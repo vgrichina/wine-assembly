@@ -190,8 +190,14 @@ function look(pngPath) {
   // full-screen one with the same drawing spread thinner, and measuring
   // against 640x480 said it was: Pegged's board came to 2% of the screen and
   // read as blank next to a screenshot anyone can see is a finished game.
-  return { colors: seen.size, content: content / Math.max(covered, 1),
-           covered: covered / (png.width * png.height),
+  // A denominator needs something in it. An app that put nothing on screen
+  // covers a few stray pixels, and dividing by those turns a blank desktop
+  // into "100% drawn" — Go Figure! scored that on an empty teal screenshot.
+  // Below one percent of the screen there is no window to measure against.
+  const coveredFraction = covered / (png.width * png.height);
+  return { colors: seen.size,
+           content: coveredFraction < 0.01 ? 0 : content / covered,
+           covered: coveredFraction,
            w: png.width, h: png.height };
 }
 

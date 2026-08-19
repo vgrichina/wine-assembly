@@ -891,6 +891,17 @@
     "\11MIDIOUTGETNUMDEVS\c9\00"
     "\11WAVEOUTGETNUMDEVS\91\01"
     "\00")
+  ;; The same shape for the entry points apps look up in GDI and USER by name
+  ;; rather than importing. A module this emulator answers for has no export
+  ;; table to search, so the name has to be matched here and turned into an
+  ;; ordinal — see $win16_builtin_ordinal. JigSawed asks GDI for
+  ;; CreateRectRgn before it will draw its board.
+  (data (i32.const 0x3EA0)
+    "\0dCREATERECTRGN\40\00"
+    "\15CREATERECTRGNINDIRECT\41\00"
+    "\0eGETSTOCKOBJECT\57\00"
+    "\0bRECTVISIBLE\68\00"
+    "\00")
   (data (i32.const 0x11EE0) "Hearts$\00MSHearts\00Hearts\00\00")
 
   ;; MessageBox system strings mirrored in the WAT-owned reserved page just

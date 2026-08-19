@@ -1245,6 +1245,20 @@
         (global.set $steps (i32.const 0))
         (return)))
 
+    ;; 36h free disk space, DL = drive (0 = current). AX sectors per cluster,
+    ;; BX free clusters, CX bytes per sector, DX clusters in total. The
+    ;; filesystem here has no geometry, so it answers with a plain one: 512
+    ;; byte sectors, 8 to a cluster, and a 512MB volume half of which is free.
+    ;; JigSawed asks before it will save a game.
+    (if (i32.eq (local.get $ah) (i32.const 0x36))
+      (then
+        (call $dos_set_ax (i32.const 8))
+        (global.set $ebx (i32.const 65536))
+        (global.set $ecx (i32.const 512))
+        (global.set $edx (i32.const 131072))
+        (call $dos_cf (i32.const 0))
+        (return)))
+
     ;; Anything else stops and says which call it was, on the same reasoning as
     ;; the unimplemented-API path: a DOS function that quietly returns nothing
     ;; is indistinguishable from one that worked and found nothing.
@@ -2439,14 +2453,17 @@
       (then (call $win16_local_identity (i32.const 4) (global.get $sreg_ds)) (return)))
     (call $win16_cstr_to_pstr (local.get $name) (call $win16_name_scratch) (i32.const 1))
     (local.set $id (call $win16_module_id (call $g2w (call $win16_name_scratch))))
+    ;; A module this emulator answers for has a handle too, and it has to be
+    ;; that module's — not the task's. Handing back DS meant the next
+    ;; GetProcAddress looked its name up in the running program: JigSawed
+    ;; asked "Gdi" for CreateRectRgn and was told the game does not export it.
     (if (i32.and (i32.ne (local.get $id) (i32.const 0))
-                 (i32.ge_u (local.get $id) (global.get $WIN16_DYNAMIC_BASE)))
+                 (i32.or (i32.lt_u (local.get $id) (global.get $WIN16_DYNAMIC_BASE))
+                         (call $win16_dll_loaded (local.get $id))))
       (then
-        (if (call $win16_dll_loaded (local.get $id))
-          (then
-            (call $win16_local_identity (i32.const 4)
-              (call $win16_h16 (i32.or (i32.const 0x00D10000) (local.get $id))))
-            (return)))))
+        (call $win16_local_identity (i32.const 4)
+          (call $win16_h16 (i32.or (i32.const 0x00D10000) (local.get $id))))
+        (return)))
     (call $win16_local_identity (i32.const 4) (global.get $sreg_ds)))
 
   ;; NDDEAPI.NDdeGetWindow() -> HWND of the agent that serves network DDE, or
@@ -2507,6 +2524,22 @@
               (call $win16_far_to_guest (local.get $sel) (local.get $off))
               (call $win16_name_scratch) (i32.const 0))
             (local.set $ord (call $win16_mmsystem_ordinal
+              (call $g2w (call $win16_name_scratch))))
+            (if (local.get $ord)
+              (then (local.set $target
+                (i32.or (i32.shl (global.get $WIN16_THUNK_SEL) (i32.const 16))
+                        (call $win16_thunk_for (local.get $id) (local.get $ord)
+                                               (i32.const 0))))))))
+        ;; The same for GDI and USER, out of the small table of names apps
+        ;; actually ask for by name rather than importing.
+        (if (i32.and (i32.or (i32.eq (local.get $id) (i32.const 2))
+                             (i32.eq (local.get $id) (i32.const 3)))
+                     (local.get $sel))
+          (then
+            (call $win16_cstr_to_pstr
+              (call $win16_far_to_guest (local.get $sel) (local.get $off))
+              (call $win16_name_scratch) (i32.const 0))
+            (local.set $ord (call $win16_builtin_ordinal
               (call $g2w (call $win16_name_scratch))))
             (if (local.get $ord)
               (then (local.set $target
@@ -3414,6 +3447,19 @@
         (call $win16_api_return (i32.const 4))
         (return (i32.const 1))))
     ;; USER.236 GetCapture() -> the window holding the mouse, or NULL.
+    (if (i32.eq (local.get $ordinal) (i32.const 197))
+      (then (call $win16_GetTabbedTextExtent) (return (i32.const 1))))
+    ;; USER.35 IsWindowEnabled(hWnd).
+    (if (i32.eq (local.get $ordinal) (i32.const 35))
+      (then
+        (local.set $arg (call $win16_h32 (call $win16_arg16 (i32.const 0))))
+        (call $win16_call32_begin (i32.const 1))
+        (call $handle_IsWindowEnabled (local.get $arg) (i32.const 0) (i32.const 0)
+          (i32.const 0) (i32.const 0) (i32.const 0))
+        (call $win16_call32_end)
+        (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+        (call $win16_api_return (i32.const 2))
+        (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 236))
       (then
         (call $win16_call32_begin (i32.const 0))
@@ -6303,6 +6349,55 @@
     (global.set $eax (call $win16_h16 (global.get $eax)))
     (call $win16_api_return (i32.const 8)))
 
+  ;; GDI.44 SelectClipRgn(hDC, hRgn) -> the new region's complexity.
+  (func $win16_SelectClipRgn
+    (local $hdc i32) (local $rgn i32)
+    (local.set $rgn (call $win16_h32 (call $win16_arg16 (i32.const 0))))
+    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 1))))
+    (call $win16_call32_begin (i32.const 2))
+    (call $handle_SelectClipRgn (local.get $hdc) (local.get $rgn)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 4)))
+
+  ;; USER.197 GetTabbedTextExtent(hDC, lpString, nCount, nTabPositions,
+  ;;   lpnTabStopPositions) -> the size as a DWORD in DX:AX.
+  (func $win16_GetTabbedTextExtent
+    (local $hdc i32) (local $str i32) (local $count i32) (local $ntabs i32)
+    (local $tabs i32)
+    (local.set $tabs (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+    (local.set $ntabs (call $win16_short (call $win16_arg16 (i32.const 2))))
+    (local.set $count (call $win16_short (call $win16_arg16 (i32.const 3))))
+    (local.set $str (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 5)) (call $win16_arg16 (i32.const 4))))
+    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 6))))
+    (call $win16_call32_begin (i32.const 5))
+    (call $win16_call32_arg (i32.const 4) (local.get $tabs))
+    (call $handle_GetTabbedTextExtentA (local.get $hdc) (local.get $str)
+      (local.get $count) (local.get $ntabs) (local.get $tabs) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $edx (i32.shr_u (global.get $eax) (i32.const 16)))
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 14)))
+
+  ;; GDI.65 CreateRectRgnIndirect(lpRect) — the same region from a RECT.
+  (func $win16_CreateRectRgnIndirect
+    (local $src i32)
+    (local.set $src (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+    (call $win16_call32_begin (i32.const 4))
+    (call $handle_CreateRectRgn
+      (call $win16_short (call $gl16 (local.get $src)))
+      (call $win16_short (call $gl16 (i32.add (local.get $src) (i32.const 2))))
+      (call $win16_short (call $gl16 (i32.add (local.get $src) (i32.const 4))))
+      (call $win16_short (call $gl16 (i32.add (local.get $src) (i32.const 6))))
+      (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (call $win16_h16 (global.get $eax)))
+    (call $win16_api_return (i32.const 4)))
+
   ;; GDI.172 SetRectRgn(hrgn, left, top, right, bottom).
   ;;
   ;; CARDS.DLL clips to the card it is about to draw, so the first card played
@@ -7873,6 +7968,10 @@
       (then (call $win16_GetClipBox) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 64))
       (then (call $win16_CreateRectRgn) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 65))
+      (then (call $win16_CreateRectRgnIndirect) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 44))
+      (then (call $win16_SelectClipRgn) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 66))
       (then (call $win16_CreateSolidBrush) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 68))
@@ -8206,10 +8305,21 @@
   ;; Answers 0 for a name it does not know, which is what GetProcAddress
   ;; reports when a module does not export something.
   (global $WIN16_MMSYSTEM_NAMES i32 (i32.const 0x3E40))
+  (global $WIN16_BUILTIN_NAMES i32 (i32.const 0x3EA0))
+
+  ;; The GDI/USER half of the same idea, over its own table.
+  (func $win16_builtin_ordinal (param $name i32) (result i32)
+    (call $win16_name_table_lookup (global.get $WIN16_BUILTIN_NAMES) (local.get $name)))
 
   (func $win16_mmsystem_ordinal (param $name i32) (result i32)
+    (call $win16_name_table_lookup (global.get $WIN16_MMSYSTEM_NAMES) (local.get $name)))
+
+  ;; Length-prefixed name, then the ordinal as a word; a zero length ends the
+  ;; table. The caller's name arrives folded to upper case, which is the form
+  ;; the tables are written in.
+  (func $win16_name_table_lookup (param $table i32) (param $name i32) (result i32)
     (local $p i32) (local $n i32) (local $i i32)
-    (local.set $p (global.get $WIN16_MMSYSTEM_NAMES))
+    (local.set $p (local.get $table))
     (block $done (loop $entries
       (local.set $n (i32.load8_u (local.get $p)))
       (br_if $done (i32.eqz (local.get $n)))
