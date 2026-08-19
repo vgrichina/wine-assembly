@@ -688,9 +688,81 @@
     (i32.store8 (i32.add (global.get $TEXT_SCRATCH) (local.get $i)) (i32.const 0))
     (global.get $TEXT_SCRATCH))
 
+  ;; The six classes USER registers into every process at init, with the atoms
+  ;; it gives them. They are not ours to choose: 0x0080-0x0085 are the values
+  ;; baked into every dialog template ever compiled, which is why a template
+  ;; writes 0xFFFF followed by 0x0080 where a custom class writes a name.
+  ;;
+  ;; Returns 0 for anything else. Case-insensitive, and exact -- "buttonBar" is
+  ;; not BUTTON. Compared as lowercased LE dwords, the same trick the callers
+  ;; use, with the tail checked per byte because OR 0x20202020 over a dword
+  ;; that spans the NUL would turn the terminator into a space.
+  ;;
+  ;; This exists so that the name form and the atom form of a built-in class
+  ;; produce the SAME class-table key. Before it they were two different keys
+  ;; for one class: CreateWindowExA("BUTTON") hashed the string, while
+  ;; CreateWindowExA(MAKEINTATOM(0x0080)) keyed on 0x0080 and could never find
+  ;; a record the string form had registered. In Win98 there is no such split --
+  ;; RegisterClass calls AddAtom and CreateWindowEx calls FindAtom, so both
+  ;; forms are already the same atom before the class list is ever walked.
+  (func $builtin_class_atom (param $wa i32) (result i32)
+    (local $d0 i32)
+    (if (i32.lt_u (local.get $wa) (i32.const 0x10000)) (then (return (i32.const 0))))
+    (local.set $d0 (i32.or (i32.load (local.get $wa)) (i32.const 0x20202020)))
+    ;; "edit" — 4 chars, so the NUL is the whole tail.
+    (if (i32.eq (local.get $d0) (i32.const 0x74696465))
+      (then (return (select (i32.const 0x0081) (i32.const 0)
+        (i32.eqz (i32.load8_u offset=4 (local.get $wa)))))))
+    ;; "butt" + "on"
+    (if (i32.eq (local.get $d0) (i32.const 0x74747562))
+      (then (return (select (i32.const 0x0080) (i32.const 0)
+        (i32.and
+          (i32.eq (i32.or (i32.load16_u offset=4 (local.get $wa)) (i32.const 0x2020))
+                  (i32.const 0x6e6f))
+          (i32.eqz (i32.load8_u offset=6 (local.get $wa))))))))
+    ;; "stat" + "ic"
+    (if (i32.eq (local.get $d0) (i32.const 0x74617473))
+      (then (return (select (i32.const 0x0082) (i32.const 0)
+        (i32.and
+          (i32.eq (i32.or (i32.load16_u offset=4 (local.get $wa)) (i32.const 0x2020))
+                  (i32.const 0x6369))
+          (i32.eqz (i32.load8_u offset=6 (local.get $wa))))))))
+    ;; "list" + "box"
+    (if (i32.eq (local.get $d0) (i32.const 0x7473696c))
+      (then (return (select (i32.const 0x0083) (i32.const 0)
+        (i32.and
+          (i32.and
+            (i32.eq (i32.or (i32.load16_u offset=4 (local.get $wa)) (i32.const 0x2020))
+                    (i32.const 0x6f62))
+            (i32.eq (i32.or (i32.load8_u offset=6 (local.get $wa)) (i32.const 0x20))
+                    (i32.const 0x78)))
+          (i32.eqz (i32.load8_u offset=7 (local.get $wa))))))))
+    ;; "scro" + "llba" + "r"
+    (if (i32.eq (local.get $d0) (i32.const 0x6f726373))
+      (then (return (select (i32.const 0x0084) (i32.const 0)
+        (i32.and
+          (i32.and
+            (i32.eq (i32.or (i32.load offset=4 (local.get $wa)) (i32.const 0x20202020))
+                    (i32.const 0x61626c6c))
+            (i32.eq (i32.or (i32.load8_u offset=8 (local.get $wa)) (i32.const 0x20))
+                    (i32.const 0x72)))
+          (i32.eqz (i32.load8_u offset=9 (local.get $wa))))))))
+    ;; "comb" + "obox"
+    (if (i32.eq (local.get $d0) (i32.const 0x626d6f63))
+      (then (return (select (i32.const 0x0085) (i32.const 0)
+        (i32.and
+          (i32.eq (i32.or (i32.load offset=4 (local.get $wa)) (i32.const 0x20202020))
+                  (i32.const 0x786f626f))
+          (i32.eqz (i32.load8_u offset=8 (local.get $wa))))))))
+    (i32.const 0))
+
   ;; Simple FNV-1a hash of NUL-terminated string at WASM addr
   (func $class_name_hash (param $wa i32) (result i32)
     (local $h i32) (local $ch i32)
+    ;; A built-in class answers with its USER atom, so that the name form and
+    ;; the MAKEINTATOM form of the same class key on the same record.
+    (local.set $h (call $builtin_class_atom (local.get $wa)))
+    (if (local.get $h) (then (return (local.get $h))))
     ;; If class name is a small integer (ATOM), return it directly
     (if (i32.lt_u (local.get $wa) (i32.const 0x10000))
       (then (return (local.get $wa))))
