@@ -50,10 +50,27 @@
     ;; than stopping the task at the load. In CS or SS it is always a mistake —
     ;; and a quiet one, because a zero code base turns the next branch into a
     ;; jump to zero, which the run loop reads as the task having exited.
+    ;; A selector that names no segment in ES or DS is the same story one step
+    ;; on. Loading one is not what faults on real hardware — dereferencing it
+    ;; is — and a program can carry a stale or computed selector around for a
+    ;; long time without ever touching it. Visual Basic 1's runtime puts one in
+    ;; ES right after RegisterClass and never reads through it; stopping at the
+    ;; load cost all five VB games their first window. It is still reported
+    ;; under --trace-win16, because it is a sign of something, and an access
+    ;; through it lands at guest offset 0 where it will be noticed.
+    (if (i32.and (i32.and (i32.eqz (local.get $base))
+                          (i32.ne (local.get $sel) (i32.const 0)))
+                 (i32.or (i32.eq (local.get $id) (i32.const 0))
+                         (i32.eq (local.get $id) (i32.const 3))))
+      (then
+        (if (global.get $win16_trace)
+          (then
+            (call $host_log_i32 (i32.const 0xCA165E11))  ;; unmapped data selector
+            (call $host_log_i32 (local.get $sel))
+            (call $host_log_i32 (global.get $eip))))))
     (if (i32.and (i32.eqz (local.get $base))
-                 (i32.or (i32.ne (local.get $sel) (i32.const 0))
-                         (i32.or (i32.eq (local.get $id) (i32.const 1))
-                                 (i32.eq (local.get $id) (i32.const 2)))))
+                 (i32.or (i32.eq (local.get $id) (i32.const 1))
+                         (i32.eq (local.get $id) (i32.const 2))))
       (then
         (call $host_log_i32 (i32.const 0xCA165E10))  ;; selector names no segment
         (call $host_log_i32 (local.get $sel))

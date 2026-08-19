@@ -2571,6 +2571,8 @@
       (then (call $win16_change_menu (i32.const 2)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 17))
       (then (call $win16_GetCursorPos) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 60))
+      (then (call $win16_GetActiveWindow) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 70))
       (then (call $win16_SetCursorPos) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 36))
@@ -4912,6 +4914,15 @@
       (else (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))))
     (call $win16_api_return (i32.const 2)))
 
+  ;; USER.60 GetActiveWindow() — the top-level window with the focus.
+  (func $win16_GetActiveWindow
+    (call $win16_call32_begin (i32.const 0))
+    (call $handle_GetActiveWindow (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (call $win16_h16 (global.get $eax)))
+    (call $win16_api_return (i32.const 0)))
+
   (func $win16_GetFocus
     (call $win16_call32_begin (i32.const 0))
     (call $handle_GetFocus (i32.const 0) (i32.const 0) (i32.const 0)
@@ -6005,6 +6016,46 @@
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 4)))
 
+  ;; GDI.99 LPtoDP / GDI.67 DPtoLP(hDC, lpPoints, nCount) — map an array of
+  ;; points between logical and device space, in place. Points are two words
+  ;; here and two longs there, so the array is widened into scratch, converted,
+  ;; and narrowed back over the caller's own array.
+  (func $win16_map_points (param $to_device i32)
+    (local $hdc i32) (local $src i32) (local $n i32) (local $dst i32) (local $i i32)
+    (local.set $n (call $win16_coord (call $win16_arg16 (i32.const 0))))
+    (local.set $src (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
+    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 3))))
+    (if (i32.gt_u (local.get $n) (i32.const 512))
+      (then
+        (call $host_log_i32 (i32.const 0xCA16B01E))   ;; more points than scratch holds
+        (call $host_log_i32 (local.get $n))
+        (unreachable)))
+    (local.set $dst (global.get $GUEST_STACK))
+    (block $wide (loop $pts
+      (br_if $wide (i32.ge_u (local.get $i) (i32.shl (local.get $n) (i32.const 1))))
+      (call $gs32 (i32.add (local.get $dst) (i32.shl (local.get $i) (i32.const 2)))
+        (call $win16_coord
+          (call $gl16 (i32.add (local.get $src) (i32.shl (local.get $i) (i32.const 1))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $pts)))
+    (call $win16_call32_begin (i32.const 3))
+    (if (local.get $to_device)
+      (then (call $handle_LPtoDP (local.get $hdc) (local.get $dst) (local.get $n)
+              (i32.const 0) (i32.const 0) (i32.const 0)))
+      (else (call $handle_DPtoLP (local.get $hdc) (local.get $dst) (local.get $n)
+              (i32.const 0) (i32.const 0) (i32.const 0))))
+    (call $win16_call32_end)
+    (local.set $i (i32.const 0))
+    (block $narrow (loop $back
+      (br_if $narrow (i32.ge_u (local.get $i) (i32.shl (local.get $n) (i32.const 1))))
+      (call $gs16 (i32.add (local.get $src) (i32.shl (local.get $i) (i32.const 1)))
+        (call $gl32 (i32.add (local.get $dst) (i32.shl (local.get $i) (i32.const 2)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $back)))
+    (global.set $eax (i32.const 1))
+    (call $win16_api_return (i32.const 8)))
+
   ;; GDI.36 Polygon / GDI.37 Polyline(hDC, lpPoints, nCount). A Win16 POINT is
   ;; two words and a Win32 one two longs, so the array is widened into scratch
   ;; on the way through. The cap is what the scratch holds, and a longer array
@@ -6595,6 +6646,10 @@
       (then (call $win16_Ellipse) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 27))
       (then (call $win16_Rectangle) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 67))
+      (then (call $win16_map_points (i32.const 0)) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 99))
+      (then (call $win16_map_points (i32.const 1)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 70))
       (then (call $win16_EnumFonts) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 104))
