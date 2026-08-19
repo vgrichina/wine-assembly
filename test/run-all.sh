@@ -123,6 +123,7 @@ UNIT=(
   test/test-dib-dirty-sync.js
   test/test-web-pinball-assets.js
   test/test-process-boot-yields.js
+  test/test-worker-imports.js
   test/test-pinball-web-lifecycle.js
   test/test-web-touch-input.js
   test/test-web-fullscreen-consent.js

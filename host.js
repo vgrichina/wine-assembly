@@ -635,19 +635,18 @@ class WineAssembly {
       const traceApiNames = (typeof window !== 'undefined' && window.__waTraceApiNames)
         ? window.__waTraceApiNames
         : null;
-      let lastTraceApi = false;
       let workerInstance = null;
-      const wi = self.getImports({
+      // The filesystem, the LAN wire, the GDI table and the audio device all
+      // belong to the process rather than to a thread, and which ones those
+      // are is stated once in lib/worker-imports.js so this host and the CLI
+      // cannot quietly disagree. The rest of the options are per-thread by
+      // nature: this worker's own instance, and its id.
+      const wi = self.getImports(Object.assign(processSharedCtx(mainCtx), {
         detached: true,
         instance: () => workerInstance || self.instance,
         exports: () => workerInstance ? workerInstance.exports : self.instance.exports,
-        vfs: mainCtx.vfs,
-        sharedGdi: mainCtx.sharedGdi,
-        sharedAudio: mainCtx.sharedAudio,
-        sharedMixer: mainCtx.sharedMixer,
-        vlanWire: mainCtx.vlanWire,  // one wire per process, shared by every thread
         threadId: tid,
-      });
+      }));
       wi.__setInstance = (instance) => { workerInstance = instance; };
       wi.host.memory = self.memory;
       const markAudioThread = () => {
@@ -668,20 +667,18 @@ class WineAssembly {
           return orig(...args);
         };
       }
-      wi.host.log = (ptr, len) => {
-        lastTraceApi = false;
-        if (!traceApiNames || !traceApiNames.size) return;
-        const bytes = new Uint8Array(self.memory.buffer, ptr, Math.min(len, 256));
-        let text = '';
-        for (let i = 0; i < bytes.length && bytes[i]; i++) text += String.fromCharCode(bytes[i]);
-        if (traceApiNames.has(text)) {
-          lastTraceApi = true;
-          console.log(`[API T${tid}] ${text}`);
-        }
-      };
-      wi.host.log_i32 = (val) => {
-        if (lastTraceApi) console.log(`  => 0x${(val >>> 0).toString(16)}`);
-      };
+      // Shared decode and the "the return belongs to the call just logged"
+      // latch; what stays here is this host's own policy — trace only the
+      // names the debug toolbar asked for, and print nothing when it asked for
+      // none.
+      const workerApiLog = makeWorkerApiLogger({
+        getBuffer: () => self.memory.buffer,
+        threadId: tid,
+        shouldLog: (name) => !!(traceApiNames && traceApiNames.size && traceApiNames.has(name)),
+        emit: (line) => console.log(line),
+      });
+      wi.host.log = workerApiLog.log;
+      wi.host.log_i32 = workerApiLog.log_i32;
       wi.host.log_eip = (eip) => {
         if (typeof window !== 'undefined' && typeof window.__waProfileEipHit === 'function') {
           window.__waProfileEipHit(eip >>> 0, tid | 0);

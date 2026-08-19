@@ -11,6 +11,7 @@ const {
   applyExeCompatibilityPatches: applyProfilePatches,
   onThreadExit: profileThreadExit,
 } = require('../lib/app-profiles');
+const { processSharedCtx, adoptThreadPrimitives, makeWorkerApiLogger } = require('../lib/worker-imports');
 const { decodeMfcCString, g2w: translateGuest } = require('../lib/mem-utils');
 const { formatCall: fmtApiCall, formatRet: fmtApiRet, formatOutParams: fmtApiOutParams, walkFrames } = require('../lib/api-format');
 const { fontMounts, BUNDLED_BITMAP_FONTS } = require('../lib/font-substitutions');
@@ -2271,65 +2272,50 @@ async function main() {
 
   // Create ThreadManager now that we have the main instance
   const makeWorkerImports = (tid) => {
-    const workerCtx = {
+    // Everything process-scoped — the filesystem, the LAN wire, the clock, the
+    // audio device, the GDI handles — comes from one shared list, so the two
+    // hosts cannot quietly disagree about what a thread inherits.
+    const workerCtx = Object.assign(processSharedCtx(ctx), {
       getMemory: () => memory.buffer,
       renderer,
       onExit: () => {},
       trace: traceCategories,
       traceHost: traceHostNames,
       hostCensus: HOST_CENSUS,
-      vfs: ctx.vfs,  // share filesystem with main thread
-      vlanWire: ctx.vlanWire,  // one wire per process, shared by every thread
-      guestNowMs: ctx.guestNowMs,  // one clock per process, not per thread
       exports: instance.exports,  // share main instance exports for g2w
-      _audioOutFd: ctx._audioOutFd,  // share audio output fd
-      sharedAudio: ctx.sharedAudio,  // share waveOut state across threads
-      _waveStats: ctx._waveStats,  // share audio-stats counters so T4 writes show in main-thread summary
-      audioStatsStride: ctx.audioStatsStride,
       _debugReadFile: TRACE_API,
-      sharedGdi: base.gdi,  // share GDI handles so worker BitBlt can see main-thread bitmaps
+      sharedGdi: base.gdi,  // the live GDI table, not the copy in ctx
       g2w: (addr) => translateGuest(addr, instance.exports.get_image_base(), memory.buffer),
-    };
+    });
     const workerBase = createHostImports(workerCtx);
     const wh = workerBase.host;
     wh.memory = memory;
-    // Wire thread/event to same ThreadManager
-    wh.create_thread = h.create_thread;
-    wh.suspend_thread = h.suspend_thread;
-    wh.resume_thread = h.resume_thread;
-    wh.exit_thread = h.exit_thread;
-    wh.get_exit_code_thread = h.get_exit_code_thread;
-    wh.create_event = h.create_event;
-    wh.set_event = h.set_event;
-    wh.reset_event = h.reset_event;
-    wh.wait_single = h.wait_single;
-    wh.wait_multiple = h.wait_multiple;
-    wh.create_semaphore = h.create_semaphore;
-    wh.release_semaphore = h.release_semaphore;
+    // Every thread in the process schedules against one ThreadManager. The
+    // list is shared, and adopting a name the main table does not implement
+    // throws rather than leaving the return-0 stub in place.
+    adoptThreadPrimitives(wh, h);
     for (const name of profileHostNames) wrapProfileHost(wh, name);
-    // Worker logging. The return value belongs to the call that was just
-    // logged, so it is shown only when that call was.
-    let workerLogVisible = false;
-    wh.log = (ptr, len) => {
-      const b = new Uint8Array(memory.buffer, ptr, Math.min(len, 256));
-      let t = '';
-      for (let i = 0; i < b.length && b[i]; i++) t += String.fromCharCode(b[i]);
-      if (apiCounts) apiCounts.set(t, (apiCounts.get(t) || 0) + 1);
-      // Honour --quiet-api and --trace-api=NAMES here exactly as the main
-      // thread does. Without this a worker's idle poll (MsgWaitForMultiple-
-      // Objects, Sleep, QueryPerformanceCounter) logs unfiltered: a long
-      // two-process run emitted 2.3M such lines and died of heap exhaustion
-      // inside console.log, with the filter the caller asked for ignored.
-      if (TRACE_API && !QUIET_API && (!TRACE_API_FILTER || TRACE_API_FILTER.has(t))) {
-        workerLogVisible = true;
-        logs.push(`[API T${tid}] ${t}`);
-      } else {
-        workerLogVisible = false;
-      }
-    };
-    wh.log_i32 = (val) => {
-      if (workerLogVisible) logs.push(`  => ${hex(val)}`);
-    };
+    // Worker API tracing. The decode and the "the return belongs to the call
+    // just logged" latch are shared; what stays here is the CLI's own policy —
+    // count every call for the summary, and honour --quiet-api and
+    // --trace-api=NAMES exactly as the main thread does. That filter is not a
+    // nicety: without it a worker's idle poll (MsgWaitForMultipleObjects,
+    // Sleep, QueryPerformanceCounter) logs unfiltered, and a long two-process
+    // run emitted 2.3M such lines and died of heap exhaustion inside
+    // console.log with the filter the caller asked for ignored.
+    const workerApiLog = makeWorkerApiLogger({
+      getBuffer: () => memory.buffer,
+      threadId: tid,
+      onCall: (name) => {
+        if (apiCounts) apiCounts.set(name, (apiCounts.get(name) || 0) + 1);
+      },
+      shouldLog: (name) => TRACE_API && !QUIET_API &&
+        (!TRACE_API_FILTER || TRACE_API_FILTER.has(name)),
+      formatValue: hex,
+      emit: (line) => logs.push(line),
+    });
+    wh.log = workerApiLog.log;
+    wh.log_i32 = workerApiLog.log_i32;
     if (TRACE_MOUSE_STATE) {
       const workerGetMousePosition = wh.get_mouse_position;
       const workerGetMouseButtons = wh.get_mouse_buttons;
