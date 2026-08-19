@@ -1182,6 +1182,17 @@
                              (i32.mul (global.get $WIN16_SEG_MAX) (i32.const 16))))
     (local.set $off (call $win16_entry_lookup
       (i32.load (local.get $rec)) (local.get $ordinal) (local.get $seg)))
+    ;; Under --trace-win16: which module, which ordinal, and the segment and
+    ;; offset its entry table gave — the three numbers that decide where a
+    ;; call into a DLL actually lands.
+    (if (global.get $win16_trace)
+      (then
+        (call $host_log_i32 (i32.const 0xCA16E17E))
+        (call $host_log_i32 (local.get $module_id))
+        (call $host_log_i32 (local.get $ordinal))
+        (call $host_log_i32 (i32.add (i32.load offset=4 (local.get $rec))
+                                     (i32.load (local.get $seg))))
+        (call $host_log_i32 (local.get $off))))
     (if (i32.eqz (i32.load (local.get $seg))) (then (return (i32.const 0))))
     (i32.or (i32.shl (call $win16_index_to_sel
               (i32.add (i32.load offset=4 (local.get $rec)) (i32.load (local.get $seg))))

@@ -1253,11 +1253,15 @@
   ;; for the same reason: SetClassWord(GCW_HICON) changes what a window shows
   ;; for itself, and the class record it came from may be re-registered or its
   ;; slot reused before anyone reads it back.
-  ;; 64 classes x 4 bytes. The size said 0x400, which reaches 0x11300 and
-  ;; covers the WAT system strings and DX_PRESENT_BMI; only MAX_CLASSES
-  ;; entries are ever written, so nothing had corrupted them yet.
-  (global $WND_CLASS_ICON_TABLE i32 (i32.const 0x00010F00))
-  (global $WND_CLASS_ICON_TABLE_SIZE i32 (i32.const 0x00000100))
+  ;; One entry per *window* slot, not per class — $wnd_slot_reset clears it for
+  ;; any slot up to MAX_WINDOWS — so it needs the full 256 x 4 bytes. At
+  ;; 0x10F00 that reached 0x11300, over the dialog button captions at 0x11000
+  ;; and the WAT system strings after them; shrinking the declared size only
+  ;; hid the overlap from anyone reading the header. Moved somewhere with room,
+  ;; verified with tools/wat-memory-map.js, which is the only way to see that a
+  ;; (data ...) segment in one file and a table in another share an address.
+  (global $WND_CLASS_ICON_TABLE i32 (i32.const 0x079C9000))
+  (global $WND_CLASS_ICON_TABLE_SIZE i32 (i32.const 0x00000400))
   ;; Which class record each window was created from, one byte per window slot
   ;; (0xFF = none), and the cbClsExtra bytes that belong to that class. Class
   ;; extra is shared by every window of the class — that is the whole point of
@@ -2266,16 +2270,18 @@
   ;; ---- Win16 / NE loader state (src/08c-ne-loader.wat) ----
   ;; WIN16_SEG_TABLE has one spare entry past WIN16_SEG_MAX, used as scratch by
   ;; $win16_apply_relocs for the entry-table segment out-parameter.
-  ;; 256 entries x 16 bytes + 1 scratch, in the space between the API hash
-  ;; table and TEXT_SCRATCH. It was 128 entries at 0x07E08400, which is 0x800
-  ;; from WIN16_THUNK_TABLE and could not grow in place.
-  (global $WIN16_SEG_TABLE i32 (i32.const 0x07E03000))
+  ;; 256 entries x 16 bytes + 1 scratch. It was 128 entries at 0x07E08400,
+  ;; which is 0x800 from WIN16_THUNK_TABLE and could not grow in place; the
+  ;; obvious-looking space at 0x07E03000 turned out to be inside API_HASH_TABLE,
+  ;; whose size global says 32KB rather than the 12KB its comment claims. This
+  ;; address was checked with tools/wat-memory-map.js.
+  (global $WIN16_SEG_TABLE i32 (i32.const 0x079C5000))
   (global $WIN16_SEG_MAX   i32 (i32.const 255))
   ;; One entry per distinct (module, ordinal) the task and its DLLs import.
   ;; 256 was not enough once a DLL as large as VBRUN100 was in the picture, and
   ;; the table is now beside the segment table with room for 2048 — still only
   ;; 8KB of thunk segment used out of the 64KB that selector owns.
-  (global $WIN16_THUNK_TABLE i32 (i32.const 0x07E04100))
+  (global $WIN16_THUNK_TABLE i32 (i32.const 0x079C7000))
   (global $WIN16_THUNK_MAX i32 (i32.const 2048))
   ;; Each selector index owns one 64KB slot. The arena sits above the PE guest
   ;; image start: an NE task sets image_base to 0, so nothing else is mapped

@@ -4093,9 +4093,14 @@
         (global.set $edx (i32.const 0))
         (call $win16_api_return (i32.const 10))
         (return)))
+    ;; Widen what was narrowed on the way out: WM_ERASEBKGND carries a DC, and
+    ;; the default procedure is on the 32-bit side, where a 16-bit handle names
+    ;; nothing. The invariant is that the 16-bit side holds narrow handles and
+    ;; this side holds wide ones, and every crossing converts.
     (call $win16_call32_begin (i32.const 4))
     (call $handle_DefWindowProcA (local.get $hwnd) (local.get $message)
-      (local.get $wparam) (local.get $lparam) (i32.const 0) (i32.const 0))
+      (call $win16_msg_wparam32 (local.get $message) (local.get $wparam))
+      (local.get $lparam) (i32.const 0) (i32.const 0))
     (call $win16_call32_end)
     (global.set $edx (i32.shr_u (global.get $eax) (i32.const 16)))
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
