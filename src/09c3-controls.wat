@@ -10829,6 +10829,7 @@
     (local $scan_slot i32) (local $sibling_hwnd i32)
     (local $combo_max_x i32) (local $sibling_right i32)
     (local $paint_state_w i32)
+    (local $prev_lb i32) (local $prev_edit i32) (local $prev_popup i32)
 
     (local.set $field_h (i32.const 21))
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
@@ -10841,6 +10842,20 @@
         (local.set $style (i32.load offset=32 (local.get $cs_w)))
         (local.set $variant (i32.and (local.get $style) (i32.const 0x3)))
         (if (i32.eqz (local.get $variant)) (then (local.set $variant (i32.const 3))))
+        ;; A toolbar-hosted combo can be sent WM_CREATE a second time (MFC
+        ;; creates it 288 wide, then the toolbar lays it out again). The old
+        ;; state block is still on $hwnd here, so carry its children across:
+        ;; creating a second inner EDIT left the first one orphaned at the
+        ;; original width, painting white over the drop arrow it no longer
+        ;; had room for.
+        (if (local.get $state)
+          (then
+            (local.set $prev_lb
+              (i32.load offset=20 (call $g2w (local.get $state))))
+            (local.set $prev_popup
+              (i32.load offset=24 (call $g2w (local.get $state))))
+            (local.set $prev_edit
+              (i32.load offset=28 (call $g2w (local.get $state))))))
         (local.set $state (call $heap_alloc (i32.const 40)))
         (local.set $state_w (call $g2w (local.get $state)))
         (i32.store          (local.get $state_w) (i32.const 0))      ;; text_buf_ptr
@@ -10849,9 +10864,9 @@
         (i32.store offset=12 (local.get $state_w)
           (i32.and (i32.load offset=8 (local.get $cs_w)) (i32.const 0xFFFF))) ;; ctrl_id
         (i32.store offset=16 (local.get $state_w) (i32.const -1))   ;; cur_sel
-        (i32.store offset=20 (local.get $state_w) (i32.const 0))    ;; lb_hwnd
-        (i32.store offset=24 (local.get $state_w) (i32.const 0))    ;; popup_hwnd
-        (i32.store offset=28 (local.get $state_w) (i32.const 0))    ;; edit_hwnd
+        (i32.store offset=20 (local.get $state_w) (local.get $prev_lb))    ;; lb_hwnd
+        (i32.store offset=24 (local.get $state_w) (local.get $prev_popup))    ;; popup_hwnd
+        (i32.store offset=28 (local.get $state_w) (local.get $prev_edit))    ;; edit_hwnd
         (i32.store offset=32 (local.get $state_w) (i32.const 0))    ;; is_dropped
         (i32.store offset=36 (local.get $state_w) (local.get $variant)) ;; variant
         (if (local.get $name_ptr)
@@ -10874,13 +10889,16 @@
         (local.set $style (i32.const 0x40A00000))
         (if (i32.eq (local.get $variant) (i32.const 1))
           (then (local.set $style (i32.or (local.get $style) (i32.const 0x10000000)))))
+        (if (local.get $prev_lb)
+          (then (local.set $lb (local.get $prev_lb)))
+          (else
         (local.set $lb (call $ctrl_create_child (local.get $hwnd) (i32.const 4)
                           (i32.const 1000) ;; synthetic ctrl_id for inner listbox
                           (i32.const 0)
                           (select (i32.const 0) (local.get $field_h) (i32.eq (local.get $variant) (i32.const 1)))
                           (local.get $w)
                           (select (local.get $cy) (local.get $h) (i32.eq (local.get $variant) (i32.const 1)))
-                          (local.get $style) (i32.const 0)))
+                          (local.get $style) (i32.const 0)))))
         (i32.store offset=20 (local.get $state_w) (local.get $lb))
         ;; CBS_SIMPLE: always-dropped state.
         (if (i32.eq (local.get $variant) (i32.const 1))
@@ -10889,7 +10907,8 @@
         ;; area minus the arrow box (18px wide on right). Style: WS_CHILD |
         ;; WS_VISIBLE | ES_AUTOHSCROLL(0x80). Field width = w - 18 to leave
         ;; room for the arrow.
-        (if (i32.eq (local.get $variant) (i32.const 2))
+        (if (i32.and (i32.eq (local.get $variant) (i32.const 2))
+                     (i32.eqz (local.get $prev_edit)))
           (then
             (i32.store offset=28 (local.get $state_w)
               (call $ctrl_create_child (local.get $hwnd) (i32.const 2)
@@ -10902,7 +10921,8 @@
         ;; Dropdown variants (2/3): pre-allocate a WS_POPUP shell sized to the
         ;; listbox area. Hidden until $combobox_open_dropdown shows it. The
         ;; listbox is still parented to the combo until then.
-        (if (i32.ne (local.get $variant) (i32.const 1))
+        (if (i32.and (i32.ne (local.get $variant) (i32.const 1))
+                     (i32.eqz (local.get $prev_popup)))
           (then
             (i32.store offset=24 (local.get $state_w)
               (call $combo_create_popup (local.get $hwnd) (local.get $w) (local.get $h)))))
