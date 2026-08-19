@@ -942,13 +942,14 @@ class WineAssembly {
         // A font an app ships was put in the Windows font directory by its
         // installer on a real machine, and that is the only reason an app
         // like Age of Empires can name "Copperplate Gothic Light" without
-        // ever calling AddFontResource. Mount it there too - but never over
-        // a vendored substitute, which is what keeps text identical on every
-        // machine.
+        // ever calling AddFontResource. Mount it there too, and let it win
+        // over a vendored substitute already at that name: the app ships the
+        // real face its artwork was laid out against, so its ARIAL.TTF beats
+        // Liberation Sans standing in for one. Text stays identical on every
+        // machine either way - the bytes come from the app, not the host.
         const base = url.replace(/^.*[\\\/]/, '').toLowerCase();
         if (/\.(ttf|ttc|fon)$/.test(base)) {
-          const installed = 'c:\\windows\\fonts\\' + base;
-          if (!vfs.files.has(installed)) addFile(installed);
+          addFile('c:\\windows\\fonts\\' + base);
         }
         loaded++;
       } catch (_) {

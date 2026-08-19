@@ -2641,18 +2641,17 @@ async function main() {
             // installer on a real machine, which is why an app like Age of
             // Empires can ask for "Copperplate Gothic Light" without ever
             // calling AddFontResource. Mount it where an installed font
-            // lives, but never over a vendored substitute already mounted
-            // there: the substitutes are what make text identical on every
-            // machine, and a bundled ARIAL.TTF must not displace one.
+            // lives, and let it win over the vendored substitute sitting
+            // there: the app ships the real face the artwork was laid out
+            // against, so its own ARIAL.TTF is a better answer than
+            // Liberation Sans standing in for one. Deterministic either way
+            // -- the bytes come from the app's own files, not the host's.
             if (/\.(ttf|ttc|fon)$/i.test(f)) {
-              const installed = `c:\\windows\\fonts\\${f.toLowerCase()}`;
-              if (!ctx.vfs.files.has(installed)) {
-                ctx.vfs.setLazyFile(installed, {
-                  attrs: 0x20,
-                  size: stat.size,
-                  load: () => new Uint8Array(fs.readFileSync(fpath)),
-                });
-              }
+              ctx.vfs.setLazyFile(`c:\\windows\\fonts\\${f.toLowerCase()}`, {
+                attrs: 0x20,
+                size: stat.size,
+                load: () => new Uint8Array(fs.readFileSync(fpath)),
+              });
             }
           } else if (stat.isDirectory() && f !== '.' && f !== '..') {
             const subDir = vfsPrefix + f.toLowerCase() + '\\';
@@ -2701,12 +2700,11 @@ async function main() {
           : [(typeof item === 'object' && item.vfsPath) || url.replace(/^.*[\\\/]/, '')];
         for (const p of paths) addFile(p, hostPath, size);
         // Same rule the page applies: a font the app ships is a font its
-        // installer had put in the font directory, so mount it there too --
-        // but never over a vendored substitute already sitting there.
+        // installer had put in the font directory, so mount it there too,
+        // over the vendored substitute if one is already sitting there.
         const base = url.replace(/^.*[\\\/]/, '').toLowerCase();
         if (/\.(ttf|ttc|fon)$/.test(base)) {
-          const installed = 'c:\\windows\\fonts\\' + base;
-          if (!ctx.vfs.files.has(installed)) addFile(installed, hostPath, size);
+          addFile('c:\\windows\\fonts\\' + base, hostPath, size);
         }
       }
       if (missing.length) {
