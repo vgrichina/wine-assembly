@@ -610,6 +610,8 @@
 
   (import "host" "get_async_key_state" (func $host_get_async_key_state (param i32) (result i32)))
   (import "host" "get_key_down_state" (func $host_get_key_down_state (param i32) (result i32)))
+  (import "host" "set_key_down_state" (func $host_set_key_down_state (param i32) (param i32)))
+  (import "host" "win16_stage_module" (func $host_win16_stage_module (param i32) (param i32) (result i32)))
   (import "host" "di_set_event_notification" (func $host_di_set_event_notification (param i32 i32) (result i32)))
 
   ;; Math host imports (for FPU transcendentals)
@@ -1237,6 +1239,12 @@
   ;; top-level/modal windows and GetWindow(GW_OWNER).
   (global $OWNER_TABLE i32 (i32.const 0x00010B00))
   (global $OWNER_TABLE_SIZE i32 (i32.const 0x00000400))
+  ;; WNDCLASS.hIcon per window, the same shape as the class cursor above and
+  ;; for the same reason: SetClassWord(GCW_HICON) changes what a window shows
+  ;; for itself, and the class record it came from may be re-registered or its
+  ;; slot reused before anyone reads it back.
+  (global $WND_CLASS_ICON_TABLE i32 (i32.const 0x00010F00))
+  (global $WND_CLASS_ICON_TABLE_SIZE i32 (i32.const 0x00000400))
   ;; EDIT visual-line scratch table. Each entry is { char_start, char_len }.
   ;; Used by WAT EDIT controls so wrapped text, caret, hit-testing and scroll
   ;; all share one layout model instead of mixing DrawText with manual math.
@@ -1576,6 +1584,18 @@
   (global $VIRTUAL_MAP_TABLE i32 (i32.const 0x07F02410))
   (global $VIRTUAL_MAP_TABLE_SIZE i32 (i32.const 0x00008000))
   (global $MAX_VIRTUAL_MAPS i32 (i32.const 2048))
+  ;; Which class record each window was created from, and the cbClsExtra bytes
+  ;; that belong to that class. Class extra is shared by every window of the
+  ;; class — that is the whole point of it, as against cbWndExtra — so it is
+  ;; keyed by class slot and reached through the per-window link.
+  ;; 16 bytes per class covers the two or three words these apps declare;
+  ;; anything past that is refused rather than silently aliased onto the next
+  ;; class.
+  (global $WND_CLASS_SLOT_TABLE i32 (i32.const 0x07F0A800))
+  (global $WND_CLASS_SLOT_TABLE_SIZE i32 (i32.const 0x00000400))
+  (global $CLASS_EXTRA_TABLE i32 (i32.const 0x07F0AC00))
+  (global $CLASS_EXTRA_TABLE_SIZE i32 (i32.const 0x00000400))
+  (global $CLASS_EXTRA_STRIDE i32 (i32.const 16))
   (global $VIRTUAL_BACKING_BASE i32 (i32.const 0x08000000))
   (global $VIRTUAL_BACKING_BASE_SIZE i32 (i32.const 0x14000000))
   (global $VIRTUAL_ALLOC_TOP_INIT i32 (i32.const 0x40000000))
@@ -2244,6 +2264,14 @@
   ;; Next free selector index for $win16_alloc_segment, and the task's PSP.
   (global $win16_next_seg (mut i32) (i32.const 0))
   (global $win16_psp_sel (mut i32) (i32.const 0))
+  ;; Selector index holding the task's DOS environment block, filled in the
+  ;; first time GetDOSEnvironment is called and zero until then. It has to be a
+  ;; real arena slot rather than a WAT-private buffer: the caller gets a far
+  ;; pointer and walks it with 16-bit code.
+  (global $win16_env_seg (mut i32) (i32.const 0))
+  ;; Scratch for the widened wvsprintf argument list — 32 dwords, allocated on
+  ;; first use because most tasks never format anything.
+  (global $win16_va_scratch (mut i32) (i32.const 0))
   ;; Highest 16-bit handle handed out so far (see $win16_h16 in
   ;; src/09e-win16-api.wat). Indices are 1-based so that 0 stays NULL in both
   ;; handle spaces. The table itself is the one arena slot no selector can

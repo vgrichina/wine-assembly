@@ -74,14 +74,26 @@
     (if (i32.gt_u (local.get $n) (i32.const 16)) (then (return (i32.const 0))))
     (if (i32.ne (i32.load8_u (i32.add (local.get $lit) (local.get $n))) (i32.const 0))
       (then (return (i32.const 0))))
+    ;; Case-insensitively: a module name in a reference table is upper case,
+    ;; but the same name reaching LoadLibrary is whatever the app typed, and
+    ;; FreeCell types "cards.dll". Comparing those byte for byte made it decide
+    ;; the card deck was missing and stop before its first deal.
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
-      (if (i32.ne (i32.load8_u (i32.add (i32.add (local.get $p) (i32.const 1)) (local.get $i)))
-                  (i32.load8_u (i32.add (local.get $lit) (local.get $i))))
+      (if (i32.ne (call $ascii_upper
+                    (i32.load8_u (i32.add (i32.add (local.get $p) (i32.const 1))
+                                          (local.get $i))))
+                  (call $ascii_upper
+                    (i32.load8_u (i32.add (local.get $lit) (local.get $i)))))
         (then (return (i32.const 0))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (i32.const 1))
+
+  (func $ascii_upper (param $c i32) (result i32)
+    (select (i32.sub (local.get $c) (i32.const 0x20)) (local.get $c)
+      (i32.and (i32.ge_u (local.get $c) (i32.const 0x61))
+               (i32.le_u (local.get $c) (i32.const 0x7A)))))
 
   ;; Address of module reference `index`'s name, as a Pascal string. $ne_off is
   ;; the absolute address of the NE header in the staged file.
@@ -128,18 +140,44 @@
                                  (i32.mul (global.get $WIN16_SEG_MAX) (i32.const 0x10000))))
              (i32.add (i32.const 0x8400) (i32.mul (local.get $i) (i32.const 16)))))
 
+  ;; An app-local name gets its id the first time anything asks about it, which
+  ;; is while the task's own fixups are being applied — long before the host
+  ;; has had a chance to stage the file. Assigning it here rather than waiting
+  ;; is what makes the two orders agree: the thunk records the id it will still
+  ;; have when the DLL is finally loaded, instead of the zero it used to record
+  ;; and never revisit. Tetris imports win87em that way, and every call into it
+  ;; arrived at the dispatcher as module 0 with no name left to identify it.
   (func $win16_dynamic_module_id (param $pstr i32) (result i32)
-    (local $i i32) (local $slot i32)
+    (local $i i32) (local $slot i32) (local $n i32) (local $j i32)
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $WIN16_DYNAMIC_MODULES)))
       (local.set $slot (call $win16_dynamic_module_slot (local.get $i)))
-      (if (i32.load8_u (local.get $slot))
+      (if (i32.eqz (i32.load8_u (local.get $slot)))
         (then
-          (if (call $win16_pstr_eq_pstr (local.get $pstr) (local.get $slot))
-            (then (return (i32.add (local.get $i) (i32.const 12)))))))
+          ;; First free slot: claim it for this name.
+          (local.set $n (i32.load8_u (local.get $pstr)))
+          (if (i32.eqz (local.get $n)) (then (return (i32.const 0))))
+          (block $copied (loop $copy
+            (i32.store8 (i32.add (local.get $slot) (local.get $j))
+              (i32.load8_u (i32.add (local.get $pstr) (local.get $j))))
+            (local.set $j (i32.add (local.get $j) (i32.const 1)))
+            (br_if $copy (i32.le_u (local.get $j) (local.get $n)))))
+          (return (i32.add (local.get $i) (i32.const 12)))))
+      (if (call $win16_pstr_eq_pstr (local.get $pstr) (local.get $slot))
+        (then (return (i32.add (local.get $i) (i32.const 12)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (i32.const 0))
+
+  ;; Give a slot back. A name claimed for a module that turned out to have no
+  ;; file must not keep its id, or four failed LoadLibrary calls would leave no
+  ;; room for a real one.
+  (func $win16_dynamic_module_release (param $id i32)
+    (if (i32.and (i32.ge_u (local.get $id) (i32.const 12))
+                 (i32.lt_u (local.get $id)
+                           (i32.add (i32.const 12) (global.get $WIN16_DYNAMIC_MODULES))))
+      (then (i32.store8 (call $win16_dynamic_module_slot
+                          (i32.sub (local.get $id) (i32.const 12))) (i32.const 0)))))
 
   ;; Clear the app-local names. Called when a task is loaded, so one run's
   ;; modules cannot answer for the next one's.
@@ -449,6 +487,9 @@
     ;; Anything allocated from here on takes the slot after the thunks.
     (global.set $win16_next_seg (i32.add (global.get $win16_thunk_index) (i32.const 1)))
     (global.set $win16_psp_sel (i32.const 0))
+    (global.set $win16_env_seg (i32.const 0))
+    ;; Before the fixups, because they are what fills these in.
+    (call $win16_dynamic_modules_reset)
 
     ;; Pass 2: relocations.
     (local.set $i (i32.const 0))
@@ -601,7 +642,71 @@
       (local.set $p (i32.add (i32.add (local.get $p) (i32.const 8))
                              (i32.mul (local.get $count) (i32.const 12))))
       (br $types)))
+    ;; A name that matched no entry may still be in the module's name table:
+    ;; the 3.0 resource compiler moved named resources to numeric ids and left
+    ;; RT_NAMETABLE behind to say which name became which number. Cruel's whole
+    ;; resource set is reached that way — it asks for the accelerators as
+    ;; "CRUEL" and they are stored as id 1 — so a straight miss here is not
+    ;; the answer until the table has been consulted.
+    (if (local.get $name_wa)
+      (then
+        (local.set $rid (call $win16_nametable_id (local.get $type_id) (local.get $name_wa)))
+        (if (local.get $rid)
+          (then (return (call $win16_find_resource_ex
+                  (local.get $type_id) (local.get $rid) (i32.const 0)))))))
     (i32.const 0))
+
+  ;; RT_NAMETABLE is a run of {WORD cbEntry, WORD type, WORD id, char name[]}
+  ;; ending at a zero length. The ids carry the 0x8000 integer flag exactly as
+  ;; the resource table's do.
+  (func $win16_nametable_id (param $type_id i32) (param $name_wa i32) (result i32)
+    (local $p i32) (local $end i32) (local $cb i32)
+    (local.set $p (call $win16_find_resource_ex (i32.const 15) (i32.const 1) (i32.const 0)))
+    (if (i32.eqz (local.get $p)) (then (return (i32.const 0))))
+    (local.set $end (i32.add (local.get $p) (global.get $win16_res_len)))
+    (block $done (loop $entries
+      (br_if $done (i32.gt_u (i32.add (local.get $p) (i32.const 6)) (local.get $end)))
+      (local.set $cb (i32.load16_u (local.get $p)))
+      (br_if $done (i32.lt_u (local.get $cb) (i32.const 7)))
+      (if (i32.eq (i32.and (i32.load16_u (i32.add (local.get $p) (i32.const 2)))
+                           (i32.const 0x7FFF))
+                  (local.get $type_id))
+        (then
+          ;; Two NUL-terminated strings can follow the three words: a type name,
+          ;; used when the type ordinal is really an offset, and then the
+          ;; resource's own name. The compiler that built these files writes the
+          ;; type as a plain ordinal and still leaves an empty type name behind
+          ;; it, so an empty first string means the name is the second one.
+          (if (call $win16_res_name_eq_z
+                (i32.add (local.get $p)
+                  (select (i32.const 7) (i32.const 6)
+                    (i32.eqz (i32.load8_u (i32.add (local.get $p) (i32.const 6))))))
+                (local.get $name_wa))
+            (then (return (i32.and (i32.load16_u (i32.add (local.get $p) (i32.const 4)))
+                                   (i32.const 0x7FFF)))))))
+      (local.set $p (i32.add (local.get $p) (local.get $cb)))
+      (br $entries)))
+    (i32.const 0))
+
+  ;; Case-insensitive compare of two NUL-terminated names.
+  (func $win16_res_name_eq_z (param $a i32) (param $b i32) (result i32)
+    (local $x i32) (local $y i32)
+    (if (i32.eqz (local.get $b)) (then (return (i32.const 0))))
+    (block $done (loop $cmp
+      (local.set $x (i32.load8_u (local.get $a)))
+      (local.set $y (i32.load8_u (local.get $b)))
+      (if (i32.and (i32.ge_u (local.get $x) (i32.const 0x61))
+                   (i32.le_u (local.get $x) (i32.const 0x7A)))
+        (then (local.set $x (i32.sub (local.get $x) (i32.const 0x20)))))
+      (if (i32.and (i32.ge_u (local.get $y) (i32.const 0x61))
+                   (i32.le_u (local.get $y) (i32.const 0x7A)))
+        (then (local.set $y (i32.sub (local.get $y) (i32.const 0x20)))))
+      (if (i32.ne (local.get $x) (local.get $y)) (then (return (i32.const 0))))
+      (br_if $done (i32.eqz (local.get $x)))
+      (local.set $a (i32.add (local.get $a) (i32.const 1)))
+      (local.set $b (i32.add (local.get $b) (i32.const 1)))
+      (br $cmp)))
+    (i32.const 1))
 
   ;; ---- Segment allocation ----
   ;;
@@ -949,8 +1054,12 @@
     (if (i32.ne (local.get $n) (i32.load8_u (local.get $b))) (then (return (i32.const 0))))
     (block $done (loop $cmp
       (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
-      (if (i32.ne (i32.load8_u (i32.add (i32.add (local.get $a) (i32.const 1)) (local.get $i)))
-                  (i32.load8_u (i32.add (i32.add (local.get $b) (i32.const 1)) (local.get $i))))
+      (if (i32.ne (call $ascii_upper
+                    (i32.load8_u (i32.add (i32.add (local.get $a) (i32.const 1))
+                                          (local.get $i))))
+                  (call $ascii_upper
+                    (i32.load8_u (i32.add (i32.add (local.get $b) (i32.const 1))
+                                          (local.get $i)))))
         (then (return (i32.const 0))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $cmp)))

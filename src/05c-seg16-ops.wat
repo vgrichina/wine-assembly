@@ -169,11 +169,15 @@
   ;; at the transfer rather than waiting for the run loop to notice is the
   ;; difference between naming the instruction and naming the block after it.
   (func $win16_assert_eip (param $site i32)
-    (if (i32.or
+    ;; Zero is the run loop's "this task has exited" EIP — FatalAppExit and the
+    ;; normal end of a task both leave it there deliberately — so it is not a
+    ;; wild jump and must not be reported as one.
+    (if (i32.and (i32.ne (global.get $eip) (i32.const 0))
+        (i32.or
           (i32.lt_u (global.get $eip) (global.get $WIN16_ARENA))
           (i32.ge_u (global.get $eip)
             (i32.add (global.get $WIN16_ARENA)
-              (i32.mul (global.get $WIN16_SEG_MAX) (i32.const 0x10000)))))
+              (i32.mul (global.get $WIN16_SEG_MAX) (i32.const 0x10000))))))
       (then
         (call $host_log_i32 (i32.const 0xCA165E22))
         (call $host_log_i32 (local.get $site))

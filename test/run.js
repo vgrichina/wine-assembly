@@ -1223,6 +1223,22 @@ async function main() {
       }
       return null;
     },
+    // Stage one NE DLL from the exe's own directory into the module slot WAT
+    // has just given its name. Called from LoadLibrary, for modules nothing
+    // imports statically — the Entertainment Pack's WEPUTIL and the per-level
+    // DLLs Stones ships one of per screen.
+    win16StageModule: (name, id) => {
+      if (!ctx.exports || !ctx.exports.win16_dll_staging) return false;
+      const dir = path.dirname(EXE_PATH);
+      for (const f of win16FileCandidates(name)) {
+        const p = path.join(dir, f);
+        if (!fs.existsSync(p)) continue;
+        const bytes = fs.readFileSync(p);
+        new Uint8Array(ctx.getMemory()).set(bytes, ctx.exports.win16_dll_staging(id));
+        return true;
+      }
+      return false;
+    },
   };
   const base = createHostImports(ctx);
   if (ctx.vfs) {
