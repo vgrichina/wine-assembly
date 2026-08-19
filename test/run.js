@@ -1188,6 +1188,7 @@ async function main() {
   if (TRACE_WAVE) traceCategories.add('wave');
   if (AUDIO_STATS) traceCategories.add('audio-stats');
   if (TRACE_NET) traceCategories.add('net');
+  if (TRACE_WIN16) traceCategories.add('win16');
   const traceHostNames = TRACE_HOST ? new Set(TRACE_HOST.split(',').map(s => s.trim()).filter(Boolean)) : null;
 
   const apiTable = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'src', 'api_table.json'), 'utf8'));

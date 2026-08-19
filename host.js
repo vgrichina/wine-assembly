@@ -213,6 +213,13 @@ class WineAssembly {
       },
       get _audioCtx() { return self._audioCtx; },
       set _audioCtx(v) { self._audioCtx = v; },
+      // A 16-bit LoadLibrary for a module nothing imports statically: the
+      // Entertainment Pack's WEPUTIL, or the per-level DLL Stones ships one of
+      // per screen. WAT has already given the name a module id and wants the
+      // bytes in that id's staging slot before it returns, and the page cannot
+      // fetch anything synchronously — so the app's registry entry names these
+      // and loadExe has them in hand before the guest runs.
+      win16StageModule: (name, id) => self._stageWin16Module(name, id),
       readFile: (name) => self._vfsLookup(name, ctx.vfs),
       // A miss is a file the app's registry entry never listed, so the page
       // never mounted it. It used to be read with a *synchronous*
@@ -802,8 +809,11 @@ class WineAssembly {
       exeName, this.instance.exports, this.memory && this.memory.buffer);
   }
 
-  async loadExe(url) {
+  // `opts.win16Modules` names NE DLLs the task loads by name at runtime rather
+  // than importing — see the win16StageModule host import.
+  async loadExe(url, opts = {}) {
     if (!this.instance) await this.init();
+    this._win16ExtraModules = opts.win16Modules || [];
 
     const resp = await fetch(url);
     const exeBytes = new Uint8Array(await resp.arrayBuffer());
@@ -856,7 +866,9 @@ class WineAssembly {
 
     const dir = url.replace(/[^\\\/]*$/, '');
     const files = new Map();
-    await Promise.all(_stageable().flatMap(name =>
+    const candidates = [...new Set([...(_stageable(exeBytes) || []),
+                                    ...(this._win16ExtraModules || [])])];
+    await Promise.all(candidates.flatMap(name =>
       VfsSeed.win16FileCandidates(name).map(async file => {
         if (files.has(name)) return;
         try {
@@ -866,9 +878,23 @@ class WineAssembly {
           if (!files.has(name)) files.set(name, bytes);
         } catch (_) { /* absent is a valid answer */ }
       })));
+    // Keyed uppercase, because the name a LoadLibrary arrives with is whatever
+    // the app typed and the name fetched here is whatever the registry says.
+    this._win16Modules = new Map(
+      [...files].map(([name, bytes]) => [name.toUpperCase(), bytes]));
 
     _loadWin16Dlls(exports, this.memory, exeBytes, dir,
       (_dir, name) => files.get(name) || null, (m) => console.log(m));
+  }
+
+  // Answer a 16-bit LoadLibrary for a module nothing imported, out of what
+  // _loadWin16Dlls fetched. False is a LoadLibrary failure, not an error.
+  _stageWin16Module(name, id) {
+    const bytes = this._win16Modules && this._win16Modules.get(String(name).toUpperCase());
+    const exports = this.instance && this.instance.exports;
+    if (!bytes || !exports || !exports.win16_dll_staging) return false;
+    new Uint8Array(this.memory.buffer).set(bytes, exports.win16_dll_staging(id));
+    return true;
   }
 
   // Mount every vendored open font at the Win98 filename it substitutes.

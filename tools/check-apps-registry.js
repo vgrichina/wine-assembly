@@ -15,6 +15,7 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
 const { APPS } = require(path.join(ROOT, 'lib', 'apps.js'));
+const { win16FileCandidates } = require(path.join(ROOT, 'lib', 'vfs-seed.js'));
 
 const resolve = p => (path.isAbsolute(p) ? p : path.join(ROOT, p));
 const urlOf = item => (typeof item === 'string' ? item : (item && item.url));
@@ -33,6 +34,19 @@ for (const id of Object.keys(APPS).sort()) {
     if (!spec.includes('/')) continue;
     if (!fs.existsSync(resolve(spec))) {
       console.log(`FAIL ${id}: dll not found: ${spec}`);
+      missingExes++;
+    }
+  }
+  // A `win16Modules` name is a module name, not a filename: the page fetches
+  // it under each of the spellings a Win16 library ships as. A name with no
+  // file behind it is a LoadLibrary that fails only in the browser — the CLI
+  // reads the exe's own directory and never consults this list — which is
+  // exactly the divergence this gate exists to catch.
+  const exeDir = app.exe ? path.dirname(resolve(app.exe)) : null;
+  for (const name of (app.win16Modules || [])) {
+    if (!exeDir) continue;
+    if (!win16FileCandidates(name).some(f => fs.existsSync(path.join(exeDir, f)))) {
+      console.log(`FAIL ${id}: win16 module not found beside the exe: ${name}`);
       missingExes++;
     }
   }
