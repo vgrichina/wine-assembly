@@ -2,7 +2,7 @@
 // Win98Renderer is loaded from lib/renderer.js (included via <script> in index.html)
 
 class WineAssembly {
-  static SOURCE_VERSION = '207';
+  static SOURCE_VERSION = '208';
   static _nextProcessId = 1000;
 
   static hasRemainingAppWindow(destroyed, remainingTopLevel) {
@@ -35,6 +35,13 @@ class WineAssembly {
     this.renderer = null;
     this.resourceJson = null;
     this.threadManager = null;
+    // [{ name, base }], every image this process has loaded. A guest thread that
+    // traps reports a raw EIP, and a raw EIP in a DLL is unreadable — the load
+    // address depends on what loaded before it, so the same crash prints a
+    // different number every run and matches nothing in any disassembly. With
+    // this, the trap says `in_mp3.dll+0x14564`, which tools/disasm_fn.js can be
+    // pointed at directly.
+    this.moduleMap = [];
     this._wasmModule = null;
     this.stepsPerSlice = 100000;
     this.verbose = false;
@@ -802,6 +809,10 @@ class WineAssembly {
       // the cooperative one and says so.
       workerBackend: this.guestWorker || null,
       threadsRequested: !!(typeof window !== 'undefined' && window.WINE_THREADS),
+      // So a trapped thread's EIP prints as a module and an offset. In worker
+      // mode a DLL's load address depends on load order, so the raw number is
+      // different every run and matches nothing in a disassembly.
+      describeAddr: (addr) => self.describeAddr(addr),
       hasMessage: () => !!(self.renderer && self.renderer.inputQueue && self.renderer.inputQueue.length),
       now: () => self.renderer && self.renderer._profileNow ? self.renderer._profileNow() : Date.now(),
       onThreadExit: (info) => self._cleanupWinampVisualizerThread(info),
@@ -1442,8 +1453,30 @@ class WineAssembly {
     const res = await gw.loadLibrary(dllBytes, fileName);
     if (res && res.loadAddr) {
       console.log(`[LoadLibrary] ${fileName} loaded at 0x${(res.loadAddr >>> 0).toString(16)} (worker)`);
+      this.registerModule(fileName, res.loadAddr);
       this._registerDllBitmapResources(fileName, dllBytes, res.loadAddr);
     }
+  }
+
+  // Remember where an image landed, and resolve an address back to it.
+  // Nearest base at or below the address wins: the table has no sizes, and an
+  // address inside a module is always above its base and below the next one's.
+  // Answering with the wrong module is still better than answering with a bare
+  // number, and being explicit about that is the point of the name it prints.
+  registerModule(name, base) {
+    if (!name || !base) return;
+    this.moduleMap.push({ name, base: base >>> 0 });
+    this.moduleMap.sort((a, b) => a.base - b.base);
+  }
+
+  describeAddr(addr) {
+    const a = addr >>> 0;
+    const hex = `0x${a.toString(16)}`;
+    let best = null;
+    for (const m of this.moduleMap) {
+      if (m.base <= a && (!best || m.base > best.base)) best = m;
+    }
+    return best ? `${hex} (${best.name}+0x${(a - best.base).toString(16)})` : hex;
   }
 
   // Worker-mode COM server load (yield reason 3). Same split as LoadLibrary:
@@ -1553,6 +1586,7 @@ class WineAssembly {
     try {
       const result = _loadDll(exports, this.memory.buffer, dllBytes);
       console.log(`[LoadLibrary] ${fileName} loaded at 0x${result.loadAddr.toString(16)}`);
+      this.registerModule(fileName, result.loadAddr);
       this._registerDllBitmapResources(fileName, dllBytes, result.loadAddr);
       if (_patchDllImports) {
         _patchDllImports(exports, this.memory.buffer, [{ name: fileName, bytes: dllBytes }], [result], console.log);

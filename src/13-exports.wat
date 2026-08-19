@@ -171,6 +171,10 @@
   ;; ============================================================
   (func (export "get_eip") (result i32) (global.get $eip))
   (func (export "get_dbg_prev_eip") (result i32) (global.get $dbg_prev_eip))
+  ;; The block before that one. When a thread jumps into blank memory, prev_eip
+  ;; is already inside the blank memory — the useful address is the block that
+  ;; jumped, which is one further back.
+  (func (export "get_dbg_prev2_eip") (result i32) (global.get $dbg_prev2_eip))
   (func (export "get_esp") (result i32) (global.get $esp))
   (func (export "get_eax") (result i32) (global.get $eax))
   (func (export "get_ecx") (result i32) (global.get $ecx))
