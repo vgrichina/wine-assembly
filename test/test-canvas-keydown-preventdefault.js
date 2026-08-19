@@ -24,12 +24,18 @@
 const fs = require('fs');
 const path = require('path');
 
-const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf-8');
+// These three predicates moved out of the page template into
+// lib/browser-input.js in 760b79f, one indent level shallower.
+// The keyboard-proxy <textarea> is still page markup, so the string checks
+// below need index.html too.
+const SOURCE_FILE = path.join(__dirname, '..', 'lib', 'browser-input.js');
+const html = fs.readFileSync(SOURCE_FILE, 'utf-8') +
+  fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf-8');
 
 function extract(name) {
-  const re = new RegExp(`const ${name} = \\(e\\) => \\{([\\s\\S]*?)^\\s{6}\\};`, 'm');
+  const re = new RegExp(`const ${name} = \\(e\\) => \\{([\\s\\S]*?)^\\s{4,6}\\};`, 'm');
   const m = html.match(re);
-  if (!m) throw new Error(`could not extract ${name} from index.html`);
+  if (!m) throw new Error(`could not extract ${name} from ${SOURCE_FILE}`);
   return new Function('e', m[1]);
 }
 
