@@ -9145,9 +9145,8 @@ GetTopWindow(hWnd) — 1 arg stdcall
     (local.set $slot (call $wnd_table_find (local.get $arg0)))
     (if (i32.ge_s (local.get $slot) (i32.const 0))
       (then
-        (local.set $base (i32.add (global.get $SCROLL_TABLE)
-          (i32.add (i32.mul (local.get $slot) (i32.const 24))
-            (i32.mul (i32.ne (local.get $arg1) (i32.const 0)) (i32.const 12)))))
+        (local.set $base (call $scroll_bar_addr (local.get $slot)
+          (i32.ne (local.get $arg1) (i32.const 0))))
         (local.set $old (i32.load (local.get $base)))
         (i32.store (local.get $base) (local.get $arg2))
         (global.set $eax (local.get $old)))
@@ -9160,9 +9159,8 @@ GetTopWindow(hWnd) — 1 arg stdcall
     (local.set $slot (call $wnd_table_find (local.get $arg0)))
     (if (i32.ge_s (local.get $slot) (i32.const 0))
       (then
-        (local.set $base (i32.add (global.get $SCROLL_TABLE)
-          (i32.add (i32.mul (local.get $slot) (i32.const 24))
-            (i32.mul (i32.ne (local.get $arg1) (i32.const 0)) (i32.const 12)))))
+        (local.set $base (call $scroll_bar_addr (local.get $slot)
+          (i32.ne (local.get $arg1) (i32.const 0))))
         (global.set $eax (i32.load (local.get $base))))
       (else (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
@@ -9173,9 +9171,8 @@ GetTopWindow(hWnd) — 1 arg stdcall
     (local.set $slot (call $wnd_table_find (local.get $arg0)))
     (if (i32.ge_s (local.get $slot) (i32.const 0))
       (then
-        (local.set $base (i32.add (global.get $SCROLL_TABLE)
-          (i32.add (i32.mul (local.get $slot) (i32.const 24))
-            (i32.mul (i32.ne (local.get $arg1) (i32.const 0)) (i32.const 12)))))
+        (local.set $base (call $scroll_bar_addr (local.get $slot)
+          (i32.ne (local.get $arg1) (i32.const 0))))
         (i32.store offset=4 (local.get $base) (local.get $arg2))
         (i32.store offset=8 (local.get $base) (local.get $arg3))))
     (global.set $eax (i32.const 1))
@@ -9187,9 +9184,8 @@ GetTopWindow(hWnd) — 1 arg stdcall
     (local.set $slot (call $wnd_table_find (local.get $arg0)))
     (if (i32.ge_s (local.get $slot) (i32.const 0))
       (then
-        (local.set $base (i32.add (global.get $SCROLL_TABLE)
-          (i32.add (i32.mul (local.get $slot) (i32.const 24))
-            (i32.mul (i32.ne (local.get $arg1) (i32.const 0)) (i32.const 12)))))
+        (local.set $base (call $scroll_bar_addr (local.get $slot)
+          (i32.ne (local.get $arg1) (i32.const 0))))
         (local.set $wmin (i32.load offset=4 (local.get $base)))
         (local.set $wmax (i32.load offset=8 (local.get $base)))))
     (if (local.get $arg2)
@@ -9214,12 +9210,10 @@ GetTopWindow(hWnd) — 1 arg stdcall
     (local.set $fMask (i32.load offset=4 (local.get $lpsi)))
     (if (i32.ge_s (local.get $slot) (i32.const 0))
       (then
-        (local.set $base (i32.add (global.get $SCROLL_TABLE)
-          (i32.add (i32.mul (local.get $slot) (i32.const 24))
-            (i32.mul (i32.ne (local.get $arg1) (i32.const 0)) (i32.const 12)))))
-        (local.set $aux (i32.add (global.get $SCROLL_AUX_TABLE)
-          (i32.add (i32.mul (local.get $slot) (i32.const 16))
-            (i32.mul (i32.ne (local.get $arg1) (i32.const 0)) (i32.const 8)))))
+        (local.set $base (call $scroll_bar_addr (local.get $slot)
+          (i32.ne (local.get $arg1) (i32.const 0))))
+        (local.set $aux (call $scroll_aux_bar_addr (local.get $slot)
+          (i32.ne (local.get $arg1) (i32.const 0))))
         ;; SIF_RANGE = 0x01
         (if (i32.and (local.get $fMask) (i32.const 1))
           (then
@@ -9310,12 +9304,10 @@ GetTopWindow(hWnd) — 1 arg stdcall
     (local.set $fMask (i32.load offset=4 (local.get $lpsi)))
     (if (i32.ge_s (local.get $slot) (i32.const 0))
       (then
-        (local.set $base (i32.add (global.get $SCROLL_TABLE)
-          (i32.add (i32.mul (local.get $slot) (i32.const 24))
-            (i32.mul (i32.ne (local.get $arg1) (i32.const 0)) (i32.const 12)))))
-        (local.set $aux (i32.add (global.get $SCROLL_AUX_TABLE)
-          (i32.add (i32.mul (local.get $slot) (i32.const 16))
-            (i32.mul (i32.ne (local.get $arg1) (i32.const 0)) (i32.const 8)))))
+        (local.set $base (call $scroll_bar_addr (local.get $slot)
+          (i32.ne (local.get $arg1) (i32.const 0))))
+        (local.set $aux (call $scroll_aux_bar_addr (local.get $slot)
+          (i32.ne (local.get $arg1) (i32.const 0))))
         ;; SIF_RANGE = 0x01
         (if (i32.and (local.get $fMask) (i32.const 1))
           (then

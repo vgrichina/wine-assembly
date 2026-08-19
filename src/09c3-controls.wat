@@ -548,7 +548,7 @@
     (local.set $addr (call $ctrl_slot_addr (local.get $slot)))
     (i64.store (local.get $addr) (i64.const 0))
     (i64.store offset=8 (local.get $addr) (i64.const 0))
-    (local.set $addr (i32.add (global.get $CONTROL_GEOM) (i32.mul (local.get $slot) (i32.const 8))))
+    (local.set $addr (call $ctrl_geom_addr (local.get $slot)))
     (i64.store (local.get $addr) (i64.const 0)))
 
   ;; Per-control WS_EX_* flags. Stored in CONTROL_TABLE+12 by $dlg_load
