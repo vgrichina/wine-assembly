@@ -1053,6 +1053,16 @@
       (call $win16_seg_set (local.get $index)
         (call $win16_seg_base (local.get $index)) (local.get $alloc)
         (local.get $flags) (i32.add (local.get $i) (i32.const 1)))
+      ;; Clear the slot first, exactly as the task's own segments are cleared.
+      ;; A segment's allocation is usually larger than what the file holds and
+      ;; the difference is uninitialised data, which is *zero* — not whatever
+      ;; the last module to use that arena slot left there. VBRUN100 keeps its
+      ;; control tables in that gap: 0xdd1 bytes of them in the data image it
+      ;; copies into the task's DGROUP, so the list of a custom control's
+      ;; properties had no terminator and Visual Basic walked it off the end
+      ;; into a far pointer whose selector named no segment.
+      (call $zero_memory (call $g2w (call $win16_seg_base (local.get $index)))
+        (i32.const 0x10000))
       (if (local.get $file_pos)
         (then (call $memcpy (call $g2w (call $win16_seg_base (local.get $index)))
                 (i32.add (local.get $base) (local.get $file_pos)) (local.get $len))))
