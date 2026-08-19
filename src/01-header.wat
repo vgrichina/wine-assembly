@@ -1035,10 +1035,13 @@
   ;; 0x07F0A440 80B      GDI_BITMAP_FONT_DESC (surface scratch)
   ;; 0x07F0A600 192B     GDI_BITMAP_FONT_LRU (last-use stamp per strike slot)
   ;; 0x07F0A800 3KB      GDI_BITMAP_FONT_TABLE (48 strikes x 64 bytes)
+  ;; 0x07F0B400 2KB      TT_SUBST_TABLE (font substitution, see 10c-truetype.wat)
+  ;; 0x07F0BC00 768B     TT_SUBST_ALIAS_TABLE
   ;; 0x07F0C000 2KB      GDI_DC_SYSTEM_CLIP_TABLE (256 x {HDC, owned HRGN})
   ;; 0x07F0C800 64B      HEAP_SHARED (low-heap chunk cursor, heap_base)
   ;; 0x07F0C840 512B     LOCK_TABLE (cross-instance mutexes, one 64B line each)
   ;; 0x07F0CA40 1KB      CS_TABLE (256 CRITICAL_SECTIONs, WASM addresses)
+  ;; 0x07F0CE40 16B      SHARED_COUNTERS (process-wide allocators; +0 class atom)
   ;; 0x07F0D000 8KB      GDI_REGION_TABLE (256 WAT-owned HRGN records)
   ;; 0x07F0F000 4KB      GDI_DC_PATH_TABLE (256 x 16-byte WAT path records)
   ;; 0x07F10000 4KB      HANDLER_HIST_COUNTS (1024 i32 counters)
@@ -1548,6 +1551,26 @@
   (global $LOCK_VIRTUAL_MAP i32 (i32.const 0x07F0C840))
   (global $LOCK_DX i32 (i32.const 0x07F0C880))
   (global $LOCK_SOCKET i32 (i32.const 0x07F0C8C0))
+  ;; The window and class tables. Both are claimed by a scan-then-claim — find
+  ;; the first empty slot, then write into it — which two threads can run
+  ;; through at the same instant and both pick the same slot. The loser's window
+  ;; simply stops existing, and nothing reports it. One lock covers both because
+  ;; nothing here takes them together (rule 2), and because a window claim and a
+  ;; class claim are each a few hundred instructions of pure table arithmetic.
+  (global $LOCK_WND i32 (i32.const 0x07F0C9C0))
+  ;; Process-wide allocators that were mutable globals — i.e. a private copy per
+  ;; instance, handing out the same value twice. +0: the class atom counter. Two
+  ;; instances each starting at 0xC000 give two DIFFERENT classes the SAME atom,
+  ;; and CreateWindowA by atom then builds the wrong class's window.
+  ;; In the gap between CS_TABLE and GDI_REGION_TABLE. It went at 0x07F0B400
+  ;; first, which the memory map's comments show as free and which
+  ;; $TT_SUBST_TABLE in 10c-truetype.wat actually owns — so every class
+  ;; registration wrote a counter into the TrueType substitution table, and a
+  ;; guest thread trapped in font code. test-wat-memory-map.js is what caught
+  ;; it: the comments are documentation, that test is the authority.
+  (global $SHARED_COUNTERS i32 (i32.const 0x07F0CE40))
+  (global $SHARED_COUNTERS_SIZE i32 (i32.const 0x00000010))
+  (global $CLASS_ATOM_BASE i32 (i32.const 0xC000))
   ;; The COM aux-wrapper bump cursor. It was a mutable global, which means a
   ;; private copy per instance handing out the same aux slot twice — the same
   ;; shape of bug $heap_ptr had. Under $LOCK_DX, so plain loads are fine.
@@ -2058,7 +2081,9 @@
   ;; new EIP, stalling the dialog loop with EIP=0.
   (global $handler_set_eip (mut i32) (i32.const 0))
   (global $current_thunk_eip (mut i32) (i32.const 0))
-  (global $class_atom_counter (mut i32) (i32.const 0xC000)) ;; Class atom allocator
+  ;; The class atom allocator lives in shared memory now — see $SHARED_COUNTERS.
+  ;; As a mutable global it was a private copy per instance, so two threads
+  ;; registering two different classes both got 0xC001.
 
   ;; ---- Printer compatibility state ----
   ;; Printer DCs select a WAT-owned 2400x3150 32-bpp printable Letter page.

@@ -38,15 +38,27 @@
 
   ;; Add or update hwnd→wndproc mapping. Allocates a fresh slot for a new
   ;; hwnd, or updates the existing slot's wndproc field.
+  ;;
+  ;; Locked, because this is a scan-then-claim over a table every guest thread's
+  ;; instance shares: two threads creating a window at the same instant can both
+  ;; settle on the same empty slot, and the second overwrites the first. The
+  ;; loser's window is then a handle nothing can resolve — no error, no trace,
+  ;; just a window that stops existing. The whole body is table arithmetic and
+  ;; the parallel-slot resets, none of which calls a host import, so a spinlock
+  ;; is safe here (rule 1 on $lock_acquire).
   (func $wnd_table_set (param $hwnd i32) (param $wndproc i32)
     (local $i i32) (local $ptr i32) (local $empty i32)
     (local.set $empty (i32.const -1))
     (local.set $i (i32.const 0))
+    (call $lock_wnd_acquire)
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
       (local.set $ptr (call $wnd_record_addr (local.get $i)))
       (if (i32.eq (i32.load (local.get $ptr)) (local.get $hwnd))
-        (then (i32.store offset=4 (local.get $ptr) (local.get $wndproc)) (return)))
+        (then
+          (i32.store offset=4 (local.get $ptr) (local.get $wndproc))
+          (call $lock_wnd_release)
+          (return)))
       (if (i32.and (i32.eqz (i32.load (local.get $ptr)))
                    (i32.eq (local.get $empty) (i32.const -1)))
         (then (local.set $empty (local.get $i))))
@@ -77,6 +89,7 @@
         (call $dialog_state_reset_slot (local.get $empty))
         (call $wnd_unicode_reset_slot (local.get $empty))
         (call $wnd_extra_reset_slot (local.get $empty))))
+    (call $lock_wnd_release)
   )
 
   ;; Look up wndproc for hwnd; returns 0 if not found
@@ -94,9 +107,36 @@
   )
 
   ;; Remove hwnd from window table — zeroes the whole record.
+  ;;
+  ;; The teardown itself CANNOT hold $LOCK_WND: it releases the window's GDI
+  ;; surface, which is a host import, and a spinlock held across one of those
+  ;; deadlocks worker mode — the import blocks in Atomics.wait for the main
+  ;; thread, which may be spinning for this very lock (rule 1 on $lock_acquire).
+  ;;
+  ;; So the slot is FOUND under the lock and torn down outside it, and the record
+  ;; keeps its hwnd the whole way through. An earlier version wrote a "dying"
+  ;; marker into the hwnd field first, to stop anything finding a window that is
+  ;; going away — which is exactly what broke it: the teardown calls into the
+  ;; host, the host calls back to resolve that hwnd, and the window it is being
+  ;; asked about is no longer there. A guest thread trapped in the browser every
+  ;; run. Keeping the hwnd means a concurrent lookup sees a window mid-teardown,
+  ;; which is what it saw before this change too; what the lock adds is that the
+  ;; slot is never handed to a second window, because it is not empty until the
+  ;; record is zeroed under the lock at the end.
   (func $wnd_table_remove (param $hwnd i32)
     (local $i i32) (local $ptr i32) (local $state i32)
     (local.set $i (i32.const 0))
+    (call $lock_wnd_acquire)
+    (block $claim (loop $find
+      (if (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS))
+        (then
+          (call $lock_wnd_release)
+          (return)))
+      (local.set $ptr (call $wnd_record_addr (local.get $i)))
+      (br_if $claim (i32.eq (i32.load (local.get $ptr)) (local.get $hwnd)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $find)))
+    (call $lock_wnd_release)
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
       (local.set $ptr (call $wnd_record_addr (local.get $i)))
@@ -122,13 +162,17 @@
           (call $dialog_state_reset_slot (local.get $i))
           (call $wnd_unicode_reset_slot (local.get $i))
           (call $wnd_extra_reset_slot (local.get $i))
-          ;; Clear the whole 24-byte record
+          ;; Clear the whole 24-byte record. Under the lock, because zeroing the
+          ;; hwnd is what publishes the slot as free — a claim that reads it
+          ;; half-cleared would inherit this window's parent and style.
+          (call $lock_wnd_acquire)
           (i32.store         (local.get $ptr) (i32.const 0))
           (i32.store offset=4  (local.get $ptr) (i32.const 0))
           (i32.store offset=8  (local.get $ptr) (i32.const 0))
           (i32.store offset=12 (local.get $ptr) (i32.const 0))
           (i32.store offset=16 (local.get $ptr) (i32.const 0))
           (i32.store offset=20 (local.get $ptr) (i32.const 0))
+          (call $lock_wnd_release)
           (return)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
@@ -669,17 +713,26 @@
   ;; Allocate or find a class slot for $name_wa. Returns the class atom.
   ;; The caller is responsible for memcpy'ing the WNDCLASSA into
   ;; $class_wndclass_addr(slot) immediately afterwards.
+  ;; Locked: the scan and the claim have to be one step, or two threads
+  ;; registering different classes at the same moment both take the slot the
+  ;; other just took. The atom comes from a shared counter for the same reason —
+  ;; see $SHARED_COUNTERS. Nothing on this path calls a host import, which is
+  ;; what makes a spinlock safe here (rule 1 on $lock_acquire).
   (func $class_table_register (param $name_wa i32) (result i32)
-    (local $hash i32) (local $i i32) (local $ptr i32) (local $empty i32)
+    (local $hash i32) (local $i i32) (local $ptr i32) (local $empty i32) (local $atom i32)
     (local.set $hash (call $class_name_hash (local.get $name_wa)))
     (local.set $empty (i32.const -1))
     (local.set $i (i32.const 0))
+    (call $lock_wnd_acquire)
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_CLASSES)))
       (local.set $ptr (call $class_record_addr (local.get $i)))
       ;; Existing class — return its atom (caller will overwrite WNDCLASSA via memcpy)
       (if (i32.eq (i32.load (local.get $ptr)) (local.get $hash))
-        (then (return (i32.load offset=4 (local.get $ptr)))))
+        (then
+          (local.set $atom (i32.load offset=4 (local.get $ptr)))
+          (call $lock_wnd_release)
+          (return (local.get $atom))))
       ;; Track first empty
       (if (i32.and (i32.eqz (i32.load (local.get $ptr)))
                    (i32.eq (local.get $empty) (i32.const -1)))
@@ -691,9 +744,13 @@
       (then
         (local.set $ptr (call $class_record_addr (local.get $empty)))
         (i32.store (local.get $ptr) (local.get $hash))
-        (global.set $class_atom_counter (i32.add (global.get $class_atom_counter) (i32.const 1)))
-        (i32.store offset=4 (local.get $ptr) (global.get $class_atom_counter))
-        (return (global.get $class_atom_counter))))
+        (local.set $atom (i32.add (global.get $CLASS_ATOM_BASE)
+          (i32.add (i32.atomic.rmw.add (global.get $SHARED_COUNTERS) (i32.const 1))
+                   (i32.const 1))))
+        (i32.store offset=4 (local.get $ptr) (local.get $atom))
+        (call $lock_wnd_release)
+        (return (local.get $atom))))
+    (call $lock_wnd_release)
     (i32.const 0)
   )
 

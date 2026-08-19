@@ -270,6 +270,14 @@
       (br $spin)))
     (i32.store (i32.add (local.get $lock) (i32.const 4)) (i32.const 1)))
 
+  ;; The window/class/timer tables all take one lock, through this pair rather
+  ;; than at each site: they are claimed from three files, and a lock whose
+  ;; every use is spelled out by hand is a lock somebody eventually forgets to
+  ;; release. It also makes the negative control one edit — turn these into
+  ;; no-ops and test/test-wat-window-tables.js reports lost windows again.
+  (func $lock_wnd_acquire (call $lock_acquire (global.get $LOCK_WND)))
+  (func $lock_wnd_release (call $lock_release (global.get $LOCK_WND)))
+
   (func $lock_release (param $lock i32)
     (local $depth i32)
     (local.set $depth

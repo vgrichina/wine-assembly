@@ -260,6 +260,12 @@
       (local.get $cs) (i32.const 0) (i32.const 0) (i32.const 0)
       (i32.const 0) (i32.const 0))
     (global.set $esp (local.get $saved_esp)))
+  ;; The window and class table claims, callable without a guest at all, so two
+  ;; OS threads can race them directly. See test/test-wat-window-tables.js.
+  (func (export "test_wnd_table_set") (param $hwnd i32) (param $wndproc i32)
+    (call $wnd_table_set (local.get $hwnd) (local.get $wndproc)))
+  (func (export "test_class_register") (param $name_wa i32) (result i32)
+    (call $class_table_register (local.get $name_wa)))
   (func (export "test_call_GetLogicalDrives") (result i32)
     (local $saved_esp i32)
     (local.set $saved_esp (global.get $esp))

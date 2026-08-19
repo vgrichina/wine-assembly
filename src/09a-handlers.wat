@@ -11,6 +11,14 @@
   ;; id=0 means slot is empty
 
   ;; $timer_set(hwnd, id, interval_ms, callback) — add or update a timer
+  ;;
+  ;; Locked for the same reason as the window table: this is a scan-then-claim
+  ;; over a table every instance shares, so two threads calling SetTimer at the
+  ;; same instant can both settle on the same free slot and one timer never
+  ;; fires. The clock read is deliberately OUTSIDE the lock — it is a host
+  ;; import, and rule 1 on $lock_acquire is that a section holding a spinlock
+  ;; must not make one: in worker mode that call blocks in Atomics.wait for the
+  ;; main thread, which may itself be spinning for this lock.
   (func $timer_set (param $hwnd i32) (param $id i32) (param $interval i32) (param $callback i32)
     (local $i i32)
     (local $addr i32)
@@ -18,6 +26,7 @@
     (global.set $tick_count (call $host_get_ticks))
     (local.set $free_slot (i32.const -1))
     (local.set $i (i32.const 0))
+    (call $lock_wnd_acquire)
     (block $break
       (loop $loop
         (br_if $break (i32.ge_u (local.get $i) (global.get $TIMER_MAX)))
@@ -33,6 +42,7 @@
             (i32.store (i32.add (local.get $addr) (i32.const 8)) (local.get $interval))
             (i32.store (i32.add (local.get $addr) (i32.const 12)) (global.get $tick_count))
             (i32.store (i32.add (local.get $addr) (i32.const 16)) (local.get $callback))
+            (call $lock_wnd_release)
             (return)
           )
         )
@@ -57,13 +67,17 @@
         (global.set $timer_count (i32.add (global.get $timer_count) (i32.const 1)))
       )
     )
+    (call $lock_wnd_release)
   )
 
   ;; $timer_kill(hwnd, id) — remove a timer, return 1 if found
+  ;; Under the same lock as $timer_set: freeing a slot while another thread is
+  ;; mid-scan for a free one is how a slot ends up claimed twice.
   (func $timer_kill (param $hwnd i32) (param $id i32) (result i32)
     (local $i i32)
     (local $addr i32)
     (local.set $i (i32.const 0))
+    (call $lock_wnd_acquire)
     (block $break
       (loop $loop
         (br_if $break (i32.ge_u (local.get $i) (global.get $TIMER_MAX)))
@@ -76,6 +90,7 @@
             (i32.store (local.get $addr) (i32.const 0))
             (i32.store (i32.add (local.get $addr) (i32.const 4)) (i32.const 0))
             (global.set $timer_count (i32.sub (global.get $timer_count) (i32.const 1)))
+            (call $lock_wnd_release)
             (return (i32.const 1))
           )
         )
@@ -83,6 +98,7 @@
         (br $loop)
       )
     )
+    (call $lock_wnd_release)
     (i32.const 0)
   )
 
@@ -93,6 +109,7 @@
     (local $i i32)
     (local $addr i32)
     (local.set $i (i32.const 0))
+    (call $lock_wnd_acquire)
     (block $break
       (loop $loop
         (br_if $break (i32.ge_u (local.get $i) (global.get $TIMER_MAX)))
@@ -105,7 +122,8 @@
             (i32.store (i32.add (local.get $addr) (i32.const 4)) (i32.const 0))
             (global.set $timer_count (i32.sub (global.get $timer_count) (i32.const 1)))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
-        (br $loop))))
+        (br $loop)))
+    (call $lock_wnd_release))
 
   ;; $timer_check_due(msg_ptr, consume) — scan timer table, fill MSG with first due timer, return 1 if found
   ;; $consume: 1 = update last_tick (PM_REMOVE/GetMessage), 0 = peek only (PM_NOREMOVE)
