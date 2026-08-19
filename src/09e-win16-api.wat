@@ -93,7 +93,19 @@
   (func $win16_handle_reset
     (global.set $win16_handle_next (i32.const 0))
     (call $zero_memory (call $win16_handle_table)
-      (i32.shl (global.get $WIN16_HANDLE_MAX) (i32.const 2))))
+      (i32.shl (global.get $WIN16_HANDLE_MAX) (i32.const 2)))
+    ;; The interrupt vectors go with the task: a zero means nothing is hooked,
+    ;; which is what a fresh task should see.
+    (call $zero_memory (call $win16_int_vectors) (i32.const 0x400)))
+
+  ;; 256 far pointers, in the same arena page as the handle table and the DLL
+  ;; records. A program that hooks an interrupt saves the old vector and puts
+  ;; it back on the way out; nothing here raises interrupts, so what these
+  ;; hold only has to be what was last written.
+  (func $win16_int_vectors (result i32)
+    (i32.add (call $g2w (i32.add (global.get $WIN16_ARENA)
+                                 (i32.mul (global.get $WIN16_SEG_MAX) (i32.const 0x10000))))
+             (i32.const 0xE000)))
 
   ;; 16 -> 32. An index the table never handed out is a bug in the translation
   ;; layer, not something to paper over with a zero: it means an API returned a
@@ -329,6 +341,17 @@
     (global.set $esi (i32.const 0))   ;; no previous instance
     (global.set $edi (global.get $sreg_ds))
     (call $win16_set_sreg (i32.const 0) (global.get $win16_psp_sel))
+    (call $win16_api_return (i32.const 0)))
+
+  ;; KERNEL.37 GetCurrentPDB() -> the selector of the task's PSP, which is the
+  ;; same block InitTask builds the command line in. Visual Basic 1's runtime
+  ;; asks for it before it will start: all five VB games in the pack stop here.
+  (func $win16_GetCurrentPDB
+    (if (i32.eqz (global.get $win16_psp_sel))
+      (then (global.set $win16_psp_sel
+              (call $win16_index_to_sel (call $win16_alloc_segment)))))
+    (global.set $eax (global.get $win16_psp_sel))
+    (global.set $edx (i32.const 0))
     (call $win16_api_return (i32.const 0)))
 
   ;; KERNEL.3 GetVersion. AL:AH is the Windows version and DX the DOS one.
@@ -588,11 +611,59 @@
 
   ;; KERNEL.49 GetModuleFileName(hModule, lpFileName, nSize). The buffer holds
   ;; bytes in both worlds, so it is filled in place.
+  ;; KERNEL.49 GetModuleFileName(hModule, lpFileName, nSize).
+  ;;
+  ;; A module handle here is what LoadLibrary and GetModuleHandle hand out:
+  ;; 0x00D1 over the module id. Answering with the task's own exe whatever was
+  ;; asked is what made Visual Basic 1 refuse to start — VBRUN100 asks for its
+  ;; own filename, reads that file's header to check it is the runtime it
+  ;; thinks it is, found Rattler Race's header instead, and reported "a virus
+  ;; has been detected during program initialization".
   (func $win16_GetModuleFileName
-    (local $buf i32) (local $size i32)
+    (local $buf i32) (local $size i32) (local $mod i32) (local $id i32)
+    (local $slot i32) (local $n i32) (local $i i32)
     (local.set $buf (call $win16_far_to_guest
       (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
     (local.set $size (call $win16_arg16 (i32.const 0)))
+    (local.set $mod (call $win16_h32 (call $win16_arg16 (i32.const 3))))
+    (if (i32.eq (i32.and (local.get $mod) (i32.const 0xFFFF0000)) (i32.const 0x00D10000))
+      (then
+        (local.set $id (i32.and (local.get $mod) (i32.const 0xFFFF)))
+        (if (i32.ge_u (local.get $id) (global.get $WIN16_DYNAMIC_BASE))
+          (then
+            (local.set $slot (call $win16_dynamic_module_slot
+              (i32.sub (local.get $id) (global.get $WIN16_DYNAMIC_BASE))))
+            (local.set $n (i32.load8_u (local.get $slot)))
+            (if (i32.and (i32.ne (local.get $n) (i32.const 0))
+                         (i32.gt_u (local.get $size)
+                                   (i32.add (local.get $n) (i32.const 7))))
+              (then
+                ;; "C:\" + the module name + ".DLL", which is where the host
+                ;; staged it from and the only path a task can open it by.
+                (call $gs8 (local.get $buf) (i32.const 0x43))          ;; C
+                (call $gs8 (i32.add (local.get $buf) (i32.const 1)) (i32.const 0x3A))
+                (call $gs8 (i32.add (local.get $buf) (i32.const 2)) (i32.const 0x5C))
+                (block $named (loop $chars
+                  (br_if $named (i32.ge_u (local.get $i) (local.get $n)))
+                  (call $gs8 (i32.add (i32.add (local.get $buf) (i32.const 3))
+                                      (local.get $i))
+                    (i32.load8_u (i32.add (i32.add (local.get $slot) (i32.const 1))
+                                          (local.get $i))))
+                  (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                  (br $chars)))
+                (local.set $i (i32.add (local.get $n) (i32.const 3)))
+                (call $gs8 (i32.add (local.get $buf) (local.get $i)) (i32.const 0x2E))
+                (call $gs8 (i32.add (local.get $buf) (i32.add (local.get $i) (i32.const 1)))
+                  (i32.const 0x44))
+                (call $gs8 (i32.add (local.get $buf) (i32.add (local.get $i) (i32.const 2)))
+                  (i32.const 0x4C))
+                (call $gs8 (i32.add (local.get $buf) (i32.add (local.get $i) (i32.const 3)))
+                  (i32.const 0x4C))
+                (call $gs8 (i32.add (local.get $buf) (i32.add (local.get $i) (i32.const 4)))
+                  (i32.const 0))
+                (global.set $eax (i32.add (local.get $i) (i32.const 4)))
+                (call $win16_api_return (i32.const 8))
+                (return)))))))
     (call $win16_call32_begin (i32.const 3))
     (call $handle_GetModuleFileNameA (i32.const 0) (local.get $buf) (local.get $size)
       (i32.const 0) (i32.const 0) (i32.const 0))
@@ -759,6 +830,392 @@
   (func $win16_lblock_set (param $p i32) (param $size i32) (param $free i32)
     (call $gs16 (i32.add (global.get $seg_base_ds) (local.get $p))
       (i32.or (local.get $size) (local.get $free))))
+
+  ;; ---- INT 21h ----
+  ;;
+  ;; A Windows 3.x program is still a DOS program underneath: its C runtime
+  ;; opens and reads files through DOS, not through the Windows file API, and
+  ;; the compiler emits INT 21h for it. Klotski reads its score file that way
+  ;; and Chess its opening book; before this the instruction was decoded as a
+  ;; block end and did nothing at all, so both saw a call that neither
+  ;; succeeded nor failed and reported the file as unreadable.
+  ;;
+  ;; Handles are the same 16-bit map the _l* calls use, so a file opened
+  ;; through DOS can be closed through KERNEL and the other way about.
+  ;;
+  ;; The carry flag is the DOS error convention, and $load_eflags is the way to
+  ;; set it here: the lazy-flag system has no "just set CF" path, and raw mode
+  ;; is exactly what a returning interrupt wants.
+  (func $dos_cf (param $set i32)
+    (call $load_eflags (select (i32.const 1) (i32.const 0) (local.get $set))))
+
+  ;; The DTA starts where DOS puts it, at offset 0x80 of the PSP — the same
+  ;; block InitTask builds the command line in, which is why a program that
+  ;; wants both moves one of them first.
+  (func $win16_dta_ensure
+    (if (i32.eqz (global.get $win16_dta))
+      (then
+        (if (i32.eqz (global.get $win16_psp_sel))
+          (then (global.set $win16_psp_sel
+                  (call $win16_index_to_sel (call $win16_alloc_segment)))))
+        (global.set $win16_dta (i32.or
+          (i32.shl (global.get $win16_psp_sel) (i32.const 16)) (i32.const 0x80))))))
+
+  (func $win16_dta_guest (result i32)
+    (call $win16_far_to_guest (i32.shr_u (global.get $win16_dta) (i32.const 16))
+                              (i32.and (global.get $win16_dta) (i32.const 0xFFFF))))
+
+  ;; The 43-byte record a DOS directory search leaves behind: 21 bytes the
+  ;; search owns, then the attribute, time, date, size and 8.3 name. Times are
+  ;; the one fixed stamp this filesystem reports — see AH=57h.
+  (func $win16_dos_find_record (param $dta i32) (param $fd i32)
+    (local $i i32) (local $ch i32)
+    (call $gs8 (i32.add (local.get $dta) (i32.const 21))
+      (i32.and (call $gl32 (local.get $fd)) (i32.const 0x3F)))
+    (call $gs16 (i32.add (local.get $dta) (i32.const 22)) (i32.const 0))
+    (call $gs16 (i32.add (local.get $dta) (i32.const 24)) (i32.const 0x2421))
+    (call $gs32 (i32.add (local.get $dta) (i32.const 26))
+      (call $gl32 (i32.add (local.get $fd) (i32.const 32))))
+    (block $named (loop $chars
+      (br_if $named (i32.ge_u (local.get $i) (i32.const 12)))
+      (local.set $ch (call $gl8 (i32.add (i32.add (local.get $fd) (i32.const 44))
+                                         (local.get $i))))
+      ;; DOS names are upper case, and a program that compares them expects it.
+      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x61))
+                   (i32.le_u (local.get $ch) (i32.const 0x7A)))
+        (then (local.set $ch (i32.sub (local.get $ch) (i32.const 0x20)))))
+      (call $gs8 (i32.add (i32.add (local.get $dta) (i32.const 30)) (local.get $i))
+        (local.get $ch))
+      (br_if $named (i32.eqz (local.get $ch)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $chars)))
+    (call $gs8 (i32.add (local.get $dta) (i32.const 42)) (i32.const 0)))
+
+  (func $dos_ptr (result i32)
+    (i32.add (global.get $seg_base_ds) (i32.and (global.get $edx) (i32.const 0xFFFF))))
+
+  (func $dos_set_ax (param $v i32)
+    (global.set $eax (i32.or (i32.and (global.get $eax) (i32.const 0xFFFF0000))
+                             (i32.and (local.get $v) (i32.const 0xFFFF)))))
+
+  (func $win16_dos_int21
+    (local $ah i32) (local $h i32) (local $n i32) (local $tmp i32)
+    (local.set $ah (i32.and (i32.shr_u (global.get $eax) (i32.const 8)) (i32.const 0xFF)))
+    ;; --trace-win16 covers the DOS side too: AH, and the three registers that
+    ;; carry a handle, a count and a pointer for the calls that have them.
+    (if (global.get $win16_trace)
+      (then
+        (call $host_log_i32 (i32.const 0xCA16D021))
+        (call $host_log_i32 (local.get $ah))
+        (call $host_log_i32 (i32.and (global.get $ebx) (i32.const 0xFFFF)))
+        (call $host_log_i32 (i32.and (global.get $ecx) (i32.const 0xFFFF)))
+        (call $host_log_i32 (i32.and (global.get $edx) (i32.const 0xFFFF)))))
+
+    ;; 3Dh open, AL = access mode, DS:DX = path.
+    (if (i32.eq (local.get $ah) (i32.const 0x3D))
+      (then
+        (call $win16_call32_begin (i32.const 2))
+        (call $handle__lopen (call $dos_ptr) (i32.and (global.get $eax) (i32.const 3))
+          (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+        (call $win16_call32_end)
+        (if (i32.eq (global.get $eax) (i32.const -1))
+          (then (call $dos_set_ax (i32.const 2)) (call $dos_cf (i32.const 1)))  ;; file not found
+          (else
+            (call $dos_set_ax (call $win16_h16 (global.get $eax)))
+            (call $dos_cf (i32.const 0))))
+        (return)))
+
+    ;; 3Ch create / 5Bh create new, CX = attributes, DS:DX = path.
+    (if (i32.or (i32.eq (local.get $ah) (i32.const 0x3C))
+                (i32.eq (local.get $ah) (i32.const 0x5B)))
+      (then
+        (call $win16_call32_begin (i32.const 2))
+        (call $handle__lcreat (call $dos_ptr)
+          (i32.and (global.get $ecx) (i32.const 0xFFFF))
+          (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+        (call $win16_call32_end)
+        (if (i32.eq (global.get $eax) (i32.const -1))
+          (then (call $dos_set_ax (i32.const 3)) (call $dos_cf (i32.const 1)))  ;; path not found
+          (else
+            (call $dos_set_ax (call $win16_h16 (global.get $eax)))
+            (call $dos_cf (i32.const 0))))
+        (return)))
+
+    ;; 3Eh close, BX = handle.
+    (if (i32.eq (local.get $ah) (i32.const 0x3E))
+      (then
+        (local.set $h (call $win16_h32 (i32.and (global.get $ebx) (i32.const 0xFFFF))))
+        (call $win16_call32_begin (i32.const 1))
+        (call $handle__lclose (local.get $h) (i32.const 0) (i32.const 0)
+          (i32.const 0) (i32.const 0) (i32.const 0))
+        (call $win16_call32_end)
+        (call $win16_h16_forget (local.get $h))
+        (call $dos_cf (i32.const 0))
+        (return)))
+
+    ;; 3Fh read / 40h write, BX = handle, CX = bytes, DS:DX = buffer.
+    (if (i32.or (i32.eq (local.get $ah) (i32.const 0x3F))
+                (i32.eq (local.get $ah) (i32.const 0x40)))
+      (then
+        (local.set $h (call $win16_h32 (i32.and (global.get $ebx) (i32.const 0xFFFF))))
+        (local.set $n (i32.and (global.get $ecx) (i32.const 0xFFFF)))
+        (call $win16_call32_begin (i32.const 3))
+        (if (i32.eq (local.get $ah) (i32.const 0x3F))
+          (then (call $handle__lread (local.get $h) (call $dos_ptr) (local.get $n)
+                  (i32.const 0) (i32.const 0) (i32.const 0)))
+          (else (call $handle__lwrite (local.get $h) (call $dos_ptr) (local.get $n)
+                  (i32.const 0) (i32.const 0) (i32.const 0))))
+        (call $win16_call32_end)
+        (if (i32.eq (global.get $eax) (i32.const -1))
+          (then (call $dos_set_ax (i32.const 5)) (call $dos_cf (i32.const 1)))  ;; access denied
+          (else
+            (call $dos_set_ax (global.get $eax))
+            (call $dos_cf (i32.const 0))))
+        (return)))
+
+    ;; 42h lseek, BX = handle, CX:DX = offset, AL = origin. DX:AX = new position.
+    (if (i32.eq (local.get $ah) (i32.const 0x42))
+      (then
+        (local.set $h (call $win16_h32 (i32.and (global.get $ebx) (i32.const 0xFFFF))))
+        (local.set $tmp (i32.or (i32.and (global.get $edx) (i32.const 0xFFFF))
+          (i32.shl (i32.and (global.get $ecx) (i32.const 0xFFFF)) (i32.const 16))))
+        (call $win16_call32_begin (i32.const 3))
+        (call $handle__llseek (local.get $h) (local.get $tmp)
+          (i32.and (global.get $eax) (i32.const 0xFF))
+          (i32.const 0) (i32.const 0) (i32.const 0))
+        (call $win16_call32_end)
+        (if (i32.eq (global.get $eax) (i32.const -1))
+          (then (call $dos_set_ax (i32.const 6)) (call $dos_cf (i32.const 1)))  ;; bad handle
+          (else
+            (global.set $edx (i32.shr_u (global.get $eax) (i32.const 16)))
+            (call $dos_set_ax (global.get $eax))
+            (call $dos_cf (i32.const 0))))
+        (return)))
+
+    ;; 41h delete, DS:DX = path.
+    (if (i32.eq (local.get $ah) (i32.const 0x41))
+      (then
+        (call $win16_call32_begin (i32.const 1))
+        (call $handle_DeleteFileA (call $dos_ptr) (i32.const 0) (i32.const 0)
+          (i32.const 0) (i32.const 0) (i32.const 0))
+        (call $win16_call32_end)
+        (call $dos_cf (i32.eqz (global.get $eax)))
+        (if (i32.eqz (global.get $eax)) (then (call $dos_set_ax (i32.const 2))))
+        (return)))
+
+    ;; 43h get/set file attributes, DS:DX = path. AL=0 reads into CX.
+    (if (i32.eq (local.get $ah) (i32.const 0x43))
+      (then
+        (if (i32.eqz (i32.and (global.get $eax) (i32.const 0xFF)))
+          (then
+            (call $win16_call32_begin (i32.const 1))
+            (call $handle_GetFileAttributesA (call $dos_ptr) (i32.const 0) (i32.const 0)
+              (i32.const 0) (i32.const 0) (i32.const 0))
+            (call $win16_call32_end)
+            (if (i32.eq (global.get $eax) (i32.const -1))
+              (then (call $dos_set_ax (i32.const 2)) (call $dos_cf (i32.const 1)))
+              (else
+                (global.set $ecx (i32.and (global.get $eax) (i32.const 0x27)))
+                (call $dos_cf (i32.const 0)))))
+          ;; Setting attributes has nowhere to go — the VFS keeps none — and
+          ;; saying so is better than reporting a change that did not happen.
+          (else (call $dos_set_ax (i32.const 5)) (call $dos_cf (i32.const 1))))
+        (return)))
+
+    ;; 44h IOCTL, AL=0: what kind of handle is this? Everything opened here is
+    ;; a file on drive C, never a character device.
+    (if (i32.eq (local.get $ah) (i32.const 0x44))
+      (then
+        (if (i32.eqz (i32.and (global.get $eax) (i32.const 0xFF)))
+          (then
+            (global.set $edx (i32.const 2))
+            (call $dos_set_ax (i32.const 2))
+            (call $dos_cf (i32.const 0)))
+          (else (call $dos_set_ax (i32.const 1)) (call $dos_cf (i32.const 1))))
+        (return)))
+
+    ;; 2Ah date and 2Ch time, from the same clock the Windows calls read.
+    (if (i32.or (i32.eq (local.get $ah) (i32.const 0x2A))
+                (i32.eq (local.get $ah) (i32.const 0x2C)))
+      (then
+        (local.set $tmp (global.get $GUEST_STACK))
+        (call $win16_call32_begin (i32.const 1))
+        (call $handle_GetLocalTime (local.get $tmp) (i32.const 0) (i32.const 0)
+          (i32.const 0) (i32.const 0) (i32.const 0))
+        (call $win16_call32_end)
+        (if (i32.eq (local.get $ah) (i32.const 0x2A))
+          (then
+            (global.set $ecx (call $gl16 (local.get $tmp)))                    ;; year
+            (global.set $edx (i32.or
+              (i32.shl (call $gl16 (i32.add (local.get $tmp) (i32.const 2)))
+                       (i32.const 8))                                          ;; month
+              (call $gl16 (i32.add (local.get $tmp) (i32.const 6)))))           ;; day
+            (call $dos_set_ax (call $gl16 (i32.add (local.get $tmp) (i32.const 4)))))
+          (else
+            (global.set $ecx (i32.or
+              (i32.shl (call $gl16 (i32.add (local.get $tmp) (i32.const 8)))
+                       (i32.const 8))                                          ;; hour
+              (call $gl16 (i32.add (local.get $tmp) (i32.const 10)))))          ;; minute
+            (global.set $edx (i32.or
+              (i32.shl (call $gl16 (i32.add (local.get $tmp) (i32.const 12)))
+                       (i32.const 8))                                          ;; second
+              (i32.div_u (call $gl16 (i32.add (local.get $tmp) (i32.const 14)))
+                         (i32.const 10))))                                     ;; hundredths
+            (call $dos_set_ax (i32.const 0))))
+        (call $dos_cf (i32.const 0))
+        (return)))
+
+    ;; 1Ah set / 2Fh get the disk transfer area, which is where a directory
+    ;; search puts what it finds. DOS starts it at PSP:0080 and a program that
+    ;; wants it elsewhere says so; IdleWild does, before listing its modules.
+    (if (i32.eq (local.get $ah) (i32.const 0x1A))
+      (then
+        (global.set $win16_dta (i32.or
+          (i32.shl (global.get $sreg_ds) (i32.const 16))
+          (i32.and (global.get $edx) (i32.const 0xFFFF))))
+        (call $dos_cf (i32.const 0))
+        (return)))
+    (if (i32.eq (local.get $ah) (i32.const 0x2F))
+      (then
+        (call $win16_dta_ensure)
+        (global.set $ebx (i32.and (global.get $win16_dta) (i32.const 0xFFFF)))
+        (call $win16_set_sreg (i32.const 0)
+          (i32.shr_u (global.get $win16_dta) (i32.const 16)))
+        (call $dos_cf (i32.const 0))
+        (return)))
+
+    ;; 4Eh find first (DS:DX = pattern, CX = attributes) and 4Fh find next.
+    ;; Both fill the DTA with a DOS find record, whose first bytes are the
+    ;; search's own state — which is where the handle the 32-bit side gave us
+    ;; goes, exactly as DOS keeps its search state there.
+    (if (i32.or (i32.eq (local.get $ah) (i32.const 0x4E))
+                (i32.eq (local.get $ah) (i32.const 0x4F)))
+      (then
+        (call $win16_dta_ensure)
+        (local.set $tmp (global.get $GUEST_STACK))
+        (local.set $h (call $win16_dta_guest))
+        (call $win16_call32_begin (i32.const 2))
+        (if (i32.eq (local.get $ah) (i32.const 0x4E))
+          (then (call $handle_FindFirstFileA (call $dos_ptr) (local.get $tmp)
+                  (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
+          (else (call $handle_FindNextFileA (call $gl32 (local.get $h)) (local.get $tmp)
+                  (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))))
+        (call $win16_call32_end)
+        (if (i32.or (i32.eqz (global.get $eax))
+                    (i32.eq (global.get $eax) (i32.const -1)))
+          (then
+            (call $dos_set_ax (i32.const 18))   ;; no more files
+            (call $dos_cf (i32.const 1))
+            (return)))
+        (if (i32.eq (local.get $ah) (i32.const 0x4E))
+          (then (call $gs32 (local.get $h) (global.get $eax))))
+        (call $win16_dos_find_record (local.get $h) (local.get $tmp))
+        (call $dos_set_ax (i32.const 0))
+        (call $dos_cf (i32.const 0))
+        (return)))
+
+    ;; 47h get current directory, DL = drive, DS:SI = 64-byte buffer. The
+    ;; answer has no leading backslash, so the root is the empty string.
+    ;; IdleWild asks before it looks for its screen-saver modules.
+    (if (i32.eq (local.get $ah) (i32.const 0x47))
+      (then
+        (call $gs8 (i32.add (global.get $seg_base_ds)
+                            (i32.and (global.get $esi) (i32.const 0xFFFF)))
+          (i32.const 0))
+        (call $dos_set_ax (i32.const 0x0100))
+        (call $dos_cf (i32.const 0))
+        (return)))
+
+    ;; 57h file date and time, BX = handle. The filesystem here keeps none —
+    ;; what persists is the content — so a read answers with one fixed
+    ;; timestamp rather than a different invented one each call, and a write is
+    ;; accepted and forgotten. Klotski stamps its score file this way.
+    (if (i32.eq (local.get $ah) (i32.const 0x57))
+      (then
+        (if (i32.eqz (i32.and (global.get $eax) (i32.const 0xFF)))
+          (then
+            (global.set $ecx (i32.const 0))            ;; 00:00:00
+            (global.set $edx (i32.const 0x2421))))     ;; 1998-01-01
+        (call $dos_set_ax (i32.const 0))
+        (call $dos_cf (i32.const 0))
+        (return)))
+
+    ;; 30h version — 6.22, which is what Windows 3.x shipped on.
+    (if (i32.eq (local.get $ah) (i32.const 0x30))
+      (then
+        (call $dos_set_ax (i32.const 0x1606))
+        (global.set $ebx (i32.const 0))
+        (global.set $ecx (i32.const 0))
+        (call $dos_cf (i32.const 0))
+        (return)))
+
+    ;; 35h get vector (AL = number) -> ES:BX, and 25h set vector (DS:DX).
+    ;; Klotski hooks one on the way in and restores it on the way out.
+    (if (i32.eq (local.get $ah) (i32.const 0x35))
+      (then
+        (local.set $tmp (i32.load (i32.add (call $win16_int_vectors)
+          (i32.shl (i32.and (global.get $eax) (i32.const 0xFF)) (i32.const 2)))))
+        (global.set $ebx (i32.and (local.get $tmp) (i32.const 0xFFFF)))
+        (call $win16_set_sreg (i32.const 0) (i32.shr_u (local.get $tmp) (i32.const 16)))
+        (call $dos_cf (i32.const 0))
+        (return)))
+    (if (i32.eq (local.get $ah) (i32.const 0x25))
+      (then
+        (i32.store (i32.add (call $win16_int_vectors)
+                            (i32.shl (i32.and (global.get $eax) (i32.const 0xFF))
+                                     (i32.const 2)))
+          (i32.or (i32.shl (global.get $sreg_ds) (i32.const 16))
+                  (i32.and (global.get $edx) (i32.const 0xFFFF))))
+        (call $dos_cf (i32.const 0))
+        (return)))
+
+    ;; 19h current drive: C, which is the only one mounted.
+    (if (i32.eq (local.get $ah) (i32.const 0x19))
+      (then (call $dos_set_ax (i32.const 2)) (call $dos_cf (i32.const 0)) (return)))
+
+    ;; 4Ch terminate, AL = exit code.
+    (if (i32.eq (local.get $ah) (i32.const 0x4C))
+      (then
+        (call $host_exit (i32.and (global.get $eax) (i32.const 0xFF)))
+        (global.set $eip (i32.const 0))
+        (global.set $steps (i32.const 0))
+        (return)))
+
+    ;; Anything else stops and says which call it was, on the same reasoning as
+    ;; the unimplemented-API path: a DOS function that quietly returns nothing
+    ;; is indistinguishable from one that worked and found nothing.
+    (call $host_log_i32 (i32.const 0xCA16D05F))
+    (call $host_log_i32 (local.get $ah))
+    (call $host_log_i32 (global.get $eip))
+    (unreachable))
+
+  ;; KERNEL.4 LocalInit(hSegment, pStart, pEnd) — lay a local heap between two
+  ;; offsets in a segment. The task's own heap is already built by the loader
+  ;; from the header's request; this is a program asking for a different one,
+  ;; which Visual Basic 1's runtime does before it allocates anything.
+  ;;
+  ;; There is one local heap here, described by offsets and reached through
+  ;; whatever DS holds — so pointing it at the new range is the whole of it,
+  ;; and a second LocalInit replaces the first rather than adding to it. That
+  ;; matches every caller in this corpus; a task that wanted two would find
+  ;; its first heap's blocks unreachable, which is why this says so.
+  (func $win16_LocalInit
+    (local $start i32) (local $end i32)
+    (local.set $end (call $win16_arg16 (i32.const 0)))
+    (local.set $start (call $win16_arg16 (i32.const 1)))
+    (if (i32.ge_u (local.get $start) (local.get $end))
+      (then
+        (global.set $eax (i32.const 0))
+        (call $win16_api_return (i32.const 6))
+        (return)))
+    (call $zero_memory
+      (call $g2w (i32.add (global.get $seg_base_ds) (local.get $start)))
+      (i32.sub (local.get $end) (local.get $start)))
+    (global.set $win16_lheap_base (local.get $start))
+    (global.set $win16_lheap_ptr (local.get $start))
+    (global.set $win16_lheap_end (local.get $end))
+    (global.set $eax (i32.const 1))
+    (call $win16_api_return (i32.const 6)))
 
   (func $win16_LocalAlloc
     (local $bytes i32) (local $h i32) (local $p i32) (local $size i32)
@@ -1115,16 +1572,22 @@
       (else (call $handle__lopen (local.get $path) (local.get $mode)
               (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))))
     (call $win16_call32_end)
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    ;; Through the handle map, not masked to sixteen bits. A file handle here
+    ;; is 0xF0000001 and masking hands the task a 1, which is some other file's
+    ;; handle — Rattler Race read its own image through it, found bytes that
+    ;; were not its own, and put up "a virus has been detected".
+    (global.set $eax (call $win16_h16 (global.get $eax)))
     (call $win16_api_return (i32.const 6)))
 
   (func $win16_lclose
     (local $h i32)
-    (local.set $h (call $win16_arg16 (i32.const 0)))
+    (local.set $h (call $win16_h32 (call $win16_arg16 (i32.const 0))))
     (call $win16_call32_begin (i32.const 1))
     (call $handle__lclose (local.get $h) (i32.const 0) (i32.const 0)
       (i32.const 0) (i32.const 0) (i32.const 0))
     (call $win16_call32_end)
+    ;; The file is gone, so its place in the map is free.
+    (call $win16_h16_forget (local.get $h))
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 2)))
 
@@ -1133,7 +1596,7 @@
     (local.set $n (call $win16_arg16 (i32.const 0)))
     (local.set $buf (call $win16_far_to_guest
       (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
-    (local.set $h (call $win16_arg16 (i32.const 3)))
+    (local.set $h (call $win16_h32 (call $win16_arg16 (i32.const 3))))
     (call $win16_call32_begin (i32.const 3))
     (if (local.get $write)
       (then (call $handle__lwrite (local.get $h) (local.get $buf) (local.get $n)
@@ -1149,7 +1612,7 @@
     (local $h i32) (local $off i32) (local $origin i32)
     (local.set $origin (call $win16_arg16 (i32.const 0)))
     (local.set $off (call $win16_arg32 (i32.const 1)))
-    (local.set $h (call $win16_arg16 (i32.const 3)))
+    (local.set $h (call $win16_h32 (call $win16_arg16 (i32.const 3))))
     (call $win16_call32_begin (i32.const 3))
     (call $handle__llseek (local.get $h) (local.get $off) (local.get $origin)
       (i32.const 0) (i32.const 0) (i32.const 0))
@@ -1172,7 +1635,7 @@
     (call $handle_OpenFile (local.get $name) (local.get $ofs) (local.get $style)
       (i32.const 0) (i32.const 0) (i32.const 0))
     (call $win16_call32_end)
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (global.set $eax (call $win16_h16 (global.get $eax)))
     (call $win16_api_return (i32.const 10)))
 
   ;; KERNEL.134 GetWindowsDirectory / KERNEL.135 GetSystemDirectory
@@ -1276,6 +1739,8 @@
       (then (call $win16_local_identity (i32.const 2) (i32.const 0)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 25))
       (then (call $win16_GlobalCompact) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 4))
+      (then (call $win16_LocalInit) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 5))
       (then (call $win16_LocalAlloc) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 7))
@@ -1313,6 +1778,8 @@
     (if (i32.eq (local.get $ordinal) (i32.const 36))
       (then (call $win16_local_identity (i32.const 0) (global.get $sreg_ds))
             (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 37))
+      (then (call $win16_GetCurrentPDB) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 51))
       (then
         (global.set $edx (call $win16_arg16 (i32.const 2)))
@@ -1373,8 +1840,7 @@
     ;; DGROUP selector; GetProcAddress and LoadLibrary are asked about modules
     ;; nothing has loaded, and zero is the answer Windows gives for those.
     (if (i32.eq (local.get $ordinal) (i32.const 47))
-      (then (call $win16_local_identity (i32.const 4) (global.get $sreg_ds))
-            (return (i32.const 1))))
+      (then (call $win16_GetModuleHandle) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 50))
       (then (call $win16_GetProcAddress) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 95))
@@ -1419,7 +1885,8 @@
   (func $win16_module_emulated (param $id i32) (result i32)
     (i32.or (i32.le_u (local.get $id) (global.get $WIN16_SYSTEM_MODULES))
             (i32.or (i32.eq (local.get $id) (i32.const 10))
-                    (i32.eq (local.get $id) (i32.const 11)))))
+            (i32.or (i32.eq (local.get $id) (i32.const 11))
+                    (i32.eq (local.get $id) (i32.const 12))))))
 
   ;; Scratch for the Pascal string above, at the unused bottom of the 32-bit
   ;; task's stack region, which a 16-bit task never touches.
@@ -1466,6 +1933,32 @@
                 (return)))))))
     (call $win16_local_identity (i32.const 4)
       (call $win16_h16 (i32.or (i32.const 0x00D10000) (local.get $id)))))
+
+  ;; KERNEL.47 GetModuleHandle(lpModuleName) -> the module's handle.
+  ;;
+  ;; A module this emulator has loaded gets the same 0x00D1-over-id handle
+  ;; LoadLibrary hands out, so GetModuleFileName can tell afterwards which
+  ;; module was meant. Anything else is the task itself, whose handle is its
+  ;; own DGROUP selector — an hInstance and an hModule are the same thing for
+  ;; the task, which is why RegisterClass accepts either.
+  (func $win16_GetModuleHandle
+    (local $name i32) (local $id i32)
+    (local.set $name (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+    ;; MAKEINTRESOURCE-style: a null selector means there is no name at all.
+    (if (i32.eqz (call $win16_arg16 (i32.const 1)))
+      (then (call $win16_local_identity (i32.const 4) (global.get $sreg_ds)) (return)))
+    (call $win16_cstr_to_pstr (local.get $name) (call $win16_name_scratch) (i32.const 1))
+    (local.set $id (call $win16_module_id (call $g2w (call $win16_name_scratch))))
+    (if (i32.and (i32.ne (local.get $id) (i32.const 0))
+                 (i32.ge_u (local.get $id) (global.get $WIN16_DYNAMIC_BASE)))
+      (then
+        (if (call $win16_dll_loaded (local.get $id))
+          (then
+            (call $win16_local_identity (i32.const 4)
+              (call $win16_h16 (i32.or (i32.const 0x00D10000) (local.get $id))))
+            (return)))))
+    (call $win16_local_identity (i32.const 4) (global.get $sreg_ds)))
 
   ;; NDDEAPI.NDdeGetWindow() -> HWND of the agent that serves network DDE, or
   ;; NULL when there is none and the caller should start NETDDE.EXE.
@@ -1776,6 +2269,34 @@
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 0)))
 
+  ;; USER.17 GetCursorPos(lpPoint) / USER.70 SetCursorPos(X, Y). A POINT is two
+  ;; words here and two longs there.
+  (func $win16_GetCursorPos
+    (local $pt i32) (local $tmp i32)
+    (local.set $pt (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+    (local.set $tmp (global.get $GUEST_STACK))
+    (call $win16_call32_begin (i32.const 1))
+    (call $handle_GetCursorPos (local.get $tmp) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (call $gs16 (local.get $pt) (call $gl32 (local.get $tmp)))
+    (call $gs16 (i32.add (local.get $pt) (i32.const 2))
+      (call $gl32 (i32.add (local.get $tmp) (i32.const 4))))
+    (global.set $eax (i32.const 1))
+    (call $win16_api_return (i32.const 4)))
+
+  (func $win16_SetCursorPos
+    (local $x i32) (local $y i32)
+    (local.set $y (call $win16_coord (call $win16_arg16 (i32.const 0))))
+    (local.set $x (call $win16_coord (call $win16_arg16 (i32.const 1))))
+    (call $win16_call32_begin (i32.const 2))
+    (call $handle_SetCursorPos (local.get $x) (local.get $y)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.const 1))
+    (call $win16_api_return (i32.const 4)))
+
   ;; USER.47 IsWindow(hWnd). A handle the task made up, or one it kept after
   ;; the window was destroyed, has no 32-bit counterpart and is not a window.
   (func $win16_IsWindow
@@ -2048,6 +2569,10 @@
       (then (call $win16_change_menu (i32.const 1)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 414))
       (then (call $win16_change_menu (i32.const 2)) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 17))
+      (then (call $win16_GetCursorPos) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 70))
+      (then (call $win16_SetCursorPos) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 36))
       (then (call $win16_GetWindowText) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 38))
@@ -2058,6 +2583,20 @@
       (then (call $win16_SetKeyboardState) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 243))
       (then (call $win16_GetDialogBaseUnits) (return (i32.const 1))))
+    ;; SetMessageQueue(cMsg) asks for a queue of a given size. This one is not
+    ;; sized, so the request always succeeds — which is the answer Windows also
+    ;; gives when the queue it already has is big enough.
+    ;; GetWindowTask(hWnd) — which task owns the window. There is one task
+    ;; here, and its hTask is its DGROUP selector, the same answer
+    ;; GetCurrentTask gives.
+    (if (i32.eq (local.get $ordinal) (i32.const 224))
+      (then (call $win16_local_identity (i32.const 2) (global.get $sreg_ds))
+            (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 266))
+      (then (call $win16_local_identity (i32.const 2) (i32.const 1))
+            (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 272))   ;; IsZoomed
+      (then (call $win16_hwnd_query (i32.const 7)) (return (i32.const 1))))
     ;; USER.282/283 are the window-aware spellings of GDI.361/362.
     (if (i32.eq (local.get $ordinal) (i32.const 282))
       (then (call $win16_SelectPalette) (return (i32.const 1))))
@@ -3711,6 +4250,29 @@
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 6)))
 
+  ;; GDI.104 RectVisible(hDC, lpRect) -> is any part of it inside the clip? The
+  ;; rectangle is four words here and four longs there, so it is widened into
+  ;; scratch on the way through.
+  (func $win16_RectVisible
+    (local $hdc i32) (local $r i32) (local $w i32) (local $i i32)
+    (local.set $r (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 2))))
+    (local.set $w (global.get $GUEST_STACK))
+    (block $done (loop $edges
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 4)))
+      (call $gs32 (i32.add (local.get $w) (i32.shl (local.get $i) (i32.const 2)))
+        (call $win16_coord
+          (call $gl16 (i32.add (local.get $r) (i32.shl (local.get $i) (i32.const 1))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $edges)))
+    (call $win16_call32_begin (i32.const 2))
+    (call $handle_RectVisible (local.get $hdc) (local.get $w)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.ne (global.get $eax) (i32.const 0)))
+    (call $win16_api_return (i32.const 6)))
+
   (func $win16_InflateRect
     (local $r i32) (local $x i32) (local $y i32)
     (local.set $r (call $win16_far_to_guest
@@ -4336,6 +4898,9 @@
     (if (i32.eq (local.get $which) (i32.const 6))
       (then (call $handle_DrawMenuBar (local.get $hwnd)
               (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))))
+    (if (i32.eq (local.get $which) (i32.const 7))
+      (then (call $handle_IsZoomed (local.get $hwnd)
+              (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))))
     (call $win16_call32_end)
     ;; The two that answer with a handle go back through the map; the rest are
     ;; already booleans or small numbers.
@@ -4914,6 +5479,38 @@
   ;; and $win16_call32_begin moves ESP onto the scratch stack, so a read after
   ;; it comes off the frame being built rather than the task's — the guard in
   ;; $win16_arg16 traps on exactly that mistake.
+  ;; GDI.57 CreateFontIndirect(lpLogFont). A Win16 LOGFONT is 50 bytes where
+  ;; Win32's is 60: its first five fields are shorts rather than longs, and
+  ;; everything after them — eight flag bytes and a 32-byte face name — is
+  ;; identical. So the structure is widened into scratch, which is the same
+  ;; conversion GetObject does in the other direction. Visual Basic 1 builds
+  ;; every one of its fonts this way.
+  (func $win16_CreateFontIndirect
+    (local $src i32) (local $dst i32) (local $i i32)
+    (local.set $src (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+    (local.set $dst (global.get $GUEST_STACK))
+    (block $wide (loop $five
+      (br_if $wide (i32.ge_u (local.get $i) (i32.const 5)))
+      (call $gs32 (i32.add (local.get $dst) (i32.shl (local.get $i) (i32.const 2)))
+        (call $win16_coord
+          (call $gl16 (i32.add (local.get $src) (i32.shl (local.get $i) (i32.const 1))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $five)))
+    (local.set $i (i32.const 0))
+    (block $rest (loop $bytes
+      (br_if $rest (i32.ge_u (local.get $i) (i32.const 40)))
+      (call $gs8 (i32.add (i32.add (local.get $dst) (i32.const 20)) (local.get $i))
+        (call $gl8 (i32.add (i32.add (local.get $src) (i32.const 10)) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $bytes)))
+    (call $win16_call32_begin (i32.const 1))
+    (call $handle_CreateFontIndirectA (local.get $dst) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (call $win16_h16 (global.get $eax)))
+    (call $win16_api_return (i32.const 4)))
+
   (func $win16_CreateFont
     (local $face i32) (local $sel i32) (local $off i32) (local $h i32)
     (local $w i32) (local $esc i32) (local $ori i32) (local $weight i32)
@@ -5717,7 +6314,165 @@
   ;; frame goes up front, the way the modal pump parks — the far return saved
   ;; here is what the last point resumes.
   (global $WIN16_DDA_CB i32 (i32.const 0xFF90))
+  ;; The same shape for EnumFonts, whose callback also runs between one entry
+  ;; and the next.
+  (global $WIN16_ENUMFONT_CB i32 (i32.const 0xFF94))
   (global $win16_dda_ret  (mut i32) (i32.const 0))
+  ;; ---- GDI.70 EnumFonts(hDC, lpFaceName, lpFontFunc, lpData) ----
+  ;;
+  ;; The faces this device has are the bitmap strikes src/10b-gdi-font.wat can
+  ;; render; naming anything else would be inviting the caller to ask for a
+  ;; font that would then come back as a substitute. Asking by face name
+  ;; reports that one face if it is among them, which is what "enumerate the
+  ;; sizes of this face" comes to on a device with one size of each.
+  ;;
+  ;; Like LineDDA, the callback is guest code, so this cannot be a loop: each
+  ;; face gives the interpreter the task back and is picked up again on the far
+  ;; return, and a callback that answers zero ends the enumeration.
+  (global $WIN16_FONT_FACES i32 (i32.const 0x11500))
+  (global $win16_ef_proc (mut i32) (i32.const 0))
+  (global $win16_ef_data (mut i32) (i32.const 0))
+  (global $win16_ef_ret  (mut i32) (i32.const 0))
+  (global $win16_ef_face (mut i32) (i32.const 0))
+  (global $win16_ef_one  (mut i32) (i32.const 0))
+  (global $win16_ef_hdc  (mut i32) (i32.const 0))
+  (global $win16_ef_count (mut i32) (i32.const 0))
+
+  (func $win16_EnumFonts
+    (local $want i32) (local $p i32)
+    (global.set $win16_ef_hdc (call $win16_h32 (call $win16_arg16 (i32.const 6))))
+    (global.set $win16_ef_proc (call $win16_arg32 (i32.const 2)))
+    (global.set $win16_ef_data (call $win16_arg32 (i32.const 0)))
+    (local.set $want (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 5)) (call $win16_arg16 (i32.const 4))))
+    (if (i32.eqz (call $win16_arg16 (i32.const 5))) (then (local.set $want (i32.const 0))))
+    (global.set $win16_ef_ret (i32.or
+      (i32.shl (call $gl16 (i32.add (global.get $esp) (i32.const 2))) (i32.const 16))
+      (call $gl16 (global.get $esp))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 18)))  ;; far return + 14
+    (global.set $win16_ef_count (i32.const 0))
+    (global.set $win16_ef_one (i32.const 0))
+    (global.set $win16_ef_face (global.get $WIN16_FONT_FACES))
+    ;; A named face: find it in the list, and report only that one.
+    (if (local.get $want)
+      (then
+        (local.set $p (global.get $WIN16_FONT_FACES))
+        (global.set $win16_ef_face (i32.const 0))
+        (block $found (loop $faces
+          (br_if $found (i32.eqz (i32.load8_u (local.get $p))))
+          (if (call $win16_res_name_eq_z (local.get $p) (call $g2w (local.get $want)))
+            (then
+              (global.set $win16_ef_face (local.get $p))
+              (global.set $win16_ef_one (i32.const 1))
+              (br $found)))
+          (local.set $p (i32.add (local.get $p)
+            (i32.add (call $strlen_wa (local.get $p)) (i32.const 1))))
+          (br $faces)))))
+    (call $win16_ef_next))
+
+  ;; Fill the LOGFONT and TEXTMETRIC the callback is shown, then enter it. The
+  ;; metrics come from the DC, so they describe a real font this device has
+  ;; rather than numbers invented here.
+  (func $win16_ef_enter
+    (local $lf i32) (local $tm i32) (local $wide i32) (local $i i32) (local $n i32)
+    (local.set $lf (i32.add (call $win16_seg_base (global.get $win16_auto_data))
+                            (global.get $win16_font_scratch)))
+    (local.set $tm (i32.add (local.get $lf) (i32.const 52)))
+    (call $zero_memory (call $g2w (local.get $lf)) (global.get $WIN16_FONT_SCRATCH_SIZE))
+    ;; TEXTMETRICA is the same fields with longs where Win16 has words, so it
+    ;; is measured into scratch and narrowed.
+    (local.set $wide (global.get $GUEST_STACK))
+    (call $win16_call32_begin (i32.const 2))
+    (call $handle_GetTextMetricsA (global.get $win16_ef_hdc) (local.get $wide)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (block $done (loop $narrow
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 11)))
+      (call $gs16 (i32.add (local.get $tm) (i32.shl (local.get $i) (i32.const 1)))
+        (call $gl32 (i32.add (local.get $wide) (i32.shl (local.get $i) (i32.const 2)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $narrow)))
+    (local.set $i (i32.const 0))
+    (block $copied (loop $bytes
+      (br_if $copied (i32.ge_u (local.get $i) (i32.const 9)))
+      (call $gs8 (i32.add (i32.add (local.get $tm) (i32.const 22)) (local.get $i))
+        (call $gl8 (i32.add (i32.add (local.get $wide) (i32.const 44)) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $bytes)))
+    ;; LOGFONT: the height and weight the DC reports, the rest defaulted, and
+    ;; the face name this entry is about.
+    (call $gs16 (local.get $lf) (call $gl16 (local.get $tm)))            ;; lfHeight
+    (call $gs16 (i32.add (local.get $lf) (i32.const 8))
+      (call $gl16 (i32.add (local.get $tm) (i32.const 14))))             ;; lfWeight
+    (call $gs8 (i32.add (local.get $lf) (i32.const 13))
+      (call $gl8 (i32.add (local.get $tm) (i32.const 30))))              ;; lfCharSet
+    (call $gs8 (i32.add (local.get $lf) (i32.const 17))
+      (call $gl8 (i32.add (local.get $tm) (i32.const 29))))              ;; lfPitchAndFamily
+    (local.set $n (call $strlen_wa (global.get $win16_ef_face)))
+    (if (i32.gt_u (local.get $n) (i32.const 31)) (then (local.set $n (i32.const 31))))
+    (local.set $i (i32.const 0))
+    (block $named (loop $chars
+      (br_if $named (i32.ge_u (local.get $i) (local.get $n)))
+      (call $gs8 (i32.add (i32.add (local.get $lf) (i32.const 18)) (local.get $i))
+        (i32.load8_u (i32.add (global.get $win16_ef_face) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $chars)))
+    (global.set $win16_ef_count (i32.add (global.get $win16_ef_count) (i32.const 1)))
+    ;; The callback's Pascal frame: lpLogFont, lpTextMetric, nFontType, lpData,
+    ;; and a far return onto the thunk that picks the walk up again. RASTER
+    ;; (1) is what these strikes are.
+    (call $win16_push16 (call $win16_index_to_sel (global.get $win16_auto_data)))
+    (call $win16_push16 (global.get $win16_font_scratch))
+    (call $win16_push16 (call $win16_index_to_sel (global.get $win16_auto_data)))
+    (call $win16_push16 (i32.add (global.get $win16_font_scratch) (i32.const 52)))
+    (call $win16_push16 (i32.const 1))
+    (call $win16_push16 (i32.shr_u (global.get $win16_ef_data) (i32.const 16)))
+    (call $win16_push16 (global.get $win16_ef_data))
+    (call $win16_push16 (global.get $WIN16_THUNK_SEL))
+    (call $win16_push16 (global.get $WIN16_ENUMFONT_CB))
+    (call $win16_set_sreg (i32.const 1)
+      (i32.shr_u (global.get $win16_ef_proc) (i32.const 16)))
+    (global.set $eip (i32.add (global.get $seg_base_cs)
+                              (i32.and (global.get $win16_ef_proc) (i32.const 0xFFFF))))
+    (global.set $steps (i32.const 0)))
+
+  ;; Next face, or give the caller its call back.
+  (func $win16_ef_next
+    (if (i32.or (i32.eqz (global.get $win16_ef_face))
+                (i32.eqz (i32.load8_u (global.get $win16_ef_face))))
+      (then (call $win16_ef_resume) (return)))
+    (call $win16_ef_enter))
+
+  ;; The callback has answered. Zero means stop; anything else means go on.
+  (func $win16_ef_step
+    (if (i32.eqz (i32.and (global.get $eax) (i32.const 0xFFFF)))
+      (then (call $win16_ef_resume) (return)))
+    (if (global.get $win16_ef_one)
+      (then (call $win16_ef_resume) (return)))
+    (global.set $win16_ef_face
+      (i32.add (global.get $win16_ef_face)
+               (i32.add (call $strlen_wa (global.get $win16_ef_face)) (i32.const 1))))
+    (call $win16_ef_next))
+
+  ;; EnumFonts answers with the last value the callback returned, or the number
+  ;; of faces reported when it never asked to stop. Non-zero either way, which
+  ;; is what a caller checks.
+  (func $win16_ef_resume
+    (global.set $eax (global.get $win16_ef_count))
+    (call $win16_set_sreg (i32.const 1)
+      (i32.shr_u (global.get $win16_ef_ret) (i32.const 16)))
+    (global.set $eip (i32.add (global.get $seg_base_cs)
+                              (i32.and (global.get $win16_ef_ret) (i32.const 0xFFFF))))
+    (global.set $steps (i32.const 0)))
+
+  (func $strlen_wa (param $p i32) (result i32)
+    (local $n i32)
+    (block $done (loop $scan
+      (br_if $done (i32.eqz (i32.load8_u (i32.add (local.get $p) (local.get $n)))))
+      (local.set $n (i32.add (local.get $n) (i32.const 1)))
+      (br $scan)))
+    (local.get $n))
+
   (global $win16_dda_proc (mut i32) (i32.const 0))
   (global $win16_dda_data (mut i32) (i32.const 0))
   (global $win16_dda_x    (mut i32) (i32.const 0))
@@ -5840,6 +6595,10 @@
       (then (call $win16_Ellipse) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 27))
       (then (call $win16_Rectangle) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 70))
+      (then (call $win16_EnumFonts) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 104))
+      (then (call $win16_RectVisible) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 90))
       (then (call $win16_GetTextColor) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 36))
@@ -5888,6 +6647,8 @@
       (then (call $win16_PtVisible) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 56))
       (then (call $win16_CreateFont) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 57))
+      (then (call $win16_CreateFontIndirect) (return (i32.const 1))))
     ;; UnrealizeObject asks a brush or palette to be re-mapped on next select.
     ;; With no palette realisation here there is nothing to invalidate, and
     ;; success is the truthful answer rather than a placeholder.
@@ -6142,6 +6903,25 @@
       (then (call $win16_local_identity (i32.const 0) (i32.const 0)) (return (i32.const 1))))
     (i32.const 0))
 
+  ;; WIN87EM is the 80x87 emulator every Windows 3.x compiler linked against.
+  ;; Its job is to stand in for a coprocessor that is not there: its entry
+  ;; points patch the caller's own code, and the state they work on is the
+  ;; emulator's, not the machine's. There IS a coprocessor here — src/06-fpu.wat
+  ;; — and GetWinFlags says so, which is the case the compilers' own code is
+  ;; written for: the floating-point instructions in the image are real x87
+  ;; instructions until something patches them into emulator calls. So the
+  ;; honest answer is to answer for the module and change nothing, rather than
+  ;; run its code, which reads a jump table through a selector no descriptor
+  ;; here describes and lands in a segment nothing filled — Fuji Golf's third
+  ;; call into it stopped that way.
+  ;;
+  ;; Ordinal 1 is the only entry any of these games imports.
+  (func $win16_win87em (param $ordinal i32) (result i32)
+    (if (i32.eq (local.get $ordinal) (i32.const 1))
+      (then (call $win16_local_identity (i32.const 0) (i32.const 0))
+            (return (i32.const 1))))
+    (i32.const 0))
+
   (func $win16_commdlg (param $ordinal i32) (result i32)
     (if (i32.eq (local.get $ordinal) (i32.const 27))
       (then (call $win16_GetFileTitle) (return (i32.const 1))))
@@ -6215,6 +6995,8 @@
     ;; A LineDDA callback has returned; the next point of the line is owed to it.
     (if (i32.eq (local.get $thunk_off) (global.get $WIN16_DDA_CB))
       (then (call $win16_dda_step) (return)))
+    (if (i32.eq (local.get $thunk_off) (global.get $WIN16_ENUMFONT_CB))
+      (then (call $win16_ef_step) (return)))
     ;; An NDDEAPI entry point the task took the address of and called.
     (if (i32.eq (local.get $thunk_off) (global.get $WIN16_NDDE_GETWINDOW))
       (then (call $win16_NDdeGetWindow) (return)))
@@ -6368,6 +7150,9 @@
               (then (call $win16_trace_ret) (return)))))
     (if (i32.eq (local.get $module) (i32.const 3))
       (then (if (call $win16_gdi (local.get $ordinal))
+              (then (call $win16_trace_ret) (return)))))
+    (if (i32.eq (local.get $module) (i32.const 12))
+      (then (if (call $win16_win87em (local.get $ordinal))
               (then (call $win16_trace_ret) (return)))))
     (if (i32.eq (local.get $module) (i32.const 5))
       (then (if (call $win16_sound (local.get $ordinal))

@@ -120,6 +120,7 @@
     (if (call $win16_pstr_eq (local.get $pstr) (global.get $WIN16_NAME_CARDS))    (then (return (i32.const 9))))
     (if (call $win16_pstr_eq (local.get $pstr) (global.get $WIN16_NAME_DDEML))    (then (return (i32.const 10))))
     (if (call $win16_pstr_eq (local.get $pstr) (global.get $WIN16_NAME_NDDEAPI))  (then (return (i32.const 11))))
+    (if (call $win16_pstr_eq (local.get $pstr) (global.get $WIN16_NAME_WIN87EM))  (then (return (i32.const 12))))
     ;; Then the ones this task brought with it. A Win16 game is routinely three
     ;; or four NE files -- Tetris alone imports ABOUTTET for its about box, and
     ;; the Entertainment Pack ships IWLIB and WEPUTIL beside the games -- and
@@ -133,6 +134,9 @@
   ;; WIN16_DLL_STAGING and DLL_TABLE holds sixteen of them, twelve of which are
   ;; spoken for by the system modules and the emulated ones.
   (global $WIN16_DYNAMIC_MODULES i32 (i32.const 4))
+  ;; The first id an app-local module can take. Everything below it is a module
+  ;; this emulator answers for itself, so the host neither stages nor loads it.
+  (global $WIN16_DYNAMIC_BASE i32 (i32.const 13))
 
   (func $win16_dynamic_module_slot (export "win16_dynamic_module_slot")
         (param $i i32) (result i32)
@@ -162,9 +166,9 @@
               (i32.load8_u (i32.add (local.get $pstr) (local.get $j))))
             (local.set $j (i32.add (local.get $j) (i32.const 1)))
             (br_if $copy (i32.le_u (local.get $j) (local.get $n)))))
-          (return (i32.add (local.get $i) (i32.const 12)))))
+          (return (i32.add (local.get $i) (global.get $WIN16_DYNAMIC_BASE)))))
       (if (call $win16_pstr_eq_pstr (local.get $pstr) (local.get $slot))
-        (then (return (i32.add (local.get $i) (i32.const 12)))))
+        (then (return (i32.add (local.get $i) (global.get $WIN16_DYNAMIC_BASE)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (i32.const 0))
@@ -173,11 +177,13 @@
   ;; file must not keep its id, or four failed LoadLibrary calls would leave no
   ;; room for a real one.
   (func $win16_dynamic_module_release (param $id i32)
-    (if (i32.and (i32.ge_u (local.get $id) (i32.const 12))
+    (if (i32.and (i32.ge_u (local.get $id) (global.get $WIN16_DYNAMIC_BASE))
                  (i32.lt_u (local.get $id)
-                           (i32.add (i32.const 12) (global.get $WIN16_DYNAMIC_MODULES))))
+                           (i32.add (global.get $WIN16_DYNAMIC_BASE)
+                                    (global.get $WIN16_DYNAMIC_MODULES))))
       (then (i32.store8 (call $win16_dynamic_module_slot
-                          (i32.sub (local.get $id) (i32.const 12))) (i32.const 0)))))
+                          (i32.sub (local.get $id) (global.get $WIN16_DYNAMIC_BASE)))
+                        (i32.const 0)))))
 
   ;; Clear the app-local names. Called when a task is loaded, so one run's
   ;; modules cannot answer for the next one's.
@@ -488,6 +494,7 @@
     (global.set $win16_next_seg (i32.add (global.get $win16_thunk_index) (i32.const 1)))
     (global.set $win16_psp_sel (i32.const 0))
     (global.set $win16_env_seg (i32.const 0))
+    (global.set $win16_dta (i32.const 0))
     ;; Before the fixups, because they are what fills these in.
     (call $win16_dynamic_modules_reset)
 
@@ -769,8 +776,10 @@
         (global.set $win16_msg_scratch
           (i32.add (call $win16_seg_limit (local.get $ds_index)) (i32.const 2)))
         (global.set $win16_msg_slot (i32.const 0))
-        (global.set $win16_lheap_ptr
+        (global.set $win16_font_scratch
           (i32.add (global.get $win16_msg_scratch) (global.get $WIN16_MSG_SCRATCH_SIZE)))
+        (global.set $win16_lheap_ptr
+          (i32.add (global.get $win16_font_scratch) (global.get $WIN16_FONT_SCRATCH_SIZE)))
         (global.set $win16_lheap_base (global.get $win16_lheap_ptr))
         (global.set $win16_lheap_end
           (i32.add (global.get $win16_lheap_ptr) (global.get $win16_heap_size)))
@@ -778,7 +787,8 @@
           (i32.add
             (i32.add (call $win16_seg_limit (local.get $ds_index)) (global.get $win16_heap_size))
             (global.get $win16_stack_size))
-          (global.get $WIN16_MSG_SCRATCH_SIZE)))
+          (i32.add (global.get $WIN16_MSG_SCRATCH_SIZE)
+                   (global.get $WIN16_FONT_SCRATCH_SIZE))))
         (if (i32.gt_u (local.get $limit) (i32.const 0x10000))
           (then (local.set $limit (i32.const 0x10000))))
         (if (i32.gt_u (global.get $win16_lheap_end) (local.get $limit))
@@ -888,9 +898,9 @@
   ;; runtime is 265KB and five Entertainment Pack games are written in it, so a
   ;; 256KB slot rejected the file and the games stopped at their first call.
   (func $win16_dll_staging (export "win16_dll_staging") (param $module_id i32) (result i32)
-    (if (i32.ge_u (local.get $module_id) (i32.const 12))
+    (if (i32.ge_u (local.get $module_id) (global.get $WIN16_DYNAMIC_BASE))
       (then (return (i32.add (global.get $WIN16_APP_DLL_STAGING)
-        (i32.mul (i32.sub (local.get $module_id) (i32.const 12))
+        (i32.mul (i32.sub (local.get $module_id) (global.get $WIN16_DYNAMIC_BASE))
                  (global.get $WIN16_APP_DLL_STRIDE))))))
     (i32.add (global.get $WIN16_DLL_STAGING)
              (i32.mul (local.get $module_id) (global.get $WIN16_DLL_STAGING_STRIDE))))

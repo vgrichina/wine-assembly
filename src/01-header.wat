@@ -856,7 +856,7 @@
   (data (i32.const 0x11E50) "OleCreateFontIndirect\00")
   ;; Win16 module names, matched against an NE imported-name table entry by
   ;; $win16_module_id. NE name tables are upper case, so the compare is exact.
-  (data (i32.const 0x11E70) "KERNEL\00USER\00GDI\00KEYBOARD\00SOUND\00SHELL\00MMSYSTEM\00COMMDLG\00CARDS\00DDEML\00SHELLABOUT\00NDDEAPI\00NDDEGETWINDOW\00")
+  (data (i32.const 0x11E70) "KERNEL\00USER\00GDI\00KEYBOARD\00SOUND\00SHELL\00MMSYSTEM\00COMMDLG\00CARDS\00DDEML\00SHELLABOUT\00NDDEAPI\00NDDEGETWINDOW\00WIN87EM\00")
   ;; The machine's NetDDE share database. A DDE share maps a name that clients
   ;; on other machines ask for onto the local application and topic that
   ;; actually serves it, and on a real Win98 box it is written at install time
@@ -866,6 +866,9 @@
   ;; remote Hearts asks for topic "Hearts$" on \\SOMEBODY\NDDE$, and that share
   ;; is what says the local server is application "MSHearts" topic "Hearts".
   ;; Records are share, application, topic; an empty share ends the table.
+  ;; The faces GDI here can actually rasterize — the .FON strikes mounted by
+  ;; fonts/substitutions.json. EnumFonts reports these and nothing else.
+  (data (i32.const 0x11500) "System\00MS Sans Serif\00Fixedsys\00Courier\00Terminal\00\00")
   (data (i32.const 0x11EE0) "Hearts$\00MSHearts\00Hearts\00\00")
 
   ;; MessageBox system strings mirrored in the WAT-owned reserved page just
@@ -2246,13 +2249,23 @@
   ;; ---- Win16 / NE loader state (src/08c-ne-loader.wat) ----
   ;; WIN16_SEG_TABLE has one spare entry past WIN16_SEG_MAX, used as scratch by
   ;; $win16_apply_relocs for the entry-table segment out-parameter.
-  (global $WIN16_SEG_TABLE i32 (i32.const 0x07E08400))  ;; 128 entries x 16 bytes + 1 scratch
-  (global $WIN16_SEG_MAX   i32 (i32.const 127))
-  (global $WIN16_THUNK_TABLE i32 (i32.const 0x07E08C00)) ;; 256 entries x 4 bytes
-  (global $WIN16_THUNK_MAX i32 (i32.const 256))
+  ;; 256 entries x 16 bytes + 1 scratch, in the space between the API hash
+  ;; table and TEXT_SCRATCH. It was 128 entries at 0x07E08400, which is 0x800
+  ;; from WIN16_THUNK_TABLE and could not grow in place.
+  (global $WIN16_SEG_TABLE i32 (i32.const 0x07E03000))
+  (global $WIN16_SEG_MAX   i32 (i32.const 255))
+  ;; One entry per distinct (module, ordinal) the task and its DLLs import.
+  ;; 256 was not enough once a DLL as large as VBRUN100 was in the picture, and
+  ;; the table is now beside the segment table with room for 2048 — still only
+  ;; 8KB of thunk segment used out of the 64KB that selector owns.
+  (global $WIN16_THUNK_TABLE i32 (i32.const 0x07E04100))
+  (global $WIN16_THUNK_MAX i32 (i32.const 2048))
   ;; Each selector index owns one 64KB slot. The arena sits above the PE guest
   ;; image start: an NE task sets image_base to 0, so nothing else is mapped
-  ;; low, and 128 slots need 8MB.
+  ;; low. 256 slots need 16MB, which reaches guest 0x01000000 — still far below
+  ;; the guest stack. 128 was not enough for a Visual Basic 1 game: VBRUN100
+  ;; alone is 107 segments, and Rattler Race, Rodent's Revenge, JigSawed,
+  ;; GoFigure and TicTacDrop all stopped while the loader was still placing it.
   (global $WIN16_ARENA     i32 (i32.const 0x00100000))
   (global $WIN16_THUNK_SEL (mut i32) (i32.const 0))
   (global $win16_thunk_index (mut i32) (i32.const 0))
@@ -2293,6 +2306,8 @@
   ;; real arena slot rather than a WAT-private buffer: the caller gets a far
   ;; pointer and walks it with 16-bit code.
   (global $win16_env_seg (mut i32) (i32.const 0))
+  ;; The DOS disk transfer area as a far pointer, zero until first asked for.
+  (global $win16_dta (mut i32) (i32.const 0))
   ;; Scratch for the widened wvsprintf argument list — 32 dwords, allocated on
   ;; first use because most tasks never format anything.
   (global $win16_va_scratch (mut i32) (i32.const 0))
@@ -2398,6 +2413,12 @@
   (global $win16_in_call32 (mut i32) (i32.const 0))
   (global $win16_msg_scratch (mut i32) (i32.const 0))
   (global $win16_msg_slot (mut i32) (i32.const 0))
+  ;; A LOGFONT and a TEXTMETRIC for EnumFonts to show its callback, in DGROUP
+  ;; beside the message scratch and for the same reason: the callback is given
+  ;; a far pointer to them and reads them with 16-bit code, so they cannot live
+  ;; in this emulator's private memory. 50 + 31 bytes, rounded up.
+  (global $WIN16_FONT_SCRATCH_SIZE i32 (i32.const 96))
+  (global $win16_font_scratch (mut i32) (i32.const 0))
   (global $win16_lheap_base (mut i32) (i32.const 0))
   (global $win16_lheap_ptr (mut i32) (i32.const 0))
   (global $win16_lheap_end (mut i32) (i32.const 0))
@@ -2423,6 +2444,8 @@
   (global $WIN16_NAME_SHELLABOUT i32 (i32.const 0x11EB2))
   (global $WIN16_NAME_NDDEAPI   i32 (i32.const 0x11EBD))
   (global $WIN16_NAME_NDDEGETWINDOW i32 (i32.const 0x11EC5))
+  ;; The 80x87 emulator. Answered here rather than loaded — see $win16_win87em.
+  (global $WIN16_NAME_WIN87EM i32 (i32.const 0x11ED3))
   (global $WIN16_DDE_SHARES i32 (i32.const 0x11EE0))
 
   ;; Console screen buffer state (for Telnet etc.)

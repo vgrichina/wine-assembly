@@ -492,3 +492,15 @@
                           (i32.and (global.get $eax) (i32.const 0xFF)))
                  (i32.const 0xFFFF)))))
     (return_call $next))
+
+  ;; INT imm8. The operand is the interrupt number and the word after it is
+  ;; where execution goes next — the instruction ends its block either way,
+  ;; because what the interrupt does may move EIP itself.
+  ;;
+  ;; Only 21h means anything here. Everything else keeps the DOS convention for
+  ;; "no such service": carry set, and the program's own error path takes over.
+  (func $th_int (param $op i32)
+    (global.set $eip (call $read_thread_word))
+    (if (i32.eq (local.get $op) (i32.const 0x21))
+      (then (call $win16_dos_int21))
+      (else (call $dos_cf (i32.const 1)))))

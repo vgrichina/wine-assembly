@@ -48,6 +48,28 @@ const arg = (name, dflt) => {
 const BATCHES = Number(arg('batches', 150));
 const BATCH_SIZE = Number(arg('batch-size', 20000));
 const ONLY = (arg('only', '') || '').split(',').filter(Boolean);
+// --dir=<path> sweeps every exe under a directory instead of the paired list.
+// The whole point of this tool is the picture it takes and the verdict it
+// draws from it, and "did it trap" is a much weaker question than "did it draw
+// its screen" — so the 16-bit Entertainment Pack tree gets measured the same
+// way the 32-bit one is, rather than by exit status alone.
+const DIR = arg('dir', '');
+
+function exesUnder(rel) {
+  const base = path.isAbsolute(rel) ? rel : path.join(ROOT, rel);
+  const out = [];
+  const walk = (dir, prefix) => {
+    for (const f of fs.readdirSync(dir).sort()) {
+      const full = path.join(dir, f);
+      if (fs.statSync(full).isDirectory()) { walk(full, `${prefix}${f}/`); continue; }
+      if (!/\.exe$/i.test(f)) continue;
+      out.push({ title: `${prefix}${path.basename(f, path.extname(f))}`,
+                 exe: path.relative(ROOT, full) });
+    }
+  };
+  walk(base, '');
+  return out;
+}
 
 // The games that exist here in both builds. `dlls` are the ones the app cannot
 // find for itself: CARDS.DLL ships beside each build and the two are not
@@ -253,6 +275,25 @@ function main() {
   fs.mkdirSync(OUT, { recursive: true });
   const rows = [];
   const want = t => !ONLY.length || ONLY.some(o => t.toLowerCase().includes(o.toLowerCase()));
+
+  if (DIR) {
+    const apps = exesUnder(DIR).filter(a => want(a.title));
+    const results = [];
+    for (const app of apps) {
+      const name = app.title.replace(/[^\w.-]+/g, '-');
+      process.stdout.write(`  running ${name} ...`);
+      const r = run(name, app);
+      console.log(` ${r.verdict}`);
+      results.push({ ...app, ...r });
+    }
+    console.log(`\n${DIR}:`);
+    for (const r of results) {
+      console.log(`  ${r.verdict.padEnd(10)} ${r.title.padEnd(20)} ${r.note}`);
+    }
+    const ok = results.filter(r => r.verdict === 'OK').length;
+    console.log(`\n  ${ok}/${results.length} draw a screen; pictures in ${path.relative(ROOT, OUT)}`);
+    return;
+  }
 
   for (const pair of PAIRS) {
     if (!want(pair.title)) continue;
