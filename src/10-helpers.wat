@@ -2458,13 +2458,19 @@
         (then
           (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
           (br $scan)))
-      ;; Static/listbox/combobox/scrollbar controls are handled by the dialog
-      ;; router/control wndprocs. They should not steal generic client clicks.
+      ;; A static and the colour grid are click-transparent wherever they sit,
+      ;; so they never take a generic client click. A combobox is different: it
+      ;; is skipped here because the DIALOG router delivers its clicks -- and
+      ;; that router only exists when the parent is a dialog. WordPad's font and
+      ;; size combos live on a toolbar, so skipping them there meant the click
+      ;; landed on the toolbar and the list could never drop down.
       (local.set $cls (call $ctrl_table_get_class (local.get $ch)))
       (if (i32.or
             (i32.or (i32.eq (local.get $cls) (i32.const 3))
-                    (i32.eq (local.get $cls) (i32.const 5)))
-            (i32.eq (local.get $cls) (i32.const 6)))
+                    (i32.eq (local.get $cls) (i32.const 6)))
+            (i32.and (i32.eq (local.get $cls) (i32.const 5))
+              (i32.eq (call $wnd_table_get (local.get $parent))
+                      (global.get $WNDPROC_DIALOG))))
         (then
           (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
           (br $scan)))
@@ -2478,6 +2484,11 @@
             (i32.and (i32.ge_s (local.get $sy) (local.get $y))
                      (i32.lt_s (local.get $sy) (i32.add (local.get $y) (local.get $h)))))
         (then
+          ;; A combobox owns its own edit field, button and list. The click
+          ;; belongs to the combobox itself -- it is what drops the list down --
+          ;; so stop here rather than descending into a part of it.
+          (if (i32.eq (local.get $cls) (i32.const 5))
+            (then (return (local.get $ch))))
           (local.set $deep (call $wnd_child_from_point_deep
             (local.get $ch) (local.get $sx) (local.get $sy)))
           (return (select (local.get $deep) (local.get $ch) (local.get $deep)))))
