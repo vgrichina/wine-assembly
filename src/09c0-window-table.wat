@@ -756,6 +756,32 @@
           (i32.eqz (i32.load8_u offset=8 (local.get $wa))))))))
     (i32.const 0))
 
+  ;; Which control a built-in class name or atom denotes, as one answer for
+  ;; both spellings. $guest is CreateWindowEx's lpClassName: either
+  ;; MAKEINTATOM(0x0080..0x0085), which a compiled dialog template uses, or a
+  ;; pointer to the class name, which source code uses. Returns a
+  ;; $control_wndproc_dispatch class id, or 0 for anything that is not one of
+  ;; USER's six.
+  ;;
+  ;; The ids are not the atoms and never were -- ScrollBar is atom 0x0084 but
+  ;; control 7, ComboBox is atom 0x0085 but control 5 -- so the mapping has to
+  ;; be written down somewhere. Before this it was written down twice, as
+  ;; twelve separate compares in CreateWindowExA, and the id list existed only
+  ;; in a comment above them.
+  (func $builtin_ctrl_class_id (param $guest i32) (result i32)
+    (local $atom i32)
+    (local.set $atom
+      (if (result i32) (i32.lt_u (local.get $guest) (i32.const 0x10000))
+        (then (local.get $guest))
+        (else (call $builtin_class_atom (call $g2w (local.get $guest))))))
+    (if (i32.eq (local.get $atom) (i32.const 0x0080)) (then (return (i32.const 1))))   ;; Button
+    (if (i32.eq (local.get $atom) (i32.const 0x0081)) (then (return (i32.const 2))))   ;; Edit
+    (if (i32.eq (local.get $atom) (i32.const 0x0082)) (then (return (i32.const 3))))   ;; Static
+    (if (i32.eq (local.get $atom) (i32.const 0x0083)) (then (return (i32.const 4))))   ;; ListBox
+    (if (i32.eq (local.get $atom) (i32.const 0x0084)) (then (return (i32.const 7))))   ;; ScrollBar
+    (if (i32.eq (local.get $atom) (i32.const 0x0085)) (then (return (i32.const 5))))   ;; ComboBox
+    (i32.const 0))
+
   ;; Simple FNV-1a hash of NUL-terminated string at WASM addr
   (func $class_name_hash (param $wa i32) (result i32)
     (local $h i32) (local $ch i32)
