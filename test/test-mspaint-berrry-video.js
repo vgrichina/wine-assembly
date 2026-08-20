@@ -3,8 +3,9 @@
 'use strict';
 
 // End-to-end demo workflow for the reusable CLI recorder. Real scheduled
-// mouse input maximizes Win98 Paint, builds a filled strawberry, and hand-draws
-// BERRRY in block letters while test/run.js records every rendered batch.
+// mouse and keyboard input maximize Win98 Paint, build a filled strawberry,
+// hand-draw BERRRY, then add its tagline with Paint's native Text tool while
+// test/run.js records every rendered batch.
 
 const assert = require('assert');
 const fs = require('fs');
@@ -16,8 +17,9 @@ const ROOT = path.join(__dirname, '..');
 const RUN = path.join(__dirname, 'run.js');
 const EXE = path.join(__dirname, 'binaries', 'mspaint.exe');
 const OUT = path.join(__dirname, 'output', 'mspaint-berrry-video');
-const VIDEO = path.join(OUT, 'berrry-paint.webm');
+const VIDEO = path.join(OUT, 'berrry-paint.mp4');
 const FINAL = path.join(OUT, 'berrry-paint.png');
+const TAGLINE = 'best place to host vibe coded apps';
 const FFMPEG = process.env.FFMPEG || 'ffmpeg';
 const FFPROBE = process.env.FFPROBE || (path.isAbsolute(FFMPEG)
   ? path.join(path.dirname(FFMPEG), 'ffprobe')
@@ -110,6 +112,26 @@ const lines = [
 ];
 for (const line of lines) batch = stroke(batch, ...line);
 
+// Put the tagline beneath the mark using Paint's actual Text tool and EDIT
+// control. One character every two video frames makes the typing legible in
+// the recording; switching back to Brush commits the text to the bitmap.
+batch += 4;
+click(batch++, 46, 154); // Text tool.
+at(batch++, 'mousedown:100:260');
+at(batch++, 'mousemove:385:286');
+at(batch++, 'mouseup:385:286');
+batch += 3; // Let Paint create and focus control 114 plus its Fonts palette.
+for (const char of TAGLINE) {
+  const code = char === ' ' ? 32 : char.toUpperCase().charCodeAt(0);
+  at(batch, `keydown:${code}`);
+  at(batch, `keypress:${char.charCodeAt(0)}`);
+  at(batch, `keyup:${code}`);
+  batch += 2;
+}
+at(batch++, 'dump-focus-state:berrry-tagline');
+batch += 2;
+click(batch++, 46, 129); // Brush tool commits the live text edit.
+
 const finalBatch = batch + 5;
 at(finalBatch, `png:${FINAL}`);
 at(finalBatch + 15, 'stop'); // Hold the completed logo in the final second.
@@ -159,15 +181,20 @@ const count = (box, predicate) => {
 };
 const berry = { x0: 90, y0: 70, x1: 220, y1: 265 };
 const word = { x0: 225, y0: 150, x1: 380, y1: 225 };
+const tagline = { x0: 95, y0: 255, x1: 390, y1: 290 };
 const red = count(berry, (r, g, b) => r > 200 && g < 60 && b < 60);
 const green = count(berry, (r, g, b) => g > 180 && r < 80 && b < 80);
 const seedInk = count(berry, (r, g, b) => r < 40 && g < 40 && b < 40);
 const wordInk = count(word, (r, g, b) => r < 40 && g < 40 && b < 40);
+const taglineInk = count(tagline, (r, g, b) => r < 40 && g < 40 && b < 40);
 
 assert(red >= 4000, `strawberry body is not visibly red (${red} pixels)`);
 assert(green >= 500, `strawberry crown is not visibly green (${green} pixels)`);
 assert(seedInk >= 200, `strawberry outline/seeds are missing (${seedInk} dark pixels)`);
 assert(wordInk >= 500, `BERRRY block lettering is missing (${wordInk} dark pixels)`);
+assert(taglineInk >= 300, `Berrry tagline is missing (${taglineInk} dark pixels)`);
+assert(/dump-focus-state berrry-tagline:.*class=2 id=114 .*text="best place to host vibe coded apps"/.test(output),
+  'Paint native text edit did not receive the complete Berrry tagline');
 
 const probe = JSON.parse(execFileSync(FFPROBE, [
   '-v', 'error',
@@ -176,17 +203,18 @@ const probe = JSON.parse(execFileSync(FFPROBE, [
 ], { encoding: 'utf8' }));
 const stream = probe.streams && probe.streams[0];
 const duration = Number(probe.format && probe.format.duration);
-assert(stream && stream.codec_name === 'vp9', `unexpected video stream: ${JSON.stringify(stream)}`);
+assert(stream && stream.codec_name === 'h264', `unexpected video stream: ${JSON.stringify(stream)}`);
 assert.strictEqual(stream.width, 640, 'recorded video width');
 assert.strictEqual(stream.height, 480, 'recorded video height');
-assert(duration >= 8, `recorded workflow is too short (${duration}s)`);
-assert(/\[video\] wrote .*berrry-paint\.webm/.test(output),
+assert(duration >= 12, `recorded workflow is too short (${duration}s)`);
+assert(/\[video\] wrote .*berrry-paint\.mp4/.test(output),
   'CLI did not report a completed video');
 assert(!/UNIMPLEMENTED API:|RuntimeError|LinkError|\*\*\* CRASH/.test(output),
   output.slice(-5000));
 
 console.log(`PASS  Paint drew a red strawberry (${red} red, ${green} green, ${seedInk} dark pixels)`);
 console.log(`PASS  Paint hand-drew BERRRY (${wordInk} dark pixels)`);
-console.log(`PASS  CLI recorded ${duration.toFixed(2)}s VP9 video at ${stream.width}x${stream.height}`);
+console.log(`PASS  Paint Text tool committed the tagline (${taglineInk} dark pixels)`);
+console.log(`PASS  CLI recorded ${duration.toFixed(2)}s H.264 video at ${stream.width}x${stream.height}`);
 console.log(`Video: ${VIDEO}`);
 console.log(`Final frame: ${FINAL}`);
