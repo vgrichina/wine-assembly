@@ -19,7 +19,7 @@ Build gates, in order: manifest ↔ glob equality, `api_table.json` (id == index
 ## Run
 
 - **Browser:** Open `index.html` (at repo root), select an app, click Launch. Live build deployed at https://wine-assembly.berrry.app via `tools/deploy-berrry.js --update`.
-- **CLI:** `node test/run.js --exe=path/to/exe [options]` — headless execution with auto-build. Key flags: `--verbose`, `--trace`, `--trace-api`, `--trace-gdi`, `--trace-host=fn1,fn2`, `--no-close`, `--break=0xADDR`, `--break-api=Name`, `--watch=0xADDR`, `--dump-gdi=DIR`, `--max-batches=N`, `--batch-size=N`
+- **CLI:** `node test/run.js --exe=path/to/exe [options]` — headless execution with auto-build. A registered EXE gets that app's explicit file manifest; an arbitrary bare `--exe` mounts only the executable. Add repeatable/comma-separated `--vfs-include='*.dat,plugins/**/*.dll'` patterns (relative to the EXE directory) for ad-hoc companion assets, or prefer `--app=ID`. Key flags: `--verbose`, `--trace`, `--trace-api`, `--trace-gdi`, `--trace-host=fn1,fn2`, `--no-close`, `--break=0xADDR`, `--break-api=Name`, `--watch=0xADDR`, `--dump-gdi=DIR`, `--max-batches=N`, `--batch-size=N`
 - **CLI, by app id:** `node test/run.js --app=sol` — takes the exe, its DLLs, its data files and its command line from `lib/apps.js`, the same registry the desktop icons read, so the CLI mounts exactly what the browser mounts. `--app=` with an unknown id prints the full id list. An explicit `--exe`/`--args` overrides the registry.
 - **PNG render:** `node test/run.js --exe=path/to/exe --png=output.png`
 
@@ -145,6 +145,7 @@ node tools/profile-web-frames.js --app=blobby_volley --seconds=20 --query='?debu
 | `thread-manager.js` | Multi-thread support via separate WASM instances |
 | `storage.js` | localStorage-backed registry and INI file persistence |
 | `filesystem.js` | Virtual filesystem for file operations |
+| `vfs-host-files.js` | Expands explicit CLI `--vfs-include` globs within their bounded host roots |
 | `vlan-wire.js` | Virtual LAN transport: loopback segment (instances in one process) and process wire (emulators in separate OS processes over child IPC). Carries opaque frames only — all routing lives in WAT |
 | `compile-wat.js` | Browser-side WAT → WASM compiler (wraps wabt.js) |
 

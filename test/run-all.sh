@@ -44,6 +44,7 @@ UNIT=(
   test/test-bignum-mul.js
   test/test-mat4.js
   test/test-vfs.js
+  test/test-vfs-host-files.js
   test/test-storage-registry.js
   test/test-codepage-dbcs.js
   test/test-atom-table.js
@@ -219,6 +220,7 @@ UNIT=(
 )
 
 E2E=(
+  test/test-cli-vfs-include.js
   test/test-winhelp-reference.js
   test/test-taskman-tasks.js
   test/test-taskman-arrange.js

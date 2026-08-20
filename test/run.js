@@ -13,6 +13,7 @@ const {
 } = require('../lib/app-profiles');
 const { processSharedCtx, adoptThreadPrimitives, makeWorkerApiLogger } = require('../lib/worker-imports');
 const { seedExeImage, win16FileCandidates } = require('../lib/vfs-seed');
+const { expandIncludePatterns } = require('../lib/vfs-host-files');
 const { decodeMfcCString, g2w: translateGuest } = require('../lib/mem-utils');
 const { formatCall: fmtApiCall, formatRet: fmtApiRet, formatOutParams: fmtApiOutParams, walkFrames } = require('../lib/api-format');
 const { fontMounts, BUNDLED_BITMAP_FONTS } = require('../lib/font-substitutions');
@@ -55,6 +56,12 @@ const getArg = (name, def) => {
   const prefix = `--${name}=`;
   const arg = args.find(value => value.startsWith(prefix));
   return arg ? arg.slice(prefix.length) : def;
+};
+const getArgs = name => {
+  const prefix = `--${name}=`;
+  return args.filter(value => value.startsWith(prefix))
+    .flatMap(value => value.slice(prefix.length).split(','))
+    .map(value => value.trim()).filter(Boolean);
 };
 const hasFlag = name => args.includes(`--${name}`);
 
@@ -214,7 +221,8 @@ const DUMP_BACKCANVAS = hasFlag('dump-backcanvas'); // --dump-backcanvas: save b
 const DUMP_VFS = hasFlag('dump-vfs');     // --dump-vfs: list all VFS files at end
 const SAVE_VFS = getArg('save-vfs', null); // --save-vfs=DIR: extract VFS files to directory
 const SAVE_VFS_SUFFIX = getArg('save-vfs-suffix', null); // --save-vfs-suffix=.gid: restrict extraction
-const VFS_DRIVE = getArg('vfs-drive', null); // --vfs-drive=D: also preload the EXE directory on D:\
+const VFS_DRIVE = getArg('vfs-drive', null); // --vfs-drive=D: mirror the EXE + explicit --vfs-include files on read-only D:\
+const VFS_INCLUDE = getArgs('vfs-include'); // --vfs-include=GLOB: mount matching files relative to the EXE directory
 const STUCK_AFTER = parseInt(getArg('stuck-after', '10'));  // --stuck-after=N: stuck detection after N same-EIP batches
 const WINVER = getArg('winver', null); // --winver=nt4|win2k|win98 or hex like 0x05650004
 // --app=sol launches what the desktop icon launches: lib/apps.js is the one
@@ -234,6 +242,22 @@ const APP_ENTRY = (() => {
 // symlink, so they resolve the same from the page and from here.
 const appAsset = p => (path.isAbsolute(p) ? p : path.join(ROOT, p));
 const EXE_PATH = getArg('exe', APP_ENTRY ? appAsset(APP_ENTRY.exe) : 'test/binaries/notepad.exe');
+const canonicalPath = p => {
+  try { return fs.realpathSync(p); } catch (_) { return path.resolve(p); }
+};
+const MATCHED_APP = (() => {
+  if (APP_ENTRY) return { id: APP_ID, entry: APP_ENTRY };
+  const exePath = canonicalPath(EXE_PATH);
+  for (const [id, entry] of Object.entries(APPS)) {
+    if (entry.exe && canonicalPath(appAsset(entry.exe)) === exePath) return { id, entry };
+  }
+  return null;
+})();
+// Direct --exe runs of registered apps inherit only that app's explicit asset
+// manifest and DLL seeds. They do not inherit args or startup behavior, and an
+// arbitrary EXE outside the registry still mounts no companions implicitly.
+const ASSET_ENTRY = MATCHED_APP && MATCHED_APP.entry;
+const ASSET_ENTRY_ID = MATCHED_APP && MATCHED_APP.id;
 const WASM_PATH = getArg('wasm', path.join(ROOT, 'build', 'wine-assembly.wasm')); // --wasm=FILE: isolated prebuilt used with --no-build
 const PNG_OUT = getArg('png', null);     // --png=out.png: render to PNG via node-canvas
 const VIDEO_OUT = getArg('video', null); // --video=out.webm: record deterministic renderer frames through ffmpeg
@@ -2590,13 +2614,13 @@ async function main() {
     // DLL is looked up in this app's own `files` list too — same rule the page
     // applies (index.html appFileByName).
     const appFileByName = new Map();
-    for (const f of ((APP_ENTRY && APP_ENTRY.files) || [])) {
+    for (const f of ((ASSET_ENTRY && ASSET_ENTRY.files) || [])) {
       const url = typeof f === 'string' ? f : (f && f.url);
       if (url) appFileByName.set(url.split('/').pop().toLowerCase(), url);
     }
     dlls = await resolveDllGraph({
       exeBytes,
-      seeds: (APP_ENTRY && APP_ENTRY.dlls) || [],
+      seeds: (ASSET_ENTRY && ASSET_ENTRY.dlls) || [],
       detectRequiredDlls,
       loadSpec: (spec) => {
         // Registry seeds arrive as repo-relative paths; the graph walk's own
@@ -2653,82 +2677,47 @@ async function main() {
   // Put the exe where a running image expects to find itself; see lib/vfs-seed.js.
   if (ctx.vfs) {
     const exeName = seedExeImage(ctx.vfs, exeBytes, path.basename(EXE_PATH)).base;
-    // Pre-load companion files from EXE's directory (data files, bitmaps, etc.)
-    // Recursively scan subdirectories too (e.g. Plugins/ for Winamp)
     const exeDir = path.dirname(EXE_PATH);
-    // Index the tree, don't read it. The exe's directory is whatever the caller
-    // pointed us at, and for anything sitting at the root of test/binaries that
-    // is the entire corpus — 3003 files, 1056 MB, read in full before the first
-    // x86 instruction, once per process, 114 times over a suite run. Profiling
-    // put this function at the top of the self-time list with the read/open/stat
-    // underneath it second. Measured back to back on notepad, 80 batches:
-    // eager 20.5/23.0/24.3s, lazy 1.66/1.88/2.11s. Most of that is not the
-    // reading — a warm re-read of the whole tree is under two seconds — it is
-    // allocating and then collecting a gigabyte of Uint8Array per process.
-    //
-    // readdir + stat is cheap and gives FindFirstFile everything it asks for
-    // (name, size, attributes). The bytes arrive on the first CreateFile that
-    // actually wants them.
-    const loadDir = (hostDir, vfsPrefix) => {
-      for (const f of fs.readdirSync(hostDir)) {
-        if (vfsPrefix === 'c:\\' && f.toLowerCase() === exeName) continue;
-        const fpath = path.join(hostDir, f);
-        try {
-          const stat = fs.statSync(fpath);
-          if (stat.isFile()) {
-            ctx.vfs.setLazyFile(vfsPrefix + f.toLowerCase(), {
-              attrs: 0x20,
-              size: stat.size,
-              load: () => new Uint8Array(fs.readFileSync(fpath)),
-            });
-            // A font shipped beside the exe was installed by the app's
-            // installer on a real machine, which is why an app like Age of
-            // Empires can ask for "Copperplate Gothic Light" without ever
-            // calling AddFontResource. Mount it where an installed font
-            // lives, and let it win over the vendored substitute sitting
-            // there: the app ships the real face the artwork was laid out
-            // against, so its own ARIAL.TTF is a better answer than
-            // Liberation Sans standing in for one. Deterministic either way
-            // -- the bytes come from the app's own files, not the host's.
-            if (/\.(ttf|ttc|fon)$/i.test(f)) {
-              ctx.vfs.setLazyFile(`c:\\windows\\fonts\\${f.toLowerCase()}`, {
-                attrs: 0x20,
-                size: stat.size,
-                load: () => new Uint8Array(fs.readFileSync(fpath)),
-              });
-            }
-          } else if (stat.isDirectory() && f !== '.' && f !== '..') {
-            const subDir = vfsPrefix + f.toLowerCase() + '\\';
-            ctx.vfs.dirs.add(subDir);
-            ctx.vfs.dirs.add(subDir.replace(/\\$/, ''));
-            loadDir(fpath, subDir);
-          }
-        } catch (_) {}
+    const addFile = (rawPath, hostPath, size) => {
+      let vfsPath = String(rawPath).toLowerCase().replace(/\//g, '\\');
+      if (!/^[a-z]:/.test(vfsPath)) vfsPath = 'c:\\' + vfsPath.replace(/^\\+/, '');
+      let p = vfsPath;
+      while (true) {
+        const idx = p.lastIndexOf('\\');
+        if (idx <= 2) break;
+        p = p.slice(0, idx);
+        ctx.vfs.dirs.add(p);
+      }
+      ctx.vfs.setLazyFile(vfsPath, {
+        attrs: 0x20,
+        size,
+        load: () => new Uint8Array(fs.readFileSync(hostPath)),
+      });
+    };
+    const addFontAlias = (name, hostPath, size) => {
+      const base = String(name).replace(/^.*[\\/]/, '').toLowerCase();
+      if (/\.(ttf|ttc|fon)$/.test(base)) {
+        addFile('c:\\windows\\fonts\\' + base, hostPath, size);
       }
     };
-    loadDir(exeDir, 'c:\\');
-    // --app: mount the registry's data files at the same VFS paths the page
+
+    // An arbitrary bare --exe mounts only the executable. A registered EXE
+    // gets that app's explicit file manifest; an ad-hoc run can add one or more
+    // --vfs-include globs rooted at the EXE directory. In particular, placing
+    // an EXE directly in /private/tmp no longer indexes every unrelated file
+    // and directory below /private/tmp (nor any sibling directory above it).
+    const includedFiles = expandIncludePatterns(exeDir, VFS_INCLUDE);
+    for (const file of includedFiles) {
+      const size = fs.statSync(file.hostPath).size;
+      addFile(file.guestPath, file.hostPath, size);
+      addFontAlias(file.guestPath, file.hostPath, size);
+    }
+    // Mount a matched registry app's data files at the same VFS paths the page
     // gives them. An entry is a repo-relative URL (-> c:\basename), or
     // {url, vfsPath}, or {url, vfsPaths} when one file needs several aliases.
-    if (APP_ENTRY && APP_ENTRY.files) {
-      const addFile = (rawPath, hostPath, size) => {
-        let vfsPath = String(rawPath).toLowerCase().replace(/\//g, '\\');
-        if (!/^[a-z]:/.test(vfsPath)) vfsPath = 'c:\\' + vfsPath.replace(/^\\+/, '');
-        let p = vfsPath;
-        while (true) {
-          const idx = p.lastIndexOf('\\');
-          if (idx <= 2) break;
-          p = p.slice(0, idx);
-          ctx.vfs.dirs.add(p);
-        }
-        ctx.vfs.setLazyFile(vfsPath, {
-          attrs: 0x20,
-          size,
-          load: () => new Uint8Array(fs.readFileSync(hostPath)),
-        });
-      };
+    if (ASSET_ENTRY && ASSET_ENTRY.files) {
       const missing = [];
-      for (const item of APP_ENTRY.files) {
+      for (const item of ASSET_ENTRY.files) {
         const url = typeof item === 'string' ? item : (item && item.url);
         if (!url) continue;
         const hostPath = appAsset(url);
@@ -2746,15 +2735,13 @@ async function main() {
         // Same rule the page applies: a font the app ships is a font its
         // installer had put in the font directory, so mount it there too,
         // over the vendored substitute if one is already sitting there.
-        const base = url.replace(/^.*[\\\/]/, '').toLowerCase();
-        if (/\.(ttf|ttc|fon)$/.test(base)) {
-          addFile('c:\\windows\\fonts\\' + base, hostPath, size);
-        }
+        addFontAlias(url, hostPath, size);
       }
       if (missing.length) {
-        const msg = `--app=${APP_ID}: ${missing.length} file(s) not found: ${missing.slice(0, 5).join(', ')}` +
+        const msg = `${APP_ENTRY ? `--app=${APP_ID}` : `--exe=${EXE_PATH} (${ASSET_ENTRY_ID})`}: ` +
+          `${missing.length} file(s) not found: ${missing.slice(0, 5).join(', ')}` +
           (missing.length > 5 ? ` (+${missing.length - 5} more)` : '');
-        if (APP_ENTRY.requiredFiles) throw new Error(msg);
+        if (ASSET_ENTRY.requiredFiles) throw new Error(msg);
         console.log('[app] ' + msg);
       }
     }
@@ -2764,7 +2751,11 @@ async function main() {
       const driveRoot = `${drive}:\\`;
       ctx.vfs.dirs.add(`${drive}:`);
       ctx.vfs.dirs.add(driveRoot);
-      loadDir(exeDir, driveRoot);
+      ctx.vfs.files.set(driveRoot + exeName, { data: exeBytes, attrs: 0x21 });
+      for (const file of includedFiles) {
+        addFile(driveRoot + file.guestPath.replace(/\//g, '\\'), file.hostPath,
+          fs.statSync(file.hostPath).size);
+      }
       ctx.vfs.setDriveReadOnly(drive, true);
     }
 
@@ -2849,39 +2840,6 @@ async function main() {
       } catch (_) {}
     }
 
-    // Also load sibling directories from parent — games like RCT have the exe
-    // in a subdirectory (English/) but data in a sibling (Data/).
-    const parentDir = path.dirname(exeDir);
-    if (parentDir !== exeDir) {
-      try {
-        for (const f of fs.readdirSync(parentDir)) {
-          const fpath = path.join(parentDir, f);
-          try {
-            const stat = fs.statSync(fpath);
-            if (stat.isDirectory() && f !== '.' && f !== '..' && fpath !== exeDir) {
-              const vfsDir = 'c:\\' + f.toLowerCase() + '\\';
-              if (!ctx.vfs.dirs.has(vfsDir)) {
-                ctx.vfs.dirs.add(vfsDir);
-                ctx.vfs.dirs.add(vfsDir.replace(/\\$/, ''));
-                loadDir(fpath, vfsDir);
-              }
-            }
-          } catch (_) {}
-        }
-      } catch (_) {}
-      // Some extracted InstallShield-era games put the EXE under Program_Files
-      // but expect the sibling Database_Files/zbd directory to also be visible
-      // as a CWD-relative "zbd\" search root.
-      try {
-        const zbdDir = path.join(parentDir, 'Database_Files', 'zbd');
-        const zbdStat = fs.statSync(zbdDir);
-        if (zbdStat.isDirectory() && !ctx.vfs.dirs.has('c:\\zbd\\')) {
-          ctx.vfs.dirs.add('c:\\zbd\\');
-          ctx.vfs.dirs.add('c:\\zbd');
-          loadDir(zbdDir, 'c:\\zbd\\');
-        }
-      } catch (_) {}
-    }
   }
 
   const regs = () => {
