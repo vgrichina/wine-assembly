@@ -1290,14 +1290,15 @@
   (func $tt_rasterize_glyph (param $data i32) (param $size i32) (param $gid i32)
         (param $ppem i32) (param $bitmap i32) (param $width i32) (param $height i32)
         (param $left i32) (param $top i32) (param $scratch i32)
-        (param $scratch_size i32) (param $gray i32) (param $gray_stride i32)
-        (param $gray_max i32) (result i32)
+        (param $scratch_size i32) (param $mat i32) (param $gray i32)
+        (param $gray_stride i32) (param $gray_max i32) (result i32)
     (local $points i32) (local $edges i32) (local $crossings i32)
     (local $coverage i32) (local $edge_count i32) (local $row i32)
     (local $sub i32) (local $index i32) (local $count i32) (local $sample i32)
     (local $x0 i32) (local $y0 i32) (local $x1 i32) (local $y1 i32)
     (local $lo i32) (local $hi i32) (local $winding i32) (local $span_start i32)
     (local $slot i32) (local $value i32) (local $column i32)
+    (local $tx i32) (local $ty i32)
     (if (i32.or (i32.le_s (local.get $width) (i32.const 0))
           (i32.le_s (local.get $height) (i32.const 0)))
       (then (return (i32.const 0))))
@@ -1316,6 +1317,35 @@
       (local.get $gid) (local.get $ppem) (local.get $points)
       (global.get $TT_RASTER_POINTS) (local.get $edges)
       (global.get $TT_RASTER_EDGES)))
+    ;; MAT2 affects the glyph geometry, not just its reported box. Transform
+    ;; the already-flattened 26.6 edge list so bitmap and gray output agree
+    ;; with GGO_NATIVE and GLYPHMETRICS for affine Win98 requests.
+    (if (i32.eqz (call $tt_ggo_matrix_identity (local.get $mat)))
+      (then
+        (local.set $index (i32.const 0))
+        (block $transform_done (loop $transform
+          (br_if $transform_done
+            (i32.ge_u (local.get $index) (local.get $edge_count)))
+          (local.set $slot (i32.add (local.get $edges)
+            (i32.mul (local.get $index) (i32.const 16))))
+          (local.set $x0 (i32.load (local.get $slot)))
+          (local.set $y0 (i32.load offset=4 (local.get $slot)))
+          (local.set $x1 (i32.load offset=8 (local.get $slot)))
+          (local.set $y1 (i32.load offset=12 (local.get $slot)))
+          (local.set $tx (call $tt_ggo_transform_26_6_axis
+            (local.get $x0) (local.get $y0) (local.get $mat) (i32.const 0)))
+          (local.set $ty (call $tt_ggo_transform_26_6_axis
+            (local.get $x0) (local.get $y0) (local.get $mat) (i32.const 1)))
+          (i32.store (local.get $slot) (local.get $tx))
+          (i32.store offset=4 (local.get $slot) (local.get $ty))
+          (local.set $tx (call $tt_ggo_transform_26_6_axis
+            (local.get $x1) (local.get $y1) (local.get $mat) (i32.const 0)))
+          (local.set $ty (call $tt_ggo_transform_26_6_axis
+            (local.get $x1) (local.get $y1) (local.get $mat) (i32.const 1)))
+          (i32.store offset=8 (local.get $slot) (local.get $tx))
+          (i32.store offset=12 (local.get $slot) (local.get $ty))
+          (local.set $index (i32.add (local.get $index) (i32.const 1)))
+          (br $transform)))))
     ;; An empty glyph is a legal, blank bitmap, not a failure: the caller
     ;; still needs the cell cleared before it composites.
     (if (local.get $bitmap)
@@ -2368,7 +2398,7 @@
             (local.get $gid) (local.get $ppem)) (i32.const 64))
           (local.get $scratch)
           (call $tt_raster_scratch_bytes (global.get $TT_SCRATCH_WIDTH))
-          (i32.const 0) (i32.const 0) (i32.const 0)))
+          (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
       (then
         (call $heap_free (local.get $bitmap_guest))
         (return (local.get $entry))))
@@ -3471,6 +3501,17 @@
     (i32.load (i32.add (local.get $mat)
       (i32.shl (local.get $field) (i32.const 2)))))
 
+  (func $tt_ggo_matrix_identity (param $mat i32) (result i32)
+    (if (i32.eqz (local.get $mat)) (then (return (i32.const 1))))
+    (i32.and
+      (i32.and
+        (i32.eq (i32.load (local.get $mat)) (i32.const 0x00010000))
+        (i32.eqz (i32.load offset=4 (local.get $mat))))
+      (i32.and
+        (i32.eqz (i32.load offset=8 (local.get $mat)))
+        (i32.eq (i32.load offset=12 (local.get $mat))
+          (i32.const 0x00010000)))))
+
   (func $tt_ggo_transform_axis (param $x i32) (param $y i32) (param $mat i32)
         (param $axis i32) (result i32)
     (local $a i32) (local $b i32)
@@ -3485,6 +3526,15 @@
         (i64.mul (i64.extend_i32_s (local.get $y))
           (i64.extend_i32_s (local.get $b))))
       (i64.const 65536)))
+
+  (func $tt_ggo_transform_26_6_axis (param $x i32) (param $y i32)
+        (param $mat i32) (param $axis i32) (result i32)
+    (call $gdi_round_ratio
+      (i64.extend_i32_s (call $tt_ggo_transform_axis
+        (i32.shl (local.get $x) (i32.const 10))
+        (i32.shl (local.get $y) (i32.const 10))
+        (local.get $mat) (local.get $axis)))
+      (i64.const 1024)))
 
   (func $tt_ggo_fu_fixed (param $value i32) (param $ppem i32)
         (param $upem i32) (result i32)
@@ -3721,7 +3771,8 @@
     (local $max_x i32) (local $max_y i32) (local $advance i32)
     (local $advance_x i32) (local $advance_y i32)
     (local $width i32) (local $height i32) (local $stride i32)
-    (local $gray_max i32)
+    (local $gray_max i32) (local $bitmap_guest i32) (local $bitmap i32)
+    (local $bitmap_bytes i32) (local $pixel i32)
     (local.set $strike (call $gdi_bitmap_font_selected (local.get $hdc)))
     (if (i32.or (i32.eqz (local.get $strike))
           (i32.ne (i32.load (local.get $strike)) (i32.const 2)))
@@ -3734,12 +3785,15 @@
     ;; GGO_BEZIER is an NT-family extension. Win98 returns GDI_ERROR.
     (if (i32.eq (local.get $base) (i32.const 3))
       (then (return (i32.const -1))))
-    ;; The synthesized strike remains the canonical monochrome bitmap path.
-    (if (i32.eq (local.get $base) (i32.const 1))
+    ;; Identity monochrome output keeps using the synthesized strike's exact
+    ;; cached pixels. A transformed bitmap must use the affine edge path here.
+    (if (i32.and (i32.eq (local.get $base) (i32.const 1))
+          (call $tt_ggo_matrix_identity (local.get $mat)))
       (then (return (i32.const -2))))
     (if (i32.and
           (i32.and (i32.ne (local.get $base) (i32.const 0))
-            (i32.ne (local.get $base) (i32.const 2)))
+            (i32.and (i32.ne (local.get $base) (i32.const 1))
+              (i32.ne (local.get $base) (i32.const 2))))
           (i32.and (i32.ne (local.get $base) (i32.const 4))
             (i32.and (i32.ne (local.get $base) (i32.const 5))
               (i32.ne (local.get $base) (i32.const 6)))))
@@ -3827,22 +3881,72 @@
       (i64.extend_i32_s (local.get $advance_y)) (i64.const 65536)))
     (if (i32.eqz (local.get $base)) (then (return (i32.const 0))))
 
+    (if (i32.eq (local.get $base) (i32.const 1))
+      (then
+        (local.set $width (i32.load (local.get $metrics)))
+        (local.set $height (i32.load offset=4 (local.get $metrics)))
+        (if (i32.or (i32.gt_u (local.get $width)
+              (global.get $TT_SCRATCH_WIDTH))
+              (i32.gt_u (local.get $height) (i32.const 4096)))
+          (then (return (i32.const -1))))
+        (local.set $stride (i32.shr_u
+          (i32.and (i32.add (local.get $width) (i32.const 31)) (i32.const -32))
+          (i32.const 3)))
+        (local.set $needed (i32.mul (local.get $stride) (local.get $height)))
+        (if (i32.or (i32.eqz (local.get $buffer_size))
+              (i32.eqz (local.get $buffer)))
+          (then (return (local.get $needed))))
+        (if (i32.lt_u (local.get $buffer_size) (local.get $needed))
+          (then (return (i32.const -1))))
+        (local.set $bitmap_bytes (i32.mul
+          (i32.shr_u (i32.add (local.get $width) (i32.const 7)) (i32.const 3))
+          (local.get $height)))
+        (if (local.get $bitmap_bytes)
+          (then
+            (local.set $bitmap_guest (call $heap_alloc (local.get $bitmap_bytes)))
+            (if (i32.eqz (local.get $bitmap_guest))
+              (then (return (i32.const -1))))
+            (local.set $bitmap (call $g2w (local.get $bitmap_guest)))
+            (if (i32.eqz (call $tt_rasterize_glyph
+                  (local.get $data) (local.get $size) (local.get $gid)
+                  (local.get $ppem) (local.get $bitmap)
+                  (local.get $width) (local.get $height)
+                  (i32.mul (i32.load offset=8 (local.get $metrics)) (i32.const 64))
+                  (i32.mul (i32.load offset=12 (local.get $metrics)) (i32.const 64))
+                  (local.get $scratch)
+                  (call $tt_raster_scratch_bytes (global.get $TT_SCRATCH_WIDTH))
+                  (local.get $mat) (i32.const 0) (i32.const 0) (i32.const 0)))
+              (then
+                (call $heap_free (local.get $bitmap_guest))
+                (return (i32.const -1))))))
+        (memory.fill (local.get $buffer) (i32.const 0) (local.get $needed))
+        (local.set $y (i32.const 0))
+        (block $mono_rows_done (loop $mono_rows
+          (br_if $mono_rows_done (i32.ge_u (local.get $y) (local.get $height)))
+          (local.set $x (i32.const 0))
+          (block $mono_row_done (loop $mono_row
+            (br_if $mono_row_done (i32.ge_u (local.get $x) (local.get $width)))
+            (local.set $pixel (call $tt_bitmap_pixel (local.get $bitmap)
+              (local.get $height) (local.get $x) (local.get $y)))
+            (if (local.get $pixel)
+              (then
+                (local.set $index (i32.add (local.get $buffer)
+                  (i32.add (i32.mul (local.get $y) (local.get $stride))
+                    (i32.shr_u (local.get $x) (i32.const 3)))))
+                (i32.store8 (local.get $index)
+                  (i32.or (i32.load8_u (local.get $index))
+                    (i32.shr_u (i32.const 0x80)
+                      (i32.and (local.get $x) (i32.const 7)))))))
+            (local.set $x (i32.add (local.get $x) (i32.const 1)))
+            (br $mono_row)))
+          (local.set $y (i32.add (local.get $y) (i32.const 1)))
+          (br $mono_rows)))
+        (if (local.get $bitmap_guest)
+          (then (call $heap_free (local.get $bitmap_guest))))
+        (return (local.get $needed))))
+
     (if (i32.ge_u (local.get $base) (i32.const 4))
       (then
-        ;; The current coverage rasterizer consumes the untransformed outline.
-        ;; Keep transformed gray requests fail-fast instead of returning pixels
-        ;; that disagree with the transformed GLYPHMETRICS.
-        (if (local.get $mat)
-          (then
-            (if (i32.or
-                  (i32.ne (i32.load (local.get $mat)) (i32.const 0x00010000))
-                  (i32.or
-                    (i32.ne (i32.load offset=4 (local.get $mat)) (i32.const 0))
-                    (i32.or
-                      (i32.ne (i32.load offset=8 (local.get $mat)) (i32.const 0))
-                      (i32.ne (i32.load offset=12 (local.get $mat))
-                        (i32.const 0x00010000)))))
-              (then (return (i32.const -1))))))
         (local.set $width (i32.load (local.get $metrics)))
         (local.set $height (i32.load offset=4 (local.get $metrics)))
         (if (i32.or (i32.gt_u (local.get $width)
@@ -3869,7 +3973,8 @@
               (i32.mul (i32.load offset=12 (local.get $metrics)) (i32.const 64))
               (local.get $scratch)
               (call $tt_raster_scratch_bytes (global.get $TT_SCRATCH_WIDTH))
-              (local.get $buffer) (local.get $stride) (local.get $gray_max)))
+              (local.get $mat) (local.get $buffer)
+              (local.get $stride) (local.get $gray_max)))
           (then (return (i32.const -1))))
         (return (local.get $needed))))
 
@@ -4174,7 +4279,7 @@
     (call $tt_rasterize_glyph (local.get 0) (local.get 1) (local.get 2)
       (local.get 3) (local.get 4) (local.get 5) (local.get 6) (local.get 7)
       (local.get 8) (local.get 9) (local.get 10)
-      (i32.const 0) (i32.const 0) (i32.const 0)))
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
 
   (func (export "test_tt_bitmap_pixel") (param i32) (param i32) (param i32)
         (param i32) (result i32)

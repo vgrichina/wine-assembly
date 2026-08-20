@@ -13,8 +13,8 @@ surface without a Canvas glyph or destination readback.
 The checked-in application corpus now has complete GDI dispatch coverage:
 239 distinct imports from 313 PE files are public and WAT-dispatchable, with
 no missing handlers or `crash_unimplemented` entries. Remaining fidelity work
-is DBCS/complex shaping, transformed bitmap/gray glyph rasterization, remaining
-enhanced and classic metafile record families, and printer integration. Real
+is DBCS/complex shaping, remaining enhanced and classic metafile record
+families, and printer integration. Real
 Win98 rejects `GGO_BEZIER`; it is not a compatibility target. The checked-in
 PE corpus has a machine-checked public API inventory in
 `gdi-public-api-status.json`; its exact sorted import-set hash
@@ -658,9 +658,9 @@ payloads from selected FNT strikes without binding Canvas. Scalable faces also
 emit transformed quadratic `GGO_NATIVE` contours and deterministic byte-per-
 pixel `GGO_GRAY2_BITMAP`, `GGO_GRAY4_BITMAP`, and `GGO_GRAY8_BITMAP` coverage.
 The gray maxima 4/16/64, DWORD row padding, short-buffer behavior, and
-`GGO_UNHINTED` acceptance are tested. Real Win98 returns `GDI_ERROR` for
-`GGO_BEZIER`, including on Arial, so the emulator does too. Transformed
-monochrome/gray raster output remains fidelity work.
+`GGO_UNHINTED` acceptance are tested. Affine MAT2 transforms apply to native,
+monochrome, and gray output. Real Win98 returns `GDI_ERROR` for `GGO_BEZIER`,
+including on Arial, so the emulator does too.
 `GetFontData` exports bounded selected-font data; unsupported provider/table
 combinations retain the documented `GDI_ERROR` result.
 

@@ -331,6 +331,23 @@ const REPO = path.join(__dirname, '..');
     Buffer.from(mem().slice(wa(shearBuffer), wa(shearBuffer) + shearSize)),
     nativeBytes, 'a non-identity MAT2 must transform the native outline');
 
+  // Real Win98 applies the same MAT2 to its monochrome bitmap. The scalable
+  // provider transposes the canonical column-major strike raster into the
+  // public top-down, DWORD-padded GGO_BITMAP layout.
+  const shearMonoSize = wat.test_call_GetGlyphOutlineA(
+    hdc, 'g'.charCodeAt(0), 1, glyphMetrics, 0, 0, shear) >>> 0;
+  const shearMonoWidth = wat.guest_read32(glyphMetrics) >>> 0;
+  const shearMonoHeight = wat.guest_read32(glyphMetrics + 4) >>> 0;
+  assert.strictEqual(shearMonoSize,
+    (((shearMonoWidth + 31) & ~31) >>> 3) * shearMonoHeight,
+    'transformed GGO_BITMAP must use DWORD-padded rows');
+  const shearMono = allocZero(shearMonoSize);
+  assert.strictEqual(wat.test_call_GetGlyphOutlineA(
+    hdc, 'g'.charCodeAt(0), 1, glyphMetrics,
+    shearMonoSize, shearMono, shear) >>> 0, shearMonoSize);
+  assert.ok(mem().slice(wa(shearMono), wa(shearMono) + shearMonoSize)
+    .some(value => value !== 0), 'transformed GGO_BITMAP must contain glyph ink');
+
   // Although GGO_BEZIER is present in the Win32 headers, real Windows 98
   // returns GDI_ERROR for Arial. It is an NT-family extension, not a Win98
   // fidelity target.
@@ -342,6 +359,7 @@ const REPO = path.join(__dirname, '..');
   // maxima are 4, 16 and 64. Each scanline is padded to a DWORD boundary.
   // Exercise the public API so this also proves the scalable face does not
   // accidentally fall through to the monochrome synthesized FNT strike.
+  let identityGray8 = null;
   for (const [format, max] of [[4, 4], [5, 16], [6, 64]]) {
     const graySize = wat.test_call_GetGlyphOutlineA(
       hdc, 'g'.charCodeAt(0), format, glyphMetrics, 0, 0, identity) >>> 0;
@@ -384,7 +402,22 @@ const REPO = path.join(__dirname, '..');
       Buffer.from(mem().slice(wa(unhinted), wa(unhinted) + graySize)),
       Buffer.from(pixels),
       'the unhinted flag matches Win98 when no bytecode hinter is active');
+    if (format === 6) identityGray8 = Buffer.from(pixels);
   }
+
+  const shearGraySize = wat.test_call_GetGlyphOutlineA(
+    hdc, 'g'.charCodeAt(0), 6, glyphMetrics, 0, 0, shear) >>> 0;
+  const shearGray = allocZero(shearGraySize);
+  assert.strictEqual(wat.test_call_GetGlyphOutlineA(
+    hdc, 'g'.charCodeAt(0), 6, glyphMetrics,
+    shearGraySize, shearGray, shear) >>> 0, shearGraySize,
+  'MAT2 must transform Win98 gray coverage as well as its metrics');
+  const shearGrayBytes = Buffer.from(
+    mem().slice(wa(shearGray), wa(shearGray) + shearGraySize));
+  assert.ok(shearGrayBytes.some(value => value > 0 && value < 64));
+  assert.ok(shearGrayBytes.every(value => value <= 64));
+  assert.notDeepStrictEqual(shearGrayBytes, identityGray8,
+    'a non-identity MAT2 must change gray coverage');
 
   console.log(
     `PASS  scalable text: Arial draws ${ink} pixels of "${text}" in WAT across ` +

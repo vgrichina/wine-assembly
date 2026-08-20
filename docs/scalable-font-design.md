@@ -19,8 +19,8 @@ for Arial, so implementing the later NT extension would reduce compatibility.
 `GetCharacterPlacement` consumes legacy `kern` format-0 pairs only under
 `GCP_USEKERNING`, adjusting the left glyph advance as the capture does. The
 deployed CP1252 subsets preserve the classic table even when their full source
-font also has GPOS. DBCS conversion, contextual shaping/ligation, transformed
-bitmap/gray output, and TrueType bytecode hinting remain explicit gaps.
+font also has GPOS. DBCS conversion, contextual shaping/ligation, and TrueType
+bytecode hinting remain explicit gaps.
 
 A face registry and glyph cache sit on top: `$tt_face_open` loads a font from
 the same virtual filesystem the `.FON` strikes come from, keyed by path hash
@@ -625,8 +625,8 @@ shrinks monotonically.
    intentional `GDI_ERROR`, matching Win98 rather than NT. `GetCharABCWidths`
    uses `hmtx` bearings plus glyph bounds. `GetCharacterPlacement` now applies
    legacy `kern` format-0 pairs for `GCP_USEKERNING`, and deployed subsets are
-   tested to preserve them. Still to do: transformed bitmap/gray raster output,
-   DBCS conversion, contextual shaping/ligation, and any separately demanded
+   tested to preserve them. Still to do: DBCS conversion, contextual
+   shaping/ligation, and any separately demanded
    public `GetKerningPairsA/W` import. `kern` remains the source rather than
    GPOS on purpose: Win98 GDI had no OpenType layout engine.
 
