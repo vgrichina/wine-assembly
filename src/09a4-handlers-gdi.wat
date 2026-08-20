@@ -482,6 +482,12 @@
   (func $handle_GetTextMetricsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $w i32) (local $packed i32) (local $h i32) (local $aveW i32)
     (local.set $w (call $g2w (local.get $arg1)))
+    (if (call $gdi_bitmap_text_metrics_write
+          (local.get $arg0) (local.get $w) (i32.const 0))
+      (then
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
     (local.set $packed (call $host_get_text_metrics (local.get $arg0))) ;; hdc
     (local.set $h (i32.and (local.get $packed) (i32.const 0xFFFF)))
     (local.set $aveW (i32.shr_u (local.get $packed) (i32.const 16)))
@@ -1616,6 +1622,12 @@
   ;; 314: GetTextMetricsW — zero-fill, return 1
   (func $handle_GetTextMetricsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $packed i32) (local $h i32) (local $aveW i32)
+    (if (call $gdi_bitmap_text_metrics_write
+          (local.get $arg0) (call $g2w (local.get $arg1)) (i32.const 1))
+      (then
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
     (local.set $packed (call $host_get_text_metrics (local.get $arg0)))
     (local.set $h (i32.and (local.get $packed) (i32.const 0xFFFF)))
     (local.set $aveW (i32.shr_u (local.get $packed) (i32.const 16)))

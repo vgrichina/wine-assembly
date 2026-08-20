@@ -78,6 +78,14 @@
       "waitMs": 5000,
       "files": []
     },
+    "ms-sans-size-sweep": {
+      "title": "Windows 98 MS Sans Serif negative-height sweep",
+      "probeSource": "tools/v86-reference/probes/ms-sans-size-sweep.c",
+      "probeName": "MSSWEEP.EXE",
+      "launch": "D:\\MSSWEEP.EXE",
+      "waitMs": 5000,
+      "files": []
+    },
     "font-render-substitutes": {
       "title": "Open substitute fonts rendered by Windows 98 GDI",
       "probeSource": "tools/v86-reference/probes/font-render-matrix.c",
