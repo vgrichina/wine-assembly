@@ -20374,5 +20374,68 @@
       }
     ],
     "ret": "BOOL"
+  },
+  {
+    "id": 2468,
+    "name": "CloseEnhMetaFile",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 768795607
+  },
+  {
+    "id": 2469,
+    "name": "ColorMatchToTarget",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3979646369
+  },
+  {
+    "id": 2470,
+    "name": "CreateEllipticRgnIndirect",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2295203464
+  },
+  {
+    "id": 2471,
+    "name": "CreateEnhMetaFileA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3772733284
+  },
+  {
+    "id": 2472,
+    "name": "EqualRgn",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3154701738
+  },
+  {
+    "id": 2473,
+    "name": "ExtCreateRegion",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1379260324
+  },
+  {
+    "id": 2474,
+    "name": "GetCharacterPlacementA",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 788745880
+  },
+  {
+    "id": 2475,
+    "name": "SetICMMode",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 517416389
+  },
+  {
+    "id": 2476,
+    "name": "SetICMProfileA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 5371878
   }
 ]

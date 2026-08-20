@@ -8720,7 +8720,7 @@ HookEx — no next hook in chain, return 0
         (local.set $color (i32.load offset=4 (local.get $brush)))
         (local.set $flags (i32.or
           (select (i32.const 1) (i32.const 0) (i32.eq (local.get $style) (i32.const 5)))
-          (i32.and (local.get $arg0) (i32.const 0x000F0F00))))
+          (i32.and (local.get $arg0) (i32.const 0x000FFF00))))
         (global.set $eax (call $gdi_object_alloc (i32.const 1)
           (local.get $style) (local.get $arg1) (local.get $color) (local.get $flags)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))

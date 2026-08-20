@@ -10,12 +10,12 @@ the scalable-font Canvas fallback. Installed Win16/Win9x FNT bitmap strikes
 are parsed, selected, measured, and rasterized directly into the canonical WAT
 surface without a Canvas glyph or destination readback.
 
-The public compatibility surface is not complete yet. Current high-priority
-gaps are native/Bezier scalable glyph outlines, adaptive path curves and
-geometric cap/join fidelity, remaining enhanced and classic metafile record
-families, and printer integration.
-The
-checked-in PE corpus has a machine-checked public API inventory in
+The checked-in application corpus now has complete GDI dispatch coverage:
+239 distinct imports from 313 PE files are public and WAT-dispatchable, with
+no missing handlers or `crash_unimplemented` entries. Remaining fidelity work
+is native/Bezier scalable glyph outlines, complex shaping, remaining enhanced
+and classic metafile record families, and printer integration. The checked-in
+PE corpus has a machine-checked public API inventory in
 `gdi-public-api-status.json`; its exact sorted import-set hash
 prevents new application dependencies from silently expanding the
 compatibility surface. All explicit gaps in that inventory must be closed
@@ -67,8 +67,9 @@ split at quadrant boundaries into bounded cubic segments. Arc direction,
 are WAT-owned. `AngleArc` preserves its connector, current-position update,
 signed sweep, and multiple revolutions; `Chord` and `Pie` close their arc with
 the secant or center radials and share the same path fill/stroke consumers in
-both direct and bracketed modes. `FlattenPath` converts cubic controls into a
-bounded 32-segment device-space line stream. Both straight and cubic figures
+both direct and bracketed modes. `FlattenPath` converts cubic controls with
+bounded adaptive de Casteljau subdivision and a half-pixel device-space
+tolerance. Both straight and cubic figures
 feed `PathToRegion` and `SelectClipPath` through canonical WAT regions, and
 `PathToRegion` consumes the closed path as Win32 specifies. `FillPath`,
 `StrokePath`, and `StrokeAndFillPath` use the selected WAT brush/pen and
@@ -80,12 +81,13 @@ bitmap pixel as a closed device-space figure. Scalable `TextOut`,
 `ExtTextOut`, and `DrawText` obtain only bounded one-bit glyph masks from the
 Canvas font provider; WAT converts those masks into retained path geometry and
 owns explicit `Dx`/`ETO_PDY` advances, layout, and `TA_UPDATECP`. `WidenPath`
-flattens curves, derives the exact device-space
-coverage of the current integer square-stamp wide-pen rasterizer, and replaces
-the retained path atomically with non-overlapping band rectangles. It does not
-use Canvas geometry or destination pixel readback. Adaptive curve subdivision
-and distinct geometric cap/join styles remain explicit path fidelity work;
-none of the implemented shape or text-path APIs fall back to Canvas geometry.
+flattens curves, derives analytic pixel-center coverage for geometric pen
+bodies, flat/round/square caps, and round/bevel/miter outer joins, then replaces
+the retained path atomically with non-overlapping band rectangles. Cosmetic
+wide-pen compatibility retains its captured integer coverage. Direct geometric
+`LineTo` uses the same analytic segment/cap rule and writes each destination
+pixel once for ROP2 safety. No implemented shape or text-path API falls back
+to Canvas geometry or destination pixel readback.
 
 Printer DCs no longer alias the screen surface. `CreateDCA/W` and the common
 print dialog allocate an independent 2400x3150 32-bpp WAT bitmap for the
@@ -683,6 +685,8 @@ silently substituted.
 `GGO_BITMAP` payloads from selected FNT strikes without binding Canvas.
 Scalable faces retain the metrics-only Canvas fallback; affine transforms and
 native/Bezier/gray outline formats remain explicit future font-provider work.
+`GetFontData` exports bounded selected-font data; unsupported provider/table
+combinations retain the documented `GDI_ERROR` result.
 
 Character-width queries share one font-provider boundary: selected FNT strikes
 produce their advances in WAT, while scalable faces may call Canvas once per
@@ -756,9 +760,9 @@ license text/SPDX identifier, checksum, and generation recipe recorded under
   placement, selected border, and masks of all option glyphs.
 - Add a diagonal-line assertion that permits only foreground and background
   colors. It must fail on intermediate antialiasing colors.
-- Extend the checked-in native Win98 wide-line fixtures from axis-aligned
-  widths 2..5 to diagonal coverage, larger widths, geometric caps/joins, and
-  representative ROPs; keep the probe source reusable in the repository.
+- Extend the checked-in native Win98 wide-line fixtures beyond the current
+  axis and geometric-cap cases with multi-segment join and representative ROP
+  captures; keep the probe source reusable in the repository.
 - Capture reference fixtures for rectangles, ellipses, curves, and polygons in
   Node and the browser harness.
 - Preserve the existing all-tools, file round-trip, dirty-New, large-scroll,

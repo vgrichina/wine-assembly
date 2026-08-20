@@ -68,6 +68,7 @@ UNIT=(
   test/test-wat-gdi-region.js
   test/test-wat-gdi-select-clip-path.js
   test/test-wat-gdi-path.js
+  test/test-gdi-p0-p1.js
   test/test-wat-gdi-line.js
   test/test-wat-gdi-raster.js
   test/test-wat-gdi-raster-handlers.js

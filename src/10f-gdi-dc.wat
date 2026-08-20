@@ -326,6 +326,7 @@
   (func $gdi_dc_meta_release (param $hdc i32)
     (local $i i32) (local $p i32) (local $meta_g i32) (local $meta i32)
     (local $node_g i32) (local $next_g i32) (local $recording_bitmap i32)
+    (local $profile_g i32)
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $GDI_DC_SAVE_COUNT)))
       (local.set $p (i32.add (global.get $GDI_DC_SAVE_TABLE)
@@ -341,6 +342,7 @@
         (local.set $meta (call $g2w (local.get $meta_g)))
         (if (i32.eq (i32.load offset=20 (local.get $meta)) (i32.const 0x4D464443))
           (then (local.set $recording_bitmap (i32.load offset=24 (local.get $meta)))))
+        (local.set $profile_g (i32.load offset=32 (local.get $meta)))
         (local.set $node_g (i32.load offset=4 (local.get $meta)))
         (block $freed (loop $free
           (br_if $freed (i32.eqz (local.get $node_g)))
@@ -348,6 +350,7 @@
           (call $gdi_dc_save_node_free (local.get $node_g))
           (local.set $node_g (local.get $next_g))
           (br $free)))
+        (if (local.get $profile_g) (then (call $heap_free (local.get $profile_g))))
         (call $heap_free (local.get $meta_g))))
     (i64.store (local.get $p) (i64.const 0))
     (if (local.get $recording_bitmap)
