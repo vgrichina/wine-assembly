@@ -102,12 +102,37 @@ function collectTextFiles() {
 // every file it decided to ship" that can notice a file it never considered.
 // Derived, the two cannot drift: adding an app or a DLL to the registry ships
 // its assets.
+// Needing a file and being allowed to publish it are different questions, and
+// deriving the asset set from the registries answers only the first. These are
+// the ones test/binaries/dlls/SOURCES.md says must not go on a public site:
+// `Unverified` in its inventory, "local-only" Win98 SE OEM extractions, or an
+// explicit "do not include this DLL in a public deployment". Redistribution
+// terms are the gate, not whether an app would run better with them.
+//
+// Moving an entry out of here means updating SOURCES.md first with a
+// reproducible source and the terms that permit redistribution.
+const NOT_REDISTRIBUTABLE = new Set([
+  'binaries/dlls/comctl32.dll',  // IE6 SP1; terms verification pending
+  'binaries/dlls/mfc42.dll',     // Unverified
+  'binaries/dlls/mfc42u.dll',    // Unverified
+  'binaries/dlls/msvcp60.dll',   // Unverified
+  'binaries/dlls/msvcrt.dll',    // Unverified
+  'binaries/dlls/mfc30.dll',     // Win98 SE OEM, local-only
+  'binaries/dlls/msvcrt20.dll',  // Win98 SE OEM, local-only
+  'binaries/dlls/oleaut32.dll',  // IE6 SP1 OAINST.CAB; reproduction pending
+]);
+
 function desktopAssetPaths() {
   const { APPS, DESKTOP_APPS, LOCAL_CANDIDATE_APPS, DEBUG_ONLY_APPS, appFileUrl } =
     require(path.join(ROOT, 'lib', 'apps.js'));
   const { DLL_PATHS } = require(path.join(ROOT, 'lib', 'dll-registry.js'));
   const out = new Set();
-  const add = p => { if (p && p.startsWith('binaries/')) out.add(p); };
+  const add = p => {
+    if (!p || !p.startsWith('binaries/')) return;
+    if (NOT_REDISTRIBUTABLE.has(p)) { blocked.add(p); return; }
+    out.add(p);
+  };
+  const blocked = new Set();
 
   // index.html offers exactly these three lists and nothing else, so an APPS
   // entry no icon and no selector row can reach is not a live-site asset.
@@ -124,6 +149,8 @@ function desktopAssetPaths() {
   }
   // Any app can LoadLibrary any of these at runtime, so they all ship.
   for (const p of Object.values(DLL_PATHS)) add(p);
+  for (const p of [...blocked].sort())
+    console.log('  HELD BACK (redistribution terms): ' + p);
   return out;
 }
 
