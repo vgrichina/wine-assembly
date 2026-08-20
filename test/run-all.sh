@@ -231,6 +231,7 @@ E2E=(
   test/test-wordpad-font-size-list.js
   test/test-fontview.js
   test/test-mspaint-web.js
+  test/test-mspaint-berrry-video.js
   test/test-qblackjack-web.js
   test/test-sound-recorder-audio.js
   test/test-volume-control-audio.js

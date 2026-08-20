@@ -17,6 +17,7 @@ const { decodeMfcCString, g2w: translateGuest } = require('../lib/mem-utils');
 const { formatCall: fmtApiCall, formatRet: fmtApiRet, formatOutParams: fmtApiOutParams, walkFrames } = require('../lib/api-format');
 const { fontMounts, BUNDLED_BITMAP_FONTS } = require('../lib/font-substitutions');
 const { APPS } = require('../lib/apps');
+const { CliVideoRecorder } = require('../lib/cli-recorder');
 let PNG;
 try { ({ PNG } = require('pngjs')); } catch (_) {}
 let createCanvas, Win98Renderer;
@@ -235,6 +236,9 @@ const appAsset = p => (path.isAbsolute(p) ? p : path.join(ROOT, p));
 const EXE_PATH = getArg('exe', APP_ENTRY ? appAsset(APP_ENTRY.exe) : 'test/binaries/notepad.exe');
 const WASM_PATH = getArg('wasm', path.join(ROOT, 'build', 'wine-assembly.wasm')); // --wasm=FILE: isolated prebuilt used with --no-build
 const PNG_OUT = getArg('png', null);     // --png=out.png: render to PNG via node-canvas
+const VIDEO_OUT = getArg('video', null); // --video=out.webm: record deterministic renderer frames through ffmpeg
+const VIDEO_FPS = parseFloat(getArg('video-fps', '30')); // --video-fps=N: playback rate; one frame is captured per batch
+const FFMPEG_PATH = getArg('ffmpeg', 'ffmpeg'); // --ffmpeg=FILE: ffmpeg executable used by --video
 const INPUT_SPEC = getArg('input', null); // --input=batch:msg:wParam[:lParam],...  e.g. --input=50:0x111:11
 const SEED_WINDOW = getArg('seed-window', null); // --seed-window=TITLE[|TITLE...]: add foreign top-level windows for shell tests
 const EXTRA_ARGS = getArg('args', (APP_ENTRY && APP_ENTRY.args) || null); // --args="-quick -fullscreen": extra cmdline args appended after exe name
@@ -1055,6 +1059,15 @@ async function main() {
     const [screenW, screenH] = screenArg ? screenArg.split('=')[1].split('x').map(Number) : [640, 480];
     const canvas = createCanvas(screenW, screenH);
     renderer = new Win98Renderer(canvas);
+  }
+  let videoRecorder = null;
+  if (VIDEO_OUT) {
+    if (!renderer) throw new Error('--video requires the CLI renderer (remove --no-renderer)');
+    videoRecorder = new CliVideoRecorder(renderer.canvas, {
+      path: VIDEO_OUT,
+      fps: VIDEO_FPS,
+      ffmpeg: FFMPEG_PATH,
+    });
   }
 
   // String APIs where we want to log content
@@ -5834,6 +5847,7 @@ async function main() {
         && (REPAINT_EVERY === 1 || batch % REPAINT_EVERY === 0)) {
       renderer.flushRepaint();
     }
+    if (videoRecorder) await videoRecorder.capture(renderer.canvas);
     if (TRACE_BATCH_TIMING) {
       const afterPaintMs = Date.now();
       console.log(`[batch-timing] batch=${batch} run=${afterRunMs - batchStartMs}ms paint=${afterPaintMs - afterRunMs}ms eip=${hex(instance.exports.get_eip())}`);
@@ -6269,6 +6283,12 @@ if (VERBOSE) {
     fs.writeSync(fd, pcm);
     fs.closeSync(fd);
     console.log(`[wav] wrote ${ctx._audioOutPath}: ${fmt.rate}Hz ${fmt.ch}ch ${fmt.bits}bit ${dataLen} B PCM (+44 B header)`);
+  }
+
+  if (videoRecorder) {
+    const video = await videoRecorder.finish();
+    console.log(`[video] wrote ${video.path}: ${video.frames} frames, ` +
+      `${video.width}x${video.height} at ${video.fps}fps (${video.duration.toFixed(2)}s)`);
   }
 
   console.log(`\nStats: ${apiCount} API calls, ${MAX_BATCHES} batches`);
