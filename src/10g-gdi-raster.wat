@@ -2430,13 +2430,18 @@
     (local.set $pen_width (i32.load offset=28 (local.get $desc)))
     ;; Non-idempotent ROP2 modes are safe for the captured axis-aligned
     ;; width-2..5 region because that path writes each covered pixel once.
+    ;; A solid wide pen is safe at any angle too: the stamp walk below skips
+    ;; the pixels the previous stamp already covered, so each covered pixel
+    ;; takes the Boolean operation exactly once. Patterned pens keep the old
+    ;; restriction because a dash gap breaks that previous-stamp invariant.
     (if (i32.and (i32.gt_u (local.get $pen_width) (i32.const 1))
           (i32.and (i32.ne (call $gdi_dc_get_rop2 (local.get $hdc)) (i32.const 13))
-            (i32.or
-              (i32.or (i32.lt_u (local.get $pen_width) (i32.const 2))
-                (i32.gt_u (local.get $pen_width) (i32.const 5)))
-              (i32.and (i32.ne (local.get $x0) (local.get $x1))
-                (i32.ne (local.get $y0) (local.get $y1))))))
+            (i32.and (i32.ne (i32.load offset=64 (local.get $desc)) (i32.const 0))
+              (i32.or
+                (i32.or (i32.lt_u (local.get $pen_width) (i32.const 2))
+                  (i32.gt_u (local.get $pen_width) (i32.const 5)))
+                (i32.and (i32.ne (local.get $x0) (local.get $x1))
+                  (i32.ne (local.get $y0) (local.get $y1)))))))
       (then (return (i32.const 0))))
     (if (i64.gt_u (i64.mul (i64.extend_i32_u (local.get $span))
           (i64.mul (i64.extend_i32_u (local.get $pen_width))
@@ -2457,6 +2462,7 @@
     (local $pen_width i32) (local $stamp_x i32) (local $stamp_y i32)
     (local $stamp_left i32) (local $stamp_top i32) (local $pixel_x i32) (local $pixel_y i32)
     (local $pen_style i32)
+    (local $dedupe i32) (local $has_prev i32) (local $prev_left i32) (local $prev_top i32)
     (local.set $desc (global.get $GDI_LINE_DESC))
     (if (i32.eqz (call $gdi_surface_descriptor (local.get $hdc) (local.get $desc)))
       (then (return (i32.const 0))))
@@ -2483,8 +2489,15 @@
     ;; idempotent. Other ROP2 modes need a coverage mask before wide strokes
     ;; can safely avoid applying the Boolean operation twice.
     (if (i32.and (i32.gt_u (local.get $pen_width) (i32.const 1))
-          (i32.ne (local.get $rop2) (i32.const 13)))
+          (i32.and (i32.ne (local.get $rop2) (i32.const 13))
+            (i32.ne (local.get $pen_style) (i32.const 0))))
       (then (return (i32.const 0))))
+    ;; Consecutive stamp centres differ by at most one pixel per axis and the
+    ;; walk is monotone, so every pixel of the current stamp that the previous
+    ;; stamp already covered was covered by that stamp and no earlier one.
+    ;; Skipping exactly those keeps a non-idempotent ROP2 applied once.
+    (local.set $dedupe (i32.and (i32.gt_u (local.get $pen_width) (i32.const 1))
+      (i32.ne (local.get $rop2) (i32.const 13))))
     (if (i32.ge_s (local.get $x1) (local.get $x0))
       (then (local.set $dx (i32.sub (local.get $x1) (local.get $x0))) (local.set $sx (i32.const 1)))
       (else (local.set $dx (i32.sub (local.get $x0) (local.get $x1))) (local.set $sx (i32.const -1))))
@@ -2526,8 +2539,17 @@
             (block $stamp_cols_done (loop $stamp_cols
               (br_if $stamp_cols_done (i32.ge_u (local.get $stamp_x) (local.get $pen_width)))
               (local.set $pixel_x (i32.add (local.get $stamp_left) (local.get $stamp_x)))
-              (if (call $gdi_line_put_pixel (local.get $hdc) (local.get $desc)
-                    (local.get $pixel_x) (local.get $pixel_y) (local.get $rop2))
+              (if (i32.and
+                    (i32.eqz (i32.and (i32.and (local.get $dedupe) (local.get $has_prev))
+                      (i32.and
+                        (i32.and (i32.ge_s (local.get $pixel_x) (local.get $prev_left))
+                          (i32.lt_s (local.get $pixel_x)
+                            (i32.add (local.get $prev_left) (local.get $pen_width))))
+                        (i32.and (i32.ge_s (local.get $pixel_y) (local.get $prev_top))
+                          (i32.lt_s (local.get $pixel_y)
+                            (i32.add (local.get $prev_top) (local.get $pen_width)))))))
+                    (call $gdi_line_put_pixel (local.get $hdc) (local.get $desc)
+                      (local.get $pixel_x) (local.get $pixel_y) (local.get $rop2)))
                 (then
                   (local.set $wrote (i32.const 1))
                   (if (i32.lt_s (local.get $pixel_x) (local.get $min_x))
@@ -2541,7 +2563,10 @@
               (local.set $stamp_x (i32.add (local.get $stamp_x) (i32.const 1)))
               (br $stamp_cols)))
             (local.set $stamp_y (i32.add (local.get $stamp_y) (i32.const 1)))
-            (br $stamp_rows)))))
+            (br $stamp_rows)))
+          (local.set $prev_left (local.get $stamp_left))
+          (local.set $prev_top (local.get $stamp_top))
+          (local.set $has_prev (i32.const 1))))
       (global.set $gdi_line_style_phase
         (i32.add (global.get $gdi_line_style_phase) (i32.const 1)))
       (local.set $e2 (i32.shl (local.get $err) (i32.const 1)))
