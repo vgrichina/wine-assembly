@@ -97,6 +97,7 @@ UNIT=(
   test/test-font-subsets.js
   test/test-wat-truetype-substitution.js
   test/test-wat-gdi-scalable-text.js
+  test/test-win98-gdi-font-outline-reference.js
   test/test-wat-text-draw-extent.js
   test/test-wat-font-resource.js
   test/test-wat-gdi-public-metafile.js
