@@ -15,6 +15,8 @@ const WIDE_LINE_FIXTURES = JSON.parse(fs.readFileSync(
   path.join(__dirname, 'fixtures', 'gdi-wide-line-pixels.json'), 'utf8'));
 const ROP2_POLYLINE_FIXTURES = JSON.parse(fs.readFileSync(
   path.join(__dirname, 'fixtures', 'gdi-rop2-polyline-pixels.json'), 'utf8'));
+const WIDE_GRID_SUMMARY = JSON.parse(fs.readFileSync(
+  path.join(__dirname, 'fixtures', 'gdi-wide-line-grid-summary.json'), 'utf8'));
 
 async function main() {
   const wasmBytes = await compileWat(file => fs.promises.readFile(path.join(SRC, file), 'utf8'));
@@ -90,16 +92,66 @@ async function main() {
     while (x0 !== x1 || y0 !== y1) {
       points.push(`${x0},${y0}`);
       const e2 = err * 2;
-      if (e2 >= dy) {
+      if (e2 > dy || (e2 === dy && sy < 0)) {
         err += dy;
         x0 += sx;
       }
-      if (e2 <= dx) {
+      if (e2 < dx || (e2 === dx && sy < 0)) {
         err += dx;
         y0 += sy;
       }
     }
     return points;
+  }
+
+  function win98WideEdgeBoundary(base, dx, dy, k, reversed) {
+    if (k <= 0) return base;
+    const absDx = Math.abs(dx);
+    const sign = dx < 0 ? -1 : 1;
+    const offset = absDx > dy
+      ? Math.floor((absDx * k + Math.floor((absDx - 1) / 2)) / dy)
+      : Math.trunc((Math.floor(dy / 2) - reversed + absDx * k) / dy);
+    return base + sign * offset;
+  }
+
+  function referenceWin98WideLine(x0, y0, x1, y1, width) {
+    const pixels = new Set();
+    const half = width >> 1;
+    const far = width - half;
+    const mark = (left, top, right, bottom) => {
+      for (let y = top; y < bottom; y++) {
+        for (let x = left; x < right; x++) pixels.add(`${x},${y}`);
+      }
+    };
+    if (x0 === x1 || y0 === y1) {
+      mark(Math.min(x0, x1) - half, Math.min(y0, y1) - half,
+        Math.max(x0, x1) + far, Math.max(y0, y1) + far);
+      return pixels;
+    }
+    let px;
+    let py;
+    let qx;
+    let qy;
+    if (x0 < x1) [px, py, qx, qy] = [x0, y0, x1, y1];
+    else [px, py, qx, qy] = [x1, y1, x0, y0];
+    if (py < qy) {
+      for (let y = py - half; y < qy + far; y++) {
+        const left = y < py + far ? px - half : win98WideEdgeBoundary(
+          px - half, qx - px, qy - py, y - (py + far), 1);
+        const right = y < qy - half ? win98WideEdgeBoundary(
+          px + far, qx - px, qy - py, y - (py - half), 0) : qx + far;
+        mark(left, y, right, y + 1);
+      }
+    } else {
+      for (let y = qy - half; y < py + far; y++) {
+        const left = y < py - half ? win98WideEdgeBoundary(
+          qx - half, px - qx, py - qy, y - (qy - half), 1) : px - half;
+        const right = y < qy + far ? qx + far : win98WideEdgeBoundary(
+          qx + far, px - qx, py - qy, y - (qy + far), 0);
+        mark(left, y, right, y + 1);
+      }
+    }
+    return pixels;
   }
 
   function pointsBuffer(points) {
@@ -186,6 +238,41 @@ async function main() {
         for (let x = 0; x < dib.width; x++) {
           assert.strictEqual(pixel(dib, x, y), expected.has(`${x},${y}`) ? 0xFFFFFF : 0,
             `case ${x0},${y0}->${x1},${y1}: unexpected pixel at ${x},${y}`);
+        }
+      }
+    }
+  });
+
+  check('native Win98 half-step ties follow vertical direction', () => {
+    const nativeCases = [
+      [[12, 12, 14, 13], ['12,12', '13,12']],
+      [[12, 12, 10, 13], ['12,12', '11,12']],
+      [[12, 12, 13, 14], ['12,12', '12,13']],
+      [[12, 12, 11, 14], ['12,12', '12,13']],
+      [[12, 12, 14, 11], ['12,12', '13,11']],
+      [[12, 12, 11, 10], ['12,12', '11,11']],
+    ];
+    const manifest = JSON.parse(fs.readFileSync(
+      path.join(ROOT, 'tools', 'v86-reference', 'gdi-apps.json'), 'utf8'));
+    assert.strictEqual(manifest.apps['gdi-wide-line-grid'].probeSource,
+      'tools/v86-reference/probes/gdi-wide-line-grid.c');
+    assert.strictEqual(WIDE_GRID_SUMMARY.provenance.fidelityClaim, true);
+    assert.strictEqual(WIDE_GRID_SUMMARY.coverage.totalCases, 560);
+    assert.strictEqual(WIDE_GRID_SUMMARY.coverage.wideHullComparisons, 448);
+    assert.strictEqual(WIDE_GRID_SUMMARY.coverage.wideHullDifferences, 0);
+    const gridProbe = fs.readFileSync(path.join(ROOT, WIDE_GRID_SUMMARY.provenance.source));
+    assert.strictEqual(crypto.createHash('sha256').update(gridProbe).digest('hex'),
+      WIDE_GRID_SUMMARY.provenance.probeSourceSha256);
+    for (const [line, nativePixels] of nativeCases) {
+      const dib = makeDib(20, 20, 24, true);
+      const pen = createPen(0, 1, 0x00FFFFFF);
+      selectObject(dib.hdc, pen);
+      assert.strictEqual(wat.test_gdi_line_try(dib.hdc, ...line), 1);
+      const expected = new Set(nativePixels);
+      for (let y = 0; y < dib.height; y++) {
+        for (let x = 0; x < dib.width; x++) {
+          assert.strictEqual(pixel(dib, x, y), expected.has(`${x},${y}`) ? 0xFFFFFF : 0,
+            `native tie ${line.join(',')}: pixel ${x},${y}`);
         }
       }
     }
@@ -297,7 +384,8 @@ async function main() {
       assert.deepStrictEqual([...colors].sort((a, b) => a - b), [background, foreground],
         `${fixture.name}: output must contain only exact background and pen colors`);
     }
-    assert.strictEqual(exactCases, 5, 'five captured axis cases must be exact');
+    assert.strictEqual(exactCases, WIDE_LINE_FIXTURES.cases.length,
+      'every captured Win98 wide-line case must be exact');
   });
 
   check('native Win98 wide ROP2 Polyline applies once across joins and crossings', () => {
@@ -393,7 +481,7 @@ async function main() {
     '16-bpp BI_RGB lines use RGB555 and preserve endpoint exclusion');
   });
 
-  check('diagonal wide ROP2 writes each stamp-union pixel once in all octants', () => {
+  check('diagonal wide ROP2 matches Win98 hull pixels once in all octants', () => {
     const directions = [
       [6, 3], [3, 6], [-3, 6], [-6, 3],
       [-6, -3], [-3, -6], [3, -6], [6, -3],
@@ -412,15 +500,7 @@ async function main() {
           assert.strictEqual(wat.test_gdi_line_try(dib.hdc, x0, y0, x1, y1), 1,
             `width ${width}, ROP2 ${rop2}, delta ${dx},${dy}: raster admission`);
 
-          const expected = new Set();
-          for (const center of referenceLine(x0, y0, x1, y1)) {
-            const [cx, cy] = center.split(',').map(Number);
-            const left = cx - (width >> 1);
-            const top = cy - (width >> 1);
-            for (let sy = 0; sy < width; sy++) {
-              for (let sx = 0; sx < width; sx++) expected.add(`${left + sx},${top + sy}`);
-            }
-          }
+          const expected = referenceWin98WideLine(x0, y0, x1, y1, width);
           for (let y = 0; y < dib.height; y++) {
             for (let x = 0; x < dib.width; x++) {
               assert.strictEqual(pixel(dib, x, y), expected.has(`${x},${y}`) ? 0xFFFFFF : 0,

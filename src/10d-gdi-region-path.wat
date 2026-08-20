@@ -2424,8 +2424,30 @@
       (br $rows))))
 
   ;; Mark exactly the same device-pixel footprint as the canonical wide-line
-  ;; renderer. Axis-aligned widths 2..5 use its captured Win98 rectangle;
-  ;; other widths use the same endpoint-exclusive Bresenham square stamps.
+  ;; renderer. Widths 2..5 use captured Win98 rectangle/hull coverage at every
+  ;; angle; other widths retain endpoint-exclusive Bresenham square stamps.
+  (func $gdi_win98_wide_edge_boundary (param $base i32) (param $dx i32)
+        (param $dy i32) (param $k i32) (param $reversed i32) (result i32)
+    (local $abs_dx i32) (local $sign i32) (local $offset i32)
+    (if (i32.le_s (local.get $k) (i32.const 0)) (then (return (local.get $base))))
+    (local.set $abs_dx (select (local.get $dx) (i32.sub (i32.const 0) (local.get $dx))
+      (i32.ge_s (local.get $dx) (i32.const 0))))
+    (local.set $sign (select (i32.const 1) (i32.const -1)
+      (i32.ge_s (local.get $dx) (i32.const 0))))
+    (if (i32.gt_u (local.get $abs_dx) (local.get $dy))
+      (then
+        (local.set $offset (i32.div_u
+          (i32.add (i32.mul (local.get $abs_dx) (local.get $k))
+            (i32.shr_u (i32.sub (local.get $abs_dx) (i32.const 1)) (i32.const 1)))
+          (local.get $dy))))
+      (else
+        (local.set $offset (i32.div_s
+          (i32.add
+            (i32.sub (i32.shr_u (local.get $dy) (i32.const 1)) (local.get $reversed))
+            (i32.mul (local.get $abs_dx) (local.get $k)))
+          (local.get $dy)))))
+    (i32.add (local.get $base) (i32.mul (local.get $sign) (local.get $offset))))
+
   (func $gdi_path_widen_segment (param $mask i32) (param $mask_w i32)
         (param $mask_h i32) (param $origin_x i32) (param $origin_y i32)
         (param $from_x i32) (param $from_y i32) (param $to_x i32) (param $to_y i32)
@@ -2434,6 +2456,7 @@
     (local $dx i32) (local $dy i32) (local $sx i32) (local $sy i32)
     (local $err i32) (local $e2 i32) (local $half i32) (local $far i32)
     (local $left i32) (local $top i32) (local $right i32) (local $bottom i32)
+    (local $px i32) (local $py i32) (local $qx i32) (local $qy i32) (local $y i32)
     (local.set $x0 (local.get $from_x)) (local.set $y0 (local.get $from_y))
     (local.set $x1 (local.get $to_x)) (local.set $y1 (local.get $to_y))
     (if (i32.and (i32.eq (local.get $x0) (local.get $x1))
@@ -2441,6 +2464,82 @@
       (then (return)))
     (local.set $half (i32.shr_u (local.get $width) (i32.const 1)))
     (local.set $far (i32.sub (local.get $width) (local.get $half)))
+    (if (i32.and (i32.ge_u (local.get $width) (i32.const 2))
+          (i32.and (i32.le_u (local.get $width) (i32.const 5))
+            (i32.and (i32.ne (local.get $x0) (local.get $x1))
+              (i32.ne (local.get $y0) (local.get $y1)))))
+      (then
+        (if (i32.lt_s (local.get $x0) (local.get $x1))
+          (then
+            (local.set $px (local.get $x0)) (local.set $py (local.get $y0))
+            (local.set $qx (local.get $x1)) (local.set $qy (local.get $y1)))
+          (else
+            (local.set $px (local.get $x1)) (local.set $py (local.get $y1))
+            (local.set $qx (local.get $x0)) (local.set $qy (local.get $y0))))
+        (if (i32.lt_s (local.get $py) (local.get $qy))
+          (then
+            (local.set $top (i32.sub (local.get $py) (local.get $half)))
+            (local.set $bottom (i32.add (local.get $qy) (local.get $far)))
+            (local.set $y (local.get $top))
+            (block $positive_done (loop $positive_rows
+              (br_if $positive_done (i32.ge_s (local.get $y) (local.get $bottom)))
+              (local.set $left
+                (if (result i32) (i32.lt_s (local.get $y) (i32.add (local.get $py) (local.get $far)))
+                  (then (i32.sub (local.get $px) (local.get $half)))
+                  (else (call $gdi_win98_wide_edge_boundary
+                    (i32.sub (local.get $px) (local.get $half))
+                    (i32.sub (local.get $qx) (local.get $px))
+                    (i32.sub (local.get $qy) (local.get $py))
+                    (i32.sub (local.get $y) (i32.add (local.get $py) (local.get $far)))
+                    (i32.const 1)))))
+              (local.set $right
+                (if (result i32) (i32.lt_s (local.get $y) (i32.sub (local.get $qy) (local.get $half)))
+                  (then (call $gdi_win98_wide_edge_boundary
+                    (i32.add (local.get $px) (local.get $far))
+                    (i32.sub (local.get $qx) (local.get $px))
+                    (i32.sub (local.get $qy) (local.get $py))
+                    (i32.sub (local.get $y) (i32.sub (local.get $py) (local.get $half)))
+                    (i32.const 0)))
+                  (else (i32.add (local.get $qx) (local.get $far)))))
+              (call $gdi_path_widen_mark_rect
+                (local.get $mask) (local.get $mask_w) (local.get $mask_h)
+                (local.get $origin_x) (local.get $origin_y)
+                (local.get $left) (local.get $y) (local.get $right)
+                (i32.add (local.get $y) (i32.const 1)))
+              (local.set $y (i32.add (local.get $y) (i32.const 1)))
+              (br $positive_rows))))
+          (else
+            (local.set $top (i32.sub (local.get $qy) (local.get $half)))
+            (local.set $bottom (i32.add (local.get $py) (local.get $far)))
+            (local.set $y (local.get $top))
+            (block $negative_done (loop $negative_rows
+              (br_if $negative_done (i32.ge_s (local.get $y) (local.get $bottom)))
+              (local.set $left
+                (if (result i32) (i32.lt_s (local.get $y) (i32.sub (local.get $py) (local.get $half)))
+                  (then (call $gdi_win98_wide_edge_boundary
+                    (i32.sub (local.get $qx) (local.get $half))
+                    (i32.sub (local.get $px) (local.get $qx))
+                    (i32.sub (local.get $py) (local.get $qy))
+                    (i32.sub (local.get $y) (i32.sub (local.get $qy) (local.get $half)))
+                    (i32.const 1)))
+                  (else (i32.sub (local.get $px) (local.get $half)))))
+              (local.set $right
+                (if (result i32) (i32.lt_s (local.get $y) (i32.add (local.get $qy) (local.get $far)))
+                  (then (i32.add (local.get $qx) (local.get $far)))
+                  (else (call $gdi_win98_wide_edge_boundary
+                    (i32.add (local.get $qx) (local.get $far))
+                    (i32.sub (local.get $px) (local.get $qx))
+                    (i32.sub (local.get $py) (local.get $qy))
+                    (i32.sub (local.get $y) (i32.add (local.get $qy) (local.get $far)))
+                    (i32.const 0)))))
+              (call $gdi_path_widen_mark_rect
+                (local.get $mask) (local.get $mask_w) (local.get $mask_h)
+                (local.get $origin_x) (local.get $origin_y)
+                (local.get $left) (local.get $y) (local.get $right)
+                (i32.add (local.get $y) (i32.const 1)))
+              (local.set $y (i32.add (local.get $y) (i32.const 1)))
+              (br $negative_rows)))))
+        (return)))
     (if (i32.and (i32.ge_u (local.get $width) (i32.const 2))
           (i32.and (i32.le_u (local.get $width) (i32.const 5))
             (i32.or (i32.eq (local.get $x0) (local.get $x1))

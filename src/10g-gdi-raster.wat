@@ -1305,6 +1305,355 @@
         (i32.add (local.get $max_y) (i32.const 1)))))
     (i32.const 1))
 
+  ;; Native Windows 98 renders a solid cosmetic diagonal at widths 2..5 as
+  ;; the Win98 Polygon coverage of the convex hull of two asymmetric endpoint
+  ;; boxes.  Each box extends floor(width/2) toward negative coordinates and
+  ;; ceil(width/2) toward positive coordinates.  The hull has six vertices;
+  ;; consuming its canonical region bands applies every ROP2 exactly once.
+  (func $gdi_diagonal_wide_line_desc (param $hdc i32) (param $desc i32)
+        (param $x0 i32) (param $y0 i32) (param $x1 i32) (param $y1 i32)
+        (param $width i32) (param $color i32) (param $rop2 i32) (result i32)
+    (local $half i32) (local $far i32) (local $px i32) (local $py i32)
+    (local $qx i32) (local $qy i32) (local $guest_points i32) (local $points i32)
+    (local $region i32) (local $record i32) (local $bands i32) (local $band i32)
+    (local $band_count i32) (local $i i32) (local $x i32) (local $y i32)
+    (local $wrote i32) (local $min_x i32) (local $min_y i32)
+    (local $max_x i32) (local $max_y i32)
+    (if (i32.or (i32.lt_u (local.get $width) (i32.const 2))
+          (i32.gt_u (local.get $width) (i32.const 5)))
+      (then (return (i32.const 0))))
+    (if (i32.or (i32.eq (local.get $x0) (local.get $x1))
+          (i32.eq (local.get $y0) (local.get $y1)))
+      (then (return (i32.const 0))))
+    (local.set $half (i32.shr_u (local.get $width) (i32.const 1)))
+    (local.set $far (i32.sub (local.get $width) (local.get $half)))
+    ;; Name the left endpoint P and the right endpoint Q.  Their Y ordering
+    ;; selects one of the two possible six-vertex hulls.
+    (if (i32.lt_s (local.get $x0) (local.get $x1))
+      (then
+        (local.set $px (local.get $x0)) (local.set $py (local.get $y0))
+        (local.set $qx (local.get $x1)) (local.set $qy (local.get $y1)))
+      (else
+        (local.set $px (local.get $x1)) (local.set $py (local.get $y1))
+        (local.set $qx (local.get $x0)) (local.set $qy (local.get $y0))))
+    (local.set $guest_points (call $heap_alloc (i32.const 48)))
+    (if (i32.eqz (local.get $guest_points)) (then (return (i32.const 0))))
+    (local.set $points (call $g2w (local.get $guest_points)))
+    (if (i32.lt_s (local.get $py) (local.get $qy))
+      (then
+        ;; Positive screen-space slope: P.LT, P.RT, Q.RT, Q.RB, Q.LB, P.LB.
+        (i32.store (local.get $points) (i32.sub (local.get $px) (local.get $half)))
+        (i32.store offset=4 (local.get $points) (i32.sub (local.get $py) (local.get $half)))
+        (i32.store offset=8 (local.get $points) (i32.add (local.get $px) (local.get $far)))
+        (i32.store offset=12 (local.get $points) (i32.sub (local.get $py) (local.get $half)))
+        (i32.store offset=16 (local.get $points) (i32.add (local.get $qx) (local.get $far)))
+        (i32.store offset=20 (local.get $points) (i32.sub (local.get $qy) (local.get $half)))
+        (i32.store offset=24 (local.get $points) (i32.add (local.get $qx) (local.get $far)))
+        (i32.store offset=28 (local.get $points) (i32.add (local.get $qy) (local.get $far)))
+        (i32.store offset=32 (local.get $points) (i32.sub (local.get $qx) (local.get $half)))
+        (i32.store offset=36 (local.get $points) (i32.add (local.get $qy) (local.get $far)))
+        (i32.store offset=40 (local.get $points) (i32.sub (local.get $px) (local.get $half)))
+        (i32.store offset=44 (local.get $points) (i32.add (local.get $py) (local.get $far))))
+      (else
+        ;; Negative screen-space slope: P.LT, Q.LT, Q.RT, Q.RB, P.RB, P.LB.
+        (i32.store (local.get $points) (i32.sub (local.get $px) (local.get $half)))
+        (i32.store offset=4 (local.get $points) (i32.sub (local.get $py) (local.get $half)))
+        (i32.store offset=8 (local.get $points) (i32.sub (local.get $qx) (local.get $half)))
+        (i32.store offset=12 (local.get $points) (i32.sub (local.get $qy) (local.get $half)))
+        (i32.store offset=16 (local.get $points) (i32.add (local.get $qx) (local.get $far)))
+        (i32.store offset=20 (local.get $points) (i32.sub (local.get $qy) (local.get $half)))
+        (i32.store offset=24 (local.get $points) (i32.add (local.get $qx) (local.get $far)))
+        (i32.store offset=28 (local.get $points) (i32.add (local.get $qy) (local.get $far)))
+        (i32.store offset=32 (local.get $points) (i32.add (local.get $px) (local.get $far)))
+        (i32.store offset=36 (local.get $points) (i32.add (local.get $py) (local.get $far)))
+        (i32.store offset=40 (local.get $points) (i32.sub (local.get $px) (local.get $half)))
+        (i32.store offset=44 (local.get $points) (i32.add (local.get $py) (local.get $far)))))
+    (local.set $region (call $gdi_rgn_alloc_polygon
+      (local.get $points) (i32.const 6) (i32.const 2)))
+    (call $heap_free (local.get $guest_points))
+    (if (i32.eqz (local.get $region)) (then (return (i32.const 0))))
+    (local.set $record (call $gdi_rgn_record (local.get $region)))
+    (local.set $bands (call $gdi_rgn_bands (local.get $record)))
+    (local.set $band_count (i32.load offset=28 (local.get $record)))
+    (local.set $min_x (i32.const 0x7FFFFFFF)) (local.set $min_y (i32.const 0x7FFFFFFF))
+    (local.set $max_x (i32.const 0x80000000)) (local.set $max_y (i32.const 0x80000000))
+    (block $bands_done (loop $draw_bands
+      (br_if $bands_done (i32.ge_u (local.get $i) (local.get $band_count)))
+      (local.set $band (i32.add (local.get $bands) (i32.shl (local.get $i) (i32.const 4))))
+      (local.set $y (i32.load offset=4 (local.get $band)))
+      (block $rows_done (loop $rows
+        (br_if $rows_done (i32.ge_s (local.get $y) (i32.load offset=12 (local.get $band))))
+        (local.set $x (i32.load (local.get $band)))
+        (block $cols_done (loop $cols
+          (br_if $cols_done (i32.ge_s (local.get $x) (i32.load offset=8 (local.get $band))))
+          (if (call $gdi_shape_put_pixel (local.get $hdc) (local.get $desc)
+                (local.get $x) (local.get $y) (local.get $color) (local.get $rop2))
+            (then
+              (local.set $wrote (i32.const 1))
+              (if (i32.lt_s (local.get $x) (local.get $min_x)) (then (local.set $min_x (local.get $x))))
+              (if (i32.lt_s (local.get $y) (local.get $min_y)) (then (local.set $min_y (local.get $y))))
+              (if (i32.gt_s (local.get $x) (local.get $max_x)) (then (local.set $max_x (local.get $x))))
+              (if (i32.gt_s (local.get $y) (local.get $max_y)) (then (local.set $max_y (local.get $y))))))
+          (local.set $x (i32.add (local.get $x) (i32.const 1)))
+          (br $cols)))
+        (local.set $y (i32.add (local.get $y) (i32.const 1)))
+        (br $rows)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $draw_bands)))
+    (drop (call $gdi_rgn_delete (local.get $region)))
+    (if (local.get $wrote)
+      (then (call $gdi_geometry_present (local.get $hdc) (local.get $desc)
+        (local.get $min_x) (local.get $min_y)
+        (i32.add (local.get $max_x) (i32.const 1))
+        (i32.add (local.get $max_y) (i32.const 1)))))
+    (i32.const 1))
+
+  ;; Initialize one classic GDI polygon-fill edge. This is the integer edge
+  ;; algorithm historically shared with the X region scanner: its half-pixel
+  ;; bias and asymmetric decision ties choose the first pixel inside on a left
+  ;; edge and the first pixel outside on a right edge.
+  ;; Layout: minY,maxY,minorAxis,d,m,m+step,incr1,incr2,xMajor.
+  (func $gdi_win98_edge_init (param $edge i32)
+        (param $from_x i32) (param $from_y i32) (param $to_x i32) (param $to_y i32)
+    (local $low_x i32) (local $low_y i32) (local $high_x i32) (local $high_y i32)
+    (local $dx i32) (local $abs_dx i32) (local $dy i32) (local $m i32) (local $m1 i32)
+    (local $d i32) (local $incr1 i32) (local $incr2 i32) (local $reversed i32)
+    (if (i32.lt_s (local.get $to_y) (local.get $from_y))
+      (then
+        (local.set $low_x (local.get $to_x)) (local.set $low_y (local.get $to_y))
+        (local.set $high_x (local.get $from_x)) (local.set $high_y (local.get $from_y))
+        (local.set $reversed (i32.const 1)))
+      (else
+        (local.set $low_x (local.get $from_x)) (local.set $low_y (local.get $from_y))
+        (local.set $high_x (local.get $to_x)) (local.set $high_y (local.get $to_y))))
+    (local.set $dx (i32.sub (local.get $high_x) (local.get $low_x)))
+    (local.set $abs_dx (select (local.get $dx) (i32.sub (i32.const 0) (local.get $dx))
+      (i32.ge_s (local.get $dx) (i32.const 0))))
+    (local.set $dy (i32.sub (local.get $high_y) (local.get $low_y)))
+    (if (i32.ne (local.get $dy) (i32.const 0))
+      (then
+        (local.set $m (i32.div_s (local.get $dx) (local.get $dy)))
+        (if (i32.lt_s (local.get $dx) (i32.const 0))
+          (then
+            (local.set $m1 (i32.sub (local.get $m) (i32.const 1)))
+            (local.set $incr1 (i32.add
+              (i32.mul (i32.const -2) (local.get $dx))
+              (i32.mul (i32.shl (local.get $dy) (i32.const 1)) (local.get $m1))))
+            (local.set $incr2 (i32.add
+              (i32.mul (i32.const -2) (local.get $dx))
+              (i32.mul (i32.shl (local.get $dy) (i32.const 1)) (local.get $m))))
+            (local.set $d (i32.sub
+              (i32.sub (i32.mul (i32.shl (local.get $m) (i32.const 1)) (local.get $dy))
+                (i32.shl (local.get $dx) (i32.const 1)))
+              (i32.shl (local.get $dy) (i32.const 1)))))
+          (else
+            (local.set $m1 (i32.add (local.get $m) (i32.const 1)))
+            (local.set $incr1 (i32.sub
+              (i32.shl (local.get $dx) (i32.const 1))
+              (i32.mul (i32.shl (local.get $dy) (i32.const 1)) (local.get $m1))))
+            (local.set $incr2 (i32.sub
+              (i32.shl (local.get $dx) (i32.const 1))
+              (i32.mul (i32.shl (local.get $dy) (i32.const 1)) (local.get $m))))
+            (local.set $d (i32.add
+              (i32.mul (i32.mul (i32.const -2) (local.get $m)) (local.get $dy))
+              (i32.shl (local.get $dx) (i32.const 1))))))))
+    ;; Win98's y-major edge path uses the midpoint accumulator directly. An
+    ;; upward source edge is walked backward with a one-count error offset.
+    (if (i32.le_u (local.get $abs_dx) (local.get $dy))
+      (then
+        (local.set $d (i32.sub (i32.shr_u (local.get $dy) (i32.const 1))
+          (local.get $reversed)))
+        (local.set $m (local.get $abs_dx))
+        (local.set $m1 (local.get $dy))
+        (local.set $incr1 (select (i32.const 1) (i32.const -1)
+          (i32.ge_s (local.get $dx) (i32.const 0))))
+        (local.set $incr2 (i32.const 0)))
+      (else
+        ;; X-major edges use the centre-biased quotient of the horizontal
+        ;; run. Keeping its numerator makes jumps larger than one exact.
+        (local.set $d (i32.const 0))
+        (local.set $m (local.get $abs_dx))
+        (local.set $m1 (local.get $dy))
+        (local.set $incr1 (select (i32.const 1) (i32.const -1)
+          (i32.ge_s (local.get $dx) (i32.const 0))))
+        (local.set $incr2 (i32.const 1))))
+    (i32.store (local.get $edge) (local.get $low_y))
+    (i32.store offset=4 (local.get $edge) (local.get $high_y))
+    (i32.store offset=8 (local.get $edge) (local.get $low_x))
+    (i32.store offset=12 (local.get $edge) (local.get $d))
+    (i32.store offset=16 (local.get $edge) (local.get $m))
+    (i32.store offset=20 (local.get $edge) (local.get $m1))
+    (i32.store offset=24 (local.get $edge) (local.get $incr1))
+    (i32.store offset=28 (local.get $edge) (local.get $incr2))
+    (i32.store offset=32 (local.get $edge) (i32.gt_u (local.get $abs_dx) (local.get $dy))))
+
+  ;; Return the edge's current X boundary in both halves, then advance it one
+  ;; scanline. Packing preserves the caller's compact two-edge sorting path.
+  (func $gdi_win98_edge_step (param $edge i32) (result i64)
+    (local $x i32) (local $boundary i32) (local $d i32) (local $m i32) (local $m1 i32)
+    (local $incr1 i32) (local $incr2 i32)
+    (local.set $x (i32.load offset=8 (local.get $edge)))
+    (local.set $boundary (local.get $x))
+    (local.set $d (i32.load offset=12 (local.get $edge)))
+    (local.set $m (i32.load offset=16 (local.get $edge)))
+    (local.set $m1 (i32.load offset=20 (local.get $edge)))
+    (local.set $incr1 (i32.load offset=24 (local.get $edge)))
+    (local.set $incr2 (i32.load offset=28 (local.get $edge)))
+    (if (i32.eqz (i32.load offset=32 (local.get $edge)))
+      (then
+        (local.set $d (i32.add (local.get $d) (local.get $m)))
+        (if (i32.ge_s (local.get $d) (local.get $m1))
+          (then
+            (local.set $d (i32.sub (local.get $d) (local.get $m1)))
+            (local.set $x (i32.add (local.get $x) (local.get $incr1))))))
+      (else
+        (local.set $boundary (i32.add (local.get $x)
+          (i32.mul (local.get $incr1) (i32.div_u (local.get $d) (local.get $m1)))))
+        (if (local.get $incr2)
+          (then
+            (local.set $d (i32.add (local.get $m)
+              (i32.shr_u (i32.sub (local.get $m) (i32.const 1)) (i32.const 1))))
+            (local.set $incr2 (i32.const 0)))
+          (else (local.set $d (i32.add (local.get $d) (local.get $m)))))))
+    (i32.store offset=8 (local.get $edge) (local.get $x))
+    (i32.store offset=12 (local.get $edge) (local.get $d))
+    (i32.store offset=28 (local.get $edge) (local.get $incr2))
+    (i64.or (i64.extend_i32_u (local.get $boundary))
+      (i64.shl (i64.extend_i32_u (local.get $boundary)) (i64.const 32))))
+
+  ;; Exact Win98 solid cosmetic diagonal coverage for CreatePen widths 2..5.
+  ;; Win98 produces the same pixels as Polygon(NULL_PEN) over the six-point
+  ;; endpoint-box hull; this uses that filler's stateful integer edge walk.
+  (func $gdi_win98_diagonal_wide_line_desc (param $hdc i32) (param $desc i32)
+        (param $x0 i32) (param $y0 i32) (param $x1 i32) (param $y1 i32)
+        (param $width i32) (param $color i32) (param $rop2 i32) (result i32)
+    (local $half i32) (local $far i32) (local $px i32) (local $py i32)
+    (local $qx i32) (local $qy i32) (local $guest i32) (local $points i32)
+    (local $edges i32) (local $i i32) (local $j i32) (local $p i32) (local $q i32)
+    (local $edge i32) (local $packed i64) (local $edge_x0 i32) (local $edge_x1 i32)
+    (local $first_x0 i32) (local $first_x1 i32) (local $active i32)
+    (local $left i32) (local $right i32) (local $top i32) (local $bottom i32)
+    (local $x i32) (local $y i32) (local $wrote i32)
+    (local $min_x i32) (local $min_y i32) (local $max_x i32) (local $max_y i32)
+    (if (i32.or (i32.lt_u (local.get $width) (i32.const 2))
+          (i32.gt_u (local.get $width) (i32.const 5)))
+      (then (return (i32.const 0))))
+    (if (i32.or (i32.eq (local.get $x0) (local.get $x1))
+          (i32.eq (local.get $y0) (local.get $y1)))
+      (then (return (i32.const 0))))
+    (local.set $half (i32.shr_u (local.get $width) (i32.const 1)))
+    (local.set $far (i32.sub (local.get $width) (local.get $half)))
+    (if (i32.lt_s (local.get $x0) (local.get $x1))
+      (then
+        (local.set $px (local.get $x0)) (local.set $py (local.get $y0))
+        (local.set $qx (local.get $x1)) (local.set $qy (local.get $y1)))
+      (else
+        (local.set $px (local.get $x1)) (local.set $py (local.get $y1))
+        (local.set $qx (local.get $x0)) (local.set $qy (local.get $y0))))
+    ;; Six POINTs followed by six 36-byte edge records.
+    (local.set $guest (call $heap_alloc (i32.const 264)))
+    (if (i32.eqz (local.get $guest)) (then (return (i32.const 0))))
+    (local.set $points (call $g2w (local.get $guest)))
+    (local.set $edges (i32.add (local.get $points) (i32.const 48)))
+    (if (i32.lt_s (local.get $py) (local.get $qy))
+      (then
+        (i32.store (local.get $points) (i32.sub (local.get $px) (local.get $half)))
+        (i32.store offset=4 (local.get $points) (i32.sub (local.get $py) (local.get $half)))
+        (i32.store offset=8 (local.get $points) (i32.add (local.get $px) (local.get $far)))
+        (i32.store offset=12 (local.get $points) (i32.sub (local.get $py) (local.get $half)))
+        (i32.store offset=16 (local.get $points) (i32.add (local.get $qx) (local.get $far)))
+        (i32.store offset=20 (local.get $points) (i32.sub (local.get $qy) (local.get $half)))
+        (i32.store offset=24 (local.get $points) (i32.add (local.get $qx) (local.get $far)))
+        (i32.store offset=28 (local.get $points) (i32.add (local.get $qy) (local.get $far)))
+        (i32.store offset=32 (local.get $points) (i32.sub (local.get $qx) (local.get $half)))
+        (i32.store offset=36 (local.get $points) (i32.add (local.get $qy) (local.get $far)))
+        (i32.store offset=40 (local.get $points) (i32.sub (local.get $px) (local.get $half)))
+        (i32.store offset=44 (local.get $points) (i32.add (local.get $py) (local.get $far))))
+      (else
+        (i32.store (local.get $points) (i32.sub (local.get $px) (local.get $half)))
+        (i32.store offset=4 (local.get $points) (i32.sub (local.get $py) (local.get $half)))
+        (i32.store offset=8 (local.get $points) (i32.sub (local.get $qx) (local.get $half)))
+        (i32.store offset=12 (local.get $points) (i32.sub (local.get $qy) (local.get $half)))
+        (i32.store offset=16 (local.get $points) (i32.add (local.get $qx) (local.get $far)))
+        (i32.store offset=20 (local.get $points) (i32.sub (local.get $qy) (local.get $half)))
+        (i32.store offset=24 (local.get $points) (i32.add (local.get $qx) (local.get $far)))
+        (i32.store offset=28 (local.get $points) (i32.add (local.get $qy) (local.get $far)))
+        (i32.store offset=32 (local.get $points) (i32.add (local.get $px) (local.get $far)))
+        (i32.store offset=36 (local.get $points) (i32.add (local.get $py) (local.get $far)))
+        (i32.store offset=40 (local.get $points) (i32.sub (local.get $px) (local.get $half)))
+        (i32.store offset=44 (local.get $points) (i32.add (local.get $py) (local.get $far)))))
+    (block $init_done (loop $init
+      (br_if $init_done (i32.ge_u (local.get $i) (i32.const 6)))
+      (local.set $j (i32.add (local.get $i) (i32.const 1)))
+      (if (i32.eq (local.get $j) (i32.const 6)) (then (local.set $j (i32.const 0))))
+      (local.set $p (i32.add (local.get $points) (i32.shl (local.get $i) (i32.const 3))))
+      (local.set $q (i32.add (local.get $points) (i32.shl (local.get $j) (i32.const 3))))
+      (call $gdi_win98_edge_init
+        (i32.add (local.get $edges) (i32.mul (local.get $i) (i32.const 36)))
+        (i32.load (local.get $p)) (i32.load offset=4 (local.get $p))
+        (i32.load (local.get $q)) (i32.load offset=4 (local.get $q)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $init)))
+    (local.set $top (i32.sub (select (local.get $py) (local.get $qy)
+      (i32.lt_s (local.get $py) (local.get $qy))) (local.get $half)))
+    (local.set $bottom (i32.add (select (local.get $qy) (local.get $py)
+      (i32.lt_s (local.get $py) (local.get $qy))) (local.get $far)))
+    (local.set $min_x (i32.const 0x7FFFFFFF)) (local.set $min_y (i32.const 0x7FFFFFFF))
+    (local.set $max_x (i32.const 0x80000000)) (local.set $max_y (i32.const 0x80000000))
+    (local.set $y (local.get $top))
+    (block $rows_done (loop $rows
+      (br_if $rows_done (i32.ge_s (local.get $y) (local.get $bottom)))
+      (local.set $active (i32.const 0)) (local.set $i (i32.const 0))
+      (block $edges_done (loop $scan_edges
+        (br_if $edges_done (i32.ge_u (local.get $i) (i32.const 6)))
+        (local.set $edge (i32.add (local.get $edges) (i32.mul (local.get $i) (i32.const 36))))
+        (if (i32.and (i32.ge_s (local.get $y) (i32.load (local.get $edge)))
+              (i32.lt_s (local.get $y) (i32.load offset=4 (local.get $edge))))
+          (then
+            (local.set $packed (call $gdi_win98_edge_step (local.get $edge)))
+            (local.set $edge_x0 (i32.wrap_i64 (local.get $packed)))
+            (local.set $edge_x1 (i32.wrap_i64 (i64.shr_u (local.get $packed) (i64.const 32))))
+            (if (i32.eqz (local.get $active))
+              (then
+                (local.set $first_x0 (local.get $edge_x0))
+                (local.set $first_x1 (local.get $edge_x1)))
+              (else
+                (if (i32.lt_s (i32.add (local.get $edge_x0) (local.get $edge_x1))
+                      (i32.add (local.get $first_x0) (local.get $first_x1)))
+                  (then
+                    (local.set $left (local.get $edge_x0))
+                    (local.set $right (local.get $first_x1)))
+                  (else
+                    (local.set $left (local.get $first_x0))
+                    (local.set $right (local.get $edge_x1))))))
+            (local.set $active (i32.add (local.get $active) (i32.const 1)))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $scan_edges)))
+      (if (i32.ge_u (local.get $active) (i32.const 2))
+        (then
+          (local.set $x (local.get $left))
+          (block $cols_done (loop $cols
+            (br_if $cols_done (i32.ge_s (local.get $x) (local.get $right)))
+            (if (call $gdi_shape_put_pixel (local.get $hdc) (local.get $desc)
+                  (local.get $x) (local.get $y) (local.get $color) (local.get $rop2))
+              (then
+                (local.set $wrote (i32.const 1))
+                (if (i32.lt_s (local.get $x) (local.get $min_x)) (then (local.set $min_x (local.get $x))))
+                (if (i32.lt_s (local.get $y) (local.get $min_y)) (then (local.set $min_y (local.get $y))))
+                (if (i32.gt_s (local.get $x) (local.get $max_x)) (then (local.set $max_x (local.get $x))))
+                (if (i32.gt_s (local.get $y) (local.get $max_y)) (then (local.set $max_y (local.get $y))))))
+            (local.set $x (i32.add (local.get $x) (i32.const 1)))
+            (br $cols)))))
+      (local.set $y (i32.add (local.get $y) (i32.const 1)))
+      (br $rows)))
+    (call $heap_free (local.get $guest))
+    (if (local.get $wrote)
+      (then (call $gdi_geometry_present (local.get $hdc) (local.get $desc)
+        (local.get $min_x) (local.get $min_y)
+        (i32.add (local.get $max_x) (i32.const 1))
+        (i32.add (local.get $max_y) (i32.const 1)))))
+    (i32.const 1))
+
   (func $gdi_line_desc_can_raster (param $desc i32)
         (param $from_x i32) (param $from_y i32) (param $to_x i32) (param $to_y i32)
         (param $pen i32) (param $rop2 i32) (result i32)
@@ -1334,16 +1683,13 @@
       (i32.sub (local.get $y0) (local.get $y1)) (i32.ge_s (local.get $y1) (local.get $y0))))
     (local.set $span (select (local.get $dx) (local.get $dy)
       (i32.ge_u (local.get $dx) (local.get $dy))))
-    ;; Only the captured axis-aligned width-2..5 coverage has a one-write
-    ;; region for non-idempotent ROP2 modes so far.
+    ;; Captured Win98 width-2..5 coverage is emitted as a one-write region at
+    ;; every angle, so non-idempotent ROP2 modes are safe on those widths.
     (if (i32.and (i32.eqz (local.get $geometric))
           (i32.and (i32.gt_u (local.get $width) (i32.const 1))
           (i32.and (i32.ne (local.get $rop2) (i32.const 13))
-            (i32.or
               (i32.or (i32.lt_u (local.get $width) (i32.const 2))
-                (i32.gt_u (local.get $width) (i32.const 5)))
-              (i32.and (i32.ne (local.get $x0) (local.get $x1))
-                (i32.ne (local.get $y0) (local.get $y1)))))))
+                (i32.gt_u (local.get $width) (i32.const 5))))))
       (then (return (i32.const 0))))
     (if (i32.gt_u (local.get $span) (i32.const 65536)) (then (return (i32.const 0))))
     (if (i64.gt_u
@@ -1492,6 +1838,10 @@
           (local.get $x0) (local.get $y0) (local.get $x1) (local.get $y1)
           (local.get $width) (local.get $color) (local.get $rop2))
       (then (return (i32.const 1))))
+    (if (call $gdi_win98_diagonal_wide_line_desc (local.get $hdc) (local.get $desc)
+          (local.get $x0) (local.get $y0) (local.get $x1) (local.get $y1)
+          (local.get $width) (local.get $color) (local.get $rop2))
+      (then (return (i32.const 1))))
     (local.set $min_x (i32.const 0x7FFFFFFF))
     (local.set $min_y (i32.const 0x7FFFFFFF))
     (local.set $max_x (i32.const 0x80000000))
@@ -1547,11 +1897,15 @@
       (global.set $gdi_line_style_phase
         (i32.add (global.get $gdi_line_style_phase) (i32.const 1)))
       (local.set $e2 (i32.shl (local.get $err) (i32.const 1)))
-      (if (i32.ge_s (local.get $e2) (local.get $dy))
+      (if (i32.or (i32.gt_s (local.get $e2) (local.get $dy))
+            (i32.and (i32.eq (local.get $e2) (local.get $dy))
+              (i32.lt_s (local.get $sy) (i32.const 0))))
         (then
           (local.set $err (i32.add (local.get $err) (local.get $dy)))
           (local.set $x0 (i32.add (local.get $x0) (local.get $sx)))))
-      (if (i32.le_s (local.get $e2) (local.get $dx))
+      (if (i32.or (i32.lt_s (local.get $e2) (local.get $dx))
+            (i32.and (i32.eq (local.get $e2) (local.get $dx))
+              (i32.lt_s (local.get $sy) (i32.const 0))))
         (then
           (local.set $err (i32.add (local.get $err) (local.get $dx)))
           (local.set $y0 (i32.add (local.get $y0) (local.get $sy)))))
@@ -2489,6 +2843,11 @@
           (local.get $pen_width) (i32.load offset=24 (local.get $desc))
           (local.get $rop2))
       (then (return (i32.const 1))))
+    (if (call $gdi_win98_diagonal_wide_line_desc (local.get $hdc) (local.get $desc)
+          (local.get $x0) (local.get $y0) (local.get $x1) (local.get $y1)
+          (local.get $pen_width) (i32.load offset=24 (local.get $desc))
+          (local.get $rop2))
+      (then (return (i32.const 1))))
     ;; Repeated square stamps are exact for COPYPEN because the operation is
     ;; idempotent. Other ROP2 modes need a coverage mask before wide strokes
     ;; can safely avoid applying the Boolean operation twice.
@@ -2576,10 +2935,14 @@
       (global.set $gdi_line_style_phase
         (i32.add (global.get $gdi_line_style_phase) (i32.const 1)))
       (local.set $e2 (i32.shl (local.get $err) (i32.const 1)))
-      (if (i32.ge_s (local.get $e2) (local.get $dy))
+      (if (i32.or (i32.gt_s (local.get $e2) (local.get $dy))
+            (i32.and (i32.eq (local.get $e2) (local.get $dy))
+              (i32.lt_s (local.get $sy) (i32.const 0))))
         (then (local.set $err (i32.add (local.get $err) (local.get $dy)))
           (local.set $x0 (i32.add (local.get $x0) (local.get $sx)))))
-      (if (i32.le_s (local.get $e2) (local.get $dx))
+      (if (i32.or (i32.lt_s (local.get $e2) (local.get $dx))
+            (i32.and (i32.eq (local.get $e2) (local.get $dx))
+              (i32.lt_s (local.get $sy) (i32.const 0))))
         (then (local.set $err (i32.add (local.get $err) (local.get $dx)))
           (local.set $y0 (i32.add (local.get $y0) (local.get $sy)))))
       (br $pixels)))

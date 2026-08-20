@@ -1,0 +1,24 @@
+{
+  "provenance": {
+    "kind": "native-windows-98-reference",
+    "source": "tools/v86-reference/probes/gdi-wide-line-grid.c",
+    "capturedAt": "2026-08-20T10:06:03.559Z",
+    "profile": "Windows 98 reference state in pinned v86 0.5.432+gf3d4472",
+    "v86Commit": "f3d4472a9c934b9ad78a311f5849ba711a296d23",
+    "probeSourceSha256": "10901420575c94e79ceae792e3cc2b6e044e3b60284f0b60ac52615d52d538a5",
+    "probeExeSha256": "a932a89aab88326163e2338937865ba63f965ce96335b9f6726e636ff462fd90",
+    "serialOutputSha256": "044bce7089666b53841a823c86d3c2c1c96a522370b44dc8ea859ca20e9d3f06",
+    "screenshotSha256": "19700a36e5b37eed248835d9237c9ad8026c9c8b7f1cca128d3ad01984c9aecf",
+    "fidelityClaim": true,
+    "note": "Top-down 32-bpp DIB masks were emitted over COM1. Each width-2..5 LineTo mask was compared inside Win98 with Polygon(NULL_PEN) over the convex hull of its two asymmetric endpoint boxes."
+  },
+  "coverage": {
+    "totalCases": 560,
+    "casesPerWidth": 112,
+    "widths": [1, 2, 3, 4, 5],
+    "baseVectors": 14,
+    "variantsPerVector": 8,
+    "wideHullComparisons": 448,
+    "wideHullDifferences": 0
+  }
+}
