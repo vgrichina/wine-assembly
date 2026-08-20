@@ -231,6 +231,9 @@ async function main() {
   await cdp.opened;
   await cdp.send('Runtime.enable');
   await cdp.send('Page.enable');
+  await cdp.send('Emulation.setDeviceMetricsOverride', {
+    width: 640, height: 1136, deviceScaleFactor: 1, mobile: false,
+  });
 
   async function evaluate(expression, timeoutMs = 10000) {
     const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Runtime.evaluate timeout')), timeoutMs));
@@ -250,6 +253,18 @@ async function main() {
     };
     poll();
   })`, 18000);
+  const screenSize = await evaluate(`(() => {
+    const canvas = document.getElementById('screen');
+    const oldW = canvas.width, oldH = canvas.height;
+    canvas.width = 640;
+    canvas.height = 1136;
+    if (typeof sharedRenderer !== 'undefined' && sharedRenderer) {
+      sharedRenderer.handleScreenResize(oldW, oldH, canvas.width, canvas.height);
+    }
+    return { width: canvas.width, height: canvas.height };
+  })()`);
+  assert.deepStrictEqual(screenSize, { width: 640, height: 1136 },
+    `Task Manager phone-size regression needs a 640x1136 desktop: ${JSON.stringify(screenSize)}`);
 
   async function launch(name, titlePattern, timeoutMs = 30000) {
     await evaluate(`(() => {
@@ -295,6 +310,15 @@ async function main() {
   const calculator = await launch('calc', 'Calculator');
   const recorder = await launch('sndrec32_98', 'Sound Recorder');
   const taskman = await launch('taskman', '^Tasks$');
+  const taskmanWindows = await evaluate(`(() => {
+    const app = runningApps.find(item => item && item.name === 'taskman');
+    return Object.values(sharedRenderer.windows)
+      .filter(win => win && win.wasm === app.wine.instance)
+      .map(win => ({ hwnd: win.hwnd, title: win.title, w: win.w, h: win.h }));
+  })()`);
+  assert(taskmanWindows.length >= 3 && taskmanWindows.every(win =>
+    win.w > 0 && win.h > 0 && win.w * win.h <= 640 * 1136),
+  `Task Manager should not allocate oversized window canvases: ${JSON.stringify(taskmanWindows)}`);
 
   const inspectTasksSource = `(() => {
     const app = runningApps.find(item => item && item.name === 'taskman');
@@ -479,7 +503,7 @@ async function main() {
     `closing Task Manager should leave other apps running: ${JSON.stringify(taskmanClosed)}`);
 
   const consoleText = consoleSummary(cdp.events).join('\n');
-  assert(!/UNIMPLEMENTED API:|RuntimeError|LinkError|Thread \d+ crashed|FATAL:/i.test(consoleText),
+  assert(!/UNIMPLEMENTED API:|RuntimeError|LinkError|Thread \d+ crashed|FATAL:|Canvas area exceeds the maximum limit/i.test(consoleText),
     `browser console should not contain runtime failures\n${consoleText.slice(-4000)}`);
   assert(screenshot.width >= 375 && screenshot.height >= 275 && fs.statSync(tasksPng).size > 5000,
     `Task Manager screenshot should be complete: ${JSON.stringify(screenshot)}`);

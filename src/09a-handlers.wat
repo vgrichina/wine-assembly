@@ -1767,6 +1767,14 @@
           (i32.eq (call $hash_api_name (call $g2w (local.get $name_g)))
                   (i32.const 0x1A9C8FD4)))
       (then (global.set $findreplace_message (local.get $id))))
+    ;; FNV-1a("SHELLHOOK") = 0x684BA376. RegisterShellHook has no message-id
+    ;; argument, so retain the exact interned value while the name is still
+    ;; available instead of trying to reconstruct it from a counter later.
+    (if (i32.and
+          (i32.ne (local.get $id) (i32.const 0))
+          (i32.eq (call $hash_api_name (call $g2w (local.get $name_g)))
+                  (i32.const 0x684BA376)))
+      (then (global.set $shell_hook_message (local.get $id))))
     (local.get $id))
 
   ;; 66: RegisterWindowMessageA(lpString) — return unique msg ID from 0xC000+ range
@@ -7580,7 +7588,13 @@ HookEx — no next hook in chain, return 0
     (if (i32.eq (local.get $arg1) (i32.const 1))
       (then
         (global.set $shell_hook_hwnd (local.get $arg0))
-        (global.set $shell_hook_message (global.get $clipboard_format_counter)))
+        ;; $register_window_message retained the exact interned SHELLHOOK id.
+        ;; Keep a counter-derived fallback for callers that skip the documented
+        ;; RegisterWindowMessage("SHELLHOOK") setup sequence.
+        (if (i32.eqz (global.get $shell_hook_message))
+          (then
+            (global.set $shell_hook_message
+              (i32.add (i32.const 0xC000) (global.get $clipboard_fmt_counter))))))
       (else
         (if (i32.eq (local.get $arg0) (global.get $shell_hook_hwnd))
           (then
@@ -11262,4 +11276,3 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
         (then (call $g2w (local.get $arg4))) (else (i32.const 0)))
       (call $gl32 (i32.add (global.get $esp) (i32.const 24)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
-

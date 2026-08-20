@@ -694,7 +694,7 @@ Resource-aware Win98 emulator
   <script src="lib/dib.js?v=168"></script>
   <script src="lib/gdi-surface.js?v=2"></script>
   <script src="lib/surface.js?v=1"></script>
-  <script src="lib/resources-icon.js?v=170"></script>
+  <script src="lib/resources-icon.js?v=169"></script>
   <script src="lib/renderer-input.js?v=188"></script>
   <script src="lib/renderer.js?v=178"></script>
   <script src="lib/dll-registry.js?v=1"></script>
@@ -966,8 +966,16 @@ Resource-aware Win98 emulator
         el.dataset.app = value;
         el.innerHTML = '<div class="icon-img">' + glyph + '</div><div class="icon-label">' + label + '</div>';
         const exePath = apps[value] && apps[value].exe;
-        if (typeof loadAppIcon === 'function') {
-          loadAppIcon(el.querySelector('.icon-img'), value, exePath);
+        if (exePath && typeof fetchIconDataURL === 'function') {
+          fetchIconDataURL(exePath).then(url => {
+            if (!url) return;
+            const imgDiv = el.querySelector('.icon-img');
+            if (imgDiv) {
+              imgDiv.innerHTML = '<img src="' + url + '" style="width:32px;height:32px;image-rendering:pixelated">';
+              imgDiv.style.background = 'transparent';
+              imgDiv.style.border = '0';
+            }
+          });
         }
         let lastClick = 0;
         el.addEventListener('click', () => {

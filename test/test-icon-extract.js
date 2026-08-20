@@ -4,22 +4,19 @@
 //
 //   node test/test-icon-extract.js
 //
-// lib/resources-icon.js normally loads a pre-extracted PNG, then reads an icon
-// straight out of an executable only as a fallback. This checks a known icon
-// out of both executable containers, that a real image comes back rather than
-// an empty one, and that the pre-extracted fast path avoids the EXE request.
+// lib/resources-icon.js reads an icon straight out of an executable so the
+// desktop can show the app's own picture. It only ever understood the PE
+// resource tree, so every 16-bit NE on the desktop silently fell back to its
+// emoji -- silently because a missing icon is indistinguishable from an app
+// that simply has none. This checks a known icon out of each container, and
+// that a real image comes back rather than an empty one.
 
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
 const { PNG } = require('pngjs');
-const {
-  extractIconRgba,
-  preExtractedIconUrl,
-  loadAppIcon,
-} = require('../lib/resources-icon');
-const { APPS, DESKTOP_APPS, LOCAL_CANDIDATE_APPS } = require('../lib/apps');
+const { extractIconRgba } = require('../lib/resources-icon');
 
 const ROOT = path.join(__dirname, '..');
 const OUT = path.join(ROOT, 'test', 'output', 'icon-extract');
@@ -79,35 +76,6 @@ for (const [label, file, expect] of [['NE (16-bit)', NE, 32], ['PE (32-bit)', PE
     PNG.sync.write(png));
 }
 
-// The checked-in fast-path set must follow the registry. Compare decoded
-// pixels, not only filenames, so replacing an EXE without regenerating its PNG
-// cannot quietly put the old artwork on the desktop.
-const fastIconDir = path.join(ROOT, 'icons', 'apps');
-const expectedFastIcons = new Set();
-const fastIconErrors = [];
-for (const [id] of [...DESKTOP_APPS, ...LOCAL_CANDIDATE_APPS]) {
-  const app = APPS[id];
-  const icon = app && fs.existsSync(path.join(ROOT, app.exe))
-    ? extractIconRgba(fs.readFileSync(path.join(ROOT, app.exe))) : null;
-  if (!icon) continue;
-  const name = `${encodeURIComponent(id)}.png`;
-  expectedFastIcons.add(name);
-  const file = path.join(fastIconDir, name);
-  if (!fs.existsSync(file)) { fastIconErrors.push(`${id}: missing`); continue; }
-  const png = PNG.sync.read(fs.readFileSync(file));
-  if (png.width !== icon.w || png.height !== icon.h ||
-      !Buffer.from(png.data).equals(Buffer.from(icon.pixels))) {
-    fastIconErrors.push(`${id}: stale pixels`);
-  }
-}
-if (fs.existsSync(fastIconDir)) {
-  for (const name of fs.readdirSync(fastIconDir).filter(name => name.endsWith('.png'))) {
-    if (!expectedFastIcons.has(name)) fastIconErrors.push(`${name}: stale file`);
-  }
-}
-check(`all ${expectedFastIcons.size} pre-extracted desktop icons match their executables`,
-  fastIconErrors.length === 0, fastIconErrors.join(', '));
-
 // Not every executable has an icon, and the caller distinguishes "no icon"
 // from a thrown error only by getting null back.
 check('a buffer that is not an executable returns null',
@@ -115,86 +83,5 @@ check('a buffer that is not an executable returns null',
 check('a truncated MZ returns null instead of throwing',
   extractIconRgba(Buffer.from('MZ')) === null);
 
-async function checkFastPath() {
-  const oldDocument = global.document;
-  const oldFetch = global.fetch;
-  const created = [];
-  let exeFetches = 0;
-  global.document = {
-    createElement(tag) {
-      if (tag === 'canvas') {
-        return {
-          width: 0,
-          height: 0,
-          getContext: () => ({
-            createImageData: (w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }),
-            putImageData: () => {},
-          }),
-          toDataURL: () => 'data:image/png;base64,extracted',
-        };
-      }
-      const img = { tag, style: {}, onload: null, onerror: null, _src: '' };
-      Object.defineProperty(img, 'src', {
-        get: () => img._src,
-        set(value) { img._src = value; created.push(img); },
-      });
-      return img;
-    },
-  };
-  global.fetch = async () => { exeFetches++; throw new Error('unexpected EXE fetch'); };
-  const container = {
-    style: {},
-    child: 'fallback glyph',
-    replaceChildren(child) { this.child = child; },
-  };
-
-  try {
-    const loading = loadAppIcon(container, 'an app/id', 'large.exe');
-    check('the fast path uses the predictable encoded PNG URL',
-      created.length === 1 && created[0].src === 'icons/apps/an%20app%2Fid.png',
-      created[0] && created[0].src);
-    check('the fallback glyph remains while the PNG is loading',
-      container.child === 'fallback glyph');
-    created[0].onload();
-    check('a pre-extracted PNG avoids downloading the executable',
-      await loading === 'pre-extracted' && exeFetches === 0,
-      `${exeFetches} EXE fetches`);
-    check('the loaded image replaces the fallback glyph', container.child === created[0]);
-    check('app icon URL helper matches the loader',
-      preExtractedIconUrl('an app/id') === created[0].src);
-
-    // A missing PNG must retain the old behavior: fetch the EXE, decode its
-    // resource, and install the resulting data URL.
-    const peBytes = fs.readFileSync(PE);
-    global.fetch = async url => {
-      exeFetches++;
-      return {
-        ok: true,
-        arrayBuffer: async () => peBytes.buffer.slice(
-          peBytes.byteOffset, peBytes.byteOffset + peBytes.byteLength),
-      };
-    };
-    const fallback = loadAppIcon(container, 'missing', 'large.exe');
-    created[1].onerror();
-    await new Promise(resolve => setImmediate(resolve));
-    check('a missing PNG downloads the executable exactly once',
-      exeFetches === 1, `${exeFetches} EXE fetches`);
-    check('the EXE fallback parses an icon into an image URL',
-      created.length === 3 && created[2].src === 'data:image/png;base64,extracted',
-      created[2] && created[2].src);
-    created[2].onload();
-    check('the EXE-derived image replaces the missing PNG',
-      await fallback === 'executable' && container.child === created[2]);
-  } finally {
-    global.document = oldDocument;
-    global.fetch = oldFetch;
-  }
-}
-
-checkFastPath().then(() => {
-  console.log(`\n${passed} passed, ${failed} failed`);
-  process.exit(failed ? 1 : 0);
-}, err => {
-  console.error(err);
-  process.exit(1);
-});
+console.log(`\n${passed} passed, ${failed} failed`);
+process.exit(failed ? 1 : 0);

@@ -20,6 +20,7 @@ const images = {
   paragraph: path.join(OUT, 'paragraph-dialog.png'),
   tabs: path.join(OUT, 'tabs-dialog.png'),
   date: path.join(OUT, 'date-time-dialog.png'),
+  rightMargin: path.join(OUT, 'right-margin-wrap.png'),
 };
 for (const file of Object.values(images)) fs.rmSync(file, { force: true });
 
@@ -46,6 +47,18 @@ const ruler = run([
   '240:stop',
 ], 265);
 
+const rightMargin = run([
+  '170:main-resize:620:420',
+  '180:click:40:150',
+  '184:set-focus-text-b64:b25lIHR3byB0aHJlZSBmb3VyIGZpdmUgc2l4IHNldmVuIGVpZ2h0IG5pbmUgdGVuIGVsZXZlbiB0d2VsdmUgdGhpcnRlZW4gZm91cnRlZW4gZmlmdGVlbiBzaXh0ZWVuIHNldmVudGVlbiBlaWdodGVlbiBuaW5ldGVlbiB0d2VudHk=:long',
+  '190:send-focus-message:186:0:0:before-right-margin-lines',
+  '195:mousedown:596:124', '197:mousemove:300:124', '199:mouseup:300:124',
+  '205:click:40:150',
+  '210:dump-focus-paraformat:after-right-margin',
+  '212:send-focus-message:186:0:0:after-right-margin-lines',
+  `220:png:${images.rightMargin}`, '225:stop',
+], 250);
+
 const paragraph = run([
   '180:0x111:32780', '215:wait-dlg-control:1002:160',
   '220:dlg-dump:paragraph', `225:dlg-png:${images.paragraph}`, '230:stop',
@@ -63,10 +76,10 @@ const date = run([
   '255:click:40:150', '265:dump-focus-state:date-inserted', '275:stop',
 ], 290);
 
-const runs = [ruler, paragraph, tabs, date];
+const runs = [ruler, rightMargin, paragraph, tabs, date];
 for (const { output } of runs) {
   for (const line of output.split('\n')) {
-    if (/dump-focus-paraformat|dlg-dump|dump-listbox:date|dlg-send|dump-focus-state date|UNIMPLEMENTED|CRASH|RuntimeError/.test(line)) {
+    if (/dump-focus-paraformat|send-focus-message .*right-margin|dlg-dump|dump-listbox:date|dlg-send|dump-focus-state date|UNIMPLEMENTED|CRASH|RuntimeError/.test(line)) {
       console.log('  ' + line);
     }
   }
@@ -81,6 +94,11 @@ const checks = [
   ['ruler click adds a native RichEdit paragraph tab stop',
     /after-indent-drag:.*tabCount=0/.test(ruler.output) &&
     /after-tab-click:.*tabCount=1 tab0=[1-9]\d*/.test(ruler.output)],
+  ['right ruler marker sets a native RichEdit right indent',
+    /after-right-margin:.*dxRightIndent=[1-9]\d*/.test(rightMargin.output)],
+  ['right ruler margin is enforced by native RichEdit wrapping',
+    /before-right-margin-lines:.*ret=0x2/.test(rightMargin.output) &&
+    /after-right-margin-lines:.*ret=0x3/.test(rightMargin.output)],
   ['Paragraph dialog exposes indentation and alignment controls',
     /dlg-dump:paragraph:.*Indentation.*id=1000.*id=1001.*id=1002.*Alignment:.*text="Left"/.test(paragraph.output)],
   ['Tabs dialog exposes set, clear, and clear-all commands',
