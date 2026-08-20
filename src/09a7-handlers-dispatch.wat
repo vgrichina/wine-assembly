@@ -2463,4 +2463,22 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
+  ;; GetFileSecurityA(lpFileName, RequestedInformation, pSecurityDescriptor,
+  ;; nLength, lpnLengthNeeded) — 5 args stdcall.
+  ;;
+  ;; This is a Windows NT API. On the Windows 98 we emulate there is no
+  ;; security descriptor on a file at all, and ADVAPI32 answers every call
+  ;; with FALSE / ERROR_CALL_NOT_IMPLEMENTED — which is exactly what MFC's
+  ;; CFile save-with-backup path expects to see before it skips the ACL copy.
+  ;; The export still has to exist: MSPaint reaches it through GetProcAddress,
+  ;; and a NULL there turned into RaiseException 0xC06D007F + ExitProcess in
+  ;; the middle of File > Save (mfc42 6.00).
+  (func $handle_GetFileSecurityA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg4)
+      (then (call $gs32 (local.get $arg4) (i32.const 0))))
+    (global.set $last_error (i32.const 120)) ;; ERROR_CALL_NOT_IMPLEMENTED
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+  )
+
   ;; CommandLineToArgvW — already handled above as crash stub replacement

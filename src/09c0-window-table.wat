@@ -177,6 +177,19 @@
       (i32.const 0x0082)  ;; WM_NCDESTROY
       (i32.const 0) (i32.const 0)))
     (call $timer_kill_hwnd (local.get $hwnd))
+    ;; A destroyed window cannot keep the focus or the capture. USER drops both
+    ;; as the HWND dies; we used to clear focus only in $handle_DestroyWindow,
+    ;; and only when the *named* window held it — so a dialog's focused child
+    ;; left $focus_hwnd pointing at a dead HWND. The next SetFocus then posted
+    ;; WM_KILLFOCUS to it, GetMessage handed that message to the app, and MFC's
+    ;; CWnd::WalkPreTranslateTree looked the dead HWND up in its permanent
+    ;; handle map and called a virtual on a CWnd whose stack frame was gone
+    ;; (WordPad File>New + Cancel, mfc42 6.00).
+    (if (i32.eq (global.get $focus_hwnd) (local.get $hwnd))
+      (then (global.set $focus_hwnd (i32.const 0))))
+    (if (i32.eq (global.get $capture_hwnd) (local.get $hwnd))
+      (then (global.set $capture_hwnd (i32.const 0))))
+    (call $post_queue_purge_hwnd (local.get $hwnd))
     ;; Notify host to remove from its table (for each child too)
     (call $host_destroy_window (local.get $hwnd))
     ;; Finally, remove the window itself from guest table

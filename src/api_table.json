@@ -90,15 +90,42 @@
     "convention": "stdcall",
     "hash": 712574158,
     "args": [
-      { "name": "hdc", "type": "HANDLE" },
-      { "name": "x", "type": "INT" },
-      { "name": "y", "type": "INT" },
-      { "name": "w", "type": "INT" },
-      { "name": "h", "type": "INT" },
-      { "name": "srcDC", "type": "HANDLE" },
-      { "name": "sx", "type": "INT" },
-      { "name": "sy", "type": "INT" },
-      { "name": "rop", "type": "DWORD" }
+      {
+        "name": "hdc",
+        "type": "HANDLE"
+      },
+      {
+        "name": "x",
+        "type": "INT"
+      },
+      {
+        "name": "y",
+        "type": "INT"
+      },
+      {
+        "name": "w",
+        "type": "INT"
+      },
+      {
+        "name": "h",
+        "type": "INT"
+      },
+      {
+        "name": "srcDC",
+        "type": "HANDLE"
+      },
+      {
+        "name": "sx",
+        "type": "INT"
+      },
+      {
+        "name": "sy",
+        "type": "INT"
+      },
+      {
+        "name": "rop",
+        "type": "DWORD"
+      }
     ],
     "ret": "BOOL"
   },
@@ -417,7 +444,10 @@
     "convention": "stdcall",
     "hash": 3510766298,
     "args": [
-      { "name": "hdc", "type": "HDC" }
+      {
+        "name": "hdc",
+        "type": "HDC"
+      }
     ],
     "ret": "HDC"
   },
@@ -456,12 +486,31 @@
     "convention": "stdcall",
     "hash": 1775273563,
     "args": [
-      { "name": "hdc", "type": "HDC" },
-      { "name": "bmi", "type": "LPBITMAPINFO" },
-      { "name": "usage", "type": "UINT" },
-      { "name": "bits", "type": "LPVOID", "out": true },
-      { "name": "section", "type": "HANDLE" },
-      { "name": "offset", "type": "DWORD" }
+      {
+        "name": "hdc",
+        "type": "HDC"
+      },
+      {
+        "name": "bmi",
+        "type": "LPBITMAPINFO"
+      },
+      {
+        "name": "usage",
+        "type": "UINT"
+      },
+      {
+        "name": "bits",
+        "type": "LPVOID",
+        "out": true
+      },
+      {
+        "name": "section",
+        "type": "HANDLE"
+      },
+      {
+        "name": "offset",
+        "type": "DWORD"
+      }
     ],
     "ret": "HANDLE"
   },
@@ -3041,7 +3090,10 @@
     "convention": "stdcall",
     "hash": 1339497294,
     "args": [
-      { "name": "hwnd", "type": "HWND" }
+      {
+        "name": "hwnd",
+        "type": "HWND"
+      }
     ],
     "ret": "HDC"
   },
@@ -20291,5 +20343,36 @@
       }
     ],
     "ret": "HANDLE"
+  },
+  {
+    "id": 2467,
+    "name": "GetFileSecurityA",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1047573794,
+    "args": [
+      {
+        "name": "lpFileName",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "RequestedInformation",
+        "type": "DWORD"
+      },
+      {
+        "name": "pSecurityDescriptor",
+        "type": "LPVOID"
+      },
+      {
+        "name": "nLength",
+        "type": "DWORD"
+      },
+      {
+        "name": "lpnLengthNeeded",
+        "type": "LPDWORD",
+        "out": true
+      }
+    ],
+    "ret": "BOOL"
   }
 ]

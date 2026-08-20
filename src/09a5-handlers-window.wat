@@ -303,7 +303,12 @@
     ;; it stores private state at GetWindowLong(hwnd, 0) and crashes if USER
     ;; substitutes the WAT state model underneath it (Media Player 32).
     (if (i32.and
-          (global.get $cbt_hook_proc)
+          ;; A hook proc is a raw address: AND it as a 0/1 predicate or its low
+          ;; bit decides the branch. MFC 4.21's CBT proc happens to sit at an
+          ;; odd address and MFC 6.00's at an even one, which is the whole
+          ;; reason WordPad's toolbars appeared under one build and not the
+          ;; other (feedback_wat_bitwise_and).
+          (i32.ne (global.get $cbt_hook_proc) (i32.const 0))
           (i32.and
           (i32.ge_u (local.get $arg1) (i32.const 0x10000))
           (i32.and

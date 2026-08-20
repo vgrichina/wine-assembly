@@ -6896,9 +6896,85 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 429: SystemTimeToFileTime — STUB: unimplemented
+  ;; 429: SystemTimeToFileTime(const SYSTEMTIME*, FILETIME*) — 2 args stdcall.
+  ;; The calendar arithmetic is the civil-days era algorithm: shift March to
+  ;; the head of the year so the leap day lands last, then count whole
+  ;; 400-year eras. wDayOfWeek is ignored, as Win32 ignores it.
+  ;;
+  ;; MFC 6.00's CTime/COleDateTime path runs this on every document save, so a
+  ;; missing one stopped MSPaint's file round trip at the first Save As.
   (func $handle_SystemTimeToFileTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $st i32)
+    (local $year i32) (local $mon i32) (local $day i32)
+    (local $hour i32) (local $min i32) (local $sec i32) (local $ms i32)
+    (local $y i32) (local $era i32) (local $yoe i32) (local $doy i32) (local $doe i32)
+    (local $days i32)
+    (if (i32.or (i32.eqz (local.get $arg0)) (i32.eqz (local.get $arg1)))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $st (call $g2w (local.get $arg0)))
+    (local.set $year (i32.load16_u          (local.get $st)))
+    (local.set $mon  (i32.load16_u offset=2  (local.get $st)))
+    (local.set $day  (i32.load16_u offset=6  (local.get $st)))
+    (local.set $hour (i32.load16_u offset=8  (local.get $st)))
+    (local.set $min  (i32.load16_u offset=10 (local.get $st)))
+    (local.set $sec  (i32.load16_u offset=12 (local.get $st)))
+    (local.set $ms   (i32.load16_u offset=14 (local.get $st)))
+    ;; FILETIME cannot represent anything before 1601, and Win32 rejects a
+    ;; SYSTEMTIME whose fields are out of range rather than normalizing it.
+    (if (i32.or
+          (i32.lt_u (local.get $year) (i32.const 1601))
+          (i32.or
+            (i32.or (i32.eqz (local.get $mon)) (i32.gt_u (local.get $mon) (i32.const 12)))
+            (i32.or
+              (i32.or (i32.eqz (local.get $day)) (i32.gt_u (local.get $day) (i32.const 31)))
+              (i32.or
+                (i32.or (i32.gt_u (local.get $hour) (i32.const 23))
+                        (i32.gt_u (local.get $min) (i32.const 59)))
+                (i32.or (i32.gt_u (local.get $sec) (i32.const 59))
+                        (i32.gt_u (local.get $ms) (i32.const 999)))))))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    ;; Days since 1601-01-01.
+    (local.set $y (i32.sub (local.get $year)
+      (i32.le_u (local.get $mon) (i32.const 2))))
+    (local.set $era (i32.div_u (local.get $y) (i32.const 400)))
+    (local.set $yoe (i32.sub (local.get $y) (i32.mul (local.get $era) (i32.const 400))))
+    (local.set $doy (i32.add
+      (i32.div_u
+        (i32.add (i32.mul (i32.add (local.get $mon)
+                            (select (i32.const -3) (i32.const 9)
+                                    (i32.gt_u (local.get $mon) (i32.const 2))))
+                          (i32.const 153))
+                 (i32.const 2))
+        (i32.const 5))
+      (i32.sub (local.get $day) (i32.const 1))))
+    (local.set $doe (i32.add
+      (i32.add (i32.mul (local.get $yoe) (i32.const 365))
+               (i32.div_u (local.get $yoe) (i32.const 4)))
+      (i32.sub (local.get $doy) (i32.div_u (local.get $yoe) (i32.const 100)))))
+    ;; 584694 = 719468 (era day 0 → 1970-01-01) - 134774 (1601-01-01 → 1970),
+    ;; so the count comes out relative to the FILETIME epoch directly.
+    (local.set $days (i32.sub
+      (i32.add (i32.mul (local.get $era) (i32.const 146097)) (local.get $doe))
+      (i32.const 584694)))
+    (i64.store (call $g2w (local.get $arg1))
+      (i64.add
+        (i64.mul
+          (i64.add
+            (i64.mul (i64.extend_i32_u (local.get $days)) (i64.const 86400))
+            (i64.extend_i32_u
+              (i32.add (i32.mul (local.get $hour) (i32.const 3600))
+                       (i32.add (i32.mul (local.get $min) (i32.const 60))
+                                (local.get $sec)))))
+          (i64.const 10000000))
+        (i64.mul (i64.extend_i32_u (local.get $ms)) (i64.const 10000))))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 430: RegOpenKeyW — STUB: unimplemented

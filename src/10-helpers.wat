@@ -3984,6 +3984,34 @@
         (call $host_log_i32 (global.get $post_queue_count))))
     (i32.const 1))
 
+  ;; $post_queue_purge_hwnd(hwnd): drop every queued message aimed at a window
+  ;; that is going away. USER discards a destroyed window's queued messages;
+  ;; delivering one afterwards hands the app an HWND it has already torn its
+  ;; own bookkeeping down for (MFC looks the dead HWND up in its permanent
+  ;; handle map and calls a virtual on a freed CWnd).
+  (func $post_queue_purge_hwnd (param $hwnd i32)
+    (local $i i32) (local $slot i32)
+    (if (i32.eqz (local.get $hwnd)) (then (return)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $post_queue_count)))
+      (local.set $slot (i32.add (i32.const 0x400)
+        (i32.mul (local.get $i) (i32.const 16))))
+      (if (i32.eq (i32.load (local.get $slot)) (local.get $hwnd))
+        (then
+          (global.set $post_queue_count
+            (i32.sub (global.get $post_queue_count) (i32.const 1)))
+          (if (i32.lt_u (local.get $i) (global.get $post_queue_count))
+            (then
+              (call $memcpy
+                (local.get $slot)
+                (i32.add (local.get $slot) (i32.const 16))
+                (i32.mul
+                  (i32.sub (global.get $post_queue_count) (local.get $i))
+                  (i32.const 16))))))
+        (else (local.set $i (i32.add (local.get $i) (i32.const 1)))))
+      (br $scan)))
+  )
+
   ;; Skip a DLGTEMPLATE variable-length field (OrdOrString):
   ;;   0x0000 → null (skip 2 bytes)
   ;;   0xFFFF → ordinal (skip 4 bytes: 0xFFFF + u16 value)
