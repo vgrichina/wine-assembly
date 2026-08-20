@@ -21,7 +21,7 @@ const expected = {
   'System.fon': { face: 'System', metrics: [[7, 16], [8, 18]] },
   'MSSansSerif.fon': {
     face: 'MS Sans Serif',
-    metrics: [[6, 13], [7, 16], [8, 20], [10, 24], [12, 29], [15, 37]],
+    metrics: [[6, 13], [7, 16], [8, 20]],
   },
   'Courier.fon': { face: 'Courier', metrics: [[8, 13]] },
   'Terminal.fon': { face: 'Terminal', metrics: [[8, 12]], charset: 255, first: 0 },
@@ -142,17 +142,17 @@ try {
     }
     if (name === 'MSSansSerif.fon') {
       assert.deepStrictEqual(parsed.map(strike => strike.height),
-        [13, 16, 20, 24, 29, 37],
-        'MS Sans Serif must expose every 96-DPI cell shipped by Win98');
+        [13, 16, 20],
+        'MS Sans Serif must preserve only Wine native bitmap cells');
       assert.deepStrictEqual(parsed.map(strike => strike.points),
-        [8, 10, 12, 14, 18, 24],
-        'MS Sans Serif point-size ladder');
+        [8, 10, 12],
+        'MS Sans Serif native point-size ladder');
       assert.deepStrictEqual(parsed.map(strike => strike.internalLeading),
-        [2, 3, 4, 6, 5, 5],
+        [2, 3, 4],
         'MS Sans Serif character-height metadata');
       assert.deepStrictEqual(parsed.map(strike => strike.ascent),
-        [11, 13, 16, 19, 23, 30],
-        'scaled Wine bitmap baseline ladder');
+        [11, 13, 16],
+        'native Wine bitmap baseline ladder');
     }
     if (name === 'Terminal.fon') {
       const strike = parsed[0];

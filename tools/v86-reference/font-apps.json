@@ -86,6 +86,14 @@
       "waitMs": 5000,
       "files": []
     },
+    "ms-sans-artwork-matrix": {
+      "title": "MS Sans Serif dense artwork ladder",
+      "probeSource": "tools/v86-reference/probes/ms-sans-artwork-matrix.c",
+      "probeName": "MSART.EXE",
+      "launch": "D:\\MSART.EXE ORIGINAL",
+      "waitMs": 5000,
+      "files": []
+    },
     "font-render-substitutes": {
       "title": "Open substitute fonts rendered by Windows 98 GDI",
       "probeSource": "tools/v86-reference/probes/font-render-matrix.c",

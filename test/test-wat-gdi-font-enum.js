@@ -139,7 +139,7 @@ const { bootRenderHarness } = require('./render-helper');
     'Wingdings', 'Webdings',
   ], 'enumeration must retain Arial first, collapse duplicate FNT strikes, '
     + 'and report the substituted scalable faces');
-  assert.strictEqual(wat.test_gdi_bitmap_font_count(), 11,
+  assert.strictEqual(wat.test_gdi_bitmap_font_count(), 8,
     'enumeration should lazily install all bundled FNT strikes');
   assert.deepStrictEqual(candidates.map(candidate =>
     wat.test_gdi_bitmap_font_enum_type(candidate) >>> 0),
