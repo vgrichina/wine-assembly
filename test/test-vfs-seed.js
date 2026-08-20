@@ -62,8 +62,25 @@ check('an ArrayBuffer of exe bytes is accepted as well as a view', () => {
   assert.strictEqual(vfs.files.get('c:\\app.exe').data.length, 3);
 });
 
-check('a Win16 module name is tried under all three spellings', () => {
-  assert.deepStrictEqual(win16FileCandidates('CARDS'), ['CARDS.DLL', 'CARDS.dll', 'CARDS.EXE']);
+check('a Win16 module name is tried as every suffix under every case', () => {
+  // Both axes are load-bearing: .VBX because Visual Basic's custom controls
+  // ship under it (Go Figure!, Tic Tac Drop), and the case variants because
+  // the import table carries the linker's spelling while the file carries the
+  // installer's (TETRIS imports "Abouttet" from ABOUTTET.DLL) — invisible on a
+  // case-insensitive filesystem, fatal over HTTP.
+  assert.deepStrictEqual(win16FileCandidates('CARDS'), [
+    'CARDS.DLL', 'CARDS.dll', 'CARDS.VBX', 'CARDS.vbx', 'CARDS.EXE',
+    'cards.DLL', 'cards.dll', 'cards.VBX', 'cards.vbx', 'cards.EXE',
+  ]);
+  // An already-lowercase name must not be tried twice.
+  assert.deepStrictEqual(win16FileCandidates('cards'), [
+    'cards.DLL', 'cards.dll', 'cards.VBX', 'cards.vbx', 'cards.EXE',
+    'CARDS.DLL', 'CARDS.dll', 'CARDS.VBX', 'CARDS.vbx', 'CARDS.EXE',
+  ]);
+  // .IW is deliberately absent: staging IdleWild's six screen-saver libraries
+  // makes it run out of module slots and stop, where not finding them costs
+  // only the previews.
+  assert.ok(!win16FileCandidates('SCRNSAVE').some(c => /\.IW$/i.test(c)));
 });
 
 // Both hosts must be calling this, not carrying their own copy — that is the
