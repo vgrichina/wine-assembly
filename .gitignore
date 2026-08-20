@@ -21,6 +21,8 @@ binaries
 !screenshots/v86-reference/reviewed/*.png
 !icons/
 !icons/*.png
+!icons/apps/
+!icons/apps/*.png
 *.dll
 *.DLL
 *.wav
