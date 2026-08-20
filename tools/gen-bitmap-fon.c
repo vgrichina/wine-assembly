@@ -32,6 +32,7 @@ typedef struct {
   int height;
   int raster_height;
   int ascent;
+  int internal_leading;
   int average_width;
   int maximum_width;
 } Strike;
@@ -181,6 +182,11 @@ static int round_26_6(FT_Pos value) {
   return -(int)((-value + 32) >> 6);
 }
 
+static int round_ratio(int value, int numerator, int denominator) {
+  if (value <= 0 || numerator <= 0 || denominator <= 0) return 0;
+  return (value * numerator + denominator / 2) / denominator;
+}
+
 static uint8_t mono_source_bit(const FT_Bitmap *bitmap, int x, int y) {
   int pitch = bitmap->pitch;
   const uint8_t *row;
@@ -290,19 +296,54 @@ static void render_glyph(FT_Face face, unsigned byte, int cell_height,
   }
 }
 
+static Glyph scale_bitmap_glyph(const Glyph *source, int source_height,
+                                int target_height) {
+  Glyph glyph;
+  int width_bytes;
+  int x;
+  int y;
+
+  memset(&glyph, 0, sizeof(glyph));
+  glyph.width = round_ratio(source->width, target_height, source_height);
+  if (glyph.width < 1) glyph.width = 1;
+  if (glyph.width > 255) glyph.width = 255;
+  width_bytes = (glyph.width + 7) / 8;
+  glyph.bits_len = (size_t)width_bytes * (size_t)target_height;
+  glyph.bits = (uint8_t *)calloc(glyph.bits_len ? glyph.bits_len : 1, 1);
+  if (!glyph.bits) die("out of memory");
+
+  for (y = 0; y < target_height; y++) {
+    int source_y = y * source_height / target_height;
+    for (x = 0; x < glyph.width; x++) {
+      int source_x = x * source->width / glyph.width;
+      size_t source_offset = (size_t)(source_x >> 3) * (size_t)source_height +
+                             (size_t)source_y;
+      size_t target_offset;
+      if (!(source->bits[source_offset] & (0x80u >> (source_x & 7)))) continue;
+      target_offset = (size_t)(x >> 3) * (size_t)target_height + (size_t)y;
+      glyph.bits[target_offset] |= (uint8_t)(0x80u >> (x & 7));
+    }
+  }
+  return glyph;
+}
+
 static Strike make_strike(FT_Face face, int requested_height,
                           const char *face_name, int force_fixed,
                           const char *copyright, HintingMode hinting,
                           RasterSizing raster_sizing, int bitmap_only,
-                          CharacterSet charset, int weight) {
+                          int scale_bitmaps, CharacterSet charset, int weight,
+                          int requested_internal_leading) {
   enum { LAST_CHAR = 255, MAX_GLYPH_COUNT = 256 };
   Strike strike;
   Glyph glyphs[MAX_GLYPH_COUNT];
   FT_Error error;
   int raster_height;
+  int render_height;
+  int render_ascent;
   int ascent;
   int descent;
   int height;
+  int internal_leading;
   int max_width = 1;
   long printable_width = 0;
   int printable_count = 0;
@@ -324,19 +365,59 @@ static Strike make_strike(FT_Face face, int requested_height,
    * emitting a differently named strike or clipping the bottom row.
    */
   raster_height = requested_height;
-  for (;;) {
-    error = FT_Set_Pixel_Sizes(face, 0, (FT_UInt)raster_height);
-    if (error) die_ft("FT_Set_Pixel_Sizes", error);
+  render_height = requested_height;
+  if (scale_bitmaps && face->num_fixed_sizes > 0) {
+    int best = 0;
+    int best_distance = 0x7fffffff;
+    for (i = 0; i < face->num_fixed_sizes; i++) {
+      int candidate = face->available_sizes[i].height;
+      int distance;
+      if (candidate <= 0) candidate = (int)(face->available_sizes[i].y_ppem >> 6);
+      distance = candidate - requested_height;
+      if (distance < 0) distance = -distance;
+      if (distance < best_distance) {
+        best = i;
+        best_distance = distance;
+      }
+    }
+    error = FT_Select_Size(face, best);
+    if (error) die_ft("FT_Select_Size", error);
+    raster_height = face->available_sizes[best].height;
+    if (raster_height <= 0)
+      raster_height = (int)(face->available_sizes[best].y_ppem >> 6);
     ascent = ceil_26_6(face->size->metrics.ascender);
     descent = ceil_26_6(-face->size->metrics.descender);
-    if (raster_sizing == RASTER_EXACT_SIZE ||
-        ascent + descent <= requested_height || raster_height <= 4) break;
-    raster_height--;
+    render_height = raster_height;
+    render_ascent = ascent;
+    ascent = round_ratio(ascent, requested_height, raster_height);
+    descent = round_ratio(descent, requested_height, raster_height);
+  } else {
+    for (;;) {
+      error = FT_Set_Pixel_Sizes(face, 0, (FT_UInt)raster_height);
+      if (error) die_ft("FT_Set_Pixel_Sizes", error);
+      ascent = ceil_26_6(face->size->metrics.ascender);
+      descent = ceil_26_6(-face->size->metrics.descender);
+      if (raster_sizing == RASTER_EXACT_SIZE ||
+          ascent + descent <= requested_height || raster_height <= 4) break;
+      raster_height--;
+    }
+    render_ascent = ascent;
   }
   height = requested_height;
   if (height < 1 || height > 256) die("generated cell height is outside FNT limits");
   if (ascent < 1) ascent = height;
   if (ascent > height) ascent = height;
+  if (render_height == height) {
+    render_ascent = ascent;
+  } else {
+    if (render_ascent < 1) render_ascent = render_height;
+    if (render_ascent > render_height) render_ascent = render_height;
+  }
+  internal_leading = requested_internal_leading >= 0
+    ? requested_internal_leading
+    : (height > raster_height ? height - raster_height : 0);
+  if (internal_leading >= height)
+    die("internal leading must be smaller than its pixel height");
 
   if (force_fixed) {
     error = FT_Load_Char(face, 'M', hinting_load_flags(hinting));
@@ -348,8 +429,15 @@ static Strike make_strike(FT_Face face, int requested_height,
 
   for (i = 0; i < glyph_count; i++) {
     int byte = first_char + i;
-    render_glyph(face, (unsigned)byte, height, ascent, fixed_width, hinting, bitmap_only,
-                 charset, &glyphs[i]);
+    Glyph rendered;
+    render_glyph(face, (unsigned)byte, render_height, render_ascent, fixed_width,
+                 hinting, bitmap_only, charset, &rendered);
+    if (render_height == height) {
+      glyphs[i] = rendered;
+    } else {
+      glyphs[i] = scale_bitmap_glyph(&rendered, render_height, height);
+      free(rendered.bits);
+    }
     if (glyphs[i].width > max_width) max_width = glyphs[i].width;
     width_bytes += (glyphs[i].width + 7) / 8;
     if (byte >= 32 && byte <= 126) {
@@ -381,11 +469,12 @@ static Strike make_strike(FT_Face face, int requested_height,
     memcpy(strike.bytes.data + 6, copyright, n);
   }
   put_u16(&strike.bytes, 66, 0); /* raster font */
-  put_u16(&strike.bytes, 68, (uint16_t)((raster_height * 72 + 48) / 96));
+  put_u16(&strike.bytes, 68,
+          (uint16_t)(((height - internal_leading) * 72 + 48) / 96));
   put_u16(&strike.bytes, 70, 96);
   put_u16(&strike.bytes, 72, 96);
   put_u16(&strike.bytes, 74, (uint16_t)ascent);
-  put_u16(&strike.bytes, 76, (uint16_t)(height - raster_height));
+  put_u16(&strike.bytes, 76, (uint16_t)internal_leading);
   put_u16(&strike.bytes, 78, 0);
   put_u8(&strike.bytes, 80, 0);
   put_u8(&strike.bytes, 81, 0);
@@ -417,6 +506,7 @@ static Strike make_strike(FT_Face face, int requested_height,
   strike.height = height;
   strike.raster_height = raster_height;
   strike.ascent = ascent;
+  strike.internal_leading = internal_leading;
   strike.average_width = printable_count
     ? (int)((printable_width + printable_count / 2) / printable_count) : 1;
   strike.maximum_width = max_width;
@@ -554,6 +644,26 @@ static int parse_height(const char *text) {
   return (int)value;
 }
 
+static void parse_internal_leadings(const char *text, int *values, int count) {
+  int index;
+  const char *cursor = text;
+  for (index = 0; index < count; index++) {
+    char *end = NULL;
+    long value;
+    errno = 0;
+    value = strtol(cursor, &end, 10);
+    if (errno || end == cursor || value < 0 || value > 255)
+      die("internal leading values must be integers from 0 through 255");
+    values[index] = (int)value;
+    if (index + 1 == count) {
+      if (*end) die("internal leading count must match the height count");
+    } else {
+      if (*end != ',') die("internal leading count must match the height count");
+      cursor = end + 1;
+    }
+  }
+}
+
 int main(int argc, char **argv) {
   static const int defaults[] = {11, 12, 16, 24, 32, 48, 64};
   static const char default_copyright[] =
@@ -563,6 +673,7 @@ int main(int argc, char **argv) {
   const char *face_name;
   const char *copyright = default_copyright;
   const char *hinting_name = "auto";
+  const char *internal_leading_text = NULL;
   /* dfWeight. A bold strike that reported 400 would be indistinguishable
      from its regular sibling to any face-selection code reading the FNT. */
   int weight = 400;
@@ -571,8 +682,10 @@ int main(int argc, char **argv) {
   CharacterSet charset = CHARSET_ANSI;
   int force_fixed = 0;
   int bitmap_only = 0;
+  int scale_bitmaps = 0;
   int first_height = 4;
   int *heights;
+  int *internal_leadings;
   int count;
   FT_Library library;
   FT_Face face;
@@ -585,7 +698,8 @@ int main(int argc, char **argv) {
   if (argc < 4) {
     fprintf(stderr,
       "usage: %s INPUT.otf OUTPUT.fon FACE [--fixed] [--copyright=TEXT]"
-      " [--bitmap-only]"
+      " [--bitmap-only] [--scale-bitmaps]"
+      " [--internal-leading=N,N,...]"
       " [--charset=ansi|oem]"
       " [--hinting=auto|auto-normal|auto-light|native|none]"
       " [--raster=fit|exact]"
@@ -605,6 +719,11 @@ int main(int argc, char **argv) {
       force_fixed = 1;
     } else if (strcmp(argv[first_height], "--bitmap-only") == 0) {
       bitmap_only = 1;
+    } else if (strcmp(argv[first_height], "--scale-bitmaps") == 0) {
+      scale_bitmaps = 1;
+    } else if (strncmp(argv[first_height], "--internal-leading=", 19) == 0) {
+      internal_leading_text = argv[first_height] + 19;
+      if (!*internal_leading_text) die("internal leading list must not be empty");
     } else if (strcmp(argv[first_height], "--charset=ansi") == 0) {
       charset = CHARSET_ANSI;
     } else if (strcmp(argv[first_height], "--charset=oem") == 0) {
@@ -653,6 +772,13 @@ int main(int argc, char **argv) {
     for (i = 0; i < count; i++) heights[i] = defaults[i];
   }
   if (count > 16) die("at most 16 strikes can be emitted");
+  if (scale_bitmaps && !bitmap_only)
+    die("--scale-bitmaps requires --bitmap-only");
+  internal_leadings = (int *)calloc((size_t)count, sizeof(int));
+  if (!internal_leadings) die("out of memory");
+  for (i = 0; i < count; i++) internal_leadings[i] = -1;
+  if (internal_leading_text)
+    parse_internal_leadings(internal_leading_text, internal_leadings, count);
 
   error = FT_Init_FreeType(&library);
   if (error) die_ft("FT_Init_FreeType", error);
@@ -665,12 +791,12 @@ int main(int argc, char **argv) {
   if (!strikes) die("out of memory");
   for (i = 0; i < count; i++) {
     strikes[i] = make_strike(face, heights[i], face_name, force_fixed, copyright,
-                             hinting, raster_sizing, bitmap_only, charset,
-                             weight);
-    fprintf(stderr, "strike request=%dpx cell=%dpx em=%dpx ascent=%d avg=%d max=%d hinting=%s bytes=%zu\n",
+                             hinting, raster_sizing, bitmap_only, scale_bitmaps,
+                             charset, weight, internal_leadings[i]);
+    fprintf(stderr, "strike request=%dpx cell=%dpx source=%dpx ascent=%d leading=%d avg=%d max=%d hinting=%s bytes=%zu\n",
       heights[i], strikes[i].height, strikes[i].raster_height, strikes[i].ascent,
-      strikes[i].average_width, strikes[i].maximum_width, hinting_name,
-      strikes[i].bytes.len);
+      strikes[i].internal_leading, strikes[i].average_width,
+      strikes[i].maximum_width, hinting_name, strikes[i].bytes.len);
   }
   fon = make_fon(strikes, count, face_name);
 
@@ -689,6 +815,7 @@ int main(int argc, char **argv) {
   for (i = 0; i < count; i++) free(strikes[i].bytes.data);
   free(strikes);
   free(heights);
+  free(internal_leadings);
   free(fon.data);
   FT_Done_Face(face);
   FT_Done_FreeType(library);

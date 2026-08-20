@@ -222,9 +222,12 @@ Two findings matter here.
 Bold ships seven covering 9–16** — exactly the range Win98 dialogs and
 tooltips use. (An earlier revision of this table said Tahoma Bold was outline
 only; that was wrong, and `fonts/Tahoma*.fon` are built from its strikes.)
-Those strikes go through the *existing* pixel-exact pipeline:
+Those strikes go through the *existing* bitmap pipeline:
 `tools/gen-bitmap-fon.c` extracts embedded monochrome strikes with FreeType at
-`--bitmap-only --raster=exact`, which is how `MSSansSerif.fon` is built.
+`--bitmap-only --raster=exact`. `MSSansSerif.fon` uses the same path for Wine's
+native 13/16/20px bitmaps and fills the 24/29/37px cells that Wine omits by
+explicit build-time nearest-neighbor scaling; Tahoma's listed rungs are all
+native and remain pixel-exact.
 Tahoma at UI sizes is therefore a bitmap-path face, not a Canvas face, and
 needs no new rasterizer.
 

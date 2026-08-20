@@ -854,8 +854,11 @@
   (func $gdi_bitmap_font_best (param $face i32) (param $request i32) (result i32)
     (local $i i32) (local $strike i32) (local $best i32)
     (local $distance i32) (local $best_distance i32)
+    (local $character_request i32) (local $candidate i32)
     (if (i32.lt_s (local.get $request) (i32.const 0))
-      (then (local.set $request (i32.sub (i32.const 0) (local.get $request)))))
+      (then
+        (local.set $character_request (i32.const 1))
+        (local.set $request (i32.sub (i32.const 0) (local.get $request)))))
     (local.set $best_distance (i32.const 0x7FFFFFFF))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $GDI_BITMAP_FONT_COUNT)))
@@ -870,9 +873,23 @@
               (i32.add (i32.load offset=8 (local.get $strike))
                 (i32.load offset=56 (local.get $strike)))))
         (then
-          (local.set $distance (i32.sub (select (local.get $request)
-            (i32.load offset=20 (local.get $strike)) (local.get $request))
-            (i32.load offset=20 (local.get $strike))))
+          ;; A negative LOGFONT height describes the character body, while an
+          ;; FNT's dfPixHeight is the whole cell. Win98 compares negative
+          ;; requests against dfPixHeight - dfInternalLeading; treating -18
+          ;; as an 18px cell incorrectly picked the 16px rung instead of the
+          ;; shipped 24px/18px-character MS Sans Serif strike.
+          (local.set $candidate (i32.load offset=20 (local.get $strike)))
+          (if (local.get $character_request)
+            (then
+              (local.set $candidate (i32.sub (local.get $candidate)
+                (i32.and (i32.load offset=60 (local.get $strike))
+                  (i32.const 0xFFFF))))
+              (if (i32.le_s (local.get $candidate) (i32.const 0))
+                (then (local.set $candidate
+                  (i32.load offset=20 (local.get $strike)))))))
+          (local.set $distance (select
+            (i32.sub (local.get $request) (local.get $candidate))
+            (i32.const 0) (local.get $request)))
           (if (i32.lt_s (local.get $distance) (i32.const 0))
             (then (local.set $distance (i32.sub (i32.const 0) (local.get $distance)))))
           (if (i32.lt_s (local.get $distance) (local.get $best_distance))

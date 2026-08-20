@@ -95,7 +95,9 @@
           (i32.eq (global.get $yield_reason) (i32.const 5))
           (i32.or
             (i32.eq (global.get $yield_reason) (i32.const 7))
-            (i32.eq (global.get $yield_reason) (i32.const 8))))))
+            (i32.or
+              (i32.eq (global.get $yield_reason) (i32.const 8))
+              (i32.eq (global.get $yield_reason) (i32.const 9)))))))
       ;; The 16-bit twin of the thunk-zone check below. A far call or return
       ;; into the thunk segment is caught at the transfer, but EIP can also be
       ;; *parked* there — a modal message box owns the task until it is
@@ -2191,6 +2193,8 @@
         (then (global.set $cbt_hook_ret_thunk (local.get $guest))))
       (if (i32.eq (local.get $marker) (i32.const 0xCACA0003))
         (then (global.set $initterm_thunk (local.get $guest))))
+      (if (i32.eq (local.get $marker) (i32.const 0xCACA002C))
+        (then (global.set $atexit_ret_thunk (local.get $guest))))
       (if (i32.eq (local.get $marker) (i32.const 0xCACA0004))
         (then (global.set $dlg_loop_thunk (local.get $guest))))
       (if (i32.eq (local.get $marker) (i32.const 0xCACA0005))
@@ -2230,6 +2234,17 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan))))
 
+  ;; Focused CRT callback tests use these without routing through an imported
+  ;; API thunk; callback execution itself still runs through the real x86
+  ;; interpreter and CACA002C continuation path.
+  (func (export "test_crt_atexit_register") (param $fn i32) (result i32)
+    (call $crt_atexit_register (local.get $fn)))
+  (func (export "test_crt_atexit_count") (result i32)
+    (global.get $atexit_count))
+  (func (export "test_crt_exit_begin") (param $code i32)
+    (global.set $atexit_exit_code (local.get $code))
+    (call $crt_atexit_run_next))
+
   ;; Thread init — called by host after creating worker instance
   (func (export "init_thread") (param $tid i32)
       (param $img_base i32) (param $code_s i32) (param $code_e i32)
@@ -2268,17 +2283,23 @@
     (global.set $thunk_guest_end (local.get $thunk_ge))
     (global.set $num_thunks (local.get $num_th))
     (call $sync_thread_thunk_globals)
+    ;; Worker code can call an existing COM object's vtable directly before
+    ;; making another imported Win32 call. Restore every per-instance DirectX
+    ;; vtable global eagerly so those calls never dispatch through address 0.
+    (call $dx_sync_thread_vtables)
   )
 
   ;; Yield state exports
   (func (export "get_yield_reason") (result i32) (global.get $yield_reason))
   (func (export "get_wait_handle") (result i32) (global.get $wait_handle))
   (func (export "get_wait_handles_ptr") (result i32) (global.get $wait_handles_ptr))
+  (func (export "get_wait_all") (result i32) (global.get $wait_all))
   (func (export "get_wait_timeout") (result i32) (global.get $wait_timeout))
   (func (export "get_wait_stack_bytes") (result i32) (global.get $wait_stack_bytes))
   (func (export "clear_yield")
     (global.set $yield_reason (i32.const 0))
     (global.set $wait_handles_ptr (i32.const 0))
+    (global.set $wait_all (i32.const 0))
     (global.set $wait_timeout (i32.const 0xFFFFFFFF))
     (global.set $wait_stack_bytes (i32.const 12)))
   (func (export "resume_message_wait") (result i32)
@@ -2578,14 +2599,18 @@
   ;; fire_mm_timer: check if multimedia timer is due, inject callback if so.
   ;; Saves current EIP as return address so execution resumes after callback returns.
   ;; Returns 1 if timer was fired, 0 if not due or no timer active.
-  (func (export "fire_mm_timer") (result i32)
+  (func $fire_mm_timer (export "fire_mm_timer") (result i32)
     (local $elapsed i32)
     (if (i32.eqz (global.get $mm_timer_id)) (then (return (i32.const 0))))
-    ;; Re-entrancy guard: if callback is running, check if it returned
-    (if (global.get $mm_timer_in_cb) (then
-      (if (i32.ge_u (global.get $esp) (global.get $mm_timer_saved_esp))
-        (then (global.set $mm_timer_in_cb (i32.const 0)))  ;; callback returned
-        (else (return (i32.const 0))))))                    ;; still running
+    ;; A yielded Win32 wait keeps its stdcall frame parked for the cooperative
+    ;; scheduler. Interrupting that frame would make wait completion mistake
+    ;; this callback's continuation thunk for the wait's return address.
+    (if (global.get $yield_reason) (then (return (i32.const 0))))
+    ;; The CACA000A callback-return continuation clears this flag exactly when
+    ;; the guest callback returns. Do not infer that event from later ESP: the
+    ;; interrupted code may already have entered a deeper call by this poll.
+    (if (global.get $mm_timer_in_cb)
+      (then (return (i32.const 0))))
     (global.set $tick_count (call $host_get_ticks))
     (local.set $elapsed (i32.sub (global.get $tick_count) (global.get $mm_timer_last_tick)))
     (if (i32.lt_u (local.get $elapsed) (global.get $mm_timer_interval))
@@ -2594,8 +2619,6 @@
     (global.set $mm_timer_last_tick (global.get $tick_count))
     (if (global.get $mm_timer_oneshot)
       (then (global.set $mm_timer_id (i32.const 0))))
-    ;; Save ESP before pushing anything (re-entrancy guard compares against this)
-    (global.set $mm_timer_saved_esp (global.get $esp))
     (global.set $mm_timer_in_cb (i32.const 1))
     ;; Save caller-saved regs + flags (36 bytes, includes EIP for restore)
     (call $save_caller_regs)

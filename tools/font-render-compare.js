@@ -44,6 +44,7 @@ function cellStats(column, row) {
   const x0 = column * 160 + 3;
   const x1 = column * 160 + 158;
   const { y0, y1 } = sampleBands[row];
+  const maxShift = Math.max(2, Math.ceil(sizes[row] / 6));
   let oursInk = 0;
   let referenceInk = 0;
   let intersection = 0;
@@ -62,8 +63,8 @@ function cellStats(column, row) {
   }
   let alignedIntersection = 0;
   let bestShift = { x: 0, y: 0 };
-  for (let dy = -4; dy <= 4; dy++) {
-    for (let dx = -4; dx <= 4; dx++) {
+  for (let dy = -maxShift; dy <= maxShift; dy++) {
+    for (let dx = -maxShift; dx <= maxShift; dx++) {
       let shiftedIntersection = 0;
       for (const [x, y] of oursPoints) {
         if (referencePoints.has(`${x + dx},${y + dy}`)) shiftedIntersection++;
@@ -84,6 +85,9 @@ function cellStats(column, row) {
     union,
     inkIoU: union ? Number((intersection / union).toFixed(4)) : 1,
     bestShift,
+    maxShift,
+    alignedIntersection,
+    alignedUnion,
     alignedInkIoU: alignedUnion ? Number((alignedIntersection / alignedUnion).toFixed(4)) : 1,
   };
 }
@@ -109,6 +113,8 @@ for (let row = 0; row < sizes.length; row++) {
 }
 const totalIntersection = cells.reduce((sum, cell) => sum + cell.intersection, 0);
 const totalUnion = cells.reduce((sum, cell) => sum + cell.union, 0);
+const totalAlignedIntersection = cells.reduce((sum, cell) => sum + cell.alignedIntersection, 0);
+const totalAlignedUnion = cells.reduce((sum, cell) => sum + cell.alignedUnion, 0);
 
 const overlay = new PNG({ width: ours.width, height: ours.height });
 for (let y = 0; y < ours.height; y++) {
@@ -155,6 +161,7 @@ const report = {
     meanAbsoluteRgbError: Number((absoluteRgbError / (pixelCount * 3)).toFixed(4)),
   },
   sampleInkIoU: Number((totalIntersection / totalUnion).toFixed(4)),
+  sampleAlignedInkIoU: Number((totalAlignedIntersection / totalAlignedUnion).toFixed(4)),
   cells,
 };
 
@@ -168,7 +175,7 @@ fs.writeFileSync(path.join(outputDir, "report.json"), `${JSON.stringify(report, 
 const rows = cells.map(cell => `
           <tr><td>${cell.face}</td><td>${cell.size}px</td><td>${cell.oursInk}</td>
           <td>${cell.referenceInk}</td><td>${(cell.inkIoU * 100).toFixed(1)}%</td>
-          <td>${(cell.alignedInkIoU * 100).toFixed(1)}% (${cell.bestShift.x},${cell.bestShift.y})</td></tr>`).join("");
+          <td>${(cell.alignedInkIoU * 100).toFixed(1)}% (${cell.bestShift.x},${cell.bestShift.y}; ±${cell.maxShift})</td></tr>`).join("");
 const html = `<!doctype html>
 <meta charset="utf-8">
 <title>Win98 font rendering comparison</title>
@@ -195,8 +202,9 @@ const html = `<!doctype html>
 </div>
 <p>Whole-image differing pixels: ${differingPixels.toLocaleString()} / ${pixelCount.toLocaleString()}
 (${(report.wholeImage.differingFraction * 100).toFixed(2)}%). Weighted sample ink IoU:
-${(report.sampleInkIoU * 100).toFixed(1)}%.</p>
-<table><thead><tr><th>Face</th><th>Request</th><th>Our ink</th><th>Win98 ink</th><th>Screen IoU</th><th>Best IoU ±4px (dx,dy)</th></tr></thead>
+${(report.sampleInkIoU * 100).toFixed(1)}%; baseline-aligned (≤1/6 em):
+${(report.sampleAlignedInkIoU * 100).toFixed(1)}%.</p>
+<table><thead><tr><th>Face</th><th>Request</th><th>Our ink</th><th>Win98 ink</th><th>Screen IoU</th><th>Baseline-aligned IoU (dx,dy; bound)</th></tr></thead>
 <tbody>${rows}
 </tbody></table>
 `;
@@ -205,6 +213,7 @@ fs.writeFileSync(path.join(outputDir, "index.html"), html);
 console.log(`Wrote ${path.join(outputDir, "index.html")}`);
 console.log(`Whole-image differing pixels: ${differingPixels}/${pixelCount}`);
 console.log(`Weighted sample ink IoU: ${(report.sampleInkIoU * 100).toFixed(1)}%`);
+console.log(`Aligned sample ink IoU: ${(report.sampleAlignedInkIoU * 100).toFixed(1)}%`);
 for (const cell of cells) {
   console.log(`${cell.face.padEnd(16)} ${String(cell.size).padStart(2)}px  ` +
     `ink ${String(cell.oursInk).padStart(4)}/${String(cell.referenceInk).padStart(4)}  ` +

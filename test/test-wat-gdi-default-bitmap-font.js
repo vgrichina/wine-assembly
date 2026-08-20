@@ -76,6 +76,33 @@ const { bootRenderHarness } = require('./render-helper');
     wat.test_gdi_bitmap_font_bound(uiFont));
   assert.strictEqual(wat.test_call_TextOutA(hdc, 50, 30, text, 10), 1);
 
+  // Win98's 96-DPI SSERIFE.FON contains six hand-sized cells. Negative
+  // LOGFONT heights describe the character body, so selection must subtract
+  // dfInternalLeading before comparing a request with a bitmap rung.
+  const tm = allocZero(64);
+  const ladder = [
+    { request: -11, cell: 13, leading: 2 },
+    { request: -13, cell: 16, leading: 3 },
+    { request: -16, cell: 20, leading: 4 },
+    { request: -19, cell: 24, leading: 6 },
+    { request: -24, cell: 29, leading: 5 },
+    { request: -32, cell: 37, leading: 5 },
+  ];
+  for (const expected of ladder) {
+    const font = wat.test_call_CreateFontW(
+      expected.request, 400, 0, writeWide('MS Sans Serif')) >>> 0;
+    const strike = wat.test_gdi_bitmap_font_bound(font) >>> 0;
+    assert(font && strike, `MS Sans Serif ${expected.request}px must bind`);
+    assert.strictEqual(new DataView(memory.buffer).getUint32(strike + 20, true),
+      expected.cell, `MS Sans Serif ${expected.request}px cell`);
+    assert.strictEqual(new DataView(memory.buffer).getUint32(strike + 60, true) & 0xffff,
+      expected.leading, `MS Sans Serif ${expected.request}px internal leading`);
+    wat.test_call_SelectObject(hdc, font);
+    assert.strictEqual(wat.test_call_GetTextMetricsA(hdc, tm), 1);
+    assert.strictEqual(wat.guest_read32(tm), expected.cell,
+      `MS Sans Serif ${expected.request}px public tmHeight`);
+  }
+
   // No font files are mounted in this harness, so Arial cannot be rasterized
   // from its substitute here. It still must not reach Canvas: the bundled
   // MS Sans Serif strike is the last resort, which is what makes it safe for
@@ -90,10 +117,10 @@ const { bootRenderHarness } = require('./render-helper');
   assert(wat.test_gdi_bitmap_font_selected(hdc) >>> 0,
     'with no font file to rasterize, a scalable face falls back to a strike');
 
-  assert.strictEqual(wat.test_gdi_bitmap_font_count(), 8,
-    'four Wine resources plus Terminal should install eight bitmap strikes');
+  assert.strictEqual(wat.test_gdi_bitmap_font_count(), 11,
+    'four Wine resources plus Terminal should install eleven bitmap strikes');
 
-  console.log('PASS  System and MS Sans Serif stock/alias text uses Wine bitmaps without Canvas');
+  console.log('PASS  System and the six-rung MS Sans Serif ladder use Wine bitmaps without Canvas');
 })().catch(error => {
   console.error(error.stack || error);
   process.exit(1);

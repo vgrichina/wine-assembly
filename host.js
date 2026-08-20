@@ -50,6 +50,17 @@ class WineAssembly {
     this._wasmModule = null;
     this.stepsPerSlice = 100000;
     this.verbose = false;
+    // Some WinMM clients intentionally wait for a timeSetEvent callback while
+    // they are not pumping messages. This remains opt-in per app: the normal
+    // path still delivers the callback through the guest message loop.
+    this.asyncMultimediaTimer = false;
+  }
+
+  _pumpMultimediaTimer() {
+    const ex = this.instance && this.instance.exports;
+    if (!this.asyncMultimediaTimer || !ex || !ex.fire_mm_timer) return 0;
+    if (ex.get_eip && !(ex.get_eip() >>> 0)) return 0;
+    return ex.fire_mm_timer() | 0;
   }
 
   _guestTickState(sharedAudio) {
@@ -1675,6 +1686,13 @@ class WineAssembly {
           if (perf) perf.countSteps(activeStepsPerSlice);
           const perfMainStart = perf ? performance.now() : 0;
           self.instance.exports.run(activeStepsPerSlice);
+          // timeSetEvent is asynchronous on Windows. Most emulated apps pump
+          // often enough for the existing MM_TIMER message path; opted-in
+          // clients such as Diablo also need a callback between slices while
+          // their main thread is deliberately busy-waiting. fire_mm_timer is
+          // cooperative: it refuses to interrupt a parked wait or an active
+          // callback and resumes the interrupted EIP through its return thunk.
+          self._pumpMultimediaTimer();
           if (perf) perf.mark('main', performance.now() - perfMainStart);
           self._checkLastWindowStop();
           // ExitProcess/last-window teardown can stop the app from inside a

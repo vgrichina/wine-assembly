@@ -60,6 +60,9 @@ UNIT=(
   test/test-wide-api.js
   test/test-midi-mci.js
   test/test-thread-manager.js
+  test/test-mm-timer-callback.js
+  test/test-browser-mm-timer.js
+  test/test-diablo-runtime-apis.js
   test/test-dev-server.js
   test/test-vlan-rtc.js
   test/test-waveout-audio.js
@@ -165,6 +168,7 @@ UNIT=(
   test/test-aoe-stack-packet-handler.js
   test/test-clipboard-rtf-api.js
   test/test-coinitialize-ex.js
+  test/test-critical-section-threading.js
   test/test-ddraw-surface-dirty-rect.js
   test/test-defer-window-pos-visibility.js
   test/test-delphi-seh-mutated-chain.js

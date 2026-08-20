@@ -34,7 +34,15 @@ generate() {
 # FreeType returns those pixels verbatim; it does not rasterize outlines here.
 generate fixedsys Fixedsys Fixedsys --fixed 15
 generate system System System 16 18
-generate ms_sans_serif MSSansSerif "MS Sans Serif" 13 16 20
+# Microsoft's 96-DPI SSERIFE.FON shipped six cells: 13, 16, 20, 24, 29,
+# and 37 pixels, with character heights encoded through internal leading.
+# Wine's redistributable bitmap source supplies exact 13/16/20px strikes.
+# Fill its missing rungs once at build time by nearest-neighbor scaling those
+# open pixels; the runtime still consumes a normal bitmap-only FON and never
+# needs Microsoft bytes or a font engine.
+generate ms_sans_serif MSSansSerif "MS Sans Serif" \
+  --scale-bitmaps --internal-leading=2,3,4,6,5,5 \
+  13 16 20 24 29 37
 generate courier Courier Courier --fixed 13
 
 # Tahoma is the Win98 shell and tooltip face. Wine's TTFs carry monochrome

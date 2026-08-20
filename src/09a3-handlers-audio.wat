@@ -2,6 +2,48 @@
   ;; AUDIO/WAVE API HANDLERS
   ;; ============================================================
 
+  ;; acmMetrics(hao, uMetric, pMetric) reports Audio Compression Manager
+  ;; inventory and sizing information.  The emulator exposes one built-in
+  ;; PCM converter and no installable codecs or filters.  In particular,
+  ;; ACM_METRIC_MAX_SIZE_FORMAT (50) must include the cbSize word: callers use
+  ;; this result to allocate a WAVEFORMATEX before enumerating formats.
+  (func $acm_metrics (param $hao i32) (param $metric i32) (param $out i32) (result i32)
+    (local $value i32)
+    (if (i32.eqz (local.get $out))
+      (then (return (i32.const 11))))                       ;; MMSYSERR_INVALPARAM
+    (if (i32.eq (local.get $metric) (i32.const 50))
+      (then (call $gs32 (local.get $out) (i32.const 18))    ;; sizeof WAVEFORMATEX
+            (return (i32.const 0))))
+    (if (i32.eq (local.get $metric) (i32.const 51))
+      (then (call $gs32 (local.get $out) (i32.const 0))     ;; no ACM filters
+            (return (i32.const 0))))
+    (if (i32.or
+          (i32.eq (local.get $metric) (i32.const 1))        ;; COUNT_DRIVERS
+          (i32.eq (local.get $metric) (i32.const 20)))      ;; COUNT_LOCAL_DRIVERS
+      (then (call $gs32 (local.get $out) (i32.const 1))
+            (return (i32.const 0))))
+    (if (i32.or
+          (i32.eq (local.get $metric) (i32.const 3))        ;; COUNT_CONVERTERS
+          (i32.eq (local.get $metric) (i32.const 22)))      ;; COUNT_LOCAL_CONVERTERS
+      (then (call $gs32 (local.get $out) (i32.const 1))
+            (return (i32.const 0))))
+    (if (i32.or
+          (i32.le_u (local.get $metric) (i32.const 6))
+          (i32.or
+            (i32.and (i32.ge_u (local.get $metric) (i32.const 20))
+                     (i32.le_u (local.get $metric) (i32.const 25)))
+            (i32.and (i32.ge_u (local.get $metric) (i32.const 30))
+                     (i32.le_u (local.get $metric) (i32.const 34)))))
+      (then (call $gs32 (local.get $out) (i32.const 0))
+            (return (i32.const 0))))
+    (i32.const 10))                                         ;; MMSYSERR_INVALFLAG
+
+  (func $handle_acmMetrics (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $acm_metrics
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))) ;; 3 args stdcall
+  )
+
   ;; acmFormatTagDetailsA(had, paftd, fdwDetails) — describe one format tag.
   ;;
   ;; ACMFORMATTAGDETAILS is 24 bytes of fields then a 48-byte name:

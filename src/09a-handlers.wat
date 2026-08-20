@@ -3822,11 +3822,10 @@
 
   ;; 205: exit
   (func $handle_exit (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; cdecl: pop only the return address; the caller owns the status arg.
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
-    (call $host_exit (local.get $arg0))
-    (global.set $eip (i32.const 0))
-    (global.set $yield_flag (i32.const 1))
-    (global.set $steps (i32.const 0)) (return)
+    (global.set $atexit_exit_code (local.get $arg0))
+    (call $crt_atexit_run_next)
   )
 
   ;; 206: _exit
@@ -8639,6 +8638,7 @@ HookEx — no next hook in chain, return 0
         (global.set $yield_reason (i32.const 1))
         (global.set $wait_handle (local.get $arg0)) ;; nCount
         (global.set $wait_handles_ptr (call $g2w (local.get $arg1)))
+        (global.set $wait_all (i32.ne (local.get $arg2) (i32.const 0)))
         (global.set $wait_timeout (local.get $arg3))
         (global.set $wait_stack_bytes (i32.const 20))
         (global.set $steps (i32.const 0))

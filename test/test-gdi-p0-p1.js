@@ -73,9 +73,10 @@ async function main() {
   }
 
   check('all nine corpus APIs are append-only public dispatch entries', () => {
-    const tail = table.slice(-9);
-    assert.deepStrictEqual(tail.map(x => x.name), [...expected.keys()]);
-    tail.forEach((entry, i) => assert.strictEqual(entry.id, table.length - 9 + i));
+    const firstId = table.find(entry => entry.name === expected.keys().next().value).id;
+    const entries = table.slice(firstId, firstId + expected.size);
+    assert.deepStrictEqual(entries.map(x => x.name), [...expected.keys()]);
+    entries.forEach((entry, i) => assert.strictEqual(entry.id, firstId + i));
   });
 
   check('indirect ellipse and exact normalized region equality', () => {

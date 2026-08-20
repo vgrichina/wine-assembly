@@ -185,6 +185,8 @@ const HOST_CENSUS = (hasFlag('host-census') || getArg('host-census', null) !== n
 const PROFILE_HOST = getArg('profile-host', null); // --profile-host=fn1,fn2: print count + total time for host imports
 const TRACE_WAVE = hasFlag('trace-wave');     // --trace-wave: log wave_out_* calls + cumulative totals
 const TRACE_THREAD = hasFlag('trace-thread'); // --trace-thread: log per-thread state transitions
+const ASYNC_MM_TIMER_AFTER = Math.max(0,
+  parseInt(getArg('async-mm-timer-after', '0'), 10) || 0);
 const TRACE_YIELD = hasFlag('trace-yield');   // --trace-yield: log yield_reason transitions per thread
 const TRACE_BATCH_TIMING = hasFlag('trace-batch-timing'); // --trace-batch-timing: log run/repaint wall time per batch
 const AUDIO_STATS_RAW = args.find(a => a === '--audio-stats' || a.startsWith('--audio-stats=')); // --audio-stats[=N]: heartbeat every N waveOutWrites
@@ -2633,6 +2635,7 @@ async function main() {
       path.basename(EXE_PATH), info, instance.exports, memory.buffer,
       { log: (m) => console.log(m) }),
   });
+  ctx.closeSyncHandle = handle => threadManager.closeSyncHandle(handle);
 
   const mem = new Uint8Array(memory.buffer);
   const { entry } = stageAndLoadPe(instance.exports, memory.buffer, exeBytes, console.log);
@@ -5843,7 +5846,8 @@ async function main() {
     //
     // `--async-mm-timer` keeps the old path available for experiments on
     // binaries that truly need out-of-band timer delivery.
-    if (instance.exports.fire_mm_timer && hasFlag('async-mm-timer') && !hasFlag('no-timer')) {
+    if (instance.exports.fire_mm_timer && hasFlag('async-mm-timer') &&
+        batch >= ASYNC_MM_TIMER_AFTER && !hasFlag('no-timer')) {
       const comBefore = instance.exports.guest_read32(0x003fea90);
       const fired = instance.exports.fire_mm_timer();
       const comAfter = instance.exports.guest_read32(0x003fea90);
