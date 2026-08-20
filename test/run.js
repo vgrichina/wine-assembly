@@ -4552,7 +4552,16 @@ async function main() {
             // parent's `nc` bit 1 (erase) or its own `dirty` bit is what holds
             // the queue up.
             const dirty = we.paint_flag_test ? (we.paint_flag_test(hwnd) | 0) : -1;
-            children.push(`slot=${slot} hwnd=0x${hwnd.toString(16)} parent=0x${par.toString(16)} proc=0x${proc.toString(16)} cls=${cls} id=${id} style=0x${style.toString(16)} buttonFlags=0x${buttonFlags.toString(16)} xy=${xy & 0xffff},${xy >>> 16} wh=${wh & 0xffff}x${wh >>> 16} dirty=${dirty}`);
+            // For a WS_CHILD the recorded CLIENT_RECT, not `wh`, is what
+            // $wnd_client_{w,h}_for_clip hands to the DC clip whenever it is
+            // non-empty — so a control that paints its own furniture (an
+            // edit's scrollbar strips, a combo's drop arrow) loses exactly the
+            // pixels this rect is short of `wh`, and nothing else in a trace
+            // says so.
+            const cr = we.get_client_rect_l
+              ? `${we.get_client_rect_l(hwnd) | 0},${we.get_client_rect_t(hwnd) | 0},${we.get_client_rect_r(hwnd) | 0},${we.get_client_rect_b(hwnd) | 0}`
+              : 'n/a';
+            children.push(`slot=${slot} hwnd=0x${hwnd.toString(16)} parent=0x${par.toString(16)} proc=0x${proc.toString(16)} cls=${cls} id=${id} style=0x${style.toString(16)} buttonFlags=0x${buttonFlags.toString(16)} xy=${xy & 0xffff},${xy >>> 16} wh=${wh & 0xffff}x${wh >>> 16} cr=${cr} dirty=${dirty}`);
             slot++;
           }
         }

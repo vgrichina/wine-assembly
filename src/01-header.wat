@@ -536,6 +536,14 @@
   (import "host" "ctrl_paint_trace"
     (func $host_ctrl_paint_trace (param i32 i32 i32 i32 i32 i32 i32)))
 
+  ;; Every standard scrollbar strip as it is painted: control-local rect,
+  ;; orientation, and the page model it was handed. A strip that is flat grey
+  ;; with no arrows is either a paint that never happened or one whose `long`
+  ;; axis came out under 36px, and nothing else in a trace can tell those two
+  ;; apart. Same --trace-ctrl gate as the paint lines above.
+  (import "host" "ctrl_sb_trace"
+    (func $host_ctrl_sb_trace (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32)))
+
   ;; Registry host imports — backed by localStorage
   (import "host" "reg_open_key" (func $host_reg_open_key (param i32 i32 i32) (result i32)))
   ;; reg_open_key(hKey, subKeyWA, isWide) → hKey or 0

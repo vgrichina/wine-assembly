@@ -12021,6 +12021,36 @@
   ;;   +32  font           HFONT from WM_SETFONT (0 = default GUI font)
   ;;   +36  scroll_x       horizontal scroll offset in pixels (WS_HSCROLL)
 
+  ;; Word wrap is on when the edit has WS_VSCROLL and cannot scroll sideways:
+  ;; no ES_AUTOHSCROLL, and no WS_HSCROLL either. USER32 implies the style bit
+  ;; from the scrollbar on a multiline edit ("if (WS_HSCROLL) style |=
+  ;; ES_AUTOHSCROLL"), which is why Win98 Notepad opens *unwrapped* — it asks
+  ;; for both bars and no ES_AUTO* at all, and Word Wrap is it recreating the
+  ;; edit without WS_HSCROLL. Reading only ES_AUTOHSCROLL wrapped it from the
+  ;; start, against the real control.
+  ;;
+  ;; The two halves have to agree: a wrapped edit has nothing to scroll
+  ;; horizontally over and its paint path draws no bottom strip, so it must not
+  ;; reserve one either. Where they disagreed the control left a 16px band it
+  ;; never painted into, showing whatever the parent last erased there.
+  (func $edit_wraps (param $hwnd i32) (result i32)
+    (local $style i32)
+    (local.set $style (call $wnd_get_style (local.get $hwnd)))
+    (i32.and
+      (i32.ne (i32.and (local.get $style) (i32.const 0x00200000)) (i32.const 0))
+      (i32.eqz (i32.and (local.get $style) (i32.const 0x00100080)))))
+
+  ;; WS_HSCROLL that actually costs the client 16px at the bottom: the style
+  ;; bit, minus the wrapped case above. Every place that reserves the strip
+  ;; must agree with the painter, or the caret and the hit-test measure a
+  ;; viewport a different height from the one on screen.
+  (func $edit_hscroll_reserved (param $hwnd i32) (result i32)
+    (i32.and
+      (i32.ne
+        (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00100000))
+        (i32.const 0))
+      (i32.eqz (call $edit_wraps (local.get $hwnd)))))
+
   ;; Keep the caret inside the viewport, which is what USER's EM_SCROLLCARET
   ;; does and what every EDIT operation that moves the caret ends with. Without
   ;; it, typing past the last visible line keeps editing text nobody can see:
@@ -12047,16 +12077,14 @@
       (then
         (if (i32.gt_u (local.get $w) (i32.const 16))
           (then (local.set $w (i32.sub (local.get $w) (i32.const 16)))))))
-    (if (i32.and (local.get $style) (i32.const 0x00100000)) ;; WS_HSCROLL
+    (if (call $edit_hscroll_reserved (local.get $hwnd))
       (then
         (if (i32.gt_u (local.get $h) (i32.const 16))
           (then (local.set $h (i32.sub (local.get $h) (i32.const 16)))))))
     ;; Same viewport arithmetic the wheel handler and the painter use.
     (local.set $visible (i32.div_u (i32.sub (local.get $h) (i32.const 8)) (i32.const 16)))
     (if (i32.eqz (local.get $visible)) (then (local.set $visible (i32.const 1))))
-    (if (i32.and
-          (i32.ne (i32.and (local.get $style) (i32.const 0x00200000)) (i32.const 0))
-          (i32.eqz (i32.and (local.get $style) (i32.const 0x00000080)))) ;; not ES_AUTOHSCROLL
+    (if (call $edit_wraps (local.get $hwnd))
       (then
         ;; Wrapped: visual lines, so a wrapped paragraph counts for each row.
         (local.set $total (call $edit_layout_build (local.get $state_w)
@@ -12122,7 +12150,7 @@
       (then
         (if (i32.gt_u (local.get $w) (i32.const 16))
           (then (local.set $w (i32.sub (local.get $w) (i32.const 16)))))))
-    (if (i32.and (local.get $style) (i32.const 0x00100000)) ;; WS_HSCROLL
+    (if (call $edit_hscroll_reserved (local.get $hwnd))
       (then
         (if (i32.gt_u (local.get $h) (i32.const 16))
           (then (local.set $h (i32.sub (local.get $h) (i32.const 16)))))))
@@ -12131,9 +12159,7 @@
               (i32.gt_u (local.get $h) (i32.const 8)))
       (i32.const 16)))
     (if (i32.eqz (local.get $visible)) (then (local.set $visible (i32.const 1))))
-    (if (i32.and
-          (i32.ne (i32.and (local.get $style) (i32.const 0x00200000)) (i32.const 0))
-          (i32.eqz (i32.and (local.get $style) (i32.const 0x00000080))))
+    (if (call $edit_wraps (local.get $hwnd))
       (then (local.set $total (call $edit_layout_build (local.get $state_w)
         (i32.add (local.get $hwnd) (i32.const 0x40000)) (local.get $w))))
       (else (local.set $total (i32.add
@@ -12797,7 +12823,7 @@
                     (i32.ge_s (local.get $cx)
                       (i32.sub (i32.and (local.get $b) (i32.const 0xFFFF)) (i32.const 16))))
                   (i32.and
-                    (i32.ne (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00100000)) (i32.const 0))
+                    (call $edit_hscroll_reserved (local.get $hwnd))
                     (i32.ge_s (local.get $cy)
                       (i32.sub (i32.shr_u (local.get $b) (i32.const 16)) (i32.const 16)))))
               (then
@@ -13245,7 +13271,7 @@
 	        ;; to neither scrollbar and a press in the strip is not a caret
 	        ;; placement. Parts: 3 = left arrow held, 4 = right arrow held,
 	        ;; 6 = thumb drag (the vertical thumb owns 5).
-	        (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00100000))
+	        (if (call $edit_hscroll_reserved (local.get $hwnd))
 	          (then
 	            (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
 	            (local.set $full_w (i32.and (local.get $sz) (i32.const 0xFFFF)))
@@ -13305,7 +13331,7 @@
 	            (local.set $line_y (i32.shr_u (local.get $sz) (i32.const 16)))
 	            ;; The vertical strip stops above the horizontal one, so its
 	            ;; track is that much shorter when both are present.
-	            (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00100000))
+	            (if (call $edit_hscroll_reserved (local.get $hwnd))
 	              (then (local.set $line_y (i32.sub (local.get $line_y) (i32.const 16)))))
 	            ;; Inside the vertical strip: classify with the same geometry
 	            ;; $defwndproc_paint_standard_scrollbar painted it with, so a
@@ -13358,9 +13384,7 @@
 	                  (local.get $hwnd) (i32.const 0x000F) (i32.const 0) (i32.const 0)))
 	                (call $invalidate_hwnd (local.get $hwnd))
 	                (return (i32.const 0))))))
-	        (if (i32.and
-	              (i32.ne (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000)) (i32.const 0))
-	              (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00000080))))
+	        (if (call $edit_wraps (local.get $hwnd))
 	          (then
 	            (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
 	            (local.set $cur (call $edit_layout_xy_to_offset
@@ -13465,9 +13489,7 @@
         (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
         (local.set $w (i32.shr_s (i32.shl (local.get $lParam) (i32.const 16)) (i32.const 16)))
         (local.set $h (i32.shr_s (local.get $lParam) (i32.const 16)))
-        (if (i32.and
-              (i32.ne (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000)) (i32.const 0))
-              (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00000080))))
+        (if (call $edit_wraps (local.get $hwnd))
           (then
             (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
             (local.set $cur (call $edit_layout_xy_to_offset
@@ -13536,7 +13558,9 @@
         ;; And the bottom strip for WS_HSCROLL. Without this the last row of
         ;; text and its caret are drawn underneath the horizontal scrollbar,
         ;; which only became visible once the caret could reach the last row.
-        (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00100000))
+        ;; A wrapped edit keeps the full height: it draws no horizontal strip,
+        ;; so reserving one leaves a band nothing in this paint ever covers.
+        (if (call $edit_hscroll_reserved (local.get $hwnd))
           (then
             (if (i32.gt_u (local.get $h) (i32.const 16))
               (then (local.set $h (i32.sub (local.get $h) (i32.const 16)))))))
@@ -13544,11 +13568,7 @@
         ;; scroll offset. A wrapped edit has nothing to scroll horizontally
         ;; over, so its offset is forced home rather than left stale from
         ;; before the app turned word wrap on.
-        (if (i32.and
-              (i32.ne
-                (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
-                (i32.const 0))
-              (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00000080))))
+        (if (call $edit_wraps (local.get $hwnd))
           (then (i32.store offset=36 (local.get $state_w) (i32.const 0))))
         (local.set $tx (i32.sub (i32.const 4)
           (i32.load offset=36 (local.get $state_w))))
@@ -13584,11 +13604,7 @@
         ;; client rect.
         (if (i32.and
               (i32.ne (local.get $buf) (i32.const 0))
-              (i32.and
-                (i32.ne
-                  (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
-                  (i32.const 0))
-                (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00000080)))))
+              (call $edit_wraps (local.get $hwnd)))
           (then
             (local.set $total_lines
               (call $edit_layout_build
@@ -13860,8 +13876,10 @@
               (i32.const 0) (i32.sub (local.get $total_lines) (i32.const 1))
               (local.get $visible_lines))))
         ;; 6) Optional horizontal scrollbar strip. Scrolling state is in
-        ;; pixels, since an unwrapped line is measured, not counted.
-        (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00100000))
+        ;; pixels, since an unwrapped line is measured, not counted. Same
+        ;; predicate the prologue reserved the band with, so the strip is
+        ;; drawn exactly when the room for it was taken.
+        (if (call $edit_hscroll_reserved (local.get $hwnd))
           (then
             (local.set $max_hscroll (call $edit_max_hscroll
               (local.get $state_w) (local.get $hdc) (local.get $w)))
