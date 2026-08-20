@@ -2788,15 +2788,9 @@
     (local $alu i32) (local $reg i32) (local $val i32)
     (local.set $alu (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 7)))
     (local.set $reg (i32.and (local.get $op) (i32.const 0xF)))
-    ;; Both operands masked to sixteen bits. The immediate matters as much as
-    ;; the register: `cmp si, -0x1d` arrives here sign-extended to 32 bits, and
-    ;; comparing 0x0000FFFF against 0xFFFFFFE3 unsigned says "below" when the
-    ;; 16-bit answer is "above". Visual Basic tells a standard property from a
-    ;; pointer with exactly that comparison, so every standard property on
-    ;; every form came out as a pointer into nothing.
     (local.set $val (call $do_alu32 (local.get $alu)
       (i32.and (call $get_reg (local.get $reg)) (i32.const 0xFFFF))
-      (i32.and (call $read_thread_word) (i32.const 0xFFFF))))
+      (call $read_thread_word)))
     ;; Mask flag_res to 16 bits so ZF/SF/CF compute correctly for 16-bit ops
     (global.set $flag_res (i32.and (global.get $flag_res) (i32.const 0xFFFF)))
     (global.set $flag_sign_shift (i32.const 15))

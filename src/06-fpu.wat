@@ -113,21 +113,7 @@
   ;; SF=64 (stack fault, paired with IE), ES=128 (error summary).
   (func $fpu_set_exc (param $bits i32)
     (global.set $fpu_sw (i32.or (global.get $fpu_sw)
-      (i32.or (local.get $bits) (i32.const 0x80))))
-    (call $fpu_trace_exc (local.get $bits) (i32.const 1)))
-
-  ;; --trace-fpu. `raised` tells a flag going up from FCLEX/FINIT taking them
-  ;; all down again, which is the pair that matters: a status word read between
-  ;; the two reports an exception, and read after the clear reports none.
-  (func $fpu_trace_exc (param $bits i32) (param $raised i32)
-    (if (global.get $fpu_trace)
-      (then
-        (call $host_log_i32 (i32.const 0xCAF00001))
-        (call $host_log_i32 (local.get $bits))
-        (call $host_log_i32 (local.get $raised))
-        (call $host_log_i32 (global.get $eip)))))
-
-  (func (export "set_fpu_trace") (param $on i32) (global.set $fpu_trace (local.get $on)))
+      (i32.or (local.get $bits) (i32.const 0x80)))))
 
   (func $fpu_get (param $i i32) (result f64)
     (f64.load (i32.add (i32.const 0x200)
@@ -783,12 +769,10 @@
               (then (return)))
             ;; DB E2 = FNCLEX
             (if (i32.eq (local.get $rm) (i32.const 2))
-              (then (call $fpu_trace_exc (i32.and (global.get $fpu_sw) (i32.const 0xFF)) (i32.const 0))
-                    (global.set $fpu_sw (i32.and (global.get $fpu_sw) (i32.const 0x7F00))) (return)))
+              (then (global.set $fpu_sw (i32.and (global.get $fpu_sw) (i32.const 0x7F00))) (return)))
             ;; DB E3 = FNINIT — full reset (clear tag word too).
             (if (i32.eq (local.get $rm) (i32.const 3))
-              (then (call $fpu_trace_exc (i32.and (global.get $fpu_sw) (i32.const 0xFF)) (i32.const 0))
-                    (global.set $fpu_top (i32.const 0)) (global.set $fpu_cw (i32.const 0x037F))
+              (then (global.set $fpu_top (i32.const 0)) (global.set $fpu_cw (i32.const 0x037F))
                     (global.set $fpu_sw (i32.const 0)) (global.set $fpu_tag (i32.const 0)) (return)))
             (call $fpu_crash_op (local.get $group) (local.get $reg) (local.get $rm)) (return)))
         ;; DB E8..EF = FUCOMI ST(i)

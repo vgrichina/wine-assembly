@@ -89,13 +89,9 @@ function diffPixels(A, B, bbox) {
     const [A, B] = await Promise.all([readPixels(pngBefore), readPixels(pngAfter)]);
     nDiff = diffPixels(A, B, DISPLAY_BBOX);
   }
-  // '0.' → '3.' dirties 8 pixels: the two glyphs share their whole outer
-  // outline and differ only where 0's left column is and 3's middle bar is.
-  // The threshold used to be 10, which failed a calculator that was adding
-  // correctly -- 0 still means the clicks never landed, which is the thing
-  // worth catching. (Dump the digit cell with tools/png-window.js if this
-  // ever gets ambiguous.)
-  checks.push({ name: `display changed after 1+2= (>=5 px, got ${nDiff})`, pass: nDiff >= 5 });
+  // '0.' → '3.' transition dirties ~18 pixels in the right-aligned display.
+  // 0 = clicks didn't land; we need at least a clear digit-shape difference.
+  checks.push({ name: `display changed after 1+2= (>=10 px, got ${nDiff})`, pass: nDiff >= 10 });
 
   console.log('');
   let failed = 0;

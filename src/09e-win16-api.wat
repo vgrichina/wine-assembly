@@ -93,22 +93,7 @@
   (func $win16_handle_reset
     (global.set $win16_handle_next (i32.const 0))
     (call $zero_memory (call $win16_handle_table)
-      (i32.shl (global.get $WIN16_HANDLE_MAX) (i32.const 2)))
-    ;; The interrupt vectors go with the task: a zero means nothing is hooked,
-    ;; which is what a fresh task should see. So do the extra local heaps —
-    ;; a selector one run laid a heap into is a different segment in the next.
-    (call $zero_memory (call $win16_int_vectors) (i32.const 0x400))
-    (call $zero_memory (call $win16_lheap_slot (i32.const 0))
-      (i32.mul (global.get $WIN16_LHEAPS) (i32.const 8))))
-
-  ;; 256 far pointers, in the same arena page as the handle table and the DLL
-  ;; records. A program that hooks an interrupt saves the old vector and puts
-  ;; it back on the way out; nothing here raises interrupts, so what these
-  ;; hold only has to be what was last written.
-  (func $win16_int_vectors (result i32)
-    (i32.add (call $g2w (i32.add (global.get $WIN16_ARENA)
-                                 (i32.mul (global.get $WIN16_SEG_MAX) (i32.const 0x10000))))
-             (i32.const 0xE000)))
+      (i32.shl (global.get $WIN16_HANDLE_MAX) (i32.const 2))))
 
   ;; 16 -> 32. An index the table never handed out is a bug in the translation
   ;; layer, not something to paper over with a zero: it means an API returned a
@@ -144,13 +129,6 @@
   (func $win16_h16 (param $h32 i32) (result i32)
     (local $t i32) (local $i i32)
     (if (i32.eqz (local.get $h32)) (then (return (i32.const 0))))
-    ;; No range check on the way in. A 16-bit handle mapped a second time is a
-    ;; real bug — it allocates a fresh entry for an object that already has one
-    ;; — but it cannot be told from a small 32-bit handle by value: menus are
-    ;; numbered from a few hundred and FreeCell's own menu is 0x190. The two
-    ;; defences that do work are in $win16_msg_wparam16, which will not narrow
-    ;; a DC that is already narrow, and $win16_h16_forget, which gives a slot
-    ;; back when its object is destroyed.
     (if (i32.eq (local.get $h32) (i32.const -1)) (then (return (i32.const 0xFFFF))))
     (local.set $t (call $win16_handle_table))
     (local.set $i (i32.const 1))
@@ -161,58 +139,16 @@
         (then (return (i32.add (local.get $i) (global.get $WIN16_HANDLE_BASE)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
-    ;; Reuse a slot whose 32-bit handle has been released before taking a new
-    ;; one. A task in its message pump asks for a DC, draws and releases it
-    ;; thousands of times; without this the map grows once per iteration and
-    ;; runs out — Pipe Dream exhausted it in seven batches of idling.
-    (local.set $i (i32.const 1))
-    (block $reused (loop $free
-      (br_if $reused (i32.gt_u (local.get $i) (global.get $win16_handle_next)))
-      (if (i32.eqz (i32.load (i32.add (local.get $t) (i32.shl (local.get $i) (i32.const 2)))))
-        (then
-          (i32.store (i32.add (local.get $t) (i32.shl (local.get $i) (i32.const 2)))
-                     (local.get $h32))
-          (return (i32.add (local.get $i) (global.get $WIN16_HANDLE_BASE)))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $free)))
     (if (i32.ge_u (global.get $win16_handle_next) (global.get $WIN16_HANDLE_MAX))
       (then
         (call $host_log_i32 (i32.const 0xCA16A9F4))
         (call $host_log_i32 (local.get $h32))
-        ;; The last few entries name what filled it, which is the only thing
-        ;; that tells a leak from a table that is simply too small.
-        (call $host_log_i32 (global.get $win16_handle_next))
-        (call $host_log_i32 (i32.load (i32.add (local.get $t)
-          (i32.shl (i32.sub (global.get $win16_handle_next) (i32.const 1)) (i32.const 2)))))
-        (call $host_log_i32 (i32.load (i32.add (local.get $t)
-          (i32.shl (i32.sub (global.get $win16_handle_next) (i32.const 2)) (i32.const 2)))))
-        (call $host_log_i32 (i32.load (i32.add (local.get $t)
-          (i32.shl (i32.sub (global.get $win16_handle_next) (i32.const 3)) (i32.const 2)))))
         (unreachable)))
     (global.set $win16_handle_next (i32.add (global.get $win16_handle_next) (i32.const 1)))
     (i32.store (i32.add (local.get $t)
                         (i32.shl (global.get $win16_handle_next) (i32.const 2)))
                (local.get $h32))
     (i32.add (global.get $win16_handle_next) (global.get $WIN16_HANDLE_BASE)))
-
-  ;; Drop a mapping. The 32-bit handle has been released and may be handed out
-  ;; again for something else, so keeping the entry would make a stale 16-bit
-  ;; handle silently name the new object.
-  (func $win16_h16_forget (param $h32 i32)
-    (local $t i32) (local $i i32)
-    (if (i32.eqz (local.get $h32)) (then (return)))
-    (local.set $t (call $win16_handle_table))
-    (local.set $i (i32.const 1))
-    (block $done (loop $scan
-      (br_if $done (i32.gt_u (local.get $i) (global.get $win16_handle_next)))
-      (if (i32.eq (i32.load (i32.add (local.get $t) (i32.shl (local.get $i) (i32.const 2))))
-                  (local.get $h32))
-        (then
-          (i32.store (i32.add (local.get $t) (i32.shl (local.get $i) (i32.const 2)))
-                     (i32.const 0))
-          (return)))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $scan))))
 
   ;; ---- Calling the 32-bit handler for the same API ----
   ;;
@@ -346,17 +282,6 @@
     (call $win16_set_sreg (i32.const 0) (global.get $win16_psp_sel))
     (call $win16_api_return (i32.const 0)))
 
-  ;; KERNEL.37 GetCurrentPDB() -> the selector of the task's PSP, which is the
-  ;; same block InitTask builds the command line in. Visual Basic 1's runtime
-  ;; asks for it before it will start: all five VB games in the pack stop here.
-  (func $win16_GetCurrentPDB
-    (if (i32.eqz (global.get $win16_psp_sel))
-      (then (global.set $win16_psp_sel
-              (call $win16_index_to_sel (call $win16_alloc_segment)))))
-    (global.set $eax (global.get $win16_psp_sel))
-    (global.set $edx (i32.const 0))
-    (call $win16_api_return (i32.const 0)))
-
   ;; KERNEL.3 GetVersion. AL:AH is the Windows version and DX the DOS one.
   ;; Reporting 3.10 rather than what Windows 98 reports is deliberate: these
   ;; are Windows 3.x images, and 3.10 is the version they were built against
@@ -430,60 +355,6 @@
     (call $win16_call32_end)
     (global.set $eax (i32.const 1))
     (call $win16_api_return (i32.const 16)))
-
-  ;; KERNEL.57 GetProfileInt / .58 GetProfileString / .59 WriteProfileString —
-  ;; the same three calls as the private ones with WIN.INI as the file, which
-  ;; is exactly how the 32-bit handlers below implement them too.
-  (func $win16_GetProfileInt
-    (local $app i32) (local $key i32) (local $def i32)
-    (local.set $app (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 4)) (call $win16_arg16 (i32.const 3))))
-    (local.set $key (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
-    (local.set $def (call $win16_coord (call $win16_arg16 (i32.const 0))))
-    (call $win16_call32_begin (i32.const 3))
-    (call $handle_GetProfileIntA (local.get $app) (local.get $key)
-      (local.get $def) (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 10)))
-
-  (func $win16_GetProfileString
-    (local $app i32) (local $key i32) (local $def i32) (local $buf i32) (local $size i32)
-    (local.set $app (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 8)) (call $win16_arg16 (i32.const 7))))
-    (local.set $key (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 6)) (call $win16_arg16 (i32.const 5))))
-    (local.set $def (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 4)) (call $win16_arg16 (i32.const 3))))
-    (local.set $buf (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
-    (local.set $size (call $win16_arg16 (i32.const 0)))
-    (call $win16_call32_begin (i32.const 5))
-    (call $win16_call32_arg (i32.const 3) (local.get $buf))
-    (call $win16_call32_arg (i32.const 4) (local.get $size))
-    (call $handle_GetProfileStringA (local.get $app) (local.get $key)
-      (local.get $def) (local.get $buf) (local.get $size) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 18)))
-
-  (func $win16_WriteProfileString
-    (local $app i32) (local $key i32) (local $val i32)
-    (local.set $app (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 5)) (call $win16_arg16 (i32.const 4))))
-    (local.set $key (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 3)) (call $win16_arg16 (i32.const 2))))
-    (local.set $val (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
-    ;; A NULL value deletes the key, and it arrives as a null selector.
-    (if (i32.eqz (call $win16_arg16 (i32.const 1))) (then (local.set $val (i32.const 0))))
-    (call $win16_call32_begin (i32.const 3))
-    (call $handle_WriteProfileStringA (local.get $app) (local.get $key)
-      (local.get $val) (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 12)))
 
   ;; KERNEL.88 lstrcpy / KERNEL.89 lstrcat(lpString1, lpString2) -> lpString1,
   ;; and KERNEL.90 lstrlen(lpString).
@@ -569,9 +440,6 @@
     (local $type i32) (local $id i32)
     (local.set $type (call $win16_res_arg (i32.const 0)))
     (local.set $id (call $win16_res_arg (i32.const 2)))
-    ;; hInstance is the last argument pushed before the two names.
-    (global.set $win16_res_module_id
-      (call $win16_res_module (call $win16_arg16 (i32.const 4))))
     (global.set $eax (i32.const 0))
     (if (i32.and (i32.ne (local.get $type) (i32.const -1))
                  (i32.ne (local.get $id) (i32.const -1)))
@@ -579,68 +447,11 @@
         (if (call $win16_find_resource (local.get $type) (local.get $id))
           (then (global.set $eax (call $win16_h16
             (call $win16_res_key (local.get $type) (local.get $id))))))))
-    (global.set $win16_res_module_id (i32.const 0))
     (call $win16_api_return (i32.const 10)))
 
   ;; KERNEL.61 LoadResource(hInstance, hResInfo) — nothing to load yet.
   (func $win16_LoadResource
     (global.set $eax (call $win16_arg16 (i32.const 0)))
-    (call $win16_api_return (i32.const 4)))
-
-  ;; KERNEL.64 AccessResource(hInstance, hResInfo) -> a file handle positioned
-  ;; at the resource's first byte.
-  ;;
-  ;; This is the one resource call that hands back a file rather than memory,
-  ;; and it means what it says: the module's own file, seeked to where the
-  ;; resource starts. Visual Basic reads its forms this way rather than
-  ;; through LockResource, so all five VB games stop here.
-  ;;
-  ;; The image the caller named is already staged, but the file is in the VFS
-  ;; under the name GetModuleFileName reports — which is where the loader read
-  ;; it from — so opening it again is honest rather than a second copy.
-  (func $win16_AccessResource
-    (local $key i32) (local $path i32) (local $h i32)
-    (local.set $key (call $win16_h32 (call $win16_arg16 (i32.const 0))))
-    (global.set $win16_res_module_id
-      (call $win16_res_module (call $win16_arg16 (i32.const 1))))
-    (global.set $eax (i32.const 0xFFFF))
-    (if (call $win16_find_resource (i32.shr_u (local.get $key) (i32.const 16))
-                                   (i32.and (local.get $key) (i32.const 0xFFFF)))
-      (then
-        (local.set $path (global.get $GUEST_STACK))
-        (call $win16_call32_begin (i32.const 3))
-        (call $handle_GetModuleFileNameA (i32.const 0) (local.get $path) (i32.const 260)
-          (i32.const 0) (i32.const 0) (i32.const 0))
-        (call $win16_call32_end)
-        (call $win16_call32_begin (i32.const 2))
-        (call $handle__lopen (local.get $path) (i32.const 0)
-          (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
-        (call $win16_call32_end)
-        (local.set $h (global.get $eax))
-        (if (i32.ne (local.get $h) (i32.const -1))
-          (then
-            (call $win16_call32_begin (i32.const 3))
-            (call $handle__llseek (local.get $h) (global.get $win16_res_file_off)
-              (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
-            (call $win16_call32_end)
-            (global.set $eax (call $win16_fh16 (local.get $h)))))))
-    (global.set $win16_res_module_id (i32.const 0))
-    ;; Two words: an instance handle and a resource handle. Popping six left
-    ;; two bytes of the caller's frame behind, and Visual Basic's runtime
-    ;; returned through it into nothing a few calls later.
-    (call $win16_api_return (i32.const 4)))
-
-  ;; KERNEL.65 SizeofResource(hInstance, hResInfo) -> its length in bytes.
-  (func $win16_SizeofResource
-    (local $key i32)
-    (local.set $key (call $win16_h32 (call $win16_arg16 (i32.const 0))))
-    (global.set $win16_res_module_id
-      (call $win16_res_module (call $win16_arg16 (i32.const 1))))
-    (global.set $eax (i32.const 0))
-    (if (call $win16_find_resource (i32.shr_u (local.get $key) (i32.const 16))
-                                   (i32.and (local.get $key) (i32.const 0xFFFF)))
-      (then (global.set $eax (global.get $win16_res_len))))
-    (global.set $win16_res_module_id (i32.const 0))
     (call $win16_api_return (i32.const 4)))
 
   ;; KERNEL.62 LockResource(hResData) -> far pointer.
@@ -674,59 +485,11 @@
 
   ;; KERNEL.49 GetModuleFileName(hModule, lpFileName, nSize). The buffer holds
   ;; bytes in both worlds, so it is filled in place.
-  ;; KERNEL.49 GetModuleFileName(hModule, lpFileName, nSize).
-  ;;
-  ;; A module handle here is what LoadLibrary and GetModuleHandle hand out:
-  ;; 0x00D1 over the module id. Answering with the task's own exe whatever was
-  ;; asked is what made Visual Basic 1 refuse to start — VBRUN100 asks for its
-  ;; own filename, reads that file's header to check it is the runtime it
-  ;; thinks it is, found Rattler Race's header instead, and reported "a virus
-  ;; has been detected during program initialization".
   (func $win16_GetModuleFileName
-    (local $buf i32) (local $size i32) (local $mod i32) (local $id i32)
-    (local $slot i32) (local $n i32) (local $i i32)
+    (local $buf i32) (local $size i32)
     (local.set $buf (call $win16_far_to_guest
       (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
     (local.set $size (call $win16_arg16 (i32.const 0)))
-    (local.set $mod (call $win16_h32 (call $win16_arg16 (i32.const 3))))
-    (if (i32.eq (i32.and (local.get $mod) (i32.const 0xFFFF0000)) (i32.const 0x00D10000))
-      (then
-        (local.set $id (i32.and (local.get $mod) (i32.const 0xFFFF)))
-        (if (i32.ge_u (local.get $id) (global.get $WIN16_DYNAMIC_BASE))
-          (then
-            (local.set $slot (call $win16_dynamic_module_slot
-              (i32.sub (local.get $id) (global.get $WIN16_DYNAMIC_BASE))))
-            (local.set $n (i32.load8_u (local.get $slot)))
-            (if (i32.and (i32.ne (local.get $n) (i32.const 0))
-                         (i32.gt_u (local.get $size)
-                                   (i32.add (local.get $n) (i32.const 7))))
-              (then
-                ;; "C:\" + the module name + ".DLL", which is where the host
-                ;; staged it from and the only path a task can open it by.
-                (call $gs8 (local.get $buf) (i32.const 0x43))          ;; C
-                (call $gs8 (i32.add (local.get $buf) (i32.const 1)) (i32.const 0x3A))
-                (call $gs8 (i32.add (local.get $buf) (i32.const 2)) (i32.const 0x5C))
-                (block $named (loop $chars
-                  (br_if $named (i32.ge_u (local.get $i) (local.get $n)))
-                  (call $gs8 (i32.add (i32.add (local.get $buf) (i32.const 3))
-                                      (local.get $i))
-                    (i32.load8_u (i32.add (i32.add (local.get $slot) (i32.const 1))
-                                          (local.get $i))))
-                  (local.set $i (i32.add (local.get $i) (i32.const 1)))
-                  (br $chars)))
-                (local.set $i (i32.add (local.get $n) (i32.const 3)))
-                (call $gs8 (i32.add (local.get $buf) (local.get $i)) (i32.const 0x2E))
-                (call $gs8 (i32.add (local.get $buf) (i32.add (local.get $i) (i32.const 1)))
-                  (i32.const 0x44))
-                (call $gs8 (i32.add (local.get $buf) (i32.add (local.get $i) (i32.const 2)))
-                  (i32.const 0x4C))
-                (call $gs8 (i32.add (local.get $buf) (i32.add (local.get $i) (i32.const 3)))
-                  (i32.const 0x4C))
-                (call $gs8 (i32.add (local.get $buf) (i32.add (local.get $i) (i32.const 4)))
-                  (i32.const 0))
-                (global.set $eax (i32.add (local.get $i) (i32.const 4)))
-                (call $win16_api_return (i32.const 8))
-                (return)))))))
     (call $win16_call32_begin (i32.const 3))
     (call $handle_GetModuleFileNameA (i32.const 0) (local.get $buf) (local.get $size)
       (i32.const 0) (i32.const 0) (i32.const 0))
@@ -894,552 +657,18 @@
     (call $gs16 (i32.add (global.get $seg_base_ds) (local.get $p))
       (i32.or (local.get $size) (local.get $free))))
 
-  ;; ---- INT 21h ----
-  ;;
-  ;; A Windows 3.x program is still a DOS program underneath: its C runtime
-  ;; opens and reads files through DOS, not through the Windows file API, and
-  ;; the compiler emits INT 21h for it. Klotski reads its score file that way
-  ;; and Chess its opening book; before this the instruction was decoded as a
-  ;; block end and did nothing at all, so both saw a call that neither
-  ;; succeeded nor failed and reported the file as unreadable.
-  ;;
-  ;; Handles are the same 16-bit map the _l* calls use, so a file opened
-  ;; through DOS can be closed through KERNEL and the other way about.
-  ;;
-  ;; The carry flag is the DOS error convention, and $load_eflags is the way to
-  ;; set it here: the lazy-flag system has no "just set CF" path, and raw mode
-  ;; is exactly what a returning interrupt wants.
-  (func $dos_cf (param $set i32)
-    (call $load_eflags (select (i32.const 1) (i32.const 0) (local.get $set))))
-
-  ;; The DTA starts where DOS puts it, at offset 0x80 of the PSP — the same
-  ;; block InitTask builds the command line in, which is why a program that
-  ;; wants both moves one of them first.
-  (func $win16_dta_ensure
-    (if (i32.eqz (global.get $win16_dta))
-      (then
-        (if (i32.eqz (global.get $win16_psp_sel))
-          (then (global.set $win16_psp_sel
-                  (call $win16_index_to_sel (call $win16_alloc_segment)))))
-        (global.set $win16_dta (i32.or
-          (i32.shl (global.get $win16_psp_sel) (i32.const 16)) (i32.const 0x80))))))
-
-  (func $win16_dta_guest (result i32)
-    (call $win16_far_to_guest (i32.shr_u (global.get $win16_dta) (i32.const 16))
-                              (i32.and (global.get $win16_dta) (i32.const 0xFFFF))))
-
-  ;; The 43-byte record a DOS directory search leaves behind: 21 bytes the
-  ;; search owns, then the attribute, time, date, size and 8.3 name. Times are
-  ;; the one fixed stamp this filesystem reports — see AH=57h.
-  (func $win16_dos_find_record (param $dta i32) (param $fd i32)
-    (local $i i32) (local $ch i32)
-    (call $gs8 (i32.add (local.get $dta) (i32.const 21))
-      (i32.and (call $gl32 (local.get $fd)) (i32.const 0x3F)))
-    (call $gs16 (i32.add (local.get $dta) (i32.const 22)) (i32.const 0))
-    (call $gs16 (i32.add (local.get $dta) (i32.const 24)) (i32.const 0x2421))
-    (call $gs32 (i32.add (local.get $dta) (i32.const 26))
-      (call $gl32 (i32.add (local.get $fd) (i32.const 32))))
-    (block $named (loop $chars
-      (br_if $named (i32.ge_u (local.get $i) (i32.const 12)))
-      (local.set $ch (call $gl8 (i32.add (i32.add (local.get $fd) (i32.const 44))
-                                         (local.get $i))))
-      ;; DOS names are upper case, and a program that compares them expects it.
-      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x61))
-                   (i32.le_u (local.get $ch) (i32.const 0x7A)))
-        (then (local.set $ch (i32.sub (local.get $ch) (i32.const 0x20)))))
-      (call $gs8 (i32.add (i32.add (local.get $dta) (i32.const 30)) (local.get $i))
-        (local.get $ch))
-      (br_if $named (i32.eqz (local.get $ch)))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $chars)))
-    (call $gs8 (i32.add (local.get $dta) (i32.const 42)) (i32.const 0)))
-
-  (func $dos_ptr (result i32)
-    (i32.add (global.get $seg_base_ds) (i32.and (global.get $edx) (i32.const 0xFFFF))))
-
-  (func $dos_set_ax (param $v i32)
-    (global.set $eax (i32.or (i32.and (global.get $eax) (i32.const 0xFFFF0000))
-                             (i32.and (local.get $v) (i32.const 0xFFFF)))))
-
-  (func $win16_dos_int21
-    (local $ah i32) (local $h i32) (local $n i32) (local $tmp i32)
-    (local.set $ah (i32.and (i32.shr_u (global.get $eax) (i32.const 8)) (i32.const 0xFF)))
-    ;; --trace-win16 covers the DOS side too: AH, and the three registers that
-    ;; carry a handle, a count and a pointer for the calls that have them.
-    (if (global.get $win16_trace)
-      (then
-        (call $host_log_i32 (i32.const 0xCA16D021))
-        (call $host_log_i32 (local.get $ah))
-        (call $host_log_i32 (i32.and (global.get $ebx) (i32.const 0xFFFF)))
-        (call $host_log_i32 (i32.and (global.get $ecx) (i32.const 0xFFFF)))
-        (call $host_log_i32 (i32.and (global.get $edx) (i32.const 0xFFFF)))))
-
-    ;; 3Dh open, AL = access mode, DS:DX = path.
-    (if (i32.eq (local.get $ah) (i32.const 0x3D))
-      (then
-        (call $win16_call32_begin (i32.const 2))
-        (call $handle__lopen (call $dos_ptr) (i32.and (global.get $eax) (i32.const 3))
-          (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
-        (call $win16_call32_end)
-        (if (i32.eq (global.get $eax) (i32.const -1))
-          (then (call $dos_set_ax (i32.const 2)) (call $dos_cf (i32.const 1)))  ;; file not found
-          (else
-            (call $dos_set_ax (call $win16_fh16 (global.get $eax)))
-            (call $dos_cf (i32.const 0))))
-        (return)))
-
-    ;; 3Ch create / 5Bh create new, CX = attributes, DS:DX = path.
-    (if (i32.or (i32.eq (local.get $ah) (i32.const 0x3C))
-                (i32.eq (local.get $ah) (i32.const 0x5B)))
-      (then
-        (call $win16_call32_begin (i32.const 2))
-        (call $handle__lcreat (call $dos_ptr)
-          (i32.and (global.get $ecx) (i32.const 0xFFFF))
-          (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
-        (call $win16_call32_end)
-        (if (i32.eq (global.get $eax) (i32.const -1))
-          (then (call $dos_set_ax (i32.const 3)) (call $dos_cf (i32.const 1)))  ;; path not found
-          (else
-            (call $dos_set_ax (call $win16_fh16 (global.get $eax)))
-            (call $dos_cf (i32.const 0))))
-        (return)))
-
-    ;; 3Eh close, BX = handle.
-    (if (i32.eq (local.get $ah) (i32.const 0x3E))
-      (then
-        (local.set $h (call $win16_fh32 (i32.and (global.get $ebx) (i32.const 0xFFFF))))
-        (call $win16_call32_begin (i32.const 1))
-        (call $handle__lclose (local.get $h) (i32.const 0) (i32.const 0)
-          (i32.const 0) (i32.const 0) (i32.const 0))
-        (call $win16_call32_end)
-        (call $win16_fh_forget (i32.and (global.get $ebx) (i32.const 0xFFFF)))
-        (call $win16_h16_forget (local.get $h))
-        (call $dos_cf (i32.const 0))
-        (return)))
-
-    ;; 3Fh read / 40h write, BX = handle, CX = bytes, DS:DX = buffer.
-    (if (i32.or (i32.eq (local.get $ah) (i32.const 0x3F))
-                (i32.eq (local.get $ah) (i32.const 0x40)))
-      (then
-        (local.set $h (call $win16_fh32 (i32.and (global.get $ebx) (i32.const 0xFFFF))))
-        (local.set $n (i32.and (global.get $ecx) (i32.const 0xFFFF)))
-        (call $win16_call32_begin (i32.const 3))
-        (if (i32.eq (local.get $ah) (i32.const 0x3F))
-          (then (call $handle__lread (local.get $h) (call $dos_ptr) (local.get $n)
-                  (i32.const 0) (i32.const 0) (i32.const 0)))
-          (else (call $handle__lwrite (local.get $h) (call $dos_ptr) (local.get $n)
-                  (i32.const 0) (i32.const 0) (i32.const 0))))
-        (call $win16_call32_end)
-        (if (i32.eq (global.get $eax) (i32.const -1))
-          (then (call $dos_set_ax (i32.const 5)) (call $dos_cf (i32.const 1)))  ;; access denied
-          (else
-            (call $dos_set_ax (global.get $eax))
-            (call $dos_cf (i32.const 0))))
-        (return)))
-
-    ;; 42h lseek, BX = handle, CX:DX = offset, AL = origin. DX:AX = new position.
-    (if (i32.eq (local.get $ah) (i32.const 0x42))
-      (then
-        (local.set $h (call $win16_fh32 (i32.and (global.get $ebx) (i32.const 0xFFFF))))
-        (local.set $tmp (i32.or (i32.and (global.get $edx) (i32.const 0xFFFF))
-          (i32.shl (i32.and (global.get $ecx) (i32.const 0xFFFF)) (i32.const 16))))
-        (call $win16_call32_begin (i32.const 3))
-        (call $handle__llseek (local.get $h) (local.get $tmp)
-          (i32.and (global.get $eax) (i32.const 0xFF))
-          (i32.const 0) (i32.const 0) (i32.const 0))
-        (call $win16_call32_end)
-        (if (i32.eq (global.get $eax) (i32.const -1))
-          (then (call $dos_set_ax (i32.const 6)) (call $dos_cf (i32.const 1)))  ;; bad handle
-          (else
-            (global.set $edx (i32.shr_u (global.get $eax) (i32.const 16)))
-            (call $dos_set_ax (global.get $eax))
-            (call $dos_cf (i32.const 0))))
-        (return)))
-
-    ;; 41h delete, DS:DX = path.
-    (if (i32.eq (local.get $ah) (i32.const 0x41))
-      (then
-        (call $win16_call32_begin (i32.const 1))
-        (call $handle_DeleteFileA (call $dos_ptr) (i32.const 0) (i32.const 0)
-          (i32.const 0) (i32.const 0) (i32.const 0))
-        (call $win16_call32_end)
-        (call $dos_cf (i32.eqz (global.get $eax)))
-        (if (i32.eqz (global.get $eax)) (then (call $dos_set_ax (i32.const 2))))
-        (return)))
-
-    ;; 43h get/set file attributes, DS:DX = path. AL=0 reads into CX.
-    (if (i32.eq (local.get $ah) (i32.const 0x43))
-      (then
-        (if (i32.eqz (i32.and (global.get $eax) (i32.const 0xFF)))
-          (then
-            (call $win16_call32_begin (i32.const 1))
-            (call $handle_GetFileAttributesA (call $dos_ptr) (i32.const 0) (i32.const 0)
-              (i32.const 0) (i32.const 0) (i32.const 0))
-            (call $win16_call32_end)
-            (if (i32.eq (global.get $eax) (i32.const -1))
-              (then (call $dos_set_ax (i32.const 2)) (call $dos_cf (i32.const 1)))
-              (else
-                (global.set $ecx (i32.and (global.get $eax) (i32.const 0x27)))
-                (call $dos_cf (i32.const 0)))))
-          ;; Setting attributes has nowhere to go — the VFS keeps none — and
-          ;; saying so is better than reporting a change that did not happen.
-          (else (call $dos_set_ax (i32.const 5)) (call $dos_cf (i32.const 1))))
-        (return)))
-
-    ;; 44h IOCTL, AL=0: what kind of handle is this? Everything opened here is
-    ;; a file on drive C, never a character device.
-    (if (i32.eq (local.get $ah) (i32.const 0x44))
-      (then
-        (if (i32.eqz (i32.and (global.get $eax) (i32.const 0xFF)))
-          (then
-            (global.set $edx (i32.const 2))
-            (call $dos_set_ax (i32.const 2))
-            (call $dos_cf (i32.const 0)))
-          (else (call $dos_set_ax (i32.const 1)) (call $dos_cf (i32.const 1))))
-        (return)))
-
-    ;; 2Ah date and 2Ch time, from the same clock the Windows calls read.
-    (if (i32.or (i32.eq (local.get $ah) (i32.const 0x2A))
-                (i32.eq (local.get $ah) (i32.const 0x2C)))
-      (then
-        (local.set $tmp (global.get $GUEST_STACK))
-        (call $win16_call32_begin (i32.const 1))
-        (call $handle_GetLocalTime (local.get $tmp) (i32.const 0) (i32.const 0)
-          (i32.const 0) (i32.const 0) (i32.const 0))
-        (call $win16_call32_end)
-        (if (i32.eq (local.get $ah) (i32.const 0x2A))
-          (then
-            (global.set $ecx (call $gl16 (local.get $tmp)))                    ;; year
-            (global.set $edx (i32.or
-              (i32.shl (call $gl16 (i32.add (local.get $tmp) (i32.const 2)))
-                       (i32.const 8))                                          ;; month
-              (call $gl16 (i32.add (local.get $tmp) (i32.const 6)))))           ;; day
-            (call $dos_set_ax (call $gl16 (i32.add (local.get $tmp) (i32.const 4)))))
-          (else
-            (global.set $ecx (i32.or
-              (i32.shl (call $gl16 (i32.add (local.get $tmp) (i32.const 8)))
-                       (i32.const 8))                                          ;; hour
-              (call $gl16 (i32.add (local.get $tmp) (i32.const 10)))))          ;; minute
-            (global.set $edx (i32.or
-              (i32.shl (call $gl16 (i32.add (local.get $tmp) (i32.const 12)))
-                       (i32.const 8))                                          ;; second
-              (i32.div_u (call $gl16 (i32.add (local.get $tmp) (i32.const 14)))
-                         (i32.const 10))))                                     ;; hundredths
-            (call $dos_set_ax (i32.const 0))))
-        (call $dos_cf (i32.const 0))
-        (return)))
-
-    ;; 1Ah set / 2Fh get the disk transfer area, which is where a directory
-    ;; search puts what it finds. DOS starts it at PSP:0080 and a program that
-    ;; wants it elsewhere says so; IdleWild does, before listing its modules.
-    (if (i32.eq (local.get $ah) (i32.const 0x1A))
-      (then
-        (global.set $win16_dta (i32.or
-          (i32.shl (global.get $sreg_ds) (i32.const 16))
-          (i32.and (global.get $edx) (i32.const 0xFFFF))))
-        (call $dos_cf (i32.const 0))
-        (return)))
-    (if (i32.eq (local.get $ah) (i32.const 0x2F))
-      (then
-        (call $win16_dta_ensure)
-        (global.set $ebx (i32.and (global.get $win16_dta) (i32.const 0xFFFF)))
-        (call $win16_set_sreg (i32.const 0)
-          (i32.shr_u (global.get $win16_dta) (i32.const 16)))
-        (call $dos_cf (i32.const 0))
-        (return)))
-
-    ;; 4Eh find first (DS:DX = pattern, CX = attributes) and 4Fh find next.
-    ;; Both fill the DTA with a DOS find record, whose first bytes are the
-    ;; search's own state — which is where the handle the 32-bit side gave us
-    ;; goes, exactly as DOS keeps its search state there.
-    (if (i32.or (i32.eq (local.get $ah) (i32.const 0x4E))
-                (i32.eq (local.get $ah) (i32.const 0x4F)))
-      (then
-        (call $win16_dta_ensure)
-        (local.set $tmp (global.get $GUEST_STACK))
-        (local.set $h (call $win16_dta_guest))
-        (call $win16_call32_begin (i32.const 2))
-        (if (i32.eq (local.get $ah) (i32.const 0x4E))
-          (then (call $handle_FindFirstFileA (call $dos_ptr) (local.get $tmp)
-                  (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
-          (else (call $handle_FindNextFileA (call $gl32 (local.get $h)) (local.get $tmp)
-                  (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))))
-        (call $win16_call32_end)
-        (if (i32.or (i32.eqz (global.get $eax))
-                    (i32.eq (global.get $eax) (i32.const -1)))
-          (then
-            (call $dos_set_ax (i32.const 18))   ;; no more files
-            (call $dos_cf (i32.const 1))
-            (return)))
-        (if (i32.eq (local.get $ah) (i32.const 0x4E))
-          (then (call $gs32 (local.get $h) (global.get $eax))))
-        (call $win16_dos_find_record (local.get $h) (local.get $tmp))
-        (call $dos_set_ax (i32.const 0))
-        (call $dos_cf (i32.const 0))
-        (return)))
-
-    ;; 47h get current directory, DL = drive, DS:SI = 64-byte buffer. The
-    ;; answer has no leading backslash, so the root is the empty string.
-    ;; IdleWild asks before it looks for its screen-saver modules.
-    (if (i32.eq (local.get $ah) (i32.const 0x47))
-      (then
-        (call $gs8 (i32.add (global.get $seg_base_ds)
-                            (i32.and (global.get $esi) (i32.const 0xFFFF)))
-          (i32.const 0))
-        (call $dos_set_ax (i32.const 0x0100))
-        (call $dos_cf (i32.const 0))
-        (return)))
-
-    ;; 57h file date and time, BX = handle. The filesystem here keeps none —
-    ;; what persists is the content — so a read answers with one fixed
-    ;; timestamp rather than a different invented one each call, and a write is
-    ;; accepted and forgotten. Klotski stamps its score file this way.
-    (if (i32.eq (local.get $ah) (i32.const 0x57))
-      (then
-        (if (i32.eqz (i32.and (global.get $eax) (i32.const 0xFF)))
-          (then
-            (global.set $ecx (i32.const 0))            ;; 00:00:00
-            (global.set $edx (i32.const 0x2421))))     ;; 1998-01-01
-        (call $dos_set_ax (i32.const 0))
-        (call $dos_cf (i32.const 0))
-        (return)))
-
-    ;; 30h version — 6.22, which is what Windows 3.x shipped on.
-    (if (i32.eq (local.get $ah) (i32.const 0x30))
-      (then
-        (call $dos_set_ax (i32.const 0x1606))
-        (global.set $ebx (i32.const 0))
-        (global.set $ecx (i32.const 0))
-        (call $dos_cf (i32.const 0))
-        (return)))
-
-    ;; 35h get vector (AL = number) -> ES:BX, and 25h set vector (DS:DX).
-    ;; Klotski hooks one on the way in and restores it on the way out.
-    (if (i32.eq (local.get $ah) (i32.const 0x35))
-      (then
-        (local.set $tmp (i32.load (i32.add (call $win16_int_vectors)
-          (i32.shl (i32.and (global.get $eax) (i32.const 0xFF)) (i32.const 2)))))
-        (global.set $ebx (i32.and (local.get $tmp) (i32.const 0xFFFF)))
-        (call $win16_set_sreg (i32.const 0) (i32.shr_u (local.get $tmp) (i32.const 16)))
-        (call $dos_cf (i32.const 0))
-        (return)))
-    (if (i32.eq (local.get $ah) (i32.const 0x25))
-      (then
-        (i32.store (i32.add (call $win16_int_vectors)
-                            (i32.shl (i32.and (global.get $eax) (i32.const 0xFF))
-                                     (i32.const 2)))
-          (i32.or (i32.shl (global.get $sreg_ds) (i32.const 16))
-                  (i32.and (global.get $edx) (i32.const 0xFFFF))))
-        (call $dos_cf (i32.const 0))
-        (return)))
-
-    ;; 19h current drive: C, which is the only one mounted.
-    (if (i32.eq (local.get $ah) (i32.const 0x19))
-      (then (call $dos_set_ax (i32.const 2)) (call $dos_cf (i32.const 0)) (return)))
-
-    ;; 4Ch terminate, AL = exit code.
-    (if (i32.eq (local.get $ah) (i32.const 0x4C))
-      (then
-        (call $host_exit (i32.and (global.get $eax) (i32.const 0xFF)))
-        (global.set $eip (i32.const 0))
-        (global.set $steps (i32.const 0))
-        (return)))
-
-    ;; 36h free disk space, DL = drive (0 = current). AX sectors per cluster,
-    ;; BX free clusters, CX bytes per sector, DX clusters in total. The
-    ;; filesystem here has no geometry, so it answers with a plain one: 512
-    ;; byte sectors, 8 to a cluster, and a 512MB volume half of which is free.
-    ;; JigSawed asks before it will save a game.
-    (if (i32.eq (local.get $ah) (i32.const 0x36))
-      (then
-        (call $dos_set_ax (i32.const 8))
-        (global.set $ebx (i32.const 65536))
-        (global.set $ecx (i32.const 512))
-        (global.set $edx (i32.const 131072))
-        (call $dos_cf (i32.const 0))
-        (return)))
-
-    ;; Anything else stops and says which call it was, on the same reasoning as
-    ;; the unimplemented-API path: a DOS function that quietly returns nothing
-    ;; is indistinguishable from one that worked and found nothing.
-    (call $host_log_i32 (i32.const 0xCA16D05F))
-    (call $host_log_i32 (local.get $ah))
-    (call $host_log_i32 (global.get $eip))
-    (unreachable))
-
-  ;; KERNEL.4 LocalInit(hSegment, pStart, pEnd) — lay a local heap between two
-  ;; offsets in a segment. The task's own heap is already built by the loader
-  ;; from the header's request; this is a program asking for a different one,
-  ;; which Visual Basic 1's runtime does before it allocates anything.
-  ;;
-  ;; There is one local heap here, described by offsets and reached through
-  ;; whatever DS holds — so pointing it at the new range is the whole of it,
-  ;; and a second LocalInit replaces the first rather than adding to it. That
-  ;; matches every caller in this corpus; a task that wanted two would find
-  ;; its first heap's blocks unreachable, which is why this says so.
-  ;; ---- Local heaps other than the task's own ----
-  ;;
-  ;; A task's DGROUP heap is built by the loader from the header's request and
-  ;; described by the three globals below. LocalInit is a program asking for
-  ;; another one, and the segment it names is usually not DGROUP: Visual Basic
-  ;; 1's runtime lays two heaps into blocks it has just allocated. Writing
-  ;; those through DS zeroed two kilobytes of the task's own data segment.
-  ;;
-  ;; Each extra heap is remembered by its selector, and LocalAlloc picks the
-  ;; one matching DS — which is how Windows resolves it too, since every local
-  ;; call there is implicitly about the current data segment.
-  ;; Sixty-four of them. Eight was a guess and JigSawed ran out: a Visual
-  ;; Basic form lays a heap into every block it allocates for a control array,
-  ;; so the count follows the form rather than anything fixed. The table lives
-  ;; at 0xE400 of the arena's last page, above the interrupt vectors and well
-  ;; below the DLL records at 0x8000, so there is room for hundreds.
-  (global $WIN16_LHEAPS i32 (i32.const 64))
-
-  (func $win16_lheap_slot (param $i i32) (result i32)
-    (i32.add (call $g2w (i32.add (global.get $WIN16_ARENA)
-                                 (i32.mul (global.get $WIN16_SEG_MAX) (i32.const 0x10000))))
-             (i32.add (i32.const 0xE400) (i32.mul (local.get $i) (i32.const 8)))))
-
-  ;; The slot for the current DS, or -1 when this is the task's own heap.
-  (func $win16_lheap_current (result i32)
-    (local $i i32) (local $p i32)
-    (block $done (loop $scan
-      (br_if $done (i32.ge_u (local.get $i) (global.get $WIN16_LHEAPS)))
-      (local.set $p (call $win16_lheap_slot (local.get $i)))
-      (if (i32.eq (i32.load16_u (local.get $p)) (global.get $sreg_ds))
-        (then (return (local.get $p))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $scan)))
-    (i32.const -1))
-
-  ;; base/ptr/end of whichever heap the current DS names.
-  (func $win16_lheap_get (param $field i32) (result i32)
-    (local $p i32)
-    (local.set $p (call $win16_lheap_current))
-    (if (i32.eq (local.get $p) (i32.const -1))
-      (then
-        (if (i32.eq (local.get $field) (i32.const 0))
-          (then (return (global.get $win16_lheap_base))))
-        (if (i32.eq (local.get $field) (i32.const 1))
-          (then (return (global.get $win16_lheap_ptr))))
-        (return (global.get $win16_lheap_end))))
-    (i32.load16_u (i32.add (local.get $p)
-                           (i32.mul (i32.add (local.get $field) (i32.const 1))
-                                    (i32.const 2)))))
-
-  (func $win16_lheap_set_ptr (param $v i32)
-    (local $p i32)
-    (local.set $p (call $win16_lheap_current))
-    (if (i32.eq (local.get $p) (i32.const -1))
-      (then (global.set $win16_lheap_ptr (local.get $v)) (return)))
-    (i32.store16 (i32.add (local.get $p) (i32.const 4)) (local.get $v)))
-
-  ;; Make room up to $need, growing the segment under the heap if that is what
-  ;; it takes. Windows reallocates DGROUP — or whichever segment the heap was
-  ;; laid into — when a block will not fit; every segment here owns a whole
-  ;; 64KB arena slot, so growing one is only a matter of raising its limit.
-  ;; Answers whether the heap now reaches $need.
-  (func $win16_lheap_room (param $need i32) (result i32)
-    (local $index i32)
-    (if (i32.le_u (local.get $need) (call $win16_lheap_get (i32.const 2)))
-      (then (return (i32.const 1))))
-    (if (i32.gt_u (local.get $need) (i32.const 0x10000)) (then (return (i32.const 0))))
-    (local.set $index (call $win16_sel_to_index (global.get $sreg_ds)))
-    (if (i32.gt_u (local.get $need) (call $win16_seg_limit (local.get $index)))
-      (then
-        (call $win16_gseg_store (local.get $index) (i32.const 4) (local.get $need))
-        (call $win16_gseg_store (local.get $index) (i32.const 12) (local.get $need))))
-    (call $win16_lheap_set_end (local.get $need))
-    (i32.const 1))
-
-  ;; The heap's ceiling. A local heap grows: Windows reallocates the segment
-  ;; under it when a block will not fit, whether that segment is the task's
-  ;; DGROUP or one a task laid a second heap into with LocalInit.
-  (func $win16_lheap_set_end (param $v i32)
-    (local $p i32)
-    (local.set $p (call $win16_lheap_current))
-    (if (i32.eq (local.get $p) (i32.const -1))
-      (then (global.set $win16_lheap_end (local.get $v)) (return)))
-    (i32.store16 (i32.add (local.get $p) (i32.const 6)) (local.get $v)))
-
-  (func $win16_LocalInit
-    (local $start i32) (local $end i32) (local $sel i32) (local $base i32)
-    (local $i i32) (local $p i32) (local $slot i32)
-    (local.set $end (call $win16_arg16 (i32.const 0)))
-    (local.set $start (call $win16_arg16 (i32.const 1)))
-    (local.set $sel (call $win16_arg16 (i32.const 2)))
-    ;; A zero segment means the caller's own, which is what DS holds.
-    (if (i32.eqz (local.get $sel)) (then (local.set $sel (global.get $sreg_ds))))
-    (local.set $base (call $win16_seg_base (call $win16_sel_to_index (local.get $sel))))
-    (if (i32.or (i32.ge_u (local.get $start) (local.get $end))
-                (i32.eqz (local.get $base)))
-      (then
-        (global.set $eax (i32.const 0))
-        (call $win16_api_return (i32.const 6))
-        (return)))
-    (call $zero_memory (call $g2w (i32.add (local.get $base) (local.get $start)))
-      (i32.sub (local.get $end) (local.get $start)))
-    ;; The task's own DGROUP keeps its heap in the globals; anything else takes
-    ;; a slot, reusing the one that already describes this segment.
-    (if (i32.eq (local.get $sel)
-                (call $win16_index_to_sel (global.get $win16_auto_data)))
-      (then
-        (global.set $win16_lheap_base (local.get $start))
-        (global.set $win16_lheap_ptr (local.get $start))
-        (global.set $win16_lheap_end (local.get $end)))
-      (else
-        (local.set $slot (i32.const -1))
-        (block $found (loop $scan
-          (br_if $found (i32.ge_u (local.get $i) (global.get $WIN16_LHEAPS)))
-          (local.set $p (call $win16_lheap_slot (local.get $i)))
-          (if (i32.or (i32.eq (i32.load16_u (local.get $p)) (local.get $sel))
-                      (i32.eqz (i32.load16_u (local.get $p))))
-            (then (local.set $slot (local.get $p)) (br $found)))
-          (local.set $i (i32.add (local.get $i) (i32.const 1)))
-          (br $scan)))
-        (if (i32.eq (local.get $slot) (i32.const -1))
-          (then
-            (call $host_log_i32 (i32.const 0xCA16104F))   ;; no room for another heap
-            (call $host_log_i32 (local.get $sel))
-            (unreachable)))
-        (i32.store16 (local.get $slot) (local.get $sel))
-        (i32.store16 (i32.add (local.get $slot) (i32.const 2)) (local.get $start))
-        (i32.store16 (i32.add (local.get $slot) (i32.const 4)) (local.get $start))
-        (i32.store16 (i32.add (local.get $slot) (i32.const 6)) (local.get $end))))
-    (global.set $eax (i32.const 1))
-    (call $win16_api_return (i32.const 6)))
-
-  ;; LocalAlloc(wFlags, wBytes). A moveable block answers with a *handle*, and
-  ;; the difference is not cosmetic: the caller dereferences it to reach the
-  ;; block. Visual Basic registers every control with
-  ;; LocalAlloc(LMEM_MOVEABLE|LMEM_ZEROINIT, 0x1f), reads the word at the
-  ;; handle to get the record, and writes the control's model pointer there —
-  ;; so with a handle that was really the record itself it wrote the model
-  ;; through a null pointer, and the control it had just registered could not
-  ;; be found again. That is VB error 363, "custom control not found".
-  ;;
-  ;; The handle is the first word of the block and holds the address of the
-  ;; two bytes after it, which is where the caller's data starts. Nothing here
-  ;; moves a block, so that word never has to change; it is what makes the
-  ;; handle dereferenceable, and what LocalLock recognises.
   (func $win16_LocalAlloc
-    (local $bytes i32) (local $h i32) (local $p i32) (local $size i32) (local $limit i32)
-    (local $moveable i32)
-    (local.set $moveable (i32.and (call $win16_arg16 (i32.const 1)) (i32.const 2)))
+    (local $bytes i32) (local $h i32) (local $p i32) (local $size i32)
     (local.set $bytes (i32.and (i32.add (call $win16_arg16 (i32.const 0)) (i32.const 1))
                                (i32.const 0xFFFE)))
-    (if (local.get $moveable)
-      (then (local.set $bytes (i32.add (local.get $bytes) (i32.const 2)))))
     ;; A zero-length block would make the walk below stand still.
     (if (i32.eqz (local.get $bytes)) (then (local.set $bytes (i32.const 2))))
 
-    ;; First fit across the blocks already handed out. Which heap that is comes
-    ;; from DS, so a task that has laid a second one into another segment and
-    ;; pointed DS at it allocates from that one.
-    (local.set $p (call $win16_lheap_get (i32.const 0)))
+    ;; First fit across the blocks already handed out.
+    (local.set $p (global.get $win16_lheap_base))
     (block $found
       (loop $walk
-        (br_if $found (i32.ge_u (local.get $p) (call $win16_lheap_get (i32.const 1))))
+        (br_if $found (i32.ge_u (local.get $p) (global.get $win16_lheap_ptr)))
         (local.set $size (call $win16_lblock_size (local.get $p)))
         (if (i32.and (call $win16_lblock_free (local.get $p))
                      (i32.ge_u (local.get $size) (local.get $bytes)))
@@ -1461,280 +690,58 @@
             (call $zero_memory
               (call $g2w (i32.add (global.get $seg_base_ds) (local.get $h)))
               (local.get $bytes))
-            (call $win16_lmoveable (local.get $h) (local.get $moveable))
             (global.set $eax (local.get $h))
             (call $win16_api_return (i32.const 4))
             (return)))
         (local.set $p (i32.add (i32.add (local.get $p) (i32.const 2)) (local.get $size)))
         (br $walk)))
 
-    (local.set $h (i32.add (call $win16_lheap_get (i32.const 1)) (i32.const 2)))
-    (if (i32.gt_u (i32.add (local.get $h) (local.get $bytes))
-                  (call $win16_lheap_get (i32.const 2)))
+    (local.set $h (i32.add (global.get $win16_lheap_ptr) (i32.const 2)))
+    (if (i32.gt_u (i32.add (local.get $h) (local.get $bytes)) (global.get $win16_lheap_end))
       (then
-        ;; The heap the header asked for is a starting size, not a ceiling:
-        ;; Windows grows the local heap upward into whatever DGROUP space the
-        ;; stack has not reached. Life Genesis declares a 1KB heap, allocates
-        ;; its cell grid out of it, and reported "out of memory" the moment
-        ;; that ran out. Growing is only safe for the task's own DGROUP, where
-        ;; SP says how far the stack has come down; a heap laid into some other
-        ;; segment by LocalInit keeps the bounds it was given.
-        (if (i32.and (i32.eq (call $win16_lheap_current) (i32.const -1))
-                     (i32.eq (global.get $sreg_ss) (global.get $sreg_ds)))
-          (then
-            (local.set $limit (i32.sub
-              (i32.and (i32.sub (global.get $esp) (global.get $seg_base_ss))
-                       (i32.const 0xFFFF))
-              (i32.const 512)))
-            (if (i32.gt_u (local.get $limit) (global.get $win16_lheap_end))
-              (then (global.set $win16_lheap_end (local.get $limit))))))
-        ;; Still short, and the heap is the task's own: grow the segment under
-        ;; it. That is what Windows does — LocalAlloc reallocates DGROUP when
-        ;; its heap is full — and it is the only way up for a heap that sits
-        ;; above the stack rather than below it, which is where a task that
-        ;; laid out its own DGROUP put it. Visual Basic asks for an eight
-        ;; kilobyte block out of a four kilobyte heap while loading its form.
-        (if (i32.gt_u (i32.add (local.get $h) (local.get $bytes))
-                      (call $win16_lheap_get (i32.const 2)))
-          (then
-            (local.set $limit (i32.add (local.get $h) (local.get $bytes)))
-            (if (i32.le_u (local.get $limit) (i32.const 0x10000))
-              (then
-                (local.set $p (call $win16_sel_to_index (global.get $sreg_ds)))
-                (if (i32.gt_u (local.get $limit) (call $win16_seg_limit (local.get $p)))
-                  (then
-                    (call $win16_gseg_store (local.get $p) (i32.const 4)
-                      (local.get $limit))
-                    (call $win16_gseg_store (local.get $p) (i32.const 12)
-                      (local.get $limit))))
-                (call $win16_lheap_set_end (local.get $limit))))))
-        (if (i32.gt_u (i32.add (local.get $h) (local.get $bytes))
-                      (call $win16_lheap_get (i32.const 2)))
-          (then
-            (global.set $eax (i32.const 0))
-            (call $win16_api_return (i32.const 4))
-            (return)))))
-    (call $win16_lblock_set (call $win16_lheap_get (i32.const 1))
-      (local.get $bytes) (i32.const 0))
-    (call $win16_lheap_set_ptr (i32.add (local.get $h) (local.get $bytes)))
+        (global.set $eax (i32.const 0))
+        (call $win16_api_return (i32.const 4))
+        (return)))
+    (call $win16_lblock_set (global.get $win16_lheap_ptr) (local.get $bytes) (i32.const 0))
+    (global.set $win16_lheap_ptr (i32.add (local.get $h) (local.get $bytes)))
     ;; LMEM_ZEROINIT is the common flag and zeroing unconditionally is both
     ;; cheap and what every caller here expects of fresh memory.
     (call $zero_memory (call $g2w (i32.add (global.get $seg_base_ds) (local.get $h)))
       (local.get $bytes))
-    (call $win16_lmoveable (local.get $h) (local.get $moveable))
     (global.set $eax (local.get $h))
     (call $win16_api_return (i32.const 4)))
-
-  ;; Turn a freshly allocated block into a moveable one: its first word points
-  ;; at the two bytes after it. LocalLock reads that word back.
-  (func $win16_lmoveable (param $h i32) (param $moveable i32)
-    (if (local.get $moveable)
-      (then (call $gs16 (i32.add (global.get $seg_base_ds) (local.get $h))
-              (i32.add (local.get $h) (i32.const 2))))))
-
-  ;; ---- What a local handle names ----
-  ;;
-  ;; A Win16 moveable handle outlives the block it names: LocalReAlloc moves
-  ;; the data and the handle keeps working, which is the whole point of asking
-  ;; for LMEM_MOVEABLE. Visual Basic's runtime relies on it — it grows the
-  ;; array behind a form's control list and then writes the new entry through
-  ;; the handle it has been holding all along. Handing back a different handle
-  ;; left it writing into the block that had just been freed, twelve bytes
-  ;; past its end and straight over the next block: the custom-control model
-  ;; list, whose records live there. The controls THREED.VBX had registered
-  ;; vanished from the chain and the second form could not find SSPanel.
-  ;;
-  ;; So a handle stays put and the data moves out from under it. Three shapes,
-  ;; told apart by the two words at the handle:
-  ;;
-  ;;   fixed        [h] is the caller's own data      -> the handle is the block
-  ;;   moveable     [h] == h+2                        -> data starts two along
-  ;;   moved        [h] == data, [h+2] == h           -> a four-byte stub
-  ;;
-  ;; The stub's second word holding its own address is what tells it from a
-  ;; fixed block, and a fixed block would have to contain its own offset in
-  ;; its second word to be mistaken for one.
-  (func $win16_lhandle_kind (param $h i32) (result i32)
-    (local $b i32)
-    (local.set $b (global.get $seg_base_ds))
-    (if (i32.eq (call $gl16 (i32.add (local.get $b) (local.get $h)))
-                (i32.add (local.get $h) (i32.const 2)))
-      (then (return (i32.const 1))))
-    (if (i32.eq (call $gl16 (i32.add (local.get $b)
-                                     (i32.add (local.get $h) (i32.const 2))))
-                (local.get $h))
-      (then (return (i32.const 2))))
-    (i32.const 0))
-
-  (func $win16_lhandle_data (param $h i32) (result i32)
-    (local $k i32)
-    (local.set $k (call $win16_lhandle_kind (local.get $h)))
-    (if (i32.eq (local.get $k) (i32.const 1))
-      (then (return (i32.add (local.get $h) (i32.const 2)))))
-    (if (i32.eq (local.get $k) (i32.const 2))
-      (then (return (call $gl16 (i32.add (global.get $seg_base_ds) (local.get $h))))))
-    (local.get $h))
-
-  ;; Bytes the caller may use, which is the block minus the word a moveable
-  ;; handle spends on pointing at its own data.
-  (func $win16_lhandle_size (param $h i32) (result i32)
-    (if (i32.eq (call $win16_lhandle_kind (local.get $h)) (i32.const 1))
-      (then (return (i32.sub
-        (call $win16_lblock_size (i32.sub (local.get $h) (i32.const 2)))
-        (i32.const 2)))))
-    (call $win16_lblock_size
-      (i32.sub (call $win16_lhandle_data (local.get $h)) (i32.const 2))))
-
-  ;; LocalLock(hMem) -> the block the handle currently names.
-  (func $win16_LocalLock
-    (global.set $eax (call $win16_lhandle_data (call $win16_arg16 (i32.const 0))))
-    (call $win16_api_return (i32.const 2)))
-
-  ;; KERNEL.6 LocalReAlloc(hMem, wBytes, wFlags) -> the block, resized.
-  ;;
-  ;; Shrinking, or growing into slack the block already has, is free. Growing
-  ;; the block at the top of the heap extends the bump pointer. Anything else
-  ;; takes a fresh block and copies — and for a moveable handle the handle
-  ;; itself stays where it is, shrunk to a four-byte stub that points at the
-  ;; data's new home, because that is the contract the caller asked for.
-  ;; Visual Basic resizes its control list as a form is built and then writes
-  ;; through the handle it kept.
-  (func $win16_LocalReAlloc
-    (local $h i32) (local $bytes i32) (local $k i32) (local $extra i32)
-    (local $d i32) (local $dp i32) (local $dsize i32) (local $blk i32)
-    (local $new i32) (local $i i32) (local $copy i32)
-    (local.set $h (call $win16_arg16 (i32.const 2)))
-    (local.set $bytes (i32.and (i32.add (call $win16_arg16 (i32.const 1)) (i32.const 1))
-                               (i32.const 0xFFFE)))
-    (if (i32.eqz (local.get $bytes)) (then (local.set $bytes (i32.const 2))))
-    (if (i32.or (i32.eqz (local.get $h))
-                (i32.lt_u (local.get $h) (i32.add (call $win16_lheap_get (i32.const 0))
-                                                  (i32.const 2))))
-      (then
-        (global.set $eax (i32.const 0))
-        (call $win16_api_return (i32.const 6))
-        (return)))
-    (local.set $k (call $win16_lhandle_kind (local.get $h)))
-    (local.set $extra (select (i32.const 2) (i32.const 0)
-      (i32.eq (local.get $k) (i32.const 1))))
-    (local.set $d (call $win16_lhandle_data (local.get $h)))
-    (local.set $dp (i32.sub (i32.sub (local.get $d) (i32.const 2)) (local.get $extra)))
-    (local.set $dsize (call $win16_lhandle_size (local.get $h)))
-    (if (i32.le_u (local.get $bytes) (local.get $dsize))
-      (then
-        (global.set $eax (local.get $h))
-        (call $win16_api_return (i32.const 6))
-        (return)))
-    ;; The block on top of the heap can simply take more of it, growing the
-    ;; heap if that is what it takes.
-    (if (i32.and (i32.eq (i32.add (local.get $d) (local.get $dsize))
-                         (call $win16_lheap_get (i32.const 1)))
-                 (call $win16_lheap_room (i32.add (local.get $d) (local.get $bytes))))
-      (then
-        (call $zero_memory
-          (call $g2w (i32.add (global.get $seg_base_ds)
-                              (i32.add (local.get $d) (local.get $dsize))))
-          (i32.sub (local.get $bytes) (local.get $dsize)))
-        (call $win16_lblock_set (local.get $dp)
-          (i32.add (local.get $bytes) (local.get $extra)) (i32.const 0))
-        (call $win16_lheap_set_ptr (i32.add (local.get $d) (local.get $bytes)))
-        (global.set $eax (local.get $h))
-        (call $win16_api_return (i32.const 6))
-        (return)))
-    ;; Otherwise a fresh block at the top of the heap, copied into.
-    (local.set $new (i32.add (call $win16_lheap_get (i32.const 1)) (i32.const 2)))
-    (if (i32.eqz (call $win16_lheap_room
-                   (i32.add (local.get $new) (local.get $bytes))))
-      (then
-        (global.set $eax (i32.const 0))
-        (call $win16_api_return (i32.const 6))
-        (return)))
-    (call $win16_lblock_set (call $win16_lheap_get (i32.const 1))
-      (local.get $bytes) (i32.const 0))
-    (call $win16_lheap_set_ptr (i32.add (local.get $new) (local.get $bytes)))
-    (call $zero_memory (call $g2w (i32.add (global.get $seg_base_ds) (local.get $new)))
-      (local.get $bytes))
-    (local.set $copy (select (local.get $bytes) (local.get $dsize)
-      (i32.lt_u (local.get $bytes) (local.get $dsize))))
-    (block $copied (loop $byte
-      (br_if $copied (i32.ge_u (local.get $i) (local.get $copy)))
-      (call $gs8 (i32.add (i32.add (global.get $seg_base_ds) (local.get $new))
-                          (local.get $i))
-        (call $gl8 (i32.add (i32.add (global.get $seg_base_ds) (local.get $d))
-                            (local.get $i))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $byte)))
-    ;; A fixed handle is the block, so it has no choice but to move with it.
-    (if (i32.eqz (local.get $k))
-      (then
-        (call $win16_lfree_block (local.get $dp))
-        (global.set $eax (local.get $new))
-        (call $win16_api_return (i32.const 6))
-        (return)))
-    ;; A moveable one keeps its offset. The first move leaves the handle's own
-    ;; block behind as the stub and returns the rest of it to the heap; a
-    ;; later move only has the data block to give back.
-    (if (i32.eq (local.get $k) (i32.const 1))
-      (then
-        (local.set $blk (call $win16_lblock_size (local.get $dp)))
-        (if (i32.ge_u (i32.sub (local.get $blk) (i32.const 4)) (i32.const 4))
-          (then
-            (call $win16_lblock_set (i32.add (local.get $h) (i32.const 4))
-              (i32.sub (local.get $blk) (i32.const 6)) (i32.const 1))
-            (call $win16_lblock_set (local.get $dp) (i32.const 4) (i32.const 0)))))
-      (else
-        (call $win16_lfree_block (local.get $dp))))
-    (call $gs16 (i32.add (global.get $seg_base_ds) (local.get $h)) (local.get $new))
-    (call $gs16 (i32.add (global.get $seg_base_ds) (i32.add (local.get $h) (i32.const 2)))
-      (local.get $h))
-    (global.set $eax (local.get $h))
-    (call $win16_api_return (i32.const 6)))
 
   ;; Mark the block free, absorb any free blocks that follow it, and give the
   ;; space straight back to the bump pointer when it turns out to be the last
   ;; one — without that the heap only ever grows by its high-water mark.
-  (func $win16_lfree_block (param $p i32)
-    (local $size i32) (local $next i32)
+  (func $win16_LocalFree
+    (local $p i32) (local $size i32) (local $next i32)
+    (local.set $p (i32.sub (call $win16_arg16 (i32.const 0)) (i32.const 2)))
+    (if (i32.or (i32.lt_u (local.get $p) (global.get $win16_lheap_base))
+                (i32.ge_u (local.get $p) (global.get $win16_lheap_ptr)))
+      (then
+        (global.set $eax (i32.const 0))
+        (call $win16_api_return (i32.const 2))
+        (return)))
     (local.set $size (call $win16_lblock_size (local.get $p)))
     (block $done
       (loop $merge
         (local.set $next (i32.add (i32.add (local.get $p) (i32.const 2)) (local.get $size)))
-        (br_if $done (i32.ge_u (local.get $next) (call $win16_lheap_get (i32.const 1))))
+        (br_if $done (i32.ge_u (local.get $next) (global.get $win16_lheap_ptr)))
         (br_if $done (i32.eqz (call $win16_lblock_free (local.get $next))))
         (local.set $size (i32.add (i32.add (local.get $size) (i32.const 2))
                                   (call $win16_lblock_size (local.get $next))))
         (br $merge)))
     (if (i32.ge_u (i32.add (i32.add (local.get $p) (i32.const 2)) (local.get $size))
-                  (call $win16_lheap_get (i32.const 1)))
-      (then (call $win16_lheap_set_ptr (local.get $p)))
-      (else (call $win16_lblock_set (local.get $p) (local.get $size) (i32.const 1)))))
-
-  ;; A handle whose data has moved owns two blocks — the stub and the data —
-  ;; and freeing only the stub would leak the larger of the two.
-  (func $win16_LocalFree
-    (local $h i32) (local $d i32)
-    (local.set $h (call $win16_arg16 (i32.const 0)))
-    (if (i32.or (i32.lt_u (local.get $h) (i32.add (call $win16_lheap_get (i32.const 0))
-                                                  (i32.const 2)))
-                (i32.ge_u (i32.sub (local.get $h) (i32.const 2))
-                          (call $win16_lheap_get (i32.const 1))))
-      (then
-        (global.set $eax (i32.const 0))
-        (call $win16_api_return (i32.const 2))
-        (return)))
-    (if (i32.eq (call $win16_lhandle_kind (local.get $h)) (i32.const 2))
-      (then
-        (local.set $d (call $win16_lhandle_data (local.get $h)))
-        (call $gs16 (i32.add (global.get $seg_base_ds) (local.get $h)) (i32.const 0))
-        (call $gs16 (i32.add (global.get $seg_base_ds)
-                             (i32.add (local.get $h) (i32.const 2))) (i32.const 0))
-        (call $win16_lfree_block (i32.sub (local.get $d) (i32.const 2)))))
-    (call $win16_lfree_block (i32.sub (local.get $h) (i32.const 2)))
+                  (global.get $win16_lheap_ptr))
+      (then (global.set $win16_lheap_ptr (local.get $p)))
+      (else (call $win16_lblock_set (local.get $p) (local.get $size) (i32.const 1))))
     (global.set $eax (i32.const 0))
     (call $win16_api_return (i32.const 2)))
 
   (func $win16_LocalSize
-    (global.set $eax (call $win16_lhandle_size (call $win16_arg16 (i32.const 0))))
+    (global.set $eax (call $win16_lblock_size
+      (i32.sub (call $win16_arg16 (i32.const 0)) (i32.const 2))))
     (call $win16_api_return (i32.const 2)))
 
   ;; LocalLock, LocalUnlock and LocalCompact on a fixed block: the handle is
@@ -1743,543 +750,13 @@
     (global.set $eax (local.get $result))
     (call $win16_api_return (local.get $argbytes)))
 
-  ;; ---- The global heap ----
-  ;;
-  ;; A global block is one or more whole arena slots, and its handle is the
-  ;; selector of the first: that is what makes GlobalLock free — the far
-  ;; pointer is handle:0000 — and it is also what real Windows does once a
-  ;; block is fixed, which is the only state we have. Blocks larger than 64KB
-  ;; get consecutive slots, so the selector of slot n+1 is the selector of slot
-  ;; n plus 8, which is exactly the step huge-pointer arithmetic walks by.
-  ;;
-  ;; Per-block bookkeeping rides in the segment table entry of the head slot:
-  ;; flags gets one of the two bits below and the ne_seg field, which means
-  ;; nothing for a slot that came from no NE file, holds the requested size.
-  ;; Freed blocks stay in the table and are reused by a later allocation of the
-  ;; same size or smaller, so an app that cycles a scratch buffer does not walk
-  ;; the arena to its end.
-  (global $WIN16_SEG_GLOBAL i32 (i32.const 0x10000))  ;; head slot of a global block
-  (global $WIN16_SEG_GFREE  i32 (i32.const 0x20000))  ;; ...and it has been freed
-
-  (func $win16_gseg_field (param $index i32) (param $off i32) (result i32)
-    (i32.load (i32.add (i32.add (global.get $WIN16_SEG_TABLE)
-                                (i32.mul (local.get $index) (i32.const 16)))
-                       (local.get $off))))
-
-  (func $win16_gseg_store (param $index i32) (param $off i32) (param $v i32)
-    (i32.store (i32.add (i32.add (global.get $WIN16_SEG_TABLE)
-                                 (i32.mul (local.get $index) (i32.const 16)))
-                        (local.get $off))
-               (local.get $v)))
-
-  ;; Slots a block of this many bytes occupies. Zero bytes still takes one:
-  ;; GlobalAlloc(0) has to answer with a handle nothing else holds.
-  (func $win16_gseg_count (param $bytes i32) (result i32)
-    (if (i32.eqz (local.get $bytes)) (then (return (i32.const 1))))
-    (i32.div_u (i32.add (local.get $bytes) (i32.const 0xFFFF)) (i32.const 0x10000)))
-
-  ;; Allocate `bytes` and answer with the head selector, or 0 if the arena
-  ;; cannot cover it.
-  (func $win16_global_alloc (param $bytes i32) (result i32)
-    (local $need i32) (local $i i32) (local $head i32) (local $n i32)
-    (local.set $need (call $win16_gseg_count (local.get $bytes)))
-
-    ;; Reuse pass: the first freed block big enough, taken whole.
-    (local.set $i (i32.const 1))
-    (block $scanned (loop $scan
-      (br_if $scanned (i32.ge_u (local.get $i) (global.get $win16_next_seg)))
-      (if (i32.eq (i32.and (call $win16_gseg_field (local.get $i) (i32.const 8))
-                           (i32.or (global.get $WIN16_SEG_GLOBAL) (global.get $WIN16_SEG_GFREE)))
-                  (i32.or (global.get $WIN16_SEG_GLOBAL) (global.get $WIN16_SEG_GFREE)))
-        (then
-          (if (i32.ge_u (call $win16_gseg_count
-                          (call $win16_gseg_field (local.get $i) (i32.const 12)))
-                        (local.get $need))
-            (then
-              (call $win16_gseg_store (local.get $i) (i32.const 8)
-                (global.get $WIN16_SEG_GLOBAL))
-              (call $win16_gseg_store (local.get $i) (i32.const 12) (local.get $bytes))
-              (call $zero_memory (call $g2w (call $win16_seg_base (local.get $i)))
-                (i32.mul (local.get $need) (i32.const 0x10000)))
-              (return (call $win16_index_to_sel (local.get $i)))))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $scan)))
-
-    ;; Fresh slots. $win16_alloc_segment traps when the arena runs out, and a
-    ;; trap is the wrong answer here — an app that asks for more than fits is
-    ;; entitled to a NULL and its own out-of-memory path.
-    (if (i32.gt_u (i32.add (global.get $win16_next_seg) (local.get $need))
-                  (global.get $WIN16_SEG_MAX))
-      (then (return (i32.const 0))))
-    (local.set $head (call $win16_alloc_segment))
-    (local.set $n (i32.const 1))
-    (block $done (loop $more
-      (br_if $done (i32.ge_u (local.get $n) (local.get $need)))
-      (drop (call $win16_alloc_segment))
-      (local.set $n (i32.add (local.get $n) (i32.const 1)))
-      (br $more)))
-    (call $win16_gseg_store (local.get $head) (i32.const 8) (global.get $WIN16_SEG_GLOBAL))
-    (call $win16_gseg_store (local.get $head) (i32.const 12) (local.get $bytes))
-    (call $win16_index_to_sel (local.get $head)))
-
-  (func $win16_GlobalAlloc
-    (local $bytes i32)
-    (local.set $bytes (call $win16_arg32 (i32.const 0)))
-    (global.set $eax (call $win16_global_alloc (local.get $bytes)))
-    (call $win16_api_return (i32.const 6)))
-
-  (func $win16_GlobalFree
-    (local $index i32)
-    (local.set $index (call $win16_sel_to_index (call $win16_arg16 (i32.const 0))))
-    (if (i32.and (i32.ne (local.get $index) (i32.const 0))
-                 (i32.lt_u (local.get $index) (global.get $WIN16_SEG_MAX)))
-      (then
-        (if (i32.and (call $win16_gseg_field (local.get $index) (i32.const 8))
-                     (global.get $WIN16_SEG_GLOBAL))
-          (then (call $win16_gseg_store (local.get $index) (i32.const 8)
-                  (i32.or (global.get $WIN16_SEG_GLOBAL) (global.get $WIN16_SEG_GFREE)))))))
-    ;; GlobalFree answers with NULL on success.
-    (global.set $eax (i32.const 0))
-    (call $win16_api_return (i32.const 2)))
-
-  ;; GlobalLock(h) -> h:0000, the whole point of handles being selectors.
-  (func $win16_GlobalLock
-    (local $h i32)
-    (local.set $h (call $win16_arg16 (i32.const 0)))
-    (global.set $edx (local.get $h))
-    (global.set $eax (i32.const 0))
-    (if (i32.eqz (local.get $h)) (then (global.set $edx (i32.const 0))))
-    (call $win16_api_return (i32.const 2)))
-
-  (func $win16_GlobalSize
-    (local $bytes i32)
-    (local.set $bytes (call $win16_gseg_field
-      (call $win16_sel_to_index (call $win16_arg16 (i32.const 0))) (i32.const 12)))
-    (global.set $edx (i32.shr_u (local.get $bytes) (i32.const 16)))
-    (global.set $eax (i32.and (local.get $bytes) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 2)))
-
-  ;; GlobalHandle(sel) -> the handle in AX and the selector in DX; here they
-  ;; are the same value.
-  (func $win16_GlobalHandle
-    (local $h i32)
-    (local.set $h (call $win16_arg16 (i32.const 0)))
-    (global.set $edx (local.get $h))
-    (global.set $eax (local.get $h))
-    (call $win16_api_return (i32.const 2)))
-
-  ;; GlobalReAlloc(h, dwBytes, wFlags). Growing inside the slots the block
-  ;; already owns is free; anything else moves it, which a caller that kept a
-  ;; pointer instead of the handle would notice — as it would on real Windows.
-  ;; Let a segment grow inside the arena slot it already owns, and move the
-  ;; local heap with it when the segment is the task's own DGROUP.
-  ;;
-  ;; A task that grows DGROUP is making room for a layout of its own — Visual
-  ;; Basic's is [its 0x3a44 bytes of runtime state][stack][heap], and it sets
-  ;; SP to the top of the stack immediately afterwards. The heap belongs at the
-  ;; top; leaving it where the loader guessed it had LocalAlloc handing out
-  ;; offsets in the middle of the state VB had just copied in, so VB's own
-  ;; tables were being overwritten by its own allocations.
-  (func $win16_gseg_grow (param $index i32) (param $bytes i32)
-    (if (i32.le_u (local.get $bytes) (call $win16_seg_limit (local.get $index)))
-      (then (return)))
-    (call $win16_gseg_store (local.get $index) (i32.const 4) (local.get $bytes))
-    (if (i32.and (i32.eq (local.get $index) (global.get $win16_auto_data))
-                 (i32.gt_u (local.get $bytes) (global.get $win16_heap_size)))
-      (then
-        (global.set $win16_lheap_base
-          (i32.sub (local.get $bytes) (global.get $win16_heap_size)))
-        (global.set $win16_lheap_ptr (global.get $win16_lheap_base))
-        (global.set $win16_lheap_end (local.get $bytes)))))
-
-  (func $win16_GlobalReAlloc
-    (local $h i32) (local $bytes i32) (local $index i32) (local $new i32)
-    (local $old i32) (local $i i32)
-    (local.set $h (call $win16_arg16 (i32.const 3)))
-    (local.set $bytes (call $win16_arg32 (i32.const 1)))
-    (local.set $index (call $win16_sel_to_index (local.get $h)))
-    (local.set $old (call $win16_gseg_field (local.get $index) (i32.const 12)))
-    (if (i32.le_u (call $win16_gseg_count (local.get $bytes))
-                  (call $win16_gseg_count (local.get $old)))
-      (then
-        (call $win16_gseg_store (local.get $index) (i32.const 12) (local.get $bytes))
-        (call $win16_gseg_grow (local.get $index) (local.get $bytes))
-        (global.set $eax (local.get $h))
-        (call $win16_api_return (i32.const 8))
-        (return)))
-    ;; A block that already has a whole arena slot to itself grows inside it
-    ;; rather than moving. Every slot here is 64KB, so anything that still
-    ;; fits in one is free to grow, and growing in place is the answer that
-    ;; keeps the caller's selector working — which matters most for the one
-    ;; block a task cannot survive being moved: its own DGROUP, which is what
-    ;; Visual Basic reallocates on its way in to make room for its runtime.
-    (if (i32.and (i32.le_u (local.get $bytes) (i32.const 0x10000))
-                 (i32.ne (call $win16_seg_base (local.get $index)) (i32.const 0)))
-      (then
-        (call $win16_gseg_store (local.get $index) (i32.const 12) (local.get $bytes))
-        (call $win16_gseg_grow (local.get $index) (local.get $bytes))
-        (global.set $eax (local.get $h))
-        (call $win16_api_return (i32.const 8))
-        (return)))
-    (local.set $new (call $win16_global_alloc (local.get $bytes)))
-    (if (local.get $new)
-      (then
-        (block $copied (loop $copy
-          (br_if $copied (i32.ge_u (local.get $i) (local.get $old)))
-          (call $gs8 (i32.add (call $win16_far_to_guest (local.get $new) (i32.const 0))
-                              (local.get $i))
-            (call $gl8 (i32.add (call $win16_far_to_guest (local.get $h) (i32.const 0))
-                                (local.get $i))))
-          (local.set $i (i32.add (local.get $i) (i32.const 1)))
-          (br $copy)))
-        (call $win16_gseg_store (local.get $index) (i32.const 8)
-          (i32.or (global.get $WIN16_SEG_GLOBAL) (global.get $WIN16_SEG_GFREE)))))
-    (global.set $eax (local.get $new))
-    (call $win16_api_return (i32.const 8)))
-
-  ;; GlobalCompact(dwMinFree) -> the largest block that could still be had,
-  ;; which is every arena slot nothing has taken yet.
-  (func $win16_GlobalCompact
-    (local $free i32)
-    (local.set $free (i32.mul
-      (i32.sub (global.get $WIN16_SEG_MAX) (global.get $win16_next_seg))
-      (i32.const 0x10000)))
-    (global.set $edx (i32.shr_u (local.get $free) (i32.const 16)))
-    (global.set $eax (i32.and (local.get $free) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 4)))
-
-  ;; KERNEL.137 FatalAppExit(wAction, lpszMessageText) — the task has decided
-  ;; it cannot continue. The message is the whole value of the call, so it is
-  ;; logged as a string before the process goes down; without it the exit looks
-  ;; like an emulator fault instead of the app's own diagnosis.
-  (func $win16_FatalAppExit
-    (local $msg i32)
-    (local.set $msg (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
-    (call $host_log_i32 (i32.const 0xCA16FA7A))   ;; FatalAppExit, message follows
-    (if (call $win16_arg16 (i32.const 1))
-      (then (call $host_log (call $g2w (local.get $msg))
-              (call $win16_lstr_len (local.get $msg)))))
-    (call $host_exit (i32.const 1))
-    (global.set $eip (i32.const 0))
-    (global.set $steps (i32.const 0)))
-
-  ;; ---- Selector aliases ----
-  ;;
-  ;; Real protected-mode Windows hands out one selector per view of a block:
-  ;; a code selector cannot be written through, so a program that generates or
-  ;; patches code asks for a data alias of it, and one that runs a block it
-  ;; built asks for a code alias. Here every selector is a base and a limit
-  ;; into the same flat arena and the descriptor has no code/data distinction
-  ;; to honour, so an alias is a second selector over the same bytes — which is
-  ;; what an alias is, minus the protection the hardware would apply.
-  ;;
-  ;; PrestoChangoSelector is the same idea without the allocation: it changes
-  ;; the destination selector to be the other kind of view of the source.
-  (func $win16_alias_of (param $src i32) (result i32)
-    (local $si i32) (local $di i32)
-    (local.set $si (call $win16_sel_to_index (local.get $src)))
-    (if (i32.eqz (call $win16_seg_base (local.get $si))) (then (return (i32.const 0))))
-    (if (i32.ge_u (global.get $win16_next_seg) (global.get $WIN16_SEG_MAX))
-      (then (return (i32.const 0))))
-    ;; The alias slot names the source's memory, so it must not be given the
-    ;; arena page $win16_alloc_segment would zero. Take the index by hand.
-    (local.set $di (global.get $win16_next_seg))
-    (global.set $win16_next_seg (i32.add (local.get $di) (i32.const 1)))
-    (call $win16_seg_set (local.get $di)
-      (call $win16_seg_base (local.get $si)) (call $win16_seg_limit (local.get $si))
-      (i32.const 0) (i32.const 0))
-    (call $win16_index_to_sel (local.get $di)))
-
-  (func $win16_AllocAlias
-    (global.set $eax (call $win16_alias_of (call $win16_arg16 (i32.const 0))))
-    (call $win16_api_return (i32.const 2)))
-
-  (func $win16_PrestoChangoSelector
-    (local $src i32) (local $dst i32) (local $si i32) (local $di i32)
-    (local.set $dst (call $win16_arg16 (i32.const 0)))
-    (local.set $src (call $win16_arg16 (i32.const 1)))
-    (local.set $si (call $win16_sel_to_index (local.get $src)))
-    (local.set $di (call $win16_sel_to_index (local.get $dst)))
-    (if (i32.and (i32.ne (call $win16_seg_base (local.get $si)) (i32.const 0))
-                 (i32.and (i32.ne (local.get $di) (i32.const 0))
-                          (i32.lt_u (local.get $di) (global.get $WIN16_SEG_MAX))))
-      (then (call $win16_seg_set (local.get $di)
-              (call $win16_seg_base (local.get $si))
-              (call $win16_seg_limit (local.get $si))
-              (i32.const 0) (i32.const 0)))
-      (else (local.set $dst (i32.const 0))))
-    (global.set $eax (local.get $dst))
-    (call $win16_api_return (i32.const 4)))
-
-  ;; KERNEL.169 GetFreeSpace(wFlags) -> bytes still available, which for this
-  ;; arena is every slot no selector has taken.
-  (func $win16_GetFreeSpace
-    (local $free i32)
-    (local.set $free (i32.mul
-      (i32.sub (global.get $WIN16_SEG_MAX) (global.get $win16_next_seg))
-      (i32.const 0x10000)))
-    (global.set $edx (i32.shr_u (local.get $free) (i32.const 16)))
-    (global.set $eax (i32.and (local.get $free) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 2)))
-
-  ;; ---- File handles ----
-  ;;
-  ;; Every other kind of handle goes through $win16_h16, which numbers from
-  ;; 0x100 because a small number could be confused with a real 32-bit handle.
-  ;; A file handle cannot afford that: DOS numbers files from zero, INT 21h
-  ;; takes one in BX, and a C runtime keeps a per-handle array of its own
-  ;; indexed by exactly that number. So files get their own map, small and
-  ;; dense, and 0-4 are left alone for stdin/stdout/stderr/aux/prn.
-  (func $win16_fh16 (param $h32 i32) (result i32)
-    (local $t i32) (local $i i32)
-    (if (i32.eq (local.get $h32) (i32.const -1)) (then (return (i32.const 0xFFFF))))
-    (local.set $t (global.get $WIN16_FILE_TABLE))
-    (local.set $i (i32.const 5))
-    (block $done (loop $scan
-      (br_if $done (i32.ge_u (local.get $i) (global.get $WIN16_FILE_MAX)))
-      (if (i32.eq (i32.load (i32.add (local.get $t) (i32.shl (local.get $i) (i32.const 2))))
-                  (local.get $h32))
-        (then (return (local.get $i))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $scan)))
-    (local.set $i (i32.const 5))
-    (block $free (loop $look
-      (br_if $free (i32.ge_u (local.get $i) (global.get $WIN16_FILE_MAX)))
-      (if (i32.eqz (i32.load (i32.add (local.get $t) (i32.shl (local.get $i) (i32.const 2)))))
-        (then
-          (i32.store (i32.add (local.get $t) (i32.shl (local.get $i) (i32.const 2)))
-                     (local.get $h32))
-          (return (local.get $i))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $look)))
-    ;; Out of handles is what DOS itself answers when FILES= is exhausted, and
-    ;; a task that leaks them deserves to hear it rather than to be given one
-    ;; that names another task's file.
-    (i32.const 0xFFFF))
-
-  ;; The way back. A handle at or above the general base never came from here,
-  ;; so it goes through the general map — AccessResource used to hand those
-  ;; out and a task may still be holding one.
-  (func $win16_fh32 (param $h16 i32) (result i32)
-    (local.set $h16 (i32.and (local.get $h16) (i32.const 0xFFFF)))
-    (if (i32.eq (local.get $h16) (i32.const 0xFFFF)) (then (return (i32.const -1))))
-    (if (i32.ge_u (local.get $h16) (global.get $WIN16_FILE_MAX))
-      (then (return (call $win16_h32 (local.get $h16)))))
-    (if (i32.lt_u (local.get $h16) (i32.const 5)) (then (return (local.get $h16))))
-    (i32.load (i32.add (global.get $WIN16_FILE_TABLE)
-                       (i32.shl (local.get $h16) (i32.const 2)))))
-
-  (func $win16_fh_forget (param $h16 i32)
-    (local.set $h16 (i32.and (local.get $h16) (i32.const 0xFFFF)))
-    (if (i32.and (i32.ge_u (local.get $h16) (i32.const 5))
-                 (i32.lt_u (local.get $h16) (global.get $WIN16_FILE_MAX)))
-      (then (i32.store (i32.add (global.get $WIN16_FILE_TABLE)
-                                (i32.shl (local.get $h16) (i32.const 2)))
-              (i32.const 0)))))
-
-  ;; ---- The file API ----
-  ;;
-  ;; _lopen and friends are the same calls as their Win32 spellings with
-  ;; sixteen-bit handles, so each one narrows its far pointers and hands the
-  ;; work to the 32-bit handler. HFILE_ERROR is 0xFFFF rather than -1 once the
-  ;; result is a word, and that is the whole difference for the caller.
-  (func $win16_lopen (param $create i32)
-    (local $path i32) (local $mode i32)
-    (local.set $mode (call $win16_arg16 (i32.const 0)))
-    (local.set $path (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
-    (call $win16_call32_begin (i32.const 2))
-    (if (local.get $create)
-      (then (call $handle__lcreat (local.get $path) (local.get $mode)
-              (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
-      (else (call $handle__lopen (local.get $path) (local.get $mode)
-              (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))))
-    (call $win16_call32_end)
-    ;; Through the file map, not masked to sixteen bits. A file handle here
-    ;; is 0xF0000001 and masking hands the task a 1, which is some other file's
-    ;; handle — Rattler Race read its own image through it, found bytes that
-    ;; were not its own, and put up "a virus has been detected".
-    (global.set $eax (call $win16_fh16 (global.get $eax)))
-    (call $win16_api_return (i32.const 6)))
-
-  (func $win16_lclose
-    (local $h i32) (local $h16 i32)
-    (local.set $h16 (call $win16_arg16 (i32.const 0)))
-    (local.set $h (call $win16_fh32 (local.get $h16)))
-    (call $win16_call32_begin (i32.const 1))
-    (call $handle__lclose (local.get $h) (i32.const 0) (i32.const 0)
-      (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    ;; The file is gone, so its place in the map is free.
-    (call $win16_fh_forget (local.get $h16))
-    (call $win16_h16_forget (local.get $h))
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 2)))
-
-  (func $win16_lread (param $write i32)
-    (local $h i32) (local $buf i32) (local $n i32)
-    (local.set $n (call $win16_arg16 (i32.const 0)))
-    (local.set $buf (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
-    (local.set $h (call $win16_fh32 (call $win16_arg16 (i32.const 3))))
-    (call $win16_call32_begin (i32.const 3))
-    (if (local.get $write)
-      (then (call $handle__lwrite (local.get $h) (local.get $buf) (local.get $n)
-              (i32.const 0) (i32.const 0) (i32.const 0)))
-      (else (call $handle__lread (local.get $h) (local.get $buf) (local.get $n)
-              (i32.const 0) (i32.const 0) (i32.const 0))))
-    (call $win16_call32_end)
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 8)))
-
-  ;; _llseek(hFile, lOffset, iOrigin) -> the new position, a LONG in DX:AX.
-  (func $win16_llseek
-    (local $h i32) (local $off i32) (local $origin i32)
-    (local.set $origin (call $win16_arg16 (i32.const 0)))
-    (local.set $off (call $win16_arg32 (i32.const 1)))
-    (local.set $h (call $win16_fh32 (call $win16_arg16 (i32.const 3))))
-    (call $win16_call32_begin (i32.const 3))
-    (call $handle__llseek (local.get $h) (local.get $off) (local.get $origin)
-      (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $edx (i32.shr_u (global.get $eax) (i32.const 16)))
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 8)))
-
-  ;; OpenFile(lpFileName, lpReOpenBuff, wStyle). The OFSTRUCT the second
-  ;; argument points at is written by the 32-bit handler in the same layout.
-  (func $win16_OpenFile
-    (local $name i32) (local $ofs i32) (local $style i32)
-    (local.set $style (call $win16_arg16 (i32.const 0)))
-    (local.set $ofs (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
-    (if (i32.eqz (call $win16_arg16 (i32.const 2))) (then (local.set $ofs (i32.const 0))))
-    (local.set $name (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 4)) (call $win16_arg16 (i32.const 3))))
-    (call $win16_call32_begin (i32.const 3))
-    (call $handle_OpenFile (local.get $name) (local.get $ofs) (local.get $style)
-      (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    ;; OF_EXIST and the other styles that only report answer 1 or -1 rather
-    ;; than opening anything, and neither belongs in the file map.
-    (if (i32.gt_u (global.get $eax) (i32.const 1))
-      (then (global.set $eax (call $win16_fh16 (global.get $eax))))
-      (else (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))))
-    (call $win16_api_return (i32.const 10)))
-
-  ;; KERNEL.134 GetWindowsDirectory / KERNEL.135 GetSystemDirectory
-  ;; (lpBuffer, uSize) -> length written, not counting the NUL.
-  ;;
-  ;; Every Entertainment Pack game asks for one of these on startup: they keep
-  ;; their high scores in a private INI beside Windows itself, and the path is
-  ;; built from the answer.
-  (func $win16_dir_query (param $system i32)
-    (local $buf i32) (local $max i32)
-    (local.set $max (call $win16_arg16 (i32.const 0)))
-    (local.set $buf (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
-    (call $win16_call32_begin (i32.const 2))
-    (if (local.get $system)
-      (then (call $handle_GetSystemDirectoryA (local.get $buf) (local.get $max)
-              (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
-      (else (call $handle_GetWindowsDirectoryA (local.get $buf) (local.get $max)
-              (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))))
-    (call $win16_call32_end)
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 6)))
-
-  ;; KERNEL.131 GetDOSEnvironment -> far pointer to the task's environment.
-  ;;
-  ;; The block is a run of NAME=VALUE strings ending in a second NUL. Nothing
-  ;; here sets any, so it is the empty block -- which is a real answer: a task
-  ;; that walks it finds no variables and carries on, where a null pointer
-  ;; would be dereferenced. TetraVex and Chip's Challenge both read it before
-  ;; they open a window.
-  (func $win16_GetDOSEnvironment
-    (local $seg i32) (local $dst i32) (local $n i32) (local $i i32)
-    (if (i32.eqz (global.get $win16_env_seg))
-      (then
-        (call $env_ensure)
-        (local.set $n (call $env_size))
-        (local.set $seg (call $win16_alloc_segment))
-        (local.set $dst (call $win16_seg_base (local.get $seg)))
-        (block $done (loop $copy
-          (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
-          (call $gs8 (i32.add (local.get $dst) (local.get $i))
-            (call $gl8 (i32.add (global.get $env_block) (local.get $i))))
-          (local.set $i (i32.add (local.get $i) (i32.const 1)))
-          (br $copy)))
-        (global.set $win16_env_seg (local.get $seg))))
-    (global.set $edx (call $win16_index_to_sel (global.get $win16_env_seg)))
-    (global.set $eax (i32.const 0))
-    (call $win16_api_return (i32.const 0)))
-
   (func $win16_kernel (param $ordinal i32) (result i32)
-    (if (i32.eq (local.get $ordinal) (i32.const 131))
-      (then (call $win16_GetDOSEnvironment) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 134))
-      (then (call $win16_dir_query (i32.const 0)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 135))
-      (then (call $win16_dir_query (i32.const 1)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 74))
-      (then (call $win16_OpenFile) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 137))
-      (then (call $win16_FatalAppExit) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 81))
-      (then (call $win16_lclose) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 82))
-      (then (call $win16_lread (i32.const 0)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 83))
-      (then (call $win16_lopen (i32.const 1)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 84))
-      (then (call $win16_llseek) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 85))
-      (then (call $win16_lopen (i32.const 0)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 86))
-      (then (call $win16_lread (i32.const 1)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 169))
-      (then (call $win16_GetFreeSpace) (return (i32.const 1))))
-    ;; AllocCStoDSAlias, AllocDStoCSAlias, AllocAlias and AllocSelector all
-    ;; come to the same thing here: another selector over the same bytes.
-    (if (i32.or (i32.eq (local.get $ordinal) (i32.const 170))
-        (i32.or (i32.eq (local.get $ordinal) (i32.const 171))
-        (i32.or (i32.eq (local.get $ordinal) (i32.const 172))
-                (i32.eq (local.get $ordinal) (i32.const 175)))))
-      (then (call $win16_AllocAlias) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 176))   ;; FreeSelector
-      (then (call $win16_local_identity (i32.const 2) (i32.const 0)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 177))
-      (then (call $win16_PrestoChangoSelector) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 15))
-      (then (call $win16_GlobalAlloc) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 16))
-      (then (call $win16_GlobalReAlloc) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 17))
-      (then (call $win16_GlobalFree) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 18))
-      (then (call $win16_GlobalLock) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 19))   ;; GlobalUnlock
-      (then (call $win16_local_identity (i32.const 2) (i32.const 0)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 20))
-      (then (call $win16_GlobalSize) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 21))
-      (then (call $win16_GlobalHandle) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 22))   ;; GlobalFlags
-      (then (call $win16_local_identity (i32.const 2) (i32.const 0)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 25))
-      (then (call $win16_GlobalCompact) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 4))
-      (then (call $win16_LocalInit) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 5))
       (then (call $win16_LocalAlloc) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 6))
-      (then (call $win16_LocalReAlloc) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 7))
       (then (call $win16_LocalFree) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 8))            ;; LocalLock
-      (then (call $win16_LocalLock) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 23))           ;; LockSegment
+    (if (i32.or (i32.eq (local.get $ordinal) (i32.const 8))    ;; LocalLock
+                (i32.eq (local.get $ordinal) (i32.const 23)))  ;; LockSegment
       (then (call $win16_local_identity (i32.const 2)
               (call $win16_arg16 (i32.const 0))) (return (i32.const 1))))
     (if (i32.or (i32.eq (local.get $ordinal) (i32.const 9))    ;; LocalUnlock
@@ -2289,20 +766,15 @@
       (then (call $win16_LocalSize) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 13))   ;; LocalCompact
       (then (call $win16_local_identity (i32.const 2)
-              (i32.sub (call $win16_lheap_get (i32.const 2))
-                       (call $win16_lheap_get (i32.const 1))))
+              (i32.sub (global.get $win16_lheap_end) (global.get $win16_lheap_ptr)))
             (return (i32.const 1))))
-    ;; GetWinFlags / __WinFlags: WF_PMODE | WF_CPU386 | WF_ENHANCED is what a
-    ;; 386 in enhanced mode reports, which is what these apps are written for,
-    ;; plus WF_80x87 (0x0400) because there is a real x87 here — see
-    ;; src/06-fpu.wat. Saying otherwise sends every floating-point app down the
-    ;; WIN87EM emulator path, whose entry point patches its caller's code and
-    ;; then runs on state this emulator does not keep; Fuji Golf called it
-    ;; three times and jumped into a segment nothing had filled.
+    ;; GetWinFlags / __WinFlags: WF_STANDARD | WF_PMODE | WF_80x87 absent,
+    ;; WF_ENHANCED (0x0020) and WF_CPU386 (0x0004) is what a 386 in enhanced
+    ;; mode reports, which is what these apps are written for.
     (if (i32.or (i32.eq (local.get $ordinal) (i32.const 132))
                 (i32.eq (local.get $ordinal) (i32.const 178)))
       (then
-        (global.set $eax (i32.const 0x0425))
+        (global.set $eax (i32.const 0x0025))
         (global.set $edx (i32.const 0))
         (call $win16_api_return (i32.const 0))
         (return (i32.const 1))))
@@ -2312,8 +784,6 @@
     (if (i32.eq (local.get $ordinal) (i32.const 36))
       (then (call $win16_local_identity (i32.const 0) (global.get $sreg_ds))
             (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 37))
-      (then (call $win16_GetCurrentPDB) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 51))
       (then
         (global.set $edx (call $win16_arg16 (i32.const 2)))
@@ -2324,12 +794,6 @@
       (then (call $win16_local_identity (i32.const 4) (i32.const 1)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 107))  ;; SetErrorMode
       (then (call $win16_local_identity (i32.const 2) (i32.const 0)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 57))
-      (then (call $win16_GetProfileInt) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 58))
-      (then (call $win16_GetProfileString) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 59))
-      (then (call $win16_WriteProfileString) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 127))
       (then (call $win16_GetPrivateProfileInt) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 128))
@@ -2366,10 +830,6 @@
       (then (call $win16_LoadResource) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 62))
       (then (call $win16_LockResource) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 64))
-      (then (call $win16_AccessResource) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 65))
-      (then (call $win16_SizeofResource) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 63))   ;; FreeResource
       (then (call $win16_local_identity (i32.const 2) (i32.const 0)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 49))
@@ -2378,13 +838,14 @@
     ;; DGROUP selector; GetProcAddress and LoadLibrary are asked about modules
     ;; nothing has loaded, and zero is the answer Windows gives for those.
     (if (i32.eq (local.get $ordinal) (i32.const 47))
-      (then (call $win16_GetModuleHandle) (return (i32.const 1))))
+      (then (call $win16_local_identity (i32.const 4) (global.get $sreg_ds))
+            (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 50))
       (then (call $win16_GetProcAddress) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 95))
       (then (call $win16_LoadLibrary) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 96))
-      (then (call $win16_FreeLibrary) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 96))   ;; FreeLibrary
+      (then (call $win16_local_identity (i32.const 2) (i32.const 0)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 3))
       (then (call $win16_GetVersion) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 30))
@@ -2402,22 +863,6 @@
   ;; where the extension is not part of the name.
   (func $win16_cstr_to_pstr (param $src i32) (param $dst i32) (param $stop_at_dot i32)
     (local $n i32) (local $c i32)
-    ;; A module name is the base name: LoadLibrary is routinely given a path,
-    ;; and Visual Basic hands it the full one for its custom controls. Skip to
-    ;; after the last separator before copying, or "C:\FIELD100" is what gets
-    ;; looked up and no such module is ever found.
-    (block $scanned (loop $path
-      (local.set $c (call $gl8 (i32.add (local.get $src) (local.get $n))))
-      (br_if $scanned (i32.eqz (local.get $c)))
-      (if (i32.or (i32.eq (local.get $c) (i32.const 0x5C))    ;; backslash
-          (i32.or (i32.eq (local.get $c) (i32.const 0x2F))    ;; forward slash
-                  (i32.eq (local.get $c) (i32.const 0x3A))))  ;; colon
-        (then (local.set $src (i32.add (local.get $src)
-                                       (i32.add (local.get $n) (i32.const 1))))
-              (local.set $n (i32.const -1))))
-      (local.set $n (i32.add (local.get $n) (i32.const 1)))
-      (br $path)))
-    (local.set $n (i32.const 0))
     (block $done (loop $copy
       (br_if $done (i32.ge_u (local.get $n) (i32.const 63)))
       (local.set $c (call $gl8 (i32.add (local.get $src) (local.get $n))))
@@ -2439,8 +884,7 @@
   (func $win16_module_emulated (param $id i32) (result i32)
     (i32.or (i32.le_u (local.get $id) (global.get $WIN16_SYSTEM_MODULES))
             (i32.or (i32.eq (local.get $id) (i32.const 10))
-            (i32.or (i32.eq (local.get $id) (i32.const 11))
-                    (i32.eq (local.get $id) (i32.const 12))))))
+                    (i32.eq (local.get $id) (i32.const 11)))))
 
   ;; Scratch for the Pascal string above, at the unused bottom of the 32-bit
   ;; task's stack region, which a 16-bit task never touches.
@@ -2460,100 +904,16 @@
       (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
     (call $win16_cstr_to_pstr (local.get $name) (call $win16_name_scratch) (i32.const 1))
     (local.set $id (call $win16_module_id (call $g2w (call $win16_name_scratch))))
-    ;; Which module the name resolved to, and whether it was already loaded —
-    ;; the two things that decide what this call does.
-    (if (global.get $win16_trace)
-      (then
-        (call $host_log_i32 (i32.const 0xCA16110A))
-        (call $host_log_i32 (local.get $id))
-        (call $host_log_i32 (call $win16_dll_loaded (local.get $id)))))
     (if (i32.eqz (local.get $id))
       (then (call $win16_local_identity (i32.const 4) (i32.const 2)) (return)))
     (if (i32.eqz (call $win16_module_emulated (local.get $id)))
       (then
         (if (i32.eqz (call $win16_dll_loaded (local.get $id)))
           (then
-            ;; An app-local module reached only through LoadLibrary has an id
-            ;; but no bytes: the host stages the file now, at the moment its
-            ;; name is known. A slot claimed for a module with no file has to
-            ;; be given back, or the next LoadLibrary of a real one finds the
-            ;; table full.
-            (if (i32.ge_u (local.get $id) (global.get $WIN16_DYNAMIC_BASE))
-              (then
-                (if (i32.eqz (call $host_win16_stage_module
-                               (call $g2w (call $win16_name_scratch)) (local.get $id)))
-                  (then
-                    (call $win16_dynamic_module_release (local.get $id))
-                    (call $win16_local_identity (i32.const 4) (i32.const 2))
-                    (return)))))
             (if (i32.eqz (call $load_ne_dll (local.get $id)))
-              (then
-                (if (i32.ge_u (local.get $id) (global.get $WIN16_DYNAMIC_BASE))
-                  (then (call $win16_dynamic_module_release (local.get $id))))
-                (call $win16_local_identity (i32.const 4) (i32.const 2))
-                (return)))))))
+              (then (call $win16_local_identity (i32.const 4) (i32.const 2)) (return)))))))
     (call $win16_local_identity (i32.const 4)
       (call $win16_h16 (i32.or (i32.const 0x00D10000) (local.get $id)))))
-
-  ;; KERNEL.96 FreeLibrary(hLibModule).
-  ;;
-  ;; It used to answer and do nothing, which costs an app-local module slot
-  ;; every time — and there are four. Stones loads each of its five stone-style
-  ;; DLLs, reads what it needs, and frees it again before the next; on the
-  ;; fifth it got the fourth one's handle back and reported its styles
-  ;; corrupted. Freeing marks the record unloaded and gives the name slot back,
-  ;; so the next LoadLibrary of a different module has somewhere to go.
-  ;;
-  ;; The module's segments stay in the arena. Real Windows discards them and
-  ;; reloads on demand; here they are simply no longer reachable by name, which
-  ;; costs arena slots and nothing else — and a module the app frees and loads
-  ;; again is staged and placed afresh.
-  (func $win16_FreeLibrary
-    (local $id i32)
-    (local.set $id (call $win16_h32 (call $win16_arg16 (i32.const 0))))
-    (if (i32.eq (i32.and (local.get $id) (i32.const 0xFFFF0000)) (i32.const 0x00D10000))
-      (then
-        (local.set $id (i32.and (local.get $id) (i32.const 0xFFFF)))
-        (if (i32.ge_u (local.get $id) (global.get $WIN16_DYNAMIC_BASE))
-          (then
-            (call $win16_dll_unload (local.get $id))
-            (call $win16_dynamic_module_release (local.get $id))))))
-    (global.set $eax (i32.const 1))
-    (call $win16_api_return (i32.const 2)))
-
-  ;; KERNEL.47 GetModuleHandle(lpModuleName) -> the module's handle.
-  ;;
-  ;; A module this emulator has loaded gets the same 0x00D1-over-id handle
-  ;; LoadLibrary hands out, so GetModuleFileName can tell afterwards which
-  ;; module was meant. Anything else is the task itself, whose handle is its
-  ;; own DGROUP selector — an hInstance and an hModule are the same thing for
-  ;; the task, which is why RegisterClass accepts either.
-  (func $win16_GetModuleHandle
-    (local $name i32) (local $id i32)
-    (local.set $name (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
-    ;; MAKEINTRESOURCE-style: a null selector means there is no name at all.
-    (if (i32.eqz (call $win16_arg16 (i32.const 1)))
-      (then (call $win16_local_identity (i32.const 4) (global.get $sreg_ds)) (return)))
-    (call $win16_cstr_to_pstr (local.get $name) (call $win16_name_scratch) (i32.const 1))
-    (local.set $id (call $win16_module_id (call $g2w (call $win16_name_scratch))))
-    ;; A module this emulator answers for has a handle too, and it has to be
-    ;; that module's — not the task's. Handing back DS meant the next
-    ;; GetProcAddress looked its name up in the running program: JigSawed
-    ;; asked "Gdi" for CreateRectRgn and was told the game does not export it.
-    ;; $win16_dll_loaded answers with the module's segment COUNT, not a flag,
-    ;; so it has to be normalised before it meets an i32.and — 1 & 4 is 0, and
-    ;; FIELD100.VBX has exactly four segments. Rattler Race asked for its
-    ;; handle, got the task's DS, and looked FLDERASE up in the game.
-    (if (i32.and (i32.ne (local.get $id) (i32.const 0))
-                 (i32.or (i32.lt_u (local.get $id) (global.get $WIN16_DYNAMIC_BASE))
-                         (i32.ne (call $win16_dll_loaded (local.get $id))
-                                 (i32.const 0))))
-      (then
-        (call $win16_local_identity (i32.const 4)
-          (call $win16_h16 (i32.or (i32.const 0x00D10000) (local.get $id))))
-        (return)))
-    (call $win16_local_identity (i32.const 4) (global.get $sreg_ds)))
 
   ;; NDDEAPI.NDdeGetWindow() -> HWND of the agent that serves network DDE, or
   ;; NULL when there is none and the caller should start NETDDE.EXE.
@@ -2587,14 +947,9 @@
   ;;
   ;; lpszProcName is a far pointer to a name, unless its selector half is zero —
   ;; then the whole thing is an ordinal, and Hearts asks for CARDS.1, .2 and .4
-  ;; that way.
-  ;;
-  ;; A module this emulator implements itself has no export table to read, but
-  ;; it does have import thunks, and a thunk's address is exactly what a
-  ;; FARPROC is: the same far pointer a static import would have been fixed up
-  ;; to. So a name this side knows gets one. Chip's Challenge loads MMSYSTEM
-  ;; and asks for five entry points by name rather than importing them, and a
-  ;; NULL sent it calling through a null selector.
+  ;; that way. Only a loaded NE has entry points to give; the modules this
+  ;; emulator implements itself are reached through the import thunks, not
+  ;; through an address, so asking one for a procedure address answers NULL.
   (func $win16_GetProcAddress
     (local $sel i32) (local $off i32) (local $id i32) (local $ord i32) (local $target i32)
     (local.set $off (call $win16_arg16 (i32.const 0)))
@@ -2603,39 +958,11 @@
     (if (i32.eq (i32.and (local.get $id) (i32.const 0xFFFF0000)) (i32.const 0x00D10000))
       (then
         (local.set $id (i32.and (local.get $id) (i32.const 0xFFFF)))
-        ;; MMSYSTEM: the name is looked up in the table this side keeps and
-        ;; answered with the import thunk for that ordinal, which is the same
-        ;; address a static import would have been fixed up to — so calling
-        ;; through it arrives at $win16_dispatch exactly as an import does.
-        (if (i32.and (i32.eq (local.get $id) (i32.const 7)) (local.get $sel))
-          (then
-            (call $win16_cstr_to_pstr
-              (call $win16_far_to_guest (local.get $sel) (local.get $off))
-              (call $win16_name_scratch) (i32.const 0))
-            (local.set $ord (call $win16_mmsystem_ordinal
-              (call $g2w (call $win16_name_scratch))))
-            (if (local.get $ord)
-              (then (local.set $target
-                (i32.or (i32.shl (global.get $WIN16_THUNK_SEL) (i32.const 16))
-                        (call $win16_thunk_for (local.get $id) (local.get $ord)
-                                               (i32.const 0))))))))
-        ;; The same for KERNEL, USER and GDI, out of the small table of names
-        ;; apps actually ask for by name rather than importing.
-        (if (i32.and (i32.and (i32.ge_u (local.get $id) (i32.const 1))
-                              (i32.le_u (local.get $id) (i32.const 3)))
-                     (i32.ne (local.get $sel) (i32.const 0)))
-          (then
-            (call $win16_cstr_to_pstr
-              (call $win16_far_to_guest (local.get $sel) (local.get $off))
-              (call $win16_name_scratch) (i32.const 0))
-            (local.set $ord (call $win16_builtin_ordinal
-              (call $g2w (call $win16_name_scratch)) (local.get $id)))
-            (if (local.get $ord)
-              (then (local.set $target
-                (i32.or (i32.shl (global.get $WIN16_THUNK_SEL) (i32.const 16))
-                        (call $win16_thunk_for (local.get $id) (local.get $ord)
-                                               (i32.const 0))))))))
-        ;; NDDEAPI's one entry point, matched the same way.
+        ;; A module this emulator implements has no export table to read, so
+        ;; the few entry points that are asked for by address rather than
+        ;; called through an import thunk get a fixed thunk-segment slot each.
+        ;; NDDEAPI's one is the only one so far; anything else still answers
+        ;; NULL, which is what a caller checks for.
         (if (i32.and (i32.eq (local.get $id) (i32.const 11)) (local.get $sel))
           (then
             (call $win16_cstr_to_pstr
@@ -2657,23 +984,6 @@
                   (call $g2w (call $win16_name_scratch)))))
               (else (local.set $ord (local.get $off))))
             (local.set $target (call $win16_dll_entry (local.get $id) (local.get $ord)))))))
-    ;; A name this side could not place. Worth its own trace line, because the
-    ;; caller almost never checks: Visual Basic turns a NULL FARPROC into "Sub
-    ;; or Function not defined" thousands of instructions later, with nothing
-    ;; left to say which Declare it came from. The name is already in the
-    ;; scratch buffer as a Pascal string.
-    (if (i32.and
-          (i32.and (i32.ne (global.get $win16_trace) (i32.const 0))
-                   (i32.ne (local.get $sel) (i32.const 0)))
-          (i32.eqz (local.get $target)))
-      (then
-        (call $win16_cstr_to_pstr
-          (call $win16_far_to_guest (local.get $sel) (local.get $off))
-          (call $win16_name_scratch) (i32.const 0))
-        (call $host_log_i32 (i32.const 0xCA16A9E5))
-        (call $host_log_i32 (i32.shl (local.get $id) (i32.const 16)))
-        (call $host_log_i32 (i32.const 0))
-        (call $host_log_i32 (call $g2w (call $win16_name_scratch)))))
     (global.set $edx (i32.shr_u (local.get $target) (i32.const 16)))
     (call $win16_local_identity (i32.const 6)
       (i32.and (local.get $target) (i32.const 0xFFFF))))
@@ -2706,433 +1016,6 @@
   ;; it. That packing is why a Win16 app's string ids cluster.
   ;;
   ;;   arg 4 hInstance   3 id   2:1 lpBuffer (seg:off)   0 nBufferMax
-  ;; USER.421 wvsprintf(lpOut, lpFmt, lpArglist).
-  ;;
-  ;; The formatter itself is shared with the 32-bit side, but the argument list
-  ;; is not: Win16 pushes an int as two bytes and a string as a far pointer,
-  ;; where $wsprintf_impl reads every argument as a dword and every string as a
-  ;; flat guest address. Handing it the 16-bit list directly would make the
-  ;; first %d read half of the second argument. So the format is walked once
-  ;; here to learn what each argument is, and a widened copy is built for the
-  ;; formatter to read — which is the same thing a real thunk had to do.
-  (func $win16_va_widen (param $fmt i32) (param $args i32) (result i32)
-    (local $p i32) (local $ch i32) (local $n i32) (local $long i32) (local $out i32)
-    (if (i32.eqz (global.get $win16_va_scratch))
-      (then (global.set $win16_va_scratch (call $heap_alloc (i32.const 128)))))
-    (local.set $out (global.get $win16_va_scratch))
-    (local.set $p (local.get $fmt))
-    (block $done (loop $scan
-      (local.set $ch (call $gl8 (local.get $p)))
-      (br_if $done (i32.eqz (local.get $ch)))
-      (local.set $p (i32.add (local.get $p) (i32.const 1)))
-      (if (i32.ne (local.get $ch) (i32.const 37)) (then (br $scan)))   ;; '%'
-      (local.set $long (i32.const 0))
-      ;; Flags, width and precision. '*' takes its value from the list, so it
-      ;; consumes an argument of its own before the conversion does.
-      (block $spec (loop $chars
-        (local.set $ch (call $gl8 (local.get $p)))
-        (br_if $done (i32.eqz (local.get $ch)))
-        (local.set $p (i32.add (local.get $p) (i32.const 1)))
-        (if (i32.or (i32.eq (local.get $ch) (i32.const 108))    ;; 'l'
-                    (i32.eq (local.get $ch) (i32.const 76)))    ;; 'L'
-          (then (local.set $long (i32.const 1)) (br $chars)))
-        (if (i32.or (i32.eq (local.get $ch) (i32.const 104))    ;; 'h'
-                    (i32.eq (local.get $ch) (i32.const 119)))   ;; 'w'
-          (then (br $chars)))
-        (if (i32.eq (local.get $ch) (i32.const 42))             ;; '*'
-          (then
-            (if (i32.lt_u (local.get $n) (i32.const 32))
-              (then
-                (call $gs32 (i32.add (local.get $out) (i32.shl (local.get $n) (i32.const 2)))
-                  (call $win16_coord (call $gl16 (local.get $args))))
-                (local.set $n (i32.add (local.get $n) (i32.const 1)))))
-            (local.set $args (i32.add (local.get $args) (i32.const 2)))
-            (br $chars)))
-        (if (i32.or (i32.eq (local.get $ch) (i32.const 45))     ;; '-'
-            (i32.or (i32.eq (local.get $ch) (i32.const 43))     ;; '+'
-            (i32.or (i32.eq (local.get $ch) (i32.const 32))     ;; ' '
-            (i32.or (i32.eq (local.get $ch) (i32.const 35))     ;; '#'
-            (i32.or (i32.eq (local.get $ch) (i32.const 46))     ;; '.'
-                    (i32.and (i32.ge_u (local.get $ch) (i32.const 48))
-                             (i32.le_u (local.get $ch) (i32.const 57))))))))
-          (then (br $chars)))
-        (br $spec)))
-      ;; $ch is now the conversion character.
-      (if (i32.eq (local.get $ch) (i32.const 37)) (then (br $scan)))   ;; '%%'
-      (br_if $done (i32.ge_u (local.get $n) (i32.const 32)))
-      (if (i32.or (i32.eq (local.get $ch) (i32.const 115))     ;; 's'
-                  (i32.eq (local.get $ch) (i32.const 83)))     ;; 'S'
-        (then
-          (call $gs32 (i32.add (local.get $out) (i32.shl (local.get $n) (i32.const 2)))
-            (call $win16_far_to_guest
-              (call $gl16 (i32.add (local.get $args) (i32.const 2)))
-              (call $gl16 (local.get $args))))
-          (local.set $args (i32.add (local.get $args) (i32.const 4))))
-        (else (if (local.get $long)
-          (then
-            (call $gs32 (i32.add (local.get $out) (i32.shl (local.get $n) (i32.const 2)))
-              (call $gl32 (local.get $args)))
-            (local.set $args (i32.add (local.get $args) (i32.const 4))))
-          (else
-            ;; A signed conversion has to sign-extend, an unsigned one must
-            ;; not: %d of -1 is "-1" and %u of the same word is "65535".
-            (if (i32.or (i32.eq (local.get $ch) (i32.const 100))    ;; 'd'
-                        (i32.eq (local.get $ch) (i32.const 105)))   ;; 'i'
-              (then (local.set $ch (call $win16_coord (call $gl16 (local.get $args)))))
-              (else (local.set $ch (call $gl16 (local.get $args)))))
-            (call $gs32 (i32.add (local.get $out) (i32.shl (local.get $n) (i32.const 2)))
-              (local.get $ch))
-            (local.set $args (i32.add (local.get $args) (i32.const 2)))))))
-      (local.set $n (i32.add (local.get $n) (i32.const 1)))
-      (br $scan)))
-    (local.get $out))
-
-  (func $win16_wvsprintf
-    (local $out i32) (local $fmt i32) (local $args i32)
-    (local.set $args (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
-    (local.set $fmt (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 3)) (call $win16_arg16 (i32.const 2))))
-    (local.set $out (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 5)) (call $win16_arg16 (i32.const 4))))
-    (global.set $eax (i32.and
-      (call $wsprintf_impl (local.get $out) (local.get $fmt)
-        (call $win16_va_widen (local.get $fmt) (local.get $args)))
-      (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 12)))
-
-  ;; USER.129 GetClassWord / USER.130 SetClassWord(hWnd, nIndex[, wNewWord]).
-  ;;
-  ;; The two indices apps actually use are the background brush and the cursor,
-  ;; and both are already resolved per window when it is created — that per
-  ;; window value is what the window paints and hit-tests with, so it is the
-  ;; one that has to change. Anything else stops rather than answering zero:
-  ;; a wrong class word is a silent wrong answer, and this is the only place
-  ;; that would know it happened.
-  (func $win16_class_word (param $is_set i32)
-    (local $hwnd i32) (local $index i32) (local $val i32) (local $prev i32)
-    (local $handled i32)
-    (if (local.get $is_set)
-      (then
-        (local.set $val (call $win16_arg16 (i32.const 0)))
-        (local.set $index (call $win16_coord (call $win16_arg16 (i32.const 1))))
-        (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 2)))))
-      (else
-        (local.set $index (call $win16_coord (call $win16_arg16 (i32.const 0))))
-        (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 1))))))
-    ;; A non-negative index is a byte offset into the class's own extra bytes,
-    ;; which every window of the class shares. IdleWild keeps its animation
-    ;; state there.
-    (if (i32.ge_s (local.get $index) (i32.const 0))
-      (then
-        (local.set $prev (call $class_extra_get_word
-          (call $wnd_get_class_slot (local.get $hwnd)) (local.get $index)))
-        (if (local.get $is_set)
-          (then (call $class_extra_set_word
-                  (call $wnd_get_class_slot (local.get $hwnd))
-                  (local.get $index) (local.get $val))))
-        (global.set $eax (local.get $prev))
-        (call $win16_api_return (select (i32.const 6) (i32.const 4) (local.get $is_set)))
-        (return)))
-    ;; Flat rather than a chain of else-ifs on purpose: the nested form put the
-    ;; function's own tail inside the innermost else, so every index that WAS
-    ;; handled returned without calling $win16_api_return at all — leaving EIP
-    ;; on the call instruction and the arguments on the stack. IdleWild then
-    ;; re-ran its own pushes forever, ten bytes of stack at a time, until SS
-    ;; went wild. Nothing about that looked like a paren mistake from the
-    ;; outside, and the paren checker is no help: the totals balance either way.
-    (local.set $handled (i32.const 1))
-    (if (i32.eq (local.get $index) (i32.const -10))        ;; GCW_HBRBACKGROUND
-      (then
-        (local.set $prev (call $win16_h16 (call $wnd_get_bg_brush (local.get $hwnd))))
-        (if (local.get $is_set)
-          (then (call $wnd_set_bg_brush (local.get $hwnd)
-                  (call $win16_h32 (local.get $val))))))
-      (else (local.set $handled (i32.const 0))))
-    (if (i32.eq (local.get $index) (i32.const -12))        ;; GCW_HCURSOR
-      (then
-        (local.set $handled (i32.const 1))
-        (local.set $prev (call $win16_h16 (call $wnd_get_class_cursor (local.get $hwnd))))
-        (if (local.get $is_set)
-          (then (call $wnd_set_class_cursor (local.get $hwnd)
-                  (call $win16_h32 (local.get $val)))))))
-    (if (i32.eq (local.get $index) (i32.const -14))        ;; GCW_HICON
-      (then
-        (local.set $handled (i32.const 1))
-        (local.set $prev (call $win16_h16 (call $wnd_get_class_icon (local.get $hwnd))))
-        (if (local.get $is_set)
-          (then (call $wnd_set_class_icon (local.get $hwnd)
-                  (call $win16_h32 (local.get $val)))))))
-    ;; The three sizes the class was registered with, which live in the class
-    ;; record's own WNDCLASS. A window asks for cbWndExtra before it uses the
-    ;; extra bytes — Rodent's Revenge does, for its form.
-    (if (i32.or (i32.eq (local.get $index) (i32.const -16))   ;; GCW_HMODULE
-            (i32.or (i32.eq (local.get $index) (i32.const -18))   ;; GCW_CBWNDEXTRA
-                    (i32.eq (local.get $index) (i32.const -20)))) ;; GCW_CBCLSEXTRA
-      (then
-        (local.set $handled (i32.const 1))
-        (local.set $val (call $class_wndclass_addr
-          (call $wnd_get_class_slot (local.get $hwnd))))
-        (if (i32.eq (local.get $index) (i32.const -16))
-          (then (local.set $prev (i32.load offset=16 (local.get $val))))
-          (else
-            (local.set $prev (select
-              (i32.load offset=8 (local.get $val))
-              (i32.load offset=12 (local.get $val))
-              (i32.eq (local.get $index) (i32.const -20))))))
-        (local.set $prev (i32.and (local.get $prev) (i32.const 0xFFFF)))))
-    (if (i32.eqz (local.get $handled))
-      (then
-        (call $host_log_i32 (i32.const 0xCA16C1A5))   ;; class word not implemented
-        (call $host_log_i32 (local.get $index))
-        (call $host_log_i32 (local.get $is_set))
-        (unreachable)))
-    (global.set $eax (local.get $prev))
-    (call $win16_api_return (select (i32.const 6) (i32.const 4) (local.get $is_set))))
-
-  ;; USER.131 GetClassLong / USER.132 SetClassLong(hWnd, nIndex[, dwNewLong]).
-  ;;
-  ;; The long-sized half of the same class record. A non-negative index is two
-  ;; words of the class's extra bytes; GCL_WNDPROC is the window procedure the
-  ;; class was registered with, which is a far pointer and so already a long.
-  ;; Visual Basic reads it for every control it creates.
-  (func $win16_class_long (param $is_set i32)
-    (local $hwnd i32) (local $index i32) (local $val i32) (local $prev i32)
-    (local $slot i32)
-    (if (local.get $is_set)
-      (then
-        (local.set $val (call $win16_arg32 (i32.const 0)))
-        (local.set $index (call $win16_coord (call $win16_arg16 (i32.const 2))))
-        (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 3)))))
-      (else
-        (local.set $index (call $win16_coord (call $win16_arg16 (i32.const 0))))
-        (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 1))))))
-    (local.set $slot (call $wnd_get_class_slot (local.get $hwnd)))
-    (if (i32.ge_s (local.get $index) (i32.const 0))
-      (then
-        (local.set $prev (i32.or
-          (call $class_extra_get_word (local.get $slot) (local.get $index))
-          (i32.shl (call $class_extra_get_word (local.get $slot)
-                     (i32.add (local.get $index) (i32.const 2))) (i32.const 16))))
-        (if (local.get $is_set)
-          (then
-            (call $class_extra_set_word (local.get $slot) (local.get $index)
-              (i32.and (local.get $val) (i32.const 0xFFFF)))
-            (call $class_extra_set_word (local.get $slot)
-              (i32.add (local.get $index) (i32.const 2))
-              (i32.shr_u (local.get $val) (i32.const 16))))))
-      (else
-        ;; GCL_WNDPROC. A procedure of ours has no address a task could call,
-        ;; so it is reported as the thunk that stands for it — the same answer
-        ;; GetWindowLong gives for the same reason.
-        (if (i32.eq (local.get $index) (i32.const -24))
-          (then
-            (local.set $prev (call $wnd_table_get (local.get $hwnd)))
-            (if (i32.eqz (call $win16_is_far_proc (local.get $prev)))
-              (then (local.set $prev (call $win16_builtin_wndproc))))
-            (if (local.get $is_set)
-              (then (call $wnd_table_set (local.get $hwnd) (local.get $val)))))
-          (else
-            (if (i32.eq (local.get $index) (i32.const -26))   ;; GCL_STYLE
-              (then
-                (local.set $prev (i32.load (call $class_wndclass_addr (local.get $slot))))
-                (if (local.get $is_set)
-                  (then (i32.store (call $class_wndclass_addr (local.get $slot))
-                          (local.get $val)))))
-              (else
-                (call $host_log_i32 (i32.const 0xCA16C1A6))  ;; class long not implemented
-                (call $host_log_i32 (local.get $index))
-                (call $host_log_i32 (local.get $is_set))
-                (unreachable)))))))
-    (global.set $edx (i32.shr_u (local.get $prev) (i32.const 16)))
-    (global.set $eax (i32.and (local.get $prev) (i32.const 0xFFFF)))
-    (call $win16_api_return (select (i32.const 8) (i32.const 4) (local.get $is_set))))
-
-  ;; USER.222 GetKeyboardState(lpKeyState) — 256 bytes, one per virtual key,
-  ;; same array in both worlds.
-  (func $win16_GetKeyboardState
-    (local $buf i32)
-    (local.set $buf (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
-    (call $win16_call32_begin (i32.const 1))
-    (call $handle_GetKeyboardState (local.get $buf) (i32.const 0) (i32.const 0)
-      (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (i32.const 1))
-    (call $win16_api_return (i32.const 4)))
-
-  ;; USER.223 SetKeyboardState(lpKeyState) — the same 256-byte array on the way
-  ;; back in. Only the high bit of each byte is the down state; the low bit is
-  ;; the toggle, which nothing here models.
-  (func $win16_SetKeyboardState
-    (local $buf i32) (local $i i32)
-    (local.set $buf (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
-    (block $done (loop $keys
-      (br_if $done (i32.ge_u (local.get $i) (i32.const 256)))
-      (call $host_set_key_down_state (local.get $i)
-        (i32.and (call $gl8 (i32.add (local.get $buf) (local.get $i)))
-                 (i32.const 0x80)))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $keys)))
-    (global.set $eax (i32.const 1))
-    (call $win16_api_return (i32.const 4)))
-
-  ;; USER.243 GetDialogBaseUnits() -> the width in AX and the height in DX of
-  ;; the system font's average character, which is what a dialog unit is
-  ;; measured in.
-  (func $win16_GetDialogBaseUnits
-    (call $win16_call32_begin (i32.const 0))
-    (call $handle_GetDialogBaseUnits (i32.const 0) (i32.const 0) (i32.const 0)
-      (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $edx (i32.shr_u (global.get $eax) (i32.const 16)))
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 0)))
-
-  ;; USER.17 GetCursorPos(lpPoint) / USER.70 SetCursorPos(X, Y). A POINT is two
-  ;; words here and two longs there.
-  (func $win16_GetCursorPos
-    (local $pt i32) (local $tmp i32)
-    (local.set $pt (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
-    (local.set $tmp (global.get $GUEST_STACK))
-    (call $win16_call32_begin (i32.const 1))
-    (call $handle_GetCursorPos (local.get $tmp) (i32.const 0) (i32.const 0)
-      (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (call $gs16 (local.get $pt) (call $gl32 (local.get $tmp)))
-    (call $gs16 (i32.add (local.get $pt) (i32.const 2))
-      (call $gl32 (i32.add (local.get $tmp) (i32.const 4))))
-    (global.set $eax (i32.const 1))
-    (call $win16_api_return (i32.const 4)))
-
-  (func $win16_SetCursorPos
-    (local $x i32) (local $y i32)
-    (local.set $y (call $win16_coord (call $win16_arg16 (i32.const 0))))
-    (local.set $x (call $win16_coord (call $win16_arg16 (i32.const 1))))
-    (call $win16_call32_begin (i32.const 2))
-    (call $handle_SetCursorPos (local.get $x) (local.get $y)
-      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (i32.const 1))
-    (call $win16_api_return (i32.const 4)))
-
-  ;; USER.47 IsWindow(hWnd). A handle the task made up, or one it kept after
-  ;; the window was destroyed, has no 32-bit counterpart and is not a window.
-  (func $win16_IsWindow
-    (local $hwnd i32)
-    (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 0))))
-    (if (i32.eqz (local.get $hwnd))
-      (then
-        (global.set $eax (i32.const 0))
-        (call $win16_api_return (i32.const 2))
-        (return)))
-    (call $win16_call32_begin (i32.const 1))
-    (call $handle_IsWindow (local.get $hwnd) (i32.const 0) (i32.const 0)
-      (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (i32.ne (global.get $eax) (i32.const 0)))
-    (call $win16_api_return (i32.const 2)))
-
-  ;; USER.50 FindWindow(lpClassName, lpWindowName). Either argument may be a
-  ;; NULL far pointer, which means "any", and a null selector is how that
-  ;; arrives — it has to stay a zero pointer rather than become the base of
-  ;; whatever segment zero is.
-  (func $win16_FindWindow
-    (local $cls i32) (local $title i32)
-    (local.set $title (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
-    (if (i32.eqz (call $win16_arg16 (i32.const 1))) (then (local.set $title (i32.const 0))))
-    (local.set $cls (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 3)) (call $win16_arg16 (i32.const 2))))
-    (if (i32.eqz (call $win16_arg16 (i32.const 3))) (then (local.set $cls (i32.const 0))))
-    (call $win16_call32_begin (i32.const 2))
-    (call $handle_FindWindowA (local.get $cls) (local.get $title)
-      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (call $win16_h16 (global.get $eax)))
-    (call $win16_api_return (i32.const 8)))
-
-  ;; USER.431 AnsiUpper / .432 AnsiLower(lpsz) and USER.437 AnsiUpperBuff /
-  ;; .438 AnsiLowerBuff(lpsz, cchLength).
-  ;;
-  ;; The first pair takes either a string or, when the selector is zero, a
-  ;; single character in the low byte — the same MAKEINTRESOURCE-shaped trick
-  ;; the resource calls use, and callers rely on both spellings. The buffered
-  ;; pair takes a length rather than a terminator, and a length of zero means
-  ;; 65536 bytes.
-  (func $win16_ansi_case (param $upper i32) (param $buffered i32)
-    (local $p i32) (local $n i32) (local $i i32) (local $ch i32) (local $sel i32)
-    (if (local.get $buffered)
-      (then
-        (local.set $n (call $win16_arg16 (i32.const 0)))
-        (if (i32.eqz (local.get $n)) (then (local.set $n (i32.const 0x10000))))
-        (local.set $sel (call $win16_arg16 (i32.const 2)))
-        (local.set $p (call $win16_far_to_guest (local.get $sel)
-                        (call $win16_arg16 (i32.const 1)))))
-      (else
-        (local.set $sel (call $win16_arg16 (i32.const 1)))
-        (local.set $p (call $win16_far_to_guest (local.get $sel)
-                        (call $win16_arg16 (i32.const 0))))
-        ;; A null selector: the "string" is one character in the offset.
-        (if (i32.eqz (local.get $sel))
-          (then
-            (local.set $ch (i32.and (call $win16_arg16 (i32.const 0)) (i32.const 0xFF)))
-            (if (local.get $upper)
-              (then (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x61))
-                                 (i32.le_u (local.get $ch) (i32.const 0x7A)))
-                      (then (local.set $ch (i32.sub (local.get $ch) (i32.const 0x20))))))
-              (else (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x41))
-                                 (i32.le_u (local.get $ch) (i32.const 0x5A)))
-                      (then (local.set $ch (i32.add (local.get $ch) (i32.const 0x20)))))))
-            (global.set $edx (i32.const 0))
-            (global.set $eax (local.get $ch))
-            (call $win16_api_return (i32.const 4))
-            (return)))
-        (local.set $n (i32.const 0x10000))))
-    (block $done (loop $chars
-      (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
-      (local.set $ch (call $gl8 (i32.add (local.get $p) (local.get $i))))
-      ;; An unbuffered call stops at the terminator; a buffered one does not.
-      (if (i32.and (i32.eqz (local.get $buffered)) (i32.eqz (local.get $ch)))
-        (then (br $done)))
-      (if (local.get $upper)
-        (then (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x61))
-                           (i32.le_u (local.get $ch) (i32.const 0x7A)))
-                (then (call $gs8 (i32.add (local.get $p) (local.get $i))
-                        (i32.sub (local.get $ch) (i32.const 0x20))))))
-        (else (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x41))
-                           (i32.le_u (local.get $ch) (i32.const 0x5A)))
-                (then (call $gs8 (i32.add (local.get $p) (local.get $i))
-                        (i32.add (local.get $ch) (i32.const 0x20)))))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $chars)))
-    (if (local.get $buffered)
-      (then
-        (global.set $eax (local.get $i))
-        (call $win16_api_return (i32.const 6)))
-      (else
-        ;; Answers with the string it was given.
-        (global.set $edx (local.get $sel))
-        (global.set $eax (call $win16_arg16 (i32.const 0)))
-        (call $win16_api_return (i32.const 4)))))
-
-  ;; USER.472 AnsiNext(lpszCurrentChar) -> the next character. With a
-  ;; single-byte character set that is the pointer plus one, except at the
-  ;; terminating NUL, where AnsiNext stands still so a walk cannot run off the
-  ;; end of the string.
-  (func $win16_AnsiNext
-    (local $sel i32) (local $off i32)
-    (local.set $off (call $win16_arg16 (i32.const 0)))
-    (local.set $sel (call $win16_arg16 (i32.const 1)))
-    (if (call $gl8 (call $win16_far_to_guest (local.get $sel) (local.get $off)))
-      (then (local.set $off (i32.and (i32.add (local.get $off) (i32.const 1))
-                                     (i32.const 0xFFFF)))))
-    (global.set $edx (local.get $sel))
-    (global.set $eax (local.get $off))
-    (call $win16_api_return (i32.const 4)))
-
   (func $win16_LoadString
     (local $id i32) (local $max i32) (local $dst i32)
     (local $p i32) (local $end i32) (local $i i32) (local $len i32) (local $n i32)
@@ -3140,13 +1023,6 @@
     (local.set $max (call $win16_arg16 (i32.const 0)))
     (local.set $dst (call $win16_far_to_guest
       (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
-    ;; Which module's strings — the instance handle decides, exactly as it does
-    ;; for the Load* family. Stones keeps each stone style's name in that
-    ;; style's own DLL and asks for it with that DLL's handle; answering out of
-    ;; the task's own resources found nothing and it declared the styles
-    ;; corrupted.
-    (global.set $win16_res_module_id
-      (call $win16_res_module (call $win16_arg16 (i32.const 4))))
 
     (global.set $eax (i32.const 0))
     (local.set $p (call $win16_find_resource (i32.const 6)
@@ -3175,111 +1051,7 @@
           (local.set $p (i32.add (i32.add (local.get $p) (i32.const 1)) (local.get $len)))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
           (br $walk)))))
-    (global.set $win16_res_module_id (i32.const 0))
     (call $win16_api_return (i32.const 10)))
-
-  ;; The scroll bar of a window, USER.62..65. The state lives in one place for
-  ;; both worlds — the per-window scroll table the 32-bit handlers keep — so
-  ;; these only narrow. SB_HORZ/SB_VERT/SB_CTL are the same three numbers in
-  ;; both, and every position and limit is a signed word.
-  ;;
-  ;; USER.62 SetScrollPos(hWnd, nBar, nPos, bRedraw) -> the previous position.
-  (func $win16_SetScrollPos
-    (local $hwnd i32) (local $bar i32) (local $pos i32) (local $redraw i32)
-    (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 3))))
-    (local.set $bar (call $win16_arg16 (i32.const 2)))
-    (local.set $pos (call $win16_coord (call $win16_arg16 (i32.const 1))))
-    (local.set $redraw (call $win16_arg16 (i32.const 0)))
-    (call $win16_call32_begin (i32.const 4))
-    (call $handle_SetScrollPos (local.get $hwnd) (local.get $bar)
-      (local.get $pos) (local.get $redraw) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 8)))
-
-  ;; USER.63 GetScrollPos(hWnd, nBar) -> the position.
-  (func $win16_GetScrollPos
-    (local $hwnd i32) (local $bar i32)
-    (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 1))))
-    (local.set $bar (call $win16_arg16 (i32.const 0)))
-    (call $win16_call32_begin (i32.const 2))
-    (call $handle_GetScrollPos (local.get $hwnd) (local.get $bar)
-      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 4)))
-
-  ;; USER.64 SetScrollRange(hWnd, nBar, nMinPos, nMaxPos, bRedraw).
-  (func $win16_SetScrollRange
-    (local $hwnd i32) (local $bar i32) (local $lo i32) (local $hi i32)
-    (local $redraw i32)
-    (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 4))))
-    (local.set $bar (call $win16_arg16 (i32.const 3)))
-    (local.set $lo (call $win16_coord (call $win16_arg16 (i32.const 2))))
-    (local.set $hi (call $win16_coord (call $win16_arg16 (i32.const 1))))
-    (local.set $redraw (call $win16_arg16 (i32.const 0)))
-    (call $win16_call32_begin (i32.const 5))
-    (call $win16_call32_arg (i32.const 4) (local.get $redraw))
-    (call $handle_SetScrollRange (local.get $hwnd) (local.get $bar)
-      (local.get $lo) (local.get $hi) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (i32.const 1))
-    (call $win16_api_return (i32.const 10)))
-
-  ;; USER.65 GetScrollRange(hWnd, nBar, lpMinPos, lpMaxPos). The two answers
-  ;; are ints, which are words here — the 32-bit handler writes dwords, so it
-  ;; writes into scratch and the words are stored from there.
-  (func $win16_GetScrollRange
-    (local $hwnd i32) (local $tmp i32) (local $lo i32) (local $hi i32)
-    (local $bar i32) (local $have_lo i32) (local $have_hi i32)
-    (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 5))))
-    (local.set $lo (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 3)) (call $win16_arg16 (i32.const 2))))
-    (local.set $hi (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
-    (local.set $tmp (global.get $GUEST_STACK))
-    (local.set $bar (call $win16_arg16 (i32.const 4)))
-    (local.set $have_lo (call $win16_arg16 (i32.const 3)))
-    (local.set $have_hi (call $win16_arg16 (i32.const 1)))
-    (call $win16_call32_begin (i32.const 4))
-    (call $handle_GetScrollRange (local.get $hwnd) (local.get $bar)
-      (local.get $tmp) (i32.add (local.get $tmp) (i32.const 4))
-      (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (if (local.get $have_lo)
-      (then (call $gs16 (local.get $lo) (call $gl32 (local.get $tmp)))))
-    (if (local.get $have_hi)
-      (then (call $gs16 (local.get $hi)
-              (call $gl32 (i32.add (local.get $tmp) (i32.const 4))))))
-    (global.set $eax (i32.const 1))
-    (call $win16_api_return (i32.const 12)))
-
-  ;; USER.61 ScrollWindow(hWnd, XAmount, YAmount, lpRect, lpClipRect). Either
-  ;; rectangle may be NULL, meaning the whole client area, and must stay NULL
-  ;; rather than becoming a pointer to a zero rectangle.
-  (func $win16_ScrollWindow
-    (local $hwnd i32) (local $rc i32) (local $clip i32)
-    (local $dx i32) (local $dy i32)
-    (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 6))))
-    (local.set $dx (call $win16_coord (call $win16_arg16 (i32.const 5))))
-    (local.set $dy (call $win16_coord (call $win16_arg16 (i32.const 4))))
-    (if (call $win16_arg16 (i32.const 3))
-      (then
-        (local.set $rc (global.get $GUEST_STACK))
-        (call $win16_rect_widen (local.get $rc) (call $win16_far_to_guest
-          (call $win16_arg16 (i32.const 3)) (call $win16_arg16 (i32.const 2))))))
-    (if (call $win16_arg16 (i32.const 1))
-      (then
-        (local.set $clip (i32.add (global.get $GUEST_STACK) (i32.const 16)))
-        (call $win16_rect_widen (local.get $clip) (call $win16_far_to_guest
-          (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))))
-    (call $win16_call32_begin (i32.const 5))
-    (call $win16_call32_arg (i32.const 4) (local.get $clip))
-    (call $handle_ScrollWindow (local.get $hwnd) (local.get $dx) (local.get $dy)
-      (local.get $rc) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (i32.const 1))
-    (call $win16_api_return (i32.const 14)))
 
   ;; USER.66 GetDC(hWnd) -> HDC, USER.68 ReleaseDC(hWnd, hDC).
   ;;
@@ -3298,27 +1070,8 @@
     (global.set $eax (call $win16_h16 (local.get $hdc)))
     (call $win16_api_return (i32.const 2)))
 
-  ;; USER.68 ReleaseDC(hWnd, hDC) -> nonzero if it released one.
-  ;;
-  ;; The handle is checked against the DC table before anything happens to it,
-  ;; because a task may hand over something that is not a DC and Windows
-  ;; answers zero rather than acting. Klotski pushes its two arguments the
-  ;; other way round, so what arrives here is its window: releasing that did
-  ;; nothing, but forgetting it took the window's place in the handle map away
-  ;; and the next DC was given the same number. The task then showed and
-  ;; painted its DC instead of its window, and drew nothing at all.
   (func $win16_ReleaseDC
-    (local $hdc i32)
-    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 0))))
-    (if (i32.eqz (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
-      (then
-        (global.set $eax (i32.const 0))
-        (call $win16_api_return (i32.const 4))
-        (return)))
-    (drop (call $host_release_dc (local.get $hdc)))
-    ;; The DC is gone, so its place in the handle map is free. A pump that gets
-    ;; and releases a DC every iteration would otherwise fill the map.
-    (call $win16_h16_forget (local.get $hdc))
+    (drop (call $host_release_dc (call $win16_h32 (call $win16_arg16 (i32.const 0)))))
     (global.set $eax (i32.const 1))
     (call $win16_api_return (i32.const 4)))
 
@@ -3357,21 +1110,13 @@
       (call $win16_arg16 (local.get $n)))))
 
   ;; Find a resource from a Load*-style argument pair, by id or by name.
-  ;; Every Load* call in this family is (hInstance, lpName), so the instance
-  ;; handle is the word above the name's far pointer. It decides which module's
-  ;; resources are searched — see $win16_res_module — and is cleared again so
-  ;; nothing else inherits it.
   (func $win16_res_lookup (param $type i32) (param $n i32) (result i32)
-    (local $id i32) (local $found i32)
-    (global.set $win16_res_module_id
-      (call $win16_res_module (call $win16_arg16 (i32.add (local.get $n) (i32.const 2)))))
+    (local $id i32)
     (local.set $id (call $win16_res_arg (local.get $n)))
     (if (i32.ne (local.get $id) (i32.const -1))
-      (then (local.set $found (call $win16_find_resource (local.get $type) (local.get $id))))
-      (else (local.set $found (call $win16_find_resource_ex (local.get $type) (i32.const 0)
-              (call $win16_res_name_wa (local.get $n))))))
-    (global.set $win16_res_module_id (i32.const 0))
-    (local.get $found))
+      (then (return (call $win16_find_resource (local.get $type) (local.get $id)))))
+    (call $win16_find_resource_ex (local.get $type) (i32.const 0)
+      (call $win16_res_name_wa (local.get $n))))
 
   ;; USER.179 GetSystemMetrics(nIndex). Same indices, same answers as Win32 —
   ;; see $system_metric in 09a-handlers.wat.
@@ -3472,168 +1217,6 @@
     (global.set $steps (i32.const 0)))
 
   (func $win16_user (param $ordinal i32) (result i32)
-    (local $arg i32) (local $arg2 i32) (local $arg3 i32)
-    ;; USER.13 GetTickCount and USER.15 GetCurrentTime are the same clock; the
-    ;; second name is the Windows 2.x spelling that survived into 3.x headers.
-    (if (i32.eq (local.get $ordinal) (i32.const 13))
-      (then (call $win16_GetCurrentTime) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 47))
-      (then (call $win16_IsWindow) (return (i32.const 1))))
-    (if (i32.or (i32.eq (local.get $ordinal) (i32.const 412))
-                (i32.eq (local.get $ordinal) (i32.const 413)))
-      (then (call $win16_DeleteMenu) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 410))
-      (then (call $win16_change_menu (i32.const 0)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 411))
-      (then (call $win16_change_menu (i32.const 1)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 414))
-      (then (call $win16_change_menu (i32.const 2)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 17))
-      (then (call $win16_GetCursorPos) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 60))
-      (then (call $win16_GetActiveWindow) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 70))
-      (then (call $win16_SetCursorPos) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 36))
-      (then (call $win16_GetWindowText) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 38))
-      (then (call $win16_GetWindowTextLength) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 222))
-      (then (call $win16_GetKeyboardState) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 223))
-      (then (call $win16_SetKeyboardState) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 243))
-      (then (call $win16_GetDialogBaseUnits) (return (i32.const 1))))
-    ;; SetMessageQueue(cMsg) asks for a queue of a given size. This one is not
-    ;; sized, so the request always succeeds — which is the answer Windows also
-    ;; gives when the queue it already has is big enough.
-    ;; GetWindowTask(hWnd) — which task owns the window. There is one task
-    ;; here, and its hTask is its DGROUP selector, the same answer
-    ;; GetCurrentTask gives.
-    (if (i32.eq (local.get $ordinal) (i32.const 224))
-      (then (call $win16_local_identity (i32.const 2) (global.get $sreg_ds))
-            (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 266))
-      (then (call $win16_local_identity (i32.const 2) (i32.const 1))
-            (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 272))   ;; IsZoomed
-      (then (call $win16_hwnd_query (i32.const 7)) (return (i32.const 1))))
-    ;; USER.282/283 are the window-aware spellings of GDI.361/362.
-    (if (i32.eq (local.get $ordinal) (i32.const 282))
-      (then (call $win16_SelectPalette) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 283))
-      (then (call $win16_RealizePalette) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 129))
-      (then (call $win16_class_word (i32.const 0)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 130))
-      (then (call $win16_class_word (i32.const 1)) (return (i32.const 1))))
-    ;; USER.112 WaitMessage — "sleep until something arrives". A task pumping
-    ;; its own loop cannot be slept here: its stack is its own and the host
-    ;; delivers input between batches, so the honest equivalent is to give the
-    ;; host its turn and come straight back. The caller loops on GetMessage
-    ;; either way, which is what it would do on Windows after waking.
-    (if (i32.eq (local.get $ordinal) (i32.const 112))
-      (then
-        (global.set $yield_flag (i32.const 1))
-        (call $win16_local_identity (i32.const 0) (i32.const 1))
-        (return (i32.const 1))))
-    ;; USER.156 GetSystemMenu(hWnd, bRevert) -> the window's system menu, which
-    ;; is the same one for every window here. A task takes it to grey out
-    ;; Close or to add a line of its own; both Visual Basic games ask for it
-    ;; while building their form.
-    (if (i32.eq (local.get $ordinal) (i32.const 156))
-      (then
-        (local.set $arg (call $win16_h32 (call $win16_arg16 (i32.const 1))))
-        (local.set $arg2 (call $win16_arg16 (i32.const 0)))
-        (call $win16_call32_begin (i32.const 2))
-        (call $handle_GetSystemMenu (local.get $arg) (local.get $arg2)
-          (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
-        (call $win16_call32_end)
-        (global.set $eax (call $win16_h16 (global.get $eax)))
-        (call $win16_api_return (i32.const 4))
-        (return (i32.const 1))))
-    ;; USER.236 GetCapture() -> the window holding the mouse, or NULL.
-    (if (i32.eq (local.get $ordinal) (i32.const 197))
-      (then (call $win16_GetTabbedTextExtent) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 196))
-      (then (call $win16_TabbedTextOut) (return (i32.const 1))))
-    ;; USER.35 IsWindowEnabled(hWnd).
-    (if (i32.eq (local.get $ordinal) (i32.const 35))
-      (then
-        (local.set $arg (call $win16_h32 (call $win16_arg16 (i32.const 0))))
-        (call $win16_call32_begin (i32.const 1))
-        (call $handle_IsWindowEnabled (local.get $arg) (i32.const 0) (i32.const 0)
-          (i32.const 0) (i32.const 0) (i32.const 0))
-        (call $win16_call32_end)
-        (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-        (call $win16_api_return (i32.const 2))
-        (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 236))
-      (then
-        (call $win16_call32_begin (i32.const 0))
-        (call $handle_GetCapture (i32.const 0) (i32.const 0) (i32.const 0)
-          (i32.const 0) (i32.const 0) (i32.const 0))
-        (call $win16_call32_end)
-        (global.set $eax (call $win16_h16 (global.get $eax)))
-        (call $win16_api_return (i32.const 0))
-        (return (i32.const 1))))
-    ;; USER.58 GetClassName(hWnd, lpClassName, nMaxCount) -> its length. Tic
-    ;; Tac Drop asks every window it made what class it is while wiring up its
-    ;; form.
-    (if (i32.eq (local.get $ordinal) (i32.const 58))
-      (then
-        (local.set $arg (call $win16_h32 (call $win16_arg16 (i32.const 3))))
-        (local.set $arg2 (call $win16_far_to_guest
-          (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
-        (local.set $arg3 (call $win16_arg16 (i32.const 0)))
-        (call $win16_call32_begin (i32.const 3))
-        (call $handle_GetClassNameA (local.get $arg) (local.get $arg2)
-          (local.get $arg3)
-          (i32.const 0) (i32.const 0) (i32.const 0))
-        (call $win16_call32_end)
-        (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-        (call $win16_api_return (i32.const 8))
-        (return (i32.const 1))))
-    ;; USER.151 CreateMenu / USER.152 CreatePopupMenu — an empty menu the task
-    ;; then fills with AppendMenu. Rodent's Revenge builds its own.
-    (if (i32.eq (local.get $ordinal) (i32.const 151))
-      (then
-        (call $win16_call32_begin (i32.const 0))
-        (call $handle_CreateMenu (i32.const 0) (i32.const 0) (i32.const 0)
-          (i32.const 0) (i32.const 0) (i32.const 0))
-        (call $win16_call32_end)
-        (global.set $eax (call $win16_h16 (global.get $eax)))
-        (call $win16_api_return (i32.const 0))
-        (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 152))
-      (then
-        (call $win16_call32_begin (i32.const 0))
-        (call $handle_CreatePopupMenu (i32.const 0) (i32.const 0) (i32.const 0)
-          (i32.const 0) (i32.const 0) (i32.const 0))
-        (call $win16_call32_end)
-        (global.set $eax (call $win16_h16 (global.get $eax)))
-        (call $win16_api_return (i32.const 0))
-        (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 407))
-      (then (call $win16_CreateIcon) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 131))
-      (then (call $win16_class_long (i32.const 0)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 132))
-      (then (call $win16_class_long (i32.const 1)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 421))
-      (then (call $win16_wvsprintf) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 50))
-      (then (call $win16_FindWindow) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 431))
-      (then (call $win16_ansi_case (i32.const 1) (i32.const 0)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 432))
-      (then (call $win16_ansi_case (i32.const 0) (i32.const 0)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 437))
-      (then (call $win16_ansi_case (i32.const 1) (i32.const 1)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 438))
-      (then (call $win16_ansi_case (i32.const 0) (i32.const 1)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 472))
-      (then (call $win16_AnsiNext) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 121))
       (then (call $win16_hook (i32.const 3)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 234))
@@ -3728,8 +1311,6 @@
       (then (call $win16_RegisterWindowMessage) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 125))
       (then (call $win16_InvalidateRect) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 127))
-      (then (call $win16_ValidateRect) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 150))
       (then (call $win16_LoadMenu) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 158))
@@ -3742,16 +1323,8 @@
       (then (call $win16_GetWindowDC) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 72))
       (then (call $win16_SetRect) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 73))
-      (then (call $win16_SetRectEmpty) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 74))
       (then (call $win16_CopyRect) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 75))
-      (then (call $win16_IsRectEmpty) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 77))
-      (then (call $win16_OffsetRect) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 80))
-      (then (call $win16_UnionRect) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 76))
       (then (call $win16_PtInRect) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 78))
@@ -3853,16 +1426,6 @@
       (then (call $win16_GetDC) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 68))
       (then (call $win16_ReleaseDC) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 61))
-      (then (call $win16_ScrollWindow) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 62))
-      (then (call $win16_SetScrollPos) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 63))
-      (then (call $win16_GetScrollPos) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 64))
-      (then (call $win16_SetScrollRange) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 65))
-      (then (call $win16_GetScrollRange) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 5))
       (then (call $win16_InitApp) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 15))
@@ -3969,31 +1532,6 @@
         (call $host_log_i32 (local.get $hwnd))
         (call $host_log_i32 (local.get $msg))
         (unreachable)))
-    ;; A window whose procedure belongs to this side — a built-in control, a
-    ;; WAT-native window, the default procedure — has no 16-bit code to enter.
-    ;; Its "far pointer" is a marker, and jumping to it loads CS with 0xFFFE
-    ;; and runs from a selector that names no segment; Pipe Dream's first
-    ;; CreateWindow died that way. Dispatch it here instead and hand the result
-    ;; straight back to the caller, which is what entering it would have
-    ;; produced anyway.
-    (if (i32.ge_u (local.get $proc) (i32.const 0xFFFE0000))
-      (then
-        ;; Widen what was narrowed on the way out. WM_ERASEBKGND and
-        ;; WM_PAINTICON carry a DC in wParam, and handing the 16-bit form to
-        ;; the 32-bit side puts a 16-bit handle back into the message queue,
-        ;; where the next GetMessage narrows it a second time and allocates a
-        ;; fresh entry for it — a handle table that fills up once per pump
-        ;; iteration.
-        (if (i32.or (i32.eq (local.get $msg) (i32.const 0x0014))
-                    (i32.eq (local.get $msg) (i32.const 0x0027)))
-          (then (local.set $wparam (call $win16_h32 (local.get $wparam)))))
-        (local.set $proc (call $wat_wndproc_dispatch (call $win16_h32 (local.get $hwnd))
-          (local.get $msg) (local.get $wparam) (local.get $lparam)))
-        (global.set $eax (i32.and (local.get $proc) (i32.const 0xFFFF)))
-        (global.set $edx (i32.shr_u (local.get $proc) (i32.const 16)))
-        (call $win16_set_sreg (i32.const 1) (local.get $ret_sel))
-        (global.set $eip (i32.add (global.get $seg_base_cs) (local.get $ret_ip)))
-        (return)))
     (local.set $lparam (call $win16_msg_lparam16 (local.get $msg) (local.get $lparam)))
     (call $win16_push16 (local.get $hwnd))
     (call $win16_push16 (local.get $msg))
@@ -4389,12 +1927,7 @@
     (local.set $w (call $win16_coord (call $win16_arg16 (i32.const 6))))
     (local.set $h (call $win16_coord (call $win16_arg16 (i32.const 5))))
     (local.set $parent (call $win16_h32 (call $win16_arg16 (i32.const 4))))
-    ;; For a child window the hMenu argument is the control id, not a handle,
-    ;; and putting an id through the handle map stops the task on a number it
-    ;; was never given — Cruel's first child button is control 4000.
-    (local.set $menu (call $win16_arg16 (i32.const 3)))
-    (if (i32.eqz (i32.and (local.get $style) (i32.const 0x40000000)))
-      (then (local.set $menu (call $win16_h32 (local.get $menu)))))
+    (local.set $menu (call $win16_h32 (call $win16_arg16 (i32.const 3))))
     (local.set $inst (call $win16_arg16 (i32.const 2)))
     (local.set $param (call $win16_far_to_guest
       (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
@@ -4426,19 +1959,6 @@
     ;; WM_NCCREATE shown to the hook below does carry a real one.
     (local.set $hwnd (global.get $eax))
     (local.set $redirected (call $win16_call32_end_redirected))
-    ;; Which class the window ended up with, and the procedure that came with
-    ;; it. A window that answers nothing and paints nothing is usually one
-    ;; whose class was not found — the name arrives as a far pointer and the
-    ;; class table is keyed on the bytes it points at, so the two can miss
-    ;; each other with nothing else to show for it.
-    (if (global.get $win16_trace)
-      (then
-        (call $host_log_i32 (i32.const 0xCA16A9E6))
-        (call $host_log_i32 (local.get $hwnd))
-        (call $host_log_i32 (local.get $class))
-        (call $host_log_i32 (call $wnd_table_get (local.get $hwnd)))
-        (call $host_log_i32 (call $class_table_lookup
-          (call $class_name_key (local.get $class))))))
     ;; The API's own frame goes now, and everything still owed goes on the stack
     ;; in its place: the return address, the handle, and whether WM_CREATE is
     ;; still to be delivered. Anything CreateWindow does from here can create
@@ -4661,33 +2181,10 @@
   ;; 0x0001 hands the app a DC that is not one. WM_ICONERASEBKGND is the same
   ;; message for the iconic case. (Win16's WM_CTLCOLOR also passes an HDC in
   ;; wParam, but it is sent rather than posted, so it never comes through here.)
-  ;; The inverse: a 16-bit task handing a message back to this side — through
-  ;; PostMessage, SendMessage, or a window procedure of ours — must hand back a
-  ;; 32-bit DC, or the queue ends up holding a 16-bit handle that the next
-  ;; GetMessage narrows a second time and allocates a fresh map entry for.
-  (func $win16_msg_wparam32 (param $message i32) (param $wparam i32) (result i32)
-    (if (i32.or (i32.eq (local.get $message) (i32.const 0x0014))
-                (i32.eq (local.get $message) (i32.const 0x0027)))
-      (then (return (call $win16_h32 (local.get $wparam)))))
-    (local.get $wparam))
-
   (func $win16_msg_wparam16 (param $message i32) (param $wparam i32) (result i32)
     (if (i32.or (i32.eq (local.get $message) (i32.const 0x0014))
                 (i32.eq (local.get $message) (i32.const 0x0027)))
-      (then
-        ;; The DC in one of these can have started life on this side of the
-        ;; fence: a 16-bit task that erases its own background hands its DC to
-        ;; a window procedure of ours, and the message comes back carrying it.
-        ;; Narrowing an already-narrow handle would allocate a second map entry
-        ;; for the same DC on every trip, which is a handle table that fills up
-        ;; while an app sits in its message loop doing nothing — Pipe Dream did
-        ;; it in seven batches.
-        (if (i32.and (i32.ge_u (local.get $wparam) (global.get $WIN16_HANDLE_BASE))
-                     (i32.lt_u (local.get $wparam)
-                       (i32.add (global.get $WIN16_HANDLE_BASE)
-                                (global.get $WIN16_HANDLE_MAX))))
-          (then (return (local.get $wparam))))
-        (return (call $win16_h16 (local.get $wparam)))))
+      (then (return (call $win16_h16 (local.get $wparam)))))
     (local.get $wparam))
 
   ;; Control messages are numbered differently in the two worlds, and unlike
@@ -4850,8 +2347,7 @@
         (global.set $eax (call $wnd_send_message
           (local.get $hwnd)
           (call $win16_ctrl_msg32 (local.get $hwnd) (local.get $msg))
-          (call $win16_msg_wparam32 (local.get $msg) (local.get $wp))
-          (local.get $lp)))
+          (local.get $wp) (local.get $lp)))
         (call $win16_call32_end)
         (global.set $edx (i32.shr_u (global.get $eax) (i32.const 16)))
         (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
@@ -4885,14 +2381,9 @@
         (global.set $edx (i32.const 0))
         (call $win16_api_return (i32.const 10))
         (return)))
-    ;; Widen what was narrowed on the way out: WM_ERASEBKGND carries a DC, and
-    ;; the default procedure is on the 32-bit side, where a 16-bit handle names
-    ;; nothing. The invariant is that the 16-bit side holds narrow handles and
-    ;; this side holds wide ones, and every crossing converts.
     (call $win16_call32_begin (i32.const 4))
     (call $handle_DefWindowProcA (local.get $hwnd) (local.get $message)
-      (call $win16_msg_wparam32 (local.get $message) (local.get $wparam))
-      (local.get $lparam) (i32.const 0) (i32.const 0))
+      (local.get $wparam) (local.get $lparam) (i32.const 0) (i32.const 0))
     (call $win16_call32_end)
     (global.set $edx (i32.shr_u (global.get $eax) (i32.const 16)))
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
@@ -5076,24 +2567,6 @@
     (call $win16_call32_end)
     (global.set $eax (i32.const 1))
     (call $win16_api_return (i32.const 8)))
-
-  ;; USER.127 ValidateRect(hWnd, lpRect) — the other half of InvalidateRect,
-  ;; and NULL means the whole client area here too, so it stays NULL.
-  (func $win16_ValidateRect
-    (local $hwnd i32) (local $src i32) (local $tmp i32)
-    (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 2))))
-    (local.set $src (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
-    (if (call $win16_arg16 (i32.const 1))
-      (then
-        (local.set $tmp (global.get $GUEST_STACK))
-        (call $win16_rect_widen (local.get $tmp) (local.get $src))))
-    (call $win16_call32_begin (i32.const 2))
-    (call $handle_ValidateRect (local.get $hwnd) (local.get $tmp)
-      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (i32.const 1))
-    (call $win16_api_return (i32.const 6)))
 
   ;; USER.81 FillRect(hDC, lpRect, hBrush).
   (func $win16_FillRect
@@ -5320,29 +2793,6 @@
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 6)))
 
-  ;; GDI.104 RectVisible(hDC, lpRect) -> is any part of it inside the clip? The
-  ;; rectangle is four words here and four longs there, so it is widened into
-  ;; scratch on the way through.
-  (func $win16_RectVisible
-    (local $hdc i32) (local $r i32) (local $w i32) (local $i i32)
-    (local.set $r (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
-    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 2))))
-    (local.set $w (global.get $GUEST_STACK))
-    (block $done (loop $edges
-      (br_if $done (i32.ge_u (local.get $i) (i32.const 4)))
-      (call $gs32 (i32.add (local.get $w) (i32.shl (local.get $i) (i32.const 2)))
-        (call $win16_coord
-          (call $gl16 (i32.add (local.get $r) (i32.shl (local.get $i) (i32.const 1))))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $edges)))
-    (call $win16_call32_begin (i32.const 2))
-    (call $handle_RectVisible (local.get $hdc) (local.get $w)
-      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (i32.ne (global.get $eax) (i32.const 0)))
-    (call $win16_api_return (i32.const 6)))
-
   (func $win16_InflateRect
     (local $r i32) (local $x i32) (local $y i32)
     (local.set $r (call $win16_far_to_guest
@@ -5359,99 +2809,6 @@
       (i32.add (call $win16_rect_get (local.get $r) (i32.const 3)) (local.get $y)))
     (global.set $eax (i32.const 1))
     (call $win16_api_return (i32.const 8)))
-
-  ;; USER.77 OffsetRect(lpRect, X, Y) — slides the rectangle, same shape as
-  ;; InflateRect above but adding to both edges of each axis.
-  (func $win16_OffsetRect
-    (local $r i32) (local $x i32) (local $y i32)
-    (local.set $r (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 3)) (call $win16_arg16 (i32.const 2))))
-    (local.set $x (call $win16_coord (call $win16_arg16 (i32.const 1))))
-    (local.set $y (call $win16_coord (call $win16_arg16 (i32.const 0))))
-    (call $win16_rect_set (local.get $r) (i32.const 0)
-      (i32.add (call $win16_rect_get (local.get $r) (i32.const 0)) (local.get $x)))
-    (call $win16_rect_set (local.get $r) (i32.const 1)
-      (i32.add (call $win16_rect_get (local.get $r) (i32.const 1)) (local.get $y)))
-    (call $win16_rect_set (local.get $r) (i32.const 2)
-      (i32.add (call $win16_rect_get (local.get $r) (i32.const 2)) (local.get $x)))
-    (call $win16_rect_set (local.get $r) (i32.const 3)
-      (i32.add (call $win16_rect_get (local.get $r) (i32.const 3)) (local.get $y)))
-    (global.set $eax (i32.const 1))
-    (call $win16_api_return (i32.const 8)))
-
-  ;; USER.73 SetRectEmpty(lpRect) and USER.75 IsRectEmpty(lpRect).
-  (func $win16_SetRectEmpty
-    (local $r i32) (local $i i32)
-    (local.set $r (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
-    (block $done (loop $edges
-      (br_if $done (i32.ge_u (local.get $i) (i32.const 4)))
-      (call $win16_rect_set (local.get $r) (local.get $i) (i32.const 0))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $edges)))
-    (global.set $eax (i32.const 1))
-    (call $win16_api_return (i32.const 4)))
-
-  (func $win16_IsRectEmpty
-    (local $r i32)
-    (local.set $r (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
-    (global.set $eax (i32.or
-      (i32.le_s (call $win16_rect_get (local.get $r) (i32.const 2))
-                (call $win16_rect_get (local.get $r) (i32.const 0)))
-      (i32.le_s (call $win16_rect_get (local.get $r) (i32.const 3))
-                (call $win16_rect_get (local.get $r) (i32.const 1)))))
-    (call $win16_api_return (i32.const 4)))
-
-  ;; USER.80 UnionRect(lpDestRect, lpSrc1Rect, lpSrc2Rect) -> non-empty? An
-  ;; empty source contributes nothing, which is what keeps the union of an
-  ;; empty rectangle and a real one equal to the real one.
-  (func $win16_UnionRect
-    (local $dst i32) (local $a i32) (local $b i32) (local $ae i32) (local $be i32)
-    (local $i i32)
-    (local.set $dst (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 5)) (call $win16_arg16 (i32.const 4))))
-    (local.set $a (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 3)) (call $win16_arg16 (i32.const 2))))
-    (local.set $b (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
-    (local.set $ae (i32.or
-      (i32.le_s (call $win16_rect_get (local.get $a) (i32.const 2))
-                (call $win16_rect_get (local.get $a) (i32.const 0)))
-      (i32.le_s (call $win16_rect_get (local.get $a) (i32.const 3))
-                (call $win16_rect_get (local.get $a) (i32.const 1)))))
-    (local.set $be (i32.or
-      (i32.le_s (call $win16_rect_get (local.get $b) (i32.const 2))
-                (call $win16_rect_get (local.get $b) (i32.const 0)))
-      (i32.le_s (call $win16_rect_get (local.get $b) (i32.const 3))
-                (call $win16_rect_get (local.get $b) (i32.const 1)))))
-    (if (i32.and (local.get $ae) (local.get $be))
-      (then
-        (block $done (loop $edges
-          (br_if $done (i32.ge_u (local.get $i) (i32.const 4)))
-          (call $win16_rect_set (local.get $dst) (local.get $i) (i32.const 0))
-          (local.set $i (i32.add (local.get $i) (i32.const 1)))
-          (br $edges)))
-        (global.set $eax (i32.const 0))
-        (call $win16_api_return (i32.const 12))
-        (return)))
-    (if (local.get $ae) (then (local.set $a (local.get $b))))
-    (if (local.get $be) (then (local.set $b (local.get $a))))
-    (local.set $i (i32.const 0))
-    (block $done (loop $edges
-      (br_if $done (i32.ge_u (local.get $i) (i32.const 4)))
-      (local.set $ae (call $win16_rect_get (local.get $a) (local.get $i)))
-      (local.set $be (call $win16_rect_get (local.get $b) (local.get $i)))
-      ;; Left and top take the smaller edge, right and bottom the larger.
-      (call $win16_rect_set (local.get $dst) (local.get $i)
-        (select (local.get $ae) (local.get $be)
-          (select (i32.lt_s (local.get $ae) (local.get $be))
-                  (i32.gt_s (local.get $ae) (local.get $be))
-                  (i32.lt_u (local.get $i) (i32.const 2)))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $edges)))
-    (global.set $eax (i32.const 1))
-    (call $win16_api_return (i32.const 12)))
 
   ;; USER.79 IntersectRect(lpDestRect, lpSrc1Rect, lpSrc2Rect) -> non-empty?
   ;; An empty intersection zeroes the destination, which callers rely on.
@@ -5577,8 +2934,7 @@
     (local $hwnd i32) (local $msg i32) (local $wp i32) (local $lp i32)
     (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 4))))
     (local.set $msg (call $win16_arg16 (i32.const 3)))
-    (local.set $wp (call $win16_msg_wparam32 (local.get $msg)
-      (call $win16_arg16 (i32.const 2))))
+    (local.set $wp (call $win16_arg16 (i32.const 2)))
     (local.set $lp (call $win16_arg32 (i32.const 0)))
     (call $win16_call32_begin (i32.const 4))
     (call $handle_PostMessageA (local.get $hwnd) (local.get $msg)
@@ -5968,9 +3324,6 @@
     (if (i32.eq (local.get $which) (i32.const 6))
       (then (call $handle_DrawMenuBar (local.get $hwnd)
               (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))))
-    (if (i32.eq (local.get $which) (i32.const 7))
-      (then (call $handle_IsZoomed (local.get $hwnd)
-              (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))))
     (call $win16_call32_end)
     ;; The two that answer with a handle go back through the map; the rest are
     ;; already booleans or small numbers.
@@ -5981,15 +3334,6 @@
       (then (global.set $eax (call $win16_h16 (global.get $eax))))
       (else (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))))
     (call $win16_api_return (i32.const 2)))
-
-  ;; USER.60 GetActiveWindow() — the top-level window with the focus.
-  (func $win16_GetActiveWindow
-    (call $win16_call32_begin (i32.const 0))
-    (call $handle_GetActiveWindow (i32.const 0) (i32.const 0) (i32.const 0)
-      (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (call $win16_h16 (global.get $eax)))
-    (call $win16_api_return (i32.const 0)))
 
   (func $win16_GetFocus
     (call $win16_call32_begin (i32.const 0))
@@ -6051,86 +3395,6 @@
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 6)))
 
-  ;; USER.410 InsertMenu / .411 AppendMenu / .414 ModifyMenu. The last argument
-  ;; is a far string only for a text item: with MF_BITMAP it is a bitmap handle
-  ;; and with MF_OWNERDRAW it is the app's own data, and neither may be put
-  ;; through a pointer translation. AppendMenu has one argument fewer, so its
-  ;; words sit two lower and it returns the same BOOL.
-  (func $win16_change_menu (param $which i32)
-    (local $menu i32) (local $pos i32) (local $flags i32) (local $id i32)
-    (local $item i32) (local $append i32)
-    (local.set $append (i32.eq (local.get $which) (i32.const 1)))
-    (local.set $item (call $win16_arg16 (i32.const 0)))
-    (local.set $id (call $win16_arg16 (i32.const 2)))
-    (local.set $flags (call $win16_arg16 (i32.const 3)))
-    ;; AppendMenu has no position argument, so its menu handle is the word the
-    ;; other two spend on one.
-    (if (local.get $append)
-      (then (local.set $menu (call $win16_h32 (call $win16_arg16 (i32.const 4)))))
-      (else
-        (local.set $pos (call $win16_arg16 (i32.const 4)))
-        (local.set $menu (call $win16_h32 (call $win16_arg16 (i32.const 5))))))
-    (if (i32.eqz (i32.and (local.get $flags) (i32.const 0x0104)))
-      (then (local.set $item (call $win16_far_to_guest
-              (call $win16_arg16 (i32.const 1)) (local.get $item))))
-      (else (if (i32.and (local.get $flags) (i32.const 0x0004))
-        (then (local.set $item (call $win16_h32 (local.get $item)))))))
-    (call $win16_call32_begin (i32.const 5))
-    (call $win16_call32_arg (i32.const 3) (local.get $id))
-    (call $win16_call32_arg (i32.const 4) (local.get $item))
-    (if (local.get $append)
-      (then (call $handle_AppendMenuA (local.get $menu) (local.get $flags)
-              (local.get $id) (local.get $item) (i32.const 0) (i32.const 0)))
-      (else (if (i32.eq (local.get $which) (i32.const 0))
-        (then (call $handle_InsertMenuA (local.get $menu) (local.get $pos)
-                (local.get $flags) (local.get $id) (local.get $item) (i32.const 0)))
-        (else (call $handle_ModifyMenuA (local.get $menu) (local.get $pos)
-                (local.get $flags) (local.get $id) (local.get $item) (i32.const 0))))))
-    (call $win16_call32_end)
-    (global.set $eax (i32.ne (global.get $eax) (i32.const 0)))
-    (call $win16_api_return (select (i32.const 10) (i32.const 12) (local.get $append))))
-
-  ;; USER.413 DeleteMenu(hMenu, nPosition, wFlags) — and USER.412 RemoveMenu,
-  ;; which differs only in that it leaves a popup submenu's own handle valid.
-  ;; Nothing here owns a submenu separately from its parent, so both remove the
-  ;; item and both are honest about it.
-  (func $win16_DeleteMenu
-    (local $menu i32) (local $pos i32) (local $flags i32)
-    (local.set $flags (call $win16_arg16 (i32.const 0)))
-    (local.set $pos (call $win16_arg16 (i32.const 1)))
-    (local.set $menu (call $win16_h32 (call $win16_arg16 (i32.const 2))))
-    (call $win16_call32_begin (i32.const 3))
-    (call $handle_DeleteMenu (local.get $menu) (local.get $pos) (local.get $flags)
-      (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (i32.ne (global.get $eax) (i32.const 0)))
-    (call $win16_api_return (i32.const 6)))
-
-  ;; USER.36 GetWindowText(hWnd, lpString, nMaxCount) -> characters copied, and
-  ;; USER.38 GetWindowTextLength(hWnd).
-  (func $win16_GetWindowText
-    (local $hwnd i32) (local $buf i32) (local $max i32)
-    (local.set $max (call $win16_arg16 (i32.const 0)))
-    (local.set $buf (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
-    (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 3))))
-    (call $win16_call32_begin (i32.const 3))
-    (call $handle_GetWindowTextA (local.get $hwnd) (local.get $buf) (local.get $max)
-      (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 8)))
-
-  (func $win16_GetWindowTextLength
-    (local $hwnd i32)
-    (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 0))))
-    (call $win16_call32_begin (i32.const 1))
-    (call $handle_GetWindowTextLengthA (local.get $hwnd) (i32.const 0) (i32.const 0)
-      (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 2)))
-
   ;; USER.37 SetWindowText(hWnd, lpString).
   (func $win16_SetWindowText
     (local $hwnd i32) (local $s i32)
@@ -6145,51 +3409,20 @@
     (call $win16_api_return (i32.const 6)))
 
   ;; USER.56 MoveWindow(hWnd, x, y, nWidth, nHeight, bRepaint).
-  ;;
-  ;; MoveWindow does not return until the window procedure has seen the new
-  ;; size. That ordering is load-bearing rather than cosmetic: Visual Basic
-  ;; keeps a form's geometry in the form object in twips, and the only thing
-  ;; that ever writes it is the WM_SIZE handler in VBRUN's own procedure.
-  ;; Queue that message instead of sending it and VB reads the object back
-  ;; while it is still zero, decides the form is 0x0, and moves the window to
-  ;; 1x1 -- which is exactly what every VB1 game did here: sixty-two windows
-  ;; built, a form shown, and nothing on screen.
-  ;;
-  ;; The delivery uses the same continuation the create path uses: this frame
-  ;; goes now, the result and the caller's return address go on the stack in
-  ;; its place, and the procedure's RETF 10 lands on the continuation thunk,
-  ;; which puts the 1 back in AX and returns where MoveWindow was going to.
-  ;; $handle_MoveWindow leaves the queue alone for these windows (see the
-  ;; $code16 arm there) so the procedure hears about the size exactly once.
   (func $win16_MoveWindow
     (local $hwnd i32) (local $x i32) (local $y i32) (local $w i32)
-    (local $h i32) (local $repaint i32) (local $hwnd16 i32)
-    (local $proc i32) (local $cs i32) (local $old_cs i32)
-    (local.set $hwnd16 (call $win16_arg16 (i32.const 5)))
-    (local.set $hwnd (call $win16_h32 (local.get $hwnd16)))
+    (local $h i32) (local $repaint i32)
+    (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 5))))
     (local.set $x (call $win16_coord (call $win16_arg16 (i32.const 4))))
     (local.set $y (call $win16_coord (call $win16_arg16 (i32.const 3))))
     (local.set $w (call $win16_coord (call $win16_arg16 (i32.const 2))))
     (local.set $h (call $win16_coord (call $win16_arg16 (i32.const 1))))
     (local.set $repaint (call $win16_arg16 (i32.const 0)))
-    (local.set $proc (call $wnd_table_get (local.get $hwnd)))
-    (local.set $old_cs (call $host_get_window_client_size (local.get $hwnd)))
     (call $win16_call32_begin (i32.const 6))
     (call $win16_call32_arg (i32.const 5) (local.get $repaint))
     (call $handle_MoveWindow (local.get $hwnd) (local.get $x) (local.get $y)
       (local.get $w) (local.get $h) (i32.const 0))
     (call $win16_call32_end)
-    (local.set $cs (call $host_get_window_client_size (local.get $hwnd)))
-    (if (i32.and
-          (call $win16_is_far_proc (local.get $proc))
-          (i32.ne (local.get $cs) (local.get $old_cs)))
-      (then
-        (call $win16_cont_push
-          (call $win16_take_return (i32.const 12)) (i32.const 1))
-        (call $win16_enter_wndproc (local.get $proc) (local.get $hwnd16)
-          (i32.const 0x0005) (i32.const 0) (local.get $cs)
-          (global.get $WIN16_THUNK_SEL) (global.get $WIN16_CONT_OFFSET))
-        (return)))
     (global.set $eax (i32.const 1))
     (call $win16_api_return (i32.const 12)))
 
@@ -6295,76 +3528,6 @@
     (local.set $count (call $win16_arg16 (i32.const 2)))
     (local.set $dst (call $win16_far_to_guest
       (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
-    ;; A LOGFONT is the other shape asked for: 50 bytes in Win16 against 60 in
-    ;; Win32, because its first five fields are shorts there and longs here.
-    ;; Everything after them — the eight bytes of flags and the 32-byte face
-    ;; name — is identical, so it is copied straight across.
-    (if (i32.eq (local.get $count) (i32.const 50))
-      (then
-        (local.set $tmp (global.get $GUEST_STACK))
-        (call $win16_call32_begin (i32.const 3))
-        (call $handle_GetObjectA (local.get $h) (i32.const 60) (local.get $tmp)
-          (i32.const 0) (i32.const 0) (i32.const 0))
-        (call $win16_call32_end)
-        (if (global.get $eax)
-          (then
-            (local.set $count (i32.const 0))
-            (block $narrowed (loop $five
-              (br_if $narrowed (i32.ge_u (local.get $count) (i32.const 5)))
-              (call $gs16 (i32.add (local.get $dst) (i32.shl (local.get $count) (i32.const 1)))
-                (call $gl32 (i32.add (local.get $tmp)
-                                     (i32.shl (local.get $count) (i32.const 2)))))
-              (local.set $count (i32.add (local.get $count) (i32.const 1)))
-              (br $five)))
-            (local.set $count (i32.const 0))
-            (block $copied (loop $rest
-              (br_if $copied (i32.ge_u (local.get $count) (i32.const 40)))
-              (call $gs8 (i32.add (i32.add (local.get $dst) (i32.const 10)) (local.get $count))
-                (call $gl8 (i32.add (i32.add (local.get $tmp) (i32.const 20))
-                                    (local.get $count))))
-              (local.set $count (i32.add (local.get $count) (i32.const 1)))
-              (br $rest)))
-            (global.set $eax (i32.const 50))))
-        (call $win16_api_return (i32.const 8))
-        (return)))
-    ;; A LOGPEN is ten bytes here — a word of style, a POINT of two words, and
-    ;; a colour — against sixteen in Win32, where the style is a long and the
-    ;; POINT is two of them.
-    (if (i32.eq (local.get $count) (i32.const 10))
-      (then
-        (local.set $tmp (global.get $GUEST_STACK))
-        (call $win16_call32_begin (i32.const 3))
-        (call $handle_GetObjectA (local.get $h) (i32.const 16) (local.get $tmp)
-          (i32.const 0) (i32.const 0) (i32.const 0))
-        (call $win16_call32_end)
-        (call $gs16 (local.get $dst) (call $gl32 (local.get $tmp)))
-        (call $gs16 (i32.add (local.get $dst) (i32.const 2))
-          (call $gl32 (i32.add (local.get $tmp) (i32.const 4))))
-        (call $gs16 (i32.add (local.get $dst) (i32.const 4))
-          (call $gl32 (i32.add (local.get $tmp) (i32.const 8))))
-        (call $gs32 (i32.add (local.get $dst) (i32.const 6))
-          (call $gl32 (i32.add (local.get $tmp) (i32.const 12))))
-        (global.set $eax (i32.const 10))
-        (call $win16_api_return (i32.const 8))
-        (return)))
-    ;; A LOGBRUSH is eight bytes here — a word of style, a colour, and a word
-    ;; of hatch — against twelve in Win32, where all three are longs. JigSawed
-    ;; asks its board's brush what colour it is.
-    (if (i32.eq (local.get $count) (i32.const 8))
-      (then
-        (local.set $tmp (global.get $GUEST_STACK))
-        (call $win16_call32_begin (i32.const 3))
-        (call $handle_GetObjectA (local.get $h) (i32.const 12) (local.get $tmp)
-          (i32.const 0) (i32.const 0) (i32.const 0))
-        (call $win16_call32_end)
-        (call $gs16 (local.get $dst) (call $gl32 (local.get $tmp)))
-        (call $gs32 (i32.add (local.get $dst) (i32.const 2))
-          (call $gl32 (i32.add (local.get $tmp) (i32.const 4))))
-        (call $gs16 (i32.add (local.get $dst) (i32.const 6))
-          (call $gl32 (i32.add (local.get $tmp) (i32.const 8))))
-        (global.set $eax (i32.const 8))
-        (call $win16_api_return (i32.const 8))
-        (return)))
     (if (i32.ne (local.get $count) (i32.const 14))
       (then
         (call $host_log_i32 (i32.const 0xCA16A9F5))
@@ -6442,40 +3605,6 @@
     (call $win16_api_return (i32.const 4)))
 
   ;; GDI.61 CreatePen(nPenStyle, nWidth, crColor) -> HPEN.
-  ;; GDI.77 GetClipBox(hDC, lpRect) -> the clip region's bounding box and its
-  ;; complexity. The rectangle comes back narrowed like every other.
-  (func $win16_GetClipBox
-    (local $hdc i32) (local $dst i32) (local $tmp i32)
-    (local.set $dst (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
-    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 2))))
-    (local.set $tmp (global.get $GUEST_STACK))
-    (call $win16_call32_begin (i32.const 2))
-    (call $handle_GetClipBox (local.get $hdc) (local.get $tmp)
-      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (call $win16_rect_narrow (local.get $dst) (local.get $tmp))
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 6)))
-
-  ;; GDI.62 CreatePenIndirect(lpLogPen) — the same pen from a structure. The
-  ;; 16-bit LOGPEN is a word of style, a POINT of two words and a colour;
-  ;; only the width's x is used, as in Win32.
-  (func $win16_CreatePenIndirect
-    (local $src i32) (local $style i32) (local $width i32) (local $c i32)
-    (local.set $src (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
-    (local.set $style (call $gl16 (local.get $src)))
-    (local.set $width (call $win16_coord
-      (call $gl16 (i32.add (local.get $src) (i32.const 2)))))
-    (local.set $c (call $gl32 (i32.add (local.get $src) (i32.const 6))))
-    (call $win16_call32_begin (i32.const 3))
-    (call $handle_CreatePen (local.get $style) (local.get $width) (local.get $c)
-      (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (call $win16_h16 (global.get $eax)))
-    (call $win16_api_return (i32.const 4)))
-
   (func $win16_CreatePen
     (local $style i32) (local $width i32) (local $c i32)
     (local.set $style (call $win16_arg16 (i32.const 3)))
@@ -6508,120 +3637,6 @@
     (global.set $eax (call $win16_h16 (global.get $eax)))
     (call $win16_api_return (i32.const 8)))
 
-  ;; GDI.44 SelectClipRgn(hDC, hRgn) -> the new region's complexity.
-  (func $win16_SelectClipRgn
-    (local $hdc i32) (local $rgn i32)
-    (local.set $rgn (call $win16_h32 (call $win16_arg16 (i32.const 0))))
-    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 1))))
-    (call $win16_call32_begin (i32.const 2))
-    (call $handle_SelectClipRgn (local.get $hdc) (local.get $rgn)
-      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 4)))
-
-  ;; USER.197 GetTabbedTextExtent(hDC, lpString, nCount, nTabPositions,
-  ;;   lpnTabStopPositions) -> the size as a DWORD in DX:AX.
-  (func $win16_GetTabbedTextExtent
-    (local $hdc i32) (local $str i32) (local $count i32) (local $ntabs i32)
-    (local $tabs i32)
-    (local.set $tabs (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
-    (local.set $ntabs (call $win16_short (call $win16_arg16 (i32.const 2))))
-    (local.set $count (call $win16_short (call $win16_arg16 (i32.const 3))))
-    (local.set $str (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 5)) (call $win16_arg16 (i32.const 4))))
-    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 6))))
-    (call $win16_call32_begin (i32.const 5))
-    (call $win16_call32_arg (i32.const 4) (local.get $tabs))
-    (call $handle_GetTabbedTextExtentA (local.get $hdc) (local.get $str)
-      (local.get $count) (local.get $ntabs) (local.get $tabs) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $edx (i32.shr_u (global.get $eax) (i32.const 16)))
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 14)))
-
-  ;; USER.196 TabbedTextOut(hDC, X, Y, lpString, nCount, nTabPositions,
-  ;;   lpnTabStopPositions, nTabOrigin) -> the size as a DWORD in DX:AX.
-  ;;
-  ;; Ten words of arguments: two of the eight are far pointers. The 32-bit
-  ;; handler reads its last three off the frame at esp+24..32, so they are
-  ;; filled in by index rather than passed.
-  (func $win16_TabbedTextOut
-    (local $hdc i32) (local $x i32) (local $y i32) (local $str i32)
-    (local $count i32) (local $ntabs i32) (local $tabs i32) (local $origin i32)
-    (local.set $origin (call $win16_short (call $win16_arg16 (i32.const 0))))
-    (local.set $tabs (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
-    (local.set $ntabs (call $win16_short (call $win16_arg16 (i32.const 3))))
-    (local.set $count (call $win16_short (call $win16_arg16 (i32.const 4))))
-    (local.set $str (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 6)) (call $win16_arg16 (i32.const 5))))
-    (local.set $y (call $win16_coord (call $win16_arg16 (i32.const 7))))
-    (local.set $x (call $win16_coord (call $win16_arg16 (i32.const 8))))
-    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 9))))
-    (call $win16_call32_begin (i32.const 8))
-    (call $win16_call32_arg (i32.const 5) (local.get $ntabs))
-    (call $win16_call32_arg (i32.const 6) (local.get $tabs))
-    (call $win16_call32_arg (i32.const 7) (local.get $origin))
-    (call $handle_TabbedTextOutA (local.get $hdc) (local.get $x) (local.get $y)
-      (local.get $str) (local.get $count) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $edx (i32.shr_u (global.get $eax) (i32.const 16)))
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 20)))
-
-  ;; GDI.65 CreateRectRgnIndirect(lpRect) — the same region from a RECT.
-  (func $win16_CreateRectRgnIndirect
-    (local $src i32)
-    (local.set $src (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
-    (call $win16_call32_begin (i32.const 4))
-    (call $handle_CreateRectRgn
-      (call $win16_short (call $gl16 (local.get $src)))
-      (call $win16_short (call $gl16 (i32.add (local.get $src) (i32.const 2))))
-      (call $win16_short (call $gl16 (i32.add (local.get $src) (i32.const 4))))
-      (call $win16_short (call $gl16 (i32.add (local.get $src) (i32.const 6))))
-      (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (call $win16_h16 (global.get $eax)))
-    (call $win16_api_return (i32.const 4)))
-
-  ;; GDI.172 SetRectRgn(hrgn, left, top, right, bottom).
-  ;;
-  ;; CARDS.DLL clips to the card it is about to draw, so the first card played
-  ;; in a networked hand went straight through this and trapped -- both players
-  ;; died on the opening lead.
-  (func $win16_SetRectRgn
-    (local $rgn i32) (local $l i32) (local $t i32) (local $r i32) (local $b i32)
-    (local.set $rgn (call $win16_h32 (call $win16_arg16 (i32.const 4))))
-    (local.set $l (call $win16_coord (call $win16_arg16 (i32.const 3))))
-    (local.set $t (call $win16_coord (call $win16_arg16 (i32.const 2))))
-    (local.set $r (call $win16_coord (call $win16_arg16 (i32.const 1))))
-    (local.set $b (call $win16_coord (call $win16_arg16 (i32.const 0))))
-    (call $win16_call32_begin (i32.const 5))
-    (call $handle_SetRectRgn (local.get $rgn) (local.get $l) (local.get $t)
-      (local.get $r) (local.get $b) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 10)))
-
-  ;; GDI.47 CombineRgn(hrgnDest, hrgnSrc1, hrgnSrc2, fnCombineMode).
-  ;; The other half of the same clip: Hearts builds the rectangle it is about to
-  ;; redraw with SetRectRgn and folds it into the region it keeps.
-  (func $win16_CombineRgn
-    (local $dst i32) (local $a i32) (local $b i32) (local $mode i32)
-    (local.set $dst  (call $win16_h32 (call $win16_arg16 (i32.const 3))))
-    (local.set $a    (call $win16_h32 (call $win16_arg16 (i32.const 2))))
-    (local.set $b    (call $win16_h32 (call $win16_arg16 (i32.const 1))))
-    (local.set $mode (call $win16_arg16 (i32.const 0)))
-    (call $win16_call32_begin (i32.const 4))
-    (call $handle_CombineRgn (local.get $dst) (local.get $a) (local.get $b)
-      (local.get $mode) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 8)))
-
   ;; GDI.45 SelectObject(hDC, hObject) -> the object it replaced.
   (func $win16_SelectObject
     (local $hdc i32) (local $obj i32)
@@ -6642,7 +3657,6 @@
     (call $handle_DeleteObject (local.get $h)
       (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
     (call $win16_call32_end)
-    (call $win16_h16_forget (local.get $h))
     (global.set $eax (i32.const 1))
     (call $win16_api_return (i32.const 2)))
 
@@ -6653,7 +3667,6 @@
     (call $handle_DeleteDC (local.get $h)
       (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
     (call $win16_call32_end)
-    (call $win16_h16_forget (local.get $h))
     (global.set $eax (i32.const 1))
     (call $win16_api_return (i32.const 2)))
 
@@ -6722,18 +3735,6 @@
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 4)))
 
-  ;; GDI.85 GetROP2(hDC) -> word. The mode SetROP2 last stored; JigSawed reads
-  ;; it back before it draws its About box so it can put it where it found it.
-  (func $win16_GetROP2
-    (local $hdc i32)
-    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 0))))
-    (call $win16_call32_begin (i32.const 1))
-    (call $handle_GetROP2 (local.get $hdc)
-      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 2)))
-
   ;; GDI.56 CreateFont(nHeight, nWidth, nEscapement, nOrientation, nWeight,
   ;; bItalic, bUnderline, cStrikeOut, nCharSet, nOutPrecision, nClipPrecision,
   ;; nQuality, nPitchAndFamily, lpszFace) — fourteen arguments, thirteen of
@@ -6752,38 +3753,6 @@
   ;; and $win16_call32_begin moves ESP onto the scratch stack, so a read after
   ;; it comes off the frame being built rather than the task's — the guard in
   ;; $win16_arg16 traps on exactly that mistake.
-  ;; GDI.57 CreateFontIndirect(lpLogFont). A Win16 LOGFONT is 50 bytes where
-  ;; Win32's is 60: its first five fields are shorts rather than longs, and
-  ;; everything after them — eight flag bytes and a 32-byte face name — is
-  ;; identical. So the structure is widened into scratch, which is the same
-  ;; conversion GetObject does in the other direction. Visual Basic 1 builds
-  ;; every one of its fonts this way.
-  (func $win16_CreateFontIndirect
-    (local $src i32) (local $dst i32) (local $i i32)
-    (local.set $src (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
-    (local.set $dst (global.get $GUEST_STACK))
-    (block $wide (loop $five
-      (br_if $wide (i32.ge_u (local.get $i) (i32.const 5)))
-      (call $gs32 (i32.add (local.get $dst) (i32.shl (local.get $i) (i32.const 2)))
-        (call $win16_coord
-          (call $gl16 (i32.add (local.get $src) (i32.shl (local.get $i) (i32.const 1))))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $five)))
-    (local.set $i (i32.const 0))
-    (block $rest (loop $bytes
-      (br_if $rest (i32.ge_u (local.get $i) (i32.const 40)))
-      (call $gs8 (i32.add (i32.add (local.get $dst) (i32.const 20)) (local.get $i))
-        (call $gl8 (i32.add (i32.add (local.get $src) (i32.const 10)) (local.get $i))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $bytes)))
-    (call $win16_call32_begin (i32.const 1))
-    (call $handle_CreateFontIndirectA (local.get $dst) (i32.const 0) (i32.const 0)
-      (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (call $win16_h16 (global.get $eax)))
-    (call $win16_api_return (i32.const 4)))
-
   (func $win16_CreateFont
     (local $face i32) (local $sel i32) (local $off i32) (local $h i32)
     (local $w i32) (local $esc i32) (local $ori i32) (local $weight i32)
@@ -6854,18 +3823,10 @@
         (call $gl32 (i32.add (local.get $tmp) (i32.shl (local.get $i) (i32.const 2)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $narrow)))
-    ;; ... and the nine trailing bytes carry over unchanged: tmFirstChar,
-    ;; tmLastChar, tmDefaultChar, tmBreakChar, tmItalic, tmUnderlined,
-    ;; tmStruckOut, tmPitchAndFamily, tmCharSet. Nine, not eleven — the
-    ;; structure is 31 bytes and copying eleven wrote two past its end.
-    ;; Pipe Dream asks for its metrics into a local, and those two bytes were
-    ;; the DS its frame had saved: it came back holding a null data selector,
-    ;; pushed that as half of the class name it handed CreateWindow, got a
-    ;; window with no class and so no window procedure of its own, and never
-    ;; drew a thing.
+    ;; ... and the eleven trailing bytes carry over unchanged.
     (call $memcpy (call $g2w (i32.add (local.get $dst) (i32.const 22)))
                   (call $g2w (i32.add (local.get $tmp) (i32.const 44)))
-                  (i32.const 9))
+                  (i32.const 11))
     (global.set $eax (i32.const 1))
     (call $win16_api_return (i32.const 6)))
 
@@ -6890,84 +3851,6 @@
     (global.set $eax (i32.const 1))
     (call $win16_api_return (i32.const 12)))
 
-  ;; GDI.351 ExtTextOut(hDC, X, Y, wOptions, lpRect, lpString, nCount, lpDx).
-  ;;
-  ;; The RECT is four words in Win16 and four dwords in Win32, so it is widened
-  ;; into scratch rather than passed through; the spacing array is words in
-  ;; both, and $host_gdi_ext_text_out reads it as words, so that one goes
-  ;; straight across.
-  (func $win16_ExtTextOut
-    (local $hdc i32) (local $x i32) (local $y i32) (local $opts i32)
-    (local $rect i32) (local $str i32) (local $n i32) (local $dx i32) (local $r32 i32)
-    (local.set $dx (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
-    (if (i32.eqz (call $win16_arg16 (i32.const 1))) (then (local.set $dx (i32.const 0))))
-    (local.set $n (call $win16_arg16 (i32.const 2)))
-    (local.set $str (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 4)) (call $win16_arg16 (i32.const 3))))
-    (if (i32.eqz (call $win16_arg16 (i32.const 4))) (then (local.set $str (i32.const 0))))
-    (local.set $rect (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 6)) (call $win16_arg16 (i32.const 5))))
-    (if (i32.eqz (call $win16_arg16 (i32.const 6))) (then (local.set $rect (i32.const 0))))
-    (local.set $opts (call $win16_arg16 (i32.const 7)))
-    (local.set $y (call $win16_coord (call $win16_arg16 (i32.const 8))))
-    (local.set $x (call $win16_coord (call $win16_arg16 (i32.const 9))))
-    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 10))))
-    (if (local.get $rect)
-      (then
-        (local.set $r32 (global.get $GUEST_STACK))
-        (call $gs32 (local.get $r32)
-          (call $win16_coord (call $gl16 (local.get $rect))))
-        (call $gs32 (i32.add (local.get $r32) (i32.const 4))
-          (call $win16_coord (call $gl16 (i32.add (local.get $rect) (i32.const 2)))))
-        (call $gs32 (i32.add (local.get $r32) (i32.const 8))
-          (call $win16_coord (call $gl16 (i32.add (local.get $rect) (i32.const 4)))))
-        (call $gs32 (i32.add (local.get $r32) (i32.const 12))
-          (call $win16_coord (call $gl16 (i32.add (local.get $rect) (i32.const 6)))))))
-    (call $win16_call32_begin (i32.const 8))
-    (call $win16_call32_arg (i32.const 4) (local.get $r32))
-    (call $win16_call32_arg (i32.const 5) (local.get $str))
-    (call $win16_call32_arg (i32.const 6) (local.get $n))
-    (call $win16_call32_arg (i32.const 7) (local.get $dx))
-    (call $handle_ExtTextOutA (local.get $hdc) (local.get $x) (local.get $y)
-      (local.get $opts) (local.get $r32) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 22)))
-
-  ;; GDI.50 CreateBrushIndirect(lpLogBrush). A Win16 LOGBRUSH is eight bytes —
-  ;; a word style, a dword colour and a word hatch — where Win32 pairs three
-  ;; dwords, so the structure is rebuilt rather than handed over as it stands.
-  (func $win16_CreateBrushIndirect
-    (local $lb i32) (local $out i32) (local $style i32) (local $hatch i32)
-    (local.set $lb (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
-    (local.set $style (call $gl16 (local.get $lb)))
-    (local.set $hatch (call $win16_coord (call $gl16 (i32.add (local.get $lb) (i32.const 6)))))
-    ;; lbHatch is only a hatch index for BS_HATCHED. For BS_PATTERN it is a
-    ;; bitmap handle and has to cross the handle spaces, and for Win16's
-    ;; BS_DIBPATTERN it is a global handle to the packed DIB — which here is a
-    ;; selector, so it becomes the pointer form Win32 spells BS_DIBPATTERNPT.
-    ;; TetraVex builds its tile brush this way and read a NULL back as the
-    ;; machine being out of memory.
-    (if (i32.eq (local.get $style) (i32.const 3))
-      (then (local.set $hatch (call $win16_h32 (local.get $hatch)))))
-    (if (i32.eq (local.get $style) (i32.const 5))
-      (then
-        (local.set $hatch (call $win16_far_to_guest (local.get $hatch) (i32.const 0)))
-        (local.set $style (i32.const 6))))
-    (local.set $out (global.get $GUEST_STACK))
-    (call $gs32 (local.get $out) (local.get $style))
-    (call $gs32 (i32.add (local.get $out) (i32.const 4))
-      (call $gl32 (i32.add (local.get $lb) (i32.const 2))))
-    (call $gs32 (i32.add (local.get $out) (i32.const 8)) (local.get $hatch))
-    (call $win16_call32_begin (i32.const 1))
-    (call $handle_CreateBrushIndirect (local.get $out) (i32.const 0) (i32.const 0)
-      (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (call $win16_h16 (global.get $eax)))
-    (call $win16_api_return (i32.const 4)))
-
   ;; GDI.34 BitBlt(hDest, X, Y, nWidth, nHeight, hSrc, XSrc, YSrc, dwRop).
   (func $win16_BitBlt
     (local $dst i32) (local $x i32) (local $y i32) (local $w i32) (local $h i32)
@@ -6991,103 +3874,6 @@
     (call $win16_call32_end)
     (global.set $eax (i32.const 1))
     (call $win16_api_return (i32.const 20)))
-
-  ;; USER.407 CreateIcon(hInstance, nWidth, nHeight, nPlanes, nBitsPixel,
-  ;;   lpANDbits, lpXORbits) -> HICON.
-  ;;
-  ;; An icon built out of two bitmaps rather than loaded from a module. The
-  ;; colour half becomes a real bitmap and the icon remembers it; drawing one
-  ;; blits that bitmap (see $icon_draw_handle). The mask is not applied yet —
-  ;; the picture is right, its transparency is not — which is a great deal
-  ;; closer than the handle-shaped nothing this used to be.
-  (func $win16_CreateIcon
-    (local $w i32) (local $h i32) (local $planes i32) (local $bpp i32)
-    (local $xor i32) (local $bmp i32)
-    (local.set $w (call $win16_coord (call $win16_arg16 (i32.const 7))))
-    (local.set $h (call $win16_coord (call $win16_arg16 (i32.const 6))))
-    ;; nPlanes and nBitsPixel are BYTEs, and a byte pushed as a word arrives
-    ;; with whatever was in the high half — and sometimes with nothing in the
-    ;; low half either. Neither can be zero for a bitmap that exists, and one
-    ;; plane of one bit is what a 32x32 icon mask is: the 128 bytes the caller
-    ;; just read out with GetBitmapBits.
-    (local.set $planes (i32.and (call $win16_arg16 (i32.const 5)) (i32.const 0xFF)))
-    (local.set $bpp (i32.and (call $win16_arg16 (i32.const 4)) (i32.const 0xFF)))
-    (if (i32.eqz (local.get $planes)) (then (local.set $planes (i32.const 1))))
-    (if (i32.eqz (local.get $bpp)) (then (local.set $bpp (i32.const 1))))
-    (local.set $xor (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
-    (call $win16_call32_begin (i32.const 5))
-    (call $win16_call32_arg (i32.const 4) (local.get $xor))
-    (call $handle_CreateBitmap (local.get $w) (local.get $h) (local.get $planes)
-      (local.get $bpp) (local.get $xor) (i32.const 0))
-    (call $win16_call32_end)
-    (local.set $bmp (global.get $eax))
-    (global.set $eax (i32.const 0))
-    (if (local.get $bmp)
-      (then (global.set $eax (call $win16_h16
-              (call $icon_intern (global.get $ICON_FROM_BITMAP) (local.get $bmp))))))
-    (call $win16_api_return (i32.const 18)))
-
-  ;; GDI.74 GetBitmapBits(hbm, cbBuffer, lpvBits) and GDI.76 SetBitmapBits —
-  ;; the bitmap's own pixels, copied to or from the caller's memory. A Visual
-  ;; Basic control reads its bitmap back this way while composing the board.
-  (func $win16_bitmap_bits (param $is_set i32)
-    (local $bmp i32) (local $count i32) (local $buf i32)
-    (local.set $buf (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
-    (local.set $count (call $win16_arg32 (i32.const 2)))
-    (local.set $bmp (call $win16_h32 (call $win16_arg16 (i32.const 4))))
-    (call $win16_call32_begin (i32.const 3))
-    (if (local.get $is_set)
-      (then (call $handle_SetBitmapBits (local.get $bmp) (local.get $count)
-              (local.get $buf) (i32.const 0) (i32.const 0) (i32.const 0)))
-      (else (call $handle_GetBitmapBits (local.get $bmp) (local.get $count)
-              (local.get $buf) (i32.const 0) (i32.const 0) (i32.const 0))))
-    (call $win16_call32_end)
-    (global.set $edx (i32.shr_u (global.get $eax) (i32.const 16)))
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 10)))
-
-  ;; GDI.439 StretchDIBits(hdc, XDest, YDest, cxDest, cyDest, XSrc, YSrc,
-  ;;   cxSrc, cySrc, lpBits, lpBitsInfo, wUsage, dwRop).
-  ;;
-  ;; Thirteen arguments and two far pointers, and the bits are a DIB in the
-  ;; caller's own memory rather than a GDI object — the 32-bit handler already
-  ;; decodes every format these games use, so this only widens. Both Visual
-  ;; Basic games draw their board through it.
-  (func $win16_StretchDIBits
-    (local $dc i32) (local $x i32) (local $y i32) (local $w i32) (local $h i32)
-    (local $sx i32) (local $sy i32) (local $sw i32) (local $sh i32)
-    (local $bits i32) (local $info i32) (local $usage i32) (local $rop i32)
-    (local.set $dc (call $win16_h32 (call $win16_arg16 (i32.const 15))))
-    (local.set $x (call $win16_coord (call $win16_arg16 (i32.const 14))))
-    (local.set $y (call $win16_coord (call $win16_arg16 (i32.const 13))))
-    (local.set $w (call $win16_coord (call $win16_arg16 (i32.const 12))))
-    (local.set $h (call $win16_coord (call $win16_arg16 (i32.const 11))))
-    (local.set $sx (call $win16_coord (call $win16_arg16 (i32.const 10))))
-    (local.set $sy (call $win16_coord (call $win16_arg16 (i32.const 9))))
-    (local.set $sw (call $win16_coord (call $win16_arg16 (i32.const 8))))
-    (local.set $sh (call $win16_coord (call $win16_arg16 (i32.const 7))))
-    (local.set $bits (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 6)) (call $win16_arg16 (i32.const 5))))
-    (local.set $info (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 4)) (call $win16_arg16 (i32.const 3))))
-    (local.set $usage (call $win16_arg16 (i32.const 2)))
-    (local.set $rop (call $win16_arg32 (i32.const 0)))
-    (call $win16_call32_begin (i32.const 13))
-    (call $win16_call32_arg (i32.const 5) (local.get $sx))
-    (call $win16_call32_arg (i32.const 6) (local.get $sy))
-    (call $win16_call32_arg (i32.const 7) (local.get $sw))
-    (call $win16_call32_arg (i32.const 8) (local.get $sh))
-    (call $win16_call32_arg (i32.const 9) (local.get $bits))
-    (call $win16_call32_arg (i32.const 10) (local.get $info))
-    (call $win16_call32_arg (i32.const 11) (local.get $usage))
-    (call $win16_call32_arg (i32.const 12) (local.get $rop))
-    (call $handle_StretchDIBits (local.get $dc) (local.get $x) (local.get $y)
-      (local.get $w) (local.get $h) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 32)))
 
   ;; GDI.35 StretchBlt — BitBlt with a source size of its own.
   (func $win16_StretchBlt
@@ -7148,440 +3934,6 @@
     ;; worked, which is the hardest kind of paint bug to see from a trace.
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 14)))
-
-  ;; GDI.24 Ellipse(hDC, X1, Y1, X2, Y2) — the bounding box, same as Win32.
-  (func $win16_Ellipse
-    (local $hdc i32) (local $x1 i32) (local $y1 i32) (local $x2 i32) (local $y2 i32)
-    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 4))))
-    (local.set $x1 (call $win16_coord (call $win16_arg16 (i32.const 3))))
-    (local.set $y1 (call $win16_coord (call $win16_arg16 (i32.const 2))))
-    (local.set $x2 (call $win16_coord (call $win16_arg16 (i32.const 1))))
-    (local.set $y2 (call $win16_coord (call $win16_arg16 (i32.const 0))))
-    (call $win16_call32_begin (i32.const 5))
-    (call $win16_call32_arg (i32.const 3) (local.get $x2))
-    (call $win16_call32_arg (i32.const 4) (local.get $y2))
-    (call $handle_Ellipse (local.get $hdc) (local.get $x1) (local.get $y1)
-      (local.get $x2) (local.get $y2) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 10)))
-
-  ;; ---- Palettes ----
-  ;;
-  ;; LOGPALETTE and PALETTEENTRY have the same layout in both worlds, so only
-  ;; the handles and the far pointers need translating. Win16 spells the two
-  ;; DC-level calls twice — GDI.361/362 are what USER.282/283 forward to after
-  ;; adding the window bookkeeping this host does not need — and both spellings
-  ;; land here.
-  (func $win16_CreatePalette
-    (local $pal i32)
-    (local.set $pal (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
-    (call $win16_call32_begin (i32.const 1))
-    (call $handle_CreatePalette (local.get $pal) (i32.const 0) (i32.const 0)
-      (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (call $win16_h16 (global.get $eax)))
-    (call $win16_api_return (i32.const 4)))
-
-  (func $win16_SelectPalette
-    (local $hdc i32) (local $pal i32) (local $bg i32)
-    (local.set $bg (call $win16_arg16 (i32.const 0)))
-    (local.set $pal (call $win16_h32 (call $win16_arg16 (i32.const 1))))
-    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 2))))
-    (call $win16_call32_begin (i32.const 3))
-    (call $handle_SelectPalette (local.get $hdc) (local.get $pal) (local.get $bg)
-      (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (call $win16_h16 (global.get $eax)))
-    (call $win16_api_return (i32.const 6)))
-
-  (func $win16_RealizePalette
-    (local $hdc i32)
-    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 0))))
-    (call $win16_call32_begin (i32.const 1))
-    (call $handle_RealizePalette (local.get $hdc) (i32.const 0) (i32.const 0)
-      (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 2)))
-
-  ;; GetPaletteEntries / SetPaletteEntries / AnimatePalette(hPal, wStart,
-  ;; wEntries, lpPaletteEntries) — one shape, three destinations.
-  (func $win16_palette_entries (param $which i32)
-    (local $pal i32) (local $start i32) (local $count i32) (local $entries i32)
-    (local.set $entries (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
-    (local.set $count (call $win16_arg16 (i32.const 2)))
-    (local.set $start (call $win16_arg16 (i32.const 3)))
-    (local.set $pal (call $win16_h32 (call $win16_arg16 (i32.const 4))))
-    (call $win16_call32_begin (i32.const 4))
-    (call $win16_call32_arg (i32.const 3) (local.get $entries))
-    (if (i32.eq (local.get $which) (i32.const 0))
-      (then (call $handle_GetPaletteEntries (local.get $pal) (local.get $start)
-              (local.get $count) (local.get $entries) (i32.const 0) (i32.const 0))))
-    (if (i32.eq (local.get $which) (i32.const 1))
-      (then (call $handle_SetPaletteEntries (local.get $pal) (local.get $start)
-              (local.get $count) (local.get $entries) (i32.const 0) (i32.const 0))))
-    (if (i32.eq (local.get $which) (i32.const 2))
-      (then (call $handle_AnimatePalette (local.get $pal) (local.get $start)
-              (local.get $count) (local.get $entries) (i32.const 0) (i32.const 0))))
-    (call $win16_call32_end)
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 10)))
-
-  (func $win16_ResizePalette
-    (local $pal i32) (local $n i32)
-    (local.set $n (call $win16_arg16 (i32.const 0)))
-    (local.set $pal (call $win16_h32 (call $win16_arg16 (i32.const 1))))
-    (call $win16_call32_begin (i32.const 2))
-    (call $handle_ResizePalette (local.get $pal) (local.get $n)
-      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 4)))
-
-  (func $win16_GetNearestPaletteIndex
-    (local $pal i32) (local $color i32)
-    (local.set $color (call $win16_arg32 (i32.const 0)))
-    (local.set $pal (call $win16_h32 (call $win16_arg16 (i32.const 2))))
-    (call $win16_call32_begin (i32.const 2))
-    (call $handle_GetNearestPaletteIndex (local.get $pal) (local.get $color)
-      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 6)))
-
-  (func $win16_UpdateColors
-    (local $hdc i32)
-    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 0))))
-    (call $win16_call32_begin (i32.const 1))
-    (call $handle_UpdateColors (local.get $hdc) (i32.const 0) (i32.const 0)
-      (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 2)))
-
-  ;; GDI.94 GetViewportExt / .95 GetViewportOrg / .96 GetWindowExt /
-  ;; .97 GetWindowOrg(hDC) -> a POINT packed into a DWORD, X in AX and Y in DX.
-  ;; The Win32 spellings all take a POINT to fill instead, so the answer is
-  ;; written to scratch and read straight back out.
-  (func $win16_dc_pair (param $which i32)
-    (local $hdc i32) (local $pt i32)
-    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 0))))
-    (local.set $pt (global.get $GUEST_STACK))
-    (call $win16_call32_begin (i32.const 2))
-    (if (i32.eq (local.get $which) (i32.const 0))
-      (then (call $handle_GetViewportExtEx (local.get $hdc) (local.get $pt)
-              (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))))
-    (if (i32.eq (local.get $which) (i32.const 1))
-      (then (call $handle_GetViewportOrgEx (local.get $hdc) (local.get $pt)
-              (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))))
-    (if (i32.eq (local.get $which) (i32.const 2))
-      (then (call $handle_GetWindowExtEx (local.get $hdc) (local.get $pt)
-              (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))))
-    (if (i32.eq (local.get $which) (i32.const 3))
-      (then (call $handle_GetWindowOrgEx (local.get $hdc) (local.get $pt)
-              (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))))
-    (call $win16_call32_end)
-    (global.set $eax (i32.and (call $gl32 (local.get $pt)) (i32.const 0xFFFF)))
-    (global.set $edx (i32.and (call $gl32 (i32.add (local.get $pt) (i32.const 4)))
-                              (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 2)))
-
-  ;; ---- Mapping mode ----
-  ;;
-  ;; GDI.3 SetMapMode(hDC, nMapMode) -> the previous mode, and the four
-  ;; two-coordinate setters GDI.11..14 plus the offset/scale pairs, each of
-  ;; which answers with the value it replaced packed into DX:AX. Win32 spells
-  ;; them all with a trailing POINT or SIZE to fill instead of a return value,
-  ;; so the old value is read back out of scratch.
-  (func $win16_SetMapMode
-    (local $hdc i32) (local $mode i32)
-    (local.set $mode (call $win16_coord (call $win16_arg16 (i32.const 0))))
-    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 1))))
-    (call $win16_call32_begin (i32.const 2))
-    (call $handle_SetMapMode (local.get $hdc) (local.get $mode)
-      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 4)))
-
-  (func $win16_GetMapMode
-    (local $hdc i32)
-    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 0))))
-    (call $win16_call32_begin (i32.const 1))
-    (call $handle_GetMapMode (local.get $hdc) (i32.const 0) (i32.const 0)
-      (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 2)))
-
-  ;; which: 0 SetWindowOrg, 1 SetWindowExt, 2 SetViewportOrg, 3 SetViewportExt,
-  ;; 4 OffsetWindowOrg, 5 OffsetViewportOrg, 6 ScaleWindowExt, 7 ScaleViewportExt.
-  ;; The scale pair takes four arguments rather than two.
-  (func $win16_dc_set_pair (param $which i32)
-    (local $hdc i32) (local $a i32) (local $b i32) (local $c i32) (local $d i32)
-    (local $out i32) (local $scale i32)
-    (local.set $scale (i32.ge_u (local.get $which) (i32.const 6)))
-    (if (local.get $scale)
-      (then
-        (local.set $d (call $win16_coord (call $win16_arg16 (i32.const 0))))
-        (local.set $c (call $win16_coord (call $win16_arg16 (i32.const 1))))
-        (local.set $b (call $win16_coord (call $win16_arg16 (i32.const 2))))
-        (local.set $a (call $win16_coord (call $win16_arg16 (i32.const 3))))
-        (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 4)))))
-      (else
-        (local.set $b (call $win16_coord (call $win16_arg16 (i32.const 0))))
-        (local.set $a (call $win16_coord (call $win16_arg16 (i32.const 1))))
-        (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 2))))))
-    (local.set $out (global.get $GUEST_STACK))
-    (call $gs32 (local.get $out) (i32.const 0))
-    (call $gs32 (i32.add (local.get $out) (i32.const 4)) (i32.const 0))
-    (call $win16_call32_begin (i32.const 5))
-    (call $win16_call32_arg (i32.const 3) (local.get $d))
-    (call $win16_call32_arg (i32.const 4) (local.get $out))
-    (if (i32.eq (local.get $which) (i32.const 0))
-      (then (call $handle_SetWindowOrgEx (local.get $hdc) (local.get $a) (local.get $b)
-              (local.get $out) (i32.const 0) (i32.const 0))))
-    (if (i32.eq (local.get $which) (i32.const 1))
-      (then (call $handle_SetWindowExtEx (local.get $hdc) (local.get $a) (local.get $b)
-              (local.get $out) (i32.const 0) (i32.const 0))))
-    (if (i32.eq (local.get $which) (i32.const 2))
-      (then (call $handle_SetViewportOrgEx (local.get $hdc) (local.get $a) (local.get $b)
-              (local.get $out) (i32.const 0) (i32.const 0))))
-    (if (i32.eq (local.get $which) (i32.const 3))
-      (then (call $handle_SetViewportExtEx (local.get $hdc) (local.get $a) (local.get $b)
-              (local.get $out) (i32.const 0) (i32.const 0))))
-    (if (i32.eq (local.get $which) (i32.const 4))
-      (then (call $handle_OffsetWindowOrgEx (local.get $hdc) (local.get $a) (local.get $b)
-              (local.get $out) (i32.const 0) (i32.const 0))))
-    (if (i32.eq (local.get $which) (i32.const 5))
-      (then (call $handle_OffsetViewportOrgEx (local.get $hdc) (local.get $a) (local.get $b)
-              (local.get $out) (i32.const 0) (i32.const 0))))
-    (if (i32.eq (local.get $which) (i32.const 6))
-      (then (call $handle_ScaleWindowExtEx (local.get $hdc) (local.get $a) (local.get $b)
-              (local.get $c) (local.get $d) (i32.const 0))))
-    (if (i32.eq (local.get $which) (i32.const 7))
-      (then (call $handle_ScaleViewportExtEx (local.get $hdc) (local.get $a) (local.get $b)
-              (local.get $c) (local.get $d) (i32.const 0))))
-    (call $win16_call32_end)
-    (global.set $eax (i32.and (call $gl32 (local.get $out)) (i32.const 0xFFFF)))
-    (global.set $edx (i32.and (call $gl32 (i32.add (local.get $out) (i32.const 4)))
-                              (i32.const 0xFFFF)))
-    (call $win16_api_return (select (i32.const 10) (i32.const 6) (local.get $scale))))
-
-  ;; GDI.346 SetTextAlign(hDC, wFlags) -> the previous alignment.
-  (func $win16_SetTextAlign
-    (local $hdc i32) (local $flags i32)
-    (local.set $flags (call $win16_arg16 (i32.const 0)))
-    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 1))))
-    (call $win16_call32_begin (i32.const 2))
-    (call $handle_SetTextAlign (local.get $hdc) (local.get $flags)
-      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 4)))
-
-  ;; GDI.128 MulDiv(nNumber, nNumerator, nDenominator) -> (a*b)/c rounded, with
-  ;; the multiply done wide so it does not overflow sixteen bits on the way —
-  ;; which is the whole reason the call exists. -32768 signals a zero divisor.
-  (func $win16_MulDiv
-    (local $a i32) (local $b i32) (local $c i32) (local $r i32)
-    (local.set $c (call $win16_coord (call $win16_arg16 (i32.const 0))))
-    (local.set $b (call $win16_coord (call $win16_arg16 (i32.const 1))))
-    (local.set $a (call $win16_coord (call $win16_arg16 (i32.const 2))))
-    (if (i32.eqz (local.get $c))
-      (then
-        (global.set $eax (i32.const 0x8000))
-        (call $win16_api_return (i32.const 6))
-        (return)))
-    (local.set $r (i32.mul (local.get $a) (local.get $b)))
-    ;; Round to nearest, away from zero, the way GDI's own does.
-    (if (i32.eq (i32.lt_s (local.get $r) (i32.const 0))
-                (i32.lt_s (local.get $c) (i32.const 0)))
-      (then (local.set $r (i32.add (local.get $r) (i32.div_s (local.get $c) (i32.const 2)))))
-      (else (local.set $r (i32.sub (local.get $r) (i32.div_s (local.get $c) (i32.const 2))))))
-    (global.set $eax (i32.and (i32.div_s (local.get $r) (local.get $c))
-                              (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 6)))
-
-  ;; GDI.99 LPtoDP / GDI.67 DPtoLP(hDC, lpPoints, nCount) — map an array of
-  ;; points between logical and device space, in place. Points are two words
-  ;; here and two longs there, so the array is widened into scratch, converted,
-  ;; and narrowed back over the caller's own array.
-  (func $win16_map_points (param $to_device i32)
-    (local $hdc i32) (local $src i32) (local $n i32) (local $dst i32) (local $i i32)
-    (local.set $n (call $win16_coord (call $win16_arg16 (i32.const 0))))
-    (local.set $src (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
-    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 3))))
-    (if (i32.gt_u (local.get $n) (i32.const 512))
-      (then
-        (call $host_log_i32 (i32.const 0xCA16B01E))   ;; more points than scratch holds
-        (call $host_log_i32 (local.get $n))
-        (unreachable)))
-    (local.set $dst (global.get $GUEST_STACK))
-    (block $wide (loop $pts
-      (br_if $wide (i32.ge_u (local.get $i) (i32.shl (local.get $n) (i32.const 1))))
-      (call $gs32 (i32.add (local.get $dst) (i32.shl (local.get $i) (i32.const 2)))
-        (call $win16_coord
-          (call $gl16 (i32.add (local.get $src) (i32.shl (local.get $i) (i32.const 1))))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $pts)))
-    (call $win16_call32_begin (i32.const 3))
-    (if (local.get $to_device)
-      (then (call $handle_LPtoDP (local.get $hdc) (local.get $dst) (local.get $n)
-              (i32.const 0) (i32.const 0) (i32.const 0)))
-      (else (call $handle_DPtoLP (local.get $hdc) (local.get $dst) (local.get $n)
-              (i32.const 0) (i32.const 0) (i32.const 0))))
-    (call $win16_call32_end)
-    (local.set $i (i32.const 0))
-    (block $narrow (loop $back
-      (br_if $narrow (i32.ge_u (local.get $i) (i32.shl (local.get $n) (i32.const 1))))
-      (call $gs16 (i32.add (local.get $src) (i32.shl (local.get $i) (i32.const 1)))
-        (call $gl32 (i32.add (local.get $dst) (i32.shl (local.get $i) (i32.const 2)))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $back)))
-    (global.set $eax (i32.const 1))
-    (call $win16_api_return (i32.const 8)))
-
-  ;; GDI.36 Polygon / GDI.37 Polyline(hDC, lpPoints, nCount). A Win16 POINT is
-  ;; two words and a Win32 one two longs, so the array is widened into scratch
-  ;; on the way through. The cap is what the scratch holds, and a longer array
-  ;; is refused rather than truncated into a shape the app did not ask for.
-  (func $win16_poly (param $closed i32)
-    (local $hdc i32) (local $src i32) (local $n i32) (local $dst i32) (local $i i32)
-    (local.set $n (call $win16_coord (call $win16_arg16 (i32.const 0))))
-    (local.set $src (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
-    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 3))))
-    (if (i32.gt_u (local.get $n) (i32.const 512))
-      (then
-        (call $host_log_i32 (i32.const 0xCA16B01F))   ;; polygon too long for scratch
-        (call $host_log_i32 (local.get $n))
-        (unreachable)))
-    (local.set $dst (global.get $GUEST_STACK))
-    (block $done (loop $pts
-      (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
-      (call $gs32 (i32.add (local.get $dst) (i32.shl (local.get $i) (i32.const 3)))
-        (call $win16_coord (call $gl16
-          (i32.add (local.get $src) (i32.shl (local.get $i) (i32.const 2))))))
-      (call $gs32 (i32.add (i32.add (local.get $dst) (i32.shl (local.get $i) (i32.const 3)))
-                           (i32.const 4))
-        (call $win16_coord (call $gl16
-          (i32.add (i32.add (local.get $src) (i32.shl (local.get $i) (i32.const 2)))
-                   (i32.const 2)))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $pts)))
-    (call $win16_call32_begin (i32.const 3))
-    (if (local.get $closed)
-      (then (call $handle_Polygon (local.get $hdc) (local.get $dst) (local.get $n)
-              (i32.const 0) (i32.const 0) (i32.const 0)))
-      (else (call $handle_Polyline (local.get $hdc) (local.get $dst) (local.get $n)
-              (i32.const 0) (i32.const 0) (i32.const 0))))
-    (call $win16_call32_end)
-    (global.set $eax (i32.ne (global.get $eax) (i32.const 0)))
-    (call $win16_api_return (i32.const 8)))
-
-  ;; GDI.21 ExcludeClipRect(hDC, X1, Y1, X2, Y2) -> the new clip region's type.
-  (func $win16_ExcludeClipRect
-    (local $hdc i32) (local $x1 i32) (local $y1 i32) (local $x2 i32) (local $y2 i32)
-    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 4))))
-    (local.set $x1 (call $win16_coord (call $win16_arg16 (i32.const 3))))
-    (local.set $y1 (call $win16_coord (call $win16_arg16 (i32.const 2))))
-    (local.set $x2 (call $win16_coord (call $win16_arg16 (i32.const 1))))
-    (local.set $y2 (call $win16_coord (call $win16_arg16 (i32.const 0))))
-    (call $win16_call32_begin (i32.const 5))
-    (call $win16_call32_arg (i32.const 3) (local.get $x2))
-    (call $win16_call32_arg (i32.const 4) (local.get $y2))
-    (call $handle_ExcludeClipRect (local.get $hdc) (local.get $x1) (local.get $y1)
-      (local.get $x2) (local.get $y2) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 10)))
-
-  ;; GDI.27 Rectangle(hDC, X1, Y1, X2, Y2).
-  (func $win16_Rectangle
-    (local $hdc i32) (local $x1 i32) (local $y1 i32) (local $x2 i32) (local $y2 i32)
-    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 4))))
-    (local.set $x1 (call $win16_coord (call $win16_arg16 (i32.const 3))))
-    (local.set $y1 (call $win16_coord (call $win16_arg16 (i32.const 2))))
-    (local.set $x2 (call $win16_coord (call $win16_arg16 (i32.const 1))))
-    (local.set $y2 (call $win16_coord (call $win16_arg16 (i32.const 0))))
-    (call $win16_call32_begin (i32.const 5))
-    (call $win16_call32_arg (i32.const 3) (local.get $x2))
-    (call $win16_call32_arg (i32.const 4) (local.get $y2))
-    (call $handle_Rectangle (local.get $hdc) (local.get $x1) (local.get $y1)
-      (local.get $x2) (local.get $y2) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 10)))
-
-  ;; GDI.23 Arc(hDC, X1, Y1, X2, Y2, X3, Y3, X4, Y4) — bounding box, then the
-  ;; two radial points that cut the start and end of the arc out of it.
-  (func $win16_Arc
-    (local $hdc i32) (local $x1 i32) (local $y1 i32) (local $x2 i32) (local $y2 i32)
-    (local $x3 i32) (local $y3 i32) (local $x4 i32) (local $y4 i32)
-    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 8))))
-    (local.set $x1 (call $win16_coord (call $win16_arg16 (i32.const 7))))
-    (local.set $y1 (call $win16_coord (call $win16_arg16 (i32.const 6))))
-    (local.set $x2 (call $win16_coord (call $win16_arg16 (i32.const 5))))
-    (local.set $y2 (call $win16_coord (call $win16_arg16 (i32.const 4))))
-    (local.set $x3 (call $win16_coord (call $win16_arg16 (i32.const 3))))
-    (local.set $y3 (call $win16_coord (call $win16_arg16 (i32.const 2))))
-    (local.set $x4 (call $win16_coord (call $win16_arg16 (i32.const 1))))
-    (local.set $y4 (call $win16_coord (call $win16_arg16 (i32.const 0))))
-    (call $win16_call32_begin (i32.const 9))
-    (call $win16_call32_arg (i32.const 3) (local.get $x2))
-    (call $win16_call32_arg (i32.const 4) (local.get $y2))
-    (call $win16_call32_arg (i32.const 5) (local.get $x3))
-    (call $win16_call32_arg (i32.const 6) (local.get $y3))
-    (call $win16_call32_arg (i32.const 7) (local.get $x4))
-    (call $win16_call32_arg (i32.const 8) (local.get $y4))
-    (call $handle_Arc (local.get $hdc) (local.get $x1) (local.get $y1)
-      (local.get $x2) (local.get $y2) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 18)))
-
-  ;; GDI.90 GetTextColor(hDC) -> COLORREF in DX:AX.
-  (func $win16_GetTextColor
-    (local $hdc i32)
-    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 0))))
-    (call $win16_call32_begin (i32.const 1))
-    (call $handle_GetTextColor (local.get $hdc) (i32.const 0) (i32.const 0)
-      (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $edx (i32.shr_u (global.get $eax) (i32.const 16)))
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 2)))
-
-  ;; GDI.75 GetBkColor(hDC) -> COLORREF in DX:AX, the other half of GDI.9.
-  (func $win16_GetBkColor
-    (local $hdc i32)
-    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 0))))
-    (call $win16_call32_begin (i32.const 1))
-    (call $handle_GetBkColor (local.get $hdc) (i32.const 0) (i32.const 0)
-      (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $edx (i32.shr_u (global.get $eax) (i32.const 16)))
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 2)))
-
-  ;; GDI.154 GetNearestColor(hDC, crColor) -> the colour the device can
-  ;; actually show. Answers in DX:AX like every DWORD-returning Win16 call.
-  (func $win16_GetNearestColor
-    (local $hdc i32) (local $color i32)
-    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 2))))
-    (local.set $color (call $win16_arg32 (i32.const 0)))
-    (call $win16_call32_begin (i32.const 2))
-    (call $handle_GetNearestColor (local.get $hdc) (local.get $color)
-      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $edx (i32.shr_u (global.get $eax) (i32.const 16)))
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-    (call $win16_api_return (i32.const 6)))
 
   ;; GDI.20 MoveTo / GDI.19 LineTo / GDI.83 GetPixel(hDC, X, Y). MoveTo and
   ;; GetPixel answer with a DWORD in DX:AX — the previous position and the
@@ -7650,13 +4002,8 @@
     (local $w i32) (local $h i32) (local $planes i32) (local $bpp i32) (local $bits i32)
     (local.set $w (call $win16_coord (call $win16_arg16 (i32.const 5))))
     (local.set $h (call $win16_coord (call $win16_arg16 (i32.const 4))))
-    ;; nPlanes and nBitCount are BYTE parameters, and a byte pushed as a word
-    ;; carries whatever was in the high half — SkiFree's compiler leaves the
-    ;; previous value there, so its 1-plane 1-bit bitmap arrived as 0x0101 by
-    ;; 0x0101 and GDI refused it. "Whoa, like, can't load bitmaps! Yer outa
-    ;; memory, duuude!" was the whole of the diagnosis.
-    (local.set $planes (i32.and (call $win16_arg16 (i32.const 3)) (i32.const 0xFF)))
-    (local.set $bpp (i32.and (call $win16_arg16 (i32.const 2)) (i32.const 0xFF)))
+    (local.set $planes (call $win16_arg16 (i32.const 3)))
+    (local.set $bpp (call $win16_arg16 (i32.const 2)))
     (local.set $bits (call $win16_far_to_guest
       (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
     ;; A null far pointer is a bitmap with undefined contents, not a pointer to
@@ -7772,165 +4119,7 @@
   ;; frame goes up front, the way the modal pump parks — the far return saved
   ;; here is what the last point resumes.
   (global $WIN16_DDA_CB i32 (i32.const 0xFF90))
-  ;; The same shape for EnumFonts, whose callback also runs between one entry
-  ;; and the next.
-  (global $WIN16_ENUMFONT_CB i32 (i32.const 0xFF94))
   (global $win16_dda_ret  (mut i32) (i32.const 0))
-  ;; ---- GDI.70 EnumFonts(hDC, lpFaceName, lpFontFunc, lpData) ----
-  ;;
-  ;; The faces this device has are the bitmap strikes src/10b-gdi-font.wat can
-  ;; render; naming anything else would be inviting the caller to ask for a
-  ;; font that would then come back as a substitute. Asking by face name
-  ;; reports that one face if it is among them, which is what "enumerate the
-  ;; sizes of this face" comes to on a device with one size of each.
-  ;;
-  ;; Like LineDDA, the callback is guest code, so this cannot be a loop: each
-  ;; face gives the interpreter the task back and is picked up again on the far
-  ;; return, and a callback that answers zero ends the enumeration.
-  (global $WIN16_FONT_FACES i32 (i32.const 0x00003E00))
-  (global $win16_ef_proc (mut i32) (i32.const 0))
-  (global $win16_ef_data (mut i32) (i32.const 0))
-  (global $win16_ef_ret  (mut i32) (i32.const 0))
-  (global $win16_ef_face (mut i32) (i32.const 0))
-  (global $win16_ef_one  (mut i32) (i32.const 0))
-  (global $win16_ef_hdc  (mut i32) (i32.const 0))
-  (global $win16_ef_count (mut i32) (i32.const 0))
-
-  (func $win16_EnumFonts
-    (local $want i32) (local $p i32)
-    (global.set $win16_ef_hdc (call $win16_h32 (call $win16_arg16 (i32.const 6))))
-    (global.set $win16_ef_proc (call $win16_arg32 (i32.const 2)))
-    (global.set $win16_ef_data (call $win16_arg32 (i32.const 0)))
-    (local.set $want (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 5)) (call $win16_arg16 (i32.const 4))))
-    (if (i32.eqz (call $win16_arg16 (i32.const 5))) (then (local.set $want (i32.const 0))))
-    (global.set $win16_ef_ret (i32.or
-      (i32.shl (call $gl16 (i32.add (global.get $esp) (i32.const 2))) (i32.const 16))
-      (call $gl16 (global.get $esp))))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 18)))  ;; far return + 14
-    (global.set $win16_ef_count (i32.const 0))
-    (global.set $win16_ef_one (i32.const 0))
-    (global.set $win16_ef_face (global.get $WIN16_FONT_FACES))
-    ;; A named face: find it in the list, and report only that one.
-    (if (local.get $want)
-      (then
-        (local.set $p (global.get $WIN16_FONT_FACES))
-        (global.set $win16_ef_face (i32.const 0))
-        (block $found (loop $faces
-          (br_if $found (i32.eqz (i32.load8_u (local.get $p))))
-          (if (call $win16_res_name_eq_z (local.get $p) (call $g2w (local.get $want)))
-            (then
-              (global.set $win16_ef_face (local.get $p))
-              (global.set $win16_ef_one (i32.const 1))
-              (br $found)))
-          (local.set $p (i32.add (local.get $p)
-            (i32.add (call $strlen_wa (local.get $p)) (i32.const 1))))
-          (br $faces)))))
-    (call $win16_ef_next))
-
-  ;; Fill the LOGFONT and TEXTMETRIC the callback is shown, then enter it. The
-  ;; metrics come from the DC, so they describe a real font this device has
-  ;; rather than numbers invented here.
-  (func $win16_ef_enter
-    (local $lf i32) (local $tm i32) (local $wide i32) (local $i i32) (local $n i32)
-    (local.set $lf (i32.add (call $win16_seg_base (global.get $win16_auto_data))
-                            (global.get $win16_font_scratch)))
-    (local.set $tm (i32.add (local.get $lf) (i32.const 52)))
-    (call $zero_memory (call $g2w (local.get $lf)) (global.get $WIN16_FONT_SCRATCH_SIZE))
-    ;; TEXTMETRICA is the same fields with longs where Win16 has words, so it
-    ;; is measured into scratch and narrowed.
-    (local.set $wide (global.get $GUEST_STACK))
-    (call $win16_call32_begin (i32.const 2))
-    (call $handle_GetTextMetricsA (global.get $win16_ef_hdc) (local.get $wide)
-      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (block $done (loop $narrow
-      (br_if $done (i32.ge_u (local.get $i) (i32.const 11)))
-      (call $gs16 (i32.add (local.get $tm) (i32.shl (local.get $i) (i32.const 1)))
-        (call $gl32 (i32.add (local.get $wide) (i32.shl (local.get $i) (i32.const 2)))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $narrow)))
-    (local.set $i (i32.const 0))
-    (block $copied (loop $bytes
-      (br_if $copied (i32.ge_u (local.get $i) (i32.const 9)))
-      (call $gs8 (i32.add (i32.add (local.get $tm) (i32.const 22)) (local.get $i))
-        (call $gl8 (i32.add (i32.add (local.get $wide) (i32.const 44)) (local.get $i))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $bytes)))
-    ;; LOGFONT: the height and weight the DC reports, the rest defaulted, and
-    ;; the face name this entry is about.
-    (call $gs16 (local.get $lf) (call $gl16 (local.get $tm)))            ;; lfHeight
-    (call $gs16 (i32.add (local.get $lf) (i32.const 8))
-      (call $gl16 (i32.add (local.get $tm) (i32.const 14))))             ;; lfWeight
-    (call $gs8 (i32.add (local.get $lf) (i32.const 13))
-      (call $gl8 (i32.add (local.get $tm) (i32.const 30))))              ;; lfCharSet
-    (call $gs8 (i32.add (local.get $lf) (i32.const 17))
-      (call $gl8 (i32.add (local.get $tm) (i32.const 29))))              ;; lfPitchAndFamily
-    (local.set $n (call $strlen_wa (global.get $win16_ef_face)))
-    (if (i32.gt_u (local.get $n) (i32.const 31)) (then (local.set $n (i32.const 31))))
-    (local.set $i (i32.const 0))
-    (block $named (loop $chars
-      (br_if $named (i32.ge_u (local.get $i) (local.get $n)))
-      (call $gs8 (i32.add (i32.add (local.get $lf) (i32.const 18)) (local.get $i))
-        (i32.load8_u (i32.add (global.get $win16_ef_face) (local.get $i))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $chars)))
-    (global.set $win16_ef_count (i32.add (global.get $win16_ef_count) (i32.const 1)))
-    ;; The callback's Pascal frame: lpLogFont, lpTextMetric, nFontType, lpData,
-    ;; and a far return onto the thunk that picks the walk up again. RASTER
-    ;; (1) is what these strikes are.
-    (call $win16_push16 (call $win16_index_to_sel (global.get $win16_auto_data)))
-    (call $win16_push16 (global.get $win16_font_scratch))
-    (call $win16_push16 (call $win16_index_to_sel (global.get $win16_auto_data)))
-    (call $win16_push16 (i32.add (global.get $win16_font_scratch) (i32.const 52)))
-    (call $win16_push16 (i32.const 1))
-    (call $win16_push16 (i32.shr_u (global.get $win16_ef_data) (i32.const 16)))
-    (call $win16_push16 (global.get $win16_ef_data))
-    (call $win16_push16 (global.get $WIN16_THUNK_SEL))
-    (call $win16_push16 (global.get $WIN16_ENUMFONT_CB))
-    (call $win16_set_sreg (i32.const 1)
-      (i32.shr_u (global.get $win16_ef_proc) (i32.const 16)))
-    (global.set $eip (i32.add (global.get $seg_base_cs)
-                              (i32.and (global.get $win16_ef_proc) (i32.const 0xFFFF))))
-    (global.set $steps (i32.const 0)))
-
-  ;; Next face, or give the caller its call back.
-  (func $win16_ef_next
-    (if (i32.or (i32.eqz (global.get $win16_ef_face))
-                (i32.eqz (i32.load8_u (global.get $win16_ef_face))))
-      (then (call $win16_ef_resume) (return)))
-    (call $win16_ef_enter))
-
-  ;; The callback has answered. Zero means stop; anything else means go on.
-  (func $win16_ef_step
-    (if (i32.eqz (i32.and (global.get $eax) (i32.const 0xFFFF)))
-      (then (call $win16_ef_resume) (return)))
-    (if (global.get $win16_ef_one)
-      (then (call $win16_ef_resume) (return)))
-    (global.set $win16_ef_face
-      (i32.add (global.get $win16_ef_face)
-               (i32.add (call $strlen_wa (global.get $win16_ef_face)) (i32.const 1))))
-    (call $win16_ef_next))
-
-  ;; EnumFonts answers with the last value the callback returned, or the number
-  ;; of faces reported when it never asked to stop. Non-zero either way, which
-  ;; is what a caller checks.
-  (func $win16_ef_resume
-    (global.set $eax (global.get $win16_ef_count))
-    (call $win16_set_sreg (i32.const 1)
-      (i32.shr_u (global.get $win16_ef_ret) (i32.const 16)))
-    (global.set $eip (i32.add (global.get $seg_base_cs)
-                              (i32.and (global.get $win16_ef_ret) (i32.const 0xFFFF))))
-    (global.set $steps (i32.const 0)))
-
-  (func $strlen_wa (param $p i32) (result i32)
-    (local $n i32)
-    (block $done (loop $scan
-      (br_if $done (i32.eqz (i32.load8_u (i32.add (local.get $p) (local.get $n)))))
-      (local.set $n (i32.add (local.get $n) (i32.const 1)))
-      (br $scan)))
-    (local.get $n))
-
   (global $win16_dda_proc (mut i32) (i32.const 0))
   (global $win16_dda_data (mut i32) (i32.const 0))
   (global $win16_dda_x    (mut i32) (i32.const 0))
@@ -8027,86 +4216,6 @@
     (global.set $steps (i32.const 0)))
 
   (func $win16_gdi (param $ordinal i32) (result i32)
-    (if (i32.eq (local.get $ordinal) (i32.const 3))
-      (then (call $win16_SetMapMode) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 81))
-      (then (call $win16_GetMapMode) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 128))
-      (then (call $win16_MulDiv) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 11))
-      (then (call $win16_dc_set_pair (i32.const 0)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 12))
-      (then (call $win16_dc_set_pair (i32.const 1)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 13))
-      (then (call $win16_dc_set_pair (i32.const 2)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 14))
-      (then (call $win16_dc_set_pair (i32.const 3)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 15))
-      (then (call $win16_dc_set_pair (i32.const 4)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 16))
-      (then (call $win16_dc_set_pair (i32.const 6)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 17))
-      (then (call $win16_dc_set_pair (i32.const 5)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 18))
-      (then (call $win16_dc_set_pair (i32.const 7)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 21))
-      (then (call $win16_ExcludeClipRect) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 23))
-      (then (call $win16_Arc) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 24))
-      (then (call $win16_Ellipse) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 27))
-      (then (call $win16_Rectangle) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 67))
-      (then (call $win16_map_points (i32.const 0)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 99))
-      (then (call $win16_map_points (i32.const 1)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 70))
-      (then (call $win16_EnumFonts) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 104))
-      (then (call $win16_RectVisible) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 90))
-      (then (call $win16_GetTextColor) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 75))
-      (then (call $win16_GetBkColor) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 36))
-      (then (call $win16_poly (i32.const 1)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 37))
-      (then (call $win16_poly (i32.const 0)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 50))
-      (then (call $win16_CreateBrushIndirect) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 346))
-      (then (call $win16_SetTextAlign) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 351))
-      (then (call $win16_ExtTextOut) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 360))
-      (then (call $win16_CreatePalette) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 361))
-      (then (call $win16_SelectPalette) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 362))
-      (then (call $win16_RealizePalette) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 363))
-      (then (call $win16_palette_entries (i32.const 0)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 364))
-      (then (call $win16_palette_entries (i32.const 1)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 366))
-      (then (call $win16_UpdateColors) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 367))
-      (then (call $win16_palette_entries (i32.const 2)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 368))
-      (then (call $win16_ResizePalette) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 370))
-      (then (call $win16_GetNearestPaletteIndex) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 94))
-      (then (call $win16_dc_pair (i32.const 0)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 95))
-      (then (call $win16_dc_pair (i32.const 1)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 96))
-      (then (call $win16_dc_pair (i32.const 2)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 97))
-      (then (call $win16_dc_pair (i32.const 3)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 154))
-      (then (call $win16_GetNearestColor) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 100))
       (then (call $win16_LineDDA) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 79))
@@ -8115,8 +4224,6 @@
       (then (call $win16_PtVisible) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 56))
       (then (call $win16_CreateFont) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 57))
-      (then (call $win16_CreateFontIndirect) (return (i32.const 1))))
     ;; UnrealizeObject asks a brush or palette to be re-mapped on next select.
     ;; With no palette realisation here there is nothing to invalidate, and
     ;; success is the truthful answer rather than a placeholder.
@@ -8145,12 +4252,6 @@
       (then (call $win16_BitBlt) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 35))
       (then (call $win16_StretchBlt) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 439))
-      (then (call $win16_StretchDIBits) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 74))
-      (then (call $win16_bitmap_bits (i32.const 0)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 76))
-      (then (call $win16_bitmap_bits (i32.const 1)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 39))
       (then (call $win16_save_restore_dc (i32.const 1)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 48))
@@ -8163,32 +4264,18 @@
       (then (call $win16_set_dc_mode (i32.const 0)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 4))
       (then (call $win16_set_dc_mode (i32.const 1)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 85))
-      (then (call $win16_GetROP2) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 9))
       (then (call $win16_set_dc_color (i32.const 1)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 45))
       (then (call $win16_SelectObject) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 172))
-      (then (call $win16_SetRectRgn) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 47))
-      (then (call $win16_CombineRgn) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 51))
       (then (call $win16_CreateCompatibleBitmap) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 52))
       (then (call $win16_CreateCompatibleDC) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 61))
       (then (call $win16_CreatePen) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 62))
-      (then (call $win16_CreatePenIndirect) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 77))
-      (then (call $win16_GetClipBox) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 64))
       (then (call $win16_CreateRectRgn) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 65))
-      (then (call $win16_CreateRectRgnIndirect) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 44))
-      (then (call $win16_SelectClipRgn) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 66))
       (then (call $win16_CreateSolidBrush) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 68))
@@ -8217,15 +4304,11 @@
     ;; names the API responsible, which is the whole difficulty: the wild jump
     ;; and the mistake that caused it are otherwise separated by a batch
     ;; boundary and any amount of unrelated code.
-    ;; EIP zero is the exception: that is how a task that has been terminated
-    ;; on purpose — FatalAppExit, or a fatal error the host reported — tells
-    ;; the run loop it is done, and it must not read as a wild jump.
-    (if (i32.and (i32.ne (global.get $eip) (i32.const 0))
-        (i32.or
+    (if (i32.or
           (i32.lt_u (global.get $eip) (global.get $WIN16_ARENA))
           (i32.ge_u (global.get $eip)
             (i32.add (global.get $WIN16_ARENA)
-              (i32.mul (global.get $WIN16_SEG_MAX) (i32.const 0x10000))))))
+              (i32.mul (global.get $WIN16_SEG_MAX) (i32.const 0x10000)))))
       (then
         (call $host_log_i32 (i32.const 0xCA16A9F8))
         (call $host_log_i32 (global.get $win16_last_module))
@@ -8242,17 +4325,7 @@
         ;; the return address the call trace printed, is a frame bug, and those
         ;; are the bugs this layer actually has.
         (call $host_log_i32 (global.get $eip))
-        (call $host_log_i32 (global.get $esp))
-        ;; How much the call actually took off the stack, counting the far
-        ;; return address: 4 + the Pascal argument bytes. Compare it against
-        ;; the API's real signature — a wrong count here is a frame bug that
-        ;; only shows up much later, as a return into nothing.
-        (call $host_log_i32 (i32.sub (global.get $esp) (global.get $win16_entry_esp)))
-        ;; And the data selector the task is left holding. An API that returns
-        ;; with the wrong DS is invisible until the task pushes it as half of
-        ;; a far pointer: Pipe Dream handed CreateWindow a class name whose
-        ;; segment was zero and got a window with no class at all.
-        (call $host_log_i32 (global.get $sreg_ds)))))
+        (call $host_log_i32 (global.get $esp)))))
 
   ;; Hooks.
   ;;
@@ -8355,51 +4428,7 @@
   ;; lpszSound, fuSound) -> BOOL. Hearts asks how many wave devices there are
   ;; before it will play anything, so answering it is what turns the sound on.
   (func $win16_mmsystem (param $ordinal i32) (result i32)
-    (local $name i32) (local $flags i32) (local $dev i32) (local $msg i32)
-    (local $p1 i32) (local $p2 i32)
-    ;; 201 midiOutGetNumDevs() — how many MIDI output devices there are. Chip's
-    ;; Challenge asks before it decides whether to play its music.
-    (if (i32.eq (local.get $ordinal) (i32.const 201))
-      (then
-        (call $win16_call32_begin (i32.const 0))
-        (call $handle_midiOutGetNumDevs (i32.const 0) (i32.const 0) (i32.const 0)
-          (i32.const 0) (i32.const 0) (i32.const 0))
-        (call $win16_call32_end)
-        (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-        (call $win16_api_return (i32.const 0))
-        (return (i32.const 1))))
-    ;; 701 mciSendCommand(wDeviceID, wMessage, dwParam1, dwParam2). The two
-    ;; dwParams are the same dwords on both sides, and dwParam2 is usually a
-    ;; pointer to an MCI parameter block — a far pointer here, flat there.
-    (if (i32.eq (local.get $ordinal) (i32.const 701))
-      (then
-        (local.set $p2 (call $win16_far_to_guest
-          (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
-        (if (i32.eqz (call $win16_arg16 (i32.const 1))) (then (local.set $p2 (i32.const 0))))
-        (local.set $p1 (call $win16_arg32 (i32.const 2)))
-        (local.set $msg (call $win16_arg16 (i32.const 4)))
-        (local.set $dev (call $win16_arg16 (i32.const 5)))
-        (call $win16_call32_begin (i32.const 4))
-        (call $handle_mciSendCommandA (local.get $dev) (local.get $msg)
-          (local.get $p1) (local.get $p2) (i32.const 0) (i32.const 0))
-        (call $win16_call32_end)
-        (global.set $edx (i32.shr_u (global.get $eax) (i32.const 16)))
-        (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
-        (call $win16_api_return (i32.const 12))
-        (return (i32.const 1))))
-    ;; 706 mciGetErrorString(dwError, lpstrBuffer, wLength). Nothing here fails
-    ;; an MCI command in a way that has a message, so the buffer comes back
-    ;; empty and the call reports FALSE — which is what it reports for an error
-    ;; code it does not recognise.
-    (if (i32.eq (local.get $ordinal) (i32.const 706))
-      (then
-        (local.set $p2 (call $win16_far_to_guest
-          (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
-        (if (call $win16_arg16 (i32.const 2))
-          (then (call $gs8 (local.get $p2) (i32.const 0))))
-        (global.set $eax (i32.const 0))
-        (call $win16_api_return (i32.const 10))
-        (return (i32.const 1))))
+    (local $name i32) (local $flags i32)
     (if (i32.eq (local.get $ordinal) (i32.const 401))
       (then
         (call $win16_call32_begin (i32.const 0))
@@ -8422,70 +4451,6 @@
         (global.set $eax (i32.ne (global.get $eax) (i32.const 0)))
         (call $win16_api_return (i32.const 6))
         (return (i32.const 1))))
-    (i32.const 0))
-
-  ;; KEYBOARD.5 AnsiToOem(lpAnsiStr, lpOemStr) and .6 OemToAnsi. One code page
-  ;; here — the OEM and ANSI sets differ only above 0x7F, and nothing in this
-  ;; corpus writes those — so both are a copy, which is what the conversion
-  ;; comes to when the two encodings agree. AnsiToOem answers nothing;
-  ;; OemToAnsi answers TRUE.
-  (func $win16_oem_convert (param $to_ansi i32)
-    (local $src i32) (local $dst i32) (local $ch i32)
-    (local.set $dst (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
-    (local.set $src (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 3)) (call $win16_arg16 (i32.const 2))))
-    (block $done (loop $copy
-      (local.set $ch (call $gl8 (local.get $src)))
-      (call $gs8 (local.get $dst) (local.get $ch))
-      (br_if $done (i32.eqz (local.get $ch)))
-      (local.set $src (i32.add (local.get $src) (i32.const 1)))
-      (local.set $dst (i32.add (local.get $dst) (i32.const 1)))
-      (br $copy)))
-    (global.set $eax (select (i32.const 1) (i32.const 0) (local.get $to_ansi)))
-    (call $win16_api_return (i32.const 8)))
-
-  (func $win16_keyboard (param $ordinal i32) (result i32)
-    (if (i32.eq (local.get $ordinal) (i32.const 5))
-      (then (call $win16_oem_convert (i32.const 0)) (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 6))
-      (then (call $win16_oem_convert (i32.const 1)) (return (i32.const 1))))
-    (i32.const 0))
-
-  ;; SOUND is the Windows 3.0 tone generator — a voice queue driving the PC
-  ;; speaker, replaced by MMSYSTEM in 3.1 and gone entirely by Win95. Nothing
-  ;; here can play it, and OpenSound has a defined answer for exactly that
-  ;; case: a negative result means the device is not available, and every app
-  ;; that calls it is required to carry on without sound. That is a real
-  ;; answer, not a stubbed success — the alternative is accepting voices and
-  ;; then never sounding them, which looks like a broken emulator instead of a
-  ;; machine with no speaker. CloseSound is a no-op for the same reason; a
-  ;; program that never opened the device still balances its calls.
-  (func $win16_sound (param $ordinal i32) (result i32)
-    (if (i32.eq (local.get $ordinal) (i32.const 1))       ;; OpenSound
-      (then (call $win16_local_identity (i32.const 0) (i32.const 0xFFFF))
-            (return (i32.const 1))))
-    (if (i32.eq (local.get $ordinal) (i32.const 2))       ;; CloseSound
-      (then (call $win16_local_identity (i32.const 0) (i32.const 0)) (return (i32.const 1))))
-    (i32.const 0))
-
-  ;; WIN87EM is the 80x87 emulator every Windows 3.x compiler linked against.
-  ;; Its job is to stand in for a coprocessor that is not there: its entry
-  ;; points patch the caller's own code, and the state they work on is the
-  ;; emulator's, not the machine's. There IS a coprocessor here — src/06-fpu.wat
-  ;; — and GetWinFlags says so, which is the case the compilers' own code is
-  ;; written for: the floating-point instructions in the image are real x87
-  ;; instructions until something patches them into emulator calls. So the
-  ;; honest answer is to answer for the module and change nothing, rather than
-  ;; run its code, which reads a jump table through a selector no descriptor
-  ;; here describes and lands in a segment nothing filled — Fuji Golf's third
-  ;; call into it stopped that way.
-  ;;
-  ;; Ordinal 1 is the only entry any of these games imports.
-  (func $win16_win87em (param $ordinal i32) (result i32)
-    (if (i32.eq (local.get $ordinal) (i32.const 1))
-      (then (call $win16_local_identity (i32.const 0) (i32.const 0))
-            (return (i32.const 1))))
     (i32.const 0))
 
   (func $win16_commdlg (param $ordinal i32) (result i32)
@@ -8516,61 +4481,6 @@
 
   ;; A by-name import of a module this emulator implements. Returns 1 when the
   ;; call was made, 0 to leave it to the caller's trap.
-  ;; Name to ordinal for a module this emulator answers for itself. A real DLL
-  ;; has an export table GetProcAddress can read; an emulated one has only what
-  ;; is written down here — see the MMSYSTEM list in src/01-header.wat.
-  ;; Answers 0 for a name it does not know, which is what GetProcAddress
-  ;; reports when a module does not export something.
-  (global $WIN16_MMSYSTEM_NAMES i32 (i32.const 0x3E40))
-  (global $WIN16_BUILTIN_NAMES i32 (i32.const 0x3EA0))
-
-  ;; The KERNEL/USER/GDI half of the same idea, over its own table. That table
-  ;; carries the module in the top nibble of each ordinal word, so a name only
-  ;; answers for the module the caller actually asked.
-  (func $win16_builtin_ordinal (param $name i32) (param $module i32) (result i32)
-    (local $packed i32)
-    (local.set $packed
-      (call $win16_name_table_lookup (global.get $WIN16_BUILTIN_NAMES) (local.get $name)))
-    (if (i32.ne (i32.shr_u (local.get $packed) (i32.const 12)) (local.get $module))
-      (then (return (i32.const 0))))
-    (i32.and (local.get $packed) (i32.const 0x0FFF)))
-
-  (func $win16_mmsystem_ordinal (param $name i32) (result i32)
-    (call $win16_name_table_lookup (global.get $WIN16_MMSYSTEM_NAMES) (local.get $name)))
-
-  ;; Length-prefixed name, then the ordinal as a word; a zero length ends the
-  ;; table. The caller's name arrives folded to upper case, which is the form
-  ;; the tables are written in.
-  (func $win16_name_table_lookup (param $table i32) (param $name i32) (result i32)
-    (local $p i32) (local $n i32) (local $i i32)
-    (local.set $p (local.get $table))
-    (block $done (loop $entries
-      (local.set $n (i32.load8_u (local.get $p)))
-      (br_if $done (i32.eqz (local.get $n)))
-      (if (i32.eq (local.get $n) (i32.load8_u (local.get $name)))
-        (then
-          (local.set $i (i32.const 0))
-          ;; Two blocks, not one: running off the end of the name is the match,
-          ;; and a differing byte is not, so they cannot share an exit — a
-          ;; single block that both branches jump to lands past the answer and
-          ;; every name reads as unknown.
-          (block $mismatch
-            (block $matched
-              (loop $chars
-                (br_if $matched (i32.ge_u (local.get $i) (local.get $n)))
-                (br_if $mismatch (i32.ne
-                  (i32.load8_u (i32.add (i32.add (local.get $p) (i32.const 1))
-                                        (local.get $i)))
-                  (i32.load8_u (i32.add (i32.add (local.get $name) (i32.const 1))
-                                        (local.get $i)))))
-                (local.set $i (i32.add (local.get $i) (i32.const 1)))
-                (br $chars)))
-            (return (i32.load16_u (i32.add (i32.add (local.get $p) (i32.const 1))
-                                           (local.get $n)))))))
-      (local.set $p (i32.add (i32.add (local.get $p) (i32.const 3)) (local.get $n)))
-      (br $entries)))
-    (i32.const 0))
-
   (func $win16_builtin_by_name (param $module i32) (param $name i32) (result i32)
     (if (i32.eq (local.get $module) (i32.const 6))
       (then
@@ -8616,8 +4526,6 @@
     ;; A LineDDA callback has returned; the next point of the line is owed to it.
     (if (i32.eq (local.get $thunk_off) (global.get $WIN16_DDA_CB))
       (then (call $win16_dda_step) (return)))
-    (if (i32.eq (local.get $thunk_off) (global.get $WIN16_ENUMFONT_CB))
-      (then (call $win16_ef_step) (return)))
     ;; An NDDEAPI entry point the task took the address of and called.
     (if (i32.eq (local.get $thunk_off) (global.get $WIN16_NDDE_GETWINDOW))
       (then (call $win16_NDdeGetWindow) (return)))
@@ -8679,11 +4587,6 @@
     ;; apart from LoadBitmap-was-never-asked. Six words covers every API here
     ;; with a fixed argument list — LoadString's five, and one spare to show
     ;; where the frame ends.
-    ;; ESP as the task left it, for the stack-delta check in $win16_trace_ret.
-    ;; A Pascal callee must leave it exactly its own frame higher, and an API
-    ;; that pops the wrong number of bytes is invisible until something returns
-    ;; through the damage thousands of instructions later.
-    (global.set $win16_entry_esp (global.get $esp))
     (if (global.get $win16_trace)
       (then
         (call $host_log_i32 (i32.const 0xCA16A9F0))
@@ -8776,15 +4679,6 @@
               (then (call $win16_trace_ret) (return)))))
     (if (i32.eq (local.get $module) (i32.const 3))
       (then (if (call $win16_gdi (local.get $ordinal))
-              (then (call $win16_trace_ret) (return)))))
-    (if (i32.eq (local.get $module) (i32.const 12))
-      (then (if (call $win16_win87em (local.get $ordinal))
-              (then (call $win16_trace_ret) (return)))))
-    (if (i32.eq (local.get $module) (i32.const 4))
-      (then (if (call $win16_keyboard (local.get $ordinal))
-              (then (call $win16_trace_ret) (return)))))
-    (if (i32.eq (local.get $module) (i32.const 5))
-      (then (if (call $win16_sound (local.get $ordinal))
               (then (call $win16_trace_ret) (return)))))
     (if (i32.eq (local.get $module) (i32.const 6))
       (then (if (call $win16_shell (local.get $ordinal))

@@ -27,13 +27,6 @@ const OK_BUTTON = [319, 92];
 const LOCATE_FIELD = [80, 132];
 const LOCATE_OK = [284, 90];
 
-// The table itself. The CLI harness puts the window at 50,0 and the browser at
-// 20,20, so these are the CLI's points shifted by the difference -- the game
-// draws its hand in the same place inside its own window either way.
-const CARDS = [[220, 400], [290, 400], [360, 400]];
-const PASS_BUTTON = [290, 318];   // "Pass Left", and later "OK"
-const LOWEST_CARD = [170, 400];   // the two of clubs opens; the hand is sorted
-
 const CHROME_CANDIDATES = [
   process.env.CHROME,
   process.env.CHROME_PATH,
@@ -85,7 +78,7 @@ const hasDialog = (index) => {
 // The table is green baize and the cards on it are white -- the same two
 // fractions the CLI test reads out of its PNGs, measured on the window's own
 // back-canvas so a covered window is still readable.
-const tallyWindow = ({ index, wantTitle, box }) => {
+const tallyWindow = ({ index, wantTitle }) => {
   const app = runningApps[index];
   if (!app) return null;
   const base = (app.wine._hwndBase >>> 0) & 0xFFFF0000;
@@ -101,13 +94,9 @@ const tallyWindow = ({ index, wantTitle, box }) => {
   if (!surface || !surface.canvas) return null;
   const canvas = surface.canvas;
   const data = surface.ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-  // `box` narrows the count to one part of the table -- the middle, where a
-  // trick is, which is baize until somebody leads.
-  const [bx0, by0, bx1, by1] = box
-    || [20, 30, canvas.width - 20, canvas.height - 20];
   let green = 0, white = 0, total = 0;
-  for (let y = by0; y < by1 && y < canvas.height; y++) {
-    for (let x = bx0; x < bx1 && x < canvas.width; x++) {
+  for (let y = 30; y < canvas.height - 20; y++) {
+    for (let x = 20; x < canvas.width - 20; x++) {
       const i = (y * canvas.width + x) * 4;
       const r = data[i], g = data[i + 1], b = data[i + 2];
       total++;
@@ -267,44 +256,8 @@ function clearPngs(dir) {
   }
 }
 
-// Bring one instance's table to the front, so the clicks that follow land on
-// it. Two copies of one app sit at identical coordinates, and the taskbar is
-// the only way to reach the one underneath -- which is also why the taskbar
-// had to learn to raise rather than minimize.
-async function raise(page, index) {
-  const ok = await page.evaluate(i => {
-    // The taskbar has one button per captioned top-level window, in the
-    // renderer's own window order -- which is NOT the order the apps were
-    // launched in, and includes any dialogs. Clicking buttons[i] and hoping
-    // raises the wrong game as soon as either side has put a box up.
-    const app = runningApps[i];
-    if (!app) return false;
-    const base = (app.wine._hwndBase >>> 0) & 0xFFFF0000;
-    const order = Object.values(sharedRenderer.windows)
-      .filter(w => !w.isChild && w.hasCaption);
-    const at = order.findIndex(w => ((w.hwnd >>> 0) & 0xFFFF0000) === base);
-    const buttons = [...document.querySelectorAll('#task-buttons .task-btn')];
-    if (at < 0 || !buttons[at]) return false;
-    buttons[at].click();
-    // Raising is the point; if this instance is already in front the taskbar
-    // would minimize it instead, so put it back.
-    const mine = order.filter(w => ((w.hwnd >>> 0) & 0xFFFF0000) === base);
-    if (mine.some(w => !w.visible)) buttons[at].click();
-    return true;
-  }, index);
-  await sleep(600);
-  return ok;
-}
-
-// Three cards and the button: one seat's whole move in the passing round.
-async function passThree(page) {
-  for (const c of CARDS) await click(page, c);
-  await click(page, PASS_BUTTON);
-}
-
 module.exports = {
   NAME_FIELD, DEALER_RADIO, CONNECT_RADIO, OK_BUTTON, LOCATE_FIELD, LOCATE_OK,
-  CARDS, PASS_BUTTON, LOWEST_CARD, raise, passThree,
   findChrome, sleep, budget, outOfTime, until, installHelpers,
   click, type, retype, answerWelcome, answerLocate, dumpWindows,
   savePng, clearPngs,

@@ -139,37 +139,18 @@ if (fs.existsSync(screenshot)) {
     '.##..##.',
     '##....##',
   ];
-  // Read the glyph wherever it sits in the caption's right-hand corner rather
-  // than at fixed screen coordinates: b272399 widened the sizing frame from 3
-  // to 4px to match Win98, which moved every caption button one pixel down and
-  // left. The glyph's *shape* is the Win98 claim being made here, and it was
-  // still pixel-exact -- but a hardcoded origin reported it as a mismatch and
-  // printed the neighbouring pixels as if the drawing were wrong.
-  const inkAt = (x, y) => {
-    const offset = (y * png.width + x) * 4;
-    return png.data[offset] < 70 && png.data[offset + 1] < 70 &&
-      png.data[offset + 2] < 70 && png.data[offset + 3] !== 0;
-  };
-  const glyphAt = (ox, oy) => {
-    const rows = [];
-    for (let y = oy; y < oy + 7; y++) {
-      let row = '';
-      for (let x = ox; x < ox + 8; x++) row += inkAt(x, y) ? '#' : '.';
-      rows.push(row);
+  const actualCloseGlyph = [];
+  for (let y = 26; y < 33; y++) {
+    let row = '';
+    for (let x = 448; x < 456; x++) {
+      const offset = (y * png.width + x) * 4;
+      row += png.data[offset] < 70 && png.data[offset + 1] < 70 &&
+        png.data[offset + 2] < 70 && png.data[offset + 3] !== 0 ? '#' : '.';
     }
-    return rows.join('/');
-  };
-  let closeGlyphOrigin = null;
-  for (let oy = 20; oy <= 40 && !closeGlyphOrigin; oy++) {
-    for (let ox = 430; ox <= 470; ox++) {
-      if (glyphAt(ox, oy) === expectedCloseGlyph.join('/')) {
-        closeGlyphOrigin = [ox, oy];
-        break;
-      }
-    }
+    actualCloseGlyph.push(row);
   }
-  if (!closeGlyphOrigin) {
-    failures.push(`WinHelp close glyph differs from Win98 (at the old origin: ${glyphAt(448, 26)})`);
+  if (actualCloseGlyph.join('/') !== expectedCloseGlyph.join('/')) {
+    failures.push(`WinHelp close glyph differs from Win98 (${actualCloseGlyph.join('/')})`);
   }
   // The archived viewer restores this reference window at (115,18), placing
   // its 21px command bar at screen y=59. A hidden MS_WINICON parent leaves

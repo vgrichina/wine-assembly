@@ -2485,31 +2485,10 @@
 
   ;; ── Present helper: blit DIB to screen via SetDIBitsToDevice ─
   ;; Constructs a BITMAPINFOHEADER on the stack and calls the existing host import
-
-  ;; True when this top-level window is shared between DirectDraw and ordinary
-  ;; GDI: it already owns a WAT window surface and has at least one visible
-  ;; child. Both surfaces would attach to the same hwnd, and the host keeps
-  ;; only the most recent attach, so presenting straight from the DirectDraw
-  ;; surface would drop either the frame or the controls.
-  (func $dx_window_surface_shared (param $hwnd i32) (result i32)
-    (local $slot i32)
-    (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
-    (if (i32.eqz (call $gdi_window_surface_record (local.get $hwnd) (i32.const 0)))
-      (then (return (i32.const 0))))
-    (local.set $slot (i32.const 0))
-    (block $done (loop $scan
-      (local.set $slot (call $wnd_next_child_slot (local.get $hwnd) (local.get $slot)))
-      (br_if $done (i32.lt_s (local.get $slot) (i32.const 0)))
-      (if (call $wnd_is_effectively_visible (call $wnd_slot_hwnd (local.get $slot)))
-        (then (return (i32.const 1))))
-      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
-      (br $scan)))
-    (i32.const 0))
-
   (func $dx_present (param $entry_wa i32)
     (local $w i32) (local $h i32) (local $bpp i32) (local $pitch i32)
     (local $dib_wa i32) (local $bmi_wa i32) (local $i i32) (local $val i32)
-    (local $surface_id i32) (local $target_hwnd i32) (local $shared i32)
+    (local $surface_id i32) (local $target_hwnd i32)
     (local.set $w (i32.load16_u (i32.add (local.get $entry_wa) (i32.const 12))))
     (local.set $h (i32.load16_u (i32.add (local.get $entry_wa) (i32.const 14))))
     (local.set $bpp (i32.load16_u (i32.add (local.get $entry_wa) (i32.const 16))))
@@ -2524,26 +2503,13 @@
     (local.set $surface_id
       (i32.add (i32.const 0x00200000) (call $dx_slot_of (local.get $entry_wa))))
     (local.set $target_hwnd (call $dx_target_hwnd))
-    ;; ...but only while DirectDraw is the sole owner of the window. A window
-    ;; that also has ordinary GDI children has a WAT window surface, and both
-    ;; surfaces attach to the same hwnd, so whichever attaches last becomes
-    ;; the composited one and the other's pixels vanish. Age of Empires' name
-    ;; screen puts an EDIT child over a presented frame: the child's first
-    ;; paint created the window surface, that surface won the attach, and the
-    ;; screen went black for the rest of the session. Present through the
-    ;; window surface in that case -- one surface holding frame and controls
-    ;; together is what the real screen is -- and mark the children so they
-    ;; land back on top of each new frame.
-    (local.set $shared (call $dx_window_surface_shared (local.get $target_hwnd)))
-    (if (i32.eqz (local.get $shared))
+    (if (call $gdi_dx_dc_bind (local.get $surface_id))
       (then
-        (if (call $gdi_dx_dc_bind (local.get $surface_id))
+        (if (call $host_gdi_surface_attach (local.get $surface_id) (local.get $target_hwnd))
           (then
-            (if (call $host_gdi_surface_attach (local.get $surface_id) (local.get $target_hwnd))
-              (then
-                (drop (call $host_gdi_surface_upload (local.get $surface_id)
-                  (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)))
-                (return)))))))
+            (drop (call $host_gdi_surface_upload (local.get $surface_id)
+              (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)))
+            (return)))))
     ;; Build BITMAPINFO in a private DirectDraw scratch area. PAINT_SCRATCH
     ;; at 0xAD40 is reused by window/control paint paths during presentation.
     (local.set $bmi_wa (i32.const 0x00011140))
@@ -2588,20 +2554,7 @@
       (local.get $dib_wa) ;; bits WASM addr
       (local.get $bmi_wa) ;; bmi WASM addr
       (i32.const 0)) ;; colorUse = DIB_RGB_COLORS
-    (drop)
-    ;; The frame just overwrote the whole window surface, controls included.
-    ;; Repaint the children -- and only the children: the top-level's own
-    ;; WM_PAINT is what renders the next frame, so marking it here would spin
-    ;; the app's render loop as fast as it can present.
-    (if (local.get $shared)
-      (then
-        (local.set $i (i32.const 0))
-        (block $cdone (loop $cscan
-          (local.set $i (call $wnd_next_child_slot (local.get $target_hwnd) (local.get $i)))
-          (br_if $cdone (i32.lt_s (local.get $i) (i32.const 0)))
-          (call $paint_mark_visible_tree (call $wnd_slot_hwnd (local.get $i)))
-          (local.set $i (i32.add (local.get $i) (i32.const 1)))
-          (br $cscan))))))
+    (drop))
 
   ;; ════════════════════════════════════════════════════════════
   ;; IDirectDrawPalette methods

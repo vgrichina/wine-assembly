@@ -134,15 +134,13 @@ function readPng(file) {
 function textBandBounds(file) {
   if (!fs.existsSync(file)) return null;
   const img = readPng(file);
-  // Inside the RichEdit's client area, below its top border. x=0..9 and
-  // x>=386 are the window frame and x1=394/y0=132 caught both it and the
-  // editor's border line, so minX..maxX came back 4..392 for every paragraph
-  // no matter where the text sat. Centred "align" lands at x 295..320 against
-  // 22..47 for left, and its descenders reach y=152.
-  const x0 = 10;
-  const y0 = 134;
-  const x1 = Math.min(386, img.width);
-  const y1 = Math.min(156, img.height);
+  const x0 = 0;
+  // Stay below the ruler/border line and above the blank document body. The
+  // wider edit-client band includes the dark horizontal ruler edge, which makes
+  // left and centered paragraphs appear to span the full page width.
+  const y0 = 132;
+  const x1 = Math.min(394, img.width);
+  const y1 = Math.min(150, img.height);
   let minX = Infinity;
   let maxX = -1;
   let count = 0;

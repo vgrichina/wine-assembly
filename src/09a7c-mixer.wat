@@ -155,46 +155,47 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; mixerGetLineInfo{A,W}(hmxobj, pmxl, fdwInfo) -> MMRESULT. Picking the line
-  ;; is the same walk in both spellings; $wide only decides how the names in
-  ;; the MIXERLINE are written back.
-  (func $mixer_get_line_info (param $pmxl_g i32) (param $fdw i32) (param $wide i32)
+  (func $handle_mixerGetLineInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $p i32) (local $component i32) (local $line_id i32)
-    (local.set $p (call $g2w (local.get $pmxl_g)))
+    (local.set $p (call $g2w (local.get $arg1)))
     (local.set $component (i32.load offset=24 (local.get $p)))
-    (if (i32.eq (i32.and (local.get $fdw) (i32.const 0xf)) (i32.const 1))
+    (if (i32.eq (i32.and (local.get $arg2) (i32.const 0xf)) (i32.const 1))
       (then (local.set $line_id (i32.add (i32.load offset=8 (local.get $p)) (i32.const 1))))
       (else
-        (if (i32.eq (i32.and (local.get $fdw) (i32.const 0xf)) (i32.const 2))
+        (if (i32.eq (i32.and (local.get $arg2) (i32.const 0xf)) (i32.const 2))
           (then (local.set $line_id (i32.load offset=12 (local.get $p))))
           (else
             (if (i32.eq (local.get $component) (i32.const 0x1008)) (then (local.set $line_id (i32.const 1))))
             (if (i32.eq (local.get $component) (i32.const 0x1004)) (then (local.set $line_id (i32.const 2))))))))
-    (call $fill_mixer_line (local.get $p) (local.get $wide) (local.get $line_id)))
-
-  (func $handle_mixerGetLineInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $mixer_get_line_info (local.get $arg1) (local.get $arg2) (i32.const 0))
+    (call $fill_mixer_line (local.get $p) (i32.const 0) (local.get $line_id))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; 825: mixerGetLineInfoW(hmxobj, pmxl, fdwInfo) -> MMRESULT
   (func $handle_mixerGetLineInfoW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $mixer_get_line_info (local.get $arg1) (local.get $arg2) (i32.const 1))
+    (local $p i32) (local $component i32) (local $line_id i32)
+    (local.set $p (call $g2w (local.get $arg1)))
+    (local.set $component (i32.load offset=24 (local.get $p)))
+    (if (i32.eq (i32.and (local.get $arg2) (i32.const 0xf)) (i32.const 1))
+      (then (local.set $line_id (i32.add (i32.load offset=8 (local.get $p)) (i32.const 1))))
+      (else
+        (if (i32.eq (i32.and (local.get $arg2) (i32.const 0xf)) (i32.const 2))
+          (then (local.set $line_id (i32.load offset=12 (local.get $p))))
+          (else
+            (if (i32.eq (local.get $component) (i32.const 0x1008)) (then (local.set $line_id (i32.const 1))))
+            (if (i32.eq (local.get $component) (i32.const 0x1004)) (then (local.set $line_id (i32.const 2))))))))
+    (call $fill_mixer_line (local.get $p) (i32.const 1) (local.get $line_id))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; mixerGetLineControls{A,W}(hmxobj, pmxlc, fdwControls) -> MMRESULT. The only
-  ;; difference between the spellings is the width of the names written into
-  ;; each MIXERCONTROL, and hence its default size.
-  (func $mixer_get_line_controls (param $pmxlc_g i32) (param $fdw i32) (param $wide i32) (result i32)
+  (func $handle_mixerGetLineControlsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $p i32) (local $ctrl i32) (local $line_id i32) (local $kind i32) (local $cb i32)
-    (local.set $p (call $g2w (local.get $pmxlc_g)))
+    (local.set $p (call $g2w (local.get $arg1)))
     (local.set $ctrl (call $g2w (i32.load offset=20 (local.get $p))))
-    (if (i32.eqz (i32.load offset=16 (local.get $p)))
-      (then (i32.store offset=16 (local.get $p) (select (i32.const 228) (i32.const 148) (local.get $wide)))))
+    (if (i32.eqz (i32.load offset=16 (local.get $p))) (then (i32.store offset=16 (local.get $p) (i32.const 148))))
     (local.set $cb (i32.load offset=16 (local.get $p)))
     (local.set $line_id (i32.load offset=4 (local.get $p)))
-    (if (i32.eq (i32.and (local.get $fdw) (i32.const 0xf)) (i32.const 1))
+    (if (i32.eq (i32.and (local.get $arg2) (i32.const 0xf)) (i32.const 1))
       (then
         (local.set $line_id (i32.load offset=8 (local.get $p)))          ;; dwControlID
         (if (i32.ge_u (local.get $line_id) (i32.const 0x3000))
@@ -209,7 +210,7 @@
               (else
                 (local.set $kind (i32.const 0))
                 (local.set $line_id (i32.sub (local.get $line_id) (i32.const 0x1000)))))))))
-    (if (i32.eq (i32.and (local.get $fdw) (i32.const 0xf)) (i32.const 2))
+    (if (i32.eq (i32.and (local.get $arg2) (i32.const 0xf)) (i32.const 2))
       (then
         (if (i32.eq (i32.load offset=8 (local.get $p)) (i32.const 0x50030001))
           (then (local.set $kind (i32.const 0)))
@@ -219,24 +220,68 @@
               (else
                 (if (i32.eq (i32.load offset=8 (local.get $p)) (i32.const 0x10020001))
                   (then (local.set $kind (i32.const 2)))
-                  (else (return (i32.const 1025))))))))))               ;; MIXERR_INVALCONTROL
-    (if (i32.eqz (i32.and (local.get $fdw) (i32.const 0xf)))
+                  (else
+                    (global.set $eax (i32.const 1025))                 ;; MIXERR_INVALCONTROL
+                    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+                    (return)))))))))
+    (if (i32.eqz (i32.and (local.get $arg2) (i32.const 0xf)))
       (then
         (i32.store offset=12 (local.get $p) (i32.const 3))
-        (call $fill_mixer_control (local.get $ctrl) (local.get $wide) (local.get $line_id) (i32.const 0))
-        (call $fill_mixer_control (i32.add (local.get $ctrl) (local.get $cb)) (local.get $wide) (local.get $line_id) (i32.const 1))
-        (call $fill_mixer_control (i32.add (local.get $ctrl) (i32.mul (local.get $cb) (i32.const 2))) (local.get $wide) (local.get $line_id) (i32.const 2)))
+        (call $fill_mixer_control (local.get $ctrl) (i32.const 0) (local.get $line_id) (i32.const 0))
+        (call $fill_mixer_control (i32.add (local.get $ctrl) (local.get $cb)) (i32.const 0) (local.get $line_id) (i32.const 1))
+        (call $fill_mixer_control (i32.add (local.get $ctrl) (i32.mul (local.get $cb) (i32.const 2))) (i32.const 0) (local.get $line_id) (i32.const 2)))
       (else
         (i32.store offset=12 (local.get $p) (i32.const 1))
-        (call $fill_mixer_control (local.get $ctrl) (local.get $wide) (local.get $line_id) (local.get $kind))))
-    (i32.const 0))
-
-  (func $handle_mixerGetLineControlsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $mixer_get_line_controls (local.get $arg1) (local.get $arg2) (i32.const 0)))
+        (call $fill_mixer_control (local.get $ctrl) (i32.const 0) (local.get $line_id) (local.get $kind))))
+    (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_mixerGetLineControlsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $mixer_get_line_controls (local.get $arg1) (local.get $arg2) (i32.const 1)))
+    (local $p i32) (local $ctrl i32) (local $line_id i32) (local $kind i32) (local $cb i32)
+    (local.set $p (call $g2w (local.get $arg1)))
+    (local.set $ctrl (call $g2w (i32.load offset=20 (local.get $p))))
+    (if (i32.eqz (i32.load offset=16 (local.get $p))) (then (i32.store offset=16 (local.get $p) (i32.const 228))))
+    (local.set $cb (i32.load offset=16 (local.get $p)))
+    (local.set $line_id (i32.load offset=4 (local.get $p)))
+    (if (i32.eq (i32.and (local.get $arg2) (i32.const 0xf)) (i32.const 1))
+      (then
+        (local.set $line_id (i32.load offset=8 (local.get $p)))          ;; dwControlID
+        (if (i32.ge_u (local.get $line_id) (i32.const 0x3000))
+          (then
+            (local.set $kind (i32.const 2))
+            (local.set $line_id (i32.sub (local.get $line_id) (i32.const 0x3000))))
+          (else
+            (if (i32.ge_u (local.get $line_id) (i32.const 0x2000))
+              (then
+                (local.set $kind (i32.const 1))
+                (local.set $line_id (i32.sub (local.get $line_id) (i32.const 0x2000))))
+              (else
+                (local.set $kind (i32.const 0))
+                (local.set $line_id (i32.sub (local.get $line_id) (i32.const 0x1000)))))))))
+    (if (i32.eq (i32.and (local.get $arg2) (i32.const 0xf)) (i32.const 2))
+      (then
+        (if (i32.eq (i32.load offset=8 (local.get $p)) (i32.const 0x50030001))
+          (then (local.set $kind (i32.const 0)))
+          (else
+            (if (i32.eq (i32.load offset=8 (local.get $p)) (i32.const 0x20010002))
+              (then (local.set $kind (i32.const 1)))
+              (else
+                (if (i32.eq (i32.load offset=8 (local.get $p)) (i32.const 0x10020001))
+                  (then (local.set $kind (i32.const 2)))
+                  (else
+                    (global.set $eax (i32.const 1025))                 ;; MIXERR_INVALCONTROL
+                    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+                    (return)))))))))
+    (if (i32.eqz (i32.and (local.get $arg2) (i32.const 0xf)))
+      (then
+        (i32.store offset=12 (local.get $p) (i32.const 3))
+        (call $fill_mixer_control (local.get $ctrl) (i32.const 1) (local.get $line_id) (i32.const 0))
+        (call $fill_mixer_control (i32.add (local.get $ctrl) (local.get $cb)) (i32.const 1) (local.get $line_id) (i32.const 1))
+        (call $fill_mixer_control (i32.add (local.get $ctrl) (i32.mul (local.get $cb) (i32.const 2))) (i32.const 1) (local.get $line_id) (i32.const 2)))
+      (else
+        (i32.store offset=12 (local.get $p) (i32.const 1))
+        (call $fill_mixer_control (local.get $ctrl) (i32.const 1) (local.get $line_id) (local.get $kind))))
+    (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_mixerGetControlDetailsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

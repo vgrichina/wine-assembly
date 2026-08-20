@@ -17,7 +17,6 @@ const { createCanvas } = require('../lib/canvas-compat');
 const { createHostImports } = require('../lib/host-imports');
 const { compileWat } = require('../lib/compile-wat');
 const { Win98Renderer } = require('../lib/renderer');
-const { mountBundledFonts } = require('./render-helper');
 
 const ROOT = path.join(__dirname, '..');
 const SRC_DIR = path.join(ROOT, 'src');
@@ -44,12 +43,6 @@ async function main() {
     onExit: () => {},
   };
   const base = createHostImports(ctx);
-  // Must follow createHostImports: that is what puts ctx.vfs there, and
-  // mountBundledFonts silently does nothing without it. With no font mounted,
-  // draw_text draws no glyphs, so the two checks below that compare pixels
-  // before and after text appears could only ever fail -- which is exactly
-  // what they had been doing, against a combobox that paints correctly.
-  mountBundledFonts(ctx);
   base.host.memory = memory;
   base.host.create_thread = () => 0;
   base.host.exit_thread   = () => 0;

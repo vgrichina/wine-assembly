@@ -99,7 +99,7 @@ async function main() {
     '--trace-api=EndDialog',
     '--trace-host=destroy_window',
     '--no-close',
-    '--input="10:273:2,20:wait-title:Winamp:1000,420:click:263:164,760:menu-dump:eqmenu,780:click:260:176,820:click:445:196,1000:dlg-dump:eqdlg,1040:click:208:320,1280:stop"',
+    '--input="10:273:2,20:wait-title:Winamp:1000,420:click:263:164,760:menu-dump:eqmenu,780:click:260:176,820:click:445:196,1000:dlg-dump:eqdlg,1040:click:176:281,1280:stop"',
   ].join(' ');
   console.log('');
   console.log('$', dialogCmd);
@@ -205,15 +205,12 @@ async function main() {
   const closeCmd = [
     `node "${RUN}"`,
     `--exe="${EXE}"`,
-    '--max-batches=1500',
+    '--max-batches=1100',
     '--batch-size=100',
     '--quiet-api',
     '--quiet-blocks',
     '--no-close',
-    // The input queue is strictly ordered and each click waits for the guest
-    // to be ready, so the Cancel click does not land until ~batch 917 -- the
-    // after-close dump has to be scheduled past that or it never runs at all.
-    '--input="10:273:2,20:wait-title:Winamp:1000,420:click:263:164,460:click:260:176,500:click:445:196,650:dlg-dump:opened,670:click:208:320,1100:dlg-dump:after-close,1200:stop"',
+    '--input="10:273:2,20:wait-title:Winamp:1000,420:click:263:164,460:click:260:176,500:click:445:196,650:dlg-dump:opened,670:click:176:281,860:dlg-dump:after-close,890:stop"',
   ].join(' ');
   console.log('');
   console.log('$', closeCmd);
@@ -243,19 +240,13 @@ async function main() {
   const eqfCmd = [
     `node "${RUN}"`,
     `--exe="${EXE}"`,
-    '--max-batches=2200',
+    '--max-batches=1150',
     '--batch-size=100',
     '--quiet-api',
     '--quiet-blocks',
     '--trace-api=GetOpenFileNameA',
     '--no-close',
-    // Every click waits for the guest to be ready before it lands, and the
-    // queue is strictly ordered, so the Load/Preset... clicks scheduled at
-    // 780 and 820 actually fire around batch 1030-1070. The dump has to be
-    // scheduled past that, and the run has to have batches left to serve the
-    // GetOpenFileNameA the second click causes -- at 1150 the call was the
-    // last thing in the run and nothing ever dumped the file dialog.
-    '--input="10:273:2,20:wait-title:Winamp:1000,420:click:263:164,780:click:260:176,820:click:445:256,1500:dlg-dump:eqfopen,1600:stop"',
+    '--input="10:273:2,20:wait-title:Winamp:1000,420:click:263:164,780:click:260:176,820:click:445:256,1000:dlg-dump:eqfopen,1060:stop"',
   ].join(' ');
   console.log('');
   console.log('$', eqfCmd);

@@ -390,15 +390,11 @@
             ;; WM_DESTROY as app shutdown and call PostQuitMessage.
             ;; Use $dlg_pump_hwnd: $dlg_hwnd may have been clobbered by a
             ;; nested modeless CreateDialogParamA inside the modal's dlgproc.
-            (local.set $arg4 (call $wnd_get_owner (global.get $dlg_pump_hwnd)))
             (if (call $wnd_table_get (global.get $dlg_pump_hwnd))
               (then
                 (call $wnd_destroy_children (global.get $dlg_pump_hwnd))
                 (call $wnd_table_remove (global.get $dlg_pump_hwnd))
                 (call $host_destroy_window (global.get $dlg_pump_hwnd))))
-            ;; The dialog and its controls held the focus; hand it back to the
-            ;; owner so an app that paused on WM_KILLFOCUS resumes.
-            (call $focus_restore_after_modal (local.get $arg4))
             (global.set $eax (global.get $dlg_result))
             (global.set $eip (global.get $dlg_ret_addr))
             (global.set $dlg_pump_hwnd (i32.const 0))
@@ -453,25 +449,6 @@
             (local.set $arg2 (i32.const 0))            ;; wParam
             (local.set $arg3 (i32.const 0))            ;; lParam
             (local.set $arg4 (call $wnd_table_get (local.get $arg0)))
-            ;; A hidden window has no update region on Win98, so a paint that
-            ;; was queued before it was hidden -- or was never shown at all --
-            ;; must be dropped, not delivered. A WAT-native control paints
-            ;; through its own hwnd+0x40000 DC and so is not saved by the
-            ;; empty visible region a real window DC would get: NSIS's license
-            ;; page keeps an invisible SS_BLACKRECT placeholder over the whole
-            ;; page area to position the child page dialog, and delivering its
-            ;; queued WM_PAINT filled the page solid black. The modeless drain
-            ;; ($paint_drain_native_control_paints) already declines this way.
-            (if (i32.and
-                  (i32.ne (call $ctrl_table_get_class (local.get $arg0)) (i32.const 0))
-                  (i32.eqz (call $wnd_is_effectively_visible (local.get $arg0))))
-              (then
-                (call $ctrl_paint_trace_emit (local.get $arg0)
-                  (call $ctrl_table_get_class (local.get $arg0)) (i32.const 2))
-                (call $update_clear_hwnd (local.get $arg0))
-                (global.set $eip (global.get $dlg_loop_thunk))
-                (global.set $steps (i32.const 0))
-                (return)))
             ;; A WAT-native control paints itself, whether or not the app has
             ;; subclassed it. Routing WM_PAINT at its current wndproc sends it
             ;; to the subclass, which chains back through CallWindowProc -- and

@@ -207,11 +207,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return_call $next))
   (func $th_alu_m16_i16 (param $op i32)
     (local $addr i32) (local $imm i32) (local $val i32)
-    ;; The immediate is masked to sixteen bits like the memory operand: a
-    ;; sign-extended imm8 arrives as 0xFFFFFFxx and would compare unsigned
-    ;; against a 16-bit value as though it were enormous. See $th_alu_r16_i16.
-    (local.set $addr (call $read_addr))
-    (local.set $imm (i32.and (call $read_thread_word) (i32.const 0xFFFF)))
+    (local.set $addr (call $read_addr)) (local.set $imm (call $read_thread_word))
     (local.set $val (call $do_alu32 (local.get $op) (call $gl16 (local.get $addr)) (local.get $imm)))
     (if (i32.ne (local.get $op) (i32.const 7)) (then (call $gs16 (local.get $addr) (local.get $val))))
     (global.set $flag_res (i32.and (global.get $flag_res) (i32.const 0xFFFF)))
@@ -372,7 +368,7 @@
     (local $addr i32) (local $alu i32) (local $imm i32) (local $val i32)
     (local.set $addr (call $ea_from_op (local.get $op)))
     (local.set $alu (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF)))
-    (local.set $imm (i32.and (call $read_thread_word) (i32.const 0xFFFF)))
+    (local.set $imm (call $read_thread_word))
     (local.set $val (call $do_alu32 (local.get $alu) (call $gl16 (local.get $addr)) (local.get $imm)))
     (if (i32.ne (local.get $alu) (i32.const 7)) (then (call $gs16 (local.get $addr) (local.get $val))))
     (global.set $flag_res (i32.and (global.get $flag_res) (i32.const 0xFFFF)))

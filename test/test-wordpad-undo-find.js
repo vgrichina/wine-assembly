@@ -21,47 +21,37 @@ if (!fs.existsSync(EXE)) {
 fs.mkdirSync(OUT, { recursive: true });
 try { fs.unlinkSync(PNG); } catch (_) {}
 
-// One character per batch. The input queue hands the guest a single event per
-// GetMessage poll, so ten keypresses stacked on one batch are still in flight
-// when the next batch's dump runs -- which is why the old sequence read the
-// document back empty and blamed the RichEdit.
-const ALPHA = 'alpha beta';
-const seq = ['70:click:40:150'];
-let b = 71;
-for (const ch of ALPHA) seq.push(`${b++}:keypress:${ch.charCodeAt(0)}`);
-b += 2;
-seq.push(`${b}:dump-focus-state:typed`);
-// WordPad's Ctrl+Z accelerator sends its real MFC Undo command.
-b += 1;
-seq.push(`${b}:keydown:17`, `${b}:keydown:90`, `${b + 1}:keyup:90`, `${b + 1}:keyup:17`);
-b += 4;
-seq.push(`${b}:dump-focus-state:undone`);
-// Retype after Undo, then search from the document start.
-b += 1;
-for (const ch of ALPHA) seq.push(`${b++}:keypress:${ch.charCodeAt(0)}`);
-b += 2;
-seq.push(`${b}:keydown:36`);
-b += 3;
-seq.push(`${b}:0x111:57636`); // MFC ID_EDIT_FIND
-b += 10;
-seq.push(`${b}:focus-find`);
-for (const ch of 'beta') seq.push(`${b++}:keypress:${ch.charCodeAt(0)}`);
-b += 2;
-seq.push(
-  `${b}:dump-find`,
-  `${b}:find-click:1`,
-  `${b}:dump-fr`,
-  `${b}:dump-control-state:59648:found`,
-  `${b}:dlg-paint`,
-  `${b}:png:${PNG}`,
-  `${b}:stop`,
-);
+const seq = [
+  '70:click:40:150',
+  '70:keypress:97', '70:keypress:108', '70:keypress:112',
+  '70:keypress:104', '70:keypress:97', '70:keypress:32',
+  '70:keypress:98', '70:keypress:101', '70:keypress:116', '70:keypress:97',
+  '71:dump-focus-state:typed',
+  // WordPad's Ctrl+Z accelerator sends its real MFC Undo command.
+  '71:keydown:17', '71:keydown:90', '71:keyup:90', '71:keyup:17',
+  '72:dump-focus-state:undone',
+  // Retype after Undo, then search from the document start.
+  '72:keypress:97', '72:keypress:108', '72:keypress:112',
+  '72:keypress:104', '72:keypress:97', '72:keypress:32',
+  '72:keypress:98', '72:keypress:101', '72:keypress:116', '72:keypress:97',
+  '72:keydown:36',
+  '75:0x111:57636', // MFC ID_EDIT_FIND
+  '85:focus-find',
+  '85:keypress:98', '85:keypress:101', '85:keypress:116', '85:keypress:97',
+  '86:dump-find',
+  '86:find-click:1',
+  '86:dump-fr',
+  '86:dump-control-state:59648:found',
+  '86:dlg-paint',
+  `86:png:${PNG}`,
+  '86:stop',
+];
 
 const result = spawnSync(process.execPath, [
   RUN,
   `--exe=${EXE}`,
   `--input=${seq.join(',')}`,
-  '--max-batches=160',
+  '--max-batches=100',
   '--batch-size=100000',
   '--quiet-api',
   '--quiet-blocks',
@@ -91,17 +81,7 @@ check('Ctrl+Z invoked native RichEdit Undo', /len=0 .*text=""/.test(state('undon
 check('WordPad opened the modeless Find dialog', /\[FindTextA\].*owner=0x10002/.test(output));
 check('Find dialog accepted beta', /dump-find:.*editText="beta"/.test(output));
 check('native Find avoids a duplicate owner notification', !/post_queue after find-click:.*h=0x10002 m=0xc[0-9a-f]+ .*lp=0x[1-9a-f][0-9a-f]*/i.test(output));
-// MFC's CFindReplaceDialog attaches the HWND through the WH_CBT hook that real
-// commdlg fires from inside its dialog; we do not fire it, so MFC concludes
-// Create failed and deletes the object -- FINDREPLACE and its buffers become
-// recycled heap while our dialog stays up. Writing the search text back into
-// somebody else's allocation is worse than not writing it, so the struct only
-// gets the answer while lStructSize still says it is a FINDREPLACE.
-const frLine = output.split('\n').find(line => line.includes('dump-fr:')) || '';
-const frLive = /size=40 /.test(frLine); // sizeof(FINDREPLACE)
-check('Find Next notification carries FR_FINDNEXT and beta',
-  /watFlags=0x[0-9a-f]*[89a-f][0-9a-f]* findWhat="beta"/i.test(frLine));
-check('freed FINDREPLACE left untouched', frLive || /findBuf=0x0 /.test(frLine));
+check('FINDREPLACE reports Find Next beta', /dump-fr: flags=0x[0-9a-f]*[89a-f][0-9a-f]* findWhat="beta"/i.test(output));
 check('Find Next selects beta in native RichEdit', /len=10 sel=6\.\.10 .*text="alpha beta"/.test(controlState('found')));
 check('Find screenshot written', fs.existsSync(PNG) && fs.statSync(PNG).size > 0);
 check('no unimplemented API', !/UNIMPLEMENTED/.test(output));

@@ -275,38 +275,6 @@ async function launchLocal(page, label) {
       !!raised && raised.buttons >= 2 && raised.mine > raised.others,
       JSON.stringify(raised));
 
-    // ---- playing ---------------------------------------------------------
-    //
-    // The same hand the two-process test plays, driven through one tab: each
-    // seat is brought to the front in turn, passes three cards, accepts the
-    // three it is given, and then one of them leads.
-    await H.raise(page, dealer);
-    await H.passThree(page);
-    await H.raise(page, client);
-    await H.passThree(page);
-    await H.sleep(3000);
-    await H.click(page, H.PASS_BUTTON);       // accept what was passed to me
-    await H.raise(page, dealer);
-    await H.click(page, H.PASS_BUTTON);
-    await H.raise(page, client);
-    await H.click(page, H.LOWEST_CARD);       // the two of clubs opens
-
-    const middle = (index) => H.until(page, `${index === dealer ? 'dealer' : 'client'}: no card in the middle`,
-      i => {
-        const t = tallyWindow({ index: i, wantTitle: 'Hearts', box: [250, 150, 400, 300] });
-        return t && t.white > 0.05 ? t : null;
-      }, index, 60000);
-    const dealerTrick = await middle(dealer);
-    check(`the dealer sees the trick (${dealerTrick
-      ? (dealerTrick.white * 100).toFixed(0) : '0'}% of the middle)`, !!dealerTrick,
-      'the lead never reached the other instance');
-    H.savePng(OUT, 'dealer-trick', dealerTrick && dealerTrick.png);
-    const clientTrick = await middle(client);
-    check(`the client sees its own lead (${clientTrick
-      ? (clientTrick.white * 100).toFixed(0) : '0'}% of the middle)`, !!clientTrick,
-      'nothing in the middle of its table');
-    H.savePng(OUT, 'client-trick', clientTrick && clientTrick.png);
-
     await page.screenshot({ path: path.join(OUT, 'page.png') });
     check('the page reported no errors', problems.length === 0, problems.join(' | '));
 

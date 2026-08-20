@@ -145,24 +145,16 @@
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
-  ;; The character-writing half of WriteConsole, shared by both spellings: the
-  ;; cursor, wrap and control-character rules are identical, only the width of
-  ;; the source characters differs. WriteConsoleA used to carry its own copy of
-  ;; this loop in 09a-handlers.wat, and that copy had gone stale — it wrote to
-  ;; the hard-coded addresses the console buffer used to live at instead of
-  ;; $CONSOLE_TEXT/$CONSOLE_ATTR, never called $console_cells_ensure, and never
-  ;; refreshed, so ANSI console output landed in unrelated memory and was
-  ;; invisible.
-  (func $console_write (param $buf_g i32) (param $count i32) (param $wide i32)
-    (local $i i32) (local $ch i32) (local $off i32) (local $src i32) (local $step i32)
+  ;; WriteConsoleW(hConsole, lpBuffer, nNumberOfCharsToWrite, lpNumberOfCharsWritten, lpReserved) → BOOL
+  ;; Writes UTF-16 chars to console buffer at cursor position, advancing cursor
+  (func $handle_WriteConsoleW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $i i32) (local $ch i32) (local $off i32) (local $src i32)
     (call $console_cells_ensure)
-    (local.set $step (select (i32.const 2) (i32.const 1) (local.get $wide)))
-    (local.set $src (call $g2w (local.get $buf_g)))
+    (local.set $src (call $g2w (local.get $arg1)))
     (local.set $i (i32.const 0))
     (block $done (loop $write
-      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
-      (local.set $ch (call $load_char
-        (i32.add (local.get $src) (i32.mul (local.get $i) (local.get $step))) (local.get $wide)))
+      (br_if $done (i32.ge_u (local.get $i) (local.get $arg2)))
+      (local.set $ch (i32.load16_u (i32.add (local.get $src) (i32.mul (local.get $i) (i32.const 2)))))
       (if (i32.eq (local.get $ch) (i32.const 10)) ;; newline
         (then
           (global.set $console_cursor_x (i32.const 0))
@@ -182,14 +174,10 @@
                 (global.set $console_cursor_y (i32.add (global.get $console_cursor_y) (i32.const 1)))))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $write)))
-    (call $console_refresh))
-
-  ;; WriteConsoleW(hConsole, lpBuffer, nNumberOfCharsToWrite, lpNumberOfCharsWritten, lpReserved) → BOOL
-  (func $handle_WriteConsoleW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $console_write (local.get $arg1) (local.get $arg2) (i32.const 1))
     (if (local.get $arg3)
       (then (i32.store (call $g2w (local.get $arg3)) (local.get $arg2))))
     (global.set $eax (i32.const 1))
+    (call $console_refresh)
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
   ;; WriteConsoleOutputW(hConsole, lpBuffer, dwBufferSize, dwBufferCoord, lpWriteRegion) → BOOL
@@ -292,13 +280,17 @@
   ;; ReadConsoleW(hConsole, lpBuffer, nNumberOfCharsToRead, lpNumberOfCharsRead, pInputControl) → BOOL
   ;; No input available — return 0 chars read
   (func $handle_ReadConsoleW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_ReadConsoleA
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+    (if (local.get $arg3)
+      (then (i32.store (call $g2w (local.get $arg3)) (i32.const 0))))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
   ;; ReadConsoleInputW — same as A version
   (func $handle_ReadConsoleInputW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_ReadConsoleInputA
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+    (if (local.get $arg3)
+      (then (i32.store (call $g2w (local.get $arg3)) (i32.const 0))))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; ReadConsoleOutputW(hConsole, lpBuffer, dwBufferSize, dwBufferCoord, lpReadRegion) → BOOL
   ;; Read CHAR_INFO from console buffer

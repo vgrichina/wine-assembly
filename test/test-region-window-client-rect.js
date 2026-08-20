@@ -12,9 +12,7 @@ const { bootRenderHarness } = require('./render-helper');
 
   renderer.createWindow(hwnd, style, 26, 29, 275, 116, 'Winamp 2.91', 0, instance, memory);
   renderer.windows[hwnd].visible = true;
-  // No guest wndproc: 1 is not an address, and once wnd_destroy_tree started
-  // sending WM_DESTROY the emulator went off and executed it.
-  e.wnd_table_set(hwnd, 0);
+  e.wnd_table_set(hwnd, 1);
   e.wnd_set_style_export(hwnd, style);
 
   e.host_resize_commit(hwnd, 26, 29, 275, 116);

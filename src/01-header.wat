@@ -891,31 +891,6 @@
     "\11MIDIOUTGETNUMDEVS\c9\00"
     "\11WAVEOUTGETNUMDEVS\91\01"
     "\00")
-  ;; The same shape for the entry points apps look up in KERNEL, GDI and USER
-  ;; by name rather than importing. A module this emulator answers for has no
-  ;; export table to search, so the name has to be matched here and turned into
-  ;; an ordinal — see $win16_builtin_ordinal. JigSawed asks GDI for
-  ;; CreateRectRgn before it will draw its board.
-  ;;
-  ;; The word after each name is the ordinal with the module number in its top
-  ;; nibble (1 KERNEL, 2 USER, 3 GDI), because one table serves all three and
-  ;; ordinals collide across them — GDI.47 and KERNEL.47 are different calls.
-  ;; No Win16 ordinal reaches 4096, so the nibble is free.
-  ;;
-  ;; Every name here is one a game in the corpus actually asks for: Visual
-  ;; Basic's Declare statement is a GetProcAddress by name, and a NULL comes
-  ;; back to the program as "Sub or Function not defined".
-  (data (i32.const 0x3EA0)
-    "\0dCREATERECTRGN\40\30"
-    "\15CREATERECTRGNINDIRECT\41\30"
-    "\0eGETSTOCKOBJECT\57\30"
-    "\0bRECTVISIBLE\68\30"
-    "\0dGETDEVICECAPS\50\30"
-    "\06BITBLT\22\30"
-    "\0fGETMODULEHANDLE\2f\10"
-    "\11GETMODULEFILENAME\31\10"
-    "\14GETPRIVATEPROFILEINT\7f\10"
-    "\00")
   (data (i32.const 0x11EE0) "Hearts$\00MSHearts\00Hearts\00\00")
 
   ;; MessageBox system strings mirrored in the WAT-owned reserved page just
@@ -1170,7 +1145,7 @@
   ;; 0x00012000  60MB    Guest address space (PE sections + DLLs + large data)
   ;;   For an NE task image_base is 0, so guest 0x00100000 + 8MB is the Win16
   ;;   selector arena (WIN16_ARENA): one 64KB slot per selector index.
-  ;;   Slot WIN16_SEG_MAX (guest 0x01FF0000) is past the last usable selector,
+  ;;   Slot WIN16_SEG_MAX (guest 0x008F0000) is past the last usable selector,
   ;;   so no far pointer can name it; it holds the Win16 handle table.
   ;; 0x03C12000  1MB     Former low main stack slot, now free for guest heap
   ;; 0x03D12000  ...     Guest heap grows upward; VirtualAlloc reserves grow downward from thread cache
@@ -2330,21 +2305,13 @@
   ;; ---- Win16 / NE loader state (src/08c-ne-loader.wat) ----
   ;; WIN16_SEG_TABLE has one spare entry past WIN16_SEG_MAX, used as scratch by
   ;; $win16_apply_relocs for the entry-table segment out-parameter.
-  ;; 511 entries x 16 bytes + 1 scratch, which is exactly the 8KB between here
-  ;; and WIN16_THUNK_TABLE. It was 128 entries at 0x07E08400, which is 0x800
-  ;; from WIN16_THUNK_TABLE and could not grow in place; the obvious-looking
-  ;; space at 0x07E03000 turned out to be inside API_HASH_TABLE, whose size
-  ;; global says 32KB rather than the 12KB its comment claims. This address was
-  ;; checked with tools/wat-memory-map.js.
-  ;;
-  ;; Every GlobalAlloc costs a whole selector, because a selector is what a
-  ;; Win16 global handle *is* — so the ceiling here is an out-of-memory limit,
-  ;; not a bookkeeping one. Rattler Race makes 140 global allocations loading
-  ;; its form and ran out at 255, and VB reports that as its error 7 with an
-  ;; empty message box. Slot MAX is the handle table, at guest 0x01FF0000, and
-  ;; the arena ends at 32MB — well clear of the guest heap at 0x03C12000.
+  ;; 256 entries x 16 bytes + 1 scratch. It was 128 entries at 0x07E08400,
+  ;; which is 0x800 from WIN16_THUNK_TABLE and could not grow in place; the
+  ;; obvious-looking space at 0x07E03000 turned out to be inside API_HASH_TABLE,
+  ;; whose size global says 32KB rather than the 12KB its comment claims. This
+  ;; address was checked with tools/wat-memory-map.js.
   (global $WIN16_SEG_TABLE i32 (i32.const 0x079C5000))
-  (global $WIN16_SEG_MAX   i32 (i32.const 510))
+  (global $WIN16_SEG_MAX   i32 (i32.const 255))
   ;; One entry per distinct (module, ordinal) the task and its DLLs import.
   ;; 256 was not enough once a DLL as large as VBRUN100 was in the picture, and
   ;; the table is now beside the segment table with room for 2048 — still only
@@ -2424,12 +2391,6 @@
   (global $WIN16_HANDLE_BASE i32 (i32.const 0x100))
   ;; --trace-win16: log every dispatch, not only the one that stops the task.
   (global $win16_trace (mut i32) (i32.const 0))
-  ;; --trace-fpu: log every x87 exception flag as it is raised or cleared. The
-  ;; flags are sticky -- nothing clears them but FCLEX/FINIT -- so a program
-  ;; that reads the status word sees whatever the last few thousand
-  ;; instructions left there, and "Division by zero" can be reported an
-  ;; arbitrary distance from the divide that set ZE.
-  (global $fpu_trace (mut i32) (i32.const 0))
   ;; The task's real ESP while a Win16 handler is borrowing the 32-bit stack to
   ;; call a $handle_* — see $win16_call32_begin in src/09e-win16-api.wat.
   (global $win16_esp_save (mut i32) (i32.const 0))

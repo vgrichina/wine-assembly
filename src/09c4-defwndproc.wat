@@ -84,7 +84,6 @@
     (local $simple_child_border i32)
     (local $glyph_brush i32)
     (local $frame i32)
-    (local $bd_l i32) (local $bd_t i32) (local $bd_r i32) (local $bd_b i32)
 
     ;; NC paint gets a real typed DC with a WAT-built visible clip:
     ;; window rect minus client rect. JS only applies this region to the
@@ -113,41 +112,10 @@
     (if (local.get $simple_child_border)
       (then
         ;; Plain WS_CHILD|WS_BORDER controls get a simple 1px border, not
-        ;; a top-level raised frame.
-        ;;
-        ;; Paint the four border bands explicitly instead of flooding the
-        ;; window rect and trusting the NC clip to carve the client back
-        ;; out: a WAT-native control lays itself out and never runs
-        ;; WM_NCCALCSIZE, so its client rect is all zeroes, nothing gets
-        ;; carved, and the flood covers the control's own face. That is
-        ;; what painted NSIS's license edit solid black. With no client
-        ;; rect to go by, fall back to the 1px inset WS_BORDER reserves.
-        (local.set $bd_l (call $client_rect_get_l (local.get $hwnd)))
-        (local.set $bd_t (call $client_rect_get_t (local.get $hwnd)))
-        (local.set $bd_r (call $client_rect_get_r (local.get $hwnd)))
-        (local.set $bd_b (call $client_rect_get_b (local.get $hwnd)))
-        (if (i32.or (i32.ge_s (local.get $bd_l) (local.get $bd_r))
-                    (i32.ge_s (local.get $bd_t) (local.get $bd_b)))
-          (then
-            (local.set $bd_l (i32.const 1))
-            (local.set $bd_t (i32.const 1))
-            (local.set $bd_r (i32.sub (local.get $w) (i32.const 1)))
-            (local.set $bd_b (i32.sub (local.get $h) (i32.const 1)))))
+        ;; a top-level raised frame. The NC clip excludes the client inset.
         (drop (call $host_gdi_fill_rect (local.get $hdc)
                 (i32.const 0) (i32.const 0)
-                (local.get $w) (local.get $bd_t)
-                (i32.const 0x30014)))
-        (drop (call $host_gdi_fill_rect (local.get $hdc)
-                (i32.const 0) (local.get $bd_b)
                 (local.get $w) (local.get $h)
-                (i32.const 0x30014)))
-        (drop (call $host_gdi_fill_rect (local.get $hdc)
-                (i32.const 0) (local.get $bd_t)
-                (local.get $bd_l) (local.get $bd_b)
-                (i32.const 0x30014)))
-        (drop (call $host_gdi_fill_rect (local.get $hdc)
-                (local.get $bd_r) (local.get $bd_t)
-                (local.get $w) (local.get $bd_b)
                 (i32.const 0x30014)))
         (drop (call $host_release_dc (local.get $hdc)))
         (return (i32.const 0))))
@@ -215,14 +183,15 @@
         (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30022)))
         (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
         (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0xFFFFFF)))
+        ;; PAINT_SCRATCH RECT: l, t, r, b
+        (i32.store           (global.get $PAINT_SCRATCH) (i32.add (local.get $cap_l) (i32.const 4)))
+        (i32.store offset=4  (global.get $PAINT_SCRATCH) (local.get $cap_top))
+        (i32.store offset=8  (global.get $PAINT_SCRATCH) (local.get $cap_r))
+        (i32.store offset=12 (global.get $PAINT_SCRATCH) (local.get $cap_bot))
         ;; DT_LEFT(0) | DT_VCENTER(4) | DT_SINGLELINE(0x20) | DT_NOPREFIX(0x800) = 0x824
-        ;; This takes its own scratch slot, so it no longer overwrites the
-        ;; window rect this function is still holding in $rect.
         (drop (call $host_gdi_draw_text (local.get $hdc)
                 (local.get $title_wa) (local.get $title_len)
-                (call $paint_rect (i32.add (local.get $cap_l) (i32.const 4))
-                                  (local.get $cap_top)
-                                  (local.get $cap_r) (local.get $cap_bot))
+                (global.get $PAINT_SCRATCH)
                 (i32.const 0x824) (i32.const 0)))))
 
     ;; -------------------------------------------------
@@ -586,7 +555,9 @@
     (local $hdc i32) (local $slot i32) (local $base i32) (local $aux i32)
     (local $cl i32) (local $ct i32) (local $cr i32) (local $cb i32)
     (if (i32.eqz (local.get $hwnd)) (then (return)))
-    (local.set $rect (call $paint_scratch_take))
+    ;; Reuse PAINT_SCRATCH for the rect — it's 16 bytes and not in use
+    ;; between the GetWindowRect/DrawText overlap here.
+    (local.set $rect (global.get $PAINT_SCRATCH))
     (call $host_get_window_rect (local.get $hwnd) (local.get $rect))
     (local.set $w (i32.sub (i32.load offset=8  (local.get $rect))
                             (i32.load         (local.get $rect))))
@@ -706,7 +677,7 @@
     (local $is_child i32) (local $simple_child_border i32)
     (local $bw i32) (local $cy i32) (local $bot i32) (local $right i32)
     (if (i32.eqz (local.get $hwnd)) (then (return)))
-    (local.set $rect (call $paint_scratch_take))
+    (local.set $rect (global.get $PAINT_SCRATCH))
     (call $host_get_window_rect (local.get $hwnd) (local.get $rect))
     (local.set $w (i32.sub (i32.load offset=8  (local.get $rect))
                             (i32.load         (local.get $rect))))
@@ -776,23 +747,11 @@
         (local.set $bot (i32.add (local.get $bot) (i32.const 2)))))
     ;; Standard window scrollbars are non-client strips. USER removes their
     ;; 16px metrics from the usable client area whenever the style bit is set.
-    ;; Again not for WAT-native controls, and for the same reason as the edge
-    ;; above: every control wndproc that honours WS_VSCROLL/WS_HSCROLL measures
-    ;; the strip off its *window* rect ($ctrl_get_wh_packed minus 16) and paints
-    ;; it inside its own bounds. Taking the same 16px out of the client rect
-    ;; narrows the DC clip ($wnd_client_w_for_clip) under the control, so the
-    ;; strip it draws is clipped away. A combobox is the worst case: its
-    ;; WS_VSCROLL describes the dropdown list, not a scrollbar on the field, so
-    ;; the reservation is not even nominally right -- WordPad's font and size
-    ;; combos lost exactly the 16px their drop arrow is painted in (w-18), which
-    ;; is why they rendered as plain edit boxes with no arrow.
     (local.set $right (local.get $bw))
-    (if (i32.eqz (call $ctrl_table_get_class (local.get $hwnd)))
-      (then
-        (if (i32.and (local.get $style) (i32.const 0x00200000)) ;; WS_VSCROLL
-          (then (local.set $right (i32.add (local.get $right) (i32.const 16)))))
-        (if (i32.and (local.get $style) (i32.const 0x00100000)) ;; WS_HSCROLL
-          (then (local.set $bot (i32.add (local.get $bot) (i32.const 16)))))))
+    (if (i32.and (local.get $style) (i32.const 0x00200000)) ;; WS_VSCROLL
+      (then (local.set $right (i32.add (local.get $right) (i32.const 16)))))
+    (if (i32.and (local.get $style) (i32.const 0x00100000)) ;; WS_HSCROLL
+      (then (local.set $bot (i32.add (local.get $bot) (i32.const 16)))))
     ;; Store window-local l/t/r/b.
     (call $client_rect_set (local.get $hwnd)
       (local.get $bw) (local.get $cy)
@@ -822,7 +781,7 @@
     (local $cl i32) (local $ct i32) (local $cr i32) (local $cb i32)
     (local $has_vsb i32) (local $has_hsb i32)
     (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
-    (local.set $rect (call $paint_scratch_take))
+    (local.set $rect (global.get $PAINT_SCRATCH))
     (call $host_get_window_rect (local.get $hwnd) (local.get $rect))
     (local.set $wx (i32.load         (local.get $rect)))
     (local.set $wy (i32.load offset=4 (local.get $rect)))
@@ -1053,84 +1012,21 @@
     (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
     (i32.load8_u (i32.add (global.get $FLASH_TABLE) (local.get $idx))))
 
-  ;; Per-window show state, held one bit per condition in SHOW_STATE_TABLE.
-  ;; These four functions are the only code that knows which bit is which.
-  ;;
-  ;; Maximized (bit 0) is set by ShowWindow(SW_SHOWMAXIMIZED) and by the
-  ;; WM_SYSCOMMAND handler after SC_MAXIMIZE / SC_RESTORE commits its geometry
-  ;; change. Read by the HTMAXBUTTON click handler (to flip
-  ;; SC_MAXIMIZE↔SC_RESTORE), by $defwndproc_do_ncpaint (so the glyph reflects
-  ;; current state), and by IsZoomed.
-  ;;
-  ;; Minimized (bit 1) is set by ShowWindow(SW_MINIMIZE / SW_SHOWMINIMIZED /
-  ;; SW_SHOWMINNOACTIVE) and by SC_MINIMIZE, and read by IsIconic and
-  ;; GetWindowPlacement. The renderer keeps its own `_minimized` for
-  ;; compositing; this bit is what the *guest* is allowed to ask about, so the
-  ;; answer no longer depends on which side of the host boundary you stand on.
-  (func $wnd_show_state_addr (param $hwnd i32) (result i32)
+  ;; Per-window maximized state. Set by the WM_SYSCOMMAND handler after
+  ;; SC_MAXIMIZE / SC_RESTORE commits its geometry change. Read by the
+  ;; HTMAXBUTTON click handler (to flip SC_MAXIMIZE↔SC_RESTORE) and by
+  ;; $defwndproc_do_ncpaint (so the glyph reflects current state).
+  (func $wnd_max_get (param $hwnd i32) (result i32)
     (local $idx i32)
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
-    (i32.add (global.get $SHOW_STATE_TABLE) (local.get $idx)))
-  (func $wnd_show_state_bit_set (param $hwnd i32) (param $bit i32) (param $val i32)
-    (local $addr i32)
-    (local.set $addr (call $wnd_show_state_addr (local.get $hwnd)))
-    (if (i32.eqz (local.get $addr)) (then (return)))
-    (i32.store8 (local.get $addr)
-      (select
-        (i32.or (i32.load8_u (local.get $addr)) (local.get $bit))
-        (i32.and (i32.load8_u (local.get $addr))
-                 (i32.xor (local.get $bit) (i32.const 0xFF)))
-        (i32.ne (local.get $val) (i32.const 0)))))
-  (func $wnd_show_state_bit_get (param $hwnd i32) (param $bit i32) (result i32)
-    (local $addr i32)
-    (local.set $addr (call $wnd_show_state_addr (local.get $hwnd)))
-    (if (i32.eqz (local.get $addr)) (then (return (i32.const 0))))
-    (i32.ne (i32.and (i32.load8_u (local.get $addr)) (local.get $bit))
-            (i32.const 0)))
-  (func $wnd_max_get (param $hwnd i32) (result i32)
-    (call $wnd_show_state_bit_get (local.get $hwnd) (i32.const 1)))
+    (i32.load8_u (i32.add (global.get $MAX_TABLE) (local.get $idx))))
   (func $wnd_max_set (param $hwnd i32) (param $val i32)
-    (call $wnd_show_state_bit_set (local.get $hwnd) (i32.const 1) (local.get $val)))
-  (func $wnd_min_get (param $hwnd i32) (result i32)
-    (call $wnd_show_state_bit_get (local.get $hwnd) (i32.const 2)))
-  (func $wnd_min_set (param $hwnd i32) (param $val i32)
-    (call $wnd_show_state_bit_set (local.get $hwnd) (i32.const 2) (local.get $val)))
-
-  ;; Fold an SW_* command into the stored show state. Called from ShowWindow so
-  ;; every route into it — the API, WinMain's nCmdShow, the Win16 bridge —
-  ;; leaves the same answer behind for IsIconic/IsZoomed/GetWindowPlacement.
-  ;; SW_HIDE and the plain SW_SHOW family are absent on purpose: Windows shows
-  ;; and hides a window "in its current state", so neither un-iconifies it.
-  (func $wnd_apply_show_state (param $hwnd i32) (param $cmd i32)
-    ;; SW_SHOWMINIMIZED(2) / SW_MINIMIZE(6) / SW_SHOWMINNOACTIVE(7). The
-    ;; maximized bit survives: restoring an icon that was maximized when it was
-    ;; minimized puts it back maximized, which is why these are two bits.
-    (if (i32.or (i32.eq (local.get $cmd) (i32.const 2))
-          (i32.or (i32.eq (local.get $cmd) (i32.const 6))
-                  (i32.eq (local.get $cmd) (i32.const 7))))
-      (then (call $wnd_min_set (local.get $hwnd) (i32.const 1)) (return)))
-    ;; SW_SHOWMAXIMIZED / SW_MAXIMIZE (3)
-    (if (i32.eq (local.get $cmd) (i32.const 3))
-      (then
-        (call $wnd_max_set (local.get $hwnd) (i32.const 1))
-        (call $wnd_min_set (local.get $hwnd) (i32.const 0))
-        (return)))
-    ;; SW_RESTORE (9) undoes one level: an icon goes back to whatever it was
-    ;; before, a maximized window goes to normal.
-    (if (i32.eq (local.get $cmd) (i32.const 9))
-      (then
-        (if (call $wnd_min_get (local.get $hwnd))
-          (then (call $wnd_min_set (local.get $hwnd) (i32.const 0)) (return)))
-        (call $wnd_max_set (local.get $hwnd) (i32.const 0))
-        (return)))
-    ;; SW_SHOWNORMAL / SW_NORMAL (1) and SW_SHOWDEFAULT (10) ask for the normal
-    ;; size and position outright.
-    (if (i32.or (i32.eq (local.get $cmd) (i32.const 1))
-                (i32.eq (local.get $cmd) (i32.const 10)))
-      (then
-        (call $wnd_min_set (local.get $hwnd) (i32.const 0))
-        (call $wnd_max_set (local.get $hwnd) (i32.const 0)))))
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.ne (local.get $idx) (i32.const -1))
+      (then (i32.store8 (i32.add (global.get $MAX_TABLE) (local.get $idx))
+                        (local.get $val)))))
 
   ;; ---- Sysbutton press state (used by JS while user holds LMB on a
   ;; title-bar button). Setting to (hwnd, hit) makes the next ncpaint

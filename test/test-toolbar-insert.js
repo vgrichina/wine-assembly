@@ -193,8 +193,8 @@ async function main() {
   }
 
   const baselineSlots = e.wnd_count_used();
-  check('ToolbarWindow32 resolves to the native Toolbar control',
-    e.test_class_name_to_ctrl_id(writeStr('ToolbarWindow32')) === 21);
+  check('ToolbarWindow32 is protected from registered-class fallback',
+    e.test_is_builtin_control_class(writeStr('ToolbarWindow32')) === 1);
   const toolbar = e.test_create_toolbar(0, 0, 220, 28, 0);
   check('toolbar hwnd allocated', toolbar !== 0, 'hwnd=0x' + toolbar.toString(16));
   check('create added 2 slots (parent + toolbar)', e.wnd_count_used() === baselineSlots + 2);

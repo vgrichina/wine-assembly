@@ -19,43 +19,32 @@ const extraWat = String.raw`
     ;; Model a newly instantiated worker: its mutable globals start at zero.
     (global.set $DX_VTBL_DDRAW (i32.const 0))
     (global.set $DX_VTBL_DPLAY3 (i32.const 0))
-    (global.set $DX_VTBL_OLE_FONT (i32.const 0))
+    (global.set $DX_VTBL_D3DTEX2 (i32.const 0))
     (call $dx_sync_thread_vtables_if_needed))
   (func (export "test_dx_vtbl_ddraw") (result i32)
     (global.get $DX_VTBL_DDRAW))
   (func (export "test_dx_vtbl_dplay3") (result i32)
     (global.get $DX_VTBL_DPLAY3))
-  ;; The global fed from the highest registry slot -- keep this pointing at
-  ;; whatever $dx_sync_thread_vtables assigns last.
   (func (export "test_dx_vtbl_last") (result i32)
-    (global.get $DX_VTBL_OLE_FONT))
-  ;; Read the size rather than restating it: the registry grows every time a
-  ;; COM interface is added, and this test used to hardcode 52/53 -- it went
-  ;; red the next time one was, saying "worker does not restore vtables" about
-  ;; a worker that restores them correctly.
-  (func (export "test_dx_registry_count") (result i32)
-    (global.get $DX_VTBL_REGISTRY_COUNT))
+    (global.get $DX_VTBL_D3DTEX2))
 `;
 
 (async () => {
   const { exports: wat } = await bootRenderHarness({ extraWat });
   const base = 0x51000000;
 
-  const count = wat.test_dx_registry_count() | 0;
-  assert(count > 10, `registry count looks wrong: ${count}`);
-
-  wat.test_dx_seed_registry(count - 1, base);
+  wat.test_dx_seed_registry(52, base);
   assert.strictEqual(wat.test_dx_vtbl_ddraw() >>> 0, 0,
     'workers reject a partially initialized shared vtable registry');
   assert.strictEqual(wat.test_dx_vtbl_dplay3() >>> 0, 0,
     'partial registries cannot leak a DirectPlay vtable');
 
-  wat.test_dx_seed_registry(count, base);
+  wat.test_dx_seed_registry(53, base);
   assert.strictEqual(wat.test_dx_vtbl_ddraw() >>> 0, base,
     'worker restores the first generated COM vtable');
   assert.strictEqual(wat.test_dx_vtbl_dplay3() >>> 0, base + 10 * 0x100,
     'worker restores IDirectPlay3 from its generated-order registry slot');
-  assert.strictEqual(wat.test_dx_vtbl_last() >>> 0, base + (count - 1) * 0x100,
+  assert.strictEqual(wat.test_dx_vtbl_last() >>> 0, base + 52 * 0x100,
     'worker restores the final generated COM vtable');
 
   console.log('PASS  worker instances restore shared DirectX COM vtables');

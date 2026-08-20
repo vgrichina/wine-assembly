@@ -751,6 +751,7 @@ Resource-aware Win98 emulator
     const apps = window.wineApps.APPS;
     const DEFAULT_APPS = window.wineApps.DESKTOP_APPS;
     const LOCAL_CANDIDATE_APPS = window.wineApps.LOCAL_CANDIDATE_APPS;
+    const DEBUG_ONLY_APPS = window.wineApps.DEBUG_ONLY_APPS;
     const appFileUrl = window.wineApps.appFileUrl;
 
     const LOCAL_DESKTOP = /^(localhost|127\.|0\.0\.0\.0|::1$|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(location.hostname);
@@ -922,7 +923,11 @@ Resource-aware Win98 emulator
       const desktopApps = LOCAL_DESKTOP
         ? DEFAULT_APPS.concat(LOCAL_CANDIDATE_APPS)
         : DEFAULT_APPS;
+      const selectorApps = DEBUG_MODE
+        ? DEFAULT_APPS.concat(DEBUG_ONLY_APPS)
+        : desktopApps;
       const desktopAppSet = new Set(desktopApps.map(a => a[0]));
+      const selectorAppSet = new Set(selectorApps.map(a => a[0]));
       // Pre-launch click forwarder: canvas sits over the icons even before
       // wireCanvasInput runs, so clicks would be swallowed. Forward any click
       // on the canvas through to the icon underneath until the real input
@@ -949,7 +954,7 @@ Resource-aware Win98 emulator
       }, { passive: false });
       const sel = document.getElementById('app-select');
       for (const opt of [...sel.querySelectorAll('option')]) {
-        if (!desktopAppSet.has(opt.value)) opt.remove();
+        if (!selectorAppSet.has(opt.value)) opt.remove();
       }
       for (const grp of [...sel.querySelectorAll('optgroup')]) {
         if (!grp.querySelector('option')) grp.remove();
