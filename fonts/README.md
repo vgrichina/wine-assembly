@@ -11,7 +11,7 @@ for the covered stock faces.
 | Runtime file | Source face and native cell strikes | Used for | SHA-256 |
 |---|---|---|---|
 | `System.fon` | System 16, 18 | `SYSTEM_FONT`, explicit System | `2f41afc0ea1d2ac4361fea4bfe4cd4eac5cb99627f1e7ee185ec9f5d1980f94b` |
-| `MSSansSerif.fon` | MS Sans Serif 13, 16, 20 | dialog/UI stocks and aliases | `71e0bb6cd752d858f8712ab6b0c9ec50065c5fa76dc70b68da9eb85438dcf2d8` |
+| `MSSansSerif.fon` | MS Sans Serif 13, 16, 20 native; 24, 29, 37 generated | dialog/UI stocks and aliases | `6d1dc659a1fcb31b1ba309ff7a2548875c3ffc8893234345624caddcc0fd3785` |
 | `Fixedsys.fon` | Fixedsys 8x15 | `SYSTEM_FIXED_FONT`, Fixedsys | `2b5cf71bfbadbc460f79fb5b2d8bf1650a7e148359fcb6064392b4a28fadd3c4` |
 | `Courier.fon` | Courier 8x13 | `ANSI_FIXED_FONT`, Courier | `51dd54b23b9857032faac1ab672d7c788b657752ea0b2d0cc39a9f727a607457` |
 | `Terminal.fon` | ANAKRON-derived Terminal 8x12 | `OEM_FIXED_FONT`, Terminal | `dccca736742e4c1bf0b6a98393417c07f6e46ef0ecb2030cec0ebddb2369d4e1` |
@@ -71,7 +71,7 @@ complete license is in `ANAKRON-OFL.txt`. The generator preserves the native
 8x12 pixels, maps bytes 0x00-0xff to ANAKRON Unicode glyphs using CP437, and
 marks the strike `OEM_CHARSET`.
 
-Generate all five runtime resources reproducibly with:
+Generate all eight resources reproducibly with:
 
 ```sh
 bash tools/gen-wine-fonts.sh fonts
@@ -79,9 +79,11 @@ node test/test-generated-wine-fonts.js
 ```
 
 The generator requires a C compiler and `pkg-config freetype2`. FreeType reads
-the exact embedded monochrome strike at each requested size from the Wine TTFs
-and ANAKRON BDF; it does not hint or rasterize an outline. FreeType is a
-build-time tool and is not linked into the emulator.
+the exact embedded monochrome strike at each native size from the Wine TTFs
+and ANAKRON BDF; it does not hint or rasterize an outline. Wine MS Sans Serif
+only contains the first three cells, so its missing 24/29/37px Win98 rungs are
+nearest-neighbor expansions of those open pixels performed once by the
+generator. FreeType is a build-time tool and is not linked into the emulator.
 `tools/gen-fixedsys-fon.sh` remains as a convenient wrapper for generating only
 the native Wine 8x15 Fixedsys resource.
 
