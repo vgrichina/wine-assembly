@@ -59,7 +59,7 @@ const { bootRenderHarness } = require('./render-helper');
     assert.strictEqual(wat.guest_read32(fit), 1);
   });
 
-  check('UTF-16 extent-ex shares Canvas measurement and WAT prefix fitting', () => {
+  check('UTF-16 extent-ex shares WAT strike measurement and prefix fitting', () => {
     const { hdc } = createTextDc();
     const text = allocZero(8);
     ['W', 'i', '!'].forEach((character, index) =>

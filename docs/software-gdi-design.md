@@ -5,16 +5,17 @@
 Implementation started 2026-08-12. WAT now owns canonical bitmap and window
 surfaces, GDI object/DC state, regions and explicit clipping, native-format
 pixel access, all ROP2/ROP3 truth tables, source and stretch blits, flood fill,
-and integer geometry. JavaScript retains presentation uploads/composition and
-the scalable-font Canvas fallback. Installed Win16/Win9x FNT bitmap strikes
-are parsed, selected, measured, and rasterized directly into the canonical WAT
+and integer geometry. JavaScript retains presentation uploads/composition.
+Installed Win16/Win9x FNT bitmap strikes and scalable `glyf` TrueType faces are
+parsed, selected, measured, and rasterized directly into the canonical WAT
 surface without a Canvas glyph or destination readback.
 
 The checked-in application corpus now has complete GDI dispatch coverage:
 239 distinct imports from 313 PE files are public and WAT-dispatchable, with
 no missing handlers or `crash_unimplemented` entries. Remaining fidelity work
-is native/Bezier scalable glyph outlines, complex shaping, remaining enhanced
-and classic metafile record families, and printer integration. The checked-in
+is DBCS/complex shaping, transformed bitmap/gray glyph rasterization, remaining
+enhanced and classic metafile record families, and printer integration. Real
+Win98 rejects `GGO_BEZIER`; it is not a compatibility target. The checked-in
 PE corpus has a machine-checked public API inventory in
 `gdi-public-api-status.json`; its exact sorted import-set hash
 prevents new application dependencies from silently expanding the
@@ -78,9 +79,9 @@ all successful consumers discard the path. Preflighted stroke coverage and
 device-space filling ensure mapping changes after `EndPath` do not move the
 retained geometry. Text from an installed FNT strike records each covered
 bitmap pixel as a closed device-space figure. Scalable `TextOut`,
-`ExtTextOut`, and `DrawText` obtain only bounded one-bit glyph masks from the
-Canvas font provider; WAT converts those masks into retained path geometry and
-owns explicit `Dx`/`ETO_PDY` advances, layout, and `TA_UPDATECP`. `WidenPath`
+`ExtTextOut`, and `DrawText` consume deterministic WAT-rasterized glyph strikes;
+WAT converts covered pixels into retained path geometry and owns explicit
+`Dx`/`ETO_PDY` advances, layout, and `TA_UPDATECP`. `WidenPath`
 flattens curves, derives analytic pixel-center coverage for geometric pen
 bodies, flat/round/square caps, and round/bevel/miter outer joins, then replaces
 the retained path atomically with non-overlapping band rectangles. Cosmetic
@@ -92,8 +93,8 @@ to Canvas geometry or destination pixel readback.
 Printer DCs no longer alias the screen surface. `CreateDCA/W` and the common
 print dialog allocate an independent 2400x3150 32-bpp WAT bitmap for the
 300-DPI printable area of Letter paper. Each successful `StartPage` clears the
-canonical page to white; geometry, blits, bitmap-font text, and Canvas fallback
-text then commit to those same bytes. Job ordering and teardown are WAT-owned.
+canonical page to white; geometry, blits, bitmap-font text, and scalable text
+then commit to those same bytes. Job ordering and teardown are WAT-owned.
 Persisting every completed page and handing a spool/export stream to the
 browser remain printer-integration work rather than GDI raster ownership work.
 
@@ -127,8 +128,7 @@ handles follow the bounded WMF object table's lowest-free-slot and deletion
 rules. Win16 `LOGFONT`, text state,
 length-padded strings, `ETO_OPAQUE`/`ETO_CLIPPED` rectangles, and signed `Dx`
 arrays are validated and converted before replay. Installed FNT faces use the
-same WAT bitmap rasterizer as public text APIs and do not invoke Canvas; only
-unavailable scalable faces cross the text-policy fallback. Its
+same WAT bitmap rasterizer as public text APIs and do not invoke Canvas. Its
 object table is bounded by `mtNoObjects`; playback restores the caller DC and
 deletes all surviving temporary objects on success or failure. `EnumMetaFile`
 walks the validated record stream through a resumable guest `MFENUMPROC`, with
@@ -145,10 +145,7 @@ a derived cache: WAT raster writes only union a dirty rectangle in the canonical
 surface. Memory DCs perform no Canvas conversion. Attached window, desktop, and
 menu surfaces convert the accumulated rectangle immediately before compositor
 use; explicit Canvas reads and captures are presentation synchronization
-boundaries only. The retained Canvas font provider receives canonical mapping
-and font state and writes a bounded one-bit mask into caller-owned WAT memory;
-it never reads or modifies a destination surface. Deletion returns the private
-pages to the arena.
+boundaries only. Deletion returns the private pages to the arena.
 
 `LoadBitmapA/W` now materialize uncompressed `BITMAPCOREHEADER` and
 `BITMAPINFOHEADER` resources plus bounded `BI_RLE4`/`BI_RLE8`
@@ -270,12 +267,12 @@ semantics to JavaScript. JavaScript receives dirty rectangles and remains
 responsible for browser-facing presentation, final window composition,
 scaling, and display.
 
-Canvas vector paths must not be used for geometric GDI primitives whose Win32
-result is defined as raster pixels. Canvas remains the layout/raster fallback
-for scalable and shaped text; installed FNT bitmap faces use WAT-owned integer
-metrics and exact one-bit glyph data.
+Canvas vector paths must not be used for GDI primitives whose Win32 result is
+defined as raster pixels. Installed FNT faces and scalable `glyf` faces use
+WAT-owned metrics and deterministic glyph data. DBCS and complex shaping must
+fail or use an explicit compatible engine, never the host's Canvas text rules.
 JavaScript host imports are limited to facilities WebAssembly cannot directly
-provide: Canvas upload/composition, browser font rasterization, audio, input,
+provide: Canvas upload/composition, audio, input,
 storage, and similar platform APIs. Canvas may also remain an explicitly
 documented compatibility fallback during migration, but new GDI algorithms
 must not be implemented in JavaScript.
@@ -404,15 +401,10 @@ gdi_surface_upload     upload dirty authoritative pixels to Canvas
 gdi_surface_delete     discard the derived Canvas cache
 ```
 
-Canvas text-policy imports are `gdi_text_bind` and `gdi_text_mask`. `DrawText`,
-`TextOut`, and `ExtTextOut` layout, tabs, ellipsis, alignment, explicit
-advances, prefix removal, underlines, colors, background mode, clipping, and
-destination writes are WAT-owned. `gdi_text_bind` exposes canonical font and
-mapping state plus an opaque surface token without constructing a semantic
-JavaScript DC mirror. For a scalable face, `gdi_text_mask` rasterizes only into
-a bounded caller-owned one-bit mask; WAT composes that mask into the same
-authoritative memory used by `.FON` strikes and every other raster operation.
-Canvas never reads or writes a GDI destination for text. There is no current
+No `gdi_*` text-policy import remains. `DrawText`, `TextOut`, and `ExtTextOut`
+layout, tabs, ellipsis, alignment, explicit advances, prefix removal,
+underlines, colors, background mode, clipping, rasterization, and destination
+writes are WAT-owned. There is no current
 `gdi_*` resource exception. `LoadBitmapA/W` resolve raw RT_BITMAP bytes through
 the WAT PE-resource walker, validate and copy pixels and RGBQUADs into owned
 canonical storage, then publish only a derived surface presentation.
@@ -555,63 +547,46 @@ fallback. WAT owns a screen-sized bitmap selected into a persistent memory DC,
 paints menu chrome in desktop coordinates, and calls `gdi_surface_attach` with
 the compositor-overlay target. The renderer composites only the popup's dirty
 rectangles, so opaque native bitmap storage does not cover unrelated desktop
-pixels. Scalable menu glyphs use the normal Canvas mask provider followed by
-WAT composition; no JavaScript menu geometry implementation remains.
+pixels. Scalable menu glyphs use the normal WAT synthesized-strike provider;
+no JavaScript menu geometry or text implementation remains.
 
 The renderer then composes window caches onto the desktop Canvas as it does
 today. Browser zoom or CSS scaling may affect display size but cannot change the
 underlying GDI pixels.
 
-Never read the presentation Canvas in GDI code. The Canvas font provider reads
-only its private scratch mask; WAT composes those mask bytes into the canonical
-surface. Screen-source reads consume the same canonical surface memories that
+Never read the presentation Canvas in GDI code. Text rasterization is WAT-owned.
+Screen-source reads consume the same canonical surface memories that
 feed presentation, not their Canvas caches.
 
 ## Text
 
-Text has two explicit backends. Installed FNT 2.x/3.x bitmap strikes are a
-WAT-native backend; scalable faces and shaping remain on the Canvas fallback.
-The selected font object determines the route before any host text binding.
-
-Canvas must not bypass authoritative surface storage. Text operations use this
-pipeline:
+Text has one destination pipeline. Installed FNT 2.x/3.x resources enter it as
+native bitmap strikes; scalable `glyf` TrueType faces are parsed, flattened,
+scan-converted, cached, and exposed as synthetic FNT 3.00 strikes. The selected
+font object determines the producer, while every layout, path, clipping, ROP,
+and destination operation remains shared WAT code:
 
 ```text
-WAT TextOut/ExtTextOut/DrawText policy (scalable face)
+TrueType tables (`cmap`/`glyf`/`hmtx`/`kern`)
         |
         v
-Canvas scratch surface renders glyphs
+WAT quadratic outline loader + deterministic scan converter
         |
         v
-coverage is read from scratch
+exact-size synthetic FNT strike / glyph cache
         |
         v
-WAT either converts a thresholded one-bit mask into retained path
-geometry or commits the bounded raster result to canonical storage
+shared TextOut/ExtTextOut/DrawText/path policy
         |
         v
 authoritative WAT path or GdiSurface + dirty rectangle
 ```
 
-The scratch Canvas is temporary source material, not a presentation cache and
-not a second owner of destination pixels. Reading it with `getImageData` is
-allowed. Reading the destination's presentation Canvas to recover bitmap state
-is not.
-
-Scalable text renders white glyphs on transparent black, thresholds the scratch
-alpha channel into a one-bit mask, and returns only that bounded mask to WAT.
-Canvas never creates a retained path and never reads or modifies the destination
-surface. WAT converts the same mask into path geometry or composes it into
-canonical pixels with its own color, background, explicit rectangle, region
-clip, and dirty-presentation semantics.
-
-Known limitations remain explicit: browser font availability, metrics,
-hinting, shaping, and antialiasing can differ between Safari, Chromium, and
-Node. These differences apply only to the Canvas fallback; FNT measurements
-and pixels are deterministic across those hosts.
-
-No Canvas-only text draw may leave the authoritative surface stale when that
-surface can later be observed through GDI.
+Browser font availability and Canvas rasterizer differences therefore cannot
+move guest layout or pixels. Current limitations are emulator features rather
+than host variance: the runtime does not execute TrueType bytecode hinting,
+ANSI DBCS conversion is incomplete, and complex-script reordering/ligation is
+not implemented.
 
 ### High-fidelity Win98 text backend
 
@@ -634,25 +609,22 @@ over unrelated format bits. `DT_MODIFYSTRING` copies an ellipsified byte-oriente
 presentation back to ANSI or UTF-16 caller storage. The same provider-neutral
 layout serves scalable faces. Its 65,540-WCHAR buffer keeps mnemonic flags in
 a separate WAT byte array so UTF-16 code units remain intact.
-Inside a path bracket, FNT operations append exact closed pixel figures while
-scalable operations convert Canvas masks into those same WAT figures; neither
-changes destination pixels. A later path consumer supplies the brush, pen,
-clipping, and raster operation. Unsupported formats and shaped faces continue
-through the Canvas font fallback.
+Inside a path bracket, both installed and synthesized strikes append exact
+closed pixel figures without changing destination pixels. A later path
+consumer supplies the brush, pen, clipping, and raster operation.
 
 The target selection order is:
 
 1. An exact bitmap strike from a legally supplied Windows `.FON`/`.FNT` file.
-2. A pre-generated monochrome strike from a bundled open substitute.
-3. Deterministic monochrome rasterization of a bundled outline font.
-4. Canvas text for faces, sizes, scripts, or shaping the deterministic backend
-   does not support.
+2. A deterministic exact-size strike rasterized from a bundled open substitute.
+3. A deterministic exact-size strike rasterized from a guest-installed TTF.
+4. The bundled bitmap UI fallback for an unnamed or unavailable face.
 
 The project-native WAT loader understands NE `.FON` containers with one or
 more RT_FONT resources as well as standalone `.FNT` files. Node and browsers
 therefore consume the same validated bytes and integer raster algorithm.
-FreeType remains a possible future dependency for PCF, BDF, outline fonts,
-and broader font-table coverage.
+FreeType remains a possible future dependency for PCF, BDF, CFF, bytecode
+hinting, and broader font-table coverage.
 
 For each face/size/weight/charset strike, cache:
 
@@ -678,22 +650,28 @@ maps bytes through CP437, and declares `OEM_CHARSET`. `SYSTEM_FONT` uses System,
 `ANSI_FIXED_FONT` uses Courier, `SYSTEM_FIXED_FONT` uses Fixedsys,
 `OEM_FIXED_FONT` uses Terminal, and the variable UI stocks use MS Sans Serif.
 Common Win9x UI aliases use deterministic MS Sans Serif. Explicit document
-faces such as Arial remain on the scalable Canvas fallback rather than being
-silently substituted.
+faces such as Arial resolve to license-safe open substitutes mounted under the
+filenames Win98 used, while a guest-installed face takes precedence.
 
-`GetGlyphOutlineA` derives exact metrics and DWORD-aligned monochrome
-`GGO_BITMAP` payloads from selected FNT strikes without binding Canvas.
-Scalable faces retain the metrics-only Canvas fallback; affine transforms and
-native/Bezier/gray outline formats remain explicit future font-provider work.
+`GetGlyphOutlineA` derives metrics and DWORD-aligned monochrome `GGO_BITMAP`
+payloads from selected FNT strikes without binding Canvas. Scalable faces also
+emit transformed quadratic `GGO_NATIVE` contours and deterministic byte-per-
+pixel `GGO_GRAY2_BITMAP`, `GGO_GRAY4_BITMAP`, and `GGO_GRAY8_BITMAP` coverage.
+The gray maxima 4/16/64, DWORD row padding, short-buffer behavior, and
+`GGO_UNHINTED` acceptance are tested. Real Win98 returns `GDI_ERROR` for
+`GGO_BEZIER`, including on Arial, so the emulator does too. Transformed
+monochrome/gray raster output remains fidelity work.
 `GetFontData` exports bounded selected-font data; unsupported provider/table
 combinations retain the documented `GDI_ERROR` result.
 
-Character-width queries share one font-provider boundary: selected FNT strikes
-produce their advances in WAT, while scalable faces may call Canvas once per
-character. `GetCharacterPlacementW` keeps Latin ordering, widths, caret
-positions, classes, maximum-extent truncation, and simple justification in WAT.
-Complex-script shaping remains explicit future provider work rather than a
-geometry or destination-surface fallback.
+Character-width queries share one WAT font-provider boundary for installed and
+scalable strikes. `GetCharacterPlacementW` keeps Latin ordering, widths, caret
+positions, classes, maximum-extent truncation, and simple justification in WAT;
+with `GCP_USEKERNING`, classic TrueType `kern` format-0 pairs adjust the left
+glyph's `lpDx`, caret, and packed extent exactly as captured on Win98. The
+deployed CP1252 subsets preserve those legacy tables even when the source also
+contains modern GPOS. DBCS expansion and complex-script shaping remain future
+work rather than a geometry or destination-surface fallback.
 
 Font enumeration is also provider-aware. `EnumFontsA` and the ANSI/Unicode
 `EnumFontFamilies` variants retain scalable Arial as the first compatibility
@@ -714,8 +692,8 @@ and advances are integers; `TA_UPDATECP`, alignment, inter-character spacing,
 justification, tabs, opaque backgrounds, `ETO_CLIPPED`, and `ETO_OPAQUE` are
 handled above the font provider. Single-line overflow and the final vertically
 visible multiline row support end, word, and path ellipsis in that WAT layout
-layer. Complex scripts may remain on the Canvas path until a shaping engine
-such as HarfBuzz is introduced.
+layer. Complex scripts require an explicit Win98-compatible shaping engine and
+language-edition fixtures; host Canvas shaping is not a compatibility path.
 
 Validation requires reference captures from an actual Win98 environment at
 known DPI. Test `GetTextMetrics`, `GetTextExtentPoint32`, ABC widths, dialog
@@ -731,9 +709,8 @@ The deterministic stock resources have pinned, redistributable inputs:
   embedded monochrome strikes and remain under LGPL-2.1-or-later.
 - **ANAKRON-derived Terminal** preserves ANAKRON v0.3.3's native 8x12 BDF
   pixels, is renamed for the compatibility role, and remains under OFL-1.1.
-- **W95FA** and **Fixedsys Excelsior** remain legacy outline/web fallbacks for
-  shell CSS and unsupported scalable Canvas faces; they no longer generate or
-  back the covered stock GDI bitmap resources.
+- **W95FA** and **Fixedsys Excelsior** remain legacy shell CSS assets; they no
+  longer generate or back the covered stock GDI bitmap resources.
 
 Generated strikes remain subject to their source font's license and
 attribution/renaming requirements. Deterministic output does not make an open
@@ -871,8 +848,8 @@ the same machine.
   guest-visible DIBs, so format adapters are required.
 - Window-surface conversion changes invalidation and child-window clipping. It
   should follow bitmap migration, not lead it.
-- Canvas scalable-glyph masks remain engine- and font-dependent. This is an
-  accepted temporary fidelity boundary; WAT still owns all destination pixels.
+- TrueType bytecode hinting, DBCS conversion, and complex shaping are explicit
+  fidelity boundaries; they must not silently inherit a host font engine.
 - A software rasterizer can regress performance if it uploads whole canvases or
   uses generic per-pixel dispatch in hot loops.
 
@@ -882,8 +859,7 @@ the same machine.
   first migration.
 - Implementing the entire documented Win32 GDI API before landing useful
   phases.
-- Replacing Canvas font measurement, shaping, or glyph rasterization during
-  this migration.
+- Replacing the HTML shell's CSS font rendering; guest GDI text is WAT-owned.
 - Treating antialiasing removal alone as proof of GDI compatibility.
 - Making raw `CreateDIBSection` stores immediately visible without an explicit
   GDI transfer or presentation operation.

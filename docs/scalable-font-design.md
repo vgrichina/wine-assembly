@@ -11,6 +11,17 @@ formats, ABC widths, `kern` format 0, simple-glyph outline points, and
 composite recursion with an explicit depth limit, 26.6 flattening, and nonzero
 scan conversion into the FNT column-major bitmap layout.
 
+The public Win98 font surface now exposes that work directly. A native v86
+capture pins Arial `GGO_BITMAP`, quadratic `GGO_NATIVE`, 4/16/64-level gray
+coverage, affine MAT2 behavior, `GGO_UNHINTED`, and classic kerning pairs.
+`GGO_BEZIER` deliberately returns `GDI_ERROR`: real Windows 98 rejects it even
+for Arial, so implementing the later NT extension would reduce compatibility.
+`GetCharacterPlacement` consumes legacy `kern` format-0 pairs only under
+`GCP_USEKERNING`, adjusting the left glyph advance as the capture does. The
+deployed CP1252 subsets preserve the classic table even when their full source
+font also has GPOS. DBCS conversion, contextual shaping/ligation, transformed
+bitmap/gray output, and TrueType bytecode hinting remain explicit gaps.
+
 A face registry and glyph cache sit on top: `$tt_face_open` loads a font from
 the same virtual filesystem the `.FON` strikes come from, keyed by path hash
 so a file opens once, and `$tt_face_glyph` returns a cached bitmap for a guest
@@ -599,24 +610,25 @@ shrinks monotonically.
    selection layer answers it with the bundled MS Sans Serif strike, which
    needs no font file to load and no host font to exist.
 
-   Still to do: delete `gdi_text_mask`, `measure_text`, `get_text_metrics`,
-   `gdi_text_bind`, their WAT call sites, and both hosts' font registration.
-   The corpus already renders without them — notepad, mspaint, calc, wordpad,
-   fontview, TetriNET and CWordZap each call them zero times — so this is now
-   a deletion rather than a migration.
+   Cleanup is done: `gdi_text_mask`, `gdi_text_bind`, and the JavaScript
+   measurement/metric imports are deleted. The `$host_measure_text` and
+   `$host_get_text_metrics` names that remain are internal WAT compatibility
+   wrappers over the strike provider, not host calls. Browser font registration
+   is gone for GDI faces; the remaining CSS fonts belong to the HTML shell.
 
 5. **Metric reference** — v86 probe, pinned capture, comparison test. Gates any
    claim of metric correctness; can run against milestone 1 immediately.
 
-6. **API completion** — `GetGlyphOutline` `GGO_NATIVE`/`GGO_BEZIER` (nearly free
-   once `glyf` is parsed, and currently a documented gap in
-   `software-gdi-design.md`), `GetCharABCWidths` from `hmtx` lsb plus glyph
-   `xMax`, `GetKerningPairs` from `kern`, synthetic bold by outline embolden,
-   synthetic italic by shear. The ABC and `kern` computations exist in
-   `src/10c-truetype.wat`; the handlers that would expose them do not, and
-   both wait on the same arena milestone 1 waits on. `kern` is read rather
-   than GPOS on purpose: Win98 GDI had no OpenType layout engine, so a face
-   that kerns only through GPOS must kern nothing here too.
+6. **API completion** — `GetGlyphOutlineA` metrics, bitmap, quadratic native,
+   and gray formats are WAT-owned; the native Win98 contract is pinned by
+   `gdi-font-outline.c` and `gdi-font-outline-win98.json`. `GGO_BEZIER` is an
+   intentional `GDI_ERROR`, matching Win98 rather than NT. `GetCharABCWidths`
+   uses `hmtx` bearings plus glyph bounds. `GetCharacterPlacement` now applies
+   legacy `kern` format-0 pairs for `GCP_USEKERNING`, and deployed subsets are
+   tested to preserve them. Still to do: transformed bitmap/gray raster output,
+   DBCS conversion, contextual shaping/ligation, and any separately demanded
+   public `GetKerningPairsA/W` import. `kern` remains the source rather than
+   GPOS on purpose: Win98 GDI had no OpenType layout engine.
 
 7. **Enumeration** — `EnumFontFamiliesEx` reports substituted faces under their
    *Win98* names with correct `TEXTMETRIC` and charset, so apps that enumerate

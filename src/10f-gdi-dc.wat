@@ -1327,8 +1327,8 @@
     (select (local.get $bitmap_result) (i32.const 0)
       (i32.ge_s (local.get $bitmap_result) (i32.const 0))))
 
-  ;; Canvas supplies only glyph measurement. Prefix fitting and Win32 output
-  ;; structures remain WAT-owned so ANSI and UTF-16 calls share exact state.
+  ;; The selected WAT strike supplies glyph measurement. Prefix fitting and
+  ;; Win32 output structures share the same state for ANSI and UTF-16 calls.
   (func $gdi_text_extent_ex (param $hdc i32) (param $text i32)
         (param $count i32) (param $max_extent i32) (param $fit i32)
         (param $dx i32) (param $size i32) (param $wide i32) (result i32)

@@ -33,7 +33,7 @@
       }
     ],
     "canvasTextPolicy": [],
-    "fontObjectAuthority": "WAT allocates font handles and owns LOGFONT properties, selected-face state, face-name storage, FNT strikes, and destination pixels. Canvas receives only a transient derived font description when an unsupported scalable face needs a one-bit glyph mask.",
+    "fontObjectAuthority": "WAT allocates font handles and owns LOGFONT properties, selected-face state, face-name storage, installed FNT strikes, scalable TrueType parsing/rasterization, metrics, and destination pixels. No Canvas text import remains.",
     "resourceByteBoundaries": [],
     "temporaryNonTextExceptions": [],
     "maximumTemporaryNonTextExceptions": 0

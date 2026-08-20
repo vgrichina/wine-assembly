@@ -16,6 +16,14 @@
       "launch": "D:\\GDILGRID.EXE",
       "waitMs": 60000,
       "files": []
+    },
+    "gdi-font-outline": {
+      "title": "Windows 98 scalable glyph outline and kerning reference",
+      "probeSource": "tools/v86-reference/probes/gdi-font-outline.c",
+      "probeName": "GDIFONT.EXE",
+      "launch": "D:\\GDIFONT.EXE",
+      "waitMs": 30000,
+      "files": []
     }
   }
 }

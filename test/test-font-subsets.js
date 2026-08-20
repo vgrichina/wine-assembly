@@ -51,6 +51,7 @@ const METRICS = [
 
   let pairs = 0;
   let advances = 0;
+  let legacyKernPairs = 0;
   let fullBytes = 0;
   let subsetBytes = 0;
 
@@ -117,6 +118,23 @@ const METRICS = [
     assert.ok(mapped >= floor,
       `${where} kept only ${mapped} mapped codes, expected at least ${floor}`);
 
+    // Win98 GDI reads the classic TrueType `kern` table. fontTools drops it
+    // by default when a font also has GPOS, which made local/full-font tests
+    // pass while the deployed CP1252 subset silently lost all kerning.
+    for (const [left, right] of [['A', 'V'], ['T', 'o'], ['W', 'a'], ['Y', 'o']]) {
+      const leftCode = left.charCodeAt(0);
+      const rightCode = right.charCodeAt(0);
+      const fullKern = wat.test_tt_kern_pair_fu(full.at, full.size,
+        wat.test_tt_glyph_index(full.at, full.size, leftCode),
+        wat.test_tt_glyph_index(full.at, full.size, rightCode));
+      const cutKern = wat.test_tt_kern_pair_fu(cut.at, cut.size,
+        wat.test_tt_glyph_index(cut.at, cut.size, leftCode),
+        wat.test_tt_glyph_index(cut.at, cut.size, rightCode));
+      assert.strictEqual(cutKern, fullKern,
+        `${where} legacy kern ${left}${right} changed`);
+      if (fullKern) legacyKernPairs += 1;
+    }
+
     for (const ppem of PPEMS) {
       for (const [field, name] of METRICS) {
         assert.strictEqual(
@@ -168,11 +186,14 @@ const METRICS = [
     'the vendored sources are 6.5 MB nothing fetches at runtime; ship subsets');
 
   assert.strictEqual(pairs, 18, 'every vendored font must have a subset');
+  assert.ok(legacyKernPairs > 0,
+    'the fixture set must exercise at least one nonzero legacy kern pair');
   assert.ok(subsetBytes * 4 < fullBytes,
     `subsetting must actually pay: ${subsetBytes} vs ${fullBytes} bytes`);
 
   console.log(
-    `PASS  font subsets: ${pairs} faces, ${advances} advances and ` +
+    `PASS  font subsets: ${pairs} faces, ${advances} advances, ` +
+    `${legacyKernPairs} legacy kern pairs and ` +
     `${PPEMS.length * METRICS.length * pairs} metrics identical to the full ` +
     `fonts; ${(subsetBytes / 1024).toFixed(0)} KB deployed instead of ` +
     `${(fullBytes / 1024).toFixed(0)} KB`);
