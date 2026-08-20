@@ -15,7 +15,9 @@ The demo is the preferred first target.
 The Archive item describes the demo as a 1996 Blizzard release in which the
 Warrior can play through the first two dungeon levels and fight the Butcher.
 Its download is a roughly 56 MB ZIP containing only `DIABLO.EXE` and
-`DIABLO.TXT`, so it does not require running an installer.
+`DIABLO.TXT`. `DIABLO.EXE` is Blizzard's self-extracting package rather than
+the game executable itself; running it produces `DIABDEMO.EXE`, `STORM.DLL`,
+and the other temporary payload used by the demo.
 
 Local inspection of the archived executable found:
 
@@ -34,6 +36,43 @@ This makes the Diablo demo an unusually promising target: its Win95/DirectX 2
 technology overlaps with the DirectDraw SDK samples, DX-Ball, Age of Empires,
 threading, palette, audio, and virtual-filesystem work already present in this
 repository.
+
+### Current local integration
+
+The repository's `?debug` app selector now has a debug-only
+`diablo_demo` entry. Its ignored local payload lives in
+`test/binaries/candidates/diablo/` and uses this verified layout:
+
+- `DIABDEMO.EXE` is the launched game.
+- `STORM.DLL` is loaded as a real PE DLL.
+- The original 58,586,610-byte `DIABLO.EXE` package is mounted in the guest as
+  `Z:\DIABLO.EXE`; Storm reopens it there as the demo's MPQ data archive.
+- `DIABLO.TXT` is mounted as `C:\DIABLO.TXT`.
+
+The source ZIP is
+[`diablopr.zip`](https://archive.org/download/Diablo_1020/diablopr.zip), SHA-1
+`3116e614824b7bca73e24f41e09b61c7c012ac04`. The local candidate metadata
+records the extraction step and file provenance. The payload remains excluded
+from public deployment while compatibility work is in progress.
+
+The debug registry was smoke-tested through the shared CLI app path: it loaded
+`DIABDEMO.EXE`, mapped `STORM.DLL`, patched 1,446 Storm thunks, and created the
+640-by-480 `Diablo Game` window.
+
+### Startup-scan note
+
+An earlier report that the "loader" took roughly two minutes was incorrect.
+The CLI harness recursively indexes the executable's parent directory before
+execution. Placing the executable directly in `/private/tmp` therefore made it
+walk all of `/private/tmp`; putting it in a dedicated app directory made that
+phase nearly immediate. This is not PE-loader or Diablo execution time.
+
+The scan should eventually be bounded more explicitly because its runtime and
+file-discovery scope currently depend on unrelated siblings. The compatibility
+cost of tightening it is that ad-hoc `--exe` runs may implicitly depend on the
+recursive sibling scan for DLLs or data. A safe change should preserve an
+explicit opt-in recursive mount/root while making the executable's dedicated
+directory the default, with regressions for apps that use nested assets.
 
 Full Diablo is still commercially available as a DRM-free offline release in
 [Diablo + Hellfire on GOG](https://www.gog.com/en/game/diablo). Archive.org
