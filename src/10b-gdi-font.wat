@@ -2881,10 +2881,6 @@
       (then (i32.load offset=24 (local.get $object))) (else (i32.const 0))))
   (func (export "test_gdi_bitmap_font_selected") (param $hdc i32) (result i32)
     (call $gdi_bitmap_font_selected (local.get $hdc)))
-  (func (export "test_gdi_bitmap_text_metrics_write")
-        (param $hdc i32) (param $out i32) (param $wide i32) (result i32)
-    (call $gdi_bitmap_text_metrics_write
-      (local.get $hdc) (call $g2w (local.get $out)) (local.get $wide)))
   (func (export "test_gdi_bitmap_font_enum_next")
         (param $after i32) (param $filter i32) (param $wide i32) (result i32)
     (call $gdi_bitmap_font_enum_next (local.get $after) (local.get $filter)

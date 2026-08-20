@@ -133,7 +133,6 @@ const { bootRenderHarness } = require('./render-helper');
       assert.strictEqual(wat.test_call_GetTextMetricsA(hdc, tm), 1);
       assert.strictEqual(wat.guest_read32(tm), range.cell,
         `MS Sans Serif -${request}px realized cell`);
-      assert.strictEqual(wat.test_gdi_bitmap_text_metrics_write(hdc, tm, 0), 1);
       const view = new DataView(memory.buffer);
       const scale = range.cell / range.source;
       const nativeAscent = view.getUint32(strike + 24, true);
