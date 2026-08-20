@@ -310,6 +310,28 @@ async function main() {
   const calculator = await launch('calc', 'Calculator');
   const recorder = await launch('sndrec32_98', 'Sound Recorder');
   const taskman = await launch('taskman', '^Tasks$');
+  const taskmanPresentation = await evaluate(`(() => {
+    const win = sharedRenderer.windows[${taskman.hwnd}];
+    const top = Object.values(sharedRenderer.windows)
+      .filter(item => item && item.visible && !item.isChild)
+      .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0))[0];
+    const canvas = document.getElementById('screen');
+    return {
+      hwnd: win && win.hwnd,
+      visible: !!(win && win.visible),
+      minimized: !!(win && win._minimized),
+      rect: win && { x: win.x, y: win.y, w: win.w, h: win.h },
+      topHwnd: top && top.hwnd,
+      topTitle: top && top.title,
+      screen: { w: canvas.width, h: canvas.height },
+    };
+  })()`);
+  const taskRect = taskmanPresentation.rect;
+  assert(taskmanPresentation.visible && !taskmanPresentation.minimized &&
+      taskmanPresentation.topHwnd === taskman.hwnd && taskRect &&
+      taskRect.x < taskmanPresentation.screen.w && taskRect.y < taskmanPresentation.screen.h &&
+      taskRect.x + taskRect.w > 0 && taskRect.y + 24 > 0,
+  `Task Manager should open frontmost and on-screen: ${JSON.stringify(taskmanPresentation)}`);
   const taskmanWindows = await evaluate(`(() => {
     const app = runningApps.find(item => item && item.name === 'taskman');
     return Object.values(sharedRenderer.windows)
@@ -509,6 +531,7 @@ async function main() {
     `Task Manager screenshot should be complete: ${JSON.stringify(screenshot)}`);
 
   console.log(`PASS  browser Task Manager initially enumerates real Calculator and Sound Recorder tasks`);
+  console.log('PASS  browser Task Manager opens frontmost and on-screen after other apps');
   console.log('PASS  Notepad accepts delayed keyboard input after RegEdit launches first');
   console.log(`PASS  browser Task Manager live refresh adds and removes Volume Control (${liveTasks.rows.length} tasks)`);
   console.log('PASS  browser Task Manager Switch To raises the selected real app');
