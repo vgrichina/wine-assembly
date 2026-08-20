@@ -1854,6 +1854,13 @@
     ;; wait for the subsequent WM_PAINT; without this the freshly reallocated
     ;; backing canvas remains the default grey fill.
     (call $paint_flag_set_inv (local.get $hwnd))
+    ;; A resize exposes client area that has never been erased -- the reallocated
+    ;; back-canvas is grey there. Invalidating alone only buys a WM_PAINT, and an
+    ;; app that paints its own background from WM_ERASEBKGND (FreeCell's and
+    ;; Solitaire's green baize is a PATCOPY over GetClientRect) draws its cards
+    ;; onto grey and leaves the rest of the enlarged window grey forever. Queue
+    ;; the erase alongside the paint, as USER does for the newly exposed region.
+    (call $nc_flags_set (local.get $hwnd) (i32.const 2))
     ;; Resize reallocates the back-canvas (grey-filled), wiping the previous
     ;; chrome. The guest's WM_SIZE handler invalidates the client area but
     ;; not the NC region, so synchronously redraw chrome here — same pattern

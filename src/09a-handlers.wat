@@ -2871,6 +2871,14 @@
 	      (if (i32.ne (local.get $cs) (local.get $old_cs))
 	        (then
 	          (call $invalidate_hwnd (local.get $arg0))
+              ;; A child that grew covers parent pixels it has never erased. It
+              ;; owns no surface of its own, so whatever the parent left there
+              ;; stays until something fills it -- Solitaire's score bar is
+              ;; WHITE_BRUSH-classed and draws its text opaquely, so after the
+              ;; main window widened, the widened part of the bar stayed the
+              ;; grey the reallocated back-canvas came with. Queue the erase the
+              ;; way USER's invalidate-on-resize does.
+              (call $nc_flags_set (local.get $arg0) (i32.const 2))
               ;; Preserve every resized child instead of overwriting one global
               ;; pending HWND. Paint resizes its inner canvas during dock-bar
               ;; layout without calling ShowWindow on it afterward; the old
