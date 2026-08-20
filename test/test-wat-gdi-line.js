@@ -312,6 +312,45 @@ async function main() {
     '16-bpp BI_RGB lines use RGB555 and preserve endpoint exclusion');
   });
 
+  check('diagonal wide ROP2 writes each stamp-union pixel once in all octants', () => {
+    const directions = [
+      [6, 3], [3, 6], [-3, 6], [-6, 3],
+      [-6, -3], [-3, -6], [3, -6], [6, -3],
+    ];
+    for (const width of [2, 3, 4]) {
+      for (const rop2 of [6, 7]) { // R2_NOT and R2_XORPEN are non-idempotent.
+        for (const [dx, dy] of directions) {
+          const dib = makeDib(20, 20, 24, true);
+          const pen = createPen(0, width, 0x00FFFFFF);
+          const x0 = 10;
+          const y0 = 10;
+          const x1 = x0 + dx;
+          const y1 = y0 + dy;
+          selectObject(dib.hdc, pen);
+          assert.strictEqual(wat.test_gdi_dc_set_rop2(dib.hdc, rop2), 13);
+          assert.strictEqual(wat.test_gdi_line_try(dib.hdc, x0, y0, x1, y1), 1,
+            `width ${width}, ROP2 ${rop2}, delta ${dx},${dy}: raster admission`);
+
+          const expected = new Set();
+          for (const center of referenceLine(x0, y0, x1, y1)) {
+            const [cx, cy] = center.split(',').map(Number);
+            const left = cx - (width >> 1);
+            const top = cy - (width >> 1);
+            for (let sy = 0; sy < width; sy++) {
+              for (let sx = 0; sx < width; sx++) expected.add(`${left + sx},${top + sy}`);
+            }
+          }
+          for (let y = 0; y < dib.height; y++) {
+            for (let x = 0; x < dib.width; x++) {
+              assert.strictEqual(pixel(dib, x, y), expected.has(`${x},${y}`) ? 0xFFFFFF : 0,
+                `width ${width}, ROP2 ${rop2}, delta ${dx},${dy}: pixel ${x},${y}`);
+            }
+          }
+        }
+      }
+    }
+  });
+
   check('wide dash requests normalize to solid and PS_NULL never draws', () => {
     const dib = makeDib(8, 5, 24, true);
     const wideDash = createPen(1, 3, 0x000000FF);
