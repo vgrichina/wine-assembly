@@ -218,6 +218,15 @@ for (const rel of [
 }
 assert(webApp.includes('StorageImports.setIniValue(entry.fileName, entry.section, entry.key, entry.value)'), 'web launcher should apply app-scoped startup INI values');
 assert(/\[\s*'winamp'\s*,\s*'Winamp'/.test(webApp), 'default desktop whitelist should include Winamp');
+for (const [id, label] of [
+  ['wordpad', 'WordPad'],
+  ['regedit', 'RegEdit'],
+  ['taskman', 'Task Manager'],
+  ['sndrec32_98', 'Sound Recorder'],
+]) {
+  assert(new RegExp(`\\[\\s*'${id}'\\s*,\\s*'${label}'`).test(webApp),
+    `default desktop whitelist should include ${label}`);
+}
 assert(webApp.includes("'binaries/demo.mp3'"), 'Winamp web manifest should preload demo.mp3');
 assert(webApp.includes("'binaries/whatsnew.txt'"), 'Winamp web manifest should preload version history text');
 assert(webApp.includes("winampDemo: 'C:\\\\demo.mp3'"), 'Winamp web manifest should make demo.mp3 available');

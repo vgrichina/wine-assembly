@@ -13,6 +13,7 @@ const { spawn } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const BASE_URL = (process.env.TASKMAN_WEB_BASE_URL || '').replace(/\/$/, '');
 const OUT = path.join(ROOT, 'scratch', 'taskman-web');
 const tasksPng = path.join(OUT, 'live-tasks.png');
 
@@ -193,8 +194,11 @@ async function main() {
   fs.mkdirSync(OUT, { recursive: true });
   try { fs.unlinkSync(tasksPng); } catch (_) {}
 
-  const server = await startStaticServer();
-  const port = server.address().port;
+  const server = BASE_URL ? null : await startStaticServer();
+  const port = server && server.address().port;
+  const pageUrl = BASE_URL
+    ? `${BASE_URL}/index.html?debug&taskman-web=${Date.now()}`
+    : `http://127.0.0.1:${port}/index.html?debug&taskman-web=${Date.now()}`;
   const debugPort = await reserveTcpPort();
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'wine-assembly-taskman-web-'));
   const chrome = spawn(CHROME, [
@@ -202,7 +206,7 @@ async function main() {
     '--no-default-browser-check', '--disable-search-engine-choice-screen',
     `--remote-debugging-port=${debugPort}`,
     `--user-data-dir=${profile}`,
-    `http://127.0.0.1:${port}/index.html?debug&taskman-web=${Date.now()}`,
+    pageUrl,
   ], { stdio: ['ignore', 'ignore', 'pipe'] });
   let chromeError = '';
   chrome.stderr.on('data', data => { chromeError += data.toString(); });
@@ -211,7 +215,7 @@ async function main() {
   const cleanup = () => {
     try { if (cdp) cdp.close(); } catch (_) {}
     try { chrome.kill('SIGKILL'); } catch (_) {}
-    try { server.close(); } catch (_) {}
+    try { if (server) server.close(); } catch (_) {}
     try { fs.rmSync(profile, { recursive: true, force: true }); } catch (_) {}
   };
   process.on('exit', cleanup);
