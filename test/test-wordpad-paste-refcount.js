@@ -39,14 +39,22 @@ if (!fs.existsSync(EXE)) {
 
 // Type, select all, copy, cut, paste. The gaps are wide because each command
 // runs a full metafile render of the selection.
+//
+// The first keystroke waits until batch 2400 because the document has to
+// exist before a character can land in it: MFC 6.00 (the VC++ 6.0
+// redistributable mfc42.dll) takes roughly twice as many batches to get
+// WordPad's view up as MFC 4.21 does, and typing into a not-yet-created
+// RichEdit left WM_GETTEXTLENGTH at 0, so Select All selected nothing and
+// Copy had nothing to publish. Nothing was wrong with the emulator — the
+// schedule was simply tuned to one DLL build's boot time.
 const inputSpec = [
-  '1200:keypress:72',
-  '1230:keypress:101',
-  '1260:keypress:108',
-  '1400:post-cmd:57642',   // ID_EDIT_SELECT_ALL
-  '1800:post-cmd:57634',   // ID_EDIT_COPY
-  '4000:post-cmd:57637',   // ID_EDIT_CUT
-  '6000:post-cmd:57633',   // ID_EDIT_PASTE
+  '2400:keypress:72',
+  '2430:keypress:101',
+  '2460:keypress:108',
+  '2800:post-cmd:57642',   // ID_EDIT_SELECT_ALL
+  '3600:post-cmd:57634',   // ID_EDIT_COPY
+  '5800:post-cmd:57637',   // ID_EDIT_CUT
+  '7800:post-cmd:57633',   // ID_EDIT_PASTE
 ].join(',');
 
 const cmd = `node "${RUN}" --exe="${EXE}" --no-close --batch-size=100 ` +

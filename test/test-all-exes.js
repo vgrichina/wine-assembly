@@ -432,7 +432,7 @@ const TEST_CASES = [
 const MAX_BATCHES = 80;
 const BATCH_SIZE = 1000;
 
-function runExe(testCase, pngPath) {
+function runExe(testCase, pngPath, budgetMultiplier) {
   const exePath = path.join(ROOT, testCase.exe);
   if (!fs.existsSync(exePath)) {
     return { name: testCase.name, status: 'SKIP', reason: 'file not found' };
@@ -484,7 +484,8 @@ function runExe(testCase, pngPath) {
   ];
 
   const startedAt = Date.now();
-  const budgetMs = wallBudgetMs(testCase);
+  const factor = loadFactor() * (budgetMultiplier || 1);
+  const budgetMs = wallBudgetMs(testCase, factor);
   const result = spawnSync('node', args, {
     cwd: ROOT,
     timeout: budgetMs,
@@ -544,10 +545,12 @@ function runExe(testCase, pngPath) {
       reason: `timed out after ${(elapsedMs / 1000).toFixed(1)}s ` +
         `(budget ${(budgetMs / 1000).toFixed(0)}s = max(declared ` +
         `${((testCase.timeoutMs || 15000) / 1000).toFixed(0)}s, floor ` +
-        `${(MIN_BACKSTOP_MS / 1000).toFixed(0)}s) x${LOAD_FACTOR.toFixed(1)}, ` +
+        `${(MIN_BACKSTOP_MS / 1000).toFixed(0)}s) x${factor.toFixed(factor < 1 ? 3 : 1)}, ` +
         `load ${os.loadavg()[0].toFixed(1)}) — ${apiCalls.size} APIs, nothing verified`,
       apiCount: apiCalls.size,
       hasWindow,
+      elapsedMs,
+      budgetMs,
     };
   }
 
@@ -582,6 +585,8 @@ function runExe(testCase, pngPath) {
       reason: testCase.expectedCrash ? `${reason} — EXPECTED_CRASH (${testCase.expectedCrash})` : reason,
       apiCount: apiCalls.size,
       hasWindow,
+      elapsedMs,
+      budgetMs,
     };
   }
 
@@ -603,6 +608,8 @@ function runExe(testCase, pngPath) {
     hasShowWindow,
     visibleTitle,
     forbiddenVisibleTitle,
+    elapsedMs,
+    budgetMs,
   };
 }
 
@@ -627,11 +634,30 @@ if (!noBuild) {
 // factor in every timeout line, so a scaled budget can never be mistaken for
 // the declared one. --strict-timeouts pins the factor at 1 for a quiet machine
 // or CI runner where the declared numbers are the point.
-const LOAD_FACTOR = (() => {
-  if (process.argv.includes('--strict-timeouts')) return 1;
-  const perCpu = os.loadavg()[0] / Math.max(1, os.cpus().length);
-  return Math.min(8, Math.max(1, perCpu * 1.5));
+//
+// Sample it per case, at the moment that case is about to spawn. A corpus run
+// takes twenty minutes and this box swings between load 20 and 35 while it
+// runs, so a single reading taken at module load describes a machine that no
+// longer exists by the time the late cases start — in whichever direction
+// hurts. The suite is self-loading too (run-all.sh runs a tier N-at-a-time),
+// and that concurrency is entirely absent from a sample taken before any of it
+// has started.
+const STRICT_TIMEOUTS = process.argv.includes('--strict-timeouts');
+// Deliberate budget squeeze. Two uses: it is the only way to exercise the
+// timeout and retry paths on purpose (MIN_BACKSTOP_MS floors every real budget
+// at 30s, so nothing healthy ever reaches them), and it answers "which cases
+// only pass because they have room to spare" directly — run at 0.5 and read
+// the at-risk list.
+const TIMEOUT_SCALE = (() => {
+  const arg = process.argv.find(a => a.startsWith('--timeout-scale='));
+  const v = arg ? parseFloat(arg.split('=')[1]) : 1;
+  return Number.isFinite(v) && v > 0 ? v : 1;
 })();
+function loadFactor() {
+  if (STRICT_TIMEOUTS) return TIMEOUT_SCALE;
+  const perCpu = os.loadavg()[0] / Math.max(1, os.cpus().length);
+  return Math.min(8, Math.max(1, perCpu * 1.5)) * TIMEOUT_SCALE;
+}
 // Every run pays the same fixed startup before it emulates anything: node
 // boot, the wasm compile, the PE and its DLLs. Measured on this box, notepad.exe
 // at its default 80-batch budget takes 19.5s wall for 5.2s of CPU — so a 10s or
@@ -640,16 +666,17 @@ const LOAD_FACTOR = (() => {
 // nothing. Since --max-batches is what actually bounds the work, the backstop
 // only has to be above that floor to still catch a wedge.
 const MIN_BACKSTOP_MS = 30000;
-function wallBudgetMs(testCase) {
-  return Math.round(Math.max(testCase.timeoutMs || 15000, MIN_BACKSTOP_MS) * LOAD_FACTOR);
+function wallBudgetMs(testCase, factor) {
+  return Math.round(Math.max(testCase.timeoutMs || 15000, MIN_BACKSTOP_MS) *
+    (factor === undefined ? loadFactor() : factor));
 }
 
 // Run all tests
 console.log('=== Wine-Assembly EXE Smoke Tests ===\n');
-if (LOAD_FACTOR > 1.05) {
+if (loadFactor() > 1.05) {
   console.log(`  [load] ${os.loadavg()[0].toFixed(1)} on ${os.cpus().length} cpus — ` +
-    `wall-clock backstops scaled x${LOAD_FACTOR.toFixed(1)} (emulated work is unchanged; ` +
-    `--strict-timeouts to disable)\n`);
+    `wall-clock backstops scaled x${loadFactor().toFixed(1)} at start and re-sampled per ` +
+    `case (emulated work is unchanged; --strict-timeouts to disable)\n`);
 }
 
 const filter = process.argv.slice(2).filter(a => !a.startsWith('--')).pop();
@@ -668,7 +695,25 @@ fs.mkdirSync(PNG_DIR, { recursive: true });
     if (pngPath) {
       try { fs.unlinkSync(pngPath); } catch (_) {}
     }
-    const r = runExe(tc, pngPath);
+    let r = runExe(tc, pngPath);
+
+    // A timeout verifies nothing, so it is the one verdict worth paying to
+    // repeat: the run was killed mid-flight and its PNG never written, which
+    // means the difference between TIMEOUT and PASS here is the machine, not
+    // the emulator. Retrying once at double the budget converts a load spike
+    // into the answer the case actually has, and leaves TIMEOUT meaning what
+    // it should — genuinely wedged, or too slow even with room to breathe.
+    // Without this the PASS count moves with whatever else is running on the
+    // box, which is exactly the instability that made the number untrustworthy.
+    if (r.status === 'TIMEOUT') {
+      const firstReason = r.reason;
+      if (pngPath) { try { fs.unlinkSync(pngPath); } catch (_) {} }
+      r = runExe(tc, pngPath, 2);
+      r.reason = r.status === 'TIMEOUT'
+        ? `${r.reason} — twice, second at 2x budget`
+        : `${r.reason} — RETRIED after a timeout (${firstReason})`;
+      r.retriedAfterTimeout = true;
+    }
 
     // A case that asked for a PNG and did not get one was never pixel-checked,
     // so calling it PASS claims a verification that did not happen. The gate
@@ -750,6 +795,32 @@ fs.mkdirSync(PNG_DIR, { recursive: true });
     console.log(`\nTimed out — NOT verified, do not read the PASS count as stable ` +
       `(load now ${os.loadavg()[0].toFixed(1)}):`);
     for (const r of timeouts) console.log(`  ${r.name}: ${r.reason}`);
+  }
+
+  // Which cases would have flipped on a busier box. A run that used most of its
+  // wall-clock budget is one load spike away from being killed, and a killed
+  // run verifies nothing — so these are precisely the cases that make the PASS
+  // count differ between two runs of identical code. Naming them every run
+  // answers "is this number stable?" without having to sweep the corpus twice
+  // and diff, which on this machine costs forty minutes and is itself load-
+  // dependent. An empty list is the claim that the count means something.
+  const nearTimeout = results
+    .filter(r => r.budgetMs && r.elapsedMs && r.status !== 'TIMEOUT' &&
+      r.elapsedMs / r.budgetMs > 0.7)
+    .sort((a, b) => (b.elapsedMs / b.budgetMs) - (a.elapsedMs / a.budgetMs));
+  const retried = results.filter(r => r.retriedAfterTimeout && r.status !== 'TIMEOUT');
+  const atRisk = [...new Set([...nearTimeout, ...retried])];
+  if (atRisk.length > 0) {
+    console.log('\nAt risk of flipping on a busier box (verdict depended on finishing in time):');
+    for (const r of atRisk) {
+      const why = [];
+      if (r.retriedAfterTimeout) why.push('only after a retry');
+      if (r.budgetMs && r.elapsedMs) {
+        why.push(`using ${(100 * r.elapsedMs / r.budgetMs).toFixed(0)}% of a ` +
+          `${(r.budgetMs / 1000).toFixed(0)}s budget`);
+      }
+      console.log(`  ${r.name}: ${r.status} ${why.join(', ')}`);
+    }
   }
 
   if (fail > 0) {

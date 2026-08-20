@@ -302,8 +302,8 @@ host presentation only
 
 FreeType is used only by `tools/gen-wine-fonts.sh` at build time to read the
 BDF and serialize the generated FNT. The shipped emulator has no FreeType
-dependency. Canvas remains available for unsupported scalable/document fonts,
-but it is not used for ANAKRON Terminal or the covered Wine stock bitmap faces.
+dependency. Scalable/document GDI fonts now use the deterministic WAT TrueType
+rasterizer; Canvas is not a guest-text fallback.
 
 ## Bold and italic policy
 

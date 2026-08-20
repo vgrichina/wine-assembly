@@ -6,6 +6,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const { bootRenderHarness } = require('./render-helper');
+const { fontMounts } = require('../lib/font-substitutions');
 
 (async () => {
   const harness = await bootRenderHarness({
@@ -20,6 +21,10 @@ const { bootRenderHarness } = require('./render-helper');
         (call $gdi_character_placement_w
           (local.get 0) (call $g2w (local.get 1)) (local.get 2)
           (local.get 3) (call $g2w (local.get 4)) (local.get 5)))
+      (func (export "test_public_kern_pair_w")
+            (param i32 i32 i32) (result i32)
+        (call $tt_gdi_kern_pair_w
+          (local.get 0) (local.get 1) (local.get 2)))
       (func (export "test_public_call_CreateDIBPatternBrush")
             (param i32 i32) (result i32)
         (local $saved i32)
@@ -160,6 +165,14 @@ const { bootRenderHarness } = require('./render-helper');
       attrs: 0x20,
     });
   }
+  const substitutions = JSON.parse(fs.readFileSync(
+    path.join(root, 'fonts', 'substitutions.json'), 'utf8'));
+  for (const mount of fontMounts(substitutions, { subset: true })) {
+    hostCtx.vfs.files.set(mount.vfsPath, {
+      data: new Uint8Array(fs.readFileSync(path.join(root, 'fonts', mount.file))),
+      attrs: 0x20,
+    });
+  }
 
   const hdc = createDc();
   const widths = allocZero(12);
@@ -216,7 +229,7 @@ const { bootRenderHarness } = require('./render-helper');
     sum + wat.guest_read32(justified.dx + index * 4), 0), justifiedWidth);
 
   const arial = writeWide('Arial');
-  const scalable = wat.test_call_CreateFontW(-14, 400, 0, arial) >>> 0;
+  const scalable = wat.test_call_CreateFontW(-24, 400, 0, arial) >>> 0;
   assert(scalable);
   wat.test_call_SelectObject(hdc, scalable);
   assert.strictEqual(wat.test_public_char_widths(hdc, 65, 67, widths, 1), 1);
@@ -234,6 +247,25 @@ const { bootRenderHarness } = require('./render-helper');
       sum + wat.guest_read32(scalablePlacement.dx + index * 4), 0),
     'placement extent must be the sum of the advances it reported');
   assert((scalablePacked >>> 16) > 0, 'placement should report a cell height');
+
+  const avText = writeWide('AV');
+  const avPlain = makeResults(2);
+  const avKerned = makeResults(2);
+  const avPlainPacked = wat.test_public_character_placement_w(
+    hdc, avText, 2, 1000, avPlain.results, 0) >>> 0;
+  const avKernedPacked = wat.test_public_character_placement_w(
+    hdc, avText, 2, 1000, avKerned.results, 8) >>> 0;
+  const pairAdjustment = wat.test_public_kern_pair_w(hdc, 65, 86);
+  assert.ok(pairAdjustment < 0, 'the scalable substitute needs a legacy AV kern pair');
+  assert.strictEqual(wat.guest_read32(avKerned.dx) | 0,
+    (wat.guest_read32(avPlain.dx) | 0) + pairAdjustment,
+    'GCP_USEKERNING must adjust the left glyph advance like Win98');
+  assert.strictEqual(wat.guest_read32(avKerned.dx + 4),
+    wat.guest_read32(avPlain.dx + 4), 'the right glyph advance remains unchanged');
+  assert.strictEqual((avKernedPacked & 0xffff) - (avPlainPacked & 0xffff),
+    pairAdjustment, 'the packed extent includes the legacy pair adjustment');
+  assert.strictEqual(wat.guest_read32(avKerned.caret + 4),
+    wat.guest_read32(avKerned.dx), 'the second caret follows the kerned advance');
 
   const bitmapInfo = allocZero(24);
   const discardable = wat.test_public_call_CreateDiscardableBitmap(hdc, 3, 2) >>> 0;

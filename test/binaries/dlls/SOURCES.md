@@ -15,19 +15,23 @@ file; it must not be shipped based on this document.
 
 | DLL | Size | SHA-256 | Source status |
 |-----|-----:|---------|---------------|
+| asycfilt.dll | 147,728 | `de83c9d9203050b40c098e4143ef8f577aa90016c7a64d4f2931b57a4c43e566` | VB6 SP6 redistributable path below |
 | cabinet.dll | 56,080 | `cb535e27870708f94f46ecb75bf6a5dff17422c28b9f21c2c80ab7b1fcf1f715` | Windows Installer 2.0 path below |
+| comcat.dll | 22,288 | `96d04cdfaf4f4d7b8722b139a15074975d4c244302f78034b7be65df1a92fd03` | VB6 SP6 redistributable path below |
+| msvbvm60.dll | 1,386,496 | `3ef32e0152cc3fa07c417e6aadf9ead83a17b5fdee73799044e1bd7564725d6e` | VB6 SP6 redistributable path below |
+| olepro32.dll | 164,112 | `789c3c45eda1749bd939f4a96616e1e9ef1b7dcc62a2889f65088954c64d0938` | VB6 SP6 redistributable path below |
 | cards.dll | 148,528 | `07ed76ebed79520a92e2a2ad5dfdbb230929322e75ef85b053ff54d5a8be6a02` | See `../SOURCES.md` |
-| comctl32.dll | 548,624 | `d8c8d415e28b24f544be3f53ec103353ebefc2aa3056380084d058ca13d0f6c5` | Reproduced from the IE6 SP1 path below |
+| comctl32.dll | 577,808 | `28a41e6a35c4509924a32a99841a815cf49e1d3ee6912ec26a823e45472edfa4` | VC++ 6.0 redistributable path below |
 | d3drm.dll | 437,008 | `fd80f3839a035b6b52362735b22eb8d2523d3434bf18afb3e0f1b5ace84357b0` | DirectX 6.0 path below |
 | d3dxof.dll | 107,792 | `1f2d0683668b3039d451d88ed449fd9d49371fab3fadb991636cd6bfb0aa6eee` | DirectX 6.0 path below |
 | imagehlp.dll | 106,013 | `a01ea2839b8b9676631cc7d5a9e8d6d64c2cae5cfba8d7e74d6e9f4b0e122331` | Windows Installer 2.0 path below |
 | mfc30.dll | 335,872 | `07eeb7e8d7b2fdba0a250e0f19a2d5336a0ff83ae70b7b0f8623fb86e066041a` | Windows 98 SE OEM path below; local-only |
-| mfc42.dll | 940,304 | `590ee92bc1c9cf0d4a6b40e11c9272db243c59e709f940147c6085f07e297788` | Unverified |
-| mfc42u.dll | 995,384 | `5b3b68bb88be968a0c7c24887b437fac6d9081671b8d8376482168383ca30b8b` | Unverified |
-| msvcp60.dll | 401,462 | `2b6b93c2d66969eb00258e2b5ad6172decebada096e3b1b077a3380c80e4a072` | Unverified |
+| mfc42.dll | 995,383 | `ec63a85030c60716acdcf060abfaa95a6a3528631622fa60e7d17fbea2f751f9` | VC++ 6.0 redistributable path below |
+| mfc42u.dll | 995,384 | `5b3b68bb88be968a0c7c24887b437fac6d9081671b8d8376482168383ca30b8b` | VC++ 6.0 redistributable path below |
+| msvcp60.dll | 401,462 | `2b6b93c2d66969eb00258e2b5ad6172decebada096e3b1b077a3380c80e4a072` | VC++ 6.0 redistributable path below |
 | msvcrt20.dll | 274,432 | `9446a83656e24ebf303a2c8c046ef0cce252a789c1becfde3580e9ab614b4316` | Windows 98 SE OEM path below; local-only |
-| msvcrt.dll | 278,581 | `887eb5ce93edb7192ca3e9220f07f9ca0f94db02af5862ebcbdfcb852db99fd1` | Unverified |
-| oleaut32.dll | 598,288 | `baeb2f7c1b8be56738d34e1d1ddf8e0eebd3a633215dc1575e14656be38b939d` | IE6 SP1 `OAINST.CAB`; outer archive reproduction pending |
+| msvcrt.dll | 278,581 | `887eb5ce93edb7192ca3e9220f07f9ca0f94db02af5862ebcbdfcb852db99fd1` | VC++ 6.0 redistributable path below |
+| oleaut32.dll | 598,288 | `baeb2f7c1b8be56738d34e1d1ddf8e0eebd3a633215dc1575e14656be38b939d` | VC++ 6.0 redistributable path below |
 | riched20.dll | 431,133 | `1c2508fb55ddc459d0327f2017471545c87420443391567094e768fb34032da1` | Windows Installer 2.0 path below |
 | shfolder.dll | 21,021 | `6f0443a62fd444c4254f902f668543b867a0577504915d22cd75328f73cd4472` | Windows Installer 2.0 path below |
 | usp10.dll | 314,906 | `4d8ff1f53c3babf9bfd11b2ebcd44e2698cfe3bc80c6f0cbc64c0d191ea1fc1b` | Windows Installer 2.0 path below |
@@ -163,10 +167,14 @@ cabextract -F comctl32.dll ie6sp1en/SETUPW95.CAB
 shasum -a 256 comctl32.dll
 ```
 
-Redistribution-term verification remains pending. Do not include this DLL in a
-public deployment until that is complete. Microsoft documents `Comctl32.dll`
-as a Windows component whose versions were distributed with Windows and
-Internet Explorer; that fact alone is not a redistribution grant.
+**Superseded on 2026-08-19, and no longer the local fixture.** That file is
+COMCTL32 **5.81**, whose version resource names it a Windows 2000 operating
+system component. Coming out of an IE package is not a redistribution grant —
+IE's own license covers redistributing IE, not lifting a DLL out of it — so it
+could never go on the public site. Microsoft did publish a redistributable
+COMCTL32: version **5.80**, as `50comupd.exe`, which is carried inside the
+Visual C++ 6.0 redistributable documented below. The fixture is that file now;
+this section is kept because it is what a checkout from before that date has.
 
 ## Other files previously extracted from IE6 SP1
 
@@ -198,6 +206,94 @@ File: `Microsoft_DirectX-6_1999Sep.7z` > `directx.cab`
 | d3dxof.dll | 107,792 | 1999-01-08 | DirectX File (.x) parser, version 4.06.02.0436 — matches d3drm.dll same build. Required for d3drm `.x` mesh loading (Plus!98 Organic Art screensavers). |
 
 `d3drm.dll` (version 4.06.02.0436, same date/build) ships in this same cab and predates this entry; future re-extractions can pull both from here.
+
+## From the Visual C++ 6.0 redistributable (archive.org)
+
+Source: `https://archive.org/details/vc-6-redist-setup-enu`
+File: `VC6RedistSetup_enu.exe`, a self-extracting wrapper around `vcredist.exe`,
+which is itself a self-extracting archive of the runtime files. Microsoft
+published `vcredist.exe` for redistribution with Visual C++ 6.0 applications —
+it is the runtime those applications were licensed to ship — which is what makes
+these copies publishable where the same DLLs lifted out of Windows or IE are
+not.
+
+| Artifact | Size | SHA-256 |
+|----------|-----:|---------|
+| `VC6RedistSetup_enu.exe` | 1,833,232 | `cf9d0dd968e78d5e685a6ea6ab58ec438ac0ac24316b14d271b02cf3cced67d9` |
+| `vcredist.exe` | 1,807,072 | `6298eaed2cc2dcaf222030d1af5b68580fff439cfcd2501ee231c043638fe51e` |
+| `50comupd.exe` | 509,984 | `e70f9945a7803173cb46c90d014000cbf45e390cce1db2411cbd07e0ffd6b9e9` |
+
+Members taken as fixtures, verified on 2026-08-19:
+
+| DLL | Size | SHA-256 | Note |
+|-----|-----:|---------|------|
+| `comctl32.dll` | 577,808 | `28a41e6a35c4509924a32a99841a815cf49e1d3ee6912ec26a823e45472edfa4` | `comc95.dll` inside `50comupd.exe` — COMCTL32 5.80, the Win9x member; `comcnt.dll` beside it is the NT one |
+| `mfc42.dll` | 995,383 | `ec63a85030c60716acdcf060abfaa95a6a3528631622fa60e7d17fbea2f751f9` | MFC 6.00.8665.0; replaced the unverified 4.21.7160 copy |
+| `mfc42u.dll` | 995,384 | `5b3b68bb88be968a0c7c24887b437fac6d9081671b8d8376482168383ca30b8b` | byte-identical to the copy already present |
+| `msvcp60.dll` | 401,462 | `2b6b93c2d66969eb00258e2b5ad6172decebada096e3b1b077a3380c80e4a072` | byte-identical |
+| `msvcrt.dll` | 278,581 | `887eb5ce93edb7192ca3e9220f07f9ca0f94db02af5862ebcbdfcb852db99fd1` | byte-identical |
+| `oleaut32.dll` | 598,288 | `baeb2f7c1b8be56738d34e1d1ddf8e0eebd3a633215dc1575e14656be38b939d` | byte-identical; supersedes the IE6 `OAINST.CAB` provenance |
+| `asycfilt.dll`, `comcat.dll`, `olepro32.dll` | — | — | same bytes as the VB6 SP6 package below |
+
+Four of those were already the local fixtures, hash for hash: they had simply
+never been traced to a package whose terms permit redistribution, and were
+marked `Unverified` for it.
+
+`mfc42.dll` 6.00.8665.0 now replaces the unverified MFC 4.21.7160 copy
+(940,304 bytes, `590ee92b…`) that Windows 98's own applets were compiled
+against. Swapping it in first cost WordPad its toolbars —
+`test/test-wordpad-toolbar.js` fell from 23/23 to 7/23 with neither
+`ToolbarWindow32` child created — but that was our bug, not an incompatibility:
+`$handle_CreateWindowExA` tested the raw CBT hook address with `i32.and`, so a
+hook proc at an even address read as "no hook" and the toolbar creation took the
+wrong arm. MFC 4.21's CBT proc happens to sit at an odd address and 6.00's at an
+even one, which is the only reason the old fixture hid it. Four further
+6.00-only failures were the same kind of find: a stale `$focus_hwnd` on a
+destroyed dialog child, a missing `SystemTimeToFileTime`, and a missing
+`GetFileSecurityA` export. The whole WordPad and Paint suites pass on this
+build; the 4.21 copy is kept beside it as `mfc42.dll.pre-redist` for A/B runs.
+
+Reproduce:
+
+```bash
+curl -L -o VC6RedistSetup_enu.exe \
+  https://archive.org/download/vc-6-redist-setup-enu/VC6RedistSetup_enu.exe
+7z x -ovc6 VC6RedistSetup_enu.exe        # -> vcredist.exe
+7z x -ovc6x vc6/vcredist.exe             # -> the runtime DLLs + 50comupd.exe
+7z x -occ vc6x/50comupd.exe              # -> comc95.dll (Win9x), comcnt.dll (NT)
+shasum -a 256 cc/comc95.dll vc6x/mfc42.dll vc6x/mfc42u.dll vc6x/msvcp60.dll \
+              vc6x/msvcrt.dll vc6x/oleaut32.dll
+```
+
+## From the Visual Basic 6 SP6 runtime redistributable (archive.org)
+
+Source: `https://archive.org/details/vbrun60sp6`
+File: `vbrun60sp6.exe` (1,028,368 bytes, sha256
+`7f7bc59f453539194c2d38fd68fb2b4beb3c1b5b5273cec1b7dd1150b0ea929d`), a
+self-extracting CAB. `cabextract` gives the members below directly.
+
+Microsoft published this package for redistribution with VB6 applications,
+which is why it is preferred over lifting the same DLLs out of a Windows
+install: it is the runtime the applications themselves were licensed to ship.
+
+| DLL | Size | Notes |
+|-----|------|-------|
+| msvbvm60.dll | 1,386,496 | The VB6 virtual machine. A VB6 executable is almost entirely imports of this. |
+| oleaut32.dll | — | Present in the package; the repository's copy still comes from the IE6 path above. |
+| olepro32.dll | 164,112 | OLE property pages, loaded by msvbvm60. |
+| asycfilt.dll | 147,728 | Asynchronous storage filter, loaded by msvbvm60. |
+| comcat.dll | 22,288 | Component categories, loaded by msvbvm60. |
+
+## 16-bit runtimes for the Entertainment Pack games
+
+These are staged beside the games in `test/binaries/wep16/`, not here, because
+the 16-bit loader looks in the application's own directory. Recorded here so
+the fetch is reproducible.
+
+| DLL | Size | Source |
+|-----|------|--------|
+| VBRUN100.DLL | 271,264 | `https://archive.org/details/visual-basic_202303` > `VBRUN123JBM.zip` > `VBRUN100.DLL`. Five WEP games are Visual Basic 1 programs. |
+| WIN87EM.DLL | 11,459 | `https://archive.org/details/WIN87EM_ZIP` > `WIN87EM.ZIP` > `WIN87EM.EXE`, renamed. The 80x87 emulator Microsoft C linked against; Tetris, Chess, Tut's Tomb and Fuji Golf import it. |
 
 ## Previously collected
 

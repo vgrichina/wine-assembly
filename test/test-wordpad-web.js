@@ -304,6 +304,70 @@ async function main() {
     poll();
   })`, 10000);
 
+  const longDate = await evaluate(`new Promise((resolve, reject) => {
+    const app = runningApps.find(item => item && item.name === 'wordpad');
+    const e = app.wine.instance.exports;
+    e.post_message_q(${ready.main}, 0x0111, 32778, 0); // Insert > Date and Time
+    sharedRenderer._wakeMessageWait();
+    const started = performance.now();
+    const findControl = (parent, id) => {
+      let slot = 0;
+      while ((slot = e.wnd_next_child_slot(parent, slot) | 0) >= 0) {
+        const hwnd = e.wnd_slot_hwnd(slot) | 0;
+        slot++;
+        if (hwnd && (e.ctrl_get_id(hwnd) | 0) === id) return hwnd;
+      }
+      return 0;
+    };
+    const pollDialog = () => {
+      const dialog = Object.values(sharedRenderer.windows).find(win =>
+        win && win.wasm === app.wine.instance && win.visible && win.isDialog &&
+        /Date and Time/i.test(win.title || ''));
+      const list = dialog && findControl(dialog.hwnd, 1018);
+      if (dialog && list) {
+        const x = e.wnd_window_screen_x(list) | 0;
+        const y = e.wnd_window_screen_y(list) | 0;
+        sharedRenderer.handleMouseDown(x + 20, y + 24, 0); // second row: long date
+        sharedRenderer.handleMouseUp(x + 20, y + 24, 0);
+        const selectedAt = performance.now();
+        const pollSelection = () => {
+          const selected = e.send_message(list, 0x0188, 0, 0) | 0; // LB_GETCURSEL
+          if (selected !== 1 && performance.now() - selectedAt <= 5000) {
+            setTimeout(pollSelection, 50);
+            return;
+          }
+          if (selected !== 1) {
+            reject(new Error('long-date mouse selection did not stick: ' + selected));
+            return;
+          }
+          e.post_message_q(dialog.hwnd, 0x0111, 1, 0); // IDOK
+          sharedRenderer._wakeMessageWait();
+          const insertedAt = performance.now();
+          const pollText = () => {
+            const length = e.send_message(${ready.editor}, 0x000E, 0, 0) | 0;
+            const guest = e.guest_alloc(Math.max(64, length + 1)) >>> 0;
+            e.send_message(${ready.editor}, 0x000D, length + 1, guest);
+            const wa = app.wine._guestToWasmAddress(guest);
+            const bytes = new Uint8Array(app.wine.memory.buffer);
+            let text = '';
+            for (let i = 0; i < length && bytes[wa + i]; i++) text += String.fromCharCode(bytes[wa + i]);
+            if (e.guest_free) e.guest_free(guest);
+            if (/Monday, January 1, 2001/.test(text)) {
+              resolve({ selected, text, running: app.wine.running });
+            } else if (!app.wine.running || performance.now() - insertedAt > 8000) {
+              reject(new Error('long date did not insert: ' + JSON.stringify({ selected, text, running: app.wine.running })));
+            } else setTimeout(pollText, 100);
+          };
+          pollText();
+        };
+        pollSelection();
+      } else if (performance.now() - started > 10000) {
+        reject(new Error('Date and Time dialog did not open'));
+      } else setTimeout(pollDialog, 100);
+    };
+    pollDialog();
+  })`, 20000);
+
   const dibPaste = await evaluate(`new Promise(resolve => {
     const app = runningApps.find(item => item && item.name === 'wordpad');
     const e = app.wine.instance.exports;
@@ -359,9 +423,9 @@ async function main() {
     throw new Error(`WordPad did not survive native CF_DIB paste: ${JSON.stringify(dibPaste)}\n` +
       consoleSummary(cdp.events).slice(-120).join('\n'));
   }
-  assert.strictEqual(dibPaste.length, 12,
+  assert.strictEqual(dibPaste.length, longDate.text.length + 1,
     `native RichEdit should add one inline object position: ${JSON.stringify(dibPaste)}`);
-  assert.strictEqual(dibPaste.text, 'hello world ',
+  assert.strictEqual(dibPaste.text, longDate.text + ' ',
     `WM_GETTEXT should preserve text and expose the object position as a space: ${JSON.stringify(dibPaste)}`);
 
   const screenshot = await evaluate(`(() => {
@@ -466,11 +530,16 @@ async function main() {
   })()`);
   const consoleText = consoleSummary(cdp.events).join('\n');
   assert.strictEqual(typed.text, 'hello world', `native RichEdit text mismatch: ${JSON.stringify(typed)}`);
+  assert.strictEqual(longDate.selected, 1, `Date and Time should select the non-default long-date row: ${JSON.stringify(longDate)}`);
+  assert(longDate.running && /hello worldMonday, January 1, 2001/.test(longDate.text),
+    `WordPad should survive inserting the selected long-date format: ${JSON.stringify(longDate)}`);
   assert(typed.running, 'WordPad should remain running after typing');
   assert.strictEqual(typed.focus, ready.editor, 'native RichEdit child should retain focus');
   assert(!/--- Program exited ---/.test(log), `WordPad should not exit:\n${log.slice(-3000)}`);
   assert(/DLL: riched20\.dll at/i.test(consoleText),
     `browser should preload riched20.dll:\n${consoleText.slice(-5000)}`);
+  assert(!/UNIMPLEMENTED API:|RuntimeError|LinkError|Thread \d+ crashed|FATAL:/i.test(consoleText),
+    `WordPad browser run should not crash:\n${consoleText.slice(-5000)}`);
   assert.deepStrictEqual(sizeState, { rendererText: '10', guestText: '10' },
     'WordPad browser toolbar should show the 10pt default in renderer and control state');
   assert(toolbarVisualState && toolbarVisualState.buttonDetail >= 900,
@@ -492,6 +561,7 @@ async function main() {
   console.log('PASS  WordPad stays running in the browser');
   console.log('PASS  browser preloads riched20.dll');
   console.log('PASS  native RichEdit accepts "hello world"');
+  console.log('PASS  non-default long Date and Time format inserts without crashing');
   console.log('PASS  native RichEdit inserts a crash-safe CF_DIB object position:', JSON.stringify(dibPaste));
   console.log('PASS  native RichEdit paints the inline CF_DIB:', JSON.stringify(imagePixels));
   console.log('PASS  browser toolbar shows 10pt default size');

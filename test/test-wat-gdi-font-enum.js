@@ -192,7 +192,7 @@ const { bootRenderHarness } = require('./render-helper');
     view.getUint32(wa(tmW), true), 'Unicode ntmCellHeight offset');
 
   assert.deepStrictEqual(calls, { measure: 0, metrics: 0 },
-    'installed face enumeration must not consult Canvas font providers');
+    'installed face enumeration must not consult host font providers');
 
   const EXPECTED = [
     ['Aria', 4], ['Syst', 1], ['MS S', 1], ['Fixe', 1], ['Cour', 1],

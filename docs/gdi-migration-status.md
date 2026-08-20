@@ -15,25 +15,20 @@ transport calls:
 - `gdi_surface_upload`
 - `gdi_surface_delete`
 
-Two `gdi_*` calls remain under the explicit Canvas text policy. Font handles,
-LOGFONT properties, face-name storage, selection, text color, background mode,
-alignment, mapping, and clipping are owned by WAT. `gdi_text_bind` exposes a
-transient derived view of those properties only when `gdi_text_mask` must
-rasterize an unsupported scalable face. JavaScript neither allocates font
-handles nor stores authoritative dynamic font objects. Canvas returns a
-bounded one-bit mask, and WAT writes memory, window, DirectDraw, and screen DC
-pixels into canonical surface storage. Installed FNT 2.x/3.x strikes bypass
-both calls: WAT measures and writes
-their glyphs directly, including `ExtTextOut` rectangle/lpDx behavior and
+No `gdi_*` text import remains. Font handles, LOGFONT properties, face-name
+storage, selection, metrics, rasterization, text color, background mode,
+alignment, mapping, clipping, and destination writes are owned by WAT.
+Installed FNT 2.x/3.x strikes and scalable `glyf` TrueType faces both measure
+and draw without Canvas, including `ExtTextOut` rectangle/lpDx behavior and
 `DrawText` wrapping, alignment, clipping, and calculated rectangles.
 The tracked Wine System, MS Sans Serif, Fixedsys, and Courier FONs plus the
 ANAKRON-derived Terminal FON are preloaded into every browser and CLI process
 and installed lazily by WAT. Stock variable UI fonts, common Win9x UI aliases,
 all three fixed stocks, and explicit requests for those bitmap faces therefore
-use this path without calling the two Canvas text-policy imports.
+use this path without a host text-policy import.
 `OEM_FIXED_FONT` selects the open Terminal 8x12 strike, whose complete byte
-range is generated through CP437 and marked `OEM_CHARSET`. Explicit
-scalable/document faces and shaped text retain the Canvas fallback. See
+range is generated through CP437 and marked `OEM_CHARSET`. Explicit scalable
+document faces use deterministic open substitutes or guest-installed TTFs. See
 [`bitmap-font-review.md`](bitmap-font-review.md) for the candidate and license
 audit.
 Every non-text semantic call removed in the
@@ -54,9 +49,12 @@ both directions, including endpoint-cap coverage, edge clipping, and all
 `ROP2` modes through a one-write coverage region. The reusable source is
 `tools/v86-reference/probes/gdi-wide-lines.c`; its capture provenance and
 exact masks are checked in under `test/fixtures/gdi-wide-line-pixels.json`.
-Captured diagonal cases remain reference-only while the WAT path retains its
-deterministic square-stamp approximation, and widths above five, transformed
-wide lines, and geometric pen cap/join semantics remain future fidelity work.
+The captured diagonal grid now matches Win98's asymmetric endpoint-box hull
+for widths 2 through 5, including direction and endpoint order. `PS_GEOMETRIC`
+solid lines instead use analytic pixel-center segment coverage with flat,
+round, or square caps, and widened paths add analytic round, bevel, or
+miter-limited joins. Transformed cosmetic wide lines and additional geometric
+join-angle fixtures remain future fidelity work.
 Public bitmap access (`CreateBitmapIndirect`, `GetBitmapBits`, and
 `SetBitmapBits`), rounded and multi-polygon regions, `GetRegionData`,
 `PtInRegion`, and ROP4 `MaskBlt` also route through canonical WAT storage.
@@ -65,10 +63,13 @@ state, gamma-ramp bytes, and the single software RGBA pixel-format contract
 are likewise WAT-owned. Pixel-format selection is immutable after the first
 successful `SetPixelFormat`, and `SwapBuffers` uses only the raw surface
 presentation boundary.
-`GetTextExtentExPointA/W`, `GetCharABCWidthsA`, and `GetGlyphOutlineA`
-delegate glyph measurement to the allowed Canvas policy while WAT owns prefix
-fitting and Win32 result structures. Font enumeration and resource/table
-fallback contracts are exposed without adding another JavaScript bridge.
+`GetTextExtentExPointA/W`, `GetCharABCWidthsA`, and `GetGlyphOutlineA` are
+WAT-owned. Scalable `GetGlyphOutlineA` now returns transformed quadratic
+`GGO_NATIVE` streams and deterministic 4/16/64-level gray buffers; real Win98's
+`GGO_BEZIER` rejection is pinned rather than emulating an NT-only extension.
+`GetCharacterPlacement` applies classic TrueType `kern` format-0 pairs under
+`GCP_USEKERNING`, including in deployed font subsets. DBCS conversion and
+complex-script reordering/ligation remain separate compatibility work.
 All named GDI32 imports in the checked-in PE corpus are now exposed. Classic
 and enhanced metafiles have WAT-owned byte objects, deep-copy/lifetime,
 header/query, and valid empty conversion-stream semantics; drawing-record

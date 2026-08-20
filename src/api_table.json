@@ -88,7 +88,46 @@
     "name": "BitBlt",
     "nargs": 9,
     "convention": "stdcall",
-    "hash": 712574158
+    "hash": 712574158,
+    "args": [
+      {
+        "name": "hdc",
+        "type": "HANDLE"
+      },
+      {
+        "name": "x",
+        "type": "INT"
+      },
+      {
+        "name": "y",
+        "type": "INT"
+      },
+      {
+        "name": "w",
+        "type": "INT"
+      },
+      {
+        "name": "h",
+        "type": "INT"
+      },
+      {
+        "name": "srcDC",
+        "type": "HANDLE"
+      },
+      {
+        "name": "sx",
+        "type": "INT"
+      },
+      {
+        "name": "sy",
+        "type": "INT"
+      },
+      {
+        "name": "rop",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "BOOL"
   },
   {
     "id": 13,
@@ -403,7 +442,14 @@
     "name": "CreateCompatibleDC",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 3510766298
+    "hash": 3510766298,
+    "args": [
+      {
+        "name": "hdc",
+        "type": "HDC"
+      }
+    ],
+    "ret": "HDC"
   },
   {
     "id": 54,
@@ -438,7 +484,35 @@
     "name": "CreateDIBSection",
     "nargs": 6,
     "convention": "stdcall",
-    "hash": 1775273563
+    "hash": 1775273563,
+    "args": [
+      {
+        "name": "hdc",
+        "type": "HDC"
+      },
+      {
+        "name": "bmi",
+        "type": "LPBITMAPINFO"
+      },
+      {
+        "name": "usage",
+        "type": "UINT"
+      },
+      {
+        "name": "bits",
+        "type": "LPVOID",
+        "out": true
+      },
+      {
+        "name": "section",
+        "type": "HANDLE"
+      },
+      {
+        "name": "offset",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "HANDLE"
   },
   {
     "id": 59,
@@ -3014,7 +3088,14 @@
     "name": "GetWindowDC",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 1339497294
+    "hash": 1339497294,
+    "args": [
+      {
+        "name": "hwnd",
+        "type": "HWND"
+      }
+    ],
+    "ret": "HDC"
   },
   {
     "id": 354,
@@ -17298,21 +17379,62 @@
     "name": "IDataObject_GetData",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 95865312
+    "hash": 95865312,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "pformatetc",
+        "type": "LPFORMATETC"
+      },
+      {
+        "name": "pmedium",
+        "type": "HANDLE"
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 2142,
     "name": "IDataObject_GetDataHere",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 3641951518
+    "hash": 3641951518,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "pformatetc",
+        "type": "LPFORMATETC"
+      },
+      {
+        "name": "pmedium",
+        "type": "HANDLE"
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 2143,
     "name": "IDataObject_QueryGetData",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 1861475772
+    "hash": 1861475772,
+    "args": [
+      {
+        "name": "this",
+        "type": "HANDLE"
+      },
+      {
+        "name": "pformatetc",
+        "type": "LPFORMATETC"
+      }
+    ],
+    "ret": "HRESULT"
   },
   {
     "id": 2144,
@@ -20199,5 +20321,121 @@
       }
     ],
     "ret": "UINT"
+  },
+  {
+    "id": 2466,
+    "name": "OleDuplicateData",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3917170522,
+    "args": [
+      {
+        "name": "hSrc",
+        "type": "HANDLE"
+      },
+      {
+        "name": "cfFormat",
+        "type": "UINT"
+      },
+      {
+        "name": "uiFlags",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "HANDLE"
+  },
+  {
+    "id": 2467,
+    "name": "GetFileSecurityA",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1047573794,
+    "args": [
+      {
+        "name": "lpFileName",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "RequestedInformation",
+        "type": "DWORD"
+      },
+      {
+        "name": "pSecurityDescriptor",
+        "type": "LPVOID"
+      },
+      {
+        "name": "nLength",
+        "type": "DWORD"
+      },
+      {
+        "name": "lpnLengthNeeded",
+        "type": "LPDWORD",
+        "out": true
+      }
+    ],
+    "ret": "BOOL"
+  },
+  {
+    "id": 2468,
+    "name": "CloseEnhMetaFile",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 768795607
+  },
+  {
+    "id": 2469,
+    "name": "ColorMatchToTarget",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3979646369
+  },
+  {
+    "id": 2470,
+    "name": "CreateEllipticRgnIndirect",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2295203464
+  },
+  {
+    "id": 2471,
+    "name": "CreateEnhMetaFileA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3772733284
+  },
+  {
+    "id": 2472,
+    "name": "EqualRgn",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3154701738
+  },
+  {
+    "id": 2473,
+    "name": "ExtCreateRegion",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1379260324
+  },
+  {
+    "id": 2474,
+    "name": "GetCharacterPlacementA",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 788745880
+  },
+  {
+    "id": 2475,
+    "name": "SetICMMode",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 517416389
+  },
+  {
+    "id": 2476,
+    "name": "SetICMProfileA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 5371878
   }
 ]

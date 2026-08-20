@@ -1,0 +1,783 @@
+{
+  "provenance": {
+    "kind": "native-windows-98-reference",
+    "source": "tools/v86-reference/probes/gdi-font-outline.c",
+    "capturedAt": "2026-08-20T12:34:13.521Z",
+    "probeSourceSha256": "7089e3a441012a50ff2ea3936a0e8edbbef2d5a494d8eb46369f9bce188d26b6",
+    "probeExeSha256": "983a047480feb93838161fb6cc023e6c5deadbea04183d502e35536daf64a915",
+    "serialOutputSha256": "1195d670e214879ec540c54b87ed2e5ad56c1484fc953b5184e3c445fd584707",
+    "screenshotSha256": "1b96efc00582d4275cbcb116e71d011ad8ab13a499214ad0ff04599f17cc6b55",
+    "v86": {
+      "package": "v86@0.5.432",
+      "embeddedVersion": "0.5.432+gf3d4472",
+      "upstreamCommit": "f3d4472a9c934b9ad78a311f5849ba711a296d23"
+    },
+    "note": "Captured from real Windows 98 GDI with Arial selected into a memory DC. GGO gray bytes use inclusive maxima; GGO_BEZIER is rejected by Win98."
+  },
+  "face": {
+    "requested": "Arial",
+    "selected": "Arial",
+    "height": -24
+  },
+  "cases": [
+    {
+      "character": 65,
+      "format": 0,
+      "matrix": "identity",
+      "needed": 0,
+      "metrics": [
+        15,
+        17,
+        0,
+        17,
+        15,
+        0
+      ]
+    },
+    {
+      "character": 65,
+      "format": 1,
+      "matrix": "identity",
+      "needed": 68,
+      "metrics": [
+        15,
+        17,
+        0,
+        17,
+        15,
+        0
+      ],
+      "result": 68,
+      "resultMetrics": [
+        15,
+        17,
+        0,
+        17,
+        15,
+        0
+      ],
+      "dataSha256": "40be9713bf1652229b6ab8156dc24f2b8b2ffc177b7285fa75a4b12f461aa725",
+      "dataMax": 248
+    },
+    {
+      "character": 65,
+      "format": 2,
+      "matrix": "identity",
+      "needed": 152,
+      "metrics": [
+        15,
+        17,
+        0,
+        17,
+        15,
+        0
+      ],
+      "result": 152,
+      "resultMetrics": [
+        15,
+        17,
+        0,
+        17,
+        15,
+        0
+      ],
+      "dataSha256": "57f277587b2dd6e9167e0cb990b6a8fb1160187540580ad8528a2deb0d07d2a1",
+      "dataMax": 255
+    },
+    {
+      "character": 65,
+      "format": 3,
+      "matrix": "identity",
+      "needed": -1,
+      "metrics": [
+        359,
+        343,
+        -808,
+        343,
+        367,
+        0
+      ]
+    },
+    {
+      "character": 65,
+      "format": 4,
+      "matrix": "identity",
+      "needed": 272,
+      "metrics": [
+        15,
+        17,
+        0,
+        17,
+        15,
+        0
+      ],
+      "result": 272,
+      "resultMetrics": [
+        15,
+        17,
+        0,
+        17,
+        15,
+        0
+      ],
+      "dataSha256": "1f56768fd6be15a8d6ac9246c84ad80f0b1b6a58304a6f639abc06086fcd6f26",
+      "dataMax": 4
+    },
+    {
+      "character": 65,
+      "format": 5,
+      "matrix": "identity",
+      "needed": 340,
+      "metrics": [
+        17,
+        17,
+        -1,
+        17,
+        15,
+        0
+      ],
+      "result": 340,
+      "resultMetrics": [
+        17,
+        17,
+        -1,
+        17,
+        15,
+        0
+      ],
+      "dataSha256": "153d67d923eea3b771db21dc2ea51c5f796e72ff21e57aa51316a4447a7c696f",
+      "dataMax": 16
+    },
+    {
+      "character": 65,
+      "format": 6,
+      "matrix": "identity",
+      "needed": 340,
+      "metrics": [
+        17,
+        17,
+        -1,
+        17,
+        15,
+        0
+      ],
+      "result": 340,
+      "resultMetrics": [
+        17,
+        17,
+        -1,
+        17,
+        15,
+        0
+      ],
+      "dataSha256": "26c54de3a7cf0db0e131662a67d249e476d56c4b2648c60004742ebb6b61b90d",
+      "dataMax": 64
+    },
+    {
+      "character": 65,
+      "format": 257,
+      "matrix": "identity",
+      "needed": 68,
+      "metrics": [
+        15,
+        17,
+        0,
+        17,
+        15,
+        0
+      ],
+      "result": 68,
+      "resultMetrics": [
+        15,
+        17,
+        0,
+        17,
+        15,
+        0
+      ],
+      "dataSha256": "40be9713bf1652229b6ab8156dc24f2b8b2ffc177b7285fa75a4b12f461aa725",
+      "dataMax": 248
+    },
+    {
+      "character": 65,
+      "format": 258,
+      "matrix": "identity",
+      "needed": 152,
+      "metrics": [
+        15,
+        17,
+        0,
+        17,
+        15,
+        0
+      ],
+      "result": 152,
+      "resultMetrics": [
+        15,
+        17,
+        0,
+        17,
+        15,
+        0
+      ],
+      "dataSha256": "57f277587b2dd6e9167e0cb990b6a8fb1160187540580ad8528a2deb0d07d2a1",
+      "dataMax": 255
+    },
+    {
+      "character": 103,
+      "format": 0,
+      "matrix": "identity",
+      "needed": 0,
+      "metrics": [
+        11,
+        18,
+        1,
+        13,
+        14,
+        0
+      ]
+    },
+    {
+      "character": 103,
+      "format": 1,
+      "matrix": "identity",
+      "needed": 72,
+      "metrics": [
+        11,
+        18,
+        1,
+        13,
+        14,
+        0
+      ],
+      "result": 72,
+      "resultMetrics": [
+        11,
+        18,
+        1,
+        13,
+        14,
+        0
+      ],
+      "dataSha256": "79446b983d55282b4791f5c2b4ec0d3dde3dcf1f6fd039b4b5b1c28e94ad7492",
+      "dataMax": 225
+    },
+    {
+      "character": 103,
+      "format": 2,
+      "matrix": "identity",
+      "needed": 440,
+      "metrics": [
+        11,
+        18,
+        1,
+        13,
+        14,
+        0
+      ],
+      "result": 440,
+      "resultMetrics": [
+        11,
+        18,
+        1,
+        13,
+        14,
+        0
+      ],
+      "dataSha256": "df0919f34926f2665653ed216c4d5917557a202014e15a0e391bfa96dd54cffb",
+      "dataMax": 255
+    },
+    {
+      "character": 103,
+      "format": 3,
+      "matrix": "identity",
+      "needed": -1,
+      "metrics": [
+        359,
+        343,
+        -808,
+        343,
+        367,
+        0
+      ]
+    },
+    {
+      "character": 103,
+      "format": 4,
+      "matrix": "identity",
+      "needed": 216,
+      "metrics": [
+        11,
+        18,
+        1,
+        13,
+        14,
+        0
+      ],
+      "result": 216,
+      "resultMetrics": [
+        11,
+        18,
+        1,
+        13,
+        14,
+        0
+      ],
+      "dataSha256": "d389e58831d9d80c61c3dc8e5ae7aaadc1b7e555fe100915a56162586055d08e",
+      "dataMax": 4
+    },
+    {
+      "character": 103,
+      "format": 5,
+      "matrix": "identity",
+      "needed": 216,
+      "metrics": [
+        11,
+        18,
+        1,
+        13,
+        14,
+        0
+      ],
+      "result": 216,
+      "resultMetrics": [
+        11,
+        18,
+        1,
+        13,
+        14,
+        0
+      ],
+      "dataSha256": "0bd055379b9b6c2c96c903d91c73b3546c7a59398ca45465813192d5b3df008f",
+      "dataMax": 16
+    },
+    {
+      "character": 103,
+      "format": 6,
+      "matrix": "identity",
+      "needed": 216,
+      "metrics": [
+        11,
+        18,
+        1,
+        13,
+        14,
+        0
+      ],
+      "result": 216,
+      "resultMetrics": [
+        11,
+        18,
+        1,
+        13,
+        14,
+        0
+      ],
+      "dataSha256": "4a3b3e3abfdb6aa3fe556c95a09691aeb5be33f828562ab11da63079c37139ed",
+      "dataMax": 64
+    },
+    {
+      "character": 103,
+      "format": 257,
+      "matrix": "identity",
+      "needed": 72,
+      "metrics": [
+        11,
+        18,
+        1,
+        13,
+        14,
+        0
+      ],
+      "result": 72,
+      "resultMetrics": [
+        11,
+        18,
+        1,
+        13,
+        14,
+        0
+      ],
+      "dataSha256": "79446b983d55282b4791f5c2b4ec0d3dde3dcf1f6fd039b4b5b1c28e94ad7492",
+      "dataMax": 225
+    },
+    {
+      "character": 103,
+      "format": 258,
+      "matrix": "identity",
+      "needed": 440,
+      "metrics": [
+        11,
+        18,
+        1,
+        13,
+        14,
+        0
+      ],
+      "result": 440,
+      "resultMetrics": [
+        11,
+        18,
+        1,
+        13,
+        14,
+        0
+      ],
+      "dataSha256": "df0919f34926f2665653ed216c4d5917557a202014e15a0e391bfa96dd54cffb",
+      "dataMax": 255
+    },
+    {
+      "character": 233,
+      "format": 0,
+      "matrix": "identity",
+      "needed": 0,
+      "metrics": [
+        11,
+        17,
+        1,
+        17,
+        13,
+        0
+      ]
+    },
+    {
+      "character": 233,
+      "format": 1,
+      "matrix": "identity",
+      "needed": 68,
+      "metrics": [
+        11,
+        17,
+        1,
+        17,
+        13,
+        0
+      ],
+      "result": 68,
+      "resultMetrics": [
+        11,
+        17,
+        1,
+        17,
+        13,
+        0
+      ],
+      "dataSha256": "8aab5250a48baed39d332ff15ee6167d46e3e877cb4c1f22547367b0702f37c2",
+      "dataMax": 255
+    },
+    {
+      "character": 233,
+      "format": 2,
+      "matrix": "identity",
+      "needed": 368,
+      "metrics": [
+        11,
+        17,
+        1,
+        17,
+        13,
+        0
+      ],
+      "result": 368,
+      "resultMetrics": [
+        11,
+        17,
+        1,
+        17,
+        13,
+        0
+      ],
+      "dataSha256": "68ac8e7fbce61e855a8ba3456acd24b14e5d63f40b6f620177230954e25e8e68",
+      "dataMax": 252
+    },
+    {
+      "character": 233,
+      "format": 3,
+      "matrix": "identity",
+      "needed": -1,
+      "metrics": [
+        359,
+        343,
+        -808,
+        343,
+        367,
+        0
+      ]
+    },
+    {
+      "character": 233,
+      "format": 4,
+      "matrix": "identity",
+      "needed": 204,
+      "metrics": [
+        11,
+        17,
+        1,
+        17,
+        13,
+        0
+      ],
+      "result": 204,
+      "resultMetrics": [
+        11,
+        17,
+        1,
+        17,
+        13,
+        0
+      ],
+      "dataSha256": "7e4e71cce747ca66ea570944e883b00288dbcda9c263b5e400d1de8e06e01b20",
+      "dataMax": 4
+    },
+    {
+      "character": 233,
+      "format": 5,
+      "matrix": "identity",
+      "needed": 204,
+      "metrics": [
+        11,
+        17,
+        1,
+        17,
+        13,
+        0
+      ],
+      "result": 204,
+      "resultMetrics": [
+        11,
+        17,
+        1,
+        17,
+        13,
+        0
+      ],
+      "dataSha256": "14028b103489ad5efabb087cb8d41e00fe39edfa88e0d3b66405470506408194",
+      "dataMax": 16
+    },
+    {
+      "character": 233,
+      "format": 6,
+      "matrix": "identity",
+      "needed": 204,
+      "metrics": [
+        11,
+        17,
+        1,
+        17,
+        13,
+        0
+      ],
+      "result": 204,
+      "resultMetrics": [
+        11,
+        17,
+        1,
+        17,
+        13,
+        0
+      ],
+      "dataSha256": "f89ea5354ef9a348cd7a7741e6f3d4f8293a918a18acc2b0483a2fc24180886f",
+      "dataMax": 64
+    },
+    {
+      "character": 233,
+      "format": 257,
+      "matrix": "identity",
+      "needed": 68,
+      "metrics": [
+        11,
+        17,
+        1,
+        17,
+        13,
+        0
+      ],
+      "result": 68,
+      "resultMetrics": [
+        11,
+        17,
+        1,
+        17,
+        13,
+        0
+      ],
+      "dataSha256": "8aab5250a48baed39d332ff15ee6167d46e3e877cb4c1f22547367b0702f37c2",
+      "dataMax": 255
+    },
+    {
+      "character": 233,
+      "format": 258,
+      "matrix": "identity",
+      "needed": 368,
+      "metrics": [
+        11,
+        17,
+        1,
+        17,
+        13,
+        0
+      ],
+      "result": 368,
+      "resultMetrics": [
+        11,
+        17,
+        1,
+        17,
+        13,
+        0
+      ],
+      "dataSha256": "68ac8e7fbce61e855a8ba3456acd24b14e5d63f40b6f620177230954e25e8e68",
+      "dataMax": 252
+    },
+    {
+      "character": 65,
+      "format": 2,
+      "matrix": "shear-quarter",
+      "needed": 152,
+      "metrics": [
+        16,
+        17,
+        0,
+        17,
+        16,
+        0
+      ],
+      "result": 152,
+      "resultMetrics": [
+        16,
+        17,
+        0,
+        17,
+        16,
+        0
+      ],
+      "dataSha256": "56cc7b58e628b133808ad08eabc27833af7856d7223245145112a96c3ba0a23e",
+      "dataMax": 255
+    },
+    {
+      "character": 65,
+      "format": 1,
+      "matrix": "shear-quarter",
+      "needed": 68,
+      "metrics": [
+        16,
+        17,
+        0,
+        17,
+        16,
+        0
+      ],
+      "result": 68,
+      "resultMetrics": [
+        16,
+        17,
+        0,
+        17,
+        16,
+        0
+      ],
+      "dataSha256": "6c12c782111b8d98dabab9a69366e07f7558eb1550332303c72ffc679da77b69",
+      "dataMax": 254
+    }
+  ],
+  "kerning": {
+    "total": 105,
+    "copied": 105,
+    "pairs": [
+      {
+        "first": 65,
+        "second": 86,
+        "found": true,
+        "amount": -2
+      },
+      {
+        "first": 65,
+        "second": 87,
+        "found": true,
+        "amount": -1
+      },
+      {
+        "first": 84,
+        "second": 111,
+        "found": true,
+        "amount": -3
+      },
+      {
+        "first": 87,
+        "second": 97,
+        "found": true,
+        "amount": -1
+      },
+      {
+        "first": 89,
+        "second": 111,
+        "found": true,
+        "amount": -2
+      },
+      {
+        "first": 102,
+        "second": 105,
+        "found": false,
+        "amount": 0
+      }
+    ]
+  },
+  "placements": [
+    {
+      "text": "AV",
+      "flags": 0,
+      "packed": 1769502,
+      "glyphs": 2,
+      "dx": [
+        15,
+        15
+      ],
+      "caret": [
+        0,
+        15
+      ]
+    },
+    {
+      "text": "AV",
+      "flags": 8,
+      "packed": 1769500,
+      "glyphs": 2,
+      "dx": [
+        13,
+        15
+      ],
+      "caret": [
+        0,
+        13
+      ]
+    },
+    {
+      "text": "To",
+      "flags": 0,
+      "packed": 1769499,
+      "glyphs": 2,
+      "dx": [
+        14,
+        13
+      ],
+      "caret": [
+        0,
+        14
+      ]
+    },
+    {
+      "text": "To",
+      "flags": 8,
+      "packed": 1769496,
+      "glyphs": 2,
+      "dx": [
+        11,
+        13
+      ],
+      "caret": [
+        0,
+        11
+      ]
+    }
+  ]
+}

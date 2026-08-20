@@ -44,10 +44,12 @@ UNIT=(
   test/test-bignum-mul.js
   test/test-mat4.js
   test/test-vfs.js
+  test/test-vfs-host-files.js
   test/test-storage-registry.js
   test/test-codepage-dbcs.js
   test/test-atom-table.js
   test/test-menu-insert.js
+  test/test-menu-popup-text.js
   test/test-sscanf.js
   test/test-format-message-inserts.js
   test/test-ole-clipboard-wrap.js
@@ -67,6 +69,7 @@ UNIT=(
   test/test-wat-gdi-region.js
   test/test-wat-gdi-select-clip-path.js
   test/test-wat-gdi-path.js
+  test/test-gdi-p0-p1.js
   test/test-wat-gdi-line.js
   test/test-wat-gdi-raster.js
   test/test-wat-gdi-raster-handlers.js
@@ -87,12 +90,14 @@ UNIT=(
   test/test-wat-gdi-draw-text-ex.js
   test/test-wat-gdi-default-bitmap-font.js
   test/test-wat-gdi-font-enum.js
+  test/test-font-enum-sizes.js
   test/test-wat-gdi-fixed-stock-font.js
   test/test-wat-truetype-metrics.js
   test/test-font-substitutions.js
   test/test-font-subsets.js
   test/test-wat-truetype-substitution.js
   test/test-wat-gdi-scalable-text.js
+  test/test-win98-gdi-font-outline-reference.js
   test/test-wat-text-draw-extent.js
   test/test-wat-font-resource.js
   test/test-wat-gdi-public-metafile.js
@@ -110,6 +115,8 @@ UNIT=(
   test/test-worker-thread-scheduler.js
   test/test-wat-memory-map.js
   test/test-wat-window-frame.js
+  test/test-paint-wallpaper-host.js
+  test/test-region-window-client-rect.js
   test/test-wat-statusbar-grip.js
   test/test-wat-font-metrics-reference.js
   test/test-wat-decoder-runaway.js
@@ -125,7 +132,13 @@ UNIT=(
   test/test-wat-gdi-shapes.js
   test/test-wat-gdi-geometry-handlers.js
   test/test-dib-dirty-sync.js
+  test/test-mem-utils-dib-g2w.js
   test/test-web-pinball-assets.js
+  test/test-process-boot-yields.js
+  test/test-worker-imports.js
+  test/test-debug-midi.js
+  test/test-vfs-seed.js
+  test/test-vfs-miss-async.js
   test/test-pinball-web-lifecycle.js
   test/test-web-touch-input.js
   test/test-web-fullscreen-consent.js
@@ -162,12 +175,16 @@ UNIT=(
   test/test-directinput-device.js
   test/test-directinput8-create.js
   test/test-directx-ordinals.js
+  test/test-dx-vtable-worker-sync.js
   test/test-disabled-dialog-controls.js
   test/test-duplicate-handle.js
   test/test-ext-text-out-wide.js
   test/test-findreplace-matchcase-flags.js
   test/test-gdi-exttextout-clipping.js
   test/test-gdi-transparent-blt.js
+  test/test-gdi-scroll-window-rect.js
+  test/test-listview.js
+  test/test-edit-wrap-resize.js
   test/test-isequalguid.js
   test/test-kernel32-last-error.js
   test/test-movewindow-child-size.js
@@ -204,9 +221,15 @@ UNIT=(
   test/test-wat-gdi-screen-readback.js
   test/test-wat-winsock-hostname.js
   test/test-window-control-id.js
+  test/test-compile-wat-unknown-name.js
+  test/test-gdi-public-seven.js
+  test/test-combobox.js
+  test/test-render-combobox.js
 )
 
 E2E=(
+  test/test-cli-vfs-include.js
+  test/test-winhelp-reference.js
   test/test-taskman-tasks.js
   test/test-taskman-arrange.js
   test/test-taskman-web.js
@@ -215,8 +238,12 @@ E2E=(
   test/test-cli-worker-threads.js
   test/test-wordpad-copy-clipboard.js
   test/test-wordpad-paste-refcount.js
+  test/test-wordpad-font-combo.js
+  test/test-wordpad-font-size-list.js
   test/test-fontview.js
   test/test-mspaint-web.js
+  test/test-mspaint-berrry-video.js
+  test/test-qblackjack-web.js
   test/test-sound-recorder-audio.js
   test/test-volume-control-audio.js
   test/test-notepad.js
@@ -225,6 +252,7 @@ E2E=(
   test/test-notepad-menu-items.js
   test/test-notepad-typing-latency.js
   test/test-notepad-typing-scroll.js
+  test/test-notepad-scrollbar-cursor.js
   test/test-find-typing.js
   test/test-notepad-find-next-positive.js
   test/test-notepad-find-not-found-msgbox.js
@@ -290,23 +318,27 @@ E2E=(
   test/test-cruel-maximized-launch-layout.js
   test/test-skifree-showwindow-startup.js
   test/test-skifree-gameplay.js
+  test/test-cs-owndc-stats-font.js
   test/test-spider-deal-menu.js
   test/test-spider-drag.js
   test/test-spider-maximized-canvas-resize.js
   test/test-spider-messagebox.js
   test/test-spider-show-available-move-menu.js
   test/test-solitaire-maximize.js
+  test/test-window-show-state.js
   test/test-solitaire-resize.js
   test/test-minesweeper-click.js
   test/test-minesweeper-no-resize.js
   test/test-minesweeper-smiley-reset.js
   test/test-pinball-controls-layout.js
   test/test-pinball-fullscreen-menu.js
+  test/test-pinball-select-players.js
   test/test-pinball-flipper.js
   test/test-pinball-web-render.js
   test/test-aoe-menu.js
   test/test-tworld-launch.js
   test/test-winamp-about-web.js
+  test/test-winamp-visualization-web.js
   test/test-vlan-loopback.js
   test/test-wat-windowposchanged.js
   test/test-tetrinet-connect.js
@@ -314,6 +346,8 @@ E2E=(
   # Recovered 2026-08-18 (see the UNIT note). Several of these only pass now
   # because their spawn budgets were raised off the 5-15s they were written
   # with -- that is under the emulator's own CPU cost on a loaded box.
+  test/test-calc-arith.js
+  test/test-calc-view-switch.js
   test/test-calc-button-pressed.js
   test/test-cli-candidate-corpus.js
   test/test-cwordzap-gameplay.js
@@ -329,7 +363,10 @@ E2E=(
   test/test-mspaint-magnifier-menu.js
   test/test-mspaint-opaque-selection.js
   test/test-mspaint-selection-move.js
+  test/test-mspaint-image-edit.js
+  test/test-mspaint-statusbar.js
   test/test-mspaint-stretch-icons.js
+  test/test-notepad-editing.js
   test/test-notepad-file-menu.js
   test/test-notepad-find-radio-click.js
   test/test-notepad-find-tab.js
@@ -339,7 +376,10 @@ E2E=(
   test/test-pinball-select-table.js
   test/test-qbob-candidate.js
   test/test-solitaire-maximize-restore.js
+  test/test-winamp.js
   test/test-winamp-audio.js
+  test/test-winamp-eq-presets.js
+  test/test-winamp-installers.js
   test/test-wordpad-advanced-rtf.js
   test/test-wordpad-dialog-lifecycle.js
   test/test-wordpad-format-accelerators.js
@@ -365,13 +405,21 @@ E2E=(
   test/test-wordpad-richedit.js
   test/test-wordpad-save-as.js
   test/test-wordpad-selection-highlight.js
+  test/test-wordpad-toolbar.js
   test/test-wordpad-toolbar-color-menu.js
   test/test-wordpad-toolbar-format-buttons.js
+  test/test-wordpad-font-dialog.js
+  test/test-wordpad-paragraph-align.js
+  test/test-wordpad-caret.js
+  test/test-wordpad-replace.js
+  test/test-wordpad-undo-find.js
+  test/test-wordpad-ui-advanced.js
   # Green only once their budgets stopped being shorter than the work: the two
   # vlan ones spawn a second emulator and wait for it over the wire.
   test/test-find-mouse-click.js
   test/test-liquid-war-candidate.js
   test/test-vlan-tetrinet.js
+  test/test-combobox-pinball.js
 )
 
 SMOKE=(
@@ -388,50 +436,14 @@ SMOKE=(
 # Harness drift: the test calls a host/renderer entry point that no longer
 # exists. Cheap to fix; the product is probably fine.
 QUARANTINE=(
-  test/test-gdi-scroll-window-rect.js   # host.gdi_scroll_window is not a function
-  test/test-listview.js                 # host.gdi_create_bitmap is not a function
-  test/test-menu-popup-text.js          # renderer._menuFormatText is not a function
-  test/test-paint-wallpaper-host.js     # asserts a browser wallpaper install that moved
-  test/test-v86-reference-harness.js    # "reviewed corpus size changed" snapshot, needs --write
-  test/test-winhelp-reference.js        # close-glyph bitmap differs from the Win98 reference
-  # Module fails to instantiate. Not a stack bug in the WAT -- 09b2's generated
-  # dispatch table calls $handle_StartDocW, $handle_CopyMetaFileA and
-  # $handle_GetCharWidth32W, none of which exist. compile-wat only WARNS on an
-  # unknown func and drops the call, so the args stay on the stack and any
-  # module that lands one of those in a value position fails validation. The
-  # shipped wasm has the same three holes; they are silent no-ops there rather
-  # than crash_unimplemented, which is why nothing else notices.
-  test/test-gdi-public-seven.js         # fn #6391: expected 1 elements on the stack for fallthru, found 5
+  # b2a93f7 added winhelp-freecell-default/-topics to apps.json without
+  # capturing their reviewed references; capture.js needs the Win98 v86 state
+  # off the network, and a reference nobody looked at is worse than none.
+  test/test-v86-reference-harness.js    # 2 manifest apps have no reviewed capture
   test/test-vlan-match.js               # server now listens, then no progress in 400s on 3.0s of CPU
-  # Combobox drop-down paints no text at all. Three tests agree, so this is one bug.
-  test/test-combobox.js                 # 57/59: CBS_DROPDOWN paints its selected list text (changedBytes=0)
-  test/test-render-combobox.js          # 4/5: canvas has 5 distinct colors after repaint, wanted >=8
-  test/test-combobox-pinball.js         # 16/18: field text not repainted after pick
-  # Edit/RichEdit gaps.
-  test/test-edit-wrap-resize.js         # 4/7: narrow edit never wraps (lines=1, scroll max=0)
-  test/test-notepad-editing.js          # 7/10: type-over-selection, thumb drag, wheel scroll
-  test/test-wordpad-caret.js            # 11/13: caret off phase does not erase the stroke
-  test/test-wordpad-replace.js          # 13/14: empty Replace All does not delete every match
-  test/test-wordpad-undo-find.js        # 8/11: typed text does not reach the native RichEdit
-  test/test-wordpad-font-dialog.js      # 15/16: 24pt does not increase text height
-  test/test-wordpad-paragraph-align.js  # 16/17: center alignment does not shift text
-  test/test-wordpad-ui-advanced.js      # 8/9: ruler drag adds no paragraph tab stop
-  test/test-wordpad-toolbar.js          # no WAT-native ToolbarWindow32 at all
   # OLE presentation data -- the known static-handler/IDataObject gap.
   test/test-wordpad-ole-roundtrip.js    # saved RTF carries no DIB presentation
   test/test-wordpad-ole-delete-roundtrip.js
-  # Paint / app-specific.
-  test/test-mspaint-image-edit.js       # 7/9: Invert Colors misses part of the image
-  test/test-mspaint-statusbar.js        # status bar loses its MFC docked geometry
-  test/test-calc-arith.js               # 3/4: display changed only 8px after 1+2=
-  test/test-calc-view-switch.js         # 14/15: fixed dialogs oversized vertically
-  test/test-pinball-select-players.js   # 5/7: 2 Players submenu never painted
-  test/test-region-window-client-rect.js # RuntimeError: unreachable (hits crash_unimplemented)
-  test/test-dx-vtable-worker-sync.js    # worker does not restore the first generated COM vtable
-  test/test-winamp.js                   # 13/15: titlebar not blitted again lower in the window
-  test/test-winamp-eq-presets.js        # auto-load preset dialog never calls EndDialog
-  test/test-winamp-installers.js        # license page: no word-wrapped DrawText, no PNG
-  test/test-winamp-visualization-web.js # wVis plug-in window should be visible
 )
 
 # A test file missing from every array above does not fail, it just never runs.

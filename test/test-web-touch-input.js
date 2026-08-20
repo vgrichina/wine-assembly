@@ -7,7 +7,11 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 
-const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+// 760b79f moved the DOM input bridge out of the page template into
+// lib/browser-input.js. Read both: the CSS that disables touch gestures is
+// still page markup, the listeners are not.
+const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8') +
+  fs.readFileSync(path.join(__dirname, '..', 'lib', 'browser-input.js'), 'utf8');
 
 assert(html.includes('touch-action: none'), 'canvas should disable browser touch gestures');
 assert(html.includes('-webkit-user-select: none'), 'canvas should disable iOS text selection');

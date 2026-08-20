@@ -79,6 +79,11 @@ async function runCase({ name, cmd, title, minColors, minClientInk = 0 }) {
     '--quiet-api',
     `--input=3000:post-cmd:${cmd},3020:stop`,
     '--png=' + pngBase,
+    // Both things this test reads -- the per-hwnd back-canvas PNGs and the
+    // window summary we scrape the dialog hwnd out of -- live behind this
+    // flag. run.js used to print them for any --png run; once they moved
+    // behind DUMP_BACKCANVAS every case here failed at step 3.
+    '--dump-backcanvas',
   ];
   let stdout;
   try {

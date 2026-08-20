@@ -119,7 +119,8 @@ async function main() {
   assert.strictEqual(wat.test_call_GetDCOrgEx(0x7FFFFFF0, dcOrigin), 0,
     'GetDCOrgEx must reject an unknown DC');
   const desc = 0x07EF1000;
-  const paintScratch = 0x0000AD40;
+  // First rect of the PAINT_SCRATCH ring (src/01-header.wat).
+  const paintScratch = 0x00006E00;
   const paintSentinel = [7, 3, 37, 21];
   const dv = new DataView(memory.buffer);
   paintSentinel.forEach((value, index) => dv.setInt32(paintScratch + index * 4, value, true));

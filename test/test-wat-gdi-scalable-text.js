@@ -257,6 +257,168 @@ const REPO = path.join(__dirname, '..');
   assert.strictEqual(wat.test_call_GetFontData(hdc, 0, 0, 0, 0) >>> 0 > nameSize, true,
     'dwTable zero must address the whole font file');
 
+  // ---- GetGlyphOutline exposes Win98's scalable quadratic format --------
+
+  const identity = allocZero(16);
+  wat.guest_write32(identity, 0x00010000);
+  wat.guest_write32(identity + 12, 0x00010000);
+  const glyphMetrics = allocZero(20);
+  assert.strictEqual(
+    wat.test_call_GetGlyphOutlineA(hdc, 'g'.charCodeAt(0), 0,
+      glyphMetrics, 0, 0, identity) >>> 0,
+    0,
+    'GGO_METRICS must succeed for a selected scalable face');
+
+  const nativeSize = wat.test_call_GetGlyphOutlineA(
+    hdc, 'g'.charCodeAt(0), 2, glyphMetrics, 0, 0, identity) >>> 0;
+  assert.ok(nativeSize > 16 && nativeSize < 0xFFFFFFFF && nativeSize % 4 === 0,
+    `GGO_NATIVE must size a bounded DWORD-aligned outline, got ${nativeSize}`);
+  const nativeBuffer = allocZero(nativeSize + 8);
+  mem().fill(0xA5, wa(nativeBuffer), wa(nativeBuffer) + nativeSize + 8);
+  assert.strictEqual(wat.test_call_GetGlyphOutlineA(
+    hdc, 'g'.charCodeAt(0), 2, glyphMetrics,
+    nativeSize - 1, nativeBuffer, identity) >>> 0, 0xFFFFFFFF,
+  'a short GGO_NATIVE buffer must fail atomically');
+  assert.deepStrictEqual([...mem().slice(wa(nativeBuffer), wa(nativeBuffer) + nativeSize + 8)],
+    Array(nativeSize + 8).fill(0xA5), 'a short outline buffer must remain untouched');
+  assert.strictEqual(wat.test_call_GetGlyphOutlineA(
+    hdc, 'g'.charCodeAt(0), 2, glyphMetrics,
+    nativeSize, nativeBuffer, identity) >>> 0, nativeSize);
+
+  // Walk the public TTPOLYGONHEADER/TTPOLYCURVE stream rather than accepting
+  // an opaque non-empty blob. Win98 uses type 24 polygons and quadratic
+  // splines; a scalable 'g' must contain at least one actual QSPLINE.
+  const nativeBytes = Buffer.from(
+    mem().slice(wa(nativeBuffer), wa(nativeBuffer) + nativeSize));
+  let polygon = 0;
+  let quadratic = 0;
+  while (polygon < nativeBytes.length) {
+    const polygonBytes = nativeBytes.readUInt32LE(polygon);
+    assert.ok(polygonBytes >= 16 && polygon + polygonBytes <= nativeBytes.length,
+      `invalid TTPOLYGONHEADER size ${polygonBytes} at ${polygon}`);
+    assert.strictEqual(nativeBytes.readUInt32LE(polygon + 4), 24,
+      'GGO_NATIVE polygons must use TT_POLYGON_TYPE');
+    let curve = polygon + 16;
+    while (curve < polygon + polygonBytes) {
+      const type = nativeBytes.readUInt16LE(curve);
+      const points = nativeBytes.readUInt16LE(curve + 2);
+      assert.ok((type === 1 || type === 2) && points > 0,
+        `invalid TTPOLYCURVE type/count ${type}/${points}`);
+      if (type === 2) quadratic += 1;
+      curve += 4 + points * 8;
+    }
+    assert.strictEqual(curve, polygon + polygonBytes,
+      'TTPOLYCURVE records must exactly fill their polygon');
+    polygon += polygonBytes;
+  }
+  assert.strictEqual(polygon, nativeBytes.length,
+    'TTPOLYGONHEADER records must exactly fill GGO_NATIVE output');
+  assert.ok(quadratic > 0, 'the scalable g outline must retain quadratic curves');
+
+  // The MAT2 applies to both the outline and GLYPHMETRICS. A quarter shear
+  // should move upper points horizontally without changing the input glyph.
+  const shear = allocZero(16);
+  wat.guest_write32(shear, 0x00010000);
+  wat.guest_write32(shear + 8, 0x00004000);
+  wat.guest_write32(shear + 12, 0x00010000);
+  const shearSize = wat.test_call_GetGlyphOutlineA(
+    hdc, 'g'.charCodeAt(0), 2, glyphMetrics, 0, 0, shear) >>> 0;
+  const shearBuffer = allocZero(shearSize);
+  assert.strictEqual(wat.test_call_GetGlyphOutlineA(
+    hdc, 'g'.charCodeAt(0), 2, glyphMetrics,
+    shearSize, shearBuffer, shear) >>> 0, shearSize);
+  assert.notDeepStrictEqual(
+    Buffer.from(mem().slice(wa(shearBuffer), wa(shearBuffer) + shearSize)),
+    nativeBytes, 'a non-identity MAT2 must transform the native outline');
+
+  // Real Win98 applies the same MAT2 to its monochrome bitmap. The scalable
+  // provider transposes the canonical column-major strike raster into the
+  // public top-down, DWORD-padded GGO_BITMAP layout.
+  const shearMonoSize = wat.test_call_GetGlyphOutlineA(
+    hdc, 'g'.charCodeAt(0), 1, glyphMetrics, 0, 0, shear) >>> 0;
+  const shearMonoWidth = wat.guest_read32(glyphMetrics) >>> 0;
+  const shearMonoHeight = wat.guest_read32(glyphMetrics + 4) >>> 0;
+  assert.strictEqual(shearMonoSize,
+    (((shearMonoWidth + 31) & ~31) >>> 3) * shearMonoHeight,
+    'transformed GGO_BITMAP must use DWORD-padded rows');
+  const shearMono = allocZero(shearMonoSize);
+  assert.strictEqual(wat.test_call_GetGlyphOutlineA(
+    hdc, 'g'.charCodeAt(0), 1, glyphMetrics,
+    shearMonoSize, shearMono, shear) >>> 0, shearMonoSize);
+  assert.ok(mem().slice(wa(shearMono), wa(shearMono) + shearMonoSize)
+    .some(value => value !== 0), 'transformed GGO_BITMAP must contain glyph ink');
+
+  // Although GGO_BEZIER is present in the Win32 headers, real Windows 98
+  // returns GDI_ERROR for Arial. It is an NT-family extension, not a Win98
+  // fidelity target.
+  assert.strictEqual(wat.test_call_GetGlyphOutlineA(
+    hdc, 'g'.charCodeAt(0), 3, glyphMetrics, 0, 0, identity) >>> 0,
+    0xFFFFFFFF, 'Win98-compatible GGO_BEZIER must return GDI_ERROR');
+
+  // Win98 exposes antialiasing as byte-per-pixel coverage whose inclusive
+  // maxima are 4, 16 and 64. Each scanline is padded to a DWORD boundary.
+  // Exercise the public API so this also proves the scalable face does not
+  // accidentally fall through to the monochrome synthesized FNT strike.
+  let identityGray8 = null;
+  for (const [format, max] of [[4, 4], [5, 16], [6, 64]]) {
+    const graySize = wat.test_call_GetGlyphOutlineA(
+      hdc, 'g'.charCodeAt(0), format, glyphMetrics, 0, 0, identity) >>> 0;
+    const grayWidth = wat.guest_read32(glyphMetrics) >>> 0;
+    const grayHeight = wat.guest_read32(glyphMetrics + 4) >>> 0;
+    const grayStride = (grayWidth + 3) & ~3;
+    assert.ok(grayWidth > 0 && grayHeight > 0,
+      `GGO_GRAY${format === 4 ? 2 : format === 5 ? 4 : 8} must report a box`);
+    assert.strictEqual(graySize, grayStride * grayHeight,
+      'gray output must use DWORD-padded scanlines');
+
+    const grayBuffer = allocZero(graySize + 8);
+    mem().fill(0xA5, wa(grayBuffer), wa(grayBuffer) + graySize + 8);
+    assert.strictEqual(wat.test_call_GetGlyphOutlineA(
+      hdc, 'g'.charCodeAt(0), format, glyphMetrics,
+      graySize - 1, grayBuffer, identity) >>> 0, 0xFFFFFFFF,
+    'a short gray buffer must fail atomically');
+    assert.deepStrictEqual([...mem().slice(wa(grayBuffer), wa(grayBuffer) + graySize + 8)],
+      Array(graySize + 8).fill(0xA5), 'a short gray buffer must remain untouched');
+    assert.strictEqual(wat.test_call_GetGlyphOutlineA(
+      hdc, 'g'.charCodeAt(0), format, glyphMetrics,
+      graySize, grayBuffer, identity) >>> 0, graySize);
+
+    const pixels = mem().slice(wa(grayBuffer), wa(grayBuffer) + graySize);
+    assert.ok(pixels.some(value => value > 0 && value < max),
+      `GGO gray-${max} must retain partial coverage`);
+    assert.ok(pixels.every(value => value <= max),
+      `GGO gray-${max} bytes must not exceed ${max}`);
+    for (let row = 0; row < grayHeight; row += 1) {
+      assert.ok(pixels.slice(row * grayStride + grayWidth, (row + 1) * grayStride)
+        .every(value => value === 0), 'gray DWORD padding must stay zero');
+    }
+
+    const unhinted = allocZero(graySize);
+    assert.strictEqual(wat.test_call_GetGlyphOutlineA(
+      hdc, 'g'.charCodeAt(0), format | 0x100, glyphMetrics,
+      graySize, unhinted, identity) >>> 0, graySize,
+    'GGO_UNHINTED must be accepted on Win98 gray output');
+    assert.deepStrictEqual(
+      Buffer.from(mem().slice(wa(unhinted), wa(unhinted) + graySize)),
+      Buffer.from(pixels),
+      'the unhinted flag matches Win98 when no bytecode hinter is active');
+    if (format === 6) identityGray8 = Buffer.from(pixels);
+  }
+
+  const shearGraySize = wat.test_call_GetGlyphOutlineA(
+    hdc, 'g'.charCodeAt(0), 6, glyphMetrics, 0, 0, shear) >>> 0;
+  const shearGray = allocZero(shearGraySize);
+  assert.strictEqual(wat.test_call_GetGlyphOutlineA(
+    hdc, 'g'.charCodeAt(0), 6, glyphMetrics,
+    shearGraySize, shearGray, shear) >>> 0, shearGraySize,
+  'MAT2 must transform Win98 gray coverage as well as its metrics');
+  const shearGrayBytes = Buffer.from(
+    mem().slice(wa(shearGray), wa(shearGray) + shearGraySize));
+  assert.ok(shearGrayBytes.some(value => value > 0 && value < 64));
+  assert.ok(shearGrayBytes.every(value => value <= 64));
+  assert.notDeepStrictEqual(shearGrayBytes, identityGray8,
+    'a non-identity MAT2 must change gray coverage');
+
   console.log(
     `PASS  scalable text: Arial draws ${ink} pixels of "${text}" in WAT across ` +
     `${drawn}px (face measures ${expected}px), and every face reaches a ` +

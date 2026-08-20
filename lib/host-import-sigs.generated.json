@@ -1,6 +1,6 @@
 {
   "generated_from": "src/01-header.wat",
-  "count": 181,
+  "count": 184,
   "sigs": {
     "log": {
       "params": [
@@ -576,6 +576,21 @@
       ],
       "results": []
     },
+    "ctrl_sb_trace": {
+      "params": [
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "results": []
+    },
     "reg_open_key": {
       "params": [
         "i32",
@@ -900,6 +915,22 @@
     },
     "get_key_down_state": {
       "params": [
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
+    "set_key_down_state": {
+      "params": [
+        "i32",
+        "i32"
+      ],
+      "results": []
+    },
+    "win16_stage_module": {
+      "params": [
+        "i32",
         "i32"
       ],
       "results": [

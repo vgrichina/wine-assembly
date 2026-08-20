@@ -204,10 +204,12 @@
     (local.get $best))
 
   ;; Per-DC cold metadata uses the former raster-mirror table. Each fixed
-  ;; entry owns a 28-byte heap record: selected palette at +0, SaveDC stack
+  ;; entry owns a 44-byte heap record: selected palette at +0, SaveDC stack
   ;; head guest pointer at +4, graphics mode at +8, system palette use at +12,
   ;; the immutable-once-set pixel format index at +16, and private recording
-  ;; DC kind/owned bitmap fields at +20/+24. ROP2 already lives in the
+  ;; DC kind/owned bitmap fields at +20/+24, ICM mode at +28, owned profile
+  ;; string guest pointer at +32, and ColorMatchToTarget state at +36/+40.
+  ;; ROP2 already lives in the
   ;; canonical hot DC record, so no separate raster mirror remains.
   (func $gdi_dc_meta_entry (param $hdc i32) (param $create i32) (result i32)
     (local $i i32) (local $p i32) (local $empty i32)
@@ -230,11 +232,12 @@
       (br $scan)))
     (if (i32.or (i32.eqz (local.get $create)) (i32.eqz (local.get $empty)))
       (then (return (i32.const 0))))
-    (local.set $meta_g (call $heap_alloc (i32.const 28)))
+    (local.set $meta_g (call $heap_alloc (i32.const 44)))
     (if (i32.eqz (local.get $meta_g)) (then (return (i32.const 0))))
-    (memory.fill (call $g2w (local.get $meta_g)) (i32.const 0) (i32.const 28))
+    (memory.fill (call $g2w (local.get $meta_g)) (i32.const 0) (i32.const 44))
     (i32.store offset=8 (call $g2w (local.get $meta_g)) (i32.const 1))
     (i32.store offset=12 (call $g2w (local.get $meta_g)) (i32.const 1))
+    (i32.store offset=28 (call $g2w (local.get $meta_g)) (i32.const 1))
     (i32.store (local.get $empty) (local.get $hdc))
     (i32.store offset=4 (local.get $empty) (local.get $meta_g))
     (call $g2w (local.get $meta_g)))

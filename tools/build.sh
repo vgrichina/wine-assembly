@@ -45,4 +45,11 @@ node tools/concat-wat.js
 echo "Compiling with lib/compile-wat.js..."
 node tools/build-compile-wat.js
 
+# Two (data ...) segments that cover the same byte: the later one wins at
+# instantiation and eats the earlier one's NUL terminator, which turns a
+# string compare into a compare against the concatenation of both strings.
+# check-data-strings.js reads the source, so it cannot see this -- only the
+# compiled module can.
+node tools/wasm-data.js build/wine-assembly.wasm --overlaps
+
 ls -la build/wine-assembly.wasm

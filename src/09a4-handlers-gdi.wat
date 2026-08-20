@@ -524,8 +524,8 @@
   )
 
   (func $handle_GetOutlineTextMetricsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    (call $handle_GetOutlineTextMetricsA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; 165: GetTextExtentPointA — font-aware text measurement via host
@@ -1138,7 +1138,7 @@
     (local $buffer_g i32) (local $mat2_g i32) (local $result i32)
     (local.set $buffer_g (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
     (local.set $mat2_g (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
-    (local.set $result (call $gdi_bitmap_glyph_outline_a
+    (local.set $result (call $tt_gdi_glyph_outline_a
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (if (result i32) (local.get $arg3)
         (then (call $g2w (local.get $arg3))) (else (i32.const 0)))
@@ -1147,6 +1147,16 @@
         (then (call $g2w (local.get $buffer_g))) (else (i32.const 0)))
       (if (result i32) (local.get $mat2_g)
         (then (call $g2w (local.get $mat2_g))) (else (i32.const 0)))))
+    (if (i32.eq (local.get $result) (i32.const -2))
+      (then (local.set $result (call $gdi_bitmap_glyph_outline_a
+        (local.get $arg0) (local.get $arg1) (local.get $arg2)
+        (if (result i32) (local.get $arg3)
+          (then (call $g2w (local.get $arg3))) (else (i32.const 0)))
+        (local.get $arg4)
+        (if (result i32) (local.get $buffer_g)
+          (then (call $g2w (local.get $buffer_g))) (else (i32.const 0)))
+        (if (result i32) (local.get $mat2_g)
+          (then (call $g2w (local.get $mat2_g))) (else (i32.const 0)))))))
     (if (i32.eq (local.get $result) (i32.const -2))
       (then (local.set $result (call $gdi_glyph_metrics_a
         (local.get $arg0) (local.get $arg1) (local.get $arg2)
@@ -1360,28 +1370,96 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   (func $handle_GetICMProfileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dst i32)
+    (local $dst i32) (local $profile_g i32) (local $required i32)
     (if (i32.or
           (i32.eqz (call $gdi_dc_state_entry (local.get $arg0) (i32.const 0)))
           (i32.eqz (local.get $arg1)))
       (then (global.set $eax (i32.const 0)))
       (else
+        (local.set $profile_g (call $gdi_dc_meta_get
+          (local.get $arg0) (i32.const 32) (i32.const 0)))
+        (local.set $required (i32.const 29))
+        (if (local.get $profile_g)
+          (then (local.set $required
+            (i32.add (call $guest_strlen (local.get $profile_g)) (i32.const 1)))))
         (if (i32.or (i32.eqz (local.get $arg2))
-              (i32.lt_u (call $gl32 (local.get $arg1)) (i32.const 29)))
+              (i32.lt_u (call $gl32 (local.get $arg1)) (local.get $required)))
           (then
-            (call $gs32 (local.get $arg1) (i32.const 29))
+            (call $gs32 (local.get $arg1) (local.get $required))
             (global.set $eax (i32.const 0)))
           (else
-            (local.set $dst (call $g2w (local.get $arg2)))
-            (i32.store (local.get $dst) (i32.const 0x42475273))
-            (i32.store offset=4 (local.get $dst) (i32.const 0x6C6F4320))
-            (i32.store offset=8 (local.get $dst) (i32.const 0x5320726F))
-            (i32.store offset=12 (local.get $dst) (i32.const 0x65636170))
-            (i32.store offset=16 (local.get $dst) (i32.const 0x6F725020))
-            (i32.store offset=20 (local.get $dst) (i32.const 0x656C6966))
-            (i32.store offset=24 (local.get $dst) (i32.const 0x6D63692E))
-            (i32.store8 offset=28 (local.get $dst) (i32.const 0))
-            (call $gs32 (local.get $arg1) (i32.const 29))
+            (if (local.get $profile_g)
+              (then (call $guest_strcpy (local.get $arg2) (local.get $profile_g)))
+              (else
+                (local.set $dst (call $g2w (local.get $arg2)))
+                (i32.store (local.get $dst) (i32.const 0x42475273))
+                (i32.store offset=4 (local.get $dst) (i32.const 0x6C6F4320))
+                (i32.store offset=8 (local.get $dst) (i32.const 0x5320726F))
+                (i32.store offset=12 (local.get $dst) (i32.const 0x65636170))
+                (i32.store offset=16 (local.get $dst) (i32.const 0x6F725020))
+                (i32.store offset=20 (local.get $dst) (i32.const 0x656C6966))
+                (i32.store offset=24 (local.get $dst) (i32.const 0x6D63692E))
+                (i32.store8 offset=28 (local.get $dst) (i32.const 0))))
+            (call $gs32 (local.get $arg1) (local.get $required))
+            (global.set $eax (i32.const 1))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_SetICMMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (call $gdi_dc_state_entry (local.get $arg0) (i32.const 0)))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (if (i32.eq (local.get $arg1) (i32.const 3))
+      (then (global.set $eax (call $gdi_dc_meta_get
+        (local.get $arg0) (i32.const 28) (i32.const 1))))
+      (else
+        (if (i32.or (i32.eq (local.get $arg1) (i32.const 1))
+              (i32.eq (local.get $arg1) (i32.const 2)))
+          (then (global.set $eax (call $gdi_dc_meta_set
+            (local.get $arg0) (i32.const 28) (local.get $arg1) (i32.const 1))))
+          (else (global.set $eax (i32.const 0))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_SetICMProfileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $meta i32) (local $length i32) (local $copy_g i32) (local $old_g i32)
+    (if (i32.or (i32.eqz (local.get $arg1))
+          (i32.eqz (call $gdi_dc_state_entry (local.get $arg0) (i32.const 0))))
+      (then (global.set $eax (i32.const 0)))
+      (else
+        (local.set $length (call $guest_strlen (local.get $arg1)))
+        (if (i32.or (i32.eqz (local.get $length)) (i32.ge_u (local.get $length) (i32.const 65536)))
+          (then (global.set $eax (i32.const 0)))
+          (else
+            (local.set $copy_g (call $heap_alloc (i32.add (local.get $length) (i32.const 1))))
+            (if (i32.eqz (local.get $copy_g))
+              (then (global.set $eax (i32.const 0)))
+              (else
+                (call $guest_strcpy (local.get $copy_g) (local.get $arg1))
+                (local.set $meta (call $gdi_dc_meta_entry (local.get $arg0) (i32.const 1)))
+                (if (i32.eqz (local.get $meta))
+                  (then (call $heap_free (local.get $copy_g)) (global.set $eax (i32.const 0)))
+                  (else
+                    (local.set $old_g (i32.load offset=32 (local.get $meta)))
+                    (i32.store offset=32 (local.get $meta) (local.get $copy_g))
+                    (if (local.get $old_g) (then (call $heap_free (local.get $old_g))))
+                    (global.set $eax (i32.const 1))))))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_ColorMatchToTarget (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.or
+          (i32.eqz (call $gdi_dc_state_entry (local.get $arg0) (i32.const 0)))
+          (i32.or (i32.lt_u (local.get $arg2) (i32.const 1)) (i32.gt_u (local.get $arg2) (i32.const 3))))
+      (then (global.set $eax (i32.const 0)))
+      (else
+        (if (i32.and (i32.eq (local.get $arg2) (i32.const 1))
+              (i32.eqz (call $gdi_dc_state_entry (local.get $arg1) (i32.const 0))))
+          (then (global.set $eax (i32.const 0)))
+          (else
+            (drop (call $gdi_dc_meta_set (local.get $arg0) (i32.const 36)
+              (select (local.get $arg1) (i32.const 0) (i32.eq (local.get $arg2) (i32.const 1))) (i32.const 0)))
+            (drop (call $gdi_dc_meta_set (local.get $arg0) (i32.const 40)
+              (local.get $arg2) (i32.const 0)))
             (global.set $eax (i32.const 1))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
@@ -1685,6 +1763,28 @@
       (i32.load (i32.add (local.get $r) (i32.const 12)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
+
+  (func $handle_CreateEllipticRgnIndirect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $r i32)
+    (if (i32.eqz (local.get $arg0))
+      (then (global.set $eax (i32.const 0)))
+      (else
+        (local.set $r (call $g2w (local.get $arg0)))
+        (global.set $eax (call $gdi_rgn_alloc_ellipse
+          (i32.load (local.get $r)) (i32.load offset=4 (local.get $r))
+          (i32.load offset=8 (local.get $r)) (i32.load offset=12 (local.get $r))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_EqualRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdi_rgn_equal (local.get $arg0) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_ExtCreateRegion (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdi_rgn_ext_create
+      (if (result i32) (local.get $arg0) (then (call $g2w (local.get $arg0))) (else (i32.const 0)))
+      (local.get $arg1)
+      (if (result i32) (local.get $arg2) (then (call $g2w (local.get $arg2))) (else (i32.const 0)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; 362: GetObjectW — same object layout as GetObjectA for bitmaps
   (func $handle_GetObjectW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -2282,6 +2382,17 @@
     (global.set $eax (call $gdi_metafile_recording_dc_create))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
+  ;; Enhanced metafile recording shares the canonical recording DC; Close
+  ;; chooses the EMF serializer. File-backed recording is rejected explicitly
+  ;; until the virtual filesystem can commit the resulting byte stream.
+  (func $handle_CreateEnhMetaFileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.or (i32.ne (local.get $arg1) (i32.const 0))
+          (i32.and (i32.ne (local.get $arg0) (i32.const 0))
+            (i32.eqz (call $gdi_dc_state_entry (local.get $arg0) (i32.const 0)))))
+      (then (global.set $eax (i32.const 0)))
+      (else (global.set $eax (call $gdi_metafile_recording_dc_create))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
   ;; 554: DPtoLP(hdc, lpPoints, nCount) → BOOL.
   (func $handle_DPtoLP (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $i i32) (local $p i32)
@@ -2600,6 +2711,12 @@
   ;; Finish recording, serialize the canonical surface and release the DC.
   (func $handle_CloseMetaFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $gdi_metafile_snapshot_wmf (local.get $arg0)))
+    (if (call $gdi_metafile_recording_bitmap (local.get $arg0))
+      (then (drop (call $gdi_dc_delete (local.get $arg0)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_CloseEnhMetaFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdi_metafile_snapshot_emf (local.get $arg0)))
     (if (call $gdi_metafile_recording_bitmap (local.get $arg0))
       (then (drop (call $gdi_dc_delete (local.get $arg0)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
@@ -2923,6 +3040,60 @@
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
+
+  ;; ANSI GCP is an adapter over the canonical UTF-16 placement engine. The
+  ;; pointer-bearing result structure remains guest-addressed; only input and
+  ;; lpOutString need temporary wide buffers.
+  (func $handle_GetCharacterPlacementA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $scratch_g i32) (local $scratch i32) (local $wide_g i32) (local $wide i32)
+    (local $results i32) (local $wide_out_g i32) (local $wide_out i32)
+    (local $ansi_out_g i32) (local $i i32) (local $included i32) (local $placed i32)
+    (if (i32.or (i32.lt_s (local.get $arg2) (i32.const 0))
+          (i32.or (i32.gt_u (local.get $arg2) (i32.const 65536))
+            (i32.or (i32.eqz (local.get $arg4))
+              (i32.and (i32.gt_u (local.get $arg2) (i32.const 0)) (i32.eqz (local.get $arg1))))))
+      (then (global.set $eax (i32.const 0)))
+      (else
+        (local.set $scratch_g (call $heap_alloc
+          (i32.add (i32.const 40) (i32.shl (local.get $arg2) (i32.const 2)))))
+        (if (i32.eqz (local.get $scratch_g))
+          (then (global.set $eax (i32.const 0)))
+          (else
+            (local.set $scratch (call $g2w (local.get $scratch_g)))
+            (local.set $wide_g (i32.add (local.get $scratch_g) (i32.const 36)))
+            (local.set $wide (i32.add (local.get $scratch) (i32.const 36)))
+            (local.set $wide_out_g (i32.add (local.get $wide_g) (i32.shl (local.get $arg2) (i32.const 1))))
+            (local.set $wide_out (i32.add (local.get $wide) (i32.shl (local.get $arg2) (i32.const 1))))
+            (local.set $results (call $g2w (local.get $arg4)))
+            (memory.copy (local.get $scratch) (local.get $results) (i32.const 36))
+            (local.set $ansi_out_g (i32.load offset=4 (local.get $scratch)))
+            (if (local.get $ansi_out_g)
+              (then (i32.store offset=4 (local.get $scratch) (local.get $wide_out_g))))
+            (block $converted (loop $convert
+              (br_if $converted (i32.ge_u (local.get $i) (local.get $arg2)))
+              (i32.store16 (i32.add (local.get $wide) (i32.shl (local.get $i) (i32.const 1)))
+                (call $gl8 (i32.add (local.get $arg1) (local.get $i))))
+              (local.set $i (i32.add (local.get $i) (i32.const 1)))
+              (br $convert)))
+            (local.set $placed (call $gdi_character_placement_w
+              (local.get $arg0) (local.get $wide) (local.get $arg2) (local.get $arg3)
+              (local.get $scratch) (call $gl32 (i32.add (global.get $esp) (i32.const 24)))))
+            (local.set $included (i32.load offset=28 (local.get $scratch)))
+            (i32.store offset=28 (local.get $results) (local.get $included))
+            (i32.store offset=32 (local.get $results) (i32.load offset=32 (local.get $scratch)))
+            (if (local.get $ansi_out_g)
+              (then
+                (local.set $i (i32.const 0))
+                (block $copied (loop $copy
+                  (br_if $copied (i32.ge_u (local.get $i) (local.get $included)))
+                  (call $gs8 (i32.add (local.get $ansi_out_g) (local.get $i))
+                    (i32.and (i32.load16_u (i32.add (local.get $wide_out)
+                      (i32.shl (local.get $i) (i32.const 1)))) (i32.const 0xFF)))
+                  (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                  (br $copy)))))
+            (call $heap_free (local.get $scratch_g))
+            (global.set $eax (local.get $placed))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
 
   ;; GetRgnBox(hrgn, lprc) → complexity. Writes bbox into lprc and returns
   ;; SIMPLEREGION/COMPLEXREGION/NULLREGION (1/2/3) like the real GDI.

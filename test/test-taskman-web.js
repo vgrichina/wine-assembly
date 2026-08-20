@@ -13,6 +13,7 @@ const { spawn } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const BASE_URL = (process.env.TASKMAN_WEB_BASE_URL || '').replace(/\/$/, '');
 const OUT = path.join(ROOT, 'scratch', 'taskman-web');
 const tasksPng = path.join(OUT, 'live-tasks.png');
 
@@ -193,8 +194,11 @@ async function main() {
   fs.mkdirSync(OUT, { recursive: true });
   try { fs.unlinkSync(tasksPng); } catch (_) {}
 
-  const server = await startStaticServer();
-  const port = server.address().port;
+  const server = BASE_URL ? null : await startStaticServer();
+  const port = server && server.address().port;
+  const pageUrl = BASE_URL
+    ? `${BASE_URL}/index.html?debug&taskman-web=${Date.now()}`
+    : `http://127.0.0.1:${port}/index.html?debug&taskman-web=${Date.now()}`;
   const debugPort = await reserveTcpPort();
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'wine-assembly-taskman-web-'));
   const chrome = spawn(CHROME, [
@@ -202,7 +206,7 @@ async function main() {
     '--no-default-browser-check', '--disable-search-engine-choice-screen',
     `--remote-debugging-port=${debugPort}`,
     `--user-data-dir=${profile}`,
-    `http://127.0.0.1:${port}/index.html?debug&taskman-web=${Date.now()}`,
+    pageUrl,
   ], { stdio: ['ignore', 'ignore', 'pipe'] });
   let chromeError = '';
   chrome.stderr.on('data', data => { chromeError += data.toString(); });
@@ -211,7 +215,7 @@ async function main() {
   const cleanup = () => {
     try { if (cdp) cdp.close(); } catch (_) {}
     try { chrome.kill('SIGKILL'); } catch (_) {}
-    try { server.close(); } catch (_) {}
+    try { if (server) server.close(); } catch (_) {}
     try { fs.rmSync(profile, { recursive: true, force: true }); } catch (_) {}
   };
   process.on('exit', cleanup);
@@ -231,6 +235,9 @@ async function main() {
   await cdp.opened;
   await cdp.send('Runtime.enable');
   await cdp.send('Page.enable');
+  await cdp.send('Emulation.setDeviceMetricsOverride', {
+    width: 640, height: 1136, deviceScaleFactor: 1, mobile: false,
+  });
 
   async function evaluate(expression, timeoutMs = 10000) {
     const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Runtime.evaluate timeout')), timeoutMs));
@@ -250,6 +257,18 @@ async function main() {
     };
     poll();
   })`, 18000);
+  const screenSize = await evaluate(`(() => {
+    const canvas = document.getElementById('screen');
+    const oldW = canvas.width, oldH = canvas.height;
+    canvas.width = 640;
+    canvas.height = 1136;
+    if (typeof sharedRenderer !== 'undefined' && sharedRenderer) {
+      sharedRenderer.handleScreenResize(oldW, oldH, canvas.width, canvas.height);
+    }
+    return { width: canvas.width, height: canvas.height };
+  })()`);
+  assert.deepStrictEqual(screenSize, { width: 640, height: 1136 },
+    `Task Manager phone-size regression needs a 640x1136 desktop: ${JSON.stringify(screenSize)}`);
 
   async function launch(name, titlePattern, timeoutMs = 30000) {
     await evaluate(`(() => {
@@ -295,6 +314,37 @@ async function main() {
   const calculator = await launch('calc', 'Calculator');
   const recorder = await launch('sndrec32_98', 'Sound Recorder');
   const taskman = await launch('taskman', '^Tasks$');
+  const taskmanPresentation = await evaluate(`(() => {
+    const win = sharedRenderer.windows[${taskman.hwnd}];
+    const top = Object.values(sharedRenderer.windows)
+      .filter(item => item && item.visible && !item.isChild)
+      .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0))[0];
+    const canvas = document.getElementById('screen');
+    return {
+      hwnd: win && win.hwnd,
+      visible: !!(win && win.visible),
+      minimized: !!(win && win._minimized),
+      rect: win && { x: win.x, y: win.y, w: win.w, h: win.h },
+      topHwnd: top && top.hwnd,
+      topTitle: top && top.title,
+      screen: { w: canvas.width, h: canvas.height },
+    };
+  })()`);
+  const taskRect = taskmanPresentation.rect;
+  assert(taskmanPresentation.visible && !taskmanPresentation.minimized &&
+      taskmanPresentation.topHwnd === taskman.hwnd && taskRect &&
+      taskRect.x < taskmanPresentation.screen.w && taskRect.y < taskmanPresentation.screen.h &&
+      taskRect.x + taskRect.w > 0 && taskRect.y + 24 > 0,
+  `Task Manager should open frontmost and on-screen: ${JSON.stringify(taskmanPresentation)}`);
+  const taskmanWindows = await evaluate(`(() => {
+    const app = runningApps.find(item => item && item.name === 'taskman');
+    return Object.values(sharedRenderer.windows)
+      .filter(win => win && win.wasm === app.wine.instance)
+      .map(win => ({ hwnd: win.hwnd, title: win.title, w: win.w, h: win.h }));
+  })()`);
+  assert(taskmanWindows.length >= 3 && taskmanWindows.every(win =>
+    win.w > 0 && win.h > 0 && win.w * win.h <= 640 * 1136),
+  `Task Manager should not allocate oversized window canvases: ${JSON.stringify(taskmanWindows)}`);
 
   const inspectTasksSource = `(() => {
     const app = runningApps.find(item => item && item.name === 'taskman');
@@ -479,12 +529,13 @@ async function main() {
     `closing Task Manager should leave other apps running: ${JSON.stringify(taskmanClosed)}`);
 
   const consoleText = consoleSummary(cdp.events).join('\n');
-  assert(!/UNIMPLEMENTED API:|RuntimeError|LinkError|Thread \d+ crashed|FATAL:/i.test(consoleText),
+  assert(!/UNIMPLEMENTED API:|RuntimeError|LinkError|Thread \d+ crashed|FATAL:|Canvas area exceeds the maximum limit/i.test(consoleText),
     `browser console should not contain runtime failures\n${consoleText.slice(-4000)}`);
   assert(screenshot.width >= 375 && screenshot.height >= 275 && fs.statSync(tasksPng).size > 5000,
     `Task Manager screenshot should be complete: ${JSON.stringify(screenshot)}`);
 
   console.log(`PASS  browser Task Manager initially enumerates real Calculator and Sound Recorder tasks`);
+  console.log('PASS  browser Task Manager opens frontmost and on-screen after other apps');
   console.log('PASS  Notepad accepts delayed keyboard input after RegEdit launches first');
   console.log(`PASS  browser Task Manager live refresh adds and removes Volume Control (${liveTasks.rows.length} tasks)`);
   console.log('PASS  browser Task Manager Switch To raises the selected real app');

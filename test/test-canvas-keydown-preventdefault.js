@@ -22,14 +22,21 @@
 //   - Toolbar focus after Launch does not swallow guest typing.
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
-const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf-8');
+// These three predicates moved out of the page template into
+// lib/browser-input.js in 760b79f, one indent level shallower.
+// The keyboard-proxy <textarea> is still page markup, so the string checks
+// below need index.html too.
+const SOURCE_FILE = path.join(__dirname, '..', 'lib', 'browser-input.js');
+const html = fs.readFileSync(SOURCE_FILE, 'utf-8') +
+  fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf-8');
 
 function extract(name) {
-  const re = new RegExp(`const ${name} = \\(e\\) => \\{([\\s\\S]*?)^\\s{6}\\};`, 'm');
+  const re = new RegExp(`const ${name} = \\(e\\) => \\{([\\s\\S]*?)^\\s{4,6}\\};`, 'm');
   const m = html.match(re);
-  if (!m) throw new Error(`could not extract ${name} from index.html`);
+  if (!m) throw new Error(`could not extract ${name} from ${SOURCE_FILE}`);
   return new Function('e', m[1]);
 }
 
@@ -120,23 +127,32 @@ const { execSync } = require('child_process');
 const RUN = path.join(__dirname, 'run.js');
 const EXE = path.join(__dirname, 'binaries', 'notepad.exe');
 let cliOk = false;
+let cliNote = '';
 if (fs.existsSync(EXE)) {
   try {
     const out = execSync(
       `node "${RUN}" --exe="${EXE}" --input=90:focus-main-window,100:keypress:72,110:keypress:73,130:dump-main-edit-state:typed --max-batches=200 --quiet-api`,
-      // 120s, the budget e2bc3a3 settled on for every spawned emulator run: at
-      // load ~40 this one takes 39s wall for 4.7s of CPU, so a 30s cap measured
-      // the box rather than the keypress path. It failed as one red check with
-      // no output, which reads like an input regression and is not one.
-      { encoding: 'utf-8', timeout: 120000, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 8 * 1024 * 1024 });
+      // 200 batches of notepad is ~5s of CPU, but this box is regularly at
+      // load 100+ with several agent sessions sweeping, and there the same
+      // command takes 26s of wall for 4.6s of user time. At 30s this check
+      // reported "the keypress flow is broken" when the flow was fine and the
+      // machine was busy — the most expensive kind of red there is.
+      { encoding: 'utf-8', timeout: 180000, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 8 * 1024 * 1024 });
     // The top-level window can own focus after a browser click; typing must
     // still resolve to Notepad's child EDIT and mutate its text.
     cliOk = out.includes('keypress code=72') && out.includes('keypress code=73')
             && out.includes('dump-main-edit-state typed:')
             && out.includes('text="HI"')
             && !out.includes('UNIMPLEMENTED') && !out.includes('CRASH');
-  } catch (e) { /* keep cliOk=false */ }
-  check('CLI keypress flow into Notepad edit succeeds', cliOk);
+    if (!cliOk) cliNote = ' (ran to completion; the flow itself did not produce text="HI")';
+  } catch (e) {
+    // Say which failure this was. A kill and a wrong answer are different
+    // bugs, and only one of them is about the keypress path.
+    cliNote = (e && (e.killed || e.signal))
+      ? ` (run was killed after ${(180000 / 1000)}s — machine, not the flow; loadavg ${os.loadavg()[0].toFixed(1)})`
+      : ` (run failed: ${e && e.message ? String(e.message).split('\n')[0] : e})`;
+  }
+  check('CLI keypress flow into Notepad edit succeeds' + cliNote, cliOk);
 }
 
 let pass = 0, fail = 0;

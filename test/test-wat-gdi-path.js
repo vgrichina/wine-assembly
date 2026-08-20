@@ -436,7 +436,7 @@ async function main() {
     assert.strictEqual(wat.test_call_DeleteObject(brush), 1);
   });
 
-  check('FlattenPath converts cubic controls to exact device-space line points', () => {
+  check('FlattenPath adaptively converts cubic controls to device-space line points', () => {
     setIdentityMap(dib.hdc);
     const bezier = allocPoints([[1, 10], [3, 2], [7, 2], [9, 10]]);
     assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
@@ -445,11 +445,8 @@ async function main() {
     assert.strictEqual(wat.test_call_EndPath(dib.hdc), 1);
     assert.strictEqual(wat.test_call_FlattenPath(dib.hdc), 1);
     const path = readPath(dib.hdc);
-    assert.strictEqual(path.points.length, 33);
-    assert.deepStrictEqual(path.points[0], [1, 10]);
-    assert.deepStrictEqual(path.points[16], [5, 4]);
-    assert.deepStrictEqual(path.points[32], [9, 10]);
-    assert.deepStrictEqual(path.types, [6, ...Array(31).fill(2), 3]);
+    assert.deepStrictEqual(path.points, [[1, 10], [3, 6], [5, 4], [7, 6], [9, 10]]);
+    assert.deepStrictEqual(path.types, [6, 2, 2, 2, 3]);
     const region = wat.test_call_PathToRegion(dib.hdc) >>> 0;
     assert(region);
     assert.strictEqual(wat.test_call_PtInRegion(region, 5, 7), 1);

@@ -59,6 +59,14 @@ for (let i = 0; i < 60; i++) {
   lines.push(`line${String(i).padStart(2, '0')}`);
 }
 typeText(lines.join('\r'));
+// Typing leaves the caret on the last line, which parks the thumb at the
+// bottom of its track -- there is nowhere further down to drag it, and a
+// press above it is a page-up, not a thumb drag. Go back to the top first so
+// the drag below starts on the thumb and has somewhere to go.
+keydown(17);              // Ctrl
+keydown(36);              // Home
+keyup(36);
+keyup(17);
 push('dump-main-edit-state:long-before-scroll', 8);
 push('drag-main-edit:386:24:386:140', 8);
 push('dump-main-edit-state:long-after-drag-scroll', 8);
@@ -121,10 +129,13 @@ const checks = [
   { name: 'typed text reached Notepad edit', pass: typed && typed.text === 'alpha beta' },
   { name: 'mouse drag selected text in Notepad edit', pass: mouseSelected && mouseSelected.text === 'alpha beta' && mouseSelected.cursor !== mouseSelected.sel },
   { name: 'Ctrl+A selected typed text', pass: selected && selected.text === 'alpha beta' && selected.sel === 0 && selected.cursor === selected.len },
-  { name: 'typing over selection and Backspace edited text', pass: edited && edited.text === 'gamm' },
+  // "gammax" replaces the selection, then one Backspace takes the x back off.
+  { name: 'typing over selection and Backspace edited text', pass: edited && edited.text === 'gamma' },
   { name: 'long multiline content inserted', pass: longBefore && longBefore.text.includes('line00\nline01') && longBefore.lineCount >= 60 },
   { name: 'scrollbar thumb drag scrolled long edit', pass: longAfterDrag && longBefore && longAfterDrag.firstVisible > longBefore.firstVisible },
-  { name: 'mouse wheel scrolled long edit', pass: longAfter && longBefore && longAfter.firstVisible > longBefore.firstVisible },
+  // The wheel is measured against where the drag left the view, not against
+  // the top: comparing it to longBefore would pass on the drag's scrolling.
+  { name: 'mouse wheel scrolled long edit', pass: longAfter && longAfterDrag && longAfter.firstVisible > longAfterDrag.firstVisible },
   {
     name: 'mouse selection after scroll targets visible scrolled text',
     pass: scrolledMouseSelected && longAfter &&

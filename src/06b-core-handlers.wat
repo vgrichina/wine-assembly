@@ -207,7 +207,11 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return_call $next))
   (func $th_alu_m16_i16 (param $op i32)
     (local $addr i32) (local $imm i32) (local $val i32)
-    (local.set $addr (call $read_addr)) (local.set $imm (call $read_thread_word))
+    ;; The immediate is masked to sixteen bits like the memory operand: a
+    ;; sign-extended imm8 arrives as 0xFFFFFFxx and would compare unsigned
+    ;; against a 16-bit value as though it were enormous. See $th_alu_r16_i16.
+    (local.set $addr (call $read_addr))
+    (local.set $imm (i32.and (call $read_thread_word) (i32.const 0xFFFF)))
     (local.set $val (call $do_alu32 (local.get $op) (call $gl16 (local.get $addr)) (local.get $imm)))
     (if (i32.ne (local.get $op) (i32.const 7)) (then (call $gs16 (local.get $addr) (local.get $val))))
     (global.set $flag_res (i32.and (global.get $flag_res) (i32.const 0xFFFF)))
@@ -368,7 +372,7 @@
     (local $addr i32) (local $alu i32) (local $imm i32) (local $val i32)
     (local.set $addr (call $ea_from_op (local.get $op)))
     (local.set $alu (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF)))
-    (local.set $imm (call $read_thread_word))
+    (local.set $imm (i32.and (call $read_thread_word) (i32.const 0xFFFF)))
     (local.set $val (call $do_alu32 (local.get $alu) (call $gl16 (local.get $addr)) (local.get $imm)))
     (if (i32.ne (local.get $alu) (i32.const 7)) (then (call $gs16 (local.get $addr) (local.get $val))))
     (global.set $flag_res (i32.and (global.get $flag_res) (i32.const 0xFFFF)))
@@ -523,7 +527,7 @@
     (return_call $next))
   ;; 147: mul/imul/div/idiv [base+disp]. op=type<<4|base, disp in word. type: 0=mul,1=imul,2=div,3=idiv
   (func $th_muldiv_m32_ro (param $op i32)
-    (local $addr i32) (local $mtype i32) (local $mval i32) (local $val64 i64) (local $divisor i64) (local $dividend i64)
+    (local $addr i32) (local $mtype i32) (local $mval i32) (local $val64 i64) (local $divisor i64) (local $dividend i64) (local $quotient i64)
     (local.set $addr (call $ea_from_op (local.get $op)))
     (local.set $mtype (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
     (local.set $mval (call $gl32 (local.get $addr)))
@@ -537,18 +541,30 @@
             (global.set $eax (i32.wrap_i64 (local.get $val64)))
             (global.set $edx (i32.wrap_i64 (i64.shr_s (local.get $val64) (i64.const 32))))
             (call $set_flags_mul (i32.ne (global.get $edx) (i32.shr_s (global.get $eax) (i32.const 31))))))
+    ;; DIV/IDIV here must match $th_div_m32/$th_idiv_m32 exactly: same divide
+    ;; signedness, same #DE code, same quotient-range check. IDIV divided
+    ;; unsignedly for years, so any `idiv [base+disp]` with a negative operand
+    ;; silently returned 0 -- that is what flattened MSPaint's round brush on
+    ;; every stroke heading up or left.
     (if (i32.eq (local.get $mtype) (i32.const 2)) ;; DIV
       (then (local.set $divisor (i64.extend_i32_u (local.get $mval)))
             (local.set $dividend (i64.or (i64.extend_i32_u (global.get $eax))
               (i64.shl (i64.extend_i32_u (global.get $edx)) (i64.const 32))))
-            (if (i64.eqz (local.get $divisor)) (then (call $raise_exception (i32.const 2)) (return)))
-            (global.set $eax (i32.wrap_i64 (i64.div_u (local.get $dividend) (local.get $divisor))))
+            (if (i64.eqz (local.get $divisor)) (then (call $raise_exception (i32.const 0xC0000094)) (return)))
+            (local.set $quotient (i64.div_u (local.get $dividend) (local.get $divisor)))
+            (if (i64.gt_u (local.get $quotient) (i64.const 0xFFFFFFFF))
+              (then (call $raise_exception (i32.const 0xC0000094)) (return)))
+            (global.set $eax (i32.wrap_i64 (local.get $quotient)))
             (global.set $edx (i32.wrap_i64 (i64.rem_u (local.get $dividend) (local.get $divisor))))))
     (if (i32.eq (local.get $mtype) (i32.const 3)) ;; IDIV
       (then (local.set $divisor (i64.extend_i32_s (local.get $mval)))
             (local.set $dividend (i64.or (i64.extend_i32_u (global.get $eax))
               (i64.shl (i64.extend_i32_u (global.get $edx)) (i64.const 32))))
-            (if (i64.eqz (local.get $divisor)) (then (call $raise_exception (i32.const 3)) (return)))
-            (global.set $eax (i32.wrap_i64 (i64.div_u (local.get $dividend) (local.get $divisor))))
-            (global.set $edx (i32.wrap_i64 (i64.rem_u (local.get $dividend) (local.get $divisor))))))
+            (if (i64.eqz (local.get $divisor)) (then (call $raise_exception (i32.const 0xC0000094)) (return)))
+            (local.set $quotient (i64.div_s (local.get $dividend) (local.get $divisor)))
+            (if (i32.or (i64.gt_s (local.get $quotient) (i64.const 0x7FFFFFFF))
+                        (i64.lt_s (local.get $quotient) (i64.const -2147483648)))
+              (then (call $raise_exception (i32.const 0xC0000094)) (return)))
+            (global.set $eax (i32.wrap_i64 (local.get $quotient)))
+            (global.set $edx (i32.wrap_i64 (i64.rem_s (local.get $dividend) (local.get $divisor))))))
             (return_call $next))

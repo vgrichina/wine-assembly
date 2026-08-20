@@ -536,6 +536,14 @@
   (import "host" "ctrl_paint_trace"
     (func $host_ctrl_paint_trace (param i32 i32 i32 i32 i32 i32 i32)))
 
+  ;; Every standard scrollbar strip as it is painted: control-local rect,
+  ;; orientation, and the page model it was handed. A strip that is flat grey
+  ;; with no arrows is either a paint that never happened or one whose `long`
+  ;; axis came out under 36px, and nothing else in a trace can tell those two
+  ;; apart. Same --trace-ctrl gate as the paint lines above.
+  (import "host" "ctrl_sb_trace"
+    (func $host_ctrl_sb_trace (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32)))
+
   ;; Registry host imports — backed by localStorage
   (import "host" "reg_open_key" (func $host_reg_open_key (param i32 i32 i32) (result i32)))
   ;; reg_open_key(hKey, subKeyWA, isWide) → hKey or 0
@@ -610,6 +618,8 @@
 
   (import "host" "get_async_key_state" (func $host_get_async_key_state (param i32) (result i32)))
   (import "host" "get_key_down_state" (func $host_get_key_down_state (param i32) (result i32)))
+  (import "host" "set_key_down_state" (func $host_set_key_down_state (param i32) (param i32)))
+  (import "host" "win16_stage_module" (func $host_win16_stage_module (param i32) (param i32) (result i32)))
   (import "host" "di_set_event_notification" (func $host_di_set_event_notification (param i32 i32) (result i32)))
 
   ;; Math host imports (for FPU transcendentals)
@@ -798,7 +808,9 @@
   (data (i32.const 0x2C5) "12\00")             ;; +0x125
   (data (i32.const 0x2C8) "14\00")             ;; +0x128
   (data (i32.const 0x2CB) "18\00")             ;; +0x12B
-  (data (i32.const 0x2CE) "24\00")             ;; +0x12E
+  ;; "24" does not fit before the 0x2D0 buffer -- its terminator would land on
+  ;; that buffer's first byte -- so it sits after <ord> instead.
+  (data (i32.const 0x2E6) "24\00")             ;; +0x146
   ;; Buffer for ordinal-import crash messages: "KERNEL32.#NNNNN\0" (max 16 bytes)
   (data (i32.const 0x2D0) "KERNEL32.#00000\00")  ;; +0x1D0, filled in by $win32_dispatch
   ;; Placeholder name for RESOLVED ordinal imports. thunk+0 holds the ordinal
@@ -854,7 +866,7 @@
   (data (i32.const 0x11E50) "OleCreateFontIndirect\00")
   ;; Win16 module names, matched against an NE imported-name table entry by
   ;; $win16_module_id. NE name tables are upper case, so the compare is exact.
-  (data (i32.const 0x11E70) "KERNEL\00USER\00GDI\00KEYBOARD\00SOUND\00SHELL\00MMSYSTEM\00COMMDLG\00CARDS\00DDEML\00SHELLABOUT\00NDDEAPI\00NDDEGETWINDOW\00")
+  (data (i32.const 0x11E70) "KERNEL\00USER\00GDI\00KEYBOARD\00SOUND\00SHELL\00MMSYSTEM\00COMMDLG\00CARDS\00DDEML\00SHELLABOUT\00NDDEAPI\00NDDEGETWINDOW\00WIN87EM\00")
   ;; The machine's NetDDE share database. A DDE share maps a name that clients
   ;; on other machines ask for onto the local application and topic that
   ;; actually serves it, and on a real Win98 box it is written at install time
@@ -864,6 +876,54 @@
   ;; remote Hearts asks for topic "Hearts$" on \\SOMEBODY\NDDE$, and that share
   ;; is what says the local server is application "MSHearts" topic "Hearts".
   ;; Records are share, application, topic; an empty share ends the table.
+  ;; The faces GDI here can actually rasterize — the .FON strikes mounted by
+  ;; fonts/substitutions.json. EnumFonts reports these and nothing else.
+  ;; Not at 0x11500: that is the oleaut32 ordinal-name block above, and the
+  ;; later segment wins, so placing them together cost Kodak Imaging its
+  ;; BSTR/VARIANT imports.
+  (data (i32.const 0x3E00) "System\00MS Sans Serif\00Fixedsys\00Courier\00Terminal\00\00")
+  ;; MMSYSTEM entry points asked for by name rather than imported. A module
+  ;; this emulator answers for has no export table to read, so GetProcAddress
+  ;; needs the name-to-ordinal mapping written down — see
+  ;; $win16_mmsystem_ordinal. Chip's Challenge asks for exactly these five
+  ;; before it will start.
+  ;;
+  ;; Each entry is a length byte, the name, and the ordinal as a word; a zero
+  ;; length ends the list. Upper case, because $win16_cstr_to_pstr folds the
+  ;; caller's name that way before any lookup — the same form the tables in
+  ;; src/win16-ordinals.generated.json use.
+  (data (i32.const 0x3E40)
+    "\0cSNDPLAYSOUND\02\00"
+    "\0eMCISENDCOMMAND\bd\02"
+    "\11MCIGETERRORSTRING\c2\02"
+    "\11MIDIOUTGETNUMDEVS\c9\00"
+    "\11WAVEOUTGETNUMDEVS\91\01"
+    "\00")
+  ;; The same shape for the entry points apps look up in KERNEL, GDI and USER
+  ;; by name rather than importing. A module this emulator answers for has no
+  ;; export table to search, so the name has to be matched here and turned into
+  ;; an ordinal — see $win16_builtin_ordinal. JigSawed asks GDI for
+  ;; CreateRectRgn before it will draw its board.
+  ;;
+  ;; The word after each name is the ordinal with the module number in its top
+  ;; nibble (1 KERNEL, 2 USER, 3 GDI), because one table serves all three and
+  ;; ordinals collide across them — GDI.47 and KERNEL.47 are different calls.
+  ;; No Win16 ordinal reaches 4096, so the nibble is free.
+  ;;
+  ;; Every name here is one a game in the corpus actually asks for: Visual
+  ;; Basic's Declare statement is a GetProcAddress by name, and a NULL comes
+  ;; back to the program as "Sub or Function not defined".
+  (data (i32.const 0x3EA0)
+    "\0dCREATERECTRGN\40\30"
+    "\15CREATERECTRGNINDIRECT\41\30"
+    "\0eGETSTOCKOBJECT\57\30"
+    "\0bRECTVISIBLE\68\30"
+    "\0dGETDEVICECAPS\50\30"
+    "\06BITBLT\22\30"
+    "\0fGETMODULEHANDLE\2f\10"
+    "\11GETMODULEFILENAME\31\10"
+    "\14GETPRIVATEPROFILEINT\7f\10"
+    "\00")
   (data (i32.const 0x11EE0) "Hearts$\00MSHearts\00Hearts\00\00")
 
   ;; MessageBox system strings mirrored in the WAT-owned reserved page just
@@ -944,7 +1004,7 @@
   (data (i32.const 0x3141) "SysListView32\00")
   (data (i32.const 0x3150) "Slider1\00")
   (data (i32.const 0x3158) "msctls_trackbar32\00")
-  (data (i32.const 0x316B) "SysTreeView32\00")
+  (data (i32.const 0x316A) "SysTreeView32\00")
   (data (i32.const 0x3178) "SysLink\00")
   (data (i32.const 0x3180) "DirectAnimation.DAView\00")
   (data (i32.const 0x31A0) "DirectAnimation.DAStatics\00")
@@ -991,6 +1051,11 @@
   ;; no OLE applications installed -- Windows shows an empty list there too.
   (data (i32.const 0x3370) "(no object types registered)\00") ;; 0x3370 (no object types registered)
 
+  ;; ENV_DEFAULTS — the process environment a freshly booted Win98 hands an
+  ;; app, as one "NAME=VALUE\0"... run ending in a second NUL. Copied into the
+  ;; guest heap on first use; see $env_ensure.
+  (data (i32.const 0x3390) "COMSPEC=C:\\COMMAND.COM\00TEMP=C:\\WINDOWS\\TEMP\00TMP=C:\\WINDOWS\\TEMP\00windir=C:\\WINDOWS\00PATH=C:\\WINDOWS;C:\\WINDOWS\\COMMAND\00\00")
+
   ;; ============================================================
   ;; MEMORY MAP
   ;; ============================================================
@@ -999,9 +1064,12 @@
   ;; 0x00002000  4KB     UPDATE_RECT    (256 entries × 16 bytes — WAT-owned update bbox)
   ;; 0x00003000  256B    UPDATE_FLAGS   (1 byte per window slot, non-empty update state)
   ;; 0x00003100  128B    CLASS_NAME_STRINGS (built-in control class names)
+  ;; 0x00003390  ~370B   ENV_DEFAULTS (initial environment block template)
   ;; 0x00003500  1KB     WND_BG_BRUSH_TABLE (256 × 4 bytes — class hbrBackground per hwnd)
   ;; 0x00003900  1KB     WND_CLASS_CURSOR_TABLE (256 × 4 bytes — class hCursor per hwnd)
-  ;; 0x00003D00  ~768B   Free
+  ;; 0x00003D00  256B    CLASS_EXTRA_TABLE (64 × 4 bytes — cbClsExtra per class slot)
+  ;; 0x00003E00   48B    WIN16_FONT_FACES (face names EnumFonts reports)
+  ;; 0x00003E30  ~464B   Free
   ;; 0x00004000  4KB     DIALOG_STATE_TABLE (256 entries x 16 bytes)
   ;; 0x00005000  256B    WINDOW_UNICODE_TABLE (one byte per WND_RECORDS slot)
   ;; 0x00005100  4B      SHARED_PROCESS_ID (shared by every thread instance)
@@ -1010,13 +1078,14 @@
   ;; 0x00006200  1KB     ATOM_LOCAL_TABLE  (128 entries × 8 bytes — AddAtom namespace)
   ;; 0x00006600  1KB     ATOM_GLOBAL_TABLE (128 entries × 8 bytes — GlobalAddAtom namespace)
   ;; 0x00006A00  1KB     CLIPFORMAT_TABLE (128 entries × 8 bytes — RegisterClipboardFormat)
-  ;; 0x00006E00  512B    Free (former API dispatch hash table)
+  ;; 0x00006E00  256B    PAINT_SCRATCH  (ring of 16 RECTs for painting wndprocs)
+  ;; 0x00006F00  256B    WND_CLASS_SLOT_TABLE (256 × 1 byte — class record per window slot)
   ;; 0x00007000  6KB     WND_RECORDS    (256 entries × 24 bytes, ends 0x8800)
   ;; 0x00008800  4KB     CONTROL_TABLE  (256 entries × 16 bytes, ends 0x9800)
   ;; 0x00009800  2KB     CONTROL_GEOM   (256 entries × 8 bytes,  ends 0xA000)
   ;; 0x0000A000  3KB     CLASS_RECORDS  (64  entries × 48 bytes, ends 0xAC00)
   ;; 0x0000AC00  320B    TIMER_TABLE    (16  entries × 20 bytes, ends 0xAD40)
-  ;; 0x0000AD40  16B     PAINT_SCRATCH  (one RECT for control wndproc WM_PAINT)
+  ;; 0x0000AD40  32B     Free (former PAINT_SCRATCH, now a ring at 0x6E00)
   ;; 0x0000AD60  1KB     MENU_DATA_TABLE (256 × 4 bytes — heap ptr to per-window menu blob)
   ;; 0x0000B160  8KB     WND_DLG_RECORDS (256 × 32 bytes — dialog header state per slot, ends 0xD160)
   ;; 0x0000D160  16B     WAVE_OUT_STATE (shared waveOut callback info for cross-thread access)
@@ -1026,7 +1095,7 @@
   ;;   bit 0: WM_NCPAINT pending; bit 1: WM_ERASEBKGND pending; bit 2: WM_NCCALCSIZE pending
   ;; 0x0000EE70  2KB     TITLE_TABLE    (256 entries × 8 bytes — WASM title ptr + len, ends 0xF670)
   ;; 0x0000F670  4KB     CLIENT_RECT    (256 entries × 16 bytes — l/t/r/b i32, ends 0x10670)
-  ;; 0x00010670  256B    MAX_TABLE      (256 × 1 byte — per-hwnd maximized flag, ends 0x10770)
+  ;; 0x00010670  256B    SHOW_STATE_TABLE (256 × 1 byte — bit 0 maximized, bit 1 minimized, ends 0x10770)
   ;; 0x00010770  32B     WINDOW_REGION_BITS (256 × 1 bit — SetWindowRgn state, ends 0x10790)
   ;; 0x00010790  32B     NATIVE_STATUS_BITS (one bit per WND_RECORDS slot)
   ;; 0x000107B0  32B     NATIVE_TAB_BITS (one bit per WND_RECORDS slot)
@@ -1035,11 +1104,12 @@
   ;; 0x00010900  256B    CALLSTACK_RING (64 slots × 4 bytes — shadow ret_addr stack for --trace-callstack)
   ;; 0x00010A00  256B    MCI_DEVICE_TABLE (16 × 16 bytes — host-backed MCI devices)
   ;; 0x00010B00  1KB     OWNER_TABLE   (256 entries × 4 bytes, ends 0x10F00)
-  ;; 0x00010F00  256B    Free
+  ;; 0x00010F00  256B    WND_CLASS_ICON_TABLE (64 × 4 bytes — WNDCLASS.hIcon per class slot)
   ;; 0x00011000  320B    WAT-owned system strings
   ;; 0x00011140  448B    DX_PRESENT_BMI (BITMAPINFOHEADER + palette/masks)
   ;; 0x00011300  220B    WSOCK32 ordinal-import names (ends 0x000113DC)
-  ;; 0x000113DC 396B     Free
+  ;; 0x000113DC  36B     Free
+  ;; 0x00011400 256B     DI_DIK_VK_TABLE (DirectInput scancode → VK, 09a8-handlers-directx.wat)
   ;; 0x00011568  24B     Free
   ;; 0x00011580  1KB     RICHEDIT_FORMAT_TABLE (256 × 4 bytes — latest CFM_SIZE yHeight)
   ;; 0x00011980  1KB     RICHEDIT_PARA_TABLE (256 × 4 bytes — heap ptr to PARAFORMAT cache)
@@ -1114,7 +1184,7 @@
   ;; 0x00012000  60MB    Guest address space (PE sections + DLLs + large data)
   ;;   For an NE task image_base is 0, so guest 0x00100000 + 8MB is the Win16
   ;;   selector arena (WIN16_ARENA): one 64KB slot per selector index.
-  ;;   Slot WIN16_SEG_MAX (guest 0x008F0000) is past the last usable selector,
+  ;;   Slot WIN16_SEG_MAX (guest 0x01FF0000) is past the last usable selector,
   ;;   so no far pointer can name it; it holds the Win16 handle table.
   ;; 0x03C12000  1MB     Former low main stack slot, now free for guest heap
   ;; 0x03D12000  ...     Guest heap grows upward; VirtualAlloc reserves grow downward from thread cache
@@ -1238,6 +1308,67 @@
   ;; top-level/modal windows and GetWindow(GW_OWNER).
   (global $OWNER_TABLE i32 (i32.const 0x00010B00))
   (global $OWNER_TABLE_SIZE i32 (i32.const 0x00000400))
+  ;; WNDCLASS.hIcon per window, the same shape as the class cursor above and
+  ;; for the same reason: SetClassWord(GCW_HICON) changes what a window shows
+  ;; for itself, and the class record it came from may be re-registered or its
+  ;; slot reused before anyone reads it back.
+  ;; One entry per *window* slot, not per class — $wnd_slot_reset clears it for
+  ;; any slot up to MAX_WINDOWS — so it needs the full 256 x 4 bytes. At
+  ;; 0x10F00 that reached 0x11300, over the dialog button captions at 0x11000
+  ;; and the WAT system strings after them; shrinking the declared size only
+  ;; hid the overlap from anyone reading the header. Moved somewhere with room,
+  ;; verified with tools/wat-memory-map.js, which is the only way to see that a
+  ;; (data ...) segment in one file and a table in another share an address.
+  (global $WND_CLASS_ICON_TABLE i32 (i32.const 0x079C9000))
+  (global $WND_CLASS_ICON_TABLE_SIZE i32 (i32.const 0x00000400))
+  ;; WND_OWN_DC_TABLE: the private device context of a CS_OWNDC window, one
+  ;; entry per window slot. A class registered with CS_OWNDC gets one DC per
+  ;; window and keeps it, which is the whole point of the style: what the app
+  ;; selects into that DC is still selected the next time it asks for one.
+  ;; SkiFree selects the OEM fixed font into its GetDC once at startup and
+  ;; paints its stats labels through a later BeginPaint; with a fresh DC each
+  ;; time they came back in the default proportional face.
+  ;;   0  the class did not ask for a private DC
+  ;;  -1  it did, and nothing has asked for the DC yet
+  ;;   n  the DC handle, alive until the window is destroyed
+  (global $WND_OWN_DC_TABLE i32 (i32.const 0x079C9800))
+  (global $WND_OWN_DC_TABLE_SIZE i32 (i32.const 0x00000400))
+  ;; Open files, indexed by the small handle a 16-bit task sees. DOS numbers
+  ;; file handles from zero and a C runtime indexes its own per-handle table
+  ;; with them, so a task that gets 0x136 back from OpenFile hands it to
+  ;; fstat, which finds it past the end of that table and answers -1 without
+  ;; ever asking DOS. Klotski compared the size it got with the size it
+  ;; expected and reported its score file unreadable. Entry i holds the
+  ;; 32-bit handle that 16-bit handle i names, 0 for a free slot; 0-4 stay
+  ;; reserved for the standard handles a DOS program assumes it starts with.
+  (global $WIN16_FILE_TABLE i32 (i32.const 0x079C9400))
+  (global $WIN16_FILE_MAX i32 (i32.const 256))
+  ;; Which class record each window was created from, one byte per window slot
+  ;; (0xFF = none), and the cbClsExtra bytes that belong to that class. Class
+  ;; extra is shared by every window of the class — that is the whole point of
+  ;; it, as against cbWndExtra — so it is keyed by class slot and reached
+  ;; through the per-window link. Four bytes per class is what the gap between
+  ;; here and RICHEDIT_FORMAT_TABLE holds, and it covers the two words apps
+  ;; that use class extra at all actually declare; a class asking for more is
+  ;; refused in $class_extra_addr rather than aliased onto its neighbour.
+  ;;
+  ;; These were briefly at 0x07F0A800, which is GDI_BITMAP_FONT_TABLE — the
+  ;; font table's globals live in src/10b-gdi-font.wat, not here, so picking an
+  ;; address by reading this file alone landed on top of it and corrupted every
+  ;; loaded strike. Check every src/*.wat before taking an address.
+  ;; And 0x11300 was no better: that is where the WSOCK32 ordinal-import name
+  ;; strings live, so one byte per window slot walked straight through them and
+  ;; a program that created 256 windows lost its socket imports. It is now in
+  ;; the page below WND_RECORDS, which is emulator-private and holds no data
+  ;; segment at all.
+  (global $WND_CLASS_SLOT_TABLE i32 (i32.const 0x00006F00))
+  (global $WND_CLASS_SLOT_TABLE_SIZE i32 (i32.const 0x00000100))
+  ;; 0x11400 was DI_DIK_VK_TABLE (09a8-handlers-directx.wat) — a DirectInput
+  ;; game and a class with cbClsExtra were writing the same 256 bytes. Moved
+  ;; beside the other per-class tables instead.
+  (global $CLASS_EXTRA_TABLE i32 (i32.const 0x00003D00))
+  (global $CLASS_EXTRA_TABLE_SIZE i32 (i32.const 0x00000100))
+  (global $CLASS_EXTRA_STRIDE i32 (i32.const 4))
   ;; EDIT visual-line scratch table. Each entry is { char_start, char_len }.
   ;; Used by WAT EDIT controls so wrapped text, caret, hit-testing and scroll
   ;; all share one layout model instead of mixing DrawText with manual math.
@@ -1418,11 +1549,26 @@
   (global $CLASS_RECORDS i32 (i32.const 0x0000A000))
   (global $CLASS_RECORDS_SIZE i32 (i32.const 0x00000C00))
   (global $MAX_CLASSES   i32 (i32.const 64))
-  ;; 16-byte RECT scratch used by control wndproc WM_PAINT to call WAT DrawText
-  ;; (which expects a WASM linear address for the rect). Below GUEST_BASE so guest
-  ;; cannot reach it via image-relative pointers. Lives just past TIMER_TABLE.
-  (global $PAINT_SCRATCH  i32 (i32.const 0x0000AD40))
-  (global $PAINT_SCRATCH_SIZE i32 (i32.const 0x00000010))
+  ;; RECT scratch used by control wndproc WM_PAINT to call WAT DrawText and the
+  ;; other rect-taking primitives (they expect a WASM linear address for the
+  ;; rect). Below GUEST_BASE so guest cannot reach it via image-relative
+  ;; pointers.
+  ;;
+  ;; This is a ring of 16 rects, not one rect. Painting nests — a control's
+  ;; WM_PAINT can send a message that paints another window — and with a single
+  ;; shared rect the inner painter overwrote the one its caller was still
+  ;; holding. $paint_rect hands out the next slot, and a caller that dispatches
+  ;; into other windows while holding rects brackets the call with
+  ;; $paint_scratch_mark / $paint_scratch_reset so the inner frame's slots are
+  ;; recycled and the outer frame's are not. See $paint_rect in 10-helpers.wat.
+  (global $PAINT_SCRATCH  i32 (i32.const 0x00006E00))
+  (global $PAINT_SCRATCH_SLOTS i32 (i32.const 16))
+  (global $PAINT_SCRATCH_SIZE i32 (i32.const 0x00000100))
+  ;; Cursor into the ring. Mutable globals are per-instance while the memory is
+  ;; shared, so two threads painting at once can still land on the same slot.
+  ;; That is the pre-existing situation (they shared one rect before) and is not
+  ;; what this ring is for; it fixes nesting inside one thread.
+  (global $paint_scratch_cursor (mut i32) (i32.const 0))
   ;; PROP_TABLE: SetPropA/GetPropA/RemovePropA storage. Linear scan (apps
   ;; that touch Props rarely have more than a handful of live entries).
   ;;   +0  hwnd       (0 = empty slot)
@@ -1524,11 +1670,17 @@
   ;; Each byte: 0 = normal, 1 = flashing (inverted caption)
   (global $FLASH_TABLE i32 (i32.const 0x0000E970))
   (global $FLASH_TABLE_SIZE i32 (i32.const 0x00000100))
-  ;; MAX_TABLE — per-window maximized flag, parallel to WND_RECORDS slots.
-  ;; 256 entries × 1 byte (0 = normal, 1 = maximized). Toggled by the
-  ;; WM_SYSCOMMAND handler after $host_sys_command commits geometry.
-  (global $MAX_TABLE i32 (i32.const 0x00010670))
-  (global $MAX_TABLE_SIZE i32 (i32.const 0x00000100))
+  ;; SHOW_STATE_TABLE — per-window show state, parallel to WND_RECORDS slots.
+  ;; 256 entries × 1 byte, two independent bits because Windows treats them as
+  ;; independent: a maximized window that is then minimized restores to
+  ;; maximized, so SC_MINIMIZE must not clear the maximized bit.
+  ;;   bit 0 (1) — maximized (WS_MAXIMIZE / IsZoomed)
+  ;;   bit 1 (2) — minimized (WS_MINIMIZE / IsIconic)
+  ;; Written by ShowWindow and by the WM_SYSCOMMAND handler after
+  ;; $host_sys_command commits geometry; read through $wnd_max_get /
+  ;; $wnd_min_get, which are the only two functions that know the encoding.
+  (global $SHOW_STATE_TABLE i32 (i32.const 0x00010670))
+  (global $SHOW_STATE_TABLE_SIZE i32 (i32.const 0x00000100))
   ;; WINDOW_REGION_BITS — bitset keyed by WND_RECORDS slot. Regioned/skinned
   ;; windows (Winamp) use their whole shaped surface as the client area, so
   ;; later MoveWindow/SetWindowPos NCCALCSIZE must not restore standard chrome
@@ -1812,6 +1964,13 @@
 
   (global $free_list (mut i32) (i32.const 0))  ;; WASM-space head of free list (0 = empty)
   (global $fake_cmdline_addr (mut i32) (i32.const 0))
+  ;; Process environment block: guest pointer to "NAME=VALUE\0"... "\0", and
+  ;; the byte capacity of that allocation. Filled from ENV_DEFAULTS on first
+  ;; use. One block serves every spelling — GetEnvironmentStringsA/W hand out
+  ;; encoded copies of it, GetEnvironmentVariable reads it, and
+  ;; SetEnvironmentVariable edits it in place.
+  (global $env_block (mut i32) (i32.const 0))
+  (global $env_cap   (mut i32) (i32.const 4096))
   (global $exe_name_wa (mut i32) (i32.const 0x120))   ;; WASM addr of exe name string
   (global $exe_name_len (mut i32) (i32.const 7))      ;; length of exe name
   ;; MSVCRT static data pointers (allocated on first use from heap)
@@ -1965,9 +2124,6 @@
   (global $ATOM_FIRST        i32 (i32.const 0xC000))  ;; first string-atom value
   (global $pending_wm_create (mut i32) (i32.const 0)) ;; deliver WM_CREATE as next GetMessageA
   (global $pending_wm_size   (mut i32) (i32.const 0)) ;; deliver WM_SIZE after WM_CREATE (lParam=cx|cy<<16)
-  (global $main_win_cx       (mut i32) (i32.const 0)) ;; main window width (from CreateWindowExA)
-  (global $main_win_cy       (mut i32) (i32.const 0)) ;; main window height
-  (global $main_nc_height    (mut i32) (i32.const 25)) ;; non-client height: 25 (no menu) or 45 (with menu)
   (global $movewindow_pending_hwnd (mut i32) (i32.const 0)) ;; non-main hwnd awaiting WM_SIZE from MoveWindow
   (global $movewindow_pending_size (mut i32) (i32.const 0)) ;; packed client cx|cy<<16 for that hwnd
   ;; Posted message queue: up to 64 messages, each = (hwnd, msg, wParam, lParam) = 16 bytes
@@ -2267,6 +2423,11 @@
   (global $findreplace_edit_hwnd (mut i32) (i32.const 0))
   (global $findreplace_replace_hwnd (mut i32) (i32.const 0))
   (global $findreplace_is_replace (mut i32) (i32.const 0))
+  ;; The Flags word of the notification we last sent. It is also written into
+  ;; the caller's FINDREPLACE, but only while that struct is still alive --
+  ;; MFC frees its own before the dialog closes -- so this is the copy that
+  ;; always says what the dialog actually asked for.
+  (global $findreplace_last_flags (mut i32) (i32.const 0))
   ;; Registered FINDMSGSTRING ("commdlg_FindReplace") message. Unlike a
   ;; process-local increment-only stub, repeated registrations of this system
   ;; string must return the same value so modeless Find notifications reach
@@ -2349,13 +2510,33 @@
   ;; ---- Win16 / NE loader state (src/08c-ne-loader.wat) ----
   ;; WIN16_SEG_TABLE has one spare entry past WIN16_SEG_MAX, used as scratch by
   ;; $win16_apply_relocs for the entry-table segment out-parameter.
-  (global $WIN16_SEG_TABLE i32 (i32.const 0x07E08400))  ;; 128 entries x 16 bytes + 1 scratch
-  (global $WIN16_SEG_MAX   i32 (i32.const 127))
-  (global $WIN16_THUNK_TABLE i32 (i32.const 0x07E08C00)) ;; 256 entries x 4 bytes
-  (global $WIN16_THUNK_MAX i32 (i32.const 256))
+  ;; 511 entries x 16 bytes + 1 scratch, which is exactly the 8KB between here
+  ;; and WIN16_THUNK_TABLE. It was 128 entries at 0x07E08400, which is 0x800
+  ;; from WIN16_THUNK_TABLE and could not grow in place; the obvious-looking
+  ;; space at 0x07E03000 turned out to be inside API_HASH_TABLE, whose size
+  ;; global says 32KB rather than the 12KB its comment claims. This address was
+  ;; checked with tools/wat-memory-map.js.
+  ;;
+  ;; Every GlobalAlloc costs a whole selector, because a selector is what a
+  ;; Win16 global handle *is* — so the ceiling here is an out-of-memory limit,
+  ;; not a bookkeeping one. Rattler Race makes 140 global allocations loading
+  ;; its form and ran out at 255, and VB reports that as its error 7 with an
+  ;; empty message box. Slot MAX is the handle table, at guest 0x01FF0000, and
+  ;; the arena ends at 32MB — well clear of the guest heap at 0x03C12000.
+  (global $WIN16_SEG_TABLE i32 (i32.const 0x079C5000))
+  (global $WIN16_SEG_MAX   i32 (i32.const 510))
+  ;; One entry per distinct (module, ordinal) the task and its DLLs import.
+  ;; 256 was not enough once a DLL as large as VBRUN100 was in the picture, and
+  ;; the table is now beside the segment table with room for 2048 — still only
+  ;; 8KB of thunk segment used out of the 64KB that selector owns.
+  (global $WIN16_THUNK_TABLE i32 (i32.const 0x079C7000))
+  (global $WIN16_THUNK_MAX i32 (i32.const 2048))
   ;; Each selector index owns one 64KB slot. The arena sits above the PE guest
   ;; image start: an NE task sets image_base to 0, so nothing else is mapped
-  ;; low, and 128 slots need 8MB.
+  ;; low. 256 slots need 16MB, which reaches guest 0x01000000 — still far below
+  ;; the guest stack. 128 was not enough for a Visual Basic 1 game: VBRUN100
+  ;; alone is 107 segments, and Rattler Race, Rodent's Revenge, JigSawed,
+  ;; GoFigure and TicTacDrop all stopped while the loader was still placing it.
   (global $WIN16_ARENA     i32 (i32.const 0x00100000))
   (global $WIN16_THUNK_SEL (mut i32) (i32.const 0))
   (global $win16_thunk_index (mut i32) (i32.const 0))
@@ -2391,6 +2572,27 @@
   ;; Next free selector index for $win16_alloc_segment, and the task's PSP.
   (global $win16_next_seg (mut i32) (i32.const 0))
   (global $win16_psp_sel (mut i32) (i32.const 0))
+  ;; Selector index holding the task's DOS environment block, filled in the
+  ;; first time GetDOSEnvironment is called and zero until then. It has to be a
+  ;; real arena slot rather than a WAT-private buffer: the caller gets a far
+  ;; pointer and walks it with 16-bit code.
+  (global $win16_env_seg (mut i32) (i32.const 0))
+  ;; The DOS disk transfer area as a far pointer, zero until first asked for.
+  (global $win16_dta (mut i32) (i32.const 0))
+  ;; ESP as the dispatcher found it, so --trace-win16 can report how much each
+  ;; API actually popped.
+  (global $win16_entry_esp (mut i32) (i32.const 0))
+  ;; Which module the resource call in flight is about, from its hInstance:
+  ;; 1 = the task's own image, 0x10000|id = one of its DLLs, 0 = follow CS.
+  ;; Set by the Win16 resource APIs around a lookup and cleared afterwards,
+  ;; because everything else that walks resources — the icon extractor, the
+  ;; dialog loader — is already about the image its code is running from.
+  (global $win16_res_module_id (mut i32) (i32.const 0))
+  ;; Where the last resource found sits in its module's file.
+  (global $win16_res_file_off (mut i32) (i32.const 0))
+  ;; Scratch for the widened wvsprintf argument list — 32 dwords, allocated on
+  ;; first use because most tasks never format anything.
+  (global $win16_va_scratch (mut i32) (i32.const 0))
   ;; Highest 16-bit handle handed out so far (see $win16_h16 in
   ;; src/09e-win16-api.wat). Indices are 1-based so that 0 stays NULL in both
   ;; handle spaces. The table itself is the one arena slot no selector can
@@ -2402,6 +2604,12 @@
   (global $WIN16_HANDLE_BASE i32 (i32.const 0x100))
   ;; --trace-win16: log every dispatch, not only the one that stops the task.
   (global $win16_trace (mut i32) (i32.const 0))
+  ;; --trace-fpu: log every x87 exception flag as it is raised or cleared. The
+  ;; flags are sticky -- nothing clears them but FCLEX/FINIT -- so a program
+  ;; that reads the status word sees whatever the last few thousand
+  ;; instructions left there, and "Division by zero" can be reported an
+  ;; arbitrary distance from the divide that set ZE.
+  (global $fpu_trace (mut i32) (i32.const 0))
   ;; The task's real ESP while a Win16 handler is borrowing the 32-bit stack to
   ;; call a $handle_* — see $win16_call32_begin in src/09e-win16-api.wat.
   (global $win16_esp_save (mut i32) (i32.const 0))
@@ -2419,6 +2627,12 @@
   ;; KB, and there are at most nine module ids.
   (global $WIN16_DLL_STAGING i32 (i32.const 0x07592000))
   (global $WIN16_DLL_STAGING_STRIDE i32 (i32.const 0x00040000))
+  ;; Where the modules an application ships with itself are staged, one
+  ;; megabyte each, above the 32-bit DLL tables and below the virtual-alloc
+  ;; backing store. They get their own area because their size is the app's
+  ;; business rather than the system's: VBRUN100.DLL alone is 265KB.
+  (global $WIN16_APP_DLL_STAGING i32 (i32.const 0x07A00000))
+  (global $WIN16_APP_DLL_STRIDE  i32 (i32.const 0x00100000))
   (global $WIN16_CONT_OFFSET i32 (i32.const 0xFF00))
   ;; The second continuation slot: CreateWindow calls the WH_CALLWNDPROC hook
   ;; before the window's own procedure, so the two returns have to be told
@@ -2487,6 +2701,12 @@
   (global $win16_in_call32 (mut i32) (i32.const 0))
   (global $win16_msg_scratch (mut i32) (i32.const 0))
   (global $win16_msg_slot (mut i32) (i32.const 0))
+  ;; A LOGFONT and a TEXTMETRIC for EnumFonts to show its callback, in DGROUP
+  ;; beside the message scratch and for the same reason: the callback is given
+  ;; a far pointer to them and reads them with 16-bit code, so they cannot live
+  ;; in this emulator's private memory. 50 + 31 bytes, rounded up.
+  (global $WIN16_FONT_SCRATCH_SIZE i32 (i32.const 96))
+  (global $win16_font_scratch (mut i32) (i32.const 0))
   (global $win16_lheap_base (mut i32) (i32.const 0))
   (global $win16_lheap_ptr (mut i32) (i32.const 0))
   (global $win16_lheap_end (mut i32) (i32.const 0))
@@ -2512,6 +2732,8 @@
   (global $WIN16_NAME_SHELLABOUT i32 (i32.const 0x11EB2))
   (global $WIN16_NAME_NDDEAPI   i32 (i32.const 0x11EBD))
   (global $WIN16_NAME_NDDEGETWINDOW i32 (i32.const 0x11EC5))
+  ;; The 80x87 emulator. Answered here rather than loaded — see $win16_win87em.
+  (global $WIN16_NAME_WIN87EM i32 (i32.const 0x11ED3))
   (global $WIN16_DDE_SHARES i32 (i32.const 0x11EE0))
 
   ;; Console screen buffer state (for Telnet etc.)

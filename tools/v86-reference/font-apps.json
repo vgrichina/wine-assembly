@@ -69,6 +69,14 @@
       "launch": "D:\\\\FONTMET.EXE",
       "waitMs": 30000,
       "files": []
+    },
+    "font-render-matrix": {
+      "title": "Windows 98 GDI font rendering matrix",
+      "probeSource": "tools/v86-reference/probes/font-render-matrix.c",
+      "probeName": "FONTRND.EXE",
+      "launch": "D:\\FONTRND.EXE",
+      "waitMs": 5000,
+      "files": []
     }
   }
 }

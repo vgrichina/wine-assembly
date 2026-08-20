@@ -128,6 +128,44 @@ async function main() {
     check('truncation NUL-terminates inside the buffer', getStr(dst), 'My Co');
   }
 
+  // The shared core both spellings call. FormatMessageW used to be
+  // crash_unimplemented while FormatMessageA had the whole implementation;
+  // now the only thing W adds is a narrow on the way in and a widen on the
+  // way out, so everything worth asserting about either is asserted here.
+  const FROM_STRING = 0x400, FROM_HMODULE = 0x800;
+  const ansi = (flags, template, args, source = 0, msgId = 0) => {
+    const src = template === null ? 0 : putStr(template);
+    const argv = args === null ? 0 : putArgs(args);
+    const need = wat.test_format_message_ansi(flags, src, source, msgId, argv, 0, 0);
+    const dst = wat.guest_alloc(need + 1) >>> 0;
+    const wrote = wat.test_format_message_ansi(flags, src, source, msgId, argv, dst, need + 1);
+    assert.strictEqual(wrote, need, 'core: measure and write disagree');
+    return { text: getStr(dst), len: need };
+  };
+
+  check('the core expands a FROM_STRING template',
+    ansi(FROM_STRING, 'opening %1', [name]).text, 'opening My Computer');
+
+  check('a source we cannot resolve falls back to "Error"',
+    ansi(FROM_HMODULE, null, null, 0, 0x1234).text, 'Error');
+
+  check('the fallback measures the same length it writes',
+    ansi(FROM_HMODULE, null, null, 0, 0x1234).len, 5);
+
+  check('no source flag at all is the same fallback',
+    ansi(0, null, null).text, 'Error');
+
+  // A caller with a short buffer gets a NUL-terminated prefix and the length
+  // it would have needed — the fallback path has to obey that too, because
+  // ALLOCATE_BUFFER sizes the buffer from a measuring pass.
+  {
+    const dst = wat.guest_alloc(64) >>> 0;
+    for (let i = 0; i < 64; i++) wat.guest_write8(dst + i, 0x7F);
+    const need = wat.test_format_message_ansi(0, 0, 0, 0, 0, dst, 3);
+    check('the fallback truncates to nSize', getStr(dst), 'Er');
+    check('and still reports its full length', need, 5);
+  }
+
   let failed = 0;
   for (const c of cases) {
     if (c.pass) {

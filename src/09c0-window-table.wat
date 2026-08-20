@@ -45,6 +45,8 @@
   (func $wnd_slot_reset (param $slot i32)
     (call $wnd_bg_brush_reset_slot (local.get $slot))
     (call $wnd_class_cursor_reset_slot (local.get $slot))
+    (call $wnd_class_icon_reset_slot (local.get $slot))
+    (call $wnd_class_slot_reset_slot (local.get $slot))
     (call $nc_flags_reset_slot (local.get $slot))
     (call $title_table_reset_slot (local.get $slot))
     (call $client_rect_reset_slot (local.get $slot))
@@ -53,6 +55,7 @@
     (call $ctrl_table_reset_slot (local.get $slot))
     (call $richedit_format_reset_slot (local.get $slot))
     (call $wnd_owner_reset_slot (local.get $slot))
+    (call $wnd_own_dc_reset_slot (local.get $slot))
     (call $menu_data_reset_slot (local.get $slot))
     (call $dialog_state_reset_slot (local.get $slot))
     (call $wnd_unicode_reset_slot (local.get $slot))
@@ -60,7 +63,7 @@
     ;; Added with this registry — see the note above.
     (call $scroll_reset_slot (local.get $slot))
     (i32.store8 (i32.add (global.get $FLASH_TABLE) (local.get $slot)) (i32.const 0))
-    (i32.store8 (i32.add (global.get $MAX_TABLE) (local.get $slot)) (i32.const 0))
+    (i32.store8 (i32.add (global.get $SHOW_STATE_TABLE) (local.get $slot)) (i32.const 0))
     (call $zero_memory (call $update_rect_addr_for_slot (local.get $slot)) (i32.const 16))
     (i32.store8 (call $update_flag_addr_for_slot (local.get $slot)) (i32.const 0)))
 
@@ -201,6 +204,19 @@
       (i32.const 0x0082)  ;; WM_NCDESTROY
       (i32.const 0) (i32.const 0)))
     (call $timer_kill_hwnd (local.get $hwnd))
+    ;; A destroyed window cannot keep the focus or the capture. USER drops both
+    ;; as the HWND dies; we used to clear focus only in $handle_DestroyWindow,
+    ;; and only when the *named* window held it — so a dialog's focused child
+    ;; left $focus_hwnd pointing at a dead HWND. The next SetFocus then posted
+    ;; WM_KILLFOCUS to it, GetMessage handed that message to the app, and MFC's
+    ;; CWnd::WalkPreTranslateTree looked the dead HWND up in its permanent
+    ;; handle map and called a virtual on a CWnd whose stack frame was gone
+    ;; (WordPad File>New + Cancel, mfc42 6.00).
+    (if (i32.eq (global.get $focus_hwnd) (local.get $hwnd))
+      (then (global.set $focus_hwnd (i32.const 0))))
+    (if (i32.eq (global.get $capture_hwnd) (local.get $hwnd))
+      (then (global.set $capture_hwnd (i32.const 0))))
+    (call $post_queue_purge_hwnd (local.get $hwnd))
     ;; Notify host to remove from its table (for each child too)
     (call $host_destroy_window (local.get $hwnd))
     ;; Finally, remove the window itself from guest table
@@ -455,6 +471,81 @@
       (then (return (i32.const 0))))
     (i32.load (i32.add (global.get $WND_CLASS_CURSOR_TABLE) (i32.mul (local.get $idx) (i32.const 4)))))
 
+  ;; ---- Class icon, per window ----
+  (func $wnd_class_icon_reset_slot (param $slot i32)
+    (i32.store
+      (i32.add (global.get $WND_CLASS_ICON_TABLE) (i32.mul (local.get $slot) (i32.const 4)))
+      (i32.const 0)))
+
+  (func $wnd_set_class_icon (param $hwnd i32) (param $icon i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.ne (local.get $idx) (i32.const -1))
+      (then
+        (i32.store
+          (i32.add (global.get $WND_CLASS_ICON_TABLE) (i32.mul (local.get $idx) (i32.const 4)))
+          (local.get $icon)))))
+
+  (func $wnd_get_class_icon (param $hwnd i32) (result i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1))
+      (then (return (i32.const 0))))
+    (i32.load (i32.add (global.get $WND_CLASS_ICON_TABLE) (i32.mul (local.get $idx) (i32.const 4)))))
+
+  ;; ---- Which class a window belongs to ----
+  ;;
+  ;; Resolved once at creation, like the brush and the cursor above, and for
+  ;; the same reason. It is what lets GetClassWord/SetClassWord reach the
+  ;; class's own extra bytes from an hwnd; -1 means the class was gone by the
+  ;; time the window was made, which is not an error for a builtin control.
+  (func $wnd_class_slot_reset_slot (param $slot i32)
+    (i32.store8 (i32.add (global.get $WND_CLASS_SLOT_TABLE) (local.get $slot))
+      (i32.const 0xFF)))
+
+  (func $wnd_get_class_slot (param $hwnd i32) (result i32)
+    (local $idx i32) (local $slot i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const -1))))
+    (local.set $slot
+      (i32.load8_u (i32.add (global.get $WND_CLASS_SLOT_TABLE) (local.get $idx))))
+    (select (i32.const -1) (local.get $slot) (i32.eq (local.get $slot) (i32.const 0xFF))))
+
+  (func $wnd_set_class_slot_from_name (param $hwnd i32) (param $class_name_guest i32)
+    (local $idx i32) (local $slot i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1)) (then (return)))
+    (local.set $slot (call $class_find_slot (call $class_name_key (local.get $class_name_guest))))
+    (if (i32.or (i32.lt_s (local.get $slot) (i32.const 0))
+                (i32.ge_u (local.get $slot) (global.get $MAX_CLASSES)))
+      (then (local.set $slot (i32.const 0xFF))))
+    (i32.store8 (i32.add (global.get $WND_CLASS_SLOT_TABLE) (local.get $idx))
+      (local.get $slot)))
+
+  ;; One word of a class's extra bytes. `off` is the byte offset the app asked
+  ;; for; a class that never declared that many gets nothing rather than the
+  ;; next class's storage.
+  (func $class_extra_addr (param $slot i32) (param $off i32) (result i32)
+    (if (i32.lt_s (local.get $slot) (i32.const 0)) (then (return (i32.const 0))))
+    (if (i32.ge_u (local.get $slot) (global.get $MAX_CLASSES)) (then (return (i32.const 0))))
+    (if (i32.gt_u (i32.add (local.get $off) (i32.const 2)) (global.get $CLASS_EXTRA_STRIDE))
+      (then (return (i32.const 0))))
+    (i32.add (i32.add (global.get $CLASS_EXTRA_TABLE)
+                      (i32.mul (local.get $slot) (global.get $CLASS_EXTRA_STRIDE)))
+             (local.get $off)))
+
+  (func $class_extra_get_word (param $slot i32) (param $off i32) (result i32)
+    (local $a i32)
+    (local.set $a (call $class_extra_addr (local.get $slot) (local.get $off)))
+    (if (i32.eqz (local.get $a)) (then (return (i32.const 0))))
+    (i32.load16_u (local.get $a)))
+
+  (func $class_extra_set_word (param $slot i32) (param $off i32) (param $v i32)
+    (local $a i32)
+    (local.set $a (call $class_extra_addr (local.get $slot) (local.get $off)))
+    (if (local.get $a)
+      (then (i32.store16 (local.get $a) (i32.and (local.get $v) (i32.const 0xFFFF))))))
+
   (func $wnd_set_class_cursor_from_name (param $hwnd i32) (param $class_name_guest i32)
     (local $slot i32)
     (local.set $slot (call $class_find_slot (call $class_name_key (local.get $class_name_guest))))
@@ -464,6 +555,64 @@
         (call $wnd_set_class_cursor
           (local.get $hwnd)
           (i32.load offset=32 (call $class_record_addr (local.get $slot)))))))
+
+  ;; ---- CS_OWNDC private device contexts ----
+  ;;
+  ;; Resolved per window at creation like the class brush and cursor above,
+  ;; and for the same reason. The slot holds -1 from creation until the first
+  ;; GetDC/BeginPaint, then the DC handle itself; $host_alloc_window_dc hands
+  ;; that same handle back on every later request so the objects the app
+  ;; selected into it stay selected.
+  (func $wnd_own_dc_addr_for_slot (param $slot i32) (result i32)
+    (i32.add (global.get $WND_OWN_DC_TABLE) (i32.mul (local.get $slot) (i32.const 4))))
+
+  (func $wnd_own_dc_reset_slot (param $slot i32)
+    (local $addr i32) (local $hdc i32)
+    (local.set $addr (call $wnd_own_dc_addr_for_slot (local.get $slot)))
+    (local.set $hdc (i32.load (local.get $addr)))
+    ;; Clear the slot before releasing, so the release does not see the handle
+    ;; as still privately owned and decline to free it.
+    (i32.store (local.get $addr) (i32.const 0))
+    (if (i32.gt_s (local.get $hdc) (i32.const 0))
+      (then (drop (call $host_release_dc (local.get $hdc))))))
+
+  (func $wnd_set_own_dc (param $hwnd i32) (param $hdc i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.ne (local.get $idx) (i32.const -1))
+      (then (i32.store (call $wnd_own_dc_addr_for_slot (local.get $idx)) (local.get $hdc)))))
+
+  (func $wnd_get_own_dc (param $hwnd i32) (result i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1))
+      (then (return (i32.const 0))))
+    (i32.load (call $wnd_own_dc_addr_for_slot (local.get $idx))))
+
+  ;; Is this DC some window's private one? ReleaseDC/EndPaint asks, because a
+  ;; private DC outlives both.
+  (func $wnd_own_dc_is_private (param $hdc i32) (result i32)
+    (local $i i32)
+    (if (i32.le_s (local.get $hdc) (i32.const 0))
+      (then (return (i32.const 0))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (if (i32.eq (i32.load (call $wnd_own_dc_addr_for_slot (local.get $i)))
+                  (local.get $hdc))
+        (then (return (i32.const 1))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  (func $wnd_set_own_dc_from_name (param $hwnd i32) (param $class_name_guest i32)
+    (local $slot i32)
+    (local.set $slot (call $class_find_slot (call $class_name_key (local.get $class_name_guest))))
+    (if (i32.ge_s (local.get $slot) (i32.const 0))
+      (then
+        ;; WNDCLASSA.style is at +0 inside WNDCLASSA, i.e. class record +8.
+        (if (i32.and (i32.load offset=8 (call $class_record_addr (local.get $slot)))
+                     (i32.const 0x0020))  ;; CS_OWNDC
+          (then (call $wnd_set_own_dc (local.get $hwnd) (i32.const -1)))))))
 
   ;; Owner hwnd for owned popup/top-level windows. This is deliberately
   ;; separate from parent: only WS_CHILD windows inherit geometry from parent.
@@ -493,44 +642,6 @@
     (if (i32.and (local.get $style) (i32.const 0x40000000))
       (then (return (call $wnd_get_parent (local.get $hwnd)))))
     (call $wnd_get_owner (local.get $hwnd)))
-
-  ;; USER32 built-in controls must keep their native WAT wndprocs. This guard
-  ;; prevents registered-class fallback from stealing common classes like Edit.
-  (func $is_builtin_control_class (param $class_name i32) (result i32)
-    (local $name_w i32)
-    (if (i32.and (i32.ge_u (local.get $class_name) (i32.const 0x0080))
-                 (i32.le_u (local.get $class_name) (i32.const 0x0085)))
-      (then (return (i32.const 1))))
-    (if (i32.lt_u (local.get $class_name) (i32.const 0x10000))
-      (then (return (i32.const 0))))
-    (local.set $name_w (call $g2w (local.get $class_name)))
-    (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x74696465))
-      (then (return (i32.const 1)))) ;; edit
-    (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x68636972))
-      (then (return (i32.const 1)))) ;; rich*
-    (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x74747562))
-      (then (return (i32.const 1)))) ;; butt*
-    (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x74617473))
-      (then (return (i32.const 1)))) ;; stat*
-    (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x7473696c))
-      (then (return (i32.const 1)))) ;; list*
-    (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x626d6f63))
-      (then (return (i32.const 1)))) ;; comb*
-    (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x6f726373))
-      (then (return (i32.const 1)))) ;; scro*
-    (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x74737973))
-      (then (return (i32.const 1)))) ;; syst*
-    (if (i32.and
-          (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x6c737973))
-          (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x76747369)))
-      (then (return (i32.const 1)))) ;; syslistview*
-    (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x6c6f6f74))
-      (then (return (i32.const 1)))) ;; tool*
-    (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x7463736d))
-      (then (return (i32.const 1)))) ;; msct*
-    (if (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020)) (i32.const 0x64696c73))
-      (then (return (i32.const 1)))) ;; slid*
-    (i32.const 0))
 
   ;; Identify the two pre-msftedit RichEdit class contracts used by Win9x
   ;; applications. RICHEDIT is the Riched32/RichEdit 1.0 class; RichEdit20A
@@ -982,6 +1093,28 @@
         (then (return (local.get $i))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
+    ;; A small key that named no class by hash is the atom RegisterClass gave
+    ;; back, which is a class name everywhere the API takes one. Windows
+    ;; returns one and half the world stores it rather than the string: Pipe
+    ;; Dream registers "Winpipe", keeps the atom, and creates its window with
+    ;; that — and with no atom column consulted the class was not found, so
+    ;; the window got the built-in procedure and every message it was sent
+    ;; came back to the queue instead of reaching the game.
+    ;;
+    ;; After the hash scan rather than before it, because a built-in class
+    ;; keys on its USER atom in the hash column and must keep answering there.
+    (if (i32.lt_u (local.get $name_wa) (i32.const 0x10000))
+      (then
+        (local.set $i (i32.const 0))
+        (block $adone (loop $ascan
+          (br_if $adone (i32.ge_u (local.get $i) (global.get $MAX_CLASSES)))
+          (local.set $ptr (call $class_record_addr (local.get $i)))
+          (if (i32.and (i32.ne (i32.load (local.get $ptr)) (i32.const 0))
+                       (i32.eq (i32.load offset=4 (local.get $ptr))
+                               (local.get $name_wa)))
+            (then (return (local.get $i))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $ascan)))))
     (i32.const -1))
 
   ;; Look up wndproc by class name (WASM addr); returns 0 if not found.
@@ -1050,6 +1183,41 @@
       (then (drop (call $wnd_send_message (local.get $old) (i32.const 0x0008) (local.get $new_hwnd) (i32.const 0)))))
     (if (local.get $new_hwnd)
       (then (drop (call $wnd_send_message (local.get $new_hwnd) (i32.const 0x0007) (local.get $old) (i32.const 0)))))
+  )
+
+  ;; $focus_restore_after_modal(owner) — hand focus back when a modal dialog
+  ;; is torn down. USER returns activation to the dialog's owner, and the owner
+  ;; hears WM_SETFOCUS; an app that paused itself on the WM_KILLFOCUS the
+  ;; dialog caused depends on that message to start again. EmPipe kills its
+  ;; game timer on WM_KILLFOCUS and only re-arms it from WM_SETFOCUS (and only
+  ;; when GetFocus() already names its own window), so without this every
+  ;; "Stage cleared!" box left the game frozen on the stage it had just
+  ;; cleared — the app looked like it could not get past level one.
+  ;;
+  ;; The focus hwnd is set before the message goes out because that is the
+  ;; order the app observes: its WM_SETFOCUS handler calls GetFocus() and
+  ;; compares. WM_SETFOCUS is posted rather than sent, matching
+  ;; $handle_SetFocus, so a teardown running inside a control's wndproc does
+  ;; not nest a guest call underneath itself.
+  (func $focus_restore_after_modal (param $owner i32)
+    (if (i32.eqz (local.get $owner))
+      (then (local.set $owner (global.get $main_hwnd))))
+    (if (i32.eqz (local.get $owner)) (then (return)))
+    ;; Owner must still be a live window.
+    (if (i32.eqz (call $wnd_table_get (local.get $owner))) (then (return)))
+    ;; Something live already holds the focus — a dialog that deliberately
+    ;; handed focus elsewhere before closing keeps it.
+    (if (i32.and (i32.ne (global.get $focus_hwnd) (i32.const 0))
+                 (i32.ne (call $wnd_table_get (global.get $focus_hwnd)) (i32.const 0)))
+      (then (return)))
+    (global.set $focus_hwnd (local.get $owner))
+    (if (i32.ge_u (call $wnd_table_get (local.get $owner)) (i32.const 0xFFFF0000))
+      (then
+        (drop (call $wnd_send_message
+                (local.get $owner) (i32.const 0x0007) (i32.const 0) (i32.const 0))))
+      (else
+        (drop (call $post_queue_push
+                (local.get $owner) (i32.const 0x0007) (i32.const 0) (i32.const 0)))))
   )
 
   ;; ---- SCROLL_TABLE / SCROLL_AUX_TABLE accessors ----

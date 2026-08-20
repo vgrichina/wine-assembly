@@ -222,7 +222,14 @@
         (i32.load offset=56 (local.get $record))))
       (else (i32.const 0))))
 
-  (func $gdi_bitmap_font_enum_unique (param $candidate i32) (result i32)
+  ;; $family_only is 1 for a family enumeration (no lpszFamily / an empty one),
+  ;; where GDI reports each family once, and 0 when the caller named a family,
+  ;; where GDI reports every font in it. That distinction is what gives a
+  ;; bitmap face its real, short size list: Courier ships 10/12/15px strikes
+  ;; and a font picker asking for "Courier" must be offered all three, while
+  ;; the family list must still name Courier once.
+  (func $gdi_bitmap_font_enum_unique (param $candidate i32)
+        (param $family_only i32) (result i32)
     (local $face i32) (local $i i32) (local $prior i32) (local $prior_face i32)
     (local $limit i32)
     (if (i32.eq (local.get $candidate) (i32.const 1))
@@ -235,14 +242,21 @@
     ;; ones before it: drawing text in a substituted face installs a strike
     ;; under that same name, so after any Arial has been drawn the family would
     ;; otherwise be reported twice.
+    ;; Only state 1 counts as a duplicate. State 2 is the on-demand
+    ;; rasterization cache, which $gdi_bitmap_font_enum_face never reports, so
+    ;; treating it as a prior sighting does not prevent a double-report — it
+    ;; deletes the family outright. That is what emptied WordPad's size list:
+    ;; the app draws in Times New Roman, which caches a strike, and the very
+    ;; next EnumFontFamiliesA("Times New Roman") then matched nothing.
     (local.set $limit
       (if (result i32) (i32.gt_u (local.get $candidate) (i32.const 17))
         (then (i32.const 16))
-        (else (i32.sub (local.get $candidate) (i32.const 2)))))
+        (else (select (i32.sub (local.get $candidate) (i32.const 2)) (i32.const 0)
+          (local.get $family_only)))))
     (block $unique (loop $scan
       (br_if $unique (i32.ge_u (local.get $i) (local.get $limit)))
       (local.set $prior (call $gdi_bitmap_font_record (local.get $i)))
-      (if (i32.load (local.get $prior))
+      (if (i32.eq (i32.load (local.get $prior)) (i32.const 1))
         (then
           (local.set $prior_face (i32.add (i32.load offset=8 (local.get $prior))
             (i32.load offset=56 (local.get $prior))))
@@ -259,7 +273,13 @@
   (func $gdi_bitmap_font_enum_next (param $after i32) (param $filter i32)
         (param $wide i32) (result i32)
     (local $candidate i32) (local $face i32) (local $matches i32)
+    (local $family_only i32)
     (drop (call $gdi_bitmap_font_ensure_stock))
+    ;; No family, or an empty one, is the family enumeration.
+    (local.set $family_only (i32.or (i32.eqz (local.get $filter))
+      (if (result i32) (local.get $wide)
+        (then (i32.eqz (i32.load16_u (local.get $filter))))
+        (else (i32.eqz (i32.load8_u (local.get $filter)))))))
     (local.set $candidate (i32.add (local.get $after) (i32.const 1)))
     (block $done (loop $scan
       ;; The scalable list ends where it runs out of names rather than at a
@@ -269,12 +289,10 @@
           (i32.sub (local.get $candidate) (i32.const 18)))))))
       (local.set $face (call $gdi_bitmap_font_enum_face (local.get $candidate)))
       (if (i32.and (i32.ne (local.get $face) (i32.const 0))
-            (call $gdi_bitmap_font_enum_unique (local.get $candidate)))
+            (call $gdi_bitmap_font_enum_unique
+              (local.get $candidate) (local.get $family_only)))
         (then
-          (local.set $matches (i32.or (i32.eqz (local.get $filter))
-            (if (result i32) (local.get $wide)
-              (then (i32.eqz (i32.load16_u (local.get $filter))))
-              (else (i32.eqz (i32.load8_u (local.get $filter)))))))
+          (local.set $matches (local.get $family_only))
           (if (i32.eqz (local.get $matches))
             (then
               (local.set $matches
@@ -310,7 +328,7 @@
         (i32.shl (local.get $i) (i32.const 1))) (i32.const 0)))
       (else (i32.store8 (i32.add (local.get $dst) (local.get $i)) (i32.const 0)))))
 
-  ;; TRUETYPE_FONTTYPE (4) for the scalable fallback and every substituted or
+  ;; TRUETYPE_FONTTYPE (4) for every scalable substituted or
   ;; registered face; RASTER_FONTTYPE (1) for an installed strike.
   (func $gdi_bitmap_font_enum_type (param $candidate i32) (result i32)
     (if (result i32) (i32.or (i32.eq (local.get $candidate) (i32.const 1))
@@ -328,7 +346,7 @@
       (i32.sub (local.get $candidate) (i32.const 2)))))
 
   ;; Fill ENUMLOGFONTEXA/W and NEWTEXTMETRICEXA/W from the selected provider.
-  ;; The scalable fallback keeps deterministic compatibility metrics; installed
+  ;; The scalable provider keeps deterministic compatibility metrics; installed
   ;; FNT faces expose their parsed native strike metrics without Canvas.
   (func $gdi_bitmap_font_enum_fill (param $candidate i32) (param $lf i32)
         (param $tm i32) (param $wide i32) (result i32)
@@ -782,8 +800,8 @@
     (local.set $state (i32.load (local.get $state_ptr)))
     (if (i32.eq (local.get $state) (i32.const 2))
       (then (return (i32.const 1))))
-    ;; Another shared-memory worker is already loading it. That first call may
-    ;; use Canvas, but all later calls observe state 2 and use the FON.
+    ;; Another shared-memory worker is already loading it. The caller may retry
+    ;; after the first worker publishes state 2 and the installed FON.
     (if (i32.eq (local.get $state) (i32.const 1))
       (then (return (i32.const 0))))
     (if (i32.eq (local.get $state) (i32.const 3))
@@ -1098,9 +1116,9 @@
         (i32.sub (i32.const 7) (i32.and (local.get $sx) (i32.const 7)))))
       (i32.const 0)))
 
-  ;; Return -2 when no bitmap strike is selected so the public handler can
-  ;; retain Canvas only as the scalable-font fallback. Selected FNT strikes
-  ;; implement GGO_METRICS and DWORD-aligned monochrome GGO_BITMAP in WAT.
+  ;; Return -2 when no bitmap strike is selected. The public scalable backend
+  ;; runs before this function; selected FNT strikes implement GGO_METRICS and
+  ;; DWORD-aligned monochrome GGO_BITMAP here.
   (func $gdi_bitmap_glyph_outline_a (param $hdc i32) (param $character i32)
         (param $format i32) (param $metrics_out i32) (param $buffer_size i32)
         (param $buffer i32) (param $mat2 i32) (result i32)
@@ -1252,8 +1270,8 @@
       (i32.const 1) (local.get $wide)))
 
   ;; GetCharWidth/GetCharWidth32 share the same selected-font semantics. FNT
-  ;; advances never cross the host boundary; scalable faces use Canvas only as
-  ;; their font provider, while range validation and output storage stay in WAT.
+  ;; and synthesized scalable-strike advances never cross the host boundary;
+  ;; range validation and output storage stay in WAT.
   (func $gdi_font_char_widths (param $hdc i32) (param $first i32)
         (param $last i32) (param $output i32) (param $wide i32) (result i32)
     (local $count i32) (local $i i32)
@@ -1274,13 +1292,14 @@
     (i32.const 1))
 
   ;; Deterministic Latin/SBCS placement. WAT owns the GCP_RESULTSW contract and
-  ;; all arrays. The selected font provider supplies only integer advances:
-  ;; bitmap FNT in WAT, or Canvas measurement for a scalable fallback face.
+  ;; all arrays. Installed FNT and synthesized scalable strikes both supply
+  ;; integer advances in WAT.
   (func $gdi_character_placement_w (param $hdc i32) (param $text i32)
         (param $count i32) (param $max_extent i32) (param $results i32)
         (param $flags i32) (result i32)
     (local $capacity i32) (local $limit i32) (local $i i32) (local $included i32)
-    (local $character i32) (local $width i32) (local $extent i32) (local $height i32)
+    (local $character i32) (local $next i32) (local $width i32)
+    (local $extent i32) (local $height i32)
     (local $out_string i32) (local $order i32) (local $dx i32)
     (local $caret i32) (local $class i32) (local $glyphs i32)
     (local $strike i32) (local $packed i32) (local $justification i32)
@@ -1314,6 +1333,18 @@
         (i32.load16_u (i32.add (local.get $text) (i32.shl (local.get $i) (i32.const 1)))))
       (local.set $width (call $gdi_font_character_width
         (local.get $hdc) (local.get $character) (i32.const 1)))
+      ;; Native Win98 applies a legacy kern pair to the left glyph's advance,
+      ;; and only when GCP_USEKERNING is requested. The pinned Arial probe
+      ;; reports AV as dx=15,15 normally and dx=13,15 with this flag.
+      (if (i32.and (i32.ne (i32.and (local.get $flags) (i32.const 8))
+                (i32.const 0))
+            (i32.lt_u (i32.add (local.get $i) (i32.const 1)) (local.get $limit)))
+        (then
+          (local.set $next (i32.load16_u (i32.add (local.get $text)
+            (i32.shl (i32.add (local.get $i) (i32.const 1)) (i32.const 1)))))
+          (local.set $width (i32.add (local.get $width)
+            (call $tt_gdi_kern_pair_w (local.get $hdc)
+              (local.get $character) (local.get $next))))))
       ;; GCP_MAXEXTENT stops before the first character that would exceed the
       ;; caller's logical extent. Other flags do not truncate the input.
       (if (i32.and (i32.ne (i32.and (local.get $flags) (i32.const 0x00100000))
@@ -1868,9 +1899,9 @@
     (i64.or (i64.extend_i32_u (local.get $end))
       (i64.shl (i64.extend_i32_u (local.get $next)) (i64.const 32))))
 
-  ;; Emit one already-laid-out scalable DrawText line into an open WAT path.
-  ;; Canvas supplies only masks for non-tab runs. WAT owns alignment, tabs,
-  ;; mnemonic underlines, UTF-16 preservation, and retained geometry.
+  ;; Legacy compatibility path for emitting one already-laid-out scalable
+  ;; DrawText line into an open WAT path. Normal scalable faces resolve to a
+  ;; synthesized strike before reaching it.
   (func $gdi_scalable_draw_text_line (param $hdc i32) (param $x i32)
         (param $y i32) (param $text i32) (param $count i32)
         (param $wide i32) (param $tab_width i32) (param $line_width i32)
@@ -2438,8 +2469,8 @@
     (local.set $format (call $gdi_bitmap_text_consume_tabstop (local.get $format)))
     (local.set $prepared (call $gdi_bitmap_text_prepare_layout
       (local.get $text) (local.get $count) (local.get $wide) (local.get $format)))
-    ;; Very large prefix-aware strings retain the complete Canvas DrawText
-    ;; fallback instead of being truncated to the private WCHAR buffer.
+    ;; Refuse very large prefix-aware strings instead of truncating the private
+    ;; WCHAR buffer; callers can preserve the original input on failure.
     (if (i32.lt_s (local.get $prepared) (i32.const 0))
       (then (return (i32.const -1))))
     (local.set $text (global.get $GDI_BITMAP_TEXT_LAYOUT))

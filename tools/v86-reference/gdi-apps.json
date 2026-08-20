@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "apps": {
+    "gdi-rop2-polyline": {
+      "title": "Windows 98 wide cosmetic ROP2 Polyline reference",
+      "probeSource": "tools/v86-reference/probes/gdi-rop2-polyline.c",
+      "probeName": "GDIROP2.EXE",
+      "launch": "D:\\GDIROP2.EXE",
+      "waitMs": 30000,
+      "files": []
+    },
+    "gdi-wide-line-grid": {
+      "title": "Windows 98 wide cosmetic LineTo coverage grid",
+      "probeSource": "tools/v86-reference/probes/gdi-wide-line-grid.c",
+      "probeName": "GDILGRID.EXE",
+      "launch": "D:\\GDILGRID.EXE",
+      "waitMs": 60000,
+      "files": []
+    },
+    "gdi-font-outline": {
+      "title": "Windows 98 scalable glyph outline and kerning reference",
+      "probeSource": "tools/v86-reference/probes/gdi-font-outline.c",
+      "probeName": "GDIFONT.EXE",
+      "launch": "D:\\GDIFONT.EXE",
+      "waitMs": 30000,
+      "files": []
+    }
+  }
+}

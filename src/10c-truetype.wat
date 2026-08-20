@@ -1290,13 +1290,15 @@
   (func $tt_rasterize_glyph (param $data i32) (param $size i32) (param $gid i32)
         (param $ppem i32) (param $bitmap i32) (param $width i32) (param $height i32)
         (param $left i32) (param $top i32) (param $scratch i32)
-        (param $scratch_size i32) (result i32)
+        (param $scratch_size i32) (param $mat i32) (param $gray i32)
+        (param $gray_stride i32) (param $gray_max i32) (result i32)
     (local $points i32) (local $edges i32) (local $crossings i32)
     (local $coverage i32) (local $edge_count i32) (local $row i32)
     (local $sub i32) (local $index i32) (local $count i32) (local $sample i32)
     (local $x0 i32) (local $y0 i32) (local $x1 i32) (local $y1 i32)
     (local $lo i32) (local $hi i32) (local $winding i32) (local $span_start i32)
     (local $slot i32) (local $value i32) (local $column i32)
+    (local $tx i32) (local $ty i32)
     (if (i32.or (i32.le_s (local.get $width) (i32.const 0))
           (i32.le_s (local.get $height) (i32.const 0)))
       (then (return (i32.const 0))))
@@ -1315,11 +1317,47 @@
       (local.get $gid) (local.get $ppem) (local.get $points)
       (global.get $TT_RASTER_POINTS) (local.get $edges)
       (global.get $TT_RASTER_EDGES)))
+    ;; MAT2 affects the glyph geometry, not just its reported box. Transform
+    ;; the already-flattened 26.6 edge list so bitmap and gray output agree
+    ;; with GGO_NATIVE and GLYPHMETRICS for affine Win98 requests.
+    (if (i32.eqz (call $tt_ggo_matrix_identity (local.get $mat)))
+      (then
+        (local.set $index (i32.const 0))
+        (block $transform_done (loop $transform
+          (br_if $transform_done
+            (i32.ge_u (local.get $index) (local.get $edge_count)))
+          (local.set $slot (i32.add (local.get $edges)
+            (i32.mul (local.get $index) (i32.const 16))))
+          (local.set $x0 (i32.load (local.get $slot)))
+          (local.set $y0 (i32.load offset=4 (local.get $slot)))
+          (local.set $x1 (i32.load offset=8 (local.get $slot)))
+          (local.set $y1 (i32.load offset=12 (local.get $slot)))
+          (local.set $tx (call $tt_ggo_transform_26_6_axis
+            (local.get $x0) (local.get $y0) (local.get $mat) (i32.const 0)))
+          (local.set $ty (call $tt_ggo_transform_26_6_axis
+            (local.get $x0) (local.get $y0) (local.get $mat) (i32.const 1)))
+          (i32.store (local.get $slot) (local.get $tx))
+          (i32.store offset=4 (local.get $slot) (local.get $ty))
+          (local.set $tx (call $tt_ggo_transform_26_6_axis
+            (local.get $x1) (local.get $y1) (local.get $mat) (i32.const 0)))
+          (local.set $ty (call $tt_ggo_transform_26_6_axis
+            (local.get $x1) (local.get $y1) (local.get $mat) (i32.const 1)))
+          (i32.store offset=8 (local.get $slot) (local.get $tx))
+          (i32.store offset=12 (local.get $slot) (local.get $ty))
+          (local.set $index (i32.add (local.get $index) (i32.const 1)))
+          (br $transform)))))
     ;; An empty glyph is a legal, blank bitmap, not a failure: the caller
     ;; still needs the cell cleared before it composites.
-    (memory.fill (local.get $bitmap) (i32.const 0)
-      (i32.mul (i32.shr_u (i32.add (local.get $width) (i32.const 7)) (i32.const 3))
-        (local.get $height)))
+    (if (local.get $bitmap)
+      (then
+        (memory.fill (local.get $bitmap) (i32.const 0)
+          (i32.mul
+            (i32.shr_u (i32.add (local.get $width) (i32.const 7)) (i32.const 3))
+            (local.get $height)))))
+    (if (local.get $gray)
+      (then
+        (memory.fill (local.get $gray) (i32.const 0)
+          (i32.mul (local.get $gray_stride) (local.get $height)))))
     (if (i32.eqz (local.get $edge_count)) (then (return (i32.const 1))))
 
     (block $rows_done (loop $rows
@@ -1412,8 +1450,9 @@
         (br_if $emit_done (i32.ge_s (local.get $column) (local.get $width)))
         (local.set $value (i32.load (i32.add (local.get $coverage)
           (i32.mul (local.get $column) (i32.const 4)))))
-        (if (i32.ge_s (i32.mul (local.get $value) (i32.const 2))
-              (i32.mul (i32.const 64) (global.get $TT_SUBROWS)))
+        (if (i32.and (i32.ne (local.get $bitmap) (i32.const 0))
+              (i32.ge_s (i32.mul (local.get $value) (i32.const 2))
+                (i32.mul (i32.const 64) (global.get $TT_SUBROWS))))
           (then
             (local.set $slot (i32.add (local.get $bitmap)
               (i32.add
@@ -1423,6 +1462,21 @@
             (i32.store8 (local.get $slot) (i32.or (i32.load8_u (local.get $slot))
               (i32.shr_u (i32.const 0x80)
                 (i32.and (local.get $column) (i32.const 7)))))))
+        (if (local.get $gray)
+          (then
+            ;; Win98's GGO_GRAY2/4/8 bytes use inclusive maxima 4/16/64.
+            ;; Round the canonical 0..256 coverage to that caller-selected
+            ;; range and leave the DWORD row padding zero-filled.
+            (local.set $slot (call $gdi_round_ratio
+              (i64.mul (i64.extend_i32_u (local.get $value))
+                (i64.extend_i32_u (local.get $gray_max)))
+              (i64.extend_i32_u
+                (i32.mul (i32.const 64) (global.get $TT_SUBROWS)))))
+            (if (i32.gt_u (local.get $slot) (local.get $gray_max))
+              (then (local.set $slot (local.get $gray_max))))
+            (i32.store8 (i32.add (local.get $gray)
+              (i32.add (i32.mul (local.get $row) (local.get $gray_stride))
+                (local.get $column))) (local.get $slot))))
         (local.set $column (i32.add (local.get $column) (i32.const 1)))
         (br $emit)))
 
@@ -2343,7 +2397,8 @@
           (i32.mul (call $tt_glyph_box_top (local.get $data) (local.get $size)
             (local.get $gid) (local.get $ppem)) (i32.const 64))
           (local.get $scratch)
-          (call $tt_raster_scratch_bytes (global.get $TT_SCRATCH_WIDTH))))
+          (call $tt_raster_scratch_bytes (global.get $TT_SCRATCH_WIDTH))
+          (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
       (then
         (call $heap_free (local.get $bitmap_guest))
         (return (local.get $entry))))
@@ -2563,6 +2618,29 @@
   (global $TT_SUBST_DEFAULT i32 (i32.const 0x07F0BF00))
   (data (i32.const 0x07F0BF00) "Arial\00")
 
+  ;; ---- fonts that are simply installed -----------------------------------
+  ;;
+  ;; AddFontResourceA is how an application installs a font for itself, but it
+  ;; is not how most applications get theirs. Age of Empires ships six TTFs
+  ;; beside its exe, imports exactly one font entry point (CreateFontIndirectA)
+  ;; and asks for "Copperplate Gothic Light" by name: its installer put the
+  ;; files in the Windows font directory, and after that they were simply
+  ;; there. A face nobody registered used to fall through to the catch-all and
+  ;; come back as Arial, so the game's own lettering was drawn in a grotesque.
+  ;;
+  ;; So the directory is read once, the first time any face is resolved, and
+  ;; every file in it that the substitution tables do not already own is
+  ;; registered by the family name in its own name table - the same path
+  ;; AddFontResourceA takes. Files the tables own are skipped without being
+  ;; opened: those are the vendored look-alikes mounted under Win98 filenames,
+  ;; and registering one would put "Liberation Sans" in front of a guest that
+  ;; asked what fonts exist, which is a face Windows 98 never had.
+  (global $TT_FONT_DIR_PATTERN i32 (i32.const 0x07F0BF20))
+  (data (i32.const 0x07F0BF20) "C:\\WINDOWS\\FONTS\\*.TTF\00")
+  (global $TT_FONT_DIR_PREFIX i32 (i32.const 0x07F0BF40))
+  (data (i32.const 0x07F0BF40) "C:\\WINDOWS\\FONTS\\\00")
+  (global $tt_font_dir_scanned (mut i32) (i32.const 0))
+
   (func $tt_subst_fold (param $byte i32) (result i32)
     (if (i32.and (i32.ge_u (local.get $byte) (i32.const 65))
           (i32.le_u (local.get $byte) (i32.const 90)))
@@ -2646,6 +2724,85 @@
       (br $scan)))
     (i32.const 0))
 
+  ;; 1 when either substitution table names this file. Compared with the same
+  ;; case folding face names use: the tables spell the directory in upper case
+  ;; and the VFS hands back whatever the host mounted.
+  (func $tt_subst_owns_path (param $table i32) (param $size i32)
+        (param $path i32) (result i32)
+    (local $p i32) (local $end i32) (local $field i32) (local $i i32)
+    (local.set $p (local.get $table))
+    (local.set $end (i32.add (local.get $table) (local.get $size)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $p) (local.get $end)))
+      (br_if $done (i32.eqz (i32.load8_u (local.get $p))))
+      ;; The four file fields that follow the face name.
+      (local.set $field (local.get $p))
+      (local.set $i (i32.const 0))
+      (block $fields (loop $next_field
+        (br_if $fields (i32.ge_u (local.get $i) (i32.const 4)))
+        (local.set $field (call $tt_subst_skip (local.get $field) (local.get $end)))
+        (if (i32.load8_u (local.get $field))
+          (then (if (call $tt_subst_name_equal (local.get $path) (local.get $field))
+            (then (return (i32.const 1))))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $next_field)))
+      (local.set $p (call $tt_subst_skip (local.get $field) (local.get $end)))
+      (br $scan)))
+    (i32.const 0))
+
+  ;; Read C:\WINDOWS\FONTS once and register what is installed there. See the
+  ;; note on $TT_FONT_DIR_PATTERN for why an application that never calls
+  ;; AddFontResourceA still expects its own faces to answer.
+  (func $tt_scan_font_dir
+    (local $fd_g i32) (local $fd_w i32) (local $path_g i32) (local $path_w i32)
+    (local $handle i32) (local $name_w i32)
+    (local $prefix_len i32) (local $name_len i32)
+    (if (global.get $tt_font_dir_scanned) (then (return)))
+    ;; Marked before the work, not after: a directory that is empty, absent or
+    ;; too big to allocate scratch for must not be re-read on every face
+    ;; lookup for the rest of the run.
+    (global.set $tt_font_dir_scanned (i32.const 1))
+    (local.set $fd_g (call $heap_alloc (i32.const 320)))
+    (if (i32.eqz (local.get $fd_g)) (then (return)))
+    (local.set $path_g (call $heap_alloc (i32.const 160)))
+    (if (i32.eqz (local.get $path_g))
+      (then (call $heap_free (local.get $fd_g)) (return)))
+    (local.set $fd_w (call $g2w (local.get $fd_g)))
+    (local.set $path_w (call $g2w (local.get $path_g)))
+    (local.set $prefix_len (call $strlen (global.get $TT_FONT_DIR_PREFIX)))
+    (call $memcpy (local.get $path_w) (global.get $TT_FONT_DIR_PREFIX)
+      (local.get $prefix_len))
+    (local.set $handle (call $host_fs_find_first_file
+      (global.get $TT_FONT_DIR_PATTERN) (local.get $fd_g) (i32.const 0)))
+    (if (i32.eq (local.get $handle) (i32.const -1))
+      (then
+        (call $heap_free (local.get $path_g))
+        (call $heap_free (local.get $fd_g))
+        (return)))
+    (block $done (loop $next
+      ;; cFileName, the basename only - WIN32_FIND_DATA offset 44.
+      (local.set $name_w (i32.add (local.get $fd_w) (i32.const 44)))
+      (local.set $name_len (call $strlen (local.get $name_w)))
+      (if (i32.and
+            (i32.ne (local.get $name_len) (i32.const 0))
+            (i32.lt_u (i32.add (local.get $name_len) (local.get $prefix_len))
+                      (i32.const 159)))
+        (then
+          (call $memcpy (i32.add (local.get $path_w) (local.get $prefix_len))
+            (local.get $name_w) (i32.add (local.get $name_len) (i32.const 1)))
+          (if (i32.eqz (i32.or
+                (call $tt_subst_owns_path (global.get $TT_SUBST_TABLE)
+                  (global.get $TT_SUBST_TABLE_SIZE) (local.get $path_w))
+                (call $tt_subst_owns_path (global.get $TT_SUBST_ALIAS_TABLE)
+                  (global.get $TT_SUBST_ALIAS_TABLE_SIZE) (local.get $path_w))))
+            (then (drop (call $tt_reg_add (local.get $path_g)))))))
+      (br_if $done (i32.eqz (call $host_fs_find_next_file
+        (local.get $handle) (local.get $fd_g) (i32.const 0))))
+      (br $next)))
+    (drop (call $host_fs_find_close (local.get $handle)))
+    (call $heap_free (local.get $path_g))
+    (call $heap_free (local.get $fd_g)))
+
   (func $tt_subst_path (param $name i32) (param $weight i32) (param $italic i32)
         (result i32)
     (local $found i32)
@@ -2657,6 +2814,10 @@
     ;; default below.
     (if (i32.eqz (local.get $name)) (then (return (i32.const 0))))
     (if (i32.eqz (i32.load8_u (local.get $name))) (then (return (i32.const 0))))
+    ;; Whatever is sitting in the font directory counts as installed, and the
+    ;; first face anybody asks for is the earliest point at which the VFS is
+    ;; certainly mounted.
+    (call $tt_scan_font_dir)
     ;; A font the guest installed itself outranks the substitute for it.
     (local.set $found (call $tt_reg_path (local.get $name)
       (local.get $weight) (local.get $italic)))
@@ -3324,6 +3485,510 @@
       (then (i32.store (local.get $found) (i32.const 2))))
     (local.get $found))
 
+  ;; ---- GetGlyphOutline for scalable Win98 TrueType faces ---------------
+  ;;
+  ;; Win98 exposes TrueType's quadratic contours through GGO_NATIVE. Its
+  ;; GGO_BEZIER constant exists in the headers but native Win98 returns
+  ;; GDI_ERROR for it, including for Arial; the pinned v86 probe protects that
+  ;; distinction. Coordinates below are signed 16.16 device pixels, exactly
+  ;; the POINTFX/FIXED byte representation the public structure uses.
+
+  (func $tt_ggo_matrix_value (param $mat i32) (param $field i32) (result i32)
+    (if (i32.eqz (local.get $mat))
+      (then (return (select (i32.const 0x00010000) (i32.const 0)
+        (i32.or (i32.eqz (local.get $field))
+          (i32.eq (local.get $field) (i32.const 3)))))))
+    (i32.load (i32.add (local.get $mat)
+      (i32.shl (local.get $field) (i32.const 2)))))
+
+  (func $tt_ggo_matrix_identity (param $mat i32) (result i32)
+    (if (i32.eqz (local.get $mat)) (then (return (i32.const 1))))
+    (i32.and
+      (i32.and
+        (i32.eq (i32.load (local.get $mat)) (i32.const 0x00010000))
+        (i32.eqz (i32.load offset=4 (local.get $mat))))
+      (i32.and
+        (i32.eqz (i32.load offset=8 (local.get $mat)))
+        (i32.eq (i32.load offset=12 (local.get $mat))
+          (i32.const 0x00010000)))))
+
+  (func $tt_ggo_transform_axis (param $x i32) (param $y i32) (param $mat i32)
+        (param $axis i32) (result i32)
+    (local $a i32) (local $b i32)
+    (local.set $a (call $tt_ggo_matrix_value (local.get $mat)
+      (local.get $axis)))
+    (local.set $b (call $tt_ggo_matrix_value (local.get $mat)
+      (i32.add (local.get $axis) (i32.const 2))))
+    (call $gdi_round_ratio
+      (i64.add
+        (i64.mul (i64.extend_i32_s (local.get $x))
+          (i64.extend_i32_s (local.get $a)))
+        (i64.mul (i64.extend_i32_s (local.get $y))
+          (i64.extend_i32_s (local.get $b))))
+      (i64.const 65536)))
+
+  (func $tt_ggo_transform_26_6_axis (param $x i32) (param $y i32)
+        (param $mat i32) (param $axis i32) (result i32)
+    (call $gdi_round_ratio
+      (i64.extend_i32_s (call $tt_ggo_transform_axis
+        (i32.shl (local.get $x) (i32.const 10))
+        (i32.shl (local.get $y) (i32.const 10))
+        (local.get $mat) (local.get $axis)))
+      (i64.const 1024)))
+
+  (func $tt_ggo_fu_fixed (param $value i32) (param $ppem i32)
+        (param $upem i32) (result i32)
+    (call $gdi_round_ratio
+      (i64.mul
+        (i64.mul (i64.extend_i32_s (local.get $value))
+          (i64.extend_i32_s (local.get $ppem)))
+        (i64.const 65536))
+      (i64.extend_i32_s (local.get $upem))))
+
+  (func $tt_ggo_point_axis (param $points i32) (param $index i32)
+        (param $ppem i32) (param $upem i32) (param $mat i32)
+        (param $axis i32) (result i32)
+    (local $x i32) (local $y i32)
+    (local.set $x (call $tt_ggo_fu_fixed
+      (call $tt_point_x (local.get $points) (local.get $index))
+      (local.get $ppem) (local.get $upem)))
+    (local.set $y (call $tt_ggo_fu_fixed
+      (call $tt_point_y (local.get $points) (local.get $index))
+      (local.get $ppem) (local.get $upem)))
+    (call $tt_ggo_transform_axis (local.get $x) (local.get $y)
+      (local.get $mat) (local.get $axis)))
+
+  (func $tt_ggo_emit_curve (param $out i32) (param $offset i32)
+        (param $type i32) (param $count i32) (param $x1 i32) (param $y1 i32)
+        (param $x2 i32) (param $y2 i32) (result i32)
+    (if (local.get $out)
+      (then
+        (i32.store16 (i32.add (local.get $out) (local.get $offset))
+          (local.get $type))
+        (i32.store16 (i32.add (local.get $out)
+            (i32.add (local.get $offset) (i32.const 2)))
+          (local.get $count))
+        (i32.store (i32.add (local.get $out)
+            (i32.add (local.get $offset) (i32.const 4))) (local.get $x1))
+        (i32.store (i32.add (local.get $out)
+            (i32.add (local.get $offset) (i32.const 8))) (local.get $y1))
+        (if (i32.eq (local.get $count) (i32.const 2))
+          (then
+            (i32.store (i32.add (local.get $out)
+                (i32.add (local.get $offset) (i32.const 12))) (local.get $x2))
+            (i32.store (i32.add (local.get $out)
+                (i32.add (local.get $offset) (i32.const 16))) (local.get $y2))))))
+    (i32.add (local.get $offset)
+      (i32.add (i32.const 4) (i32.shl (local.get $count) (i32.const 3)))))
+
+  ;; Serialize one or more contours as TTPOLYGONHEADER/TTPOLYCURVE records.
+  ;; One curve record per segment is intentionally simple and fully legal;
+  ;; callers must consume the structures, not rely on GDI coalescing adjacent
+  ;; line segments into one record.
+  (func $tt_ggo_native_bytes (param $points i32) (param $count i32)
+        (param $ppem i32) (param $upem i32) (param $mat i32) (param $out i32)
+        (result i32)
+    (local $start i32) (local $end i32) (local $length i32)
+    (local $first i32) (local $step i32) (local $index i32)
+    (local $offset i32) (local $header i32)
+    (local $sx i32) (local $sy i32) (local $cx i32) (local $cy i32)
+    (local $px i32) (local $py i32) (local $qx i32) (local $qy i32)
+    (local $control_x i32) (local $control_y i32) (local $pending i32)
+    (block $contours_done (loop $contours
+      (br_if $contours_done (i32.ge_u (local.get $start) (local.get $count)))
+      (local.set $end (local.get $start))
+      (block $end_found (loop $seek
+        (br_if $end_found (i32.ge_u (local.get $end)
+          (i32.sub (local.get $count) (i32.const 1))))
+        (br_if $end_found
+          (call $tt_point_ends_contour (local.get $points) (local.get $end)))
+        (local.set $end (i32.add (local.get $end) (i32.const 1)))
+        (br $seek)))
+      (local.set $length
+        (i32.add (i32.sub (local.get $end) (local.get $start)) (i32.const 1)))
+
+      (if (call $tt_point_on_curve (local.get $points) (local.get $start))
+        (then
+          (local.set $sx (call $tt_ggo_point_axis (local.get $points)
+            (local.get $start) (local.get $ppem) (local.get $upem)
+            (local.get $mat) (i32.const 0)))
+          (local.set $sy (call $tt_ggo_point_axis (local.get $points)
+            (local.get $start) (local.get $ppem) (local.get $upem)
+            (local.get $mat) (i32.const 1)))
+          (local.set $first (i32.add (local.get $start) (i32.const 1))))
+        (else (if (call $tt_point_on_curve (local.get $points) (local.get $end))
+          (then
+            (local.set $sx (call $tt_ggo_point_axis (local.get $points)
+              (local.get $end) (local.get $ppem) (local.get $upem)
+              (local.get $mat) (i32.const 0)))
+            (local.set $sy (call $tt_ggo_point_axis (local.get $points)
+              (local.get $end) (local.get $ppem) (local.get $upem)
+              (local.get $mat) (i32.const 1)))
+            (local.set $first (local.get $start)))
+          (else
+            (local.set $sx (i32.shr_s (i32.add
+              (call $tt_ggo_point_axis (local.get $points) (local.get $start)
+                (local.get $ppem) (local.get $upem) (local.get $mat) (i32.const 0))
+              (call $tt_ggo_point_axis (local.get $points) (local.get $end)
+                (local.get $ppem) (local.get $upem) (local.get $mat) (i32.const 0)))
+              (i32.const 1)))
+            (local.set $sy (i32.shr_s (i32.add
+              (call $tt_ggo_point_axis (local.get $points) (local.get $start)
+                (local.get $ppem) (local.get $upem) (local.get $mat) (i32.const 1))
+              (call $tt_ggo_point_axis (local.get $points) (local.get $end)
+                (local.get $ppem) (local.get $upem) (local.get $mat) (i32.const 1)))
+              (i32.const 1)))
+            (local.set $first (local.get $start))))))
+
+      (local.set $header (local.get $offset))
+      (local.set $offset (i32.add (local.get $offset) (i32.const 16)))
+      (if (local.get $out)
+        (then
+          (i32.store (i32.add (local.get $out)
+            (i32.add (local.get $header) (i32.const 4))) (i32.const 24))
+          (i32.store (i32.add (local.get $out)
+            (i32.add (local.get $header) (i32.const 8))) (local.get $sx))
+          (i32.store (i32.add (local.get $out)
+            (i32.add (local.get $header) (i32.const 12))) (local.get $sy))))
+      (local.set $cx (local.get $sx))
+      (local.set $cy (local.get $sy))
+      (local.set $pending (i32.const 0))
+      (local.set $step (i32.const 0))
+      (block $walk_done (loop $walk
+        (br_if $walk_done (i32.ge_u (local.get $step) (local.get $length)))
+        (local.set $index (i32.add (local.get $start)
+          (i32.rem_u (i32.add (i32.sub (local.get $first) (local.get $start))
+              (local.get $step)) (local.get $length))))
+        (local.set $px (call $tt_ggo_point_axis (local.get $points)
+          (local.get $index) (local.get $ppem) (local.get $upem)
+          (local.get $mat) (i32.const 0)))
+        (local.set $py (call $tt_ggo_point_axis (local.get $points)
+          (local.get $index) (local.get $ppem) (local.get $upem)
+          (local.get $mat) (i32.const 1)))
+        (if (call $tt_point_on_curve (local.get $points) (local.get $index))
+          (then
+            (if (local.get $pending)
+              (then
+                (local.set $offset (call $tt_ggo_emit_curve (local.get $out)
+                  (local.get $offset) (i32.const 2) (i32.const 2)
+                  (local.get $control_x) (local.get $control_y)
+                  (local.get $px) (local.get $py)))
+                (local.set $pending (i32.const 0)))
+              (else
+                (if (i32.or (i32.ne (local.get $px) (local.get $cx))
+                      (i32.ne (local.get $py) (local.get $cy)))
+                  (then (local.set $offset (call $tt_ggo_emit_curve
+                    (local.get $out) (local.get $offset) (i32.const 1)
+                    (i32.const 1) (local.get $px) (local.get $py)
+                    (i32.const 0) (i32.const 0)))))))
+            (local.set $cx (local.get $px))
+            (local.set $cy (local.get $py)))
+          (else
+            (if (local.get $pending)
+              (then
+                (local.set $qx (i32.shr_s
+                  (i32.add (local.get $control_x) (local.get $px)) (i32.const 1)))
+                (local.set $qy (i32.shr_s
+                  (i32.add (local.get $control_y) (local.get $py)) (i32.const 1)))
+                (local.set $offset (call $tt_ggo_emit_curve (local.get $out)
+                  (local.get $offset) (i32.const 2) (i32.const 2)
+                  (local.get $control_x) (local.get $control_y)
+                  (local.get $qx) (local.get $qy)))
+                (local.set $cx (local.get $qx))
+                (local.set $cy (local.get $qy))))
+            (local.set $control_x (local.get $px))
+            (local.set $control_y (local.get $py))
+            (local.set $pending (i32.const 1))))
+        (local.set $step (i32.add (local.get $step) (i32.const 1)))
+        (br $walk)))
+      (if (local.get $pending)
+        (then (local.set $offset (call $tt_ggo_emit_curve (local.get $out)
+          (local.get $offset) (i32.const 2) (i32.const 2)
+          (local.get $control_x) (local.get $control_y)
+          (local.get $sx) (local.get $sy))))
+        (else
+          (if (i32.or (i32.ne (local.get $cx) (local.get $sx))
+                (i32.ne (local.get $cy) (local.get $sy)))
+            (then (local.set $offset (call $tt_ggo_emit_curve
+              (local.get $out) (local.get $offset) (i32.const 1) (i32.const 1)
+              (local.get $sx) (local.get $sy) (i32.const 0) (i32.const 0)))))))
+      (if (local.get $out)
+        (then (i32.store (i32.add (local.get $out) (local.get $header))
+          (i32.sub (local.get $offset) (local.get $header)))))
+      (local.set $start (i32.add (local.get $end) (i32.const 1)))
+      (br $contours)))
+    (local.get $offset))
+
+  (func $tt_ggo_floor (param $value i32) (result i32)
+    (i32.shr_s (local.get $value) (i32.const 16)))
+
+  (func $tt_ggo_ceil (param $value i32) (result i32)
+    (i32.sub (i32.const 0)
+      (i32.shr_s (i32.sub (i32.const 0) (local.get $value)) (i32.const 16))))
+
+  ;; Legacy Win98 kerning for the scalable face selected into a DC. Bitmap
+  ;; strikes and faces without a classic `kern` format-0 table adjust by zero.
+  ;; OpenType GPOS is intentionally not consulted: Win98 GDI did not shape it.
+  (func $tt_gdi_kern_pair_w (param $hdc i32) (param $left i32)
+        (param $right i32) (result i32)
+    (local $strike i32) (local $dc i32) (local $handle i32)
+    (local $face i32) (local $data i32) (local $size i32) (local $ppem i32)
+    (local.set $strike (call $gdi_bitmap_font_selected (local.get $hdc)))
+    (if (i32.or (i32.eqz (local.get $strike))
+          (i32.ne (i32.load (local.get $strike)) (i32.const 2)))
+      (then (return (i32.const 0))))
+    (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
+    (if (i32.eqz (local.get $dc)) (then (return (i32.const 0))))
+    (local.set $handle (i32.load offset=88 (local.get $dc)))
+    (local.set $face (call $tt_face_for_logfont
+      (call $gdi_font_face (local.get $handle))
+      (call $gdi_font_weight (local.get $handle))
+      (call $gdi_font_italic (local.get $handle))))
+    (if (i32.lt_s (local.get $face) (i32.const 0))
+      (then (return (i32.const 0))))
+    (local.set $data (call $tt_face_data (local.get $face)))
+    (local.set $size (call $tt_face_size (local.get $face)))
+    (local.set $ppem (call $tt_face_ppem (local.get $face)
+      (call $gdi_font_height (local.get $handle))))
+    (call $tt_kern_pair_px (local.get $data) (local.get $size)
+      (call $tt_glyph_index (local.get $data) (local.get $size)
+        (i32.and (local.get $left) (i32.const 0xFFFF)))
+      (call $tt_glyph_index (local.get $data) (local.get $size)
+        (i32.and (local.get $right) (i32.const 0xFFFF)))
+      (local.get $ppem)))
+
+  ;; Returns -2 when the selected face is not a synthesized TrueType strike,
+  ;; so the ordinary FNT implementation can answer it instead.
+  (func $tt_gdi_glyph_outline_a (param $hdc i32) (param $character i32)
+        (param $format i32) (param $metrics i32) (param $buffer_size i32)
+        (param $buffer i32) (param $mat i32) (result i32)
+    (local $strike i32) (local $dc i32) (local $handle i32) (local $object i32)
+    (local $face i32) (local $data i32) (local $size i32) (local $ppem i32)
+    (local $gid i32) (local $base i32)
+    (local $scratch i32) (local $points i32) (local $count i32)
+    (local $upem i32) (local $needed i32) (local $index i32)
+    (local $x i32) (local $y i32) (local $min_x i32) (local $min_y i32)
+    (local $max_x i32) (local $max_y i32) (local $advance i32)
+    (local $advance_x i32) (local $advance_y i32)
+    (local $width i32) (local $height i32) (local $stride i32)
+    (local $gray_max i32) (local $bitmap_guest i32) (local $bitmap i32)
+    (local $bitmap_bytes i32) (local $pixel i32)
+    (local.set $strike (call $gdi_bitmap_font_selected (local.get $hdc)))
+    (if (i32.or (i32.eqz (local.get $strike))
+          (i32.ne (i32.load (local.get $strike)) (i32.const 2)))
+      (then (return (i32.const -2))))
+    (if (i32.eqz (local.get $metrics)) (then (return (i32.const -1))))
+    (local.set $base (i32.and (local.get $format) (i32.const 0x7F)))
+    (if (i32.ne (i32.and (local.get $format) (i32.const -512))
+          (i32.const 0))
+      (then (return (i32.const -1))))
+    ;; GGO_BEZIER is an NT-family extension. Win98 returns GDI_ERROR.
+    (if (i32.eq (local.get $base) (i32.const 3))
+      (then (return (i32.const -1))))
+    ;; Identity monochrome output keeps using the synthesized strike's exact
+    ;; cached pixels. A transformed bitmap must use the affine edge path here.
+    (if (i32.and (i32.eq (local.get $base) (i32.const 1))
+          (call $tt_ggo_matrix_identity (local.get $mat)))
+      (then (return (i32.const -2))))
+    (if (i32.and
+          (i32.and (i32.ne (local.get $base) (i32.const 0))
+            (i32.and (i32.ne (local.get $base) (i32.const 1))
+              (i32.ne (local.get $base) (i32.const 2))))
+          (i32.and (i32.ne (local.get $base) (i32.const 4))
+            (i32.and (i32.ne (local.get $base) (i32.const 5))
+              (i32.ne (local.get $base) (i32.const 6)))))
+      (then (return (i32.const -1))))
+
+    (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
+    (if (i32.eqz (local.get $dc)) (then (return (i32.const -1))))
+    (local.set $handle (i32.load offset=88 (local.get $dc)))
+    (local.set $object (call $gdi_object_record (local.get $handle)))
+    (if (i32.eqz (local.get $object)) (then (return (i32.const -1))))
+    (local.set $face (call $tt_face_for_logfont
+      (call $gdi_font_face (local.get $handle))
+      (call $gdi_font_weight (local.get $handle))
+      (call $gdi_font_italic (local.get $handle))))
+    (if (i32.lt_s (local.get $face) (i32.const 0))
+      (then (return (i32.const -1))))
+    (local.set $data (call $tt_face_data (local.get $face)))
+    (local.set $size (call $tt_face_size (local.get $face)))
+    (local.set $ppem (call $tt_face_ppem (local.get $face)
+      (call $gdi_font_height (local.get $handle))))
+    (local.set $gid (select (i32.and (local.get $character) (i32.const 0xFFFF))
+      (call $tt_ansi_glyph_index (local.get $data) (local.get $size)
+        (local.get $character))
+      (i32.ne (i32.and (local.get $format) (i32.const 0x80)) (i32.const 0))))
+    (if (i32.ge_u (local.get $gid)
+          (call $tt_num_glyphs (local.get $data) (local.get $size)))
+      (then (return (i32.const -1))))
+    (local.set $scratch (call $tt_raster_scratch))
+    (if (i32.eqz (local.get $scratch)) (then (return (i32.const -1))))
+    (local.set $points (local.get $scratch))
+    (local.set $count (call $tt_glyph_load_outline (local.get $data)
+      (local.get $size) (local.get $gid) (local.get $points)
+      (global.get $TT_RASTER_POINTS) (i32.const 0)))
+    (local.set $upem (call $tt_units_per_em (local.get $data) (local.get $size)))
+
+    (if (local.get $count)
+      (then
+        (local.set $min_x (i32.const 0x7FFFFFFF))
+        (local.set $min_y (i32.const 0x7FFFFFFF))
+        (local.set $max_x (i32.const 0x80000000))
+        (local.set $max_y (i32.const 0x80000000))
+        (block $bounds_done (loop $bounds
+          (br_if $bounds_done (i32.ge_u (local.get $index) (local.get $count)))
+          (local.set $x (call $tt_ggo_point_axis (local.get $points)
+            (local.get $index) (local.get $ppem) (local.get $upem)
+            (local.get $mat) (i32.const 0)))
+          (local.set $y (call $tt_ggo_point_axis (local.get $points)
+            (local.get $index) (local.get $ppem) (local.get $upem)
+            (local.get $mat) (i32.const 1)))
+          (if (i32.lt_s (local.get $x) (local.get $min_x))
+            (then (local.set $min_x (local.get $x))))
+          (if (i32.lt_s (local.get $y) (local.get $min_y))
+            (then (local.set $min_y (local.get $y))))
+          (if (i32.gt_s (local.get $x) (local.get $max_x))
+            (then (local.set $max_x (local.get $x))))
+          (if (i32.gt_s (local.get $y) (local.get $max_y))
+            (then (local.set $max_y (local.get $y))))
+          (local.set $index (i32.add (local.get $index) (i32.const 1)))
+          (br $bounds)))
+        (i32.store (local.get $metrics) (i32.sub
+          (call $tt_ggo_ceil (local.get $max_x))
+          (call $tt_ggo_floor (local.get $min_x))))
+        (i32.store offset=4 (local.get $metrics) (i32.sub
+          (call $tt_ggo_ceil (local.get $max_y))
+          (call $tt_ggo_floor (local.get $min_y))))
+        (i32.store offset=8 (local.get $metrics)
+          (call $tt_ggo_floor (local.get $min_x)))
+        (i32.store offset=12 (local.get $metrics)
+          (call $tt_ggo_ceil (local.get $max_y))))
+      (else
+        (i32.store (local.get $metrics) (i32.const 0))
+        (i32.store offset=4 (local.get $metrics) (i32.const 0))
+        (i32.store offset=8 (local.get $metrics) (i32.const 0))
+        (i32.store offset=12 (local.get $metrics) (i32.const 0))))
+    (local.set $advance (i32.shl
+      (call $tt_advance_px (local.get $data) (local.get $size)
+        (local.get $gid) (local.get $ppem)) (i32.const 16)))
+    (local.set $advance_x (call $tt_ggo_transform_axis (local.get $advance)
+      (i32.const 0) (local.get $mat) (i32.const 0)))
+    (local.set $advance_y (call $tt_ggo_transform_axis (local.get $advance)
+      (i32.const 0) (local.get $mat) (i32.const 1)))
+    (i32.store16 offset=16 (local.get $metrics) (call $gdi_round_ratio
+      (i64.extend_i32_s (local.get $advance_x)) (i64.const 65536)))
+    (i32.store16 offset=18 (local.get $metrics) (call $gdi_round_ratio
+      (i64.extend_i32_s (local.get $advance_y)) (i64.const 65536)))
+    (if (i32.eqz (local.get $base)) (then (return (i32.const 0))))
+
+    (if (i32.eq (local.get $base) (i32.const 1))
+      (then
+        (local.set $width (i32.load (local.get $metrics)))
+        (local.set $height (i32.load offset=4 (local.get $metrics)))
+        (if (i32.or (i32.gt_u (local.get $width)
+              (global.get $TT_SCRATCH_WIDTH))
+              (i32.gt_u (local.get $height) (i32.const 4096)))
+          (then (return (i32.const -1))))
+        (local.set $stride (i32.shr_u
+          (i32.and (i32.add (local.get $width) (i32.const 31)) (i32.const -32))
+          (i32.const 3)))
+        (local.set $needed (i32.mul (local.get $stride) (local.get $height)))
+        (if (i32.or (i32.eqz (local.get $buffer_size))
+              (i32.eqz (local.get $buffer)))
+          (then (return (local.get $needed))))
+        (if (i32.lt_u (local.get $buffer_size) (local.get $needed))
+          (then (return (i32.const -1))))
+        (local.set $bitmap_bytes (i32.mul
+          (i32.shr_u (i32.add (local.get $width) (i32.const 7)) (i32.const 3))
+          (local.get $height)))
+        (if (local.get $bitmap_bytes)
+          (then
+            (local.set $bitmap_guest (call $heap_alloc (local.get $bitmap_bytes)))
+            (if (i32.eqz (local.get $bitmap_guest))
+              (then (return (i32.const -1))))
+            (local.set $bitmap (call $g2w (local.get $bitmap_guest)))
+            (if (i32.eqz (call $tt_rasterize_glyph
+                  (local.get $data) (local.get $size) (local.get $gid)
+                  (local.get $ppem) (local.get $bitmap)
+                  (local.get $width) (local.get $height)
+                  (i32.mul (i32.load offset=8 (local.get $metrics)) (i32.const 64))
+                  (i32.mul (i32.load offset=12 (local.get $metrics)) (i32.const 64))
+                  (local.get $scratch)
+                  (call $tt_raster_scratch_bytes (global.get $TT_SCRATCH_WIDTH))
+                  (local.get $mat) (i32.const 0) (i32.const 0) (i32.const 0)))
+              (then
+                (call $heap_free (local.get $bitmap_guest))
+                (return (i32.const -1))))))
+        (memory.fill (local.get $buffer) (i32.const 0) (local.get $needed))
+        (local.set $y (i32.const 0))
+        (block $mono_rows_done (loop $mono_rows
+          (br_if $mono_rows_done (i32.ge_u (local.get $y) (local.get $height)))
+          (local.set $x (i32.const 0))
+          (block $mono_row_done (loop $mono_row
+            (br_if $mono_row_done (i32.ge_u (local.get $x) (local.get $width)))
+            (local.set $pixel (call $tt_bitmap_pixel (local.get $bitmap)
+              (local.get $height) (local.get $x) (local.get $y)))
+            (if (local.get $pixel)
+              (then
+                (local.set $index (i32.add (local.get $buffer)
+                  (i32.add (i32.mul (local.get $y) (local.get $stride))
+                    (i32.shr_u (local.get $x) (i32.const 3)))))
+                (i32.store8 (local.get $index)
+                  (i32.or (i32.load8_u (local.get $index))
+                    (i32.shr_u (i32.const 0x80)
+                      (i32.and (local.get $x) (i32.const 7)))))))
+            (local.set $x (i32.add (local.get $x) (i32.const 1)))
+            (br $mono_row)))
+          (local.set $y (i32.add (local.get $y) (i32.const 1)))
+          (br $mono_rows)))
+        (if (local.get $bitmap_guest)
+          (then (call $heap_free (local.get $bitmap_guest))))
+        (return (local.get $needed))))
+
+    (if (i32.ge_u (local.get $base) (i32.const 4))
+      (then
+        (local.set $width (i32.load (local.get $metrics)))
+        (local.set $height (i32.load offset=4 (local.get $metrics)))
+        (if (i32.or (i32.gt_u (local.get $width)
+              (global.get $TT_SCRATCH_WIDTH))
+              (i32.gt_u (local.get $height) (i32.const 4096)))
+          (then (return (i32.const -1))))
+        (local.set $stride
+          (i32.and (i32.add (local.get $width) (i32.const 3)) (i32.const -4)))
+        (local.set $needed (i32.mul (local.get $stride) (local.get $height)))
+        (if (i32.or (i32.eqz (local.get $buffer_size))
+              (i32.eqz (local.get $buffer)))
+          (then (return (local.get $needed))))
+        (if (i32.lt_u (local.get $buffer_size) (local.get $needed))
+          (then (return (i32.const -1))))
+        (local.set $gray_max (select (i32.const 4)
+          (select (i32.const 16) (i32.const 64)
+            (i32.eq (local.get $base) (i32.const 5)))
+          (i32.eq (local.get $base) (i32.const 4))))
+        (if (i32.eqz (call $tt_rasterize_glyph
+              (local.get $data) (local.get $size) (local.get $gid)
+              (local.get $ppem) (i32.const 0)
+              (local.get $width) (local.get $height)
+              (i32.mul (i32.load offset=8 (local.get $metrics)) (i32.const 64))
+              (i32.mul (i32.load offset=12 (local.get $metrics)) (i32.const 64))
+              (local.get $scratch)
+              (call $tt_raster_scratch_bytes (global.get $TT_SCRATCH_WIDTH))
+              (local.get $mat) (local.get $buffer)
+              (local.get $stride) (local.get $gray_max)))
+          (then (return (i32.const -1))))
+        (return (local.get $needed))))
+
+    (local.set $needed (call $tt_ggo_native_bytes (local.get $points)
+      (local.get $count) (local.get $ppem) (local.get $upem)
+      (local.get $mat) (i32.const 0)))
+    (if (i32.or (i32.eqz (local.get $buffer_size)) (i32.eqz (local.get $buffer)))
+      (then (return (local.get $needed))))
+    (if (i32.lt_u (local.get $buffer_size) (local.get $needed))
+      (then (return (i32.const -1))))
+    (drop (call $tt_ggo_native_bytes (local.get $points) (local.get $count)
+      (local.get $ppem) (local.get $upem) (local.get $mat) (local.get $buffer)))
+    (local.get $needed))
+
   ;; ---- test surface -----------------------------------------------------
   ;;
   ;; Exported here rather than in 13-exports.wat so this layer stays a single
@@ -3613,7 +4278,8 @@
         (param i32) (param i32) (result i32)
     (call $tt_rasterize_glyph (local.get 0) (local.get 1) (local.get 2)
       (local.get 3) (local.get 4) (local.get 5) (local.get 6) (local.get 7)
-      (local.get 8) (local.get 9) (local.get 10)))
+      (local.get 8) (local.get 9) (local.get 10)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
 
   (func (export "test_tt_bitmap_pixel") (param i32) (param i32) (param i32)
         (param i32) (result i32)
@@ -3672,8 +4338,3 @@
   (func (export "test_tt_reg_path") (param i32) (param i32) (param i32)
         (result i32)
     (call $tt_reg_path (local.get 0) (local.get 1) (local.get 2)))
-
-
-
-
-

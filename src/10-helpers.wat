@@ -2,6 +2,45 @@
   ;; HELPER FUNCTIONS
   ;; ============================================================
 
+  ;; ---- PAINT_SCRATCH ring ----
+  ;;
+  ;; Every rect-taking primitive in here wants a WASM linear address, so a
+  ;; painter needs somewhere to put four i32s. That used to be one shared RECT,
+  ;; and painting nests: a wndproc that fills the rect, then sends a message
+  ;; that paints something else, got its rect back rewritten. Hand out one of
+  ;; PAINT_SCRATCH_SLOTS rects instead.
+  ;;
+  ;; $paint_scratch_take is a bump allocator that wraps. Wrapping is the whole
+  ;; safety story for the common shape — fill a rect, pass it to one call, never
+  ;; look at it again — since a slot is only reused after 15 more takes. Callers
+  ;; that hold a rect *across* a dispatch into other windows bracket the
+  ;; dispatch with $paint_scratch_mark / $paint_scratch_reset: the inner frame's
+  ;; slots are recycled on the way out, the outer frame's (allocated before the
+  ;; mark) are not.
+  (func $paint_scratch_take (result i32)
+    (local $slot i32)
+    (local.set $slot (global.get $paint_scratch_cursor))
+    (global.set $paint_scratch_cursor
+      (i32.rem_u (i32.add (local.get $slot) (i32.const 1))
+                 (global.get $PAINT_SCRATCH_SLOTS)))
+    (i32.add (global.get $PAINT_SCRATCH) (i32.mul (local.get $slot) (i32.const 16))))
+
+  ;; Fill a fresh scratch rect and return its address, so a call site can build
+  ;; the rect inline in the argument it is passing.
+  (func $paint_rect (param $l i32) (param $t i32) (param $r i32) (param $b i32) (result i32)
+    (local $p i32)
+    (local.set $p (call $paint_scratch_take))
+    (i32.store           (local.get $p) (local.get $l))
+    (i32.store offset=4  (local.get $p) (local.get $t))
+    (i32.store offset=8  (local.get $p) (local.get $r))
+    (i32.store offset=12 (local.get $p) (local.get $b))
+    (local.get $p))
+
+  (func $paint_scratch_mark (result i32) (global.get $paint_scratch_cursor))
+
+  (func $paint_scratch_reset (param $mark i32)
+    (global.set $paint_scratch_cursor (local.get $mark)))
+
   ;; FNV-1a hash over null-terminated string at WASM address
   (func $hash_api_name (param $ptr i32) (result i32)
     (local $h i32) (local $ch i32)
@@ -1210,26 +1249,6 @@
       (br $search)))
     (i32.const 0))
 
-  ;; Find DLL by UTF-16 name (WASM ptr), return guest load_addr or 0.
-  (func $find_dll_by_wname (param $name_wa i32) (result i32)
-    (local $i i32) (local $tbl_ptr i32) (local $la i32) (local $exp_rva i32)
-    (local $exp_name_rva i32) (local $exp_name_wa i32)
-    (local.set $i (i32.const 0))
-    (block $notfound (loop $search
-      (br_if $notfound (i32.ge_u (local.get $i) (global.get $dll_count)))
-      (local.set $tbl_ptr (i32.add (global.get $DLL_TABLE) (i32.mul (local.get $i) (i32.const 32))))
-      (local.set $la (i32.load (local.get $tbl_ptr)))
-      (local.set $exp_rva (i32.load (i32.add (local.get $tbl_ptr) (i32.const 8))))
-      (if (i32.ne (local.get $exp_rva) (i32.const 0))
-        (then
-          (local.set $exp_name_rva (i32.load (i32.add (call $g2w (i32.add (local.get $la) (local.get $exp_rva))) (i32.const 12))))
-          (local.set $exp_name_wa (call $g2w (i32.add (local.get $la) (local.get $exp_name_rva))))
-          (if (call $wide_ascii_eq (local.get $name_wa) (local.get $exp_name_wa))
-            (then (return (local.get $la))))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $search)))
-    (i32.const 0))
-
   ;; ASCII tolower: if A-Z, add 0x20
   (func $tolower (param $c i32) (result i32)
     (if (result i32) (i32.and (i32.ge_u (local.get $c) (i32.const 0x41)) (i32.le_u (local.get $c) (i32.const 0x5A)))
@@ -1587,6 +1606,27 @@
     (call $update_invalidate_full (local.get $hwnd))
     (call $host_invalidate (local.get $hwnd)))
 
+  ;; $wnd_uncover_parent(hwnd): the window is about to stop being visible —
+  ;; hidden or destroyed — so hand the area it occupied back to its parent.
+  ;; On Win98 a child owns a visible region carved out of its parent's, and
+  ;; taking the child away turns that region into invalid area on the parent,
+  ;; which erases and repaints it. We keep one back-canvas per top-level, so
+  ;; a departing child's pixels are simply left on the parent's surface with
+  ;; nothing that would ever overwrite them. Ask the parent for an erase and
+  ;; a paint instead; the erase re-invalidates the surviving subtree.
+  ;; NSIS's wizard swaps pages by destroying the old page dialog, and without
+  ;; this the license text and the options checkboxes stayed on screen
+  ;; underneath the Installing Files page.
+  (func $wnd_uncover_parent (param $hwnd i32)
+    (local $parent i32)
+    (if (i32.eqz (local.get $hwnd)) (then (return)))
+    (if (i32.eqz (call $wnd_is_effectively_visible (local.get $hwnd))) (then (return)))
+    (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+    (if (i32.eqz (local.get $parent)) (then (return)))
+    (if (i32.eq (call $wnd_table_find (local.get $parent)) (i32.const -1)) (then (return)))
+    (call $nc_flags_set (local.get $parent) (i32.const 2))
+    (call $invalidate_hwnd (local.get $parent)))
+
   ;; Paint flags table — 1 byte per WND slot at $PAINT_FLAGS. This mirrors
   ;; how real Win32 tracks paint state: a per-window pending bit, not a
   ;; central queue. No fixed capacity to overflow; CreateDialogParamA can
@@ -1767,7 +1807,7 @@
                   (if (i32.eq (local.get $hwnd) (global.get $main_hwnd))
                     (then (global.set $paint_pending (i32.const 0)))))
                 (else
-                  (if (call $update_get_rect (local.get $hwnd) (global.get $PAINT_SCRATCH))
+                  (if (call $update_get_rect (local.get $hwnd) (call $paint_scratch_take))
                     (then
                       ;; Native status bars paint after their guest-owned
                       ;; siblings so late non-client work cannot cover them.
@@ -1792,12 +1832,14 @@
     (local $pl i32) (local $pt i32) (local $pr i32) (local $pb i32)
     (local $xy i32) (local $wh i32) (local $cx i32) (local $cy i32) (local $cw i32) (local $chh i32)
     (local $il i32) (local $it i32) (local $ir i32) (local $ib i32) (local $n i32)
-    (if (i32.eqz (call $update_get_rect (local.get $parent) (global.get $PAINT_SCRATCH)))
+    (local $rect i32)
+    (local.set $rect (call $paint_scratch_take))
+    (if (i32.eqz (call $update_get_rect (local.get $parent) (local.get $rect)))
       (then (return (i32.const 0))))
-    (local.set $pl (i32.load (global.get $PAINT_SCRATCH)))
-    (local.set $pt (i32.load offset=4 (global.get $PAINT_SCRATCH)))
-    (local.set $pr (i32.load offset=8 (global.get $PAINT_SCRATCH)))
-    (local.set $pb (i32.load offset=12 (global.get $PAINT_SCRATCH)))
+    (local.set $pl (i32.load (local.get $rect)))
+    (local.set $pt (i32.load offset=4 (local.get $rect)))
+    (local.set $pr (i32.load offset=8 (local.get $rect)))
+    (local.set $pb (i32.load offset=12 (local.get $rect)))
     (local.set $slot (i32.const 0))
     (block $done (loop $scan
       (local.set $slot (call $wnd_next_child_slot (local.get $parent) (local.get $slot)))
@@ -1880,7 +1922,7 @@
                     (call $paint_flag_clear_hwnd (local.get $hwnd))
                     (call $update_clear_hwnd (local.get $hwnd))
                     (br $found)))
-                (if (call $update_get_rect (local.get $hwnd) (global.get $PAINT_SCRATCH))
+                (if (call $update_get_rect (local.get $hwnd) (call $paint_scratch_take))
                   (then
                     ;; Descendants inherit this update before it is consumed.
                     ;; Clearing first loses the geometry needed to intersect
@@ -2686,13 +2728,19 @@
         (then
           (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
           (br $scan)))
-      ;; Static/listbox/combobox/scrollbar controls are handled by the dialog
-      ;; router/control wndprocs. They should not steal generic client clicks.
+      ;; A static and the colour grid are click-transparent wherever they sit,
+      ;; so they never take a generic client click. A combobox is different: it
+      ;; is skipped here because the DIALOG router delivers its clicks -- and
+      ;; that router only exists when the parent is a dialog. WordPad's font and
+      ;; size combos live on a toolbar, so skipping them there meant the click
+      ;; landed on the toolbar and the list could never drop down.
       (local.set $cls (call $ctrl_table_get_class (local.get $ch)))
       (if (i32.or
             (i32.or (i32.eq (local.get $cls) (i32.const 3))
-                    (i32.eq (local.get $cls) (i32.const 5)))
-            (i32.eq (local.get $cls) (i32.const 6)))
+                    (i32.eq (local.get $cls) (i32.const 6)))
+            (i32.and (i32.eq (local.get $cls) (i32.const 5))
+              (i32.eq (call $wnd_table_get (local.get $parent))
+                      (global.get $WNDPROC_DIALOG))))
         (then
           (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
           (br $scan)))
@@ -2700,12 +2748,21 @@
       (local.set $y (call $wnd_window_screen_y (local.get $ch)))
       (local.set $w (call $wnd_screen_w (local.get $ch)))
       (local.set $h (call $wnd_screen_h (local.get $ch)))
+      ;; A closed combobox claims its field, not the whole dropped-height
+      ;; window it was created with; see $combobox_hit_h.
+      (if (i32.eq (local.get $cls) (i32.const 5))
+        (then (local.set $h (call $combobox_hit_h (local.get $ch) (local.get $h)))))
       (if (i32.and
             (i32.and (i32.ge_s (local.get $sx) (local.get $x))
                      (i32.lt_s (local.get $sx) (i32.add (local.get $x) (local.get $w))))
             (i32.and (i32.ge_s (local.get $sy) (local.get $y))
                      (i32.lt_s (local.get $sy) (i32.add (local.get $y) (local.get $h)))))
         (then
+          ;; A combobox owns its own edit field, button and list. The click
+          ;; belongs to the combobox itself -- it is what drops the list down --
+          ;; so stop here rather than descending into a part of it.
+          (if (i32.eq (local.get $cls) (i32.const 5))
+            (then (return (local.get $ch))))
           (local.set $deep (call $wnd_child_from_point_deep
             (local.get $ch) (local.get $sx) (local.get $sy)))
           (return (select (local.get $deep) (local.get $ch) (local.get $deep)))))
@@ -4135,6 +4192,34 @@
         (call $host_log_i32 (global.get $post_queue_count))))
     (i32.const 1))
 
+  ;; $post_queue_purge_hwnd(hwnd): drop every queued message aimed at a window
+  ;; that is going away. USER discards a destroyed window's queued messages;
+  ;; delivering one afterwards hands the app an HWND it has already torn its
+  ;; own bookkeeping down for (MFC looks the dead HWND up in its permanent
+  ;; handle map and calls a virtual on a freed CWnd).
+  (func $post_queue_purge_hwnd (param $hwnd i32)
+    (local $i i32) (local $slot i32)
+    (if (i32.eqz (local.get $hwnd)) (then (return)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $post_queue_count)))
+      (local.set $slot (i32.add (i32.const 0x400)
+        (i32.mul (local.get $i) (i32.const 16))))
+      (if (i32.eq (i32.load (local.get $slot)) (local.get $hwnd))
+        (then
+          (global.set $post_queue_count
+            (i32.sub (global.get $post_queue_count) (i32.const 1)))
+          (if (i32.lt_u (local.get $i) (global.get $post_queue_count))
+            (then
+              (call $memcpy
+                (local.get $slot)
+                (i32.add (local.get $slot) (i32.const 16))
+                (i32.mul
+                  (i32.sub (global.get $post_queue_count) (local.get $i))
+                  (i32.const 16))))))
+        (else (local.set $i (i32.add (local.get $i) (i32.const 1)))))
+      (br $scan)))
+  )
+
   ;; Skip a DLGTEMPLATE variable-length field (OrdOrString):
   ;;   0x0000 → null (skip 2 bytes)
   ;;   0xFFFF → ordinal (skip 4 bytes: 0xFFFF + u16 value)
@@ -4489,14 +4574,14 @@
     ;; their template dimensions remain unchanged.
     (call $ctrl_geom_set (local.get $dlg_slot)
       (i32.div_u (i32.mul (local.get $dlg_x) (i32.const 3)) (i32.const 2))
-      (i32.div_u (i32.mul (local.get $dlg_y) (i32.const 7)) (i32.const 4))
+      (i32.div_u (i32.add (i32.mul (local.get $dlg_y) (i32.const 13)) (i32.const 4)) (i32.const 8))
       (i32.add
         (i32.div_u (i32.mul (local.get $dlg_cx) (i32.const 3)) (i32.const 2))
         (select
           (i32.const 8) (i32.const 0)
           (i32.eqz (i32.and (local.get $style) (i32.const 0x40000000)))))
       (i32.add
-        (i32.div_u (i32.mul (local.get $dlg_cy) (i32.const 7)) (i32.const 4))
+        (i32.div_u (i32.add (i32.mul (local.get $dlg_cy) (i32.const 13)) (i32.const 4)) (i32.const 8))
         (select
           (i32.add
             (i32.const 30)
@@ -4570,7 +4655,7 @@
             (then (local.set $class_enum (i32.const 5))))
           (if (call $wide_ascii_prefix_eq (local.get $p) (i32.const 0x312F))
             (then (local.set $class_enum (i32.const 17))))
-          (if (call $wide_ascii_prefix_eq (local.get $p) (i32.const 0x316B))
+          (if (call $wide_ascii_prefix_eq (local.get $p) (i32.const 0x316A)) ;; SysTreeView32
             (then (local.set $class_enum (i32.const 8))))
           (if (call $wide_ascii_prefix_eq (local.get $p) (i32.const 0x3141))
             (then (local.set $class_enum (i32.const 18))))
@@ -4653,7 +4738,13 @@
           ;; live text via existing button_get_text / edit / static
           ;; accessors, so we don't need to stash a parallel copy in
           ;; CONTROL_TABLE.
-          ;; DLU → pixel geometry (x*3/2, y*7/4). For comboboxes (class 5),
+          ;; DLU → pixel geometry (x*3/2, y*13/8). The vertical factor is
+          ;; tmHeight/8 for the dialog font, and a real Win98 probe measures
+          ;; MS Sans Serif 8pt at tmHeight=13 (test/fixtures/font-metrics.json)
+          ;; -- we used 7/4 for a long time, which is a 14px cell and made
+          ;; every dialog ~8% too tall. The +4 rounds the way MapDialogRect's
+          ;; MulDiv does; truncating turns the canonical 14-DLU button into
+          ;; 22px instead of 23. For comboboxes (class 5),
           ;; the template's ch is the full dropped-down extent per Win32
           ;; convention — clamp the window/hit-test rect to the field
           ;; height (21px) unless CBS_SIMPLE so stacked combos don't
@@ -4662,11 +4753,11 @@
           ;; ch=70 each were all ~120px tall pre-clamp).
           (call $ctrl_geom_set (local.get $ctrl_slot)
             (i32.div_u (i32.mul (local.get $cx) (i32.const 3)) (i32.const 2))
-            (i32.div_u (i32.mul (local.get $cy) (i32.const 7)) (i32.const 4))
+            (i32.div_u (i32.add (i32.mul (local.get $cy) (i32.const 13)) (i32.const 4)) (i32.const 8))
             (i32.div_u (i32.mul (local.get $cw) (i32.const 3)) (i32.const 2))
             (select
               (i32.const 21)
-              (i32.div_u (i32.mul (local.get $ch) (i32.const 7)) (i32.const 4))
+              (i32.div_u (i32.add (i32.mul (local.get $ch) (i32.const 13)) (i32.const 4)) (i32.const 8))
               (i32.and
                 (i32.eq (local.get $class_enum) (i32.const 5))
                 (i32.ne (i32.and (local.get $ctrl_style) (i32.const 0x3))
@@ -4680,9 +4771,9 @@
       (i32.store offset=4  (call $g2w (local.get $cs)) (i32.const 0))
       (i32.store offset=8  (call $g2w (local.get $cs)) (local.get $ctrl_id))
       (i32.store offset=12 (call $g2w (local.get $cs)) (local.get $dlg_hwnd))
-      (i32.store offset=16 (call $g2w (local.get $cs)) (i32.div_u (i32.mul (local.get $ch) (i32.const 7)) (i32.const 4)))
+      (i32.store offset=16 (call $g2w (local.get $cs)) (i32.div_u (i32.add (i32.mul (local.get $ch) (i32.const 13)) (i32.const 4)) (i32.const 8)))
       (i32.store offset=20 (call $g2w (local.get $cs)) (i32.div_u (i32.mul (local.get $cw) (i32.const 3)) (i32.const 2)))
-      (i32.store offset=24 (call $g2w (local.get $cs)) (i32.div_u (i32.mul (local.get $cy) (i32.const 7)) (i32.const 4)))
+      (i32.store offset=24 (call $g2w (local.get $cs)) (i32.div_u (i32.add (i32.mul (local.get $cy) (i32.const 13)) (i32.const 4)) (i32.const 8)))
       (i32.store offset=28 (call $g2w (local.get $cs)) (i32.div_u (i32.mul (local.get $cx) (i32.const 3)) (i32.const 2)))
       (i32.store offset=32 (call $g2w (local.get $cs)) (local.get $ctrl_style))
       (i32.store offset=36 (call $g2w (local.get $cs))
@@ -4713,3 +4804,169 @@
     (call $heap_free (local.get $cs))
     (call $dlg_seed_focus (local.get $dlg_hwnd))
     (return (local.get $ctrl_count)))
+
+  ;; ============================================================
+  ;; Process environment block
+  ;; ============================================================
+  ;; One ANSI block in guest memory, "NAME=VALUE\0"... terminated by a second
+  ;; NUL, exactly the layout GetEnvironmentStrings hands back. Every
+  ;; environment entry point reads or edits this one block, so the A and W
+  ;; spellings cannot disagree about what the environment contains: the wide
+  ;; ones widen on the way out and narrow on the way in.
+
+  (func $env_ensure
+    (local $i i32) (local $ch i32) (local $prev i32)
+    (if (global.get $env_block) (then (return)))
+    (global.set $env_block (call $heap_alloc (global.get $env_cap)))
+    (local.set $prev (i32.const 1))
+    (block $done (loop $copy
+      (local.set $ch (i32.load8_u (i32.add (i32.const 0x3390) (local.get $i))))
+      (call $gs8 (i32.add (global.get $env_block) (local.get $i)) (local.get $ch))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br_if $done (i32.and (i32.eqz (local.get $ch)) (i32.eqz (local.get $prev))))
+      (local.set $prev (local.get $ch))
+      (br $copy))))
+
+  ;; Total bytes in the block, including both terminating NULs.
+  (func $env_size (result i32)
+    (local $i i32) (local $ch i32) (local $prev i32)
+    (call $env_ensure)
+    (local.set $prev (i32.const 1))
+    (block $done (loop $scan
+      (local.set $ch (call $gl8 (i32.add (global.get $env_block) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br_if $done (i32.and (i32.eqz (local.get $ch)) (i32.eqz (local.get $prev))))
+      (local.set $prev (local.get $ch))
+      (br $scan)))
+    (local.get $i))
+
+  ;; Guest address of the entry whose name matches, or 0. Names are compared
+  ;; case-insensitively, as Win32 does.
+  (func $env_find (param $name_g i32) (param $wide i32) (result i32)
+    (local $p i32) (local $i i32) (local $a i32) (local $b i32) (local $step i32)
+    (call $env_ensure)
+    (local.set $step (select (i32.const 2) (i32.const 1) (local.get $wide)))
+    (local.set $p (global.get $env_block))
+    (block $miss (loop $entry
+      (br_if $miss (i32.eqz (call $gl8 (local.get $p))))
+      (local.set $i (i32.const 0))
+      (block $next (block $hit (loop $cmp
+        (local.set $a (call $tolower (call $gl8 (i32.add (local.get $p) (local.get $i)))))
+        (local.set $b (call $tolower (call $gl_char
+          (i32.add (local.get $name_g) (i32.mul (local.get $i) (local.get $step)))
+          (local.get $wide))))
+        ;; End of the caller's name: a match needs '=' on our side.
+        (if (i32.eqz (local.get $b))
+          (then (br_if $hit (i32.eq (local.get $a) (i32.const 0x3D))) (br $next)))
+        (br_if $next (i32.ne (local.get $a) (local.get $b)))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $cmp)))
+        (return (local.get $p)))
+      (local.set $p (i32.add (local.get $p)
+        (i32.add (call $guest_strlen (local.get $p)) (i32.const 1))))
+      (br $entry)))
+    (i32.const 0))
+
+  ;; GetEnvironmentVariable: characters written on success, or the buffer size
+  ;; the caller needs (including the NUL) when the buffer is too small, or 0
+  ;; when the variable does not exist.
+  (func $env_get (param $name_g i32) (param $buf_g i32) (param $size i32) (param $wide i32) (result i32)
+    (local $p i32) (local $len i32) (local $i i32) (local $step i32)
+    (local.set $p (call $env_find (local.get $name_g) (local.get $wide)))
+    (if (i32.eqz (local.get $p)) (then (return (i32.const 0))))
+    ;; Skip past "NAME=".
+    (local.set $p (i32.add (local.get $p)
+      (i32.add (call $env_name_len (local.get $p)) (i32.const 1))))
+    (local.set $len (call $guest_strlen (local.get $p)))
+    (if (i32.or (i32.eqz (local.get $buf_g)) (i32.le_u (local.get $size) (local.get $len)))
+      (then (return (i32.add (local.get $len) (i32.const 1)))))
+    (local.set $step (select (i32.const 2) (i32.const 1) (local.get $wide)))
+    (block $done (loop $copy
+      (br_if $done (i32.gt_u (local.get $i) (local.get $len)))
+      (call $store_char
+        (i32.add (local.get $buf_g) (i32.mul (local.get $i) (local.get $step)))
+        (call $gl8 (i32.add (local.get $p) (local.get $i))) (local.get $wide))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (local.get $len))
+
+  ;; Length of the NAME part of an entry, i.e. the offset of its '='.
+  (func $env_name_len (param $p i32) (result i32)
+    (local $i i32) (local $ch i32)
+    (block $done (loop $scan
+      (local.set $ch (call $gl8 (i32.add (local.get $p) (local.get $i))))
+      (br_if $done (i32.or (i32.eqz (local.get $ch)) (i32.eq (local.get $ch) (i32.const 0x3D))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $i))
+
+  ;; SetEnvironmentVariable: replaces or removes one entry. A NULL value
+  ;; deletes. Returns TRUE unless the block has no room left.
+  (func $env_set (param $name_g i32) (param $val_g i32) (param $wide i32) (result i32)
+    (local $p i32) (local $entry i32) (local $tail i32) (local $size i32)
+    (local $i i32) (local $step i32) (local $ch i32) (local $name_len i32) (local $val_len i32)
+    (if (i32.eqz (local.get $name_g)) (then (return (i32.const 0))))
+    (local.set $step (select (i32.const 2) (i32.const 1) (local.get $wide)))
+    (local.set $size (call $env_size))
+    ;; Drop any existing entry by shifting the rest of the block over it.
+    (local.set $entry (call $env_find (local.get $name_g) (local.get $wide)))
+    (if (local.get $entry)
+      (then
+        (local.set $tail (i32.add (call $guest_strlen (local.get $entry)) (i32.const 1)))
+        (local.set $i (i32.sub (local.get $entry) (global.get $env_block)))
+        (block $moved (loop $shift
+          (br_if $moved (i32.ge_u (i32.add (local.get $i) (local.get $tail)) (local.get $size)))
+          (call $gs8 (i32.add (global.get $env_block) (local.get $i))
+            (call $gl8 (i32.add (global.get $env_block)
+              (i32.add (local.get $i) (local.get $tail)))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $shift)))
+        (local.set $size (i32.sub (local.get $size) (local.get $tail)))))
+    (if (i32.eqz (local.get $val_g)) (then (return (i32.const 1))))
+    ;; Append "NAME=VALUE\0" over the block's final NUL.
+    (local.set $name_len (call $lstr_len (local.get $name_g) (local.get $wide)))
+    (local.set $val_len (call $lstr_len (local.get $val_g) (local.get $wide)))
+    (if (i32.gt_u (i32.add (local.get $size)
+                     (i32.add (local.get $name_len)
+                       (i32.add (local.get $val_len) (i32.const 2))))
+                  (global.get $env_cap))
+      (then (return (i32.const 0))))
+    (local.set $p (i32.add (global.get $env_block) (i32.sub (local.get $size) (i32.const 1))))
+    (local.set $i (i32.const 0))
+    (block $names_done (loop $name
+      (br_if $names_done (i32.ge_u (local.get $i) (local.get $name_len)))
+      (call $gs8 (i32.add (local.get $p) (local.get $i))
+        (call $gl_char (i32.add (local.get $name_g) (i32.mul (local.get $i) (local.get $step)))
+          (local.get $wide)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $name)))
+    (local.set $p (i32.add (local.get $p) (local.get $name_len)))
+    (call $gs8 (local.get $p) (i32.const 0x3D))
+    (local.set $p (i32.add (local.get $p) (i32.const 1)))
+    (local.set $i (i32.const 0))
+    (block $vals_done (loop $val
+      (br_if $vals_done (i32.ge_u (local.get $i) (local.get $val_len)))
+      (call $gs8 (i32.add (local.get $p) (local.get $i))
+        (call $gl_char (i32.add (local.get $val_g) (i32.mul (local.get $i) (local.get $step)))
+          (local.get $wide)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $val)))
+    (local.set $p (i32.add (local.get $p) (local.get $val_len)))
+    (call $gs8 (local.get $p) (i32.const 0))                      ;; end of this entry
+    (call $gs8 (i32.add (local.get $p) (i32.const 1)) (i32.const 0))  ;; end of block
+    (i32.const 1))
+
+  ;; GetEnvironmentStrings: a fresh copy of the block in the caller's
+  ;; encoding, owned by the caller until FreeEnvironmentStrings.
+  (func $env_strings (param $wide i32) (result i32)
+    (local $size i32) (local $out i32) (local $i i32) (local $step i32)
+    (local.set $size (call $env_size))
+    (local.set $step (select (i32.const 2) (i32.const 1) (local.get $wide)))
+    (local.set $out (call $heap_alloc (i32.mul (local.get $size) (local.get $step))))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (local.get $size)))
+      (call $store_char (i32.add (local.get $out) (i32.mul (local.get $i) (local.get $step)))
+        (call $gl8 (i32.add (global.get $env_block) (local.get $i))) (local.get $wide))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (local.get $out))

@@ -50,10 +50,45 @@
     ;; than stopping the task at the load. In CS or SS it is always a mistake —
     ;; and a quiet one, because a zero code base turns the next branch into a
     ;; jump to zero, which the run loop reads as the task having exited.
+    ;; A selector that names no segment in ES or DS is the same story one step
+    ;; on. Loading one is not what faults on real hardware — dereferencing it
+    ;; is — and a program can carry a stale or computed selector around for a
+    ;; long time without ever touching it. Visual Basic 1's runtime puts one in
+    ;; ES right after RegisterClass and never reads through it; stopping at the
+    ;; load cost all five VB games their first window. It is still reported
+    ;; under --trace-win16, because it is a sign of something, and an access
+    ;; through it lands at guest offset 0 where it will be noticed.
+    (if (i32.and (i32.and (i32.eqz (local.get $base))
+                          (i32.ne (local.get $sel) (i32.const 0)))
+                 (i32.or (i32.eq (local.get $id) (i32.const 0))
+                         (i32.eq (local.get $id) (i32.const 3))))
+      (then
+        (if (global.get $win16_trace)
+          (then
+            (call $host_log_i32 (i32.const 0xCA165E11))  ;; unmapped data selector
+            (call $host_log_i32 (local.get $sel))
+            (call $host_log_i32 (global.get $eip))))))
+    ;; A NULL one gets its own line under --trace-win16. Loading it is legal
+    ;; and common; what is not is the dereference that usually follows a few
+    ;; instructions later, and by then the register says only that it is zero
+    ;; and nothing about where it came from. This is the line that says where.
+    ;;
+    ;; Both addresses, like the fatal case below: $eip is the enclosing basic
+    ;; block, not the instruction, so on its own it can point at a block whose
+    ;; disassembly contains no segment load at all.
+    (if (i32.and (i32.eqz (local.get $sel))
+                 (i32.or (i32.eq (local.get $id) (i32.const 0))
+                         (i32.eq (local.get $id) (i32.const 3))))
+      (then
+        (if (global.get $win16_trace)
+          (then
+            (call $host_log_i32 (i32.const 0xCA165E12))  ;; null ES/DS load
+            (call $host_log_i32 (local.get $id))
+            (call $host_log_i32 (global.get $eip))
+            (call $host_log_i32 (global.get $dbg_prev_eip))))))
     (if (i32.and (i32.eqz (local.get $base))
-                 (i32.or (i32.ne (local.get $sel) (i32.const 0))
-                         (i32.or (i32.eq (local.get $id) (i32.const 1))
-                                 (i32.eq (local.get $id) (i32.const 2)))))
+                 (i32.or (i32.eq (local.get $id) (i32.const 1))
+                         (i32.eq (local.get $id) (i32.const 2))))
       (then
         (call $host_log_i32 (i32.const 0xCA165E10))  ;; selector names no segment
         (call $host_log_i32 (local.get $sel))
@@ -169,11 +204,15 @@
   ;; at the transfer rather than waiting for the run loop to notice is the
   ;; difference between naming the instruction and naming the block after it.
   (func $win16_assert_eip (param $site i32)
-    (if (i32.or
+    ;; Zero is the run loop's "this task has exited" EIP — FatalAppExit and the
+    ;; normal end of a task both leave it there deliberately — so it is not a
+    ;; wild jump and must not be reported as one.
+    (if (i32.and (i32.ne (global.get $eip) (i32.const 0))
+        (i32.or
           (i32.lt_u (global.get $eip) (global.get $WIN16_ARENA))
           (i32.ge_u (global.get $eip)
             (i32.add (global.get $WIN16_ARENA)
-              (i32.mul (global.get $WIN16_SEG_MAX) (i32.const 0x10000)))))
+              (i32.mul (global.get $WIN16_SEG_MAX) (i32.const 0x10000))))))
       (then
         (call $host_log_i32 (i32.const 0xCA165E22))
         (call $host_log_i32 (local.get $site))
@@ -488,3 +527,15 @@
                           (i32.and (global.get $eax) (i32.const 0xFF)))
                  (i32.const 0xFFFF)))))
     (return_call $next))
+
+  ;; INT imm8. The operand is the interrupt number and the word after it is
+  ;; where execution goes next — the instruction ends its block either way,
+  ;; because what the interrupt does may move EIP itself.
+  ;;
+  ;; Only 21h means anything here. Everything else keeps the DOS convention for
+  ;; "no such service": carry set, and the program's own error path takes over.
+  (func $th_int (param $op i32)
+    (global.set $eip (call $read_thread_word))
+    (if (i32.eq (local.get $op) (i32.const 0x21))
+      (then (call $win16_dos_int21))
+      (else (call $dos_cf (i32.const 1)))))

@@ -30,15 +30,6 @@ const SKIP_DIRS = new Set(['node_modules', '.git', '.claude', 'scratch', 'tools'
 // Directories that contain binary assets (base64-encoded)
 const BINARY_DIRS = ['binaries', 'icons', 'build'];
 
-// Skip these binary subdirs (too large, not used by app, or 16-bit).
-// Default deploy ships only assets reachable from the desktop icons. Debug-only
-// apps can still be pushed with --files=... when needed.
-const SKIP_BIN_DIRS = new Set([
-  'installers', 'win98-16bit', 'demos', 'plus', 'plus98',
-  'shareware', 'wep32-community', 'screensavers', 'xp', 'win98-apps',
-  'help',
-]);
-
 // Skip individual large files (>500KB) that aren't essential
 const MAX_BINARY_SIZE = 500 * 1024;
 // But always include these even if large
@@ -54,89 +45,6 @@ const LARGE_OK_PATHS = new Set([
   'binaries/plus98/DIALOG.BMP',
 ]);
 
-const DESKTOP_BINARY_FILES = new Set([
-  'binaries/notepad.exe',
-  'binaries/calc.exe',
-  'binaries/dlls/comctl32.dll',
-  'binaries/dlls/msvcrt.dll',
-  'binaries/entertainment-pack/cards.dll',
-  'binaries/entertainment-pack/freecell.exe',
-  'binaries/entertainment-pack/sol.exe',
-  'binaries/entertainment-pack/cruel.exe',
-  'binaries/entertainment-pack/golf.exe',
-  'binaries/entertainment-pack/pegged.exe',
-  'binaries/entertainment-pack/snake.exe',
-  'binaries/entertainment-pack/taipei.exe',
-  'binaries/entertainment-pack/tictac.exe',
-  'binaries/entertainment-pack/reversi.exe',
-  'binaries/entertainment-pack/winmine.exe',
-  'binaries/entertainment-pack/ski32.exe',
-  'binaries/pinball/pinball.exe',
-  'binaries/pinball-plus95/pinball.exe',
-  'binaries/plus98/SPIDER.EXE',
-  'binaries/plus98/SPIDER.CHM',
-  'binaries/plus98/SPIDER.HLP',
-  'binaries/plus98/MARBLES.EXE',
-  'binaries/plus98/LLOGO.BMP',
-  'binaries/plus98/LSPLASH.BMP',
-  'binaries/plus98/CHOOSE1.BMP',
-  'binaries/plus98/CHOOSE2.BMP',
-  'binaries/plus98/COMMON01.BMP',
-  'binaries/plus98/COMMON02.BMP',
-  'binaries/plus98/COMMON03.BMP',
-  'binaries/plus98/COMMON04.BMP',
-  'binaries/plus98/COMMON05.BMP',
-  'binaries/plus98/CMNBONUS.BMP',
-  'binaries/plus98/LEVEL-01.BMP',
-  'binaries/plus98/LEVEL-01.DAT',
-  'binaries/plus98/LEVEL1BG.BMP',
-  'binaries/plus98/TRANS1A.BMP',
-  'binaries/plus98/TRANS2A.BMP',
-  'binaries/plus98/DIALOG.BMP',
-  'binaries/plus98/OPTIONS.BMP',
-  'binaries/plus98/TEXTFONT.BMP',
-  'binaries/plus98/CRACK.BMP',
-  'binaries/plus98/GRASTILE.BMP',
-  'binaries/plus98/B1.MID',
-  'binaries/plus98/CRD.MID',
-  'binaries/plus98/LVL1.MID',
-  'binaries/plus98/2.WAV',
-  'binaries/plus98/MARBLES.ICO',
-  'binaries/winamp.exe',
-  'binaries/plugins/in_mp3.dll',
-  'binaries/plugins/out_wave.dll',
-  'binaries/plugins/candidates/vis_w.dll',
-  'binaries/demo.mp3',
-  'binaries/winamp.ini',
-  'binaries/winamp.m3u',
-  'binaries/whatsnew.txt',
-  'binaries/wep32-community/Bricks/bricks.exe',
-  'binaries/wep32-community/Bricks/brk1.dll',
-  'binaries/wep32-community/EmPipe/EMPIPE.EXE',
-  'binaries/wep32-community/EmPipe/EMPIPE.EXE.manifest',
-  'binaries/wep32-community/EmPipe/EMPIPEE.HLP',
-  'binaries/wep32-community/EmPipe/EMPIPEE.TXT',
-  'binaries/wep32-community/EmPipe/EMPCLEAR.MID',
-  'binaries/wep32-community/EmPipe/EMPGMOV.MID',
-  'binaries/wep32-community/EmPipe/EMPSCR1.MID',
-  'binaries/wep32-community/EmPipe/EMPSCR2.MID',
-  'binaries/wep32-community/EmPipe/EMPSCR3.MID',
-  'binaries/wep32-community/EmPipe/EMPSCR4.MID',
-  'binaries/wep32-community/EmPipe/EMPSCR5.MID',
-  'binaries/wep32-community/EmPipe/EMPSTART.MID',
-  'binaries/wep32-community/Funpack/FunPack.dll',
-  'binaries/wep32-community/Funpack/Funtris.exe',
-  'binaries/wep32-community/Funpack/Peaks.exe',
-  'binaries/wep32-community/Funpack/Pyramid.exe',
-  'binaries/wep32-community/Funpack/FourStones.exe',
-  'binaries/wep32-community/Wordzap/CWordZap.exe',
-  'binaries/wep32-community/QBlackjack/QuickBlackjack.exe',
-]);
-
-const DESKTOP_BINARY_PREFIXES = [
-  'binaries/pinball/',
-  'binaries/pinball-plus95/',
-];
 
 // Binary extensions to include
 const BINARY_EXTS = new Set(['.exe', '.dll', '.manifest', '.hlp', '.chm', '.bmp', '.ico', '.cur', '.wav', '.mp3', '.mid', '.m3u', '.dat', '.inf', '.ini', '.txt', '.png', '.wasm']);
@@ -184,24 +92,93 @@ function collectTextFiles() {
   return files;
 }
 
+// What under binaries/ the live site needs, asked of the same registries the
+// page itself reads rather than of a hand-kept list here.
+//
+// The hand-kept list is how mspaint.cnt and binaries/dlls/mfc42.dll came to
+// 404 on a deploy that reported success: Paint is a desktop icon and its help
+// file and MFC runtime are in lib/apps.js and lib/dll-registry.js, but nobody
+// remembered to add them here, and there is nothing about "the deploy shipped
+// every file it decided to ship" that can notice a file it never considered.
+// Derived, the two cannot drift: adding an app or a DLL to the registry ships
+// its assets.
+// Needing a file and being allowed to publish it are different questions, and
+// deriving the asset set from the registries answers only the first. These are
+// the ones test/binaries/dlls/SOURCES.md says must not go on a public site:
+// `Unverified` in its inventory, "local-only" Win98 SE OEM extractions, or an
+// explicit "do not include this DLL in a public deployment". Redistribution
+// terms are the gate, not whether an app would run better with them.
+//
+// Moving an entry out of here means updating SOURCES.md first with a
+// reproducible source and the terms that permit redistribution.
+const NOT_REDISTRIBUTABLE = new Set([
+  'binaries/dlls/mfc30.dll',     // Win98 SE OEM, local-only
+  'binaries/dlls/msvcrt20.dll',  // Win98 SE OEM, local-only
+]);
+
+function desktopAssetPaths() {
+  const { APPS, DESKTOP_APPS, LOCAL_CANDIDATE_APPS, DEBUG_ONLY_APPS, appFileUrl } =
+    require(path.join(ROOT, 'lib', 'apps.js'));
+  const { DLL_PATHS } = require(path.join(ROOT, 'lib', 'dll-registry.js'));
+  const out = new Set();
+  const add = p => {
+    if (!p || !p.startsWith('binaries/')) return;
+    if (NOT_REDISTRIBUTABLE.has(p)) { blocked.add(p); return; }
+    out.add(p);
+  };
+  const blocked = new Set();
+
+  // index.html offers exactly these three lists and nothing else, so an APPS
+  // entry no icon and no selector row can reach is not a live-site asset.
+  const listed = [...DESKTOP_APPS, ...LOCAL_CANDIDATE_APPS, ...DEBUG_ONLY_APPS];
+  for (const [id] of listed) {
+    const app = APPS[id];
+    if (!app) continue;
+    add(app.exe);
+    // A bare DLL name is resolved through the registry below, not here.
+    for (const d of app.dlls || []) if (d.includes('/')) add(d);
+    // `win16Modules` names NE modules the page fetches from the exe's own
+    // directory by candidate filename, not paths — those still do not ship.
+    for (const f of app.files || []) add(appFileUrl(f));
+  }
+  // Any app can LoadLibrary any of these at runtime, so they all ship.
+  for (const p of Object.values(DLL_PATHS)) add(p);
+  for (const p of [...blocked].sort())
+    console.log('  HELD BACK (redistribution terms): ' + p);
+  return out;
+}
+
 function collectBinaries() {
   const files = [];
-  for (const subdir of BINARY_DIRS) {
+  const wanted = desktopAssetPaths();
+  const seen = new Set();
+
+  // binaries/ ships exactly what the registries name — not what a directory
+  // walk with an extension filter happens to match.
+  for (const rel of [...wanted].sort()) {
+    const full = path.join(ROOT, rel);
+    if (!fs.existsSync(full)) { console.log('  MISSING: ' + rel); continue; }
+    const stat = fs.statSync(full);
+    if (stat.size > MAX_BINARY_SIZE &&
+        !LARGE_OK.has(path.basename(full).toLowerCase()) &&
+        !LARGE_OK_PATHS.has(rel)) {
+      // A registry-declared asset is by definition needed, so this is a
+      // warning about weight, not a decision to leave the app broken.
+      console.log('  LARGE: ' + rel + ' (' + (stat.size / 1024).toFixed(0) + 'KB)');
+    }
+    seen.add(rel);
+    files.push({ name: rel, content: fs.readFileSync(full).toString('base64'), encoding: 'base64' });
+  }
+
+  // icons/ and build/ have no registry; they are whole directories the page
+  // fetches by name, so they still walk.
+  for (const subdir of BINARY_DIRS.filter(d => d !== 'binaries')) {
     const dir = path.join(ROOT, subdir);
     if (!fs.existsSync(dir)) continue;
-    const realDir = fs.realpathSync(dir);
-    const found = walk(realDir, subdir, (name, rel) => {
-      if (!BINARY_EXTS.has(path.extname(name).toLowerCase())) return false;
-      if (rel.startsWith('binaries/')) {
-        const explicitDesktopAsset = DESKTOP_BINARY_FILES.has(rel);
-        const desktopAsset = explicitDesktopAsset || DESKTOP_BINARY_PREFIXES.some(p => rel.startsWith(p));
-        if (!desktopAsset) return false;
-        const parts = rel.split('/');
-        if (!explicitDesktopAsset && parts.some(p => SKIP_BIN_DIRS.has(p))) return false;
-      }
-      return true;
-    });
+    const found = walk(fs.realpathSync(dir), subdir,
+      (name) => BINARY_EXTS.has(path.extname(name).toLowerCase()));
     for (const f of found) {
+      if (seen.has(f.rel)) continue;
       const stat = fs.statSync(f.full);
       if (stat.size > MAX_BINARY_SIZE &&
           !LARGE_OK.has(path.basename(f.full).toLowerCase()) &&
@@ -257,12 +234,38 @@ function collectFonts() {
   return files;
 }
 
+// A deploy is a sequence of batches, and the live site is whatever prefix of
+// them landed. So a dropped socket in the middle is not "the deploy failed" —
+// it is a site serving the new index.html against the old assets, which is how
+// a run that stopped at batch 6 of 17 left every .fon 404ing while the page
+// still asked for them. Retry the transport before giving up, and when it does
+// give up, say that the site is now mixed.
+async function fetchRetry(url, opts, label) {
+  const attempts = 4;
+  for (let i = 1; ; i++) {
+    try {
+      const r = await fetch(url, opts);
+      if (r.status >= 500 && i < attempts) {
+        console.log(`  ${label}: HTTP ${r.status}, retrying (${i}/${attempts - 1})...`);
+        await new Promise(res => setTimeout(res, 1000 * i));
+        continue;
+      }
+      return r;
+    } catch (e) {
+      if (i >= attempts) throw e;
+      const why = (e && e.cause && e.cause.code) || (e && e.message) || 'error';
+      console.log(`  ${label}: ${why}, retrying (${i}/${attempts - 1})...`);
+      await new Promise(res => setTimeout(res, 1000 * i));
+    }
+  }
+}
+
 async function apiJson(method, endpoint, body) {
-  const r = await fetch(API_BASE + endpoint, {
+  const r = await fetchRetry(API_BASE + endpoint, {
     method,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
-  });
+  }, `${method} ${endpoint}`);
   const text = await r.text();
   let json; try { json = JSON.parse(text); } catch { json = { raw: text }; }
   if (!r.ok) console.error(`API ${method} ${endpoint} -> ${r.status}:`, json);
@@ -283,7 +286,9 @@ async function apiMultipart(method, endpoint, body) {
     form.append('file', new Blob([raw]), f.name);
   }
 
-  const r = await fetch(API_BASE + endpoint, { method, body: form });
+  // The FormData holds Blobs, not a consumed stream, so it can be posted again.
+  const r = await fetchRetry(API_BASE + endpoint, { method, body: form },
+    `${method} ${endpoint}`);
   const text = await r.text();
   let json; try { json = JSON.parse(text); } catch { json = { raw: text }; }
   if (!r.ok) console.error(`API ${method} ${endpoint} -> ${r.status}:`, json);
@@ -478,6 +483,13 @@ async function deploy() {
   const versionsArg = process.argv.includes('--versions');
   const rollbackArg = process.argv.find(a => a.startsWith('--rollback='));
   if (versionsArg) { await listVersions(30); return; }
+  // Standalone repair pass: --verify on its own checks and heals the live site
+  // without re-deploying anything.
+  if (process.argv.includes('--verify') && !process.argv.includes('--update')
+      && !process.argv.some(a => a.startsWith('--files='))) {
+    await verifyServed();
+    return;
+  }
   if (rollbackArg) {
     const target = Number(rollbackArg.slice('--rollback='.length));
     if (!Number.isInteger(target) || target <= 0) {
@@ -522,6 +534,14 @@ async function deploy() {
   }
 
   let allFiles = [...textFiles, ...binFiles];
+
+  // What would go up, without going up: the asset set is derived now, so
+  // "which files does this deploy think the site is made of" is a question
+  // worth being able to ask before answering it live.
+  if (process.argv.includes('--dry-run')) {
+    console.log('Dry run: ' + allFiles.length + ' files would be considered.');
+    return;
+  }
 
   if (useDiff) {
     console.log('\nFetching server manifest...');
@@ -574,11 +594,65 @@ async function deploy() {
       console.log('Updating (batch ' + (i + 1) + '/' + batches.length + ', ' + batches[i].length + ' files, ' + transport + ')...');
       const r = await api('PUT', '/apps/' + SUBDOMAIN, body);
       console.log('Result:', r.status);
-      if (r.status >= 400 && r.status !== 404) return;
+      if (r.status >= 400 && r.status !== 404) {
+        throw new Error(`batch ${i + 1}/${batches.length} failed with HTTP ${r.status}`
+          + ` — the site now has batches 1..${i} of this deploy and the previous`
+          + ` version of everything after; re-run to finish it`);
+      }
     }
   }
 
   console.log('\nDone! Visit: https://' + SUBDOMAIN + '.berrry.app');
+
+  if (process.argv.includes('--verify')) await verifyServed();
+}
+
+// Being in the server's file manifest is not the same as being served. An
+// interrupted deploy can leave a file stored under a version that never went
+// live, and because the next run diffs by sha256 it then sees the bytes
+// already there and skips it forever — which is how the site kept 404ing
+// fonts/w95fa.woff2 and every fonts/subset/*.ttf across two successful-looking
+// deploys. So ask the live site, not the manifest, and re-upload whatever it
+// will not hand back.
+async function verifyServed() {
+  console.log('\nVerifying what the live site actually serves...');
+  const manifest = await fetchServerManifest();
+  if (!manifest) return;
+  const names = [...manifest.keys()];
+  const base = 'https://' + SUBDOMAIN + '.berrry.app/';
+  const missing = [];
+  let done = 0, next = 0;
+  const worker = async () => {
+    for (let i = next++; i < names.length; i = next++) {
+      const name = names[i];
+      try {
+        const r = await fetch(base + name.split('/').map(encodeURIComponent).join('/'),
+          { method: 'HEAD' });
+        if (r.status === 404) missing.push(name);
+      } catch { /* a transport blip is not evidence the file is missing */ }
+      if (++done % 100 === 0) console.log(`  ${done}/${names.length} checked`);
+    }
+  };
+  await Promise.all(Array.from({ length: 8 }, worker));
+
+  if (!missing.length) {
+    console.log(`All ${names.length} files serve.`);
+    return;
+  }
+  // Only re-upload what still exists locally; a file the repo dropped is
+  // supposed to be gone, and its 404 is the correct answer.
+  const local = missing.filter(n => fs.existsSync(path.join(ROOT, n)));
+  console.log(`${missing.length} stored-but-not-served file(s); ${local.length} still in the repo:`);
+  for (const n of missing) console.log(`  ${n}${local.includes(n) ? '' : '  (gone locally, leaving it)'}`);
+  if (!local.length) return;
+
+  for (const batch of splitIntoBatches(loadExplicitFiles(local))) {
+    console.log(`Re-uploading ${batch.length} file(s)...`);
+    const r = await api('PUT', '/apps/' + SUBDOMAIN, { subdomain: SUBDOMAIN, files: batch });
+    console.log('Result:', r.status);
+    if (r.status >= 400 && r.status !== 404) throw new Error(`re-upload failed: HTTP ${r.status}`);
+  }
+  console.log('Re-uploaded. Run --verify again to confirm.');
 }
 
 deploy().catch(e => { console.error(e); process.exit(1); });

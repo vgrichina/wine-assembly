@@ -222,6 +222,35 @@ const wireOf = () => {
       !!clientTable && clientTable.green > 0.2, 'nothing drawn');
     H.savePng(OUT, 'client-dealt', clientTable && clientTable.png);
 
+    // ---- the hand --------------------------------------------------------
+    //
+    // Being dealt to is the far end answering; playing is the far end taking
+    // its turn. Each browser has one game in it, so there is nothing to raise
+    // and nothing to disambiguate -- the clicks go where they are aimed.
+    await H.passThree(dealer.page);
+    await H.passThree(client.page);
+    await H.sleep(4000);
+    await H.click(client.page, H.PASS_BUTTON);    // accept the three passed to me
+    await H.click(dealer.page, H.PASS_BUTTON);
+    await H.click(client.page, H.LOWEST_CARD);    // the two of clubs opens
+
+    const middle = ({ page, label }) => H.until(page, `${label}: no card in the middle`,
+      () => {
+        const t = tallyWindow({ index: 0, wantTitle: 'Hearts', box: [250, 150, 400, 300] });
+        return t && t.white > 0.05 ? t : null;
+      }, null, MILESTONE_MS);
+    const leadHere = await middle(client);
+    check(`the leading browser put a card down (${leadHere
+      ? (leadHere.white * 100).toFixed(0) : '0'}% of the middle)`, !!leadHere, 'nothing led');
+    H.savePng(OUT, 'client-trick', leadHere && leadHere.png);
+    // The card crossed a peer connection to get here, and this is a different
+    // machine as far as either game can tell.
+    const leadThere = await middle(dealer);
+    check(`the other browser sees the trick (${leadThere
+      ? (leadThere.white * 100).toFixed(0) : '0'}% of the middle)`, !!leadThere,
+      'the played card never arrived');
+    H.savePng(OUT, 'dealer-trick', leadThere && leadThere.png);
+
     for (const p of players) {
       await p.page.screenshot({ path: path.join(OUT, `${p.label}-page.png`) });
       check(`${p.label} raised no page errors`, p.problems.length === 0,

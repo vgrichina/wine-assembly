@@ -995,6 +995,14 @@
                 (call $treeview_paint_wat (local.get $hwnd))))))
         (return (i32.const 1))))
 
+    ;; A plain WM_MOUSEMOVE is observational. Only the scrollbar-thumb branch
+    ;; above owns mouse motion while captured; falling through to the item hit
+    ;; path made hovering a plus box toggle expansion and hovering row text
+    ;; move the caret. RegEdit exposed this immediately while crossing its root
+    ;; keys. Selection and expansion belong to button/double-click messages.
+    (if (i32.eq (local.get $msg) (i32.const 0x0200))
+      (then (return (i32.const 0))))
+
     ;; Right-edge scrollbar strip: arrows/page/thumb. TreeView common controls
     ;; grow their scrollbars from content overflow, not just WS_VSCROLL.
     (if (i32.eq (local.get $msg) (i32.const 0x0201))

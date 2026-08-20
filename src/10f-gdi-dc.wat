@@ -326,6 +326,7 @@
   (func $gdi_dc_meta_release (param $hdc i32)
     (local $i i32) (local $p i32) (local $meta_g i32) (local $meta i32)
     (local $node_g i32) (local $next_g i32) (local $recording_bitmap i32)
+    (local $profile_g i32)
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $GDI_DC_SAVE_COUNT)))
       (local.set $p (i32.add (global.get $GDI_DC_SAVE_TABLE)
@@ -341,6 +342,7 @@
         (local.set $meta (call $g2w (local.get $meta_g)))
         (if (i32.eq (i32.load offset=20 (local.get $meta)) (i32.const 0x4D464443))
           (then (local.set $recording_bitmap (i32.load offset=24 (local.get $meta)))))
+        (local.set $profile_g (i32.load offset=32 (local.get $meta)))
         (local.set $node_g (i32.load offset=4 (local.get $meta)))
         (block $freed (loop $free
           (br_if $freed (i32.eqz (local.get $node_g)))
@@ -348,6 +350,7 @@
           (call $gdi_dc_save_node_free (local.get $node_g))
           (local.set $node_g (local.get $next_g))
           (br $free)))
+        (if (local.get $profile_g) (then (call $heap_free (local.get $profile_g))))
         (call $heap_free (local.get $meta_g))))
     (i64.store (local.get $p) (i64.const 0))
     (if (local.get $recording_bitmap)
@@ -879,35 +882,51 @@
       (then (drop (call $gdi_object_delete_full (local.get $bitmap)))))
     (local.get $released))
 
-  (func $gdi_printer_dc_alloc (result i32)
-    (local $bitmap i32) (local $hdc i32)
-    (if (global.get $printer_hdc)
-      (then (drop (call $gdi_printer_dc_release (global.get $printer_hdc)))))
+  ;; A printer page raster is 2400x3150x4 = 30MB, which is nearly half the DIB
+  ;; backing arena. MFC asks for a printer DC during startup purely to measure
+  ;; the page (WordPad does this before its window is even up) and usually
+  ;; never draws a pixel to it, so allocating the page eagerly cost every such
+  ;; app 30MB it never used -- and with a worker thread allocating its own the
+  ;; arena had no room left for a screen-sized menu overlay, which is why
+  ;; WordPad's menus silently refused to open at large screen sizes.
+  ;; The page is created on first use instead; $gdi_dc_bitmap_record is the
+  ;; single choke point every draw and every size query already goes through.
+  (func $gdi_printer_page_ensure (result i32)
+    (local $bitmap i32)
+    (if (global.get $printer_bitmap)
+      (then (return (global.get $printer_bitmap))))
+    (if (i32.eqz (global.get $printer_hdc)) (then (return (i32.const 0))))
     (local.set $bitmap (call $gdi_create_compat_bitmap_internal
       (i32.const 2400) (i32.const 3150) (i32.const 0)))
     (if (i32.eqz (local.get $bitmap)) (then (return (i32.const 0))))
-    (local.set $hdc (call $gdi_dc_alloc))
-    (if (i32.eqz (local.get $hdc))
-      (then
-        (drop (call $gdi_object_delete_full (local.get $bitmap)))
-        (return (i32.const 0))))
     (if (i32.eq (call $gdi_dc_select_owned_object
-          (local.get $hdc) (local.get $bitmap)) (i32.const -1))
+          (global.get $printer_hdc) (local.get $bitmap)) (i32.const -1))
       (then
-        (drop (call $gdi_dc_delete (local.get $hdc)))
         (drop (call $gdi_object_delete_full (local.get $bitmap)))
         (return (i32.const 0))))
-    (global.set $printer_hdc (local.get $hdc))
     (global.set $printer_bitmap (local.get $bitmap))
+    (drop (call $gdi_printer_page_clear (global.get $printer_hdc)))
+    (local.get $bitmap))
+
+  (func $gdi_printer_dc_alloc (result i32)
+    (local $hdc i32)
+    (if (global.get $printer_hdc)
+      (then (drop (call $gdi_printer_dc_release (global.get $printer_hdc)))))
+    (local.set $hdc (call $gdi_dc_alloc))
+    (if (i32.eqz (local.get $hdc)) (then (return (i32.const 0))))
+    (global.set $printer_hdc (local.get $hdc))
+    (global.set $printer_bitmap (i32.const 0))
     (global.set $printer_doc_state (i32.const 0))
-    (if (i32.eqz (call $gdi_printer_page_clear (local.get $hdc)))
-      (then
-        (drop (call $gdi_printer_dc_release (local.get $hdc)))
-        (return (i32.const 0))))
     (local.get $hdc))
 
   (func $gdi_dc_bitmap_record (param $hdc i32) (result i32)
     (local $dc i32) (local $bmp i32)
+    ;; First touch of the printer DC materializes its page (see above).
+    (if (i32.and
+          (i32.and (i32.ne (local.get $hdc) (i32.const 0))
+                   (i32.eq (local.get $hdc) (global.get $printer_hdc)))
+          (i32.eqz (global.get $printer_bitmap)))
+      (then (drop (call $gdi_printer_page_ensure))))
     (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
     (if (i32.eqz (local.get $dc)) (then (return (i32.const 0))))
     (local.set $bmp (call $gdi_object_record (i32.load offset=84 (local.get $dc))))
@@ -1204,7 +1223,26 @@
     (drop (call $host_gdi_surface_delete (local.get $hdc))))
 
   (func $host_alloc_window_dc (param $hwnd i32) (param $whole i32) (result i32)
-    (local $hdc i32)
+    (local $hdc i32) (local $own i32)
+    ;; A CS_OWNDC window is handed the same DC every time, so that whatever it
+    ;; selected in stays selected. Client DCs only: GetWindowDC and the
+    ;; nonclient chrome ask for a different region of the surface and get
+    ;; their own DC, as they do on Windows.
+    (if (i32.eqz (local.get $whole))
+      (then (local.set $own (call $wnd_get_own_dc (local.get $hwnd)))))
+    (if (i32.gt_s (local.get $own) (i32.const 0))
+      (then
+        ;; Rebind rather than assume: the window may have been resized and its
+        ;; surface remade since the last acquisition. The bind touches only the
+        ;; owner field and the surface, never the selected objects. The clip is
+        ;; per-acquisition — BeginPaint intersects the update rect into it — so
+        ;; it starts each time from the same empty state a fresh DC would have.
+        (if (call $gdi_window_dc_bind (local.get $own) (local.get $hwnd) (i32.const 0))
+          (then
+            (call $gdi_dc_clip_release (local.get $own))
+            (call $gdi_dc_aux_release (local.get $own))
+            (return (local.get $own))))
+        (return (i32.const 0))))
     (local.set $hdc (call $gdi_dc_alloc))
     (if (local.get $hdc)
       (then
@@ -1212,10 +1250,21 @@
               (local.get $hdc) (local.get $hwnd) (local.get $whole)))
           (then
             (drop (call $gdi_dc_delete (local.get $hdc)))
-            (local.set $hdc (i32.const 0))))))
+            (local.set $hdc (i32.const 0)))
+          (else
+            (if (i32.lt_s (local.get $own) (i32.const 0))
+              (then (call $wnd_set_own_dc (local.get $hwnd) (local.get $hdc))))))))
     (local.get $hdc))
 
   (func $host_release_dc (param $hdc i32) (result i32)
+    ;; A private DC survives ReleaseDC and EndPaint — that is what makes its
+    ;; selected objects persist. Its clip and aux scratch are per-acquisition
+    ;; and still go; only the state record, which holds the selections, stays.
+    (if (call $wnd_own_dc_is_private (local.get $hdc))
+      (then
+        (call $gdi_dc_aux_release (local.get $hdc))
+        (call $gdi_dc_clip_release (local.get $hdc))
+        (return (i32.const 1))))
     (call $gdi_dc_aux_release (local.get $hdc))
     (call $gdi_dc_clip_release (local.get $hdc))
     (call $gdi_dc_state_release (local.get $hdc))
@@ -1278,8 +1327,8 @@
     (select (local.get $bitmap_result) (i32.const 0)
       (i32.ge_s (local.get $bitmap_result) (i32.const 0))))
 
-  ;; Canvas supplies only glyph measurement. Prefix fitting and Win32 output
-  ;; structures remain WAT-owned so ANSI and UTF-16 calls share exact state.
+  ;; The selected WAT strike supplies glyph measurement. Prefix fitting and
+  ;; Win32 output structures share the same state for ANSI and UTF-16 calls.
   (func $gdi_text_extent_ex (param $hdc i32) (param $text i32)
         (param $count i32) (param $max_extent i32) (param $fit i32)
         (param $dx i32) (param $size i32) (param $wide i32) (result i32)

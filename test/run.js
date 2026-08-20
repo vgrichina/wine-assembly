@@ -3,11 +3,22 @@ const path = require('path');
 const { execSync } = require('child_process');
 const { createHostImports } = require('../lib/host-imports');
 const { loadDlls, detectRequiredDlls, shouldReportNtForDlls, loadWin16Dlls } = require('../lib/dll-loader');
+const { inputEventHwnd } = require('../lib/host-window');
 const { compileWat } = require('../lib/compile-wat');
-const dllRegistry = require('../lib/dll-registry');
+const { resolveDllGraph, stageAndLoadPe, setExeName, setExtraCmdline,
+  handleLoadLibraryYield, handleComDllYield } = require('../lib/process-boot');
+const {
+  applyExeCompatibilityPatches: applyProfilePatches,
+  onThreadExit: profileThreadExit,
+} = require('../lib/app-profiles');
+const { processSharedCtx, adoptThreadPrimitives, makeWorkerApiLogger } = require('../lib/worker-imports');
+const { seedExeImage, win16FileCandidates } = require('../lib/vfs-seed');
+const { expandIncludePatterns } = require('../lib/vfs-host-files');
 const { decodeMfcCString, g2w: translateGuest } = require('../lib/mem-utils');
 const { formatCall: fmtApiCall, formatRet: fmtApiRet, formatOutParams: fmtApiOutParams, walkFrames } = require('../lib/api-format');
 const { fontMounts, BUNDLED_BITMAP_FONTS } = require('../lib/font-substitutions');
+const { APPS } = require('../lib/apps');
+const { CliVideoRecorder } = require('../lib/cli-recorder');
 let PNG;
 try { ({ PNG } = require('pngjs')); } catch (_) {}
 let createCanvas, Win98Renderer;
@@ -45,6 +56,12 @@ const getArg = (name, def) => {
   const prefix = `--${name}=`;
   const arg = args.find(value => value.startsWith(prefix));
   return arg ? arg.slice(prefix.length) : def;
+};
+const getArgs = name => {
+  const prefix = `--${name}=`;
+  return args.filter(value => value.startsWith(prefix))
+    .flatMap(value => value.slice(prefix.length).split(','))
+    .map(value => value.trim()).filter(Boolean);
 };
 const hasFlag = name => args.includes(`--${name}`);
 
@@ -122,6 +139,12 @@ const TRACE_WIN16 = hasFlag('trace-win16'); // --trace-win16: log every Win16 (N
 // large enough to change the timing of anything involving two processes, so a
 // race between two emulators in one room needs the quiet version.
 const TRACE_WIN16_DDE = (getArg('trace-win16', '') || '').split(',').includes('dde');
+// --trace-fpu: every x87 exception flag as it is raised, and every FCLEX or
+// FNINIT that takes them down again. The flags are sticky, so a program that
+// reads the status word reports whatever the last few thousand instructions
+// left in it -- Visual Basic says "Division by zero" from a status read, which
+// can be an arbitrary distance from the divide that set ZE.
+const TRACE_FPU = hasFlag('trace-fpu');
 const TRACE_NET = hasFlag('trace-net');   // --trace-net: log every vln/1 frame on the virtual LAN wire
 // --vlan-ip=10.77.0.2: this process's room address (host of the room keeps
 // 10.77.0.1). --vlan-wire joins the segment offered by the parent process
@@ -198,15 +221,52 @@ const DUMP_BACKCANVAS = hasFlag('dump-backcanvas'); // --dump-backcanvas: save b
 const DUMP_VFS = hasFlag('dump-vfs');     // --dump-vfs: list all VFS files at end
 const SAVE_VFS = getArg('save-vfs', null); // --save-vfs=DIR: extract VFS files to directory
 const SAVE_VFS_SUFFIX = getArg('save-vfs-suffix', null); // --save-vfs-suffix=.gid: restrict extraction
-const VFS_DRIVE = getArg('vfs-drive', null); // --vfs-drive=D: also preload the EXE directory on D:\
+const VFS_DRIVE = getArg('vfs-drive', null); // --vfs-drive=D: mirror the EXE + explicit --vfs-include files on read-only D:\
+const VFS_INCLUDE = getArgs('vfs-include'); // --vfs-include=GLOB: mount matching files relative to the EXE directory
 const STUCK_AFTER = parseInt(getArg('stuck-after', '10'));  // --stuck-after=N: stuck detection after N same-EIP batches
 const WINVER = getArg('winver', null); // --winver=nt4|win2k|win98 or hex like 0x05650004
-const EXE_PATH = getArg('exe', 'test/binaries/notepad.exe');
+// --app=sol launches what the desktop icon launches: lib/apps.js is the one
+// registry both hosts read, so the exe, the DLLs beside it, the data files it
+// needs in the VFS and its command line all come from the same entry the
+// browser uses. An explicit --exe/--args still wins over the registry.
+const APP_ID = getArg('app', null);
+const APP_ENTRY = (() => {
+  if (!APP_ID) return null;
+  const entry = APPS[APP_ID];
+  if (entry) return entry;
+  console.error(`unknown --app=${APP_ID}. Known ids:\n  ` +
+    Object.keys(APPS).sort().join(' '));
+  process.exit(1);
+})();
+// Registry paths are repo-relative and lean on the top-level `binaries`
+// symlink, so they resolve the same from the page and from here.
+const appAsset = p => (path.isAbsolute(p) ? p : path.join(ROOT, p));
+const EXE_PATH = getArg('exe', APP_ENTRY ? appAsset(APP_ENTRY.exe) : 'test/binaries/notepad.exe');
+const canonicalPath = p => {
+  try { return fs.realpathSync(p); } catch (_) { return path.resolve(p); }
+};
+const MATCHED_APP = (() => {
+  if (APP_ENTRY) return { id: APP_ID, entry: APP_ENTRY };
+  const exePath = canonicalPath(EXE_PATH);
+  for (const [id, entry] of Object.entries(APPS)) {
+    if (entry.exe && canonicalPath(appAsset(entry.exe)) === exePath) return { id, entry };
+  }
+  return null;
+})();
+// Direct --exe runs of registered apps inherit only that app's explicit asset
+// manifest and DLL seeds. They do not inherit args or startup behavior, and an
+// arbitrary EXE outside the registry still mounts no companions implicitly.
+const ASSET_ENTRY = MATCHED_APP && MATCHED_APP.entry;
+const ASSET_ENTRY_ID = MATCHED_APP && MATCHED_APP.id;
 const WASM_PATH = getArg('wasm', path.join(ROOT, 'build', 'wine-assembly.wasm')); // --wasm=FILE: isolated prebuilt used with --no-build
 const PNG_OUT = getArg('png', null);     // --png=out.png: render to PNG via node-canvas
+const VIDEO_OUT = getArg('video', null); // --video=out.webm: record deterministic renderer frames through ffmpeg
+const VIDEO_FPS = parseFloat(getArg('video-fps', '30')); // --video-fps=N: playback rate; one frame is captured per batch
+const VIDEO_START_BATCH = Math.max(0, parseInt(getArg('video-start-batch', '0'), 10) || 0); // --video-start-batch=N: skip setup batches before capture
+const FFMPEG_PATH = getArg('ffmpeg', 'ffmpeg'); // --ffmpeg=FILE: ffmpeg executable used by --video
 const INPUT_SPEC = getArg('input', null); // --input=batch:msg:wParam[:lParam],...  e.g. --input=50:0x111:11
 const SEED_WINDOW = getArg('seed-window', null); // --seed-window=TITLE[|TITLE...]: add foreign top-level windows for shell tests
-const EXTRA_ARGS = getArg('args', null); // --args="-quick -fullscreen": extra cmdline args appended after exe name
+const EXTRA_ARGS = getArg('args', (APP_ENTRY && APP_ENTRY.args) || null); // --args="-quick -fullscreen": extra cmdline args appended after exe name
 const AUDIO_OUT = getArg('audio-out', null); // --audio-out=file.pcm: write raw PCM to file
 const AUDIO_EXIT_BYTES = parseInt(getArg('audio-exit-bytes', '0'), 10) || 0; // --audio-exit-bytes=N: stop once captured PCM reaches N bytes
 const THREAD_SLICES = parseInt(getArg('thread-slices', '4')); // --thread-slices=N: worker slices per main batch (default 4; raise for compute-heavy audio decode)
@@ -255,59 +315,15 @@ function win16ApiName(moduleId, ordinal) {
   return `${mod}.${ordinal}${name ? ' ' + name : ' (no exported name)'}`;
 }
 
+// The patch table itself lives in lib/app-profiles.js, shared with the browser
+// host; only the CLI's env-var opt-in filter is here.
 function applyExeCompatibilityPatches(exeName, exports, memoryBuffer) {
-  if (process.env.WA_SKIP_EXE_COMPAT_PATCHES === '1') return;
-  const enabledKeys = process.env.WA_EXE_COMPAT_PATCHES
-    ? new Set(process.env.WA_EXE_COMPAT_PATCHES.split(',').map(s => s.trim()).filter(Boolean))
-    : null;
-  const name = String(exeName || '').toLowerCase();
-  if (name !== 'quickblackjack.exe') return;
-  if (!exports || !exports.get_image_base || !memoryBuffer) return;
-  const imageBase = exports.get_image_base() >>> 0;
-  const guestBase = exports.get_guest_base ? (exports.get_guest_base() >>> 0) : 0x12000;
-  const mem = new Uint8Array(memoryBuffer);
-  const patches = [
-    {
-      key: 'qbj-delay',
-      addr: 0x004222d0,
-      expected: [0x55, 0x89, 0xe5],
-      replacement: [0xc3, 0x90, 0x90],
-      label: 'QuickBlackjack synchronous animation delay',
-    },
-    {
-      key: 'qbj-hand-x',
-      addr: 0x0041a80c,
-      expected: [0x75, 0x05],
-      replacement: [0x90, 0x90],
-      label: 'QuickBlackjack hand painter x-animation branch',
-    },
-    {
-      key: 'qbj-hand-y',
-      addr: 0x0041a890,
-      expected: [0x75, 0x05],
-      replacement: [0x90, 0x90],
-      label: 'QuickBlackjack hand painter y-animation branch',
-    },
-  ];
-  for (const patch of patches) {
-    if (enabledKeys && !enabledKeys.has(patch.key)) continue;
-    const wa = (((patch.addr >>> 0) - imageBase + guestBase) >>> 0);
-    if (wa + patch.expected.length > mem.length) {
-      console.warn(`[compat] cannot patch ${patch.label}: address out of range`);
-      continue;
-    }
-    let ok = true;
-    for (let i = 0; i < patch.expected.length; i++) {
-      if (mem[wa + i] !== patch.expected[i]) {
-        console.warn(`[compat] cannot patch ${patch.label}: unexpected byte at ${hex(patch.addr + i)}`);
-        ok = false;
-        break;
-      }
-    }
-    if (!ok) continue;
-    mem.set(patch.replacement, wa);
-    console.log(`[compat] patched ${patch.label} at ${hex(patch.addr)}`);
-  }
+  applyProfilePatches(exeName, exports, memoryBuffer, {
+    skip: process.env.WA_SKIP_EXE_COMPAT_PATCHES === '1',
+    enabledKeys: process.env.WA_EXE_COMPAT_PATCHES
+      ? new Set(process.env.WA_EXE_COMPAT_PATCHES.split(',').map(s => s.trim()).filter(Boolean))
+      : null,
+  });
 }
 
 // Module-relative address syntax: `module.dll+0xVA` or `module.exe+0xVA` resolves
@@ -489,6 +505,35 @@ async function main() {
   }
   const exeBytes = fs.readFileSync(EXE_PATH);
 
+  // Where a DLL the guest asks for at run time comes from: what the app mounted
+  // in the VFS first, then the directories this process can see. The browser
+  // answers the same question with fetch(); the yield pumps that ask it are
+  // shared (lib/process-boot.js). COM used to look only at the filesystem, so a
+  // plugin sitting in the VFS was "not found" for CoCreateInstance and present
+  // for LoadLibrary.
+  const findRuntimeDllBytes = (fileName, fullName) => {
+    if (ctx.vfs) {
+      for (const p of [
+        String(fullName).toLowerCase(),
+        'c:\\' + fileName,
+        'c:\\plugins\\' + fileName,
+        'c:\\windows\\system\\' + fileName,
+      ]) {
+        const entry = ctx.vfs.files.get(p);
+        if (entry && entry.data) return entry.data;
+      }
+    }
+    for (const sp of [
+      path.join(__dirname, 'binaries/dlls', fileName),
+      path.join(path.dirname(EXE_PATH), fileName),
+      path.join(path.dirname(EXE_PATH), 'dlls', fileName),
+      path.join(path.dirname(EXE_PATH), 'plugins', fileName),
+    ]) {
+      if (fs.existsSync(sp)) return new Uint8Array(fs.readFileSync(sp));
+    }
+    return null;
+  };
+
   const logs = [];
   let stopped = false;
   let netWaits = 0;   // consecutive net_wait yields, reset by any progress
@@ -501,6 +546,7 @@ async function main() {
   let lastApiEsp = 0;      // ESP at API entry, for --esp-delta audit
   let pendingComApiId = -1; // COM api_id from 0xC0DE0000 marker emitted just BEFORE the '<ord>' name log
   let pendingWin16 = null;  // words following the 0xCA16A9F1 Win16 dispatch marker
+  let pendingFpu = null;    // words following the 0xCAF00001 --trace-fpu marker
   let dedupLast = null;    // {line, count} for --trace-api-dedup
   const flushDedup = () => {
     if (dedupLast && dedupLast.count > 1) logs.push(`  (x${dedupLast.count})`);
@@ -544,11 +590,13 @@ async function main() {
   //   B:set-focus-selection:START:END[:LABEL] — set focused edit/RichEdit selection through EM_SETSEL
   //   B:send-focus-message:MSG:WPARAM:LPARAM[:LABEL] — synchronously send a message to focus
   //   B:dump-control-state:ID[:LABEL] — log a visible control's state without changing focus
+  //   B:dump-combobox:ID[:LABEL] — log a visible combobox's CB_GETCOUNT/CB_GETLBTEXT rows
   //   B:dump-clipboard[:LABEL] — log supported clipboard format count and RTF snippet
   //   B:seed-cf-dib[:LABEL] — publish a 32x24 checker CF_DIB and paste it into focus
   //   B:dump-focus-charformat[:LABEL] — log focused hwnd EM_GETCHARFORMAT state
   //   B:set-focus-charformat-color:COLOR[:LABEL] — EM_SETCHARFORMAT color on focused hwnd
   //   B:set-focus-charformat-size:TWIPS[:LABEL] — EM_SETCHARFORMAT size on focused hwnd
+  //   B:set-focus-charformat-face:NAME[:TWIPS][:LABEL] — EM_SETCHARFORMAT face (and size) on focused hwnd
   //   B:dump-focus-paraformat[:LABEL] — log focused hwnd EM_GETPARAFORMAT state
   //   B:set-focus-paraformat-align:ALIGN[:LABEL] — EM_SETPARAFORMAT alignment on focused hwnd
   //   B:set-focus-paraformat-basic:NUMBERING:START:RIGHT:OFFSET:TAB[:LABEL]
@@ -637,6 +685,8 @@ async function main() {
           label: parts[4] || '' });
       } else if (kind === 'dump-control-state') {
         scheduledInput.push({ batch, action: 'dump-control-state', ctrlId: parseInt(parts[2]), label: parts[3] || '' });
+      } else if (kind === 'dump-combobox') {
+        scheduledInput.push({ batch, action: 'dump-combobox', ctrlId: parseInt(parts[2]), label: parts[3] || '' });
       } else if (kind === 'dump-clipboard') {
         scheduledInput.push({ batch, action: 'dump-clipboard', label: parts[2] || '' });
       } else if (kind === 'seed-cf-dib') {
@@ -666,6 +716,11 @@ async function main() {
       } else if (kind === 'set-focus-charformat-size') {
         scheduledInput.push({ batch, action: 'set-focus-charformat-size',
           twips: parseInt(parts[2]), label: parts[3] || '' });
+      } else if (kind === 'set-focus-charformat-face') {
+        // The face name carries spaces ("Times New Roman"), so the parts split
+        // is on ':' only and an optional size follows it.
+        scheduledInput.push({ batch, action: 'set-focus-charformat-face',
+          face: parts[2] || '', twips: parseInt(parts[3]) || 0, label: parts[4] || '' });
       } else if (kind === 'dump-focus-paraformat') {
         scheduledInput.push({ batch, action: 'dump-focus-paraformat', label: parts[2] || '' });
       } else if (kind === 'set-focus-paraformat-align') {
@@ -785,16 +840,26 @@ async function main() {
           startBatch: batch,
         });
       } else if (kind === 'wait-title-windows-snapshot') {
-        // B:wait-title-windows-snapshot:TITLE:LIMIT:LABEL:PNG_PATH
+        // B:wait-title-windows-snapshot:TITLE:LIMIT:LABEL:PNG_PATH[:SETTLE]
         // Wait for a visible window title, dump renderer window rows, write
         // each back-canvas as PNG via pngjs pixels, then stop.
+        //
+        // A window becomes visible before the app has painted it: on Win98 a
+        // hidden window has no visible region, so everything drawn into its DC
+        // while hidden is discarded and the show is what *causes* the repaint.
+        // Winamp composes its whole skin while hidden, shows the player, and
+        // only then blits the composite again — capture at the instant the
+        // title appears and the back-canvas is still the COLOR_BTNFACE seed.
+        // SETTLE runs that many more batches after the match before capturing.
+        const settleTail = parts.length > 6 && /^\d+$/.test(parts[parts.length - 1]);
         scheduledInput.push({
           batch,
           action: 'wait-title-windows-snapshot',
           title: (parts[2] || '').replace(/_/g, ' '),
           limit: parseInt(parts[3]) || 2000,
           label: parts[4] || '',
-          path: parts.slice(5).join(':'),
+          path: (settleTail ? parts.slice(5, -1) : parts.slice(5)).join(':'),
+          settle: settleTail ? parseInt(parts[parts.length - 1]) : 0,
           startBatch: batch,
         });
       } else if (kind === 'wait-title-dump-stop') {
@@ -1050,6 +1115,15 @@ async function main() {
     const canvas = createCanvas(screenW, screenH);
     renderer = new Win98Renderer(canvas);
   }
+  let videoRecorder = null;
+  if (VIDEO_OUT) {
+    if (!renderer) throw new Error('--video requires the CLI renderer (remove --no-renderer)');
+    videoRecorder = new CliVideoRecorder(renderer.canvas, {
+      path: VIDEO_OUT,
+      fps: VIDEO_FPS,
+      ffmpeg: FFMPEG_PATH,
+    });
+  }
 
   // String APIs where we want to log content
   const STRING_APIS = [
@@ -1198,6 +1272,7 @@ async function main() {
   if (TRACE_WAVE) traceCategories.add('wave');
   if (AUDIO_STATS) traceCategories.add('audio-stats');
   if (TRACE_NET) traceCategories.add('net');
+  if (TRACE_WIN16) traceCategories.add('win16');
   const traceHostNames = TRACE_HOST ? new Set(TRACE_HOST.split(',').map(s => s.trim()).filter(Boolean)) : null;
 
   const apiTable = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'src', 'api_table.json'), 'utf8'));
@@ -1243,6 +1318,22 @@ async function main() {
       }
       return null;
     },
+    // Stage one NE DLL from the exe's own directory into the module slot WAT
+    // has just given its name. Called from LoadLibrary, for modules nothing
+    // imports statically — the Entertainment Pack's WEPUTIL and the per-level
+    // DLLs Stones ships one of per screen.
+    win16StageModule: (name, id) => {
+      if (!ctx.exports || !ctx.exports.win16_dll_staging) return false;
+      const dir = path.dirname(EXE_PATH);
+      for (const f of win16FileCandidates(name)) {
+        const p = path.join(dir, f);
+        if (!fs.existsSync(p)) continue;
+        const bytes = fs.readFileSync(p);
+        new Uint8Array(ctx.getMemory()).set(bytes, ctx.exports.win16_dll_staging(id));
+        return true;
+      }
+      return false;
+    },
   };
   const base = createHostImports(ctx);
   if (ctx.vfs) {
@@ -1286,6 +1377,17 @@ async function main() {
   // the arena is a direct WASM offset, so this needs no guest translation.
   const win16Linear = (sel, off) =>
     0x100000 + (((sel >> 3) - 1) * 0x10000) + (off & 0xFFFF);
+  // The DDE transaction types, which are the whole story of a DDE trace: a
+  // hex number here is one of a dozen things an application can be asked, and
+  // reading 0x4090 as "somebody poked me" takes a table lookup every time.
+  const WIN16_DDE_XTYP = {
+    0x0060: 'XTYP_REGISTER', 0x1030: 'XTYP_ADVSTART', 0x1062: 'XTYP_CONNECT',
+    0x2022: 'XTYP_ADVREQ', 0x20B0: 'XTYP_REQUEST', 0x20E2: 'XTYP_WILDCONNECT',
+    0x4010: 'XTYP_ADVDATA', 0x4050: 'XTYP_EXECUTE', 0x4090: 'XTYP_POKE',
+    0x8002: 'XTYP_ERROR', 0x8040: 'XTYP_ADVSTOP', 0x8072: 'XTYP_CONNECT_CONFIRM',
+    0x8080: 'XTYP_XACT_COMPLETE',
+    0x80A2: 'XTYP_DISCONNECT', 0x80C2: 'XTYP_REGISTER_NOTIFY',
+  };
   const WIN16_MSG_NAMES = {
     0x0000: 'WM_NULL', 0x0001: 'WM_CREATE', 0x0002: 'WM_DESTROY',
     0x0003: 'WM_MOVE', 0x0005: 'WM_SIZE', 0x0006: 'WM_ACTIVATE',
@@ -1723,29 +1825,87 @@ async function main() {
     // 0xCA16A9F0 / 0xCA16A9EF are the two halves of --trace-win16: the call
     // with the four stack words nearest the top, then AX and DX once it has
     // run. Only the F1/F2 markers mean the task stopped.
+    // --trace-fpu (06-fpu.wat): the flags, whether they went up or came down,
+    // and the EIP of the block that did it.
+    if ((val >>> 0) === 0xCAF00001) { pendingFpu = { words: [] }; return; }
+    if (pendingFpu) {
+      pendingFpu.words.push(val >>> 0);
+      if (pendingFpu.words.length < 3) return;
+      const [bits, raised, eip] = pendingFpu.words;
+      pendingFpu = null;
+      const names = ['IE', 'DE', 'ZE', 'OE', 'UE', 'PE', 'SF', 'ES']
+        .filter((_, i) => bits & (1 << i)).join('|') || 'none';
+      logs.push(`[fpu] ${raised ? 'raise' : 'clear'} ${names} at ${hex(eip)}`);
+      return;
+    }
     if ((val >>> 0) === 0xCA16A9F1) { pendingWin16 = { want: 2, words: [] }; return; }
     if ((val >>> 0) === 0xCA16A9F2) { pendingWin16 = { want: 3, words: [] }; return; }
     // A by-name call into a loaded DLL that resolved: same three words as the
     // unresolved marker, but it is a call rather than a stop.
     if ((val >>> 0) === 0xCA16A9EE) { pendingWin16 = { want: 3, words: [], resolved: true }; return; }
+    // GetProcAddress asked a module this emulator answers for by name and got
+    // nothing back. Callers rarely check, so this is the only place the name
+    // is still known: Visual Basic reports "Sub or Function not defined" long
+    // afterwards with no way back to the Declare that failed.
+    if ((val >>> 0) === 0xCA16A9E5) { pendingWin16 = { want: 3, words: [], procMiss: true }; return; }
     // The Win16 modal dialog pump handing one message on: hwnd, message,
     // wParam, lParam, and the dialog the pump belongs to.
     if ((val >>> 0) === 0xCA16A9EB) { pendingWin16 = { want: 6, words: [], route: true }; return; }
     if ((val >>> 0) === 0xCA16A9EC) { pendingWin16 = { want: 5, words: [], posted: true }; return; }
-    if ((val >>> 0) === 0xCA16A9E9) { pendingWin16 = { want: 6, words: [], ddeAsk: true }; return; }
+    if ((val >>> 0) === 0xCA16A9E9) { pendingWin16 = { want: 12, words: [], ddeAsk: true }; return; }
     if ((val >>> 0) === 0xCA16A9E8) { pendingWin16 = { want: 2, words: [], ddeAns: true }; return; }
+    if ((val >>> 0) === 0xCA16A9E7) { pendingWin16 = { want: 3, words: [], ddeData: true }; return; }
+    // What CreateWindow made of its class name: the window, the class-name
+    // far pointer once flattened, the procedure the window ended up with, and
+    // what the class table says that name resolves to. They disagree exactly
+    // when the class was not found, which is otherwise invisible.
+    if ((val >>> 0) === 0xCA16A9E6) { pendingWin16 = { want: 4, words: [], wndClass: true }; return; }
     if ((val >>> 0) === 0xCA16A9F0) { pendingWin16 = { want: 15, words: [], call: true }; return; }
-    if ((val >>> 0) === 0xCA16A9EF) { pendingWin16 = { want: 4, words: [], ret: true }; return; }
+    if ((val >>> 0) === 0xCA16A9EF) { pendingWin16 = { want: 6, words: [], ret: true }; return; }
     if (pendingWin16) {
       pendingWin16.words.push(val >>> 0);
       if (pendingWin16.words.length < pendingWin16.want) return;
       const { call: isCall, ret: isRet, route: isRoute, posted: isPosted,
-              ddeAsk: isDdeAsk, ddeAns: isDdeAns, resolved, words } = pendingWin16;
+              ddeAsk: isDdeAsk, ddeAns: isDdeAns, ddeData: isDdeData,
+              wndClass: isWndClass, procMiss: isProcMiss, resolved, words } = pendingWin16;
       pendingWin16 = null;
+      if (isProcMiss) {
+        const mod = WIN16_MODULES[words[0] >>> 16] || `<module ${words[0] >>> 16}>`;
+        logs.push(`[win16] GetProcAddress ${mod}."${readPascalStr(words[2])}" -> NULL`);
+        return;
+      }
+      if (isWndClass) {
+        const [hwnd, cls, proc, found] = words;
+        const name = cls >= 0x10000 ? readStr(ctx.g2w(cls), 32) : `atom ${hex(cls)}`;
+        logs.push(`[win16] class hwnd=${hex(hwnd)} name=${hex(cls)} "${name}"` +
+          ` wndproc=${hex(proc)} class-table=${hex(found)}`);
+        return;
+      }
+      if (isDdeData) {
+        logs.push(`[win16] dde answered with ${words[0]} bytes:` +
+          ` ${hex(words[1])},${hex(words[2])}`);
+        return;
+      }
       if (isDdeAsk) {
-        const [type, inst, conv, hsz1, hsz2, cb] = words;
-        logs.push(`[win16] dde offer type=${hex(type)} inst=${inst} conv=${conv}` +
-          ` topic=${hsz1} service=${hsz2} callback=${hex(cb)}` +
+        const [type, inst, conv, hsz1, hsz2, cb, fmt, hdata, head, dlen, head2, head3] = words;
+        // Named, not numbered. A string handle is per-instance, so the two
+        // sides of one conversation give the same name different numbers and
+        // comparing two transcripts by handle proves nothing -- which is how a
+        // poke that arrived under the right name still read as a mystery.
+        const hszText = (h) => {
+          if (!instance.exports.win16_dde_hsz_text) return String(h);
+          const wa = instance.exports.win16_dde_hsz_text(h | 0) >>> 0;
+          if (!wa) return String(h);
+          const bytes = new Uint8Array(memory.buffer);
+          let end = wa;
+          while (end < wa + 68 && bytes[end]) end++;
+          const text = Buffer.from(bytes.slice(wa, end)).toString('latin1');
+          return text ? `${h}:${JSON.stringify(text)}` : String(h);
+        };
+        logs.push(`[win16] dde offer ${WIN16_DDE_XTYP[type] || hex(type)}` +
+          ` inst=${inst} conv=${conv}` +
+          ` topic=${hszText(hsz1)} item=${hszText(hsz2)}` +
+          ` fmt=${fmt} data=${hex(hdata)}${hdata ? `[${dlen}]=${hex(head)},${hex(head2)},${hex(head3)}` : ''} callback=${hex(cb)}` +
           `${cb >>> 16 ? '' : ' NO CALLBACK -- nobody to ask'}`);
         return;
       }
@@ -1771,7 +1931,11 @@ async function main() {
         return;
       }
       if (isRet) {
-        logs.push(`[win16]   -> AX=${hex(words[0])} DX=${hex(words[1])} eip=${hex(words[2])} esp=${hex(words[3])}`);
+        // `popped` counts the far return address plus the Pascal argument
+        // bytes the API removed. Comparing it against the API's real signature
+        // is how a frame bug is found before it becomes a return into nothing.
+        logs.push(`[win16]   -> AX=${hex(words[0])} DX=${hex(words[1])} eip=${hex(words[2])}`
+          + ` esp=${hex(words[3])} popped=${words[4] | 0} ds=${hex(words[5])}`);
         return;
       }
       const [key, ret, nameAddr] = words;
@@ -1965,6 +2129,28 @@ async function main() {
         ` menu=${hex(ex.dlg_get_menu(hwnd))}`;
     }
     logs.push(`[CreateDialog] hwnd=0x${hwnd.toString(16)} parent=0x${parentHwnd.toString(16)}${detail}`);
+    // Which WAT control class each template control resolved to. A template
+    // names its controls by string ("SysTreeView32") or ordinal, and the class
+    // it lands on decides everything afterwards: class 0 keeps the app's own
+    // registered wndproc, anything else replaces it with the WAT-native
+    // control. Nothing else in the log says which of the two happened, so a
+    // control that renders but ignores every click looks identical to one that
+    // was never wired up at all.
+    if (ex && ex.wnd_next_child_slot && ex.ctrl_get_class) {
+      let slot = 0;
+      for (;;) {
+        slot = ex.wnd_next_child_slot(hwnd, slot);
+        if (slot < 0) break;
+        const ch = ex.wnd_slot_hwnd(slot);
+        const xy = ex.ctrl_get_xy(ch), wh = ex.ctrl_get_wh(ch);
+        const s16 = v => (v << 16) >> 16;
+        logs.push(`[CreateDialog]   ctrl hwnd=0x${(ch >>> 0).toString(16)}`
+          + ` id=${ex.ctrl_get_id(ch)} class=${ex.ctrl_get_class(ch)}`
+          + ` at ${s16(xy & 0xFFFF)},${s16(xy >>> 16)}`
+          + ` ${s16(wh & 0xFFFF)}x${s16(wh >>> 16)}`);
+        slot++;
+      }
+    }
     if (renderer) renderer.createDialog(hwnd, parentHwnd);
   };
 
@@ -2039,23 +2225,8 @@ async function main() {
   // need to land in the edit child (0x10002) since we don't track focus from
   // outside WAT. Anything else (menu commands, mouse, etc.) returns 0 so the
   // WAT side defaults to main_hwnd.
-  h.check_input_hwnd = () => {
-    if (!lastInputEvent) return 0;
-    if (lastInputEvent.hwnd) { logs.push(`[check_input_hwnd] explicit hwnd=0x${lastInputEvent.hwnd.toString(16)}`); return lastInputEvent.hwnd; }
-    const m = lastInputEvent.msg;
-    // Keyboard: prefer the WAT focus owner (e.g. edit child), else fall back to
-    // main_hwnd (0). Hard-coding 0x10002 was a notepad hack that broke any app
-    // (e.g. SDL) whose focus owner isn't a notepad-shaped edit ctrl.
-    if (m >= 0x100 && m <= 0x108) {
-      const we = instance && instance.exports;
-      const focus = (we && we.get_focus_hwnd) ? (we.get_focus_hwnd() | 0) : 0;
-      if (focus) { logs.push(`[check_input_hwnd] keyboard → focus 0x${focus.toString(16)}`); return focus; }
-      logs.push(`[check_input_hwnd] keyboard → 0 (main_hwnd)`);
-      return 0;
-    }
-    logs.push(`[check_input_hwnd] msg=0x${m.toString(16)} → 0 (main_hwnd)`);
-    return 0;
-  };
+  h.check_input_hwnd = () => inputEventHwnd(lastInputEvent, instance && instance.exports,
+    (why) => logs.push(`[check_input_hwnd] ${why}`));
   h.check_input_lparam = () => (lastInputEvent ? (lastInputEvent.lParam || 0) : 0);
   let lastMouseTracePos = -1;
   let lastMouseTraceButtons = -1;
@@ -2240,6 +2411,21 @@ async function main() {
   const wasmModule = await WebAssembly.compile(wasmBytes);
   const instance = await WebAssembly.instantiate(wasmModule, imports);
   ctx.exports = instance.exports;
+  // A run that is stopped from outside still knows things worth having. The
+  // two-process tests kill both emulators when their checks are done, and
+  // without this the --count summary -- the whole point of the flag -- was
+  // never printed for either of them.
+  if (countAddrs.length && instance.exports.get_count) {
+    for (const sig of ['SIGTERM', 'SIGINT']) {
+      process.on(sig, () => {
+        console.log(`Hit counts (on ${sig}):`);
+        for (let i = 0; i < countAddrs.length; i++) {
+          console.log(`  ${hex(countAddrs[i])} = ${instance.exports.get_count(i)}`);
+        }
+        process.exit(0);
+      });
+    }
+  }
   if (instance.exports.set_process_id) instance.exports.set_process_id(ctx.processId);
   if (VLAN_IP && instance.exports.set_vlan_local_ip) {
     const octets = VLAN_IP.split('.').map(Number);
@@ -2264,65 +2450,83 @@ async function main() {
 
   // Create ThreadManager now that we have the main instance
   const makeWorkerImports = (tid) => {
-    const workerCtx = {
+    // Everything process-scoped — the filesystem, the LAN wire, the clock, the
+    // audio device, the GDI handles — comes from one shared list, so the two
+    // hosts cannot quietly disagree about what a thread inherits.
+    const workerCtx = Object.assign(processSharedCtx(ctx), {
       getMemory: () => memory.buffer,
       renderer,
       onExit: () => {},
       trace: traceCategories,
       traceHost: traceHostNames,
       hostCensus: HOST_CENSUS,
-      vfs: ctx.vfs,  // share filesystem with main thread
-      vlanWire: ctx.vlanWire,  // one wire per process, shared by every thread
-      guestNowMs: ctx.guestNowMs,  // one clock per process, not per thread
       exports: instance.exports,  // share main instance exports for g2w
-      _audioOutFd: ctx._audioOutFd,  // share audio output fd
-      sharedAudio: ctx.sharedAudio,  // share waveOut state across threads
-      _waveStats: ctx._waveStats,  // share audio-stats counters so T4 writes show in main-thread summary
-      audioStatsStride: ctx.audioStatsStride,
       _debugReadFile: TRACE_API,
-      sharedGdi: base.gdi,  // share GDI handles so worker BitBlt can see main-thread bitmaps
+      sharedGdi: base.gdi,  // the live GDI table, not the copy in ctx
       g2w: (addr) => translateGuest(addr, instance.exports.get_image_base(), memory.buffer),
-    };
+    });
     const workerBase = createHostImports(workerCtx);
     const wh = workerBase.host;
     wh.memory = memory;
-    // Wire thread/event to same ThreadManager
-    wh.create_thread = h.create_thread;
-    wh.suspend_thread = h.suspend_thread;
-    wh.resume_thread = h.resume_thread;
-    wh.exit_thread = h.exit_thread;
-    wh.get_exit_code_thread = h.get_exit_code_thread;
-    wh.create_event = h.create_event;
-    wh.set_event = h.set_event;
-    wh.reset_event = h.reset_event;
-    wh.wait_single = h.wait_single;
-    wh.wait_multiple = h.wait_multiple;
-    wh.create_semaphore = h.create_semaphore;
-    wh.release_semaphore = h.release_semaphore;
+    // Every thread in the process schedules against one ThreadManager. The
+    // list is shared, and adopting a name the main table does not implement
+    // throws rather than leaving the return-0 stub in place.
+    adoptThreadPrimitives(wh, h);
     for (const name of profileHostNames) wrapProfileHost(wh, name);
-    // Worker logging. The return value belongs to the call that was just
-    // logged, so it is shown only when that call was.
-    let workerLogVisible = false;
-    wh.log = (ptr, len) => {
-      const b = new Uint8Array(memory.buffer, ptr, Math.min(len, 256));
-      let t = '';
-      for (let i = 0; i < b.length && b[i]; i++) t += String.fromCharCode(b[i]);
-      if (apiCounts) apiCounts.set(t, (apiCounts.get(t) || 0) + 1);
-      // Honour --quiet-api and --trace-api=NAMES here exactly as the main
-      // thread does. Without this a worker's idle poll (MsgWaitForMultiple-
-      // Objects, Sleep, QueryPerformanceCounter) logs unfiltered: a long
-      // two-process run emitted 2.3M such lines and died of heap exhaustion
-      // inside console.log, with the filter the caller asked for ignored.
-      if (TRACE_API && !QUIET_API && (!TRACE_API_FILTER || TRACE_API_FILTER.has(t))) {
-        workerLogVisible = true;
-        logs.push(`[API T${tid}] ${t}`);
-      } else {
-        workerLogVisible = false;
+    // Worker API tracing. The decode and the "the return belongs to the call
+    // just logged" latch are shared; what stays here is the CLI's own policy —
+    // count every call for the summary, and honour --quiet-api and
+    // --trace-api=NAMES exactly as the main thread does. That filter is not a
+    // nicety: without it a worker's idle poll (MsgWaitForMultipleObjects,
+    // Sleep, QueryPerformanceCounter) logs unfiltered, and a long two-process
+    // run emitted 2.3M such lines and died of heap exhaustion inside
+    // console.log with the filter the caller asked for ignored.
+    // Typed args for the worker trace. The worker instance does not exist yet
+    // (ThreadManager builds it from these imports), so its exports are looked
+    // up by tid at log time; before it is registered these return null and the
+    // trace falls back to the bare name.
+    const workerExports = () => {
+      if (!threadManager) return null;
+      for (const [, t] of threadManager.threads) {
+        if ((t.tid | 0) === (tid | 0) && t.instance) return t.instance.exports;
       }
+      return null;
     };
-    wh.log_i32 = (val) => {
-      if (workerLogVisible) logs.push(`  => ${hex(val)}`);
+    const workerFmtCtx = () => {
+      const e = workerExports();
+      if (!e || !e.get_esp || !e.get_image_base) return null;
+      const imageBase = e.get_image_base();
+      const g2w = addr => addr - imageBase + 0x12000;
+      return {
+        esp: e.get_esp(),
+        ctx: { dv: new DataView(memory.buffer), g2w, memory: memory.buffer, readStr, hex },
+      };
     };
+    const workerApiLog = makeWorkerApiLogger({
+      getBuffer: () => memory.buffer,
+      threadId: tid,
+      formatCall: (name) => {
+        const entry = apiByName.get(name);
+        if (!entry) return null;
+        const f = workerFmtCtx();
+        return f ? fmtApiCall(entry, f.esp, f.ctx) : null;
+      },
+      formatReturn: (name, val) => {
+        const entry = apiByName.get(name);
+        if (!entry) return null;
+        const f = workerFmtCtx();
+        return f ? fmtApiRet(entry, val, f.ctx) : null;
+      },
+      onCall: (name) => {
+        if (apiCounts) apiCounts.set(name, (apiCounts.get(name) || 0) + 1);
+      },
+      shouldLog: (name) => TRACE_API && !QUIET_API &&
+        (!TRACE_API_FILTER || TRACE_API_FILTER.has(name)),
+      formatValue: hex,
+      emit: (line) => logs.push(line),
+    });
+    wh.log = workerApiLog.log;
+    wh.log_i32 = workerApiLog.log_i32;
     if (TRACE_MOUSE_STATE) {
       const workerGetMousePosition = wh.get_mouse_position;
       const workerGetMouseButtons = wh.get_mouse_buttons;
@@ -2422,23 +2626,16 @@ async function main() {
       (inputQueue && inputQueue.length) ||
       (renderer && renderer.inputQueue && renderer.inputQueue.length)
     ),
+    // The per-app thread-exit fixups the browser host has always run — Winamp's
+    // visualizer bookkeeping — now run headless too, so a browser-only symptom
+    // is reproducible from the CLI.
+    onThreadExit: (info) => profileThreadExit(
+      path.basename(EXE_PATH), info, instance.exports, memory.buffer,
+      { log: (m) => console.log(m) }),
   });
 
   const mem = new Uint8Array(memory.buffer);
-  // Self-extracting installers append their archive after the PE image, so the
-  // file can be far larger than anything the loader needs. The staging buffer
-  // sits below emulator-private tables — the API hash table among them — and an
-  // unbounded copy walks straight through them, after which every import
-  // resolves to api_id 0xFFFF and the app dies on its first call.
-  const stagingCap = instance.exports.get_staging_size();
-  const staged = Math.min(exeBytes.length, stagingCap);
-  if (staged < exeBytes.length) {
-    console.log(`[pe] staging ${staged} of ${exeBytes.length} bytes ` +
-      `(buffer is ${stagingCap}); the tail is appended data, read via the VFS`);
-  }
-  mem.set(exeBytes.subarray(0, staged), instance.exports.get_staging());
-  const entry = instance.exports.load_pe(staged);
-  console.log('PE loaded. Entry: ' + hex(entry));
+  const { entry } = stageAndLoadPe(instance.exports, memory.buffer, exeBytes, console.log);
   if (CS_STEAL_AFTER && instance.exports.set_cs_steal_after) {
     instance.exports.set_cs_steal_after(CS_STEAL_AFTER);
   }
@@ -2447,7 +2644,7 @@ async function main() {
   // went into, so this has to follow load_pe.
   loadWin16Dlls(instance.exports, memory, exeBytes, path.dirname(EXE_PATH),
     (dir, name) => {
-      for (const f of [`${name}.DLL`, `${name}.dll`, `${name}.EXE`]) {
+      for (const f of win16FileCandidates(name)) {
         const p = path.join(dir, f);
         if (fs.existsSync(p)) return fs.readFileSync(p);
       }
@@ -2461,20 +2658,11 @@ async function main() {
   }
 
   // Set EXE name from path
-  if (instance.exports.set_exe_name) {
-    const exeName = path.basename(EXE_PATH);
-    const nameBytes = Buffer.from(exeName);
-    const staging = instance.exports.get_staging();
-    mem.set(nameBytes, staging);
-    instance.exports.set_exe_name(staging, nameBytes.length);
-  }
+  setExeName(instance.exports, memory.buffer, path.basename(EXE_PATH));
 
   // Pass extra command-line arguments via the staging buffer (--args="...")
-  if (EXTRA_ARGS && instance.exports.set_extra_cmdline) {
-    const argBytes = Buffer.from(EXTRA_ARGS);
-    const staging = instance.exports.get_staging();
-    mem.set(argBytes, staging);
-    instance.exports.set_extra_cmdline(staging, argBytes.length);
+  if (EXTRA_ARGS) {
+    setExtraCmdline(instance.exports, memory.buffer, EXTRA_ARGS);
     console.log(`Extra cmdline args: ${JSON.stringify(EXTRA_ARGS)}`);
   }
 
@@ -2500,10 +2688,9 @@ async function main() {
     }));
   } else {
     // Auto-detect: scan EXE imports, load any DLLs found in test/binaries/dlls/
-    const required = requiredDlls;
-    // Only load DLLs that work as real PE DLLs; others are handled by WAT stub handlers
-    // The one list, shared with the browser (lib/dll-registry.js).
-    const LOADABLE_DLLS = dllRegistry.LOADABLE_DLLS;
+    // Only load DLLs that work as real PE DLLs; others are handled by WAT stub
+    // handlers — the one list, shared with the browser (lib/dll-registry.js),
+    // as is the graph walk itself (lib/process-boot.js).
     const exeDir = path.dirname(EXE_PATH);
     const dllSearchDirs = [
       dllDir,
@@ -2512,17 +2699,6 @@ async function main() {
       path.join(exeDir, '..', 'shared_dlls'),
       path.join(__dirname, 'binaries', 'dlls'),
     ];
-    dlls = [];
-    // Old MFC builds import their matching CRT during DllMain. Preserve a
-    // dependency-safe order even when the EXE import directory lists MFC first.
-    const orderedRequired = [...required].sort((a, b) => {
-      const rank = name => name.toLowerCase() === 'msvcrt20.dll' ? 0 : 1;
-      return rank(a) - rank(b);
-    });
-    // A DLL's own imports have to be satisfied too. Kodak Imaging pulls in
-    // IMGCMN, which imports OIFIL400, which imports its siblings — leave any
-    // of them unloaded and the first cross-DLL ordinal resolves to a system
-    // thunk and traps. Walk the dependency graph, not just the EXE's row of it.
     const findDllFile = name => {
       for (const dir of dllSearchDirs) {
         const p = path.join(dir, name);
@@ -2530,23 +2706,29 @@ async function main() {
       }
       return null;
     };
-    const queued = new Set();
-    const queue = [...orderedRequired];
-    while (queue.length) {
-      const name = queue.shift();
-      const key = name.toLowerCase();
-      if (queued.has(key) || !LOADABLE_DLLS.has(key)) continue;
-      const p = findDllFile(name);
-      if (!p) continue;
-      queued.add(key);
-      const bytes = fs.readFileSync(p);
-      dlls.push({ name, bytes });
-      try {
-        for (const dep of detectRequiredDlls(bytes)) {
-          if (!queued.has(dep.toLowerCase())) queue.push(dep);
-        }
-      } catch (_) { /* a DLL we cannot parse simply contributes no deps */ }
+    // App-local DLLs ship beside their exe, so a dependency named by another
+    // DLL is looked up in this app's own `files` list too — same rule the page
+    // applies (index.html appFileByName).
+    const appFileByName = new Map();
+    for (const f of ((ASSET_ENTRY && ASSET_ENTRY.files) || [])) {
+      const url = typeof f === 'string' ? f : (f && f.url);
+      if (url) appFileByName.set(url.split('/').pop().toLowerCase(), url);
     }
+    dlls = await resolveDllGraph({
+      exeBytes,
+      seeds: (ASSET_ENTRY && ASSET_ENTRY.dlls) || [],
+      detectRequiredDlls,
+      loadSpec: (spec) => {
+        // Registry seeds arrive as repo-relative paths; the graph walk's own
+        // discoveries arrive as bare DLL names.
+        const name = spec.split('/').pop();
+        const p = spec.includes('/')
+          ? appAsset(spec)
+          : (findDllFile(name) || (appFileByName.has(name.toLowerCase())
+              ? appAsset(appFileByName.get(name.toLowerCase())) : null));
+        return (p && fs.existsSync(p)) ? { name, bytes: fs.readFileSync(p) } : null;
+      },
+    });
   }
   // Register exe in moduleBases so `exe+0xVA` and basename-relative specs work.
   {
@@ -2588,59 +2770,88 @@ async function main() {
   // Resolve any module-relative address specs now that all module bases are known.
   deferredResolveAddrs();
 
-  // Pre-populate EXE in virtual filesystem so CreateFileA on itself works
-  // GetModuleFileNameA returns "C:\app.exe" — inject EXE bytes at that path
+  // Put the exe where a running image expects to find itself; see lib/vfs-seed.js.
   if (ctx.vfs) {
-    const exeData = new Uint8Array(exeBytes);
-    ctx.vfs.files.set('c:\\app.exe', { data: exeData, attrs: 0x20 });
-    // Also register under the real basename in case something uses it differently
-    const exeName = path.basename(EXE_PATH).toLowerCase();
-    ctx.vfs.files.set('c:\\' + exeName, { data: exeData, attrs: 0x20 });
-    // Pre-load companion files from EXE's directory (data files, bitmaps, etc.)
-    // Recursively scan subdirectories too (e.g. Plugins/ for Winamp)
+    const exeName = seedExeImage(ctx.vfs, exeBytes, path.basename(EXE_PATH)).base;
     const exeDir = path.dirname(EXE_PATH);
-    // Index the tree, don't read it. The exe's directory is whatever the caller
-    // pointed us at, and for anything sitting at the root of test/binaries that
-    // is the entire corpus — 3003 files, 1056 MB, read in full before the first
-    // x86 instruction, once per process, 114 times over a suite run. Profiling
-    // put this function at the top of the self-time list with the read/open/stat
-    // underneath it second. Measured back to back on notepad, 80 batches:
-    // eager 20.5/23.0/24.3s, lazy 1.66/1.88/2.11s. Most of that is not the
-    // reading — a warm re-read of the whole tree is under two seconds — it is
-    // allocating and then collecting a gigabyte of Uint8Array per process.
-    //
-    // readdir + stat is cheap and gives FindFirstFile everything it asks for
-    // (name, size, attributes). The bytes arrive on the first CreateFile that
-    // actually wants them.
-    const loadDir = (hostDir, vfsPrefix) => {
-      for (const f of fs.readdirSync(hostDir)) {
-        if (vfsPrefix === 'c:\\' && f.toLowerCase() === exeName) continue;
-        const fpath = path.join(hostDir, f);
-        try {
-          const stat = fs.statSync(fpath);
-          if (stat.isFile()) {
-            ctx.vfs.setLazyFile(vfsPrefix + f.toLowerCase(), {
-              attrs: 0x20,
-              size: stat.size,
-              load: () => new Uint8Array(fs.readFileSync(fpath)),
-            });
-          } else if (stat.isDirectory() && f !== '.' && f !== '..') {
-            const subDir = vfsPrefix + f.toLowerCase() + '\\';
-            ctx.vfs.dirs.add(subDir);
-            ctx.vfs.dirs.add(subDir.replace(/\\$/, ''));
-            loadDir(fpath, subDir);
-          }
-        } catch (_) {}
+    const addFile = (rawPath, hostPath, size) => {
+      let vfsPath = String(rawPath).toLowerCase().replace(/\//g, '\\');
+      if (!/^[a-z]:/.test(vfsPath)) vfsPath = 'c:\\' + vfsPath.replace(/^\\+/, '');
+      let p = vfsPath;
+      while (true) {
+        const idx = p.lastIndexOf('\\');
+        if (idx <= 2) break;
+        p = p.slice(0, idx);
+        ctx.vfs.dirs.add(p);
+      }
+      ctx.vfs.setLazyFile(vfsPath, {
+        attrs: 0x20,
+        size,
+        load: () => new Uint8Array(fs.readFileSync(hostPath)),
+      });
+    };
+    const addFontAlias = (name, hostPath, size) => {
+      const base = String(name).replace(/^.*[\\/]/, '').toLowerCase();
+      if (/\.(ttf|ttc|fon)$/.test(base)) {
+        addFile('c:\\windows\\fonts\\' + base, hostPath, size);
       }
     };
-    loadDir(exeDir, 'c:\\');
+
+    // An arbitrary bare --exe mounts only the executable. A registered EXE
+    // gets that app's explicit file manifest; an ad-hoc run can add one or more
+    // --vfs-include globs rooted at the EXE directory. In particular, placing
+    // an EXE directly in /private/tmp no longer indexes every unrelated file
+    // and directory below /private/tmp (nor any sibling directory above it).
+    const includedFiles = expandIncludePatterns(exeDir, VFS_INCLUDE);
+    for (const file of includedFiles) {
+      const size = fs.statSync(file.hostPath).size;
+      addFile(file.guestPath, file.hostPath, size);
+      addFontAlias(file.guestPath, file.hostPath, size);
+    }
+    // Mount a matched registry app's data files at the same VFS paths the page
+    // gives them. An entry is a repo-relative URL (-> c:\basename), or
+    // {url, vfsPath}, or {url, vfsPaths} when one file needs several aliases.
+    if (ASSET_ENTRY && ASSET_ENTRY.files) {
+      const missing = [];
+      for (const item of ASSET_ENTRY.files) {
+        const url = typeof item === 'string' ? item : (item && item.url);
+        if (!url) continue;
+        const hostPath = appAsset(url);
+        let size = 0;
+        try {
+          size = fs.statSync(hostPath).size;
+        } catch (_) {
+          missing.push(url);
+          continue;
+        }
+        const paths = (typeof item === 'object' && Array.isArray(item.vfsPaths))
+          ? item.vfsPaths
+          : [(typeof item === 'object' && item.vfsPath) || url.replace(/^.*[\\\/]/, '')];
+        for (const p of paths) addFile(p, hostPath, size);
+        // Same rule the page applies: a font the app ships is a font its
+        // installer had put in the font directory, so mount it there too,
+        // over the vendored substitute if one is already sitting there.
+        addFontAlias(url, hostPath, size);
+      }
+      if (missing.length) {
+        const msg = `${APP_ENTRY ? `--app=${APP_ID}` : `--exe=${EXE_PATH} (${ASSET_ENTRY_ID})`}: ` +
+          `${missing.length} file(s) not found: ${missing.slice(0, 5).join(', ')}` +
+          (missing.length > 5 ? ` (+${missing.length - 5} more)` : '');
+        if (ASSET_ENTRY.requiredFiles) throw new Error(msg);
+        console.log('[app] ' + msg);
+      }
+    }
     if (VFS_DRIVE) {
       const drive = VFS_DRIVE.replace(/:$/, '').toLowerCase();
       if (!/^[a-z]$/.test(drive)) throw new Error(`invalid --vfs-drive: ${VFS_DRIVE}`);
       const driveRoot = `${drive}:\\`;
       ctx.vfs.dirs.add(`${drive}:`);
       ctx.vfs.dirs.add(driveRoot);
-      loadDir(exeDir, driveRoot);
+      ctx.vfs.files.set(driveRoot + exeName, { data: exeBytes, attrs: 0x21 });
+      for (const file of includedFiles) {
+        addFile(driveRoot + file.guestPath.replace(/\//g, '\\'), file.hostPath,
+          fs.statSync(file.hostPath).size);
+      }
       ctx.vfs.setDriveReadOnly(drive, true);
     }
 
@@ -2725,44 +2936,18 @@ async function main() {
       } catch (_) {}
     }
 
-    // Also load sibling directories from parent — games like RCT have the exe
-    // in a subdirectory (English/) but data in a sibling (Data/).
-    const parentDir = path.dirname(exeDir);
-    if (parentDir !== exeDir) {
-      try {
-        for (const f of fs.readdirSync(parentDir)) {
-          const fpath = path.join(parentDir, f);
-          try {
-            const stat = fs.statSync(fpath);
-            if (stat.isDirectory() && f !== '.' && f !== '..' && fpath !== exeDir) {
-              const vfsDir = 'c:\\' + f.toLowerCase() + '\\';
-              if (!ctx.vfs.dirs.has(vfsDir)) {
-                ctx.vfs.dirs.add(vfsDir);
-                ctx.vfs.dirs.add(vfsDir.replace(/\\$/, ''));
-                loadDir(fpath, vfsDir);
-              }
-            }
-          } catch (_) {}
-        }
-      } catch (_) {}
-      // Some extracted InstallShield-era games put the EXE under Program_Files
-      // but expect the sibling Database_Files/zbd directory to also be visible
-      // as a CWD-relative "zbd\" search root.
-      try {
-        const zbdDir = path.join(parentDir, 'Database_Files', 'zbd');
-        const zbdStat = fs.statSync(zbdDir);
-        if (zbdStat.isDirectory() && !ctx.vfs.dirs.has('c:\\zbd\\')) {
-          ctx.vfs.dirs.add('c:\\zbd\\');
-          ctx.vfs.dirs.add('c:\\zbd');
-          loadDir(zbdDir, 'c:\\zbd\\');
-        }
-      } catch (_) {}
-    }
   }
 
   const regs = () => {
     const e = instance.exports;
-    return `EIP=${hex(e.get_eip())} EAX=${hex(e.get_eax())} ECX=${hex(e.get_ecx())} EDX=${hex(e.get_edx())} EBX=${hex(e.get_ebx())} ESP=${hex(e.get_esp())} EBP=${hex(e.get_ebp())} ESI=${hex(e.get_esi())} EDI=${hex(e.get_edi())}`;
+    const base = `EIP=${hex(e.get_eip())} EAX=${hex(e.get_eax())} ECX=${hex(e.get_ecx())} EDX=${hex(e.get_edx())} EBX=${hex(e.get_ebx())} ESP=${hex(e.get_esp())} EBP=${hex(e.get_ebp())} ESI=${hex(e.get_esi())} EDI=${hex(e.get_edi())}`;
+    // A 16-bit task's segment registers decide what every one of the above
+    // addresses. Printed only when there are any, so 32-bit traces are
+    // unchanged.
+    if (!e.get_sreg_ds) return base;
+    const ds = e.get_sreg_ds(), es = e.get_sreg_es(), ss = e.get_sreg_ss();
+    if (!(ds | es | ss)) return base;
+    return `${base} DS=${hex(ds)} ES=${hex(es)} SS=${hex(ss)} CS=${hex(e.get_sreg_cs())}`;
   };
 
   const g2w = addr => {
@@ -3018,6 +3203,9 @@ async function main() {
   }
   if (TRACE_WIN16 && instance.exports.set_win16_trace) {
     instance.exports.set_win16_trace(1);
+  }
+  if (TRACE_FPU && instance.exports.set_fpu_trace) {
+    instance.exports.set_fpu_trace(1);
   }
   const dumpCallstack = (label, e) => {
     if (!TRACE_CALLSTACK || !e || !e.get_callstack_depth) return;
@@ -3554,6 +3742,48 @@ async function main() {
         } else {
           logs.push(`[input] dump-control-state${tag}: hwnd=0x${h.toString(16)} id=${ev.ctrlId} NO STATE API at batch ${batch}`);
         }
+      } else if (ev.action === 'dump-combobox') {
+        // A combobox's dropped list is a WAT popup window, not a LISTBOX
+        // control, so dump-listbox cannot see it. Read the rows the way the
+        // app does instead: CB_GETCOUNT + CB_GETLBTEXT.
+        const we = instance.exports;
+        let h = 0;
+        for (const w of Object.values((renderer && renderer.windows) || {})) {
+          if (w.visible && we.ctrl_get_id && we.ctrl_get_id(w.hwnd) === ev.ctrlId) {
+            h = w.hwnd;
+            break;
+          }
+        }
+        if (!h && we.wnd_slot_hwnd && we.ctrl_get_id) {
+          for (let s = 255; s >= 0; s--) {
+            const hwnd = we.wnd_slot_hwnd(s);
+            if (hwnd && we.ctrl_get_id(hwnd) === ev.ctrlId) {
+              h = hwnd;
+              break;
+            }
+          }
+        }
+        const tag = ev.label ? ` ${ev.label}` : '';
+        if (!h) {
+          logs.push(`[input] dump-combobox${tag}: id=${ev.ctrlId} NOT FOUND at batch ${batch}`);
+        } else if (we.send_message && we.guest_alloc) {
+          const count = we.send_message(h, 0x0146, 0, 0) | 0;   // CB_GETCOUNT
+          const cur = we.send_message(h, 0x0147, 0, 0) | 0;     // CB_GETCURSEL
+          const bufG = we.guest_alloc(512);
+          const rows = [];
+          const shown = Math.max(0, Math.min(count, 128));
+          for (let i = 0; i < shown; i++) {
+            new Uint8Array(memory.buffer, g2w(bufG), 512).fill(0);
+            const n = we.send_message(h, 0x0148, i, bufG) | 0; // CB_GETLBTEXT
+            const len = Math.max(0, Math.min(n, 511));
+            const data = we.send_message(h, 0x0150, i, 0) >>> 0; // CB_GETITEMDATA
+            rows.push(JSON.stringify(readStr(g2w(bufG), len)) +
+              (data ? `@0x${data.toString(16)}` : ''));
+          }
+          logs.push(`[input] dump-combobox${tag}: hwnd=0x${h.toString(16)} id=${ev.ctrlId} count=${count} cursel=${cur} items=${rows.join(',')} at batch ${batch}`);
+        } else {
+          logs.push(`[input] dump-combobox${tag}: hwnd=0x${h.toString(16)} id=${ev.ctrlId} NO SEND API at batch ${batch}`);
+        }
       } else if (ev.action === 'dump-clipboard') {
         const we = instance.exports;
         const tag = ev.label ? ` ${ev.label}` : '';
@@ -3742,6 +3972,30 @@ async function main() {
           logs.push(`[input] set-focus-charformat-size${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} twips=${ev.twips | 0} ret=0x${ret.toString(16)} at batch ${batch}`);
         } else {
           logs.push(`[input] set-focus-charformat-size${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} NO CHARFORMAT API at batch ${batch}`);
+        }
+      } else if (ev.action === 'set-focus-charformat-face') {
+        const we = instance.exports;
+        const h = we.get_focus_hwnd ? (we.get_focus_hwnd() | 0) : 0;
+        const cls = (h && we.ctrl_get_class) ? we.ctrl_get_class(h) : -1;
+        const id  = (h && we.ctrl_get_id)    ? we.ctrl_get_id(h)    : -1;
+        const tag = ev.label ? ` ${ev.label}` : '';
+        if (!h) {
+          logs.push(`[input] set-focus-charformat-face${tag}: NO FOCUS at batch ${batch}`);
+        } else if (we.send_message && we.guest_alloc) {
+          const cfG = we.guest_alloc(128);
+          const cfWA = g2w(cfG);
+          const dv = new DataView(memory.buffer);
+          new Uint8Array(memory.buffer, cfWA, 128).fill(0);
+          dv.setUint32(cfWA, 60, true); // CHARFORMATA cbSize
+          // CFM_FACE 0x20000000, plus CFM_SIZE 0x80000000 when a size is given.
+          dv.setUint32(cfWA + 4, ev.twips ? 0xa0000000 : 0x20000000, true);
+          if (ev.twips) dv.setInt32(cfWA + 12, ev.twips | 0, true); // yHeight
+          const name = Buffer.from(String(ev.face).slice(0, 31), 'latin1');
+          new Uint8Array(memory.buffer, cfWA + 26, name.length).set(name); // szFaceName
+          const ret = we.send_message(h, 0x0444, 1, cfG) >>> 0; // EM_SETCHARFORMAT, SCF_SELECTION
+          logs.push(`[input] set-focus-charformat-face${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} face=${JSON.stringify(ev.face)} twips=${ev.twips | 0} ret=0x${ret.toString(16)} at batch ${batch}`);
+        } else {
+          logs.push(`[input] set-focus-charformat-face${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} NO CHARFORMAT API at batch ${batch}`);
         }
       } else if (ev.action === 'dump-focus-paraformat') {
         const we = instance.exports;
@@ -4375,7 +4629,16 @@ async function main() {
             // parent's `nc` bit 1 (erase) or its own `dirty` bit is what holds
             // the queue up.
             const dirty = we.paint_flag_test ? (we.paint_flag_test(hwnd) | 0) : -1;
-            children.push(`slot=${slot} hwnd=0x${hwnd.toString(16)} parent=0x${par.toString(16)} proc=0x${proc.toString(16)} cls=${cls} id=${id} style=0x${style.toString(16)} buttonFlags=0x${buttonFlags.toString(16)} xy=${xy & 0xffff},${xy >>> 16} wh=${wh & 0xffff}x${wh >>> 16} dirty=${dirty}`);
+            // For a WS_CHILD the recorded CLIENT_RECT, not `wh`, is what
+            // $wnd_client_{w,h}_for_clip hands to the DC clip whenever it is
+            // non-empty — so a control that paints its own furniture (an
+            // edit's scrollbar strips, a combo's drop arrow) loses exactly the
+            // pixels this rect is short of `wh`, and nothing else in a trace
+            // says so.
+            const cr = we.get_client_rect_l
+              ? `${we.get_client_rect_l(hwnd) | 0},${we.get_client_rect_t(hwnd) | 0},${we.get_client_rect_r(hwnd) | 0},${we.get_client_rect_b(hwnd) | 0}`
+              : 'n/a';
+            children.push(`slot=${slot} hwnd=0x${hwnd.toString(16)} parent=0x${par.toString(16)} proc=0x${proc.toString(16)} cls=${cls} id=${id} style=0x${style.toString(16)} buttonFlags=0x${buttonFlags.toString(16)} xy=${xy & 0xffff},${xy >>> 16} wh=${wh & 0xffff}x${wh >>> 16} cr=${cr} dirty=${dirty}`);
             slot++;
           }
         }
@@ -4422,7 +4685,25 @@ async function main() {
           }
           items.push(`#${i} id=${id} flags=0x${flags.toString(16)} "${label}"${sub}`);
         }
-        logs.push(`[input] menu-dump${ev.label ? ':' + ev.label : ''}: hwnd=${hwnd ? '0x' + hwnd.toString(16) : 'none'} top=${top} hover=${hover} subhover=${subHover} xy=${x},${y} count=${count} ${items.join(' | ') || '(no items)'}`);
+        // Where the dropdown and its cascade actually are. Without this a
+        // "submenu never highlighted" report cannot be told apart from
+        // "the test aimed the mouse at the wrong place": both look like
+        // subhover=-1. Widths are the fixed 180 the painter and hit-test
+        // share; the cascade hangs off the hovered row.
+        let geom = '';
+        if (hwnd && we.menu_dropdown_x && we.menu_dropdown_y) {
+          const dx = we.menu_dropdown_x(hwnd, top) | 0;
+          const dy = we.menu_dropdown_y(hwnd) | 0;
+          const dh = we.menu_dropdown_height ? (we.menu_dropdown_height(hwnd, top) | 0) : 0;
+          geom = ` drop=${dx},${dy} ${180}x${dh}`;
+          if (hover >= 0 && we.menu_child_sub_count) {
+            const subn = we.menu_child_sub_count(hwnd, top, hover) | 0;
+            if (subn > 0) {
+              geom += ` cascade=${dx + 180},${dy + 2 + hover * 20} 180x${subn * 20 + 4}`;
+            }
+          }
+        }
+        logs.push(`[input] menu-dump${ev.label ? ':' + ev.label : ''}: hwnd=${hwnd ? '0x' + hwnd.toString(16) : 'none'} top=${top} hover=${hover} subhover=${subHover} xy=${x},${y}${geom} count=${count} ${items.join(' | ') || '(no items)'}`);
       } else if (ev.action === 'dlg-paint') {
         const we = instance.exports;
         let dlg = 0;
@@ -4510,7 +4791,32 @@ async function main() {
           // the window out, so ask it rather than guessing from the style.
           let menuBar = false;
           try { if (renderer._hasMenuBar) menuBar = !!renderer._hasMenuBar(win); } catch (_) {}
-          logs.push(`[input] window${label} hwnd=${hwndStr} class=${JSON.stringify(win.className || '')} ctrlClass=${ctrlClass} ctrlId=${ctrlId} parent=${parent} owner=0x${owner.toString(16)} wndProc=0x${wndProc.toString(16)} dialogProc=0x${dialogProc.toString(16)} z=${win.zOrder || 0} pos=${win.x},${win.y} size=${win.w}x${win.h} client=${JSON.stringify(win.clientRect)} visible=${win.visible} minimized=${!!win._minimized} enabled=${enabled} style=0x${style.toString(16)} dialog=${!!win.isDialog} menuBar=${menuBar} hasBack=${!!win._backCanvas} title=${JSON.stringify(win.title)} at batch ${batch}`);
+          // GetWindowText on a combobox returns its edit-field text, which for
+          // a dropdown is the current selection. The renderer's title mirror
+          // only carries what WM_SETTEXT put there, so a combobox filled by
+          // CB_ADDSTRING + CB_SETCURSEL -- WordPad's font name box -- reads as
+          // empty here while the control itself holds the right string.
+          let title = win.title;
+          try {
+            if (ctrlClass === 5 && we && we.combobox_get_text && we.guest_alloc) {
+              const buf = we.guest_alloc(256);
+              const len = we.combobox_get_text(hwnd, buf, 256) | 0;
+              if (len > 0) {
+                title = Buffer.from(
+                  new Uint8Array(memory.buffer, g2w(buf), len)).toString('latin1');
+              }
+            }
+          } catch (_) {}
+          // What the *guest* is told, next to what the renderer believes.
+          // IsIconic/IsZoomed read these bits; win._minimized composites. They
+          // are supposed to agree, and printing only one hid it when they did
+          // not.
+          let iconic = false, zoomed = false;
+          try {
+            if (we && we.wnd_is_minimized) iconic = !!we.wnd_is_minimized(hwnd);
+            if (we && we.wnd_is_maximized) zoomed = !!we.wnd_is_maximized(hwnd);
+          } catch (_) {}
+          logs.push(`[input] window${label} hwnd=${hwndStr} class=${JSON.stringify(win.className || '')} ctrlClass=${ctrlClass} ctrlId=${ctrlId} parent=${parent} owner=0x${owner.toString(16)} wndProc=0x${wndProc.toString(16)} dialogProc=0x${dialogProc.toString(16)} z=${win.zOrder || 0} pos=${win.x},${win.y} size=${win.w}x${win.h} client=${JSON.stringify(win.clientRect)} visible=${win.visible} minimized=${!!win._minimized} iconic=${iconic} zoomed=${zoomed} enabled=${enabled} style=0x${style.toString(16)} dialog=${!!win.isDialog} menuBar=${menuBar} hasBack=${!!win._backCanvas} title=${JSON.stringify(title)} at batch ${batch}`);
         }
       } else if (ev.action === 'dump-tree') {
         const label = ev.label ? ':' + ev.label : '';
@@ -4786,8 +5092,17 @@ async function main() {
         const title = ev.title || '';
         const wins = renderer ? Object.values(renderer.windows || {}) : [];
         const found = wins.find(w => w && w.visible && String(w.title || '').includes(title));
-        if (found) {
-          logs.push(`[input] wait-title: matched "${title}" hwnd=0x${(found.hwnd | 0).toString(16)} at batch ${batch}`);
+        if (found && ev.settle && !ev.settleUntil) {
+          ev.settleUntil = batch + ev.settle;
+          logs.push(`[input] wait-title: matched "${title}" hwnd=0x${(found.hwnd | 0).toString(16)}`
+            + ` at batch ${batch}, settling ${ev.settle} batches`);
+        }
+        if (found && ev.settleUntil && batch < ev.settleUntil) {
+          deferScheduledWait(ev, batch);
+        } else if (found) {
+          if (!ev.settleUntil) {
+            logs.push(`[input] wait-title: matched "${title}" hwnd=0x${(found.hwnd | 0).toString(16)} at batch ${batch}`);
+          }
           const label = ev.label ? ':' + ev.label : '';
           const entries = Object.entries(renderer.windows || {})
             .sort((a, b) => (parseInt(a[0], 10) || 0) - (parseInt(b[0], 10) || 0));
@@ -4992,6 +5307,11 @@ async function main() {
           if (frG) {
             const dv = new DataView(memory.buffer);
             const wa = g2w(frG);
+            // lStructSize is the liveness bit: commdlg requires the caller to
+            // set it to sizeof(FINDREPLACE) = 40, so anything else means the
+            // caller freed the block
+            // and something else owns those bytes now.
+            const structSize = dv.getUint32(wa + 0x00, true);
             const flags = dv.getUint32(wa + 0x0C, true);
             const findBufG = dv.getUint32(wa + 0x10, true);
             const findBufLen = dv.getUint16(wa + 0x18, true);
@@ -5010,15 +5330,30 @@ async function main() {
                 replacement += String.fromCharCode(m8[replaceBufWa + i]);
               }
             }
-            if (!replacement && we.get_findreplace_replace_edit && we.get_edit_text && we.guest_alloc) {
-              const replaceEdit = we.get_findreplace_replace_edit() | 0;
-              if (replaceEdit) {
-                const scratchG = we.guest_alloc(512);
-                const n = we.get_edit_text(replaceEdit, scratchG, 511) | 0;
-                replacement = Buffer.from(new Uint8Array(memory.buffer, g2w(scratchG), Math.max(0, n))).toString('latin1');
-              }
+            // Once the caller has freed its FINDREPLACE (lStructSize no longer
+            // reads 40) every field in it is somebody else's data, so the
+            // dialog's own edits and the flags we last sent are the only
+            // honest answer to "what did the app ask for".
+            const structLive = structSize === 40;
+            const editText = (hwnd) => {
+              if (!hwnd || !we.get_edit_text || !we.guest_alloc) return '';
+              const scratchG = we.guest_alloc(512);
+              const n = we.get_edit_text(hwnd, scratchG, 511) | 0;
+              return Buffer.from(new Uint8Array(memory.buffer, g2w(scratchG), Math.max(0, n))).toString('latin1');
+            };
+            if ((!replacement || !structLive) && we.get_findreplace_replace_edit) {
+              const fromEdit = editText(we.get_findreplace_replace_edit() | 0);
+              if (fromEdit || !structLive) replacement = fromEdit;
             }
-            logs.push(`[input] dump-fr: flags=0x${flags.toString(16)} findWhat=${JSON.stringify(txt)} replaceWith=${JSON.stringify(replacement)} at batch ${batch}`);
+            if (!structLive && we.get_findreplace_edit) {
+              txt = editText(we.get_findreplace_edit() | 0);
+            }
+            const watFlags = we.get_findreplace_last_flags ? we.get_findreplace_last_flags() >>> 0 : 0;
+            // The two length words are part of the answer, not decoration: a
+            // zero wFindWhatLen makes findWhat read back empty no matter what
+            // the buffer holds, and telling that apart from "nothing was
+            // copied" is the whole question when a Find comes back blank.
+            logs.push(`[input] dump-fr: dlg=0x${dlg.toString(16)} fr=0x${frG.toString(16)} size=${structSize} flags=0x${flags.toString(16)} watFlags=0x${watFlags.toString(16)} findWhat=${JSON.stringify(txt)} findBuf=0x${findBufG.toString(16)} findLen=${findBufLen} replaceWith=${JSON.stringify(replacement)} replaceBuf=0x${replaceBufG.toString(16)} replaceLen=${replaceBufLen} at batch ${batch}`);
           } else {
             logs.push(`[input] dump-fr: no FR ptr at batch ${batch}`);
           }
@@ -5226,6 +5561,14 @@ async function main() {
           win.w = Math.max(1, ev.w | 0);
           win.h = Math.max(1, ev.h | 0);
           win._maximized = false;
+          // Drop the back-canvas the way the browser's resize-drag release
+          // does (renderer-input.js handleMouseUp), so a resize here starts
+          // from the same blank surface a real one does. Keeping the old
+          // canvas made the harness repaint bugs that the browser shows.
+          win._backCanvas = null;
+          win._backCtx = null;
+          win._backW = 0;
+          win._backH = 0;
           if (we.host_resize_commit) we.host_resize_commit(hwnd, win.x | 0, win.y | 0, win.w, win.h);
           if (typeof renderer._computeClientRect === 'function') renderer._computeClientRect(win);
           if (typeof renderer.invalidate === 'function') renderer.invalidate(hwnd);
@@ -5568,6 +5911,9 @@ async function main() {
         && (REPAINT_EVERY === 1 || batch % REPAINT_EVERY === 0)) {
       renderer.flushRepaint();
     }
+    if (videoRecorder && batch >= VIDEO_START_BATCH) {
+      await videoRecorder.capture(renderer.canvas);
+    }
     if (TRACE_BATCH_TIMING) {
       const afterPaintMs = Date.now();
       console.log(`[batch-timing] batch=${batch} run=${afterRunMs - batchStartMs}ms paint=${afterPaintMs - afterRunMs}ms eip=${hex(instance.exports.get_eip())}`);
@@ -5686,45 +6032,18 @@ async function main() {
       }
     }
 
-    // Handle COM DLL loading yield (synchronous in Node.js)
+    // Handle COM DLL loading yield (yield_reason=3). The pump itself is shared
+    // with the browser (lib/process-boot.js); only where the bytes come from
+    // is ours.
     if (instance.exports.get_yield_reason() === 3) {
-      const dllNameWA = instance.exports.get_com_dll_name();
-      if (dllNameWA) {
-        const mem8 = new Uint8Array(memory.buffer);
-        let dllPathStr = '';
-        for (let i = 0; i < 260; i++) {
-          const ch = mem8[dllNameWA + i];
-          if (!ch) break;
-          dllPathStr += String.fromCharCode(ch);
-        }
-        const fileName = dllPathStr.split('\\').pop().toLowerCase();
-        console.log(`[COM] Loading DLL: ${fileName}`);
-        // Try to find the DLL file
-        const searchPaths = [
-          path.join(__dirname, 'binaries/dlls', fileName),
-          path.join(path.dirname(EXE_PATH), fileName),
-          path.join(path.dirname(EXE_PATH), 'dlls', fileName),
-        ];
-        let loaded = false;
-        for (const sp of searchPaths) {
-          if (fs.existsSync(sp)) {
-            const dllBytes = new Uint8Array(fs.readFileSync(sp));
-            const { loadDll: ld, patchExeImports: pe, callDllMain: cdm } = require('../lib/dll-loader');
-            const result = ld(instance.exports, memory.buffer, dllBytes);
-            console.log(`[COM] DLL loaded at 0x${result.loadAddr.toString(16)}`);
-            pe(instance.exports, memory.buffer, new Uint8Array(fs.readFileSync(EXE_PATH)), [{ name: fileName, bytes: dllBytes }], console.log);
-            if (result.dllMain && cdm) cdm(instance.exports, result.loadAddr, result.dllMain, console.log);
-            loaded = true;
-            break;
-          }
-        }
-        if (!loaded) {
-          console.log(`[COM] DLL not found: ${fileName}`);
-          instance.exports.set_eax(0x80040154); // REGDB_E_CLASSNOTREG
-          instance.exports.set_esp(instance.exports.get_esp() + 24);
-        }
-      }
-      instance.exports.clear_yield();
+      await handleComDllYield({
+        exports: instance.exports,
+        memoryBuffer: memory.buffer,
+        exeBytes: new Uint8Array(exeBytes),
+        resourceHost: ctx,
+        log: console.log,
+        findDll: findRuntimeDllBytes,
+      });
     }
 
     // Handle the virtual LAN net_wait yield (yield_reason=8). The guest is
@@ -5778,63 +6097,17 @@ async function main() {
         console.log(`[yield] T0 reason=5 (load_library) eip=${hex(instance.exports.get_eip())} ` +
           `esp=${hex(instance.exports.get_esp())} syncDepth=${instance.exports.get_sync_msg_depth ? instance.exports.get_sync_msg_depth() : 0}`);
       }
-      const nameWA = instance.exports.get_loadlib_name();
-      const mem8 = new Uint8Array(memory.buffer);
-      let nameStr = '';
-      if (nameWA > 0 && nameWA < mem8.length - 260) {
-        for (let i = 0; i < 260; i++) {
-          const ch = mem8[nameWA + i];
-          if (!ch) break;
-          nameStr += String.fromCharCode(ch);
-        }
-      }
-      const fileName = nameStr.split('\\').pop().toLowerCase();
-      // Search VFS for the DLL file
-      let dllData = null;
-      if (ctx.vfs) {
-        // Try exact path first, then just filename in common locations
-        const tryPaths = [
-          nameStr.toLowerCase(),
-          'c:\\' + fileName,
-          'c:\\plugins\\' + fileName,
-          'c:\\windows\\system\\' + fileName,
-        ];
-        for (const p of tryPaths) {
-          const entry = ctx.vfs.files.get(p);
-          if (entry) { dllData = entry.data; break; }
-        }
-      }
-      // Also try host filesystem
-      if (!dllData) {
-        const searchPaths = [
-          path.join(__dirname, 'binaries/dlls', fileName),
-          path.join(path.dirname(EXE_PATH), fileName),
-          path.join(path.dirname(EXE_PATH), 'dlls', fileName),
-          path.join(path.dirname(EXE_PATH), 'plugins', fileName),
-        ];
-        for (const sp of searchPaths) {
-          if (fs.existsSync(sp)) {
-            dllData = new Uint8Array(fs.readFileSync(sp));
-            break;
-          }
-        }
-      }
-      if (dllData) {
-        const dllBytesArr = new Uint8Array(dllData);
-        const { loadDll: ld, patchDllImports: pdi, callDllMain: cdm, resumeAfterLoadLibraryYield: rly } = require('../lib/dll-loader');
-        const result = ld(instance.exports, memory.buffer, dllBytesArr);
-        console.log(`[LoadLibrary] ${fileName} loaded at 0x${result.loadAddr.toString(16)}, dllMain=0x${(result.dllMain>>>0).toString(16)}`);
-        try {
-          const { extractBitmapBytes } = require('../lib/dib');
-          const bitmapBytes = extractBitmapBytes(dllBytesArr);
-          const count = Object.keys(bitmapBytes).length;
-          if (count > 0) {
-            ctx.dllResources = ctx.dllResources || {};
-            ctx.dllResources[result.loadAddr] = { bitmapBytes };
-            console.log(`DLL resources: ${fileName} has ${count} bitmaps`);
-          }
-        } catch (_) {}
-        {
+      await handleLoadLibraryYield({
+        exports: instance.exports,
+        memoryBuffer: memory.buffer,
+        resourceHost: ctx,
+        log: console.log,
+        trace: TRACE_YIELD ? console.log : null,
+        findDll: findRuntimeDllBytes,
+        // CLI-only bookkeeping: `module+0xVA` probes need this module's base
+        // before the app can reach any code in it, so the breakpoint and
+        // counter slots are re-armed here rather than at the next batch.
+        onLoaded: ({ result, fileName, bytes: dllBytesArr }) => {
           const key = fileName.toLowerCase().replace(/\.[^.]+$/, '');
           const peOff2 = dllBytesArr[0x3C] | (dllBytesArr[0x3D] << 8) | (dllBytesArr[0x3E] << 16) | (dllBytesArr[0x3F] << 24);
           const dllOrigBase = dllBytesArr[peOff2 + 52] | (dllBytesArr[peOff2 + 53] << 8) | (dllBytesArr[peOff2 + 54] << 16) | (dllBytesArr[peOff2 + 55] << 24);
@@ -5852,28 +6125,8 @@ async function main() {
           if (traceEipOn && traceEipArmed && instance.exports.set_trace_eip_range) {
             instance.exports.set_trace_eip_range(1, traceEipLo, traceEipHi);
           }
-        }
-        // Patch the new DLL's imports against all previously loaded DLLs
-        pdi(instance.exports, memory.buffer,
-          [{ name: fileName, bytes: dllBytesArr }],
-          [result], console.log);
-        // Call DllMain(DLL_PROCESS_ATTACH). Some DLLs (e.g. d3dxof) initialize
-        // critical state here — the template registry. callDllMain saves/restores
-        // EIP/ESP so it's safe to invoke from the LoadLibrary yield handler.
-        instance.exports.clear_yield();
-        if (result.dllMain && cdm) cdm(instance.exports, result.loadAddr, result.dllMain, console.log);
-        instance.exports.set_eax(result.loadAddr);
-        if (rly) rly(instance.exports, memory.buffer, TRACE_YIELD ? console.log : null);
-      } else {
-        console.log(`[LoadLibrary] DLL not found: ${fileName}`);
-        instance.exports.set_eax(0);
-        try {
-          const { resumeAfterLoadLibraryYield: rly } = require('../lib/dll-loader');
-          if (rly) rly(instance.exports, memory.buffer, TRACE_YIELD ? console.log : null);
-        } catch (_) {}
-      }
-      // ESP and EIP already adjusted by WAT handler before yield
-      instance.exports.clear_yield();
+        },
+      });
     }
 
     // Thread management: spawn pending threads, run worker slices
@@ -6067,6 +6320,11 @@ if (VERBOSE) {
       console.log('gdi: dc_states', instance.exports.gdi_dc_state_used(), '/ 256   objects',
         instance.exports.gdi_object_used(), '/ 256   dc_mark', instance.exports.gdi_table_mark(2));
     }
+    if (instance.exports.gdi_dib_arena_stat) {
+      const st = instance.exports.gdi_dib_arena_stat;
+      console.log('gdi: dib arena pages used', st(0), 'free', st(1),
+        'largest free run', st(2), 'of', st(3));
+    }
   }
   // Critical-section contention, printed only when there was some. A steal means
   // a section was taken from a holder that never released it — a real bug that
@@ -6188,6 +6446,12 @@ if (VERBOSE) {
     fs.writeSync(fd, pcm);
     fs.closeSync(fd);
     console.log(`[wav] wrote ${ctx._audioOutPath}: ${fmt.rate}Hz ${fmt.ch}ch ${fmt.bits}bit ${dataLen} B PCM (+44 B header)`);
+  }
+
+  if (videoRecorder) {
+    const video = await videoRecorder.finish();
+    console.log(`[video] wrote ${video.path}: ${video.frames} frames, ` +
+      `${video.width}x${video.height} at ${video.fps}fps (${video.duration.toFixed(2)}s)`);
   }
 
   console.log(`\nStats: ${apiCount} API calls, ${MAX_BATCHES} batches`);

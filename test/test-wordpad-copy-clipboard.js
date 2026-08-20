@@ -40,16 +40,22 @@ if (!fs.existsSync(EXE)) {
 
 // Type three characters, select all (ID_EDIT_SELECT_ALL), copy (ID_EDIT_COPY).
 // The gaps are wide because Copy runs a full metafile render of the selection.
+// The first keystroke waits until batch 2400 because the document has to
+// exist before a character can land in it: MFC 6.00 (the VC++ 6.0
+// redistributable mfc42.dll) needs about twice as many batches to bring
+// WordPad's view up as MFC 4.21 did, and typing into a not-yet-created
+// RichEdit left WM_GETTEXTLENGTH at 0 — Select All then selected nothing and
+// Copy published nothing.
 const inputSpec = [
-  '1200:keypress:72',
-  '1230:keypress:101',
-  '1260:keypress:108',
-  '1400:post-cmd:57642',
-  '1800:post-cmd:57634',
+  '2400:keypress:72',
+  '2430:keypress:101',
+  '2460:keypress:108',
+  '2800:post-cmd:57642',
+  '3600:post-cmd:57634',
 ].join(',');
 
 const cmd = `node "${RUN}" --exe="${EXE}" --no-close --batch-size=100 ` +
-  `--max-batches=2600 --trace-api=OleSetClipboard,CountClipboardFormats ` +
+  `--max-batches=4600 --trace-api=OleSetClipboard,CountClipboardFormats ` +
   `--input=${inputSpec}`;
 console.log('$', cmd);
 
