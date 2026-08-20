@@ -77,6 +77,26 @@
       "launch": "D:\\FONTRND.EXE",
       "waitMs": 5000,
       "files": []
+    },
+    "font-render-substitutes": {
+      "title": "Open substitute fonts rendered by Windows 98 GDI",
+      "probeSource": "tools/v86-reference/probes/font-render-matrix.c",
+      "probeName": "FONTRND.EXE",
+      "launch": "D:\\FONTRND.EXE SUBSTITUTES",
+      "waitMs": 5000,
+      "files": [
+        { "path": "fonts/subset/LiberationSans-Regular.ttf", "name": "LIBSANS.TTF" },
+        { "path": "fonts/subset/LiberationSerif-Regular.ttf", "name": "LIBSERIF.TTF" },
+        { "path": "fonts/subset/LiberationMono-Regular.ttf", "name": "LIBMONO.TTF" }
+      ]
+    },
+    "font-file-dump": {
+      "title": "Local-only Windows 98 font file extraction over COM1",
+      "probeSource": "tools/v86-reference/probes/font-file-dump.c",
+      "probeName": "FONTDUMP.EXE",
+      "launch": "D:\\FONTDUMP.EXE",
+      "waitMs": 30000,
+      "files": []
     }
   }
 }

@@ -177,6 +177,34 @@ ink overlap. The overlay uses black for shared ink, magenta for wine-assembly
 only, and cyan for native Win98 only. Generated captures and reports remain
 ignored; the probe, manifest, and comparison tool are the reproducible source.
 
+For the full font-by-renderer experiment, `font-render-substitutes` installs
+the exact deployed Liberation subsets inside Win98 before drawing. This
+separates substitution error from rasterizer error: both systems consume the
+same unhinted open font bytes. A user may also copy the native font files out
+of their own Win98 image over COM1 for the opposite half of the experiment:
+
+```sh
+node tools/v86-reference/capture.js --online \
+  --manifest tools/v86-reference/font-apps.json \
+  --app font-file-dump \
+  --serial-output /tmp/font-file-dump.serial
+
+node tools/v86-reference/extract-font-dump.js \
+  /tmp/font-file-dump.serial \
+  .cache/v86-reference/native-fonts
+
+node test/run.js \
+  --exe=.cache/v86-reference/font-render-matrix.exe \
+  --args=NATIVE --vfs-include='native-fonts/*' --no-build \
+  --max-batches=120 --png=/tmp/font-native-ours.png
+```
+
+The extraction parser validates the TrueType/NE signatures, records local
+hashes, and refuses unexpected filenames. `.cache/v86-reference/` is ignored;
+Microsoft font binaries and native-font captures must not be committed. Run
+`font-render-2x2.js` after producing native/substitute captures in both
+renderers to generate the four-quadrant HTML report.
+
 ## Profile exclusions
 
 `apps.json` marks profile-specific exclusions with `skip`. The official Win98

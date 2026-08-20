@@ -8,18 +8,78 @@
 
 unsigned long _tls_index = 0;
 
-static const char *faces[] = {
+static const char *native_faces[] = {
   "Arial",
   "Times New Roman",
   "Courier New",
   "MS Sans Serif"
 };
 
+static const char *substitute_faces[] = {
+  "Liberation Sans",
+  "Liberation Serif",
+  "Liberation Mono",
+  "Liberation Sans"
+};
+
+static const char *substitute_labels[] = {
+  "Liberation Sans",
+  "Liberation Serif",
+  "Liberation Mono",
+  "MS outline -> Lib Sans"
+};
+
 static const int heights[] = { -12, -18, -26, -36 };
+static const char **faces = native_faces;
+static const char **labels = native_faces;
+static const char *mode_title = "Native Win98 face names";
+static int installed_fonts;
 
 static void zero_bytes(void *memory, int length) {
   volatile unsigned char *out = (volatile unsigned char *)memory;
   while (length-- > 0) *out++ = 0;
+}
+
+static int contains_word(const char *text, const char *word) {
+  int index;
+  int length = lstrlenA(word);
+  while (*text) {
+    for (index = 0; index < length && text[index] == word[index]; index++) {}
+    if (index == length) return 1;
+    text++;
+  }
+  return 0;
+}
+
+static int file_exists(const char *path) {
+  return GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES;
+}
+
+static int add_first_font(const char *primary, const char *fallback) {
+  if (file_exists(primary)) return AddFontResourceA(primary);
+  if (fallback && file_exists(fallback)) return AddFontResourceA(fallback);
+  return 0;
+}
+
+static void configure_fonts(void) {
+  const char *command = GetCommandLineA();
+  if (contains_word(command, "SUBSTITUTES")) {
+    faces = substitute_faces;
+    labels = substitute_labels;
+    mode_title = "Open substitutes (same bytes in both renderers)";
+    installed_fonts += add_first_font("D:\\LIBSANS.TTF",
+      "C:\\WINDOWS\\FONTS\\ARIAL.TTF");
+    installed_fonts += add_first_font("D:\\LIBSERIF.TTF",
+      "C:\\WINDOWS\\FONTS\\TIMES.TTF");
+    installed_fonts += add_first_font("D:\\LIBMONO.TTF",
+      "C:\\WINDOWS\\FONTS\\COUR.TTF");
+  } else if (contains_word(command, "NATIVE")) {
+    mode_title = "Locally supplied native Win98 font bytes";
+    installed_fonts += add_first_font("C:\\NATIVE-FONTS\\ARIAL.TTF", NULL);
+    installed_fonts += add_first_font("C:\\NATIVE-FONTS\\TIMES.TTF", NULL);
+    installed_fonts += add_first_font("C:\\NATIVE-FONTS\\COUR.TTF", NULL);
+    installed_fonts += add_first_font("C:\\NATIVE-FONTS\\SSERIFE.FON", NULL);
+  }
 }
 
 static void text(HDC dc, int x, int y, const char *value) {
@@ -33,6 +93,7 @@ static void line(HDC dc, int x0, int y0, int x1, int y1) {
 
 static void paint_matrix(HDC dc) {
   static const int row_tops[] = { 66, 152, 248, 352 };
+  char title[96];
   HFONT label_font = (HFONT)GetStockObject(SYSTEM_FONT);
   HPEN grid_pen = CreatePen(PS_SOLID, 1, RGB(192, 192, 192));
   HPEN metric_pen = CreatePen(PS_SOLID, 1, RGB(0, 0, 255));
@@ -46,7 +107,11 @@ static void paint_matrix(HDC dc) {
   SetTextColor(dc, RGB(0, 0, 0));
   SetTextAlign(dc, TA_LEFT | TA_TOP);
   SelectObject(dc, label_font);
-  text(dc, 8, 5, "Win98 GDI font raster comparison: Ag09Wm");
+  if (installed_fonts)
+    wsprintfA(title, "%s; AddFontResource=%d", mode_title, installed_fonts);
+  else
+    lstrcpynA(title, mode_title, sizeof(title));
+  text(dc, 8, 5, title);
   text(dc, 8, 23, "red=baseline  blue=ascent/descent box  request heights: -12 -18 -26 -36");
 
   old_pen = SelectObject(dc, grid_pen);
@@ -57,7 +122,7 @@ static void paint_matrix(HDC dc) {
     int x = column * 160 + 6;
     SelectObject(dc, label_font);
     SetTextAlign(dc, TA_LEFT | TA_TOP);
-    text(dc, x, 47, faces[column]);
+    text(dc, x, 47, labels[column]);
 
     for (row = 0; row < 4; row++) {
       HFONT font = CreateFontA(heights[row], 0, 0, 0, FW_NORMAL,
@@ -137,6 +202,7 @@ static int run_probe(void) {
   cls.lpszClassName = "FontRenderMatrixReference";
   RegisterClassA(&cls);
 
+  configure_fonts();
   ShowCursor(FALSE);
   window = CreateWindowA(cls.lpszClassName, "Font render matrix",
     WS_POPUP | WS_VISIBLE, 0, 0, 640, 480,
