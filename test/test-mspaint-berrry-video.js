@@ -64,6 +64,14 @@ const stroke = (batch, x0, y0, x1, y1) => {
 // live caption geometry so the workflow is stable if default placement moves.
 at(10, 'caption-click:0x10001:max');
 
+// Maximizing Paint does not resize the bitmap: its original bottom-right size
+// handle remains at 389,290. Drag that real handle across the gray work area
+// before drawing so the white document fills the maximized window.
+at(13, 'mousedown:389:290');
+at(14, 'mousemove:500:340');
+at(15, 'mousemove:626:396');
+at(16, 'mouseup:626:396');
+
 // Black polygon outline for the berry, followed by a red flood fill.
 click(18, 46, 204); // Polygon tool.
 let batch = polygon(20, [
@@ -182,12 +190,16 @@ const count = (box, predicate) => {
 const berry = { x0: 90, y0: 70, x1: 220, y1: 265 };
 const word = { x0: 225, y0: 150, x1: 380, y1: 225 };
 const tagline = { x0: 95, y0: 255, x1: 390, y1: 290 };
+const expandedCanvas = { x0: 400, y0: 60, x1: 620, y1: 390 };
 const red = count(berry, (r, g, b) => r > 200 && g < 60 && b < 60);
 const green = count(berry, (r, g, b) => g > 180 && r < 80 && b < 80);
 const seedInk = count(berry, (r, g, b) => r < 40 && g < 40 && b < 40);
 const wordInk = count(word, (r, g, b) => r < 40 && g < 40 && b < 40);
 const taglineInk = count(tagline, (r, g, b) => r < 40 && g < 40 && b < 40);
+const expandedCanvasWhite = count(expandedCanvas, (r, g, b) => r > 245 && g > 245 && b > 245);
 
+assert(expandedCanvasWhite >= 65000,
+  `Paint document did not fill the maximized work area (${expandedCanvasWhite} white pixels)`);
 assert(red >= 4000, `strawberry body is not visibly red (${red} pixels)`);
 assert(green >= 500, `strawberry crown is not visibly green (${green} pixels)`);
 assert(seedInk >= 200, `strawberry outline/seeds are missing (${seedInk} dark pixels)`);
@@ -212,6 +224,7 @@ assert(/\[video\] wrote .*berrry-paint\.mp4/.test(output),
 assert(!/UNIMPLEMENTED API:|RuntimeError|LinkError|\*\*\* CRASH/.test(output),
   output.slice(-5000));
 
+console.log(`PASS  Paint expanded its document across the work area (${expandedCanvasWhite} white pixels)`);
 console.log(`PASS  Paint drew a red strawberry (${red} red, ${green} green, ${seedInk} dark pixels)`);
 console.log(`PASS  Paint hand-drew BERRRY (${wordInk} dark pixels)`);
 console.log(`PASS  Paint Text tool committed the tagline (${taglineInk} dark pixels)`);
