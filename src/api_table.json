@@ -20437,5 +20437,26 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 5371878
+  },
+  {
+    "id": 2477,
+    "name": "atexit",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 3558767576
+  },
+  {
+    "id": 2478,
+    "name": "strstr",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 3246185919
+  },
+  {
+    "id": 2479,
+    "name": "acmMetrics",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3446989061
   }
 ]

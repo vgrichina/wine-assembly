@@ -46,7 +46,9 @@ The repository's `?debug` app selector now has a debug-only
 - `DIABDEMO.EXE` is the launched game.
 - `STORM.DLL` is loaded as a real PE DLL.
 - The original 58,586,610-byte `DIABLO.EXE` package is mounted in the guest as
-  `Z:\DIABLO.EXE`; Storm reopens it there as the demo's MPQ data archive.
+  both `C:\DIABLO.EXE` and `Z:\DIABLO.EXE`. An authoritative filesystem trace
+  shows this Storm build opening the `C:` path; the `Z:` alias preserves the
+  demo's CD-style search layout.
 - `DIABLO.TXT` is mounted as `C:\DIABLO.TXT`.
 
 The source ZIP is
@@ -55,9 +57,49 @@ The source ZIP is
 records the extraction step and file provenance. The payload remains excluded
 from public deployment while compatibility work is in progress.
 
-The debug registry was smoke-tested through the shared CLI app path: it loaded
-`DIABDEMO.EXE`, mapped `STORM.DLL`, patched 1,446 Storm thunks, and created the
-640-by-480 `Diablo Game` window.
+The debug registry has been exercised through both launch paths. It loads
+`DIABDEMO.EXE`, maps `STORM.DLL`, patches 1,446 Storm thunks, and creates the
+640-by-480 `Diablo Game` window. The browser reaches the animated title menu,
+character selection, name entry, and the cathedral loading screen through the
+normal `?debug` selector with no CLI-only filesystem scan or thread mode.
+
+### Compatibility findings
+
+Reaching gameplay required several real runtime contracts rather than success
+stubs:
+
+- CRT `atexit` now registers callbacks and drains them in LIFO order on normal
+  `exit`; cdecl `strstr` implements exact first-substring semantics.
+- `acmMetrics` reports the built-in PCM converter and the correct 18-byte
+  `WAVEFORMATEX` maximum format size used by Diablo's sound initialization.
+- Closing an event or semaphore frees its shared synchronization slot so
+  Storm's repeated create/close cycle cannot exhaust the 64-slot table.
+- DirectX COM vtable globals are synchronized into a worker instance before
+  Storm calls `IDirectSoundBuffer::Lock` through a vtable. The shared registry
+  was also moved away from the virtual-socket table it previously overlapped.
+- `CRITICAL_SECTION` acquisition is recursive and owner-aware across the
+  emulator's cooperative WASM instances. A contended entrant parks with a
+  scheduler yield instead of being allowed into the protected region.
+- `WaitForMultipleObjects(..., bWaitAll=TRUE, ...)` remains wait-all after a
+  cooperative yield and consumes auto-reset events/semaphore counts only when
+  every requested object is ready. Treating the resumed wait as wait-any had
+  let Storm recycle handles while its worker still used them, corrupting a
+  DirectSound object.
+- The multimedia timer callback guard is cleared by its dedicated return
+  thunk, not inferred from later stack depth, and callbacks never interrupt a
+  parked wait frame. Diablo opts into the existing cooperative browser timer
+  hook between main slices because its loading loop waits on `timeSetEvent`
+  without pumping window messages. This is an isolated per-app scheduling
+  policy and does not add Web Workers or native/real threads.
+
+The deterministic CLI harness reached the cathedral progress screen and then
+the rendered town game view. A subsequent click visibly moved the Warrior,
+providing an interaction check rather than a menu-only or static-frame result.
+The evidence captures are `/private/tmp/diablo-delayed-b43000.png`,
+`/private/tmp/diablo-delayed-b60000.png`,
+`/private/tmp/diablo-delayed-b85000.png`, and
+`/private/tmp/diablo-delayed-b119999.png` (temporary local artifacts, not
+redistributable fixtures).
 
 ### Startup-scan note
 
@@ -67,12 +109,13 @@ execution. Placing the executable directly in `/private/tmp` therefore made it
 walk all of `/private/tmp`; putting it in a dedicated app directory made that
 phase nearly immediate. This is not PE-loader or Diablo execution time.
 
-The scan should eventually be bounded more explicitly because its runtime and
-file-discovery scope currently depend on unrelated siblings. The compatibility
-cost of tightening it is that ad-hoc `--exe` runs may implicitly depend on the
-recursive sibling scan for DLLs or data. A safe change should preserve an
-explicit opt-in recursive mount/root while making the executable's dedicated
-directory the default, with regressions for apps that use nested assets.
+This was fixed in commit `571ea0f`. Registered `--app` runs use only their
+explicit manifests; an arbitrary `--exe` mounts only that executable unless
+the caller supplies bounded, repeatable `--vfs-include` globs. This removes the
+unrelated-directory scan and accidental file exposure. The tradeoff is that an
+ad-hoc executable which previously found undeclared sibling DLLs or data must
+now list those files explicitly (or be added to the app registry). Nested
+assets remain supported through explicit glob patterns.
 
 Full Diablo is still commercially available as a DRM-free offline release in
 [Diablo + Hellfire on GOG](https://www.gog.com/en/game/diablo). Archive.org

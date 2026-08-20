@@ -3799,11 +3799,10 @@
 
   ;; 205: exit
   (func $handle_exit (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; cdecl: pop only the return address; the caller owns the status arg.
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
-    (call $host_exit (local.get $arg0))
-    (global.set $eip (i32.const 0))
-    (global.set $yield_flag (i32.const 1))
-    (global.set $steps (i32.const 0)) (return)
+    (global.set $atexit_exit_code (local.get $arg0))
+    (call $crt_atexit_run_next)
   )
 
   ;; 206: _exit
@@ -5678,37 +5677,60 @@ nW — STUB: unimplemented
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 331: EnterCriticalSection(lpCriticalSection) — single-threaded: always succeeds
+  ;; Park a contended EnterCriticalSection without consuming its stdcall
+  ;; frame. $run normally auto-pops a thunk whose handler left EIP unchanged;
+  ;; setting handler_set_eip opts out so clearing yield reason 9 re-enters this
+  ;; exact API call with its original argument and return address.
+  (func $cs_block
+    (global.set $handler_set_eip (i32.const 1))
+    (global.set $yield_reason (i32.const 9))
+    (global.set $yield_flag (i32.const 1))
+    (global.set $steps (i32.const 0)))
+
+  ;; 331: EnterCriticalSection(lpCriticalSection). Instances execute
+  ;; cooperatively but share guest memory, so ownership in the Win32 structure
+  ;; is sufficient to serialize them. A contended caller leaves its thunk and
+  ;; stack untouched and yields; the host scheduler retries the same call after
+  ;; giving the owner a chance to run.
   (func $handle_EnterCriticalSection (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $cs i32)
+    (local $cs i32) (local $owner i32) (local $recursion i32)
     (local.set $cs (call $g2w (local.get $arg0)))
-    ;; LockCount: -1 -> 0 (first acquire) or increment (recursive)
+    (local.set $owner (i32.load offset=12 (local.get $cs)))
+    (if (i32.and (local.get $owner)
+                 (i32.ne (local.get $owner) (global.get $current_thread_id)))
+      (then
+        (global.set $wait_handle (local.get $arg0))
+        (call $cs_block)
+        (return)))
+    (local.set $recursion (i32.add
+      (i32.load offset=8 (local.get $cs)) (i32.const 1)))
+    (i32.store offset=8 (local.get $cs) (local.get $recursion))
     (i32.store offset=4 (local.get $cs)
-      (i32.add (i32.load offset=4 (local.get $cs)) (i32.const 1)))
-    ;; RecursionCount++
-    (i32.store offset=8 (local.get $cs)
-      (i32.add (i32.load offset=8 (local.get $cs)) (i32.const 1)))
-    ;; OwningThread = 1 (our single thread ID)
-    (i32.store offset=12 (local.get $cs) (i32.const 1))
+      (i32.sub (local.get $recursion) (i32.const 1)))
+    (i32.store offset=12 (local.get $cs) (global.get $current_thread_id))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 332: LeaveCriticalSection(lpCriticalSection)
   (func $handle_LeaveCriticalSection (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $cs i32)
+    (local $cs i32) (local $recursion i32)
     (local.set $cs (call $g2w (local.get $arg0)))
-    ;; RecursionCount--
-    (i32.store offset=8 (local.get $cs)
-      (i32.sub (i32.load offset=8 (local.get $cs)) (i32.const 1)))
-    ;; If RecursionCount == 0, clear OwningThread
-    (if (i32.eqz (i32.load offset=8 (local.get $cs)))
+    ;; Windows treats leaving a section owned by another thread as undefined;
+    ;; keep the live owner's state intact rather than letting a bad caller
+    ;; unlock it for everyone else.
+    (if (i32.eq (i32.load offset=12 (local.get $cs))
+                (global.get $current_thread_id))
       (then
-        (i32.store offset=12 (local.get $cs) (i32.const 0))
-      )
-    )
-    ;; LockCount--
-    (i32.store offset=4 (local.get $cs)
-      (i32.sub (i32.load offset=4 (local.get $cs)) (i32.const 1)))
+        (local.set $recursion (i32.sub
+          (i32.load offset=8 (local.get $cs)) (i32.const 1)))
+        (i32.store offset=8 (local.get $cs) (local.get $recursion))
+        (if (i32.eqz (local.get $recursion))
+          (then
+            (i32.store offset=12 (local.get $cs) (i32.const 0))
+            (i32.store offset=4 (local.get $cs) (i32.const -1)))
+          (else
+            (i32.store offset=4 (local.get $cs)
+              (i32.sub (local.get $recursion) (i32.const 1)))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -8348,6 +8370,7 @@ HookEx — no next hook in chain, return 0
         (global.set $yield_reason (i32.const 1))
         (global.set $wait_handle (local.get $arg0)) ;; nCount
         (global.set $wait_handles_ptr (call $g2w (local.get $arg1)))
+        (global.set $wait_all (i32.ne (local.get $arg2) (i32.const 0)))
         (global.set $wait_timeout (local.get $arg3))
         (global.set $wait_stack_bytes (i32.const 20))
         (global.set $steps (i32.const 0))

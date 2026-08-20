@@ -33,17 +33,17 @@
   ;; primary wrappers so $dx_from_this works for aux guest ptrs too. Dedup'd
   ;; by (slot, vtbl) via linear scan.
   (global $COM_WRAPPERS_AUX  i32 (i32.const 0x07FFA000))
-  (global $COM_WRAPPERS_AUX_SIZE i32 (i32.const 0x00004000))
-  (global $COM_WRAPPERS_AUX_MAX i32 (i32.const 2048))
+  (global $COM_WRAPPERS_AUX_SIZE i32 (i32.const 0x00003F00))
+  (global $COM_WRAPPERS_AUX_MAX i32 (i32.const 2016))
   (global $com_aux_next (mut i32) (i32.const 0))
 
   ;; Shared registry for COM vtable guest addresses. The vtable globals below
   ;; are per-WASM-instance, while threads use separate instances over one
   ;; shared memory. The main instance records the addresses produced by
   ;; $init_dx_com_thunks here; a worker restores its local globals before its
-  ;; first Win32/COM dispatch. 0x07FFE000..0x08000000 is the reserved high-memory
-  ;; gap immediately after COM_WRAPPERS_AUX.
-  (global $DX_VTBL_REGISTRY i32 (i32.const 0x07FFE000))
+  ;; guest code begins. Reserve the final 256 bytes of the auxiliary-wrapper
+  ;; region rather than overlapping VSOCK_TABLE at 0x07FFE000.
+  (global $DX_VTBL_REGISTRY i32 (i32.const 0x07FFDF00))
   (global $DX_VTBL_REGISTRY_COUNT i32 (i32.const 54))
 
   ;; Vtable blocks — arrays of thunk guest-addrs, one per interface type.

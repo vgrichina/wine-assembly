@@ -134,8 +134,8 @@ assert(webApp.includes('<option value="diablo_demo">Diablo (pre-release demo)</o
   'debug app selector should expose the local Diablo demo candidate');
 assert(/DEBUG_ONLY_APPS\s*=\s*\[[\s\S]*\[\s*'diablo_demo'\s*,\s*'Diablo Demo'/s.test(webApp),
   'Diablo should remain debug-only rather than becoming a desktop app');
-assert(/diablo_demo:\s*\{[\s\S]*?exe:\s*diabloCandidateRoot \+ 'DIABDEMO\.EXE'[\s\S]*?dlls:\s*\[diabloCandidateRoot \+ 'STORM\.DLL'\][\s\S]*?vfsPath:\s*'z:\\\\diablo\.exe'[\s\S]*?requiredFiles:\s*true[\s\S]*?\n\s*\},\n\s*funtris:/s.test(webApp),
-  'Diablo debug launch should load the extracted game, Storm, and its MPQ package on Z:');
+assert(/diablo_demo:\s*\{[\s\S]*?exe:\s*diabloCandidateRoot \+ 'DIABDEMO\.EXE'[\s\S]*?dlls:\s*\[diabloCandidateRoot \+ 'STORM\.DLL'\][\s\S]*?vfsPaths:\s*\['c:\\\\diablo\.exe', 'z:\\\\diablo\.exe'\][\s\S]*?requiredFiles:\s*true[\s\S]*?\n\s*\},\n\s*funtris:/s.test(webApp),
+  'Diablo debug launch should load the extracted game, Storm, and its MPQ package on C: and Z:');
 assert(!deployJs.includes('test/binaries/candidates/diablo'),
   'public deploy should exclude the local Diablo demo payload');
 assert(webApp.includes('playDebugMidi()'), 'debug toolbar should expose direct MIDI playback');
@@ -288,8 +288,8 @@ assert(webApp.indexOf('lib/gdi-surface.js?v=2') < webApp.indexOf('lib/host-impor
 assert(webApp.includes('lib/host-imports.js?v=203'), 'web host should cache-bust binary text rasterization');
 assert(webApp.includes('lib/thread-manager.js?v=170'), 'web host should cache-bust thread manager after creation-flag handling changes');
 assert(webApp.includes('lib/compile-wat.js?v=169'), 'web host should cache-bust the snapshot-capable WAT compiler');
-assert(webApp.includes('host.js?v=207'), 'web host should cache-bust host.js after the current source update');
-assert(hostJs.includes("static SOURCE_VERSION = '207'"), 'web host should cache-bust WASM artifacts and WAT source compilation');
+assert(webApp.includes('host.js?v=208'), 'web host should cache-bust host.js after the current source update');
+assert(hostJs.includes("static SOURCE_VERSION = '208'"), 'web host should cache-bust WASM artifacts and WAT source compilation');
 assert(webApp.includes("['mspaint98',   'Paint'"), 'normal desktop should expose Paint without the downscaled debug pane');
 assert(webApp.includes("mplay32:  { exe: 'binaries/win98-apps/mplay32.exe' }"),
   'Media Player 32 should use normal DLL auto-detection now that native and WAT toolbars are supported');

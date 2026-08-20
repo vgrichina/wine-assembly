@@ -640,6 +640,13 @@
         (global.set $eip (global.get $initterm_ret))
         (return)))
 
+    ;; Normal CRT exit() callback returned. Continue draining the atexit
+    ;; registry in LIFO order; the final step reports the saved exit code.
+    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA002C))
+      (then
+        (call $crt_atexit_run_next)
+        (return)))
+
     ;; bsearch continuation — comparator returned eax = sign(key - elem).
     ;; eax==0 → hit; eax<0 → narrow to [low, mid); eax>0 → narrow to [mid+1, high).
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA000C))
@@ -729,6 +736,10 @@
     ;; mm_timer callback returned — restore caller-saved regs + flags
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA000A))
       (then
+        ;; This dedicated continuation is the authoritative completion event.
+        ;; Inferring completion later from ESP fails when the interrupted code
+        ;; returns from the callback and immediately enters a deeper call.
+        (global.set $mm_timer_in_cb (i32.const 0))
         (call $restore_caller_regs)
         (return)))
 

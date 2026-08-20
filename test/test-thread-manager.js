@@ -80,6 +80,52 @@ assert.strictEqual(
   'GetExitCodeThread reports a pending worker as STILL_ACTIVE'
 );
 
+const syncLifecycleTm = makeThreadManager();
+const syncHandles = [];
+for (let i = 0; i < 64; i++) {
+  syncHandles.push(syncLifecycleTm.createEvent(false, false));
+}
+assert(syncHandles.every(Boolean), 'all 64 synchronization slots should allocate');
+assert.strictEqual(syncLifecycleTm.createEvent(false, false), 0, 'the full synchronization table rejects another event');
+assert.strictEqual(syncLifecycleTm.closeSyncHandle(syncHandles[17]), true, 'CloseHandle should release an event slot');
+assert.strictEqual(
+  syncLifecycleTm.createEvent(true, true),
+  syncHandles[17],
+  'the next event should reuse the released table slot'
+);
+assert.strictEqual(syncLifecycleTm.closeSyncHandle(0xdeadbeef), false, 'an unrelated handle is not a synchronization object');
+assert.strictEqual(syncLifecycleTm.closeSyncHandle(syncHandles[18]), true, 'semaphore test should begin with a free slot');
+const reusedSemaphore = syncLifecycleTm.createSemaphore(2, 4);
+assert.strictEqual(reusedSemaphore, syncHandles[18], 'semaphores should share and reuse the synchronization table');
+assert.strictEqual(syncLifecycleTm.closeSyncHandle(reusedSemaphore), true, 'CloseHandle should release a semaphore slot');
+
+const waitAllTm = makeThreadManager();
+const waitAllA = waitAllTm.createEvent(false, false);
+const waitAllB = waitAllTm.createEvent(false, false);
+const waitAllHandlesWA = 0x180;
+const waitAllMemory = new Int32Array(waitAllTm.memory.buffer);
+waitAllMemory[waitAllHandlesWA >>> 2] = waitAllA;
+waitAllMemory[(waitAllHandlesWA >>> 2) + 1] = waitAllB;
+waitAllTm.setEvent(waitAllA);
+assert.strictEqual(
+  waitAllTm.waitMultiple(2, waitAllHandlesWA, true, 0),
+  0x102,
+  'wait-all remains blocked while only one object is signaled'
+);
+assert.strictEqual(
+  Atomics.load(waitAllTm.syncView, (waitAllA - 0xE0000) * 4 + 2),
+  1,
+  'an incomplete wait-all must not consume an already-signaled auto-reset event'
+);
+waitAllTm.setEvent(waitAllB);
+assert.strictEqual(
+  waitAllTm.waitMultiple(2, waitAllHandlesWA, true, 0),
+  0,
+  'wait-all completes once every object is signaled'
+);
+assert.strictEqual(Atomics.load(waitAllTm.syncView, (waitAllA - 0xE0000) * 4 + 2), 0);
+assert.strictEqual(Atomics.load(waitAllTm.syncView, (waitAllB - 0xE0000) * 4 + 2), 0);
+
 const lifecycleEvents = suspendTm.getThreadEvents();
 assert.deepStrictEqual(
   lifecycleEvents.map(event => event.type),
@@ -250,3 +296,5 @@ console.log('PASS  ThreadManager prioritizes hot audio threads');
 console.log('PASS  ThreadManager notifies thread exits once');
 console.log('PASS  ThreadManager completes nested infinite waits without losing callback state');
 console.log('PASS  ThreadManager keeps pending worker handles unsignaled');
+console.log('PASS  ThreadManager recycles closed event and semaphore handles');
+console.log('PASS  ThreadManager preserves and atomically consumes wait-all state');

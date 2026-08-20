@@ -1173,7 +1173,8 @@
   ;; 0x07FEC000 16KB     D3DIM_MATRICES (256 entries × 64 bytes, ends 0x07FF0000)
   ;; 0x07FF0000 32KB     DX_OBJECTS     (1024 entries × 32 bytes, ends 0x07FF8000)
   ;; 0x07FF8000  8KB     COM_WRAPPERS   (1024 entries × 8 bytes, ends 0x07FFA000)
-  ;; 0x07FFA000 16KB     COM_WRAPPERS_AUX (2048 entries × 8 bytes, ends 0x07FFE000)
+  ;; 0x07FFA000 15.75KB  COM_WRAPPERS_AUX (2016 entries × 8 bytes, ends 0x07FFDF00)
+  ;; 0x07FFDF00  256B    DX_VTBL_REGISTRY (220 bytes used, ends before VSOCK_TABLE)
   ;; 0x07FFE000  8KB     VSOCK_TABLE    (64 sockets × 128 bytes, ends 0x08000000)
   ;; 0x00012000  60MB    Guest address space (PE sections + DLLs + large data)
   ;;   For an NE task image_base is 0, so guest 0x00100000 + 8MB is the Win16
@@ -1924,6 +1925,14 @@
   (global $initterm_end (mut i32) (i32.const 0))  ;; end of fn ptr table
   (global $initterm_ret (mut i32) (i32.const 0))  ;; original caller return address
   (global $initterm_thunk (mut i32) (i32.const 0)) ;; guest addr of initterm-return thunk
+  ;; CRT atexit registry. The callback array contains guest function pointers
+  ;; and grows on demand; normal exit() drains it in reverse registration
+  ;; order through the CACA002C continuation thunk. _exit/ExitProcess bypass it.
+  (global $atexit_table (mut i32) (i32.const 0))
+  (global $atexit_count (mut i32) (i32.const 0))
+  (global $atexit_capacity (mut i32) (i32.const 0))
+  (global $atexit_exit_code (mut i32) (i32.const 0))
+  (global $atexit_ret_thunk (mut i32) (i32.const 0))
   ;; bsearch trampoline state (CACA000C continuation drives the search)
   (global $bsearch_key     (mut i32) (i32.const 0))  ;; guest ptr to key
   (global $bsearch_base    (mut i32) (i32.const 0))  ;; guest ptr to array base
@@ -2058,7 +2067,6 @@
   (global $mm_timer_oneshot  (mut i32) (i32.const 0))  ;; 1 = TIME_ONESHOT
   (global $mm_timer_next_id  (mut i32) (i32.const 1))  ;; auto-increment
   (global $mm_timer_in_cb    (mut i32) (i32.const 0))  ;; re-entrancy guard
-  (global $mm_timer_saved_esp (mut i32) (i32.const 0)) ;; ESP before callback injection
   (global $mm_timer_ret_thunk (mut i32) (i32.const 0)) ;; CACA000A return thunk
   (global $font_enum_ret_thunk (mut i32) (i32.const 0)) ;; CACA0011 EnumFontFamilies callback return
   ;; LineDDA callback continuation (CACA0012) and exact integer walk state.
@@ -2125,7 +2133,7 @@
   (global $clip_cursor_t (mut i32) (i32.const 0))
   (global $clip_cursor_r (mut i32) (i32.const 0))
   (global $clip_cursor_b (mut i32) (i32.const 0))
-  (global $yield_reason (mut i32) (i32.const 0))  ;; 0=none, 1=waiting, 2=exited, 3=com_load_dll, 4=help_load, 5=load_library, 6=modal_dialog, 7=message_wait, 8=net_wait
+  (global $yield_reason (mut i32) (i32.const 0))  ;; 0=none, 1=waiting, 2=exited, 3=com_load_dll, 4=help_load, 5=load_library, 6=modal_dialog, 7=message_wait, 8=net_wait, 9=critical_section
   ;; Set/GetProcessShutdownParameters. 0x280 is the Win32 default level.
   ;; WsControl's view of the virtual adapter (src/09d-winsock.wat): subnet mask
   ;; and default gateway, both host byte order.
@@ -2137,6 +2145,7 @@
   (global $message_wait_msg_ptr (mut i32) (i32.const 0))
   (global $wait_handle  (mut i32) (i32.const 0))
   (global $wait_handles_ptr (mut i32) (i32.const 0)) ;; if non-zero, wait_handle is nCount
+  (global $wait_all (mut i32) (i32.const 0)) ;; WaitForMultipleObjects bWaitAll
   (global $wait_timeout (mut i32) (i32.const 0xFFFFFFFF))
   (global $wait_stack_bytes (mut i32) (i32.const 12))
   ;; COM yield state — saved when yielding for async DLL fetch

@@ -286,6 +286,17 @@
       (i32.const 0xCACA0003))
     (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
 
+    ;; Allocate normal CRT exit() callback continuation thunk (marker
+    ;; 0xCACA002C). Each atexit callback returns here so the registry can be
+    ;; drained in LIFO order before the host process exit is reported.
+    (global.set $atexit_ret_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA002C))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
     ;; Allocate bsearch continuation thunk (marker 0xCACA000C)
     (global.set $bsearch_thunk (i32.add
       (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
