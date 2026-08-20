@@ -238,6 +238,7 @@ const WASM_PATH = getArg('wasm', path.join(ROOT, 'build', 'wine-assembly.wasm'))
 const PNG_OUT = getArg('png', null);     // --png=out.png: render to PNG via node-canvas
 const VIDEO_OUT = getArg('video', null); // --video=out.webm: record deterministic renderer frames through ffmpeg
 const VIDEO_FPS = parseFloat(getArg('video-fps', '30')); // --video-fps=N: playback rate; one frame is captured per batch
+const VIDEO_START_BATCH = Math.max(0, parseInt(getArg('video-start-batch', '0'), 10) || 0); // --video-start-batch=N: skip setup batches before capture
 const FFMPEG_PATH = getArg('ffmpeg', 'ffmpeg'); // --ffmpeg=FILE: ffmpeg executable used by --video
 const INPUT_SPEC = getArg('input', null); // --input=batch:msg:wParam[:lParam],...  e.g. --input=50:0x111:11
 const SEED_WINDOW = getArg('seed-window', null); // --seed-window=TITLE[|TITLE...]: add foreign top-level windows for shell tests
@@ -3699,6 +3700,15 @@ async function main() {
             break;
           }
         }
+        if (!h && we.wnd_slot_hwnd && we.ctrl_get_id) {
+          for (let s = 255; s >= 0; s--) {
+            const hwnd = we.wnd_slot_hwnd(s);
+            if (hwnd && we.ctrl_get_id(hwnd) === ev.ctrlId) {
+              h = hwnd;
+              break;
+            }
+          }
+        }
         const tag = ev.label ? ` ${ev.label}` : '';
         if (!h) {
           logs.push(`[input] dump-combobox${tag}: id=${ev.ctrlId} NOT FOUND at batch ${batch}`);
@@ -5847,7 +5857,9 @@ async function main() {
         && (REPAINT_EVERY === 1 || batch % REPAINT_EVERY === 0)) {
       renderer.flushRepaint();
     }
-    if (videoRecorder) await videoRecorder.capture(renderer.canvas);
+    if (videoRecorder && batch >= VIDEO_START_BATCH) {
+      await videoRecorder.capture(renderer.canvas);
+    }
     if (TRACE_BATCH_TIMING) {
       const afterPaintMs = Date.now();
       console.log(`[batch-timing] batch=${batch} run=${afterRunMs - batchStartMs}ms paint=${afterPaintMs - afterRunMs}ms eip=${hex(instance.exports.get_eip())}`);

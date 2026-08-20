@@ -75,24 +75,24 @@ at(16, 'mouseup:626:396');
 // Black polygon outline for the berry, followed by a red flood fill.
 click(18, 46, 204); // Polygon tool.
 let batch = polygon(20, [
-  [110, 135], [200, 135], [215, 160], [210, 195], [185, 235],
-  [155, 255], [125, 235], [105, 195], [95, 160], [110, 135],
+  [120, 135], [260, 135], [285, 170], [280, 225], [245, 285],
+  [190, 325], [140, 290], [105, 230], [95, 170], [120, 135],
 ]);
 click(batch + 1, 78, 433); // Bright red foreground.
 click(batch + 2, 46, 79);  // Fill tool.
-click(batch + 3, 155, 185);
+click(batch + 3, 190, 210);
 
 // Jagged green crown, also created entirely with Paint's Polygon and Fill.
 click(batch + 6, 46, 416); // Black foreground.
 click(batch + 7, 46, 204); // Polygon tool.
 batch = polygon(batch + 9, [
-  [105, 145], [135, 125], [125, 90], [155, 115], [165, 75],
-  [175, 115], [205, 90], [195, 125], [215, 145], [185, 155],
-  [135, 155], [105, 145],
+  [105, 145], [145, 120], [125, 70], [175, 110], [190, 55],
+  [205, 110], [260, 70], [240, 125], [280, 145], [235, 160],
+  [150, 160], [105, 145],
 ]);
 click(batch + 1, 110, 433); // Bright green foreground.
 click(batch + 2, 46, 79);   // Fill tool.
-click(batch + 3, 165, 100);
+click(batch + 3, 190, 105);
 
 // Large round brush for seeds and the BERRRY wordmark.
 click(batch + 6, 46, 416); // Black foreground.
@@ -100,23 +100,24 @@ click(batch + 7, 46, 129); // Brush tool.
 click(batch + 8, 19, 252); // Largest round brush option.
 batch += 8;
 for (const [x, y] of [
-  [130, 170], [160, 165], [190, 175], [120, 195],
-  [150, 195], [185, 205], [140, 225], [170, 225],
+  [145, 185], [190, 175], [235, 185], [125, 220],
+  [170, 215], [225, 225], [145, 255], [195, 250],
+  [245, 260], [165, 285], [220, 285],
 ]) click(++batch, x, y);
 
 batch += 3;
 const lines = [
   // B
-  [230,160,230,220], [230,160,245,160], [230,190,245,190], [230,220,245,220],
-  [245,160,250,175], [250,175,245,190], [245,190,250,205], [250,205,245,220],
+  [315,100,315,250], [315,100,350,100], [315,175,350,175], [315,250,350,250],
+  [350,100,360,135], [360,135,350,175], [350,175,360,215], [360,215,350,250],
   // E
-  [258,160,258,220], [258,160,275,160], [258,190,273,190], [258,220,275,220],
+  [370,100,370,250], [370,100,405,100], [370,175,402,175], [370,250,405,250],
   // R R R
-  [282,160,282,220], [282,160,298,160], [282,190,298,190], [298,160,298,190], [290,190,300,220],
-  [306,160,306,220], [306,160,322,160], [306,190,322,190], [322,160,322,190], [314,190,324,220],
-  [330,160,330,220], [330,160,346,160], [330,190,346,190], [346,160,346,190], [338,190,348,220],
+  [415,100,415,250], [415,100,450,100], [415,175,450,175], [450,100,450,175], [430,175,455,250],
+  [465,100,465,250], [465,100,500,100], [465,175,500,175], [500,100,500,175], [480,175,505,250],
+  [515,100,515,250], [515,100,550,100], [515,175,550,175], [550,100,550,175], [530,175,555,250],
   // Y
-  [352,160,362,188], [372,160,362,188], [362,188,362,220],
+  [560,100,580,175], [605,100,580,175], [580,175,580,250],
 ];
 for (const line of lines) batch = stroke(batch, ...line);
 
@@ -125,10 +126,23 @@ for (const line of lines) batch = stroke(batch, ...line);
 // the recording; switching back to Brush commits the text to the bitmap.
 batch += 4;
 click(batch++, 46, 154); // Text tool.
-at(batch++, 'mousedown:100:260');
-at(batch++, 'mousemove:385:286');
-at(batch++, 'mouseup:385:286');
+at(batch++, 'mousedown:305:280');
+at(batch++, 'mousemove:615:345');
+at(batch++, 'mouseup:615:345');
 batch += 3; // Let Paint create and focus control 114 plus its Fonts palette.
+at(batch, 'dump-combobox:103:paint-font-size');
+at(batch++, 'dump-combobox:104:paint-font-face');
+
+// Paint defaults this scalable font to 8pt. Open its live size dropdown,
+// scroll until 18pt is the fourth visible row, and click that real list item.
+at(batch++, 'ctrl-click:103');
+at(batch++, 'mousedown:258:76');
+at(batch++, 'mousemove:258:88');
+at(batch++, 'mouseup:258:88');
+click(batch++, 220, 95);
+at(batch++, 'dump-combobox:103:paint-font-size-selected');
+batch += 2;
+click(batch++, 330, 310);
 for (const char of TAGLINE) {
   const code = char === ' ' ? 32 : char.toUpperCase().charCodeAt(0);
   at(batch, `keydown:${code}`);
@@ -153,6 +167,7 @@ try {
     `--input=${events.join(',')}`,
     `--video=${VIDEO}`,
     '--video-fps=15',
+    '--video-start-batch=17',
     `--ffmpeg=${FFMPEG}`,
     `--max-batches=${finalBatch + 17}`,
     '--batch-size=50000',
@@ -170,27 +185,27 @@ try {
   console.error(output.slice(-10000));
   throw error;
 }
-
 assert(fs.existsSync(FINAL) && fs.statSync(FINAL).size > 1000,
   `final Paint snapshot was not written: ${FINAL}`);
 assert(fs.existsSync(VIDEO) && fs.statSync(VIDEO).size > 10000,
   `Paint video was not written: ${VIDEO}`);
 
 const image = PNG.sync.read(fs.readFileSync(FINAL));
-const count = (box, predicate) => {
+const countPixels = (source, box, predicate) => {
   let total = 0;
   for (let y = box.y0; y < box.y1; y++) {
     for (let x = box.x0; x < box.x1; x++) {
-      const i = (y * image.width + x) * 4;
-      if (predicate(image.data[i], image.data[i + 1], image.data[i + 2])) total++;
+      const i = (y * source.width + x) * 4;
+      if (predicate(source.data[i], source.data[i + 1], source.data[i + 2])) total++;
     }
   }
   return total;
 };
-const berry = { x0: 90, y0: 70, x1: 220, y1: 265 };
-const word = { x0: 225, y0: 150, x1: 380, y1: 225 };
-const tagline = { x0: 95, y0: 255, x1: 390, y1: 290 };
-const expandedCanvas = { x0: 400, y0: 60, x1: 620, y1: 390 };
+const count = (box, predicate) => countPixels(image, box, predicate);
+const berry = { x0: 90, y0: 50, x1: 290, y1: 335 };
+const word = { x0: 305, y0: 90, x1: 615, y1: 260 };
+const tagline = { x0: 300, y0: 275, x1: 620, y1: 350 };
+const expandedCanvas = { x0: 400, y0: 355, x1: 620, y1: 390 };
 const red = count(berry, (r, g, b) => r > 200 && g < 60 && b < 60);
 const green = count(berry, (r, g, b) => g > 180 && r < 80 && b < 80);
 const seedInk = count(berry, (r, g, b) => r < 40 && g < 40 && b < 40);
@@ -198,15 +213,18 @@ const wordInk = count(word, (r, g, b) => r < 40 && g < 40 && b < 40);
 const taglineInk = count(tagline, (r, g, b) => r < 40 && g < 40 && b < 40);
 const expandedCanvasWhite = count(expandedCanvas, (r, g, b) => r > 245 && g > 245 && b > 245);
 
-assert(expandedCanvasWhite >= 65000,
+assert(expandedCanvasWhite >= 7000,
   `Paint document did not fill the maximized work area (${expandedCanvasWhite} white pixels)`);
-assert(red >= 4000, `strawberry body is not visibly red (${red} pixels)`);
-assert(green >= 500, `strawberry crown is not visibly green (${green} pixels)`);
-assert(seedInk >= 200, `strawberry outline/seeds are missing (${seedInk} dark pixels)`);
-assert(wordInk >= 500, `BERRRY block lettering is missing (${wordInk} dark pixels)`);
-assert(taglineInk >= 300, `Berrry tagline is missing (${taglineInk} dark pixels)`);
+assert(red >= 15000, `strawberry body is not visibly red (${red} pixels)`);
+assert(green >= 2500, `strawberry crown is not visibly green (${green} pixels)`);
+assert(seedInk >= 700, `strawberry outline/seeds are missing (${seedInk} dark pixels)`);
+assert(wordInk >= 7000, `BERRRY block lettering is missing (${wordInk} dark pixels)`);
+assert(taglineInk >= 500, `Berrry tagline is missing or too small (${taglineInk} dark pixels)`);
+assert(/dump-combobox paint-font-size-selected:.*id=103 .*cursel=7 /.test(output),
+  'Paint Fonts palette did not select its 18pt row');
+const taglineFocusDump = output.match(/dump-focus-state berrry-tagline:.*$/m);
 assert(/dump-focus-state berrry-tagline:.*class=2 id=114 .*text="best place to host vibe coded apps"/.test(output),
-  'Paint native text edit did not receive the complete Berrry tagline');
+  `Paint native text edit did not receive the complete Berrry tagline (${taglineFocusDump || 'no focus dump'})`);
 
 const probe = JSON.parse(execFileSync(FFPROBE, [
   '-v', 'error',
@@ -215,10 +233,22 @@ const probe = JSON.parse(execFileSync(FFPROBE, [
 ], { encoding: 'utf8' }));
 const stream = probe.streams && probe.streams[0];
 const duration = Number(probe.format && probe.format.duration);
+const firstFrame = PNG.sync.read(execFileSync(FFMPEG, [
+  '-v', 'error', '-i', VIDEO,
+  '-vf', 'select=eq(n\\,0)', '-frames:v', '1',
+  '-f', 'image2pipe', '-vcodec', 'png', 'pipe:1',
+], { maxBuffer: 4 * 1024 * 1024 }));
+const openingCanvas = { x0: 70, y0: 50, x1: 620, y1: 390 };
+const openingWhite = countPixels(firstFrame, openingCanvas,
+  (r, g, b) => r > 240 && g > 240 && b > 240);
+const openingInk = countPixels(firstFrame, openingCanvas,
+  (r, g, b) => r < 80 && g < 80 && b < 80);
 assert(stream && stream.codec_name === 'h264', `unexpected video stream: ${JSON.stringify(stream)}`);
 assert.strictEqual(stream.width, 640, 'recorded video width');
 assert.strictEqual(stream.height, 480, 'recorded video height');
 assert(duration >= 12, `recorded workflow is too short (${duration}s)`);
+assert(openingWhite >= 185000 && openingInk <= 20,
+  `video did not start on the clean expanded canvas (${openingWhite} white, ${openingInk} dark pixels)`);
 assert(/\[video\] wrote .*berrry-paint\.mp4/.test(output),
   'CLI did not report a completed video');
 assert(!/UNIMPLEMENTED API:|RuntimeError|LinkError|\*\*\* CRASH/.test(output),
@@ -228,6 +258,7 @@ console.log(`PASS  Paint expanded its document across the work area (${expandedC
 console.log(`PASS  Paint drew a red strawberry (${red} red, ${green} green, ${seedInk} dark pixels)`);
 console.log(`PASS  Paint hand-drew BERRRY (${wordInk} dark pixels)`);
 console.log(`PASS  Paint Text tool committed the tagline (${taglineInk} dark pixels)`);
+console.log(`PASS  MP4 starts on the clean expanded canvas (${openingWhite} white pixels)`);
 console.log(`PASS  CLI recorded ${duration.toFixed(2)}s H.264 video at ${stream.width}x${stream.height}`);
 console.log(`Video: ${VIDEO}`);
 console.log(`Final frame: ${FINAL}`);
