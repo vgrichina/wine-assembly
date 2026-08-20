@@ -303,6 +303,7 @@ E2E=(
   test/test-cruel-maximized-launch-layout.js
   test/test-skifree-showwindow-startup.js
   test/test-skifree-gameplay.js
+  test/test-cs-owndc-stats-font.js
   test/test-spider-deal-menu.js
   test/test-spider-drag.js
   test/test-spider-maximized-canvas-resize.js

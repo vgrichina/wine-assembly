@@ -1306,6 +1306,18 @@
   ;; (data ...) segment in one file and a table in another share an address.
   (global $WND_CLASS_ICON_TABLE i32 (i32.const 0x079C9000))
   (global $WND_CLASS_ICON_TABLE_SIZE i32 (i32.const 0x00000400))
+  ;; WND_OWN_DC_TABLE: the private device context of a CS_OWNDC window, one
+  ;; entry per window slot. A class registered with CS_OWNDC gets one DC per
+  ;; window and keeps it, which is the whole point of the style: what the app
+  ;; selects into that DC is still selected the next time it asks for one.
+  ;; SkiFree selects the OEM fixed font into its GetDC once at startup and
+  ;; paints its stats labels through a later BeginPaint; with a fresh DC each
+  ;; time they came back in the default proportional face.
+  ;;   0  the class did not ask for a private DC
+  ;;  -1  it did, and nothing has asked for the DC yet
+  ;;   n  the DC handle, alive until the window is destroyed
+  (global $WND_OWN_DC_TABLE i32 (i32.const 0x079C9800))
+  (global $WND_OWN_DC_TABLE_SIZE i32 (i32.const 0x00000400))
   ;; Open files, indexed by the small handle a 16-bit task sees. DOS numbers
   ;; file handles from zero and a C runtime indexes its own per-handle table
   ;; with them, so a task that gets 0x136 back from OpenFile hands it to

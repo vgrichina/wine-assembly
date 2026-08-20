@@ -1220,7 +1220,26 @@
     (drop (call $host_gdi_surface_delete (local.get $hdc))))
 
   (func $host_alloc_window_dc (param $hwnd i32) (param $whole i32) (result i32)
-    (local $hdc i32)
+    (local $hdc i32) (local $own i32)
+    ;; A CS_OWNDC window is handed the same DC every time, so that whatever it
+    ;; selected in stays selected. Client DCs only: GetWindowDC and the
+    ;; nonclient chrome ask for a different region of the surface and get
+    ;; their own DC, as they do on Windows.
+    (if (i32.eqz (local.get $whole))
+      (then (local.set $own (call $wnd_get_own_dc (local.get $hwnd)))))
+    (if (i32.gt_s (local.get $own) (i32.const 0))
+      (then
+        ;; Rebind rather than assume: the window may have been resized and its
+        ;; surface remade since the last acquisition. The bind touches only the
+        ;; owner field and the surface, never the selected objects. The clip is
+        ;; per-acquisition — BeginPaint intersects the update rect into it — so
+        ;; it starts each time from the same empty state a fresh DC would have.
+        (if (call $gdi_window_dc_bind (local.get $own) (local.get $hwnd) (i32.const 0))
+          (then
+            (call $gdi_dc_clip_release (local.get $own))
+            (call $gdi_dc_aux_release (local.get $own))
+            (return (local.get $own))))
+        (return (i32.const 0))))
     (local.set $hdc (call $gdi_dc_alloc))
     (if (local.get $hdc)
       (then
@@ -1228,10 +1247,21 @@
               (local.get $hdc) (local.get $hwnd) (local.get $whole)))
           (then
             (drop (call $gdi_dc_delete (local.get $hdc)))
-            (local.set $hdc (i32.const 0))))))
+            (local.set $hdc (i32.const 0)))
+          (else
+            (if (i32.lt_s (local.get $own) (i32.const 0))
+              (then (call $wnd_set_own_dc (local.get $hwnd) (local.get $hdc))))))))
     (local.get $hdc))
 
   (func $host_release_dc (param $hdc i32) (result i32)
+    ;; A private DC survives ReleaseDC and EndPaint — that is what makes its
+    ;; selected objects persist. Its clip and aux scratch are per-acquisition
+    ;; and still go; only the state record, which holds the selections, stays.
+    (if (call $wnd_own_dc_is_private (local.get $hdc))
+      (then
+        (call $gdi_dc_aux_release (local.get $hdc))
+        (call $gdi_dc_clip_release (local.get $hdc))
+        (return (i32.const 1))))
     (call $gdi_dc_aux_release (local.get $hdc))
     (call $gdi_dc_clip_release (local.get $hdc))
     (call $gdi_dc_state_release (local.get $hdc))

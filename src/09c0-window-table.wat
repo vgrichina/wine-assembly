@@ -55,6 +55,7 @@
     (call $ctrl_table_reset_slot (local.get $slot))
     (call $richedit_format_reset_slot (local.get $slot))
     (call $wnd_owner_reset_slot (local.get $slot))
+    (call $wnd_own_dc_reset_slot (local.get $slot))
     (call $menu_data_reset_slot (local.get $slot))
     (call $dialog_state_reset_slot (local.get $slot))
     (call $wnd_unicode_reset_slot (local.get $slot))
@@ -514,6 +515,64 @@
         (call $wnd_set_class_cursor
           (local.get $hwnd)
           (i32.load offset=32 (call $class_record_addr (local.get $slot)))))))
+
+  ;; ---- CS_OWNDC private device contexts ----
+  ;;
+  ;; Resolved per window at creation like the class brush and cursor above,
+  ;; and for the same reason. The slot holds -1 from creation until the first
+  ;; GetDC/BeginPaint, then the DC handle itself; $host_alloc_window_dc hands
+  ;; that same handle back on every later request so the objects the app
+  ;; selected into it stay selected.
+  (func $wnd_own_dc_addr_for_slot (param $slot i32) (result i32)
+    (i32.add (global.get $WND_OWN_DC_TABLE) (i32.mul (local.get $slot) (i32.const 4))))
+
+  (func $wnd_own_dc_reset_slot (param $slot i32)
+    (local $addr i32) (local $hdc i32)
+    (local.set $addr (call $wnd_own_dc_addr_for_slot (local.get $slot)))
+    (local.set $hdc (i32.load (local.get $addr)))
+    ;; Clear the slot before releasing, so the release does not see the handle
+    ;; as still privately owned and decline to free it.
+    (i32.store (local.get $addr) (i32.const 0))
+    (if (i32.gt_s (local.get $hdc) (i32.const 0))
+      (then (drop (call $host_release_dc (local.get $hdc))))))
+
+  (func $wnd_set_own_dc (param $hwnd i32) (param $hdc i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.ne (local.get $idx) (i32.const -1))
+      (then (i32.store (call $wnd_own_dc_addr_for_slot (local.get $idx)) (local.get $hdc)))))
+
+  (func $wnd_get_own_dc (param $hwnd i32) (result i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1))
+      (then (return (i32.const 0))))
+    (i32.load (call $wnd_own_dc_addr_for_slot (local.get $idx))))
+
+  ;; Is this DC some window's private one? ReleaseDC/EndPaint asks, because a
+  ;; private DC outlives both.
+  (func $wnd_own_dc_is_private (param $hdc i32) (result i32)
+    (local $i i32)
+    (if (i32.le_s (local.get $hdc) (i32.const 0))
+      (then (return (i32.const 0))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (if (i32.eq (i32.load (call $wnd_own_dc_addr_for_slot (local.get $i)))
+                  (local.get $hdc))
+        (then (return (i32.const 1))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  (func $wnd_set_own_dc_from_name (param $hwnd i32) (param $class_name_guest i32)
+    (local $slot i32)
+    (local.set $slot (call $class_find_slot (call $class_name_key (local.get $class_name_guest))))
+    (if (i32.ge_s (local.get $slot) (i32.const 0))
+      (then
+        ;; WNDCLASSA.style is at +0 inside WNDCLASSA, i.e. class record +8.
+        (if (i32.and (i32.load offset=8 (call $class_record_addr (local.get $slot)))
+                     (i32.const 0x0020))  ;; CS_OWNDC
+          (then (call $wnd_set_own_dc (local.get $hwnd) (i32.const -1)))))))
 
   ;; Owner hwnd for owned popup/top-level windows. This is deliberately
   ;; separate from parent: only WS_CHILD windows inherit geometry from parent.
