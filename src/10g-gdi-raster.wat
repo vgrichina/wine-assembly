@@ -1436,15 +1436,19 @@
                   (f64.le (local.get $dot) (f64.add (local.get $len2) (local.get $limit)))))
                 (else (i32.and (f64.ge (local.get $dot) (f64.const 0))
                   (f64.le (local.get $dot) (local.get $len2)))))))))
-        (if (i32.and (local.get $inside) (call $gdi_shape_put_pixel
-              (local.get $hdc) (local.get $desc) (local.get $x) (local.get $y)
-              (local.get $color) (local.get $rop2)))
+        ;; Keep the side-effecting write behind the coverage branch. i32.and
+        ;; evaluates both operands eagerly and would paint the entire bounds.
+        (if (local.get $inside)
           (then
-            (local.set $wrote (i32.const 1))
-            (if (i32.lt_s (local.get $x) (local.get $min_x)) (then (local.set $min_x (local.get $x))))
-            (if (i32.lt_s (local.get $y) (local.get $min_y)) (then (local.set $min_y (local.get $y))))
-            (if (i32.gt_s (local.get $x) (local.get $max_x)) (then (local.set $max_x (local.get $x))))
-            (if (i32.gt_s (local.get $y) (local.get $max_y)) (then (local.set $max_y (local.get $y))))))
+            (if (call $gdi_shape_put_pixel
+                  (local.get $hdc) (local.get $desc) (local.get $x) (local.get $y)
+                  (local.get $color) (local.get $rop2))
+              (then
+                (local.set $wrote (i32.const 1))
+                (if (i32.lt_s (local.get $x) (local.get $min_x)) (then (local.set $min_x (local.get $x))))
+                (if (i32.lt_s (local.get $y) (local.get $min_y)) (then (local.set $min_y (local.get $y))))
+                (if (i32.gt_s (local.get $x) (local.get $max_x)) (then (local.set $max_x (local.get $x))))
+                (if (i32.gt_s (local.get $y) (local.get $max_y)) (then (local.set $max_y (local.get $y))))))))
         (local.set $x (i32.add (local.get $x) (i32.const 1)))
         (br $cols)))
       (local.set $y (i32.add (local.get $y) (i32.const 1)))
@@ -2586,12 +2590,141 @@
         (i32.add (local.get $max_y) (i32.const 1))))))
     (i32.const 1))
 
+  ;; Apply a non-idempotent ROP2 once to the union of a solid wide cosmetic
+  ;; polyline. Native Win98 does not toggle overlap pixels again at joins or
+  ;; self-crossings, so per-segment line calls are not equivalent here.
+  (func $gdi_polyline_rop2_union (param $hdc i32) (param $points i32)
+        (param $count i32) (param $from_current i32) (param $desc i32)
+        (param $width i32) (param $rop2 i32) (result i32)
+    (local $i i32) (local $from_x i32) (local $from_y i32)
+    (local $to_x i32) (local $to_y i32) (local $device_x i32) (local $device_y i32)
+    (local $min_x i32) (local $min_y i32) (local $max_x i32) (local $max_y i32)
+    (local $half i32) (local $far i32) (local $left i32) (local $top i32)
+    (local $right i32) (local $bottom i32) (local $mask_w i32) (local $mask_h i32)
+    (local $mask_size i64) (local $mask_g i32) (local $mask i32)
+    (local $x i32) (local $y i32) (local $wrote i32)
+    (if (local.get $from_current)
+      (then
+        (local.set $from_x (call $gdi_dc_get_field
+          (local.get $hdc) (i32.const 12) (i32.const 0)))
+        (local.set $from_y (call $gdi_dc_get_field
+          (local.get $hdc) (i32.const 16) (i32.const 0))))
+      (else
+        (local.set $from_x (i32.load (local.get $points)))
+        (local.set $from_y (i32.load offset=4 (local.get $points)))
+        (local.set $i (i32.const 1))))
+    (local.set $device_x (call $gdi_line_map_x (local.get $desc) (local.get $from_x)))
+    (local.set $device_y (call $gdi_line_map_y (local.get $desc) (local.get $from_y)))
+    (local.set $min_x (local.get $device_x)) (local.set $max_x (local.get $device_x))
+    (local.set $min_y (local.get $device_y)) (local.set $max_y (local.get $device_y))
+    (block $bounds_done (loop $bounds
+      (br_if $bounds_done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $to_x (i32.load
+        (i32.add (local.get $points) (i32.shl (local.get $i) (i32.const 3)))))
+      (local.set $to_y (i32.load offset=4
+        (i32.add (local.get $points) (i32.shl (local.get $i) (i32.const 3)))))
+      (local.set $device_x (call $gdi_line_map_x (local.get $desc) (local.get $to_x)))
+      (local.set $device_y (call $gdi_line_map_y (local.get $desc) (local.get $to_y)))
+      (if (i32.lt_s (local.get $device_x) (local.get $min_x))
+        (then (local.set $min_x (local.get $device_x))))
+      (if (i32.gt_s (local.get $device_x) (local.get $max_x))
+        (then (local.set $max_x (local.get $device_x))))
+      (if (i32.lt_s (local.get $device_y) (local.get $min_y))
+        (then (local.set $min_y (local.get $device_y))))
+      (if (i32.gt_s (local.get $device_y) (local.get $max_y))
+        (then (local.set $max_y (local.get $device_y))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $bounds)))
+    (local.set $half (i32.shr_u (local.get $width) (i32.const 1)))
+    (local.set $far (i32.sub (local.get $width) (local.get $half)))
+    ;; Clamp before the small pen-margin arithmetic so hostile INT_MIN/MAX
+    ;; coordinates cannot wrap the bounded mask back onto the surface.
+    (local.set $left (select (i32.const 0)
+      (i32.sub (local.get $min_x) (local.get $half))
+      (i32.le_s (local.get $min_x) (local.get $half))))
+    (local.set $top (select (i32.const 0)
+      (i32.sub (local.get $min_y) (local.get $half))
+      (i32.le_s (local.get $min_y) (local.get $half))))
+    (local.set $right (select (i32.load offset=4 (local.get $desc))
+      (i32.add (local.get $max_x) (local.get $far))
+      (i32.ge_s (local.get $max_x)
+        (i32.sub (i32.load offset=4 (local.get $desc)) (local.get $far)))))
+    (local.set $bottom (select (i32.load offset=8 (local.get $desc))
+      (i32.add (local.get $max_y) (local.get $far))
+      (i32.ge_s (local.get $max_y)
+        (i32.sub (i32.load offset=8 (local.get $desc)) (local.get $far)))))
+    (if (i32.or (i32.ge_s (local.get $left) (local.get $right))
+          (i32.ge_s (local.get $top) (local.get $bottom)))
+      (then (return (i32.const 1))))
+    (local.set $mask_w (i32.sub (local.get $right) (local.get $left)))
+    (local.set $mask_h (i32.sub (local.get $bottom) (local.get $top)))
+    (local.set $mask_size (i64.mul (i64.extend_i32_u (local.get $mask_w))
+      (i64.extend_i32_u (local.get $mask_h))))
+    (if (i64.gt_u (local.get $mask_size) (i64.const 4000000))
+      (then (return (i32.const 0))))
+    (local.set $mask_g (call $heap_alloc (i32.wrap_i64 (local.get $mask_size))))
+    (if (i32.eqz (local.get $mask_g)) (then (return (i32.const 0))))
+    (local.set $mask (call $g2w (local.get $mask_g)))
+    (memory.fill (local.get $mask) (i32.const 0) (i32.wrap_i64 (local.get $mask_size)))
+    (if (local.get $from_current)
+      (then
+        (local.set $from_x (call $gdi_dc_get_field
+          (local.get $hdc) (i32.const 12) (i32.const 0)))
+        (local.set $from_y (call $gdi_dc_get_field
+          (local.get $hdc) (i32.const 16) (i32.const 0)))
+        (local.set $i (i32.const 0)))
+      (else
+        (local.set $from_x (i32.load (local.get $points)))
+        (local.set $from_y (i32.load offset=4 (local.get $points)))
+        (local.set $i (i32.const 1))))
+    (block $mark_done (loop $mark
+      (br_if $mark_done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $to_x (i32.load
+        (i32.add (local.get $points) (i32.shl (local.get $i) (i32.const 3)))))
+      (local.set $to_y (i32.load offset=4
+        (i32.add (local.get $points) (i32.shl (local.get $i) (i32.const 3)))))
+      (call $gdi_path_widen_segment
+        (local.get $mask) (local.get $mask_w) (local.get $mask_h)
+        (local.get $left) (local.get $top)
+        (call $gdi_line_map_x (local.get $desc) (local.get $from_x))
+        (call $gdi_line_map_y (local.get $desc) (local.get $from_y))
+        (call $gdi_line_map_x (local.get $desc) (local.get $to_x))
+        (call $gdi_line_map_y (local.get $desc) (local.get $to_y))
+        (local.get $width))
+      (local.set $from_x (local.get $to_x)) (local.set $from_y (local.get $to_y))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $mark)))
+    (local.set $y (i32.const 0))
+    (block $rows_done (loop $rows
+      (br_if $rows_done (i32.ge_u (local.get $y) (local.get $mask_h)))
+      (local.set $x (i32.const 0))
+      (block $cols_done (loop $cols
+        (br_if $cols_done (i32.ge_u (local.get $x) (local.get $mask_w)))
+        (if (i32.load8_u (i32.add (local.get $mask)
+              (i32.add (i32.mul (local.get $y) (local.get $mask_w)) (local.get $x))))
+          (then
+            (if (call $gdi_line_put_pixel (local.get $hdc) (local.get $desc)
+                  (i32.add (local.get $left) (local.get $x))
+                  (i32.add (local.get $top) (local.get $y)) (local.get $rop2))
+              (then (local.set $wrote (i32.const 1))))))
+        (local.set $x (i32.add (local.get $x) (i32.const 1)))
+        (br $cols)))
+      (local.set $y (i32.add (local.get $y) (i32.const 1)))
+      (br $rows)))
+    (call $heap_free (local.get $mask_g))
+    (if (local.get $wrote)
+      (then (call $gdi_geometry_present (local.get $hdc) (local.get $desc)
+        (local.get $left) (local.get $top) (local.get $right) (local.get $bottom))))
+    (i32.const 1))
+
   ;; Draws an open point path after preflighting every segment. from_current=0
   ;; implements Polyline; from_current=1 implements PolylineTo.
   (func $gdi_polyline_try (param $hdc i32) (param $points i32)
         (param $count i32) (param $from_current i32) (result i32)
     (local $i i32) (local $from_x i32) (local $from_y i32)
     (local $to_x i32) (local $to_y i32)
+    (local $desc i32) (local $rop2 i32) (local $width i32)
+    (local $dc i32) (local $pen i32) (local $record i32) (local $geometric i32)
     (if (i32.or (i32.gt_u (local.get $count) (i32.const 4096))
           (select (i32.eqz (local.get $count)) (i32.lt_u (local.get $count) (i32.const 2))
             (local.get $from_current)))
@@ -2618,6 +2751,25 @@
       (local.set $from_x (local.get $to_x)) (local.set $from_y (local.get $to_y))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $preflight)))
+    (local.set $desc (global.get $GDI_LINE_DESC))
+    (local.set $rop2 (call $gdi_dc_get_rop2 (local.get $hdc)))
+    (local.set $width (i32.load offset=28 (local.get $desc)))
+    (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
+    (if (local.get $dc)
+      (then
+        (local.set $pen (i32.load offset=4 (local.get $dc)))
+        (local.set $record (call $gdi_object_record (local.get $pen)))
+        (if (local.get $record)
+          (then (local.set $geometric (i32.and
+            (i32.load offset=20 (local.get $record)) (i32.const 0x00010000)))))))
+    (if (i32.and (i32.gt_u (local.get $width) (i32.const 1))
+          (i32.and (i32.ne (local.get $rop2) (i32.const 13))
+            (i32.and (i32.eqz (local.get $geometric))
+              (i32.eq (i32.load offset=64 (local.get $desc)) (i32.const 0)))))
+      (then
+        (return (call $gdi_polyline_rop2_union
+          (local.get $hdc) (local.get $points) (local.get $count)
+          (local.get $from_current) (local.get $desc) (local.get $width) (local.get $rop2)))))
     (global.set $gdi_line_style_phase (i32.const 0))
     (if (local.get $from_current)
       (then

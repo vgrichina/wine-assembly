@@ -13,6 +13,8 @@ const ROOT = path.join(__dirname, '..');
 const SRC = path.join(ROOT, 'src');
 const WIDE_LINE_FIXTURES = JSON.parse(fs.readFileSync(
   path.join(__dirname, 'fixtures', 'gdi-wide-line-pixels.json'), 'utf8'));
+const ROP2_POLYLINE_FIXTURES = JSON.parse(fs.readFileSync(
+  path.join(__dirname, 'fixtures', 'gdi-rop2-polyline-pixels.json'), 'utf8'));
 
 async function main() {
   const wasmBytes = await compileWat(file => fs.promises.readFile(path.join(SRC, file), 'utf8'));
@@ -209,6 +211,23 @@ async function main() {
     assert.strictEqual(pixel(dib, 8, 2), 0);
   });
 
+  check('geometric line coverage never writes outside its analytic stroke', () => {
+    const dib = makeDib(20, 14, 32, true);
+    const brush = wat.guest_alloc(12) >>> 0;
+    wat.guest_write32(brush, 0); // BS_SOLID
+    wat.guest_write32(brush + 4, 0x00FFFFFF);
+    wat.guest_write32(brush + 8, 0);
+    const pen = wat.test_call_ExtCreatePen(0x00010000 | 0x0200, 4, brush, 0, 0) >>> 0;
+    assert(pen, 'failed to create geometric flat-cap pen');
+    selectObject(dib.hdc, pen);
+    assert.strictEqual(wat.test_gdi_line_try(dib.hdc, 4, 4, 12, 8), 1);
+    assert.strictEqual(pixel(dib, 6, 5), 0xFFFFFF, 'stroke body must draw');
+    assert.strictEqual(pixel(dib, 1, 1), 0,
+      'coverage branch must suppress writes in the enclosing bounding box');
+    assert.strictEqual(pixel(dib, 14, 10), 0,
+      'far bounding-box corner must remain untouched');
+  });
+
   check('wide solid strokes include native square endpoint caps', () => {
     const dib = makeDib(10, 8, 24, true);
     const wide = createPen(0, 3, 0x000000FF);
@@ -279,6 +298,68 @@ async function main() {
         `${fixture.name}: output must contain only exact background and pen colors`);
     }
     assert.strictEqual(exactCases, 5, 'five captured axis cases must be exact');
+  });
+
+  check('native Win98 wide ROP2 Polyline applies once across joins and crossings', () => {
+    const fixtures = ROP2_POLYLINE_FIXTURES;
+    assert.strictEqual(fixtures.provenance.kind, 'native-windows-98-reference');
+    assert.strictEqual(fixtures.provenance.fidelityClaim, true);
+    assert.strictEqual(fixtures.provenance.source,
+      'tools/v86-reference/probes/gdi-rop2-polyline.c');
+    const probeSource = fs.readFileSync(path.join(ROOT, fixtures.provenance.source));
+    assert.strictEqual(crypto.createHash('sha256').update(probeSource).digest('hex'),
+      fixtures.provenance.probeSourceSha256);
+    assert.match(fixtures.provenance.probeExeSha256, /^[0-9a-f]{64}$/);
+    assert.match(fixtures.provenance.serialOutputSha256, /^[0-9a-f]{64}$/);
+
+    const foreground = parseInt(fixtures.foregroundPackedBgr, 16);
+    const colorRef = parseInt(fixtures.foregroundColorRef, 16);
+    const rowsFor = dib => Array.from({ length: dib.height }, (_, y) =>
+      Array.from({ length: dib.width }, (_, x) => pixel(dib, x, y) === foreground ? '#' : '.').join(''));
+
+    let lineRows;
+    let polylineRows;
+    for (const fixture of fixtures.cases) {
+      const [width, height] = fixture.size;
+      assert.strictEqual(fixture.pixels.length, height, `${fixture.name}: fixture height`);
+      assert(fixture.pixels.every(row => row.length === width), `${fixture.name}: fixture width`);
+      const dib = makeDib(width, height, 32, true);
+      const pen = createPen(0, fixture.width, colorRef);
+      const points = pointsBuffer(fixture.points);
+      selectObject(dib.hdc, pen);
+      assert.strictEqual(wat.test_gdi_dc_set_rop2(dib.hdc, fixture.rop2), 13);
+      for (let repeat = 0; repeat < fixture.repeat; repeat++) {
+        const result = fixture.api === 'LineTo'
+          ? wat.test_gdi_line_try(dib.hdc,
+            fixture.points[0][0], fixture.points[0][1], fixture.points[1][0], fixture.points[1][1])
+          : wat.test_gdi_polyline_try(dib.hdc, points, fixture.points.length, 0);
+        assert.strictEqual(result, 1, `${fixture.name}: WAT raster admission`);
+      }
+      const actualRows = rowsFor(dib);
+
+      if (fixture.watExact) {
+        assert.deepStrictEqual(actualRows, fixture.pixels, `${fixture.name}: native pixel mask`);
+      } else {
+        // Diagonal cosmetic coverage is still a documented fidelity gap. Gate
+        // the Win98 ROP2 rule independently: render every segment with COPYPEN
+        // to obtain this rasterizer's union, then require the Polyline ROP2
+        // result to contain that union with no join/crossing toggles.
+        const union = makeDib(width, height, 32, true);
+        const unionPen = createPen(0, fixture.width, colorRef);
+        selectObject(union.hdc, unionPen);
+        for (let i = 1; i < fixture.points.length; i++) {
+          const [x0, y0] = fixture.points[i - 1];
+          const [x1, y1] = fixture.points[i];
+          assert.strictEqual(wat.test_gdi_line_try(union.hdc, x0, y0, x1, y1), 1);
+        }
+        assert.deepStrictEqual(actualRows, rowsFor(union),
+          `${fixture.name}: ROP2 must be applied once to the call-wide coverage union`);
+      }
+      if (fixture.name === 'lineto_diag_w2_not') lineRows = actualRows;
+      if (fixture.name === 'polyline_diag_w2_not') polylineRows = actualRows;
+    }
+    assert.deepStrictEqual(polylineRows, lineRows,
+      'two-point Polyline must match LineTo under the same wide ROP2');
   });
 
   check('wide ROP2 uses one coverage write; transformed wide and huge lines still fall back', () => {

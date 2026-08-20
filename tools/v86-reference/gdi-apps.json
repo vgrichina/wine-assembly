@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "apps": {
+    "gdi-rop2-polyline": {
+      "title": "Windows 98 wide cosmetic ROP2 Polyline reference",
+      "probeSource": "tools/v86-reference/probes/gdi-rop2-polyline.c",
+      "probeName": "GDIROP2.EXE",
+      "launch": "D:\\GDIROP2.EXE",
+      "waitMs": 30000,
+      "files": []
+    }
+  }
+}
