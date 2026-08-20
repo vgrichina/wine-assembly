@@ -103,6 +103,51 @@ const { bootRenderHarness } = require('./render-helper');
       `MS Sans Serif ${expected.request}px public tmHeight`);
   }
 
+  // Win98's raster mapper also considers integer enlargements of every stored
+  // strike. These transition ranges are the exact native SSERIFE.FON results
+  // from the -1..-48 reference sweep. `source` is the stored bitmap cell;
+  // `cell` is the realized cell after GDI's integral magnification.
+  const mappedRanges = [
+    { first: 1, last: 12, source: 13, cell: 13 },
+    { first: 13, last: 15, source: 16, cell: 16 },
+    { first: 16, last: 17, source: 20, cell: 20 },
+    { first: 18, last: 21, source: 24, cell: 24 },
+    { first: 22, last: 23, source: 13, cell: 26 },
+    { first: 24, last: 25, source: 29, cell: 29 },
+    { first: 26, last: 30, source: 16, cell: 32 },
+    { first: 31, last: 35, source: 37, cell: 37 },
+    { first: 36, last: 38, source: 24, cell: 48 },
+    { first: 39, last: 43, source: 16, cell: 48 },
+    { first: 44, last: 47, source: 13, cell: 52 },
+    { first: 48, last: 48, source: 29, cell: 58 },
+  ];
+  for (const range of mappedRanges) {
+    for (let request = range.first; request <= range.last; request++) {
+      const font = wat.test_call_CreateFontW(
+        -request, 400, 0, writeWide('MS Sans Serif')) >>> 0;
+      const strike = wat.test_gdi_bitmap_font_bound(font) >>> 0;
+      assert(font && strike, `MS Sans Serif -${request}px must bind`);
+      assert.strictEqual(new DataView(memory.buffer).getUint32(strike + 20, true),
+        range.source, `MS Sans Serif -${request}px source cell`);
+      wat.test_call_SelectObject(hdc, font);
+      assert.strictEqual(wat.test_call_GetTextMetricsA(hdc, tm), 1);
+      assert.strictEqual(wat.guest_read32(tm), range.cell,
+        `MS Sans Serif -${request}px realized cell`);
+      assert.strictEqual(wat.test_gdi_bitmap_text_metrics_write(hdc, tm, 0), 1);
+      const view = new DataView(memory.buffer);
+      const scale = range.cell / range.source;
+      const nativeAscent = view.getUint32(strike + 24, true);
+      const nativeLeading = view.getUint32(strike + 60, true) & 0xffff;
+      assert.strictEqual(wat.guest_read32(tm + 4), nativeAscent * scale,
+        `MS Sans Serif -${request}px scaled ascent`);
+      assert.strictEqual(wat.guest_read32(tm + 8),
+        (range.source - nativeAscent) * scale,
+        `MS Sans Serif -${request}px scaled descent`);
+      assert.strictEqual(wat.guest_read32(tm + 12), nativeLeading * scale,
+        `MS Sans Serif -${request}px scaled internal leading`);
+    }
+  }
+
   // No font files are mounted in this harness, so Arial cannot be rasterized
   // from its substitute here. It still must not reach Canvas: the bundled
   // MS Sans Serif strike is the last resort, which is what makes it safe for
