@@ -88,6 +88,7 @@ UNIT=(
   test/test-wat-gdi-draw-text-ex.js
   test/test-wat-gdi-default-bitmap-font.js
   test/test-wat-gdi-font-enum.js
+  test/test-font-enum-sizes.js
   test/test-wat-gdi-fixed-stock-font.js
   test/test-wat-truetype-metrics.js
   test/test-font-substitutions.js
@@ -225,6 +226,7 @@ E2E=(
   test/test-wordpad-copy-clipboard.js
   test/test-wordpad-paste-refcount.js
   test/test-wordpad-font-combo.js
+  test/test-wordpad-font-size-list.js
   test/test-fontview.js
   test/test-mspaint-web.js
   test/test-qblackjack-web.js

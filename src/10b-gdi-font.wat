@@ -222,7 +222,14 @@
         (i32.load offset=56 (local.get $record))))
       (else (i32.const 0))))
 
-  (func $gdi_bitmap_font_enum_unique (param $candidate i32) (result i32)
+  ;; $family_only is 1 for a family enumeration (no lpszFamily / an empty one),
+  ;; where GDI reports each family once, and 0 when the caller named a family,
+  ;; where GDI reports every font in it. That distinction is what gives a
+  ;; bitmap face its real, short size list: Courier ships 10/12/15px strikes
+  ;; and a font picker asking for "Courier" must be offered all three, while
+  ;; the family list must still name Courier once.
+  (func $gdi_bitmap_font_enum_unique (param $candidate i32)
+        (param $family_only i32) (result i32)
     (local $face i32) (local $i i32) (local $prior i32) (local $prior_face i32)
     (local $limit i32)
     (if (i32.eq (local.get $candidate) (i32.const 1))
@@ -235,14 +242,21 @@
     ;; ones before it: drawing text in a substituted face installs a strike
     ;; under that same name, so after any Arial has been drawn the family would
     ;; otherwise be reported twice.
+    ;; Only state 1 counts as a duplicate. State 2 is the on-demand
+    ;; rasterization cache, which $gdi_bitmap_font_enum_face never reports, so
+    ;; treating it as a prior sighting does not prevent a double-report — it
+    ;; deletes the family outright. That is what emptied WordPad's size list:
+    ;; the app draws in Times New Roman, which caches a strike, and the very
+    ;; next EnumFontFamiliesA("Times New Roman") then matched nothing.
     (local.set $limit
       (if (result i32) (i32.gt_u (local.get $candidate) (i32.const 17))
         (then (i32.const 16))
-        (else (i32.sub (local.get $candidate) (i32.const 2)))))
+        (else (select (i32.sub (local.get $candidate) (i32.const 2)) (i32.const 0)
+          (local.get $family_only)))))
     (block $unique (loop $scan
       (br_if $unique (i32.ge_u (local.get $i) (local.get $limit)))
       (local.set $prior (call $gdi_bitmap_font_record (local.get $i)))
-      (if (i32.load (local.get $prior))
+      (if (i32.eq (i32.load (local.get $prior)) (i32.const 1))
         (then
           (local.set $prior_face (i32.add (i32.load offset=8 (local.get $prior))
             (i32.load offset=56 (local.get $prior))))
@@ -259,7 +273,13 @@
   (func $gdi_bitmap_font_enum_next (param $after i32) (param $filter i32)
         (param $wide i32) (result i32)
     (local $candidate i32) (local $face i32) (local $matches i32)
+    (local $family_only i32)
     (drop (call $gdi_bitmap_font_ensure_stock))
+    ;; No family, or an empty one, is the family enumeration.
+    (local.set $family_only (i32.or (i32.eqz (local.get $filter))
+      (if (result i32) (local.get $wide)
+        (then (i32.eqz (i32.load16_u (local.get $filter))))
+        (else (i32.eqz (i32.load8_u (local.get $filter)))))))
     (local.set $candidate (i32.add (local.get $after) (i32.const 1)))
     (block $done (loop $scan
       ;; The scalable list ends where it runs out of names rather than at a
@@ -269,12 +289,10 @@
           (i32.sub (local.get $candidate) (i32.const 18)))))))
       (local.set $face (call $gdi_bitmap_font_enum_face (local.get $candidate)))
       (if (i32.and (i32.ne (local.get $face) (i32.const 0))
-            (call $gdi_bitmap_font_enum_unique (local.get $candidate)))
+            (call $gdi_bitmap_font_enum_unique
+              (local.get $candidate) (local.get $family_only)))
         (then
-          (local.set $matches (i32.or (i32.eqz (local.get $filter))
-            (if (result i32) (local.get $wide)
-              (then (i32.eqz (i32.load16_u (local.get $filter))))
-              (else (i32.eqz (i32.load8_u (local.get $filter)))))))
+          (local.set $matches (local.get $family_only))
           (if (i32.eqz (local.get $matches))
             (then
               (local.set $matches

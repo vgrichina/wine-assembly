@@ -531,11 +531,13 @@ async function main() {
   //   B:set-focus-selection:START:END[:LABEL] — set focused edit/RichEdit selection through EM_SETSEL
   //   B:send-focus-message:MSG:WPARAM:LPARAM[:LABEL] — synchronously send a message to focus
   //   B:dump-control-state:ID[:LABEL] — log a visible control's state without changing focus
+  //   B:dump-combobox:ID[:LABEL] — log a visible combobox's CB_GETCOUNT/CB_GETLBTEXT rows
   //   B:dump-clipboard[:LABEL] — log supported clipboard format count and RTF snippet
   //   B:seed-cf-dib[:LABEL] — publish a 32x24 checker CF_DIB and paste it into focus
   //   B:dump-focus-charformat[:LABEL] — log focused hwnd EM_GETCHARFORMAT state
   //   B:set-focus-charformat-color:COLOR[:LABEL] — EM_SETCHARFORMAT color on focused hwnd
   //   B:set-focus-charformat-size:TWIPS[:LABEL] — EM_SETCHARFORMAT size on focused hwnd
+  //   B:set-focus-charformat-face:NAME[:TWIPS][:LABEL] — EM_SETCHARFORMAT face (and size) on focused hwnd
   //   B:dump-focus-paraformat[:LABEL] — log focused hwnd EM_GETPARAFORMAT state
   //   B:set-focus-paraformat-align:ALIGN[:LABEL] — EM_SETPARAFORMAT alignment on focused hwnd
   //   B:set-focus-paraformat-basic:NUMBERING:START:RIGHT:OFFSET:TAB[:LABEL]
@@ -624,6 +626,8 @@ async function main() {
           label: parts[4] || '' });
       } else if (kind === 'dump-control-state') {
         scheduledInput.push({ batch, action: 'dump-control-state', ctrlId: parseInt(parts[2]), label: parts[3] || '' });
+      } else if (kind === 'dump-combobox') {
+        scheduledInput.push({ batch, action: 'dump-combobox', ctrlId: parseInt(parts[2]), label: parts[3] || '' });
       } else if (kind === 'dump-clipboard') {
         scheduledInput.push({ batch, action: 'dump-clipboard', label: parts[2] || '' });
       } else if (kind === 'seed-cf-dib') {
@@ -653,6 +657,11 @@ async function main() {
       } else if (kind === 'set-focus-charformat-size') {
         scheduledInput.push({ batch, action: 'set-focus-charformat-size',
           twips: parseInt(parts[2]), label: parts[3] || '' });
+      } else if (kind === 'set-focus-charformat-face') {
+        // The face name carries spaces ("Times New Roman"), so the parts split
+        // is on ':' only and an optional size follows it.
+        scheduledInput.push({ batch, action: 'set-focus-charformat-face',
+          face: parts[2] || '', twips: parseInt(parts[3]) || 0, label: parts[4] || '' });
       } else if (kind === 'dump-focus-paraformat') {
         scheduledInput.push({ batch, action: 'dump-focus-paraformat', label: parts[2] || '' });
       } else if (kind === 'set-focus-paraformat-align') {
@@ -3665,6 +3674,39 @@ async function main() {
         } else {
           logs.push(`[input] dump-control-state${tag}: hwnd=0x${h.toString(16)} id=${ev.ctrlId} NO STATE API at batch ${batch}`);
         }
+      } else if (ev.action === 'dump-combobox') {
+        // A combobox's dropped list is a WAT popup window, not a LISTBOX
+        // control, so dump-listbox cannot see it. Read the rows the way the
+        // app does instead: CB_GETCOUNT + CB_GETLBTEXT.
+        const we = instance.exports;
+        let h = 0;
+        for (const w of Object.values((renderer && renderer.windows) || {})) {
+          if (w.visible && we.ctrl_get_id && we.ctrl_get_id(w.hwnd) === ev.ctrlId) {
+            h = w.hwnd;
+            break;
+          }
+        }
+        const tag = ev.label ? ` ${ev.label}` : '';
+        if (!h) {
+          logs.push(`[input] dump-combobox${tag}: id=${ev.ctrlId} NOT FOUND at batch ${batch}`);
+        } else if (we.send_message && we.guest_alloc) {
+          const count = we.send_message(h, 0x0146, 0, 0) | 0;   // CB_GETCOUNT
+          const cur = we.send_message(h, 0x0147, 0, 0) | 0;     // CB_GETCURSEL
+          const bufG = we.guest_alloc(512);
+          const rows = [];
+          const shown = Math.max(0, Math.min(count, 128));
+          for (let i = 0; i < shown; i++) {
+            new Uint8Array(memory.buffer, g2w(bufG), 512).fill(0);
+            const n = we.send_message(h, 0x0148, i, bufG) | 0; // CB_GETLBTEXT
+            const len = Math.max(0, Math.min(n, 511));
+            const data = we.send_message(h, 0x0150, i, 0) >>> 0; // CB_GETITEMDATA
+            rows.push(JSON.stringify(readStr(g2w(bufG), len)) +
+              (data ? `@0x${data.toString(16)}` : ''));
+          }
+          logs.push(`[input] dump-combobox${tag}: hwnd=0x${h.toString(16)} id=${ev.ctrlId} count=${count} cursel=${cur} items=${rows.join(',')} at batch ${batch}`);
+        } else {
+          logs.push(`[input] dump-combobox${tag}: hwnd=0x${h.toString(16)} id=${ev.ctrlId} NO SEND API at batch ${batch}`);
+        }
       } else if (ev.action === 'dump-clipboard') {
         const we = instance.exports;
         const tag = ev.label ? ` ${ev.label}` : '';
@@ -3853,6 +3895,30 @@ async function main() {
           logs.push(`[input] set-focus-charformat-size${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} twips=${ev.twips | 0} ret=0x${ret.toString(16)} at batch ${batch}`);
         } else {
           logs.push(`[input] set-focus-charformat-size${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} parent=0x${parent.toString(16)} NO CHARFORMAT API at batch ${batch}`);
+        }
+      } else if (ev.action === 'set-focus-charformat-face') {
+        const we = instance.exports;
+        const h = we.get_focus_hwnd ? (we.get_focus_hwnd() | 0) : 0;
+        const cls = (h && we.ctrl_get_class) ? we.ctrl_get_class(h) : -1;
+        const id  = (h && we.ctrl_get_id)    ? we.ctrl_get_id(h)    : -1;
+        const tag = ev.label ? ` ${ev.label}` : '';
+        if (!h) {
+          logs.push(`[input] set-focus-charformat-face${tag}: NO FOCUS at batch ${batch}`);
+        } else if (we.send_message && we.guest_alloc) {
+          const cfG = we.guest_alloc(128);
+          const cfWA = g2w(cfG);
+          const dv = new DataView(memory.buffer);
+          new Uint8Array(memory.buffer, cfWA, 128).fill(0);
+          dv.setUint32(cfWA, 60, true); // CHARFORMATA cbSize
+          // CFM_FACE 0x20000000, plus CFM_SIZE 0x80000000 when a size is given.
+          dv.setUint32(cfWA + 4, ev.twips ? 0xa0000000 : 0x20000000, true);
+          if (ev.twips) dv.setInt32(cfWA + 12, ev.twips | 0, true); // yHeight
+          const name = Buffer.from(String(ev.face).slice(0, 31), 'latin1');
+          new Uint8Array(memory.buffer, cfWA + 26, name.length).set(name); // szFaceName
+          const ret = we.send_message(h, 0x0444, 1, cfG) >>> 0; // EM_SETCHARFORMAT, SCF_SELECTION
+          logs.push(`[input] set-focus-charformat-face${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} face=${JSON.stringify(ev.face)} twips=${ev.twips | 0} ret=0x${ret.toString(16)} at batch ${batch}`);
+        } else {
+          logs.push(`[input] set-focus-charformat-face${tag}: hwnd=0x${h.toString(16)} class=${cls} id=${id} NO CHARFORMAT API at batch ${batch}`);
         }
       } else if (ev.action === 'dump-focus-paraformat') {
         const we = instance.exports;
