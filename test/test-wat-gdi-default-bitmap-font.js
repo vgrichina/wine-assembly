@@ -76,17 +76,14 @@ const { bootRenderHarness } = require('./render-helper');
     wat.test_gdi_bitmap_font_bound(uiFont));
   assert.strictEqual(wat.test_call_TextOutA(hdc, 50, 30, text, 10), 1);
 
-  // Win98's 96-DPI SSERIFE.FON contains six hand-sized cells. Negative
-  // LOGFONT heights describe the character body, so selection must subtract
-  // dfInternalLeading before comparing a request with a bitmap rung.
+  // Preserve only Wine's three native cells. Negative LOGFONT heights
+  // describe the character body, so selection must subtract dfInternalLeading
+  // before comparing a request with a bitmap rung.
   const tm = allocZero(64);
   const ladder = [
     { request: -11, cell: 13, leading: 2 },
     { request: -13, cell: 16, leading: 3 },
     { request: -16, cell: 20, leading: 4 },
-    { request: -19, cell: 24, leading: 6 },
-    { request: -24, cell: 29, leading: 5 },
-    { request: -32, cell: 37, leading: 5 },
   ];
   for (const expected of ladder) {
     const font = wat.test_call_CreateFontW(
@@ -103,23 +100,21 @@ const { bootRenderHarness } = require('./render-helper');
       `MS Sans Serif ${expected.request}px public tmHeight`);
   }
 
-  // Win98's raster mapper also considers integer enlargements of every stored
-  // strike. These transition ranges are the exact native SSERIFE.FON results
-  // from the -1..-48 reference sweep. `source` is the stored bitmap cell;
-  // `cell` is the realized cell after GDI's integral magnification.
+  // Win98's raster mapper considers integer enlargements of every stored
+  // strike. With Wine's three native rungs, these are the deterministic
+  // transition ranges. `source` is the stored bitmap cell; `cell` is the
+  // realized cell after GDI's integral magnification.
   const mappedRanges = [
     { first: 1, last: 12, source: 13, cell: 13 },
     { first: 13, last: 15, source: 16, cell: 16 },
-    { first: 16, last: 17, source: 20, cell: 20 },
-    { first: 18, last: 21, source: 24, cell: 24 },
-    { first: 22, last: 23, source: 13, cell: 26 },
-    { first: 24, last: 25, source: 29, cell: 29 },
-    { first: 26, last: 30, source: 16, cell: 32 },
-    { first: 31, last: 35, source: 37, cell: 37 },
-    { first: 36, last: 38, source: 24, cell: 48 },
+    { first: 16, last: 21, source: 20, cell: 20 },
+    { first: 22, last: 25, source: 13, cell: 26 },
+    { first: 26, last: 31, source: 16, cell: 32 },
+    { first: 32, last: 32, source: 20, cell: 40 },
+    { first: 33, last: 38, source: 13, cell: 39 },
     { first: 39, last: 43, source: 16, cell: 48 },
     { first: 44, last: 47, source: 13, cell: 52 },
-    { first: 48, last: 48, source: 29, cell: 58 },
+    { first: 48, last: 48, source: 20, cell: 60 },
   ];
   for (const range of mappedRanges) {
     for (let request = range.first; request <= range.last; request++) {
@@ -161,10 +156,10 @@ const { bootRenderHarness } = require('./render-helper');
   assert(wat.test_gdi_bitmap_font_selected(hdc) >>> 0,
     'with no font file to rasterize, a scalable face falls back to a strike');
 
-  assert.strictEqual(wat.test_gdi_bitmap_font_count(), 11,
-    'four Wine resources plus Terminal should install eleven bitmap strikes');
+  assert.strictEqual(wat.test_gdi_bitmap_font_count(), 8,
+    'four Wine resources plus Terminal should install eight native bitmap strikes');
 
-  console.log('PASS  System and the six-rung MS Sans Serif ladder use Wine bitmaps without Canvas');
+  console.log('PASS  System and native-rung MS Sans Serif use Wine bitmaps without Canvas');
 })().catch(error => {
   console.error(error.stack || error);
   process.exit(1);

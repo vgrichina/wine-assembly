@@ -14,10 +14,11 @@ machine with FreeType but without FontForge.
 These feed the generated `.FON` resources consumed by the WAT bitmap font path.
 
 Wine's `ms_sans_serif.ttf` carries native 13, 16, and 20px bitmaps. The tracked
-`MSSansSerif.fon` keeps those exact pixels and adds build-time scaled 24, 29,
-and 37px cells so its point/cell ladder matches the six sizes in Win98's
-96-DPI `SSERIFE.FON`. The extra cells remain derivatives of Wine's LGPL source;
-no Microsoft font bytes are used or distributed.
+`MSSansSerif.fon` keeps exactly those cells. It deliberately does not invent
+the 24, 29, and 37px rungs from Win98's 96-DPI `SSERIFE.FON`: fractional
+nearest-neighbor enlargement made the substitute visibly thin. Larger requests
+use the runtime's Win98-style integer bitmap magnification instead. No
+Microsoft font bytes are used or distributed.
 
 | File | SHA-256 |
 |---|---|

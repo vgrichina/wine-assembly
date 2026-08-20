@@ -225,9 +225,10 @@ only; that was wrong, and `fonts/Tahoma*.fon` are built from its strikes.)
 Those strikes go through the *existing* bitmap pipeline:
 `tools/gen-bitmap-fon.c` extracts embedded monochrome strikes with FreeType at
 `--bitmap-only --raster=exact`. `MSSansSerif.fon` uses the same path for Wine's
-native 13/16/20px bitmaps and fills the 24/29/37px cells that Wine omits by
-explicit build-time nearest-neighbor scaling; Tahoma's listed rungs are all
-native and remain pixel-exact.
+native 13/16/20px bitmaps and intentionally omits synthetic 24/29/37px cells;
+the fractional enlargements looked thin, while runtime integer magnification
+preserves the source pixel weight. Tahoma's listed rungs are all native and
+remain pixel-exact.
 Tahoma at UI sizes is therefore a bitmap-path face, not a Canvas face, and
 needs no new rasterizer.
 
