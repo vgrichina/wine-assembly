@@ -112,14 +112,8 @@ function collectTextFiles() {
 // Moving an entry out of here means updating SOURCES.md first with a
 // reproducible source and the terms that permit redistribution.
 const NOT_REDISTRIBUTABLE = new Set([
-  'binaries/dlls/comctl32.dll',  // IE6 SP1; terms verification pending
-  'binaries/dlls/mfc42.dll',     // Unverified
-  'binaries/dlls/mfc42u.dll',    // Unverified
-  'binaries/dlls/msvcp60.dll',   // Unverified
-  'binaries/dlls/msvcrt.dll',    // Unverified
   'binaries/dlls/mfc30.dll',     // Win98 SE OEM, local-only
   'binaries/dlls/msvcrt20.dll',  // Win98 SE OEM, local-only
-  'binaries/dlls/oleaut32.dll',  // IE6 SP1 OAINST.CAB; reproduction pending
 ]);
 
 function desktopAssetPaths() {
