@@ -34,6 +34,18 @@ const APPS = [
   { key: 'freecell16', title: 'FreeCell', deal: 102 },
   { key: 'sol16', title: 'Solitaire', deal: 1000 },
   { key: 'mshearts16', title: 'The Microsoft Hearts Network' },
+  // The Entertainment Pack volumes, one game per DLL arrangement they use.
+  // These are what the module-reference table has to drive: CARDS is the only
+  // NE module name compiled into lib/dll-loader.js, and every one of these
+  // needs a module that is named nowhere but in its own exe -- ABOUTWEP for
+  // Pegged, IWLIB and WEPUTIL for IdleWild, WEP4UTIL for Chip's Challenge,
+  // VBRUN100 for Rattler Race. Tut's Tomb adds the case that must NOT be
+  // fetched: it imports "win87em", which this machine answers for itself.
+  { key: 'wep16_pegged', title: 'Pegged' },
+  { key: 'wep16_idlewild', title: 'IdleWild' },
+  { key: 'wep16_tutstomb', title: "Tut's Tomb" },
+  { key: 'wep16_chips', title: "Chip's Challenge" },
+  { key: 'wep16_rattler', title: 'RattlerRace' },
 ];
 
 function startStaticServer() {
@@ -115,7 +127,10 @@ async function runApp(page, port, app) {
   await page.waitForFunction((key, title) => {
     const app = runningApps.find(item => item && item.name === key);
     const main = Object.values((sharedRenderer && sharedRenderer.windows) || {})
-      .find(win => win && win.visible && win.title === title);
+      // Prefix, not equality: Chip's Challenge puts the level it is on in its
+      // caption ("Chip's Challenge: LESSON 1"), which it can only know from
+      // CHIPS.DAT — so the part that varies is the part worth not matching on.
+      .find(win => win && win.visible && win.title.startsWith(title));
     return !!(app && app.wine._runSliceCount >= 40 && main);
   }, { timeout: 60000 }, app.key, app.title);
 
@@ -194,7 +209,11 @@ async function main() {
         consoleByApp.get(current).push(`[http ${res.status()}] ${res.url()}`);
       }
     });
-    for (const app of APPS) {
+    // `node test/test-win16-web.js wep16_chips` runs one app. Each launch is a
+    // fresh page load and a full boot of the guest, so the whole list is
+    // minutes of wall clock and iterating on one game should not cost that.
+    const only = process.argv.slice(2).filter(a => !a.startsWith('-'));
+    for (const app of APPS.filter(a => !only.length || only.includes(a.key))) {
       current = app.key;
       consoleByApp.set(app.key, []);
       let result;
@@ -209,6 +228,16 @@ async function main() {
         // and a run that simply stopped short is the slow case.
         const said = consoleByApp.get(app.key) || [];
         console.error(`\n--- ${app.key} did not reach its "${app.title}" window`);
+        // The title is how this test recognizes the app, so when the wait
+        // fails the first question is always which windows *are* up — an app
+        // still building its main window and an app whose window is up under
+        // another title are different bugs and look identical otherwise.
+        const windows = await page.evaluate(() =>
+          Object.values((typeof sharedRenderer !== 'undefined' && sharedRenderer.windows) || {})
+            .filter(Boolean)
+            .map(w => `${w.visible ? 'shown ' : 'hidden'} ${w.isChild ? 'child ' : 'top   '} "${w.title}"`)
+        ).catch(() => null);
+        console.error(`--- windows on screen:\n${(windows || ['(could not ask the page)']).join('\n')}`);
         console.error(`--- last ${Math.min(said.length, 40)} of ${said.length} console lines:`);
         console.error(said.slice(-40).join('\n') || '(the page said nothing at all)');
         throw error;
@@ -275,12 +304,15 @@ async function main() {
     // CARDS.DLL is an NE image fetched by host.js, not by the `dlls` list. If
     // that fetch stops happening the card games still open a window, so the
     // loader's own line is what actually proves the browser found it.
-    const cards = consoleByApp.get('freecell16') || [];
-    assert(cards.some(line => /^\[win16\] loaded CARDS$/.test(line)),
-      'browser did not load CARDS.DLL for the 16-bit card games:\n' +
-        cards.filter(line => line.startsWith('[win16]')).join('\n'));
-    console.log('PASS  browser loaded CARDS.DLL for the 16-bit card games');
-    pass++;
+    // Skipped when this run was narrowed to a single app that is not FreeCell.
+    const cards = consoleByApp.get('freecell16');
+    if (cards) {
+      assert(cards.some(line => /^\[win16\] loaded CARDS$/.test(line)),
+        'browser did not load CARDS.DLL for the 16-bit card games:\n' +
+          cards.filter(line => line.startsWith('[win16]')).join('\n'));
+      console.log('PASS  browser loaded CARDS.DLL for the 16-bit card games');
+      pass++;
+    }
   } finally {
     await browser.close();
     await new Promise(resolve => server.close(resolve));

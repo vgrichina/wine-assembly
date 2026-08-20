@@ -209,6 +209,14 @@
   (func (export "get_ebp") (result i32) (global.get $ebp))
   (func (export "get_esi") (result i32) (global.get $esi))
   (func (export "get_edi") (result i32) (global.get $edi))
+  ;; The segment registers a 16-bit task is holding. Invisible everywhere until
+  ;; now, and a wrong one is what a whole class of Win16 bug looks like: the
+  ;; task pushes DS as half of a far pointer and the API on the other side
+  ;; reads a string out of nowhere. --trace-at prints these.
+  (func (export "get_sreg_ds") (result i32) (global.get $sreg_ds))
+  (func (export "get_sreg_es") (result i32) (global.get $sreg_es))
+  (func (export "get_sreg_ss") (result i32) (global.get $sreg_ss))
+  (func (export "get_sreg_cs") (result i32) (global.get $sreg_cs))
   (func (export "get_staging") (result i32) (global.get $PE_STAGING))
   (func (export "get_staging_size") (result i32) (global.get $PE_STAGING_SIZE))
   (func (export "get_fs_base") (result i32) (global.get $fs_base))
@@ -1822,7 +1830,7 @@
   (func $post_resize_messages (export "post_resize_messages") (param $hwnd i32) (param $size_w i32)
     (local $rect i32) (local $x i32) (local $y i32)
     (local $cw i32) (local $ch i32)
-    (local.set $rect (global.get $PAINT_SCRATCH))
+    (local.set $rect (call $paint_scratch_take))
     (call $host_get_window_rect (local.get $hwnd) (local.get $rect))
     (local.set $x (i32.load         (local.get $rect)))
     (local.set $y (i32.load offset=4 (local.get $rect)))
@@ -1846,6 +1854,13 @@
     ;; wait for the subsequent WM_PAINT; without this the freshly reallocated
     ;; backing canvas remains the default grey fill.
     (call $paint_flag_set_inv (local.get $hwnd))
+    ;; A resize exposes client area that has never been erased -- the reallocated
+    ;; back-canvas is grey there. Invalidating alone only buys a WM_PAINT, and an
+    ;; app that paints its own background from WM_ERASEBKGND (FreeCell's and
+    ;; Solitaire's green baize is a PATCOPY over GetClientRect) draws its cards
+    ;; onto grey and leaves the rest of the enlarged window grey forever. Queue
+    ;; the erase alongside the paint, as USER does for the newly exposed region.
+    (call $nc_flags_set (local.get $hwnd) (i32.const 2))
     ;; Resize reallocates the back-canvas (grey-filled), wiping the previous
     ;; chrome. The guest's WM_SIZE handler invalidates the client area but
     ;; not the NC region, so synchronously redraw chrome here — same pattern
@@ -1862,6 +1877,11 @@
       (select (i32.const 2) (i32.const 0) (call $wnd_max_get (local.get $hwnd)))))
   (func (export "wnd_is_maximized") (param $hwnd i32) (result i32)
     (call $wnd_max_get (local.get $hwnd)))
+  ;; The answer IsIconic gives the guest. The renderer keeps `_minimized` for
+  ;; compositing; exporting this one lets a test see both and notice when they
+  ;; disagree, which is the failure mode the show-state bits exist to close.
+  (func (export "wnd_is_minimized") (param $hwnd i32) (result i32)
+    (call $wnd_min_get (local.get $hwnd)))
   ;; User-initiated move commit (host title-bar drag). Moving a Win98 window
   ;; sends WM_MOVE but does not imply WM_SIZE/NCCALCSIZE; dialog controls keep
   ;; their layout and only the top-level screen origin changes.
@@ -2031,12 +2051,12 @@
     (if (global.get $pending_child_size) (then (return (i32.const 1))))
     (if (global.get $pending_input_packed) (then (return (i32.const 1))))
     (if (global.get $post_queue_count) (then (return (i32.const 1))))
-    (if (call $shared_post_queue_read (global.get $PAINT_SCRATCH) (i32.const 0))
+    (if (call $shared_post_queue_read (call $paint_scratch_take) (i32.const 0))
       (then (return (i32.const 1))))
     (if (global.get $pending_wm_size) (then (return (i32.const 1))))
     (if (global.get $nc_flags_count) (then (return (i32.const 1))))
     (if (call $paint_flag_any) (then (return (i32.const 1))))
-    (if (call $timer_check_due (global.get $PAINT_SCRATCH) (i32.const 0))
+    (if (call $timer_check_due (call $paint_scratch_take) (i32.const 0))
       (then (return (i32.const 1))))
     (i32.const 0))
   (func (export "get_com_dll_name") (result i32) (global.get $com_dll_name))
@@ -2045,8 +2065,6 @@
   ;; PE metadata exports (needed to init worker threads)
   (func (export "get_code_start") (result i32) (global.get $code_start))
   (func (export "get_code_end") (result i32) (global.get $code_end))
-  (func (export "get_main_win_cx") (result i32) (global.get $main_win_cx))
-  (func (export "get_main_win_cy") (result i32) (global.get $main_win_cy))
 
   ;; Register setters for test harness
   (func (export "set_eip") (param i32) (global.set $eip (local.get 0)))
@@ -2353,6 +2371,16 @@
   ;; test/test-format-message-inserts.js. All three addresses are guest
   ;; addresses; $dst_g == 0 is the measure-only mode the real handler uses to
   ;; size an ALLOCATE_BUFFER allocation before writing into it.
+  (func (export "test_format_message_ansi")
+      (param $flags i32) (param $fmt_g i32) (param $source i32) (param $msg_id i32)
+      (param $args_g i32) (param $dst_g i32) (param $max i32) (result i32)
+    (call $format_message_ansi
+      (local.get $flags)
+      (select (i32.const 0) (call $g2w (local.get $fmt_g)) (i32.eqz (local.get $fmt_g)))
+      (local.get $source) (local.get $msg_id) (local.get $args_g)
+      (select (i32.const 0) (call $g2w (local.get $dst_g)) (i32.eqz (local.get $dst_g)))
+      (local.get $max)))
+
   (func (export "test_format_message_expand")
       (param $src_g i32) (param $dst_g i32) (param $max i32) (param $args_g i32) (result i32)
     (call $format_message_expand
@@ -2606,6 +2634,16 @@
       (i32.sub (local.get $inst) (i32.const 1))) (local.get $proc)))
   (func (export "test_dde_ask_pending") (result i32)
     (i32.ge_s (call $win16_dde_ask_next) (i32.const 0)))
+  ;; The text behind a DDE string handle. Every DDE trace line names its topic
+  ;; and item by handle, and a handle is a per-instance number: the two sides
+  ;; of one conversation call the same string different things, so comparing
+  ;; the numbers across a pair of transcripts says nothing at all. This is what
+  ;; lets the trace print the name.
+  (func (export "win16_dde_hsz_text") (param $hsz i32) (result i32)
+    (if (i32.or (i32.eqz (local.get $hsz)) (i32.gt_u (local.get $hsz) (i32.const 64)))
+      (then (return (i32.const 0))))
+    (i32.add (call $win16_dde_hsz_slot (i32.sub (local.get $hsz) (i32.const 1)))
+             (i32.const 4)))
   ;; 0 free, 1 established, 2 offered to the application and not yet answered.
   (func (export "test_dde_conv_state") (param $conv i32) (result i32)
     (i32.load (call $win16_dde_conv_slot (i32.sub (local.get $conv) (i32.const 1)))))
@@ -3263,6 +3301,7 @@
   (func (export "get_findreplace_dlg")  (result i32) (global.get $findreplace_dlg_hwnd))
   (func (export "get_findreplace_edit") (result i32) (global.get $findreplace_edit_hwnd))
   (func (export "get_findreplace_replace_edit") (result i32) (global.get $findreplace_replace_hwnd))
+  (func (export "get_findreplace_last_flags") (result i32) (global.get $findreplace_last_flags))
   (func (export "wnd_get_userdata_export") (param $hwnd i32) (result i32)
     (call $wnd_get_userdata (local.get $hwnd)))
 
@@ -3300,7 +3339,7 @@
           (if (local.get $st)
             (then
               (local.set $stw (call $g2w (local.get $st)))
-              (if (i32.and (i32.load offset=8 (local.get $stw)) (i32.const 0x04))
+              (if (i32.and (call $btn_flags (local.get $stw)) (i32.const 0x04))
                 (then (return (local.get $h))))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
@@ -3737,11 +3776,7 @@
 
   ;; Control id from CONTROL_TABLE.
   (func (export "ctrl_get_id") (param $hwnd i32) (result i32)
-    (local $idx i32)
-    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
-    (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
-    (i32.load offset=4
-      (i32.add (global.get $CONTROL_TABLE) (i32.mul (local.get $idx) (i32.const 16)))))
+    (call $ctrl_table_get_id (local.get $hwnd)))
 
   ;; Window style (also exposed for renderer drawing decisions).
   (func (export "wnd_get_style_export") (param $hwnd i32) (result i32)
@@ -3754,8 +3789,8 @@
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
     (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
     (local.set $sw (call $g2w (local.get $state)))
-    (local.set $src (i32.load (local.get $sw)))
-    (local.set $len (i32.load offset=4 (local.get $sw)))
+    (local.set $src (call $btn_text_ptr (local.get $sw)))
+    (local.set $len (call $btn_text_len (local.get $sw)))
     (if (i32.le_u (local.get $max) (i32.const 0)) (then (return (i32.const 0))))
     (if (i32.ge_u (local.get $len) (local.get $max))
       (then (local.set $len (i32.sub (local.get $max) (i32.const 1)))))
@@ -3773,7 +3808,7 @@
     (local $state i32)
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
     (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
-    (i32.load offset=8 (call $g2w (local.get $state))))
+    (call $btn_flags (call $g2w (local.get $state))))
 
   ;; Wrapper around $wnd_destroy_tree for tests that need to tear down a
   ;; standalone dialog/control without going through find/about teardown.
@@ -4003,8 +4038,8 @@
                      (i32.or (i32.const 0x50000000) (local.get $style)) (i32.const 0)))
     (local.get $tb))
 
-  (func (export "test_is_builtin_control_class") (param $class_name i32) (result i32)
-    (call $is_builtin_control_class (local.get $class_name)))
+  (func (export "test_class_name_to_ctrl_id") (param $class_name i32) (result i32)
+    (call $class_name_to_ctrl_id (local.get $class_name)))
 
   (func (export "test_richedit_class_version") (param $class_name i32) (result i32)
     (call $richedit_class_version (local.get $class_name)))
@@ -4269,8 +4304,8 @@
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
     (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
     (local.set $sw (call $g2w (local.get $state)))
-    (local.set $src (i32.load (local.get $sw)))
-    (local.set $len (i32.load offset=4 (local.get $sw)))
+    (local.set $src (call $static_text_ptr (local.get $sw)))
+    (local.set $len (call $static_text_len (local.get $sw)))
     (if (i32.le_u (local.get $max) (i32.const 0)) (then (return (i32.const 0))))
     (if (i32.ge_u (local.get $len) (local.get $max))
       (then (local.set $len (i32.sub (local.get $max) (i32.const 1)))))
@@ -4309,6 +4344,31 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (local.get $n))
+
+  ;; DIB backing arena occupancy. $kind: 0 = used pages, 1 = free pages,
+  ;; 2 = largest free contiguous run, 3 = total pages. A screen-sized overlay
+  ;; needs one contiguous run, so kind 1 >> kind 2 means fragmentation, not
+  ;; exhaustion.
+  (func (export "gdi_dib_arena_stat") (param $kind i32) (result i32)
+    (local $i i32) (local $used i32) (local $run i32) (local $best i32)
+    (if (i32.eq (local.get $kind) (i32.const 3))
+      (then (return (global.get $DIB_PAGE_COUNT))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $DIB_PAGE_COUNT)))
+      (if (i32.load8_u (i32.add (global.get $DIB_PAGE_USED) (local.get $i)))
+        (then
+          (local.set $used (i32.add (local.get $used) (i32.const 1)))
+          (local.set $run (i32.const 0)))
+        (else
+          (local.set $run (i32.add (local.get $run) (i32.const 1)))
+          (if (i32.gt_u (local.get $run) (local.get $best))
+            (then (local.set $best (local.get $run))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (if (i32.eqz (local.get $kind)) (then (return (local.get $used))))
+    (if (i32.eq (local.get $kind) (i32.const 1))
+      (then (return (i32.sub (global.get $DIB_PAGE_COUNT) (local.get $used)))))
+    (local.get $best))
 
   ;; slot 0 = clip table, 1 = system clip table, 2 = DC state table.
   (func (export "gdi_table_mark") (param $slot i32) (result i32)

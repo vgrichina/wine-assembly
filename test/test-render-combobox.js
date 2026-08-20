@@ -44,4 +44,10 @@ runRenderTest('combobox', async (h, check) => {
   check('CB_SHOWDROPDOWN(1) → is_dropped=1', e.combobox_is_dropped(cb) === 1);
   const count = e.listbox_get_count(lb);
   check('inner listbox has 5 items', count === 5, 'count=' + count);
-}, { minColors: 8 });
+  // countUniqueColors samples one pixel per 16x16 cell of a 640x480 canvas, and
+  // this dialog is small: a fully correct render -- field, open list, selection
+  // bar, scrollbar, text -- lands on exactly five (teal, face gray, white,
+  // black, highlight navy). The check is here to separate "painted" from
+  // "blank teal", which is 1, so 8 was never a threshold a correct picture
+  // could meet. Compare test/output/combobox.png when this moves.
+}, { minColors: 5 });

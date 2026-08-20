@@ -33,6 +33,17 @@ for (const a of argv.slice(1)) {
     const v = parseInt(a.slice(7), 16) >>> 0;
     needle = Buffer.from([0x68, v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff]);
     label = `push 0x${v.toString(16)}`;
+  } else if (a.startsWith('--push16=')) {
+    // 16-bit code pushes an immediate as three bytes, not five. Searching a
+    // 16-bit binary for `push 0x135` with the 32-bit encoding finds nothing
+    // and looks exactly like "this value is never pushed".
+    const v = parseInt(a.slice(9), 16) & 0xffff;
+    needle = Buffer.from([0x68, v & 0xff, (v >>> 8) & 0xff]);
+    label = `push16 0x${v.toString(16)}`;
+  } else if (a.startsWith('--imm16=')) {
+    const v = parseInt(a.slice(8), 16) & 0xffff;
+    needle = Buffer.from([v & 0xff, (v >>> 8) & 0xff]);
+    label = `imm16 0x${v.toString(16)}`;
   } else if (a.startsWith('--imm32=')) {
     const v = parseInt(a.slice(8), 16) >>> 0;
     needle = Buffer.from([v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff]);
@@ -57,7 +68,31 @@ for (const a of argv.slice(1)) {
 
 if (!needle) { console.error('need a pattern'); process.exit(1); }
 
-const pe = readPE(pePath);
+// A 16-bit NE has no sections and no image base -- it has segments, and an
+// address in one is seg:off, not a linear VA. Everything below works on file
+// offsets either way, so the only difference is how a hit is named. Without
+// this the 16-bit corpus was unsearchable: every PE tool here stops at the
+// signature check, and MSHEARTS/SOL/WINMINE are exactly the binaries whose
+// behaviour needs looking up in the code.
+function readNE(file) {
+  const { parse } = require(path.join(__dirname, 'ne-dump.js'));
+  const { b, h } = parse(file);
+  return {
+    buf: b, imageBase: 0, ne: true,
+    sections: h.segments.map(s => ({
+      name: `seg ${s.index}`, rva: 0, vsize: s.alloc,
+      rawOff: s.filePos, rawSize: s.length,
+    })),
+  };
+}
+
+const pe = (() => {
+  try { return readPE(pePath); }
+  catch (e) {
+    if (!/not a PE image/.test(String(e && e.message))) throw e;
+    return readNE(pePath);
+  }
+})();
 const data = pe.buf;
 const imageBase = pe.imageBase;
 // Local field names kept: va is the section RVA here, raw/rsize the on-disk pair.
@@ -77,8 +112,11 @@ while (true) {
   if (i < 0) break;
   const sec = findSection(i);
   if (sec && (!sectionFilter || sec.name === sectionFilter)) {
-    const va = imageBase + sec.va + (i - sec.raw);
-    let line = `  0x${va.toString(16).padStart(8, '0')}  [${sec.name.padEnd(8)}]  raw=0x${i.toString(16)}  ${needle.toString('hex')}`;
+    const off = i - sec.raw;
+    const where = pe.ne
+      ? `  ${sec.name}:0x${off.toString(16).padStart(4, '0')}`
+      : `  0x${(imageBase + sec.va + off).toString(16).padStart(8, '0')}  [${sec.name.padEnd(8)}]`;
+    let line = `${where}  raw=0x${i.toString(16)}  ${needle.toString('hex')}`;
     if (context > 0) {
       const ctx = data.slice(Math.max(0, i - context), i + needle.length + context).toString('hex');
       line += `\n    ctx: ${ctx}`;

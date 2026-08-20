@@ -175,7 +175,7 @@ The good news: table *bases* are always reached via globals (no bare `0x7000` li
 - **SCROLL_TABLE: zero encapsulation** — 17 raw `base + slot*24` sites across 4 files (`09a:10637-10795`, `09c3:5522…14799`, `09c4:643`, `13-exports:3484-3500`), plus 5 SCROLL_AUX sites at a *different* stride (16) for the same slot.
 - **CONTROL_TABLE: accessors exist and are re-implemented anyway** — `09a5:562` and `13-exports:3623` re-implement `$ctrl_table_set_id`/`get_id` (canonical at `09c3:571/560`); `09a:2207` is a third copy; 13 raw `slot*16` sites in 4 files.
 - **The state struct is the real magic-number problem**: 481 raw `offset=N ($sw)` + 259 `offset=N ($state_w)` accesses over 19 distinct offsets with no named accessors (`offset=20` means "top index" in listbox, combobox, *and* edit).
-- **PAINT_SCRATCH**: one shared 16-byte RECT used at 136 sites in 7 files; the reentrancy hazard is acknowledged in a comment (`01-header.wat:1239`) and unenforced.
+- ~~**PAINT_SCRATCH**: one shared 16-byte RECT used at 136 sites in 7 files; the reentrancy hazard is acknowledged in a comment (`01-header.wat:1239`) and unenforced.~~ Fixed in `2c4ef73` — a ring of 16 rects handed out by `$paint_rect`/`$paint_scratch_take`, with `$wnd_send_message` bracketing the one place painting actually nests.
 
 **3.8 Duplicated state / dual ownership.**
 - Window rect has two owners: children in CONTROL_GEOM, top-levels in the JS host via `host_get_window_rect` — branch at `10-helpers.wat:15144-15158`; `renderer.windows` is a second window tree mirroring WND_RECORDS with sync seams both directions (`lib/host-imports.js:3477-3492` `sync_window_client`; `get_window_rect:3335-3400` prefers WAT exports for children, JS `win.x/y/w/h` for top-levels).
@@ -231,7 +231,7 @@ Register-register/immediate forms are specialized per opcode (`$th_add_r_r` etc.
 
 ### 4.3 "All logic in WAT" violations (architecture + perf both)
 
-`lib/host-imports.js` implements real Win32 semantics in JS: `get_window_related` implements GetWindow GW_* walks over `renderer.windows` (`3150-3199`); `arrange_windows` implements Cascade/Tile math (`3230-3310`); `move_window` carries SWP flag semantics, CW_USEDEFAULT policy, z-order policy, plus MFC class-name-specific clamps for `toolbarwindow32`/`afxcontrolbar42` (`3401-3475`, clamp duplicated in `set_parent:2975-2983`); `renderer-input.js` decides modal blocking, dialog hit-tests, capture/focus routing (`951-1100`). Every geometry heuristic patch lands in JS because authority is split (see 3.8). `host.js:588-630` `_getVersionInfo` linear-scans 2MB of guest memory for `VS_VERSION_INFO` in JS — a scan, not a resource-tree walk, contradicting the resources-in-WAT principle.
+`lib/host-imports.js` implements real Win32 semantics in JS: `get_window_related` implements GetWindow GW_* walks over `renderer.windows` (`3150-3199`); `arrange_windows` implements Cascade/Tile math (`3230-3310`); `move_window` carries SWP flag semantics, CW_USEDEFAULT policy, z-order policy, plus MFC class-name-specific clamps for `toolbarwindow32`/`afxcontrolbar42` (`3401-3475`, clamp duplicated in `set_parent:2975-2983`; the duplication is gone as of `4b9c952` — three renderer methods now — though the clamp itself is still JS policy); `renderer-input.js` decides modal blocking, dialog hit-tests, capture/focus routing (`951-1100`). Every geometry heuristic patch lands in JS because authority is split (see 3.8). `host.js:588-630` `_getVersionInfo` linear-scans 2MB of guest memory for `VS_VERSION_INFO` in JS — a scan, not a resource-tree walk, contradicting the resources-in-WAT principle. (Deleted in `f7f3401`: it had no caller at all, the About box having moved to `$create_about_dialog`.)
 *Direction:* make WAT the single authority for geometry/z/visibility (exports already exist: `wnd_window_screen_x/y`, `wnd_screen_w/h`, `get_client_rect_wh`); shrink JS window records to canvas/back-canvas bookkeeping.
 
 ---
@@ -328,9 +328,30 @@ a few unrelated commits from a parallel session are interleaved in the log.*
 | 1 | `10-helpers.wat` → four `10*-gdi-*.wat` files; `09a7` → `09a7b-ole.wat` + `09a7c-mixer.wat`; `09c-help` → `09c0-window-table.wat`; `06-fpu`'s non-FPU handlers → `06b-core-handlers.wat`; 09a's comctl32 slab → `09a9-comctl32.wat`. New `tools/wat-split.js` | `1c75b2f`, `661b8c1`, `6eb9ece`, `430d3ed` |
 | 2.1 | wsprintf: one formatter parameterized on `$wide`, 520 → 290 lines | `9a9987a` |
 | 2.1 | The W message pump deleted — GetMessageW/PeekMessageW/DispatchMessageW were stale forks missing WM_NCPAINT, the VLAN pump, timers, the post queue, and status-bar/tab dispatch | `75bf280` |
+| 2.1 | The independent A/W pairs, in two batches, measured by the new `tools/aw-census.js`: 184 pairs went DIVERGENT 35 / STUB 6 → DIVERGENT 4 / BOTH_STUB 1, with 52 pairs now delegating and 127 sharing a `$wide`-parameterized core. Drift found on the way: PostMessageW was stale, WriteConsoleA wrote to the console buffer's *old* addresses, the ANSI `lstr*` family was NULL-unsafe, GetShortPathNameA ignored the VFS, DrawStatusTextW drew nothing, GetVersionExW hardcoded Win98, and SetEnvironmentVariableA was a crash stub (the environment APIs now share one real block). The 5 pairs left are not duplication: separate ANSI and wide command lines, wsprintf's two entry points over one `_x` formatter, RegisterClipboardFormatW narrowing into the A helper, and IsBadStringPtrA/W as a deliberate fail-fast pair | `aaf8af5`, `c57666b` |
+| 3.7 | PAINT_SCRATCH is a ring of 16 rects instead of one shared RECT, converted at all ~136 sites in 8 files; `$wnd_send_message` marks/resets around the nesting point. Two bugs found on the way: the statusbar caption guard ANDed a pointer with a length, and two sites wrote past the end of the shared rect into MENU_DATA_TABLE. Auditing the map for a free address then turned up three live overlaps — WND_CLASS_SLOT_TABLE on the WSOCK32 ordinal-import names, CLASS_EXTRA_TABLE on DI_DIK_VK_TABLE, and the Win16 EnumFonts faces on the oleaut32 ordinal names — each caused by picking an address from 01-header's map while the colliding table was declared in the file that uses it | `2c4ef73`, `8860cdb`, `3c6e302` |
 | 3.5, 3.7 | SCROLL_TABLE/SCROLL_AUX accessors; one `$wnd_slot_reset` — which turned out to be missing four tables, so a recycled slot inherited scroll range, flash and maximized state | `0b6fa45`, `5c59649` |
+| 3.7 | The last sites that still open-coded a table stride: the six Set/Get Scroll{Pos,Range,Info} handlers multiplied the slot by 24 (record) or 16 (SCROLLINFO aux) by hand — two different strides over the same slot index, which is the exact way that arithmetic goes wrong — and `$ctrl_table_reset_slot` did its own `slot * 8` into CONTROL_GEOM. All now call `$scroll_bar_addr` / `$scroll_aux_bar_addr` / `$ctrl_geom_addr` | `1675bea` |
+| 3.7 | ButtonState's fields named: `$btn_text_ptr/_len`, `$btn_flags`, `$btn_ctrl_id`, `$btn_image_*` and `$btn_drawitem_guest` for the embedded owner-draw scratch, with the wndproc's 18 message cases, the three sibling-default walkers, `$ctrl_get/set_check_state` and the three JS-facing exports in `13-exports.wat` reading through them instead of bare `offset=8`. Every class puts something different at each offset, so a bare offset mid-file named nothing | `ad9b3de` |
+| 3.7 | Three more classes named: StaticState (read by both the static and the SysLink wndproc, which allocate the same 16-byte layout — invisible while both spelled `offset=8`), ProgressState with `$prog_state_init`/`$prog_clamp` for the duplicated default-init and the range clamp five PBM_* handlers open-coded, and TrackBarState, whose min/max/pos sit on the same three offsets as ProgressState with a different total length. Found on the way: SysLink's WM_GETTEXT guarded its copy with `i32.and(text_ptr, len != 0)`, and an aligned heap pointer ANDed with a 0/1 predicate is always false, so it returned a length and wrote nothing | `92217e4` |
+| 3.7 | The three big classes named, closing the per-class half except for EditState (held by a parallel session): ListBoxState, ComboBoxState — whose drop-down list is a second window with its own state — and ListViewState, whose columns, items and subitems are three strides over one block | `4682d5a`, `da4a7ac`, `f3d2f45` |
+| 3.8 | Window show state had two owners and no guest-facing one: the renderer's `win._minimized/_maximized` composited, WAT's MAX_TABLE drew the caption glyph, and IsIconic/IsZoomed returned 0 while GetWindowPlacement reported SW_SHOWNORMAL and SetWindowPlacement dropped showCmd. MAX_TABLE becomes SHOW_STATE_TABLE with an independent minimized bit (a maximized window that is minimized comes back maximized), and one `$wnd_apply_show_state` SW_* fold serves ShowWindow, WM_SYSCOMMAND and SetWindowPlacement. `host-window.js`'s `sys_command` was a drifted second copy of the JS transition table and now delegates to `renderer.showWindow`, which did not handle SW_SHOWMINIMIZED at all | `1ba6a38` |
+| 4.3 | `host.js`'s `_getVersionInfo` — 44 lines that walked 2MB of guest memory two bytes at a time looking for the UTF-16 `VS_VERSION_INFO`, then walked it again per field name. A byte scan rather than a resource-tree walk, and dead: the About box has been WAT-side (`$handle_ShellAboutA` → `$create_about_dialog`) since before it stopped being called, and `h.shell_about` only logs | `f7f3401` |
+| 4.3 | The MFC toolbar width clamp, written out longhand at five sites in two files (`set_parent`, `move_window` twice, `sync_window_client`, both branches of `_computeClientRect`) and already drifted in which copies recomputed the client rect. Now `_toolbarWidthLimit`/`_clampToolbarWidth`/`_clampToolbarClientWidth` on the renderer, beside the geometry they act on. The clamp exists because MFC caches a toolbar's ideal button span and then moves the child with SWP_NOSIZE — WordPad's formatting toolbar is 1512px wide inside a 394px frame | `4b9c952` |
+| 3.6 | `$class_name_to_ctrl_id` in `09c0-window-table.wat` — one resolver for "which built-in control is this class name". CreateWindowExA, GetClassInfo and the class-hash path each answered it separately and could disagree about what "SysLink" is; USER's six now resolve through their atom first, as Windows does, and the comctl32/riched names stay string compares in one place | `da03204` |
+| 2.2 | `renderer.takeInput(owns)` and `inputEventHwnd` — one queue dequeue and one "which window is this for" rule instead of three and two. The browser host's own dequeue had lost `_asyncPressedKeys`, so GetAsyncKeyState's press bit never fired for events it took, and its multi-app branch skipped the WM_PAINT repaint as well | `6869a72` |
 | 2.1 | One `$paint_sb_thumb` for both scrollbar painters (the control inset its thumb 2px, the shared painter did not); `$ctrl_get_w`/`$ctrl_get_h` | `83fef1b`, `7ddc9fa` |
 | 2.2 | `lib/dll-registry.js` — one loadable-DLL list; the browser's copy had 14 names to the CLI's 32; window-title bookkeeping collapsed from three copies to one | `125e25d`, `53b4e4e` |
+| 2.2 | `lib/process-boot.js` — one `resolveDllGraph()` for both hosts, each supplying only a `loadSpec` callback (readFileSync over the search dirs / fetch over the URL map). The browser resolved EXE-level imports only, so Kodak Imaging's IMGCMN → OIFIL400 → siblings chain loaded headless and trapped in the page on the first cross-DLL ordinal; it now also walks its per-app `dlls` seeds and finds app-local dependencies in the app's own `files` list | `b1c5e45` |
+| 2.2 | `stageAndLoadPe`/`setExeName`/`setExtraCmdline` in `lib/process-boot.js` — each host had its own transcription of the staging clamp that keeps an installer's appended archive off the API hash table | `ea8be43` |
+| 2.2 | `THREAD_EXIT_HOOKS` in `lib/app-profiles.js` — Winamp's visualizer-thread cleanup poked hard-coded guest addresses from `host.js`, so it ran in the browser and never headless; both hosts now run it | `8f30fa8` |
+| 2.2 | `lib/app-profiles.js` — one per-app compat patch table; QuickBlackjack's three byte patches existed twice (`run.js` and `host.js`), so a patch only ever landed in whichever host was being debugged. `test/test-qblackjack-web.js` now covers the browser side, which nothing did | `9278133` |
+| 2.2 | `lib/host-audio.js` — the mixer/voice/waveIn/MIDI/MCI half of the 4.3k-line `createHostImports` closure, behind a `createAudioHost(ctx, shared)` factory whose import entries are spread back into the same flat namespace. The seam is five helpers and one `getHost()` thunk; `lib/host-imports.js` is 4,347 → 2,578 lines | `5950986` |
+| 2.2 | `lib/host-window.js` — the window/scrollbar/capture/cursor/input imports, same shape. `lib/host-imports.js` is 4,347 → 1,975 lines across both cuts, and what remains is GDI | `49d2c9b` |
+| 2.2 | `lib/apps.js` — the app registry (118 entries + the desktop icon list) out of index.html, which drops 752 lines of it, and `test/run.js --app=<id>` so the CLI mounts exactly what the icon mounts: exe, DLL seeds, data files at their real VFS paths, command line. `tools/check-apps-registry.js` gates the paths | `7f55b29`, `6590806` |
+| 2.2 | `lib/browser-input.js` — the 380-line DOM→renderer input bridge out of index.html, `runningApps`/`DEBUG_MODE` passed in as deps, the wired-once latch exposed as `browserInput.isWired()` for the pre-launch icon handlers | `760b79f` |
+| 2.2 | `lib/browser-shell.js` — the process lifecycle (launch, stop, tab-local LAN join, run-slice policy, startup-dialog dismissal) out of index.html, behind `createBrowserShell(deps)` taking only the four page-owned things plus an `onStopAll()` hook. index.html: 2,671 → 1,225 lines over the arc | `e58b93a` |
+| 2.2 | `handleLoadLibraryYield`/`handleComDllYield` in `lib/process-boot.js` — the two runtime-DLL yield pumps, behind a `findDll` callback so each host keeps only its own idea of where bytes come from. The browser's COM copy passed its log function in `patchExeImports`' `dlls` slot (per-DLL matching never ran), and only the CLI looked in the VFS, so a plugin the app had mounted was found by LoadLibrary and missing for CoCreateInstance | `1310435` |
 | — | Extras this pass earned: the build now validates the wasm with `WebAssembly.Module` (it was shipping modules that failed to instantiate), `check-handler-esp` reads every part instead of ten named files, and `test/run-all.sh` runs a tier N-at-a-time | `83fef1b`, `f93ebba`, `dc37c8d` |
 
 **The three I first declined, then did**
@@ -356,20 +377,107 @@ a few unrelated commits from a parallel session are interleaved in the log.*
   shape does not predict it. `--check` now verifies all 1,325 epilogue lines
   against `nargs` in the build, and `--sync` rewrites drift.
 
+- **The corpus PASS count flapping between runs (bug, found during this
+  work).** Two causes, both fixed. A run killed by the wall-clock backstop
+  exits by *signal*, so `result.status` is `null` rather than non-zero and the
+  case fell through to the success path — where the pixel gate is skipped
+  because the PNG was never written. A *slower* box therefore passed more apps.
+  Second, the load factor scaling those backstops was computed once at module
+  load, and a sweep takes twenty minutes on a box that moved 23.9 → 28.9 →
+  16.3 → 8.6 within one hour, so late cases were budgeted against a machine
+  that no longer existed. It is now sampled per case at spawn, a timeout
+  retries once at double budget rather than being reported as a verdict, and
+  every run prints the cases whose result depended on finishing in time — an
+  empty list is the claim that the count means something (`28e5830`).
+
+- **The worker/thread import wiring (§2.2).** `lib/worker-imports.js` now
+  states what a thread inherits from its process, and both hosts read it
+  (`5f8cbf3`). The review read the `_waveStats`/`audioStatsStride` vs
+  `sharedMixer` split as an unmade decision; it is not. `host-audio.js:27`
+  falls back from `sharedMixer` to `sharedAudio`, so the CLI already had mixer
+  sharing, and the browser needs its own object only because several apps play
+  audio in one page. The list is what *may* cross, so both hosts stay correct.
+  What was worth catching is the other half: the twelve thread and sync
+  imports are return-0 stubs in `host-imports.js` so the import shape is always
+  complete, which means a host that misses one hands the guest a wait that
+  never waited and returns success. Adopting a name the main table does not
+  implement now throws.
+
+- **The VFS-seed tail, which closes §2.2.** Two of the seeding rules are not
+  about where bytes come from — they are things the *guest* believes — and each
+  had a copy in both hosts: an image must be findable at `c:\app.exe` (what
+  `GetModuleFileNameA` reports regardless of the real filename) *and* under its
+  own basename; and a Win16 module name can live on disk as `NAME.DLL`,
+  `NAME.dll` or `NAME.EXE`. `lib/vfs-seed.js` states both once and
+  `test/test-vfs-seed.js` asserts neither host has re-inlined them (`a43be3a`).
+  The rest stays two implementations on purpose: the CLI indexes a directory
+  lazily and HTTP has no readdir, so there is no shared mechanism there.
+
+  With that, §2.2 is done: `host-audio`, `host-window`, `browser-input`,
+  `browser-shell`, `app-profiles`, `worker-imports`, `debug-midi`, `vfs-seed`,
+  the shared apps registry, `resolveDllGraph`, `stageAndLoadPe` and both DLL
+  yield pumps. index.html is 1,136 lines, down from 2,671, and holds no
+  application logic.
+
+- **The synchronous VFS-miss read (§4.2).** A file no app-registry entry
+  listed was fetched with a *synchronous* `XMLHttpRequest` on the page's main
+  thread, so the tab froze for a whole network round trip — and invisibly,
+  because the stall was inside a host import rather than a phase the perf HUD
+  marks. The old comment (and this review) called yield-and-resume the real
+  fix; it turned out none is needed. Only two callers can reach a miss, and
+  neither needs the bytes in the same turn: a wallpaper may appear a beat late
+  without any caller noticing, and real MCI is free to still be preparing a
+  device when `open` returns — so the sequencer opens, the SMF attaches when
+  it lands, and a `play` issued in between is remembered rather than dropped.
+  The miss is now an off-thread fetch that mounts its result, hits and 404s
+  both still remembered. The CLI, whose VFS is a real directory and where a
+  miss is final, is byte-identical (`bdef7d3`).
+
+- **The main-window geometry globals (§3.8, second bullet).** Read out, the
+  dual ownership was not the interesting part: `$main_win_cx`, `$main_win_cy`
+  and `$main_nc_height` were *write-only*. `nc_height` was assigned once and
+  read nowhere; `cx`/`cy` were read only by `nc_height`'s own assignment and
+  by two exports no JS calls. There was no second owner of the geometry to
+  reconcile — only three globals to delete, and with them three values every
+  thread spawn had to carry. What does the work stays: CreateWindowExA asks
+  `$defwndproc_do_nccalcsize` and seeds `$pending_wm_size` from the resulting
+  client rect, and MoveWindow refreshes it through
+  `$host_get_window_client_size` — both read the real rect, which is why the
+  mirror was dead (`18dd07b`).
+
 **Still open**
 
-- §2.2 `lib/process-boot.js`, the per-app profile registry, `lib/browser-shell.js`,
-  and splitting `host-audio`/`host-window` out of `lib/host-imports.js`. The DLL
-  list is now shared, which is the prerequisite for sharing the transitive DLL
-  walk the CLI has and the browser does not.
-- §2.1 the remaining 47 independent A/W handler pairs.
-- §3.6 one control-class id table (three matchers answer two different
-  questions; collapsing them changes which classes count as built-in).
-- §3.7 named accessors for the control state struct — the offsets mean
-  different things per class, so this is a per-class job, not one rename.
-- §3.8 and §4.3, the dual-ownership and JS-authority arcs. Multi-session.
-- §4.2 the VFS-miss read is memoized but still synchronous; making it
-  yield-and-resume is the real fix.
-- `test-all-exes`'s screensaver check is unstable — two runs of identical code
-  gave 105 and 103 PASS, with different MFC screensavers flipping to BLANK.
-  Worth chasing before trusting that number.
+- §3.7 named accessors for the *remaining* per-class state structs. The
+  offsets mean different things per class, so this is a per-class job, not one
+  rename, and ButtonState is the first class done (`ad9b3de`): text ptr/len,
+  flags, ctrl_id, image type/handle and the embedded owner-draw
+  DRAWITEMSTRUCT, with the wndproc, the three sibling-default walkers,
+  `$ctrl_get/set_check_state` and the three JS-facing exports all reading
+  through them. StaticState (shared with SysLink), ProgressState and
+  TrackBarState followed in `92217e4`, then the three big ones: ListBoxState
+  (`4682d5a`), ComboBoxState (`da4a7ac`) and ListViewState (`f3d2f45`). Only
+  EditState is left, and it is held by a parallel session that owns
+  `$edit_wndproc`.
+  The table-level half is finished: the CONTROL_TABLE row is `$ctrl_slot_addr`
+  plus documented field offsets, GetDlgCtrlID and the exported `ctrl_get_id`
+  stopped re-implementing `$ctrl_table_get_id` (`f0ac4b6`), and the six
+  Set/Get Scroll{Pos,Range,Info} handlers that still open-coded both scroll
+  strides — 24 for the legacy record, 16 for the SCROLLINFO fields — now call
+  `$scroll_bar_addr` / `$scroll_aux_bar_addr` (`1675bea`), and PAINT_SCRATCH is
+  now a ring rather than one shared rect (`2c4ef73`).
+- §3.8's remaining bullets and §4.3, the dual-ownership and JS-authority arcs
+  — window rect owned by CONTROL_GEOM for children and by the JS host for
+  top-levels, the EDIT/LISTVIEW/WinHelp scroll state stored twice. These are
+  real second owners, unlike the geometry globals, and multi-session. One of
+  them is closed: show state (`1ba6a38`), which was the worst of the set
+  because the second owner was not merely redundant — the guest-facing half
+  did not exist at all, so IsIconic and IsZoomed answered with a constant.
+
+**Declined, with reasons**
+
+- **The "still-CLI-only per-app hacks" (§2.2).** The NSIS title sniffing in
+  `run.js:1983-2034` and the Winamp IPC injection at `:852-857` are not host
+  divergence: the first gates *injected* input off while an installer copies
+  files, and the second is a pair of `--input=` DSL verbs. Both exist because
+  the CLI has no hands. A browser user clicks, so porting them would mean
+  giving the page a scripted-input DSL with no caller.

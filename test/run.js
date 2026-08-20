@@ -5475,6 +5475,14 @@ async function main() {
           win.w = Math.max(1, ev.w | 0);
           win.h = Math.max(1, ev.h | 0);
           win._maximized = false;
+          // Drop the back-canvas the way the browser's resize-drag release
+          // does (renderer-input.js handleMouseUp), so a resize here starts
+          // from the same blank surface a real one does. Keeping the old
+          // canvas made the harness repaint bugs that the browser shows.
+          win._backCanvas = null;
+          win._backCtx = null;
+          win._backW = 0;
+          win._backH = 0;
           if (we.host_resize_commit) we.host_resize_commit(hwnd, win.x | 0, win.y | 0, win.w, win.h);
           if (typeof renderer._computeClientRect === 'function') renderer._computeClientRect(win);
           if (typeof renderer.invalidate === 'function') renderer.invalidate(hwnd);

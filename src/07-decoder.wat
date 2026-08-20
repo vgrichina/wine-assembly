@@ -1892,7 +1892,15 @@
                 (i32.const 0))
               (br $decode))) ;; LEAVE
       (if (i32.eq (local.get $op) (i32.const 0xCC)) (then (call $te (i32.const 45) (global.get $d_pc)) (local.set $done (i32.const 1)) (br $decode))) ;; INT3
-      (if (i32.eq (local.get $op) (i32.const 0xCD)) (then (drop (call $d_fetch8)) (call $te (i32.const 45) (global.get $d_pc)) (local.set $done (i32.const 1)) (br $decode))) ;; INT imm8
+      ;; INT imm8. The number matters — a 16-bit task reaches DOS through INT
+      ;; 21h for everything the Windows API does not cover, and Klotski and
+      ;; Chess both read their data files that way — so it is kept as the
+      ;; operand and the resume address follows it, which is what $th_block_end
+      ;; would have carried on its own.
+      (if (i32.eq (local.get $op) (i32.const 0xCD))
+        (then (call $te (i32.const 388) (call $d_fetch8))
+              (call $te_raw (global.get $d_pc))
+              (local.set $done (i32.const 1)) (br $decode))) ;; INT imm8
       (if (i32.eq (local.get $op) (i32.const 0xF4)) (then (call $te (i32.const 45) (global.get $d_pc)) (local.set $done (i32.const 1)) (br $decode))) ;; HLT
       ;; CLI/STI — ignore (no interrupt emulation)
       (if (i32.eq (local.get $op) (i32.const 0xFA)) (then (call $te (i32.const 0) (i32.const 0)) (br $decode))) ;; CLI

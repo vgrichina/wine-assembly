@@ -32,13 +32,19 @@ function run(input, maxBatches = 320) {
   return { result, output: `${result.stdout || ''}${result.stderr || ''}` };
 }
 
+// The ruler has two distinct gestures, and the left edge is not where you set
+// a tab stop: x=20 is the hanging-indent marker, so a drag from there moves the
+// paragraph indent. A tab stop comes from a plain click further along the
+// ruler, away from the markers.
 const ruler = run([
   '180:click:40:150', '184:keypress:114',
   '190:dump-focus-paraformat:before-ruler',
   '195:mousedown:20:112', '197:mousemove:100:112', '199:mouseup:100:112',
-  '205:click:40:150', '210:dump-focus-paraformat:after-ruler',
-  '220:stop',
-], 245);
+  '205:click:40:150', '210:dump-focus-paraformat:after-indent-drag',
+  '215:click:200:112',
+  '225:click:40:150', '230:dump-focus-paraformat:after-tab-click',
+  '240:stop',
+], 265);
 
 const paragraph = run([
   '180:0x111:32780', '215:wait-dlg-control:1002:160',
@@ -69,9 +75,12 @@ for (const { output } of runs) {
 const checks = [
   ['all UI emulator runs completed inside their timeouts',
     runs.every(({ result }) => result.status === 0 && !result.signal && !result.error)],
-  ['ruler drag adds a native RichEdit paragraph tab stop',
-    /before-ruler:.*tabCount=0/.test(ruler.output) &&
-    /after-ruler:.*tabCount=1 tab0=[1-9]\d*/.test(ruler.output)],
+  ['ruler marker drag moves the paragraph indent',
+    /before-ruler:.*dxStartIndent=0 .*tabCount=0/.test(ruler.output) &&
+    /after-indent-drag:.*dxStartIndent=[1-9]\d*/.test(ruler.output)],
+  ['ruler click adds a native RichEdit paragraph tab stop',
+    /after-indent-drag:.*tabCount=0/.test(ruler.output) &&
+    /after-tab-click:.*tabCount=1 tab0=[1-9]\d*/.test(ruler.output)],
   ['Paragraph dialog exposes indentation and alignment controls',
     /dlg-dump:paragraph:.*Indentation.*id=1000.*id=1001.*id=1002.*Alignment:.*text="Left"/.test(paragraph.output)],
   ['Tabs dialog exposes set, clear, and clear-all commands',

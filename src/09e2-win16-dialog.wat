@@ -255,14 +255,17 @@
     (local.set $parent (call $win16_h32
       (call $win16_arg16 (i32.add (local.get $base) (i32.const 2)))))
     ;; lpTemplateName is a far pointer, and MAKEINTRESOURCE puts the id in the
-    ;; offset with a null selector. A template named by string is not something
-    ;; these apps do, and guessing at one would be worse than saying so.
-    (if (call $win16_arg16 (i32.add (local.get $base) (i32.const 4)))
-      (then
-        (call $host_log_i32 (i32.const 0xCA16D1A6))
-        (unreachable)))
+    ;; offset with a null selector; a non-null selector means the template is
+    ;; named by string, which for these files means the name table decides
+    ;; which numbered template it is. Blackjack asks for all four of its
+    ;; dialogs that way.
     (local.set $id (call $win16_arg16 (i32.add (local.get $base) (i32.const 3))))
-    (local.set $res (call $win16_find_resource (i32.const 5) (local.get $id)))
+    (if (call $win16_arg16 (i32.add (local.get $base) (i32.const 4)))
+      (then (local.set $res (call $win16_find_resource_ex (i32.const 5) (i32.const 0)
+              (call $g2w (call $win16_far_to_guest
+                (call $win16_arg16 (i32.add (local.get $base) (i32.const 4)))
+                (local.get $id))))))
+      (else (local.set $res (call $win16_find_resource (i32.const 5) (local.get $id)))))
     (if (i32.eqz (local.get $res))
       (then
         (global.set $eax (i32.const -1))

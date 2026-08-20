@@ -2563,6 +2563,29 @@
   (global $TT_SUBST_DEFAULT i32 (i32.const 0x07F0BF00))
   (data (i32.const 0x07F0BF00) "Arial\00")
 
+  ;; ---- fonts that are simply installed -----------------------------------
+  ;;
+  ;; AddFontResourceA is how an application installs a font for itself, but it
+  ;; is not how most applications get theirs. Age of Empires ships six TTFs
+  ;; beside its exe, imports exactly one font entry point (CreateFontIndirectA)
+  ;; and asks for "Copperplate Gothic Light" by name: its installer put the
+  ;; files in the Windows font directory, and after that they were simply
+  ;; there. A face nobody registered used to fall through to the catch-all and
+  ;; come back as Arial, so the game's own lettering was drawn in a grotesque.
+  ;;
+  ;; So the directory is read once, the first time any face is resolved, and
+  ;; every file in it that the substitution tables do not already own is
+  ;; registered by the family name in its own name table - the same path
+  ;; AddFontResourceA takes. Files the tables own are skipped without being
+  ;; opened: those are the vendored look-alikes mounted under Win98 filenames,
+  ;; and registering one would put "Liberation Sans" in front of a guest that
+  ;; asked what fonts exist, which is a face Windows 98 never had.
+  (global $TT_FONT_DIR_PATTERN i32 (i32.const 0x07F0BF20))
+  (data (i32.const 0x07F0BF20) "C:\\WINDOWS\\FONTS\\*.TTF\00")
+  (global $TT_FONT_DIR_PREFIX i32 (i32.const 0x07F0BF40))
+  (data (i32.const 0x07F0BF40) "C:\\WINDOWS\\FONTS\\\00")
+  (global $tt_font_dir_scanned (mut i32) (i32.const 0))
+
   (func $tt_subst_fold (param $byte i32) (result i32)
     (if (i32.and (i32.ge_u (local.get $byte) (i32.const 65))
           (i32.le_u (local.get $byte) (i32.const 90)))
@@ -2646,6 +2669,85 @@
       (br $scan)))
     (i32.const 0))
 
+  ;; 1 when either substitution table names this file. Compared with the same
+  ;; case folding face names use: the tables spell the directory in upper case
+  ;; and the VFS hands back whatever the host mounted.
+  (func $tt_subst_owns_path (param $table i32) (param $size i32)
+        (param $path i32) (result i32)
+    (local $p i32) (local $end i32) (local $field i32) (local $i i32)
+    (local.set $p (local.get $table))
+    (local.set $end (i32.add (local.get $table) (local.get $size)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $p) (local.get $end)))
+      (br_if $done (i32.eqz (i32.load8_u (local.get $p))))
+      ;; The four file fields that follow the face name.
+      (local.set $field (local.get $p))
+      (local.set $i (i32.const 0))
+      (block $fields (loop $next_field
+        (br_if $fields (i32.ge_u (local.get $i) (i32.const 4)))
+        (local.set $field (call $tt_subst_skip (local.get $field) (local.get $end)))
+        (if (i32.load8_u (local.get $field))
+          (then (if (call $tt_subst_name_equal (local.get $path) (local.get $field))
+            (then (return (i32.const 1))))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $next_field)))
+      (local.set $p (call $tt_subst_skip (local.get $field) (local.get $end)))
+      (br $scan)))
+    (i32.const 0))
+
+  ;; Read C:\WINDOWS\FONTS once and register what is installed there. See the
+  ;; note on $TT_FONT_DIR_PATTERN for why an application that never calls
+  ;; AddFontResourceA still expects its own faces to answer.
+  (func $tt_scan_font_dir
+    (local $fd_g i32) (local $fd_w i32) (local $path_g i32) (local $path_w i32)
+    (local $handle i32) (local $name_w i32)
+    (local $prefix_len i32) (local $name_len i32)
+    (if (global.get $tt_font_dir_scanned) (then (return)))
+    ;; Marked before the work, not after: a directory that is empty, absent or
+    ;; too big to allocate scratch for must not be re-read on every face
+    ;; lookup for the rest of the run.
+    (global.set $tt_font_dir_scanned (i32.const 1))
+    (local.set $fd_g (call $heap_alloc (i32.const 320)))
+    (if (i32.eqz (local.get $fd_g)) (then (return)))
+    (local.set $path_g (call $heap_alloc (i32.const 160)))
+    (if (i32.eqz (local.get $path_g))
+      (then (call $heap_free (local.get $fd_g)) (return)))
+    (local.set $fd_w (call $g2w (local.get $fd_g)))
+    (local.set $path_w (call $g2w (local.get $path_g)))
+    (local.set $prefix_len (call $strlen (global.get $TT_FONT_DIR_PREFIX)))
+    (call $memcpy (local.get $path_w) (global.get $TT_FONT_DIR_PREFIX)
+      (local.get $prefix_len))
+    (local.set $handle (call $host_fs_find_first_file
+      (global.get $TT_FONT_DIR_PATTERN) (local.get $fd_g) (i32.const 0)))
+    (if (i32.eq (local.get $handle) (i32.const -1))
+      (then
+        (call $heap_free (local.get $path_g))
+        (call $heap_free (local.get $fd_g))
+        (return)))
+    (block $done (loop $next
+      ;; cFileName, the basename only - WIN32_FIND_DATA offset 44.
+      (local.set $name_w (i32.add (local.get $fd_w) (i32.const 44)))
+      (local.set $name_len (call $strlen (local.get $name_w)))
+      (if (i32.and
+            (i32.ne (local.get $name_len) (i32.const 0))
+            (i32.lt_u (i32.add (local.get $name_len) (local.get $prefix_len))
+                      (i32.const 159)))
+        (then
+          (call $memcpy (i32.add (local.get $path_w) (local.get $prefix_len))
+            (local.get $name_w) (i32.add (local.get $name_len) (i32.const 1)))
+          (if (i32.eqz (i32.or
+                (call $tt_subst_owns_path (global.get $TT_SUBST_TABLE)
+                  (global.get $TT_SUBST_TABLE_SIZE) (local.get $path_w))
+                (call $tt_subst_owns_path (global.get $TT_SUBST_ALIAS_TABLE)
+                  (global.get $TT_SUBST_ALIAS_TABLE_SIZE) (local.get $path_w))))
+            (then (drop (call $tt_reg_add (local.get $path_g)))))))
+      (br_if $done (i32.eqz (call $host_fs_find_next_file
+        (local.get $handle) (local.get $fd_g) (i32.const 0))))
+      (br $next)))
+    (drop (call $host_fs_find_close (local.get $handle)))
+    (call $heap_free (local.get $path_g))
+    (call $heap_free (local.get $fd_g)))
+
   (func $tt_subst_path (param $name i32) (param $weight i32) (param $italic i32)
         (result i32)
     (local $found i32)
@@ -2657,6 +2759,10 @@
     ;; default below.
     (if (i32.eqz (local.get $name)) (then (return (i32.const 0))))
     (if (i32.eqz (i32.load8_u (local.get $name))) (then (return (i32.const 0))))
+    ;; Whatever is sitting in the font directory counts as installed, and the
+    ;; first face anybody asks for is the earliest point at which the VFS is
+    ;; certainly mounted.
+    (call $tt_scan_font_dir)
     ;; A font the guest installed itself outranks the substitute for it.
     (local.set $found (call $tt_reg_path (local.get $name)
       (local.get $weight) (local.get $italic)))

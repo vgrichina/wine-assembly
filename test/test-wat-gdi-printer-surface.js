@@ -16,9 +16,16 @@ const { bootRenderHarness } = require('./render-helper');
     0x00FF0000, 'screen seed pixel must be writable');
 
   const printerDc = wat.test_call_CreateDCA() >>> 0;
-  const printerBitmap = wat.get_printer_bitmap() >>> 0;
-  assert(printerDc && printerBitmap, 'CreateDCA must allocate a page DC and bitmap');
+  assert(printerDc, 'CreateDCA must allocate a page DC');
+  // The 30MB page raster is created on first use, not at CreateDC time: MFC
+  // opens a printer DC during startup just to measure the page and usually
+  // never draws to it, and an eager page left the DIB arena too full for a
+  // screen-sized menu overlay.
+  assert.strictEqual(wat.get_printer_bitmap() >>> 0, 0,
+    'CreateDCA must not materialize the page raster before it is used');
   assert.strictEqual(wat.test_gdi_surface_descriptor(printerDc, desc), 1);
+  const printerBitmap = wat.get_printer_bitmap() >>> 0;
+  assert(printerBitmap, 'resolving the printer surface must materialize its page');
   assert.deepStrictEqual([
     dv.getInt32(desc + 4, true),
     dv.getInt32(desc + 8, true),

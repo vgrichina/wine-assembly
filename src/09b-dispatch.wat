@@ -390,11 +390,15 @@
             ;; WM_DESTROY as app shutdown and call PostQuitMessage.
             ;; Use $dlg_pump_hwnd: $dlg_hwnd may have been clobbered by a
             ;; nested modeless CreateDialogParamA inside the modal's dlgproc.
+            (local.set $arg4 (call $wnd_get_owner (global.get $dlg_pump_hwnd)))
             (if (call $wnd_table_get (global.get $dlg_pump_hwnd))
               (then
                 (call $wnd_destroy_children (global.get $dlg_pump_hwnd))
                 (call $wnd_table_remove (global.get $dlg_pump_hwnd))
                 (call $host_destroy_window (global.get $dlg_pump_hwnd))))
+            ;; The dialog and its controls held the focus; hand it back to the
+            ;; owner so an app that paused on WM_KILLFOCUS resumes.
+            (call $focus_restore_after_modal (local.get $arg4))
             (global.set $eax (global.get $dlg_result))
             (global.set $eip (global.get $dlg_ret_addr))
             (global.set $dlg_pump_hwnd (i32.const 0))
