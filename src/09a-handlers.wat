@@ -2855,6 +2855,13 @@
       (call $wnd_client_screen_y (local.get $arg0))
       (i32.sub (call $client_rect_get_r (local.get $arg0)) (call $client_rect_get_l (local.get $arg0)))
       (i32.sub (call $client_rect_get_b (local.get $arg0)) (call $client_rect_get_t (local.get $arg0))))
+    ;; A window DC may outlive the geometry it was acquired under. Visual
+    ;; Basic picture boxes retain a DC while the control grows from its 1x1
+    ;; creation fallback to its authored size, so rebuild USER-visible clips
+    ;; after a real client-size transition.
+    (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
+    (if (i32.ne (local.get $cs) (local.get $old_cs))
+      (then (call $gdi_refresh_window_dc_system_clips)))
     (local.set $dlg_rec (call $dlg_record_for_hwnd (local.get $arg0)))
     (if (i32.and
           (i32.ne (local.get $dlg_rec) (i32.const 0))
@@ -2865,13 +2872,11 @@
     ;; exactly this; using the stale 0x0 create size moves its controls offscreen.
     (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
     (then
-	      (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
 	      (if (i32.ne (local.get $cs) (local.get $old_cs))
 	        (then
 	          (global.set $pending_wm_size (local.get $cs))
 	          (call $invalidate_hwnd (local.get $arg0)))))
 	    (else
-	      (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
 	      (if (i32.ne (local.get $cs) (local.get $old_cs))
 	        (then
 	          (call $invalidate_hwnd (local.get $arg0))
@@ -3305,11 +3310,18 @@
   (func $handle_SetWindowPos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; SetWindowPos(hwnd, hWndInsertAfter, X, Y, cx, cy, uFlags)
     (local $cy i32) (local $uFlags i32) (local $dlg_rec i32)
+    (local $old_wh i32) (local $new_wh i32)
     (local.set $cy (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
     (local.set $uFlags (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
+    (local.set $old_wh (call $ctrl_get_wh_packed (local.get $arg0)))
+    (if (i32.eqz (local.get $old_wh))
+      (then (local.set $old_wh (call $host_get_window_client_size (local.get $arg0)))))
     ;; Pass uFlags to host so it can respect SWP_NOSIZE/SWP_NOMOVE independently
     (call $host_move_window (local.get $arg0) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $cy) (local.get $uFlags))
     (call $ctrl_geom_sync (local.get $arg0) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $cy) (local.get $uFlags))
+    (local.set $new_wh (call $ctrl_get_wh_packed (local.get $arg0)))
+    (if (i32.eqz (local.get $new_wh))
+      (then (local.set $new_wh (call $host_get_window_client_size (local.get $arg0)))))
     ;; Keep WAT's GWL_STYLE in sync with SetWindowPos visibility flags. Apps
     ;; such as Tetravex show custom child panels via SWP_SHOWWINDOW instead of
     ;; ShowWindow; if WS_VISIBLE stays clear here, WAT's paint selector treats
@@ -3340,6 +3352,10 @@
       (call $wnd_client_screen_y (local.get $arg0))
       (i32.sub (call $client_rect_get_r (local.get $arg0)) (call $client_rect_get_l (local.get $arg0)))
       (i32.sub (call $client_rect_get_b (local.get $arg0)) (call $client_rect_get_t (local.get $arg0))))
+    ;; SetWindowPos can resize the same retained-DC controls as MoveWindow.
+    ;; Refresh only after NCCALCSIZE publishes the new client rectangle.
+    (if (i32.ne (local.get $new_wh) (local.get $old_wh))
+      (then (call $gdi_refresh_window_dc_system_clips)))
     ;; Repaint a moved WAT-native control immediately, but only if it is
     ;; actually on screen. Its own WS_VISIBLE bit is not enough: a control
     ;; inside a hidden dialog page keeps that bit set, and painting it writes

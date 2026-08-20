@@ -3721,7 +3721,7 @@
                 (i32.add (local.get $origin_y) (local.get $cy))
                 (i32.add (i32.add (local.get $origin_x) (local.get $cx)) (local.get $cw))
                 (i32.add (i32.add (local.get $origin_y) (local.get $cy)) (local.get $chh))
-                (i32.const 4))))))))
+                (i32.const 4)))))))
       (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
       (br 0))))
 
@@ -3755,7 +3755,7 @@
                 (i32.add (local.get $origin_y) (local.get $cy))
                 (i32.add (i32.add (local.get $origin_x) (local.get $cx)) (local.get $cw))
                 (i32.add (i32.add (local.get $origin_y) (local.get $cy)) (local.get $chh))
-                (i32.const 4))))))))
+                (i32.const 4)))))))
       (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
       (br 0))))
 

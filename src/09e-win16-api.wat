@@ -4623,6 +4623,13 @@
       (call $win16_h16 (call $gl32 (local.get $tmp))))
     (call $gs16 (i32.add (local.get $dst) (i32.const 2))
       (call $gl32 (i32.add (local.get $tmp) (i32.const 4))))
+    ;; Synthetic WM_ERASEBKGND DCs are named by hwnd+0x40000 and can outlive
+    ;; child creation. Rebuild USER's erase-visible region at delivery time so
+    ;; WS_CLIPCHILDREN excludes every currently visible child.
+    (if (i32.eq (call $gl32 (i32.add (local.get $tmp) (i32.const 4))) (i32.const 0x0014))
+      (then (call $dc_apply_client_erase_clip
+        (call $gl32 (i32.add (local.get $tmp) (i32.const 8)))
+        (call $gl32 (local.get $tmp)))))
     (call $gs16 (i32.add (local.get $dst) (i32.const 4))
       (call $win16_msg_wparam16
         (call $gl32 (i32.add (local.get $tmp) (i32.const 4)))
@@ -6244,10 +6251,19 @@
         (call $gs16 (local.get $dst) (call $win16_h16 (call $gl32 (local.get $tmp))))
         (call $gs16 (i32.add (local.get $dst) (i32.const 2))
           (call $gl32 (i32.add (local.get $tmp) (i32.const 4))))
+        (if (i32.eq (call $gl32 (i32.add (local.get $tmp) (i32.const 4))) (i32.const 0x0014))
+          (then (call $dc_apply_client_erase_clip
+            (call $gl32 (i32.add (local.get $tmp) (i32.const 8)))
+            (call $gl32 (local.get $tmp)))))
         (call $gs16 (i32.add (local.get $dst) (i32.const 4))
-          (call $gl32 (i32.add (local.get $tmp) (i32.const 8))))
+          (call $win16_msg_wparam16
+            (call $gl32 (i32.add (local.get $tmp) (i32.const 4)))
+            (call $gl32 (i32.add (local.get $tmp) (i32.const 8)))))
         (call $gs32 (i32.add (local.get $dst) (i32.const 6))
-          (call $gl32 (i32.add (local.get $tmp) (i32.const 12))))
+          (call $win16_msg_lparam16_cmd
+            (call $gl32 (i32.add (local.get $tmp) (i32.const 4)))
+            (call $gl32 (i32.add (local.get $tmp) (i32.const 8)))
+            (call $gl32 (i32.add (local.get $tmp) (i32.const 12)))))
         (call $gs32 (i32.add (local.get $dst) (i32.const 10))
           (call $gl32 (i32.add (local.get $tmp) (i32.const 16))))
         (call $win16_msg_pt_narrow (local.get $dst) (local.get $tmp))))

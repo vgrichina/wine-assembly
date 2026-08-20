@@ -4,6 +4,14 @@ Verified 2026-08-20. These are possible future compatibility targets for
 Wine-Assembly, with an emphasis on official demos and shareware that can be
 tested without distributing a full retail game.
 
+## Win16 Entertainment Pack recovery
+
+The byte-level recovery ledger for Rodent's Revenge, Fuji Golf, and Tic Tac
+Drop is [docs/win16-app-sources.md](docs/win16-app-sources.md). Internet Archive
+disk images and unpacked collections are the primary sources; the ledger lists
+every item URL, downloaded archive and disk-image SHA-256, recovered-file hash,
+the independent WinWorld comparison, and the libmspack extraction tool source.
+
 ## Diablo
 
 The Internet Archive has several copies of the original PC release, including
