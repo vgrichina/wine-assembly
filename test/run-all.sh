@@ -123,6 +123,7 @@ UNIT=(
   test/test-wat-gdi-shapes.js
   test/test-wat-gdi-geometry-handlers.js
   test/test-dib-dirty-sync.js
+  test/test-mem-utils-dib-g2w.js
   test/test-web-pinball-assets.js
   test/test-process-boot-yields.js
   test/test-worker-imports.js
