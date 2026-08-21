@@ -7,7 +7,7 @@
 const ProcessBoot = (typeof window !== 'undefined' && window.processBoot) || null;
 
 class WineAssembly {
-  static SOURCE_VERSION = '212';
+  static SOURCE_VERSION = '213';
   static _nextProcessId = 1000;
 
   static hasRemainingAppWindow(destroyed, remainingTopLevel) {
@@ -30,6 +30,13 @@ class WineAssembly {
   }
 
   constructor() {
+    // A debug tab is a live-worktree harness. Stop/Launch creates a new
+    // process and must see a newly rebuilt module even when the page itself
+    // was not reloaded; production keeps sharing one compiled module.
+    if (typeof location !== 'undefined' &&
+        new URLSearchParams(location.search).has('debug')) {
+      WineAssembly._wasmModulePromise = null;
+    }
     // One WineAssembly object models one Win32 process. Worker WASM instances
     // created by ThreadManager are threads of this process and share its PID
     // through the process's SharedArrayBuffer-backed memory.
