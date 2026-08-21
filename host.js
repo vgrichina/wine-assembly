@@ -495,7 +495,22 @@ class WineAssembly {
     h.resume_thread = (handle) => self.threadManager ? self.threadManager.resumeThread(handle) : 0xFFFFFFFF;
     h.exit_thread = (c) => self.threadManager && self.threadManager.exitThread(c);
     h.get_exit_code_thread = (handle) => self.threadManager ? self.threadManager.getExitCodeThread(handle) : 0x103;
-    h.create_event = (m, i) => self.threadManager ? self.threadManager.createEvent(m, i) : 0;
+    const readSyncObjectName = (nameWa, wide) => {
+      if (!nameWa) return '';
+      if (!wide) return self.readString(nameWa);
+      const dv = new DataView(self.memory.buffer);
+      let name = '';
+      for (let i = 0; i < 512; i++) {
+        const ch = dv.getUint16(nameWa + i * 2, true);
+        if (!ch) break;
+        name += String.fromCharCode(ch);
+      }
+      return name;
+    };
+    h.create_event = (m, i, nameWa, wide) => self.threadManager
+      ? self.threadManager.createEvent(m, i, readSyncObjectName(nameWa, wide)) : 0;
+    h.open_event = (nameWa, wide) => self.threadManager
+      ? self.threadManager.openEvent(readSyncObjectName(nameWa, wide)) : 0;
     h.set_event = (handle) => self.threadManager ? self.threadManager.setEvent(handle) : 1;
     h.reset_event = (handle) => self.threadManager ? self.threadManager.resetEvent(handle) : 1;
     h.wait_single = (handle, t) => {

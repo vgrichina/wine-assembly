@@ -63,6 +63,7 @@ UNIT=(
   test/test-mm-timer-callback.js
   test/test-browser-mm-timer.js
   test/test-diablo-runtime-apis.js
+  test/test-debug-thread-state.js
   test/test-dev-server.js
   test/test-vlan-rtc.js
   test/test-waveout-audio.js
@@ -185,6 +186,7 @@ UNIT=(
   test/test-isequalguid.js
   test/test-kernel32-last-error.js
   test/test-movewindow-child-size.js
+  test/test-named-event-api.js
   test/test-nested-child-paint.js
   test/test-ole-bind-context.js
   test/test-ole-cfb.js
@@ -204,7 +206,9 @@ UNIT=(
   test/test-renderer-transparent-desktop.js
   test/test-richedit-version-compat.js
   test/test-rtf-stylesheet.js
+  test/test-shell-desktop-fallback.js
   test/test-solitaire-web.js
+  test/test-sparse-width-boundary.js
   test/test-string-ops-sparse-boundary.js
   test/test-surface.js
   test/test-system-metrics.js

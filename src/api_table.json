@@ -20458,5 +20458,182 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 3446989061
+  },
+  {
+    "id": 2480,
+    "name": "OpenEventA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 193796678,
+    "args": [
+      {
+        "name": "desiredAccess",
+        "type": "DWORD"
+      },
+      {
+        "name": "inheritHandle",
+        "type": "BOOL"
+      },
+      {
+        "name": "name",
+        "type": "LPCSTR"
+      }
+    ],
+    "ret": "HANDLE"
+  },
+  {
+    "id": 2481,
+    "name": "SHGetDesktopFolder",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3809330866,
+    "args": [
+      {
+        "name": "ppshf",
+        "type": "LPVOID",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
+  },
+  {
+    "id": 2482,
+    "name": "IShellFolder_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2484254500
+  },
+  {
+    "id": 2483,
+    "name": "IShellFolder_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2868681279
+  },
+  {
+    "id": 2484,
+    "name": "IShellFolder_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2352800584
+  },
+  {
+    "id": 2485,
+    "name": "IShellFolder_ParseDisplayName",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 1746551655
+  },
+  {
+    "id": 2486,
+    "name": "IShellFolder_EnumObjects",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1547209678
+  },
+  {
+    "id": 2487,
+    "name": "IShellFolder_BindToObject",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1886680194
+  },
+  {
+    "id": 2488,
+    "name": "IShellFolder_BindToStorage",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1831913614
+  },
+  {
+    "id": 2489,
+    "name": "IShellFolder_CompareIDs",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 381341756
+  },
+  {
+    "id": 2490,
+    "name": "IShellFolder_CreateViewObject",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 4156258237
+  },
+  {
+    "id": 2491,
+    "name": "IShellFolder_GetAttributesOf",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3430118581
+  },
+  {
+    "id": 2492,
+    "name": "IShellFolder_GetUIObjectOf",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 198210561
+  },
+  {
+    "id": 2493,
+    "name": "IShellFolder_GetDisplayNameOf",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 4088079191
+  },
+  {
+    "id": 2494,
+    "name": "IShellFolder_SetNameOf",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 1592593411
+  },
+  {
+    "id": 2495,
+    "name": "IEnumIDList_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1271394798
+  },
+  {
+    "id": 2496,
+    "name": "IEnumIDList_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 881929309
+  },
+  {
+    "id": 2497,
+    "name": "IEnumIDList_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3276828538
+  },
+  {
+    "id": 2498,
+    "name": "IEnumIDList_Next",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 4141398916
+  },
+  {
+    "id": 2499,
+    "name": "IEnumIDList_Skip",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3214543494
+  },
+  {
+    "id": 2500,
+    "name": "IEnumIDList_Reset",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1024119156
+  },
+  {
+    "id": 2501,
+    "name": "IEnumIDList_Clone",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 205911374
   }
 ]

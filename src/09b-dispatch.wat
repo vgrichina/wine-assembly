@@ -9,6 +9,16 @@
     (local $saved_ebx i32) (local $saved_esi i32)
     (local $saved_edi i32) (local $saved_ebp i32)
 
+    ;; Most imported calls are dispatched directly by the decoded CALL/JMP
+    ;; handler rather than by entering the thunk zone through $run. Keep the
+    ;; concrete thunk address available to blocking handlers in both paths.
+    ;; A parked handler must resume here, not at the caller's decoded block,
+    ;; or that block repeats its PUSH/CALL and consumes another stack frame on
+    ;; every cooperative retry.
+    (global.set $current_thunk_eip
+      (i32.add (global.get $thunk_guest_base)
+        (i32.mul (local.get $thunk_idx) (i32.const 8))))
+
     ;; Worker threads instantiate a fresh module over the process's shared
     ;; memory. Restore per-instance COM vtable globals before any imported API
     ;; can create or return a DirectX/OLE wrapper.

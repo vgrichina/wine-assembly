@@ -132,6 +132,57 @@ image. For a public deployment or checked-in test fixture, prefer the official
 demo. For full-game testing, use files from a legitimately owned retail or GOG
 copy and verify the applicable redistribution rights separately.
 
+## StarCraft demo and shareware
+
+Two Internet Archive items were used as independent Blizzard-era sources:
+
+- [StarCraft Shareware CD](https://archive.org/details/cdrom-starcraft-shareware),
+  whose raw image has SHA-1
+  `d5afc3283344091e6d3caf9f96a92dadcb0f681b`. The local ISO derived from it
+  is 230,686,720 bytes with SHA-256
+  `63ffa521f8ea07c01fbf4035eda24bc667c5fe2e71bc162fdae5c8c1a48609b8`.
+  The native disc installer files are `INSTALL.EXE` (SHA-256
+  `8c8855f29d1fb3265727021381d82bf35555a736a27896d9f159c3f34bebe0a8`),
+  `SETUP.EXE` (SHA-256
+  `ab0c5f9ffabf9e879ba89405eaed97064d4edf8ab17764f4b2b36cd3dd893cb7`),
+  and `SMACKW32.DLL` (SHA-256
+  `5786b7b72667b9ea1cc4bf7762a9e313c2ad1474392907a0f3b52e4e888029bf`).
+- [StarCraft Demo](https://archive.org/details/SCDEMO), whose original
+  29,569,615-byte `SCDEMO.EXE` has Archive-recorded SHA-1
+  `2bef4f65032f34d70957bb123560fddb63e5686c` and local SHA-256
+  `3c10439a63f1dc06f07fb3451d7d2788ba5cd000c798fd846294f467431663d0`.
+
+Both were exercised through their native Windows installers inside
+Wine-Assembly; no host Wine installation or pre-extracted gameplay shortcut
+was used. The shareware CD installer produced the exact 35,912,186-byte
+`stardatsw.mpq` and exited its worker after the cooperative critical-section
+ownership and retry contracts were corrected.
+
+The standalone demo installer also provided a real-Windows oracle using the
+repository's v86 Windows 98 reference environment. Windows 98 produced a
+970,752-byte `Starcraft.exe` with SHA-256
+`b2461f58aca73df0af402009f2a33fae85ce57626eb938479effd12e972c1c26`.
+Before the memory fix, Wine-Assembly produced the same length but corrupted
+175,467 bytes across 224 of its 237 4 KiB blocks. Tracing showed the first bad
+byte was already present in the PKWARE explode output buffer before VFS
+`WriteFile`, excluding the extracted file, VFS persistence, and mapped-file
+data as the source.
+
+The root cause was the sparse guest-memory layout. Adjacent guest pages may be
+backed by non-adjacent regions of WASM memory when `VirtualAlloc` commits are
+interleaved. Ordinary 16- and 32-bit helpers translated only the first address
+and then performed one native WASM-width access, so a word or dword crossing a
+4 KiB boundary read or wrote unrelated backing memory. Page-local accesses
+retain the single-translation fast path; only true non-contiguous boundary
+accesses gather or scatter bytes. After that correction, all 237 output blocks
+from the native demo installer matched the Windows 98 oracle byte-for-byte.
+
+The installer is intentionally retained as a compatibility test because it
+exposed shared-dialog data-segment overlap, named-event behavior, cooperative
+critical-section ownership, and sparse-memory corruption that mounting a
+prebuilt installed image would have hidden. A mounted image can still be an
+optional faster gameplay path once the installer result has been verified.
+
 ## Other promising games
 
 Recommended order after the Diablo demo:

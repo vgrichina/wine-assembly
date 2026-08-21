@@ -1014,9 +1014,35 @@
 
   ;; 27: CreateEventA(lpAttr, bManualReset, bInitialState, lpName) — 4 args stdcall
   (func $handle_CreateEventA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_create_event (local.get $arg1) (local.get $arg2)))
+    (local $name_wa i32) (local $existing i32)
+    (if (local.get $arg3)
+      (then (local.set $name_wa (call $g2w (local.get $arg3)))))
+    ;; CreateEvent opens an existing same-name event and reports
+    ;; ERROR_ALREADY_EXISTS; otherwise it creates the shared object.
+    (if (local.get $name_wa)
+      (then (local.set $existing (call $host_open_event (local.get $name_wa) (i32.const 0)))))
+    (if (local.get $existing)
+      (then
+        (global.set $eax (local.get $existing))
+        (global.set $last_error (i32.const 183)))
+      (else
+        (global.set $eax (call $host_create_event
+          (local.get $arg1) (local.get $arg2) (local.get $name_wa) (i32.const 0)))
+        (global.set $last_error (i32.const 0))))
     (call $host_log_i32 (global.get $eax))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  ;; OpenEventA(dwDesiredAccess, bInheritHandle, lpName) — 3 args stdcall.
+  ;; Access masks and inheritance do not change the cooperative process-local
+  ;; object, but the name lookup and reference lifetime match Win32.
+  (func $handle_OpenEventA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (if (result i32) (local.get $arg2)
+      (then (call $host_open_event (call $g2w (local.get $arg2)) (i32.const 0)))
+      (else (i32.const 0))))
+    (if (i32.eqz (global.get $eax))
+      (then (global.set $last_error (i32.const 2)))) ;; ERROR_FILE_NOT_FOUND
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 28: CreateThread(lpAttr, dwStackSize, lpStartAddr, lpParam, dwFlags, lpThreadId) — 6 args stdcall
@@ -5694,10 +5720,15 @@ nW — STUB: unimplemented
   )
 
   ;; Park a contended EnterCriticalSection without consuming its stdcall
-  ;; frame. $run normally auto-pops a thunk whose handler left EIP unchanged;
-  ;; setting handler_set_eip opts out so clearing yield reason 9 re-enters this
-  ;; exact API call with its original argument and return address.
+  ;; frame. Imported CALL/JMP instructions normally dispatch their thunk
+  ;; inline while EIP still names the caller's decoded block. Resume at the
+  ;; concrete thunk instead, otherwise every cooperative retry re-executes the
+  ;; guest PUSH/CALL and walks ESP downward by another frame. $run then sees
+  ;; the thunk directly; handler_set_eip keeps its normal auto-pop suppressed
+  ;; until the section is acquired.
   (func $cs_block
+    (if (global.get $current_thunk_eip)
+      (then (global.set $eip (global.get $current_thunk_eip))))
     (global.set $handler_set_eip (i32.const 1))
     (global.set $yield_reason (i32.const 9))
     (global.set $yield_flag (i32.const 1))
@@ -5712,7 +5743,11 @@ nW — STUB: unimplemented
     (local $cs i32) (local $owner i32) (local $recursion i32)
     (local.set $cs (call $g2w (local.get $arg0)))
     (local.set $owner (i32.load offset=12 (local.get $cs)))
-    (if (i32.and (local.get $owner)
+    ;; i32.and is bitwise, so the raw owner value cannot be used as its first
+    ;; boolean operand: an even thread id (2, 4, ...) AND TRUE is zero. That
+    ;; made thread 1 steal sections owned by thread 2 and strand the original
+    ;; owner. Normalize both predicates to 0/1 before combining them.
+    (if (i32.and (i32.ne (local.get $owner) (i32.const 0))
                  (i32.ne (local.get $owner) (global.get $current_thread_id)))
       (then
         (global.set $wait_handle (local.get $arg0))
@@ -5724,6 +5759,11 @@ nW — STUB: unimplemented
     (i32.store offset=4 (local.get $cs)
       (i32.sub (local.get $recursion) (i32.const 1)))
     (i32.store offset=12 (local.get $cs) (global.get $current_thread_id))
+    ;; A contended attempt sets this flag so $run preserves the import frame.
+    ;; Once the retry acquires the section it is an ordinary completed API
+    ;; call again; leaving the flag sticky suppresses the thunk auto-pop and
+    ;; makes the first argument look like the return address.
+    (global.set $handler_set_eip (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -8372,7 +8412,19 @@ HookEx — no next hook in chain, return 0
 
   ;; 526: CreateEventW(lpAttr, bManualReset, bInitialState, lpName) — 4 args stdcall
   (func $handle_CreateEventW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_create_event (local.get $arg1) (local.get $arg2)))
+    (local $name_wa i32) (local $existing i32)
+    (if (local.get $arg3)
+      (then (local.set $name_wa (call $g2w (local.get $arg3)))))
+    (if (local.get $name_wa)
+      (then (local.set $existing (call $host_open_event (local.get $name_wa) (i32.const 1)))))
+    (if (local.get $existing)
+      (then
+        (global.set $eax (local.get $existing))
+        (global.set $last_error (i32.const 183)))
+      (else
+        (global.set $eax (call $host_create_event
+          (local.get $arg1) (local.get $arg2) (local.get $name_wa) (i32.const 1)))
+        (global.set $last_error (i32.const 0))))
     (call $host_log_i32 (global.get $eax))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )

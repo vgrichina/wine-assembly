@@ -99,6 +99,27 @@ const reusedSemaphore = syncLifecycleTm.createSemaphore(2, 4);
 assert.strictEqual(reusedSemaphore, syncHandles[18], 'semaphores should share and reuse the synchronization table');
 assert.strictEqual(syncLifecycleTm.closeSyncHandle(reusedSemaphore), true, 'CloseHandle should release a semaphore slot');
 
+const namedEventTm = makeThreadManager();
+assert.strictEqual(namedEventTm.openEvent('StarcraftSetupEvent'), 0,
+  'OpenEvent reports a missing process-local name');
+const namedEvent = namedEventTm.createEvent(false, false, 'StarcraftSetupEvent');
+assert(namedEvent, 'CreateEvent allocates a named event');
+assert.strictEqual(namedEventTm.openEvent('starcraftsetupevent'), 0,
+  'named kernel objects use case-sensitive names');
+assert.strictEqual(namedEventTm.openEvent('StarcraftSetupEvent'), namedEvent,
+  'OpenEvent finds the existing named event');
+assert.strictEqual(namedEventTm.createEvent(true, true, 'StarcraftSetupEvent'), namedEvent,
+  'CreateEvent returns the existing object when its name already exists');
+assert.strictEqual(namedEventTm.closeSyncHandle(namedEvent), true,
+  'closing one named-event reference succeeds');
+assert.strictEqual(namedEventTm.openEvent('StarcraftSetupEvent'), namedEvent,
+  'the named object survives while other references remain');
+assert.strictEqual(namedEventTm.closeSyncHandle(namedEvent), true);
+assert.strictEqual(namedEventTm.closeSyncHandle(namedEvent), true);
+assert.strictEqual(namedEventTm.closeSyncHandle(namedEvent), true);
+assert.strictEqual(namedEventTm.openEvent('StarcraftSetupEvent'), 0,
+  'the name disappears after the final reference closes');
+
 const waitAllTm = makeThreadManager();
 const waitAllA = waitAllTm.createEvent(false, false);
 const waitAllB = waitAllTm.createEvent(false, false);

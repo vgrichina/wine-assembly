@@ -49,6 +49,17 @@ async function instantiate(wasmBytes, memory, tid) {
   main.test_cs_init(CS_GUEST);
   assert.deepStrictEqual(state(), { lock: -1, recursion: 0, owner: 0 });
 
+  assert.strictEqual(worker.test_cs_park_retry(CS_GUEST), 31,
+    'a parked inline EnterCriticalSection resumes at its thunk, completes once, and restores auto-pop');
+  assert.deepStrictEqual(state(), { lock: 0, recursion: 1, owner: 2 },
+    'the retry owns the section exactly once');
+  assert.strictEqual(main.test_cs_enter(CS_GUEST), 7,
+    'thread 1 parks instead of stealing a section from even-numbered owner 2');
+  assert.deepStrictEqual(state(), { lock: 0, recursion: 1, owner: 2 },
+    'an even-numbered owner remains intact while thread 1 is parked');
+  worker.test_cs_leave(CS_GUEST);
+  assert.deepStrictEqual(state(), { lock: -1, recursion: 0, owner: 0 });
+
   assert.strictEqual(main.test_cs_enter(CS_GUEST), 0,
     'the main identity acquires a free section without parking');
   assert.deepStrictEqual(state(), { lock: 0, recursion: 1, owner: 1 });
