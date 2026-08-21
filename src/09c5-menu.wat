@@ -2227,7 +2227,19 @@
     (if (global.get $code16)
       (then
         (global.set $ml_char_stride (i32.const 1))
-        (local.set $bytes_w (call $win16_find_resource (i32.const 4) (local.get $menu_id)))
+        ;; A Win16 WNDCLASS.lpszMenuName is a far pointer, not the integer
+        ;; resource id Win32 commonly puts there. RegisterClass widens that
+        ;; pointer to its linear guest address before storing the shared
+        ;; WNDCLASSA. Treating the address as an id leaves class-owned named
+        ;; menus (Cruel/Golf use "CRUEL"/"GOLF") absent even though the
+        ;; RT_NAMETABLE maps each name to a real RT_MENU entry.
+        (if (i32.ge_u (local.get $menu_id) (i32.const 0x10000))
+          (then
+            (local.set $bytes_w (call $win16_find_resource_ex
+              (i32.const 4) (i32.const 0) (call $g2w (local.get $menu_id)))))
+          (else
+            (local.set $bytes_w (call $win16_find_resource
+              (i32.const 4) (local.get $menu_id)))))
         (if (i32.eqz (local.get $bytes_w)) (then (return)))
         (local.set $size (global.get $win16_res_len)))
       (else
