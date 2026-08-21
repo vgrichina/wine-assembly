@@ -2531,6 +2531,10 @@
   ;; apart. See $win16_CreateWindow. What each one has to remember lives on the
   ;; task's stack, not here, because these calls nest.
   (global $WIN16_CONT_CWP i32 (i32.const 0xFF10))
+  ;; A custom child created through the Win16 call32 bridge returns from its
+  ;; synchronous WM_CREATE here so USER can deliver the paired initial
+  ;; WM_SIZE before CreateWindow itself returns.
+  (global $WIN16_CONT_CREATE_SIZE i32 (i32.const 0xFF80))
   ;; The CWPSTRUCT and CREATESTRUCT the hook is shown, built below SP; a fixed
   ;; size so the continuation can drop them without being told how big they are.
   (global $WIN16_CWP_SCRATCH i32 (i32.const 44))

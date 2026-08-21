@@ -3761,7 +3761,15 @@
     (i32.store offset=4 (local.get $empty) (local.get $type))
     (i32.store offset=8 (local.get $empty) (local.get $style))
     (i32.store offset=12 (local.get $empty) (local.get $width))
-    (i32.store offset=16 (local.get $empty) (i32.and (local.get $color) (i32.const 0xFFFFFF)))
+    ;; Pens and brushes retain the PALETTEINDEX/PALETTERGB qualifier in the
+    ;; high byte.  Their literal color cannot be known until they are drawn
+    ;; into a DC with a selected logical palette.  Other object types keep the
+    ;; historical 24-bit payload here.
+    (i32.store offset=16 (local.get $empty)
+      (i32.and (local.get $color)
+        (select (i32.const 0x03FFFFFF) (i32.const 0x00FFFFFF)
+          (i32.or (i32.eq (local.get $type) (i32.const 1))
+            (i32.eq (local.get $type) (i32.const 2))))))
     (i32.store offset=20 (local.get $empty) (local.get $flags))
     (local.get $handle))
 

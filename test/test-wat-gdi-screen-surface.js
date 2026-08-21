@@ -19,6 +19,10 @@ const { bootRenderHarness } = require('./render-helper');
         (call $compat_is_pinball_exe))
       (func (export "test_set_main_hwnd") (param $hwnd i32)
         (global.set $main_hwnd (local.get $hwnd)))
+      (func (export "test_clear_screen_rect")
+            (param $x i32) (param $y i32) (param $w i32) (param $h i32)
+        (call $gdi_screen_surface_clear_rect
+          (local.get $x) (local.get $y) (local.get $w) (local.get $h)))
     `,
   });
   const dv = new DataView(memory.buffer);
@@ -59,6 +63,21 @@ const { bootRenderHarness } = require('./render-helper');
     new Uint8Array(memory.buffer)[bits + (3 * 96 + 4) * 4 + 1],
     new Uint8Array(memory.buffer)[bits + (3 * 96 + 4) * 4 + 2],
   ], [0, 0, 255], 'ReleaseDC must not read the desktop presentation back');
+
+  const outside = bits + (2 * 96 + 2) * 4;
+  new DataView(memory.buffer).setUint32(outside, 0x00FF0000, true);
+  wat.test_clear_screen_rect(4, 3, 2, 2);
+  assert.deepStrictEqual([
+    new Uint8Array(memory.buffer)[bits + (3 * 96 + 4) * 4],
+    new Uint8Array(memory.buffer)[bits + (3 * 96 + 4) * 4 + 1],
+    new Uint8Array(memory.buffer)[bits + (3 * 96 + 4) * 4 + 2],
+  ], [128, 128, 0], 'destroyed popup bounds must return to COLOR_DESKTOP');
+  assert.strictEqual(new DataView(memory.buffer).getUint32(outside, true), 0x00FF0000,
+    'clearing exposed popup bounds must preserve the rest of the desktop');
+  renderer.repaint();
+  assert.deepStrictEqual(
+    [...canvas.getContext('2d').getImageData(4, 3, 1, 1).data.subarray(0, 3)],
+    [0, 128, 128], 'renderer must receive the cleared screen rectangle');
 
   const second = wat.test_call_GetDC(0) >>> 0;
   assert(second && second !== hdc);

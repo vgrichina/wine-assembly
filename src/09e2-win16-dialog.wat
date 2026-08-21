@@ -393,7 +393,8 @@
   ;; input, timers — rather than a second opinion about it maintained here.
   (func $win16_dlg_pump
     (local $dlg i32) (local $proc i32) (local $scratch i32) (local $packed i32)
-    (local $hwnd i32) (local $msg i32)
+    (local $hwnd i32) (local $msg i32) (local $prev_focus i32) (local $owner i32)
+    (local $dlg_x i32) (local $dlg_y i32) (local $dlg_w i32) (local $dlg_h i32)
     (local.set $dlg (call $win16_h32 (call $gl16 (global.get $esp))))
     (local.set $proc (call $dialog_proc_get (local.get $dlg)))
 
@@ -401,9 +402,42 @@
     (if (global.get $win16_dlg_ended)
       (then
         (global.set $win16_dlg_ended (i32.const 0))
+        (local.set $owner (call $wnd_get_owner (local.get $dlg)))
+        ;; EndDialog owns this cleanup rather than calling DestroyWindow. Give
+        ;; focus back to the main frame before recursively removing a focused
+        ;; control; otherwise renderer keys keep targeting a dead child HWND.
+        (local.set $prev_focus (global.get $focus_hwnd))
+        (if (i32.and (local.get $prev_focus)
+              (i32.or (i32.eq (local.get $prev_focus) (local.get $dlg))
+                      (call $enum_child_is_descendant
+                        (local.get $prev_focus) (local.get $dlg))))
+          (then
+            (global.set $focus_hwnd (global.get $main_hwnd))
+            (if (global.get $main_hwnd)
+              (then (drop (call $post_queue_push (global.get $main_hwnd)
+                (i32.const 0x0007) (local.get $prev_focus) (i32.const 0)))))))
+        ;; Preserve the popup's screen bounds while its host/window-table
+        ;; records still exist. ABOUTTET draws directly through GetDC(NULL),
+        ;; so the region below the owner must be restored after it disappears.
+        (local.set $dlg_x (call $wnd_window_screen_x (local.get $dlg)))
+        (local.set $dlg_y (call $wnd_window_screen_y (local.get $dlg)))
+        (local.set $dlg_w (call $wnd_screen_w (local.get $dlg)))
+        (local.set $dlg_h (call $wnd_screen_h (local.get $dlg)))
         (call $wnd_destroy_children (local.get $dlg))
         (call $wnd_table_remove (local.get $dlg))
         (call $host_destroy_window (local.get $dlg))
+        (call $gdi_screen_surface_clear_rect
+          (local.get $dlg_x) (local.get $dlg_y)
+          (local.get $dlg_w) (local.get $dlg_h))
+        ;; Destroying the popup exposes its owner and every visible child
+        ;; region, not just the owner's client background. Queue that complete
+        ;; exposed subtree before returning to the task.
+        (if (i32.eqz (local.get $owner))
+          (then (local.set $owner (global.get $main_hwnd))))
+        (if (local.get $owner)
+          (then
+            (call $invalidate_hwnd (local.get $owner))
+            (drop (call $paint_seed_child_paints (local.get $owner)))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 2)))
         (local.set $packed (i32.or (call $gl16 (global.get $esp))
           (i32.shl (call $gl16 (i32.add (global.get $esp) (i32.const 2)))

@@ -236,6 +236,10 @@ UNIT=(
 E2E=(
   test/test-win16-wep-gameplay.js
   test/test-win16-vb-gameplay.js
+  test/test-win16-wep1-gameplay.js
+  test/test-win16-wep2-gameplay.js
+  test/test-win16-wep3-gameplay.js
+  test/test-win16-wep4-gameplay.js
   test/test-win16-wep-class-menu.js
   test/test-win16-pipe-help.js
   test/test-win16-pipe-about.js

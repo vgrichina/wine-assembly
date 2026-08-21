@@ -250,6 +250,23 @@
     (select (local.get $palette) (i32.const 0x3001F)
       (i32.ne (local.get $palette) (i32.const 0))))
 
+  ;; Resolve the two palette-qualified COLORREF forms at draw time, when the
+  ;; destination DC (and therefore its selected logical palette) is known.
+  ;; PALETTEINDEX is 0x01xxxxxx with the logical index in the low word;
+  ;; PALETTERGB is 0x02BBGGRR and already carries its literal color.
+  (func $gdi_dc_resolve_colorref (param $hdc i32) (param $color i32) (result i32)
+    (local $resolved i32)
+    (if (i32.eq (i32.and (local.get $color) (i32.const 0xFF000000))
+          (i32.const 0x01000000))
+      (then
+        (local.set $resolved (call $gdi_palette_colorref
+          (call $gdi_dc_selected_palette (local.get $hdc))
+          (i32.and (local.get $color) (i32.const 0xFFFF))))
+        (if (i32.ne (local.get $resolved) (i32.const -1))
+          (then (return (local.get $resolved))))
+        (return (i32.const 0))))
+    (i32.and (local.get $color) (i32.const 0x00FFFFFF)))
+
   (func $gdi_dc_select_palette (param $hdc i32) (param $palette i32) (result i32)
     (local $meta i32) (local $previous i32)
     (if (i32.or (i32.eqz (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))

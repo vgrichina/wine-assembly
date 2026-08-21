@@ -601,6 +601,63 @@
     ;; Both ended together, or the caller's string runs on past the stored one.
     (i32.eqz (i32.load8_u (i32.add (local.get $want) (local.get $n)))))
 
+  ;; Resolve a named TYPEINFO to a token that can travel in a resource handle.
+  ;; NE either stores a named type as an offset from the resource-table base,
+  ;; with bit 15 clear, or compiles it to an integer id and records the original
+  ;; name in RT_NAMETABLE. The former gets bit 15 set in our token so
+  ;; $win16_find_resource_ex can distinguish it from an integer type id; the
+  ;; latter is already an ordinary integer id.
+  (func $win16_find_resource_type_name (export "win16_find_resource_type_name")
+        (param $name_wa i32) (result i32)
+    (local $p i32) (local $type i32) (local $count i32) (local $cb i32)
+    (local $end i32) (local $ne_off i32) (local $img i32) (local $rt i32)
+    (local.set $ne_off (call $win16_res_ne_off (global.get $win16_res_module_id)))
+    (local.set $img (call $win16_res_base_addr (global.get $win16_res_module_id)))
+    (local.set $p (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x24))))
+    (if (i32.eqz (local.get $p)) (then (return (i32.const 0))))
+    (local.set $p (i32.add (local.get $ne_off) (local.get $p)))
+    (local.set $rt (local.get $p))
+    (local.set $p (i32.add (local.get $p) (i32.const 2)))
+    (local.set $end (i32.add (local.get $img)
+      (select (global.get $win16_file_size) (global.get $WIN16_DLL_STAGING_STRIDE)
+              (i32.eq (local.get $img) (global.get $PE_STAGING)))))
+    (block $done (loop $types
+      (br_if $done (i32.ge_u (i32.add (local.get $p) (i32.const 8)) (local.get $end)))
+      (local.set $type (i32.load16_u (local.get $p)))
+      (br_if $done (i32.eqz (local.get $type)))
+      (local.set $count (i32.load16_u (i32.add (local.get $p) (i32.const 2))))
+      (if (i32.and
+            (i32.eqz (i32.and (local.get $type) (i32.const 0x8000)))
+            (i32.and (i32.lt_u (i32.add (local.get $rt) (local.get $type)) (local.get $end))
+                     (call $win16_res_name_eq
+                       (i32.add (local.get $rt) (local.get $type))
+                       (local.get $name_wa))))
+        (then (return (i32.or (local.get $type) (i32.const 0x8000)))))
+      (local.set $p (i32.add (i32.add (local.get $p) (i32.const 8))
+                             (i32.mul (local.get $count) (i32.const 12))))
+      (br $types)))
+    ;; Resource Compiler 3.0 commonly turns a named type into a numeric one.
+    ;; Taipei's seven LAYOUT resources are TYPEINFO 0xF009, while these table
+    ;; entries retain "LAYOUT" beside type 0xF009 and ids 200..206.
+    (local.set $p (call $win16_find_resource_ex
+      (i32.const 15) (i32.const 1) (i32.const 0)))
+    (if (i32.eqz (local.get $p)) (then (return (i32.const 0))))
+    (local.set $end (i32.add (local.get $p) (global.get $win16_res_len)))
+    (block $names_done (loop $names
+      (br_if $names_done (i32.gt_u (i32.add (local.get $p) (i32.const 6)) (local.get $end)))
+      (local.set $cb (i32.load16_u (local.get $p)))
+      (br_if $names_done (i32.lt_u (local.get $cb) (i32.const 7)))
+      (if (i32.and
+            (i32.ne (i32.load8_u (i32.add (local.get $p) (i32.const 6))) (i32.const 0))
+            (call $win16_res_name_eq_z
+              (i32.add (local.get $p) (i32.const 6)) (local.get $name_wa)))
+        (then (return (i32.and
+          (i32.load16_u (i32.add (local.get $p) (i32.const 2)))
+          (i32.const 0x7FFF)))))
+      (local.set $p (i32.add (local.get $p) (local.get $cb)))
+      (br $names)))
+    (i32.const 0))
+
   (func $win16_find_resource (export "win16_find_resource")
         (param $type_id i32) (param $res_id i32) (result i32)
     (call $win16_find_resource_ex
@@ -638,9 +695,15 @@
       (br_if $done (i32.eqz (local.get $type)))
       (local.set $count (i32.load16_u (i32.add (local.get $p) (i32.const 2))))
       (local.set $q (i32.add (local.get $p) (i32.const 8)))
-      ;; Only integer type ids are matched. A named type is a custom resource
-      ;; and nothing asks for one by number.
-      (if (i32.eq (local.get $type) (i32.or (local.get $type_id) (i32.const 0x8000)))
+      ;; Integer types are stored with bit 15 set. A named type token also has
+      ;; bit 15 set, but represents the resource-table name offset with that
+      ;; bit cleared; $win16_find_resource_type_name creates those tokens.
+      (if (select
+            (i32.eq (local.get $type)
+                    (i32.and (local.get $type_id) (i32.const 0x7FFF)))
+            (i32.eq (local.get $type)
+                    (i32.or (local.get $type_id) (i32.const 0x8000)))
+            (i32.ne (i32.and (local.get $type_id) (i32.const 0x8000)) (i32.const 0)))
         (then
           (local.set $i (i32.const 0))
           (block $scanned (loop $names
@@ -1015,13 +1078,52 @@
       (br $scan)))
     (global.get $PE_STAGING))
 
+  ;; Data selector Windows supplies when it calls a procedure in an NE image.
+  ;;
+  ;; An application's callback entry starts with the linker's three-byte
+  ;; placeholder `push ds; pop ax; nop`, then later does `mov ds,ax`. Exported
+  ;; DLL entries with their own data are patched to `mov ax,sel` below, but an
+  ;; EXE entry deliberately is not: USER is responsible for entering it with
+  ;; AX naming the task's instance/DGROUP. A modal DLL can leave its own DS in
+  ;; the registers, so merely jumping to the application's far procedure makes
+  ;; its prologue adopt the DLL's globals. Find the image which owns PROC's
+  ;; code selector and return that image's automatic-data selector. Zero means
+  ;; the image has no automatic data and the caller should leave AX alone.
+  (func $win16_proc_data_sel (param $proc i32) (result i32)
+    (local $index i32) (local $id i32) (local $rec i32) (local $n i32)
+    (local $base i32) (local $auto_data i32)
+    (local.set $index
+      (call $win16_sel_to_index (i32.shr_u (local.get $proc) (i32.const 16))))
+    (local.set $id (i32.const 1))
+    (block $task (loop $scan
+      (br_if $task (i32.gt_u (local.get $id) (i32.const 15)))
+      (local.set $rec (call $win16_dll_rec (local.get $id)))
+      (local.set $n (i32.load offset=12 (local.get $rec)))
+      (local.set $base (i32.load offset=4 (local.get $rec)))
+      (if (i32.and (i32.ne (local.get $n) (i32.const 0))
+            (i32.and (i32.gt_u (local.get $index) (local.get $base))
+                     (i32.le_u (local.get $index)
+                               (i32.add (local.get $base) (local.get $n)))))
+        (then
+          (local.set $auto_data
+            (i32.load16_u (i32.add (i32.load (local.get $rec)) (i32.const 0x0E))))
+          (if (i32.eqz (local.get $auto_data))
+            (then (return (i32.const 0))))
+          (return (call $win16_index_to_sel
+            (i32.add (local.get $base) (local.get $auto_data))))))
+      (local.set $id (i32.add (local.get $id) (i32.const 1)))
+      (br $scan)))
+    (if (i32.eqz (global.get $win16_auto_data))
+      (then (return (i32.const 0))))
+    (call $win16_index_to_sel (global.get $win16_auto_data)))
+
   ;; The staging area for module `id`, which is where JS puts the file bytes.
   ;;
   ;; The app-local ones (12 and up) stage somewhere else, with a megabyte each.
   ;; A system module is small and there are twelve id slots in front of them,
   ;; but what an application brings with it can be anything: the Visual Basic 1
-  ;; runtime is 265KB and five Entertainment Pack games are written in it, so a
-  ;; 256KB slot rejected the file and the games stopped at their first call.
+  ;; runtime is 265KB and five Entertainment Pack games are written in it, so
+  ;; app-local staging slots must remain larger than 256KB.
   (func $win16_dll_staging (export "win16_dll_staging") (param $module_id i32) (result i32)
     (if (i32.ge_u (local.get $module_id) (global.get $WIN16_DYNAMIC_BASE))
       (then (return (i32.add (global.get $WIN16_APP_DLL_STAGING)

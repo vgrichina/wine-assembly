@@ -8,7 +8,9 @@
   ;; ---- Timer table helpers ----
   ;; Timer table at 0x24C0: 16 entries × 20 bytes
   ;; Each entry: [hwnd:4][id:4][interval:4][last_tick:4][callback:4]
-  ;; id=0 means slot is empty
+  ;; A zero hwnd/id pair means the slot is empty. Window-owned timers may use
+  ;; ID 0 (Tetris does), while thread/callback timers have hwnd=0 and an
+  ;; auto-generated nonzero ID.
 
   ;; $timer_set(hwnd, id, interval_ms, callback) — add or update a timer
   (func $timer_set (param $hwnd i32) (param $id i32) (param $interval i32) (param $callback i32)
@@ -23,9 +25,12 @@
         (br_if $break (i32.ge_u (local.get $i) (global.get $TIMER_MAX)))
         (local.set $addr (i32.add (global.get $TIMER_TABLE) (i32.mul (local.get $i) (global.get $TIMER_ENTRY_SIZE))))
         ;; Check if this slot matches (same hwnd + id) — update in place.
-        ;; hwnd may legitimately be NULL for callback timers; id=0 marks empty.
+        ;; Either half may legitimately be zero, so only the zero/zero pair is
+        ;; empty.
         (if (i32.and
-              (i32.ne (i32.load (i32.add (local.get $addr) (i32.const 4))) (i32.const 0))
+              (i32.or
+                (i32.ne (i32.load (local.get $addr)) (i32.const 0))
+                (i32.ne (i32.load (i32.add (local.get $addr) (i32.const 4))) (i32.const 0)))
               (i32.and
                 (i32.eq (i32.load (local.get $addr)) (local.get $hwnd))
                 (i32.eq (i32.load (i32.add (local.get $addr) (i32.const 4))) (local.get $id))))
@@ -36,10 +41,12 @@
             (return)
           )
         )
-        ;; Track first free slot (id=0 means empty)
+        ;; Track first free slot (only hwnd=0,id=0 is empty).
         (if (i32.and
               (i32.eq (local.get $free_slot) (i32.const -1))
-              (i32.eqz (i32.load (i32.add (local.get $addr) (i32.const 4)))))
+              (i32.and
+                (i32.eqz (i32.load (local.get $addr)))
+                (i32.eqz (i32.load (i32.add (local.get $addr) (i32.const 4))))))
           (then (local.set $free_slot (local.get $i))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $loop)
@@ -69,10 +76,14 @@
         (br_if $break (i32.ge_u (local.get $i) (global.get $TIMER_MAX)))
         (local.set $addr (i32.add (global.get $TIMER_TABLE) (i32.mul (local.get $i) (global.get $TIMER_ENTRY_SIZE))))
         (if (i32.and
-              (i32.eq (i32.load (local.get $addr)) (local.get $hwnd))
-              (i32.eq (i32.load (i32.add (local.get $addr) (i32.const 4))) (local.get $id)))
+              (i32.or
+                (i32.ne (i32.load (local.get $addr)) (i32.const 0))
+                (i32.ne (i32.load (i32.add (local.get $addr) (i32.const 4))) (i32.const 0)))
+              (i32.and
+                (i32.eq (i32.load (local.get $addr)) (local.get $hwnd))
+                (i32.eq (i32.load (i32.add (local.get $addr) (i32.const 4))) (local.get $id))))
           (then
-            ;; Clear the slot (id=0 means empty; hwnd may legitimately be NULL)
+            ;; Clear both identity fields to mark the slot empty.
             (i32.store (local.get $addr) (i32.const 0))
             (i32.store (i32.add (local.get $addr) (i32.const 4)) (i32.const 0))
             (global.set $timer_count (i32.sub (global.get $timer_count) (i32.const 1)))
@@ -99,7 +110,9 @@
         (local.set $addr (i32.add (global.get $TIMER_TABLE) (i32.mul (local.get $i) (global.get $TIMER_ENTRY_SIZE))))
         (if (i32.and
               (i32.eq (i32.load (local.get $addr)) (local.get $hwnd))
-              (i32.ne (i32.load (i32.add (local.get $addr) (i32.const 4))) (i32.const 0)))
+              (i32.or
+                (i32.ne (i32.load (local.get $addr)) (i32.const 0))
+                (i32.ne (i32.load (i32.add (local.get $addr) (i32.const 4))) (i32.const 0))))
           (then
             (i32.store (local.get $addr) (i32.const 0))
             (i32.store (i32.add (local.get $addr) (i32.const 4)) (i32.const 0))
@@ -120,8 +133,10 @@
       (loop $loop
         (br_if $break (i32.ge_u (local.get $i) (global.get $TIMER_MAX)))
         (local.set $addr (i32.add (global.get $TIMER_TABLE) (i32.mul (local.get $i) (global.get $TIMER_ENTRY_SIZE))))
-        ;; Skip empty slots (id=0 means empty; hwnd may legitimately be NULL)
-        (if (i32.load (i32.add (local.get $addr) (i32.const 4)))
+        ;; Skip only the empty zero/zero identity pair.
+        (if (i32.or
+              (i32.ne (i32.load (local.get $addr)) (i32.const 0))
+              (i32.ne (i32.load (i32.add (local.get $addr) (i32.const 4))) (i32.const 0)))
           (then
             (local.set $elapsed (i32.sub (global.get $tick_count) (i32.load (i32.add (local.get $addr) (i32.const 12)))))
             (if (i32.ge_u (local.get $elapsed) (i32.load (i32.add (local.get $addr) (i32.const 8))))
@@ -1809,12 +1824,33 @@
 
   ;; 83: DestroyWindow
   (func $handle_DestroyWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $focus_lost i32) (local $wndproc i32) (local $ret_addr i32)
-    ;; If the destroyed window held focus, clear focus_hwnd. After main_hwnd
-    ;; promotion below, we'll transfer focus to the (possibly new) main_hwnd.
-    (if (i32.eq (local.get $arg0) (global.get $focus_hwnd))
-    (then (global.set $focus_hwnd (i32.const 0))
-      (local.set $focus_lost (i32.const 1))))
+    (local $focus_lost i32) (local $focus_parent i32) (local $focus_guard i32)
+    (local $wndproc i32) (local $ret_addr i32)
+    ;; Recursive destruction also removes every child. If any of them held
+    ;; focus, that focus is lost just as surely as when the root itself held
+    ;; it. Tetris closes an About dialog whose OK child has focus; retaining
+    ;; that dead child made every subsequent arrow key disappear.
+    (if (global.get $focus_hwnd)
+      (then
+        (if (i32.eq (local.get $arg0) (global.get $focus_hwnd))
+          (then (local.set $focus_lost (i32.const 1)))
+          (else
+            (local.set $focus_parent (call $wnd_get_parent (global.get $focus_hwnd)))
+            (block $focus_done (loop $focus_ancestors
+              (br_if $focus_done (i32.eqz (local.get $focus_parent)))
+              (if (i32.eq (local.get $focus_parent) (local.get $arg0))
+                (then
+                  (local.set $focus_lost (i32.const 1))
+                  (br $focus_done)))
+              (local.set $focus_guard (i32.add (local.get $focus_guard) (i32.const 1)))
+              (br_if $focus_done (i32.ge_u (local.get $focus_guard) (global.get $MAX_WINDOWS)))
+              (local.set $focus_parent (call $wnd_get_parent (local.get $focus_parent)))
+              (br $focus_ancestors)))))))
+    ;; After main_hwnd promotion below, transfer focus to the (possibly new)
+    ;; main window rather than leaving a handle that recursive destruction
+    ;; just removed from the table.
+    (if (local.get $focus_lost)
+      (then (global.set $focus_hwnd (i32.const 0))))
     ;; When destroying main_hwnd, promote to next window only if it's a sibling
     ;; top-level window — NOT a child of the destroyed window.  A hidden first
     ;; window may only be a startup/helper HWND: Pinball destroys its invisible
@@ -1843,6 +1879,17 @@
         (local.set $wndproc (call $wnd_table_get (global.get $main_hwnd)))
         (if (i32.eqz (local.get $wndproc))
           (then (local.set $wndproc (global.get $wndproc_addr))))
+        ;; A Win16 WndProc is a packed selector:offset, not a linear EIP. This
+        ;; handler can run below the Win16 call32 bridge (USER.53), so let the
+        ;; task's ordinary queue dispatcher resolve that far procedure after
+        ;; the bridge has restored its real stack. Tic Tac Drop destroys its
+        ;; splash this way while promoting the playable VB form.
+        (if (global.get $win16_in_call32)
+          (then
+            (global.set $focus_hwnd (global.get $main_hwnd))
+            (drop (call $post_queue_push (global.get $main_hwnd)
+              (i32.const 0x0007) (i32.const 0) (i32.const 0))))
+          (else
         (if (i32.and (i32.ne (local.get $wndproc) (i32.const 0))
                      (i32.lt_u (local.get $wndproc) (i32.const 0xFFFF0000)))
           (then
@@ -1859,7 +1906,7 @@
             (global.set $eip (local.get $wndproc))
             (global.set $eax (i32.const 1))
             (global.set $steps (i32.const 0))
-            (return)))))
+            (return)))))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
@@ -3553,13 +3600,19 @@
   (func $handle_SetTimer (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tid i32)
     (local.set $tid (local.get $arg1))
-    ;; Auto-generate unique timer ID when caller passes 0
-    (if (i32.eqz (local.get $tid))
+    ;; Only thread timers need an auto-generated ID. A window timer retains
+    ;; the caller's ID verbatim, including zero, because WM_TIMER and
+    ;; KillTimer identify it with that same value.
+    (if (i32.and (i32.eqz (local.get $arg0)) (i32.eqz (local.get $tid)))
       (then
         (global.set $auto_timer_id (i32.add (global.get $auto_timer_id) (i32.const 1)))
         (local.set $tid (global.get $auto_timer_id))))
     (call $timer_set (local.get $arg0) (local.get $tid) (local.get $arg2) (local.get $arg3))
-    (global.set $eax (local.get $tid))
+    ;; Window-timer success is boolean; do not turn an ID-zero timer into an
+    ;; apparent failure even though its delivered/stored ID stays zero.
+    (global.set $eax
+      (select (i32.const 1) (local.get $tid)
+        (i32.and (i32.ne (local.get $arg0) (i32.const 0)) (i32.eqz (local.get $tid)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
 

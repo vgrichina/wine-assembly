@@ -743,8 +743,16 @@
             (if (i32.ne (global.get $pending_child_size_hwnd) (local.get $hwnd))
               (then (local.set $v (i32.const 0))))
             (global.set $pending_child_create (i32.const 0))
-            (global.set $pending_child_size (i32.const 0))
-            (global.set $pending_child_size_hwnd (i32.const 0))
+            ;; A Win16 caller cannot resume the 32-bit CACA0027 frame this
+            ;; branch builds: $win16_call32_end_redirected deliberately
+            ;; discards that frame and re-enters the child with a Pascal one.
+            ;; Leave the paired size where the Win16 wrapper can move it onto
+            ;; its own continuation record. Native Win32 callers still consume
+            ;; it here as before.
+            (if (i32.eqz (global.get $win16_in_call32))
+              (then
+                (global.set $pending_child_size (i32.const 0))
+                (global.set $pending_child_size_hwnd (i32.const 0))))
             (global.set $createwnd_saved_hwnd (local.get $hwnd))
             (global.set $createwnd_saved_ret (call $gl32 (global.get $esp)))
             (global.set $esp (i32.add (global.get $esp) (i32.const 52)))

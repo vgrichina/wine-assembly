@@ -7,7 +7,7 @@
 const ProcessBoot = (typeof window !== 'undefined' && window.processBoot) || null;
 
 class WineAssembly {
-  static SOURCE_VERSION = '214';
+  static SOURCE_VERSION = '215';
   static _nextProcessId = 1000;
 
   static hasRemainingAppWindow(destroyed, remainingTopLevel) {

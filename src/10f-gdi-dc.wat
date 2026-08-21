@@ -829,6 +829,58 @@
         (return (i32.const 0))))
     (local.get $hdc))
 
+  ;; Restore a newly exposed screen rectangle to COLOR_DESKTOP. GetDC(NULL)
+  ;; writes into the retained canonical screen bitmap, so pixels drawn by a
+  ;; popup remain there after the host window is destroyed unless the exposed
+  ;; rectangle is cleared before the windows underneath repaint. Clear only
+  ;; that rectangle: resetting the whole desktop briefly erases unrelated
+  ;; window presentation (and Tetris' authentic tiled main-window background).
+  (func $gdi_screen_surface_clear_rect
+        (param $x i32) (param $y i32) (param $w i32) (param $h i32)
+    (local $bitmap i32) (local $record i32) (local $bits i32)
+    (local $stride i32) (local $l i32) (local $t i32)
+    (local $r i32) (local $b i32) (local $px i32) (local $py i32)
+    (local.set $bitmap (global.get $gdi_screen_bitmap))
+    (if (i32.or (i32.eqz (local.get $bitmap))
+          (i32.or (i32.le_s (local.get $w) (i32.const 0))
+                  (i32.le_s (local.get $h) (i32.const 0))))
+      (then (return)))
+    (local.set $record (call $gdi_object_record (local.get $bitmap)))
+    (if (i32.eqz (local.get $record)) (then (return)))
+    (local.set $bits (i32.load offset=24 (local.get $record)))
+    (local.set $stride (i32.load offset=28 (local.get $record)))
+    (local.set $l (select (local.get $x) (i32.const 0)
+      (i32.gt_s (local.get $x) (i32.const 0))))
+    (local.set $t (select (local.get $y) (i32.const 0)
+      (i32.gt_s (local.get $y) (i32.const 0))))
+    (local.set $r (i32.add (local.get $x) (local.get $w)))
+    (if (i32.gt_s (local.get $r) (global.get $gdi_screen_width))
+      (then (local.set $r (global.get $gdi_screen_width))))
+    (local.set $b (i32.add (local.get $y) (local.get $h)))
+    (if (i32.gt_s (local.get $b) (global.get $gdi_screen_height))
+      (then (local.set $b (global.get $gdi_screen_height))))
+    (if (i32.or (i32.le_s (local.get $r) (local.get $l))
+                (i32.le_s (local.get $b) (local.get $t)))
+      (then (return)))
+    (local.set $py (local.get $t))
+    (block $rows_done (loop $rows
+      (br_if $rows_done (i32.ge_s (local.get $py) (local.get $b)))
+      (local.set $px (local.get $l))
+      (block $cols_done (loop $cols
+        (br_if $cols_done (i32.ge_s (local.get $px) (local.get $r)))
+        (i32.store
+          (i32.add (i32.add (local.get $bits)
+            (i32.mul (local.get $py) (local.get $stride)))
+            (i32.shl (local.get $px) (i32.const 2)))
+          (i32.const 0x00008080))
+        (local.set $px (i32.add (local.get $px) (i32.const 1)))
+        (br $cols)))
+      (local.set $py (i32.add (local.get $py) (i32.const 1)))
+      (br $rows)))
+    (drop (call $host_gdi_surface_upload (local.get $bitmap)
+      (local.get $l) (local.get $t)
+      (local.get $r) (local.get $b))))
+
   (func $host_alloc_screen_dc (result i32)
     (call $gdi_screen_dc_alloc))
 

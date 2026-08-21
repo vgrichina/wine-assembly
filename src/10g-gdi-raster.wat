@@ -765,7 +765,8 @@
       (then (return (i32.const 0x01000000))))
     (local.set $style (i32.load offset=8 (local.get $record)))
     (if (i32.eqz (local.get $style))
-      (then (return (i32.load offset=16 (local.get $record)))))
+      (then (return (call $gdi_dc_resolve_colorref (local.get $hdc)
+        (i32.load offset=16 (local.get $record))))))
     (if (i32.eq (local.get $style) (i32.const 1))
       (then (return (i32.const 0x01000001))))
     (if (i32.or (i32.eq (local.get $style) (i32.const 3))
@@ -861,7 +862,8 @@
         (i32.eqz (i32.and (i32.add (local.get $px) (local.get $py)) (i32.const 7)))
         (i32.eqz (i32.and (i32.sub (local.get $px) (local.get $py)) (i32.const 7)))))))
     (if (local.get $foreground)
-      (then (return (i32.load offset=16 (local.get $record)))))
+      (then (return (call $gdi_dc_resolve_colorref (local.get $hdc)
+        (i32.load offset=16 (local.get $record))))))
     (if (i32.eq (call $gdi_dc_get_field
           (local.get $hdc) (i32.const 28) (i32.const 2)) (i32.const 2))
       (then (return (call $gdi_dc_get_field
@@ -872,7 +874,7 @@
         (param $y i32) (param $left i32) (param $right i32)
         (param $brush i32) (param $rop2 i32) (result i32)
     (local $x i32) (local $color i32) (local $wrote i32)
-    (local.set $color (call $gdi_brush_solid_color (local.get $brush)))
+    (local.set $color (call $gdi_brush_solid_color (local.get $hdc) (local.get $brush)))
     (if (i32.and (i32.le_u (local.get $color) (i32.const 0xFFFFFF))
           (i32.eq (local.get $rop2) (i32.const 13)))
       (then (return (call $gdi_shape_fill_span
@@ -1725,7 +1727,8 @@
     (if (i32.and (i32.eq (local.get $x0) (local.get $x1))
           (i32.eq (local.get $y0) (local.get $y1))) (then (return (i32.const 1))))
     (local.set $cap (i32.and (local.get $flags) (i32.const 0x00000F00)))
-    (local.set $color (call $gdi_object_color (local.get $pen)))
+    (local.set $color (call $gdi_dc_resolve_colorref (local.get $hdc)
+      (call $gdi_object_color (local.get $pen))))
     (local.set $radius (f64.mul (f64.convert_i32_u (local.get $width)) (f64.const 0.5)))
     (local.set $radius2 (f64.mul (local.get $radius) (local.get $radius)))
     (local.set $vx (f64.convert_i32_s (i32.sub (local.get $x1) (local.get $x0))))
@@ -1829,7 +1832,8 @@
       (then (return (i32.const 1))))
     (local.set $width (call $gdi_object_width (local.get $pen)))
     (local.set $style (call $gdi_object_style (local.get $pen)))
-    (local.set $color (call $gdi_object_color (local.get $pen)))
+    (local.set $color (call $gdi_dc_resolve_colorref (local.get $hdc)
+      (call $gdi_object_color (local.get $pen))))
     (if (call $gdi_geometric_line_desc (local.get $hdc) (local.get $desc)
           (local.get $x0) (local.get $y0) (local.get $x1) (local.get $y1)
           (local.get $pen) (local.get $rop2))
@@ -2066,7 +2070,8 @@
     (if (i32.or (i32.le_s (local.get $x1) (local.get $x0))
           (i32.le_s (local.get $y1) (local.get $y0)))
       (then (return (i32.const 1))))
-    (local.set $pen_color (call $gdi_object_color (local.get $pen)))
+    (local.set $pen_color (call $gdi_dc_resolve_colorref (local.get $hdc)
+      (call $gdi_object_color (local.get $pen))))
     (local.set $pen_width (call $gdi_object_width (local.get $pen)))
     (if (i32.or
           (i32.eq (local.get $pen) (i32.const 0x30018))
@@ -2195,7 +2200,8 @@
                     (local.set $wrote (i32.or (local.get $wrote)
                       (call $gdi_shape_put_pixel (local.get $hdc) (local.get $desc)
                         (local.get $x) (local.get $y)
-                        (call $gdi_object_color (local.get $pen)) (local.get $rop2)))))
+                        (call $gdi_dc_resolve_colorref (local.get $hdc)
+                          (call $gdi_object_color (local.get $pen))) (local.get $rop2)))))
                   (else
                     (local.set $color (call $gdi_brush_sample
                       (local.get $hdc) (local.get $brush) (local.get $x) (local.get $y)))
@@ -2426,7 +2432,8 @@
                     (local.set $wrote (i32.or (local.get $wrote)
                       (call $gdi_shape_put_pixel (local.get $hdc) (local.get $desc)
                         (local.get $x) (local.get $y)
-                        (call $gdi_object_color (local.get $pen)) (local.get $rop2)))))
+                        (call $gdi_dc_resolve_colorref (local.get $hdc)
+                          (call $gdi_object_color (local.get $pen))) (local.get $rop2)))))
                   (else
                     (local.set $color (call $gdi_brush_sample
                       (local.get $hdc) (local.get $brush) (local.get $x) (local.get $y)))
@@ -3329,7 +3336,7 @@
 
   ;; Return one COLORREF for solid/system/stock brushes, or a value above the
   ;; COLORREF range when sampling must remain per pixel.
-  (func $gdi_brush_solid_color (param $brush i32) (result i32)
+  (func $gdi_brush_solid_color (param $hdc i32) (param $brush i32) (result i32)
     (local $record i32)
     (if (i32.and (i32.ge_u (local.get $brush) (i32.const 1))
           (i32.le_u (local.get $brush) (i32.const 23)))
@@ -3342,8 +3349,8 @@
     (if (i32.and (i32.ne (local.get $record) (i32.const 0))
           (i32.and (i32.eq (i32.load offset=4 (local.get $record)) (i32.const 2))
             (i32.eqz (i32.load offset=8 (local.get $record)))))
-      (then (return (i32.and (i32.load offset=16 (local.get $record))
-        (i32.const 0xFFFFFF)))))
+      (then (return (call $gdi_dc_resolve_colorref (local.get $hdc)
+        (i32.load offset=16 (local.get $record))))))
     (i32.const 0x01000000))
 
   (func $gdi_raster_pixel_ptr (param $desc i32) (param $x i32) (param $y i32) (result i32)
@@ -3952,7 +3959,8 @@
       (then
         (if (local.get $brush)
           (then
-            (local.set $color (call $gdi_brush_solid_color (local.get $brush)))
+            (local.set $color (call $gdi_brush_solid_color
+              (local.get $hdc) (local.get $brush)))
             (if (i32.gt_u (local.get $color) (i32.const 0xFFFFFF))
               (then (return (i32.const -1))))
             (local.set $pattern (call $gdi_raster_swap_rb (local.get $color)))))

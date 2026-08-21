@@ -573,7 +573,12 @@
     (global.set $win16_res_module_id
       (call $win16_res_module (call $win16_arg16 (i32.const 4))))
     (global.set $eax (i32.const 0))
-    (if (i32.and (i32.ne (local.get $type) (i32.const -1))
+    ;; A string type names a custom TYPEINFO. Resolve it to a tagged table
+    ;; offset so the handle can carry it through LoadResource to LockResource.
+    (if (i32.eq (local.get $type) (i32.const -1))
+      (then (local.set $type (call $win16_find_resource_type_name
+        (call $win16_res_name_wa (i32.const 0))))))
+    (if (i32.and (i32.ne (local.get $type) (i32.const 0))
                  (i32.ne (local.get $id) (i32.const -1)))
       (then
         (if (call $win16_find_resource (local.get $type) (local.get $id))
@@ -1803,6 +1808,42 @@
   (func $win16_local_identity (param $argbytes i32) (param $result i32)
     (global.set $eax (local.get $result))
     (call $win16_api_return (local.get $argbytes)))
+
+  ;; USER.433..436 IsCharAlpha/IsCharAlphaNumeric/IsCharUpper/IsCharLower.
+  ;; These Win16 exports take one promoted ANSI character (a WORD in the
+  ;; Pascal frame), unlike the pointer-or-character AnsiUpper/AnsiLower pair.
+  ;; The entertainment-pack callers use the invariant ASCII range; leave
+  ;; locale-specific high bytes unclassified until USER has a locale table.
+  (func $win16_IsChar (param $ordinal i32)
+    (local $c i32) (local $upper i32) (local $lower i32)
+    (local $alpha i32) (local $digit i32)
+    (local.set $c (i32.and (call $win16_arg16 (i32.const 0)) (i32.const 0xFF)))
+    (local.set $upper (i32.and
+      (i32.ge_u (local.get $c) (i32.const 0x41))
+      (i32.le_u (local.get $c) (i32.const 0x5A))))
+    (local.set $lower (i32.and
+      (i32.ge_u (local.get $c) (i32.const 0x61))
+      (i32.le_u (local.get $c) (i32.const 0x7A))))
+    (local.set $alpha (i32.or (local.get $upper) (local.get $lower)))
+    (local.set $digit (i32.and
+      (i32.ge_u (local.get $c) (i32.const 0x30))
+      (i32.le_u (local.get $c) (i32.const 0x39))))
+    (global.set $eax
+      (if (result i32) (i32.eq (local.get $ordinal) (i32.const 433))
+        (then (local.get $alpha))
+        (else (if (result i32) (i32.eq (local.get $ordinal) (i32.const 434))
+          (then (i32.or (local.get $alpha) (local.get $digit)))
+          (else (if (result i32) (i32.eq (local.get $ordinal) (i32.const 435))
+            (then (local.get $upper))
+            (else (local.get $lower))))))))
+    (call $win16_api_return (i32.const 2)))
+
+  ;; USER.205 WriteComm(cid, lpBuf, cb). There is no host serial device. A
+  ;; channel id of -1 is the documented invalid handle and returns -1; WordZap
+  ;; probes exactly that disconnected path while entering a local game.
+  (func $win16_WriteComm
+    (global.set $eax (i32.const 0xFFFF))
+    (call $win16_api_return (i32.const 8)))
 
   ;; ---- The global heap ----
   ;;
@@ -3590,6 +3631,8 @@
       (then (call $win16_IsWindow) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 48))
       (then (call $win16_IsChild) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 205))
+      (then (call $win16_WriteComm) (return (i32.const 1))))
     (if (i32.or (i32.eq (local.get $ordinal) (i32.const 412))
                 (i32.eq (local.get $ordinal) (i32.const 413)))
       (then (call $win16_DeleteMenu) (return (i32.const 1))))
@@ -3873,6 +3916,8 @@
       (then (call $win16_DrawIcon) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 171))
       (then (call $win16_WinHelp) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 16))
+      (then (call $win16_ClipCursor) (return (i32.const 1))))
     ;; SetCursor answers with the cursor it replaced, and the renderer draws
     ;; the host cursor either way; ShowCursor keeps the display count Windows
     ;; keeps, which apps do read back.
@@ -3886,6 +3931,9 @@
         (call $win16_local_identity (i32.const 2)
           (i32.and (global.get $win16_cursor_count) (i32.const 0xFFFF)))
         (return (i32.const 1))))
+    (if (i32.and (i32.ge_u (local.get $ordinal) (i32.const 433))
+                 (i32.le_u (local.get $ordinal) (i32.const 436)))
+      (then (call $win16_IsChar (local.get $ordinal)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 452))
       (then (call $win16_CreateWindow (i32.const 1)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 41))
@@ -4071,6 +4119,7 @@
   ;; continuation thunks the 32-bit side uses.
   (func $win16_enter_wndproc (param $proc i32) (param $hwnd i32) (param $msg i32)
         (param $wparam i32) (param $lparam i32) (param $ret_sel i32) (param $ret_ip i32)
+    (local $data_sel i32)
     ;; A 16-bit window procedure is a far pointer, so its selector is never
     ;; zero. Anything else is a procedure belonging to the 32-bit side or a
     ;; window with none at all, and entering it would set CS to the null
@@ -4115,6 +4164,17 @@
     (call $win16_push16 (local.get $lparam))
     (call $win16_push16 (local.get $ret_sel))
     (call $win16_push16 (local.get $ret_ip))
+    ;; USER calls an application procedure with AX naming its instance/DGROUP.
+    ;; The standard Win16 callback prologue copies AX into DS. Restore the
+    ;; selector for the image that owns this far procedure: a modal DLL may
+    ;; have been the last guest code to run and therefore left its own DS/AX
+    ;; behind before an application WM_PAINT is dispatched.
+    (local.set $data_sel (call $win16_proc_data_sel (local.get $proc)))
+    (if (local.get $data_sel)
+      (then
+        (global.set $eax
+          (i32.or (i32.and (global.get $eax) (i32.const 0xFFFF0000))
+                  (local.get $data_sel)))))
     (call $win16_set_sreg (i32.const 1) (i32.shr_u (local.get $proc) (i32.const 16)))
     (global.set $eip (i32.add (global.get $seg_base_cs)
                               (i32.and (local.get $proc) (i32.const 0xFFFF))))
@@ -4514,6 +4574,7 @@
     (local $x i32) (local $y i32) (local $w i32) (local $h i32)
     (local $parent i32) (local $menu i32) (local $inst i32) (local $param i32)
     (local $exstyle i32) (local $hwnd i32) (local $cs i32) (local $redirected i32)
+    (local $pending_size i32)
     (local $raw_class i32) (local $raw_title i32) (local $raw_param i32)
     (local $raw_menu i32) (local $raw_parent i32)
     (local $raw_x i32) (local $raw_y i32) (local $raw_w i32) (local $raw_h i32)
@@ -4577,6 +4638,19 @@
     ;; WM_NCCREATE shown to the hook below does carry a real one.
     (local.set $hwnd (global.get $eax))
     (local.set $redirected (call $win16_call32_end_redirected))
+    ;; The generic child-creation path pairs its synchronous WM_CREATE with a
+    ;; CACA0027 WM_SIZE continuation. That continuation uses a 32-bit frame,
+    ;; which call32 must discard for a Win16 task. Move the saved size onto the
+    ;; Pascal continuation record instead, before a second child can replace
+    ;; the single pending slot (Tetris creates both GameGrid children in one
+    ;; startup burst).
+    (if (i32.and
+          (local.get $redirected)
+          (i32.eq (global.get $pending_child_size_hwnd) (local.get $hwnd)))
+      (then
+        (local.set $pending_size (global.get $pending_child_size))
+        (global.set $pending_child_size (i32.const 0))
+        (global.set $pending_child_size_hwnd (i32.const 0))))
     ;; Which class the window ended up with, and the procedure that came with
     ;; it. A window that answers nothing and paints nothing is usually one
     ;; whose class was not found — the name arrives as a far pointer and the
@@ -4597,6 +4671,11 @@
     (call $win16_cont_push
       (call $win16_take_return (select (i32.const 34) (i32.const 30) (local.get $ex)))
       (call $win16_h16 (local.get $hwnd)))
+    ;; Keep the paired size with this nested CreateWindow invocation. The
+    ;; WH_CALLWNDPROC hook and the child WM_CREATE can both create more windows
+    ;; before this record is resumed, so a global cannot safely carry it.
+    (call $win16_push16 (i32.shr_u (local.get $pending_size) (i32.const 16)))
+    (call $win16_push16 (local.get $pending_size))
     (call $win16_push16 (local.get $redirected))
 
     ;; Before the window's own procedure hears anything, the WH_CALLWNDPROC
@@ -4624,15 +4703,26 @@
   ;; Reached both directly and from the WH_CALLWNDPROC continuation, so the two
   ;; paths cannot drift apart.
   (func $win16_create_finish
-    (local $redirected i32)
+    (local $redirected i32) (local $pending_size i32) (local $hwnd16 i32)
     (local.set $redirected (call $gl16 (global.get $esp)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 2)))
+    (local.set $pending_size (call $gl32 (i32.add (global.get $esp) (i32.const 2))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 6)))
+    (local.set $hwnd16 (call $win16_cont_result))
     (if (local.get $redirected)
       (then
+        ;; WIN16_CONT_CREATE_SIZE consumes this dword after WM_CREATE, then
+        ;; enters the same wndproc with WM_SIZE and finally resumes the normal
+        ;; three-word CreateWindow continuation below it.
+        (if (local.get $pending_size)
+          (then
+            (call $win16_push16 (i32.shr_u (local.get $pending_size) (i32.const 16)))
+            (call $win16_push16 (local.get $pending_size))))
         (call $win16_enter_wndproc
-          (call $wnd_table_get (call $win16_h32 (call $win16_cont_result)))
-          (call $win16_cont_result) (i32.const 0x0001) (i32.const 0) (i32.const 0)
-          (global.get $WIN16_THUNK_SEL) (global.get $WIN16_CONT_OFFSET))
+          (call $wnd_table_get (call $win16_h32 (local.get $hwnd16)))
+          (local.get $hwnd16) (i32.const 0x0001) (i32.const 0) (i32.const 0)
+          (global.get $WIN16_THUNK_SEL)
+          (select (global.get $WIN16_CONT_CREATE_SIZE) (global.get $WIN16_CONT_OFFSET)
+            (i32.ne (local.get $pending_size) (i32.const 0))))
         (return)))
     (call $win16_cont_resume))
 
@@ -5279,6 +5369,24 @@
     (call $win16_call32_end)
     (global.set $eax (i32.const 1))
     (call $win16_api_return (i32.const 8)))
+
+  ;; USER.16 ClipCursor(lpRect). The Win16 RECT has four signed 16-bit fields;
+  ;; widen it before handing it to the shared cursor-confinement handler.
+  ;; A null far pointer releases any existing confinement.
+  (func $win16_ClipCursor
+    (local $src i32) (local $tmp i32)
+    (local.set $src (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+    (if (call $win16_arg16 (i32.const 1))
+      (then
+        (local.set $tmp (global.get $GUEST_STACK))
+        (call $win16_rect_widen (local.get $tmp) (local.get $src))))
+    (call $win16_call32_begin (i32.const 1))
+    (call $handle_ClipCursor (local.get $tmp)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 4)))
 
   ;; USER.127 ValidateRect(hWnd, lpRect) — the other half of InvalidateRect,
   ;; and NULL means the whole client area here too, so it stays NULL.
@@ -6936,7 +7044,10 @@
     (global.set $eax (call $win16_h16 (global.get $eax)))
     (call $win16_api_return (i32.const 16)))
 
-  ;; GDI.51 CreateCompatibleBitmap(hDC, nWidth, nHeight).
+  ;; GDI.51 CreateCompatibleBitmap and GDI.156 CreateDiscardableBitmap share
+  ;; the same three-word signature. Discardable bitmaps stopped being a
+  ;; distinct allocation class after Win16, and the 32-bit handler already
+  ;; implements it as a compatible bitmap.
   (func $win16_CreateCompatibleBitmap
     (local $hdc i32) (local $w i32) (local $h i32)
     (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 2))))
@@ -7560,6 +7671,18 @@
     (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 1))))
     (call $win16_call32_begin (i32.const 2))
     (call $handle_SetMapMode (local.get $hdc) (local.get $mode)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 4)))
+
+  ;; GDI.6 SetPolyFillMode(hDC, nMode) -> previous ALTERNATE/WINDING mode.
+  (func $win16_SetPolyFillMode
+    (local $hdc i32) (local $mode i32)
+    (local.set $mode (call $win16_arg16 (i32.const 0)))
+    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 1))))
+    (call $win16_call32_begin (i32.const 2))
+    (call $handle_SetPolyFillMode (local.get $hdc) (local.get $mode)
       (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
     (call $win16_call32_end)
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
@@ -8306,6 +8429,8 @@
   (func $win16_gdi (param $ordinal i32) (result i32)
     (if (i32.eq (local.get $ordinal) (i32.const 3))
       (then (call $win16_SetMapMode) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 6))
+      (then (call $win16_SetPolyFillMode) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 81))
       (then (call $win16_GetMapMode) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 128))
@@ -8453,6 +8578,8 @@
     (if (i32.eq (local.get $ordinal) (i32.const 47))
       (then (call $win16_CombineRgn) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 51))
+      (then (call $win16_CreateCompatibleBitmap) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 156))
       (then (call $win16_CreateCompatibleBitmap) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 52))
       (then (call $win16_CreateCompatibleDC) (return (i32.const 1))))
@@ -8878,6 +9005,26 @@
       (then
         (global.set $esp (i32.add (global.get $esp) (global.get $WIN16_CWP_SCRATCH)))
         (call $win16_create_finish)
+        (return)))
+    ;; A Win16 custom child's WM_CREATE has returned. Its initial size was
+    ;; stacked above the ordinary CreateWindow continuation so nested child
+    ;; creation cannot overwrite it. Consume only that dword; the normal
+    ;; continuation remains for WM_SIZE to return through.
+    (if (i32.eq (local.get $thunk_off) (global.get $WIN16_CONT_CREATE_SIZE))
+      (then
+        (local.set $target (call $gl32 (global.get $esp)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+        (call $defwndproc_do_nccalcsize
+          (call $win16_h32 (call $win16_cont_result)))
+        (if (call $wnd_is_effectively_visible
+              (call $win16_h32 (call $win16_cont_result)))
+          (then (call $nc_flags_set
+            (call $win16_h32 (call $win16_cont_result)) (i32.const 4))))
+        (call $win16_enter_wndproc
+          (call $wnd_table_get (call $win16_h32 (call $win16_cont_result)))
+          (call $win16_cont_result) (i32.const 0x0005) (i32.const 0)
+          (local.get $target)
+          (global.get $WIN16_THUNK_SEL) (global.get $WIN16_CONT_OFFSET))
         (return)))
     ;; The window procedure this emulator supplies, called by an app that
     ;; subclassed one of its windows. It arrives with a window procedure's own
