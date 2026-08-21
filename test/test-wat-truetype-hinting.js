@@ -167,6 +167,21 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
   let oracle = 'not installed';
   if (fs.existsSync(oraclePath)) {
     const native = copyToGuest(fs.readFileSync(oraclePath));
+
+    // Windows uses Arial's ANSI, square-pixel VDMX group for TEXTMETRIC so
+    // grid-fitted extrema are not clipped by linearly scaled OS/2 metrics.
+    // These are the same tmAscent/tmDescent values captured by the Win98
+    // comparison probe; 12, 18 and 26ppem each need one more ascent pixel.
+    assert.deepStrictEqual([12, 18, 26, 36].map(ppem => [
+      wat.test_tt_tm_ascent(native.at, native.size, ppem),
+      wat.test_tt_tm_descent(native.at, native.size, ppem),
+      wat.test_tt_tm_height(native.at, native.size, ppem),
+    ]), [
+      [12, 3, 15],
+      [17, 4, 21],
+      [25, 6, 31],
+      [33, 8, 41],
+    ], 'Win98 Arial TEXTMETRIC must use its square-pixel ANSI VDMX records');
     let nativePoints = 0;
     for (const character of ['A', 'g', 'é']) {
       const nativeGid = wat.test_tt_glyph_index(
@@ -256,6 +271,83 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
           `expected (${expectedX}, ${expectedY})`);
       }
     }
+
+    // GGO_BITMAP from the same Win98 VM distinguishes scan conversion from
+    // the point oracle above. At 12ppem Arial enables SCANCTRL bit 8 with
+    // SCANTYPE 1: pixel-centre fill draws the body and dropout control retains
+    // the two thin outer strokes on row 3.
+    const w12Width = wat.test_tt_glyph_box_width(
+      native.at, native.size, nativeWGid, 12);
+    const w12Height = wat.test_tt_glyph_box_height(
+      native.at, native.size, nativeWGid, 12);
+    const w12Left = wat.test_tt_glyph_box_left(
+      native.at, native.size, nativeWGid, 12);
+    const w12Top = wat.test_tt_glyph_box_top(
+      native.at, native.size, nativeWGid, 12);
+    assert.deepStrictEqual([w12Width, w12Height, w12Left, w12Top], [11, 9, 0, 9],
+      'Win98 Arial W 12ppem monochrome metrics must match');
+    const w12BitmapGuest = wat.guest_alloc(32) >>> 0;
+    const w12ScratchBytes = wat.test_tt_raster_scratch_bytes(w12Width) >>> 0;
+    const w12ScratchGuest = wat.guest_alloc(w12ScratchBytes) >>> 0;
+    assert.strictEqual(wat.test_tt_rasterize_glyph(
+      native.at, native.size, nativeWGid, 12, wa(w12BitmapGuest),
+      w12Width, w12Height, w12Left * 64, w12Top * 64,
+      wa(w12ScratchGuest), w12ScratchBytes), 1,
+    'Win98 Arial W 12ppem must scan-convert');
+    const w12Rows = Array.from({ length: w12Height }, (_, y) =>
+      Array.from({ length: w12Width }, (_unused, x) =>
+        wat.test_tt_bitmap_pixel(wa(w12BitmapGuest), w12Height, x, y)
+          ? '#' : '.').join(''));
+    assert.deepStrictEqual(w12Rows, [
+      '#....#....#',
+      '#...#.#...#',
+      '#...#.#..#.',
+      '.#..#.#..#.',
+      '.#.#...#.#.',
+      '.#.#...#.#.',
+      '.#.#...#.#.',
+      '..#.....#..',
+      '..#.....#..',
+    ], 'Win98 Arial W 12ppem monochrome bitmap must match exactly');
+
+    // Arial's prep program creates twilight points with MIAP, interpolates
+    // them, and writes the resulting x-height back to CVT 6.  Win98 rounds
+    // that anchor to seven pixels at 12ppem; losing the twilight point's
+    // original coordinate instead collapses the CVT and erases this top row.
+    const nativeMGid = wat.test_tt_glyph_index(
+      native.at, native.size, 'm'.charCodeAt(0));
+    const m12Width = wat.test_tt_glyph_box_width(
+      native.at, native.size, nativeMGid, 12);
+    const m12Height = wat.test_tt_glyph_box_height(
+      native.at, native.size, nativeMGid, 12);
+    const m12Left = wat.test_tt_glyph_box_left(
+      native.at, native.size, nativeMGid, 12);
+    const m12Top = wat.test_tt_glyph_box_top(
+      native.at, native.size, nativeMGid, 12);
+    assert.deepStrictEqual([m12Width, m12Height, m12Left, m12Top,
+      wat.test_tth_last_advance()], [9, 7, 1, 7, 704],
+    'Win98 Arial m 12ppem metrics and 11-pixel advance must match');
+    const m12BitmapGuest = wat.guest_alloc(32) >>> 0;
+    const m12ScratchBytes = wat.test_tt_raster_scratch_bytes(m12Width) >>> 0;
+    const m12ScratchGuest = wat.guest_alloc(m12ScratchBytes) >>> 0;
+    assert.strictEqual(wat.test_tt_rasterize_glyph(
+      native.at, native.size, nativeMGid, 12, wa(m12BitmapGuest),
+      m12Width, m12Height, m12Left * 64, m12Top * 64,
+      wa(m12ScratchGuest), m12ScratchBytes), 1,
+    'Win98 Arial m 12ppem must scan-convert');
+    const m12Rows = Array.from({ length: m12Height }, (_, y) =>
+      Array.from({ length: m12Width }, (_unused, x) =>
+        wat.test_tt_bitmap_pixel(wa(m12BitmapGuest), m12Height, x, y)
+          ? '#' : '.').join(''));
+    assert.deepStrictEqual(m12Rows, [
+      '#.##..##.',
+      '##..##..#',
+      '#...#...#',
+      '#...#...#',
+      '#...#...#',
+      '#...#...#',
+      '#...#...#',
+    ], 'Win98 Arial m 12ppem monochrome bitmap must match exactly');
 
     // Drive the public GDI seam with the original local file and compare the
     // resulting quadratic streams to bytes captured from real Windows 98.

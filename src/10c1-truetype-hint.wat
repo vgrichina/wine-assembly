@@ -1258,6 +1258,35 @@
         (local.set $other (call $tth_pop))
         (local.set $point_index (call $tth_pop))
         (local.set $value (call $tth_cvt_get (local.get $other)))
+        (local.set $point (call $tth_point (global.get $tth_zp0)
+          (local.get $point_index)))
+        ;; MIAP creates a twilight point at the CVT coordinate.  Its original
+        ;; position is that unrounded coordinate, not the zone's stale origin;
+        ;; prep programs rely on that original position when IP derives CVTs.
+        (if (i32.eqz (global.get $tth_zp0))
+          (then
+            (i64.store (local.get $point) (i64.const 0))
+            (i64.store offset=8 (local.get $point) (i64.const 0))
+            (if (i32.eqz (call $tth_move_projection (local.get $point)
+                  (local.get $value)))
+              (then (return (i32.const 0))))
+            (i32.store offset=8 (local.get $point)
+              (i32.load (local.get $point)))
+            (i32.store offset=12 (local.get $point)
+              (i32.load offset=4 (local.get $point)))
+            (if (i32.and (local.get $op) (i32.const 1))
+              (then
+                (local.set $current (call $tth_dot
+                  (i32.load (local.get $point))
+                  (i32.load offset=4 (local.get $point))
+                  (global.get $tth_pvx) (global.get $tth_pvy)))
+                (local.set $value (call $tth_round (local.get $value)))
+                (if (i32.eqz (call $tth_move_projection (local.get $point)
+                      (i32.sub (local.get $value) (local.get $current))))
+                  (then (return (i32.const 0))))))
+            (global.set $tth_rp0 (local.get $point_index))
+            (global.set $tth_rp1 (local.get $point_index))
+            (return (i32.const 1))))
         (local.set $current (call $tth_dot
           (call $tth_point_original_x (global.get $tth_zp0) (local.get $point_index))
           (call $tth_point_original_y (global.get $tth_zp0) (local.get $point_index))
@@ -1274,7 +1303,7 @@
           (call $tth_point_current_y (global.get $tth_zp0) (local.get $point_index))
           (global.get $tth_pvx) (global.get $tth_pvy)))
         (if (i32.eqz (call $tth_move_projection
-              (call $tth_point (global.get $tth_zp0) (local.get $point_index))
+              (local.get $point)
               (i32.sub (local.get $value) (local.get $current))))
           (then (return (i32.const 0))))
         (global.set $tth_rp0 (local.get $point_index))
@@ -1491,8 +1520,11 @@
           (i32.const 1)))))
     (block $done (loop $flip
       (br_if $done (i32.eqz (local.get $count)))
-      (local.set $index (select (call $tth_pop) (local.get $lo)
-        (i32.eq (local.get $op) (i32.const 0x80))))
+      ;; `select` evaluates both values. Keeping tth_pop in its unused arm for
+      ;; FLIPRGON/FLIPRGOFF consumed one unrelated stack value per range point.
+      (if (i32.eq (local.get $op) (i32.const 0x80))
+        (then (local.set $index (call $tth_pop)))
+        (else (local.set $index (local.get $lo))))
       (local.set $point (call $tth_point (global.get $tth_zp0) (local.get $index)))
       (local.set $flags (i32.load offset=16 (local.get $point)))
       (if (i32.eq (local.get $op) (i32.const 0x81))
