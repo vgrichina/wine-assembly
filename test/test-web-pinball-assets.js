@@ -286,10 +286,11 @@ assert(webApp.includes('lib/gdi-surface.js?v=2'), 'web host should load the cano
 assert(webApp.indexOf('lib/gdi-surface.js?v=2') < webApp.indexOf('lib/host-imports.js?v=203'),
   'web host should load the GDI surface module before host imports');
 assert(webApp.includes('lib/host-imports.js?v=203'), 'web host should cache-bust binary text rasterization');
-assert(webApp.includes('lib/thread-manager.js?v=178'), 'web host should cache-bust thread manager after merging current scheduler updates');
+assert(webApp.includes('lib/thread-manager.js?v=179'), 'web host should cache-bust thread manager after resumable owner-thread sends');
 assert(webApp.includes('lib/compile-wat.js?v=169'), 'web host should cache-bust the snapshot-capable WAT compiler');
-assert(webApp.includes('host.js?v=210'), 'web host should cache-bust host.js after the current source update');
-assert(hostJs.includes("static SOURCE_VERSION = '208'"), 'web host should cache-bust WASM artifacts and WAT source compilation');
+assert(webApp.includes('lib/guest-thread-host.js?v=4'), 'web host should cache-bust the owner-thread send protocol');
+assert(webApp.includes('host.js?v=211'), 'web host should cache-bust host.js after the current source update');
+assert(hostJs.includes("static SOURCE_VERSION = '209'"), 'web host should cache-bust WASM artifacts and WAT source compilation');
 assert(webApp.includes("['mspaint98',   'Paint'"), 'normal desktop should expose Paint without the downscaled debug pane');
 assert(webApp.includes("mplay32:  { exe: 'binaries/win98-apps/mplay32.exe' }"),
   'Media Player 32 should use normal DLL auto-detection now that native and WAT toolbars are supported');

@@ -7,7 +7,7 @@
 const ProcessBoot = (typeof window !== 'undefined' && window.processBoot) || null;
 
 class WineAssembly {
-  static SOURCE_VERSION = '208';
+  static SOURCE_VERSION = '209';
   static _nextProcessId = 1000;
 
   static hasRemainingAppWindow(destroyed, remainingTopLevel) {
@@ -714,6 +714,12 @@ class WineAssembly {
       describeAddr: (addr) => self.describeAddr(addr),
       hasMessage: () => !!(self.renderer && self.renderer.inputQueue && self.renderer.inputQueue.length),
       now: () => self.renderer && self.renderer._profileNow ? self.renderer._profileNow() : Date.now(),
+      resolveThreadSendExternalYield: async (link, r) => {
+        if (r.yield === 3) await self._handleComDllLoadThreaded(link);
+        else if (r.yield === 5) await self._handleLoadLibraryThreaded(link);
+        else return false;
+        return true;
+      },
       onThreadExit: (info) => self._onThreadExit(info),
       profileThreadRun: (info) => {
         if (typeof window !== 'undefined' && typeof window.__waProfileThreadRun === 'function') {
@@ -873,7 +879,7 @@ class WineAssembly {
         module: wasmModule,
         sigs,
         hostImports: this._mainImports.host,
-        workerUrl: 'lib/guest-worker.js',
+        workerUrl: 'lib/guest-worker.js?v=4',
         log: msg => { console.log(msg); self.logToUI(msg); },
         tickMs: () => self._guestTickMs(self.hostCtx && self.hostCtx.sharedAudio),
       });
@@ -1260,9 +1266,10 @@ class WineAssembly {
   // resolving bytes is host work and happens here; loading the image, patching
   // its imports, running DllMain and resuming the guest are guest work and
   // happen in the worker, because they set EIP/ESP and execute code.
-  async _handleLoadLibraryThreaded() {
+  async _handleLoadLibraryThreaded(targetLink) {
     const gw = this.guestWorker;
-    const nameWA = (await gw.callExport('get_loadlib_name')) >>> 0;
+    const link = targetLink || gw.link;
+    const nameWA = (await link.callExport('get_loadlib_name')) >>> 0;
     let dllName = '';
     if (nameWA) {
       const mem = new Uint8Array(this.memory.buffer);
@@ -1271,10 +1278,10 @@ class WineAssembly {
     const { fileName, dllBytes } = dllName ? await this._resolveDllBytes(dllName) : { fileName: '', dllBytes: null };
     if (!dllBytes) {
       if (fileName) console.error(`[LoadLibrary] DLL not found: ${fileName}`);
-      await gw.loadLibrary(null, fileName);
+      await gw.loadLibrary(null, fileName, link);
       return;
     }
-    const res = await gw.loadLibrary(dllBytes, fileName);
+    const res = await gw.loadLibrary(dllBytes, fileName, link);
     if (res && res.loadAddr) {
       console.log(`[LoadLibrary] ${fileName} loaded at 0x${(res.loadAddr >>> 0).toString(16)} (worker)`);
       this.registerModule(fileName, res.loadAddr);
@@ -1310,12 +1317,13 @@ class WineAssembly {
   // The COM search order is not LoadLibrary's — a class's server is looked up by
   // bare filename in the DLL and plugin directories — so this resolves its own
   // candidates rather than sharing _resolveDllBytes.
-  async _handleComDllLoadThreaded() {
+  async _handleComDllLoadThreaded(targetLink) {
     const gw = this.guestWorker;
-    const nameWA = (await gw.callExport('get_com_dll_name')) >>> 0;
+    const link = targetLink || gw.link;
+    const nameWA = (await link.callExport('get_com_dll_name')) >>> 0;
     if (!nameWA) {
       console.error('COM yield but no pending DLL name');
-      await gw.callExport('clear_yield');
+      await link.callExport('clear_yield');
       return;
     }
     const mem = new Uint8Array(this.memory.buffer);
@@ -1340,10 +1348,10 @@ class WineAssembly {
     }
     if (!dllBytes) {
       console.error(`[COM] Failed to fetch DLL: ${fileName}`);
-      await gw.comLoadDll(null, fileName, null);
+      await gw.comLoadDll(null, fileName, null, link);
       return;
     }
-    const res = await gw.comLoadDll(dllBytes, fileName, this._exeBytes || null);
+    const res = await gw.comLoadDll(dllBytes, fileName, this._exeBytes || null, link);
     if (res && res.error) console.error('[COM] DLL load error:', res.error);
     else if (res) console.log(`[COM] DLL loaded at 0x${(res.loadAddr >>> 0).toString(16)} (worker)`);
   }
@@ -1598,6 +1606,7 @@ class WineAssembly {
             targetTid: r.sendTargetTid | 0,
             hwnd: r.sendHwnd | 0, msg: r.sendMsg | 0,
             wparam: r.sendWparam | 0, lparam: r.sendLparam | 0,
+            postKind: r.sendPostKind | 0,
           });
         } else if (r.yield === 8) {
           await self.guestWorker.callExport('clear_yield');

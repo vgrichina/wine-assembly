@@ -2395,6 +2395,21 @@
   (func (export "get_send_msg") (result i32) (global.get $send_msg))
   (func (export "get_send_wparam") (result i32) (global.get $send_wparam))
   (func (export "get_send_lparam") (result i32) (global.get $send_lparam))
+  (func (export "get_send_post_kind") (result i32) (global.get $send_post_kind))
+
+  ;; Finish message-specific compatibility work on the HWND owner's instance,
+  ;; after its native WndProc has returned but before the LRESULT is delivered
+  ;; to the parked sender.
+  (func (export "thread_send_post")
+    (param $hwnd i32) (param $msg i32) (param $wparam i32) (param $lparam i32)
+    (param $post_kind i32) (param $result i32) (result i32)
+    (if (i32.eq (local.get $post_kind) (i32.const 1))
+      (then (return (call $richedit_formatrange_next (local.get $lparam)))))
+    (if (i32.eq (local.get $post_kind) (i32.const 2))
+      (then
+        (call $richedit_patch_get_charformat_message
+          (local.get $hwnd) (local.get $msg) (local.get $lparam))))
+    (local.get $result))
 
   ;; Start a synchronous dispatch on this instance. Native USER procedures can
   ;; complete immediately; an x86 WndProc is entered with CACA0005 as its return

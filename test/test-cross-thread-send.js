@@ -35,17 +35,32 @@ function check(ok, label, detail) {
     const imports = createHostImports(ctx);
     imports.host.memory = memory;
     for (const name of ['create_thread', 'exit_thread', 'create_event', 'set_event',
-      'reset_event', 'wait_single', 'wait_multiple']) imports.host[name] = () => 0;
+      'reset_event', 'wait_multiple']) imports.host[name] = () => 0;
+    imports.host.wait_single = () => 0xFFFF;
     const sigs = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'lib',
       'host-import-sigs.generated.json'), 'utf8')).sigs;
+    let blockedWait = null;
     const host = new GuestThreadHost({
       memory, module, sigs, hostImports: imports.host,
       workerUrl: path.join(__dirname, '..', 'lib', 'guest-worker.js'),
       clockIntervalMs: 0,
+      threadSendYieldResolver: async (link, r) => {
+        blockedWait = r;
+        await link.completeWait(0, r.waitStackBytes);
+        return 'resume';
+      },
     });
     await host.start();
     const ex = name => (...args) => host.callExport(name, ...args);
-    await ex('init_thread')(0, 0x400000, 0x400000, 0x600000, 0, 0, 0);
+    // One imported WaitForSingleObject thunk followed by the synchronous
+    // SendMessage return marker used by thread_send_begin.
+    const thunkGuest = 0x7500000;
+    const thunkWasm = 0x07112000;
+    const dv = new DataView(memory.buffer);
+    dv.setUint32(thunkWasm + 4, 723, true);        // WaitForSingleObject
+    dv.setUint32(thunkWasm + 8, 0xCACA0005, true); // sync-message continuation
+    await ex('init_thread')(0, 0x400000, 0x400000, 0x600000,
+      thunkGuest, thunkGuest + 16, 2);
     await ex('set_esp')(0x510000);
     await ex('set_eip')(0x401234);
     const procGuest = 0x500000;
@@ -68,6 +83,62 @@ function check(ok, label, detail) {
       `0x${(result >>> 0).toString(16)}`);
     check(before.get_eip === after.get_eip && before.get_esp === after.get_esp,
       'owner dispatch restores the interrupted thread context');
+
+    // The owner WndProc parks inside WaitForSingleObject, then resumes at the
+    // instruction after the imported call and returns normally. Before this
+    // protocol, any non-critical-section yield abandoned the nested callback
+    // and SendMessage returned zero.
+    const waitProcGuest = 0x500100;
+    const waitProcWasm = waitProcGuest - 0x400000 + 0x12000;
+    const waitHandle = 0xE0042;
+    const rel = (thunkGuest - (waitProcGuest + 15)) | 0;
+    const waitProc = new Uint8Array(23);
+    waitProc.set([0x68, 0xFF, 0xFF, 0xFF, 0xFF, 0x68], 0); // push INFINITE; push handle
+    new DataView(waitProc.buffer).setUint32(6, waitHandle, true);
+    waitProc[10] = 0xE8;
+    new DataView(waitProc.buffer).setInt32(11, rel, true);
+    waitProc.set([0xB8, 0x44, 0x33, 0x22, 0x11, 0xC2, 0x10, 0x00], 15);
+    new Uint8Array(memory.buffer).set(waitProc, waitProcWasm);
+    await ex('test_wnd_table_set')(hwnd, waitProcGuest);
+    blockedWait = null;
+    const waited = await host.resolveThreadSend(sender, {
+      targetTid: 1, hwnd, msg: 0x501, wparam: 8, lparam: 10,
+    });
+    check(waited === 0x11223344 && blockedWait && blockedWait.yield === 1
+      && blockedWait.waitHandle === waitHandle && blockedWait.waitStackBytes === 12,
+    'an owner WndProc resumes after a blocking event wait and preserves its LRESULT',
+    blockedWait ? `yield=${blockedWait.yield} handle=0x${blockedWait.waitHandle.toString(16)}` : 'no wait');
+
+    // RichEdit compatibility work is deliberately performed by the owner
+    // instance after its native WndProc returns. FORMATRANGE replaces only the
+    // LRESULT, while GETCHARFORMAT patches the caller-provided output buffer.
+    await ex('test_wnd_table_set')(hwnd, procGuest);
+    const frGuest = 0x520000;
+    const frWasm = frGuest - 0x400000 + 0x12000;
+    dv.setInt32(frWasm + 8, 0, true); dv.setInt32(frWasm + 12, 0, true);
+    dv.setInt32(frWasm + 16, 7200, true); dv.setInt32(frWasm + 20, 7200, true);
+    dv.setInt32(frWasm + 40, 100, true); dv.setInt32(frWasm + 44, 5000, true);
+    const formatNext = await host.resolveThreadSend(sender, {
+      targetTid: 1, hwnd, msg: 0x0439, wparam: 1, lparam: frGuest, postKind: 1,
+    });
+    check(formatNext === 1900,
+      'cross-thread EM_FORMATRANGE applies deterministic pagination on the owner', `${formatNext}`);
+
+    const zeroProcGuest = 0x500180;
+    const zeroProcWasm = zeroProcGuest - 0x400000 + 0x12000;
+    new Uint8Array(memory.buffer).set([0x31, 0xC0, 0xC2, 0x10, 0x00], zeroProcWasm);
+    await ex('test_wnd_table_set')(hwnd, zeroProcGuest);
+    const cfGuest = 0x520100;
+    const cfWasm = cfGuest - 0x400000 + 0x12000;
+    dv.setUint32(cfWasm, 60, true);
+    dv.setUint32(cfWasm + 4, 0, true);
+    dv.setUint32(cfWasm + 12, 32767, true);
+    await host.resolveThreadSend(sender, {
+      targetTid: 1, hwnd, msg: 0x043A, wparam: 1, lparam: cfGuest, postKind: 2,
+    });
+    check(dv.getUint32(cfWasm + 12, true) === 200
+      && (dv.getUint32(cfWasm + 4, true) & 0x80000000) !== 0,
+    'cross-thread EM_GETCHARFORMAT patches the output buffer on the owner');
     host.stop();
   }
 

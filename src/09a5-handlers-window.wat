@@ -2208,8 +2208,19 @@
   ;; Synchronous: call WndProc(hwnd, msg, wParam, lParam) directly
   (func $handle_SendMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $ret_addr i32) (local $wndproc i32) (local $ctrl_class i32) (local $sm_ret i32) (local $owner_tid i32)
+    (local $post_kind i32)
     (call $richedit_note_charformat_message
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3))
+    ;; These two compatibility paths need work after the real native WndProc
+    ;; returns. Record that work before an owner-thread send can park us.
+    (if (i32.and
+          (i32.eq (local.get $arg1) (i32.const 0x0439)) ;; EM_FORMATRANGE
+          (i32.eq (call $ctrl_table_get_class (local.get $arg0)) (i32.const 0)))
+      (then (local.set $post_kind (i32.const 1))))
+    (if (i32.and
+          (i32.eq (local.get $arg1) (i32.const 0x043A)) ;; EM_GETCHARFORMAT
+          (i32.ne (local.get $arg3) (i32.const 0)))
+      (then (local.set $post_kind (i32.const 2))))
     ;; USER window procedures have thread affinity.  Leave this stdcall frame
     ;; untouched and let the scheduler execute the call on the owner instance;
     ;; complete_thread_send installs its LRESULT and returns to the caller.
@@ -2222,6 +2233,7 @@
         (global.set $send_msg (local.get $arg1))
         (global.set $send_wparam (local.get $arg2))
         (global.set $send_lparam (local.get $arg3))
+        (global.set $send_post_kind (local.get $post_kind))
         (global.set $handler_set_eip (i32.const 1))
         (global.set $eip (global.get $current_thunk_eip))
         (global.set $yield_reason (i32.const 10))

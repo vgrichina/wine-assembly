@@ -44,6 +44,10 @@ posted messages use locked per-owner rings, cross-thread `SendMessage` parks the
 sender and dispatches on the owner instance (including A→B→A reentrancy), and
 window/class/timer records publish complete state before becoming visible.
 Critical sections no longer barge, steal, or release on a non-owner Leave.
+An owner WndProc may itself park: object/event, message, network, modal, and
+DLL/COM yields now preserve and resume the nested interpreter frame instead of
+collapsing the send to zero. RichEdit's `EM_FORMATRANGE` return modeling and
+`EM_GETCHARFORMAT` output patch run on the owner after its native WndProc.
 Threaded mode remains off by default, behind the Threads switch and cross-origin
 isolation.
 
@@ -418,7 +422,10 @@ Win32 is not symmetric about threads, and that is a gift here:
   Worker in `Atomics.wait`: a parked sender must remain command-responsive so B
   can send back to A while A waits for B. The scheduler injects a nested dispatch
   on the owner instance, returns its `LRESULT`, and completes the original
-  stdcall frame. A vanished target completes with zero.
+  stdcall frame. If that WndProc blocks, its nested interpreter frame stays live
+  while the scheduler resolves the same event/message/net/modal/DLL protocol as
+  an ordinary worker slice; unrelated workers keep running so another thread can
+  signal the object. A vanished or trapped target completes with zero.
 - **`PostMessage` is asynchronous** and per-target-thread. The ring is MPSC in
   practice (any guest thread may post), so producers and the owner consumer use
   the USER lock.
@@ -707,6 +714,11 @@ because the *proof* is the second one.
   reentrant because parked Workers still accept dispatch commands. Target exit
   resolves the sender with zero. The cooperative backend uses the same owner
   metadata and context-save protocol synchronously.
+- ✅ Resumable owner-WndProc yields and message postprocessing. Event/object,
+  message, network, modal, LoadLibrary, and COM parks resume the exact nested
+  frame. A request carries a narrow post-kind so RichEdit compatibility work is
+  performed after the real WndProc on the HWND owner, without teaching the JS
+  scheduler message semantics.
 
 Three things the split had to get right, each learned from a failure:
 
@@ -1020,7 +1032,9 @@ Pre-merge validation on 2026-08-20:
   fixed-memory audit reports 112 regions with no data-segment overlap.
 - The focused concurrency gates pass: USER ownership/queues/timers/classes 7/7,
   strict critical sections 20/20 plus the two-instance integration check,
-  cross-thread `SendMessage` 5/5, and worker scheduler 34/34.
+  cross-thread `SendMessage` 8/8 (including a real WndProc event-wait resume and
+  both RichEdit post paths), and worker scheduler 35/35 (all blocking-yield
+  classes).
 - WordPad startup is 8/8 and worker/cooperative parity is 14/14. Threaded Winamp
   audio is 7/7 with 73728 bytes of non-silent PCM in 1.34 seconds.
 - The browser worker gate is 27/27: Notepad and Calculator match their control

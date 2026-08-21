@@ -96,7 +96,7 @@ function makeBackend(scripts) {
   };
 }
 
-function makeManager(backend) {
+function makeManager(backend, extraOpts) {
   const memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
   const mainInstance = {
     exports: {
@@ -108,7 +108,7 @@ function makeManager(backend) {
     },
   };
   const tm = new ThreadManager({}, memory, mainInstance, () => ({ host: {} }),
-    { workerBackend: backend, threadsRequested: true });
+    Object.assign({ workerBackend: backend, threadsRequested: true }, extraOpts || {}));
   tm._log = () => {};
   return tm;
 }
@@ -305,15 +305,52 @@ function makeManager(backend) {
   {
     const backend = makeBackend([[{
       yield: 10, sendTargetTid: 1, sendHwnd: 0x1234,
-      sendMsg: 0x500, sendWparam: 7, sendLparam: 9,
+      sendMsg: 0x500, sendWparam: 7, sendLparam: 9, sendPostKind: 2,
     }]]);
     const tm = makeManager(backend);
     tm.createThread(0x401500, 0, 0, 0);
     await tm.runWorkerSlices(1000);
     check(backend.resolvedSends.length === 1
       && backend.resolvedSends[0].targetTid === 1
+      && backend.resolvedSends[0].postKind === 2
       && backend.links[0].completedSends[0] === 0x76543210,
       'yield 10 routes SendMessage to the HWND owner and resumes with its LRESULT');
+  }
+
+  {
+    const external = [];
+    const tm = makeManager(makeBackend([]), {
+      hasMessage: () => true,
+      resolveThreadSendExternalYield: async (_link, r) => {
+        external.push(r.yield);
+        return true;
+      },
+    });
+    const calls = [];
+    const link = {
+      completeWait: async (result, bytes) => calls.push(['wait', result, bytes]),
+      resumeThreadSendMessageWait: async hostInput => {
+        calls.push(['message', hostInput]);
+        return { resumed: true };
+      },
+      callExport: async name => { calls.push(['export', name]); return 0; },
+    };
+    const state = { waitPolls: 0, waitStartedAt: 0 };
+    const ev = tm.createEvent(false, true);
+    const actions = [];
+    actions.push(await tm.resolveThreadSendYield(link, {
+      yield: 1, waitHandle: ev, waitTimeout: 0xFFFFFFFF, waitStackBytes: 12,
+    }, state, new Set([link])));
+    for (const yieldReason of [7, 8, 9, 6, 3, 5]) {
+      actions.push(await tm.resolveThreadSendYield(link, { yield: yieldReason }, state, new Set([link])));
+    }
+    check(actions.every(action => action === 'resume')
+      && calls.some(c => c[0] === 'wait' && c[1] === 0 && c[2] === 12)
+      && calls.some(c => c[0] === 'message' && c[1] === true)
+      && calls.some(c => c[0] === 'export' && c[1] === 'vlan_pump')
+      && external.join(',') === '3,5',
+    'a target WndProc keeps its SendMessage frame across event/message/net/modal/DLL yields',
+    `actions=${actions.join(',')} external=${external.join(',')}`);
   }
 
   console.log(`\n${passed} passed, ${failed} failed`);

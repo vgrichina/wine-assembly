@@ -2611,6 +2611,51 @@ async function main() {
     console.log('[threads] guest threads will run in node worker_threads (--threads)');
   }
 
+  const resolveThreadSendExternalYield = async (link, r) => {
+    if (!guestThreadHost || (r.yield !== 3 && r.yield !== 5)) return false;
+    // In CLI threaded mode slot 0 remains a local instance. Use the shared
+    // process-boot pumps there; Worker links use the worker-side loader commands
+    // below so all EIP/ESP mutations stay with the instance they belong to.
+    if (link === guestThreadHost._localLink) {
+      if (r.yield === 3) {
+        await handleComDllYield({
+          exports: instance.exports,
+          memoryBuffer: memory.buffer,
+          exeBytes: new Uint8Array(exeBytes),
+          resourceHost: ctx,
+          log: console.log,
+          findDll: findRuntimeDllBytes,
+        });
+      } else {
+        await handleLoadLibraryYield({
+          exports: instance.exports,
+          memoryBuffer: memory.buffer,
+          resourceHost: ctx,
+          log: console.log,
+          findDll: findRuntimeDllBytes,
+        });
+      }
+      return true;
+    }
+    const nameExport = r.yield === 3 ? 'get_com_dll_name' : 'get_loadlib_name';
+    const nameWA = (await link.callExport(nameExport)) >>> 0;
+    let dllName = '';
+    if (nameWA) {
+      const shared = new Uint8Array(memory.buffer);
+      for (let i = 0; i < 260 && shared[nameWA + i]; i++) {
+        dllName += String.fromCharCode(shared[nameWA + i]);
+      }
+    }
+    const fileName = dllName.split(/[\\/]/).pop().toLowerCase();
+    const dllBytes = fileName ? findRuntimeDllBytes(fileName, dllName) : null;
+    if (r.yield === 3) {
+      await guestThreadHost.comLoadDll(dllBytes, fileName, new Uint8Array(exeBytes), link);
+    } else {
+      await guestThreadHost.loadLibrary(dllBytes, fileName, link);
+    }
+    return true;
+  };
+
   threadManager = new ThreadManager(wasmModule, memory, instance, makeWorkerImports, {
     workerBackend: guestThreadHost,
     serialSlices: THREADS_SERIAL,
@@ -2628,6 +2673,7 @@ async function main() {
       (inputQueue && inputQueue.length) ||
       (renderer && renderer.inputQueue && renderer.inputQueue.length)
     ),
+    resolveThreadSendExternalYield,
     // The per-app thread-exit fixups the browser host has always run — Winamp's
     // visualizer bookkeeping — now run headless too, so a browser-only symptom
     // is reproducible from the CLI.

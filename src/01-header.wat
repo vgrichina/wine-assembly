@@ -2320,6 +2320,10 @@
   (global $send_msg (mut i32) (i32.const 0))
   (global $send_wparam (mut i32) (i32.const 0))
   (global $send_lparam (mut i32) (i32.const 0))
+  ;; Sender-side compatibility work which must run on the HWND owner after the
+  ;; real WndProc returns: 1=EM_FORMATRANGE result model, 2=EM_GETCHARFORMAT
+  ;; output patch. The scheduler carries this with the request.
+  (global $send_post_kind (mut i32) (i32.const 0))
   ;; Set/GetProcessShutdownParameters. 0x280 is the Win32 default level.
   ;; WsControl's view of the virtual adapter (src/09d-winsock.wat): subnet mask
   ;; and default gateway, both host byte order.
