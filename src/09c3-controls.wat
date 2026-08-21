@@ -5087,7 +5087,7 @@
     (local $name_ptr i32) (local $text_len i32) (local $style i32)
     (local $fmt i32) (local $ex i32) (local $tx_l i32) (local $tx_t i32)
     (local $tx_r i32) (local $tx_b i32) (local $brush i32) (local $ctrl_id i32)
-    (local $origin_clip i32)
+    (local $origin_clip i32) (local $image i32) (local $previous i32)
 
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
 
@@ -5181,6 +5181,38 @@
         (if (local.get $state)
           (then (return (call $static_text_len (call $g2w (local.get $state))))))
         (return (i32.const 0))))
+
+    ;; ---------- STM_SETICON / STM_GETICON ----------
+    ;; Win16 STATIC messages are translated from 0x400/0x401 to the Win32
+    ;; numbers before arriving here. Preserve the actual interned HICON, not
+    ;; merely a template resource ordinal, so dynamically assigned icons paint.
+    (if (i32.eq (local.get $msg) (i32.const 0x0170))
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (local.set $state_w (call $g2w (local.get $state)))
+        (local.set $previous (call $static_image_ord (local.get $state_w)))
+        (local.set $image
+          (select (call $win16_h32 (local.get $wParam)) (local.get $wParam)
+            (global.get $is_win16)))
+        (call $static_set_image_ord (local.get $state_w) (local.get $image))
+        ;; A zero-sized SS_ICON template asks USER to adopt the icon's natural
+        ;; dimensions. WEPUTIL uses exactly this form for its About icon.
+        (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+        (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
+        (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+        (if (i32.or (i32.eqz (local.get $w)) (i32.eqz (local.get $h)))
+          (then
+            (call $ctrl_geom_set (call $wnd_table_find (local.get $hwnd))
+              (call $ctrl_get_x_s (local.get $hwnd))
+              (call $ctrl_get_y_s (local.get $hwnd))
+              (select (local.get $w) (i32.const 32) (local.get $w))
+              (select (local.get $h) (i32.const 32) (local.get $h)))))
+        (call $invalidate_hwnd (local.get $hwnd))
+        (return (local.get $previous))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0171))
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (return (call $static_image_ord (call $g2w (local.get $state))))))
 
     ;; ---------- WM_PAINT ----------
     (if (i32.eq (local.get $msg) (i32.const 0x000F))
@@ -5298,12 +5330,20 @@
             (local.set $origin_clip
               (i32.and (i32.le_u (local.get $w) (i32.const 16))
                        (i32.le_u (local.get $h) (i32.const 16))))
-            (if (call $gdi_icon_draw_resource
-                  (local.get $hdc)
-                  (call $static_image_ord (local.get $state_w))
-                  (local.get $w) (local.get $h)
-                  (local.get $origin_clip))
-              (then (return (i32.const 0))))))
+            (local.set $image (call $static_image_ord (local.get $state_w)))
+            (if (i32.eq
+                  (i32.and (local.get $image) (i32.const 0xFFFF0000))
+                  (global.get $ICON_HANDLE_TAG))
+              (then
+                (if (call $icon_draw_handle (local.get $image) (local.get $hdc)
+                      (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
+                      (global.get $DI_NORMAL))
+                  (then (return (i32.const 0)))))
+              (else
+                (if (call $gdi_icon_draw_resource
+                      (local.get $hdc) (local.get $image)
+                      (local.get $w) (local.get $h) (local.get $origin_clip))
+                  (then (return (i32.const 0))))))))
         ;; A few mixer builds reference absent speaker resources 301/302.
         ;; Preserve the compact monochrome fallback for those missing icons.
         (if (i32.and

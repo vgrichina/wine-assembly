@@ -2604,6 +2604,9 @@
   ;; bitmap as its "resource", and drawing one blits that bitmap — see
   ;; $icon_draw_handle. Visual Basic's controls build their pictures this way.
   (global $ICON_FROM_BITMAP i32 (i32.const 0x1C0B17))
+  ;; A Win16 NE module id, stored in ICON_TABLE's hInstance word. The low 24
+  ;; bits are the $win16_res_module selector (task=1, DLL=0x10000|id).
+  (global $ICON_FROM_WIN16 i32 (i32.const 0x16000000))
 
   (func $icon_intern (param $hinst i32) (param $resid i32) (result i32)
     (local $i i32) (local $p i32) (local $free i32)
@@ -2664,6 +2667,20 @@
                 (i32.const 0) (i32.const 0) (i32.const 0x00CC0020)))
         (drop (call $gdi_dc_delete (local.get $ok)))
         (return (i32.const 1))))
+    ;; NE icon resources live in a flat table rather than the PE resource
+    ;; tree. Restore the module captured by Win16 LoadIcon while decoding.
+    (if (i32.eq
+          (i32.and (i32.load (local.get $p)) (i32.const 0xFF000000))
+          (global.get $ICON_FROM_WIN16))
+      (then
+        (global.set $win16_res_module_id
+          (i32.and (i32.load (local.get $p)) (i32.const 0x00FFFFFF)))
+        (local.set $ok (call $gdi_icon_draw_resource_at
+          (local.get $hdc) (i32.load offset=4 (local.get $p))
+          (local.get $cx) (local.get $cy) (i32.const 1)
+          (local.get $x) (local.get $y) (local.get $di_flags)))
+        (global.set $win16_res_module_id (i32.const 0))
+        (return (local.get $ok))))
     ;; The icon belongs to the module it was loaded from, which need not be
     ;; the one running now.
     (call $push_rsrc_ctx (i32.load (local.get $p)))
@@ -9910,31 +9927,37 @@ rDragDrop(hwnd, pDropTarget) — return S_OK.
 
   ;; 663: MapDialogRect(hDlg, lpRect) — convert dialog units to pixels.
   (func $handle_MapDialogRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $p i32)
+    (local $p i32) (local $base_x i32) (local $base_y i32)
     (if (i32.eqz (local.get $arg1))
       (then
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
         (return)))
     (local.set $p (call $g2w (local.get $arg1)))
-    ;; x pixels = MulDiv(dialogX, baseX=6, 4)
+    (local.set $base_x
+      (select (i32.const 8) (i32.const 6) (global.get $is_win16)))
+    (local.set $base_y
+      (select (i32.const 16) (i32.const 13) (global.get $is_win16)))
+    ;; x pixels = MulDiv(dialogX, baseX, 4)
     (i32.store offset=0 (local.get $p)
-      (i32.div_s (i32.mul (i32.load offset=0 (local.get $p)) (i32.const 6)) (i32.const 4)))
+      (i32.div_s (i32.mul (i32.load offset=0 (local.get $p)) (local.get $base_x)) (i32.const 4)))
     (i32.store offset=8 (local.get $p)
-      (i32.div_s (i32.mul (i32.load offset=8 (local.get $p)) (i32.const 6)) (i32.const 4)))
-    ;; y pixels = MulDiv(dialogY, baseY=13, 8)
+      (i32.div_s (i32.mul (i32.load offset=8 (local.get $p)) (local.get $base_x)) (i32.const 4)))
+    ;; y pixels = MulDiv(dialogY, baseY, 8)
     (i32.store offset=4 (local.get $p)
-      (i32.div_s (i32.mul (i32.load offset=4 (local.get $p)) (i32.const 13)) (i32.const 8)))
+      (i32.div_s (i32.mul (i32.load offset=4 (local.get $p)) (local.get $base_y)) (i32.const 8)))
     (i32.store offset=12 (local.get $p)
-      (i32.div_s (i32.mul (i32.load offset=12 (local.get $p)) (i32.const 13)) (i32.const 8)))
+      (i32.div_s (i32.mul (i32.load offset=12 (local.get $p)) (local.get $base_y)) (i32.const 8)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 664: GetDialogBaseUnits() → DWORD (loword=X, hiword=Y base units)
-  ;; Standard dialog units based on system font (8pt MS Sans Serif: 6x13)
+  ;; Win16 SYSTEM_FONT is 8x16; Win32's 8pt MS Sans Serif base is 6x13.
   (func $handle_GetDialogBaseUnits (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.or (i32.const 6) (i32.shl (i32.const 13) (i32.const 16))))
+    (global.set $eax
+      (select (i32.const 0x00100008) (i32.const 0x000D0006)
+        (global.get $is_win16)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
 
   ;; 665: GetClassNameW(hwnd, lpClassName, nMaxCount) → chars copied.

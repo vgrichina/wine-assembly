@@ -4274,6 +4274,13 @@
     (local $class_val i32) (local $class_enum i32) (local $class_ptr i32)
     (local $custom_wndproc i32) (local $native_tab i32)
     (local $text_ptr i32) (local $text_ord i32) (local $cs i32)
+    (local $base_x i32) (local $base_y i32)
+    ;; Win16 USER uses the classic 8x16 SYSTEM_FONT dialog base. Win32
+    ;; dialogs in this runtime use the measured 8pt MS Sans Serif 6x13 base.
+    (local.set $base_x
+      (select (i32.const 8) (i32.const 6) (global.get $is_win16)))
+    (local.set $base_y
+      (select (i32.const 16) (i32.const 13) (global.get $is_win16)))
     ;; Find the dialog slot — caller must have inserted it already
     (local.set $dlg_slot (call $wnd_table_find (local.get $dlg_hwnd)))
     (if (i32.lt_s (local.get $dlg_slot) (i32.const 0)) (then (return (i32.const 0))))
@@ -4365,18 +4372,19 @@
     ;; Child dialog pages have no separately composed top-level chrome, so
     ;; their template dimensions remain unchanged.
     (call $ctrl_geom_set (local.get $dlg_slot)
-      (i32.div_u (i32.mul (local.get $dlg_x) (i32.const 3)) (i32.const 2))
-      (i32.div_u (i32.add (i32.mul (local.get $dlg_y) (i32.const 13)) (i32.const 4)) (i32.const 8))
+      (i32.div_u (i32.mul (local.get $dlg_x) (local.get $base_x)) (i32.const 4))
+      (i32.div_u (i32.add (i32.mul (local.get $dlg_y) (local.get $base_y)) (i32.const 4)) (i32.const 8))
       (i32.add
-        (i32.div_u (i32.mul (local.get $dlg_cx) (i32.const 3)) (i32.const 2))
+        (i32.div_u (i32.mul (local.get $dlg_cx) (local.get $base_x)) (i32.const 4))
         (select
-          (i32.const 8) (i32.const 0)
+          (select (i32.const 5) (i32.const 8) (global.get $is_win16))
+          (i32.const 0)
           (i32.eqz (i32.and (local.get $style) (i32.const 0x40000000)))))
       (i32.add
-        (i32.div_u (i32.add (i32.mul (local.get $dlg_cy) (i32.const 13)) (i32.const 4)) (i32.const 8))
+        (i32.div_u (i32.add (i32.mul (local.get $dlg_cy) (local.get $base_y)) (i32.const 4)) (i32.const 8))
         (select
           (i32.add
-            (i32.const 30)
+            (select (i32.const 24) (i32.const 30) (global.get $is_win16))
             (select
               (i32.const 18) (i32.const 0)
               (i32.ne (local.get $menu_key) (i32.const 0))))
@@ -4530,12 +4538,10 @@
           ;; live text via existing button_get_text / edit / static
           ;; accessors, so we don't need to stash a parallel copy in
           ;; CONTROL_TABLE.
-          ;; DLU → pixel geometry (x*3/2, y*13/8). The vertical factor is
-          ;; tmHeight/8 for the dialog font, and a real Win98 probe measures
-          ;; MS Sans Serif 8pt at tmHeight=13 (test/fixtures/font-metrics.json)
-          ;; -- we used 7/4 for a long time, which is a 14px cell and made
-          ;; every dialog ~8% too tall. The +4 rounds the way MapDialogRect's
-          ;; MulDiv does; truncating turns the canonical 14-DLU button into
+          ;; DLU → pixel geometry. Win16 uses the classic 8x16 SYSTEM_FONT
+          ;; base; Win32 uses the measured 8pt MS Sans Serif 6x13 base
+          ;; (test/fixtures/font-metrics.json). The +4 rounds the vertical
+          ;; MulDiv; truncating turns the canonical 14-DLU Win32 button into
           ;; 22px instead of 23. For comboboxes (class 5),
           ;; the template's ch is the full dropped-down extent per Win32
           ;; convention — clamp the window/hit-test rect to the field
@@ -4544,12 +4550,12 @@
           ;; (pinball Player Controls: 6 combos at y=85/108/133 with
           ;; ch=70 each were all ~120px tall pre-clamp).
           (call $ctrl_geom_set (local.get $ctrl_slot)
-            (i32.div_u (i32.mul (local.get $cx) (i32.const 3)) (i32.const 2))
-            (i32.div_u (i32.add (i32.mul (local.get $cy) (i32.const 13)) (i32.const 4)) (i32.const 8))
-            (i32.div_u (i32.mul (local.get $cw) (i32.const 3)) (i32.const 2))
+            (i32.div_u (i32.mul (local.get $cx) (local.get $base_x)) (i32.const 4))
+            (i32.div_u (i32.add (i32.mul (local.get $cy) (local.get $base_y)) (i32.const 4)) (i32.const 8))
+            (i32.div_u (i32.mul (local.get $cw) (local.get $base_x)) (i32.const 4))
             (select
               (i32.const 21)
-              (i32.div_u (i32.add (i32.mul (local.get $ch) (i32.const 13)) (i32.const 4)) (i32.const 8))
+              (i32.div_u (i32.add (i32.mul (local.get $ch) (local.get $base_y)) (i32.const 4)) (i32.const 8))
               (i32.and
                 (i32.eq (local.get $class_enum) (i32.const 5))
                 (i32.ne (i32.and (local.get $ctrl_style) (i32.const 0x3))
@@ -4563,10 +4569,10 @@
       (i32.store offset=4  (call $g2w (local.get $cs)) (i32.const 0))
       (i32.store offset=8  (call $g2w (local.get $cs)) (local.get $ctrl_id))
       (i32.store offset=12 (call $g2w (local.get $cs)) (local.get $dlg_hwnd))
-      (i32.store offset=16 (call $g2w (local.get $cs)) (i32.div_u (i32.add (i32.mul (local.get $ch) (i32.const 13)) (i32.const 4)) (i32.const 8)))
-      (i32.store offset=20 (call $g2w (local.get $cs)) (i32.div_u (i32.mul (local.get $cw) (i32.const 3)) (i32.const 2)))
-      (i32.store offset=24 (call $g2w (local.get $cs)) (i32.div_u (i32.add (i32.mul (local.get $cy) (i32.const 13)) (i32.const 4)) (i32.const 8)))
-      (i32.store offset=28 (call $g2w (local.get $cs)) (i32.div_u (i32.mul (local.get $cx) (i32.const 3)) (i32.const 2)))
+      (i32.store offset=16 (call $g2w (local.get $cs)) (i32.div_u (i32.add (i32.mul (local.get $ch) (local.get $base_y)) (i32.const 4)) (i32.const 8)))
+      (i32.store offset=20 (call $g2w (local.get $cs)) (i32.div_u (i32.mul (local.get $cw) (local.get $base_x)) (i32.const 4)))
+      (i32.store offset=24 (call $g2w (local.get $cs)) (i32.div_u (i32.add (i32.mul (local.get $cy) (local.get $base_y)) (i32.const 4)) (i32.const 8)))
+      (i32.store offset=28 (call $g2w (local.get $cs)) (i32.div_u (i32.mul (local.get $cx) (local.get $base_x)) (i32.const 4)))
       (i32.store offset=32 (call $g2w (local.get $cs)) (local.get $ctrl_style))
       (i32.store offset=36 (call $g2w (local.get $cs))
         (select

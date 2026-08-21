@@ -3407,12 +3407,28 @@
   ;; for the predefined ones, which belong to USER rather than to the task and
   ;; so will never be in its resource table.
   (func $win16_LoadIcon
-    (local $id i32) (local $name i32)
+    (local $id i32) (local $name i32) (local $module i32) (local $found i32)
     (local.set $id (call $win16_res_arg (i32.const 0)))
     (global.set $eax (i32.const 0))
     (if (i32.ne (local.get $id) (i32.const -1))
       (then
-        (global.set $eax (call $win16_h16 (i32.const 0x60001)))
+        (local.set $module
+          (call $win16_res_module (call $win16_arg16 (i32.const 2))))
+        (global.set $win16_res_module_id (local.get $module))
+        (local.set $found
+          (call $win16_find_resource (i32.const 14) (local.get $id)))
+        (if (i32.eqz (local.get $found))
+          (then (local.set $found
+            (call $win16_find_resource (i32.const 3) (local.get $id)))))
+        (global.set $win16_res_module_id (i32.const 0))
+        (if (local.get $found)
+          (then
+            (global.set $eax (call $win16_h16
+              (call $icon_intern
+                (i32.or (global.get $ICON_FROM_WIN16) (local.get $module))
+                (local.get $id)))))
+          (else
+            (global.set $eax (call $win16_h16 (i32.const 0x60001)))))
         (call $win16_api_return (i32.const 6))
         (return)))
     (local.set $name (call $win16_res_name_wa (i32.const 0)))

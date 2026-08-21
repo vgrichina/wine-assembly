@@ -129,3 +129,59 @@ The viewer integration follows these Microsoft window-manager references:
   condition. The Help viewer selects the system `IDC_HAND` while a retained
   hotspot or navigation link is under the pointer and restores `IDC_ARROW`
   elsewhere.
+
+## Pipe Dream About-dialog evidence
+
+The primary application source is again the
+[Internet Archive Volume 2 disk-image item](https://archive.org/details/000210-MicrosoftEntertainmentPackVolume2).
+The archive describes two verified 720 KB raw disks from Microsoft
+Entertainment Pack Volume 2 version 1.0. The extracted files used by the
+regression are:
+
+| File | Size | SHA-256 |
+| --- | ---: | --- |
+| `test/binaries/wep16/WEP2/PIPE.EXE` | 124,960 | `877698244e2d9ecad690d9311a04eb40286f8f3cf20cc3b7d457a685c976a597` |
+| `test/binaries/wep16/WEP2/WEPUTIL.DLL` | 19,200 | `7bd426e4d1ca0afea88e5ad22d9add44d4df79432cdc4b5cb165c10c6023e6bd` |
+
+The local NE resource audit found Pipe Dream's `RT_GROUP_ICON` 99 and its
+three 32x32 `RT_ICON` images in `PIPE.EXE`. `WEPUTIL.DLL` supplies the About
+template (dialog 100, 140x128 dialog units), the 259x64 logo bitmaps 666
+(4-bpp) and 999 (1-bpp), and the owner-draw logo control. Its dialog procedure
+loads Pipe icon 99, sends Win16 static message `0x0400` to zero-sized
+`SS_ICON` control 701, and creates the 260x65 owner-draw logo panel at dialog
+position 10,10.
+
+A reviewed Windows 98 oracle was captured with the repository's v86 harness.
+The 640x480 screenshot SHA-256 is
+`d332b9310714d1a423d2e43df49ab8cef32bb6712c6dcfd854da721745103c44`.
+It measures the outer dialog at 285x280 pixels, the 140x128-DLU client at
+280x256 pixels, the panel at 260x65, and the assigned Pipe icon at 32x32.
+That establishes an 8x16 Win16 system-font base and 5x24 top-level non-client
+extent for this template. The capture used v86 `0.5.432+gf3d4472`
+([upstream commit](https://github.com/copy/v86/commit/f3d4472a9c934b9ad78a311f5849ba711a296d23)),
+its SeaBIOS and VGA BIOS at that commit, and the harness's documented
+[Windows 98 disk](https://i.copy.sh/windows98/.img) and
+[saved state](https://i.copy.sh/windows98_state-v2.bin.zst). Those images are
+reference-environment inputs only; the Internet Archive WEP2 disks remain the
+primary source for every application byte and resource assertion.
+
+The API behavior is cross-checked against Microsoft's documentation:
+
+- [GetDialogBaseUnits](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getdialogbaseunits)
+  defines the low/high words as horizontal/vertical system-font base units and
+  gives the `MulDiv(x, baseX, 4)` / `MulDiv(y, baseY, 8)` conversion used here.
+- [LoadIcon](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-loadicona)
+  identifies the application instance as the module containing a named or
+  ordinal icon resource. The Win16 bridge therefore retains the NE module and
+  resource id together instead of flattening every icon to one opaque handle.
+- [STM_SETICON](https://learn.microsoft.com/en-us/windows/win32/controls/stm-seticon)
+  places the icon handle in `wParam`, leaves `lParam` unused, and associates it
+  with the static icon control. The focused regression exercises the original
+  WEPUTIL call and verifies both the 32x32 control state and visible icon
+  pixels.
+
+The Win98 oracle selects WEPUTIL's 4-bpp logo 666 after its DLL initialization
+checks display color capability. The runtime currently renders the DLL's valid
+1-bpp fallback 999 because general Win16 DLL entry-point (`LibMain`) execution
+is not yet modeled. This is a recorded palette-fidelity difference, not a
+layout, clipping, icon, or control-visibility failure.

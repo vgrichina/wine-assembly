@@ -1079,8 +1079,15 @@
           (i32.or (i32.le_s (local.get $control_w) (i32.const 0))
             (i32.le_s (local.get $control_h) (i32.const 0))))
       (then (return (i32.const 0))))
-    (local.set $group (call $rsrc_find_data_wa (i32.const 14) (local.get $resource_id)))
-    (local.set $group_size (global.get $rsrc_last_size))
+    (if (global.get $is_win16)
+      (then
+        (local.set $group
+          (call $win16_find_resource (i32.const 14) (local.get $resource_id)))
+        (local.set $group_size (global.get $win16_res_len)))
+      (else
+        (local.set $group
+          (call $rsrc_find_data_wa (i32.const 14) (local.get $resource_id)))
+        (local.set $group_size (global.get $rsrc_last_size))))
     (if (i32.or (i32.eqz (local.get $group))
           (i32.or (i32.lt_u (local.get $group_size) (i32.const 20))
             (i32.or (i32.ne (i32.load16_u offset=2 (local.get $group)) (i32.const 1))
@@ -1090,8 +1097,15 @@
     ;; multi-size groups put their default small image first as well.
     (local.set $entry (i32.add (local.get $group) (i32.const 6)))
     (local.set $image_id (i32.load16_u offset=12 (local.get $entry)))
-    (local.set $image (call $rsrc_find_data_wa (i32.const 3) (local.get $image_id)))
-    (local.set $image_size (global.get $rsrc_last_size))
+    (if (global.get $is_win16)
+      (then
+        (local.set $image
+          (call $win16_find_resource (i32.const 3) (local.get $image_id)))
+        (local.set $image_size (global.get $win16_res_len)))
+      (else
+        (local.set $image
+          (call $rsrc_find_data_wa (i32.const 3) (local.get $image_id)))
+        (local.set $image_size (global.get $rsrc_last_size))))
     (if (i32.or (i32.eqz (local.get $image))
           (i32.lt_u (local.get $image_size) (i32.const 40)))
       (then (return (i32.const 0))))
