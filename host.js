@@ -7,7 +7,7 @@
 const ProcessBoot = (typeof window !== 'undefined' && window.processBoot) || null;
 
 class WineAssembly {
-  static SOURCE_VERSION = '210';
+  static SOURCE_VERSION = '211';
   static _nextProcessId = 1000;
 
   static hasRemainingAppWindow(destroyed, remainingTopLevel) {
@@ -757,6 +757,12 @@ class WineAssembly {
       const modulePromise = (async () => {
         const tailCalls = WineAssembly.supportsWasmTailCalls();
         console.log(`[host] wasm tail calls ${tailCalls ? 'enabled' : 'not available; using compatibility dispatch'}`);
+        // Debug sessions run directly from a changing worktree. A stable
+        // production cache key can otherwise leave Safari executing an older
+        // WASM artifact after tools/build.sh replaces the file underneath it.
+        const debugFetch = typeof location !== 'undefined' &&
+          new URLSearchParams(location.search).has('debug');
+        const fetchOptions = debugFetch ? { cache: 'no-store' } : undefined;
         const forceSourceCompile = typeof location !== 'undefined' &&
           new URLSearchParams(location.search).has('compile-wat');
         if (!forceSourceCompile) {
@@ -764,7 +770,7 @@ class WineAssembly {
             ? 'build/wine-assembly.wasm'
             : 'build/wine-assembly.compat.wasm';
           try {
-            const response = await fetch(`${artifact}?v=${WineAssembly.SOURCE_VERSION}`);
+            const response = await fetch(`${artifact}?v=${WineAssembly.SOURCE_VERSION}`, fetchOptions);
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             return await WebAssembly.compile(await response.arrayBuffer());
           } catch (error) {
@@ -773,7 +779,7 @@ class WineAssembly {
         }
         const bytes = await compileWatSnapshot(
           async file => {
-            const response = await fetch(`src/${file}?v=${WineAssembly.SOURCE_VERSION}`);
+            const response = await fetch(`src/${file}?v=${WineAssembly.SOURCE_VERSION}`, fetchOptions);
             if (!response.ok) throw new Error(`Unable to load ${file}: HTTP ${response.status}`);
             return response.text();
           },

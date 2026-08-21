@@ -289,8 +289,12 @@ assert(webApp.includes('lib/host-imports.js?v=203'), 'web host should cache-bust
 assert(webApp.includes('lib/thread-manager.js?v=170'), 'web host should cache-bust thread manager after creation-flag handling changes');
 assert(webApp.includes('lib/compile-wat.js?v=169'), 'web host should cache-bust the snapshot-capable WAT compiler');
 assert(webApp.includes('lib/debug-thread-state.js?v=2'), 'web host should cache-bust corrected guest thread ownership diagnostics');
-assert(webApp.includes('host.js?v=210'), 'web host should cache-bust host.js after the current source update');
-assert(hostJs.includes("static SOURCE_VERSION = '210'"), 'web host should cache-bust WASM artifacts and WAT source compilation');
+assert(webApp.includes('host.js?v=211'), 'web host should cache-bust host.js after the current source update');
+assert(hostJs.includes("static SOURCE_VERSION = '211'"), 'web host should cache-bust WASM artifacts and WAT source compilation');
+assert(hostJs.includes("const fetchOptions = debugFetch ? { cache: 'no-store' } : undefined;"),
+  'debug sessions should select a no-store fetch policy');
+assert(hostJs.includes('fetch(`${artifact}?v=${WineAssembly.SOURCE_VERSION}`, fetchOptions)'),
+  'debug sessions should apply their cache policy when loading rebuilt WASM artifacts');
 assert(webApp.includes("['mspaint98',   'Paint'"), 'normal desktop should expose Paint without the downscaled debug pane');
 assert(webApp.includes("mplay32:  { exe: 'binaries/win98-apps/mplay32.exe' }"),
   'Media Player 32 should use normal DLL auto-detection now that native and WAT toolbars are supported');
