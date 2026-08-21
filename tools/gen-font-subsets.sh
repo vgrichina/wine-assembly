@@ -6,9 +6,9 @@
 # corpus are CP1252 (or symbol-encoded), so the emulator can only ever ask for
 # ~220 codepoints per face - everything else is payload nobody reads.
 #
-# Hinting goes too. docs/scalable-font-design.md deliberately has no TrueType
-# bytecode interpreter, so `fpgm`/`prep`/`cvt ` and per-glyph instructions are
-# bytes the rasterizer will never execute.
+# Runtime grid fitting needs `fpgm`, `prep`, `cvt `, and each retained glyph's
+# instruction stream. fontTools rewrites point references while subsetting;
+# never add --no-hinting here or deployed text silently reverts to outlines.
 #
 # The full TTFs stay in the repo as the pinned, reproducible source; only the
 # subsets are deployed. Do not hand-edit anything in fonts/subset/ - regenerate
@@ -81,7 +81,6 @@ subset() {
 
   python3 -m fontTools.subset "$src" \
     --unicodes="$unicodes" \
-    --no-hinting \
     --notdef-outline \
     --layout-features='' \
     --legacy-kern \

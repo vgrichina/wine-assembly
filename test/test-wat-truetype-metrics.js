@@ -139,26 +139,28 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
   assert.strictEqual(wat.test_tt_scale(1000, 16, 0), 0,
     'a zero upem must not divide by zero');
 
-  assert.strictEqual(wat.test_tt_char_advance_px(sans.at, sans.size, 0x41, 11), 7);
+  assert.strictEqual(wat.test_tt_char_advance_px(sans.at, sans.size, 0x41, 11), 8,
+    'the glyph program widens the A phantom-point advance at 11ppem');
   assert.strictEqual(wat.test_tt_char_advance_px(sans.at, sans.size, 0x41, 16), 11);
 
   // ---- string width -----------------------------------------------------
   //
-  // Advances accumulate in font units and scale once. Scaling per character
-  // would round each advance independently and drift across a long run, which
-  // is exactly the class of error that mis-lays-out dialogs.
+  // TrueType phantom points make spacing a size-specific hinted result. GDI
+  // exposes integer cell increments, so a run is the sum of those per-glyph
+  // advances rather than one scaling of the unhinted font-unit total.
 
   const text = 'AWi.';
   const textGuest = wat.guest_alloc(text.length + 1) >>> 0;
   bytes.set(Buffer.from(text, 'latin1'), wa(textGuest));
   bytes[wa(textGuest) + text.length] = 0;
 
-  const units = 1366 + 1933 + 455 + 569;
   for (const ppem of [8, 11, 16, 24, 72]) {
+    const expected = [...text].reduce((total, character) =>
+      total + wat.test_tt_char_advance_px(sans.at, sans.size,
+        character.charCodeAt(0), ppem), 0);
     assert.strictEqual(
       wat.test_tt_text_width_px(sans.at, sans.size, wa(textGuest), text.length, ppem),
-      wat.test_tt_scale(units, ppem, 2048),
-      `"${text}" at ${ppem}ppem must equal the scaled font-unit sum`);
+      expected, `"${text}" at ${ppem}ppem must sum hinted cell increments`);
   }
 
   const perCharacter = [...text].reduce((total, character) =>
@@ -166,13 +168,10 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
       character.charCodeAt(0), 11), 0);
   const once = wat.test_tt_text_width_px(
     sans.at, sans.size, wa(textGuest), text.length, 11);
-  assert.notStrictEqual(perCharacter, once,
-    'this string is chosen so per-character rounding visibly differs; if this ' +
-    'ever matches, pick a string where it does not, or the drift guard is inert');
-  // 4323 units at 11ppem is 23.2px scaled once, against 7+10+2+3 = 22px when
-  // each advance rounds on its own: a whole pixel lost over four characters.
-  assert.strictEqual(once, 23);
-  assert.strictEqual(perCharacter, 22);
+  assert.strictEqual(perCharacter, once,
+    'measurement and individual hinted cell increments must agree');
+  assert.strictEqual(perCharacter, 23,
+    '11ppem AWi. uses the four hinted phantom-point advances');
 
   assert.strictEqual(
     wat.test_tt_text_width_px(sans.at, sans.size, wa(textGuest), 0, 11), 0,
@@ -224,10 +223,11 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
   const quoted = '\x93hi\x94';
   const quotedGuest = wat.guest_alloc(quoted.length) >>> 0;
   bytes.set(Buffer.from(quoted, 'latin1'), wa(quotedGuest));
-  const quotedUnits = 682 + 1139 + 455 + 682;  // ldquo + h + i + rdquo
+  const quotedAdvance = [0x93, 0x68, 0x69, 0x94].reduce((total, code) =>
+    total + wat.test_tt_ansi_advance_px(sans.at, sans.size, code, 16), 0);
   assert.strictEqual(
     wat.test_tt_text_width_px(sans.at, sans.size, wa(quotedGuest), quoted.length, 16),
-    wat.test_tt_scale(quotedUnits, 16, 2048),
+    quotedAdvance,
     'smart quotes must measure as quotes');
   assert.strictEqual(wat.test_tt_ansi_advance_px(sans.at, sans.size, 0x80, 16),
     wat.test_tt_scale(1139, 16, 2048));
@@ -526,9 +526,9 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
 
   // A rectangle has four sides and exactly two of them can be crossed.
   assert.deepStrictEqual(readEdges(sans, '.', 16), [
-    [94, 0, 94, 110],
-    [191, 110, 191, 0],
-  ], 'the two horizontal sides of the period contribute no crossings');
+    [94, 0, 94, 128],
+    [191, 128, 191, 0],
+  ], 'hinting grid-fits the period to 2px and horizontal sides add no crossings');
 
   assert.strictEqual(readEdges(sans, 'i', 16).length, 4,
     'two rectangles give two crossable sides each');
@@ -537,7 +537,7 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
     assert.notStrictEqual(edge[1], edge[3], 'no horizontal edge may survive');
   }
 
-  // The flattened outline must reach exactly the glyph's own bounding box.
+  // The flattened outline must reach the grid-fitted glyph's extrema.
   // Curves stay inside the hull of their control points, so falling short
   // means subdivision dropped an extreme and overshooting means a control
   // point leaked into the output as if it were on the curve.
@@ -549,8 +549,10 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
   const to266 = value => wat.test_tt_fu_to_26_6(value, 16, 2048);
   assert.strictEqual(Math.min(...xs), to266(oBox.xMin));
   assert.strictEqual(Math.max(...xs), to266(oBox.xMax));
-  assert.strictEqual(Math.min(...ys), to266(oBox.yMin));
-  assert.strictEqual(Math.max(...ys), to266(oBox.yMax));
+  assert.strictEqual(Math.min(...ys), 0,
+    'the glyph program aligns the o baseline to the pixel grid');
+  assert.strictEqual(Math.max(...ys), 576,
+    'the glyph program aligns the o cap to the 9px grid line');
 
   // Larger text gets more segments per curve, which is the whole point of
   // sizing subdivision from the control polygon.
@@ -600,22 +602,17 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
     return { width, height, rows };
   };
 
-  // The period is a rectangle from x 1.46 to 2.98 and y 0 to 1.71 pixels at
-  // 16ppem, so it lands in a 2x2 cell. Its top-left pixel is only 54% covered
-  // horizontally and 75% vertically — 40% of the pixel, under the threshold —
-  // while the other three clear it. Every one of those numbers moves if the
-  // box, the sampling, or the threshold is wrong, which is why the exact
-  // pattern is asserted rather than just the ink count.
+  // The period's glyph program snaps its top edge to two pixels at 16ppem.
+  // The exact 2x2 result catches a skipped prep/glyph program just as sharply
+  // as the old fractional outline caught scan-conversion mistakes.
   assert.deepStrictEqual(raster(sans, '.', 16), {
-    width: 2, height: 2, rows: ['.#', '##'],
+    width: 2, height: 2, rows: ['##', '##'],
   });
 
   // A golden bitmap. Nonzero winding is tested here where it actually
   // differs from even-odd: the counter is hollow because the inner contour
-  // runs the other way, not because it is the second contour. The bottom row
-  // is blank because the overshoot below the baseline is 0.23 of a pixel and
-  // does not reach the threshold, and the box is cut from the outline's own
-  // bounds rather than from what happens to be inked.
+  // runs the other way, not because it is the second contour. Runtime hinting
+  // aligns the baseline and cap, producing a symmetric 13-row result.
   //
   // Changing the fill rule, the sub-row count, or the threshold is expected
   // to change this picture; it should be updated deliberately and looked at,
@@ -623,22 +620,21 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
   const o24 = raster(sans, 'o', 24);
   assert.deepStrictEqual(o24, {
     width: 12,
-    height: 14,
+    height: 13,
     rows: [
       '...#####....',
       '..########..',
-      '.##.....##..',
-      '.##......##.',
+      '.##.....###.',
+      '###......##.',
       '##.......##.',
       '##.......##.',
       '##.......##.',
       '##.......##.',
       '##.......##.',
       '###......##.',
-      '.##.....###.',
-      '.####.####..',
-      '...######...',
-      '............',
+      '.##.....##..',
+      '..########..',
+      '...#####....',
     ],
   });
   const middleRow = o24.rows[Math.floor(o24.height / 2)];
@@ -673,7 +669,7 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
   const rawBytes = new Uint8Array(memory.buffer, wa(BITMAP), 64);
   const period = raster(sans, '.', 16);
   assert.strictEqual(period.height, 2);
-  assert.strictEqual(rawBytes[0] & 0x80, 0, 'pixel (0,0) is the top bit of byte 0');
+  assert.strictEqual(rawBytes[0] & 0x80, 0x80, 'pixel (0,0) is the top bit of byte 0');
   assert.strictEqual(rawBytes[0] & 0x40, 0x40, 'pixel (1,0) is the next bit down');
   assert.strictEqual(rawBytes[1] & 0xC0, 0xC0, 'row 1 lives in byte 1');
 

@@ -770,16 +770,28 @@
       (local.set $cursor (i32.add (local.get $cursor) (i32.const 4)))
       (if (i32.and (local.get $flags) (i32.const 0x0001))
         (then
-          (local.set $arg1
-            (call $tt_s16 (local.get $data) (local.get $size) (local.get $cursor)))
-          (local.set $arg2 (call $tt_s16 (local.get $data) (local.get $size)
-            (i32.add (local.get $cursor) (i32.const 2))))
+          (local.set $arg1 (select
+            (call $tt_s16 (local.get $data) (local.get $size) (local.get $cursor))
+            (call $tt_u16 (local.get $data) (local.get $size) (local.get $cursor))
+            (i32.and (local.get $flags) (i32.const 0x0002))))
+          (local.set $arg2 (select
+            (call $tt_s16 (local.get $data) (local.get $size)
+              (i32.add (local.get $cursor) (i32.const 2)))
+            (call $tt_u16 (local.get $data) (local.get $size)
+              (i32.add (local.get $cursor) (i32.const 2)))
+            (i32.and (local.get $flags) (i32.const 0x0002))))
           (local.set $cursor (i32.add (local.get $cursor) (i32.const 4))))
         (else
-          (local.set $arg1
-            (call $tt_s8 (local.get $data) (local.get $size) (local.get $cursor)))
-          (local.set $arg2 (call $tt_s8 (local.get $data) (local.get $size)
-            (i32.add (local.get $cursor) (i32.const 1))))
+          (local.set $arg1 (select
+            (call $tt_s8 (local.get $data) (local.get $size) (local.get $cursor))
+            (call $tt_u8 (local.get $data) (local.get $size) (local.get $cursor))
+            (i32.and (local.get $flags) (i32.const 0x0002))))
+          (local.set $arg2 (select
+            (call $tt_s8 (local.get $data) (local.get $size)
+              (i32.add (local.get $cursor) (i32.const 1)))
+            (call $tt_u8 (local.get $data) (local.get $size)
+              (i32.add (local.get $cursor) (i32.const 1)))
+            (i32.and (local.get $flags) (i32.const 0x0002))))
           (local.set $cursor (i32.add (local.get $cursor) (i32.const 2)))))
       (local.set $a (i32.const 0x4000))
       (local.set $b (i32.const 0))
@@ -996,6 +1008,36 @@
     (call $tt_fu_to_26_6 (call $tt_point_y (local.get $points) (local.get $index))
       (local.get $ppem) (local.get $upem)))
 
+  ;; Runtime hinting keeps its expanded 26.6 point records separate from the
+  ;; compact font-unit outline. A zero hinted pointer is the explicit bounded
+  ;; fallback to the long-standing unhinted path.
+  (func $tt_outline_x_26_6 (param $points i32) (param $hinted i32)
+        (param $index i32) (param $ppem i32) (param $upem i32) (result i32)
+    (if (result i32) (local.get $hinted)
+      (then (call $tth_hint_point_x (local.get $hinted) (local.get $index)))
+      (else (call $tt_point_x_26_6 (local.get $points) (local.get $index)
+        (local.get $ppem) (local.get $upem)))))
+
+  (func $tt_outline_y_26_6 (param $points i32) (param $hinted i32)
+        (param $index i32) (param $ppem i32) (param $upem i32) (result i32)
+    (if (result i32) (local.get $hinted)
+      (then (call $tth_hint_point_y (local.get $hinted) (local.get $index)))
+      (else (call $tt_point_y_26_6 (local.get $points) (local.get $index)
+        (local.get $ppem) (local.get $upem)))))
+
+  (func $tt_outline_on_curve (param $points i32) (param $hinted i32)
+        (param $index i32) (result i32)
+    (if (result i32) (local.get $hinted)
+      (then (call $tth_hint_point_on_curve (local.get $hinted) (local.get $index)))
+      (else (call $tt_point_on_curve (local.get $points) (local.get $index)))))
+
+  (func $tt_outline_ends_contour (param $points i32) (param $hinted i32)
+        (param $index i32) (result i32)
+    (if (result i32) (local.get $hinted)
+      (then (call $tth_hint_point_ends_contour (local.get $hinted)
+        (local.get $index)))
+      (else (call $tt_point_ends_contour (local.get $points) (local.get $index)))))
+
   (func $tt_glyph_edges (param $data i32) (param $size i32) (param $gid i32)
         (param $ppem i32) (param $points i32) (param $points_cap i32)
         (param $edges i32) (param $edges_cap i32) (result i32)
@@ -1004,11 +1046,14 @@
     (local $edge_count i32) (local $sx i32) (local $sy i32) (local $cur_x i32)
     (local $cur_y i32) (local $ctrl_x i32) (local $ctrl_y i32) (local $pending i32)
     (local $px i32) (local $py i32) (local $mid_x i32) (local $mid_y i32)
+    (local $hinted i32)
     (local.set $count (call $tt_glyph_load_outline (local.get $data)
       (local.get $size) (local.get $gid) (local.get $points) (local.get $points_cap)
       (i32.const 0)))
     (if (i32.eqz (local.get $count)) (then (return (i32.const 0))))
     (local.set $upem (call $tt_units_per_em (local.get $data) (local.get $size)))
+    (local.set $hinted (call $tth_hint_outline (local.get $data) (local.get $size)
+      (local.get $gid) (local.get $ppem) (local.get $points) (local.get $count)))
 
     (block $contours_done (loop $contours
       (br_if $contours_done (i32.ge_u (local.get $start) (local.get $count)))
@@ -1019,7 +1064,8 @@
         (br_if $end_found (i32.ge_u (local.get $end)
           (i32.sub (local.get $count) (i32.const 1))))
         (br_if $end_found
-          (call $tt_point_ends_contour (local.get $points) (local.get $end)))
+          (call $tt_outline_ends_contour (local.get $points) (local.get $hinted)
+            (local.get $end)))
         (local.set $end (i32.add (local.get $end) (i32.const 1)))
         (br $seek)))
       (local.set $length
@@ -1028,31 +1074,39 @@
       ;; The contour must begin at an on-curve point. When neither the first
       ;; nor the last point is on-curve the real start is their midpoint,
       ;; which is the same implied-point rule applied to the seam.
-      (if (call $tt_point_on_curve (local.get $points) (local.get $start))
+      (if (call $tt_outline_on_curve (local.get $points) (local.get $hinted)
+            (local.get $start))
         (then
-          (local.set $sx (call $tt_point_x_26_6 (local.get $points)
-            (local.get $start) (local.get $ppem) (local.get $upem)))
-          (local.set $sy (call $tt_point_y_26_6 (local.get $points)
-            (local.get $start) (local.get $ppem) (local.get $upem)))
+          (local.set $sx (call $tt_outline_x_26_6 (local.get $points)
+            (local.get $hinted) (local.get $start) (local.get $ppem)
+            (local.get $upem)))
+          (local.set $sy (call $tt_outline_y_26_6 (local.get $points)
+            (local.get $hinted) (local.get $start) (local.get $ppem)
+            (local.get $upem)))
           (local.set $first (i32.add (local.get $start) (i32.const 1))))
-        (else (if (call $tt_point_on_curve (local.get $points) (local.get $end))
+        (else (if (call $tt_outline_on_curve (local.get $points)
+              (local.get $hinted) (local.get $end))
           (then
-            (local.set $sx (call $tt_point_x_26_6 (local.get $points)
-              (local.get $end) (local.get $ppem) (local.get $upem)))
-            (local.set $sy (call $tt_point_y_26_6 (local.get $points)
-              (local.get $end) (local.get $ppem) (local.get $upem)))
+            (local.set $sx (call $tt_outline_x_26_6 (local.get $points)
+              (local.get $hinted) (local.get $end) (local.get $ppem)
+              (local.get $upem)))
+            (local.set $sy (call $tt_outline_y_26_6 (local.get $points)
+              (local.get $hinted) (local.get $end) (local.get $ppem)
+              (local.get $upem)))
             (local.set $first (local.get $start)))
           (else
             (local.set $sx (i32.shr_s (i32.add
-              (call $tt_point_x_26_6 (local.get $points) (local.get $start)
-                (local.get $ppem) (local.get $upem))
-              (call $tt_point_x_26_6 (local.get $points) (local.get $end)
-                (local.get $ppem) (local.get $upem))) (i32.const 1)))
+              (call $tt_outline_x_26_6 (local.get $points) (local.get $hinted)
+                (local.get $start) (local.get $ppem) (local.get $upem))
+              (call $tt_outline_x_26_6 (local.get $points) (local.get $hinted)
+                (local.get $end) (local.get $ppem) (local.get $upem)))
+              (i32.const 1)))
             (local.set $sy (i32.shr_s (i32.add
-              (call $tt_point_y_26_6 (local.get $points) (local.get $start)
-                (local.get $ppem) (local.get $upem))
-              (call $tt_point_y_26_6 (local.get $points) (local.get $end)
-                (local.get $ppem) (local.get $upem))) (i32.const 1)))
+              (call $tt_outline_y_26_6 (local.get $points) (local.get $hinted)
+                (local.get $start) (local.get $ppem) (local.get $upem))
+              (call $tt_outline_y_26_6 (local.get $points) (local.get $hinted)
+                (local.get $end) (local.get $ppem) (local.get $upem)))
+              (i32.const 1)))
             (local.set $first (local.get $start))))))
       (local.set $cur_x (local.get $sx))
       (local.set $cur_y (local.get $sy))
@@ -1065,11 +1119,14 @@
           (i32.rem_u (i32.add (i32.sub (local.get $first) (local.get $start))
               (local.get $step))
             (local.get $length))))
-        (local.set $px (call $tt_point_x_26_6 (local.get $points) (local.get $index)
-          (local.get $ppem) (local.get $upem)))
-        (local.set $py (call $tt_point_y_26_6 (local.get $points) (local.get $index)
-          (local.get $ppem) (local.get $upem)))
-        (if (call $tt_point_on_curve (local.get $points) (local.get $index))
+        (local.set $px (call $tt_outline_x_26_6 (local.get $points)
+          (local.get $hinted) (local.get $index) (local.get $ppem)
+          (local.get $upem)))
+        (local.set $py (call $tt_outline_y_26_6 (local.get $points)
+          (local.get $hinted) (local.get $index) (local.get $ppem)
+          (local.get $upem)))
+        (if (call $tt_outline_on_curve (local.get $points) (local.get $hinted)
+              (local.get $index))
           (then
             (if (local.get $pending)
               (then
@@ -1181,6 +1238,11 @@
 
   (func $tt_glyph_box_left (param $data i32) (param $size i32) (param $gid i32)
         (param $ppem i32) (result i32)
+    (local $hinted i32)
+    (local.set $hinted (call $tth_hint_bound (local.get $data) (local.get $size)
+      (local.get $gid) (local.get $ppem) (i32.const 0)))
+    (if (i32.ne (local.get $hinted) (i32.const 0x80000000))
+      (then (return (local.get $hinted))))
     (call $tt_floor_px (call $tt_fu_to_26_6
       (call $tt_glyph_x_min (local.get $data) (local.get $size) (local.get $gid))
       (local.get $ppem)
@@ -1188,6 +1250,11 @@
 
   (func $tt_glyph_box_top (param $data i32) (param $size i32) (param $gid i32)
         (param $ppem i32) (result i32)
+    (local $hinted i32)
+    (local.set $hinted (call $tth_hint_bound (local.get $data) (local.get $size)
+      (local.get $gid) (local.get $ppem) (i32.const 1)))
+    (if (i32.ne (local.get $hinted) (i32.const 0x80000000))
+      (then (return (local.get $hinted))))
     (call $tt_ceil_px (call $tt_fu_to_26_6
       (call $tt_glyph_y_max (local.get $data) (local.get $size) (local.get $gid))
       (local.get $ppem)
@@ -1195,6 +1262,11 @@
 
   (func $tt_glyph_box_width (param $data i32) (param $size i32) (param $gid i32)
         (param $ppem i32) (result i32)
+    (local $hinted i32)
+    (local.set $hinted (call $tth_hint_bound (local.get $data) (local.get $size)
+      (local.get $gid) (local.get $ppem) (i32.const 2)))
+    (if (i32.ne (local.get $hinted) (i32.const 0x80000000))
+      (then (return (local.get $hinted))))
     (i32.sub
       (call $tt_ceil_px (call $tt_fu_to_26_6
         (call $tt_glyph_x_max (local.get $data) (local.get $size) (local.get $gid))
@@ -1205,6 +1277,11 @@
 
   (func $tt_glyph_box_height (param $data i32) (param $size i32) (param $gid i32)
         (param $ppem i32) (result i32)
+    (local $hinted i32)
+    (local.set $hinted (call $tth_hint_bound (local.get $data) (local.get $size)
+      (local.get $gid) (local.get $ppem) (i32.const 3)))
+    (if (i32.ne (local.get $hinted) (i32.const 0x80000000))
+      (then (return (local.get $hinted))))
     (i32.sub
       (call $tt_glyph_box_top (local.get $data) (local.get $size) (local.get $gid)
         (local.get $ppem))
@@ -1299,6 +1376,8 @@
     (local $lo i32) (local $hi i32) (local $winding i32) (local $span_start i32)
     (local $slot i32) (local $value i32) (local $column i32)
     (local $tx i32) (local $ty i32)
+    (local $scan_control i32) (local $scan_type i32) (local $dropout i32)
+    (local $inked i32) (local $best_column i32) (local $best_value i32)
     (if (i32.or (i32.le_s (local.get $width) (i32.const 0))
           (i32.le_s (local.get $height) (i32.const 0)))
       (then (return (i32.const 0))))
@@ -1317,6 +1396,19 @@
       (local.get $gid) (local.get $ppem) (local.get $points)
       (global.get $TT_RASTER_POINTS) (local.get $edges)
       (global.get $TT_RASTER_EDGES)))
+    (local.set $scan_control (call $tth_hint_last_scan_control))
+    (local.set $scan_type (call $tth_hint_last_scan_type))
+    ;; This rasterizer's canonical path is neither rotated nor stretched.
+    ;; SCANCTRL bit 8 enables dropout below its low-byte ppem threshold;
+    ;; SCANTYPE 2/3/6/7 explicitly disables dropout rules.
+    (local.set $dropout (i32.and
+      (i32.and (i32.and (local.get $scan_control) (i32.const 0x100))
+        (i32.le_u (local.get $ppem)
+          (i32.and (local.get $scan_control) (i32.const 0xFF))))
+      (i32.and (i32.ne (local.get $scan_type) (i32.const 2))
+        (i32.and (i32.ne (local.get $scan_type) (i32.const 3))
+          (i32.and (i32.ne (local.get $scan_type) (i32.const 6))
+            (i32.ne (local.get $scan_type) (i32.const 7)))))))
     ;; MAT2 affects the glyph geometry, not just its reported box. Transform
     ;; the already-flattened 26.6 edge list so bitmap and gray output agree
     ;; with GGO_NATIVE and GLYPHMETRICS for affine Win98 requests.
@@ -1446,14 +1538,22 @@
       ;; A pixel is ink when it is at least half covered, summed over the
       ;; sub-rows: full coverage is 64 * TT_SUBROWS.
       (local.set $column (i32.const 0))
+      (local.set $inked (i32.const 0))
+      (local.set $best_column (i32.const 0))
+      (local.set $best_value (i32.const 0))
       (block $emit_done (loop $emit
         (br_if $emit_done (i32.ge_s (local.get $column) (local.get $width)))
         (local.set $value (i32.load (i32.add (local.get $coverage)
           (i32.mul (local.get $column) (i32.const 4)))))
+        (if (i32.gt_s (local.get $value) (local.get $best_value))
+          (then
+            (local.set $best_value (local.get $value))
+            (local.set $best_column (local.get $column))))
         (if (i32.and (i32.ne (local.get $bitmap) (i32.const 0))
               (i32.ge_s (i32.mul (local.get $value) (i32.const 2))
                 (i32.mul (i32.const 64) (global.get $TT_SUBROWS))))
           (then
+            (local.set $inked (i32.const 1))
             (local.set $slot (i32.add (local.get $bitmap)
               (i32.add
                 (i32.mul (i32.shr_u (local.get $column) (i32.const 3))
@@ -1479,6 +1579,20 @@
                 (local.get $column))) (local.get $slot))))
         (local.set $column (i32.add (local.get $column) (i32.const 1)))
         (br $emit)))
+
+      ;; Simple horizontal dropout: when a contour crosses this scan row but
+      ;; coverage alone would erase every pixel, retain the strongest pixel.
+      (if (i32.and (i32.and (local.get $dropout)
+            (i32.ne (local.get $bitmap) (i32.const 0)))
+          (i32.and (i32.eqz (local.get $inked))
+            (i32.gt_s (local.get $best_value) (i32.const 0))))
+        (then
+          (local.set $slot (i32.add (local.get $bitmap)
+            (i32.add (i32.mul (i32.shr_u (local.get $best_column) (i32.const 3))
+                (local.get $height)) (local.get $row))))
+          (i32.store8 (local.get $slot) (i32.or (i32.load8_u (local.get $slot))
+            (i32.shr_u (i32.const 0x80)
+              (i32.and (local.get $best_column) (i32.const 7)))))))
 
       (local.set $row (i32.add (local.get $row) (i32.const 1)))
       (br $rows)))
@@ -1762,6 +1876,15 @@
 
   (func $tt_advance_px (param $data i32) (param $size i32) (param $gid i32)
         (param $ppem i32) (result i32)
+    (local $scratch i32) (local $hinted i32)
+    (local.set $scratch (call $tt_raster_scratch))
+    (if (local.get $scratch)
+      (then
+        (local.set $hinted (call $tth_hint_advance_px (local.get $data)
+          (local.get $size) (local.get $gid) (local.get $ppem)
+          (local.get $scratch) (global.get $TT_RASTER_POINTS)))
+        (if (i32.ne (local.get $hinted) (i32.const 0x80000000))
+          (then (return (local.get $hinted))))))
     (call $tt_scale
       (call $tt_advance_fu (local.get $data) (local.get $size) (local.get $gid))
       (local.get $ppem)
@@ -1783,22 +1906,22 @@
         (local.get $byte))
       (local.get $ppem)))
 
-  ;; Sum advances for a byte string. Widths are accumulated in font units and
-  ;; scaled once at the end: scaling per character would round every advance
-  ;; independently and drift several pixels across a long run.
+  ;; Sum the grid-fitted integer advances GDI exposes for each glyph. Phantom
+  ;; point movement can change an advance at a particular ppem, so scaling one
+  ;; font-unit total would discard the hinter's spacing decisions.
   (func $tt_text_width_px (param $data i32) (param $size i32) (param $text i32)
         (param $count i32) (param $ppem i32) (result i32)
     (local $index i32) (local $total i32)
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $index) (local.get $count)))
       (local.set $total (i32.add (local.get $total)
-        (call $tt_advance_fu (local.get $data) (local.get $size)
+        (call $tt_advance_px (local.get $data) (local.get $size)
           (call $tt_ansi_glyph_index (local.get $data) (local.get $size)
-            (i32.load8_u (i32.add (local.get $text) (local.get $index)))))))
+            (i32.load8_u (i32.add (local.get $text) (local.get $index))))
+          (local.get $ppem))))
       (local.set $index (i32.add (local.get $index) (i32.const 1)))
       (br $scan)))
-    (call $tt_scale (local.get $total) (local.get $ppem)
-      (call $tt_units_per_em (local.get $data) (local.get $size))))
+    (local.get $total))
 
   ;; ---- TEXTMETRIC -------------------------------------------------------
   ;;
@@ -3558,6 +3681,22 @@
     (call $tt_ggo_transform_axis (local.get $x) (local.get $y)
       (local.get $mat) (local.get $axis)))
 
+  (func $tt_ggo_outline_axis (param $points i32) (param $hinted i32)
+        (param $index i32) (param $ppem i32) (param $upem i32) (param $mat i32)
+        (param $axis i32) (result i32)
+    (local $x i32) (local $y i32)
+    (if (i32.eqz (local.get $hinted))
+      (then (return (call $tt_ggo_point_axis (local.get $points)
+        (local.get $index) (local.get $ppem) (local.get $upem)
+        (local.get $mat) (local.get $axis)))))
+    ;; Interpreter points are already 26.6 pixels; POINTFX is 16.16.
+    (local.set $x (i32.shl (call $tth_hint_point_x (local.get $hinted)
+      (local.get $index)) (i32.const 10)))
+    (local.set $y (i32.shl (call $tth_hint_point_y (local.get $hinted)
+      (local.get $index)) (i32.const 10)))
+    (call $tt_ggo_transform_axis (local.get $x) (local.get $y)
+      (local.get $mat) (local.get $axis)))
+
   (func $tt_ggo_emit_curve (param $out i32) (param $offset i32)
         (param $type i32) (param $count i32) (param $x1 i32) (param $y1 i32)
         (param $x2 i32) (param $y2 i32) (result i32)
@@ -3585,7 +3724,8 @@
   ;; One curve record per segment is intentionally simple and fully legal;
   ;; callers must consume the structures, not rely on GDI coalescing adjacent
   ;; line segments into one record.
-  (func $tt_ggo_native_bytes (param $points i32) (param $count i32)
+  (func $tt_ggo_native_bytes (param $points i32) (param $hinted i32)
+        (param $count i32)
         (param $ppem i32) (param $upem i32) (param $mat i32) (param $out i32)
         (result i32)
     (local $start i32) (local $end i32) (local $length i32)
@@ -3601,42 +3741,49 @@
         (br_if $end_found (i32.ge_u (local.get $end)
           (i32.sub (local.get $count) (i32.const 1))))
         (br_if $end_found
-          (call $tt_point_ends_contour (local.get $points) (local.get $end)))
+          (call $tt_outline_ends_contour (local.get $points) (local.get $hinted)
+            (local.get $end)))
         (local.set $end (i32.add (local.get $end) (i32.const 1)))
         (br $seek)))
       (local.set $length
         (i32.add (i32.sub (local.get $end) (local.get $start)) (i32.const 1)))
 
-      (if (call $tt_point_on_curve (local.get $points) (local.get $start))
+      (if (call $tt_outline_on_curve (local.get $points) (local.get $hinted)
+            (local.get $start))
         (then
-          (local.set $sx (call $tt_ggo_point_axis (local.get $points)
-            (local.get $start) (local.get $ppem) (local.get $upem)
+          (local.set $sx (call $tt_ggo_outline_axis (local.get $points)
+            (local.get $hinted) (local.get $start) (local.get $ppem) (local.get $upem)
             (local.get $mat) (i32.const 0)))
-          (local.set $sy (call $tt_ggo_point_axis (local.get $points)
-            (local.get $start) (local.get $ppem) (local.get $upem)
+          (local.set $sy (call $tt_ggo_outline_axis (local.get $points)
+            (local.get $hinted) (local.get $start) (local.get $ppem) (local.get $upem)
             (local.get $mat) (i32.const 1)))
           (local.set $first (i32.add (local.get $start) (i32.const 1))))
-        (else (if (call $tt_point_on_curve (local.get $points) (local.get $end))
+        (else (if (call $tt_outline_on_curve (local.get $points)
+              (local.get $hinted) (local.get $end))
           (then
-            (local.set $sx (call $tt_ggo_point_axis (local.get $points)
-              (local.get $end) (local.get $ppem) (local.get $upem)
+            (local.set $sx (call $tt_ggo_outline_axis (local.get $points)
+              (local.get $hinted) (local.get $end) (local.get $ppem) (local.get $upem)
               (local.get $mat) (i32.const 0)))
-            (local.set $sy (call $tt_ggo_point_axis (local.get $points)
-              (local.get $end) (local.get $ppem) (local.get $upem)
+            (local.set $sy (call $tt_ggo_outline_axis (local.get $points)
+              (local.get $hinted) (local.get $end) (local.get $ppem) (local.get $upem)
               (local.get $mat) (i32.const 1)))
             (local.set $first (local.get $start)))
           (else
             (local.set $sx (i32.shr_s (i32.add
-              (call $tt_ggo_point_axis (local.get $points) (local.get $start)
-                (local.get $ppem) (local.get $upem) (local.get $mat) (i32.const 0))
-              (call $tt_ggo_point_axis (local.get $points) (local.get $end)
-                (local.get $ppem) (local.get $upem) (local.get $mat) (i32.const 0)))
+              (call $tt_ggo_outline_axis (local.get $points) (local.get $hinted)
+                (local.get $start) (local.get $ppem) (local.get $upem)
+                (local.get $mat) (i32.const 0))
+              (call $tt_ggo_outline_axis (local.get $points) (local.get $hinted)
+                (local.get $end) (local.get $ppem) (local.get $upem)
+                (local.get $mat) (i32.const 0)))
               (i32.const 1)))
             (local.set $sy (i32.shr_s (i32.add
-              (call $tt_ggo_point_axis (local.get $points) (local.get $start)
-                (local.get $ppem) (local.get $upem) (local.get $mat) (i32.const 1))
-              (call $tt_ggo_point_axis (local.get $points) (local.get $end)
-                (local.get $ppem) (local.get $upem) (local.get $mat) (i32.const 1)))
+              (call $tt_ggo_outline_axis (local.get $points) (local.get $hinted)
+                (local.get $start) (local.get $ppem) (local.get $upem)
+                (local.get $mat) (i32.const 1))
+              (call $tt_ggo_outline_axis (local.get $points) (local.get $hinted)
+                (local.get $end) (local.get $ppem) (local.get $upem)
+                (local.get $mat) (i32.const 1)))
               (i32.const 1)))
             (local.set $first (local.get $start))))))
 
@@ -3659,13 +3806,14 @@
         (local.set $index (i32.add (local.get $start)
           (i32.rem_u (i32.add (i32.sub (local.get $first) (local.get $start))
               (local.get $step)) (local.get $length))))
-        (local.set $px (call $tt_ggo_point_axis (local.get $points)
-          (local.get $index) (local.get $ppem) (local.get $upem)
+        (local.set $px (call $tt_ggo_outline_axis (local.get $points)
+          (local.get $hinted) (local.get $index) (local.get $ppem) (local.get $upem)
           (local.get $mat) (i32.const 0)))
-        (local.set $py (call $tt_ggo_point_axis (local.get $points)
-          (local.get $index) (local.get $ppem) (local.get $upem)
+        (local.set $py (call $tt_ggo_outline_axis (local.get $points)
+          (local.get $hinted) (local.get $index) (local.get $ppem) (local.get $upem)
           (local.get $mat) (i32.const 1)))
-        (if (call $tt_point_on_curve (local.get $points) (local.get $index))
+        (if (call $tt_outline_on_curve (local.get $points) (local.get $hinted)
+              (local.get $index))
           (then
             (if (local.get $pending)
               (then
@@ -3765,7 +3913,7 @@
     (local $strike i32) (local $dc i32) (local $handle i32) (local $object i32)
     (local $face i32) (local $data i32) (local $size i32) (local $ppem i32)
     (local $gid i32) (local $base i32)
-    (local $scratch i32) (local $points i32) (local $count i32)
+    (local $scratch i32) (local $points i32) (local $hinted i32) (local $count i32)
     (local $upem i32) (local $needed i32) (local $index i32)
     (local $x i32) (local $y i32) (local $min_x i32) (local $min_y i32)
     (local $max_x i32) (local $max_y i32) (local $advance i32)
@@ -3828,6 +3976,10 @@
       (local.get $size) (local.get $gid) (local.get $points)
       (global.get $TT_RASTER_POINTS) (i32.const 0)))
     (local.set $upem (call $tt_units_per_em (local.get $data) (local.get $size)))
+    (if (local.get $count)
+      (then (local.set $hinted (call $tth_hint_outline (local.get $data)
+        (local.get $size) (local.get $gid) (local.get $ppem)
+        (local.get $points) (local.get $count)))))
 
     (if (local.get $count)
       (then
@@ -3837,11 +3989,11 @@
         (local.set $max_y (i32.const 0x80000000))
         (block $bounds_done (loop $bounds
           (br_if $bounds_done (i32.ge_u (local.get $index) (local.get $count)))
-          (local.set $x (call $tt_ggo_point_axis (local.get $points)
-            (local.get $index) (local.get $ppem) (local.get $upem)
+          (local.set $x (call $tt_ggo_outline_axis (local.get $points)
+            (local.get $hinted) (local.get $index) (local.get $ppem) (local.get $upem)
             (local.get $mat) (i32.const 0)))
-          (local.set $y (call $tt_ggo_point_axis (local.get $points)
-            (local.get $index) (local.get $ppem) (local.get $upem)
+          (local.set $y (call $tt_ggo_outline_axis (local.get $points)
+            (local.get $hinted) (local.get $index) (local.get $ppem) (local.get $upem)
             (local.get $mat) (i32.const 1)))
           (if (i32.lt_s (local.get $x) (local.get $min_x))
             (then (local.set $min_x (local.get $x))))
@@ -3868,9 +4020,33 @@
         (i32.store offset=4 (local.get $metrics) (i32.const 0))
         (i32.store offset=8 (local.get $metrics) (i32.const 0))
         (i32.store offset=12 (local.get $metrics) (i32.const 0))))
-    (local.set $advance (i32.shl
-      (call $tt_advance_px (local.get $data) (local.get $size)
-        (local.get $gid) (local.get $ppem)) (i32.const 16)))
+
+    ;; Win98 derives the identity GLYPHMETRICS box from the grid-fitted point
+    ;; extrema rounded to pixel grid lines.  This is tighter than floor/ceil
+    ;; control-point bounds for fractional overshoots (notably Arial A and
+    ;; e-acute) and matches the captured native rasterizer metrics.
+    (if (i32.and (i32.ne (local.get $hinted) (i32.const 0))
+          (call $tt_ggo_matrix_identity (local.get $mat)))
+      (then
+        (local.set $min_x (call $gdi_round_ratio
+          (i64.extend_i32_s (local.get $min_x)) (i64.const 65536)))
+        (local.set $min_y (call $gdi_round_ratio
+          (i64.extend_i32_s (local.get $min_y)) (i64.const 65536)))
+        (local.set $max_x (call $gdi_round_ratio
+          (i64.extend_i32_s (local.get $max_x)) (i64.const 65536)))
+        (local.set $max_y (call $gdi_round_ratio
+          (i64.extend_i32_s (local.get $max_y)) (i64.const 65536)))
+        (i32.store (local.get $metrics) (i32.sub
+          (local.get $max_x) (local.get $min_x)))
+        (i32.store offset=4 (local.get $metrics) (i32.sub
+          (local.get $max_y) (local.get $min_y)))
+        (i32.store offset=8 (local.get $metrics) (local.get $min_x))
+        (i32.store offset=12 (local.get $metrics) (local.get $max_y))))
+    (local.set $advance (if (result i32) (local.get $hinted)
+      (then (i32.shl (call $tth_hint_last_advance) (i32.const 10)))
+      (else (i32.shl
+        (call $tt_advance_px (local.get $data) (local.get $size)
+          (local.get $gid) (local.get $ppem)) (i32.const 16)))))
     (local.set $advance_x (call $tt_ggo_transform_axis (local.get $advance)
       (i32.const 0) (local.get $mat) (i32.const 0)))
     (local.set $advance_y (call $tt_ggo_transform_axis (local.get $advance)
@@ -3979,14 +4155,15 @@
         (return (local.get $needed))))
 
     (local.set $needed (call $tt_ggo_native_bytes (local.get $points)
-      (local.get $count) (local.get $ppem) (local.get $upem)
+      (local.get $hinted) (local.get $count) (local.get $ppem) (local.get $upem)
       (local.get $mat) (i32.const 0)))
     (if (i32.or (i32.eqz (local.get $buffer_size)) (i32.eqz (local.get $buffer)))
       (then (return (local.get $needed))))
     (if (i32.lt_u (local.get $buffer_size) (local.get $needed))
       (then (return (i32.const -1))))
-    (drop (call $tt_ggo_native_bytes (local.get $points) (local.get $count)
-      (local.get $ppem) (local.get $upem) (local.get $mat) (local.get $buffer)))
+    (drop (call $tt_ggo_native_bytes (local.get $points) (local.get $hinted)
+      (local.get $count) (local.get $ppem) (local.get $upem)
+      (local.get $mat) (local.get $buffer)))
     (local.get $needed))
 
   ;; ---- test surface -----------------------------------------------------

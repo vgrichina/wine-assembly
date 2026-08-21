@@ -97,6 +97,7 @@ UNIT=(
   test/test-font-enum-sizes.js
   test/test-wat-gdi-fixed-stock-font.js
   test/test-wat-truetype-metrics.js
+  test/test-wat-truetype-hinting.js
   test/test-font-substitutions.js
   test/test-font-subsets.js
   test/test-wat-truetype-substitution.js
