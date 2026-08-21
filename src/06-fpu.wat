@@ -174,6 +174,30 @@
   (func $fpu_is_nan (param $v f64) (result i32)
     (f64.ne (local.get $v) (local.get $v)))
 
+  ;; FXAM classifies ST(0) in C3:C2:C0 and reports its sign in C1. VBRUN100
+  ;; relies on C1 before raising a negative base to an integral power: losing
+  ;; it sends -10 through FYL2X as log2(-10), producing a NaN and VB error 6.
+  (func $fpu_fxam
+    (local $v f64) (local $abs f64) (local $cc i32)
+    (if (i32.eqz (call $fpu_is_valid (i32.const 0)))
+      (then (local.set $cc (i32.const 0x4100)))       ;; empty: 101
+      (else
+        (local.set $v (call $fpu_get (i32.const 0)))
+        (local.set $abs (f64.abs (local.get $v)))
+        (if (call $fpu_is_nan (local.get $v))
+          (then (local.set $cc (i32.const 0x0100)))   ;; NaN: 001
+          (else (if (f64.gt (local.get $abs) (f64.const 1.7976931348623157e308))
+            (then (local.set $cc (i32.const 0x0500))) ;; infinity: 011
+            (else (if (f64.eq (local.get $abs) (f64.const 0))
+              (then (local.set $cc (i32.const 0x4000))) ;; zero: 100
+              (else (if (f64.lt (local.get $abs) (f64.const 2.2250738585072014e-308))
+                (then (local.set $cc (i32.const 0x4400))) ;; denormal: 110
+                (else (local.set $cc (i32.const 0x0400)))))))))) ;; normal: 010
+        (if (i64.lt_s (i64.reinterpret_f64 (local.get $v)) (i64.const 0))
+          (then (local.set $cc (i32.or (local.get $cc) (i32.const 0x0200)))))))
+    (global.set $fpu_sw
+      (i32.or (i32.and (global.get $fpu_sw) (i32.const 0xB8FF)) (local.get $cc))))
+
   (func $fpu_compare (param $a f64) (param $b f64)
     (local $cc i32)
     (if (f64.lt (local.get $a) (local.get $b))
@@ -658,7 +682,7 @@
             (if (i32.eq (local.get $rm) (i32.const 4))
               (then (call $fpu_compare (local.get $st0) (f64.const 0)) (return)))
             (if (i32.eq (local.get $rm) (i32.const 5))
-              (then (global.set $fpu_sw (i32.or (i32.and (global.get $fpu_sw) (i32.const 0xB8FF)) (i32.const 0x0400))) (return)))
+              (then (call $fpu_fxam) (return)))
             ;; D9 E2/E3/E6/E7 — reserved.
             (call $fpu_crash_op (local.get $group) (local.get $reg) (local.get $rm)) (return)))
         (if (i32.eq (local.get $reg) (i32.const 5))

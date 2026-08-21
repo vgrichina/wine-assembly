@@ -176,6 +176,24 @@ async function main() {
     bytesAt(scratchA, 10),
     [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x9c, 0x0d, 0x40]);
 
+  // VBRUN100 checks FXAM's C1 sign bit before evaluating a negative base.
+  // The condition-code mask is C3:C2:C1:C0 at status bits 14,10,9,8.
+  const fxamStatus = value => {
+    setFloat(scratch, value);
+    runCode([
+      0xDD, 0x05, ...le32(scratch), // fld qword ptr [scratch]
+      0xD9, 0xE5,                   // fxam
+      0xDF, 0xE0,                   // fnstsw ax
+      0xDD, 0xD8,                   // fstp st(0)
+    ]);
+    return e.get_eax() & 0x4700;
+  };
+  test('FXAM classifies positive normal', fxamStatus(10), 0x0400);
+  test('FXAM preserves negative-normal sign in C1', fxamStatus(-10), 0x0600);
+  test('FXAM classifies positive zero', fxamStatus(0), 0x4000);
+  test('FXAM preserves negative-zero sign in C1', fxamStatus(-0), 0x4200);
+  test('FXAM classifies positive infinity', fxamStatus(Infinity), 0x0500);
+
   // ================================================================
   // MUL dword [mem] — unsigned 32×32→64 multiply
   // ================================================================

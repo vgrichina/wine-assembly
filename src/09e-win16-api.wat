@@ -3106,6 +3106,28 @@
     (global.set $eax (i32.ne (global.get $eax) (i32.const 0)))
     (call $win16_api_return (i32.const 2)))
 
+  ;; USER.48 IsChild(hWndParent, hWnd). Walk the real WND parent chain rather
+  ;; than reusing the narrow Win32 dialog-only helper: Visual Basic asks this
+  ;; during WM_SETFOCUS even for an ordinary top-level form. The window itself
+  ;; is not its own child, so start at its parent, matching USER's semantics.
+  (func $win16_IsChild
+    (local $parent i32) (local $child i32)
+    (local.set $child (call $win16_h32 (call $win16_arg16 (i32.const 0))))
+    (local.set $parent (call $win16_h32 (call $win16_arg16 (i32.const 1))))
+    (global.set $eax (i32.const 0))
+    (if (i32.and (local.get $parent) (local.get $child))
+      (then
+        (local.set $child (call $wnd_get_parent (local.get $child)))
+        (block $done (loop $ancestors
+          (br_if $done (i32.eqz (local.get $child)))
+          (if (i32.eq (local.get $child) (local.get $parent))
+            (then
+              (global.set $eax (i32.const 1))
+              (br $done)))
+          (local.set $child (call $wnd_get_parent (local.get $child)))
+          (br $ancestors)))))
+    (call $win16_api_return (i32.const 4)))
+
   ;; USER.50 FindWindow(lpClassName, lpWindowName). Either argument may be a
   ;; NULL far pointer, which means "any", and a null selector is how that
   ;; arrives — it has to stay a zero pointer rather than become the base of
@@ -3566,6 +3588,8 @@
       (then (call $win16_GetCurrentTime) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 47))
       (then (call $win16_IsWindow) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 48))
+      (then (call $win16_IsChild) (return (i32.const 1))))
     (if (i32.or (i32.eq (local.get $ordinal) (i32.const 412))
                 (i32.eq (local.get $ordinal) (i32.const 413)))
       (then (call $win16_DeleteMenu) (return (i32.const 1))))
