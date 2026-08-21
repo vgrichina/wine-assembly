@@ -55,6 +55,7 @@
       padding: 4px 6px;
       border-bottom: 1px solid #808080;
       display: flex;
+      flex-wrap: wrap;
       gap: 8px;
       align-items: center;
       font-size: 12px;
@@ -330,10 +331,10 @@
     body.no-debug #log { display: none; }
     body.no-debug #screen-wrap { background: #008080; }
     body.no-debug canvas { background: transparent; z-index: 2; }
-    body.exclusive-fullscreen,
-    body.exclusive-fullscreen #shell,
-    body.exclusive-fullscreen #content,
-    body.exclusive-fullscreen #screen-wrap {
+    body.no-debug.exclusive-fullscreen,
+    body.no-debug.exclusive-fullscreen #shell,
+    body.no-debug.exclusive-fullscreen #content,
+    body.no-debug.exclusive-fullscreen #screen-wrap {
       width: 100vw;
       height: 100vh;
       margin: 0;
@@ -341,23 +342,23 @@
       border: 0;
       background: #000;
     }
-    body.exclusive-fullscreen {
+    body.no-debug.exclusive-fullscreen {
       overflow: hidden;
     }
-    body.exclusive-fullscreen #screen-wrap {
+    body.no-debug.exclusive-fullscreen #screen-wrap {
       position: fixed;
       inset: 0;
       max-width: none;
       max-height: none;
       flex-direction: column;
     }
-    body.exclusive-fullscreen #titlebar,
-    body.exclusive-fullscreen #toolbar,
-    body.exclusive-fullscreen #log,
-    body.exclusive-fullscreen #taskbar,
-    body.exclusive-fullscreen #desktop-icons { display: none !important; }
+    body.no-debug.exclusive-fullscreen #titlebar,
+    body.no-debug.exclusive-fullscreen #toolbar,
+    body.no-debug.exclusive-fullscreen #log,
+    body.no-debug.exclusive-fullscreen #taskbar,
+    body.no-debug.exclusive-fullscreen #desktop-icons { display: none !important; }
     body.exclusive-fullscreen #browser-fullscreen-consent { display: flex; }
-    body.exclusive-fullscreen canvas {
+    body.no-debug.exclusive-fullscreen canvas {
       position: relative !important;
       inset: auto !important;
       flex: 1 1 0;
@@ -366,6 +367,23 @@
       height: 0 !important;
       max-width: none !important;
       max-height: none !important;
+    }
+    /* In ?debug, an app's fullscreen request is only a request. Keep the
+       toolbar and log available and fit the exclusive surface into the
+       remaining pane until the user explicitly enters browser fullscreen. */
+    body:not(.no-debug).exclusive-fullscreen #screen-wrap {
+      flex-direction: column;
+      min-width: 0;
+      min-height: 0;
+    }
+    body:not(.no-debug).exclusive-fullscreen canvas {
+      position: relative !important;
+      inset: auto !important;
+      flex: 1 1 0;
+      min-width: 0;
+      min-height: 0;
+      width: 100% !important;
+      height: 0 !important;
     }
     #screen-wrap:fullscreen {
       position: fixed;
@@ -625,6 +643,9 @@
       <span class="debug-record">
         <button id="record-btn" onclick="toggleRecording()" title="Record screen + audio to .webm">● Record</button>
       </span>
+      <span class="debug-thread-state">
+        <button id="thread-state-btn" onclick="openThreadState()" title="Open live scheduler, yield, and critical-section state">Thread state</button>
+      </span>
       <a href="story.html" style="margin-left: 8px; font-size: 12px; color: #000080;">The Story</a>
       <span id="status" style="margin-left: auto; color: #808080;"></span>
     </div>
@@ -714,6 +735,7 @@ Resource-aware Win98 emulator
   <script src="lib/worker-imports.js?v=1"></script>
   <script src="lib/vfs-seed.js?v=1"></script>
   <script src="lib/debug-midi.js?v=1"></script>
+  <script src="lib/debug-thread-state.js?v=1"></script>
   <script src="lib/host-imports.js?v=203"></script>
   <script src="lib/compile-wat.js?v=169"></script>
   <script src="lib/thread-manager.js?v=170"></script>
@@ -780,6 +802,12 @@ Resource-aware Win98 emulator
     function launchApp() { return shell.launchApp(); }
     function stopAllApps() { shell.stopAllApps(); }
     function applyRunSlice() { shell.applyRunSlice(); }
+
+    const threadStateViewer = window.debugThreadState.createDebugThreadState({
+      debugMode: DEBUG_MODE,
+      getRunningApps: () => runningApps,
+    });
+    function openThreadState() { return threadStateViewer.open(); }
 
     // Frame/step graph overlay (lib/perf-hud.js). Off by default even in
     // debug mode — it draws every rAF, and a profiler you cannot turn off is
