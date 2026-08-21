@@ -1327,11 +1327,11 @@
         (local.set $other (call $tth_pop))
         (if (i32.and (local.get $op) (i32.const 1))
           (then (local.set $value (call $tth_project_original
-            (global.get $tth_zp1) (local.get $point_index)
-            (global.get $tth_zp0) (local.get $other))))
+            (global.get $tth_zp0) (local.get $other)
+            (global.get $tth_zp1) (local.get $point_index))))
           (else (local.set $value (call $tth_project_current
-            (global.get $tth_zp1) (local.get $point_index)
-            (global.get $tth_zp0) (local.get $other)))))
+            (global.get $tth_zp0) (local.get $other)
+            (global.get $tth_zp1) (local.get $point_index)))))
         (return (call $tth_push (local.get $value)))))
     (call $tth_fail (i32.const 6)))
 

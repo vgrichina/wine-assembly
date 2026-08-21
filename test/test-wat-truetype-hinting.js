@@ -22,6 +22,15 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
     'the bytecode dispatcher must remain a WAT br_table');
   assert.doesNotMatch(source, /freetype|generated interpreter|\.c\b/i,
     'the runtime engine must not name an external or generated implementation');
+  const mdOpcode = source.match(/;; MD\[0\/1\]\.([\s\S]*?)\(call \$tth_fail/);
+  assert.ok(mdOpcode, 'the MD opcode implementation must remain present');
+  for (const projection of ['original', 'current']) {
+    assert.match(mdOpcode[1], new RegExp(
+      `\\$tth_project_${projection}\\s+` +
+      `\\(global\\.get \\$tth_zp0\\)\\s+\\(local\\.get \\$other\\)\\s+` +
+      `\\(global\\.get \\$tth_zp1\\)\\s+\\(local\\.get \\$point_index\\)`),
+    `MD ${projection} distance must preserve the p2 minus p1 operand order`);
+  }
 
   const { exports: wat, memory, hostCtx } = await bootRenderHarness();
   const imageBase = wat.get_image_base() >>> 0;
@@ -210,6 +219,44 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
     assert.strictEqual(nativePoints, 92,
       'the A/g/e-acute raw point topology must stay stable before GGO expansion');
 
+    // A fresh GGO_NATIVE capture from Windows 98 provides the critical points
+    // around Arial W's MD-controlled SHPIX branch. The old reversed MD sign
+    // displaced these points by several pixels; native rounding differs by at
+    // most 2/64 pixel over this four-size oracle.
+    const nativeWGid = wat.test_tt_glyph_index(
+      native.at, native.size, 'W'.charCodeAt(0));
+    const nativeWCount = wat.test_tt_glyph_load_outline(
+      native.at, native.size, nativeWGid, compact, 512);
+    assert.strictEqual(nativeWCount, 25,
+      'Win98 Arial W raw point topology must remain stable');
+    const win98WPoints = new Map([
+      [12, [[5, 160, 145], [8, 309, 576], [9, 395, 576],
+        [12, 544, 145], [21, 352, 506]]],
+      [18, [[5, 288, 116], [8, 442, 832], [9, 646, 832],
+        [12, 800, 116], [21, 544, 732]]],
+      [26, [[5, 416, 170], [8, 709, 1216], [9, 890, 1216],
+        [12, 1184, 170], [21, 800, 1069]]],
+      [36, [[5, 544, 233], [8, 982, 1664], [9, 1257, 1664],
+        [12, 1696, 233], [21, 1120, 1463]]],
+    ]);
+    for (const [ppem, expectedPoints] of win98WPoints) {
+      const nativeWHinted = wat.test_tth_hint_outline(
+        native.at, native.size, nativeWGid, ppem, compact, nativeWCount) >>> 0;
+      assert.ok(nativeWHinted,
+        `Win98 Arial W must hint at ${ppem}ppem ` +
+        `(error=${wat.test_tth_last_error()}, ` +
+        `opcode=0x${wat.test_tth_last_opcode().toString(16)})`);
+      for (const [index, expectedX, expectedY] of expectedPoints) {
+        const actualX = wat.test_tth_point_x(nativeWHinted, index);
+        const actualY = wat.test_tth_point_y(nativeWHinted, index);
+        assert.ok(Math.abs(actualX - expectedX) <= 2 &&
+          Math.abs(actualY - expectedY) <= 2,
+        `Win98 Arial W point ${index} at ${ppem}ppem must stay within ` +
+          `2/64 pixel of the native oracle; got (${actualX}, ${actualY}), ` +
+          `expected (${expectedX}, ${expectedY})`);
+      }
+    }
+
     // Drive the public GDI seam with the original local file and compare the
     // resulting quadratic streams to bytes captured from real Windows 98.
     const win98Fixture = require('./fixtures/gdi-font-outline-win98.json');
@@ -270,7 +317,9 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
         controlPrograms += 1;
       }
     }
-    oracle = `${nativePoints} Arial raw points, ${metricCases}/3 exact GGO metric cases, ` +
+    oracle = `${nativePoints} Arial raw points, ` +
+      `${win98WPoints.size * 5} Arial W point cases, ` +
+      `${metricCases}/3 exact GGO metric cases, ` +
       `${controlPrograms} Times/Courier programs`;
   }
 
