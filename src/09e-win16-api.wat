@@ -7517,6 +7517,25 @@
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 10)))
 
+  ;; GDI.22 IntersectClipRect(hDC, X1, Y1, X2, Y2) -> the new clip region's
+  ;; type. Pipe Dream intersects the cell rectangle before drawing the first
+  ;; placed tile, so this is a gameplay path rather than startup decoration.
+  (func $win16_IntersectClipRect
+    (local $hdc i32) (local $x1 i32) (local $y1 i32) (local $x2 i32) (local $y2 i32)
+    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 4))))
+    (local.set $x1 (call $win16_coord (call $win16_arg16 (i32.const 3))))
+    (local.set $y1 (call $win16_coord (call $win16_arg16 (i32.const 2))))
+    (local.set $x2 (call $win16_coord (call $win16_arg16 (i32.const 1))))
+    (local.set $y2 (call $win16_coord (call $win16_arg16 (i32.const 0))))
+    (call $win16_call32_begin (i32.const 5))
+    (call $win16_call32_arg (i32.const 3) (local.get $x2))
+    (call $win16_call32_arg (i32.const 4) (local.get $y2))
+    (call $handle_IntersectClipRect (local.get $hdc) (local.get $x1) (local.get $y1)
+      (local.get $x2) (local.get $y2) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 10)))
+
   ;; GDI.27 Rectangle(hDC, X1, Y1, X2, Y2).
   (func $win16_Rectangle
     (local $hdc i32) (local $x1 i32) (local $y1 i32) (local $x2 i32) (local $y2 i32)
@@ -8067,6 +8086,8 @@
       (then (call $win16_dc_set_pair (i32.const 7)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 21))
       (then (call $win16_ExcludeClipRect) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 22))
+      (then (call $win16_IntersectClipRect) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 23))
       (then (call $win16_Arc) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 24))

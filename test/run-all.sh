@@ -225,6 +225,7 @@ UNIT=(
 )
 
 E2E=(
+  test/test-win16-wep-gameplay.js
   test/test-win16-entertainment-manifests.js
   test/test-cli-vfs-include.js
   test/test-winhelp-reference.js

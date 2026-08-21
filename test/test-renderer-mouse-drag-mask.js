@@ -135,6 +135,41 @@ focusRenderer.handleMouseDown(40, 60, 1);
 assert.deepStrictEqual(focusChanges, [],
   'clicking an already-focused game window must not synthesize WM_KILLFOCUS');
 
+// WEP4 Blackjack puts ordinary BUTTON children directly on its main window,
+// rather than inside a dialog. Its initial Split/Double/Stay/Hit controls have
+// WS_DISABLED; the direct deep-child route must reject both halves of a click.
+const disabledRenderer = new Win98Renderer(canvas);
+let disabledStyle = 0x08000000;
+let disabledFocus = 142;
+const disabledFocusChanges = [];
+const disabledWasm = {
+  exports: {
+    wnd_child_from_point_deep() { return 141; },
+    wnd_window_screen_x() { return 30; },
+    wnd_window_screen_y() { return 40; },
+    wnd_get_style_export(hwnd) { return hwnd === 141 ? disabledStyle : 0; },
+    get_focus_hwnd() { return disabledFocus; },
+    set_focus(hwnd) { disabledFocusChanges.push(hwnd); disabledFocus = hwnd; },
+  },
+};
+disabledRenderer.wasm = disabledWasm;
+disabledRenderer.windows[140] = {
+  hwnd: 140, visible: true, isChild: false,
+  x: 10, y: 10, w: 200, h: 160, hasCaption: false, style: 0, zOrder: 1,
+  wasm: disabledWasm,
+};
+disabledRenderer.handleMouseDown(40, 60, 0);
+disabledRenderer.handleMouseUp(40, 60, 0);
+assert.strictEqual(disabledRenderer.inputQueue.filter(e => e.hwnd === 141).length, 0,
+  'disabled non-dialog button must reject mouse down and up');
+assert.deepStrictEqual(disabledFocusChanges, [],
+  'disabled non-dialog button must not disturb keyboard focus');
+disabledStyle = 0;
+disabledRenderer.handleMouseDown(40, 60, 0);
+disabledRenderer.handleMouseUp(40, 60, 0);
+assert.deepStrictEqual(disabledRenderer.inputQueue.filter(e => e.hwnd === 141).map(e => e.msg),
+  [0x0201, 0x0202], 'the same button must receive a normal click after EnableWindow');
+
 const captionRenderer = new Win98Renderer(canvas);
 const captionWasm = {
   exports: {
