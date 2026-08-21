@@ -7,7 +7,7 @@
 const ProcessBoot = (typeof window !== 'undefined' && window.processBoot) || null;
 
 class WineAssembly {
-  static SOURCE_VERSION = '211';
+  static SOURCE_VERSION = '212';
   static _nextProcessId = 1000;
 
   static hasRemainingAppWindow(destroyed, remainingTopLevel) {
@@ -440,9 +440,10 @@ class WineAssembly {
       console.log(`[SetWindowText] hwnd=0x${hwnd.toString(16)} "${text}"`);
       if (self.renderer) self.renderer.setWindowText(hwnd, text);
     };
+    const installHostMenu = h.set_menu;
     h.set_menu = (hwnd, menuResId) => {
       console.log(`[SetMenu] hwnd=0x${hwnd.toString(16)} menuRes=${menuResId}`);
-      if (self.renderer) self.renderer.setMenu(hwnd, menuResId);
+      installHostMenu(hwnd, menuResId);
     };
 
     // --- Input ---

@@ -41,6 +41,7 @@ UNIT=(
   test/test-ne-loader.js
   test/test-win16-exec.js
   test/test-fs-prefix.js
+  test/test-create-directory-last-error.js
   test/test-bignum-mul.js
   test/test-mat4.js
   test/test-vfs.js
@@ -50,6 +51,7 @@ UNIT=(
   test/test-atom-table.js
   test/test-menu-insert.js
   test/test-menu-popup-text.js
+  test/test-dynamic-menu-bar.js
   test/test-sscanf.js
   test/test-format-message-inserts.js
   test/test-ole-clipboard-wrap.js
@@ -233,6 +235,7 @@ E2E=(
   test/test-win16-wep-gameplay.js
   test/test-win16-pipe-help.js
   test/test-win16-pipe-about.js
+  test/test-win16-jigsawed.js
   test/test-win16-entertainment-manifests.js
   test/test-cli-vfs-include.js
   test/test-winhelp-reference.js

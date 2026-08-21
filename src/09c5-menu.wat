@@ -460,6 +460,36 @@
       (local.get $src_wa) (local.get $len))
     (i32.store (local.get $tbl) (i32.add (local.get $newg) (i32.const 8))))
 
+  ;; Host-created menu bars have no RT_MENU resource key, but GetMenu and the
+  ;; handle-based mutation APIs still need the CreateMenu handle as identity.
+  ;; Keep the ordinary three-argument menu_set for tests/tools and let the
+  ;; runtime bridge supply the source handle through this variant.
+  (func $menu_set_source (export "menu_set_source")
+        (param $hwnd i32) (param $src_wa i32) (param $len i32) (param $source i32)
+    (local $slot i32) (local $tbl i32) (local $old i32) (local $newg i32)
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $slot) (i32.const -1)) (then (return)))
+    (local.set $tbl (call $menu_data_table_addr (local.get $slot)))
+    (local.set $old (i32.load (local.get $tbl)))
+    (if (local.get $old)
+      (then (call $heap_free (i32.sub (local.get $old) (i32.const 8)))))
+    (i32.store (local.get $tbl) (i32.const 0))
+    (if (i32.eqz (local.get $len)) (then (return)))
+    (local.set $newg (call $heap_alloc (i32.add (local.get $len) (i32.const 8))))
+    (i32.store (call $g2w (local.get $newg)) (local.get $source))
+    (i32.store offset=4 (call $g2w (local.get $newg)) (local.get $len))
+    (call $memcpy
+      (call $g2w (i32.add (local.get $newg) (i32.const 8)))
+      (local.get $src_wa) (local.get $len))
+    (i32.store (local.get $tbl) (i32.add (local.get $newg) (i32.const 8))))
+
+  ;; Browser hosts do not carry a JS guest-address translator. Let them fill a
+  ;; temporary guest allocation through guest_write8 and translate it here.
+  (func (export "menu_set_source_guest")
+        (param $hwnd i32) (param $src_g i32) (param $len i32) (param $source i32)
+    (call $menu_set_source (local.get $hwnd) (call $g2w (local.get $src_g))
+      (local.get $len) (local.get $source)))
+
   ;; Drop a window's menu (called from $host_destroy_window path).
   (func (export "menu_clear") (param $hwnd i32)
     (local $slot i32) (local $tbl i32) (local $old i32)

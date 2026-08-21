@@ -256,6 +256,10 @@ async function main() {
   const sourceBitmap = wat.test_call_CreateDIBSection(0, bmi, bitsOut) >>> 0;
   const sourceDc = wat.test_call_CreateCompatibleDC(0) >>> 0;
   assert(sourceBitmap && sourceDc);
+  assert.strictEqual(wat.test_call_SelectObject(hdc, sourceBitmap) >>> 0, 0,
+    'SelectObject must reject bitmaps on a display/window DC');
+  assert.strictEqual(wat.test_gdi_dc_get_field(hdc, 84, 0) >>> 0, 0x30007,
+    'a rejected bitmap must not redirect later window painting');
   assert.strictEqual(wat.test_call_GetDCOrgEx(sourceDc, dcOrigin), 1);
   assert.deepStrictEqual([
     wat.guest_read32(dcOrigin) | 0,

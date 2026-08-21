@@ -2169,9 +2169,10 @@ async function main() {
     else if (text.includes('Completed') || text.includes('Finish')) installingFiles = false;
   };
 
+  const installHostMenu = h.set_menu;
   h.set_menu = (hwnd, menuResId) => {
     logs.push(`[SetMenu] hwnd=0x${hwnd.toString(16)} menu=${menuResId}`);
-    if (renderer) renderer.setMenu(hwnd, menuResId);
+    installHostMenu(hwnd, menuResId);
   };
 
   // Deterministic tick: drive from the batch counter, not wall clock.

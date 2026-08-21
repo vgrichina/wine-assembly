@@ -279,7 +279,8 @@ assert(fs.statSync(path.join(ROOT, 'binaries', 'whatsnew.txt')).size > 0, 'Winam
 assert(!webApp.includes('wine.waitForMainHwnd(() =>'), 'Winamp web launch should not auto-drive playback through IPC');
 assert(!webApp.includes('?v=55'), 'index.html should not keep stale cache-buster v55');
 assert(webApp.includes('lib/renderer-input.js?v=190'), 'web host should cache-bust renderer input after top-window hover routing');
-assert(webApp.includes('lib/renderer.js?v=179'), 'web host should cache-bust renderer after Win16 dialog sizing changes');
+assert(webApp.includes('lib/renderer.js?v=180'), 'web host should cache-bust renderer after dynamic Win16 menu installation');
+assert(webApp.includes('lib/host-window.js?v=2'), 'web host should cache-bust dynamic Win16 menu serialization');
 assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
 assert(webApp.includes('lib/storage.js?v=169'), 'web host should cache-bust storage after Media Player association changes');
 assert(webApp.includes('lib/gdi-surface.js?v=2'), 'web host should load the canonical GDI surface module');
@@ -289,8 +290,8 @@ assert(webApp.includes('lib/host-imports.js?v=203'), 'web host should cache-bust
 assert(webApp.includes('lib/thread-manager.js?v=170'), 'web host should cache-bust thread manager after creation-flag handling changes');
 assert(webApp.includes('lib/compile-wat.js?v=169'), 'web host should cache-bust the snapshot-capable WAT compiler');
 assert(webApp.includes('lib/debug-thread-state.js?v=2'), 'web host should cache-bust corrected guest thread ownership diagnostics');
-assert(webApp.includes('host.js?v=211'), 'web host should cache-bust host.js after the current source update');
-assert(hostJs.includes("static SOURCE_VERSION = '211'"), 'web host should cache-bust WASM artifacts and WAT source compilation');
+assert(webApp.includes('host.js?v=212'), 'web host should cache-bust host.js after the current source update');
+assert(hostJs.includes("static SOURCE_VERSION = '212'"), 'web host should cache-bust WASM artifacts and WAT source compilation');
 assert(hostJs.includes("const fetchOptions = debugFetch ? { cache: 'no-store' } : undefined;"),
   'debug sessions should select a no-store fetch policy');
 assert(hostJs.includes('fetch(`${artifact}?v=${WineAssembly.SOURCE_VERSION}`, fetchOptions)'),

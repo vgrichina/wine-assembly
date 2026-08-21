@@ -1158,6 +1158,20 @@
         (call $win16_dta_ensure)
         (local.set $tmp (global.get $GUEST_STACK))
         (local.set $h (call $win16_dta_guest))
+        ;; Attribute 08h requests the volume label, not ordinary files. VB1's
+        ;; drive-list control asks for it with *.* and rejects the control's
+        ;; initialization if DOS hands it an archive file instead.
+        (if (i32.and (i32.eq (local.get $ah) (i32.const 0x4E))
+                     (i32.and (global.get $ecx) (i32.const 0x08)))
+          (then
+            (memory.fill (call $g2w (local.get $h)) (i32.const 0) (i32.const 43))
+            (call $gs8 (i32.add (local.get $h) (i32.const 21)) (i32.const 0x08))
+            (call $gs32 (i32.add (local.get $h) (i32.const 30)) (i32.const 0x52425F43)) ;; C_BR
+            (call $gs32 (i32.add (local.get $h) (i32.const 34)) (i32.const 0x4553574F)) ;; OWSE
+            (call $gs8 (i32.add (local.get $h) (i32.const 38)) (i32.const 0x52))       ;; R
+            (call $dos_set_ax (i32.const 0))
+            (call $dos_cf (i32.const 0))
+            (return)))
         (call $win16_call32_begin (i32.const 2))
         (if (i32.eq (local.get $ah) (i32.const 0x4E))
           (then (call $handle_FindFirstFileA (call $dos_ptr) (local.get $tmp)
@@ -1213,6 +1227,33 @@
         (call $dos_cf (i32.const 0))
         (return)))
 
+    ;; 32h get drive parameter block. VB1 uses the FAT-count byte while it
+    ;; builds its drive picker; no caller needs a real on-disk FAT because all
+    ;; file access still goes through the VFS. Keep one stable DOS-shaped DPB
+    ;; in the PSP segment and return it as DS:BX.
+    (if (i32.eq (local.get $ah) (i32.const 0x32))
+      (then
+        (call $win16_dta_ensure)
+        (local.set $tmp (call $win16_far_to_guest
+          (global.get $win16_psp_sel) (i32.const 0x100)))
+        (memory.fill (local.get $tmp) (i32.const 0) (i32.const 32))
+        (call $gs8  (local.get $tmp) (i32.const 2))                 ;; C:
+        (call $gs16 (i32.add (local.get $tmp) (i32.const 2))
+          (i32.const 512))                                         ;; bytes/sector
+        (call $gs8  (i32.add (local.get $tmp) (i32.const 4))
+          (i32.const 7))                                           ;; sectors/cluster - 1
+        (call $gs8  (i32.add (local.get $tmp) (i32.const 5))
+          (i32.const 3))                                           ;; cluster shift
+        (call $gs16 (i32.add (local.get $tmp) (i32.const 6))
+          (i32.const 1))                                           ;; reserved sectors
+        (call $gs8  (i32.add (local.get $tmp) (i32.const 8))
+          (i32.const 1))                                           ;; FAT count
+        (global.set $ebx (i32.const 0x100))
+        (call $win16_set_sreg (i32.const 3) (global.get $win16_psp_sel))
+        (call $dos_set_ax (i32.const 0))
+        (call $dos_cf (i32.const 0))
+        (return)))
+
     ;; 35h get vector (AL = number) -> ES:BX, and 25h set vector (DS:DX).
     ;; Klotski hooks one on the way in and restores it on the way out.
     (if (i32.eq (local.get $ah) (i32.const 0x35))
@@ -1230,6 +1271,26 @@
                                      (i32.const 2)))
           (i32.or (i32.shl (global.get $sreg_ds) (i32.const 16))
                   (i32.and (global.get $edx) (i32.const 0xFFFF))))
+        (call $dos_cf (i32.const 0))
+        (return)))
+
+    ;; 0Eh select default drive. The VFS exposes only C:, so accepting C and
+    ;; reporting three logical drive letters is the complete state change.
+    ;; VB1's standard Open File form executes this before it creates its file
+    ;; list; treating an otherwise harmless drive selection as fatal made
+    ;; JigSawed crash as soon as Game -> Open reached the picker.
+    (if (i32.eq (local.get $ah) (i32.const 0x0E))
+      (then
+        (call $dos_set_ax (i32.const 3))
+        (call $dos_cf (i32.const 0))
+        (return)))
+
+    ;; 3Bh change current directory. The browser VFS is a flat C: root; keep
+    ;; that root selected while reporting success so Win3.x file-list controls
+    ;; can finish their normal initialization sequence.
+    (if (i32.eq (local.get $ah) (i32.const 0x3B))
+      (then
+        (call $dos_set_ax (i32.const 0))
         (call $dos_cf (i32.const 0))
         (return)))
 
@@ -2215,6 +2276,14 @@
     (global.set $eax (i32.const 0))
     (call $win16_api_return (i32.const 0)))
 
+  ;; KERNEL.136 GetDriveType(nDrive) -> UINT. The Win16 spelling takes a
+  ;; one-based drive number rather than a root-path string. This runtime's
+  ;; DOS view is the fixed C: drive; VB1 calls this while creating its drive
+  ;; picker and only needs the stable fixed-drive classification.
+  (func $win16_GetDriveType
+    (global.set $eax (i32.const 3)) ;; DRIVE_FIXED
+    (call $win16_api_return (i32.const 2)))
+
   (func $win16_kernel (param $ordinal i32) (result i32)
     (if (i32.eq (local.get $ordinal) (i32.const 131))
       (then (call $win16_GetDOSEnvironment) (return (i32.const 1))))
@@ -2222,6 +2291,8 @@
       (then (call $win16_dir_query (i32.const 0)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 135))
       (then (call $win16_dir_query (i32.const 1)) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 136))
+      (then (call $win16_GetDriveType) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 74))
       (then (call $win16_OpenFile) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 137))
@@ -3857,6 +3928,8 @@
       (then (call $win16_CheckDlgButton) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 98))
       (then (call $win16_IsDlgButtonChecked) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 100))
+      (then (call $win16_DlgDirList) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 101))
       (then (call $win16_SendDlgItemMessage) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 174))
@@ -4275,6 +4348,7 @@
   (func $win16_CallWindowProc
     (local $proc i32) (local $hwnd i32) (local $message i32)
     (local $wparam i32) (local $lparam i32) (local $ret i32)
+    (local $hwnd32 i32) (local $class i32)
     (local.set $proc (call $win16_arg32 (i32.const 5)))
     (local.set $hwnd (call $win16_arg16 (i32.const 4)))
     (local.set $message (call $win16_arg16 (i32.const 3)))
@@ -4282,7 +4356,44 @@
     (local.set $lparam (call $win16_arg32 (i32.const 0)))
     (if (i32.eqz (call $win16_is_far_proc (local.get $proc)))
       (then
-        (if (call $win16_defdlg_command (call $win16_h32 (local.get $hwnd))
+        (local.set $hwnd32 (call $win16_h32 (local.get $hwnd)))
+        (local.set $class (call $ctrl_table_get_class (local.get $hwnd32)))
+        ;; USER returns a sentinel rather than a callable far procedure when a
+        ;; Win16 app subclasses one of the controls implemented by the WAT
+        ;; runtime. Some libraries keep that value and later pass it back to
+        ;; CallWindowProc. Route those calls through the native control just as
+        ;; SendMessage does; DefWindowProc does not understand LB_/CB_/EM_.
+        ;;
+        ;; LB_GETTEXT's final argument is still a Win16 far pointer at this
+        ;; boundary. The native listbox writes to a guest linear address.
+        (if (local.get $class)
+          (then
+            (if (i32.and (i32.eq (local.get $class) (i32.const 4))
+                  (i32.or
+                    (i32.eq (local.get $message) (i32.const 0x0401)) ;; LB_ADDSTRING
+                    (i32.or
+                      (i32.eq (local.get $message) (i32.const 0x0402)) ;; LB_INSERTSTRING
+                      (i32.eq (local.get $message) (i32.const 0x040A))))) ;; LB_GETTEXT
+              (then
+                (local.set $lparam (call $win16_far_to_guest
+                  (i32.shr_u (local.get $lparam) (i32.const 16))
+                  (i32.and (local.get $lparam) (i32.const 0xFFFF))))))
+            (call $win16_call32_begin (i32.const 4))
+            ;; This is the procedure *under* the guest subclass, so bypass the
+            ;; window table (which still names that subclass) and invoke the
+            ;; native control directly. Going through wnd_send_message here
+            ;; would post the translated message back to the same guest proc.
+            (global.set $eax (call $control_wndproc_dispatch
+              (local.get $hwnd32)
+              (call $win16_ctrl_msg32 (local.get $hwnd32) (local.get $message))
+              (call $win16_msg_wparam32 (local.get $message) (local.get $wparam))
+              (local.get $lparam)))
+            (call $win16_call32_end)
+            (global.set $edx (i32.shr_u (global.get $eax) (i32.const 16)))
+            (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+            (call $win16_api_return (i32.const 14))
+            (return)))
+        (if (call $win16_defdlg_command (local.get $hwnd32)
                   (local.get $message) (local.get $wparam))
           (then
             (global.set $eax (i32.const 0))
@@ -4290,7 +4401,7 @@
             (call $win16_api_return (i32.const 14))
             (return)))
         (call $win16_call32_begin (i32.const 4))
-        (call $handle_DefWindowProcA (call $win16_h32 (local.get $hwnd))
+        (call $handle_DefWindowProcA (local.get $hwnd32)
           (local.get $message) (local.get $wparam) (local.get $lparam)
           (i32.const 0) (i32.const 0))
         (call $win16_call32_end)
@@ -4516,8 +4627,10 @@
   ;; MFC frame two batches in. Whatever those two depend on has to be
   ;; understood before the order moves.
   (func $win16_ShowWindow
-    (local $hwnd i32) (local $show i32)
-    (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 1))))
+    (local $hwnd16 i32) (local $hwnd i32) (local $show i32)
+    (local $proc i32) (local $client_size i32)
+    (local.set $hwnd16 (call $win16_arg16 (i32.const 1)))
+    (local.set $hwnd (call $win16_h32 (local.get $hwnd16)))
     (local.set $show (call $win16_arg16 (i32.const 0)))
     (drop (call $post_queue_push (local.get $hwnd) (i32.const 0x0018)
       (i32.ne (local.get $show) (i32.const 0)) (i32.const 0)))
@@ -4540,6 +4653,7 @@
         (drop (call $post_queue_push (local.get $hwnd) (i32.const 0x0007)
           (i32.const 0) (i32.const 0)))))                  ;; WM_SETFOCUS
     (drop (call $host_show_window (local.get $hwnd) (local.get $show)))
+    (call $wnd_apply_show_state (local.get $hwnd) (local.get $show))
     (if (local.get $show)
       (then
         ;; CreateWindow defers the initial erase for a window that is not yet
@@ -4571,6 +4685,26 @@
       (else
         (drop (call $wnd_set_style (local.get $hwnd)
           (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0xEFFFFFFF))))))
+    ;; SW_MAXIMIZE changed the renderer's outer rectangle above. Win16 cannot
+    ;; use the 32-bit ShowWindow continuation, but it still needs USER's client
+    ;; rectangle and synchronous SIZE_MAXIMIZED delivery before ShowWindow
+    ;; returns. Visual Basic lays out the real form here even when a separate
+    ;; ThunderRTMain helper remains $main_hwnd.
+    (if (i32.eq (local.get $show) (i32.const 3))
+      (then
+        (call $defwndproc_do_nccalcsize (local.get $hwnd))
+        (local.set $client_size (call $client_rect_wh_packed (local.get $hwnd)))
+        (local.set $proc (call $wnd_table_get (local.get $hwnd)))
+        (if (call $win16_is_far_proc (local.get $proc))
+          (then
+            (call $win16_cont_push
+              (call $win16_take_return (i32.const 4)) (i32.const 1))
+            (call $win16_enter_wndproc (local.get $proc) (local.get $hwnd16)
+              (i32.const 0x0005) (i32.const 2) (local.get $client_size)
+              (global.get $WIN16_THUNK_SEL) (global.get $WIN16_CONT_OFFSET))
+            (return)))
+        (drop (call $wnd_send_message (local.get $hwnd)
+          (i32.const 0x0005) (i32.const 2) (local.get $client_size)))))
     (global.set $eax (i32.const 1))
     (call $win16_api_return (i32.const 4)))
 
@@ -5071,12 +5205,34 @@
     (call $win16_api_return (i32.const 6)))
 
   (func $win16_EndPaint
-    (local $hwnd i32)
+    (local $hwnd i32) (local $src i32) (local $tmp i32)
+    (local $hdc i32) (local $private i32)
     (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 2))))
+    (local.set $src (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+    (local.set $tmp (global.get $GUEST_STACK))
+    ;; EndPaint consumes the same PAINTSTRUCT that BeginPaint returned. Widen
+    ;; it before crossing into the 32-bit handler; passing untouched scratch
+    ;; here loses both the HDC and rcPaint, leaking one transient DC per paint.
+    (local.set $hdc (call $win16_h32 (call $gl16 (local.get $src))))
+    (local.set $private (call $wnd_own_dc_is_private (local.get $hdc)))
+    (call $gs32 (local.get $tmp) (local.get $hdc))
+    (call $gs32 (i32.add (local.get $tmp) (i32.const 4))
+      (call $gl16 (i32.add (local.get $src) (i32.const 2))))
+    (call $win16_rect_widen (i32.add (local.get $tmp) (i32.const 8))
+                             (i32.add (local.get $src) (i32.const 4)))
+    (call $gs32 (i32.add (local.get $tmp) (i32.const 24))
+      (call $gl16 (i32.add (local.get $src) (i32.const 12))))
+    (call $gs32 (i32.add (local.get $tmp) (i32.const 28))
+      (call $gl16 (i32.add (local.get $src) (i32.const 14))))
     (call $win16_call32_begin (i32.const 2))
-    (call $handle_EndPaint (local.get $hwnd) (global.get $GUEST_STACK)
+    (call $handle_EndPaint (local.get $hwnd) (local.get $tmp)
       (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
     (call $win16_call32_end)
+    ;; A CS_OWNDC mapping persists with the private DC. Transient BeginPaint
+    ;; DCs are gone after EndPaint, so their narrow slots must be reusable.
+    (if (i32.eqz (local.get $private))
+      (then (call $win16_h16_forget (local.get $hdc))))
     (global.set $eax (i32.const 1))
     (call $win16_api_return (i32.const 6)))
 
@@ -5634,20 +5790,39 @@
   (func $win16_DeferWindowPos
     (local $hwnd i32) (local $after i32) (local $x i32) (local $y i32)
     (local $cx i32) (local $cy i32) (local $flags i32) (local $hdwp i32)
+    (local $hwnd16 i32) (local $proc i32) (local $old_cs i32) (local $cs i32)
     (local.set $hdwp (call $win16_arg16 (i32.const 7)))
-    (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 6))))
+    (local.set $hwnd16 (call $win16_arg16 (i32.const 6)))
+    (local.set $hwnd (call $win16_h32 (local.get $hwnd16)))
     (local.set $after (call $win16_arg16 (i32.const 5)))
     (local.set $x (call $win16_coord (call $win16_arg16 (i32.const 4))))
     (local.set $y (call $win16_coord (call $win16_arg16 (i32.const 3))))
     (local.set $cx (call $win16_coord (call $win16_arg16 (i32.const 2))))
     (local.set $cy (call $win16_coord (call $win16_arg16 (i32.const 1))))
     (local.set $flags (call $win16_arg16 (i32.const 0)))
+    (local.set $proc (call $wnd_table_get (local.get $hwnd)))
+    (local.set $old_cs (call $host_get_window_client_size (local.get $hwnd)))
     (call $win16_call32_begin (i32.const 7))
     (call $win16_call32_arg (i32.const 5) (local.get $cy))
     (call $win16_call32_arg (i32.const 6) (local.get $flags))
     (call $handle_SetWindowPos (local.get $hwnd) (local.get $after)
       (local.get $x) (local.get $y) (local.get $cx) (i32.const 0))
     (call $win16_call32_end)
+    (local.set $cs (call $host_get_window_client_size (local.get $hwnd)))
+    ;; USER sends size changes before SetWindowPos/DeferWindowPos returns.
+    ;; VBRUN caches PictureBox ScaleWidth/ScaleHeight in that notification;
+    ;; posting it leaves the old design-time 32x32 scale visible to the next
+    ;; Basic statement even though the HWND has already been resized.
+    (if (i32.and
+          (call $win16_is_far_proc (local.get $proc))
+          (i32.ne (local.get $cs) (local.get $old_cs)))
+      (then
+        (call $win16_cont_push
+          (call $win16_take_return (i32.const 16)) (local.get $hdwp))
+        (call $win16_enter_wndproc (local.get $proc) (local.get $hwnd16)
+          (i32.const 0x0005) (i32.const 0) (local.get $cs)
+          (global.get $WIN16_THUNK_SEL) (global.get $WIN16_CONT_OFFSET))
+        (return)))
     (global.set $eax (local.get $hdwp))
     (call $win16_api_return (i32.const 16)))
 
@@ -5667,20 +5842,35 @@
   ;; handles, and mapping them would turn them into windows.
   (func $win16_SetWindowPos
     (local $hwnd i32) (local $after i32) (local $x i32) (local $y i32)
-    (local $cx i32) (local $cy i32) (local $flags i32)
-    (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 6))))
+    (local $cx i32) (local $cy i32) (local $flags i32) (local $hwnd16 i32)
+    (local $proc i32) (local $old_cs i32) (local $cs i32)
+    (local.set $hwnd16 (call $win16_arg16 (i32.const 6)))
+    (local.set $hwnd (call $win16_h32 (local.get $hwnd16)))
     (local.set $after (call $win16_arg16 (i32.const 5)))
     (local.set $x (call $win16_coord (call $win16_arg16 (i32.const 4))))
     (local.set $y (call $win16_coord (call $win16_arg16 (i32.const 3))))
     (local.set $cx (call $win16_coord (call $win16_arg16 (i32.const 2))))
     (local.set $cy (call $win16_coord (call $win16_arg16 (i32.const 1))))
     (local.set $flags (call $win16_arg16 (i32.const 0)))
+    (local.set $proc (call $wnd_table_get (local.get $hwnd)))
+    (local.set $old_cs (call $host_get_window_client_size (local.get $hwnd)))
     (call $win16_call32_begin (i32.const 7))
     (call $win16_call32_arg (i32.const 5) (local.get $cy))
     (call $win16_call32_arg (i32.const 6) (local.get $flags))
     (call $handle_SetWindowPos (local.get $hwnd) (local.get $after)
       (local.get $x) (local.get $y) (local.get $cx) (i32.const 0))
     (call $win16_call32_end)
+    (local.set $cs (call $host_get_window_client_size (local.get $hwnd)))
+    (if (i32.and
+          (call $win16_is_far_proc (local.get $proc))
+          (i32.ne (local.get $cs) (local.get $old_cs)))
+      (then
+        (call $win16_cont_push
+          (call $win16_take_return (i32.const 14)) (i32.const 1))
+        (call $win16_enter_wndproc (local.get $proc) (local.get $hwnd16)
+          (i32.const 0x0005) (i32.const 0) (local.get $cs)
+          (global.get $WIN16_THUNK_SEL) (global.get $WIN16_CONT_OFFSET))
+        (return)))
     (global.set $eax (i32.const 1))
     (call $win16_api_return (i32.const 14)))
 
@@ -6093,6 +6283,11 @@
     (local.set $item (call $win16_arg16 (i32.const 0)))
     (local.set $id (call $win16_arg16 (i32.const 2)))
     (local.set $flags (call $win16_arg16 (i32.const 3)))
+    ;; For MF_POPUP, uIDNewItem is an HMENU rather than a command id. Win16
+    ;; sees the 16-bit alias returned by CreatePopupMenu; the 32-bit host menu
+    ;; tree needs the original handle so SetMenu can follow the submenu.
+    (if (i32.and (local.get $flags) (i32.const 0x0010))
+      (then (local.set $id (call $win16_h32 (local.get $id)))))
     ;; AppendMenu has no position argument, so its menu handle is the word the
     ;; other two spend on one.
     (if (local.get $append)

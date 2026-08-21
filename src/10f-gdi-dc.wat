@@ -481,7 +481,7 @@
     (i32.const 1))
 
   (func $gdi_dc_select_owned_object (param $hdc i32) (param $handle i32) (result i32)
-    (local $type i32)
+    (local $type i32) (local $dc i32)
     (local.set $type (call $gdi_object_type (local.get $handle)))
     (if (i32.eq (local.get $type) (i32.const 1))
       (then (return (call $gdi_dc_set_field
@@ -490,8 +490,18 @@
       (then (return (call $gdi_dc_set_field
         (local.get $hdc) (i32.const 8) (local.get $handle) (i32.const 0x30010)))))
     (if (i32.eq (local.get $type) (i32.const 3))
-      (then (return (call $gdi_dc_set_field
-        (local.get $hdc) (i32.const 84) (local.get $handle) (i32.const 0x30007)))))
+      (then
+        ;; A bitmap may only be selected into a memory DC. Window, child,
+        ;; whole-window, and CS_OWNDC records carry an HWND binding at +92;
+        ;; accepting a bitmap there redirects every later paint away from the
+        ;; attached window surface. VB1's PictureBox runtime probes this rule
+        ;; while constructing JigSawed pieces and expects SelectObject to fail.
+        (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
+        (if (i32.and (i32.ne (local.get $dc) (i32.const 0))
+              (i32.ne (i32.load offset=92 (local.get $dc)) (i32.const 0)))
+          (then (return (i32.const -1))))
+        (return (call $gdi_dc_set_field
+          (local.get $hdc) (i32.const 84) (local.get $handle) (i32.const 0x30007)))))
     (if (i32.eq (local.get $type) (i32.const 4))
       (then (return (call $gdi_dc_set_field
         (local.get $hdc) (i32.const 88) (local.get $handle) (i32.const 0x3001D)))))
@@ -1258,12 +1268,14 @@
 
   (func $host_release_dc (param $hdc i32) (result i32)
     ;; A private DC survives ReleaseDC and EndPaint — that is what makes its
-    ;; selected objects persist. Its clip and aux scratch are per-acquisition
-    ;; and still go; only the state record, which holds the selections, stays.
+    ;; selected objects persist. Keep its USER visible-region clip too: code
+    ;; holding a CS_OWNDC HDC can draw again before its next GetDC/BeginPaint,
+    ;; and that draw must still be constrained to the window hierarchy. The
+    ;; next acquisition rebuilds both application and system clips from a
+    ;; clean state in $host_alloc_window_dc.
     (if (call $wnd_own_dc_is_private (local.get $hdc))
       (then
         (call $gdi_dc_aux_release (local.get $hdc))
-        (call $gdi_dc_clip_release (local.get $hdc))
         (return (i32.const 1))))
     (call $gdi_dc_aux_release (local.get $hdc))
     (call $gdi_dc_clip_release (local.get $hdc))
