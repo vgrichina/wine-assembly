@@ -217,6 +217,13 @@ const TRACE_AT_WATCH = hasFlag('trace-at-watch'); // --trace-at-watch: diff --tr
 const SHOW_CSTRING = getArg('show-cstring', null); // --show-cstring=0xADDR[,0xADDR...]: decode MFC CString at these addrs in trace-at and debug prompt
 const SKIP_SPEC = getArg('skip', null);          // --skip=0xADDR[,0xADDR,...]: auto-return (simulate ret) when EIP hits
 const COUNT_SPEC = getArg('count', null);        // --count=0xADDR[,0xADDR,...]: passive hit counter per block dispatch (up to 16 slots)
+// --handler-hist-thread=N --handler-hist-start=A --handler-hist-stop=B:
+// enable the existing WAT handler/block/pair histograms only for thread N and
+// only in [A,B), then print a compact snapshot. Profiling is off by default.
+const HANDLER_HIST_THREAD = parseInt(getArg('handler-hist-thread', '-1'), 10);
+const HANDLER_HIST_START = Math.max(0, parseInt(getArg('handler-hist-start', '0'), 10) || 0);
+const HANDLER_HIST_STOP = Math.max(HANDLER_HIST_START + 1,
+  parseInt(getArg('handler-hist-stop', String(MAX_BATCHES)), 10) || MAX_BATCHES);
 const DUMP_SPEC = getArg('dump', null);   // --dump=0xADDR:LEN: hexdump memory region
 const DUMP_SEH = hasFlag('dump-seh');     // --dump-seh: detailed SEH chain dump at end
 const DUMP_VMAP = hasFlag('dump-vmap');   // --dump-vmap: sparse VirtualAlloc map + which probes are mapped
@@ -467,6 +474,21 @@ function describeSchedule(instance, threadManager) {
     }
   }
   return { text: parts.join('  '), sig: sig.join('|') };
+}
+
+function buildHandlerNameList() {
+  const names = [];
+  try {
+    const source = fs.readFileSync(path.join(SRC_DIR, '02-thread-table.wat'), 'utf8');
+    for (const line of source.split(/\r?\n/)) {
+      const match = line.match(/^\s*(\$[^\s()]+).*;;\s*(\d+)(?::\s*(.*))?$/);
+      if (!match) continue;
+      const id = parseInt(match[2], 10);
+      if (!Number.isFinite(id)) continue;
+      names[id] = match[3] ? `${match[1]}: ${match[3].trim()}` : match[1];
+    }
+  } catch (_) {}
+  return names;
 }
 
 async function main() {
@@ -3324,7 +3346,128 @@ async function main() {
 
   let lastSchedSig = null;
   let lastSchedAt = 0;
+  const handlerNames = HANDLER_HIST_THREAD >= 0 ? buildHandlerNameList() : [];
+  let handlerHistExports = null;
+  let handlerHistArmed = false;
+  let handlerHistDone = false;
+  const findHandlerHistExports = () => {
+    if (HANDLER_HIST_THREAD === 0) return instance.exports;
+    for (const [, thread] of threadManager.threads) {
+      if ((thread.tid | 0) === HANDLER_HIST_THREAD && thread.instance) {
+        return thread.instance.exports;
+      }
+    }
+    return null;
+  };
+  const printHandlerHistogram = (batch) => {
+    const e = handlerHistExports;
+    if (!e || !e.get_handler_hist_count || !e.get_handler_hist_base) return;
+    const u32 = new Uint32Array(memory.buffer);
+    const count = e.get_handler_hist_count() | 0;
+    const base = (e.get_handler_hist_base() >>> 2) >>> 0;
+    const pairBase = e.get_handler_pair_hist_base
+      ? ((e.get_handler_pair_hist_base() >>> 2) >>> 0) : 0;
+    const handlers = [];
+    let total = 0;
+    for (let id = 0; id < count; id++) {
+      const hits = u32[base + id] >>> 0;
+      total += hits;
+      if (hits) handlers.push({ id, hits });
+    }
+    handlers.sort((a, b) => b.hits - a.hits);
+    console.log(`[handler-hist] T${HANDLER_HIST_THREAD} batches=${HANDLER_HIST_START}..${batch} total=${total}`);
+    for (const row of handlers.slice(0, 24)) {
+      const pct = total ? (row.hits * 100 / total).toFixed(2) : '0.00';
+      console.log(`  H${row.id} ${handlerNames[row.id] || '$handler_' + row.id} ${row.hits} (${pct}%)`);
+    }
+    if (pairBase) {
+      const pairs = [];
+      let pairTotal = 0;
+      for (let prev = 0; prev < count; prev++) {
+        const rowBase = pairBase + prev * count;
+        for (let cur = 0; cur < count; cur++) {
+          const hits = u32[rowBase + cur] >>> 0;
+          pairTotal += hits;
+          if (hits) pairs.push({ prev, cur, hits });
+        }
+      }
+      pairs.sort((a, b) => b.hits - a.hits);
+      console.log('  top pairs:');
+      for (const row of pairs.slice(0, 12)) {
+        const pct = pairTotal ? (row.hits * 100 / pairTotal).toFixed(2) : '0.00';
+        console.log(`    H${row.prev}->H${row.cur} ${handlerNames[row.prev] || '$handler_' + row.prev} -> ${handlerNames[row.cur] || '$handler_' + row.cur} ${row.hits} (${pct}%)`);
+      }
+    }
+    if (e.get_hot_block_hist_base && e.get_hot_block_hist_count) {
+      const hotBase = (e.get_hot_block_hist_base() >>> 2) >>> 0;
+      const hotCount = e.get_hot_block_hist_count() | 0;
+      const blocks = [];
+      let blockTotal = 0;
+      for (let i = 0; i < hotCount; i++) {
+        const addr = u32[hotBase + i * 2] >>> 0;
+        const hits = u32[hotBase + i * 2 + 1] >>> 0;
+        blockTotal += hits;
+        if (addr && hits) blocks.push({ addr, hits });
+      }
+      blocks.sort((a, b) => b.hits - a.hits);
+      console.log(`  top blocks (collisions=${e.get_hot_block_hist_collisions ? e.get_hot_block_hist_collisions() >>> 0 : 0}):`);
+      for (const row of blocks.slice(0, 20)) {
+        const pct = blockTotal ? (row.hits * 100 / blockTotal).toFixed(2) : '0.00';
+        console.log(`    ${hex(row.addr)} ${row.hits} (${pct}%)`);
+      }
+    }
+    if (e.get_sib_consumer_hist_base && e.get_sib_consumer_hist_count) {
+      const sibBase = (e.get_sib_consumer_hist_base() >>> 2) >>> 0;
+      const sibCount = e.get_sib_consumer_hist_count() | 0;
+      const rows = [];
+      let sibTotal = 0;
+      const regNames = ['eax', 'ecx', 'edx', 'ebx', 'esp', 'ebp', 'esi', 'edi'];
+      const regName = id => id === 15 ? 'none' : (regNames[id] || String(id));
+      for (let i = 0; i < sibCount; i++) {
+        const key = u32[sibBase + i * 2] >>> 0;
+        const hits = u32[sibBase + i * 2 + 1] >>> 0;
+        if (!key || !hits) continue;
+        sibTotal += hits;
+        rows.push({
+          consumer: (key >>> 23) & 0x1ff,
+          op: (key >>> 14) & 0x1ff,
+          base: (key >>> 10) & 0xf,
+          index: (key >>> 6) & 0xf,
+          scale: (key >>> 4) & 3,
+          hits,
+        });
+      }
+      rows.sort((a, b) => b.hits - a.hits);
+      const recorded = e.get_sib_consumer_hist_total ? e.get_sib_consumer_hist_total() >>> 0 : sibTotal;
+      const collisions = e.get_sib_consumer_hist_collisions ? e.get_sib_consumer_hist_collisions() >>> 0 : 0;
+      console.log(`  top SIB consumers (recorded=${recorded}, collisions=${collisions}):`);
+      for (const row of rows.slice(0, 12)) {
+        const pct = sibTotal ? (row.hits * 100 / sibTotal).toFixed(2) : '0.00';
+        console.log(`    H${row.consumer} ${handlerNames[row.consumer] || '$handler_' + row.consumer}` +
+          ` op=0x${row.op.toString(16)} [${regName(row.base)}+${regName(row.index)}*${1 << row.scale}+disp]` +
+          ` ${row.hits} (${pct}%)`);
+      }
+    }
+  };
   for (let batch = 0; batch < MAX_BATCHES && !stopped; batch++) {
+    if (HANDLER_HIST_THREAD >= 0 && !handlerHistDone) {
+      if (!handlerHistArmed && batch >= HANDLER_HIST_START) {
+        handlerHistExports = findHandlerHistExports();
+        if (handlerHistExports && handlerHistExports.reset_handler_hist &&
+            handlerHistExports.set_handler_hist_enabled) {
+          handlerHistExports.reset_handler_hist();
+          handlerHistExports.set_handler_hist_enabled(1);
+          handlerHistArmed = true;
+          console.log(`[handler-hist] armed T${HANDLER_HIST_THREAD} at batch ${batch}`);
+        }
+      }
+      if (handlerHistArmed && batch >= HANDLER_HIST_STOP) {
+        handlerHistExports.set_handler_hist_enabled(0);
+        printHandlerHistogram(batch);
+        handlerHistArmed = false;
+        handlerHistDone = true;
+      }
+    }
     if (TRACE_SCHED) {
       const sched = describeSchedule(instance, threadManager);
       if (sched.sig !== lastSchedSig || (batch - lastSchedAt) >= TRACE_SCHED_EVERY) {
@@ -6209,6 +6352,13 @@ if (VERBOSE) {
         }
       }
     }
+  }
+
+  if (handlerHistArmed && handlerHistExports) {
+    handlerHistExports.set_handler_hist_enabled(0);
+    printHandlerHistogram(MAX_BATCHES);
+    handlerHistArmed = false;
+    handlerHistDone = true;
   }
 
   if (!stopped) {

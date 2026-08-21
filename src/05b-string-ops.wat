@@ -15,6 +15,103 @@
           (i32.add (call $g2w (local.get $guest))
             (i32.sub (local.get $size) (i32.const 1)))))))
 
+  ;; Bulk CRT/kernel copies take guest pointers, not already-translated WASM
+  ;; offsets.  Adjacent sparse guest pages do not necessarily have adjacent
+  ;; backing, so translate both range endpoints before using memory.copy/fill.
+  ;; The byte fallback also preserves memmove overlap semantics.
+  (func $guest_memmove (param $dst i32) (param $src i32) (param $size i32)
+    (local $i i32) (local $chunk i32) (local $remaining i32)
+    (if (i32.eqz (local.get $size)) (then (return)))
+    (if (i32.and
+          (call $string_guest_range_contiguous (local.get $dst) (local.get $size))
+          (call $string_guest_range_contiguous (local.get $src) (local.get $size)))
+      (then
+        (memory.copy
+          (call $g2w (local.get $dst))
+          (call $g2w (local.get $src))
+          (local.get $size))
+        (return)))
+    (if (i32.and
+          (i32.gt_u (local.get $dst) (local.get $src))
+          (i32.lt_u (i32.sub (local.get $dst) (local.get $src)) (local.get $size)))
+      (then
+        (local.set $remaining (local.get $size))
+        (block $done (loop $backward
+          (br_if $done (i32.eqz (local.get $remaining)))
+          ;; End each chunk at the current copy end, stopping at either
+          ;; source or destination guest-page boundary.
+          (local.set $chunk (local.get $remaining))
+          (local.set $i
+            (i32.add
+              (i32.and
+                (i32.add (local.get $src) (i32.sub (local.get $remaining) (i32.const 1)))
+                (i32.const 0xFFF))
+              (i32.const 1)))
+          (if (i32.lt_u (local.get $i) (local.get $chunk))
+            (then (local.set $chunk (local.get $i))))
+          (local.set $i
+            (i32.add
+              (i32.and
+                (i32.add (local.get $dst) (i32.sub (local.get $remaining) (i32.const 1)))
+                (i32.const 0xFFF))
+              (i32.const 1)))
+          (if (i32.lt_u (local.get $i) (local.get $chunk))
+            (then (local.set $chunk (local.get $i))))
+          (local.set $remaining (i32.sub (local.get $remaining) (local.get $chunk)))
+          (memory.copy
+            (call $g2w (i32.add (local.get $dst) (local.get $remaining)))
+            (call $g2w (i32.add (local.get $src) (local.get $remaining)))
+            (local.get $chunk))
+          (br $backward))))
+      (else
+        (local.set $i (i32.const 0))
+        (block $done (loop $forward
+          (br_if $done (i32.ge_u (local.get $i) (local.get $size)))
+          ;; Each chunk stays inside one source and one destination guest
+          ;; page, where a single translation is guaranteed contiguous.
+          (local.set $chunk (i32.sub (local.get $size) (local.get $i)))
+          (local.set $remaining
+            (i32.sub (i32.const 0x1000)
+              (i32.and (i32.add (local.get $src) (local.get $i)) (i32.const 0xFFF))))
+          (if (i32.lt_u (local.get $remaining) (local.get $chunk))
+            (then (local.set $chunk (local.get $remaining))))
+          (local.set $remaining
+            (i32.sub (i32.const 0x1000)
+              (i32.and (i32.add (local.get $dst) (local.get $i)) (i32.const 0xFFF))))
+          (if (i32.lt_u (local.get $remaining) (local.get $chunk))
+            (then (local.set $chunk (local.get $remaining))))
+          (memory.copy
+            (call $g2w (i32.add (local.get $dst) (local.get $i)))
+            (call $g2w (i32.add (local.get $src) (local.get $i)))
+            (local.get $chunk))
+          (local.set $i (i32.add (local.get $i) (local.get $chunk)))
+          (br $forward))))))
+
+  (func $guest_memset (param $dst i32) (param $value i32) (param $size i32)
+    (local $i i32) (local $chunk i32)
+    (if (i32.eqz (local.get $size)) (then (return)))
+    (if (call $string_guest_range_contiguous (local.get $dst) (local.get $size))
+      (then
+        (memory.fill
+          (call $g2w (local.get $dst))
+          (local.get $value)
+          (local.get $size)))
+      (else
+        (local.set $i (i32.const 0))
+        (block $done (loop $fill
+          (br_if $done (i32.ge_u (local.get $i) (local.get $size)))
+          (local.set $chunk
+            (i32.sub (i32.const 0x1000)
+              (i32.and (i32.add (local.get $dst) (local.get $i)) (i32.const 0xFFF))))
+          (if (i32.lt_u (i32.sub (local.get $size) (local.get $i)) (local.get $chunk))
+            (then (local.set $chunk (i32.sub (local.get $size) (local.get $i)))))
+          (memory.fill
+            (call $g2w (i32.add (local.get $dst) (local.get $i)))
+            (local.get $value)
+            (local.get $chunk))
+          (local.set $i (i32.add (local.get $i) (local.get $chunk)))
+          (br $fill))))))
+
   ;; --- String ops ---
   (func $th_movsb (param $op i32)
     (call $gs8 (global.get $edi) (call $gl8 (global.get $esi)))

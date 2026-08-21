@@ -1859,6 +1859,28 @@
   (global $heap_ptr (mut i32) (i32.const 0x03D12000))  ;; heap region: 0x03D12000-0x03E12000 (1MB)
   (global $heap_sparse_ptr (mut i32) (i32.const 0))
   (global $heap_sparse_end (mut i32) (i32.const 0))
+  ;; Four recent successful sparse guest translations. Storm's decompressor
+  ;; stays in slot 0; generated video converters alternate palette/input/output
+  ;; ranges and need the extra slots to avoid rescanning hundreds of append-only
+  ;; map records on nearly every instruction.
+  (global $g2w_sparse_base (mut i32) (i32.const 0))
+  (global $g2w_sparse_size (mut i32) (i32.const 0))
+  (global $g2w_sparse_backing (mut i32) (i32.const 0))
+  (global $g2w_sparse_base1 (mut i32) (i32.const 0))
+  (global $g2w_sparse_size1 (mut i32) (i32.const 0))
+  (global $g2w_sparse_backing1 (mut i32) (i32.const 0))
+  (global $g2w_sparse_base2 (mut i32) (i32.const 0))
+  (global $g2w_sparse_size2 (mut i32) (i32.const 0))
+  (global $g2w_sparse_backing2 (mut i32) (i32.const 0))
+  (global $g2w_sparse_base3 (mut i32) (i32.const 0))
+  (global $g2w_sparse_size3 (mut i32) (i32.const 0))
+  (global $g2w_sparse_backing3 (mut i32) (i32.const 0))
+  ;; Byte reads in generated converters repeatedly hit one palette page while
+  ;; dword input/output accesses use other mappings. Keep that translation
+  ;; separate from the shared recent-range cache so the access classes do not
+  ;; evict or linearly probe through each other.
+  (global $g2w_gl8_page (mut i32) (i32.const -1))
+  (global $g2w_gl8_delta (mut i32) (i32.const 0))
   ;; Guest-space top of the downward-growing sparse VirtualAlloc arena. Kept
   ;; 64KB-aligned to match Win32 allocation granularity for NULL MEM_RESERVE
   ;; calls.
@@ -1954,6 +1976,16 @@
   (global $bsearch_mid     (mut i32) (i32.const 0))  ;; current probe index
   (global $bsearch_ret     (mut i32) (i32.const 0))  ;; caller return address
   (global $bsearch_thunk   (mut i32) (i32.const 0))  ;; guest addr of CACA000C thunk
+  ;; qsort trampoline state. Adjacent comparisons make the continuation small
+  ;; and let swaps use sparse-safe guest byte accesses (CACA002D).
+  (global $qsort_base      (mut i32) (i32.const 0))
+  (global $qsort_count     (mut i32) (i32.const 0))
+  (global $qsort_size      (mut i32) (i32.const 0))
+  (global $qsort_compar    (mut i32) (i32.const 0))
+  (global $qsort_pass      (mut i32) (i32.const 0))
+  (global $qsort_index     (mut i32) (i32.const 0))
+  (global $qsort_ret       (mut i32) (i32.const 0))
+  (global $qsort_thunk     (mut i32) (i32.const 0))
   ;; DLL loader state
   (global $dll_count (mut i32) (i32.const 0))
   (global $DLL_TABLE i32 (i32.const 0x07992000))  ;; 32 bytes x 16 DLLs = 512 bytes

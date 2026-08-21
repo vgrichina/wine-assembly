@@ -2123,9 +2123,22 @@
     (global.set $flag_sign_shift (i32.const 7))
     (return_call $next))
 
-  ;; --- Byte MOV reg8, reg8 (op = dst<<4 | src) ---
+  ;; --- Byte MOV reg8, reg8 ---
+  ;; Low byte is dst<<4 | src. Bit 8 means the decoder fused a second
+  ;; adjacent register-only byte MOV, encoded as (dst<<4 | src) << 9.
+  ;; Neither instruction changes flags, so executing the exact pair here is
+  ;; indistinguishable while saving one threaded-handler dispatch.
   (func $th_mov_r8_r8 (param $op i32)
-    (call $set_reg8 (i32.shr_u (local.get $op) (i32.const 4)) (call $get_reg8 (i32.and (local.get $op) (i32.const 0xF)))) (return_call $next))
+    (call $set_reg8
+      (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF))
+      (call $get_reg8 (i32.and (local.get $op) (i32.const 0xF))))
+    (if (i32.and (local.get $op) (i32.const 0x100))
+      (then
+        (call $set_reg8
+          (i32.and (i32.shr_u (local.get $op) (i32.const 13)) (i32.const 0xF))
+          (call $get_reg8
+            (i32.and (i32.shr_u (local.get $op) (i32.const 9)) (i32.const 0xF))))))
+    (return_call $next))
 
   ;; --- Byte MOV reg8, imm8 (op = reg, imm in next word) ---
   (func $th_mov_r8_i8 (param $op i32)

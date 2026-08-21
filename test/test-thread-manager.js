@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const { ThreadManager } = require('../lib/thread-manager');
+
+const handlersWat = fs.readFileSync(path.join(__dirname, '..', 'src', '09a-handlers.wat'), 'utf8');
+assert(!handlersWat.includes('(call $host_log_i32 (global.get $eax))'),
+  'synchronization handlers must not cross to the host solely to print return values');
 
 function makeThreadManager(opts) {
   return makeThreadManagerWithMemory(new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true }), opts);
@@ -146,6 +152,62 @@ assert.strictEqual(
 );
 assert.strictEqual(Atomics.load(waitAllTm.syncView, (waitAllA - 0xE0000) * 4 + 2), 0);
 assert.strictEqual(Atomics.load(waitAllTm.syncView, (waitAllB - 0xE0000) * 4 + 2), 0);
+
+function completeMainEventWait(traceThread) {
+  const waitTm = makeThreadManager({ traceThread });
+  const waitEvent = waitTm.createEvent(false, true);
+  const emitted = [];
+  let esp = 0x100;
+  waitTm._log = line => emitted.push(line);
+  waitTm.mainInstance.exports = {
+    get_yield_reason: () => 1,
+    get_wait_handle: () => waitEvent,
+    get_wait_handles_ptr: () => 0,
+    get_wait_all: () => 0,
+    get_wait_timeout: () => 0xFFFFFFFF,
+    get_wait_stack_bytes: () => 12,
+    get_esp: () => esp,
+    guest_read32: addr => addr === esp ? 0x401234 : 0,
+    clear_yield: () => {},
+    set_eax: () => {},
+    set_esp: value => { esp = value >>> 0; },
+    set_eip: () => {},
+  };
+  assert.strictEqual(waitTm.checkMainYield(), false, 'a signaled main-thread wait completes');
+  return emitted;
+}
+
+assert.deepStrictEqual(
+  completeMainEventWait(false),
+  [],
+  'ordinary main-thread wait completions must not emit console diagnostics'
+);
+assert.strictEqual(
+  completeMainEventWait(true).length,
+  1,
+  'thread tracing retains the main-thread wait completion diagnostic'
+);
+
+function createSyncObjects(traceThread) {
+  const syncTm = makeThreadManager({ traceThread });
+  const emitted = [];
+  syncTm._log = line => emitted.push(line);
+  const event = syncTm.createEvent(false, false);
+  syncTm.setEvent(event);
+  syncTm.createSemaphore(0, 1);
+  return emitted;
+}
+
+assert.deepStrictEqual(
+  createSyncObjects(false),
+  [],
+  'ordinary synchronization-object creation must not emit console diagnostics'
+);
+assert.strictEqual(
+  createSyncObjects(true).length,
+  3,
+  'thread tracing retains synchronization-object and signal diagnostics'
+);
 
 const lifecycleEvents = suspendTm.getThreadEvents();
 assert.deepStrictEqual(
@@ -319,3 +381,5 @@ console.log('PASS  ThreadManager completes nested infinite waits without losing 
 console.log('PASS  ThreadManager keeps pending worker handles unsignaled');
 console.log('PASS  ThreadManager recycles closed event and semaphore handles');
 console.log('PASS  ThreadManager preserves and atomically consumes wait-all state');
+console.log('PASS  ThreadManager keeps main wait completion logs trace-only');
+console.log('PASS  ThreadManager keeps synchronization-object creation logs trace-only');

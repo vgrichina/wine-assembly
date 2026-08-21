@@ -821,7 +821,7 @@
 
   ;; 18: RtlMoveMemory
   (func $handle_RtlMoveMemory (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $memcpy (call $g2w (local.get $arg0)) (call $g2w (local.get $arg1)) (local.get $arg2))
+    (call $guest_memmove (local.get $arg0) (local.get $arg1) (local.get $arg2))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
   )
 
@@ -1029,7 +1029,6 @@
         (global.set $eax (call $host_create_event
           (local.get $arg1) (local.get $arg2) (local.get $name_wa) (i32.const 0)))
         (global.set $last_error (i32.const 0))))
-    (call $host_log_i32 (global.get $eax))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
@@ -1056,7 +1055,6 @@
       (local.get $arg2) (local.get $arg3) (local.get $arg1) (local.get $arg4)))
     (if (local.get $lpThreadId)
       (then (call $gs32 (local.get $lpThreadId) (global.get $eax))))
-    (call $host_log_i32 (global.get $eax))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
@@ -1073,7 +1071,6 @@
         (global.set $steps (i32.const 0))
         (return)))
     (global.set $eax (local.get $result))
-    (call $host_log_i32 (global.get $eax))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
@@ -3994,7 +3991,7 @@
 
   ;; 214: memmove
   (func $handle_memmove (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $memcpy (call $g2w (local.get $arg0)) (call $g2w (local.get $arg1)) (local.get $arg2))
+    (call $guest_memmove (local.get $arg0) (local.get $arg1) (local.get $arg2))
     (global.set $eax (local.get $arg0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
   )
@@ -4883,18 +4880,14 @@
 
   ;; 278: memset(dest, ch, count) — cdecl
   (func $handle_memset (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg2)
-      (then
-        (memory.fill (call $g2w (local.get $arg0)) (local.get $arg1) (local.get $arg2))))
+    (call $guest_memset (local.get $arg0) (local.get $arg1) (local.get $arg2))
     (global.set $eax (local.get $arg0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
   ;; 279: memcpy(dest, src, count) — cdecl
   (func $handle_memcpy (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg2)
-      (then
-        (memory.copy (call $g2w (local.get $arg0)) (call $g2w (local.get $arg1)) (local.get $arg2))))
+    (call $guest_memmove (local.get $arg0) (local.get $arg1) (local.get $arg2))
     (global.set $eax (local.get $arg0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
@@ -8442,7 +8435,6 @@ HookEx — no next hook in chain, return 0
         (global.set $eax (call $host_create_event
           (local.get $arg1) (local.get $arg2) (local.get $name_wa) (i32.const 1)))
         (global.set $last_error (i32.const 0))))
-    (call $host_log_i32 (global.get $eax))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
@@ -8461,7 +8453,6 @@ HookEx — no next hook in chain, return 0
         (global.set $steps (i32.const 0))
         (return)))
     (global.set $eax (local.get $result))
-    (call $host_log_i32 (global.get $eax))
     (drop (local.get $arg4))
     (drop (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))

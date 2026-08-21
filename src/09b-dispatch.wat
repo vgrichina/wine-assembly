@@ -677,6 +677,12 @@
         (call $bsearch_probe)
         (return)))
 
+    ;; qsort comparator returned; swap if needed and schedule the next pair.
+    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA002D))
+      (then
+        (call $qsort_continue)
+        (return)))
+
     ;; DirectDrawEnumerateA callback returned — set EAX=DD_OK and return to caller
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0007))
       (then

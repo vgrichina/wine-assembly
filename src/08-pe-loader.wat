@@ -39,6 +39,11 @@
     (global.set $heap_ptr (global.get $heap_base))
     (global.set $heap_sparse_ptr (i32.const 0))
     (global.set $heap_sparse_end (i32.const 0))
+    (global.set $g2w_sparse_size (i32.const 0))
+    (global.set $g2w_sparse_size1 (i32.const 0))
+    (global.set $g2w_sparse_size2 (i32.const 0))
+    (global.set $g2w_sparse_size3 (i32.const 0))
+    (global.set $g2w_gl8_page (i32.const -1))
     ;; VirtualAlloc(NULL, MEM_RESERVE) uses sparse high guest addresses. Commits
     ;; get backing memory through $virtual_map_commit instead of consuming the
     ;; low HeapAlloc arena.
@@ -304,6 +309,15 @@
       (global.get $image_base)))
     (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
       (i32.const 0xCACA000C))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+    ;; Allocate qsort comparator continuation thunk (marker 0xCACA002D).
+    (global.set $qsort_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA002D))
     (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
 
     ;; Allocate CBT hook continuation thunk (marker 0xCACA0002)

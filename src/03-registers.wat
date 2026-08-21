@@ -74,7 +74,7 @@
   ;; (simulating Windows null-page behavior) and writes go to a harmless sink.
   (global $NULL_SENTINEL i32 (i32.const 0xF0))
   (func $g2w (param $ga i32) (result i32)
-    (local $wa i32) (local $i i32) (local $count i32)
+    (local $wa i32) (local $i i32) (local $count i32) (local $off i32)
     (local $rec i32) (local $base i32) (local $size i32) (local $backing i32)
     (local.set $wa (i32.add (i32.sub (local.get $ga) (global.get $image_base)) (global.get $GUEST_BASE)))
     (if (i32.eqz (i32.or (i32.lt_s (local.get $wa) (i32.const 0))
@@ -91,8 +91,31 @@
           (global.get $DIB_BACKING_BASE)
           (i32.sub (local.get $ga) (global.get $DIB_GUEST_BASE))))))
     ;; Sparse VirtualAlloc mappings live outside the direct image-relative
-    ;; window. Scan only after direct translation failed, keeping normal guest
-    ;; memory accesses on the cheap arithmetic path.
+    ;; window. Map records are append-only (VirtualFree currently preserves
+    ;; its backing), so a successful last-range translation remains valid even
+    ;; when another thread appends or extends a record. An extension can miss
+    ;; the old cached size once, then the scan below refreshes it.
+    (local.set $off
+      (i32.sub (local.get $ga) (global.get $g2w_sparse_base)))
+    (if (i32.lt_u (local.get $off) (global.get $g2w_sparse_size))
+      (then
+        (return (i32.add (global.get $g2w_sparse_backing) (local.get $off)))))
+    (local.set $off
+      (i32.sub (local.get $ga) (global.get $g2w_sparse_base1)))
+    (if (i32.lt_u (local.get $off) (global.get $g2w_sparse_size1))
+      (then
+        (return (i32.add (global.get $g2w_sparse_backing1) (local.get $off)))))
+    (local.set $off
+      (i32.sub (local.get $ga) (global.get $g2w_sparse_base2)))
+    (if (i32.lt_u (local.get $off) (global.get $g2w_sparse_size2))
+      (then
+        (return (i32.add (global.get $g2w_sparse_backing2) (local.get $off)))))
+    (local.set $off
+      (i32.sub (local.get $ga) (global.get $g2w_sparse_base3)))
+    (if (i32.lt_u (local.get $off) (global.get $g2w_sparse_size3))
+      (then
+        (return (i32.add (global.get $g2w_sparse_backing3) (local.get $off)))))
+    ;; Scan only after direct, DIB, and cached sparse translation failed.
     (local.set $count (i32.load (global.get $VIRTUAL_MAP_STATE)))
     (local.set $i (i32.const 0))
     (block $mapped_done (loop $mapped_scan
@@ -105,6 +128,18 @@
             (i32.lt_u (local.get $ga) (i32.add (local.get $base) (local.get $size))))
         (then
           (local.set $backing (i32.load (i32.add (local.get $rec) (i32.const 8))))
+          (global.set $g2w_sparse_base3 (global.get $g2w_sparse_base2))
+          (global.set $g2w_sparse_size3 (global.get $g2w_sparse_size2))
+          (global.set $g2w_sparse_backing3 (global.get $g2w_sparse_backing2))
+          (global.set $g2w_sparse_base2 (global.get $g2w_sparse_base1))
+          (global.set $g2w_sparse_size2 (global.get $g2w_sparse_size1))
+          (global.set $g2w_sparse_backing2 (global.get $g2w_sparse_backing1))
+          (global.set $g2w_sparse_base1 (global.get $g2w_sparse_base))
+          (global.set $g2w_sparse_size1 (global.get $g2w_sparse_size))
+          (global.set $g2w_sparse_backing1 (global.get $g2w_sparse_backing))
+          (global.set $g2w_sparse_base (local.get $base))
+          (global.set $g2w_sparse_size (local.get $size))
+          (global.set $g2w_sparse_backing (local.get $backing))
           (return (i32.add (local.get $backing) (i32.sub (local.get $ga) (local.get $base))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $mapped_scan)))
@@ -161,7 +196,22 @@
     (i32.or
       (i32.load8_u (local.get $wa))
       (i32.shl (i32.load8_u (local.get $end_wa)) (i32.const 8))))
-  (func $gl8 (param $ga i32) (result i32) (i32.load8_u (call $g2w (local.get $ga))))
+  (func $gl8 (param $ga i32) (result i32)
+    (local $page i32) (local $wa i32)
+    (local.set $page (i32.and (local.get $ga) (i32.const 0xFFFFF000)))
+    (if (i32.eq (local.get $page) (global.get $g2w_gl8_page))
+      (then
+        (return (i32.load8_u
+          (i32.add (local.get $ga) (global.get $g2w_gl8_delta))))))
+    (local.set $wa (call $g2w (local.get $ga)))
+    ;; Never cache an invalid translation: NULL_SENTINEL is four bytes, not a
+    ;; backing page, and adding an address offset to it would turn later bad
+    ;; reads into arbitrary linear-memory reads.
+    (if (i32.ne (local.get $wa) (global.get $NULL_SENTINEL))
+      (then
+        (global.set $g2w_gl8_page (local.get $page))
+        (global.set $g2w_gl8_delta (i32.sub (local.get $wa) (local.get $ga)))))
+    (i32.load8_u (local.get $wa)))
   (func $invalidate_code_write (param $ga i32)
     (local $in_code i32) (local $in_generated i32)
     ;; Invalidate decoded blocks only when writes can affect already-decoded

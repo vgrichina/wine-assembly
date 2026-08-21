@@ -270,17 +270,30 @@
       (i32.add (i32.add (local.get $base_val) (local.get $index_val)) (local.get $disp)))
     (return_call $next))
 
-  ;; 149: compute SIB EA → ea_temp, then continue to next handler
+  ;; 149: compute SIB EA → ea_temp, then continue to next handler.
+  ;; op bit 8 fuses the overwhelmingly common SIB byte-load consumer; low
+  ;; three bits are the destination byte register. Keeping this in the EA
+  ;; handler preserves the generic SIB encoding while avoiding a second
+  ;; indirect threaded dispatch and the sentinel word it used to consume.
   (func $th_compute_ea_sib (param $op i32)
     (local $info i32) (local $base_val i32) (local $index_val i32) (local $scale i32) (local $disp i32)
     (local.set $info (call $read_thread_word))
     (local.set $disp (call $read_thread_word))
     (if (global.get $handler_hist_enabled)
       (then
-        (call $sib_consumer_hist_record
-          (i32.load (global.get $ip))
-          (i32.load offset=4 (global.get $ip))
-          (local.get $info))))
+        (if (i32.and (local.get $op) (i32.const 0x100))
+          (then
+            ;; Report the semantic consumer so profiles before and after the
+            ;; fusion remain directly comparable.
+            (call $sib_consumer_hist_record
+              (i32.const 24)
+              (i32.and (local.get $op) (i32.const 7))
+              (local.get $info)))
+          (else
+            (call $sib_consumer_hist_record
+              (i32.load (global.get $ip))
+              (i32.load offset=4 (global.get $ip))
+              (local.get $info))))))
     (if (i32.ne (i32.and (local.get $info) (i32.const 0xF)) (i32.const 0xF))
       (then (local.set $base_val (call $get_reg (i32.and (local.get $info) (i32.const 0xF))))))
     (if (i32.ne (i32.and (i32.shr_u (local.get $info) (i32.const 4)) (i32.const 0xF)) (i32.const 0xF))
@@ -290,6 +303,11 @@
           (call $get_reg (i32.and (i32.shr_u (local.get $info) (i32.const 4)) (i32.const 0xF)))
           (local.get $scale)))))
     (global.set $ea_temp (i32.add (i32.add (local.get $base_val) (local.get $index_val)) (local.get $disp)))
+    (if (i32.and (local.get $op) (i32.const 0x100))
+      (then
+        (call $set_reg8
+          (i32.and (local.get $op) (i32.const 7))
+          (call $gl8 (global.get $ea_temp)))))
     (return_call $next))
 
   ;; Helper: compute EA from operand encoding (alu_op<<8 | reg<<4 | base)

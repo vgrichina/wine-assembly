@@ -316,6 +316,34 @@
   (func $mr_absolute (result i32)
     (i32.and (i32.eq (global.get $mr_base) (i32.const -1)) (i32.eq (global.get $mr_index) (i32.const -1))))
 
+  ;; Emit one register-only byte MOV, folding the immediately following one
+  ;; when it is another unprefixed 88/8A mod=11 instruction. The pair is fully
+  ;; generic and flag-neutral; memory forms and prefixed instructions retain
+  ;; their ordinary decoder paths.
+  (func $emit_mov_r8_r8 (param $first i32)
+    (local $look i32) (local $opcode i32) (local $modrm i32)
+    (local $second i32) (local $reg i32) (local $rm i32)
+    (local.set $look (call $gl16 (global.get $d_pc)))
+    (local.set $opcode (i32.and (local.get $look) (i32.const 0xFF)))
+    (local.set $modrm (i32.shr_u (local.get $look) (i32.const 8)))
+    (if (i32.and
+          (i32.or (i32.eq (local.get $opcode) (i32.const 0x88))
+                  (i32.eq (local.get $opcode) (i32.const 0x8A)))
+          (i32.eq (i32.and (local.get $modrm) (i32.const 0xC0)) (i32.const 0xC0)))
+      (then
+        (local.set $reg (i32.and (i32.shr_u (local.get $modrm) (i32.const 3)) (i32.const 7)))
+        (local.set $rm (i32.and (local.get $modrm) (i32.const 7)))
+        (local.set $second
+          (if (result i32) (i32.eq (local.get $opcode) (i32.const 0x8A))
+            (then (i32.or (i32.shl (local.get $reg) (i32.const 4)) (local.get $rm)))
+            (else (i32.or (i32.shl (local.get $rm) (i32.const 4)) (local.get $reg)))))
+        (call $te (i32.const 155)
+          (i32.or (local.get $first)
+            (i32.or (i32.const 0x100) (i32.shl (local.get $second) (i32.const 9)))))
+        (global.set $d_pc (i32.add (global.get $d_pc) (i32.const 2)))
+        (return)))
+    (call $te (i32.const 155) (local.get $first)))
+
   (func $emit_load32 (param $dst i32) (local $a i32)
     (call $apply_seg_override)
     (if (call $mr_simple_base)
@@ -337,6 +365,23 @@
     (if (call $mr_simple_base)
       (then (call $te (i32.const 28) (i32.or (i32.shl (local.get $dst) (i32.const 4)) (global.get $mr_base)))
             (call $te_raw (global.get $mr_disp)) (return)))
+    ;; A 32-bit indexed SIB byte load used to emit compute_ea_sib followed by
+    ;; load8(SIB_SENTINEL). Fuse that exact generic pair: it is a dominant
+    ;; generated-code pattern and needs neither a temporary consumer dispatch
+    ;; nor the sentinel thread word. Absolute and 16-bit segmented addresses
+    ;; retain their existing encodings below.
+    (if (i32.and
+          (i32.eqz (global.get $code16))
+          (i32.eqz (call $mr_absolute)))
+      (then
+        (call $te (i32.const 149) (i32.or (i32.const 0x100) (local.get $dst)))
+        (call $te_raw (i32.or
+          (if (result i32) (i32.ne (global.get $mr_base) (i32.const -1))
+            (then (global.get $mr_base)) (else (i32.const 0xF)))
+          (i32.or (i32.shl (global.get $mr_index) (i32.const 4))
+                  (i32.shl (global.get $mr_scale) (i32.const 8)))))
+        (call $te_raw (global.get $mr_disp))
+        (return)))
     (local.set $a (call $emit_sib_or_abs))
     (call $te (i32.const 24) (local.get $dst)) (call $te_raw (local.get $a)))
 
@@ -1135,7 +1180,7 @@
           (if (i32.eq (global.get $mr_mod) (i32.const 3))
             (then
               (if (i32.eq (local.get $op) (i32.const 0x88))
-                (then (call $te (i32.const 155) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))
+                (then (call $emit_mov_r8_r8 (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))
                 (else (if (local.get $prefix_66)
                   (then (call $te (i32.const 210) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))
                   (else (call $te (i32.const 11) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))))))
@@ -1171,7 +1216,7 @@
           (if (i32.eq (global.get $mr_mod) (i32.const 3))
             (then
               (if (i32.eq (local.get $op) (i32.const 0x8A))
-                (then (call $te (i32.const 155) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))
+                (then (call $emit_mov_r8_r8 (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))
                 (else (if (local.get $prefix_66)
                   (then (call $te (i32.const 210) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))
                   (else (call $te (i32.const 11) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))))))

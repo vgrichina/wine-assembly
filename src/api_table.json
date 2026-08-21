@@ -20635,5 +20635,44 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 205911374
+  },
+  {
+    "id": 2502,
+    "name": "_strupr",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 299297410
+  },
+  {
+    "id": 2503,
+    "name": "_fullpath",
+    "nargs": 3,
+    "convention": "cdecl",
+    "hash": 3674385696
+  },
+  {
+    "id": 2504,
+    "name": "qsort",
+    "nargs": 4,
+    "convention": "cdecl",
+    "hash": 3192218248,
+    "args": [
+      {
+        "name": "base",
+        "type": "LPVOID"
+      },
+      {
+        "name": "nmemb",
+        "type": "SIZE_T"
+      },
+      {
+        "name": "size",
+        "type": "SIZE_T"
+      },
+      {
+        "name": "compar",
+        "type": "FARPROC"
+      }
+    ]
   }
 ]

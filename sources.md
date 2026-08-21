@@ -183,6 +183,186 @@ critical-section ownership, and sparse-memory corruption that mounting a
 prebuilt installed image would have hidden. A mounted image can still be an
 optional faster gameplay path once the installer result has been verified.
 
+The installed demo's ten files were also checked independently under the v86
+Windows 98 reference environment. Their sizes and CRC-32 values exactly match
+the native Wine-Assembly installation: `Starcraft.exe` 970,752 / `f7d9cc58`,
+`Storm.dll` 202,752 / `048f72d9`, `Local.dll` 52,224 / `7659e716`,
+`SmackW32.dll` 95,232 / `614a9406`, `Battle.snp` 239,358 / `531bcffe`,
+`Standard.snp` 97,258 / `db5e9b18`, `StardateD.mpq` 29,005,415 /
+`94d270e3`, `Readme.cnt` 1,134 / `d0b8a3e2`, `Readme.hlp` 28,926 /
+`9647957d`, and `License.txt` 10,617 / `7a99b80d`. This excludes installer,
+VFS, and extracted-file corruption from the later `font\\font.gid` failure.
+
+That failure instead exposed a Win32 loader contract. Microsoft documents that
+[`DllMain` receives a NULL `lpvReserved` for a dynamic process attach and a
+non-NULL value for a static process attach](https://learn.microsoft.com/en-us/windows/win32/dlls/dllmain).
+Wine-Assembly previously passed NULL to every DLL. StarCraft imports
+`Storm.dll` at process startup, and disassembly of this 1998 build shows that
+its attach routine branches on that third argument. NULL runs a legacy table
+initializer seeded with `0x10000100`; non-NULL defers initialization until the
+MPQ path builds the compatible table from `0x00100001`.
+
+The archive itself was checked against the algorithm and structures in
+[StormLib's `SBaseCommon.cpp`](https://github.com/ladislav-zezula/StormLib/blob/master/src/SBaseCommon.cpp).
+The on-disk hash table decrypts correctly, and `font\\font.gid` is present at
+hash slot 1675 with block index `0x57e`, file position `0x1b2a3d5`, compressed
+size `0x50`, logical size `0x48`, and flags `0x80030200`. Passing dynamic-load
+NULL to the statically imported DLL instead produced the wrong crypt table and
+deterministically transformed the correct 64 KiB VFS read into invalid hash
+entries. Static import-graph DLLs now receive non-NULL; actual `LoadLibrary`
+and COM in-process loads retain NULL.
+
+### StarCraft runtime memory-layout audit
+
+The installed executable now reaches its original full-screen loading artwork,
+loads app-local `Storm.dll`, `Local.dll`, and `SmackW32.dll`, and starts its
+cooperative loader workers. A two-phase loader breakpoint confirmed that
+`LoadLibraryA("local.dll")` returns the real mapped module base `0x006da000`
+after the host-side yield, its `DllMain` returns success, and `LoadStringA` id 3
+returns the expected locale string `0x00000409`. The small pre-yield value
+visible in an earlier trace was the loader's yield marker, not a truncated
+`HMODULE`.
+
+The startup wait that initially looked like a corrupted handle is also valid.
+At guest `0x074fb5e0`, StarCraft builds a contiguous 61-entry array containing
+events `0x000e0003` through `0x000e003f` and calls
+`WaitForMultipleObjects(61, array, TRUE, 50)`. The three earlier event slots
+belong to singleton/thread coordination, so the 61-entry preload batch exactly
+fills the remaining slots in the runtime's 64-object table. Microsoft documents
+that `nCount` is the number of entries in `lpHandles`, is bounded by
+[`MAXIMUM_WAIT_OBJECTS`](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-waitformultipleobjects),
+and a `bWaitAll=TRUE` call completes only when every listed object is signaled.
+The misleading trace label printed `nCount=0x3d` as a "handle"; the guest array
+itself, its alignment, and every handle value were intact.
+
+The `Data File Error` dialog seen during debugging was caused by injecting
+Escape twice while those asynchronous preload batches were still active; it is
+not the natural startup path. An isolated load of RT_DIALOG 106 preserved the
+source bytes and produced four independent, correctly sized controls, including
+a 16-byte text block containing `local.dll\0`. In the live cancellation dialog,
+the final static likewise had a valid 24-byte state block and a separate
+24-byte text allocation with the internally consistent length 3. Tracing the
+call site showed `SetDlgItemTextA` received guest pointer `0x3d3e2f8c`, and
+sparse-safe guest reads at that pointer were already `64 a3 6c 00` (`d£l`).
+USER copied the supplied bytes faithfully; no overlap, free-list alias, resource
+mutation, mapped-file corruption, or sparse translation error occurred in this
+dialog path. Forced cancellation should therefore not be used as evidence for
+the no-input loader's next blocker.
+
+The natural preload was then followed through batches 4,000, 8,000, and 11,000.
+All three frames retained the original `Loading` artwork, but the scheduler was
+not deadlocked: the main thread completed its 61-object wait roughly every four
+to six outer batches, worker T1 remained normally parked on event `0x000e0001`,
+and worker T2 advanced through `Storm.dll` addresses `0x006c558c` through
+`0x006c5956`. Those addresses relocate to the DLL's `0x15028570` decompressor,
+whose state layout contains a 4 KiB sliding output window, an 0x800-byte input
+buffer, input/output callbacks at offsets `+0x28` and `+0x2c`, bit accumulator
+state at `+0x14/+0x18`, and tables beginning at `+0x2234`. The observed guest
+contexts were aligned and independently allocated; output indices stayed in
+the documented 0x1000..0x2000 window and callback returns were bounded below
+0x800.
+
+A breakpoint immediately after the input callback showed different short
+refill lengths and changing context allocations across jobs. This rules out an
+EOF loop replaying one compressed buffer: Storm is processing a large queue of
+distinct MPQ assets and the main thread is consuming their completion events.
+One decoded-arena overflow marker (`0xCA00F10F`) appeared during the workload,
+but the current memory map is internally consistent: eight 4 MiB per-instance
+decoded arenas occupy `0x05000000..0x07000000`, the main stack begins at
+`0x07012000`, and all cache indices occupy `0x07152000..0x07192000`. Expanding
+an arena in place would overlap the stack or another thread, so no speculative
+layout change is justified without repartitioning the fixed 512 MiB map.
+
+The trace also exposed avoidable host overhead rather than guest corruption.
+Every satisfied main-thread wait printed an unconditional ThreadManager line;
+StarCraft generates thousands of those completions while loading. The worker
+path already restricted the equivalent message to explicit thread tracing.
+The main path now follows the same policy, so normal browser startup does not
+turn the preload queue into console I/O while `--trace-thread` retains the
+diagnostic when requested. Five older synchronization handlers also crossed
+the Wasm/JavaScript boundary solely to print their return value, including both
+wait APIs on this hot path. Those result prints were removed; functional event,
+thread, and wait calls are unchanged, and explicit API/thread tracing remains
+available. The later transition phase also creates and recycles many short-lived
+Storm events, so default `CreateEvent`/`CreateSemaphore` diagnostics were put
+behind the same explicit thread-trace switch. Actual thread lifecycle messages
+remain available by default.
+
+### StarCraft hot-code and sparse-memory profile
+
+The next performance audit used the installed, byte-verified demo with
+`--batch-size=1000 --thread-slices=64` and bounded handler histograms in
+`test/run.js`. At batch 2,600 the process had 885 sparse VirtualAlloc map
+records. Storm's active decompressor buffer was in record 860, so the former
+`g2w` implementation restarted a linear scan and tested about 861 records for
+each uncached guest byte access. On the same 2,600-batch workload, adding a
+single last-range translation cache reduced wall time from 26.0 seconds to
+3.1 seconds (about 8.4x). The mappings are append-only in the current runtime:
+`VirtualFree` does not decommit or remove their backing, and a later extension
+can safely miss the old cached size once and refill it.
+
+A worker-T2 histogram over batches 2,214 through 2,600 counted 148,574,886
+threaded handlers. Storm's bit reader and back-reference loop at relocated
+addresses around `0x006c58a0` dominated. The most frequent individual handlers
+were 32-bit loads from `[esi]` (5.17%), loads from `[esp]` (4.95%), `push esi`
+(4.84%), add-immediate (4.46%), conditional-zero branches (3.76%), and stores
+through `[esi]` (3.41%). These are already specialized handlers; the important
+remaining cost was the translation performed under their memory accesses, not
+a missing arithmetic opcode fast path.
+
+After preload, the main thread enters dynamically generated Smacker conversion
+code at `0x3ff68c18`. A representative prefix is
+`c7 c0 00 00 00 00 8b 0f 8b 16 8a c1 8a e2 81 c6 04 00 00 00 8a 1c 28`.
+It repeatedly rearranges packed byte registers, rotates 32-bit words, reads an
+input stream through ESI, reads palette bytes through `[eax+ebp]`, and writes
+pixels through EDI. This is coherent generated x86, not corrupted extracted
+data or a wild instruction stream.
+
+Before instruction fusion, the exact main-thread window from batches 3,750 to
+3,830 executed 140,307,945 handlers. `MOV r8,r8` accounted for 24.62%, shifts
+and rotates 19.44%, SIB effective-address calculation 12.39%, and its separate
+byte-load consumer 12.37%. The SIB census found 17,146,790
+compute-SIB-to-load8 pairs (12.68% of all adjacent handler pairs); 98.63% were
+palette loads into BL or BH from `[eax+ebp]`. Folding that generic SIB/load8
+pair into existing handler 149 made the same fixed handler budget execute
+20.14 million indexed loads instead of 17.39 million, 15.9% more guest work.
+It does not add a handler-table entry, which also avoids overflowing the fixed
+pair-histogram geometry.
+
+The generated converter alternates three sparse regions—palette, input, and
+output—so one shared last-range cache is insufficient. Retaining four recent
+ranges removes the fallback scans through hundreds of map records; the
+3,830-batch no-renderer point then completed in 25.53 seconds. A separate 4KB
+byte-read translation TLB prevents the palette's `gl8` stream from probing the
+input/output cache slots. With identical 140.3-million-handler progress and
+22.06 million indexed loads, this reduced the profiled whole-run time from
+31.07 to 27.67 seconds (10.9%). Invalid translations to the four-byte null
+sentinel are deliberately never cached.
+
+Two further handler experiments distinguish useful fusion from cosmetic code
+changes. Folding adjacent flag-neutral register-byte MOVs into existing
+handler 155 raised indexed-load progress under the same handler budget from
+20.14 to 22.06 million (+9.5%) while reducing profiled wall time from 32.83 to
+31.07 seconds, so it was retained. Folding adjacent immediate shifts advanced
+22.06 to 23.02 million loads (+4.35%) but increased wall time from 31.07 to
+32.51 seconds (+4.63%); normalized throughput did not improve, so that change
+was removed. Earlier direct formulas for the common byte moves and `ROR 16`
+likewise measured 32.83 versus 32.73 seconds, within noise, and were removed.
+
+Only two decoded-arena overflow/flush markers appeared in the representative
+3,830-batch run. They are far too infrequent to explain the sustained late
+cost. A renderer run also continued to return from successive batches while
+executing the generated converter; the silence between scheduler heartbeats
+was long synchronous guest work, not a decompressor deadlock. Escape was
+delivered during this first experiment, but the headless renderer's forced
+snapshot remained its gray backing canvas, so that capture alone does not
+establish whether the browser-visible Smacker presentation was skipped. A
+second renderer run held both the window-key and DirectInput Escape states
+starting at batch 3,829. Batch 3,830 still spent more than a minute in the same
+synchronous conversion phase before returning, so Escape cannot preempt a
+frame already executing; input must be observed by the surrounding video loop
+between completed conversions.
+
 ## Other promising games
 
 Recommended order after the Diablo demo:
