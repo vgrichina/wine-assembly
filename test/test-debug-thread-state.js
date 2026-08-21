@@ -141,10 +141,12 @@ assert.strictEqual(stormSnapshot.apps[0].stormQueue.address, queueHead);
 assert.strictEqual(stormSnapshot.apps[0].stormQueue.moduleBase, stormBase);
 assert.strictEqual(stormSnapshot.apps[0].stormQueue.head, nodeA);
 assert.strictEqual(stormSnapshot.apps[0].stormQueue.nodes.length, 2);
+assert.strictEqual(stormSnapshot.apps[0].stormQueue.nodeCount, 2);
 assert.strictEqual(stormSnapshot.apps[0].stormQueue.cycleAt, nodeA);
+assert.strictEqual(stormSnapshot.apps[0].stormQueue.cycleStartIndex, 0);
 const stormText = formatSnapshot(stormSnapshot);
 assert(stormText.includes('Storm active-list head 0x00654260 -> 0x3fc00cd0'));
-assert(stormText.includes('CYCLE: 0x3fc00cd0 is reached again'));
+assert(stormText.includes('CYCLE: 2 unique nodes; 0x3fc00cd0 repeats; entry index=0 length=2'));
 
 let intervalMs = 0;
 let popupFocused = false;
@@ -176,7 +178,7 @@ assert(index.includes('id="thread-state-btn" onclick="openThreadState()"'),
   'debug toolbar should expose the live thread-state popup');
 assert(index.includes('threadStateViewer.beginLaunch(select && select.value)'),
   'launch should snapshot storage before app startup can mutate it');
-assert(index.includes('lib/debug-thread-state.js?v=4'),
+assert(index.includes('lib/debug-thread-state.js?v=5'),
   'page should load the popup implementation with a cache key');
 assert(index.includes('body.no-debug.exclusive-fullscreen #toolbar'),
   'only non-debug full-page mode should hide the toolbar');

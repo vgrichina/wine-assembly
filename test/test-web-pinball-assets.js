@@ -289,9 +289,9 @@ assert(webApp.indexOf('lib/gdi-surface.js?v=2') < webApp.indexOf('lib/host-impor
 assert(webApp.includes('lib/host-imports.js?v=203'), 'web host should cache-bust binary text rasterization');
 assert(webApp.includes('lib/thread-manager.js?v=170'), 'web host should cache-bust thread manager after creation-flag handling changes');
 assert(webApp.includes('lib/compile-wat.js?v=169'), 'web host should cache-bust the snapshot-capable WAT compiler');
-assert(webApp.includes('lib/debug-thread-state.js?v=4'), 'web host should cache-bust active-list cycle diagnostics');
-assert(webApp.includes('host.js?v=214'), 'web host should cache-bust host.js after the current source update');
-assert(hostJs.includes("static SOURCE_VERSION = '214'"), 'web host should cache-bust WASM artifacts and WAT source compilation');
+assert(webApp.includes('lib/debug-thread-state.js?v=5'), 'web host should cache-bust whole-list cycle diagnostics');
+assert(webApp.includes('host.js?v=215'), 'web host should cache-bust host.js after the current source update');
+assert(hostJs.includes("static SOURCE_VERSION = '215'"), 'web host should cache-bust WASM artifacts and WAT source compilation');
 assert(hostJs.includes("const fetchOptions = debugFetch ? { cache: 'no-store' } : undefined;"),
   'debug sessions should select a no-store fetch policy');
 assert(hostJs.includes('fetch(`${artifact}?v=${WineAssembly.SOURCE_VERSION}`, fetchOptions)'),
