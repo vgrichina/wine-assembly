@@ -171,7 +171,10 @@
     (i32.const 1))
 
   (func $help_prepare_wat_view (result i32)
-    (call $help_prepare_wat_view_for (call $help_window_present_metric (i32.const 2))
+    (call $help_prepare_wat_view_for
+      (select (call $help_primary_layout_width)
+              (call $help_window_present_metric (i32.const 2))
+        (i32.ne (global.get $help_hwnd) (i32.const 0)))
       (select (global.get $help_hwnd) (global.get $next_hwnd)
         (i32.ne (global.get $help_hwnd) (i32.const 0)))))
 
@@ -387,19 +390,119 @@
               (then (call $help_create_window))
               (else
                 (call $help_apply_window_presentation)
-                (call $invalidate_hwnd (global.get $help_hwnd)))))))))
+                (call $help_reflow_primary (global.get $help_hwnd)))))))))
+
+  ;; The main viewer reserves a small, fixed navigation row below the flowing
+  ;; topic. Unlike the old 400x300 assumptions, these dimensions follow every
+  ;; WM_SIZE and therefore describe both paint clipping and hotspot hit tests.
+  (global $help_client_width (mut i32) (i32.const 400))
+  (global $help_client_height (mut i32) (i32.const 300))
+  (global $help_hover_hand (mut i32) (i32.const 0))
+  (global $HELP_NAV_HEIGHT i32 (i32.const 28))
+
+  (func $help_primary_viewport_height (result i32)
+    (local $height i32)
+    (local.set $height
+      (i32.sub (global.get $help_client_height) (global.get $HELP_NAV_HEIGHT)))
+    (if (i32.lt_s (local.get $height) (i32.const 0))
+      (then (local.set $height (i32.const 0))))
+    (local.get $height))
+
+  (func $help_primary_layout_width (result i32)
+    (select (global.get $help_client_width) (i32.const 64)
+      (i32.gt_s (global.get $help_client_width) (i32.const 64))))
+
+  (func $help_scroll_maximum (result i32)
+    (local $maximum i32)
+    (local.set $maximum (i32.sub
+      (global.get $help_view_extent_height) (call $help_primary_viewport_height)))
+    (if (i32.lt_s (local.get $maximum) (i32.const 0))
+      (then (local.set $maximum (i32.const 0))))
+    (local.get $maximum))
+
+  ;; Publish the help viewport through USER's standard vertical-scrollbar
+  ;; record. Toggling WS_VSCROLL also recalculates and synchronizes the client
+  ;; rectangle so the renderer's generic arrow/page/thumb routing applies.
+  (func $help_publish_scroll_state (param $hwnd i32)
+    (local $slot i32) (local $base i32) (local $aux i32)
+    (local $page i32) (local $extent i32) (local $maximum i32)
+    (local $style i32) (local $new_style i32) (local $show i32)
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.lt_s (local.get $slot) (i32.const 0)) (then (return)))
+    (local.set $page (call $help_primary_viewport_height))
+    (local.set $extent (global.get $help_view_extent_height))
+    (local.set $maximum (call $help_scroll_maximum))
+    (if (i32.lt_s (global.get $help_scroll_y) (i32.const 0))
+      (then (global.set $help_scroll_y (i32.const 0))))
+    (if (i32.gt_s (global.get $help_scroll_y) (local.get $maximum))
+      (then (global.set $help_scroll_y (local.get $maximum))))
+    (local.set $base (call $scroll_bar_addr (local.get $slot) (i32.const 1)))
+    (local.set $aux (call $scroll_aux_bar_addr (local.get $slot) (i32.const 1)))
+    (i32.store (local.get $base) (global.get $help_scroll_y))
+    (i32.store offset=4 (local.get $base) (i32.const 0))
+    (i32.store offset=8 (local.get $base)
+      (select (i32.sub (local.get $extent) (i32.const 1)) (i32.const 0)
+        (i32.gt_s (local.get $extent) (i32.const 0))))
+    (i32.store (local.get $aux) (local.get $page))
+    (i32.store offset=4 (local.get $aux) (global.get $help_scroll_y))
+    (local.set $show (i32.and
+      (i32.gt_s (local.get $page) (i32.const 0))
+      (i32.gt_s (local.get $extent) (local.get $page))))
+    (local.set $style (call $wnd_get_style (local.get $hwnd)))
+    (local.set $new_style
+      (if (result i32) (local.get $show)
+        (then (i32.or (local.get $style) (i32.const 0x00200000)))
+        (else (i32.and (local.get $style) (i32.const 0xFFDFFFFF)))))
+    (if (i32.ne (local.get $style) (local.get $new_style))
+      (then
+        ;; WM_SIZE's client width describes the style in force when USER sent
+        ;; it. Keep our immediate layout width coherent while NCCALCSIZE applies
+        ;; the corresponding 16px non-client strip.
+        (if (local.get $show)
+          (then (global.set $help_client_width
+            (i32.sub (global.get $help_client_width) (i32.const 16))))
+          (else (global.set $help_client_width
+            (i32.add (global.get $help_client_width) (i32.const 16)))))
+        (if (i32.lt_s (global.get $help_client_width) (i32.const 0))
+          (then (global.set $help_client_width (i32.const 0))))
+        (drop (call $wnd_set_style (local.get $hwnd) (local.get $new_style)))
+        (call $defwndproc_do_nccalcsize (local.get $hwnd))
+        (call $host_sync_window_client
+          (local.get $hwnd)
+          (call $wnd_client_screen_x (local.get $hwnd))
+          (call $wnd_client_screen_y (local.get $hwnd))
+          (global.get $help_client_width) (global.get $help_client_height))))
+    (call $defwndproc_do_ncpaint (local.get $hwnd))
+    (call $nc_flags_set (local.get $hwnd) (i32.const 1)))
+
+  ;; Rebuild wrapping only when the usable width changed. A second pass is
+  ;; intentional: adding/removing the standard scrollbar changes that width.
+  (func $help_reflow_primary (param $hwnd i32)
+    (local $width i32) (local $saved_scroll i32)
+    (if (i32.or (i32.eqz (local.get $hwnd))
+                (i32.eqz (global.get $help_topic_wa)))
+      (then (return)))
+    (local.set $saved_scroll (global.get $help_scroll_y))
+    (local.set $width (call $help_primary_layout_width))
+    (if (i32.ne (local.get $width) (global.get $help_view_layout_width))
+      (then
+        (if (call $help_replace_typed_view
+              (global.get $help_session_topic_index) (local.get $width) (local.get $hwnd))
+          (then (global.set $help_scroll_y (local.get $saved_scroll))))))
+    (call $help_publish_scroll_state (local.get $hwnd))
+    (local.set $width (call $help_primary_layout_width))
+    (if (i32.ne (local.get $width) (global.get $help_view_layout_width))
+      (then
+        (if (call $help_replace_typed_view
+              (global.get $help_session_topic_index) (local.get $width) (local.get $hwnd))
+          (then (global.set $help_scroll_y (local.get $saved_scroll))))))
+    (call $help_publish_scroll_state (local.get $hwnd))
+    (call $invalidate_hwnd (local.get $hwnd)))
 
   ;; Scroll help window by delta pixels (positive = down, negative = up), clamp to 0
   (func $help_scroll_by (param $hwnd i32) (param $delta i32)
-    (local $maximum i32)
     (global.set $help_scroll_y (i32.add (global.get $help_scroll_y) (local.get $delta)))
-    (if (i32.lt_s (global.get $help_scroll_y) (i32.const 0))
-      (then (global.set $help_scroll_y (i32.const 0))))
-    (local.set $maximum (i32.sub (global.get $help_view_extent_height) (i32.const 264)))
-    (if (i32.lt_s (local.get $maximum) (i32.const 0))
-      (then (local.set $maximum (i32.const 0))))
-    (if (i32.gt_s (global.get $help_scroll_y) (local.get $maximum))
-      (then (global.set $help_scroll_y (local.get $maximum))))
+    (call $help_publish_scroll_state (local.get $hwnd))
     (call $invalidate_hwnd (local.get $hwnd)))
 
   ;; Help window WndProc (WAT-native, called directly — not via x86)
@@ -407,6 +510,7 @@
     (local $hdc i32) (local $y i32) (local $line_start i32) (local $line_len i32)
     (local $scan i32) (local $end i32) (local $ch i32) (local $vis_y i32)
     (local $click_x i32) (local $click_y i32) (local $click_line i32)
+    (local $viewport_bottom i32) (local $scroll_code i32) (local $scroll_delta i32)
     (if (i32.eq (local.get $hwnd) (global.get $help_topics_hwnd))
       (then (return (call $help_topics_wndproc
         (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
@@ -438,12 +542,12 @@
         (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))  ;; OPAQUE
         (drop (call $host_gdi_set_bk_color (local.get $hdc) (i32.const 0xFFFFFF)))
         (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x000000)))
-        ;; Fill the exact retained popup extent or the fixed primary viewport.
+        ;; Fill the exact retained popup or live resized primary client area.
         (drop (call $host_gdi_fill_rect (local.get $hdc)
           (i32.const 0) (i32.const 0)
-          (select (global.get $help_popup_width) (i32.const 400)
+          (select (global.get $help_popup_width) (global.get $help_client_width)
             (i32.eq (local.get $hwnd) (global.get $help_popup_hwnd)))
-          (select (global.get $help_popup_height) (i32.const 300)
+          (select (global.get $help_popup_height) (global.get $help_client_height)
             (i32.eq (local.get $hwnd) (global.get $help_popup_hwnd)))
           (i32.const 0x30010)))
         ;; Paint only the visible positioned text runs. Layout is retained
@@ -463,19 +567,77 @@
               (global.get $help_popup_width) (global.get $help_popup_height)
               (i32.const 0x05) (i32.const 0x0F)))
             (return (i32.const 0))))
-        ;; Draw nav bar at bottom (y=276)
+        (local.set $viewport_bottom (call $help_primary_viewport_height))
+        ;; Draw the navigation row at the live bottom edge.
         ;; Draw separator line
         (drop (call $host_gdi_fill_rect (local.get $hdc)
-          (i32.const 0) (i32.const 272) (i32.const 400) (i32.const 273)
+          (i32.const 0) (local.get $viewport_bottom)
+          (global.get $help_client_width) (i32.add (local.get $viewport_bottom) (i32.const 1))
           (i32.const 0x30014))) ;; BLACK_BRUSH
-        ;; "[Contents]" at 0x10C (10 chars)
+        ;; "[Contents]" at 0x10D (10 chars)
         (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0xFF0000))) ;; blue (BGR)
         (drop (call $host_gdi_text_out (local.get $hdc)
-          (i32.const 8) (i32.const 278) (i32.const 0x10C) (i32.const 10) (i32.const 0)))
-        ;; "[Back]" at 0x117 (6 chars)
+          (i32.const 8) (i32.add (local.get $viewport_bottom) (i32.const 6))
+          (i32.const 0x10D) (i32.const 10) (i32.const 0)))
+        ;; "[Back]" at 0x118 (6 chars)
         (drop (call $host_gdi_text_out (local.get $hdc)
-          (i32.const 100) (i32.const 278) (i32.const 0x117) (i32.const 6) (i32.const 0)))
+          (i32.const 100) (i32.add (local.get $viewport_bottom) (i32.const 6))
+          (i32.const 0x118) (i32.const 6) (i32.const 0)))
         (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x000000)))
+        (return (i32.const 0))))
+
+    ;; WM_SIZE (0x0005): lParam is the new client width/height. Reflowing here
+    ;; also invalidates the entire client, so growth cannot expose stale pixels.
+    (if (i32.and
+          (i32.eq (local.get $msg) (i32.const 0x0005))
+          (i32.eq (local.get $hwnd) (global.get $help_hwnd)))
+      (then
+        (global.set $help_client_width
+          (i32.and (local.get $lParam) (i32.const 0xFFFF)))
+        (global.set $help_client_height
+          (i32.shr_u (local.get $lParam) (i32.const 16)))
+        (call $help_reflow_primary (local.get $hwnd))
+        (return (i32.const 0))))
+
+    ;; WM_SETCURSOR and WM_MOUSEMOVE provide WinHelp's link feedback. The
+    ;; renderer already maps the system IDC_HAND resource to CSS `pointer`.
+    (if (i32.eq (local.get $msg) (i32.const 0x0020))
+      (then
+        (if (i32.eq (i32.and (local.get $lParam) (i32.const 0xFFFF)) (i32.const 1))
+          (then
+            (drop (call $set_cursor_internal
+              (select (i32.const 0x67F89) (i32.const 0x67F00)
+                (global.get $help_hover_hand))))
+            (return (i32.const 1))))
+        (return (call $defwndproc_do_setcursor
+          (local.get $hwnd) (i32.and (local.get $lParam) (i32.const 0xFFFF))))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0200))
+      (then
+        (local.set $click_x (i32.and (local.get $lParam) (i32.const 0xFFFF)))
+        (local.set $click_y (i32.shr_u (local.get $lParam) (i32.const 16)))
+        (global.set $help_hover_hand
+          (i32.or
+            (i32.ge_s (call $help_view_hotspot_token_at
+              (local.get $click_x) (local.get $click_y)) (i32.const 0))
+            (i32.and
+              (i32.eq (local.get $hwnd) (global.get $help_hwnd))
+              (i32.and
+                (i32.and
+                  (i32.ge_s (local.get $click_y) (call $help_primary_viewport_height))
+                  (i32.lt_s (local.get $click_y) (global.get $help_client_height)))
+                (i32.or
+                  (i32.and (i32.ge_s (local.get $click_x) (i32.const 8))
+                           (i32.lt_s (local.get $click_x) (i32.const 90)))
+                  (i32.and (i32.ge_s (local.get $click_x) (i32.const 100))
+                           (i32.lt_s (local.get $click_x) (i32.const 150))))))))
+        (drop (call $set_cursor_internal
+          (select (i32.const 0x67F89) (i32.const 0x67F00)
+            (global.get $help_hover_hand))))
+        (return (i32.const 0))))
+    (if (i32.eq (local.get $msg) (i32.const 0x02A3)) ;; WM_MOUSELEAVE
+      (then
+        (global.set $help_hover_hand (i32.const 0))
+        (drop (call $set_cursor_internal (i32.const 0x67F00)))
         (return (i32.const 0))))
 
     ;; WM_LBUTTONDOWN (0x0201)
@@ -497,24 +659,77 @@
                 (i32.const 1) (global.get $help_session_last_command)))
               (else (call $help_popup_close)))
             (return (i32.const 0))))
-        ;; Nav bar click (y >= 270)
-        (if (i32.ge_u (local.get $click_y) (i32.const 270))
+        ;; Navigation row click at the live client bottom.
+        (if (i32.and
+              (i32.ge_u (local.get $click_y) (call $help_primary_viewport_height))
+              (i32.lt_u (local.get $click_y) (global.get $help_client_height)))
           (then
             ;; Check x position: [Contents] at 8..90, [Back] at 100..150
-            (if (i32.lt_u (i32.and (local.get $lParam) (i32.const 0xFFFF)) (i32.const 90))
+            (if (i32.and (i32.ge_u (local.get $click_x) (i32.const 8))
+                         (i32.lt_u (local.get $click_x) (i32.const 90)))
               (then
                 (local.set $click_line (call $help_dispatch_loaded
                   (global.get $help_session_owner)
                   (global.get $HELP_COMMAND_CONTENTS) (i32.const 0)))
                 (call $help_present_dispatch
                   (local.get $click_line) (global.get $HELP_COMMAND_CONTENTS)))
-              (else (call $help_go_back)))
+              (else
+                (if (i32.and (i32.ge_u (local.get $click_x) (i32.const 100))
+                             (i32.lt_u (local.get $click_x) (i32.const 150)))
+                  (then (call $help_go_back)))))
             (return (i32.const 0))))
         (local.set $click_line (i32.and (local.get $lParam) (i32.const 0xFFFF)))
         (if (call $help_activate_hotspot_at
               (global.get $help_session_owner) (local.get $click_line) (local.get $click_y))
           (then (call $help_present_dispatch
             (i32.const 1) (global.get $help_session_last_command))))
+        (return (i32.const 0))))
+
+    ;; USER's generic non-client scrollbar routing sends these standard SB_*
+    ;; commands. Positions are pixels because the topic layout is pixel-based.
+    (if (i32.eq (local.get $msg) (i32.const 0x0115)) ;; WM_VSCROLL
+      (then
+        (local.set $scroll_code (i32.and (local.get $wParam) (i32.const 0xFFFF)))
+        (if (i32.eq (local.get $scroll_code) (i32.const 0))
+          (then (call $help_scroll_by (local.get $hwnd) (i32.const -16)) (return (i32.const 0))))
+        (if (i32.eq (local.get $scroll_code) (i32.const 1))
+          (then (call $help_scroll_by (local.get $hwnd) (i32.const 16)) (return (i32.const 0))))
+        (if (i32.eq (local.get $scroll_code) (i32.const 2))
+          (then (call $help_scroll_by (local.get $hwnd)
+            (i32.sub (i32.const 0) (call $help_primary_viewport_height)))
+            (return (i32.const 0))))
+        (if (i32.eq (local.get $scroll_code) (i32.const 3))
+          (then (call $help_scroll_by (local.get $hwnd)
+            (call $help_primary_viewport_height)) (return (i32.const 0))))
+        (if (i32.or (i32.eq (local.get $scroll_code) (i32.const 4))
+                    (i32.eq (local.get $scroll_code) (i32.const 5)))
+          (then
+            (global.set $help_scroll_y
+              (i32.and (i32.shr_u (local.get $wParam) (i32.const 16)) (i32.const 0xFFFF)))
+            (call $help_publish_scroll_state (local.get $hwnd))
+            (call $invalidate_hwnd (local.get $hwnd))
+            (return (i32.const 0))))
+        (if (i32.eq (local.get $scroll_code) (i32.const 6))
+          (then
+            (global.set $help_scroll_y (i32.const 0))
+            (call $help_publish_scroll_state (local.get $hwnd))
+            (call $invalidate_hwnd (local.get $hwnd))
+            (return (i32.const 0))))
+        (if (i32.eq (local.get $scroll_code) (i32.const 7))
+          (then
+            (global.set $help_scroll_y (call $help_scroll_maximum))
+            (call $help_publish_scroll_state (local.get $hwnd))
+            (call $invalidate_hwnd (local.get $hwnd))
+            (return (i32.const 0))))
+        (return (i32.const 0))))
+
+    ;; WM_MOUSEWHEEL: one classic three-line notch (48px) per event.
+    (if (i32.eq (local.get $msg) (i32.const 0x020A))
+      (then
+        (local.set $scroll_delta
+          (select (i32.const -48) (i32.const 48)
+            (i32.gt_s (i32.shr_s (local.get $wParam) (i32.const 16)) (i32.const 0))))
+        (call $help_scroll_by (local.get $hwnd) (local.get $scroll_delta))
         (return (i32.const 0))))
 
     ;; WM_KEYDOWN (0x0100)
@@ -731,7 +946,14 @@
       (call $help_window_present_metric (i32.const 1))
       (call $help_window_present_metric (i32.const 2))
       (call $help_window_present_metric (i32.const 3))
-      (i32.const 1)))
+      (i32.const 1))
+    (call $defwndproc_do_nccalcsize (global.get $help_hwnd))
+    (global.set $help_client_width
+      (i32.sub (call $client_rect_get_r (global.get $help_hwnd))
+               (call $client_rect_get_l (global.get $help_hwnd))))
+    (global.set $help_client_height
+      (i32.sub (call $client_rect_get_b (global.get $help_hwnd))
+               (call $client_rect_get_t (global.get $help_hwnd)))))
 
   ;; Create help window via host
   (func $help_create_window
@@ -773,6 +995,13 @@
       (call $help_window_present_caption)
       (call $strlen (call $help_window_present_caption)))
     (call $defwndproc_do_nccalcsize (local.get $hwnd))
+    (global.set $help_client_width
+      (i32.sub (call $client_rect_get_r (local.get $hwnd))
+               (call $client_rect_get_l (local.get $hwnd))))
+    (global.set $help_client_height
+      (i32.sub (call $client_rect_get_b (local.get $hwnd))
+               (call $client_rect_get_t (local.get $hwnd))))
+    (call $help_reflow_primary (local.get $hwnd))
     (call $defwndproc_do_ncpaint (local.get $hwnd))
     ;; Bind the client DC to this window explicitly. $gdi_dc_state_entry binds
     ;; a window DC only at the moment it first creates the record, so whoever
@@ -804,6 +1033,9 @@
     (global.set $help_window_caption_ga (i32.const 0))
     (global.set $help_window_caption_wa (i32.const 0))
     (global.set $help_window_applied_index (i32.const -1))
+    (global.set $help_client_width (i32.const 400))
+    (global.set $help_client_height (i32.const 300))
+    (global.set $help_hover_hand (i32.const 0))
     (global.set $help_title_wa (i32.const 0))
     (global.set $help_title_len (i32.const 0))
     (global.set $help_topic_count (i32.const 0))

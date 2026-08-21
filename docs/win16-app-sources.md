@@ -100,3 +100,32 @@ reference documents the hyperlink-specific rule: HC30 topic numbers begin at
 16 and index `|TOMAP` directly without subtracting 16, while slot 0 is the
 special INDEX topic. That rule is exercised by both a real `PIPE.HLP` parser
 test and the browser click-through test that opens Overview details.
+
+## Help viewer interaction references
+
+The Internet Archive Volume 2 item and its byte-identical `PIPE.HLP` remain the
+primary evidence for the application, its topics, and its link/scroll extent.
+The viewer integration follows these Microsoft window-manager references:
+
+- [WM_SIZE](https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-size)
+  defines `LOWORD(lParam)` and `HIWORD(lParam)` as the new client width and
+  height. The Help viewer uses those dimensions to rewrap the retained topic,
+  move its navigation row, invalidate the whole client, and repaint.
+- [Invalidating the Client Area](https://learn.microsoft.com/en-us/windows/win32/gdi/invalidating-the-client-area)
+  documents that invalidating all or part of a client area schedules the
+  corresponding `WM_PAINT`; the resize path invalidates the complete viewer.
+- [SCROLLINFO](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-scrollinfo)
+  defines the standard range, page, position, and drag position fields.
+  [SetScrollInfo](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setscrollinfo)
+  further specifies the useful maximum position as
+  `nMax - max(nPage - 1, 0)`. The viewer publishes topic pixels as this standard
+  state, letting the shared non-client scrollbar handle arrows, pages, and
+  thumb tracking.
+- [WM_SETCURSOR](https://learn.microsoft.com/en-us/windows/win32/menurc/wm-setcursor)
+  defines the low word of `lParam` as the hit-test code and says a handler
+  returns true after choosing the cursor. Microsoft’s
+  [Using Cursors](https://learn.microsoft.com/en-us/windows/win32/menurc/using-cursors)
+  likewise identifies `WM_SETCURSOR` as the place to select a cursor for a
+  condition. The Help viewer selects the system `IDC_HAND` while a retained
+  hotspot or navigation link is under the pointer and restores `IDC_ARROW`
+  elsewhere.

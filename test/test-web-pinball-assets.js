@@ -278,7 +278,7 @@ assert(fs.existsSync(path.join(ROOT, 'binaries', 'whatsnew.txt')), 'Winamp versi
 assert(fs.statSync(path.join(ROOT, 'binaries', 'whatsnew.txt')).size > 0, 'Winamp version history text should not be empty');
 assert(!webApp.includes('wine.waitForMainHwnd(() =>'), 'Winamp web launch should not auto-drive playback through IPC');
 assert(!webApp.includes('?v=55'), 'index.html should not keep stale cache-buster v55');
-assert(webApp.includes('lib/renderer-input.js?v=189'), 'web host should cache-bust renderer input after disabled-child routing');
+assert(webApp.includes('lib/renderer-input.js?v=190'), 'web host should cache-bust renderer input after top-window hover routing');
 assert(webApp.includes('lib/renderer.js?v=178'), 'web host should cache-bust renderer after fullscreen consent changes');
 assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
 assert(webApp.includes('lib/storage.js?v=169'), 'web host should cache-bust storage after Media Player association changes');
@@ -289,7 +289,8 @@ assert(webApp.includes('lib/host-imports.js?v=203'), 'web host should cache-bust
 assert(webApp.includes('lib/thread-manager.js?v=179'), 'web host should cache-bust thread manager after resumable owner-thread sends');
 assert(webApp.includes('lib/compile-wat.js?v=169'), 'web host should cache-bust the snapshot-capable WAT compiler');
 assert(webApp.includes('lib/guest-thread-host.js?v=4'), 'web host should cache-bust the owner-thread send protocol');
-assert(webApp.includes('host.js?v=211'), 'web host should cache-bust host.js after the current source update');
+assert(webApp.includes('lib/debug-thread-state.js?v=2'), 'web host should cache-bust corrected guest thread ownership diagnostics');
+assert(webApp.includes('host.js?v=212'), 'web host should cache-bust host.js after the current source update');
 assert(hostJs.includes("static SOURCE_VERSION = '209'"), 'web host should cache-bust WASM artifacts and WAT source compilation');
 assert(webApp.includes("['mspaint98',   'Paint'"), 'normal desktop should expose Paint without the downscaled debug pane');
 assert(webApp.includes("mplay32:  { exe: 'binaries/win98-apps/mplay32.exe' }"),

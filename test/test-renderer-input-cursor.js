@@ -146,6 +146,26 @@ check('child sizing box reaches WM_SETCURSOR', childHover(4), 4);
 check('other child codes stay HTCLIENT', childHover(18), 1);
 check('unresolved child rect stays HTCLIENT', childHover(0), 1);
 
+// WAT-native Help is a second top-level window over the app that opened it.
+// Hover must follow z-order like mouse down/up do, rather than object insertion
+// order, or the underlying game receives WM_MOUSEMOVE and Help links can never
+// select IDC_HAND in the real browser.
+const overlap = renderer('default', 1);
+const overlapMoves = [];
+overlap.windows[65537].zOrder = 1;
+overlap.windows[65538] = {
+  hwnd: 65538, visible: true, isChild: false, zOrder: 2,
+  x: 40, y: 40, w: 180, h: 180, wasm: overlap.wasm,
+  clientRect: { x: 43, y: 61, w: 174, h: 156 },
+};
+overlap._mouseMsgOriginScreen = hwnd => hwnd === 65538
+  ? { x: 43, y: 61 }
+  : { x: 23, y: 61 };
+overlap._dispatchMouseEvent = (_win, evt) => overlapMoves.push(evt);
+overlap.handleMouseMove(100, 100);
+check('overlapping hover targets the frontmost top-level window',
+  overlapMoves[0] && overlapMoves[0].hwnd, 65538);
+
 // Off every window is the desktop, and the desktop's cursor is the arrow.
 // It has no hwnd to send WM_SETCURSOR to, so the reset lives in the renderer;
 // without it the pointer keeps whatever the last window set and you drag

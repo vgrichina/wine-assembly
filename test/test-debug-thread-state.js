@@ -39,7 +39,7 @@ const wine = {
   instance: { exports: mainExports },
   threadManager: {
     threads: new Map([[0x1001, {
-      tid: 2, state: 'active', suspendCount: 0, waitPolls: 7,
+      tid: 1, state: 'active', suspendCount: 0, waitPolls: 7,
       instance: { exports: workerExports },
     }]]),
   },
@@ -52,10 +52,15 @@ assert.deepStrictEqual(snapshot.apps[0].criticalSection, {
 });
 assert.strictEqual(snapshot.apps[0].workers[0].ownsBlockedSection, true,
   'the popup should identify the worker owning the main thread\'s blocked section');
+assert.strictEqual(snapshot.apps[0].workers[0].slot, 1,
+  'the worker cache/scheduler slot should remain visible');
+assert.strictEqual(snapshot.apps[0].workers[0].tid, 2,
+  'critical-section ownership should use the worker WAT guest thread id');
 const text = formatSnapshot(snapshot);
 assert(text.includes('yield=9 (critical section)'));
 assert(text.includes('owner=T2'));
 assert(text.includes('OWNS BLOCKED SECTION'));
+assert(text.includes('S1/T2'));
 
 let intervalMs = 0;
 let popupFocused = false;
@@ -85,7 +90,7 @@ assert(output.textContent.includes('0x07502a80'));
 
 assert(index.includes('id="thread-state-btn" onclick="openThreadState()"'),
   'debug toolbar should expose the live thread-state popup');
-assert(index.includes('lib/debug-thread-state.js?v=1'),
+assert(index.includes('lib/debug-thread-state.js?v=2'),
   'page should load the popup implementation with a cache key');
 assert(index.includes('body.no-debug.exclusive-fullscreen #toolbar'),
   'only non-debug full-page mode should hide the toolbar');
