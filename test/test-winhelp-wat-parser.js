@@ -326,26 +326,61 @@ function buildSyntheticTopic(topicCount = 4) {
   return Buffer.concat([header, encodeLiteralLz77(links)]);
 }
 
+function buildSyntheticHc30Topic(topicCount = 4) {
+  // HC30 ends the chain with an empty 33-byte type-2 sentinel which has no
+  // corresponding TTLBTREE title. Model that compiler output here as well as
+  // the relative distances and the zero-valued first previous link.
+  const links = Buffer.alloc(topicCount * 49 + 33);
+  for (let i = 0; i < topicCount; i++) {
+    const pos = i * 49;
+    links.writeUInt32LE(49, pos);
+    links.writeUInt32LE(0, pos + 4);
+    links.writeInt32LE(i === 0 ? 0 : 49, pos + 8);
+    links.writeInt32LE(49, pos + 12);
+    links.writeUInt32LE(49, pos + 16);
+    links[pos + 20] = 2;
+  }
+  const sentinel = topicCount * 49;
+  links.writeUInt32LE(33, sentinel);
+  links.writeUInt32LE(0, sentinel + 4);
+  links.writeInt32LE(49, sentinel + 8);
+  links.writeInt32LE(33, sentinel + 12);
+  links.writeUInt32LE(33, sentinel + 16);
+  links[sentinel + 20] = 2;
+  const header = Buffer.alloc(12);
+  header.writeInt32LE(-1, 0);
+  header.writeUInt32LE(12, 4);
+  return Buffer.concat([header, links]);
+}
+
 function buildSyntheticOldTopic(compressed = true) {
-  const positions = [12, 61, 98, 147, 196];
-  const types = [2, 0x20, 2, 2, 2];
-  const sizes = [49, 37, 49, 49, 49];
-  const displayFormat = Buffer.alloc(10);
+  const displayFormat = Buffer.alloc(compressed ? 10 : 9);
   displayFormat.writeUInt16LE(0x801a, 0); // compressed long TopicSize = 13
-  displayFormat[2] = 26; // compressed unsigned TopicLength = 13
-  displayFormat[9] = 0xff;
+  if (compressed) displayFormat[2] = 26; // HC31 compressed unsigned TopicLength = 13
+  displayFormat[displayFormat.length - 1] = 0xff;
+  const types = [2, compressed ? 0x20 : 1, 2, 2, 2];
+  const sizes = [49, 21 + displayFormat.length + 6, 49, 49, 49];
+  const positions = [];
+  for (let i = 0, position = 12; i < sizes.length; i++) {
+    positions.push(position);
+    position += sizes[i];
+  }
   const links = Buffer.alloc(sizes.reduce((sum, size) => sum + size, 0));
   let raw = 0;
   for (let i = 0; i < positions.length; i++) {
     const source = i === 1 ? Buffer.from([1, 0, 1, 3, '!'.charCodeAt(0), 0]) : Buffer.alloc(0);
     links.writeUInt32LE(sizes[i], raw);
     links.writeUInt32LE(i === 1 ? 13 : 0, raw + 4);
-    links.writeInt32LE(i === 0 ? -1 : positions[i - 1], raw + 8);
-    links.writeInt32LE(i + 1 === positions.length ? -1 : positions[i + 1], raw + 12);
-    links.writeUInt32LE(i === 1 ? 31 : 49, raw + 16);
+    links.writeInt32LE(compressed
+      ? (i === 0 ? -1 : positions[i - 1])
+      : (i === 0 ? 0 : sizes[i - 1]), raw + 8);
+    links.writeInt32LE(compressed
+      ? (i + 1 === positions.length ? -1 : positions[i + 1])
+      : (i + 1 === positions.length ? 0 : sizes[i]), raw + 12);
+    links.writeUInt32LE(i === 1 ? 21 + displayFormat.length : 49, raw + 16);
     links[raw + 20] = types[i];
     if (i === 1) displayFormat.copy(links, raw + 21);
-    source.copy(links, raw + (i === 1 ? 31 : 21));
+    source.copy(links, raw + (i === 1 ? 21 + displayFormat.length : 21));
     raw += sizes[i];
   }
   const header = Buffer.alloc(12);
@@ -3099,15 +3134,53 @@ async function main() {
     e.get_help_dispatch_status() === 4 && e.get_help_session_topic_ref() === 0 &&
     e.get_help_view_topic_index() === 0 && e.get_help_view_back_count() === 0);
 
-  function firstVisibleHotspotRun() {
+  function visibleHotspotRuns() {
+    const seen = new Set();
     return Array.from({ length: e.get_help_view_run_count() }, (_, index) => {
       const record = e.get_help_view_run_ptr() + index * 40;
       return {
         x: dv.getInt32(record + 4, true), y: dv.getInt32(record + 8, true),
         width: dv.getInt32(record + 12, true), height: dv.getInt32(record + 16, true),
-        flagged: dv.getUint32(record + 36, true) !== 0,
+        hotspot: dv.getUint32(record + 36, true),
       };
-    }).find(run => run.flagged && run.width > 0 && run.height > 0);
+    }).filter(run => run.hotspot && run.width > 0 && run.height > 0 &&
+      !seen.has(run.hotspot) && seen.add(run.hotspot));
+  }
+
+  function firstVisibleHotspotRun() {
+    return visibleHotspotRuns()[0];
+  }
+
+  {
+    // PIPE.HLP is an HC30 document. Its visible Index links use E1 with a
+    // topic number (17 for Overview), and |TOMAP[17] supplies the canonical
+    // topic position 573. Treating 17 itself as a topic offset left the blue
+    // link painted and hit-testable but unable to navigate.
+    const pipeHelp = fs.readFileSync(path.join(
+      ROOT, 'test', 'binaries', 'wep16', 'WEP2', 'PIPE.HLP'));
+    ctx.vfs.files.set('c:\\pipe.hlp', {
+      data: new Uint8Array(pipeHelp), attrs: 0x20,
+    });
+    const opened = e.test_invoke_WinHelpA(
+      0x8888, allocGuestAnsi('c:\\pipe.hlp'), 0x0003, 0) === 1;
+    const runs = opened ? visibleHotspotRuns() : [];
+    const topicPositions = [12, 573, 1328, 3233, 5112, 6026,
+      7110, 7357, 7687, 8346, 8804, 9015];
+    const resolved = topicPositions.every((position, index) =>
+      e.test_help_resolve_direct_topic(index + 16) === position) &&
+      e.test_help_resolve_direct_topic(0) === 12 &&
+      e.test_help_resolve_direct_topic(1) === -1 &&
+      e.test_help_resolve_direct_topic(28) === -1;
+    const run = runs[0];
+    const clicked = run && e.test_help_window_message(0x0201, 0,
+      (run.y << 16) | (run.x & 0xffff)) === 0;
+    check('all HC30 direct hotspots resolve their topic numbers through |TOMAP',
+      opened && e.get_help_system_minor() === 15 && resolved && clicked &&
+      e.get_help_session_topic_ref() === 573 && e.get_help_view_topic_index() === 1 &&
+      e.get_help_view_back_count() === 1,
+      `opened=${opened} runs=${runs.length} resolved=${resolved} clicked=${Boolean(clicked)} ` +
+        `ref=${e.get_help_session_topic_ref()}`);
+    e.test_invoke_WinHelpA(0x8888, 0, 0x0002, 0);
   }
 
   const fixedOpcodeCases = [
@@ -3901,6 +3974,16 @@ async function main() {
   writeSyntheticTopicRaw(badTopicPrev, 49 + 8, -1);
   check('TOPIC link previous pointer must match the chain',
     load(badTopicPrev.file) === 0 && e.get_help_last_error() === 13);
+
+  const hc30TopicLinks = buildSyntheticSemanticHelp({
+    systemMinor: 15, systemFlags: 8, topic: buildSyntheticHc30Topic(),
+  });
+  check('HC 3.0 TOPIC chain uses physical positions and relative link distances',
+    load(hc30TopicLinks.file) === 1 && e.get_help_topic_count() === 4 &&
+    e.get_help_contents_ref() === 0);
+  check('HC 3.0 HELP_CONTENTS resolves through its canonical first topic',
+    e.test_help_dispatch(0x5151, 0, 3, 0, 0) === 1 &&
+    e.get_help_session_topic_ref() === 0 && e.get_help_session_topic_index() === 0);
 
   const cyclicTopicLinks = buildSyntheticSemanticHelp();
   writeSyntheticTopicRaw(cyclicTopicLinks, 12, 12);

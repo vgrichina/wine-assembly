@@ -4,7 +4,7 @@
 `worktree-real-threads`. Written 2026-08-16, updated 2026-08-20.
 
 Notepad, Calculator and Paint boot and render with the guest's main thread
-executing inside a Web Worker and all 184 host imports running on the main
+executing inside a Web Worker and all 185 host imports running on the main
 thread. `test/test-worker-guest.js` asserts window-count and window-title parity
 against single-threaded runs, plus the COM server-load round trip.
 
@@ -1040,7 +1040,7 @@ Pre-merge validation on 2026-08-20:
 - The browser worker gate is 27/27: Notepad and Calculator match their control
   window sets, Winamp creates and runs three guest Workers without traps, and
   both COM load outcomes unpark correctly.
-- The broad quick unit run is 181/193. Its 12 failures reproduce outside this
+- The broad quick unit run is 185/197. Its 12 failures reproduce outside this
   patch's scope: four localhost/sandbox or missing-corpus fixtures and eight
   existing GDI/renderer/dialog/find-replace assertions. They are not counted as
   evidence for this branch; the relevant gates above are all green.

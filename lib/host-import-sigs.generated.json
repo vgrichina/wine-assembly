@@ -1,6 +1,6 @@
 {
   "generated_from": "src/01-header.wat",
-  "count": 184,
+  "count": 185,
   "sigs": {
     "log": {
       "params": [
@@ -1374,6 +1374,17 @@
       ]
     },
     "create_event": {
+      "params": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
+    "open_event": {
       "params": [
         "i32",
         "i32"

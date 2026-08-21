@@ -1098,9 +1098,35 @@
 
   ;; 27: CreateEventA(lpAttr, bManualReset, bInitialState, lpName) — 4 args stdcall
   (func $handle_CreateEventA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_create_event (local.get $arg1) (local.get $arg2)))
+    (local $name_wa i32) (local $existing i32)
+    (if (local.get $arg3)
+      (then (local.set $name_wa (call $g2w (local.get $arg3)))))
+    ;; CreateEvent opens an existing same-name event and reports
+    ;; ERROR_ALREADY_EXISTS; otherwise it creates the shared object.
+    (if (local.get $name_wa)
+      (then (local.set $existing (call $host_open_event (local.get $name_wa) (i32.const 0)))))
+    (if (local.get $existing)
+      (then
+        (global.set $eax (local.get $existing))
+        (global.set $last_error (i32.const 183)))
+      (else
+        (global.set $eax (call $host_create_event
+          (local.get $arg1) (local.get $arg2) (local.get $name_wa) (i32.const 0)))
+        (global.set $last_error (i32.const 0))))
     (call $host_log_i32 (global.get $eax))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  ;; OpenEventA(dwDesiredAccess, bInheritHandle, lpName) — 3 args stdcall.
+  ;; Access masks and inheritance do not change the cooperative process-local
+  ;; object, but the name lookup and reference lifetime match Win32.
+  (func $handle_OpenEventA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (if (result i32) (local.get $arg2)
+      (then (call $host_open_event (call $g2w (local.get $arg2)) (i32.const 0)))
+      (else (i32.const 0))))
+    (if (i32.eqz (global.get $eax))
+      (then (global.set $last_error (i32.const 2)))) ;; ERROR_FILE_NOT_FOUND
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 28: CreateThread(lpAttr, dwStackSize, lpStartAddr, lpParam, dwFlags, lpThreadId) — 6 args stdcall
@@ -2939,6 +2965,13 @@
       (call $wnd_client_screen_y (local.get $arg0))
       (i32.sub (call $client_rect_get_r (local.get $arg0)) (call $client_rect_get_l (local.get $arg0)))
       (i32.sub (call $client_rect_get_b (local.get $arg0)) (call $client_rect_get_t (local.get $arg0))))
+    ;; A window DC may outlive the geometry it was acquired under. Visual
+    ;; Basic picture boxes retain a DC while the control grows from its 1x1
+    ;; creation fallback to its authored size, so rebuild USER-visible clips
+    ;; after a real client-size transition.
+    (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
+    (if (i32.ne (local.get $cs) (local.get $old_cs))
+      (then (call $gdi_refresh_window_dc_system_clips)))
     (local.set $dlg_rec (call $dlg_record_for_hwnd (local.get $arg0)))
     (if (i32.and
           (i32.ne (local.get $dlg_rec) (i32.const 0))
@@ -2949,13 +2982,11 @@
     ;; exactly this; using the stale 0x0 create size moves its controls offscreen.
     (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
     (then
-	      (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
 	      (if (i32.ne (local.get $cs) (local.get $old_cs))
 	        (then
 	          (global.set $pending_wm_size (local.get $cs))
 	          (call $invalidate_hwnd (local.get $arg0)))))
 	    (else
-	      (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
 	      (if (i32.ne (local.get $cs) (local.get $old_cs))
 	        (then
 	          (call $invalidate_hwnd (local.get $arg0))
@@ -3389,11 +3420,18 @@
   (func $handle_SetWindowPos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; SetWindowPos(hwnd, hWndInsertAfter, X, Y, cx, cy, uFlags)
     (local $cy i32) (local $uFlags i32) (local $dlg_rec i32)
+    (local $old_wh i32) (local $new_wh i32)
     (local.set $cy (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
     (local.set $uFlags (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
+    (local.set $old_wh (call $ctrl_get_wh_packed (local.get $arg0)))
+    (if (i32.eqz (local.get $old_wh))
+      (then (local.set $old_wh (call $host_get_window_client_size (local.get $arg0)))))
     ;; Pass uFlags to host so it can respect SWP_NOSIZE/SWP_NOMOVE independently
     (call $host_move_window (local.get $arg0) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $cy) (local.get $uFlags))
     (call $ctrl_geom_sync (local.get $arg0) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $cy) (local.get $uFlags))
+    (local.set $new_wh (call $ctrl_get_wh_packed (local.get $arg0)))
+    (if (i32.eqz (local.get $new_wh))
+      (then (local.set $new_wh (call $host_get_window_client_size (local.get $arg0)))))
     ;; Keep WAT's GWL_STYLE in sync with SetWindowPos visibility flags. Apps
     ;; such as Tetravex show custom child panels via SWP_SHOWWINDOW instead of
     ;; ShowWindow; if WS_VISIBLE stays clear here, WAT's paint selector treats
@@ -3424,6 +3462,10 @@
       (call $wnd_client_screen_y (local.get $arg0))
       (i32.sub (call $client_rect_get_r (local.get $arg0)) (call $client_rect_get_l (local.get $arg0)))
       (i32.sub (call $client_rect_get_b (local.get $arg0)) (call $client_rect_get_t (local.get $arg0))))
+    ;; SetWindowPos can resize the same retained-DC controls as MoveWindow.
+    ;; Refresh only after NCCALCSIZE publishes the new client rectangle.
+    (if (i32.ne (local.get $new_wh) (local.get $old_wh))
+      (then (call $gdi_refresh_window_dc_system_clips)))
     ;; Repaint a moved WAT-native control immediately, but only if it is
     ;; actually on screen. Its own WS_VISIBLE bit is not enough: a control
     ;; inside a hidden dialog page keeps that bit set, and painting it writes
@@ -5944,6 +5986,9 @@ nW — STUB: unimplemented
       (i32.add (i32.load offset=4 (local.get $cs)) (i32.const 1)))
     (i32.store offset=8 (local.get $cs)
       (i32.add (i32.load offset=8 (local.get $cs)) (i32.const 1)))
+    ;; A contended attempt sets this flag so $run preserves the import frame.
+    ;; Once the retry acquires the section it is an ordinary completed API call.
+    (global.set $handler_set_eip (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -8610,7 +8655,19 @@ HookEx — no next hook in chain, return 0
 
   ;; 526: CreateEventW(lpAttr, bManualReset, bInitialState, lpName) — 4 args stdcall
   (func $handle_CreateEventW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_create_event (local.get $arg1) (local.get $arg2)))
+    (local $name_wa i32) (local $existing i32)
+    (if (local.get $arg3)
+      (then (local.set $name_wa (call $g2w (local.get $arg3)))))
+    (if (local.get $name_wa)
+      (then (local.set $existing (call $host_open_event (local.get $name_wa) (i32.const 1)))))
+    (if (local.get $existing)
+      (then
+        (global.set $eax (local.get $existing))
+        (global.set $last_error (i32.const 183)))
+      (else
+        (global.set $eax (call $host_create_event
+          (local.get $arg1) (local.get $arg2) (local.get $name_wa) (i32.const 1)))
+        (global.set $last_error (i32.const 0))))
     (call $host_log_i32 (global.get $eax))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )

@@ -291,19 +291,22 @@
       (i32.const 0) (i32.const 0))
     (global.set $esp (local.get $saved_esp)))
   (func (export "test_cs_enter") (param $cs i32) (result i32)
-    (local $saved_esp i32)
+    (local $saved_esp i32) (local $bits i32)
     (local.set $saved_esp (global.get $esp))
     (call $handle_EnterCriticalSection
       (local.get $cs) (i32.const 0) (i32.const 0) (i32.const 0)
       (i32.const 0) (i32.const 0))
+    (if (i32.eq (global.get $yield_reason) (i32.const 9))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 1)))))
+    (if (i32.eq (global.get $esp) (local.get $saved_esp))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 2)))))
+    (if (global.get $handler_set_eip)
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 4)))))
     (global.set $esp (local.get $saved_esp))
-    (if (result i32) (i32.eq (global.get $yield_reason) (i32.const 9))
-      (then
-        (global.set $yield_reason (i32.const 0))
-        (global.set $yield_flag (i32.const 0))
-        (global.set $handler_set_eip (i32.const 0))
-        (i32.const 1))
-      (else (i32.const 0))))
+    (global.set $yield_reason (i32.const 0))
+    (global.set $yield_flag (i32.const 0))
+    (global.set $handler_set_eip (i32.const 0))
+    (local.get $bits))
   (func (export "test_cs_delete") (param $cs i32)
     (local $saved_esp i32)
     (local.set $saved_esp (global.get $esp))
@@ -2266,6 +2269,57 @@
   (func (export "test_crt_exit_begin") (param $code i32)
     (global.set $atexit_exit_code (local.get $code))
     (call $crt_atexit_run_next))
+
+  ;; Exercise the exact cooperative retry transition: the first call parks on
+  ;; another owner, the owner releases while the import frame remains live,
+  ;; and the second call completes on that same frame. Bits: 1=parked with
+  ;; frame preserved, 2=retry no longer yielded, 4=stdcall frame consumed,
+  ;; 8=thunk auto-pop suppression cleared for the completed call,
+  ;; 16=the parked inline import resumes at its thunk instead of its caller.
+  (func (export "test_cs_park_retry") (param $cs_gp i32) (result i32)
+    (local $saved_esp i32) (local $saved_eip i32)
+    (local $saved_thunk_eip i32) (local $cs i32) (local $bits i32)
+    (local.set $saved_esp (global.get $esp))
+    (local.set $saved_eip (global.get $eip))
+    (local.set $saved_thunk_eip (global.get $current_thunk_eip))
+    (global.set $current_thunk_eip (i32.const 0x0BADF00D))
+    (local.set $cs (call $g2w (local.get $cs_gp)))
+    (i32.store offset=4 (local.get $cs) (i32.const 0))
+    (i32.store offset=8 (local.get $cs) (i32.const 1))
+    (i32.store offset=12 (local.get $cs)
+      (i32.add (global.get $current_thread_id) (i32.const 1)))
+    (call $handle_EnterCriticalSection
+      (local.get $cs_gp) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (if (i32.and
+          (i32.eq (global.get $yield_reason) (i32.const 9))
+          (i32.and (global.get $handler_set_eip)
+            (i32.eq (global.get $esp) (local.get $saved_esp))))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 1)))))
+    (if (i32.eq (global.get $eip) (global.get $current_thunk_eip))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 16)))))
+    ;; Publish the owner's final LeaveCriticalSection, then let the parked
+    ;; caller re-enter the same import handler just as ThreadManager does.
+    (i32.store offset=4 (local.get $cs) (i32.const -1))
+    (i32.store offset=8 (local.get $cs) (i32.const 0))
+    (i32.store offset=12 (local.get $cs) (i32.const 0))
+    (global.set $yield_reason (i32.const 0))
+    (call $handle_EnterCriticalSection
+      (local.get $cs_gp) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (if (i32.eqz (global.get $yield_reason))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 2)))))
+    (if (i32.eq (global.get $esp) (i32.add (local.get $saved_esp) (i32.const 8)))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 4)))))
+    (if (i32.eqz (global.get $handler_set_eip))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 8)))))
+    (global.set $esp (local.get $saved_esp))
+    (global.set $yield_reason (i32.const 0))
+    (global.set $yield_flag (i32.const 0))
+    (global.set $handler_set_eip (i32.const 0))
+    (global.set $eip (local.get $saved_eip))
+    (global.set $current_thunk_eip (local.get $saved_thunk_eip))
+    (local.get $bits))
 
   ;; Thread init — called by host after creating worker instance
   (func (export "init_thread") (param $tid i32)

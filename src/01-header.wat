@@ -692,7 +692,8 @@
   (import "host" "resume_thread" (func $host_resume_thread (param i32) (result i32)))
   (import "host" "exit_thread" (func $host_exit_thread (param i32)))
   (import "host" "get_exit_code_thread" (func $host_get_exit_code_thread (param i32) (result i32)))
-  (import "host" "create_event" (func $host_create_event (param i32 i32) (result i32)))
+  (import "host" "create_event" (func $host_create_event (param i32 i32 i32 i32) (result i32)))
+  (import "host" "open_event" (func $host_open_event (param i32 i32) (result i32)))
   (import "host" "set_event" (func $host_set_event (param i32) (result i32)))
   (import "host" "reset_event" (func $host_reset_event (param i32) (result i32)))
   (import "host" "wait_single" (func $host_wait_single (param i32 i32) (result i32)))
@@ -920,6 +921,15 @@
     "\0bRECTVISIBLE\68\30"
     "\0dGETDEVICECAPS\50\30"
     "\06BITBLT\22\30"
+    "\0aSHOWCURSOR\47\20"
+    "\07SETRECT\48\20"
+    "\09UNIONRECT\50\20"
+    "\12CREATECOMPATIBLEDC\34\30"
+    "\16CREATECOMPATIBLEBITMAP\33\30"
+    "\08DELETEDC\44\30"
+    "\0cDELETEOBJECT\45\30"
+    "\0cSELECTOBJECT\2d\30"
+    "\0aSTRETCHBLT\23\30"
     "\0fGETMODULEHANDLE\2f\10"
     "\11GETMODULEFILENAME\31\10"
     "\14GETPRIVATEPROFILEINT\7f\10"
@@ -1069,11 +1079,12 @@
   ;; 0x00003900  1KB     WND_CLASS_CURSOR_TABLE (256 × 4 bytes — class hCursor per hwnd)
   ;; 0x00003D00  256B    CLASS_EXTRA_TABLE (64 × 4 bytes — cbClsExtra per class slot)
   ;; 0x00003E00   48B    WIN16_FONT_FACES (face names EnumFonts reports)
-  ;; 0x00003E30  ~464B   Free
+  ;; 0x00003E30  ~464B   Win16 dynamic GetProcAddress name tables
   ;; 0x00004000  4KB     DIALOG_STATE_TABLE (256 entries x 16 bytes)
   ;; 0x00005000  256B    WINDOW_UNICODE_TABLE (one byte per WND_RECORDS slot)
   ;; 0x00005100  4B      SHARED_PROCESS_ID (shared by every thread instance)
-  ;; 0x00005104  252B    Free
+  ;; 0x00005104  8B      SHARED_DLG_ENDED / SHARED_DLG_RESULT
+  ;; 0x0000510C  244B    Free
   ;; 0x00005200  4KB     WINDOW_EXTRA_TABLE (256 entries x 16 bytes)
   ;; 0x00006200  1KB     ATOM_LOCAL_TABLE  (128 entries × 8 bytes — AddAtom namespace)
   ;; 0x00006600  1KB     ATOM_GLOBAL_TABLE (128 entries × 8 bytes — GlobalAddAtom namespace)
@@ -2367,9 +2378,9 @@
   ;; Shared-memory mirror for EndDialog calls made from worker-thread WASM
   ;; instances. Thread globals are private; this lets the main modal pump see
   ;; installer worker completion.
-  (global $SHARED_DLG_ENDED  i32 (i32.const 0x00003F00))
+  (global $SHARED_DLG_ENDED  i32 (i32.const 0x00005104))
   (global $SHARED_DLG_ENDED_SIZE i32 (i32.const 0x00000004))
-  (global $SHARED_DLG_RESULT i32 (i32.const 0x00003F04))
+  (global $SHARED_DLG_RESULT i32 (i32.const 0x00005108))
   (global $SHARED_DLG_RESULT_SIZE i32 (i32.const 0x00000004))
   (global $dlg_proc     (mut i32) (i32.const 0))    ;; Dialog proc address
   (global $dlg_ret_addr (mut i32) (i32.const 0))    ;; Return address for DialogBoxParamA

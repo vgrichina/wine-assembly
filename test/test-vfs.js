@@ -24,6 +24,14 @@ function test(name, fn) {
 
 console.log('VFS tests:');
 
+test('standard Win98 shell folders exist before an installer runs', () => {
+  const vfs = makeVFS({});
+  assert(vfs.dirs.has('c:\\windows\\start menu'));
+  assert(vfs.dirs.has('c:\\windows\\start menu\\programs'));
+  assert(vfs.dirs.has('c:\\windows\\start menu\\programs\\startup'));
+  assert(vfs.dirs.has('c:\\windows\\desktop'));
+});
+
 // --- findFirstFile ---
 
 test('wildcard *.* in CWD finds files in c:\\', () => {

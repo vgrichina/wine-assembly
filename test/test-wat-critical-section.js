@@ -146,7 +146,7 @@ function check(ok, label, detail) {
     t1.exports.test_cs_enter(CS_GUEST);
     const parked = t2.exports.test_cs_enter(CS_GUEST) | 0;
     const s = state();
-    check(parked === 1, 'Enter by another thread parks (yield 9) instead of taking it',
+    check((parked & 1) === 1, 'Enter by another thread parks (yield 9) instead of taking it',
       `parked=${parked}`);
     check(s.owner === T1_ID && s.recursion === 1,
       'a parked Enter leaves the holder\'s counters alone', show(s));
@@ -171,7 +171,7 @@ function check(ok, label, detail) {
     t2.exports.set_current_thunk_eip(THUNK);
     const espBefore = t2.exports.get_esp() >>> 0;
     const parked = t2.exports.test_cs_enter(CS_GUEST) | 0;
-    check(parked === 1 && (t2.exports.get_esp() >>> 0) === espBefore,
+    check((parked & 1) === 1 && (t2.exports.get_esp() >>> 0) === espBefore,
       'a park leaves ESP exactly where the call left it',
       `parked=${parked} esp 0x${espBefore.toString(16)} -> 0x${(t2.exports.get_esp() >>> 0).toString(16)}`);
     check((t2.exports.get_eip() >>> 0) === THUNK,

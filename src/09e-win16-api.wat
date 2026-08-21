@@ -4623,6 +4623,13 @@
       (call $win16_h16 (call $gl32 (local.get $tmp))))
     (call $gs16 (i32.add (local.get $dst) (i32.const 2))
       (call $gl32 (i32.add (local.get $tmp) (i32.const 4))))
+    ;; Synthetic WM_ERASEBKGND DCs are named by hwnd+0x40000 and can outlive
+    ;; child creation. Rebuild USER's erase-visible region at delivery time so
+    ;; WS_CLIPCHILDREN excludes every currently visible child.
+    (if (i32.eq (call $gl32 (i32.add (local.get $tmp) (i32.const 4))) (i32.const 0x0014))
+      (then (call $dc_apply_client_erase_clip
+        (call $gl32 (i32.add (local.get $tmp) (i32.const 8)))
+        (call $gl32 (local.get $tmp)))))
     (call $gs16 (i32.add (local.get $dst) (i32.const 4))
       (call $win16_msg_wparam16
         (call $gl32 (i32.add (local.get $tmp) (i32.const 4)))
@@ -5232,7 +5239,14 @@
     (local.set $file (call $win16_far_to_guest
       (call $win16_arg16 (i32.const 4)) (call $win16_arg16 (i32.const 3))))
     (local.set $cmd (call $win16_arg16 (i32.const 2)))
-    (local.set $data (call $win16_arg32 (i32.const 0)))
+    ;; Win16 packs pointer-valued ulData as selector:offset. The Win32/WAT
+    ;; dispatcher takes a guest linear pointer, while numeric HELP_CONTEXT
+    ;; and HELP_SETCONTENTS values must remain unchanged.
+    (local.set $data
+      (if (result i32) (call $help_command_data_is_pointer (local.get $cmd))
+        (then (call $win16_far_to_guest
+          (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+        (else (call $win16_arg32 (i32.const 0)))))
     (call $win16_call32_begin (i32.const 4))
     (call $handle_WinHelpA (local.get $hwnd) (local.get $file) (local.get $cmd)
       (local.get $data) (i32.const 0) (i32.const 0))
@@ -6244,10 +6258,19 @@
         (call $gs16 (local.get $dst) (call $win16_h16 (call $gl32 (local.get $tmp))))
         (call $gs16 (i32.add (local.get $dst) (i32.const 2))
           (call $gl32 (i32.add (local.get $tmp) (i32.const 4))))
+        (if (i32.eq (call $gl32 (i32.add (local.get $tmp) (i32.const 4))) (i32.const 0x0014))
+          (then (call $dc_apply_client_erase_clip
+            (call $gl32 (i32.add (local.get $tmp) (i32.const 8)))
+            (call $gl32 (local.get $tmp)))))
         (call $gs16 (i32.add (local.get $dst) (i32.const 4))
-          (call $gl32 (i32.add (local.get $tmp) (i32.const 8))))
+          (call $win16_msg_wparam16
+            (call $gl32 (i32.add (local.get $tmp) (i32.const 4)))
+            (call $gl32 (i32.add (local.get $tmp) (i32.const 8)))))
         (call $gs32 (i32.add (local.get $dst) (i32.const 6))
-          (call $gl32 (i32.add (local.get $tmp) (i32.const 12))))
+          (call $win16_msg_lparam16_cmd
+            (call $gl32 (i32.add (local.get $tmp) (i32.const 4)))
+            (call $gl32 (i32.add (local.get $tmp) (i32.const 8)))
+            (call $gl32 (i32.add (local.get $tmp) (i32.const 12)))))
         (call $gs32 (i32.add (local.get $dst) (i32.const 10))
           (call $gl32 (i32.add (local.get $tmp) (i32.const 16))))
         (call $win16_msg_pt_narrow (local.get $dst) (local.get $tmp))))
@@ -7501,6 +7524,25 @@
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 10)))
 
+  ;; GDI.22 IntersectClipRect(hDC, X1, Y1, X2, Y2) -> the new clip region's
+  ;; type. Pipe Dream intersects the cell rectangle before drawing the first
+  ;; placed tile, so this is a gameplay path rather than startup decoration.
+  (func $win16_IntersectClipRect
+    (local $hdc i32) (local $x1 i32) (local $y1 i32) (local $x2 i32) (local $y2 i32)
+    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 4))))
+    (local.set $x1 (call $win16_coord (call $win16_arg16 (i32.const 3))))
+    (local.set $y1 (call $win16_coord (call $win16_arg16 (i32.const 2))))
+    (local.set $x2 (call $win16_coord (call $win16_arg16 (i32.const 1))))
+    (local.set $y2 (call $win16_coord (call $win16_arg16 (i32.const 0))))
+    (call $win16_call32_begin (i32.const 5))
+    (call $win16_call32_arg (i32.const 3) (local.get $x2))
+    (call $win16_call32_arg (i32.const 4) (local.get $y2))
+    (call $handle_IntersectClipRect (local.get $hdc) (local.get $x1) (local.get $y1)
+      (local.get $x2) (local.get $y2) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 10)))
+
   ;; GDI.27 Rectangle(hDC, X1, Y1, X2, Y2).
   (func $win16_Rectangle
     (local $hdc i32) (local $x1 i32) (local $y1 i32) (local $x2 i32) (local $y2 i32)
@@ -8051,6 +8093,8 @@
       (then (call $win16_dc_set_pair (i32.const 7)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 21))
       (then (call $win16_ExcludeClipRect) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 22))
+      (then (call $win16_IntersectClipRect) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 23))
       (then (call $win16_Arc) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 24))

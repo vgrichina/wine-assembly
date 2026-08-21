@@ -2518,7 +2518,7 @@
           (if (result i32)
             (i32.or (i32.eq (local.get $command) (i32.const 0xE0))
                     (i32.eq (local.get $command) (i32.const 0xE1)))
-            (then (local.get $hash))
+            (then (call $help_resolve_direct_topic (local.get $hash)))
             (else (call $help_resolve_context_hash (local.get $hash)))))
         (if (i32.lt_s (local.get $topic_ref) (i32.const 0))
           (then

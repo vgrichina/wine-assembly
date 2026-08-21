@@ -185,6 +185,7 @@ const HOST_CENSUS = (hasFlag('host-census') || getArg('host-census', null) !== n
 const PROFILE_HOST = getArg('profile-host', null); // --profile-host=fn1,fn2: print count + total time for host imports
 const TRACE_WAVE = hasFlag('trace-wave');     // --trace-wave: log wave_out_* calls + cumulative totals
 const TRACE_THREAD = hasFlag('trace-thread'); // --trace-thread: log per-thread state transitions
+const TRACE_CRITICAL = hasFlag('trace-critical'); // --trace-critical: log CRITICAL_SECTION state around Enter/Leave
 const ASYNC_MM_TIMER_AFTER = Math.max(0,
   parseInt(getArg('async-mm-timer-after', '0'), 10) || 0);
 const TRACE_YIELD = hasFlag('trace-yield');   // --trace-yield: log yield_reason transitions per thread
@@ -1532,6 +1533,7 @@ async function main() {
   for (const name of profileHostNames) wrapProfileHost(h, name);
 
   // --- Override logging ---
+  let criticalTracePending = null;
   h.log = (ptr, len) => {
     const b = new Uint8Array(memory.buffer, ptr, Math.min(len, 256));
     let t = '';
@@ -1550,6 +1552,29 @@ async function main() {
     }
     apiCount++;
     if (apiCounts) apiCounts.set(t, (apiCounts.get(t) || 0) + 1);
+
+    if (TRACE_CRITICAL && (t === 'EnterCriticalSection' || t === 'LeaveCriticalSection')) {
+      try {
+        const e = instance.exports;
+        const esp = e.get_esp() >>> 0;
+        const imageBase = e.get_image_base() >>> 0;
+        const dv = new DataView(memory.buffer);
+        const g2w = addr => addr - imageBase + 0x12000;
+        const cs = dv.getUint32(g2w((esp + 4) >>> 0), true) >>> 0;
+        const state = () => ({
+          lock: dv.getInt32(g2w((cs + 4) >>> 0), true),
+          recursion: dv.getUint32(g2w((cs + 8) >>> 0), true) >>> 0,
+          owner: dv.getUint32(g2w((cs + 12) >>> 0), true) >>> 0,
+        });
+        const before = state();
+        const ret = dv.getUint32(g2w(esp), true) >>> 0;
+        const tid = e.get_current_thread_id ? e.get_current_thread_id() >>> 0 : 0;
+        criticalTracePending = { name: t, cs, ret, tid, state };
+        logs.push(`[critical T0/tid${tid}] ${t} cs=${hex(cs)} ret=${hex(ret)} before={lock:${before.lock},rec:${before.recursion},owner:${before.owner}}`);
+      } catch (_) {
+        criticalTracePending = null;
+      }
+    }
 
     if (TRACE_INPUT_DISPATCH && (t === 'DispatchMessageA' || t === 'DispatchMessageW')) {
       try {
@@ -2022,8 +2047,15 @@ async function main() {
     };
   }
 
-  if (ESP_DELTA || TRACE_API) {
+  if (ESP_DELTA || TRACE_API || TRACE_CRITICAL) {
     h.log_api_exit = () => {
+      if (criticalTracePending) {
+        try {
+          const after = criticalTracePending.state();
+          logs.push(`[critical T0/tid${criticalTracePending.tid}] ${criticalTracePending.name} cs=${hex(criticalTracePending.cs)} ret=${hex(criticalTracePending.ret)} after={lock:${after.lock},rec:${after.recursion},owner:${after.owner}}`);
+        } catch (_) {}
+        criticalTracePending = null;
+      }
       if (!lastApiName) return;
       if (ESP_DELTA) {
         const espAfter = instance.exports.get_esp();
@@ -2331,7 +2363,22 @@ async function main() {
   h.resume_thread = (handle) => threadManager.resumeThread(handle);
   h.exit_thread = (exitCode) => threadManager.exitThread(exitCode);
   h.get_exit_code_thread = (handle) => threadManager.getExitCodeThread(handle);
-  h.create_event = (manualReset, initialState) => threadManager.createEvent(manualReset, initialState);
+  const readSyncObjectName = (nameWa, wide) => {
+    if (!nameWa) return '';
+    const dv = new DataView(memory.buffer);
+    let name = '';
+    for (let i = 0; i < 512; i++) {
+      const ch = wide
+        ? dv.getUint16(nameWa + i * 2, true)
+        : dv.getUint8(nameWa + i);
+      if (!ch) break;
+      name += String.fromCharCode(ch);
+    }
+    return name;
+  };
+  h.create_event = (manualReset, initialState, nameWa, wide) =>
+    threadManager.createEvent(manualReset, initialState, readSyncObjectName(nameWa, wide));
+  h.open_event = (nameWa, wide) => threadManager.openEvent(readSyncObjectName(nameWa, wide));
   h.set_event = (handle) => threadManager.setEvent(handle);
   h.reset_event = (handle) => threadManager.resetEvent(handle);
   h.wait_single = (handle, timeout) => threadManager.waitSingle(handle, timeout);
