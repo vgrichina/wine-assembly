@@ -222,7 +222,14 @@
         (i32.load offset=56 (local.get $record))))
       (else (i32.const 0))))
 
-  (func $gdi_bitmap_font_enum_unique (param $candidate i32) (result i32)
+  ;; $family_only is 1 for a family enumeration (no lpszFamily / an empty one),
+  ;; where GDI reports each family once, and 0 when the caller named a family,
+  ;; where GDI reports every font in it. That distinction is what gives a
+  ;; bitmap face its real, short size list: Courier ships 10/12/15px strikes
+  ;; and a font picker asking for "Courier" must be offered all three, while
+  ;; the family list must still name Courier once.
+  (func $gdi_bitmap_font_enum_unique (param $candidate i32)
+        (param $family_only i32) (result i32)
     (local $face i32) (local $i i32) (local $prior i32) (local $prior_face i32)
     (local $limit i32)
     (if (i32.eq (local.get $candidate) (i32.const 1))
@@ -235,14 +242,21 @@
     ;; ones before it: drawing text in a substituted face installs a strike
     ;; under that same name, so after any Arial has been drawn the family would
     ;; otherwise be reported twice.
+    ;; Only state 1 counts as a duplicate. State 2 is the on-demand
+    ;; rasterization cache, which $gdi_bitmap_font_enum_face never reports, so
+    ;; treating it as a prior sighting does not prevent a double-report — it
+    ;; deletes the family outright. That is what emptied WordPad's size list:
+    ;; the app draws in Times New Roman, which caches a strike, and the very
+    ;; next EnumFontFamiliesA("Times New Roman") then matched nothing.
     (local.set $limit
       (if (result i32) (i32.gt_u (local.get $candidate) (i32.const 17))
         (then (i32.const 16))
-        (else (i32.sub (local.get $candidate) (i32.const 2)))))
+        (else (select (i32.sub (local.get $candidate) (i32.const 2)) (i32.const 0)
+          (local.get $family_only)))))
     (block $unique (loop $scan
       (br_if $unique (i32.ge_u (local.get $i) (local.get $limit)))
       (local.set $prior (call $gdi_bitmap_font_record (local.get $i)))
-      (if (i32.load (local.get $prior))
+      (if (i32.eq (i32.load (local.get $prior)) (i32.const 1))
         (then
           (local.set $prior_face (i32.add (i32.load offset=8 (local.get $prior))
             (i32.load offset=56 (local.get $prior))))
@@ -259,7 +273,13 @@
   (func $gdi_bitmap_font_enum_next (param $after i32) (param $filter i32)
         (param $wide i32) (result i32)
     (local $candidate i32) (local $face i32) (local $matches i32)
+    (local $family_only i32)
     (drop (call $gdi_bitmap_font_ensure_stock))
+    ;; No family, or an empty one, is the family enumeration.
+    (local.set $family_only (i32.or (i32.eqz (local.get $filter))
+      (if (result i32) (local.get $wide)
+        (then (i32.eqz (i32.load16_u (local.get $filter))))
+        (else (i32.eqz (i32.load8_u (local.get $filter)))))))
     (local.set $candidate (i32.add (local.get $after) (i32.const 1)))
     (block $done (loop $scan
       ;; The scalable list ends where it runs out of names rather than at a
@@ -269,12 +289,10 @@
           (i32.sub (local.get $candidate) (i32.const 18)))))))
       (local.set $face (call $gdi_bitmap_font_enum_face (local.get $candidate)))
       (if (i32.and (i32.ne (local.get $face) (i32.const 0))
-            (call $gdi_bitmap_font_enum_unique (local.get $candidate)))
+            (call $gdi_bitmap_font_enum_unique
+              (local.get $candidate) (local.get $family_only)))
         (then
-          (local.set $matches (i32.or (i32.eqz (local.get $filter))
-            (if (result i32) (local.get $wide)
-              (then (i32.eqz (i32.load16_u (local.get $filter))))
-              (else (i32.eqz (i32.load8_u (local.get $filter)))))))
+          (local.set $matches (local.get $family_only))
           (if (i32.eqz (local.get $matches))
             (then
               (local.set $matches
@@ -310,7 +328,7 @@
         (i32.shl (local.get $i) (i32.const 1))) (i32.const 0)))
       (else (i32.store8 (i32.add (local.get $dst) (local.get $i)) (i32.const 0)))))
 
-  ;; TRUETYPE_FONTTYPE (4) for the scalable fallback and every substituted or
+  ;; TRUETYPE_FONTTYPE (4) for every scalable substituted or
   ;; registered face; RASTER_FONTTYPE (1) for an installed strike.
   (func $gdi_bitmap_font_enum_type (param $candidate i32) (result i32)
     (if (result i32) (i32.or (i32.eq (local.get $candidate) (i32.const 1))
@@ -328,7 +346,7 @@
       (i32.sub (local.get $candidate) (i32.const 2)))))
 
   ;; Fill ENUMLOGFONTEXA/W and NEWTEXTMETRICEXA/W from the selected provider.
-  ;; The scalable fallback keeps deterministic compatibility metrics; installed
+  ;; The scalable provider keeps deterministic compatibility metrics; installed
   ;; FNT faces expose their parsed native strike metrics without Canvas.
   (func $gdi_bitmap_font_enum_fill (param $candidate i32) (param $lf i32)
         (param $tm i32) (param $wide i32) (result i32)
@@ -782,8 +800,8 @@
     (local.set $state (i32.load (local.get $state_ptr)))
     (if (i32.eq (local.get $state) (i32.const 2))
       (then (return (i32.const 1))))
-    ;; Another shared-memory worker is already loading it. That first call may
-    ;; use Canvas, but all later calls observe state 2 and use the FON.
+    ;; Another shared-memory worker is already loading it. The caller may retry
+    ;; after the first worker publishes state 2 and the installed FON.
     (if (i32.eq (local.get $state) (i32.const 1))
       (then (return (i32.const 0))))
     (if (i32.eq (local.get $state) (i32.const 3))
@@ -833,11 +851,77 @@
       (call $gdi_bitmap_font_ensure_terminal)))
     (local.get $loaded))
 
+  (func $gdi_bitmap_font_native_character_height (param $strike i32) (result i32)
+    (local $height i32)
+    (local.set $height (i32.sub (i32.load offset=20 (local.get $strike))
+      (i32.and (i32.load offset=60 (local.get $strike)) (i32.const 0xFFFF))))
+    (if (i32.le_s (local.get $height) (i32.const 0))
+      (then (local.set $height (i32.load offset=20 (local.get $strike)))))
+    (select (local.get $height) (i32.const 1)
+      (i32.gt_s (local.get $height) (i32.const 0))))
+
+  ;; Windows' raster mapper does not merely choose the nearest stored strike.
+  ;; It also considers integral bitmap magnifications. The Win3.x mapper
+  ;; penalty table, confirmed request-by-request on Win98 SSERIFE.FON, charges
+  ;; 150 per missing pixel, 600 + 150 per excess pixel, and 50 plus 20 times
+  ;; the sum of the X/Y integer multipliers for a synthesized size. lfWidth=0
+  ;; keeps X and Y equal here, hence 50 + 40*scale.
+  (func $gdi_bitmap_font_integer_scale_penalty (param $character i32)
+        (param $request i32) (param $scale i32) (result i32)
+    (local $candidate i32) (local $distance i32) (local $penalty i32)
+    (local.set $candidate (i32.mul (local.get $character) (local.get $scale)))
+    (if (i32.gt_s (local.get $candidate) (local.get $request))
+      (then
+        (local.set $distance (i32.sub (local.get $candidate) (local.get $request)))
+        (local.set $penalty (i32.add (i32.const 600)
+          (i32.mul (local.get $distance) (i32.const 150)))))
+      (else
+        (local.set $distance (i32.sub (local.get $request) (local.get $candidate)))
+        (local.set $penalty (i32.mul (local.get $distance) (i32.const 150)))))
+    (if (i32.gt_s (local.get $scale) (i32.const 1))
+      (then (local.set $penalty (i32.add (local.get $penalty)
+        (i32.add (i32.const 50) (i32.mul (local.get $scale) (i32.const 40)))))))
+    (local.get $penalty))
+
+  (func $gdi_bitmap_font_integer_scale (param $strike i32)
+        (param $request i32) (result i32)
+    (local $character i32) (local $scale i32) (local $best i32)
+    (local $penalty i32) (local $best_penalty i32)
+    (local.set $character (call $gdi_bitmap_font_native_character_height
+      (local.get $strike)))
+    (if (i32.le_s (local.get $request) (i32.const 0))
+      (then (return (i32.const 1))))
+    ;; Rendering clamps at 4096. Clamp the mapper too so a hostile LOGFONT
+    ;; cannot turn font creation into billions of candidate iterations.
+    (if (i32.gt_s (local.get $request) (i32.const 4096))
+      (then (local.set $request (i32.const 4096))))
+    (local.set $scale (i32.const 1))
+    (local.set $best (i32.const 1))
+    (local.set $best_penalty (i32.const 0x7FFFFFFF))
+    (block $done (loop $sizes
+      (local.set $penalty (call $gdi_bitmap_font_integer_scale_penalty
+        (local.get $character) (local.get $request) (local.get $scale)))
+      (if (i32.lt_s (local.get $penalty) (local.get $best_penalty))
+        (then
+          (local.set $best (local.get $scale))
+          (local.set $best_penalty (local.get $penalty))))
+      ;; Once this candidate is at or above the request, every later integral
+      ;; size is both farther above it and more expensive to synthesize.
+      (br_if $done (i32.ge_s
+        (i32.mul (local.get $character) (local.get $scale))
+        (local.get $request)))
+      (local.set $scale (i32.add (local.get $scale) (i32.const 1)))
+      (br $sizes)))
+    (local.get $best))
+
   (func $gdi_bitmap_font_best (param $face i32) (param $request i32) (result i32)
     (local $i i32) (local $strike i32) (local $best i32)
     (local $distance i32) (local $best_distance i32)
+    (local $character_request i32) (local $candidate i32) (local $scale i32)
     (if (i32.lt_s (local.get $request) (i32.const 0))
-      (then (local.set $request (i32.sub (i32.const 0) (local.get $request)))))
+      (then
+        (local.set $character_request (i32.const 1))
+        (local.set $request (i32.sub (i32.const 0) (local.get $request)))))
     (local.set $best_distance (i32.const 0x7FFFFFFF))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $GDI_BITMAP_FONT_COUNT)))
@@ -852,11 +936,39 @@
               (i32.add (i32.load offset=8 (local.get $strike))
                 (i32.load offset=56 (local.get $strike)))))
         (then
-          (local.set $distance (i32.sub (select (local.get $request)
-            (i32.load offset=20 (local.get $strike)) (local.get $request))
-            (i32.load offset=20 (local.get $strike))))
-          (if (i32.lt_s (local.get $distance) (i32.const 0))
-            (then (local.set $distance (i32.sub (i32.const 0) (local.get $distance)))))
+          ;; A negative LOGFONT height describes the character body, while an
+          ;; FNT's dfPixHeight is the whole cell. Win98 compares negative
+          ;; requests against dfPixHeight - dfInternalLeading; treating -18
+          ;; as an 18px cell incorrectly picked the 16px rung instead of the
+          ;; shipped 24px/18px-character MS Sans Serif strike.
+          (local.set $candidate (i32.load offset=20 (local.get $strike)))
+          (if (local.get $character_request)
+            (then
+              (local.set $candidate (call $gdi_bitmap_font_native_character_height
+                (local.get $strike)))
+              (if (call $gdi_bitmap_font_face_equal
+                    (i32.add (i32.load offset=8 (local.get $strike))
+                      (i32.load offset=56 (local.get $strike)))
+                    (i32.const 0x07F0A53C))
+                (then
+                  (local.set $scale (call $gdi_bitmap_font_integer_scale
+                    (local.get $strike) (local.get $request)))
+                  (local.set $distance
+                    (call $gdi_bitmap_font_integer_scale_penalty
+                      (local.get $candidate) (local.get $request) (local.get $scale))))
+                (else
+                  (local.set $distance
+                    (i32.sub (local.get $request) (local.get $candidate)))
+                  (if (i32.lt_s (local.get $distance) (i32.const 0))
+                    (then (local.set $distance
+                      (i32.sub (i32.const 0) (local.get $distance))))))))
+            (else
+              (local.set $distance (select
+                (i32.sub (local.get $request) (local.get $candidate))
+                (i32.const 0) (local.get $request)))
+              (if (i32.lt_s (local.get $distance) (i32.const 0))
+                (then (local.set $distance
+                  (i32.sub (i32.const 0) (local.get $distance)))))))
           (if (i32.lt_s (local.get $distance) (local.get $best_distance))
             (then
               (local.set $best (local.get $strike))
@@ -998,7 +1110,17 @@
                               (if (result i32) (i32.le_s (local.get $request) (i32.const 66))
                                 (then (i32.const 75))
                                 (else (i32.const 90)))))))))))
-              (else (local.set $height (i32.load offset=20 (local.get $strike))))))))
+              (else
+                (if (call $gdi_bitmap_font_face_equal
+                      (i32.add (i32.load offset=8 (local.get $strike))
+                        (i32.load offset=56 (local.get $strike)))
+                      (i32.const 0x07F0A53C))
+                  (then (local.set $height (i32.mul
+                    (i32.load offset=20 (local.get $strike))
+                    (call $gdi_bitmap_font_integer_scale
+                      (local.get $strike) (local.get $request)))))
+                  (else (local.set $height
+                    (i32.load offset=20 (local.get $strike))))))))))
       (else
         ;; Exact native stock cells measured by the v86 Win98 reference probe.
         (local.set $height
@@ -1098,9 +1220,9 @@
         (i32.sub (i32.const 7) (i32.and (local.get $sx) (i32.const 7)))))
       (i32.const 0)))
 
-  ;; Return -2 when no bitmap strike is selected so the public handler can
-  ;; retain Canvas only as the scalable-font fallback. Selected FNT strikes
-  ;; implement GGO_METRICS and DWORD-aligned monochrome GGO_BITMAP in WAT.
+  ;; Return -2 when no bitmap strike is selected. The public scalable backend
+  ;; runs before this function; selected FNT strikes implement GGO_METRICS and
+  ;; DWORD-aligned monochrome GGO_BITMAP here.
   (func $gdi_bitmap_glyph_outline_a (param $hdc i32) (param $character i32)
         (param $format i32) (param $metrics_out i32) (param $buffer_size i32)
         (param $buffer i32) (param $mat2 i32) (result i32)
@@ -1252,8 +1374,8 @@
       (i32.const 1) (local.get $wide)))
 
   ;; GetCharWidth/GetCharWidth32 share the same selected-font semantics. FNT
-  ;; advances never cross the host boundary; scalable faces use Canvas only as
-  ;; their font provider, while range validation and output storage stay in WAT.
+  ;; and synthesized scalable-strike advances never cross the host boundary;
+  ;; range validation and output storage stay in WAT.
   (func $gdi_font_char_widths (param $hdc i32) (param $first i32)
         (param $last i32) (param $output i32) (param $wide i32) (result i32)
     (local $count i32) (local $i i32)
@@ -1274,13 +1396,14 @@
     (i32.const 1))
 
   ;; Deterministic Latin/SBCS placement. WAT owns the GCP_RESULTSW contract and
-  ;; all arrays. The selected font provider supplies only integer advances:
-  ;; bitmap FNT in WAT, or Canvas measurement for a scalable fallback face.
+  ;; all arrays. Installed FNT and synthesized scalable strikes both supply
+  ;; integer advances in WAT.
   (func $gdi_character_placement_w (param $hdc i32) (param $text i32)
         (param $count i32) (param $max_extent i32) (param $results i32)
         (param $flags i32) (result i32)
     (local $capacity i32) (local $limit i32) (local $i i32) (local $included i32)
-    (local $character i32) (local $width i32) (local $extent i32) (local $height i32)
+    (local $character i32) (local $next i32) (local $width i32)
+    (local $extent i32) (local $height i32)
     (local $out_string i32) (local $order i32) (local $dx i32)
     (local $caret i32) (local $class i32) (local $glyphs i32)
     (local $strike i32) (local $packed i32) (local $justification i32)
@@ -1314,6 +1437,18 @@
         (i32.load16_u (i32.add (local.get $text) (i32.shl (local.get $i) (i32.const 1)))))
       (local.set $width (call $gdi_font_character_width
         (local.get $hdc) (local.get $character) (i32.const 1)))
+      ;; Native Win98 applies a legacy kern pair to the left glyph's advance,
+      ;; and only when GCP_USEKERNING is requested. The pinned Arial probe
+      ;; reports AV as dx=15,15 normally and dx=13,15 with this flag.
+      (if (i32.and (i32.ne (i32.and (local.get $flags) (i32.const 8))
+                (i32.const 0))
+            (i32.lt_u (i32.add (local.get $i) (i32.const 1)) (local.get $limit)))
+        (then
+          (local.set $next (i32.load16_u (i32.add (local.get $text)
+            (i32.shl (i32.add (local.get $i) (i32.const 1)) (i32.const 1)))))
+          (local.set $width (i32.add (local.get $width)
+            (call $tt_gdi_kern_pair_w (local.get $hdc)
+              (local.get $character) (local.get $next))))))
       ;; GCP_MAXEXTENT stops before the first character that would exceed the
       ;; caller's logical extent. Other flags do not truncate the input.
       (if (i32.and (i32.ne (i32.and (local.get $flags) (i32.const 0x00100000))
@@ -1428,6 +1563,93 @@
     (i32.or (i32.and (local.get $height) (i32.const 0xFFFF))
       (i32.shl (i32.and (local.get $average) (i32.const 0xFFFF)) (i32.const 16))))
 
+  ;; Fill the public TEXTMETRICA/W structure from the selected strike. The old
+  ;; handlers only had a packed height/average pair and consequently invented
+  ;; ascent=height-3, descent=3, and zero leading. With the same SSERIFE.FON
+  ;; bytes that moved otherwise-identical glyphs by one or two scanlines. FNT
+  ;; metrics magnify by the same integral factor as their bitmap and advances.
+  (func $gdi_bitmap_text_metrics_write (param $hdc i32) (param $out i32)
+        (param $wide i32) (result i32)
+    (local $strike i32) (local $source i32) (local $height i32)
+    (local $native_height i32) (local $ascent i32) (local $descent i32)
+    (local $internal i32) (local $external i32) (local $average i32)
+    (local $maximum i32) (local $first i32) (local $last i32)
+    (local $default i32) (local $break i32)
+    (if (i32.eqz (local.get $out)) (then (return (i32.const 0))))
+    (local.set $strike (call $gdi_bitmap_font_selected (local.get $hdc)))
+    (if (i32.eqz (local.get $strike)) (then (return (i32.const 0))))
+    (local.set $source (i32.load offset=8 (local.get $strike)))
+    (local.set $native_height (i32.load offset=20 (local.get $strike)))
+    (if (i32.eqz (local.get $native_height)) (then (return (i32.const 0))))
+    (local.set $height (call $gdi_bitmap_font_height
+      (local.get $hdc) (local.get $strike)))
+    (local.set $ascent (call $gdi_round_ratio
+      (i64.mul (i64.extend_i32_u (i32.load offset=24 (local.get $strike)))
+        (i64.extend_i32_u (local.get $height)))
+      (i64.extend_i32_u (local.get $native_height))))
+    (local.set $descent (call $gdi_round_ratio
+      (i64.mul (i64.extend_i32_u (i32.sub (local.get $native_height)
+          (i32.load offset=24 (local.get $strike))))
+        (i64.extend_i32_u (local.get $height)))
+      (i64.extend_i32_u (local.get $native_height))))
+    (local.set $internal (call $gdi_round_ratio
+      (i64.mul (i64.extend_i32_u
+          (i32.and (i32.load offset=60 (local.get $strike)) (i32.const 0xFFFF)))
+        (i64.extend_i32_u (local.get $height)))
+      (i64.extend_i32_u (local.get $native_height))))
+    (local.set $external (call $gdi_round_ratio
+      (i64.mul (i64.extend_i32_u
+          (i32.shr_u (i32.load offset=60 (local.get $strike)) (i32.const 16)))
+        (i64.extend_i32_u (local.get $height)))
+      (i64.extend_i32_u (local.get $native_height))))
+    (local.set $average (call $gdi_round_ratio
+      (i64.mul (i64.extend_i32_u (i32.load offset=28 (local.get $strike)))
+        (i64.extend_i32_u (local.get $height)))
+      (i64.extend_i32_u (local.get $native_height))))
+    (local.set $maximum (call $gdi_round_ratio
+      (i64.mul (i64.extend_i32_u (i32.load offset=32 (local.get $strike)))
+        (i64.extend_i32_u (local.get $height)))
+      (i64.extend_i32_u (local.get $native_height))))
+    (local.set $first (i32.load offset=36 (local.get $strike)))
+    (local.set $last (i32.load offset=40 (local.get $strike)))
+    (local.set $default (i32.load offset=44 (local.get $strike)))
+    (local.set $break (i32.add (local.get $first)
+      (i32.load8_u offset=98 (local.get $source))))
+    (memory.fill (local.get $out) (i32.const 0)
+      (select (i32.const 60) (i32.const 56) (local.get $wide)))
+    (i32.store (local.get $out) (local.get $height))
+    (i32.store offset=4 (local.get $out) (local.get $ascent))
+    (i32.store offset=8 (local.get $out) (local.get $descent))
+    (i32.store offset=12 (local.get $out) (local.get $internal))
+    (i32.store offset=16 (local.get $out) (local.get $external))
+    (i32.store offset=20 (local.get $out) (local.get $average))
+    (i32.store offset=24 (local.get $out) (local.get $maximum))
+    (i32.store offset=28 (local.get $out) (i32.load offset=48 (local.get $strike)))
+    (i32.store offset=36 (local.get $out) (i32.load16_u offset=72 (local.get $source)))
+    (i32.store offset=40 (local.get $out) (i32.load16_u offset=70 (local.get $source)))
+    (if (local.get $wide)
+      (then
+        (i32.store16 offset=44 (local.get $out) (local.get $first))
+        (i32.store16 offset=46 (local.get $out) (local.get $last))
+        (i32.store16 offset=48 (local.get $out) (local.get $default))
+        (i32.store16 offset=50 (local.get $out) (local.get $break))
+        (i32.store8 offset=52 (local.get $out) (i32.load8_u offset=80 (local.get $source)))
+        (i32.store8 offset=53 (local.get $out) (i32.load8_u offset=81 (local.get $source)))
+        (i32.store8 offset=54 (local.get $out) (i32.load8_u offset=82 (local.get $source)))
+        (i32.store8 offset=55 (local.get $out) (i32.load8_u offset=90 (local.get $source)))
+        (i32.store8 offset=56 (local.get $out) (i32.load offset=52 (local.get $strike))))
+      (else
+        (i32.store8 offset=44 (local.get $out) (local.get $first))
+        (i32.store8 offset=45 (local.get $out) (local.get $last))
+        (i32.store8 offset=46 (local.get $out) (local.get $default))
+        (i32.store8 offset=47 (local.get $out) (local.get $break))
+        (i32.store8 offset=48 (local.get $out) (i32.load8_u offset=80 (local.get $source)))
+        (i32.store8 offset=49 (local.get $out) (i32.load8_u offset=81 (local.get $source)))
+        (i32.store8 offset=50 (local.get $out) (i32.load8_u offset=82 (local.get $source)))
+        (i32.store8 offset=51 (local.get $out) (i32.load8_u offset=90 (local.get $source)))
+        (i32.store8 offset=52 (local.get $out) (i32.load offset=52 (local.get $strike)))))
+    (i32.const 1))
+
   (func $gdi_bitmap_text_pixel (param $hdc i32) (param $desc i32)
         (param $x i32) (param $y i32) (param $color i32) (result i32)
     (if (i32.or (i32.lt_s (local.get $x) (i32.const 0))
@@ -1435,7 +1657,10 @@
             (i32.or (i32.lt_s (local.get $y) (i32.const 0))
               (i32.ge_s (local.get $y) (i32.load offset=8 (local.get $desc))))))
       (then (return (i32.const 0))))
-    (if (i32.eqz (call $gdi_raster_clip_visible
+    ;; Same answer as $gdi_raster_clip_visible, resolved once per row rather
+    ;; than per glyph pixel — see $gdi_clip_row_resolve. Text entry points
+    ;; reset the memo, and nothing mutates a clip while a glyph is blitting.
+    (if (i32.eqz (call $gdi_raster_clip_visible_row
           (local.get $hdc) (local.get $desc) (local.get $x) (local.get $y)))
       (then (return (i32.const 0))))
     (call $gdi_raster_write (local.get $desc) (local.get $x) (local.get $y) (local.get $color)))
@@ -1865,9 +2090,9 @@
     (i64.or (i64.extend_i32_u (local.get $end))
       (i64.shl (i64.extend_i32_u (local.get $next)) (i64.const 32))))
 
-  ;; Emit one already-laid-out scalable DrawText line into an open WAT path.
-  ;; Canvas supplies only masks for non-tab runs. WAT owns alignment, tabs,
-  ;; mnemonic underlines, UTF-16 preservation, and retained geometry.
+  ;; Legacy compatibility path for emitting one already-laid-out scalable
+  ;; DrawText line into an open WAT path. Normal scalable faces resolve to a
+  ;; synthesized strike before reaching it.
   (func $gdi_scalable_draw_text_line (param $hdc i32) (param $x i32)
         (param $y i32) (param $text i32) (param $count i32)
         (param $wide i32) (param $tab_width i32) (param $line_width i32)
@@ -2071,6 +2296,7 @@
     (local $dirty_right i32) (local $dirty_bottom i32)
     (local $path_open i32) (local $path_entry i32) (local $path_points i64)
     (local $path_origin_x i32) (local $path_origin_y i32)
+    (call $gdi_clip_row_reset)
     (local.set $strike (call $gdi_bitmap_font_selected (local.get $hdc)))
     (if (i32.eqz (local.get $strike)) (then (return (i32.const -1))))
     (if (i32.or (i32.lt_s (local.get $count) (i32.const 0))
@@ -2408,6 +2634,7 @@
     (local $original_text i32) (local $original_wide i32)
     (local $prepared i32) (local $tab_width i32) (local $shortened i32)
     (local $visible_lines i32) (local $vertical_ellipsis i32)
+    (call $gdi_clip_row_reset)
     (local.set $strike (call $gdi_bitmap_font_selected (local.get $hdc)))
     (if (i32.eqz (local.get $strike))
       (then (local.set $scalable (i32.const 1))))
@@ -2433,8 +2660,8 @@
     (local.set $format (call $gdi_bitmap_text_consume_tabstop (local.get $format)))
     (local.set $prepared (call $gdi_bitmap_text_prepare_layout
       (local.get $text) (local.get $count) (local.get $wide) (local.get $format)))
-    ;; Very large prefix-aware strings retain the complete Canvas DrawText
-    ;; fallback instead of being truncated to the private WCHAR buffer.
+    ;; Refuse very large prefix-aware strings instead of truncating the private
+    ;; WCHAR buffer; callers can preserve the original input on failure.
     (if (i32.lt_s (local.get $prepared) (i32.const 0))
       (then (return (i32.const -1))))
     (local.set $text (global.get $GDI_BITMAP_TEXT_LAYOUT))

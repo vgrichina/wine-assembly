@@ -343,13 +343,13 @@ const { bootRenderHarness } = require('./render-helper');
   clear();
   assert.strictEqual(wat.test_call_TextOutA(hdc, 70, 40, glyphA, 1), 1);
   assert(wat.test_gdi_dc_get_field(hdc, 12, 0) > 5,
-    'scalable Canvas fallback must publish its advance into WAT current-position state');
+    'the scalable WAT strike must publish its advance into current-position state');
   assert.strictEqual(wat.test_gdi_dc_get_field(hdc, 16, 0), 30);
 
   assert.strictEqual(wat.test_call_DeleteObject(scalable), 1);
 
   assert.strictEqual(wat.test_call_RemoveFontResourceA(path), 1);
-  console.log('PASS  WAT text paths own FNT geometry and scalable Canvas masks');
+  console.log('PASS  WAT text paths own installed and scalable-strike geometry');
 })().catch(error => {
   console.error(error.stack || error);
   process.exit(1);

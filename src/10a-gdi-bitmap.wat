@@ -353,7 +353,7 @@
                         (i32.ne (local.get $bpp) (i32.const 32))))))))))
       (then (return (i32.const 0))))
     ;; Same pairing rules the RT_BITMAP path enforces: BI_RLE8 is 8-bpp only,
-    ;; BI_RLE4 is 4-bpp only, BI_BITFIELDS is 16-bpp only here.
+    ;; BI_RLE4 is 4-bpp only, BI_BITFIELDS is 16- or 32-bpp.
     (if (i32.or
           (i32.and (i32.eq (local.get $compression) (i32.const 1))
             (i32.ne (local.get $bpp) (i32.const 8)))
@@ -361,8 +361,33 @@
             (i32.and (i32.eq (local.get $compression) (i32.const 2))
               (i32.ne (local.get $bpp) (i32.const 4)))
             (i32.and (i32.eq (local.get $compression) (i32.const 3))
-              (i32.ne (local.get $bpp) (i32.const 16)))))
+              (i32.and (i32.ne (local.get $bpp) (i32.const 16))
+                (i32.ne (local.get $bpp) (i32.const 32))))))
       (then (return (i32.const 0))))
+    ;; A 32-bpp BI_BITFIELDS DIB whose masks are the ordinary 8:8:8 layout is
+    ;; byte-for-byte a BI_RGB one, so fold it into that path rather than
+    ;; teaching every consumer a second 32-bpp pixel format. Winamp's wVis
+    ;; plug-in asks for exactly this and got NULL back, which left its window
+    ;; a blank grey rectangle for the whole session. Any other mask triple is
+    ;; still refused: a wrong channel order would silently paint wrong colors.
+    (if (i32.and (i32.eq (local.get $compression) (i32.const 3))
+          (i32.eq (local.get $bpp) (i32.const 32)))
+      (then
+        (if (i32.and (i32.ne (local.get $header_size) (i32.const 40))
+              (i32.lt_u (local.get $header_size) (i32.const 52)))
+          (then (return (i32.const 0))))
+        (if (i32.eqz (i32.and
+              (i32.eq (i32.load offset=40 (local.get $info)) (i32.const 0x00FF0000))
+              (i32.and
+                (i32.eq (i32.load offset=44 (local.get $info)) (i32.const 0x0000FF00))
+                (i32.eq (i32.load offset=48 (local.get $info)) (i32.const 0x000000FF)))))
+          (then (return (i32.const 0))))
+        (local.set $compression (i32.const 0))
+        ;; With a plain 40-byte header the three masks sit between it and the
+        ;; pixels, so a packed DIB's data starts 12 bytes further in. A V4/V5
+        ;; header already contains them.
+        (if (i32.eq (local.get $header_size) (i32.const 40))
+          (then (local.set $header_size (i32.const 52))))))
     ;; Win32 does not define a top-down compressed DIB.
     (if (i32.and (i32.lt_s (local.get $height) (i32.const 0))
           (i32.or (i32.eq (local.get $compression) (i32.const 1))

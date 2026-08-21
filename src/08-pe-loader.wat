@@ -34,9 +34,11 @@
 
     ;; Store SizeOfImage for DLL loader
     (global.set $exe_size_of_image (i32.load (i32.add (local.get $pe_off) (i32.const 80))))
-    ;; Set heap to be above the image
-    (global.set $heap_base (i32.add (global.get $image_base) (global.get $exe_size_of_image)))
-    (global.set $heap_ptr (global.get $heap_base))
+    ;; Set heap to be above the image. Publishes to HEAP_SHARED so guest threads,
+    ;; which are separate instances and get their own copy of every global, start
+    ;; from the same process heap instead of a private replica of this cursor.
+    (call $heap_init
+      (i32.add (global.get $image_base) (global.get $exe_size_of_image)))
     (global.set $heap_sparse_ptr (i32.const 0))
     (global.set $heap_sparse_end (i32.const 0))
     ;; VirtualAlloc(NULL, MEM_RESERVE) uses sparse high guest addresses. Commits
@@ -284,6 +286,17 @@
       (global.get $image_base)))
     (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
       (i32.const 0xCACA0003))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+    ;; Allocate normal CRT exit() callback continuation thunk (marker
+    ;; 0xCACA002C). Each atexit callback returns here so the registry can be
+    ;; drained in LIFO order before the host process exit is reported.
+    (global.set $atexit_ret_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA002C))
     (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
 
     ;; Allocate bsearch continuation thunk (marker 0xCACA000C)

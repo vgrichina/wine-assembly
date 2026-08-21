@@ -52,7 +52,8 @@
   ;; created by this process binds there until multi-process rooms assign
   ;; per-member addresses.
   (global $vsock_local_ip (mut i32) (i32.const 0x0A4D0001))  ;; 10.77.0.1
-  (global $vsock_next_port (mut i32) (i32.const 49152))
+  ;; The ephemeral-port cursor is at $VSOCK_NEXT_PORT_SHARED — process-wide, not
+  ;; per instance. See $vsock_alloc_port.
   (global $wsa_last_error (mut i32) (i32.const 0))
   (global $wsa_started (mut i32) (i32.const 0))
   (global $vsock_ntoa_buf (mut i32) (i32.const 0))
@@ -89,7 +90,22 @@
 
   ;; Allocate a zeroed record. Returns the index, or -1 when the table is
   ;; full (WSAEMFILE).
+  ;; Serialised on $LOCK_SOCKET. Liquid War opens its connection from a worker
+  ;; thread while the UI thread is still in the menu, so "two threads in socket()
+  ;; at once" is the normal case here rather than a corner one — and the scan
+  ;; below claims a record only after finding it free.
+  ;;
+  ;; Only the claim is locked, never a send or a receive: those call host imports,
+  ;; and a worker parked in Atomics.wait while holding a lock the main thread is
+  ;; spinning for deadlocks both (see $lock_acquire).
   (func $vsock_alloc (result i32)
+    (local $r i32)
+    (call $lock_acquire (global.get $LOCK_SOCKET))
+    (local.set $r (call $vsock_alloc_locked))
+    (call $lock_release (global.get $LOCK_SOCKET))
+    (local.get $r))
+
+  (func $vsock_alloc_locked (result i32)
     (local $i i32) (local $rec i32) (local $j i32)
     (local.set $i (i32.const 0))
     (block $done (loop $scan
@@ -104,6 +120,12 @@
             (local.set $j (i32.add (local.get $j) (i32.const 4)))
             (br $zero)))
           (i32.store (i32.add (local.get $rec) (i32.const 32)) (i32.const -1))
+          ;; Claim the record before releasing the lock. Every caller overwrites
+          ;; this state a few instructions later, but "free until the caller gets
+          ;; around to it" is exactly the window in which a second thread picks
+          ;; the same record. 1 = created-but-unbound, the least surprising state
+          ;; to be caught in.
+          (i32.store (local.get $rec) (i32.const 1))
           (return (local.get $i))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
@@ -204,15 +226,28 @@
       (br $scan)))
     (i32.const 0))
 
+  ;; The cursor is process-wide (shared memory) and the pick-then-test is under
+  ;; the socket lock, so two threads calling connect() at the same moment get
+  ;; different ephemeral ports instead of racing for one.
   (func $vsock_alloc_port (result i32)
-    (local $tries i32) (local $port i32)
+    (local $r i32)
+    (call $lock_acquire (global.get $LOCK_SOCKET))
+    (local.set $r (call $vsock_alloc_port_locked))
+    (call $lock_release (global.get $LOCK_SOCKET))
+    (local.get $r))
+
+  (func $vsock_alloc_port_locked (result i32)
+    (local $tries i32) (local $port i32) (local $next i32)
     (local.set $tries (i32.const 0))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $tries) (i32.const 16384)))
-      (local.set $port (global.get $vsock_next_port))
-      (global.set $vsock_next_port (i32.add (local.get $port) (i32.const 1)))
-      (if (i32.gt_u (global.get $vsock_next_port) (i32.const 65535))
-        (then (global.set $vsock_next_port (i32.const 49152))))
+      (local.set $port (i32.load (global.get $VSOCK_NEXT_PORT_SHARED)))
+      (if (i32.lt_u (local.get $port) (i32.const 49152))
+        (then (local.set $port (i32.const 49152))))
+      (local.set $next (i32.add (local.get $port) (i32.const 1)))
+      (if (i32.gt_u (local.get $next) (i32.const 65535))
+        (then (local.set $next (i32.const 49152))))
+      (i32.store (global.get $VSOCK_NEXT_PORT_SHARED) (local.get $next))
       (if (i32.eqz (call $vsock_port_taken (global.get $vsock_local_ip) (local.get $port)))
         (then (return (local.get $port))))
       (local.set $tries (i32.add (local.get $tries) (i32.const 1)))
@@ -626,6 +661,18 @@
       (local.set $n (call $host_net_frame_peek (local.get $wa)
         (i32.add (global.get $VLN_HDR) (global.get $VLN_MAX_PAYLOAD))))
       (br_if $done (i32.eqz (local.get $n)))
+      ;; This is the room's only reader, so a frame under someone else's magic
+      ;; has to be handed over rather than dropped — DDEML shares the wire, and
+      ;; discarding what we did not recognise silently ate every conversation.
+      ;; Leaving it on the queue instead is not an option either: nothing else
+      ;; drains, so the socket stream would stall behind it.
+      (if (i32.and
+            (i32.ge_u (local.get $n) (global.get $DDE_HDR))
+            (i32.eq (i32.load (local.get $wa)) (global.get $DDE_MAGIC)))
+        (then
+          (call $win16_dde_deliver (local.get $wa) (local.get $n))
+          (call $host_net_frame_commit)
+          (br $next)))
       ;; Fail closed on anything that is not a well-formed vln/1 frame:
       ;; too short, too long for the buffer, or wrong magic.
       (if (i32.or
@@ -654,8 +701,23 @@
   ;; frame, so put those bytes back: EIP still points at the thunk, and the
   ;; host re-enters this same handler with the same arguments once the wire
   ;; has moved.
+  ;;
+  ;; $handler_set_eip is what keeps that true. $run's thunk-zone auto-pop fires
+  ;; whenever a handler leaves EIP alone — yield or no yield — and sets
+  ;; EIP = [ESP], splicing the call out: the guest resumes past its own connect
+  ;; or recv with the arguments still on the stack, having never made the call,
+  ;; and drifts by $unpop bytes every park. Every re-entering thunk raises this;
+  ;; see the CACA000x continuations and $cs_block, where the same omission cost a
+  ;; session before it was found.
   (func $vsock_block (param $unpop i32)
     (global.set $esp (i32.sub (global.get $esp) (local.get $unpop)))
+    (global.set $handler_set_eip (i32.const 1))
+    ;; And re-enter the CALL rather than the block that made it: an API call
+    ;; dispatched inline from inside a decoded block leaves EIP naming that
+    ;; block's first instruction, so a park that does not set EIP resumes by
+    ;; re-executing the argument pushes. See the same line in $cs_block, where
+    ;; that cost 8 bytes of stack per park and a wild jump much later.
+    (global.set $eip (global.get $current_thunk_eip))
     (global.set $yield_reason (i32.const 8))
     (global.set $yield_flag (i32.const 1))
     (global.set $steps (i32.const 0)))

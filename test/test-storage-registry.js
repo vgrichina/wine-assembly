@@ -129,6 +129,20 @@ writeGuestU32(cbGA, 4);
 assert.strictEqual(storage.reg_query_value(leafHKey, g2w(valueNameGA, IMAGE_BASE), 0, valueGA, cbGA, 0), 0);
 assert.strictEqual(readGuestU32(valueGA), 7);
 
+writeGuestString(subKeyGA, 'Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders');
+const shellFoldersHKey = storage.reg_open_key(0x80000001, g2w(subKeyGA, IMAGE_BASE), 0);
+assert(shellFoldersHKey, 'a stock Win98 profile exposes Explorer Shell Folders');
+writeGuestString(valueNameGA, 'Programs');
+writeGuestU32(cbGA, 128);
+assert.strictEqual(storage.reg_query_value(
+  shellFoldersHKey, g2w(valueNameGA, IMAGE_BASE), 0, outGA, cbGA, 0
+), 0);
+assert.strictEqual(
+  readStrA(memory, g2w(outGA, IMAGE_BASE)),
+  'C:\\Windows\\Start Menu\\Programs',
+  'installers can resolve the standard Win98 program-group directory'
+);
+
 const iniSectionGA = IMAGE_BASE + 0x1600;
 const iniKeyGA = IMAGE_BASE + 0x1700;
 const iniFileGA = IMAGE_BASE + 0x1800;
@@ -188,6 +202,7 @@ assert.deepStrictEqual(
 
 console.log('PASS  registry REG_SZ stores guest strings through g2w');
 console.log('PASS  setRegValue materializes parent registry keys');
+console.log('PASS  Win98 Explorer Shell Folders expose the program-group directory');
 console.log('PASS  registry roots, subkeys, and values enumerate with Win32 buffer semantics');
 console.log('PASS  RegQueryInfoKey-style registry metadata reports counts and max lengths');
 console.log('PASS  app startup INI values are visible to profile APIs');

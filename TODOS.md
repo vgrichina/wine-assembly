@@ -237,38 +237,266 @@ sets the global instead.
     a 16-bit procedure `les`-es the pointer it is handed, so it is now rebuilt
     in the task's own DGROUP (`$win16_msg_lparam16`, scratch reserved at the
     bottom of DGROUP by the NE loader).
-- **Hearts goes straight to the client path and finds no dealer.** Its three
-  dialog commands (Options, Score, Quote) open nothing for this reason and this
-  reason only: the sweep finds the app still sitting behind its startup
-  message box, so they are not three separate bugs. It gets all
-  the way to `DdeConnect`, gets NULL — correctly, nothing else is in the room —
-  and puts up "Unable to connect with dealer. Hearts will end." What it should
-  do first is show its startup dialog: the resources contain "What is your
-  name?", "I want to be &dealer." and "&Computer player names", so the dealer
-  path fills the empty seats with computer players and is a complete
-  single-player game. `DialogBox` (USER.87) and `DialogBoxIndirect` (USER.218)
-  are imported and reached through one MFC `DoModal` at `seg 1:0xaf20`, and
-  neither is ever called in a run, so something upstream of the dialog decided
-  client mode. Start by finding what picks between the DDE server wrapper near
-  `seg 1:0x79ec` (which calls `DdeNameService`) and the client one near
-  `seg 1:0x7a80` (which calls `DdeConnect`) — only the second ever runs. Use
-  `tools/ne-disasm.js`.
-- **DDEML has no conversations.** `src/09f-win16-ddeml.wat` implements the
-  twelve entry points Hearts imports, with real interning string handles and
-  real data handles, but `DdeConnect` always finds nobody because nothing
-  carries a conversation between two emulator instances. Two players in one
-  room is the same shape of problem the virtual LAN in `09d-winsock.wat`
-  already solves for Winsock, and worth doing that way when there is a second
-  player to test against.
+- ~~**Hearts goes straight to the client path and finds no dealer.**~~ FIXED,
+  and it was five bugs in five different layers, none of them the DDE guess the
+  previous version of this item made. Hearts now puts up its own startup dialog
+  ("What is your name?" / "I want to be dealer"), OK closes it, and it goes on
+  to ask for the dealer's computer name — `test/test-win16-hearts-startup.js`
+  pins the whole sequence.
+  - **The command line was `"\r"`, not `""`.** InitTask handed back the DOS
+    command tail, carriage-return-terminated. That pointer *is* WinMain's
+    lpCmdLine, which is documented null-terminated, so MFC compared the first
+    byte, saw 0x0D, and concluded it had been given a command line telling it
+    to join a game. One byte.
+  - **Every Win16 dialog-item API read the wrong argument.** `$win16_arg16` is
+    ESP-relative and `$win16_call32_begin` moves ESP to the 32-bit scratch
+    stack, so an argument read after the bridge opens comes off that frame
+    instead — index 0 being the zero written there as a return address. Ten
+    functions did it, so GetDlgItem asked for control 0 whatever it was passed.
+    `$win16_arg16` now traps if called while the bridge is open.
+  - **One posted message was delivered twice.** `$handle_PostMessageA` decided
+    "is this window another instance's?" with `i32.and`, which evaluates both
+    operands — so the host call that queues the message on the owning instance
+    ran for our own windows too, and then this side queued it again. Not a
+    Win16 bug: any app posting to itself got the message twice.
+  - **Creating a dialog never ran the WH_CALLWNDPROC filter.** CreateWindow
+    always had; DialogBox did not. MFC attaches its C++ object to the HWND from
+    inside that call, and its dialog procedure's first act is to look the object
+    back up — it called a virtual through the null it got.
+  - **DefDlgProc's share was missing.** MFC subclasses the dialog and passes
+    IDOK down the chain expecting the dialog to close, so the procedure our
+    window hands back on subclassing has to end the dialog, and the pump has to
+    route to the *window* procedure once one is installed rather than to the
+    DLGPROC.
+
+  Three more things stood between that and a game, all now fixed:
+  - **NDDEAPI.DLL would not load**, and Hearts greys out the whole "How do you
+    want to play?" group when it cannot ask `NDdeGetWindow` whether network DDE
+    is there. NDDEAPI is now a module the emulator implements, and its one
+    entry point answers with a window of ours: DDEML is implemented in WAT
+    rather than by a separate agent process, so that is the truthful answer
+    rather than a zero. A module we implement has no export table for
+    GetProcAddress to read, so the entry point gets a fixed thunk-segment slot
+    the way the pumps do.
+  - **Control messages are numbered per class from WM_USER in Win16** and in
+    distinct ranges in Win32 — BM_, EM_, LB_, CB_, SBM_ and STM_ all start at
+    0x400 — so which block a number belongs to can only be decided from the
+    class of the window being addressed. `BM_GETCHECK` arriving as 0x400 meant
+    every radio button answered "not me".
+  - **PeekMessage cannot be bridged the ordinary way.** It is the one handler
+    that ends by setting EIP from its own stack frame, so an idle PM_NOREMOVE
+    loop yields; across the bridge that address is the scratch frame's zero.
+
+  Hearts now deals: `test/test-win16-hearts-startup.js` drives name, dealer, OK
+  and New Game and checks a green table with cards on it.
+
+  **Its menu commands are covered now too** —
+  `test/test-win16-hearts-menus.js`, 18 checks, every command on both menus.
+  The sweep never reached them because it drives a freshly launched app, and
+  Hearts at that moment is inside its modal startup dialog; answering the
+  dialog first is what makes the menu bar live. Two commands were broken and
+  neither fault was Hearts-specific:
+
+  - **`ClientToScreen` and `ScreenToClient` (USER.28/29) did not exist.** MFC
+    centres every dialog with GetParent/GetClientRect/ClientToScreen, so this
+    was on the path of any 16-bit MFC dialog. Game > Score died there.
+  - **A dialog was never seeded its own first paint.** `$win16_dlg_run` marked
+    every *control* dirty and never the dialog window, which no dialog built
+    only from controls can notice. Template 502 (the Score Sheet) holds one OK
+    button and the task draws the whole score grid from WM_PAINT, so the sheet
+    came up as an empty grey box. Painting it then wanted `GDI.56 CreateFont`,
+    also missing.
+
+  **CORRECTION to what this file used to say here:** it claimed the DDE server
+  wrapper near `seg 1:0x79ec` is never reached and "only the client one ever
+  runs", so something upstream had already chosen client mode. That is no
+  longer true, and it stopped being true when the startup dialog started
+  working. Choosing "I want to be dealer" now takes the server path: a traced
+  dealer run calls `DdeInitialize`, eight `DdeCreateStringHandle`,
+  `DdeNameService` and three `DdePostAdvise`, and **never** `DdeConnect`. There
+  is nothing left to find upstream of the dialog.
+- **DDEML conversations: established, but not yet carrying transactions.**
+  `src/09f-win16-ddeml.wat` now joins two instances in one room. A registered
+  service name is *kept* (it never was — a registration nobody recorded is a
+  server no client can find), `DdeConnect` puts a CONNECT on the wire and
+  waits, the instance holding that service answers, and both sides record who
+  they are talking to. `DdeDisconnect` tells the peer rather than forgetting
+  it locally, since a conversation the other side still believes in is a
+  server holding a seat for a player who has gone.
+  `test/test-win16-dde-room.js` is the gate: two instances, separate memories,
+  separate DDE tables, on one loopback segment — 14 checks including that
+  nobody answers for a service that was never registered.
+
+  Two things worth knowing before extending it:
+
+  - **The room is one queue with one reader.** `$vsock_pump` owns it and used
+    to *discard* any frame whose magic it did not recognise, so a DDE frame was
+    eaten before DDEML saw it. It now hands `DDE1` frames to
+    `$win16_dde_deliver`. Leaving them queued is not an option either: nothing
+    else drains, so the socket stream would stall behind them. Any third
+    protocol on this wire has to be demultiplexed in the same place.
+  - **`DdeConnect` parks by not returning.** A Win16 API is entered with its
+    arguments still on the task's stack and nothing popped until
+    `$win16_api_return`, so declining to return re-enters the same call with
+    the same arguments next pass. No continuation slot, nothing to unwind.
+    This is why it is native rather than bridged — across the Win16 bridge the
+    frame it would park on belongs to a scratch stack about to be discarded,
+    which is the same reason `PeekMessage` cannot be bridged.
+
+  **Hearts will still not join, and it is NOT a name-matching bug.** Both
+  sides were traced and their interned strings dumped out of the handle table
+  at guest `0x8F9200` (that address is `WIN16_ARENA + 127*0x10000 + 0x9200`;
+  `--dump` reads it directly):
+
+  | | service | topic |
+  |---|---|---|
+  | dealer registers | `MSHearts` | `Hearts` |
+  | client asks for | `\\DEAL\NDDE$` | `Hearts$` |
+
+  That is NetDDE working exactly as designed. The client does not connect to
+  the dealer's application at all — it connects to the **NetDDE agent** on the
+  named machine (`\\COMPUTER\NDDE$`) and names a **DDE share** as the topic;
+  the trailing `$` is the share marker. The agent on the far side looks that
+  share up in the machine's share database, which maps `Hearts$` onto the
+  local pair (`MSHearts`, `Hearts`), and makes the real connection locally on
+  the client's behalf. No string the client sends will ever equal a name the
+  dealer registered.
+
+  Hearts does not create the share itself: it imports no NDDEAPI entry
+  statically and only `LoadLibrary`s it for `NDdeGetWindow`. On a real Win98
+  box the share is part of the *machine*, put there at install time. So the
+  piece to write is a **DDE share table** — share name to (service, topic) —
+  consulted when a CONNECT names `\\host\NDDE$`, modelling the share database
+  a Win98 install ships with. It belongs in the emulator as a table, not as an
+  `if (this is Hearts)`.
+
+  ~~**`XTYP_CONNECT` is not offered to the server's own callback.**~~ DONE.
+  A DDEML server is not a table of names, it is an application with a callback,
+  and that is where it says yes or no. The drain now QUEUES the question and
+  the task's own message pump asks it — the callback cannot be run from the
+  drain, because `$vsock_pump` is called from inside arbitrary API handlers and
+  redirecting EIP there returns into the wrong frame. The callback is entered
+  with a far return onto `$WIN16_DDE_CB`, which acts on the answer and then
+  finishes the interrupted `GetMessage` with an idle message, so the task's
+  loop never notices the detour. A conversation stays in state 2, offered, until
+  the application accepts; a refusal is silence, which is what `DdeConnect`
+  against a server returning FALSE sees.
+  `test/test-win16-dde-connect-callback.js` pins both answers: two instances on
+  a loopback segment, both running a real 16-bit message loop, with the
+  server's callback a hand-written stub whose answer the test chooses.
+
+  ~~**`DdeClientTransaction` fails, so nothing crosses.**~~ DONE for
+  `XTYP_REQUEST`, which is the one Hearts opens with (`Join`). It follows the
+  same three steps: the drain queues the question against the conversation it
+  arrived on, the pump asks the application, and the handle the callback
+  returns is emitted as a DATA frame. The client parks on the shared
+  `$win16_dde_park` and the drain turns the reply into a data handle, so
+  `DdeGetData` reads it like any other. A transaction nobody answers in time
+  fails with `DMLERR_DATAACKTIMEOUT` and **leaves the conversation up** —
+  tearing a session down over one slow item would be wrong.
+
+  A conversation now remembers its topic, because `XTYP_REQUEST` hands the
+  callback the topic and the item and only the conversation knows the former.
+
+  ~~**`DdePostAdvise` has no advise loops to feed.**~~ DONE, and this is the
+  one Hearts actually runs on: its dealer posts an advise after each move
+  rather than being polled. A client's `XTYP_ADVSTART` is offered to the
+  server's application like any other transaction; if it agrees, the loop is
+  recorded against that conversation. `DdePostAdvise` then turns into
+  `XTYP_ADVREQ` back to the same application — "what does it say now?" — and
+  the answer is pushed as `XTYP_ADVDATA` to a client that is not waiting on
+  anything, so it goes straight to *that* application's callback. Asking twice
+  for one item does not open two loops, and a loop dies with its conversation:
+  one left pointing at a closed conversation would push into a handle that has
+  since been reused. `XTYP_POKE` and `XTYP_EXECUTE` cross too.
+
+  `XTYP_WILDCONNECT` works too: a connect naming no service asks who is out
+  there, every instance with a service to offer is a candidate, and the
+  application is asked what it will serve rather than whether it will serve
+  this. An instance serving nothing still answers nobody. `DDE_FBUSY` is
+  honoured as its own answer — "not now" is neither yes nor no, so the caller
+  keeps waiting and a wait that only ever saw busy ends in `DMLERR_BUSY`
+  rather than a timeout. `DdeClientTransaction` uses the caller's `dwTimeout`,
+  clamped so a hopeful two milliseconds still gives the far machine a chance.
+
+  **`XTYP_MONITOR` is refused, on purpose.** A monitor is a DDE spy that
+  expects to be told about every transaction in the system, and none of that
+  is delivered. An instance that registered happily and then saw nothing would
+  be the worst outcome — a debugging tool silently reporting that nothing is
+  happening — so `DdeInitialize` with `APPCLASS_MONITOR` fails with
+  `DMLERR_DLL_USAGE`, which is what Windows uses for a class the DLL will not
+  serve. Implement the delivery before accepting the registration.
+
+  **Also fixed while checking the codes:** `DMLERR_LOW_MEMORY` is `0x4007`, not
+  `0x4001` — `0x4001` is `DMLERR_BUSY`. Five sites were returning "busy" where
+  they meant "out of memory", which an app retrying on busy would loop on.
+
+  **On testing any of this:** use the in-process harness. Two instances on a
+  `LoopbackSegment`, each with a real NE loaded so selectors and a message loop
+  exist, is deterministic and runs in seconds. The two-process
+  `test-win16-hearts-join.js` is the end-to-end shape but it is timing-bound
+  and this machine is regularly at load 80–200, where the dealer needs three
+  minutes merely to register; it is not in `run-all.sh` for that reason.
+  Minesweeper is the host of choice for the in-process tests: Hearts needs
+  CARDS.DLL staged before it runs at all, and nothing in these tests is about
+  the app.
+- ~~**Named resources returned 0.**~~ FIXED. A NAMEINFO id with bit 15 clear
+  is not an id: it is an offset from the start of the resource table to a
+  Pascal string, and the walker matched integer ids only, so every `Load*`
+  handed a string failed outright. That is not a rare corner — Solitaire's
+  group icon is stored as `"SOL"`, which is why it had no icon.
+  `$win16_find_resource_ex` takes a name to match instead of an id, comparing
+  without case the way USER does, and `$win16_res_lookup` picks between the two
+  from the argument's selector. `LoadIcon` and `LoadBitmap` go through it.
+  `LoadMenu` and `LoadAccelerators` deliberately do **not** yet: they bridge to
+  the 32-bit `$handle_Load*A`, which take an integer id and walk the PE tree,
+  so accepting a name there means teaching those handlers a second grammar.
+  Nothing in the four apps needs it — Hearts' named `HEARTSMENU` arrives by
+  another path — so it is left rather than half-done.
 - Known execution-core gaps, all of which trap loudly and none of which the
   four apps reach: INT (including the INT 3Fh moveable-segment thunks), 16↔32
-  thunking, named resources (`LoadIcon` with a string name returns 0 —
-  Solitaire's icon). `tools/ne-dump.js --resources` shows what a module
+  thunking. `tools/ne-dump.js --resources` shows what a module
   actually ships, including named types and ids; `--menus` and `--dialogs`
   decode the RT_MENU and RT_DIALOG templates, which are the two resources whose
   16-bit layout shares nothing with the 32-bit one and so cannot be read with
   `tools/parse-rsrc.js`. `--menus-json=` is what `tools/menu-sweep.js` falls
-  back to when the PE walker finds nothing.
+  back to when the PE walker finds nothing, and `--seg-bytes=N:OFF[:LEN]` reads
+  raw segment bytes, which is the only way to look at the DGROUP string a
+  disassembly names as `push 0x1e8`.
+- Tracing for message-queue problems, added while chasing the Hearts duplicate:
+  `--trace-win16` now prints `post ->` for every message going into the posted
+  queue and `task-loop ->` / `dlg-pump ->` for every one coming out, each with
+  the queue depth. A message delivered twice is either pushed twice or popped
+  twice, and only both halves together say which. `--input=N:dump-msgq` prints
+  the queue itself, which `--dump` cannot: it lives at WASM 0x400, below
+  GUEST_BASE, so that address goes through `g2w` and lands somewhere else.
+- ~~**Solitaire showed an empty table, and cards could not be dragged.**~~
+  FIXED, and neither was a Solitaire bug.
+  - **The initial erase arrived too late.** It was left to the non-client flag,
+    which GetMessage drains *after* the post queue — so it landed behind
+    whatever the app had posted for itself. Solitaire posts its deal from
+    WM_CREATE and draws each card as it deals rather than from WM_PAINT, so the
+    erase painted the table green over a hand already laid out and nothing
+    asked for it back. The cards appearing "only when you touch a menu" was the
+    menu invalidating the window. `$win16_ShowWindow` now posts the erase with
+    its own WM_SIZE/activation group, ahead of the app's, which is the order
+    Windows gives it: there the erase happens inside ShowWindow before the
+    task's message loop runs at all.
+    Worth recording what did *not* work, since both look right: invalidating
+    the window when the erase is delivered fixes Solitaire but costs a full
+    repaint per erase per window, which timed mspaint's tool sweep out; and
+    invalidating at ShowWindow is dropped on the floor, because the window has
+    no size yet and the paint phase silently discards an empty update rect.
+  - **PtInRect had x and y the wrong way round.** Its POINT is one argument
+    passed *by value*, so a doubleword push puts x nearest the top of the stack
+    — the opposite of the separate x and y of InflateRect beside it. The test
+    asked whether (y, x) was in the rectangle, which is false for every card, so
+    the button-down that starts a drag found nothing under the cursor. Any
+    future Win16 API taking a POINT by value has the same trap: `ChildWindowFromPoint`
+    and `WindowFromPoint` are the two that are not implemented yet.
+  - `GDI.103 PtVisible` was missing; Solitaire asks it while drawing the stack
+    it has picked up. `test/test-win16-solitaire-play.js` covers both the
+    untouched deal and a drag that empties the column it came from.
 - Structure width is the recurring bug class here, and it is worth stating
   plainly: **a structure that crosses the boundary is a different size in the
   two worlds.** `SystemParametersInfo(SPI_GETWORKAREA)` wrote a 32-bit RECT

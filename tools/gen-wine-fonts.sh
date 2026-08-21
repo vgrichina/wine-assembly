@@ -34,7 +34,14 @@ generate() {
 # FreeType returns those pixels verbatim; it does not rasterize outlines here.
 generate fixedsys Fixedsys Fixedsys --fixed 15
 generate system System System 16 18
-generate ms_sans_serif MSSansSerif "MS Sans Serif" 13 16 20
+# Wine's redistributable bitmap source supplies exact 13/16/20px strikes.
+# Keep only those native pixels. Synthetic fractional enlargements looked
+# visibly thinner than either the source artwork or Microsoft's hand-drawn
+# larger rungs; WAT's Win98 raster mapper supplies honest integer enlargement
+# when an application requests a larger size.
+generate ms_sans_serif MSSansSerif "MS Sans Serif" \
+  --internal-leading=2,3,4 \
+  13 16 20
 generate courier Courier Courier --fixed 13
 
 # Tahoma is the Win98 shell and tooltip face. Wine's TTFs carry monochrome

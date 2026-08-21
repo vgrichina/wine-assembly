@@ -1,22 +1,12 @@
 // Unit tests for VirtualFS — findFirstFile, createFile basename fallback, path resolution
-const path = require('path');
-const fs = require('fs');
 const assert = require('assert');
 
-// Extract VirtualFS from filesystem.js (it's not exported, so we re-require the module source)
-// The class is used internally by createFilesystemImports, but we can instantiate it directly
-// by evaluating just the class definition.
-const fsSource = fs.readFileSync(path.join(__dirname, '..', 'lib', 'filesystem.js'), 'utf8');
-const classMatch = fsSource.match(/^class VirtualFS \{/m);
-if (!classMatch) throw new Error('Cannot find VirtualFS class in filesystem.js');
-const classStart = classMatch.index;
-// Find matching closing brace
-let depth = 0, classEnd = classStart;
-for (let i = classStart; i < fsSource.length; i++) {
-  if (fsSource[i] === '{') depth++;
-  else if (fsSource[i] === '}') { depth--; if (depth === 0) { classEnd = i + 1; break; } }
-}
-const VirtualFS = new Function('return ' + fsSource.slice(classStart, classEnd))();
+// VirtualFS is exported. It used not to be, and this file used to slice the
+// class body out of the source and eval it -- which silently drops every
+// module-level helper the class calls, so the day filesystem.js grew an
+// entrySize() helper these tests started failing with "entrySize is not
+// defined" against working code. Require the module.
+const { VirtualFS } = require('../lib/filesystem');
 
 function makeVFS(files) {
   const vfs = new VirtualFS();
@@ -33,6 +23,14 @@ function test(name, fn) {
 }
 
 console.log('VFS tests:');
+
+test('standard Win98 shell folders exist before an installer runs', () => {
+  const vfs = makeVFS({});
+  assert(vfs.dirs.has('c:\\windows\\start menu'));
+  assert(vfs.dirs.has('c:\\windows\\start menu\\programs'));
+  assert(vfs.dirs.has('c:\\windows\\start menu\\programs\\startup'));
+  assert(vfs.dirs.has('c:\\windows\\desktop'));
+});
 
 // --- findFirstFile ---
 

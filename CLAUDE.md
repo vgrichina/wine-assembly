@@ -8,15 +8,21 @@ x86 Windows 98 PE interpreter in raw WebAssembly Text (WAT). Runs real Win32 exe
 bash tools/build.sh
 ```
 
-Concatenates `src/parts/*.wat` (alphabetical glob order) into `build/combined.wat`, then compiles with `wat2wasm` to `build/wine-assembly.wasm`. The alphabetical order of filenames IS the source order — file numbering (01-, 02-, etc.) controls concatenation.
+Compiles the parts listed in `WAT_FILES` (`lib/compile-wat.js`) with the project's own pure-JS WAT compiler (`tools/build-compile-wat.js`) into `build/wine-assembly.wasm` — **`wat2wasm` is not used**. `build/combined.wat` is written from the same list for grep/`check-parens`/`func-index` and is not itself compiled.
+
+**`WAT_FILES` is the build.** A new `src/*.wat` that isn't listed there lands in `combined.wat` and is silently absent from the shipped wasm; `tools/check-wat-manifest.js` (run first in the build) now fails on that. File numbering still controls order — `WAT_FILES` must stay in the same sorted order as the filenames.
+
+Build gates, in order: manifest ↔ glob equality, `api_table.json` (id == index, append-only), generated dispatch table freshness, API hash table, ordinal data-string offsets, handler-table count, handler ESP epilogues.
 
 **Important:** When adding new handler opcodes to `02-thread-table.wat`, increase `(table $handlers N funcref)` to match the total entry count (0-based index + 1).
 
 ## Run
 
 - **Browser:** Open `index.html` (at repo root), select an app, click Launch. Live build deployed at https://wine-assembly.berrry.app via `tools/deploy-berrry.js --update`.
-- **CLI:** `node test/run.js --exe=path/to/exe [options]` — headless execution with auto-build. Key flags: `--verbose`, `--trace`, `--trace-api`, `--trace-gdi`, `--trace-host=fn1,fn2`, `--no-close`, `--break=0xADDR`, `--break-api=Name`, `--watch=0xADDR`, `--dump-gdi=DIR`, `--max-batches=N`, `--batch-size=N`
+- **CLI:** `node test/run.js --exe=path/to/exe [options]` — headless execution with auto-build. A registered EXE gets that app's explicit file manifest; an arbitrary bare `--exe` mounts only the executable. Add repeatable/comma-separated `--vfs-include='*.dat,plugins/**/*.dll'` patterns (relative to the EXE directory) for ad-hoc companion assets, or prefer `--app=ID`. Key flags: `--verbose`, `--trace`, `--trace-api`, `--trace-gdi`, `--trace-host=fn1,fn2`, `--no-close`, `--break=0xADDR`, `--break-api=Name`, `--watch=0xADDR`, `--dump-gdi=DIR`, `--max-batches=N`, `--batch-size=N`
+- **CLI, by app id:** `node test/run.js --app=sol` — takes the exe, its DLLs, its data files and its command line from `lib/apps.js`, the same registry the desktop icons read, so the CLI mounts exactly what the browser mounts. `--app=` with an unknown id prints the full id list. An explicit `--exe`/`--args` overrides the registry.
 - **PNG render:** `node test/run.js --exe=path/to/exe --png=output.png`
+- **Real threads (CLI):** `--threads` gives every guest thread its own node `worker_thread` over the one shared memory, instead of a slice of the main one — the headless twin of the browser's Worker backend. The guest's *main* thread stays in-process, so this is not identical to the browser, but it is the only automated coverage of the shared-memory locks, the per-thread RPC blocks and the wait-completion path. Add `--threads-serial` to run one guest thread at a time (splits "race" from "wrong per-thread state" in one run) and `--thread-batch-size=N` to set the steps per worker slice (default `--batch-size` × `--thread-slices`, min 20000 — **not** `--batch-size`, which is tuned for the opposite constraint). `--trace-thread` also reports why a thread got no slice this batch. Runs print a `critical sections:` line, a `held critical sections at exit` list (each section's owner, `LockCount` and `RecursionCount`) and a per-thread `csPark/steal`, `csBadLeave`, `waitingOnCS=… heldBy=…` column whenever a guest thread blocked on a `CRITICAL_SECTION`. **Read the held list first on any threads hang:** a climbing `csPark` says somebody is waiting, but only the owner/counter state says why — a section whose counters sit below the values `InitializeCriticalSection` writes (`lock=-1 recursion=0`) can never be released by the guest again, and a nonzero `csBadLeave` names the thread that put it there. A section owned by a thread that has already exited is released automatically at exit. Sections are never taken by force by default, because doing so rewrites `LockCount`/`RecursionCount` under the owner and the guest CRT reads those — `--cs-steal-after=N` turns it back on for the one measurement it is good for, telling "waiting forever" apart from "took it". See `docs/design-real-threads.md` for what worker mode does and does not get right yet.
 
 ## Tracing (reach for this BEFORE editing source to add `console.log`)
 
@@ -29,15 +35,18 @@ Ad-hoc `console.log` / `DBG_*` env vars rot. Use the built-in flags first; exten
 | `--trace-stack[=DEPTH\|=Name1,Name2\|=Name:DEPTH,...]` | Walk EBP frame chain on each matched API call (default depth 12). `=N` overrides default depth for all; `=Name1,Name2` limits to those APIs; `=Name:N` sets per-API depth. |
 | `--trace-gdi` | Every wrapped GDI primitive: CreateBitmap, BitBlt, StretchBlt, FillRect, DrawEdge, DrawText, TextOut, Rectangle, Ellipse, Polygon, MoveTo/LineTo, Arc, SetPixel, SetTextColor, SetBkColor, SetBkMode, SelectObject, DeleteObject, DeleteDC, GetClipBox, LoadBitmap, CreateSolidBrush, GetObject, PatBlt |
 | `--trace-dc` | Every `_getDrawTarget` resolution: hdc → resolved hwnd, top-level hwnd, canvas ox/oy, canvas size. Logs NO_CANVAS when resolution fails. Use when a draw call fires but nothing appears — shows which surface each DC lands on. |
+| `--trace-ctrl` | Every WAT-native control paint: `[ctrl] paint hwnd=0x… Button at 254,422 75x24 vis=1`, in dispatch order, with the *screen* rect and the effective-visibility bit. **Reach for this first on "these pixels should not be there".** GDI rasterizes inside WAT now, so `--trace-gdi` sees only surface binds and cannot say who drew what; this can. Two entries for one hwnd at different origins = a control repainted after a move and nothing erased the old rect (children own no surface). `vis=0` = a paint that leaked through while the control or an ancestor was hidden — those pixels are a ghost nothing will clean up. |
 | `--trace-reg` | Every registry op (open/query/create/set/enum/close) with key path, value name, and result ("found"/"not found"/actual data). Use to discover which keys an app probes when storage returns empty. |
 | `--trace-fs` | Every VFS op: CreateFile (with decoded access/creation + handle/FAIL), GetFileAttributes, FindFirstFile, FindNextFile — each with path and hit/miss result. Use to see which files an app looks for but can't find in the VFS. |
 | `--trace-net` | Every `vln/1` frame on the virtual LAN wire, decoded: `-> SYN 10.77.0.2:49152 -> 10.77.0.1:8035`. Pair with `--vlan-ip=A.B.C.D` (this process's room address) and `--vlan-wire` (join the segment offered by the parent process over child IPC). |
 | `--trace-host=fn1,fn2` | Generic wrap of any host import by name — logs raw args + return. Use when no category fits yet. Example: `--trace-host=gdi_draw_edge,wnd_set_state_ptr` |
+| `--rpc-census` | With `--threads`: per-thread histogram of the host imports each guest thread went out to the main thread for. **This is the throughput question in worker mode** — a blocking import costs that thread a `postMessage` plus an `Atomics.wait`, so it stops until the main thread takes a turn — and `--host-census` cannot answer it, because it wraps the main thread's table and never sees a worker's calls. It is what found Winamp's decode thread spending 9,909 round trips on `math_pow` and 10,378 on the API-name `log`. |
 | `--host-census[=N]` | Counts every host import and prints a top-12 histogram (plus the top single-int argument values, so `log_i32(0xca00f10f)=9599404` names the exact marker) straight to stdout every N calls, default 1M. **Reach for this first when a run hangs or the harness dies with a JavaScript OOM.** Everything else we log is buffered and drained only *between* batches, so a batch that never returns prints nothing at all no matter how much it is doing — this is the one flag that can see inside one. It wraps the final import table, after `run.js` overrides `lib/host-imports.js`'s versions with its own logging ones — unlike `--profile-host`, which needs the names up front, wraps before those overrides, and reports at exit. |
 | `--trace` | Every decoded block's EIP |
 | `--trace-sched[=N]` | One compact line each time the *set of thread states* changes, plus a heartbeat every N batches (default 5000). Shows main + every worker as `M:run@0xEIP  T1:sleep  T2:wait(0xHANDLE)`. Reach for this first on any "it hangs" or "it's slow" report with threads involved: a stalled system prints the same line repeatedly, a healthy one churns. Doubles as a cheap sampling profiler — `--trace-sched=50` then histogram the `M:...@0x...` addresses. |
 | `--time-scale=N` | Run the guest clock N× the wall clock. Separates "the app is waiting for time to pass" from "the app is doing work": if a slow boot doesn't get faster at `--time-scale=10`, it is not timing-bound. |
 | `--trace-seh` | SEH chain operations |
+| `--trace-fpu` | Every x87 exception flag as it is raised (`[fpu] raise ZE at 0x…`), and every FCLEX/FNINIT that takes them down again. The flags are **sticky** — nothing but those two instructions clears them — so a program that reads the status word sees whatever the last few thousand instructions left there, and a "Division by zero" message can be reported an arbitrary distance from the divide that set ZE. Reach for this when an app blames the FPU: zero `[fpu]` lines means the complaint is a software check, not an x87 status read. |
 | `--break=0xADDR[,...]` / `--break-api=Name[,...]` | Pause emulator at address / API call |
 | `--break-once` | Don't re-arm WASM bp after first hit. Plus prints `bp_first_caller` (sticky `dbg_prev_eip` snapshot from the very first time `$eip == $bp_addr`) — recovers the true caller when the bp lands inside a tight self-loop that would otherwise overwrite `dbg_prev_eip` with the bp address itself. |
 | `--trace-at=0xADDR` (`--trace-at-dump=0xADDR:LEN[,...]`) | Log regs + optional hexdump of given regions each time EIP hits addr (no stop). Add `--trace-at-watch` to diff each hexdump vs previous hit (bytes marked `*`). Multi-addr `--trace-at=A,B,C` works but forces BATCH_SIZE=1 (only useful for early-execution probes); for late-code multi-addr fan-out use `--count` instead. |
@@ -95,7 +104,8 @@ node tools/profile-web-frames.js --app=blobby_volley --seconds=20 --query='?debu
 | `04-cache.wat` | Block cache (decoded x86 → threaded code) |
 | `05-alu.wat` | ALU operations (32/16/8-bit), shifts, bit ops, MUL/DIV, SETcc |
 | `05b-string-ops.wat` | String operations (movsb/movsd/stosb/stosd/cmps/scas + REP) |
-| `06-fpu.wat` | x87 FPU, 16-bit memory ALU handlers |
+| `06-fpu.wat` | x87 FPU |
+| `06b-core-handlers.wat` | Non-FPU threaded handlers: flag ops, LEAVE/BSWAP/XCHG/IMUL, 16-bit ALU/MOV, and every memory-form (`_ro`) handler |
 | `07-decoder.wat` | x86 instruction decoder → threaded code emitter |
 | `08-pe-loader.wat` | PE executable loader, import table processing |
 | `08b-dll-loader.wat` | DLL loader with relocations, export resolution |
@@ -105,12 +115,19 @@ node tools/profile-web-frames.js --app=blobby_volley --seconds=20 --query='?debu
 | `09a4-handlers-gdi.wat` | GDI API handlers (SelectObject, pens, brushes, BitBlt, text) |
 | `09a5-handlers-window.wat` | Window creation & message dispatch (CreateWindowExA, GetMessage, etc.) |
 | `09a6-handlers-crt.wat` | C runtime/string handlers (strlen, strcmp, _mbschr, etc.) |
-| `09a7-handlers-dispatch.wat` | Sub-dispatchers (Local*, Global*, lstr*, Reg*) + misc handlers |
+| `09a7-handlers-dispatch.wat` | Late-added misc handlers (shell, version, file, key/prop, atoms, setupapi) |
+| `09a7b-ole.wat` | OLE/COM: ROT, monikers, bind contexts, IFont, structured storage, IDataObject/clipboard, IOleObject/IOleCache/IViewObject |
+| `09a7c-mixer.wat` | WINMM mixer handlers (mixerOpen/GetLineInfo/GetControlDetails and A/W pairs) |
 | `09d-winsock.wat` | Virtual LAN Winsock core — socket table, in-process switch, and the `vln/1` frame wire that joins two emulator processes into one room |
 | `09b-dispatch.wat` | Manual dispatch helpers |
 | `09b2-dispatch-table.generated.wat` | **Generated** — br_table dispatch calling handler functions |
-| `09c-help.wat` | Window table, class table, WAT-native help system |
-| `10-helpers.wat` | String/memory helpers, heap allocator, resource walker |
+| `09c-help.wat` | WAT-native help system |
+| `09c0-window-table.wat` | WND_RECORDS + accessors, per-slot parallel tables, GWL/cbWndExtra, dialog state, class table, `$wat_wndproc_dispatch`, focus |
+| `10-helpers.wat` | String/memory helpers, heap allocator, resource walker, window/paint/clipboard helpers |
+| `10d-gdi-region-path.wat` | GDI regions (allocator + polygon scan-converter), path engine (record/flatten/widen/stroke), DC clipping, object allocator |
+| `10e-gdi-metafile.wat` | GDI palettes, WMF/EMF recorder and player, bitmap objects |
+| `10f-gdi-dc.wat` | GDI device-context state: save/restore, selected objects, surface descriptors, text metrics, the `$host_gdi_*` entry points |
+| `10g-gdi-raster.wat` | GDI software rasterizer: span fill, clip bands, brush sampling, shape primitives, region combine |
 | `11-seh.wat` | Win32 Structured Exception Handling |
 | `12-wsprintf.wat` | wsprintf/sprintf implementation |
 | `13-exports.wat` | WASM exports (run, get_eip, register accessors, etc.) |
@@ -130,6 +147,7 @@ node tools/profile-web-frames.js --app=blobby_volley --seconds=20 --query='?debu
 | `thread-manager.js` | Multi-thread support via separate WASM instances |
 | `storage.js` | localStorage-backed registry and INI file persistence |
 | `filesystem.js` | Virtual filesystem for file operations |
+| `vfs-host-files.js` | Expands explicit CLI `--vfs-include` globs within their bounded host roots |
 | `vlan-wire.js` | Virtual LAN transport: loopback segment (instances in one process) and process wire (emulators in separate OS processes over child IPC). Carries opaque frames only — all routing lives in WAT |
 | `compile-wat.js` | Browser-side WAT → WASM compiler (wraps wabt.js) |
 
@@ -181,6 +199,8 @@ GetMessageA in `09a5-handlers-window.wat` delivers messages in a priority-based 
 
 **SendMessageA** (`$handle_SendMessageA`) dispatches synchronously: pushes wndproc args on the guest stack, sets EIP to the target wndproc, and uses a CACA0005 continuation thunk to resume the caller when the wndproc returns.
 
+**UpdateWindow** finishes the paint before it returns, via `$wnd_send_message` (WM_ERASEBKGND from the NC_FLAGS bit, then WM_PAINT) — real `UpdateWindow` does not return until the app has painted, and anything the app draws on the next line otherwise gets covered by its own deferred background erase (Taipei's splash screen). Scoped to a visible top-level window with a real x86 wndproc (`< 0xFFFE0000`), `ctrl_class == 0`, not `$code16`, and `$sync_msg_depth == 0`; everything else still queues for the pump.
+
 **Input injection (test harness):** `test/run.js` supports `--input=BATCH:ACTION:ARGS,...` for keydown/keyup/keypress/click/dblclick/post-cmd/png and more. The renderer's `inputQueue` feeds into `check_input()`. See lines 82-159 in run.js for the full list.
 
 ## Key Concepts
@@ -189,7 +209,7 @@ GetMessageA in `09a5-handlers-window.wat` delivers messages in a priority-based 
 - **Lazy flags:** Flags (ZF, SF, CF, OF) are not computed after every instruction. Instead, `flag_op`, `flag_a`, `flag_b`, `flag_res` are stored, and flags are computed on demand by `$get_zf`, `$get_cf`, etc. `flag_sign_shift` is 31 for 32-bit ops, 15 for 16-bit, 7 for 8-bit.
 - **g2w / w2g:** Convert between guest (x86) addresses and WASM linear memory addresses. `g2w(guest) = guest - image_base + GUEST_BASE`.
 - **API thunks:** Imported Win32 functions are replaced with thunk addresses. When EIP enters the thunk zone, `$win32_dispatch` handles the call.
-- **Dispatch handlers:** Each Win32 API has a `$handle_{Name}` function in `09a-handlers.wat` with signature `(param $arg0-4 i32) (param $name_ptr i32)`. The generated `09b2-dispatch-table.generated.wat` contains the br_table that calls these. To add a new API: add it to `api_table.json`, write `$handle_{Name}` in `09a-handlers.wat`, run `node tools/gen_dispatch.js`.
+- **Dispatch handlers:** Each Win32 API has a `$handle_{Name}` function in `09a-handlers.wat` with signature `(param $arg0-4 i32) (param $name_ptr i32)`. The generated `09b2-dispatch-table.generated.wat` contains the br_table that calls these. To add a new API: **append** it to the end of `api_table.json` (ids are array positions and are baked into the compiled hash table — a mid-array insert renumbers everything and `tools/check-api-table.js` fails the build), write `$handle_{Name}` in `09a-handlers.wat`, then run **both** `node tools/gen_dispatch.js` and `node tools/gen_api_table.js` — the second regenerates the name→id hash table, and skipping it leaves the new API unfindable at runtime with no crash to point at it.
 - **Fail-fast stubs:** Unimplemented API handlers call `$crash_unimplemented` which traps with `unreachable`. Do NOT replace these with silent stubs that return 0 — silent stubs hide bugs and make them much harder to debug. When an app hits an unimplemented API, the crash log tells you exactly what to implement next. Implement the real behavior or leave the crash.
 - **WAT logical operands:** Normalize raw pointers, handles, counts, and other arbitrary integers before combining them with logical `i32.and`: use `(i32.ne value (i32.const 0))` or `i32.eqz`. A raw even value AND a `0/1` predicate has a clear low bit and silently evaluates false. Raw operands are appropriate only when `i32.and` intentionally performs a bit mask; boolean operands should each be explicitly `0/1`.
 - **Yield mechanism:** For async operations (DLL loading, help file fetching), WASM sets `$yield_reason` and returns control to JS. The JS event loop handles the async work, clears the yield, and resumes WASM. Yield reasons: 1=waiting, 2=exited, 3=com_load_dll, 4=help_load.
@@ -228,6 +248,8 @@ GetMessageA in `09a5-handlers-window.wat` delivers messages in a priority-based 
 
 - `tools/gen_dispatch.js` — Generates `09b2-dispatch-table.generated.wat` (br_table + calls + `$init_dx_com_thunks`) from `api_table.json`. COM vtable start IDs are auto-computed from interface prefixes (e.g. `IDirectDraw_*`), so adding a new API never requires manual ID fixups.
 - `tools/gen_api_table.js` — Generates the API hash table (`01b-api-hashes.generated.wat`)
+- `lib/pe.js` — **the** PE header/section reader (`readPE(fileOrBuffer)` → `{buf, imageBase, sections, va2off, va2offInfo, off2va, sectionForVa, isCodeVa}`). Use it instead of re-deriving `readUInt32LE(0x3c)` + section walk in a new tool. Two rules live here so every tool inherits them: `section.isCode` is true for Borland sections *named* CodeSeg/DataSeg even when flagged as data, and `va2offInfo().hasRaw` is false for BSS addresses that have no bytes on disk (`va2off` returns -1 for those).
+- `tools/xrefs.js` — also importable: `require('./xrefs').scanXrefs(file, targetVa, {near, codeOnly})` returns the classified hits, which is what `caller_census.js` uses instead of parsing printed output.
 - `tools/disasm.js` — x86 disassembler for debugging (importable module)
 - `tools/disasm_fn.js` — disassemble at one or more VAs: `node tools/disasm_fn.js <exe> 0xADDR[,0xADDR,...] [count]`. Warns when the start looks like a mid-instruction desync.
 - `tools/xrefs.js` — find all references to a data/code VA: `node tools/xrefs.js <exe> 0xADDR [--near=0xN] [--code]`. Classifies each ref as `load`/`store`/`branch`/`other`; handles Borland-style code-in-data sections (sections named `CodeSeg`/`DataSeg` even when flagged data). Use `--near` to catch branches into any byte of a trampoline region.
@@ -251,7 +273,13 @@ GetMessageA in `09a5-handlers-window.wat` delivers messages in a priority-based 
 - `tools/pe-sections.js` — PE section header dumper
 - `tools/render-png.js` — Headless PNG renderer
 - `tools/check-parens.js` — WAT parenthesis balance checker (auto-diffs vs git HEAD)
-- `tools/build.sh` — Build script (concat + wat2wasm)
+- `tools/build.sh` — Build script (gates + concat + `lib/compile-wat.js`)
+- `tools/check-wat-manifest.js` — asserts `WAT_FILES` == `src/*.wat` as a set and as an order
+- `tools/concat-wat.js` — writes `build/combined.wat` from `WAT_FILES` (not a shell glob)
+- `tools/check-apps-registry.js` — asserts every `lib/apps.js` entry points at files that exist (exe, path-form DLLs, data files). Both hosts read that registry now, so a typo'd path breaks `run.js --app=<id>` as well as the desktop icon.
+- `tools/check-api-table.js` — asserts `api_table.json` ids are array positions and the array is append-only vs `HEAD`
+- `tools/check-data-strings.js` — asserts every `(i32.const 0xADDR) ;; Name` string-address annotation still names the string at that address
+- `tools/gen_dispatch.js --check` — fails if the generated dispatch table is stale rather than regenerating it
 - `tools/deploy-berrry.js` — Deploy to berrry.app. `--update` updates an existing app and by default fetches the server's sha256 manifest, then uploads only files whose hash differs (so a no-op redeploy ships zero files). `--full` forces a complete reupload. `--files=a,b,c` uploads an explicit comma-separated list of repo-relative paths and skips diffing. Note: by default `--update` *will* push uncommitted working-tree changes, since the diff is against the live server, not git.
 
 ## Test Binaries

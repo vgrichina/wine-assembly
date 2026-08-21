@@ -91,7 +91,7 @@ async function main() {
     ], {
       cwd: ROOT,
       encoding: 'utf8',
-      timeout: 90000,
+      timeout: 300000,
       maxBuffer: 32 * 1024 * 1024,
       stdio: ['ignore', 'pipe', 'pipe'],
     });

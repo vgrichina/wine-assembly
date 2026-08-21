@@ -25,6 +25,11 @@ const result = spawnSync(process.execPath, [
   '--no-build',
   '--trace-thread',
   '--input=110:stop',
+  // Pass `--threads` to this test to check the same startup sequence against the
+  // real-OS-thread backend. Every assertion below is about Win32 semantics, not
+  // about how the thread is hosted, so both backends have to satisfy them —
+  // which is the point: one test, either scheduler.
+  ...process.argv.slice(2).filter(arg => arg === '--threads'),
 ], {
   cwd: ROOT,
   encoding: 'utf8',

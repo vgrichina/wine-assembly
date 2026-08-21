@@ -66,6 +66,10 @@ for (let i = 0; i < Math.max(entries.length, apiTable.length); i++) {
 if (mismatches === 0) console.log('All entries OK.');
 else console.log(`${mismatches} issues found.`);
 
+// Wired into build.sh: a stale hash table means the name→id lookup misses and
+// the API is simply unfindable at runtime, with no crash to point at it.
+if (mismatches > 0) process.exitCode = 1;
+
 // Also check: does the linear scan work for a target?
 if (searchName) {
   const targetHash = fnv1a(searchName);

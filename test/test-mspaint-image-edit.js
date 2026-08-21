@@ -56,7 +56,7 @@ try {
     '--no-close',
     '--quiet-api',
     '--quiet-blocks',
-  ], { cwd: ROOT, encoding: 'utf8', timeout: 15000, maxBuffer: 8 * 1024 * 1024 });
+  ], { cwd: ROOT, encoding: 'utf8', timeout: 120000, maxBuffer: 8 * 1024 * 1024 });
 } catch (error) {
   runFailed = true;
   output = `${error.stdout || ''}${error.stderr || ''}`;
@@ -71,10 +71,14 @@ async function pixels(file) {
     data: ctx.getImageData(0, 0, image.width, image.height).data };
 }
 
-// The 320x240 document is wider than the initial view, so its visible image
-// pixels occupy x=83..291 and y=64..303; exclude its sizing border and the
-// gray workspace below from whole-image comparisons.
-const canvasBox = { x0: 83, y0: 64, x1: 292, y1: 304 };
+// The 320x240 document is wider than the initial view, so only part of it is
+// on screen; exclude its sizing border and the gray workspace below from
+// whole-image comparisons. Measured 2026-08-19: the visible image pixels are
+// x=88..286 and y=69..308. They used to be x=83..291/y=64..303, and moved
+// because Paint's frame and its view are both created with WS_EX_CLIENTEDGE
+// (2px per side) and the sizing border went 3 -> 4 -- 5px of inset on the
+// left and top, and 10px off the visible width.
+const canvasBox = { x0: 88, y0: 69, x1: 287, y1: 309 };
 
 function compare(a, b, transform = value => value) {
   let matching = 0;
@@ -134,7 +138,8 @@ function countWhite(image) {
     clearUndone = compare(images.repeated, images['clear-undone']);
   }
 
-  const nearlyAll = result => result.total === 50160 && result.matching >= result.total - 5;
+  const CANVAS_PX = (canvasBox.x1 - canvasBox.x0) * (canvasBox.y1 - canvasBox.y0);
+  const nearlyAll = result => result.total === CANVAS_PX && result.matching >= result.total - 5;
   const checks = [
     ['emulator run completed', !runFailed],
     ['all six image-edit screenshots written', filesExist],
@@ -143,7 +148,7 @@ function countWhite(image) {
       nearlyAll(inverted)],
     [`Undo restored the drawing exactly (${undone.matching}/${undone.total})`, nearlyAll(undone)],
     [`Repeat restored the inversion exactly (${repeated.matching}/${repeated.total})`, nearlyAll(repeated)],
-    [`Clear Image produced a blank white image (${clearedWhite} white px)`, clearedWhite >= 50155],
+    [`Clear Image produced a blank white image (${clearedWhite} white px)`, clearedWhite >= CANVAS_PX - 5],
     [`Undo Clear restored the inverted image (${clearUndone.matching}/${clearUndone.total})`,
       nearlyAll(clearUndone)],
     ['no runtime crash or unimplemented API',

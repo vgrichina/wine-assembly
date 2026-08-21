@@ -19,7 +19,10 @@ if (probe.error || probe.status !== 0) {
 const expected = {
   'Fixedsys.fon': { face: 'Fixedsys', metrics: [[8, 15]] },
   'System.fon': { face: 'System', metrics: [[7, 16], [8, 18]] },
-  'MSSansSerif.fon': { face: 'MS Sans Serif', metrics: [[6, 13], [7, 16], [8, 20]] },
+  'MSSansSerif.fon': {
+    face: 'MS Sans Serif',
+    metrics: [[6, 13], [7, 16], [8, 20]],
+  },
   'Courier.fon': { face: 'Courier', metrics: [[8, 13]] },
   'Terminal.fon': { face: 'Terminal', metrics: [[8, 12]], charset: 255, first: 0 },
   // Tahoma is the Win98 shell and tooltip face. These are Wine's embedded
@@ -63,6 +66,9 @@ function strikes(bytes) {
         face,
         average: bytes.readUInt16LE(strike + 91),
         height: bytes.readUInt16LE(strike + 88),
+        points: bytes.readUInt16LE(strike + 68),
+        ascent: bytes.readUInt16LE(strike + 74),
+        internalLeading: bytes.readUInt16LE(strike + 76),
         charset: bytes[strike + 85],
         first: bytes[strike + 95],
         last: bytes[strike + 96],
@@ -133,6 +139,20 @@ try {
         assert(glyphRows(generated, strike, 0x41).some(row => row !== 0),
           `Tahoma A must have ink at ${strike.height}px`);
       }
+    }
+    if (name === 'MSSansSerif.fon') {
+      assert.deepStrictEqual(parsed.map(strike => strike.height),
+        [13, 16, 20],
+        'MS Sans Serif must preserve only Wine native bitmap cells');
+      assert.deepStrictEqual(parsed.map(strike => strike.points),
+        [8, 10, 12],
+        'MS Sans Serif native point-size ladder');
+      assert.deepStrictEqual(parsed.map(strike => strike.internalLeading),
+        [2, 3, 4],
+        'MS Sans Serif character-height metadata');
+      assert.deepStrictEqual(parsed.map(strike => strike.ascent),
+        [11, 13, 16],
+        'native Wine bitmap baseline ladder');
     }
     if (name === 'Terminal.fon') {
       const strike = parsed[0];

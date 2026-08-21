@@ -11,6 +11,17 @@ const path = require('path');
 const apiTable = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'src', 'api_table.json'), 'utf8'));
 const outPath = path.join(__dirname, '..', 'src', '09b2-dispatch-table.generated.wat');
 
+// --check: generate in memory and compare with the file on disk. Used as a build
+// gate so a stale generated table fails the build instead of dispatching to the
+// wrong handler at runtime.
+const CHECK_ONLY = process.argv.includes('--check');
+
+// A COM vtable whose api_ids are not contiguous produces a table that dispatches
+// method N to some unrelated API. This used to print WARNING and generate the
+// broken table anyway; it is now fatal.
+const errors = [];
+function fatal(msg) { errors.push(msg); console.error(`ERROR: ${msg}`); }
+
 // Clean up old generated file if it exists
 const oldPath = path.join(__dirname, '..', 'src', '09b-dispatch.generated.wat');
 if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
@@ -132,7 +143,7 @@ for (const iface of comInterfaces) {
   // Find all APIs matching this interface (prefix + "_")
   const methods = apiTable.filter(a => a.name.startsWith(iface.prefix + '_'));
   if (methods.length === 0) {
-    console.error(`WARNING: no methods found for ${iface.prefix}`);
+    fatal(`no methods found for COM interface ${iface.prefix}`);
     continue;
   }
   methods.sort((a, b) => a.id - b.id);
@@ -140,7 +151,8 @@ for (const iface of comInterfaces) {
   // Verify contiguous
   for (let i = 1; i < methods.length; i++) {
     if (methods[i].id !== startId + i) {
-      console.error(`WARNING: ${iface.prefix} IDs not contiguous: expected ${startId + i}, got ${methods[i].id} (${methods[i].name})`);
+      fatal(`${iface.prefix} api_ids not contiguous: expected ${startId + i}, got ${methods[i].id} (${methods[i].name}). ` +
+        'COM vtable slots are computed as startId + slot, so this table would call the wrong method.');
     }
   }
   ifaceInfo.set(iface.prefix, { startId, count: methods.length });
@@ -159,7 +171,7 @@ for (const iface of comInterfaces) {
   if (iface.extends) {
     // Extended interface: copy parent vtable + append extra methods
     const parentInfo = ifaceInfo.get(iface.extends);
-    if (!parentInfo) { console.error(`WARNING: parent ${iface.extends} not found`); continue; }
+    if (!parentInfo) { fatal(`COM interface ${iface.prefix} extends ${iface.extends}, which has no methods in api_table.json`); continue; }
     const totalCount = parentInfo.count + info.count;
     out.push(`    ;; ${iface.prefix}: extends ${iface.extends} (${parentInfo.count}) + ${info.count} extra = ${totalCount} total, extra at api_id ${info.startId}`);
     out.push(`    (global.set $${iface.global} (call $extend_com_vtable`);
@@ -182,8 +194,23 @@ for (let ci = 0; ci < result.length; ci++) {
   if (result[ci] === ')') depth--;
 }
 if (depth !== 0) {
-  console.error(`WARNING: paren imbalance, final depth = ${depth}`);
+  fatal(`paren imbalance in generated output, final depth = ${depth}`);
 }
 
-fs.writeFileSync(outPath, result);
-console.error(`Written ${outPath} (${N} APIs)`);
+if (errors.length) {
+  console.error(`${errors.length} fatal problem(s); ${CHECK_ONLY ? 'not checking' : 'not writing'} ${path.relative(process.cwd(), outPath)}.`);
+  process.exit(1);
+}
+
+if (CHECK_ONLY) {
+  const onDisk = fs.existsSync(outPath) ? fs.readFileSync(outPath, 'utf8') : null;
+  if (onDisk !== result) {
+    console.error(`ERROR: ${path.relative(process.cwd(), outPath)} is stale — it does not match what api_table.json generates.`);
+    console.error('       Run: node tools/gen_dispatch.js');
+    process.exit(1);
+  }
+  console.log(`dispatch table OK: 09b2-dispatch-table.generated.wat matches api_table.json (${N} APIs).`);
+} else {
+  fs.writeFileSync(outPath, result);
+  console.error(`Written ${outPath} (${N} APIs)`);
+}

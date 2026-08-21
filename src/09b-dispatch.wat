@@ -9,10 +9,48 @@
     (local $saved_ebx i32) (local $saved_esi i32)
     (local $saved_edi i32) (local $saved_ebp i32)
 
+    ;; Most imported calls are dispatched directly by the decoded CALL/JMP
+    ;; handler rather than by entering the thunk zone through $run. Keep the
+    ;; concrete thunk address available to blocking handlers in both paths.
+    ;; A parked handler must resume here, not at the caller's decoded block,
+    ;; or that block repeats its PUSH/CALL and consumes another stack frame on
+    ;; every cooperative retry.
+    (global.set $current_thunk_eip
+      (i32.add (global.get $thunk_guest_base)
+        (i32.mul (local.get $thunk_idx) (i32.const 8))))
+
     ;; Worker threads instantiate a fresh module over the process's shared
     ;; memory. Restore per-instance COM vtable globals before any imported API
     ;; can create or return a DirectX/OLE wrapper.
     (call $dx_sync_thread_vtables_if_needed)
+
+    ;; An EnterCriticalSection that parked left its stdcall frame on the stack
+    ;; for the re-entry to find. If the guest arrives at a DIFFERENT thunk while
+    ;; that is still outstanding, the call was abandoned: those 8 bytes are now
+    ;; stack garbage that the caller's own `ret` will eventually pop, and it will
+    ;; "return" to the section pointer. Counted here, at the moment it happens,
+    ;; because the crash it causes is thousands of instructions away and names
+    ;; nothing.
+    (if (global.get $cs_park_pending)
+      (then
+        (if (i32.ne (global.get $eip) (global.get $cs_park_eip))
+          (then
+            (global.set $cs_abandoned (i32.add (global.get $cs_abandoned) (i32.const 1)))
+            (global.set $cs_abandoned_eip (global.get $eip))
+            (global.set $cs_park_pending (i32.const 0))))))
+
+    ;; Which thunk this is, in GUEST addresses — the address a parking handler
+    ;; must send EIP to so the call is re-entered rather than re-executed.
+    ;;
+    ;; $run's thunk branch already set this, but most API calls never go through
+    ;; it: the decoded `call` handlers in 05-alu.wat and 06b-core-handlers.wat
+    ;; dispatch inline, mid-block, and there EIP still names the BLOCK's first
+    ;; instruction. A handler that parks and leaves EIP alone therefore resumes
+    ;; by re-running the block — pushing the call's arguments a second time. That
+    ;; is an 8-byte stack drift per park for a one-argument API, and the caller's
+    ;; own `ret` eventually pops an argument and jumps to it.
+    (global.set $current_thunk_eip
+      (i32.add (global.get $thunk_guest_base) (i32.mul (local.get $thunk_idx) (i32.const 8))))
 
     ;; Read thunk data
     (local.set $name_rva (i32.load (i32.add (global.get $THUNK_BASE) (i32.mul (local.get $thunk_idx) (i32.const 8)))))
@@ -390,11 +428,15 @@
             ;; WM_DESTROY as app shutdown and call PostQuitMessage.
             ;; Use $dlg_pump_hwnd: $dlg_hwnd may have been clobbered by a
             ;; nested modeless CreateDialogParamA inside the modal's dlgproc.
+            (local.set $arg4 (call $wnd_get_owner (global.get $dlg_pump_hwnd)))
             (if (call $wnd_table_get (global.get $dlg_pump_hwnd))
               (then
                 (call $wnd_destroy_children (global.get $dlg_pump_hwnd))
                 (call $wnd_table_remove (global.get $dlg_pump_hwnd))
                 (call $host_destroy_window (global.get $dlg_pump_hwnd))))
+            ;; The dialog and its controls held the focus; hand it back to the
+            ;; owner so an app that paused on WM_KILLFOCUS resumes.
+            (call $focus_restore_after_modal (local.get $arg4))
             (global.set $eax (global.get $dlg_result))
             (global.set $eip (global.get $dlg_ret_addr))
             (global.set $dlg_pump_hwnd (i32.const 0))
@@ -449,6 +491,22 @@
             (local.set $arg2 (i32.const 0))            ;; wParam
             (local.set $arg3 (i32.const 0))            ;; lParam
             (local.set $arg4 (call $wnd_table_get (local.get $arg0)))
+            ;; A WAT-native control paints itself, whether or not the app has
+            ;; subclassed it. Routing WM_PAINT at its current wndproc sends it
+            ;; to the subclass, which chains back through CallWindowProc -- and
+            ;; that deliberately drops WM_PAINT, so the control never draws.
+            ;; sndvol32 subclasses the volume-controls list exactly this way.
+            ;; The modeless drain ($paint_drain_native_control_paints) already
+            ;; dispatches natively for the same reason.
+            (if (i32.and
+                  (i32.ne (local.get $arg0) (global.get $dlg_pump_hwnd))
+                  (i32.ne (call $ctrl_table_get_class (local.get $arg0)) (i32.const 0)))
+              (then
+                (drop (call $control_wndproc_dispatch
+                  (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+                (global.set $eip (global.get $dlg_loop_thunk))
+                (global.set $steps (i32.const 0))
+                (return)))
             (if (i32.ge_u (local.get $arg4) (i32.const 0xFFFF0000))
               (then
                 (drop (call $wat_wndproc_dispatch
@@ -620,6 +678,13 @@
         (global.set $eip (global.get $initterm_ret))
         (return)))
 
+    ;; Normal CRT exit() callback returned. Continue draining the atexit
+    ;; registry in LIFO order; the final step reports the saved exit code.
+    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA002C))
+      (then
+        (call $crt_atexit_run_next)
+        (return)))
+
     ;; bsearch continuation — comparator returned eax = sign(key - elem).
     ;; eax==0 → hit; eax<0 → narrow to [low, mid); eax>0 → narrow to [mid+1, high).
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA000C))
@@ -709,6 +774,10 @@
     ;; mm_timer callback returned — restore caller-saved regs + flags
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA000A))
       (then
+        ;; This dedicated continuation is the authoritative completion event.
+        ;; Inferring completion later from ESP fails when the interrupted code
+        ;; returns from the callback and immediately enters a deeper call.
+        (global.set $mm_timer_in_cb (i32.const 0))
         (call $restore_caller_regs)
         (return)))
 

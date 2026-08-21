@@ -16,6 +16,7 @@
 //   --base=0xADDR  Remap: treat the file as loaded at this address
 
 const fs = require('fs');
+const { readPE } = require(require('path').join(__dirname, '..', 'lib', 'pe.js'));
 const { disasmAt } = require('./disasm');
 
 const args = process.argv.slice(2);
@@ -33,29 +34,16 @@ const ctxArg = args.find(a => a.startsWith('--context='));
 const context = ctxArg ? parseInt(ctxArg.split('=')[1]) : 3;
 const baseArg = args.find(a => a.startsWith('--base='));
 
-const buf = fs.readFileSync(file);
-const peOff = buf.readUInt32LE(0x3c);
-const numSect = buf.readUInt16LE(peOff + 6);
-const optSize = buf.readUInt16LE(peOff + 20);
-const imageBase = buf.readUInt32LE(peOff + 52);
-const sectOff = peOff + 24 + optSize;
+const pe = readPE(file);
+const buf = pe.buf;
+const imageBase = pe.imageBase;
 const loadBase = baseArg ? parseInt(baseArg.split('=')[1], 16) : imageBase;
 
-// Build section map
-const sections = [];
-for (let i = 0; i < numSect; i++) {
-  const s = sectOff + i * 40;
-  let name = '';
-  for (let j = 0; j < 8 && buf[s + j]; j++) name += String.fromCharCode(buf[s + j]);
-  sections.push({
-    name,
-    va: buf.readUInt32LE(s + 12),
-    vsize: buf.readUInt32LE(s + 8),
-    rawOff: buf.readUInt32LE(s + 20),
-    rawSize: buf.readUInt32LE(s + 16),
-    flags: buf.readUInt32LE(s + 36),
-  });
-}
+// Local field names kept: va is the section RVA here, flags its characteristics.
+const sections = pe.sections.map(s => ({
+  name: s.name, va: s.rva, vsize: s.vsize, rawOff: s.rawOff, rawSize: s.rawSize,
+  flags: s.chr, isCode: s.isCode,
+}));
 
 function rva2off(rva) {
   for (const s of sections) {
@@ -82,7 +70,7 @@ function sectionOf(rva) {
 }
 
 // Build import name map for disasm context
-const importRVA = buf.readUInt32LE(peOff + 24 + 104);
+const importRVA = buf.readUInt32LE(pe.peOff + 24 + 104);
 const importNames = {};
 if (importRVA) {
   const importSect = sectionOf(importRVA);

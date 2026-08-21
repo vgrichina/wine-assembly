@@ -13,6 +13,7 @@ const { compileWat } = require('../lib/compile-wat');
 const HWND = 0x10001;
 const CHILD = 0x10002;
 const GRANDCHILD = 0x10003;
+const SECOND_CHILD = 0x10004;
 
 async function main() {
   const root = path.join(__dirname, '..');
@@ -119,7 +120,8 @@ async function main() {
   assert.strictEqual(wat.test_call_GetDCOrgEx(0x7FFFFFF0, dcOrigin), 0,
     'GetDCOrgEx must reject an unknown DC');
   const desc = 0x07EF1000;
-  const paintScratch = 0x0000AD40;
+  // First rect of the PAINT_SCRATCH ring (src/01-header.wat).
+  const paintScratch = 0x00006E00;
   const paintSentinel = [7, 3, 37, 21];
   const dv = new DataView(memory.buffer);
   paintSentinel.forEach((value, index) => dv.setInt32(paintScratch + index * 4, value, true));
@@ -155,6 +157,28 @@ async function main() {
   assert.strictEqual(wat.test_gdi_dc_clip_get(hdc, clipCopy), 0);
   assert.strictEqual(wat.test_gdi_dc_clip_point_visible(hdc, 33, 21), 1,
     'clearing the app clip must retain USER visibility');
+
+  // Tic Tac Drop covers its form with a toolbar, board, and status bar. The
+  // visible-region loop used to close after its first child, so WS_CLIPCHILDREN
+  // protected only the toolbar and a later parent erase wiped out the board.
+  wat.wnd_table_set(SECOND_CHILD, 0);
+  wat.ctrl_set_geom(SECOND_CHILD, 25, 2, 5, 5);
+  wat.test_wnd_set_parent(SECOND_CHILD, HWND);
+  wat.wnd_set_style_export(SECOND_CHILD, 0x50000000);
+  wat.wnd_set_style_export(HWND, 0x12000000);
+  wat.dc_apply_client_clip(hdc, HWND);
+  assert.strictEqual(wat.test_gdi_dc_clip_point_visible(hdc, 8, 13), 0,
+    'WS_CLIPCHILDREN must exclude the first visible child');
+  assert.strictEqual(wat.test_gdi_dc_clip_point_visible(hdc, 26, 3), 0,
+    'WS_CLIPCHILDREN must continue through later visible children');
+  wat.dc_apply_client_erase_clip(hdc, HWND);
+  assert.strictEqual(wat.test_gdi_dc_clip_point_visible(hdc, 8, 13), 0,
+    'erase clipping must exclude the first visible child');
+  assert.strictEqual(wat.test_gdi_dc_clip_point_visible(hdc, 26, 3), 0,
+    'erase clipping must continue through later visible children');
+  wat.wnd_set_style_export(HWND, 0x10000000);
+  wat.wnd_set_style_export(SECOND_CHILD, 0x40000000);
+  wat.dc_apply_client_clip(hdc, HWND);
 
   // SkiFree acquires and retains its drawing DC from WM_CREATE, before the
   // main window is shown. Its system clip must follow later visibility

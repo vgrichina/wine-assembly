@@ -1,8 +1,13 @@
 // Wine-Assembly: JS host for the WASM x86 interpreter
 // Win98Renderer is loaded from lib/renderer.js (included via <script> in index.html)
 
+// The boot steps this host shares with the CLI harness: staging the EXE,
+// load_pe, the exe-name/cmdline pokes, and the DLL dependency walk.
+// lib/process-boot.js is a classic script loaded ahead of this one.
+const ProcessBoot = (typeof window !== 'undefined' && window.processBoot) || null;
+
 class WineAssembly {
-  static SOURCE_VERSION = '207';
+  static SOURCE_VERSION = '209';
   static _nextProcessId = 1000;
 
   static hasRemainingAppWindow(destroyed, remainingTopLevel) {
@@ -35,9 +40,27 @@ class WineAssembly {
     this.renderer = null;
     this.resourceJson = null;
     this.threadManager = null;
+    // [{ name, base }], every image this process has loaded. A guest thread that
+    // traps reports a raw EIP, and a raw EIP in a DLL is unreadable — the load
+    // address depends on what loaded before it, so the same crash prints a
+    // different number every run and matches nothing in any disassembly. With
+    // this, the trap says `in_mp3.dll+0x14564`, which tools/disasm_fn.js can be
+    // pointed at directly.
+    this.moduleMap = [];
     this._wasmModule = null;
     this.stepsPerSlice = 100000;
     this.verbose = false;
+    // Some WinMM clients intentionally wait for a timeSetEvent callback while
+    // they are not pumping messages. This remains opt-in per app: the normal
+    // path still delivers the callback through the guest message loop.
+    this.asyncMultimediaTimer = false;
+  }
+
+  _pumpMultimediaTimer() {
+    const ex = this.instance && this.instance.exports;
+    if (!this.asyncMultimediaTimer || !ex || !ex.fire_mm_timer) return 0;
+    if (ex.get_eip && !(ex.get_eip() >>> 0)) return 0;
+    return ex.fire_mm_timer() | 0;
   }
 
   _guestTickState(sharedAudio) {
@@ -85,97 +108,64 @@ class WineAssembly {
     return str;
   }
 
-  _cleanupWinampVisualizerThread(info) {
-    const ex = this.instance && this.instance.exports;
-    if (!ex || !this.memory || !this.memory.buffer) return;
-    const imageBase = ex.get_image_base ? (ex.get_image_base() >>> 0) : 0;
-    const guestBase = ex.get_guest_base ? (ex.get_guest_base() >>> 0) : 0x12000;
-    if (!imageBase) return;
-    const dv = new DataView(this.memory.buffer);
-    const g2w = (ptr) => ((ptr >>> 0) - imageBase + guestBase) >>> 0;
-    const read32 = (ptr) => {
-      const wa = g2w(ptr);
-      return wa + 4 <= dv.byteLength ? (dv.getUint32(wa, true) >>> 0) : 0;
-    };
-    const write32 = (ptr, value) => {
-      const wa = g2w(ptr);
-      if (wa + 4 <= dv.byteLength) dv.setUint32(wa, value >>> 0, true);
-    };
-    const readStr = (ptr, max) => {
-      const wa = g2w(ptr);
-      if (wa >= dv.byteLength) return '';
-      let s = '';
-      for (let i = 0; i < max && wa + i < dv.byteLength; i++) {
-        const c = dv.getUint8(wa + i);
-        if (!c) break;
-        s += String.fromCharCode(c);
-      }
-      return s;
-    };
-    const readLinearStr = (wa, max) => {
-      if (wa >= dv.byteLength) return '';
-      let s = '';
-      for (let i = 0; i < max && wa + i < dv.byteLength; i++) {
-        const c = dv.getUint8(wa + i);
-        if (!c) break;
-        s += String.fromCharCode(c);
-      }
-      return s;
-    };
-    const findDllLoadAddr = (name) => {
-      if (!ex.get_dll_count || !ex.get_dll_table) return 0;
-      const target = String(name || '').toLowerCase();
-      const table = ex.get_dll_table() >>> 0;
-      const count = ex.get_dll_count() | 0;
-      for (let i = 0; i < count; i++) {
-        const entry = table + i * 32;
-        if (entry + 12 > dv.byteLength) break;
-        const loadAddr = dv.getUint32(entry, true) >>> 0;
-        const exportRva = dv.getUint32(entry + 8, true) >>> 0;
-        if (!loadAddr || !exportRva) continue;
-        const exportDir = g2w((loadAddr + exportRva) >>> 0);
-        if (exportDir + 16 > dv.byteLength) continue;
-        const nameRva = dv.getUint32(exportDir + 12, true) >>> 0;
-        if (!nameRva) continue;
-        const dllName = readLinearStr(g2w((loadAddr + nameRva) >>> 0), 96).toLowerCase();
-        if (dllName === target) return loadAddr;
-      }
-      return 0;
-    };
-    const resetWvisDllWindowCache = () => {
-      const loadAddr = findDllLoadAddr('vis_w.dll');
-      if (!loadAddr) return false;
-      const resetOffsets = [
-        0xc060, 0xc064,       // current surface size
-        0xca48, 0xca4c,       // last allocated surface size
-        0xde60, 0xde64, 0xde68, 0xde70,
-        0xde78, 0xde7c, 0xde80, 0xde84, // cached parent window rect
-      ];
-      for (const off of resetOffsets) write32((loadAddr + off) >>> 0, 0);
-      return true;
-    };
-
-    const handle = (info && info.handle) >>> 0;
-    if (((info && info.param) >>> 0) === 0x458060 && read32(0x458060) === 1) {
-      if (read32(0x45805c) === handle) write32(0x45805c, 0);
-      write32(0x458060, 0);
-      console.log(`[host] reset Winamp visualizer data helper stop flag after thread 0x${handle.toString(16)} exited`);
-      return;
+  // The mounted view of a guest path: whatever the launch already put in the
+  // VFS, matched by full path, by c:\-rooted path, and finally by basename,
+  // because a guest names a file however its own code spelled it.
+  _vfsLookup(name, instanceVfs) {
+    const baseName = String(name).replace(/^.*[\\\/]/, '');
+    const lowerName = String(name).toLowerCase().replace(/\//g, '\\');
+    const lowerBase = baseName.toLowerCase();
+    const vfs = instanceVfs || (this._helpCtx && this._helpCtx.vfs);
+    if (!vfs || !vfs.files) return null;
+    const candidates = [
+      lowerName,
+      'c:\\' + lowerName.replace(/^\\+/, ''),
+      'c:\\' + lowerBase,
+    ];
+    for (const p of candidates) {
+      const entry = vfs.files.get(p);
+      if (entry && entry.data) return entry.data;
     }
-    if (!handle || read32(0x4595ac) !== handle) return;
-    const pluginPath = readStr(0x4595b8, 260).toLowerCase();
-    if (!pluginPath.includes('vis_w.dll') && !pluginPath.includes('plugins\\vis_')) return;
-    if (!read32(0x459584) && !read32(0x459810)) return;
-    if (read32(0x458c78) !== 0) return;
+    for (const [p, entry] of vfs.files) {
+      if (String(p).split('\\').pop() === lowerBase && entry && entry.data) return entry.data;
+    }
+    return null;
+  }
 
-    write32(0x4595a4, 0);
-    write32(0x4595ac, 0);
-    write32(0x459584, 0);
-    write32(0x459810, 0);
-    write32(0x458060, 1);
-    const resetDll = resetWvisDllWindowCache();
-    console.log(`[host] cleared stale Winamp visualizer thread handle 0x${handle.toString(16)}`);
-    if (resetDll) console.log('[host] reset wVis DLL cached window geometry');
+  // Fetch a file the launch did not mount, off the main thread, and mount it
+  // so every later read is a plain VFS hit. Both outcomes are remembered:
+  // an app that probes the same missing name in a loop costs one request, not
+  // one per probe, and a 404 is remembered as a 404.
+  _fetchMissingFile(name, instanceVfs) {
+    const baseName = String(name).replace(/^.*[\\\/]/, '');
+    if (!this._missingFetches) this._missingFetches = new Map();
+    const exeDir = this._exeUrl ? this._exeUrl.replace(/[^\/\\]*$/, '') : '';
+    const url = exeDir ? exeDir + baseName : 'binaries/' + baseName;
+    const pending = this._missingFetches.get(url);
+    if (pending) return pending;
+    const p = fetch(url)
+      .then(r => (r.ok ? r.arrayBuffer() : null))
+      .then(buf => {
+        if (!buf) return null;
+        const data = new Uint8Array(buf);
+        const vfs = instanceVfs || (this._helpCtx && this._helpCtx.vfs);
+        if (vfs && vfs.files) {
+          vfs.files.set('c:\\' + baseName.toLowerCase(), { data, attrs: 0x20 });
+        }
+        return data;
+      })
+      .catch(() => null);
+    this._missingFetches.set(url, p);
+    return p;
+  }
+
+  // Per-app thread-exit fixups (Winamp's visualizer bookkeeping) live in
+  // lib/app-profiles.js, so the CLI harness runs the same ones.
+  _onThreadExit(info) {
+    const profiles = (typeof window !== 'undefined' && window.appProfiles) || null;
+    if (!profiles || !this.instance || !this.memory) return;
+    profiles.onThreadExit(
+      this._exeName, info, this.instance.exports, this.memory.buffer);
   }
 
   primeAudio() {
@@ -226,6 +216,8 @@ class WineAssembly {
       // so it is handed the same wire rather than opening one of its own.
       vlanWire: opts.vlanWire || self.vlanWire || null,
       get availableDllFiles() { return opts.availableDllFiles || self._availableDllFiles || null; },
+      // Live guest thread count, for HKEY_DYN_DATA\PerfStats KERNEL\Threads.
+      get threadManager() { return self.threadManager; },
       sharedGdi: opts.sharedGdi || null,
       sharedAudio,
       sharedMixer,
@@ -239,35 +231,26 @@ class WineAssembly {
       },
       get _audioCtx() { return self._audioCtx; },
       set _audioCtx(v) { self._audioCtx = v; },
-      readFile: (name) => {
-        const baseName = name.replace(/^.*[\\\/]/, '');
-        const lowerName = name.toLowerCase().replace(/\//g, '\\');
-        const lowerBase = baseName.toLowerCase();
-        const vfs = ctx.vfs || (self._helpCtx && self._helpCtx.vfs);
-        if (vfs && vfs.files) {
-          const candidates = [
-            lowerName,
-            'c:\\' + lowerName.replace(/^\\+/, ''),
-            'c:\\' + lowerBase,
-          ];
-          for (const p of candidates) {
-            const entry = vfs.files.get(p);
-            if (entry && entry.data) return entry.data;
-          }
-          for (const [p, entry] of vfs.files) {
-            if (String(p).split('\\').pop() === lowerBase && entry && entry.data) return entry.data;
-          }
-        }
-        try {
-          const xhr = new XMLHttpRequest();
-          const exeDir = self._exeUrl ? self._exeUrl.replace(/[^\/\\]*$/, '') : '';
-          const url = exeDir ? exeDir + baseName : 'binaries/' + baseName;
-          xhr.open('GET', url, false);
-          xhr.responseType = 'arraybuffer';
-          xhr.send();
-          if (xhr.status === 200) return new Uint8Array(xhr.response);
-        } catch (_) {}
-        return null;
+      // A 16-bit LoadLibrary for a module nothing imports statically: the
+      // Entertainment Pack's WEPUTIL, or the per-level DLL Stones ships one of
+      // per screen. WAT has already given the name a module id and wants the
+      // bytes in that id's staging slot before it returns, and the page cannot
+      // fetch anything synchronously — so the app's registry entry names these
+      // and loadExe has them in hand before the guest runs.
+      win16StageModule: (name, id) => self._stageWin16Module(name, id),
+      readFile: (name) => self._vfsLookup(name, ctx.vfs),
+      // A miss is a file the app's registry entry never listed, so the page
+      // never mounted it. It used to be read with a *synchronous*
+      // XMLHttpRequest, which froze the tab for a whole network round trip
+      // and was invisible to the perf HUD's phase marks. Nothing that reads
+      // through here needs the bytes in the same turn: the two callers are a
+      // wallpaper set and an MCI open, and MCI is allowed to still be
+      // spinning a device up when open returns. So the miss now starts an
+      // async fetch and the caller applies the bytes when they land.
+      readFileAsync: (name) => {
+        const have = self._vfsLookup(name, ctx.vfs);
+        if (have) return Promise.resolve(have);
+        return self._fetchMissingFile(name, ctx.vfs);
       },
       onTopLevelWindowDestroyed: (hwnd, destroyed) => {
         if (!self._multiApp || !self.renderer || !self._hwndBase) return;
@@ -437,8 +420,7 @@ class WineAssembly {
     };
     h.create_window = (hwnd, style, x, y, cx, cy, titlePtr, menuId) => {
       const title = self.readString(titlePtr);
-      if (!ctx._windowText) ctx._windowText = new Map();
-      ctx._windowText.set(hwnd, title);
+      ctx.recordWindowText(hwnd, title);
       if (self.verbose) console.log(`[CreateWindow] hwnd=0x${hwnd.toString(16)} title="${title}" menu=${menuId} pos=${x},${y} size=${cx}x${cy}`);
       self.logToUI(`[CreateWindow] "${title}"`);
       const ownerInstance = ctx.instance || self.instance;
@@ -461,8 +443,7 @@ class WineAssembly {
 
     h.set_window_text = (hwnd, textPtr) => {
       const text = self.readString(textPtr);
-      if (!ctx._windowText) ctx._windowText = new Map();
-      ctx._windowText.set(hwnd, text);
+      ctx.recordWindowText(hwnd, text);
       console.log(`[SetWindowText] hwnd=0x${hwnd.toString(16)} "${text}"`);
       if (self.renderer) self.renderer.setWindowText(hwnd, text);
     };
@@ -478,45 +459,24 @@ class WineAssembly {
         self._lastInputEvent = null;
         self.renderer._activeInputEvent = null;
       };
-      // In multi-app mode, only dequeue events for this app's hwnd range
-      let evt;
-      if (self._hwndBase && self._multiApp) {
-        const lo = self._hwndBase;
-        const hi = lo + 0x10000;
-        const q = self.renderer.inputQueue;
-        const idx = q.findIndex(e => !e.hwnd || (e.hwnd >= lo && e.hwnd < hi));
-        if (idx < 0) {
-          if (q.length === 0) clearInactiveInput();
-          return 0;
-        }
-        evt = q.splice(idx, 1)[0];
-      } else {
-        const q = self.renderer.inputQueue;
-        const ownerInstance = ctx.instance || self.instance;
-        const ownsEvent = (e) => {
+      // Which queued events are this instance's to take. In multi-app mode
+      // that is its own hwnd range; otherwise it is any window this WASM
+      // instance owns. An event with no hwnd belongs to whoever asks first.
+      // The dequeue itself, and the async-key/repaint bookkeeping that has to
+      // follow it, live in the renderer (renderer-input.js takeInput) -- this
+      // used to be a second transcription of them that had already lost the
+      // GetAsyncKeyState press bit.
+      const ownerInstance = ctx.instance || self.instance;
+      const owns = (self._hwndBase && self._multiApp)
+        ? (e) => !e.hwnd || (e.hwnd >= self._hwndBase && e.hwnd < self._hwndBase + 0x10000)
+        : (e) => {
           if (!ownerInstance || !e || !e.hwnd) return true;
           const win = self.renderer.windows && self.renderer.windows[e.hwnd];
           return !win || !win.wasm || win.wasm === ownerInstance;
         };
-        const idx = q.findIndex(ownsEvent);
-        if (idx < 0) {
-          if (q.length === 0) clearInactiveInput();
-          return 0;
-        }
-        evt = q.splice(idx, 1)[0];
-        if (evt && (evt.msg === 0x0100 || evt.msg === 0x0102 || evt.msg === 0x0104)) {
-          self.renderer._profileMark && self.renderer._profileMark('input-queue-dispatch', { msg: evt.msg, wParam: evt.wParam });
-        }
-        if (evt && evt.msg === 0x000F) self.renderer.scheduleRepaint();
-        if (evt && (evt.msg === 0x0100 || evt.msg === 0x0104)) {
-          if (!self.renderer._asyncKeys) self.renderer._asyncKeys = Object.create(null);
-          self.renderer._asyncKeys[evt.wParam & 0xFF] = true;
-        } else if (evt && (evt.msg === 0x0101 || evt.msg === 0x0105)) {
-          if (self.renderer._asyncKeys) self.renderer._asyncKeys[evt.wParam & 0xFF] = false;
-        }
-      }
+      const evt = self.renderer.takeInput(owns);
       if (!evt) {
-        clearInactiveInput();
+        if (self.renderer.inputQueue.length === 0) clearInactiveInput();
         return 0;
       }
       self._lastInputEvent = evt;
@@ -532,19 +492,8 @@ class WineAssembly {
     h.check_input_hwnd = () => {
       const evt = self._lastInputEvent;
       if (!evt) return 0;
-      if (evt.hwnd) return evt.hwnd | 0;
-      // Browser key events are queued without a target HWND. Route them to
-      // the guest focus owner just like the CLI harness; otherwise GetMessage
-      // substitutes main_hwnd and native child controls such as WordPad's
-      // RichEdit20A never receive WM_KEYDOWN/WM_CHAR.
-      if (evt.msg >= 0x0100 && evt.msg <= 0x0108) {
-        const exports = self.instance && self.instance.exports;
-        if (exports && exports.get_focus_hwnd) {
-          const focus = exports.get_focus_hwnd() | 0;
-          if (focus) return focus;
-        }
-      }
-      return 0;
+      // The routing rule itself is shared with the CLI (lib/host-window.js).
+      return inputEventHwnd(evt, self.instance && self.instance.exports);
     };
 
     // Wire thread/event imports to ThreadManager
@@ -553,13 +502,34 @@ class WineAssembly {
     h.resume_thread = (handle) => self.threadManager ? self.threadManager.resumeThread(handle) : 0xFFFFFFFF;
     h.exit_thread = (c) => self.threadManager && self.threadManager.exitThread(c);
     h.get_exit_code_thread = (handle) => self.threadManager ? self.threadManager.getExitCodeThread(handle) : 0x103;
-    h.create_event = (m, i) => self.threadManager ? self.threadManager.createEvent(m, i) : 0;
+    const readSyncObjectName = (nameWa, wide) => {
+      if (!nameWa) return '';
+      if (!wide) return self.readString(nameWa);
+      const dv = new DataView(self.memory.buffer);
+      let name = '';
+      for (let i = 0; i < 512; i++) {
+        const ch = dv.getUint16(nameWa + i * 2, true);
+        if (!ch) break;
+        name += String.fromCharCode(ch);
+      }
+      return name;
+    };
+    h.create_event = (m, i, nameWa, wide) => self.threadManager
+      ? self.threadManager.createEvent(m, i, readSyncObjectName(nameWa, wide)) : 0;
+    h.open_event = (nameWa, wide) => self.threadManager
+      ? self.threadManager.openEvent(readSyncObjectName(nameWa, wide)) : 0;
     h.set_event = (handle) => self.threadManager ? self.threadManager.setEvent(handle) : 1;
     h.reset_event = (handle) => self.threadManager ? self.threadManager.resetEvent(handle) : 1;
     h.wait_single = (handle, t) => {
       if (!self.threadManager) return 0;
       const e = ctx.exports;
-      const nestedSyncMessage = !!(e && e.get_sync_msg_depth && (e.get_sync_msg_depth() | 0));
+      // The cooperative variant exists to run OTHER guest threads from inside a
+      // nested synchronous callback, on this thread. With the worker backend
+      // there is nothing to run here — the other threads are already running,
+      // somewhere else — and its runSlice would walk thread records that have a
+      // Worker where it expects an instance.
+      const nestedSyncMessage = self.threadManager.backend !== 'worker'
+        && !!(e && e.get_sync_msg_depth && (e.get_sync_msg_depth() | 0));
       return nestedSyncMessage
         ? self.threadManager.waitSingleCooperative(handle, t)
         : self.threadManager.waitSingle(handle, t);
@@ -574,57 +544,19 @@ class WineAssembly {
     return { host: h, gdi: base.gdi };
   }
 
+  // Every non-mousemove input event, every CreateWindow/SetWindowText and the
+  // per-slice heartbeat come through here. `el.textContent += msg` re-serializes
+  // the entire accumulated log and forces a layout on each call, so a long
+  // session got steadily slower at exactly the moments the user was interacting.
+  // Appending a text node is O(1), and the ring keeps the DOM bounded.
   logToUI(msg) {
     console.log(msg);
     const el = document.getElementById('log');
-    if (el) {
-      el.textContent += msg + '\n';
-      el.scrollTop = el.scrollHeight;
-    }
-  }
-
-  _getVersionInfo() {
-    const info = {};
-    try {
-      const mem = new Uint8Array(this.memory.buffer);
-      const needle = 'VS_VERSION_INFO';
-      const searchStart = 0x12000;
-      const searchEnd = Math.min(searchStart + 0x200000, mem.length);
-      let viBase = 0;
-      for (let p = searchStart; p < searchEnd - needle.length * 2; p += 2) {
-        let match = true;
-        for (let j = 0; j < needle.length; j++) {
-          if (mem[p + j * 2] !== needle.charCodeAt(j) || mem[p + j * 2 + 1] !== 0) { match = false; break; }
-        }
-        if (match) { viBase = p - 6; break; }
-      }
-      if (!viBase) return info;
-      const dv = new DataView(this.memory.buffer);
-      const viSize = dv.getUint16(viBase, true);
-      const keys = ['CompanyName', 'FileDescription', 'FileVersion', 'LegalCopyright', 'ProductName', 'ProductVersion'];
-      for (const key of keys) {
-        for (let p = viBase; p < viBase + viSize - key.length * 2; p += 2) {
-          let match = true;
-          for (let j = 0; j < key.length; j++) {
-            if (mem[p + j * 2] !== key.charCodeAt(j) || mem[p + j * 2 + 1] !== 0) { match = false; break; }
-          }
-          if (!match) continue;
-          let vp = p + (key.length + 1) * 2;
-          while (vp % 4 !== 0) vp++;
-          let val = '';
-          for (let j = vp; j < viBase + viSize - 1; j += 2) {
-            const ch = mem[j] | (mem[j + 1] << 8);
-            if (ch === 0) break;
-            val += String.fromCharCode(ch);
-          }
-          if (val) info[key] = val;
-          break;
-        }
-      }
-    } catch (e) {
-      console.warn('[ShellAbout] version info parse error:', e);
-    }
-    return info;
+    if (!el) return;
+    el.appendChild(document.createTextNode(msg + '\n'));
+    const MAX_LOG_NODES = 2000;
+    while (el.childNodes.length > MAX_LOG_NODES) el.removeChild(el.firstChild);
+    el.scrollTop = el.scrollHeight;
   }
 
   async ensureUiFontsReady() {
@@ -713,6 +645,11 @@ class WineAssembly {
       this.instance.exports.set_process_id(this.processId);
     }
     this._wasmModule = wasmModule;
+    // Kept so an experimental guest worker can be handed the SAME host import
+    // table this instance uses — the point of the broker is that there is one
+    // implementation of every host call, not two.
+    this._mainImports = imports;
+    await this._maybeStartGuestWorker(wasmModule);
     if (this.renderer) {
       this.renderer.wasm = this.instance;
       this.renderer.wasmMemory = this.memory;
@@ -727,19 +664,18 @@ class WineAssembly {
       const traceApiNames = (typeof window !== 'undefined' && window.__waTraceApiNames)
         ? window.__waTraceApiNames
         : null;
-      let lastTraceApi = false;
       let workerInstance = null;
-      const wi = self.getImports({
+      // The filesystem, the LAN wire, the GDI table and the audio device all
+      // belong to the process rather than to a thread, and which ones those
+      // are is stated once in lib/worker-imports.js so this host and the CLI
+      // cannot quietly disagree. The rest of the options are per-thread by
+      // nature: this worker's own instance, and its id.
+      const wi = self.getImports(Object.assign(processSharedCtx(mainCtx), {
         detached: true,
         instance: () => workerInstance || self.instance,
         exports: () => workerInstance ? workerInstance.exports : self.instance.exports,
-        vfs: mainCtx.vfs,
-        sharedGdi: mainCtx.sharedGdi,
-        sharedAudio: mainCtx.sharedAudio,
-        sharedMixer: mainCtx.sharedMixer,
-        vlanWire: mainCtx.vlanWire,  // one wire per process, shared by every thread
         threadId: tid,
-      });
+      }));
       wi.__setInstance = (instance) => { workerInstance = instance; };
       wi.host.memory = self.memory;
       const markAudioThread = () => {
@@ -760,20 +696,18 @@ class WineAssembly {
           return orig(...args);
         };
       }
-      wi.host.log = (ptr, len) => {
-        lastTraceApi = false;
-        if (!traceApiNames || !traceApiNames.size) return;
-        const bytes = new Uint8Array(self.memory.buffer, ptr, Math.min(len, 256));
-        let text = '';
-        for (let i = 0; i < bytes.length && bytes[i]; i++) text += String.fromCharCode(bytes[i]);
-        if (traceApiNames.has(text)) {
-          lastTraceApi = true;
-          console.log(`[API T${tid}] ${text}`);
-        }
-      };
-      wi.host.log_i32 = (val) => {
-        if (lastTraceApi) console.log(`  => 0x${(val >>> 0).toString(16)}`);
-      };
+      // Shared decode and the "the return belongs to the call just logged"
+      // latch; what stays here is this host's own policy — trace only the
+      // names the debug toolbar asked for, and print nothing when it asked for
+      // none.
+      const workerApiLog = makeWorkerApiLogger({
+        getBuffer: () => self.memory.buffer,
+        threadId: tid,
+        shouldLog: (name) => !!(traceApiNames && traceApiNames.size && traceApiNames.has(name)),
+        emit: (line) => console.log(line),
+      });
+      wi.host.log = workerApiLog.log;
+      wi.host.log_i32 = workerApiLog.log_i32;
       wi.host.log_eip = (eip) => {
         if (typeof window !== 'undefined' && typeof window.__waProfileEipHit === 'function') {
           window.__waProfileEipHit(eip >>> 0, tid | 0);
@@ -783,12 +717,25 @@ class WineAssembly {
       return wi;
     };
     this.threadManager = new ThreadManager(this._wasmModule, this.memory, this.instance, makeWorkerImports, {
-      // Opt-in from the debug toolbar. It does not switch schedulers yet —
-      // ThreadManager reports which backend it really used.
+      // Opt-in from the debug toolbar. Passing the guest-worker host is what
+      // actually switches schedulers: with it, each CreateThread becomes a real
+      // Worker; without it (no isolation, CLI, Safari private) ThreadManager runs
+      // the cooperative one and says so.
+      workerBackend: this.guestWorker || null,
       threadsRequested: !!(typeof window !== 'undefined' && window.WINE_THREADS),
+      // So a trapped thread's EIP prints as a module and an offset. In worker
+      // mode a DLL's load address depends on load order, so the raw number is
+      // different every run and matches nothing in a disassembly.
+      describeAddr: (addr) => self.describeAddr(addr),
       hasMessage: () => !!(self.renderer && self.renderer.inputQueue && self.renderer.inputQueue.length),
       now: () => self.renderer && self.renderer._profileNow ? self.renderer._profileNow() : Date.now(),
-      onThreadExit: (info) => self._cleanupWinampVisualizerThread(info),
+      resolveThreadSendExternalYield: async (link, r) => {
+        if (r.yield === 3) await self._handleComDllLoadThreaded(link);
+        else if (r.yield === 5) await self._handleLoadLibraryThreaded(link);
+        else return false;
+        return true;
+      },
+      onThreadExit: (info) => self._onThreadExit(info),
       profileThreadRun: (info) => {
         if (typeof window !== 'undefined' && typeof window.__waProfileThreadRun === 'function') {
           window.__waProfileThreadRun(info);
@@ -908,49 +855,63 @@ class WineAssembly {
     return (((addr >>> 0) - imageBase + guestBase) >>> 0);
   }
 
-  _patchLoadedBytes(addr, expected, replacement, label) {
-    const wa = this._guestToWasmAddress(addr);
-    const mem = this.memory && this.memory.buffer ? new Uint8Array(this.memory.buffer) : null;
-    if (!mem || wa < 0 || wa + expected.length > mem.length || expected.length !== replacement.length) {
-      console.warn(`[compat] cannot patch ${label}: address out of range`);
-      return false;
-    }
-    for (let i = 0; i < expected.length; i++) {
-      if (mem[wa + i] !== expected[i]) {
-        console.warn(`[compat] cannot patch ${label}: unexpected byte at 0x${(addr + i).toString(16)}`);
-        return false;
-      }
-    }
-    mem.set(replacement, wa);
-    console.log(`[compat] patched ${label} at 0x${addr.toString(16)}`);
-    return true;
-  }
-
+  // The patch table is lib/app-profiles.js, shared with the CLI harness — it
+  // used to be a second hand-copy here, so a patch added on one side never
+  // reached the other.
   _applyExeCompatibilityPatches(exeName) {
-    const name = String(exeName || '').toLowerCase();
-    if (name !== 'quickblackjack.exe') return;
-    this._patchLoadedBytes(
-      0x004222d0,
-      [0x55, 0x89, 0xe5],
-      [0xc3, 0x90, 0x90],
-      'QuickBlackjack synchronous animation delay'
-    );
-    this._patchLoadedBytes(
-      0x0041a80c,
-      [0x75, 0x05],
-      [0x90, 0x90],
-      'QuickBlackjack hand painter x-animation branch'
-    );
-    this._patchLoadedBytes(
-      0x0041a890,
-      [0x75, 0x05],
-      [0x90, 0x90],
-      'QuickBlackjack hand painter y-animation branch'
-    );
+    const profiles = (typeof window !== 'undefined' && window.appProfiles) ||
+      (typeof appProfiles !== 'undefined' ? appProfiles : null);
+    if (!profiles || !this.instance) return;
+    profiles.applyExeCompatibilityPatches(
+      exeName, this.instance.exports, this.memory && this.memory.buffer);
   }
 
-  async loadExe(url) {
+  // EXPERIMENTAL: run the guest's main thread in a Worker.
+  //
+  // Only when the page asked for it AND the document is cross-origin isolated,
+  // because a shared WebAssembly.Memory cannot reach a Worker otherwise. Any
+  // failure here falls back to the normal single-threaded path rather than
+  // taking the launch down with it — single-threaded is a supported mode, not a
+  // degraded one (docs/design-real-threads.md §3.6).
+  async _maybeStartGuestWorker(wasmModule) {
+    if (typeof window === 'undefined') return;
+    if (!window.WINE_THREADS) return;
+    if (!(typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated)) {
+      this.logToUI('[threads] not cross-origin isolated — running single-threaded');
+      return;
+    }
+    if (typeof GuestThreadHost !== 'function') {
+      this.logToUI('[threads] lib/guest-thread-host.js not loaded — running single-threaded');
+      return;
+    }
+    try {
+      const res = await fetch('lib/host-import-sigs.generated.json');
+      if (!res.ok) throw new Error(`sigs HTTP ${res.status}`);
+      const sigs = (await res.json()).sigs;
+      const self = this;
+      const worker = new GuestThreadHost({
+        memory: this.memory,
+        module: wasmModule,
+        sigs,
+        hostImports: this._mainImports.host,
+        workerUrl: 'lib/guest-worker.js?v=4',
+        log: msg => { console.log(msg); self.logToUI(msg); },
+        tickMs: () => self._guestTickMs(self.hostCtx && self.hostCtx.sharedAudio),
+      });
+      await worker.start();
+      this.guestWorker = worker;
+      this.logToUI('[threads] guest main thread is running in a Worker (experimental)');
+    } catch (err) {
+      this.guestWorker = null;
+      this.logToUI(`[threads] worker start failed (${err.message}) — running single-threaded`);
+    }
+  }
+
+  // `opts.win16Modules` names NE DLLs the task loads by name at runtime rather
+  // than importing — see the win16StageModule host import.
+  async loadExe(url, opts = {}) {
     if (!this.instance) await this.init();
+    this._win16ExtraModules = opts.win16Modules || [];
 
     const resp = await fetch(url);
     const exeBytes = new Uint8Array(await resp.arrayBuffer());
@@ -960,25 +921,32 @@ class WineAssembly {
     // $menu_load, $string_load_a, $rsrc_find_data_wa). The JS side no
     // longer pre-parses anything from the EXE bytes.
 
-    // Load EXE into staging buffer
-    const staging = this.instance.exports.get_staging();
-    const mem = new Uint8Array(this.memory.buffer);
-    // Self-extracting installers append their archive after the PE image, so
-    // the file can be far larger than the loader needs. The staging buffer sits
-    // below emulator-private tables — the API hash table among them — and an
-    // unbounded copy walks straight through them, after which every import
-    // resolves to api_id 0xFFFF and the app dies on its first call.
-    const stagingCap = this.instance.exports.get_staging_size();
-    const staged = Math.min(exeBytes.length, stagingCap);
-    if (staged < exeBytes.length) {
-      console.log(`[pe] staging ${staged} of ${exeBytes.length} bytes ` +
-        `(buffer is ${stagingCap}); the tail is appended data, read via the VFS`);
+    // Load PE. In worker mode the guest instance lives in the Worker, so the
+    // loader runs there — the bytes are already in shared memory, only the call
+    // is marshalled. The idle main-thread instance is then brought up with the
+    // same PE metadata via init_thread, because a handful of host-import paths
+    // read image_base off it (SEH and callstack formatting) and would otherwise
+    // translate every guest address against zero.
+    let entry;
+    if (this.guestWorker) {
+      entry = await this.guestWorker.loadPe(exeBytes, url.replace(/^.*[\\\/]/, ''), this.processId);
+      const meta = await this.guestWorker.readExports([
+        'get_image_base', 'get_code_start', 'get_code_end',
+        'get_thunk_base', 'get_thunk_end', 'get_num_thunks',
+      ]);
+      if (this.instance.exports.init_thread && meta.get_image_base) {
+        // tid 7 is the last worker slot; this instance never executes guest
+        // code, so its decoded-cache partition is irrelevant — only its globals
+        // matter.
+        this.instance.exports.init_thread(7, meta.get_image_base, meta.get_code_start,
+          meta.get_code_end, meta.get_thunk_base, meta.get_thunk_end, meta.get_num_thunks);
+      }
+    } else {
+      // The staging clamp and its reasoning live in lib/process-boot.js,
+      // shared with the CLI harness.
+      ({ entry } = ProcessBoot.stageAndLoadPe(
+        this.instance.exports, this.memory.buffer, exeBytes));
     }
-    mem.set(exeBytes.subarray(0, staged), staging);
-
-    // Load PE
-    const entry = this.instance.exports.load_pe(staged);
-    console.log('PE loaded. Entry: 0x' + (entry >>> 0).toString(16).padStart(8, '0'));
 
     const exeName = url.replace(/^.*[\\\/]/, '');
     this._applyExeCompatibilityPatches(exeName);
@@ -996,19 +964,10 @@ class WineAssembly {
     // Set EXE name from URL
     this._exeName = exeName;
     this._exeUrl = url;
-    if (this._helpCtx && this._helpCtx.vfs && this._helpCtx.vfs.files) {
-      const exeData = new Uint8Array(exeBytes);
-      this._helpCtx.vfs.files.set('c:\\app.exe', { data: exeData, attrs: 0x20 });
-      this._helpCtx.vfs.files.set('c:\\' + exeName.toLowerCase(), { data: exeData, attrs: 0x20 });
+    if (this._helpCtx && this._helpCtx.vfs) {
+      VfsSeed.seedExeImage(this._helpCtx.vfs, exeBytes, exeName);
     }
-    if (this.instance.exports.set_exe_name) {
-      const enc = new TextEncoder();
-      const nameBytes = enc.encode(exeName);
-      const mem2 = new Uint8Array(this.memory.buffer);
-      const tmpOff = staging; // reuse staging as scratch
-      mem2.set(nameBytes, tmpOff);
-      this.instance.exports.set_exe_name(tmpOff, nameBytes.length);
-    }
+    ProcessBoot.setExeName(this.instance.exports, this.memory.buffer, exeName);
 
     return entry;
   }
@@ -1027,8 +986,10 @@ class WineAssembly {
 
     const dir = url.replace(/[^\\\/]*$/, '');
     const files = new Map();
-    await Promise.all(_stageable().flatMap(name =>
-      [`${name}.DLL`, `${name}.dll`, `${name}.EXE`].map(async file => {
+    const candidates = [...new Set([...(_stageable(exeBytes) || []),
+                                    ...(this._win16ExtraModules || [])])];
+    await Promise.all(candidates.flatMap(name =>
+      VfsSeed.win16FileCandidates(name).map(async file => {
         if (files.has(name)) return;
         try {
           const resp = await fetch(dir + file);
@@ -1037,9 +998,23 @@ class WineAssembly {
           if (!files.has(name)) files.set(name, bytes);
         } catch (_) { /* absent is a valid answer */ }
       })));
+    // Keyed uppercase, because the name a LoadLibrary arrives with is whatever
+    // the app typed and the name fetched here is whatever the registry says.
+    this._win16Modules = new Map(
+      [...files].map(([name, bytes]) => [name.toUpperCase(), bytes]));
 
     _loadWin16Dlls(exports, this.memory, exeBytes, dir,
       (_dir, name) => files.get(name) || null, (m) => console.log(m));
+  }
+
+  // Answer a 16-bit LoadLibrary for a module nothing imported, out of what
+  // _loadWin16Dlls fetched. False is a LoadLibrary failure, not an error.
+  _stageWin16Module(name, id) {
+    const bytes = this._win16Modules && this._win16Modules.get(String(name).toUpperCase());
+    const exports = this.instance && this.instance.exports;
+    if (!bytes || !exports || !exports.win16_dll_staging) return false;
+    new Uint8Array(this.memory.buffer).set(bytes, exports.win16_dll_staging(id));
+    return true;
   }
 
   // Mount every vendored open font at the Win98 filename it substitutes.
@@ -1110,6 +1085,18 @@ class WineAssembly {
         } else {
           addFile('c:\\' + url.replace(/^.*[\\\/]/, '').toLowerCase());
         }
+        // A font an app ships was put in the Windows font directory by its
+        // installer on a real machine, and that is the only reason an app
+        // like Age of Empires can name "Copperplate Gothic Light" without
+        // ever calling AddFontResource. Mount it there too, and let it win
+        // over a vendored substitute already at that name: the app ships the
+        // real face its artwork was laid out against, so its ARIAL.TTF beats
+        // Liberation Sans standing in for one. Text stays identical on every
+        // machine either way - the bytes come from the app, not the host.
+        const base = url.replace(/^.*[\\\/]/, '').toLowerCase();
+        if (/\.(ttf|ttc|fon)$/.test(base)) {
+          addFile('c:\\windows\\fonts\\' + base);
+        }
         loaded++;
       } catch (_) {
         failed++;
@@ -1170,138 +1157,108 @@ class WineAssembly {
         this._registerDllBitmapResources(dllConfigs[i].name, dllConfigs[i].bytes, dllResults[i].loadAddr);
       }
     };
-    const results = _loadDlls(this.instance.exports, this.memory.buffer, exeBytes, readyConfigs, console.log, opts);
+    let results;
+    if (this.guestWorker) {
+      // Guest execution (DllMain runs) must happen on the thread that owns the
+      // instance. registerDllResources stays here: it is host bookkeeping over
+      // bytes this thread already has.
+      const register = opts.registerDllResources;
+      delete opts.registerDllResources;
+      results = await this.guestWorker.loadDlls(readyConfigs, exeBytes, opts);
+      if (register) register(readyConfigs, results);
+    } else {
+      results = _loadDlls(this.instance.exports, this.memory.buffer, exeBytes, readyConfigs, console.log, opts);
+    }
     this._inDllInit = false;
     this.running = true;
   }
 
+  // Where a DLL the guest asks for at runtime comes from in the browser: the
+  // VFS the app mounted, whatever was already fetched for it, then the served
+  // directories. The CLI answers the same question against the filesystem —
+  // the yield pumps themselves are shared (lib/process-boot.js).
+  async _findDllBytes(fileName, fullName, { exeDir = false, vfsPaths = null } = {}) {
+    const ctx = this._helpCtx;
+    if (ctx && ctx.readFile) {
+      const fromVfs = ctx.readFile(fullName);
+      if (fromVfs) return fromVfs;
+    }
+    if (ctx && ctx.vfs && vfsPaths) {
+      for (const vp of vfsPaths) {
+        const entry = ctx.vfs.files.get(vp);
+        if (entry && entry.data) return entry.data;
+      }
+    }
+    if (this._loadedDllBytesByName && this._loadedDllBytesByName[fileName]) {
+      return this._loadedDllBytesByName[fileName];
+    }
+    const dir = exeDir && this._exeUrl ? this._exeUrl.replace(/[^\/\\]*$/, '') : '';
+    const paths = [
+      dir ? dir + fileName : '',
+      `binaries/dlls/${fileName}`,
+      `binaries/plugins/${fileName}`,
+      `dlls/${fileName}`,
+    ].filter(Boolean);
+    for (const p of paths) {
+      try {
+        const resp = await fetch(p);
+        if (resp.ok) return new Uint8Array(await resp.arrayBuffer());
+      } catch (_) {}
+    }
+    return null;
+  }
+
   async handleComDllLoad() {
-    const exports = this.instance.exports;
-    // Read pending DLL name from COM yield state
-    const dllNameWA = exports.get_com_dll_name ? exports.get_com_dll_name() : 0;
-    if (!dllNameWA) {
-      console.error('COM yield but no pending DLL name');
-      exports.clear_yield();
-      return;
-    }
-    const mem = new Uint8Array(this.memory.buffer);
-    let dllName = '';
-    for (let i = 0; i < 260; i++) {
-      const ch = mem[dllNameWA + i];
-      if (!ch) break;
-      dllName += String.fromCharCode(ch);
-    }
-    // Extract just the filename
-    const fileName = dllName.split('\\').pop().toLowerCase();
-    console.log(`[COM] Loading DLL: ${fileName}`);
-
-    try {
-      // Try to fetch the DLL
-      const paths = [`binaries/dlls/${fileName}`, `binaries/plugins/${fileName}`, `dlls/${fileName}`];
-      let dllBytes = null;
-      for (const p of paths) {
-        try {
-          const resp = await fetch(p);
-          if (resp.ok) {
-            dllBytes = new Uint8Array(await resp.arrayBuffer());
-            console.log(`[COM] Fetched ${p} (${dllBytes.length} bytes)`);
-            break;
-          }
-        } catch (_) {}
-      }
-      // Fallback: check VFS for the DLL bytes
-      if (!dllBytes && this._helpCtx && this._helpCtx.vfs) {
-        const vfs = this._helpCtx.vfs;
-        for (const vp of [dllName.toLowerCase(), 'c:\\' + fileName, 'c:\\plugins\\' + fileName]) {
-          const entry = vfs.files.get(vp);
-          if (entry && entry.data) {
-            dllBytes = entry.data;
-            console.log(`[COM] Found ${fileName} in VFS (${dllBytes.length} bytes)`);
-            break;
-          }
-        }
-      }
-      if (!dllBytes) {
-        console.error(`[COM] Failed to fetch DLL: ${fileName}`);
-        // Clear yield and let CoCreateInstance fail with REGDB_E_CLASSNOTREG
-        exports.clear_yield();
-        // Set EAX to error, advance ESP past the 5 stdcall args
-        exports.set_eax(0x80040154);
-        exports.set_esp(exports.get_esp() + 24);
-        return;
-      }
-
-      // Load the DLL using existing infrastructure
-      const _loadDll = (typeof DllLoader !== 'undefined' && DllLoader.loadDll) || null;
-      if (_loadDll) {
-        const result = _loadDll(exports, this.memory.buffer, dllBytes);
-        console.log(`[COM] DLL loaded at 0x${result.loadAddr.toString(16)}`);
-        // Patch EXE imports if we have EXE bytes
-        if (this._exeBytes) {
-          const _patchExeImports = (typeof DllLoader !== 'undefined' && DllLoader.patchExeImports) || null;
-          if (_patchExeImports) {
-            _patchExeImports(exports, this.memory.buffer, this._exeBytes, console.log);
-          }
-        }
-        // Call DllMain if entry point exists
-        if (result.dllMain) {
-          const _callDllMain = (typeof DllLoader !== 'undefined' && DllLoader.callDllMain) || null;
-          if (_callDllMain) {
-            _callDllMain(exports, result.loadAddr, result.dllMain, console.log);
-          }
-        }
-      }
-
-      // Clear yield — run() will re-enter CoCreateInstance handler
-      // which will retry and find the DLL now loaded
-      exports.clear_yield();
-      // Don't advance ESP — the handler will be re-invoked by the dispatch
-    } catch (e) {
-      console.error('[COM] DLL load error:', e);
-      exports.clear_yield();
-      exports.set_eax(0x80004005); // E_FAIL
-      exports.set_esp(exports.get_esp() + 24);
-    }
+    await ProcessBoot.handleComDllYield({
+      exports: this.instance.exports,
+      memoryBuffer: this.memory.buffer,
+      exeBytes: this._exeBytes || null,
+      resourceHost: this,
+      log: console.log,
+      findDll: (fileName, fullName) => this._findDllBytes(fileName, fullName, {
+        vfsPaths: [fullName.toLowerCase(), 'c:\\' + fileName, 'c:\\plugins\\' + fileName],
+      }),
+    });
   }
 
   _registerDllBitmapResources(name, bytes, loadAddr) {
-    const _extractBitmapBytes = (typeof extractBitmapBytes === 'function')
-      ? extractBitmapBytes
-      : (typeof dibLib !== 'undefined' && dibLib.extractBitmapBytes);
-    if (!_extractBitmapBytes) return;
-    try {
-      const bitmapBytes = _extractBitmapBytes(bytes);
-      const count = Object.keys(bitmapBytes).length;
-      if (count > 0) {
-        this.dllResources = this.dllResources || {};
-        this.dllResources[loadAddr] = { bitmapBytes };
-        console.log(`DLL resources: ${name} has ${count} bitmaps`);
-      }
-    } catch (_) {}
+    ProcessBoot.registerDllBitmaps(this, name, bytes, loadAddr, console.log);
   }
 
-  async handleLoadLibrary() {
-    const exports = this.instance.exports;
-    const _resumeAfterLoadLibraryYield = (typeof DllLoader !== 'undefined' && DllLoader.resumeAfterLoadLibraryYield) || null;
-    const nameWA = exports.get_loadlib_name ? exports.get_loadlib_name() : 0;
-    if (!nameWA) {
-      exports.set_eax && exports.set_eax(0);
-      if (_resumeAfterLoadLibraryYield) _resumeAfterLoadLibraryYield(exports, this.memory.buffer);
-      exports.clear_yield && exports.clear_yield();
-      return;
-    }
-    const mem = new Uint8Array(this.memory.buffer);
-    let dllName = '';
-    for (let i = 0; i < 260 && mem[nameWA + i]; i++) {
-      dllName += String.fromCharCode(mem[nameWA + i]);
-    }
+  // Call a guest export wherever the guest actually is.
+  //
+  // Launch-time configuration (set_winver, set_hwnd_base, set_extra_cmdline) is
+  // main-side code writing per-instance globals, so in worker mode it has to
+  // reach the worker's instance — writing them on the idle main instance looks
+  // like it worked and does nothing. That is what made MFC42U refuse to load:
+  // set_winver never reached the running guest, so GetVersion still answered
+  // Win98 and MFC put up "cannot be loaded on Windows 95".
+  //
+  // Returns a promise in worker mode and the value directly otherwise; callers
+  // at launch time can ignore the difference, since nothing reads the result.
+  callGuest(name, ...args) {
+    if (this.guestWorker) return this.guestWorker.callExport(name, ...args);
+    const fn = this.instance && this.instance.exports[name];
+    return typeof fn === 'function' ? fn(...args) : undefined;
+  }
+
+  hasGuestExport(name) {
+    // Both modes instantiate the same module, so the main instance is a valid
+    // oracle for whether an export exists even when the guest runs elsewhere.
+    return !!(this.instance && typeof this.instance.exports[name] === 'function');
+  }
+
+  // Where a DLL's bytes come from: the VFS, the ones already loaded, or a
+  // fetch. Pure host work — no instance involved — so both the single-threaded
+  // handler and the worker-mode one use it rather than keeping two copies of a
+  // four-candidate path search.
+  async _resolveDllBytes(dllName) {
     const fileName = dllName.split('\\').pop().toLowerCase();
     const ctx = this._helpCtx;
     let dllBytes = ctx && ctx.readFile ? ctx.readFile(dllName) : null;
     if (!dllBytes && this._loadedDllBytesByName) {
       dllBytes = this._loadedDllBytesByName[fileName] || null;
     }
-
     if (!dllBytes) {
       const exeDir = this._exeUrl ? this._exeUrl.replace(/[^\/\\]*$/, '') : '';
       const paths = [
@@ -1313,51 +1270,115 @@ class WineAssembly {
       for (const p of paths) {
         try {
           const resp = await fetch(p);
-          if (resp.ok) {
-            dllBytes = new Uint8Array(await resp.arrayBuffer());
-            break;
-          }
+          if (resp.ok) { dllBytes = new Uint8Array(await resp.arrayBuffer()); break; }
         } catch (_) {}
       }
     }
+    return { fileName, dllBytes };
+  }
 
+  // Worker-mode LoadLibrary. The split is the same one the design predicted:
+  // resolving bytes is host work and happens here; loading the image, patching
+  // its imports, running DllMain and resuming the guest are guest work and
+  // happen in the worker, because they set EIP/ESP and execute code.
+  async _handleLoadLibraryThreaded(targetLink) {
+    const gw = this.guestWorker;
+    const link = targetLink || gw.link;
+    const nameWA = (await link.callExport('get_loadlib_name')) >>> 0;
+    let dllName = '';
+    if (nameWA) {
+      const mem = new Uint8Array(this.memory.buffer);
+      for (let i = 0; i < 260 && mem[nameWA + i]; i++) dllName += String.fromCharCode(mem[nameWA + i]);
+    }
+    const { fileName, dllBytes } = dllName ? await this._resolveDllBytes(dllName) : { fileName: '', dllBytes: null };
     if (!dllBytes) {
-      console.error(`[LoadLibrary] DLL not found: ${fileName}`);
-      exports.set_eax && exports.set_eax(0);
-      if (_resumeAfterLoadLibraryYield) _resumeAfterLoadLibraryYield(exports, this.memory.buffer);
-      exports.clear_yield && exports.clear_yield();
+      if (fileName) console.error(`[LoadLibrary] DLL not found: ${fileName}`);
+      await gw.loadLibrary(null, fileName, link);
       return;
     }
+    const res = await gw.loadLibrary(dllBytes, fileName, link);
+    if (res && res.loadAddr) {
+      console.log(`[LoadLibrary] ${fileName} loaded at 0x${(res.loadAddr >>> 0).toString(16)} (worker)`);
+      this.registerModule(fileName, res.loadAddr);
+      this._registerDllBitmapResources(fileName, dllBytes, res.loadAddr);
+    }
+  }
 
-    const _loadDll = (typeof DllLoader !== 'undefined' && DllLoader.loadDll) || null;
-    const _patchDllImports = (typeof DllLoader !== 'undefined' && DllLoader.patchDllImports) || null;
-    const _callDllMain = (typeof DllLoader !== 'undefined' && DllLoader.callDllMain) || null;
-    if (!_loadDll) {
-      exports.set_eax && exports.set_eax(0);
-      if (_resumeAfterLoadLibraryYield) _resumeAfterLoadLibraryYield(exports, this.memory.buffer);
-      exports.clear_yield && exports.clear_yield();
+  // Remember where an image landed, and resolve an address back to it.
+  // Nearest base at or below the address wins: the table has no sizes, and an
+  // address inside a module is always above its base and below the next one's.
+  // Answering with the wrong module is still better than answering with a bare
+  // number, and being explicit about that is the point of the name it prints.
+  registerModule(name, base) {
+    if (!name || !base) return;
+    this.moduleMap.push({ name, base: base >>> 0 });
+    this.moduleMap.sort((a, b) => a.base - b.base);
+  }
+
+  describeAddr(addr) {
+    const a = addr >>> 0;
+    const hex = `0x${a.toString(16)}`;
+    let best = null;
+    for (const m of this.moduleMap) {
+      if (m.base <= a && (!best || m.base > best.base)) best = m;
+    }
+    return best ? `${hex} (${best.name}+0x${(a - best.base).toString(16)})` : hex;
+  }
+
+  // Worker-mode COM server load (yield reason 3). Same split as LoadLibrary:
+  // the name and bytes are resolved here, the image load, DllMain and the guest
+  // resume happen in the worker.
+  //
+  // The COM search order is not LoadLibrary's — a class's server is looked up by
+  // bare filename in the DLL and plugin directories — so this resolves its own
+  // candidates rather than sharing _resolveDllBytes.
+  async _handleComDllLoadThreaded(targetLink) {
+    const gw = this.guestWorker;
+    const link = targetLink || gw.link;
+    const nameWA = (await link.callExport('get_com_dll_name')) >>> 0;
+    if (!nameWA) {
+      console.error('COM yield but no pending DLL name');
+      await link.callExport('clear_yield');
       return;
     }
+    const mem = new Uint8Array(this.memory.buffer);
+    let dllName = '';
+    for (let i = 0; i < 260 && mem[nameWA + i]; i++) dllName += String.fromCharCode(mem[nameWA + i]);
+    const fileName = dllName.split('\\').pop().toLowerCase();
+    console.log(`[COM] Loading DLL: ${fileName} (worker)`);
 
-    try {
-      const result = _loadDll(exports, this.memory.buffer, dllBytes);
-      console.log(`[LoadLibrary] ${fileName} loaded at 0x${result.loadAddr.toString(16)}`);
-      this._registerDllBitmapResources(fileName, dllBytes, result.loadAddr);
-      if (_patchDllImports) {
-        _patchDllImports(exports, this.memory.buffer, [{ name: fileName, bytes: dllBytes }], [result], console.log);
-      }
-      exports.clear_yield && exports.clear_yield();
-      if (result.dllMain && _callDllMain) {
-        _callDllMain(exports, result.loadAddr, result.dllMain, console.log);
-      }
-      exports.set_eax && exports.set_eax(result.loadAddr);
-      if (_resumeAfterLoadLibraryYield) _resumeAfterLoadLibraryYield(exports, this.memory.buffer);
-    } catch (e) {
-      console.error('[LoadLibrary] load error:', e);
-      exports.set_eax && exports.set_eax(0);
-      if (_resumeAfterLoadLibraryYield) _resumeAfterLoadLibraryYield(exports, this.memory.buffer);
+    let dllBytes = null;
+    for (const p of [`binaries/dlls/${fileName}`, `binaries/plugins/${fileName}`, `dlls/${fileName}`]) {
+      try {
+        const resp = await fetch(p);
+        if (resp.ok) { dllBytes = new Uint8Array(await resp.arrayBuffer()); break; }
+      } catch (_) {}
     }
-    exports.clear_yield && exports.clear_yield();
+    if (!dllBytes && this._helpCtx && this._helpCtx.vfs) {
+      const vfs = this._helpCtx.vfs;
+      for (const vp of [dllName.toLowerCase(), 'c:\\' + fileName, 'c:\\plugins\\' + fileName]) {
+        const entry = vfs.files.get(vp);
+        if (entry && entry.data) { dllBytes = entry.data; break; }
+      }
+    }
+    if (!dllBytes) {
+      console.error(`[COM] Failed to fetch DLL: ${fileName}`);
+      await gw.comLoadDll(null, fileName, null, link);
+      return;
+    }
+    const res = await gw.comLoadDll(dllBytes, fileName, this._exeBytes || null, link);
+    if (res && res.error) console.error('[COM] DLL load error:', res.error);
+    else if (res) console.log(`[COM] DLL loaded at 0x${(res.loadAddr >>> 0).toString(16)} (worker)`);
+  }
+
+  async handleLoadLibrary() {
+    await ProcessBoot.handleLoadLibraryYield({
+      exports: this.instance.exports,
+      memoryBuffer: this.memory.buffer,
+      resourceHost: this,
+      log: console.log,
+      findDll: (fileName, fullName) => this._findDllBytes(fileName, fullName, { exeDir: true }),
+    });
   }
 
   // Finish (or cancel) a deferred last-window teardown. Called once per run
@@ -1433,33 +1454,237 @@ class WineAssembly {
     return hotUntil > this._audioSchedulerNow();
   }
 
+  // Called once per step from the worker-budget calculation, so it used to
+  // build a Set and an array and call a WASM export for every instance, on
+  // every step, for the whole session. The instance list only changes when a
+  // window is created or destroyed, so cache it and rebuild on a window-count
+  // change; the exported call itself is cheap and stays exact.
   _hasOpenMenu() {
     const renderer = this.renderer;
     if (!renderer) return false;
-    const seen = new Set();
-    const wasms = [];
-    const add = (wasm) => {
-      if (wasm && !seen.has(wasm)) {
-        seen.add(wasm);
-        wasms.push(wasm);
-      }
-    };
-    add(this.instance);
-    add(renderer.wasm);
-    add(renderer.mainWasm);
-    for (const win of Object.values(renderer.windows || {})) add(win && win.wasm);
-    for (const wasm of wasms) {
-      const ex = wasm && wasm.exports;
-      if (!ex || !ex.menu_open_hwnd) continue;
+    const windows = renderer.windows || {};
+    const count = Object.keys(windows).length;
+    if (this._menuWasms === undefined || this._menuWasmsWindowCount !== count ||
+        this._menuWasmsInstance !== this.instance) {
+      const seen = new Set();
+      const wasms = [];
+      const add = (wasm) => {
+        if (wasm && !seen.has(wasm) && wasm.exports && wasm.exports.menu_open_hwnd) {
+          seen.add(wasm);
+          wasms.push(wasm);
+        }
+      };
+      add(this.instance);
+      add(renderer.wasm);
+      add(renderer.mainWasm);
+      for (const win of Object.values(windows)) add(win && win.wasm);
+      this._menuWasms = wasms;
+      this._menuWasmsWindowCount = count;
+      this._menuWasmsInstance = this.instance;
+    }
+    for (const wasm of this._menuWasms) {
       try {
-        if ((ex.menu_open_hwnd() >>> 0) !== 0) return true;
+        if ((wasm.exports.menu_open_hwnd() >>> 0) !== 0) return true;
       } catch (_) {}
     }
     return false;
   }
 
+  // Worker-mode run loop. The guest executes inside the Worker, so this loop
+  // does nothing but hand out slices and composite — which is the whole claim
+  // of the design: the UI thread is no longer in the guest's critical path, so
+  // there is no wall-clock budget, no quantum, and no input-wake heuristic here.
+  _runThreaded(stepsPerSlice) {
+    this.running = true;
+    const self = this;
+    let unsupportedYield = 0;
+    const step = async () => {
+      if (!self.running) return;
+      const perf = (typeof window !== 'undefined' && window.WinePerf && window.WinePerf.enabled)
+        ? window.WinePerf : null;
+      if (perf) perf.stepBegin();
+      try {
+        self._beginGuestTickBatch();
+        if (self.guestWorker.broker) {
+          // The guest's message-wait resume runs inside the worker and needs to
+          // know whether the renderer has input queued — that queue is here, so
+          // its depth is published rather than asked for.
+          const q = self.renderer && self.renderer.inputQueue ? self.renderer.inputQueue.length : 0;
+          self.guestWorker.broker.publish({
+            tickMs: self._guestTickMs(self.hostCtx && self.hostCtx.sharedAudio),
+            inputPending: q,
+          });
+        }
+        const steps = Math.max(1000, (self.stepsPerSlice | 0) || stepsPerSlice);
+        // The guest's main thread and every thread it created run AT THE SAME
+        // TIME — that is the whole of phase 2. Awaiting them together rather
+        // than in sequence is what makes it true: each slice() is a message to a
+        // different Worker, and none of them needs this thread except to be
+        // served a host import.
+        const runThreads = () => (self.threadManager && self.threadManager.backend === 'worker'
+          ? self.threadManager.runWorkerSlices(steps)
+          : 0);
+        // The guest's main thread takes part in the same rendezvous its threads
+        // do: in worker mode it is not the main INSTANCE, so its thunk
+        // allocations are invisible to everyone else unless they are published.
+        const sync = self.threadManager ? self.threadManager.workerSyncState() : null;
+        let r, threadsRun;
+        if (typeof window !== 'undefined' && window.WINE_THREADS_SERIAL) {
+          // Diagnostic only: the same slices, one at a time. A bug that appears
+          // in parallel and not here is a race in shared emulator state, which is
+          // a different investigation from a bug in the worker plumbing.
+          r = await self.guestWorker.slice(steps, sync);
+          threadsRun = await runThreads();
+        } else {
+          [r, threadsRun] = await Promise.all([self.guestWorker.slice(steps, sync), runThreads()]);
+        }
+        if (self.threadManager) self.threadManager.publishWorkerThunkState(r);
+        if (!self.running) return;
+        if (self.threadManager && self.threadManager.netWaitPending) {
+          // A thread parked in a blocking socket call. Frames arrive on this
+          // thread's event loop, so it has to get a turn before the next slice.
+          self.threadManager.netWaitPending = false;
+          await new Promise(resolve => setTimeout(resolve, 0));
+        }
+        // How many guest threads got a slice this step. Nothing consumes it yet;
+        // it is here because "the threads are live but none of them ran" and "no
+        // threads exist" look identical from the outside, and that is the first
+        // thing worth knowing when a threaded app goes quiet.
+        self.workerThreadsRun = threadsRun | 0;
+        if (perf) {
+          perf.countSteps(stepsPerSlice);
+          // Off-thread time is reported as thread time, not main time: it did
+          // not block this thread, and calling it 'guest' here would make the
+          // HUD's phase shares mean something different than in the other mode.
+          perf.mark('workers', r.ms || 0);
+        }
+        if (r.trapped) {
+          const g = r.regs || {};
+          const hex = v => '0x' + ((v || 0) >>> 0).toString(16);
+          self.logToUI(`[threads] guest trapped in worker: ${r.trapped} @ EIP=${hex(r.eip)} `
+            + `prev_eip=${hex(g.prevEip)} esp=${hex(g.esp)} eax=${hex(g.eax)} ebx=${hex(g.ebx)} `
+            + `ecx=${hex(g.ecx)} edx=${hex(g.edx)} esi=${hex(g.esi)} edi=${hex(g.edi)} ebp=${hex(g.ebp)}`);
+          self.stop({ repaint: false });
+          return;
+        }
+        const presentStart = perf ? performance.now() : 0;
+        if (self.renderer && self.renderer.flushRepaint) self.renderer.flushRepaint(true);
+        if (perf) perf.mark('present', performance.now() - presentStart);
+
+        if (!r.eip && !r.yield) {
+          self.logToUI('--- Program exited (worker) ---');
+          self.stop({ repaint: false });
+          return;
+        }
+        // Every yield the WAT actually raises is handled here: 1 wait, 2 exit
+        // (caught above as eip=0), 3 com_load_dll, 5 load_library, 6
+        // modal_dialog, 7 message_wait, 8 net_wait. Reason 4 (help_load) is
+        // named in thread-manager.js's map but is never set by any WAT or JS
+        // path, so there is nothing to port for it. The fallback below stays as
+        // a guard for anything added later.
+        if (r.yield === 1) {
+          // A parked WaitForSingleObject/WaitForMultipleObjects. This used to
+          // just clear the yield and let the guest re-poll, which is wrong in a
+          // way that only shows up once a wait can actually be satisfied: $run
+          // has already popped the return address, so the guest is past the call
+          // with its stdcall arguments still on the stack. Only completing the
+          // wait drops them. Clearing instead leaked 12 bytes of guest stack per
+          // wait, and Winamp died minutes later at EIP=0xffffffff — which is why
+          // nothing caught it before guest threads ran in this mode.
+          const done = self.threadManager ? self.threadManager.resolveMainWorkerWait(r) : null;
+          if (done) await self.guestWorker.link.completeWait(done.result, done.waitStackBytes);
+          // Unsatisfied: leave the yield set. The next slice re-polls, and the
+          // worker's run() returns immediately while parked.
+        } else if (r.yield === 7) {
+          // The message-wait resume runs inside the worker at the top of each
+          // slice, where the instance is. Nothing to do here — and specifically
+          // not clear_yield, for the same reason as above.
+        } else if (r.yield === 3) {
+          await self._handleComDllLoadThreaded();
+        } else if (r.yield === 5) {
+          await self._handleLoadLibraryThreaded();
+        } else if (r.yield === 9) {
+          // cs_wait: EnterCriticalSection found the section held by another guest
+          // thread. Clearing re-enters the same call, and the holder gets its
+          // slice in this same round — which is why the WAT must not spin there:
+          // the holder may be parked in Atomics.wait for an import only this
+          // thread serves.
+          //
+          // The guest's MAIN thread does not currently park (see
+          // $handle_EnterCriticalSection — it nests interpreter runs that cannot
+          // be unwound), so this is a safety net rather than a live path. It is
+          // kept because the alternative is the catch-all below, which stops the
+          // app outright, and that is how this was found.
+          await self.guestWorker.callExport('clear_yield');
+        } else if (r.yield === 10) {
+          await self.guestWorker.resolveThreadSend(self.guestWorker.link, {
+            targetTid: r.sendTargetTid | 0,
+            hwnd: r.sendHwnd | 0, msg: r.sendMsg | 0,
+            wparam: r.sendWparam | 0, lparam: r.sendLparam | 0,
+            postKind: r.sendPostKind | 0,
+          });
+        } else if (r.yield === 8) {
+          await self.guestWorker.callExport('clear_yield');
+          try { await self.guestWorker.callExport('vlan_pump'); } catch (_) {}
+        } else if (r.yield === 6) {
+          // modal_dialog: the single-threaded loop does nothing special here
+          // either — the WAT side drives the dialog — so neither does this.
+        } else if (r.yield) {
+          if (++unsupportedYield === 1) {
+            self.logToUI(`[threads] yield ${r.yield} is not supported in worker mode yet `
+              + `(needs its host sequence ported into the worker); stopping.`);
+            self.stop({ repaint: false });
+            return;
+          }
+        }
+      } catch (err) {
+        self.logToUI(`[threads] worker loop failed: ${err.message}`);
+        self.stop({ repaint: false });
+        return;
+      } finally {
+        if (perf) perf.stepEnd();
+      }
+      // Same unclamped scheduling the single-threaded loop uses: a nested
+      // setTimeout chain is capped at 4ms once it is five deep, which would
+      // hold worker mode to ~250 slices a second no matter how fast a slice is.
+      if (self.running) self._scheduleStep(step);
+    };
+    step();
+  }
+
+  // Schedule the next guest slice.
+  //
+  // This used to be setTimeout(step, 0). Browsers clamp a *nested* timer to
+  // >=4ms once the chain is five deep, and this chain never ends — so the
+  // drive loop was capped near 250 slices/s no matter how fast a slice ran.
+  // With a p50 step of ~2.3ms that left the main thread idle more than half
+  // of every cycle. A MessageChannel port posts an unclamped macrotask: it
+  // still yields to input and rAF between slices, it just doesn't wait 4ms to
+  // do it. setTimeout stays as the fallback for anything without MessageChannel.
+  _scheduleStep(step) {
+    if (this._stepPort === undefined) {
+      this._stepPort = null;
+      if (typeof MessageChannel === 'function') {
+        const chan = new MessageChannel();
+        chan.port1.onmessage = () => {
+          const fn = this._pendingStep;
+          this._pendingStep = null;
+          if (fn) fn();
+        };
+        this._stepPort = chan.port2;
+      }
+    }
+    if (this._stepPort) {
+      this._pendingStep = step;
+      this._stepPort.postMessage(0);
+    } else {
+      setTimeout(step, 0);
+    }
+  }
+
   run(stepsPerSlice = 100000) {
     this.stepsPerSlice = stepsPerSlice;
+    if (this.guestWorker) return this._runThreaded(stepsPerSlice);
     this.running = true;
     const self = this;
     const step = async () => {
@@ -1475,6 +1700,7 @@ class WineAssembly {
         const activeStepsPerSlice = Math.max(1000, (self.stepsPerSlice | 0) || stepsPerSlice);
         self._beginGuestTickBatch();
         // Check if main thread is waiting
+        if (self.threadManager) await self.threadManager.resolveMainThreadSend();
         const mainThreadWaiting = self.threadManager && self.threadManager.checkMainYield();
         if (mainThreadWaiting) {
           // Main still waiting — just run worker threads
@@ -1491,6 +1717,13 @@ class WineAssembly {
           if (perf) perf.countSteps(activeStepsPerSlice);
           const perfMainStart = perf ? performance.now() : 0;
           self.instance.exports.run(activeStepsPerSlice);
+          // timeSetEvent is asynchronous on Windows. Most emulated apps pump
+          // often enough for the existing MM_TIMER message path; opted-in
+          // clients such as Diablo also need a callback between slices while
+          // their main thread is deliberately busy-waiting. fire_mm_timer is
+          // cooperative: it refuses to interrupt a parked wait or an active
+          // callback and resumes the interrupted EIP through its return thunk.
+          self._pumpMultimediaTimer();
           if (perf) perf.mark('main', performance.now() - perfMainStart);
           self._checkLastWindowStop();
           // ExitProcess/last-window teardown can stop the app from inside a
@@ -1555,7 +1788,7 @@ class WineAssembly {
         const yieldReason = self.instance.exports.get_yield_reason();
         if (yieldReason === 3) {
           await self.handleComDllLoad();
-          if (self.running) { setTimeout(step, 0); }
+          if (self.running) { self._scheduleStep(step); }
           return;
         }
         if (yieldReason === 8) {
@@ -1566,11 +1799,20 @@ class WineAssembly {
           // would starve the delivery this call is waiting for.
           self.instance.exports.clear_yield();
           if (self.instance.exports.vlan_pump) self.instance.exports.vlan_pump();
-          if (self.running) { setTimeout(step, 0); }
+          if (self.running) { self._scheduleStep(step); }
           return;
         }
         if (yieldReason === 5) {
           await self.handleLoadLibrary();
+          if (self.running) { self._scheduleStep(step); }
+          return;
+        }
+        if (yieldReason === 9) {
+          // cs_wait: EnterCriticalSection found the section held by another guest
+          // thread. Same shape as net_wait — EIP is still on the thunk, so
+          // clearing re-enters the same call — and rescheduling rather than
+          // spinning is again the point: the holder only runs when this returns.
+          self.instance.exports.clear_yield();
           if (self.running) { setTimeout(step, 0); }
           return;
         }
@@ -1670,7 +1912,7 @@ class WineAssembly {
         if (perf) perf.stepEnd();
       }
       if (self.running) {
-        setTimeout(step, 0);
+        self._scheduleStep(step);
       }
     };
     step();

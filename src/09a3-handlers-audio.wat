@@ -2,6 +2,48 @@
   ;; AUDIO/WAVE API HANDLERS
   ;; ============================================================
 
+  ;; acmMetrics(hao, uMetric, pMetric) reports Audio Compression Manager
+  ;; inventory and sizing information.  The emulator exposes one built-in
+  ;; PCM converter and no installable codecs or filters.  In particular,
+  ;; ACM_METRIC_MAX_SIZE_FORMAT (50) must include the cbSize word: callers use
+  ;; this result to allocate a WAVEFORMATEX before enumerating formats.
+  (func $acm_metrics (param $hao i32) (param $metric i32) (param $out i32) (result i32)
+    (local $value i32)
+    (if (i32.eqz (local.get $out))
+      (then (return (i32.const 11))))                       ;; MMSYSERR_INVALPARAM
+    (if (i32.eq (local.get $metric) (i32.const 50))
+      (then (call $gs32 (local.get $out) (i32.const 18))    ;; sizeof WAVEFORMATEX
+            (return (i32.const 0))))
+    (if (i32.eq (local.get $metric) (i32.const 51))
+      (then (call $gs32 (local.get $out) (i32.const 0))     ;; no ACM filters
+            (return (i32.const 0))))
+    (if (i32.or
+          (i32.eq (local.get $metric) (i32.const 1))        ;; COUNT_DRIVERS
+          (i32.eq (local.get $metric) (i32.const 20)))      ;; COUNT_LOCAL_DRIVERS
+      (then (call $gs32 (local.get $out) (i32.const 1))
+            (return (i32.const 0))))
+    (if (i32.or
+          (i32.eq (local.get $metric) (i32.const 3))        ;; COUNT_CONVERTERS
+          (i32.eq (local.get $metric) (i32.const 22)))      ;; COUNT_LOCAL_CONVERTERS
+      (then (call $gs32 (local.get $out) (i32.const 1))
+            (return (i32.const 0))))
+    (if (i32.or
+          (i32.le_u (local.get $metric) (i32.const 6))
+          (i32.or
+            (i32.and (i32.ge_u (local.get $metric) (i32.const 20))
+                     (i32.le_u (local.get $metric) (i32.const 25)))
+            (i32.and (i32.ge_u (local.get $metric) (i32.const 30))
+                     (i32.le_u (local.get $metric) (i32.const 34)))))
+      (then (call $gs32 (local.get $out) (i32.const 0))
+            (return (i32.const 0))))
+    (i32.const 10))                                         ;; MMSYSERR_INVALFLAG
+
+  (func $handle_acmMetrics (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $acm_metrics
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))) ;; 3 args stdcall
+  )
+
   ;; acmFormatTagDetailsA(had, paftd, fdwDetails) — describe one format tag.
   ;;
   ;; ACMFORMATTAGDETAILS is 24 bytes of fields then a 48-byte name:
@@ -236,47 +278,39 @@
 
   ;; 794: waveOutGetDevCapsA(uDeviceID, lpCaps, cbCaps) — 3 args stdcall
   ;; Fill WAVEOUTCAPSA struct with basic PCM support
-  (func $handle_waveOutGetDevCapsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32)
-    (local.set $wa (call $g2w (local.get $arg1)))
-    (call $zero_memory (local.get $wa) (local.get $arg2))
-    ;; wMid=1 (Microsoft), wPid=1
+  ;; waveOutGetDevCaps{A,W}(uDeviceID, lpCaps, cbCaps). WAVEOUTCAPSA and
+  ;; WAVEOUTCAPSW differ only in szPname[32] being CHAR vs WCHAR, so everything
+  ;; after that field sits 32 bytes further along in the wide struct.
+  (func $wave_out_dev_caps (param $caps_g i32) (param $cb i32) (param $wide i32)
+    (local $wa i32) (local $i i32) (local $tail i32)
+    (local.set $wa (call $g2w (local.get $caps_g)))
+    (call $zero_memory (local.get $wa) (local.get $cb))
+    ;; wMid=1 (Microsoft), wPid=1, vDriverVersion = 4.0
     (i32.store16 (local.get $wa) (i32.const 1))
     (i32.store16 (i32.add (local.get $wa) (i32.const 2)) (i32.const 1))
-    ;; vDriverVersion = 4.0
     (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x0400))
-    ;; szPname = "Audio" at offset 8, 32 bytes
-    (i32.store (i32.add (local.get $wa) (i32.const 8)) (i32.const 0x64755741))  ;; "Audi"
-    (i32.store8 (i32.add (local.get $wa) (i32.const 12)) (i32.const 0x6F))      ;; "o"
-    ;; dwFormats at offset 40: support common formats (44.1k 16-bit stereo etc.)
-    (i32.store (i32.add (local.get $wa) (i32.const 40)) (i32.const 0x00000FFF))
-    ;; wChannels at offset 44: 2 (stereo)
-    (i32.store16 (i32.add (local.get $wa) (i32.const 44)) (i32.const 2))
-    ;; dwSupport at offset 48: WAVECAPS_VOLUME|WAVECAPS_LRVOLUME
-    (i32.store (i32.add (local.get $wa) (i32.const 48)) (i32.const 0x0C))
+    ;; szPname = "Audio" at offset 8
+    (call $store_char (i32.add (local.get $caps_g) (i32.const 8)) (i32.const 0x41) (local.get $wide))
+    (local.set $i (select (i32.const 2) (i32.const 1) (local.get $wide)))
+    (call $store_char (i32.add (local.get $caps_g) (i32.add (i32.const 8) (local.get $i))) (i32.const 0x75) (local.get $wide))
+    (call $store_char (i32.add (local.get $caps_g) (i32.add (i32.const 8) (i32.mul (local.get $i) (i32.const 2)))) (i32.const 0x64) (local.get $wide))
+    (call $store_char (i32.add (local.get $caps_g) (i32.add (i32.const 8) (i32.mul (local.get $i) (i32.const 3)))) (i32.const 0x69) (local.get $wide))
+    (call $store_char (i32.add (local.get $caps_g) (i32.add (i32.const 8) (i32.mul (local.get $i) (i32.const 4)))) (i32.const 0x6F) (local.get $wide))
+    ;; dwFormats / wChannels / dwSupport: 40/44/48 (A), 72/76/80 (W)
+    (local.set $tail (i32.add (local.get $wa) (select (i32.const 72) (i32.const 40) (local.get $wide))))
+    (i32.store (local.get $tail) (i32.const 0x00000FFF))                ;; common PCM formats
+    (i32.store16 (i32.add (local.get $tail) (i32.const 4)) (i32.const 2))  ;; stereo
+    (i32.store (i32.add (local.get $tail) (i32.const 8)) (i32.const 0x0C))) ;; VOLUME|LRVOLUME
+
+  (func $handle_waveOutGetDevCapsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $wave_out_dev_caps (local.get $arg1) (local.get $arg2) (i32.const 0))
     (global.set $eax (i32.const 0))  ;; MMSYSERR_NOERROR
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; 3 args stdcall
   )
 
   ;; waveOutGetDevCapsW(uDeviceID, lpCaps, cbCaps) — wide-char variant
   (func $handle_waveOutGetDevCapsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32)
-    (local.set $wa (call $g2w (local.get $arg1)))
-    (call $zero_memory (local.get $wa) (local.get $arg2))
-    ;; wMid=1, wPid=1, vDriverVersion=4.0
-    (i32.store16 (local.get $wa) (i32.const 1))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 2)) (i32.const 1))
-    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x0400))
-    ;; szPname = "Audio" at offset 8 as WCHAR[32]
-    (i32.store16 (i32.add (local.get $wa) (i32.const 8)) (i32.const 0x41))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 10)) (i32.const 0x75))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 12)) (i32.const 0x64))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 14)) (i32.const 0x69))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 16)) (i32.const 0x6f))
-    ;; WAVEOUTCAPSW: dwFormats=72, wChannels=76, dwSupport=80
-    (i32.store (i32.add (local.get $wa) (i32.const 72)) (i32.const 0x00000FFF))
-    (i32.store16 (i32.add (local.get $wa) (i32.const 76)) (i32.const 2))
-    (i32.store (i32.add (local.get $wa) (i32.const 80)) (i32.const 0x0C))
+    (call $wave_out_dev_caps (local.get $arg1) (local.get $arg2) (i32.const 1))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )

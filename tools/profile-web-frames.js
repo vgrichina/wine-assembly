@@ -45,6 +45,16 @@ const QUERY = opt('query', '');
 // a single page setting against an otherwise identical run.
 const AFTER_LAUNCH = opt('after-launch', '');
 const CPU_PROFILE = argv.includes('--cpu-profile');
+// --resize-viewport=WxH@Ns[,WxH@Ns]: resize the browser window partway through
+// the sample. The emulator's screen canvas is sized from its wrapper, so this
+// is the only way to exercise renderer.handleScreenResize -- and the windows it
+// re-lays-out -- from a script. Page JS cannot resize its own window, so
+// setting the wrapper's style instead does NOT reach the same path.
+const RESIZES = (opt('resize-viewport', '') || '').split(',').filter(Boolean).map(spec => {
+  const [size, at] = spec.split('@');
+  const [w, h] = size.split('x').map(Number);
+  return { w, h, at: Number((at || '0').replace(/s$/, '')) };
+});
 // Use an already-running server (e.g. `node tools/dev-server.js`) instead of
 // this file's own static one. Required for anything that talks to a same-
 // origin API, since the throwaway server serves files and nothing else.
@@ -255,6 +265,16 @@ async function main() {
     // 40 measures the box, not the app.
     const loadBefore = os.loadavg();
     console.log(`load average before: ${loadBefore.map(n => n.toFixed(2)).join(' ')}`);
+
+    // Fire the scheduled viewport resizes alongside the sample rather than
+    // before it, so the frames either side of each one are in the histogram.
+    for (const r of RESIZES) {
+      setTimeout(() => {
+        page.setViewport({ width: r.w, height: r.h, deviceScaleFactor: 1 })
+          .then(() => console.log(`  resized viewport to ${r.w}x${r.h}`))
+          .catch(() => {});
+      }, r.at * 1000);
+    }
 
     console.log(`sampling ${SECONDS}s ...`);
     const result = await page.evaluate(seconds => new Promise(resolve => {

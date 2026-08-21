@@ -17,18 +17,46 @@
 
 set -euo pipefail
 
-DEST=${1:?usage: make-test-worktree.sh <path> [<commit-ish>]}
-REF=${2:-HEAD}
-
-MAIN=$(git rev-parse --show-toplevel)
-cd "$MAIN"
-
-if [ -e "$DEST" ]; then
-  echo "make-test-worktree: $DEST already exists" >&2
-  exit 1
+# --link-only links assets into a worktree that already exists. A worktree
+# created any other way (git worktree add, the harness's own EnterWorktree) has
+# exactly the same holes, and hand-rolling the symlinks is how 18 broken
+# self-referential links got created in the main tree once already.
+LINK_ONLY=
+if [ "${1:-}" = "--link-only" ]; then
+  LINK_ONLY=1
+  shift
 fi
 
-git worktree add --detach "$DEST" "$REF"
+DEST=${1:?usage: make-test-worktree.sh [--link-only] <path> [<commit-ish>]}
+REF=${2:-HEAD}
+
+# Resolve DEST while the caller's cwd still applies. Doing it after the cd
+# below turns "." into the main checkout, which silently links assets into the
+# tree that already has them and reports success.
+if [ -d "$DEST" ]; then
+  DEST=$(cd "$DEST" && pwd)
+else
+  DEST=$(cd "$(dirname "$DEST")" && pwd)/$(basename "$DEST")
+fi
+
+# Resolve the MAIN checkout even when invoked from inside a worktree, where
+# --show-toplevel would answer with the worktree itself.
+MAIN=$(git rev-parse --path-format=absolute --git-common-dir)
+MAIN=$(cd "$(dirname "$MAIN")" && pwd)
+cd "$MAIN"
+
+if [ -n "$LINK_ONLY" ]; then
+  if [ ! -d "$DEST" ]; then
+    echo "make-test-worktree: --link-only needs an existing worktree at $DEST" >&2
+    exit 1
+  fi
+else
+  if [ -e "$DEST" ]; then
+    echo "make-test-worktree: $DEST already exists" >&2
+    exit 1
+  fi
+  git worktree add --detach "$DEST" "$REF"
+fi
 DEST=$(cd "$DEST" && pwd)
 
 # Assets the suite reads but git does not carry. Anything ignored under these

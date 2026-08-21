@@ -102,15 +102,16 @@
 
     (global.set $dll_count (i32.add (global.get $dll_count) (i32.const 1)))
 
-    ;; Advance heap_ptr past loaded DLL so heap doesn't overlap DLL memory
+    ;; Push the low heap past this DLL image so allocations don't land on its
+    ;; code. This has to move the PROCESS cursor in shared memory, not $heap_ptr:
+    ;; that global now bounds one instance's private arena, so raising it here
+    ;; would leave every other instance still reserving over the image.
     (local.set $dst (i32.and
       (i32.add (i32.add (local.get $load_addr)
         (i32.load (i32.add (local.get $pe_off) (i32.const 80)))) ;; SizeOfImage
         (i32.const 0xFFF))
       (i32.const 0xFFFFF000)))
-    (if (i32.gt_u (local.get $dst) (global.get $heap_ptr))
-      (then (global.set $heap_ptr (local.get $dst))
-            (global.set $heap_base (local.get $dst))))
+    (call $heap_reserve_below (local.get $dst))
 
     ;; Return DllMain entry point
     (if (result i32) (i32.ne (local.get $entry_rva) (i32.const 0))
@@ -241,21 +242,21 @@
   ;; the comctl32 entry papers over a genuine Win98-vs-XP version gap.
   (func $native_override_export_api_id (param $name_wa i32) (result i32)
     (if (call $str_eq (local.get $name_wa) (i32.const 0x300))
-      (then (return (call $lookup_api_id (i32.const 0x300)))))
+      (then (return (call $lookup_api_id (i32.const 0x300))))) ;; ceil
     (if (call $str_eq (local.get $name_wa) (i32.const 0x305))
-      (then (return (call $lookup_api_id (i32.const 0x305)))))
+      (then (return (call $lookup_api_id (i32.const 0x305))))) ;; sqrt
     (if (call $str_eq (local.get $name_wa) (i32.const 0x30A))
-      (then (return (call $lookup_api_id (i32.const 0x30A)))))
+      (then (return (call $lookup_api_id (i32.const 0x30A))))) ;; sin
     (if (call $str_eq (local.get $name_wa) (i32.const 0x30E))
-      (then (return (call $lookup_api_id (i32.const 0x30E)))))
+      (then (return (call $lookup_api_id (i32.const 0x30E))))) ;; pow
     (if (call $str_eq (local.get $name_wa) (i32.const 0x312))
-      (then (return (call $lookup_api_id (i32.const 0x312)))))
+      (then (return (call $lookup_api_id (i32.const 0x312))))) ;; _CIpow
     ;; Win98's comctl32 rejects every ICC_* bit in 0x7fff8000, so an XP-era
     ;; caller asking for ICC_LINK_CLASS (0x8000) gets FALSE and quits. The
     ;; classes themselves are registered from the DLL's DllMain, so answering
     ;; natively costs nothing and matches how a newer comctl32 would behave.
     (if (call $str_eq (local.get $name_wa) (i32.const 0x11E30))
-      (then (return (call $lookup_api_id (i32.const 0x11E30)))))
+      (then (return (call $lookup_api_id (i32.const 0x11E30))))) ;; InitCommonControlsEx
     (i32.const -1))
 
   ;; WinSock 1.1 commonly imports WSOCK32 by ordinal. Resolve ordinals for
@@ -363,7 +364,10 @@
                   (call $g2w (i32.add (local.get $load_addr) (i32.add (local.get $entry) (i32.const 2))))))))
             (i32.store (local.get $iat_ptr) (local.get $resolved_addr)))
           (else
-            ;; System DLL — create thunk
+            ;; System DLL — create thunk. LoadLibrary can run on any guest
+            ;; thread, so the index comes from the process-wide cursor rather
+            ;; than this instance's count (see $thunk_reserve).
+            (global.set $num_thunks (call $thunk_reserve))
             (local.set $thunk_addr (i32.add
               (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
                        (global.get $GUEST_BASE))
@@ -491,6 +495,9 @@
                 (local.set $api_id (call $native_override_export_api_id (local.get $name_wa)))
                 (if (i32.ne (local.get $api_id) (i32.const -1))
                   (then
+                    ;; Same reservation as above: this patching path runs
+                    ;; whenever a DLL loads, on whichever thread loaded it.
+                    (global.set $num_thunks (call $thunk_reserve))
                     (local.set $thunk_addr (i32.add
                       (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
                                (global.get $GUEST_BASE))
@@ -519,7 +526,7 @@
   ;; engine loads a help file's own DLL when a registered macro is called,
   ;; without a round trip through the host.
   (func $next_dll_addr (export "get_next_dll_addr") (result i32)
-    (local $addr i32) (local $after_dll i32)
+    (local $addr i32) (local $after_dll i32) (local $mark i32)
     (if (global.get $dll_count)
       (then
         ;; After last loaded DLL
@@ -532,9 +539,13 @@
         (local.set $after_dll (i32.and
           (i32.add (i32.add (global.get $image_base) (global.get $exe_size_of_image)) (i32.const 0xFFF))
           (i32.const 0xFFFFF000)))))
-    ;; Return max(after_dll, page_aligned(heap_ptr)) to avoid overwriting heap
-    (if (result i32) (i32.gt_u (global.get $heap_ptr) (local.get $after_dll))
-      (then (i32.and (i32.add (global.get $heap_ptr) (i32.const 0xFFF)) (i32.const 0xFFFFF000)))
+    ;; Return max(after_dll, page_aligned(low-heap watermark)) to avoid
+    ;; overwriting the heap. The watermark is the top of every instance's
+    ;; reserved arena, which is what has to be cleared — one instance's
+    ;; $heap_ptr would say nothing about the others'.
+    (local.set $mark (call $heap_low_watermark))
+    (if (result i32) (i32.gt_u (local.get $mark) (local.get $after_dll))
+      (then (i32.and (i32.add (local.get $mark) (i32.const 0xFFF)) (i32.const 0xFFFFF000)))
       (else (local.get $after_dll))))
 
   (func (export "get_exe_size_of_image") (result i32) (global.get $exe_size_of_image))

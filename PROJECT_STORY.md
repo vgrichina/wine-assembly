@@ -1,6 +1,6 @@
 # Wine-Assembly — The Whole Story
 
-*A retrospective from the initial commit (2026-03-26) through 2026-08-12: 1,404 commits across 140 calendar days and 83 active commit days.*
+*A retrospective from the initial commit (2026-03-26) through 2026-08-19: 2,131 commits across 147 calendar days and 90 active commit days.*
 
 ---
 
@@ -8,13 +8,13 @@
 
 > Run real Windows 98 `.exe` files in the browser. No source, no recompilation, no porting layer. Just raw WebAssembly Text interpreting x86 machine code, with the Win32 API reimplemented inside the WASM module itself.
 
-This is the kind of project that "shouldn't" be a sprint at all. It started as a single WAT file. It is now about 80k lines of WAT plus 73k lines of browser, test, and tooling JavaScript. The 114-binary smoke matrix spans Win98/XP accessories, MFC applications, games, installers, screensavers, DirectDraw, Direct3D Immediate/Retained Mode, audio, RichEdit, and OLE.
+This is the kind of project that "shouldn't" be a sprint at all. It started as a single WAT file. It is now about 150k lines of WAT across 54 parts plus 122k lines of browser, test, and tooling JavaScript. The 114-binary smoke matrix spans Win98/XP accessories, MFC applications, games, installers, screensavers, DirectDraw, Direct3D Immediate/Retained Mode, audio, RichEdit, and OLE — and since Aug 15 it is no longer only a 32-bit story: 16-bit NE images load, link and run, so the original Windows Entertainment Pack plays in the browser next to its 32-bit remake.
 
-The history is also a record of AI-assisted systems work. The implementation is **coded directly in WAT**—there is no C/Rust-to-WASM emulator build—but it should not be described as solely "hand-written." Large parts of the reverse engineering, code, tests, and design were produced through sustained collaboration with Claude Code and Codex. This retrospective was refreshed from all three available records: Git, the repository's Claude session history/memories, and Codex rollout transcripts.
+The history is also a record of AI-assisted systems work. The implementation is **coded directly in WAT**—there is no C/Rust-to-WASM emulator build—but it should not be described as solely "hand-written." Large parts of the reverse engineering, code, tests, and design were produced through sustained collaboration with Claude Code and Codex. This retrospective was refreshed from all three available records: Git, the repository's Claude session history/memories, and Codex rollout transcripts. The final week is visibly a *multi-agent* record: up to six sessions worked the same tree at once, coordinating through an append-only `messageboard.txt` and building every commit in a throwaway `GIT_INDEX_FILE` so nobody swept up a neighbour's in-flight edits.
 
 ---
 
-## 1. The arc, in twelve acts
+## 1. The arc, in thirteen acts
 
 ```
 Act I     Mar 26-28   Decoder, lazy flags, FPU, SEH        →  Notepad runs
@@ -29,6 +29,8 @@ Act IX    May 07-29   Web/mobile shell, Winamp, RCT        →  Safari/PWA + ins
 Act X     Jun 01-18   AoE profiling, D3D3/D3D7 breadth    →  Broad 3D and app smoke coverage
 Act XI    Jul 06-30   Safari regressions, RichEdit start   →  WordPad becomes a real target
 Act XII   Aug 01-12   WordPad/OLE, Paint, accessories      →  Desktop workflows + software GDI
+Act XIII  Aug 13-19   Fonts, WinHelp, Win16, LAN, de-drift →  Canvas text deleted; NE runs; two
+                                                              emulators play each other
 ```
 
 ### Commit cadence
@@ -86,8 +88,17 @@ May        212 commits  MIDI, installer, mobile/PWA, Winamp, RCT/AoE
 June      118 commits  AoE performance work, D3D3/D3D7, broad smoke promotion
 July       19 commits  Safari fixes and native WordPad/RichEdit bring-up
 08-01..12 152 commits  WordPad/OLE, Paint, RegEdit, audio apps, Task Manager
+08-13      57 commits  GDI ownership lands in WAT; OLE clipboard; bitmap fonts
+08-14     154 commits  TrueType + WinHelp + virtual LAN, all three at once
+08-15      85 commits  WAT text path only; NE loader; help viewer runs
+08-16      94 commits  16-bit apps reach WinMain, then their message loops
+08-17      53 commits  DDEML, menu sweep across the corpus, threads probe
+08-18      76 commits  Architecture review, then de-drift: A/W merge, file splits
+08-19     113 commits  Win16 breadth, VB games, web desktop cleanup
 
-Peak day remains Apr 26 (56 commits); Aug 11 and Aug 12 each added 49.
+The peak day is now Aug 14 (154 commits), which displaced Apr 26 (56). The last
+seven days carried 632 commits — 30% of the project's entire history — with up
+to six agent sessions committing into one worktree at once.
 ```
 
 ---
@@ -637,6 +648,75 @@ feature-complete; the focused workflow suites are the stronger evidence.
 
 ---
 
+## Act XIII — "Everything the host still knew moves into WAT" (Aug 13–19)
+
+632 commits in seven days — 30% of the project's history — and the theme is a
+single one: every remaining place where JavaScript still *understood* something
+about Windows was closed, and the platform grew a second CPU mode underneath it.
+
+**GDI stops being a Canvas wrapper.** The staged software-GDI plan from Act XII
+was carried to its end. WAT took ownership of DC state, pixel formats, bitmaps,
+palettes, brushes, pattern sampling, DIB transfers, clipping, path state,
+metafile record and replay, printer pages, and monochrome/mask blits. The legacy
+JavaScript GDI state was deleted outright, and the browser and CLI both compose
+through one canonical surface contract rather than a 2D context. `lib/apps.js`
+and `lib/raster-canvas.js` mean the CLI has no native canvas dependency at all
+now: the same rasterizer produces the headless PNGs and the browser pixels.
+
+**Fonts became a subsystem, and Canvas text was deleted.** A design doc
+("scalable-font-design.md") preceded the code, which is the pattern that keeps
+working. WAT now parses TrueType — `glyf` outlines, composites, kerning, ABC
+widths, `TEXTMETRIC` derivation, CP1252 mapping — flattens contours, scan-converts
+glyphs, caches faces and strikes, and lays out runs. Bitmap `.FON` strikes were
+generated for the Win9x stock faces, vendored under open licences, and mounted by
+both hosts through one substitution manifest. Then `eff03cb` — *"Delete the
+JavaScript text path"* — removed the fallback. Text is now measured the way
+Windows 98 measured it, one advance at a time, against metrics captured from a
+real Win98 box.
+
+**WinHelp became a real viewer.** The `.hlp` format (B+trees, Hall phrase
+decompression, topic/context/keyword indexes, CNT hierarchies, fonts, bitmaps,
+hotspots, macros, secondary windows, tables) was implemented in WAT across four
+new parts, the semantic JavaScript runtime was removed, and the Windows 98 Help
+viewer itself runs. Every app now ships its help file to the browser.
+
+**The virtual LAN.** Winsock moved into WAT with a socket table and an in-process
+switch, and a `vln/1` frame wire joins two emulator processes — or two browser
+tabs — into one room. Liquid War completes a real connection driven from its own
+Net menu; two Hearts processes deal and play a full hand across the wire, which
+forced DDEML to become real (wildconnect, advise loops, pokes, executes, busy,
+timeouts). All routing lives in WAT; the transport carries opaque frames.
+
+**16-bit Windows.** The oldest entry on the "explicit limits" list fell. An NE
+loader links segments and fixups, ordinal imports resolve against a generated
+`win16-ordinals` table, 16-bit segment/addressing ops joined the decoder, tasks
+get DGROUP-relative local heaps with a free list, and a Win16 API layer
+(~9k lines, plus dialogs and DDEML) carries tasks into their own `WinMain`,
+message loops, menus, dialogs and resources. The original 16-bit Entertainment
+Pack now runs in the browser next to its 32-bit remake, and even the Visual Basic
+1.0 titles get as far as their own forms.
+
+**Then the tree got a review it could not argue with.** On Aug 18 four parallel
+deep reviews produced `fable-review.md`: the macro-architecture is sound; the
+problems are *drift*. Files whose names had stopped describing their contents
+(a 17k-line "helpers" file that was 74% GDI), parallel hand-copies that had
+silently diverged (A/W pairs, browser-vs-CLI host paths, ~24 copied PE parsers),
+and invariants kept in sync by discipline rather than by the build. The week
+closed by fixing all three classes: GDI, OLE, the window table, comctl32 and the
+Win16 layer moved into files named for them; every A/W pair became one body;
+`lib/pe.js` became the one PE reader; the browser launcher, app registry, input
+bridge and DLL walk left `index.html` for `lib/`; and the build gained gates for
+the manifest, the generated tables, handler counts, stdcall epilogues, and
+unresolved function names — the last of which had been silently building calls
+that did nothing.
+
+Around all of it: the corpus grew a screenshot-based sweep that pulls every lever
+on every app's menus, 145 tests that had been written but never wired up were put
+under a gate, and a perf HUD learned to separate *game* fps from *page* fps so
+"it feels laggy" became a measurable claim.
+
+---
+
 ## 2. Architecture today
 
 ```
@@ -694,22 +774,45 @@ src/
 ├─ 09a5-handlers-window.wat    │  (broken out by area)
 ├─ 09a6-handlers-crt.wat       │
 ├─ 09a7-handlers-dispatch.wat  │
+├─ 09a7b-ole.wat               │
+├─ 09a7c-mixer.wat             │
 ├─ 09a8-handlers-directx.wat   │
+├─ 09a9-comctl32.wat           │
 ├─ 09aa-handlers-d3dim.wat     │
 ├─ 09ab-handlers-d3dim-core.wat┘
 ├─ 09b-dispatch.wat            ┐
 ├─ 09b2-dispatch-table.generated.wat
-│                               │  dispatch + window mgr
+│                              │  dispatch + window mgr
 ├─ 09c-help.wat                │
+├─ 09c0-window-table.wat       │
 ├─ 09c2-treeview.wat           │
 ├─ 09c3-controls.wat           │
 ├─ 09c4-defwndproc.wat         │
 ├─ 09c5-menu.wat               ┘
-├─ 10-helpers.wat
+├─ 09c6-winhelp-core.wat       ┐
+├─ 09c7-winhelp-hlp.wat        │  WinHelp engine (Act XIII)
+├─ 09c8-winhelp-cnt.wat        │
+├─ 09c9-winhelp-ui.wat         ┘
+├─ 09d-winsock.wat             ─  virtual LAN
+├─ 09e-win16-api.wat           ┐
+├─ 09e2-win16-dialog.wat       │  Win16 personality
+├─ 09f-win16-ddeml.wat         ┘
+├─ 10-helpers.wat              ┐
+├─ 10a-gdi-bitmap.wat          │
+├─ 10b-gdi-font.wat            │
+├─ 10c-truetype.wat            │  GDI, now in files
+├─ 10d-gdi-region-path.wat     │  named for what it is
+├─ 10e-gdi-metafile.wat        │
+├─ 10f-gdi-dc.wat              │
+├─ 10g-gdi-raster.wat          ┘
 ├─ 11-seh.wat
 ├─ 12-wsprintf.wat
 └─ 13-exports.wat
 ```
+
+The 16-bit path enters at `08c-ne-loader.wat` with `05c-seg16-ops.wat` under it,
+and everything above the loader — windows, menus, dialogs, GDI — is shared with
+the 32-bit side.
 
 **Rendering/composition baseline (Apr 15 unification, still active):**
 ```
@@ -754,12 +857,16 @@ text backend, while per-window canvases remain the desktop composition target.
 | DirectDraw/D3D | Marbles, DX5 samples, Organic Art | Meaningful 2D/3D frames with real execute buffers, transforms, clipping, depth, and broad D3D3/D3D7 state |
 | Heavy demos | AoE, AoE2, Abe, MCM, MW3, RCT | Promoted startup/frame smokes; AoE also has a scripted route into the map. These are not claimed as complete games |
 | Web shell | Multi-app desktop/PWA | PE icons, touch/mobile keyboard, Safari compatibility build, cross-app focus/audio/window management, and active-window recording |
-| Explicit limits | 16-bit NE, VB6/DX9 targets, DirectAnimation, full IE/Winamp minibrowser | Unsupported or bounded honestly rather than hidden behind silent success |
+| 16-bit | Windows Entertainment Pack 1–4, Hearts, Chess, Klotski, Pipe Dream | NE images load/link/run with real menus, dialogs, resources and help; all 31 launch and most draw their game |
+| Help | Windows 98 Help viewer plus each app's own `.hlp` | WAT-native `.hlp`/`.cnt` parsing, topics, keyword index, hotspots, macros, secondary windows |
+| Networked | Liquid War, Hearts, TetriNET | Real connections over the virtual LAN — two emulator processes, or two browser tabs, playing each other |
+| Explicit limits | VB6/DX9 targets, DirectAnimation, full IE/Winamp minibrowser | Unsupported or bounded honestly rather than hidden behind silent success |
 
-The latest recorded full matrix is 81 PASS / 29 WARN / 4 expected SKIP / 0
-unexpected FAIL across 114 binaries. “PASS” there means the configured
-startup/frame gate; only focused tests justify the stronger workflow claims in
-the table.
+The latest recorded full matrix is 106 PASS / 0 FAIL across the corpus, and the
+four entries that used to be "expected 16-bit NE skips" now run. “PASS” there
+means the configured startup/frame gate; only focused tests justify the stronger
+workflow claims in the table. A separate menu sweep pulls every command on every
+app's menus and reports what each one actually did.
 
 ---
 
@@ -855,36 +962,41 @@ The `--trace-*` family in particular pays compounding interest. Every time someo
 ## 6. The numbers
 
 ```
-Lines of WAT            80,127     (32 files in src/)
-Lines of JS support     73,544     (lib/ + test/ + tools/)
-WASM builds             ~407 KB    (tail-call and compatibility variants)
-Commits                 1,404
-Calendar span           140 days   (Mar 26 through Aug 12, inclusive)
-Active commit days      83
-Avg / active day        ~16.9 commits
-Peak day                56 commits (Apr 26)
-Smoke matrix            114 binaries; 81 PASS / 29 WARN / 4 SKIP / 0 FAIL
-Per-app investigations  35 *.md files in apps/
-History sources         Git + Claude project history/memory + 47 repo-tagged
-                        Codex rollout transcripts
+Lines of WAT           149,989     (54 files in src/)
+Lines of JS support    122,630     (lib/ + test/ + tools/)
+WASM builds             ~765 KB    (tail-call and compatibility variants)
+Commits                 2,131
+Calendar span           147 days   (Mar 26 through Aug 19, inclusive)
+Active commit days      90
+Avg / active day        ~23.7 commits
+Peak day                154 commits (Aug 14)
+Last seven days         632 commits (30% of all history)
+Focused test files      365 in test/
+Smoke matrix            114 binaries; last full run 106 PASS / 0 FAIL, and the
+                        4 former 16-bit NE skips now run
+Per-app investigations  36 *.md files in apps/
+History sources         Git + Claude project history/memory (24 sessions since
+                        Aug 12 alone) + 72 repo-tagged Codex rollout transcripts
+                        + 1,549 messageboard entries
 ```
 
 ---
 
 ## 7. What's in flight right now
 
-1. **Deterministic software GDI** — canonical DIB surfaces, WAT-owned complex regions/DC clips, and the first exact line path exist. Next are wider/styled pens, shapes, source blits, window/DirectDraw surfaces, and removal of shadow synchronization. Canvas text remains intentional ([design](docs/software-gdi-design.md)).
-2. **OLE persistence and WordPad revalidation** — the in-memory storage/stream contract is broad and green. Finish deterministic compound-file serialization/reading, then re-run bounded fresh-process static-image save/delete/reopen pixels on the settled GDI path ([plan](docs/non-gdi-work-plan.md), [status](apps/wordpad.md)).
-3. **General RichEdit/OLE breadth** — linked/activated objects, non-DIB presentations, arbitrary compound documents, drag/drop, exact printer layout, complex scripts, and undocumented version quirks remain beyond the bounded everyday target ([design](docs/richedit-compat-design.md)).
-4. **Generic threaded/block compilation** — AoE profiling identified register/flag/EA reuse opportunities and an isolated proof of concept showed a modest browser win. The next step is a generic compiler design that stays web-buildable and does not bake in AoE algorithms ([performance notes](docs/aoe-performance-optimization.md), [stack-threaded design](docs/wasm-stack-threaded-code.md)).
-5. **Direct3D and heavy-app depth** — the broad frame-level surface is real, but D3DRM ProgressiveMesh/Viewer fidelity, deeper MCM/MW3/RCT gameplay, long AoE simulation/save/load, and complete NT Paint remain separate compatibility programs ([DirectX status](apps/directx.md)).
-6. **Explicit platform boundaries** — 16-bit NE, VB6 without its runtime, DX9, full DirectAnimation, and embedded browser engines are still unsupported. The project records these as limits rather than hiding them behind silent stubs.
+1. **Win16 breadth** — NE images load, link and run, and the 16-bit Entertainment Pack plays; the tail is per-app (Visual Basic 1.0 forms, DOS-era CRT assumptions, 16-bit GDI corner cases) rather than structural ([status](TODOS.md)).
+2. **Real threads in the browser** — a probe took the pipeline all the way from WAT to WASM workers to canvas, and answered the gating question: production is not cross-origin-isolated today but has a route there. Single-threaded stays a permanent supported mode ([design](docs/design-real-threads.md)).
+3. **Finishing the de-drift pass** — `fable-review.md` is largely worked off, and the remaining items are the ones that need design rather than a move: the residual "dispatch" bucket files, the hottest interpreter paths (per-block scan tax, generic re-dispatch of decode-time constants), and the browser drive loop's composite-per-step.
+4. **OLE persistence and WordPad revalidation** — the in-memory storage/stream contract is broad and green. Finish deterministic compound-file serialization/reading, then re-run bounded fresh-process static-image save/delete/reopen pixels on the settled GDI path ([plan](docs/non-gdi-work-plan.md), [status](apps/wordpad.md)).
+5. **Generic threaded/block compilation** — AoE profiling identified register/flag/EA reuse opportunities and an isolated proof of concept showed a modest browser win. The next step is a generic compiler design that stays web-buildable and does not bake in AoE algorithms ([performance notes](docs/aoe-performance-optimization.md), [stack-threaded design](docs/wasm-stack-threaded-code.md)).
+6. **Direct3D and heavy-app depth** — the broad frame-level surface is real, but D3DRM ProgressiveMesh/Viewer fidelity, deeper MCM/MW3/RCT gameplay, long AoE simulation/save/load, and complete NT Paint remain separate compatibility programs ([DirectX status](apps/directx.md)).
+7. **Explicit platform boundaries** — VB6 without its runtime, DX9, full DirectAnimation, and embedded browser engines are still unsupported. 16-bit NE left this list on Aug 15. The project records these as limits rather than hiding them behind silent stubs.
 
 ---
 
 ## 8. The narrative arc
 
-This is what 140 calendar days of disciplined “fail-fast, fix the real bug,
+This is what 147 calendar days of disciplined “fail-fast, fix the real bug,
 prove the bounded claim” looks like. Every act made the next one cheaper:
 
 - Act I built the foundation that made everything else *possible*.
@@ -899,17 +1011,26 @@ prove the bounded claim” looks like. Every act made the next one cheaper:
 - Act X widened both ends of the machine: workload-driven interpreter optimization below and D3D3/D3D7 plus many more applications above.
 - Act XI chose native RichEdit as the next compositional platform test and set an honest bounded target before implementing it.
 - Act XII made that target real, then used the same platform pieces to make Paint, RegEdit, Sound Recorder, Volume Control, and Task Manager behave as a connected Win98 desktop.
+- Act XIII finished the migration Act IV started. GDI, fonts, WinHelp and Winsock all moved into WAT, and the JavaScript text path was *deleted* rather than deprecated — the host now knows nothing about Windows except how to put pixels on a surface and bytes on a wire. Underneath, a second CPU mode appeared: 16-bit NE. And with the code doubled, the tree got a structural review and spent a day paying off the drift it found.
 
 The progression matters more than the raw commit count. Early sessions asked
-whether Notepad could decode. Current sessions argue about CFB directory trees,
-RichEdit object identity, cross-app mixer buses, exact ROP2 pixels, and whether
-a generic block compiler can preserve the project's browser-build constraint.
-Those are platform questions, not demo questions.
+whether Notepad could decode. Current sessions argue about `glyf` composite
+transforms, Hall phrase tables, whether a wrapped edit should reserve a
+scrollbar strip it never paints, and which of two agents owns `01-header.wat`
+this minute. Those are platform questions, not demo questions.
 
-The next inflection point is likely one of two architectural payoffs: a
-deterministic WAT-owned raster surface that removes Canvas/DIB ambiguity across
-many apps, or a generic compiled threaded/block path that buys enough CPU for
-heavy games and multimedia. In parallel, compound-storage persistence can turn
-the current static-image OLE slice into reusable document compatibility. The
-same tracing, focused tests, and session-to-session written state make each of
-those programs cumulative instead of starting over.
+Act XIII also changed *how* the work happens. Six sessions in one worktree, an
+append-only message board as the coordination primitive, throwaway git indexes
+so nobody commits a neighbour's half-finished hunk, and a review pass that four
+agents wrote in parallel and one day of work then consumed. The rules in
+`CLAUDE.md` stopped being style preferences and became the concurrency protocol.
+
+The next inflection point is likelier to be CPU than pixels now: the raster
+surface is WAT-owned and deterministic, so the open architectural payoff is a
+generic compiled threaded/block path that buys enough throughput for heavy games
+and multimedia — with real browser threads as the other half of that answer. In
+parallel, compound-storage persistence can turn the current static-image OLE
+slice into reusable document compatibility, and Win16 has a long, shallow tail
+that mostly needs apps run and bugs read. The same tracing, focused tests, and
+session-to-session written state make each of those programs cumulative instead
+of starting over.

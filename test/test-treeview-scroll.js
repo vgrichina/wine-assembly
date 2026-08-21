@@ -31,6 +31,7 @@ const TVN_ITEMEXPANDEDA = -406;
 const WM_VSCROLL = 0x0115;
 const WM_LBUTTONDOWN = 0x0201;
 const WM_LBUTTONUP = 0x0202;
+const WM_LBUTTONDBLCLK = 0x0203;
 const WM_MOUSEMOVE = 0x0200;
 const WM_MOUSEWHEEL = 0x020A;
 const SB_THUMBTRACK = 5;
@@ -237,6 +238,32 @@ async function main() {
       e.treeview_get_debug_expand_notify_action() === TVE_COLLAPSE &&
       (e.treeview_get_debug_expand_notify_item() >>> 0) === parent &&
       e.treeview_get_debug_expand_notify_children() === 1);
+
+  // RegEdit depends on standard TreeView mouse semantics: merely crossing a
+  // plus box must not expand it or move the caret. Expansion belongs to an
+  // explicit plus-box click or a row double-click.
+  const hoverChild = insertItem('Hover child', handles[0]);
+  e.send_message(tv, WM_VSCROLL, 6, 0); // SB_TOP: make Node 0 the top row
+  e.send_message(tv, TVM_EXPAND, TVE_COLLAPSE, handles[0]);
+  const hoverCollapsedCount = e.treeview_get_visible_count();
+  const caretBeforeHover = e.send_message(tv, TVM_GETNEXTITEM, TVGN_CARET, 0) >>> 0;
+  e.send_message(tv, WM_MOUSEMOVE, 0, makeLParam(8, 4));
+  check('plain hover over a plus box does not expand or select its item',
+    e.treeview_get_visible_count() === hoverCollapsedCount &&
+      (e.send_message(tv, TVM_GETNEXTITEM, TVGN_CARET, 0) >>> 0) === caretBeforeHover);
+
+  e.send_message(tv, TVM_EXPAND, TVE_COLLAPSE, handles[0]);
+  e.send_message(tv, WM_LBUTTONDOWN, 1, makeLParam(32, 4));
+  check('single click on row text selects without expanding',
+    (e.send_message(tv, TVM_GETNEXTITEM, TVGN_CARET, 0) >>> 0) === handles[0] &&
+      e.treeview_get_visible_count() === hoverCollapsedCount);
+  e.send_message(tv, WM_LBUTTONDOWN, 1, makeLParam(8, 4));
+  check('single click on the plus box expands the item',
+    e.treeview_get_visible_count() === hoverCollapsedCount + 1 && hoverChild !== 0);
+  e.send_message(tv, TVM_EXPAND, TVE_COLLAPSE, handles[0]);
+  e.send_message(tv, WM_LBUTTONDBLCLK, 1, makeLParam(32, 4));
+  check('double-click on row text expands the item',
+    e.treeview_get_visible_count() === hoverCollapsedCount + 1);
 
   if (e.wnd_destroy_tree) e.wnd_destroy_tree(tv - 1);
   check('slot count returns to baseline after destroy', e.wnd_count_used() === baselineSlots);

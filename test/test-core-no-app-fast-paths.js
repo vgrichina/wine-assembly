@@ -7,8 +7,16 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const exportsWat = fs.readFileSync(path.join(ROOT, 'src', '13-exports.wat'), 'utf8');
 const decoderWat = fs.readFileSync(path.join(ROOT, 'src', '07-decoder.wat'), 'utf8');
-const handlersWat = fs.readFileSync(path.join(ROOT, 'src', '09a-handlers.wat'), 'utf8');
-const gdiHandlersWat = fs.readFileSync(path.join(ROOT, 'src', '09a4-handlers-gdi.wat'), 'utf8');
+// "Which file is this handler in" is not what these assertions are about — they
+// are about the *WAT side* owning the geometry. Reading a fixed pair of files
+// made them fail the moment CreatePolygonRgn moved from 09a-handlers.wat to
+// 09a4-handlers-gdi.wat, which is a filing change, not a regression.
+const allHandlerWat = fs.readdirSync(path.join(ROOT, 'src'))
+  .filter(f => /^09a/.test(f) && f.endsWith('.wat'))
+  .map(f => fs.readFileSync(path.join(ROOT, 'src', f), 'utf8'))
+  .join('\n');
+const handlersWat = allHandlerWat;
+const gdiHandlersWat = allHandlerWat;
 const hostImports = fs.readFileSync(path.join(ROOT, 'lib', 'host-imports.js'), 'utf8');
 
 assert(!/\$?is_winamp\b|winamp_/i.test(exportsWat),
@@ -31,6 +39,14 @@ for (const eip of [
 for (const marker of ['0xDEC0DE19', '0xDEC0B10C', '0x01009604', '0x010095f0', '0x01009620']) {
   assert(!exportsWat.includes(marker), `exports should not contain stale app debug marker ${marker}`);
   assert(!decoderWat.includes(marker), `decoder should not contain stale app debug marker ${marker}`);
+}
+
+// $decode_block runs for every block of every app, so a guest function address
+// from one build of one game does not belong in it. The stack-packet prototype
+// is armed from JS with an address and a variant; the decoder reads globals.
+for (const eip of ['0x0049D9D1', '0x0049DD20']) {
+  assert(!decoderWat.includes(eip),
+    `decoder should not test literal guest EIP ${eip} — pass it in via set_stack_packet_enabled`);
 }
 
 assert(handlersWat.includes('(call $gdi_rgn_alloc_polygon'),

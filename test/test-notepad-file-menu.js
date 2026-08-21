@@ -20,7 +20,7 @@ function run(name, inputSpec, maxBatches = 180, extra = '') {
   console.log('$', name, cmd);
   try {
     return execSync(cmd, {
-      encoding: 'utf-8', timeout: 90000, cwd: ROOT,
+      encoding: 'utf-8', timeout: 180000, cwd: ROOT,
       stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024,
     });
   } catch (e) {

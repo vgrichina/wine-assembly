@@ -1,119 +1,144 @@
 #!/usr/bin/env node
+
+'use strict';
+
+// ScrollWindowEx's rect handling: the scroll rect bounds what moves, the clip
+// rect bounds what may be touched at all, and the strip the copy vacates is
+// repainted in the window background -- inside the clip only.
+//
+// This used to drive host.gdi_scroll_window, a JS import removed in 78d7289
+// when the GDI bridge was cut down to primitives; scrolling has rasterized
+// inside WAT since. Rewritten against $gdi_scroll_window, which is where the
+// rect arithmetic now lives. The plain "scroll the whole client" case is
+// covered by test-wat-gdi-window-surface; what is only here is the
+// scroll-rect/clip-rect intersection, and that chrome stays put.
+
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const { createCanvas } = require('../lib/canvas-compat');
 const { createHostImports } = require('../lib/host-imports');
-const { g2w } = require('../lib/mem-utils');
+const { Win98Renderer } = require('../lib/renderer');
+const { compileWat } = require('../lib/compile-wat');
 
-const IMAGE_BASE = 0x400000;
+const ROOT = path.join(__dirname, '..');
 const HWND = 0x10001;
+const WHITE = 0x00ffffff;
 
-function makeHarness(width, height, clientRect) {
-  const memory = new ArrayBuffer(1024 * 1024);
-  const canvas = createCanvas(width, height);
-  const c = canvas.getContext('2d');
-  let repaints = 0;
-  const win = {
-    hwnd: HWND,
-    x: 100,
-    y: 50,
-    w: width,
-    h: height,
-    isChild: false,
-    style: 0,
-    clientRect: {
-      x: 100 + (clientRect.x | 0),
-      y: 50 + (clientRect.y | 0),
-      w: clientRect.w | 0,
-      h: clientRect.h | 0,
-    },
+async function boot(width, height) {
+  const wasm = await compileWat(file =>
+    fs.promises.readFile(path.join(ROOT, 'src', file), 'utf8'));
+  const renderer = new Win98Renderer(createCanvas(640, 480));
+  const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
+  const ctx = { getMemory: () => memory.buffer, renderer, resourceJson: {}, exports: null };
+  const base = createHostImports(ctx);
+  base.host.memory = memory;
+  for (const name of ['create_thread', 'exit_thread', 'create_event', 'set_event',
+                      'reset_event', 'wait_single', 'wait_multiple']) {
+    base.host[name] = () => 0;
+  }
+  base.host.com_create_instance = () => 0x80004002;
+  const { instance } = await WebAssembly.instantiate(wasm, base);
+  ctx.exports = instance.exports;
+  const wat = instance.exports;
+  renderer.windows[HWND] = {
+    hwnd: HWND, x: 100, y: 50, w: width, h: height, zOrder: 1,
+    style: 0x10000000, visible: true, isChild: false,
+    clientRect: { x: 100, y: 50, w: width, h: height },
+    wasm: instance, wasmMemory: memory,
   };
-  const exports = {
-    get_image_base: () => IMAGE_BASE,
-    wnd_window_screen_x: () => 100,
-    wnd_window_screen_y: () => 50,
-    wnd_client_screen_x: () => win.clientRect.x,
-    wnd_client_screen_y: () => win.clientRect.y,
-  };
-  const renderer = {
-    windows: { [HWND]: win },
-    wasm: { exports },
-    getWindowCanvas: (hwnd) => hwnd === HWND ? { canvas, ctx: c } : null,
-    scheduleRepaint: () => { repaints++; },
-    _usesOwnWindowSurface: () => false,
-  };
-  const ctx = { getMemory: () => memory, renderer, exports };
-  const { host } = createHostImports(ctx);
-  return { memory, canvas, c, host, get repaints() { return repaints; } };
+  wat.wnd_table_set(HWND, 0);
+  wat.ctrl_set_geom(HWND, 100, 50, width, height);
+  wat.wnd_set_style_export(HWND, 0x10000000);
+  return { wat, renderer };
 }
 
-function putRect(memory, guestPtr, l, t, r, b) {
-  const dv = new DataView(memory);
-  const wa = g2w(guestPtr, IMAGE_BASE, memory);
-  dv.setInt32(wa, l, true);
-  dv.setInt32(wa + 4, t, true);
-  dv.setInt32(wa + 8, r, true);
-  dv.setInt32(wa + 12, b, true);
+// The RECT pair ScrollWindowEx takes, at WASM addresses -- $gdi_scroll_window
+// reads them directly rather than through g2w.
+function putRect(wat, guestPtr, l, t, r, b) {
+  wat.guest_write32(guestPtr, l);
+  wat.guest_write32(guestPtr + 4, t);
+  wat.guest_write32(guestPtr + 8, r);
+  wat.guest_write32(guestPtr + 12, b);
+  return guestPtr - wat.get_image_base() + 0x12000;
 }
 
-function fillPattern(c, w, h) {
+function paintPattern(wat, hdc, w, h) {
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      c.fillStyle = `rgb(${(x * 11) & 255},${(y * 23) & 255},${(x * 5 + y * 7) & 255})`;
-      c.fillRect(x, y, 1, 1);
+      // Distinct per pixel and never white, so "was cleared" and "was moved"
+      // can never be confused.
+      wat.test_call_SetPixel(hdc, x, y, ((x + 1) | ((y + 1) << 8) | (0x40 << 16)) >>> 0);
     }
   }
 }
 
-function rgbAt(c, x, y) {
-  const d = c.getImageData(x, y, 1, 1).data;
-  return [d[0], d[1], d[2]];
+let passed = 0;
+function check(label, fn) {
+  fn();
+  passed++;
+  console.log(`  ok  ${label}`);
 }
 
-function samePixel(a, b) {
-  return a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
-}
+async function main() {
+  {
+    const { wat } = await boot(18, 12);
+    // Client area inset from the window: 2,3 .. 14,9.
+    wat.test_gdi_client_rect_set(HWND, 2, 3, 14, 9);
+    const whole = wat.test_call_GetWindowDC(HWND) >>> 0;
+    const client = wat.test_call_GetDC(HWND) >>> 0;
+    assert(whole && client, 'both DCs must allocate');
+    paintPattern(wat, whole, 18, 12);
+    const chromeBefore = wat.test_call_GetPixel(whole, 1, 1) >>> 0;
+    const clientTopBefore = wat.test_call_GetPixel(client, 3, 0) >>> 0;
 
-function testClientDefaultDoesNotScrollChrome() {
-  const h = makeHarness(18, 12, { x: 2, y: 3, w: 12, h: 6 });
-  h.c.fillStyle = 'rgb(0,0,160)';
-  h.c.fillRect(0, 0, 18, 12);
-  for (let y = 3; y < 9; y++) {
-    for (let x = 2; x < 14; x++) {
-      h.c.fillStyle = `rgb(${40 + x},${60 + y},${100 + x + y})`;
-      h.c.fillRect(x, y, 1, 1);
-    }
-  }
-  const chromeBefore = rgbAt(h.c, 2, 2);
-  const oldClientTop = rgbAt(h.c, 5, 3);
-  h.host.gdi_scroll_window(HWND, 0, 1, 0, 0);
-  assert.deepStrictEqual(rgbAt(h.c, 2, 2), chromeBefore, 'default scroll must not touch non-client chrome');
-  assert.deepStrictEqual(rgbAt(h.c, 5, 3), [255, 255, 255], 'newly exposed client row is cleared');
-  assert.deepStrictEqual(rgbAt(h.c, 5, 4), oldClientTop, 'client content moved down by dy');
-  assert.strictEqual(h.repaints, 1, 'scroll schedules repaint');
-}
+    assert.strictEqual(wat.test_gdi_scroll_window(HWND, 0, 1, 0, 0), 1);
 
-function testScrollAndClipRectsIntersect() {
-  const h = makeHarness(20, 10, { x: 0, y: 0, w: 20, h: 10 });
-  fillPattern(h.c, 20, 10);
-  const before = new Map();
-  for (const [x, y] of [[3, 3], [4, 3], [7, 6], [10, 3]]) {
-    before.set(`${x},${y}`, rgbAt(h.c, x, y));
+    check('a default scroll leaves the non-client chrome alone', () => {
+      assert.strictEqual(wat.test_call_GetPixel(whole, 1, 1) >>> 0, chromeBefore);
+    });
+    check('client content moves by dy', () => {
+      assert.strictEqual(wat.test_call_GetPixel(client, 3, 1) >>> 0, clientTopBefore);
+    });
+    check('the row the scroll vacated is cleared', () => {
+      assert.strictEqual(wat.test_call_GetPixel(client, 3, 0) >>> 0, WHITE);
+    });
   }
 
-  const scrollRect = IMAGE_BASE + 0x2000;
-  const clipRect = IMAGE_BASE + 0x2020;
-  putRect(h.memory, scrollRect, 2, 2, 12, 7);
-  putRect(h.memory, clipRect, 4, 2, 10, 7);
-  h.host.gdi_scroll_window(HWND, 2, 0, scrollRect, clipRect);
+  {
+    const { wat } = await boot(20, 10);
+    wat.test_gdi_client_rect_set(HWND, 0, 0, 20, 10);
+    const client = wat.test_call_GetDC(HWND) >>> 0;
+    paintPattern(wat, client, 20, 10);
+    const before = (x, y) => wat.test_call_GetPixel(client, x, y) >>> 0;
+    const at33 = before(3, 3), at43 = before(4, 3), at76 = before(7, 6), at103 = before(10, 3);
 
-  assert(samePixel(rgbAt(h.c, 3, 3), before.get('3,3')), 'pixels left of clip stay unchanged');
-  assert.deepStrictEqual(rgbAt(h.c, 4, 3), [255, 255, 255], 'left exposed strip inside clip is cleared');
-  assert.deepStrictEqual(rgbAt(h.c, 6, 3), before.get('4,3'), 'scroll copies from clipped source rect');
-  assert.deepStrictEqual(rgbAt(h.c, 9, 6), before.get('7,6'), 'bottom-right clipped copy is preserved');
-  assert(samePixel(rgbAt(h.c, 10, 3), before.get('10,3')), 'pixels right of clip stay unchanged');
-  assert.strictEqual(h.repaints, 1, 'rect-limited scroll schedules repaint');
+    const scratch = wat.guest_alloc(64) >>> 0;
+    const scrollRect = putRect(wat, scratch, 2, 2, 12, 7);
+    const clipRect = putRect(wat, scratch + 16, 4, 2, 10, 7);
+    assert.strictEqual(wat.test_gdi_scroll_window(HWND, 2, 0, scrollRect, clipRect), 1);
+
+    check('pixels left of the clip rect are untouched', () => {
+      assert.strictEqual(before(3, 3), at33);
+    });
+    check('the exposed strip is cleared only inside the clip', () => {
+      assert.strictEqual(before(4, 3), WHITE);
+    });
+    check('the copy source is the clipped rect, not the scroll rect', () => {
+      assert.strictEqual(before(6, 3), at43);
+    });
+    check('the clipped copy keeps its bottom-right corner', () => {
+      assert.strictEqual(before(9, 6), at76);
+    });
+    check('pixels right of the clip rect are untouched', () => {
+      assert.strictEqual(before(10, 3), at103);
+    });
+  }
+
+  console.log(`PASS test-gdi-scroll-window-rect (${passed} checks)`);
 }
 
-testClientDefaultDoesNotScrollChrome();
-testScrollAndClipRectsIntersect();
-console.log('PASS test-gdi-scroll-window-rect');
+main().catch(error => {
+  console.error(error);
+  process.exit(1);
+});

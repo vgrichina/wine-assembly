@@ -84,6 +84,7 @@ subset() {
     --no-hinting \
     --notdef-outline \
     --layout-features='' \
+    --legacy-kern \
     --drop-tables+=EBDT,EBLC,BDF,VDMX,FFTM,GDEF,GPOS,GSUB \
     --name-IDs='*' \
     --recalc-bounds \

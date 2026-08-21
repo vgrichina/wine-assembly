@@ -33,17 +33,21 @@
   ;; primary wrappers so $dx_from_this works for aux guest ptrs too. Dedup'd
   ;; by (slot, vtbl) via linear scan.
   (global $COM_WRAPPERS_AUX  i32 (i32.const 0x07FFA000))
-  (global $COM_WRAPPERS_AUX_SIZE i32 (i32.const 0x00004000))
-  (global $COM_WRAPPERS_AUX_MAX i32 (i32.const 2048))
-  (global $com_aux_next (mut i32) (i32.const 0))
+  (global $COM_WRAPPERS_AUX_SIZE i32 (i32.const 0x00003F00))
+  (global $COM_WRAPPERS_AUX_MAX i32 (i32.const 2016))
+  ;; The aux-wrapper cursor lives at $COM_AUX_NEXT_SHARED, not in a global: a
+  ;; mutable global is per-instance, and every guest thread is its own instance
+  ;; over this one memory, so two threads would hand out the same aux slot. Same
+  ;; shape of bug $heap_ptr had (docs/design-real-threads.md §3.1a). Read and
+  ;; written only under $LOCK_DX.
 
   ;; Shared registry for COM vtable guest addresses. The vtable globals below
   ;; are per-WASM-instance, while threads use separate instances over one
   ;; shared memory. The main instance records the addresses produced by
   ;; $init_dx_com_thunks here; a worker restores its local globals before its
-  ;; first Win32/COM dispatch. 0x07FFE000..0x08000000 is the reserved high-memory
-  ;; gap immediately after COM_WRAPPERS_AUX.
-  (global $DX_VTBL_REGISTRY i32 (i32.const 0x07FFE000))
+  ;; guest code begins. Reserve the final 256 bytes of the auxiliary-wrapper
+  ;; region rather than overlapping VSOCK_TABLE at 0x07FFE000.
+  (global $DX_VTBL_REGISTRY i32 (i32.const 0x07FFDF00))
   (global $DX_VTBL_REGISTRY_COUNT i32 (i32.const 54))
 
   ;; Vtable blocks — arrays of thunk guest-addrs, one per interface type.
@@ -266,7 +270,19 @@
 
   ;; ── Helper: allocate a DX object ─────────────────────────────
   ;; Returns WASM addr of entry, or 0 if full
+  ;; Serialised: the scan below finds a free slot and only then claims it, so two
+  ;; threads creating COM objects at the same instant would both take the same
+  ;; one and the second would silently inherit the first's object. The critical
+  ;; section is pure table arithmetic with no host import in it, which is what
+  ;; makes a spinlock safe here — see the rules on $lock_acquire.
   (func $dx_alloc (param $type i32) (result i32)
+    (local $r i32)
+    (call $lock_acquire (global.get $LOCK_DX))
+    (local.set $r (call $dx_alloc_locked (local.get $type)))
+    (call $lock_release (global.get $LOCK_DX))
+    (local.get $r))
+
+  (func $dx_alloc_locked (param $type i32) (result i32)
     (local $i i32) (local $ptr i32) (local $wrapper_wa i32)
     (local.set $i (i32.const 0))
     (block $done (loop $scan
@@ -326,6 +342,17 @@
   ;; Never mutates the primary wrapper's vtbl (callers may hold cached copies
   ;; of the primary wrapper pointer and expect its vtbl to be stable).
   (func $dx_get_wrapper_for_vtbl (param $slot i32) (param $vtbl_guest i32) (result i32)
+    (local $r i32)
+    (call $lock_acquire (global.get $LOCK_DX))
+    (local.set $r (call $dx_get_wrapper_for_vtbl_locked
+      (local.get $slot) (local.get $vtbl_guest)))
+    (call $lock_release (global.get $LOCK_DX))
+    (local.get $r))
+
+  ;; Scan-then-append over the aux pool: held under $LOCK_DX so two threads
+  ;; querying the same interface get one shared wrapper instead of two racing
+  ;; appends into the same slot.
+  (func $dx_get_wrapper_for_vtbl_locked (param $slot i32) (param $vtbl_guest i32) (result i32)
     (local $primary_wa i32) (local $aux_wa i32) (local $i i32) (local $n i32)
     (local.set $primary_wa (i32.add (global.get $COM_WRAPPERS)
       (i32.mul (local.get $slot) (i32.const 8))))
@@ -334,7 +361,7 @@
       (return (i32.add (i32.sub (local.get $primary_wa) (global.get $GUEST_BASE))
                        (global.get $image_base)))))
     ;; Scan aux pool for (vtbl, slot) match.
-    (local.set $n (global.get $com_aux_next))
+    (local.set $n (i32.load (global.get $COM_AUX_NEXT_SHARED)))
     (local.set $i (i32.const 0))
     (block $done (loop $lp
       (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
@@ -357,7 +384,7 @@
       (i32.mul (local.get $n) (i32.const 8))))
     (i32.store (local.get $aux_wa) (local.get $vtbl_guest))
     (i32.store (i32.add (local.get $aux_wa) (i32.const 4)) (local.get $slot))
-    (global.set $com_aux_next (i32.add (local.get $n) (i32.const 1)))
+    (i32.store (global.get $COM_AUX_NEXT_SHARED) (i32.add (local.get $n) (i32.const 1)))
     (i32.add (i32.sub (local.get $aux_wa) (global.get $GUEST_BASE))
              (global.get $image_base)))
 
@@ -2485,10 +2512,31 @@
 
   ;; ── Present helper: blit DIB to screen via SetDIBitsToDevice ─
   ;; Constructs a BITMAPINFOHEADER on the stack and calls the existing host import
+
+  ;; True when this top-level window is shared between DirectDraw and ordinary
+  ;; GDI: it already owns a WAT window surface and has at least one visible
+  ;; child. Both surfaces would attach to the same hwnd, and the host keeps
+  ;; only the most recent attach, so presenting straight from the DirectDraw
+  ;; surface would drop either the frame or the controls.
+  (func $dx_window_surface_shared (param $hwnd i32) (result i32)
+    (local $slot i32)
+    (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
+    (if (i32.eqz (call $gdi_window_surface_record (local.get $hwnd) (i32.const 0)))
+      (then (return (i32.const 0))))
+    (local.set $slot (i32.const 0))
+    (block $done (loop $scan
+      (local.set $slot (call $wnd_next_child_slot (local.get $hwnd) (local.get $slot)))
+      (br_if $done (i32.lt_s (local.get $slot) (i32.const 0)))
+      (if (call $wnd_is_effectively_visible (call $wnd_slot_hwnd (local.get $slot)))
+        (then (return (i32.const 1))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
   (func $dx_present (param $entry_wa i32)
     (local $w i32) (local $h i32) (local $bpp i32) (local $pitch i32)
     (local $dib_wa i32) (local $bmi_wa i32) (local $i i32) (local $val i32)
-    (local $surface_id i32) (local $target_hwnd i32)
+    (local $surface_id i32) (local $target_hwnd i32) (local $shared i32)
     (local.set $w (i32.load16_u (i32.add (local.get $entry_wa) (i32.const 12))))
     (local.set $h (i32.load16_u (i32.add (local.get $entry_wa) (i32.const 14))))
     (local.set $bpp (i32.load16_u (i32.add (local.get $entry_wa) (i32.const 16))))
@@ -2503,13 +2551,26 @@
     (local.set $surface_id
       (i32.add (i32.const 0x00200000) (call $dx_slot_of (local.get $entry_wa))))
     (local.set $target_hwnd (call $dx_target_hwnd))
-    (if (call $gdi_dx_dc_bind (local.get $surface_id))
+    ;; ...but only while DirectDraw is the sole owner of the window. A window
+    ;; that also has ordinary GDI children has a WAT window surface, and both
+    ;; surfaces attach to the same hwnd, so whichever attaches last becomes
+    ;; the composited one and the other's pixels vanish. Age of Empires' name
+    ;; screen puts an EDIT child over a presented frame: the child's first
+    ;; paint created the window surface, that surface won the attach, and the
+    ;; screen went black for the rest of the session. Present through the
+    ;; window surface in that case -- one surface holding frame and controls
+    ;; together is what the real screen is -- and mark the children so they
+    ;; land back on top of each new frame.
+    (local.set $shared (call $dx_window_surface_shared (local.get $target_hwnd)))
+    (if (i32.eqz (local.get $shared))
       (then
-        (if (call $host_gdi_surface_attach (local.get $surface_id) (local.get $target_hwnd))
+        (if (call $gdi_dx_dc_bind (local.get $surface_id))
           (then
-            (drop (call $host_gdi_surface_upload (local.get $surface_id)
-              (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)))
-            (return)))))
+            (if (call $host_gdi_surface_attach (local.get $surface_id) (local.get $target_hwnd))
+              (then
+                (drop (call $host_gdi_surface_upload (local.get $surface_id)
+                  (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)))
+                (return)))))))
     ;; Build BITMAPINFO in a private DirectDraw scratch area. PAINT_SCRATCH
     ;; at 0xAD40 is reused by window/control paint paths during presentation.
     (local.set $bmi_wa (i32.const 0x00011140))
@@ -2554,7 +2615,20 @@
       (local.get $dib_wa) ;; bits WASM addr
       (local.get $bmi_wa) ;; bmi WASM addr
       (i32.const 0)) ;; colorUse = DIB_RGB_COLORS
-    (drop))
+    (drop)
+    ;; The frame just overwrote the whole window surface, controls included.
+    ;; Repaint the children -- and only the children: the top-level's own
+    ;; WM_PAINT is what renders the next frame, so marking it here would spin
+    ;; the app's render loop as fast as it can present.
+    (if (local.get $shared)
+      (then
+        (local.set $i (i32.const 0))
+        (block $cdone (loop $cscan
+          (local.set $i (call $wnd_next_child_slot (local.get $target_hwnd) (local.get $i)))
+          (br_if $cdone (i32.lt_s (local.get $i) (i32.const 0)))
+          (call $paint_mark_visible_tree (call $wnd_slot_hwnd (local.get $i)))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $cscan))))))
 
   ;; ════════════════════════════════════════════════════════════
   ;; IDirectDrawPalette methods

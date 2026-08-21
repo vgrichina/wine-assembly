@@ -1,25 +1,37 @@
   ;; ============================================================
   ;; REGISTER ACCESS
   ;; ============================================================
+  ;; br_table, not a chain of seven compares. These two are called several times
+  ;; per memory-form instruction — a single `cmp [ebp+8], esi` used to walk this
+  ;; chain three times — so the average three data-dependent branches per call
+  ;; were a real share of the interpreter's work. A br_table is one indexed
+  ;; jump. The default arm covers r=7 and anything out of range, exactly as the
+  ;; fall-through did.
   (func $get_reg (param $r i32) (result i32)
-    (if (i32.eq (local.get $r) (i32.const 0)) (then (return (global.get $eax))))
-    (if (i32.eq (local.get $r) (i32.const 1)) (then (return (global.get $ecx))))
-    (if (i32.eq (local.get $r) (i32.const 2)) (then (return (global.get $edx))))
-    (if (i32.eq (local.get $r) (i32.const 3)) (then (return (global.get $ebx))))
-    (if (i32.eq (local.get $r) (i32.const 4)) (then (return (global.get $esp))))
-    (if (i32.eq (local.get $r) (i32.const 5)) (then (return (global.get $ebp))))
-    (if (i32.eq (local.get $r) (i32.const 6)) (then (return (global.get $esi))))
+    (block $edi (block $esi (block $ebp (block $esp
+      (block $ebx (block $edx (block $ecx (block $eax
+        (br_table $eax $ecx $edx $ebx $esp $ebp $esi $edi (local.get $r)))
+        (return (global.get $eax)))
+        (return (global.get $ecx)))
+        (return (global.get $edx)))
+        (return (global.get $ebx)))
+        (return (global.get $esp)))
+        (return (global.get $ebp)))
+        (return (global.get $esi)))
     (global.get $edi)
   )
 
   (func $set_reg (param $r i32) (param $v i32)
-    (if (i32.eq (local.get $r) (i32.const 0)) (then (global.set $eax (local.get $v)) (return)))
-    (if (i32.eq (local.get $r) (i32.const 1)) (then (global.set $ecx (local.get $v)) (return)))
-    (if (i32.eq (local.get $r) (i32.const 2)) (then (global.set $edx (local.get $v)) (return)))
-    (if (i32.eq (local.get $r) (i32.const 3)) (then (global.set $ebx (local.get $v)) (return)))
-    (if (i32.eq (local.get $r) (i32.const 4)) (then (global.set $esp (local.get $v)) (return)))
-    (if (i32.eq (local.get $r) (i32.const 5)) (then (global.set $ebp (local.get $v)) (return)))
-    (if (i32.eq (local.get $r) (i32.const 6)) (then (global.set $esi (local.get $v)) (return)))
+    (block $edi (block $esi (block $ebp (block $esp
+      (block $ebx (block $edx (block $ecx (block $eax
+        (br_table $eax $ecx $edx $ebx $esp $ebp $esi $edi (local.get $r)))
+        (global.set $eax (local.get $v)) (return))
+        (global.set $ecx (local.get $v)) (return))
+        (global.set $edx (local.get $v)) (return))
+        (global.set $ebx (local.get $v)) (return))
+        (global.set $esp (local.get $v)) (return))
+        (global.set $ebp (local.get $v)) (return))
+        (global.set $esi (local.get $v)) (return))
     (global.set $edi (local.get $v))
   )
 
@@ -81,13 +93,18 @@
     ;; Sparse VirtualAlloc mappings live outside the direct image-relative
     ;; window. Scan only after direct translation failed, keeping normal guest
     ;; memory accesses on the cheap arithmetic path.
-    (local.set $count (i32.load (global.get $VIRTUAL_MAP_STATE)))
+    ;; The count and each record's size are the two fields $virtual_map_commit
+    ;; publishes LAST, after the memory they describe is mapped and zeroed. Read
+    ;; them atomically so this scan cannot be reordered ahead of the record it is
+    ;; about to trust. Everything else here is read-only, so no lock: the writer
+    ;; holds $LOCK_VIRTUAL_MAP, the readers never do — see $virtual_map_commit.
+    (local.set $count (i32.atomic.load (global.get $VIRTUAL_MAP_STATE)))
     (local.set $i (i32.const 0))
     (block $mapped_done (loop $mapped_scan
       (br_if $mapped_done (i32.ge_u (local.get $i) (local.get $count)))
       (local.set $rec (i32.add (global.get $VIRTUAL_MAP_TABLE) (i32.shl (local.get $i) (i32.const 4))))
       (local.set $base (i32.load (local.get $rec)))
-      (local.set $size (i32.load (i32.add (local.get $rec) (i32.const 4))))
+      (local.set $size (i32.atomic.load (i32.add (local.get $rec) (i32.const 4))))
       (if (i32.and
             (i32.ge_u (local.get $ga) (local.get $base))
             (i32.lt_u (local.get $ga) (i32.add (local.get $base) (local.get $size))))
@@ -113,8 +130,42 @@
         (i32.add
           (i32.sub (local.get $wa) (global.get $GUEST_BASE))
           (global.get $image_base)))))
-  (func $gl32 (param $ga i32) (result i32) (i32.load (call $g2w (local.get $ga))))
-  (func $gl16 (param $ga i32) (result i32) (i32.load16_u (call $g2w (local.get $ga))))
+  ;; Sparse VirtualAlloc ranges are guest-contiguous, but adjacent guest pages
+  ;; need not have adjacent WASM backing (commits can be interleaved). Keep the
+  ;; normal aligned/page-local path to one translation; only gather/scatter the
+  ;; few x86 word/dword accesses that actually cross a non-contiguous boundary.
+  (func $gl32 (param $ga i32) (result i32)
+    (local $wa i32) (local $end_wa i32)
+    (local.set $wa (call $g2w (local.get $ga)))
+    (if (i32.le_u (i32.and (local.get $ga) (i32.const 0xFFF)) (i32.const 0xFFC))
+      (then (return (i32.load (local.get $wa)))))
+    (local.set $end_wa (call $g2w (i32.add (local.get $ga) (i32.const 3))))
+    (if (i32.eq (local.get $end_wa) (i32.add (local.get $wa) (i32.const 3)))
+      (then (return (i32.load (local.get $wa)))))
+    (i32.or
+      (i32.or
+        (i32.load8_u (call $g2w (local.get $ga)))
+        (i32.shl
+          (i32.load8_u (call $g2w (i32.add (local.get $ga) (i32.const 1))))
+          (i32.const 8)))
+      (i32.or
+        (i32.shl
+          (i32.load8_u (call $g2w (i32.add (local.get $ga) (i32.const 2))))
+          (i32.const 16))
+        (i32.shl
+          (i32.load8_u (local.get $end_wa))
+          (i32.const 24)))))
+  (func $gl16 (param $ga i32) (result i32)
+    (local $wa i32) (local $end_wa i32)
+    (local.set $wa (call $g2w (local.get $ga)))
+    (if (i32.ne (i32.and (local.get $ga) (i32.const 0xFFF)) (i32.const 0xFFF))
+      (then (return (i32.load16_u (local.get $wa)))))
+    (local.set $end_wa (call $g2w (i32.add (local.get $ga) (i32.const 1))))
+    (if (i32.eq (local.get $end_wa) (i32.add (local.get $wa) (i32.const 1)))
+      (then (return (i32.load16_u (local.get $wa)))))
+    (i32.or
+      (i32.load8_u (local.get $wa))
+      (i32.shl (i32.load8_u (local.get $end_wa)) (i32.const 8))))
   (func $gl8 (param $ga i32) (result i32) (i32.load8_u (call $g2w (local.get $ga))))
   (func $invalidate_code_write (param $ga i32)
     (local $in_code i32) (local $in_generated i32)
@@ -135,15 +186,35 @@
     (if (i32.or (local.get $in_code) (local.get $in_generated))
       (then (call $invalidate_page (local.get $ga)))))
   (func $gs32 (param $ga i32) (param $v i32)
-    (local $wa i32)
+    (local $wa i32) (local $end_wa i32)
     (local.set $wa (call $g2w (local.get $ga)))
     (call $invalidate_code_write (local.get $ga))
-    (i32.store (local.get $wa) (local.get $v)))
+    (if (i32.le_u (i32.and (local.get $ga) (i32.const 0xFFF)) (i32.const 0xFFC))
+      (then (i32.store (local.get $wa) (local.get $v)) (return)))
+    (local.set $end_wa (call $g2w (i32.add (local.get $ga) (i32.const 3))))
+    (if (i32.eq (local.get $end_wa) (i32.add (local.get $wa) (i32.const 3)))
+      (then (i32.store (local.get $wa) (local.get $v)) (return)))
+    (call $invalidate_code_write (i32.add (local.get $ga) (i32.const 3)))
+    (i32.store8 (local.get $wa) (local.get $v))
+    (i32.store8
+      (call $g2w (i32.add (local.get $ga) (i32.const 1)))
+      (i32.shr_u (local.get $v) (i32.const 8)))
+    (i32.store8
+      (call $g2w (i32.add (local.get $ga) (i32.const 2)))
+      (i32.shr_u (local.get $v) (i32.const 16)))
+    (i32.store8 (local.get $end_wa) (i32.shr_u (local.get $v) (i32.const 24))))
   (func $gs16 (param $ga i32) (param $v i32)
-    (local $wa i32)
+    (local $wa i32) (local $end_wa i32)
     (local.set $wa (call $g2w (local.get $ga)))
     (call $invalidate_code_write (local.get $ga))
-    (i32.store16 (local.get $wa) (local.get $v)))
+    (if (i32.ne (i32.and (local.get $ga) (i32.const 0xFFF)) (i32.const 0xFFF))
+      (then (i32.store16 (local.get $wa) (local.get $v)) (return)))
+    (local.set $end_wa (call $g2w (i32.add (local.get $ga) (i32.const 1))))
+    (if (i32.eq (local.get $end_wa) (i32.add (local.get $wa) (i32.const 1)))
+      (then (i32.store16 (local.get $wa) (local.get $v)) (return)))
+    (call $invalidate_code_write (i32.add (local.get $ga) (i32.const 1)))
+    (i32.store8 (local.get $wa) (local.get $v))
+    (i32.store8 (local.get $end_wa) (i32.shr_u (local.get $v) (i32.const 8))))
   (func $gs8 (param $ga i32) (param $v i32)
     (local $wa i32)
     (local.set $wa (call $g2w (local.get $ga)))

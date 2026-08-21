@@ -144,6 +144,67 @@ on cell height. Courier New at request 20 reports cell 20 with average advance
 11: cell height is a step function of ppem, and a positive request resolves to
 the bottom of the run of ppem values sharing that cell rather than the top.
 
+### Side-by-side font rendering evaluation
+
+`font-render-matrix` draws the same six-character sample in Arial, Times New
+Roman, Courier New, and MS Sans Serif at 12, 18, 26, and 36 pixels. The
+borderless 640x480 probe also draws GDI-reported metric boxes and baselines at
+fixed screen coordinates. Capture it in Win98 first, then run the exact
+generated executable in wine-assembly:
+
+```sh
+node tools/v86-reference/capture.js --online \
+  --manifest tools/v86-reference/font-apps.json \
+  --app font-render-matrix \
+  --output /tmp/font-render-v86.png \
+  --metadata /tmp/font-render-v86.json
+
+bash tools/build.sh
+node test/run.js \
+  --exe=.cache/v86-reference/font-render-matrix.exe \
+  --no-build --max-batches=120 \
+  --png=/tmp/font-render-wine-assembly.png
+
+node tools/font-render-compare.js \
+  /tmp/font-render-wine-assembly.png \
+  /tmp/font-render-v86.png \
+  test/output/font-render-comparison
+```
+
+Open `test/output/font-render-comparison/index.html` for the two captures, a
+thresholded ink overlay, whole-image error measurements, and per-face/per-size
+ink overlap. The overlay uses black for shared ink, magenta for wine-assembly
+only, and cyan for native Win98 only. Generated captures and reports remain
+ignored; the probe, manifest, and comparison tool are the reproducible source.
+
+For the full font-by-renderer experiment, `font-render-substitutes` installs
+the exact deployed Liberation subsets inside Win98 before drawing. This
+separates substitution error from rasterizer error: both systems consume the
+same unhinted open font bytes. A user may also copy the native font files out
+of their own Win98 image over COM1 for the opposite half of the experiment:
+
+```sh
+node tools/v86-reference/capture.js --online \
+  --manifest tools/v86-reference/font-apps.json \
+  --app font-file-dump \
+  --serial-output /tmp/font-file-dump.serial
+
+node tools/v86-reference/extract-font-dump.js \
+  /tmp/font-file-dump.serial \
+  .cache/v86-reference/native-fonts
+
+node test/run.js \
+  --exe=.cache/v86-reference/font-render-matrix.exe \
+  --args=NATIVE --vfs-include='native-fonts/*' --no-build \
+  --max-batches=120 --png=/tmp/font-native-ours.png
+```
+
+The extraction parser validates the TrueType/NE signatures, records local
+hashes, and refuses unexpected filenames. `.cache/v86-reference/` is ignored;
+Microsoft font binaries and native-font captures must not be committed. Run
+`font-render-2x2.js` after producing native/substitute captures in both
+renderers to generate the four-quadrant HTML report.
+
 ## Profile exclusions
 
 `apps.json` marks profile-specific exclusions with `skip`. The official Win98

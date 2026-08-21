@@ -79,9 +79,12 @@
   )
 
   ;; 783: SHGetFileInfoA(pszPath, dwFileAttributes, psfi, cbFileInfo, uFlags) — 5 args stdcall
-  ;; Return 0 (failure) — no shell file info available
+  ;; This returned 0 — "the shell knows nothing about that file" — while the W
+  ;; spelling filled in szDisplayName, so an ANSI app that titles its window
+  ;; with the display name got an empty caption. Same core, ANSI struct.
   (func $handle_SHGetFileInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $sh_file_info_display_name
+      (local.get $arg0) (local.get $arg2) (local.get $arg3) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
@@ -1010,6 +1013,122 @@
                   (i32.eq (i32.load offset=12 (local.get $wa0))
                           (i32.load offset=12 (local.get $wa1))))))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; Register one CRT termination callback. Returns 0 on success and -1 for a
+  ;; NULL callback or allocation failure, matching the Microsoft CRT contract.
+  (func $crt_atexit_register (param $fn i32) (result i32)
+    (local $new_capacity i32) (local $new_table i32)
+    (if (i32.eqz (local.get $fn))
+      (then (return (i32.const -1))))
+    (if (i32.eqz (global.get $atexit_table))
+      (then
+        (global.set $atexit_capacity (i32.const 32))
+        (global.set $atexit_table (call $heap_alloc (i32.const 128)))
+        (if (i32.eqz (global.get $atexit_table))
+          (then
+            (global.set $atexit_capacity (i32.const 0))
+            (return (i32.const -1))))))
+    (if (i32.ge_u (global.get $atexit_count) (global.get $atexit_capacity))
+      (then
+        (local.set $new_capacity
+          (i32.shl (global.get $atexit_capacity) (i32.const 1)))
+        ;; Keep size arithmetic bounded even for a hostile registration loop.
+        (if (i32.gt_u (local.get $new_capacity) (i32.const 0x10000000))
+          (then (return (i32.const -1))))
+        (local.set $new_table
+          (call $heap_alloc (i32.shl (local.get $new_capacity) (i32.const 2))))
+        (if (i32.eqz (local.get $new_table))
+          (then (return (i32.const -1))))
+        (call $memcpy
+          (call $g2w (local.get $new_table))
+          (call $g2w (global.get $atexit_table))
+          (i32.shl (global.get $atexit_count) (i32.const 2)))
+        (call $heap_free (global.get $atexit_table))
+        (global.set $atexit_table (local.get $new_table))
+        (global.set $atexit_capacity (local.get $new_capacity))))
+    (call $gs32
+      (i32.add (global.get $atexit_table)
+        (i32.shl (global.get $atexit_count) (i32.const 2)))
+      (local.get $fn))
+    (global.set $atexit_count
+      (i32.add (global.get $atexit_count) (i32.const 1)))
+    (i32.const 0)
+  )
+
+  ;; Continue a normal exit() sequence. Callbacks are cdecl void(void), so the
+  ;; only stack word pushed here is their continuation return address.
+  (func $crt_atexit_run_next
+    (local $fn i32)
+    (block $done (loop $scan
+      (if (i32.eqz (global.get $atexit_count))
+        (then (br $done)))
+      (global.set $atexit_count
+        (i32.sub (global.get $atexit_count) (i32.const 1)))
+      (local.set $fn
+        (call $gl32
+          (i32.add (global.get $atexit_table)
+            (i32.shl (global.get $atexit_count) (i32.const 2)))))
+      ;; Be defensive about a corrupt/cleared slot while still draining the
+      ;; rest of the registry.
+      (if (i32.eqz (local.get $fn))
+        (then (br $scan)))
+      (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+      (call $gs32 (global.get $esp) (global.get $atexit_ret_thunk))
+      (global.set $eip (local.get $fn))
+      (global.set $steps (i32.const 0))
+      (return)))
+    (call $host_exit (global.get $atexit_exit_code))
+    (global.set $eip (i32.const 0))
+    (global.set $yield_flag (i32.const 1))
+    (global.set $yield_reason (i32.const 2))
+    (global.set $steps (i32.const 0))
+  )
+
+  ;; atexit(fn) — cdecl, so the caller retains the argument word.
+  (func $handle_atexit (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $crt_atexit_register (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  ;; strstr(haystack, needle) — cdecl. Return the guest pointer to the first
+  ;; exact byte substring, haystack for an empty needle, or NULL if absent.
+  (func $handle_strstr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $hay_base i32) (local $hay i32) (local $needle i32)
+    (local $h i32) (local $n i32)
+    (global.set $eax (i32.const 0))
+    (block $done
+      (if (i32.and (i32.ne (local.get $arg0) (i32.const 0))
+                    (i32.ne (local.get $arg1) (i32.const 0)))
+        (then
+        (local.set $hay_base (call $g2w (local.get $arg0)))
+        (local.set $hay (local.get $hay_base))
+        (local.set $needle (call $g2w (local.get $arg1)))
+        (if (i32.eqz (i32.load8_u (local.get $needle)))
+          (then (global.set $eax (local.get $arg0)))
+          (else
+            (block $absent (loop $candidate
+              (br_if $absent (i32.eqz (i32.load8_u (local.get $hay))))
+              (local.set $h (local.get $hay))
+              (local.set $n (local.get $needle))
+              (block $mismatch (loop $compare
+                (br_if $mismatch
+                  (i32.ne (i32.load8_u (local.get $h))
+                          (i32.load8_u (local.get $n))))
+                (local.set $n (i32.add (local.get $n) (i32.const 1)))
+                (if (i32.eqz (i32.load8_u (local.get $n)))
+                  (then
+                    (global.set $eax
+                      (i32.add (local.get $arg0)
+                        (i32.sub (local.get $hay) (local.get $hay_base))))
+                    (br $done)))
+                (local.set $h (i32.add (local.get $h) (i32.const 1)))
+                ;; The haystack ended while the needle still has bytes.
+                (br_if $mismatch (i32.eqz (i32.load8_u (local.get $h))))
+                (br $compare)))
+              (local.set $hay (i32.add (local.get $hay) (i32.const 1)))
+              (br $candidate))))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
   ;; fallback: unknown API — crash with full details

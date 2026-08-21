@@ -13,6 +13,13 @@ machine with FreeType but without FontForge.
 
 These feed the generated `.FON` resources consumed by the WAT bitmap font path.
 
+Wine's `ms_sans_serif.ttf` carries native 13, 16, and 20px bitmaps. The tracked
+`MSSansSerif.fon` keeps exactly those cells. It deliberately does not invent
+the 24, 29, and 37px rungs from Win98's 96-DPI `SSERIFE.FON`: fractional
+nearest-neighbor enlargement made the substitute visibly thin. Larger requests
+use the runtime's Win98-style integer bitmap magnification instead. No
+Microsoft font bytes are used or distributed.
+
 | File | SHA-256 |
 |---|---|
 | `fixedsys.sfd` | `9019eab07b9a19f994829e88556a5df4332a6cce9543c1aa83ee2433fb58c07c` |

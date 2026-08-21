@@ -7,7 +7,7 @@
     (local $tmp i32) (local $v i32) (local $i i32) (local $menu_id i32) (local $parent_hwnd i32) (local $hwnd i32)
     (local $win_x i32) (local $win_y i32) (local $win_cx i32) (local $win_cy i32)
     (local $host_win_x i32) (local $host_win_y i32) (local $host_win_cx i32) (local $host_win_cy i32)
-    (local $detected_class i32) (local $name_w i32) (local $wat_statusbar i32) (local $wat_tab i32)
+    (local $detected_class i32) (local $wat_statusbar i32) (local $wat_tab i32)
     ;; Copy stack parameters that USER32 owns for the whole CreateWindowExA
     ;; operation. Later helper/import calls may use scratch paths; do not keep
     ;; treating the caller's stack frame as the source of truth.
@@ -195,7 +195,10 @@
               (then (call $wnd_table_set (local.get $hwnd) (global.get $wndproc_addr)))
               (else (call $wnd_table_set (local.get $hwnd) (global.get $WNDPROC_BUILTIN)))))))
         (drop (call $wnd_set_style (local.get $hwnd) (local.get $arg3)))
-        (call $wnd_set_class_bg_brush_from_name (local.get $hwnd) (local.get $arg1)))
+        (call $wnd_set_class_bg_brush_from_name (local.get $hwnd) (local.get $arg1))
+        (call $wnd_set_class_cursor_from_name (local.get $hwnd) (local.get $arg1))
+        (call $wnd_set_class_slot_from_name (local.get $hwnd) (local.get $arg1))
+        (call $wnd_set_own_dc_from_name (local.get $hwnd) (local.get $arg1)))
     ;; Call host: create_window(hwnd, style, x, y, cx, cy, title_ptr, menu_id)
     (drop (call $host_create_window
     (local.get $hwnd)                                    ;; hwnd
@@ -300,7 +303,12 @@
     ;; it stores private state at GetWindowLong(hwnd, 0) and crashes if USER
     ;; substitutes the WAT state model underneath it (Media Player 32).
     (if (i32.and
-          (global.get $cbt_hook_proc)
+          ;; A hook proc is a raw address: AND it as a 0/1 predicate or its low
+          ;; bit decides the branch. MFC 4.21's CBT proc happens to sit at an
+          ;; odd address and MFC 6.00's at an even one, which is the whole
+          ;; reason WordPad's toolbars appeared under one build and not the
+          ;; other (feedback_wat_bitwise_and).
+          (i32.ne (global.get $cbt_hook_proc) (i32.const 0))
           (i32.and
           (i32.ge_u (local.get $arg1) (i32.const 0x10000))
           (i32.and
@@ -312,182 +320,18 @@
               (i32.eq (i32.or (i32.load offset=8 (call $g2w (local.get $arg1))) (i32.const 0x20202020))
                       (i32.const 0x6f646e69)))))) ;; "indo"
       (then (local.set $tmp (i32.const 0))))
-    ;; If lookup failed and this isn't the first window, scan class table for an
-    ;; EXE-range wndproc not already used by main_hwnd (handles rotating string
-    ;; buffer mismatches where className was overwritten between RegisterClass and CreateWindow)
-    (if (i32.and
-          (i32.and (i32.eqz (local.get $tmp)) (i32.ne (global.get $main_hwnd) (i32.const 0)))
-          (i32.eqz (call $is_builtin_control_class (local.get $arg1))))
-      (then
-        (local.set $i (i32.const 0))
-        (block $found3 (loop $scan3
-          (br_if $found3 (i32.ge_u (local.get $i) (global.get $MAX_CLASSES)))
-          ;; Read WNDCLASSA.lpfnWndProc at class record + 12
-          (local.set $v (i32.load offset=12 (call $class_record_addr (local.get $i))))
-          (if (i32.and
-            (i32.and (i32.ge_u (local.get $v) (global.get $image_base))
-                     (i32.lt_u (local.get $v) (i32.add (global.get $image_base) (global.get $exe_size_of_image))))
-            (i32.ne (local.get $v) (call $wnd_table_get (global.get $main_hwnd))))
-            (then (local.set $tmp (local.get $v)) (br $found3)))
-          (local.set $i (i32.add (local.get $i) (i32.const 1)))
-          (br $scan3)))))
     (if (local.get $tmp)
       (then (call $wnd_table_set (local.get $hwnd) (local.get $tmp)))
       (else
-        ;; System control class detection — atoms or case-insensitive name match.
-        ;; Atoms: BUTTON=0x0080, EDIT=0x0081, STATIC=0x0082, LISTBOX=0x0083,
-        ;;        SCROLLBAR=0x0084, COMBOBOX=0x0085.
-        ;; ctrl class IDs (see $control_wndproc_dispatch):
-        ;;   Button=1, Edit=2, Static=3, ListBox=4, ComboBox=5, ScrollBar=7,
-        ;;   TreeView=8, ListView=18, TrackBar=19, Tooltip=20, Toolbar=21.
+        ;; Which control this class denotes, decided in one place for every
+        ;; caller ($class_name_to_ctrl_id, 09c0-window-table.wat). It folds
+        ;; MAKEINTATOM(0x0080..0x0085) from a dialog template and the class
+        ;; name from source code onto one answer, exactly as Windows does, so
+        ;; the two spellings cannot drift apart -- and it is the same answer
+        ;; GetClassInfo and the class-hash path give.
         ;; Registered status bars deliberately remain unclassified: MFC must
         ;; subclass and lay them out before the separate paint marker is used.
-        (local.set $detected_class (i32.const 0))
-        (if (i32.eq (local.get $arg1) (i32.const 0x0080)) (then (local.set $detected_class (i32.const 1))))
-        (if (i32.eq (local.get $arg1) (i32.const 0x0081)) (then (local.set $detected_class (i32.const 2))))
-        (if (i32.eq (local.get $arg1) (i32.const 0x0082)) (then (local.set $detected_class (i32.const 3))))
-        (if (i32.eq (local.get $arg1) (i32.const 0x0083)) (then (local.set $detected_class (i32.const 4))))
-        (if (i32.eq (local.get $arg1) (i32.const 0x0084)) (then (local.set $detected_class (i32.const 7))))
-        (if (i32.eq (local.get $arg1) (i32.const 0x0085)) (then (local.set $detected_class (i32.const 5))))
-        ;; String compare (case-insensitive via OR 0x20). Lowercase LE dwords:
-        ;;   "edit\0"   = 0x74696465, NUL at offset 4
-        ;;   "button\0" = 0x74747562, "on\0" at offset 4 (0x6e6f), NUL at offset 6
-        ;;   "static\0" = 0x74617473, "ic\0" at offset 4 (0x6369), NUL at offset 6
-        (if (i32.and (i32.eqz (local.get $detected_class))
-                     (i32.ge_u (local.get $arg1) (i32.const 0x10000)))
-          (then
-            (local.set $name_w (call $g2w (local.get $arg1)))
-            (if (i32.and
-                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x74696465))
-                  (i32.eqz (i32.load8_u offset=4 (local.get $name_w))))
-              (then (local.set $detected_class (i32.const 2))))
-            ;; Keep RichEdit 1.0 and 2.0+ distinguishable while sharing the
-            ;; edit state/paint implementation. Class 24 is RICHEDIT;
-            ;; class 25 is RichEdit20A/W.
-            (local.set $v (call $richedit_class_version (local.get $arg1)))
-            (if (i32.eq (local.get $v) (i32.const 1))
-              (then (local.set $detected_class (i32.const 24))))
-            (if (i32.eq (local.get $v) (i32.const 2))
-              (then (local.set $detected_class (i32.const 25))))
-            (if (i32.and
-                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x74747562))
-                  (i32.and
-                    (i32.eq (i32.or (i32.load16_u offset=4 (local.get $name_w)) (i32.const 0x2020))
-                            (i32.const 0x6e6f))
-                    (i32.eqz (i32.load8_u offset=6 (local.get $name_w)))))
-              (then (local.set $detected_class (i32.const 1))))
-            (if (i32.and
-                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x74617473))
-                  (i32.and
-                    (i32.eq (i32.or (i32.load16_u offset=4 (local.get $name_w)) (i32.const 0x2020))
-                            (i32.const 0x6369))
-                    (i32.eqz (i32.load8_u offset=6 (local.get $name_w)))))
-              (then (local.set $detected_class (i32.const 3))))
-            ;; "SysTreeView*" → class 8 (TreeView)
-            ;; LE dwords: "syst"=0x74737973, "reev"=0x76656572
-            (if (i32.and
-                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x74737973))
-                  (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x76656572)))
-              (then (local.set $detected_class (i32.const 8))))
-            ;; "SysListView*" → class 18 (ListView)
-            ;; LE dwords: "sysl"=0x6c737973, "istv"=0x76747369
-            (if (i32.and
-                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x6c737973))
-                  (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x76747369)))
-              (then (local.set $detected_class (i32.const 18))))
-            ;; "SysLink\0" → class 28 (SysLink)
-            ;; LE dwords: "sysl"=0x6c737973, "ink\0"=0x006b6e69. The trailing
-            ;; NUL keeps this from colliding with the SysListView32 test above.
-            (if (i32.and
-                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x6c737973))
-                  (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x00202020))
-                          (i32.const 0x006b6e69)))
-              (then (local.set $detected_class (i32.const 28))))
-            ;; "msctls_trackbar32" / "Slider1" -> class 19 (TrackBar).
-            ;; Prefix matching also accepts the Win9x A/W common-control aliases.
-            (if (i32.or
-                  (i32.and
-                    (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                            (i32.const 0x7463736d)) ;; "msct"
-                    (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
-                            (i32.const 0x747f736c))) ;; "ls_t" after ASCII lowercase mask
-                  (i32.and
-                    (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                            (i32.const 0x64696c73)) ;; "slid"
-                    (i32.eq
-                      (i32.or (i32.load16_u offset=4 (local.get $name_w)) (i32.const 0x2020))
-                      (i32.const 0x7265)))) ;; "er"
-              (then (local.set $detected_class (i32.const 19))))
-            ;; "tooltips_class32" → class 20 (Tooltip)
-            ;; LE dwords: "tool"=0x6c6f6f74, "tips"=0x73706974
-            (if (i32.and
-                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x6c6f6f74))
-                  (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x73706974)))
-              (then (local.set $detected_class (i32.const 20))))
-            ;; "ToolbarWindow32" → class 21 (Toolbar)
-            ;; LE dwords: "tool"=0x6c6f6f74, "barw"=0x77726162, "indo"=0x6f646e69
-            (if (i32.and
-                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x6c6f6f74))
-                  (i32.and
-                    (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
-                            (i32.const 0x77726162))
-                    (i32.eq (i32.or (i32.load offset=8 (local.get $name_w)) (i32.const 0x20202020))
-                            (i32.const 0x6f646e69))))
-              (then (local.set $detected_class (i32.const 21))))
-            ;; "listbox\0" — LE dwords: "list"=0x7473696c, "box\0" = u32 0x00786f62.
-            (if (i32.and
-                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x7473696c))
-                  (i32.and
-                    (i32.eq (i32.or (i32.load16_u offset=4 (local.get $name_w)) (i32.const 0x2020))
-                            (i32.const 0x6f62))
-                    (i32.and
-                      (i32.eq (i32.or (i32.load8_u offset=6 (local.get $name_w)) (i32.const 0x20)) (i32.const 0x78))
-                      (i32.eqz (i32.load8_u offset=7 (local.get $name_w))))))
-              (then (local.set $detected_class (i32.const 4))))
-            ;; "combobox\0" — LE dwords: "comb"=0x626d6f63, "obox"=0x786f626f
-            (if (i32.and
-                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x626d6f63))
-                  (i32.and
-                    (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
-                            (i32.const 0x786f626f))
-                    (i32.eqz (i32.load8_u offset=8 (local.get $name_w)))))
-              (then (local.set $detected_class (i32.const 5))))
-            ;; "ComboLBox\0" — popup-listbox class used by some apps
-            ;; LE dwords: "Comb" lower → "comb"=0x626d6f63, "oLBo" lower → "olbo"=0x6f626c6f, "x\0"
-            (if (i32.and
-                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x626d6f63))
-                  (i32.and
-                    (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
-                            (i32.const 0x6f626c6f))
-                    (i32.and
-                      (i32.eq (i32.or (i32.load8_u offset=8 (local.get $name_w)) (i32.const 0x20)) (i32.const 0x78))
-                      (i32.eqz (i32.load8_u offset=9 (local.get $name_w))))))
-              (then (local.set $detected_class (i32.const 4))))
-            ;; "scrollbar\0" — LE dwords: "scro"=0x6f726373, "llba"=0x61626c6c, "r\0"
-            (if (i32.and
-                  (i32.eq (i32.or (i32.load (local.get $name_w)) (i32.const 0x20202020))
-                          (i32.const 0x6f726373))
-                  (i32.and
-                    (i32.eq (i32.or (i32.load offset=4 (local.get $name_w)) (i32.const 0x20202020))
-                            (i32.const 0x61626c6c))
-                    (i32.and
-                      (i32.eq (i32.or (i32.load8_u offset=8 (local.get $name_w)) (i32.const 0x20)) (i32.const 0x72))
-                      (i32.eqz (i32.load8_u offset=9 (local.get $name_w))))))
-              (then (local.set $detected_class (i32.const 7))))))
+        (local.set $detected_class (call $class_name_to_ctrl_id (local.get $arg1)))
         (if (local.get $detected_class)
           (then
             ;; System control class → WAT-native control. WM_CREATE is
@@ -533,6 +377,9 @@
           (then (call $tab_native_mark_slot
             (local.get $v) (i32.const 1))))))
     (call $wnd_set_class_bg_brush_from_name (local.get $hwnd) (local.get $arg1))
+    (call $wnd_set_class_cursor_from_name (local.get $hwnd) (local.get $arg1))
+    (call $wnd_set_class_slot_from_name (local.get $hwnd) (local.get $arg1))
+    (call $wnd_set_own_dc_from_name (local.get $hwnd) (local.get $arg1))
     ;; hWndParent means geometry parent only for WS_CHILD. For top-level
     ;; popup/overlapped windows it is an owner; keep that separate so owned
     ;; modal dialogs do not inherit the owner's client coordinates.
@@ -558,10 +405,7 @@
         (local.set $v (call $wnd_table_find (local.get $hwnd)))
         (if (i32.ne (local.get $v) (i32.const -1))
           (then
-            (i32.store
-              (i32.add (i32.add (global.get $CONTROL_TABLE)
-                                (i32.mul (local.get $v) (i32.const 16)))
-                       (i32.const 4))
+            (i32.store offset=4 (call $ctrl_slot_addr (local.get $v))
               (call $gl32 (i32.add (global.get $esp) (i32.const 40))))
             ;; Record child geometry for ALL child classes (not just the
             ;; system Edit/Button/Static path above). Needed for
@@ -650,8 +494,6 @@
     ;; slot because the message pump delivers that slot to main_hwnd.
     (if (i32.eq (local.get $hwnd) (global.get $main_hwnd))
       (then
-        (global.set $main_win_cx (local.get $win_cx))
-        (global.set $main_win_cy (local.get $win_cy))
         ;; $menu_id holds the resolved top-level menu ID (from hMenu param or class lpszMenuName fallback)
         ;; The startup WM_SIZE carries the client size, so it has to be the
         ;; client size USER will report from then on. This used to subtract
@@ -660,10 +502,6 @@
         ;; to its Win98 width of 4 the two disagreed by a pixel and Notepad
         ;; sized its edit control over the window frame. Ask nccalcsize.
         (call $defwndproc_do_nccalcsize (local.get $hwnd))
-        (global.set $main_nc_height
-          (i32.sub (global.get $main_win_cy)
-            (i32.sub (call $client_rect_get_b (local.get $hwnd))
-                     (call $client_rect_get_t (local.get $hwnd)))))
         (global.set $pending_wm_size (i32.or
           (i32.and
             (i32.sub (call $client_rect_get_r (local.get $hwnd))
@@ -1182,6 +1020,11 @@
             (local.get $arg0) (i32.const 0x0018)
             (i32.ne (local.get $arg1) (i32.const 0)) (i32.const 0)))
     (local.set $client_size (call $host_show_window (local.get $arg0) (local.get $arg1)))
+    ;; Record the minimized/maximized state the command asks for. The renderer
+    ;; keeps its own copy for compositing; this is the one the guest reads back
+    ;; through IsIconic/IsZoomed/GetWindowPlacement, and it used to not exist —
+    ;; those three answered with a constant.
+    (call $wnd_apply_show_state (local.get $arg0) (local.get $arg1))
     ;; Sync WS_VISIBLE into the stored GWL_STYLE. MFC (e.g. CDockBar::OnSizeParent)
     ;; skips toolbars whose GetStyle() lacks WS_VISIBLE — without this sync, any
     ;; control bar that relies on CreateWindow-without-WS_VISIBLE + ShowWindow
@@ -1276,7 +1119,8 @@
     (if (i32.and (i32.eq (local.get $arg1) (i32.const 3))
                  (i32.eq (local.get $arg0) (global.get $main_hwnd)))
       (then
-        (call $wnd_max_set (local.get $arg0) (i32.const 1))
+        ;; The maximized bit itself is already recorded by
+        ;; $wnd_apply_show_state above; this block owns only the resize pair.
         (global.set $pending_wm_size (i32.const 0))
         (call $post_resize_messages (local.get $arg0) (i32.const 2))))
     ;; First ShowWindow on main_hwnd (non-hide) drives the synchronous activation
@@ -1382,19 +1226,53 @@
 
   ;; 72: UpdateWindow
   (func $handle_UpdateWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Queue the update and let the normal WAT-owned message pump deliver
-    ;; WM_PAINT. Some Win98 apps call UpdateWindow during fragile startup
-    ;; sequences; synchronous re-entry here can run dialog/control procs
-    ;; before their surrounding initialization has unwound.
+    (local $wp i32)
     (call $paint_flag_set_inv (local.get $arg0))
     (call $defwndproc_do_ncpaint (local.get $arg0))
+    ;; UpdateWindow does not return until WM_PAINT has been handled, and
+    ;; BeginPaint runs the window's pending WM_ERASEBKGND on the way in.
+    ;; Apps depend on that ordering: Taipei paints its splash screen through
+    ;; a GetDC handle on the line after UpdateWindow, so an erase and paint
+    ;; left queued for the pump land on top of the splash and wipe it.
+    ;;
+    ;; Restricted to a visible top-level window with a real x86 wndproc, and
+    ;; never while another synchronous send is already unwinding. That is the
+    ;; hazard this call used to defer around: a dialog or control procedure
+    ;; re-entered before its own initialization has finished.
+    (local.set $wp (call $wnd_table_get (local.get $arg0)))
+    (if (i32.and
+          (i32.and
+            (i32.eqz (global.get $sync_msg_depth))
+            (i32.eqz (global.get $code16)))
+          (i32.and
+            (i32.and
+              (i32.ne (local.get $wp) (i32.const 0))
+              (i32.lt_u (local.get $wp) (i32.const 0xFFFE0000)))
+            (i32.and
+              (call $wnd_is_effectively_visible (local.get $arg0))
+              (i32.eqz (call $ctrl_table_get_class (local.get $arg0))))))
+      (then
+        ;; Erase first — this is BeginPaint's half of the sequence, and the
+        ;; queued NC_FLAGS bit is where the pump would otherwise have found it.
+        (if (i32.and (call $nc_flags_test (local.get $arg0)) (i32.const 2))
+          (then
+            (call $nc_flags_clear (local.get $arg0) (i32.const 2))
+            (drop (call $wnd_send_message
+              (local.get $arg0) (i32.const 0x0014)
+              (i32.add (local.get $arg0) (i32.const 0x40000)) (i32.const 0)))))
+        (call $paint_flag_clear_hwnd (local.get $arg0))
+        (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
+          (then (global.set $paint_pending (i32.const 0))))
+        (drop (call $paint_seed_child_paints (local.get $arg0)))
+        (drop (call $wnd_send_message
+          (local.get $arg0) (i32.const 0x000F) (i32.const 0) (i32.const 0)))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 
   ;; 73: GetMessageA
   (func $handle_GetMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $tmp i32) (local $msg_ptr i32) (local $packed i32)
+    (local $tmp i32) (local $msg_ptr i32) (local $packed i32) (local $nc_rect i32)
     ;; Move the virtual wire before looking for a message. WSAAsyncSelect is a
     ;; promise that the app will be TOLD about socket activity, so a server
     ;; written to that model calls no socket function at all while it waits --
@@ -1522,12 +1400,15 @@
     (if (local.get $tmp)
     (then
     (call $nc_flags_clear (local.get $tmp) (i32.const 4))
-    (call $host_get_window_rect (local.get $tmp) (global.get $PAINT_SCRATCH))
+    ;; The app dereferences this rect when it processes the message, so the
+    ;; slot has to stay its own until then — which is what the ring buys us.
+    (local.set $nc_rect (call $paint_scratch_take))
+    (call $host_get_window_rect (local.get $tmp) (local.get $nc_rect))
     (call $gs32 (local.get $msg_ptr) (local.get $tmp))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0083))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12))
-      (i32.add (i32.sub (global.get $image_base) (global.get $GUEST_BASE)) (global.get $PAINT_SCRATCH)))
+      (i32.add (i32.sub (global.get $image_base) (global.get $GUEST_BASE)) (local.get $nc_rect)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))))
     ;; WM_NCPAINT (0x85) — bit 0
@@ -1601,18 +1482,9 @@
     (global.set $yield_flag (i32.const 1)) ;; yield to host after each timer
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; Check cross-thread message queue (shared memory at 0xB400)
-    (if (i32.gt_u (i32.load (i32.const 0xB400)) (i32.const 0))
+    ;; A producer may have posted after the earlier queue check in this handler.
+    (if (call $shared_post_queue_read (local.get $msg_ptr) (i32.const 1))
     (then
-      (local.set $tmp (i32.const 0xB410))
-      (call $gs32 (local.get $msg_ptr) (i32.load (local.get $tmp)))
-      (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.load (i32.add (local.get $tmp) (i32.const 4))))
-      (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.load (i32.add (local.get $tmp) (i32.const 8))))
-      (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.load (i32.add (local.get $tmp) (i32.const 12))))
-      (i32.store (i32.const 0xB400) (i32.sub (i32.load (i32.const 0xB400)) (i32.const 1)))
-      (if (i32.gt_u (i32.load (i32.const 0xB400)) (i32.const 0))
-        (then (call $memcpy (i32.const 0xB410) (i32.const 0xB420)
-          (i32.mul (i32.load (i32.const 0xB400)) (i32.const 16)))))
       (global.set $eax (i32.const 1))
       (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; No message ready. Real GetMessage blocks here; keep the API call live
@@ -1629,7 +1501,7 @@
   ;; Returns 0 = no message available (non-blocking)
   (func $handle_PeekMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $packed i32) (local $msg i32) (local $tmp i32)
-    (local $qidx i32) (local $qaddr i32) (local $qmsg i32)
+    (local $qidx i32) (local $qaddr i32) (local $qmsg i32) (local $nc_rect i32)
     ;; Same reason as GetMessageA: an idle message pump is where a
     ;; WSAAsyncSelect server spends its time, so it has to move the wire.
     (call $vsock_pump)
@@ -1683,12 +1555,14 @@
     (then
     (if (i32.and (local.get $arg4) (i32.const 1))
       (then (call $nc_flags_clear (local.get $tmp) (i32.const 4))))
-    (call $host_get_window_rect (local.get $tmp) (global.get $PAINT_SCRATCH))
+    ;; Same as GetMessageA: the rect outlives this handler, so take a slot.
+    (local.set $nc_rect (call $paint_scratch_take))
+    (call $host_get_window_rect (local.get $tmp) (local.get $nc_rect))
     (call $gs32 (local.get $arg0) (local.get $tmp))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0x0083))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.const 0))
     (call $gs32 (i32.add (local.get $arg0) (i32.const 12))
-      (i32.add (i32.sub (global.get $image_base) (global.get $GUEST_BASE)) (global.get $PAINT_SCRATCH)))
+      (i32.add (i32.sub (global.get $image_base) (global.get $GUEST_BASE)) (local.get $nc_rect)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))))
     (if (global.get $nc_flags_count)
@@ -2011,10 +1885,22 @@
           (call $gl32 (i32.add (local.get $arg0) (i32.const 12)))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
         (return)))
-    ;; Built-in control wndproc — act as DefWindowProc (return 0)
+    ;; Built-in control wndproc. A message that reaches DispatchMessage for a
+    ;; WAT-native control is that control's own message and has to run its
+    ;; proc, exactly as $handle_CallWindowProcA does when an app chains here:
+    ;; anything posted to a control (WM_KILLFOCUS from SetFocus, for one) was
+    ;; otherwise swallowed as DefWindowProc, so a combo's edit child never
+    ;; learned it had lost the focus and the combo never relayed
+    ;; CBN_KILLFOCUS. WM_PAINT is handled by the branch above.
     (if (i32.eq (local.get $wndproc) (global.get $WNDPROC_BUILTIN))
       (then
-        (global.set $eax (i32.const 0))
+        (if (i32.ne (local.get $ctrl_class) (i32.const 0))
+          (then (global.set $eax (call $control_wndproc_dispatch
+                  (call $gl32 (local.get $arg0))
+                  (call $gl32 (i32.add (local.get $arg0) (i32.const 4)))
+                  (call $gl32 (i32.add (local.get $arg0) (i32.const 8)))
+                  (call $gl32 (i32.add (local.get $arg0) (i32.const 12))))))
+          (else (global.set $eax (i32.const 0))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
         (return)))
     ;; x86 WndProc dispatch: use window table result, or fall back to globals
@@ -2254,13 +2140,18 @@
           ;; needs WM_MOVE + WM_SIZE so its wndproc relays out (otherwise the
           ;; back-canvas grows but the app keeps drawing in its old area).
           ;; SC_MINIMIZE just hides the window; no relayout needed.
+          ;; Each of the three commands is the SW_* it corresponds to, so the
+          ;; show state goes through the same fold ShowWindow uses rather than
+          ;; a second transition table.
+          (if (i32.eq (i32.and (local.get $arg2) (i32.const 0xFFF0)) (i32.const 0xF020))
+            (then (call $wnd_apply_show_state (local.get $arg0) (i32.const 6)))) ;; SW_MINIMIZE
           (if (i32.eq (i32.and (local.get $arg2) (i32.const 0xFFF0)) (i32.const 0xF030))
             (then
-              (call $wnd_max_set (local.get $arg0) (i32.const 1))
+              (call $wnd_apply_show_state (local.get $arg0) (i32.const 3)) ;; SW_SHOWMAXIMIZED
               (call $post_resize_messages (local.get $arg0) (i32.const 2))))
           (if (i32.eq (i32.and (local.get $arg2) (i32.const 0xFFF0)) (i32.const 0xF120))
             (then
-              (call $wnd_max_set (local.get $arg0) (i32.const 0))
+              (call $wnd_apply_show_state (local.get $arg0) (i32.const 9)) ;; SW_RESTORE
               (call $post_resize_messages (local.get $arg0) (i32.const 0))))
           (global.set $eax (i32.const 0))
           (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
@@ -2279,34 +2170,36 @@
 
   ;; 80: PostMessageA
   (func $handle_PostMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $tmp i32)
+    (local $tmp i32) (local $target_tid i32)
     ;; Renderer-wide top-level windows can belong to another WASM instance.
     ;; The host places those messages in the shared owning-app input queue.
-    (if (i32.and
-          (i32.lt_s (call $wnd_table_find (local.get $arg0)) (i32.const 0))
-          (call $host_post_window_message
-            (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+    ;;
+    ;; The two tests are nested rather than i32.and-ed, and that is the whole
+    ;; point: i32.and evaluates both operands, so the host call ran for windows
+    ;; of our own too — it queues the message on the owning instance and then
+    ;; this function queued it again. Every app posting to itself got the
+    ;; message twice. Hearts posts itself one command at startup and put its
+    ;; startup dialog up twice, the second on top of the first's modal loop.
+    (if (i32.lt_s (call $wnd_table_find (local.get $arg0)) (i32.const 0))
       (then
-        (global.set $eax (i32.const 1))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-        (return)))
-    (if (i32.ne (global.get $current_thread_id) (i32.const 1))
+        (if (call $host_post_window_message
+              (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3))
+          (then
+            (global.set $eax (i32.const 1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+            (return)))))
+    (local.set $target_tid (call $wnd_get_thread (local.get $arg0)))
+    (if (i32.and (i32.ne (local.get $target_tid) (i32.const 0))
+                 (i32.ne (local.get $target_tid) (global.get $current_thread_id)))
       (then
-        (drop (call $shared_post_queue_enqueue
+        (global.set $eax (call $shared_post_queue_enqueue
           (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
-        (global.set $eax (i32.const 1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
-    ;; Queue if room (max 64 messages, 16 bytes each, at WASM addr 0x400)
-    (if (i32.lt_u (global.get $post_queue_count) (i32.const 64))
-    (then
-    (local.set $tmp (i32.add (i32.const 0x400)
-    (i32.mul (global.get $post_queue_count) (i32.const 16))))
-    (i32.store (local.get $tmp) (local.get $arg0))                         ;; hwnd
-    (i32.store (i32.add (local.get $tmp) (i32.const 4)) (local.get $arg1)) ;; msg
-    (i32.store (i32.add (local.get $tmp) (i32.const 8)) (local.get $arg2)) ;; wParam
-    (i32.store (i32.add (local.get $tmp) (i32.const 12)) (local.get $arg3));; lParam
-    (global.set $post_queue_count (i32.add (global.get $post_queue_count) (i32.const 1)))))
+    ;; One funnel for the queue, so every posted message is visible to
+    ;; --trace-win16 and there is one place that knows the layout.
+    (drop (call $post_queue_push
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
@@ -2314,9 +2207,39 @@
   ;; 81: SendMessageA(hwnd, msg, wParam, lParam) — 4 args stdcall
   ;; Synchronous: call WndProc(hwnd, msg, wParam, lParam) directly
   (func $handle_SendMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ret_addr i32) (local $wndproc i32) (local $ctrl_class i32) (local $sm_ret i32)
+    (local $ret_addr i32) (local $wndproc i32) (local $ctrl_class i32) (local $sm_ret i32) (local $owner_tid i32)
+    (local $post_kind i32)
     (call $richedit_note_charformat_message
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3))
+    ;; These two compatibility paths need work after the real native WndProc
+    ;; returns. Record that work before an owner-thread send can park us.
+    (if (i32.and
+          (i32.eq (local.get $arg1) (i32.const 0x0439)) ;; EM_FORMATRANGE
+          (i32.eq (call $ctrl_table_get_class (local.get $arg0)) (i32.const 0)))
+      (then (local.set $post_kind (i32.const 1))))
+    (if (i32.and
+          (i32.eq (local.get $arg1) (i32.const 0x043A)) ;; EM_GETCHARFORMAT
+          (i32.ne (local.get $arg3) (i32.const 0)))
+      (then (local.set $post_kind (i32.const 2))))
+    ;; USER window procedures have thread affinity.  Leave this stdcall frame
+    ;; untouched and let the scheduler execute the call on the owner instance;
+    ;; complete_thread_send installs its LRESULT and returns to the caller.
+    (local.set $owner_tid (call $wnd_get_thread (local.get $arg0)))
+    (if (i32.and (i32.ne (local.get $owner_tid) (i32.const 0))
+                 (i32.ne (local.get $owner_tid) (global.get $current_thread_id)))
+      (then
+        (global.set $send_target_tid (local.get $owner_tid))
+        (global.set $send_hwnd (local.get $arg0))
+        (global.set $send_msg (local.get $arg1))
+        (global.set $send_wparam (local.get $arg2))
+        (global.set $send_lparam (local.get $arg3))
+        (global.set $send_post_kind (local.get $post_kind))
+        (global.set $handler_set_eip (i32.const 1))
+        (global.set $eip (global.get $current_thunk_eip))
+        (global.set $yield_reason (i32.const 10))
+        (global.set $yield_flag (i32.const 1))
+        (global.set $steps (i32.const 0))
+        (return)))
     ;; EM_FORMATRANGE. The Win98 RichEdit DLL's printer message path cannot
     ;; reliably preserve its LRESULT through the emulated native wndproc (it
     ;; returns the FORMATRANGE pointer), but render=true must still enter that
@@ -2533,7 +2456,7 @@
         ;; bInvert=FALSE: restore to normal (not flashing)
         (i32.store8 (local.get $addr) (i32.const 0))))
     ;; Trigger repaint so the caption redraws with inverted active state
-    (call $host_invalidate (local.get $arg0))
+    (call $host_invalidate_frame (local.get $arg0))
     (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
       (then (global.set $paint_pending (i32.const 1)))
       (else (call $paint_flag_set (local.get $arg0))))

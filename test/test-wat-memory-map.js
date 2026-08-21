@@ -63,12 +63,47 @@ function collectRegions(globals) {
   return regions.sort((a, b) => (a.start - b.start) || (a.end - b.end));
 }
 
+function watStringLength(literal) {
+  let length = 0;
+  for (let i = 0; i < literal.length; i++, length++) {
+    if (literal[i] !== '\\') continue;
+    if (/[0-9a-f]/i.test(literal[i + 1] || '') &&
+        /[0-9a-f]/i.test(literal[i + 2] || '')) i += 2;
+    else i += 1;
+  }
+  return length;
+}
+
+function collectDataRegions() {
+  const regions = [];
+  const dataRe = /\(data\s+\(i32\.const\s+([^)]+)\)\s*((?:"(?:[^"\\]|\\.)*"\s*)+)\)/gs;
+  const stringRe = /"((?:[^"\\]|\\.)*)"/g;
+  for (const file of WAT_FILES) {
+    const source = fs.readFileSync(path.join(SRC, file), 'utf8');
+    for (const match of source.matchAll(dataRe)) {
+      let size = 0;
+      for (const part of match[2].matchAll(stringRe)) size += watStringLength(part[1]);
+      const offset = match.index;
+      regions.push({
+        name: '(data)',
+        start: parseConstI32(match[1]),
+        size,
+        end: parseConstI32(match[1]) + size,
+        file,
+        line: source.slice(0, offset).split(/\r?\n/).length,
+      });
+    }
+  }
+  return regions;
+}
+
 function hex(value) {
   return `0x${(value >>> 0).toString(16).padStart(8, '0')}`;
 }
 
 const globals = collectConstGlobals();
 const regions = collectRegions(globals);
+const dataRegions = collectDataRegions();
 
 const requiredRegions = [
   'UPDATE_RECT',
@@ -88,6 +123,8 @@ const requiredRegions = [
   'TV_TABLE',
   'SYNC_TABLE',
   'EDIT_LAYOUT_SCRATCH',
+  'SHARED_DLG_ENDED',
+  'SHARED_DLG_RESULT',
   'GDI_REGION_TABLE',
   'GDI_DC_PATH_TABLE',
   'GDI_REGION_BANDS',
@@ -137,6 +174,24 @@ for (let i = 1; i < regions.length; i++) {
     `(${cur.baseGlobal.file}:${cur.baseGlobal.line}, size ${cur.sizeGlobal.file}:${cur.sizeGlobal.line})`);
 }
 
+// Data segments intentionally initialize some declared regions. They may be
+// contained by those regions, but must not straddle an unrelated table. A
+// worker WebAssembly instance reapplies every data segment to shared memory,
+// so even a seemingly harmless overlap corrupts live process state.
+for (const data of dataRegions) {
+  assert(data.end <= WASM_MEMORY_SIZE,
+    `WAT data exceeds memory: ${hex(data.start)}..${hex(data.end)} (${data.file}:${data.line})`);
+  for (const region of regions) {
+    if (data.start >= region.end || data.end <= region.start) continue;
+    const contained = data.start >= region.start && data.end <= region.end;
+    assert(contained,
+      `WAT data overlaps fixed memory region:\n` +
+      `  data: ${hex(data.start)}..${hex(data.end)} (${data.file}:${data.line})\n` +
+      `  ${region.name}: ${hex(region.start)}..${hex(region.end)} ` +
+      `(${region.baseGlobal.file}:${region.baseGlobal.line})`);
+  }
+}
+
 const treeviewSource = fs.readFileSync(path.join(SRC, '09c2-treeview.wat'), 'utf8');
 assert(!/\(i32\.const\s+0x0*9000\)/i.test(treeviewSource),
   'treeview table must use $TV_TABLE, not a hard-coded 0x9000 base');
@@ -154,4 +209,4 @@ assert(apiTable.some(api => api.name === 'GetProfileStringW' && api.nargs === 5)
 assert(apiTable.length * 8 <= globals.get('API_HASH_TABLE_SIZE').value,
   'api_table.json exceeds the declared API hash table memory region');
 
-console.log(`test-wat-memory-map: ok (${regions.length} fixed regions)`);
+console.log(`test-wat-memory-map: ok (${regions.length} fixed regions, ${dataRegions.length} data segments)`);

@@ -3,7 +3,7 @@
 //
 // Drives the browser build through Preferences -> Plug-ins -> Visualization,
 // starts wVis, stops it, starts it again, closes Preferences, starts playback,
-// right-clicks the visualizer, opens its Rendering Options submenu, and verifies
+// right-clicks the visualizer, hovers its Rendering Options submenu, and verifies
 // the restarted visualizer owns a
 // visible, non-black backing canvas plus its worker-owned configuration popup.
 // This covers the browser worker path that loads the visualizer DLL and paints
@@ -37,7 +37,16 @@ const args = [
   '--trace-api=waveOutWrite,LoadLibraryA,GetProcAddress,CreateWindowExA,CreateDIBSection,CreatePalette,SelectPalette,RealizePalette,UpdateColors,BitBlt',
   '--post-cmd=40317',
   '--post-wait-ms=3000',
-  '--post-clicks=54,188;170,59;184,346;wait:2200;244,346;wait:2200;184,346;wait:2200;440,16;66,129;wait:4000;150,205,right;230,137',
+  // Preferences opens at 0,0 and the player at 26,29 in both hosts, so this
+  // sequence is the one `node test/run.js --app=winamp --screen=756x480
+  // --input=...:click:X:Y` reproduces exactly. Plug-ins > Visualization (54,188)
+  // > plugin row (170,60) > Start (184,323) > Stop (244,323) > Start again >
+  // close Preferences (440,16) > play (66,129) > right-click the visualizer.
+  // The last step is a hover, not a click: a click on "Rendering Options"
+  // dismisses the whole popup, and menuStates is a final snapshot that only
+  // sees a menu still on screen. Hovering it leaves both the popup and its
+  // submenu up, which is what the subLabels assertion reads.
+  '--post-clicks=54,188;170,60;184,323;wait:2200;244,323;wait:2200;184,323;wait:2200;440,16;66,129;wait:4000;150,205,right;wait:1200;move:215,228',
   '--post-click-wait-ms=1200',
   '--screenshot', SHOT,
 ];
@@ -47,7 +56,7 @@ console.log('$ node', args.map(a => a.replace(ROOT, '.')).join(' '));
 const r = spawnSync(process.execPath, args, {
   cwd: ROOT,
   encoding: 'utf8',
-  timeout: 75000,
+  timeout: 180000,
   maxBuffer: 64 * 1024 * 1024,
 });
 

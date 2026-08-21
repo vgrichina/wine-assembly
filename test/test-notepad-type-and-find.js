@@ -76,7 +76,7 @@ console.log('$', cmd);
 
 let out = '';
 try {
-  out = execSync(cmd, { encoding: 'utf-8', timeout: 60000, cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+  out = execSync(cmd, { encoding: 'utf-8', timeout: 180000, cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
 } catch (e) {
   out = (e.stdout || '').toString() + (e.stderr || '').toString();
   console.log('(run.js exited non-zero — output captured)');

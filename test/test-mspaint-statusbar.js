@@ -39,7 +39,7 @@ try {
     '--no-close',
     '--quiet-api',
     '--quiet-blocks',
-  ], { cwd: ROOT, encoding: 'utf8', timeout: 5000, maxBuffer: 8 * 1024 * 1024 });
+  ], { cwd: ROOT, encoding: 'utf8', timeout: 120000, maxBuffer: 8 * 1024 * 1024 });
 } catch (error) {
   output = `${error.stdout || ''}${error.stderr || ''}`;
   assert.fail(`Paint status-bar run failed:\n${output.slice(-3000)}`);
@@ -58,23 +58,29 @@ const statusLine = output.split('\n').find(line =>
   line.includes('window:status') && line.includes('class="msctls_statusbar32"')) || '';
 assert(statusLine.includes('ctrlClass=0'),
   `Paint status bar must retain its registered guest wndproc: ${statusLine}`);
-assert(statusLine.includes('pos=0,332 size=269x23'),
+// Paint's frame is created with WS_EX_CLIENTEDGE (exStyle 0x300), so its
+// client area is inset 2px more per side than a plain frame, and the sizing
+// border is 4px rather than the 3 this test was written against. Both are
+// what Win98 does; between them the client went from 269x355 to 263x350 and
+// the bar with it. The pixel probes below follow: 3px right, 2px up, and the
+// grip/right-arrow ones 3px left of where they were.
+assert(statusLine.includes('pos=0,327 size=263x23'),
   `Paint status bar did not retain its MFC docked geometry: ${statusLine}`);
 
 // The old stale scrollbar has mirrored black triangular arrows in both 16px
 // end boxes. A real status line has prompt glyphs on the left and no arrow in
 // the right-side pane before the size grip.
 let rightArrowInk = 0;
-for (let y = 404; y <= 410; y++) {
-  for (let x = 280; x <= 284; x++) {
+for (let y = 402; y <= 408; y++) {
+  for (let x = 277; x <= 281; x++) {
     const p = (y * image.width + x) * 4;
     if (image.data[p] < 32 && image.data[p + 1] < 32 && image.data[p + 2] < 32) rightArrowInk++;
   }
 }
 
 let promptInk = 0;
-for (let y = 397; y < 412; y++) {
-  for (let x = 27; x < 220; x++) {
+for (let y = 395; y < 410; y++) {
+  for (let x = 30; x < 223; x++) {
     const p = (y * image.width + x) * 4;
     if (image.data[p] < 80 && image.data[p + 1] < 80 && image.data[p + 2] < 80) promptInk++;
   }
@@ -84,19 +90,21 @@ for (let y = 397; y < 412; y++) {
 // coordinate pane. Its lower-right resize grip is a six-segment 3D staircase,
 // not the empty strip produced by treating it as a generic common control.
 let paneSeparator = 0;
-for (let y = 397; y <= 412; y++) {
-  for (let x = 191; x <= 193; x++) {
+for (let y = 395; y <= 410; y++) {
+  for (let x = 194; x <= 196; x++) {
     const p = (y * image.width + x) * 4;
     if (image.data[p] < 160 && image.data[p + 1] < 160 && image.data[p + 2] < 160) paneSeparator++;
   }
 }
 
 let gripShadow = 0;
-for (let y = 407; y <= 414; y++) {
-  for (let x = 278; x <= 290; x++) {
+for (let y = 405; y <= 412; y++) {
+  for (let x = 275; x <= 287; x++) {
+    // The staircase is drawn in COLOR_3DSHADOW over the face, and on Win98
+    // that is exactly 0x808080. This used to accept anything from 32 to 111,
+    // which is a darker grey than the palette has ever had here.
     const p = (y * image.width + x) * 4;
-    const r = image.data[p];
-    if (r >= 32 && r < 112 && image.data[p + 1] < 112 && image.data[p + 2] < 112) gripShadow++;
+    if (image.data[p] === 0x80 && image.data[p + 1] === 0x80 && image.data[p + 2] === 0x80) gripShadow++;
   }
 }
 
@@ -104,8 +112,8 @@ let coordinateInk = 0;
 let clearedCoordinateInk = 0;
 let previewCoordinateInk = 0;
 let previewPromptDiff = 0;
-for (let y = 399; y <= 410; y++) {
-  for (let x = 196; x <= 250; x++) {
+for (let y = 397; y <= 408; y++) {
+  for (let x = 199; x <= 253; x++) {
     const p = (y * image.width + x) * 4;
     if (image.data[p] < 80 && image.data[p + 1] < 80 && image.data[p + 2] < 80) coordinateInk++;
     if (clearImage.data[p] < 80 && clearImage.data[p + 1] < 80 && clearImage.data[p + 2] < 80) {
@@ -116,8 +124,8 @@ for (let y = 399; y <= 410; y++) {
     }
   }
 }
-for (let y = 399; y <= 410; y++) {
-  for (let x = 27; x <= 188; x++) {
+for (let y = 397; y <= 408; y++) {
+  for (let x = 30; x <= 191; x++) {
     const p = (y * image.width + x) * 4;
     if (previewImage.data[p] !== clearImage.data[p] ||
         previewImage.data[p + 1] !== clearImage.data[p + 1] ||

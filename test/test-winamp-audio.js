@@ -36,6 +36,22 @@ if (!fs.existsSync(MP3))  { console.log('SKIP  demo.mp3 not found');    process.
 fs.mkdirSync(OUTDIR, { recursive: true });
 if (fs.existsSync(PCM)) fs.unlinkSync(PCM);
 
+// One budget for both execution models, and generous, because the assertion
+// here is about audio and not about speed: on a loaded box the emulator's own
+// CPU cost is what a tight budget measures. 120s is what e2bc3a3 settled on for
+// the whole suite for the same reason. (Worker mode used to need the headroom
+// far more — it paid a blocking round trip per host import, ~20k of them a run,
+// until the decode thread stopped making them.)
+const THREADS_MODE = process.argv.slice(2).includes('--threads');
+const TIME_BUDGET_MS = 120000;
+// Winamp primes its output with silence and the decode thread fills in behind
+// it. Under real threads that lead is longer — measured: the first non-zero
+// sample can land past 16KB where cooperatively it lands at byte 4350 — so
+// stopping at 8KB captures the priming and nothing else. Capture further in
+// threads mode, so "is it silence?" is asked of audio that has had a chance to
+// exist; the check itself is unchanged, and cooperative keeps its old 8KB.
+const EXIT_BYTES = THREADS_MODE ? 65536 : MIN_PCM_BYTES;
+
 const cmd = [
   `node "${RUN}"`,
   `--exe="${EXE}"`,
@@ -48,18 +64,26 @@ const cmd = [
   '--stuck-after=5000',
   '--input="10:273:2,20:wait-title:Winamp:1000,300:click:66:129"',
   `--audio-out="${PCM}"`,
-  `--audio-exit-bytes=${MIN_PCM_BYTES}`,
+  `--audio-exit-bytes=${EXIT_BYTES}`,
+  // Pass `--threads` to this test to check the same playback against the
+  // real-OS-thread backend: the decode thread, the buffer thread and the UI
+  // thread each get their own OS thread instead of a slice of this one. Audio
+  // either comes out or it does not, which makes this the strictest check of
+  // that backend we have — it was worth 0 bytes until worker slices stopped
+  // being sized like main-thread batches.
+  ...process.argv.slice(2).filter(arg => arg === '--threads'),
 ].join(' ');
+
 console.log('$', cmd);
 
 let out = '';
 const t0 = Date.now();
 try {
-  out = execSync(cmd, { encoding: 'utf-8', timeout: 30000, cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+  out = execSync(cmd, { encoding: 'utf-8', timeout: TIME_BUDGET_MS, cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
 } catch (e) {
   out = (e.stdout || '').toString() + (e.stderr || '').toString();
   if (e.signal === 'SIGTERM' || e.code === 'ETIMEDOUT') {
-    console.log('(run.js timed out after 30s — output so far captured)');
+    console.log(`(run.js timed out after ${TIME_BUDGET_MS / 1000}s — output so far captured)`);
   } else {
     console.log('(run.js exited non-zero — output captured)');
   }
@@ -79,7 +103,7 @@ if (fs.existsSync(PCM)) {
 const durationMs = Math.round((pcmBytes / 4) / 22.050); // 22050 Hz stereo s16
 
 const checks = [
-  { name: 'ran within 30s',                    pass: elapsedMs < 30000 },
+  { name: `ran within ${TIME_BUDGET_MS / 1000}s`, pass: elapsedMs < TIME_BUDGET_MS },
   { name: 'no UNIMPLEMENTED API crash',        pass: !/UNIMPLEMENTED API:/.test(out) },
   { name: 'no unreachable trap',               pass: !/RuntimeError:\s*unreachable/.test(out) },
   { name: 'reached message loop',              pass: apiCount > 1000 },

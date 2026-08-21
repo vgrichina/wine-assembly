@@ -765,6 +765,9 @@
         (if (call $thread_arena_flush_if_safe)
           (then (call $host_log_i32 (i32.const 0xCA00F10F))))))
     (local.set $tstart (global.get $thread_alloc))
+    ;; Ask once, here, whether this block entry is the MSVC small-block-heap
+    ;; scan loop. The run loop then only has to compare EIP with the answer.
+    (call $sbh_note_candidate (local.get $start_eip))
     (global.set $d_pc (local.get $start_eip))
     (local.set $done (i32.const 0))
 
@@ -772,16 +775,13 @@
           (global.get $stack_packet_enabled)
           (i32.eq (local.get $start_eip) (global.get $stack_packet_addr)))
       (then
-        (if (i32.eq (local.get $start_eip) (i32.const 0x0049D9D1))
-          (then
-            (call $te (i32.const 356) (i32.const 1))
-            (call $cache_store (local.get $start_eip) (local.get $tstart))
-            (return (local.get $tstart))))
-        (if (i32.eq (local.get $start_eip) (i32.const 0x0049DD20))
-          (then
-            (call $te (i32.const 356) (i32.const 2))
-            (call $cache_store (local.get $start_eip) (local.get $tstart))
-            (return (local.get $tstart))))))
+        ;; Which variant of the packet handler to emit is decided by whoever
+        ;; armed the prototype, not by a guest address compiled into the
+        ;; decoder. This used to test two literal EIPs from one particular
+        ;; build of one particular game, in the decoder every app runs.
+        (call $te (i32.const 356) (global.get $stack_packet_variant))
+        (call $cache_store (local.get $start_eip) (local.get $tstart))
+        (return (local.get $tstart))))
 
     ;; A 16-bit task can only execute inside the selector arena. Landing
     ;; outside it means a far pointer was used as a linear address somewhere,
@@ -1892,7 +1892,15 @@
                 (i32.const 0))
               (br $decode))) ;; LEAVE
       (if (i32.eq (local.get $op) (i32.const 0xCC)) (then (call $te (i32.const 45) (global.get $d_pc)) (local.set $done (i32.const 1)) (br $decode))) ;; INT3
-      (if (i32.eq (local.get $op) (i32.const 0xCD)) (then (drop (call $d_fetch8)) (call $te (i32.const 45) (global.get $d_pc)) (local.set $done (i32.const 1)) (br $decode))) ;; INT imm8
+      ;; INT imm8. The number matters — a 16-bit task reaches DOS through INT
+      ;; 21h for everything the Windows API does not cover, and Klotski and
+      ;; Chess both read their data files that way — so it is kept as the
+      ;; operand and the resume address follows it, which is what $th_block_end
+      ;; would have carried on its own.
+      (if (i32.eq (local.get $op) (i32.const 0xCD))
+        (then (call $te (i32.const 388) (call $d_fetch8))
+              (call $te_raw (global.get $d_pc))
+              (local.set $done (i32.const 1)) (br $decode))) ;; INT imm8
       (if (i32.eq (local.get $op) (i32.const 0xF4)) (then (call $te (i32.const 45) (global.get $d_pc)) (local.set $done (i32.const 1)) (br $decode))) ;; HLT
       ;; CLI/STI — ignore (no interrupt emulation)
       (if (i32.eq (local.get $op) (i32.const 0xFA)) (then (call $te (i32.const 0) (i32.const 0)) (br $decode))) ;; CLI

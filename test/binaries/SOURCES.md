@@ -29,10 +29,33 @@ The full WEP (Volumes 1-4) contained 29 games. The Best of WEP 32-bit port above
 
 Chess, Chip's Challenge, Dr. Black Jack, Fuji Golf, Go Figure!, IdleWild, JezzBall, JigSawed, Klotski, LifeGenesis, Maxwell's Maniac, Pipe Dream, Rodent's Revenge, Stones, TetraVex, Tetris, Tic Tac Drop, TicTacToe, TriPeaks, Tut's Tomb, WordZap
 
-**Original 16-bit sources** (not usable, for reference):
+### The 16-bit originals, in `wep16/`
+
+They are usable. This section said otherwise for as long as there was no NE
+loader; there is one now, and all 31 executables below load as 16-bit tasks.
+
+Source: `https://archive.org/details/wep1-4` — `WEP1.zip` .. `WEP4.zip`, which
+are *installed* copies: plain `.EXE`, `.DLL` and `.HLP` files, no unpacking
+needed. Staged as `wep16/WEP1` .. `wep16/WEP4`, one directory per volume, which
+is also how the games find each other's DLLs.
+
+| Volume | Games |
+|--------|-------|
+| WEP1 | Cruel, Golf, IdleWild, Pegged, Tetris, TicTactics (TIC), TriPeaks (TP), Minesweeper |
+| WEP2 | FreeCell, IdleWild, JigSawed, Pipe Dream (PIPE), Rattler Race, Rodent's Revenge, Stones, Tut's Tomb |
+| WEP3 | Fuji Golf, IdleWild, Klotski, LifeGenesis, SkiFree (SKI), TetraVex, TriPeaks, WordZap |
+| WEP4 | Dr. Black Jack (BLAKJAK), Chess, Chip's Challenge (CHIPS), Go Figure, JezzBall, Maxwell's Maniac, TicTacDrop |
+
+The install floppies are also archived, and are *not* the easier route: they
+ship the games as `.EX$`/`.DL$` files packed with the pack's own `WEPBINXZ.EXE`,
+which is a DOS program. For reference:
 - WEP 1-4 floppies: `https://archive.org/details/microsoft-windows-entertainment-pack-1-3.5-720-k.-7z_202501`
 - Individual volumes: `https://archive.org/details/000777-WindowsEntertainmentPack1` (1-4)
 - Best of WEP floppy: `https://archive.org/details/wep_best-of`
+
+Two runtimes have to be staged beside them and are not part of the pack —
+`VBRUN100.DLL` for the five Visual Basic 1 games and `WIN87EM.DLL` for the four
+that link the 80x87 emulator. Both are recorded in `dlls/SOURCES.md`.
 
 **Community 32-bit remakes** (third-party PE executables, staged in `wep32-community/`):
 - Source: `https://archive.org/details/wep-32bit`
@@ -319,3 +342,19 @@ reference fixture at `test/binaries/help/winhlp32.exe`. It is used by
 
 The binary is not committed. Recover it by extracting the ISO and cabinet,
 then copy it to the path above. The reference test skips cleanly when absent.
+
+## Control panel applets
+
+Extracted locally from `scratch/win98se.iso` (Windows 98 SE), which ships them
+inside the multi-part `win98/*.CAB` set. Any part lists the whole set's
+directory, and cabextract follows the chain as long as every part is in one
+directory:
+
+```
+7z e scratch/win98se.iso -oscratch/win98cabs 'win98/*.CAB'
+cabextract -F 'mmsys.cpl' -d test/binaries/dlls scratch/win98cabs/BASE4.CAB
+```
+
+| File | Why |
+|------|-----|
+| mmsys.cpl | Sound Recorder's Edit > Audio Properties does `LoadLibrary("MMSYS.CPL")` then `GetProcAddress("ShowMMCPLPropertySheet")` (ordinal 5). Without it the app probes, fails and silently gives up. |

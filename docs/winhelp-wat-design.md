@@ -624,8 +624,7 @@ Layout is deterministic and integer-based:
 6. Paint only visible runs using the top-level window back-canvas.
 7. Re-layout on width/font changes; scrolling does not reparse the topic.
 
-Installed FNT faces stay on the canonical WAT font path. Unavailable scalable
-faces may use the existing bounded Canvas fallback under the same GDI policy;
+Installed FNT and scalable TrueType faces stay on the canonical WAT font path;
 the topic model and positions remain WAT-owned.
 
 ## UI architecture

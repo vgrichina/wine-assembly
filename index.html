@@ -55,6 +55,7 @@
       padding: 4px 6px;
       border-bottom: 1px solid #808080;
       display: flex;
+      flex-wrap: wrap;
       gap: 8px;
       align-items: center;
       font-size: 12px;
@@ -330,10 +331,10 @@
     body.no-debug #log { display: none; }
     body.no-debug #screen-wrap { background: #008080; }
     body.no-debug canvas { background: transparent; z-index: 2; }
-    body.exclusive-fullscreen,
-    body.exclusive-fullscreen #shell,
-    body.exclusive-fullscreen #content,
-    body.exclusive-fullscreen #screen-wrap {
+    body.no-debug.exclusive-fullscreen,
+    body.no-debug.exclusive-fullscreen #shell,
+    body.no-debug.exclusive-fullscreen #content,
+    body.no-debug.exclusive-fullscreen #screen-wrap {
       width: 100vw;
       height: 100vh;
       margin: 0;
@@ -341,23 +342,23 @@
       border: 0;
       background: #000;
     }
-    body.exclusive-fullscreen {
+    body.no-debug.exclusive-fullscreen {
       overflow: hidden;
     }
-    body.exclusive-fullscreen #screen-wrap {
+    body.no-debug.exclusive-fullscreen #screen-wrap {
       position: fixed;
       inset: 0;
       max-width: none;
       max-height: none;
       flex-direction: column;
     }
-    body.exclusive-fullscreen #titlebar,
-    body.exclusive-fullscreen #toolbar,
-    body.exclusive-fullscreen #log,
-    body.exclusive-fullscreen #taskbar,
-    body.exclusive-fullscreen #desktop-icons { display: none !important; }
+    body.no-debug.exclusive-fullscreen #titlebar,
+    body.no-debug.exclusive-fullscreen #toolbar,
+    body.no-debug.exclusive-fullscreen #log,
+    body.no-debug.exclusive-fullscreen #taskbar,
+    body.no-debug.exclusive-fullscreen #desktop-icons { display: none !important; }
     body.exclusive-fullscreen #browser-fullscreen-consent { display: flex; }
-    body.exclusive-fullscreen canvas {
+    body.no-debug.exclusive-fullscreen canvas {
       position: relative !important;
       inset: auto !important;
       flex: 1 1 0;
@@ -366,6 +367,23 @@
       height: 0 !important;
       max-width: none !important;
       max-height: none !important;
+    }
+    /* In ?debug, an app's fullscreen request is only a request. Keep the
+       toolbar and log available and fit the exclusive surface into the
+       remaining pane until the user explicitly enters browser fullscreen. */
+    body:not(.no-debug).exclusive-fullscreen #screen-wrap {
+      flex-direction: column;
+      min-width: 0;
+      min-height: 0;
+    }
+    body:not(.no-debug).exclusive-fullscreen canvas {
+      position: relative !important;
+      inset: auto !important;
+      flex: 1 1 0;
+      min-width: 0;
+      min-height: 0;
+      width: 100% !important;
+      height: 0 !important;
     }
     #screen-wrap:fullscreen {
       position: fixed;
@@ -454,6 +472,42 @@
           <option value="freecell16">FreeCell (16-bit)</option>
           <option value="sol16">Solitaire (16-bit)</option>
           <option value="mshearts16">Hearts (16-bit)</option>
+        </optgroup>
+        <!-- The four Entertainment Pack volumes, 16-bit originals. Only the
+             games that reach their own screen are listed; see lib/apps.js. -->
+        <optgroup label="Entertainment Pack 1 (16-bit)">
+          <option value="wep16_cruel">Cruel</option>
+          <option value="wep16_golf">Golf</option>
+          <option value="wep16_idlewild">IdleWild</option>
+          <option value="wep16_pegged">Pegged</option>
+          <option value="wep16_tetris">Tetris</option>
+          <option value="wep16_tic">TicTactics</option>
+          <option value="wep16_tp">TriPeaks</option>
+          <option value="wep16_winmine">Minesweeper</option>
+        </optgroup>
+        <optgroup label="Entertainment Pack 2 (16-bit)">
+          <option value="wep16_freecell">FreeCell</option>
+          <option value="wep16_jigsawed">JigSawed</option>
+          <option value="wep16_pipe">Pipe Dream</option>
+          <option value="wep16_rattler">Rattler Race</option>
+          <option value="wep16_stones">Stones</option>
+          <option value="wep16_tutstomb">Tut's Tomb</option>
+        </optgroup>
+        <optgroup label="Entertainment Pack 3 (16-bit)">
+          <option value="wep16_klotski">Klotski</option>
+          <option value="wep16_lifegen">Life Genesis</option>
+          <option value="wep16_ski">SkiFree</option>
+          <option value="wep16_tetravex">TetraVex</option>
+          <option value="wep16_tripeaks">TriPeaks</option>
+          <option value="wep16_wordzap">WordZap</option>
+        </optgroup>
+        <optgroup label="Entertainment Pack 4 (16-bit)">
+          <option value="wep16_blakjak">Blackjack</option>
+          <option value="wep16_chess">Chess</option>
+          <option value="wep16_chips">Chip's Challenge</option>
+          <option value="wep16_gofigure">Go Figure!</option>
+          <option value="wep16_jezzball">JezzBall</option>
+          <option value="wep16_maxwell">Maxwell's Maniac</option>
         </optgroup>
         <optgroup label="XP">
           <option value="claass">Calculator (XP)</option>
@@ -550,6 +604,7 @@
           <option value="mirc59">mIRC 5.9 Installer</option>
         </optgroup>
         <optgroup label="Local Candidates">
+          <option value="diablo_demo">Diablo (pre-release demo)</option>
           <option value="dxball">DX-Ball 1.09</option>
           <option value="blobby_volley">Blobby Volley</option>
         </optgroup>
@@ -587,6 +642,9 @@
       </span>
       <span class="debug-record">
         <button id="record-btn" onclick="toggleRecording()" title="Record screen + audio to .webm">● Record</button>
+      </span>
+      <span class="debug-thread-state">
+        <button id="thread-state-btn" onclick="openThreadState()" title="Open live scheduler, yield, and critical-section state">Thread state</button>
       </span>
       <a href="story.html" style="margin-left: 8px; font-size: 12px; color: #000080;">The Story</a>
       <span id="status" style="margin-left: auto; color: #808080;"></span>
@@ -658,31 +716,38 @@ Resource-aware Win98 emulator
   <script src="lib/dib.js?v=168"></script>
   <script src="lib/gdi-surface.js?v=2"></script>
   <script src="lib/surface.js?v=1"></script>
-  <script src="lib/resources-icon.js?v=168"></script>
-  <script src="lib/renderer-input.js?v=188"></script>
+  <script src="lib/resources-icon.js?v=170"></script>
+  <script src="lib/renderer-input.js?v=190"></script>
   <script src="lib/renderer.js?v=178"></script>
+  <script src="lib/dll-registry.js?v=1"></script>
+  <script src="lib/apps.js?v=2"></script>
+  <script src="lib/browser-input.js?v=1"></script>
+  <script src="lib/browser-shell.js?v=2"></script>
+  <script src="lib/process-boot.js?v=1"></script>
+  <script src="lib/app-profiles.js?v=1"></script>
   <script src="lib/dll-loader.js?v=168"></script>
   <script src="lib/storage.js?v=169"></script>
   <script src="lib/filesystem.js?v=169"></script>
   <script src="lib/font-substitutions.js?v=1"></script>
   <script src="lib/vendor/webaudio-tinysynth.js?v=168"></script>
-  <script src="lib/host-imports.js?v=201"></script>
+  <script src="lib/host-audio.js?v=1"></script>
+  <script src="lib/host-window.js?v=1"></script>
+  <script src="lib/worker-imports.js?v=1"></script>
+  <script src="lib/vfs-seed.js?v=1"></script>
+  <script src="lib/debug-midi.js?v=1"></script>
+  <script src="lib/debug-thread-state.js?v=2"></script>
+  <script src="lib/host-imports.js?v=203"></script>
   <script src="lib/compile-wat.js?v=169"></script>
-  <script src="lib/thread-manager.js?v=170"></script>
+  <script src="lib/thread-manager.js?v=179"></script>
   <script src="lib/vlan-wire.js?v=1"></script>
   <script src="lib/vlan-rtc.js?v=1"></script>
   <script src="lib/vlan-lobby.js?v=1"></script>
-  <script src="host.js?v=207"></script>
+  <script src="lib/guest-rpc.js?v=3"></script>
+  <script src="lib/guest-thread-host.js?v=4"></script>
+  <script src="host.js?v=212"></script>
   <script src="lib/recorder.js?v=168"></script>
   <script src="lib/perf-hud.js?v=1"></script>
   <script>
-    let wine = null;
-    const runningApps = [];  // array of { wine, name, appIndex }
-    let nextAppIndex = 0;
-    let sharedRenderer = null;
-    let sharedWasmModule = null;
-    const sharedAudioMixer = {};
-    let inputWired = false;
 
     async function approveBrowserFullscreen(event) {
       if (event) {
@@ -705,75 +770,46 @@ Resource-aware Win98 emulator
       }
     }
 
-    function unregisterRunningApp(wine) {
-      const index = runningApps.findIndex(running => running && running.wine === wine);
-      if (index >= 0) runningApps.splice(index, 1);
-      const status = document.getElementById('status');
-      if (status) status.textContent = runningApps.length
-        ? `Running ${runningApps.length} app(s)`
-        : 'Ready';
-    }
+    // What each app is made of, and which ones get a desktop icon: lib/apps.js.
+    // The CLI reads the same table, so `run.js --app=sol` mounts exactly the
+    // assets the desktop icon does.
+    const apps = window.wineApps.APPS;
+    const DEFAULT_APPS = window.wineApps.DESKTOP_APPS;
+    const LOCAL_CANDIDATE_APPS = window.wineApps.LOCAL_CANDIDATE_APPS;
+    const DEBUG_ONLY_APPS = window.wineApps.DEBUG_ONLY_APPS;
+    const appFileUrl = window.wineApps.appFileUrl;
 
-    function stopRunningApp(running, repaint) {
-      if (!running || !running.wine) return;
-      if (typeof running.wine.stop === 'function') running.wine.stop({ repaint: false });
-      else {
-        running.wine.running = false;
-        if (running.wine._cleanupAudio) running.wine._cleanupAudio();
-        if (running.wine._removeAppWindows) running.wine._removeAppWindows();
-      }
-      unregisterRunningApp(running.wine);
-      if (repaint !== false && sharedRenderer) sharedRenderer.repaint();
-    }
-
-    function stopAllApps() {
-      for (const app of [...runningApps]) stopRunningApp(app, false);
-      runningApps.length = 0;
-      if (sharedRenderer) {
-        sharedRenderer.windows = {};
-        sharedRenderer.repaint();
-      }
-      document.getElementById('desktop-icons').style.display = '';
-      stopDebugMidi(true);
-    }
-
-    const DEFAULT_APPS = [
-      ['notepad',     'Notepad',     '\u{1F4DD}'],
-      ['calc',        'Calculator',  '\u{1F9EE}'],
-      ['mspaint98',   'Paint',       '\u{1F3A8}'],
-      ['freecell',    'FreeCell',    '\u{1F0CF}'],
-      ['sol',         'Solitaire',   '\u{2660}'],
-      ['cruel',       'Cruel',       '\u{1F0A1}'],
-      ['golf',        'Golf',        '\u{26F3}'],
-      ['pegged',      'Pegged',      '\u{1F3AF}'],
-      ['snake',       'Rattler',     '\u{1F40D}'],
-      ['taipei',      'Taipei',      '\u{1F004}'],
-      ['tictac',      'TicTactics',  '\u{274C}'],
-      ['reversi',     'Reversi',     '\u{26AB}'],
-      ['winmine_wep', 'Minesweeper', '\u{1F4A3}'],
-      ['ski32',       'SkiFree',     '\u{26F7}'],
-      ['pinball',     'Pinball',     '\u{1F3D0}'],
-      ['spider',      'Spider',      '\u{1F578}'],
-      ['marbles',     'Marbles',     '\u{1F535}'],
-      ['bricks',      'Bricks',      '\u{1F9F1}'],
-      ['empipe',      'EmPipe',      '\u{1F6E0}'],
-      ['funtris',     'Funtris',     '\u{1F9E9}'],
-      ['peaks',       'Peaks',       '\u{26F0}'],
-      ['pyramid',     'Pyramid',     '\u{2666}'],
-      ['fourstones',  'FourStones',  '\u{1F536}'],
-      ['cwordzap',    'CWordZap',    '\u{1F524}'],
-      ['qblackjack',  'Blackjack',   '\u{1F0A1}'],
-      ['winamp',      'Winamp',      '\u{1F3B5}'],
-    ];
-    // Local-only until the LAN party is wired end to end: the client is
-    // playable solo against its own bots, but the interesting mode needs a
-    // second browser and a room to meet in.
-    const LOCAL_CANDIDATE_APPS = [
-      ['liquid_war',        'Liquid War',    '\u{1F4A7}'],
-      ['liquid_war_server', 'LW Server',     '\u{1F5A7}'],
-    ];
     const LOCAL_DESKTOP = /^(localhost|127\.|0\.0\.0\.0|::1$|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(location.hostname);
     const DEBUG_MODE = new URLSearchParams(location.search).has('debug');
+
+    // Launching, stopping, run-slice policy and the tab-local LAN segment all
+    // live in lib/browser-shell.js. The page hands it the things that are
+    // genuinely the page's: the registry, the canvas sizing policy, the debug
+    // log pane, and what to tidy up once the last guest is gone.
+    const shell = window.browserShell.createBrowserShell({
+      apps,
+      debugMode: DEBUG_MODE,
+      screenCanvasSize: () => screenCanvasSize(),
+      appendDebugLog: text => appendDebugLog(text),
+      onStopAll: () => {
+        document.getElementById('desktop-icons').style.display = '';
+        stopDebugMidi(true);
+      },
+    });
+    const runningApps = shell.runningApps;
+    // Tests, devtools and the inline toolbar handlers reach for these by name.
+    // The shell owns the state; these are live views of it, not copies.
+    Object.defineProperty(window, 'wine', { configurable: true, get: () => shell.currentWine });
+    Object.defineProperty(window, 'sharedRenderer', { configurable: true, get: () => shell.renderer });
+    function launchApp() { return shell.launchApp(); }
+    function stopAllApps() { shell.stopAllApps(); }
+    function applyRunSlice() { shell.applyRunSlice(); }
+
+    const threadStateViewer = window.debugThreadState.createDebugThreadState({
+      debugMode: DEBUG_MODE,
+      getRunningApps: () => runningApps,
+    });
+    function openThreadState() { return threadStateViewer.open(); }
 
     // Frame/step graph overlay (lib/perf-hud.js). Off by default even in
     // debug mode — it draws every rAF, and a profiler you cannot turn off is
@@ -814,15 +850,17 @@ Resource-aware Win98 emulator
     //      verifies the whole pipeline (isolation, memory transfer, module
     //      transfer including on-the-fly WAT compilation, worker rendering).
     //
-    //   2. THE SCHEDULER — guest threads actually running in Workers. NOT
-    //      BUILT. It needs a broker for every host import that touches the DOM,
-    //      audio, or localStorage (which does not exist in a worker at all).
-    //      See docs/design-real-threads.md phase 1.
+    //   2. THE SCHEDULER — DONE behind this opt-in. The guest's main thread and
+    //      every CreateThread target run in Workers of their own, while DOM,
+    //      audio and localStorage imports are brokered back to this thread.
     //
-    // So the switch records the opt-in and reports the true state; it does not
-    // pretend the second half exists. ThreadManager logs which backend it ran.
+    // The label reports the true per-launch state rather than inferring it from
+    // isolation: worker startup may still fail and fall back cooperatively.
     const THREADS_KEY = 'wine-assembly.threads';
     window.WINE_THREADS = false;
+    // Diagnostic: serialize Worker slices to distinguish shared-state races
+    // from incorrect per-thread state.
+    window.WINE_THREADS_SERIAL = /[?&]threads-serial\b/.test(location.search);
 
     function threadsIsolated() {
       return typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated;
@@ -835,16 +873,41 @@ Resource-aware Win98 emulator
       const wanted = localStorage.getItem(THREADS_KEY) === '1';
       box.checked = wanted;
       if (!wanted) { el.textContent = ''; return; }
+      if (!window.__threadsStatusTimer && runningApps.length) {
+        window.__threadsStatusTimer = setInterval(() => {
+          if (!runningApps.length) {
+            clearInterval(window.__threadsStatusTimer);
+            window.__threadsStatusTimer = null;
+          }
+          updateThreadsStatus();
+        }, 1000);
+      }
       if (!threadsIsolated()) {
         el.textContent = 'not isolated';
         el.title = 'No COOP/COEP in effect. Toggle again to install the service worker and reload.';
         return;
       }
-      // Honest wording: isolation is real, the worker scheduler is not.
-      el.textContent = 'isolated · cooperative sched';
-      el.title = 'Cross-origin isolation is active, so real threads are possible. '
-        + 'The Worker backend is not implemented yet (docs/design-real-threads.md phase 1), '
-        + 'so guest threads still share this thread.';
+      const workers = runningApps.filter(r => r && r.wine && r.wine.guestWorker).length;
+      if (!runningApps.length) {
+        el.textContent = 'isolated · ready';
+        el.title = 'Cross-origin isolation is active. Launch an app to start its guest Worker.';
+        return;
+      }
+      if (!workers) {
+        el.textContent = 'isolated · worker did not start';
+        el.title = 'Isolation is active, but the running app fell back to cooperative mode. '
+          + 'See the debug log for the worker startup failure.';
+        return;
+      }
+      const guestThreads = runningApps.reduce((n, r) => n
+        + ((r && r.wine && r.wine.guestWorker && r.wine.guestWorker.threadLinks)
+          ? r.wine.guestWorker.threadLinks.size : 0), 0);
+      const suffix = workers === runningApps.length ? '' : ` (${workers}/${runningApps.length})`;
+      el.textContent = guestThreads
+        ? `${workers + guestThreads} threads in workers${suffix}`
+        : `guest in worker${suffix}`;
+      el.title = 'The guest main thread and every thread it creates run in Workers. '
+        + 'Cross-thread SendMessage still runs the target wndproc on the caller thread.';
     }
 
     async function setThreads(on) {
@@ -858,8 +921,8 @@ Resource-aware Win98 emulator
       window.WINE_THREADS = true;
       if (threadsIsolated()) {
         updateThreadsStatus();
-        appendDebugLog('[threads] isolated. Worker scheduler is not implemented yet — '
-          + 'guest threads still run cooperatively on this thread (design-real-threads.md phase 1).');
+        appendDebugLog('[threads] isolated. The next app launched will run its guest main '
+          + 'thread and CreateThread targets in Workers.');
         return;
       }
       if (!navigator.serviceWorker) {
@@ -918,14 +981,18 @@ Resource-aware Win98 emulator
       const desktopApps = LOCAL_DESKTOP
         ? DEFAULT_APPS.concat(LOCAL_CANDIDATE_APPS)
         : DEFAULT_APPS;
+      const selectorApps = DEBUG_MODE
+        ? DEFAULT_APPS.concat(DEBUG_ONLY_APPS)
+        : desktopApps;
       const desktopAppSet = new Set(desktopApps.map(a => a[0]));
+      const selectorAppSet = new Set(selectorApps.map(a => a[0]));
       // Pre-launch click forwarder: canvas sits over the icons even before
       // wireCanvasInput runs, so clicks would be swallowed. Forward any click
       // on the canvas through to the icon underneath until the real input
       // wiring takes over (wireCanvasInput overwrites these handlers).
       const cv = document.getElementById('screen');
       cv.onmousedown = e => {
-        if (inputWired) return;
+        if (window.browserInput.isWired()) return;
         cv.style.pointerEvents = 'none';
         const under = document.elementFromPoint(e.clientX, e.clientY);
         cv.style.pointerEvents = '';
@@ -933,7 +1000,7 @@ Resource-aware Win98 emulator
         if (iconEl) iconEl.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: e.clientX, clientY: e.clientY }));
       };
       cv.addEventListener('touchstart', e => {
-        if (inputWired) return;
+        if (window.browserInput.isWired()) return;
         const t = e.changedTouches && e.changedTouches[0];
         if (!t) return;
         e.preventDefault();
@@ -945,7 +1012,7 @@ Resource-aware Win98 emulator
       }, { passive: false });
       const sel = document.getElementById('app-select');
       for (const opt of [...sel.querySelectorAll('option')]) {
-        if (!desktopAppSet.has(opt.value)) opt.remove();
+        if (!selectorAppSet.has(opt.value)) opt.remove();
       }
       for (const grp of [...sel.querySelectorAll('optgroup')]) {
         if (!grp.querySelector('option')) grp.remove();
@@ -957,16 +1024,8 @@ Resource-aware Win98 emulator
         el.dataset.app = value;
         el.innerHTML = '<div class="icon-img">' + glyph + '</div><div class="icon-label">' + label + '</div>';
         const exePath = apps[value] && apps[value].exe;
-        if (exePath && typeof fetchIconDataURL === 'function') {
-          fetchIconDataURL(exePath).then(url => {
-            if (!url) return;
-            const imgDiv = el.querySelector('.icon-img');
-            if (imgDiv) {
-              imgDiv.innerHTML = '<img src="' + url + '" style="width:32px;height:32px;image-rendering:pixelated">';
-              imgDiv.style.background = 'transparent';
-              imgDiv.style.border = '0';
-            }
-          });
+        if (typeof loadAppIcon === 'function') {
+          loadAppIcon(el.querySelector('.icon-img'), value, exePath);
         }
         let lastClick = 0;
         el.addEventListener('click', () => {
@@ -993,1264 +1052,21 @@ Resource-aware Win98 emulator
       }
     }
 
-    const rctFiles = [
-      "AUTORUN.INF",
-      "Data/csg1.dat",
-      "Data/csg1i.dat",
-      "Data/css1.dat",
-      "Data/css10.dat",
-      "Data/css11.dat",
-      "Data/css12.dat",
-      "Data/css13.dat",
-      "Data/css14.dat",
-      "Data/css15.dat",
-      "Data/css16.dat",
-      "Data/css17.dat",
-      "Data/css2.dat",
-      "Data/css3.dat",
-      "Data/css4.dat",
-      "Data/css5.dat",
-      "Data/css6.dat",
-      "Data/css7.dat",
-      "Data/css8.dat",
-      "Data/css9.dat",
-      "Data/game.cfg",
-      "Data/kanji.dat",
-      "Data/mp.dat",
-      "Data/tutoriak.dat",
-      "Data/tutorial.dat",
-      "English/English.txt",
-      "English/Hasbro Interactive.url",
-      "English/RCT.exe",
-      "English/README.TXT",
-      "English/RollerCoaster Tycoon Web Site.url",
-      "English/license.txt",
-      "Llogo.bmp",
-      "SLOGO.BMP",
-      "Saved Games/001",
-      "Scenarios/SC.IDX",
-      "Scenarios/SC10.SC4",
-      "Scenarios/SC11.SC4",
-      "Scenarios/SC15.SC4",
-      "Scenarios/SC17.SC4",
-      "Scenarios/SC4.SC4",
-      "Scenarios/SC8.SC4",
-      "Scenarios/SC9.SC4",
-      "Scenarios/sc0.SC4",
-      "Scenarios/sc3.SC4",
-      "Setup.exe",
-      "Tracks/Big Twister.TD4",
-      "Tracks/Big Twister.TP4",
-      "Tracks/Chipper Dipper.TD4",
-      "Tracks/Chipper Dipper.TP4",
-      "Tracks/Crazy Caterpillar.TD4",
-      "Tracks/Crazy Caterpillar.TP4",
-      "Tracks/Demon Drop.TD4",
-      "Tracks/Demon Drop.TP4",
-      "Tracks/Exterminator.TD4",
-      "Tracks/Exterminator.TP4",
-      "Tracks/Logger's Revenge.TD4",
-      "Tracks/Logger's Revenge.TP4",
-      "Tracks/Manic Miner.TD4",
-      "Tracks/Manic Miner.TP4",
-      "Tracks/Manic Mouse.TD4",
-      "Tracks/Manic Mouse.TP4",
-      "Tracks/Mini Cars.TD4",
-      "Tracks/Mini Cars.TP4",
-      "Tracks/Mini Maze.TD4",
-      "Tracks/Mini Maze.TP4",
-      "Tracks/Mini Miner.TD4",
-      "Tracks/Mini Miner.TP4",
-      "Tracks/Ropey Rapids.TD4",
-      "Tracks/Ropey Rapids.TP4",
-      "Tracks/Scorpion.TD4",
-      "Tracks/Scorpion.TP4",
-      "Tracks/Spiral Maze.TD4",
-      "Tracks/Spiral Maze.TP4",
-      "Tracks/Thunder Looper.TD4",
-      "Tracks/Thunder Looper.TP4",
-      "UniFish3.exe",
-    ].flatMap(p => {
-      const url = 'binaries/shareware/rct/' + p;
-      const mapped = [{ url, vfsPath: 'c:\\' + p }];
-      if (p.startsWith('English/')) {
-        mapped.push({ url, vfsPath: 'c:\\' + p.slice('English/'.length) });
-      }
-      return mapped;
+
+    // The debug toolbar's MIDI player: lib/debug-midi.js. It plays an asset
+    // through the real MCI host path with no guest running, which is what
+    // separates "the synth is broken" from "the app never asked for music".
+    const debugMidiPlayer = window.debugMidi.createDebugMidi({
+      apps,
+      appFileUrl,
+      debugMode: DEBUG_MODE,
+      assetVersion: '168',
+      setStatus: (text) => { document.getElementById('status').textContent = text; },
     });
+    function playDebugMidi() { return debugMidiPlayer.play(); }
+    function stopDebugMidi(quiet) { debugMidiPlayer.stop(quiet); }
 
-    const aoe1Files = [
-      "Aelaunch.dll",
-      "Aggres_1.per",
-      "Aggres_2.per",
-      "Aggres_3.per",
-      "Aichall.ai",
-      "Aoe.ply",
-      "AoEHlp.dll",
-      "Archer_1.ai",
-      "Archer_2.ai",
-      "Arial.ttf",
-      "Arialbd.ttf",
-      "Armies_1.cpn",
-      "Assyri_1.ai",
-      "Assyri_2.ai",
-      "Assyrian.doc",
-      "Bablnian.doc",
-      "Babylo_1.ai",
-      "Babylo_2.ai",
-      "Bird.wav",
-      "Cavalr_1.ai",
-      "Cavalr_2.ai",
-      "Cavarc_1.ai",
-      "Choson_1.ai",
-      "Choson_2.ai",
-      "Choson.doc",
-      "Closedpw.exe",
-      "Comic.ttf",
-      "Comicbd.ttf",
-      "Coprgtb.ttf",
-      "Coprgtl.ttf",
-      "data/Border.drs",
-      "data/Graphics.drs",
-      "data/Interfac.drs",
-      "data/Sounds.drs",
-      "data/Terrain.drs",
-      "De316f_1.ai",
-      "De34c1_1.ai",
-      "De451c_1.ai",
-      "De494f_1.ai",
-      "De4ef6_1.ai",
-      "De4fe1_1.ai",
-      "De5149_1.ai",
-      "De8dfc_1.ai",
-      "Deathm_1.ai",
-      "Deathm_2.ai",
-      "Deathm_3.ai",
-      "Deathm_4.ai",
-      "Default.ai",
-      "Default.cty",
-      "Default.per",
-      "Defens_1.per",
-      "Desert1.wav",
-      "dplay50a.EXE",
-      "Egyptc_1.ai",
-      "Egyptian.doc",
-      "Egyptw_1.ai",
-      "Elepha_1.ai",
-      "Empires.dat",
-      "Empires.hlp",
-      "eula.txt",
-      "Forest1.wav",
-      "Greek.doc",
-      "Greekp_1.ai",
-      "Hittit_1.ai",
-      "Hittit_2.ai",
-      "Hittite.doc",
-      "Im04fa_1.ai",
-      "Im867c_1.ai",
-      "Immort_1.ai",
-      "Immort_2.ai",
-      "Immort_3.ai",
-      "Immort_4.ai",
-      "Infant_1.ai",
-      "Infant_2.ai",
-      "Infant_3.ai",
-      "language.dll",
-      "Learn.txt",
-      "Lost.mid",
-      "Minoac_1.ai",
-      "Minoan.doc",
-      "Multip_1.scn",
-      "Music1.mid",
-      "Music2.mid",
-      "Music3.mid",
-      "Music4.mid",
-      "Music5.mid",
-      "Music6.mid",
-      "Music7.mid",
-      "Music8.mid",
-      "Music9.mid",
-      "Ocean1.wav",
-      "Open.mid",
-      "Passiv_1.per",
-      "Passive.per",
-      "Persia_1.ai",
-      "Persian.doc",
-      "Phalan_1.ai",
-      "Phalan_2.ai",
-      "Phnician.doc",
-      "Phoeni_1.ai",
-      "Priest_1.ai",
-      "Priest_2.ai",
-      "Readme.doc",
-      "Reigno_1.cpn",
-      "Rules.rps",
-      "Savegame.txt",
-      "Scenario.inf",
-      "setup.exe",
-      "setupenu.dll",
-      "Shadow.col",
-      "Shang.doc",
-      "Shangc_1.ai",
-      "Shangc_2.ai",
-      "Shangh_1.ai",
-      "Sumeri_1.ai",
-      "Sumeri_2.ai",
-      "Sumerian.doc",
-      "Supera_1.per",
-      "Tileedge.dat",
-      "Trirem_1.ai",
-      "Trirem_2.ai",
-      "Warele_1.ai",
-      "Wind1.wav",
-      "Wind2.wav",
-      "Won.mid",
-      "Wonder_1.ai",
-      "Yamato_1.ai",
-      "Yamato.doc",
-    ].map(p => {
-      const url = 'binaries/shareware/aoe/aoe_ex/' + p;
-      const vfsPath = 'c:\\' + p.toLowerCase().replace(/\//g, '\\');
-      if (/^data\/.*\.drs$/i.test(p)) {
-        return { url, vfsPaths: [vfsPath, 'c:\\' + p.split('/').pop().toLowerCase()] };
-      }
-      return { url, vfsPath };
-    });
-
-    const pinballFiles = [
-      'binaries/pinball/wavemix.inf',
-      'binaries/pinball/PINBALL.DAT',
-      'binaries/pinball/FONT.DAT',
-      'binaries/pinball/table.bmp',
-      'binaries/pinball/PINBALL.MID',
-      'binaries/pinball/PINBALL2.MID',
-      'binaries/pinball/SOUND1.WAV',
-      'binaries/pinball/SOUND104.WAV',
-      'binaries/pinball/SOUND105.WAV',
-      'binaries/pinball/SOUND108.WAV',
-      'binaries/pinball/SOUND111.WAV',
-      'binaries/pinball/SOUND112.WAV',
-      'binaries/pinball/SOUND12.WAV',
-      'binaries/pinball/SOUND13.WAV',
-      'binaries/pinball/SOUND131.WAV',
-      'binaries/pinball/SOUND136.WAV',
-      'binaries/pinball/SOUND14.WAV',
-      'binaries/pinball/SOUND16.WAV',
-      'binaries/pinball/SOUND17.WAV',
-      'binaries/pinball/SOUND18.WAV',
-      'binaries/pinball/SOUND181.WAV',
-      'binaries/pinball/SOUND19.WAV',
-      'binaries/pinball/SOUND20.WAV',
-      'binaries/pinball/SOUND21.WAV',
-      'binaries/pinball/SOUND22.WAV',
-      'binaries/pinball/SOUND24.WAV',
-      'binaries/pinball/SOUND240.WAV',
-      'binaries/pinball/SOUND243.WAV',
-      'binaries/pinball/SOUND25.WAV',
-      'binaries/pinball/SOUND26.WAV',
-      'binaries/pinball/SOUND27.WAV',
-      'binaries/pinball/SOUND28.WAV',
-      'binaries/pinball/SOUND29.WAV',
-      'binaries/pinball/SOUND3.WAV',
-      'binaries/pinball/SOUND30.WAV',
-      'binaries/pinball/SOUND34.WAV',
-      'binaries/pinball/SOUND35.WAV',
-      'binaries/pinball/SOUND36.WAV',
-      'binaries/pinball/SOUND38.WAV',
-      'binaries/pinball/SOUND39.WAV',
-      'binaries/pinball/SOUND4.WAV',
-      'binaries/pinball/SOUND42.WAV',
-      'binaries/pinball/SOUND43.WAV',
-      'binaries/pinball/SOUND45.WAV',
-      'binaries/pinball/SOUND49.WAV',
-      'binaries/pinball/SOUND49D.WAV',
-      'binaries/pinball/SOUND5.WAV',
-      'binaries/pinball/SOUND50.WAV',
-      'binaries/pinball/SOUND528.WAV',
-      'binaries/pinball/SOUND53.WAV',
-      'binaries/pinball/SOUND54.WAV',
-      'binaries/pinball/SOUND55.WAV',
-      'binaries/pinball/SOUND560.WAV',
-      'binaries/pinball/SOUND563.WAV',
-      'binaries/pinball/SOUND57.WAV',
-      'binaries/pinball/SOUND58.WAV',
-      'binaries/pinball/SOUND6.WAV',
-      'binaries/pinball/SOUND65.WAV',
-      'binaries/pinball/SOUND68.WAV',
-      'binaries/pinball/SOUND7.WAV',
-      'binaries/pinball/SOUND713.WAV',
-      'binaries/pinball/SOUND735.WAV',
-      'binaries/pinball/SOUND8.WAV',
-      'binaries/pinball/SOUND827.WAV',
-      'binaries/pinball/SOUND9.WAV',
-      'binaries/pinball/SOUND999.WAV',
-    ];
-
-    const pinballPlus95Files = [
-      'binaries/pinball-plus95/wavemix.inf',
-      'binaries/pinball-plus95/PINBALL.DAT',
-      'binaries/pinball-plus95/FONT.DAT',
-      'binaries/pinball-plus95/table.bmp',
-      'binaries/pinball-plus95/PINBALL.MID',
-      'binaries/pinball-plus95/PINBALL2.MID',
-      'binaries/pinball-plus95/SOUND1.WAV',
-      'binaries/pinball-plus95/SOUND104.WAV',
-      'binaries/pinball-plus95/SOUND105.WAV',
-      'binaries/pinball-plus95/SOUND108.WAV',
-      'binaries/pinball-plus95/SOUND12.WAV',
-      'binaries/pinball-plus95/SOUND131.WAV',
-      'binaries/pinball-plus95/SOUND14.WAV',
-      'binaries/pinball-plus95/SOUND16.WAV',
-      'binaries/pinball-plus95/SOUND17.WAV',
-      'binaries/pinball-plus95/SOUND18.WAV',
-      'binaries/pinball-plus95/SOUND19.WAV',
-      'binaries/pinball-plus95/SOUND20.WAV',
-      'binaries/pinball-plus95/SOUND21.WAV',
-      'binaries/pinball-plus95/SOUND22.WAV',
-      'binaries/pinball-plus95/SOUND24.WAV',
-      'binaries/pinball-plus95/SOUND25.WAV',
-      'binaries/pinball-plus95/SOUND26.WAV',
-      'binaries/pinball-plus95/SOUND27.WAV',
-      'binaries/pinball-plus95/SOUND28.WAV',
-      'binaries/pinball-plus95/SOUND29.WAV',
-      'binaries/pinball-plus95/SOUND3.WAV',
-      'binaries/pinball-plus95/SOUND30.WAV',
-      'binaries/pinball-plus95/SOUND34.WAV',
-      'binaries/pinball-plus95/SOUND35.WAV',
-      'binaries/pinball-plus95/SOUND36.WAV',
-      'binaries/pinball-plus95/SOUND38.WAV',
-      'binaries/pinball-plus95/SOUND39.WAV',
-      'binaries/pinball-plus95/SOUND4.WAV',
-      'binaries/pinball-plus95/SOUND42.WAV',
-      'binaries/pinball-plus95/SOUND43.WAV',
-      'binaries/pinball-plus95/SOUND45.WAV',
-      'binaries/pinball-plus95/SOUND49.WAV',
-      'binaries/pinball-plus95/SOUND49D.WAV',
-      'binaries/pinball-plus95/SOUND5.WAV',
-      'binaries/pinball-plus95/SOUND50.WAV',
-      'binaries/pinball-plus95/SOUND54.WAV',
-      'binaries/pinball-plus95/SOUND55.WAV',
-      'binaries/pinball-plus95/SOUND57.WAV',
-      'binaries/pinball-plus95/SOUND58.WAV',
-      'binaries/pinball-plus95/SOUND7.WAV',
-      'binaries/pinball-plus95/SOUND8.WAV',
-      'binaries/pinball-plus95/SOUND9.WAV',
-    ];
-
-    const dxSdkBinFiles = [
-      'binaries/dx-sdk/bin/banana.ppm',
-      'binaries/dx-sdk/bin/camera.x',
-      'binaries/dx-sdk/bin/checker.ppm',
-      'binaries/dx-sdk/bin/lake.ppm',
-      'binaries/dx-sdk/bin/mslogo.x',
-      'binaries/dx-sdk/bin/pm_bship.x',
-      'binaries/dx-sdk/bin/pm_cam.x',
-      'binaries/dx-sdk/bin/pm_chrry.x',
-      'binaries/dx-sdk/bin/pm_cube.x',
-      'binaries/dx-sdk/bin/pm_dship.x',
-      'binaries/dx-sdk/bin/pm_egg.x',
-      'binaries/dx-sdk/bin/pm_land4.x',
-      'binaries/dx-sdk/bin/pm_mslog.x',
-      'binaries/dx-sdk/bin/pm_multi.x',
-      'binaries/dx-sdk/bin/pm_rmlog.x',
-      'binaries/dx-sdk/bin/pm_sph0.x',
-      'binaries/dx-sdk/bin/pm_sph1.x',
-      'binaries/dx-sdk/bin/pm_sph2.x',
-      'binaries/dx-sdk/bin/pm_sph3.x',
-      'binaries/dx-sdk/bin/pm_sph4.x',
-      'binaries/dx-sdk/bin/pm_torus.x',
-      'binaries/dx-sdk/bin/pm_tpot.x',
-      'binaries/dx-sdk/bin/pm_tpot0.x',
-      'binaries/dx-sdk/bin/pm_tpot1.x',
-      'binaries/dx-sdk/bin/pm_tpot2.x',
-      'binaries/dx-sdk/bin/pm_tpot3.x',
-      'binaries/dx-sdk/bin/pm_tree.x',
-      'binaries/dx-sdk/bin/sphere2.x',
-      'binaries/dx-sdk/bin/sphere3.x',
-      'binaries/dx-sdk/bin/tex1.ppm',
-      'binaries/dx-sdk/bin/tex2.ppm',
-      'binaries/dx-sdk/bin/tex3.ppm',
-      'binaries/dx-sdk/bin/tex4.ppm',
-      'binaries/dx-sdk/bin/tex5.ppm',
-      'binaries/dx-sdk/bin/tex6.ppm',
-      'binaries/dx-sdk/bin/tex7.ppm',
-      'binaries/dx-sdk/bin/win95.ppm',
-    ];
-
-    // Prepared from the original Wise installer by running
-    // PREPARE_DXBALL_DEBUG_WEB=1 node test/test-dxball-candidate.js.
-    // test/binaries is gitignored and excluded from public deployment; this
-    // manifest is reachable only from the unfiltered ?debug app selector.
-    const dxballCandidateRoot = 'test/binaries/candidates/dxball/installed/';
-    const dxballCandidateFiles = [
-      '12flight.mds', 'acker-gs.mds', 'ao-laser.wav', 'bang.wav',
-      'bassdrum.wav', 'bigbolt.pcx', 'boing.wav', 'brain.mds',
-      'byeball.wav', 'candy.sbk', 'chisel2.sbk', 'default.bds',
-      'effect.wav', 'effect2.wav', 'ethno_pa.mds', 'fanfare.wav',
-      'freebee.mds', 'glass.wav', 'gmfigaro.mds', 'gunfire.wav',
-      'highscor.pcx', 'humm.wav', 'intro.pcx', 'mainmenu.pcx',
-      'mainmenu.sbk', 'mball2.sbk', 'mbbkgrnd.pcx', 'orchblas.wav',
-      'orchestr.wav', 'padexplo.wav', 'peow!.wav', 'readme.txt',
-      'ricochet.wav', 'saucer.wav', 'score.dat', 'sfont.sbk',
-      'sweepdow.wav', 'swordswi.wav', 'sysfont.sbk', 'tank.wav',
-      'thefont.sbk', 'thudclap.wav', 'voltage.wav', 'whine.wav',
-      'wowpulse.wav', 'xploshor.wav', 'xplosht1.wav',
-    ].map(name => dxballCandidateRoot + name);
-
-    // Extracted archive payload used by the candidate CLI gate. Keep it local
-    // and debug-only, alongside DX-Ball, until Blobby is ready for promotion.
-    const blobbyCandidateRoot = 'test/binaries/candidates/blobby-volley/';
-    const blobbyCandidateFiles = [
-      'graph.pak', 'sound.pak', 'text.pak',
-    ].map(name => blobbyCandidateRoot + name);
-
-    // Liquid War 5.6.2. The client and the server are separate programs from
-    // the same tree and share its assets: lw.dat holds the sprites and the
-    // built-in maps, custom/ holds the user maps and textures the menus offer.
-    const liquidWarRoot = 'test/binaries/candidates/liquid-war/LW5/';
-    const liquidWarFiles = [
-      'data/lw.dat',
-      'custom/map/meditate.bmp', 'custom/map/pacman.bmp',
-      'custom/map/paille.bmp', 'custom/map/t4.bmp',
-      'custom/texture/bluesq.bmp', 'custom/texture/clovers.bmp',
-      'custom/texture/meditate.bmp', 'custom/texture/rust.bmp',
-      'custom/texture/warning.bmp',
-      'custom/music/colossus.mid',
-    ].map(name => liquidWarRoot + name);
-
-    // A guest reaches its help file only through the VFS, and the CLI harness
-    // has a fallback that silently resolves any name against binaries/help.
-    // The browser has no such fallback, so each app must mount its own .hlp
-    // (and .cnt, which drives the Help Topics contents tree).
-    const helpFiles = name => [`binaries/help/${name}.hlp`, `binaries/help/${name}.cnt`];
-
-    const apps = {
-      notepad:  { exe: 'binaries/notepad.exe', files: helpFiles('notepad') },
-      calc:     { exe: 'binaries/calc.exe', dlls: ['binaries/dlls/msvcrt.dll'], files: helpFiles('calc') },
-      freecell: { exe: 'binaries/entertainment-pack/freecell.exe', dlls: ['binaries/entertainment-pack/cards.dll'], files: helpFiles('freecell') },
-      sol:      { exe: 'binaries/entertainment-pack/sol.exe', dlls: ['binaries/entertainment-pack/cards.dll'], files: ['binaries/help/sol.hlp'] },
-      cruel:    { exe: 'binaries/entertainment-pack/cruel.exe', dlls: ['binaries/entertainment-pack/cards.dll'] },
-      golf:     { exe: 'binaries/entertainment-pack/golf.exe', dlls: ['binaries/entertainment-pack/cards.dll'] },
-      pegged:   { exe: 'binaries/entertainment-pack/pegged.exe' },
-      snake:    { exe: 'binaries/entertainment-pack/snake.exe' },
-      taipei:   { exe: 'binaries/entertainment-pack/taipei.exe' },
-      tictac:   { exe: 'binaries/entertainment-pack/tictac.exe' },
-      reversi:  { exe: 'binaries/entertainment-pack/reversi.exe' },
-      winmine_wep: { exe: 'binaries/entertainment-pack/winmine.exe' },
-      // The original 16-bit NE builds. Their DLLs are NE too, so they do not
-      // go in `dlls` (which loads 32-bit PEs) — host.js fetches them from the
-      // exe's own directory once it sees the task is 16-bit.
-      winmine16:  { exe: 'binaries/win98-16bit/WINMINE.EXE' },
-      freecell16: { exe: 'binaries/win98-16bit/FREECELL.EXE' },
-      sol16:      { exe: 'binaries/win98-16bit/SOL.EXE' },
-      mshearts16: { exe: 'binaries/win98-16bit/MSHEARTS.EXE' },
-      mspaint98: { exe: 'binaries/mspaint.exe', files: helpFiles('mspaint') },
-      notepad98: { exe: 'binaries/win98-apps/notepad98.exe', files: helpFiles('notepad') },
-      wordpad:   {
-        exe: 'binaries/win98-apps/wordpad.exe',
-        files: helpFiles('wordpad'),
-        // WordPad calls LoadLibrary for RichEdit during document-view setup.
-        // Preload the native editor and its shaping dependency so their
-        // DllMain/import initialization completes before WordPad creates the
-        // RichEdit20A child, matching the CLI harness.
-        dlls: ['binaries/dlls/riched20.dll', 'binaries/dlls/usp10.dll'],
-      },
-      write:     { exe: 'binaries/win98-apps/write.exe' },
-      mplayer:  { exe: 'binaries/win98-apps/mplayer.exe' },
-      mplay32:  { exe: 'binaries/win98-apps/mplay32.exe' },
-      cdplayer: { exe: 'binaries/win98-apps/cdplayer.exe' },
-      sndrec32_98: { exe: 'binaries/win98-apps/sndrec32.exe' },
-      sndvol32: { exe: 'binaries/win98-apps/sndvol32.exe' },
-      vol98:    { exe: 'binaries/win98-apps/vol98.exe' },
-      fontview: {
-        exe: 'binaries/win98-apps/fontview.exe',
-        // This Win98 build previews NE-format .FON resources and uses the
-        // VC++ 2.0/MFC 3.0 runtime pair. Load the CRT first because MFC30
-        // imports it during DllMain initialization.
-        dlls: ['binaries/dlls/msvcrt20.dll', 'binaries/dlls/mfc30.dll'],
-        files: ['binaries/win98-apps/vgasys.fon'],
-        requiredFiles: true,
-        args: 'vgasys.fon',
-      },
-      kodakimg: { exe: 'binaries/win98-apps/kodakimg.exe' },
-      kodakprv: { exe: 'binaries/win98-apps/kodakprv.exe' },
-      hypertrm: { exe: 'binaries/win98-apps/hypertrm.exe' },
-      telnet:   { exe: 'binaries/win98-apps/telnet.exe' },
-      winipcfg: { exe: 'binaries/win98-apps/winipcfg.exe' },
-      explorer98: { exe: 'binaries/explorer98/explorer.exe' },
-      regedit:  { exe: 'binaries/win98-apps/regedit.exe' },
-      taskman:  { exe: 'binaries/win98-apps/taskman.exe' },
-      welcome98: { exe: 'binaries/win98-apps/welcome.exe' },
-      tour98:   { exe: 'binaries/win98-apps/tour98.exe' },
-      sysmon:   { exe: 'binaries/win98-apps/sysmon.exe' },
-      rsrcmtr:  { exe: 'binaries/win98-apps/rsrcmtr.exe' },
-      cleanmgr: { exe: 'binaries/win98-apps/cleanmgr.exe' },
-      claass:   { exe: 'binaries/xp/claass.exe' },
-      xp_eos:   { exe: 'binaries/xp/xp_eos.exe' },
-      mspaint_ep: { exe: 'binaries/entertainment-pack/mspaint.exe' },
-      mspaint:  { exe: 'binaries/nt/mspaint.exe', dlls: ['binaries/dlls/msvcrt.dll', 'binaries/dlls/mfc42u.dll'], winver: 0x05650004 },
-      ski32:    { exe: 'binaries/entertainment-pack/ski32.exe' },
-      liquid_war: {
-        exe: liquidWarRoot + 'lwwin.exe',
-        files: liquidWarFiles,
-        requiredFiles: true,
-        // Opens the lobby before booting. The channel is keyed on the
-        // executable, so a Liquid War player only ever sees other Liquid War
-        // players — see scopeFor() in lib/vlan-rtc.js.
-        lan: { exe: 'lwwin.exe', label: 'Liquid War' },
-      },
-      // The dedicated server is the same tree's other executable. It has no
-      // game window of its own — it prints to a console and waits — so it is
-      // only interesting with a client pointed at it.
-      liquid_war_server: {
-        exe: liquidWarRoot + 'lwwinsrv.exe',
-        files: liquidWarFiles,
-        requiredFiles: true,
-        args: '-private -2 -nobeep',
-        // The server shares the client's channel: it is the thing the other
-        // player's client is looking for, so they have to be on one segment.
-        lan: { exe: 'lwwin.exe', label: 'Liquid War server' },
-      },
-      winmine:  { exe: 'binaries/xp/winmine.exe' },
-      sndrec32_xp: { exe: 'binaries/xp/sndrec32.exe' },
-      pinball:  { exe: 'binaries/pinball/pinball.exe', files: pinballFiles },
-      pinball_plus95: { exe: 'binaries/pinball-plus95/pinball.exe', files: pinballPlus95Files },
-      dxball: {
-        exe: dxballCandidateRoot + 'dxball.exe',
-        files: dxballCandidateFiles,
-        requiredFiles: true,
-      },
-      blobby_volley: {
-        exe: blobbyCandidateRoot + 'volley.exe',
-        files: blobbyCandidateFiles,
-        requiredFiles: true,
-      },
-      funtris:    {
-        exe: 'binaries/wep32-community/Funpack/Funtris.exe',
-        dlls: ['binaries/wep32-community/Funpack/FunPack.dll'],
-        startupRegistry: [
-          { keyPath: 'HKCU\\Software\\Funpack Software\\Funtris\\Options', valueName: 'GetStarted', type: 4, data: 0 },
-        ],
-        dismissStartupDialog: { title: 'Funtris', command: 1 },
-      },
-      peaks:      {
-        exe: 'binaries/wep32-community/Funpack/Peaks.exe',
-        dlls: ['binaries/wep32-community/Funpack/FunPack.dll'],
-        startupRegistry: [
-          { keyPath: 'HKCU\\Software\\Funpack Software\\Peaks\\Options', valueName: 'GetStarted', type: 4, data: 0 },
-        ],
-        dismissStartupDialog: { title: 'Peaks', command: 1 },
-      },
-      pyramid:    {
-        exe: 'binaries/wep32-community/Funpack/Pyramid.exe',
-        dlls: ['binaries/wep32-community/Funpack/FunPack.dll'],
-        startupIni: [
-          { fileName: 'win.ini', section: 'intl', key: 'iCDateCount', value: -1 },
-        ],
-        startupRegistry: [
-          { keyPath: 'HKCU\\Software\\Funpack Software\\Pyramid\\Options', valueName: 'GetStarted', type: 4, data: 0 },
-        ],
-      },
-      fourstones: {
-        exe: 'binaries/wep32-community/Funpack/FourStones.exe',
-        dlls: ['binaries/wep32-community/Funpack/FunPack.dll'],
-        startupRegistry: [
-          { keyPath: 'HKCU\\Software\\Funpack Software\\Four Stones\\Options', valueName: 'GetStarted', type: 4, data: 0 },
-        ],
-        dismissStartupDialog: { title: 'Four', command: 1 },
-      },
-      cwordzap:   { exe: 'binaries/wep32-community/Wordzap/CWordZap.exe' },
-      bricks:     { exe: 'binaries/wep32-community/Bricks/bricks.exe',      files: ['binaries/wep32-community/Bricks/brk1.dll'] },
-      pawn:       { exe: 'binaries/wep32-community/Pawn/Pawn.exe' },
-      qblackjack: {
-        exe: 'binaries/wep32-community/QBlackjack/QuickBlackjack.exe',
-        startupRegistry: [
-          { keyPath: 'HKCU\\Software\\Wesley Steiner\\Quick Blackjack\\Player', valueName: 'Purse', type: 4, data: 500 },
-          { keyPath: 'HKCU\\Software\\Wesley Steiner\\Quick Blackjack\\Player', valueName: 'Change', type: 4, data: 0 },
-          { keyPath: 'HKCU\\Software\\Wesley Steiner\\Quick Blackjack\\Tabletop', valueName: 'Animation', type: 4, data: 0 },
-        ],
-      },
-      runenlegen: { exe: 'binaries/wep32-community/Runenlegen/Runenlegen.exe' },
-      tetravex:   { exe: 'binaries/wep32-community/Tetravex/Tetravex.exe' },
-      winarc:     { exe: 'binaries/wep32-community/Winarc/Winarc.exe' },
-      jigssawme:  { exe: 'binaries/wep32-community/Jigssawme/JigSawedME.exe' },
-      rodent2000: { exe: 'binaries/wep32-community/Rodent2000/Rodent2000.exe' },
-      tworld: {
-        exe: 'binaries/wep32-community/TWorld/tworld.exe',
-        dlls: ['binaries/wep32-community/TWorld/SDL.dll'],
-        files: [
-          // Level packs (.dac descriptors live in sets/, .dat level data in data/)
-          { url: 'binaries/wep32-community/TWorld/sets/cc-ms.dac',     vfsPath: 'c:\\sets\\cc-ms.dac' },
-          { url: 'binaries/wep32-community/TWorld/sets/CCLP1-MS.dac',  vfsPath: 'c:\\sets\\cclp1-ms.dac' },
-          { url: 'binaries/wep32-community/TWorld/sets/CCLP2-MS.dac',  vfsPath: 'c:\\sets\\cclp2-ms.dac' },
-          { url: 'binaries/wep32-community/TWorld/sets/CCLP3-MS.dac',  vfsPath: 'c:\\sets\\cclp3-ms.dac' },
-          { url: 'binaries/wep32-community/TWorld/sets/intro-ms.dac',  vfsPath: 'c:\\sets\\intro-ms.dac' },
-          { url: 'binaries/wep32-community/TWorld/data/CHIPS.DAT',     vfsPath: 'c:\\data\\chips.dat' },
-          { url: 'binaries/wep32-community/TWorld/data/CCLP1.dat',     vfsPath: 'c:\\data\\cclp1.dat' },
-          { url: 'binaries/wep32-community/TWorld/data/CCLP2.dat',     vfsPath: 'c:\\data\\cclp2.dat' },
-          { url: 'binaries/wep32-community/TWorld/data/CCLP3.dat',     vfsPath: 'c:\\data\\cclp3.dat' },
-          { url: 'binaries/wep32-community/TWorld/data/intro.dat',     vfsPath: 'c:\\data\\intro.dat' },
-          // Resources (font/tiles + ruleset config + sound effects)
-          { url: 'binaries/wep32-community/TWorld/res/rc',             vfsPath: 'c:\\res\\rc' },
-          { url: 'binaries/wep32-community/TWorld/res/font.bmp',       vfsPath: 'c:\\res\\font.bmp' },
-          { url: 'binaries/wep32-community/TWorld/res/tiles.bmp',      vfsPath: 'c:\\res\\tiles.bmp' },
-          { url: 'binaries/wep32-community/TWorld/res/unslist.txt',    vfsPath: 'c:\\res\\unslist.txt' },
-        ],
-      },
-      empipe:     { exe: 'binaries/wep32-community/EmPipe/EMPIPE.EXE', requiredFiles: true, files: [
-        'binaries/wep32-community/EmPipe/EMPIPEE.HLP',
-        'binaries/wep32-community/EmPipe/EMPIPEE.TXT',
-        'binaries/wep32-community/EmPipe/EMPIPE.EXE.manifest',
-        'binaries/wep32-community/EmPipe/EMPCLEAR.MID', 'binaries/wep32-community/EmPipe/EMPGMOV.MID',
-        'binaries/wep32-community/EmPipe/EMPSCR1.MID', 'binaries/wep32-community/EmPipe/EMPSCR2.MID',
-        'binaries/wep32-community/EmPipe/EMPSCR3.MID', 'binaries/wep32-community/EmPipe/EMPSCR4.MID',
-        'binaries/wep32-community/EmPipe/EMPSCR5.MID', 'binaries/wep32-community/EmPipe/EMPSTART.MID',
-      ] },
-      spider:     { exe: 'binaries/plus98/SPIDER.EXE', dlls: ['binaries/entertainment-pack/cards.dll'], files: ['binaries/plus98/SPIDER.CHM', 'binaries/plus98/SPIDER.HLP'] },
-      marbles:    { exe: 'binaries/plus98/MARBLES.EXE', files: [
-        'binaries/plus98/LLOGO.BMP', 'binaries/plus98/LSPLASH.BMP',
-        'binaries/plus98/CHOOSE1.BMP', 'binaries/plus98/CHOOSE2.BMP',
-        'binaries/plus98/COMMON01.BMP', 'binaries/plus98/COMMON02.BMP', 'binaries/plus98/COMMON03.BMP',
-        'binaries/plus98/COMMON04.BMP', 'binaries/plus98/COMMON05.BMP', 'binaries/plus98/CMNBONUS.BMP',
-        'binaries/plus98/LEVEL-01.BMP', 'binaries/plus98/LEVEL-01.DAT', 'binaries/plus98/LEVEL1BG.BMP',
-        'binaries/plus98/TRANS1A.BMP', 'binaries/plus98/TRANS2A.BMP',
-        'binaries/plus98/DIALOG.BMP', 'binaries/plus98/OPTIONS.BMP', 'binaries/plus98/TEXTFONT.BMP',
-        'binaries/plus98/CRACK.BMP', 'binaries/plus98/GRASTILE.BMP',
-        'binaries/plus98/B1.MID', 'binaries/plus98/CRD.MID', 'binaries/plus98/LVL1.MID',
-        'binaries/plus98/2.WAV', 'binaries/plus98/MARBLES.ICO',
-      ] },
-      winamp:     {
-        exe: 'binaries/winamp.exe',
-        dlls: ['binaries/plugins/candidates/vis_w.dll'],
-        files: [
-          // Keep the web default to the known-good playback pair. Winamp's
-          // Visualization prefs enumerate C:\Plugins\*.DLL and dynamically
-          // loading arbitrary non-visualizer plugins still aborts that pane's
-          // init under the current loader.
-          { url: 'binaries/plugins/in_mp3.dll', vfsPath: 'c:\\plugins\\in_mp3.dll' },
-          { url: 'binaries/plugins/out_wave.dll', vfsPath: 'c:\\plugins\\out_wave.dll' },
-          { url: 'binaries/plugins/candidates/vis_w.dll', vfsPath: 'c:\\plugins\\vis_w.dll' },
-          'binaries/demo.mp3',
-          'binaries/winamp.ini',
-          'binaries/winamp.m3u',
-          'binaries/whatsnew.txt',
-        ],
-        winampDemo: 'C:\\demo.mp3',
-        resetIniOnLaunch: ['winamp.ini'],
-      },
-      winamp291_inst: { exe: 'binaries/installers/winamp291.exe' },
-      winamp295_inst: { exe: 'binaries/installers/winamp295.exe' },
-      mirc59:     { exe: 'binaries/installers/mirc59.exe' },
-      abedemo:    { exe: 'binaries/shareware/abe/ex/AbeDemo.exe', files: [
-        'binaries/shareware/abe/ex/GAMEBGN.ddv',
-        'binaries/shareware/abe/ex/R1P18P19.ddv',
-        'binaries/shareware/abe/ex/R1P19P18.ddv',
-        'binaries/shareware/abe/ex/demoopen.ddv',
-        'binaries/shareware/abe/ex/c1.lvl',
-        'binaries/shareware/abe/ex/r1.lvl',
-        'binaries/shareware/abe/ex/s1.lvl',
-      ] },
-      aoe1:       { exe: 'binaries/shareware/aoe/aoe_ex/Empires.exe', files: aoe1Files, requiredFiles: true, fileConcurrency: 10 },
-      aoe2:       { exe: 'binaries/shareware/aoe2/aoe2_ex/EMPIRES2.EXE', files: [
-        'binaries/shareware/aoe2/aoe2_ex/language.dll',
-      ] },
-      mcm:        { exe: 'binaries/shareware/mcm/mcm_ex/MCM.EXE' },
-      mw3:        { exe: 'binaries/shareware/mw3/ex/Program_Files/mech3demo.exe' },
-      rct:        { exe: 'binaries/shareware/rct/English/RCT.exe', files: rctFiles, requiredFiles: true, fileConcurrency: 10 },
-      dx_ddex1:   { exe: 'binaries/dx-sdk/bin/ddex1.exe', files: dxSdkBinFiles },
-      dx_ddex2:   { exe: 'binaries/dx-sdk/bin/ddex2.exe', files: dxSdkBinFiles },
-      dx_ddex3:   { exe: 'binaries/dx-sdk/bin/ddex3.exe', files: dxSdkBinFiles },
-      dx_ddex4:   { exe: 'binaries/dx-sdk/bin/ddex4.exe', files: dxSdkBinFiles },
-      dx_ddex5:   { exe: 'binaries/dx-sdk/bin/ddex5.exe', files: dxSdkBinFiles },
-      dx_flip2d:  { exe: 'binaries/dx-sdk/bin/flip2d.exe', files: dxSdkBinFiles },
-      dx_palette: { exe: 'binaries/dx-sdk/bin/palette.exe', files: dxSdkBinFiles },
-      dx_stretch: { exe: 'binaries/dx-sdk/bin/stretch.exe', files: dxSdkBinFiles },
-      dx_donut:   { exe: 'binaries/dx-sdk/bin/donut.exe', files: dxSdkBinFiles },
-      dx_donuts:  { exe: 'binaries/dx-sdk/bin/donuts.exe', files: dxSdkBinFiles },
-      dx_foxbear: { exe: 'binaries/dx-sdk/foxbear/foxbear.exe', files: ['binaries/dx-sdk/foxbear/foxbear.art'] },
-      dx_tunnel:  { exe: 'binaries/dx-sdk/bin/tunnel.exe', files: dxSdkBinFiles },
-      dx_twist:   { exe: 'binaries/dx-sdk/bin/twist.exe', files: dxSdkBinFiles },
-      dx_boids:   { exe: 'binaries/dx-sdk/bin/boids.exe', files: dxSdkBinFiles },
-      dx_globe:   { exe: 'binaries/dx-sdk/bin/globe.exe', files: dxSdkBinFiles },
-      dx_bellhop: { exe: 'binaries/dx-sdk/bin/bellhop.exe', files: dxSdkBinFiles },
-      dx_viewer:  { exe: 'binaries/dx-sdk/bin/viewer.exe', files: dxSdkBinFiles },
-      dx_flip3dtl: { exe: 'binaries/dx-sdk/bin/flip3dtl.exe', files: dxSdkBinFiles },
-      dx_wormhole: { exe: 'binaries/dx-sdk/bin/wormhole.exe', files: dxSdkBinFiles },
-      scr_architec: { exe: 'binaries/screensavers/ARCHITEC.SCR', args: '/s', files: [
-        'binaries/screensavers/ARCHITEC.SCN',
-        'binaries/screensavers/AR_MESH.X',
-        'binaries/screensavers/AR_TEXTU.GIF',
-        'binaries/screensavers/AR_WALLP.GIF',
-        'binaries/screensavers/AR_WALLP.PAL',
-        'binaries/screensavers/AR_WVLFT.BMP',
-        'binaries/screensavers/AR_WVLIN.GIF',
-      ] },
-      scr_cathy:    { exe: 'binaries/screensavers/CATHY.SCR', args: '/s' },
-      scr_cityscap: { exe: 'binaries/screensavers/CITYSCAP.SCR', args: '/s' },
-      scr_corbis:   { exe: 'binaries/screensavers/CORBIS.SCR', args: '/s' },
-      scr_doonbury: { exe: 'binaries/screensavers/DOONBURY.SCR', args: '/s' },
-      scr_fallingl: { exe: 'binaries/screensavers/FALLINGL.SCR', args: '/s' },
-      scr_fashion:  { exe: 'binaries/screensavers/FASHION.SCR', args: '/s' },
-      scr_foxtrot:  { exe: 'binaries/screensavers/FOXTROT.SCR', args: '/s' },
-      scr_ga_saver: { exe: 'binaries/screensavers/GA_SAVER.SCR', args: '/s' },
-      scr_geometry: { exe: 'binaries/screensavers/GEOMETRY.SCR', args: '/s' },
-      scr_horror:   { exe: 'binaries/screensavers/HORROR.SCR', args: '/s' },
-      scr_jazz:     { exe: 'binaries/screensavers/JAZZ.SCR', args: '/s' },
-      scr_oasaver:  { exe: 'binaries/screensavers/OASAVER.SCR', args: '/s' },
-      scr_peanuts:  { exe: 'binaries/screensavers/PEANUTS.SCR', args: '/s' },
-      scr_phodisc:  { exe: 'binaries/screensavers/PHODISC.SCR', args: '/s' },
-      scr_rockroll: { exe: 'binaries/screensavers/ROCKROLL.SCR', args: '/s' },
-      scr_scifi:    { exe: 'binaries/screensavers/SCIFI.SCR', args: '/s' },
-      scr_win98:    { exe: 'binaries/screensavers/WIN98.SCR', args: '/s' },
-      scr_wotravel: { exe: 'binaries/screensavers/WOTRAVEL.SCR', args: '/s' },
-    };
-
-    let debugMidiPlayer = null;
-    let debugMidiAudioHost = null;
-
-    function appFileUrl(file) {
-      if (!file) return '';
-      return typeof file === 'string' ? file : (file.url || '');
-    }
-
-    function midiBaseName(url) {
-      return String(url || '').split(/[\/\\]/).pop();
-    }
-
-    function midiContainerKind(bytes) {
-      if (!bytes || bytes.length < 14) return '';
-      const text4 = (p) => String.fromCharCode(bytes[p], bytes[p + 1], bytes[p + 2], bytes[p + 3]);
-      if (text4(0) === 'MThd') return 'SMF';
-      if (bytes.length >= 24 && text4(0) === 'RIFF' && text4(8) === 'RMID') return 'RMID';
-      return '';
-    }
-
-    function initDebugMidiSelect() {
-      if (!DEBUG_MODE) return;
-      const sel = document.getElementById('midi-select');
-      if (!sel) return;
-      const seen = new Set();
-      for (const [appKey, app] of Object.entries(apps)) {
-        for (const file of (app.files || [])) {
-          const url = appFileUrl(file);
-          if (!/\.(mid|midi|rmi)$/i.test(url) || seen.has(url)) continue;
-          seen.add(url);
-          const opt = document.createElement('option');
-          opt.value = url;
-          opt.textContent = appKey + ': ' + midiBaseName(url);
-          sel.appendChild(opt);
-        }
-      }
-      if (!sel.options.length) {
-        const opt = document.createElement('option');
-        opt.value = '';
-        opt.textContent = 'No MIDI assets';
-        sel.appendChild(opt);
-      }
-    }
-
-    function writeDebugString(memory, ptr, value) {
-      const mem = new Uint8Array(memory.buffer);
-      const s = String(value || '');
-      for (let i = 0; i < s.length && ptr + i + 1 < mem.length; i++) {
-        mem[ptr + i] = s.charCodeAt(i) & 0xFF;
-      }
-      mem[Math.min(ptr + s.length, mem.length - 1)] = 0;
-    }
-
-    function stopDebugMidi(quiet) {
-      if (debugMidiPlayer) {
-        try { debugMidiPlayer.imports.host.mci_command(debugMidiPlayer.id, 0x0804, 0, 0); } catch (_) {}
-        debugMidiPlayer = null;
-      }
-      if (!quiet) document.getElementById('status').textContent = 'MIDI stopped';
-    }
-
-    async function playDebugMidi() {
-      const sel = document.getElementById('midi-select');
-      const url = sel && sel.value;
-      if (!url) return;
-      stopDebugMidi(true);
-      const status = document.getElementById('status');
-      const name = midiBaseName(url);
-      status.textContent = 'Loading MIDI...';
-      try {
-        if (!debugMidiAudioHost) debugMidiAudioHost = new WineAssembly();
-        const ac = debugMidiAudioHost.primeAudio();
-        const response = await fetch(url + '?v=168');
-        if (!response.ok) throw new Error('HTTP ' + response.status);
-        const bytes = new Uint8Array(await response.arrayBuffer());
-        if (!midiContainerKind(bytes)) {
-          status.textContent = name + ' is not SMF/RMID MIDI data';
-          console.warn('[debug-midi] unsupported MIDI container:', name, bytes.slice(0, 16));
-          return;
-        }
-        const memory = new WebAssembly.Memory({ initial: 1 });
-        const path = 'c:\\' + name.toLowerCase();
-        const files = new Map([[path, { data: bytes, attrs: 0x20 }]]);
-        const ctx = {
-          getMemory: () => memory.buffer,
-          get _audioCtx() { return ac; },
-          trimMidiLeadIn: true,
-          readFile: (requested) => {
-            const base = midiBaseName(requested).toLowerCase();
-            const entry = files.get('c:\\' + base);
-            return entry && entry.data;
-          },
-          vfs: { files },
-        };
-        const imports = createHostImports(ctx);
-        writeDebugString(memory, 0x100, name);
-        const id = imports.host.mci_open(0x100, 0, 0x2002);
-        const dev = ctx._mci && ctx._mci.devices && ctx._mci.devices.get(id >>> 0);
-        if (!dev || !dev.smf || !dev.smf.notes.length) {
-          throw new Error('MIDI parsed with no notes');
-        }
-        const err = imports.host.mci_command(id, 0x0806, 0, 0);
-        if (err) throw new Error('MCI_PLAY failed: 0x' + (err >>> 0).toString(16));
-        debugMidiPlayer = { imports, id, ctx, url };
-        status.textContent = 'Playing MIDI: ' + name + ' (' + dev.smf.notes.length + ' notes)';
-      } catch (e) {
-        console.error('[debug-midi] failed:', e);
-        status.textContent = 'MIDI failed: ' + (e && e.message ? e.message : e);
-      }
-    }
-
-    initDebugMidiSelect();
-
-    function wireCanvasInput(canvas, renderer) {
-      if (inputWired) return;
-      inputWired = true;
-      canvas.oncontextmenu = e => e.preventDefault();
-      function eventPointFromClient(clientX, clientY) {
-        const r = canvas.getBoundingClientRect();
-        const sx = canvas.width / r.width, sy = canvas.height / r.height;
-        const x = Math.floor((clientX - r.left) * sx);
-        const y = Math.floor((clientY - r.top) * sy);
-        return { x, y };
-      }
-      function eventPoint(e) {
-        return eventPointFromClient(e.clientX, e.clientY);
-      }
-      const keyboardProxy = document.getElementById('mobile-keyboard-proxy');
-      const isKeyboardProxy = el => keyboardProxy && el === keyboardProxy;
-      function clearKeyboardProxy() {
-        if (keyboardProxy && keyboardProxy.value) keyboardProxy.value = '';
-      }
-      function focusGuestKeyboardProxy() {
-        if (!keyboardProxy || !runningApps || !runningApps.length) return;
-        // iOS only opens the software keyboard from a real editable DOM
-        // element, and only during a user gesture. The canvas remains the
-        // visual surface; this hidden textarea is just the keyboard device.
-        try {
-          clearKeyboardProxy();
-          keyboardProxy.focus({ preventScroll: true });
-        } catch (_) {
-          try { keyboardProxy.focus(); } catch (_) {}
-        }
-      }
-      function unlockRunningAudio() {
-        if (!runningApps || !runningApps.length) return;
-        for (const app of runningApps) {
-          const wineHost = app && app.wine;
-          if (!wineHost) continue;
-          try {
-            if (wineHost.primeAudio) wineHost.primeAudio();
-          } catch (_) {}
-          const contexts = [];
-          if (wineHost._audioCtx) contexts.push(wineHost._audioCtx);
-          const voices = wineHost._sharedAudio && wineHost._sharedAudio.voices;
-          if (voices && voices._ac && voices._ac !== wineHost._audioCtx) contexts.push(voices._ac);
-          for (const ac of contexts) {
-            if (ac && ac.state === 'suspended') {
-              try { ac.resume(); } catch (_) {}
-            }
-          }
-        }
-      }
-      function windowAtCanvas(cx, cy) {
-        for (const w of Object.values(renderer.windows)) {
-          if (!w.visible || w.isChild) continue;
-          if (cx >= w.x && cx < w.x + w.w && cy >= w.y && cy < w.y + w.h) return w;
-        }
-        return null;
-      }
-      function forwardEmptyDesktopClick(clientX, clientY, cx, cy) {
-        if (DEBUG_MODE || windowAtCanvas(cx, cy)) return false;
-        canvas.style.pointerEvents = 'none';
-        const under = document.elementFromPoint(clientX, clientY);
-        canvas.style.pointerEvents = '';
-        const iconEl = under && under.closest && under.closest('.desktop-icon');
-        if (iconEl) {
-          iconEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX, clientY }));
-          return true;
-        }
-        for (const sel of document.querySelectorAll('.desktop-icon.selected')) sel.classList.remove('selected');
-        return false;
-      }
-      let mouseDragActive = false;
-      let mouseDownActive = false;
-      let activeTouchId = null;
-      let lastTouchPoint = null;
-      function stopMouseDragCapture() {
-        mouseDragActive = false;
-        mouseDownActive = false;
-        window.removeEventListener('mousemove', windowMouseMove, true);
-        window.removeEventListener('mouseup', windowMouseUp, true);
-      }
-      function touchById(list, id) {
-        if (!list) return null;
-        for (let i = 0; i < list.length; i++) {
-          if (list[i].identifier === id) return list[i];
-        }
-        return null;
-      }
-      function stopTouchCapture() {
-        activeTouchId = null;
-        lastTouchPoint = null;
-        window.removeEventListener('touchmove', windowTouchMove, true);
-        window.removeEventListener('touchend', windowTouchEnd, true);
-        window.removeEventListener('touchcancel', windowTouchCancel, true);
-      }
-      function windowMouseMove(e) {
-        if (!mouseDownActive) return;
-        mouseDragActive = true;
-        e.preventDefault();
-        e.stopPropagation();
-        const { x, y } = eventPoint(e);
-        renderer.handleMouseMove(x, y);
-      }
-      function windowMouseUp(e) {
-        if (!mouseDownActive) return;
-        e.preventDefault();
-        e.stopPropagation();
-        const { x, y } = eventPoint(e);
-        renderer.handleMouseUp(x, y, e.button);
-        stopMouseDragCapture();
-      }
-      function windowTouchMove(e) {
-        if (activeTouchId === null) return;
-        const t = touchById(e.changedTouches, activeTouchId) || touchById(e.touches, activeTouchId);
-        if (!t) return;
-        e.preventDefault();
-        e.stopPropagation();
-        const { x, y } = eventPointFromClient(t.clientX, t.clientY);
-        lastTouchPoint = { x, y };
-        renderer.handleMouseMove(x, y);
-      }
-      function windowTouchEnd(e) {
-        if (activeTouchId === null) return;
-        const t = touchById(e.changedTouches, activeTouchId);
-        if (!t) return;
-        e.preventDefault();
-        e.stopPropagation();
-        const p = eventPointFromClient(t.clientX, t.clientY);
-        renderer.handleMouseUp(p.x, p.y, 0);
-        stopTouchCapture();
-      }
-      function windowTouchCancel(e) {
-        if (activeTouchId === null) return;
-        e.preventDefault();
-        e.stopPropagation();
-        const p = lastTouchPoint;
-        if (p) renderer.handleMouseUp(p.x, p.y, 0);
-        stopTouchCapture();
-      }
-      canvas.onmousedown = e => {
-        e.preventDefault();
-        canvas.focus();
-        unlockRunningAudio();
-        const { x: cx, y: cy } = eventPoint(e);
-        if (forwardEmptyDesktopClick(e.clientX, e.clientY, cx, cy)) return;
-        renderer.handleMouseDown(cx, cy, e.button, { ctrlKey: e.ctrlKey, shiftKey: e.shiftKey });
-        focusGuestKeyboardProxy();
-        mouseDownActive = true;
-        mouseDragActive = false;
-        window.addEventListener('mousemove', windowMouseMove, true);
-        window.addEventListener('mouseup', windowMouseUp, true);
-      };
-      canvas.onmouseup = e => {
-        if (mouseDownActive) return;
-        const { x, y } = eventPoint(e);
-        renderer.handleMouseUp(x, y, e.button);
-      };
-      canvas.addEventListener('wheel', e => {
-        e.preventDefault();
-        const { x, y } = eventPoint(e);
-        renderer.handleWheel(x, y, e.deltaY);
-      }, { passive: false });
-      canvas.addEventListener('touchstart', e => {
-        if (activeTouchId !== null) return;
-        const t = e.changedTouches && e.changedTouches[0];
-        if (!t) return;
-        e.preventDefault();
-        canvas.focus();
-        unlockRunningAudio();
-        const { x: cx, y: cy } = eventPointFromClient(t.clientX, t.clientY);
-        if (forwardEmptyDesktopClick(t.clientX, t.clientY, cx, cy)) return;
-        activeTouchId = t.identifier;
-        lastTouchPoint = { x: cx, y: cy };
-        renderer.handleMouseDown(cx, cy, 0);
-        focusGuestKeyboardProxy();
-        window.addEventListener('touchmove', windowTouchMove, { capture: true, passive: false });
-        window.addEventListener('touchend', windowTouchEnd, { capture: true, passive: false });
-        window.addEventListener('touchcancel', windowTouchCancel, { capture: true, passive: false });
-      }, { passive: false });
-      canvas.setAttribute('tabindex', '0');
-      canvas.focus();
-      // Default-claim keys when canvas is focused: the guest gets every
-      // keystroke except those reserved for the browser/OS (close tab,
-      // reload, devtools, fullscreen, OS keys). This matches Win98 feel
-      // — Ctrl+S/F/P etc. land in the app instead of the browser.
-      const keepForBrowser = (e) => {
-        const vk = e.keyCode;
-        if (e.metaKey) return true;                          // Cmd/Win
-        if (vk === 44) return true;                          // PrintScreen
-        if (vk === 122 || vk === 123) return true;           // F11, F12
-        if (vk === 116) return true;                         // F5 (reload)
-        if (e.ctrlKey && vk === 82) return true;             // Ctrl+R
-        if (e.ctrlKey && vk === 87) return true;             // Ctrl+W
-        if (e.ctrlKey && vk === 84) return true;             // Ctrl+T
-        if (e.ctrlKey && vk === 9)  return true;             // Ctrl+Tab
-        if (e.ctrlKey && vk === 33) return true;             // Ctrl+PgUp
-        if (e.ctrlKey && vk === 34) return true;             // Ctrl+PgDn
-        if (e.ctrlKey && vk === 27) return true;             // Ctrl+Esc
-        if (e.ctrlKey && e.shiftKey && (vk === 73 || vk === 74 || vk === 67)) return true; // devtools
-        if (e.ctrlKey && (vk === 187 || vk === 189 || vk === 48)) return true; // zoom
-        if (e.altKey && vk === 115) return true;             // Alt+F4
-        return false;
-      };
-      // Keys that would generate a printable character via the keypress
-      // event (no Ctrl/Alt modifiers, VK in the typing range). Calling
-      // preventDefault() on keydown suppresses the subsequent keypress in
-      // browsers, which would break WM_CHAR delivery — so leave those
-      // alone and let keypress fire naturally.
-      const isPrintableKey = (e) => {
-        if (e.ctrlKey || e.altKey || e.metaKey) return false;
-        const vk = e.keyCode;
-        if (vk >= 0x30 && vk <= 0x5A) return true;           // 0-9, A-Z
-        if (vk >= 0x60 && vk <= 0x6F) return true;           // numpad
-        if (vk >= 0xBA && vk <= 0xC0) return true;           // ;=,-./` etc.
-        if (vk >= 0xDB && vk <= 0xDE) return true;           // [\]'
-        if (vk === 32) return true;                          // space
-        return false;
-      };
-      let suppressTextInputEvents = 0;
-      const charCodeFromKeyEvent = (e) => {
-        if (e.ctrlKey || e.altKey || e.metaKey) return 0;
-        if (typeof e.key === 'string' && e.key.length === 1) return e.key.charCodeAt(0);
-        if (e.key === 'Enter') return 13;
-        return 0;
-      };
-      const focusGuestCanvas = () => {
-        try {
-          const active = document.activeElement;
-          if (active && active !== canvas && !isKeyboardProxy(active) && active.blur) active.blur();
-          canvas.focus({ preventScroll: true });
-        } catch (_) {
-          try { canvas.focus(); } catch (_) {}
-        }
-      };
-      const shouldIgnorePageKey = (e) => {
-        const el = e.target;
-        if (isKeyboardProxy(el)) return false;
-        if (!el || el === canvas || el === document.body || el === document.documentElement) return false;
-        if (runningApps && runningApps.length) {
-          const toolbar = document.getElementById('toolbar');
-          if (toolbar && toolbar.contains(el) && !keepForBrowser(e)) {
-            // After a program is running, the Win98 guest owns normal
-            // keystrokes. Browser toolbar controls can retain DOM focus after
-            // Launch/program selection; refocus the canvas so Notepad-style
-            // text input is delivered to the guest, not swallowed by <select>.
-            focusGuestCanvas();
-            return false;
-          }
-        }
-        const tag = (el.tagName || '').toUpperCase();
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
-        if (el.isContentEditable) return true;
-        return false;
-      };
-      const startInputProfile = (label, e, data) => {
-        if (!renderer._profileInput || !window.DEBUG_INPUT_PROFILE) return;
-        const now = renderer._profileNow ? renderer._profileNow() : performance.now();
-        let eventTime = (e && typeof e.timeStamp === 'number') ? e.timeStamp : now;
-        if (eventTime > now + 100000 && performance.timeOrigin) eventTime -= performance.timeOrigin;
-        if (!Number.isFinite(eventTime) || eventTime < 0 || eventTime > now + 1000) eventTime = now;
-        renderer._profileInput(label, {
-          ...(data || {}),
-          domType: e.type,
-          key: e.key,
-          code: e.code,
-          eventTime: Number(eventTime.toFixed(3)),
-        }, eventTime);
-        renderer._profileMark('browser-handler-start', {
-          delayMs: Number((now - eventTime).toFixed(3)),
-        });
-      };
-      const handleKeyDown = (e) => {
-        if (shouldIgnorePageKey(e)) return;
-        const vk = e.keyCode;
-        unlockRunningAudio();
-        renderer.handleKeyDown(vk);
-        suppressTextInputEvents = 0;
-        if (!keepForBrowser(e)) {
-          const charCode = charCodeFromKeyEvent(e);
-          if (charCode) {
-            startInputProfile('keydown-char', e, { vk, charCode });
-            renderer.handleKeyPress(charCode);
-            renderer._profileMark && renderer._profileMark('browser-handler-end');
-            suppressTextInputEvents = 2;
-            e.preventDefault();
-          } else if (!isPrintableKey(e)) {
-            e.preventDefault();
-          }
-        }
-      };
-      const handleKeyUp = (e) => {
-        if (shouldIgnorePageKey(e)) return;
-        renderer.handleKeyUp(e.keyCode);
-      };
-      const handleKeyPress = (e) => {
-        if (shouldIgnorePageKey(e)) return;
-        if (suppressTextInputEvents > 0) {
-          suppressTextInputEvents--;
-          e.preventDefault();
-          return;
-        }
-        e.preventDefault();
-        const charCode = e.charCode || e.keyCode;
-        startInputProfile('keypress', e, { charCode });
-        renderer.handleKeyPress(charCode);
-        renderer._profileMark && renderer._profileMark('browser-handler-end');
-      };
-      const handleBeforeInput = (e) => {
-        if (shouldIgnorePageKey(e)) return;
-        if (suppressTextInputEvents > 0) {
-          suppressTextInputEvents--;
-          e.preventDefault();
-          clearKeyboardProxy();
-          return;
-        }
-        if (e.data) {
-          e.preventDefault();
-          for (const ch of e.data) {
-            const charCode = ch.charCodeAt(0);
-            startInputProfile('beforeinput', e, { charCode });
-            renderer.handleKeyPress(charCode);
-            renderer._profileMark && renderer._profileMark('browser-handler-end');
-          }
-          clearKeyboardProxy();
-        }
-      };
-      const handleProxyInput = (e) => {
-        if (!isKeyboardProxy(e.target)) return;
-        if (suppressTextInputEvents > 0) {
-          suppressTextInputEvents--;
-          clearKeyboardProxy();
-          return;
-        }
-        const text = keyboardProxy.value || '';
-        if (text) {
-          for (const ch of text) {
-            const charCode = ch.charCodeAt(0);
-            startInputProfile('proxy-input', e, { charCode });
-            renderer.handleKeyPress(charCode);
-            renderer._profileMark && renderer._profileMark('browser-handler-end');
-          }
-        }
-        clearKeyboardProxy();
-      };
-      let imeComposing = false;
-      const handleCompositionStart = (e) => {
-        if (shouldIgnorePageKey(e)) return;
-        imeComposing = true;
-        suppressTextInputEvents = 0;
-        renderer.handleCompositionStart && renderer.handleCompositionStart();
-      };
-      const handleCompositionUpdate = (e) => {
-        if (!imeComposing || shouldIgnorePageKey(e)) return;
-        renderer.handleCompositionUpdate && renderer.handleCompositionUpdate(e.data || '');
-      };
-      const handleCompositionEnd = (e) => {
-        if (!imeComposing || shouldIgnorePageKey(e)) return;
-        imeComposing = false;
-        renderer.handleCompositionEnd && renderer.handleCompositionEnd(e.data || '');
-        // Browsers commonly follow compositionend with beforeinput/input for
-        // the same committed text. The guest commit above is authoritative.
-        suppressTextInputEvents = 2;
-        clearKeyboardProxy();
-      };
-      window.addEventListener('keydown', handleKeyDown, { capture: true });
-      window.addEventListener('keyup', handleKeyUp, { capture: true });
-      window.addEventListener('keypress', handleKeyPress, { capture: true });
-      window.addEventListener('beforeinput', handleBeforeInput, { capture: true });
-      window.addEventListener('compositionstart', handleCompositionStart, { capture: true });
-      window.addEventListener('compositionupdate', handleCompositionUpdate, { capture: true });
-      window.addEventListener('compositionend', handleCompositionEnd, { capture: true });
-      if (keyboardProxy) keyboardProxy.addEventListener('input', handleProxyInput);
-      canvas.onmousemove = e => {
-        if (mouseDragActive) return;
-        const { x: mx, y: my } = eventPoint(e);
-        renderer.handleMenuHover(mx, my);
-        // Always deliver mouse moves — WM_SETCURSOR depends on it, and games
-        // like Reversi key their "valid move" cross cursor on WM_MOUSEMOVE.
-        renderer.handleMouseMove(mx, my);
-      };
-    }
-
-    function hasWasmTailCalls() {
-      return typeof WineAssembly === 'undefined' ||
-        !WineAssembly.supportsWasmTailCalls ||
-        WineAssembly.supportsWasmTailCalls();
-    }
-
-    function autoRunSliceFor(appKey, compatDispatch) {
-      switch (appKey) {
-        case 'spider':
-        case 'sol':
-        case 'freecell':
-        case 'cruel':
-        case 'golf':
-        case 'pyramid':
-        case 'winmine_wep':
-        case 'winmine':
-        case 'winmine16':
-        case 'freecell16':
-        case 'sol16':
-        case 'mshearts16':
-        case 'reversi':
-        case 'tictac':
-          return compatDispatch ? 100 : 25000;
-        default:
-          return compatDispatch ? 500 : 100000;
-      }
-    }
-
-    function selectedRunSlice(appKey) {
-      const compatDispatch = !hasWasmTailCalls();
-      const autoSlice = autoRunSliceFor(appKey, compatDispatch);
-      const select = document.getElementById('slice-size-select');
-      const raw = select && select.value ? select.value : 'auto';
-      if (raw !== 'auto') {
-        const selected = parseInt(raw, 10);
-        if (Number.isFinite(selected) && selected > 0) {
-          return compatDispatch ? Math.min(selected, autoSlice) : selected;
-        }
-      }
-      return autoSlice;
-    }
-
-    function applyRunSlice() {
-      const applied = [];
-      for (const app of runningApps) {
-        app.wine.stepsPerSlice = selectedRunSlice(app.name);
-        applied.push(`${app.name}:${app.wine.stepsPerSlice}`);
-      }
-      if (applied.length) {
-        appendDebugLog(`Run slice updated: ${applied.join(', ')}`);
-      }
-    }
+    debugMidiPlayer.init();
 
     window.DEBUG_INPUT_PROFILE = false;
     window.DEBUG_INPUT_PROFILE_LOG = false;
@@ -2312,221 +1128,6 @@ Resource-aware Win98 emulator
         );
       }
       appendDebugLog(lines.join('\n'));
-    }
-
-    function scheduleStartupDialogDismiss(app, wine) {
-      const pending = app && (app.dismissStartupDialogs || app.dismissStartupDialog);
-      const configs = Array.isArray(pending) ? pending.slice() : (pending ? [pending] : []);
-      if (!configs.length || !wine || !wine.instance || !wine.instance.exports || !sharedRenderer) return;
-      const e = wine.instance.exports;
-      if (!e.send_message) return;
-      let tries = 0;
-      const maxTries = Math.max(...configs.map(cfg => cfg.tries || 80));
-      const intervalMs = Math.min(...configs.map(cfg => cfg.intervalMs || 50));
-      const timer = setInterval(() => {
-        tries++;
-        const stillRunning = runningApps.some(r => r && r.wine === wine);
-        const dialogs = Object.values(sharedRenderer.windows || {})
-          .filter(w => w && w.visible && w.isDialog)
-          .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0));
-        const idx = configs.findIndex(cfg =>
-          dialogs.some(w => !cfg.title || String(w.title || '').includes(cfg.title)));
-        if (idx >= 0) {
-          const cfg = configs[idx];
-          const dlg = dialogs.find(w => !cfg.title || String(w.title || '').includes(cfg.title));
-          e.send_message(dlg.hwnd | 0, 0x0111, cfg.command || 1, 0);
-          configs.splice(idx, 1);
-          if (!configs.length) clearInterval(timer);
-        } else if (!stillRunning || tries >= maxTries) {
-          clearInterval(timer);
-        }
-      }, intervalMs);
-    }
-
-    async function launchApp() {
-      const sel = document.getElementById('app-select').value;
-      const app = apps[sel];
-      if (!app) return;
-      if (app.resetIniOnLaunch && typeof localStorage !== 'undefined') {
-        for (const name of app.resetIniOnLaunch) {
-          localStorage.removeItem('ini:' + String(name).toLowerCase());
-        }
-      }
-      if (app.startupIni && window.StorageImports && StorageImports.setIniValue) {
-        for (const entry of app.startupIni) {
-          StorageImports.setIniValue(entry.fileName, entry.section, entry.key, entry.value);
-        }
-      }
-      if (app.startupRegistry && window.StorageImports && StorageImports.setRegValue) {
-        for (const entry of app.startupRegistry) {
-          StorageImports.setRegValue(entry.keyPath, entry.valueName, entry.type, entry.data);
-        }
-      }
-      const failLaunch = (e) => {
-        const log = document.getElementById('log');
-        const msg = 'ERROR launching ' + sel + ': ' + (e && e.message ? e.message : e);
-        console.error('[launchApp] failed:', e);
-        document.getElementById('status').textContent = msg;
-        if (log) {
-          log.textContent += msg + '\n';
-          log.scrollTop = log.scrollHeight;
-        }
-      };
-
-      const canvas = document.getElementById('screen');
-      const size = screenCanvasSize();
-      canvas.width = size.w;
-      canvas.height = size.h;
-
-      const log = document.getElementById('log');
-      log.textContent += `Launching ${sel}.exe...\n`;
-
-      // Create shared renderer on first launch
-      if (!sharedRenderer) {
-        sharedRenderer = new Win98Renderer(canvas);
-        if (!DEBUG_MODE) sharedRenderer.transparentDesktop = true;
-      }
-
-      // The CLI harness creates a fresh renderer for every run. The browser
-      // intentionally shares one renderer so multiple apps can coexist, but
-      // relaunching the same app must not leave stale back-canvases or old
-      // wasm bindings around; those make the web view disagree with CLI PNGs.
-      for (let i = runningApps.length - 1; i >= 0; i--) {
-        const running = runningApps[i];
-        if (!running || running.name !== sel) continue;
-        stopRunningApp(running, false);
-      }
-      sharedRenderer.repaint();
-
-      // A LAN-capable app asks who else is out there before it boots. The
-      // wire and the room address have to be in place before init(), because
-      // host imports capture them at instantiate time and the guest may bind
-      // a socket on its first slice.
-      let lanLink = null;
-      if (app.lan && window.VlanLobby) {
-        try {
-          lanLink = await VlanLobby.showLobby({
-            exe: app.lan.exe || sel,
-            label: app.lan.label || sel,
-          });
-        } catch (e) {
-          console.error('[lan] lobby failed:', e);
-        }
-        if (lanLink === null) {
-          log.textContent += `Launch of ${sel} cancelled.\n`;
-          return;
-        }
-        if (lanLink && lanLink.wire) {
-          log.textContent += `LAN: connected to ${lanLink.peer && lanLink.peer.name}`
-            + ` — you are ${lanLink.address}\n`;
-        }
-      }
-
-      wine = new WineAssembly();
-      wine.onStopped = unregisterRunningApp;
-      wine._sharedMixer = sharedAudioMixer;
-      wine.primeAudio();
-      wine.renderer = sharedRenderer;  // set before init so it won't create a new one
-      wine._multiApp = true;
-      if (lanLink && lanLink.wire) wine.joinVlan(lanLink.wire, lanLink.address);
-      await wine.init(canvas);
-
-      // Set unique hwnd range for this app
-      const appIndex = nextAppIndex++;
-      const hwndBase = 0x10001 + appIndex * 0x10000;
-      wine._hwndBase = hwndBase;
-      if (wine.instance.exports.set_hwnd_base) {
-        wine.instance.exports.set_hwnd_base(hwndBase);
-      }
-
-      wireCanvasInput(canvas, sharedRenderer);
-      canvas.focus();
-
-      document.getElementById('status').textContent = 'Loading PE...';
-
-      const ok = await wine.loadExe(app.exe);
-      if (ok) {
-        if (app.files && app.files.length) {
-          document.getElementById('status').textContent = 'Loading data files...';
-          log.textContent += `Loading ${app.files.length} data file(s)...\n`;
-          const progressStride = Math.max(1, Math.ceil(app.files.length / 20));
-          await wine.loadFiles(app.files, {
-            required: !!app.requiredFiles,
-            concurrency: app.fileConcurrency || 6,
-            onProgress: ({ loaded, failed, total }) => {
-              const done = loaded + failed;
-              if (done === total || done === 1 || done % progressStride === 0) {
-                const msg = `Loading data files ${done}/${total}${failed ? ` (${failed} failed)` : ''}`;
-                document.getElementById('status').textContent = msg;
-                log.textContent += msg + '\n';
-                log.scrollTop = log.scrollHeight;
-              }
-            },
-          }).catch(e => { failLaunch(e); throw e; });
-          log.textContent += `Data files ready: ${app.files.length}\n`;
-          log.scrollTop = log.scrollHeight;
-        }
-        if (app.winver && wine.instance.exports.set_winver) {
-          wine.instance.exports.set_winver(app.winver);
-        }
-        if (app.args) {
-          wine._extraArgs = app.args;
-          if (wine.instance.exports.set_extra_cmdline) {
-            const enc = new TextEncoder();
-            const argBytes = enc.encode(app.args);
-            const staging = wine.instance.exports.get_staging();
-            new Uint8Array(wine.memory.buffer).set(argBytes, staging);
-            wine.instance.exports.set_extra_cmdline(staging, argBytes.length);
-          }
-        }
-        const dllsToLoad = app.dlls ? [...app.dlls] : [];
-        const availableDlls = {
-          'comctl32.dll': 'binaries/dlls/comctl32.dll',
-          'msvcrt20.dll': 'binaries/dlls/msvcrt20.dll',
-          'mfc30.dll': 'binaries/dlls/mfc30.dll',
-          'msvcrt.dll': 'binaries/dlls/msvcrt.dll',
-          'mfc42u.dll': 'binaries/dlls/mfc42u.dll',
-          'mfc42.dll': 'binaries/dlls/mfc42.dll',
-          'msvcp60.dll': 'binaries/dlls/msvcp60.dll',
-          'oleaut32.dll': 'binaries/dlls/oleaut32.dll',
-          // WordPad loads RichEdit dynamically after its MFC frame/toolbars
-          // exist. Advertising these lets LoadLibraryA yield to the browser
-          // loader instead of returning the synthetic system-DLL handle.
-          'riched20.dll': 'binaries/dlls/riched20.dll',
-          'usp10.dll': 'binaries/dlls/usp10.dll',
-          'd3drm.dll': 'binaries/dlls/d3drm.dll',
-          'cards.dll': 'binaries/entertainment-pack/cards.dll',
-        };
-        wine._availableDllFiles = new Set(Object.keys(availableDlls));
-        if (DllLoader && DllLoader.detectRequiredDlls && wine._exeBytes) {
-          const required = DllLoader.detectRequiredDlls(wine._exeBytes);
-          if (required.length) {
-            log.textContent += `Detected DLLs: ${required.join(', ')}\n`;
-          }
-          const alreadyListed = new Set(dllsToLoad.map(d => d.split('/').pop().toLowerCase()));
-          for (const name of required) {
-            if (availableDlls[name] && !alreadyListed.has(name)) {
-              dllsToLoad.push(availableDlls[name]);
-            }
-          }
-        }
-        if (dllsToLoad.length) {
-          document.getElementById('status').textContent = 'Loading DLLs...';
-          log.textContent += `Loading ${dllsToLoad.length} DLL(s)...\n`;
-        }
-        await wine.loadDlls(dllsToLoad).catch(e => { failLaunch(e); throw e; });
-        log.textContent += 'DLLs ready\n';
-        runningApps.push({ wine, name: sel, appIndex });
-        document.getElementById('status').textContent = `Running ${runningApps.length} app(s)`;
-        canvas.focus();
-        const runSlice = selectedRunSlice(sel);
-        log.textContent += `Starting run slice=${runSlice}\n`;
-        log.scrollTop = log.scrollHeight;
-        wine.run(runSlice);
-        scheduleStartupDialogDismiss(app, wine);
-      } else {
-        document.getElementById('status').textContent = 'Failed to load';
-      }
     }
 
     function screenCanvasSize() {
