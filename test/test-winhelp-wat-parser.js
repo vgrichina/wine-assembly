@@ -3044,6 +3044,14 @@ async function main() {
     fixedHotspotRun &&
     e.test_help_view_hotspot_token_at(fixedHotspotRun.x, fixedHotspotRun.y) === fixedHotspotRun.token &&
     e.test_help_view_hotspot_token_at(399, 270) === -1);
+  check('Help link hover selects IDC_HAND and leaving the link restores IDC_ARROW',
+    fixedHotspotRun &&
+    e.test_help_window_message(0x0200, 0,
+      (fixedHotspotRun.y << 16) | (fixedHotspotRun.x & 0xffff)) === 0 &&
+    e.get_cursor() === 0x67f89 &&
+    e.test_help_window_message(0x0200, 0, (260 << 16) | 380) === 0 &&
+    e.get_cursor() === 0x67f00,
+    `cursor=0x${(e.get_cursor() >>> 0).toString(16)}`);
   check('hotspot click uses canonical hash navigation and Back history',
     fixedHotspotRun && e.test_help_window_message(0x0201, 0,
       (fixedHotspotRun.y << 16) | (fixedHotspotRun.x & 0xffff)) === 0 &&
@@ -3163,6 +3171,7 @@ async function main() {
     });
     const opened = e.test_invoke_WinHelpA(
       0x8888, allocGuestAnsi('c:\\pipe.hlp'), 0x0003, 0) === 1;
+    const pipeHwnd = e.get_help_window();
     const runs = opened ? visibleHotspotRuns() : [];
     const topicPositions = [12, 573, 1328, 3233, 5112, 6026,
       7110, 7357, 7687, 8346, 8804, 9015];
@@ -3180,6 +3189,47 @@ async function main() {
       e.get_help_view_back_count() === 1,
       `opened=${opened} runs=${runs.length} resolved=${resolved} clicked=${Boolean(clicked)} ` +
         `ref=${e.get_help_session_topic_ref()}`);
+    e.test_help_view_go_back();
+    // A narrow client makes the original Index taller than its topic viewport.
+    // WM_SIZE must rewrap it, publish the pixel extent through SCROLLINFO, add
+    // the standard non-client bar, and repaint using the resized dimensions.
+    const resized = opened && e.test_help_window_message(
+      0x0005, 0, (100 << 16) | 220) === 0;
+    const extent = e.get_help_view_extent_height();
+    const scrolling = resized && (e.wnd_get_style_export(pipeHwnd) & 0x00200000) !== 0;
+    check('WM_SIZE reflows Pipe Help and publishes a standard vertical scrollbar',
+      scrolling && e.get_help_client_width() === 220 &&
+      e.get_help_client_height() === 100 && e.get_help_view_layout_width() === 220 &&
+      e.standard_scroll_min(pipeHwnd, 1) === 0 &&
+      e.standard_scroll_max(pipeHwnd, 1) === extent - 1 &&
+      e.standard_scroll_page(pipeHwnd, 1) === 72,
+      `style=0x${(e.wnd_get_style_export(pipeHwnd) >>> 0).toString(16)} ` +
+        `client=${e.get_help_client_width()}x${e.get_help_client_height()} ` +
+        `layout=${e.get_help_view_layout_width()} extent=${extent} ` +
+        `range=${e.standard_scroll_min(pipeHwnd, 1)}..${e.standard_scroll_max(pipeHwnd, 1)} ` +
+        `page=${e.standard_scroll_page(pipeHwnd, 1)}`);
+    const oldScroll = e.get_help_scroll_y();
+    e.test_help_window_message(0x0115, 3, 0); // SB_PAGEDOWN
+    check('the standard Pipe Help scrollbar drives the retained topic viewport',
+      scrolling && e.get_help_scroll_y() > oldScroll &&
+      e.standard_scroll_pos(pipeHwnd, 1) === e.get_help_scroll_y(),
+      `old=${oldScroll} current=${e.get_help_scroll_y()} ` +
+        `published=${e.standard_scroll_pos(pipeHwnd, 1)}`);
+    e.test_help_window_message(0x0115, 6, 0); // SB_TOP
+    check('resized Help navigation links use the hand cursor at their live bottom row',
+      e.test_help_window_message(0x0200, 0, (78 << 16) | 10) === 0 &&
+      e.get_cursor() === 0x67f89 &&
+      e.test_help_window_message(0x0200, 0, (78 << 16) | 170) === 0 &&
+      e.get_cursor() === 0x67f00);
+    const enlarged = e.test_help_window_message(0x0005, 0, (500 << 16) | 600) === 0;
+    check('enlarging Help removes an unnecessary scrollbar and keeps repaint geometry live',
+      enlarged && (e.wnd_get_style_export(pipeHwnd) & 0x00200000) === 0 &&
+      e.get_help_client_width() === 616 && e.get_help_client_height() === 500 &&
+      e.get_help_view_layout_width() === 616 &&
+      e.test_help_window_message(0x000f, 0, 0) === 0,
+      `style=0x${(e.wnd_get_style_export(pipeHwnd) >>> 0).toString(16)} ` +
+        `client=${e.get_help_client_width()}x${e.get_help_client_height()} ` +
+        `layout=${e.get_help_view_layout_width()}`);
     e.test_invoke_WinHelpA(0x8888, 0, 0x0002, 0);
   }
 

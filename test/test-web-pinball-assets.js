@@ -278,7 +278,7 @@ assert(fs.existsSync(path.join(ROOT, 'binaries', 'whatsnew.txt')), 'Winamp versi
 assert(fs.statSync(path.join(ROOT, 'binaries', 'whatsnew.txt')).size > 0, 'Winamp version history text should not be empty');
 assert(!webApp.includes('wine.waitForMainHwnd(() =>'), 'Winamp web launch should not auto-drive playback through IPC');
 assert(!webApp.includes('?v=55'), 'index.html should not keep stale cache-buster v55');
-assert(webApp.includes('lib/renderer-input.js?v=189'), 'web host should cache-bust renderer input after disabled-child routing');
+assert(webApp.includes('lib/renderer-input.js?v=190'), 'web host should cache-bust renderer input after top-window hover routing');
 assert(webApp.includes('lib/renderer.js?v=178'), 'web host should cache-bust renderer after fullscreen consent changes');
 assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
 assert(webApp.includes('lib/storage.js?v=169'), 'web host should cache-bust storage after Media Player association changes');
