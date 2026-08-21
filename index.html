@@ -736,7 +736,7 @@ Resource-aware Win98 emulator
   <script src="lib/worker-imports.js?v=1"></script>
   <script src="lib/vfs-seed.js?v=1"></script>
   <script src="lib/debug-midi.js?v=1"></script>
-  <script src="lib/debug-thread-state.js?v=2"></script>
+  <script src="lib/debug-thread-state.js?v=3"></script>
   <script src="lib/host-imports.js?v=203"></script>
   <script src="lib/compile-wat.js?v=169"></script>
   <script src="lib/thread-manager.js?v=170"></script>
@@ -800,7 +800,11 @@ Resource-aware Win98 emulator
     // The shell owns the state; these are live views of it, not copies.
     Object.defineProperty(window, 'wine', { configurable: true, get: () => shell.currentWine });
     Object.defineProperty(window, 'sharedRenderer', { configurable: true, get: () => shell.renderer });
-    function launchApp() { return shell.launchApp(); }
+    function launchApp() {
+      const select = document.getElementById('app-select');
+      if (threadStateViewer) threadStateViewer.beginLaunch(select && select.value);
+      return shell.launchApp();
+    }
     function stopAllApps() { shell.stopAllApps(); }
     function applyRunSlice() { shell.applyRunSlice(); }
 
