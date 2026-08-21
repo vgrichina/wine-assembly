@@ -1419,16 +1419,27 @@
     (global.set $help_topic_link_bytes (i32.const 0))
     (if (i32.lt_s (local.get $current) (i32.const 12))
       (then (return (call $help_link_fail (i32.const 1) (local.get $current) (i32.const 0)))))
-    ;; Blocks are numbered in TopicPos space at a fixed 16K stride, whatever a
-    ;; block's payload actually holds: 16K for a compressed block, 4084 for an
-    ;; uncompressed 4096-byte one. Treating the stride as the payload size is
-    ;; the same arithmetic for compressed files and wrong for uncompressed
-    ;; ones, so no file could show the difference until CHIPEDIT.HLP, which
-    ;; walked off its own chain at the first record past block 0.
-    (local.set $block_number
-      (i32.shr_u (i32.sub (local.get $current) (i32.const 12)) (i32.const 14)))
-    (local.set $relative
-      (i32.and (i32.sub (local.get $current) (i32.const 12)) (i32.const 0x3FFF)))
+    ;; HC 3.0's 1.15 TOPICPOS is a physical |TOPIC byte position, including
+    ;; each 2K block header. HC 3.1 changed it to the decompressed 16K address
+    ;; space used below. Pipe Dream and the other early Entertainment Pack
+    ;; files exercise the former convention.
+    (if (i32.lt_u (global.get $help_doc_system_minor) (i32.const 16))
+      (then
+        (local.set $block_number
+          (i32.div_u (local.get $current) (call $help_topic_physical_block_size)))
+        (local.set $relative
+          (i32.rem_u (local.get $current) (call $help_topic_physical_block_size)))
+        (if (i32.lt_u (local.get $relative) (i32.const 12))
+          (then (return (call $help_link_fail (i32.const 1)
+            (local.get $current) (local.get $relative)))))
+        (local.set $relative (i32.sub (local.get $relative) (i32.const 12))))
+      (else
+        ;; HC 3.1 blocks are numbered in TopicPos space at a fixed 16K stride,
+        ;; whatever a physical block's payload actually holds.
+        (local.set $block_number
+          (i32.shr_u (i32.sub (local.get $current) (i32.const 12)) (i32.const 14)))
+        (local.set $relative
+          (i32.and (i32.sub (local.get $current) (i32.const 12)) (i32.const 0x3FFF)))))
     (if (i32.ge_u (local.get $relative) (local.get $logical_size))
       (then (return (call $help_link_fail (i32.const 8)
         (local.get $relative) (local.get $logical_size)))))
@@ -2317,13 +2328,35 @@
         (then
           (global.set $help_topic_fail_code (i32.const 4)) (call $help_set_error (global.get $HELP_ERROR_TOPIC_RECORD) (local.get $current))
           (br $done)))
-      (if (i32.ne (local.get $prev_link) (local.get $previous))
+      ;; HC 3.0 stores backward/forward byte distances (including physical
+      ;; block headers); HC 3.1 stores absolute TOPICPOS values.
+      (if (i32.ne (local.get $prev_link)
+            (if (result i32)
+              (i32.lt_u (global.get $help_doc_system_minor) (i32.const 16))
+              (then
+                (select (i32.sub (local.get $current) (local.get $previous))
+                  (i32.const 0) (i32.ge_s (local.get $previous) (i32.const 12))))
+              (else (local.get $previous))))
         (then
           (global.set $help_topic_fail_code (i32.const 5)) (call $help_set_error (global.get $HELP_ERROR_TOPIC_RECORD)
             (i32.add (local.get $current) (i32.const 8)))
           (br $done)))
       (if (i32.eq (local.get $record_type) (i32.const 2))
         (then
+          ;; HC30 appends an empty 33-byte topic header after the last real
+          ;; topic. It is a stream sentinel, not a TTLBTREE topic (PIPE.HLP
+          ;; is one of the original Microsoft files that uses it).
+          (if (i32.and
+                (i32.and
+                  (i32.lt_u (global.get $help_doc_system_minor) (i32.const 16))
+                  (i32.eq (local.get $header_count) (local.get $topic_count)))
+                (i32.and
+                  (i32.and (i32.eq (local.get $block_size) (i32.const 33))
+                           (i32.eq (local.get $data_len1) (i32.const 33)))
+                  (i32.eqz (local.get $data_len2))))
+            (then
+              (local.set $ok (i32.const 1))
+              (br $done)))
           (if (i32.ge_u (local.get $header_count) (local.get $topic_count))
             (then
               (global.set $help_topic_fail_code (i32.const 6)) (call $help_set_error (global.get $HELP_ERROR_TOPIC_RECORD) (local.get $current))
@@ -2334,15 +2367,19 @@
           (local.set $header_count (i32.add (local.get $header_count) (i32.const 1))))
         (else
           (if (i32.and
-                (i32.ne (local.get $record_type) (i32.const 0x20))
-                (i32.ne (local.get $record_type) (i32.const 0x23)))
+                (i32.ne (local.get $record_type) (i32.const 1))
+                (i32.and
+                  (i32.ne (local.get $record_type) (i32.const 0x20))
+                  (i32.ne (local.get $record_type) (i32.const 0x23))))
             (then
               (global.set $help_topic_fail_code (i32.const 7)) (call $help_set_error (global.get $HELP_ERROR_TOPIC_RECORD)
                 (i32.add (local.get $current) (i32.const 20)))
               (br $done)))))
       (if (i32.or
-            (i32.eq (local.get $record_type) (i32.const 0x20))
-            (i32.eq (local.get $record_type) (i32.const 0x23)))
+            (i32.eq (local.get $record_type) (i32.const 1))
+            (i32.or
+              (i32.eq (local.get $record_type) (i32.const 0x20))
+              (i32.eq (local.get $record_type) (i32.const 0x23))))
         (then
           (if (i32.eqz (call $help_validate_linkdata1
                 (local.get $link) (local.get $record_type) (local.get $current)))
@@ -2359,13 +2396,19 @@
           ;; stream - the bound every mid-topic reference is checked against.
           (local.set $ok (i32.const 1))
           (br $done)))
-      (if (i32.le_s (local.get $next_link) (local.get $current))
+      (if (i32.and
+            (i32.ge_u (global.get $help_doc_system_minor) (i32.const 16))
+            (i32.le_s (local.get $next_link) (local.get $current)))
         (then
           (global.set $help_topic_fail_code (i32.const 9)) (call $help_set_error (global.get $HELP_ERROR_TOPIC_RECORD)
             (i32.add (local.get $current) (i32.const 12)))
           (br $done)))
       (local.set $previous (local.get $current))
-      (local.set $current (local.get $next_link))
+      (local.set $current
+        (if (result i32)
+          (i32.lt_u (global.get $help_doc_system_minor) (i32.const 16))
+          (then (i32.add (local.get $current) (local.get $next_link)))
+          (else (local.get $next_link))))
       (br $links)))
     (call $heap_free (local.get $temp_ga))
     (local.get $ok))
@@ -2618,8 +2661,10 @@
           (local.set $first_header (i32.const 0)))
         (else
           (if (i32.and
-                (i32.ne (local.get $record_type) (i32.const 0x20))
-                (i32.ne (local.get $record_type) (i32.const 0x23)))
+                (i32.ne (local.get $record_type) (i32.const 1))
+                (i32.and
+                  (i32.ne (local.get $record_type) (i32.const 0x20))
+                  (i32.ne (local.get $record_type) (i32.const 0x23))))
             (then (br $done)))
           (if (i32.or
                 (i32.gt_u (local.get $data_len2)
@@ -2658,7 +2703,11 @@
         (then
           (local.set $ok (i32.const 1))
           (br $done)))
-      (local.set $current (local.get $next_link))
+      (local.set $current
+        (if (result i32)
+          (i32.lt_u (global.get $help_doc_system_minor) (i32.const 16))
+          (then (i32.add (local.get $current) (local.get $next_link)))
+          (else (local.get $next_link))))
       (br $links)))
     (call $heap_free (local.get $temp_ga))
     (if (i32.eqz (local.get $ok)) (then (return (i32.const -1))))
@@ -2816,8 +2865,10 @@
           (local.set $first_header (i32.const 0)))
         (else
           (if (i32.and
-                (i32.ne (local.get $record_type) (i32.const 0x20))
-                (i32.ne (local.get $record_type) (i32.const 0x23)))
+                (i32.ne (local.get $record_type) (i32.const 1))
+                (i32.and
+                  (i32.ne (local.get $record_type) (i32.const 0x20))
+                  (i32.ne (local.get $record_type) (i32.const 0x23))))
             (then (br $done)))
           (if (i32.gt_u (local.get $data_len2)
                 (i32.sub (local.get $raw_len) (local.get $raw_cursor)))
@@ -2835,7 +2886,11 @@
         (then
           (local.set $ok (i32.const 1))
           (br $done)))
-      (local.set $current (local.get $next_link))
+      (local.set $current
+        (if (result i32)
+          (i32.lt_u (global.get $help_doc_system_minor) (i32.const 16))
+          (then (i32.add (local.get $current) (local.get $next_link)))
+          (else (local.get $next_link))))
       (br $links)))
     (if (i32.and (local.get $ok)
           (i32.ne (local.get $raw_cursor) (local.get $raw_len)))
@@ -4679,6 +4734,17 @@
       (if (i32.eqz (call $help_parse_topic_links
             (local.get $topic_internal) (local.get $topics_wa) (local.get $topic_count)))
         (then (br $done)))
+
+      ;; HC30 has no tagged |SYSTEM CONTENTS record. Its first canonical
+      ;; title/TOMAP entry is the INDEX topic, so publish that exact reference
+      ;; as HELP_CONTENTS instead of leaving every old file unresolved.
+      (if (i32.and
+            (i32.and
+              (i32.lt_u (global.get $help_doc_system_minor) (i32.const 16))
+              (i32.lt_s (global.get $help_doc_contents_ref) (i32.const 0)))
+            (i32.gt_u (local.get $topic_count) (i32.const 0)))
+        (then
+          (global.set $help_doc_contents_ref (i32.load (local.get $topics_wa)))))
 
       (global.set $help_doc_topics_ga (local.get $topics_ga))
       (global.set $help_doc_topics_wa (local.get $topics_wa))

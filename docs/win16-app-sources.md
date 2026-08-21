@@ -73,3 +73,22 @@ archive used to build that diagnostic tool had SHA-256
 `8fa80dd7f038cd2ccad381f5bcdf7290a49fcb3c432ff0912f33c086e3a4be42`.
 The expanded `TICTACDP.EXE` hash was the same as both Internet Archive copies
 recorded above. No output from this tool or from WinWorld is committed.
+
+## Pipe Dream Help format evidence
+
+The primary application artifact for the Pipe Dream Help repair is `PIPE.HLP`
+from the [Internet Archive Volume 2 disk-image item](https://archive.org/details/000210-MicrosoftEntertainmentPackVolume2)
+listed above. The local file is 21,418 bytes with SHA-256
+`6bf9c13daeedb6008f2ff2e85bbba7e5d213780cf6d6bfd6647c123581148fdd`.
+Its `|SYSTEM` stream identifies compiler format minor version 15 (HC30), and
+its `|TOPIC` stream contains 12 titled topics plus the compiler's empty final
+topic-header sentinel.
+
+The technical interpretation is cross-checked against HelpDeco's
+[Windows Help File Format](https://github.com/joncampbell123/helpdeco/blob/master/doc/html/Windows%20Help%20File%20Format.htm),
+an independently reverse-engineered description of the undocumented WinHelp
+format. It specifies that HC30 uses 2 KB topic blocks, relative `PrevBlock` and
+`NextBlock` byte distances that include skipped physical headers, and record
+type 1 for displayable text; HC31 uses absolute topic positions and record type
+`0x20`. Those distinctions are the parser behavior exercised by the checked-in
+synthetic regression and the original `PIPE.HLP` diagnostic.

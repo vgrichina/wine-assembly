@@ -326,26 +326,61 @@ function buildSyntheticTopic(topicCount = 4) {
   return Buffer.concat([header, encodeLiteralLz77(links)]);
 }
 
+function buildSyntheticHc30Topic(topicCount = 4) {
+  // HC30 ends the chain with an empty 33-byte type-2 sentinel which has no
+  // corresponding TTLBTREE title. Model that compiler output here as well as
+  // the relative distances and the zero-valued first previous link.
+  const links = Buffer.alloc(topicCount * 49 + 33);
+  for (let i = 0; i < topicCount; i++) {
+    const pos = i * 49;
+    links.writeUInt32LE(49, pos);
+    links.writeUInt32LE(0, pos + 4);
+    links.writeInt32LE(i === 0 ? 0 : 49, pos + 8);
+    links.writeInt32LE(49, pos + 12);
+    links.writeUInt32LE(49, pos + 16);
+    links[pos + 20] = 2;
+  }
+  const sentinel = topicCount * 49;
+  links.writeUInt32LE(33, sentinel);
+  links.writeUInt32LE(0, sentinel + 4);
+  links.writeInt32LE(49, sentinel + 8);
+  links.writeInt32LE(33, sentinel + 12);
+  links.writeUInt32LE(33, sentinel + 16);
+  links[sentinel + 20] = 2;
+  const header = Buffer.alloc(12);
+  header.writeInt32LE(-1, 0);
+  header.writeUInt32LE(12, 4);
+  return Buffer.concat([header, links]);
+}
+
 function buildSyntheticOldTopic(compressed = true) {
-  const positions = [12, 61, 98, 147, 196];
-  const types = [2, 0x20, 2, 2, 2];
-  const sizes = [49, 37, 49, 49, 49];
-  const displayFormat = Buffer.alloc(10);
+  const displayFormat = Buffer.alloc(compressed ? 10 : 9);
   displayFormat.writeUInt16LE(0x801a, 0); // compressed long TopicSize = 13
-  displayFormat[2] = 26; // compressed unsigned TopicLength = 13
-  displayFormat[9] = 0xff;
+  if (compressed) displayFormat[2] = 26; // HC31 compressed unsigned TopicLength = 13
+  displayFormat[displayFormat.length - 1] = 0xff;
+  const types = [2, compressed ? 0x20 : 1, 2, 2, 2];
+  const sizes = [49, 21 + displayFormat.length + 6, 49, 49, 49];
+  const positions = [];
+  for (let i = 0, position = 12; i < sizes.length; i++) {
+    positions.push(position);
+    position += sizes[i];
+  }
   const links = Buffer.alloc(sizes.reduce((sum, size) => sum + size, 0));
   let raw = 0;
   for (let i = 0; i < positions.length; i++) {
     const source = i === 1 ? Buffer.from([1, 0, 1, 3, '!'.charCodeAt(0), 0]) : Buffer.alloc(0);
     links.writeUInt32LE(sizes[i], raw);
     links.writeUInt32LE(i === 1 ? 13 : 0, raw + 4);
-    links.writeInt32LE(i === 0 ? -1 : positions[i - 1], raw + 8);
-    links.writeInt32LE(i + 1 === positions.length ? -1 : positions[i + 1], raw + 12);
-    links.writeUInt32LE(i === 1 ? 31 : 49, raw + 16);
+    links.writeInt32LE(compressed
+      ? (i === 0 ? -1 : positions[i - 1])
+      : (i === 0 ? 0 : sizes[i - 1]), raw + 8);
+    links.writeInt32LE(compressed
+      ? (i + 1 === positions.length ? -1 : positions[i + 1])
+      : (i + 1 === positions.length ? 0 : sizes[i]), raw + 12);
+    links.writeUInt32LE(i === 1 ? 21 + displayFormat.length : 49, raw + 16);
     links[raw + 20] = types[i];
     if (i === 1) displayFormat.copy(links, raw + 21);
-    source.copy(links, raw + (i === 1 ? 31 : 21));
+    source.copy(links, raw + (i === 1 ? 21 + displayFormat.length : 21));
     raw += sizes[i];
   }
   const header = Buffer.alloc(12);
@@ -3901,6 +3936,16 @@ async function main() {
   writeSyntheticTopicRaw(badTopicPrev, 49 + 8, -1);
   check('TOPIC link previous pointer must match the chain',
     load(badTopicPrev.file) === 0 && e.get_help_last_error() === 13);
+
+  const hc30TopicLinks = buildSyntheticSemanticHelp({
+    systemMinor: 15, systemFlags: 8, topic: buildSyntheticHc30Topic(),
+  });
+  check('HC 3.0 TOPIC chain uses physical positions and relative link distances',
+    load(hc30TopicLinks.file) === 1 && e.get_help_topic_count() === 4 &&
+    e.get_help_contents_ref() === 0);
+  check('HC 3.0 HELP_CONTENTS resolves through its canonical first topic',
+    e.test_help_dispatch(0x5151, 0, 3, 0, 0) === 1 &&
+    e.get_help_session_topic_ref() === 0 && e.get_help_session_topic_index() === 0);
 
   const cyclicTopicLinks = buildSyntheticSemanticHelp();
   writeSyntheticTopicRaw(cyclicTopicLinks, 12, 12);

@@ -5239,7 +5239,14 @@
     (local.set $file (call $win16_far_to_guest
       (call $win16_arg16 (i32.const 4)) (call $win16_arg16 (i32.const 3))))
     (local.set $cmd (call $win16_arg16 (i32.const 2)))
-    (local.set $data (call $win16_arg32 (i32.const 0)))
+    ;; Win16 packs pointer-valued ulData as selector:offset. The Win32/WAT
+    ;; dispatcher takes a guest linear pointer, while numeric HELP_CONTEXT
+    ;; and HELP_SETCONTENTS values must remain unchanged.
+    (local.set $data
+      (if (result i32) (call $help_command_data_is_pointer (local.get $cmd))
+        (then (call $win16_far_to_guest
+          (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+        (else (call $win16_arg32 (i32.const 0)))))
     (call $win16_call32_begin (i32.const 4))
     (call $handle_WinHelpA (local.get $hwnd) (local.get $file) (local.get $cmd)
       (local.get $data) (i32.const 0) (i32.const 0))
