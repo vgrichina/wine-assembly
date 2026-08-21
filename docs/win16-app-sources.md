@@ -82,7 +82,11 @@ listed above. The local file is 21,418 bytes with SHA-256
 `6bf9c13daeedb6008f2ff2e85bbba7e5d213780cf6d6bfd6647c123581148fdd`.
 Its `|SYSTEM` stream identifies compiler format minor version 15 (HC30), and
 its `|TOPIC` stream contains 12 titled topics plus the compiler's empty final
-topic-header sentinel.
+topic-header sentinel. Its 116-byte `|TOMAP` stream has the INDEX topic at
+slot 0, unused zero slots 1–15, and twelve physical topic positions at slots
+16–27: `12, 573, 1328, 3233, 5112, 6026, 7110, 7357, 7687, 8346, 8804,
+9015`. The visible Overview link in the INDEX topic stores topic number 17;
+therefore its detail target is `|TOMAP[17] = 573`, not byte position 17.
 
 The technical interpretation is cross-checked against HelpDeco's
 [Windows Help File Format](https://github.com/joncampbell123/helpdeco/blob/master/doc/html/Windows%20Help%20File%20Format.htm),
@@ -91,4 +95,8 @@ format. It specifies that HC30 uses 2 KB topic blocks, relative `PrevBlock` and
 `NextBlock` byte distances that include skipped physical headers, and record
 type 1 for displayable text; HC31 uses absolute topic positions and record type
 `0x20`. Those distinctions are the parser behavior exercised by the checked-in
-synthetic regression and the original `PIPE.HLP` diagnostic.
+synthetic regression and the original `PIPE.HLP` diagnostic. The same format
+reference documents the hyperlink-specific rule: HC30 topic numbers begin at
+16 and index `|TOMAP` directly without subtracting 16, while slot 0 is the
+special INDEX topic. That rule is exercised by both a real `PIPE.HLP` parser
+test and the browser click-through test that opens Overview details.

@@ -1140,6 +1140,10 @@
       (then
         (i64.store (local.get $scratch) (i64.const 0x0041544144574B7C))
         (local.set $length (i32.const 7))))
+    (if (i32.eq (local.get $kind) (i32.const 12))
+      (then
+        (i64.store (local.get $scratch) (i64.const 0x000050414D4F547C))
+        (local.set $length (i32.const 6))))
     (if (i32.eqz (local.get $length)) (then (return (i32.const -1))))
     (call $help_find_internal_file (local.get $scratch) (local.get $length)))
 
@@ -1227,6 +1231,41 @@
         (else (local.set $hi (local.get $mid))))
       (br $search)))
     (i32.const -1))
+
+  ;; E0/E1 hotspot payloads changed meaning with the help compiler. HC31 and
+  ;; later store a direct TOPICOFFSET, while HC30 stores a topic number. Old
+  ;; topic numbers begin at 16 and index |TOMAP without subtracting 16; slot
+  ;; zero is the compiler's special INDEX topic. Resolve that indirection here
+  ;; and require its value to name one of the canonical topic headers.
+  (func $help_resolve_direct_topic (param $target i32) (result i32)
+    (local $internal i32) (local $record i32) (local $count i32)
+    (local $topic_ref i32)
+    (if (i32.ge_u (global.get $help_doc_system_minor) (i32.const 16))
+      (then (return (local.get $target))))
+    (if (i32.and (i32.ne (local.get $target) (i32.const 0))
+          (i32.lt_u (local.get $target) (i32.const 16)))
+      (then (return (i32.const -1))))
+    (local.set $internal (call $help_find_internal_literal (i32.const 12)))
+    (if (i32.lt_s (local.get $internal) (i32.const 0))
+      (then (return (i32.const -1))))
+    (local.set $record (i32.add (global.get $help_doc_directory_wa)
+      (i32.mul (local.get $internal) (global.get $HELP_INTERNAL_FILE_SIZE))))
+    (local.set $count (i32.shr_u (i32.load offset=16 (local.get $record)) (i32.const 2)))
+    (if (i32.ge_u (local.get $target) (local.get $count))
+      (then (return (i32.const -1))))
+    (local.set $topic_ref (i32.load
+      (i32.add
+        (i32.add (global.get $help_doc_file_wa) (i32.load offset=12 (local.get $record)))
+        (i32.shl (local.get $target) (i32.const 2)))))
+    (if (i32.lt_s (call $help_find_topic_index_in
+          (global.get $help_doc_topics_wa) (global.get $help_doc_topic_count)
+          (local.get $topic_ref)) (i32.const 0))
+      (then (return (i32.const -1))))
+    (local.get $topic_ref))
+
+  (func (export "test_help_resolve_direct_topic")
+    (param $target i32) (result i32)
+    (call $help_resolve_direct_topic (local.get $target)))
 
   ;; The topic CONTAINING a position, rather than the topic that starts at it.
   ;; A |CONTEXT entry or keyword posting may aim at any offset inside a topic -

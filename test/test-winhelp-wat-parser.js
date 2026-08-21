@@ -3134,15 +3134,53 @@ async function main() {
     e.get_help_dispatch_status() === 4 && e.get_help_session_topic_ref() === 0 &&
     e.get_help_view_topic_index() === 0 && e.get_help_view_back_count() === 0);
 
-  function firstVisibleHotspotRun() {
+  function visibleHotspotRuns() {
+    const seen = new Set();
     return Array.from({ length: e.get_help_view_run_count() }, (_, index) => {
       const record = e.get_help_view_run_ptr() + index * 40;
       return {
         x: dv.getInt32(record + 4, true), y: dv.getInt32(record + 8, true),
         width: dv.getInt32(record + 12, true), height: dv.getInt32(record + 16, true),
-        flagged: dv.getUint32(record + 36, true) !== 0,
+        hotspot: dv.getUint32(record + 36, true),
       };
-    }).find(run => run.flagged && run.width > 0 && run.height > 0);
+    }).filter(run => run.hotspot && run.width > 0 && run.height > 0 &&
+      !seen.has(run.hotspot) && seen.add(run.hotspot));
+  }
+
+  function firstVisibleHotspotRun() {
+    return visibleHotspotRuns()[0];
+  }
+
+  {
+    // PIPE.HLP is an HC30 document. Its visible Index links use E1 with a
+    // topic number (17 for Overview), and |TOMAP[17] supplies the canonical
+    // topic position 573. Treating 17 itself as a topic offset left the blue
+    // link painted and hit-testable but unable to navigate.
+    const pipeHelp = fs.readFileSync(path.join(
+      ROOT, 'test', 'binaries', 'wep16', 'WEP2', 'PIPE.HLP'));
+    ctx.vfs.files.set('c:\\pipe.hlp', {
+      data: new Uint8Array(pipeHelp), attrs: 0x20,
+    });
+    const opened = e.test_invoke_WinHelpA(
+      0x8888, allocGuestAnsi('c:\\pipe.hlp'), 0x0003, 0) === 1;
+    const runs = opened ? visibleHotspotRuns() : [];
+    const topicPositions = [12, 573, 1328, 3233, 5112, 6026,
+      7110, 7357, 7687, 8346, 8804, 9015];
+    const resolved = topicPositions.every((position, index) =>
+      e.test_help_resolve_direct_topic(index + 16) === position) &&
+      e.test_help_resolve_direct_topic(0) === 12 &&
+      e.test_help_resolve_direct_topic(1) === -1 &&
+      e.test_help_resolve_direct_topic(28) === -1;
+    const run = runs[0];
+    const clicked = run && e.test_help_window_message(0x0201, 0,
+      (run.y << 16) | (run.x & 0xffff)) === 0;
+    check('all HC30 direct hotspots resolve their topic numbers through |TOMAP',
+      opened && e.get_help_system_minor() === 15 && resolved && clicked &&
+      e.get_help_session_topic_ref() === 573 && e.get_help_view_topic_index() === 1 &&
+      e.get_help_view_back_count() === 1,
+      `opened=${opened} runs=${runs.length} resolved=${resolved} clicked=${Boolean(clicked)} ` +
+        `ref=${e.get_help_session_topic_ref()}`);
+    e.test_invoke_WinHelpA(0x8888, 0, 0x0002, 0);
   }
 
   const fixedOpcodeCases = [
