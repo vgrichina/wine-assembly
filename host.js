@@ -1593,6 +1593,12 @@ class WineAssembly {
           // kept because the alternative is the catch-all below, which stops the
           // app outright, and that is how this was found.
           await self.guestWorker.callExport('clear_yield');
+        } else if (r.yield === 10) {
+          await self.guestWorker.resolveThreadSend(self.guestWorker.link, {
+            targetTid: r.sendTargetTid | 0,
+            hwnd: r.sendHwnd | 0, msg: r.sendMsg | 0,
+            wparam: r.sendWparam | 0, lparam: r.sendLparam | 0,
+          });
         } else if (r.yield === 8) {
           await self.guestWorker.callExport('clear_yield');
           try { await self.guestWorker.callExport('vlan_pump'); } catch (_) {}
@@ -1670,6 +1676,7 @@ class WineAssembly {
         const activeStepsPerSlice = Math.max(1000, (self.stepsPerSlice | 0) || stepsPerSlice);
         self._beginGuestTickBatch();
         // Check if main thread is waiting
+        if (self.threadManager) await self.threadManager.resolveMainThreadSend();
         const mainThreadWaiting = self.threadManager && self.threadManager.checkMainYield();
         if (mainThreadWaiting) {
           // Main still waiting — just run worker threads

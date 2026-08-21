@@ -72,10 +72,12 @@ async function instantiate(wasmBytes, memory, tid) {
     'the waiter acquires on its retry after release');
   assert.deepStrictEqual(state(), { lock: 0, recursion: 1, owner: 2 });
   main.test_cs_leave(CS_GUEST);
-  assert.deepStrictEqual(state(), { lock: -1, recursion: 0, owner: 0 },
-    'a non-owner Leave releases cleanly without driving counters negative');
+  assert.deepStrictEqual(state(), { lock: 0, recursion: 1, owner: 2 },
+    'a non-owner Leave cannot release another thread\'s section');
+  worker.test_cs_leave(CS_GUEST);
+  assert.deepStrictEqual(state(), { lock: -1, recursion: 0, owner: 0 });
   assert.strictEqual(worker.test_cs_enter(CS_GUEST), 0,
-    'the section remains reusable after a cross-thread Leave');
+    'the section remains reusable after the owner releases it');
   worker.test_cs_leave(CS_GUEST);
   assert.deepStrictEqual(state(), { lock: -1, recursion: 0, owner: 0 });
 

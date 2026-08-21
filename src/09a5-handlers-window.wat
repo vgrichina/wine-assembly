@@ -1482,18 +1482,9 @@
     (global.set $yield_flag (i32.const 1)) ;; yield to host after each timer
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
-    ;; Check cross-thread message queue (shared memory at 0xB400)
-    (if (i32.gt_u (i32.load (i32.const 0xB400)) (i32.const 0))
+    ;; A producer may have posted after the earlier queue check in this handler.
+    (if (call $shared_post_queue_read (local.get $msg_ptr) (i32.const 1))
     (then
-      (local.set $tmp (i32.const 0xB410))
-      (call $gs32 (local.get $msg_ptr) (i32.load (local.get $tmp)))
-      (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.load (i32.add (local.get $tmp) (i32.const 4))))
-      (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.load (i32.add (local.get $tmp) (i32.const 8))))
-      (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.load (i32.add (local.get $tmp) (i32.const 12))))
-      (i32.store (i32.const 0xB400) (i32.sub (i32.load (i32.const 0xB400)) (i32.const 1)))
-      (if (i32.gt_u (i32.load (i32.const 0xB400)) (i32.const 0))
-        (then (call $memcpy (i32.const 0xB410) (i32.const 0xB420)
-          (i32.mul (i32.load (i32.const 0xB400)) (i32.const 16)))))
       (global.set $eax (i32.const 1))
       (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; No message ready. Real GetMessage blocks here; keep the API call live
@@ -2179,7 +2170,7 @@
 
   ;; 80: PostMessageA
   (func $handle_PostMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $tmp i32)
+    (local $tmp i32) (local $target_tid i32)
     ;; Renderer-wide top-level windows can belong to another WASM instance.
     ;; The host places those messages in the shared owning-app input queue.
     ;;
@@ -2197,11 +2188,12 @@
             (global.set $eax (i32.const 1))
             (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
             (return)))))
-    (if (i32.ne (global.get $current_thread_id) (i32.const 1))
+    (local.set $target_tid (call $wnd_get_thread (local.get $arg0)))
+    (if (i32.and (i32.ne (local.get $target_tid) (i32.const 0))
+                 (i32.ne (local.get $target_tid) (global.get $current_thread_id)))
       (then
-        (drop (call $shared_post_queue_enqueue
+        (global.set $eax (call $shared_post_queue_enqueue
           (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
-        (global.set $eax (i32.const 1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
     ;; One funnel for the queue, so every posted message is visible to
@@ -2215,9 +2207,27 @@
   ;; 81: SendMessageA(hwnd, msg, wParam, lParam) — 4 args stdcall
   ;; Synchronous: call WndProc(hwnd, msg, wParam, lParam) directly
   (func $handle_SendMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ret_addr i32) (local $wndproc i32) (local $ctrl_class i32) (local $sm_ret i32)
+    (local $ret_addr i32) (local $wndproc i32) (local $ctrl_class i32) (local $sm_ret i32) (local $owner_tid i32)
     (call $richedit_note_charformat_message
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3))
+    ;; USER window procedures have thread affinity.  Leave this stdcall frame
+    ;; untouched and let the scheduler execute the call on the owner instance;
+    ;; complete_thread_send installs its LRESULT and returns to the caller.
+    (local.set $owner_tid (call $wnd_get_thread (local.get $arg0)))
+    (if (i32.and (i32.ne (local.get $owner_tid) (i32.const 0))
+                 (i32.ne (local.get $owner_tid) (global.get $current_thread_id)))
+      (then
+        (global.set $send_target_tid (local.get $owner_tid))
+        (global.set $send_hwnd (local.get $arg0))
+        (global.set $send_msg (local.get $arg1))
+        (global.set $send_wparam (local.get $arg2))
+        (global.set $send_lparam (local.get $arg3))
+        (global.set $handler_set_eip (i32.const 1))
+        (global.set $eip (global.get $current_thunk_eip))
+        (global.set $yield_reason (i32.const 10))
+        (global.set $yield_flag (i32.const 1))
+        (global.set $steps (i32.const 0))
+        (return)))
     ;; EM_FORMATRANGE. The Win98 RichEdit DLL's printer message path cannot
     ;; reliably preserve its LRESULT through the emulated native wndproc (it
     ;; returns the FORMATRANGE pointer), but render=true must still enter that

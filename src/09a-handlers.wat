@@ -23,7 +23,11 @@
     (local $i i32)
     (local $addr i32)
     (local $free_slot i32)
+    (local $owner_tid i32)
     (global.set $tick_count (call $host_get_ticks))
+    (local.set $owner_tid (call $wnd_get_thread (local.get $hwnd)))
+    (if (i32.eqz (local.get $owner_tid))
+      (then (local.set $owner_tid (global.get $current_thread_id))))
     (local.set $free_slot (i32.const -1))
     (local.set $i (i32.const 0))
     (call $lock_wnd_acquire)
@@ -39,9 +43,16 @@
                 (i32.eq (i32.load (local.get $addr)) (local.get $hwnd))
                 (i32.eq (i32.load (i32.add (local.get $addr) (i32.const 4))) (local.get $id))))
           (then
+            ;; Existing records follow the same publish protocol as inserts:
+            ;; hide the id while rewriting the payload, then publish it last.
+            (i32.atomic.store offset=4 (local.get $addr) (i32.const 0))
             (i32.store (i32.add (local.get $addr) (i32.const 8)) (local.get $interval))
             (i32.store (i32.add (local.get $addr) (i32.const 12)) (global.get $tick_count))
             (i32.store (i32.add (local.get $addr) (i32.const 16)) (local.get $callback))
+            (i32.store (i32.add (global.get $TIMER_SHARED)
+              (i32.add (i32.const 0x10) (i32.mul (local.get $i) (i32.const 4))))
+              (local.get $owner_tid))
+            (i32.atomic.store offset=4 (local.get $addr) (local.get $id))
             (call $lock_wnd_release)
             (return)
           )
@@ -60,11 +71,15 @@
       (then
         (local.set $addr (i32.add (global.get $TIMER_TABLE) (i32.mul (local.get $free_slot) (global.get $TIMER_ENTRY_SIZE))))
         (i32.store (local.get $addr) (local.get $hwnd))
-        (i32.store (i32.add (local.get $addr) (i32.const 4)) (local.get $id))
         (i32.store (i32.add (local.get $addr) (i32.const 8)) (local.get $interval))
         (i32.store (i32.add (local.get $addr) (i32.const 12)) (global.get $tick_count))
         (i32.store (i32.add (local.get $addr) (i32.const 16)) (local.get $callback))
-        (global.set $timer_count (i32.add (global.get $timer_count) (i32.const 1)))
+        (i32.store (i32.add (global.get $TIMER_SHARED)
+          (i32.add (i32.const 0x10) (i32.mul (local.get $free_slot) (i32.const 4))))
+          (local.get $owner_tid))
+        ;; id is the publication word and is written after the complete entry.
+        (i32.atomic.store offset=4 (local.get $addr) (local.get $id))
+        (drop (i32.atomic.rmw.add (global.get $TIMER_SHARED) (i32.const 1)))
       )
     )
     (call $lock_wnd_release)
@@ -87,9 +102,11 @@
               (i32.eq (i32.load (i32.add (local.get $addr) (i32.const 4))) (local.get $id)))
           (then
             ;; Clear the slot (id=0 means empty; hwnd may legitimately be NULL)
+            (i32.atomic.store offset=4 (local.get $addr) (i32.const 0))
             (i32.store (local.get $addr) (i32.const 0))
-            (i32.store (i32.add (local.get $addr) (i32.const 4)) (i32.const 0))
-            (global.set $timer_count (i32.sub (global.get $timer_count) (i32.const 1)))
+            (i32.store (i32.add (global.get $TIMER_SHARED)
+              (i32.add (i32.const 0x10) (i32.mul (local.get $i) (i32.const 4)))) (i32.const 0))
+            (drop (i32.atomic.rmw.sub (global.get $TIMER_SHARED) (i32.const 1)))
             (call $lock_wnd_release)
             (return (i32.const 1))
           )
@@ -118,9 +135,11 @@
               (i32.eq (i32.load (local.get $addr)) (local.get $hwnd))
               (i32.ne (i32.load (i32.add (local.get $addr) (i32.const 4))) (i32.const 0)))
           (then
+            (i32.atomic.store offset=4 (local.get $addr) (i32.const 0))
             (i32.store (local.get $addr) (i32.const 0))
-            (i32.store (i32.add (local.get $addr) (i32.const 4)) (i32.const 0))
-            (global.set $timer_count (i32.sub (global.get $timer_count) (i32.const 1)))))
+            (i32.store (i32.add (global.get $TIMER_SHARED)
+              (i32.add (i32.const 0x10) (i32.mul (local.get $i) (i32.const 4)))) (i32.const 0))
+            (drop (i32.atomic.rmw.sub (global.get $TIMER_SHARED) (i32.const 1)))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $loop)))
     (call $lock_wnd_release))
@@ -131,15 +150,21 @@
     (local $i i32)
     (local $addr i32)
     (local $elapsed i32)
+    (local $found i32)
     ;; Update tick_count from host real time
     (global.set $tick_count (call $host_get_ticks))
     (local.set $i (i32.const 0))
+    (call $lock_wnd_acquire)
     (block $break
       (loop $loop
         (br_if $break (i32.ge_u (local.get $i) (global.get $TIMER_MAX)))
         (local.set $addr (i32.add (global.get $TIMER_TABLE) (i32.mul (local.get $i) (global.get $TIMER_ENTRY_SIZE))))
         ;; Skip empty slots (id=0 means empty; hwnd may legitimately be NULL)
-        (if (i32.load (i32.add (local.get $addr) (i32.const 4)))
+        (if (i32.and
+              (i32.atomic.load offset=4 (local.get $addr))
+              (i32.eq (i32.load (i32.add (global.get $TIMER_SHARED)
+                (i32.add (i32.const 0x10) (i32.mul (local.get $i) (i32.const 4)))))
+                (global.get $current_thread_id)))
           (then
             (local.set $elapsed (i32.sub (global.get $tick_count) (i32.load (i32.add (local.get $addr) (i32.const 12)))))
             (if (i32.ge_u (local.get $elapsed) (i32.load (i32.add (local.get $addr) (i32.const 8))))
@@ -151,7 +176,8 @@
                 (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0113))            ;; WM_TIMER
                 (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.load (i32.add (local.get $addr) (i32.const 4))))   ;; wParam=timerID
                 (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.load (i32.add (local.get $addr) (i32.const 16)))) ;; lParam=callback
-                (return (i32.const 1))
+                (local.set $found (i32.const 1))
+                (br $break)
               )
             )
           )
@@ -160,6 +186,8 @@
         (br $loop)
       )
     )
+    (call $lock_wnd_release)
+    (if (local.get $found) (then (return (i32.const 1))))
     ;; Check multimedia timer (timeSetEvent)
     (if (global.get $mm_timer_id)
       (then
@@ -179,41 +207,74 @@
     (i32.const 0)
   )
 
-  ;; Shared cross-instance posted-message queue.
-  ;; Worker threads run in separate WASM instances, so globals such as
-  ;; $post_queue_count are private. Win98 USER queues are shared by the window
-  ;; owner thread; use shared linear memory for messages posted by worker
-  ;; instances so the main UI pump can see them.
-  (func $shared_post_queue_enqueue (param $hwnd i32) (param $msg i32) (param $wparam i32) (param $lparam i32) (result i32)
-    (local $cnt i32) (local $slot i32)
-    (local.set $cnt (i32.load (i32.const 0xB400)))
-    (if (i32.ge_u (local.get $cnt) (i32.const 64))
+  ;; Shared cross-instance posted-message queues, one per owning Win32 thread.
+  ;; The former implementation was one unlocked count+array at hard-coded
+  ;; 0xB400.  Besides allowing two producers to overwrite the same slot, that
+  ;; address is inside WND_DLG_RECORDS.  Posting from a worker could therefore
+  ;; corrupt a dialog even when the queue race did not fire.
+  (func $thread_msg_queue_addr (param $tid i32) (result i32)
+    (if (i32.or (i32.lt_u (local.get $tid) (i32.const 1))
+                (i32.gt_u (local.get $tid) (i32.const 8)))
       (then (return (i32.const 0))))
-    (local.set $slot (i32.add (i32.const 0xB410)
-      (i32.mul (local.get $cnt) (i32.const 16))))
+    (i32.add (global.get $THREAD_MSG_QUEUES)
+      (i32.mul (i32.sub (local.get $tid) (i32.const 1))
+        (global.get $THREAD_MSG_QUEUE_STRIDE))))
+
+  (func $shared_post_queue_enqueue (param $hwnd i32) (param $msg i32) (param $wparam i32) (param $lparam i32) (result i32)
+    (local $cnt i32) (local $tail i32) (local $slot i32) (local $queue i32) (local $tid i32)
+    (local.set $tid (call $wnd_get_thread (local.get $hwnd)))
+    ;; HWND 0 and handles which vanished between routing and enqueue belong to
+    ;; the caller's queue.  PostThreadMessage is a separate API.
+    (if (i32.eqz (local.get $tid))
+      (then (local.set $tid (global.get $current_thread_id))))
+    (local.set $queue (call $thread_msg_queue_addr (local.get $tid)))
+    (if (i32.eqz (local.get $queue)) (then (return (i32.const 0))))
+    (call $lock_wnd_acquire)
+    (local.set $cnt (i32.load (local.get $queue)))
+    (if (i32.ge_u (local.get $cnt) (global.get $THREAD_MSG_QUEUE_MAX))
+      (then
+        (call $lock_wnd_release)
+        (return (i32.const 0))))
+    (local.set $tail (i32.load offset=8 (local.get $queue)))
+    (local.set $slot (i32.add (local.get $queue)
+      (i32.add (i32.const 0x10) (i32.mul (local.get $tail) (i32.const 16)))))
     (i32.store          (local.get $slot) (local.get $hwnd))
     (i32.store offset=4 (local.get $slot) (local.get $msg))
     (i32.store offset=8 (local.get $slot) (local.get $wparam))
     (i32.store offset=12 (local.get $slot) (local.get $lparam))
-    (i32.store (i32.const 0xB400) (i32.add (local.get $cnt) (i32.const 1)))
+    (i32.store offset=8 (local.get $queue)
+      (i32.rem_u (i32.add (local.get $tail) (i32.const 1))
+        (global.get $THREAD_MSG_QUEUE_MAX)))
+    ;; Count is the publication word and is written after the payload.
+    (i32.store (local.get $queue) (i32.add (local.get $cnt) (i32.const 1)))
+    (call $lock_wnd_release)
     (i32.const 1)
   )
 
   (func $shared_post_queue_read (param $msg_ptr i32) (param $remove i32) (result i32)
-    (local $cnt i32)
-    (local.set $cnt (i32.load (i32.const 0xB400)))
+    (local $cnt i32) (local $head i32) (local $slot i32) (local $queue i32)
+    (local.set $queue (call $thread_msg_queue_addr (global.get $current_thread_id)))
+    (if (i32.eqz (local.get $queue)) (then (return (i32.const 0))))
+    (call $lock_wnd_acquire)
+    (local.set $cnt (i32.load (local.get $queue)))
     (if (i32.eqz (local.get $cnt))
-      (then (return (i32.const 0))))
-    (call $gs32 (local.get $msg_ptr) (i32.load (i32.const 0xB410)))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.load (i32.const 0xB414)))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.load (i32.const 0xB418)))
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.load (i32.const 0xB41C)))
+      (then
+        (call $lock_wnd_release)
+        (return (i32.const 0))))
+    (local.set $head (i32.load offset=4 (local.get $queue)))
+    (local.set $slot (i32.add (local.get $queue)
+      (i32.add (i32.const 0x10) (i32.mul (local.get $head) (i32.const 16)))))
+    (call $gs32 (local.get $msg_ptr) (i32.load (local.get $slot)))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.load offset=4 (local.get $slot)))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.load offset=8 (local.get $slot)))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.load offset=12 (local.get $slot)))
     (if (local.get $remove)
       (then
-        (i32.store (i32.const 0xB400) (i32.sub (local.get $cnt) (i32.const 1)))
-        (if (i32.gt_u (local.get $cnt) (i32.const 1))
-          (then (call $memcpy (i32.const 0xB410) (i32.const 0xB420)
-            (i32.mul (i32.sub (local.get $cnt) (i32.const 1)) (i32.const 16)))))))
+        (i32.store offset=4 (local.get $queue)
+          (i32.rem_u (i32.add (local.get $head) (i32.const 1))
+            (global.get $THREAD_MSG_QUEUE_MAX)))
+        (i32.store (local.get $queue) (i32.sub (local.get $cnt) (i32.const 1)))))
+    (call $lock_wnd_release)
     (i32.const 1)
   )
 
@@ -3517,14 +3578,17 @@
   )
 
   ;; 188: SetTimer
+  (func $timer_next_auto_id (result i32)
+    (i32.add (i32.const 0x1001)
+      (i32.atomic.rmw.add offset=4 (global.get $TIMER_SHARED) (i32.const 1))))
+
   (func $handle_SetTimer (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tid i32)
     (local.set $tid (local.get $arg1))
     ;; Auto-generate unique timer ID when caller passes 0
     (if (i32.eqz (local.get $tid))
       (then
-        (global.set $auto_timer_id (i32.add (global.get $auto_timer_id) (i32.const 1)))
-        (local.set $tid (global.get $auto_timer_id))))
+        (local.set $tid (call $timer_next_auto_id))))
     (call $timer_set (local.get $arg0) (local.get $tid) (local.get $arg2) (local.get $arg3))
     (global.set $eax (local.get $tid))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
@@ -4337,19 +4401,11 @@
     ;;   lpszClassName(+40) hIconSm(+44)
     (local.set $tmp (call $gl32 (i32.add (local.get $arg0) (i32.const 8)))) ;; lpfnWndProc
     (local.set $class_name_wa (call $g2w (call $gl32 (i32.add (local.get $arg0) (i32.const 40)))))
-    ;; Allocate class record (returns atom; WNDCLASSA filled in below)
-    (global.set $eax (call $class_table_register (local.get $class_name_wa)))
-    ;; Convert WNDCLASSEX(+4..+40) → WNDCLASSA(+0..+36) (skip cbSize, copy 9 dwords)
-    ;; into the embedded WNDCLASSA at class record + 8.
-    (local.set $slot (call $class_find_slot (local.get $class_name_wa)))
-    (if (i32.ge_s (local.get $slot) (i32.const 0))
-      (then
-        (local.set $dst (call $class_wndclass_addr (local.get $slot)))
-        (local.set $src (call $g2w (i32.add (local.get $arg0) (i32.const 4))))
-        (call $memcpy (local.get $dst) (local.get $src) (i32.const 36))
-        ;; Copy lpszClassName from WNDCLASSEX+40 to WNDCLASSA+36
-        (i32.store (i32.add (local.get $dst) (i32.const 36))
-          (call $gl32 (i32.add (local.get $arg0) (i32.const 40))))))
+    ;; WNDCLASSEX without cbSize/hIconSm is exactly WNDCLASSA.  Copy and
+    ;; publish it while the class-table writer lock is still held.
+    (local.set $src (call $g2w (i32.add (local.get $arg0) (i32.const 4))))
+    (global.set $eax (call $class_table_register_data
+      (local.get $class_name_wa) (local.get $src)))
     ;; Store first EXE-space wndproc as main (skip DLL-registered classes)
     (if (i32.and (i32.eqz (global.get $wndproc_addr))
       (i32.and (i32.ge_u (local.get $tmp) (global.get $image_base))
@@ -4376,14 +4432,8 @@
     ;;   lpszMenuName(+32) lpszClassName(+36)
     (local.set $tmp (call $gl32 (i32.add (local.get $arg0) (i32.const 4)))) ;; lpfnWndProc
     (local.set $class_name_wa (call $class_name_key (call $gl32 (i32.add (local.get $arg0) (i32.const 36)))))
-    ;; Allocate class record (returns atom; WNDCLASSA filled in below)
-    (global.set $eax (call $class_table_register (local.get $class_name_wa)))
-    ;; Copy full WNDCLASSA into the embedded slot at class record + 8.
-    (local.set $slot (call $class_find_slot (local.get $class_name_wa)))
-    (if (i32.ge_s (local.get $slot) (i32.const 0))
-      (then
-        (local.set $dst (call $class_wndclass_addr (local.get $slot)))
-        (call $memcpy (local.get $dst) (call $g2w (local.get $arg0)) (i32.const 40))))
+    (global.set $eax (call $class_table_register_data
+      (local.get $class_name_wa) (call $g2w (local.get $arg0))))
     ;; Store first EXE-space wndproc as main (skip DLL-registered classes)
     (if (i32.and (i32.eqz (global.get $wndproc_addr))
       (i32.and (i32.ge_u (local.get $tmp) (global.get $image_base))
@@ -4399,7 +4449,6 @@
             (i32.and (i32.ge_u (local.get $tmp) (global.get $image_base))
                      (i32.lt_u (local.get $tmp) (i32.add (global.get $image_base) (global.get $exe_size_of_image)))))
         (then (global.set $wndproc_addr2 (local.get $tmp))))))
-    (global.set $eax (i32.const 0xC001))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 
@@ -4951,12 +5000,8 @@
     (local $tmp i32) (local $class_name_wa i32) (local $slot i32) (local $dst i32)
     (local.set $tmp (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
     (local.set $class_name_wa (call $class_wide_name_key (call $gl32 (i32.add (local.get $arg0) (i32.const 36)))))
-    (global.set $eax (call $class_table_register (local.get $class_name_wa)))
-    (local.set $slot (call $class_find_slot (local.get $class_name_wa)))
-    (if (i32.ge_s (local.get $slot) (i32.const 0))
-      (then
-        (local.set $dst (call $class_wndclass_addr (local.get $slot)))
-        (call $memcpy (local.get $dst) (call $g2w (local.get $arg0)) (i32.const 40))))
+    (global.set $eax (call $class_table_register_data
+      (local.get $class_name_wa) (call $g2w (local.get $arg0))))
     (if (i32.and (i32.eqz (global.get $wndproc_addr))
       (i32.and (i32.ge_u (local.get $tmp) (global.get $image_base))
                (i32.lt_u (local.get $tmp) (i32.add (global.get $image_base) (global.get $exe_size_of_image)))))
@@ -4979,15 +5024,9 @@
     ;; WNDCLASSEXW: cbSize(+0) style(+4) lpfnWndProc(+8) ... lpszClassName(+40)
     (local.set $tmp (call $gl32 (i32.add (local.get $arg0) (i32.const 8))))
     (local.set $class_name_wa (call $class_wide_name_key (call $gl32 (i32.add (local.get $arg0) (i32.const 40)))))
-    (global.set $eax (call $class_table_register (local.get $class_name_wa)))
-    (local.set $slot (call $class_find_slot (local.get $class_name_wa)))
-    (if (i32.ge_s (local.get $slot) (i32.const 0))
-      (then
-        (local.set $dst (call $class_wndclass_addr (local.get $slot)))
-        (local.set $src (call $g2w (i32.add (local.get $arg0) (i32.const 4))))
-        (call $memcpy (local.get $dst) (local.get $src) (i32.const 36))
-        (i32.store (i32.add (local.get $dst) (i32.const 36))
-          (call $gl32 (i32.add (local.get $arg0) (i32.const 40))))))
+    (local.set $src (call $g2w (i32.add (local.get $arg0) (i32.const 4))))
+    (global.set $eax (call $class_table_register_data
+      (local.get $class_name_wa) (local.get $src)))
     (if (i32.and (i32.eqz (global.get $wndproc_addr))
       (i32.and (i32.ge_u (local.get $tmp) (global.get $image_base))
                (i32.lt_u (local.get $tmp) (i32.add (global.get $image_base) (global.get $exe_size_of_image)))))
@@ -5880,45 +5919,11 @@ nW — STUB: unimplemented
                  (i32.ne (local.get $prev) (local.get $me)))
       (then
         (global.set $cs_wait_spins (i32.add (global.get $cs_wait_spins) (i32.const 1)))
-        ;; Two reasons to take a section that is not free, both counted.
-        ;;
-        ;; $sync_msg_depth: a synchronous wndproc is running nested inside a
-        ;; handler. Parking sets $steps = 0 and unwinds run(), and the nested
-        ;; call's frame cannot survive that — the same hazard
-        ;; waitSingleCooperative exists for. Yielding from here trapped the guest
-        ;; at a garbage EIP (0x113 — a message id executed as code) some distance
-        ;; later, resembling its cause not at all. An exclusion honoured only at
-        ;; the top level still covers the whole of the common case; $cs_barges
-        ;; says how often it was not.
-        ;;
-        ;; 2000 fruitless rounds: a section can be lost rather than held. A
-        ;; thread that trapped or exited inside one never releases it, and
-        ;; waiting forever on that is a hang with no output. $cs_steals turns it
-        ;; into a reportable degradation instead.
-        ;; The guest's MAIN thread never parks here either, and this one is a
-        ;; measured limit rather than a design: it is the thread that runs
-        ;; wndprocs, dialogs and JS-driven message sends, and several of those
-        ;; nest an interpreter run without raising $sync_msg_depth. Parking out
-        ;; of one of those unwinds a frame nobody can rebuild, and the browser's
-        ;; Winamp died at EIP=0x113 every time it happened. Spawned threads own
-        ;; their stack from the first instruction and park safely — which is
-        ;; where the exclusion was needed anyway: it is what took worker-mode
-        ;; audio from near-silence to full scale.
-        (if (i32.or (i32.eq (global.get $current_thread_id) (i32.const 1))
-              (i32.or (i32.ne (global.get $sync_msg_depth) (i32.const 0))
-                      (i32.ge_u (global.get $cs_wait_spins) (global.get $cs_steal_after))))
-          (then
-            (if (i32.lt_u (global.get $cs_wait_spins) (global.get $cs_steal_after))
-              (then (global.set $cs_barges (i32.add (global.get $cs_barges) (i32.const 1))))
-              (else (global.set $cs_steals (i32.add (global.get $cs_steals) (i32.const 1)))))
-            (if (call $cs_owner_aligned (local.get $cs))
-              (then (i32.atomic.store offset=12 (local.get $cs) (local.get $me)))
-              (else (i32.store offset=12 (local.get $cs) (local.get $me))))
-            (i32.store offset=8 (local.get $cs) (i32.const 0))
-            (i32.store offset=4 (local.get $cs) (i32.const -1)))
-          (else
-            (call $cs_block (local.get $cs) (local.get $prev))
-            (return)))))
+        ;; Never barge and never steal. Owner-thread callback dispatch now parks
+        ;; and resumes nested sends explicitly, so there is no longer a callback
+        ;; running on the wrong instance that needs this semantic escape hatch.
+        (call $cs_block (local.get $cs) (local.get $prev))
+        (return)))
     (global.set $cs_wait_spins (i32.const 0))
     ;; Came back to a park: the frame must be exactly where it was left, or the
     ;; caller's `ret` will pop something that is not its return address.
@@ -5952,33 +5957,14 @@ nW — STUB: unimplemented
   (func $handle_LeaveCriticalSection (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $cs i32) (local $rec i32)
     (local.set $cs (call $g2w (local.get $arg0)))
-    ;; A Leave from a thread that does not own the section still releases it,
-    ;; and is counted rather than refused. Refusing is what NT would do and it
-    ;; is the wrong trade here: this emulator still runs some guest callbacks on
-    ;; the calling thread rather than the owning one (cross-thread SendMessage is
-    ;; not implemented), so an Enter here and a Leave there is reachable through
-    ;; no fault of the guest — and a section that is never released is a hang,
-    ;; where releasing one early is the race we already had. Win9x did not check
-    ;; either. $cs_bad_leaves is exported so this stops being invisible.
-    ;;
-    ;; What it must NOT do is take the counters with it. Decrementing on behalf of
-    ;; a thread that never entered walks RecursionCount PAST zero, and a release
-    ;; test of "== 0" then never fires again: measured on Winamp in worker mode,
-    ;; 70 such leaves left one section at LockCount=-2 RecursionCount=-1 with
-    ;; OwningThread still set, and three threads parked on it for the rest of the
-    ;; run. So an unowned Leave frees the section outright and touches nothing
-    ;; else, and an owned one releases at "<= 0" with the counters clamped —
-    ;; either way the struct lands in the state InitializeCriticalSection left it.
+    ;; A non-owner Leave is invalid and must not mutate the section. The former
+    ;; compatibility path released somebody else's lock because callbacks could
+    ;; execute on the wrong instance; owner-thread SendMessage removes that cause.
     (if (i32.ne (i32.load offset=12 (local.get $cs)) (global.get $current_thread_id))
       (then
         (global.set $cs_bad_leaves (i32.add (global.get $cs_bad_leaves) (i32.const 1)))
         (global.set $cs_bad_leave_addr (local.get $cs))
         (global.set $cs_bad_leave_owner (i32.load offset=12 (local.get $cs)))
-        (i32.store offset=8 (local.get $cs) (i32.const 0))
-        (i32.store offset=4 (local.get $cs) (i32.const -1))
-        (if (call $cs_owner_aligned (local.get $cs))
-          (then (i32.atomic.store offset=12 (local.get $cs) (i32.const 0)))
-          (else (i32.store offset=12 (local.get $cs) (i32.const 0))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
         (return)))
     ;; RecursionCount-- / LockCount--
@@ -9135,7 +9121,7 @@ SetColorAdjustment — validate and copy complete per-DC state.
           (i32.or
             (i32.or (global.get $quit_flag)
                     (i32.gt_u (global.get $post_queue_count) (i32.const 0)))
-            (i32.or (i32.gt_u (i32.load (i32.const 0xB400)) (i32.const 0))
+            (i32.or (call $shared_post_queue_read (call $paint_scratch_take) (i32.const 0))
                     (global.get $pending_input_packed)))
           (i32.or
             (i32.or (global.get $paint_pending)
@@ -10445,35 +10431,33 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; PostThreadMessageA/W(threadId, msg, wParam, lParam) — post to thread queue with hwnd=0
-  ;; If target is a thread handle (0xE0000 mask), write to shared-memory XTHREAD queue
-  ;; at 0xB400 (count) / 0xB410 (entries) so the target WASM instance sees it.
-  ;; Otherwise fall back to the local post_queue.
+  ;; PostThreadMessageA/W(threadId, msg, wParam, lParam) — post to the target's
+  ;; shared USER queue with hwnd=0. Thread ids are the same 1..8 values returned
+  ;; by GetCurrentThreadId, not thread handles.
   (func $handle_PostThreadMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $tmp i32) (local $cnt i32)
-    (if (i32.eq (i32.and (local.get $arg0) (i32.const 0xFFFF0000)) (i32.const 0x000E0000))
-    (then
-      (local.set $cnt (i32.load (i32.const 0xB400)))
-      (if (i32.lt_u (local.get $cnt) (i32.const 32))
-      (then
-        (local.set $tmp (i32.add (i32.const 0xB410)
-          (i32.mul (local.get $cnt) (i32.const 16))))
-        (i32.store (local.get $tmp) (i32.const 0))
-        (i32.store (i32.add (local.get $tmp) (i32.const 4)) (local.get $arg1))
-        (i32.store (i32.add (local.get $tmp) (i32.const 8)) (local.get $arg2))
-        (i32.store (i32.add (local.get $tmp) (i32.const 12)) (local.get $arg3))
-        (i32.store (i32.const 0xB400) (i32.add (local.get $cnt) (i32.const 1))))))
-    (else
-      (if (i32.lt_u (global.get $post_queue_count) (i32.const 64))
-      (then
-        (local.set $tmp (i32.add (i32.const 0x400)
-          (i32.mul (global.get $post_queue_count) (i32.const 16))))
-        (i32.store (local.get $tmp) (i32.const 0))
-        (i32.store (i32.add (local.get $tmp) (i32.const 4)) (local.get $arg1))
-        (i32.store (i32.add (local.get $tmp) (i32.const 8)) (local.get $arg2))
-        (i32.store (i32.add (local.get $tmp) (i32.const 12)) (local.get $arg3))
-        (global.set $post_queue_count (i32.add (global.get $post_queue_count) (i32.const 1)))))))
-    (global.set $eax (i32.const 1))
+    (local $queue i32) (local $slot i32) (local $cnt i32) (local $tail i32)
+    (local.set $queue (call $thread_msg_queue_addr (local.get $arg0)))
+    (if (i32.eqz (local.get $queue))
+      (then (global.set $eax (i32.const 0)))
+      (else
+        (call $lock_wnd_acquire)
+        (local.set $cnt (i32.load (local.get $queue)))
+        (if (i32.ge_u (local.get $cnt) (global.get $THREAD_MSG_QUEUE_MAX))
+          (then (global.set $eax (i32.const 0)))
+          (else
+            (local.set $tail (i32.load offset=8 (local.get $queue)))
+            (local.set $slot (i32.add (local.get $queue)
+              (i32.add (i32.const 0x10) (i32.mul (local.get $tail) (i32.const 16)))))
+            (i32.store (local.get $slot) (i32.const 0))
+            (i32.store offset=4 (local.get $slot) (local.get $arg1))
+            (i32.store offset=8 (local.get $slot) (local.get $arg2))
+            (i32.store offset=12 (local.get $slot) (local.get $arg3))
+            (i32.store offset=8 (local.get $queue)
+              (i32.rem_u (i32.add (local.get $tail) (i32.const 1))
+                (global.get $THREAD_MSG_QUEUE_MAX)))
+            (i32.store (local.get $queue) (i32.add (local.get $cnt) (i32.const 1)))
+            (global.set $eax (i32.const 1))))
+        (call $lock_wnd_release)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   (func $handle_PostThreadMessageW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

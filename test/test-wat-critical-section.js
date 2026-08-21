@@ -111,24 +111,22 @@ function check(ok, label, detail) {
   }
 
   {
-    // The regression. A Leave from a thread that never entered still frees the
-    // section — cross-thread SendMessage is not implemented, so an Enter here and
-    // a Leave there is reachable through no fault of the guest, and a section
-    // nobody can release is a hang. What it must not do is leave the counters
-    // below their initial values, because the owner's release test would then
-    // never fire again.
+    // Strict ownership. Owner-thread SendMessage dispatch means an emulator
+    // callback no longer enters on one instance and leaves on another, so the
+    // old compatibility release would only unlock somebody else's section.
     t1.exports.test_cs_enter(CS_GUEST);
     t2.exports.test_cs_leave(CS_GUEST);
     const s = state();
-    check(isFree(s), 'a Leave from a non-owner frees the section without going negative',
+    check(s.owner === T1_ID && s.lock === 0 && s.recursion === 1,
+      'a Leave from a non-owner does not mutate the section',
       show(s));
     check(s.recursion >= 0 && s.lock >= -1, 'the counters never fall below the init state',
       show(s));
-    // And the section is reusable afterwards, which is the property the negative
-    // counters actually destroyed.
+    // Recursive owner entry is still valid after the rejected Leave.
     const parked = t1.exports.test_cs_enter(CS_GUEST) | 0;
     check(!parked && state().owner === T1_ID, 'the section is still usable after a stray Leave',
       `parked=${parked} ${show(state())}`);
+    t1.exports.test_cs_leave(CS_GUEST);
     t1.exports.test_cs_leave(CS_GUEST);
   }
 
@@ -138,6 +136,11 @@ function check(ok, label, detail) {
     t1.exports.test_cs_leave(CS_GUEST);
     check(isFree(state()), 'a Leave on a free section changes nothing', show(state()));
   }
+
+  check((t1.exports.get_cs_barges() | 0) === 0,
+    'strict entry never barges into a section owned by another thread');
+  check((t1.exports.get_cs_steals() | 0) === 0,
+    'strict entry never steals a section from another thread');
 
   {
     t1.exports.test_cs_enter(CS_GUEST);

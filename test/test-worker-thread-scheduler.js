@@ -33,6 +33,7 @@ class FakeLink {
     this.script = script.slice();
     this.calls = [];
     this.completed = [];
+    this.completedSends = [];
     this.exports = [];
     this.stopped = false;
     this.concurrentPeak = 0;
@@ -54,6 +55,7 @@ class FakeLink {
     this.completed.push({ result, waitStackBytes });
     return { eip: 0x401000 };
   }
+  async completeThreadSend(result) { this.completedSends.push(result | 0); }
 
   async callExport(name) { this.exports.push(name); return 0; }
   async syncThunks() { return {}; }
@@ -71,6 +73,7 @@ function makeBackend(scripts) {
     links,
     specs: [],
     dropped: [],
+    resolvedSends: [],
     async readExports() {
       return {
         get_image_base: 0x400000, get_code_start: 0x401000, get_code_end: 0x420000,
@@ -85,6 +88,11 @@ function makeBackend(scripts) {
       return link;
     },
     dropThread(link) { this.dropped.push(link.slot); },
+    async resolveThreadSend(link, request) {
+      this.resolvedSends.push(request);
+      await link.completeThreadSend(0x76543210);
+      return 0x76543210;
+    },
   };
 }
 
@@ -291,6 +299,21 @@ function makeManager(backend) {
       backend.links[0].exports.join(','));
     check(tm.netWaitPending === true,
       'and asks the caller for an event-loop turn, or the frames it waits for never arrive');
+  }
+
+  // --- cross-thread SendMessage --------------------------------------------
+  {
+    const backend = makeBackend([[{
+      yield: 10, sendTargetTid: 1, sendHwnd: 0x1234,
+      sendMsg: 0x500, sendWparam: 7, sendLparam: 9,
+    }]]);
+    const tm = makeManager(backend);
+    tm.createThread(0x401500, 0, 0, 0);
+    await tm.runWorkerSlices(1000);
+    check(backend.resolvedSends.length === 1
+      && backend.resolvedSends[0].targetTid === 1
+      && backend.links[0].completedSends[0] === 0x76543210,
+      'yield 10 routes SendMessage to the HWND owner and resumes with its LRESULT');
   }
 
   console.log(`\n${passed} passed, ${failed} failed`);

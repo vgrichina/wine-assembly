@@ -1,10 +1,10 @@
 # Design: real OS threads for guest threads
 
 **Status:** phase 0 answered, phase 1 working, **phase 2 implemented** on branch
-`worktree-real-threads`. Written 2026-08-16, updated 2026-08-17.
+`worktree-real-threads`. Written 2026-08-16, updated 2026-08-20.
 
 Notepad, Calculator and Paint boot and render with the guest's main thread
-executing inside a Web Worker and all 179 host imports running on the main
+executing inside a Web Worker and all 184 host imports running on the main
 thread. `test/test-worker-guest.js` asserts window-count and window-title parity
 against single-threaded runs, plus the COM server-load round trip.
 
@@ -33,15 +33,19 @@ Two bugs that phase 2 uncovered, both older than phase 2:
 
 **Every yield the WAT actually raises is now handled in worker mode** — 1 wait,
 2 exit, 3 com_load_dll, 5 load_library, 6 modal_dialog, 7 message_wait, 8
-net_wait. Reason 4 was listed as `help_load` in `thread-manager.js` and is set by
+net_wait, 9 critical-section wait, and 10 cross-thread `SendMessage`. Reason 4
+was listed as `help_load` in `thread-manager.js` and is set by
 nothing in the codebase; the help engine fetches through host imports rather than
 parking the guest. It has been dropped from the map, because leaving it there
 made worker mode look like it had two async yields left to port when it had one.
 
-Not done: cross-thread `SendMessage` still runs the target's wndproc on the
-calling thread rather than blocking the sender on the owner's queue, and the
-window/class/timer tables are unlocked on a single-owner argument nothing enforces
-(§3.1b). Off by default, behind the Threads switch and cross-origin isolation.
+The pre-merge USER debt is now implemented: HWNDs publish their creating thread,
+posted messages use locked per-owner rings, cross-thread `SendMessage` parks the
+sender and dispatches on the owner instance (including A→B→A reentrancy), and
+window/class/timer records publish complete state before becoming visible.
+Critical sections no longer barge, steal, or release on a non-owner Leave.
+Threaded mode remains off by default, behind the Threads switch and cross-origin
+isolation.
 
 ### What the implementation actually looks like
 
@@ -230,10 +234,11 @@ emulator rather than the emulated program.
   sparse heap bump        $heap_sparse_ptr        → per-thread arenas ✅ already
   VirtualAlloc top        $virtual_alloc_top      → shared cell ✅, lock ✗
   virtual map table       VIRTUAL_MAP_TABLE       → append-only publish (§3.1a)
-  window table            WND_RECORDS  0x7000     → main-thread-only (§3.3)
-  class table             CLASS_RECORDS           → main-thread-only
-  timer table             TIMER_TABLE             → main-thread-only
-  post queue              0x400 ring              → lock-free SPSC per thread
+  window table            WND_RECORDS  0x7000     → writer lock + publish-last ✅
+  HWND owner threads      WND_THREAD_TABLE         → publish with HWND ✅
+  class table             CLASS_RECORDS           → writer lock + publish-last ✅
+  timer table             TIMER_TABLE             → locked, owner-addressed ✅
+  post queues             THREAD_MSG_QUEUES        → locked MPSC ring per thread ✅
   DX objects / COM        0x07FF0000              → lock, coarse
   socket table            09d-winsock.wat         → lock, coarse
   DLL table               0x04462000              → immutable after load
@@ -357,12 +362,19 @@ but past a local count, and `$run` bounds-checks EIP against `$thunk_guest_end`
 before dispatching it. The slice-boundary reconciliation through the main instance
 stays, but correctness no longer rests on it.
 
-❌ **`WND_RECORDS`, `CLASS_RECORDS`, `TIMER_TABLE` are unlocked**, on the §3.3
-argument that windows belong to the thread that created them. Nothing enforces
-it: a guest thread that creates a window touches those tables concurrently with
-the UI thread. It has not bitten in the corpus — Winamp's three threads do not
-create windows — and enforcing it properly means the coarse USER/GDI lock real
-Win9x had, which cannot be a spinlock under rule 1 above.
+✅ **USER publication and routing.** `WND_RECORDS` and `CLASS_RECORDS` use
+`$LOCK_WND` for scan/claim/update, but readers remain lock-free. The identifying
+word (`hwnd` or class hash) is stored atomically last, so a reader sees either a
+complete record or no record. `WND_THREAD_TABLE` records the creating thread in
+the same publication transaction. `TIMER_TABLE` scans, updates, consumes, and
+deletes under the lock; timer ids and the active count are shared atomics, and a
+parallel owner table keeps each thread from consuming another thread's timers.
+
+The old cross-instance post queue was worse than unlocked: its hard-coded
+`0xB400` storage overlapped `WND_DLG_RECORDS`. It is gone. Eight declared
+per-thread 64-message rings now live at `THREAD_MSG_QUEUES`; the coarse USER lock
+makes them safe for multiple producers while each owner is the sole consumer.
+`test/test-wat-user-threading.js` drives all of these from two OS threads.
 
 ### 3.2 Host imports are the surface that must be brokered
 
@@ -399,14 +411,17 @@ Win32 is not symmetric about threads, and that is a gift here:
 
 - **Window ownership is per-thread.** A window belongs to the thread that
   created it, its messages are delivered on that thread's queue, and its
-  wndproc runs there. So `WND_RECORDS`, `CLASS_RECORDS` and `TIMER_TABLE` can
-  stay single-owner instead of locked — they belong to the UI thread, which is
-  the thread that created the windows in every app in the corpus.
-- **`SendMessage` across threads blocks the sender** until the receiver's
-  wndproc returns. That is exactly `Atomics.wait` on a request slot, and it is
-  the *documented* behaviour, not an emulator compromise.
-- **`PostMessage` is asynchronous** and per-target-thread — an SPSC ring per
-  thread, no lock.
+  wndproc runs there. `WND_THREAD_TABLE` makes that rule executable rather than
+  an assumption about the corpus.
+- **`SendMessage` across threads blocks the guest sender** until the receiver's
+  wndproc returns. The implementation parks with yield 10 instead of blocking a
+  Worker in `Atomics.wait`: a parked sender must remain command-responsive so B
+  can send back to A while A waits for B. The scheduler injects a nested dispatch
+  on the owner instance, returns its `LRESULT`, and completes the original
+  stdcall frame. A vanished target completes with zero.
+- **`PostMessage` is asynchronous** and per-target-thread. The ring is MPSC in
+  practice (any guest thread may post), so producers and the owner consumer use
+  the USER lock.
 - **GDI objects are process-global** but per-object serialised. A coarse lock
   around the object table is authentic enough; real GDI serialised too.
 
@@ -585,7 +600,7 @@ the app for a real fraction of visitors.
   │ audio ring ◀── drained to AudioContext                   │
   │ registry/INI broker (Atomics.wait responder)             │
   │ composite: offscreen surfaces ──▶ screen canvas, z-order │
-  │ window table / class table / timers  (single owner)      │
+  │ USER tables: writer lock + lock-free published readers   │
   └──────────────────────────────────────────────────────────┘
         │ postMessage: Module + Memory (once, at spawn)
         ▼
@@ -606,10 +621,11 @@ Each worker runs its own uninterrupted `run(steps)` loop. No wall-clock
 budgets, no quantum tuning, no input-wake heuristics — those five scheduling
 knobs in `host.js` all delete.
 
-The guest's own thread is a real thread, so `Sleep`, `WaitForSingleObject` and
-`SendMessage` become genuine blocking calls (`Atomics.wait`) instead of yields
-that unwind to the JS event loop. That removes the yield-reason state machine
-for the blocking cases, which is a simplification, not just a move.
+The guest's own thread is a real thread, so ordinary execution no longer blocks
+the browser main thread. `Sleep` and object waits still park through scheduler
+yields. Cross-thread `SendMessage` deliberately does too: unlike an
+`Atomics.wait`-blocked Worker, a parked sender can accept an inbound nested send,
+which is required for Win32's reentrant A→B→A behavior.
 
 ---
 
@@ -685,10 +701,12 @@ because the *proof* is the second one.
   a record in the same map. What differs is only where the instructions run.
 - ✅ Coarse locks on the shared tables; `VIRTUAL_MAP_TABLE` publish-ordered
   instead of locked, since `$g2w` reads it per access.
-- ❌ Cross-thread `SendMessage` over `Atomics.wait`. Still runs the target's
-  wndproc on the calling thread, as it did in the cooperative backend. Doing it
-  properly means a per-thread message queue and blocking the sender until the
-  owner's pump dispatches it — the authentic behaviour, and its own piece of work.
+- ✅ Cross-thread `SendMessage` request/reply. HWND ownership chooses the target
+  instance; yield 10 parks the sender without dropping its stdcall frame; the
+  owner executes the WndProc and returns its `LRESULT`. Nested A→B→A sends are
+  reentrant because parked Workers still accept dispatch commands. Target exit
+  resolves the sender with zero. The cooperative backend uses the same owner
+  metadata and context-save protocol synchronously.
 
 Three things the split had to get right, each learned from a failure:
 
@@ -734,12 +752,16 @@ Three things the split had to get right, each learned from a failure:
   code and serves the workers' RPC (get that wrong and the run hangs instead of
   failing, which is what the test's timeout is for).
 
-  `test/test-cli-worker-threads.js` runs WordPad on both backends and compares:
-  13 checks, including that the same thread lifecycle happened, that an event
-  signalled in one OS thread woke a wait parked in another in both directions, and
-  that both backends did the same amount of guest-visible work (11958 API calls
-  each, exactly). `test-wordpad-thread-startup.js` and `test-winamp-audio.js` now
-  accept `--threads` and run their own assertions against either backend.
+  `test/test-cli-worker-threads.js` runs WordPad on both backends and compares 14
+  invariants: the same thread lifecycle, both directions of cross-thread event
+  wakeup, the same final window state, no traps, and bounded guest-visible work.
+  Owner-thread `SendMessage` now lets the real worker finish formatting callbacks
+  between cooperative slices; at the fixed batch cutoff the current deterministic
+  counts are 9537 worker versus 8651 cooperative (10.2%). The secondary work-count
+  guard is therefore 15%, while lifecycle, waits, exit attribution, broker use,
+  traps, and final UI state remain exact assertions. `test-wordpad-thread-startup.js`
+  and `test-winamp-audio.js` accept `--threads` and run their own assertions
+  against either backend.
 
   **Two sizing traps, both found by this, both about wakeups rather than steps.**
   A worker's slice size is only the granularity of its round trip — nothing on the
@@ -765,53 +787,37 @@ because guest CRT and MFC lock code reads this field and compares it against tha
 — it has to be the same number, not a private one. 0 is free, and no thread id is
 ever 0 (main is 1, a spawned thread is tid+1).
 
-Four things this had to get right:
+Five things this had to get right:
 
-- **It cannot spin.** The holder is another guest thread, and on the browser's
-  main thread — or the CLI's, which both runs guest code and serves the workers'
-  host imports — spinning is the deadlock: the holder is parked in `Atomics.wait`
-  for an import that only the spinning thread would have served. So a contended
-  Enter parks the whole API call with a new yield reason (9), the way a blocking
-  socket call does: EIP stays on the thunk and clearing the yield re-enters the
-  same call. All four schedulers clear it — cooperative threads, worker threads,
-  `checkMainYield`, and host.js.
+- **It may spin only for a bounded multiprocessor grace period.** If that does
+  not acquire the word, a contended Enter parks the whole API call with yield 9,
+  the way a blocking socket call does: EIP stays on the thunk and clearing the
+  yield re-enters the same call. Unbounded spinning can deadlock a holder parked
+  in `Atomics.wait` for a host import. All schedulers understand the park.
 - **`$cs_block` must not touch ESP.** The winsock equivalent subtracts, because
   those handlers pop their frame on entry and have to put it back; this one parks
   before popping. Subtracting dropped ESP by 8 per park, and WordPad's thread
   trapped after three of them.
-- **A section can be lost rather than held.** A thread that traps or exits inside
-  one never releases it, so waiting forever turns a bug into a hang with no
-  output. After 2000 fruitless rounds the section is taken, and `$cs_steals`
-  counts it so the run can say so.
-- **Only spawned threads park; the guest's main thread barges.** This is a
-  measured limit, not a preference. The main thread is the one that runs
-  wndprocs, dialogs and JS-driven message sends, and several of those nest an
-  interpreter run *without* raising `$sync_msg_depth` — parking out of one
-  unwinds a frame nobody can rebuild, and browser Winamp died at `EIP=0x113` (a
-  message id executed as code) every time it happened. A spawned thread owns its
-  stack from its first instruction and parks safely, which is where the exclusion
-  was needed anyway: worker threads excluding each other is what took worker-mode
-  audio from near-silence to full scale. `$cs_barges` counts every entry that
-  therefore was not excluded, including the `$sync_msg_depth` cases on any thread.
-- **Nothing is taken by force, by default.** The first version took a section
+- **A section can be lost rather than held.** Thread exit/trap cleanup walks the
+  shared critical-section registry and releases every section owned by the dead
+  thread. A live owner is never displaced.
+- **Every thread parks; nobody barges.** Owner-thread callback dispatch saves a
+  nested interpreter context explicitly, removing the old reason the main thread
+  and `$sync_msg_depth` paths could not survive a park. `$cs_barges` must remain
+  zero.
+- **Nothing is taken by force.** The first version took a section
   after 2000 fruitless rounds so that a lost section could not hang the app. It
   hangs nothing and corrupts instead: a steal rewrites `LockCount` and
   `RecursionCount` under a thread that still believes it owns the section, guest
   CRT lock code reads those fields, and two of Winamp's worker threads ended up
   jumping into a heap structure — `EIP` = out_wave's thread parameter + 0xc — and
   trapping. Controlled: the same 6000-batch run traps **twice** with a 2000-round
-  steal and **zero** times with stealing off. So the default is effectively never,
-  `--cs-steal-after=N` sets it, and a waiter that cannot proceed parks with a
-  climbing `$cs_waits` — a stuck thread rather than damage somewhere else.
-- **A non-owner `Leave` still releases.** NT would refuse, and refusing is the
-  wrong trade here: this emulator still runs some guest callbacks on the calling
-  thread rather than the owning one (cross-thread `SendMessage` is not
-  implemented), so Enter-here-Leave-there is reachable through no fault of the
-  guest. A section never released is a hang; one released early is the race we
-  already had. Win9x did not check either. `$cs_bad_leaves` counts it. It frees the
-  section **without touching the counters** — decrementing on behalf of a thread
-  that never entered is what walked `RecursionCount` past zero and cost a whole
-  session; see "It was the non-owner `Leave`" below.
+  steal and **zero** times without it. The compatibility diagnostic option is
+  still parsed, but strict entry ignores it; `$cs_steals` must remain zero.
+- **A non-owner `Leave` is rejected.** It increments `$cs_bad_leaves` for
+  diagnosis but does not touch owner, recursion, or lock count. Correct callback
+  affinity removes the emulator-generated Enter-here/Leave-there case that once
+  motivated releasing somebody else's section.
 
 One more trap, worth recording because it is not specific to this handler:
 `$run`'s thunk-zone auto-pop fires whenever a handler leaves EIP alone — yield or
@@ -829,9 +835,9 @@ never goes through `$run` and so cannot see the auto-pop at all).
 
 `$cs_waits` / `$cs_steals` / `$cs_barges` / `$cs_bad_leaves` are exported, printed by
 `test/run.js` when nonzero, and carried per-thread in the worker slice reply, so
-contention is reportable instead of inferred. Cooperative runs show 0/0/0 — one
-instance at a time never contends — which is also why this change is invisible to
-the single-threaded path.
+contention is reportable instead of inferred. Valid runs require zero steals,
+zero barges, and zero bad Leaves; waits may be nonzero and identify ordinary
+contention.
 
 Contended Enter also spins before it parks — a few thousand CAS attempts, which
 is what `SpinCount` is for on a multiprocessor, since the holder is on another OS
@@ -912,11 +918,11 @@ nobody was inside, forever, and every waiter parked forever. The per-thread
 copy reads 0 for anything a worker did) named the source: **70** Leaves from T2 on
 sections it did not own.
 
-The fix is two lines of arithmetic and one of judgement:
+The initial mitigation was two lines of arithmetic and one of judgement; the
+pre-merge owner-affinity work replaces that compromise with strict semantics:
 
-- An **unowned** `Leave` frees the section outright and touches no counters. It
-  still releases — see the trade above — but it no longer decrements on behalf of
-  a thread that never entered.
+- An **unowned** `Leave` is diagnosed and ignored. It cannot free another
+  thread's section now that callbacks execute on the HWND owner's instance.
 - An **owned** `Leave` releases at `<= 0` rather than `== 0`, and clamps
   `LockCount`/`RecursionCount` back to the values `InitializeCriticalSection`
   writes. A section can now only ever be free-and-initialised or held.
@@ -924,15 +930,19 @@ The fix is two lines of arithmetic and one of judgement:
 | Winamp, CLI `--threads`, same 1200 batches | before | after |
 |---|---|---|
 | parks (T1/T2/T3) | 2344 / 2345 / 2477 | 0 / 4 / 0 |
-| bad Leaves | 70 | 3 |
+| bad Leaves | 70 | 3 (initial compatibility mitigation) |
 | PCM captured | 55296 B, then deadlocked | **78336 B**, hit the capture target |
 | wall clock to 64KB of audio | never | 6.0 s |
 
-`test/test-wat-critical-section.js` is the regression: 16 assertions on the struct
+The strict follow-up requires the current validation run to report **0** bad
+Leaves, **0** barges, and **0** steals; the table above is retained as the
+historical measurement that identified the arithmetic failure.
+
+`test/test-wat-critical-section.js` is the regression: 20 assertions on the struct
 itself, driven through `test_cs_enter` / `test_cs_leave` / `test_cs_delete` exports
 so the semantics are asserted rather than inferred from an app that hangs. Against
-the old `Leave` it fails four of them, and it fails them with exactly the Winamp
-signature — `lock=-2 recursion=-1 owner=2`.
+the old `Leave` it fails with exactly the Winamp signature —
+`lock=-2 recursion=-1 owner=2`. It also requires zero barges and zero steals.
 
 The browser side moved too, without being touched: `test-worker-guest.js` went from
 20 of 21 to **27 of 27**, both worker traps gone. Guest `0x1121B78` — the address
@@ -1003,6 +1013,23 @@ number has to come from a real browser (see §6).
 ---
 
 ## 6. How we know it works
+
+Pre-merge validation on 2026-08-20:
+
+- Both WASM variants build, all manifest/API/dispatch/ESP gates pass, and the
+  fixed-memory audit reports 112 regions with no data-segment overlap.
+- The focused concurrency gates pass: USER ownership/queues/timers/classes 7/7,
+  strict critical sections 20/20 plus the two-instance integration check,
+  cross-thread `SendMessage` 5/5, and worker scheduler 34/34.
+- WordPad startup is 8/8 and worker/cooperative parity is 14/14. Threaded Winamp
+  audio is 7/7 with 73728 bytes of non-silent PCM in 1.34 seconds.
+- The browser worker gate is 27/27: Notepad and Calculator match their control
+  window sets, Winamp creates and runs three guest Workers without traps, and
+  both COM load outcomes unpark correctly.
+- The broad quick unit run is 181/193. Its 12 failures reproduce outside this
+  patch's scope: four localhost/sandbox or missing-corpus fixtures and eight
+  existing GDI/renderer/dialog/find-replace assertions. They are not counted as
+  evidence for this branch; the relevant gates above are all green.
 
 The instrumentation for this already exists, which is the one piece of luck in
 this plan:

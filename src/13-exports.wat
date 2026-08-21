@@ -97,7 +97,9 @@
             (i32.eq (global.get $yield_reason) (i32.const 7))
             (i32.or
               (i32.eq (global.get $yield_reason) (i32.const 8))
-              (i32.eq (global.get $yield_reason) (i32.const 9)))))))
+              (i32.or
+                (i32.eq (global.get $yield_reason) (i32.const 9))
+                (i32.eq (global.get $yield_reason) (i32.const 10))))))))
       ;; The 16-bit twin of the thunk-zone check below. A far call or return
       ;; into the thunk segment is caught at the transfer, but EIP can also be
       ;; *parked* there — a modal message box owns the task until it is
@@ -322,6 +324,24 @@
     (call $wnd_table_set (local.get $hwnd) (local.get $wndproc)))
   (func (export "test_class_register") (param $name_wa i32) (result i32)
     (call $class_table_register (local.get $name_wa)))
+  (func (export "test_class_register_data") (param $name_wa i32) (param $wndclass_wa i32) (result i32)
+    (call $class_table_register_data (local.get $name_wa) (local.get $wndclass_wa)))
+  (func (export "test_class_lookup") (param $name_wa i32) (result i32)
+    (call $class_table_lookup (local.get $name_wa)))
+  (func (export "test_shared_post")
+    (param $hwnd i32) (param $msg i32) (param $wparam i32) (param $lparam i32) (result i32)
+    (call $shared_post_queue_enqueue
+      (local.get $hwnd) (local.get $msg) (local.get $wparam) (local.get $lparam)))
+  (func (export "test_shared_post_read") (param $msg_ptr i32) (param $remove i32) (result i32)
+    (call $shared_post_queue_read (local.get $msg_ptr) (local.get $remove)))
+  (func (export "test_timer_set")
+    (param $hwnd i32) (param $id i32) (param $interval i32) (param $callback i32)
+    (call $timer_set (local.get $hwnd) (local.get $id) (local.get $interval) (local.get $callback)))
+  (func (export "test_timer_check") (param $msg_ptr i32) (param $consume i32) (result i32)
+    (call $timer_check_due (local.get $msg_ptr) (local.get $consume)))
+  (func (export "test_timer_kill") (param $hwnd i32) (param $id i32) (result i32)
+    (call $timer_kill (local.get $hwnd) (local.get $id)))
+  (func (export "test_timer_next_auto_id") (result i32) (call $timer_next_auto_id))
   (func (export "test_call_GetLogicalDrives") (result i32)
     (local $saved_esp i32)
     (local.set $saved_esp (global.get $esp))
@@ -406,6 +426,8 @@
     (global.set $esp (local.get $saved_esp))
     (global.get $eax))
   (func (export "get_sync_msg_depth") (result i32) (global.get $sync_msg_depth))
+  (func (export "get_window_thread") (param $hwnd i32) (result i32)
+    (call $wnd_get_thread (local.get $hwnd)))
   (func (export "set_current_thread_id") (param i32) (global.set $current_thread_id (local.get 0)))
   (func (export "get_image_base") (result i32) (global.get $image_base))
   (func (export "get_thread_alloc") (result i32) (global.get $thread_alloc))
@@ -2358,6 +2380,64 @@
   (func (export "set_ebx") (param i32) (global.set $ebx (local.get 0)))
   (func (export "set_esi") (param i32) (global.set $esi (local.get 0)))
   (func (export "set_edi") (param i32) (global.set $edi (local.get 0)))
+  ;; Owner-thread SendMessage dispatcher support.  guest-worker.js snapshots
+  ;; these few interpreter-control globals around a nested dispatch just as
+  ;; $wnd_send_message_inner does for a local synchronous send.
+  (func (export "get_handler_set_eip") (result i32) (global.get $handler_set_eip))
+  (func (export "set_handler_set_eip") (param i32) (global.set $handler_set_eip (local.get 0)))
+  (func (export "get_steps") (result i32) (global.get $steps))
+  (func (export "set_steps") (param i32) (global.set $steps (local.get 0)))
+  (func (export "set_yield_state") (param $reason i32) (param $flag i32)
+    (global.set $yield_reason (local.get $reason))
+    (global.set $yield_flag (local.get $flag)))
+  (func (export "get_send_target_tid") (result i32) (global.get $send_target_tid))
+  (func (export "get_send_hwnd") (result i32) (global.get $send_hwnd))
+  (func (export "get_send_msg") (result i32) (global.get $send_msg))
+  (func (export "get_send_wparam") (result i32) (global.get $send_wparam))
+  (func (export "get_send_lparam") (result i32) (global.get $send_lparam))
+
+  ;; Start a synchronous dispatch on this instance. Native USER procedures can
+  ;; complete immediately; an x86 WndProc is entered with CACA0005 as its return
+  ;; thunk and is driven by the worker until EIP becomes zero.
+  (func (export "thread_send_begin")
+    (param $hwnd i32) (param $msg i32) (param $wparam i32) (param $lparam i32)
+    (result i32)
+    (local $wp i32)
+    (local.set $wp (call $wnd_table_get (local.get $hwnd)))
+    (if (i32.or (i32.eqz (local.get $wp))
+                (i32.ge_u (local.get $wp) (i32.const 0xFFFF0000)))
+      (then
+        (global.set $eax (call $wnd_send_message
+          (local.get $hwnd) (local.get $msg) (local.get $wparam) (local.get $lparam)))
+        (return (i32.const 0))))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 16)))
+    (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (local.get $lparam))
+    (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (local.get $wparam))
+    (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (local.get $msg))
+    (call $gs32 (global.get $esp) (local.get $hwnd))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $sync_msg_ret_thunk))
+    (global.set $eip (local.get $wp))
+    (global.set $steps (i32.const 0))
+    (global.set $yield_reason (i32.const 0))
+    (global.set $yield_flag (i32.const 0))
+    (global.set $sync_msg_depth (i32.add (global.get $sync_msg_depth) (i32.const 1)))
+    (i32.const 1))
+
+  (func (export "thread_send_end") (result i32)
+    (global.set $sync_msg_depth (i32.sub (global.get $sync_msg_depth) (i32.const 1)))
+    (global.get $eax))
+
+  ;; Finish the original parked SendMessage stdcall on its owning instance.
+  (func (export "complete_thread_send") (param $result i32)
+    (local $ret i32)
+    (if (i32.ne (global.get $yield_reason) (i32.const 10)) (then (return)))
+    (local.set $ret (call $gl32 (global.get $esp)))
+    (global.set $eax (local.get $result))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    (global.set $eip (local.get $ret))
+    (global.set $yield_reason (i32.const 0))
+    (global.set $yield_flag (i32.const 0)))
 
   ;; Windows version
   (func (export "set_winver") (param i32) (global.set $winver (local.get 0)))

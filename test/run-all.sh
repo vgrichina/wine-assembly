@@ -114,6 +114,8 @@ UNIT=(
   test/test-wat-locks.js
   test/test-wat-critical-section.js
   test/test-wat-window-tables.js
+  test/test-wat-user-threading.js
+  test/test-cross-thread-send.js
   test/test-wat-rpc-region.js
   test/test-worker-thread-scheduler.js
   test/test-wat-memory-map.js

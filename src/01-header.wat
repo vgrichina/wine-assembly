@@ -1333,6 +1333,26 @@
   ;;  -1  it did, and nothing has asked for the DC yet
   ;;   n  the DC handle, alive until the window is destroyed
   (global $WND_OWN_DC_TABLE i32 (i32.const 0x079C9800))
+  ;; Owning Win32 thread id for each WND_RECORDS slot.  This is deliberately
+  ;; separate from OWNER_TABLE: that table is the GW_OWNER HWND relationship,
+  ;; while this one is the execution-affinity relationship used by USER message
+  ;; routing.  The owning id is written before WND_RECORDS.hwnd is published and
+  ;; cleared after hwnd is unpublished.
+  (global $WND_THREAD_TABLE i32 (i32.const 0x079C9C00))
+  (global $WND_THREAD_TABLE_SIZE i32 (i32.const 0x00000400))
+  ;; Shared per-thread USER queues.  Eight emulated thread ids (1..8), each with
+  ;; a 64-entry MSG ring.  Queue metadata and payload live in shared memory;
+  ;; $LOCK_WND serializes producers and the single owning consumer.
+  ;;
+  ;; queue +0: count, +4: head, +8: tail, +0x10: 64 x {hwnd,msg,wParam,lParam}
+  (global $THREAD_MSG_QUEUES i32 (i32.const 0x079CA000))
+  (global $THREAD_MSG_QUEUES_SIZE i32 (i32.const 0x00002080))
+  (global $THREAD_MSG_QUEUE_STRIDE i32 (i32.const 0x00000410))
+  (global $THREAD_MSG_QUEUE_MAX i32 (i32.const 64))
+  ;; Timer metadata that must be process-wide rather than per-instance.
+  ;; +0 active count, +4 next auto id, +0x10 owner tid for each of 16 slots.
+  (global $TIMER_SHARED i32 (i32.const 0x079CC080))
+  (global $TIMER_SHARED_SIZE i32 (i32.const 0x00000050))
   (global $WND_OWN_DC_TABLE_SIZE i32 (i32.const 0x00000400))
   ;; Open files, indexed by the small handle a 16-bit task sees. DOS numbers
   ;; file handles from zero and a C runtime indexes its own per-handle table
@@ -2291,7 +2311,15 @@
   ;; different bugs: what is actually wrong in that Winamp run is that a section
   ;; is orphaned by a thread that exits while owning it.
   (global $cs_steal_after (mut i32) (i32.const 0x3FFFFFFF))
-  (global $yield_reason (mut i32) (i32.const 0))  ;; 0=none, 1=waiting, 2=exited, 3=com_load_dll, 4=help_load, 5=load_library, 6=modal_dialog, 7=message_wait, 8=net_wait, 9=cs_wait (EnterCriticalSection held by another thread; clear to re-enter the same call)
+  (global $yield_reason (mut i32) (i32.const 0))  ;; 0=none, 1=waiting, 2=exited, 3=com_load_dll, 4=help_load, 5=load_library, 6=modal_dialog, 7=message_wait, 8=net_wait, 9=cs_wait, 10=cross-thread SendMessage
+  ;; Parameters published when SendMessage parks on an HWND owned by another
+  ;; guest thread.  They are per-instance because only that sender consumes
+  ;; them; the scheduler carries them to the target instance.
+  (global $send_target_tid (mut i32) (i32.const 0))
+  (global $send_hwnd (mut i32) (i32.const 0))
+  (global $send_msg (mut i32) (i32.const 0))
+  (global $send_wparam (mut i32) (i32.const 0))
+  (global $send_lparam (mut i32) (i32.const 0))
   ;; Set/GetProcessShutdownParameters. 0x280 is the Win32 default level.
   ;; WsControl's view of the virtual adapter (src/09d-winsock.wat): subnet mask
   ;; and default gateway, both host byte order.
