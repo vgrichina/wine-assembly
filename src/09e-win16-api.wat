@@ -3642,6 +3642,8 @@
       (then (call $win16_change_menu (i32.const 1)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 414))
       (then (call $win16_change_menu (i32.const 2)) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 416))
+      (then (call $win16_TrackPopupMenu) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 17))
       (then (call $win16_GetCursorPos) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 60))
@@ -3830,6 +3832,20 @@
       (then (call $win16_word_query (i32.const 1)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 109))
       (then (call $win16_PeekMessage) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 137))
+      (then (call $win16_OpenClipboard) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 138))
+      (then (call $win16_CloseClipboard) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 139))
+      (then (call $win16_EmptyClipboard) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 140))
+      (then (call $win16_GetClipboardOwner) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 141))
+      (then (call $win16_SetClipboardData) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 142))
+      (then (call $win16_GetClipboardData) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 143))
+      (then (call $win16_CountClipboardFormats) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 145))
       (then (call $win16_RegisterClipboardFormat) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 154))
@@ -3838,6 +3854,8 @@
       (then (call $win16_menu_item (i32.const 1)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 157))
       (then (call $win16_hwnd_query (i32.const 5)) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 159))
+      (then (call $win16_GetSubMenu) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 160))
       (then (call $win16_hwnd_query (i32.const 6)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 177))
@@ -3860,6 +3878,8 @@
       (then (call $win16_window_from_point (i32.const 0)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 191))
       (then (call $win16_window_from_point (i32.const 1)) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 193))
+      (then (call $win16_IsClipboardFormatAvailable) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 29))
       (then (call $win16_map_point (i32.const 0)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 32))
@@ -6113,6 +6133,85 @@
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 4)))
 
+  (func $win16_OpenClipboard
+    (local $hwnd i32)
+    (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 0))))
+    (call $win16_call32_begin (i32.const 1))
+    (call $handle_OpenClipboard (local.get $hwnd)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 2)))
+
+  (func $win16_CloseClipboard
+    (call $win16_call32_begin (i32.const 0))
+    (call $handle_CloseClipboard
+      (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 0)))
+
+  (func $win16_EmptyClipboard
+    (call $win16_call32_begin (i32.const 0))
+    (call $handle_EmptyClipboard
+      (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 0)))
+
+  (func $win16_GetClipboardOwner
+    (call $win16_call32_begin (i32.const 0))
+    (call $handle_GetClipboardOwner
+      (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (call $win16_h16 (global.get $eax)))
+    (call $win16_api_return (i32.const 0)))
+
+  (func $win16_SetClipboardData
+    (local $format i32) (local $handle i32)
+    (local.set $format (call $win16_arg16 (i32.const 1)))
+    (local.set $handle (call $win16_h32 (call $win16_arg16 (i32.const 0))))
+    (call $win16_call32_begin (i32.const 2))
+    (call $handle_SetClipboardData (local.get $format) (local.get $handle)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (call $win16_h16 (global.get $eax)))
+    (call $win16_api_return (i32.const 4)))
+
+  (func $win16_GetClipboardData
+    (local $format i32)
+    (local.set $format (call $win16_arg16 (i32.const 0)))
+    (call $win16_call32_begin (i32.const 1))
+    (call $handle_GetClipboardData (local.get $format)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (call $win16_h16 (global.get $eax)))
+    (call $win16_api_return (i32.const 2)))
+
+  (func $win16_CountClipboardFormats
+    (call $win16_call32_begin (i32.const 0))
+    (call $handle_CountClipboardFormats
+      (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 0)))
+
+  ;; USER.193 IsClipboardFormatAvailable(format). JigSawed checks CF_BITMAP
+  ;; and CF_METAFILEPICT before its Paste path; this is a one-WORD Pascal call.
+  (func $win16_IsClipboardFormatAvailable
+    (local $format i32)
+    (local.set $format (call $win16_arg16 (i32.const 0)))
+    (call $win16_call32_begin (i32.const 1))
+    (call $handle_IsClipboardFormatAvailable (local.get $format)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 2)))
+
   ;; A 16-bit accelerator table is not the 32-bit one with narrower fields, it
   ;; is a different record: BYTE fFlags, WORD key, WORD id -- five bytes, with
   ;; 0x80 in the flags of the last one. The 32-bit walker reads WORD fFlags,
@@ -6350,6 +6449,41 @@
     (call $win16_call32_end)
     (global.set $eax (call $win16_h16 (global.get $eax)))
     (call $win16_api_return (i32.const 0)))
+
+  ;; USER.159 GetSubMenu(hMenu, nPos).
+  (func $win16_GetSubMenu
+    (local $menu i32) (local $pos i32)
+    (local.set $menu (call $win16_h32 (call $win16_arg16 (i32.const 1))))
+    (local.set $pos (call $win16_arg16 (i32.const 0)))
+    (call $win16_call32_begin (i32.const 2))
+    (call $handle_GetSubMenu (local.get $menu) (local.get $pos)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (call $win16_h16 (global.get $eax)))
+    (call $win16_api_return (i32.const 4)))
+
+  ;; USER.416 TrackPopupMenu(hMenu, wFlags, x, y, nReserved, hWnd, lpRect).
+  (func $win16_TrackPopupMenu
+    (local $menu i32) (local $flags i32) (local $x i32) (local $y i32)
+    (local $reserved i32) (local $hwnd i32) (local $rect i32)
+    (local.set $menu (call $win16_h32 (call $win16_arg16 (i32.const 7))))
+    (local.set $flags (call $win16_arg16 (i32.const 6)))
+    (local.set $x (call $win16_coord (call $win16_arg16 (i32.const 5))))
+    (local.set $y (call $win16_coord (call $win16_arg16 (i32.const 4))))
+    (local.set $reserved (call $win16_arg16 (i32.const 3)))
+    (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 2))))
+    (local.set $rect (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+    (if (i32.eqz (call $win16_arg16 (i32.const 1)))
+      (then (local.set $rect (i32.const 0))))
+    (call $win16_call32_begin (i32.const 7))
+    (call $win16_call32_arg (i32.const 5) (local.get $hwnd))
+    (call $win16_call32_arg (i32.const 6) (local.get $rect))
+    (call $handle_TrackPopupMenu (local.get $menu) (local.get $flags)
+      (local.get $x) (local.get $y) (local.get $reserved) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 16)))
 
   (func $win16_ReleaseCapture
     (call $win16_call32_begin (i32.const 0))
@@ -6755,9 +6889,9 @@
         (call $gs16 (i32.add (local.get $dst) (i32.const 6))
           (call $gl32 (i32.add (local.get $tmp) (i32.const 12))))
         (call $gs8 (i32.add (local.get $dst) (i32.const 8))
-          (call $gl32 (i32.add (local.get $tmp) (i32.const 16))))
+          (call $gl16 (i32.add (local.get $tmp) (i32.const 16))))
         (call $gs8 (i32.add (local.get $dst) (i32.const 9))
-          (call $gl32 (i32.add (local.get $tmp) (i32.const 20))))
+          (call $gl16 (i32.add (local.get $tmp) (i32.const 18))))
         (call $gs32 (i32.add (local.get $dst) (i32.const 10)) (i32.const 0))
         (global.set $eax (i32.const 14))))
     (call $win16_api_return (i32.const 8)))
@@ -6981,6 +7115,19 @@
     (local.set $y (call $win16_coord (call $win16_arg16 (i32.const 0))))
     (call $win16_call32_begin (i32.const 3))
     (call $handle_PtInRegion (local.get $rgn) (local.get $x) (local.get $y)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 6)))
+
+  ;; GDI.101 OffsetRgn(hrgn, x, y).
+  (func $win16_OffsetRgn
+    (local $rgn i32) (local $x i32) (local $y i32)
+    (local.set $rgn (call $win16_h32 (call $win16_arg16 (i32.const 2))))
+    (local.set $x (call $win16_coord (call $win16_arg16 (i32.const 1))))
+    (local.set $y (call $win16_coord (call $win16_arg16 (i32.const 0))))
+    (call $win16_call32_begin (i32.const 3))
+    (call $handle_OffsetRgn (local.get $rgn) (local.get $x) (local.get $y)
       (i32.const 0) (i32.const 0) (i32.const 0))
     (call $win16_call32_end)
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
@@ -8500,6 +8647,8 @@
       (then (call $win16_EnumFonts) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 104))
       (then (call $win16_RectVisible) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 101))
+      (then (call $win16_OffsetRgn) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 90))
       (then (call $win16_GetTextColor) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 75))
@@ -8963,7 +9112,7 @@
   ;; Answers 0 for a name it does not know, which is what GetProcAddress
   ;; reports when a module does not export something.
   (global $WIN16_MMSYSTEM_NAMES i32 (i32.const 0x3E30))
-  (global $WIN16_BUILTIN_NAMES i32 (i32.const 0x3E90))
+  (global $WIN16_BUILTIN_NAMES i32 (i32.const 0x11600))
 
   ;; The KERNEL/USER/GDI half of the same idea, over its own table. That table
   ;; carries the module in the top nibble of each ordinal word, so a name only

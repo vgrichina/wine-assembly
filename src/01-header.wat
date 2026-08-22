@@ -914,7 +914,7 @@
   ;; Every name here is one a game in the corpus actually asks for: Visual
   ;; Basic's Declare statement is a GetProcAddress by name, and a NULL comes
   ;; back to the program as "Sub or Function not defined".
-  (data (i32.const 0x3E90)
+  (data (i32.const 0x11600)
     "\0dCREATERECTRGN\40\30"
     "\15CREATERECTRGNINDIRECT\41\30"
     "\0eGETSTOCKOBJECT\57\30"
@@ -935,6 +935,15 @@
     "\0aCOMBINERGN\2f\30"
     "\0aPTINREGION\a1\30"
     "\08FRAMERGN\29\30"
+    "\08DRAWICON\54\20"
+    "\07ELLIPSE\18\30"
+    "\08GETFOCUS\17\20"
+    "\07GETMENU\9d\20"
+    "\0aGETSUBMENU\9f\20"
+    "\09OFFSETRGN\65\30"
+    "\07POLYGON\24\30"
+    "\0eTRACKPOPUPMENU\a0\21"
+    "\07WINHELP\ab\20"
     "\0fGETMODULEHANDLE\2f\10"
     "\11GETMODULEFILENAME\31\10"
     "\14GETPRIVATEPROFILEINT\7f\10"
