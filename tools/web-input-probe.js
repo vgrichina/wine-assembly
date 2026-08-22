@@ -2,7 +2,7 @@
 // Drive an app in the real browser with scripted mouse input and read state back.
 //
 //   node tools/web-input-probe.js --app=mspaint98 \
-//        --steps='wait:4000;move:180,200;move:180,331' [--eval='expr']
+//        --steps='wait:4000;move:180,200;move:180,331' [--eval='expr'] [--cpu=2]
 //
 // WHY THIS EXISTS: test/run.js shares lib/renderer-input.js and the wasm with
 // the browser, so it can answer "does WAT pick the right cursor". It cannot
@@ -26,6 +26,8 @@
 //
 // After every step the CSS cursor of the canvas is printed, since that is the
 // pixel-visible answer to "what does the user see under the pointer".
+// --cpu=N applies Chrome's CPU throttling while preserving real browser audio
+// timing, which is useful for scheduler-sensitive game/audio failures.
 
 const fs = require('fs');
 const http = require('http');
@@ -44,6 +46,7 @@ const APP = opt('app', 'mspaint98');
 const QUERY = opt('query', '');
 const STEPS = (opt('steps', '') || '').split(';').map(s => s.trim()).filter(Boolean);
 const READY_MS = Number(opt('ready', 6000));
+const CPU_RATE = Number(opt('cpu', 1));
 const FINAL_EVAL = opt('eval', '');
 const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
@@ -116,6 +119,10 @@ async function main() {
   const problems = [];
   try {
     const page = await browser.newPage();
+    if (CPU_RATE > 1) {
+      const cdp = await page.target().createCDPSession();
+      await cdp.send('Emulation.setCPUThrottlingRate', { rate: CPU_RATE });
+    }
     await page.setViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });
     page.on('pageerror', e => problems.push(String(e)));
     page.on('console', m => {
@@ -136,8 +143,11 @@ async function main() {
       stopAllApps();
       localStorage.clear();
       sel.value = app;
-      return launchApp();
     }, APP);
+    // Use a trusted browser gesture for launch. AudioContext.resume() is
+    // gated on user activation, so calling launchApp() through evaluate()
+    // silently exercises a suspended-audio path that real users never take.
+    await page.click('button[onclick="launchApp()"]');
     await page.waitForFunction(
       'typeof runningApps !== "undefined" && runningApps.length > 0 && typeof sharedRenderer !== "undefined" && sharedRenderer',
       { timeout: 90000 });
