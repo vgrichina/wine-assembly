@@ -230,6 +230,7 @@ assert(cacheBytes.every(byte => byte === 0), 'reused worker slot should clear it
 
 function makeRunnableThread(tid, onRun) {
   let heapPtr = 0;
+  let freeList = 0;
   return {
     tid,
     state: 'active',
@@ -243,6 +244,8 @@ function makeRunnableThread(tid, onRun) {
         get_eip: () => 0x401000,
         set_heap_ptr: v => { heapPtr = v >>> 0; },
         get_heap_ptr: () => heapPtr,
+        set_free_list: v => { freeList = v >>> 0; },
+        get_free_list: () => freeList,
         run: onRun,
         get_bp_addr: () => 0,
         get_sleep_yielded: () => 0,
@@ -250,6 +253,26 @@ function makeRunnableThread(tid, onRun) {
     },
   };
 }
+
+const allocatorTm = makeThreadManager();
+let mainFreeList = 0x650000;
+allocatorTm.mainInstance.exports.get_free_list = () => mainFreeList;
+allocatorTm.mainInstance.exports.set_free_list = value => { mainFreeList = value >>> 0; };
+const allocatorWorker = makeRunnableThread(1, () => {
+  assert.strictEqual(
+    allocatorWorker.instance.exports.get_free_list(),
+    0x650000,
+    'worker should begin its slice with the process free-list head'
+  );
+  allocatorWorker.instance.exports.set_free_list(0x651000);
+});
+allocatorTm.threads.set(0xe1000, allocatorWorker);
+allocatorTm.runSlice(100);
+assert.strictEqual(
+  mainFreeList,
+  0x651000,
+  'main should receive the worker free-list head after its slice'
+);
 
 const suspendedRunTm = makeThreadManager();
 let suspendedRuns = 0;
@@ -374,6 +397,7 @@ assert.strictEqual(
 assert.strictEqual(reentrantRuns, 0, 'reentrant nested wait should not run the worker again');
 
 console.log('PASS  ThreadManager reuses exited worker cache slots');
+console.log('PASS  ThreadManager hands allocator free-list ownership between instances');
 console.log('PASS  ThreadManager supports wall-budgeted worker slices');
 console.log('PASS  ThreadManager prioritizes hot audio threads');
 console.log('PASS  ThreadManager notifies thread exits once');

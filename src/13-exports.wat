@@ -339,6 +339,8 @@
 
   (func (export "get_heap_ptr") (result i32) (global.get $heap_ptr))
   (func (export "set_heap_ptr") (param i32) (global.set $heap_ptr (local.get 0)))
+  (func (export "get_free_list") (result i32) (global.get $free_list))
+  (func (export "set_free_list") (param i32) (global.set $free_list (local.get 0)))
   (func (export "get_heap_sparse_ptr") (result i32) (global.get $heap_sparse_ptr))
   (func (export "set_heap_sparse_ptr") (param i32) (global.set $heap_sparse_ptr (local.get 0)))
   (func (export "get_heap_sparse_end") (result i32) (global.get $heap_sparse_end))
