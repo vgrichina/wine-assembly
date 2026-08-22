@@ -25,10 +25,13 @@ fs.mkdirSync(OUT, { recursive: true });
 
 function runMode(name, dlls, openBatch) {
   const png = path.join(OUT, `${name}.png`);
+  const startupPng = path.join(OUT, `${name}-startup.png`);
   try { fs.unlinkSync(png); } catch (_) {}
+  try { fs.unlinkSync(startupPng); } catch (_) {}
   const pickBatch = openBatch + 60;
   const input = [
     `8:vfs-import:PINBALL.MID:${MIDI}`,
+    `${openBatch - 20}:png:${startupPng}`,
     `${openBatch}:wait-title-command:Media_Player:800:100:open`,
     `${pickBatch}:open-dlg-pick:PINBALL.MID`,
     `${pickBatch + 30}:dump-windows:${name}`,
@@ -53,12 +56,13 @@ function runMode(name, dlls, openBatch) {
       '--quiet-api',
       '--quiet-blocks',
     ], { cwd: ROOT, encoding: 'utf8', timeout: 120000, maxBuffer: 8 * 1024 * 1024 });
-    return { name, output, png, failed: false };
+    return { name, output, png, startupPng, failed: false };
   } catch (error) {
     return {
       name,
       output: `${error.stdout || ''}${error.stderr || ''}`,
       png,
+      startupPng,
       failed: true,
     };
   }
@@ -108,6 +112,39 @@ function trackbarRect(output, name) {
   return m ? { x: +m[1], y: +m[2], w: +m[3], h: +m[4] } : null;
 }
 
+function toolbarRect(output, name, controlId) {
+  const line = output.split('\n').find(l =>
+    l.includes(`window:${name} `) && l.includes('class="ToolbarWindow32"') &&
+    l.includes(`ctrlId=${controlId} `));
+  const m = line && line.match(/client=\{"x":(-?\d+),"y":(-?\d+),"w":(\d+),"h":(\d+)\}/);
+  return m ? { x: +m[1], y: +m[2], w: +m[3], h: +m[4] } : null;
+}
+
+// At startup every transport command is disabled. Native comctl32 draws each
+// disabled glyph as a white highlight plus a gray shadow over COLOR_BTNFACE.
+// The old indexed-DIB mask bug instead filled the entire 16x16 icon interior
+// with COLOR_BTNSHADOW, which looked like a row of blank dark rectangles.
+function disabledTransportGlyphsVisible(pngPath, rect) {
+  if (!rect || !fs.existsSync(pngPath)) return false;
+  const img = PNG.sync.read(fs.readFileSync(pngPath));
+  for (let button = 0; button < 3; button++) {
+    let face = 0;
+    let highlight = 0;
+    const left = rect.x + 3 + button * 23;
+    const top = rect.y + 4;
+    for (let y = top; y < top + 16; y++) {
+      for (let x = left; x < left + 16; x++) {
+        const i = (y * img.width + x) * 4;
+        const color = (img.data[i] << 16) | (img.data[i + 1] << 8) | img.data[i + 2];
+        if (color === 0xC0C0C0) face++;
+        if (color === 0xFFFFFF) highlight++;
+      }
+    }
+    if (face < 100 || highlight < 5) return false;
+  }
+  return true;
+}
+
 const watTrackbarInk = paintedInk(wat.png, trackbarRect(wat.output, 'wat'));
 check(`WAT: trackbar uses built-in class and is painted (${watTrackbarInk} colors)`,
   /window:wat[^\n]*class="msctls_trackbar32" ctrlClass=19/.test(wat.output) &&
@@ -121,6 +158,8 @@ check(`native: loaded comctl32 owns toolbar and trackbar classes (${nativeTrackb
   /window:native[^\n]*class="msctls_trackbar32" ctrlClass=0/.test(native.output) &&
   /window:native[^\n]*class="ToolbarWindow32" ctrlClass=0/.test(native.output) &&
   nativeTrackbarInk >= 3);
+check('native: disabled startup transport glyphs are embossed, not solid rectangles',
+  disabledTransportGlyphsVisible(native.startupPng, toolbarRect(native.output, 'native', 301)));
 
 let failed = 0;
 for (const [name, pass] of checks) {

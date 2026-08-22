@@ -386,6 +386,101 @@ const { bootRenderHarness } = require('./render-helper');
     ]);
   });
 
+  check('indexed color-to-mono BitBlt maps the source background through its palette', () => {
+    const imageBase = wat.get_image_base() >>> 0;
+    const bmiGa = wat.guest_alloc(40 + 16 * 4) >>> 0;
+    const bitsOutGa = wat.guest_alloc(4) >>> 0;
+    const bmiWa = 0x12000 + (bmiGa - imageBase);
+    bytes.fill(0, bmiWa, bmiWa + 40 + 16 * 4);
+    wat.guest_write32(bmiGa, 40);
+    wat.guest_write32(bmiGa + 4, 2);
+    wat.guest_write32(bmiGa + 8, -1);
+    wat.guest_write16(bmiGa + 12, 1);
+    wat.guest_write16(bmiGa + 14, 4);
+    wat.guest_write32(bmiGa + 32, 16);
+    // Media Player's RT_BITMAP 101 uses index 8 for COLOR_BTNFACE and index 0
+    // for its glyphs.
+    bytes.set([0xC0, 0xC0, 0xC0, 0], bmiWa + 40 + 8 * 4);
+    const bitmap = wat.test_call_CreateDIBSection(0, bmiGa, bitsOutGa) >>> 0;
+    const bitsGa = wat.guest_read32(bitsOutGa) >>> 0;
+    const bitsWa = 0x1C000000 + (bitsGa - 0x50000000);
+    const indexed = wat.test_call_CreateCompatibleDC(0) >>> 0;
+    assert(bitmap && indexed && bitsGa);
+    wat.test_call_SelectObject(indexed, bitmap);
+    bytes[bitsWa] = 0x80; // gray palette index 8, then black palette index 0
+    wat.test_gdi_dc_set_field(indexed, 24, 0x00C0C0C0, 0xFFFFFF);
+
+    // Native comctl32 temporarily installs a one-hot mask palette before
+    // copying the indexed DIB into a monochrome DDB. COLOR_BTNFACE is no
+    // longer present exactly, so GDI maps it to the nearest entry (white,
+    // index 8) and compares source indexes rather than resolved RGB values.
+    const maskPaletteGa = wat.guest_alloc(16 * 4) >>> 0;
+    const maskPaletteWa = 0x12000 + (maskPaletteGa - imageBase);
+    bytes.fill(0, maskPaletteWa, maskPaletteWa + 16 * 4);
+    bytes.set([0xFF, 0xFF, 0xFF, 0], maskPaletteWa + 8 * 4);
+    assert.strictEqual(wat.test_gdi_set_dib_color_table(
+      indexed, 0, 16, maskPaletteWa), 16);
+
+    const maskBitmap = wat.test_call_CreateBitmap(2, 1, 1, 1, 0) >>> 0;
+    const mask = wat.test_call_CreateCompatibleDC(0) >>> 0;
+    wat.test_call_SelectObject(mask, maskBitmap);
+    assert.strictEqual(wat.test_call_BitBlt(
+      mask, 0, 0, 2, 1, indexed, 0, 0, 0x00CC0020), 1);
+
+    const target = makeDib(2, 1);
+    wat.test_gdi_dc_set_field(target.hdc, 20, 0x000000FF, 0); // red
+    wat.test_gdi_dc_set_field(target.hdc, 24, 0x0000FF00, 0xFFFFFF); // green
+    assert.strictEqual(wat.test_call_BitBlt(
+      target.hdc, 0, 0, 2, 1, mask, 0, 0, 0x00CC0020), 1);
+    assert.deepStrictEqual([packed(target, 0, 0), packed(target, 1, 0)], [
+      0x00FF00, 0xFF0000,
+    ]);
+  });
+
+  check('native ImageList disabled emboss sequence preserves the glyph mask', () => {
+    const color = makeDib(3, 1);
+    wat.test_call_SetPixel(color.hdc, 0, 0, 0x00C0C0C0);
+    wat.test_call_SetPixel(color.hdc, 1, 0, 0x00000000);
+    wat.test_call_SetPixel(color.hdc, 2, 0, 0x00C0C0C0);
+    wat.test_gdi_dc_set_field(color.hdc, 24, 0x00C0C0C0, 0xFFFFFF);
+
+    const maskBitmap = wat.test_call_CreateBitmap(3, 1, 1, 1, 0) >>> 0;
+    const mask = wat.test_call_CreateCompatibleDC(0) >>> 0;
+    wat.test_call_SelectObject(mask, maskBitmap);
+    assert.strictEqual(wat.test_call_BitBlt(
+      mask, 0, 0, 3, 1, color.hdc, 0, 0, 0x00CC0020), 1);
+
+    const temp = makeDib(3, 1);
+    wat.test_gdi_dc_set_field(temp.hdc, 20, 0x00000000, 0);
+    wat.test_gdi_dc_set_field(temp.hdc, 24, 0x00FFFFFF, 0xFFFFFF);
+    const white = wat.test_call_CreateSolidBrush(0x00FFFFFF) >>> 0;
+    wat.test_call_SelectObject(temp.hdc, white);
+    wat.test_call_PatBlt(temp.hdc, 0, 0, 3, 1, 0x00F00021);
+    wat.test_call_BitBlt(temp.hdc, 0, 0, 3, 1, color.hdc, 0, 0, 0x00CC0020);
+    wat.test_gdi_dc_set_field(mask, 24, 0x00FFFFFF, 0xFFFFFF);
+    wat.test_call_BitBlt(temp.hdc, 0, 0, 3, 1, mask, 0, 0, 0x00EE0086);
+    assert.deepStrictEqual([0, 1, 2].map(x => packed(temp, x, 0)), [
+      0xFFFFFF, 0x000000, 0xFFFFFF,
+    ]);
+
+    const target = makeDib(5, 2);
+    const face = wat.test_call_CreateSolidBrush(0x00C0C0C0) >>> 0;
+    wat.test_call_SelectObject(target.hdc, face);
+    wat.test_call_PatBlt(target.hdc, 0, 0, 5, 2, 0x00F00021);
+    const highlight = wat.test_call_CreateSolidBrush(0x00FFFFFF) >>> 0;
+    wat.test_call_SelectObject(target.hdc, highlight);
+    wat.test_call_BitBlt(target.hdc, 1, 1, 3, 1, temp.hdc, 0, 0, 0x00B8074A);
+    const shadow = wat.test_call_CreateSolidBrush(0x00808080) >>> 0;
+    wat.test_call_SelectObject(target.hdc, shadow);
+    wat.test_call_BitBlt(target.hdc, 0, 0, 3, 1, temp.hdc, 0, 0, 0x00B8074A);
+    assert.deepStrictEqual([0, 1, 2, 3].map(x => packed(target, x, 0)), [
+      0xC0C0C0, 0x808080, 0xC0C0C0, 0xC0C0C0,
+    ]);
+    assert.deepStrictEqual([0, 1, 2, 3].map(x => packed(target, x, 1)), [
+      0xC0C0C0, 0xC0C0C0, 0xFFFFFF, 0xC0C0C0,
+    ]);
+  });
+
   check('SetDIBitsToDevice decodes indexed RGBQUAD sprites in WAT', () => {
     const bmiGa = wat.guest_alloc(40 + 16 * 4) >>> 0;
     const bitsGa = wat.guest_alloc(8) >>> 0;

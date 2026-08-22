@@ -3636,8 +3636,10 @@
   ;; the destination text color and one bits use its background color.  A
   ;; 1-bpp DIB keeps using its explicit color table instead.
   (func $gdi_raster_read_blt_source (param $dst_hdc i32) (param $src_hdc i32)
-        (param $dst i32) (param $src i32) (param $x i32) (param $y i32) (result i32)
+        (param $dst i32) (param $src i32) (param $x i32) (param $y i32)
+        (param $background i32) (param $mono_key i32) (result i32)
     (local $record i32) (local $p i32) (local $bit i32) (local $color i32)
+    (local $index i32)
     ;; A color DDB copied into a monochrome DDB is keyed against the source
     ;; DC background color.  Matching pixels become white; all others become
     ;; black before the raster operation is evaluated.  Classic Win32 icon
@@ -3651,14 +3653,28 @@
         (if (i32.and (i32.ne (local.get $record) (i32.const 0))
               (i32.eqz (i32.and (i32.load offset=20 (local.get $record)) (i32.const 1))))
           (then
+            ;; Indexed DIBs compare palette indexes after mapping the DC
+            ;; background color through the bitmap's current color table.
+            ;; Native comctl32 relies on this when it temporarily changes an
+            ;; ImageList DIB palette to black plus one white key entry: the DC
+            ;; background remains COLOR_BTNFACE, whose nearest entry is white.
+            ;; Comparing the resolved pixel RGB to COLOR_BTNFACE instead makes
+            ;; every pixel black and turns disabled toolbar glyphs into solid
+            ;; rectangles.
+            (if (i32.le_u (i32.load offset=16 (local.get $src)) (i32.const 8))
+              (then
+                (local.set $index (call $gdi_raster_read_index
+                  (local.get $src) (local.get $x) (local.get $y)))
+                (if (i32.eq (local.get $index) (i32.const -1))
+                  (then (return (i32.const -1))))
+                (return (select (i32.const 0xFFFFFF) (i32.const 0)
+                  (i32.eq (local.get $index) (local.get $mono_key))))))
             (local.set $color (call $gdi_raster_read
               (local.get $src) (local.get $x) (local.get $y)))
             (if (i32.eq (local.get $color) (i32.const -1))
               (then (return (i32.const -1))))
             (return (select (i32.const 0xFFFFFF) (i32.const 0)
-              (i32.eq (local.get $color) (call $gdi_raster_swap_rb
-                (call $gdi_dc_get_field
-                  (local.get $src_hdc) (i32.const 24) (i32.const 0xFFFFFF))))))))))
+              (i32.eq (local.get $color) (local.get $background))))))))
     (if (i32.and
           (i32.and (i32.ne (local.get $dst_hdc) (i32.const 0))
             (i32.ne (i32.load offset=16 (local.get $dst)) (i32.const 1)))
@@ -4235,6 +4251,7 @@
     (local $snapshot_desc i32) (local $surface_size i32)
     (local $surface_size64 i64) (local $snapshot_size64 i64)
     (local $brush i32) (local $sample i32) (local $pixel_pattern i32) (local $fast i32)
+    (local $source_background i32) (local $mono_key i32)
     (if (i32.or (i32.eqz (call $gdi_raster_surface_valid (local.get $dst)))
           (i32.or (i32.eqz (local.get $dw)) (i32.eqz (local.get $dh))))
       (then (return (i32.const 0))))
@@ -4244,6 +4261,17 @@
       (then (return (i32.const 0))))
     (local.set $same (i32.and (i32.ne (local.get $src) (i32.const 0))
       (i32.eq (i32.load (local.get $dst)) (i32.load (local.get $src)))))
+    (local.set $mono_key (i32.const -1))
+    (if (local.get $src_hdc)
+      (then
+        (local.set $source_background (call $gdi_raster_swap_rb
+          (call $gdi_dc_get_field
+            (local.get $src_hdc) (i32.const 24) (i32.const 0xFFFFFF))))
+        (if (i32.and (i32.ne (local.get $src) (i32.const 0))
+              (i32.and (i32.gt_u (i32.load offset=16 (local.get $src)) (i32.const 1))
+                (i32.le_u (i32.load offset=16 (local.get $src)) (i32.const 8))))
+          (then (local.set $mono_key (call $gdi_raster_nearest_index
+            (local.get $src) (local.get $source_background)))))))
     (local.set $rop3 (i32.and (i32.shr_u (local.get $rop) (i32.const 16)) (i32.const 0xFF)))
     (if (i32.and (i32.ne (local.get $hdc) (i32.const 0))
           (call $gdi_rop3_uses_pattern (local.get $rop3)))
@@ -4355,7 +4383,8 @@
                       (local.get $dh_abs)))))
                 (local.set $s (call $gdi_raster_read_blt_source
                   (local.get $hdc) (local.get $src_hdc) (local.get $dst) (local.get $src)
-                  (local.get $ux) (local.get $uy)))
+                  (local.get $ux) (local.get $uy)
+                  (local.get $source_background) (local.get $mono_key)))
                 (if (i32.eq (local.get $s) (i32.const -1))
                   (then
                     (if (local.get $snapshot)
@@ -4380,6 +4409,7 @@
     (local $x i32) (local $y i32) (local $step i32) (local $start i32)
     (local $s i32) (local $d i32) (local $rop3 i32) (local $same i32)
     (local $brush i32) (local $sample i32) (local $pixel_pattern i32) (local $fast i32)
+    (local $source_background i32) (local $mono_key i32)
     (if (i32.or (i32.eqz (call $gdi_raster_surface_valid (local.get $dst)))
           (i32.or (i32.le_s (local.get $w) (i32.const 0)) (i32.le_s (local.get $h) (i32.const 0))))
       (then (return (i32.const 0))))
@@ -4388,6 +4418,17 @@
       (then (return (i32.const 0))))
     (local.set $same (i32.and (i32.ne (local.get $src) (i32.const 0))
       (i32.eq (i32.load (local.get $dst)) (i32.load (local.get $src)))))
+    (local.set $mono_key (i32.const -1))
+    (if (local.get $src_hdc)
+      (then
+        (local.set $source_background (call $gdi_raster_swap_rb
+          (call $gdi_dc_get_field
+            (local.get $src_hdc) (i32.const 24) (i32.const 0xFFFFFF))))
+        (if (i32.and (i32.ne (local.get $src) (i32.const 0))
+              (i32.and (i32.gt_u (i32.load offset=16 (local.get $src)) (i32.const 1))
+                (i32.le_u (i32.load offset=16 (local.get $src)) (i32.const 8))))
+          (then (local.set $mono_key (call $gdi_raster_nearest_index
+            (local.get $src) (local.get $source_background)))))))
     (local.set $step (i32.const 1))
     (if (i32.and (local.get $same) (i32.or (i32.gt_s (local.get $dy) (local.get $sy))
           (i32.and (i32.eq (local.get $dy) (local.get $sy)) (i32.gt_s (local.get $dx) (local.get $sx)))))
@@ -4441,7 +4482,8 @@
             (if (local.get $src)
               (then (local.set $s (call $gdi_raster_read_blt_source
                 (local.get $hdc) (local.get $src_hdc) (local.get $dst) (local.get $src)
-                (i32.add (local.get $sx) (local.get $x)) (i32.add (local.get $sy) (local.get $y))))
+                (i32.add (local.get $sx) (local.get $x)) (i32.add (local.get $sy) (local.get $y))
+                (local.get $source_background) (local.get $mono_key)))
                 ;; BitBlt clips a source rectangle that extends beyond its
                 ;; bitmap instead of rejecting the entire transfer. Paint's
                 ;; thumbnail deliberately copies from (-3,-3), leaving a
