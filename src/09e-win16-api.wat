@@ -4658,6 +4658,15 @@
     ;; WM_NCCREATE shown to the hook below does carry a real one.
     (local.set $hwnd (global.get $eax))
     (local.set $redirected (call $win16_call32_end_redirected))
+    ;; VB1 registers every visual control with its own Thunder window
+    ;; procedure, so CreateWindowEx cannot classify a ThunderCommandButton as
+    ;; USER's built-in Button.  Give it native button state while the original
+    ;; caption pointer is still valid; its guest procedure remains installed
+    ;; and continues to own the VB object.
+    (call $win16_shadow_command_button
+      (local.get $hwnd) (local.get $menu) (local.get $title))
+    (call $win16_shadow_label
+      (local.get $hwnd) (local.get $menu) (local.get $title))
     ;; The generic child-creation path pairs its synchronous WM_CREATE with a
     ;; CACA0027 WM_SIZE continuation. That continuation uses a 32-bit frame,
     ;; which call32 must discard for a Win16 task. Move the saved size onto the

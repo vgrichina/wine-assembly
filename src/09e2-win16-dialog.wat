@@ -569,6 +569,93 @@
   ;; time an application reopens its file picker.
   (global $win16_dlgdir_seg (mut i32) (i32.const 0))
 
+  ;; VB1 registers command buttons as ThunderCommandButton rather than using
+  ;; USER's Button class.  Preserve Thunder's Win16 wndproc, but attach the
+  ;; same renderer-facing state as a native push button.  Mouse input for this
+  ;; deliberately shadowed class is routed to $button_wndproc by the renderer;
+  ;; WM_COMMAND then goes through the ordinary Win16 post queue to the form.
+  (func $win16_shadow_command_button
+    (param $hwnd i32) (param $id i32) (param $title i32)
+    (local $slot i32) (local $class_w i32) (local $cs i32) (local $state i32)
+    (if (i32.eqz (local.get $hwnd)) (then (return)))
+    (local.set $class_w (call $g2w (global.get $GUEST_STACK)))
+    (if (i32.ne
+          (call $host_get_window_class
+            (local.get $hwnd) (local.get $class_w) (i32.const 32))
+          (i32.const 20))
+      (then (return)))
+    (if (i32.or
+          (i32.or
+            (i32.ne (i32.load (local.get $class_w))
+                    (i32.const 0x6E756854))                              ;; Thun
+            (i32.ne (i32.load offset=4 (local.get $class_w))
+                    (i32.const 0x43726564)))                             ;; derC
+          (i32.or
+            (i32.ne (i32.load offset=8 (local.get $class_w))
+                    (i32.const 0x616D6D6F))                             ;; omma
+            (i32.or
+              (i32.ne (i32.load offset=12 (local.get $class_w))
+                      (i32.const 0x7542646E))                           ;; ndBu
+              (i32.ne (i32.load offset=16 (local.get $class_w))
+                      (i32.const 0x6E6F7474)))))                        ;; tton
+      (then (return)))
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.lt_s (local.get $slot) (i32.const 0)) (then (return)))
+    (call $ctrl_table_set (local.get $slot) (i32.const 1) (local.get $id))
+    (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $state))
+      (then
+        (local.set $cs (call $heap_alloc (i32.const 48)))
+        (memory.fill (call $g2w (local.get $cs)) (i32.const 0) (i32.const 48))
+        (call $gs32 (i32.add (local.get $cs) (i32.const 8)) (local.get $id))
+        (call $gs32 (i32.add (local.get $cs) (i32.const 12))
+          (call $wnd_get_parent (local.get $hwnd)))
+        (call $gs32 (i32.add (local.get $cs) (i32.const 36)) (local.get $title))
+        (drop (call $button_wndproc (local.get $hwnd)
+          (i32.const 0x0001) (i32.const 0) (local.get $cs)))
+        (call $heap_free (local.get $cs)))))
+
+  ;; ThunderLabel has the same problem as ThunderCommandButton: its registered
+  ;; VB wndproc prevents USER from recognizing the standard control beneath
+  ;; it.  Without a native STATIC shadow, VB1's file picker paints an internal
+  ;; property name ("ListCount") over every caption.  Keep the VB procedure,
+  ;; but let STATIC own the caption supplied through SetWindowText.
+  (func $win16_shadow_label
+    (param $hwnd i32) (param $id i32) (param $title i32)
+    (local $slot i32) (local $class_w i32) (local $cs i32)
+    (if (i32.eqz (local.get $hwnd)) (then (return)))
+    (local.set $class_w (call $g2w (global.get $GUEST_STACK)))
+    (if (i32.ne
+          (call $host_get_window_class
+            (local.get $hwnd) (local.get $class_w) (i32.const 32))
+          (i32.const 12))
+      (then (return)))
+    (if (i32.or
+          (i32.ne (i32.load (local.get $class_w))
+                  (i32.const 0x6E756854))                                ;; Thun
+          (i32.or
+            (i32.ne (i32.load offset=4 (local.get $class_w))
+                    (i32.const 0x4C726564))                              ;; derL
+            (i32.ne (i32.load offset=8 (local.get $class_w))
+                    (i32.const 0x6C656261))))                            ;; abel
+      (then (return)))
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.lt_s (local.get $slot) (i32.const 0)) (then (return)))
+    (call $ctrl_table_set (local.get $slot) (i32.const 3) (local.get $id))
+    (if (i32.eqz (call $wnd_get_state_ptr (local.get $hwnd)))
+      (then
+        (local.set $cs (call $heap_alloc (i32.const 48)))
+        (memory.fill (call $g2w (local.get $cs)) (i32.const 0) (i32.const 48))
+        (call $gs32 (i32.add (local.get $cs) (i32.const 8)) (local.get $id))
+        (call $gs32 (i32.add (local.get $cs) (i32.const 12))
+          (call $wnd_get_parent (local.get $hwnd)))
+        (call $gs32 (i32.add (local.get $cs) (i32.const 32))
+          (call $wnd_get_style (local.get $hwnd)))
+        (call $gs32 (i32.add (local.get $cs) (i32.const 36)) (local.get $title))
+        (drop (call $static_wndproc (local.get $hwnd)
+          (i32.const 0x0001) (i32.const 0) (local.get $cs)))
+        (call $heap_free (local.get $cs)))))
+
   ;; Attach native listbox state to a subclassed Thunder control while keeping
   ;; its Win16 window procedure installed. The guest procedure continues to
   ;; maintain VB's object properties, then CallWindowProc reaches this shadow

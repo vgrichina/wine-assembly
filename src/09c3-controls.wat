@@ -1039,7 +1039,8 @@
                      (i32.const 26))))))
 
   ;; Dispatch to the correct control wndproc based on control class
-  (func $control_wndproc_dispatch (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+  (func $control_wndproc_dispatch (export "control_wndproc_dispatch")
+    (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $class i32)
     (local.set $class (call $ctrl_table_get_class (local.get $hwnd)))
     (if (i32.and (i32.eq (local.get $msg) (i32.const 0x000F))

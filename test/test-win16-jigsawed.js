@@ -41,12 +41,17 @@ try {
   const args = [path.join(ROOT, 'test', 'run.js'), '--app=wep16_jigsawed',
     '--max-batches=1500', '--quiet-blocks'];
   if (OPTIONAL_WASM) args.push('--no-build', `--wasm=${OPTIONAL_WASM}`);
-  args.push('--input=190:dlg-click:1,215:post-cmd:3216,' +
-    '285:click:150:150,315:ctrl-cmd:5,' +
+  args.push('--input=190:dlg-click:1,' +
+    // Open Game -> Open through the rendered menu, choose bricks.bmp in the
+    // rendered file list, then click the rendered Thunder OK button.  Do not
+    // replace either step with post-cmd/ctrl-cmd: those shortcuts previously
+    // concealed a picker whose visible Open button did nothing.
+    '215:click:20:31,240:click:80:52,' +
+    '300:click:150:150,330:click:475:180,' +
     `800:png:${beforeScreenshot},` +
-    '900:mousedown:280:328,1000:mousemove:320:328,' +
-    '1100:mousemove:370:328,1200:mousemove:420:328,' +
-    `1300:mouseup:420:328,1450:png:${afterScreenshot}`);
+    '900:mousedown:241:287,1000:mousemove:211:287,' +
+    '1100:mousemove:171:287,1200:mousemove:121:287,' +
+    `1300:mouseup:121:287,1450:png:${afterScreenshot}`);
 
   const output = execFileSync(process.execPath, args, {
     cwd: ROOT, encoding: 'utf8', timeout: 120000,
@@ -56,8 +61,12 @@ try {
     /\*\*\* CRASH|UNIMPLEMENTED API|RuntimeError|\[MessageBox\]/);
   assert.match(output, /SetWindowText\] "JigSawed: c:\\bricks\.bmp"/,
     'the archived bitmap should load through JigSawed\'s Open dialog');
-  assert.match(output, /\[input\] mousedown 280,328 at batch 900/);
-  assert.match(output, /\[input\] mouseup 420,328 at batch 1300/);
+  assert.match(output, /\[input\] click 150,150 at batch 300/,
+    'the bitmap must be selected through the rendered file list');
+  assert.match(output, /\[input\] click 475,180 at batch 330/,
+    'the rendered Open button must accept the selection');
+  assert.match(output, /\[input\] mousedown 241,287 at batch 900/);
+  assert.match(output, /\[input\] mouseup 121,287 at batch 1300/);
 
   const before = PNG.sync.read(fs.readFileSync(beforeScreenshot));
   const after = PNG.sync.read(fs.readFileSync(afterScreenshot));
@@ -88,17 +97,19 @@ try {
   assert(vivid > 20000,
     `loaded puzzle should contain full-size bitmap pieces (found ${vivid} vivid pixels)`);
 
-  // The deterministic shuffle leaves one complete 108x59 piece at
-  // [229,298]-[337,357). Dragging its centre by +140px moves that exact bitmap
-  // rectangle to [369,298]-[477,357). Compare every RGBA pixel, then require the
+  // The genuine rendered-menu/file-picker sequence leaves one complete
+  // isolated 108x59 piece at [187,258]-[295,317). Dragging its centre by 120px
+  // left moves that exact bitmap rectangle to [67,258]-[175,317).
+  // Compare every RGBA pixel, then require the
   // saturated brick colors to leave the source and arrive at the destination.
-  const source = { left: 229, top: 298, right: 337, bottom: 357 };
-  const deltaX = 140;
+  const source = { left: 187, top: 258, right: 295, bottom: 317 };
+  const deltaX = -120;
+  const deltaY = 0;
   let matchingMovedPixels = 0;
   for (let y = source.top; y < source.bottom; y++) {
     for (let x = source.left; x < source.right; x++) {
       const beforePixel = (y * before.width + x) * 4;
-      const afterPixel = (y * after.width + x + deltaX) * 4;
+      const afterPixel = ((y + deltaY) * after.width + x + deltaX) * 4;
       let equal = true;
       for (let channel = 0; channel < 4; channel++) {
         if (before.data[beforePixel + channel] !== after.data[afterPixel + channel]) {
@@ -118,9 +129,11 @@ try {
   const sourceAfter = countVivid(after,
     source.left, source.top, source.right, source.bottom);
   const destinationBefore = countVivid(before,
-    source.left + deltaX, source.top, source.right + deltaX, source.bottom);
+    source.left + deltaX, source.top + deltaY,
+    source.right + deltaX, source.bottom + deltaY);
   const destinationAfter = countVivid(after,
-    source.left + deltaX, source.top, source.right + deltaX, source.bottom);
+    source.left + deltaX, source.top + deltaY,
+    source.right + deltaX, source.bottom + deltaY);
   assert(sourceBefore > 1200 && sourceAfter < 100,
     `drag should clear the old piece location (${sourceBefore} -> ${sourceAfter} vivid pixels)`);
   assert(destinationBefore < 100 && destinationAfter === sourceBefore,

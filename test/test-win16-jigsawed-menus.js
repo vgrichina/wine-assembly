@@ -38,7 +38,9 @@ fs.mkdirSync(OUT, { recursive: true });
 
 const dismissAbout = '190:dlg-click:1';
 const loadPicture = dismissAbout +
-  ',215:click:20:31,240:click:80:52,300:click:150:150,330:ctrl-cmd:5';
+  // Use only rendered mouse input for the picker. ctrl-cmd:5 used to let this
+  // suite pass while the visible Thunder Open button was inert.
+  ',215:click:20:31,240:click:80:52,300:click:150:150,330:click:475:180';
 
 function shot(name) {
   return path.join(OUT, `${name}.png`);
