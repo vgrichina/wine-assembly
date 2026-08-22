@@ -612,29 +612,31 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
   // A golden bitmap. Nonzero winding is tested here where it actually
   // differs from even-odd: the counter is hollow because the inner contour
   // runs the other way, not because it is the second contour. Runtime hinting
-  // aligns the baseline and cap, producing a symmetric 13-row result.
+  // aligns the baseline and cap, producing a symmetric 13-row result. GDI
+  // rounds the hinted extrema to the nearest device pixels, so the unused
+  // trailing column from the former conservative box is intentionally absent.
   //
   // Changing the fill rule, the sub-row count, or the threshold is expected
   // to change this picture; it should be updated deliberately and looked at,
   // which is the point of keeping it readable.
   const o24 = raster(sans, 'o', 24);
   assert.deepStrictEqual(o24, {
-    width: 12,
+    width: 11,
     height: 13,
     rows: [
-      '...#####....',
-      '..########..',
-      '.##.....###.',
-      '###......##.',
-      '##.......##.',
-      '##.......##.',
-      '##.......##.',
-      '##.......##.',
-      '##.......##.',
-      '###......##.',
-      '.##.....##..',
-      '..########..',
-      '...#####....',
+      '...#####...',
+      '..########.',
+      '.##.....###',
+      '###......##',
+      '##.......##',
+      '##.......##',
+      '##.......##',
+      '##.......##',
+      '##.......##',
+      '###......##',
+      '.##.....##.',
+      '..########.',
+      '...#####...',
     ],
   });
   const middleRow = o24.rows[Math.floor(o24.height / 2)];

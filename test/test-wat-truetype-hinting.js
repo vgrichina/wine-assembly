@@ -429,6 +429,81 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
       '.##.', '#..#', '#...', '#..#', '.##.',
     ], 'Win98 Arial c 10ppem monochrome bitmap must match exactly');
 
+    // Arial has no 10ppem hdmx record: that means its device width is the
+    // rounded linear width, not that the glyph program receives a fractional
+    // right phantom. head.flags bits 1 and 4 also put the left phantom at zero
+    // and advertise instruction-dependent device advances. D exposes the
+    // distinction because its white MIRP measures from the right phantom.
+    const nativeHead = wat.test_tt_table_off(
+      native.at, native.size, tag('head')) >>> 0;
+    const nativeHeadFlags = new DataView(memory.buffer).getUint16(
+      native.at + nativeHead + 16, false);
+    assert.strictEqual(nativeHeadFlags & 0x12, 0x12,
+      'Win98 Arial must advertise zero LSB and device advance flags');
+    const nativeHdmx = wat.test_tt_table_off(
+      native.at, native.size, tag('hdmx')) >>> 0;
+    const nativeHdmxRecords = new DataView(memory.buffer).getUint16(
+      native.at + nativeHdmx + 2, false);
+    const nativeHdmxStride = new DataView(memory.buffer).getUint32(
+      native.at + nativeHdmx + 4, false);
+    assert.ok(!Array.from({ length: nativeHdmxRecords }, (_unused, index) =>
+      new Uint8Array(memory.buffer)[native.at + nativeHdmx + 8 +
+        index * nativeHdmxStride]).includes(10),
+    'Win98 Arial hdmx must omit its rounded-linear 10ppem widths');
+    const nativeDGid = wat.test_tt_glyph_index(
+      native.at, native.size, 'D'.charCodeAt(0));
+    const nativeDCount = wat.test_tt_glyph_load_outline(
+      native.at, native.size, nativeDGid, compact, 512);
+    assert.strictEqual(nativeDCount, 30,
+      'Win98 Arial D raw point topology must remain stable');
+    const nativeDHinted = wat.test_tth_hint_outline(
+      native.at, native.size, nativeDGid, 10, compact, nativeDCount) >>> 0;
+    assert.ok(nativeDHinted, 'Win98 Arial D must hint at 10ppem');
+    assert.deepStrictEqual([[2, 197, 448], [9, 384, 227],
+      [23, 320, 228], [28, 200, 384]].map(([index]) => [
+      index, wat.test_tth_point_x(nativeDHinted, index),
+      wat.test_tth_point_y(nativeDHinted, index),
+    ]), [[2, 197, 448], [9, 384, 227],
+      [23, 320, 228], [28, 200, 384]],
+    'rounded-linear phantoms must reproduce Win98 Arial D points');
+    assert.strictEqual(wat.test_tth_last_advance(), 448,
+      'Win98 Arial D must expose its seven-pixel device advance');
+    const d10Box = [
+      wat.test_tt_glyph_box_width(native.at, native.size, nativeDGid, 10),
+      wat.test_tt_glyph_box_height(native.at, native.size, nativeDGid, 10),
+      wat.test_tt_glyph_box_left(native.at, native.size, nativeDGid, 10),
+      wat.test_tt_glyph_box_top(native.at, native.size, nativeDGid, 10),
+    ];
+    assert.deepStrictEqual(d10Box, [5, 7, 1, 7],
+      'Win98 Arial D 10ppem monochrome metrics must match');
+    const d10BitmapGuest = wat.guest_alloc(64) >>> 0;
+    const d10ScratchBytes = wat.test_tt_raster_scratch_bytes(d10Box[0]) >>> 0;
+    const d10ScratchGuest = wat.guest_alloc(d10ScratchBytes) >>> 0;
+    assert.strictEqual(wat.test_tt_rasterize_glyph(
+      native.at, native.size, nativeDGid, 10, wa(d10BitmapGuest),
+      d10Box[0], d10Box[1], d10Box[2] * 64, d10Box[3] * 64,
+      wa(d10ScratchGuest), d10ScratchBytes), 1,
+    'Win98 Arial D must scan-convert at 10ppem');
+    assert.deepStrictEqual(Array.from({ length: d10Box[1] }, (_, y) =>
+      Array.from({ length: d10Box[0] }, (_unused, x) =>
+        wat.test_tt_bitmap_pixel(wa(d10BitmapGuest), d10Box[1], x, y)
+          ? '#' : '.').join('')), [
+      '###..', '#..#.', '#...#', '#...#', '#...#', '#..#.', '###..',
+    ], 'Win98 Arial D 10ppem monochrome bitmap must match exactly');
+
+    // GGO black boxes round hinted extrema to device pixels. Arial j has an
+    // exact -29/64 left extremum: conservative floor/ceil would report a
+    // spurious blank column at x=-1 even though Win98 reports x=0, width 2.
+    const nativeJGid = wat.test_tt_glyph_index(
+      native.at, native.size, 'j'.charCodeAt(0));
+    assert.deepStrictEqual([
+      wat.test_tt_glyph_box_width(native.at, native.size, nativeJGid, 10),
+      wat.test_tt_glyph_box_height(native.at, native.size, nativeJGid, 10),
+      wat.test_tt_glyph_box_left(native.at, native.size, nativeJGid, 10),
+      wat.test_tt_glyph_box_top(native.at, native.size, nativeJGid, 10),
+    ], [2, 9, 0, 7],
+    'Win98 Arial j black box must round its fractional left extremum');
+
     // Arial's prep program creates twilight points with MIAP, interpolates
     // them, and writes the resulting x-height back to CVT 6.  Win98 rounds
     // that anchor to seven pixels at 12ppem; losing the twilight point's
@@ -531,7 +606,7 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
     oracle = `${nativePoints} Arial raw points, ` +
       `${win98WPoints.size * 5} Arial W point cases, ` +
       `${digitOracles.size} exact Arial digit bitmaps, ` +
-      `1 exact Arial LTSH c bitmap, ` +
+      `2 exact Arial 10ppem c/D bitmaps, ` +
       `${metricCases}/3 exact GGO metric cases, ` +
       `${controlPrograms} Times/Courier programs`;
   }

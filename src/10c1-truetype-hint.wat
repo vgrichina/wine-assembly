@@ -2271,11 +2271,11 @@
     (select (i32.add (local.get $data) (local.get $cursor)) (i32.const 0)
       (i32.ne (local.get $length) (i32.const 0))))
 
-  ;; An hdmx record marks a ppem where Win98 prepares integer device advances.
-  ;; At those sizes its glyph zone starts with the base horizontal phantom on
-  ;; the integer grid; instructions may subsequently move it to the per-glyph
-  ;; width cached in hdmx. Return the linear fallback when no complete record
-  ;; covers this exact glyph and size. Malformed counts/strides never read
+  ;; A valid hdmx table establishes integer device-advance behavior. A record
+  ;; is needed only where a post-program width differs from rounded linear
+  ;; scaling, so a missing ppem still starts with a rounded-linear horizontal
+  ;; phantom. The cached byte is not the pre-program phantom coordinate.
+  ;; Malformed counts/strides retain the exact linear fallback and never read
   ;; beyond the table.
   (func $tth_hdmx_advance (param $data i32) (param $size i32) (param $gid i32)
         (param $ppem i32) (param $fallback i32) (result i32)
@@ -2322,7 +2322,9 @@
             (i32.const 64)))))
       (local.set $index (i32.add (local.get $index) (i32.const 1)))
       (br $scan)))
-    (local.get $fallback))
+    (i32.mul (call $gdi_round_ratio
+      (i64.extend_i32_s (local.get $fallback)) (i64.const 64))
+      (i32.const 64)))
 
   ;; LTSH lets Win98 avoid grid-fitting a glyph solely to discover its device
   ;; advance. At and above the per-glyph threshold, the OpenType contract says
@@ -2378,6 +2380,7 @@
         (param $compact i32) (param $count i32) (result i32)
     (local $index i32) (local $point i32) (local $x i32) (local $y i32)
     (local $flags i32) (local $left i32) (local $advance i32)
+    (local $head i32) (local $head_length i32)
     (if (i32.gt_u (i32.add (local.get $count) (i32.const 4))
           (global.get $TTH_MAX_POINTS))
       (then (return (call $tth_fail (i32.const 4)))))
@@ -2407,6 +2410,19 @@
           (local.get $gid))
         (call $tt_lsb_fu (local.get $data) (local.get $size) (local.get $gid)))
       (global.get $tth_ppem) (global.get $tth_upem)))
+    ;; head.flags bit 1 declares that the left-sidebearing phantom is exactly
+    ;; x=0. Using the independently scaled xMin-lsb residual here shifts both
+    ;; horizontal phantoms before the glyph program sees them.
+    (local.set $head (call $tt_table_off (local.get $data) (local.get $size)
+      (i32.const 0x68656164)))
+    (local.set $head_length (call $tt_table_len (local.get $data) (local.get $size)
+      (i32.const 0x68656164)))
+    (if (i32.and (i32.ne (local.get $head) (i32.const 0))
+          (i32.and (i32.ge_u (local.get $head_length) (i32.const 18))
+            (i32.ne (i32.and (call $tt_u16 (local.get $data) (local.get $size)
+              (i32.add (local.get $head) (i32.const 16))) (i32.const 2))
+              (i32.const 0))))
+      (then (local.set $left (i32.const 0))))
     (local.set $advance (call $tt_fu_to_26_6
       (call $tt_advance_fu (local.get $data) (local.get $size) (local.get $gid))
       (global.get $tth_ppem) (global.get $tth_upem)))
@@ -2867,10 +2883,14 @@
         (then (local.set $max_y (local.get $y))))
       (local.set $index (i32.add (local.get $index) (i32.const 1)))
       (br $points)))
-    (global.set $tth_bound_left (call $tt_floor_px (local.get $min_x)))
-    (global.set $tth_bound_top (call $tt_ceil_px (local.get $max_y)))
-    (global.set $tth_bound_right (call $tt_ceil_px (local.get $max_x)))
-    (global.set $tth_bound_bottom (call $tt_floor_px (local.get $min_y)))
+    (global.set $tth_bound_left (call $gdi_round_ratio
+      (i64.extend_i32_s (local.get $min_x)) (i64.const 64)))
+    (global.set $tth_bound_top (call $gdi_round_ratio
+      (i64.extend_i32_s (local.get $max_y)) (i64.const 64)))
+    (global.set $tth_bound_right (call $gdi_round_ratio
+      (i64.extend_i32_s (local.get $max_x)) (i64.const 64)))
+    (global.set $tth_bound_bottom (call $gdi_round_ratio
+      (i64.extend_i32_s (local.get $min_y)) (i64.const 64)))
     (global.set $tth_bound_status (i32.const 1))
     (call $tth_hint_bound (local.get $data) (local.get $size) (local.get $gid)
       (local.get $ppem) (local.get $field)))
