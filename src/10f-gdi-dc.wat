@@ -480,6 +480,26 @@
       (br $purge)))
     (i32.const 1))
 
+  ;; Unlike pens, brushes, and fonts, a non-stock bitmap can be selected into
+  ;; only one memory DC at a time. Keep the ownership test derived from the DC
+  ;; table so deletion and stock-bitmap restoration cannot leave stale state.
+  (func $gdi_bitmap_selected_elsewhere (param $handle i32) (param $hdc i32) (result i32)
+    (local $i i32) (local $entry i32) (local $limit i32)
+    (local.set $limit (call $gdi_table_mark_limit
+      (i32.const 2) (global.get $GDI_DC_STATE_COUNT)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $limit)))
+      (local.set $entry (i32.add (global.get $GDI_DC_STATE_TABLE)
+        (i32.mul (local.get $i) (global.get $GDI_DC_STATE_STRIDE))))
+      (if (i32.and
+            (i32.and (i32.ne (i32.load (local.get $entry)) (i32.const 0))
+              (i32.ne (i32.load (local.get $entry)) (local.get $hdc)))
+            (i32.eq (i32.load offset=84 (local.get $entry)) (local.get $handle)))
+        (then (return (i32.const 1))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
   (func $gdi_dc_select_owned_object (param $hdc i32) (param $handle i32) (result i32)
     (local $type i32) (local $dc i32)
     (local.set $type (call $gdi_object_type (local.get $handle)))
@@ -499,6 +519,11 @@
         (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
         (if (i32.and (i32.ne (local.get $dc) (i32.const 0))
               (i32.ne (i32.load offset=92 (local.get $dc)) (i32.const 0)))
+          (then (return (i32.const -1))))
+        (if (i32.and
+              (i32.and (i32.ne (local.get $handle) (i32.const 0x30007))
+                (i32.ne (local.get $handle) (i32.const 0x30001)))
+              (call $gdi_bitmap_selected_elsewhere (local.get $handle) (local.get $hdc)))
           (then (return (i32.const -1))))
         (return (call $gdi_dc_set_field
           (local.get $hdc) (i32.const 84) (local.get $handle) (i32.const 0x30007)))))

@@ -893,7 +893,7 @@
   ;; length ends the list. Upper case, because $win16_cstr_to_pstr folds the
   ;; caller's name that way before any lookup — the same form the tables in
   ;; src/win16-ordinals.generated.json use.
-  (data (i32.const 0x3E40)
+  (data (i32.const 0x3E30)
     "\0cSNDPLAYSOUND\02\00"
     "\0eMCISENDCOMMAND\bd\02"
     "\11MCIGETERRORSTRING\c2\02"
@@ -914,7 +914,7 @@
   ;; Every name here is one a game in the corpus actually asks for: Visual
   ;; Basic's Declare statement is a GetProcAddress by name, and a NULL comes
   ;; back to the program as "Sub or Function not defined".
-  (data (i32.const 0x3EA0)
+  (data (i32.const 0x3E90)
     "\0dCREATERECTRGN\40\30"
     "\15CREATERECTRGNINDIRECT\41\30"
     "\0eGETSTOCKOBJECT\57\30"
@@ -930,6 +930,11 @@
     "\0cDELETEOBJECT\45\30"
     "\0cSELECTOBJECT\2d\30"
     "\0aSTRETCHBLT\23\30"
+    "\0aSETRECTRGN\ac\30"
+    "\0dSELECTCLIPRGN\2c\30"
+    "\0aCOMBINERGN\2f\30"
+    "\0aPTINREGION\a1\30"
+    "\08FRAMERGN\29\30"
     "\0fGETMODULEHANDLE\2f\10"
     "\11GETMODULEFILENAME\31\10"
     "\14GETPRIVATEPROFILEINT\7f\10"

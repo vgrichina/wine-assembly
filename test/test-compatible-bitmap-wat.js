@@ -36,6 +36,10 @@ const { bootRenderHarness } = require('./render-helper');
   wat.guest_free(bitmapStruct);
 
   const firstDc = selectBitmap(first.bitmap);
+  const competingDc = wat.test_call_CreateCompatibleDC(0) >>> 0;
+  assert.strictEqual(wat.test_call_SelectObject(competingDc, first.bitmap), 0,
+    'a non-stock bitmap already selected in another DC must be rejected');
+  assert.strictEqual(wat.test_call_DeleteDC(competingDc), 1);
   assert.strictEqual(wat.test_gdi_surface_descriptor(firstDc, descriptor), 1);
   const firstStorage = dv.getUint32(descriptor, true);
   assert(firstStorage, 'DDB should expose private storage only to WAT');

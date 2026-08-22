@@ -6972,6 +6972,37 @@
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 10)))
 
+  ;; GDI.161 PtInRegion(hrgn, x, y). JigSawed tests the piece-region at the
+  ;; release point before committing a drag, and obtains this entry by name.
+  (func $win16_PtInRegion
+    (local $rgn i32) (local $x i32) (local $y i32)
+    (local.set $rgn (call $win16_h32 (call $win16_arg16 (i32.const 2))))
+    (local.set $x (call $win16_coord (call $win16_arg16 (i32.const 1))))
+    (local.set $y (call $win16_coord (call $win16_arg16 (i32.const 0))))
+    (call $win16_call32_begin (i32.const 3))
+    (call $handle_PtInRegion (local.get $rgn) (local.get $x) (local.get $y)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 6)))
+
+  ;; GDI.41 FrameRgn(hdc, hrgn, hbrush, width, height). JigSawed uses this
+  ;; dynamically obtained entry when its Fast Move option is enabled.
+  (func $win16_FrameRgn
+    (local $hdc i32) (local $rgn i32) (local $brush i32)
+    (local $width i32) (local $height i32)
+    (local.set $hdc (call $win16_h32 (call $win16_arg16 (i32.const 4))))
+    (local.set $rgn (call $win16_h32 (call $win16_arg16 (i32.const 3))))
+    (local.set $brush (call $win16_h32 (call $win16_arg16 (i32.const 2))))
+    (local.set $width (call $win16_short (call $win16_arg16 (i32.const 1))))
+    (local.set $height (call $win16_short (call $win16_arg16 (i32.const 0))))
+    (call $win16_call32_begin (i32.const 5))
+    (call $handle_FrameRgn (local.get $hdc) (local.get $rgn) (local.get $brush)
+      (local.get $width) (local.get $height) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 10)))
+
   ;; GDI.47 CombineRgn(hrgnDest, hrgnSrc1, hrgnSrc2, fnCombineMode).
   ;; The other half of the same clip: Hearts builds the rectangle it is about to
   ;; redraw with SetRectRgn and folds it into the region it keeps.
@@ -8575,6 +8606,10 @@
       (then (call $win16_SelectObject) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 172))
       (then (call $win16_SetRectRgn) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 161))
+      (then (call $win16_PtInRegion) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 41))
+      (then (call $win16_FrameRgn) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 47))
       (then (call $win16_CombineRgn) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 51))
@@ -8927,8 +8962,8 @@
   ;; is written down here — see the MMSYSTEM list in src/01-header.wat.
   ;; Answers 0 for a name it does not know, which is what GetProcAddress
   ;; reports when a module does not export something.
-  (global $WIN16_MMSYSTEM_NAMES i32 (i32.const 0x3E40))
-  (global $WIN16_BUILTIN_NAMES i32 (i32.const 0x3EA0))
+  (global $WIN16_MMSYSTEM_NAMES i32 (i32.const 0x3E30))
+  (global $WIN16_BUILTIN_NAMES i32 (i32.const 0x3E90))
 
   ;; The KERNEL/USER/GDI half of the same idea, over its own table. That table
   ;; carries the module in the top nibble of each ordinal word, so a name only
