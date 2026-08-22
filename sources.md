@@ -674,3 +674,48 @@ drained to zero, and the final frame contained one cursor. The apparent dark
 lower bands are already present in StarCraft's canonical primary DIB rather
 than being Safari canvas retention; they are the dark 1998 game HUD regions,
 not additional browser cursor copies.
+
+## Further shareware/demo/freeware game candidates
+
+Research on 2026-08-22 narrowed the next browser targets to distributions that
+were released as demos or shareware. Archive.org availability is evidence that
+the historical package can be obtained and inspected, not by itself permission
+to redistribute it with this repository; keep external downloads and verify
+the original package terms before bundling any commercial demo.
+
+Recommended order:
+
+1. [Jazz Jackrabbit 2 Demo v1.23s](https://archive.org/details/JazzJackrabbit2Demo)
+   remains the best next target. The Archive item identifies it as a 1998
+   Windows action-game demo, provides a 19.2 MB Windows executable, and says it
+   contains three single-player levels including a boss plus multiplayer maps.
+   The exact `J2swc123.exe` package and SHA-1 are already pinned in
+   `test/candidate-corpus/manifest.json`, so acquisition is reproducible.
+2. [RollerCoaster Tycoon Demo](https://archive.org/details/RollercoasterTycoonDemo)
+   is a 1999 Windows demo delivered as the single 18.7 MB `RCTYCOON.EXE`.
+   Archive.org describes a roughly 25-minute playable session with saving,
+   most scenarios, some rides, and ride music disabled. It is a useful change
+   from action games: dense GDI/DirectDraw UI, timers, simulation, and mouse
+   interaction matter more than twitch input.
+3. [Worms 2 Demo](https://archive.org/details/Worms2_1020) is a 1998 Windows
+   action/strategy demo in a 13.6 MB Archive item. Turn-based local play makes
+   it forgiving of emulator speed while still exercising destructible 2D
+   graphics, sound, keyboard, and precise mouse input.
+4. [Total Annihilation Demo](https://archive.org/details/TotalAnnihilation_201405)
+   is a 1997 Windows strategy-game demo offered as a 20.6 MB item with a direct
+   Windows executable download. It is a strong later stress target for large
+   scrolling battlefields, many animated units, audio, and sustained RTS
+   simulation, but is likely heavier than Jazz, RollerCoaster Tycoon, or Worms.
+5. [Captain Claw Demo](https://archive.org/details/CaptainClaw) and
+   [Heroes of Might and Magic II Demo](https://archive.org/details/HeroesofMightandMagicIITheSuccessionWars_1020)
+   remain good alternates already researched above. Claw is the more immediate
+   action target; Heroes II is slower-paced but brings WinG, Miles, and Smacker
+   DLL coverage.
+
+[Warcraft II: Tides of Darkness Demo](https://archive.org/details/WarcraftIiTidesOfDarknessDemo)
+is intentionally not ranked as a Wine-Assembly game target. Although the item
+is tagged as a Windows game and includes Win32 autorun/map-editor programs, its
+35.6 MB `war2sw108.zip` contains a DOS4GW `setup.exe` and the playable
+`war2.exe` compressed inside `war2.exa`; only `war2ed95.exe` and the autorun
+shell are PE32. It is therefore primarily a DOS-game package rather than the
+Win32 executable this emulator needs.
