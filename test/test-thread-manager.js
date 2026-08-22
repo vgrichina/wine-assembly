@@ -211,6 +211,29 @@ assert.strictEqual(
   'thread tracing retains the main-thread wait completion diagnostic'
 );
 
+let mainSleepNow = 100;
+let mainSleepPending = 1;
+const mainSleepTm = makeThreadManager({ now: () => mainSleepNow });
+mainSleepTm.mainInstance.exports = {
+  get_sleep_yielded: () => {
+    const pending = mainSleepPending;
+    mainSleepPending = 0;
+    return pending;
+  },
+  get_sleep_timeout: () => 10,
+  get_yield_reason: () => 0,
+};
+assert.strictEqual(mainSleepTm.checkMainYield(), true,
+  'main-thread Sleep parks the main instance until its wall-clock deadline');
+assert.strictEqual(mainSleepTm._mainSleepUntil, 110);
+mainSleepNow = 109;
+assert.strictEqual(mainSleepTm.checkMainYield(), true,
+  'main-thread Sleep remains parked before the full timeout elapses');
+mainSleepNow = 110;
+assert.strictEqual(mainSleepTm.checkMainYield(), false,
+  'main-thread Sleep resumes when the full timeout has elapsed');
+assert.strictEqual(mainSleepTm._mainSleepUntil, 0);
+
 function createSyncObjects(traceThread) {
   const syncTm = makeThreadManager({ traceThread });
   const emitted = [];

@@ -289,7 +289,7 @@ assert(webApp.includes('lib/gdi-surface.js?v=2'), 'web host should load the cano
 assert(webApp.indexOf('lib/gdi-surface.js?v=2') < webApp.indexOf('lib/host-imports.js?v=203'),
   'web host should load the GDI surface module before host imports');
 assert(webApp.includes('lib/host-imports.js?v=203'), 'web host should cache-bust binary text rasterization');
-assert(webApp.includes('lib/thread-manager.js?v=172'), 'web host should cache-bust generation-safe synchronization reuse');
+assert(webApp.includes('lib/thread-manager.js?v=173'), 'web host should cache-bust main-thread Sleep scheduling');
 assert(webApp.includes('lib/compile-wat.js?v=169'), 'web host should cache-bust the snapshot-capable WAT compiler');
 assert(webApp.includes('lib/debug-thread-state.js?v=5'), 'web host should cache-bust whole-list cycle diagnostics');
 assert(webApp.includes('host.js?v=216'), 'web host should cache-bust host.js after the current source update');
