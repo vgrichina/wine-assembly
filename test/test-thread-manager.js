@@ -94,15 +94,38 @@ for (let i = 0; i < 64; i++) {
 assert(syncHandles.every(Boolean), 'all 64 synchronization slots should allocate');
 assert.strictEqual(syncLifecycleTm.createEvent(false, false), 0, 'the full synchronization table rejects another event');
 assert.strictEqual(syncLifecycleTm.closeSyncHandle(syncHandles[17]), true, 'CloseHandle should release an event slot');
+const staleEvent = syncHandles[17];
+const replacementEvent = syncLifecycleTm.createEvent(true, true);
 assert.strictEqual(
-  syncLifecycleTm.createEvent(true, true),
-  syncHandles[17],
-  'the next event should reuse the released table slot'
+  syncLifecycleTm._getSyncIdx(replacementEvent),
+  17,
+  'the next event should reuse the released table slot with a new identity'
 );
+assert.notStrictEqual(replacementEvent, staleEvent,
+  'a recycled synchronization slot must advance its handle generation');
+assert.strictEqual(syncLifecycleTm.closeSyncHandle(staleEvent), false,
+  'a stale CloseHandle must not close the replacement event');
+syncLifecycleTm.resetEvent(replacementEvent);
+syncLifecycleTm.setEvent(staleEvent);
+assert.strictEqual(syncLifecycleTm.waitSingle(replacementEvent, 0), 0x102,
+  'a delayed SetEvent for the old generation must not signal the replacement');
+const issuedEventHandles = new Set([staleEvent, replacementEvent]);
+let churnedEvent = replacementEvent;
+for (let i = 0; i < 128; i++) {
+  assert.strictEqual(syncLifecycleTm.closeSyncHandle(churnedEvent), true);
+  churnedEvent = syncLifecycleTm.createEvent(false, false);
+  assert.strictEqual(syncLifecycleTm._getSyncIdx(churnedEvent), 17);
+  assert(!issuedEventHandles.has(churnedEvent),
+    'rapid synchronization churn must not wrap back to an earlier handle identity');
+  issuedEventHandles.add(churnedEvent);
+}
 assert.strictEqual(syncLifecycleTm.closeSyncHandle(0xdeadbeef), false, 'an unrelated handle is not a synchronization object');
 assert.strictEqual(syncLifecycleTm.closeSyncHandle(syncHandles[18]), true, 'semaphore test should begin with a free slot');
 const reusedSemaphore = syncLifecycleTm.createSemaphore(2, 4);
-assert.strictEqual(reusedSemaphore, syncHandles[18], 'semaphores should share and reuse the synchronization table');
+assert.strictEqual(syncLifecycleTm._getSyncIdx(reusedSemaphore), 18,
+  'semaphores should share and reuse synchronization slots with a new identity');
+assert.notStrictEqual(reusedSemaphore, syncHandles[18],
+  'a recycled semaphore slot must also advance its handle generation');
 assert.strictEqual(syncLifecycleTm.closeSyncHandle(reusedSemaphore), true, 'CloseHandle should release a semaphore slot');
 
 const namedEventTm = makeThreadManager();
@@ -140,7 +163,7 @@ assert.strictEqual(
   'wait-all remains blocked while only one object is signaled'
 );
 assert.strictEqual(
-  Atomics.load(waitAllTm.syncView, (waitAllA - 0xE0000) * 4 + 2),
+  Atomics.load(waitAllTm.syncView, waitAllTm._getSyncIdx(waitAllA) * 4 + 2),
   1,
   'an incomplete wait-all must not consume an already-signaled auto-reset event'
 );
@@ -150,8 +173,8 @@ assert.strictEqual(
   0,
   'wait-all completes once every object is signaled'
 );
-assert.strictEqual(Atomics.load(waitAllTm.syncView, (waitAllA - 0xE0000) * 4 + 2), 0);
-assert.strictEqual(Atomics.load(waitAllTm.syncView, (waitAllB - 0xE0000) * 4 + 2), 0);
+assert.strictEqual(Atomics.load(waitAllTm.syncView, waitAllTm._getSyncIdx(waitAllA) * 4 + 2), 0);
+assert.strictEqual(Atomics.load(waitAllTm.syncView, waitAllTm._getSyncIdx(waitAllB) * 4 + 2), 0);
 
 function completeMainEventWait(traceThread) {
   const waitTm = makeThreadManager({ traceThread });
