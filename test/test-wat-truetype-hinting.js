@@ -24,15 +24,23 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
     'the runtime engine must not name an external or generated implementation');
   const mdOpcode = source.match(/;; MD\[0\/1\]\.([\s\S]*?)\(call \$tth_fail/);
   assert.ok(mdOpcode, 'the MD opcode implementation must remain present');
-  for (const projection of ['original', 'current']) {
+  for (const [projection, helper] of [
+    ['original', 'project_original'], ['current', 'measure_current'],
+  ]) {
     assert.match(mdOpcode[1], new RegExp(
-      `\\$tth_project_${projection}\\s+` +
+      `\\$tth_${helper}\\s+` +
       `\\(global\\.get \\$tth_zp0\\)\\s+\\(local\\.get \\$other\\)\\s+` +
       `\\(global\\.get \\$tth_zp1\\)\\s+\\(local\\.get \\$point_index\\)`),
     `MD ${projection} distance must preserve the p2 minus p1 operand order`);
   }
   assert.match(mdOpcode[1], /\$tth_md_uses_original/,
     'MD must select Win98 current/original opcode semantics centrally');
+  const lineVector = source.match(
+    /\(func \$tth_set_line_vector([\s\S]*?)\n  ;; ---- stream/);
+  assert.ok(lineVector, 'line-vector implementation must remain present');
+  assert.match(lineVector[1],
+    /i32\.sub \(i32\.load(?: offset=4)? \(local\.get \$b\)\)[\s\S]*?\(i32\.load(?: offset=4)? \(local\.get \$a\)\)/,
+    'line vectors must point from the first popped point toward the second');
 
   const { exports: wat, memory, hostCtx } = await bootRenderHarness();
   assert.deepStrictEqual([
@@ -63,6 +71,14 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
     new Uint8Array(memory.buffer).fill(0, wa(guest), wa(guest) + size);
     return guest;
   };
+  const normalizedGuest = allocZero(8);
+  const normalized = wa(normalizedGuest);
+  assert.strictEqual(wat.test_tth_normalize(160, -161, normalized), 1);
+  assert.deepStrictEqual([
+    new DataView(memory.buffer).getInt32(normalized, true),
+    new DataView(memory.buffer).getInt32(normalized + 4, true),
+  ], [11549, -11621],
+  'line normalization must retain fractional length before 2.14 rounding');
   const allocFaceW = text => {
     const guest = allocZero(text.length * 2 + 2);
     [...text].forEach((character, index) =>
@@ -554,6 +570,35 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
       '#.#.#.#', '#..#..#',
     ], 'Win98 Arial M 10ppem monochrome bitmap must match exactly');
 
+    // Arial V builds its diagonal projection vector from two close points.
+    // Flooring that line length before normalization overshoots unit length
+    // and leaves a two-pixel foot instead of Win98's centered one-pixel tip.
+    const nativeVGid = wat.test_tt_glyph_index(
+      native.at, native.size, 'V'.charCodeAt(0));
+    const v10Box = [
+      wat.test_tt_glyph_box_width(native.at, native.size, nativeVGid, 10),
+      wat.test_tt_glyph_box_height(native.at, native.size, nativeVGid, 10),
+      wat.test_tt_glyph_box_left(native.at, native.size, nativeVGid, 10),
+      wat.test_tt_glyph_box_top(native.at, native.size, nativeVGid, 10),
+    ];
+    assert.deepStrictEqual(v10Box, [7, 7, 0, 7],
+      'Win98 Arial V 10ppem monochrome metrics must match');
+    const v10BitmapGuest = wat.guest_alloc(64) >>> 0;
+    const v10ScratchBytes = wat.test_tt_raster_scratch_bytes(v10Box[0]) >>> 0;
+    const v10ScratchGuest = wat.guest_alloc(v10ScratchBytes) >>> 0;
+    assert.strictEqual(wat.test_tt_rasterize_glyph(
+      native.at, native.size, nativeVGid, 10, wa(v10BitmapGuest),
+      v10Box[0], v10Box[1], v10Box[2] * 64, v10Box[3] * 64,
+      wa(v10ScratchGuest), v10ScratchBytes), 1,
+    'Win98 Arial V must scan-convert at 10ppem');
+    assert.deepStrictEqual(Array.from({ length: v10Box[1] }, (_, y) =>
+      Array.from({ length: v10Box[0] }, (_unused, x) =>
+        wat.test_tt_bitmap_pixel(wa(v10BitmapGuest), v10Box[1], x, y)
+          ? '#' : '.').join('')), [
+      '#.....#', '.#...#.', '.#...#.', '.#...#.', '..#.#..', '..#.#..',
+      '...#...',
+    ], 'Win98 Arial V 10ppem monochrome bitmap must match exactly');
+
     // GGO black boxes round hinted extrema to device pixels. Arial j has an
     // exact -29/64 left extremum: conservative floor/ceil would report a
     // spurious blank column at x=-1 even though Win98 reports x=0, width 2.
@@ -669,7 +714,7 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
     oracle = `${nativePoints} Arial raw points, ` +
       `${win98WPoints.size * 5} Arial W point cases, ` +
       `${digitOracles.size} exact Arial digit bitmaps, ` +
-      `3 exact Arial 10ppem c/D/M bitmaps, ` +
+      `4 exact Arial 10ppem c/D/M/V bitmaps, ` +
       `${metricCases}/3 exact GGO metric cases, ` +
       `${controlPrograms} Times/Courier programs`;
   }

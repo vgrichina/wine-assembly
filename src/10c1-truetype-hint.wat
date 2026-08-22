@@ -433,6 +433,15 @@
 
   (func $tth_project_current (param $zone_a i32) (param $a i32)
         (param $zone_b i32) (param $b i32) (result i32)
+    (call $tth_dot
+      (i32.sub (call $tth_point_current_x (local.get $zone_a) (local.get $a))
+        (call $tth_point_current_x (local.get $zone_b) (local.get $b)))
+      (i32.sub (call $tth_point_current_y (local.get $zone_a) (local.get $a))
+        (call $tth_point_current_y (local.get $zone_b) (local.get $b)))
+      (global.get $tth_pvx) (global.get $tth_pvy)))
+
+  (func $tth_measure_current (param $zone_a i32) (param $a i32)
+        (param $zone_b i32) (param $b i32) (result i32)
     (i32.sub
       (call $tth_dot
         (call $tth_point_current_x (local.get $zone_a) (local.get $a))
@@ -454,22 +463,25 @@
 
   (func $tth_normalize (param $x i32) (param $y i32) (param $out i32)
         (result i32)
-    (local $length i32)
+    (local $length f64)
     (if (i32.and (i32.eqz (local.get $x)) (i32.eqz (local.get $y)))
       (then (return (call $tth_fail (i32.const 5)))))
-    (local.set $length (i32.trunc_f64_s (f64.sqrt (f64.add
+    ;; Keep the fractional line length until the final 2.14 component round.
+    ;; Flooring it first produces non-unit vectors at small ppem values.
+    (local.set $length (f64.sqrt (f64.add
       (f64.mul (f64.convert_i32_s (local.get $x))
         (f64.convert_i32_s (local.get $x)))
       (f64.mul (f64.convert_i32_s (local.get $y))
-        (f64.convert_i32_s (local.get $y)))))))
-    (if (i32.eqz (local.get $length))
+        (f64.convert_i32_s (local.get $y))))))
+    (if (f64.eq (local.get $length) (f64.const 0))
       (then (return (call $tth_fail (i32.const 5)))))
-    (i32.store (local.get $out) (call $gdi_round_ratio
-      (i64.mul (i64.extend_i32_s (local.get $x)) (i64.const 16384))
-      (i64.extend_i32_s (local.get $length))))
-    (i32.store offset=4 (local.get $out) (call $gdi_round_ratio
-      (i64.mul (i64.extend_i32_s (local.get $y)) (i64.const 16384))
-      (i64.extend_i32_s (local.get $length))))
+    (i32.store (local.get $out) (i32.trunc_f64_s (f64.nearest (f64.div
+      (f64.mul (f64.convert_i32_s (local.get $x)) (f64.const 16384))
+      (local.get $length)))))
+    (i32.store offset=4 (local.get $out)
+      (i32.trunc_f64_s (f64.nearest (f64.div
+        (f64.mul (f64.convert_i32_s (local.get $y)) (f64.const 16384))
+        (local.get $length)))))
     (i32.const 1))
 
   (func $tth_round (param $value i32) (result i32)
@@ -576,9 +588,11 @@
     (local.set $a (call $tth_point (global.get $tth_zp2) (local.get $p2)))
     (local.set $b (call $tth_point (global.get $tth_zp1) (local.get $p1)))
     (if (global.get $tth_error) (then (return (i32.const 0))))
-    (local.set $x (i32.sub (i32.load (local.get $a)) (i32.load (local.get $b))))
-    (local.set $y (i32.sub (i32.load offset=4 (local.get $a))
-      (i32.load offset=4 (local.get $b))))
+    ;; The top stack point is p1/zp2 and the next is p2/zp1. The vector points
+    ;; from p1 toward p2, so its delta is b-a (including the dual outline).
+    (local.set $x (i32.sub (i32.load (local.get $b)) (i32.load (local.get $a))))
+    (local.set $y (i32.sub (i32.load offset=4 (local.get $b))
+      (i32.load offset=4 (local.get $a))))
     (if (i32.and (i32.eqz (local.get $x)) (i32.eqz (local.get $y)))
       (then
         ;; The Win98 rasterizer treats a coincident-point line as a no-op.
@@ -610,10 +624,10 @@
         (global.set $tth_pvy (local.get $y))
         (if (local.get $dual)
           (then
-            (local.set $x (i32.sub (i32.load offset=8 (local.get $a))
-              (i32.load offset=8 (local.get $b))))
-            (local.set $y (i32.sub (i32.load offset=12 (local.get $a))
-              (i32.load offset=12 (local.get $b))))
+            (local.set $x (i32.sub (i32.load offset=8 (local.get $b))
+              (i32.load offset=8 (local.get $a))))
+            (local.set $y (i32.sub (i32.load offset=12 (local.get $b))
+              (i32.load offset=12 (local.get $a))))
             (if (local.get $perpendicular)
               (then
                 (local.set $tmp (local.get $x))
@@ -1164,15 +1178,22 @@
         (i32.lt_s (local.get $direction) (i32.const 0))))))
     (local.get $distance))
 
-  ;; MDRP/MIRP share the reference-point update and final projected move.
+  ;; MDRP/MIRP share reference-point updates. Win98 quantizes MIRP's fitted
+  ;; endpoint coordinates before subtraction, while MDRP/MSIRP project their
+  ;; current delta directly.
   (func $tth_relative_finish (param $point_index i32) (param $distance i32)
-        (param $set_rp0 i32) (result i32)
+        (param $set_rp0 i32) (param $measure_current i32) (result i32)
     (local $old_rp0 i32) (local $point i32) (local $current i32)
     (local.set $old_rp0 (global.get $tth_rp0))
     (local.set $point (call $tth_point (global.get $tth_zp1)
       (local.get $point_index)))
-    (local.set $current (call $tth_project_current (global.get $tth_zp1)
-      (local.get $point_index) (global.get $tth_zp0) (local.get $old_rp0)))
+    (if (local.get $measure_current)
+      (then (local.set $current (call $tth_measure_current
+        (global.get $tth_zp1) (local.get $point_index)
+        (global.get $tth_zp0) (local.get $old_rp0))))
+      (else (local.set $current (call $tth_project_current
+        (global.get $tth_zp1) (local.get $point_index)
+        (global.get $tth_zp0) (local.get $old_rp0)))))
     (if (global.get $tth_error) (then (return (i32.const 0))))
     (if (i32.eqz (call $tth_move_projection (local.get $point)
           (i32.sub (local.get $distance) (local.get $current))))
@@ -1223,7 +1244,8 @@
           (local.get $original)))))
     (local.set $set_rp0 (i32.and (local.get $op) (i32.const 0x10)))
     (call $tth_relative_finish (local.get $point_index) (local.get $distance)
-      (local.get $set_rp0)))
+      (local.get $set_rp0)
+      (i32.ge_u (local.get $op) (i32.const 0xE0))))
 
   (func $tth_op_direct_point (result i32)
     (local $op i32) (local $point_index i32) (local $other i32)
@@ -1345,7 +1367,8 @@
         (local.set $point_index (call $tth_pop))
         (local.set $other (global.get $tth_rp0))
         (if (i32.eqz (call $tth_relative_finish (local.get $point_index)
-              (local.get $value) (i32.and (local.get $op) (i32.const 1))))
+              (local.get $value) (i32.and (local.get $op) (i32.const 1))
+              (i32.const 0)))
           (then (return (i32.const 0))))
         (global.set $tth_rp1 (local.get $other))
         (return (i32.const 1))))
@@ -1386,7 +1409,7 @@
           (then (local.set $value (call $tth_project_original
             (global.get $tth_zp0) (local.get $other)
             (global.get $tth_zp1) (local.get $point_index))))
-          (else (local.set $value (call $tth_project_current
+          (else (local.set $value (call $tth_measure_current
             (global.get $tth_zp0) (local.get $other)
             (global.get $tth_zp1) (local.get $point_index)))))
         (return (call $tth_push (local.get $value)))))
@@ -2980,6 +3003,10 @@
 
   (func (export "test_tth_md_uses_original") (param i32) (result i32)
     (call $tth_md_uses_original (local.get 0)))
+
+  (func (export "test_tth_normalize") (param i32) (param i32) (param i32)
+        (result i32)
+    (call $tth_normalize (local.get 0) (local.get 1) (local.get 2)))
 
   (func (export "test_tth_minimum_distance_direction")
         (param $distance i32) (param $original i32) (param $minimum i32)
