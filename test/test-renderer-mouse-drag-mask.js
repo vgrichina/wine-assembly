@@ -51,6 +51,28 @@ move = r.inputQueue.find(e => e.msg === 0x0200);
 assert(move, 'hover should enqueue WM_MOUSEMOVE');
 assert.strictEqual(move.wParam & 0x0001, 0, 'hover move after mouseup should not include MK_LBUTTON');
 
+// Windows retains only the newest pending WM_MOUSEMOVE for one target. A
+// browser can generate dozens while a slow software-cursor game is between
+// input polls; replaying all of them makes the guest paint obsolete cursors.
+r.inputQueue.length = 0;
+r.handleMouseMove(95, 105);
+r.handleMouseMove(100, 110);
+r.handleMouseMove(105, 115);
+assert.strictEqual(r.inputQueue.filter(e => e.msg === 0x0200).length, 1,
+  'adjacent moves for one target and button state should coalesce');
+move = r.inputQueue.find(e => e.msg === 0x0200);
+assert.strictEqual(move.lParam, (105 << 16) | 95,
+  'coalesced move should retain the newest client coordinate');
+
+// A button transition is an ordering barrier: the following drag move must
+// never replace the hover that occurred before WM_LBUTTONDOWN.
+r.handleMouseDown(105, 115, 1);
+r.handleMouseMove(110, 120);
+assert.deepStrictEqual(r.inputQueue.slice(-2).map(e => e.msg), [0x0201, 0x0200],
+  'button down and the first drag move should remain distinct and ordered');
+assert.strictEqual(r.inputQueue[r.inputQueue.length - 1].wParam & 1, 1,
+  'post-down move should retain MK_LBUTTON');
+
 const modifierRenderer = new Win98Renderer(canvas);
 modifierRenderer.windows[105] = {
   hwnd: 105, visible: true, isChild: false,

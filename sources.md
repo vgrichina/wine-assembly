@@ -109,6 +109,17 @@ The evidence captures are `/private/tmp/diablo-delayed-b43000.png`,
 `/private/tmp/diablo-delayed-b119999.png` (temporary local artifacts, not
 redistributable fixtures).
 
+This was reverified against the current worktree on 2026-08-21 through the
+registered `--app=diablo_demo` path and its native-installer output. The
+deterministic input sequence clicked through the quote at batch 25,000, chose
+New Game at 28,000, confirmed Warrior at 32,000, entered `ABC` at
+35,000--35,200, and confirmed the name at 39,000. With the app's cooperative
+multimedia timer enabled from that transition, the cathedral loader completed
+and the live town view was rendered by batch 70,000. A canvas click at batch
+72,000 moved the Warrior; the batch-70,000 and batch-80,000 PNGs differ in
+214,119 pixels and the process remained live through batch 100,000. The fresh
+temporary evidence is under `/private/tmp/diablo-gameplay.2UwT5L/`.
+
 ### Startup-scan note
 
 An earlier report that the "loader" took roughly two minutes was incorrect.
@@ -414,3 +425,252 @@ Diablo package is self-contained, period-appropriate, recognizable, and close
 to subsystems already exercised by existing applications. Once its Storm,
 Smacker, DirectDraw, input, and audio paths work, StarCraft should reuse much of
 the resulting compatibility work.
+
+## StarCraft command-line video bypass research
+
+The documented command-line surface for original StarCraft is very small. The
+[BWAPI command reference](https://github.com/bwapi/bwapi/wiki/Commands) lists
+only `ddemulate` and `nosound` as ordinary options, plus single-player cheat
+codes. A period technical community reference gives the same list and notes
+that arguments have no leading dash: `StarCraft.exe nosound`, not
+`StarCraft.exe -nosound`. Local string inspection of the exact shareware
+`starcraft.exe` likewise found `ddemulate` and `nosound`, but none of
+`skipintro`, `novideo`, or `nomovie`. There is therefore no evidence of a
+dedicated video-disabling CLI switch in this build.
+
+The useful indirect option is the `ophelia` level-selection cheat. The
+[StarEdit Network command-line notes](https://staredit.net/topic/8620/#1)
+show `StarCraft.exe ophelia xzerg01` and report that it skips the menu and opens
+that campaign mission directly. The same behavior is documented by BWAPI.
+
+Disassembly of the exact shareware executable resolves the remaining grammar.
+Function `0x45dab0` compares each token at full token length and recognizes five
+literal options: `nosound`, `ddemulate`, `pirate`, `nospawn`, and `rdtsc`.
+Before that literal fallback, caller `0x45d490` passes every token to the
+encoded cheat recognizer at `0x406fe0`. `ophelia` matches its eight-byte table
+entry at `0x4d5588` and toggles cheat-state bit `0x200`. While that bit is set,
+fallback `0x407490` accepts the three campaign prefixes stored at `0x4da6e8`,
+but this shareware branch only acts on `terran` followed by a number from zero
+through three. It stores mission selectors `0x26` through `0x29` and sets the
+direct-launch flag at `0x508144`. Runtime probes confirmed all four forms;
+`terran4` leaves the direct-launch flag clear.
+
+An end-to-end rendered run of `Starcraft.exe ophelia terran1` confirmed mask
+`0x200`, mission selector `0x27`, and direct-launch flag `1`. It does not bypass
+the startup presentation/preload: the Shareware title remained visible, and
+the main thread repeatedly waited for all 61 Smacker work events while the
+decoder worker ran. That barrier eventually completed around batch 23,500,
+after which the game loaded both network providers and created another worker.
+The frame at batch 25,000 was still the title, and the next long synchronous
+guest batch did not return before the bounded 180-second run expired. Holding
+both window-key and DirectInput Escape did not avoid the preload. Thus
+`ophelia terran1` does select the first demo mission and should bypass the main
+menu after startup, but it is not a workaround for the current slow/non-
+preemptible startup decode path.
+
+## StarCraft native-install, preload, and gameplay follow-up
+
+All subsequent runs used the files produced by the original StarCraft
+Shareware installer, not Wine and not a pre-extracted third-party package. The
+installed tree is currently preserved at
+`/private/tmp/starcraft-native-install.J7GB4C/vfs/program files/starcraft shareware/`;
+it contains `starcraft.exe`, the 38 MB `stardatsw.mpq`, `storm.dll`,
+`smackw32.dll`, both network providers, and the remaining installed data. The
+test registry supplies the install path and CD-drive value expected by this
+build. [StormLib](https://github.com/ladislav-zezula/StormLib) is a useful
+modern primary reference for the MPQ container family, while the conclusions
+below come from disassembly and execution of this exact 1998 shareware build.
+
+The apparent post-preload hang had two independent causes. First, the decoder
+allowed a straight-line block to contain as many as 4,096 guest instructions,
+but `$next` retained only 1,000 threaded-handler calls and did not retain a
+resume IP. A generated block at `0x3ff60f8a` therefore restarted on every
+quantum. Splitting straight-line blocks after 256 decoded guest instructions
+preserves an exact EIP continuation and eliminates that replay. The focused
+regression executes a 1,200-instruction increment stream and verifies every
+increment occurs exactly once.
+
+Second, the original `VirtualFree` handler returned TRUE without removing a
+sparse map. Storm performs thousands of short-lived 64 KB reservations, often
+committing only the first 4 KB. After roughly 2,400 cycles, the 2,048-record
+sparse-map table was exhausted and Storm's `SBmpAllocLoadImage` reached its
+allocation failure at the source provenance `SBMP.CPP`, line 889. Exact sparse
+`MEM_RELEASE` now removes and compacts the matching map record, and reclaims
+the physical backing cursor when the released mapping is topmost. A 2,500
+cycle focused regression verifies that table slots and LIFO backing are
+recovered.
+
+Map-slot reclamation exposed a separate guest-address-space limit: reservations
+were still handed out monotonically from `0x40000000` down to `0x10000000`, and
+StarCraft reached that floor just before building the selected unit's command
+panel. The result was its `_CTRLNODE` critical-error dialog on the first unit
+or building selection. The dedicated DIB guest arena does not begin until
+`0x50000000`, so the sparse allocation ceiling now uses that exact boundary.
+This adds 256 MB without overlap or a change to the established reserve/commit
+mapping behavior. A more complete future allocator could recycle fragmented
+guest reservation holes; the bounded ceiling change intentionally does not
+introduce that larger semantic change.
+
+The late decompression hot path is scalar by construction. The profiled Storm
+routine at original `storm.dll` address `0x150288a0` updates a serial bit
+reservoir and follows a data-dependent Huffman node on every step. In batches
+29,500 through 30,000 it was entered 58,512 times, and its prologue accounted
+for 11.7% of sampled block entries. Each next address and bit count depends on
+the immediately previous result, so there is no independent lane set for a
+SIMD implementation; the repository also contained no SIMD variant of this
+path. The retained optimization is therefore a scalar superinstruction for
+the exact common no-refill path, with the rare refill callback reconstructed
+and resumed through the original guest code. Similar exact fusions cover the
+dominant indexed load/test, add/load/test, byte-decrement branch, shift branch,
+and Smacker Huffman-walk sequences. The focused handler suite covers their
+fast paths, fallbacks, flags, callback return, and long-block continuation.
+
+The corrected native run now completes the preload, loads `battle.snp` and
+`standard.snp`, presents the Terran mission briefing, accepts Start, renders
+the first mission, and dismisses the normal StarCraft Tips modal. StarCraft
+polls mouse-button state, so a synthetic press and release in the same harness
+batch can be missed; holding mouse-down across several guest batches matches a
+real browser click. At batch 1,220,000 an SCV selection produced its green
+selection ring, portrait, 60/60 health display, and command buttons. The game
+remained active through batch 1,350,000 with no `_CTRLNODE` error and with
+`virtual_alloc_top=0x1cbf0000`, still above the floor. Evidence images are:
+
+- `/private/tmp/sc12-clean.png` — unobstructed first Terran mission;
+- `/private/tmp/sc12-selected.png` — selected SCV and populated command panel;
+- `/private/tmp/sc12-final.png` — stable selected-unit gameplay later;
+- `/private/tmp/sc13-selected.png` and `/private/tmp/sc13-final.png` — repeated
+  native run confirming the interaction and continued simulation.
+
+The full build, handler-count/ESP gates, indexed-handler regression, and
+cross-instance sparse-map regression pass with these changes. The result
+establishes native emulator gameplay and normal mouse selection. The scripted
+`M` key plus target click did not visibly relocate the chosen SCV in the
+captured interval, so movement-command automation is not claimed here; the
+browser's real mouse state remains the correct next input oracle.
+
+## Fallout demo native archive and gameplay follow-up
+
+The Fallout demo was run from the repository's extracted copy of the original
+`falldemo.zip` distribution, whose readme explicitly describes unzipping the
+archive with directory names as the installation procedure. No Wine install or
+Wine runtime was used. The pinned package source is
+[Internet Archive: Fallout Demo](https://archive.org/download/FalloutDemo/falldemo.zip),
+with package SHA-1 `214c6b8931f75aa2a9a11f521a26b0cb8e565ad9`;
+the tested `Falldemo.exe` and `Falldemo.dat` SHA-1 values are respectively
+`e8340e0cf5604f7f2e916b8126446894f993307a` and
+`4d072c81d852287804e77ac951ba981d6ea84017`.
+
+The first strict launch failed at `Falldemo.exe` address `0x004a1c5a`, opcode
+`D4 0A`. The emulator had no AAM decoder or handler. The new general x86
+implementation divides AL by the encoded byte base, places the quotient in AH
+and remainder in AL, preserves EAX's upper half, publishes byte-width SF/ZF/PF,
+and raises the normal divide exception for a zero base. The real demo then
+finished opening `Falldemo.dat` and created its 640x480 DirectDraw window.
+
+Fallout next entered a timer-seed helper that writes control byte zero to PIT
+port `0x43` and reads the low/high bytes from channel-zero port `0x40`. The
+emulator now decodes the complete accumulator IN/OUT opcode family
+(`E4`-`E7`, `EC`-`EF`), models the latched PIT access used here, alternates VGA
+vertical-retrace status for legacy polling, and uses a conservative floating-
+bus value for other ports. Its following compiler helper exposed ordinary
+32-bit `ENTER 0x144,0`; level-zero 32-bit ENTER is now implemented while
+non-zero nesting remains fail-fast.
+
+The first input initially jumped to patterned address `0x39ac39a6`. This was
+not an input or DirectDraw defect. Fallout is a Watcom PE whose `.bss` section
+has `VirtualSize=0`, `SizeOfRawData=0x160200`,
+`PointerToRawData=0`, and `IMAGE_SCN_CNT_UNINITIALIZED_DATA`. The loader treated
+the raw-size field as copy length and copied 1.38 MB beginning at the DOS header
+into guest address `0x510000`. The optional input callback at `0x5fa560`, which
+must start as zero, consequently contained bytes `a6 39 ac 39`. PE section
+mapping now uses `max(VirtualSize, SizeOfRawData)` as the committed extent but
+zero-fills uninitialized/no-file-backing sections. A synthetic Watcom-style BSS
+regression locks this behavior down.
+
+With correct BSS state, Fallout requested `VirtualProtect` on its own code
+range `0x004aa97c..0x004b0e8c`. Wasm linear memory already has the effective
+read/write/execute capability required by this interpreter, so the handler now
+validates the call, reports the prior effective protection, and succeeds; no
+guest instructions are skipped. The resulting run performs hundreds of
+primary-surface lock/unlock operations, palette updates, DirectInput polls, and
+file reads, then renders the outdoor demo map with the player character and
+live HUD. Evidence images are:
+
+- `/private/tmp/fallout-vp-final.png` — the rendered outdoor starting map;
+- `/private/tmp/fallout-play-before.png` — repeat run at the same interactive
+  gameplay state;
+- `/private/tmp/fallout-play-after.png` and
+  `/private/tmp/fallout-play-late.png` — the held mouse action was delivered and
+  advanced the game into a normal fade/loading-cursor transition.
+
+The full WAT build, handler count/ESP checks, AAM/PIT/ENTER focused execution,
+PE FirstThunk+BSS regression, and cross-instance sparse-map regression all
+pass. The measured Fallout startup is file/decompression and asset setup into
+guest memory plus DirectDraw surfaces; it completes. It was not a permanent
+decompression hang.
+
+## Browser debug-launch follow-up
+
+Diablo, StarCraft Shareware, and the Fallout demo are now all present in the
+`?debug` app selector. Fallout launches from the original extracted demo
+distribution, fetches `Falldemo.dat`, creates its 640x480 DirectDraw surface,
+and renders the native main menu in Chromium. A trusted held Enter advances
+through New Game and the Max Stone equipment screen; after the bounded load,
+`/private/tmp/fallout-browser-character-confirm.png` captures live outdoor
+combat with the player and NPC sprites, floating dialogue, hit messages, and
+the weapon/AP/HUD controls. This establishes browser gameplay, not only menu
+rendering. Earlier browser stages remain at `/private/tmp/fallout-browser.png`
+and `/private/tmp/fallout-browser-enter-held.png`; native-emulator gameplay and
+accepted-input evidence remains `/private/tmp/fallout-play-before.png`,
+`/private/tmp/fallout-play-after.png`, and `/private/tmp/fallout-play-late.png`.
+
+StarCraft uses the tree produced by its original native installer, copied into
+the ignored local candidate directory
+`test/binaries/candidates/starcraft-shareware/installed/`. The browser mounts
+the installed files both at `C:\\` (the layout of the successful compatibility
+run) and at `C:\\Program Files\\Starcraft Shareware\\` (the path written by the
+installer), and seeds the install registry values before launch. The app
+command line remains `ophelia terran1 nosound`.
+
+The first browser manifest omitted the CD's 163,820,728-byte `Install.exe` and
+reliably reached StarCraft's own **Data File Error** dialog. Static strings in
+the exact shareware executable include root-relative `\\Install.exe` beside
+`StarCD`; the successful native run had that file mounted at the drive root.
+The corrected manifest therefore mounts the original CD file as
+`C:\\install.exe` rather than bypassing the check. Its SHA-256 is
+`8c8855f29d1fb3265727021381d82bf35555a736a27896d9f159c3f34bebe0a8`.
+
+With that correction Chromium renders the genuine StarCraft Shareware title,
+advances through its loading screen to the animated main menu, accepts a held
+browser click on **Single Player**, and creates the native `codex` player
+profile. Evidence images are:
+
+- `/private/tmp/starcraft-browser-with-cd.png` — corrected CD mount reaches the
+  shareware title instead of the data-file dialog;
+- `/private/tmp/starcraft-browser-multiskip.png` — fully rendered interactive
+  main menu;
+- `/private/tmp/starcraft-browser-campaign.png` — held browser click reaches
+  the Single Player registry/name dialog;
+- `/private/tmp/starcraft-browser-briefing.png` — typed profile created and
+  returned in the native registry list;
+- `/private/tmp/starcraft-browser-terran.png` — Terran mission briefing with
+  objectives and the live Start button;
+- `/private/tmp/starcraft-cursor-coalesce-before.png` and
+  `/private/tmp/starcraft-cursor-coalesce-after.png` — genuine first-mission
+  map and StarCraft Tips dialog before and after a ten-position browser cursor
+  burst.
+
+The latter run establishes browser gameplay: the emulated game has loaded the
+first Terran map, units and HUD and is waiting at its in-game Tips dialog. It
+also exposed a browser-input fidelity problem. Native Windows coalesces pending
+`WM_MOUSEMOVE` messages, but the renderer retained every browser pointer
+sample. StarCraft draws a software cursor into its sole canonical 640x480
+DirectDraw primary surface, so replaying a large backlog made it paint obsolete
+cursor positions and appear to leave trails. The renderer now replaces only an
+adjacent pending move for the same HWND, button state, and target. Mouse button
+edges, target crossings, and drag transitions remain ordering barriers. In the
+live verification, ten input positions produced one queued move, the queue
+drained to zero, and the final frame contained one cursor. The apparent dark
+lower bands are already present in StarCraft's canonical primary DIB rather
+than being Safari canvas retention; they are the dark 1998 game HUD regions,
+not additional browser cursor copies.

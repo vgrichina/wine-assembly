@@ -347,8 +347,47 @@
   (func $emit_load32 (param $dst i32) (local $a i32)
     (call $apply_seg_override)
     (if (call $mr_simple_base)
-      (then (call $te (i32.add (i32.const 339) (global.get $mr_base)) (local.get $dst))
-            (call $te_raw (global.get $mr_disp)) (return)))
+      (then
+        ;; Smacker's Huffman builder repeatedly emits exactly
+        ;;   mov eax,[edx+disp] / test eax,imm32
+        ;; Fuse the flag-neutral load with its TEST. Keep the match exact and
+        ;; flat/unprefixed so segmented and address-size forms retain their
+        ;; ordinary decoder paths.
+        (if (i32.and
+              (i32.and
+                (i32.eqz (global.get $code16))
+                (i32.eqz (global.get $d_addr16)))
+              (i32.and
+                (i32.eqz (global.get $d_seg))
+                (i32.and
+                  (i32.eq (local.get $dst) (i32.const 0))
+                  (i32.and
+                    (i32.eq (global.get $mr_base) (i32.const 2))
+                    (i32.eq (call $gl8 (global.get $d_pc)) (i32.const 0xA9))))))
+          (then
+            (call $te (i32.const 391) (i32.const 0))
+            (call $te_raw (global.get $mr_disp))
+            (call $te_raw (call $gl32 (i32.add (global.get $d_pc) (i32.const 1))))
+            (global.set $d_pc (i32.add (global.get $d_pc) (i32.const 5)))
+            (return)))
+        (call $te (i32.add (i32.const 339) (global.get $mr_base)) (local.get $dst))
+        (call $te_raw (global.get $mr_disp))
+        (return)))
+    ;; Indexed SIB loads dominate generated Smacker conversion loops. Encode
+    ;; the load in compute_ea_sib so the hot path needs one threaded dispatch
+    ;; and no SIB_SENTINEL word. Absolute and segmented forms stay unchanged.
+    (if (i32.and
+          (i32.eqz (global.get $code16))
+          (i32.eqz (call $mr_absolute)))
+      (then
+        (call $te (i32.const 389) (local.get $dst))
+        (call $te_raw (i32.or
+          (if (result i32) (i32.ne (global.get $mr_base) (i32.const -1))
+            (then (global.get $mr_base)) (else (i32.const 0xF)))
+          (i32.or (i32.shl (global.get $mr_index) (i32.const 4))
+                  (i32.shl (global.get $mr_scale) (i32.const 8)))))
+        (call $te_raw (global.get $mr_disp))
+        (return)))
     (local.set $a (call $emit_sib_or_abs))
     (call $te (i32.const 20) (local.get $dst)) (call $te_raw (local.get $a)))
 
@@ -393,6 +432,63 @@
     (local.set $a (call $emit_sib_or_abs))
     (call $te (i32.const 25) (local.get $src)) (call $te_raw (local.get $a)))
 
+  ;; Emit an indexed SIB LEA, folding a following unprefixed indexed SIB LEA.
+  ;; This bounded lookahead handles the ordinary mod=00/01/10 encodings and
+  ;; leaves prefixes, register operands, and non-SIB forms to the main decoder.
+  (func $emit_lea_sib (param $dst i32)
+    (local $info1 i32) (local $disp1 i32) (local $opcode i32) (local $modrm i32)
+    (local $mod i32) (local $sib i32) (local $base i32) (local $index i32)
+    (local $info2 i32) (local $disp2 i32) (local $len i32) (local $dst2 i32)
+    (local.set $info1 (i32.or
+      (if (result i32) (i32.ne (global.get $mr_base) (i32.const -1))
+        (then (global.get $mr_base)) (else (i32.const 0xF)))
+      (i32.or (i32.shl (global.get $mr_index) (i32.const 4))
+              (i32.shl (global.get $mr_scale) (i32.const 8)))))
+    (local.set $disp1 (global.get $mr_disp))
+    (local.set $opcode (call $gl8 (global.get $d_pc)))
+    (local.set $modrm (call $gl8 (i32.add (global.get $d_pc) (i32.const 1))))
+    (local.set $mod (i32.shr_u (local.get $modrm) (i32.const 6)))
+    (if (i32.and
+          (i32.and
+            (i32.eq (local.get $opcode) (i32.const 0x8D))
+            (i32.ne (local.get $mod) (i32.const 3)))
+          (i32.eq (i32.and (local.get $modrm) (i32.const 7)) (i32.const 4)))
+      (then
+        (local.set $sib (call $gl8 (i32.add (global.get $d_pc) (i32.const 2))))
+        (local.set $index (i32.and (i32.shr_u (local.get $sib) (i32.const 3)) (i32.const 7)))
+        (if (i32.ne (local.get $index) (i32.const 4))
+          (then
+            (local.set $base (i32.and (local.get $sib) (i32.const 7)))
+            (local.set $info2 (i32.or
+              (if (result i32) (i32.and
+                    (i32.eqz (local.get $mod))
+                    (i32.eq (local.get $base) (i32.const 5)))
+                (then (i32.const 0xF)) (else (local.get $base)))
+              (i32.or (i32.shl (local.get $index) (i32.const 4))
+                      (i32.shl (i32.and (local.get $sib) (i32.const 0xC0)) (i32.const 2)))))
+            (local.set $len (i32.const 3))
+            (if (i32.eq (local.get $mod) (i32.const 1))
+              (then
+                (local.set $disp2 (i32.extend8_s (call $gl8 (i32.add (global.get $d_pc) (i32.const 3)))))
+                (local.set $len (i32.const 4))))
+            (if (i32.or
+                  (i32.eq (local.get $mod) (i32.const 2))
+                  (i32.and (i32.eqz (local.get $mod)) (i32.eq (local.get $base) (i32.const 5))))
+              (then
+                (local.set $disp2 (call $gl32 (i32.add (global.get $d_pc) (i32.const 3))))
+                (local.set $len (i32.const 7))))
+            (local.set $dst2 (i32.and (i32.shr_u (local.get $modrm) (i32.const 3)) (i32.const 7)))
+            (call $te (i32.const 390) (i32.or (local.get $dst) (i32.shl (local.get $dst2) (i32.const 4))))
+            (call $te_raw (local.get $info1))
+            (call $te_raw (local.get $disp1))
+            (call $te_raw (local.get $info2))
+            (call $te_raw (local.get $disp2))
+            (global.set $d_pc (i32.add (global.get $d_pc) (local.get $len)))
+            (return)))))
+    (call $te (i32.const 148) (local.get $dst))
+    (call $te_raw (local.get $info1))
+    (call $te_raw (local.get $disp1)))
+
   (func $emit_lea (param $dst i32)
     ;; LEA computes address without memory access
     (call $apply_seg_override)
@@ -415,14 +511,7 @@
     ;; SIB with index: use th_lea_sib (handler 148)
     (if (i32.ne (global.get $mr_index) (i32.const -1))
       (then
-        (call $te (i32.const 148) (local.get $dst))
-        ;; Encode: base (0xF if none) | index<<4 | scale<<8
-        (call $te_raw (i32.or
-          (if (result i32) (i32.ne (global.get $mr_base) (i32.const -1))
-            (then (global.get $mr_base)) (else (i32.const 0xF)))
-          (i32.or (i32.shl (global.get $mr_index) (i32.const 4))
-                  (i32.shl (global.get $mr_scale) (i32.const 8)))))
-        (call $te_raw (global.get $mr_disp))
+        (call $emit_lea_sib (local.get $dst))
         (return)))
     ;; Absolute: LEA reg, [const] = MOV reg, const
     (call $te (i32.const 2) (local.get $dst)) (call $te_raw (global.get $mr_disp)))
@@ -779,6 +868,104 @@
     (call $te (i32.const 267) (i32.const 0))
     (call $te_raw (local.get $a)))
 
+  ;; Match the exact 40 bytes following Smacker's leading FE opcode. Keeping
+  ;; the signature in one helper makes the hot decoder branch readable and
+  ;; ensures a near-match always falls back to ordinary i486 decoding.
+  (func $match_smack_huff_walk (result i32)
+    (local $counter_addr i32)
+    (if (i32.ne (call $gl8 (global.get $d_pc)) (i32.const 0x0D))
+      (then (return (i32.const 0))))
+    (local.set $counter_addr
+      (call $gl32 (i32.add (global.get $d_pc) (i32.const 1))))
+    (if (i32.ne (call $gl8 (i32.add (global.get $d_pc) (i32.const 5))) (i32.const 0x75))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl8 (i32.add (global.get $d_pc) (i32.const 6))) (i32.const 0x0C))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl16 (i32.add (global.get $d_pc) (i32.const 7))) (i32.const 0x2E8B))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (global.get $d_pc) (i32.const 9))) (i32.const 0xC604C683))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl8 (i32.add (global.get $d_pc) (i32.const 13))) (i32.const 0x05))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (global.get $d_pc) (i32.const 14))) (local.get $counter_addr))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl8 (i32.add (global.get $d_pc) (i32.const 18))) (i32.const 0x20))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (global.get $d_pc) (i32.const 19))) (i32.const 0x7201EDC1))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl8 (i32.add (global.get $d_pc) (i32.const 23))) (i32.const 0x05))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl8 (i32.add (global.get $d_pc) (i32.const 24))) (i32.const 0xB8))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (global.get $d_pc) (i32.const 25))) (i32.const 4))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (global.get $d_pc) (i32.const 29))) (i32.const 0x028BD003))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl8 (i32.add (global.get $d_pc) (i32.const 33))) (i32.const 0xA9))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (global.get $d_pc) (i32.const 34))) (i32.const 0x80000000))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl16 (i32.add (global.get $d_pc) (i32.const 38))) (i32.const 0xD774))
+      (then (return (i32.const 0))))
+    (i32.const 1))
+
+  ;; Match Storm.dll's 144-byte PKWARE bit-reservoir helper. The signature has
+  ;; no relocated addresses: check its complete prologue/fast path and the
+  ;; entire common slow-path tail. This is deliberately an exact compiler-code
+  ;; superinstruction, not a general CALL peephole.
+  (func $match_storm_bitreader (result i32)
+    (local $p i32)
+    (local.set $p (global.get $d_pc))
+    (if (i32.ne (call $gl32 (local.get $p)) (i32.const 0x748B5653))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 4))) (i32.const 0x8B570C24))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 8))) (i32.const 0x8B14245C))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 12))) (i32.const 0xC33B1846))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 16))) (i32.const 0xCB8A1072))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 20))) (i32.const 0x895FC32B))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 24))) (i32.const 0x6ED31846))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 28))) (i32.const 0x5EC03314))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 32))) (i32.const 0xC88AC35B))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 36))) (i32.const 0xD31C7E8D))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 40))) (i32.const 0x468B146E))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 44))) (i32.const 0x75073920))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 96))) (i32.const 0x8AD23307))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 100))) (i32.const 0x22340694))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 104))) (i32.const 0x8B400000))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 108))) (i32.const 0x08E2C1CB))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 112))) (i32.const 0x560B0789))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 116))) (i32.const 0x18468B14))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 120))) (i32.const 0x5689C82A))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 124))) (i32.const 0x5FC32B14))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 128))) (i32.const 0xC083EAD3))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 132))) (i32.const 0x14568908))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 136))) (i32.const 0x33184689))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 140))) (i32.const 0xC35B5EC0))
+      (then (return (i32.const 0))))
+    (i32.const 1))
+
   ;; ============================================================
   ;; DECODE BLOCK
   ;; ============================================================
@@ -868,19 +1055,33 @@
     (block $exit (loop $decode
       (br_if $exit (local.get $done))
 
-      ;; A basic block ends at the first branch, call, return or interrupt, so
-      ;; real code cannot run thousands of instructions without one. Passing
-      ;; this cap means the decoder has lost the instruction stream and is
-      ;; emitting forever, which fills the 4MB arena and then keeps going.
-      ;; Say so here, where the entry EIP and the current decode position are
-      ;; both still known, instead of surfacing as a wild EIP much later.
-      (local.set $icount (i32.add (local.get $icount) (i32.const 1)))
-      (if (i32.gt_u (local.get $icount) (i32.const 4096))
+      ;; Storm's scalar MPQ decompressor calls this tiny helper tens of
+      ;; thousands of times per rendered frame load. It is always entered at a
+      ;; basic-block boundary, so recognize the whole exact helper before the
+      ;; ordinary per-instruction decoder consumes its first PUSH.
+      (if (i32.and
+            (i32.eqz (local.get $icount))
+            (i32.eqz (global.get $code16)))
         (then
-          (call $host_log_i32 (i32.const 0xCA00B10C))  ;; runaway block
-          (call $host_log_i32 (local.get $start_eip))
-          (call $host_log_i32 (global.get $d_pc))
-          (unreachable)))
+          (if (call $match_storm_bitreader)
+            (then
+              (call $te (i32.const 396)
+                (i32.add (global.get $d_pc) (i32.const 0x31)))
+              (local.set $done (i32.const 1))
+              (br $decode)))))
+
+      ;; Most compiler basic blocks are short, but runtime generators can emit
+      ;; thousands of straight-line instructions. $next has a 1000-handler
+      ;; preemption quantum and does not retain $ip after it returns; allowing
+      ;; a decoded block to exceed that quantum replays it from start_eip on
+      ;; every host turn. Split at a real instruction boundary with ordinary
+      ;; block_end semantics. 256 guest instructions leave ample room for the
+      ;; few instructions that emit two or three threaded handlers.
+      (local.set $icount (i32.add (local.get $icount) (i32.const 1)))
+      (if (i32.gt_u (local.get $icount) (i32.const 256))
+        (then
+          (call $te (i32.const 45) (global.get $d_pc))
+          (br $exit)))
 
       ;; Reset prefixes
       (local.set $prefix_rep (i32.const 0))
@@ -1087,8 +1288,33 @@
                           (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg)))))))
                   (else ;; 32-bit (odd opcode)
                     (if (i32.and (local.get $op) (i32.const 2))
-                      (then (call $te (i32.add (i32.const 12) (local.get $imm))
-                        (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))
+                      (then
+                        ;; Smacker's hottest tree walk is the exact unprefixed
+                        ;; sequence 03 d0 / 8b 02 / a9 imm32. TEST overwrites
+                        ;; ADD's flags, so one handler can preserve all live
+                        ;; register, memory, and final-flag state.
+                        (if (i32.and
+                              (i32.and
+                                (i32.eqz (local.get $prefix_rep))
+                                (i32.eqz (local.get $prefix_seg)))
+                              (i32.and
+                                (i32.eqz (local.get $prefix_67))
+                                (i32.and
+                                  (i32.eqz (local.get $imm))
+                                  (i32.and
+                                    (i32.eq (global.get $mr_reg) (i32.const 2))
+                                    (i32.and
+                                      (i32.eqz (global.get $mr_val))
+                                      (i32.and
+                                        (i32.eq (call $gl16 (global.get $d_pc)) (i32.const 0x028B))
+                                        (i32.eq (call $gl8 (i32.add (global.get $d_pc) (i32.const 2))) (i32.const 0xA9))))))))
+                          (then
+                            (call $te (i32.const 392) (i32.const 0))
+                            (call $te_raw (call $gl32 (i32.add (global.get $d_pc) (i32.const 3))))
+                            (global.set $d_pc (i32.add (global.get $d_pc) (i32.const 7))))
+                          (else
+                            (call $te (i32.add (i32.const 12) (local.get $imm))
+                              (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))))
                       (else (call $te (i32.add (i32.const 12) (local.get $imm))
                         (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))))))
                 (else ;; byte (even opcode) — use r8 handler 153
@@ -1507,6 +1733,54 @@
       ;; ---- 0xFE: Group 4 (INC/DEC r/m8) ----
       (if (i32.eq (local.get $op) (i32.const 0xFE))
         (then
+          ;; Four Smacker decode paths contain the same complete Huffman walk.
+          ;; It starts at this FE and ends 40 following bytes later. Execute
+          ;; it through the bounded handler before considering the shorter
+          ;; DEC/JNZ pair below.
+          (if (i32.and
+                (i32.and
+                  (i32.eqz (global.get $code16))
+                  (i32.and (i32.eqz (local.get $prefix_66))
+                           (i32.eqz (local.get $prefix_67))))
+                (i32.and
+                  (i32.and (i32.eqz (local.get $prefix_rep))
+                           (i32.eqz (local.get $prefix_seg)))
+                  (call $match_smack_huff_walk)))
+            (then
+              (local.set $a (call $gl32 (i32.add (global.get $d_pc) (i32.const 1))))
+              (local.set $imm (i32.sub (global.get $d_pc) (i32.const 1)))
+              (global.set $d_pc (i32.add (global.get $d_pc) (i32.const 40)))
+              (call $te (i32.const 395) (local.get $a))
+              (call $te_raw (local.get $imm))
+              (call $te_raw (global.get $d_pc))
+              (local.set $done (i32.const 1))
+              (br $decode)))
+          ;; Exact unprefixed `FE 0D abs32 / 75 rel8`: Smacker's bit-count
+          ;; refill loop. DEC defines the ZF consumed by JNZ, so this pair can
+          ;; end the block in one handler while retaining every DEC flag.
+          (if (i32.and
+                (i32.and
+                  (i32.eqz (global.get $code16))
+                  (i32.and (i32.eqz (local.get $prefix_66))
+                           (i32.eqz (local.get $prefix_67))))
+                (i32.and
+                  (i32.and (i32.eqz (local.get $prefix_rep))
+                           (i32.eqz (local.get $prefix_seg)))
+                  (i32.and
+                    (i32.eq (call $gl8 (global.get $d_pc)) (i32.const 0x0D))
+                    (i32.eq (call $gl8 (i32.add (global.get $d_pc) (i32.const 5)))
+                            (i32.const 0x75)))))
+            (then
+              (local.set $a (call $gl32 (i32.add (global.get $d_pc) (i32.const 1))))
+              (local.set $disp
+                (call $sign_ext8
+                  (call $gl8 (i32.add (global.get $d_pc) (i32.const 6)))))
+              (global.set $d_pc (i32.add (global.get $d_pc) (i32.const 7)))
+              (call $te (i32.const 393) (local.get $a))
+              (call $te_raw (global.get $d_pc))
+              (call $te_raw (call $branch_target (local.get $disp)))
+              (local.set $done (i32.const 1))
+              (br $decode)))
           (call $decode_modrm)
           (if (i32.eq (global.get $mr_reg) (i32.const 0)) ;; INC r/m8
             (then
@@ -1642,6 +1916,41 @@
       ;; ---- 0xC0/0xC1: Shift group 2, imm8 ----
       (if (i32.or (i32.eq (local.get $op) (i32.const 0xC0)) (i32.eq (local.get $op) (i32.const 0xC1)))
         (then
+          ;; Exact unprefixed `C1 ED 01 / 72|73 rel8`: SHR EBP,1 followed by
+          ;; JB/JAE in Smacker's Huffman walkers. Both successors observe the
+          ;; same shift flags, so the pair is safely block-ending.
+          (if (i32.and
+                (i32.eq (local.get $op) (i32.const 0xC1))
+                (i32.and
+                  (i32.and
+                    (i32.eqz (global.get $code16))
+                    (i32.and (i32.eqz (local.get $prefix_66))
+                             (i32.eqz (local.get $prefix_67))))
+                  (i32.and
+                    (i32.and (i32.eqz (local.get $prefix_rep))
+                             (i32.eqz (local.get $prefix_seg)))
+                    (i32.and
+                      (i32.and
+                        (i32.eq (call $gl8 (global.get $d_pc)) (i32.const 0xED))
+                        (i32.eq (call $gl8 (i32.add (global.get $d_pc) (i32.const 1)))
+                                (i32.const 1)))
+                      (i32.and
+                        (i32.ge_u (call $gl8 (i32.add (global.get $d_pc) (i32.const 2)))
+                                  (i32.const 0x72))
+                        (i32.le_u (call $gl8 (i32.add (global.get $d_pc) (i32.const 2)))
+                                  (i32.const 0x73)))))))
+            (then
+              (local.set $imm
+                (call $gl8 (i32.add (global.get $d_pc) (i32.const 2))))
+              (local.set $disp
+                (call $sign_ext8
+                  (call $gl8 (i32.add (global.get $d_pc) (i32.const 3)))))
+              (global.set $d_pc (i32.add (global.get $d_pc) (i32.const 4)))
+              (call $te (i32.const 394) (i32.sub (local.get $imm) (i32.const 0x72)))
+              (call $te_raw (global.get $d_pc))
+              (call $te_raw (call $branch_target (local.get $disp)))
+              (local.set $done (i32.const 1))
+              (br $decode)))
           (call $decode_modrm)
           (local.set $imm (call $d_fetch8))
           (if (i32.eq (local.get $op) (i32.const 0xC0))
@@ -1901,6 +2210,7 @@
           (br $decode)))
       (if (i32.eq (local.get $op) (i32.const 0x9E)) (then (call $te (i32.const 212) (i32.const 0)) (br $decode))) ;; SAHF
       (if (i32.eq (local.get $op) (i32.const 0x9F)) (then (call $te (i32.const 213) (i32.const 0)) (br $decode))) ;; LAHF
+      (if (i32.eq (local.get $op) (i32.const 0xD4)) (then (call $te (i32.const 397) (call $d_fetch8)) (br $decode))) ;; AAM imm8
       (if (i32.eq (local.get $op) (i32.const 0xD7)) (then (call $te (i32.const 280) (i32.const 0)) (br $decode))) ;; XLAT
       (if (i32.eq (local.get $op) (i32.const 0x99)) ;; CDQ / CWD
         (then (if (local.get $prefix_66)
@@ -1917,20 +2227,47 @@
       (if (i32.eq (local.get $op) (i32.const 0xF8)) (then (call $te (i32.const 110) (i32.const 0)) (br $decode))) ;; CLC
       (if (i32.eq (local.get $op) (i32.const 0xF9)) (then (call $te (i32.const 111) (i32.const 0)) (br $decode))) ;; STC
       (if (i32.eq (local.get $op) (i32.const 0xF5)) (then (call $te (i32.const 112) (i32.const 0)) (br $decode))) ;; CMC
+      ;; IN/OUT accumulator forms. Immediate-port opcodes E4..E7 carry the
+      ;; port in bits 8..15; EC..EF read DX at execution time. Bit 16 records
+      ;; the operand-size override for AX versus EAX.
+      (if (i32.and
+            (i32.ge_u (local.get $op) (i32.const 0xE4))
+            (i32.le_u (local.get $op) (i32.const 0xEF)))
+        (then
+          (if (i32.or
+                (i32.lt_u (local.get $op) (i32.const 0xE8))
+                (i32.ge_u (local.get $op) (i32.const 0xEC)))
+            (then
+              (local.set $imm
+                (i32.or
+                  (local.get $op)
+                  (i32.shl (local.get $prefix_66) (i32.const 16))))
+              (if (i32.lt_u (local.get $op) (i32.const 0xE8))
+                (then
+                  (local.set $imm
+                    (i32.or
+                      (local.get $imm)
+                      (i32.shl (call $d_fetch8) (i32.const 8))))))
+              (call $te (i32.const 398) (local.get $imm))
+              (br $decode)))))
       ;; ---- 0xC8: ENTER imm16, imm8 ----
       ;; The standard 16-bit compiled prologue. A non-zero nesting level would
       ;; additionally copy the display, which no compiler of this era emits and
       ;; which is better refused than approximated.
       (if (i32.eq (local.get $op) (i32.const 0xC8))
         (then
-          (call $win16_only (local.get $op))
           (local.set $imm (call $d_fetch16))
-          (if (call $d_fetch8)
+          (local.set $disp (call $d_fetch8))
+          (if (local.get $disp)
             (then
               (call $host_log_i32 (i32.const 0xCA165E0C)) ;; ENTER with nesting level
               (call $host_log_i32 (global.get $d_pc))
               (unreachable)))
-          (call $te (i32.const 383) (local.get $imm))
+          (call $te
+            (if (result i32) (global.get $code16)
+              (then (i32.const 383))
+              (else (i32.const 399)))
+            (local.get $imm))
           (br $decode)))
       (if (i32.eq (local.get $op) (i32.const 0xC9))
         (then (call $te (if (result i32) (global.get $code16) (then (i32.const 384)) (else (i32.const 113)))

@@ -27,6 +27,18 @@ const extraWat = String.raw`
       (i32.const 0) (local.get $size) (i32.const 0x2000)
       (i32.const 0x04) (i32.const 0) (i32.const 0))
     (global.get $eax))
+  (func (export "test_virtual_alloc_commit") (param $size i32) (result i32)
+    (global.set $esp (i32.const 0x00500000))
+    (call $handle_VirtualAlloc
+      (i32.const 0) (local.get $size) (i32.const 0x3000)
+      (i32.const 0x04) (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_virtual_free") (param $guest i32) (result i32)
+    (global.set $esp (i32.const 0x00500000))
+    (call $handle_VirtualFree
+      (local.get $guest) (i32.const 0) (i32.const 0x8000)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
   (func (export "test_virtual_commit") (param $guest i32) (param $size i32) (result i32)
     (call $virtual_map_commit (local.get $guest) (local.get $size)))
   (func (export "test_sparse_heap_alloc") (param $size i32) (result i32)
@@ -73,7 +85,7 @@ async function main() {
 
   const graphicsSize = 0x00a90000;
   const graphicsBase = main.test_virtual_alloc_null(graphicsSize) >>> 0;
-  assert.strictEqual(graphicsBase, 0x3f570000,
+  assert.strictEqual(graphicsBase, 0x4f570000,
     'the first reservation should retain the legacy high-arena address');
 
   // Model Blobby's exact order: the main thread reserves its graphics arena
@@ -96,6 +108,22 @@ async function main() {
     'the coalesced sparse map should begin at the worker heap reservation');
   assert.strictEqual(state.getUint32(0x07f02414, true), graphicsSize + 0x00100000,
     'the coalesced sparse map should cover each reservation exactly once');
+
+  // Storm's image preload performs more than 2048 short-lived reserve/commit
+  // cycles. Returning success from VirtualFree without removing mappings made
+  // the 2049th allocation fail despite every prior block having been released.
+  main.test_virtual_reset();
+  for (let i = 0; i < 2500; i++) {
+    const block = main.test_virtual_alloc_commit(0x1000) >>> 0;
+    assert.notStrictEqual(block, 0,
+      `short-lived sparse allocation ${i} must not exhaust map slots`);
+    assert.strictEqual(main.test_virtual_free(block) >>> 0, 1,
+      `MEM_RELEASE ${i} should succeed`);
+  }
+  assert.strictEqual(state.getUint32(0x07f02400, true), 0,
+    'released sparse mappings must recover their table slots');
+  assert.strictEqual(state.getUint32(0x07f02404, true), 0x08000000,
+    'LIFO sparse releases must recover their topmost backing extent');
 
   console.log('PASS  cross-instance sparse reservations remain disjoint');
 }

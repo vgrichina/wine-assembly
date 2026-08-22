@@ -395,6 +395,54 @@
     (global.set $virtual_alloc_top (local.get $guest))
     (local.get $guest))
 
+  ;; Remove an exact sparse mapping on VirtualFree(..., MEM_RELEASE). Compact
+  ;; the live prefix so g2w's linear scan and MAX_VIRTUAL_MAPS bound keep their
+  ;; existing representation. Backing is a bump arena, therefore only the
+  ;; most recently committed extent can be reclaimed without a free list; all
+  ;; other releases still recover their map-table slot immediately.
+  (func $virtual_map_release (param $guest i32) (result i32)
+    (local $count i32) (local $i i32) (local $rec i32) (local $last i32)
+    (local $last_rec i32) (local $size i32) (local $backing i32)
+    (local $backing_ptr i32)
+    (local.set $count (i32.load (global.get $VIRTUAL_MAP_STATE)))
+    (local.set $i (i32.const 0))
+    (block $not_found (loop $scan
+      (br_if $not_found (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $rec
+        (i32.add (global.get $VIRTUAL_MAP_TABLE)
+          (i32.shl (local.get $i) (i32.const 4))))
+      (if (i32.eq (i32.load (local.get $rec)) (local.get $guest))
+        (then
+          (local.set $size (i32.load (i32.add (local.get $rec) (i32.const 4))))
+          (local.set $backing (i32.load (i32.add (local.get $rec) (i32.const 8))))
+          (local.set $backing_ptr
+            (i32.load (i32.add (global.get $VIRTUAL_MAP_STATE) (i32.const 4))))
+          (if (i32.eq
+                (i32.add (local.get $backing) (local.get $size))
+                (local.get $backing_ptr))
+            (then
+              (i32.store (i32.add (global.get $VIRTUAL_MAP_STATE) (i32.const 4))
+                (local.get $backing))))
+          (local.set $last (i32.sub (local.get $count) (i32.const 1)))
+          (local.set $last_rec
+            (i32.add (global.get $VIRTUAL_MAP_TABLE)
+              (i32.shl (local.get $last) (i32.const 4))))
+          (if (i32.ne (local.get $i) (local.get $last))
+            (then
+              (i32.store (local.get $rec) (i32.load (local.get $last_rec)))
+              (i32.store offset=4 (local.get $rec) (i32.load offset=4 (local.get $last_rec)))
+              (i32.store offset=8 (local.get $rec) (i32.load offset=8 (local.get $last_rec)))
+              (i32.store offset=12 (local.get $rec) (i32.load offset=12 (local.get $last_rec)))))
+          (i32.store (local.get $last_rec) (i32.const 0))
+          (i32.store offset=4 (local.get $last_rec) (i32.const 0))
+          (i32.store offset=8 (local.get $last_rec) (i32.const 0))
+          (i32.store offset=12 (local.get $last_rec) (i32.const 0))
+          (i32.store (global.get $VIRTUAL_MAP_STATE) (local.get $last))
+          (return (i32.const 1))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
   ;; HeapAlloc starts in the low direct guest window for compatibility, then
   ;; spills to sparse high guest chunks when that window reaches emulator-private
   ;; memory. This keeps Windows heap pointers valid without moving code caches.

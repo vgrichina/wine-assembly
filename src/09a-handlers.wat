@@ -1248,8 +1248,17 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
 
-  ;; 39: VirtualFree — return TRUE (no real decommit needed)
+  ;; 39: VirtualFree. A sparse MEM_RELEASE must recover its map-table slot;
+  ;; otherwise allocation-heavy loaders eventually hit MAX_VIRTUAL_MAPS even
+  ;; though every corresponding Windows allocation was freed successfully.
+  ;; Decommit and low/direct mappings need no backing operation here.
   (func $handle_VirtualFree (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.and
+          (i32.and
+            (i32.ge_u (local.get $arg0) (global.get $VIRTUAL_ALLOC_MIN))
+            (i32.eqz (local.get $arg1)))
+          (i32.ne (i32.and (local.get $arg2) (i32.const 0x8000)) (i32.const 0)))
+      (then (drop (call $virtual_map_release (local.get $arg0)))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
@@ -8559,9 +8568,22 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
-  ;; 532: VirtualProtect — STUB: unimplemented
+  ;; VirtualProtect(lpAddress, dwSize, flNewProtect, lpflOldProtect).
+  ;; The interpreter's linear memory has no host page-permission distinction,
+  ;; so a valid committed/direct guest range is already readable, writable,
+  ;; and executable. Publish that effective prior protection and accept the
+  ;; requested mode; generated/self-modifying code is handled by cache guards.
   (func $handle_VirtualProtect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (if (i32.or
+          (i32.eqz (local.get $arg0))
+          (i32.or (i32.eqz (local.get $arg1)) (i32.eqz (local.get $arg3))))
+      (then
+        (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
+        (global.set $eax (i32.const 0)))
+      (else
+        (call $gs32 (local.get $arg3) (i32.const 0x40)) ;; PAGE_EXECUTE_READWRITE
+        (global.set $eax (i32.const 1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; VirtualQuery(lpAddress, lpBuffer, dwLength) → SIZE_T

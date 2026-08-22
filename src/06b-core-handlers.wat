@@ -26,6 +26,15 @@
     (global.set $esp (global.get $ebp))
     (global.set $ebp (call $gl32 (global.get $esp)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return_call $next))
+  ;; 399: ENTER imm16,0 — the ordinary 32-bit compiler frame prologue.
+  ;; Non-zero nesting levels are rejected by the decoder.
+  (func $th_enter (param $op i32)
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $ebp))
+    (global.set $ebp (global.get $esp))
+    (global.set $esp
+      (i32.sub (global.get $esp) (i32.and (local.get $op) (i32.const 0xFFFF))))
+    (return_call $next))
   (func $th_nop2 (param $op i32) (return_call $next))
   (func $th_bswap (param $op i32)
     (local $v i32) (local.set $v (call $get_reg (local.get $op)))
@@ -308,6 +317,353 @@
         (call $set_reg8
           (i32.and (local.get $op) (i32.const 7))
           (call $gl8 (global.get $ea_temp)))))
+    (return_call $next))
+
+  ;; 389: MOV r32,[base+index*scale+disp]. This is deliberately separate from
+  ;; handler 149: StarCraft's generated Smacker converter executes indexed
+  ;; dword loads millions of times, while adding another mode branch to the
+  ;; generic SIB handler slows every other SIB operation.
+  (func $th_load32_sib (param $op i32)
+    (local $info i32) (local $base_val i32) (local $index_val i32) (local $scale i32) (local $disp i32)
+    (local.set $info (call $read_thread_word))
+    (local.set $disp (call $read_thread_word))
+    (if (i32.ne (i32.and (local.get $info) (i32.const 0xF)) (i32.const 0xF))
+      (then (local.set $base_val (call $get_reg (i32.and (local.get $info) (i32.const 0xF))))))
+    (if (i32.ne (i32.and (i32.shr_u (local.get $info) (i32.const 4)) (i32.const 0xF)) (i32.const 0xF))
+      (then
+        (local.set $scale (i32.and (i32.shr_u (local.get $info) (i32.const 8)) (i32.const 3)))
+        (local.set $index_val (i32.shl
+          (call $get_reg (i32.and (i32.shr_u (local.get $info) (i32.const 4)) (i32.const 0xF)))
+          (local.get $scale)))))
+    (call $set_reg (local.get $op)
+      (call $gl32 (i32.add (i32.add (local.get $base_val) (local.get $index_val)) (local.get $disp))))
+    (return_call $next))
+
+  ;; 390: two adjacent SIB LEAs. Words are info1, disp1, info2, disp2 and the
+  ;; destination registers are packed into op. The second address is computed
+  ;; after committing the first result, preserving dependent LEA semantics.
+  (func $th_lea_sib_pair (param $op i32)
+    (local $info1 i32) (local $disp1 i32) (local $info2 i32) (local $disp2 i32)
+    (local $base_val i32) (local $index_val i32) (local $scale i32)
+    (local.set $info1 (call $read_thread_word))
+    (local.set $disp1 (call $read_thread_word))
+    (local.set $info2 (call $read_thread_word))
+    (local.set $disp2 (call $read_thread_word))
+    (if (i32.ne (i32.and (local.get $info1) (i32.const 0xF)) (i32.const 0xF))
+      (then (local.set $base_val (call $get_reg (i32.and (local.get $info1) (i32.const 0xF))))))
+    (if (i32.ne (i32.and (i32.shr_u (local.get $info1) (i32.const 4)) (i32.const 0xF)) (i32.const 0xF))
+      (then
+        (local.set $scale (i32.and (i32.shr_u (local.get $info1) (i32.const 8)) (i32.const 3)))
+        (local.set $index_val (i32.shl
+          (call $get_reg (i32.and (i32.shr_u (local.get $info1) (i32.const 4)) (i32.const 0xF)))
+          (local.get $scale)))))
+    (call $set_reg (i32.and (local.get $op) (i32.const 7))
+      (i32.add (i32.add (local.get $base_val) (local.get $index_val)) (local.get $disp1)))
+    (local.set $base_val (i32.const 0))
+    (local.set $index_val (i32.const 0))
+    (if (i32.ne (i32.and (local.get $info2) (i32.const 0xF)) (i32.const 0xF))
+      (then (local.set $base_val (call $get_reg (i32.and (local.get $info2) (i32.const 0xF))))))
+    (if (i32.ne (i32.and (i32.shr_u (local.get $info2) (i32.const 4)) (i32.const 0xF)) (i32.const 0xF))
+      (then
+        (local.set $scale (i32.and (i32.shr_u (local.get $info2) (i32.const 8)) (i32.const 3)))
+        (local.set $index_val (i32.shl
+          (call $get_reg (i32.and (i32.shr_u (local.get $info2) (i32.const 4)) (i32.const 0xF)))
+          (local.get $scale)))))
+    (call $set_reg (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 7))
+      (i32.add (i32.add (local.get $base_val) (local.get $index_val)) (local.get $disp2)))
+    (return_call $next))
+
+  ;; 391: MOV EAX,[EDX+disp] followed by TEST EAX,imm32. Smacker's Huffman
+  ;; tree builder uses this pair for every node probe. MOV leaves flags alone;
+  ;; TEST publishes the same lazy logic flags as the two ordinary handlers.
+  (func $th_load_eax_edx_test_i32 (param $op i32)
+    (global.set $eax
+      (call $gl32
+        (i32.add (global.get $edx) (call $read_thread_word))))
+    (call $set_flags_logic
+      (i32.and (global.get $eax) (call $read_thread_word)))
+    (return_call $next))
+
+  ;; 392: ADD EDX,EAX followed by the zero-displacement form of handler 391.
+  ;; TEST overwrites every arithmetic flag written by ADD, so the only live
+  ;; intermediate state is the updated EDX used as the load address.
+  (func $th_add_edx_eax_load_test (param $op i32)
+    (global.set $edx (i32.add (global.get $edx) (global.get $eax)))
+    (global.set $eax (call $gl32 (global.get $edx)))
+    (call $set_flags_logic
+      (i32.and (global.get $eax) (call $read_thread_word)))
+    (return_call $next))
+
+  ;; 393: Smacker refills its bit reservoir after decrementing an absolute
+  ;; byte counter, then immediately branches on DEC's ZF. The fall-through
+  ;; and target words make this block-ending just like $th_jcc_nz; DEC's full
+  ;; lazy-flag state (including preserved CF) remains visible at either edge.
+  (func $th_dec_m8_abs_jnz (param $op i32)
+    (local $old i32) (local $r i32) (local $fall i32) (local $target i32)
+    (local.set $old (call $gl8 (local.get $op)))
+    (local.set $r
+      (i32.and (i32.sub (local.get $old) (i32.const 1)) (i32.const 0xFF)))
+    (call $set_flags_dec (local.get $old) (local.get $r))
+    (global.set $flag_sign_shift (i32.const 7))
+    (call $gs8 (local.get $op) (local.get $r))
+    (local.set $fall (call $read_thread_word))
+    (local.set $target (call $read_thread_word))
+    (if (global.get $handler_hist_enabled)
+      (then (call $branch_hist_record_jcc (i32.const 5))))
+    (if (local.get $r)
+      (then (global.set $eip (local.get $target)))
+      (else (global.set $eip (local.get $fall)))))
+
+  ;; 394: Smacker consumes one input bit with SHR EBP,1 and immediately uses
+  ;; CF through JB or JAE. op=0 is JB, op=1 is JAE. $do_shift32 publishes the
+  ;; exact count-one shift flags; the saved low bit selects the successor
+  ;; without resolving the lazy CF a second time.
+  (func $th_shr_ebp_1_jcc_b (param $op i32)
+    (local $old i32) (local $taken i32) (local $fall i32) (local $target i32)
+    (local.set $old (global.get $ebp))
+    (global.set $ebp
+      (call $do_shift32 (i32.const 5) (local.get $old) (i32.const 1)))
+    (local.set $fall (call $read_thread_word))
+    (local.set $target (call $read_thread_word))
+    (if (global.get $handler_hist_enabled)
+      (then (call $branch_hist_record_jcc (i32.add (i32.const 2) (local.get $op)))))
+    (local.set $taken
+      (if (result i32) (i32.eqz (local.get $op))
+        (then (i32.and (local.get $old) (i32.const 1)))
+        (else (i32.eqz (i32.and (local.get $old) (i32.const 1))))))
+    (if (local.get $taken)
+      (then (global.set $eip (local.get $target)))
+      (else (global.set $eip (local.get $fall)))))
+
+  ;; 395: Exact Smacker Huffman node walk. op is the absolute byte-counter
+  ;; address; words are the original loop EIP and the fall-through EIP. Each
+  ;; iteration has no externally visible call boundary, and every arithmetic
+  ;; flag before the final TEST is overwritten by that TEST. Bound the native
+  ;; loop so even corrupt input returns control with an exact guest resume EIP.
+  (func $th_smack_huff_walk (param $op i32)
+    (local $loop_eip i32) (local $fall i32) (local $counter i32)
+    (local $old_ebp i32) (local $r i32) (local $n i32)
+    (local.set $loop_eip (call $read_thread_word))
+    (local.set $fall (call $read_thread_word))
+    (block $done
+      (loop $walk
+        (local.set $counter
+          (i32.and
+            (i32.sub (call $gl8 (local.get $op)) (i32.const 1))
+            (i32.const 0xFF)))
+        (call $gs8 (local.get $op) (local.get $counter))
+        (if (i32.eqz (local.get $counter))
+          (then
+            (global.set $ebp (call $gl32 (global.get $esi)))
+            (global.set $esi (i32.add (global.get $esi) (i32.const 4)))
+            (call $gs8 (local.get $op) (i32.const 32))))
+        (local.set $old_ebp (global.get $ebp))
+        (global.set $ebp (i32.shr_u (local.get $old_ebp) (i32.const 1)))
+        (if (i32.eqz (i32.and (local.get $old_ebp) (i32.const 1)))
+          (then (global.set $eax (i32.const 4))))
+        (global.set $edx (i32.add (global.get $edx) (global.get $eax)))
+        (global.set $eax (call $gl32 (global.get $edx)))
+        (local.set $r (i32.and (global.get $eax) (i32.const 0x80000000)))
+        (call $set_flags_logic (local.get $r))
+        (if (local.get $r)
+          (then (global.set $eip (local.get $fall)) (br $done)))
+        (local.set $n (i32.add (local.get $n) (i32.const 1)))
+        (if (i32.ge_u (local.get $n) (i32.const 64))
+          (then (global.set $eip (local.get $loop_eip)) (br $done)))
+        (br $walk))))
+
+  ;; 396: Exact common paths through Storm.dll's PKWARE bit-reservoir helper.
+  ;; The helper is called for almost every decoded symbol. Its usual paths do
+  ;; nothing but a cdecl prologue/epilogue around two reservoir dwords, so the
+  ;; emulated call/return and threaded dispatch cost much more than the work.
+  ;; op is the guest EIP of the rare input-refill path. When the byte buffer is
+  ;; exhausted, reconstruct the precise prologue state and resume original
+  ;; code there; the callback and its failure behavior remain fully emulated.
+  (func $th_storm_bitreader (param $op i32)
+    (local $sp i32) (local $ctx i32) (local $bits i32) (local $avail i32)
+    (local $reservoir i32) (local $pos_addr i32) (local $pos i32)
+    (local $end i32) (local $byte i32) (local $shift i32) (local $v i32)
+    (local.set $sp (global.get $esp))
+    (local.set $ctx (call $gl32 (i32.add (local.get $sp) (i32.const 4))))
+    (local.set $bits (call $gl32 (i32.add (local.get $sp) (i32.const 8))))
+    (local.set $avail (call $gl32 (i32.add (local.get $ctx) (i32.const 0x18))))
+    (local.set $reservoir (call $gl32 (i32.add (local.get $ctx) (i32.const 0x14))))
+    (if (i32.ge_u (local.get $avail) (local.get $bits))
+      (then
+        (call $gs32 (i32.add (local.get $ctx) (i32.const 0x18))
+          (i32.sub (local.get $avail) (local.get $bits)))
+        (call $gs32 (i32.add (local.get $ctx) (i32.const 0x14))
+          (i32.shr_u (local.get $reservoir) (local.get $bits)))
+        (global.set $eax (i32.const 0))
+        (call $set_flags_logic (i32.const 0))
+        (global.set $eip (call $gl32 (local.get $sp)))
+        (global.set $esp (i32.add (local.get $sp) (i32.const 4)))
+        (call $cs_pop)
+        (return)))
+
+    ;; The original slow path first discards every remaining reservoir bit,
+    ;; then checks whether its 2 KiB input buffer needs a callback refill.
+    (local.set $reservoir
+      (i32.shr_u (local.get $reservoir) (local.get $avail)))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 0x14))
+      (local.get $reservoir))
+    (local.set $pos_addr (i32.add (local.get $ctx) (i32.const 0x1C)))
+    (local.set $pos (call $gl32 (local.get $pos_addr)))
+    (local.set $end (call $gl32 (i32.add (local.get $ctx) (i32.const 0x20))))
+    (if (i32.eq (local.get $pos) (local.get $end))
+      (then
+        ;; State at original offset +0x31, immediately before the refill call.
+        (call $gs32 (i32.sub (local.get $sp) (i32.const 4)) (global.get $ebx))
+        (call $gs32 (i32.sub (local.get $sp) (i32.const 8)) (global.get $esi))
+        (call $gs32 (i32.sub (local.get $sp) (i32.const 12)) (global.get $edi))
+        (global.set $esp (i32.sub (local.get $sp) (i32.const 12)))
+        (global.set $esi (local.get $ctx))
+        (global.set $edi (local.get $pos_addr))
+        (global.set $ebx (local.get $bits))
+        (global.set $eax (local.get $end))
+        (global.set $ecx
+          (i32.or
+            (i32.and (global.get $ecx) (i32.const 0xFFFFFF00))
+            (i32.and (local.get $avail) (i32.const 0xFF))))
+        (call $set_flags_sub (local.get $pos) (local.get $end) (i32.const 0))
+        (global.set $eip (local.get $op))
+        (return)))
+
+    ;; Common no-refill path, original offsets +0x5f..+0x8f.
+    (local.set $byte
+      (call $gl8
+        (i32.add
+          (i32.add (local.get $ctx) (i32.const 0x2234))
+          (local.get $pos))))
+    (call $gs32 (local.get $pos_addr) (i32.add (local.get $pos) (i32.const 1)))
+    (local.set $v
+      (i32.or (i32.shl (local.get $byte) (i32.const 8)) (local.get $reservoir)))
+    (local.set $shift
+      (i32.and (i32.sub (local.get $bits) (local.get $avail)) (i32.const 0xFF)))
+    (global.set $ecx
+      (i32.or
+        (i32.and (local.get $bits) (i32.const 0xFFFFFF00))
+        (local.get $shift)))
+    (global.set $edx (i32.shr_u (local.get $v) (local.get $shift)))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 0x14)) (global.get $edx))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 0x18))
+      (i32.add
+        (i32.sub (local.get $avail) (local.get $bits))
+        (i32.const 8)))
+    (global.set $eax (i32.const 0))
+    (call $set_flags_logic (i32.const 0))
+    (global.set $eip (call $gl32 (local.get $sp)))
+    (global.set $esp (i32.add (local.get $sp) (i32.const 4)))
+    (call $cs_pop))
+
+  ;; 397: ASCII adjust after multiply. The immediate is normally decimal 10,
+  ;; but 32-bit x86 accepts any non-zero byte base. Only AL participates; AH
+  ;; receives the quotient and AL the remainder while EAX[31:16] is preserved.
+  (func $th_aam (param $op i32)
+    (local $al i32) (local $quotient i32) (local $remainder i32)
+    (if (i32.eqz (local.get $op))
+      (then
+        (call $raise_exception (i32.const 0xC0000094))
+        (return)))
+    (local.set $al (i32.and (global.get $eax) (i32.const 0xFF)))
+    (local.set $quotient (i32.div_u (local.get $al) (local.get $op)))
+    (local.set $remainder (i32.rem_u (local.get $al) (local.get $op)))
+    (global.set $eax
+      (i32.or
+        (i32.and (global.get $eax) (i32.const 0xFFFF0000))
+        (i32.or
+          (i32.shl (local.get $quotient) (i32.const 8))
+          (local.get $remainder))))
+    (call $set_flags_logic (local.get $remainder))
+    (global.set $flag_sign_shift (i32.const 7))
+    (return_call $next))
+
+  ;; Minimal PC port state used by Win9x applications that legitimately issue
+  ;; user-mode IN/OUT. Channel 0 is latched through port 0x43 and returned low
+  ;; byte then high byte from 0x40, matching the 8254 access Fallout uses for
+  ;; its random/timer seed. Port 0x3DA alternates vertical-retrace status so a
+  ;; legacy VGA polling loop cannot deadlock. Other ports float high.
+  (global $io_pit_latch (mut i32) (i32.const 0))
+  (global $io_pit_phase (mut i32) (i32.const 0))
+  (global $io_vga_status (mut i32) (i32.const 0))
+
+  ;; 398: IN/OUT AL/AX/EAX with an immediate or DX port. Operand bits 0..7 are
+  ;; the x86 opcode, 8..15 hold an immediate port, and bit 16 records 66h.
+  (func $th_port_io (param $op i32)
+    (local $opcode i32) (local $port i32) (local $value i32)
+    (local $wide i32) (local $word i32) (local $is_in i32)
+    (local.set $opcode (i32.and (local.get $op) (i32.const 0xFF)))
+    (local.set $port
+      (if (result i32) (i32.lt_u (local.get $opcode) (i32.const 0xEC))
+        (then (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xFF)))
+        (else (i32.and (global.get $edx) (i32.const 0xFFFF)))))
+    (local.set $wide (i32.and (local.get $opcode) (i32.const 1)))
+    (local.set $word
+      (i32.and
+        (local.get $wide)
+        (i32.ne (i32.and (local.get $op) (i32.const 0x10000)) (i32.const 0))))
+    (local.set $is_in
+      (i32.or
+        (i32.eq (local.get $opcode) (i32.const 0xE4))
+        (i32.or
+          (i32.eq (local.get $opcode) (i32.const 0xE5))
+          (i32.or
+            (i32.eq (local.get $opcode) (i32.const 0xEC))
+            (i32.eq (local.get $opcode) (i32.const 0xED))))))
+
+    (if (local.get $is_in)
+      (then
+        (local.set $value (i32.const -1))
+        (if (i32.eq (local.get $port) (i32.const 0x40))
+          (then
+            (if (i32.eqz (global.get $io_pit_phase))
+              (then
+                (local.set $value (i32.and (global.get $io_pit_latch) (i32.const 0xFF)))
+                (global.set $io_pit_phase (i32.const 1)))
+              (else
+                (local.set $value
+                  (i32.and (i32.shr_u (global.get $io_pit_latch) (i32.const 8)) (i32.const 0xFF)))
+                (global.set $io_pit_phase (i32.const 0))))))
+        (if (i32.eq (local.get $port) (i32.const 0x61))
+          (then (local.set $value (i32.const 0))))
+        (if (i32.eq (local.get $port) (i32.const 0x3DA))
+          (then
+            (global.set $io_vga_status
+              (i32.xor (global.get $io_vga_status) (i32.const 8)))
+            (local.set $value (global.get $io_vga_status))))
+        (if (i32.eqz (local.get $wide))
+          (then
+            (global.set $eax
+              (i32.or
+                (i32.and (global.get $eax) (i32.const 0xFFFFFF00))
+                (i32.and (local.get $value) (i32.const 0xFF)))))
+          (else
+            (if (local.get $word)
+              (then
+                (global.set $eax
+                  (i32.or
+                    (i32.and (global.get $eax) (i32.const 0xFFFF0000))
+                    (i32.and (local.get $value) (i32.const 0xFFFF)))))
+              (else (global.set $eax (local.get $value)))))))
+      (else
+        (local.set $value
+          (if (result i32) (i32.eqz (local.get $wide))
+            (then (i32.and (global.get $eax) (i32.const 0xFF)))
+            (else
+              (if (result i32) (local.get $word)
+                (then (i32.and (global.get $eax) (i32.const 0xFFFF)))
+                (else (global.get $eax))))))
+        (if (i32.and
+              (i32.eq (local.get $port) (i32.const 0x43))
+              (i32.eqz (i32.and (local.get $value) (i32.const 0xC0))))
+          (then
+            (global.set $io_pit_latch
+              (i32.and
+                (i32.sub
+                  (i32.const 0)
+                  (i32.mul (call $host_get_ticks) (i32.const 1193)))
+                (i32.const 0xFFFF)))
+            (global.set $io_pit_phase (i32.const 0))))))
     (return_call $next))
 
   ;; Helper: compute EA from operand encoding (alu_op<<8 | reg<<4 | base)

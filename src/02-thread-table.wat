@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 389 funcref)
+  (table $handlers 400 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -445,4 +445,15 @@
     $th_string16            ;; 386: 16-bit string op (MOVS/STOS/LODS/CMPS/SCAS + REP)
     $th_xlat16              ;; 387: XLAT (16-bit)
     $th_int                 ;; 388: INT imm8 (operand=vector, resume EIP in next word)
+    $th_load32_sib          ;; 389: MOV r32,[base+index*scale+disp]
+    $th_lea_sib_pair        ;; 390: two adjacent SIB LEAs (op=dst1|dst2<<4)
+    $th_load_eax_edx_test_i32 ;; 391: MOV EAX,[EDX+disp] + TEST EAX,imm32
+    $th_add_edx_eax_load_test ;; 392: ADD EDX,EAX + MOV EAX,[EDX] + TEST EAX,imm32
+    $th_dec_m8_abs_jnz        ;; 393: DEC byte [abs] + JNZ rel8
+    $th_shr_ebp_1_jcc_b       ;; 394: SHR EBP,1 + JB/JAE rel8 (op=0/1)
+    $th_smack_huff_walk       ;; 395: bounded Smacker Huffman node walk
+    $th_storm_bitreader       ;; 396: exact Storm PKWARE bit-reservoir helper
+    $th_aam                   ;; 397: AAM imm8
+    $th_port_io               ;; 398: IN/OUT accumulator, imm8/DX port
+    $th_enter                 ;; 399: ENTER imm16,0 (32-bit frame)
   )

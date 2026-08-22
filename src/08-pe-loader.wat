@@ -9,6 +9,7 @@
     (local $tls_index_addr i32) (local $tls_index i32) (local $tls_data i32)
     (local $tls_raw_size i32) (local $tls_zero_size i32)
     (local $src i32) (local $dst i32) (local $characteristics i32)
+    (local $mapped_size i32) (local $copy_size i32)
 
     (if (i32.ne (i32.load16_u (global.get $PE_STAGING)) (i32.const 0x5A4D)) (then (return (i32.const -1))))
     (local.set $pe_off (i32.add (global.get $PE_STAGING)
@@ -66,18 +67,36 @@
       (local.set $raw_size (i32.load (i32.add (local.get $section_off) (i32.const 16))))
       (local.set $raw_off (i32.load (i32.add (local.get $section_off) (i32.const 20))))
       (local.set $characteristics (i32.load (i32.add (local.get $section_off) (i32.const 36))))
+      ;; Watcom PE images use VirtualSize=0 and put the committed extent in
+      ;; SizeOfRawData, including for IMAGE_SCN_CNT_UNINITIALIZED_DATA sections
+      ;; whose PointerToRawData is zero. Map the larger declared span, but never
+      ;; copy file bytes into an uninitialized section.
+      (local.set $mapped_size
+        (if (result i32) (i32.gt_u (local.get $vsize) (local.get $raw_size))
+          (then (local.get $vsize))
+          (else (local.get $raw_size))))
+      (local.set $copy_size
+        (if (result i32)
+            (i32.or
+              (i32.ne
+                (i32.and (local.get $characteristics) (i32.const 0x80))
+                (i32.const 0))
+              (i32.eqz (local.get $raw_off)))
+          (then (i32.const 0))
+          (else (local.get $raw_size))))
       (local.set $dst (i32.add (global.get $GUEST_BASE) (local.get $vaddr)))
       (local.set $src (i32.add (global.get $PE_STAGING) (local.get $raw_off)))
-      (call $memcpy (local.get $dst) (local.get $src) (local.get $raw_size))
-      ;; Zero BSS portion: if VirtualSize > RawSize, zero the remainder
-      (if (i32.gt_u (local.get $vsize) (local.get $raw_size))
+      (if (local.get $copy_size)
+        (then (call $memcpy (local.get $dst) (local.get $src) (local.get $copy_size))))
+      ;; Zero BSS/unbacked tail through the complete mapped section extent.
+      (if (i32.gt_u (local.get $mapped_size) (local.get $copy_size))
         (then (call $zero_memory
-          (i32.add (local.get $dst) (local.get $raw_size))
-          (i32.sub (local.get $vsize) (local.get $raw_size)))))
+          (i32.add (local.get $dst) (local.get $copy_size))
+          (i32.sub (local.get $mapped_size) (local.get $copy_size)))))
       (if (i32.and (local.get $characteristics) (i32.const 0x20))
         (then
           (global.set $code_start (i32.add (global.get $image_base) (local.get $vaddr)))
-          (global.set $code_end (i32.add (global.get $code_start) (local.get $vsize)))))
+          (global.set $code_end (i32.add (global.get $code_start) (local.get $mapped_size)))))
       (local.set $section_off (i32.add (local.get $section_off) (i32.const 40)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $sl)))

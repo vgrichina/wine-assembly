@@ -19,7 +19,7 @@ function makePeWithFirstThunkLookup() {
   bytes.writeUInt32LE(pe, 0x3C);
   bytes.writeUInt32LE(0x00004550, pe);
   bytes.writeUInt16LE(0x014C, pe + 4);
-  bytes.writeUInt16LE(1, pe + 6);
+  bytes.writeUInt16LE(2, pe + 6);
   bytes.writeUInt16LE(0xE0, pe + 20);
   bytes.writeUInt16LE(0x010F, pe + 22);
 
@@ -30,7 +30,7 @@ function makePeWithFirstThunkLookup() {
   bytes.writeUInt32LE(0x400000, opt + 28);
   bytes.writeUInt32LE(0x1000, opt + 32);
   bytes.writeUInt32LE(0x200, opt + 36);
-  bytes.writeUInt32LE(0x2000, opt + 56);
+  bytes.writeUInt32LE(0x3000, opt + 56);
   bytes.writeUInt32LE(0x200, opt + 60);
   bytes.writeUInt32LE(16, opt + 92);
   bytes.writeUInt32LE(0x1100, opt + 104); // import directory RVA
@@ -42,6 +42,14 @@ function makePeWithFirstThunkLookup() {
   bytes.writeUInt32LE(0x400, section + 16);
   bytes.writeUInt32LE(0x200, section + 20);
   bytes.writeUInt32LE(0x60000020, section + 36);
+
+  const bss = section + 40;
+  bytes.write('.bss\0\0\0\0', bss, 'ascii');
+  bytes.writeUInt32LE(0, bss + 8);          // Watcom-style zero VirtualSize
+  bytes.writeUInt32LE(0x2000, bss + 12);
+  bytes.writeUInt32LE(0x1000, bss + 16);   // committed extent lives here
+  bytes.writeUInt32LE(0, bss + 20);        // no file backing
+  bytes.writeUInt32LE(0xC0000080, bss + 36); // uninitialized data
 
   // push 0; call dword [0x401140]; ret
   Buffer.from([0x6A, 0x00, 0xFF, 0x15, 0x40, 0x11, 0x40, 0x00, 0xC3])
@@ -77,6 +85,10 @@ function makePeWithFirstThunkLookup() {
     'thunk metadata should retain the IMAGE_IMPORT_BY_NAME RVA');
   assert.strictEqual(view.getUint32(0x07112004, true), api.id,
     'FirstThunk fallback should resolve the normal API ID');
+  assert.deepStrictEqual(
+    [...new Uint8Array(memory.buffer, 0x12000 + 0x2000, 0x1000)],
+    new Array(0x1000).fill(0),
+    'an uninitialized section with PointerToRawData=0 must be zero-filled');
 
   wat.call_func(0x401000, 0, 0, 0, 0);
   for (let i = 0; i < 20 && wat.get_eip(); i++) wat.run(1000);
@@ -84,7 +96,7 @@ function makePeWithFirstThunkLookup() {
   assert.strictEqual(wat.get_eax() >>> 0, 0x400000,
     'GetModuleHandleA(NULL) should execute through the repaired IAT');
 
-  console.log('PASS  PE imports fall back to FirstThunk when OriginalFirstThunk is zero');
+  console.log('PASS  PE FirstThunk fallback and uninitialized-section zero fill');
 })().catch(error => {
   console.error(error.stack || error.message);
   process.exit(1);

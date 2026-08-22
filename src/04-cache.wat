@@ -113,7 +113,7 @@
     ;; whole cache and restart at $eip. The fresh decode will produce
     ;; valid threaded code. This recovers from rare corruption rather
     ;; than trapping with wasm "table index out of bounds".
-    (if (i32.ge_u (local.get $fn) (i32.const 389))
+    (if (i32.ge_u (local.get $fn) (i32.const 400))
       (then
         (call $host_log_i32 (i32.const 0xCAC4BAD0))
         (call $host_log_i32 (local.get $fn))
@@ -140,7 +140,14 @@
     (i32.store (local.get $addr)
       (i32.add (i32.load (local.get $addr)) (i32.const 1)))
     (local.set $prev (global.get $handler_hist_last))
-    (if (i32.ge_s (local.get $prev) (i32.const 0))
+    ;; The dense pair matrix predates handlers 361+ and is intentionally
+    ;; bounded to HANDLER_HIST_COUNT. Keep individual counts for newer
+    ;; handlers, but never alias their pairs into another matrix row.
+    (if (i32.and
+          (i32.and
+            (i32.ge_s (local.get $prev) (i32.const 0))
+            (i32.lt_u (local.get $prev) (global.get $HANDLER_HIST_COUNT)))
+          (i32.lt_u (local.get $fn) (global.get $HANDLER_HIST_COUNT)))
       (then
         (local.set $addr
           (i32.add (global.get $HANDLER_PAIR_HIST_COUNTS)

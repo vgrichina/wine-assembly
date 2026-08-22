@@ -1750,7 +1750,11 @@
   (global $MAX_VIRTUAL_MAPS i32 (i32.const 2048))
   (global $VIRTUAL_BACKING_BASE i32 (i32.const 0x08000000))
   (global $VIRTUAL_BACKING_BASE_SIZE i32 (i32.const 0x14000000))
-  (global $VIRTUAL_ALLOC_TOP_INIT i32 (i32.const 0x40000000))
+  ;; The sparse VA arena ends exactly where the separate DIB guest arena
+  ;; begins. Keeping the former 0x40000000 ceiling left 256MB of valid,
+  ;; non-overlapping guest address space unused and exhausted StarCraft's
+  ;; reserve/free churn before its first command-panel allocation.
+  (global $VIRTUAL_ALLOC_TOP_INIT i32 (i32.const 0x50000000))
   (global $VIRTUAL_ALLOC_MIN i32 (i32.const 0x10000000))
   ;; DIB sections use a dedicated guest range and fixed linear-memory backing.
   ;; One occupancy byte per 4KB page is 0=free, 1=allocated. The run table
