@@ -4722,7 +4722,12 @@
           (local.get $raw_parent) (local.get $raw_h) (local.get $raw_w)
           (local.get $raw_y) (local.get $raw_x) (local.get $style)
           (local.get $raw_title) (local.get $raw_class) (local.get $exstyle)))
-        (call $win16_hook_cwp_fire (call $gl16 (i32.add (global.get $esp) (i32.const 36)))
+        ;; CREATESTRUCT is 34 bytes. Above it sit redirected(2), the paired
+        ;; WM_SIZE value(4), then the continuation result HWND(2): 34+6.
+        ;; Reading +36 picked the zero pending-size word, so MFC's creation
+        ;; hook attached its CWnd to HWND 0 and Hearts immediately called
+        ;; through the resulting null object.
+        (call $win16_hook_cwp_fire (call $gl16 (i32.add (global.get $esp) (i32.const 40)))
           (i32.const 0x0081) (i32.const 0) (local.get $cs)
           (global.get $WIN16_CONT_CWP))
         (return)))

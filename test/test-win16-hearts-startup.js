@@ -46,11 +46,13 @@ const ROOT = path.join(__dirname, '..');
 const OUT = path.join(ROOT, 'test', 'output', 'win16-hearts');
 const EXE = path.join(ROOT, 'test', 'binaries', 'win98-16bit', 'MSHEARTS.EXE');
 
-// Points on the startup dialog, each the dialog's client origin (18,69) plus
-// the control's position in its own template.
-const OK_CLICK = '319:92';        // OK, at client 264,12 size 75x24
-const NAME_CLICK = '200:122';     // the name edit, id 201
-const DEALER_CLICK = '55:210';    // "I want to be dealer", id 203
+// Screen points inside the rendered controls. Dialog-template units are not
+// pixels: the 235x105 DLU template renders about 475x230 with the current
+// system font. The old arithmetic clicked the dialog body, so the test could
+// deal behind a welcome dialog without ever choosing Dealer or pressing OK.
+const OK_CLICK = '420:103';       // OK, id 1
+const NAME_CLICK = '275:138';     // player-name edit, id 201
+const DEALER_CLICK = '70:237';    // "I want to be dealer", id 203
 
 let pass = 0;
 function check(name, cond, detail) {
@@ -84,6 +86,12 @@ function inkFraction(file, x0, y0, x1, y1) {
   return total ? ink / total : 0;
 }
 
+function dialogHeaders(log) {
+  // Child-control diagnostics intentionally share the [CreateDialog] prefix.
+  // Only the template header carries hwnd= and represents a dialog instance.
+  return log.match(/^\[CreateDialog\] hwnd=.*$/gm) || [];
+}
+
 function main() {
   if (!fs.existsSync(EXE)) { console.log('SKIP  MSHEARTS.EXE not found'); return; }
   fs.mkdirSync(OUT, { recursive: true });
@@ -97,7 +105,7 @@ function main() {
   check('Hearts does not give up on finding a dealer at startup',
     !/Unable to connect with dealer/.test(log));
 
-  const dialogs = log.match(/^\[CreateDialog\].*$/gm) || [];
+  const dialogs = dialogHeaders(log);
   check('the startup dialog opened', dialogs.length >= 1,
     `${dialogs.length} dialogs`);
   // Twice is the failure this pins: one posted command delivered twice put two
@@ -117,7 +125,7 @@ function main() {
   const logEmpty = run(`4000:click:${OK_CLICK},9000:png:${after}`, 12000);
   check('clicking OK did not crash', !/CRASH|UNIMPLEMENTED API/.test(logEmpty));
   check('OK with no name keeps the dialog up',
-    (logEmpty.match(/^\[CreateDialog\].*$/gm) || []).length === 1);
+    dialogHeaders(logEmpty).length === 1);
 
   // The whole flow: a name, "I want to be dealer", OK, then New Game.
   const table = path.join(OUT, 'table.png');
@@ -126,7 +134,7 @@ function main() {
     `30000:post-cmd:102,52000:png:${table}`, 60000);
   check('the dealer path did not crash', !/CRASH|UNIMPLEMENTED API/.test(log2));
   check('the dealer path put up no further dialog',
-    (log2.match(/^\[CreateDialog\].*$/gm) || []).length === 1,
+    dialogHeaders(log2).length === 1,
     'a "Locate dealer" box here means the play-mode choice was not read');
 
   // A dealt hand: the table is green baize, and the three computer players'
