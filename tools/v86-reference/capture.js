@@ -27,8 +27,10 @@ function usage() {
 
 Options:
   --app ID             App from apps.json (default: geometry-probe)
+  --apps ID,ID         Capture several apps in one restored VM session
   --manifest PATH      Alternate app manifest (default: tools/v86-reference/apps.json)
   --output PATH        VGA screenshot path
+  --output-dir PATH    Batch output root; writes ID/native.{png,json}
   --metadata PATH      Capture metadata path
   --serial-output PATH Save COM1 output emitted by a reference probe
   --online             Load BIOS, Win98 disk chunks, and state from documented URLs
@@ -55,8 +57,10 @@ function parseArgs(argv) {
   };
   const valueOptions = new Map([
     ["--app", "app"],
+    ["--apps", "apps"],
     ["--manifest", "manifest"],
     ["--output", "output"],
+    ["--output-dir", "outputDir"],
     ["--metadata", "metadata"],
     ["--serial-output", "serialOutput"],
     ["--bios", "bios"],
@@ -88,6 +92,7 @@ function parseArgs(argv) {
   }
   options.waitMs = options.waitMs === undefined ? undefined : positiveInteger(options.waitMs, "--wait-ms");
   options.bootTimeoutMs = positiveInteger(options.bootTimeoutMs, "--boot-timeout-ms");
+  if (options.apps) options.apps = options.apps.split(",").filter(Boolean);
   return options;
 }
 
@@ -345,17 +350,22 @@ async function main() {
     return;
   }
 
-  const entry = apps[options.app];
-  if (!entry) throw new Error(`unknown app ${options.app}; use --list`);
-  if (entry.skip) throw new Error(`${options.app} is excluded from this profile: ${entry.skip}`);
-  entry.id = options.app;
-  const output = path.resolve(options.output || path.join(
-    REPO_ROOT,
-    `screenshots/v86-reference/generated/${options.app}.png`
-  ));
-  const metadataPath = path.resolve(options.metadata || output.replace(/\.png$/i, ".json"));
-  fs.mkdirSync(path.dirname(output), { recursive: true });
-  fs.mkdirSync(path.dirname(metadataPath), { recursive: true });
+  const appIds = options.apps || [options.app];
+  if (options.apps && (options.output || options.metadata || options.serialOutput)) {
+    throw new Error("--apps uses --output-dir and cannot be combined with --output, --metadata, or --serial-output");
+  }
+  const entries = appIds.map(id => {
+    const configured = apps[id];
+    if (!configured) throw new Error(`unknown app ${id}; use --list`);
+    if (configured.skip) throw new Error(`${id} is excluded from this profile: ${configured.skip}`);
+    return { ...configured, id };
+  });
+  const outputFor = entry => options.apps
+    ? path.resolve(options.outputDir || path.join(REPO_ROOT, "screenshots/v86-reference/generated"), entry.id, "native.png")
+    : path.resolve(options.output || path.join(REPO_ROOT, `screenshots/v86-reference/generated/${entry.id}.png`));
+  const metadataFor = (entry, output) => options.apps
+    ? path.join(path.dirname(output), "native.json")
+    : path.resolve(options.metadata || output.replace(/\.png$/i, ".json"));
 
   const runtimeRoot = path.join(REPO_ROOT, "node_modules/v86/build");
   const routes = new Map();
@@ -380,8 +390,15 @@ async function main() {
       : (options.online ? { type: "remote", value: ONLINE.disk } : null));
   if (!disk) throw new Error("missing disk; pass --disk, cache windows98.img, or select --online");
   const state = options.noState ? null : localOrOnline(options, "state", "windows98_state-v2.bin.zst");
-  const payload = preparePayload(entry);
-  routes.set("/payload.iso", { buffer: payload.iso, type: "application/x-iso9660-image" });
+  const payloads = new Map();
+  for (const entry of entries) {
+    const payload = preparePayload(entry);
+    payloads.set(entry.id, payload);
+    routes.set(`/payload/${encodeURIComponent(entry.id)}.iso`, {
+      buffer: payload.iso,
+      type: "application/x-iso9660-image",
+    });
+  }
 
   const sourceUrl = (asset, local, remote) => {
     if (asset.type === "local") return addFileRoute(routes, local, asset.value);
@@ -429,90 +446,113 @@ async function main() {
     page.on("console", message => console.log(`[browser:${message.type()}] ${message.text()}`));
     page.on("pageerror", error => console.error(`[browser:error] ${error.message}`));
     await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "load", timeout: 30000 });
-    console.log(`Starting Windows 98 reference VM for ${options.app}`);
+    console.log(`Starting Windows 98 reference VM for ${entries.map(entry => entry.id).join(",")}`);
     await withTimeout(page.evaluate(config => window.startReferenceVm(config), vmConfig), options.bootTimeoutMs, "VM initialization");
     await page.waitForFunction(() => {
       const canvas = document.querySelector("#screen_container canvas");
       return canvas && canvas.width === 640 && canvas.height === 480 && getComputedStyle(canvas).display !== "none";
     }, { timeout: options.bootTimeoutMs });
-    await page.evaluate(() => window.referenceVm.insertCd("/payload.iso"));
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    await page.evaluate(command => window.referenceVm.run(command), entry.launch);
-    for (const action of entry.postLaunch || []) {
-      await new Promise(resolve => setTimeout(resolve, action.waitMs || 0));
-      if (action.scancodes) {
-        await page.evaluate(scancodes => window.emulator.keyboard_send_scancodes(scancodes, 20), action.scancodes);
+    // v86 0.5's CD-ROM state serializer requires a concrete backing buffer.
+    // Save the baseline with the first payload already inserted; restoring a
+    // state captured with an empty drive leaves its IDE buffer reference null.
+    if (entries.length > 1) {
+      await page.evaluate(url => window.referenceVm.insertCd(url),
+        `/payload/${encodeURIComponent(entries[0].id)}.iso`);
+      await page.evaluate(() => window.referenceVm.savePristine());
+    }
+    for (let entryIndex = 0; entryIndex < entries.length; entryIndex++) {
+      const entry = entries[entryIndex];
+      if (entryIndex) {
+        console.log(`Restoring pristine Windows 98 state for ${entry.id}`);
+        await page.evaluate(() => window.referenceVm.restorePristine());
+        await new Promise(resolve => setTimeout(resolve, 500));
       }
-      if (action.mouse) {
-        const mouse = action.mouse;
-        const button = mouse.button || "left";
-        if (mouse.type === "click") {
-          await moveGuestMouse(page, mouse.x, mouse.y);
-          await setGuestMouseButton(page, button, true);
-          await setGuestMouseButton(page, button, false);
-        } else if (mouse.type === "drag") {
-          await moveGuestMouse(page, mouse.x, mouse.y);
-          await setGuestMouseButton(page, button, true);
-          await page.evaluate(async ({ dx, dy }) => {
-            const pause = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
-            const count = Math.max(Math.abs(dx), Math.abs(dy));
-            for (let i = 0; i < count; i++) {
-              window.emulator.bus.send("mouse-delta", [
-                i < Math.abs(dx) ? Math.sign(dx) : 0,
-                i < Math.abs(dy) ? -Math.sign(dy) : 0,
-              ]);
-              await pause(2);
-            }
-            await pause(100);
-          }, { dx: mouse.toX - mouse.x, dy: mouse.toY - mouse.y });
-          await setGuestMouseButton(page, button, false);
-        } else {
-          throw new Error(`unsupported mouse action: ${mouse.type}`);
+      const output = outputFor(entry);
+      const metadataPath = metadataFor(entry, output);
+      fs.mkdirSync(path.dirname(output), { recursive: true });
+      fs.mkdirSync(path.dirname(metadataPath), { recursive: true });
+      if (!(entries.length > 1 && entryIndex === 0)) {
+        await page.evaluate(url => window.referenceVm.insertCd(url), `/payload/${encodeURIComponent(entry.id)}.iso`);
+      }
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      await page.evaluate(command => window.referenceVm.run(command), entry.launch);
+      for (const action of entry.postLaunch || []) {
+        await new Promise(resolve => setTimeout(resolve, action.waitMs || 0));
+        if (action.scancodes) {
+          await page.evaluate(scancodes => window.emulator.keyboard_send_scancodes(scancodes, 20), action.scancodes);
+        }
+        if (action.mouse) {
+          const mouse = action.mouse;
+          const button = mouse.button || "left";
+          if (mouse.type === "click") {
+            await moveGuestMouse(page, mouse.x, mouse.y);
+            await setGuestMouseButton(page, button, true);
+            await setGuestMouseButton(page, button, false);
+          } else if (mouse.type === "drag") {
+            await moveGuestMouse(page, mouse.x, mouse.y);
+            await setGuestMouseButton(page, button, true);
+            await page.evaluate(async ({ dx, dy }) => {
+              const pause = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+              const count = Math.max(Math.abs(dx), Math.abs(dy));
+              for (let i = 0; i < count; i++) {
+                window.emulator.bus.send("mouse-delta", [
+                  i < Math.abs(dx) ? Math.sign(dx) : 0,
+                  i < Math.abs(dy) ? -Math.sign(dy) : 0,
+                ]);
+                await pause(2);
+              }
+              await pause(100);
+            }, { dx: mouse.toX - mouse.x, dy: mouse.toY - mouse.y });
+            await setGuestMouseButton(page, button, false);
+          } else {
+            throw new Error(`unsupported mouse action: ${mouse.type}`);
+          }
         }
       }
-    }
-    const waitMs = options.waitMs === undefined ? (entry.waitMs || 8000) : options.waitMs;
-    await new Promise(resolve => setTimeout(resolve, waitMs));
+      const waitMs = options.waitMs === undefined ? (entry.waitMs || 8000) : options.waitMs;
+      await new Promise(resolve => setTimeout(resolve, waitMs));
 
-    const screen = await page.evaluate(() => window.referenceVm.screen());
-    const serialText = await page.evaluate(() => window.referenceVm.serial());
-    if (options.serialOutput) {
-      const serialPath = path.resolve(options.serialOutput);
-      fs.mkdirSync(path.dirname(serialPath), { recursive: true });
-      fs.writeFileSync(serialPath, serialText, "latin1");
-      console.log(`Serial:     ${serialPath} (${Buffer.byteLength(serialText, "latin1")} bytes)`);
+      const screen = await page.evaluate(() => window.referenceVm.screen());
+      const serialText = await page.evaluate(() => window.referenceVm.serial());
+      if (options.serialOutput) {
+        const serialPath = path.resolve(options.serialOutput);
+        fs.mkdirSync(path.dirname(serialPath), { recursive: true });
+        fs.writeFileSync(serialPath, serialText, "latin1");
+        console.log(`Serial:     ${serialPath} (${Buffer.byteLength(serialText, "latin1")} bytes)`);
+      }
+      const canvas = await page.$("#screen_container canvas");
+      await canvas.screenshot({ path: output });
+      const screenshotHash = sha256File(output);
+      const payload = payloads.get(entry.id);
+      const metadata = {
+        schemaVersion: 1,
+        capturedAt: new Date().toISOString(),
+        app: { id: entry.id, title: entry.title, launch: entry.launch },
+        display: screen,
+        output: path.relative(REPO_ROOT, output),
+        screenshotSha256: screenshotHash,
+        v86: {
+          package: "v86@0.5.432",
+          embeddedVersion: runtimePackage.version,
+          upstreamCommit: "f3d4472a9c934b9ad78a311f5849ba711a296d23",
+        },
+        sources: {
+          bios: bios.value,
+          vgaBios: vgaBios.value,
+          disk: disk.value,
+          state: state && state.value,
+        },
+        payload: payload.files.map(file => ({
+          name: file.name,
+          source: path.relative(REPO_ROOT, file.source),
+          sha256: file.sha256,
+        })),
+      };
+      fs.writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
+      console.log(`Screenshot: ${output}`);
+      console.log(`Metadata:   ${metadataPath}`);
+      console.log(`SHA-256:    ${screenshotHash}`);
     }
-    const canvas = await page.$("#screen_container canvas");
-    await canvas.screenshot({ path: output });
-    const screenshotHash = sha256File(output);
-    const metadata = {
-      schemaVersion: 1,
-      capturedAt: new Date().toISOString(),
-      app: { id: options.app, title: entry.title, launch: entry.launch },
-      display: screen,
-      output: path.relative(REPO_ROOT, output),
-      screenshotSha256: screenshotHash,
-      v86: {
-        package: "v86@0.5.432",
-        embeddedVersion: runtimePackage.version,
-        upstreamCommit: "f3d4472a9c934b9ad78a311f5849ba711a296d23",
-      },
-      sources: {
-        bios: bios.value,
-        vgaBios: vgaBios.value,
-        disk: disk.value,
-        state: state && state.value,
-      },
-      payload: payload.files.map(file => ({
-        name: file.name,
-        source: path.relative(REPO_ROOT, file.source),
-        sha256: file.sha256,
-      })),
-    };
-    fs.writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
-    console.log(`Screenshot: ${output}`);
-    console.log(`Metadata:   ${metadataPath}`);
-    console.log(`SHA-256:    ${screenshotHash}`);
   } finally {
     if (browser) await browser.close();
     await new Promise(resolve => server.close(resolve));

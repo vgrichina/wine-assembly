@@ -231,6 +231,7 @@ UNIT=(
   test/test-gdi-public-seven.js
   test/test-combobox.js
   test/test-render-combobox.js
+  test/test-win16-v86-audit.js
 )
 
 E2E=(

@@ -43,7 +43,10 @@ const opt = (name, dflt) => {
 };
 
 const APP = opt('app', 'mspaint98');
-const QUERY = opt('query', '');
+// The launch controls are intentionally hidden in the normal desktop view.
+// This is a diagnostic driver, so default to the debug shell that exposes the
+// Program selector and trusted Launch button.
+const QUERY = opt('query', '?debug');
 const STEPS = (opt('steps', '') || '').split(';').map(s => s.trim()).filter(Boolean);
 const READY_MS = Number(opt('ready', 6000));
 const CPU_RATE = Number(opt('cpu', 1));
@@ -147,7 +150,17 @@ async function main() {
     // Use a trusted browser gesture for launch. AudioContext.resume() is
     // gated on user activation, so calling launchApp() through evaluate()
     // silently exercises a suspended-audio path that real users never take.
-    await page.click('button[onclick="launchApp()"]');
+    const launchPoint = await page.evaluate(() => {
+      const buttons = [...document.querySelectorAll('button[onclick="launchApp()"]')];
+      const button = buttons.find(candidate => {
+        const rect = candidate.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && getComputedStyle(candidate).visibility !== 'hidden';
+      });
+      if (!button) throw new Error('no visible Launch button');
+      const rect = button.getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    });
+    await page.mouse.click(launchPoint.x, launchPoint.y);
     await page.waitForFunction(
       'typeof runningApps !== "undefined" && runningApps.length > 0 && typeof sharedRenderer !== "undefined" && sharedRenderer',
       { timeout: 90000 });
