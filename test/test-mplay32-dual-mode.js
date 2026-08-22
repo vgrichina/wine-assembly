@@ -29,20 +29,49 @@ function runMode(name, dlls, openBatch) {
   try { fs.unlinkSync(png); } catch (_) {}
   try { fs.unlinkSync(startupPng); } catch (_) {}
   const pickBatch = openBatch + 60;
+  const playBatch = pickBatch + 30;
+  const screenshotBatch = playBatch + 20;
+  const helpBatch = screenshotBatch + 10;
+  const exitBatch = helpBatch + 7;
+  const playInput = name === 'wat'
+    ? [`${playBatch}:mousedown:39:123`, `${playBatch + 5}:mouseup:39:123`]
+    : [`${playBatch}:toolbar-click:501:play`];
   const input = [
     `8:vfs-import:PINBALL.MID:${MIDI}`,
     `${openBatch - 20}:png:${startupPng}`,
-    `${openBatch}:wait-title-command:Media_Player:800:100:open`,
+    // Exercise the real parsed menu: Alt+F opens File, Down selects the first
+    // row, and Enter activates Open. Successful file-dialog creation and MIDI
+    // loading below prove the menu delivered command 100 to Media Player.
+    `${openBatch}:wait-title-menu-open:Media_Player:800:70:${name}-file-open`,
+    `${openBatch + 2}:menu-dump:${name}-file-open`,
+    `${openBatch + 4}:keydown:40`,
+    `${openBatch + 6}:keydown:13`,
     `${pickBatch}:open-dlg-pick:PINBALL.MID`,
-    `${pickBatch + 30}:dump-windows:${name}`,
-    `${pickBatch + 35}:dump-toolbar:${name}`,
     // Play is command 501 on the transport toolbar. This used to be
     // click:31:79, which stopped landing on the button when the toolbar moved
     // down the window -- 79 is inside MPlayerTrackMap now, so Play was never
     // pressed and "Play reaches MCI" failed while every other check passed.
-    `${pickBatch + 40}:toolbar-click:501:play`,
-    `${pickBatch + 55}:png:${png}`,
-    `${pickBatch + 65}:0x10:0`,
+    // The WAT toolbar needs the same time between DOWN and UP as real browser
+    // events. Native comctl32 resolves the command-based helper to its actual
+    // button rectangle, then performs the equivalent native-control click.
+    ...playInput,
+    `${screenshotBatch}:png:${png}`,
+    // Introspection sends synchronous control messages. Keep it after the
+    // user click so it cannot perturb focus/capture before playback starts.
+    `${screenshotBatch + 2}:dump-windows:${name}`,
+    `${screenshotBatch + 4}:dump-toolbar:${name}`,
+    // Re-open another real menu after playback has begun. This catches menu
+    // state getting stuck after a toolbar click or nested MCI dispatch.
+    `${helpBatch}:wait-title-menu-open:Media_Player:800:72:${name}-help-playing`,
+    `${helpBatch + 2}:menu-dump:${name}-help-playing`,
+    // Finish through File > Exit instead of injecting WM_CLOSE. Besides being
+    // user-realistic, this proves a second File-menu command still dispatches.
+    `${exitBatch}:wait-title-menu-open:Media_Player:800:70:${name}-file-exit`,
+    `${exitBatch + 2}:menu-dump:${name}-file-exit`,
+    `${exitBatch + 4}:keydown:40`,
+    `${exitBatch + 6}:keydown:40`,
+    `${exitBatch + 8}:keydown:40`,
+    `${exitBatch + 10}:keydown:13`,
   ].join(',');
   try {
     const output = execFileSync(process.execPath, [
@@ -50,7 +79,7 @@ function runMode(name, dlls, openBatch) {
       `--exe=${EXE}`,
       `--dlls=${dlls.join(',')}`,
       `--input=${input}`,
-      `--max-batches=${pickBatch + 70}`,
+      `--max-batches=${exitBatch + 20}`,
       '--batch-size=1000',
       '--no-close',
       '--quiet-api',
@@ -76,11 +105,15 @@ const check = (name, pass) => checks.push([name, !!pass]);
 
 for (const run of runs) {
   check(`${run.name}: emulator run completed`, !run.failed);
+  check(`${run.name}: File menu exposes Open, Close, and Exit`,
+    new RegExp(`menu-dump:${run.name}-file-open:[^\\n]*&Open\\.\\.[^\\n]*&Close[^\\n]*E&xit`).test(run.output));
   check(`${run.name}: MIDI file opened`, /\[MCI\] open sequencer id=1 element="PINBALL\.MID" notes=14139/.test(run.output));
   check(`${run.name}: stable stopped title rendered`, /title="PINBALL\.MID - Media Player \(stopped\)"/.test(run.output));
   check(`${run.name}: Play reaches MCI`, /\[MCI\] play sequencer id=1 element="PINBALL\.MID" notes=14139/.test(run.output));
+  check(`${run.name}: Help menu remains usable during playback`,
+    new RegExp(`menu-dump:${run.name}-help-playing:[^\\n]*&Help Topics[^\\n]*&About Media Player`).test(run.output));
   check(`${run.name}: screenshot written`, fs.existsSync(run.png) && fs.statSync(run.png).size > 4000);
-  check(`${run.name}: WM_CLOSE exits cleanly`, /\[Exit\] code=0/.test(run.output));
+  check(`${run.name}: File > Exit exits cleanly`, /\[Exit\] code=0/.test(run.output));
   check(`${run.name}: no runtime crash`, !/UNIMPLEMENTED API:|RuntimeError|LinkError|\*\*\* CRASH|STUCK at EIP/.test(run.output));
 }
 
