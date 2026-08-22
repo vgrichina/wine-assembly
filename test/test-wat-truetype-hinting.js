@@ -217,8 +217,8 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
         'Win98 Arial A x coordinates must remain within 1/64 pixel of the oracle');
         assert.deepStrictEqual(actualY, expectedY,
           'Win98 Arial A y coordinates must match the oracle exactly');
-        assert.strictEqual(wat.test_tth_last_advance(), 961,
-          'Win98 Arial A hinted advance must match the oracle');
+        assert.strictEqual(wat.test_tth_last_advance(), 960,
+          'Win98 Arial A hinted advance must match its 15-pixel device width');
       }
       if (character === 'é') {
         assert.deepStrictEqual(
@@ -309,6 +309,68 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
       '..#.....#..',
       '..#.....#..',
     ], 'Win98 Arial W 12ppem monochrome bitmap must match exactly');
+
+    // The native 12ppem GGO_NATIVE capture also exposes Win98's initial
+    // horizontal phantom placement. Arial's digit advance scales to 427/64,
+    // but Win98 supplies point n+1 to the glyph program at 448/64. The white
+    // MIRP that references it therefore places the outer stem at 384/64.
+    // Pin both that causal outline and the corner pixels it controls.
+    const digitOracles = new Map([
+      ['0', {
+        points: [[8, 384, 372], [9, 384, 288], [10, 384, 189],
+          [22, 320, 122], [23, 320, 288], [24, 320, 423]],
+        rows: ['.###.', '#...#', '#...#', '#...#', '#...#',
+          '#...#', '#...#', '#...#', '.###.'],
+      }],
+      ['9', {
+        points: [[8, 320, 209], [9, 320, 251], [10, 320, 256],
+          [23, 384, 407], [24, 384, 303], [25, 384, 195]],
+        rows: ['.###.', '#...#', '#...#', '#...#', '#..##',
+          '.##.#', '....#', '#...#', '.###.'],
+      }],
+    ]);
+    for (const [character, expected] of digitOracles) {
+      const digitGid = wat.test_tt_glyph_index(
+        native.at, native.size, character.charCodeAt(0));
+      const digitCount = wat.test_tt_glyph_load_outline(
+        native.at, native.size, digitGid, compact, 512);
+      const digitHinted = wat.test_tth_hint_outline(
+        native.at, native.size, digitGid, 12, compact, digitCount) >>> 0;
+      assert.ok(digitHinted, `Win98 Arial ${character} must hint at 12ppem`);
+      assert.strictEqual(wat.test_tth_last_advance(), 448,
+        `Win98 Arial ${character} must expose its seven-pixel phantom advance`);
+      for (const [index, expectedX, expectedY] of expected.points) {
+        const actualX = wat.test_tth_point_x(digitHinted, index);
+        const actualY = wat.test_tth_point_y(digitHinted, index);
+        assert.ok(actualX === expectedX && Math.abs(actualY - expectedY) <= 1,
+          `Win98 Arial ${character} point ${index} must match the native ` +
+          `oracle; got (${actualX}, ${actualY}), expected ` +
+          `(${expectedX}, ${expectedY})`);
+      }
+      const width = wat.test_tt_glyph_box_width(
+        native.at, native.size, digitGid, 12);
+      const height = wat.test_tt_glyph_box_height(
+        native.at, native.size, digitGid, 12);
+      const left = wat.test_tt_glyph_box_left(
+        native.at, native.size, digitGid, 12);
+      const top = wat.test_tt_glyph_box_top(
+        native.at, native.size, digitGid, 12);
+      assert.deepStrictEqual([width, height, left, top], [5, 9, 1, 9],
+        `Win98 Arial ${character} monochrome metrics must match`);
+      const bitmapGuest = wat.guest_alloc(32) >>> 0;
+      const scratchBytes = wat.test_tt_raster_scratch_bytes(width) >>> 0;
+      const scratchGuest = wat.guest_alloc(scratchBytes) >>> 0;
+      assert.strictEqual(wat.test_tt_rasterize_glyph(
+        native.at, native.size, digitGid, 12, wa(bitmapGuest), width, height,
+        left * 64, top * 64, wa(scratchGuest), scratchBytes), 1,
+      `Win98 Arial ${character} must scan-convert at 12ppem`);
+      const rows = Array.from({ length: height }, (_, y) =>
+        Array.from({ length: width }, (_unused, x) =>
+          wat.test_tt_bitmap_pixel(wa(bitmapGuest), height, x, y)
+            ? '#' : '.').join(''));
+      assert.deepStrictEqual(rows, expected.rows,
+        `Win98 Arial ${character} 12ppem monochrome bitmap must match exactly`);
+    }
 
     // Arial's prep program creates twilight points with MIAP, interpolates
     // them, and writes the resulting x-height back to CVT 6.  Win98 rounds
@@ -411,6 +473,7 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
     }
     oracle = `${nativePoints} Arial raw points, ` +
       `${win98WPoints.size * 5} Arial W point cases, ` +
+      `${digitOracles.size} exact Arial digit bitmaps, ` +
       `${metricCases}/3 exact GGO metric cases, ` +
       `${controlPrograms} Times/Courier programs`;
   }

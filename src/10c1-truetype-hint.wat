@@ -2271,6 +2271,59 @@
     (select (i32.add (local.get $data) (local.get $cursor)) (i32.const 0)
       (i32.ne (local.get $length) (i32.const 0))))
 
+  ;; An hdmx record marks a ppem where Win98 prepares integer device advances.
+  ;; At those sizes its glyph zone starts with the base horizontal phantom on
+  ;; the integer grid; instructions may subsequently move it to the per-glyph
+  ;; width cached in hdmx. Return the linear fallback when no complete record
+  ;; covers this exact glyph and size. Malformed counts/strides never read
+  ;; beyond the table.
+  (func $tth_hdmx_advance (param $data i32) (param $size i32) (param $gid i32)
+        (param $ppem i32) (param $fallback i32) (result i32)
+    (local $hdmx i32) (local $length i32) (local $records i32)
+    (local $record_size i32) (local $glyphs i32) (local $index i32)
+    (local $record i32)
+    (local.set $hdmx (call $tt_table_off (local.get $data) (local.get $size)
+      (i32.const 0x68646D78)))
+    (local.set $length (call $tt_table_len (local.get $data) (local.get $size)
+      (i32.const 0x68646D78)))
+    (if (i32.or (i32.eqz (local.get $hdmx))
+          (i32.lt_u (local.get $length) (i32.const 8)))
+      (then (return (local.get $fallback))))
+    (if (i32.ne (call $tt_u16 (local.get $data) (local.get $size)
+          (local.get $hdmx)) (i32.const 0))
+      (then (return (local.get $fallback))))
+    (local.set $records (call $tt_u16 (local.get $data) (local.get $size)
+      (i32.add (local.get $hdmx) (i32.const 2))))
+    (local.set $record_size (call $tt_u32 (local.get $data) (local.get $size)
+      (i32.add (local.get $hdmx) (i32.const 4))))
+    (local.set $glyphs (call $tt_num_glyphs (local.get $data) (local.get $size)))
+    (if (i32.or (i32.ge_u (local.get $gid) (local.get $glyphs))
+          (i32.lt_u (local.get $record_size)
+            (i32.add (local.get $glyphs) (i32.const 2))))
+      (then (return (local.get $fallback))))
+    (if (i32.or (i32.gt_u (local.get $record_size)
+          (i32.sub (local.get $length) (i32.const 8)))
+        (i32.gt_u (local.get $records)
+          (i32.div_u (i32.sub (local.get $length) (i32.const 8))
+            (local.get $record_size))))
+      (then (return (local.get $fallback))))
+    (block $missing (loop $scan
+      (br_if $missing (i32.ge_u (local.get $index) (local.get $records)))
+      (local.set $record (i32.add (local.get $hdmx)
+        (i32.add (i32.const 8)
+          (i32.mul (local.get $index) (local.get $record_size)))))
+      (if (i32.eq (call $tt_u8 (local.get $data) (local.get $size)
+            (local.get $record)) (local.get $ppem))
+        (then
+          ;; The cached glyph byte is the post-program width, not the
+          ;; pre-program phantom coordinate. Snap the latter independently.
+          (return (i32.mul (call $gdi_round_ratio
+            (i64.extend_i32_s (local.get $fallback)) (i64.const 64))
+            (i32.const 64)))))
+      (local.set $index (i32.add (local.get $index) (i32.const 1)))
+      (br $scan)))
+    (local.get $fallback))
+
   (func $tth_load_outline (param $data i32) (param $size i32) (param $gid i32)
         (param $compact i32) (param $count i32) (result i32)
     (local $index i32) (local $point i32) (local $x i32) (local $y i32)
@@ -2307,6 +2360,12 @@
     (local.set $advance (call $tt_fu_to_26_6
       (call $tt_advance_fu (local.get $data) (local.get $size) (local.get $gid))
       (global.get $tth_ppem) (global.get $tth_upem)))
+    ;; Win98 snaps the base phantom when hdmx covers this ppem. Arial 12ppem
+    ;; maps its 427/64 linear digit width to a 448/64 advance phantom, from
+    ;; which the glyph's white MIRP lands at 384/64.
+    (local.set $advance (call $tth_hdmx_advance (local.get $data)
+      (local.get $size) (local.get $gid) (global.get $tth_ppem)
+      (local.get $advance)))
     (local.set $index (local.get $count))
     (block $phantom_done (loop $phantom
       (br_if $phantom_done (i32.ge_u (local.get $index)
