@@ -415,18 +415,37 @@
           (i64.extend_i32_s (local.get $vy))))
       (i64.const 16384)))
 
+  (func $tth_dot_trunc (param $x i32) (param $y i32)
+        (param $vx i32) (param $vy i32) (result i32)
+    (i32.wrap_i64 (i64.div_s
+      (i64.add
+        (i64.mul (i64.extend_i32_s (local.get $x))
+          (i64.extend_i32_s (local.get $vx)))
+        (i64.mul (i64.extend_i32_s (local.get $y))
+          (i64.extend_i32_s (local.get $vy))))
+      (i64.const 16384))))
+
+  ;; Win98's 0x49/0x4A behavior is observably asymmetric: current-distance
+  ;; measurement subtracts two rounded projected coordinates, while original
+  ;; distance projects the unhinted delta with signed truncation.
+  (func $tth_md_uses_original (param $op i32) (result i32)
+    (i32.eq (local.get $op) (i32.const 0x4A)))
+
   (func $tth_project_current (param $zone_a i32) (param $a i32)
         (param $zone_b i32) (param $b i32) (result i32)
-    (call $tth_dot
-      (i32.sub (call $tth_point_current_x (local.get $zone_a) (local.get $a))
-        (call $tth_point_current_x (local.get $zone_b) (local.get $b)))
-      (i32.sub (call $tth_point_current_y (local.get $zone_a) (local.get $a))
-        (call $tth_point_current_y (local.get $zone_b) (local.get $b)))
-      (global.get $tth_pvx) (global.get $tth_pvy)))
+    (i32.sub
+      (call $tth_dot
+        (call $tth_point_current_x (local.get $zone_a) (local.get $a))
+        (call $tth_point_current_y (local.get $zone_a) (local.get $a))
+        (global.get $tth_pvx) (global.get $tth_pvy))
+      (call $tth_dot
+        (call $tth_point_current_x (local.get $zone_b) (local.get $b))
+        (call $tth_point_current_y (local.get $zone_b) (local.get $b))
+        (global.get $tth_pvx) (global.get $tth_pvy))))
 
   (func $tth_project_original (param $zone_a i32) (param $a i32)
         (param $zone_b i32) (param $b i32) (result i32)
-    (call $tth_dot
+    (call $tth_dot_trunc
       (i32.sub (call $tth_point_original_x (local.get $zone_a) (local.get $a))
         (call $tth_point_original_x (local.get $zone_b) (local.get $b)))
       (i32.sub (call $tth_point_original_y (local.get $zone_a) (local.get $a))
@@ -1363,7 +1382,7 @@
       (then
         (local.set $point_index (call $tth_pop))
         (local.set $other (call $tth_pop))
-        (if (i32.and (local.get $op) (i32.const 1))
+        (if (call $tth_md_uses_original (local.get $op))
           (then (local.set $value (call $tth_project_original
             (global.get $tth_zp0) (local.get $other)
             (global.get $tth_zp1) (local.get $point_index))))
@@ -2950,6 +2969,17 @@
 
   (func (export "test_tth_last_pc") (result i32)
     (global.get $tth_pc))
+
+  (func (export "test_tth_dot_mode") (param i32) (param i32)
+        (param i32) (param i32) (param $original i32) (result i32)
+    (if (result i32) (local.get $original)
+      (then (call $tth_dot_trunc (local.get 0) (local.get 1)
+        (local.get 2) (local.get 3)))
+      (else (call $tth_dot (local.get 0) (local.get 1)
+        (local.get 2) (local.get 3)))))
+
+  (func (export "test_tth_md_uses_original") (param i32) (result i32)
+    (call $tth_md_uses_original (local.get 0)))
 
   (func (export "test_tth_minimum_distance_direction")
         (param $distance i32) (param $original i32) (param $minimum i32)

@@ -31,6 +31,8 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
       `\\(global\\.get \\$tth_zp1\\)\\s+\\(local\\.get \\$point_index\\)`),
     `MD ${projection} distance must preserve the p2 minus p1 operand order`);
   }
+  assert.match(mdOpcode[1], /\$tth_md_uses_original/,
+    'MD must select Win98 current/original opcode semantics centrally');
 
   const { exports: wat, memory, hostCtx } = await bootRenderHarness();
   assert.deepStrictEqual([
@@ -39,6 +41,15 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
     wat.test_tth_minimum_distance_direction(-80, 23, 64),
   ], [-64, 64, -80],
   'minimum_distance must retain the original direction after rounding to zero');
+  assert.deepStrictEqual([
+    wat.test_tth_dot_mode(192, -2, -14043, 8479, 0),
+    wat.test_tth_dot_mode(192, -2, -14043, 8479, 1),
+  ], [-166, -165],
+  'current and original projections must retain Win98 fixed-point quantization');
+  assert.deepStrictEqual([
+    wat.test_tth_md_uses_original(0x49),
+    wat.test_tth_md_uses_original(0x4A),
+  ], [0, 1], 'MD opcodes must select fitted then original outline distances');
   const imageBase = wat.get_image_base() >>> 0;
   const wa = guest => (0x12000 + ((guest >>> 0) - imageBase)) >>> 0;
   const copyToGuest = bytes => {
