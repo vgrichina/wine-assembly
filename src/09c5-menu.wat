@@ -42,6 +42,11 @@
   ;;   dropdown label inset  = 20 (from dropdown left)
   ;;   dropdown shortcut inset = 20 (from dropdown right)
 
+  ;; The fake LoadMenu handle keeps the most recent resource name as its
+  ;; stable identity. Named W calls need their original character width when
+  ;; SetMenu later resolves that opaque handle into RT_MENU bytes.
+  (global $last_load_menu_wide (mut i32) (i32.const 0))
+
   ;; --------- MENU_DATA_TABLE accessors ---------
 
   (func $menu_data_table_addr (param $slot i32) (result i32)
@@ -2200,7 +2205,7 @@
     (local $slot i32) (local $tbl i32) (local $old i32)
     (local $entry i32) (local $bytes_g i32) (local $bytes_w i32)
     (local $size i32) (local $total i32) (local $newg i32)
-    (local $source_id i32)
+    (local $source_id i32) (local $from_last_load i32)
     (local $version i32) (local $headerOffset i32) (local $items_w i32)
     (local.set $source_id (local.get $menu_id))
     (local.set $slot (call $wnd_table_find (local.get $hwnd)))
@@ -2220,6 +2225,8 @@
     (if (i32.eq (i32.and (local.get $menu_id) (i32.const 0xFFFF0000))
                 (i32.const 0x00BE0000))
       (then (local.set $menu_id (i32.and (local.get $menu_id) (i32.const 0xFFFF)))))
+    (local.set $from_last_load
+      (i32.eq (local.get $menu_id) (global.get $last_load_menu_id)))
     ;; Resolve resource bytes. An NE image keeps its menus in a flat resource
     ;; table with none of the PE tree, and stores the same MENUITEMTEMPLATE
     ;; with ANSI rather than UTF-16 labels — which is the whole difference, so
@@ -2244,7 +2251,18 @@
         (local.set $size (global.get $win16_res_len)))
       (else
         (global.set $ml_char_stride (i32.const 2))
-        (local.set $entry (call $find_resource (i32.const 4) (local.get $menu_id)))
+        ;; LoadMenu can target a DLL and can carry a named ANSI/UTF-16 key.
+        ;; Resolve it in the module and character width captured by the most
+        ;; recent LoadMenuA/W call; direct class-menu pointers remain ANSI in
+        ;; the current executable as before.
+        (if (local.get $from_last_load)
+          (then (call $push_rsrc_ctx (global.get $last_load_menu_hinst))))
+        (local.set $entry
+          (if (result i32) (i32.and (local.get $from_last_load)
+                (global.get $last_load_menu_wide))
+            (then (call $find_resource_w (i32.const 4) (local.get $menu_id)))
+            (else (call $find_resource (i32.const 4) (local.get $menu_id)))))
+        (if (local.get $from_last_load) (then (call $pop_rsrc_ctx)))
         (if (i32.eqz (local.get $entry)) (then (return)))
         ;; data entry: i32 RVA, i32 size
         (local.set $bytes_g (i32.add (call $r_base)
@@ -3200,16 +3218,19 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 137: LoadMenuA(hInstance, lpMenuName) — 2 args stdcall
-  ;; Return menu resource ID as handle (host renderer resolves by ID)
+  ;; 137: LoadMenuA(hInstance, lpMenuName) — 2 args stdcall.
+  ;; Integer resources retain the compact tagged handle. A named resource uses
+  ;; its guest pointer as the opaque identity so SetMenu can resolve the same
+  ;; name instead of silently substituting ordinal 1.
   (func $handle_LoadMenuA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $last_load_menu_id (local.get $arg1))
+    (global.set $last_load_menu_hinst (local.get $arg0))
+    (global.set $last_load_menu_wide (i32.const 0))
     ;; If lpMenuName < 0x10000, it's MAKEINTRESOURCE (resource ID)
     (if (i32.lt_u (local.get $arg1) (i32.const 0x10000))
       (then
-        (global.set $last_load_menu_id (i32.and (local.get $arg1) (i32.const 0xFFFF)))
-        (global.set $last_load_menu_hinst (local.get $arg0))
         (global.set $eax (i32.or (local.get $arg1) (i32.const 0x00BE0000))))
-      (else (global.set $eax (i32.const 0x00BE0001))))
+      (else (global.set $eax (local.get $arg1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
@@ -3220,12 +3241,13 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
-  ;; 292: LoadMenuW — a menu is named by ordinal here (the menu itself comes
-  ;; from the PE resource), and an ordinal has no encoding, so this is
-  ;; LoadMenuA.
+  ;; 292: LoadMenuW — ordinals share the A path; named resources keep the
+  ;; pointer identity but select UTF-16 matching for the later SetMenu load.
   (func $handle_LoadMenuW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $handle_LoadMenuA (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+    (if (i32.ge_u (local.get $arg1) (i32.const 0x10000))
+      (then (global.set $last_load_menu_wide (i32.const 1))))
   )
 
   ;; 407: RemoveMenu(hMenu, uPosition, uFlags) — return TRUE.

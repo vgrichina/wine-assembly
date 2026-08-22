@@ -696,7 +696,13 @@
 
   ;; Find resource entry in PE resource directory
   ;; Returns offset of data entry (relative to image_base) or 0
-  ;; Compare ASCII string at guest $str_ptr with Unicode resource name at rsrc offset $name_off
+  ;; Named-resource API variants carry either ANSI or UTF-16 guest strings.
+  ;; $find_resource uses ANSI; $find_resource_w temporarily selects UTF-16.
+  (global $rsrc_name_char_stride (mut i32) (i32.const 1))
+
+  ;; Compare a guest string with the Unicode resource name at rsrc offset
+  ;; $name_off. The guest character width is selected by the public lookup
+  ;; wrapper, while PE resource-directory names are always UTF-16.
   ;; Resource name format: u16 length, then u16[] chars. Returns 1 if match (case-insensitive).
   (func $rsrc_name_match (param $str_ptr i32) (param $name_off i32) (result i32)
     (local $str_wa i32) (local $name_wa i32) (local $len i32) (local $j i32)
@@ -708,8 +714,9 @@
     (local.set $j (i32.const 0))
     (block $done (loop $cmp
       (br_if $done (i32.ge_u (local.get $j) (local.get $len)))
-      (local.set $ch_a (i32.load8_u (i32.add (local.get $str_wa) (local.get $j))))
-      (if (i32.eqz (local.get $ch_a)) (then (return (i32.const 0)))) ;; ASCII shorter
+      (local.set $ch_a (i32.load8_u (i32.add (local.get $str_wa)
+        (i32.mul (local.get $j) (global.get $rsrc_name_char_stride)))))
+      (if (i32.eqz (local.get $ch_a)) (then (return (i32.const 0)))) ;; guest string shorter
       (local.set $ch_r (i32.load16_u (i32.add (local.get $name_wa)
         (i32.add (i32.const 2) (i32.mul (local.get $j) (i32.const 2))))))
       ;; Uppercase both for case-insensitive compare
@@ -720,8 +727,9 @@
       (if (i32.ne (local.get $ch_a) (local.get $ch_r)) (then (return (i32.const 0))))
       (local.set $j (i32.add (local.get $j) (i32.const 1)))
       (br $cmp)))
-    ;; Matched all $len resource chars — ensure ASCII string ends here too
-    (i32.eqz (i32.load8_u (i32.add (local.get $str_wa) (local.get $len)))))
+    ;; Matched all $len resource chars — ensure the guest string ends here too.
+    (i32.eqz (i32.load8_u (i32.add (local.get $str_wa)
+      (i32.mul (local.get $len) (global.get $rsrc_name_char_stride))))))
 
   ;; Raw eid (name-level directory entry dword, with 0x80000000 set for
   ;; named entries) of the most-recent successful name-level $rsrc_find_entry
@@ -849,6 +857,16 @@
     ;; d is now the offset of the data entry (RVA, size, codepage, reserved) relative to rsrc start
     ;; Return as offset from image_base (rsrc_rva + d)
     (i32.add (call $r_rva) (local.get $d)))
+
+  ;; Wide-name companion used by APIs such as LoadMenuW. Keep the ordinary
+  ;; finder ANSI so existing A-entry points and named class resources retain
+  ;; their exact behavior.
+  (func $find_resource_w (param $type_id i32) (param $name_id i32) (result i32)
+    (local $entry i32)
+    (global.set $rsrc_name_char_stride (i32.const 2))
+    (local.set $entry (call $find_resource (local.get $type_id) (local.get $name_id)))
+    (global.set $rsrc_name_char_stride (i32.const 1))
+    (local.get $entry))
 
   ;; Find a WAVE resource by name ID. Walks L1 looking for named type "WAVE",
   ;; then L2 by integer name_id, then takes first lang entry.

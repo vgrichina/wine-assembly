@@ -153,6 +153,8 @@ check('WAT: transport toolbar keeps Play enabled after open',
   /toolbar:wat:[^\n]*#0 ok=1\/1 img=0 cmd=501 state=0x4/.test(wat.output));
 check('WAT: toolbar uses Win98 padded 23x22 transport faces',
   /toolbar:wat:[^\n]*#0[^\n]*rect=2,2,25,24/.test(wat.output));
+check('WAT: named LoadMenuW attaches the Media Player menu bar',
+  /window:wat[^\n]*class="MPlayer"[^\n]*menuBar=true/.test(wat.output));
 const nativeTrackbarInk = paintedInk(native.png, trackbarRect(native.output, 'native'));
 check(`native: loaded comctl32 owns toolbar and trackbar classes (${nativeTrackbarInk} colors)`,
   /window:native[^\n]*class="msctls_trackbar32" ctrlClass=0/.test(native.output) &&
@@ -160,6 +162,8 @@ check(`native: loaded comctl32 owns toolbar and trackbar classes (${nativeTrackb
   nativeTrackbarInk >= 3);
 check('native: disabled startup transport glyphs are embossed, not solid rectangles',
   disabledTransportGlyphsVisible(native.startupPng, toolbarRect(native.output, 'native', 301)));
+check('native: named LoadMenuW attaches the Media Player menu bar',
+  /window:native[^\n]*class="MPlayer"[^\n]*menuBar=true/.test(native.output));
 
 let failed = 0;
 for (const [name, pass] of checks) {
