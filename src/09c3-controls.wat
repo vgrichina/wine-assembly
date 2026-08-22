@@ -4401,6 +4401,14 @@
             (i32.const 0) (i32.const 0)
             (local.get $w) (local.get $h)
             (i32.const 0x30011)))
+    ;; Win98 supplies owner-draw button DCs with the standard 3-D colors.
+    ;; Monochrome BitBlt maps source 1 through TextColor and source 0 through
+    ;; BkColor; ABOUT.DLL relies on this to emboss resource 999 instead of
+    ;; painting a literal black-and-white logo.
+    (drop (call $host_gdi_set_text_color (local.get $hdc)
+      (call $win98_sys_color (i32.const 15))))
+    (drop (call $host_gdi_set_bk_color (local.get $hdc)
+      (call $win98_sys_color (i32.const 20))))
     (drop (call $wnd_send_message
             (call $wnd_get_parent (local.get $hwnd))
             (i32.const 0x002B)
@@ -4995,6 +5003,10 @@
                     (i32.const 0) (i32.const 0)
                     (local.get $w) (local.get $h)
                     (i32.const 0x30011)))
+            (drop (call $host_gdi_set_text_color (local.get $hdc)
+              (call $win98_sys_color (i32.const 15))))
+            (drop (call $host_gdi_set_bk_color (local.get $hdc)
+              (call $win98_sys_color (i32.const 20))))
             ;; Post WM_DRAWITEM (0x002B) to parent
             (drop (call $wnd_send_message
               (call $wnd_get_parent (local.get $hwnd))

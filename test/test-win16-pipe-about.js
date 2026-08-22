@@ -68,6 +68,28 @@ try {
   assert(fs.existsSync(screenshot) && fs.statSync(screenshot).size > 14000,
     'About should render a non-empty screenshot');
   const png = PNG.sync.read(fs.readFileSync(screenshot));
+  let logoFacePixels = 0;
+  let logoHighlightPixels = 0;
+  let logoBlackPixels = 0;
+  // The owner-draw logo button is at screen 188,99 with a 260x65 client.
+  // Its 1-bpp source must expand through COLOR_BTNFACE/BTNHIGHLIGHT, not the
+  // default black/white monochrome-DC pair.
+  for (let y = 99; y < 164; y++) {
+    for (let x = 188; x < 448; x++) {
+      const p = (y * png.width + x) * 4;
+      const r = png.data[p];
+      const g = png.data[p + 1];
+      const b = png.data[p + 2];
+      if (r === 0xc0 && g === 0xc0 && b === 0xc0) logoFacePixels++;
+      if (r === 0xff && g === 0xff && b === 0xff) logoHighlightPixels++;
+      if (r === 0 && g === 0 && b === 0) logoBlackPixels++;
+    }
+  }
+  assert(logoFacePixels > 5000 && logoHighlightPixels > 10000,
+    `the monochrome About logo should expand to 3-D colors ` +
+    `(face=${logoFacePixels}, highlight=${logoHighlightPixels})`);
+  assert.strictEqual(logoBlackPixels, 0,
+    'the About logo panel must not retain the default black monochrome color');
   let iconPixels = 0;
   for (let y = 177; y < 209; y++) {
     for (let x = 199; x < 231; x++) {
