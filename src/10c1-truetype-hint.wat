@@ -1129,13 +1129,20 @@
       (then (return (i32.mul (local.get $sign) (global.get $tth_sw_value)))))
     (local.get $distance))
 
-  (func $tth_minimum_distance (param $distance i32) (result i32)
+  ;; Rounding can collapse a signed distance to zero. Preserve the original
+  ;; outline direction when enforcing minimum_distance so zero does not move
+  ;; a point to the opposite side of its reference point.
+  (func $tth_minimum_distance (param $distance i32) (param $original i32)
+        (result i32)
+    (local $direction i32)
+    (local.set $direction (select (local.get $original) (local.get $distance)
+      (i32.ne (local.get $original) (i32.const 0))))
     (if (i32.lt_s (call $tth_abs (local.get $distance))
           (global.get $tth_min_dist))
       (then (return (select
         (i32.sub (i32.const 0) (global.get $tth_min_dist))
         (global.get $tth_min_dist)
-        (i32.lt_s (local.get $distance) (i32.const 0))))))
+        (i32.lt_s (local.get $direction) (i32.const 0))))))
     (local.get $distance))
 
   ;; MDRP/MIRP share the reference-point update and final projected move.
@@ -1185,14 +1192,16 @@
         (local.set $point_index (call $tth_pop))
         (local.set $distance (call $tth_project_original
           (global.get $tth_zp1) (local.get $point_index)
-          (global.get $tth_zp0) (global.get $tth_rp0)))))
+          (global.get $tth_zp0) (global.get $tth_rp0)))
+        (local.set $original (local.get $distance))))
     (if (global.get $tth_error) (then (return (i32.const 0))))
     (local.set $distance (call $tth_single_width (local.get $distance)))
     (if (i32.and (local.get $op) (i32.const 0x04))
       (then (local.set $distance (call $tth_round (local.get $distance)))))
     (if (i32.and (local.get $op) (i32.const 0x08))
       (then (local.set $distance
-        (call $tth_minimum_distance (local.get $distance)))))
+        (call $tth_minimum_distance (local.get $distance)
+          (local.get $original)))))
     (local.set $set_rp0 (i32.and (local.get $op) (i32.const 0x10)))
     (call $tth_relative_finish (local.get $point_index) (local.get $distance)
       (local.get $set_rp0)))
@@ -2941,3 +2950,9 @@
 
   (func (export "test_tth_last_pc") (result i32)
     (global.get $tth_pc))
+
+  (func (export "test_tth_minimum_distance_direction")
+        (param $distance i32) (param $original i32) (param $minimum i32)
+        (result i32)
+    (global.set $tth_min_dist (local.get $minimum))
+    (call $tth_minimum_distance (local.get $distance) (local.get $original)))

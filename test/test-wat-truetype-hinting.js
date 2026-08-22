@@ -33,6 +33,12 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
   }
 
   const { exports: wat, memory, hostCtx } = await bootRenderHarness();
+  assert.deepStrictEqual([
+    wat.test_tth_minimum_distance_direction(0, -23, 64),
+    wat.test_tth_minimum_distance_direction(0, 23, 64),
+    wat.test_tth_minimum_distance_direction(-80, 23, 64),
+  ], [-64, 64, -80],
+  'minimum_distance must retain the original direction after rounding to zero');
   const imageBase = wat.get_image_base() >>> 0;
   const wa = guest => (0x12000 + ((guest >>> 0) - imageBase)) >>> 0;
   const copyToGuest = bytes => {
@@ -491,6 +497,52 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
       '###..', '#..#.', '#...#', '#...#', '#...#', '#..#.', '###..',
     ], 'Win98 Arial D 10ppem monochrome bitmap must match exactly');
 
+    // The black MIRP controlling Arial M's inner diagonal starts with a small
+    // negative outline distance that round-to-grid collapses to zero. Win98
+    // applies minimum_distance in that original negative direction; choosing
+    // the sign from rounded zero instead sends point 8 two pixels across rp0
+    // and distorts both diagonals.
+    const nativeCapitalMGid = wat.test_tt_glyph_index(
+      native.at, native.size, 'M'.charCodeAt(0));
+    const nativeCapitalMCount = wat.test_tt_glyph_load_outline(
+      native.at, native.size, nativeCapitalMGid, compact, 512);
+    assert.strictEqual(nativeCapitalMCount, 17,
+      'Win98 Arial M raw point topology must remain stable');
+    const nativeCapitalMHinted = wat.test_tth_hint_outline(
+      native.at, native.size, nativeCapitalMGid, 10,
+      compact, nativeCapitalMCount) >>> 0;
+    assert.ok(nativeCapitalMHinted, 'Win98 Arial M must hint at 10ppem');
+    assert.deepStrictEqual([6, 8, 13].map(index => [index,
+      wat.test_tth_point_x(nativeCapitalMHinted, index),
+      wat.test_tth_point_y(nativeCapitalMHinted, index),
+    ]), [[6, 295, 81], [8, 433, 448], [13, 335, 0]],
+    'minimum-distance direction must reproduce Win98 Arial M diagonal anchors');
+    const capitalM10Box = [
+      wat.test_tt_glyph_box_width(native.at, native.size, nativeCapitalMGid, 10),
+      wat.test_tt_glyph_box_height(native.at, native.size, nativeCapitalMGid, 10),
+      wat.test_tt_glyph_box_left(native.at, native.size, nativeCapitalMGid, 10),
+      wat.test_tt_glyph_box_top(native.at, native.size, nativeCapitalMGid, 10),
+    ];
+    assert.deepStrictEqual(capitalM10Box, [7, 7, 1, 7],
+      'Win98 Arial M 10ppem monochrome metrics must match');
+    const capitalM10BitmapGuest = wat.guest_alloc(64) >>> 0;
+    const capitalM10ScratchBytes = wat.test_tt_raster_scratch_bytes(
+      capitalM10Box[0]) >>> 0;
+    const capitalM10ScratchGuest = wat.guest_alloc(capitalM10ScratchBytes) >>> 0;
+    assert.strictEqual(wat.test_tt_rasterize_glyph(
+      native.at, native.size, nativeCapitalMGid, 10, wa(capitalM10BitmapGuest),
+      capitalM10Box[0], capitalM10Box[1], capitalM10Box[2] * 64,
+      capitalM10Box[3] * 64, wa(capitalM10ScratchGuest),
+      capitalM10ScratchBytes), 1,
+    'Win98 Arial M must scan-convert at 10ppem');
+    assert.deepStrictEqual(Array.from({ length: capitalM10Box[1] }, (_, y) =>
+      Array.from({ length: capitalM10Box[0] }, (_unused, x) =>
+        wat.test_tt_bitmap_pixel(wa(capitalM10BitmapGuest),
+          capitalM10Box[1], x, y) ? '#' : '.').join('')), [
+      '#.....#', '##...##', '##...##', '#.#.#.#', '#.#.#.#',
+      '#.#.#.#', '#..#..#',
+    ], 'Win98 Arial M 10ppem monochrome bitmap must match exactly');
+
     // GGO black boxes round hinted extrema to device pixels. Arial j has an
     // exact -29/64 left extremum: conservative floor/ceil would report a
     // spurious blank column at x=-1 even though Win98 reports x=0, width 2.
@@ -606,7 +658,7 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
     oracle = `${nativePoints} Arial raw points, ` +
       `${win98WPoints.size * 5} Arial W point cases, ` +
       `${digitOracles.size} exact Arial digit bitmaps, ` +
-      `2 exact Arial 10ppem c/D bitmaps, ` +
+      `3 exact Arial 10ppem c/D/M bitmaps, ` +
       `${metricCases}/3 exact GGO metric cases, ` +
       `${controlPrograms} Times/Courier programs`;
   }
