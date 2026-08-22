@@ -13,9 +13,10 @@ const EXE = path.join(__dirname, 'binaries', 'win98-apps', 'mplay32.exe');
 const MSVCRT = path.join(__dirname, 'binaries', 'dlls', 'msvcrt.dll');
 const COMCTL32 = path.join(__dirname, 'binaries', 'dlls', 'comctl32.dll');
 const MIDI = path.join(__dirname, 'binaries', 'pinball', 'PINBALL.MID');
+const WAV = path.join(__dirname, 'binaries', 'plus98', '2.WAV');
 const OUT = path.join(ROOT, 'scratch', 'mplay32-dual-mode');
 
-for (const file of [EXE, MSVCRT, COMCTL32, MIDI]) {
+for (const file of [EXE, MSVCRT, COMCTL32, MIDI, WAV]) {
   if (!fs.existsSync(file)) {
     console.log('SKIP  missing fixture:', file);
     process.exit(0);
@@ -26,18 +27,24 @@ fs.mkdirSync(OUT, { recursive: true });
 function runMode(name, dlls, openBatch) {
   const png = path.join(OUT, `${name}.png`);
   const startupPng = path.join(OUT, `${name}-startup.png`);
+  const wavePng = path.join(OUT, `${name}-wave.png`);
   try { fs.unlinkSync(png); } catch (_) {}
   try { fs.unlinkSync(startupPng); } catch (_) {}
+  try { fs.unlinkSync(wavePng); } catch (_) {}
   const pickBatch = openBatch + 60;
   const playBatch = pickBatch + 30;
   const screenshotBatch = playBatch + 20;
   const helpBatch = screenshotBatch + 10;
-  const exitBatch = helpBatch + 7;
-  const playInput = name === 'wat'
-    ? [`${playBatch}:mousedown:39:123`, `${playBatch + 5}:mouseup:39:123`]
-    : [`${playBatch}:toolbar-click:501:play`];
+  const waveOpenBatch = helpBatch + 7;
+  const wavePickBatch = waveOpenBatch + 60;
+  const wavePlayBatch = wavePickBatch + 30;
+  const exitBatch = wavePlayBatch + 25;
+  const playInput = (batch, label) => name === 'wat'
+    ? [`${batch}:mousedown:39:123`, `${batch + 5}:mouseup:39:123`]
+    : [`${batch}:toolbar-click:501:${label}`];
   const input = [
     `8:vfs-import:PINBALL.MID:${MIDI}`,
+    `9:vfs-import:TEST.WAV:${WAV}`,
     `${openBatch - 20}:png:${startupPng}`,
     // Exercise the real parsed menu: Alt+F opens File, Down selects the first
     // row, and Enter activates Open. Successful file-dialog creation and MIDI
@@ -54,7 +61,7 @@ function runMode(name, dlls, openBatch) {
     // The WAT toolbar needs the same time between DOWN and UP as real browser
     // events. Native comctl32 resolves the command-based helper to its actual
     // button rectangle, then performs the equivalent native-control click.
-    ...playInput,
+    ...playInput(playBatch, 'play-midi'),
     `${screenshotBatch}:png:${png}`,
     // Introspection sends synchronous control messages. Keep it after the
     // user click so it cannot perturb focus/capture before playback starts.
@@ -64,6 +71,17 @@ function runMode(name, dlls, openBatch) {
     // state getting stuck after a toolbar click or nested MCI dispatch.
     `${helpBatch}:wait-title-menu-open:Media_Player:800:72:${name}-help-playing`,
     `${helpBatch + 2}:menu-dump:${name}-help-playing`,
+    // Open and play PCM WAV in the same process after MIDI. This proves the
+    // advertised WaveAudio association is a real second MCI backend, not a
+    // filename filter that silently routes everything to the sequencer.
+    `${waveOpenBatch}:wait-title-menu-open:Media_Player:800:70:${name}-wave-open`,
+    `${waveOpenBatch + 2}:menu-dump:${name}-wave-open`,
+    `${waveOpenBatch + 4}:keydown:40`,
+    `${waveOpenBatch + 6}:keydown:13`,
+    `${wavePickBatch}:open-dlg-pick:TEST.WAV`,
+    ...playInput(wavePlayBatch, 'play-wave'),
+    `${wavePlayBatch + 12}:png:${wavePng}`,
+    `${wavePlayBatch + 14}:dump-windows:${name}-wave`,
     // Finish through File > Exit instead of injecting WM_CLOSE. Besides being
     // user-realistic, this proves a second File-menu command still dispatches.
     `${exitBatch}:wait-title-menu-open:Media_Player:800:70:${name}-file-exit`,
@@ -85,13 +103,14 @@ function runMode(name, dlls, openBatch) {
       '--quiet-api',
       '--quiet-blocks',
     ], { cwd: ROOT, encoding: 'utf8', timeout: 120000, maxBuffer: 8 * 1024 * 1024 });
-    return { name, output, png, startupPng, failed: false };
+    return { name, output, png, startupPng, wavePng, failed: false };
   } catch (error) {
     return {
       name,
       output: `${error.stdout || ''}${error.stderr || ''}`,
       png,
       startupPng,
+      wavePng,
       failed: true,
     };
   }
@@ -112,6 +131,16 @@ for (const run of runs) {
   check(`${run.name}: Play reaches MCI`, /\[MCI\] play sequencer id=1 element="PINBALL\.MID" notes=14139/.test(run.output));
   check(`${run.name}: Help menu remains usable during playback`,
     new RegExp(`menu-dump:${run.name}-help-playing:[^\\n]*&Help Topics[^\\n]*&About Media Player`).test(run.output));
+  check(`${run.name}: PCM WAV file opened through WaveAudio`,
+    /\[MCI\] open waveaudio id=\d+ element="TEST\.WAV" frames=[1-9]\d* rate=22050 channels=1 bits=16/.test(run.output));
+  check(`${run.name}: WAV Play reaches MCI`,
+    /\[MCI\] play waveaudio id=\d+ element="TEST\.WAV" frames=[1-9]\d* duration=[1-9]\d*ms/.test(run.output));
+  check(`${run.name}: WAV enters the playing state`,
+    /\[SetWindowText\] "TEST\.WAV - Media Player \(playing\)"/.test(run.output));
+  check(`${run.name}: WAV title rendered`,
+    new RegExp(`window:${run.name}-wave[^\\n]*title="TEST\\.WAV - Media Player \\((?:playing|stopped)\\)"`).test(run.output));
+  check(`${run.name}: WAV screenshot written`,
+    fs.existsSync(run.wavePng) && fs.statSync(run.wavePng).size > 4000);
   check(`${run.name}: screenshot written`, fs.existsSync(run.png) && fs.statSync(run.png).size > 4000);
   check(`${run.name}: File > Exit exits cleanly`, /\[Exit\] code=0/.test(run.output));
   check(`${run.name}: no runtime crash`, !/UNIMPLEMENTED API:|RuntimeError|LinkError|\*\*\* CRASH|STUCK at EIP/.test(run.output));

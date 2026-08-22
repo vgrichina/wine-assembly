@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Regression coverage for generic MIDI playback.
+// Regression coverage for host-backed MCI audio playback.
 //
 // This does not launch a Win32 app. It verifies the host import layer can:
 //   - open an explicit .mid file through the MCI "sequencer" path
@@ -8,6 +8,8 @@
 //   - avoid inventing a default song when an app opens sequencer with no file
 //   - play direct midiOutShortMsg note-on/note-off messages
 //   - handle the common mciSendStringA sequencer commands
+//   - decode PCM WAV files and route them through the shared Wave mixer bus
+//   - preserve WAV position across pause/resume and report MCI status
 
 const assert = require('assert');
 const { createHostImports } = require('../lib/host-imports');
@@ -57,6 +59,35 @@ function makeRmid(smf) {
 }
 
 const oneNoteRmid = makeRmid(oneNoteMidi);
+
+function makePcmWave(rate = 8000, frames = 4000) {
+  const dataLength = frames * 2;
+  const out = new Uint8Array(44 + dataLength);
+  const dv = new DataView(out.buffer);
+  const text = (off, value) => {
+    for (let i = 0; i < value.length; i++) out[off + i] = value.charCodeAt(i);
+  };
+  text(0, 'RIFF');
+  dv.setUint32(4, out.length - 8, true);
+  text(8, 'WAVE');
+  text(12, 'fmt ');
+  dv.setUint32(16, 16, true);
+  dv.setUint16(20, 1, true); // PCM
+  dv.setUint16(22, 1, true); // mono
+  dv.setUint32(24, rate, true);
+  dv.setUint32(28, rate * 2, true);
+  dv.setUint16(32, 2, true);
+  dv.setUint16(34, 16, true);
+  text(36, 'data');
+  dv.setUint32(40, dataLength, true);
+  for (let frame = 0; frame < frames; frame++) {
+    const sample = Math.round(Math.sin(frame * Math.PI / 16) * 12000);
+    dv.setInt16(44 + frame * 2, sample, true);
+  }
+  return out;
+}
+
+const halfSecondWave = makePcmWave();
 const delayedOneNoteMidi = Uint8Array.from([
   0x4d, 0x54, 0x68, 0x64, 0x00, 0x00, 0x00, 0x06,
   0x00, 0x00, 0x00, 0x01, 0x00, 0x60,
@@ -150,11 +181,13 @@ class FakeBufferSource extends FakeNode {
     this.playbackRate = new FakeAudioParam(1);
     this.detune = new FakeAudioParam();
     this.starts = [];
+    this.offsets = [];
     this.stops = [];
     this.loop = false;
   }
-  start(time) {
+  start(time, offset = 0) {
     this.starts.push(time);
+    this.offsets.push(offset);
     this.owner.started.push(this);
   }
   stop(time) {
@@ -245,6 +278,7 @@ try {
       if (lower === 'song.rmi') return oneNoteRmid;
       if (lower === 'delayed.mid') return delayedOneNoteMidi;
       if (lower === 'events.mid') return midiEventStream;
+      if (lower === 'sound.wav') return halfSecondWave;
       return null;
     },
   };
@@ -312,6 +346,61 @@ try {
   assert(rmidDev && rmidDev.smf, 'RIFF RMID files should unwrap to embedded SMF data');
   assert.strictEqual(rmidDev.smf.notes.length, 1);
   assert.strictEqual(imports.host.mci_command(rmidId, 0x0804, 0, 0), 0);
+
+  writeStrW(0x500, 'waveaudio');
+  writeStrW(0x540, 'sound.wav');
+  const waveId = imports.host.mci_open_w(0x500, 0x540, 0x2000);
+  const waveDev = ctx._mci.devices.get(waveId);
+  assert(waveDev && waveDev.wave, 'wide MCI open should parse an explicit WAV file');
+  assert.strictEqual(waveDev.type, 'waveaudio');
+  assert.strictEqual(waveDev.wave.rate, 8000);
+  assert.strictEqual(waveDev.wave.channels, 1);
+  assert.strictEqual(waveDev.wave.bits, 16);
+  assert.strictEqual(waveDev.wave.frames, 4000);
+  const beforeWave = ctx._voices._ac.started.length;
+  assert.strictEqual(imports.host.mci_command(waveId, 0x0806, 0, 0), 0, 'WAV MCI_PLAY should succeed');
+  assert.strictEqual(waveDev.state, 'playing');
+  assert.strictEqual(ctx._voices._ac.started.length, beforeWave + 1, 'WAV playback should start one AudioBufferSource');
+  const waveSource = ctx._voices._ac.started[beforeWave];
+  assert(waveSource instanceof FakeBufferSource);
+  assert.strictEqual(waveSource.buffer.duration, 0.5);
+  assert.strictEqual(waveSource.buffer.numberOfChannels, 1);
+  assert(waveSource.buffer.getChannelData(0).some(sample => Math.abs(sample) > 0.1),
+    'PCM samples should be decoded into the Web Audio buffer');
+  assert(waveSource.connections.includes(ctx._voices._ac._wineWaveBus),
+    'MCI waveaudio should route through the shared Wave mixer bus');
+
+  statusView.setUint32(statusPtr + 8, 1, true); // MCI_STATUS_LENGTH
+  assert.strictEqual(imports.host.mci_command(waveId, 0x0814, 0, statusPtr), 0);
+  assert.strictEqual(statusView.getUint32(statusPtr + 4, true), 500);
+  statusView.setUint32(statusPtr + 8, 2, true); // MCI_STATUS_POSITION
+  ctx._voices._ac.currentTime += 0.2;
+  assert.strictEqual(imports.host.mci_command(waveId, 0x0814, 0, statusPtr), 0);
+  const wavePosition = statusView.getUint32(statusPtr + 4, true);
+  assert(wavePosition >= 190 && wavePosition <= 210, `WAV position should advance, got ${wavePosition}`);
+
+  assert.strictEqual(imports.host.mci_command(waveId, 0x0809, 0, 0), 0, 'WAV MCI_PAUSE should succeed');
+  assert.strictEqual(waveDev.state, 'paused');
+  assert(waveSource.stops.length > 0, 'pausing WAV should stop the active source');
+  statusView.setUint32(statusPtr + 8, 4, true); // MCI_STATUS_MODE
+  assert.strictEqual(imports.host.mci_command(waveId, 0x0814, 0, statusPtr), 0);
+  assert.strictEqual(statusView.getUint32(statusPtr + 4, true), 529, 'paused WAV should report MCI_MODE_PAUSE');
+  ctx._voices._ac.currentTime += 0.1;
+  statusView.setUint32(statusPtr + 8, 2, true);
+  imports.host.mci_command(waveId, 0x0814, 0, statusPtr);
+  assert.strictEqual(statusView.getUint32(statusPtr + 4, true), wavePosition,
+    'paused WAV position should remain stable');
+
+  assert.strictEqual(imports.host.mci_command(waveId, 0x0855, 0, 0), 0, 'WAV MCI_RESUME should succeed');
+  const resumedSource = ctx._voices._ac.started[beforeWave + 1];
+  assert(resumedSource instanceof FakeBufferSource, 'resuming WAV should create a replacement source');
+  assert(Math.abs(resumedSource.offsets[0] - wavePosition / 1000) < 0.001,
+    'resumed WAV source should start at the paused offset');
+  assert.strictEqual(imports.host.mci_command(waveId, 0x0808, 0, 0), 0, 'WAV MCI_STOP should succeed');
+  assert.strictEqual(waveDev.state, 'stopped');
+  assert.strictEqual(waveDev.playPositionMs, 0);
+  assert.strictEqual(imports.host.mci_command(waveId, 0x0804, 0, 0), 0, 'WAV MCI_CLOSE should succeed');
+  assert(!ctx._mci.devices.has(waveId));
 
   writeStr(0x1d0, 'delayed.mid');
   const delayedCtx = {
@@ -529,6 +618,8 @@ try {
   console.log('PASS  vendored TinySynth runs against the richer fake AudioContext');
   console.log('PASS  MCI wide-command open uses the same sequencer backend');
   console.log('PASS  RIFF RMID files unwrap to the same SMF parser');
+  console.log('PASS  MCI waveaudio decodes PCM WAV through the Wave mixer bus');
+  console.log('PASS  MCI waveaudio play/pause/resume/stop and status follow the audio clock');
   console.log('PASS  debug MIDI playback can trim leading silence');
   console.log('PASS  MCI_OPEN_TYPE accepts .mid filenames used by Pinball');
   console.log('PASS  direct midiOutShortMsg schedules and releases Web Audio notes');
