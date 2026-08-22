@@ -2324,6 +2324,56 @@
       (br $scan)))
     (local.get $fallback))
 
+  ;; LTSH lets Win98 avoid grid-fitting a glyph solely to discover its device
+  ;; advance. At and above the per-glyph threshold, the OpenType contract says
+  ;; scaling is linear again even if instructions still move the sidebearing
+  ;; phantoms while fitting the visible outline. Return the rounded linear
+  ;; device width in 26.6 form; malformed or inapplicable tables retain the
+  ;; instructed phantom distance.
+  (func $tth_ltsh_advance (param $data i32) (param $size i32) (param $gid i32)
+        (param $ppem i32) (param $instructed i32) (result i32)
+    (local $head i32) (local $head_length i32) (local $ltsh i32)
+    (local $length i32) (local $glyphs i32) (local $threshold i32)
+    (local $linear i32)
+    (local.set $head (call $tt_table_off (local.get $data) (local.get $size)
+      (i32.const 0x68656164)))
+    (local.set $head_length (call $tt_table_len (local.get $data) (local.get $size)
+      (i32.const 0x68656164)))
+    (if (i32.or (i32.eqz (local.get $head))
+          (i32.lt_u (local.get $head_length) (i32.const 18)))
+      (then (return (local.get $instructed))))
+    ;; head.flags bit 4 advertises integer device advances and the LTSH/hdmx
+    ;; optimization tables that describe them.
+    (if (i32.eqz (i32.and (call $tt_u16 (local.get $data) (local.get $size)
+          (i32.add (local.get $head) (i32.const 16))) (i32.const 0x10)))
+      (then (return (local.get $instructed))))
+    (local.set $ltsh (call $tt_table_off (local.get $data) (local.get $size)
+      (i32.const 0x4C545348)))
+    (local.set $length (call $tt_table_len (local.get $data) (local.get $size)
+      (i32.const 0x4C545348)))
+    (if (i32.or (i32.eqz (local.get $ltsh))
+          (i32.lt_u (local.get $length) (i32.const 4)))
+      (then (return (local.get $instructed))))
+    (if (i32.ne (call $tt_u16 (local.get $data) (local.get $size)
+          (local.get $ltsh)) (i32.const 0))
+      (then (return (local.get $instructed))))
+    (local.set $glyphs (call $tt_u16 (local.get $data) (local.get $size)
+      (i32.add (local.get $ltsh) (i32.const 2))))
+    (if (i32.or (i32.ge_u (local.get $gid) (local.get $glyphs))
+          (i32.gt_u (local.get $glyphs)
+            (i32.sub (local.get $length) (i32.const 4))))
+      (then (return (local.get $instructed))))
+    (local.set $threshold (call $tt_u8 (local.get $data) (local.get $size)
+      (i32.add (local.get $ltsh) (i32.add (i32.const 4) (local.get $gid)))))
+    (if (i32.or (i32.eqz (local.get $threshold))
+          (i32.lt_u (local.get $ppem) (local.get $threshold)))
+      (then (return (local.get $instructed))))
+    (local.set $linear (call $tt_fu_to_26_6
+      (call $tt_advance_fu (local.get $data) (local.get $size) (local.get $gid))
+      (local.get $ppem) (global.get $tth_upem)))
+    (i32.mul (call $gdi_round_ratio (i64.extend_i32_s (local.get $linear))
+      (i64.const 64)) (i32.const 64)))
+
   (func $tth_load_outline (param $data i32) (param $size i32) (param $gid i32)
         (param $compact i32) (param $count i32) (result i32)
     (local $index i32) (local $point i32) (local $x i32) (local $y i32)
@@ -2703,10 +2753,12 @@
         (if (i32.eqz (call $tth_run (local.get $program) (local.get $length)
               (i32.const 2)))
           (then (return (i32.const 0))))))
-    (global.set $tth_glyph_advance (i32.sub
-      (call $tth_point_current_x (i32.const 1)
-        (i32.add (local.get $count) (i32.const 1)))
-      (call $tth_point_current_x (i32.const 1) (local.get $count))))
+    (global.set $tth_glyph_advance (call $tth_ltsh_advance
+      (local.get $data) (local.get $size) (local.get $gid) (local.get $ppem)
+      (i32.sub
+        (call $tth_point_current_x (i32.const 1)
+          (i32.add (local.get $count) (i32.const 1)))
+        (call $tth_point_current_x (i32.const 1) (local.get $count)))))
     (global.get $tth_points))
 
   (func $tth_hint_point_x (param $points i32) (param $index i32) (result i32)

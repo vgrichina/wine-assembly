@@ -372,6 +372,63 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
         `Win98 Arial ${character} 12ppem monochrome bitmap must match exactly`);
     }
 
+    // Arial c deliberately moves its right phantom with DELTAP1 at 10ppem,
+    // but LTSH marks this glyph linear from 6ppem onward. Native Win98 still
+    // grid-fits the visible contour while exposing the rounded linear five-
+    // pixel advance. This is the first glyph in "AaBbCcDd" whose origin made
+    // the old one-pixel metrics error visible.
+    const nativeCGid = wat.test_tt_glyph_index(
+      native.at, native.size, 'c'.charCodeAt(0));
+    const ltsh = wat.test_tt_table_off(
+      native.at, native.size, tag('LTSH')) >>> 0;
+    assert.ok(ltsh, 'Win98 Arial must expose its LTSH table');
+    assert.strictEqual(new Uint8Array(memory.buffer)[native.at + ltsh + 4 + nativeCGid], 6,
+      'Win98 Arial c must become linear at 6ppem');
+    const nativeCCount = wat.test_tt_glyph_load_outline(
+      native.at, native.size, nativeCGid, compact, 512);
+    assert.strictEqual(nativeCCount, 27,
+      'Win98 Arial c raw point topology must remain stable');
+    const nativeCHinted = wat.test_tth_hint_outline(
+      native.at, native.size, nativeCGid, 10, compact, nativeCCount) >>> 0;
+    assert.ok(nativeCHinted, 'Win98 Arial c must hint at 10ppem');
+    assert.deepStrictEqual(Array.from({ length: nativeCCount }, (_, index) => [
+      wat.test_tth_point_x(nativeCHinted, index),
+      wat.test_tth_point_y(nativeCHinted, index),
+    ]), [
+      [256, 128], [320, 128], [312, 68], [246, 0], [198, 0],
+      [138, 0], [64, 82], [64, 159], [64, 208], [96, 283],
+      [161, 320], [200, 320], [249, 304], [311, 254], [320, 192],
+      [256, 192], [250, 224], [221, 256], [199, 256], [168, 256],
+      [128, 210], [128, 160], [128, 109], [165, 64], [195, 64],
+      [219, 64], [252, 95],
+    ], 'Win98 Arial c 10ppem hinted outline must match GGO_NATIVE exactly');
+    assert.strictEqual(wat.test_tth_last_advance(), 320,
+      'LTSH must retain Arial c rounded linear five-pixel advance');
+    const c10Width = wat.test_tt_glyph_box_width(
+      native.at, native.size, nativeCGid, 10);
+    const c10Height = wat.test_tt_glyph_box_height(
+      native.at, native.size, nativeCGid, 10);
+    const c10Left = wat.test_tt_glyph_box_left(
+      native.at, native.size, nativeCGid, 10);
+    const c10Top = wat.test_tt_glyph_box_top(
+      native.at, native.size, nativeCGid, 10);
+    assert.deepStrictEqual([c10Width, c10Height, c10Left, c10Top], [4, 5, 1, 5],
+      'Win98 Arial c 10ppem monochrome metrics must match');
+    const c10BitmapGuest = wat.guest_alloc(32) >>> 0;
+    const c10ScratchBytes = wat.test_tt_raster_scratch_bytes(c10Width) >>> 0;
+    const c10ScratchGuest = wat.guest_alloc(c10ScratchBytes) >>> 0;
+    assert.strictEqual(wat.test_tt_rasterize_glyph(
+      native.at, native.size, nativeCGid, 10, wa(c10BitmapGuest),
+      c10Width, c10Height, c10Left * 64, c10Top * 64,
+      wa(c10ScratchGuest), c10ScratchBytes), 1,
+    'Win98 Arial c must scan-convert at 10ppem');
+    assert.deepStrictEqual(Array.from({ length: c10Height }, (_, y) =>
+      Array.from({ length: c10Width }, (_unused, x) =>
+        wat.test_tt_bitmap_pixel(wa(c10BitmapGuest), c10Height, x, y)
+          ? '#' : '.').join('')), [
+      '.##.', '#..#', '#...', '#..#', '.##.',
+    ], 'Win98 Arial c 10ppem monochrome bitmap must match exactly');
+
     // Arial's prep program creates twilight points with MIAP, interpolates
     // them, and writes the resulting x-height back to CVT 6.  Win98 rounds
     // that anchor to seven pixels at 12ppem; losing the twilight point's
@@ -474,6 +531,7 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
     oracle = `${nativePoints} Arial raw points, ` +
       `${win98WPoints.size * 5} Arial W point cases, ` +
       `${digitOracles.size} exact Arial digit bitmaps, ` +
+      `1 exact Arial LTSH c bitmap, ` +
       `${metricCases}/3 exact GGO metric cases, ` +
       `${controlPrograms} Times/Courier programs`;
   }
