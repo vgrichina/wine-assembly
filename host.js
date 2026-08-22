@@ -7,7 +7,7 @@
 const ProcessBoot = (typeof window !== 'undefined' && window.processBoot) || null;
 
 class WineAssembly {
-  static SOURCE_VERSION = '215';
+  static SOURCE_VERSION = '216';
   static _nextProcessId = 1000;
 
   static hasRemainingAppWindow(destroyed, remainingTopLevel) {
@@ -61,6 +61,11 @@ class WineAssembly {
     if (!this.asyncMultimediaTimer || !ex || !ex.fire_mm_timer) return 0;
     if (ex.get_eip && !(ex.get_eip() >>> 0)) return 0;
     return ex.fire_mm_timer() | 0;
+  }
+
+  _closeSyncHandle(handle) {
+    return !!(this.threadManager && this.threadManager.closeSyncHandle &&
+      this.threadManager.closeSyncHandle(handle >>> 0));
   }
 
   _guestTickState(sharedAudio) {
@@ -208,6 +213,11 @@ class WineAssembly {
         return instance ? instance.exports : null;
       },
       get processId() { return self.processId; },
+      // CloseHandle is shared by VFS files and process synchronization
+      // objects. The CLI installs this scheduler callback explicitly; keep the
+      // browser context on the same path so short-lived Storm events release
+      // their fixed-table slots instead of leaking until creation fails.
+      closeSyncHandle: handle => self._closeSyncHandle(handle),
       traceHost: opts.traceHost || (typeof window !== 'undefined' ? window.__waTraceHostNames : null),
       threadId: opts.threadId | 0,
       vfs: opts.vfs || null,

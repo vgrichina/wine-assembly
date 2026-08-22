@@ -38,6 +38,20 @@ assert.strictEqual(wine._pumpMultimediaTimer(), 0,
   'an exited guest cannot receive a multimedia callback');
 assert.strictEqual(calls, 1, 'the exited guest did not call the timer hook');
 
+let closedHandle = 0;
+wine.threadManager = {
+  closeSyncHandle: handle => {
+    closedHandle = handle >>> 0;
+    return true;
+  },
+};
+assert.strictEqual(wine._closeSyncHandle(0xE0007), true,
+  'the browser delegates synchronization CloseHandle calls to ThreadManager');
+assert.strictEqual(closedHandle, 0xE0007,
+  'the browser preserves the process synchronization handle value');
+assert(hostSource.includes('closeSyncHandle: handle => self._closeSyncHandle(handle)'),
+  'browser filesystem imports expose the synchronization close callback');
+
 assert.strictEqual(apps.diablo_demo.asyncMultimediaTimer, true,
   'Diablo opts into out-of-message-loop timeSetEvent delivery');
 assert(shellSource.includes('wine.asyncMultimediaTimer = !!app.asyncMultimediaTimer'),
