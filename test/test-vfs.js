@@ -78,6 +78,12 @@ test('relative missing subdir wildcard falls back to current directory', () => {
   assert.deepStrictEqual(names, ['armies_1.cpn', 'reigno_1.cpn']);
 });
 
+test('broad wildcard in a missing relative directory does not enumerate the root', () => {
+  const vfs = makeVFS({ 'c:\\game.exe': 1, 'c:\\readme.txt': 2 });
+  const r = vfs.findFirstFile('palettes\\*');
+  assert(!r.handle, 'a missing palettes directory must not expose root entries');
+});
+
 test('absolute missing subdir wildcard does not use flat fallback', () => {
   const vfs = makeVFS({ 'c:\\armies_1.cpn': 1 });
   const r = vfs.findFirstFile('D:\\campaign\\*.cpn');

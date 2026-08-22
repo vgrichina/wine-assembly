@@ -9,7 +9,7 @@
     (local $tls_index_addr i32) (local $tls_index i32) (local $tls_data i32)
     (local $tls_raw_size i32) (local $tls_zero_size i32)
     (local $src i32) (local $dst i32) (local $characteristics i32)
-    (local $mapped_size i32) (local $copy_size i32)
+    (local $mapped_size i32) (local $copy_size i32) (local $initialized_size i32)
 
     (if (i32.ne (i32.load16_u (global.get $PE_STAGING)) (i32.const 0x5A4D)) (then (return (i32.const -1))))
     (local.set $pe_off (i32.add (global.get $PE_STAGING)
@@ -84,15 +84,26 @@
               (i32.eqz (local.get $raw_off)))
           (then (i32.const 0))
           (else (local.get $raw_size))))
+      (local.set $initialized_size (local.get $copy_size))
+      ;; The host prehydrates initialized section bytes whose file offsets lie
+      ;; beyond the fixed staging buffer. Copy only bytes that are actually in
+      ;; staging, but preserve the full initialized extent so imports and PE
+      ;; resources can consume that prehydrated tail during this load.
+      (if (i32.gt_u (i32.add (local.get $raw_off) (local.get $copy_size)) (local.get $size))
+        (then
+          (local.set $copy_size
+            (if (result i32) (i32.lt_u (local.get $raw_off) (local.get $size))
+              (then (i32.sub (local.get $size) (local.get $raw_off)))
+              (else (i32.const 0))))))
       (local.set $dst (i32.add (global.get $GUEST_BASE) (local.get $vaddr)))
       (local.set $src (i32.add (global.get $PE_STAGING) (local.get $raw_off)))
       (if (local.get $copy_size)
         (then (call $memcpy (local.get $dst) (local.get $src) (local.get $copy_size))))
       ;; Zero BSS/unbacked tail through the complete mapped section extent.
-      (if (i32.gt_u (local.get $mapped_size) (local.get $copy_size))
+      (if (i32.gt_u (local.get $mapped_size) (local.get $initialized_size))
         (then (call $zero_memory
-          (i32.add (local.get $dst) (local.get $copy_size))
-          (i32.sub (local.get $mapped_size) (local.get $copy_size)))))
+          (i32.add (local.get $dst) (local.get $initialized_size))
+          (i32.sub (local.get $mapped_size) (local.get $initialized_size)))))
       (if (i32.and (local.get $characteristics) (i32.const 0x20))
         (then
           (global.set $code_start (i32.add (global.get $image_base) (local.get $vaddr)))

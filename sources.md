@@ -719,3 +719,44 @@ is tagged as a Windows game and includes Win32 autorun/map-editor programs, its
 `war2.exe` compressed inside `war2.exa`; only `war2ed95.exe` and the autorun
 shell are PE32. It is therefore primarily a DOS-game package rather than the
 Win32 executable this emulator needs.
+
+### 2026-08-22 native-installer bring-up results
+
+RollerCoaster Tycoon was already present as the `rct` debug app, so it remains
+the baseline rather than a new registration. The other candidate packages were
+downloaded into ignored `test/binaries/candidates/` directories and exercised
+through their original installers before using any extracted game files.
+
+- Jazz Jackrabbit 2 uses the pinned `J2swc123.exe`. Its InstallShield wizard
+  reaches the DirectX 5 choice and accepts **No, continue without DirectX 5**,
+  then enters a long synchronous extraction batch; a 330-second bounded run did
+  not return, so completion is not yet proven.
+- Worms 2 is the direct Archive file `worms2demo05sepa.zip`. Its original
+  `SETUP.EXE` is a Win16 InstallShield launcher and correctly exposes the next
+  compatibility gap: it imports `VER.DLL` ordinals 6, 7, 10, and 11, while the
+  current Win16 loader has no VER module and the launcher reports Error 102.
+- Total Annihilation is the direct `Total Annihilation.exe`. The native
+  self-extractor calls `FindResourceA` with string-form integer names `#130`,
+  `#135`, and `#136`; these correspond to numeric `ADD` resources containing
+  `TADemo.hpi` (20,474,804 bytes), the readme (24,279 bytes), and `TADemo.exe`
+  (809,984 bytes). Supporting the documented `#decimal` resource spelling
+  exposed a second general bug: the 21,540,864-byte PE exceeded the fixed 8 MB
+  staging buffer, and the loader copied the unstaged `.rsrc` tail as zeroes.
+  Prehydrating mapped section tails now makes the unchanged native installer
+  produce a valid PE (`216e4f39617cb979cd2bc1fba92e9e5136b33a98790d9fc6d3d1cb901ecfbb57`)
+  and HPI (`fd53a2637ecf8fb5ca6d2c02a34b4ef783a4441f8be070137276afc4d5627e1e`).
+  Game startup then exposed a VFS enumeration error: `palettes\\*` against a
+  missing directory fell back to the drive root and recursively invented paths
+  such as `palettes\\program files\\program files`. Broad wildcards in missing
+  directories now fail normally; TA advances into archive/audio/palette setup,
+  but its next CPU-bound allocator scan has not yet reached a rendered menu.
+- Captain Claw is the direct 11,275,313-byte `claw_demo.exe`. Its original
+  InstallShield self-extractor runs from 1% through 99% and yields a complete
+  10,689,596-byte `data.z` plus the native Win16 second-stage `setup.exe`.
+  Starting that stage exposes its next missing companion (`_SETUP.DLL`, Error
+  103); no pre-extracted game has been substituted for that result.
+- Heroes II is the direct `h2demo.zip`, which is already a ready-to-run demo
+  rather than an installer. `H2DEMOW.EXE` creates its real game window, then
+  stops at the unimplemented Miles export `_AIL_startup@0`. The executable's
+  own command-line help advertises `/D0`, `/M0`, and `/R0`; these disable the
+  respective sound systems after startup, but do not bypass that initial call.

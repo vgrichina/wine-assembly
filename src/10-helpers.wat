@@ -742,6 +742,43 @@
   (func $rsrc_find_entry (param $dir_off i32) (param $id i32) (result i32)
     (local $named i32) (local $ids i32) (local $total i32)
     (local $e i32) (local $i i32) (local $eid i32) (local $doff i32)
+    (local $str_wa i32) (local $j i32) (local $ch i32)
+    (local $decimal_id i32) (local $decimal_valid i32)
+    ;; Win32 also accepts string-form integer identifiers such as "#130".
+    ;; Resource compiler helpers emit these surprisingly often, so resolve a
+    ;; complete bounded decimal string exactly like MAKEINTRESOURCE(130)
+    ;; before deciding whether to scan named entries.
+    (if (i32.ge_u (local.get $id) (i32.const 0x10000))
+      (then
+        (local.set $str_wa (call $g2w (local.get $id)))
+        (if (i32.eq (i32.load8_u (local.get $str_wa)) (i32.const 0x23)) ;; '#'
+          (then
+            (local.set $j (i32.const 1))
+            (local.set $decimal_valid (i32.const 1))
+            (block $decimal_done
+              (loop $decimal
+                (local.set $ch (i32.load8_u (i32.add (local.get $str_wa)
+                  (i32.mul (local.get $j) (global.get $rsrc_name_char_stride)))))
+                (br_if $decimal_done (i32.eqz (local.get $ch)))
+                (if (i32.or
+                      (i32.lt_u (local.get $ch) (i32.const 0x30))
+                      (i32.gt_u (local.get $ch) (i32.const 0x39)))
+                  (then
+                    (local.set $decimal_valid (i32.const 0))
+                    (br $decimal_done)))
+                (local.set $decimal_id (i32.add
+                  (i32.mul (local.get $decimal_id) (i32.const 10))
+                  (i32.sub (local.get $ch) (i32.const 0x30))))
+                (if (i32.gt_u (local.get $decimal_id) (i32.const 0xffff))
+                  (then
+                    (local.set $decimal_valid (i32.const 0))
+                    (br $decimal_done)))
+                (local.set $j (i32.add (local.get $j) (i32.const 1)))
+                (br $decimal)))
+            (if (i32.and
+                  (local.get $decimal_valid)
+                  (i32.gt_u (local.get $j) (i32.const 1)))
+              (then (local.set $id (local.get $decimal_id))))))))
     ;; dir_off = offset from image_base to resource directory
     ;; Read number of named + id entries
     (local.set $named (i32.load16_u (call $g2w (i32.add (call $r_base)
