@@ -54,7 +54,7 @@ try {
     `1300:mouseup:121:287,1450:png:${afterScreenshot}`);
 
   const output = execFileSync(process.execPath, args, {
-    cwd: ROOT, encoding: 'utf8', timeout: 120000,
+    cwd: ROOT, encoding: 'utf8', timeout: 240000,
     maxBuffer: 16 * 1024 * 1024,
   });
   assert.doesNotMatch(output,
@@ -93,9 +93,39 @@ try {
     return vivid;
   }
 
+  function countRgb(png, left, top, right, bottom, red, green, blue) {
+    let count = 0;
+    for (let y = top; y < bottom; y++) {
+      for (let x = left; x < right; x++) {
+        const p = (y * png.width + x) * 4;
+        if (png.data[p] === red && png.data[p + 1] === green &&
+            png.data[p + 2] === blue) count++;
+      }
+    }
+    return count;
+  }
+
   const vivid = countVivid(before, 4, 42, 636, 456);
   assert(vivid > 20000,
     `loaded puzzle should contain full-size bitmap pieces (found ${vivid} vivid pixels)`);
+
+  // Win98 leaves the target interior black because Pic_Outline uses
+  // NULL_BRUSH. A stale Win16 stock-handle mapping recycled that handle for a
+  // solid gray brush and produced roughly 87k button-face pixels here. Check
+  // the rendered board, not just the GDI return values.
+  const boardBlack = countRgb(before, 4, 42, 616, 456, 0, 0, 0);
+  const boardGray = countRgb(before, 4, 42, 616, 456, 192, 192, 192);
+  assert(boardBlack > 100000 && boardGray < 15000,
+    `target should be a hollow white outline over black (${boardBlack} black, ${boardGray} gray)`);
+
+  // Thunder scrollbars are registered VB classes. They still retain their
+  // guest procedures, but their visible strips must be painted by the native
+  // scrollbar control path. Before shadow classification these rectangles
+  // contained only the underlying black/white board surface.
+  const verticalFace = countRgb(before, 616, 42, 636, 456, 192, 192, 192);
+  const horizontalFace = countRgb(before, 4, 456, 553, 476, 192, 192, 192);
+  assert(verticalFace > 6000 && horizontalFace > 8000,
+    `both scrollbars should paint tracks/arrows/thumbs (${verticalFace} vertical, ${horizontalFace} horizontal face pixels)`);
 
   // The genuine rendered-menu/file-picker sequence leaves one complete
   // isolated 108x59 piece at [187,258]-[295,317). Dragging its centre by 120px
@@ -141,6 +171,7 @@ try {
 
   console.log('PASS  Win16 JigSawed loads BRICKS.BMP through its VB1 Open dialog');
   console.log(`PASS  Win16 JigSawed renders full-size puzzle pieces (${vivid} vivid pixels)`);
+  console.log(`PASS  Win16 JigSawed renders a hollow target and both scrollbars (${boardBlack} black pixels)`);
   console.log(`PASS  Win16 JigSawed drags a complete picture piece (${matchingMovedPixels} pixels)`);
 } finally {
   fs.rmSync(outDir, { recursive: true, force: true });

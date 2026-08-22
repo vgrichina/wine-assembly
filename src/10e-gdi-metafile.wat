@@ -374,6 +374,11 @@
     (local $p i32)
     (local.set $p (call $gdi_object_record (local.get $handle)))
     (if (local.get $p) (then (return (i32.load offset=8 (local.get $p)))))
+    ;; Stock NULL_BRUSH is BS_NULL/BS_HOLLOW.  Returning BS_SOLID here makes
+    ;; GetObject callers clone it as a painting brush; VB1 does exactly that
+    ;; while creating a PictureBox AutoRedraw DC.
+    (if (i32.eq (local.get $handle) (i32.const 0x30015))
+      (then (return (i32.const 1))))
     (select (i32.const 5) (i32.const 0)
       (i32.eq (local.get $handle) (i32.const 0x30018))))
 

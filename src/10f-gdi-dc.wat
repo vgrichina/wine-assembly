@@ -693,8 +693,12 @@
         (param $size i32) (result i32)
     (local $record i32) (local $type i32) (local $required i32)
     (local.set $record (call $gdi_object_record (local.get $handle)))
-    (if (i32.eqz (local.get $record)) (then (return (i32.const 0))))
-    (local.set $type (i32.load offset=4 (local.get $record)))
+    ;; Stock pens and brushes have no dynamic object record, but GetObject
+    ;; must still serialize their LOGPEN/LOGBRUSH values.  In particular,
+    ;; NULL_BRUSH must report BS_NULL rather than leave the caller's buffer
+    ;; untouched; VBRUN copies this structure when it constructs AutoRedraw
+    ;; memory DCs.
+    (local.set $type (call $gdi_object_type (local.get $handle)))
     (if (i32.eq (local.get $type) (i32.const 1))
       (then (local.set $required (i32.const 16)))
       (else (if (i32.eq (local.get $type) (i32.const 2))
@@ -704,6 +708,18 @@
     (if (i32.lt_u (local.get $size) (local.get $required))
       (then (return (i32.const 0))))
     (memory.fill (local.get $dest) (i32.const 0) (local.get $required))
+    (if (i32.eqz (local.get $record))
+      (then
+        (i32.store (local.get $dest) (call $gdi_object_style (local.get $handle)))
+        (if (i32.eq (local.get $type) (i32.const 1))
+          (then
+            (i32.store offset=4 (local.get $dest) (i32.const 1))
+            (i32.store offset=12 (local.get $dest)
+              (call $gdi_object_color (local.get $handle))))
+          (else
+            (i32.store offset=4 (local.get $dest)
+              (call $gdi_object_color (local.get $handle)))))
+        (return (local.get $required))))
     (i32.store (local.get $dest) (i32.or
       (i32.load offset=8 (local.get $record))
       (i32.and (i32.load offset=20 (local.get $record)) (i32.const 0x000F0F00))))

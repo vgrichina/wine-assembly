@@ -77,6 +77,19 @@ async function main() {
   assert.strictEqual(wat.guest_read32(objectStruct), 2);
   assert.strictEqual(wat.guest_read32(objectStruct + 4), 0x000000FF);
   assert.strictEqual(wat.guest_read32(objectStruct + 8), 4);
+  wat.guest_write32(objectStruct, 0xCCCCCCCC);
+  wat.guest_write32(objectStruct + 4, 0xCCCCCCCC);
+  wat.guest_write32(objectStruct + 8, 0xCCCCCCCC);
+  assert.strictEqual(wat.test_call_GetObjectA(0x30015, 12, objectStruct), 12);
+  assert.strictEqual(wat.guest_read32(objectStruct), 1,
+    'stock NULL_BRUSH must serialize as BS_NULL rather than stale memory');
+  assert.strictEqual(wat.guest_read32(objectStruct + 4), 0);
+  assert.strictEqual(wat.guest_read32(objectStruct + 8), 0);
+  assert.strictEqual(wat.test_gdi_object_style(0x30015), 1);
+  assert.strictEqual(wat.test_call_GetObjectA(0x30018, 16, objectStruct), 16);
+  assert.strictEqual(wat.guest_read32(objectStruct), 5,
+    'stock NULL_PEN must serialize as PS_NULL');
+  assert.strictEqual(wat.guest_read32(objectStruct + 4), 1);
 
   const wideFace = wat.guest_alloc(32) >>> 0;
   'Arial'.split('').forEach((ch, i) => wat.guest_write16(wideFace + i * 2, ch.charCodeAt(0)));

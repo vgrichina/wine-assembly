@@ -656,6 +656,44 @@
           (i32.const 0x0001) (i32.const 0) (local.get $cs)))
         (call $heap_free (local.get $cs)))))
 
+  ;; VB1's horizontal and vertical scrollbars are registered Thunder classes,
+  ;; not USER's built-in SCROLLBAR class.  Keep the guest wndproc installed so
+  ;; VB continues to own Value/Change events, but classify the shared child as
+  ;; a native scrollbar for WM_PAINT.  Otherwise the window is present, sized,
+  ;; visible, and interactive yet contributes no pixels to its parent's
+  ;; surface (JigSawed exposed both missing strips).
+  (func $win16_shadow_scrollbar
+    (param $hwnd i32) (param $id i32)
+    (local $slot i32) (local $class_w i32)
+    (if (i32.eqz (local.get $hwnd)) (then (return)))
+    (local.set $class_w (call $g2w (global.get $GUEST_STACK)))
+    (if (i32.ne
+          (call $host_get_window_class
+            (local.get $hwnd) (local.get $class_w) (i32.const 32))
+          (i32.const 17))
+      (then (return)))
+    (if (i32.or
+          (i32.ne (i32.load (local.get $class_w))
+                  (i32.const 0x6E756854))                                ;; Thun
+          (i32.or
+            (i32.and
+              (i32.ne (i32.load offset=4 (local.get $class_w))
+                      (i32.const 0x48726564))                            ;; derH
+              (i32.ne (i32.load offset=4 (local.get $class_w))
+                      (i32.const 0x56726564)))                           ;; derV
+            (i32.or
+              (i32.ne (i32.load offset=8 (local.get $class_w))
+                      (i32.const 0x6F726353))                            ;; Scro
+              (i32.or
+                (i32.ne (i32.load offset=12 (local.get $class_w))
+                        (i32.const 0x61426C6C))                          ;; llBa
+                (i32.ne (i32.load8_u offset=16 (local.get $class_w))
+                        (i32.const 0x72))))))                            ;; r
+      (then (return)))
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.lt_s (local.get $slot) (i32.const 0)) (then (return)))
+    (call $ctrl_table_set (local.get $slot) (i32.const 7) (local.get $id)))
+
   ;; Attach native listbox state to a subclassed Thunder control while keeping
   ;; its Win16 window procedure installed. The guest procedure continues to
   ;; maintain VB's object properties, then CallWindowProc reaches this shadow
