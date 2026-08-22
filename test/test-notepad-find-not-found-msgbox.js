@@ -25,7 +25,7 @@ const input = [
   '120:mouseup:350:101',
   `150:png:${PNG}`,
   '155:dlg-dump:message',
-  '160:click:206:212',
+  '160:click:317:278',
   '210:slot-count:after-click',
   '220:stop',
 ].join(',');
@@ -57,8 +57,8 @@ async function messageBoxLooksVisible() {
   ctx.drawImage(img, 0, 0);
   const data = ctx.getImageData(0, 0, img.width, img.height).data;
   let blue = 0, gray = 0, black = 0;
-  for (let y = 100; y < 140; y++) {
-    for (let x = 100; x < 320; x++) {
+  for (let y = 178; y < 302; y++) {
+    for (let x = 240; x < 400; x++) {
       const i = (y * img.width + x) * 4;
       const r = data[i], g = data[i + 1], b = data[i + 2];
       if (b > 90 && r < 40 && g < 90) blue++;

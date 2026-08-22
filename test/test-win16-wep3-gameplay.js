@@ -13,6 +13,7 @@ const { PNG } = require('pngjs');
 
 const ROOT = path.join(__dirname, '..');
 const RUN = path.join(ROOT, 'test', 'run.js');
+const OPTIONAL_WASM = process.env.WINE_ASSEMBLY_WASM || '';
 
 function readPng(file) {
   return PNG.sync.read(fs.readFileSync(file));
@@ -36,6 +37,23 @@ function changedPixels(beforePath, afterPath, rect) {
   return changed;
 }
 
+function colorBounds(file, rect, matches) {
+  const png = readPng(file);
+  let count = 0;
+  let minX = png.width;
+  let maxX = -1;
+  for (let y = rect.y; y < rect.y + rect.h; y++) {
+    for (let x = rect.x; x < rect.x + rect.w; x++) {
+      const i = (y * png.width + x) * 4;
+      if (!matches(png.data[i], png.data[i + 1], png.data[i + 2])) continue;
+      count++;
+      minX = Math.min(minX, x);
+      maxX = Math.max(maxX, x);
+    }
+  }
+  return { count, width: maxX >= minX ? maxX - minX + 1 : 0 };
+}
+
 let built = false;
 function runGame(app, input, maxBatches, extra = []) {
   const args = [
@@ -43,7 +61,8 @@ function runGame(app, input, maxBatches, extra = []) {
     `--max-batches=${maxBatches}`, '--quiet-api', '--quiet-blocks',
     '--repaint-every=5', ...extra, `--input=${input}`,
   ];
-  if (built) args.splice(2, 0, '--no-build');
+  if (OPTIONAL_WASM) args.splice(2, 0, '--no-build', `--wasm=${OPTIONAL_WASM}`);
+  else if (built) args.splice(2, 0, '--no-build');
   const output = execFileSync(process.execPath, args, {
     cwd: ROOT,
     encoding: 'utf8',
@@ -60,18 +79,25 @@ function assertHealthy(output, game) {
 }
 
 function testKlotski(outDir) {
+  const welcome = path.join(outDir, 'klotski-welcome.png');
   const before = path.join(outDir, 'klotski-before.png');
   const after = path.join(outDir, 'klotski-after.png');
   // Dismiss Welcome, choose Game > Level 1 and the default puzzle, then enter
   // a player name. Move the centre single-square block into the empty cell
   // below it; this crosses both modal returns and USER.433 name validation.
   const output = runGame('wep16_klotski',
-      '20:dlg-cmd:1,45:mousedown:48:51,46:mouseup:48:51,' +
+      `15:png:${welcome},20:dlg-cmd:1,45:mousedown:48:51,46:mouseup:48:51,` +
       '55:mousedown:70:72,56:mouseup:70:72,90:dlg-cmd:1,' +
       '120:dlg-set-edit:201:Codex,130:dlg-cmd:1,' +
       `170:png:${before},190:mousedown:210:190,191:mousemove:210:208,` +
-      `192:mouseup:210:208,230:png:${after},250:stop`, 300);
+      `192:mouseup:210:208,230:png:${after},250:stop`, 300, ['--trace-ctrl']);
   assertHealthy(output, 'Klotski');
+  assert.match(output, /Static at 260,225 126x45/,
+    'Klotski Welcome should be a centered 158px dialog with 126px text client');
+  const banner = colorBounds(welcome, { x: 20, y: 270, w: 235, h: 48 },
+    (r, g, b) => r > 180 && g > 180 && b < 100);
+  assert(banner.count > 1500 && banner.width > 200,
+    `Klotski should stitch all three yellow banner strips (count=${banner.count}, width=${banner.width})`);
   assert.match(output, /dlg-set-edit: id=201 text="Codex"/,
     'Klotski should receive the player name before gameplay');
   const changed = changedPixels(before, after, { x: 178, y: 137, w: 80, h: 86 });
@@ -159,13 +185,14 @@ function testWordZap(outDir) {
 
 const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'win16-wep3-gameplay-'));
 try {
-  testKlotski(outDir);
-  testTetraVex(outDir);
-  testFujiGolf(outDir);
-  testLifeGenesis(outDir);
-  testSkiFree(outDir);
-  testTriPeaks(outDir);
-  testWordZap(outDir);
+  const only = process.argv[2] || '';
+  if (!only || only === 'klotski') testKlotski(outDir);
+  if (!only || only === 'tetravex') testTetraVex(outDir);
+  if (!only || only === 'fujigolf') testFujiGolf(outDir);
+  if (!only || only === 'lifegen') testLifeGenesis(outDir);
+  if (!only || only === 'ski') testSkiFree(outDir);
+  if (!only || only === 'tripeaks') testTriPeaks(outDir);
+  if (!only || only === 'wordzap') testWordZap(outDir);
 } finally {
   fs.rmSync(outDir, { recursive: true, force: true });
 }

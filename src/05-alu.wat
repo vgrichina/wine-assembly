@@ -1590,7 +1590,11 @@
   ;; 243: 8-bit MUL/DIV [addr] (op=type 0-3, addr next word)
   (func $th_muldiv_m8 (param $op i32)
     (local $val i32) (local $addr i32) (local $result i32) (local $dividend i32) (local $divisor i32) (local $quot i32) (local $rem i32)
-    (local.set $addr (call $read_thread_word))
+    ;; Segmented and indexed decodes place SIB_SENTINEL in this word after a
+    ;; compute-EA handler has populated ea_temp. Read it through the shared
+    ;; adapter, as every other memory-width group does; treating the sentinel
+    ;; as an address made Win16 `mul byte [bp+disp]` multiply by unrelated data.
+    (local.set $addr (call $read_addr))
     (local.set $val (call $gl8 (local.get $addr)))
     (if (i32.eq (local.get $op) (i32.const 0)) (then ;; MUL
       (local.set $result (i32.mul (i32.and (global.get $eax) (i32.const 0xFF)) (local.get $val)))

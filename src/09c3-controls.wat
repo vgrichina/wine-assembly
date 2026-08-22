@@ -2184,7 +2184,8 @@
     (local $text_g i32) (local $w i32) (local $h i32)
     (local $btn_kind i32) (local $n_btn i32) (local $row_w i32)
     (local $bx i32) (local $by i32) (local $longest i32)
-    (local $slot i32) (local $ch i32)
+    (local $slot i32) (local $ch i32) (local $scan i32)
+    (local $line_len i32) (local $line_last i32) (local $line_started i32)
     (local.set $text_len (call $strlen (local.get $text_wa)))
     (if (i32.eqz (local.get $caption_wa))
       (then (local.set $cap_len (i32.const 0)))
@@ -2209,20 +2210,59 @@
     (local.set $row_w (i32.add
       (i32.mul (local.get $n_btn) (i32.const 76))
       (i32.const 8)))
-    ;; Pick width: max of (longer string * 6 + 60), button row + 32, 220 floor.
-    (local.set $longest (select (local.get $text_len) (local.get $cap_len)
-      (i32.gt_u (local.get $text_len) (local.get $cap_len))))
-    (local.set $w (i32.add (i32.mul (local.get $longest) (i32.const 6)) (i32.const 60)))
+    ;; Measure the longest visible message line. Win98 does not size a box
+    ;; from the total byte count (nor from leading/trailing centering spaces),
+    ;; so multiline Win16 strings such as Klotski's compact Welcome box must
+    ;; not turn into a desktop-wide dialog.
+    (block $measure_done (loop $measure
+      (br_if $measure_done (i32.ge_u (local.get $scan) (local.get $text_len)))
+      (local.set $ch (i32.load8_u (i32.add (local.get $text_wa) (local.get $scan))))
+      (if (i32.or (i32.eq (local.get $ch) (i32.const 10))
+            (i32.eq (local.get $ch) (i32.const 13)))
+        (then
+          (if (i32.gt_u (local.get $line_last) (local.get $longest))
+            (then (local.set $longest (local.get $line_last))))
+          (local.set $line_len (i32.const 0))
+          (local.set $line_last (i32.const 0))
+          (local.set $line_started (i32.const 0)))
+        (else
+          (if (i32.or (i32.ne (local.get $ch) (i32.const 32))
+                (local.get $line_started))
+            (then
+              (local.set $line_started (i32.const 1))
+              (local.set $line_len (i32.add (local.get $line_len) (i32.const 1)))
+              (if (i32.ne (local.get $ch) (i32.const 32))
+                (then (local.set $line_last (local.get $line_len))))))))
+      (local.set $scan (i32.add (local.get $scan) (i32.const 1)))
+      (br $measure)))
+    (if (i32.gt_u (local.get $line_last) (local.get $longest))
+      (then (local.set $longest (local.get $line_last))))
+    ;; Classic small-font metrics are about five pixels per message character.
+    ;; Caption sizing keeps enough room for the frame buttons independently.
+    (local.set $w (i32.add
+      (i32.div_u (i32.mul (local.get $longest) (i32.const 11)) (i32.const 2))
+      (i32.const 32)))
+    (if (i32.lt_u (local.get $w)
+          (i32.add (i32.mul (local.get $cap_len) (i32.const 6)) (i32.const 60)))
+      (then (local.set $w
+        (i32.add (i32.mul (local.get $cap_len) (i32.const 6)) (i32.const 60)))))
     (if (i32.lt_u (local.get $w) (i32.add (local.get $row_w) (i32.const 32)))
       (then (local.set $w (i32.add (local.get $row_w) (i32.const 32)))))
-    (if (i32.lt_u (local.get $w) (i32.const 220)) (then (local.set $w (i32.const 220))))
+    (if (i32.lt_u (local.get $w) (i32.const 148)) (then (local.set $w (i32.const 148))))
     (if (i32.gt_u (local.get $w) (i32.const 420)) (then (local.set $w (i32.const 420))))
-    (local.set $h (i32.const 140))
+    (local.set $h (i32.const 124))
     (call $host_register_dialog_frame
       (local.get $dlg) (local.get $owner)
       (local.get $caption_wa)
       (local.get $w) (local.get $h)
       (i32.const 1))
+    (if (i32.and (i32.ge_u (global.get $gdi_screen_width) (local.get $w))
+          (i32.ge_u (global.get $gdi_screen_height) (local.get $h)))
+      (then
+        (call $host_move_window (local.get $dlg)
+          (i32.div_u (i32.sub (global.get $gdi_screen_width) (local.get $w)) (i32.const 2))
+          (i32.div_u (i32.sub (global.get $gdi_screen_height) (local.get $h)) (i32.const 2))
+          (local.get $w) (local.get $h) (i32.const 0))))
     (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
     (if (local.get $caption_wa)
       (then (call $title_table_set (local.get $dlg) (local.get $caption_wa)
