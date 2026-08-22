@@ -79,6 +79,9 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
     new DataView(memory.buffer).getInt32(normalized + 4, true),
   ], [11549, -11621],
   'line normalization must retain fractional length before 2.14 rounding');
+  assert.strictEqual(
+    wat.test_tth_project_delta(192, 318, -11549, 11621), 91,
+    'relative projection must round its two 2.14 components separately');
   const allocFaceW = text => {
     const guest = allocZero(text.length * 2 + 2);
     [...text].forEach((character, index) =>

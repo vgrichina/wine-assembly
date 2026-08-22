@@ -425,6 +425,18 @@
           (i64.extend_i32_s (local.get $vy))))
       (i64.const 16384))))
 
+  (func $tth_project_delta (param $x i32) (param $y i32)
+        (param $vx i32) (param $vy i32) (result i32)
+    (i32.add
+      (call $gdi_round_ratio
+        (i64.mul (i64.extend_i32_s (local.get $x))
+          (i64.extend_i32_s (local.get $vx)))
+        (i64.const 16384))
+      (call $gdi_round_ratio
+        (i64.mul (i64.extend_i32_s (local.get $y))
+          (i64.extend_i32_s (local.get $vy)))
+        (i64.const 16384))))
+
   ;; Win98's 0x49/0x4A behavior is observably asymmetric: current-distance
   ;; measurement subtracts two rounded projected coordinates, while original
   ;; distance projects the unhinted delta with signed truncation.
@@ -433,7 +445,7 @@
 
   (func $tth_project_current (param $zone_a i32) (param $a i32)
         (param $zone_b i32) (param $b i32) (result i32)
-    (call $tth_dot
+    (call $tth_project_delta
       (i32.sub (call $tth_point_current_x (local.get $zone_a) (local.get $a))
         (call $tth_point_current_x (local.get $zone_b) (local.get $b)))
       (i32.sub (call $tth_point_current_y (local.get $zone_a) (local.get $a))
@@ -3007,6 +3019,11 @@
   (func (export "test_tth_normalize") (param i32) (param i32) (param i32)
         (result i32)
     (call $tth_normalize (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tth_project_delta") (param i32) (param i32)
+        (param i32) (param i32) (result i32)
+    (call $tth_project_delta (local.get 0) (local.get 1)
+      (local.get 2) (local.get 3)))
 
   (func (export "test_tth_minimum_distance_direction")
         (param $distance i32) (param $original i32) (param $minimum i32)
