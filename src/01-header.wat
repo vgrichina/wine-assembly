@@ -17,6 +17,7 @@
   ;; EIP is inside [trace_eip_lo, trace_eip_hi]. test/run.js --trace-eip-range wires it up.
   (import "host" "crash_unimplemented" (func $host_crash_unimplemented (param i32 i32 i32 i32)))
   (import "host" "unhandled_exception" (func $host_unhandled_exception (param i32 i32 i32 i32)))
+  (import "host" "cxx_throw" (func $host_cxx_throw (param i32)))
   (import "host" "message_box" (func $host_message_box (param i32 i32 i32 i32) (result i32)))
   (import "host" "exit" (func $host_exit (param i32)))
   (import "host" "draw_rect" (func $host_draw_rect (param i32 i32 i32 i32 i32)))
