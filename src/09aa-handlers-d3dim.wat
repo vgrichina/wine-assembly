@@ -419,24 +419,12 @@
                 (i32.or (i32.lt_u (local.get $arg1) (i32.const 1))
                         (i32.gt_u (local.get $arg1) (global.get $D3DIM_MATRIX_MAX))))
       (then (call $crash_unimplemented (local.get $name_ptr))))
-    (call $host_log_i32 (i32.const 0xD3D57000))
-    (call $host_log_i32 (local.get $arg1))
-    (call $host_log_i32 (call $gl32 (local.get $arg2)))
-    (call $host_log_i32 (call $gl32 (i32.add (local.get $arg2) (i32.const 4))))
-    (call $host_log_i32 (call $gl32 (i32.add (local.get $arg2) (i32.const 8))))
-    (call $host_log_i32 (call $gl32 (i32.add (local.get $arg2) (i32.const 12))))
-    (call $host_log_i32 (call $gl32 (i32.add (local.get $arg2) (i32.const 16))))
-    (call $host_log_i32 (call $gl32 (i32.add (local.get $arg2) (i32.const 20))))
-    (call $host_log_i32 (call $gl32 (i32.add (local.get $arg2) (i32.const 24))))
-    (call $host_log_i32 (call $gl32 (i32.add (local.get $arg2) (i32.const 28))))
-    (call $host_log_i32 (call $gl32 (i32.add (local.get $arg2) (i32.const 32))))
-    (call $host_log_i32 (call $gl32 (i32.add (local.get $arg2) (i32.const 36))))
-    (call $host_log_i32 (call $gl32 (i32.add (local.get $arg2) (i32.const 40))))
-    (call $host_log_i32 (call $gl32 (i32.add (local.get $arg2) (i32.const 44))))
-    (call $host_log_i32 (call $gl32 (i32.add (local.get $arg2) (i32.const 48))))
-    (call $host_log_i32 (call $gl32 (i32.add (local.get $arg2) (i32.const 52))))
-    (call $host_log_i32 (call $gl32 (i32.add (local.get $arg2) (i32.const 56))))
-    (call $host_log_i32 (call $gl32 (i32.add (local.get $arg2) (i32.const 60))))
+    ;; Matrix dump goes through the dx trace channel, which is silent unless
+    ;; --trace-dx is on. As seventeen bare $host_log_i32 calls it cost every
+    ;; D3DIM app 17 console writes per SetMatrix -- scr_oasaver sets 16269
+    ;; matrices in a single run, i.e. 276k lines of output nobody asked for.
+    (call $host_dx_trace (i32.const 20) (local.get $arg1)
+      (call $g2w (local.get $arg2)) (i32.const 0) (i32.const 0))
     (call $memcpy
       (i32.add (global.get $D3DIM_MATRICES)
                (i32.mul (i32.sub (local.get $arg1) (i32.const 1)) (i32.const 64)))
