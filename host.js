@@ -7,7 +7,7 @@
 const ProcessBoot = (typeof window !== 'undefined' && window.processBoot) || null;
 
 class WineAssembly {
-  static SOURCE_VERSION = '217';
+  static SOURCE_VERSION = '219';
   static _nextProcessId = 1000;
 
   static hasRemainingAppWindow(destroyed, remainingTopLevel) {
@@ -321,6 +321,7 @@ class WineAssembly {
       ? window.__waTraceApiNames
       : null;
     let lastTraceApi = false;
+    let pendingTraceComApiId = -1;
 
     // --- Browser-specific overrides ---
     h.log = (ptr, len) => {
@@ -331,10 +332,29 @@ class WineAssembly {
       }
       lastTraceApi = false;
       if (traceApiNames && traceApiNames.size) {
-        const apiName = text.replace(/\0.*$/, '');
+        let apiName = text.replace(/\0.*$/, '');
+        if (pendingTraceComApiId >= 0) {
+          const resolved = self.apiTable && self.apiTable[pendingTraceComApiId];
+          if (resolved && resolved.name) apiName = resolved.name;
+          pendingTraceComApiId = -1;
+        }
         if (traceApiNames.has(apiName)) {
           lastTraceApi = true;
-          console.log(`[API] ${apiName}`);
+          let suffix = '';
+          const ex = self.instance && self.instance.exports;
+          const entry = self.apiTable && self.apiTable.find(item => item.name === apiName);
+          if (ex && ex.get_esp && ex.guest_read32 && entry) {
+            const raw = [];
+            const esp = ex.get_esp() >>> 0;
+            for (let i = 0; i < Math.min(entry.nargs || 0, 8); i++) {
+              raw.push(ex.guest_read32((esp + 4 + i * 4) >>> 0) >>> 0);
+            }
+            suffix = `(${raw.map(v => `0x${v.toString(16).padStart(8, '0')}`).join(', ')})`;
+            if (apiName === 'CoCreateInstance' && raw[0]) {
+              suffix += ` clsid.d1=0x${(ex.guest_read32(raw[0]) >>> 0).toString(16).padStart(8, '0')}`;
+            }
+          }
+          console.log(`[API] ${apiName}${suffix}`);
         }
       }
       if (self.verbose) {
@@ -343,6 +363,11 @@ class WineAssembly {
       }
     };
     h.log_i32 = (val) => {
+      if (((val >>> 0) >>> 16) === 0xC0DE) {
+        pendingTraceComApiId = (val >>> 0) & 0xFFFF;
+        lastTraceApi = false;
+        return;
+      }
       if (lastTraceApi) console.log(`  => 0x${(val >>> 0).toString(16)}`);
       if (self.verbose) {
         console.log('[wine-asm] i32:', '0x' + (val >>> 0).toString(16));
@@ -565,15 +590,22 @@ class WineAssembly {
       ? self.threadManager.openEvent(readSyncObjectName(nameWa, wide)) : 0;
     h.set_event = (handle) => self.threadManager ? self.threadManager.setEvent(handle) : 1;
     h.reset_event = (handle) => self.threadManager ? self.threadManager.resetEvent(handle) : 1;
+    const nestedSyncMessage = () => {
+      const e = ctx.exports;
+      return !!(e && e.get_sync_msg_depth && (e.get_sync_msg_depth() | 0));
+    };
     h.wait_single = (handle, t) => {
       if (!self.threadManager) return 0;
-      const e = ctx.exports;
-      const nestedSyncMessage = !!(e && e.get_sync_msg_depth && (e.get_sync_msg_depth() | 0));
-      return nestedSyncMessage
+      return nestedSyncMessage()
         ? self.threadManager.waitSingleCooperative(handle, t)
         : self.threadManager.waitSingle(handle, t);
     };
-    h.wait_multiple = (n, ha, wa, t) => self.threadManager ? self.threadManager.waitMultiple(n, ha, wa, t) : 0;
+    h.wait_multiple = (n, ha, wa, t) => {
+      if (!self.threadManager) return 0;
+      return nestedSyncMessage()
+        ? self.threadManager.waitMultipleCooperative(n, ha, wa, t)
+        : self.threadManager.waitMultiple(n, ha, wa, t);
+    };
     h.create_semaphore = (initial, max) => self.threadManager ? self.threadManager.createSemaphore(initial, max) : 0;
     h.release_semaphore = (handle, count, prev) => self.threadManager ? self.threadManager.releaseSemaphore(handle, count, prev) : 0;
 
@@ -1011,6 +1043,40 @@ class WineAssembly {
     })), { required: false });
   }
 
+  async _decodeMountedImage(data, url) {
+    if (typeof document === 'undefined') return null;
+    const lower = String(url || '').toLowerCase();
+    const type = lower.endsWith('.png') ? 'image/png' : 'image/jpeg';
+    const blob = new Blob([data], { type });
+    if (typeof createImageBitmap === 'function') {
+      const source = await createImageBitmap(blob);
+      return { width: source.width, height: source.height, source };
+    }
+
+    // Safari versions without createImageBitmap still decode through the
+    // native HTML image pipeline. Materialize RGBA before revoking the blob
+    // URL so the synchronous DirectAnimation host call owns stable pixels.
+    const objectUrl = URL.createObjectURL(blob);
+    try {
+      const source = await new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error(`failed to decode image: ${url}`));
+        image.src = objectUrl;
+      });
+      const canvas = document.createElement('canvas');
+      canvas.width = source.naturalWidth || source.width;
+      canvas.height = source.naturalHeight || source.height;
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      context.drawImage(source, 0, 0);
+      const rgba = new Uint8Array(context.getImageData(
+        0, 0, canvas.width, canvas.height).data);
+      return { width: canvas.width, height: canvas.height, rgba };
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  }
+
   async loadFiles(urls, options = {}) {
     const vfs = this._helpCtx && this._helpCtx.vfs;
     if (!vfs) return;
@@ -1030,6 +1096,9 @@ class WineAssembly {
           return;
         }
         const data = new Uint8Array(await resp.arrayBuffer());
+        const decodedImage = (typeof item === 'object' && item.decodeImage)
+          ? await this._decodeMountedImage(data, url)
+          : null;
         const addFile = (rawPath) => {
           let vfsPath = String(rawPath).toLowerCase().replace(/\//g, '\\');
           if (!/^[a-z]:/.test(vfsPath)) vfsPath = 'c:\\' + vfsPath.replace(/^\\+/, '');
@@ -1041,7 +1110,7 @@ class WineAssembly {
             p = p.slice(0, idx);
             vfs.dirs.add(p);
           }
-          vfs.files.set(vfsPath, { data, attrs: 0x20 });
+          vfs.files.set(vfsPath, { data, attrs: 0x20, decodedImage });
         };
         if (explicitPaths && explicitPaths.length) {
           for (const p of explicitPaths) addFile(p);
