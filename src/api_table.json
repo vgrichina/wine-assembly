@@ -21886,5 +21886,166 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 1373481254
+  },
+  {
+    "id": 2634,
+    "name": "lineInitialize",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2606293805
+  },
+  {
+    "id": 2635,
+    "name": "lineShutdown",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 935149725
+  },
+  {
+    "id": 2636,
+    "name": "lineNegotiateAPIVersion",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 886396857
+  },
+  {
+    "id": 2637,
+    "name": "lineGetDevCaps",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2500481465
+  },
+  {
+    "id": 2638,
+    "name": "lineGetAddressCaps",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 3449317930
+  },
+  {
+    "id": 2639,
+    "name": "lineGetTranslateCaps",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2864721604
+  },
+  {
+    "id": 2640,
+    "name": "lineGetCountry",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 4243708469
+  },
+  {
+    "id": 2641,
+    "name": "lineSetCurrentLocation",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1907808145
+  },
+  {
+    "id": 2642,
+    "name": "lineSetAppPriority",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 1643798108
+  },
+  {
+    "id": 2643,
+    "name": "lineTranslateAddress",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 2264367701
+  },
+  {
+    "id": 2644,
+    "name": "lineTranslateDialog",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3478858883
+  },
+  {
+    "id": 2645,
+    "name": "lineConfigDialog",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2103701113
+  },
+  {
+    "id": 2646,
+    "name": "lineGetDevConfig",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2458405110
+  },
+  {
+    "id": 2647,
+    "name": "lineSetDevConfig",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1742099042
+  },
+  {
+    "id": 2648,
+    "name": "lineOpen",
+    "nargs": 9,
+    "convention": "stdcall",
+    "hash": 672725707
+  },
+  {
+    "id": 2649,
+    "name": "lineClose",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3235570429
+  },
+  {
+    "id": 2650,
+    "name": "lineGetID",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 3624676484
+  },
+  {
+    "id": 2651,
+    "name": "lineGetLineDevStatus",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1182402116
+  },
+  {
+    "id": 2652,
+    "name": "lineSetStatusMessages",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3530337967
+  },
+  {
+    "id": 2653,
+    "name": "lineMakeCall",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 992089913
+  },
+  {
+    "id": 2654,
+    "name": "lineAnswer",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2018014785
+  },
+  {
+    "id": 2655,
+    "name": "lineDial",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1225785373
+  },
+  {
+    "id": 2656,
+    "name": "lineDrop",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 973960766
   }
 ]

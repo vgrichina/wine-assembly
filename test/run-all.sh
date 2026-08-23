@@ -267,6 +267,7 @@ E2E=(
   test/test-win16-pipe-about.js
   test/test-win16-idlewild-handle-map.js
   test/test-worker-thread-stuck-detect.js
+  test/test-tapi-line-init.js
   test/test-win16-jigsawed.js
   test/test-win16-jigsawed-menus.js
   test/test-win16-entertainment-manifests.js
