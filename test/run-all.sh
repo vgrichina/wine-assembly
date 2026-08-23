@@ -42,6 +42,7 @@ UNIT=(
   test/test-win16-exec.js
   test/test-fs-prefix.js
   test/test-create-directory-last-error.js
+  test/test-unhandled-exception-filter.js
   test/test-bignum-mul.js
   test/test-mat4.js
   test/test-vfs.js

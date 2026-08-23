@@ -1655,10 +1655,53 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
   )
 
-  ;; 55: UnhandledExceptionFilter — STUB: unimplemented
+  ;; 55: UnhandledExceptionFilter(ExceptionInfo) -> LONG
+  ;;
+  ;; The last stop for an exception nobody claimed. A CRT reaches here from its
+  ;; own __except filter -- msvcrt's _XcptFilter tail is literally
+  ;; `push [ebp+0xc]; call [UnhandledExceptionFilter]` -- so arriving here means
+  ;; a fault already happened somewhere else and every registered handler
+  ;; declined it. Trapping here used to report this function as the
+  ;; unimplemented API, which named the messenger instead of the fault; the
+  ;; exception code and faulting address are the only useful facts and they are
+  ;; in the record the caller just passed, so report those.
+  ;;
+  ;;   EXCEPTION_POINTERS { EXCEPTION_RECORD* ExceptionRecord; CONTEXT* Context; }
+  ;;   EXCEPTION_RECORD   { DWORD Code; DWORD Flags; EXCEPTION_RECORD* Nested;
+  ;;                        PVOID Address; DWORD NumberParameters; ... }
+  ;;
+  ;; Returns EXCEPTION_EXECUTE_HANDLER, which is what the real API returns on a
+  ;; machine with no debugger attached once its fault dialog is dismissed: the
+  ;; caller's __except block runs and the process terminates through its own
+  ;; shutdown path rather than dying mid-instruction.
+  ;;
+  ;; Not yet done: re-entering a filter installed by SetUnhandledExceptionFilter.
+  ;; Windows calls that filter from here and returns what it returns. Doing so
+  ;; needs a continuation thunk to resume this handler after guest code runs
+  ;; (the CACA000x mechanism), and every filter we have actually seen installed
+  ;; is a CRT's own terminate path, which reaches the same place this does. The
+  ;; filter is still stored and still round-trips through the setter, so nothing
+  ;; here has to be undone when that trampoline exists.
   (func $handle_UnhandledExceptionFilter (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (local $rec i32)
+    ;; arg0 is EXCEPTION_POINTERS*. A null pointer, or a null ExceptionRecord
+    ;; inside it, is legal input -- report what is known and skip the rest
+    ;; rather than dereferencing it.
+    (if (local.get $arg0)
+      (then (local.set $rec (i32.load (call $g2w (local.get $arg0))))))
+    (if (local.get $rec)
+      (then (call $host_unhandled_exception
+              (i32.load (call $g2w (local.get $rec)))                  ;; ExceptionCode
+              (i32.load offset=4 (call $g2w (local.get $rec)))         ;; ExceptionFlags
+              (i32.load offset=12 (call $g2w (local.get $rec)))        ;; ExceptionAddress
+              (global.get $unhandled_exception_filter)))
+      (else (call $host_unhandled_exception
+              (i32.const 0) (i32.const 0) (i32.const 0)
+              (global.get $unhandled_exception_filter))))
+    (global.set $eax (i32.const 1))  ;; EXCEPTION_EXECUTE_HANDLER
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
+
 
   ;; 56: GetCurrentProcess — return pseudo-handle -1 (0xFFFFFFFF)
   (func $handle_GetCurrentProcess (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -6202,11 +6245,19 @@ nW — STUB: unimplemented
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
-  ;; 345: SetUnhandledExceptionFilter(lpFilter) — store filter, return previous (0)
+  ;; 345: SetUnhandledExceptionFilter(lpTopLevelFilter) -> previous filter.
+  ;;
+  ;; The comment used to say "store filter" while the body stored nothing and
+  ;; returned a constant 0. Both halves matter: a CRT installs its filter at
+  ;; startup and a DLL that installs its own is expected to chain to whatever
+  ;; it displaced, so returning a fabricated 0 tells every caller it is the
+  ;; first one and loses the filter the previous caller had installed.
   (func $handle_SetUnhandledExceptionFilter (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (global.get $unhandled_exception_filter))
+    (global.set $unhandled_exception_filter (local.get $arg0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
+
 
   ;; 937: SetPriorityClass(hProcess, dwPriorityClass) — no-op, return TRUE
   (func $handle_SetPriorityClass (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -10720,7 +10771,7 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (call $handle_PostThreadMessageA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
- 688: WindowFromDC — STUB: unimplemented
+  ;; 688: WindowFromDC — STUB: unimplemented
   (func $handle_WindowFromDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $crash_unimplemented (local.get $name_ptr))
   )

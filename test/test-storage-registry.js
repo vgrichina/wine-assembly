@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 const assert = require('assert');
-const { createStorageImports, setIniValue, setRegValue } = require('../lib/storage');
+const { createStorageImports, setIniValue, setRegValue, exportStore, importStore } =
+  require('../lib/storage');
 const { g2w, readStrA } = require('../lib/mem-utils');
 
 const IMAGE_BASE = 0x400000;
@@ -329,6 +330,32 @@ assert.strictEqual(comDv.getUint32(factoryOut, true), factory,
 assert.strictEqual(comStorage.com_revoke_class_object(cookie), 0,
   'CoRevokeClassObject removes the matching registration cookie');
 
+// A snapshot has to carry what an app wrote, so that a later run starts where
+// this one left off. In the browser that continuity is localStorage and it is
+// automatic; in Node the store is a per-process Map, so every headless run is
+// a first run and any bug that needs persisted settings to exist is invisible.
+// These two are what --reg-export/--reg-import are built on.
+setRegValue('HKCU\\Software\\SnapshotProbe', 'Kept', 1, 'value-from-first-run');
+const snapshot = exportStore();
+assert(Object.keys(snapshot).length > 0, 'exportStore returns the populated store');
+assert(Object.keys(snapshot).every(k => /^(reg:|ini:)/.test(k)),
+  'a snapshot carries only registry and INI entries');
+const probeKey = Object.keys(snapshot).find(k => /snapshotprobe/i.test(k));
+assert(probeKey, 'a value written this run appears in the snapshot');
+assert(/value-from-first-run/.test(snapshot[probeKey]),
+  'the snapshot carries the stored data, not just the key');
+
+// Restoring is what makes the next run a *second* launch.
+setRegValue('HKCU\\Software\\SnapshotProbe', 'Kept', 1, 'clobbered');
+assert.strictEqual(importStore(snapshot), Object.keys(snapshot).length,
+  'importStore reports how many entries it restored');
+assert(/value-from-first-run/.test(exportStore()[probeKey]),
+  'importStore puts the snapshot value back over the newer one');
+// Non-store keys are ignored rather than trusted: a snapshot is a file on disk.
+assert.strictEqual(importStore({ 'not-a-store-key': 'x' }), 0,
+  'importStore ignores keys outside the registry/INI namespaces');
+assert.strictEqual(importStore(null), 0, 'importStore tolerates a missing snapshot');
+
 console.log('PASS  registry REG_SZ stores guest strings through g2w');
 console.log('PASS  setRegValue materializes parent registry keys');
 console.log('PASS  Win98 Explorer Shell Folders expose the program-group directory');
@@ -339,3 +366,4 @@ console.log('PASS  system.ini exposes supported MCI drivers with case-insensitiv
 console.log('PASS  win.ini exposes the supported Media Player file extensions');
 console.log('PASS  COM activation resolves CLSID registry paths case-insensitively');
 console.log('PASS  process-registered COM class factories resolve and revoke by cookie');
+console.log('PASS  registry/INI snapshots export and restore across runs');

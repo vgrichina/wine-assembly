@@ -134,6 +134,13 @@ const TRACE_FS = hasFlag('trace-fs');     // --trace-fs: log filesystem CreateFi
 const TRACE_INI = hasFlag('trace-ini');   // --trace-ini: log GetPrivateProfileString resolutions
 const TRACE_REG = hasFlag('trace-reg');   // --trace-reg: log registry RegOpen/Query/Create/Set/Enum/Close
 const TRACE_SEH = hasFlag('trace-seh');   // --trace-seh: log SEH chain operations
+// --reg-import=FILE / --reg-export=FILE: carry the registry and INI store
+// across runs. The browser keeps it in localStorage, so an app's second launch
+// reads back what its first launch wrote; Node keeps it in a per-process Map,
+// so every headless run is a first run. Bugs that need persisted settings to
+// exist are invisible to the CLI without these.
+const REG_IMPORT = getArg('reg-import', '');
+const REG_EXPORT = getArg('reg-export', '');
 const TRACE_WIN16 = hasFlag('trace-win16'); // --trace-win16: log every Win16 (NE) API call and its result
 // --trace-win16=dde: only the DDEML offers and answers. The full trace is
 // large enough to change the timing of anything involving two processes, so a
@@ -2845,6 +2852,21 @@ async function main() {
           fs.statSync(file.hostPath).size);
       }
       ctx.vfs.setDriveReadOnly(drive, true);
+    }
+
+    // A --reg-import snapshot stands in for the browser's localStorage: it is
+    // loaded before the app manifest so manifest defaults still win, exactly
+    // as they do on a browser profile that already has the key.
+    if (REG_IMPORT) {
+      try {
+        const { importStore } = require('../lib/storage');
+        const snap = JSON.parse(fs.readFileSync(REG_IMPORT, 'utf8'));
+        const n = importStore(snap);
+        console.log(`[reg] imported ${n} entries from ${REG_IMPORT}`);
+      } catch (e) {
+        console.error(`--reg-import failed: ${e.message}`);
+        process.exit(1);
+      }
     }
 
     // `--app` is the CLI spelling of selecting the same dropdown entry in the
@@ -6496,6 +6518,15 @@ if (VERBOSE) {
 
   console.log(`\nStats: ${apiCount} API calls, ${MAX_BATCHES} batches`);
 
+  // --reg-export writes what the run left in the registry/INI store, which is
+  // what a browser tab would have kept in localStorage. Feed it back with
+  // --reg-import to make the next run a *second* launch.
+  if (REG_EXPORT) {
+    const { exportStore } = require('../lib/storage');
+    const snap = exportStore();
+    fs.writeFileSync(REG_EXPORT, JSON.stringify(snap, null, 2));
+    console.log(`[reg] exported ${Object.keys(snap).length} entries to ${REG_EXPORT}`);
+  }
   // --gdi-stats: how much software rasterization the run actually did. Span
   // counts and pixel counts answer different questions — a repaint storm shows
   // up as pixels per batch, a clip/ROP fallback as slow-path share.

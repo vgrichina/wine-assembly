@@ -16,6 +16,7 @@
   ;; log_eip(eip) — invoked at block entry when trace_eip_flag is non-zero and
   ;; EIP is inside [trace_eip_lo, trace_eip_hi]. test/run.js --trace-eip-range wires it up.
   (import "host" "crash_unimplemented" (func $host_crash_unimplemented (param i32 i32 i32 i32)))
+  (import "host" "unhandled_exception" (func $host_unhandled_exception (param i32 i32 i32 i32)))
   (import "host" "message_box" (func $host_message_box (param i32 i32 i32 i32) (result i32)))
   (import "host" "exit" (func $host_exit (param i32)))
   (import "host" "draw_rect" (func $host_draw_rect (param i32 i32 i32 i32 i32)))
@@ -2224,6 +2225,12 @@
   ;; and default gateway, both host byte order.
   (global $wsctl_mask (mut i32) (i32.const 0xFFFFFF00))
   (global $wsctl_gateway (mut i32) (i32.const 0x0A4D0001))
+  ;; SetUnhandledExceptionFilter's top-level filter, as a guest address. Zero
+  ;; means no filter is installed, which is also the value the first caller
+  ;; gets back as "the previous filter" -- CRTs save that return value and put
+  ;; it back on the way out, so it has to be a real stored slot rather than a
+  ;; constant.
+  (global $unhandled_exception_filter (mut i32) (i32.const 0))
   (global $shutdown_level (mut i32) (i32.const 0x280))
   (global $shutdown_flags (mut i32) (i32.const 0))
   (global $loadlib_name_ptr (mut i32) (i32.const 0)) ;; guest addr of DLL name for yield=5
