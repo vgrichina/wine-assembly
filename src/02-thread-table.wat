@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 400 funcref)
+  (table $handlers 407 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -456,4 +456,11 @@
     $th_aam                   ;; 397: AAM imm8
     $th_port_io               ;; 398: IN/OUT accumulator, imm8/DX port
     $th_enter                 ;; 399: ENTER imm16,0 (32-bit frame)
+    $th_movsx8_sib            ;; 400: MOVSX r32, byte [base+index*scale+disp]
+    $th_store8_sib            ;; 401: MOV byte [base+index*scale+disp], r8
+    $th_mov_m8_i8_sib         ;; 402: MOV byte [base+index*scale+disp], imm8
+    $th_ptrvar_fetch8         ;; 403: mov r,[abs] + inc r + mov [abs],r (+ mov r8,[r+disp])
+    $th_test_jcc              ;; 404: TEST r,r / TEST r8,r8 + Jcc
+    $th_store32_abs_run       ;; 405: 2-4 back-to-back mov [abs],reg
+    $th_load32_abs_run        ;; 406: 2-4 back-to-back mov reg,[abs]
   )

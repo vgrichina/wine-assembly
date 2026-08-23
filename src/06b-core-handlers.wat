@@ -339,6 +339,187 @@
       (call $gl32 (i32.add (i32.add (local.get $base_val) (local.get $index_val)) (local.get $disp))))
     (return_call $next))
 
+  ;; 400/401/402: the other three dominant SIB consumers, fused the same way
+  ;; 389 fuses the dword load. Heroes II's ICN sprite blitter is the case that
+  ;; forced these: a --handler-hist run of its adventure map attributes 37.7%
+  ;; of every SIB EA computed to MOVSX r32, byte [eax+ecx], 24.3% to a byte
+  ;; store through [ecx*4+disp] and 8.1% to a byte-immediate store, so three
+  ;; quarters of the generic handler-149 traffic in that loop was paying for a
+  ;; second threaded dispatch and a SIB_SENTINEL word per pixel.
+  ;;
+  ;; Each keeps the 149 encoding — info word then disp word — so the decoder
+  ;; change is only which opcode it emits, and reports its semantic consumer to
+  ;; the SIB histogram so profiles stay comparable across the fusion.
+  (func $sib_ea (param $info i32) (param $disp i32) (result i32)
+    (local $addr i32)
+    (local.set $addr (local.get $disp))
+    (if (i32.ne (i32.and (local.get $info) (i32.const 0xF)) (i32.const 0xF))
+      (then (local.set $addr (i32.add (local.get $addr)
+        (call $get_reg (i32.and (local.get $info) (i32.const 0xF)))))))
+    (if (i32.ne (i32.and (i32.shr_u (local.get $info) (i32.const 4)) (i32.const 0xF)) (i32.const 0xF))
+      (then (local.set $addr (i32.add (local.get $addr) (i32.shl
+        (call $get_reg (i32.and (i32.shr_u (local.get $info) (i32.const 4)) (i32.const 0xF)))
+        (i32.and (i32.shr_u (local.get $info) (i32.const 8)) (i32.const 3)))))))
+    (local.get $addr))
+
+  ;; 400: MOVSX r32, byte [base+index*scale+disp]
+  (func $th_movsx8_sib (param $op i32)
+    (local $info i32) (local $v i32)
+    (local.set $info (call $read_thread_word))
+    (if (global.get $handler_hist_enabled)
+      (then (call $sib_consumer_hist_record (i32.const 79) (local.get $op) (local.get $info))))
+    (local.set $v (call $gl8 (call $sib_ea (local.get $info) (call $read_thread_word))))
+    (if (i32.ge_u (local.get $v) (i32.const 0x80))
+      (then (local.set $v (i32.or (local.get $v) (i32.const 0xFFFFFF00)))))
+    (call $set_reg (local.get $op) (local.get $v))
+    (return_call $next))
+
+  ;; 401: MOV byte [base+index*scale+disp], r8
+  (func $th_store8_sib (param $op i32)
+    (local $info i32)
+    (local.set $info (call $read_thread_word))
+    (if (global.get $handler_hist_enabled)
+      (then (call $sib_consumer_hist_record (i32.const 25) (local.get $op) (local.get $info))))
+    (call $gs8 (call $sib_ea (local.get $info) (call $read_thread_word))
+      (call $get_reg8 (local.get $op)))
+    (return_call $next))
+
+  ;; 402: MOV byte [base+index*scale+disp], imm8 (op = the immediate)
+  (func $th_mov_m8_i8_sib (param $op i32)
+    (local $info i32)
+    (local.set $info (call $read_thread_word))
+    (if (global.get $handler_hist_enabled)
+      (then (call $sib_consumer_hist_record (i32.const 77) (local.get $op) (local.get $info))))
+    (call $gs8 (call $sib_ea (local.get $info) (call $read_thread_word)) (local.get $op))
+    (return_call $next))
+
+  ;; 403: the post-increment byte fetch through a pointer *variable*:
+  ;;
+  ;;   mov ecx,[0x525d80]      ; the stream pointer lives in memory, not a reg
+  ;;   inc ecx
+  ;;   mov [0x525d80],ecx
+  ;;   mov al,[ecx-1]          ; optional: read the byte just stepped over
+  ;;
+  ;; Heroes II's ICN decoder is written entirely out of this idiom -- it reads
+  ;; every RLE control byte and every pixel run this way, and the profile shows
+  ;; the shape rather than the operation: load32-abs 6.5%, store32-abs 8.8%,
+  ;; inc_r 3.4%, with the adjacent pairs load32->inc, inc->store32 and
+  ;; store32->load8_ro all in the top ten. Folding the group into one dispatch
+  ;; is worth three or four of them per byte consumed.
+  ;;
+  ;; op: bits 0-3 pointer register, bit 8 set when the byte load is present,
+  ;; and then bits 4-6 its destination byte register. Words: the absolute
+  ;; address of the pointer variable, then the byte load's displacement (only
+  ;; when bit 8 is set). Flags are INC's, exactly as the separate ops left them.
+  (func $th_ptrvar_fetch8 (param $op i32)
+    (local $abs i32) (local $old i32) (local $ptr i32)
+    (local.set $abs (call $read_thread_word))
+    (local.set $old (call $gl32 (local.get $abs)))
+    (local.set $ptr (i32.add (local.get $old) (i32.const 1)))
+    (call $set_reg (i32.and (local.get $op) (i32.const 0xF)) (local.get $ptr))
+    (call $gs32 (local.get $abs) (local.get $ptr))
+    (call $set_flags_inc (local.get $old) (local.get $ptr))
+    (if (i32.and (local.get $op) (i32.const 0x100))
+      (then
+        (call $set_reg8 (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 7))
+          (call $gl8 (i32.add (local.get $ptr) (call $read_thread_word))))))
+    (return_call $next))
+
+  ;; 404: TEST r,r (or TEST r8,r8) immediately followed by a Jcc. The branch is
+  ;; the only consumer of those flags in every occurrence the decoder fuses, so
+  ;; the pair costs one dispatch instead of two, and the condition is read off
+  ;; the AND result directly — a logic op leaves CF=0 and OF=0, which collapses
+  ;; BE to ZF, A to !ZF, L/GE to the sign bit and LE/G to a sign-or-zero test.
+  ;; Lazy-flag state is still published so any later reader (PUSHFD, SETcc, a
+  ;; second branch) sees exactly what the separate TEST would have left.
+  ;;
+  ;; op: bits 0-3 and 4-7 the two registers, bits 8-11 the x86 condition code,
+  ;; bit 12 set for the byte form. Words: fall-through EIP, then target EIP.
+  (func $th_test_jcc (param $op i32)
+    (local $r i32) (local $cc i32) (local $sign i32) (local $taken i32)
+    (local $fall i32) (local $target i32)
+    (local.set $cc (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF)))
+    (if (global.get $handler_hist_enabled)
+      (then (call $branch_hist_record_jcc (local.get $cc))))
+    (if (i32.and (local.get $op) (i32.const 0x1000))
+      (then
+        (local.set $r (i32.and
+          (call $get_reg8 (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
+          (call $get_reg8 (i32.and (local.get $op) (i32.const 0xF)))))
+        (call $set_flags_logic (local.get $r))
+        (global.set $flag_sign_shift (i32.const 7))
+        (local.set $sign (i32.and (i32.shr_u (local.get $r) (i32.const 7)) (i32.const 1))))
+      (else
+        (local.set $r (i32.and
+          (call $get_reg (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
+          (call $get_reg (i32.and (local.get $op) (i32.const 0xF)))))
+        (call $set_flags_logic (local.get $r))
+        (local.set $sign (i32.shr_u (local.get $r) (i32.const 31)))))
+    (local.set $fall (call $read_thread_word))
+    (local.set $target (call $read_thread_word))
+    (block $cc_done
+      (if (i32.or (i32.eq (local.get $cc) (i32.const 0x4)) (i32.eq (local.get $cc) (i32.const 0x6)))
+        (then (local.set $taken (i32.eqz (local.get $r))) (br $cc_done)))
+      (if (i32.or (i32.eq (local.get $cc) (i32.const 0x5)) (i32.eq (local.get $cc) (i32.const 0x7)))
+        (then (local.set $taken (i32.ne (local.get $r) (i32.const 0))) (br $cc_done)))
+      (if (i32.or (i32.eq (local.get $cc) (i32.const 0x8)) (i32.eq (local.get $cc) (i32.const 0xC)))
+        (then (local.set $taken (local.get $sign)) (br $cc_done)))
+      (if (i32.or (i32.eq (local.get $cc) (i32.const 0x9)) (i32.eq (local.get $cc) (i32.const 0xD)))
+        (then (local.set $taken (i32.eqz (local.get $sign))) (br $cc_done)))
+      (if (i32.eq (local.get $cc) (i32.const 0xE))
+        (then
+          (local.set $taken (i32.or (i32.eqz (local.get $r)) (local.get $sign)))
+          (br $cc_done)))
+      (if (i32.eq (local.get $cc) (i32.const 0xF))
+        (then
+          (local.set $taken (i32.and (i32.ne (local.get $r) (i32.const 0)) (i32.eqz (local.get $sign))))
+          (br $cc_done)))
+      ;; O/NO/B/AE/P/NP are rare after a logic op; let the general evaluator
+      ;; answer them from the state just published.
+      (local.set $taken (call $eval_cc (local.get $cc))))
+    (if (local.get $taken)
+      (then (global.set $eip (local.get $target)))
+      (else (global.set $eip (local.get $fall)))))
+
+  ;; 405/406: a run of 2-4 back-to-back absolute MOVs — `mov [abs],reg` or
+  ;; `mov reg,[abs]` with nothing in between. Absolute loads and stores are the
+  ;; two heaviest handlers in Heroes II's blitter (8.6% and 6.0% of all ops) and
+  ;; the compiler emits them in clusters when it spills a register set, so the
+  ;; run costs one dispatch instead of four.
+  ;;
+  ;; op: bits 0-3 the run length, then one register per nibble from bit 4 up.
+  ;; Words: one absolute address per element, in program order.
+  (func $th_store32_abs_run (param $op i32)
+    (local $n i32) (local $i i32) (local $addr i32)
+    (local.set $n (i32.and (local.get $op) (i32.const 0xF)))
+    (block $done (loop $l
+      (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+      (local.set $addr (call $read_thread_word))
+      (call $gs32 (local.get $addr)
+        (call $get_reg (i32.and
+          (i32.shr_u (local.get $op)
+            (i32.add (i32.const 4) (i32.shl (local.get $i) (i32.const 2))))
+          (i32.const 0xF))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $l)))
+    (return_call $next))
+
+  (func $th_load32_abs_run (param $op i32)
+    (local $n i32) (local $i i32) (local $addr i32)
+    (local.set $n (i32.and (local.get $op) (i32.const 0xF)))
+    (block $done (loop $l
+      (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+      (local.set $addr (call $read_thread_word))
+      (call $set_reg
+        (i32.and
+          (i32.shr_u (local.get $op)
+            (i32.add (i32.const 4) (i32.shl (local.get $i) (i32.const 2))))
+          (i32.const 0xF))
+        (call $gl32 (local.get $addr)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $l)))
+    (return_call $next))
+
   ;; 390: two adjacent SIB LEAs. Words are info1, disp1, info2, disp2 and the
   ;; destination registers are packed into op. The second address is computed
   ;; after committing the first result, preserving dependent LEA semantics.
