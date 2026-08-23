@@ -798,3 +798,13 @@ through their original installers before using any extracted game files.
   music reaches the emulator's existing WinMM MIDI path without a replacement
   Miles implementation. The web manifest therefore seeds both bundled DLLs and
   no longer passes the `/D0` digital-audio or `/M0` MIDI-disable switches.
+  A later adventure-map trace identified the repeating-effect defect precisely:
+  Miles creates a 32,768-byte mono 8-bit DirectSound software-mixer ring at
+  22,050 Hz and starts it looping, then continuously rewrites it through
+  `IDirectSoundBuffer::Lock`/`Unlock`. The browser host had decoded the ring only
+  once at `Play`, so its first 1.486 seconds repeated even after Miles mixed
+  silence or a replacement effect. Looping-buffer `Unlock` now copies the guest
+  PCM into the existing Web Audio buffer without replacing its source or moving
+  its play cursor. In a rebuilt Chromium run, three observed refreshes preserved
+  source identity and each changed the ring RMS to zero; the adventure map stayed
+  live at 60.1 fps. Evidence is `/private/tmp/heroes2-audio-refresh.png`.

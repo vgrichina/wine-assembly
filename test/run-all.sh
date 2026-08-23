@@ -73,6 +73,7 @@ UNIT=(
   test/test-waveout-audio.js
   test/test-wavein-audio.js
   test/test-audio-mixer.js
+  test/test-directsound-loop-refresh.js
   test/test-core-no-app-fast-paths.js
   test/test-wat-gdi-region.js
   test/test-wat-gdi-select-clip-path.js

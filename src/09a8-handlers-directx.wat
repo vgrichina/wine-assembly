@@ -3136,8 +3136,27 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
-  ;; Unlock(this, pvAudioPtr1, dwAudioBytes1, pvAudioPtr2, dwAudioBytes2) — no-op
+  ;; Unlock(this, pvAudioPtr1, dwAudioBytes1, pvAudioPtr2, dwAudioBytes2)
+  ;; A looping DirectSound buffer is commonly a software-mixer ring. Miles
+  ;; rewrites it after Play and expects the live device to consume those new
+  ;; bytes; refresh the existing host AudioBuffer in place without moving its
+  ;; play cursor. Host loop mode 2 is internal and distinct from DSBPLAY_LOOPING.
   (func $handle_IDirectSoundBuffer_Unlock (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $entry i32) (local $handle i32) (local $dib_wa i32) (local $buf_size i32)
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (local.set $handle (i32.load (i32.add (local.get $entry) (i32.const 8))))
+    (local.set $dib_wa (i32.load (i32.add (local.get $entry) (i32.const 20))))
+    (local.set $buf_size (i32.load (i32.add (local.get $entry) (i32.const 12))))
+    (if (i32.and
+          (i32.eq (i32.and (i32.load (i32.add (local.get $entry) (i32.const 28)))
+            (i32.const 3)) (i32.const 3))
+          (i32.and (i32.ne (local.get $handle) (i32.const 0))
+            (i32.and (i32.ne (local.get $dib_wa) (i32.const 0))
+              (i32.ne (local.get $buf_size) (i32.const 0)))))
+      (then
+        (drop (call $host_voice_play_ring
+          (local.get $handle) (local.get $dib_wa) (local.get $buf_size)
+          (i32.const 0) (i32.const 2)))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
