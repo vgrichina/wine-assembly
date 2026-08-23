@@ -675,6 +675,24 @@ lower bands are already present in StarCraft's canonical primary DIB rather
 than being Safari canvas retention; they are the dark 1998 game HUD regions,
 not additional browser cursor copies.
 
+A later live Chromium gameplay probe reproduced the reported intermittent
+white/grey blink as a precise one-refresh swap to solid RGB `192,192,192`.
+Nine such frames appeared in a 30-second gameplay sample, each followed by a
+normal DirectDraw frame. Attachment tracing identified the solid color as the
+canonical 32-bit GDI window surface (`0x610001`), whose untouched pixels are
+initialized to Win98 `COLOR_BTNFACE`, temporarily replacing StarCraft's 8-bit
+DirectDraw primary (`0x200002`). The trigger was not an asynchronous canvas
+blit: repeated `GetDC(hwnd)` probes reattached the GDI backing even when no GDI
+pixels were written. Window-DC acquisition no longer changes the presented
+surface; the GDI backing is reattached only when a raster operation uploads
+real changed pixels.
+
+The rebuilt browser run repeated the same scripted mission start and sampled
+1,846 displayed frames over 30 seconds of active gameplay. It observed zero
+solid-grey frames (versus nine before the change), and every attachment in the
+sample was the DirectDraw primary. The final unobstructed gameplay capture is
+`/private/tmp/starcraft-no-flash-gameplay.png`.
+
 ## Further shareware/demo/freeware game candidates
 
 Research on 2026-08-22 narrowed the next browser targets to distributions that
@@ -755,8 +773,28 @@ through their original installers before using any extracted game files.
   10,689,596-byte `data.z` plus the native Win16 second-stage `setup.exe`.
   Starting that stage exposes its next missing companion (`_SETUP.DLL`, Error
   103); no pre-extracted game has been substituted for that result.
-- Heroes II is the direct `h2demo.zip`, which is already a ready-to-run demo
-  rather than an installer. `H2DEMOW.EXE` creates its real game window, then
+- Heroes II is the direct `h2demo.zip` (SHA-1
+  `f324b626e69a6e087364be5f69e5dd13dde814d2`), which is already a ready-to-run
+  demo rather than an installer. `H2DEMOW.EXE` creates its real game window, then
   stops at the unimplemented Miles export `_AIL_startup@0`. The executable's
   own command-line help advertises `/D0`, `/M0`, and `/R0`; these disable the
   respective sound systems after startup, but do not bypass that initial call.
+  A two-call diagnostic substitution established that the only Miles calls
+  made in this mode are zero-argument `_AIL_startup@0` and periodic
+  `_AIL_serve@0` housekeeping. With both returning normally, the original demo
+  renders its main menu, accepts **New Game**, opens the **Standard Game**
+  configuration, and reads `MAPS\\BROKENA.MP2` for the playable Broken Alliance
+  scenario. This proves the 42 MB `DATA\\HEROES2.AGG` VFS mount is intact and
+  makes Heroes II the first newly playable candidate from this round. A final
+  Chromium run through the real `heroes2_demo` web manifest clicked **New
+  Game**, **Standard Game**, and **Okay** and reached the interactive adventure
+  map with the castle, hero, minimap, and command panel rendered. Evidence is
+  `/private/tmp/heroes2-browser-gameplay.png`; the untouched executable also
+  rendered through the CLI manifest at `/private/tmp/heroes2-unmodified-app.png`.
+  A subsequent untouched run loaded the archive's real `MSS32.DLL` and
+  `SMACKW32.DLL` with only `/R0` (Red Book CD audio) disabled. Both DLL entry
+  points completed successfully and the Miles runtime emitted 240
+  `midiOutShortMsg` calls during 300 execution batches, proving that Heroes II
+  music reaches the emulator's existing WinMM MIDI path without a replacement
+  Miles implementation. The web manifest therefore seeds both bundled DLLs and
+  no longer passes the `/D0` digital-audio or `/M0` MIDI-disable switches.

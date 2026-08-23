@@ -141,6 +141,31 @@ async function main() {
     [192, 192, 192, 255],
     'attached presentation must expose untouched canonical window pixels');
 
+  // StarCraft periodically acquires the HWND DC while its 8-bpp DirectDraw
+  // primary owns the fullscreen window. GetDC alone must not swap the
+  // untouched COLOR_BTNFACE GDI backing onto screen; a real GDI write remains
+  // a presentation boundary and restores that surface.
+  const dxSurfaceId = 0x200002;
+  const dxBits = 0x20000;
+  assert.strictEqual(base.host.gdi_surface_create(
+    dxSurfaceId, 40, 30, 8, dxBits, 40, 1, 0, 0, 0, 0, 0), 1);
+  assert.strictEqual(base.host.gdi_surface_attach(dxSurfaceId, HWND), 1);
+  const dxCanvas = base.gdi.surfacePresentations.get(dxSurfaceId).canvas;
+  assert.strictEqual(canvas, dxCanvas, 'the DirectDraw primary should own the window');
+  const probeDc = wat.test_call_GetDC(HWND) >>> 0;
+  assert(probeDc, 'a GetDC-only probe must still return a usable DC');
+  assert.strictEqual(canvas, dxCanvas,
+    'GetDC alone must not replace an attached DirectDraw primary');
+  assert.strictEqual(wat.test_call_SetPixel(probeDc, 0, 0, 0x000000FF), 0x000000FF);
+  const windowCanvas = base.gdi.surfacePresentations.get(surfaceId).canvas;
+  assert.strictEqual(canvas, windowCanvas,
+    'the first real GDI upload should restore the window GDI surface');
+  assert.deepStrictEqual(
+    [...windowCanvas.getContext('2d').getImageData(3, 5, 1, 1).data.subarray(0, 3)],
+    [255, 0, 0], 'the restoring GDI upload must retain its changed pixel');
+  assert.strictEqual(wat.test_call_ReleaseDC(HWND, probeDc), 1);
+  assert.strictEqual(base.host.gdi_surface_delete(dxSurfaceId), 1);
+
   const clipCopy = wat.test_gdi_rgn_alloc_rect(0, 0, 0, 0) >>> 0;
   assert.strictEqual(wat.test_gdi_dc_clip_get(hdc, clipCopy), 0,
     'GetDC system visibility must not appear as an application-selected clip');

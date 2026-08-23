@@ -1191,7 +1191,12 @@
     (if (i32.and (i32.eq (i32.load offset=8 (local.get $p)) (local.get $w))
           (i32.eq (i32.load offset=12 (local.get $p)) (local.get $h)))
       (then
-        (drop (call $host_gdi_surface_attach (local.get $id) (local.get $owner)))
+        ;; Acquiring a DC is not itself a presentation boundary. In
+        ;; particular, fullscreen DirectDraw games may probe GetDC(hwnd)
+        ;; between primary-surface presents. Reattaching this untouched
+        ;; COLOR_BTNFACE backing here publishes a one-frame grey flash before
+        ;; the next DirectDraw present. The host reattaches this surface when
+        ;; a raster operation actually uploads changed pixels.
         (return (local.get $p))))
     ;; Reaching here means the window changed size, so the surface it was
     ;; drawn on is about to be thrown away and replaced with a blank one.
