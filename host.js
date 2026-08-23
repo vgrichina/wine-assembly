@@ -1300,7 +1300,11 @@ class WineAssembly {
       this._stepPort = null;
       if (typeof MessageChannel === 'function') {
         const chan = new MessageChannel();
-        chan.port1.onmessage = () => {
+        // Keep both ends alive. An entangled sending port does not require the
+        // browser to retain an otherwise unreachable listener wrapper; image
+        // decode pressure made that listener collectable after a few slices.
+        this._stepListenPort = chan.port1;
+        this._stepListenPort.onmessage = () => {
           const fn = this._pendingStep;
           this._pendingStep = null;
           if (fn) fn();
