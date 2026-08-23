@@ -277,6 +277,7 @@ const ASSET_ENTRY = MATCHED_APP && MATCHED_APP.entry;
 const ASSET_ENTRY_ID = MATCHED_APP && MATCHED_APP.id;
 const WASM_PATH = getArg('wasm', path.join(ROOT, 'build', 'wine-assembly.wasm')); // --wasm=FILE: isolated prebuilt used with --no-build
 const PNG_OUT = getArg('png', null);     // --png=out.png: render to PNG via node-canvas
+const PNG_CANVAS = hasFlag('png-canvas'); // --png-canvas: always capture the composited screen, never a raw DX surface
 const VIDEO_OUT = getArg('video', null); // --video=out.webm: record deterministic renderer frames through ffmpeg
 const VIDEO_FPS = parseFloat(getArg('video-fps', '30')); // --video-fps=N: playback rate; one frame is captured per batch
 const VIDEO_START_BATCH = Math.max(0, parseInt(getArg('video-start-batch', '0'), 10) || 0); // --video-start-batch=N: skip setup batches before capture
@@ -6687,7 +6688,7 @@ if (VERBOSE) {
     const mem = new Uint8Array(memory.buffer);
     const dv = new DataView(memory.buffer);
     const DX_BASE = 0x07FF0000;
-    const DX_SLOTS = 256;
+    const DX_SLOTS = 1024; // matches $DX_MAX in src/09a8-handlers-directx.wat
     let paletteWa = 0;
     for (let slot = 0; slot < DX_SLOTS; slot++) {
       const entry = DX_BASE + slot * 32;
@@ -6838,7 +6839,7 @@ if (VERBOSE) {
 
   if (PNG_OUT && renderer) {
     const { mem, surfaces } = getDxSurfaceManifest();
-    const surface = chooseDxPresentationSurface(surfaces, mem);
+    const surface = PNG_CANVAS ? null : chooseDxPresentationSurface(surfaces, mem);
     if (surface) {
       const bytes = writeRgbaPng(PNG_OUT, surface.w, surface.h, dxSurfaceToRgba(surface, mem));
       console.log(`Wrote ${PNG_OUT} (${bytes} bytes, dx slot ${surface.slot} ${surface.w}x${surface.h})`);
@@ -6893,7 +6894,7 @@ if (VERBOSE) {
     const mem = new Uint8Array(memory.buffer);
     const dv = new DataView(memory.buffer);
     const DX_BASE = 0x07FF0000;
-    const DX_SLOTS = 256;
+    const DX_SLOTS = 1024; // matches $DX_MAX in src/09a8-handlers-directx.wat
     const manifest = [];
     // Read the primary palette WASM addr by scanning palette-type entries in
     // the live DX table. Palette slots have type=3 and store their palette
