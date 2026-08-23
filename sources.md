@@ -875,3 +875,51 @@ byte argument with the correct stdcall frame. With that API present, the
 unchanged web manifest creates and shows the 640x480 "Total Annihilation"
 window and remains live through 1,200 execution batches (874 API calls), past
 the former batch-665 failure.
+
+### 2026-08-22 Caesar III demo
+
+The sixth compatibility target is the [Caesar III Demo Archive.org item](https://archive.org/details/CaesarIiiDemo),
+published by Sierra On-Line / Impressions Games in 1998. Archive.org's metadata
+identifies the original Windows executable as `caesar3.exe`, 25,035,493 bytes,
+with SHA-1 `0f342a7722a0819bcfb225d51148ceb3c8f309d5` and MD5
+`2b13991ed623eab12e1161deafde8983`. The locally downloaded file matches all
+three values exactly and is a 32-bit i386 Windows GUI PE.
+
+The file is a ZipMagic self-extracting archive rather than the game executable.
+An unchanged emulator run reaches its native **Caesar 3 Demo** extraction
+window, whose own text says that it will extract the payload and launch Setup.
+That wrapper produces the original Win16 `setup.exe`; running it in the emulator
+then produces and invokes the 547,840-byte native InstallShield engine
+`_ins5176._mp` with the bundled `setup.ins` and cabinets.
+
+The installer originally chose `A:\\SIERRA\\CAESAR3DEMO` because the emulator's
+`GetDriveTypeA/W` helper incorrectly reported every non-CD letter as a fixed
+disk. Windows 98 exposes only fixed `C:` and CD-ROM `D:` here; returning
+`DRIVE_NO_ROOT_DIR` for the other letters makes the untouched wizard select
+`C:\\SIERRA\\CAESAR3DEMO` and proceed through its DirectX notice, WAV system
+test, destination page, Sierra utility copy, and game-data expansion.
+
+The resulting `c3.exe` is 1,343,488 bytes with SHA-256
+`d7c73f21d3837b1fc465a6035f4fea6ab5a7eddf62907c72c4dd076a5193d236`.
+The native run produced 113 cabinet payload files byte-for-byte identical to a
+direct InstallShield-cabinet verification; the bounded diagnostic run stopped
+while writing its final 5.5 MB narration file, so the checked launch payload
+uses the same cabinet's complete `Wavs/rome1.wav` (5,544,566 bytes, SHA-256
+`0be017cae367622e1e5e15548b383f58f4abd8a7af6fd2fd1130f7d207aece1a`)
+rather than preserving that interrupted partial write. The debug launcher now
+starts this untouched installed `c3.exe`, loads its bundled `SMACKW32.DLL`, and
+mounts the full 112-file data/sound manifest at the paths used by the game.
+
+A direct current-emulator launch creates the 800x600 Caesar III DirectDraw
+surface and renders the Sierra/Caesar title sequence. Its long first transition
+is real progress rather than a deadlock: the executable performs a software
+RGB555-to-RGB565 conversion over the whole surface one pixel at a time, then
+leaves that loop and enters its normal message pump.
+
+An actual Chromium launch through the shared web manifest reaches the Caesar III
+main menu, accepts **Start new game** and the default governor name, and loads
+the **Assignment 1 - Aventine / The Birth of a City** briefing from
+`mission1.pak`, with no runtime or missing-API failure. The scripted coordinate
+probe can scroll that briefing but has not yet made its **To the city** button
+advance, so this verifies the browser launch and first mission load but not the
+final transition into the city map.

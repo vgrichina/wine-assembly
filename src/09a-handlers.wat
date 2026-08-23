@@ -8464,21 +8464,28 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 490: GetDriveTypeA(lpRootPathName) — C: is fixed, D: is the CD-ROM.
-  ;; GetDriveType{A,W}(lpRootPathName) — everything is DRIVE_FIXED except D:,
-  ;; which is the CD. Only the stride of the two characters we look at differs
-  ;; between the spellings.
+  ;; GetDriveType{A,W}(lpRootPathName). The Win98 environment advertises only
+  ;; fixed C: and CD-ROM D:. Installers enumerate letters independently of
+  ;; GetLogicalDrives, so reporting every other letter as fixed makes them pick
+  ;; the nonexistent A: drive as their default destination.
   (func $drive_type (param $root_g i32) (param $wide i32) (result i32)
+    (local $drive i32)
     (if (i32.eqz (local.get $root_g)) (then (return (i32.const 3))))
-    (return (select (i32.const 5) (i32.const 3)
-      (i32.and
-        (i32.eq (i32.and (call $gl_char (local.get $root_g) (local.get $wide)) (i32.const 0xDF))
-                (i32.const 0x44))
-        (i32.eq (call $gl_char
-                  (i32.add (local.get $root_g)
-                           (select (i32.const 2) (i32.const 1) (local.get $wide)))
-                  (local.get $wide))
-                (i32.const 0x3A))))))
+    (if (i32.ne
+          (call $gl_char
+            (i32.add (local.get $root_g)
+              (select (i32.const 2) (i32.const 1) (local.get $wide)))
+            (local.get $wide))
+          (i32.const 0x3A))
+      (then (return (i32.const 1)))) ;; DRIVE_NO_ROOT_DIR
+    (local.set $drive
+      (i32.and (call $gl_char (local.get $root_g) (local.get $wide))
+        (i32.const 0xDF)))
+    (if (i32.eq (local.get $drive) (i32.const 0x43))
+      (then (return (i32.const 3)))) ;; DRIVE_FIXED
+    (if (i32.eq (local.get $drive) (i32.const 0x44))
+      (then (return (i32.const 5)))) ;; DRIVE_CDROM
+    (i32.const 1)) ;; DRIVE_NO_ROOT_DIR
 
   (func $handle_GetDriveTypeA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $drive_type (local.get $arg0) (i32.const 0)))

@@ -57,10 +57,21 @@ async function main() {
   assert.strictEqual(exports.test_call_GetDriveTypeA(guestPtr), 5, 'D: is DRIVE_CDROM');
   writeAnsi('d:\\help');
   assert.strictEqual(exports.test_call_GetDriveTypeA(guestPtr), 5, 'drive letters are case-insensitive');
+  for (const letter of ['A', 'B', 'E', 'Z']) {
+    writeAnsi(`${letter}:\\`);
+    assert.strictEqual(exports.test_call_GetDriveTypeA(guestPtr), 1,
+      `${letter}: is DRIVE_NO_ROOT_DIR because it is not advertised`);
+  }
+  writeAnsi('C');
+  assert.strictEqual(exports.test_call_GetDriveTypeA(guestPtr), 1,
+    'a path without a drive separator is not a mounted root');
   writeWide('D:\\');
   assert.strictEqual(exports.test_call_GetDriveTypeW(guestPtr), 5, 'Unicode D: is DRIVE_CDROM');
   writeWide('C:\\');
   assert.strictEqual(exports.test_call_GetDriveTypeW(guestPtr), 3, 'Unicode C: is DRIVE_FIXED');
+  writeWide('A:\\');
+  assert.strictEqual(exports.test_call_GetDriveTypeW(guestPtr), 1,
+    'Unicode A: is DRIVE_NO_ROOT_DIR');
   assert.strictEqual(exports.test_call_EnumThreadWindows(1, 0x401000, 0), 1,
     'single-process thread-window enumeration succeeds without fabricating foreign windows');
 
