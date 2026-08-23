@@ -3384,8 +3384,13 @@
     (local $hwnd i32) (local $init_param i32)
     (local $dlg_rec i32) (local $ctrl_count i32) (local $i i32) (local $ctrl_hwnd i32)
     ;; arg0=hInstance, arg1=lpTemplateName (resource ID), arg2=hWndParent
-    ;; arg3=lpDialogFunc, arg4=dwInitParam (from stack: [esp+24])
-    (local.set $init_param (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    ;; arg3=lpDialogFunc, arg4=dwInitParam. Five stdcall args live at
+    ;; [esp+4]..[esp+20]; [esp+24] is already the caller's own frame, so
+    ;; reading it handed WM_INITDIALOG a garbage lParam (usually 0).
+    ;; HyperTerminal's "Connect To" DlgProc stores that lParam in its
+    ;; per-dialog block and then asserts it non-NULL — a 0 there took the
+    ;; app straight to ExitProcess(1).
+    (local.set $init_param (local.get $arg4))
     ;; Allocate HWND
     (local.set $hwnd (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
