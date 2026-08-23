@@ -96,18 +96,30 @@ try {
   const oneShotSource = ctx._voices._map[oneShot].currentSrc;
   assert(oneShotSource && !oneShotSource.loop,
     'a Miles looping allocation with a substantial silent tail must play once');
+  assert.strictEqual(host.voice_is_playing(oneShot), 1,
+    'a live DirectSound source must report DSBSTATUS_PLAYING to the guest');
   oneShotSource.onended();
   assert.strictEqual(ctx._voices._map[oneShot].currentSrc, null,
     'a silent-tail one-shot must clear itself when Web Audio finishes it');
+  assert.strictEqual(host.voice_is_playing(oneShot), 0,
+    'a naturally-ended Web Audio source must clear guest-visible playing state');
 
   host.voice_stop(voice);
   assert.strictEqual(ctx._voices._map[voice].currentSrc, null,
     'DirectSound Stop should still terminate the refreshed ring source');
+  assert.strictEqual(host.voice_is_playing(voice), 0,
+    'DirectSound Stop must clear guest-visible playing state');
 
   const directSoundWat = fs.readFileSync(
     path.join(__dirname, '..', 'src', '09a8-handlers-directx.wat'), 'utf8');
   assert(/\$handle_IDirectSoundBuffer_Unlock[\s\S]*?\$host_voice_play_ring[\s\S]*?\(i32\.const 2\)/.test(directSoundWat),
     'IDirectSoundBuffer::Unlock must request an in-place host ring refresh');
+  assert(/\$handle_IDirectSoundBuffer_GetStatus[\s\S]*?\$host_voice_is_playing/.test(directSoundWat),
+    'GetStatus must query asynchronous Web Audio source state');
+  assert(/\$handle_IDirectSoundBuffer_Play[\s\S]*?i32\.shl \(local\.get \$loop\) \(i32\.const 2\)/.test(directSoundWat),
+    'Play must store DSBSTATUS_LOOPING as 0x4, not DSBSTATUS_BUFFERLOST as 0x2');
+  assert(/\$handle_IDirectSoundBuffer_Unlock[\s\S]*?\(i32\.const 5\)\) \(i32\.const 5\)/.test(directSoundWat),
+    'Unlock refresh must recognize the native PLAYING|LOOPING status mask');
 
   console.log('PASS  DirectSound rings refresh while silent-tail effects end once');
 } finally {

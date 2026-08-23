@@ -738,6 +738,7 @@
   (import "host" "voice_stop" (func $host_voice_stop (param i32) (result i32)))
   (import "host" "voice_close" (func $host_voice_close (param i32) (result i32)))
   (import "host" "voice_get_pos" (func $host_voice_get_pos (param i32) (result i32)))
+  (import "host" "voice_is_playing" (func $host_voice_is_playing (param i32) (result i32)))
   (import "host" "voice_set_volume_linear" (func $host_voice_set_volume_linear (param i32 i32)))
   (import "host" "voice_set_volume_db" (func $host_voice_set_volume_db (param i32 i32)))
   (import "host" "voice_set_pan" (func $host_voice_set_pan (param i32 i32)))

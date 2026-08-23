@@ -818,3 +818,16 @@ through their original installers before using any extracted game files.
   a one-shot. In the rebuilt Chromium run, the full-ring ambience remained
   looped while the gold voice ended naturally and cleared its active source.
   Evidence is `/private/tmp/heroes2-gold-no-repeat.png`.
+  A follow-up route collected both nearby gold piles and then entered the
+  castle, exposing a distinct lifecycle error rather than another PCM-tail
+  classification problem. Miles did issue `IDirectSoundBuffer::Stop` for every
+  explicit map loop at the scene transition, and the host stopped all of those
+  Web Audio sources. However, `IDirectSoundBuffer::GetStatus` was backed only by
+  the flags recorded at `Play`, so a source that ended naturally still reported
+  `DSBSTATUS_PLAYING` forever. The stored loop bit was also `0x2`, which is
+  `DSBSTATUS_BUFFERLOST`; the real `DSBSTATUS_LOOPING` value is `0x4`. Status now
+  queries the live Web Audio voice, clears playing/looping after `onended`, and
+  uses `PLAYING|LOOPING == 0x5` consistently for Play and Unlock. In the rebuilt
+  Chromium route, the pickup effects ended, the map ambience remained active
+  only while appropriate, and the castle transition left every DirectSound
+  voice inactive. Evidence is `/private/tmp/heroes-audio-stop-fixed.png`.

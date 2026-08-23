@@ -3009,10 +3009,21 @@
 
   ;; GetStatus(this, lpdwStatus)
   (func $handle_IDirectSoundBuffer_GetStatus (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $flags i32)
+    (local $entry i32) (local $flags i32) (local $handle i32)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $flags (i32.load (i32.add (local.get $entry) (i32.const 28))))
-    ;; bit 1 = playing, bit 2 = looping
+    (local.set $handle (i32.load (i32.add (local.get $entry) (i32.const 8))))
+    ;; Web Audio ends non-looping sources asynchronously. Reflect that in the
+    ;; guest-visible status so Miles can retire and reuse naturally-ended
+    ;; samples instead of seeing DSBSTATUS_PLAYING forever.
+    (if (i32.and
+          (i32.ne (i32.and (local.get $flags) (i32.const 1)) (i32.const 0))
+          (i32.and (i32.ne (local.get $handle) (i32.const 0))
+            (i32.eqz (call $host_voice_is_playing (local.get $handle)))))
+      (then
+        ;; DSBSTATUS_PLAYING=0x1, DSBSTATUS_LOOPING=0x4.
+        (local.set $flags (i32.and (local.get $flags) (i32.const 0xFFFFFFFA)))
+        (i32.store (i32.add (local.get $entry) (i32.const 28)) (local.get $flags))))
     (if (local.get $arg1) (then
       (call $gs32 (local.get $arg1)
         (i32.and (local.get $flags) (i32.const 0x7)))))
@@ -3081,7 +3092,7 @@
         (local.get $handle) (local.get $dib_wa) (local.get $buf_size)
         (i32.const 0) (local.get $loop)))))
     (i32.store (i32.add (local.get $entry) (i32.const 28))
-      (i32.or (i32.const 1) (i32.shl (local.get $loop) (i32.const 1))))
+      (i32.or (i32.const 1) (i32.shl (local.get $loop) (i32.const 2))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
@@ -3149,7 +3160,7 @@
     (local.set $buf_size (i32.load (i32.add (local.get $entry) (i32.const 12))))
     (if (i32.and
           (i32.eq (i32.and (i32.load (i32.add (local.get $entry) (i32.const 28)))
-            (i32.const 3)) (i32.const 3))
+            (i32.const 5)) (i32.const 5))
           (i32.and (i32.ne (local.get $handle) (i32.const 0))
             (i32.and (i32.ne (local.get $dib_wa) (i32.const 0))
               (i32.ne (local.get $buf_size) (i32.const 0)))))
