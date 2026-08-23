@@ -86,6 +86,12 @@ assert.strictEqual(
   'GetExitCodeThread reports a pending worker as STILL_ACTIVE'
 );
 
+const currentProcessTm = makeThreadManager();
+assert.strictEqual(currentProcessTm.waitSingle(0x000E23E8, 0), 0x102,
+  'a zero-time wait reports the current process handle as still active');
+assert.strictEqual(currentProcessTm.waitSingle(0x000E23E8, 0xFFFFFFFF), 0xFFFF,
+  'an infinite current-process wait parks for cooperative scheduling');
+
 const syncLifecycleTm = makeThreadManager();
 const syncHandles = [];
 for (let i = 0; i < 64; i++) {

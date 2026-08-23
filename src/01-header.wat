@@ -682,6 +682,10 @@
   ;; COM host imports
   (import "host" "com_create_instance" (func $host_com_create_instance (param i32 i32 i32 i32 i32) (result i32)))
   ;; com_create_instance(rclsidWA, pUnkOuterGA, dwClsContext, riidWA, ppvGA) → HRESULT
+  (import "host" "com_register_class_object" (func $host_com_register_class_object (param i32 i32 i32 i32) (result i32)))
+  ;; com_register_class_object(rclsidWA, pUnkGA, dwClsContext, flags) → cookie
+  (import "host" "com_revoke_class_object" (func $host_com_revoke_class_object (param i32) (result i32)))
+  ;; com_revoke_class_object(cookie) → HRESULT
   ;; Returns 0=S_OK, 0x800401F0=CO_E_DLLNOTFOUND (need async load), other=error
   (import "host" "com_get_pending_dll" (func $host_com_get_pending_dll (result i32)))
   ;; com_get_pending_dll() → WASM addr of pending DLL name string (0=none)
@@ -859,6 +863,10 @@
   (data (i32.const 0x11D90) "Virtual LAN Adapter\00")
   ;; Console window caption; SetConsoleTitle overwrites it in place.
   (data (i32.const 0x11DA4) "Console\00")
+  ;; Win98 KERNEL32 ordinal 99 is an unnamed timezone-cache classifier.  Keep
+  ;; its diagnostic/API name separate from GetTimeZoneInformation: the native
+  ;; ordinal takes a BOOL refresh flag, not an output-structure pointer.
+  (data (i32.const 0x11DB0) "KERNEL32.dll\00KERNEL32_Ordinal99\00")
   ;; Exports we answer natively even when the real DLL is loaded — see
   ;; $native_override_export_api_id in src/08b-dll-loader.wat.
   (data (i32.const 0x11E30) "InitCommonControlsEx\00")
@@ -1354,6 +1362,13 @@
   ;;   n  the DC handle, alive until the window is destroyed
   (global $WND_OWN_DC_TABLE i32 (i32.const 0x079C9800))
   (global $WND_OWN_DC_TABLE_SIZE i32 (i32.const 0x00000400))
+  ;; Module instance supplied to CreateWindowEx, one dword per window slot.
+  ;; DLL-owned helper windows must retain their DLL HINSTANCE: OLEAUT32 checks
+  ;; this through GetWindowLong(GWL_HINSTANCE) before reusing its hidden window.
+  ;; -1 means an older/template creation path did not provide an instance, in
+  ;; which case GetWindowLong keeps the historical EXE-module fallback.
+  (global $WND_HINSTANCE_TABLE i32 (i32.const 0x079C9C00))
+  (global $WND_HINSTANCE_TABLE_SIZE i32 (i32.const 0x00000400))
   ;; Open files, indexed by the small handle a 16-bit task sees. DOS numbers
   ;; file handles from zero and a C runtime indexes its own per-handle table
   ;; with them, so a task that gets 0x136 back from OpenFile hands it to
@@ -1936,6 +1951,7 @@
   (global $cbt_hook_ret_thunk (mut i32) (i32.const 0)) ;; CBT hook → WM_CREATE continuation (CACA0002)
   (global $child_cbt_ret_thunk (mut i32) (i32.const 0)) ;; Child CBT hook → dispatch WM_CREATE (CACA0026)
   (global $child_create_ret_thunk (mut i32) (i32.const 0)) ;; Child WM_CREATE returned → hand hwnd back (CACA0027)
+  (global $child_create_nccreate_ret_thunk (mut i32) (i32.const 0)) ;; Child WM_NCCREATE returned → WM_CREATE (CACA002E)
   (global $dialog_cbt_ret_thunk (mut i32) (i32.const 0)) ;; Dialog CBT hook → WM_INITDIALOG/return (CACA0028)
   (global $createwnd_nccreate_ret_thunk (mut i32) (i32.const 0)) ;; WM_NCCREATE returned → dispatch WM_CREATE (CACA0029)
   (global $setfocus_ret_thunk (mut i32) (i32.const 0)) ;; SetFocus WM_SETFOCUS return (CACA002A)
@@ -2057,6 +2073,7 @@
   (global $caret_blink_time (mut i32) (i32.const 530)) ;; ms; Windows' default
   (global $win_ini_name_ptr i32 (i32.const 0x100))   ;; WASM ptr to "win.ini\0" string constant
   (global $main_hwnd    (mut i32) (i32.const 0))    ;; Main window handle
+  (global $shell_hwnd   (mut i32) (i32.const 0))    ;; USER32 Set/GetShellWindow process state
   (global $next_hwnd    (mut i32) (i32.const 0x10001)) ;; HWND allocator
   (global $next_hmenu   (mut i32) (i32.const 0x800001)) ;; HMENU allocator — opaque handle, no backing state (AppendMenu is no-op; menu bar rendered from PE resources)
   (global $last_load_menu_id (mut i32) (i32.const 0)) ;; low-word resource id from most recent LoadMenuA/W

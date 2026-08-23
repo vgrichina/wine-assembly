@@ -96,6 +96,15 @@ async function main() {
   const notOle32A = writeAscii('OLE32X');
   check('GetModuleHandleA recognizes statically dispatched OLE32',
     (e.test_call_GetModuleHandleA(ole32A) >>> 0) === (e.get_image_base() >>> 0));
+  const oleExpDir = e.guest_alloc(32);
+  const oleDllName = writeAscii('OLE32.DLL');
+  const oleLoadAddr = oleExpDir - 0x1800;
+  e.guest_write32(oleExpDir + 12, oleDllName - oleLoadAddr);
+  dv.setUint32(e.get_dll_table() + 32, oleLoadAddr >>> 0, true);
+  dv.setUint32(e.get_dll_table() + 40, 0x1800, true);
+  e.test_set_dll_count(2);
+  check('GetModuleHandleA prefers a mapped OLE32 over the static fallback',
+    (e.test_call_GetModuleHandleA(ole32A) >>> 0) === (oleLoadAddr >>> 0));
   check('GetModuleHandleA does not prefix-match static module names',
     (e.test_call_GetModuleHandleA(notOle32A) >>> 0) === 0);
   check('GetModuleHandleW returns NULL module as image base',

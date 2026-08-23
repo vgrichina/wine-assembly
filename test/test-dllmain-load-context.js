@@ -40,5 +40,8 @@ assert.deepStrictEqual(captureDllMainArgs(),
 assert.deepStrictEqual(captureDllMainArgs(1234),
   [0, 0x0069d000, 1, 0],
   'legacy numeric maxBlocks calls must remain dynamic-load compatible');
+assert.deepStrictEqual(captureDllMainArgs({ reason: 2 }),
+  [0, 0x0069d000, 2, 0],
+  'new worker threads must deliver DLL_THREAD_ATTACH before their start routine');
 
 console.log('PASS  DllMain receives the Windows static/dynamic load context');

@@ -27,6 +27,34 @@
       (then (call $heap_free (i32.sub (local.get $old) (i32.const 4)))))
     (i32.store (local.get $addr) (i32.const 0)))
 
+  (func $wnd_hinstance_reset_slot (param $slot i32)
+    (i32.store
+      (i32.add (global.get $WND_HINSTANCE_TABLE)
+        (i32.shl (local.get $slot) (i32.const 2)))
+      (i32.const -1)))
+
+  (func $wnd_set_hinstance (param $hwnd i32) (param $hinstance i32)
+    (local $slot i32)
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.ge_s (local.get $slot) (i32.const 0))
+      (then
+        (i32.store
+          (i32.add (global.get $WND_HINSTANCE_TABLE)
+            (i32.shl (local.get $slot) (i32.const 2)))
+          (local.get $hinstance)))))
+
+  (func $wnd_get_hinstance (param $hwnd i32) (result i32)
+    (local $slot i32) (local $hinstance i32)
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.lt_s (local.get $slot) (i32.const 0))
+      (then (return (i32.const 0))))
+    (local.set $hinstance
+      (i32.load (i32.add (global.get $WND_HINSTANCE_TABLE)
+        (i32.shl (local.get $slot) (i32.const 2)))))
+    (if (result i32) (i32.eq (local.get $hinstance) (i32.const -1))
+      (then (global.get $image_base))
+      (else (local.get $hinstance))))
+
   ;; Add or update hwnd→wndproc mapping. Allocates a fresh slot for a new
   ;; hwnd, or updates the existing slot's wndproc field.
 
@@ -56,6 +84,7 @@
     (call $richedit_format_reset_slot (local.get $slot))
     (call $wnd_owner_reset_slot (local.get $slot))
     (call $wnd_own_dc_reset_slot (local.get $slot))
+    (call $wnd_hinstance_reset_slot (local.get $slot))
     (call $menu_data_reset_slot (local.get $slot))
     (call $dialog_state_reset_slot (local.get $slot))
     (call $wnd_unicode_reset_slot (local.get $slot))

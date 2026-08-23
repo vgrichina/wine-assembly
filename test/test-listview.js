@@ -377,7 +377,7 @@ async function main() {
     dv.setInt32(p + 8, 0, true);
     dv.setUint32(p + 20, writeStr(text), true);
     dv.setInt32(p + 28, image, true);
-    dv.setUint32(p + 36, lParam >>> 0, true);
+    dv.setUint32(p + 32, lParam >>> 0, true);
     return e.send_message(lv, LVM_INSERTITEMA, 0, g);
   }
   function setSubitem(item, sub, text) {
@@ -406,7 +406,7 @@ async function main() {
     dv.setUint32(p + 0, LVIF_IMAGE | LVIF_PARAM, true);
     dv.setInt32(p + 4, item, true);
     dv.setInt32(p + 28, image, true);
-    dv.setUint32(p + 36, lParam >>> 0, true);
+    dv.setUint32(p + 32, lParam >>> 0, true);
     return e.send_message(lv, LVM_SETITEMA, 0, g);
   }
   function getItemMeta(item) {
@@ -419,7 +419,7 @@ async function main() {
     return {
       len,
       image: dv.getInt32(p + 28, true),
-      lParam: dv.getUint32(p + 36, true),
+      lParam: dv.getUint32(p + 32, true),
       state: dv.getUint32(p + 12, true),
     };
   }

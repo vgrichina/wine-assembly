@@ -132,6 +132,12 @@ assert.strictEqual(readGuestU32(valueGA), 7);
 writeGuestString(subKeyGA, 'Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders');
 const shellFoldersHKey = storage.reg_open_key(0x80000001, g2w(subKeyGA, IMAGE_BASE), 0);
 assert(shellFoldersHKey, 'a stock Win98 profile exposes Explorer Shell Folders');
+
+writeGuestString(subKeyGA, 'SOFTWARE\\Microsoft\\OLE');
+assert(
+  storage.reg_open_key(0x80000002, g2w(subKeyGA, IMAGE_BASE), 0),
+  'a stock Win98 machine exposes the OLE policy key even when its optional values are absent'
+);
 writeGuestString(valueNameGA, 'Programs');
 writeGuestU32(cbGA, 128);
 assert.strictEqual(storage.reg_query_value(
@@ -141,6 +147,92 @@ assert.strictEqual(
   readStrA(memory, g2w(outGA, IMAGE_BASE)),
   'C:\\Windows\\Start Menu\\Programs',
   'installers can resolve the standard Win98 program-group directory'
+);
+
+writeGuestString(subKeyGA, 'SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders');
+const commonShellFoldersHKey = storage.reg_open_key(0x80000002, g2w(subKeyGA, IMAGE_BASE), 0);
+assert(commonShellFoldersHKey, 'a stock Win98 profile exposes machine-wide Explorer Shell Folders');
+writeGuestString(valueNameGA, 'Common Desktop');
+writeGuestU32(cbGA, 128);
+assert.strictEqual(storage.reg_query_value(
+  commonShellFoldersHKey, g2w(valueNameGA, IMAGE_BASE), 0, outGA, cbGA, 0
+), 0);
+assert.strictEqual(
+  readStrA(memory, g2w(outGA, IMAGE_BASE)),
+  'C:\\Windows\\All Users\\Desktop',
+  'stock SHELL32 can resolve CSIDL_COMMON_DESKTOPDIRECTORY while constructing the desktop folder'
+);
+
+writeGuestString(subKeyGA, 'SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders');
+const commonUserShellFoldersHKey = storage.reg_open_key(0x80000002, g2w(subKeyGA, IMAGE_BASE), 0);
+assert(commonUserShellFoldersHKey, 'the installed Win98 profile exposes machine-wide User Shell Folders');
+writeGuestU32(cbGA, 128);
+assert.strictEqual(storage.reg_query_value(
+  commonUserShellFoldersHKey, g2w(valueNameGA, IMAGE_BASE), 0, outGA, cbGA, 0
+), 0);
+assert.strictEqual(
+  readStrA(memory, g2w(outGA, IMAGE_BASE)),
+  'C:\\Windows\\All Users\\Desktop',
+  'SHELL32 can populate its cached common-desktop PIDL before fallback writes occur'
+);
+
+writeGuestString(subKeyGA, 'Directory');
+assert(
+  storage.reg_open_key(0x80000000, g2w(subKeyGA, IMAGE_BASE), 0),
+  'stock SHELL32 can classify filesystem PIDLs through the installed Directory class'
+);
+
+for (const clsid of [
+  '{20D04FE0-3AEA-1069-A2D8-08002B30309D}',
+  '{F3364BA0-65B9-11CE-A9BA-00AA004AE837}',
+]) {
+  writeGuestString(subKeyGA, 'CLSID\\' + clsid + '\\InprocServer32');
+  const shellNamespaceHKey = storage.reg_open_key(0x80000000, g2w(subKeyGA, IMAGE_BASE), 0);
+  assert(shellNamespaceHKey, 'stock Win98 SHELL32 namespace class ' + clsid + ' should be registered');
+  writeGuestU32(cbGA, 128);
+  assert.strictEqual(storage.reg_query_value(shellNamespaceHKey, 0, 0, outGA, cbGA, 0), 0);
+  assert.strictEqual(
+    readStrA(memory, g2w(outGA, IMAGE_BASE)).toLowerCase(),
+    'c:\\windows\\system\\shell32.dll'
+  );
+}
+
+writeGuestString(subKeyGA, 'CLSID\\{E7E4BC40-E76A-11CE-A9BB-00AA004AE837}\\InprocServer32');
+const shdocvwFilesystemBinderHKey = storage.reg_open_key(0x80000000, g2w(subKeyGA, IMAGE_BASE), 0);
+assert(shdocvwFilesystemBinderHKey, 'stock Win98 SHDOCVW filesystem binder should be registered');
+writeGuestU32(cbGA, 128);
+assert.strictEqual(storage.reg_query_value(shdocvwFilesystemBinderHKey, 0, 0, outGA, cbGA, 0), 0);
+assert.strictEqual(
+  readStrA(memory, g2w(outGA, IMAGE_BASE)).toLowerCase(),
+  'c:\\windows\\system\\shdocvw.dll'
+);
+
+writeGuestString(subKeyGA, 'CLSID\\{AF604EFE-8897-11D1-B944-00A0C90312E1}\\InprocServer32');
+const shdoc401HKey = storage.reg_open_key(0x80000000, g2w(subKeyGA, IMAGE_BASE), 0);
+assert(shdoc401HKey, 'stock Win98 BROWSEUI desktop class should be registered');
+writeGuestU32(cbGA, 128);
+assert.strictEqual(storage.reg_query_value(shdoc401HKey, 0, 0, outGA, cbGA, 0), 0);
+assert.strictEqual(
+  readStrA(memory, g2w(outGA, IMAGE_BASE)).toLowerCase(),
+  'c:\\windows\\system\\browseui.dll'
+);
+writeGuestString(subKeyGA, 'CLSID\\{A5E46E3A-8849-11D1-9D8C-00C04FC99D61}\\InprocServer32');
+const shdocvwDesktopHKey = storage.reg_open_key(0x80000000, g2w(subKeyGA, IMAGE_BASE), 0);
+assert(shdocvwDesktopHKey, 'stock Win98 SHDOCVW desktop view class should be registered');
+writeGuestU32(cbGA, 128);
+assert.strictEqual(storage.reg_query_value(shdocvwDesktopHKey, 0, 0, outGA, cbGA, 0), 0);
+assert.strictEqual(
+  readStrA(memory, g2w(outGA, IMAGE_BASE)).toLowerCase(),
+  'c:\\windows\\system\\shdocvw.dll'
+);
+writeGuestString(subKeyGA, 'CLSID\\{ECD4FC4D-521C-11D0-B792-00A0C90312E1}\\InprocServer32');
+const browseuiDesktopBandHKey = storage.reg_open_key(0x80000000, g2w(subKeyGA, IMAGE_BASE), 0);
+assert(browseuiDesktopBandHKey, 'stock Win98 BROWSEUI desktop-band class should be registered');
+writeGuestU32(cbGA, 128);
+assert.strictEqual(storage.reg_query_value(browseuiDesktopBandHKey, 0, 0, outGA, cbGA, 0), 0);
+assert.strictEqual(
+  readStrA(memory, g2w(outGA, IMAGE_BASE)).toLowerCase(),
+  'c:\\windows\\system\\browseui.dll'
 );
 
 const iniSectionGA = IMAGE_BASE + 0x1600;
@@ -200,6 +292,43 @@ assert.deepStrictEqual(
   'win.ini should enumerate the media extensions backed by emulator MCI devices'
 );
 
+// COM formats GUIDs with lowercase hex while setup manifests commonly use
+// uppercase. The activation lookup must use the same case-insensitive key
+// semantics as RegOpenKeyEx.
+const comMemory = new ArrayBuffer(0x400);
+const comDv = new DataView(comMemory);
+const clsidWA = 0x100;
+const iidWA = 0x120;
+comDv.setUint32(clsidWA, 0xECD4FC4D, true);
+comDv.setUint16(clsidWA + 4, 0x521C, true);
+comDv.setUint16(clsidWA + 6, 0x11D0, true);
+new Uint8Array(comMemory).set([0xB7, 0x92, 0x00, 0xA0, 0xC9, 0x03, 0x12, 0xE1], clsidWA + 8);
+comDv.setUint32(iidWA, 0, true); // IID_IUnknown
+new Uint8Array(comMemory).set([0xC0, 0, 0, 0, 0, 0, 0, 0x46], iidWA + 8);
+setRegValue(
+  'HKCR\\CLSID\\{ECD4FC4D-521C-11D0-B792-00A0C90312E1}\\InprocServer32',
+  '', 1, 'C:\\WINDOWS\\SYSTEM\\BROWSEUI.DLL'
+);
+const comStorage = createStorageImports({ getMemory: () => comMemory });
+assert.strictEqual(
+  comStorage.com_create_instance(clsidWA, 0, 1, iidWA, 0) >>> 0,
+  0x80004005,
+  'COM activation should find mixed-case CLSID registry paths before checking the loader'
+);
+const factory = 0x12345678;
+const factoryOut = 0x140;
+const cookie = comStorage.com_register_class_object(clsidWA, factory, 5, 1) >>> 0;
+assert(cookie, 'CoRegisterClassObject host state issues a nonzero cookie');
+assert.strictEqual(
+  comStorage.com_create_instance(clsidWA, 0, 0x80000001, iidWA, factoryOut),
+  0,
+  'CoGetClassObject resolves a process-registered guest class factory'
+);
+assert.strictEqual(comDv.getUint32(factoryOut, true), factory,
+  'registered class-factory pointers survive until activation');
+assert.strictEqual(comStorage.com_revoke_class_object(cookie), 0,
+  'CoRevokeClassObject removes the matching registration cookie');
+
 console.log('PASS  registry REG_SZ stores guest strings through g2w');
 console.log('PASS  setRegValue materializes parent registry keys');
 console.log('PASS  Win98 Explorer Shell Folders expose the program-group directory');
@@ -208,3 +337,5 @@ console.log('PASS  RegQueryInfoKey-style registry metadata reports counts and ma
 console.log('PASS  app startup INI values are visible to profile APIs');
 console.log('PASS  system.ini exposes supported MCI drivers with case-insensitive overrides');
 console.log('PASS  win.ini exposes the supported Media Player file extensions');
+console.log('PASS  COM activation resolves CLSID registry paths case-insensitively');
+console.log('PASS  process-registered COM class factories resolve and revoke by cookie');

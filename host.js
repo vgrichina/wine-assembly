@@ -1058,8 +1058,11 @@ class WineAssembly {
       this._loadedDllBytesByName = this._loadedDllBytesByName || {};
       this._loadedDllBytesByName[key] = bytes;
       const vfs = this._helpCtx && this._helpCtx.vfs;
-      if (vfs && vfs.files) {
+      if (typeof processBootApi !== 'undefined' && processBootApi.mountLoadedDllFiles) {
+        processBootApi.mountLoadedDllFiles(vfs, [{ name: key, bytes }]);
+      } else if (vfs && vfs.files) {
         vfs.files.set('c:\\' + key, { data: bytes, attrs: 0x20 });
+        vfs.files.set('c:\\windows\\system\\' + key, { data: bytes, attrs: 0x20 });
       }
     };
     const configs = await Promise.all(dllPaths.map(async item => {
@@ -1088,6 +1091,10 @@ class WineAssembly {
       }
     };
     const results = _loadDlls(this.instance.exports, this.memory.buffer, exeBytes, readyConfigs, console.log, opts);
+    if (this.threadManager && this.threadManager.setLoadedDlls) {
+      const entryCaller = (typeof DllLoader !== 'undefined' && DllLoader.callDllMain) || null;
+      this.threadManager.setLoadedDlls(results, entryCaller);
+    }
     this._inDllInit = false;
     this.running = true;
   }

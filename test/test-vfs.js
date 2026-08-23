@@ -6,7 +6,7 @@ const assert = require('assert');
 // module-level helper the class calls, so the day filesystem.js grew an
 // entrySize() helper these tests started failing with "entrySize is not
 // defined" against working code. Require the module.
-const { VirtualFS } = require('../lib/filesystem');
+const { VirtualFS, createFilesystemImports } = require('../lib/filesystem');
 
 function makeVFS(files) {
   const vfs = new VirtualFS();
@@ -153,6 +153,23 @@ test('setCurrentDirectory normalizes trailing backslash', () => {
   assert.strictEqual(vfs.getCurrentDirectory(), 'c:\\game\\');
   vfs.setCurrentDirectory('C:\\');
   assert.strictEqual(vfs.getCurrentDirectory(), 'c:\\');
+});
+
+test('SearchPath finds an installed DLL in the Win98 system directory', () => {
+  const memory = new ArrayBuffer(0x1000);
+  const bytes = new Uint8Array(memory);
+  const writeA = (addr, value) => {
+    for (let i = 0; i < value.length; i++) bytes[addr + i] = value.charCodeAt(i);
+    bytes[addr + value.length] = 0;
+  };
+  const vfs = makeVFS({ 'c:\\windows\\system\\shell32.dll': 64 });
+  const imports = createFilesystemImports({ vfs, getMemory: () => memory });
+  writeA(0x100, 'shell32.dll');
+  assert.strictEqual(imports.fs_search_path(0, 0x100, 0, 260, 0x200, 0, 0), 29);
+  assert.strictEqual(
+    Buffer.from(bytes.subarray(0x200, 0x200 + 29)).toString('latin1').toLowerCase(),
+    'c:\\windows\\system\\shell32.dll'
+  );
 });
 
 // --- AbeDemo specific scenario ---

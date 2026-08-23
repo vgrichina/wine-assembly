@@ -787,10 +787,40 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
   )
 
-  ;; 756: GetShellWindow() — return NULL (no shell window)
+  ;; 756: GetShellWindow() — USER's process-wide registered shell owner.
   (func $handle_GetShellWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (global.get $shell_hwnd))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
+  )
+
+  ;; SetShellWindow(hwndShell) is the Win9x USER32 registration used by the
+  ;; stock desktop browser after it creates Program Manager and its shell-view
+  ;; children. USER permits the first registration (and an idempotent repeat),
+  ;; but does not let an unrelated window silently replace the active shell.
+  (func $handle_SetShellWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.or (i32.eqz (global.get $shell_hwnd))
+                (i32.eq (global.get $shell_hwnd) (local.get $arg0)))
+      (then
+        (global.set $shell_hwnd (local.get $arg0))
+        (global.set $eax (i32.const 1)))
+      (else (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; PaintDesktop(hdc) is USER's desktop-background painter. The stock Win98
+  ;; shell calls it from Program Manager's WM_PAINT handler after registering
+  ;; itself with SetShellWindow. A system-color brush is encoded as index+1;
+  ;; COLOR_DESKTOP/COLOR_BACKGROUND is index 1, hence brush handle 2.
+  (func $handle_PaintDesktop (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $screen i32)
+    (local.set $screen (call $host_get_screen_size))
+    (global.set $eax (call $host_gdi_fill_rect
+      (local.get $arg0)
+      (i32.const 0) (i32.const 0)
+      (i32.and (local.get $screen) (i32.const 0xFFFF))
+      (i32.shr_u (local.get $screen) (i32.const 16))
+      (i32.const 2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
 
@@ -922,7 +952,7 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
     (if (i32.eq (local.get $arg1) (i32.const -6))   ;; GWL_HINSTANCE
       (then
-        (global.set $eax (global.get $image_base))
+        (global.set $eax (call $wnd_get_hinstance (local.get $arg0)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
     (if (i32.eq (local.get $arg1) (i32.const -16))  ;; GWL_STYLE
       (then
@@ -1519,6 +1549,22 @@
     (global.set $eax (call $host_fs_map_view_of_file
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; 5 args
+  )
+
+  ;; MapViewOfFileEx has the same mapping semantics plus a sixth preferred
+  ;; base-address argument. NULL explicitly lets Windows choose the address,
+  ;; which is the path used by stock Win98 OLE32. A fixed placement cannot be
+  ;; represented by the current mapping allocator, so fail it honestly rather
+  ;; than returning a view at a different address.
+  (func $handle_MapViewOfFileEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $base i32)
+    (local.set $base (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (global.set $eax
+      (if (result i32) (local.get $base)
+        (then (i32.const 0))
+        (else (call $host_fs_map_view_of_file
+          (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))  ;; 6 args
   )
 
   ;; 779: UnmapViewOfFile(lpBaseAddress) — 1 arg

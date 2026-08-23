@@ -262,6 +262,14 @@
   ;; APIs already handled by the normal dispatch table; leave unsupported
   ;; ordinals explicit so they still produce the diagnostic marker below.
   (func $system_ordinal_api_id (param $dll_name_ga i32) (param $ordinal i32) (result i32)
+    ;; Authentic Win98 SE KERNEL32.DLL: ordinal 99 is unnamed, RVA 0x1e260.
+    ;; Its native body takes one BOOL refresh flag and returns the current
+    ;; TIME_ZONE_ID_* classification (0 unknown, 1 standard, 2 daylight).
+    (if (call $dll_name_match (local.get $dll_name_ga) (i32.const 0x11DB0))
+      (then
+        (if (i32.eq (local.get $ordinal) (i32.const 99))
+          (then (return (call $lookup_api_id (i32.const 0x11DBD))))) ;; KERNEL32_Ordinal99
+      ))
     (if (call $dll_name_match (local.get $dll_name_ga) (i32.const 0x11300))
       (then
         (if (i32.eq (local.get $ordinal) (i32.const 115)) (then (return (call $lookup_api_id (i32.const 0x1130C))))) ;; WSAStartup

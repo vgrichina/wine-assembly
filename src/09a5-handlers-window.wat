@@ -380,6 +380,8 @@
     (call $wnd_set_class_cursor_from_name (local.get $hwnd) (local.get $arg1))
     (call $wnd_set_class_slot_from_name (local.get $hwnd) (local.get $arg1))
     (call $wnd_set_own_dc_from_name (local.get $hwnd) (local.get $arg1))
+    (call $wnd_set_hinstance (local.get $hwnd)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 44))))
     ;; hWndParent means geometry parent only for WS_CHILD. For top-level
     ;; popup/overlapped windows it is an owner; keep that separate so owned
     ;; modal dialogs do not inherit the owner's client coordinates.
@@ -555,7 +557,8 @@
         (return)))
     ;; Clean CreateWindowExA frame (ret + 12 args = 52 bytes stdcall)
     (global.set $esp (i32.add (global.get $esp) (i32.const 52)))
-    ;; If CBT hook is installed, call it first; it will chain to WM_CREATE via thunk
+    ;; If CBT hook is installed, call it first; it will chain to
+    ;; WM_NCCREATE -> WM_CREATE via the continuation thunks.
     (if (global.get $cbt_hook_proc)
     (then
     ;; Build CBT_CREATEWND at image_base+0x140 = { lpcs=&CREATESTRUCT, hwndInsertAfter=0 }
@@ -575,7 +578,9 @@
     (global.set $eip (global.get $cbt_hook_proc))
     )
     (else
-    ;; No CBT hook — dispatch WM_CREATE directly
+    ;; No CBT hook — dispatch WM_NCCREATE first. Guest frameworks (including
+    ;; VB6's ThunderRT6 proc) establish their HWND/object association here and
+    ;; intentionally ignore later messages until this succeeds.
     ;; Save hwnd+ret on stack below WndProc args (for nested CreateWindowExA)
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (global.get $createwnd_saved_hwnd))
@@ -587,13 +592,13 @@
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (i32.const 0))                    ;; wParam = 0
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (i32.const 0x0001))               ;; WM_CREATE
+    (call $gs32 (global.get $esp) (i32.const 0x0081))               ;; WM_NCCREATE
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (local.get $hwnd))          ;; hwnd
-    ;; Push return thunk: WM_CREATE returns directly to caller (CACA0001 pops saved_ret+hwnd).
-    ;; Activation chain (WM_ACTIVATEAPP/ACTIVATE/SETFOCUS) is now triggered by first ShowWindow.
+    ;; CACA0029 sends WM_CREATE with the same CREATESTRUCT, then CACA0001
+    ;; returns to the caller and handles any implicit activation chain.
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (global.get $createwnd_ret_thunk))
+    (call $gs32 (global.get $esp) (global.get $createwnd_nccreate_ret_thunk))
     ;; Jump to WndProc (use class wndproc from lookup, not global wndproc_addr)
     (global.set $eip (local.get $tmp))
     ))
@@ -724,9 +729,9 @@
     (global.set $eip (global.get $cbt_hook_proc))
     (global.set $steps (i32.const 0))
     (return)))
-    ;; No CBT hook and not a native control: dispatch custom child WM_CREATE
-    ;; synchronously while the caller's CREATESTRUCT is still live, then chain
-    ;; the paired WM_SIZE through CACA0027. This prevents bursts of custom
+    ;; No CBT hook and not a native control: dispatch custom child WM_NCCREATE
+    ;; and WM_CREATE synchronously while the caller's CREATESTRUCT is still
+    ;; live, then chain the paired WM_SIZE through CACA0027. This prevents bursts of custom
     ;; child windows from overwriting the single pending_child_create/size slot
     ;; before the app enters its message loop (VCL TPanel startup does this).
     (if (i32.eqz (global.get $cbt_hook_proc))
@@ -768,11 +773,11 @@
             (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
             (call $gs32 (global.get $esp) (i32.const 0))
             (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-            (call $gs32 (global.get $esp) (i32.const 0x0001))
+            (call $gs32 (global.get $esp) (i32.const 0x0081))
             (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
             (call $gs32 (global.get $esp) (local.get $hwnd))
             (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-            (call $gs32 (global.get $esp) (global.get $child_create_ret_thunk))
+            (call $gs32 (global.get $esp) (global.get $child_create_nccreate_ret_thunk))
             (global.set $eax (local.get $hwnd))
             (global.set $eip (local.get $tmp))
             (global.set $steps (i32.const 0))
@@ -2218,6 +2223,44 @@
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
+  )
+
+  ;; SendNotifyMessageA is synchronous for windows owned by the caller's
+  ;; thread and asynchronous across threads. HWND_BROADCAST targets every
+  ;; top-level window. HWND ranges are partitioned by worker slot, so their
+  ;; high word matches current_thread_id and gives us the owner distinction.
+  (func $handle_SendNotifyMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $i i32) (local $rec i32) (local $hwnd i32) (local $ok i32)
+    (local.set $ok (i32.const 1))
+    (if (i32.eq (local.get $arg0) (i32.const 0xFFFF)) ;; HWND_BROADCAST
+      (then
+        (block $done (loop $scan
+          (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+          (local.set $rec (call $wnd_record_addr (local.get $i)))
+          (local.set $hwnd (i32.load (local.get $rec)))
+          (if (i32.and (i32.ne (local.get $hwnd) (i32.const 0))
+                       (i32.eqz (i32.load offset=8 (local.get $rec))))
+            (then
+              (if (i32.eq (i32.shr_u (local.get $hwnd) (i32.const 16))
+                          (global.get $current_thread_id))
+                (then (drop (call $wnd_send_message (local.get $hwnd)
+                  (local.get $arg1) (local.get $arg2) (local.get $arg3))))
+                (else (if (i32.eqz (call $shared_post_queue_enqueue
+                    (local.get $hwnd) (local.get $arg1)
+                    (local.get $arg2) (local.get $arg3)))
+                  (then (local.set $ok (i32.const 0))))))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $scan))))
+      (else
+        (if (i32.eq (i32.shr_u (local.get $arg0) (i32.const 16))
+                    (global.get $current_thread_id))
+          (then (drop (call $wnd_send_message (local.get $arg0)
+            (local.get $arg1) (local.get $arg2) (local.get $arg3))))
+          (else (local.set $ok (call $shared_post_queue_enqueue
+            (local.get $arg0) (local.get $arg1)
+            (local.get $arg2) (local.get $arg3)))))))
+    (global.set $eax (local.get $ok))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; 81: SendMessageA(hwnd, msg, wParam, lParam) — 4 args stdcall

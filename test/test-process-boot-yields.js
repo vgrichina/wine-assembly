@@ -9,7 +9,8 @@
 // the kind of bug that surfaces thousands of instructions later.
 
 const assert = require('assert');
-const { stageAndLoadPe, readGuestCString, handleLoadLibraryYield, handleComDllYield } = require('../lib/process-boot');
+const { mountLoadedDllFiles, stageAndLoadPe, readGuestCString,
+  handleLoadLibraryYield, handleComDllYield } = require('../lib/process-boot');
 
 function syntheticLargePe() {
   const bytes = Buffer.alloc(0x300);
@@ -69,6 +70,16 @@ function fakeGuest(name, { nameGetter }) {
   assert.deepStrictEqual([...peMem.subarray(0x100, 0x140)], [...peBytes.subarray(0, 0x40)],
     'the bounded staging prefix is still copied normally');
   console.log('PASS  oversized PE section tails are prehydrated before WAT loading');
+
+  const dllVfs = { files: new Map() };
+  const stockShell = Uint8Array.of(0x4d, 0x5a, 0x90, 0);
+  assert.strictEqual(mountLoadedDllFiles(dllVfs, [
+    { name: 'SHELL32.DLL', bytes: stockShell },
+  ]), 1);
+  assert.strictEqual(dllVfs.files.get('c:\\shell32.dll').data, stockShell);
+  assert.strictEqual(dllVfs.files.get('c:\\windows\\system\\shell32.dll').data, stockShell,
+    'the file reopened by stock shell code must be the exact loaded PE bytes');
+  console.log('PASS  loaded DLL bytes remain visible in the Win98 system directory');
 
   const g = fakeGuest('C:\\Plugins\\in_mp3.dll', { nameGetter: 'get_loadlib_name' });
   assert.strictEqual(readGuestCString(g.memory, g.at), 'C:\\Plugins\\in_mp3.dll');

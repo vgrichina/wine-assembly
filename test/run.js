@@ -2,10 +2,10 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 const { createHostImports } = require('../lib/host-imports');
-const { loadDlls, detectRequiredDlls, shouldReportNtForDlls, loadWin16Dlls } = require('../lib/dll-loader');
+const { loadDlls, callDllMain, detectRequiredDlls, shouldReportNtForDlls, loadWin16Dlls } = require('../lib/dll-loader');
 const { inputEventHwnd } = require('../lib/host-window');
 const { compileWat } = require('../lib/compile-wat');
-const { resolveDllGraph, stageAndLoadPe, setExeName, setExtraCmdline,
+const { resolveDllGraph, mountLoadedDllFiles, stageAndLoadPe, setExeName, setExtraCmdline,
   handleLoadLibraryYield, handleComDllYield } = require('../lib/process-boot');
 const {
   applyExeCompatibilityPatches: applyProfilePatches,
@@ -2378,8 +2378,6 @@ async function main() {
   h.wait_multiple = (nCount, handlesWA, bWaitAll, timeout) => threadManager.waitMultiple(nCount, handlesWA, bWaitAll, timeout);
   h.create_semaphore = (initialCount, maxCount) => threadManager.createSemaphore(initialCount, maxCount);
   h.release_semaphore = (handle, releaseCount, lpPrevCountWA) => threadManager.releaseSemaphore(handle, releaseCount, lpPrevCountWA);
-  h.com_create_instance = (rclsid, pUnkOuter, dwClsCtx, riid, ppv) => 0x80004002; // E_NOINTERFACE
-
   // Check if a DLL file exists in VFS or host filesystem
   h.has_dll_file = (nameWA) => {
     const mem8 = new Uint8Array(memory.buffer);
@@ -2487,6 +2485,18 @@ async function main() {
 
   // Create ThreadManager now that we have the main instance
   const makeWorkerImports = (tid) => {
+    let workerInstance = null;
+    // Host helpers such as COM activation make synchronous calls back into
+    // guest code. Resolve every export through this worker's instance once it
+    // exists; pointing them at the main instance corrupts the main EIP/ESP
+    // and returns whatever stale EAX it happened to hold.
+    const workerExportsProxy = new Proxy({}, {
+      get: (_target, name) => {
+        const e = workerInstance ? workerInstance.exports : instance.exports;
+        const value = e[name];
+        return typeof value === 'function' ? value.bind(e) : value;
+      },
+    });
     // Everything process-scoped — the filesystem, the LAN wire, the clock, the
     // audio device, the GDI handles — comes from one shared list, so the two
     // hosts cannot quietly disagree about what a thread inherits.
@@ -2497,7 +2507,7 @@ async function main() {
       trace: traceCategories,
       traceHost: traceHostNames,
       hostCensus: HOST_CENSUS,
-      exports: instance.exports,  // share main instance exports for g2w
+      exports: workerExportsProxy,
       _debugReadFile: TRACE_API,
       sharedGdi: base.gdi,  // the live GDI table, not the copy in ctx
       g2w: (addr) => translateGuest(addr, instance.exports.get_image_base(), memory.buffer),
@@ -2588,7 +2598,9 @@ async function main() {
     }
     wh.exit = () => {};
     wh.has_dll_file = h.has_dll_file;
-    return { host: wh };
+    const workerImports = { host: wh };
+    workerImports.__setInstance = value => { workerInstance = value; };
+    return workerImports;
   };
 
   threadManager = new ThreadManager(wasmModule, memory, instance, makeWorkerImports, {
@@ -2717,6 +2729,7 @@ async function main() {
     moduleBases[exeBase] = { loadAddr: exeLoad, origBase: exeOrig };
   }
   if (dlls.length > 0) {
+    mountLoadedDllFiles(ctx.vfs, dlls);
     const dllResults = loadDlls(instance.exports, memory.buffer, exeBytes, dlls, console.log, {
       exeName: path.basename(EXE_PATH),
       extraArgs: EXTRA_ARGS || '',
@@ -2736,6 +2749,7 @@ async function main() {
       },
     });
     if (dllResults) {
+      threadManager.setLoadedDlls(dllResults, callDllMain);
       for (const r of dllResults) {
         const key = r.name.toLowerCase().replace(/\.[^.]+$/, '');
         moduleBases[key] = { loadAddr: r.loadAddr, origBase: r.origBase };
@@ -2830,6 +2844,21 @@ async function main() {
           fs.statSync(file.hostPath).size);
       }
       ctx.vfs.setDriveReadOnly(drive, true);
+    }
+
+    // `--app` is the CLI spelling of selecting the same dropdown entry in the
+    // browser, so apply its installed-state manifest too. Direct `--exe` runs
+    // intentionally retain their no-startup-behavior contract.
+    if (APP_ENTRY && (APP_ENTRY.startupRegistry || APP_ENTRY.startupIni)) {
+      try {
+        const { setRegValue, setIniValue } = require('../lib/storage');
+        for (const entry of APP_ENTRY.startupRegistry || []) {
+          setRegValue(entry.keyPath, entry.valueName, entry.type, entry.data);
+        }
+        for (const entry of APP_ENTRY.startupIni || []) {
+          setIniValue(entry.fileName, entry.section, entry.key, entry.value);
+        }
+      } catch (_) {}
     }
 
     // Plus!98 Organic Art theme SCRs: each theme ships a sibling .SCN with

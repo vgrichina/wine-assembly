@@ -4801,6 +4801,137 @@
       (br $scan)))
     (local.get $i))
 
+  ;; Inspect a '%' at src[i].  When it has a closing '%', store that closing
+  ;; byte index in scratch[0] and return the matching environment entry (or 0
+  ;; when the variable is unknown).  An unmatched '%' leaves scratch[0] at -1.
+  ;; scratch+4 holds the temporary NUL-terminated variable name.
+  (func $env_expand_var (param $src i32) (param $i i32) (param $scratch i32) (result i32)
+    (local $j i32) (local $k i32) (local $ch i32)
+    (call $gs32 (local.get $scratch) (i32.const -1))
+    (local.set $j (i32.add (local.get $i) (i32.const 1)))
+    (block $scanned (loop $scan
+      (local.set $ch (call $gl8 (i32.add (local.get $src) (local.get $j))))
+      (br_if $scanned (i32.or (i32.eqz (local.get $ch))
+        (i32.eq (local.get $ch) (i32.const 0x25))))
+      (local.set $j (i32.add (local.get $j) (i32.const 1)))
+      (br $scan)))
+    (if (i32.eqz (local.get $ch)) (then (return (i32.const 0))))
+    (call $gs32 (local.get $scratch) (local.get $j))
+    (local.set $k (i32.add (local.get $i) (i32.const 1)))
+    (block $copied (loop $copy
+      (br_if $copied (i32.ge_u (local.get $k) (local.get $j)))
+      (call $gs8
+        (i32.add (i32.add (local.get $scratch) (i32.const 4))
+          (i32.sub (local.get $k) (i32.add (local.get $i) (i32.const 1))))
+        (call $gl8 (i32.add (local.get $src) (local.get $k))))
+      (local.set $k (i32.add (local.get $k) (i32.const 1)))
+      (br $copy)))
+    (call $gs8
+      (i32.add (i32.add (local.get $scratch) (i32.const 4))
+        (i32.sub (local.get $j) (i32.add (local.get $i) (i32.const 1))))
+      (i32.const 0))
+    (call $env_find (i32.add (local.get $scratch) (i32.const 4)) (i32.const 0)))
+
+  ;; ExpandEnvironmentStringsA core.  Unknown or unterminated %NAME% tokens
+  ;; remain literal.  Build into a temporary buffer after a sizing pass so
+  ;; source and destination may alias without corrupting the scan.
+  (func $env_expand_a (param $src i32) (param $dst i32) (param $size i32) (result i32)
+    (local $src_len i32) (local $scratch i32) (local $tmp i32)
+    (local $i i32) (local $j i32) (local $k i32) (local $ch i32)
+    (local $entry i32) (local $value i32) (local $value_len i32)
+    (local $out_len i32) (local $required i32)
+    (if (i32.eqz (local.get $src)) (then (return (i32.const 0))))
+    (local.set $src_len (call $guest_strlen (local.get $src)))
+    (local.set $scratch (call $heap_alloc (i32.add (local.get $src_len) (i32.const 5))))
+
+    ;; First pass: exact required character count, excluding the final NUL.
+    (block $counted (loop $count
+      (local.set $ch (call $gl8 (i32.add (local.get $src) (local.get $i))))
+      (br_if $counted (i32.eqz (local.get $ch)))
+      (block $advanced
+        (if (i32.eq (local.get $ch) (i32.const 0x25))
+          (then
+            (local.set $entry (call $env_expand_var
+              (local.get $src) (local.get $i) (local.get $scratch)))
+            (local.set $j (call $gl32 (local.get $scratch)))
+            (if (i32.ne (local.get $j) (i32.const -1))
+              (then
+                (if (local.get $entry)
+                  (then
+                    (local.set $value (i32.add (local.get $entry)
+                      (i32.add (call $env_name_len (local.get $entry)) (i32.const 1))))
+                    (local.set $out_len (i32.add (local.get $out_len)
+                      (call $guest_strlen (local.get $value)))))
+                  (else
+                    (local.set $out_len (i32.add (local.get $out_len)
+                      (i32.add (i32.sub (local.get $j) (local.get $i)) (i32.const 1))))))
+                (local.set $i (i32.add (local.get $j) (i32.const 1)))
+                (br $advanced)))))
+        (local.set $out_len (i32.add (local.get $out_len) (i32.const 1)))
+        (local.set $i (i32.add (local.get $i) (i32.const 1))))
+      (br $count)))
+    (local.set $required (i32.add (local.get $out_len) (i32.const 1)))
+    (local.set $tmp (call $heap_alloc (local.get $required)))
+
+    ;; Second pass: materialize the complete expanded string in guest memory.
+    (local.set $i (i32.const 0))
+    (local.set $out_len (i32.const 0))
+    (block $expanded (loop $expand
+      (local.set $ch (call $gl8 (i32.add (local.get $src) (local.get $i))))
+      (br_if $expanded (i32.eqz (local.get $ch)))
+      (block $advanced
+        (if (i32.eq (local.get $ch) (i32.const 0x25))
+          (then
+            (local.set $entry (call $env_expand_var
+              (local.get $src) (local.get $i) (local.get $scratch)))
+            (local.set $j (call $gl32 (local.get $scratch)))
+            (if (i32.ne (local.get $j) (i32.const -1))
+              (then
+                (if (local.get $entry)
+                  (then
+                    (local.set $value (i32.add (local.get $entry)
+                      (i32.add (call $env_name_len (local.get $entry)) (i32.const 1))))
+                    (local.set $value_len (call $guest_strlen (local.get $value)))
+                    (local.set $k (i32.const 0))
+                    (block $value_done (loop $copy_value
+                      (br_if $value_done (i32.ge_u (local.get $k) (local.get $value_len)))
+                      (call $gs8 (i32.add (local.get $tmp) (local.get $out_len))
+                        (call $gl8 (i32.add (local.get $value) (local.get $k))))
+                      (local.set $out_len (i32.add (local.get $out_len) (i32.const 1)))
+                      (local.set $k (i32.add (local.get $k) (i32.const 1)))
+                      (br $copy_value))))
+                  (else
+                    (local.set $k (local.get $i))
+                    (block $literal_done (loop $copy_literal
+                      (br_if $literal_done (i32.gt_u (local.get $k) (local.get $j)))
+                      (call $gs8 (i32.add (local.get $tmp) (local.get $out_len))
+                        (call $gl8 (i32.add (local.get $src) (local.get $k))))
+                      (local.set $out_len (i32.add (local.get $out_len) (i32.const 1)))
+                      (local.set $k (i32.add (local.get $k) (i32.const 1)))
+                      (br $copy_literal)))))
+                (local.set $i (i32.add (local.get $j) (i32.const 1)))
+                (br $advanced)))))
+        (call $gs8 (i32.add (local.get $tmp) (local.get $out_len)) (local.get $ch))
+        (local.set $out_len (i32.add (local.get $out_len) (i32.const 1)))
+        (local.set $i (i32.add (local.get $i) (i32.const 1))))
+      (br $expand)))
+    (call $gs8 (i32.add (local.get $tmp) (local.get $out_len)) (i32.const 0))
+
+    ;; Windows returns the required size including NUL when cchDest is short.
+    (if (i32.and (i32.ne (local.get $dst) (i32.const 0))
+                 (i32.ge_u (local.get $size) (local.get $required)))
+      (then
+        (local.set $k (i32.const 0))
+        (block $dest_done (loop $copy_dest
+          (br_if $dest_done (i32.ge_u (local.get $k) (local.get $required)))
+          (call $gs8 (i32.add (local.get $dst) (local.get $k))
+            (call $gl8 (i32.add (local.get $tmp) (local.get $k))))
+          (local.set $k (i32.add (local.get $k) (i32.const 1)))
+          (br $copy_dest)))))
+    (call $heap_free (local.get $tmp))
+    (call $heap_free (local.get $scratch))
+    (local.get $required))
+
   ;; SetEnvironmentVariable: replaces or removes one entry. A NULL value
   ;; deletes. Returns TRUE unless the block has no room left.
   (func $env_set (param $name_g i32) (param $val_g i32) (param $wide i32) (result i32)

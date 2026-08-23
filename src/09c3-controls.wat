@@ -6082,7 +6082,7 @@
   ;; enough for RegEdit/installer details panes to become stateful and for the
   ;; shared Win98 scrollbar helpers to be reused here.
   ;;
-  ;; ListViewState (76 bytes, allocated in WM_CREATE)
+  ;; ListViewState (80 bytes, allocated in WM_CREATE)
   ;;   +0   item_count
   ;;   +4   item_cap
   ;;   +8   item_cells_ptr   guest ptr to item_cap * 44-byte rows:
@@ -6104,6 +6104,7 @@
   ;;   +64  text_color COLORREF
   ;;   +68  text_bk_color COLORREF or CLR_NONE
   ;;   +72  state_image_list handle from LVM_SETIMAGELIST(LVSIL_STATE)
+  ;;   +76  normal_image_list handle from LVM_SETIMAGELIST(LVSIL_NORMAL)
 
   ;; ---- ListViewState accessors ----
   ;;
@@ -6186,6 +6187,10 @@
     (i32.load offset=72 (local.get $sw)))
   (func $lv_set_state_image_list (param $sw i32) (param $v i32)
     (i32.store offset=72 (local.get $sw) (local.get $v)))
+  (func $lv_normal_image_list (param $sw i32) (result i32)
+    (i32.load offset=76 (local.get $sw)))
+  (func $lv_set_normal_image_list (param $sw i32) (param $v i32)
+    (i32.store offset=76 (local.get $sw) (local.get $v)))
 
   (func $lv_header_h (param $sw i32) (result i32)
     (if (result i32) (i32.gt_s (call $lv_col_count (local.get $sw)) (i32.const 0))
@@ -6793,6 +6798,154 @@
     (drop (call $host_gdi_delete_dc (local.get $img_memdc)))
     (local.get $ret))
 
+  (func $lv_paint_normal_icon
+    (param $hdc i32) (param $sw i32) (param $row i32) (param $x i32) (param $y i32) (result i32)
+    (local $img_list i32) (local $img_idx i32) (local $img_sw i32)
+    (local $img_cx i32) (local $img_cy i32) (local $img_count i32) (local $img_bmp i32)
+    (local $img_bmp_w i32) (local $img_bmp_h i32) (local $img_src_x i32)
+    (local $draw_w i32) (local $draw_h i32) (local $dst_x i32) (local $dst_y i32)
+    (local $memdc i32) (local $image_dc i32) (local $mask_dc i32)
+    (local $stock_himl i32) (local $ret i32)
+    (local.set $img_list (call $lv_normal_image_list (local.get $sw)))
+    (if (i32.eqz (local.get $img_list))
+      (then (local.set $img_list (call $lv_image_list (local.get $sw)))))
+    (if (i32.eqz (local.get $img_list)) (then (return (i32.const 0))))
+    (local.set $img_idx (i32.load (call $lv_item_image_addr (local.get $sw) (local.get $row))))
+    (if (i32.lt_s (local.get $img_idx) (i32.const 0)) (then (return (i32.const 0))))
+    (local.set $img_sw (call $g2w (local.get $img_list)))
+    (local.set $stock_himl
+      (i32.eq (i32.load (local.get $img_sw)) (i32.const 0x4C4D4948))) ;; "HIML"
+    (if (local.get $stock_himl)
+      (then
+        ;; Authentic Win98 COMCTL32 image-list object. The stock DLL keeps
+        ;; ready-to-blit colour/mask DCs in the object, as TreeView already
+        ;; consumes, rather than our bounded bitmap-strip wrapper.
+        (local.set $img_count (i32.load offset=4 (local.get $img_sw)))
+        (local.set $img_cx (i32.load offset=16 (local.get $img_sw)))
+        (local.set $img_cy (i32.load offset=20 (local.get $img_sw)))
+        (local.set $image_dc (i32.load offset=56 (local.get $img_sw)))
+        (local.set $mask_dc (i32.load offset=60 (local.get $img_sw))))
+      (else
+        (local.set $img_cx (i32.load (local.get $img_sw)))
+        (local.set $img_cy (i32.load offset=4 (local.get $img_sw)))
+        (local.set $img_count (i32.load offset=12 (local.get $img_sw)))
+        (local.set $img_bmp (i32.load offset=16 (local.get $img_sw)))))
+    (if (i32.or
+          (i32.or (i32.le_s (local.get $img_cx) (i32.const 0))
+                  (i32.or (i32.le_s (local.get $img_cy) (i32.const 0))
+                          (i32.gt_s (local.get $img_cx) (i32.const 256))))
+          (i32.or (i32.le_s (local.get $img_count) (local.get $img_idx))
+                  (i32.and (i32.eqz (local.get $image_dc))
+                           (i32.eqz (local.get $img_bmp)))))
+      (then (return (i32.const 0))))
+    (local.set $img_src_x (i32.mul (local.get $img_idx) (local.get $img_cx)))
+    (if (local.get $img_bmp)
+      (then
+        (local.set $img_bmp_w (call $host_gdi_get_object_w (local.get $img_bmp)))
+        (local.set $img_bmp_h (call $host_gdi_get_object_h (local.get $img_bmp)))
+        (if (i32.or
+              (i32.gt_s (i32.add (local.get $img_src_x) (local.get $img_cx)) (local.get $img_bmp_w))
+              (i32.gt_s (local.get $img_cy) (local.get $img_bmp_h)))
+          (then (return (i32.const 0))))))
+    (local.set $draw_w (local.get $img_cx))
+    (if (i32.gt_s (local.get $draw_w) (i32.const 32))
+      (then (local.set $draw_w (i32.const 32))))
+    (local.set $draw_h (local.get $img_cy))
+    (if (i32.gt_s (local.get $draw_h) (i32.const 32))
+      (then (local.set $draw_h (i32.const 32))))
+    (local.set $dst_x (i32.add (local.get $x)
+      (i32.div_s (i32.sub (i32.const 32) (local.get $draw_w)) (i32.const 2))))
+    (local.set $dst_y (i32.add (local.get $y)
+      (i32.div_s (i32.sub (i32.const 32) (local.get $draw_h)) (i32.const 2))))
+    (if (local.get $image_dc)
+      (then
+        (if (local.get $mask_dc)
+          (then
+            (drop (call $host_gdi_bitblt
+              (local.get $hdc) (local.get $dst_x) (local.get $dst_y)
+              (local.get $draw_w) (local.get $draw_h)
+              (local.get $mask_dc) (local.get $img_src_x) (i32.const 0)
+              (i32.const 0x008800C6))) ;; SRCAND
+            (local.set $ret (call $host_gdi_bitblt
+              (local.get $hdc) (local.get $dst_x) (local.get $dst_y)
+              (local.get $draw_w) (local.get $draw_h)
+              (local.get $image_dc) (local.get $img_src_x) (i32.const 0)
+              (i32.const 0x00EE0086)))) ;; SRCPAINT
+          (else
+            (local.set $ret (call $host_gdi_bitblt
+              (local.get $hdc) (local.get $dst_x) (local.get $dst_y)
+              (local.get $draw_w) (local.get $draw_h)
+              (local.get $image_dc) (local.get $img_src_x) (i32.const 0)
+              (i32.const 0x00CC0020)))))) ;; SRCCOPY
+      (else
+        (local.set $memdc (call $host_gdi_create_compat_dc (local.get $hdc)))
+        (if (i32.eqz (local.get $memdc)) (then (return (i32.const 0))))
+        (drop (call $host_gdi_select_object (local.get $memdc) (local.get $img_bmp)))
+        (local.set $ret (call $host_gdi_transparent_blt
+          (local.get $hdc) (local.get $dst_x) (local.get $dst_y)
+          (local.get $draw_w) (local.get $draw_h)
+          (local.get $memdc) (local.get $img_src_x) (i32.const 0)
+          (i32.load offset=20 (local.get $img_sw))))
+        (drop (call $host_gdi_delete_dc (local.get $memdc)))))
+    (local.get $ret))
+
+  ;; Resolve LPSTR_TEXTCALLBACKA/I_IMAGECALLBACK while the item is inserted.
+  ;; The stock desktop DefView uses both callbacks: it owns the PIDLs and lets
+  ;; SysListView32 ask for the visible names and system-image-list indices.
+  ;; Retain private values exactly as the TreeView callback path does so later
+  ;; paints never depend on the parent's temporary NMLVDISPINFO buffer.
+  (func $lv_resolve_insert_callbacks
+      (param $hwnd i32) (param $sw i32) (param $item i32)
+      (param $want_text i32) (param $want_image i32)
+    (local $parent i32) (local $notify_g i32) (local $notify_w i32)
+    (local $mask i32) (local $text_g i32)
+    (if (i32.eqz (i32.or (local.get $want_text) (local.get $want_image)))
+      (then (return)))
+    (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+    (if (i32.eqz (local.get $parent)) (then (return)))
+    ;; NMLVDISPINFOA (NMHDR + LVITEMA = 52 bytes), followed by MAX_PATH.
+    (local.set $notify_g (call $heap_alloc (i32.const 312)))
+    (if (i32.eqz (local.get $notify_g)) (then (return)))
+    (local.set $notify_w (call $g2w (local.get $notify_g)))
+    (call $zero_memory (local.get $notify_w) (i32.const 312))
+    (local.set $mask (i32.const 0x0004)) ;; LVIF_PARAM
+    (if (local.get $want_text)
+      (then (local.set $mask (i32.or (local.get $mask) (i32.const 0x0001)))))
+    (if (local.get $want_image)
+      (then (local.set $mask (i32.or (local.get $mask) (i32.const 0x0002)))))
+    ;; NMHDR.
+    (i32.store          (local.get $notify_w) (local.get $hwnd))
+    (i32.store offset=4 (local.get $notify_w) (call $ctrl_table_get_id (local.get $hwnd)))
+    (i32.store offset=8 (local.get $notify_w) (i32.const -150)) ;; LVN_GETDISPINFOA
+    ;; LVITEMA at +12.
+    (i32.store offset=12 (local.get $notify_w) (local.get $mask))
+    (i32.store offset=16 (local.get $notify_w) (local.get $item))
+    (i32.store offset=20 (local.get $notify_w) (i32.const 0))
+    (i32.store offset=24 (local.get $notify_w)
+      (i32.load (call $lv_item_state_addr (local.get $sw) (local.get $item))))
+    (i32.store offset=32 (local.get $notify_w)
+      (i32.add (local.get $notify_g) (i32.const 52)))
+    (i32.store offset=36 (local.get $notify_w) (i32.const 260))
+    (i32.store offset=40 (local.get $notify_w) (i32.const -1))
+    (i32.store offset=44 (local.get $notify_w)
+      (i32.load (call $lv_item_param_addr (local.get $sw) (local.get $item))))
+    (drop (call $wnd_send_message
+      (local.get $parent) (i32.const 0x004E)
+      (call $ctrl_table_get_id (local.get $hwnd)) (local.get $notify_g)))
+    (if (local.get $want_text)
+      (then
+        (local.set $text_g (i32.load offset=32 (local.get $notify_w)))
+        (if (i32.and
+              (i32.ne (local.get $text_g) (i32.const 0))
+              (i32.lt_u (local.get $text_g) (i32.const 0xFFFF0000)))
+          (then (call $lv_set_cell_text
+            (local.get $sw) (local.get $item) (i32.const 0) (local.get $text_g))))))
+    (if (local.get $want_image)
+      (then (i32.store
+        (call $lv_item_image_addr (local.get $sw) (local.get $item))
+        (i32.load offset=40 (local.get $notify_w)))))
+    (call $heap_free (local.get $notify_g)))
+
   ;; Does this LVM_* message change what the control looks like?
   ;;
   ;; A real SysListView32 invalidates itself whenever its content, columns
@@ -6852,9 +7005,9 @@
     (if (i32.eq (local.get $msg) (i32.const 0x0001))
       (then
         (local.set $cs_w (call $g2w (local.get $lParam)))
-        (local.set $state (call $heap_alloc (i32.const 76)))
+        (local.set $state (call $heap_alloc (i32.const 80)))
         (local.set $sw (call $g2w (local.get $state)))
-        (call $zero_memory (local.get $sw) (i32.const 76))
+        (call $zero_memory (local.get $sw) (i32.const 80))
         (call $lv_set_selected (local.get $sw) (i32.const -1))
         (call $lv_set_ctrl_id (local.get $sw) (i32.load offset=8 (local.get $cs_w)))
         (call $lv_set_bk_color (local.get $sw) (i32.const 0x00FFFFFF))
@@ -6884,12 +7037,24 @@
     (if (call $lv_msg_repaints (local.get $msg))
       (then (call $invalidate_hwnd (local.get $hwnd))))
 
-    ;; LVM_GETIMAGELIST / LVM_SETIMAGELIST. Keep the assigned small-image
-    ;; list handle so report rows reserve authentic icon space.
+    ;; LVM_GETIMAGELIST / LVM_SETIMAGELIST. Keep normal and small image lists
+    ;; separate: report rows use LVSIL_SMALL while desktop LVS_ICON uses the
+    ;; authentic 32x32 LVSIL_NORMAL strip.
     (if (i32.eq (local.get $msg) (i32.const 0x1002))
-      (then (return (call $lv_image_list (local.get $sw)))))
+      (then
+        (if (i32.eqz (local.get $wParam))
+          (then (return (call $lv_normal_image_list (local.get $sw)))))
+        (if (i32.eq (local.get $wParam) (i32.const 2))
+          (then (return (call $lv_state_image_list (local.get $sw)))))
+        (return (call $lv_image_list (local.get $sw)))))
     (if (i32.eq (local.get $msg) (i32.const 0x1003))
       (then
+        ;; LVSIL_NORMAL (0).
+        (if (i32.eqz (local.get $wParam))
+          (then
+            (local.set $old (call $lv_normal_image_list (local.get $sw)))
+            (call $lv_set_normal_image_list (local.get $sw) (local.get $lParam))
+            (return (local.get $old))))
         ;; LVSIL_STATE (2) is how a pre-XP app asks for check boxes: it hands
         ;; over a two-image list and then sets each item's state-image index.
         ;; Keep it apart from the small-icon list -- what it selects is not an
@@ -7414,13 +7579,21 @@
           (then
             (i32.store
               (call $lv_item_param_addr (local.get $sw) (local.get $idx))
-              (i32.load offset=36 (local.get $lvi_w)))))
+              (i32.load offset=32 (local.get $lvi_w)))))
         (if (i32.and (local.get $mask) (i32.const 0x0008))
           (then
             (if (i32.and (i32.load offset=16 (local.get $lvi_w)) (i32.const 0x0002))
               (then
                 (if (i32.and (i32.load offset=12 (local.get $lvi_w)) (i32.const 0x0002))
                   (then (drop (call $lv_select_item (local.get $hwnd) (local.get $sw) (local.get $idx)))))))))
+        (call $lv_resolve_insert_callbacks
+          (local.get $hwnd) (local.get $sw) (local.get $idx)
+          (i32.and
+            (i32.ne (i32.and (local.get $mask) (i32.const 0x0001)) (i32.const 0))
+            (i32.eq (i32.load offset=20 (local.get $lvi_w)) (i32.const -1)))
+          (i32.and
+            (i32.ne (i32.and (local.get $mask) (i32.const 0x0002)) (i32.const 0))
+            (i32.eq (i32.load offset=28 (local.get $lvi_w)) (i32.const -1))))
         (call $paint_flag_set_inv (local.get $hwnd))
         (return (local.get $idx))))
 
@@ -7449,7 +7622,7 @@
           (then
             (i32.store
               (call $lv_item_param_addr (local.get $sw) (local.get $idx))
-              (i32.load offset=36 (local.get $lvi_w)))))
+              (i32.load offset=32 (local.get $lvi_w)))))
         (if (i32.and (i32.load (local.get $lvi_w)) (i32.const 0x0008))
           (then
             (if (i32.and (i32.load offset=16 (local.get $lvi_w)) (i32.const 0x0002))
@@ -7463,6 +7636,22 @@
                       (then
                         (if (i32.eqz (call $lv_select_item (local.get $hwnd) (local.get $sw) (i32.const -1)))
                           (then (return (i32.const 0))))))))))))
+        ;; DefView commonly inserts the PIDL/lParam first and assigns
+        ;; LPSTR_TEXTCALLBACKA/I_IMAGECALLBACK with a later LVM_SETITEMA.
+        ;; Resolve that form too; handling only INSERTITEM left stock desktop
+        ;; rows permanently anonymous even though their private PIDLs existed.
+        (call $lv_resolve_insert_callbacks
+          (local.get $hwnd) (local.get $sw) (local.get $idx)
+          (i32.and
+            (i32.or
+              (i32.eq (local.get $msg) (i32.const 0x102E))
+              (i32.ne (i32.and (i32.load (local.get $lvi_w)) (i32.const 0x0001)) (i32.const 0)))
+            (i32.eq (i32.load offset=20 (local.get $lvi_w)) (i32.const -1)))
+          (i32.and
+            (i32.eq (local.get $msg) (i32.const 0x1006))
+            (i32.and
+              (i32.ne (i32.and (i32.load (local.get $lvi_w)) (i32.const 0x0002)) (i32.const 0))
+              (i32.eq (i32.load offset=28 (local.get $lvi_w)) (i32.const -1)))))
         (call $paint_flag_set_inv (local.get $hwnd))
         (return (i32.const 1))))
 
@@ -7484,7 +7673,7 @@
                   (i32.load (call $lv_item_image_addr (local.get $sw) (local.get $idx))))))
             (if (i32.and (i32.load (local.get $lvi_w)) (i32.const 0x0004))
               (then
-                (i32.store offset=36 (local.get $lvi_w)
+                (i32.store offset=32 (local.get $lvi_w)
                   (i32.load (call $lv_item_param_addr (local.get $sw) (local.get $idx))))))
             (if (i32.and (i32.load (local.get $lvi_w)) (i32.const 0x0008))
               (then
@@ -7938,15 +8127,86 @@
             (local.set $bk_brush
               (call $host_gdi_create_solid_brush
                 (i32.and (call $lv_bk_color (local.get $sw)) (i32.const 0x00FFFFFF))))))
-        (drop (call $host_gdi_fill_rect (local.get $hdc)
-                (i32.const 0) (i32.const 0)
-                (local.get $w) (local.get $h)
-                (select (local.get $bk_brush) (i32.const 0x30010) (i32.ne (local.get $bk_brush) (i32.const 0)))))
+        ;; CLR_NONE is meaningful for icon views: the shell's desktop has
+        ;; already painted wallpaper/COLOR_DESKTOP into the shared surface.
+        ;; Report views keep their historical white fallback.
+        (if (i32.or
+              (i32.eq (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 3)) (i32.const 1))
+              (i32.ne (call $lv_bk_color (local.get $sw)) (i32.const -1)))
+          (then
+            (drop (call $host_gdi_fill_rect (local.get $hdc)
+              (i32.const 0) (i32.const 0)
+              (local.get $w) (local.get $h)
+              (select (local.get $bk_brush) (i32.const 0x30010)
+                (i32.ne (local.get $bk_brush) (i32.const 0)))))))
         (if (local.get $bk_brush)
           (then (drop (call $host_gdi_delete_object (local.get $bk_brush)))))
         (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
         (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
-        (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00000000)))
+        (drop (call $host_gdi_set_text_color (local.get $hdc)
+          (i32.and (call $lv_text_color (local.get $sw)) (i32.const 0x00FFFFFF))))
+
+        ;; LVS_ICON/LVS_SMALLICON/LVS_LIST. The desktop is LVS_ICON with
+        ;; LVS_ALIGNLEFT|LVS_AUTOARRANGE: arrange 75x70 cells down the left,
+        ;; draw the normal image list, and center the callback-resolved label.
+        ;; Non-report modes intentionally do not expose report columns/header.
+        (if (i32.ne
+              (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 3))
+              (i32.const 1))
+          (then
+            (local.set $visible (i32.div_u (local.get $h) (i32.const 70)))
+            (if (i32.eqz (local.get $visible))
+              (then (local.set $visible (i32.const 1))))
+            (local.set $i (i32.const 0))
+            (block $icon_items_done (loop $icon_items
+              (br_if $icon_items_done
+                (i32.ge_u (local.get $i) (call $lv_item_count (local.get $sw))))
+              ;; Callback data may not be available during insertion while
+              ;; DefView is still constructing its PIDL array. Common controls
+              ;; ask again when a row is displayed, so retry unresolved text
+              ;; or image fields at the paint boundary.
+              (call $lv_resolve_insert_callbacks
+                (local.get $hwnd) (local.get $sw) (local.get $i)
+                (i32.eqz
+                  (i32.load (call $lv_cell_addr
+                    (local.get $sw) (local.get $i) (i32.const 0))))
+                (i32.eq
+                  (i32.load (call $lv_item_image_addr (local.get $sw) (local.get $i)))
+                  (i32.const -1)))
+              (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0800))
+                (then
+                  (local.set $x (i32.add (i32.const 8)
+                    (i32.mul (i32.div_u (local.get $i) (local.get $visible)) (i32.const 75))))
+                  (local.set $y (i32.add (i32.const 8)
+                    (i32.mul (i32.rem_u (local.get $i) (local.get $visible)) (i32.const 70)))))
+                (else
+                  (local.set $width (i32.div_u (local.get $w) (i32.const 75)))
+                  (if (i32.eqz (local.get $width)) (then (local.set $width (i32.const 1))))
+                  (local.set $x (i32.add (i32.const 8)
+                    (i32.mul (i32.rem_u (local.get $i) (local.get $width)) (i32.const 75))))
+                  (local.set $y (i32.add (i32.const 8)
+                    (i32.mul (i32.div_u (local.get $i) (local.get $width)) (i32.const 70))))))
+              (drop (call $lv_paint_normal_icon
+                (local.get $hdc) (local.get $sw) (local.get $i)
+                (i32.add (local.get $x) (i32.const 20)) (local.get $y)))
+              (local.set $cell_g
+                (i32.load (call $lv_cell_addr (local.get $sw) (local.get $i) (i32.const 0))))
+              (if (local.get $cell_g)
+                (then
+                  (local.set $cell_w (call $g2w (local.get $cell_g)))
+                  (local.set $text_len (call $strlen (local.get $cell_w)))
+                  (if (local.get $text_len)
+                    (then
+                      (drop (call $host_gdi_draw_text
+                        (local.get $hdc) (local.get $cell_w) (local.get $text_len)
+                        (call $paint_rect
+                          (local.get $x) (i32.add (local.get $y) (i32.const 36))
+                          (i32.add (local.get $x) (i32.const 72))
+                          (i32.add (local.get $y) (i32.const 69)))
+                        (i32.const 0x0811) (i32.const 0))))))) ;; CENTER|WORDBREAK|NOPREFIX
+              (local.set $i (i32.add (local.get $i) (i32.const 1)))
+              (br $icon_items)))
+            (return (i32.const 0))))
 
         ;; Header.
         (local.set $col_count (call $lv_col_count (local.get $sw)))

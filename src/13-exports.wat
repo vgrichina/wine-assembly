@@ -315,6 +315,7 @@
   (func (export "get_sync_msg_depth") (result i32) (global.get $sync_msg_depth))
   (func (export "set_current_thread_id") (param i32) (global.set $current_thread_id (local.get 0)))
   (func (export "get_image_base") (result i32) (global.get $image_base))
+  (func (export "get_rsrc_rva") (result i32) (global.get $rsrc_rva))
   (func (export "get_thread_alloc") (result i32) (global.get $thread_alloc))
   (func (export "get_wndproc") (result i32) (global.get $wndproc_addr))
   (func (export "get_thunk_base") (result i32) (global.get $thunk_guest_base))
@@ -2035,6 +2036,8 @@
         (then (global.set $dialog_cbt_ret_thunk (local.get $guest))))
       (if (i32.eq (local.get $marker) (i32.const 0xCACA0029))
         (then (global.set $createwnd_nccreate_ret_thunk (local.get $guest))))
+      (if (i32.eq (local.get $marker) (i32.const 0xCACA002E))
+        (then (global.set $child_create_nccreate_ret_thunk (local.get $guest))))
       (if (i32.eq (local.get $marker) (i32.const 0xCACA002A))
         (then (global.set $setfocus_ret_thunk (local.get $guest))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
@@ -2142,7 +2145,7 @@
   (func (export "init_thread") (param $tid i32)
       (param $img_base i32) (param $code_s i32) (param $code_e i32)
       (param $thunk_gs i32) (param $thunk_ge i32) (param $num_th i32)
-    (local $pe_off i32)
+      (param $main_rsrc_rva i32)
     (global.set $THREAD_BASE (i32.add (i32.const 0x05000000)
       (i32.mul (local.get $tid) (i32.const 0x400000))))
     (global.set $THREAD_END  (i32.add (global.get $THREAD_BASE) (i32.const 0x400000)))
@@ -2150,14 +2153,10 @@
       (i32.mul (local.get $tid) (i32.const 0x8000))))
     (global.set $thread_alloc (global.get $THREAD_BASE))
     (global.set $image_base (local.get $img_base))
-    ;; Resource lookup state is instance-local. The main instance populates
-    ;; $rsrc_rva while loading the PE, but worker instances start with zero.
-    ;; The mapped DOS/PE headers live in shared memory, so recover the same
-    ;; resource-directory RVA when initializing each worker.
-    (local.set $pe_off (i32.add (local.get $img_base)
-      (i32.load (call $g2w (i32.add (local.get $img_base) (i32.const 0x3C))))))
-    (global.set $rsrc_rva
-      (i32.load (call $g2w (i32.add (local.get $pe_off) (i32.const 136)))))
+    ;; Resource lookup state is instance-local. PE headers are not mapped into
+    ;; guest memory, so a worker cannot reconstruct this RVA by rereading the
+    ;; optional header; copy the value the main loader retained instead.
+    (global.set $rsrc_rva (local.get $main_rsrc_rva))
     (global.set $heap_sparse_ptr (i32.const 0))
     (global.set $heap_sparse_end (i32.const 0))
     (global.set $virtual_alloc_top (global.get $VIRTUAL_ALLOC_TOP_INIT))
