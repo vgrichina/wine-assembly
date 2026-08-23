@@ -3170,6 +3170,7 @@ async function main() {
   };
 
   let prevEip = 0, stuckCount = 0, prevApiCount = 0, prevRegFp = 0, prevWin16Calls = 0;
+  let prevWorkerFp = 0;
   let stepping = false;  // single-step mode after breakpoint
   let apiBreakHit = null; // set when an API breakpoint triggers
 
@@ -6377,8 +6378,23 @@ if (VERBOSE) {
       // loop. An idle Minesweeper was therefore reported STUCK. Its own call
       // counter is the signal that actually distinguishes working from wedged.
       const win16Calls = ex.win16_api_count ? ex.win16_api_count() | 0 : 0;
+      // A worker thread doing all the drawing is invisible to every signal
+      // above: the main thread parks in GetMessageA with fixed registers and
+      // makes no further API calls, which is exactly what a healthy
+      // render-thread app looks like. CITYSCAP.SCR was cut off after 11
+      // batches this way, its renderer never given a chance to draw a frame.
+      let workerFp = 0;
+      if (threadManager && threadManager.threads) {
+        for (const [, t] of threadManager.threads) {
+          if (t.instance && t.instance.exports.get_eip) {
+            workerFp = (workerFp ^ t.instance.exports.get_eip()) | 0;
+          }
+        }
+      }
       if (injectedInputThisBatch || eip !== prevEip || apiCount !== prevApiCount
-          || regFp !== prevRegFp || win16Calls !== prevWin16Calls) {
+          || regFp !== prevRegFp || win16Calls !== prevWin16Calls
+          || workerFp !== prevWorkerFp) {
+        prevWorkerFp = workerFp;
         prevWin16Calls = win16Calls;
         if (!QUIET_BLOCKS && eip !== prevEip) console.log(`[${batch}] ${regs()}`);
         prevEip = eip;
