@@ -132,6 +132,16 @@ const { bootRenderHarness } = require('./render-helper');
   assert.strictEqual(pixel(3, 35), 0xffffff, 'DT_BOTTOM must leave the upper margin clear');
   assert.strictEqual(pixel(3, 41), 0, 'DT_BOTTOM must anchor the bitmap baseline block');
 
+  clear();
+  const ignoredVCenter = allocZero(16);
+  writeRect(ignoredVCenter, 0, 30, 20, 46);
+  assert.strictEqual(wat.test_call_DrawTextA(
+    hdc, textAA, 2, ignoredVCenter, 0x4), 8);
+  assert.strictEqual(pixel(3, 30), 0,
+    'DT_VCENTER without DT_SINGLELINE must be ignored and start at the top');
+  assert.strictEqual(pixel(3, 38), 0xffffff,
+    'ignored DT_VCENTER must not shift a multiline layout down');
+
   assert.strictEqual(wat.test_call_RemoveFontResourceA(path), 1);
   console.log('PASS  WAT bitmap ExtTextOut and DrawText honor native layout semantics');
 })().catch(error => {

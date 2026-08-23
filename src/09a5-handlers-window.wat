@@ -2111,6 +2111,13 @@
     ;; WM_ERASEBKGND (0x14): fill client area with background brush
     (if (i32.eq (local.get $arg1) (i32.const 0x0014))
     (then
+    ;; Remember that the application passed erasing to DefWindowProc. Later
+    ;; BeginPaint cycles must keep applying this class brush before the app
+    ;; redraws; otherwise pixels from an earlier scene survive outside the new
+    ;; scene. Klotski exposed this after leaving its Welcome screen: the ANSI
+    ;; path forgot the ownership bit that DefWindowProcW already records, so
+    ;; the old copyright strip remained under the active game board.
+    (call $nc_flags_set (local.get $arg0) (i32.const 8))
     (global.set $eax (call $host_erase_background (local.get $arg0) (call $wnd_get_bg_brush (local.get $arg0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; WM_PAINT (0x0F): the default procedure performs an empty BeginPaint /

@@ -57,9 +57,37 @@ function colorBounds(file, rect, matches) {
   }
   return {
     count,
+    minX: maxX >= minX ? minX : -1,
+    minY: maxY >= minY ? minY : -1,
+    maxX,
+    maxY,
     width: maxX >= minX ? maxX - minX + 1 : 0,
     height: maxY >= minY ? maxY - minY + 1 : 0,
   };
+}
+
+function rgbAt(png, x, y) {
+  const i = (y * png.width + x) * 4;
+  return (png.data[i] << 16) | (png.data[i + 1] << 8) | png.data[i + 2];
+}
+
+function checkerTiles(png, rect, a, b) {
+  let count = 0;
+  const color = (x, y) => {
+    const i = (y * png.width + x) * 4;
+    return (png.data[i] << 16) | (png.data[i + 1] << 8) | png.data[i + 2];
+  };
+  for (let y = rect.y; y + 1 < rect.y + rect.h; y += 2) {
+    for (let x = rect.x; x + 1 < rect.x + rect.w; x += 2) {
+      const p00 = color(x, y);
+      const p10 = color(x + 1, y);
+      const p01 = color(x, y + 1);
+      const p11 = color(x + 1, y + 1);
+      if ((p00 === a && p10 === b && p01 === b && p11 === a) ||
+          (p00 === b && p10 === a && p01 === a && p11 === b)) count++;
+    }
+  }
+  return count;
 }
 
 let built = false;
@@ -111,12 +139,38 @@ function testKlotski(outDir) {
     (r, g, b) => r > 180 && g > 180 && b < 100);
   assert(banner.count > 1500 && banner.width > 200,
     `Klotski should stitch all three yellow banner strips (count=${banner.count}, width=${banner.width})`);
-  const defaultExtent = colorBounds(welcome, { x: 450, y: 80, w: 45, h: 200 },
-    (r, g, b) => r > 45 && r < 90 && g > 45 && g < 90 && b > 45 && b < 90);
-  assert(defaultExtent.count > 5000,
-    `Klotski should use Win98's 480x320 CW_USEDEFAULT extent (dark pixels=${defaultExtent.count})`);
+  const opening = readPng(welcome);
+  const defaultExtent = checkerTiles(opening, { x: 450, y: 80, w: 44, h: 200 },
+    0x000000, 0x808080);
+  assert(defaultExtent > 2000,
+    `Klotski should use Win98's 480x321 CW_USEDEFAULT extent and stock-brush ` +
+    `background (checker tiles=${defaultExtent})`);
   assert.match(output, /dlg-set-edit: id=201 text="Codex"/,
     'Klotski should receive the player name before gameplay');
+  const gameplay = readPng(before);
+  const dither = checkerTiles(gameplay, { x: 30, y: 75, w: 120, h: 200 },
+    0x000000, 0x808080);
+  assert(dither > 5500,
+    `Klotski should realize stock DKGRAY_BRUSH as Win98's checker background ` +
+    `(tiles=${dither})`);
+  const clearedWelcome = checkerTiles(gameplay, { x: 30, y: 300, w: 110, h: 30 },
+    0x000000, 0x808080);
+  assert(clearedWelcome > 750,
+    `Klotski gameplay must erase the Welcome copyright strip before drawing ` +
+    `the board (checker tiles=${clearedWelcome})`);
+  assert.strictEqual(rgbAt(gameplay, 260, 337), 0xc0c0c0,
+    'Klotski 321px default window must retain the first lower-frame highlight row');
+  assert.strictEqual(rgbAt(gameplay, 260, 340), 0x000000,
+    'Klotski 321px default window must retain the final lower-frame black row');
+  assert.strictEqual(rgbAt(gameplay, 260, 341), 0x008080,
+    'the desktop must begin immediately below Klotski\'s 321px default window');
+  const daisy = colorBounds(before, { x: 225, y: 69, w: 70, h: 10 },
+    (r, g, b) => r > 180 && g > 180 && b < 100);
+  assert(daisy.width >= 50 && daisy.width <= 58 &&
+      daisy.height === 5 && daisy.minY === 72,
+    `Klotski caption must use the native FF_SCRIPT fallback width and ignore ` +
+    `DT_VCENTER without DT_SINGLELINE (bounds=${daisy.width}x${daisy.height} ` +
+    `at ${daisy.minX},${daisy.minY})`);
   const changed = changedPixels(before, after, { x: 218, y: 185, w: 58, h: 62 });
   assert(changed > 100,
     `Klotski should visibly move a legal puzzle block (changed=${changed})`);

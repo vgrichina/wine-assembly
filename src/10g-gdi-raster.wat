@@ -756,6 +756,22 @@
         (i32.sub (local.get $brush) (i32.const 1))))))
     (if (i32.eq (local.get $brush) (i32.const 0x30015))
       (then (return (i32.const 0x01000001))))
+    ;; Win98's stock DKGRAY_BRUSH is the device-patterned 25% gray brush on
+    ;; the low-color display these Win16 games target. Its nominal COLORREF is
+    ;; 0x404040, but native GDI realizes that unavailable VGA color as a
+    ;; one-pixel black/dark-gray checker. Klotski registers this stock brush as
+    ;; its class background; treating it as a literal true-color solid loses
+    ;; the checker across the entire exposed game client.
+    (if (i32.eq (local.get $brush) (i32.const 0x30013))
+      (then
+        (return (select (i32.const 0x808080) (i32.const 0x000000)
+          (i32.ne (i32.and
+            (i32.add
+              (i32.sub (local.get $x)
+                (call $gdi_dc_aux_get (local.get $hdc) (i32.const 8) (i32.const 0)))
+              (i32.sub (local.get $y)
+                (call $gdi_dc_aux_get (local.get $hdc) (i32.const 12) (i32.const 0))))
+            (i32.const 1)) (i32.const 0))))))
     (if (i32.and (i32.ge_u (local.get $brush) (i32.const 0x30010))
           (i32.le_u (local.get $brush) (i32.const 0x30014)))
       (then (return (call $gdi_stock_object_color (local.get $brush)))))
@@ -3501,6 +3517,10 @@
           (i32.le_u (local.get $brush) (i32.const 23)))
       (then (return (call $win98_sys_color
         (i32.sub (local.get $brush) (i32.const 1))))))
+    ;; DKGRAY_BRUSH is sampled as its native checker above; do not let the
+    ;; span fast path collapse it back to nominal solid 0x404040.
+    (if (i32.eq (local.get $brush) (i32.const 0x30013))
+      (then (return (i32.const 0x01000000))))
     (if (i32.and (i32.ge_u (local.get $brush) (i32.const 0x30010))
           (i32.le_u (local.get $brush) (i32.const 0x30014)))
       (then (return (call $gdi_stock_object_color (local.get $brush)))))

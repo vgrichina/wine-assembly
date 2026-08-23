@@ -567,6 +567,26 @@
           (i32.eq (i32.load offset=4 (local.get $p)) (i32.const 4)))
       (then (i32.store offset=32 (local.get $p) (local.get $width)))))
 
+  ;; Preserve LOGFONT.lfPitchAndFamily as mapper input.  In particular, an
+  ;; unnamed FF_SCRIPT font is not the same request as an unnamed UI font:
+  ;; classic Win16 games use it together with lfWidth for decorative display
+  ;; text.  The remaining object-record words are private font metadata.
+  (func $gdi_font_pitch_and_family (param $handle i32) (result i32)
+    (local $p i32)
+    (local.set $p (call $gdi_object_record (local.get $handle)))
+    (if (i32.and (i32.ne (local.get $p) (i32.const 0))
+          (i32.eq (i32.load offset=4 (local.get $p)) (i32.const 4)))
+      (then (return (i32.load offset=36 (local.get $p)))))
+    (i32.const 0))
+
+  (func $gdi_font_set_pitch_and_family (param $handle i32) (param $value i32)
+    (local $p i32)
+    (local.set $p (call $gdi_object_record (local.get $handle)))
+    (if (i32.and (i32.ne (local.get $p) (i32.const 0))
+          (i32.eq (i32.load offset=4 (local.get $p)) (i32.const 4)))
+      (then (i32.store offset=36 (local.get $p)
+        (i32.and (local.get $value) (i32.const 0xFF))))))
+
   (func $gdi_font_weight (param $handle i32) (result i32)
     (local $p i32)
     (local.set $p (call $gdi_object_record (local.get $handle)))
@@ -654,7 +674,8 @@
     (i32.store offset=4 (local.get $dest) (call $gdi_font_width (local.get $handle)))
     (i32.store offset=16 (local.get $dest) (call $gdi_font_weight (local.get $handle)))
     (i32.store8 offset=20 (local.get $dest) (call $gdi_font_italic (local.get $handle)))
-    (i32.store8 offset=27 (local.get $dest) (i32.const 0x22))
+    (i32.store8 offset=27 (local.get $dest)
+      (call $gdi_font_pitch_and_family (local.get $handle)))
     (local.set $face (call $gdi_font_face (local.get $handle)))
     (block $done (loop $copy
       (br_if $done (i32.ge_u (local.get $i) (i32.const 31)))
@@ -675,7 +696,9 @@
     (local $copy_count i32) (local $i i32) (local $ch i32)
     (local.set $handle (call $gdi_dc_get_field
       (local.get $hdc) (i32.const 88) (i32.const 0x3001D)))
-    (local.set $face (call $gdi_font_face (local.get $handle)))
+    ;; GetTextFace reports the realized mapper face, while GetObject above
+    ;; continues to serialize the application's requested LOGFONT face.
+    (local.set $face (call $gdi_font_mapper_face (local.get $handle)))
     (block $length_done (loop $length_scan
       (br_if $length_done (i32.ge_u (local.get $length) (i32.const 31)))
       (br_if $length_done (i32.eqz

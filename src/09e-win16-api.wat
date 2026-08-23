@@ -4677,7 +4677,7 @@
     (local.set $y (call $win16_coord (call $win16_arg16 (i32.const 7))))
     (local.set $w (call $win16_coord (call $win16_arg16 (i32.const 6))))
     (local.set $h (call $win16_coord (call $win16_arg16 (i32.const 5))))
-    ;; At 640x480, Win98 USER chooses a 480x320 overlapped window for the
+    ;; At 640x480, Win98 USER chooses a 480x321 overlapped window for the
     ;; Win16 CW_USEDEFAULT extent. The shared CreateWindowEx handler's generic
     ;; 400x300 bootstrap default made Klotski permanently smaller than native.
     ;; Resolve only the Win16 size sentinel here; position keeps using the
@@ -4687,9 +4687,9 @@
         (local.set $w (i32.const 480))
         ;; As with the x/y default pair, a default width asks USER to choose
         ;; the complete extent and the caller's cy is ignored.
-        (local.set $h (i32.const 320))))
+        (local.set $h (i32.const 321))))
     (if (i32.eq (local.get $h) (i32.const 0x80000000))
-      (then (local.set $h (i32.const 320))))
+      (then (local.set $h (i32.const 321))))
     (local.set $parent (call $win16_h32 (call $win16_arg16 (i32.const 4))))
     ;; For a child window the hMenu argument is the control id, not a handle,
     ;; and putting an id through the handle map stops the task on a number it

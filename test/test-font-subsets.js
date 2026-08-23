@@ -4,7 +4,7 @@
 
 // The deployed subsets must lay out exactly like the fonts they came from.
 //
-// Subsetting is a payload optimization - 4.7 MB of vendored TTFs become 278 KB
+// Subsetting is a payload optimization - 4.8 MB of vendored TTFs become 604 KB
 // the browser actually fetches - and a payload optimization that quietly moves
 // an advance width by one unit is not an optimization, it is a layout bug that
 // only appears in the deployed build. Metric compatibility is the entire point
@@ -182,10 +182,10 @@ const METRICS = [
   // Comments stripped first: the collector explains in prose why it skips the
   // vendored sources, and that explanation is not a code path that ships them.
   const deployCode = deploy.replace(/^\s*\/\/.*$/gm, '');
-  assert.ok(!/fonts\/(liberation|wine)/.test(deployCode),
-    'the vendored sources are 6.5 MB nothing fetches at runtime; ship subsets');
+  assert.ok(!/fonts\/(liberation|wine|comic-relief)/.test(deployCode),
+    'the full-size vendored sources are not runtime assets; ship subsets');
 
-  assert.strictEqual(pairs, 18, 'every vendored font must have a subset');
+  assert.strictEqual(pairs, 20, 'every vendored font must have a subset');
   assert.ok(legacyKernPairs > 0,
     'the fixture set must exercise at least one nonzero legacy kern pair');
   assert.ok(subsetBytes * 4 < fullBytes,

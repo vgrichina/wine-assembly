@@ -81,6 +81,31 @@ const { bootRenderHarness } = require('./render-helper');
     assert.strictEqual(packed(dst, 0, 0), 0);
   });
 
+  check('stock DKGRAY_BRUSH realizes as the native low-color checker', () => {
+    const surface = makeDib(4, 4);
+    const darkGray = 0x30013;
+    assert.deepStrictEqual([
+      wat.test_gdi_brush_sample(surface.hdc, darkGray, 0, 0) >>> 0,
+      wat.test_gdi_brush_sample(surface.hdc, darkGray, 1, 0) >>> 0,
+      wat.test_gdi_brush_sample(surface.hdc, darkGray, 0, 1) >>> 0,
+      wat.test_gdi_brush_sample(surface.hdc, darkGray, 1, 1) >>> 0,
+    ], [0x000000, 0x808080, 0x808080, 0x000000]);
+    wat.test_call_SelectObject(surface.hdc, darkGray);
+    assert.strictEqual(wat.test_call_PatBlt(
+      surface.hdc, 0, 0, 4, 4, 0x00F00021), 1);
+    assert.deepStrictEqual([
+      packed(surface, 0, 0), packed(surface, 1, 0),
+      packed(surface, 0, 1), packed(surface, 1, 1),
+    ], [0x000000, 0x808080, 0x808080, 0x000000]);
+    assert.strictEqual(canvasRgb(surface, 1, 0), 0x808080);
+
+    wat.test_call_SetBrushOrgEx(surface.hdc, 1, 0, 0);
+    assert.strictEqual(
+      wat.test_gdi_brush_sample(surface.hdc, darkGray, 0, 0) >>> 0,
+      0x808080,
+      'the realized checker must honor the DC brush origin');
+  });
+
   check('PatBlt samples hatch brushes per pixel and honors brush origin', () => {
     const surface = makeDib(10, 4);
     const hatch = wat.test_call_CreateHatchBrush(1, 0x000000FF) >>> 0;

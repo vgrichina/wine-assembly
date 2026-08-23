@@ -118,6 +118,7 @@ subset() {
 # purpose: it has no win98Files entry because Win98 shipped it as SMALLE.FON,
 # so nothing can ever open a scalable copy of it.
 for f in fonts/liberation/Liberation*.ttf; do subset "$f" ansi; done
+for f in fonts/comic-relief/ComicRelief-*.ttf; do subset "$f" ansi; done
 subset fonts/wine/tahoma.ttf       ansi
 subset fonts/wine/tahomabd.ttf     ansi
 subset fonts/wine/marlett.ttf      symbol
@@ -125,7 +126,8 @@ subset fonts/wine/symbol.ttf       symbol
 subset fonts/wine/wingding.ttf     symbol
 subset fonts/wine/webdings.ttf     symbol
 
-full=$(cat fonts/liberation/Liberation*.ttf fonts/wine/tahoma.ttf \
+full=$(cat fonts/liberation/Liberation*.ttf fonts/comic-relief/ComicRelief-*.ttf \
+  fonts/wine/tahoma.ttf \
   fonts/wine/tahomabd.ttf fonts/wine/marlett.ttf \
   fonts/wine/symbol.ttf fonts/wine/wingding.ttf fonts/wine/webdings.ttf \
   | wc -c | tr -d ' ')

@@ -23,6 +23,8 @@
   (global $GDI_BITMAP_FONT_TERMINAL_PATH i32 (i32.const 0x07F0A5B0))
   (global $GDI_BITMAP_FONT_TERMINAL_STATE i32 (i32.const 0x07F0A5D0))
   (global $GDI_BITMAP_FONT_WESTERN i32 (i32.const 0x07F0A5D4))
+  (global $GDI_FONT_MAPPER_FONT i32 (i32.const 0x07F0A5E0))
+  (global $GDI_FONT_MAPPER_COMIC_SANS i32 (i32.const 0x07F0A5E8))
 
   ;; Last-use stamp per strike slot, parallel to the table so the 64-byte
   ;; record layout stays as the .FON parser writes it. The table holds every
@@ -58,6 +60,8 @@
   (data (i32.const 0x07F0A590) "MS Shell Dlg 2\00")
   (data (i32.const 0x07F0A5A0) "Terminal\00")
   (data (i32.const 0x07F0A5D4) "Western\00")
+  (data (i32.const 0x07F0A5E0) "FONT\00")
+  (data (i32.const 0x07F0A5E8) "Comic Sans MS\00")
 
   (func $gdi_bitmap_font_record (param $index i32) (result i32)
     (i32.add (global.get $GDI_BITMAP_FONT_TABLE)
@@ -145,6 +149,29 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (i32.const 0))
+
+  (func $gdi_font_is_script_request (param $handle i32) (result i32)
+    (i32.eq
+      (i32.and (call $gdi_font_pitch_and_family (local.get $handle))
+        (i32.const 0xF0))
+      (i32.const 0x40)))
+
+  (func $gdi_font_is_script_placeholder (param $handle i32) (result i32)
+    (i32.and (call $gdi_font_is_script_request (local.get $handle))
+      (call $gdi_bitmap_font_face_equal
+        (call $gdi_font_face (local.get $handle))
+        (global.get $GDI_FONT_MAPPER_FONT))))
+
+  ;; The Klotski Win16 binary deliberately names the placeholder face "FONT"
+  ;; and supplies FF_SCRIPT as the mapper family.  A native Win98 probe maps
+  ;; both of its 22x22 and 9x9 requests to Comic Sans MS.  Preserve the face in
+  ;; GetObject's LOGFONT, but use and report the realized face after selection.
+  (func $gdi_font_mapper_face (param $handle i32) (result i32)
+    (local $face i32)
+    (local.set $face (call $gdi_font_face (local.get $handle)))
+    (if (call $gdi_font_is_script_placeholder (local.get $handle))
+      (then (return (global.get $GDI_FONT_MAPPER_COMIC_SANS))))
+    (local.get $face))
 
   (func $gdi_bitmap_font_face_matches (param $requested i32) (param $installed i32)
         (result i32)
@@ -1020,7 +1047,9 @@
             (i64.extend_i32_u (local.get $win))))))))
     ;; Explicit-width scalable fonts take the same slightly smaller mapper
     ;; choice used by $gdi_bitmap_font_height below.
-    (if (i32.ne (call $gdi_font_width (local.get $handle)) (i32.const 0))
+    (if (i32.and
+          (i32.ne (call $gdi_font_width (local.get $handle)) (i32.const 0))
+          (i32.eqz (call $gdi_font_is_script_request (local.get $handle))))
       (then (local.set $height (call $gdi_round_ratio
         (i64.mul (i64.extend_i32_u (local.get $height)) (i64.const 9))
         (i64.const 10)))))
@@ -1060,7 +1089,7 @@
                     (i32.const 0)))
               (then
                 (local.set $substitute (call $tt_strike_ensure
-                  (call $gdi_font_face (local.get $handle))
+                  (call $gdi_font_mapper_face (local.get $handle))
                   (call $gdi_font_strike_height_for_dc
                     (local.get $hdc) (local.get $handle))
                   (call $gdi_font_weight (local.get $handle))
@@ -1103,7 +1132,7 @@
     ;; without a strike is a LOGFONT that named no face at all, or a font file
     ;; that failed to load.
     (local.set $substitute (call $tt_strike_ensure
-      (call $gdi_font_face (local.get $handle))
+      (call $gdi_font_mapper_face (local.get $handle))
       (call $gdi_font_strike_height_for_dc (local.get $hdc) (local.get $handle))
       (call $gdi_font_weight (local.get $handle))
       (call $gdi_font_italic (local.get $handle))))
@@ -1197,7 +1226,9 @@
     ;; explicit-width fonts than our nearest substitute strike. WordZap's
     ;; Tms Rmn requests exercise this path: preserve their requested aspect
     ;; below, but reduce the 20px substitute cell to the native 18px result.
-    (if (i32.ne (call $gdi_font_width (local.get $handle)) (i32.const 0))
+    (if (i32.and
+          (i32.ne (call $gdi_font_width (local.get $handle)) (i32.const 0))
+          (i32.eqz (call $gdi_font_is_script_request (local.get $handle))))
       (then (local.set $height (call $gdi_round_ratio
         (i64.mul (i64.extend_i32_u (local.get $height)) (i64.const 9))
         (i64.const 10)))))
@@ -1226,7 +1257,8 @@
   (func $gdi_bitmap_font_width_height_dc
         (param $hdc i32) (param $strike i32) (param $height i32) (result i32)
     (local $dc i32) (local $handle i32) (local $request i32)
-    (local $logical_height i32) (local $mapped i32)
+    (local $logical_height i32) (local $mapped i32) (local $win_x i32)
+    (local $vp_x i32)
     (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
     (if (i32.eqz (local.get $dc))
       (then (return (call $gdi_bitmap_font_width_height
@@ -1243,6 +1275,41 @@
           (i32.eqz (local.get $logical_height)))
       (then (return (call $gdi_bitmap_font_width_height
         (local.get $strike) (local.get $height)))))
+    ;; Win98 treats an explicit width on an FF_SCRIPT request as the desired
+    ;; average character width.  Klotski asks for the nonexistent face "FONT"
+    ;; at 22x22 and 9x9 and relies on family fallback; blending the width back
+    ;; toward MS Sans Serif's natural aspect compresses DAISY/Stop to roughly
+    ;; half the native width.  Map the requested X width through the DC and
+    ;; convert it to this strike's scale height using dfAvgWidth. Comic Relief
+    ;; deliberately copies Comic Sans's per-glyph advances, but its OS/2
+    ;; xAvgCharWidth is 1239 rather than the original face's 959. Correct that
+    ;; table-level difference when turning the requested average width into an
+    ;; X scale; otherwise the compatible outlines are still about 23% narrow.
+    ;; Other font families retain the measured mapper blend below (notably
+    ;; WordZap's Tms Rmn requests).
+    (if (call $gdi_font_is_script_placeholder (local.get $handle))
+      (then
+        (local.set $win_x (i32.load offset=48 (local.get $dc)))
+        (local.set $vp_x (i32.load offset=64 (local.get $dc)))
+        (if (i32.lt_s (local.get $win_x) (i32.const 0))
+          (then (local.set $win_x (i32.sub (i32.const 0) (local.get $win_x)))))
+        (if (i32.lt_s (local.get $vp_x) (i32.const 0))
+          (then (local.set $vp_x (i32.sub (i32.const 0) (local.get $vp_x)))))
+        (if (i32.and (i32.ne (local.get $win_x) (i32.const 0))
+              (i32.ne (local.get $vp_x) (i32.const 0)))
+          (then (local.set $request (call $gdi_round_ratio
+            (i64.mul (i64.extend_i32_u (local.get $request))
+              (i64.extend_i32_u (local.get $vp_x)))
+            (i64.extend_i32_u (local.get $win_x))))))
+        (if (i32.ne (i32.load offset=28 (local.get $strike)) (i32.const 0))
+          (then (return (call $gdi_round_ratio
+            (i64.mul
+              (i64.mul (i64.extend_i32_u (local.get $request))
+                (i64.extend_i32_u (i32.load offset=20 (local.get $strike))))
+              (i64.const 1239))
+            (i64.mul
+              (i64.extend_i32_u (i32.load offset=28 (local.get $strike)))
+              (i64.const 959))))))))
     (local.set $mapped (call $gdi_round_ratio
       (i64.mul (i64.extend_i32_u (local.get $height))
         (i64.extend_i32_u (i32.add
@@ -2983,11 +3050,17 @@
     (drop (call $gdi_dc_set_field (local.get $hdc) (i32.const 32)
       (local.get $draw_align) (i32.const 0)))
     (local.set $device_y (local.get $top_device))
-    (if (i32.and (local.get $format) (i32.const 8))
+    ;; Win32/Win16 USER only applies DT_BOTTOM and DT_VCENTER to a
+    ;; DT_SINGLELINE layout. Without that flag both are ignored and drawing
+    ;; starts at the rectangle top. Klotski intentionally uses
+    ;; DT_CENTER|DT_VCENTER without DT_SINGLELINE for its puzzle caption.
+    (if (i32.and (local.get $single_line)
+          (i32.ne (i32.and (local.get $format) (i32.const 8)) (i32.const 0)))
       (then (local.set $device_y (i32.sub (local.get $bottom_device)
         (i32.mul (local.get $line_count) (local.get $height)))))
       (else
-        (if (i32.and (local.get $format) (i32.const 4))
+        (if (i32.and (local.get $single_line)
+              (i32.ne (i32.and (local.get $format) (i32.const 4)) (i32.const 0)))
           (then (local.set $device_y (i32.add (local.get $top_device)
             (i32.shr_s (i32.sub (i32.sub (local.get $bottom_device) (local.get $top_device))
               (i32.mul (local.get $line_count) (local.get $height))) (i32.const 1))))))))
