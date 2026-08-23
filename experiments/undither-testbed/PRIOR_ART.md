@@ -31,7 +31,7 @@ claims of proper dither detection.
 | Kornelski README | Two palette PNG inputs and two author-produced undithered outputs at the same native dimensions; one uses 256 displayed colors and one 32 | Bundled. These are the only current samples with a directly comparable positive target. |
 | Checkerboard-Dedither forum | Multiple raw/filtered game pairs plus an explicitly native 320×224 Pulseman input | Inspected but not bundled. The filtered gallery frames are presentation-scaled, and neither those nor the game screenshot are ground truth; redistribution terms are also unclear. |
 | MDAPT/GDAPT forum | Genesis and arcade before/after galleries, including Altered Beast, Lion King, and Street Fighter examples | Linked but not bundled. Useful qualitative targets, mostly not native indexed source/reference pairs. |
-| WineAssembly app corpus | Age of Empires, Diablo, and Heroes II captures | Bundled as mixed hypotheses. Visual texture is not treated as proof of dithering. |
+| WineAssembly app corpus | Age of Empires, Diablo, Heroes II, Space Cadet Pinball, and Classic WordZap captures | Bundled as mixed hypotheses. Pinball has visually confirmed stippled ramps/shading and WordZap has localized alternating pixels in gray lettering, but neither has high-color truth. Other visual texture is not treated as proof of dithering. |
 | Reviewed Win98 utility/game screenshots | Bricks, Solitaire, SkiFree, Klotski, and other low-color windows | Only Bricks remains as a no-dither control. The others added redundant low-color negatives. |
 
 The next high-value fixture is not another low-color screenshot. It is a real

@@ -23,6 +23,9 @@ The selector deliberately separates dither evidence from mere low color count:
   the author's undithered output as a comparison target;
 - Age of Empires, Diablo, and Heroes II 640×480 corpus frames, labeled as
   mixed candidates rather than assumed-positive examples;
+- a native 600×416 Space Cadet Pinball back-buffer crop with visibly stippled
+  ramps and shading, and a Classic WordZap frame with localized palette-dithered
+  gray lettering; both remain candidates because neither has high-color truth;
 - one reviewed native Bricks frame as an explicit no-dither control.
 
 Solitaire, SkiFree, and Klotski were removed because screenshot inspection
@@ -31,6 +34,10 @@ retained only to expose false positives on hard text, flat fills, and deliberate
 one-pixel ornament.
 
 Each sample includes annotated inspection regions and a stated expectation.
+Candidate admission requires visible spatial mixture evidence at nearest-pixel
+zoom; palette size by itself is not enough. In particular, the reviewed Marbles
+capture was not added because its low-color photographic texture does not by
+itself establish a reconstructable dither pattern.
 The UI shows original and reconstructed pixels side by side, a 4x absolute
 difference image, runtime, changed-pixel percentage, channel deltas, and every
 displayed color used by the frame. The two Kornelski samples also show the

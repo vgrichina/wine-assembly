@@ -35,7 +35,7 @@ const chrome = process.env.CHROME || '/Applications/Google Chrome.app/Contents/M
       palette: document.querySelectorAll('#palette .swatch').length,
       stats: document.querySelector('#stats').textContent,
     }));
-    assert.strictEqual(initial.samples, 6);
+    assert.strictEqual(initial.samples, 8);
     assert.strictEqual(initial.algorithms, 12);
     assert.strictEqual(initial.selectedAlgorithm, 'adaptiveFir');
     assert.deepStrictEqual(initial.original, [356, 239]);
@@ -56,6 +56,30 @@ const chrome = process.env.CHROME || '/Applications/Google Chrome.app/Contents/M
       timings[algorithm] = await page.$eval('#status', element => element.textContent);
     }
 
+    await page.select('#algorithm', 'original');
+    await page.waitForFunction(() => document.querySelector('#status').textContent.startsWith('Original (exact)') &&
+      document.querySelector('#status').textContent.includes('completed'), { timeout: 30000 });
+    const addedCorpus = {};
+    for (const [sample, width, height, colors] of [
+      ['space-cadet-pinball', 600, 416, 235],
+      ['classic-wordzap', 640, 480, 216],
+    ]) {
+      await page.select('#sample', sample);
+      await page.waitForFunction((id, w, h) => document.querySelector('#sample').value === id &&
+        document.querySelector('#status').textContent.includes('completed') &&
+        document.querySelector('#original-full').width === w &&
+        document.querySelector('#original-full').height === h,
+      { timeout: 30000 }, sample, width, height);
+      addedCorpus[sample] = await page.evaluate(() => ({
+        original: [document.querySelector('#original-full').width, document.querySelector('#original-full').height],
+        output: [document.querySelector('#output-full').width, document.querySelector('#output-full').height],
+        palette: document.querySelectorAll('#palette .swatch').length,
+      }));
+      assert.deepStrictEqual(addedCorpus[sample].original, [width, height]);
+      assert.deepStrictEqual(addedCorpus[sample].output, [width, height]);
+      assert.strictEqual(addedCorpus[sample].palette, colors);
+    }
+
     await page.select('#sample', 'diablo');
     await page.waitForFunction(() => document.querySelector('#status').textContent.includes('completed') &&
       document.querySelector('#sample').value === 'diablo', { timeout: 30000 });
@@ -71,7 +95,7 @@ const chrome = process.env.CHROME || '/Applications/Google Chrome.app/Contents/M
     await page.screenshot({ path: screenshot, fullPage: true });
 
     assert.deepStrictEqual(errors, [], errors.join('\n'));
-    console.log(JSON.stringify({ initial, timings, screenshot }, null, 2));
+    console.log(JSON.stringify({ initial, timings, addedCorpus, screenshot }, null, 2));
     console.log('PASS  standalone browser UI, corpus, selectors, algorithms, canvases, palette, stats, and screenshot');
   } finally {
     await browser.close();

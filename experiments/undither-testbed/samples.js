@@ -67,6 +67,32 @@ window.UNDITHER_SAMPLES = [
     ],
   },
   {
+    id: 'space-cadet-pinball',
+    label: 'VISUAL DITHER CANDIDATE — Space Cadet Pinball back buffer',
+    src: 'assets/space-cadet-pinball.png',
+    provenance: 'WineAssembly app-corpus capture; exact 600×416 client/back-buffer crop from /private/tmp/dropdown-non16-current/pinball.png at (20,32)',
+    expectation: 'Mixed positive candidate: visible palette stippling forms ramps, lamp halos, and dark playfield shading; preserve rails, labels, outlines, and mechanical texture. No undithered ground truth is available.',
+    regions: [
+      { label: 'Full native back buffer', x: 0, y: 0, w: 600, h: 416, zoom: 1 },
+      { label: 'Launch ramp stippling', x: 240, y: 190, w: 125, h: 210, zoom: 4 },
+      { label: 'Playfield lights and gradients', x: 25, y: 0, w: 340, h: 250, zoom: 3 },
+      { label: 'Display lettering and sprite edges', x: 385, y: 20, w: 205, h: 380, zoom: 3 },
+    ],
+  },
+  {
+    id: 'classic-wordzap',
+    label: 'LOCALIZED DITHER CANDIDATE — Classic WordZap splash',
+    src: 'assets/classic-wordzap.png',
+    provenance: 'WineAssembly app-corpus native 640×480 capture from /private/tmp/dropdown-non16-current/cwordzap.png',
+    expectation: 'Localized positive candidate: gray background lettering contains visible alternating palette pixels used for anti-aliasing; preserve the hard logo contours, window chrome, and white field. No undithered ground truth is available.',
+    regions: [
+      { label: 'Full native frame', x: 0, y: 0, w: 640, h: 480, zoom: 1 },
+      { label: 'Gray letter palette dither', x: 0, y: 60, w: 300, h: 180, zoom: 4 },
+      { label: 'Logo edges and shadows', x: 75, y: 120, w: 500, h: 270, zoom: 3 },
+      { label: 'Window chrome no-op region', x: 0, y: 0, w: 640, h: 42, zoom: 3 },
+    ],
+  },
+  {
     id: 'bricks',
     label: 'NO-DITHER CONTROL — Bricks native frame',
     src: 'assets/bricks.png',
