@@ -1659,8 +1659,15 @@
       (then (local.set $pixel (i32.const 0))))
     (if (i32.ge_s (local.get $pixel) (local.get $width))
       (then (local.set $pixel (i32.sub (local.get $width) (i32.const 1)))))
+    ;; Rules 2a/3a are evaluated after Rule 1 has seen every span on this scan
+    ;; line. Keep a negative candidate instead of turning the pixel on now:
+    ;; a later span may cover the adjacent centre, in which case this is no
+    ;; dropout at all. Modes 4/5 retain their immediate smart-dropout choice.
     (i32.store (i32.add (local.get $coverage)
-      (i32.mul (local.get $pixel) (i32.const 4))) (i32.const 4096)))
+        (i32.mul (local.get $pixel) (i32.const 4)))
+      (select (i32.const 4096) (i32.const -1)
+        (i32.or (i32.eq (local.get $scan_type) (i32.const 4))
+          (i32.eq (local.get $scan_type) (i32.const 5))))))
 
   ;; Rule 2b/3b is the vertical counterpart to tt_add_center_span's
   ;; horizontal dropout rule. The bitmap is column-major and top-down, so the
@@ -1702,7 +1709,7 @@
   (func $tt_add_vertical_dropout (param $bitmap i32) (param $height i32)
         (param $column i32) (param $bottom i32)
         (param $y_start i32) (param $y_end i32)
-        (param $scan_type i32) (param $sample i32)
+        (param $dropout i32) (param $scan_type i32) (param $sample i32)
         (param $edges i32) (param $start_edge i32) (param $end_edge i32)
     (local $first i32) (local $last i32) (local $pixel i32)
     (local $row i32) (local $slot i32) (local $mask i32) (local $mid i32)
@@ -1716,8 +1723,31 @@
     (local.set $last
       (call $tt_floor_fine_px
         (i32.sub (local.get $y_end) (i32.const 2048))))
-    ;; Rule 1 already covers a span containing a pixel centre.
-    (if (i32.le_s (local.get $first) (local.get $last)) (then (return)))
+    ;; Rule 1 already covers interior centres. Rule 2b is still active when
+    ;; dropout control is off: if the upper contour boundary itself is exactly
+    ;; on a centre at scan precision, turn on that boundary pixel.
+    (if (i32.le_s (local.get $first) (local.get $last))
+      (then
+        (local.set $pixel (call $tt_floor_fine_px
+          (i32.sub (local.get $y_end) (i32.const 2048))))
+        (if (i32.and
+              (i32.eq (local.get $y_end)
+                (i32.add (i32.mul (local.get $pixel) (i32.const 4096))
+                  (i32.const 2048)))
+              (i32.and (i32.ge_s (local.get $pixel) (i32.const 0))
+                (i32.lt_s (local.get $pixel) (local.get $height))))
+          (then
+            (local.set $mask (i32.shr_u (i32.const 0x80)
+              (i32.and (local.get $column) (i32.const 7))))
+            (local.set $row (i32.sub
+              (i32.sub (local.get $height) (i32.const 1)) (local.get $pixel)))
+            (local.set $slot (i32.add (local.get $bitmap)
+              (i32.add (i32.mul (i32.shr_u (local.get $column) (i32.const 3))
+                  (local.get $height)) (local.get $row))))
+            (i32.store8 (local.get $slot)
+              (i32.or (i32.load8_u (local.get $slot)) (local.get $mask)))))
+        (return)))
+    (if (i32.eqz (local.get $dropout)) (then (return)))
     ;; Modes 1 and 5 omit a terminal stub when its two boundary edges join
     ;; before reaching the neighbouring vertical scan line. Testing the
     ;; shared contour endpoint keeps flattened curve pieces from being
@@ -1989,8 +2019,16 @@
         (local.set $value (i32.load (i32.add (local.get $coverage)
           (i32.mul (local.get $column) (i32.const 4)))))
         (if (i32.and (i32.ne (local.get $bitmap) (i32.const 0))
-              (i32.ge_s (i32.mul (local.get $value) (i32.const 2))
-                (i32.mul (i32.const 4096) (local.get $subrows))))
+              (i32.or
+                (i32.ge_s (i32.mul (local.get $value) (i32.const 2))
+                  (i32.mul (i32.const 4096) (local.get $subrows)))
+                (i32.and (i32.eq (local.get $value) (i32.const -1))
+                  (i32.or
+                    (i32.ge_s (i32.add (local.get $column) (i32.const 1))
+                      (local.get $width))
+                    (i32.eqz (i32.load (i32.add (local.get $coverage)
+                      (i32.mul (i32.add (local.get $column) (i32.const 1))
+                        (i32.const 4)))))))))
           (then
             (local.set $slot (i32.add (local.get $bitmap)
               (i32.add
@@ -2021,9 +2059,9 @@
       (local.set $row (i32.add (local.get $row) (i32.const 1)))
       (br $rows)))
 
-    ;; Horizontal scan lines implement Rule 1 and Rule 2a/3a above. Complete
-    ;; monochrome dropout control with vertical scan lines (Rule 2b/3b).
-    (if (i32.and (local.get $monochrome) (local.get $dropout))
+    ;; Horizontal scan lines implement Rule 1 and Rule 2a/3a above. Vertical
+    ;; scan lines always implement Rule 2b, then Rule 3b when dropout is on.
+    (if (local.get $monochrome)
       (then
         (local.set $value (i32.sub (local.get $top)
           (i32.mul (local.get $height) (i32.const 64)))) ;; bitmap bottom
@@ -2074,10 +2112,18 @@
                       (i32.mul (local.get $count) (i32.const 16))))
                     (i32.store (local.get $slot)
                       (if (result i32) (local.get $kind)
-                        (then (call $tt_quad_crossing_fine
-                          (local.get $x0) (local.get $cx) (local.get $x1)
-                          (local.get $y0) (local.get $cy) (local.get $y1)
-                          (local.get $sample)))
+                        ;; Win98's vertical boundary comparator keeps three
+                        ;; fractional bits beyond the 26.6 outline grid. This
+                        ;; makes Rule 2 stable without moving ordinary Rule-1
+                        ;; crossings onto a pixel centre.
+                        (then (i32.shl
+                          (call $gdi_round_ratio
+                            (i64.extend_i32_s (call $tt_quad_crossing_fine
+                              (local.get $x0) (local.get $cx) (local.get $x1)
+                              (local.get $y0) (local.get $cy) (local.get $y1)
+                              (local.get $sample)))
+                            (i64.const 8))
+                          (i32.const 3)))
                         (else (i32.add (i32.shl (local.get $y0) (i32.const 6))
                           (call $gdi_round_ratio
                           (i64.mul
@@ -2115,7 +2161,8 @@
               (then (call $tt_add_vertical_dropout
                 (local.get $bitmap) (local.get $height) (local.get $column)
                 (local.get $value) (local.get $span_start)
-                (i32.load (local.get $slot)) (local.get $scan_type)
+                (i32.load (local.get $slot)) (local.get $dropout)
+                (local.get $scan_type)
                 (local.get $sample) (local.get $edges)
                 (i32.load offset=8 (local.get $span_slot))
                 (i32.load offset=8 (local.get $slot)))))
@@ -4001,26 +4048,36 @@
   ;; That the glyph cache already stores bitmaps in the FNT column-major bit
   ;; layout is what makes this a copy rather than a conversion.
   ;;
-  ;; What is lost by going through a bitmap cell: a negative left bearing is
-  ;; clipped, because an FNT cell starts at the pen. Win98 GDI clipped the
-  ;; same way for its own bitmap fonts, and the alternative is a parallel
-  ;; renderer that would have to re-derive every policy listed above.
+  ;; An ordinary FNT cell starts at the pen and its width is also its advance.
+  ;; Scalable glyphs need those two quantities kept separate: Arial K at 8ppem,
+  ;; for example, advances five pixels but has ink through x=5. Synthetic
+  ;; strikes therefore carry a small private table of signed left bearings and
+  ;; ink widths. The bitmap text path consumes that table while retaining the
+  ;; ordinary FNT width for layout; installed bitmap fonts never have it.
 
   (global $TT_FNT_HEADER i32 (i32.const 148))
   (global $TT_FNT_ENTRY i32 (i32.const 6))
   ;; 0..255 plus the sentinel entry every FNT carries after the last glyph.
   (global $TT_FNT_ENTRIES i32 (i32.const 257))
+  ;; One { i16 left, u16 ink_width } record for codes 0..255. The v3 header's
+  ;; reserved tail identifies the private extension and points at this table.
+  (global $TT_FNT_META_ENTRY i32 (i32.const 4))
+  (global $TT_FNT_META_COUNT i32 (i32.const 256))
+  (global $TT_FNT_META_MAGIC i32 (i32.const 0x58455454)) ;; "TTEX"
   ;; A face this tall is not a Win98 UI font, and the image would be megabytes.
   (global $TT_FNT_MAX_HEIGHT i32 (i32.const 200))
 
-  (func $tt_fnt_data_off (result i32)
+  (func $tt_fnt_meta_off (result i32)
     (i32.add (global.get $TT_FNT_HEADER)
       (i32.mul (global.get $TT_FNT_ENTRIES) (global.get $TT_FNT_ENTRY))))
 
-  ;; Cell width for one code. In an FNT the char-table width IS the advance -
-  ;; the renderer moves the pen by exactly this - so a cell widened to hold an
-  ;; overhanging glyph would widen the letter spacing with it. Ink that runs
-  ;; past the advance is clipped instead, which is what a bitmap font does.
+  (func $tt_fnt_data_off (result i32)
+    (i32.add (call $tt_fnt_meta_off)
+      (i32.mul (global.get $TT_FNT_META_COUNT)
+        (global.get $TT_FNT_META_ENTRY))))
+
+  ;; Cell width for one code. In an FNT the char-table width IS the advance,
+  ;; so it deliberately remains independent of the private ink width.
   (func $tt_fnt_cell_width (param $face i32) (param $ppem i32) (param $code i32)
         (result i32)
     (local $width i32)
@@ -4035,6 +4092,18 @@
   (func $tt_fnt_cell_bytes (param $width i32) (param $height i32) (result i32)
     (i32.mul (i32.shr_u (i32.add (local.get $width) (i32.const 7)) (i32.const 3))
       (local.get $height)))
+
+  (func $tt_fnt_storage_width (param $face i32) (param $ppem i32)
+        (param $code i32) (result i32)
+    (local $advance i32) (local $entry i32) (local $ink_width i32)
+    (local.set $advance (call $tt_fnt_cell_width (local.get $face)
+      (local.get $ppem) (local.get $code)))
+    (local.set $entry (call $tt_face_glyph (local.get $face) (local.get $code)
+      (local.get $ppem)))
+    (if (local.get $entry)
+      (then (local.set $ink_width (call $tt_entry_width (local.get $entry)))))
+    (select (local.get $ink_width) (local.get $advance)
+      (i32.gt_u (local.get $ink_width) (local.get $advance))))
 
   ;; Byte length of the image this face and size would produce, or 0 when it
   ;; is not one this layer will build.
@@ -4051,7 +4120,7 @@
       (br_if $done (i32.gt_u (local.get $code) (i32.const 255)))
       (local.set $total (i32.add (local.get $total)
         (call $tt_fnt_cell_bytes
-          (call $tt_fnt_cell_width (local.get $face) (local.get $ppem)
+          (call $tt_fnt_storage_width (local.get $face) (local.get $ppem)
             (local.get $code))
           (local.get $height))))
       (local.set $code (i32.add (local.get $code) (i32.const 1)))
@@ -4069,7 +4138,9 @@
     (if (i32.eqz (local.get $entry)) (then (return)))
     (local.set $gw (call $tt_entry_width (local.get $entry)))
     (local.set $gh (call $tt_entry_height (local.get $entry)))
-    (local.set $ox (call $tt_entry_left (local.get $entry)))
+    ;; The private metadata positions the ink relative to the pen. Store the
+    ;; cached bitmap itself from x=0 so negative and right overhangs survive.
+    (local.set $ox (i32.const 0))
     (local.set $oy (i32.sub (local.get $ascent)
       (call $tt_entry_top (local.get $entry))))
     (block $rows_done (loop $rows
@@ -4105,8 +4176,9 @@
         (param $out i32) (param $capacity i32) (result i32)
     (local $height i32) (local $ascent i32) (local $name_len i32)
     (local $total i32) (local $code i32) (local $width i32)
+    (local $storage_width i32) (local $ink_width i32)
     (local $entry i32) (local $data_off i32) (local $face_off i32)
-    (local $table i32) (local $ch i32)
+    (local $table i32) (local $meta i32) (local $ch i32)
     (local.set $name_len (call $tt_strlen (local.get $name)))
     (local.set $total (call $tt_fnt_size (local.get $face) (local.get $ppem)
       (local.get $name_len)))
@@ -4121,6 +4193,7 @@
 
     (local.set $data_off (call $tt_fnt_data_off))
     (local.set $table (i32.add (local.get $out) (global.get $TT_FNT_HEADER)))
+    (local.set $meta (i32.add (local.get $out) (call $tt_fnt_meta_off)))
     (block $done (loop $glyphs
       (br_if $done (i32.gt_u (local.get $code) (i32.const 255)))
       (local.set $width (call $tt_fnt_cell_width (local.get $face)
@@ -4134,11 +4207,23 @@
         (local.get $data_off))
       (local.set $entry (call $tt_face_glyph (local.get $face) (local.get $code)
         (local.get $ppem)))
+      (local.set $ink_width (i32.const 0))
+      (if (local.get $entry)
+        (then
+          (i32.store16 (i32.add (local.get $meta)
+              (i32.mul (local.get $code) (global.get $TT_FNT_META_ENTRY)))
+            (call $tt_entry_left (local.get $entry)))
+          (local.set $ink_width (call $tt_entry_width (local.get $entry)))
+          (i32.store16 offset=2 (i32.add (local.get $meta)
+              (i32.mul (local.get $code) (global.get $TT_FNT_META_ENTRY)))
+            (local.get $ink_width))))
+      (local.set $storage_width (select (local.get $ink_width) (local.get $width)
+        (i32.gt_u (local.get $ink_width) (local.get $width))))
       (call $tt_fnt_blit_cell (local.get $entry)
         (i32.add (local.get $out) (local.get $data_off))
-        (local.get $width) (local.get $height) (local.get $ascent))
+        (local.get $storage_width) (local.get $height) (local.get $ascent))
       (local.set $data_off (i32.add (local.get $data_off)
-        (call $tt_fnt_cell_bytes (local.get $width) (local.get $height))))
+        (call $tt_fnt_cell_bytes (local.get $storage_width) (local.get $height))))
       (local.set $code (i32.add (local.get $code) (i32.const 1)))
       (br $glyphs)))
 
@@ -4182,6 +4267,8 @@
     (i32.store8 offset=99 (local.get $out) (i32.const 0x20))
     (i32.store offset=105 (local.get $out) (local.get $face_off))
     (i32.store offset=117 (local.get $out) (call $tt_fnt_data_off))
+    (i32.store offset=132 (local.get $out) (global.get $TT_FNT_META_MAGIC))
+    (i32.store offset=136 (local.get $out) (call $tt_fnt_meta_off))
     (local.get $total))
 
   (func $tt_strlen (param $text i32) (result i32)

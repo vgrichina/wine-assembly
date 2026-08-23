@@ -88,6 +88,12 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
       wat.guest_write16(guest + index * 2, character.charCodeAt(0)));
     return guest;
   };
+  const allocA = text => {
+    const encoded = Buffer.from(`${text}\0`, 'latin1');
+    const guest = allocZero(encoded.length);
+    new Uint8Array(memory.buffer).set(encoded, wa(guest));
+    return guest;
+  };
 
   const fontBytes = fs.readFileSync(path.join(
     REPO, 'fonts', 'liberation', 'LiberationSans-Regular.ttf'));
@@ -722,6 +728,57 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
       `Win98 Arial ${character} 10ppem monochrome bitmap must match exactly`);
     }
 
+    // Simple dropout candidates are resolved only after every Rule-1 span on
+    // the row has run. Arial s at 11ppem otherwise gains one false pixel when
+    // a later ordinary span should suppress the earlier candidate. At 28ppem
+    // dropout is disabled, but Rule 2b still includes the a contour boundary
+    // that lands on the vertical scan converter's fine equality grid.
+    const scanRuleOracles = [
+      {
+        character: 's', ppem: 11, box: [5, 6, 0, 6],
+        rows: ['.###.', '#...#', '.##..', '...#.', '#...#', '.###.'],
+      },
+      {
+        character: 'a', ppem: 28, box: [13, 15, 1, 15],
+        boundaryRow: [5, '.......#####.'],
+      },
+    ];
+    for (const expected of scanRuleOracles) {
+      const rasterGid = wat.test_tt_glyph_index(
+        native.at, native.size, expected.character.charCodeAt(0));
+      const box = [
+        wat.test_tt_glyph_box_width(
+          native.at, native.size, rasterGid, expected.ppem),
+        wat.test_tt_glyph_box_height(
+          native.at, native.size, rasterGid, expected.ppem),
+        wat.test_tt_glyph_box_left(
+          native.at, native.size, rasterGid, expected.ppem),
+        wat.test_tt_glyph_box_top(
+          native.at, native.size, rasterGid, expected.ppem),
+      ];
+      assert.deepStrictEqual(box, expected.box,
+        `Win98 Arial ${expected.character} ${expected.ppem}ppem metrics must match`);
+      const bitmapGuest = wat.guest_alloc(256) >>> 0;
+      const scratchBytes = wat.test_tt_raster_scratch_bytes(box[0]) >>> 0;
+      const scratchGuest = wat.guest_alloc(scratchBytes) >>> 0;
+      assert.strictEqual(wat.test_tt_rasterize_glyph(
+        native.at, native.size, rasterGid, expected.ppem, wa(bitmapGuest),
+        box[0], box[1], box[2] * 64, box[3] * 64,
+        wa(scratchGuest), scratchBytes), 1,
+      `Win98 Arial ${expected.character} must scan-convert at ${expected.ppem}ppem`);
+      const rows = Array.from({ length: box[1] }, (_, y) =>
+        Array.from({ length: box[0] }, (_unused, x) =>
+          wat.test_tt_bitmap_pixel(wa(bitmapGuest), box[1], x, y)
+            ? '#' : '.').join(''));
+      if (expected.rows) {
+        assert.deepStrictEqual(rows, expected.rows,
+          `Win98 Arial ${expected.character} ${expected.ppem}ppem bitmap must match`);
+      } else {
+        assert.strictEqual(rows[expected.boundaryRow[0]], expected.boundaryRow[1],
+          `Win98 Arial ${expected.character} ${expected.ppem}ppem Rule-2b row must match`);
+      }
+    }
+
     // GGO black boxes round hinted extrema to device pixels. Arial j has an
     // exact -29/64 left extremum: conservative floor/ceil would report a
     // spurious blank column at x=-1 even though Win98 reports x=0, width 2.
@@ -782,6 +839,32 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
     hostCtx.vfs.files.set('c:\\windows\\fonts\\arial.ttf', {
       data: new Uint8Array(fs.readFileSync(oraclePath)), attrs: 0x20,
     });
+    const arialFace = wat.test_tt_face_open(
+      allocA('C:\\WINDOWS\\FONTS\\ARIAL.TTF')) | 0;
+    assert.ok(arialFace >= 0, 'the scalable Arial strike test must open its face');
+    const strikeSize = wat.test_tt_fnt_size(arialFace, 8, 5) >>> 0;
+    const strikeGuest = wat.guest_alloc(strikeSize) >>> 0;
+    const strike = wa(strikeGuest);
+    assert.strictEqual(wat.test_tt_fnt_build(
+      arialFace, 8, wa(allocA('Arial')), strike, strikeSize) >>> 0, strikeSize,
+    'the scalable Arial 8ppem strike must build completely');
+    const strikeView = new DataView(memory.buffer);
+    assert.strictEqual(strikeView.getUint32(strike + 132, true), 0x58455454,
+      'a scalable strike must carry the private TTEX marker');
+    const metaOffset = strikeView.getUint32(strike + 136, true);
+    const kMeta = strike + metaOffset + 'K'.charCodeAt(0) * 4;
+    assert.deepStrictEqual([
+      strikeView.getInt16(kMeta, true),
+      strikeView.getUint16(kMeta + 2, true),
+    ], [1, 5], 'Arial K must retain its left bearing and full ink width');
+    const kTable = strike + 148 + 'K'.charCodeAt(0) * 6;
+    assert.strictEqual(strikeView.getUint16(kTable, true), 5,
+      'Arial K strike advancement must remain five pixels');
+    const kData = strike + strikeView.getUint32(kTable + 2, true);
+    const strikeHeight = strikeView.getUint16(strike + 88, true);
+    assert.ok(Array.from(new Uint8Array(
+      memory.buffer, kData, strikeHeight)).some(row => row & 0x08),
+    'Arial K strike storage must preserve ink in its rightmost column');
     const fontHandle = wat.test_call_CreateFontW(
       -24, 400, 0, allocFaceW('Arial')) >>> 0;
     const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0;
@@ -838,6 +921,7 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
       `${win98WPoints.size * 5} Arial W point cases, ` +
       `${digitOracles.size} exact Arial digit bitmaps, ` +
       `7 exact Arial 10ppem c/D/M/V/7/O/Z bitmaps, ` +
+      `${scanRuleOracles.length} exact scan-rule bitmap cases, TTEX K strike, ` +
       `${metricCases}/3 exact GGO metric cases, ` +
       `${controlPrograms} Times/Courier programs`;
   }
