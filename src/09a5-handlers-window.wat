@@ -1379,6 +1379,10 @@
     (local.set $tmp (global.get $pending_input_hwnd))
     (if (i32.eqz (local.get $tmp))
     (then (local.set $tmp (global.get $main_hwnd))))
+    ;; A console app's keystrokes belong to the console window, not to whatever
+    ;; hidden window the process happens to own.
+    (local.set $tmp (call $console_input_target (local.get $tmp)
+      (i32.and (local.get $packed) (i32.const 0xFFFF))))
     (call $gs32 (local.get $msg_ptr) (local.get $tmp))
     (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4))
     (i32.and (local.get $packed) (i32.const 0xFFFF)))
@@ -1679,6 +1683,7 @@
             (local.set $tmp (global.get $pending_input_hwnd))
             (if (i32.eqz (local.get $tmp))
               (then (local.set $tmp (global.get $main_hwnd))))
+            (local.set $tmp (call $console_input_target (local.get $tmp) (local.get $msg)))
             (call $gs32 (local.get $arg0) (local.get $tmp))
             (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (local.get $msg))
             (call $gs32 (i32.add (local.get $arg0) (i32.const 8))

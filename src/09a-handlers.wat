@@ -8630,21 +8630,23 @@ HookEx — no next hook in chain, return 0
   )
 
   ;; 504: ReadConsoleA(hConsole, lpBuffer, nCharsToRead, lpCharsRead, lpReserved) → BOOL
+  ;; Blocks on the console input queue; see $console_read.
   (func $handle_ReadConsoleA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg3)
-      (then (i32.store (call $g2w (local.get $arg3)) (i32.const 0))))
+    (if (call $console_read (local.get $arg1) (local.get $arg2) (local.get $arg3) (i32.const 0))
+      (then (return)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
   ;; 505: SetConsoleMode(hConsole, dwMode) → BOOL
   (func $handle_SetConsoleMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $console_mode (local.get $arg1))
+    (call $console_input_set_mode (local.get $arg1))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; 506: GetConsoleMode(hConsole, lpMode) → BOOL
   (func $handle_GetConsoleMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store (call $g2w (local.get $arg1)) (global.get $console_mode))
+    (i32.store (call $g2w (local.get $arg1)) (call $console_input_mode))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
@@ -8697,22 +8699,34 @@ HookEx — no next hook in chain, return 0
   )
 
   ;; 510: ReadConsoleInputA(hConsole, lpBuffer, nLength, lpNumberOfEventsRead) → BOOL
+  ;; Blocking, like the real API: it returns only once at least one event is
+  ;; queued.
   (func $handle_ReadConsoleInputA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $n i32)
+    (if (i32.eqz (call $console_input_count))
+      (then
+        (call $console_input_block)
+        (return)))
+    (local.set $n (call $console_read_input (local.get $arg1) (local.get $arg2) (i32.const 0)))
+    (call $console_input_drop (local.get $n))
     (if (local.get $arg3)
-      (then (i32.store (call $g2w (local.get $arg3)) (i32.const 0))))
+      (then (i32.store (call $g2w (local.get $arg3)) (local.get $n))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; 511: PeekConsoleInputA(hConsole, lpBuffer, nLength, lpNumberOfEventsRead) → BOOL
+  ;; Non-destructive: copies without dropping, and never blocks.
   (func $handle_PeekConsoleInputA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (local.get $arg3)
-      (then (i32.store (call $g2w (local.get $arg3)) (i32.const 0))))
+      (then (i32.store (call $g2w (local.get $arg3))
+        (call $console_read_input (local.get $arg1) (local.get $arg2) (i32.const 0))))
+      (else (drop (call $console_read_input (local.get $arg1) (local.get $arg2) (i32.const 0)))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; 512: GetNumberOfConsoleInputEvents(hConsole, lpNumberOfEvents) → BOOL
   (func $handle_GetNumberOfConsoleInputEvents (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store (call $g2w (local.get $arg1)) (i32.const 0))
+    (i32.store (call $g2w (local.get $arg1)) (call $console_input_count))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 

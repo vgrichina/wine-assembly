@@ -2438,6 +2438,21 @@
   (global $CONSOLE_ATTR i32 (i32.const 0x07E0C000))
   (global $CONSOLE_MAX_CELLS i32 (i32.const 6144))
 
+  ;; Console input queue. $CONSOLE_ATTR's 6144 cells end at 0x07E0F000, which
+  ;; leaves one free page before DIB_PAGE_USED.
+  ;;   +0  queued event count
+  ;;   +4  read cursor (ring index of the oldest queued event)
+  ;;   +8  wake event handle, created on first block
+  ;;   +12 console mode + 1 (0 = never set, so the $console_mode default applies)
+  ;;   +16 the console window's hwnd, 0 until some thread creates it
+  ;;   +32 ring of $CONSOLE_INPUT_MAX × 8 bytes: {+0 char, +4 virtual key}
+  ;; This lives in linear memory rather than in globals because memory is
+  ;; shared across thread instances and globals are not: the window that reads
+  ;; the keyboard and the thread that calls ReadConsole are usually different
+  ;; threads, and a global would give each of them its own empty queue.
+  (global $CONSOLE_INPUT i32 (i32.const 0x07E0F000))
+  (global $CONSOLE_INPUT_MAX i32 (i32.const 256))
+
   ;; EIP hit counters: passive per-block counter at 16 slots (HIT_COUNT_BASE=0x11F00,
   ;; 8 bytes each: +0 addr i32, +4 count i32). Run loop checks up to $hit_count_n
   ;; slots per block dispatch. Addresses must be x86 block-entry boundaries.
