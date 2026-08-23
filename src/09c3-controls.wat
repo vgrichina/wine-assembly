@@ -1067,8 +1067,20 @@
     (local.set $class (call $ctrl_table_get_class (local.get $hwnd)))
     (if (i32.and (i32.eq (local.get $msg) (i32.const 0x000F))
           (i32.ne (local.get $class) (i32.const 0)))
-      (then (call $ctrl_paint_trace_emit
-              (local.get $hwnd) (local.get $class) (i32.const 0))))
+      (then
+        ;; USER never sends WM_PAINT to a window with no visible region, and a
+        ;; hidden child has none. Our children share the top-level's backing
+        ;; canvas, so a paint that slips through here is not merely wasted: it
+        ;; stamps pixels nothing will ever erase. mIRC's installer creates every
+        ;; wizard page's controls up front and hides all but one, and every
+        ;; page's text was landing on the same dialog face at once.
+        (if (i32.eqz (call $wnd_is_effectively_visible (local.get $hwnd)))
+          (then
+            (call $ctrl_paint_trace_emit
+              (local.get $hwnd) (local.get $class) (i32.const 2))
+            (return (i32.const 0))))
+        (call $ctrl_paint_trace_emit
+          (local.get $hwnd) (local.get $class) (i32.const 0))))
     ;; Class 1 = Button
     (if (i32.eq (local.get $class) (i32.const 1))
       (then (return (call $button_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
