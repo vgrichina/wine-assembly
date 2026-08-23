@@ -52,6 +52,64 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
+  ;; LR_LOADFROMFILE: `name` is a path, not a resource id. Read the .bmp
+  ;; through the VFS and build the bitmap from its BITMAPFILEHEADER + DIB, so
+  ;; the caller gets the file's real pixels at the file's real size. Returns 0
+  ;; when the file is missing or is not a BMP, leaving the resource path to
+  ;; decide what to do next.
+  (func $load_image_bitmap_file (param $path_wa i32) (result i32)
+    (local $handle i32) (local $size i32) (local $buf_ga i32) (local $buf_wa i32)
+    (local $read_ga i32) (local $off i32) (local $hdr i32) (local $bmp i32)
+    (local.set $handle (call $host_fs_create_file
+      (local.get $path_wa) (i32.const 0x80000000)
+      (i32.const 3) (i32.const 0x80) (i32.const 0)))
+    (if (i32.eq (local.get $handle) (i32.const -1)) (then (return (i32.const 0))))
+    (local.set $size (call $host_fs_get_file_size (local.get $handle)))
+    ;; 54 = BITMAPFILEHEADER + BITMAPINFOHEADER, the smallest legal BMP.
+    (if (i32.or (i32.lt_u (local.get $size) (i32.const 54))
+                (i32.gt_u (local.get $size) (i32.const 0x2000000)))
+      (then
+        (drop (call $host_fs_close_handle (local.get $handle)))
+        (return (i32.const 0))))
+    (local.set $buf_ga (call $heap_alloc (local.get $size)))
+    (local.set $read_ga (call $heap_alloc (i32.const 4)))
+    (if (i32.or (i32.eqz (local.get $buf_ga)) (i32.eqz (local.get $read_ga)))
+      (then
+        (drop (call $host_fs_close_handle (local.get $handle)))
+        (if (local.get $buf_ga) (then (call $heap_free (local.get $buf_ga))))
+        (if (local.get $read_ga) (then (call $heap_free (local.get $read_ga))))
+        (return (i32.const 0))))
+    (i32.store (call $g2w (local.get $read_ga)) (i32.const 0))
+    (drop (call $host_fs_read_file
+      (local.get $handle) (local.get $buf_ga) (local.get $size) (local.get $read_ga)))
+    (drop (call $host_fs_close_handle (local.get $handle)))
+    (local.set $size (i32.load (call $g2w (local.get $read_ga))))
+    (call $heap_free (local.get $read_ga))
+    (local.set $buf_wa (call $g2w (local.get $buf_ga)))
+    ;; 0x4D42 = 'BM'
+    (if (i32.or (i32.lt_u (local.get $size) (i32.const 54))
+                (i32.ne (i32.load16_u (local.get $buf_wa)) (i32.const 0x4D42)))
+      (then
+        (call $heap_free (local.get $buf_ga))
+        (return (i32.const 0))))
+    (local.set $hdr (i32.add (local.get $buf_wa) (i32.const 14)))
+    (local.set $off (i32.load offset=10 (local.get $buf_wa)))  ;; bfOffBits
+    ;; A wrong bfOffBits is common in hand-built files; fall back to the header
+    ;; size, which is what GDI itself uses when the offset is not plausible.
+    (if (i32.or (i32.lt_u (local.get $off) (i32.const 54))
+                (i32.ge_u (local.get $off) (local.get $size)))
+      (then (local.set $off (i32.add (i32.const 14) (i32.load (local.get $hdr))))))
+    (if (i32.ge_u (local.get $off) (local.get $size))
+      (then
+        (call $heap_free (local.get $buf_ga))
+        (return (i32.const 0))))
+    (local.set $bmp (call $gdi_bitmap_create_dibitmap
+      (i32.const 0) (local.get $hdr)
+      (i32.add (local.get $buf_wa) (local.get $off))
+      (i32.const 1) (i32.const 0)))
+    (call $heap_free (local.get $buf_ga))
+    (local.get $bmp))
+
   ;; 711: LoadImageA(hInst, name, type, cx, cy, fuLoad) — delegate to LoadIcon/LoadCursor/LoadBitmap
   (func $handle_LoadImageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tmp i32)
@@ -60,6 +118,19 @@
     ;; arg1 may be MAKEINTRESOURCE (<=0xFFFF) or a string pointer (named resource).
     (if (i32.eqz (local.get $arg2))
       (then
+        ;; LR_LOADFROMFILE (0x10) — name is a path; the resource walker has
+        ;; nothing to find. Pawn loads its two board squares this way.
+        (if (i32.and
+              (i32.ne (i32.and (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
+                               (i32.const 0x10)) (i32.const 0))
+              (i32.gt_u (local.get $arg1) (i32.const 0xFFFF)))
+          (then
+            (local.set $tmp (call $load_image_bitmap_file (call $g2w (local.get $arg1))))
+            (if (local.get $tmp)
+              (then
+                (global.set $eax (local.get $tmp))
+                (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+                (return)))))
         (local.set $tmp (call $host_gdi_load_bitmap (local.get $arg0)
           (if (result i32) (i32.gt_u (local.get $arg1) (i32.const 0xFFFF))
             (then (local.get $arg1))

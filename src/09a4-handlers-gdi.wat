@@ -633,9 +633,30 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 60))) (return)
   )
 
+  ;; CreateDC("DISPLAY", ...) is the ordinary way to ask for a screen DC when
+  ;; there is no window yet — Pawn uses one only to read LOGPIXELSY before
+  ;; sizing its piece font. Handing that caller the printer page made
+  ;; GetDeviceCaps answer 300 dpi, and every point size came out 3.1x too
+  ;; large. Case-insensitive compare of "display" as two dwords; byte 7 must be
+  ;; the terminator, so its OR mask is zero.
+  (func $gdi_driver_is_display (param $name i32) (result i32)
+    (local $wa i32)
+    (if (i32.eqz (local.get $name)) (then (return (i32.const 0))))
+    (local.set $wa (call $g2w (local.get $name)))
+    (i32.and
+      (i32.eq (i32.or (i32.load (local.get $wa)) (i32.const 0x20202020))
+              (i32.const 0x70736964))                      ;; "disp"
+      (i32.eq (i32.or (i32.load offset=4 (local.get $wa)) (i32.const 0x00202020))
+              (i32.const 0x0079616C))))                    ;; "lay\0"
+
   ;; CreateDCA(lpszDriver, lpszDevice, lpszOutput, lpInitData) — 4 args stdcall.
   ;; Allocate a WAT-owned printable Letter page and tag it for printer caps.
   (func $handle_CreateDCA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (call $gdi_driver_is_display (local.get $arg0))
+      (then
+        (global.set $eax (call $host_alloc_screen_dc))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
     (global.set $printer_hdc (call $gdi_printer_dc_alloc))
     (global.set $eax (global.get $printer_hdc))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
@@ -1923,8 +1944,30 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
+  ;; UTF-16 twin of $gdi_driver_is_display.
+  (func $gdi_driver_is_display_w (param $name i32) (result i32)
+    (local $wa i32)
+    (if (i32.eqz (local.get $name)) (then (return (i32.const 0))))
+    (local.set $wa (call $g2w (local.get $name)))
+    (i32.and
+      (i32.and
+        (i32.eq (i32.or (i32.load (local.get $wa)) (i32.const 0x00200020))
+                (i32.const 0x00690064))                    ;; "di"
+        (i32.eq (i32.or (i32.load offset=4 (local.get $wa)) (i32.const 0x00200020))
+                (i32.const 0x00700073)))                   ;; "sp"
+      (i32.and
+        (i32.eq (i32.or (i32.load offset=8 (local.get $wa)) (i32.const 0x00200020))
+                (i32.const 0x0061006C))                    ;; "la"
+        (i32.eq (i32.or (i32.load offset=12 (local.get $wa)) (i32.const 0x00000020))
+                (i32.const 0x00000079)))))                 ;; "y\0"
+
   ;; 372: CreateDCW — wide printer/display DC owns a canonical page surface.
   (func $handle_CreateDCW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (call $gdi_driver_is_display_w (local.get $arg0))
+      (then
+        (global.set $eax (call $host_alloc_screen_dc))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
     (global.set $printer_hdc (call $gdi_printer_dc_alloc))
     (global.set $eax (global.get $printer_hdc))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
