@@ -1906,7 +1906,7 @@
             (i32.const 90) (i32.sub (local.get $h) (i32.const 56))
             (i32.const 80) (i32.const 24)
             (i32.const 0x50010001)
-            (call $wat_str_to_heap (i32.const 0x1D9) (i32.const 2)))))
+            (call $wat_str_to_heap (i32.const 0x1D9) (i32.const 2))))
     ;; Lines 2 + 3: split other_g on the first '\n'. If the app passes
     ;; NULL, ShellAbout still fills the dialog with the standard Windows
     ;; version/copyright block.
@@ -1943,7 +1943,6 @@
             (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
                     (i32.const 12) (i32.const 50) (i32.const 236) (i32.const 18)
                     (i32.const 0x50000000) (local.get $line3_w)))))))
-      ))
     ;; ShellAbout is a modal shell-owned dialog on Win98: by the time the
     ;; caller observes it, USER has already exposed/erased the dialog and
     ;; delivered paint to built-in child controls. Our ShellAbout handler is
@@ -4480,10 +4479,12 @@
     ;; Calc owner-draw button labels move by 1px while pressed. Its draw code
     ;; uses transparent text, so clear the child DC first or stale glyph pixels
     ;; from the previous offset remain visible.
-    (drop (call $host_gdi_fill_rect (local.get $hdc)
-            (i32.const 0) (i32.const 0)
-            (local.get $w) (local.get $h)
-            (i32.const 0x30011)))
+    (if (call $ownerdraw_prefill_allowed (local.get $hwnd))
+      (then
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.const 0) (i32.const 0)
+                (local.get $w) (local.get $h)
+                (i32.const 0x30011)))))
     ;; Win98 supplies owner-draw button DCs with the standard 3-D colors.
     ;; Monochrome BitBlt maps source 1 through TextColor and source 0 through
     ;; BkColor; ABOUT.DLL relies on this to emboss resource 999 instead of
@@ -4503,8 +4504,21 @@
             (local.get $dis)))
     (call $heap_free (local.get $dis)))
 
+  ;; Real Win32 hands an owner-draw item's DC to the owner untouched -- the
+  ;; owner paints the whole item. We pre-fill COLOR_BTNFACE first because our
+  ;; children share the top-level back-canvas, so an owner that draws
+  ;; transparent text (Calc's keypad) would otherwise keep stale glyphs. Over
+  ;; an app's DirectDraw exclusive-fullscreen primary that pre-fill is
+  ;; destructive: such a window shares the game's framebuffer and its surface
+  ;; already holds the presented frame, and Diablo's menus are nothing but
+  ;; transparent white text over it.
+  (func $ownerdraw_prefill_allowed (param $hwnd i32) (result i32)
+    (i32.eqz
+      (i32.and (i32.ne (global.get $dx_exclusive_fullscreen) (i32.const 0))
+        (i32.ne (call $wnd_top_level (local.get $hwnd)) (call $dx_target_hwnd)))))
+
   (func $dialog_default_idok_close (param $parent i32)
-    (local $dlg_rec i32)
+    (local $dlg_rec i32) (local $slot i32) (local $kid i32)
     ;; Only DialogBoxParamA's modal pump supplies a default IDOK close.
     ;; CreateDialogParamA dialogs are modeless: their application owns the
     ;; lifetime even when the dialog proc returns FALSE for WM_COMMAND.
@@ -4517,6 +4531,23 @@
     (local.set $dlg_rec (call $dlg_record_for_hwnd (local.get $parent)))
     (if (i32.eqz (local.get $dlg_rec)) (then (return)))
     (if (i32.eqz (i32.load offset=4 (local.get $dlg_rec))) (then (return)))
+    ;; A wizard frame hosts each page as a child dialog of its own: one outer
+    ;; modal window with an inner template-loaded dialog swapped in and out.
+    ;; Its IDOK button is "Next", not "OK" -- the app's dlgproc destroys the
+    ;; current page, creates the next one, and returns FALSE because it has
+    ;; nothing to tell USER. Closing the frame on that FALSE ends the whole
+    ;; session: the NSIS installers exited with code 1 the instant "I Agree"
+    ;; moved them off the licence page.
+    (local.set $slot (i32.const 0))
+    (block $kids_done (loop $kids
+      (local.set $slot (call $wnd_next_child_slot (local.get $parent) (local.get $slot)))
+      (br_if $kids_done (i32.eq (local.get $slot) (i32.const -1)))
+      (local.set $kid (call $dlg_record_for_hwnd (call $wnd_slot_hwnd (local.get $slot))))
+      (if (i32.and (i32.ne (local.get $kid) (i32.const 0))
+                   (i32.ne (i32.load offset=28 (local.get $kid)) (i32.const 0)))
+        (then (return)))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $kids)))
     (global.set $dlg_ended (i32.const 1))
     (global.set $dlg_result (i32.const 1))
     (i32.store (global.get $SHARED_DLG_ENDED) (i32.const 1))
@@ -4616,6 +4647,24 @@
             (call $btn_set_flags (local.get $state_w)
               (i32.or (call $btn_flags (local.get $state_w)) (i32.const 0x0C))) ;; focused | default
             (call $invalidate_hwnd (local.get $hwnd))))
+        ;; BS_NOTIFY asks USER to tell the parent when a button gains focus.
+        ;; Diablo's class picker uses BN_SETFOCUS to select the highlighted
+        ;; hero and populate its stats; BN_CLICKED only accepts that choice.
+        (if (i32.and
+              (i32.ne
+                (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00004000))
+                (i32.const 0))
+              (i32.ne (local.get $state) (i32.const 0)))
+          (then
+            (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+            (if (local.get $parent)
+              (then
+                (drop (call $wnd_send_message
+                  (local.get $parent) (i32.const 0x0111)
+                  (i32.or
+                    (i32.and (call $btn_ctrl_id (local.get $state_w)) (i32.const 0xFFFF))
+                    (i32.shl (i32.const 6) (i32.const 16))) ;; BN_SETFOCUS
+                  (local.get $hwnd)))))))
         (return (i32.const 0))))
 
     ;; ---------- WM_KILLFOCUS (0x0008) ----------
@@ -4641,7 +4690,20 @@
                 (call $btn_set_flags (local.get $state_w)
                   (i32.and (call $btn_flags (local.get $state_w)) (i32.const 0xFFFFFFFB)))
                 (call $btn_restore_real_default (local.get $hwnd))))
-            (call $invalidate_hwnd (local.get $hwnd))))
+            (call $invalidate_hwnd (local.get $hwnd))
+            (if (i32.ne
+                  (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00004000))
+                  (i32.const 0))
+              (then
+                (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+                (if (local.get $parent)
+                  (then
+                    (drop (call $wnd_send_message
+                      (local.get $parent) (i32.const 0x0111)
+                      (i32.or
+                        (i32.and (call $btn_ctrl_id (local.get $state_w)) (i32.const 0xFFFF))
+                        (i32.shl (i32.const 7) (i32.const 16))) ;; BN_KILLFOCUS
+                      (local.get $hwnd)))))))))
         (return (i32.const 0))))
 
     ;; ---------- WM_KEYDOWN (0x0100) ----------
@@ -4712,8 +4774,10 @@
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
         (return (call $btn_text_len (call $g2w (local.get $state))))))
 
-    ;; ---------- WM_LBUTTONDOWN (0x0201) ----------
-    (if (i32.eq (local.get $msg) (i32.const 0x0201))
+    ;; ---------- WM_LBUTTONDOWN (0x0201) / WM_LBUTTONDBLCLK (0x0203) ----------
+    (if (i32.or
+          (i32.eq (local.get $msg) (i32.const 0x0201))
+          (i32.eq (local.get $msg) (i32.const 0x0203)))
       (then
         (if (local.get $state)
           (then
@@ -4729,7 +4793,34 @@
               (then (call $btn_send_drawitem (local.get $hwnd) (local.get $state_w) (local.get $flags)))
               (else
                 (drop (call $wnd_send_message
-                  (local.get $hwnd) (i32.const 0x000F) (i32.const 0) (i32.const 0)))))))
+                  (local.get $hwnd) (i32.const 0x000F) (i32.const 0) (i32.const 0)))))
+            ;; BUTTON sends BN_DOUBLECLICKED immediately for the historical
+            ;; radio/user/owner-draw kinds, and for any kind with BS_NOTIFY.
+            ;; Diablo uses BS_OWNERDRAW|BS_NOTIFY class buttons and advances
+            ;; from Choose Class on this notification while OK stays disabled.
+            (if (i32.eq (local.get $msg) (i32.const 0x0203))
+              (then
+                (local.set $w
+                  (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0F)))
+                (if (i32.or
+                      (i32.ne
+                        (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00004000))
+                        (i32.const 0))
+                      (i32.or
+                        (i32.or (i32.eq (local.get $w) (i32.const 4))
+                                (i32.eq (local.get $w) (i32.const 8)))
+                        (i32.or (i32.eq (local.get $w) (i32.const 9))
+                                (i32.eq (local.get $w) (i32.const 11)))))
+                  (then
+                    (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+                    (if (local.get $parent)
+                      (then
+                        (drop (call $wnd_send_message
+                          (local.get $parent) (i32.const 0x0111)
+                          (i32.or
+                            (i32.and (call $btn_ctrl_id (local.get $state_w)) (i32.const 0xFFFF))
+                            (i32.shl (i32.const 5) (i32.const 16))) ;; BN_DOUBLECLICKED
+                          (local.get $hwnd)))))))))))
         (return (i32.const 0))))
 
     ;; ---------- WM_LBUTTONUP (0x0202) ----------
@@ -5086,10 +5177,19 @@
             (i32.store offset=40 (local.get $edge_flags) (local.get $h)) ;; rcItem.bottom
             (i32.store offset=44 (local.get $edge_flags) (i32.const 0)) ;; itemData
             ;; Clear stale transparent text before delegating to the owner.
-            (drop (call $host_gdi_fill_rect (local.get $hdc)
-                    (i32.const 0) (i32.const 0)
-                    (local.get $w) (local.get $h)
-                    (i32.const 0x30011)))
+            ;; Real Win32 does not do this -- the owner is what paints the
+            ;; whole item -- and it is only safe because our children share
+            ;; the top-level back-canvas. Over a DirectDraw exclusive-
+            ;; fullscreen primary it is actively wrong: that surface holds the
+            ;; presented frame the window shares with the game, and Diablo's
+            ;; menu buttons are transparent text over it, so filling
+            ;; COLOR_BTNFACE first punches a grey slab through the game.
+            (if (call $ownerdraw_prefill_allowed (local.get $hwnd))
+              (then
+                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                        (i32.const 0) (i32.const 0)
+                        (local.get $w) (local.get $h)
+                        (i32.const 0x30011)))))
             (drop (call $host_gdi_set_text_color (local.get $hdc)
               (call $win98_sys_color (i32.const 15))))
             (drop (call $host_gdi_set_bk_color (local.get $hdc)
@@ -6011,7 +6111,7 @@
                                (i32.ge_s (local.get $h) (i32.const 12))))
                   (then
                     (call $statusbar_draw_size_grip
-                      (local.get $hdc) (local.get $w) (local.get $h))))))))))
+                      (local.get $hdc) (local.get $w) (local.get $h))))))))
         (return (i32.const 0))))
     (i32.const 0))
 
