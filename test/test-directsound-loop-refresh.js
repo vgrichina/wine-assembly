@@ -89,6 +89,17 @@ try {
     [0, 127 / 128, -1, -0.5],
     'Unlock refresh must replace the samples heard by the looping source');
 
+  const oneShotPtr = 0x1100;
+  pcm.set([0, 32, 64, 96, 128, 128, 128, 128], oneShotPtr);
+  const oneShot = host.voice_open(22050, 1, 8);
+  host.voice_play_ring(oneShot, oneShotPtr, 8, 0, 1);
+  const oneShotSource = ctx._voices._map[oneShot].currentSrc;
+  assert(oneShotSource && !oneShotSource.loop,
+    'a Miles looping allocation with a substantial silent tail must play once');
+  oneShotSource.onended();
+  assert.strictEqual(ctx._voices._map[oneShot].currentSrc, null,
+    'a silent-tail one-shot must clear itself when Web Audio finishes it');
+
   host.voice_stop(voice);
   assert.strictEqual(ctx._voices._map[voice].currentSrc, null,
     'DirectSound Stop should still terminate the refreshed ring source');
@@ -98,7 +109,7 @@ try {
   assert(/\$handle_IDirectSoundBuffer_Unlock[\s\S]*?\$host_voice_play_ring[\s\S]*?\(i32\.const 2\)/.test(directSoundWat),
     'IDirectSoundBuffer::Unlock must request an in-place host ring refresh');
 
-  console.log('PASS  looping DirectSound buffers refresh in place after Unlock');
+  console.log('PASS  DirectSound rings refresh while silent-tail effects end once');
 } finally {
   globalThis.AudioContext = oldAudioContext;
 }

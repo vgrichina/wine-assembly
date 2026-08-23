@@ -808,3 +808,13 @@ through their original installers before using any extracted game files.
   its play cursor. In a rebuilt Chromium run, three observed refreshes preserved
   source identity and each changed the ring RMS to zero; the adventure map stayed
   live at 60.1 fps. Evidence is `/private/tmp/heroes2-audio-refresh.png`.
+  That refresh fixed buffers Miles explicitly clears, but a live gold-pickup
+  reproduction exposed a second case: Miles starts both ambient rings and
+  fixed-size one-shot allocations with `DSBPLAY_LOOPING`. The gold allocation
+  held audible PCM through frame 20,372 of 32,768, followed by 12,395 frames of
+  exact unsigned-8-bit silence; looping the allocation repeated the pickup every
+  1.486 seconds even though no later `Unlock` or `Stop` was issued. The host now
+  treats a looping allocation whose final eighth or more is exact PCM silence as
+  a one-shot. In the rebuilt Chromium run, the full-ring ambience remained
+  looped while the gold voice ended naturally and cleared its active source.
+  Evidence is `/private/tmp/heroes2-gold-no-repeat.png`.
