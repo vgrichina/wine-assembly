@@ -7219,12 +7219,24 @@ HookEx — no next hook in chain, return 0
 
   ;; 422: DuplicateHandle
   (func $handle_DuplicateHandle (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Kernel object handles in this runtime are stable process-local IDs, so a
-    ;; duplicate can share the same value. This also preserves pseudo handles
-    ;; such as GetCurrentThread() == -2, which Allegro duplicates during setup.
+    (local $duplicate i32)
+    ;; Pseudo handles are contextual and cannot be copied into a durable output
+    ;; handle. Miles duplicates GetCurrentThread() during startup, then its
+    ;; WinMM callback suspends and resumes that real handle while servicing
+    ;; DirectSound. Give that case a process-owned thread handle; other kernel
+    ;; objects already use stable process-local IDs and may share their value.
     (if (local.get $arg3)
-      (then (call $gs32 (local.get $arg3) (local.get $arg1))))
-    (global.set $eax (i32.ne (local.get $arg3) (i32.const 0)))
+      (then
+        (local.set $duplicate (local.get $arg1))
+        (if (i32.eq (local.get $arg1) (i32.const 0xFFFFFFFE))
+          (then
+            (local.set $duplicate
+              (call $host_duplicate_current_thread (global.get $current_thread_id)))))
+        (if (local.get $duplicate)
+          (then (call $gs32 (local.get $arg3) (local.get $duplicate))))))
+    (global.set $eax (i32.and
+      (i32.ne (local.get $arg3) (i32.const 0))
+      (i32.ne (local.get $duplicate) (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 32))) ;; 7 args + ret
   )
 

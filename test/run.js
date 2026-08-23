@@ -2352,6 +2352,7 @@ async function main() {
   // Wire thread/event imports to ThreadManager
   h.create_thread = (startAddr, param, stackSize, creationFlags) =>
     threadManager.createThread(startAddr, param, stackSize, creationFlags);
+  h.duplicate_current_thread = (tid) => threadManager.duplicateCurrentThread(tid);
   h.suspend_thread = (handle) => threadManager.suspendThread(handle);
   h.resume_thread = (handle) => threadManager.resumeThread(handle);
   h.exit_thread = (exitCode) => threadManager.exitThread(exitCode);
@@ -5998,7 +5999,7 @@ async function main() {
 
     const batchStartMs = TRACE_BATCH_TIMING ? Date.now() : 0;
     try {
-      instance.exports.run(BATCH_SIZE);
+      if (!threadManager.isMainThreadSuspended()) instance.exports.run(BATCH_SIZE);
     } catch (e) {
       while (logs.length) console.log(logs.shift());
       console.log(`\n*** CRASH at batch ${batch}: ${e.message}`);
@@ -6274,7 +6275,8 @@ async function main() {
         // progress together. Once the last worker exits, return to the outer
         // loop; repeatedly re-entering the main message pump here can drain
         // creation-time paints before an app has finished its first layout.
-        if (s < slices - 1 && !stopped && threadManager.hasActiveThreads()) {
+        if (s < slices - 1 && !stopped && threadManager.hasActiveThreads() &&
+            !threadManager.isMainThreadSuspended()) {
           try { instance.exports.run(BATCH_SIZE); } catch (e) { break; }
         }
       }

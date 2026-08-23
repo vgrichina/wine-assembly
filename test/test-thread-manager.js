@@ -63,6 +63,40 @@ assert.strictEqual(suspendTm.resumeThread(suspendedHandle), 0, 'resuming a runni
 assert.strictEqual(suspendTm.suspendThread(0xdeadbeef), 0xFFFFFFFF, 'invalid suspend handle fails');
 assert.strictEqual(suspendTm.resumeThread(0xdeadbeef), 0xFFFFFFFF, 'invalid resume handle fails');
 
+const duplicateTm = makeThreadManager();
+const duplicatedMainA = duplicateTm.duplicateCurrentThread(1);
+const duplicatedMainB = duplicateTm.duplicateCurrentThread(1);
+assert(duplicatedMainA && duplicatedMainB && duplicatedMainA !== duplicatedMainB,
+  'each DuplicateHandle call returns a distinct real current-thread handle');
+assert.notStrictEqual(duplicatedMainA >>> 0, 0xfffffffe,
+  'a duplicated current-thread handle must not preserve the contextual pseudo handle');
+assert.strictEqual(duplicateTm.suspendThread(duplicatedMainA), 0,
+  'the first duplicated-handle suspend returns the previous main-thread count');
+assert.strictEqual(duplicateTm.isMainThreadSuspended(), true,
+  'a duplicated main-thread handle controls main scheduling state');
+assert.strictEqual(duplicateTm.suspendThread(duplicatedMainB), 1,
+  'duplicates share the underlying thread suspend count');
+assert.strictEqual(duplicateTm.resumeThread(duplicatedMainA), 2);
+assert.strictEqual(duplicateTm.resumeThread(duplicatedMainB), 1);
+assert.strictEqual(duplicateTm.isMainThreadSuspended(), false);
+assert.strictEqual(duplicateTm.getExitCodeThread(duplicatedMainA), 0x103,
+  'GetExitCodeThread accepts duplicated main-thread handles');
+assert.strictEqual(duplicateTm.closeSyncHandle(duplicatedMainA), true,
+  'CloseHandle releases a duplicated thread-handle identity');
+assert.strictEqual(duplicateTm.suspendThread(duplicatedMainA), 0xFFFFFFFF,
+  'a closed duplicated thread handle is invalid');
+assert.strictEqual(duplicateTm.suspendThread(duplicatedMainB), 0,
+  'closing one duplicate leaves another handle to the same thread usable');
+assert.strictEqual(duplicateTm.resumeThread(duplicatedMainB), 1);
+
+duplicateTm.createThread(0x6200, 0, 0, 0);
+const duplicatedWorker = duplicateTm.duplicateCurrentThread(2);
+assert(duplicatedWorker, 'a worker can duplicate its own current-thread pseudo handle');
+assert.strictEqual(duplicateTm.suspendThread(duplicatedWorker), 0,
+  'the duplicated worker handle shares its pending thread suspend state');
+assert.strictEqual(duplicateTm._pendingThreads[0].suspendCount, 1);
+assert.strictEqual(duplicateTm.resumeThread(duplicatedWorker), 1);
+
 const pendingWaitTm = makeThreadManager();
 const pendingWaitHandle = pendingWaitTm.createThread(0x6100, 0, 0, 0x4);
 const pendingWaitEvent = pendingWaitTm.createEvent(false, false);

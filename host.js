@@ -509,6 +509,7 @@ class WineAssembly {
 
     // Wire thread/event imports to ThreadManager
     h.create_thread = (s, p, sz, flags) => self.threadManager ? self.threadManager.createThread(s, p, sz, flags) : 0;
+    h.duplicate_current_thread = (tid) => self.threadManager ? self.threadManager.duplicateCurrentThread(tid) : 0;
     h.suspend_thread = (handle) => self.threadManager ? self.threadManager.suspendThread(handle) : 0xFFFFFFFF;
     h.resume_thread = (handle) => self.threadManager ? self.threadManager.resumeThread(handle) : 0xFFFFFFFF;
     h.exit_thread = (c) => self.threadManager && self.threadManager.exitThread(c);
@@ -1318,7 +1319,8 @@ class WineAssembly {
         const activeStepsPerSlice = Math.max(1000, (self.stepsPerSlice | 0) || stepsPerSlice);
         self._beginGuestTickBatch();
         // Check if main thread is waiting
-        const mainThreadWaiting = self.threadManager && self.threadManager.checkMainYield();
+        const mainThreadWaiting = self.threadManager &&
+          (self.threadManager.isMainThreadSuspended() || self.threadManager.checkMainYield());
         if (mainThreadWaiting) {
           // Main still waiting — just run worker threads
         } else {
