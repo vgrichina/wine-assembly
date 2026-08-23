@@ -54,4 +54,14 @@ assert((APPS.total_annihilation_demo.files || []).some(item =>
   item.vfsPath.toLowerCase() === 'c:\\tademo.hpi'),
   'Total Annihilation must mount the validated HPI at c:\\tademo.hpi');
 
+// WELCOME.EXE opens welcome.dat as its second act and exits when it is
+// missing, so the file is not optional and the path it is mounted at is the
+// whole point — the exe looks under the per-user Application Data tree, not
+// beside itself.
+assert((APPS.welcome98.files || []).some(item => item &&
+  path.basename(item.url || '').toLowerCase() === 'welcome.dat' &&
+  String(item.vfsPath || '').toLowerCase() ===
+    'c:\\windows\\application data\\microsoft\\welcome\\welcome.dat'),
+'Welcome to Windows 98 must mount welcome.dat under Application Data');
+
 console.log(`PASS  ${dropdownIds.length} debug dropdown IDs are registered and corrected data manifests are complete`);
