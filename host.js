@@ -418,6 +418,25 @@ class WineAssembly {
       self.logToUI(`[ShellAbout] ${appName}`);
       return 1;
     };
+    // ShellExecute("open", "wordpad.exe") is a real process launch, not a
+    // log line: WRITE.EXE's entire body is that call followed by
+    // ExitProcess, so a stub that only returns 33 leaves a blank screen.
+    // Resolve the exe against the app registry and boot it as a second
+    // guest; anything that is not a registered exe keeps the base behaviour
+    // (open http links in a tab, otherwise report success).
+    h.shell_execute = (hwnd, opWa, fileWa, paramsWa, dirWa, nShow) => {
+      const file = fileWa ? self.readString(fileWa) : '';
+      const op = opWa ? self.readString(opWa) : 'open';
+      const params = paramsWa ? self.readString(paramsWa) : '';
+      console.log(`[ShellExecute] hwnd=0x${hwnd.toString(16)} op="${op}" file="${file}" params="${params}"`);
+      const shell = window.wineShell;
+      if (shell && /\.exe$/i.test(file) && shell.launchExe(file)) {
+        self.logToUI(`[ShellExecute] launching ${file}`);
+        return 33;
+      }
+      if (/^https?:/i.test(file)) window.open(file, '_blank');
+      return 33;
+    };
     h.message_box = (hWnd, textPtr, captionPtr, uType) => {
       const text = self.readString(textPtr);
       const caption = self.readString(captionPtr);
