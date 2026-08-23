@@ -594,6 +594,8 @@
       (i32.load8_u (i32.add (local.get $lf) (i32.const 20))) ;; italic
       (i32.add (local.get $lf) (i32.const 28))               ;; faceName WASM ptr
     ))
+    (call $gdi_font_set_width (local.get $handle)
+      (i32.load offset=4 (local.get $lf)))
     (call $gdi_bitmap_font_bind (local.get $handle)
       (i32.add (local.get $lf) (i32.const 28)))
     (global.set $eax (local.get $handle))
@@ -620,6 +622,8 @@
       (local.get $italic)                                            ;; italic
       (local.get $face)                                              ;; faceName
     ))
+    (call $gdi_font_set_width (local.get $handle)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 8))))
     (call $gdi_bitmap_font_bind (local.get $handle) (local.get $face))
     (global.set $eax (local.get $handle))
     (global.set $esp (i32.add (global.get $esp) (i32.const 60))) (return)
@@ -1669,6 +1673,8 @@
       (i32.load8_u (i32.add (local.get $lf) (i32.const 20))) ;; italic
       (call $g2w (local.get $face))                          ;; faceName WASM ptr
     ))
+    (call $gdi_font_set_width (local.get $handle)
+      (i32.load offset=4 (local.get $lf)))
     (call $gdi_bitmap_font_bind (local.get $handle) (call $g2w (local.get $face)))
     (if (local.get $face) (then (call $heap_free (local.get $face))))
     (global.set $eax (local.get $handle))
@@ -2982,6 +2988,8 @@
     (local.set $handle (call $gdi_font_create
       (local.get $arg0) (local.get $weight) (local.get $italic)
       (call $g2w (local.get $face))))
+    (call $gdi_font_set_width (local.get $handle)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 8))))
     (call $gdi_bitmap_font_bind (local.get $handle) (call $g2w (local.get $face)))
     (if (local.get $face) (then (call $heap_free (local.get $face))))
     (global.set $eax (local.get $handle))

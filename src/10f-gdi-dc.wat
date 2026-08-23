@@ -549,6 +549,24 @@
       (then (return (i32.const 11))))
     (i32.const 12))
 
+  ;; LOGFONT.lfWidth is an average-character-width request. Keep it separate
+  ;; from the object allocator's four legacy font fields so existing internal
+  ;; font creation continues to default to the natural aspect ratio.
+  (func $gdi_font_width (param $handle i32) (result i32)
+    (local $p i32)
+    (local.set $p (call $gdi_object_record (local.get $handle)))
+    (if (i32.and (i32.ne (local.get $p) (i32.const 0))
+          (i32.eq (i32.load offset=4 (local.get $p)) (i32.const 4)))
+      (then (return (i32.load offset=32 (local.get $p)))))
+    (i32.const 0))
+
+  (func $gdi_font_set_width (param $handle i32) (param $width i32)
+    (local $p i32)
+    (local.set $p (call $gdi_object_record (local.get $handle)))
+    (if (i32.and (i32.ne (local.get $p) (i32.const 0))
+          (i32.eq (i32.load offset=4 (local.get $p)) (i32.const 4)))
+      (then (i32.store offset=32 (local.get $p) (local.get $width)))))
+
   (func $gdi_font_weight (param $handle i32) (result i32)
     (local $p i32)
     (local.set $p (call $gdi_object_record (local.get $handle)))
@@ -633,6 +651,7 @@
     (if (i32.lt_u (local.get $size) (local.get $required)) (then (return (i32.const 0))))
     (memory.fill (local.get $dest) (i32.const 0) (local.get $required))
     (i32.store (local.get $dest) (call $gdi_font_height (local.get $handle)))
+    (i32.store offset=4 (local.get $dest) (call $gdi_font_width (local.get $handle)))
     (i32.store offset=16 (local.get $dest) (call $gdi_font_weight (local.get $handle)))
     (i32.store8 offset=20 (local.get $dest) (call $gdi_font_italic (local.get $handle)))
     (i32.store8 offset=27 (local.get $dest) (i32.const 0x22))

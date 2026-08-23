@@ -39,6 +39,8 @@ function colorBounds(file, rect, predicate) {
   let count = 0;
   let minX = png.width;
   let maxX = -1;
+  let minY = png.height;
+  let maxY = -1;
   for (let y = rect.y; y < rect.y + rect.h; y++) {
     for (let x = rect.x; x < rect.x + rect.w; x++) {
       const i = (y * png.width + x) * 4;
@@ -46,9 +48,15 @@ function colorBounds(file, rect, predicate) {
       count++;
       minX = Math.min(minX, x);
       maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
     }
   }
-  return { count, width: maxX >= minX ? maxX - minX + 1 : 0 };
+  return {
+    count,
+    width: maxX >= minX ? maxX - minX + 1 : 0,
+    height: maxY >= minY ? maxY - minY + 1 : 0,
+  };
 }
 
 function runGame(args) {
@@ -88,17 +96,23 @@ function testRodent(outDir) {
 }
 
 function testRattler(outDir) {
+  const initial = path.join(outDir, 'rattler-initial.png');
   const before = path.join(outDir, 'rattler-before.png');
   const after = path.join(outDir, 'rattler-after.png');
   const output = runGame([
     '--app=wep16_rattler', '--no-close', '--batch-size=2000', '--max-batches=1100',
     '--quiet-api', '--quiet-blocks', '--repaint-every=20',
-    `--input=200:mousedown:300:55,201:mouseup:300:55,` +
+    `--input=150:png:${initial},200:mousedown:300:55,201:mouseup:300:55,` +
       `500:mousedown:210:72,501:mouseup:210:72,` +
       `520:mousedown:230:94,521:mouseup:230:94,` +
       `750:png:${before},800:keypress:54,1000:png:${after},1050:stop`,
   ]);
   assertHealthy(output, 'Rattler');
+  const initialScore = colorBounds(initial, { x: 378, y: 88, w: 68, h: 28 },
+    (r, g, b) => r < 48 && g < 48 && b < 48);
+  assert(initialScore.width >= 55 && initialScore.height >= 13 && initialScore.count > 100,
+    `Rattler should use its large six-digit score font ` +
+    `(dark=${initialScore.width}x${initialScore.height}, pixels=${initialScore.count})`);
   // Rattler implements pix_KeyPress (ASCII keypad controls), not KeyDown.
   // ASCII '6' turns clockwise; F3 is Pause and would stop the live timer.
   assert.match(output, /keypress code=54/, 'Rattler keypad 6 must reach pix_KeyPress');

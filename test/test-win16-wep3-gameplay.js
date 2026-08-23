@@ -63,9 +63,9 @@ function colorBounds(file, rect, matches) {
 }
 
 let built = false;
-function runGame(app, input, maxBatches, extra = []) {
+function runGame(app, input, maxBatches, extra = [], batchSize = 20000) {
   const args = [
-    RUN, `--app=${app}`, '--no-close', '--batch-size=20000',
+    RUN, `--app=${app}`, '--no-close', `--batch-size=${batchSize}`,
     `--max-batches=${maxBatches}`, '--quiet-api', '--quiet-blocks',
     '--repaint-every=5', ...extra, `--input=${input}`,
   ];
@@ -97,18 +97,27 @@ function testKlotski(outDir) {
       `15:png:${welcome},20:dlg-cmd:1,45:mousedown:48:51,46:mouseup:48:51,` +
       '55:mousedown:70:72,56:mouseup:70:72,90:dlg-cmd:1,' +
       '120:dlg-set-edit:201:Codex,130:dlg-cmd:1,' +
-      `170:png:${before},190:mousedown:210:190,191:mousemove:210:208,` +
-      `192:mouseup:210:208,230:png:${after},250:stop`, 300, ['--trace-ctrl']);
+      `170:png:${before},190:mousedown:246:213,191:mousemove:246:231,` +
+      `192:mouseup:246:231,230:png:${after},250:stop`, 300, ['--trace-ctrl']);
   assertHealthy(output, 'Klotski');
-  assert.match(output, /Static at 260,225 126x45/,
-    'Klotski Welcome should be a centered 158px dialog with 126px text client');
-  const banner = colorBounds(welcome, { x: 20, y: 270, w: 235, h: 48 },
+  assert.match(output, /Static at 260,225 126x40/,
+    'Klotski Welcome should be a centered 158px dialog with a non-overlapping text client');
+  const okButton = colorBounds(welcome, { x: 279, y: 263, w: 76, h: 28 },
+    (r, g, b) => r < 32 && g < 32 && b < 32);
+  assert(okButton.width >= 70 && okButton.height >= 22,
+    `Klotski Welcome must paint the complete OK button frame ` +
+    `(dark=${okButton.width}x${okButton.height})`);
+  const banner = colorBounds(welcome, { x: 20, y: 290, w: 235, h: 48 },
     (r, g, b) => r > 180 && g > 180 && b < 100);
   assert(banner.count > 1500 && banner.width > 200,
     `Klotski should stitch all three yellow banner strips (count=${banner.count}, width=${banner.width})`);
+  const defaultExtent = colorBounds(welcome, { x: 450, y: 80, w: 45, h: 200 },
+    (r, g, b) => r > 45 && r < 90 && g > 45 && g < 90 && b > 45 && b < 90);
+  assert(defaultExtent.count > 5000,
+    `Klotski should use Win98's 480x320 CW_USEDEFAULT extent (dark pixels=${defaultExtent.count})`);
   assert.match(output, /dlg-set-edit: id=201 text="Codex"/,
     'Klotski should receive the player name before gameplay');
-  const changed = changedPixels(before, after, { x: 178, y: 137, w: 80, h: 86 });
+  const changed = changedPixels(before, after, { x: 218, y: 185, w: 58, h: 62 });
   assert(changed > 100,
     `Klotski should visibly move a legal puzzle block (changed=${changed})`);
   console.log('PASS  Win16 Klotski selects a puzzle and accepts a legal block move');
@@ -181,19 +190,41 @@ function testTriPeaks(outDir) {
   assertHealthy(output, 'TriPeaks');
   assert(changedPixels(before, after, { x: 2, y: 42, w: 636, h: 325 }) > 25000,
     'TriPeaks should deal the full card tableau after New Game');
+  const faceRow = colorBounds(after, { x: 4, y: 155, w: 632, h: 86 },
+    (r, g, b) => r > 235 && g > 235 && b > 235);
+  assert(faceRow.count > 33000,
+    `TriPeaks face row must occlude the overlapping card backs (white=${faceRow.count})`);
   console.log('PASS  Win16 TriPeaks deals a playable tableau');
 }
 
 function testWordZap(outDir) {
+  const splash = path.join(outDir, 'wordzap-splash.png');
   const ready = path.join(outDir, 'wordzap-ready.png');
   const played = path.join(outDir, 'wordzap-played.png');
   // F2 creates the local computer game. Ready crosses WriteComm, then selecting
   // a rack letter must place it into the first grid cell and draw a new rack.
   const output = runGame('wep16_wordzap',
-    `60:keydown:113,61:keyup:113,120:mousedown:250:390,121:mouseup:250:390,` +
-    `180:sleep-ms:1500,220:png:${ready},240:mousedown:75:220,241:mouseup:75:220,` +
-    `300:png:${played},340:stop`, 370, ['--real-ticks']);
+    `40:sleep-ms:1200,45:png:${splash},60:keydown:113,61:keyup:113,100:sleep-ms:1500,` +
+    `180:mousedown:250:390,181:mouseup:250:390,220:sleep-ms:3000,` +
+    `300:png:${ready},320:mousedown:75:220,321:mouseup:75:220,` +
+    `350:sleep-ms:1000,420:png:${played},450:stop`, 500, ['--real-ticks'], 2000);
   assertHealthy(output, 'WordZap');
+  const copyright = colorBounds(splash, { x: 20, y: 430, w: 600, h: 40 },
+    (r, g, b) => r < 50 && g < 50 && b < 50);
+  const trademark = colorBounds(splash, { x: 440, y: 290, w: 160, h: 40 },
+    (r, g, b) => r < 50 && g < 50 && b < 50);
+  assert(copyright.width >= 450 && copyright.width <= 500,
+    `WordZap's Win3.x Tms Rmn copyright line must retain its native width ` +
+    `(width=${copyright.width})`);
+  assert(trademark.width >= 70 && trademark.width <= 90,
+    `WordZap's Trademark label must not be horizontally distorted ` +
+    `(width=${trademark.width})`);
+  assert(copyright.height >= 13 && copyright.height <= 18,
+    `WordZap's mapped Tms Rmn cell must retain the native glyph height ` +
+    `(height=${copyright.height})`);
+  assert(copyright.count >= 1300 && copyright.count <= 2000,
+    `WordZap must hint its serif outline at device resolution instead of ` +
+    `magnifying a dense low-resolution strike (dark pixels=${copyright.count})`);
   assert(changedPixels(ready, played, { x: 42, y: 185, w: 594, h: 230 }) > 10000,
     'WordZap should place a selected rack letter and advance the board');
   console.log('PASS  Win16 WordZap starts against the computer and plays a letter');

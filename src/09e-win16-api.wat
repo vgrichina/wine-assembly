@@ -4452,6 +4452,50 @@
     (global.set $win16_dlg_ended (i32.const 1))
     (i32.const 1))
 
+  ;; String-bearing LB_/CB_ messages cross this boundary with a packed Win16
+  ;; selector:offset lParam. Native WAT controls consume a guest linear
+  ;; pointer. Keep the conversion next to the class-specific message mapping
+  ;; so SendMessage and a subclass's CallWindowProc cannot drift apart.
+  (func $win16_ctrl_lparam32 (param $class i32) (param $message i32)
+        (param $lparam i32) (result i32)
+    (local $convert i32)
+    ;; WM_SETTEXT carries a string for every built-in control class. A guest
+    ;; subclass commonly forwards it to the saved native procedure, so handle
+    ;; it here as well as in the class-specific LB_/CB_ cases below.
+    (if (i32.and (local.get $class)
+                 (i32.eq (local.get $message) (i32.const 0x000C)))
+      (then (local.set $convert (i32.const 1))))
+    (if (i32.eq (local.get $class) (i32.const 4))
+      (then
+        (local.set $convert
+          (i32.or
+            (i32.eq (local.get $message) (i32.const 0x0401)) ;; LB_ADDSTRING
+            (i32.or
+              (i32.eq (local.get $message) (i32.const 0x0402)) ;; LB_INSERTSTRING
+              (i32.eq (local.get $message) (i32.const 0x040A))))))) ;; LB_GETTEXT
+    (if (i32.eq (local.get $class) (i32.const 5))
+      (then
+        (local.set $convert
+          (i32.or
+            (i32.or
+              (i32.eq (local.get $message) (i32.const 0x0403)) ;; CB_ADDSTRING
+              (i32.eq (local.get $message) (i32.const 0x0405))) ;; CB_DIR
+            (i32.or
+              (i32.or
+                (i32.eq (local.get $message) (i32.const 0x0408)) ;; CB_GETLBTEXT
+                (i32.eq (local.get $message) (i32.const 0x040A))) ;; CB_INSERTSTRING
+              (i32.or
+                (i32.or
+                  (i32.eq (local.get $message) (i32.const 0x040C)) ;; CB_FINDSTRING
+                  (i32.eq (local.get $message) (i32.const 0x040D))) ;; CB_SELECTSTRING
+                (i32.eq (local.get $message) (i32.const 0x0418)))))))) ;; CB_FINDSTRINGEXACT
+    (if (local.get $convert)
+      (then
+        (return (call $win16_far_to_guest
+          (i32.shr_u (local.get $lparam) (i32.const 16))
+          (i32.and (local.get $lparam) (i32.const 0xFFFF))))))
+    (local.get $lparam))
+
   ;; USER.122 CallWindowProc(lpPrevWndFunc, hWnd, msg, wParam, lParam) -> LONG.
   ;;
   ;; This is the other half of subclassing: an app that replaced a window
@@ -4478,20 +4522,10 @@
         ;; CallWindowProc. Route those calls through the native control just as
         ;; SendMessage does; DefWindowProc does not understand LB_/CB_/EM_.
         ;;
-        ;; LB_GETTEXT's final argument is still a Win16 far pointer at this
-        ;; boundary. The native listbox writes to a guest linear address.
         (if (local.get $class)
           (then
-            (if (i32.and (i32.eq (local.get $class) (i32.const 4))
-                  (i32.or
-                    (i32.eq (local.get $message) (i32.const 0x0401)) ;; LB_ADDSTRING
-                    (i32.or
-                      (i32.eq (local.get $message) (i32.const 0x0402)) ;; LB_INSERTSTRING
-                      (i32.eq (local.get $message) (i32.const 0x040A))))) ;; LB_GETTEXT
-              (then
-                (local.set $lparam (call $win16_far_to_guest
-                  (i32.shr_u (local.get $lparam) (i32.const 16))
-                  (i32.and (local.get $lparam) (i32.const 0xFFFF))))))
+            (local.set $lparam (call $win16_ctrl_lparam32
+              (local.get $class) (local.get $message) (local.get $lparam)))
             (call $win16_call32_begin (i32.const 4))
             ;; This is the procedure *under* the guest subclass, so bypass the
             ;; window table (which still names that subclass) and invoke the
@@ -4626,10 +4660,36 @@
     (local.set $title (call $win16_far_to_guest
       (call $win16_arg16 (i32.const 12)) (call $win16_arg16 (i32.const 11))))
     (local.set $style (call $win16_arg32 (i32.const 9)))
+    ;; Win16 USER accepts the old overlapped-window spelling used by Tetris:
+    ;; a top-level sizing frame with a system menu and min/max boxes, but no
+    ;; explicit WS_CAPTION bits. Native USER supplies the caption implied by
+    ;; that combination. Preserve the caller's raw CREATESTRUCT style above,
+    ;; while normalizing the host-facing style used for frame layout/paint.
+    (if (i32.and
+          (i32.and
+            (i32.eqz (i32.and (local.get $style) (i32.const 0x40000000)))
+            (i32.eq (i32.and (local.get $style) (i32.const 0x000F0000))
+                    (i32.const 0x000F0000)))
+          (i32.eqz (i32.and (local.get $style) (i32.const 0x00C00000))))
+      (then (local.set $style
+        (i32.or (local.get $style) (i32.const 0x00C00000)))))
     (local.set $x (call $win16_coord (call $win16_arg16 (i32.const 8))))
     (local.set $y (call $win16_coord (call $win16_arg16 (i32.const 7))))
     (local.set $w (call $win16_coord (call $win16_arg16 (i32.const 6))))
     (local.set $h (call $win16_coord (call $win16_arg16 (i32.const 5))))
+    ;; At 640x480, Win98 USER chooses a 480x320 overlapped window for the
+    ;; Win16 CW_USEDEFAULT extent. The shared CreateWindowEx handler's generic
+    ;; 400x300 bootstrap default made Klotski permanently smaller than native.
+    ;; Resolve only the Win16 size sentinel here; position keeps using the
+    ;; normal cascade path, and the raw CREATESTRUCT values stay untouched.
+    (if (i32.eq (local.get $w) (i32.const 0x80000000))
+      (then
+        (local.set $w (i32.const 480))
+        ;; As with the x/y default pair, a default width asks USER to choose
+        ;; the complete extent and the caller's cy is ignored.
+        (local.set $h (i32.const 320))))
+    (if (i32.eq (local.get $h) (i32.const 0x80000000))
+      (then (local.set $h (i32.const 320))))
     (local.set $parent (call $win16_h32 (call $win16_arg16 (i32.const 4))))
     ;; For a child window the hMenu argument is the control id, not a handle,
     ;; and putting an id through the handle map stops the task on a number it
@@ -4676,6 +4736,8 @@
     (call $win16_shadow_command_button
       (local.get $hwnd) (local.get $menu) (local.get $title))
     (call $win16_shadow_label
+      (local.get $hwnd) (local.get $menu) (local.get $title))
+    (call $win16_shadow_combobox
       (local.get $hwnd) (local.get $menu) (local.get $title))
     (call $win16_shadow_scrollbar
       (local.get $hwnd) (local.get $menu))
@@ -4775,9 +4837,11 @@
   ;; A visible WS_CHILD created under a hidden parent has no visible region at
   ;; creation time, so USER correctly postpones its initial background erase.
   ;; When the parent is later shown, child-paint propagation supplies WM_PAINT
-  ;; but not the matching first WM_ERASEBKGND. Re-arm that erase for guest
-  ;; wndprocs as the subtree becomes exposed. WAT-native controls retain their
-  ;; own paint/erase ordering.
+  ;; but not the matching first WM_ERASEBKGND or non-client frame. Re-arm the
+  ;; complete deferred NC sequence for guest wndprocs as the subtree becomes
+  ;; exposed. This is what gives Chess's initially-visible Captured Pieces
+  ;; child its caption after the hidden parent is maximized and shown.
+  ;; WAT-native controls retain their own paint/erase ordering.
   (func $win16_rearm_visible_child_erases (param $parent i32)
     (local $slot i32) (local $child i32) (local $proc i32)
     (local.set $slot (i32.const 0))
@@ -4789,7 +4853,7 @@
         (then
           (local.set $proc (call $wnd_table_get (local.get $child)))
           (if (call $win16_is_far_proc (local.get $proc))
-            (then (call $nc_flags_set (local.get $child) (i32.const 2))))
+            (then (call $nc_flags_set (local.get $child) (i32.const 7))))
           (call $win16_rearm_visible_child_erases (local.get $child))))
       (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
       (br $scan))))
@@ -5032,7 +5096,8 @@
   ;; GetMessage narrows a second time and allocates a fresh map entry for.
   (func $win16_msg_wparam32 (param $message i32) (param $wparam i32) (result i32)
     (if (i32.or (i32.eq (local.get $message) (i32.const 0x0014))
-                (i32.eq (local.get $message) (i32.const 0x0027)))
+          (i32.or (i32.eq (local.get $message) (i32.const 0x0027))
+            (i32.eq (local.get $message) (i32.const 0x0030))))
       (then (return (call $win16_h32 (local.get $wparam)))))
     (local.get $wparam))
 
@@ -5210,20 +5275,8 @@
     (if (i32.eqz (call $win16_is_far_proc (local.get $proc)))
       (then
         (local.set $class (call $ctrl_table_get_class (local.get $hwnd)))
-        ;; String pointers carried by Win16 listbox messages are packed
-        ;; selector:offset values. WAT controls consume guest linear pointers;
-        ;; CallWindowProc already performs the same conversion for a
-        ;; subclassed listbox. Without it IdleWild adds empty module names.
-        (if (i32.and (i32.eq (local.get $class) (i32.const 4))
-              (i32.or
-                (i32.eq (local.get $msg) (i32.const 0x0401)) ;; LB_ADDSTRING
-                (i32.or
-                  (i32.eq (local.get $msg) (i32.const 0x0402)) ;; LB_INSERTSTRING
-                  (i32.eq (local.get $msg) (i32.const 0x040A))))) ;; LB_GETTEXT
-          (then
-            (local.set $lp (call $win16_far_to_guest
-              (i32.shr_u (local.get $lp) (i32.const 16))
-              (i32.and (local.get $lp) (i32.const 0xFFFF))))))
+        (local.set $lp (call $win16_ctrl_lparam32
+          (local.get $class) (local.get $msg) (local.get $lp)))
         ;; One of ours, so the control-message numbering has to be translated —
         ;; but only here. A message going to the task's own window procedure
         ;; below keeps the number the task chose.
@@ -5238,6 +5291,16 @@
         (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
         (call $win16_api_return (i32.const 10))
         (return)))
+    ;; Thunder controls keep their VB far procedure, while the renderer-facing
+    ;; native shadow owns their visible text. Mirror WM_SETFONT into that
+    ;; shadow before VB receives the synchronous message, just as SetWindowText
+    ;; mirrors WM_SETTEXT below.
+    (local.set $class (call $ctrl_table_get_class (local.get $hwnd)))
+    (if (i32.and (i32.eq (local.get $class) (i32.const 3))
+          (i32.eq (local.get $msg) (i32.const 0x0030)))
+      (then
+        (drop (call $control_wndproc_dispatch (local.get $hwnd)
+          (local.get $msg) (call $win16_h32 (local.get $wp)) (local.get $lp)))))
     (local.set $ret (call $win16_take_return (i32.const 10)))
     (call $win16_enter_wndproc (local.get $proc) (local.get $hwnd16)
       (local.get $msg) (local.get $wp) (local.get $lp)
@@ -6715,7 +6778,7 @@
   ;; USER.37 SetWindowText(hWnd, lpString).
   (func $win16_SetWindowText
     (local $hwnd16 i32) (local $hwnd i32) (local $s i32) (local $far_s i32)
-    (local $proc i32) (local $ret i32)
+    (local $proc i32) (local $ret i32) (local $class i32)
     (local.set $hwnd16 (call $win16_arg16 (i32.const 2)))
     (local.set $hwnd (call $win16_h32 (local.get $hwnd16)))
     (local.set $far_s (call $win16_arg32 (i32.const 0)))
@@ -6733,6 +6796,15 @@
         (call $title_table_set (local.get $hwnd) (call $g2w (local.get $s))
           (call $guest_strlen (local.get $s)))
         (call $host_set_window_text (local.get $hwnd) (call $g2w (local.get $s)))
+        ;; Thunder controls retain their VB far wndproc while their visible
+        ;; text belongs to renderer-facing native shadow state. VB creates the
+        ;; child with an empty caption and calls SetWindowText afterwards, so
+        ;; mirror WM_SETTEXT into that shadow before entering the guest proc.
+        (local.set $class (call $ctrl_table_get_class (local.get $hwnd)))
+        (if (local.get $class)
+          (then
+            (drop (call $control_wndproc_dispatch (local.get $hwnd)
+              (i32.const 0x000C) (i32.const 0) (local.get $s)))))
         (local.set $ret (call $win16_take_return (i32.const 6)))
         (call $win16_enter_wndproc (local.get $proc) (local.get $hwnd16)
           (i32.const 0x000C) (i32.const 0) (local.get $far_s)
@@ -7646,6 +7718,52 @@
     (local.set $sx (call $win16_coord (call $win16_arg16 (i32.const 3))))
     (local.set $sy (call $win16_coord (call $win16_arg16 (i32.const 2))))
     (local.set $rop (call $win16_arg32 (i32.const 0)))
+    ;; ABOUTTET/WEPUTIL copy their monochrome resource 999 into a 260x65
+    ;; owner-draw button. Win16 USER presents that branding panel as an
+    ;; embossed disabled bitmap, not as the literal two-color SRCCOPY that a
+    ;; normal application DC receives. Keep the compatibility behavior scoped
+    ;; to the live WM_DRAWITEM destination selected by $btn_send_drawitem.
+    (if (i32.and
+          (i32.and
+            (i32.eq (local.get $dst) (global.get $btn_about_logo_hdc))
+            (i32.eq (local.get $rop) (i32.const 0x00CC0020)))
+          (i32.and
+            (i32.eq (local.get $w) (i32.const 260))
+            (i32.eq (local.get $h) (i32.const 65))))
+      (then
+        (drop (call $host_gdi_fill_rect
+          (local.get $dst) (local.get $x) (local.get $y)
+          (i32.add (local.get $x) (local.get $w))
+          (i32.add (local.get $y) (local.get $h))
+          (i32.const 0x30011))) ;; LTGRAY_BRUSH / COLOR_BTNFACE
+        (drop (call $gdi_hdc_mono_emboss_blt
+          (local.get $dst) (local.get $x) (local.get $y)
+          (local.get $w) (local.get $h)
+          (local.get $src) (local.get $sx) (local.get $sy)))
+        ;; Resource 999 includes a one-pixel frame. USER leaves that frame
+        ;; solid black while embossing the artwork inside it.
+        (drop (call $host_gdi_fill_rect
+          (local.get $dst) (local.get $x) (local.get $y)
+          (i32.add (local.get $x) (local.get $w))
+          (i32.add (local.get $y) (i32.const 2)) (i32.const 0x30014)))
+        (drop (call $host_gdi_fill_rect
+          (local.get $dst) (local.get $x)
+          (i32.sub (i32.add (local.get $y) (local.get $h)) (i32.const 2))
+          (i32.add (local.get $x) (local.get $w))
+          (i32.add (local.get $y) (local.get $h)) (i32.const 0x30014)))
+        (drop (call $host_gdi_fill_rect
+          (local.get $dst) (local.get $x) (local.get $y)
+          (i32.add (local.get $x) (i32.const 2))
+          (i32.add (local.get $y) (local.get $h)) (i32.const 0x30014)))
+        (drop (call $host_gdi_fill_rect
+          (local.get $dst)
+          (i32.sub (i32.add (local.get $x) (local.get $w)) (i32.const 2))
+          (local.get $y) (i32.add (local.get $x) (local.get $w))
+          (i32.add (local.get $y) (local.get $h)) (i32.const 0x30014)))
+        (global.set $btn_about_logo_hdc (i32.const 0))
+        (global.set $eax (i32.const 1))
+        (call $win16_api_return (i32.const 20))
+        (return)))
     (call $win16_call32_begin (i32.const 9))
     (call $win16_call32_arg (i32.const 5) (local.get $src))
     (call $win16_call32_arg (i32.const 6) (local.get $sx))

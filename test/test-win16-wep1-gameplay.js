@@ -76,8 +76,12 @@ function testCruel(outDir) {
     `50:png:${before},70:keydown:113,71:keyup:113,` +
     `130:png:${after},150:stop`, 170);
   assertHealthy(output, 'Cruel');
-  assert(changedPixels(before, after, { x: 22, y: 50, w: 365, h: 255 }) > 10000,
+  assert(changedPixels(before, after, { x: 22, y: 50, w: 365, h: 255 }) > 5000,
     'Cruel should visibly redeal its card tableau on New Game');
+  const tableau = readPng(after);
+  assert(matchingPixels(tableau, { x: 22, y: 50, w: 565, h: 375 },
+    (r, g, b) => r > 235 && g > 235 && b > 235) > 35000,
+  'Cruel should retain a complete playable card tableau after redealing');
   console.log('PASS  Win16 Cruel redeals a playable tableau');
 }
 
@@ -187,17 +191,32 @@ function testTetris(outDir) {
   const startup = readPng(opening);
   const magenta = (r, g, b) => r > 160 && g < 80 && b > 120;
   const green = (r, g, b) => r < 80 && g > 100 && b < 80;
+  const activeCaption = (r, g, b) => b > 90 && b > r * 1.5 && b > g * 1.5;
+  const logoRect = { x: 190, y: 32, w: 260, h: 65 };
+  const logoFace = matchingPixels(startup, logoRect,
+    (r, g, b) => r === 192 && g === 192 && b === 192);
+  const logoHighlight = matchingPixels(startup, logoRect,
+    (r, g, b) => r === 255 && g === 255 && b === 255);
+  const logoShadow = matchingPixels(startup, logoRect,
+    (r, g, b) => r === 128 && g === 128 && b === 128);
+  const logoFrame = matchingPixels(startup, logoRect,
+    (r, g, b) => r === 0 && g === 0 && b === 0);
+  assert(matchingPixels(startup, { x: 4, y: 3, w: 570, h: 16 }, activeCaption) > 5000,
+    'Tetris maximized startup must retain its visible active title bar');
   assert(matchingPixels(startup, { x: 0, y: 38, w: 640, h: 415 }, magenta) > 30000,
     'Tetris must be maximized and tile the exposed client behind its About dialog');
-  assert(matchingPixels(before, { x: 130, y: 50, w: 129, h: 90 }, magenta) > 250,
+  assert(logoFace > 12000 && logoHighlight > 800 && logoShadow > 900 && logoFrame > 500,
+    `Tetris About must emboss the Microsoft mask on a button-face panel ` +
+    `(face=${logoFace}, highlight=${logoHighlight}, shadow=${logoShadow}, frame=${logoFrame})`);
+  assert(matchingPixels(before, { x: 153, y: 60, w: 165, h: 100 }, magenta) > 250,
     'Tetris should paint a colored active piece near the top of the playfield');
-  assert(matchingPixels(after, { x: 130, y: 210, w: 129, h: 49 }, magenta) > 100,
+  assert(matchingPixels(after, { x: 153, y: 240, w: 165, h: 45 }, magenta) > 100,
     'Tetris Down should settle the active piece at the bottom of the playfield');
-  assert(matchingPixels(after, { x: 130, y: 50, w: 129, h: 90 }, green) > 400,
+  assert(matchingPixels(after, { x: 153, y: 60, w: 165, h: 100 }, green) > 400,
     'Tetris should spawn and paint the next colored piece after a hard drop');
-  assert(changedPixels(started, dropped, { x: 130, y: 35, w: 129, h: 224 }) > 600,
+  assert(changedPixels(started, dropped, { x: 153, y: 55, w: 165, h: 230 }) > 600,
     'Tetris playfield should visibly advance after keyboard input');
-  assert(matchingPixels(after, { x: 270, y: 50, w: 360, h: 390 }, magenta) > 50000,
+  assert(matchingPixels(after, { x: 330, y: 50, w: 300, h: 390 }, magenta) > 40000,
     'closing About must leave the maximized tiled game client visible around the playfield');
   console.log('PASS  Win16 Tetris starts, hard-drops, and spawns the next piece');
 }
@@ -218,6 +237,8 @@ function testIdleWild(outDir) {
     Math.max(r, g, b) - Math.min(r, g, b) > 110;
   assert(matchingPixels(png, { x: 155, y: 197, w: 135, h: 15 }, white) > 20,
     'IdleWild must show the selected Blackness module name in its list');
+  assert(matchingPixels(png, { x: 297, y: 213, w: 14, h: 107 }, white) > 1200,
+    'IdleWild listbox must hide its vertical scrollbar while the single row fits');
   assert(matchingPixels(png, { x: 328, y: 194, w: 160, h: 130 }, white) > 18000,
     'IdleWild module information child must erase to its native white class background');
   assert(matchingPixels(png, { x: 136, y: 178, w: 368, h: 162 }, saturated) > 100,

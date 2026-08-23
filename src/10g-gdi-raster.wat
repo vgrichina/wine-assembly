@@ -3563,6 +3563,44 @@
       (then (return (i32.load8_u (local.get $p)))))
     (i32.const -1))
 
+  ;; Store one palette index without resolving it through RGB. Raster ops
+  ;; between two views of the same indexed DDB operate on device pixel values,
+  ;; not on their expanded colours. Resolving first is observably different:
+  ;; JezzBall prepares its sprite strip with overlapping 4-bpp SRCINVERT blits,
+  ;; and RGB XOR followed by nearest-colour selection destroys the ball mask.
+  (func $gdi_raster_write_index (param $desc i32) (param $x i32) (param $y i32)
+        (param $index i32) (result i32)
+    (local $p i32) (local $bpp i32) (local $old i32) (local $mask i32)
+    (local.set $p (call $gdi_raster_pixel_ptr
+      (local.get $desc) (local.get $x) (local.get $y)))
+    (if (i32.eqz (local.get $p)) (then (return (i32.const 0))))
+    (local.set $bpp (i32.load offset=16 (local.get $desc)))
+    (if (i32.eq (local.get $bpp) (i32.const 1))
+      (then
+        (local.set $old (i32.load8_u (local.get $p)))
+        (local.set $mask (i32.shl (i32.const 1)
+          (i32.sub (i32.const 7) (i32.and (local.get $x) (i32.const 7)))))
+        (i32.store8 (local.get $p) (select
+          (i32.or (local.get $old) (local.get $mask))
+          (i32.and (local.get $old) (i32.xor (local.get $mask) (i32.const 0xFF)))
+          (i32.and (local.get $index) (i32.const 1))))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $bpp) (i32.const 4))
+      (then
+        (local.set $old (i32.load8_u (local.get $p)))
+        (i32.store8 (local.get $p) (select
+          (i32.or (i32.and (local.get $old) (i32.const 0xF0))
+            (i32.and (local.get $index) (i32.const 0x0F)))
+          (i32.or (i32.and (local.get $old) (i32.const 0x0F))
+            (i32.shl (i32.and (local.get $index) (i32.const 0x0F)) (i32.const 4)))
+          (i32.and (local.get $x) (i32.const 1))))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $bpp) (i32.const 8))
+      (then
+        (i32.store8 (local.get $p) (local.get $index))
+        (return (i32.const 1))))
+    (i32.const 0))
+
   (func $gdi_raster_default_palette (param $bpp i32) (param $index i32) (result i32)
     (if (i32.eq (local.get $bpp) (i32.const 1))
       (then (return (select (i32.const 0xFFFFFF) (i32.const 0) (local.get $index)))))
@@ -4569,6 +4607,7 @@
     (local $s i32) (local $d i32) (local $rop3 i32) (local $same i32)
     (local $brush i32) (local $sample i32) (local $pixel_pattern i32) (local $fast i32)
     (local $source_background i32) (local $mono_key i32)
+    (local $source_index i32) (local $dest_index i32)
     (if (i32.or (i32.eqz (call $gdi_raster_surface_valid (local.get $dst)))
           (i32.or (i32.le_s (local.get $w) (i32.const 0)) (i32.le_s (local.get $h) (i32.const 0))))
       (then (return (i32.const 0))))
@@ -4621,8 +4660,59 @@
                 (i32.add (local.get $dx) (local.get $x))
                 (i32.add (local.get $dy) (local.get $y))))
           (then
+            ;; A DDB's raster-op domain is its stored device pixels. Keep the
+            ;; palette indexes intact for a self SRCINVERT instead of expanding
+            ;; them to RGB and quantizing the XOR result back to the palette.
+            (if (i32.and (local.get $same)
+                  (i32.and (i32.eq (local.get $rop3) (i32.const 0x66))
+                    (i32.le_u (i32.load offset=16 (local.get $dst)) (i32.const 8))))
+              (then
+                (local.set $source_index (call $gdi_raster_read_index
+                  (local.get $src) (i32.add (local.get $sx) (local.get $x))
+                  (i32.add (local.get $sy) (local.get $y))))
+                (local.set $dest_index (call $gdi_raster_read_index
+                  (local.get $dst) (i32.add (local.get $dx) (local.get $x))
+                  (i32.add (local.get $dy) (local.get $y))))
+                (if (i32.and (i32.ge_s (local.get $source_index) (i32.const 0))
+                      (i32.ge_s (local.get $dest_index) (i32.const 0)))
+                  (then (drop (call $gdi_raster_write_index (local.get $dst)
+                    (i32.add (local.get $dx) (local.get $x))
+                    (i32.add (local.get $dy) (local.get $y))
+                    (i32.xor (local.get $source_index) (local.get $dest_index))))))
+                (local.set $x (i32.add (local.get $x) (local.get $step)))
+                (br $cols)))
             (local.set $d (call $gdi_raster_read (local.get $dst)
               (i32.add (local.get $dx) (local.get $x)) (i32.add (local.get $dy) (local.get $y))))
+            ;; A prepared indexed XOR sprite is also evaluated in device-index
+            ;; space when it reaches a compatible screen bitmap. If the current
+            ;; destination colour is an exact member of the sprite palette,
+            ;; preserve that Win16 DDB operation and resolve only the result.
+            ;; Falling back for a non-palette destination retains ordinary RGB
+            ;; SRCINVERT semantics for true-colour content.
+            (if (i32.and (i32.eq (local.get $rop3) (i32.const 0x66))
+                  (i32.and (i32.le_u (i32.load offset=16 (local.get $src)) (i32.const 8))
+                    (i32.gt_u (i32.load offset=16 (local.get $dst)) (i32.const 8))))
+              (then
+                (local.set $source_index (call $gdi_raster_read_index
+                  (local.get $src) (i32.add (local.get $sx) (local.get $x))
+                  (i32.add (local.get $sy) (local.get $y))))
+                (local.set $dest_index (call $gdi_raster_nearest_index
+                  (local.get $src) (local.get $d)))
+                (if (i32.and (i32.ge_s (local.get $source_index) (i32.const 0))
+                      (i32.eq (call $gdi_raster_palette_color
+                        (local.get $src) (local.get $dest_index)) (local.get $d)))
+                  (then
+                    (drop (call $gdi_raster_write (local.get $dst)
+                      (i32.add (local.get $dx) (local.get $x))
+                      (i32.add (local.get $dy) (local.get $y))
+                      (call $gdi_raster_palette_color (local.get $src)
+                        (i32.and
+                          (i32.xor (local.get $source_index) (local.get $dest_index))
+                          (i32.sub
+                            (i32.shl (i32.const 1) (i32.load offset=16 (local.get $src)))
+                            (i32.const 1))))))
+                    (local.set $x (i32.add (local.get $x) (local.get $step)))
+                    (br $cols)))))
             (local.set $pixel_pattern (local.get $pattern))
             (if (local.get $brush)
               (then
@@ -5048,6 +5138,77 @@
               (then (drop (call $gdi_raster_write (local.get $dst)
                 (i32.add (local.get $dx) (local.get $x))
                 (i32.add (local.get $dy) (local.get $y)) (i32.const 0x808080)))))))
+        (local.set $x (i32.add (local.get $x) (i32.const 1)))
+        (br $cols)))
+      (local.set $y (i32.add (local.get $y) (i32.const 1)))
+      (br $rows)))
+    (call $gdi_geometry_present (local.get $dst_hdc) (local.get $dst)
+      (local.get $dx) (local.get $dy)
+      (i32.add (i32.add (local.get $dx) (local.get $w)) (i32.const 1))
+      (i32.add (i32.add (local.get $dy) (local.get $h)) (i32.const 1)))
+    (i32.const 1))
+
+  ;; Draw a monochrome DDB as the raised branding artwork used by the Win16
+  ;; WEP About DLLs. The zero-bit mask is highlighted at its original position
+  ;; and shadowed one pixel down/right; the caller supplies the button-face
+  ;; background and restores the resource's solid frame afterward.
+  (func $gdi_hdc_mono_emboss_blt
+        (param $dst_hdc i32) (param $dx_logical i32) (param $dy_logical i32)
+        (param $w i32) (param $h i32) (param $src_hdc i32)
+        (param $sx_logical i32) (param $sy_logical i32) (result i32)
+    (local $dst i32) (local $src i32) (local $dx i32) (local $dy i32)
+    (local $sx i32) (local $sy i32) (local $x i32) (local $y i32)
+    (if (i32.or (i32.le_s (local.get $w) (i32.const 0))
+          (i32.le_s (local.get $h) (i32.const 0)))
+      (then (return (i32.const 1))))
+    (local.set $dst (global.get $GDI_BLIT_DST_DESC))
+    (local.set $src (global.get $GDI_BLIT_SRC_DESC))
+    (if (i32.or
+          (i32.eqz (call $gdi_surface_descriptor (local.get $dst_hdc) (local.get $dst)))
+          (i32.eqz (call $gdi_surface_descriptor (local.get $src_hdc) (local.get $src))))
+      (then (return (i32.const 0))))
+    (if (i32.ne (i32.load offset=16 (local.get $src)) (i32.const 1))
+      (then (return (i32.const 0))))
+    (local.set $dx (call $gdi_line_map_x (local.get $dst) (local.get $dx_logical)))
+    (local.set $dy (call $gdi_line_map_y (local.get $dst) (local.get $dy_logical)))
+    (local.set $sx (call $gdi_line_map_x (local.get $src) (local.get $sx_logical)))
+    (local.set $sy (call $gdi_line_map_y (local.get $src) (local.get $sy_logical)))
+    (block $rows_done (loop $rows
+      (br_if $rows_done (i32.ge_u (local.get $y) (local.get $h)))
+      (local.set $x (i32.const 0))
+      (block $cols_done (loop $cols
+        (br_if $cols_done (i32.ge_u (local.get $x) (local.get $w)))
+        (if (i32.eqz (call $gdi_raster_read_index (local.get $src)
+              (i32.add (local.get $sx) (local.get $x))
+              (i32.add (local.get $sy) (local.get $y))))
+          (then
+            ;; Only the mask boundaries receive 3-D colors. Keeping solid mask
+            ;; interiors at button-face is what makes the artwork embossed
+            ;; instead of a flat white silhouette.
+            (if (i32.and
+                  (i32.ne (call $gdi_raster_read_index (local.get $src)
+                    (i32.sub (i32.add (local.get $sx) (local.get $x)) (i32.const 1))
+                    (i32.sub (i32.add (local.get $sy) (local.get $y)) (i32.const 1)))
+                    (i32.const 0))
+                  (call $gdi_raster_clip_visible (local.get $dst_hdc) (local.get $dst)
+                    (i32.add (local.get $dx) (local.get $x))
+                    (i32.add (local.get $dy) (local.get $y))))
+              (then (drop (call $gdi_raster_write (local.get $dst)
+                (i32.add (local.get $dx) (local.get $x))
+                (i32.add (local.get $dy) (local.get $y))
+                (i32.const 0xFFFFFF)))))
+            (if (i32.and
+                  (i32.ne (call $gdi_raster_read_index (local.get $src)
+                    (i32.add (i32.add (local.get $sx) (local.get $x)) (i32.const 1))
+                    (i32.add (i32.add (local.get $sy) (local.get $y)) (i32.const 1)))
+                    (i32.const 0))
+                  (call $gdi_raster_clip_visible (local.get $dst_hdc) (local.get $dst)
+                    (i32.add (local.get $dx) (local.get $x))
+                    (i32.add (local.get $dy) (local.get $y))))
+              (then (drop (call $gdi_raster_write (local.get $dst)
+                (i32.add (local.get $dx) (local.get $x))
+                (i32.add (local.get $dy) (local.get $y))
+                (i32.const 0x808080)))))))
         (local.set $x (i32.add (local.get $x) (i32.const 1)))
         (br $cols)))
       (local.set $y (i32.add (local.get $y) (i32.const 1)))

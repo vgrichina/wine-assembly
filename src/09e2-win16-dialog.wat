@@ -622,7 +622,7 @@
   ;; but let STATIC own the caption supplied through SetWindowText.
   (func $win16_shadow_label
     (param $hwnd i32) (param $id i32) (param $title i32)
-    (local $slot i32) (local $class_w i32) (local $cs i32)
+    (local $slot i32) (local $class_w i32) (local $cs i32) (local $font i32)
     (if (i32.eqz (local.get $hwnd)) (then (return)))
     (local.set $class_w (call $g2w (global.get $GUEST_STACK)))
     (if (i32.ne
@@ -653,6 +653,79 @@
           (call $wnd_get_style (local.get $hwnd)))
         (call $gs32 (i32.add (local.get $cs) (i32.const 36)) (local.get $title))
         (drop (call $static_wndproc (local.get $hwnd)
+          (i32.const 0x0001) (i32.const 0) (local.get $cs)))
+        (call $heap_free (local.get $cs))
+        ;; RattlerRace's six-digit score is a VB1 ThunderLabel whose Font
+        ;; property is consumed by VB's own painter instead of being sent to
+        ;; USER as WM_SETFONT. The native shadow therefore needs to recover
+        ;; that one bold display font from the control shape. Requiring a
+        ;; top-level parent and ID 3 keeps ordinary VB captions (including Go
+        ;; Figure's nested ID 3 label) on DEFAULT_GUI_FONT. Geometry and border
+        ;; style are deliberately not part of this test: VB creates every
+        ;; control at 0x0 without WS_BORDER and applies both properties later.
+        (if (i32.and
+              (i32.eq (local.get $id) (i32.const 3))
+              (i32.eqz (call $wnd_get_parent
+                (call $wnd_get_parent (local.get $hwnd)))))
+          (then
+            (local.set $font (call $gdi_font_create
+              (i32.const -18) (i32.const 700) (i32.const 0)
+              (i32.const 0x27E))) ;; "Arial"
+            (if (local.get $font)
+              (then (call $static_set_font
+                (call $g2w (call $wnd_get_state_ptr (local.get $hwnd)))
+                (local.get $font)))))))))
+
+  ;; ThunderComboBox wraps USER's built-in COMBOBOX in the same way the
+  ;; Thunder label/button classes wrap STATIC and BUTTON. VB keeps the saved
+  ;; USER procedure and forwards CB_* messages to it with CallWindowProc, so
+  ;; attach class-5 state while leaving the registered far wndproc installed.
+  ;; Without that state CallWindowProc sends CB_ADDSTRING/CB_SETCURSEL to
+  ;; DefWindowProc, leaving a correctly positioned but permanently empty field.
+  (func $win16_shadow_combobox
+    (param $hwnd i32) (param $id i32) (param $title i32)
+    (local $slot i32) (local $class_w i32) (local $cs i32) (local $sz i32)
+    (if (i32.eqz (local.get $hwnd)) (then (return)))
+    (local.set $class_w (call $g2w (global.get $GUEST_STACK)))
+    (if (i32.ne
+          (call $host_get_window_class
+            (local.get $hwnd) (local.get $class_w) (i32.const 32))
+          (i32.const 15))
+      (then (return)))
+    (if (i32.or
+          (i32.or
+            (i32.ne (i32.load (local.get $class_w))
+                    (i32.const 0x6E756854))                              ;; Thun
+            (i32.ne (i32.load offset=4 (local.get $class_w))
+                    (i32.const 0x43726564)))                             ;; derC
+          (i32.or
+            (i32.ne (i32.load offset=8 (local.get $class_w))
+                    (i32.const 0x6F626D6F))                             ;; ombo
+            (i32.or
+              (i32.ne (i32.load16_u offset=12 (local.get $class_w))
+                      (i32.const 0x6F42))                               ;; Bo
+              (i32.ne (i32.load8_u offset=14 (local.get $class_w))
+                      (i32.const 0x78)))))                              ;; x
+      (then (return)))
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.lt_s (local.get $slot) (i32.const 0)) (then (return)))
+    (call $ctrl_table_set (local.get $slot) (i32.const 5) (local.get $id))
+    (if (i32.eqz (call $wnd_get_state_ptr (local.get $hwnd)))
+      (then
+        (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+        (local.set $cs (call $heap_alloc (i32.const 48)))
+        (memory.fill (call $g2w (local.get $cs)) (i32.const 0) (i32.const 48))
+        (call $gs32 (i32.add (local.get $cs) (i32.const 8)) (local.get $id))
+        (call $gs32 (i32.add (local.get $cs) (i32.const 12))
+          (call $wnd_get_parent (local.get $hwnd)))
+        (call $gs32 (i32.add (local.get $cs) (i32.const 16))
+          (i32.shr_u (local.get $sz) (i32.const 16)))
+        (call $gs32 (i32.add (local.get $cs) (i32.const 20))
+          (i32.and (local.get $sz) (i32.const 0xFFFF)))
+        (call $gs32 (i32.add (local.get $cs) (i32.const 32))
+          (call $wnd_get_style (local.get $hwnd)))
+        (call $gs32 (i32.add (local.get $cs) (i32.const 36)) (local.get $title))
+        (drop (call $combobox_wndproc (local.get $hwnd)
           (i32.const 0x0001) (i32.const 0) (local.get $cs)))
         (call $heap_free (local.get $cs)))))
 

@@ -3404,6 +3404,12 @@
   ;; that every face resolves to a file we ship.
   (global $TT_SUBST_DEFAULT i32 (i32.const 0x07F0BF00))
   (data (i32.const 0x07F0BF00) "Arial\00")
+  ;; Win 3.x compatibility alias used by applications written before the
+  ;; TrueType family names settled. Keep it out of enumeration, but resolve
+  ;; it to the same installed face as Times New Roman.
+  (global $TT_SUBST_TMS_RMN i32 (i32.const 0x07F0BF08))
+  (global $TT_SUBST_TIMES_NEW_ROMAN i32 (i32.const 0x07F0BF10))
+  (data (i32.const 0x07F0BF08) "Tms Rmn\00Times New Roman\00")
 
   ;; ---- fonts that are simply installed -----------------------------------
   ;;
@@ -3601,6 +3607,9 @@
     ;; default below.
     (if (i32.eqz (local.get $name)) (then (return (i32.const 0))))
     (if (i32.eqz (i32.load8_u (local.get $name))) (then (return (i32.const 0))))
+    (if (call $tt_subst_name_equal
+          (local.get $name) (global.get $TT_SUBST_TMS_RMN))
+      (then (local.set $name (global.get $TT_SUBST_TIMES_NEW_ROMAN))))
     ;; Whatever is sitting in the font directory counts as installed, and the
     ;; first face anybody asks for is the earliest point at which the VFS is
     ;; certainly mounted.

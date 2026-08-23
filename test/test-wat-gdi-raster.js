@@ -74,6 +74,24 @@ const SRC = path.join(ROOT, 'src');
     if (s.bpp === 32) bytes[p + 3] = 0xA5;
   }
 
+  function indexPixel(s, x, y, value) {
+    const row = s.topDown ? y : s.height - 1 - y;
+    const p = s.bits + row * s.stride + (s.bpp === 1 ? (x >> 3) : s.bpp === 4 ? (x >> 1) : x);
+    if (value === undefined) {
+      if (s.bpp === 1) return (bytes[p] >> (7 - (x & 7))) & 1;
+      if (s.bpp === 4) return x & 1 ? bytes[p] & 15 : bytes[p] >> 4;
+      return bytes[p];
+    }
+    if (s.bpp === 1) bytes[p] = value
+      ? bytes[p] | (1 << (7 - (x & 7)))
+      : bytes[p] & ~(1 << (7 - (x & 7)));
+    else if (s.bpp === 4) bytes[p] = x & 1
+      ? (bytes[p] & 0xF0) | (value & 15)
+      : (bytes[p] & 0x0F) | ((value & 15) << 4);
+    else bytes[p] = value;
+    return value;
+  }
+
   check('GetPixel and SetPixel honor COLORREF, stride, orientation, and bounds', () => {
     for (const bpp of [24, 32]) {
       for (const topDown of [false, true]) {
@@ -225,6 +243,39 @@ const SRC = path.join(ROOT, 'src');
     assert.strictEqual(wat.test_gdi_raster_bitblt(
       s.desc, 0, 0, 5, 1, s.desc, 2, 0, 0, 0x00CC0020), 1);
     assert.deepStrictEqual([...Array(7)].map((_, x) => packed(s, x, 0)), [1, 2, 3, 4, 5, 4, 5]);
+  });
+
+  check('indexed DDB self-SRCINVERT operates on palette indexes', () => {
+    const s = surface(8, 1, 4);
+    [1, 2, 3, 4, 5, 6, 7, 8].forEach((value, x) => indexPixel(s, x, 0, value));
+    assert.strictEqual(wat.test_gdi_raster_bitblt(
+      s.desc, 4, 0, 4, 1, s.desc, 0, 0, 0, 0x00660046), 1);
+    assert.deepStrictEqual([...Array(8)].map((_, x) => indexPixel(s, x, 0)),
+      [1, 2, 3, 4, 4, 4, 4, 12]);
+  });
+
+  check('indexed XOR sprites stay in palette space on a compatible screen', () => {
+    const colors = [
+      0x000000, 0x800000, 0x008000, 0x808000,
+      0x000080, 0x800080, 0x008080, 0xC0C0C0,
+      0x808080, 0xFF0000, 0x00FF00, 0xFFFF00,
+      0x0000FF, 0xFF00FF, 0x00FFFF, 0xFFFFFF,
+    ];
+    const src = surface(2, 1, 4);
+    const dst = surface(2, 1, 32);
+    const palette = nextBits;
+    nextBits += 0x100;
+    colors.forEach((color, index) => dv.setUint32(palette + index * 4, color, true));
+    dv.setUint32(src.desc + 24, palette, true);
+    dv.setUint32(src.desc + 28, colors.length, true);
+    indexPixel(src, 0, 0, 0); // transparent XOR index
+    indexPixel(src, 1, 0, 1); // gray(8) XOR maroon(1) -> red(9)
+    setPacked(dst, 0, 0, colors[7]);
+    setPacked(dst, 1, 0, colors[8]);
+    assert.strictEqual(wat.test_gdi_raster_bitblt(
+      dst.desc, 0, 0, 2, 1, src.desc, 0, 0, 0, 0x00660046), 1);
+    assert.deepStrictEqual([packed(dst, 0, 0), packed(dst, 1, 0)],
+      [colors[7], colors[9]]);
   });
 
   check('StretchBlt performs deterministic nearest-neighbor expansion and reduction', () => {

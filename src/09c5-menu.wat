@@ -463,7 +463,10 @@
     (call $memcpy
       (call $g2w (i32.add (local.get $newg) (i32.const 8)))
       (local.get $src_wa) (local.get $len))
-    (i32.store (local.get $tbl) (i32.add (local.get $newg) (i32.const 8))))
+    (i32.store (local.get $tbl) (i32.add (local.get $newg) (i32.const 8)))
+    ;; Host-built menus are serialized only after SetMenu has returned to the
+    ;; browser bridge. Recompute now that menu_bar_count can see the blob.
+    (call $defwndproc_do_nccalcsize (local.get $hwnd)))
 
   ;; Host-created menu bars have no RT_MENU resource key, but GetMenu and the
   ;; handle-based mutation APIs still need the CreateMenu handle as identity.
@@ -486,7 +489,8 @@
     (call $memcpy
       (call $g2w (i32.add (local.get $newg) (i32.const 8)))
       (local.get $src_wa) (local.get $len))
-    (i32.store (local.get $tbl) (i32.add (local.get $newg) (i32.const 8))))
+    (i32.store (local.get $tbl) (i32.add (local.get $newg) (i32.const 8)))
+    (call $defwndproc_do_nccalcsize (local.get $hwnd)))
 
   ;; Browser hosts do not carry a JS guest-address translator. Let them fill a
   ;; temporary guest allocation through guest_write8 and translate it here.

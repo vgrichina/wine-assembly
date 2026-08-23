@@ -91,7 +91,7 @@
   ;; ---- StaticState accessors ----
   ;;
   ;; Same rules as the button block above: $sw is the WASM address. SysLink
-  ;; allocates this same 16-byte layout (it is a static that paints part of its
+  ;; allocates this same 20-byte layout (it is a static that paints part of its
   ;; caption blue), so both wndprocs read through these; that shared shape is
   ;; invisible when both files spell out `offset=8`.
   ;;
@@ -115,6 +115,10 @@
     (i32.load offset=12 (local.get $sw)))
   (func $static_set_image_ord (param $sw i32) (param $v i32)
     (i32.store offset=12 (local.get $sw) (local.get $v)))
+  (func $static_font (param $sw i32) (result i32)
+    (i32.load offset=16 (local.get $sw)))
+  (func $static_set_font (param $sw i32) (param $v i32)
+    (i32.store offset=16 (local.get $sw) (local.get $v)))
 
   ;; ---- ProgressState accessors ----
   ;;
@@ -258,6 +262,24 @@
     (i32.load offset=48 (local.get $sw)))
   (func $lb_set_sel_cap (param $sw i32) (param $v i32)
     (i32.store offset=48 (local.get $sw) (local.get $v)))
+
+  ;; USER hides a listbox's WS_VSCROLL strip while every item fits, unless
+  ;; LBS_DISABLENOSCROLL explicitly asks for a disabled strip. Paint and
+  ;; hit-test share this decision so a hidden strip cannot steal clicks.
+  (func $listbox_vscroll_visible (param $hwnd i32) (param $sw i32) (result i32)
+    (local $style i32) (local $sz i32) (local $h i32) (local $visible i32)
+    (local.set $style (call $wnd_get_style (local.get $hwnd)))
+    (if (i32.eqz (i32.and (local.get $style) (i32.const 0x00200000)))
+      (then (return (i32.const 0))))
+    (if (i32.and (local.get $style) (i32.const 0x00001000)) ;; LBS_DISABLENOSCROLL
+      (then (return (i32.const 1))))
+    (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+    (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+    (if (i32.le_s (local.get $h) (i32.const 4))
+      (then (return (i32.const 1))))
+    (local.set $visible
+      (i32.div_u (i32.sub (local.get $h) (i32.const 4)) (i32.const 16)))
+    (i32.gt_s (call $lb_count (local.get $sw)) (local.get $visible)))
 
   ;; ---- ComboBoxState accessors (40 bytes) ----
   ;;
@@ -2286,7 +2308,11 @@
     (local.set $text_g (call $wat_str_to_heap (local.get $text_wa) (local.get $text_len)))
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
             (i32.const 16) (i32.const 24)
-            (i32.sub (local.get $w) (i32.const 32)) (i32.const 45)
+            ;; Stop at the button row. WAT-native sibling windows do not get
+            ;; USER's WS_CLIPSIBLINGS exclusion automatically; an invalidated
+            ;; message static otherwise repaints over the top eight pixels of
+            ;; Klotski's OK button after focus has already drawn the button.
+            (i32.sub (local.get $w) (i32.const 32)) (i32.const 40)
             (i32.const 0x50000000)
             (local.get $text_g)))
     ;; Button row, left edge centered around dialog midpoint.
@@ -2295,7 +2321,7 @@
     ;; place the row relative to the client bottom rather than the outer
     ;; window bottom.
     (local.set $bx (i32.div_u (i32.sub (local.get $w) (local.get $row_w)) (i32.const 2)))
-    (local.set $by (i32.sub (local.get $h) (i32.const 63)))
+    (local.set $by (i32.sub (local.get $h) (i32.const 60)))
     ;; Layout per MB_* mask. IDs match winuser.h.
     (block $done
       ;; MB_OK (0)
@@ -4405,6 +4431,11 @@
   ;;   +0x10 itemState (ODS_SELECTED 0x01 | ODS_FOCUS 0x10 | ODS_DEFAULT 0x20)
   ;;   +0x14 hwndItem                +0x18 hDC
   ;;   +0x1C..+0x2B RECT rcItem      +0x2C itemData=0
+  ;; The shared WEP About DLLs use a 260x65 owner-draw button as a monochrome
+  ;; branding panel. The Win16 BitBlt adapter consults this while WM_DRAWITEM
+  ;; is live so it can reproduce USER's embossed presentation of that panel.
+  (global $btn_about_logo_hdc (mut i32) (i32.const 0))
+
   (func $btn_send_drawitem (param $hwnd i32) (param $state_w i32) (param $flags i32)
     (local $dis i32) (local $disw i32) (local $sz i32) (local $w i32) (local $h i32)
     (local $ctrl_id i32) (local $hdc i32) (local $state_bits i32)
@@ -4449,6 +4480,10 @@
       (call $win98_sys_color (i32.const 15))))
     (drop (call $host_gdi_set_bk_color (local.get $hdc)
       (call $win98_sys_color (i32.const 20))))
+    (global.set $btn_about_logo_hdc
+      (select (local.get $hdc) (i32.const 0)
+        (i32.and (i32.eq (local.get $w) (i32.const 260))
+          (i32.eq (local.get $h) (i32.const 65)))))
     (drop (call $wnd_send_message
             (call $wnd_get_parent (local.get $hwnd))
             (i32.const 0x002B)
@@ -5047,7 +5082,12 @@
               (call $win98_sys_color (i32.const 15))))
             (drop (call $host_gdi_set_bk_color (local.get $hdc)
               (call $win98_sys_color (i32.const 20))))
-            ;; Post WM_DRAWITEM (0x002B) to parent
+            ;; Keep the live owner-draw destination visible to the Win16
+            ;; BitBlt compatibility path while the parent paints it.
+            (global.set $btn_about_logo_hdc
+              (select (local.get $hdc) (i32.const 0)
+                (i32.and (i32.eq (local.get $w) (i32.const 260))
+                  (i32.eq (local.get $h) (i32.const 65)))))
             (drop (call $wnd_send_message
               (call $wnd_get_parent (local.get $hwnd))
               (i32.const 0x002B)
@@ -5161,12 +5201,13 @@
         (local.set $cs_w (call $g2w (local.get $lParam)))
         (local.set $name_ptr (i32.load offset=36 (local.get $cs_w)))
         (local.set $style    (i32.load offset=32 (local.get $cs_w)))
-        (local.set $state (call $heap_alloc (i32.const 16)))
+        (local.set $state (call $heap_alloc (i32.const 20)))
         (local.set $state_w (call $g2w (local.get $state)))
         (call $static_set_text_ptr  (local.get $state_w) (i32.const 0))
         (call $static_set_text_len  (local.get $state_w) (i32.const 0))
         (call $static_set_style     (local.get $state_w) (local.get $style))
         (call $static_set_image_ord (local.get $state_w) (i32.const 0))
+        (call $static_set_font      (local.get $state_w) (i32.const 0))
         (if (local.get $name_ptr)
           (then
             (if (i32.lt_u (local.get $name_ptr) (i32.const 0x10000))
@@ -5233,6 +5274,20 @@
       (then
         (if (local.get $state)
           (then (return (call $static_text_len (call $g2w (local.get $state))))))
+        (return (i32.const 0))))
+
+    ;; ---------- WM_SETFONT / WM_GETFONT ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x0030))
+      (then
+        (if (local.get $state)
+          (then
+            (call $static_set_font (call $g2w (local.get $state)) (local.get $wParam))
+            (if (local.get $lParam) (then (call $invalidate_hwnd (local.get $hwnd))))))
+        (return (i32.const 0))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0031))
+      (then
+        (if (local.get $state)
+          (then (return (call $static_font (call $g2w (local.get $state))))))
         (return (i32.const 0))))
 
     ;; ---------- STM_SETICON / STM_GETICON ----------
@@ -5362,14 +5417,23 @@
             (if (i32.or (i32.lt_u (local.get $style) (i32.const 4))
                         (i32.gt_u (local.get $style) (i32.const 9)))
               (then
+                ;; VB's bordered ThunderLabel fields use a white BackColor;
+                ;; plain captions inherit the form face.
+                (local.set $brush
+                  (select (i32.const 0x30010) (i32.const 0x30011)
+                    (i32.ne (i32.and (call $wnd_get_style (local.get $hwnd))
+                      (i32.const 0x00800000)) (i32.const 0))))
                 (drop (call $host_gdi_fill_rect (local.get $hdc)
                         (i32.const 0) (i32.const 0)
                         (local.get $w) (local.get $h)
-                        (i32.const 0x30011)))))))  ;; LTGRAY_BRUSH ≈ COLOR_3DFACE (stock obj 1)
-        ;; Select DEFAULT_GUI_FONT (8pt MS Sans Serif) for the dialog look.
+                        (local.get $brush)))))))
+        ;; Use the font supplied through WM_SETFONT, falling back to the
+        ;; Win98 default GUI font for ordinary dialog labels.
         ;; TRANSPARENT bk mode so the label glyphs let the fill color show
         ;; through instead of painting an opaque white box behind every word.
-        (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
+        (drop (call $host_gdi_select_object (local.get $hdc)
+          (select (call $static_font (local.get $state_w)) (i32.const 0x30021)
+            (i32.ne (call $static_font (local.get $state_w)) (i32.const 0)))))
         (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
         ;; SS_ICON dialog controls preserve their RT_GROUP_ICON ordinal in the
         ;; static state. Decode the color plane and transparency mask through
@@ -5509,12 +5573,13 @@
         (local.set $cs_w (call $g2w (local.get $lParam)))
         (local.set $name_ptr (i32.load offset=36 (local.get $cs_w)))
         (local.set $style    (i32.load offset=32 (local.get $cs_w)))
-        (local.set $state (call $heap_alloc (i32.const 16)))
+        (local.set $state (call $heap_alloc (i32.const 20)))
         (local.set $state_w (call $g2w (local.get $state)))
         (call $static_set_text_ptr  (local.get $state_w) (i32.const 0))
         (call $static_set_text_len  (local.get $state_w) (i32.const 0))
         (call $static_set_style     (local.get $state_w) (local.get $style))
         (call $static_set_image_ord (local.get $state_w) (i32.const 0))
+        (call $static_set_font      (local.get $state_w) (i32.const 0))
         ;; A SysLink caption is always a real string; ordinal captions are a
         ;; static-only convention and would be a template authoring error here.
         (if (i32.gt_u (local.get $name_ptr) (i32.const 0xFFFF))
@@ -10669,10 +10734,10 @@
                 (i32.eq (local.get $msg) (i32.const 0x0203)))
       (then
         (local.set $count (call $lb_count (local.get $sw)))
-        ;; --- WS_VSCROLL strip hit-test (arrows only) ---
+        ;; --- visible WS_VSCROLL strip hit-test (arrows only) ---
         ;; If the click lands in the right-edge 16px scrollbar strip, adjust
         ;; top_index and short-circuit before the row-select path.
-        (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
+        (if (call $listbox_vscroll_visible (local.get $hwnd) (local.get $sw))
           (then
             (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
             (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
@@ -11163,8 +11228,8 @@
         (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
         (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
         (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
-        ;; Reserve right strip for WS_VSCROLL (0x00200000). Content uses w'=w-16.
-        (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
+        ;; Reserve the right strip only while USER would make it visible.
+        (if (call $listbox_vscroll_visible (local.get $hwnd) (local.get $sw))
           (then (local.set $w (i32.sub (local.get $w) (i32.const 16)))))
         ;; White interior + sunken edge (content rect only).
         (drop (call $host_gdi_fill_rect (local.get $hdc)
@@ -11224,8 +11289,8 @@
           (local.set $p (i32.add (local.get $p) (i32.add (local.get $slen) (i32.const 1))))
           (local.set $row (i32.add (local.get $row) (i32.const 1)))
           (br $rows)))
-        ;; WS_VSCROLL strip. $w here is already reduced; full width is via sz.
-        (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
+        ;; Visible WS_VSCROLL strip. $w here is already reduced; full width is via sz.
+        (if (call $listbox_vscroll_visible (local.get $hwnd) (local.get $sw))
           (then
             (local.set $visible (i32.div_u (i32.sub (local.get $h) (i32.const 4)) (i32.const 16)))
             (local.set $max (i32.sub (local.get $count) (local.get $visible)))

@@ -149,6 +149,8 @@ const manifest = JSON.parse(fs.readFileSync(
   assert.strictEqual(lookup('ARIAL'), expected.get('Arial').regular);
   assert.strictEqual(lookup('times new roman'),
     expected.get('Times New Roman').regular);
+  assert.strictEqual(lookup('Tms Rmn'), expected.get('Times New Roman').regular,
+    'the Win 3.x Times compatibility alias resolves to the serif face');
 
   // Tahoma ships no italic file. Falling back to the upright file is the
   // honest answer; returning nothing would drop the face to Canvas, and
