@@ -50,6 +50,21 @@ function canvasToPng(canvas) {
     ? canvas.toBufferSync('png')
     : canvas.toBuffer('image/png');
 }
+
+async function decodeMountedImage(hostPath) {
+  let skia;
+  try { skia = require('skia-canvas'); }
+  catch (_) {
+    throw new Error('decodeImage app assets require devDependency skia-canvas');
+  }
+  const source = await skia.loadImage(hostPath);
+  const canvas = new skia.Canvas(source.width, source.height);
+  const context = canvas.getContext('2d');
+  context.drawImage(source, 0, 0);
+  const rgba = new Uint8Array(context.getImageData(
+    0, 0, source.width, source.height).data);
+  return { width: source.width, height: source.height, rgba };
+}
 // Parse args (need these before autoBuild)
 const args = process.argv.slice(2);
 const getArg = (name, def) => {
@@ -125,6 +140,7 @@ const TRACE_GDI = hasFlag('trace-gdi');   // --trace-gdi: log GDI calls (CreateB
 const GDI_STATS = hasFlag('gdi-stats');   // --gdi-stats: print software-raster span/pixel totals at exit
 const LATENCY_STATS = hasFlag('latency-stats'); // --latency-stats: measure injected input -> next surface blit
 const TRACE_CTRL = hasFlag('trace-ctrl'); // --trace-ctrl: log every WAT-native control paint + its screen rect
+const TRACE_ERASE = hasFlag('trace-erase'); // --trace-erase: log every window-background erase + the brush it fills with
 const TRACE_RGN = hasFlag('trace-rgn');   // --trace-rgn: log HRGN create/combine/select + branch counts
 const TRACE_DC = hasFlag('trace-dc');     // --trace-dc: log DC→canvas target resolution (hwnd, ox/oy, canvas size)
 const TRACE_CLIP = hasFlag('trace-clip'); // --trace-clip: log _excludeChildrenClip kid/cousin rects + cover size per draw
@@ -1264,6 +1280,7 @@ async function main() {
   const traceCategories = new Set();
   if (TRACE_GDI) traceCategories.add('gdi');
   if (TRACE_CTRL) traceCategories.add('ctrl');
+  if (TRACE_ERASE) traceCategories.add('erase');
   if (TRACE_RGN) traceCategories.add('rgn');
   if (TRACE_DC) traceCategories.add('dc');
   if (TRACE_CLIP) traceCategories.add('clip');
@@ -1285,6 +1302,7 @@ async function main() {
     renderer,
     processId: 1000,
     apiTable,
+    log: VERBOSE ? console.log.bind(console) : null,
     // Live guest thread count, for HKEY_DYN_DATA\PerfStats KERNEL\Threads.
     // A getter because the manager is built long after ctx is.
     get threadManager() { return threadManager; },
@@ -2383,8 +2401,18 @@ async function main() {
   h.open_event = (nameWa, wide) => threadManager.openEvent(readSyncObjectName(nameWa, wide));
   h.set_event = (handle) => threadManager.setEvent(handle);
   h.reset_event = (handle) => threadManager.resetEvent(handle);
-  h.wait_single = (handle, timeout) => threadManager.waitSingle(handle, timeout);
-  h.wait_multiple = (nCount, handlesWA, bWaitAll, timeout) => threadManager.waitMultiple(nCount, handlesWA, bWaitAll, timeout);
+  // A wait reached from inside a synchronous SendMessage cannot yield: the
+  // recursive interpreter frame in $wnd_send_message would be abandoned. Give
+  // the signalling worker a bounded inline turn instead, exactly as host.js
+  // does in the browser.
+  const nestedSyncMessage = () =>
+    !!(ctx.exports && ctx.exports.get_sync_msg_depth && (ctx.exports.get_sync_msg_depth() | 0));
+  h.wait_single = (handle, timeout) => nestedSyncMessage()
+    ? threadManager.waitSingleCooperative(handle, timeout)
+    : threadManager.waitSingle(handle, timeout);
+  h.wait_multiple = (nCount, handlesWA, bWaitAll, timeout) => nestedSyncMessage()
+    ? threadManager.waitMultipleCooperative(nCount, handlesWA, bWaitAll, timeout)
+    : threadManager.waitMultiple(nCount, handlesWA, bWaitAll, timeout);
   h.create_semaphore = (initialCount, maxCount) => threadManager.createSemaphore(initialCount, maxCount);
   h.release_semaphore = (handle, releaseCount, lpPrevCountWA) => threadManager.releaseSemaphore(handle, releaseCount, lpPrevCountWA);
   // Check if a DLL file exists in VFS or host filesystem
@@ -2575,7 +2603,30 @@ async function main() {
         const entry = apiByName.get(name);
         if (!entry) return null;
         const f = workerFmtCtx();
-        return f ? fmtApiCall(entry, f.esp, f.ctx) : null;
+        if (!f) return null;
+        let header = fmtApiCall(entry, f.esp, f.ctx);
+        if (!header) {
+          // Match the main-thread trace for older api_table entries which only
+          // carry nargs metadata. Worker-only shell code is precisely where raw
+          // arguments are most useful, and a bare "SetWindowPos" hid the bad
+          // geometry that the authentic Win98 Explorer asked us to apply.
+          const n = typeof entry.nargs === 'number' ? entry.nargs : 6;
+          const raw = [];
+          for (let i = 0; i < n; i++) {
+            raw.push(hex(f.ctx.dv.getUint32(f.ctx.g2w(f.esp + 4 + i * 4), true)));
+          }
+          header = `${name}(${raw.join(', ')})`;
+        }
+        const ret = f.ctx.dv.getUint32(f.ctx.g2w(f.esp), true);
+        header += ` [esp=${hex(f.esp)} ret=${hex(ret)}]`;
+        if (TRACE_STACK && (!TRACE_STACK_FILTER || TRACE_STACK_FILTER.has(name))) {
+          const depth = TRACE_STACK_FILTER
+            ? TRACE_STACK_FILTER.get(name) : TRACE_STACK_DEFAULT_DEPTH;
+          const e = workerExports();
+          const chain = walkFrames(() => e.get_ebp(), f.ctx.dv, f.ctx.g2w, depth);
+          header += `\n  frames=[${chain.map(hex).join(' <- ')}]`;
+        }
+        return header;
       },
       formatReturn: (name, val) => {
         const entry = apiByName.get(name);
@@ -2612,7 +2663,28 @@ async function main() {
     }
     if (traceEipOn) {
       wh.log_eip = (eip) => {
-        logs.push(`[EIP T${tid}] ${hex(eip >>> 0)}`);
+        let line = `[EIP T${tid}] ${hex(eip >>> 0)}`;
+        const e = workerExports();
+        if (TRACE_EIP_DETAIL && e) {
+          line += ` EAX=${hex(e.get_eax())} ECX=${hex(e.get_ecx())}`
+            + ` EDX=${hex(e.get_edx())} EBX=${hex(e.get_ebx())}`
+            + ` ESP=${hex(e.get_esp())} EBP=${hex(e.get_ebp())}`
+            + ` ESI=${hex(e.get_esi())} EDI=${hex(e.get_edi())}`;
+          if (traceEipDumps.length) {
+            const imageBase = e.get_image_base();
+            const g2w = addr => addr - imageBase + 0x12000;
+            const dv = new DataView(memory.buffer);
+            for (const d of traceEipDumps) {
+              const bytes = [];
+              for (let off = 0; off < d.len; off++) {
+                bytes.push(dv.getUint8(g2w((d.addr + off) >>> 0))
+                  .toString(16).padStart(2, '0'));
+              }
+              line += ` mem[${hex(d.addr)}:${d.len}]=${bytes.join(' ')}`;
+            }
+          }
+        }
+        logs.push(line);
       };
     }
     wh.exit = () => {};
@@ -2795,7 +2867,7 @@ async function main() {
         p = p.slice(0, idx);
         ctx.vfs.dirs.add(p);
       }
-      ctx.vfs.setLazyFile(vfsPath, {
+      return ctx.vfs.setLazyFile(vfsPath, {
         attrs: 0x20,
         size,
         load: () => new Uint8Array(fs.readFileSync(hostPath)),
@@ -2838,7 +2910,13 @@ async function main() {
         const paths = (typeof item === 'object' && Array.isArray(item.vfsPaths))
           ? item.vfsPaths
           : [(typeof item === 'object' && item.vfsPath) || url.replace(/^.*[\\\/]/, '')];
-        for (const p of paths) addFile(p, hostPath, size);
+        const decodedImage = (typeof item === 'object' && item.decodeImage)
+          ? await decodeMountedImage(hostPath)
+          : null;
+        for (const p of paths) {
+          const entry = addFile(p, hostPath, size);
+          entry.decodedImage = decodedImage;
+        }
         // Same rule the page applies: a font the app ships is a font its
         // installer had put in the font directory, so mount it there too,
         // over the vendored substitute if one is already sitting there.
@@ -5077,16 +5155,32 @@ async function main() {
           const count = Math.max(0, Math.min(we.listview_get_count(hwnd) | 0, 64));
           const columns = Math.max(1, Math.min(we.listview_get_column_count ? (we.listview_get_column_count(hwnd) | 0) : 1, 8));
           const buffer = we.guest_alloc(512);
+          const item = we.guest_alloc(40);
+          const itemWa = g2w(item);
+          const itemDv = new DataView(memory.buffer);
           const cells = [];
+          const imageLists = we.send_message
+            ? [0, 1, 2].map(kind =>
+                `il${kind}=0x${(we.send_message(hwnd, 0x1002, kind, 0) >>> 0).toString(16)}`)
+              .join(' ')
+            : '';
           for (let row = 0; row < count; row++) {
             const values = [];
             for (let column = 0; column < columns; column++) {
               const length = Math.max(0, Math.min(we.listview_get_item_text(hwnd, row, column, buffer, 512) | 0, 511));
               values.push(readStr(g2w(buffer), length));
             }
-            cells.push(`#${row} ${values.map(value => JSON.stringify(value)).join(' | ')}`);
+            let metadata = '';
+            if (we.send_message) {
+              new Uint8Array(memory.buffer, itemWa, 40).fill(0);
+              itemDv.setUint32(itemWa, 0x0006, true); // LVIF_IMAGE | LVIF_PARAM
+              itemDv.setInt32(itemWa + 4, row, true);
+              const ok = we.send_message(hwnd, 0x1005, 0, item) | 0; // LVM_GETITEMA
+              metadata = ` image=${itemDv.getInt32(itemWa + 28, true)} lParam=0x${itemDv.getUint32(itemWa + 32, true).toString(16)} get=${ok}`;
+            }
+            cells.push(`#${row}${metadata} ${values.map(value => JSON.stringify(value)).join(' | ')}`);
           }
-          logs.push(`[input] dump-listview${label}: hwnd=${hwndStr} count=${count} columns=${columns} ${cells.join(' ; ') || '(empty)'} at batch ${batch}`);
+          logs.push(`[input] dump-listview${label}: hwnd=${hwndStr} count=${count} columns=${columns} ${imageLists} ${cells.join(' ; ') || '(empty)'} at batch ${batch}`);
         }
         if (!found) logs.push(`[input] dump-listview${label}: (none) at batch ${batch}`);
       } else if (ev.action === 'dump-toolbar' && renderer) {
@@ -6458,6 +6552,7 @@ if (VERBOSE) {
     if (instance.exports.get_wndproc) console.log('wndproc:', hex(instance.exports.get_wndproc()));
     if (instance.exports.get_thunk_base) console.log('thunk_base:', hex(instance.exports.get_thunk_base()), 'thunk_end:', hex(instance.exports.get_thunk_end()), 'num_thunks:', instance.exports.get_num_thunks());
     if (instance.exports.get_heap_ptr) console.log('heap_ptr:', hex(instance.exports.get_heap_ptr()));
+    if (instance.exports.get_free_list) console.log('free_list:', hex(instance.exports.get_free_list()));
     if (instance.exports.get_heap_sparse_ptr) console.log('heap_sparse_ptr:', hex(instance.exports.get_heap_sparse_ptr()));
     if (instance.exports.get_heap_sparse_end) console.log('heap_sparse_end:', hex(instance.exports.get_heap_sparse_end()));
     if (instance.exports.get_virtual_alloc_top) console.log('virtual_alloc_top:', hex(instance.exports.get_virtual_alloc_top()));
@@ -6565,6 +6660,18 @@ if (VERBOSE) {
     fs.writeFileSync(REG_EXPORT, JSON.stringify(snap, null, 2));
     console.log(`[reg] exported ${Object.keys(snap).length} entries to ${REG_EXPORT}`);
   }
+  if (traceHostNames && traceHostNames.has('com_create_instance') &&
+      ctx.sharedCom && ctx.sharedCom.lastCallback) {
+    const c = ctx.sharedCom.lastCallback;
+    console.log(`[com-callback] complete=${c.completed ? 1 : 0} eip=${hex(c.eip)} ` +
+      `yield=${c.yieldReason} eax=${hex(c.eax)} out=${hex(c.out)} ` +
+      `factory=${hex(c.factory)} method=${hex(c.method)} iid=${hex(c.iid)}`);
+    const e = ctx.sharedCom.lastEntry;
+    if (e) console.log(`[com-entry] clsid=${e.clsid} iid=${e.iid} ` +
+      `factoryOnly=${e.classFactoryOnly ? 1 : 0} outer=${hex(e.outer)} ` +
+      `context=${hex(e.context)} outPtr=${hex(e.outPtr)}`);
+  }
+
   // --gdi-stats: how much software rasterization the run actually did. Span
   // counts and pixel counts answer different questions — a repaint storm shows
   // up as pixels per batch, a clip/ROP fallback as slow-path share.

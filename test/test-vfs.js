@@ -55,6 +55,15 @@ test('basename fallback finds file by name on wrong drive', () => {
   assert.strictEqual(r.entry.name, 'demoopen.ddv');
 });
 
+test('exact lookup in an existing directory does not find a nested basename', () => {
+  const vfs = makeVFS({
+    'c:\\windows\\temp\\_istmp0.dir\\isuninst.exe': 314880,
+  });
+  vfs.dirs.add('c:\\windows\\temp\\_istmp0.dir');
+  const r = vfs.findFirstFile('C:\\WINDOWS\\IsUninst.exe');
+  assert(!r.handle, 'FindFirstFile must not recurse below an existing directory');
+});
+
 test('wildcard *.ddv finds only .ddv files', () => {
   const vfs = makeVFS({ 'c:\\a.ddv': 1, 'c:\\b.txt': 2, 'c:\\c.ddv': 3 });
   const r = vfs.findFirstFile('.\\*.ddv');

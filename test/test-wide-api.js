@@ -112,6 +112,16 @@ async function main() {
   check('GetModuleHandleW finds DLL table entry case-insensitively',
     (e.test_call_GetModuleHandleW(queryW) >>> 0) === (loadAddr >>> 0));
 
+  const ansiClass1 = writeAscii('AnsiClassOne');
+  const ansiClass2 = writeAscii('AnsiClassTwo');
+  const wcA1 = writeDwords([0, 0x11111111, 0, 0, 0, 0, 0, 0, 0, ansiClass1]);
+  const wcA2 = writeDwords([0, 0x22222222, 0, 0, 0, 0, 0, 0, 0, ansiClass2]);
+  const atomA1 = e.test_call_RegisterClassA(wcA1) >>> 0;
+  const atomA2 = e.test_call_RegisterClassA(wcA2) >>> 0;
+  check('RegisterClassA returns a nonzero atom for each class', atomA1 !== 0 && atomA2 !== 0);
+  check('RegisterClassA preserves distinct class atom identity', atomA1 !== atomA2,
+    `first=0x${atomA1.toString(16)} second=0x${atomA2.toString(16)}`);
+
   const className = writeWide('WideMainWindow');
   const wc = e.guest_alloc(40);
   const wndproc = 0x12345678;

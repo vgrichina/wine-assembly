@@ -33,14 +33,18 @@ check('the process-scoped half crosses into a worker', () => {
   const vfs = { files: new Map() };
   const wire = { id: 'wire' };
   const clock = () => 42;
+  const closeSyncHandle = () => true;
   const worker = processSharedCtx({
     vfs, vlanWire: wire, guestNowMs: clock,
     sharedGdi: { bitmaps: 1 }, sharedAudio: { open: 0 },
+    closeSyncHandle,
   });
   assert.strictEqual(worker.vfs, vfs, 'a worker must see main-thread file writes');
   assert.strictEqual(worker.vlanWire, wire, 'one wire per process, not per thread');
   assert.strictEqual(worker.guestNowMs, clock, 'threads cannot disagree about now');
   assert.strictEqual(worker.sharedAudio.open, 0);
+  assert.strictEqual(worker.closeSyncHandle, closeSyncHandle,
+    'worker CloseHandle must release the process synchronization object');
 });
 
 check('the thread-scoped half does not', () => {
@@ -67,6 +71,7 @@ check('a key the host does not have stays absent', () => {
 check('every documented key is one the list actually names', () => {
   assert.ok(PROCESS_SHARED_KEYS.includes('vfs'));
   assert.ok(PROCESS_SHARED_KEYS.includes('vlanWire'));
+  assert.ok(PROCESS_SHARED_KEYS.includes('closeSyncHandle'));
   assert.strictEqual(new Set(PROCESS_SHARED_KEYS).size, PROCESS_SHARED_KEYS.length,
     'a duplicated key means two people added it without reading');
 });

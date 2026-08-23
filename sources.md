@@ -18,7 +18,9 @@ The Internet Archive has several copies of the original PC release, including
 [Diablo (1996) (PC)](https://archive.org/details/rootifera-diablo-1996), as well
 as Blizzard's
 [official Diablo pre-release demo](https://archive.org/details/Diablo_1020).
-The demo is the preferred first target.
+The pre-release demo remains useful as a historical comparison, while the
+retail-era 1997 shareware CD documented below is now the preferred playable
+candidate.
 
 The Archive item describes the demo as a 1996 Blizzard release in which the
 Warrior can play through the first two dungeon levels and fight the Butcher.
@@ -45,7 +47,7 @@ technology overlaps with the DirectDraw SDK samples, DX-Ball, Age of Empires,
 threading, palette, audio, and virtual-filesystem work already present in this
 repository.
 
-### Current local integration
+### Pre-release local integration
 
 The repository's `?debug` app selector now has a debug-only
 `diablo_demo` entry. Its ignored local payload lives in
@@ -70,6 +72,37 @@ The debug registry has been exercised through both launch paths. It loads
 640-by-480 `Diablo Game` window. The browser reaches the animated title menu,
 character selection, name entry, and the cathedral loading screen through the
 normal `?debug` selector with no CLI-only filesystem scan or thread mode.
+
+### 1997 shareware CD
+
+The later [Diablo Shareware Windows CD](https://archive.org/details/DiabloSharewareWindowsBlizzardEntertainment1997)
+is now retained as a separate `diablo_shareware` corpus entry rather than
+replacing the historically distinct August 1996 pre-release demo. This is the
+retail-era shareware branch: it is a substantially later and more representative
+Diablo build, while still being limited shareware rather than the commercial
+full game.
+
+Archive.org's original `DIABLOSW.iso` is 137,576,448 bytes, SHA-1
+`bf1a62b24ce01ce39993955bff4b3c4d4ab9d647`, and MD5
+`3f37d919254c9747039e1042ed70a5fb`. The disc was created on 1997-01-18 and
+contains two distinct native paths:
+
+- `AUTORUN.EXE`: the authentic shareware installer and its packaged data.
+- `BLIZDEMO.EXE`: a separate Blizzard promotional reel; it is not Diablo
+  gameplay and is retained only as another disc fixture.
+
+`AUTORUN.EXE` was run to completion entirely inside Wine Assembly. Its worker
+threads exposed a real process-handle bug: `CloseHandle` did not inherit the
+process-owned synchronization-table release callback, eventually exhausting
+all 64 event slots. Sharing that callback with workers let the unchanged
+installer finish and produce `diablo_s.exe`, `storm.dll`, `diabloui.dll`,
+`smackw32.dll`, and the 50,274,091-byte `spawn.mpq`.
+
+The ignored local corpus retains the ISO, extracted disc, and untouched
+installer-produced files beneath `test/binaries/candidates/diablo-shareware/`.
+The `diablo_shareware` web entry launches that installed game payload, while
+the corpus keeps `disc/AUTORUN.EXE` as the installer regression target. This
+does not use host Wine or a preinstalled third-party package.
 
 ### Compatibility findings
 
@@ -749,10 +782,13 @@ through their original installers before using any extracted game files.
   reaches the DirectX 5 choice and accepts **No, continue without DirectX 5**,
   then enters a long synchronous extraction batch; a 330-second bounded run did
   not return, so completion is not yet proven.
-- Worms 2 is the direct Archive file `worms2demo05sepa.zip`. Its original
-  `SETUP.EXE` is a Win16 InstallShield launcher and correctly exposes the next
-  compatibility gap: it imports `VER.DLL` ordinals 6, 7, 10, and 11, while the
-  current Win16 loader has no VER module and the launcher reports Error 102.
+- Worms 2 was ultimately installed from Team17's smaller October demo archive,
+  `Worms2Demo10Oct.zip` (7,299,379 bytes; SHA-256
+  `c65d36cef69437f066a3d50d8ff26d43d228a0595d7bcc106d541375e1d3cfd8`).
+  The original Win16 InstallShield bootstrap expanded and ran its native
+  32-bit engine; fixing `IsWindow(HWND_BROADCAST)` to reject the `0xFFFF`
+  sentinel let that unchanged bootstrap finish, and three ordinary **Next**
+  clicks completed the install to `C:\\Team 17\\Worms 2 Demo`.
 - Total Annihilation is the direct `Total Annihilation.exe`. The native
   self-extractor calls `FindResourceA` with string-form integer names `#130`,
   `#135`, and `#136`; these correspond to numeric `ADD` resources containing
@@ -770,9 +806,35 @@ through their original installers before using any extracted game files.
   but its next CPU-bound allocator scan has not yet reached a rendered menu.
 - Captain Claw is the direct 11,275,313-byte `claw_demo.exe`. Its original
   InstallShield self-extractor runs from 1% through 99% and yields a complete
-  10,689,596-byte `data.z` plus the native Win16 second-stage `setup.exe`.
-  Starting that stage exposes its next missing companion (`_SETUP.DLL`, Error
-  103); no pre-extracted game has been substituted for that result.
+  10,689,596-byte `data.z`, 185,356-byte `_setup.lib`, and the native Win16
+  `setup.exe`. The Win16 bootstrap expands the original 674,304-byte 32-bit
+  InstallShield engine; running that engine with its native companions reaches
+  the Claw wizard and copies the demo to `C:\\GAMES\\CLAWDEMO`.
+
+### 2026-08-22 Worms 2 October demo gameplay
+
+The completed native install contains `worms2demo.exe` plus `worms2.dat`, the
+terrain/graphics/level archives, and 136 installed effect and speech WAV files.
+Despite its extension, `worms2.dat` is the actual PE32 game. Static and runtime
+tracing show that `worms2demo.exe` is only a promotional carousel: a click
+posts `WM_CHAR`, enters its `_spawn` implementation, and calls
+`CreateProcessA("worms2.dat", ...)`. Since Wine-Assembly intentionally has a
+single-process browser model, the debug manifest launches that exact installed
+PE directly instead of emulating a second process solely for the wrapper.
+
+An unchanged direct run finished the native loading sequence and entered the
+playable two-player medieval demo match. Captures at batches 50,000, 100,000,
+150,000, and 199,000 show different live worms (`Fudge`, `Nadger`, `Knuckle`,
+and `Woodbine`), turn arrows, moving camera/cursor, health, and changing turn
+timers. The first gameplay evidence is
+`/private/tmp/w2-direct-50k.png`; the later sustained-gameplay capture is
+`/private/tmp/w2-direct-199k.png`.
+
+The shared `worms2_demo` app manifest was then exercised through the actual
+Chromium page, not only the CLI host. After loading the same installed files,
+the browser reached the live match and changed the game canvas in 16 of 17
+one-second probes over a 15-second sample, with no runtime error or long task.
+The inspected browser capture is `/private/tmp/w2-browser-gameplay.png`.
 - Heroes II is the direct `h2demo.zip` (SHA-1
   `f324b626e69a6e087364be5f69e5dd13dde814d2`), which is already a ready-to-run
   demo rather than an installer. `H2DEMOW.EXE` creates its real game window, then
@@ -923,3 +985,35 @@ the **Assignment 1 - Aventine / The Birth of a City** briefing from
 probe can scroll that briefing but has not yet made its **To the city** button
 advance, so this verifies the browser launch and first mission load but not the
 final transition into the city map.
+
+### 2026-08-23 Captain Claw demo gameplay
+
+The original Captain Claw self-extractor and both native InstallShield stages
+now complete without substituting a third-party repack. The final wizard copies
+the following gameplay payload to `C:\\GAMES\\CLAWDEMO`:
+
+- `clawdemo.exe`: 1,227,776 bytes, SHA-256
+  `16021c5b6c5566650af364edd6468f1384e19de5d0941346858d564c7a361376`
+- `clawdemo.rez`: 16,414,408 bytes, SHA-256
+  `7e9da15bfbeca783f638e2162d2f1184046d6ef0d9c2546f811f3c65089af97c`
+- bundled `mss32.dll`: 159,232 bytes, SHA-256
+  `cc7e8d381b21049175ff25f2f628347718df7c8070661dfb31ec4c71fc47ab85`
+
+The game must load that bundled Miles DLL as native code; merely mounting it as
+a VFS file leaves `_AIL_startup@0` unresolved, while loading the original DLL
+runs its `DllMain`, starts its worker thread, and advances normally. Registry
+tracing proves that the installed game reads `Skip Joystick Calibration Test`
+and `Skip Title Screen` from
+`HKLM\\Software\\Monolith Productions\\Claw Demo\\1.0`; the debug manifest
+sets those documented advanced options so a one-process browser launch reaches
+the main menu without replaying startup calibration and movies.
+
+The shared `captain_claw_demo` manifest reaches **Demo Level #1 — La Roca** in
+the CLI host. Holding the real DirectInput right-arrow state moves Claw and
+scrolls the level camera from the initial cell into the next room; the inspected
+post-movement capture is `/private/tmp/claw-after-right.png`. The same manifest
+was then launched through the actual Chromium page, clicked through **Single
+Player**, and remained in animated gameplay for a 15-second sample. The canvas
+changed in 16 of 17 one-second probes with no runtime error or browser long
+task; the inspected browser capture is
+`/private/tmp/claw-browser-gameplay.png`.

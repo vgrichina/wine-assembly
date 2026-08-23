@@ -31,7 +31,11 @@ assert(html.includes('e.preventDefault();'), 'touch handlers should prevent brow
 assert(html.includes('name="viewport" content="width=device-width, initial-scale=1"'), 'mobile layout viewport should match the browser viewport');
 assert(!html.includes('viewport-fit=cover'), 'page should not render under iOS safe-area browser chrome');
 assert(!html.includes('MIN_VIEWPORT_WIDTH'), '640px minimum should apply to the emulated backing store, not the DOM layout viewport');
-assert(html.includes('const MIN_BACKING_WIDTH = 640'), 'small screens should still get at least a 640px emulated backing width');
+// A narrow *browser window* still emulates a 640px-wide screen. Only a phone,
+// which runs single-app mode, reports a phone-sized screen instead — see
+// test/test-single-app-mode.js.
+assert(html.includes('const MIN_BACKING_WIDTH = SINGLE_APP_MODE ? 400 : 640'),
+  'small screens should still get at least a 640px emulated backing width unless single-app mode');
 assert(html.includes('displayW') && html.includes('displayH'), 'canvas backing size should be separate from CSS display size');
 assert(html.includes('Math.max(1, MIN_BACKING_WIDTH / displayW)'), 'narrow viewports should scale backing height proportionally');
 assert(html.includes("canvas.style.width = displayW + 'px'"), 'fullscreen CSS width should use physical display width, not minimum backing width');

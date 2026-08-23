@@ -62,6 +62,7 @@ const ORIGIN = (opt('origin', '') || '').replace(/\/$/, '');
 // JS evaluated after sampling; its result is printed. Pairs with
 // --after-launch to install a counter and then read it back.
 const REPORT_EVAL = opt('report-eval', '');
+const TRACE_APIS = (opt('trace-api', '') || '').split(',').filter(Boolean);
 const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
 function mimeType(file) {
@@ -129,8 +130,14 @@ async function main() {
     page.on('pageerror', e => problems.push(String(e)));
     page.on('console', m => {
       const t = m.text();
+      if (TRACE_APIS.length && /^\[API\]|^\s*=>/.test(t)) console.log(`[page] ${t}`);
       if (/UNIMPLEMENTED API:|RuntimeError|LinkError|crashed|FATAL:/i.test(t)) problems.push(t);
     });
+    if (TRACE_APIS.length) {
+      await page.evaluateOnNewDocument(names => {
+        globalThis.__waTraceApiNames = new Set(names);
+      }, TRACE_APIS);
+    }
     await page.goto(`${base}/index.html${QUERY}`, { waitUntil: 'load', timeout: 60000 });
     await page.waitForFunction('typeof launchApp === "function"', { timeout: 60000 });
 

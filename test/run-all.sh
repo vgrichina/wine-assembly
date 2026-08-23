@@ -191,6 +191,7 @@ UNIT=(
   test/test-button-focus-notify.js
   test/test-def-dlg-proc.js
   test/test-dialog-idok-handled.js
+  test/test-isdialogmessage-enter.js
   test/test-dialog-custom-dispatch.js
   test/test-end-dialog-lifecycle.js
   test/test-directdraw-cooperative-window.js
@@ -270,8 +271,8 @@ E2E=(
   test/test-win16-pipe-about.js
   test/test-win16-idlewild-handle-map.js
   test/test-worker-thread-stuck-detect.js
-  test/test-caesar3-fullscreen-metrics.js
   test/test-tapi-line-init.js
+  test/test-caesar3-fullscreen-metrics.js
   test/test-win16-jigsawed.js
   test/test-win16-jigsawed-menus.js
   test/test-win16-entertainment-manifests.js

@@ -205,6 +205,61 @@ async function main() {
   wat.wnd_set_style_export(SECOND_CHILD, 0x40000000);
   wat.dc_apply_client_clip(hdc, HWND);
 
+  // Overlapping WS_CLIPSIBLINGS children use current z-order, not allocation
+  // slots. TriPeaks creates cards in reverse layout order, then raises each
+  // hidden card as it deals; static slot order leaves the covered cards above
+  // the playable face row.
+  wat.ctrl_set_geom(SECOND_CHILD, 10, 13, 5, 5);
+  wat.wnd_set_style_export(CHILD, 0x54000000);
+  wat.wnd_set_style_export(SECOND_CHILD, 0x54000000);
+  const wndSlot = hwnd => {
+    for (let slot = 0; slot < 256; slot++) {
+      if (dv.getUint32(0x7000 + slot * 24, true) === hwnd) return slot;
+    }
+    return -1;
+  };
+  const childSlot = wndSlot(CHILD);
+  const secondChildSlot = wndSlot(SECOND_CHILD);
+  assert(childSlot >= 0 && secondChildSlot >= 0, 'sibling windows need table slots');
+  dv.setInt32(0x079C8000 + childSlot * 4, 100, true);
+  dv.setInt32(0x079C8000 + secondChildSlot * 4, 200, true);
+  assert.strictEqual(wat.wnd_z_get(CHILD), 100);
+  assert.strictEqual(wat.wnd_z_get(SECOND_CHILD), 200);
+  assert.strictEqual(wat.wnd_get_parent(CHILD), HWND);
+  assert.strictEqual(wat.wnd_get_parent(SECOND_CHILD), HWND);
+  assert.strictEqual(wat.wnd_get_style_export(CHILD) >>> 0, 0x54000000);
+  assert.strictEqual(wat.wnd_get_style_export(SECOND_CHILD) >>> 0, 0x54000000);
+  assert.strictEqual(wat.ctrl_get_xy(CHILD) >>> 0, (12 << 16) | 7);
+  assert.strictEqual(wat.ctrl_get_xy(SECOND_CHILD) >>> 0, (13 << 16) | 10);
+  assert.strictEqual(wat.ctrl_get_wh(SECOND_CHILD) >>> 0, (5 << 16) | 5);
+  assert.strictEqual(wat.wnd_z_is_above_sibling(CHILD, SECOND_CHILD), 1);
+  const siblingDc = wat.test_call_GetDC(CHILD) >>> 0;
+  let systemClip = 0;
+  for (let slot = 0; slot < 256; slot++) {
+    const entry = 0x07F0C000 + slot * 8;
+    if (dv.getUint32(entry, true) === siblingDc) {
+      systemClip = dv.getUint32(entry + 4, true);
+      break;
+    }
+  }
+  assert(systemClip, 'child DC needs a retained USER system clip');
+  const systemClipRecord = 0x07F0D000 + ((systemClip & 0xFF) - 1) * 32;
+  const systemClipRects = dv.getUint32(systemClipRecord + 28, true);
+  const systemClipBox = [8, 12, 16, 20].map(offset =>
+    dv.getInt32(systemClipRecord + offset, true));
+  assert(systemClipRects > 1,
+    `excluding the overlapping sibling should make a complex clip ` +
+    `(rects=${systemClipRects}, box=${systemClipBox.join(',')})`);
+  assert.strictEqual(wat.test_gdi_dc_clip_point_visible(siblingDc, 3, 1), 0,
+    'a higher-z overlapping sibling must be excluded from the child DC');
+  dv.setInt32(0x079C8000 + childSlot * 4, 300, true);
+  wat.dc_apply_client_clip(siblingDc, CHILD);
+  assert.strictEqual(wat.test_gdi_dc_clip_point_visible(siblingDc, 3, 1), 1,
+    'raising the child above its sibling must restore the overlap');
+  assert.strictEqual(wat.test_call_ReleaseDC(CHILD, siblingDc), 1);
+  wat.wnd_set_style_export(CHILD, 0x50000000);
+  wat.wnd_set_style_export(SECOND_CHILD, 0x40000000);
+
   // SkiFree acquires and retains its drawing DC from WM_CREATE, before the
   // main window is shown. Its system clip must follow later visibility
   // changes without requiring the application to acquire another DC.

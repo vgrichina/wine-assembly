@@ -21,8 +21,8 @@ assert(!html.includes('<option value="scale2x">'));
 assert(!html.includes('<option value="scale3x">'));
 assert(html.includes('<option value="fsr1">FSR 1 (EASU + RCAS)</option>'));
 assert(html.includes('id="presentation-dedither-select"'));
-assert(html.includes('<option value="checkerboard">Checkerboard</option>'));
-assert(html.includes('<option value="ordered2">Ordered 2x2</option>'));
+assert(html.includes('<option value="mdapt">MDAPT</option>'));
+assert(html.includes('<option value="jinc2">Jinc2</option>'));
 assert(html.includes('id="crt-scanlines-toggle"'));
 assert(html.includes('id="crt-mask-toggle"'));
 assert(html.includes('id="crt-glow-toggle"'));
@@ -220,8 +220,10 @@ assert.strictEqual(renderer.setPresentationScaleMode('scale2x'), 'scale-auto',
 assert.strictEqual(renderer.setPresentationScaleMode('scale3x'), 'scale-auto',
   'stored legacy Scale3x selections should migrate to the automatic scaler');
 assert.strictEqual(renderer.setPresentationScaleMode('fsr1'), 'fsr1');
-assert.strictEqual(renderer.setPresentationDeditherMode('checkerboard'), 'checkerboard');
-assert.strictEqual(renderer.setPresentationDeditherMode('ordered2'), 'ordered2');
+assert.strictEqual(renderer.setPresentationDeditherMode('mdapt'), 'mdapt');
+assert.strictEqual(renderer.setPresentationDeditherMode('jinc2'), 'jinc2');
+assert.strictEqual(renderer.setPresentationDeditherMode('checkerboard'), 'mdapt',
+  'stored placeholder choices should migrate to MDAPT');
 assert.strictEqual(renderer.setPresentationDeditherMode('unknown'), 'off');
 
 assert.deepStrictEqual(
@@ -261,7 +263,7 @@ nativeRenderer.presentationFilter = {
   present(...args) { presented = args; return true; },
 };
 nativeRenderer.presentationScaleMode = 'fsr1';
-nativeRenderer.presentationDeditherMode = 'ordered2';
+nativeRenderer.presentationDeditherMode = 'jinc2';
 nativeRenderer._exclusivePresentationSource = nativeComposite;
 nativeRenderer._exclusivePresentationViewport = {
   cropX: 0, cropY: 0, cropW: 4, cropH: 4,
@@ -274,7 +276,7 @@ assert.strictEqual(presented[0], nativeComposite,
   'exclusive GPU scalers should receive the native composite, not the logical screen canvas');
 assert.strictEqual(presented[1], 'fsr1');
 assert.strictEqual(presented[3].viewport, nativeRenderer._exclusivePresentationViewport);
-assert.strictEqual(presented[3].dedither, 'ordered2',
+assert.strictEqual(presented[3].dedither, 'jinc2',
   'dedither should be applied to the native exclusive composite before scaling');
 
 console.log('PASS  scaling uses native exclusive sources, physical Retina multipliers, and aspect-preserving viewports');

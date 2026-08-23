@@ -20,7 +20,7 @@ const extraWat = String.raw`
     ;; Model a newly instantiated worker: its mutable globals start at zero.
     (global.set $DX_VTBL_DDRAW (i32.const 0))
     (global.set $DX_VTBL_DPLAY3 (i32.const 0))
-    (global.set $DX_VTBL_DS3DBUF (i32.const 0)))
+    (global.set $DX_VTBL_DIDEV2 (i32.const 0)))
   (func (export "test_dx_vtbl_ddraw") (result i32)
     (global.get $DX_VTBL_DDRAW))
   (func (export "test_dx_vtbl_dplay3") (result i32)
@@ -28,7 +28,7 @@ const extraWat = String.raw`
   ;; The global fed from the highest registry slot -- keep this pointing at
   ;; whatever $dx_sync_thread_vtables assigns last.
   (func (export "test_dx_vtbl_last") (result i32)
-    (global.get $DX_VTBL_DS3DBUF))
+    (global.get $DX_VTBL_DIDEV2))
   ;; Read the size rather than restating it: the registry grows every time a
   ;; COM interface is added, and this test used to hardcode 52/53 -- it went
   ;; red the next time one was, saying "worker does not restore vtables" about

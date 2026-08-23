@@ -25,6 +25,7 @@
   },
   "devDependencies": {
     "puppeteer": "25.7.0",
+    "skia-canvas": "3.0.8",
     "v86": "0.5.432"
   }
 }

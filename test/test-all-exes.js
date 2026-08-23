@@ -162,7 +162,7 @@ const TEST_CASES = [
     ...VOLUME_CONTROL_SMOKE },
   { exe: 'test/binaries/win98-apps/sndrec32.exe', name: 'Sound Recorder' },
   // Explorer runs its real startup against the vendored SHELL32/SHLWAPI/
-  // SHDOCVW in explorer98/dlls, then does GetProcAddress(shell32, ordinal 181)
+  // SHDOCVW/BROWSEUI set in explorer98/dlls, then does GetProcAddress(shell32, ordinal 181)
   // and calls it. That export (RVA 0x22ab1) is a flat-thunk stub — `mov cl,0xc`,
   // two `push word`, `call [0x7fcd2b68]`, `cwde` — and the pointer it calls
   // through is filled in by ThunkConnect32 from the SL01/LS01/"Smag" block in
@@ -382,28 +382,15 @@ const TEST_CASES = [
     maxBatches: 80, batchSize: 50000,
     extraArgs: ['--args=/s', '--no-close', '--quiet-blocks', '--stuck-after=5000'],
     timeoutMs: 30000 },
-  // Plus! 98 screensavers — MFC42.
-  //
-  // These four drive their picture transitions through DirectAnimation, not
-  // GDI: the API histogram is IDirectAnimationDAView_QueryInterface /
-  // DirectSlot / Release once per frame, and the 138 StretchBlt calls all
-  // source a surface DirectAnimation never wrote. Raising the budget does not
-  // help — at 140x50000 (7M instructions, 9059 API calls) the PNG is the same
-  // 2061-byte solid colour as at the default 80k. So the blank frame is the
-  // honest result, and it is recorded here rather than hidden.
-  //
-  // They read as a regression in the PASS count only because the harness used
-  // to score a killed run as a pass; they have never rendered. WIN98.SCR is the
-  // same MFC family and does pass, because it goes through DDraw instead.
-  //
-  // The declared backstop is 60s because they are heavy, not because they are
-  // wedged: they complete their batches, just slowly (mfc42 load dominates).
-  { exe: 'test/binaries/screensavers/CORBIS.SCR', name: 'Corbis (screensaver, MFC)', extraArgs: ['--args=/s'],
-    timeoutMs: 60000, knownBadRender: 'DirectAnimation DAView is a stub — no picture is ever composed' },
-  { exe: 'test/binaries/screensavers/FASHION.SCR', name: 'Fashion (screensaver, MFC)', extraArgs: ['--args=/s'],
-    timeoutMs: 60000, knownBadRender: 'DirectAnimation DAView is a stub — no picture is ever composed' },
-  { exe: 'test/binaries/screensavers/HORROR.SCR', name: 'Horror (screensaver, MFC)', extraArgs: ['--args=/s'],
-    timeoutMs: 60000, knownBadRender: 'DirectAnimation DAView is a stub — no picture is ever composed' },
+  // Plus! 98 screensavers — MFC42. The four photo savers need their registered
+  // app manifests so the original JPEG sequence is mounted and decoded before
+  // DirectAnimation's synchronous graph starts.
+  { exe: 'test/binaries/screensavers/CORBIS.SCR', app: 'scr_corbis', name: 'Corbis (screensaver, MFC)',
+    maxBatches: 8, batchSize: 20000, timeoutMs: 90000 },
+  { exe: 'test/binaries/screensavers/FASHION.SCR', app: 'scr_fashion', name: 'Fashion (screensaver, MFC)',
+    maxBatches: 8, batchSize: 20000, timeoutMs: 90000 },
+  { exe: 'test/binaries/screensavers/HORROR.SCR', app: 'scr_horror', name: 'Horror (screensaver, MFC)',
+    maxBatches: 8, batchSize: 20000, timeoutMs: 90000 },
   { exe: 'test/binaries/screensavers/WIN98.SCR', name: 'Win98 (screensaver, MFC)',
     // Animates into DDraw offscreen buffers before the first primary Blt.
     // The default 80k instructions stops during the decode/update loop and
@@ -411,8 +398,8 @@ const TEST_CASES = [
     maxBatches: 140, batchSize: 50000,
     extraArgs: ['--args=/s', '--quiet-blocks'],
     timeoutMs: 30000 },
-  { exe: 'test/binaries/screensavers/WOTRAVEL.SCR', name: 'WorldTraveler (screensaver, MFC)', extraArgs: ['--args=/s'],
-    timeoutMs: 60000, knownBadRender: 'DirectAnimation DAView is a stub — no picture is ever composed' },
+  { exe: 'test/binaries/screensavers/WOTRAVEL.SCR', app: 'scr_wotravel', name: 'WorldTraveler (screensaver, MFC)',
+    maxBatches: 8, batchSize: 20000, timeoutMs: 90000 },
   // Plus! 98 screensavers — DirectDraw/Direct3DRM
   { exe: 'test/binaries/screensavers/ARCHITEC.SCR', name: 'Architecture (screensaver, DX)', ...ORGANIC_ART_D3DRM_SMOKE },
   { exe: 'test/binaries/screensavers/FALLINGL.SCR', name: 'FallingLeaves (screensaver, DX)', ...ORGANIC_ART_D3DRM_SMOKE },
@@ -474,7 +461,7 @@ function runExe(testCase, pngPath, budgetMultiplier) {
 
   const args = [
     RUN_JS,
-    `--exe=${exePath}`,
+    testCase.app ? `--app=${testCase.app}` : `--exe=${exePath}`,
     `--max-batches=${testCase.maxBatches || MAX_BATCHES}`,
     `--batch-size=${testCase.batchSize || BATCH_SIZE}`,
     '--no-build',
