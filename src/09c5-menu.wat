@@ -3372,25 +3372,46 @@
   )
 
   ;; InsertMenuItemA/W(hMenu, uItem, fByPosition, lpmii)
-  (func $handle_InsertMenuItemA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  ;; A CreateMenu bar is host-backed, so the dynamic MNUD path declines it and a
+  ;; tail insert has to reach the host tree instead — tetravex.exe builds its whole
+  ;; bar out of InsertMenuItemA(uItem = -1) calls, and dropping them left SetMenu
+  ;; with an empty tree and the window with no menu bar at all. Non-tail mutation
+  ;; of a host menu is not modelled and keeps the historical no-op success.
+  (func $insert_menu_item_common (param $hmenu i32) (param $item i32) (param $bypos i32)
+                                 (param $mii i32) (param $wide i32) (result i32)
     (local $dyn i32) (local $flags i32)
-    (local.set $flags (call $menu_item_info_decode (local.get $arg3)))
+    (local.set $flags (call $menu_item_info_decode (local.get $mii)))
     (local.set $dyn
       (call $dynamic_menu_insert
-        (local.get $arg0)
-        (call $dynamic_menu_resolve_pos (local.get $arg0) (local.get $arg1) (local.get $arg2))
+        (local.get $hmenu)
+        (call $dynamic_menu_resolve_pos (local.get $hmenu) (local.get $item) (local.get $bypos))
         (local.get $flags) (global.get $mii_out_id) (global.get $mii_out_data)
         (global.get $mii_out_submenu)))
-    (global.set $eax
-      (if (result i32) (i32.eq (local.get $dyn) (i32.const -1))
-        (then (i32.const 1))
-        (else (local.get $dyn))))
+    (if (i32.ne (local.get $dyn) (i32.const -1))
+      (then (return (local.get $dyn))))
+    (if (i32.eq (local.get $item) (i32.const -1))
+      (then (return (call $host_menu_append
+        (local.get $hmenu) (local.get $flags)
+        ;; MF_POPUP: the host stores the submenu handle in the id slot.
+        (if (result i32) (global.get $mii_out_submenu)
+          (then (global.get $mii_out_submenu))
+          (else (global.get $mii_out_id)))
+        (if (result i32) (global.get $mii_out_data)
+          (then (call $g2w (global.get $mii_out_data)))
+          (else (i32.const 0)))
+        (local.get $wide)))))
+    (i32.const 1))
+
+  (func $handle_InsertMenuItemA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $insert_menu_item_common
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   (func $handle_InsertMenuItemW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_InsertMenuItemA (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+    (global.set $eax (call $insert_menu_item_common
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; ModifyMenuA(hMnu, uPosition, uFlags, uIDNewItem, lpNewItem) — return TRUE

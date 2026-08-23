@@ -52,6 +52,7 @@ UNIT=(
   test/test-codepage-dbcs.js
   test/test-atom-table.js
   test/test-menu-insert.js
+  test/test-insert-menu-item-host-bar.js
   test/test-menu-popup-text.js
   test/test-dynamic-menu-bar.js
   test/test-sscanf.js
