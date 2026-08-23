@@ -47,4 +47,11 @@ assert(mw3.some(item => item.vfsPath.toLowerCase() === 'c:\\zbd\\c4\\gamez.zbd')
 assert.strictEqual(APPS.mw3.requiredFiles, true,
   'MechWarrior 3 database files must be launch-critical');
 
+assert.strictEqual(APPS.total_annihilation_demo.requiredFiles, true,
+  'Total Annihilation HPI must be launch-critical');
+assert((APPS.total_annihilation_demo.files || []).some(item =>
+  item.url.endsWith('/installed-fixed/cavedog/totala/demo/tademo.hpi') &&
+  item.vfsPath.toLowerCase() === 'c:\\tademo.hpi'),
+  'Total Annihilation must mount the validated HPI at c:\\tademo.hpi');
+
 console.log(`PASS  ${dropdownIds.length} debug dropdown IDs are registered and corrected data manifests are complete`);
