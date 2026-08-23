@@ -108,6 +108,13 @@
       overflow: hidden;
       position: relative;
     }
+    #screen-canvas-stack {
+      flex: 1 1 auto;
+      min-width: 0;
+      min-height: 0;
+      position: relative;
+    }
+    #screen-present { pointer-events: none; }
     canvas {
       image-rendering: pixelated;
       cursor: default;
@@ -385,6 +392,19 @@
       width: 100% !important;
       height: 0 !important;
     }
+    body.exclusive-fullscreen #screen-canvas-stack {
+      flex: 1 1 0;
+      width: 100%;
+      height: 0;
+      min-height: 0;
+    }
+    body.exclusive-fullscreen #screen-canvas-stack canvas {
+      position: absolute !important;
+      inset: 0 !important;
+      width: 100% !important;
+      height: 100% !important;
+      min-height: 0;
+    }
     #screen-wrap:fullscreen {
       position: fixed;
       inset: 0;
@@ -413,6 +433,17 @@
       inset: 0 !important;
       width: 100% !important;
       height: 100% !important;
+    }
+    #screen-wrap:fullscreen #screen-canvas-stack,
+    #screen-wrap:-webkit-full-screen #screen-canvas-stack {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+    #screen-wrap:fullscreen #screen-canvas-stack canvas,
+    #screen-wrap:-webkit-full-screen #screen-canvas-stack canvas {
+      position: absolute !important;
     }
     #screen-wrap:fullscreen #browser-fullscreen-consent,
     #screen-wrap:-webkit-full-screen #browser-fullscreen-consent {
@@ -629,6 +660,32 @@
           <option value="500000">500k</option>
         </select>
       </span>
+      <span class="debug-scale">
+        <label>2D scale:</label>
+        <select id="presentation-scale-select" onchange="apply2dScalingMode(this.value)" autocomplete="off" title="All modes preserve the game's aspect ratio">
+          <option value="nearest" selected>Nearest fit</option>
+          <option value="integer">Integer pixels</option>
+          <option value="sharp-bilinear">Sharp bilinear</option>
+          <option value="browser-hq">Browser HQ</option>
+          <option value="sharp-hq">Sharp HQ</option>
+          <option value="scale-auto">Scale (2x / 3x / 4x)</option>
+          <option value="fsr1">FSR 1 (EASU + RCAS)</option>
+        </select>
+      </span>
+      <span class="debug-dedither">
+        <label>Dedither:</label>
+        <select id="presentation-dedither-select" onchange="applyDeditherMode(this.value)" autocomplete="off" title="Blend detected low-colour dither patterns before scaling">
+          <option value="off" selected>Off</option>
+          <option value="checkerboard">Checkerboard</option>
+          <option value="ordered2">Ordered 2x2</option>
+        </select>
+      </span>
+      <span class="debug-crt">
+        <label>CRT:</label>
+        <label title="Darken the gaps between the game's logical rows"><input id="crt-scanlines-toggle" type="checkbox" onchange="applyCrtEffects()">Scanlines</label>
+        <label title="Apply a subtle RGB phosphor triad"><input id="crt-mask-toggle" type="checkbox" onchange="applyCrtEffects()">Mask</label>
+        <label title="Bleed a little energy from bright pixels into their neighbours"><input id="crt-glow-toggle" type="checkbox" onchange="applyCrtEffects()">Glow</label>
+      </span>
       <span class="debug-midi">
         <label>MIDI:</label>
         <select id="midi-select"></select>
@@ -658,7 +715,10 @@
     <div id="content">
       <div id="screen-wrap">
         <div id="desktop-icons"></div>
-        <canvas id="screen"></canvas>
+        <div id="screen-canvas-stack">
+          <canvas id="screen-present" aria-hidden="true"></canvas>
+          <canvas id="screen"></canvas>
+        </div>
         <div id="browser-fullscreen-consent" role="group" aria-label="Browser fullscreen option">
           <span>App is using the full page</span>
           <button type="button" onclick="approveBrowserFullscreen(event)">Use browser fullscreen</button>
@@ -724,7 +784,8 @@ Resource-aware Win98 emulator
   <script src="lib/surface.js?v=1"></script>
   <script src="lib/resources-icon.js?v=170"></script>
   <script src="lib/renderer-input.js?v=191"></script>
-  <script src="lib/renderer.js?v=180"></script>
+  <script src="lib/presentation-filter.js?v=4"></script>
+  <script src="lib/renderer.js?v=184"></script>
   <script src="lib/dll-registry.js?v=1"></script>
   <script src="lib/apps.js?v=2"></script>
   <script src="lib/browser-input.js?v=1"></script>
@@ -787,6 +848,90 @@ Resource-aware Win98 emulator
 
     const LOCAL_DESKTOP = /^(localhost|127\.|0\.0\.0\.0|::1$|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(location.hostname);
     const DEBUG_MODE = new URLSearchParams(location.search).has('debug');
+    const PRESENTATION_SCALE_KEY = 'wine-assembly:2d-scale';
+    const PRESENTATION_DEDITHER_KEY = 'wine-assembly:dedither';
+    const PRESENTATION_CRT_KEY = 'wine-assembly:crt-effects';
+    function normalize2dScalingMode(mode) {
+      if (mode === 'scale2x' || mode === 'scale3x') mode = 'scale-auto';
+      return mode === 'integer' || mode === 'sharp-bilinear' ||
+        mode === 'browser-hq' || mode === 'sharp-hq' || mode === 'scale-auto' ||
+        mode === 'fsr1'
+        ? mode : 'nearest';
+    }
+    function normalizeCrtEffects(effects) {
+      effects = effects || {};
+      return {
+        scanlines: !!effects.scanlines,
+        mask: !!effects.mask,
+        glow: !!effects.glow,
+      };
+    }
+    function normalizeDeditherMode(mode) {
+      return mode === 'checkerboard' || mode === 'ordered2' ? mode : 'off';
+    }
+    let initial2dScalingMode = 'nearest';
+    try { initial2dScalingMode = normalize2dScalingMode(localStorage.getItem(PRESENTATION_SCALE_KEY)); }
+    catch (_) {}
+    window.WINE_2D_SCALE_MODE = initial2dScalingMode;
+    const initial2dScalingSelect = document.getElementById('presentation-scale-select');
+    if (initial2dScalingSelect) initial2dScalingSelect.value = initial2dScalingMode;
+    let initialDeditherMode = 'off';
+    try { initialDeditherMode = normalizeDeditherMode(localStorage.getItem(PRESENTATION_DEDITHER_KEY)); }
+    catch (_) {}
+    window.WINE_DEDITHER_MODE = initialDeditherMode;
+    const initialDeditherSelect = document.getElementById('presentation-dedither-select');
+    if (initialDeditherSelect) initialDeditherSelect.value = initialDeditherMode;
+    let initialCrtEffects = normalizeCrtEffects();
+    try { initialCrtEffects = normalizeCrtEffects(JSON.parse(localStorage.getItem(PRESENTATION_CRT_KEY) || '{}')); }
+    catch (_) {}
+    window.WINE_CRT_EFFECTS = initialCrtEffects;
+    document.getElementById('crt-scanlines-toggle').checked = initialCrtEffects.scanlines;
+    document.getElementById('crt-mask-toggle').checked = initialCrtEffects.mask;
+    document.getElementById('crt-glow-toggle').checked = initialCrtEffects.glow;
+
+    function apply2dScalingMode(mode) {
+      const normalized = normalize2dScalingMode(mode);
+      window.WINE_2D_SCALE_MODE = normalized;
+      const select = document.getElementById('presentation-scale-select');
+      if (select) select.value = normalized;
+      try { localStorage.setItem(PRESENTATION_SCALE_KEY, normalized); }
+      catch (_) {}
+      const renderer = sharedRenderer || (wine && wine.renderer);
+      if (renderer && typeof renderer.setPresentationScaleMode === 'function') {
+        renderer.setPresentationScaleMode(normalized);
+      }
+      return normalized;
+    }
+
+    function applyDeditherMode(mode) {
+      const normalized = normalizeDeditherMode(mode);
+      window.WINE_DEDITHER_MODE = normalized;
+      const select = document.getElementById('presentation-dedither-select');
+      if (select) select.value = normalized;
+      try { localStorage.setItem(PRESENTATION_DEDITHER_KEY, normalized); }
+      catch (_) {}
+      const renderer = sharedRenderer || (wine && wine.renderer);
+      if (renderer && typeof renderer.setPresentationDeditherMode === 'function') {
+        renderer.setPresentationDeditherMode(normalized);
+      }
+      return normalized;
+    }
+
+    function applyCrtEffects() {
+      const effects = normalizeCrtEffects({
+        scanlines: document.getElementById('crt-scanlines-toggle').checked,
+        mask: document.getElementById('crt-mask-toggle').checked,
+        glow: document.getElementById('crt-glow-toggle').checked,
+      });
+      window.WINE_CRT_EFFECTS = effects;
+      try { localStorage.setItem(PRESENTATION_CRT_KEY, JSON.stringify(effects)); }
+      catch (_) {}
+      const renderer = sharedRenderer || (wine && wine.renderer);
+      if (renderer && typeof renderer.setPresentationEffects === 'function') {
+        renderer.setPresentationEffects(effects);
+      }
+      return effects;
+    }
 
     // Launching, stopping, run-slice policy and the tab-local LAN segment all
     // live in lib/browser-shell.js. The page hands it the things that are
@@ -1137,17 +1282,23 @@ Resource-aware Win98 emulator
         wrap.clientHeight || 0,
         canvas.clientHeight || 0
       ) : (dedicatedPage ? canvas.clientHeight : wrap.clientHeight));
-      const scale = displayW > 0 ? Math.max(1, MIN_BACKING_WIDTH / displayW) : 1;
-      const w = Math.max(MIN_BACKING_WIDTH, displayW | 0);
+      // A single backing scale keeps CSS presentation proportional even on
+      // short landscape screens where both minimum dimensions cannot fit.
+      const scale = displayW > 0 && displayH > 0
+        ? Math.max(Math.max(1, MIN_BACKING_WIDTH / displayW), MIN_BACKING_HEIGHT / displayH)
+        : 1;
+      const w = Math.max(MIN_BACKING_WIDTH, Math.round((displayW || 1) * scale));
       const h = Math.max(MIN_BACKING_HEIGHT, Math.round((displayH || 1) * scale));
-      return { fullscreen, displayW, displayH, w, h };
+      const dpr = Math.max(1, Number(window.devicePixelRatio) || 1);
+      return { fullscreen, displayW, displayH, w, h, dpr };
     }
 
     // Resize canvas to match container
     function resizeCanvas() {
       const canvas = document.getElementById('screen');
       const wrap = document.getElementById('screen-wrap');
-      const { fullscreen, displayW, displayH, w, h } = screenCanvasSize();
+      const { fullscreen, displayW, displayH, w, h, dpr } = screenCanvasSize();
+      const presentation = document.getElementById('screen-present');
       if (fullscreen) {
         wrap.style.width = displayW + 'px';
         wrap.style.height = displayH + 'px';
@@ -1176,6 +1327,18 @@ Resource-aware Win98 emulator
         const renderer = (wine && wine.renderer) || sharedRenderer;
         if (renderer && typeof renderer.handleScreenResize === 'function') {
           renderer.handleScreenResize(oldW, oldH, w, h);
+        }
+      }
+      if (presentation && displayW > 0 && displayH > 0) {
+        const presentW = Math.max(1, Math.round(displayW * dpr));
+        const presentH = Math.max(1, Math.round(displayH * dpr));
+        const renderer = (wine && wine.renderer) || sharedRenderer;
+        if (renderer && renderer.presentationFilter &&
+            typeof renderer.presentationFilter.resize === 'function') {
+          renderer.presentationFilter.resize(presentW, presentH);
+        } else {
+          if (presentation.width !== presentW) presentation.width = presentW;
+          if (presentation.height !== presentH) presentation.height = presentH;
         }
       }
       const desktopIcons = document.getElementById('desktop-icons');
