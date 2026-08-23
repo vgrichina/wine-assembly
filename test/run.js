@@ -3491,6 +3491,21 @@ async function main() {
     return vert ? { x: across, y: along } : { x: along, y: across };
   };
 
+  // A SuspendThread on the main thread parks the main WASM instance -- except
+  // while a multimedia-timer callback is borrowing it. timeSetEvent fires on a
+  // system thread on Win32; our cooperative backend runs the TimeProc on the
+  // main instance, so a mixer such as Miles' AIL_serve suspends the
+  // DuplicateHandle'd application thread, mixes, and then resumes it. Parking
+  // the instance at that suspend deadlocks the process against its own
+  // callback: Heroes II hung ten batches after its main menu this way. host.js
+  // has always made this exemption (_isMainExecutionSuspended); the CLI has to
+  // agree or the browser and the harness run different schedulers.
+  const mainExecutionSuspended = () => {
+    if (!threadManager.isMainThreadSuspended()) return false;
+    const ex = instance.exports;
+    return !(ex.is_mm_timer_callback_active && (ex.is_mm_timer_callback_active() | 0));
+  };
+
   let lastSchedSig = null;
   let lastSchedAt = 0;
   const handlerNames = HANDLER_HIST_THREAD >= 0 ? buildHandlerNameList() : [];
@@ -6132,7 +6147,7 @@ async function main() {
 
     const batchStartMs = TRACE_BATCH_TIMING ? Date.now() : 0;
     try {
-      if (!threadManager.isMainThreadSuspended()) instance.exports.run(BATCH_SIZE);
+      if (!mainExecutionSuspended()) instance.exports.run(BATCH_SIZE);
     } catch (e) {
       while (logs.length) console.log(logs.shift());
       console.log(`\n*** CRASH at batch ${batch}: ${e.message}`);
@@ -6410,7 +6425,7 @@ async function main() {
         // loop; repeatedly re-entering the main message pump here can drain
         // creation-time paints before an app has finished its first layout.
         if (s < slices - 1 && !stopped && threadManager.hasActiveThreads() &&
-            !threadManager.isMainThreadSuspended()) {
+            !mainExecutionSuspended()) {
           try { instance.exports.run(BATCH_SIZE); } catch (e) { break; }
         }
       }
