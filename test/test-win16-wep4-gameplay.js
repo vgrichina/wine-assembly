@@ -12,6 +12,7 @@ const { PNG } = require('pngjs');
 
 const ROOT = path.join(__dirname, '..');
 const RUN = path.join(ROOT, 'test', 'run.js');
+const OPTIONAL_WASM = process.env.WINE_ASSEMBLY_WASM || '';
 
 function changedPixels(beforePath, afterPath, rect) {
   const before = PNG.sync.read(fs.readFileSync(beforePath));
@@ -34,7 +35,8 @@ function runGame(app, input, maxBatches, extra = []) {
   const args = [RUN, `--app=${app}`, '--no-close', '--batch-size=20000',
     `--max-batches=${maxBatches}`, '--quiet-api', '--quiet-blocks',
     '--repaint-every=5', ...extra, `--input=${input}`];
-  if (built) args.splice(2, 0, '--no-build');
+  if (OPTIONAL_WASM) args.splice(2, 0, '--no-build', `--wasm=${OPTIONAL_WASM}`);
+  else if (built) args.splice(2, 0, '--no-build');
   const output = execFileSync(process.execPath, args, {
     cwd: ROOT, encoding: 'utf8', timeout: 120000, maxBuffer: 16 * 1024 * 1024,
   });
@@ -142,13 +144,14 @@ function testTicTacDrop(outDir) {
 
 const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'win16-wep4-gameplay-'));
 try {
-  testBlackjack(outDir);
-  testChess(outDir);
-  testChips(outDir);
-  testGoFigure(outDir);
-  testJezzBall(outDir);
-  testMaxwell(outDir);
-  testTicTacDrop(outDir);
+  const only = process.argv[2] || '';
+  if (!only || only === 'blackjack') testBlackjack(outDir);
+  if (!only || only === 'chess') testChess(outDir);
+  if (!only || only === 'chips') testChips(outDir);
+  if (!only || only === 'gofigure') testGoFigure(outDir);
+  if (!only || only === 'jezzball') testJezzBall(outDir);
+  if (!only || only === 'maxwell') testMaxwell(outDir);
+  if (!only || only === 'tictacdrop') testTicTacDrop(outDir);
 } finally {
   fs.rmSync(outDir, { recursive: true, force: true });
 }

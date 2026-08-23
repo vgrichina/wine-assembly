@@ -4139,7 +4139,7 @@
   ;; continuation thunks the 32-bit side uses.
   (func $win16_enter_wndproc (param $proc i32) (param $hwnd i32) (param $msg i32)
         (param $wparam i32) (param $lparam i32) (param $ret_sel i32) (param $ret_ip i32)
-    (local $data_sel i32)
+    (local $data_sel i32) (local $entry i32)
     ;; A 16-bit window procedure is a far pointer, so its selector is never
     ;; zero. Anything else is a procedure belonging to the 32-bit side or a
     ;; window with none at all, and entering it would set CS to the null
@@ -4185,10 +4185,14 @@
     (call $win16_push16 (local.get $ret_sel))
     (call $win16_push16 (local.get $ret_ip))
     ;; USER calls an application procedure with AX naming its instance/DGROUP.
-    ;; The standard Win16 callback prologue copies AX into DS. Restore the
-    ;; selector for the image that owns this far procedure: a modal DLL may
-    ;; have been the last guest code to run and therefore left its own DS/AX
-    ;; behind before an application WM_PAINT is dispatched.
+    ;; The unpatched Microsoft callback prologue begins `push ds; pop ax; nop`
+    ;; before saving the caller's DS and doing `mov ds,ax`. DLL entry points
+    ;; are loader-patched to `mov ax,sel`; arbitrary application callbacks are
+    ;; not entry-table exports, so emulate that three-byte patch per call. This
+    ;; preserves the modal DLL's DS on the procedure's own stack while giving
+    ;; the callback its application's DGROUP. Merely preloading AX is not
+    ;; enough: the placeholder immediately overwrites AX from the caller's DS,
+    ;; which made Tetris read every timer-paint setting from ABOUTTET.DLL.
     (local.set $data_sel (call $win16_proc_data_sel (local.get $proc)))
     (if (local.get $data_sel)
       (then
@@ -4196,8 +4200,14 @@
           (i32.or (i32.and (global.get $eax) (i32.const 0xFFFF0000))
                   (local.get $data_sel)))))
     (call $win16_set_sreg (i32.const 1) (i32.shr_u (local.get $proc) (i32.const 16)))
-    (global.set $eip (i32.add (global.get $seg_base_cs)
-                              (i32.and (local.get $proc) (i32.const 0xFFFF))))
+    (local.set $entry (i32.add (global.get $seg_base_cs)
+                               (i32.and (local.get $proc) (i32.const 0xFFFF))))
+    (if (i32.and
+          (local.get $data_sel)
+          (i32.eq (i32.and (call $gl32 (local.get $entry)) (i32.const 0x00FFFFFF))
+                  (i32.const 0x0090581E)))
+      (then (local.set $entry (i32.add (local.get $entry) (i32.const 3)))))
+    (global.set $eip (local.get $entry))
     (global.set $steps (i32.const 0)))
 
   ;; ---- Continuation records ----
@@ -4762,6 +4772,28 @@
         (return)))
     (call $win16_cont_resume))
 
+  ;; A visible WS_CHILD created under a hidden parent has no visible region at
+  ;; creation time, so USER correctly postpones its initial background erase.
+  ;; When the parent is later shown, child-paint propagation supplies WM_PAINT
+  ;; but not the matching first WM_ERASEBKGND. Re-arm that erase for guest
+  ;; wndprocs as the subtree becomes exposed. WAT-native controls retain their
+  ;; own paint/erase ordering.
+  (func $win16_rearm_visible_child_erases (param $parent i32)
+    (local $slot i32) (local $child i32) (local $proc i32)
+    (local.set $slot (i32.const 0))
+    (block $done (loop $scan
+      (local.set $slot (call $wnd_next_child_slot (local.get $parent) (local.get $slot)))
+      (br_if $done (i32.lt_s (local.get $slot) (i32.const 0)))
+      (local.set $child (call $wnd_slot_hwnd (local.get $slot)))
+      (if (call $wnd_is_effectively_visible (local.get $child))
+        (then
+          (local.set $proc (call $wnd_table_get (local.get $child)))
+          (if (call $win16_is_far_proc (local.get $proc))
+            (then (call $nc_flags_set (local.get $child) (i32.const 2))))
+          (call $win16_rearm_visible_child_erases (local.get $child))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $scan))))
+
   ;; USER.42 ShowWindow(hWnd, nCmdShow).
   ;;
   ;; Deliberately not $handle_ShowWindow: that one hands WM_ACTIVATEAPP to the
@@ -4784,7 +4816,9 @@
     (local.set $show (call $win16_arg16 (i32.const 0)))
     (drop (call $post_queue_push (local.get $hwnd) (i32.const 0x0018)
       (i32.ne (local.get $show) (i32.const 0)) (i32.const 0)))
-    (if (i32.and (i32.ne (local.get $show) (i32.const 0))
+    (if (i32.and
+          (i32.and (i32.ne (local.get $show) (i32.const 0))
+                   (i32.ne (local.get $show) (i32.const 3)))
           (i32.and (i32.eq (local.get $hwnd) (global.get $main_hwnd))
                    (i32.ne (global.get $pending_wm_size) (i32.const 0))))
       (then
@@ -4804,6 +4838,25 @@
           (i32.const 0) (i32.const 0)))))                  ;; WM_SETFOCUS
     (drop (call $host_show_window (local.get $hwnd) (local.get $show)))
     (call $wnd_apply_show_state (local.get $hwnd) (local.get $show))
+    ;; A Win16 runtime can create a hidden helper before its real top-level
+    ;; form. Match the 32-bit ShowWindow path by promoting the first shown,
+    ;; unowned top-level guest window while the recorded main hwnd is still
+    ;; effectively invisible. Fuji Golf asks GetActiveWindow from its
+    ;; synchronous maximize handler and lays out the wrong helper otherwise.
+    (if (i32.and
+          (i32.and
+            (i32.and
+              (i32.and
+                (i32.and (i32.ne (local.get $show) (i32.const 0))
+                         (i32.ne (local.get $hwnd) (global.get $main_hwnd)))
+                (i32.eqz (global.get $show_window_activated)))
+              (i32.eqz (call $wnd_is_effectively_visible (global.get $main_hwnd))))
+            (i32.eqz (call $wnd_get_parent (local.get $hwnd))))
+          (i32.eqz (call $wnd_get_owner (local.get $hwnd))))
+      (then
+        (local.set $proc (call $wnd_table_get (local.get $hwnd)))
+        (if (call $win16_is_far_proc (local.get $proc))
+          (then (global.set $main_hwnd (local.get $hwnd))))))
     (if (local.get $show)
       (then
         ;; CreateWindow defers the initial erase for a window that is not yet
@@ -4830,6 +4883,7 @@
                   (i32.add (local.get $hwnd) (i32.const 0x40000)) (i32.const 0)))))
         (drop (call $wnd_set_style (local.get $hwnd)
           (i32.or (call $wnd_get_style (local.get $hwnd)) (i32.const 0x10000000))))
+        (call $win16_rearm_visible_child_erases (local.get $hwnd))
         (global.set $paint_pending (i32.const 1))
         (call $invalidate_hwnd (local.get $hwnd)))
       (else
@@ -4842,6 +4896,10 @@
     ;; ThunderRTMain helper remains $main_hwnd.
     (if (i32.eq (local.get $show) (i32.const 3))
       (then
+        ;; The create-time restored size belongs to the pre-maximized outer
+        ;; rectangle. Never let a nested modal loop deliver it after the
+        ;; synchronous SIZE_MAXIMIZED below (Tetris opens About immediately).
+        (global.set $pending_wm_size (i32.const 0))
         (call $defwndproc_do_nccalcsize (local.get $hwnd))
         (local.set $client_size (call $client_rect_wh_packed (local.get $hwnd)))
         (local.set $proc (call $wnd_table_get (local.get $hwnd)))
@@ -5142,6 +5200,7 @@
   (func $win16_SendMessage
     (local $hwnd16 i32) (local $hwnd i32) (local $msg i32)
     (local $wp i32) (local $lp i32) (local $proc i32) (local $ret i32)
+    (local $class i32)
     (local.set $hwnd16 (call $win16_arg16 (i32.const 4)))
     (local.set $msg (call $win16_arg16 (i32.const 3)))
     (local.set $wp (call $win16_arg16 (i32.const 2)))
@@ -5150,6 +5209,21 @@
     (local.set $proc (call $wnd_table_get (local.get $hwnd)))
     (if (i32.eqz (call $win16_is_far_proc (local.get $proc)))
       (then
+        (local.set $class (call $ctrl_table_get_class (local.get $hwnd)))
+        ;; String pointers carried by Win16 listbox messages are packed
+        ;; selector:offset values. WAT controls consume guest linear pointers;
+        ;; CallWindowProc already performs the same conversion for a
+        ;; subclassed listbox. Without it IdleWild adds empty module names.
+        (if (i32.and (i32.eq (local.get $class) (i32.const 4))
+              (i32.or
+                (i32.eq (local.get $msg) (i32.const 0x0401)) ;; LB_ADDSTRING
+                (i32.or
+                  (i32.eq (local.get $msg) (i32.const 0x0402)) ;; LB_INSERTSTRING
+                  (i32.eq (local.get $msg) (i32.const 0x040A))))) ;; LB_GETTEXT
+          (then
+            (local.set $lp (call $win16_far_to_guest
+              (i32.shr_u (local.get $lp) (i32.const 16))
+              (i32.and (local.get $lp) (i32.const 0xFFFF))))))
         ;; One of ours, so the control-message numbering has to be translated —
         ;; but only here. A message going to the task's own window procedure
         ;; below keeps the number the task chose.
@@ -6640,10 +6714,31 @@
 
   ;; USER.37 SetWindowText(hWnd, lpString).
   (func $win16_SetWindowText
-    (local $hwnd i32) (local $s i32)
-    (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 2))))
+    (local $hwnd16 i32) (local $hwnd i32) (local $s i32) (local $far_s i32)
+    (local $proc i32) (local $ret i32)
+    (local.set $hwnd16 (call $win16_arg16 (i32.const 2)))
+    (local.set $hwnd (call $win16_h32 (local.get $hwnd16)))
+    (local.set $far_s (call $win16_arg32 (i32.const 0)))
     (local.set $s (call $win16_far_to_guest
-      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+      (i32.shr_u (local.get $far_s) (i32.const 16))
+      (i32.and (local.get $far_s) (i32.const 0xFFFF))))
+    (local.set $proc (call $wnd_table_get (local.get $hwnd)))
+    ;; SetWindowText is a synchronous WM_SETTEXT for a guest window procedure.
+    ;; The shared 32-bit handler queues code16 messages, which let ThunderLabel
+    ;; auto-size against its temporary one-space caption before "000000"
+    ;; arrived. Store USER/host text now, then enter the far proc with the
+    ;; original packed pointer so its RETF lands directly at the API caller.
+    (if (call $win16_is_far_proc (local.get $proc))
+      (then
+        (call $title_table_set (local.get $hwnd) (call $g2w (local.get $s))
+          (call $guest_strlen (local.get $s)))
+        (call $host_set_window_text (local.get $hwnd) (call $g2w (local.get $s)))
+        (local.set $ret (call $win16_take_return (i32.const 6)))
+        (call $win16_enter_wndproc (local.get $proc) (local.get $hwnd16)
+          (i32.const 0x000C) (i32.const 0) (local.get $far_s)
+          (i32.shr_u (local.get $ret) (i32.const 16))
+          (i32.and (local.get $ret) (i32.const 0xFFFF)))
+        (return)))
     (call $win16_call32_begin (i32.const 2))
     (call $handle_SetWindowTextA (local.get $hwnd) (local.get $s)
       (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
@@ -9135,7 +9230,7 @@
   ;; Answers 0 for a name it does not know, which is what GetProcAddress
   ;; reports when a module does not export something.
   (global $WIN16_MMSYSTEM_NAMES i32 (i32.const 0x3E30))
-  (global $WIN16_BUILTIN_NAMES i32 (i32.const 0x11600))
+  (global $WIN16_BUILTIN_NAMES i32 (i32.const 0x079CA000))
 
   ;; The KERNEL/USER/GDI half of the same idea, over its own table. That table
   ;; carries the module in the top nibble of each ordinal word, so a name only

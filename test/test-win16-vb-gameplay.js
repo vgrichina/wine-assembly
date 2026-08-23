@@ -14,6 +14,7 @@ const { PNG } = require('pngjs');
 
 const ROOT = path.join(__dirname, '..');
 const RUN = path.join(ROOT, 'test', 'run.js');
+const OPTIONAL_WASM = process.env.WINE_ASSEMBLY_WASM || '';
 
 function changedPixels(beforePath, afterPath, rect) {
   const before = PNG.sync.read(fs.readFileSync(beforePath));
@@ -33,7 +34,25 @@ function changedPixels(beforePath, afterPath, rect) {
   return changed;
 }
 
+function colorBounds(file, rect, predicate) {
+  const png = PNG.sync.read(fs.readFileSync(file));
+  let count = 0;
+  let minX = png.width;
+  let maxX = -1;
+  for (let y = rect.y; y < rect.y + rect.h; y++) {
+    for (let x = rect.x; x < rect.x + rect.w; x++) {
+      const i = (y * png.width + x) * 4;
+      if (!predicate(png.data[i], png.data[i + 1], png.data[i + 2])) continue;
+      count++;
+      minX = Math.min(minX, x);
+      maxX = Math.max(maxX, x);
+    }
+  }
+  return { count, width: maxX >= minX ? maxX - minX + 1 : 0 };
+}
+
 function runGame(args) {
+  if (OPTIONAL_WASM) args.splice(1, 0, '--no-build', `--wasm=${OPTIONAL_WASM}`);
   return execFileSync(process.execPath, [RUN, ...args], {
     cwd: ROOT,
     encoding: 'utf8',
@@ -83,6 +102,10 @@ function testRattler(outDir) {
   // Rattler implements pix_KeyPress (ASCII keypad controls), not KeyDown.
   // ASCII '6' turns clockwise; F3 is Pause and would stop the live timer.
   assert.match(output, /keypress code=54/, 'Rattler keypad 6 must reach pix_KeyPress');
+  const score = colorBounds(before, { x: 360, y: 84, w: 90, h: 38 },
+    (r, g, b) => r > 235 && g > 235 && b > 235);
+  assert(score.width > 45 && score.count > 50,
+    `Rattler score field must fit all six digits (white bounds=${score.width}, pixels=${score.count})`);
   assert(changedPixels(before, after, { x: 188, y: 129, w: 256, h: 260 }) > 100,
     'Rattler board should visibly advance after its keypad-6 turn control');
   console.log('PASS  Win16 Rattler starts a new game and responds to keypad 6');
@@ -94,8 +117,9 @@ assert.match(index, /<option value="wep16_rodent">Rodent's Revenge<\/option>/,
 
 const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'win16-vb-gameplay-'));
 try {
-  testRodent(outDir);
-  testRattler(outDir);
+  const only = process.argv[2] || '';
+  if (!only || only === 'rodent') testRodent(outDir);
+  if (!only || only === 'rattler') testRattler(outDir);
 } finally {
   fs.rmSync(outDir, { recursive: true, force: true });
 }

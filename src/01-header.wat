@@ -914,7 +914,7 @@
   ;; Every name here is one a game in the corpus actually asks for: Visual
   ;; Basic's Declare statement is a GetProcAddress by name, and a NULL comes
   ;; back to the program as "Sub or Function not defined".
-  (data (i32.const 0x11600)
+  (data (i32.const 0x079CA000)
     "\0dCREATERECTRGN\40\30"
     "\15CREATERECTRGNINDIRECT\41\30"
     "\0eGETSTOCKOBJECT\57\30"
@@ -1155,6 +1155,7 @@
   ;; 0x07E10000 16KB     DIB_PAGE_USED
   ;; 0x07E14000 32KB     DIB_PAGE_RUNS
   ;; 0x07E1C000 832KB    GDI_REGION_BANDS (256 x 208 RECT slots)
+  ;; 0x079CA000 512B     WIN16_BUILTIN_NAMES (KERNEL/USER/GDI by-name exports)
   ;; 0x07EEC000 13KB     GDI_REGION_WORK (4 x 208 RECT buffers)
   ;; 0x07EF0000 2KB      GDI_DC_CLIP_TABLE (256 x {HDC, owned HRGN})
   ;; 0x07EF0800 2KB      GDI_DC_SAVE_TABLE (256 x {HDC, meta guest pointer})

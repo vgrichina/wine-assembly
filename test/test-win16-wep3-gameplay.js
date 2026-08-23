@@ -42,6 +42,8 @@ function colorBounds(file, rect, matches) {
   let count = 0;
   let minX = png.width;
   let maxX = -1;
+  let minY = png.height;
+  let maxY = -1;
   for (let y = rect.y; y < rect.y + rect.h; y++) {
     for (let x = rect.x; x < rect.x + rect.w; x++) {
       const i = (y * png.width + x) * 4;
@@ -49,9 +51,15 @@ function colorBounds(file, rect, matches) {
       count++;
       minX = Math.min(minX, x);
       maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
     }
   }
-  return { count, width: maxX >= minX ? maxX - minX + 1 : 0 };
+  return {
+    count,
+    width: maxX >= minX ? maxX - minX + 1 : 0,
+    height: maxY >= minY ? maxY - minY + 1 : 0,
+  };
 }
 
 let built = false;
@@ -122,11 +130,19 @@ function testFujiGolf(outDir) {
   const clubhouse = path.join(outDir, 'fuji-clubhouse.png');
   const course = path.join(outDir, 'fuji-course.png');
   const output = runGame('wep16_fujigolf',
-    `45:png:${clubhouse},60:mousedown:200:337,61:mouseup:200:337,` +
+    `45:png:${clubhouse},60:mousedown:220:409,61:mouseup:220:409,` +
     `100:dlg-set-edit:100:Codex,110:dlg-cmd:1,220:png:${course},250:stop`, 280);
   assertHealthy(output, 'Fuji Golf');
   assert.match(output, /dlg-set-edit: id=100 text="Codex"/,
     'Fuji Golf should accept a player name for the new round');
+  const caption = colorBounds(clubhouse, { x: 0, y: 0, w: 640, h: 20 },
+    (r, g, b) => b > r + 20 && b > g + 10);
+  assert(caption.width > 620,
+    `Fuji Golf clubhouse should remain maximized (caption width=${caption.width})`);
+  const scene = colorBounds(clubhouse, { x: 100, y: 55, w: 440, h: 350 },
+    (r, g, b) => Math.max(r, g, b) - Math.min(r, g, b) > 45);
+  assert(scene.width > 350 && scene.height > 310,
+    `Fuji Golf clubhouse scene should retain native depth (bounds=${scene.width}x${scene.height})`);
   assert(changedPixels(clubhouse, course, { x: 12, y: 55, w: 605, h: 395 }) > 30000,
     'Fuji Golf should leave the clubhouse and render a playable course');
   console.log('PASS  Win16 Fuji Golf starts a round and renders the first tee');

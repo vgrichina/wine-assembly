@@ -14,6 +14,7 @@ const { PNG } = require('pngjs');
 
 const ROOT = path.join(__dirname, '..');
 const RUN = path.join(ROOT, 'test', 'run.js');
+const OPTIONAL_WASM = process.env.WINE_ASSEMBLY_WASM || '';
 
 function readPng(file) {
   return PNG.sync.read(fs.readFileSync(file));
@@ -49,11 +50,13 @@ function matchingPixels(png, rect, predicate) {
 }
 
 function runGame(app, input, maxBatches) {
-  return execFileSync(process.execPath, [
+  const args = [
     RUN, `--app=${app}`, '--no-close', '--batch-size=20000',
     `--max-batches=${maxBatches}`, '--quiet-api', '--quiet-blocks',
     '--repaint-every=10', `--input=${input}`,
-  ], {
+  ];
+  if (OPTIONAL_WASM) args.splice(2, 0, '--no-build', `--wasm=${OPTIONAL_WASM}`);
+  return execFileSync(process.execPath, args, {
     cwd: ROOT,
     encoding: 'utf8',
     timeout: 120000,
@@ -163,6 +166,7 @@ function testTicTactics(outDir) {
 }
 
 function testTetris(outDir) {
+  const opening = path.join(outDir, 'tetris-opening.png');
   const started = path.join(outDir, 'tetris-started.png');
   const dropped = path.join(outDir, 'tetris-dropped.png');
   // Tetris opens with its animated About DLL. Close it, start a game with F2,
@@ -171,7 +175,7 @@ function testTetris(outDir) {
   // palette-index, timer-id-zero, and keyboard paths that a launch screenshot
   // cannot exercise.
   const output = runGame('wep16_tetris',
-    `40:dlg-cmd:1,55:keydown:113,56:keyup:113,` +
+    `25:png:${opening},40:dlg-cmd:1,55:keydown:113,56:keyup:113,` +
     `75:png:${started},90:keydown:40,91:keyup:40,` +
     `105:png:${dropped},115:stop`, 120);
   assertHealthy(output, 'Tetris');
@@ -180,9 +184,11 @@ function testTetris(outDir) {
 
   const before = readPng(started);
   const after = readPng(dropped);
+  const startup = readPng(opening);
   const magenta = (r, g, b) => r > 160 && g < 80 && b > 120;
   const green = (r, g, b) => r < 80 && g > 100 && b < 80;
-  const teal = (r, g, b) => r === 0 && g === 128 && b === 128;
+  assert(matchingPixels(startup, { x: 0, y: 38, w: 640, h: 415 }, magenta) > 30000,
+    'Tetris must be maximized and tile the exposed client behind its About dialog');
   assert(matchingPixels(before, { x: 130, y: 50, w: 129, h: 90 }, magenta) > 250,
     'Tetris should paint a colored active piece near the top of the playfield');
   assert(matchingPixels(after, { x: 130, y: 210, w: 129, h: 49 }, magenta) > 100,
@@ -191,21 +197,47 @@ function testTetris(outDir) {
     'Tetris should spawn and paint the next colored piece after a hard drop');
   assert(changedPixels(started, dropped, { x: 130, y: 35, w: 129, h: 224 }) > 600,
     'Tetris playfield should visibly advance after keyboard input');
-  assert.strictEqual(
-    matchingPixels(after, { x: 143, y: 290, w: 353, h: 140 }, teal), 353 * 140,
-    'closing About must restore the exposed desktop below the game window');
+  assert(matchingPixels(after, { x: 270, y: 50, w: 360, h: 390 }, magenta) > 50000,
+    'closing About must leave the maximized tiled game client visible around the playfield');
   console.log('PASS  Win16 Tetris starts, hard-drops, and spawns the next piece');
+}
+
+function testIdleWild(outDir) {
+  const first = path.join(outDir, 'idlewild-first.png');
+  const second = path.join(outDir, 'idlewild-second.png');
+  // Select the first real module, then allow it to animate. Blackness draws
+  // into the black parent client around the two child controls on Win98; the
+  // IWINFO child itself keeps its registered white class background.
+  const output = runGame('wep16_idlewild',
+    `45:mousedown:200:203,46:mouseup:200:203,70:png:${first},` +
+    `80:sleep-ms:1000,145:png:${second},165:stop`, 180);
+  assertHealthy(output, 'IdleWild');
+  const png = readPng(second);
+  const white = (r, g, b) => r > 225 && g > 225 && b > 225;
+  const saturated = (r, g, b) => Math.max(r, g, b) > 170 &&
+    Math.max(r, g, b) - Math.min(r, g, b) > 110;
+  assert(matchingPixels(png, { x: 155, y: 197, w: 135, h: 15 }, white) > 20,
+    'IdleWild must show the selected Blackness module name in its list');
+  assert(matchingPixels(png, { x: 328, y: 194, w: 160, h: 130 }, white) > 18000,
+    'IdleWild module information child must erase to its native white class background');
+  assert(matchingPixels(png, { x: 136, y: 178, w: 368, h: 162 }, saturated) > 100,
+    'IdleWild should render the selected module around its child controls');
+  assert(changedPixels(first, second, { x: 136, y: 178, w: 368, h: 162 }) > 500,
+    'IdleWild should keep running the selected module after the click');
+  console.log('PASS  Win16 IdleWild selects Blackness and runs its animation');
 }
 
 const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'win16-wep1-gameplay-'));
 try {
-  testCruel(outDir);
-  testGolf(outDir);
-  testPegged(outDir);
-  testTaipei(outDir);
-  testMinesweeper(outDir);
-  testTicTactics(outDir);
-  testTetris(outDir);
+  const only = process.argv[2] || '';
+  if (!only || only === 'cruel') testCruel(outDir);
+  if (!only || only === 'golf') testGolf(outDir);
+  if (!only || only === 'pegged') testPegged(outDir);
+  if (!only || only === 'taipei') testTaipei(outDir);
+  if (!only || only === 'winmine') testMinesweeper(outDir);
+  if (!only || only === 'tic') testTicTactics(outDir);
+  if (!only || only === 'tetris') testTetris(outDir);
+  if (!only || only === 'idlewild') testIdleWild(outDir);
 } finally {
   fs.rmSync(outDir, { recursive: true, force: true });
 }
