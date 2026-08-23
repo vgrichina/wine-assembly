@@ -3373,6 +3373,13 @@
     ;; draws a dealt hand with its own DC outside WM_PAINT -- so the erase landed
     ;; after the cards and wiped four of them off the table. See $handle_BeginPaint
     ;; for where the background is decided instead.
+    ;;
+    ;; bErase is still recorded, because BeginPaint has to report it back as
+    ;; ps.fErase: an app that asked for an erase and has no class brush is the
+    ;; app that paints its own background. bErase = FALSE never clears a
+    ;; pending erase -- the flag accumulates until a paint consumes it.
+    (if (local.get $arg2)
+      (then (call $nc_flags_set (local.get $arg0) (i32.const 2))))
     (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
       (then (global.set $paint_pending (i32.const 1)))
       (else (call $paint_flag_set (local.get $arg0))))
@@ -5078,6 +5085,7 @@
   ;; 243: BeginPaint
   (func $handle_BeginPaint (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $cs i32) (local $brush i32) (local $hdc i32) (local $wa i32) (local $partial i32) (local $desc i32)
+    (local $erase_pending i32)
     ;; Win98: BeginPaint sends WM_ERASEBKGND before returning. The default
     ;; handler fills the client area with this hwnd's registered class
     ;; hbrBackground. A NULL hbrBackground means no default erase; the app owns
@@ -5085,6 +5093,11 @@
     ;; custom "Stat" child is created after the main class and must not change
     ;; how unrelated hwnds erase.
     (local.set $brush (call $wnd_get_bg_brush (local.get $arg0)))
+    ;; Whether an erase is still owed for this window, read before the fill
+    ;; below clears it. fErase is decided from this at the end.
+    (local.set $erase_pending
+      (i32.ne (i32.and (call $nc_flags_test (local.get $arg0)) (i32.const 2))
+              (i32.const 0)))
     ;; Fill PAINTSTRUCT: hdc(+0), fErase(+4), rcPaint(+8: left,top,right,bottom)
     (call $zero_memory (call $g2w (local.get $arg1)) (i32.const 64))
     (local.set $hdc (call $host_alloc_window_dc (local.get $arg0) (i32.const 0)))
@@ -5174,6 +5187,30 @@
             (i32.and (local.get $cs) (i32.const 0xFFFF))
             (i32.shr_u (local.get $cs) (i32.const 16))
             (local.get $brush)))))))
+    ;; fErase is the answer to "did anyone erase the background for you?", and
+    ;; it is the only way an app finds out that it has to do it itself. USER
+    ;; erases from the class brush; a window whose class has none gets a
+    ;; WM_ERASEBKGND that DefWindowProc declines, and BeginPaint then reports
+    ;; TRUE so the app paints its own background.
+    ;;
+    ;; Storm builds every Diablo menu on exactly that contract: its paint
+    ;; wrapper saves GCL_HBRBACKGROUND, sets it to NULL, calls BeginPaint, puts
+    ;; the brush back -- and draws the whole menu background only when the
+    ;; returned ps.fErase is non-zero. Answering 0 unconditionally here left
+    ;; Diablo a black screen with five invisible buttons on it.
+    ;;
+    ;; The question is only ever "did anything fill this background", and the
+    ;; class brush is the whole of the answer: with one, the fill above (or the
+    ;; pump's own WM_ERASEBKGND, which is the same fill) has run and the app
+    ;; must not repeat it; with none, nothing has, whichever of the two paths
+    ;; the erase arrived by. Storm nulls the brush for the duration of exactly
+    ;; this call, so it reads TRUE on every paint -- which is what it needs, as
+    ;; its menu text is drawn with TRANSPARENT background and would otherwise
+    ;; pile up on the previous tick's.
+    (if (i32.eqz (local.get $brush))
+      (then (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 1))))
+    (if (local.get $erase_pending)
+      (then (call $nc_flags_clear (local.get $arg0) (i32.const 2))))
     (global.set $eax (local.get $hdc))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
@@ -6683,7 +6720,16 @@ nW — STUB: unimplemented
           (i32.load offset=4 (local.get $rect))
           (i32.load offset=8 (local.get $rect))
           (i32.load offset=12 (local.get $rect))))))
-    (global.set $eax (select (i32.const 1) (i32.const 0) (local.get $rv)))
+    ;; The return is a region type, not a BOOL: SIMPLEREGION (2) for the one
+    ;; rectangle we track, NULLREGION (1) when nothing is pending. ERROR (0)
+    ;; is reserved for a bad window, and a caller that tests for it -- Storm
+    ;; does -- treats anything else as "there is something to copy".
+    (if (i32.eqz (call $wnd_table_get (local.get $arg0)))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (global.set $eax (select (i32.const 2) (i32.const 1) (local.get $rv)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
