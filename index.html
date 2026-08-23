@@ -358,6 +358,17 @@
        every pixel. The way back to the desktop is the app's own close button —
        when the last guest exits, the icons return. */
     body.single-app #taskbar { display: none; }
+    /* The on-screen keyboard covers the page without resizing it. The guest
+       screen keeps its size (a keyboard is not a display-mode change) and is
+       translated up instead, by lib/mobile-keyboard.js. The transition is
+       short enough to read as the screen following the keyboard rather than
+       as a separate animation, and the wrap must not clip its own shifted
+       child away. */
+    body.single-app #screen-wrap {
+      transition: transform 0.15s ease-out;
+      will-change: transform;
+    }
+    body.keyboard-open { overscroll-behavior: none; }
     body.single-app.app-running #desktop-icons { display: none; }
     /* ?debug on a phone-sized viewport: the toolbar and the log together eat
        two thirds of the screen, which is the whole thing single-app mode is
@@ -687,11 +698,14 @@
         </optgroup>
         <optgroup label="Local Candidates">
           <option value="diablo_demo">Diablo (pre-release demo)</option>
+          <option value="diablo_shareware">Diablo Shareware (1997)</option>
+          <option value="worms2_demo">Worms 2 Demo</option>
           <option value="starcraft_shareware">StarCraft Shareware</option>
           <option value="fallout_demo">Fallout Demo</option>
           <option value="heroes2_demo">Heroes II Demo</option>
           <option value="total_annihilation_demo">Total Annihilation Demo</option>
           <option value="caesar3_demo">Caesar III Demo</option>
+          <option value="captain_claw_demo">Captain Claw Demo</option>
           <option value="dxball">DX-Ball 1.09</option>
           <option value="blobby_volley">Blobby Volley</option>
         </optgroup>
@@ -836,10 +850,11 @@ Resource-aware Win98 emulator
   <script src="lib/resources-icon.js?v=170"></script>
   <script src="lib/renderer-input.js?v=191"></script>
   <script src="lib/presentation-filter.js?v=5"></script>
-  <script src="lib/renderer.js?v=185"></script>
+  <script src="lib/renderer.js?v=186"></script>
   <script src="lib/dll-registry.js?v=1"></script>
   <script src="lib/apps.js?v=2"></script>
-  <script src="lib/browser-input.js?v=1"></script>
+  <script src="lib/browser-input.js?v=2"></script>
+  <script src="lib/mobile-keyboard.js?v=1"></script>
   <script src="lib/vfs-persistence.js?v=1"></script>
   <script src="lib/browser-shell.js?v=4"></script>
   <script src="lib/pe.js?v=1"></script>
@@ -862,7 +877,7 @@ Resource-aware Win98 emulator
   <script src="lib/vlan-wire.js?v=1"></script>
   <script src="lib/vlan-rtc.js?v=1"></script>
   <script src="lib/vlan-lobby.js?v=1"></script>
-  <script src="host.js?v=217"></script>
+  <script src="host.js?v=219"></script>
   <script src="lib/recorder.js?v=168"></script>
   <script src="lib/perf-hud.js?v=1"></script>
   <script>
@@ -925,6 +940,9 @@ Resource-aware Win98 emulator
       return Math.min(sw, sh) <= 500 && Math.max(sw, sh) <= 950;
     }
     let SINGLE_APP_MODE = detectSingleAppMode();
+    // Built once the DOM helpers below exist; screenCanvasSize() asks it for
+    // the frozen height, so it has to be declared before either of them.
+    let keyboardController = null;
     document.body.classList.toggle('single-app', SINGLE_APP_MODE);
     // The window can be resized across the threshold (a desktop browser being
     // narrowed, a phone rotating), so the mode is re-decided on every resize
@@ -1412,13 +1430,20 @@ Resource-aware Win98 emulator
         wrap.clientWidth || 0,
         canvas.clientWidth || 0
       ) : (dedicatedPage ? canvas.clientWidth : wrap.clientWidth));
-      const displayH = Math.floor(fullscreen ? Math.max(
+      const measuredH = Math.floor(fullscreen ? Math.max(
         (fsRect && fsRect.height) || 0,
         (vv && vv.height) || 0,
         window.innerHeight || 0,
         wrap.clientHeight || 0,
         canvas.clientHeight || 0
       ) : (dedicatedPage ? canvas.clientHeight : wrap.clientHeight));
+      // An on-screen keyboard must not change the guest's display size. Some
+      // browsers shrink the layout viewport for it, and following that down
+      // would send the app a WM_SIZE and re-centre every centred dialog into
+      // the strip above the keyboard -- the exact failure the shift exists to
+      // avoid. Hold the pre-keyboard height until the keyboard goes away.
+      const frozenH = keyboardController ? keyboardController.frozenHeight() : 0;
+      const displayH = frozenH > 0 ? Math.floor(frozenH) : measuredH;
       // A single backing scale keeps CSS presentation proportional even on
       // short landscape screens where both minimum dimensions cannot fit.
       const scale = displayW > 0 && displayH > 0
@@ -1494,6 +1519,46 @@ Resource-aware Win98 emulator
       }
     }
     window.resizeCanvas = resizeCanvas;
+
+    // On-screen keyboard handling (lib/mobile-keyboard.js). Single-app mode
+    // only: on a desktop the keyboard is physical and visualViewport never
+    // shrinks by anything like enough to trip the threshold, but gating on
+    // the mode keeps the guest screen provably still for every desktop user.
+    //
+    // The caret comes from the renderer in canvas pixels and is converted to
+    // client pixels here, since the CSS size of a canvas pixel is exactly what
+    // the backing-vs-display scale is about.
+    if (window.MobileKeyboard) {
+      keyboardController = window.MobileKeyboard.createKeyboardController({
+        element: () => document.getElementById('screen-wrap'),
+        enabled: () => SINGLE_APP_MODE,
+        focusRect: () => {
+          const renderer = (typeof wine !== 'undefined' && wine && wine.renderer) || sharedRenderer;
+          if (!renderer || typeof renderer.caretRect !== 'function') return null;
+          const caret = renderer.caretRect();
+          const canvas = document.getElementById('screen');
+          if (!caret || !canvas || !canvas.height) return null;
+          const rect = canvas.getBoundingClientRect();
+          const scaleY = rect.height / canvas.height;
+          return {
+            top: rect.top + caret.y * scaleY,
+            bottom: rect.top + (caret.y + caret.h) * scaleY,
+          };
+        },
+        // Freezing the display height changes what the backing store should
+        // be, so the resize path has to run again once the keyboard settles.
+        onChange: () => resizeCanvas(),
+      });
+      keyboardController.attach();
+      // The caret moves while the keyboard stays put, and no viewport event
+      // fires for that. Poll only while a keyboard is actually up; update()
+      // reports whether anything changed, so a still caret costs one
+      // getBoundingClientRect and nothing else.
+      setInterval(() => {
+        if (keyboardController.inset() > 0) keyboardController.update();
+      }, 250);
+    }
+
     window.addEventListener('resize', resizeCanvas);
     if (window.visualViewport) window.visualViewport.addEventListener('resize', resizeCanvas);
     document.addEventListener('fullscreenchange', resizeCanvas);

@@ -68,11 +68,11 @@ UNIT=(
   test/test-mm-timer-callback.js
   test/test-nc-flags-message-wake.js
   test/test-browser-step-scheduler.js
-  test/test-shell-execute-launch.js
   test/test-browser-mm-timer.js
   test/test-runtime-log-toggle.js
   test/test-diablo-runtime-apis.js
   test/test-starcraft-dll-policy.js
+  test/test-debug-game-apps.js
   test/test-dllmain-load-context.js
   test/test-debug-thread-state.js
   test/test-dev-server.js
@@ -153,6 +153,9 @@ UNIT=(
   test/test-pinball-web-lifecycle.js
   test/test-web-touch-input.js
   test/test-web-fullscreen-consent.js
+  test/test-single-app-mode.js
+  test/test-mobile-keyboard.js
+  test/test-page-script-globals.js
   test/test-web-pwa-metadata.js
   test/test-radio-mutex.js
   test/test-listbox.js
@@ -182,10 +185,15 @@ UNIT=(
   test/test-defer-window-pos-visibility.js
   test/test-delphi-seh-mutated-chain.js
   test/test-desktop-surface-color.js
+  test/test-button-focus-notify.js
+  test/test-def-dlg-proc.js
   test/test-dialog-idok-handled.js
+  test/test-dialog-custom-dispatch.js
+  test/test-end-dialog-lifecycle.js
   test/test-directdraw-cooperative-window.js
   test/test-directdraw-create-ex.js
   test/test-directdraw-retained-primary.js
+  test/test-directanimation-image-render.js
   test/test-directinput-device.js
   test/test-directinput8-create.js
   test/test-directx-ordinals.js
@@ -197,6 +205,7 @@ UNIT=(
   test/test-gdi-exttextout-clipping.js
   test/test-gdi-transparent-blt.js
   test/test-gdi-scroll-window-rect.js
+  test/test-rect-in-region.js
   test/test-listview.js
   test/test-edit-wrap-resize.js
   test/test-isequalguid.js
@@ -304,6 +313,7 @@ E2E=(
   test/test-funtris-new-game.js
   test/test-funtris-web-launch.js
   test/test-win98-audio-web.js
+  test/test-explorer98-web.js
   test/test-local-candidate-desktop-web.js
   test/test-win16-web.js
   test/test-win16-dialog.js
