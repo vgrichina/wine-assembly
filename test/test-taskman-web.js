@@ -15,6 +15,7 @@ const ROOT = path.join(__dirname, '..');
 const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const BASE_URL = (process.env.TASKMAN_WEB_BASE_URL || '').replace(/\/$/, '');
 const OUT = path.join(ROOT, 'scratch', 'taskman-web');
+const alonePng = path.join(OUT, 'alone-tasks.png');
 const tasksPng = path.join(OUT, 'live-tasks.png');
 
 if (!fs.existsSync(CHROME)) {
@@ -192,6 +193,7 @@ function consoleSummary(events) {
 
 async function main() {
   fs.mkdirSync(OUT, { recursive: true });
+  try { fs.unlinkSync(alonePng); } catch (_) {}
   try { fs.unlinkSync(tasksPng); } catch (_) {}
 
   const server = BASE_URL ? null : await startStaticServer();
@@ -215,7 +217,12 @@ async function main() {
   const cleanup = () => {
     try { if (cdp) cdp.close(); } catch (_) {}
     try { chrome.kill('SIGKILL'); } catch (_) {}
-    try { if (server) server.close(); } catch (_) {}
+    try {
+      if (server) {
+        server.close();
+        if (server.closeAllConnections) server.closeAllConnections();
+      }
+    } catch (_) {}
     try { fs.rmSync(profile, { recursive: true, force: true }); } catch (_) {}
   };
   process.on('exit', cleanup);
@@ -240,12 +247,29 @@ async function main() {
   });
 
   async function evaluate(expression, timeoutMs = 10000) {
-    const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Runtime.evaluate timeout')), timeoutMs));
-    const response = await Promise.race([cdp.send('Runtime.evaluate', {
-      expression, awaitPromise: true, returnByValue: true,
-    }), timeout]);
-    if (response.exceptionDetails) throw new Error(response.exceptionDetails.text || JSON.stringify(response.exceptionDetails));
-    return response.result && response.result.value;
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      try {
+        const remaining = Math.max(1, deadline - Date.now());
+        let timeoutId;
+        const timeout = new Promise((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error('Runtime.evaluate timeout')), remaining);
+        });
+        let response;
+        try {
+          response = await Promise.race([cdp.send('Runtime.evaluate', {
+            expression, awaitPromise: true, returnByValue: true,
+          }), timeout]);
+        } finally {
+          clearTimeout(timeoutId);
+        }
+        if (response.exceptionDetails) throw new Error(response.exceptionDetails.text || JSON.stringify(response.exceptionDetails));
+        return response.result && response.result.value;
+      } catch (error) {
+        if (!/Execution context was destroyed/i.test(String(error)) || Date.now() >= deadline) throw error;
+        await wait(100);
+      }
+    }
   }
 
   await evaluate(`new Promise((resolve, reject) => {
@@ -257,6 +281,48 @@ async function main() {
     };
     poll();
   })`, 18000);
+  // The production report came from an existing isolated/service-worker
+  // session. Exercise that presentation path explicitly, not just a fresh
+  // uncontrolled tab. Page.reload destroys the current JS context by design;
+  // evaluate() above retries across that boundary.
+  const isolationBefore = await evaluate('crossOriginIsolated');
+  if (!isolationBefore) {
+    await evaluate(`localStorage.setItem('wine-assembly.threads', '1');
+      navigator.serviceWorker.register('sw-coi.js', { scope: './' })
+      .then(() => navigator.serviceWorker.ready)
+      .then(() => navigator.serviceWorker.controller ? 1 : new Promise(resolve =>
+        navigator.serviceWorker.addEventListener('controllerchange', () => resolve(1), { once: true })))`, 15000);
+    await wait(500);
+    await evaluate('setTimeout(() => location.reload(), 50); 1');
+    await wait(200);
+    await evaluate(`new Promise((resolve, reject) => {
+      const started = performance.now();
+      const poll = () => {
+        if (document.readyState === 'complete' && typeof launchApp === 'function') resolve(1);
+        else if (performance.now() - started > 15000) reject(new Error('service-worker reload did not initialize'));
+        else setTimeout(poll, 50);
+      };
+      poll();
+    })`, 18000);
+    // A just-activated worker can claim the old document just after the first
+    // navigation starts. One more controlled navigation is deterministic and
+    // mirrors the user's already-isolated returning session.
+    if (!await evaluate('crossOriginIsolated')) {
+      await evaluate('setTimeout(() => location.reload(), 50); 1');
+      await wait(200);
+      await evaluate(`new Promise((resolve, reject) => {
+        const started = performance.now();
+        const poll = () => {
+          if (document.readyState === 'complete' && typeof launchApp === 'function') resolve(1);
+          else if (performance.now() - started > 15000) reject(new Error('controlled reload did not initialize'));
+          else setTimeout(poll, 50);
+        };
+        poll();
+      })`, 18000);
+    }
+  }
+  assert.strictEqual(await evaluate('crossOriginIsolated'), true,
+    'Task Manager web regression should exercise the isolated service-worker presentation path');
   const screenSize = await evaluate(`(() => {
     const canvas = document.getElementById('screen');
     const oldW = canvas.width, oldH = canvas.height;
@@ -280,7 +346,9 @@ async function main() {
       const poll = () => {
         const app = runningApps.find(item => item && item.name === ${JSON.stringify(name)});
         const win = Object.values((sharedRenderer && sharedRenderer.windows) || {})
-          .find(item => item && item.visible && new RegExp(${JSON.stringify(titlePattern)}, 'i').test(item.title || ''));
+          .find(item => item && item.visible && !item.isChild && app &&
+            item.wasm === app.wine.instance &&
+            new RegExp(${JSON.stringify(titlePattern)}, 'i').test(item.title || ''));
         if (app && app.wine.running && win) resolve({ hwnd: win.hwnd, title: win.title, x: win.x, y: win.y, w: win.w, h: win.h });
         else if (performance.now() - started > ${timeoutMs}) reject(new Error(${JSON.stringify(name + ' did not become ready')}));
         else setTimeout(poll, 100);
@@ -289,9 +357,85 @@ async function main() {
     })`, timeoutMs + 3000);
   }
 
+  const inspectTasksSource = `(() => {
+    const app = runningApps.find(item => item && item.name === 'taskman');
+    const win = Object.values((sharedRenderer && sharedRenderer.windows) || {})
+      .find(item => item && /^Tasks$/i.test(item.title || ''));
+    const e = app && app.wine && app.wine.instance && app.wine.instance.exports;
+    let listHwnd = 0;
+    if (win && e && e.wnd_next_child_slot && e.wnd_slot_hwnd && e.ctrl_get_class) {
+      let slot = 0;
+      while ((slot = e.wnd_next_child_slot(win.hwnd, slot) | 0) >= 0) {
+        const hwnd = e.wnd_slot_hwnd(slot) | 0;
+        slot++;
+        if (hwnd && (e.ctrl_get_class(hwnd) | 0) === 4) { listHwnd = hwnd; break; }
+      }
+    }
+    const rows = [];
+    if (listHwnd && e.listbox_get_count && e.listbox_get_item_text && e.guest_alloc) {
+      const count = Math.max(0, Math.min(e.listbox_get_count(listHwnd) | 0, 32));
+      const buffer = e.guest_alloc(512) >>> 0;
+      const wa = app.wine._guestToWasmAddress(buffer);
+      const bytes = new Uint8Array(app.wine.memory.buffer);
+      for (let row = 0; row < count; row++) {
+        const length = Math.max(0, Math.min(e.listbox_get_item_text(listHwnd, row, buffer, 512) | 0, 511));
+        let text = '';
+        for (let i = 0; i < length; i++) text += String.fromCharCode(bytes[wa + i]);
+        rows.push(text);
+      }
+      if (e.guest_free) e.guest_free(buffer);
+    }
+    return win && {
+      hwnd: win.hwnd, x: win.x, y: win.y, w: win.w, h: win.h,
+      listHwnd, rows,
+      listX: listHwnd && e.wnd_window_screen_x ? e.wnd_window_screen_x(listHwnd) | 0 : 0,
+      listY: listHwnd && e.wnd_window_screen_y ? e.wnd_window_screen_y(listHwnd) | 0 : 0,
+      selection: listHwnd && e.listbox_get_cur_sel ? e.listbox_get_cur_sel(listHwnd) | 0 : -1,
+    };
+  })()`;
+
+  async function waitForRows(expected, timeoutMs = 10000) {
+    const started = Date.now();
+    let state;
+    while (Date.now() - started < timeoutMs) {
+      state = await evaluate(inspectTasksSource);
+      if (state && expected.every(pattern => state.rows.some(row => new RegExp(pattern, 'i').test(row)))) return state;
+      await wait(100);
+    }
+    throw new Error(`Task Manager rows did not contain ${expected.join(', ')}: ${JSON.stringify(state)}`);
+  }
+
+  // Match the reviewed native Win98 reference: Tasks alone has no rows because
+  // it excludes itself and Explorer's desktop/taskbar are not application
+  // tasks. The important browser regression is that it remains live and sees
+  // an app launched afterward.
+  const taskmanFirst = await launch('taskman', '^Tasks$');
+  const taskmanAlone = await evaluate(inspectTasksSource);
+  assert(taskmanAlone && taskmanAlone.listHwnd && taskmanAlone.rows.length === 0,
+    `Task Manager alone should match native Win98's empty list: ${JSON.stringify(taskmanAlone)}`);
+  const aloneScreenshot = await evaluate(`(() => {
+    const state = ${inspectTasksSource};
+    const win = sharedRenderer.windows[state.hwnd];
+    win.visible = true;
+    win._minimized = false;
+    win.zOrder = sharedRenderer._nextZ++;
+    sharedRenderer.repaint();
+    const canvas = document.getElementById('screen');
+    const crop = document.createElement('canvas');
+    crop.width = win.w; crop.height = win.h;
+    crop.getContext('2d').drawImage(canvas, win.x, win.y, win.w, win.h, 0, 0, win.w, win.h);
+    return { width: win.w, height: win.h, png: crop.toDataURL('image/png') };
+  })()`);
+  fs.writeFileSync(alonePng, Buffer.from(aloneScreenshot.png.replace(/^data:image\/png;base64,/, ''), 'base64'));
+  await launch('calc', 'Calculator');
+  const taskmanFirstRefresh = await waitForRows(['Calculator']);
+  assert.strictEqual(taskmanFirstRefresh.hwnd, taskmanFirst.hwnd,
+    'Task Manager should refresh the already-running first instance');
+
   const regedit = await launch('regedit', 'Registry Editor');
   const notepad = await launch('notepad', 'Notepad');
-  assert(regedit.hwnd !== notepad.hwnd, 'RegEdit and Notepad should use distinct HWND ranges');
+  assert(regedit.hwnd !== notepad.hwnd,
+    `RegEdit and Notepad should use distinct HWND ranges: ${JSON.stringify({ regedit, notepad })}`);
   const notepadInput = await evaluate(`new Promise(resolve => {
     const app = runningApps.find(item => item && item.name === 'notepad');
     const win = sharedRenderer.windows[${notepad.hwnd}];
@@ -345,54 +489,6 @@ async function main() {
   assert(taskmanWindows.length >= 3 && taskmanWindows.every(win =>
     win.w > 0 && win.h > 0 && win.w * win.h <= 640 * 1136),
   `Task Manager should not allocate oversized window canvases: ${JSON.stringify(taskmanWindows)}`);
-
-  const inspectTasksSource = `(() => {
-    const app = runningApps.find(item => item && item.name === 'taskman');
-    const win = Object.values((sharedRenderer && sharedRenderer.windows) || {})
-      .find(item => item && /^Tasks$/i.test(item.title || ''));
-    const e = app && app.wine && app.wine.instance && app.wine.instance.exports;
-    let listHwnd = 0;
-    if (win && e && e.wnd_next_child_slot && e.wnd_slot_hwnd && e.ctrl_get_class) {
-      let slot = 0;
-      while ((slot = e.wnd_next_child_slot(win.hwnd, slot) | 0) >= 0) {
-        const hwnd = e.wnd_slot_hwnd(slot) | 0;
-        slot++;
-        if (hwnd && (e.ctrl_get_class(hwnd) | 0) === 4) { listHwnd = hwnd; break; }
-      }
-    }
-    const rows = [];
-    if (listHwnd && e.listbox_get_count && e.listbox_get_item_text && e.guest_alloc) {
-      const count = Math.max(0, Math.min(e.listbox_get_count(listHwnd) | 0, 32));
-      const buffer = e.guest_alloc(512) >>> 0;
-      const wa = app.wine._guestToWasmAddress(buffer);
-      const bytes = new Uint8Array(app.wine.memory.buffer);
-      for (let row = 0; row < count; row++) {
-        const length = Math.max(0, Math.min(e.listbox_get_item_text(listHwnd, row, buffer, 512) | 0, 511));
-        let text = '';
-        for (let i = 0; i < length; i++) text += String.fromCharCode(bytes[wa + i]);
-        rows.push(text);
-      }
-      if (e.guest_free) e.guest_free(buffer);
-    }
-    return win && {
-      hwnd: win.hwnd, x: win.x, y: win.y, w: win.w, h: win.h,
-      listHwnd, rows,
-      listX: listHwnd && e.wnd_window_screen_x ? e.wnd_window_screen_x(listHwnd) | 0 : 0,
-      listY: listHwnd && e.wnd_window_screen_y ? e.wnd_window_screen_y(listHwnd) | 0 : 0,
-      selection: listHwnd && e.listbox_get_cur_sel ? e.listbox_get_cur_sel(listHwnd) | 0 : -1,
-    };
-  })()`;
-
-  async function waitForRows(expected, timeoutMs = 10000) {
-    const started = Date.now();
-    let state;
-    while (Date.now() - started < timeoutMs) {
-      state = await evaluate(inspectTasksSource);
-      if (state && expected.every(pattern => state.rows.some(row => new RegExp(pattern, 'i').test(row)))) return state;
-      await wait(100);
-    }
-    throw new Error(`Task Manager rows did not contain ${expected.join(', ')}: ${JSON.stringify(state)}`);
-  }
 
   const initialTasks = await waitForRows(['Calculator', 'Sound Recorder']);
   assert(!initialTasks.rows.some(row => /^Tasks$/i.test(row)), `Task Manager should not list itself: ${JSON.stringify(initialTasks.rows)}`);
@@ -533,7 +629,10 @@ async function main() {
     `browser console should not contain runtime failures\n${consoleText.slice(-4000)}`);
   assert(screenshot.width >= 375 && screenshot.height >= 275 && fs.statSync(tasksPng).size > 5000,
     `Task Manager screenshot should be complete: ${JSON.stringify(screenshot)}`);
+  assert(aloneScreenshot.width >= 375 && aloneScreenshot.height >= 275 && fs.statSync(alonePng).size > 1000,
+    `Task Manager-alone screenshot should be complete: ${JSON.stringify(aloneScreenshot)}`);
 
+  console.log('PASS  Task Manager-first matches native empty state and live-refreshes Calculator');
   console.log(`PASS  browser Task Manager initially enumerates real Calculator and Sound Recorder tasks`);
   console.log('PASS  browser Task Manager opens frontmost and on-screen after other apps');
   console.log('PASS  Notepad accepts delayed keyboard input after RegEdit launches first');
@@ -541,7 +640,7 @@ async function main() {
   console.log('PASS  browser Task Manager Switch To raises the selected real app');
   console.log('PASS  browser Task Manager End Task closes only the selected real app');
   console.log('PASS  browser closing Task Manager leaves other desktop apps running');
-  console.log(`Screenshot: ${tasksPng}`);
+  console.log(`Screenshots: ${alonePng}, ${tasksPng}`);
   cleanup();
 }
 
