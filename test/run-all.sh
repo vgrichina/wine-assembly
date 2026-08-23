@@ -181,6 +181,7 @@ UNIT=(
   test/test-dialog-idok-handled.js
   test/test-directdraw-cooperative-window.js
   test/test-directdraw-create-ex.js
+  test/test-directdraw-retained-primary.js
   test/test-directinput-device.js
   test/test-directinput8-create.js
   test/test-directx-ordinals.js
