@@ -26,6 +26,18 @@
 //
 // After every step the CSS cursor of the canvas is printed, since that is the
 // pixel-visible answer to "what does the user see under the pointer".
+// --viewport=WxH[@DPR] and --touch emulate a device; a phone-sized viewport
+// puts index.html into single-app mode (add `single-app=1` to --query to force
+// it regardless of the emulated screen size).
+//
+// --gpu runs the page on SwiftShader instead of Chrome's default --disable-gpu,
+// so the WebGL presentation paths (scale-auto, fsr1, dedither, CRT) actually
+// run. Without it every presentation falls back to 2D canvas and a GPU-only
+// bug looks fixed.
+//
+// --url=https://host drives that origin instead of this working tree, which is
+// how a "works locally, broken on the deployed site" report gets checked.
+//
 // --cpu=N applies Chrome's CPU throttling while preserving real browser audio
 // timing, which is useful for scheduler-sensitive game/audio failures.
 
@@ -50,6 +62,27 @@ const QUERY = opt('query', '?debug');
 const STEPS = (opt('steps', '') || '').split(';').map(s => s.trim()).filter(Boolean);
 const READY_MS = Number(opt('ready', 6000));
 const CPU_RATE = Number(opt('cpu', 1));
+// Headless Chrome runs with --disable-gpu by default, which sends presentation
+// down the 2D canvas paths. A real phone browser has WebGL and takes the GPU
+// paths instead, so bugs that only exist there (a viewport crop the shaders
+// ignore) are invisible without --gpu, which swaps in SwiftShader.
+const GPU = argv.includes('--gpu');
+// Base origin to drive. Empty = serve this working tree over a temp server.
+const URL_BASE = (opt('url', '') || '').replace(/\/+$/, '');
+// A phone is a different page, not a smaller one: single-app mode, no taskbar,
+// a phone-sized emulated screen. --viewport=390x844 (optionally with a
+// device-pixel ratio, 390x844@3) and --touch reproduce one.
+const VIEWPORT = (() => {
+  const m = /^(\d+)x(\d+)(?:@([\d.]+))?$/.exec(opt('viewport', '1280x900'));
+  if (!m) throw new Error('--viewport must look like 390x844 or 390x844@3');
+  return {
+    width: Number(m[1]),
+    height: Number(m[2]),
+    deviceScaleFactor: m[3] ? Number(m[3]) : 1,
+    hasTouch: argv.includes('--touch'),
+    isMobile: argv.includes('--touch'),
+  };
+})();
 const FINAL_EVAL = opt('eval', '');
 const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
@@ -91,9 +124,20 @@ async function toPage(page, gx, gy) {
   return page.evaluate(([x, y]) => {
     const c = document.querySelector('canvas');
     const r = c.getBoundingClientRect();
+    // Exclusive fullscreen and single-app mode present a crop of the desktop
+    // canvas scaled to the display, so guest pixels are not canvas pixels.
+    // Invert that viewport the same way renderer-input maps a tap back.
+    const v = typeof sharedRenderer !== 'undefined' && sharedRenderer &&
+      sharedRenderer._exclusivePresentationViewport;
+    let cx = x + 0.5;
+    let cy = y + 0.5;
+    if (v && v.nativeW > 0 && v.nativeH > 0 && v.outputW > 0 && v.outputH > 0) {
+      cx = (v.dstX + (x + 0.5 - v.nativeX) * v.dstW / v.nativeW) * c.width / v.outputW;
+      cy = (v.dstY + (y + 0.5 - v.nativeY) * v.dstH / v.nativeH) * c.height / v.outputH;
+    }
     return {
-      x: r.left + (x + 0.5) * (r.width / c.width),
-      y: r.top + (y + 0.5) * (r.height / c.height),
+      x: r.left + cx * (r.width / c.width),
+      y: r.top + cy * (r.height / c.height),
     };
   }, [gx, gy]);
 }
@@ -110,14 +154,20 @@ const readCursor = page => page.evaluate(() => {
 });
 
 async function main() {
-  const server = await startStaticServer();
-  const base = `http://127.0.0.1:${server.address().port}`;
+  // --url points the probe at an already-running origin (the deployed site, or
+  // a dev server) instead of serving the working tree. "It works here but not
+  // on wine-assembly.berrry.app" is otherwise unanswerable from this tool.
+  const server = URL_BASE ? null : await startStaticServer();
+  const base = URL_BASE || `http://127.0.0.1:${server.address().port}`;
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'wine-assembly-input-'));
   const browser = await puppeteer.launch({
     headless: true,
     executablePath: CHROME,
     userDataDir: profile,
-    args: ['--no-sandbox', '--disable-gpu', '--no-first-run', '--no-default-browser-check'],
+    args: ['--no-sandbox', '--no-first-run', '--no-default-browser-check'].concat(
+      GPU
+        ? ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader']
+        : ['--disable-gpu']),
   });
   const problems = [];
   try {
@@ -126,7 +176,7 @@ async function main() {
       const cdp = await page.target().createCDPSession();
       await cdp.send('Emulation.setCPUThrottlingRate', { rate: CPU_RATE });
     }
-    await page.setViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });
+    await page.setViewport(VIEWPORT);
     page.on('pageerror', e => problems.push(String(e)));
     page.on('console', m => {
       const t = m.text();
@@ -150,17 +200,32 @@ async function main() {
     // Use a trusted browser gesture for launch. AudioContext.resume() is
     // gated on user activation, so calling launchApp() through evaluate()
     // silently exercises a suspended-audio path that real users never take.
-    const launchPoint = await page.evaluate(() => {
-      const buttons = [...document.querySelectorAll('button[onclick="launchApp()"]')];
-      const button = buttons.find(candidate => {
-        const rect = candidate.getBoundingClientRect();
-        return rect.width > 0 && rect.height > 0 && getComputedStyle(candidate).visibility !== 'hidden';
-      });
-      if (!button) throw new Error('no visible Launch button');
-      const rect = button.getBoundingClientRect();
-      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-    });
+    // Without ?debug there is no Launch button — the shipping desktop starts
+    // an app by double-clicking its icon, which is also the only launch path a
+    // phone has. Fall back to it so the real page can be driven too.
+    const launchPoint = await page.evaluate(app => {
+      const visible = el => {
+        if (!el) return false;
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 &&
+          getComputedStyle(el).visibility !== 'hidden';
+      };
+      const centre = el => {
+        const rect = el.getBoundingClientRect();
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      };
+      const button = [...document.querySelectorAll('button[onclick="launchApp()"]')].find(visible);
+      if (button) return { ...centre(button), icon: false };
+      const icon = document.querySelector(`.desktop-icon[data-app="${app}"]`);
+      if (visible(icon)) return { ...centre(icon), icon: true };
+      throw new Error(`no visible Launch button and no desktop icon for ${app}`);
+    }, APP);
     await page.mouse.click(launchPoint.x, launchPoint.y);
+    // Icons launch on the second click of a double-click.
+    if (launchPoint.icon) {
+      await wait(80);
+      await page.mouse.click(launchPoint.x, launchPoint.y);
+    }
     await page.waitForFunction(
       'typeof runningApps !== "undefined" && runningApps.length > 0 && typeof sharedRenderer !== "undefined" && sharedRenderer',
       { timeout: 90000 });
@@ -209,7 +274,7 @@ async function main() {
     }
   } finally {
     await browser.close();
-    server.close();
+    if (server) server.close();
     fs.rmSync(profile, { recursive: true, force: true });
   }
   if (problems.length) {

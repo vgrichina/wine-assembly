@@ -264,9 +264,9 @@ function serve() {
       }
       ditherCtx.putImageData(checkerImage, 0, 0);
       renderer.presentationFilter.present(source, 'scale-auto', {},
-        { dedither: 'checkerboard' });
+        { dedither: 'mdapt' });
       let deditherPixels = output.getContext('2d').getImageData(0, 0, 16, 16).data;
-      const checkerboard = {
+      const mdapt = {
         backend: renderer.presentationFilter.lastDeditherBackend,
         scale: renderer.presentationFilter.lastPixelScaleMultiplier,
         center: pixel(deditherPixels, 16, 8, 8),
@@ -280,10 +280,10 @@ function serve() {
       ditherCtx.fillStyle = 'rgb(0, 0, 255)';
       ditherCtx.fillRect(4, 0, 4, 8);
       renderer.presentationFilter.present(source, 'nearest', {},
-        { dedither: 'checkerboard' });
+        { dedither: 'mdapt' });
       deditherPixels = output.getContext('2d').getImageData(0, 0, 8, 8).data;
-      checkerboard.edgeLeft = pixel(deditherPixels, 8, 2, 4);
-      checkerboard.edgeRight = pixel(deditherPixels, 8, 5, 4);
+      mdapt.edgeLeft = pixel(deditherPixels, 8, 2, 4);
+      mdapt.edgeRight = pixel(deditherPixels, 8, 5, 4);
 
       source.width = 12;
       source.height = 12;
@@ -304,14 +304,73 @@ function serve() {
       }
       orderedCtx.putImageData(orderedImage, 0, 0);
       renderer.presentationFilter.present(source, 'nearest', {},
-        { dedither: 'ordered2' });
+        { dedither: 'jinc2' });
       deditherPixels = output.getContext('2d').getImageData(0, 0, 12, 12).data;
-      const ordered2 = {
+      const jinc2 = {
         backend: renderer.presentationFilter.lastDeditherBackend,
         quarter: pixel(deditherPixels, 12, 4, 4),
       };
+      // With a plain sampling mode, no crop and no shader, presenting is a
+      // full-canvas copy that produces what the compositor gives for free:
+      // the logical canvas becomes the visible surface and the output canvas
+      // is taken out of the layout entirely. Anything with a filter to run
+      // has to flip it straight back.
+      source.width = 4;
+      source.height = 4;
+      output.width = 8;
+      output.height = 8;
+      renderer.presentationFilter.resize(8, 8);
+      const directCtx = source.getContext('2d');
+      directCtx.fillStyle = 'rgb(10, 200, 30)';
+      directCtx.fillRect(0, 0, 4, 4);
+      const outputCtx = output.getContext('2d');
+      outputCtx.clearRect(0, 0, 8, 8);
+      renderer.setPresentationEffects({});
+      renderer.setPresentationScaleMode('nearest');
+      renderer._exclusivePresentationViewport = null;
+      renderer._presentDisplayCanvas();
+      const direct = {
+        nearest: {
+          on: renderer._directPresentation,
+          sourceOpacity: source.style.opacity,
+          outputDisplay: output.style.display,
+          sourceRendering: source.style.imageRendering,
+          // Nothing should have been drawn: the copy is what we skipped.
+          outputAlpha: pixel(outputCtx.getImageData(0, 0, 8, 8).data, 8, 4, 4)[3],
+        },
+      };
+      renderer.setPresentationScaleMode('browser-hq');
+      renderer._presentDisplayCanvas();
+      direct.browserHq = {
+        on: renderer._directPresentation,
+        sourceRendering: source.style.imageRendering,
+      };
+      // A crop (single-app zoom) needs the real pass back.
+      renderer.setPresentationScaleMode('nearest');
+      renderer._exclusivePresentationViewport = {
+        cropX: 1, cropY: 1, cropW: 2, cropH: 2,
+        nativeX: 1, nativeY: 1, nativeW: 2, nativeH: 2,
+        dstX: 0, dstY: 0, dstW: 8, dstH: 8,
+        outputW: 8, outputH: 8, multiplier: 4, background: '#008080',
+      };
+      renderer._presentDisplayCanvas();
+      direct.cropped = {
+        on: renderer._directPresentation,
+        sourceOpacity: source.style.opacity,
+        outputDisplay: output.style.display,
+        backend: renderer.presentationFilter.lastBackend,
+        outputAlpha: pixel(output.getContext('2d').getImageData(0, 0, 8, 8).data, 8, 4, 4)[3],
+      };
+      // So do the CRT effects, with no crop in play.
+      renderer._exclusivePresentationViewport = null;
+      renderer.setPresentationEffects({ scanlines: true });
+      renderer._presentDisplayCanvas();
+      direct.effects = { on: renderer._directPresentation };
+      renderer.setPresentationEffects({});
+
       return {
         retina,
+        direct,
         scale2x,
         scale3x,
         scale4x,
@@ -321,8 +380,8 @@ function serve() {
         composed,
         integer,
         sharp,
-        checkerboard,
-        ordered2,
+        mdapt,
+        jinc2,
         gpuError: String(renderer.presentationFilter.lastError || ''),
       };
     });
@@ -332,6 +391,28 @@ function serve() {
     assert.strictEqual(result.retina.physical[1], Math.round(result.retina.client[1] * 2));
     assert.notDeepStrictEqual(result.retina.logical, result.retina.physical,
       'logical Win98 canvas should remain distinct from the DPR output');
+    assert.strictEqual(result.direct.nearest.on, true,
+      'a plain nearest present with no crop and no shader should skip the copy');
+    assert.strictEqual(result.direct.nearest.sourceOpacity, '1',
+      'the logical canvas becomes the visible surface');
+    assert.strictEqual(result.direct.nearest.outputDisplay, 'none',
+      'the presentation canvas should leave the layout, not sit on top empty');
+    assert.strictEqual(result.direct.nearest.sourceRendering, 'pixelated',
+      'nearest sampling has to move onto the canvas CSS does scale');
+    assert.strictEqual(result.direct.nearest.outputAlpha, 0,
+      'nothing should be drawn into the presentation canvas on the direct path');
+    assert.strictEqual(result.direct.browserHq.on, true,
+      'browser HQ is the compositor default: no copy needed for it either');
+    assert.strictEqual(result.direct.browserHq.sourceRendering, 'auto');
+    assert.strictEqual(result.direct.cropped.on, false,
+      'single-app zoom crops, and CSS cannot crop: the real pass comes back');
+    assert.strictEqual(result.direct.cropped.sourceOpacity, '0');
+    assert.strictEqual(result.direct.cropped.outputDisplay, '');
+    assert.strictEqual(result.direct.cropped.backend, 'canvas-nearest');
+    assert.strictEqual(result.direct.cropped.outputAlpha, 255,
+      'the presented crop should land in the presentation canvas');
+    assert.strictEqual(result.direct.effects.on, false,
+      'a CRT shader has to run somewhere: not on the direct path');
     assert.strictEqual(result.scale2x.backend, 'webgl-scale2x', result.gpuError);
     assert.strictEqual(result.scale2x.multiplier, 2);
     assert.deepStrictEqual(result.scale2x.passes, ['scale2x']);
@@ -369,18 +450,18 @@ function serve() {
       { scanlines: true, mask: true, glow: true },
       'CRT should run after the canonical scale and browser-HQ correction');
 
-    assert.strictEqual(result.checkerboard.backend, 'webgl-checkerboard', result.gpuError);
-    assert.strictEqual(result.checkerboard.scale, 2,
+    assert.strictEqual(result.mdapt.backend, 'webgl-mdapt', result.gpuError);
+    assert.strictEqual(result.mdapt.scale, 2,
       'dedither should run at native resolution before the selected scaler');
-    assert(Math.abs(result.checkerboard.center[0] - 128) <= 1 &&
-      Math.abs(result.checkerboard.center[2] - 128) <= 1,
-    `checkerboard should reconstruct the red/blue midpoint: ${result.checkerboard.center}`);
-    assert.deepStrictEqual(result.checkerboard.edgeLeft, [255, 0, 0, 255]);
-    assert.deepStrictEqual(result.checkerboard.edgeRight, [0, 0, 255, 255],
-      'checkerboard detection must leave an ordinary solid edge intact');
-    assert.strictEqual(result.ordered2.backend, 'webgl-ordered2', result.gpuError);
-    assert(result.ordered2.quarter.slice(0, 3).every(channel => Math.abs(channel - 64) <= 1),
-      `ordered 25% tile should reconstruct its average: ${result.ordered2.quarter}`);
+    assert(Math.abs(result.mdapt.center[0] - 128) <= 1 &&
+      Math.abs(result.mdapt.center[2] - 128) <= 1,
+    `MDAPT should reconstruct the red/blue checkerboard midpoint: ${result.mdapt.center}`);
+    assert.deepStrictEqual(result.mdapt.edgeLeft, [255, 0, 0, 255]);
+    assert.deepStrictEqual(result.mdapt.edgeRight, [0, 0, 255, 255],
+      'MDAPT detection must leave an ordinary solid edge intact');
+    assert.strictEqual(result.jinc2.backend, 'webgl-jinc2', result.gpuError);
+    assert(result.jinc2.quarter.slice(0, 3).every(channel => channel > 0 && channel < 255),
+      `Jinc2 should reconstruct an intermediate tone from ordered dither: ${result.jinc2.quarter}`);
 
     assert.strictEqual(result.fsr1.backend, 'webgl-fsr1', result.gpuError);
     assert(Math.abs(result.fsr1.center[0] - 128) <= 2);

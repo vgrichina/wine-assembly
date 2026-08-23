@@ -353,6 +353,32 @@
       background: #000080;
       outline: 1px dotted #fff;
     }
+    /* Single-app mode (phone-sized screen): the taskbar never appears, and
+       once an app is running the desktop icons go away too, so the guest owns
+       every pixel. The way back to the desktop is the app's own close button —
+       when the last guest exits, the icons return. */
+    body.single-app #taskbar { display: none; }
+    body.single-app.app-running #desktop-icons { display: none; }
+    /* ?debug on a phone-sized viewport: the toolbar and the log together eat
+       two thirds of the screen, which is the whole thing single-app mode is
+       for. Once an app is running, collapse them behind a peek button and give
+       it the screen; the button toggles them back for as long as you need
+       them. Before launch they stay up — in debug mode the toolbar is the only
+       launcher, since the desktop icon grid is a no-debug feature. */
+    #debug-peek { display: none; }
+    body.single-app.app-running:not(.no-debug) #debug-peek {
+      display: block;
+      position: fixed;
+      top: 2px;
+      right: 2px;
+      z-index: 60;
+      padding: 3px 8px;
+      font-size: 11px;
+      opacity: 0.85;
+    }
+    body.single-app.app-running:not(.no-debug):not(.debug-open) #titlebar,
+    body.single-app.app-running:not(.no-debug):not(.debug-open) #toolbar,
+    body.single-app.app-running:not(.no-debug):not(.debug-open) #log { display: none; }
     body.no-debug #shell { margin: 0; border: 0; background: transparent; }
     body.no-debug #titlebar,
     body.no-debug #toolbar,
@@ -474,6 +500,7 @@
 </head>
 <body>
   <div id="compile-status">Compiling WAT source...</div>
+  <button id="debug-peek" onclick="toggleDebugPanels()">Debug</button>
   <div id="shell">
     <div id="titlebar">Wine-Assembly — Windows 98 Emulator</div>
     <div id="toolbar">
@@ -698,8 +725,8 @@
         <label>Dedither:</label>
         <select id="presentation-dedither-select" onchange="applyDeditherMode(this.value)" autocomplete="off" title="Blend detected low-colour dither patterns before scaling">
           <option value="off" selected>Off</option>
-          <option value="checkerboard">Checkerboard</option>
-          <option value="ordered2">Ordered 2x2</option>
+          <option value="mdapt">MDAPT</option>
+          <option value="jinc2">Jinc2</option>
         </select>
       </span>
       <span class="debug-crt">
@@ -807,8 +834,8 @@ Resource-aware Win98 emulator
   <script src="lib/surface.js?v=1"></script>
   <script src="lib/resources-icon.js?v=170"></script>
   <script src="lib/renderer-input.js?v=191"></script>
-  <script src="lib/presentation-filter.js?v=4"></script>
-  <script src="lib/renderer.js?v=184"></script>
+  <script src="lib/presentation-filter.js?v=5"></script>
+  <script src="lib/renderer.js?v=185"></script>
   <script src="lib/dll-registry.js?v=1"></script>
   <script src="lib/apps.js?v=2"></script>
   <script src="lib/browser-input.js?v=1"></script>
@@ -871,6 +898,54 @@ Resource-aware Win98 emulator
 
     const LOCAL_DESKTOP = /^(localhost|127\.|0\.0\.0\.0|::1$|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(location.hostname);
     const DEBUG_MODE = new URLSearchParams(location.search).has('debug');
+
+    // Single-app mode: a phone. One app at a time, no taskbar, no icons while
+    // it runs, and the app scaled to fill the screen. A tablet is a small
+    // desktop and keeps the full Win98 shell — the test is the physical screen
+    // (both edges), not the viewport, so rotating does not change the answer.
+    // `?single-app=1` / `?single-app=0` forces it either way for testing.
+    function detectSingleAppMode() {
+      const params = new URLSearchParams(location.search);
+      if (params.has('single-app')) return params.get('single-app') !== '0';
+      // ?debug does not opt out: debugging a phone layout is exactly when the
+      // zoom has to be on. `?debug&single-app=0` turns it off explicitly.
+      //
+      // Size is the whole test — a touch screen is not required. A narrow
+      // browser window has the same problem a phone does: a 640x480 desktop
+      // with a taskbar leaves nothing usable for the app.
+      //
+      // Measure the *page*, not window.screen: in a simulator or a device
+      // toolbar, screen.width is still the host display, so a phone-sized page
+      // would be judged a desktop. visualViewport tracks browser chrome.
+      const vv = window.visualViewport;
+      const sw = (vv && vv.width) || window.innerWidth || 0;
+      const sh = (vv && vv.height) || window.innerHeight || 0;
+      if (!sw || !sh) return false;
+      return Math.min(sw, sh) <= 500 && Math.max(sw, sh) <= 950;
+    }
+    let SINGLE_APP_MODE = detectSingleAppMode();
+    document.body.classList.toggle('single-app', SINGLE_APP_MODE);
+    // The window can be resized across the threshold (a desktop browser being
+    // narrowed, a phone rotating), so the mode is re-decided on every resize
+    // rather than frozen at load.
+    // Show/hide the debug toolbar and log inside single-app mode. The canvas
+    // is sized from the space that is left, so the resize has to follow.
+    function toggleDebugPanels() {
+      const open = document.body.classList.toggle('debug-open');
+      const button = document.getElementById('debug-peek');
+      if (button) button.textContent = open ? 'Hide' : 'Debug';
+      resizeCanvas();
+    }
+    function applySingleAppMode() {
+      const next = detectSingleAppMode();
+      if (next === SINGLE_APP_MODE) return;
+      SINGLE_APP_MODE = next;
+      document.body.classList.toggle('single-app', next);
+      if (typeof sharedRenderer !== 'undefined' && sharedRenderer) {
+        sharedRenderer.singleAppMode = next;
+        if (sharedRenderer.repaint) sharedRenderer.repaint();
+      }
+    }
     const RUNTIME_LOG_KEY = 'wine-assembly:runtime-log';
     const PRESENTATION_SCALE_KEY = 'wine-assembly:2d-scale';
     const PRESENTATION_DEDITHER_KEY = 'wine-assembly:dedither';
@@ -910,7 +985,8 @@ Resource-aware Win98 emulator
       };
     }
     function normalizeDeditherMode(mode) {
-      return mode === 'checkerboard' || mode === 'ordered2' ? mode : 'off';
+      if (mode === 'checkerboard' || mode === 'ordered2') return 'mdapt';
+      return mode === 'mdapt' || mode === 'jinc2' ? mode : 'off';
     }
     let initial2dScalingMode = 'nearest';
     try { initial2dScalingMode = normalize2dScalingMode(localStorage.getItem(PRESENTATION_SCALE_KEY)); }
@@ -985,6 +1061,13 @@ Resource-aware Win98 emulator
       debugMode: DEBUG_MODE,
       screenCanvasSize: () => screenCanvasSize(),
       appendDebugLog: text => appendDebugLog(text),
+      singleApp: () => SINGLE_APP_MODE,
+      onAppRunningChange: running => {
+        document.body.classList.toggle('app-running', !!running);
+        // The desktop reappears at its own size once the guest is gone, and
+        // the canvas is no longer sized to a maximized window.
+        resizeCanvas();
+      },
       onStopAll: () => {
         document.getElementById('desktop-icons').style.display = '';
         stopDebugMidi(true);
@@ -1304,8 +1387,14 @@ Resource-aware Win98 emulator
     function screenCanvasSize() {
       const canvas = document.getElementById('screen');
       const wrap = document.getElementById('screen-wrap');
-      const MIN_BACKING_WIDTH = 640;
-      const MIN_BACKING_HEIGHT = 480;
+      // A phone gets a phone-sized desktop. 640x480 on a 390pt screen means
+      // the guest reports a screen it then draws at 0.6x — every Win98 pixel
+      // lands on less than one CSS pixel and the app is unreadable. In
+      // single-app mode the backing size tracks the viewport instead, so
+      // GetSystemMetrics(SM_CXSCREEN) is a size the app can lay out for and
+      // one guest pixel is about one CSS pixel.
+      const MIN_BACKING_WIDTH = SINGLE_APP_MODE ? 400 : 640;
+      const MIN_BACKING_HEIGHT = SINGLE_APP_MODE ? 300 : 480;
       const fsElement = document.fullscreenElement || document.webkitFullscreenElement;
       const fullscreen = fsElement === wrap || fsElement === canvas;
       const dedicatedPage = document.body.classList.contains('exclusive-fullscreen');
@@ -1338,6 +1427,7 @@ Resource-aware Win98 emulator
 
     // Resize canvas to match container
     function resizeCanvas() {
+      applySingleAppMode();
       const canvas = document.getElementById('screen');
       const wrap = document.getElementById('screen-wrap');
       const { fullscreen, displayW, displayH, w, h, dpr } = screenCanvasSize();
