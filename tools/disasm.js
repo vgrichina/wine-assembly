@@ -10,6 +10,8 @@
 //   const { disasmAt } = require('./tools/disasm');
 //   disasmAt(buf, offset, va, count, importNames, { bits: 16 }) => string[]
 
+const simd = require('./simd-ops');
+
 const regs32 = ['eax','ecx','edx','ebx','esp','ebp','esi','edi'];
 const regs16 = ['ax','cx','dx','bx','sp','bp','si','di'];
 const regs8  = ['al','cl','dl','bl','ah','ch','dh','bh'];
@@ -43,12 +45,15 @@ function disasmAt(buf, offset, va, count, importNames, opts) {
   // 16-bit addressing has no SIB and a fixed base/index table.
   const rm16 = ['bx+si', 'bx+di', 'bp+si', 'bp+di', 'si', 'di', 'bp', 'bx'];
 
-  function modrm(sz) {
+  // `vec` (optional) makes this a SIMD ModRM: {regKind, rmKind, wide} picks the
+  // mm/xmm/gpr file for each operand, per tools/simd-ops.js. Addressing modes
+  // are identical to the integer forms, only the register names differ.
+  function modrm(sz, vec) {
     const b = rd8();
     const mod = b >> 6, reg = (b >> 3) & 7, rm = b & 7;
     const rn = sz === 8 ? regs8 : sz === 16 ? regs16 : regs32;
     let ea;
-    if (mod === 3) { ea = rn[rm]; }
+    if (mod === 3) { ea = vec ? simd.regName(vec.rmKind, vec.wide, rm) : rn[rm]; }
     else if (asz === 16) {
       let s;
       if (mod === 0 && rm === 6) { s = _hex(rd16()); }
@@ -80,7 +85,11 @@ function disasmAt(buf, offset, va, count, importNames, opts) {
         ea = `[${s}]`;
       }
     }
-    return { reg, rm: ea, mod, rn: rn[reg], rn32: regs32[reg] };
+    return {
+      reg, rm: ea, mod,
+      rn: vec ? simd.regName(vec.regKind, vec.wide, reg) : rn[reg],
+      rn32: regs32[reg],
+    };
   }
 
   function readImm(sz) {
@@ -121,6 +130,11 @@ function disasmAt(buf, offset, va, count, importNames, opts) {
 
       // In 16-bit code both size prefixes mean the opposite of what they mean
       // in 32-bit code: they select the *other* size, not a fixed one.
+      // For 0F-escaped SIMD the 66/F2/F3 prefix is a mandatory part of the
+      // opcode rather than a size override -- keep the raw value for that path.
+      const spfx = pfxF3 ? 0xF3 : pfxF2 ? 0xF2 : pfx66 ? 0x66 : 0;
+      const simdOf = (op2, reg) => simd.decodeSimd(op2, spfx, reg);
+
       const osz = (pfx66 !== (bits === 16)) ? 16 : 32;
       asz = (pfx67 !== (bits === 16)) ? 16 : 32;
       const rn = osz === 16 ? regs16 : regs32;
@@ -374,7 +388,32 @@ function disasmAt(buf, offset, va, count, importNames, opts) {
         else if (op2 === 0xC8) insn = 'bswap eax';
         else if (op2 >= 0xC8 && op2 <= 0xCF) insn = `bswap ${regs32[op2 - 0xC8]}`;
         else if (op2 === 0x31) insn = 'rdtsc';
+        else if (op2 === 0xA2) insn = 'cpuid';
         else if (op2 >= 0x40 && op2 <= 0x4F) { const m = modrm(osz); insn = `cmov${cc[op2-0x40]} ${m.rn}, ${m.rm}`; }
+        else if (op2 === 0x0F) {
+          // 3DNow!: 0F 0F ModRM ... imm8, where the imm8 is the real opcode.
+          const m = modrm(32, { regKind: 'q', rmKind: 'q', wide: false });
+          const sub = rd8();
+          insn = `${simd.NOW3D[sub] || `3dnow!(${_hex8(sub)})`} ${m.rn}, ${m.rm}`;
+        }
+        else if (simdOf(op2, pos < dv.byteLength ? (dv.getUint8(pos) >> 3) & 7 : 0)) {
+          // MMX / SSE / SSE2. The 66/F2/F3 prefix is part of the opcode here,
+          // not an operand-size override, so it has already been consumed above
+          // and only picks the mnemonic and register file.
+          const s = simdOf(op2, (dv.getUint8(pos) >> 3) & 7);
+          // mm registers are used only by the bare packed-integer block;
+          // everything else in this space -- including prefix-less `addps` --
+          // names xmm.
+          const wide = s.isa !== 'mmx';
+          if (s.noModrm) insn = s.mnem;
+          else {
+            const m = modrm(32, { regKind: s.regKind, rmKind: s.rmKind, wide });
+            const imm = s.imm8 ? `, ${_hex8(rd8())}` : '';
+            insn = s.isGroup ? `${s.mnem} ${m.rm}${imm}`
+              : s.dir === 'mr' ? `${s.mnem} ${m.rm}, ${m.rn}${imm}`
+              : `${s.mnem} ${m.rn}, ${m.rm}${imm}`;
+          }
+        }
         else insn = `db 0x0f, 0x${op2.toString(16)}`;
       }
       else { insn = `db ${_hex8(op)}`; }
