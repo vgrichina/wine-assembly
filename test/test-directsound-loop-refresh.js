@@ -104,6 +104,27 @@ try {
   assert.strictEqual(host.voice_is_playing(oneShot), 0,
     'a naturally-ended Web Audio source must clear guest-visible playing state');
 
+  const fullEffectPtr = 0x1800;
+  const fullEffectLength = 32768;
+  for (let i = 0; i < fullEffectLength; i++) pcm[fullEffectPtr + i] = (i * 29) & 0xFF;
+  const fullEffect = host.voice_open(22050, 1, 8);
+  host.voice_set_freq(fullEffect, 22050);
+  host.voice_play_ring(fullEffect, fullEffectPtr, fullEffectLength, 0, 1);
+  const fullEffectSource = ctx._voices._map[fullEffect].currentSrc;
+  assert(fullEffectSource && !fullEffectSource.loop,
+    'a retuned Miles 32 KiB full-ring effect must play once even without a silent tail');
+  fullEffectSource.onended();
+  assert.strictEqual(host.voice_is_playing(fullEffect), 0,
+    'a naturally-ended full-ring Miles effect must clear guest-visible playing state');
+  host.voice_play_ring(fullEffect, fullEffectPtr, fullEffectLength, 0, 1);
+  assert(ctx._voices._map[fullEffect].currentSrc.loop,
+    'the stopped-buffer retune marker must be consumed by one Play call');
+
+  const fullAmbience = host.voice_open(22050, 1, 8);
+  host.voice_play_ring(fullAmbience, fullEffectPtr, fullEffectLength, 0, 1);
+  assert(ctx._voices._map[fullAmbience].currentSrc.loop,
+    'an otherwise identical full-ring ambience request must remain looped');
+
   host.voice_stop(voice);
   assert.strictEqual(ctx._voices._map[voice].currentSrc, null,
     'DirectSound Stop should still terminate the refreshed ring source');
@@ -121,7 +142,7 @@ try {
   assert(/\$handle_IDirectSoundBuffer_Unlock[\s\S]*?\(i32\.const 5\)\) \(i32\.const 5\)/.test(directSoundWat),
     'Unlock refresh must recognize the native PLAYING|LOOPING status mask');
 
-  console.log('PASS  DirectSound rings refresh while silent-tail effects end once');
+  console.log('PASS  DirectSound rings refresh while Miles effects end once');
 } finally {
   globalThis.AudioContext = oldAudioContext;
 }
