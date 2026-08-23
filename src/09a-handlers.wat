@@ -2118,11 +2118,30 @@
   ;; and means the same things — so the answers live here and both dispatchers
   ;; call in. An index with no entry is 0, which is what Windows returns for a
   ;; metric it does not define.
+  ;; A DirectDraw SetDisplayMode replaces the screen metrics for as long as the
+  ;; mode is in effect — it switches the whole display, so on Windows
+  ;; SM_CXSCREEN/SM_CYSCREEN report the mode, not the desktop the app was
+  ;; launched from, until RestoreDisplayMode. Caesar III depends on it
+  ;; — in fullscreen it takes SetRect(0, 0, SM_CXSCREEN, SM_CYSCREEN) as its
+  ;; client size and scales the cursor from there down to its 800x600 logical
+  ;; screen, so reporting the host canvas (1280 wide in the browser) put every
+  ;; click at ~62% of the position the player aimed at, and nothing in the main
+  ;; menu ever highlighted or responded.
+  (func $screen_metric_w (result i32)
+    (if (global.get $dx_display_mode_set)
+      (then (return (global.get $dx_display_w))))
+    (i32.and (call $host_get_screen_size) (i32.const 0xFFFF)))
+
+  (func $screen_metric_h (result i32)
+    (if (global.get $dx_display_mode_set)
+      (then (return (global.get $dx_display_h))))
+    (i32.shr_u (call $host_get_screen_size) (i32.const 16)))
+
   (func $system_metric (param $index i32) (result i32)
     (if (i32.eq (local.get $index) (i32.const 0))  ;; SM_CXSCREEN
-      (then (return (i32.and (call $host_get_screen_size) (i32.const 0xFFFF)))))
+      (then (return (call $screen_metric_w))))
     (if (i32.eq (local.get $index) (i32.const 1))  ;; SM_CYSCREEN
-      (then (return (i32.shr_u (call $host_get_screen_size) (i32.const 16)))))
+      (then (return (call $screen_metric_h))))
     (if (i32.eq (local.get $index) (i32.const 2))  ;; SM_CXVSCROLL
       (then (return (i32.const 16))))
     (if (i32.eq (local.get $index) (i32.const 3))  ;; SM_CYHSCROLL
@@ -2152,10 +2171,15 @@
     (if (i32.eq (local.get $index) (i32.const 15)) ;; SM_CYMENU
       (then (return (i32.const 19))))
     (if (i32.eq (local.get $index) (i32.const 16)) ;; SM_CXFULLSCREEN
-      (then (return (i32.and (call $host_get_screen_size) (i32.const 0xFFFF)))))
+      (then (return (call $screen_metric_w))))
+    ;; The 46 rows are caption + frame, which a mode-switched fullscreen app
+    ;; does not have: there the full-screen client area is the whole mode.
     (if (i32.eq (local.get $index) (i32.const 17)) ;; SM_CYFULLSCREEN
-      (then (return (i32.sub (i32.shr_u (call $host_get_screen_size) (i32.const 16))
-                             (i32.const 46)))))
+      (then
+        (if (global.get $dx_display_mode_set)
+          (then (return (global.get $dx_display_h))))
+        (return (i32.sub (i32.shr_u (call $host_get_screen_size) (i32.const 16))
+                         (i32.const 46)))))
     (if (i32.eq (local.get $index) (i32.const 19)) ;; SM_MOUSEPRESENT
       (then (return (i32.const 1))))
     (if (i32.eq (local.get $index) (i32.const 20)) ;; SM_CYVSCROLL
@@ -2199,11 +2223,9 @@
     (if (i32.eq (local.get $index) (i32.const 50)) ;; SM_CYSMICON
       (then (return (i32.const 16))))
     (if (i32.eq (local.get $index) (i32.const 0x3D)) ;; SM_CXMAXIMIZED
-      (then (return (i32.add (i32.and (call $host_get_screen_size) (i32.const 0xFFFF))
-                             (i32.const 8)))))
+      (then (return (i32.add (call $screen_metric_w) (i32.const 8)))))
     (if (i32.eq (local.get $index) (i32.const 0x3E)) ;; SM_CYMAXIMIZED
-      (then (return (i32.add (i32.shr_u (call $host_get_screen_size) (i32.const 16))
-                             (i32.const 8)))))
+      (then (return (i32.add (call $screen_metric_h) (i32.const 8)))))
     (i32.const 0))
 
   ;; 90: GetSystemMetrics (actual slot used by imports)

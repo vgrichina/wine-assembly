@@ -193,6 +193,11 @@
   (global $dx_display_w (mut i32) (i32.const 640))
   (global $dx_display_h (mut i32) (i32.const 480))
   (global $dx_display_bpp (mut i32) (i32.const 16))
+  ;; 1 once SetDisplayMode has actually chosen a mode. The width/height above
+  ;; carry a default, so they cannot answer "is a mode in effect?" on their
+  ;; own — and that question decides whether GetSystemMetrics reports the mode
+  ;; or the host window ($system_metric in 09a-handlers.wat).
+  (global $dx_display_mode_set (mut i32) (i32.const 0))
 
   ;; Running tally of bytes allocated to DirectDraw surfaces. MCM measures
   ;; GetAvailableVidMem delta across CreateSurface/Release to detect texture
@@ -1800,8 +1805,10 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; RestoreDisplayMode — no-op
+  ;; RestoreDisplayMode — the surfaces stay as they are, but the mode is no
+  ;; longer in effect, so the screen metrics go back to the host window.
   (func $handle_IDirectDraw_RestoreDisplayMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $dx_display_mode_set (i32.const 0))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
@@ -1859,6 +1866,7 @@
     (global.set $dx_display_w (local.get $arg1))
     (global.set $dx_display_h (local.get $arg2))
     (global.set $dx_display_bpp (local.get $arg3))
+    (global.set $dx_display_mode_set (i32.const 1))
     (if (i32.le_u (local.get $arg3) (i32.const 8))
       (then (call $install_default_dx_palette)))
     ;; Resize the cooperative window to match the display mode so the back-canvas
@@ -1872,7 +1880,24 @@
       (call $host_move_window (local.get $target_hwnd)
         (i32.const 0) (i32.const 0)
         (local.get $arg1) (local.get $arg2) (i32.const 0))
-      (call $defwndproc_do_nccalcsize (local.get $target_hwnd))))
+      (call $defwndproc_do_nccalcsize (local.get $target_hwnd))
+      ;; Windows tells the application that its screen changed: a mode switch
+      ;; delivers WM_DISPLAYCHANGE, and the window that was resized to match
+      ;; gets the usual WM_MOVE/WM_SIZE pair. Caesar III recomputes the client
+      ;; rect it scales the cursor against only from that pair — its wndproc
+      ;; routes WM_MOVE and WM_SIZE to one SetRect(0, 0, SM_CXSCREEN,
+      ;; SM_CYSCREEN) — so without them it keeps dividing by the pre-switch
+      ;; desktop size and every click lands short of where it was aimed.
+      (drop (call $post_queue_push (local.get $target_hwnd) (i32.const 0x007E)
+        (local.get $arg3)
+        (i32.or (i32.and (local.get $arg1) (i32.const 0xFFFF))
+                (i32.shl (local.get $arg2) (i32.const 16)))))
+      (drop (call $post_queue_push (local.get $target_hwnd) (i32.const 0x0003)
+        (i32.const 0) (i32.const 0)))
+      (drop (call $post_queue_push (local.get $target_hwnd) (i32.const 0x0005)
+        (i32.const 0)
+        (i32.or (i32.and (local.get $arg1) (i32.const 0xFFFF))
+                (i32.shl (local.get $arg2) (i32.const 16)))))))
     (global.set $eax (i32.const 0))
     (local.set $vtbl (call $gl32 (local.get $arg0)))
     (if (i32.eq (local.get $vtbl) (global.get $DX_VTBL_DDRAW2))
