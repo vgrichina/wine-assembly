@@ -7363,8 +7363,17 @@
 
   ;; GDI.69 DeleteObject(hObject), GDI.68 DeleteDC(hDC).
   (func $win16_DeleteObject
-    (local $h i32) (local $deleted i32)
+    (local $h i32) (local $deleted i32) (local $dynamic i32)
     (local.set $h (call $win16_h32 (call $win16_arg16 (i32.const 0))))
+    ;; Whether this is a real allocated object has to be sampled *before* the
+    ;; delete: a successful delete clears the record, so asking afterwards
+    ;; cannot tell a deleted brush from a stock one and the answer is 0 either
+    ;; way. Reading it after meant the forget below never ran, and every
+    ;; CreateBrush/DeleteObject pair burned a slot of the 4096-entry Win16
+    ;; handle map — IdleWild filled it and trapped after ~400 batches.
+    (local.set $dynamic (i32.or
+      (i32.ne (call $gdi_object_record (local.get $h)) (i32.const 0))
+      (i32.ne (call $gdi_rgn_record (local.get $h)) (i32.const 0))))
     (call $win16_call32_begin (i32.const 1))
     (call $handle_DeleteObject (local.get $h)
       (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
@@ -7374,8 +7383,7 @@
     ;; (and that of any object whose deletion failed) so a cached 16-bit handle
     ;; cannot be recycled for an unrelated dynamic object. VBRUN caches
     ;; NULL_BRUSH in exactly this way for PictureBox AutoRedraw state.
-    (if (i32.and (local.get $deleted)
-          (i32.ne (call $gdi_object_record (local.get $h)) (i32.const 0)))
+    (if (i32.and (i32.ne (local.get $deleted) (i32.const 0)) (local.get $dynamic))
       (then (call $win16_h16_forget (local.get $h))))
     (global.set $eax (i32.and (local.get $deleted) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 2)))
