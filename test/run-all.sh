@@ -273,6 +273,7 @@ E2E=(
   test/test-worker-thread-stuck-detect.js
   test/test-tapi-line-init.js
   test/test-caesar3-fullscreen-metrics.js
+  test/test-caesar3-gameplay.js
   test/test-win16-jigsawed.js
   test/test-win16-jigsawed-menus.js
   test/test-win16-entertainment-manifests.js

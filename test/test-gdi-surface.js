@@ -158,4 +158,63 @@ check('raw presentation uploads canonical DIB bytes without semantic GDI state',
   assert.strictEqual(host.gdi_surface_delete(0x2234), 1);
 });
 
+// rgbaRect has a fast path per depth; each one must produce exactly what a
+// per-pixel readPixel walk produces, including at a sub-rect, an odd origin, a
+// bottom-up surface and an unaligned storage offset (the paths that fall back
+// to byte reads instead of a typed-array row view).
+check('rgbaRect fast paths match a per-pixel readPixel walk', () => {
+  const reference = (surface, x, y, w, h) => {
+    const out = new Uint8ClampedArray(w * h * 4);
+    for (let py = 0; py < h; py++) {
+      for (let px = 0; px < w; px++) {
+        const color = surface.readPixel(x + px, y + py);
+        const offset = (py * w + px) * 4;
+        out[offset] = color & 0xFF;
+        out[offset + 1] = (color >>> 8) & 0xFF;
+        out[offset + 2] = (color >>> 16) & 0xFF;
+        out[offset + 3] = 255;
+      }
+    }
+    return out;
+  };
+  const palette = [];
+  for (let i = 0; i < 256; i++) palette.push([i, (i * 7) & 0xFF, (i * 13) & 0xFF]);
+  let seed = 12345;
+  const nextByte = () => (seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF) >>> 16 & 0xFF;
+
+  for (const bpp of [1, 4, 8, 16]) {
+    for (const topDown of [true, false]) {
+      for (const storageOffset of [0, 3]) {
+        const width = 13;
+        const height = 5;
+        const stride = defaultStride(width, bpp);
+        const bytes = new Uint8Array(storageOffset + stride * height);
+        for (let i = 0; i < bytes.length; i++) bytes[i] = nextByte();
+        const surface = new GdiSurface({
+          width, height, bpp, storage: bytes, storageOffset, topDown,
+          palette: bpp === 16 ? null : palette,
+          masks: bpp === 16 ? [0xF800, 0x07E0, 0x001F] : undefined,
+        });
+        const label = `${bpp}bpp topDown=${topDown} offset=${storageOffset}`;
+        assert.deepStrictEqual(Array.from(surface.rgbaRect(0, 0, width, height)),
+          Array.from(reference(surface, 0, 0, width, height)), `full rect, ${label}`);
+        assert.deepStrictEqual(Array.from(surface.rgbaRect(3, 1, 7, 3)),
+          Array.from(reference(surface, 3, 1, 7, 3)), `sub rect, ${label}`);
+      }
+    }
+  }
+
+  // The 5-6-5 and 5-5-5 expansions must round the same way readPixel does.
+  const bits = new Uint8Array(4);
+  for (const masks of [[0xF800, 0x07E0, 0x001F], [0x7C00, 0x03E0, 0x001F]]) {
+    for (const value of [0x0000, 0x1234, 0x7FFF, 0xABCD, 0xFFFF]) {
+      bits[0] = value & 0xFF;
+      bits[1] = value >>> 8;
+      const surface = new GdiSurface({ width: 1, height: 1, bpp: 16, storage: bits, masks });
+      assert.deepStrictEqual(Array.from(surface.rgbaRect(0, 0, 1, 1)),
+        Array.from(reference(surface, 0, 0, 1, 1)), `masks ${masks[0].toString(16)} value ${value}`);
+    }
+  }
+});
+
 console.log(`\n${passed}/${passed} checks passed`);
