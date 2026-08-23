@@ -1236,8 +1236,10 @@
         (i32.add (i32.sub (local.get $end) (local.get $start)) (i32.const 1)))
 
       ;; The contour must begin at an on-curve point. When neither the first
-      ;; nor the last point is on-curve the real start is their midpoint,
-      ;; which is the same implied-point rule applied to the seam.
+      ;; nor the last point is on-curve the real start is their midpoint.
+      ;; Win98's monochrome converter rounds a half-26.6 midpoint upward;
+      ;; preserve=1 selects that path while public flattened edges retain the
+      ;; historical arithmetic midpoint.
       (if (call $tt_outline_on_curve (local.get $points) (local.get $hinted)
             (local.get $start))
         (then
@@ -1260,16 +1262,20 @@
             (local.set $first (local.get $start)))
           (else
             (local.set $sx (i32.shr_s (i32.add
-              (call $tt_outline_x_26_6 (local.get $points) (local.get $hinted)
-                (local.get $start) (local.get $ppem) (local.get $upem))
-              (call $tt_outline_x_26_6 (local.get $points) (local.get $hinted)
-                (local.get $end) (local.get $ppem) (local.get $upem)))
+              (i32.add (call $tt_outline_x_26_6 (local.get $points)
+                (local.get $hinted) (local.get $start) (local.get $ppem)
+                (local.get $upem))
+              (call $tt_outline_x_26_6 (local.get $points)
+                (local.get $hinted) (local.get $end) (local.get $ppem)
+                (local.get $upem))) (local.get $preserve))
               (i32.const 1)))
             (local.set $sy (i32.shr_s (i32.add
-              (call $tt_outline_y_26_6 (local.get $points) (local.get $hinted)
-                (local.get $start) (local.get $ppem) (local.get $upem))
-              (call $tt_outline_y_26_6 (local.get $points) (local.get $hinted)
-                (local.get $end) (local.get $ppem) (local.get $upem)))
+              (i32.add (call $tt_outline_y_26_6 (local.get $points)
+                (local.get $hinted) (local.get $start) (local.get $ppem)
+                (local.get $upem))
+              (call $tt_outline_y_26_6 (local.get $points)
+                (local.get $hinted) (local.get $end) (local.get $ppem)
+                (local.get $upem))) (local.get $preserve))
               (i32.const 1)))
             (local.set $first (local.get $start))))))
       (local.set $cur_x (local.get $sx))
@@ -1310,13 +1316,16 @@
           (else
             ;; Two off-curve points in a row imply an on-curve point at their
             ;; midpoint; that implied point ends one quadratic and starts the
-            ;; next.
+            ;; next. The preserved raster path uses Win98's half-up 26.6
+            ;; midpoint, as at the contour seam above.
             (if (local.get $pending)
               (then
-                (local.set $mid_x (i32.shr_s
-                  (i32.add (local.get $ctrl_x) (local.get $px)) (i32.const 1)))
-                (local.set $mid_y (i32.shr_s
-                  (i32.add (local.get $ctrl_y) (local.get $py)) (i32.const 1)))
+                (local.set $mid_x (i32.shr_s (i32.add
+                  (i32.add (local.get $ctrl_x) (local.get $px))
+                  (local.get $preserve)) (i32.const 1)))
+                (local.set $mid_y (i32.shr_s (i32.add
+                  (i32.add (local.get $ctrl_y) (local.get $py))
+                  (local.get $preserve)) (i32.const 1)))
                 (local.set $edge_count (call $tt_emit_quad (local.get $edges)
                   (local.get $edges_cap) (local.get $edge_count)
                   (local.get $cur_x) (local.get $cur_y)

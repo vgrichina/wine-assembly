@@ -432,10 +432,10 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
       wat.test_tth_point_y(nativeCHinted, index),
     ]), [
       [256, 128], [320, 128], [312, 68], [246, 0], [198, 0],
-      [138, 0], [64, 82], [64, 159], [64, 208], [96, 283],
-      [161, 320], [200, 320], [249, 304], [311, 254], [320, 192],
-      [256, 192], [250, 224], [221, 256], [199, 256], [168, 256],
-      [128, 210], [128, 160], [128, 109], [165, 64], [195, 64],
+      [137, 0], [64, 82], [64, 159], [64, 208], [96, 283],
+      [162, 320], [200, 320], [249, 304], [311, 253], [320, 192],
+      [256, 192], [250, 224], [220, 256], [199, 256], [168, 256],
+      [128, 210], [128, 160], [128, 110], [165, 64], [195, 64],
       [219, 64], [252, 95],
     ], 'Win98 Arial c 10ppem hinted outline must match GGO_NATIVE exactly');
     assert.strictEqual(wat.test_tth_last_advance(), 320,
@@ -464,6 +464,54 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
           ? '#' : '.').join('')), [
       '.##.', '#..#', '#...', '#..#', '.##.',
     ], 'Win98 Arial c 10ppem monochrome bitmap must match exactly');
+
+    // Win98 instruction-prefix probes agree through the instruction before
+    // IUP[x], then retain the sub-26.6 scaled source coordinates inside the
+    // interpolation ratio. These points straddle both contours and both
+    // interpolation directions of Arial's at sign.
+    const nativeAtGid = wat.test_tt_glyph_index(
+      native.at, native.size, '@'.charCodeAt(0));
+    const nativeAtCount = wat.test_tt_glyph_load_outline(
+      native.at, native.size, nativeAtGid, compact, 512);
+    assert.strictEqual(nativeAtCount, 88,
+      'Win98 Arial at-sign raw point topology must remain stable');
+    const nativeAtHinted = wat.test_tth_hint_outline(
+      native.at, native.size, nativeAtGid, 10, compact, nativeAtCount) >>> 0;
+    assert.ok(nativeAtHinted, 'Win98 Arial at sign must hint at 10ppem');
+    assert.deepStrictEqual([
+      [1, 365, 27], [9, 235, 273], [21, 460, 64], [30, 428, 384],
+      [46, 445, -128], [69, 397, 12], [74, 285, 64], [85, 294, 240],
+    ].map(([index]) => [index,
+      wat.test_tth_point_x(nativeAtHinted, index),
+      wat.test_tth_point_y(nativeAtHinted, index),
+    ]), [
+      [1, 365, 27], [9, 235, 273], [21, 460, 64], [30, 428, 384],
+      [46, 445, -128], [69, 397, 12], [74, 285, 64], [85, 294, 240],
+    ], 'source-precise IUP must reproduce Win98 Arial at-sign points');
+
+    const at10Box = [
+      wat.test_tt_glyph_box_width(native.at, native.size, nativeAtGid, 10),
+      wat.test_tt_glyph_box_height(native.at, native.size, nativeAtGid, 10),
+      wat.test_tt_glyph_box_left(native.at, native.size, nativeAtGid, 10),
+      wat.test_tt_glyph_box_top(native.at, native.size, nativeAtGid, 10),
+    ];
+    assert.deepStrictEqual(at10Box, [9, 9, 1, 7],
+      'Win98 Arial at-sign 10ppem monochrome metrics must match');
+    const at10BitmapGuest = wat.guest_alloc(32) >>> 0;
+    const at10ScratchBytes = wat.test_tt_raster_scratch_bytes(at10Box[0]) >>> 0;
+    const at10ScratchGuest = wat.guest_alloc(at10ScratchBytes) >>> 0;
+    assert.strictEqual(wat.test_tt_rasterize_glyph(
+      native.at, native.size, nativeAtGid, 10, wa(at10BitmapGuest),
+      at10Box[0], at10Box[1], at10Box[2] * 64, at10Box[3] * 64,
+      wa(at10ScratchGuest), at10ScratchBytes), 1,
+    'Win98 Arial at sign must scan-convert at 10ppem');
+    assert.deepStrictEqual(Array.from({ length: at10Box[1] }, (_, y) =>
+      Array.from({ length: at10Box[0] }, (_unused, x) =>
+        wat.test_tt_bitmap_pixel(wa(at10BitmapGuest), at10Box[1], x, y)
+          ? '#' : '.').join('')), [
+      '..#####..', '.#.....#.', '#..##.#.#', '#.#..##.#', '#.#..#..#',
+      '#.#..#.#.', '#..####..', '.#.....##', '..#####..',
+    ], 'Win98 Arial at-sign 10ppem monochrome bitmap must match exactly');
 
     // Arial has no 10ppem hdmx record: that means its device width is the
     // rounded linear width, not that the glyph program receives a fractional
@@ -495,12 +543,12 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
     const nativeDHinted = wat.test_tth_hint_outline(
       native.at, native.size, nativeDGid, 10, compact, nativeDCount) >>> 0;
     assert.ok(nativeDHinted, 'Win98 Arial D must hint at 10ppem');
-    assert.deepStrictEqual([[2, 197, 448], [9, 384, 227],
-      [23, 320, 228], [28, 200, 384]].map(([index]) => [
+    assert.deepStrictEqual([[2, 197, 448], [9, 384, 226],
+      [23, 320, 227], [28, 200, 384]].map(([index]) => [
       index, wat.test_tth_point_x(nativeDHinted, index),
       wat.test_tth_point_y(nativeDHinted, index),
-    ]), [[2, 197, 448], [9, 384, 227],
-      [23, 320, 228], [28, 200, 384]],
+    ]), [[2, 197, 448], [9, 384, 226],
+      [23, 320, 227], [28, 200, 384]],
     'rounded-linear phantoms must reproduce Win98 Arial D points');
     assert.strictEqual(wat.test_tth_last_advance(), 448,
       'Win98 Arial D must expose its seven-pixel device advance');
