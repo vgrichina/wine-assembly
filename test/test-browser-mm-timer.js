@@ -38,6 +38,20 @@ assert.strictEqual(wine._pumpMultimediaTimer(), 0,
   'an exited guest cannot receive a multimedia callback');
 assert.strictEqual(calls, 1, 'the exited guest did not call the timer hook');
 
+let mainSuspended = true;
+wine.threadManager = {
+  isMainThreadSuspended: () => mainSuspended,
+};
+wine.instance.exports.is_mm_timer_callback_active = () => 0;
+assert.strictEqual(wine._isMainExecutionSuspended(), true,
+  'ordinary suspended application code remains parked');
+wine.instance.exports.is_mm_timer_callback_active = () => 1;
+assert.strictEqual(wine._isMainExecutionSuspended(), false,
+  'a serialized multimedia-timer context can run until it resumes the application thread');
+mainSuspended = false;
+assert.strictEqual(wine._isMainExecutionSuspended(), false,
+  'an active application thread is never reported as suspended');
+
 let closedHandle = 0;
 wine.threadManager = {
   closeSyncHandle: handle => {
@@ -60,7 +74,7 @@ assert(hostSource.includes('self._pumpMultimediaTimer();'),
   'the browser run loop pumps the opted-in timer after each main slice');
 assert(indexSource.includes('lib/apps.js?v=2'),
   'the browser cache-busts Diablo app metadata');
-assert(indexSource.includes('lib/browser-shell.js?v=2'),
+assert(/lib\/browser-shell\.js\?v=\d+/.test(indexSource),
   'the browser cache-busts per-app timer policy wiring');
 
 console.log('PASS  browser multimedia timer delivery is isolated and per-app');

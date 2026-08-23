@@ -1822,6 +1822,15 @@
     (then
     (local.set $tmp (call $gl32 (global.get $esp)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    ;; A real multimedia timer calls from a system-owned thread. Our
+    ;; cooperative backend borrows this WASM context, so preserve the
+    ;; interrupted DispatchMessage return frame and mark the entire callback.
+    ;; Miles suspends the duplicated application-thread handle while mixing;
+    ;; the host must still schedule this borrowed context until it resumes that
+    ;; handle and reaches CACA000A.
+    (global.set $eip (local.get $tmp))
+    (global.set $mm_timer_in_cb (i32.const 1))
+    (call $save_caller_regs)
     ;; Push 5 args right-to-left: dw2, dw1, dwUser, uMsg, uTimerID
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (i32.const 0))                 ;; dw2
@@ -1834,7 +1843,7 @@
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (call $gl32 (i32.add (local.get $arg0) (i32.const 8)))) ;; uTimerID
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (local.get $tmp))              ;; return address
+    (call $gs32 (global.get $esp) (global.get $mm_timer_ret_thunk)) ;; return address
     (global.set $eip (call $gl32 (i32.add (local.get $arg0) (i32.const 12)))) ;; callback addr
     (global.set $steps (i32.const 0))
     (return)))

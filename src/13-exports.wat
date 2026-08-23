@@ -2485,6 +2485,9 @@
   ;; fire_mm_timer: check if multimedia timer is due, inject callback if so.
   ;; Saves current EIP as return address so execution resumes after callback returns.
   ;; Returns 1 if timer was fired, 0 if not due or no timer active.
+  (func (export "is_mm_timer_callback_active") (result i32)
+    (global.get $mm_timer_in_cb))
+
   (func $fire_mm_timer (export "fire_mm_timer") (result i32)
     (local $elapsed i32)
     (if (i32.eqz (global.get $mm_timer_id)) (then (return (i32.const 0))))

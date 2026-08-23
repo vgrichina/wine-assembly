@@ -63,6 +63,20 @@ class WineAssembly {
     return ex.fire_mm_timer() | 0;
   }
 
+  _isMainExecutionSuspended() {
+    if (!this.threadManager || !this.threadManager.isMainThreadSuspended ||
+        !this.threadManager.isMainThreadSuspended()) return false;
+    const ex = this.instance && this.instance.exports;
+    // timeSetEvent runs on a system timer thread on Win32. The cooperative
+    // backend serializes that callback through the main WASM instance, so a
+    // callback such as Miles' mixer may suspend the saved application thread
+    // while it services audio. Let the borrowed callback context reach its
+    // matching ResumeThread; the interrupted application context remains
+    // parked until the callback continuation restores it.
+    return !(ex && ex.is_mm_timer_callback_active &&
+      (ex.is_mm_timer_callback_active() | 0));
+  }
+
   _closeSyncHandle(handle) {
     return !!(this.threadManager && this.threadManager.closeSyncHandle &&
       this.threadManager.closeSyncHandle(handle >>> 0));
@@ -1320,7 +1334,7 @@ class WineAssembly {
         self._beginGuestTickBatch();
         // Check if main thread is waiting
         const mainThreadWaiting = self.threadManager &&
-          (self.threadManager.isMainThreadSuspended() || self.threadManager.checkMainYield());
+          (self._isMainExecutionSuspended() || self.threadManager.checkMainYield());
         if (mainThreadWaiting) {
           // Main still waiting — just run worker threads
         } else {
