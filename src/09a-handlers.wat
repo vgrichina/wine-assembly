@@ -4355,9 +4355,14 @@
   ;; 232: GlobalAlloc(uFlags, dwBytes)
   (func $handle_GlobalAlloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $heap_alloc (local.get $arg1)))
-    (if (i32.and (local.get $arg0) (i32.const 0x40)) ;; GMEM_ZEROINIT
-      (then (if (global.get $eax)
-              (then (call $zero_memory (call $g2w (global.get $eax)) (local.get $arg1))))))
+    ;; The unified emulator heap reuses blocks freed by HeapAlloc/LocalAlloc as
+    ;; GlobalAlloc results. That makes unrelated stale bytes much more visible
+    ;; than on Win9x (Diablo's CEL decoder leaves transparent skip runs alone).
+    ;; Zero is a valid result for memory whose contents are otherwise
+    ;; unspecified, and keeps GlobalAlloc deterministic; GMEM_ZEROINIT remains
+    ;; satisfied as a strict subset of this behavior.
+    (if (global.get $eax)
+      (then (call $zero_memory (call $g2w (global.get $eax)) (local.get $arg1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
