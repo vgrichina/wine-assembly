@@ -335,6 +335,21 @@ async function main() {
   })()`);
   assert.deepStrictEqual(screenSize, { width: 640, height: 1136 },
     `Task Manager phone-size regression needs a 640x1136 desktop: ${JSON.stringify(screenSize)}`);
+  const responsiveLayout = await evaluate(`(() => {
+    const screenRect = document.getElementById('screen-wrap').getBoundingClientRect();
+    const logRect = document.getElementById('log').getBoundingClientRect();
+    return {
+      viewportWidth: innerWidth,
+      screen: { left: screenRect.left, top: screenRect.top, right: screenRect.right,
+        bottom: screenRect.bottom, width: screenRect.width, height: screenRect.height },
+      log: { left: logRect.left, top: logRect.top, right: logRect.right,
+        bottom: logRect.bottom, width: logRect.width, height: logRect.height },
+    };
+  })()`);
+  assert(responsiveLayout.screen.width >= responsiveLayout.viewportWidth - 40 &&
+      responsiveLayout.log.width >= responsiveLayout.viewportWidth - 40 &&
+      responsiveLayout.log.top >= responsiveLayout.screen.bottom - 1,
+    `narrow debug mode should stack a full-width log below the emulator: ${JSON.stringify(responsiveLayout)}`);
 
   async function launch(name, titlePattern, timeoutMs = 30000) {
     await evaluate(`(() => {

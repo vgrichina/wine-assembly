@@ -39,5 +39,12 @@ assert(html.includes("desktopIcons.style.width = w + 'px'"), 'desktop icon overl
 assert(html.includes('desktopIcons.style.transform = `scale(${sx}, ${sy})`'), 'desktop icon overlay should scale with the canvas');
 assert(html.includes("window.visualViewport.addEventListener('resize', resizeCanvas)"), 'mobile browser chrome viewport changes should resize the canvas');
 assert(html.includes('requestAnimationFrame(resizeCanvas)'), 'desktop icon overlay should be scaled on initial paint');
+assert(html.includes('@media (max-width: 760px)'), 'narrow browser layouts should have a responsive debug breakpoint');
+assert(html.includes('body:not(.no-debug) #content { flex-direction: column; }'),
+  'narrow debug mode should stack the runtime log below the emulator');
+assert(html.includes('body:not(.no-debug) #screen-wrap'),
+  'narrow debug mode should preserve a full-width emulator surface');
+assert(html.includes('body:not(.no-debug) #log'),
+  'narrow debug mode should size the log independently below the emulator');
 
 console.log('PASS  web canvas supports mobile touch input');

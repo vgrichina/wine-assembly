@@ -184,6 +184,27 @@
       word-break: break-all;
       border-left: 2px inset #808080;
     }
+    /* In narrow debug sessions a fixed side log leaves almost no canvas — at
+       500px Safari gave the emulator 160px, and an iPhone-width viewport gives
+       it roughly 50px. Keep the full-width emulator usable and put diagnostics
+       underneath it. The normal no-debug desktop never shows #log. */
+    @media (max-width: 760px) {
+      body:not(.no-debug) #content { flex-direction: column; }
+      body:not(.no-debug) #screen-wrap {
+        flex: 3 1 0;
+        min-width: 0;
+        min-height: 240px;
+        width: 100%;
+      }
+      body:not(.no-debug) #log {
+        box-sizing: border-box;
+        flex: 2 1 0;
+        width: 100%;
+        min-height: 120px;
+        border-left: 0;
+        border-top: 2px inset #808080;
+      }
+    }
     #taskbar {
       background: #c0c0c0;
       border-top: 2px outset #dfdfdf;
