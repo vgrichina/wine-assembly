@@ -176,6 +176,33 @@ assert.strictEqual(
 assert.strictEqual(Atomics.load(waitAllTm.syncView, waitAllTm._getSyncIdx(waitAllA) * 4 + 2), 0);
 assert.strictEqual(Atomics.load(waitAllTm.syncView, waitAllTm._getSyncIdx(waitAllB) * 4 + 2), 0);
 
+const inputDuringWaitAllTm = makeThreadManager({ hasMessage: () => true });
+const inputDuringWaitAllEvent = inputDuringWaitAllTm.createEvent(false, false);
+const inputDuringWaitAllHandlesWA = 0x1c0;
+new Int32Array(inputDuringWaitAllTm.memory.buffer)[inputDuringWaitAllHandlesWA >>> 2] = inputDuringWaitAllEvent;
+let inputDuringWaitAllCompleted = false;
+inputDuringWaitAllTm.mainInstance.exports = {
+  get_yield_reason: () => 1,
+  get_wait_handle: () => 1,
+  get_wait_handles_ptr: () => inputDuringWaitAllHandlesWA,
+  get_wait_all: () => 1,
+  get_wait_timeout: () => 0xFFFFFFFF,
+  get_wait_stack_bytes: () => 20,
+  get_esp: () => 0x200,
+  guest_read32: () => 0x401234,
+  clear_yield: () => { inputDuringWaitAllCompleted = true; },
+  set_eax: () => {},
+  set_esp: () => {},
+  set_eip: () => {},
+};
+assert.strictEqual(
+  inputDuringWaitAllTm.checkMainYield(),
+  true,
+  'queued browser input must not satisfy an ordinary WaitForMultipleObjects'
+);
+assert.strictEqual(inputDuringWaitAllCompleted, false,
+  'ordinary multi-object waits remain parked until their synchronization objects are ready');
+
 function completeMainEventWait(traceThread) {
   const waitTm = makeThreadManager({ traceThread });
   const waitEvent = waitTm.createEvent(false, true);
