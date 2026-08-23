@@ -340,6 +340,7 @@
     (local $count i32) (local $backing_ptr i32) (local $guest_end i32)
     (local $i i32) (local $rec i32) (local $base i32) (local $map_size i32)
     (local $backing i32) (local $map_end i32) (local $backing_end i32)
+    (local $extended i32)
     (local.set $guest_end (i32.add (local.get $guest) (local.get $size)))
     (local.set $count (i32.load (global.get $VIRTUAL_MAP_STATE)))
     (local.set $backing_ptr (i32.load (i32.add (global.get $VIRTUAL_MAP_STATE) (i32.const 4))))
@@ -359,6 +360,24 @@
             (i32.ge_u (local.get $guest) (local.get $base))
             (i32.le_u (local.get $guest_end) (local.get $map_end)))
         (then (return (local.get $guest))))
+      ;; Commit APIs may repeat the reservation base with a larger size
+      ;; (MSVBVM60), or start inside an existing committed run and extend past
+      ;; its end (the MSVC small-block heap in Total Annihilation). Appending
+      ;; either request as a full map gives the overlap two distinct backings;
+      ;; g2w can then read an empty shadow instead of bytes the guest wrote.
+      ;; Commit only the new tail. The recursive call coalesces it when this
+      ;; map owns the backing bump, or records one non-overlapping extension
+      ;; when commits interleave.
+      (if (i32.and
+            (i32.and
+              (i32.ge_u (local.get $guest) (local.get $base))
+              (i32.lt_u (local.get $guest) (local.get $map_end)))
+            (i32.gt_u (local.get $guest_end) (local.get $map_end)))
+        (then
+          (local.set $extended (call $virtual_map_commit
+            (local.get $map_end) (i32.sub (local.get $guest_end) (local.get $map_end))))
+          (return (select (local.get $guest) (i32.const 0)
+            (i32.ne (local.get $extended) (i32.const 0))))))
       (if (i32.and
             (i32.eq (local.get $guest) (local.get $map_end))
             (i32.eq (local.get $backing_ptr) (local.get $backing_end)))
@@ -547,14 +566,48 @@
 
   ;; heap_free: return block to free list
   (func $heap_free (param $guest_ptr i32)
-    (local $block i32) (local $w i32)
+    (local $block i32) (local $w i32) (local $size i32) (local $end i32)
+    (local $direct i32)
     (if (i32.eqz (local.get $guest_ptr)) (then (return)))
-    ;; Only free blocks in our heap range — ignore foreign blocks
-    ;; (e.g., msvcrt sbh blocks that shouldn't reach our free list)
-    (if (i32.lt_u (local.get $guest_ptr) (global.get $heap_base)) (then (return)))
+    ;; Only free blocks owned by this allocator. The old lower-bound-only
+    ;; check accepted every high foreign value as a heap pointer. A stale
+    ;; per-window title slot containing the bytes "ACTR" therefore installed
+    ;; 0x52544341 as the free-list head, and the next small allocation walked
+    ;; arbitrary guest memory forever.
+    (if (i32.lt_u (local.get $guest_ptr)
+          (i32.add (global.get $heap_base) (i32.const 4)))
+      (then (return)))
+    (local.set $direct
+      (i32.lt_u (local.get $guest_ptr) (global.get $heap_ptr)))
+    (if (i32.eqz (local.get $direct))
+      (then
+        ;; Sparse heap blocks live in the high reserved arena. This bounded
+        ;; range also rejects arbitrary high handles/FOURCCs without disabling
+        ;; frees from the current sparse chunk.
+        (if (i32.or
+              (i32.eqz (global.get $heap_sparse_ptr))
+              (i32.or
+                (i32.lt_u (local.get $guest_ptr) (global.get $virtual_alloc_top))
+                (i32.ge_u (local.get $guest_ptr) (global.get $heap_sparse_ptr))))
+          (then (return)))))
     ;; Block starts 4 bytes before the user pointer
     (local.set $block (i32.sub (local.get $guest_ptr) (i32.const 4)))
     (local.set $w (call $g2w (local.get $block)))
+    ;; Every block header is an aligned allocation extent. Validate it before
+    ;; linking the block so even an in-range stale pointer cannot corrupt the
+    ;; list or manufacture a cycle.
+    (local.set $size (i32.load (local.get $w)))
+    (if (i32.or
+          (i32.lt_u (local.get $size) (i32.const 16))
+          (i32.ne (i32.and (local.get $size) (i32.const 7)) (i32.const 0)))
+      (then (return)))
+    (local.set $end (i32.add (local.get $block) (local.get $size)))
+    (if (i32.lt_u (local.get $end) (local.get $block)) (then (return)))
+    (if (local.get $direct)
+      (then
+        (if (i32.gt_u (local.get $end) (global.get $heap_ptr)) (then (return))))
+      (else
+        (if (i32.gt_u (local.get $end) (global.get $heap_sparse_ptr)) (then (return)))))
     ;; Prepend to free list: store next = old head
     (i32.store (i32.add (local.get $w) (i32.const 4)) (global.get $free_list))
     (global.set $free_list (local.get $block)))
@@ -1545,6 +1598,15 @@
     (call $update_invalidate_full (local.get $hwnd))
     (call $host_invalidate (local.get $hwnd)))
 
+  ;; Is this window still owed a WM_PAINT? DefWindowProc's WM_ERASEBKGND uses
+  ;; it to tell an erase our pump ran early from one that is the window's last
+  ;; chance to get a background.
+  (func $paint_flag_test_hwnd (param $hwnd i32) (result i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
+    (i32.load8_u (i32.add (global.get $PAINT_FLAGS) (local.get $idx))))
+
   ;; $paint_flag_clear_hwnd(hwnd): clear the slot bit for hwnd if any.
   (func $paint_flag_clear_hwnd (param $hwnd i32)
     (local $idx i32)
@@ -1800,7 +1862,12 @@
                 ;; in silence however often it is invalidated.
                 (call $ctrl_paint_trace_emit
                   (local.get $hwnd) (i32.const 0) (i32.const 4))))
-            (if (call $ctrl_table_get_class (local.get $hwnd))
+            ;; A subclassed control paints from its own WNDPROC. Leave its
+            ;; PAINT_FLAGS bit set so $paint_select_next_dirty hands the
+            ;; WM_PAINT to the pump, which dispatches it to that proc.
+            (if (i32.and
+                  (i32.ne (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 0))
+                  (i32.eqz (call $ctrl_is_subclassed (local.get $hwnd))))
               (then
                 (if (i32.or
                       (call $wnd_has_pending_ancestor_erase (local.get $hwnd))
@@ -1855,7 +1922,15 @@
       (local.set $style (call $wnd_get_style (local.get $ch)))
       (if (call $wnd_is_effectively_visible (local.get $ch))
         (then
-          (if (call $ctrl_table_get_class (local.get $ch))
+          ;; A subclassed control draws itself. Queue its WM_PAINT for the
+          ;; pump instead of running the built-in painter over its art.
+          (if (call $ctrl_is_subclassed (local.get $ch))
+            (then
+              (call $update_invalidate_full (local.get $ch))
+              (call $paint_flag_set_inv (local.get $ch))))
+          (if (i32.and
+                (i32.ne (call $ctrl_table_get_class (local.get $ch)) (i32.const 0))
+                (i32.eqz (call $ctrl_is_subclassed (local.get $ch))))
             (then
               (if (call $wnd_has_pending_ancestor_erase (local.get $ch))
                 (then
@@ -1906,7 +1981,15 @@
       (local.set $style (call $wnd_get_style (local.get $ch)))
       (if (i32.and (local.get $style) (i32.const 0x10000000)) ;; WS_VISIBLE
         (then
-          (if (call $ctrl_table_get_class (local.get $ch))
+          ;; A subclassed control draws itself. Queue its WM_PAINT for the
+          ;; pump instead of running the built-in painter over its art.
+          (if (call $ctrl_is_subclassed (local.get $ch))
+            (then
+              (call $update_invalidate_full (local.get $ch))
+              (call $paint_flag_set_inv (local.get $ch))))
+          (if (i32.and
+                (i32.ne (call $ctrl_table_get_class (local.get $ch)) (i32.const 0))
+                (i32.eqz (call $ctrl_is_subclassed (local.get $ch))))
             (then
               ;; host_show_window already attached/resized the canonical
               ;; surface. Draw now even if the newly shown parent still has a
@@ -3864,7 +3947,7 @@
 
   (func $dc_exclude_siblings_for_clip (param $hdc i32) (param $hwnd i32)
     (local $style i32) (local $parent i32) (local $myxy i32) (local $myx i32) (local $myy i32)
-    (local $slot i32) (local $my_slot i32) (local $sib i32) (local $sstyle i32)
+    (local $slot i32) (local $my_slot i32) (local $my_z i32) (local $sib i32)
     (local $xy i32) (local $wh i32) (local $sx i32) (local $sy i32) (local $sw i32) (local $sh i32)
     (local.set $style (call $wnd_get_style (local.get $hwnd)))
     (if (i32.eqz (i32.and (local.get $style) (i32.const 0x04000000))) ;; WS_CLIPSIBLINGS
@@ -3873,36 +3956,30 @@
     (if (i32.eqz (local.get $parent)) (then (return)))
     (local.set $my_slot (call $wnd_table_find (local.get $hwnd)))
     (if (i32.lt_s (local.get $my_slot) (i32.const 0)) (then (return)))
+    (local.set $my_z (call $wnd_z_get (local.get $hwnd)))
     (local.set $myx (call $ctrl_get_x_s (local.get $hwnd)))
     (local.set $myy (call $ctrl_get_y_s (local.get $hwnd)))
-    ;; Later slots are treated as above us; this matches existing WAT
-    ;; sibling enumeration until an explicit z-order table exists.
-    (local.set $slot (i32.add (local.get $my_slot) (i32.const 1)))
+    (local.set $slot (i32.const 0))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $slot) (global.get $MAX_WINDOWS)))
       (local.set $sib (call $wnd_slot_hwnd (local.get $slot)))
-      (if (i32.and
-            (i32.ne (local.get $sib) (i32.const 0))
-            (i32.eq (call $wnd_get_parent (local.get $sib)) (local.get $parent)))
+      (if (call $wnd_z_is_above_sibling (local.get $hwnd) (local.get $sib))
         (then
-          (local.set $sstyle (call $wnd_get_style (local.get $sib)))
-          (if (i32.and (local.get $sstyle) (i32.const 0x10000000)) ;; WS_VISIBLE
+          (local.set $wh (call $ctrl_get_wh_packed (local.get $sib)))
+          (local.set $sx (call $ctrl_get_x_s (local.get $sib)))
+          (local.set $sy (call $ctrl_get_y_s (local.get $sib)))
+          (local.set $sw (i32.and (local.get $wh) (i32.const 0xFFFF)))
+          (local.set $sh (i32.shr_u (local.get $wh) (i32.const 16)))
+          (if (i32.and (i32.gt_s (local.get $sw) (i32.const 0))
+                       (i32.gt_s (local.get $sh) (i32.const 0)))
             (then
-              (local.set $wh (call $ctrl_get_wh_packed (local.get $sib)))
-              (local.set $sx (call $ctrl_get_x_s (local.get $sib)))
-              (local.set $sy (call $ctrl_get_y_s (local.get $sib)))
-              (local.set $sw (i32.and (local.get $wh) (i32.const 0xFFFF)))
-              (local.set $sh (i32.shr_u (local.get $wh) (i32.const 16)))
-              (if (i32.and (i32.gt_s (local.get $sw) (i32.const 0))
-                           (i32.gt_s (local.get $sh) (i32.const 0)))
-                (then
-                  (drop (call $gdi_dc_system_clip_rect
-                    (local.get $hdc)
-                    (i32.sub (local.get $sx) (local.get $myx))
-                    (i32.sub (local.get $sy) (local.get $myy))
-                    (i32.add (i32.sub (local.get $sx) (local.get $myx)) (local.get $sw))
-                    (i32.add (i32.sub (local.get $sy) (local.get $myy)) (local.get $sh))
-                    (i32.const 4))))))))))
+              (drop (call $gdi_dc_system_clip_rect
+                (local.get $hdc)
+                (i32.sub (local.get $sx) (local.get $myx))
+                (i32.sub (local.get $sy) (local.get $myy))
+                (i32.add (i32.sub (local.get $sx) (local.get $myx)) (local.get $sw))
+                (i32.add (i32.sub (local.get $sy) (local.get $myy)) (local.get $sh))
+                (i32.const 4)))))))
       (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
       (br 0))))
 

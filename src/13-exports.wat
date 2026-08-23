@@ -3453,6 +3453,10 @@
     (call $handle_RegisterClassW (local.get $wc)
       (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
     (global.get $eax))
+  (func (export "test_call_RegisterClassA") (param $wc i32) (result i32)
+    (call $handle_RegisterClassA (local.get $wc)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
   (func (export "test_call_RegisterClassExW") (param $wcx i32) (result i32)
     (call $handle_RegisterClassExW (local.get $wcx)
       (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
@@ -3817,6 +3821,12 @@
     (call $ctrl_get_xy_packed (local.get $hwnd)))
   (func (export "ctrl_get_wh") (param $hwnd i32) (result i32)
     (call $ctrl_get_wh_packed (local.get $hwnd)))
+  (func (export "wnd_z_get") (param $hwnd i32) (result i32)
+    (call $wnd_z_get (local.get $hwnd)))
+  (func (export "wnd_z_set_after") (param $hwnd i32) (param $after i32)
+    (call $wnd_z_set_after (local.get $hwnd) (local.get $after)))
+  (func (export "wnd_z_is_above_sibling") (param $hwnd i32) (param $sibling i32) (result i32)
+    (call $wnd_z_is_above_sibling (local.get $hwnd) (local.get $sibling)))
 
   ;; Standard window scrollbar state for renderer non-client hit-testing.
   ;; $bar is SB_HORZ=0 or SB_VERT=1.

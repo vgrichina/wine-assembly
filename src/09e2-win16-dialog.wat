@@ -27,6 +27,11 @@
   ;; A cursor over the destination, so the emitters below read as a sequence of
   ;; fields rather than as arithmetic.
   (global $win16_dlg_w (mut i32) (i32.const 0))
+  ;; HWND whose WM_INITDIALOG return must finish CreateDialogParam rather than
+  ;; enter the modal DialogBox pump. Naming the expected window (instead of a
+  ;; boolean) keeps a nested modal dialog created by the init procedure from
+  ;; consuming the outer modeless return.
+  (global $win16_dlg_modeless_pending (mut i32) (i32.const 0))
 
   (func $win16_dlg_emit16 (param $v i32)
     (call $gs16 (global.get $win16_dlg_w) (local.get $v))
@@ -241,7 +246,7 @@
 
   ;; USER.87 DialogBox(hInstance, lpTemplateName, hWndParent, lpDialogFunc) and
   ;; USER.239 DialogBoxParam, which is the same with a dwInitParam under it.
-  (func $win16_DialogBox (param $with_param i32)
+  (func $win16_DialogBox (param $with_param i32) (param $modeless i32)
     (local $id i32) (local $parent i32) (local $proc i32) (local $init i32)
     (local $res i32) (local $template i32) (local $base i32)
     (local.set $base (select (i32.const 2) (i32.const 0) (local.get $with_param)))
@@ -274,6 +279,8 @@
         (return)))
     (local.set $template
       (call $win16_dlg_to32 (local.get $res) (global.get $win16_res_len)))
+    (if (local.get $modeless)
+      (then (global.set $win16_dlg_modeless_pending (global.get $next_hwnd))))
     (call $win16_dlg_run (local.get $template) (local.get $parent) (local.get $proc)
       (local.get $init)
       (call $win16_take_return (select (i32.const 16) (i32.const 12)
@@ -397,6 +404,27 @@
     (local $dlg_x i32) (local $dlg_y i32) (local $dlg_w i32) (local $dlg_h i32)
     (local.set $dlg (call $win16_h32 (call $gl16 (global.get $esp))))
     (local.set $proc (call $dialog_proc_get (local.get $dlg)))
+
+    ;; CreateDialogParam shares all creation and WM_INITDIALOG behavior with
+    ;; DialogBoxParam but is modeless: once the init procedure returns, leave
+    ;; the live dialog in the window table and return its HWND to the caller.
+    (if (i32.eq (local.get $dlg) (global.get $win16_dlg_modeless_pending))
+      (then
+        (global.set $win16_dlg_modeless_pending (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 2)))
+        (local.set $packed (i32.or (call $gl16 (global.get $esp))
+          (i32.shl (call $gl16 (i32.add (global.get $esp) (i32.const 2)))
+                   (i32.const 16))))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+        (global.set $eax (call $win16_h16 (local.get $dlg)))
+        (global.set $edx (i32.const 0))
+        (global.set $yield_reason (i32.const 0))
+        (call $win16_set_sreg (i32.const 1)
+          (i32.shr_u (local.get $packed) (i32.const 16)))
+        (global.set $eip (i32.add (global.get $seg_base_cs)
+          (i32.and (local.get $packed) (i32.const 0xFFFF))))
+        (global.set $steps (i32.const 0))
+        (return)))
 
     ;; EndDialog, and the procedure that called it has returned.
     (if (global.get $win16_dlg_ended)

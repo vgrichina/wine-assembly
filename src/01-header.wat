@@ -55,6 +55,7 @@
   ;; invalidate_frame(hwnd) — the caller changed something the non-client area
   ;; draws (caption flash state, a frame becoming visible). Posts WM_NCPAINT.
   (import "host" "move_window" (func $host_move_window (param i32 i32 i32 i32 i32 i32)))
+  (import "host" "set_window_zorder" (func $host_set_window_zorder (param i32 i32)))
   (import "host" "sync_window_client" (func $host_sync_window_client (param i32 i32 i32 i32 i32)))
   ;; move_window(hwnd, x, y, w, h, flags)  flags: SWP_NOSIZE=1, SWP_NOMOVE=2
   (import "host" "get_window_rect" (func $host_get_window_rect (param i32 i32)))
@@ -86,6 +87,7 @@
   (import "host" "menu_create" (func $host_menu_create (result i32)))
   (import "host" "menu_destroy" (func $host_menu_destroy (param i32) (result i32)))
   (import "host" "menu_append" (func $host_menu_append (param i32 i32 i32 i32 i32) (result i32)))
+  (import "host" "menu_remove" (func $host_menu_remove (param i32 i32 i32 i32) (result i32)))
   ;; menu_append(hMenu, flags, idOrSubmenu, text_wa, isWide) -> bool
   (import "host" "shell_about" (func $host_shell_about (param i32 i32 i32) (result i32)))
   ;; shell_about(dlg_hwnd, owner_hwnd, szApp_ptr) → result
@@ -530,6 +532,14 @@
   ;; JS formats and logs iff --trace-dx is set. kind: 1=Lock 2=Unlock 3=Blt 4=SetEntries 5=Present 6=Flip
   (import "host" "dx_trace" (func $host_dx_trace (param i32 i32 i32 i32 i32)))
 
+  ;; DirectAnimation imports resolve an already-mounted/decode-marked image by
+  ;; its UTF-16 VFS path, then copy the selected timeline frame into the
+  ;; canonical DirectDraw DIB bound to DAView. The low/high time words are the
+  ;; IEEE-754 double passed by the original Plus! 98 saver.
+  (import "host" "da_image_resolve" (func $host_da_image_resolve (param i32) (result i32)))
+  (import "host" "da_image_blit"
+    (func $host_da_image_blit (param i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
+
   ;; WAT-native control paint tracing hook — every WAT-owned control wndproc
   ;; paint, with the window-local rect it is about to draw into. GDI primitives
   ;; are rasterized inside WAT now, so --trace-gdi sees only surface binds and
@@ -537,6 +547,14 @@
   ;; --trace-ctrl is set.
   (import "host" "ctrl_paint_trace"
     (func $host_ctrl_paint_trace (param i32 i32 i32 i32 i32 i32 i32)))
+
+  ;; Every window-background erase, with the brush that will fill it and the
+  ;; client rect it covers. A flat slab of colour where an application expects
+  ;; its own art is almost always an erase: with GDI rasterized inside WAT the
+  ;; fill leaves no host-side trace at all, and --trace-gdi cannot see it.
+  ;; JS formats and logs iff --trace-erase is set.
+  (import "host" "erase_trace"
+    (func $host_erase_trace (param i32 i32 i32 i32)))
 
   ;; Every standard scrollbar strip as it is painted: control-local rect,
   ;; orientation, and the page model it was handed. A strip that is flat grey
@@ -1172,6 +1190,7 @@
   ;; 0x07E14000 32KB     DIB_PAGE_RUNS
   ;; 0x07E1C000 832KB    GDI_REGION_BANDS (256 x 208 RECT slots)
   ;; 0x079CA000 512B     WIN16_BUILTIN_NAMES (KERNEL/USER/GDI by-name exports)
+  ;; 0x079C8000  1KB     WND_Z_ORDER_TABLE (256 × 4-byte sibling z ranks)
   ;; 0x079D0000 32KB     GDI_NEAREST_CACHE (4096 × {colour tag, palette index})
   ;; 0x07EEC000 13KB     GDI_REGION_WORK (4 x 208 RECT buffers)
   ;; 0x07EF0000 2KB      GDI_DC_CLIP_TABLE (256 x {HDC, owned HRGN})
@@ -1378,6 +1397,12 @@
   ;; which case GetWindowLong keeps the historical EXE-module fallback.
   (global $WND_HINSTANCE_TABLE i32 (i32.const 0x079C9C00))
   (global $WND_HINSTANCE_TABLE_SIZE i32 (i32.const 0x00000400))
+  ;; Current sibling stacking order, parallel to WND_RECORDS. Higher ranks are
+  ;; above lower ranks; a process-global sequence is sufficient because ranks
+  ;; are compared only between windows with the same parent.
+  (global $WND_Z_ORDER_TABLE i32 (i32.const 0x079C8000))
+  (global $WND_Z_ORDER_TABLE_SIZE i32 (i32.const 0x00000400))
+  (global $wnd_z_next (mut i32) (i32.const 0))
   ;; Open files, indexed by the small handle a 16-bit task sees. DOS numbers
   ;; file handles from zero and a C runtime indexes its own per-handle table
   ;; with them, so a task that gets 0x136 back from OpenFile hands it to
@@ -2443,7 +2468,6 @@
   (global $CONSOLE_TEXT i32 (i32.const 0x07E09000))
   (global $CONSOLE_ATTR i32 (i32.const 0x07E0C000))
   (global $CONSOLE_MAX_CELLS i32 (i32.const 6144))
-
   ;; Console input queue. $CONSOLE_ATTR's 6144 cells end at 0x07E0F000, which
   ;; leaves one free page before DIB_PAGE_USED.
   ;;   +0  queued event count

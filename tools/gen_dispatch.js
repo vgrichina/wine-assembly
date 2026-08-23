@@ -160,6 +160,19 @@ comInterfaces.push({ prefix: 'IFont', global: 'DX_VTBL_OLE_FONT' });
 // the registry tail so adding it cannot renumber any established interface.
 comInterfaces.push({ prefix: 'IDirectSound3DBuffer', global: 'DX_VTBL_DS3DBUF' });
 
+// Direct3D 9. Also at the tail: $dx_sync_thread_vtables restores globals by
+// registry offset, so anything inserted above renumbers every later slot.
+const { vtableGlobals: d3d9Vtables } = require('./d3d9-methods');
+for (const v of d3d9Vtables) comInterfaces.push(v);
+
+// IDirectInput7: the v1 vtable plus FindDevice/CreateDeviceEx. Tail again,
+// for the same registry-offset reason as the entries above.
+comInterfaces.push({ prefix: 'IDirectInput7', global: 'DX_VTBL_DINPUT7', extends: 'IDirectInput' });
+
+// IDirectInputDevice2: the v1 device vtable plus the force-feedback/Poll
+// methods. Tail again, same registry-offset reason.
+comInterfaces.push({ prefix: 'IDirectInputDevice2', global: 'DX_VTBL_DIDEV2', extends: 'IDirectInputDevice' });
+
 // Build a map of prefix → { startId, count } from the api_table
 const byName = new Map(apiTable.map(a => [a.name, a]));
 const ifaceInfo = new Map();

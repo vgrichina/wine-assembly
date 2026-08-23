@@ -992,6 +992,18 @@
       (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
+  (func $handle_RectInRegion (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (local.get $arg1))
+      (then (global.set $eax (i32.const 0)))
+      (else
+        (global.set $eax (call $gdi_rgn_rect_in
+          (local.get $arg0)
+          (call $gl32 (local.get $arg1))
+          (call $gl32 (i32.add (local.get $arg1) (i32.const 4)))
+          (call $gl32 (i32.add (local.get $arg1) (i32.const 8)))
+          (call $gl32 (i32.add (local.get $arg1) (i32.const 12)))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
   (func $handle_GetRegionData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $gdi_rgn_get_data
       (local.get $arg0) (local.get $arg1)

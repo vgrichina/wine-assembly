@@ -760,6 +760,39 @@
         (return (local.get $empty))))
     (i32.const 0))
 
+  ;; TRUE when any part of a half-open RECT overlaps any canonical region
+  ;; band. Regions are already normalized into sorted, disjoint rectangles,
+  ;; so an exact query needs no temporary HRGN or host-side mirror.
+  (func $gdi_rgn_rect_in
+    (param $hrgn i32) (param $left i32) (param $top i32)
+    (param $right i32) (param $bottom i32) (result i32)
+    (local $record i32) (local $base i32) (local $count i32)
+    (local $i i32) (local $p i32)
+    (if (i32.or
+          (i32.ge_s (local.get $left) (local.get $right))
+          (i32.ge_s (local.get $top) (local.get $bottom)))
+      (then (return (i32.const 0))))
+    (local.set $record (call $gdi_rgn_record (local.get $hrgn)))
+    (if (i32.eqz (local.get $record)) (then (return (i32.const 0))))
+    (local.set $base (call $gdi_rgn_bands (local.get $record)))
+    (local.set $count (i32.load offset=28 (local.get $record)))
+    (local.set $i (i32.const 0))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $p
+        (i32.add (local.get $base) (i32.shl (local.get $i) (i32.const 4))))
+      (if (i32.and
+            (i32.lt_s (local.get $left) (i32.load offset=8 (local.get $p)))
+            (i32.and
+              (i32.gt_s (local.get $right) (i32.load (local.get $p)))
+              (i32.and
+                (i32.lt_s (local.get $top) (i32.load offset=12 (local.get $p)))
+                (i32.gt_s (local.get $bottom) (i32.load offset=4 (local.get $p))))))
+        (then (return (i32.const 1))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
   (func $gdi_dc_clip_sync (param $hdc i32) (param $entry i32) (result i32)
     (local $hrgn i32)
     (local.set $hrgn (i32.load offset=4 (local.get $entry)))

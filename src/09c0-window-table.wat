@@ -12,6 +12,107 @@
   (func $wnd_record_addr (param $slot i32) (result i32)
     (i32.add (global.get $WND_RECORDS) (i32.mul (local.get $slot) (i32.const 24))))
 
+  (func $wnd_z_addr_for_slot (param $slot i32) (result i32)
+    (i32.add (global.get $WND_Z_ORDER_TABLE)
+      (i32.shl (local.get $slot) (i32.const 2))))
+
+  (func $wnd_z_reset_slot (param $slot i32)
+    (i32.store (call $wnd_z_addr_for_slot (local.get $slot)) (i32.const 0)))
+
+  (func $wnd_z_init_slot (param $slot i32)
+    (global.set $wnd_z_next
+      (i32.add (global.get $wnd_z_next) (i32.const 1024)))
+    (i32.store (call $wnd_z_addr_for_slot (local.get $slot))
+      (global.get $wnd_z_next)))
+
+  (func $wnd_z_get (param $hwnd i32) (result i32)
+    (local $slot i32)
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.lt_s (local.get $slot) (i32.const 0))
+      (then (return (i32.const 0))))
+    (i32.load (call $wnd_z_addr_for_slot (local.get $slot))))
+
+  (func $wnd_z_raise (param $hwnd i32)
+    (local $slot i32)
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.lt_s (local.get $slot) (i32.const 0)) (then (return)))
+    (global.set $wnd_z_next
+      (i32.add (global.get $wnd_z_next) (i32.const 1024)))
+    (i32.store (call $wnd_z_addr_for_slot (local.get $slot))
+      (global.get $wnd_z_next)))
+
+  (func $wnd_z_is_above_sibling (param $hwnd i32) (param $sibling i32) (result i32)
+    (i32.and
+      (i32.and (i32.ne (local.get $sibling) (i32.const 0))
+               (i32.ne (local.get $sibling) (local.get $hwnd)))
+      (i32.and
+        (i32.and
+          (i32.eq (call $wnd_get_parent (local.get $sibling))
+                  (call $wnd_get_parent (local.get $hwnd)))
+          (i32.gt_s (call $wnd_z_get (local.get $sibling))
+                    (call $wnd_z_get (local.get $hwnd))))
+        (i32.ne (i32.and (call $wnd_get_style (local.get $sibling))
+                         (i32.const 0x10000000)) (i32.const 0)))))
+
+  ;; Apply SetWindowPos hWndInsertAfter semantics to the WAT-owned sibling
+  ;; stack. hwndAfter is already a 32-bit HWND or one of HWND_TOP(0),
+  ;; HWND_BOTTOM(1), HWND_TOPMOST(-1), HWND_NOTOPMOST(-2).
+  (func $wnd_z_set_after (param $hwnd i32) (param $hwnd_after i32)
+    (local $slot i32) (local $parent i32) (local $after_rank i32)
+    (local $i i32) (local $sib i32) (local $rank i32) (local $min_rank i32)
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.lt_s (local.get $slot) (i32.const 0)) (then (return)))
+    (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+    (if (i32.or
+          (i32.or (i32.eqz (local.get $hwnd_after))
+                  (i32.eq (local.get $hwnd_after) (i32.const -1)))
+          (i32.eq (local.get $hwnd_after) (i32.const -2)))
+      (then (call $wnd_z_raise (local.get $hwnd)) (return)))
+    (if (i32.eq (local.get $hwnd_after) (i32.const 1))
+      (then
+        (local.set $min_rank (call $wnd_z_get (local.get $hwnd)))
+        (local.set $i (i32.const 0))
+        (block $bottom_done (loop $bottom_scan
+          (br_if $bottom_done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+          (local.set $sib (call $wnd_slot_hwnd (local.get $i)))
+          (if (i32.and
+                (i32.and (i32.ne (local.get $sib) (i32.const 0))
+                         (i32.ne (local.get $sib) (local.get $hwnd)))
+                (i32.eq (call $wnd_get_parent (local.get $sib)) (local.get $parent)))
+            (then
+              (local.set $rank (call $wnd_z_get (local.get $sib)))
+              (if (i32.lt_s (local.get $rank) (local.get $min_rank))
+                (then (local.set $min_rank (local.get $rank))))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $bottom_scan)))
+        (i32.store (call $wnd_z_addr_for_slot (local.get $slot))
+          (i32.sub (local.get $min_rank) (i32.const 1)))
+        (return)))
+    ;; An invalid or cross-parent insert target behaves like HWND_TOP here.
+    (if (i32.ne (call $wnd_get_parent (local.get $hwnd_after)) (local.get $parent))
+      (then (call $wnd_z_raise (local.get $hwnd)) (return)))
+    (local.set $after_rank (call $wnd_z_get (local.get $hwnd_after)))
+    ;; Make a unique rank immediately below hwndAfter. Moving every lower
+    ;; sibling down one leaves after_rank-1 free without an auxiliary sort.
+    (local.set $i (i32.const 0))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (local.set $sib (call $wnd_slot_hwnd (local.get $i)))
+      (if (i32.and
+            (i32.and (i32.ne (local.get $sib) (i32.const 0))
+                     (i32.ne (local.get $sib) (local.get $hwnd)))
+            (i32.eq (call $wnd_get_parent (local.get $sib)) (local.get $parent)))
+        (then
+          (local.set $rank (call $wnd_z_get (local.get $sib)))
+          (if (i32.lt_s (local.get $rank) (local.get $after_rank))
+            (then
+              (i32.store (call $wnd_z_addr_for_slot (local.get $i))
+                (i32.sub (local.get $rank) (i32.const 1)))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.store (call $wnd_z_addr_for_slot (local.get $slot))
+      (i32.sub (local.get $after_rank) (i32.const 1))))
+
   ;; MENU_DATA_TABLE is parallel to WND_RECORDS. Clear it while the slot is
   ;; still known; host_destroy_window runs after wnd_table_remove and can no
   ;; longer resolve hwnd back to the slot. Leaving this pointer behind makes a
@@ -71,6 +172,7 @@
   ;;
   ;; Anything keyed by WND_RECORDS slot belongs in this one function.
   (func $wnd_slot_reset (param $slot i32)
+    (call $wnd_z_reset_slot (local.get $slot))
     (call $wnd_bg_brush_reset_slot (local.get $slot))
     (call $wnd_class_cursor_reset_slot (local.get $slot))
     (call $wnd_class_icon_reset_slot (local.get $slot))
@@ -121,7 +223,8 @@
         (i32.store offset=12 (local.get $ptr) (i32.const 0))
         (i32.store offset=16 (local.get $ptr) (i32.const 0))
         (i32.store offset=20 (local.get $ptr) (i32.const 0))
-        (call $wnd_slot_reset (local.get $empty))))
+        (call $wnd_slot_reset (local.get $empty))
+        (call $wnd_z_init_slot (local.get $empty))))
   )
 
   ;; Look up wndproc for hwnd; returns 0 if not found
@@ -168,6 +271,7 @@
           (call $dialog_state_reset_slot (local.get $i))
           (call $wnd_unicode_reset_slot (local.get $i))
           (call $wnd_extra_reset_slot (local.get $i))
+          (call $wnd_z_reset_slot (local.get $i))
           ;; Clear the whole 24-byte record
           (i32.store         (local.get $ptr) (i32.const 0))
           (i32.store offset=4  (local.get $ptr) (i32.const 0))
@@ -430,6 +534,30 @@
           (i32.add (global.get $WND_BG_BRUSH_TABLE) (i32.mul (local.get $idx) (i32.const 4)))
           (local.get $brush)))))
 
+  ;; Has the application replaced this WAT-native control's window procedure?
+  ;;
+  ;; A control that has been subclassed is no longer ours to draw. Storm's
+  ;; DiabloUI creates ordinary "Button" and "SDlgStatic" children and then hands
+  ;; each one its own WNDPROC with SetWindowLongA(GWL_WNDPROC), blanks the
+  ;; window text, and renders the label from its own art in its own WM_PAINT.
+  ;; Painting the built-in grey 3D button face for those windows is not a
+  ;; default the subclass can undo, because the native drain consumes the
+  ;; WM_PAINT before the subclass ever sees it -- the Diablo menus came out as
+  ;; rows of blank grey slabs over the artwork.
+  ;;
+  ;; A subclass that does want the built-in look still gets it: chaining to
+  ;; CallWindowProc or DefWindowProc lands back in $control_wndproc_dispatch.
+  (func $ctrl_is_subclassed (param $hwnd i32) (result i32)
+    (local $proc i32)
+    (if (i32.eqz (call $ctrl_table_get_class (local.get $hwnd)))
+      (then (return (i32.const 0))))
+    (local.set $proc (call $wnd_table_get (local.get $hwnd)))
+    ;; 0 = never registered, >= 0xFFFE0000 = one of our own sentinels
+    ;; (WNDPROC_BUILTIN, WNDPROC_DIALOG, the WAT-native procs).
+    (i32.and
+      (i32.ne (local.get $proc) (i32.const 0))
+      (i32.lt_u (local.get $proc) (i32.const 0xFFFE0000))))
+
   (func $wnd_get_bg_brush (param $hwnd i32) (result i32)
     (local $idx i32)
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
@@ -513,6 +641,21 @@
       (i32.load8_u (i32.add (global.get $WND_CLASS_SLOT_TABLE) (local.get $idx))))
     (select (i32.const -1) (local.get $slot) (i32.eq (local.get $slot) (i32.const 0xFF))))
 
+  ;; Real USER decides what a nonnegative Get/SetWindowLong index means from
+  ;; the class, not from who is calling: a class that reserves at least
+  ;; DLGWINDOWEXTRA (30) bytes owns a dialog's per-window block, so index 4
+  ;; there is DWLP_DLGPROC. Storm registers SDlgDialog that way and installs
+  ;; Diablo's DLGPROC from WM_NCCREATE, long before anything reaches
+  ;; DefDlgProcA -- without this the write is filed as ordinary window extra
+  ;; data and the dialog never gets WM_INITDIALOG.
+  (func $wnd_class_is_dialog (param $hwnd i32) (result i32)
+    (local $slot i32)
+    (local.set $slot (call $wnd_get_class_slot (local.get $hwnd)))
+    (if (i32.lt_s (local.get $slot) (i32.const 0)) (then (return (i32.const 0))))
+    (i32.ge_u
+      (i32.load offset=12 (call $class_wndclass_addr (local.get $slot)))
+      (i32.const 30)))
+
   (func $wnd_set_class_slot_from_name (param $hwnd i32) (param $class_name_guest i32)
     (local $idx i32) (local $slot i32)
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
@@ -523,6 +666,76 @@
       (then (local.set $slot (i32.const 0xFF))))
     (i32.store8 (i32.add (global.get $WND_CLASS_SLOT_TABLE) (local.get $idx))
       (local.get $slot)))
+
+  ;; ---- GetClassLong / SetClassLong ----
+  ;;
+  ;; The negative GCL_* indices name fields of the class's own WNDCLASSA;
+  ;; non-negative ones index its extra bytes. Returns the WASM address of the
+  ;; dword, or 0 when this hwnd has no class record or the index names nothing.
+  (func $class_long_offset (param $index i32) (result i32)
+    (if (i32.eq (local.get $index) (i32.const -26)) (then (return (i32.const 0))))   ;; GCL_STYLE
+    (if (i32.eq (local.get $index) (i32.const -24)) (then (return (i32.const 4))))   ;; GCL_WNDPROC
+    (if (i32.eq (local.get $index) (i32.const -20)) (then (return (i32.const 8))))   ;; GCL_CBCLSEXTRA
+    (if (i32.eq (local.get $index) (i32.const -18)) (then (return (i32.const 12))))  ;; GCL_CBWNDEXTRA
+    (if (i32.eq (local.get $index) (i32.const -16)) (then (return (i32.const 16))))  ;; GCL_HMODULE
+    (if (i32.eq (local.get $index) (i32.const -14)) (then (return (i32.const 20))))  ;; GCL_HICON
+    (if (i32.eq (local.get $index) (i32.const -12)) (then (return (i32.const 24))))  ;; GCL_HCURSOR
+    (if (i32.eq (local.get $index) (i32.const -10)) (then (return (i32.const 28))))  ;; GCL_HBRBACKGROUND
+    (if (i32.eq (local.get $index) (i32.const -8))  (then (return (i32.const 32))))  ;; GCL_MENUNAME
+    (i32.const -1))
+
+  (func $class_long_addr (param $hwnd i32) (param $index i32) (result i32)
+    (local $slot i32) (local $off i32)
+    (local.set $slot (call $wnd_get_class_slot (local.get $hwnd)))
+    (if (i32.lt_s (local.get $slot) (i32.const 0)) (then (return (i32.const 0))))
+    (if (i32.ge_s (local.get $index) (i32.const 0))
+      (then (return (call $class_extra_addr (local.get $slot) (local.get $index)))))
+    (local.set $off (call $class_long_offset (local.get $index)))
+    (if (i32.lt_s (local.get $off) (i32.const 0)) (then (return (i32.const 0))))
+    (i32.add (call $class_wndclass_addr (local.get $slot)) (local.get $off)))
+
+  ;; The brush, cursor and icon each have a per-window copy taken at creation,
+  ;; so a class value changed afterwards has to reach the windows already made
+  ;; from it — otherwise SetClassLong is a write nothing ever reads. Storm
+  ;; nulls GCL_HBRBACKGROUND around every dialog paint precisely so the default
+  ;; erase draws nothing over Diablo's DirectDraw frame.
+  (func $class_long_propagate (param $slot i32) (param $index i32) (param $value i32)
+    (local $i i32) (local $table i32)
+    (if (i32.eq (local.get $index) (i32.const -10))
+      (then (local.set $table (global.get $WND_BG_BRUSH_TABLE)))
+      (else (if (i32.eq (local.get $index) (i32.const -12))
+        (then (local.set $table (global.get $WND_CLASS_CURSOR_TABLE)))
+        (else (if (i32.eq (local.get $index) (i32.const -14))
+          (then (local.set $table (global.get $WND_CLASS_ICON_TABLE)))
+          (else (return)))))))
+    (local.set $i (i32.const 0))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (if (i32.and
+            (i32.ne (i32.load (call $wnd_record_addr (local.get $i))) (i32.const 0))
+            (i32.eq (i32.load8_u (i32.add (global.get $WND_CLASS_SLOT_TABLE) (local.get $i)))
+                    (local.get $slot)))
+        (then
+          (i32.store (i32.add (local.get $table) (i32.mul (local.get $i) (i32.const 4)))
+            (local.get $value))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan))))
+
+  (func $class_long_get (param $hwnd i32) (param $index i32) (result i32)
+    (local $addr i32)
+    (local.set $addr (call $class_long_addr (local.get $hwnd) (local.get $index)))
+    (if (i32.eqz (local.get $addr)) (then (return (i32.const 0))))
+    (i32.load (local.get $addr)))
+
+  (func $class_long_set (param $hwnd i32) (param $index i32) (param $value i32) (result i32)
+    (local $addr i32) (local $prev i32)
+    (local.set $addr (call $class_long_addr (local.get $hwnd) (local.get $index)))
+    (if (i32.eqz (local.get $addr)) (then (return (i32.const 0))))
+    (local.set $prev (i32.load (local.get $addr)))
+    (i32.store (local.get $addr) (local.get $value))
+    (call $class_long_propagate
+      (call $wnd_get_class_slot (local.get $hwnd)) (local.get $index) (local.get $value))
+    (local.get $prev))
 
   ;; One word of a class's extra bytes. `off` is the byte offset the app asked
   ;; for; a class that never declared that many gets nothing rather than the

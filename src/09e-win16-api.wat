@@ -358,11 +358,11 @@
     (call $win16_api_return (i32.const 0)))
 
   ;; KERNEL.3 GetVersion. AL:AH is the Windows version and DX the DOS one.
-  ;; Reporting 3.10 rather than what Windows 98 reports is deliberate: these
-  ;; are Windows 3.x images, and 3.10 is the version they were built against
-  ;; and test for. Raising it is a change to make when an app asks for it.
+  ;; Win16 tasks see the same configured OS release as Win32 tasks. This is
+  ;; significant for Win95-era 16-bit bootstrap programs: InstallShield's
+  ;; launcher rejects 3.10 before it starts the bundled 32-bit installer.
   (func $win16_GetVersion
-    (global.set $eax (i32.const 0x0A03))  ;; AL=3 major, AH=10 minor
+    (global.set $eax (i32.and (global.get $winver) (i32.const 0xFFFF)))
     (global.set $edx (i32.const 0x070A))  ;; DH=7 major, DL=10 minor
     (call $win16_api_return (i32.const 0)))
 
@@ -1314,14 +1314,16 @@
     ;; 36h free disk space, DL = drive (0 = current). AX sectors per cluster,
     ;; BX free clusters, CX bytes per sector, DX clusters in total. The
     ;; filesystem here has no geometry, so it answers with a plain one: 512
-    ;; byte sectors, 8 to a cluster, and a 512MB volume half of which is free.
+    ;; byte sectors, 8 to a cluster, and a 32MB volume half of which is free.
+    ;; BX and DX are 16-bit registers: the old 65536/131072 constants wrapped
+    ;; both to zero, so InstallShield reported that no drive had 1.2MB free.
     ;; JigSawed asks before it will save a game.
     (if (i32.eq (local.get $ah) (i32.const 0x36))
       (then
         (call $dos_set_ax (i32.const 8))
-        (global.set $ebx (i32.const 65536))
+        (global.set $ebx (i32.const 4096))
         (global.set $ecx (i32.const 512))
-        (global.set $edx (i32.const 131072))
+        (global.set $edx (i32.const 8192))
         (call $dos_cf (i32.const 0))
         (return)))
 
@@ -2235,6 +2237,23 @@
     (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 8)))
 
+  ;; _hread(hFile, lpBuffer, lBytes) is the long-count form of _lread and
+  ;; returns its LONG result in DX:AX. InstallShield uses it for setup.bmp as
+  ;; soon as its Win95 platform gate succeeds.
+  (func $win16_hread
+    (local $h i32) (local $buf i32) (local $n i32)
+    (local.set $n (call $win16_arg32 (i32.const 0)))
+    (local.set $buf (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 3)) (call $win16_arg16 (i32.const 2))))
+    (local.set $h (call $win16_fh32 (call $win16_arg16 (i32.const 4))))
+    (call $win16_call32_begin (i32.const 3))
+    (call $handle__hread (local.get $h) (local.get $buf) (local.get $n)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (global.set $edx (i32.shr_u (global.get $eax) (i32.const 16)))
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    (call $win16_api_return (i32.const 10)))
+
   ;; _llseek(hFile, lOffset, iOrigin) -> the new position, a LONG in DX:AX.
   (func $win16_llseek
     (local $h i32) (local $off i32) (local $origin i32)
@@ -2317,13 +2336,29 @@
     (global.set $eax (i32.const 0))
     (call $win16_api_return (i32.const 0)))
 
-  ;; KERNEL.136 GetDriveType(nDrive) -> UINT. The Win16 spelling takes a
-  ;; one-based drive number rather than a root-path string. This runtime's
-  ;; DOS view is the fixed C: drive; VB1 calls this while creating its drive
-  ;; picker and only needs the stable fixed-drive classification.
+  ;; KERNEL.136 GetDriveType(nDrive) -> UINT. The Win16 spelling takes 0 for
+  ;; the current drive and otherwise a one-based number (A:=1, B:=2, C:=3)
+  ;; rather than a root-path string.
+  ;; This runtime exposes one fixed C: drive; reporting every letter as fixed
+  ;; makes InstallShield enumerate nonexistent roots and conclude that no disk
+  ;; can hold its temporary files.
   (func $win16_GetDriveType
-    (global.set $eax (i32.const 3)) ;; DRIVE_FIXED
+    (global.set $eax (select (i32.const 3) (i32.const 1) ;; FIXED / NO_ROOT_DIR
+      (i32.or
+        (i32.eqz (call $win16_arg16 (i32.const 0)))
+        (i32.eq (call $win16_arg16 (i32.const 0)) (i32.const 3)))))
     (call $win16_api_return (i32.const 2)))
+
+  ;; KERNEL.166 WinExec(lpCmdLine, uCmdShow) -> UINT. The 16-bit InstallShield
+  ;; bootstrap uses this only after it has completely expanded the 32-bit
+  ;; engine into TEMP. This single-process runtime cannot replace its current
+  ;; image in the middle of the call, so match the existing Win32 spelling's
+  ;; bounded success contract; installer orchestration can then run the fully
+  ;; produced PE as its next native stage.
+  (func $win16_WinExec
+    (global.set $eax (i32.const 33))
+    (global.set $edx (i32.const 0))
+    (call $win16_api_return (i32.const 6)))
 
   (func $win16_kernel (param $ordinal i32) (result i32)
     (if (i32.eq (local.get $ordinal) (i32.const 131))
@@ -2334,6 +2369,8 @@
       (then (call $win16_dir_query (i32.const 1)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 136))
       (then (call $win16_GetDriveType) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 166))
+      (then (call $win16_WinExec) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 74))
       (then (call $win16_OpenFile) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 137))
@@ -2350,6 +2387,8 @@
       (then (call $win16_lopen (i32.const 0)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 86))
       (then (call $win16_lread (i32.const 1)) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 349))
+      (then (call $win16_hread) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 169))
       (then (call $win16_GetFreeSpace) (return (i32.const 1))))
     ;; AllocCStoDSAlias, AllocDStoCSAlias, AllocAlias and AllocSelector all
@@ -2399,6 +2438,12 @@
       (then (call $win16_local_identity (i32.const 2) (i32.const 0)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 10))
       (then (call $win16_LocalSize) (return (i32.const 1))))
+    ;; IsDBCSLeadByte(ch). The runtime exposes the US ANSI code page, which has
+    ;; no double-byte lead characters; Win95 InstallShield still probes every
+    ;; path component through this before it starts its 32-bit engine.
+    (if (i32.eq (local.get $ordinal) (i32.const 207))
+      (then (call $win16_local_identity (i32.const 2) (i32.const 0))
+            (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 13))   ;; LocalCompact
       (then (call $win16_local_identity (i32.const 2)
               (i32.sub (call $win16_lheap_get (i32.const 2))
@@ -2410,11 +2455,17 @@
     ;; src/06-fpu.wat. Saying otherwise sends every floating-point app down the
     ;; WIN87EM emulator path, whose entry point patches its caller's code and
     ;; then runs on state this emulator does not keep; Fuji Golf called it
-    ;; three times and jumped into a segment nothing had filled.
+    ;; three times and jumped into a segment nothing had filled. Win95-era
+    ;; bootstrap programs additionally test WF_WIN95 (0x4000): InstallShield
+    ;; accepts either its historical 3.95 version encoding or that flag. Add
+    ;; it whenever the configured major version is 4 or newer.
     (if (i32.or (i32.eq (local.get $ordinal) (i32.const 132))
                 (i32.eq (local.get $ordinal) (i32.const 178)))
       (then
-        (global.set $eax (i32.const 0x0425))
+        (global.set $eax (i32.or (i32.const 0x0425)
+          (select (i32.const 0x4000) (i32.const 0)
+            (i32.ge_u (i32.and (global.get $winver) (i32.const 0xFF))
+                      (i32.const 4)))))
         (global.set $edx (i32.const 0))
         (call $win16_api_return (i32.const 0))
         (return (i32.const 1))))
@@ -3999,11 +4050,19 @@
       (then (call $win16_SendMessage) (return (i32.const 1))))
     ;; Dialogs — see 09e2.
     (if (i32.eq (local.get $ordinal) (i32.const 87))
-      (then (call $win16_DialogBox (i32.const 0)) (return (i32.const 1))))
+      (then (call $win16_DialogBox (i32.const 0) (i32.const 0)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 239))
-      (then (call $win16_DialogBox (i32.const 1)) (return (i32.const 1))))
+      (then (call $win16_DialogBox (i32.const 1) (i32.const 0)) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 241))
+      (then (call $win16_DialogBox (i32.const 1) (i32.const 1)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 88))
       (then (call $win16_EndDialog) (return (i32.const 1))))
+    ;; IsDialogMessage(hDlg, lpMsg). The shared USER policy leaves dialog
+    ;; translation to the application, so return FALSE and let its following
+    ;; TranslateMessage/DispatchMessage calls consume the message.
+    (if (i32.eq (local.get $ordinal) (i32.const 90))
+      (then (call $win16_local_identity (i32.const 6) (i32.const 0))
+            (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 91))
       (then (call $win16_GetDlgItem) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 92))
@@ -4874,10 +4933,12 @@
   ;; understood before the order moves.
   (func $win16_ShowWindow
     (local $hwnd16 i32) (local $hwnd i32) (local $show i32)
-    (local $proc i32) (local $client_size i32)
+    (local $proc i32) (local $client_size i32) (local $was_visible i32)
     (local.set $hwnd16 (call $win16_arg16 (i32.const 1)))
     (local.set $hwnd (call $win16_h32 (local.get $hwnd16)))
     (local.set $show (call $win16_arg16 (i32.const 0)))
+    (local.set $was_visible
+      (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x10000000)))
     (drop (call $post_queue_push (local.get $hwnd) (i32.const 0x0018)
       (i32.ne (local.get $show) (i32.const 0)) (i32.const 0)))
     (if (i32.and
@@ -4923,6 +4984,13 @@
           (then (global.set $main_hwnd (local.get $hwnd))))))
     (if (local.get $show)
       (then
+        ;; USER exposes a hidden child at the top of its sibling stack. Do this
+        ;; before WS_VISIBLE changes so wnd_set_style rebuilds retained DC
+        ;; system clips against the new order.
+        (if (i32.and
+              (i32.eqz (local.get $was_visible))
+              (i32.ne (call $wnd_get_parent (local.get $hwnd)) (i32.const 0)))
+          (then (call $wnd_z_raise (local.get $hwnd))))
         ;; CreateWindow defers the initial erase for a window that is not yet
         ;; visible, so showing one has to re-arm it. A class registered with a
         ;; NULL hbrBackground means "the window paints its own background", and
@@ -6096,6 +6164,7 @@
     (local $hwnd i32) (local $after i32) (local $x i32) (local $y i32)
     (local $cx i32) (local $cy i32) (local $flags i32) (local $hdwp i32)
     (local $hwnd16 i32) (local $proc i32) (local $old_cs i32) (local $cs i32)
+    (local $after32 i32)
     (local.set $hdwp (call $win16_arg16 (i32.const 7)))
     (local.set $hwnd16 (call $win16_arg16 (i32.const 6)))
     (local.set $hwnd (call $win16_h32 (local.get $hwnd16)))
@@ -6113,6 +6182,18 @@
     (call $handle_SetWindowPos (local.get $hwnd) (local.get $after)
       (local.get $x) (local.get $y) (local.get $cx) (i32.const 0))
     (call $win16_call32_end)
+    (if (i32.eqz (i32.and (local.get $flags) (i32.const 0x0004))) ;; !SWP_NOZORDER
+      (then
+        (local.set $after32
+          (if (result i32) (i32.eq (local.get $after) (i32.const 0xFFFF))
+            (then (i32.const -1))
+            (else (if (result i32) (i32.eq (local.get $after) (i32.const 0xFFFE))
+              (then (i32.const -2))
+              (else (if (result i32) (i32.le_u (local.get $after) (i32.const 1))
+                (then (local.get $after))
+                (else (call $win16_h32 (local.get $after)))))))))
+        (call $wnd_z_set_after (local.get $hwnd) (local.get $after32))
+        (call $host_set_window_zorder (local.get $hwnd) (local.get $after32))))
     (local.set $cs (call $host_get_window_client_size (local.get $hwnd)))
     ;; USER sends size changes before SetWindowPos/DeferWindowPos returns.
     ;; VBRUN caches PictureBox ScaleWidth/ScaleHeight in that notification;
@@ -6148,7 +6229,7 @@
   (func $win16_SetWindowPos
     (local $hwnd i32) (local $after i32) (local $x i32) (local $y i32)
     (local $cx i32) (local $cy i32) (local $flags i32) (local $hwnd16 i32)
-    (local $proc i32) (local $old_cs i32) (local $cs i32)
+    (local $proc i32) (local $old_cs i32) (local $cs i32) (local $after32 i32)
     (local.set $hwnd16 (call $win16_arg16 (i32.const 6)))
     (local.set $hwnd (call $win16_h32 (local.get $hwnd16)))
     (local.set $after (call $win16_arg16 (i32.const 5)))
@@ -6165,6 +6246,18 @@
     (call $handle_SetWindowPos (local.get $hwnd) (local.get $after)
       (local.get $x) (local.get $y) (local.get $cx) (i32.const 0))
     (call $win16_call32_end)
+    (if (i32.eqz (i32.and (local.get $flags) (i32.const 0x0004))) ;; !SWP_NOZORDER
+      (then
+        (local.set $after32
+          (if (result i32) (i32.eq (local.get $after) (i32.const 0xFFFF))
+            (then (i32.const -1))
+            (else (if (result i32) (i32.eq (local.get $after) (i32.const 0xFFFE))
+              (then (i32.const -2))
+              (else (if (result i32) (i32.le_u (local.get $after) (i32.const 1))
+                (then (local.get $after))
+                (else (call $win16_h32 (local.get $after)))))))))
+        (call $wnd_z_set_after (local.get $hwnd) (local.get $after32))
+        (call $host_set_window_zorder (local.get $hwnd) (local.get $after32))))
     (local.set $cs (call $host_get_window_client_size (local.get $hwnd)))
     (if (i32.and
           (call $win16_is_far_proc (local.get $proc))

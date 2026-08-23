@@ -293,6 +293,66 @@
     (call $heap_free (local.get $hmenu))
     (i32.const 1))
 
+  ;; Remove one item from a WAT-owned popup. Return -1 when the handle is not
+  ;; dynamic so the caller can fall through to the host-owned CreateMenu tree;
+  ;; otherwise return the Win32 BOOL result. DeleteMenu passes $destroy=1 and
+  ;; owns a removed popup's submenu, whereas RemoveMenu leaves it alive.
+  (func $dynamic_menu_remove
+        (param $hmenu i32) (param $item i32) (param $by_position i32)
+        (param $destroy i32) (result i32)
+    (local $sw i32) (local $count i32) (local $idx i32)
+    (local $i i32) (local $dst i32) (local $src i32) (local $submenu i32)
+    (local.set $sw (call $dynamic_menu_state_w (local.get $hmenu)))
+    (if (i32.eqz (local.get $sw)) (then (return (i32.const -1))))
+    (local.set $count (i32.load offset=4 (local.get $sw)))
+    (local.set $idx
+      (if (result i32) (local.get $by_position)
+        (then (local.get $item))
+        (else (call $dynamic_menu_index_of_id (local.get $sw) (local.get $item)))))
+    (if (i32.or
+          (i32.lt_s (local.get $idx) (i32.const 0))
+          (i32.ge_u (local.get $idx) (local.get $count)))
+      (then (return (i32.const 0))))
+    (local.set $dst
+      (i32.add (local.get $sw)
+        (i32.add (i32.const 16) (i32.mul (local.get $idx) (i32.const 16)))))
+    (local.set $submenu (i32.load offset=12 (local.get $dst)))
+    (local.set $i (local.get $idx))
+    (block $done (loop $shift
+      (br_if $done
+        (i32.ge_u (i32.add (local.get $i) (i32.const 1)) (local.get $count)))
+      (local.set $src (i32.add (local.get $dst) (i32.const 16)))
+      (i32.store         (local.get $dst) (i32.load         (local.get $src)))
+      (i32.store offset=4  (local.get $dst) (i32.load offset=4  (local.get $src)))
+      (i32.store offset=8  (local.get $dst) (i32.load offset=8  (local.get $src)))
+      (i32.store offset=12 (local.get $dst) (i32.load offset=12 (local.get $src)))
+      (local.set $dst (local.get $src))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $shift)))
+    (call $zero_memory (local.get $dst) (i32.const 16))
+    (i32.store offset=4 (local.get $sw) (i32.sub (local.get $count) (i32.const 1)))
+    (if (i32.and
+          (i32.ne (local.get $destroy) (i32.const 0))
+          (i32.ne (local.get $submenu) (i32.const 0)))
+      (then
+        (if (i32.eqz (call $dynamic_menu_destroy (local.get $submenu)))
+          (then (drop (call $host_menu_destroy (local.get $submenu)))))))
+    (i32.const 1))
+
+  (func $menu_remove_item
+        (param $hmenu i32) (param $item i32) (param $flags i32)
+        (param $destroy i32) (result i32)
+    (local $result i32)
+    (local.set $result
+      (call $dynamic_menu_remove
+        (local.get $hmenu) (local.get $item)
+        (i32.ne (i32.and (local.get $flags) (i32.const 0x400)) (i32.const 0))
+        (local.get $destroy)))
+    (if (i32.ne (local.get $result) (i32.const -1))
+      (then (return (local.get $result))))
+    (call $host_menu_remove
+      (local.get $hmenu) (local.get $item) (local.get $flags) (local.get $destroy)))
+
   (func $hex_ascii (param $n i32) (result i32)
     (local.set $n (i32.and (local.get $n) (i32.const 0x0F)))
     (if (i32.lt_u (local.get $n) (i32.const 10))
@@ -3254,11 +3314,12 @@
       (then (global.set $last_load_menu_wide (i32.const 1))))
   )
 
-  ;; 407: RemoveMenu(hMenu, uPosition, uFlags) — return TRUE.
-  ;; AppendMenuA/InsertMenuA are no-ops in this build (the menu bar is parsed
-  ;; from the PE resource), so RemoveMenu has nothing real to remove either.
+  ;; 407: RemoveMenu(hMenu, uPosition, uFlags). Unlike DeleteMenu, a removed
+  ;; popup remains owned by the caller.
   (func $handle_RemoveMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (global.set $eax
+      (call $menu_remove_item
+        (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
@@ -3350,8 +3411,12 @@
 
   ;; InsertMenuA(hMenu, uPosition, uFlags, uIDNewItem, lpNewItem)
   ;; MF_BYPOSITION is 0x400; without it uPosition names the item to insert
-  ;; before by command id. Resource-backed menu blobs are not mutable yet, so
-  ;; those handles keep reporting success as they always have.
+  ;; before by command id. CreateMenu is host-backed (unlike CreatePopupMenu's
+  ;; MNUD table), and VB6 builds menu bars by repeatedly inserting at -1. Feed
+  ;; that append form into the existing host tree so SetMenu can serialize the
+  ;; completed hierarchy into WAT. Resource-backed menu blobs and non-tail
+  ;; host insertion are not mutable yet, so those cases retain the historical
+  ;; success/no-op result.
   (func $handle_InsertMenuA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $dyn i32)
     (local.set $dyn
@@ -3364,19 +3429,26 @@
         (if (result i32) (i32.and (local.get $arg2) (i32.const 0x10))
           (then (local.get $arg3))
           (else (i32.const 0)))))
-    (global.set $eax
-      (if (result i32) (i32.eq (local.get $dyn) (i32.const -1))
-        (then (i32.const 1))
-        (else (local.get $dyn))))
+    (if (i32.ne (local.get $dyn) (i32.const -1))
+      (then (global.set $eax (local.get $dyn)))
+      (else
+        (if (i32.and
+              (i32.ne (i32.and (local.get $arg2) (i32.const 0x400))
+                      (i32.const 0))
+              (i32.eq (local.get $arg1) (i32.const -1)))
+          (then
+            (global.set $eax (call $host_menu_append
+              (local.get $arg0) (local.get $arg2) (local.get $arg3)
+              (call $g2w (local.get $arg4)) (i32.const 0))))
+          (else (global.set $eax (i32.const 1))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
   ;; InsertMenuItemA/W(hMenu, uItem, fByPosition, lpmii)
-  ;; A CreateMenu bar is host-backed, so the dynamic MNUD path declines it and a
-  ;; tail insert has to reach the host tree instead — tetravex.exe builds its whole
-  ;; bar out of InsertMenuItemA(uItem = -1) calls, and dropping them left SetMenu
-  ;; with an empty tree and the window with no menu bar at all. Non-tail mutation
-  ;; of a host menu is not modelled and keeps the historical no-op success.
+  ;; Same host fallback as InsertMenuA: a menu bar from CreateMenu is host-backed,
+  ;; and Delphi/VB-style code fills it with repeated appends (uItem == -1). Without
+  ;; the fallback those items were dropped, so SetMenu serialized an empty tree and
+  ;; the window came up with no menu bar at all (tetravex).
   (func $insert_menu_item_common (param $hmenu i32) (param $item i32) (param $bypos i32)
                                  (param $mii i32) (param $wide i32) (result i32)
     (local $dyn i32) (local $flags i32)
@@ -3420,10 +3492,13 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
-  ;; 656: DeleteMenu — STUB: unimplemented
+  ;; 656: DeleteMenu(hMenu, uPosition, uFlags). Return FALSE when the requested
+  ;; item is absent; callers commonly clear a menu with
+  ;; `while (DeleteMenu(menu, 0, MF_BYPOSITION))`.
   (func $handle_DeleteMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; DeleteMenu(hMenu, uPosition, uFlags) — return TRUE
-    (global.set $eax (i32.const 1))
+    (global.set $eax
+      (call $menu_remove_item
+        (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 

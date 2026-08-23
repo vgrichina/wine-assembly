@@ -1286,6 +1286,13 @@
         (i32.store offset=12 (local.get $p) (i32.const 0))
         (i32.store offset=16 (local.get $p) (i32.const 0))
         (return (i32.const 0))))
+    ;; A window an app stacks over its DirectDraw exclusive-fullscreen primary
+    ;; shares the one framebuffer that primary is, so the frame shows through
+    ;; wherever the window does not paint. Start its surface at the presented
+    ;; frame rather than at COLOR_BTNFACE; Storm hangs every Diablo menu on a
+    ;; screen-sized WS_POPUP owned by the game window and paints only text
+    ;; into it, so a grey backing there covers the whole game.
+    (call $dx_seed_overlay_surface (local.get $owner))
     (if (i32.and (i32.ne (local.get $had_surface) (i32.const 0))
           (i32.eqz (global.get $gdi_surface_resize_repaint)))
       (then

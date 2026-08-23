@@ -1005,6 +1005,9 @@
   ;; renderer canvas which a later WAT surface attachment would replace.
   (func $host_erase_background (param $hwnd i32) (param $brush i32) (result i32)
     (local $hdc i32) (local $desc i32) (local $w i32) (local $h i32)
+    (call $host_erase_trace (local.get $hwnd) (local.get $brush)
+      (call $wnd_client_w_for_clip (local.get $hwnd))
+      (call $wnd_client_h_for_clip (local.get $hwnd)))
     (if (i32.eqz (local.get $brush)) (then (return (i32.const 1))))
     (local.set $hdc (call $host_alloc_window_dc (local.get $hwnd) (i32.const 0)))
     (if (i32.eqz (local.get $hdc)) (then (return (i32.const 0))))

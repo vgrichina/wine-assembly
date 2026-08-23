@@ -251,10 +251,24 @@
   ;; arg0=lpFileName, arg1=lpReOpenBuff (OFSTRUCT), arg2=uStyle
   (func $handle_OpenFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $handle i32) (local $buf_wa i32) (local $i i32) (local $ch i32)
+    (local $access i32) (local $creation i32)
+    ;; OF_READ=0, OF_WRITE=1, OF_READWRITE=2. OF_CREATE=0x1000 creates or
+    ;; truncates the destination; InstallShield combines it with READWRITE
+    ;; while creating its temporary stage files.
+    (local.set $access
+      (if (result i32) (i32.eq (i32.and (local.get $arg2) (i32.const 3)) (i32.const 1))
+        (then (i32.const 0x40000000)) ;; GENERIC_WRITE
+        (else
+          (if (result i32) (i32.eq (i32.and (local.get $arg2) (i32.const 3)) (i32.const 2))
+            (then (i32.const 0xC0000000)) ;; GENERIC_READ | GENERIC_WRITE
+            (else (i32.const 0x80000000)))))) ;; GENERIC_READ
+    (local.set $creation
+      (select (i32.const 2) (i32.const 3)
+        (i32.ne (i32.and (local.get $arg2) (i32.const 0x1000)) (i32.const 0))))
     (local.set $handle (call $host_fs_create_file
       (call $g2w (local.get $arg0))
-      (i32.const 0x80000000)  ;; GENERIC_READ
-      (i32.const 3)           ;; OPEN_EXISTING
+      (local.get $access)
+      (local.get $creation)
       (i32.const 0x80)        ;; FILE_ATTRIBUTE_NORMAL
       (i32.const 0)))         ;; isWide=0
     ;; Fill OFSTRUCT if provided
@@ -395,7 +409,11 @@
 
   ;; 743: SetClassLongA(hWnd, nIndex, dwNewLong) — return old value (0)
   (func $handle_SetClassLongA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    ;; SetClassLongA(hwnd, nIndex, dwNewLong) -> previous value. Writes the
+    ;; hwnd's own class record, so the change is visible to every window of
+    ;; that class -- which is the whole point of the call.
+    (global.set $eax
+      (call $class_long_set (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args
   )
 
@@ -923,6 +941,15 @@
     (global.set $eax (select (i32.const 0) (i32.const 0x8007000E) (i32.ne (local.get $obj) (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
+
+  ;; SHChangeNotify(wEventId, uFlags, dwItem1, dwItem2) broadcasts a shell
+  ;; namespace change and returns no value. WineAssembly has no Explorer
+  ;; process or registered shell notification sinks in an app instance, so
+  ;; delivery has no observers. SHCNF_FLUSH is therefore already satisfied
+  ;; when this handler returns. In particular, SHCNE_MKDIR is only a notice:
+  ;; the caller remains responsible for creating the directory itself.
+  (func $handle_SHChangeNotify (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   (func $handle_IShellFolder_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (local.get $arg0))))
@@ -2816,6 +2843,46 @@
       (br $scan)))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  ;; GetNumberFormatA(Locale, dwFlags, lpValue, lpFormat, lpNumberStr,
+  ;; cchNumber). The default-locale form accepts an invariant numeric string
+  ;; and, for the en-US Win98 personality, preserves its existing decimal
+  ;; spelling. This is also the form used by the Jazz Jackrabbit 2 installer.
+  ;; Keep the size-query and bounded-copy behavior exact: successful return
+  ;; values include the terminating NUL and a short destination is untouched.
+  ;; A caller-supplied NUMBERFMTA requests locale-aware regrouping/rounding we
+  ;; do not yet implement, so fail it explicitly instead of silently returning
+  ;; a plausibly formatted but wrong number.
+  (func $handle_GetNumberFormatA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $cch i32) (local $required i32)
+    (local.set $cch (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (global.set $eax (i32.const 0))
+    (if (i32.eqz (local.get $arg2))
+      (then
+        (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
+        (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+        (return)))
+    (if (local.get $arg3)
+      (then
+        (global.set $last_error (i32.const 120)) ;; ERROR_CALL_NOT_IMPLEMENTED
+        (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+        (return)))
+    (local.set $required
+      (i32.add (call $strlen_a (call $g2w (local.get $arg2))) (i32.const 1)))
+    (if (i32.eqz (local.get $cch))
+      (then (global.set $eax (local.get $required)))
+      (else
+        (if (i32.or
+              (i32.eqz (local.get $arg4))
+              (i32.lt_u (local.get $cch) (local.get $required)))
+          (then (global.set $last_error (i32.const 122))) ;; ERROR_INSUFFICIENT_BUFFER
+          (else
+            (call $memcpy
+              (call $g2w (local.get $arg4))
+              (call $g2w (local.get $arg2))
+              (local.get $required))
+            (global.set $eax (local.get $required))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
 
   ;; GetFileSecurityA(lpFileName, RequestedInformation, pSecurityDescriptor,
   ;; nLength, lpnLengthNeeded) — 5 args stdcall.

@@ -675,6 +675,22 @@ const extra = [
   { name: 'EnumWindows', nargs: 2 },
   { name: 'EnumThreadWindows', nargs: 3 },
   { name: 'EnumSystemCodePagesA', nargs: 2 },
+  { name: 'GetNumberFormatA', nargs: 6,
+    args: [
+      { name: 'Locale', type: 'DWORD' },
+      { name: 'dwFlags', type: 'DWORD' },
+      { name: 'lpValue', type: 'LPCSTR' },
+      { name: 'lpFormat', type: 'DWORD' },
+      { name: 'lpNumberStr', type: 'DWORD', out: true },
+      { name: 'cchNumber', type: 'DWORD' },
+    ], ret: 'DWORD' },
+  { name: 'SHChangeNotify', nargs: 4,
+    args: [
+      { name: 'wEventId', type: 'DWORD' },
+      { name: 'uFlags', type: 'DWORD' },
+      { name: 'dwItem1', type: 'DWORD' },
+      { name: 'dwItem2', type: 'DWORD' },
+    ] },
   { name: 'LocalSize', nargs: 1 },
   { name: 'LoadLibraryExA', nargs: 3 },
   { name: 'DdeInitializeA', nargs: 4 },
@@ -682,6 +698,19 @@ const extra = [
   { name: 'DdeNameService', nargs: 4 },
   { name: 'DdeFreeStringHandle', nargs: 2 },
   { name: 'DdeUninitialize', nargs: 1 },
+  { name: 'DdeConnect', nargs: 4 },
+  { name: 'DdeDisconnect', nargs: 1 },
+  { name: 'DdeClientTransaction', nargs: 8 },
+  { name: 'DdeGetLastError', nargs: 1 },
+  { name: 'DdeFreeDataHandle', nargs: 1 },
+  { name: 'DdeGetData', nargs: 4 },
+  { name: 'InitializeSecurityDescriptor', nargs: 2 },
+  { name: 'AllocateAndInitializeSid', nargs: 11 },
+  { name: 'SetSecurityDescriptorOwner', nargs: 3 },
+  { name: 'FreeSid', nargs: 1 },
+  { name: 'EqualSid', nargs: 2 },
+  { name: 'OpenSCManagerA', nargs: 3 },
+  { name: 'CloseServiceHandle', nargs: 1 },
   { name: 'DosDateTimeToFileTime', nargs: 3 },
   { name: 'PlaySoundA', nargs: 3 },
   // IDirectDrawFactory vtable (5 methods) — CLSID_DirectDrawFactory from ddrawex.dll,
@@ -1080,6 +1109,18 @@ const extra = [
   { name: '??3@YAXPAX@Z', nargs: 1, convention: 'cdecl' },
   { name: '??_U@YAPAXI@Z', nargs: 1, convention: 'cdecl' },
   { name: '??_V@YAXPAX@Z', nargs: 1, convention: 'cdecl' },
+  // D3D9 entry point. Apps reach it through GetProcAddress on a d3d9.dll we
+  // never load, which falls back to a name-keyed Win32 thunk — so an entry
+  // here is all it takes for Direct3DCreate9 to resolve.
+  { name: 'Direct3DCreate9', nargs: 1 },
+  // dinput.dll's GetProcAddress-only entry point (v5/v7 apps).
+  { name: 'DirectInputCreateEx', nargs: 5 },
+  // IDirectInput7 = the v1 vtable + these two. Keep them adjacent: the
+  // vtable is built from a contiguous api-id run.
+  { name: 'CreateAcceleratorTableA', nargs: 2 },
+  { name: 'DestroyAcceleratorTable', nargs: 1 },
+  { name: 'IDirectInput7_FindDevice', nargs: 5 },
+  { name: 'IDirectInput7_CreateDeviceEx', nargs: 5 },
 ];
 for (const api of extra) {
   if (!seen.has(api.name)) {
@@ -1126,6 +1167,18 @@ for (const iface of d3dimIfaces) {
     if (!seen.has(fullName)) {
       // Use 5 here to match the existing IDirect3D{,3,Device3,Viewport3,...}
       // convention — handlers are wired with 5-arg + name_ptr signature.
+      existing.push({ id: existing.length, name: fullName, nargs: 5, convention: 'stdcall', hash: 0 });
+      seen.add(fullName);
+    }
+  }
+}
+
+// Pull Direct3D 9 methods from shared spec (used by gen_d3d9_stubs.js too)
+const { interfaces: d3d9Ifaces } = require('./d3d9-methods');
+for (const iface of d3d9Ifaces) {
+  for (const m of iface.methods) {
+    const fullName = iface.prefix + '_' + m.name;
+    if (!seen.has(fullName)) {
       existing.push({ id: existing.length, name: fullName, nargs: 5, convention: 'stdcall', hash: 0 });
       seen.add(fullName);
     }
