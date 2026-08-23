@@ -1,6 +1,13 @@
   ;; ============================================================
   ;; BLOCK CACHE
   ;; ============================================================
+  ;; Executed sparse VirtualAlloc pages are a second self-modifying-code
+  ;; domain. StarCraft builds and rewrites its palette blitters immediately
+  ;; below 0x50000000; the older generated_code_* range only covers pages
+  ;; inside the PE image and therefore left those decoded blocks stale.
+  (global $generated_sparse_code_start (mut i32) (i32.const 0))
+  (global $generated_sparse_code_end   (mut i32) (i32.const 0))
+
   (func $cache_lookup (param $ga i32) (result i32)
     (local $idx i32)
     (local.set $idx (i32.add (global.get $CACHE_INDEX)
@@ -22,7 +29,7 @@
           (i32.and
             (i32.lt_u (local.get $ga) (i32.add (global.get $image_base) (global.get $exe_size_of_image)))
             (i32.or (i32.lt_u (local.get $ga) (global.get $code_start))
-                    (i32.ge_u (local.get $ga) (global.get $code_end))))))))
+                    (i32.ge_u (local.get $ga) (global.get $code_end)))))))
     (if (local.get $should_track)
       (then
         (local.set $page (i32.and (local.get $ga) (i32.const 0xFFFFF000)))
@@ -32,6 +39,20 @@
           (then (global.set $generated_code_start (local.get $page))))
         (if (i32.gt_u (local.get $page_end) (global.get $generated_code_end))
           (then (global.set $generated_code_end (local.get $page_end))))))
+    ;; Sparse VirtualAlloc code sits outside image_base..SizeOfImage, so track
+    ;; it independently rather than widening generated_code_* across hundreds
+    ;; of megabytes of ordinary heap/framebuffer writes.
+    (if (i32.and
+          (i32.ge_u (local.get $ga) (global.get $VIRTUAL_ALLOC_MIN))
+          (i32.lt_u (local.get $ga) (global.get $VIRTUAL_ALLOC_TOP_INIT)))
+      (then
+        (local.set $page (i32.and (local.get $ga) (i32.const 0xFFFFF000)))
+        (local.set $page_end (i32.add (local.get $page) (i32.const 0x1000)))
+        (if (i32.or (i32.eqz (global.get $generated_sparse_code_start))
+                    (i32.lt_u (local.get $page) (global.get $generated_sparse_code_start)))
+          (then (global.set $generated_sparse_code_start (local.get $page))))
+        (if (i32.gt_u (local.get $page_end) (global.get $generated_sparse_code_end))
+          (then (global.set $generated_sparse_code_end (local.get $page_end)))))))
   (func $clear_cache
     (local $i i32)
     (local.set $i (i32.const 0))

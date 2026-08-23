@@ -219,6 +219,7 @@ UNIT=(
   test/test-solitaire-web.js
   test/test-sparse-width-boundary.js
   test/test-string-ops-sparse-boundary.js
+  test/test-sparse-generated-code-cache.js
   test/test-surface.js
   test/test-system-metrics.js
   test/test-toolbar-insert.js

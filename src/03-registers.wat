@@ -213,7 +213,7 @@
         (global.set $g2w_gl8_delta (i32.sub (local.get $wa) (local.get $ga)))))
     (i32.load8_u (local.get $wa)))
   (func $invalidate_code_write (param $ga i32)
-    (local $in_code i32) (local $in_generated i32)
+    (local $in_code i32) (local $in_generated i32) (local $in_sparse_generated i32)
     ;; Invalidate decoded blocks only when writes can affect already-decoded
     ;; executable bytes. RCT mutates large image-data buffers during startup;
     ;; treating every image write as self-modifying code makes each byte/word
@@ -228,7 +228,14 @@
         (i32.ne (global.get $generated_code_start) (i32.const 0))
         (i32.and (i32.ge_u (local.get $ga) (global.get $generated_code_start))
                  (i32.lt_u (local.get $ga) (global.get $generated_code_end)))))
-    (if (i32.or (local.get $in_code) (local.get $in_generated))
+    (local.set $in_sparse_generated
+      (i32.and
+        (i32.ne (global.get $generated_sparse_code_start) (i32.const 0))
+        (i32.and (i32.ge_u (local.get $ga) (global.get $generated_sparse_code_start))
+                 (i32.lt_u (local.get $ga) (global.get $generated_sparse_code_end)))))
+    (if (i32.or
+          (local.get $in_code)
+          (i32.or (local.get $in_generated) (local.get $in_sparse_generated)))
       (then (call $invalidate_page (local.get $ga)))))
   (func $gs32 (param $ga i32) (param $v i32)
     (local $wa i32) (local $end_wa i32)
