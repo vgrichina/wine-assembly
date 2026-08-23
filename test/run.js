@@ -2459,13 +2459,23 @@ async function main() {
   // two-process tests kill both emulators when their checks are done, and
   // without this the --count summary -- the whole point of the flag -- was
   // never printed for either of them.
+  // The counter slots themselves live in shared linear memory (HIT_COUNT_BASE),
+  // so every instance bumps the same totals and main's read already covers the
+  // worker threads. What is NOT shared is $hit_count_n, the per-instance arming
+  // flag -- see thread-manager's set_count propagation; without it a worker ran
+  // the probed address without ever counting it.
+  const reportHitCounts = (header) => {
+    if (!countAddrs.length || !instance.exports.get_count) return;
+    console.log(header);
+    for (let i = 0; i < countAddrs.length; i++) {
+      console.log(`  ${hex(countAddrs[i])} = ${instance.exports.get_count(i) >>> 0}`);
+    }
+  };
+
   if (countAddrs.length && instance.exports.get_count) {
     for (const sig of ['SIGTERM', 'SIGINT']) {
       process.on(sig, () => {
-        console.log(`Hit counts (on ${sig}):`);
-        for (let i = 0; i < countAddrs.length; i++) {
-          console.log(`  ${hex(countAddrs[i])} = ${instance.exports.get_count(i)}`);
-        }
+        reportHitCounts(`Hit counts (on ${sig}):`);
         process.exit(0);
       });
     }
@@ -2619,6 +2629,7 @@ async function main() {
     traceCallstack: TRACE_CALLSTACK,
     traceCallstackDepth: TRACE_CALLSTACK_DEPTH,
     traceEipRange: (traceEipOn && traceEipArmed) ? { lo: traceEipLo, hi: traceEipHi } : null,
+    countAddrs: countAddrs,
     now: () => tickState.batch * 200,
     hasMessage: () => !!(
       inputEvent ||
@@ -3172,6 +3183,10 @@ async function main() {
 
   let prevEip = 0, stuckCount = 0, prevApiCount = 0, prevRegFp = 0, prevWin16Calls = 0;
   let prevWorkerFp = 0;
+  // x86 steps the worker instances have retired. A render thread that parks in
+  // Sleep at the end of every frame shows the SAME eip at every batch boundary,
+  // so the eip fingerprint below cannot see it working -- this counter can.
+  let workerStepsTotal = 0, prevWorkerSteps = 0;
   let stepping = false;  // single-step mode after breakpoint
   let apiBreakHit = null; // set when an API breakpoint triggers
 
@@ -6294,7 +6309,8 @@ async function main() {
       // reads as "nothing is running" while the box is pinned.
       const workerStartMs = TRACE_BATCH_TIMING ? Date.now() : 0;
       for (let s = 0; s < slices; s++) {
-        threadManager.runSlice(BATCH_SIZE);
+        const sliceStats = threadManager.runSlice(BATCH_SIZE);
+        if (sliceStats && sliceStats.steps) workerStepsTotal += sliceStats.steps;
         // Re-run main between live worker slices so producer/consumer pairs
         // progress together. Once the last worker exits, return to the outer
         // loop; repeatedly re-entering the main message pump here can drain
@@ -6384,6 +6400,10 @@ if (VERBOSE) {
       // makes no further API calls, which is exactly what a healthy
       // render-thread app looks like. CITYSCAP.SCR was cut off after 11
       // batches this way, its renderer never given a chance to draw a frame.
+      // The eip alone is still not enough for that app: its render thread ends
+      // every frame in Sleep, so the sampled eip is identical at each batch
+      // boundary however much work happened in between. workerStepsTotal is
+      // the signal that separates "parked between frames" from "wedged".
       let workerFp = 0;
       if (threadManager && threadManager.threads) {
         for (const [, t] of threadManager.threads) {
@@ -6394,8 +6414,9 @@ if (VERBOSE) {
       }
       if (injectedInputThisBatch || eip !== prevEip || apiCount !== prevApiCount
           || regFp !== prevRegFp || win16Calls !== prevWin16Calls
-          || workerFp !== prevWorkerFp) {
+          || workerFp !== prevWorkerFp || workerStepsTotal !== prevWorkerSteps) {
         prevWorkerFp = workerFp;
+        prevWorkerSteps = workerStepsTotal;
         prevWin16Calls = win16Calls;
         if (!QUIET_BLOCKS && eip !== prevEip) console.log(`[${batch}] ${regs()}`);
         prevEip = eip;
@@ -6607,12 +6628,7 @@ if (VERBOSE) {
     }
   }
 
-  if (countAddrs.length && instance.exports.get_count) {
-    console.log('Hit counts:');
-    for (let i = 0; i < countAddrs.length; i++) {
-      console.log(`  ${hex(countAddrs[i])} = ${instance.exports.get_count(i)}`);
-    }
-  }
+  reportHitCounts('Hit counts:');
 
   if (DUMP_VFS && ctx.vfs) {
     console.log('\n[VFS] Files (' + ctx.vfs.files.size + '):');
