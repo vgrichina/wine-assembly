@@ -36,6 +36,9 @@
   (global $COM_WRAPPERS_AUX_SIZE i32 (i32.const 0x00003F00))
   (global $COM_WRAPPERS_AUX_MAX i32 (i32.const 2016))
   (global $com_aux_next (mut i32) (i32.const 0))
+  ;; Rotating cursor for the recycle tier in $dx_alloc. Kept out of the fresh
+  ;; scan so a slot that was just freed is the LAST one handed back out.
+  (global $dx_recycle_cursor (mut i32) (i32.const 0))
 
   ;; Shared registry for COM vtable guest addresses. The vtable globals below
   ;; are per-WASM-instance, while threads use separate instances over one
@@ -294,6 +297,43 @@
           (return (local.get $ptr))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
+    ;; No never-used slot left. Retiring a slot forever is only affordable
+    ;; while an app's *lifetime* object count stays under DX_MAX; one that
+    ;; tears DirectDraw down and re-initialises burns through the table.
+    ;; RollerCoaster Tycoon creates ~250 DirectSound buffers per attempt and
+    ;; exhausted all 1024 slots on its third pass -- CreateSurface then
+    ;; returned 0, the app's own teardown dereferenced the surface pointer it
+    ;; had never been given, and the run died at EIP 0.
+    ;;
+    ;; So recycle logically-freed slots (refcount reached 0, type cleared)
+    ;; rather than failing. A guest pointer the app kept past its own Release
+    ;; can alias the new object, which is exactly the ABA case the retire rule
+    ;; avoids -- but this tier is reached only where the alternative is a hard
+    ;; failure, so every app that fits in DX_MAX behaves as before. Sweeping
+    ;; from a rotating cursor hands back the least-recently-freed slot first,
+    ;; giving a stale pointer the longest grace period we can offer.
+    (local.set $i (i32.const 0))
+    (block $recycled (loop $rescan
+      (br_if $recycled (i32.ge_u (local.get $i) (global.get $DX_MAX)))
+      (local.set $ptr (i32.add (global.get $DX_OBJECTS)
+        (i32.mul (global.get $dx_recycle_cursor) (i32.const 32))))
+      (local.set $wrapper_wa (i32.add (global.get $COM_WRAPPERS)
+        (i32.mul (global.get $dx_recycle_cursor) (i32.const 8))))
+      (global.set $dx_recycle_cursor
+        (i32.rem_u (i32.add (global.get $dx_recycle_cursor) (i32.const 1))
+                   (global.get $DX_MAX)))
+      (if (i32.eqz (i32.load (local.get $ptr)))
+        (then
+          (call $zero_memory (local.get $ptr) (i32.const 32))
+          (i32.store (local.get $ptr) (local.get $type))
+          (i32.store (i32.add (local.get $ptr) (i32.const 4)) (i32.const 1)) ;; refcount=1
+          ;; Drop the stale wrapper so the vtable $dx_create_com_obj writes
+          ;; next is the only one this slot advertises.
+          (i32.store (local.get $wrapper_wa) (i32.const 0))
+          (i32.store (i32.add (local.get $wrapper_wa) (i32.const 4)) (i32.const 0))
+          (return (local.get $ptr))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $rescan)))
     (i32.const 0))
 
   ;; ── Helper: find DX object by guest ptr ──────────────────────
@@ -1111,6 +1151,15 @@
     ;; Allocate DIB
     (local.set $dib_size (i32.mul (local.get $pitch) (local.get $h)))
     (local.set $dib_guest (call $heap_alloc (local.get $dib_size)))
+    ;; An exhausted heap returns 0, and g2w(0) is the base of the guest image --
+    ;; zeroing a 640x480 surface from there wipes the first 300KB of the PE's
+    ;; own code, so the app dies executing zeros a long way from the real cause.
+    ;; Report the failure DirectDraw would report instead.
+    (if (i32.eqz (local.get $dib_guest))
+      (then
+        (global.set $eax (i32.const 0x8876017C)) ;; DDERR_OUTOFVIDEOMEMORY
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
     (call $zero_memory (call $g2w (local.get $dib_guest)) (local.get $dib_size))
     ;; Mipmap: the pyramid adds ~1/3 of level-0 bytes. DDSCAPS_MIPMAP=0x400000.
     ;; Only level 0 is allocated in RAM; extra pyramid bytes are accounted in
@@ -1162,6 +1211,12 @@
           (i32.store16 (i32.add (local.get $back_entry) (i32.const 18)) (local.get $pitch))
           ;; Allocate separate DIB for back buffer
           (local.set $dib_guest (call $heap_alloc (local.get $dib_size)))
+          ;; Same guard as the primary above: never zero from g2w(0).
+          (if (i32.eqz (local.get $dib_guest))
+            (then
+              (global.set $eax (i32.const 0x8876017C)) ;; DDERR_OUTOFVIDEOMEMORY
+              (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+              (return)))
           (call $zero_memory (call $g2w (local.get $dib_guest)) (local.get $dib_size))
           (global.set $dx_vidmem_used (i32.add (global.get $dx_vidmem_used) (local.get $dib_size)))
           (i32.store (i32.add (local.get $back_entry) (i32.const 20)) (call $g2w (local.get $dib_guest)))
@@ -1862,7 +1917,27 @@
     (global.set $dx_primary_pal_wa (local.get $pal_wa)))
 
   (func $handle_IDirectDraw_SetDisplayMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $vtbl i32) (local $target_hwnd i32)
+    (local $vtbl i32) (local $target_hwnd i32) (local $changed i32)
+    ;; Windows announces a mode switch only when the mode actually switches:
+    ;; asking for the mode that is already current is a no-op and no
+    ;; WM_DISPLAYCHANGE goes out. Posting one unconditionally is a live-lock
+    ;; for any app whose WM_DISPLAYCHANGE handler re-applies its video mode --
+    ;; RollerCoaster Tycoon sets a "reinit display" flag from that message, and
+    ;; its next frame tore the whole subsystem down (Release surfaces,
+    ;; RestoreDisplayMode, DestroyWindow), rebuilt it, called SetDisplayMode
+    ;; with the same 640x480x8, and got the message straight back. It never
+    ;; reached its title screen; it just cycled until DX slots and heap ran out.
+    ;; The comparison is against the last mode *asked for*, which
+    ;; RestoreDisplayMode deliberately leaves in place: an app that restores the
+    ;; desktop and immediately re-selects the mode it was already running has
+    ;; not changed what is on screen here, and telling it otherwise restarts the
+    ;; same cycle.
+    (local.set $changed
+      (i32.or
+        (i32.ne (global.get $dx_display_w) (local.get $arg1))
+        (i32.or
+          (i32.ne (global.get $dx_display_h) (local.get $arg2))
+          (i32.ne (global.get $dx_display_bpp) (local.get $arg3)))))
     (global.set $dx_display_w (local.get $arg1))
     (global.set $dx_display_h (local.get $arg2))
     (global.set $dx_display_bpp (local.get $arg3))
@@ -1888,16 +1963,17 @@
       ;; routes WM_MOVE and WM_SIZE to one SetRect(0, 0, SM_CXSCREEN,
       ;; SM_CYSCREEN) — so without them it keeps dividing by the pre-switch
       ;; desktop size and every click lands short of where it was aimed.
-      (drop (call $post_queue_push (local.get $target_hwnd) (i32.const 0x007E)
-        (local.get $arg3)
-        (i32.or (i32.and (local.get $arg1) (i32.const 0xFFFF))
-                (i32.shl (local.get $arg2) (i32.const 16)))))
-      (drop (call $post_queue_push (local.get $target_hwnd) (i32.const 0x0003)
-        (i32.const 0) (i32.const 0)))
-      (drop (call $post_queue_push (local.get $target_hwnd) (i32.const 0x0005)
-        (i32.const 0)
-        (i32.or (i32.and (local.get $arg1) (i32.const 0xFFFF))
-                (i32.shl (local.get $arg2) (i32.const 16)))))))
+      (if (local.get $changed) (then
+        (drop (call $post_queue_push (local.get $target_hwnd) (i32.const 0x007E)
+          (local.get $arg3)
+          (i32.or (i32.and (local.get $arg1) (i32.const 0xFFFF))
+                  (i32.shl (local.get $arg2) (i32.const 16)))))
+        (drop (call $post_queue_push (local.get $target_hwnd) (i32.const 0x0003)
+          (i32.const 0) (i32.const 0)))
+        (drop (call $post_queue_push (local.get $target_hwnd) (i32.const 0x0005)
+          (i32.const 0)
+          (i32.or (i32.and (local.get $arg1) (i32.const 0xFFFF))
+                  (i32.shl (local.get $arg2) (i32.const 16)))))))))
     (global.set $eax (i32.const 0))
     (local.set $vtbl (call $gl32 (local.get $arg0)))
     (if (i32.eq (local.get $vtbl) (global.get $DX_VTBL_DDRAW2))
