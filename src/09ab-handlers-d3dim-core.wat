@@ -1227,17 +1227,258 @@
     (call $d3dim_material_color_from_handle
       (call $gl32 (i32.add (local.get $state_guest) (i32.const 2308)))))
 
-  (func $d3dim_vertex_lit_color (param $state_guest i32) (param $src_wa i32) (result i32)
-    (local $shade f32)
-    ;; D3DVERTEX: xyz, normal xyz, tu/tv. This is not full D3D lighting, but it
-    ;; gives legacy TRANSFORMLIGHT meshes useful shape until lights are modeled.
-    (local.set $shade
-      (f32.add (f32.const 0.25)
-        (f32.mul (f32.const 0.75)
-          (f32.abs (f32.load (i32.add (local.get $src_wa) (i32.const 20)))))))
+  ;; The material handle bound via D3DLIGHTSTATE_MATERIAL, as a guest pointer to
+  ;; the caller's D3DMATERIAL (dcvDiffuse@4, dcvAmbient@20, dcvEmissive@52).
+  ;; 0 when no usable material is bound.
+  (func $d3dim_current_material_ptr (param $state_guest i32) (result i32)
+    (local $handle i32) (local $entry i32)
+    (if (i32.eqz (local.get $state_guest)) (then (return (i32.const 0))))
+    (local.set $handle (call $gl32 (i32.add (local.get $state_guest) (i32.const 2308))))
+    (if (i32.or (i32.eqz (local.get $handle))
+                (i32.ge_u (local.get $handle) (global.get $DX_MAX)))
+      (then (return (i32.const 0))))
+    (local.set $entry (i32.add (global.get $DX_OBJECTS)
+      (i32.mul (local.get $handle) (i32.const 32))))
+    (if (i32.ne (i32.load (local.get $entry)) (i32.const 25)) (then (return (i32.const 0))))
+    (if (i32.lt_u (i32.load (i32.add (local.get $entry) (i32.const 12))) (i32.const 20))
+      (then (return (i32.const 0))))
+    (i32.load (i32.add (local.get $entry) (i32.const 8))))
+
+  ;; ── Fixed-function lighting ───────────────────────────────────
+  ;; IDirect3DLight slots are DX_OBJECTS type 24 with their 76-byte D3DLIGHT
+  ;; buffer hanging off entry+8 (see $dx_light_buf). Scanning all 1024 slots per
+  ;; vertex would be absurd, so the callers refresh this four-slot cache once per
+  ;; draw call — every entry point that lights vertices already calls
+  ;; $d3ddev_composite_wvp, and the refresh sits next to it.
+  (global $d3dim_light_n (mut i32) (i32.const 0))
+  (global $d3dim_light0 (mut i32) (i32.const 0))
+  (global $d3dim_light1 (mut i32) (i32.const 0))
+  (global $d3dim_light2 (mut i32) (i32.const 0))
+  (global $d3dim_light3 (mut i32) (i32.const 0))
+
+  (global $d3dim_dbg_light_last (mut i32) (i32.const -1))
+
+  (func $d3dim_lights_refresh (param $state_guest i32)
+    (local $i i32) (local $entry i32) (local $buf i32) (local $n i32) (local $mat i32)
+    (local.set $n (i32.const 0))
+    (local.set $i (i32.const 1))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $i) (global.get $DX_MAX)))
+      (br_if $done (i32.ge_u (local.get $n) (i32.const 4)))
+      (local.set $entry (i32.add (global.get $DX_OBJECTS)
+        (i32.mul (local.get $i) (i32.const 32))))
+      (if (i32.eq (i32.load (local.get $entry)) (i32.const 24)) (then
+        (local.set $buf (i32.load (i32.add (local.get $entry) (i32.const 8))))
+        ;; dwSize==0 ⇒ CreateLight ran but SetLight never did; nothing to shade with.
+        (if (local.get $buf) (then
+          (if (call $gl32 (local.get $buf)) (then
+            (if (i32.eq (local.get $n) (i32.const 0)) (then (global.set $d3dim_light0 (local.get $buf))))
+            (if (i32.eq (local.get $n) (i32.const 1)) (then (global.set $d3dim_light1 (local.get $buf))))
+            (if (i32.eq (local.get $n) (i32.const 2)) (then (global.set $d3dim_light2 (local.get $buf))))
+            (if (i32.eq (local.get $n) (i32.const 3)) (then (global.set $d3dim_light3 (local.get $buf))))
+            (local.set $n (i32.add (local.get $n) (i32.const 1)))))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp)))
+    (global.set $d3dim_light_n (local.get $n))
+    ;; kind=19 Lights: how many lights are live, plus the first light record and
+    ;; the bound material. "White geometry" and "no material bound" render the
+    ;; same and cannot be told apart from the API trace.
+    (local.set $mat (call $d3dim_current_material_ptr (local.get $state_guest)))
+    (local.set $entry (i32.or (i32.shl (local.get $n) (i32.const 1))
+                              (i32.ne (local.get $mat) (i32.const 0))))
+    (if (i32.ne (local.get $entry) (global.get $d3dim_dbg_light_last)) (then
+      (global.set $d3dim_dbg_light_last (local.get $entry))
+      (call $host_dx_trace (i32.const 19) (local.get $n)
+        (select (call $g2w (call $d3dim_light_slot (i32.const 0))) (i32.const 0)
+                (i32.ne (local.get $n) (i32.const 0)))
+        (select (call $g2w (local.get $mat)) (i32.const 0)
+                (i32.ne (local.get $mat) (i32.const 0)))
+        (select (call $gl32 (i32.add (local.get $state_guest) (i32.const 2312))) (i32.const 0)
+                (i32.ne (local.get $state_guest) (i32.const 0)))))))
+
+  (func $d3dim_light_slot (param $i i32) (result i32)
+    (if (i32.eq (local.get $i) (i32.const 0)) (then (return (global.get $d3dim_light0))))
+    (if (i32.eq (local.get $i) (i32.const 1)) (then (return (global.get $d3dim_light1))))
+    (if (i32.eq (local.get $i) (i32.const 2)) (then (return (global.get $d3dim_light2))))
+    (global.get $d3dim_light3))
+
+  ;; Legacy shape-only shading, kept for meshes drawn with TRANSFORMLIGHT before
+  ;; the app has configured a single light: real D3D would render those flat.
+  (func $d3dim_vertex_shade_fallback (param $state_guest i32) (param $src_wa i32) (result i32)
     (call $d3dim_scale_color
       (call $d3dim_current_material_color (local.get $state_guest))
-      (local.get $shade)))
+      (f32.add (f32.const 0.25)
+        (f32.mul (f32.const 0.75)
+          (f32.abs (f32.load (i32.add (local.get $src_wa) (i32.const 20))))))))
+
+  ;; D3DVERTEX: position xyz @0, normal xyz @12, tu/tv @24.
+  ;; colour = emissive + ambient_light*mat.ambient
+  ;;        + Σ light.colour * mat.diffuse * max(0, N·L) * attenuation
+  (func $d3dim_vertex_lit_color (param $state_guest i32) (param $src_wa i32) (result i32)
+    (local $sw i32) (local $m i32) (local $mat i32) (local $mw i32) (local $msz i32)
+    (local $amb i32) (local $i i32) (local $lp i32) (local $lw i32) (local $ltype i32)
+    (local $nx f32) (local $ny f32) (local $nz f32) (local $len f32)
+    (local $px f32) (local $py f32) (local $pz f32)
+    (local $lx f32) (local $ly f32) (local $lz f32) (local $d f32)
+    (local $ndl f32) (local $atten f32) (local $a0 f32) (local $a1 f32) (local $a2 f32)
+    (local $range f32)
+    (local $dr f32) (local $dg f32) (local $db f32)
+    (local $ar f32) (local $ag f32) (local $ab f32)
+    (local $r f32) (local $g f32) (local $b f32)
+    (if (i32.eqz (local.get $state_guest))
+      (then (return (call $d3dim_vertex_shade_fallback (local.get $state_guest) (local.get $src_wa)))))
+    (if (i32.eqz (global.get $d3dim_light_n))
+      (then (return (call $d3dim_vertex_shade_fallback (local.get $state_guest) (local.get $src_wa)))))
+    (local.set $sw (call $g2w (local.get $state_guest)))
+    (local.set $m (local.get $sw))   ;; world matrix @ state+0
+
+    ;; Material reflectances. With no material bound, D3D's defaults are white
+    ;; diffuse and black ambient; we keep white ambient so an ambient-only scene
+    ;; is not pitch black.
+    (local.set $dr (f32.const 1.0)) (local.set $dg (f32.const 1.0)) (local.set $db (f32.const 1.0))
+    (local.set $ar (f32.const 1.0)) (local.set $ag (f32.const 1.0)) (local.set $ab (f32.const 1.0))
+    (local.set $r (f32.const 0.0)) (local.set $g (f32.const 0.0)) (local.set $b (f32.const 0.0))
+    (local.set $mat (call $d3dim_current_material_ptr (local.get $state_guest)))
+    (if (local.get $mat) (then
+      (local.set $mw (call $g2w (local.get $mat)))
+      (local.set $msz (i32.load (local.get $mw)))
+      (local.set $dr (f32.load (i32.add (local.get $mw) (i32.const 4))))
+      (local.set $dg (f32.load (i32.add (local.get $mw) (i32.const 8))))
+      (local.set $db (f32.load (i32.add (local.get $mw) (i32.const 12))))
+      (if (i32.ge_u (local.get $msz) (i32.const 36)) (then
+        (local.set $ar (f32.load (i32.add (local.get $mw) (i32.const 20))))
+        (local.set $ag (f32.load (i32.add (local.get $mw) (i32.const 24))))
+        (local.set $ab (f32.load (i32.add (local.get $mw) (i32.const 28))))))
+      ;; dcvEmissive @52 (needs the full 80-byte D3DMATERIAL)
+      (if (i32.ge_u (local.get $msz) (i32.const 68)) (then
+        (local.set $r (f32.load (i32.add (local.get $mw) (i32.const 52))))
+        (local.set $g (f32.load (i32.add (local.get $mw) (i32.const 56))))
+        (local.set $b (f32.load (i32.add (local.get $mw) (i32.const 60))))))))
+
+    ;; D3DLIGHTSTATE_AMBIENT = 2 ⇒ state+2304+2*4, a D3DCOLOR.
+    (local.set $amb (call $gl32 (i32.add (local.get $state_guest) (i32.const 2312))))
+    (local.set $r (f32.add (local.get $r) (f32.mul (local.get $ar)
+      (f32.div (f32.convert_i32_u (i32.and (i32.shr_u (local.get $amb) (i32.const 16)) (i32.const 0xFF))) (f32.const 255.0)))))
+    (local.set $g (f32.add (local.get $g) (f32.mul (local.get $ag)
+      (f32.div (f32.convert_i32_u (i32.and (i32.shr_u (local.get $amb) (i32.const 8)) (i32.const 0xFF))) (f32.const 255.0)))))
+    (local.set $b (f32.add (local.get $b) (f32.mul (local.get $ab)
+      (f32.div (f32.convert_i32_u (i32.and (local.get $amb) (i32.const 0xFF))) (f32.const 255.0)))))
+
+    ;; Lights live in world space, so take the vertex there too: row-vector
+    ;; convention, m[i][j] at (i*4+j)*4.
+    (local.set $nx (f32.load (i32.add (local.get $src_wa) (i32.const 12))))
+    (local.set $ny (f32.load (i32.add (local.get $src_wa) (i32.const 16))))
+    (local.set $nz (f32.load (i32.add (local.get $src_wa) (i32.const 20))))
+    (local.set $px (f32.add (f32.add
+      (f32.mul (local.get $nx) (f32.load (i32.add (local.get $m) (i32.const 0))))
+      (f32.mul (local.get $ny) (f32.load (i32.add (local.get $m) (i32.const 16)))))
+      (f32.mul (local.get $nz) (f32.load (i32.add (local.get $m) (i32.const 32))))))
+    (local.set $py (f32.add (f32.add
+      (f32.mul (local.get $nx) (f32.load (i32.add (local.get $m) (i32.const 4))))
+      (f32.mul (local.get $ny) (f32.load (i32.add (local.get $m) (i32.const 20)))))
+      (f32.mul (local.get $nz) (f32.load (i32.add (local.get $m) (i32.const 36))))))
+    (local.set $pz (f32.add (f32.add
+      (f32.mul (local.get $nx) (f32.load (i32.add (local.get $m) (i32.const 8))))
+      (f32.mul (local.get $ny) (f32.load (i32.add (local.get $m) (i32.const 24)))))
+      (f32.mul (local.get $nz) (f32.load (i32.add (local.get $m) (i32.const 40))))))
+    (local.set $nx (local.get $px))
+    (local.set $ny (local.get $py))
+    (local.set $nz (local.get $pz))
+    (local.set $len (f32.sqrt (f32.add (f32.add
+      (f32.mul (local.get $nx) (local.get $nx))
+      (f32.mul (local.get $ny) (local.get $ny)))
+      (f32.mul (local.get $nz) (local.get $nz)))))
+    (if (f32.lt (local.get $len) (f32.const 0.000001))
+      (then (local.set $nz (f32.const 1.0)) (local.set $nx (f32.const 0.0)) (local.set $ny (f32.const 0.0)))
+      (else
+        (local.set $nx (f32.div (local.get $nx) (local.get $len)))
+        (local.set $ny (f32.div (local.get $ny) (local.get $len)))
+        (local.set $nz (f32.div (local.get $nz) (local.get $len)))))
+
+    (local.set $px (f32.add (f32.add (f32.add
+      (f32.mul (f32.load (local.get $src_wa)) (f32.load (i32.add (local.get $m) (i32.const 0))))
+      (f32.mul (f32.load (i32.add (local.get $src_wa) (i32.const 4))) (f32.load (i32.add (local.get $m) (i32.const 16)))))
+      (f32.mul (f32.load (i32.add (local.get $src_wa) (i32.const 8))) (f32.load (i32.add (local.get $m) (i32.const 32)))))
+      (f32.load (i32.add (local.get $m) (i32.const 48)))))
+    (local.set $py (f32.add (f32.add (f32.add
+      (f32.mul (f32.load (local.get $src_wa)) (f32.load (i32.add (local.get $m) (i32.const 4))))
+      (f32.mul (f32.load (i32.add (local.get $src_wa) (i32.const 4))) (f32.load (i32.add (local.get $m) (i32.const 20)))))
+      (f32.mul (f32.load (i32.add (local.get $src_wa) (i32.const 8))) (f32.load (i32.add (local.get $m) (i32.const 36)))))
+      (f32.load (i32.add (local.get $m) (i32.const 52)))))
+    (local.set $pz (f32.add (f32.add (f32.add
+      (f32.mul (f32.load (local.get $src_wa)) (f32.load (i32.add (local.get $m) (i32.const 8))))
+      (f32.mul (f32.load (i32.add (local.get $src_wa) (i32.const 4))) (f32.load (i32.add (local.get $m) (i32.const 24)))))
+      (f32.mul (f32.load (i32.add (local.get $src_wa) (i32.const 8))) (f32.load (i32.add (local.get $m) (i32.const 40)))))
+      (f32.load (i32.add (local.get $m) (i32.const 56)))))
+
+    (local.set $i (i32.const 0))
+    (block $ldone (loop $llp
+      (br_if $ldone (i32.ge_u (local.get $i) (global.get $d3dim_light_n)))
+      (local.set $lp (call $d3dim_light_slot (local.get $i)))
+      (if (local.get $lp) (then
+        (local.set $lw (call $g2w (local.get $lp)))
+        (local.set $ltype (i32.load (i32.add (local.get $lw) (i32.const 4))))
+        (local.set $atten (f32.const 1.0))
+        (if (i32.eq (local.get $ltype) (i32.const 3))
+          (then
+            ;; Directional: dvDirection points the way the light travels, so L is
+            ;; its negation.
+            (local.set $lx (f32.neg (f32.load (i32.add (local.get $lw) (i32.const 36)))))
+            (local.set $ly (f32.neg (f32.load (i32.add (local.get $lw) (i32.const 40)))))
+            (local.set $lz (f32.neg (f32.load (i32.add (local.get $lw) (i32.const 44)))))
+            (local.set $d (f32.const 0.0)))
+          (else
+            (local.set $lx (f32.sub (f32.load (i32.add (local.get $lw) (i32.const 24))) (local.get $px)))
+            (local.set $ly (f32.sub (f32.load (i32.add (local.get $lw) (i32.const 28))) (local.get $py)))
+            (local.set $lz (f32.sub (f32.load (i32.add (local.get $lw) (i32.const 32))) (local.get $pz)))
+            (local.set $d (f32.sqrt (f32.add (f32.add
+              (f32.mul (local.get $lx) (local.get $lx))
+              (f32.mul (local.get $ly) (local.get $ly)))
+              (f32.mul (local.get $lz) (local.get $lz)))))))
+        (local.set $len (f32.sqrt (f32.add (f32.add
+          (f32.mul (local.get $lx) (local.get $lx))
+          (f32.mul (local.get $ly) (local.get $ly)))
+          (f32.mul (local.get $lz) (local.get $lz)))))
+        (if (f32.gt (local.get $len) (f32.const 0.000001)) (then
+          (local.set $lx (f32.div (local.get $lx) (local.get $len)))
+          (local.set $ly (f32.div (local.get $ly) (local.get $len)))
+          (local.set $lz (f32.div (local.get $lz) (local.get $len)))
+          (if (i32.ne (local.get $ltype) (i32.const 3)) (then
+            (local.set $range (f32.load (i32.add (local.get $lw) (i32.const 48))))
+            (if (f32.gt (local.get $range) (f32.const 0.0)) (then
+              (if (f32.gt (local.get $d) (local.get $range))
+                (then (local.set $atten (f32.const 0.0))))))
+            (local.set $a0 (f32.load (i32.add (local.get $lw) (i32.const 56))))
+            (local.set $a1 (f32.load (i32.add (local.get $lw) (i32.const 60))))
+            (local.set $a2 (f32.load (i32.add (local.get $lw) (i32.const 64))))
+            (local.set $len (f32.add (f32.add (local.get $a0)
+              (f32.mul (local.get $a1) (local.get $d)))
+              (f32.mul (f32.mul (local.get $a2) (local.get $d)) (local.get $d))))
+            (if (f32.gt (local.get $len) (f32.const 0.000001)) (then
+              (local.set $atten (f32.mul (local.get $atten)
+                (f32.min (f32.const 1.0) (f32.div (f32.const 1.0) (local.get $len)))))))))
+          (local.set $ndl (f32.add (f32.add
+            (f32.mul (local.get $nx) (local.get $lx))
+            (f32.mul (local.get $ny) (local.get $ly)))
+            (f32.mul (local.get $nz) (local.get $lz))))
+          (local.set $ndl (f32.max (local.get $ndl) (f32.const 0.0)))
+          (local.set $ndl (f32.mul (local.get $ndl) (local.get $atten)))
+          (if (f32.gt (local.get $ndl) (f32.const 0.0)) (then
+            (local.set $r (f32.add (local.get $r) (f32.mul (f32.mul (local.get $dr) (local.get $ndl))
+              (f32.load (i32.add (local.get $lw) (i32.const 8))))))
+            (local.set $g (f32.add (local.get $g) (f32.mul (f32.mul (local.get $dg) (local.get $ndl))
+              (f32.load (i32.add (local.get $lw) (i32.const 12))))))
+            (local.set $b (f32.add (local.get $b) (f32.mul (f32.mul (local.get $db) (local.get $ndl))
+              (f32.load (i32.add (local.get $lw) (i32.const 16))))))))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $llp)))
+
+    (i32.or (i32.const 0xFF000000)
+      (i32.or
+        (i32.shl (i32.trunc_sat_f32_u (f32.mul (f32.min (f32.max (local.get $r) (f32.const 0.0)) (f32.const 1.0)) (f32.const 255.0))) (i32.const 16))
+        (i32.or
+          (i32.shl (i32.trunc_sat_f32_u (f32.mul (f32.min (f32.max (local.get $g) (f32.const 0.0)) (f32.const 1.0)) (f32.const 255.0))) (i32.const 8))
+          (i32.trunc_sat_f32_u (f32.mul (f32.min (f32.max (local.get $b) (f32.const 0.0)) (f32.const 1.0)) (f32.const 255.0)))))))
 
   ;; ── Texture binding ───────────────────────────────────────────
   (func $d3dim_texture_load (param $dst_this i32) (param $src_this i32)
@@ -2555,6 +2796,7 @@
         (local.set $scratch_g (call $heap_alloc (local.get $size)))
         (if (i32.eqz (local.get $scratch_g)) (then (return)))
         (call $d3ddev_composite_wvp (local.get $state_guest))
+        (call $d3dim_lights_refresh (local.get $state_guest))
         (local.set $src_stride (call $d3dim_vertex_type_stride (local.get $vtxType)))
         (local.set $src_wa (call $g2w (local.get $lpvVertices)))
         (local.set $scratch_wa (call $g2w (local.get $scratch_g)))
@@ -2768,6 +3010,7 @@
     (local.set $state_guest (call $d3ddev_state (local.get $this)))
     (if (i32.or (i32.eqz (local.get $rt)) (i32.eqz (local.get $state_guest))) (then (return)))
     (call $d3ddev_composite_wvp (local.get $state_guest))
+    (call $d3dim_lights_refresh (local.get $state_guest))
     (local.set $vbase_wa (call $g2w (local.get $lpvVertices)))
     (local.set $ibase_wa (call $g2w (local.get $lpwIndices)))
     (if (i32.eq (local.get $primType) (i32.const 4)) (then
@@ -3236,6 +3479,7 @@
     (local.set $state_g (call $d3ddev_state (local.get $dev_this)))
     (if (i32.eqz (local.get $state_g)) (then (return)))
     (call $d3ddev_composite_wvp (local.get $state_g))
+    (call $d3dim_lights_refresh (local.get $state_g))
     (local.set $vbase (call $g2w (local.get $buf_guest)))
     (local.set $srcbase (call $d3dim_execbuf_source_base (local.get $buf_guest)))
     (if (i32.eqz (local.get $srcbase)) (then (local.set $srcbase (local.get $vbase))))
