@@ -10737,6 +10737,12 @@
     "name": "GetUpdateRgn",
     "nargs": 3,
     "convention": "stdcall",
+    "args": [
+      { "name": "hwnd", "type": "HWND" },
+      { "name": "hrgn", "type": "HANDLE" },
+      { "name": "erase", "type": "BOOL" }
+    ],
+    "ret": "int",
     "hash": 3235427389
   },
   {

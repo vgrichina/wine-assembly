@@ -1820,7 +1820,19 @@
         (if (i32.eq (local.get $tmp) (global.get $main_hwnd))
           (then (global.set $paint_pending (i32.const 0))))
         (drop (call $paint_seed_child_paints (local.get $tmp)))
-        (if (i32.ne (local.get $tmp) (global.get $main_hwnd))
+        ;; Pre-validate only what GetMessageA pre-validates: a WAT-owned control
+        ;; the app has not subclassed, which paints through host_gdi_* without
+        ;; ever calling BeginPaint and so would never retire its own update
+        ;; rect. Validating every non-main window here handed the app an empty
+        ;; update region inside its own WM_PAINT: Diablo's Storm layer asks
+        ;; GetUpdateRgn for the rectangles to copy out of its back buffer, got
+        ;; ERROR every time, and copied nothing -- a black screen behind a live
+        ;; main menu.
+        (if (i32.and
+              (i32.and
+                (i32.ne (local.get $tmp) (global.get $main_hwnd))
+                (i32.ne (call $ctrl_table_get_class (local.get $tmp)) (i32.const 0)))
+              (i32.eqz (call $ctrl_is_subclassed (local.get $tmp))))
           (then
             (drop (call $update_validate_rect (local.get $tmp)
                     (i32.const 0) (i32.const 0)

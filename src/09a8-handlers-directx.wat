@@ -3013,6 +3013,37 @@
     (call $dx_blit_entry_to_hdc (local.get $entry)
       (i32.add (local.get $hwnd) (i32.const 0x40000))))
 
+  ;; Seeding an overlay once, at surface creation, freezes it on whatever was
+  ;; on screen at that instant -- but the framebuffer it shares keeps being
+  ;; presented into. Diablo builds its main-menu WS_POPUP while the intro is
+  ;; still fading to black, so the seeded surface was black and stayed black,
+  ;; covering every frame Storm drew for the rest of the session. Re-seed on
+  ;; each present: that is what one shared framebuffer means.
+  (func $dx_reseed_overlays (param $entry_wa i32)
+    (local $i i32) (local $hwnd i32) (local $target i32)
+    (if (i32.eqz (global.get $dx_exclusive_fullscreen)) (then (return)))
+    (local.set $target (call $dx_target_hwnd))
+    (if (i32.eqz (local.get $target)) (then (return)))
+    (local.set $i (i32.const 0))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (local.set $hwnd (call $wnd_slot_hwnd (local.get $i)))
+      (if (i32.and
+            (i32.and
+              (i32.ne (local.get $hwnd) (i32.const 0))
+              (i32.ne (local.get $hwnd) (local.get $target)))
+            (i32.and
+              (i32.eq (call $wnd_top_level (local.get $hwnd)) (local.get $hwnd))
+              (i32.ne (call $gdi_window_surface_record (local.get $hwnd) (i32.const 0))
+                      (i32.const 0))))
+        (then
+          (if (call $wnd_is_effectively_visible (local.get $hwnd))
+            (then
+              (call $dx_blit_entry_to_hdc (local.get $entry_wa)
+                (i32.add (local.get $hwnd) (i32.const 0x40000)))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan))))
+
   (func $dx_present (param $entry_wa i32)
     (local $w i32) (local $h i32) (local $bpp i32) (local $pitch i32)
     (local $dib_wa i32) (local $bmi_wa i32) (local $i i32) (local $val i32)
@@ -3041,6 +3072,7 @@
     ;; window surface in that case -- one surface holding frame and controls
     ;; together is what the real screen is -- and mark the children so they
     ;; land back on top of each new frame.
+    (call $dx_reseed_overlays (local.get $entry_wa))
     (local.set $shared (call $dx_window_surface_shared (local.get $target_hwnd)))
     (if (i32.eqz (local.get $shared))
       (then
