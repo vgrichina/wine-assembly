@@ -159,6 +159,7 @@ UNIT=(
   test/test-canvas-keydown-preventdefault.js
   test/test-renderer-input-cursor.js
   test/test-renderer-mouse-drag-mask.js
+  test/test-renderer-letterbox-input.js
   test/test-renderer-dialog-caption-drag.js
   test/test-renderer-shell-dialog.js
   test/test-renderer-multi-app-modal.js
