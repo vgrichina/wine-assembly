@@ -13,6 +13,17 @@ const CHROME = process.env.CHROME ||
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const OUT = path.join(ROOT, 'test', 'output', 'explorer98-web');
 const PNG = path.join(OUT, 'desktop.png');
+const viewportMatch = String(process.env.EXPLORER_VIEWPORT || '1280x900')
+  .match(/^(\d+)x(\d+)$/i);
+if (!viewportMatch) throw new Error('EXPLORER_VIEWPORT must be WIDTHxHEIGHT');
+const VIEWPORT = { width: Number(viewportMatch[1]), height: Number(viewportMatch[2]) };
+const requestedTrace = String(process.env.EXPLORER_TRACE_API || '')
+  .split(',').map(name => name.trim()).filter(Boolean);
+const TRACE_API = requestedTrace.includes('*')
+  ? require('../src/api_table.json').map(entry => entry.name)
+  : requestedTrace;
+const STARTUP_TIMEOUT_MS = Number(process.env.EXPLORER_TIMEOUT_MS || 60000);
+const STEPS_PER_SLICE = Number(process.env.EXPLORER_STEPS_PER_SLICE || 100000);
 
 if (!fs.existsSync(CHROME)) {
   console.log('SKIP  Chrome not found for Explorer 98 browser test');
@@ -66,16 +77,20 @@ async function main() {
     const page = await browser.newPage();
     page.on('console', message => {
       if (message.type() === 'error') console.error(`browser: ${message.text()}`);
+      else if (TRACE_API.length && message.text().startsWith('[API]')) {
+        console.log(message.text());
+      }
     });
     page.on('pageerror', error => console.error(`browser page error: ${error.message}`));
-    await page.setViewport({ width: 900, height: 700, deviceScaleFactor: 1 });
+    await page.setViewport({ ...VIEWPORT, deviceScaleFactor: 1 });
     await page.goto(
       `http://127.0.0.1:${server.address().port}/index.html?debug&explorer98-web=${Date.now()}`,
       { waitUntil: 'load', timeout: 30000 });
     await page.waitForFunction(() => typeof launchApp === 'function' &&
       document.querySelector('#app-select option[value="explorer98"]'),
     { timeout: 20000 });
-    await page.evaluate(async () => {
+    await page.evaluate(async ({ traceApi, stepsPerSlice }) => {
+      window.__waTraceApiNames = new Set(traceApi);
       stopAllApps();
       const select = document.getElementById('app-select');
       select.value = 'explorer98';
@@ -85,8 +100,8 @@ async function main() {
         throw new Error(`Explorer harness launched wrong app set: ${
           runningApps.map(item => item && item.name).join(',')}`);
       }
-      if (app) app.wine.stepsPerSlice = 200000;
-    });
+      if (app) app.wine.stepsPerSlice = stepsPerSlice;
+    }, { traceApi: TRACE_API, stepsPerSlice: STEPS_PER_SLICE });
     try {
       await page.waitForFunction(() => {
         const app = runningApps.find(item => item && item.name === 'explorer98');
@@ -95,12 +110,16 @@ async function main() {
           windows.some(win => win && win.visible && win.className === 'Progman') &&
           windows.some(win => win && win.visible && win.className === 'Shell_TrayWnd') &&
           windows.some(win => win && win.visible && win.className === 'SysListView32'));
-      }, { timeout: 60000 });
+      }, { timeout: STARTUP_TIMEOUT_MS });
     } catch (error) {
       const state = await page.evaluate(() => {
         const app = runningApps.find(item => item && item.name === 'explorer98');
         return {
           app: app && { running: app.wine.running, slices: app.wine._runSliceCount },
+          canvas: (() => {
+            const screen = document.getElementById('screen');
+            return screen && [screen.width, screen.height];
+          })(),
           windows: Object.values((sharedRenderer && sharedRenderer.windows) || {})
             .map(win => win && ({ hwnd: win.hwnd, visible: win.visible,
               className: win.className, title: win.title })),
