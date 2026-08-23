@@ -1180,6 +1180,7 @@
   ;; 0x07EF11A0 304B     GDI_BITMAP_PLAN/name scratch
   ;; 0x07EF12D0  16B     WINDOW_RECT_SCRATCH (window geometry queries)
   ;; 0x07EF12E0  80B     GDI_BRUSH_DESC scratch
+  ;; 0x07EF1730   4B     GDI_OBJECT_GEN (object-table generation counter)
   ;; 0x07EF1800 24KB     GDI_DC_STATE_TABLE (256 x 96-byte canonical DC state)
   ;; 0x07EF7800 12KB     GDI_OBJECT_TABLE (256 x 48-byte object records)
   ;; 0x07EFA800 8KB      GDI_WINDOW_SURFACE_TABLE (256 x 32-byte records)
@@ -1484,6 +1485,10 @@
   (global $GDI_DC_STATE_STRIDE i32 (i32.const 96))
   ;; Dynamic WAT-owned pen, brush, bitmap, font, palette, and metafile records.
   ;; Handles and all semantic object fields are allocated here.
+  ;; Bumped whenever a handle is entered into the table. Worker threads are
+  ;; separate WASM instances that share this memory but not their globals, so a
+  ;; per-instance negative lookup cache has to revalidate against this counter.
+  (global $GDI_OBJECT_GEN i32 (i32.const 0x07EF1730))
   (global $GDI_OBJECT_TABLE i32 (i32.const 0x07EF7800))
   (global $GDI_OBJECT_TABLE_SIZE i32 (i32.const 0x00003000))
   (global $GDI_OBJECT_COUNT i32 (i32.const 256))

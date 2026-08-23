@@ -3718,7 +3718,19 @@
   ;; bitsWa@24, stride@28, paletteWa@32, paletteCount@36, surfaceId@40.
   ;; Palette fields are count@8, capacity@12, version@16, flags@20,
   ;; PALETTEENTRY storage WA@24. Palette storage is always WAT-owned.
+  ;; Two positive hints, not one: a blit resolves the source handle and the
+  ;; destination handle alternately for every single pixel, and a single hint
+  ;; thrashes between them so neither ever hits. The two $gdi_object_miss slots
+  ;; are the negative twin — handles that are not in this table at all
+  ;; (DirectDraw surface handles are the hot case, and a blit again alternates
+  ;; between two of them) otherwise pay a full GDI_OBJECT_COUNT scan on every
+  ;; lookup and never populate a hint. Both negative slots share one generation
+  ;; stamp, and every writer that can turn a miss into a hit bumps it.
   (global $gdi_object_hint (mut i32) (i32.const 0))
+  (global $gdi_object_hint2 (mut i32) (i32.const 0))
+  (global $gdi_object_miss (mut i32) (i32.const 0))
+  (global $gdi_object_miss2 (mut i32) (i32.const 0))
+  (global $gdi_object_miss_gen (mut i32) (i32.const -1))
   (func $gdi_object_record (param $handle i32) (result i32)
     (local $i i32) (local $p i32)
     (if (i32.eqz (local.get $handle)) (then (return (i32.const 0))))
@@ -3726,6 +3738,23 @@
     (if (i32.and (i32.ne (local.get $p) (i32.const 0))
           (i32.eq (i32.load (local.get $p)) (local.get $handle)))
       (then (return (local.get $p))))
+    (local.set $p (global.get $gdi_object_hint2))
+    (if (i32.and (i32.ne (local.get $p) (i32.const 0))
+          (i32.eq (i32.load (local.get $p)) (local.get $handle)))
+      (then
+        (global.set $gdi_object_hint2 (global.get $gdi_object_hint))
+        (global.set $gdi_object_hint (local.get $p))
+        (return (local.get $p))))
+    (if (i32.eq (global.get $gdi_object_miss_gen)
+          (i32.load (global.get $GDI_OBJECT_GEN)))
+      (then
+        (if (i32.eq (global.get $gdi_object_miss) (local.get $handle))
+          (then (return (i32.const 0))))
+        (if (i32.eq (global.get $gdi_object_miss2) (local.get $handle))
+          (then
+            (global.set $gdi_object_miss2 (global.get $gdi_object_miss))
+            (global.set $gdi_object_miss (local.get $handle))
+            (return (i32.const 0))))))
     (local.set $p (i32.const 0))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $GDI_OBJECT_COUNT)))
@@ -3733,10 +3762,18 @@
         (i32.mul (local.get $i) (global.get $GDI_OBJECT_STRIDE))))
       (if (i32.eq (i32.load (local.get $p)) (local.get $handle))
         (then
+          (global.set $gdi_object_hint2 (global.get $gdi_object_hint))
           (global.set $gdi_object_hint (local.get $p))
           (return (local.get $p))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
+    (if (i32.ne (global.get $gdi_object_miss_gen)
+          (i32.load (global.get $GDI_OBJECT_GEN)))
+      (then
+        (global.set $gdi_object_miss2 (i32.const 0))
+        (global.set $gdi_object_miss_gen (i32.load (global.get $GDI_OBJECT_GEN))))
+      (else (global.set $gdi_object_miss2 (global.get $gdi_object_miss))))
+    (global.set $gdi_object_miss (local.get $handle))
     (i32.const 0))
 
   (func $gdi_object_adopt (param $handle i32) (param $type i32) (param $style i32)
@@ -3757,6 +3794,9 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (if (i32.eqz (local.get $empty)) (then (return (i32.const 0))))
+    ;; A handle just became resolvable: retire every instance's negative cache.
+    (i32.store (global.get $GDI_OBJECT_GEN)
+      (i32.add (i32.load (global.get $GDI_OBJECT_GEN)) (i32.const 1)))
     (i32.store (local.get $empty) (local.get $handle))
     (i32.store offset=4 (local.get $empty) (local.get $type))
     (i32.store offset=8 (local.get $empty) (local.get $style))

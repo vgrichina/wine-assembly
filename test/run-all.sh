@@ -125,6 +125,7 @@ UNIT=(
   test/test-compatible-bitmap-wat.js
   test/test-gdi-patblt-brush.js
   test/test-gdi-surface.js
+  test/test-gdi-object-record-cache.js
   test/test-gdi-deferred-presentation.js
   test/test-wat-memory-map.js
   test/test-wat-window-frame.js
