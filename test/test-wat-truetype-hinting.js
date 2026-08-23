@@ -527,6 +527,33 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
       '###..', '#..#.', '#...#', '#...#', '#...#', '#..#.', '###..',
     ], 'Win98 Arial D 10ppem monochrome bitmap must match exactly');
 
+    // Arial R interpolates two adjacent source points that collapse to the
+    // same 26.6 coordinate at 10ppem. Win98 retains their source-coordinate
+    // residual during the axis IP, then measures the angled-stem MIRP from
+    // the point-to-reference delta. Losing either detail shrinks the black
+    // box from six pixels to five.
+    const nativeRGid = wat.test_tt_glyph_index(
+      native.at, native.size, 'R'.charCodeAt(0));
+    const nativeRCount = wat.test_tt_glyph_load_outline(
+      native.at, native.size, nativeRGid, compact, 512);
+    assert.strictEqual(nativeRCount, 35,
+      'Win98 Arial R raw point topology must remain stable');
+    const nativeRHinted = wat.test_tth_hint_outline(
+      native.at, native.size, nativeRGid, 10, compact, nativeRCount) >>> 0;
+    assert.ok(nativeRHinted, 'Win98 Arial R must hint at 10ppem');
+    assert.deepStrictEqual([12, 14, 15, 18].map(index => [index,
+      wat.test_tth_point_x(nativeRHinted, index),
+      wat.test_tth_point_y(nativeRHinted, index),
+    ]), [[12, 329, 149], [14, 416, 0], [15, 352, 0], [18, 250, 166]],
+    'source-precise IP and direct-delta MIRP must reproduce Win98 Arial R');
+    assert.deepStrictEqual([
+      wat.test_tt_glyph_box_width(native.at, native.size, nativeRGid, 10),
+      wat.test_tt_glyph_box_height(native.at, native.size, nativeRGid, 10),
+      wat.test_tt_glyph_box_left(native.at, native.size, nativeRGid, 10),
+      wat.test_tt_glyph_box_top(native.at, native.size, nativeRGid, 10),
+    ], [6, 7, 1, 7],
+    'Win98 Arial R 10ppem monochrome metrics must match');
+
     // The black MIRP controlling Arial M's inner diagonal starts with a small
     // negative outline distance that round-to-grid collapses to zero. Win98
     // applies minimum_distance in that original negative direction; choosing

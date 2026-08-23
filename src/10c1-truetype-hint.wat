@@ -21,8 +21,8 @@
   (global $TTH_MAX_FUNCTIONS i32 (i32.const 96))
   (global $TTH_MAX_CALLS i32 (i32.const 32))
   (global $TTH_MAX_STEPS i32 (i32.const 100000))
-  (global $TTH_POINT_STRIDE i32 (i32.const 20))
-  (global $TTH_ARENA_BYTES i32 (i32.const 0x6000))
+  (global $TTH_POINT_STRIDE i32 (i32.const 28))
+  (global $TTH_ARENA_BYTES i32 (i32.const 0x7000))
 
   ;; Size-context offsets.  The 0x100-aligned arrays leave the graphics state
   ;; readable in a debugger while keeping index arithmetic cheap.
@@ -70,7 +70,9 @@
   (global $TTH_GS_ROUND_45 i32 (i32.const 92))
   (global $TTH_GS_BYTES i32 (i32.const 96))
 
-  ;; Point flags at record+16.
+  ;; Point records hold current 26.6 x/y at +0/+4, instruction-visible
+  ;; original 26.6 x/y at +8/+12, flags at +16, and retained 16.16 source
+  ;; coordinates at +20/+24 for axis interpolation.
   (global $TTH_P_ON_CURVE i32 (i32.const 1))
   (global $TTH_P_END i32 (i32.const 2))
   (global $TTH_P_TOUCH_X i32 (i32.const 4))
@@ -397,11 +399,23 @@
     (if (i32.eqz (local.get $p)) (then (return (i32.const 0))))
     (i32.load offset=8 (local.get $p)))
 
+  (func $tth_point_original_high_x (param $zone i32) (param $index i32) (result i32)
+    (local $p i32)
+    (local.set $p (call $tth_point (local.get $zone) (local.get $index)))
+    (if (i32.eqz (local.get $p)) (then (return (i32.const 0))))
+    (i32.load offset=20 (local.get $p)))
+
   (func $tth_point_original_y (param $zone i32) (param $index i32) (result i32)
     (local $p i32)
     (local.set $p (call $tth_point (local.get $zone) (local.get $index)))
     (if (i32.eqz (local.get $p)) (then (return (i32.const 0))))
     (i32.load offset=12 (local.get $p)))
+
+  (func $tth_point_original_high_y (param $zone i32) (param $index i32) (result i32)
+    (local $p i32)
+    (local.set $p (call $tth_point (local.get $zone) (local.get $index)))
+    (if (i32.eqz (local.get $p)) (then (return (i32.const 0))))
+    (i32.load offset=24 (local.get $p)))
 
   ;; ---- vector and rounding arithmetic ---------------------------------
 
@@ -472,6 +486,27 @@
       (i32.sub (call $tth_point_original_y (local.get $zone_a) (local.get $a))
         (call $tth_point_original_y (local.get $zone_b) (local.get $b)))
       (global.get $tth_dvx) (global.get $tth_dvy)))
+
+  (func $tth_project_original_high (param $zone_a i32) (param $a i32)
+        (param $zone_b i32) (param $b i32) (result i32)
+    (call $tth_dot_trunc
+      (i32.sub (call $tth_point_original_high_x (local.get $zone_a) (local.get $a))
+        (call $tth_point_original_high_x (local.get $zone_b) (local.get $b)))
+      (i32.sub (call $tth_point_original_high_y (local.get $zone_a) (local.get $a))
+        (call $tth_point_original_high_y (local.get $zone_b) (local.get $b)))
+      (global.get $tth_dvx) (global.get $tth_dvy)))
+
+  ;; Win98 retains sub-26.6 source precision for axis IP interpolation. A
+  ;; sloped dual vector has already been quantized to 2.14, so its historical
+  ;; path continues to use the instruction-visible 26.6 original points.
+  (func $tth_project_original_ip (param $zone_a i32) (param $a i32)
+        (param $zone_b i32) (param $b i32) (result i32)
+    (if (result i32) (i32.or (i32.eqz (global.get $tth_dvx))
+          (i32.eqz (global.get $tth_dvy)))
+      (then (call $tth_project_original_high (local.get $zone_a) (local.get $a)
+        (local.get $zone_b) (local.get $b)))
+      (else (call $tth_project_original (local.get $zone_a) (local.get $a)
+        (local.get $zone_b) (local.get $b)))))
 
   (func $tth_normalize (param $x i32) (param $y i32) (param $out i32)
         (result i32)
@@ -1190,22 +1225,17 @@
         (i32.lt_s (local.get $direction) (i32.const 0))))))
     (local.get $distance))
 
-  ;; MDRP/MIRP share reference-point updates. Win98 quantizes MIRP's fitted
-  ;; endpoint coordinates before subtraction, while MDRP/MSIRP project their
-  ;; current delta directly.
+  ;; MDRP/MIRP/MSIRP measure the current point-to-reference delta along the
+  ;; projection vector before applying the requested relative distance.
   (func $tth_relative_finish (param $point_index i32) (param $distance i32)
-        (param $set_rp0 i32) (param $measure_current i32) (result i32)
+        (param $set_rp0 i32) (result i32)
     (local $old_rp0 i32) (local $point i32) (local $current i32)
     (local.set $old_rp0 (global.get $tth_rp0))
     (local.set $point (call $tth_point (global.get $tth_zp1)
       (local.get $point_index)))
-    (if (local.get $measure_current)
-      (then (local.set $current (call $tth_measure_current
-        (global.get $tth_zp1) (local.get $point_index)
-        (global.get $tth_zp0) (local.get $old_rp0))))
-      (else (local.set $current (call $tth_project_current
-        (global.get $tth_zp1) (local.get $point_index)
-        (global.get $tth_zp0) (local.get $old_rp0)))))
+    (local.set $current (call $tth_project_current
+      (global.get $tth_zp1) (local.get $point_index)
+      (global.get $tth_zp0) (local.get $old_rp0)))
     (if (global.get $tth_error) (then (return (i32.const 0))))
     (if (i32.eqz (call $tth_move_projection (local.get $point)
           (i32.sub (local.get $distance) (local.get $current))))
@@ -1256,8 +1286,7 @@
           (local.get $original)))))
     (local.set $set_rp0 (i32.and (local.get $op) (i32.const 0x10)))
     (call $tth_relative_finish (local.get $point_index) (local.get $distance)
-      (local.get $set_rp0)
-      (i32.ge_u (local.get $op) (i32.const 0xE0))))
+      (local.get $set_rp0)))
 
   (func $tth_op_direct_point (result i32)
     (local $op i32) (local $point_index i32) (local $other i32)
@@ -1336,6 +1365,10 @@
               (i32.load (local.get $point)))
             (i32.store offset=12 (local.get $point)
               (i32.load offset=4 (local.get $point)))
+            (i32.store offset=20 (local.get $point)
+              (i32.shl (i32.load (local.get $point)) (i32.const 10)))
+            (i32.store offset=24 (local.get $point)
+              (i32.shl (i32.load offset=4 (local.get $point)) (i32.const 10)))
             (if (i32.and (local.get $op) (i32.const 1))
               (then
                 (local.set $current (call $tth_dot
@@ -1379,8 +1412,7 @@
         (local.set $point_index (call $tth_pop))
         (local.set $other (global.get $tth_rp0))
         (if (i32.eqz (call $tth_relative_finish (local.get $point_index)
-              (local.get $value) (i32.and (local.get $op) (i32.const 1))
-              (i32.const 0)))
+              (local.get $value) (i32.and (local.get $op) (i32.const 1))))
           (then (return (i32.const 0))))
         (global.set $tth_rp1 (local.get $other))
         (return (i32.const 1))))
@@ -1608,7 +1640,7 @@
     (local $count i32) (local $point_index i32)
     (local $old_range i32) (local $new_range i32) (local $old_offset i32)
     (local $new_offset i32) (local $current i32)
-    (local.set $old_range (call $tth_project_original (global.get $tth_zp1)
+    (local.set $old_range (call $tth_project_original_ip (global.get $tth_zp1)
       (global.get $tth_rp2) (global.get $tth_zp0) (global.get $tth_rp1)))
     (local.set $new_range (call $tth_project_current (global.get $tth_zp1)
       (global.get $tth_rp2) (global.get $tth_zp0) (global.get $tth_rp1)))
@@ -1616,7 +1648,7 @@
     (block $done (loop $points
       (br_if $done (i32.eqz (local.get $count)))
       (local.set $point_index (call $tth_pop))
-      (local.set $old_offset (call $tth_project_original (global.get $tth_zp2)
+      (local.set $old_offset (call $tth_project_original_ip (global.get $tth_zp2)
         (local.get $point_index) (global.get $tth_zp0) (global.get $tth_rp1)))
       (local.set $new_offset (i32.const 0))
       (if (i32.ne (local.get $old_range) (i32.const 0))
@@ -2167,9 +2199,9 @@
     (local $arena i32)
     (local.set $arena (call $g2w (global.get $tth_arena_guest)))
     (global.set $tth_points (local.get $arena))
-    (global.set $tth_stack (i32.add (local.get $arena) (i32.const 0x3000)))
-    (global.set $tth_calls (i32.add (local.get $arena) (i32.const 0x5000)))
-    (global.set $tth_temp (i32.add (local.get $arena) (i32.const 0x5F00))))
+    (global.set $tth_stack (i32.add (local.get $arena) (i32.const 0x4000)))
+    (global.set $tth_calls (i32.add (local.get $arena) (i32.const 0x6000)))
+    (global.set $tth_temp (i32.add (local.get $arena) (i32.const 0x6F00))))
 
   (func $tth_find_size (param $data i32) (param $size i32) (param $ppem i32)
         (result i32)
@@ -2439,9 +2471,16 @@
     (i32.mul (call $gdi_round_ratio (i64.extend_i32_s (local.get $linear))
       (i64.const 64)) (i32.const 64)))
 
+  (func $tth_fu_to_16_16 (param $value i32) (result i32)
+    (i32.wrap_i64 (i64.div_s
+      (i64.mul (i64.extend_i32_s (local.get $value))
+        (i64.mul (i64.extend_i32_s (global.get $tth_ppem)) (i64.const 65536)))
+      (i64.extend_i32_s (global.get $tth_upem)))))
+
   (func $tth_load_outline (param $data i32) (param $size i32) (param $gid i32)
         (param $compact i32) (param $count i32) (result i32)
     (local $index i32) (local $point i32) (local $x i32) (local $y i32)
+    (local $high_x i32) (local $high_y i32)
     (local $flags i32) (local $left i32) (local $advance i32)
     (local $head i32) (local $head_length i32)
     (if (i32.gt_u (i32.add (local.get $count) (i32.const 4))
@@ -2452,6 +2491,10 @@
     (block $done (loop $points
       (br_if $done (i32.ge_u (local.get $index) (local.get $count)))
       (local.set $point (call $tth_point (i32.const 1) (local.get $index)))
+      (local.set $high_x (call $tth_fu_to_16_16
+        (call $tt_point_x (local.get $compact) (local.get $index))))
+      (local.set $high_y (call $tth_fu_to_16_16
+        (call $tt_point_y (local.get $compact) (local.get $index))))
       (local.set $x (call $tt_fu_to_26_6 (call $tt_point_x (local.get $compact)
         (local.get $index)) (global.get $tth_ppem) (global.get $tth_upem)))
       (local.set $y (call $tt_fu_to_26_6 (call $tt_point_y (local.get $compact)
@@ -2466,6 +2509,8 @@
       (i32.store offset=8 (local.get $point) (local.get $x))
       (i32.store offset=12 (local.get $point) (local.get $y))
       (i32.store offset=16 (local.get $point) (local.get $flags))
+      (i32.store offset=20 (local.get $point) (local.get $high_x))
+      (i32.store offset=24 (local.get $point) (local.get $high_y))
       (local.set $index (i32.add (local.get $index) (i32.const 1)))
       (br $points)))
     (local.set $left (call $tt_fu_to_26_6
@@ -2510,6 +2555,9 @@
       (i32.store offset=8 (local.get $point) (local.get $x))
       (i32.store offset=12 (local.get $point) (i32.const 0))
       (i32.store offset=16 (local.get $point) (i32.const 0))
+      (i32.store offset=20 (local.get $point)
+        (i32.shl (local.get $x) (i32.const 10)))
+      (i32.store offset=24 (local.get $point) (i32.const 0))
       (local.set $index (i32.add (local.get $index) (i32.const 1)))
       (br $phantom)))
     (global.set $tth_glyph_advance (local.get $advance))
@@ -2629,6 +2677,10 @@
             (i32.store offset=12 (local.get $dst) (local.get $ty))
             (i32.store offset=16 (local.get $dst)
               (i32.and (i32.load offset=16 (local.get $src)) (i32.const 3)))
+            (i32.store offset=20 (local.get $dst)
+              (i32.shl (local.get $tx) (i32.const 10)))
+            (i32.store offset=24 (local.get $dst)
+              (i32.shl (local.get $ty) (i32.const 10)))
             (local.set $index (i32.add (local.get $index) (i32.const 1)))
             (br $copy)))
 
@@ -2691,6 +2743,10 @@
             (i32.store offset=8 (local.get $dst) (i32.load (local.get $dst)))
             (i32.store offset=12 (local.get $dst)
               (i32.load offset=4 (local.get $dst)))
+            (i32.store offset=20 (local.get $dst)
+              (i32.shl (i32.load (local.get $dst)) (i32.const 10)))
+            (i32.store offset=24 (local.get $dst)
+              (i32.shl (i32.load offset=4 (local.get $dst)) (i32.const 10)))
             (local.set $index (i32.add (local.get $index) (i32.const 1)))
             (br $translate)))
 
@@ -2726,6 +2782,10 @@
                 (i32.store offset=12 (local.get $dst)
                   (i32.load offset=4 (local.get $dst)))
                 (i32.store offset=16 (local.get $dst) (i32.const 0))
+                (i32.store offset=20 (local.get $dst)
+                  (i32.shl (i32.load (local.get $dst)) (i32.const 10)))
+                (i32.store offset=24 (local.get $dst)
+                  (i32.shl (i32.load offset=4 (local.get $dst)) (i32.const 10)))
                 (local.set $index (i32.add (local.get $index) (i32.const 1)))
                 (br $metrics)))))
           (local.set $total (i32.add (local.get $total) (local.get $count)))))
