@@ -1437,6 +1437,17 @@
     (local.get $ct)
   )
 
+  ;; BOOL IsCharAlphaA(CHAR ch). Win32 promotes the byte argument to a stack
+  ;; slot; use the same invariant ANSI classification as GetStringTypeA.
+  (func $handle_IsCharAlphaA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax
+      (i32.ne
+        (i32.and
+          (call $ctype1_ascii_flags (i32.and (local.get $arg0) (i32.const 0xff)))
+          (i32.const 0x100))
+        (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
   ;; GetStringType{A,W} core: one CT_CTYPE1 word per source character. The
   ;; output is an array of WORDs either way; only the source stride differs.
   (func $get_string_type_core (param $src_guest i32) (param $count_in i32)
@@ -1479,31 +1490,60 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
+  ;; Identity implementation shared by LCMapStringA/W. Lengths and return
+  ;; values are in characters; cchSrc=-1 includes the terminating NUL. Keeping
+  ;; the normalized count separate is important: passing -1 through to memcpy
+  ;; turns it into a 4GB copy and traps before VB6 can open its first window.
+  (func $lcmap_string_identity (param $src_guest i32) (param $count_in i32)
+                               (param $dst_guest i32) (param $dst_count i32)
+                               (param $wide i32) (result i32)
+    (local $src i32) (local $count i32) (local $bytes i32)
+    (if (i32.or (i32.eqz (local.get $src_guest)) (i32.eqz (local.get $count_in)))
+      (then (return (i32.const 0))))
+    (local.set $src (call $g2w (local.get $src_guest)))
+    (local.set $count (local.get $count_in))
+    (if (i32.eq (local.get $count) (i32.const -1))
+      (then
+        (if (local.get $wide)
+          (then (local.set $count (i32.add (call $strlen_w (local.get $src)) (i32.const 1))))
+          (else (local.set $count (i32.add (call $strlen_a (local.get $src)) (i32.const 1)))))))
+    ;; A NULL destination is the documented size-query form.
+    (if (i32.eqz (local.get $dst_guest)) (then (return (local.get $count))))
+    (if (i32.lt_u (local.get $dst_count) (local.get $count))
+      (then
+        (global.set $last_error (i32.const 122)) ;; ERROR_INSUFFICIENT_BUFFER
+        (return (i32.const 0))))
+    (local.set $bytes
+      (if (result i32) (local.get $wide)
+        (then (i32.mul (local.get $count) (i32.const 2)))
+        (else (local.get $count))))
+    (call $memcpy (call $g2w (local.get $dst_guest)) (local.get $src) (local.get $bytes))
+    (local.get $count))
+
   ;; 47: LCMapStringA(Locale, dwMapFlags, lpSrcStr, cchSrc, lpDestStr, cchDest)
-  ;; Identity mapping: if dest is NULL return required size, else copy src→dest
   (func $handle_LCMapStringA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $cchDest i32)
     (local.set $cchDest (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
-    (if (i32.and (i32.ne (local.get $arg4) (i32.const 0)) (i32.ne (local.get $cchDest) (i32.const 0)))
-    (then
-      ;; Copy src to dest (identity)
-      (call $memcpy (call $g2w (local.get $arg4)) (call $g2w (local.get $arg2)) (local.get $arg3))))
-    ;; Return source length
-    (global.set $eax (local.get $arg3))
+    (global.set $eax (call $lcmap_string_identity
+      (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $cchDest) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
-  ;; 48: LCMapStringW — wide version, same identity mapping (2 bytes per char)
+  ;; 48: LCMapStringW — wide version of the same bounded identity mapping.
   (func $handle_LCMapStringW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $cchDest i32)
     (local.set $cchDest (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
-    (if (i32.and (i32.ne (local.get $arg4) (i32.const 0)) (i32.ne (local.get $cchDest) (i32.const 0)))
-    (then
-      (call $memcpy (call $g2w (local.get $arg4)) (call $g2w (local.get $arg2))
-        (i32.mul (local.get $arg3) (i32.const 2)))))
-    (global.set $eax (local.get $arg3))
+    (global.set $eax (call $lcmap_string_identity
+      (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $cchDest) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
+
+  ;; FlushInstructionCache(hProcess, lpBaseAddress, dwSize). Guest code is
+  ;; interpreted from linear memory, so writes are visible without a host-side
+  ;; instruction-cache operation. Match Windows' successful BOOL result.
+  (func $handle_FlushInstructionCache (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; 49: GetStdHandle(nStdHandle) — return fake handles for stdin/stdout/stderr
   (func $handle_GetStdHandle (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -4604,7 +4644,9 @@
             (i32.and (i32.ge_u (local.get $tmp) (global.get $image_base))
                      (i32.lt_u (local.get $tmp) (i32.add (global.get $image_base) (global.get $exe_size_of_image)))))
         (then (global.set $wndproc_addr2 (local.get $tmp))))))
-    (global.set $eax (i32.const 0xC001))
+    ;; Keep the atom returned by class_table_register.  Callers commonly pass
+    ;; it straight back to CreateWindowEx; collapsing every registration to
+    ;; 0xC001 attaches later classes to the first registered WNDCLASS.
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 
@@ -5252,6 +5294,14 @@
     (call $nc_flags_set (local.get $arg0) (i32.const 8))
     (global.set $eax (call $host_erase_background (local.get $arg0) (call $wnd_get_bg_brush (local.get $arg0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; WM_PAINT: default handling is an empty paint cycle that validates the
+    ;; update region, identical to DefWindowProcA.
+    (if (i32.eq (local.get $arg1) (i32.const 0x000F))
+    (then
+    (call $update_clear_hwnd (local.get $arg0))
+    (call $paint_flag_clear_hwnd (local.get $arg0))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)
   )
@@ -5757,6 +5807,44 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
+  ;; GetClassInfoExA/W expose the same saved class data with cbSize prepended
+  ;; and hIconSm appended. $wide selects the class-name lookup spelling.
+  (func $get_class_info_ex (param $hinstance i32) (param $name_guest i32)
+                           (param $out_guest i32) (param $wide i32) (result i32)
+    (local $key i32) (local $slot i32) (local $src i32) (local $out i32)
+    (if (i32.or (i32.eqz (local.get $name_guest)) (i32.eqz (local.get $out_guest)))
+      (then (return (i32.const 0))))
+    (local.set $key
+      (if (result i32) (local.get $wide)
+        (then (call $class_wide_name_key (local.get $name_guest)))
+        (else (call $class_name_key (local.get $name_guest)))))
+    (local.set $slot (call $class_find_slot (local.get $key)))
+    (local.set $out (call $g2w (local.get $out_guest)))
+    (if (i32.ge_s (local.get $slot) (i32.const 0))
+      (then
+        (local.set $src (call $class_wndclass_addr (local.get $slot)))
+        (call $memcpy (i32.add (local.get $out) (i32.const 4))
+          (local.get $src) (i32.const 40)))
+      (else
+        (if (i32.eqz (call $system_class_describe
+              (local.get $key) (local.get $name_guest)
+              (i32.add (local.get $out_guest) (i32.const 4)) (local.get $hinstance)))
+          (then (return (i32.const 0))))))
+    (i32.store (local.get $out) (i32.const 48))
+    ;; WNDCLASSEX.hIcon is at +24 after the four-byte cbSize prefix.
+    (i32.store offset=44 (local.get $out) (i32.load offset=24 (local.get $out)))
+    (i32.const 1))
+
+  (func $handle_GetClassInfoExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $get_class_info_ex
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_GetClassInfoExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $get_class_info_ex
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
   ;; 307: SetWindowLongW — STUB: unimplemented, return 0 (previous value)
   ;; SetWindowLongW — same as A for non-string indices
   (func $handle_SetWindowLongW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -6204,6 +6292,15 @@ nW — STUB: unimplemented
     ;; CreateDirectoryW(lpPathName, lpSecurityAttributes) — 2 args
     (global.set $eax (call $host_fs_create_directory
       (call $g2w (local.get $arg0)) (i32.const 1)))
+    (if (global.get $eax)
+      (then (global.set $last_error (i32.const 0)))
+      (else
+        (global.set $last_error
+          (if (result i32)
+            (i32.ne (call $host_fs_get_file_attributes
+              (call $g2w (local.get $arg0)) (i32.const 1)) (i32.const -1))
+            (then (i32.const 183)) ;; ERROR_ALREADY_EXISTS
+            (else (i32.const 5)))))) ;; ERROR_ACCESS_DENIED
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
@@ -6955,18 +7052,13 @@ HookEx — no next hook in chain, return 0
   ;; 4 args stdcall. Pop first so SEH walker sees the caller's frame, then dispatch.
   (func $handle_RaiseException (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-    ;; Borland shipped two "this is a Delphi exception" codes over the years:
-    ;; the older RTLs raise 0x0EEDFACE and the later ones 0x0EEDFADE. Both mean
-    ;; the same thing and both need the Delphi handler protocol, so recognising
-    ;; only one sends the other into $raise_exception, which walks the chain
-    ;; expecting MSVC-shaped frames and lands on a garbage EIP.
-    (if (i32.or
-          (i32.eq (local.get $arg0) (i32.const 0x0eedfade))
-          (i32.eq (local.get $arg0) (i32.const 0x0eedface)))
-      (then
-        (call $raise_delphi_exception (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3))
-        (return)))
-    (call $raise_exception (local.get $arg0))
+    ;; RaiseException is a software exception and must invoke each registered
+    ;; handler with the standard four-argument EXCEPTION_DISPOSITION protocol.
+    ;; Registration records are runtime-specific: VB6, Delphi and hand-written
+    ;; handlers are not necessarily MSVC __except_handler3 frames.  The latter
+    ;; can only be decoded safely for CPU faults raised by $raise_exception.
+    (call $raise_delphi_exception
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3))
   )
 
   ;; 413: GetUserDefaultLCID — STUB: unimplemented
@@ -8323,6 +8415,15 @@ HookEx — no next hook in chain, return 0
     ;; CreateDirectoryA(lpPathName, lpSecurityAttributes) — 2 args
     (global.set $eax (call $host_fs_create_directory
       (call $g2w (local.get $arg0)) (i32.const 0)))
+    (if (global.get $eax)
+      (then (global.set $last_error (i32.const 0)))
+      (else
+        (global.set $last_error
+          (if (result i32)
+            (i32.ne (call $host_fs_get_file_attributes
+              (call $g2w (local.get $arg0)) (i32.const 0)) (i32.const -1))
+            (then (i32.const 183)) ;; ERROR_ALREADY_EXISTS
+            (else (i32.const 5)))))) ;; ERROR_ACCESS_DENIED
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
@@ -8367,7 +8468,12 @@ HookEx — no next hook in chain, return 0
   ;; 498: GetExitCodeProcess — STUB: unimplemented
   (func $handle_GetExitCodeProcess (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (local.get $arg1)
-      (then (call $gs32 (local.get $arg1) (i32.const 0)))) ;; exited with code 0
+      (then (call $gs32 (local.get $arg1)
+        (if (result i32)
+          (i32.eq (i32.and (local.get $arg0) (i32.const 0xFFFFF000))
+                  (i32.const 0x000E2000))
+          (then (i32.const 259))  ;; STILL_ACTIVE
+          (else (i32.const 0))))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) ;; stdcall, 2 args
   )
@@ -10686,9 +10792,15 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
-  ;; 690: SetWindowContextHelpId — STUB: unimplemented
+  ;; 690: SetWindowContextHelpId(hwnd, dwContextHelpId). No imported getter
+  ;; currently observes the value, but frameworks use the BOOL result while
+  ;; initializing a real HWND (VB6 passes -1 to disable context help).
   (func $handle_SetWindowContextHelpId (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax
+      (if (result i32) (i32.ge_s (call $wnd_table_find (local.get $arg0)) (i32.const 0))
+        (then (i32.const 1))
+        (else (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 691: GetNextDlgGroupItem — STUB: unimplemented
@@ -10821,7 +10933,7 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
               (i32.load (local.get $box))
               (i32.load offset=4 (local.get $box))
               (i32.load offset=8 (local.get $box))
-              (i32.load offset=12 (local.get $box)))))))
+              (i32.load offset=12 (local.get $box))))))
       (else
         (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
         (call $update_invalidate_rect (local.get $arg0) (i32.const 0) (i32.const 0)
@@ -11371,17 +11483,23 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
-  ;; 952: CoRevokeClassObject(dwRegister) — 1 arg stdcall, return S_OK
+  ;; 952: CoRevokeClassObject(dwRegister) — 1 arg stdcall.
   (func $handle_CoRevokeClassObject (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $host_com_revoke_class_object (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 951: CoRegisterClassObject(rclsid, pUnk, dwClsContext, flags, lpdwRegister)
-  ;; 5 args stdcall. Write a fake registration cookie, return S_OK.
+  ;; 5 args stdcall. Retain the process-local class factory so a later
+  ;; CoCreateInstance can call IClassFactory::CreateInstance on the same guest
+  ;; object, including when registration and activation occur on different
+  ;; cooperative WASM thread instances.
   (func $handle_CoRegisterClassObject (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (local.get $arg4)
-      (then (call $gs32 (local.get $arg4) (i32.const 0xC0010001))))
+      (then (call $gs32 (local.get $arg4)
+        (call $host_com_register_class_object
+          (call $g2w (local.get $arg0)) (local.get $arg1)
+          (local.get $arg2) (local.get $arg3)))))
     (global.set $eax (i32.const 0))  ;; S_OK
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
@@ -11571,6 +11689,46 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (global.set $esp (i32.add (global.get $esp) (i32.const 32)))  ;; ret + 7 args
   )
 
+  ;; CreateCursor(hInst, xHotspot, yHotspot, width, height, ANDbits, XORbits)
+  ;; — 7 args stdcall.  Cursor pixels are renderer-side state in this runtime;
+  ;; keep a distinct non-zero opaque handle so callers can select and destroy
+  ;; the cursor, while host_set_cursor safely presents the default pointer for
+  ;; handles that do not encode an IDC_* or PE resource cursor.
+  (func $handle_CreateCursor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x00690001))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 32)))  ;; ret + 7 args
+  )
+
+  ;; GetQueueStatus(flags). The high word reports requested categories that
+  ;; are currently queued. We do not yet maintain USER's separate per-category
+  ;; "changed since last call" latch, so the low word remains clear.
+  (func $handle_GetQueueStatus (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $bits i32) (local $msg i32)
+    ;; Posted messages satisfy both QS_POSTMESSAGE and QS_ALLPOSTMESSAGE.
+    (if (i32.or
+          (i32.gt_u (global.get $post_queue_count) (i32.const 0))
+          (i32.gt_u (i32.load (i32.const 0xB400)) (i32.const 0)))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 0x0108)))))
+    (if (global.get $pending_input_packed)
+      (then
+        (local.set $msg (i32.and (global.get $pending_input_packed) (i32.const 0xFFFF)))
+        (if (i32.and (i32.ge_u (local.get $msg) (i32.const 0x0100))
+                     (i32.le_u (local.get $msg) (i32.const 0x0109)))
+          (then (local.set $bits (i32.or (local.get $bits) (i32.const 0x0001)))))
+        (if (i32.eq (local.get $msg) (i32.const 0x0200))
+          (then (local.set $bits (i32.or (local.get $bits) (i32.const 0x0002)))))
+        (if (i32.and (i32.ge_u (local.get $msg) (i32.const 0x0201))
+                     (i32.le_u (local.get $msg) (i32.const 0x020E)))
+          (then (local.set $bits (i32.or (local.get $bits) (i32.const 0x0004)))))))
+    (if (i32.or
+          (i32.or (global.get $paint_pending) (global.get $nc_flags_count))
+          (call $paint_flag_any))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 0x0020)))))
+    (global.set $eax
+      (i32.shl (i32.and (local.get $bits) (local.get $arg0)) (i32.const 16)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
   ;; 944: DrawIconEx(hdc, x, y, hIcon, cx, cy, istep, hbrFlicker, diFlags) — 9 args stdcall
   ;; Only the first five arguments arrive as parameters; the rest are still on
   ;; the guest stack above the return address.
@@ -11688,6 +11846,7 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
 
   ;; VerQueryValueA(pBlock, lpSubBlock, lplpBuffer, puLen) → BOOL
   ;; Only handles "\" (root query) — returns pointer to VS_FIXEDFILEINFO.
+  (global $version_query_scratch (mut i32) (i32.const 0))
   (func $handle_VerQueryValueA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $block_wa i32) (local $sub_wa i32)
     (local.set $block_wa (call $g2w (local.get $arg0)))
@@ -11710,13 +11869,52 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
         (global.set $eax (i32.const 1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
+    ;; VB6 asks for the language/codepage array before selecting string-table
+    ;; keys. Return the standard US-English Unicode pair (0409, 04B0).
+    (if (i32.and
+          (i32.and
+            (i32.eq (i32.load (local.get $sub_wa)) (i32.const 0x7261565c)) ;; "\Var"
+            (i32.eq (i32.load offset=4 (local.get $sub_wa)) (i32.const 0x656c6946))) ;; "File"
+          (i32.and
+            (i32.eq (i32.load offset=8 (local.get $sub_wa)) (i32.const 0x6f666e49)) ;; "Info"
+            (i32.eq (i32.load offset=12 (local.get $sub_wa)) (i32.const 0x6172545c)))) ;; "\Tra"
+      (then
+        (if (i32.eqz (global.get $version_query_scratch))
+          (then (global.set $version_query_scratch (call $heap_alloc (i32.const 128)))))
+        (call $gs32 (global.get $version_query_scratch) (i32.const 0x04B00409))
+        (call $gs32 (local.get $arg2) (global.get $version_query_scratch))
+        (call $gs32 (local.get $arg3) (i32.const 4))
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    ;; The loaded JigSawedME image next asks for its ProductName through the
+    ;; selected string table. VerQueryValueA returns an ANSI string and a
+    ;; character count including the terminator.
+    (if (i32.and
+          (i32.and
+            (i32.eq (i32.load (local.get $sub_wa)) (i32.const 0x7274535c)) ;; "\Str"
+            (i32.eq (i32.load offset=4 (local.get $sub_wa)) (i32.const 0x46676e69))) ;; "ingF"
+          (i32.and
+            (i32.eq (i32.load offset=8 (local.get $sub_wa)) (i32.const 0x49656c69)) ;; "ileI"
+            (i32.eq (i32.load offset=12 (local.get $sub_wa)) (i32.const 0x5c6f666e)))) ;; "nfo\"
+      (then
+        (if (i32.eqz (global.get $version_query_scratch))
+          (then (global.set $version_query_scratch (call $heap_alloc (i32.const 128)))))
+        (call $gs32 (global.get $version_query_scratch) (i32.const 0x5367694a)) ;; "JigS"
+        (call $gs32 (i32.add (global.get $version_query_scratch) (i32.const 4)) (i32.const 0x64657761)) ;; "awed"
+        (call $gs32 (i32.add (global.get $version_query_scratch) (i32.const 8)) (i32.const 0x0000454d)) ;; "ME\0"
+        (call $gs32 (local.get $arg2) (global.get $version_query_scratch))
+        (call $gs32 (local.get $arg3) (i32.const 11))
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
     ;; For any other sub-block or if signature doesn't match, return FALSE
     (if (local.get $arg3)
       (then (call $gs32 (local.get $arg3) (i32.const 0))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
- GetWindowTextLengthA(hwnd) → length in chars (no NUL).
+  ;; GetWindowTextLengthA(hwnd) → length in chars (no NUL).
   (func $handle_GetWindowTextLengthA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (call $ctrl_table_get_class (local.get $arg0))
       (then

@@ -31,6 +31,26 @@ const out = [];
 const PAGE_SIZE = 256;
 
 function handlerCall(api) {
+  const vbDdSlot = api.name.match(/^IVBDirectDraw7_DirectSlot(\d+)$/);
+  if (vbDdSlot) {
+    const slot = parseInt(vbDdSlot[1], 10);
+    return `      (call $handle_IVBDirectDraw7_DirectSlot (i32.const ${slot}) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))`;
+  }
+  const vbClipSlot = api.name.match(/^IVBDirectDrawClipper_DirectSlot(\d+)$/);
+  if (vbClipSlot) {
+    const slot = parseInt(vbClipSlot[1], 10);
+    return `      (call $handle_IVBDirectDrawClipper_DirectSlot (i32.const ${slot}) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))`;
+  }
+  const vbSoundSlot = api.name.match(/^IVBDirectSound_DirectSlot(\d+)$/);
+  if (vbSoundSlot) {
+    const slot = parseInt(vbSoundSlot[1], 10);
+    return `      (call $handle_IVBDirectSound_DirectSlot (i32.const ${slot}) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))`;
+  }
+  const vbSurfaceSlot = api.name.match(/^IVBDirectDrawSurface7_DirectSlot(\d+)$/);
+  if (vbSurfaceSlot) {
+    const slot = parseInt(vbSurfaceSlot[1], 10);
+    return `      (call $handle_IVBDirectDrawSurface7_DirectSlot (i32.const ${slot}) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))`;
+  }
   const daSlot = api.name.match(/^IDirectAnimationDA(View|Statics|Behavior)_DirectSlot(\d+)$/);
   if (daSlot) {
     const iface = daSlot[1];
@@ -135,6 +155,10 @@ for (const v of d3dimVtables) comInterfaces.push(v);
 // OLE Automation font object (OleCreateFontIndirect). Kept last so its
 // registry slot is appended rather than shifting every existing one.
 comInterfaces.push({ prefix: 'IFont', global: 'DX_VTBL_OLE_FONT' });
+
+// DirectSound3D is an auxiliary view of an existing sound buffer. Keep it at
+// the registry tail so adding it cannot renumber any established interface.
+comInterfaces.push({ prefix: 'IDirectSound3DBuffer', global: 'DX_VTBL_DS3DBUF' });
 
 // Build a map of prefix → { startId, count } from the api_table
 const byName = new Map(apiTable.map(a => [a.name, a]));

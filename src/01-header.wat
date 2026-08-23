@@ -747,6 +747,10 @@
   (import "host" "voice_set_volume_db" (func $host_voice_set_volume_db (param i32 i32)))
   (import "host" "voice_set_pan" (func $host_voice_set_pan (param i32 i32)))
   (import "host" "voice_set_freq" (func $host_voice_set_freq (param i32 i32)))
+  ;; DirectSound3D float values cross as raw i32 bit patterns. Property 0/3/8
+  ;; carries a vector, 6 cone angles, 11 cone volume, 12/13 distances, 14 mode.
+  (import "host" "voice_3d_set" (func $host_voice_3d_set (param i32 i32 i32 i32 i32)))
+  (import "host" "voice_3d_get" (func $host_voice_3d_get (param i32 i32) (result i32)))
 
   ;; --- Virtual LAN wire (docs/virtual-lan-party.md) ---------------------
   ;; The room switch lives in WAT; the host only carries opaque vln/1 frames

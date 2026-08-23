@@ -993,25 +993,51 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)
   )
 
+  ;; Shared ANSI message-box presentation. $stack_advance differs between the
+  ;; ordinary four-argument API and MessageBoxIndirectA's structure argument.
+  (func $handle_MessageBoxA_core (param $owner i32) (param $text i32)
+                                 (param $caption i32) (param $type i32)
+                                 (param $stack_advance i32)
+    (local $dlg i32) (local $cap_wa i32)
+    (call $modal_capture_nonvolatile)
+    ;; Log via existing host hook so traces still show the text.
+    (drop (call $host_message_box (local.get $owner)
+      (call $g2w (local.get $text)) (call $g2w (local.get $caption)) (local.get $type)))
+    (local.set $dlg (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (local.set $cap_wa
+      (select (call $g2w (local.get $caption)) (i32.const 0) (local.get $caption)))
+    (call $create_msgbox_dialog
+      (local.get $dlg) (local.get $owner)
+      (local.get $cap_wa) (call $g2w (local.get $text))
+      (local.get $type))
+    (call $modal_begin (local.get $dlg) (local.get $stack_advance)))
+
   ;; 69: MessageBoxA(hWnd, lpText, lpCaption, uType) — build a real modal
   ;; via $create_msgbox_dialog + $modal_begin. Result code (IDOK/IDCANCEL/...)
   ;; is delivered into EAX through the CACA0006 modal pump when the user
   ;; (or a test driver) clicks a button.
   (func $handle_MessageBoxA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dlg i32) (local $cap_wa i32)
-    (call $modal_capture_nonvolatile)
-    ;; Log via existing host hook so traces still show the text.
-    (drop (call $host_message_box (local.get $arg0)
-      (call $g2w (local.get $arg1)) (call $g2w (local.get $arg2)) (local.get $arg3)))
-    (local.set $dlg (global.get $next_hwnd))
-    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
-    (local.set $cap_wa
-      (select (call $g2w (local.get $arg2)) (i32.const 0) (local.get $arg2)))
-    (call $create_msgbox_dialog
-      (local.get $dlg) (local.get $arg0)
-      (local.get $cap_wa) (call $g2w (local.get $arg1))
-      (local.get $arg3))
-    (call $modal_begin (local.get $dlg) (i32.const 20)))
+    (call $handle_MessageBoxA_core (local.get $arg0) (local.get $arg1)
+      (local.get $arg2) (local.get $arg3) (i32.const 20)))
+
+  ;; MessageBoxIndirectA(lpMsgBoxParams). MSGBOXPARAMSA is ten DWORDs; icon,
+  ;; help callback/context, and language affect decoration/notifications but
+  ;; not the owner/text/caption/button behavior this renderer implements.
+  (func $handle_MessageBoxIndirectA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $p i32)
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (local.set $p (call $g2w (local.get $arg0)))
+    (call $handle_MessageBoxA_core
+      (i32.load offset=4 (local.get $p))
+      (i32.load offset=12 (local.get $p))
+      (i32.load offset=16 (local.get $p))
+      (i32.load offset=20 (local.get $p))
+      (i32.const 8)))
 
   ;; 70: MessageBeep(uType) — play system sound via host
   (func $handle_MessageBeep (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -2086,6 +2112,16 @@
     (if (i32.eq (local.get $arg1) (i32.const 0x0014))
     (then
     (global.set $eax (call $host_erase_background (local.get $arg0) (call $wnd_get_bg_brush (local.get $arg0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; WM_PAINT (0x0F): the default procedure performs an empty BeginPaint /
+    ;; EndPaint cycle. Its visible effect is validation: runtimes such as VB6
+    ;; deliberately chain windows with no paint handler here, and leaving the
+    ;; update region dirty makes PeekMessage return that same WM_PAINT forever.
+    (if (i32.eq (local.get $arg1) (i32.const 0x000F))
+    (then
+    (call $update_clear_hwnd (local.get $arg0))
+    (call $paint_flag_clear_hwnd (local.get $arg0))
+    (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; WM_NCPAINT (0x85): redraw chrome.  Handler reads title/style/flags
     ;; from WAT-side tables and paints into the back-canvas.

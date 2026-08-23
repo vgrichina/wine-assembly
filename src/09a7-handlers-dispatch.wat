@@ -1039,6 +1039,88 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
+  ;; Park a COM activation at its import thunk while JS loads an in-proc
+  ;; server. Keeping the stdcall frame untouched lets the normal handler retry
+  ;; once the DLL exists, without re-executing the guest PUSH/CALL block and
+  ;; walking ESP downward inside the same run slice.
+  (func $com_dll_block
+    (if (global.get $current_thunk_eip)
+      (then (global.set $eip (global.get $current_thunk_eip))))
+    (global.set $handler_set_eip (i32.const 1))
+    (global.set $yield_reason (i32.const 3))
+    (global.set $yield_flag (i32.const 1))
+    (global.set $steps (i32.const 0)))
+
+  ;; Built-in class factory for the standard VB6 Common Dialog control. The
+  ;; actual COMDLG32.OCX is not shipped in the corpus; its non-visual OLE host
+  ;; surface can use the bounded static OLE object already used by OleLoad.
+  ;; Factory layout: vtbl, refcount, CLSID[16].
+  (func $common_dialog_factory_create (param $clsid i32) (result i32)
+    (local $obj i32) (local $vtbl i32)
+    (local.set $vtbl (call $init_com_vtable (i32.const 2512) (i32.const 5)))
+    (if (i32.eqz (local.get $vtbl)) (then (return (i32.const 0))))
+    (local.set $obj (call $heap_alloc (i32.const 24)))
+    (if (i32.eqz (local.get $obj)) (then (return (i32.const 0))))
+    (call $zero_memory (call $g2w (local.get $obj)) (i32.const 24))
+    (call $gs32 (local.get $obj) (local.get $vtbl))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 4)) (i32.const 1))
+    (memory.copy (call $g2w (i32.add (local.get $obj) (i32.const 8)))
+      (call $g2w (local.get $clsid)) (i32.const 16))
+    (local.get $obj))
+
+  (func $handle_IClassFactory_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $iid_d1 i32)
+    (if (i32.eqz (local.get $arg2))
+      (then (global.set $eax (i32.const 0x80004003)))
+      (else
+        (local.set $iid_d1 (call $gl32 (local.get $arg1)))
+        (if (i32.or (i32.eqz (local.get $iid_d1)) (i32.eq (local.get $iid_d1) (i32.const 1)))
+          (then
+            (call $gs32 (local.get $arg2) (local.get $arg0))
+            (call $gs32 (i32.add (local.get $arg0) (i32.const 4))
+              (i32.add (call $gl32 (i32.add (local.get $arg0) (i32.const 4))) (i32.const 1)))
+            (global.set $eax (i32.const 0)))
+          (else
+            (call $gs32 (local.get $arg2) (i32.const 0))
+            (global.set $eax (i32.const 0x80004002))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_IClassFactory_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.add (call $gl32 (i32.add (local.get $arg0) (i32.const 4))) (i32.const 1)))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (global.get $eax))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_IClassFactory_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $rc i32)
+    (local.set $rc (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
+    (if (local.get $rc) (then (local.set $rc (i32.sub (local.get $rc) (i32.const 1)))))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (local.get $rc))
+    (global.set $eax (local.get $rc))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_IClassFactory_CreateInstance (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $obj i32) (local $hr i32)
+    (if (i32.eqz (local.get $arg3))
+      (then (global.set $eax (i32.const 0x80004003)))
+      (else
+        (call $gs32 (local.get $arg3) (i32.const 0))
+        (if (local.get $arg1)
+          (then (global.set $eax (i32.const 0x80040110)))
+          (else
+            (local.set $obj (call $ole_create_static_handler (i32.add (local.get $arg0) (i32.const 8))))
+            (if (i32.eqz (local.get $obj))
+              (then (global.set $eax (i32.const 0x8007000E)))
+              (else
+                (local.set $hr (call $ole_static_query_interface
+                  (local.get $obj) (local.get $arg2) (local.get $arg3)))
+                (drop (call $ole_obj_release (local.get $obj)))
+                (global.set $eax (local.get $hr))))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
+  (func $handle_IClassFactory_LockServer (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
   ;; 769: CoCreateInstance(rclsid, pUnkOuter, dwClsContext, riid, ppv) — 5 args stdcall
   (func $handle_CoCreateInstance (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $hr i32) (local $clsid_d1 i32) (local $obj_guest i32)
@@ -1046,6 +1128,23 @@
     ;; from ddrawex.dll. Used by CORBIS/FASHION/HORROR/WOTRAVEL screensavers; we
     ;; manufacture an IDirectDrawFactory directly so the guest never needs the DLL.
     (local.set $clsid_d1 (call $gl32 (local.get $arg0)))
+    ;; CLSID_DirectX7 {E1211353-8E94-11D1-8808-00C04FC2C602}, the VB6
+    ;; DX7VB automation bootstrap. Its first direct method manufactures the
+    ;; existing IDirectDraw7-compatible wrapper.
+    (if (i32.eq (local.get $clsid_d1) (i32.const 0xE1211353))
+      (then
+        (local.set $obj_guest (call $dx_create_com_obj
+          (i32.const 32) (call $init_com_vtable (i32.const 2526) (i32.const 7))))
+        (if (i32.eqz (local.get $obj_guest))
+          (then
+            (call $gs32 (local.get $arg4) (i32.const 0))
+            (global.set $eax (i32.const 0x80004005))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+            (return)))
+        (call $gs32 (local.get $arg4) (local.get $obj_guest))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
     (if (i32.eq (local.get $clsid_d1) (i32.const 0x4FD2A832))
       (then
         (local.set $obj_guest (call $dx_create_com_obj (i32.const 10) (global.get $DX_VTBL_DDFACTORY)))
@@ -1139,14 +1238,55 @@
         (global.set $com_dll_name (call $host_com_get_pending_dll))
         ;; Yield to JS for async DLL fetch — DON'T advance ESP yet
         ;; JS will load DLL, then re-call com_create_instance
-        (global.set $yield_reason (i32.const 3))
-        (global.set $steps (i32.const 0))
+        (call $com_dll_block)
         (return)))
     ;; Synchronous success or error — zero *ppv on failure per COM spec
     (if (local.get $hr)
       (then (call $gs32 (local.get $arg4) (i32.const 0))))
     (global.set $eax (local.get $hr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))  ;; stdcall, 5 args
+  )
+
+  ;; CoGetClassObject(rclsid, dwClsContext, pvReserved, riid, ppv) — 5 args.
+  ;; The host COM bridge already performs registry lookup, async in-proc DLL
+  ;; loading and DllGetClassObject reentry. Its private high CLSCTX bit asks it
+  ;; to return the requested class-factory interface directly.
+  (func $handle_CoGetClassObject (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $hr i32) (local $host_ctx i32) (local $factory i32)
+    ;; CLSID_CommonDialog {F9043C85-F6F2-101A-A3C9-08002B2F49FB}.
+    (if (i32.eq (call $gl32 (local.get $arg0)) (i32.const 0xF9043C85))
+      (then
+        (if (i32.eqz (local.get $arg4))
+          (then (global.set $eax (i32.const 0x80004003)))
+          (else
+            (local.set $factory (call $common_dialog_factory_create (local.get $arg0)))
+            (call $gs32 (local.get $arg4) (local.get $factory))
+            (global.set $eax
+              (select (i32.const 0) (i32.const 0x8007000E)
+                (i32.ne (local.get $factory) (i32.const 0))))))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    (local.set $host_ctx (i32.or (local.get $arg1) (i32.const 0x80000000)))
+    (local.set $hr (call $host_com_create_instance
+      (call $g2w (local.get $arg0))
+      (local.get $arg2)
+      (local.get $host_ctx)
+      (call $g2w (local.get $arg3))
+      (local.get $arg4)))
+    (if (i32.eq (local.get $hr) (i32.const 0x800401F0))
+      (then
+        (global.set $com_clsid_ptr (local.get $arg0))
+        (global.set $com_iid_ptr (local.get $arg3))
+        (global.set $com_ppv_ptr (local.get $arg4))
+        (global.set $com_unk_outer (local.get $arg2))
+        (global.set $com_cls_ctx (local.get $host_ctx))
+        (global.set $com_dll_name (call $host_com_get_pending_dll))
+        (call $com_dll_block)
+        (return)))
+    (if (local.get $hr)
+      (then (call $gs32 (local.get $arg4) (i32.const 0))))
+    (global.set $eax (local.get $hr))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
   ;; OLEAUT32 BSTR support. BSTR layout:

@@ -1283,7 +1283,31 @@
 
   ;; StgCreateDocfile(pwcsName, grfMode, reserved, ppstgOpen)
   (func $handle_StgCreateDocfile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))
+    (local $lockbytes i32) (local $storage i32)
+    (if (i32.eqz (local.get $arg3))
+      (then
+        (global.set $eax (i32.const 0x80004003)) ;; E_POINTER
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (call $gs32 (local.get $arg3) (i32.const 0))
+    ;; A NULL name is the documented anonymous temporary-docfile form. The
+    ;; existing heap-backed ILockBytes/IStorage implementation is sufficient:
+    ;; interpreted apps see a normal root storage without requiring a host
+    ;; filesystem file, and DELETEONRELEASE ownership follows the object graph.
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (local.set $lockbytes (call $ole_create_lockbytes (i32.const 0) (i32.const 1)))
+        (if (local.get $lockbytes)
+          (then (local.set $storage (call $ole_create_storage (local.get $lockbytes)))))
+        (if (local.get $lockbytes) (then (drop (call $ole_obj_release (local.get $lockbytes)))))
+        (if (local.get $storage)
+          (then
+            (call $gs32 (local.get $arg3) (local.get $storage))
+            (global.set $eax (i32.const 0)))
+          (else (global.set $eax (i32.const 0x8007000E)))) ;; E_OUTOFMEMORY
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    ;; Named docfiles still require host-file persistence not provided here.
     (global.set $eax (i32.const 0x80004001)) ;; E_NOTIMPL
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
@@ -8369,6 +8393,21 @@
       (then (local.set $iface (i32.add (local.get $root) (i32.const 12)))))
     (if (i32.eq (local.get $data1) (i32.const 0x0000011E))
       (then (local.set $iface (i32.add (local.get $root) (i32.const 52)))))
+    ;; IID_IPersistStreamInit. VB6 treats this interface as mandatory while
+    ;; reconstructing the non-visual CommonDialog control from its FRX stream.
+    (if (i32.and
+          (i32.eq (local.get $data1) (i32.const 0x7FD52380))
+          (i32.eq (call $gl32 (i32.add (local.get $root) (i32.const 24)))
+                  (i32.const 0xF9043C85)))
+      (then (local.set $iface (i32.add (local.get $root) (i32.const 172)))))
+    ;; CommonDialog is a non-visual ActiveX control. VB6 obtains its
+    ;; automation properties through a separate IDispatch face after loading
+    ;; the persisted control state.
+    (if (i32.and
+          (i32.eq (local.get $data1) (i32.const 0x00020400))
+          (i32.eq (call $gl32 (i32.add (local.get $root) (i32.const 24)))
+                  (i32.const 0xF9043C85)))
+      (then (local.set $iface (i32.add (local.get $root) (i32.const 176)))))
     ;; IViewObject (10D), IViewObject2 (127) and the cache-control interface
     ;; (11D) all sit on the same vtable -- IViewObject2 only adds GetExtent, and
     ;; this vtable is the 2 flavour, which is why it is named for it. Leaving 127
@@ -8393,13 +8432,17 @@
     (drop (call $ole_obj_addref (local.get $owner)))
     (i32.const 0))
 
-  ;; +164 is the IDataObject face built on demand from the cache; see
-  ;; $ole_static_data_object.
+  ;; +164 is the IDataObject face built on demand from the cache; +172 is the
+  ;; optional CommonDialog IPersistStreamInit face and +176 its IDispatch
+  ;; automation face.
   (func $ole_create_static_handler (param $clsid i32) (result i32)
     (local $obj i32)
-    (local.set $obj (call $heap_alloc (i32.const 172)))
+    ;; The trailing 32 (VARTYPE,value) pairs retain scalar automation
+    ;; properties by DISPID. CommonDialog's persisted/default properties are
+    ;; all in this compact range.
+    (local.set $obj (call $heap_alloc (i32.const 436)))
     (if (i32.eqz (local.get $obj)) (then (return (i32.const 0))))
-    (call $zero_memory (call $g2w (local.get $obj)) (i32.const 172))
+    (call $zero_memory (call $g2w (local.get $obj)) (i32.const 436))
     (call $gs32 (local.get $obj) (global.get $DX_VTBL_OLE_OBJECT))
     (call $gs32 (i32.add (local.get $obj) (i32.const 4)) (i32.const 1))
     (call $gs32 (i32.add (local.get $obj) (i32.const 8)) (i32.const 6))
@@ -8410,7 +8453,15 @@
     (call $gs32 (i32.add (local.get $obj) (i32.const 136)) (i32.const 9)) ;; RECOMPOSEONRESIZE | STATIC
     (call $gs32 (i32.add (local.get $obj) (i32.const 160)) (i32.const 1))
     (if (local.get $clsid)
-      (then (memory.copy (call $g2w (i32.add (local.get $obj) (i32.const 24))) (call $g2w (local.get $clsid)) (i32.const 16))))
+      (then
+        (memory.copy (call $g2w (i32.add (local.get $obj) (i32.const 24)))
+          (call $g2w (local.get $clsid)) (i32.const 16))
+        (if (i32.eq (call $gl32 (local.get $clsid)) (i32.const 0xF9043C85))
+          (then
+            (call $gs32 (i32.add (local.get $obj) (i32.const 172))
+              (call $init_com_vtable (i32.const 2517) (i32.const 9)))
+            (call $gs32 (i32.add (local.get $obj) (i32.const 176))
+              (call $init_com_vtable (i32.const 2593) (i32.const 7)))))))
     (local.get $obj))
 
   ;; Release a static handler at an API boundary. Final DLL-private client-site,
@@ -8929,6 +8980,127 @@
   (func $handle_IPersistStorage_HandsOffStorage (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $ole_persist_hands_off (call $ole_static_root (local.get $arg0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; CommonDialog's persisted state only selects defaults for a dialog that is
+  ;; opened later by the application. VB6 still requires a complete, successful
+  ;; IPersistStreamInit contract before it will retain the control. This face
+  ;; lives at root+172 and shares the static handler's reference count.
+  (func $handle_IPersistStreamInit_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $ole_static_query_interface
+      (i32.sub (local.get $arg0) (i32.const 172)) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+  (func $handle_IPersistStreamInit_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $ole_obj_addref (i32.sub (local.get $arg0) (i32.const 172))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+  (func $handle_IPersistStreamInit_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $ole_static_release_api (i32.sub (local.get $arg0) (i32.const 172)) (i32.const 8)))
+  (func $handle_IPersistStreamInit_GetClassID (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $root i32)
+    (local.set $root (i32.sub (local.get $arg0) (i32.const 172)))
+    (if (local.get $arg1)
+      (then (memory.copy (call $g2w (local.get $arg1))
+        (call $g2w (i32.add (local.get $root) (i32.const 24))) (i32.const 16))))
+    (global.set $eax (select (i32.const 0) (i32.const 0x80004003) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+  (func $handle_IPersistStreamInit_IsDirty (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1)) ;; S_FALSE
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+  (func $handle_IPersistStreamInit_Load (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (select (i32.const 0) (i32.const 0x80004003) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+  (func $handle_IPersistStreamInit_Save (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (select (i32.const 0) (i32.const 0x80004003) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+  (func $handle_IPersistStreamInit_GetSizeMax (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1)
+      (then
+        (call $gs32 (local.get $arg1) (i32.const 0))
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0))))
+    (global.set $eax (select (i32.const 0) (i32.const 0x80004003) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+  (func $handle_IPersistStreamInit_InitNew (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; ---- CommonDialog IDispatch ----
+
+  (func $handle_ICommonDialogDispatch_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $ole_static_query_interface
+      (i32.sub (local.get $arg0) (i32.const 176)) (local.get $arg1) (local.get $arg2)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+  (func $handle_ICommonDialogDispatch_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $ole_obj_addref (i32.sub (local.get $arg0) (i32.const 176))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+  (func $handle_ICommonDialogDispatch_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $ole_static_release_api (i32.sub (local.get $arg0) (i32.const 176)) (i32.const 8)))
+  (func $handle_ICommonDialogDispatch_GetTypeInfoCount (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (i32.const 0))))
+    (global.set $eax (select (i32.const 0) (i32.const 0x80004003) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+  (func $handle_ICommonDialogDispatch_GetTypeInfo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))
+    (global.set $eax (i32.const 0x80004001)) ;; E_NOTIMPL: no runtime typelib.
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+  (func $handle_ICommonDialogDispatch_GetIDsOfNames (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dispids i32)
+    (local.set $dispids (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (if (local.get $dispids) (then (call $gs32 (local.get $dispids) (i32.const -1))))
+    (global.set $eax (i32.const 0x80020006)) ;; DISP_E_UNKNOWNNAME
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
+  (func $handle_ICommonDialogDispatch_Invoke (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $root i32) (local $params i32) (local $result i32)
+    (local $variant i32) (local $vt i32) (local $base_vt i32)
+    (local $value i32) (local $slot i32)
+    (local.set $root (i32.sub (local.get $arg0) (i32.const 176)))
+    (local.set $params (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (local.set $result (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
+    (if (i32.ge_u (local.get $arg1) (i32.const 32))
+      (then (global.set $eax (i32.const 0x80020003))) ;; DISP_E_MEMBERNOTFOUND
+      (else
+        (local.set $slot (i32.add (local.get $root)
+          (i32.add (i32.const 180) (i32.mul (local.get $arg1) (i32.const 8)))))
+        (if (i32.and (local.get $arg4) (i32.const 0x0C))
+          (then
+            (if (i32.or (i32.eqz (local.get $params))
+                  (i32.eqz (call $gl32 (i32.add (local.get $params) (i32.const 8)))))
+              (then (global.set $eax (i32.const 0x8002000E))) ;; DISP_E_BADPARAMCOUNT
+              (else
+                (local.set $variant (call $gl32 (local.get $params)))
+                (local.set $vt (call $gl16 (local.get $variant)))
+                (local.set $base_vt (i32.and (local.get $vt) (i32.const 0x0FFF)))
+                (if (i32.or
+                      (i32.or (i32.eq (local.get $base_vt) (i32.const 2))
+                              (i32.eq (local.get $base_vt) (i32.const 3)))
+                      (i32.or (i32.eq (local.get $base_vt) (i32.const 11))
+                              (i32.eq (local.get $base_vt) (i32.const 19))))
+                  (then
+                    (local.set $value (call $gl32 (i32.add (local.get $variant) (i32.const 8))))
+                    (if (i32.and (local.get $vt) (i32.const 0x4000))
+                      (then
+                        (local.set $value
+                          (select
+                            (call $gl16 (local.get $value))
+                            (call $gl32 (local.get $value))
+                            (i32.or (i32.eq (local.get $base_vt) (i32.const 2))
+                                    (i32.eq (local.get $base_vt) (i32.const 11)))))))
+                    (call $gs32 (local.get $slot) (local.get $base_vt))
+                    (call $gs32 (i32.add (local.get $slot) (i32.const 4)) (local.get $value))
+                    (global.set $eax (i32.const 0)))
+                  (else (global.set $eax (i32.const 0x80020005))))))) ;; DISP_E_TYPEMISMATCH
+          (else
+            (if (i32.and (local.get $arg4) (i32.const 2)) ;; DISPATCH_PROPERTYGET
+              (then
+                (if (i32.eqz (local.get $result))
+                  (then (global.set $eax (i32.const 0x80004003)))
+                  (else
+                    (call $zero_memory (call $g2w (local.get $result)) (i32.const 16))
+                    (call $gs16 (local.get $result) (call $gl32 (local.get $slot)))
+                    (call $gs32 (i32.add (local.get $result) (i32.const 8))
+                      (call $gl32 (i32.add (local.get $slot) (i32.const 4))))
+                    (global.set $eax (i32.const 0)))))
+              (else (global.set $eax (i32.const 0x80020003))))))) ;; no such method
+    (global.set $esp (i32.add (global.get $esp) (i32.const 40))))
+  )
 
   ;; IOleCache is required by RichEdit when it reconstructs an RTF \pict
   ;; presentation through OleCreateDefaultHandler. Keep a general owned cache

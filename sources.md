@@ -831,3 +831,47 @@ through their original installers before using any extracted game files.
   Chromium route, the pickup effects ended, the map ambience remained active
   only while appropriate, and the castle transition left every DirectSound
   voice inactive. Evidence is `/private/tmp/heroes-audio-stop-fixed.png`.
+
+### 2026-08-22 Total Annihilation DirectSound3D bridge
+
+The installed demo imports only `DirectSoundCreate` from `DSOUND.dll`; its
+local payload contains no redistributable `dsound.dll`. A stock DirectSound
+runtime would therefore replace the emulator's existing browser-audio COM
+objects rather than wrap them, while also bringing its Windows driver-facing
+dependencies. The bounded compatibility path is an auxiliary
+`IDirectSound3DBuffer` view over the existing DirectSound buffer and voice.
+
+The [W3C Web Audio specification](https://www.w3.org/TR/webaudio-1.1/)
+defines `PannerNode` source positions, orientations, inverse/linear/exponential
+distance models, reference and maximum distances, directional cones, and HRTF
+stereo rendering. MDN records the
+[`PannerNode.panningModel`](https://developer.mozilla.org/en-US/docs/Web/API/PannerNode/panningModel)
+API as widely available and distinguishes the efficient `equalpower` model
+from HRTF convolution. These primitives map the demo's observed
+`SetPosition`, `SetMinDistance`, `SetMaxDistance`, and `SetMode` calls to real
+browser spatialization rather than successful no-ops.
+
+The emulator now publishes the complete 21-slot `IDirectSound3DBuffer` COM
+vtable. Querying IID `{279AFA86-4981-11CE-A521-0020AF0BE560}` returns a stable
+auxiliary wrapper for the same buffer and opens its host voice before the game
+sets 3D properties. The host routes that voice through an HRTF `PannerNode`,
+mirrors DirectSound's +Z-forward convention to Web Audio's -Z-forward
+convention, maps minimum/maximum distance to `refDistance`/`maxDistance`, maps
+cone direction and attenuation, and restores the ordinary stereo route for
+`DS3DMODE_DISABLE`. Float values cross the WAT import boundary losslessly as
+their raw IEEE-754 bits, and all getters return the retained DirectSound-space
+values.
+
+Focused host, vtable-contiguity, stack-pop, and worker-vtable synchronization
+tests pass, as does the full WAT build. An unchanged run of the extracted
+`tademo.exe` plus `tademo.hpi` advances beyond the former 3D-vtable stack
+corruption and reaches its next independent missing Win32 call,
+`IsCharAlphaA`, at guest EIP `0x0047731d` (batch 665). This proves the four
+observed 3D calls return through the correct COM layout without corrupting the
+stack. A browser trace then confirmed that same next stop at `0x0047731d` was
+the one-argument USER32 `IsCharAlphaA` import, not a hang. The implementation
+now reuses the existing ANSI `C1_ALPHA` classifier and consumes the promoted
+byte argument with the correct stdcall frame. With that API present, the
+unchanged web manifest creates and shows the 640x480 "Total Annihilation"
+window and remains live through 1,200 execution batches (874 API calls), past
+the former batch-665 failure.
