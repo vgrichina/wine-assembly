@@ -65,6 +65,7 @@ UNIT=(
   test/test-midi-mci.js
   test/test-thread-manager.js
   test/test-mm-timer-callback.js
+  test/test-nc-flags-message-wake.js
   test/test-browser-mm-timer.js
   test/test-runtime-log-toggle.js
   test/test-diablo-runtime-apis.js
