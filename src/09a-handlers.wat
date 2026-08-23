@@ -120,6 +120,24 @@
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $loop))))
 
+  ;; Consume one due multimedia-timer period without moving its phase to the
+  ;; late delivery time. A 5ms periodic timer polled at t=6,12,18 otherwise
+  ;; becomes a 6ms timer permanently; advancing to the latest 5ms boundary
+  ;; keeps future callbacks aligned while still skipping missed callbacks.
+  (func $mm_timer_consume_due_tick
+    (local $periods i32)
+    (if (i32.eqz (global.get $mm_timer_interval))
+      (then (global.set $mm_timer_last_tick (global.get $tick_count)))
+      (else
+        (local.set $periods
+          (i32.div_u
+            (i32.sub (global.get $tick_count) (global.get $mm_timer_last_tick))
+            (global.get $mm_timer_interval)))
+        (global.set $mm_timer_last_tick
+          (i32.add
+            (global.get $mm_timer_last_tick)
+            (i32.mul (local.get $periods) (global.get $mm_timer_interval)))))))
+
   ;; $timer_check_due(msg_ptr, consume) — scan timer table, fill MSG with first due timer, return 1 if found
   ;; $consume: 1 = update last_tick (PM_REMOVE/GetMessage), 0 = peek only (PM_NOREMOVE)
   (func $timer_check_due (param $msg_ptr i32) (param $consume i32) (result i32)
@@ -165,7 +183,7 @@
           (then
             (if (local.get $consume)
               (then
-                (global.set $mm_timer_last_tick (global.get $tick_count))
+                (call $mm_timer_consume_due_tick)
                 (if (global.get $mm_timer_oneshot)
                   (then (global.set $mm_timer_id (i32.const 0))))))
             (call $gs32 (local.get $msg_ptr) (i32.const 0))                                        ;; hwnd=0

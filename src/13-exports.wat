@@ -2501,8 +2501,9 @@
     (local.set $elapsed (i32.sub (global.get $tick_count) (global.get $mm_timer_last_tick)))
     (if (i32.lt_u (local.get $elapsed) (global.get $mm_timer_interval))
       (then (return (i32.const 0))))
-    ;; Timer is due — update last tick
-    (global.set $mm_timer_last_tick (global.get $tick_count))
+    ;; Timer is due — consume through the latest interval boundary without
+    ;; turning host scheduling lateness into permanent periodic-timer drift.
+    (call $mm_timer_consume_due_tick)
     (if (global.get $mm_timer_oneshot)
       (then (global.set $mm_timer_id (i32.const 0))))
     (global.set $mm_timer_in_cb (i32.const 1))

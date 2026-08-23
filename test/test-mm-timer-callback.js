@@ -6,6 +6,13 @@ const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
 
 const extraWat = String.raw`
+  (func (export "test_mm_timer_consume_tick")
+    (param $last i32) (param $interval i32) (param $now i32) (result i32)
+    (global.set $mm_timer_last_tick (local.get $last))
+    (global.set $mm_timer_interval (local.get $interval))
+    (global.set $tick_count (local.get $now))
+    (call $mm_timer_consume_due_tick)
+    (global.get $mm_timer_last_tick))
   (func (export "test_mm_timer_defers_parked_wait") (result i32)
     (global.set $image_base (i32.const 0x00400000))
     (global.set $esp (i32.const 0x00500000))
@@ -33,6 +40,13 @@ const extraWat = String.raw`
 
 (async () => {
   const { exports: wat } = await bootRenderHarness({ extraWat });
+
+  assert.strictEqual(wat.test_mm_timer_consume_tick(100, 5, 156), 155,
+    'late periodic delivery retains the original 5ms phase');
+  assert.strictEqual(wat.test_mm_timer_consume_tick(100, 5, 150), 150,
+    'on-time periodic delivery advances by one exact boundary');
+  assert.strictEqual(wat.test_mm_timer_consume_tick(100, 0, 156), 156,
+    'a zero-delay timer consumes at the current tick without dividing by zero');
 
   assert.strictEqual(wat.test_mm_timer_defers_parked_wait(), 0,
     'a multimedia callback cannot interrupt a parked Win32 wait frame');
