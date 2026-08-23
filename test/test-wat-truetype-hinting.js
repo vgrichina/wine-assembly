@@ -629,6 +629,51 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
       '...#...',
     ], 'Win98 Arial V 10ppem monochrome bitmap must match exactly');
 
+    // These three glyphs distinguish direct quadratic scan crossings from a
+    // flattened chord list, and distinguish a connected diagonal stroke from
+    // a terminal smart-dropout stub. None of their hinted metrics or outlines
+    // changed; only the raster boundary is under test here.
+    const quadraticRasterOracles = new Map([
+      ['7', {
+        box: [5, 7, 0, 7],
+        rows: ['#####', '...#.', '...#.', '..#..', '..#..', '.#...', '.#...'],
+      }],
+      ['O', {
+        box: [6, 7, 1, 7],
+        rows: ['.####.', '#....#', '#....#', '#....#', '#....#',
+          '#....#', '.####.'],
+      }],
+      ['Z', {
+        box: [6, 7, 0, 7],
+        rows: ['######', '....#.', '...#..', '..#...', '.#....',
+          '#.....', '######'],
+      }],
+    ]);
+    for (const [character, expected] of quadraticRasterOracles) {
+      const rasterGid = wat.test_tt_glyph_index(
+        native.at, native.size, character.charCodeAt(0));
+      const box = [
+        wat.test_tt_glyph_box_width(native.at, native.size, rasterGid, 10),
+        wat.test_tt_glyph_box_height(native.at, native.size, rasterGid, 10),
+        wat.test_tt_glyph_box_left(native.at, native.size, rasterGid, 10),
+        wat.test_tt_glyph_box_top(native.at, native.size, rasterGid, 10),
+      ];
+      assert.deepStrictEqual(box, expected.box,
+        `Win98 Arial ${character} 10ppem monochrome metrics must match`);
+      const bitmapGuest = wat.guest_alloc(64) >>> 0;
+      const scratchBytes = wat.test_tt_raster_scratch_bytes(box[0]) >>> 0;
+      const scratchGuest = wat.guest_alloc(scratchBytes) >>> 0;
+      assert.strictEqual(wat.test_tt_rasterize_glyph(
+        native.at, native.size, rasterGid, 10, wa(bitmapGuest), box[0], box[1],
+        box[2] * 64, box[3] * 64, wa(scratchGuest), scratchBytes), 1,
+      `Win98 Arial ${character} must scan-convert at 10ppem`);
+      assert.deepStrictEqual(Array.from({ length: box[1] }, (_, y) =>
+        Array.from({ length: box[0] }, (_unused, x) =>
+          wat.test_tt_bitmap_pixel(wa(bitmapGuest), box[1], x, y)
+            ? '#' : '.').join('')), expected.rows,
+      `Win98 Arial ${character} 10ppem monochrome bitmap must match exactly`);
+    }
+
     // GGO black boxes round hinted extrema to device pixels. Arial j has an
     // exact -29/64 left extremum: conservative floor/ceil would report a
     // spurious blank column at x=-1 even though Win98 reports x=0, width 2.
@@ -744,7 +789,7 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
     oracle = `${nativePoints} Arial raw points, ` +
       `${win98WPoints.size * 5} Arial W point cases, ` +
       `${digitOracles.size} exact Arial digit bitmaps, ` +
-      `4 exact Arial 10ppem c/D/M/V bitmaps, ` +
+      `7 exact Arial 10ppem c/D/M/V/7/O/Z bitmaps, ` +
       `${metricCases}/3 exact GGO metric cases, ` +
       `${controlPrograms} Times/Courier programs`;
   }

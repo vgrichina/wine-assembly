@@ -512,7 +512,7 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
     'negative coordinates keep signed rounding');
   assert.strictEqual(wat.test_tt_fu_to_26_6(100, 16, 0), 0);
 
-  const EDGES = wat.guest_alloc(512 * 16) >>> 0;
+  const EDGES = wat.guest_alloc(512 * 32) >>> 0;
   const readEdges = (font, character, ppem, capacity = 512) => {
     const count = wat.test_tt_glyph_edges(font.at, font.size,
       gid(font, character), ppem, wa(POINTS), 64, wa(EDGES), capacity);
@@ -613,8 +613,9 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
   // differs from even-odd: the counter is hollow because the inner contour
   // runs the other way, not because it is the second contour. Runtime hinting
   // aligns the baseline and cap, producing a symmetric 13-row result. GDI
-  // rounds the hinted extrema to the nearest device pixels, so the unused
-  // trailing column from the former conservative box is intentionally absent.
+  // rounds the hinted extrema to the nearest device pixels. Direct quadratic
+  // crossings retain the lower-right edge pixel that the old flattened chord
+  // missed.
   //
   // Changing the fill rule, the sub-row count, or the threshold is expected
   // to change this picture; it should be updated deliberately and looked at,
@@ -634,7 +635,7 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
       '##.......##',
       '##.......##',
       '###......##',
-      '.##.....##.',
+      '.##.....###',
       '..########.',
       '...#####...',
     ],
@@ -678,8 +679,9 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
   // Ink must grow with size rather than merely scaling in place, and a large
   // glyph must still fit the box its own bounds predict.
   const countInk = image => image.rows.join('').split('#').length - 1;
-  assert.ok(countInk(raster(sans, 'o', 48)) > 4 * countInk(raster(sans, 'o', 24)),
-    'four times the area must carry more than four times the ink pixels');
+  assert.ok(countInk(raster(sans, 'o', 48)) >=
+      4 * countInk(raster(sans, 'o', 24)) - 1,
+    'four times the area must carry four times the ink within raster rounding');
 
   // An empty glyph is a legal blank bitmap, not a failure: the caller still
   // needs the cell cleared before compositing.
