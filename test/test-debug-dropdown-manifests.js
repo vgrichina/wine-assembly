@@ -30,6 +30,9 @@ for (const [id, scene, assets] of [
   ['scr_fallingl', 'FALLINGL.SCN', ['LEAF.X', 'LEAVES.GIF']],
   ['scr_geometry', 'GEOMETRY.SCN', ['GE_MESH1.X', 'GE_BACK.GIF']],
   ['scr_scifi', 'SCIFI.SCN', ['SF_PINCE.X', 'SF_BACK.GIF']],
+  // Without its scene ROCKROLL.SCR puts up "Couldn't find any scene
+  // definitions in location '.\;.' - reinstall?" and never draws.
+  ['scr_rockroll', 'ROCKROLL.SCN', ['RO_GIT.X', 'RO_PICK.X', 'RO_BACK.GIF']],
 ]) {
   assert(hasBasename(id, scene), `${id} must mount its Organic Art scene`);
   for (const asset of assets) assert(hasBasename(id, asset), `${id} must mount ${asset}`);
