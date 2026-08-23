@@ -1172,6 +1172,7 @@
   ;; 0x07E14000 32KB     DIB_PAGE_RUNS
   ;; 0x07E1C000 832KB    GDI_REGION_BANDS (256 x 208 RECT slots)
   ;; 0x079CA000 512B     WIN16_BUILTIN_NAMES (KERNEL/USER/GDI by-name exports)
+  ;; 0x079D0000 32KB     GDI_NEAREST_CACHE (4096 × {colour tag, palette index})
   ;; 0x07EEC000 13KB     GDI_REGION_WORK (4 x 208 RECT buffers)
   ;; 0x07EF0000 2KB      GDI_DC_CLIP_TABLE (256 x {HDC, owned HRGN})
   ;; 0x07EF0800 2KB      GDI_DC_SAVE_TABLE (256 x {HDC, meta guest pointer})

@@ -3689,10 +3689,83 @@
   (func (export "test_gdi_raster_palette_color") (param i32 i32) (result i32)
     (call $gdi_raster_palette_color (local.get 0) (local.get 1)))
 
+  ;; Palette table backing a descriptor, resolved once instead of per entry.
+  ;;
+  ;; $gdi_raster_palette_color walks the same three sources (DirectDraw primary
+  ;; PALETTEENTRY table, bitmap-record RGBQUADs, transient BITMAPINFO RGBQUADs)
+  ;; on every single call. That is fine for one pixel and ruinous inside
+  ;; $gdi_raster_nearest_index, which calls it once per palette entry per
+  ;; written pixel. Returns the table's WASM address, or 0 when no table
+  ;; applies, and leaves the entry count in $gdi_pal_count and the byte order
+  ;; in $gdi_pal_dx (1 = PALETTEENTRY R,G,B; 0 = RGBQUAD B,G,R).
+  ;;
+  ;; Each branch bails out the way $gdi_raster_palette_color's matching branch
+  ;; does, so an index at or past $gdi_pal_count must still go through
+  ;; $gdi_raster_palette_color to pick up the same fallback chain.
+  (global $gdi_pal_count (mut i32) (i32.const 0))
+  (global $gdi_pal_dx (mut i32) (i32.const 0))
+
+  (func $gdi_raster_palette_base (param $desc i32) (result i32)
+    (local $record i32) (local $palette i32)
+    (global.set $gdi_pal_count (i32.const 0))
+    (global.set $gdi_pal_dx (i32.const 0))
+    (if (i32.and
+          (i32.ge_u (i32.load offset=68 (local.get $desc)) (i32.const 0x00200000))
+          (i32.lt_u (i32.load offset=68 (local.get $desc)) (i32.const 0x00300000)))
+      (then
+        (local.set $palette (global.get $dx_primary_pal_wa))
+        (if (local.get $palette)
+          (then
+            (global.set $gdi_pal_count (i32.const 256))
+            (global.set $gdi_pal_dx (i32.const 1))
+            (return (local.get $palette))))))
+    (local.set $record (call $gdi_object_record (i32.load offset=68 (local.get $desc))))
+    (if (local.get $record)
+      (then
+        (local.set $palette (i32.load offset=32 (local.get $record)))
+        (if (i32.and (i32.ne (local.get $palette) (i32.const 0))
+              (i32.ne (i32.load offset=36 (local.get $record)) (i32.const 0)))
+          (then
+            (global.set $gdi_pal_count (i32.load offset=36 (local.get $record)))
+            (return (local.get $palette))))))
+    (local.set $palette (i32.load offset=24 (local.get $desc)))
+    (if (i32.and (i32.ne (local.get $palette) (i32.const 0))
+          (i32.ne (i32.load offset=28 (local.get $desc)) (i32.const 0)))
+      (then
+        (global.set $gdi_pal_count (i32.load offset=28 (local.get $desc)))
+        (return (local.get $palette))))
+    (i32.const 0))
+
+  ;; Exact-match memo for $gdi_raster_nearest_index: direct-mapped, 4096 slots
+  ;; of {tag, index}. A blit into an 8bpp surface asks for the index of the
+  ;; same handful of colours hundreds of thousands of times in a row, and the
+  ;; answer is nearly always an exact palette member.
+  ;;
+  ;; Entries are never invalidated, because a hit is *verified* before it is
+  ;; used: the cached index is only returned when the palette still holds the
+  ;; queried colour at that index. That makes a stale entry (different
+  ;; descriptor, edited palette, freed bitmap) cost one palette read rather
+  ;; than a wrong pixel, so no generation counter or flush hook is needed.
+  ;; Only distance-0 results are stored — an approximate match is specific to
+  ;; the palette it was computed against and could not be verified this way.
+  (global $GDI_NEAREST_CACHE i32 (i32.const 0x079D0000))
+  (global $GDI_NEAREST_CACHE_SLOTS i32 (i32.const 4096))
+
+  (func $gdi_nearest_cache_slot (param $color i32) (result i32)
+    (i32.add (global.get $GDI_NEAREST_CACHE)
+      (i32.shl
+        (i32.and
+          (i32.shr_u (i32.mul (local.get $color) (i32.const 0x9E3779B1)) (i32.const 16))
+          (i32.sub (global.get $GDI_NEAREST_CACHE_SLOTS) (i32.const 1)))
+        (i32.const 3))))
+
   (func $gdi_raster_nearest_index (param $desc i32) (param $color i32) (result i32)
     (local $bpp i32) (local $count i32) (local $i i32) (local $candidate i32)
     (local $dr i64) (local $dg i64) (local $db i64) (local $distance i64)
     (local $best_distance i64) (local $best i32)
+    (local $pal i32) (local $pal_count i32) (local $dx i32) (local $p i32)
+    (local $slot i32) (local $tag i32)
+    (local.set $color (i32.and (local.get $color) (i32.const 0xFFFFFF)))
     (local.set $bpp (i32.load offset=16 (local.get $desc)))
     (local.set $count (i32.shl (i32.const 1) (local.get $bpp)))
     (if (i32.and (i32.ne (i32.load offset=24 (local.get $desc)) (i32.const 0))
@@ -3700,10 +3773,35 @@
       (then
         (if (i32.lt_u (i32.load offset=28 (local.get $desc)) (local.get $count))
           (then (local.set $count (i32.load offset=28 (local.get $desc)))))))
+    (local.set $slot (call $gdi_nearest_cache_slot (local.get $color)))
+    (local.set $tag (i32.or (local.get $color) (i32.const 0x80000000)))
+    (if (i32.eq (i32.load (local.get $slot)) (local.get $tag))
+      (then
+        (local.set $best (i32.load offset=4 (local.get $slot)))
+        (if (i32.and (i32.lt_u (local.get $best) (local.get $count))
+              (i32.eq (call $gdi_raster_palette_color (local.get $desc) (local.get $best))
+                (local.get $color)))
+          (then (return (local.get $best))))
+        (local.set $best (i32.const 0))))
+    (local.set $pal (call $gdi_raster_palette_base (local.get $desc)))
+    (local.set $pal_count (global.get $gdi_pal_count))
+    (local.set $dx (global.get $gdi_pal_dx))
     (local.set $best_distance (i64.const 0x7FFFFFFFFFFFFFFF))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
-      (local.set $candidate (call $gdi_raster_palette_color (local.get $desc) (local.get $i)))
+      (if (i32.lt_u (local.get $i) (local.get $pal_count))
+        (then
+          (local.set $p (i32.add (local.get $pal) (i32.shl (local.get $i) (i32.const 2))))
+          (local.set $candidate (i32.or
+            (i32.shl (select (i32.load8_u (local.get $p)) (i32.load8_u offset=2 (local.get $p))
+              (local.get $dx)) (i32.const 16))
+            (i32.or
+              (i32.shl (i32.load8_u offset=1 (local.get $p)) (i32.const 8))
+              (select (i32.load8_u offset=2 (local.get $p)) (i32.load8_u (local.get $p))
+                (local.get $dx))))))
+        (else
+          (local.set $candidate
+            (call $gdi_raster_palette_color (local.get $desc) (local.get $i)))))
       (local.set $dr (i64.extend_i32_s (i32.sub
         (i32.and (i32.shr_u (local.get $color) (i32.const 16)) (i32.const 0xFF))
         (i32.and (i32.shr_u (local.get $candidate) (i32.const 16)) (i32.const 0xFF)))))
@@ -3720,7 +3818,11 @@
         (then
           (local.set $best_distance (local.get $distance))
           (local.set $best (local.get $i))
-          (if (i64.eqz (local.get $distance)) (then (return (local.get $i))))))
+          (if (i64.eqz (local.get $distance))
+            (then
+              (i32.store (local.get $slot) (local.get $tag))
+              (i32.store offset=4 (local.get $slot) (local.get $i))
+              (return (local.get $i))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (local.get $best))
