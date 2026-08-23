@@ -7,7 +7,7 @@
 const ProcessBoot = (typeof window !== 'undefined' && window.processBoot) || null;
 
 class WineAssembly {
-  static SOURCE_VERSION = '216';
+  static SOURCE_VERSION = '217';
   static _nextProcessId = 1000;
 
   static hasRemainingAppWindow(destroyed, remainingTopLevel) {
@@ -555,6 +555,7 @@ class WineAssembly {
   // session got steadily slower at exactly the moments the user was interacting.
   // Appending a text node is O(1), and the ring keeps the DOM bounded.
   logToUI(msg) {
+    if (typeof window !== 'undefined' && window.WINE_RUNTIME_LOGGING === false) return;
     console.log(msg);
     const el = document.getElementById('log');
     if (!el) return;

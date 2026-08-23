@@ -698,6 +698,7 @@
         <span id="input-profile-status"></span>
       </span>
       <span class="debug-profile">
+        <label title="Write emulator runtime messages to the browser console and debug log pane"><input id="runtime-log-toggle" type="checkbox" onchange="setRuntimeLogging(this.checked)">Runtime log</label>
         <label><input id="perf-hud-toggle" type="checkbox" onchange="setPerfHud(this.checked)">FPS graph</label>
         <label><input id="perf-stream-toggle" type="checkbox" onchange="setPerfStream(this.checked)">Stream</label>
         <label title="Experimental: opt into real guest threads. Needs cross-origin isolation; the worker backend is still phase 1."><input id="threads-toggle" type="checkbox" onchange="setThreads(this.checked)">Threads</label>
@@ -811,7 +812,7 @@ Resource-aware Win98 emulator
   <script src="lib/vlan-wire.js?v=1"></script>
   <script src="lib/vlan-rtc.js?v=1"></script>
   <script src="lib/vlan-lobby.js?v=1"></script>
-  <script src="host.js?v=216"></script>
+  <script src="host.js?v=217"></script>
   <script src="lib/recorder.js?v=168"></script>
   <script src="lib/perf-hud.js?v=1"></script>
   <script>
@@ -848,9 +849,29 @@ Resource-aware Win98 emulator
 
     const LOCAL_DESKTOP = /^(localhost|127\.|0\.0\.0\.0|::1$|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(location.hostname);
     const DEBUG_MODE = new URLSearchParams(location.search).has('debug');
+    const RUNTIME_LOG_KEY = 'wine-assembly:runtime-log';
     const PRESENTATION_SCALE_KEY = 'wine-assembly:2d-scale';
     const PRESENTATION_DEDITHER_KEY = 'wine-assembly:dedither';
     const PRESENTATION_CRT_KEY = 'wine-assembly:crt-effects';
+    let initialRuntimeLogging = true;
+    try {
+      const savedRuntimeLogging = localStorage.getItem(RUNTIME_LOG_KEY);
+      if (savedRuntimeLogging !== null) initialRuntimeLogging = savedRuntimeLogging !== '0';
+    } catch (_) {}
+    window.WINE_RUNTIME_LOGGING = initialRuntimeLogging;
+    const initialRuntimeLogToggle = document.getElementById('runtime-log-toggle');
+    if (initialRuntimeLogToggle) initialRuntimeLogToggle.checked = initialRuntimeLogging;
+
+    function setRuntimeLogging(enabled) {
+      const on = !!enabled;
+      window.WINE_RUNTIME_LOGGING = on;
+      const toggle = document.getElementById('runtime-log-toggle');
+      if (toggle) toggle.checked = on;
+      try { localStorage.setItem(RUNTIME_LOG_KEY, on ? '1' : '0'); }
+      catch (_) {}
+      return on;
+    }
+
     function normalize2dScalingMode(mode) {
       if (mode === 'scale2x' || mode === 'scale3x') mode = 'scale-auto';
       return mode === 'integer' || mode === 'sharp-bilinear' ||

@@ -64,6 +64,7 @@ UNIT=(
   test/test-thread-manager.js
   test/test-mm-timer-callback.js
   test/test-browser-mm-timer.js
+  test/test-runtime-log-toggle.js
   test/test-diablo-runtime-apis.js
   test/test-starcraft-dll-policy.js
   test/test-dllmain-load-context.js
