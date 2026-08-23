@@ -34,6 +34,10 @@
   ;;   +4000  D3DCLIPSTATUS round-trip storage          (24)
   ;;   +4032  vertex_project vec temp                  (16)
   ;;   +4064  vertex_project clip temp                 (16)
+  ;; Last (texture slot, resolved?) pair reported through $host_dx_trace kind
+  ;; 16. Only a change is logged, so a per-triangle call site stays quiet while
+  ;; still showing every rebind. -1 can never collide with a real pair.
+  (global $d3dim_dbg_tex_last (mut i32) (i32.const -1))
   (global $D3DIM_OFF_CUR_VP    i32 (i32.const 2816))
   (global $D3DIM_OFF_CUR_MAT   i32 (i32.const 2820))
   (global $D3DIM_OFF_TEX_STAGE i32 (i32.const 2824))
@@ -1314,11 +1318,26 @@
     (i32.const 0))
 
   (func $d3dim_bound_texture_entry (param $this i32) (result i32)
-    (local $state i32) (local $slot i32)
+    (local $state i32) (local $slot i32) (local $entry i32) (local $key i32)
     (local.set $state (call $d3ddev_state (local.get $this)))
     (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
     (local.set $slot (call $gl32 (i32.add (local.get $state) (global.get $D3DIM_OFF_TEX_STAGE))))
-    (call $d3dim_texture_entry_from_slot (local.get $slot)))
+    (local.set $entry (call $d3dim_texture_entry_from_slot (local.get $slot)))
+    ;; kind=16 TexBind: slot, resolved entry, packed w|h<<16, packed bpp|pitch<<16.
+    ;; A slot that never resolves is the difference between "the app never bound
+    ;; a texture" and "it did and we dropped it" -- the two look identical on
+    ;; screen (flat vertex colour) and cannot be told apart from the API trace.
+    (local.set $key (i32.or (i32.shl (local.get $slot) (i32.const 1))
+                            (i32.ne (local.get $entry) (i32.const 0))))
+    (if (i32.ne (local.get $key) (global.get $d3dim_dbg_tex_last))
+      (then
+        (global.set $d3dim_dbg_tex_last (local.get $key))
+        (call $host_dx_trace (i32.const 16) (local.get $slot) (local.get $entry)
+          (select (i32.load (i32.add (local.get $entry) (i32.const 12))) (i32.const 0)
+                  (i32.ne (local.get $entry) (i32.const 0)))
+          (select (i32.load (i32.add (local.get $entry) (i32.const 16))) (i32.const 0)
+                  (i32.ne (local.get $entry) (i32.const 0))))))
+    (local.get $entry))
 
   ;; SetTexture(stage, lpTex). Phase 0: store DX slot of lpTex on stage 0
   ;; only (multi-stage TSS stored separately by Phase 3).
@@ -2557,6 +2576,34 @@
     (local.set $rt (call $d3ddev_rt_entry (local.get $this)))
     (if (i32.eqz (local.get $rt)) (then (return)))
     (local.set $v_wa (call $g2w (local.get $lpvVertices)))
+    ;; kind=17 DPBlend: v0 diffuse + the blend state in force. A full-screen
+    ;; quad drawn with no texture looks identical in the API trace whether it is
+    ;; an opaque fill or a translucent overlay we painted opaque -- only the
+    ;; vertex alpha and SRCBLEND/DESTBLEND separate the two, and the JS tracer
+    ;; cannot read a VirtualAlloc'd vertex pointer to find them.
+    (local.set $state_guest (call $d3ddev_state (local.get $this)))
+    (if (local.get $state_guest)
+      (then
+        (call $host_dx_trace (i32.const 17) (local.get $primType)
+          (i32.load (i32.add (local.get $v_wa) (i32.const 16)))
+          (call $gl32 (i32.add (local.get $state_guest) (i32.const 364)))
+          (i32.or (call $gl32 (i32.add (local.get $state_guest) (i32.const 332)))
+                  (i32.shl (call $gl32 (i32.add (local.get $state_guest) (i32.const 336)))
+                           (i32.const 16))))
+        ;; kind=18 DPVtx: one line per vertex for small batches. A full-screen
+        ;; quad and a degenerate off-screen one are the same four trace numbers
+        ;; until the actual screen coords are visible.
+        (if (i32.le_u (local.get $dwVertexCount) (i32.const 8))
+          (then
+            (local.set $i (i32.const 0))
+            (block $vdone (loop $vlp
+              (br_if $vdone (i32.ge_u (local.get $i) (local.get $dwVertexCount)))
+              (call $host_dx_trace (i32.const 18) (local.get $i)
+                (i32.load (i32.add (i32.add (local.get $v_wa) (i32.mul (local.get $i) (i32.const 32))) (i32.const 0)))
+                (i32.load (i32.add (i32.add (local.get $v_wa) (i32.mul (local.get $i) (i32.const 32))) (i32.const 4)))
+                (i32.load (i32.add (i32.add (local.get $v_wa) (i32.mul (local.get $i) (i32.const 32))) (i32.const 16))))
+              (local.set $i (i32.add (local.get $i) (i32.const 1)))
+              (br $vlp)))))))
     (if (i32.eq (local.get $primType) (i32.const 1)) (then
       ;; POINTLIST — keep prior dot-plot behavior
       (local.set $i (i32.const 0))
@@ -2580,21 +2627,8 @@
         (local.set $v0 (i32.add (local.get $v_wa) (i32.mul (i32.mul (local.get $i) (i32.const 3)) (i32.const 32))))
         (local.set $v1 (i32.add (local.get $v0) (i32.const 32)))
         (local.set $v2 (i32.add (local.get $v0) (i32.const 64)))
-        (local.set $x0 (i32.trunc_f32_s (f32.load (local.get $v0))))
-        (local.set $y0 (i32.trunc_f32_s (f32.load (i32.add (local.get $v0) (i32.const 4)))))
-        (local.set $x1 (i32.trunc_f32_s (f32.load (local.get $v1))))
-        (local.set $y1 (i32.trunc_f32_s (f32.load (i32.add (local.get $v1) (i32.const 4)))))
-        (local.set $x2 (i32.trunc_f32_s (f32.load (local.get $v2))))
-        (local.set $y2 (i32.trunc_f32_s (f32.load (i32.add (local.get $v2) (i32.const 4)))))
-        (local.set $col (i32.load (i32.add (local.get $v0) (i32.const 16))))
-        (call $d3dim_draw_tri_culled (local.get $this) (local.get $rt) (i32.const 0) (i32.const 1)
-          (local.get $x0) (local.get $y0)
-          (f32.load (i32.add (local.get $v0) (i32.const 8)))
-          (local.get $x1) (local.get $y1)
-          (f32.load (i32.add (local.get $v1) (i32.const 8)))
-          (local.get $x2) (local.get $y2)
-          (f32.load (i32.add (local.get $v2) (i32.const 8)))
-          (local.get $col))
+        (call $d3dim_draw_tl_triangle_dp (local.get $this) (local.get $rt) (i32.const 0)
+          (local.get $v0) (local.get $v1) (local.get $v2))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $tlp)))
       (return)))
@@ -2608,34 +2642,15 @@
         (local.set $v0 (i32.add (local.get $v_wa) (i32.mul (local.get $i) (i32.const 32))))
         (local.set $v1 (i32.add (local.get $v0) (i32.const 32)))
         (local.set $v2 (i32.add (local.get $v0) (i32.const 64)))
-        (local.set $x0 (i32.trunc_f32_s (f32.load (local.get $v0))))
-        (local.set $y0 (i32.trunc_f32_s (f32.load (i32.add (local.get $v0) (i32.const 4)))))
-        (local.set $x1 (i32.trunc_f32_s (f32.load (local.get $v1))))
-        (local.set $y1 (i32.trunc_f32_s (f32.load (i32.add (local.get $v1) (i32.const 4)))))
-        (local.set $x2 (i32.trunc_f32_s (f32.load (local.get $v2))))
-        (local.set $y2 (i32.trunc_f32_s (f32.load (i32.add (local.get $v2) (i32.const 4)))))
-        (local.set $col (i32.load (i32.add (local.get $v0) (i32.const 16))))
         ;; Odd i in a strip has inverted winding — swap v0/v1 so the cull test
         ;; sees a consistent front/back sign.
         (if (i32.and (local.get $i) (i32.const 1))
           (then
-            (call $d3dim_draw_tri_culled (local.get $this) (local.get $rt) (i32.const 0) (i32.const 1)
-              (local.get $x1) (local.get $y1)
-              (f32.load (i32.add (local.get $v1) (i32.const 8)))
-              (local.get $x0) (local.get $y0)
-              (f32.load (i32.add (local.get $v0) (i32.const 8)))
-              (local.get $x2) (local.get $y2)
-              (f32.load (i32.add (local.get $v2) (i32.const 8)))
-              (local.get $col)))
+            (call $d3dim_draw_tl_triangle_dp (local.get $this) (local.get $rt) (i32.const 0)
+              (local.get $v1) (local.get $v0) (local.get $v2)))
           (else
-            (call $d3dim_draw_tri_culled (local.get $this) (local.get $rt) (i32.const 0) (i32.const 1)
-              (local.get $x0) (local.get $y0)
-              (f32.load (i32.add (local.get $v0) (i32.const 8)))
-              (local.get $x1) (local.get $y1)
-              (f32.load (i32.add (local.get $v1) (i32.const 8)))
-              (local.get $x2) (local.get $y2)
-              (f32.load (i32.add (local.get $v2) (i32.const 8)))
-              (local.get $col))))
+            (call $d3dim_draw_tl_triangle_dp (local.get $this) (local.get $rt) (i32.const 0)
+              (local.get $v0) (local.get $v1) (local.get $v2))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $slp)))
       (return)))
@@ -2657,17 +2672,8 @@
         (br_if $fdone (i32.ge_u (local.get $i) (local.get $n)))
         (local.set $v1 (i32.add (local.get $v_wa) (i32.mul (i32.add (local.get $i) (i32.const 1)) (i32.const 32))))
         (local.set $v2 (i32.add (local.get $v1) (i32.const 32)))
-        (call $d3dim_draw_tri_culled (local.get $this) (local.get $rt) (i32.const 0) (i32.const 1)
-          (i32.trunc_f32_s (f32.load (local.get $v0)))
-          (i32.trunc_f32_s (f32.load (i32.add (local.get $v0) (i32.const 4))))
-          (f32.load (i32.add (local.get $v0) (i32.const 8)))
-          (i32.trunc_f32_s (f32.load (local.get $v1)))
-          (i32.trunc_f32_s (f32.load (i32.add (local.get $v1) (i32.const 4))))
-          (f32.load (i32.add (local.get $v1) (i32.const 8)))
-          (i32.trunc_f32_s (f32.load (local.get $v2)))
-          (i32.trunc_f32_s (f32.load (i32.add (local.get $v2) (i32.const 4))))
-          (f32.load (i32.add (local.get $v2) (i32.const 8)))
-          (i32.load (i32.add (local.get $v0) (i32.const 16))))
+        (call $d3dim_draw_tl_triangle_dp (local.get $this) (local.get $rt) (i32.const 0)
+          (local.get $v0) (local.get $v1) (local.get $v2))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $flp))))) )
 
@@ -2925,6 +2931,43 @@
         (call $d3dim_draw_tl_triangle
           (local.get $this) (local.get $rt) (local.get $use_z)
           (local.get $v0) (local.get $v1) (local.get $v2)))))
+
+  ;; DrawPrimitive triangles take the same textured/flat decision as the
+  ;; execute-buffer path, but they must still honour backface culling: direct
+  ;; DrawPrimitive callers usually run without a z-buffer, so an unculled back
+  ;; face overwrites the visible one. Before this existed the whole
+  ;; DrawPrimitive family flat-filled every triangle with v0's diffuse, which
+  ;; is why Organic Art's textured sky quad came out solid white.
+  (func $d3dim_draw_tl_triangle_dp
+    (param $this i32) (param $rt i32) (param $use_z i32)
+    (param $v0 i32) (param $v1 i32) (param $v2 i32)
+    (local $tex i32)
+    (local.set $tex (call $d3dim_bound_texture_entry (local.get $this)))
+    (if (i32.eqz (local.get $tex))
+      (then
+        (call $d3dim_draw_tri_culled (local.get $this) (local.get $rt) (local.get $use_z) (i32.const 1)
+          (i32.trunc_f32_s (f32.load (local.get $v0)))
+          (i32.trunc_f32_s (f32.load (i32.add (local.get $v0) (i32.const 4))))
+          (f32.load (i32.add (local.get $v0) (i32.const 8)))
+          (i32.trunc_f32_s (f32.load (local.get $v1)))
+          (i32.trunc_f32_s (f32.load (i32.add (local.get $v1) (i32.const 4))))
+          (f32.load (i32.add (local.get $v1) (i32.const 8)))
+          (i32.trunc_f32_s (f32.load (local.get $v2)))
+          (i32.trunc_f32_s (f32.load (i32.add (local.get $v2) (i32.const 4))))
+          (f32.load (i32.add (local.get $v2) (i32.const 8)))
+          (i32.load (i32.add (local.get $v0) (i32.const 16))))
+        (return)))
+    (if (call $d3dim_cull_tri (local.get $this)
+          (i32.trunc_f32_s (f32.load (local.get $v0)))
+          (i32.trunc_f32_s (f32.load (i32.add (local.get $v0) (i32.const 4))))
+          (i32.trunc_f32_s (f32.load (local.get $v1)))
+          (i32.trunc_f32_s (f32.load (i32.add (local.get $v1) (i32.const 4))))
+          (i32.trunc_f32_s (f32.load (local.get $v2)))
+          (i32.trunc_f32_s (f32.load (i32.add (local.get $v2) (i32.const 4)))))
+      (then (return)))
+    (call $d3dim_draw_tl_triangle_textured
+      (local.get $this) (local.get $rt) (local.get $tex) (local.get $use_z)
+      (local.get $v0) (local.get $v1) (local.get $v2)))
 
   ;; ── Execute-buffer triangle rasterizer ─────────────────────────
   ;; Walks wCount D3DTRIANGLE records (8 bytes each: u16 v1,v2,v3,flags) and
