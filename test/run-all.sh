@@ -429,6 +429,7 @@ E2E=(
   test/test-winamp-audio.js
   test/test-winamp-eq-presets.js
   test/test-winamp-installers.js
+  test/test-winamp-visualizers.js
   test/test-wordpad-advanced-rtf.js
   test/test-wordpad-dialog-lifecycle.js
   test/test-wordpad-format-accelerators.js

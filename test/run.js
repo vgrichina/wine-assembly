@@ -257,6 +257,18 @@ const SAVE_VFS = getArg('save-vfs', null); // --save-vfs=DIR: extract VFS files 
 const SAVE_VFS_SUFFIX = getArg('save-vfs-suffix', null); // --save-vfs-suffix=.gid: restrict extraction
 const VFS_DRIVE = getArg('vfs-drive', null); // --vfs-drive=D: mirror the EXE + explicit --vfs-include files on read-only D:\
 const VFS_INCLUDE = getArgs('vfs-include'); // --vfs-include=GLOB: mount matching files relative to the EXE directory
+// --vfs-mount=HOSTPATH=GUESTPATH: mount one host file at an exact guest path.
+// --vfs-include can only place a file at its own path relative to the EXE, so
+// an asset that has to appear somewhere else has no other way in -- a Winamp
+// visualizer kept in binaries/plugins/candidates has to be seen at
+// c:\plugins\vis_avs.dll before Winamp will enumerate it at all.
+const VFS_MOUNT = getArgs('vfs-mount');
+// --dll-seed=PATH[,PATH]: preload one more DLL as if the app registry had
+// listed it in `dlls:`. LoadLibraryA resolves a guest path against modules
+// that are already loaded and never opens the VFS itself, so a plugin the app
+// discovers at runtime -- every Winamp visualizer past the one in the registry
+// -- returns a junk handle unless it was seeded here first.
+const DLL_SEED = getArgs('dll-seed');
 const STUCK_AFTER = parseInt(getArg('stuck-after', '10'));  // --stuck-after=N: stuck detection after N same-EIP batches
 const WINVER = getArg('winver', null); // --winver=nt4|win2k|win98 or hex like 0x05650004
 // --app=sol launches what the desktop icon launches: lib/apps.js is the one
@@ -2813,7 +2825,7 @@ async function main() {
     }
     dlls = await resolveDllGraph({
       exeBytes,
-      seeds: (ASSET_ENTRY && ASSET_ENTRY.dlls) || [],
+      seeds: [...((ASSET_ENTRY && ASSET_ENTRY.dlls) || []), ...DLL_SEED],
       detectRequiredDlls,
       loadSpec: (spec) => {
         // Registry seeds arrive as repo-relative paths; the graph walk's own
@@ -2906,6 +2918,16 @@ async function main() {
       const size = fs.statSync(file.hostPath).size;
       addFile(file.guestPath, file.hostPath, size);
       addFontAlias(file.guestPath, file.hostPath, size);
+    }
+    for (const spec of VFS_MOUNT) {
+      const eq = spec.lastIndexOf('=');
+      if (eq <= 0) throw new Error(`--vfs-mount needs HOSTPATH=GUESTPATH, got: ${spec}`);
+      const hostPath = appAsset(spec.slice(0, eq).trim());
+      const guestPath = spec.slice(eq + 1).trim();
+      if (!guestPath) throw new Error(`--vfs-mount needs a guest path: ${spec}`);
+      const size = fs.statSync(hostPath).size;
+      addFile(guestPath, hostPath, size);
+      addFontAlias(guestPath, hostPath, size);
     }
     // Mount a matched registry app's data files at the same VFS paths the page
     // gives them. An entry is a repo-relative URL (-> c:\basename), or
