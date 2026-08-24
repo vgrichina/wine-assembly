@@ -295,6 +295,11 @@ const ASSET_ENTRY_ID = MATCHED_APP && MATCHED_APP.id;
 const WASM_PATH = getArg('wasm', path.join(ROOT, 'build', 'wine-assembly.wasm')); // --wasm=FILE: isolated prebuilt used with --no-build
 const PNG_OUT = getArg('png', null);     // --png=out.png: render to PNG via node-canvas
 const PNG_CANVAS = hasFlag('png-canvas'); // --png-canvas: always capture the composited screen, never a raw DX surface
+// --dx-raw-index: for an 8bpp DX surface, write the raw palette indices as
+// greyscale instead of looking them up in the colour table. An all-black
+// capture then tells you which of the two things is wrong: nothing there to
+// draw, or art sitting under a colour table that is still black.
+const DX_RAW_INDEX = hasFlag('dx-raw-index');
 const VIDEO_OUT = getArg('video', null); // --video=out.webm: record deterministic renderer frames through ffmpeg
 const VIDEO_FPS = parseFloat(getArg('video-fps', '30')); // --video-fps=N: playback rate; one frame is captured per batch
 const VIDEO_START_BATCH = Math.max(0, parseInt(getArg('video-start-batch', '0'), 10) || 0); // --video-start-batch=N: skip setup batches before capture
@@ -6878,7 +6883,7 @@ if (VERBOSE) {
         const di = (y * surface.w + x) * 4;
         let r = 0, g = 0, b = 0;
         if (surface.bpp === 8) {
-          if (surface.paletteWa) {
+          if (surface.paletteWa && !DX_RAW_INDEX) {
             const pi = mem[srcRow + x];
             r = mem[surface.paletteWa + pi * 4];
             g = mem[surface.paletteWa + pi * 4 + 1];
