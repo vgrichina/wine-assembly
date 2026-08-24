@@ -15,6 +15,10 @@
   ;; needs a rebuild to switch off cannot be A/B'd on one box in one sitting.
   ;; Decode-time only, so the flag itself costs nothing on the hot path.
   (global $sib_fusion_enabled (mut i32) (i32.const 1))
+  ;; Where $sib_store_at leaves the operands of the store it just matched. Not
+  ;; return values because there are three of them and one is the length.
+  (global $fuse_info (mut i32) (i32.const 0))
+  (global $fuse_disp (mut i32) (i32.const 0))
 
   ;; Read next byte from guest at d_pc, advance d_pc
   (func $d_fetch8 (result i32)
@@ -663,6 +667,76 @@
     (global.set $d_pc (local.get $p))
     (i32.const 1))
 
+  ;; One unprefixed `mov [base+index*scale+disp], r32` at $p storing the given
+  ;; register: 89 /r with rm=4 (a SIB byte) and mod != 3. Returns the encoded
+  ;; length in the high bits and 1 in the low bit, or 0 for anything else -- a
+  ;; prefix byte in front declines by construction, which keeps operand-size,
+  ;; address-size and segment forms out of the fusion. The info word and the
+  ;; displacement land in $fuse_info / $fuse_disp rather than in the result,
+  ;; because a matcher that returned them would need three return values.
+  ;;
+  ;; Declines the absolute form (no base and no index) for the same reason
+  ;; $emit_store32 does: handler 420's operand encoding is the indexed one.
+  (func $sib_store_at (param $p i32) (param $reg i32) (result i32)
+    (local $modrm i32) (local $mod i32) (local $sib i32)
+    (local $base i32) (local $index i32) (local $nobase i32)
+    (if (i32.ne (call $gl8 (local.get $p)) (i32.const 0x89))
+      (then (return (i32.const 0))))
+    (local.set $modrm (call $gl8 (i32.add (local.get $p) (i32.const 1))))
+    (if (i32.ne (i32.and (i32.shr_u (local.get $modrm) (i32.const 3)) (i32.const 7))
+                (local.get $reg))
+      (then (return (i32.const 0))))
+    (if (i32.ne (i32.and (local.get $modrm) (i32.const 7)) (i32.const 4))
+      (then (return (i32.const 0))))
+    (local.set $mod (i32.shr_u (local.get $modrm) (i32.const 6)))
+    (if (i32.eq (local.get $mod) (i32.const 3)) (then (return (i32.const 0))))
+    (local.set $sib (call $gl8 (i32.add (local.get $p) (i32.const 2))))
+    (local.set $base (i32.and (local.get $sib) (i32.const 7)))
+    (local.set $index (i32.and (i32.shr_u (local.get $sib) (i32.const 3)) (i32.const 7)))
+    ;; index=4 means "no index"; base=5 with mod=00 means "no base, disp32"
+    (if (i32.eq (local.get $index) (i32.const 4))
+      (then (local.set $index (i32.const 0xF))))
+    (local.set $nobase (i32.and (i32.eqz (local.get $mod))
+                                (i32.eq (local.get $base) (i32.const 5))))
+    (if (i32.and (local.get $nobase) (i32.eq (local.get $index) (i32.const 0xF)))
+      (then (return (i32.const 0))))
+    (if (local.get $nobase) (then (local.set $base (i32.const 0xF))))
+    (global.set $fuse_info (i32.or (local.get $base)
+      (i32.or (i32.shl (local.get $index) (i32.const 4))
+              (i32.shl (i32.and (i32.shr_u (local.get $sib) (i32.const 6)) (i32.const 3))
+                       (i32.const 8)))))
+    (if (i32.eq (local.get $mod) (i32.const 1))
+      (then
+        (global.set $fuse_disp
+          (call $sign_ext8 (call $gl8 (i32.add (local.get $p) (i32.const 3)))))
+        (return (i32.const 0x41))))
+    (if (i32.or (i32.eq (local.get $mod) (i32.const 2)) (local.get $nobase))
+      (then
+        (global.set $fuse_disp (call $gl32 (i32.add (local.get $p) (i32.const 3))))
+        (return (i32.const 0x71))))
+    (global.set $fuse_disp (i32.const 0))
+    (i32.const 0x31))
+
+  ;; Fold `mov r32,[base+disp]` and the `mov [base+index*scale+disp],r32` that
+  ;; immediately follows it into handler 421. Called with the load already
+  ;; decoded (its base in $mr_base, its segment-adjusted displacement in
+  ;; $disp0); returns 1 once the store matched.
+  (func $try_emit_copy_sib (param $dst i32) (param $disp0 i32) (result i32)
+    (local $m i32)
+    (if (i32.eqz (global.get $sib_fusion_enabled)) (then (return (i32.const 0))))
+    (if (i32.or (global.get $code16) (global.get $d_addr16))
+      (then (return (i32.const 0))))
+    (if (global.get $d_seg) (then (return (i32.const 0))))
+    (local.set $m (call $sib_store_at (global.get $d_pc) (local.get $dst)))
+    (if (i32.eqz (local.get $m)) (then (return (i32.const 0))))
+    (call $te (i32.const 421)
+      (i32.or (global.get $mr_base) (i32.shl (local.get $dst) (i32.const 4))))
+    (call $te_raw (local.get $disp0))
+    (call $te_raw (global.get $fuse_info))
+    (call $te_raw (global.get $fuse_disp))
+    (global.set $d_pc (i32.add (global.get $d_pc) (i32.shr_u (local.get $m) (i32.const 4))))
+    (i32.const 1))
+
   ;; $fuse says whether the bytes after $d_pc are the next instruction. They
   ;; are for `mov r32,r/m32`, and every fusion below peeks at them; they are
   ;; NOT for `imul r32,r/m32,imm`, whose immediate the decoder has already
@@ -698,6 +772,13 @@
             (return)))
         (if (local.get $fuse)
           (then
+            ;; The copied dword: this load and the indexed store of the same
+            ;; register that follows it. Tried before the load run, because a
+            ;; run of loads is not what this code is -- Caesar's unrolled copy
+            ;; cases alternate load/store and $try_emit_base_run declines them
+            ;; anyway (the byte after the load is 0x89, not another 0x8B).
+            (if (call $try_emit_copy_sib (local.get $dst) (global.get $mr_disp))
+              (then (return)))
             (if (call $try_emit_base_run (local.get $dst) (global.get $mr_disp))
               (then (return)))))
         (call $te (i32.add (i32.const 339) (global.get $mr_base)) (local.get $dst))

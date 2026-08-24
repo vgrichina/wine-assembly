@@ -414,6 +414,48 @@
       (call $get_reg (local.get $op)))
     (return_call $next))
 
+  ;; 421: the whole copied dword —
+  ;;
+  ;;   mov  r32, [base+disp]                 ; H345 when base is esi
+  ;;   mov  [base+index*scale+disp], r32     ; H420 since the fusion above
+  ;;
+  ;; which is what Caesar III's RLE sprite decoder (0x0040f6d9) is made of: each
+  ;; `cmp al,imm8 / jz` case is a straight-line unrolled run of exactly this
+  ;; pair, one per dword of the run's length. 420 already removed the second of
+  ;; the three dispatches each dword used to cost; this removes the first, so a
+  ;; copied dword is one dispatch and three operand words instead of three
+  ;; dispatches and four.
+  ;;
+  ;; op = src_base | dst_reg<<4; words follow in x86 order: src disp, then the
+  ;; store's 149-style info word, then its disp.
+  ;;
+  ;; The register is written BEFORE the store address is computed, because it
+  ;; may be part of that address -- `mov edx,[esi+4] / mov [edi+edx*1],edx` is a
+  ;; legal member of this family and reads the new edx. Doing it in x86 order
+  ;; costs nothing and means the fusion needs no predicate about which registers
+  ;; may overlap.
+  (func $th_copy32_ro_to_sib (param $op i32)
+    (local $v i32) (local $info i32)
+    ;; Two dispatches folded away, so two steps to charge on top of the one
+    ;; $next bills -- see 420's note. Three total, matching what H345 + H149 +
+    ;; H21 billed before either fusion existed, so pacing is unchanged by how
+    ;; deep the lowering goes.
+    (global.set $steps (i32.sub (global.get $steps) (i32.const 2)))
+    (local.set $v (call $gl32 (i32.add
+      (call $get_reg (i32.and (local.get $op) (i32.const 0xF)))
+      (call $read_thread_word))))
+    (call $set_reg (i32.shr_u (local.get $op) (i32.const 4)) (local.get $v))
+    (local.set $info (call $read_thread_word))
+    ;; Report the store, not the fusion: the SIB EA this computes is consumed by
+    ;; a store32 exactly as it was before, and a profile that renamed it would
+    ;; stop being comparable across the change.
+    (if (global.get $handler_hist_enabled)
+      (then (call $sib_consumer_hist_record (i32.const 21)
+              (i32.shr_u (local.get $op) (i32.const 4)) (local.get $info))))
+    (call $gs32 (call $sib_ea (local.get $info) (call $read_thread_word))
+      (local.get $v))
+    (return_call $next))
+
   ;; 403: the post-increment byte fetch through a pointer *variable*:
   ;;
   ;;   mov ecx,[0x525d80]      ; the stream pointer lives in memory, not a reg
