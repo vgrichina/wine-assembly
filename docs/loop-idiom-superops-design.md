@@ -772,15 +772,17 @@ its work on a worker the report was a guaranteed zero that meant nothing. It
 now prints one line per instance (`M`, `T1`, `T2`, ...), and `--trace-loopmatch`
 / `--no-loop-superops` are re-applied to each worker as it spawns.
 
-**Caveat on the dynamic half.** Headless `--app=liquid_war` does not currently
-reach gameplay in this tree: main blocks in `WaitForSingleObject` on the worker
-handle at `0x446825` while the worker spins in `MsgWaitForMultipleObjects` at
-`0x4465ed`, and the run stops advancing at 3941 API calls however many batches
-it is given -- including under `test/test-liquid-war-candidate.js`'s own input
-recipe. That deadlock is unrelated to this work (zero superops are emitted for
-this app, so the emitted thread stream is byte-identical to the pre-A1 one),
-but it does mean the 26 self-loop blocks are boot-path blocks. The static
-result above is the load-bearing one.
+**Correction to an earlier caveat.** This section first recorded a headless
+deadlock for `--app=liquid_war` and treated the dynamic half as boot-path only.
+There was no deadlock: the worktree was 16 commits behind main and missing
+`b25ca528 Mount Liquid War's data files where the game looks for them`. After
+the merge the same command reaches a real DirectDraw frame and decodes 22,126
+self-loop blocks on main, still matching **0**. `tools/loopmatch-decode.js
+--why` over that run reduces to 35 unique block shapes, 0 matches, and charges
+**57.1% of the declines to `op-count<7`** -- the self-loops this app actually
+executes are shorter than LUT_RUN's floor. That is the first quantitative
+argument *for* COPY/FILL/SCAN predicates on executed blocks, and it is a
+different argument from the static one in 10.4.
 
 ### 10.4 Correction: LUT_RUN is not Heroes-II-specific
 
@@ -829,3 +831,49 @@ other two arguments still stand -- the `rep`-string forms are already single
 handlers (`th_rep_movsb` .. `th_rep_scasw`), and hand-rolled byte copies are
 usually short alignment fixups where 10.1's block-round-trip win is smallest
 -- but "the constituency is tiny" is not one of them.
+
+### 10.5 The block cache was aliasing 1-3-byte-apart blocks (fixed)
+
+Chasing why Liquid War re-decoded one 7-op block 22,054 times in a single
+`--trace-loopmatch` log turned up a defect that has nothing to do with loop
+idioms and costs far more than any of them would save.
+
+`$cache_slot` (was inline in `$cache_lookup`/`$cache_store`) indexed the
+4096-entry direct-mapped block cache with `(ga >> 2) & 0xFFF`. The `>> 2`
+throws away the two low address bits, which is right for a machine with 4-byte
+instructions and wrong for x86, where a basic block starts on any byte. Any two
+blocks 1-3 bytes apart share a slot. In dense code that is exactly the spacing
+of adjacent blocks: Liquid War's `0x466874` and `0x466877`, 6.16M entries each
+in a 9000-batch run, evicted each other on every single entry.
+
+Three counters were added to make this visible, since nothing reported it:
+`get_cache_stores` / `get_cache_evicts` (a decode whose slot already held a
+*different* block -- conflict, as opposed to a compulsory first decode),
+`get_cache_clears` (full arena-overflow wipes), and `get_cache_invals` /
+`get_cache_inval_hits` / `get_cache_inval_page` (self-modifying-code
+invalidations, and the last page that actually dropped a block).
+`test/run.js` prints all of them in the final-state block, per instance for the
+clears.
+
+Indexing on the whole address instead, with the bits above the index width
+folded back in (`(ga ^ (ga >> 12)) & MASK`, which also breaks a fixed 16KB
+stride), on the same fixed 9000-batch Liquid War run:
+
+| | before | after |
+|---|---|---|
+| block decodes | 14,379,380 | 26,788 |
+| of which evicted a live block | 14,366,238 | 24,183 |
+| full cache wipes (main) | 147 | 0 |
+| user CPU for the run | 19.49s | 16.72s |
+
+The wipes are a second-order effect of the same bug: a re-decode allocates
+fresh arena and never reclaims the old copy, so the thrash filled the 4MB
+per-thread arena 147 times, and each overflow throws away every decoded block
+in the process. Page invalidations were 0 throughout -- self-modifying code was
+never involved, which is what ruled out the first two hypotheses.
+
+The 14% CPU figure is the honest speedup, not 537x: the run is a fixed number
+of *blocks*, so it measures overhead removed at constant guest progress, and
+this box was at load 36-60 while measuring. In a real-time game the same saving
+shows up as more guest work per frame. Verified unchanged: minesweeper-click
+(8/8), notepad-editing (10/10), freecell-move (7/7), liquid-war-candidate.

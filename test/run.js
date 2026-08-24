@@ -6617,6 +6617,28 @@ if (VERBOSE) {
     if (instance.exports.get_heap_sparse_end) console.log('heap_sparse_end:', hex(instance.exports.get_heap_sparse_end()));
     if (instance.exports.get_virtual_alloc_top) console.log('virtual_alloc_top:', hex(instance.exports.get_virtual_alloc_top()));
     if (instance.exports.get_heap_base) console.log('heap_base:', hex(instance.exports.get_heap_base()));
+    // A full cache wipe re-decodes the app's whole working set. Per thread,
+    // because each worker owns its own arena and its own counter.
+    if (instance.exports.get_cache_clears) {
+      const parts = [`M ${instance.exports.get_cache_clears()}`];
+      if (threadManager) {
+        for (const [, t] of threadManager.threads) {
+          if (t.instance && t.instance.exports.get_cache_clears) {
+            parts.push(`T${t.tid} ${t.instance.exports.get_cache_clears()}`);
+          }
+        }
+      }
+      console.log('cache: full clears', parts.join('  '));
+      if (instance.exports.get_cache_stores) {
+        console.log('cache: block decodes', instance.exports.get_cache_stores(),
+          'of which evicted a live block', instance.exports.get_cache_evicts());
+      }
+      if (instance.exports.get_cache_invals) {
+        console.log('cache: page invalidations', instance.exports.get_cache_invals(),
+          'that dropped a block', instance.exports.get_cache_inval_hits(),
+          'last', hex(instance.exports.get_cache_inval_page()));
+      }
+    }
     if (instance.exports.gdi_dc_state_used) {
       console.log('gdi: dc_states', instance.exports.gdi_dc_state_used(), '/ 256   objects',
         instance.exports.gdi_object_used(), '/ 256   dc_mark', instance.exports.gdi_table_mark(2));
