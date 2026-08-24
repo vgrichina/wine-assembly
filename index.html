@@ -370,6 +370,14 @@
     }
     body.keyboard-open { overscroll-behavior: none; }
     body.single-app.app-running #desktop-icons { display: none; }
+    /* Between the click and the app's first window nothing moves: the PE, the
+       data files and the DLL graph are all being fetched, and the only sign of
+       it is status text in the debug toolbar, which the live site hides. This
+       is Windows' AppStarting cursor — `progress`, arrow-plus-hourglass, not
+       the fully-modal `wait`, because the desktop stays live underneath. The
+       descendant rule is what makes it show over the icons and the canvas,
+       both of which set a cursor of their own. */
+    body.app-booting, body.app-booting * { cursor: progress; }
     /* ?debug on a phone-sized viewport: the toolbar and the log together eat
        two thirds of the screen, which is the whole thing single-app mode is
        for. Once an app is running, collapse them behind a peek button and give
@@ -1081,6 +1089,9 @@ Resource-aware Win98 emulator
       screenCanvasSize: () => screenCanvasSize(),
       appendDebugLog: text => appendDebugLog(text),
       singleApp: () => SINGLE_APP_MODE,
+      onAppBootingChange: booting => {
+        document.body.classList.toggle('app-booting', !!booting);
+      },
       onAppRunningChange: running => {
         document.body.classList.toggle('app-running', !!running);
         // The desktop reappears at its own size once the guest is gone, and
