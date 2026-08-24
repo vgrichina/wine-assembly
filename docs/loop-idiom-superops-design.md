@@ -734,3 +734,50 @@ The honest reading is that LUT_RUN as specified is close to Heroes-II-specific,
 and the next move is not to generalize the LUT predicate. It is either to go
 after the shapes that actually recur (9.1), or to accept 9.4's arithmetic and
 build B, whose constituency is 2308 loops rather than 113.
+
+### 10.3 Liquid War: the strongest negative so far
+
+Liquid War 5 (`lwwin.exe`) is a useful check because its profile is unusually
+concentrated: two bodies own about 65% of startup -- `0x43ac70`, the packfile
+byte-at-a-time read loop that unpacks the 4.3MB `lw.dat`, and `0x466848`,
+Allegro's `getpixel`, entered once per pixel with two indirect calls inside.
+If Design A had anything to offer a real workload, this is the shape of
+workload where it would show.
+
+It has nothing to offer here, and not marginally:
+
+* **Static.** `tools/match-loops.js lwwin.exe --why` finds 1284 self-contained
+  loops and classifies COPY 12 / FILL 5 / **LUT 0** / SCAN 4. The LUT_RUN
+  predicate cannot fire on this binary at all. 21 loops (1.6%) match something,
+  none of it what A1 lowers. The declines are led by `call` (589) and
+  `multi-branch` (116) -- Design B territory.
+* **Dynamic.** Across the main instance and both worker instances the run
+  decodes 26 self-loop blocks and matches 0.
+* **Neither hot body is a self-loop block.** `tools/disasm_fn.js 0x43ac70`
+  shows the packfile loop running `0x43ac86` to a `jl 0x43ac86` at `0x43acb4`
+  across roughly five basic blocks, with a `call 0x43af80` refill and two
+  conditional exits. Per 9.4 that is not plain Design B either -- a two-exit
+  multi-block loop needs the multi-block wrapper. And `0x466848` is a function
+  *entry* (the `getpixel` prologue with its clip tests), so the cost there is
+  call-per-pixel, which wants inlining, not loop lowering.
+
+This is the same conclusion as 10.2 arrived at from seven weak negatives, but
+reached from a strong one: an app whose profile is dominated by two loops, both
+of which Design A is structurally unable to see.
+
+**Instrumentation note.** `--loopmatch-stats` originally read the counters off
+the main instance only. Every worker thread is a separate WASM instance with
+its own decoder and its own counters, so for an app that parks main and does
+its work on a worker the report was a guaranteed zero that meant nothing. It
+now prints one line per instance (`M`, `T1`, `T2`, ...), and `--trace-loopmatch`
+/ `--no-loop-superops` are re-applied to each worker as it spawns.
+
+**Caveat on the dynamic half.** Headless `--app=liquid_war` does not currently
+reach gameplay in this tree: main blocks in `WaitForSingleObject` on the worker
+handle at `0x446825` while the worker spins in `MsgWaitForMultipleObjects` at
+`0x4465ed`, and the run stops advancing at 3941 API calls however many batches
+it is given -- including under `test/test-liquid-war-candidate.js`'s own input
+recipe. That deadlock is unrelated to this work (zero superops are emitted for
+this app, so the emitted thread stream is byte-identical to the pre-A1 one),
+but it does mean the 26 self-loop blocks are boot-path blocks. The static
+result above is the load-bearing one.

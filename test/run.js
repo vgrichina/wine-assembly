@@ -6437,6 +6437,18 @@ async function main() {
     // Thread management: spawn pending threads, run worker slices
     if (threadManager._pendingThreads.length) {
       await threadManager.spawnPending();
+      // A worker is a separate WASM instance: its decoder globals start at the
+      // module defaults, so the loop-idiom flags have to be re-applied per
+      // thread or they only ever affect main.
+      if (TRACE_LOOPMATCH || NO_LOOP_SUPEROPS) {
+        for (const [, t] of threadManager.threads) {
+          const e = t.instance && t.instance.exports;
+          if (!e || t._loopFlagsArmed) continue;
+          t._loopFlagsArmed = true;
+          if (TRACE_LOOPMATCH && e.set_loop_trace) e.set_loop_trace(1, TRACE_LOOPMATCH_EIP);
+          if (NO_LOOP_SUPEROPS && e.set_loop_emit) e.set_loop_emit(0);
+        }
+      }
     }
     if (threadManager.hasActiveThreads()) {
       // Give worker threads extra runtime when main thread is idle (e.g., waiting for extraction)
@@ -6612,9 +6624,20 @@ if (VERBOSE) {
   }
 
   if ((TRACE_LOOPMATCH || LOOPMATCH_STATS) && instance.exports.get_loop_selfloop_blocks) {
-    console.log('loopmatch: self-loop blocks decoded',
-      instance.exports.get_loop_selfloop_blocks(),
-      'matched', instance.exports.get_loop_matched_blocks());
+    // Each worker thread is its own WASM instance with its own decoder and its
+    // own counters, so a main-only read reports zero for an app whose hot code
+    // runs on a worker (Liquid War parks main in WaitForSingleObject at boot).
+    const report = (label, e) => {
+      if (!e || !e.get_loop_selfloop_blocks) return;
+      console.log(`loopmatch: ${label} self-loop blocks decoded`,
+        e.get_loop_selfloop_blocks(), 'matched', e.get_loop_matched_blocks());
+    };
+    report('M ', instance.exports);
+    if (threadManager) {
+      for (const [, t] of threadManager.threads) {
+        if (t.instance) report(`T${t.tid}`, t.instance.exports);
+      }
+    }
   }
 
   if (DUMP_VIRTUAL_MAPS) {
