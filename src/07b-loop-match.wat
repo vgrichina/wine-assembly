@@ -648,6 +648,19 @@
     (call $te_raw (local.get $n))
     (i32.const 1))
 
+  ;; Bytes a cursor can still touch before it leaves the 4 KB page it sits in,
+  ;; counting the byte under it. $g2w is affine within a map record, and a
+  ;; sparse reservation committed in pieces gets one record per commit, so a
+  ;; page is the largest span whose guest->WASM delta is guaranteed constant.
+  ;; This is the same invariant $gl32 relies on when it skips its cross-page
+  ;; gather. Strides here are only ever +1 or -1: the ADDI role is inc/dec.
+  (func $copy_page_room (param $ga i32) (param $stride i32) (result i32)
+    (if (i32.eq (local.get $stride) (i32.const 1))
+      (then
+        (return (i32.sub (i32.const 0x1000)
+                         (i32.and (local.get $ga) (i32.const 0xFFF))))))
+    (i32.add (i32.and (local.get $ga) (i32.const 0xFFF)) (i32.const 1)))
+
   ;; ------------------------------------------------------------------
   ;; 411: the COPY_RUN super-op.
   ;; ------------------------------------------------------------------
@@ -668,6 +681,8 @@
     (local $src i32) (local $dst i32) (local $ctr i32) (local $old i32)
     (local $ctr_addr i32) (local $b i32) (local $tp i32) (local $store_ctr i32)
     (local $lo i32) (local $hi i32)
+    (local $src_ga i32) (local $dst_ga i32) (local $src_wa i32) (local $dst_wa i32)
+    (local $chunk i32) (local $trips i32) (local $allowed i32) (local $n i32)
 
     ;; Fourteen $read_thread_word calls would be fourteen calls and fourteen
     ;; global round trips on every entry, and this loop's measured average trip
@@ -726,20 +741,94 @@
                   (i32.gt_u (local.get $ctr_addr) (local.get $hi)))
               (then (local.set $store_ctr (i32.const 0))))))))
 
+    ;; The run is copied a page-chunk at a time rather than a byte at a time.
+    ;; Per byte, $gl8 was a call plus a page-cache probe and $gs8 was a call
+    ;; plus a full $g2w plus a code-page test; none of that can change inside a
+    ;; chunk. Guest mappings are only created by API calls (VirtualAlloc, file
+    ;; mapping, DLL load), no guest code runs while this handler is on the
+    ;; stack, and map records are append-only -- so a translation resolved at
+    ;; chunk entry stays valid for the whole chunk. What is left in the inner
+    ;; loop is two raw accesses and two pointer bumps.
     (block $exit
-      (loop $iter
-        (local.set $b (call $gl8 (i32.add (local.get $src) (local.get $src_disp))))
-        (call $gs8 (i32.add (local.get $dst) (local.get $dst_disp)) (local.get $b))
-        (local.set $src (i32.add (local.get $src) (local.get $src_stride)))
-        (local.set $dst (i32.add (local.get $dst) (local.get $dst_stride)))
-        (local.set $old (local.get $ctr))
-        (local.set $ctr (i32.add (local.get $ctr) (local.get $ctr_step)))
+      (loop $outer
+        (local.set $src_ga (i32.add (local.get $src) (local.get $src_disp)))
+        (local.set $dst_ga (i32.add (local.get $dst) (local.get $dst_disp)))
+
+        ;; Iterations left before the counter reaches zero. The loop is
+        ;; do-while, so a counter that is already zero runs the whole wrap.
+        (local.set $trips
+          (select (local.get $ctr)
+                  (i32.sub (i32.const 0) (local.get $ctr))
+                  (i32.eq (local.get $ctr_step) (i32.const -1))))
+        (if (i32.eqz (local.get $trips))
+          (then (local.set $trips (i32.const -1))))
+
+        ;; Iterations the step budget still pays for. The original exits after
+        ;; the first iteration that drives $steps to zero or below, so this is
+        ;; a ceiling, and a budget already spent still buys one iteration.
+        (local.set $allowed
+          (i32.div_u
+            (i32.add
+              (select (global.get $steps) (i32.const 0)
+                      (i32.gt_s (global.get $steps) (i32.const 0)))
+              (i32.sub (local.get $cost) (i32.const 1)))
+            (local.get $cost)))
+        (if (i32.eqz (local.get $allowed)) (then (local.set $allowed (i32.const 1))))
+
+        (local.set $chunk
+          (select (local.get $trips) (local.get $allowed)
+                  (i32.lt_u (local.get $trips) (local.get $allowed))))
+        (local.set $n (call $copy_page_room (local.get $src_ga) (local.get $src_stride)))
+        (local.set $chunk
+          (select (local.get $n) (local.get $chunk)
+                  (i32.lt_u (local.get $n) (local.get $chunk))))
+        (local.set $n (call $copy_page_room (local.get $dst_ga) (local.get $dst_stride)))
+        (local.set $chunk
+          (select (local.get $n) (local.get $chunk)
+                  (i32.lt_u (local.get $n) (local.get $chunk))))
+
+        (local.set $src_wa (call $g2w (local.get $src_ga)))
+        (local.set $dst_wa (call $g2w (local.get $dst_ga)))
+        ;; An unmapped cursor resolves to the four-byte null sentinel, which is
+        ;; not a page and must never be walked; and a counter that has to be
+        ;; published every step has no chunked form. One iteration per chunk is
+        ;; exactly the old per-byte behaviour in both cases.
+        (if (i32.or
+              (i32.ne (local.get $store_ctr) (i32.const 0))
+              (i32.or
+                (i32.eq (local.get $src_wa) (global.get $NULL_SENTINEL))
+                (i32.eq (local.get $dst_wa) (global.get $NULL_SENTINEL))))
+          (then (local.set $chunk (i32.const 1))))
+
+        ;; One code-page test for the whole chunk. The chunk cannot leave the
+        ;; destination page and nothing executes between its first and last
+        ;; store, so invalidating up front is what invalidating per byte did.
+        (call $invalidate_code_write (local.get $dst_ga))
+
+        (local.set $n (local.get $chunk))
+        (loop $inner
+          (local.set $b (i32.load8_u (local.get $src_wa)))
+          (i32.store8 (local.get $dst_wa) (local.get $b))
+          (local.set $src_wa (i32.add (local.get $src_wa) (local.get $src_stride)))
+          (local.set $dst_wa (i32.add (local.get $dst_wa) (local.get $dst_stride)))
+          (local.set $n (i32.sub (local.get $n) (i32.const 1)))
+          (br_if $inner (local.get $n)))
+
+        (local.set $src
+          (i32.add (local.get $src) (i32.mul (local.get $chunk) (local.get $src_stride))))
+        (local.set $dst
+          (i32.add (local.get $dst) (i32.mul (local.get $chunk) (local.get $dst_stride))))
+        (local.set $ctr
+          (i32.add (local.get $ctr) (i32.mul (local.get $chunk) (local.get $ctr_step))))
+        ;; The flags the terminator reads belong to the last iteration only.
+        (local.set $old (i32.sub (local.get $ctr) (local.get $ctr_step)))
         (if (local.get $store_ctr)
           (then (call $gs32 (local.get $ctr_addr) (local.get $ctr))))
-        (global.set $steps (i32.sub (global.get $steps) (local.get $cost)))
+        (global.set $steps
+          (i32.sub (global.get $steps) (i32.mul (local.get $chunk) (local.get $cost))))
         (br_if $exit (i32.eqz (local.get $ctr)))
         (br_if $exit (i32.le_s (global.get $steps) (i32.const 0)))
-        (br $iter)))
+        (br $outer)))
 
     (call $set_reg (local.get $src_reg) (local.get $src))
     (call $set_reg (local.get $dst_reg) (local.get $dst))
@@ -789,6 +878,9 @@
     (local $m1_addr i32) (local $m1_reg i32) (local $m1_adj i32)
     (local $fall i32) (local $back i32) (local $cost i32)
     (local $iv i32) (local $ctr i32) (local $tbl i32) (local $old i32) (local $b i32)
+    (local $src_ga i32) (local $dst_ga i32) (local $src_wa i32) (local $dst_wa i32)
+    (local $tbl_wa i32) (local $chunk i32) (local $trips i32) (local $allowed i32)
+    (local $n i32)
 
     (local.set $iv_reg    (call $read_thread_word))
     (local.set $iv_stride (call $read_thread_word))
@@ -812,23 +904,97 @@
     (local.set $ctr (call $get_reg (local.get $ctr_reg)))
     (local.set $tbl (call $get_reg (local.get $tbl_reg)))
 
+    ;; The lookup table is loop-invariant, so its translation can be resolved
+    ;; once for the whole run instead of once per byte. Only when all 256
+    ;; entries sit in one page: $g2w is affine within a map record and nothing
+    ;; guarantees the page after the table's is backed adjacently. A table that
+    ;; straddles a page keeps $gl8, whose page cache handles two pages fine.
+    (local.set $tbl_wa (i32.const 0))
+    (if (i32.le_u (i32.and (local.get $tbl) (i32.const 0xFFF)) (i32.const 0xF00))
+      (then
+        (local.set $n (call $g2w (local.get $tbl)))
+        (if (i32.ne (local.get $n) (global.get $NULL_SENTINEL))
+          (then (local.set $tbl_wa (local.get $n))))))
+
+    ;; Same page-chunking as COPY_RUN: the two iv-driven streams are resolved
+    ;; once per page rather than once per byte. Nothing can change a mapping
+    ;; while this handler is on the stack -- new records come only from API
+    ;; calls, and no guest code runs in here.
     (block $exit
-      (loop $iter
-        ;; One iteration, in the original's order.
-        (local.set $iv (i32.add (local.get $iv) (local.get $iv_stride)))
-        (local.set $b (call $gl8 (i32.add (local.get $iv) (local.get $src_disp))))
-        (local.set $b (call $gl8 (i32.add (local.get $b) (local.get $tbl))))
-        (call $gs8 (i32.add (local.get $iv) (local.get $dst_disp)) (local.get $b))
-        (local.set $old (local.get $ctr))
-        (local.set $ctr (i32.add (local.get $ctr) (local.get $ctr_step)))
-        (global.set $steps (i32.sub (global.get $steps) (local.get $cost)))
-        ;; The accumulator was zeroed at the top of every iteration, so after
-        ;; the table load it holds the translated byte and nothing else.
-        (call $set_reg (local.get $acc_reg) (local.get $b))
+      (loop $outer
+        ;; iv is stepped at the TOP of the original's body, so the first
+        ;; iteration of this chunk already works one stride along.
+        (local.set $src_ga
+          (i32.add (i32.add (local.get $iv) (local.get $iv_stride)) (local.get $src_disp)))
+        (local.set $dst_ga
+          (i32.add (i32.add (local.get $iv) (local.get $iv_stride)) (local.get $dst_disp)))
+
+        (local.set $trips
+          (select (local.get $ctr)
+                  (i32.sub (i32.const 0) (local.get $ctr))
+                  (i32.eq (local.get $ctr_step) (i32.const -1))))
+        (if (i32.eqz (local.get $trips))
+          (then (local.set $trips (i32.const -1))))
+        (local.set $allowed
+          (i32.div_u
+            (i32.add
+              (select (global.get $steps) (i32.const 0)
+                      (i32.gt_s (global.get $steps) (i32.const 0)))
+              (i32.sub (local.get $cost) (i32.const 1)))
+            (local.get $cost)))
+        (if (i32.eqz (local.get $allowed)) (then (local.set $allowed (i32.const 1))))
+        (local.set $chunk
+          (select (local.get $trips) (local.get $allowed)
+                  (i32.lt_u (local.get $trips) (local.get $allowed))))
+        (local.set $n (call $copy_page_room (local.get $src_ga) (local.get $iv_stride)))
+        (local.set $chunk
+          (select (local.get $n) (local.get $chunk)
+                  (i32.lt_u (local.get $n) (local.get $chunk))))
+        (local.set $n (call $copy_page_room (local.get $dst_ga) (local.get $iv_stride)))
+        (local.set $chunk
+          (select (local.get $n) (local.get $chunk)
+                  (i32.lt_u (local.get $n) (local.get $chunk))))
+
+        (local.set $src_wa (call $g2w (local.get $src_ga)))
+        (local.set $dst_wa (call $g2w (local.get $dst_ga)))
+        (if (i32.or
+              (i32.eq (local.get $src_wa) (global.get $NULL_SENTINEL))
+              (i32.eq (local.get $dst_wa) (global.get $NULL_SENTINEL)))
+          (then (local.set $chunk (i32.const 1))))
+
+        (call $invalidate_code_write (local.get $dst_ga))
+
+        (local.set $n (local.get $chunk))
+        (loop $inner
+          (local.set $b (i32.load8_u (local.get $src_wa)))
+          (if (local.get $tbl_wa)
+            (then (local.set $b
+              (i32.load8_u (i32.add (local.get $tbl_wa) (local.get $b)))))
+            (else (local.set $b
+              (call $gl8 (i32.add (local.get $b) (local.get $tbl))))))
+          (i32.store8 (local.get $dst_wa) (local.get $b))
+          (local.set $src_wa (i32.add (local.get $src_wa) (local.get $iv_stride)))
+          (local.set $dst_wa (i32.add (local.get $dst_wa) (local.get $iv_stride)))
+          (local.set $n (i32.sub (local.get $n) (i32.const 1)))
+          (br_if $inner (local.get $n)))
+
+        (local.set $iv
+          (i32.add (local.get $iv) (i32.mul (local.get $chunk) (local.get $iv_stride))))
+        (local.set $ctr
+          (i32.add (local.get $ctr) (i32.mul (local.get $chunk) (local.get $ctr_step))))
+        (local.set $old (i32.sub (local.get $ctr) (local.get $ctr_step)))
+        (global.set $steps
+          (i32.sub (global.get $steps) (i32.mul (local.get $chunk) (local.get $cost))))
         (br_if $exit (i32.eqz (local.get $ctr)))
         (br_if $exit (i32.le_s (global.get $steps) (i32.const 0)))
-        (br $iter)))
+        (br $outer)))
 
+    ;; The accumulator was zeroed at the top of every iteration, so after the
+    ;; table load it holds the translated byte and nothing else -- and only the
+    ;; last iteration's value is observable, since every path out of here is a
+    ;; block boundary. Written before the cursor and counter, which is the
+    ;; order the per-iteration version left behind if the three ever alias.
+    (call $set_reg (local.get $acc_reg) (local.get $b))
     (call $set_reg (local.get $iv_reg) (local.get $iv))
     (call $set_reg (local.get $ctr_reg) (local.get $ctr))
     ;; The original computes these with DEC/INC, whose flags the branch reads.

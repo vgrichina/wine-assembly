@@ -947,6 +947,13 @@ and what remains (bounds-checked, translated per-byte memory access) is. It
 lines up with the earlier `$next`-dispatch negative result -- fewer dispatches
 is simply not the lever on this interpreter.
 
+> **Superseded in part by §10.7.** The A/B above is measured on Total
+> Annihilation, and TA turns out to be decode-bound: its working set blows the
+> block cache, so ~99% of its block decodes evict a live block. An
+> execution-side change cannot show up in that number either way. The negative
+> result is real as a statement about this benchmark; it does not support the
+> conclusion drawn from it below. Read §10.7 first.
+
 **Consequence for Design A.** Do not add a third predicate expecting a speedup.
 The next lever for a byte-stream idiom is a bulk memory primitive --
 `memory.copy` for a `+1/+1` copy with no overlap, which skips the per-byte
@@ -958,3 +965,89 @@ worth approximately nothing.
 Verified unchanged: minesweeper-click (8/8), notepad-editing (10/10),
 freecell-move (7/7), liquid-war-candidate, heroes2-gameplay (1722 frames,
 adventure map reached).
+
+### 10.7 Page-chunked memory access, and why TA could never have measured it
+
+§10.6 concluded that the cost left in a super-op was per-byte translated
+memory access, and that Design A had no more to give. The first half was
+right and has now been acted on. The second half rested on a benchmark that
+could not have detected the fix.
+
+**Mappings cannot change inside a super-op.** `$g2w`'s own comment states that
+map records are append-only — `VirtualFree` currently preserves its backing —
+and new records are created only by API calls (`VirtualAlloc`, file mapping,
+DLL load). No guest code runs while a super-op is on the stack, so a
+translation resolved at the top of a run stays valid for the whole run. There
+is nothing to re-validate.
+
+**A page is the largest safe chunk.** Translation is affine per *map record*,
+not per page, and the direct guest window is one affine region spanning
+0..0x8000000 — so region-granular chunking would be even coarser. But a sparse
+reservation committed in pieces gets one record per commit, and `$gl32`'s
+comment spells out the consequence: "adjacent guest pages need not have
+adjacent WASM backing". A page is therefore the largest span whose guest→WASM
+delta is *guaranteed* constant, and it is the same invariant `$gl32`/`$gl16`
+already rely on when they skip their cross-page gather.
+
+**What changed.** Both super-ops now resolve per chunk instead of per byte:
+
+```
+chunk = min(trips_left, steps_budget, page_room(src), page_room(dst))
+  src_wa = g2w(...)            1 call   was 1 per byte ($gl8, page-cached)
+  dst_wa = g2w(...)            1 call   was 1 per byte ($gs8, NOT cached)
+  invalidate_code_write        1 call   was 1 per byte
+  inner: i32.load8_u / i32.store8 / two pointer bumps, nothing else
+```
+
+The code-page test is hoisted to once per chunk because a chunk cannot leave
+the destination page and nothing executes between its first and last store, so
+invalidating up front is exactly what invalidating per byte did. Two shapes
+escape to `chunk = 1`, which is bit-for-bit the old behaviour: a cursor that
+resolves to `NULL_SENTINEL` (four bytes, not a page, and must never be walked),
+and a COPY_RUN whose counter lives in memory the destination might cover.
+
+LUT_RUN gets one more: its 256-byte lookup table is loop-invariant, so its
+translation is hoisted out of the entire run when all 256 entries fit in one
+page (`tbl & 0xFFF <= 0xF00`). A straddling table keeps `$gl8`, whose page
+cache handles two pages well. That takes LUT from three per-byte translations
+to zero.
+
+Byte granularity is kept in the inner loop, so overlap semantics are unchanged
+— the copy still runs in the original's direction, one byte at a time.
+Widening to `memory.copy` or i32 steps is the point at which overlap would
+start to matter.
+
+**TA is decode-bound.** This is the finding that matters most here:
+
+| TA, 1000 batches | |
+|---|---|
+| block decodes | 1,213,167 |
+| of which evicted a live block | 1,201,016 (99.0%) |
+
+Its working set exceeds the block cache, so nearly every decode discards a live
+block and decode cost dominates the run. §10.6's wash is a property of that
+benchmark. If TA is to get faster, the lever is block-cache capacity or
+eviction policy, not the loop matcher.
+
+**Heroes II, the honest measurement, is inconclusive on this box.** Min-of-5,
+2600 batches, load ~5.5, `--no-loop-superops` as the partner:
+
+| | run times (user CPU) | min | median |
+|---|---|---|---|
+| superops on | 3.08 4.36 4.17 3.89 4.72 | 3.08 | 4.17 |
+| superops off | 3.62 4.23 4.42 3.98 4.22 | 3.62 | 4.22 |
+
+Min says 15%, median says 1%. That is noise at this load, and it should not be
+read as a win: `--loopmatch-stats` reports Heroes II matching **6 blocks of
+89**, far too small a slice to plausibly move 15% of a run.
+
+**What this leaves.** The change is justified by argument, not by measurement:
+it strictly removes work per byte and provably cannot change behaviour. What is
+still missing is a way to see it. Before the next attempt at this, build a
+deterministic counter — translations performed per run — so the effect can be
+read off a single run instead of chased through wall-clock on a loaded box.
+That instrument is worth more than another predicate.
+
+Verified unchanged: heroes2-gameplay (byte-identical output — map green 37.3%,
+black 39.4%, panel wood 69.7%, 1722 frames), minesweeper-click (8/8),
+notepad-editing (10/10), freecell-move (7/7).
