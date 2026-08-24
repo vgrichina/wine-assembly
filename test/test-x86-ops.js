@@ -496,6 +496,52 @@ async function main() {
     addr16Eax, e.get_eax());
 
   // ================================================================
+  // EFLAGS round trip through pushfd/popfd
+  // ================================================================
+  //
+  // The interpreter models six flags lazily and used to synthesise EFLAGS from
+  // those alone, so every other bit read back as zero. That silently breaks the
+  // standard "do we have CPUID?" probe, which toggles bit 21 (ID), pushes the
+  // flags and compares: the toggle never survived, so programs concluded the
+  // CPU predates CPUID. Allegro does this, and it is why Liquid War never ran
+  // the cpuid its own binary contains.
+
+  // pushfd; pop eax; mov edx,eax; xor eax,0x200000; push eax; popfd;
+  // pushfd; pop eax; xor eax,edx  — nonzero iff the ID bit toggled.
+  runCode([0x9C, 0x58, 0x89, 0xC2, 0x35, ...le32(0x200000), 0x50, 0x9D,
+           0x9C, 0x58, 0x31, 0xD0]);
+  test('EFLAGS bit 21 (ID) survives a pushfd/popfd round trip',
+    e.get_eax() >>> 0, 0x200000);
+
+  // Same shape on an unmodelled bit that is not the ID bit: bit 18 (AC).
+  runCode([0x9C, 0x58, 0x89, 0xC2, 0x35, ...le32(0x40000), 0x50, 0x9D,
+           0x9C, 0x58, 0x31, 0xD0]);
+  test('EFLAGS bit 18 (AC) survives a pushfd/popfd round trip',
+    e.get_eax() >>> 0, 0x40000);
+
+  // Restoring flags must still restore the ones we do model: stc; pushfd;
+  // clc; popfd; setc al.
+  runCode([0xF9, 0x9C, 0xF8, 0x9D, 0x0F, 0x92, 0xC0]);
+  test('popfd restores CF from the pushed word', e.get_eax() & 0xFF, 1);
+
+  // ...and the arithmetic flags must not be frozen by the extra-bit store:
+  // popfd a word with ZF set, then add 1 to a non-zero register and check ZF
+  // reflects the add, not the popped word. mov eax,0x40; push eax; popfd;
+  // mov ecx,5; add ecx,1; setz al.
+  runCode([0xB8, ...le32(0x40), 0x50, 0x9D, 0xB9, ...le32(5), 0x83, 0xC1, 0x01,
+           0x0F, 0x94, 0xC0]);
+  test('a later ALU op still owns ZF after popfd', e.get_eax() & 0xFF, 0);
+
+  // PF is reported in the pushed word, and agrees with JP: 0x03 has two bits
+  // set, so parity is even. mov al,1; add al,2; pushfd; pop eax; and eax,4.
+  runCode([0xB0, 0x01, 0x04, 0x02, 0x9C, 0x58, 0x83, 0xE0, 0x04]);
+  test('pushfd reports PF (even parity)', e.get_eax() >>> 0, 4);
+
+  // 0x07 has three bits set — odd parity, PF clear.
+  runCode([0xB0, 0x01, 0x04, 0x06, 0x9C, 0x58, 0x83, 0xE0, 0x04]);
+  test('pushfd reports PF (odd parity)', e.get_eax() >>> 0, 0);
+
+  // ================================================================
   // RDTSC and the CPUID feature word
   // ================================================================
   //

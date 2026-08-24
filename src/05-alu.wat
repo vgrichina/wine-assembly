@@ -1808,7 +1808,13 @@
     (call $gs16 (global.get $esp) (i32.and (call $build_eflags) (i32.const 0xFFFF))) (return_call $next))
   ;; 254: POPF (16-bit)
   (func $th_popf16 (param $op i32)
-    (call $load_eflags (i32.and (call $gl16 (global.get $esp)) (i32.const 0xFFFF)))
+    ;; POPF writes only the low 16 bits of EFLAGS, so the high half of
+    ;; $eflags_extra (RF, VM, AC, VIF, VIP, ID) has to be carried through --
+    ;; handing $load_eflags a bare 16-bit word would clear the ID bit that a
+    ;; CPUID probe is in the middle of toggling.
+    (call $load_eflags (i32.or
+      (i32.and (global.get $eflags_extra) (i32.const 0xFFFF0000))
+      (i32.and (call $gl16 (global.get $esp)) (i32.const 0xFFFF))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 2))) (return_call $next))
 
   ;; 255: XCHG AX, r16 (preserves upper 16 of both regs)

@@ -2078,6 +2078,12 @@
   (global $tls_next_index (mut i32) (i32.const 0))
   ;; Performance counter (monotonic, incremented per query)
   (global $perf_counter_lo (mut i32) (i32.const 0))
+  ;; EFLAGS bits outside the six we model lazily (CF/PF/ZF/SF/DF/OF). popfd
+  ;; stores them here and pushfd ORs them back, so a bit the interpreter has no
+  ;; opinion about still round-trips. Starts at the usual user-mode value:
+  ;; bit 9 IF set, everything else clear.
+  (global $eflags_extra (mut i32) (i32.const 0x200))
+
   ;; Time-stamp counter, in emulated cycles. RDTSC derives it from the guest
   ;; millisecond clock at $TSC_HZ_PER_MS, and this global holds the last value
   ;; handed out so the counter never repeats or goes backwards -- code that
