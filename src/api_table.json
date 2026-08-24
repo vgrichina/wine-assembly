@@ -5119,7 +5119,15 @@
     "name": "SendDlgItemMessageA",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 667488445
+    "hash": 667488445,
+    "args": [
+      { "name": "hDlg", "type": "HWND" },
+      { "name": "nIDDlgItem", "type": "i32" },
+      { "name": "Msg", "type": "u32" },
+      { "name": "wParam", "type": "u32" },
+      { "name": "lParam", "type": "u32" }
+    ],
+    "ret": "i32"
   },
   {
     "id": 583,
