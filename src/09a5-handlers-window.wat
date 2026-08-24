@@ -907,7 +907,13 @@
           (if (i32.and (call $wnd_get_style (local.get $ctrl_hwnd)) (i32.const 0x10000000))
             (then (call $paint_flag_set_inv (local.get $ctrl_hwnd))))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
-          (br $push_loop)))))
+          (br $push_loop)))
+        ;; …and the dialog's own client area. A DlgProc that ignores WM_PAINT
+        ;; costs nothing (the background is already filled and the pump's take
+        ;; clears the flag, so there is no repaint loop), but one that draws
+        ;; its client itself never gets a single paint otherwise. See the
+        ;; matching seed in $handle_DialogBoxParamA.
+        (call $paint_flag_set_inv (local.get $hwnd))))
     ;; Do not synchronously paint children during CreateDialogParamA. Nested
     ;; wizard pages can be created before USER has finalized the parent/child
     ;; visible region, and painting them now leaves pixels that a later parent

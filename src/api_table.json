@@ -23627,5 +23627,12 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 3535660493
+  },
+  {
+    "id": 2869,
+    "name": "RegQueryValueW",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 400203013
   }
 ]
