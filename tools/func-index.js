@@ -37,9 +37,17 @@ function scan(source) {
     const code = raw.replace(/;;.*$/, '');
 
     if (depth <= 1) {
-      const importFunc = code.match(/\(import\s+"[^"]*"\s+"([^"]*)"\s+\(func\s+(\$[^\s)]+)/);
+      // An import whose signature is long WRAPS, putting `(func $name ...)` on
+      // the next line. Requiring both on one line missed exactly 8 of them and
+      // shifted every reported index by 8 — which named $do_alu_sized as the
+      // hottest function in a profile whose real answer was $next, and made a
+      // dead function ($cdecl_return) look like 26% of RollerCoaster Tycoon.
+      // Match the module/name pair first, then look ahead for the (func.
+      const importPair = code.match(/\(import\s+"[^"]*"\s+"([^"]*)"(.*)$/);
+      const importFunc = importPair
+        && (importPair[2] + (lines[i + 1] || '').replace(/;;.*$/, '')).match(/\(func\s+(\$[^\s)]+)/);
       if (importFunc) {
-        imports.push({ name: importFunc[2], line: i + 1, host: importFunc[1] });
+        imports.push({ name: importFunc[1], line: i + 1, host: importPair[1] });
       } else {
         const define = code.match(/^\s*\(func\s+(\$[^\s)]+|\(export\s+"[^"]*")/);
         if (define) {
