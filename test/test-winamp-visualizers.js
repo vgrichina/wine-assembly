@@ -12,12 +12,13 @@
 //      click order below is load-bearing: Start, Stop, Start, close prefs,
 //      play. Starting playback first leaves the window black.
 //
-//   B. A plug-in that is not the one in the app registry. LoadLibraryA
-//      resolves a guest path against modules that are already loaded and never
-//      opens the VFS, so an arbitrary visualizer needs --dll-seed as well as
-//      --vfs-mount. vis_milk is the one that survives the enumeration walk;
-//      the case asserts MilkDrop's header is read AND that the walk continues
-//      to vis_w behind it and still shows the page.
+//   B. The second plug-in in the desktop config. LoadLibraryA resolves a guest
+//      path against modules that are already loaded and never opens the VFS,
+//      so a visualizer needs both an app-registry `dlls:` entry (or --dll-seed
+//      on an ad-hoc run) and a c:\plugins mount. MilkDrop is the MMX one that
+//      survives the enumeration walk; the case asserts its header is read from
+//      the registry-loaded module AND that the walk continues to vis_w behind
+//      it and still shows the page.
 //
 // Known gap, deliberately not asserted: vis_avs, vis_milk2 and vis_nsfs load
 // and export winampVisGetHeader, but the enumerator never comes back from
@@ -78,9 +79,9 @@ function assertNoCrash(out, label) {
 // ---------------------------------------------------------------- case A
 
 // Preferences opens at 0,0 and the player at 26,29, the same geometry the
-// browser test drives. Plug-ins > Visualization (54,188) > plug-in row (170,60)
-// > Start (184,323) > Stop (244,323) > Start > close Preferences (440,16) >
-// play (66,129).
+// browser test drives. Plug-ins > Visualization (54,188) > the wWis row
+// (170,73 -- MilkDrop sorts above it) > Start (184,323) > Stop (244,323) >
+// Start > close Preferences (440,16) > play (66,129).
 const shotA = path.join(OUT, 'winamp-vis-w.png');
 try { fs.unlinkSync(shotA); } catch (_) {}
 
@@ -95,7 +96,7 @@ const outA = run([
     '5:273:2',
     '80:post-cmd:40317',
     '360:click:54:188',
-    '440:click:170:60',
+    '440:click:170:73',
     '520:click:184:323',
     '680:click:244:323',
     '840:click:184:323',
@@ -151,16 +152,14 @@ const outB = run([
   '--screen=756x480',
   '--max-batches=560',
   '--batch-size=50000',
-  '--dll-seed=binaries/plugins/candidates/vis_milk.dll',
-  '--vfs-mount=binaries/plugins/candidates/vis_milk.dll=c:\\plugins\\vis_milk.dll',
   '--trace-api=LoadLibraryA,GetProcAddress,ShowWindow,CreateDialogParamA',
   '--input=' + ['5:273:2', '80:post-cmd:40317', '360:click:54:188'].join(','),
 ], 180000);
 
-console.log('case B: a visualizer that is not the registry one enumerates');
+console.log('case B: the second plug-in in the desktop config enumerates');
 assertNoCrash(outB, 'vis_milk');
 const milkLoad = outB.match(/LoadLibraryA\(name="C:\\Plugins\\vis_milk\.dll"\)[^\n]*\n\s*=> h:0x([0-9a-f]+)/i);
-check(milkLoad, 'vis_milk: LoadLibrary should resolve the seeded module, not a junk handle');
+check(milkLoad, 'vis_milk: LoadLibrary should resolve the registry-loaded module, not a junk handle');
 if (milkLoad) {
   const mod = milkLoad[1];
   check(parseInt(mod, 16) >= 0x400000 && parseInt(mod, 16) < 0x1000000,
@@ -184,4 +183,4 @@ if (failures.length) {
   for (const f of failures) console.log(`  - ${f}`);
   process.exit(1);
 }
-console.log('\nPASS  Winamp visualizers: vis_w renders, a seeded plug-in enumerates');
+console.log('\nPASS  Winamp visualizers: vis_w renders, MilkDrop enumerates');
