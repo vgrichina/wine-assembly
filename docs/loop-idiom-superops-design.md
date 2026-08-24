@@ -21,7 +21,9 @@ than on the byte signatures $match_storm_bitreader-style matchers use:
   B  self-loop wrap   any block whose Jcc targets its own entry gets driven by
                       a wrapper handler. Needs no library at all, but keeps one
                       call_indirect per op per iteration, which is the expensive
-                      half. Expect 20-30%, not 90%.
+                      half. Some tens of percent on the blocks it wraps, not
+                      90% -- see 4.2, and note the figure there is reasoned,
+                      not measured.
 
 Neither touches 0x004c7341. That one wants a third, unrelated change:
 promoting a load-modify-store of a fixed global into a block-local.
@@ -183,6 +185,25 @@ There is deliberately no scalar blend pattern -- see 3.2.1.
 for the REP path. `LUT_RUN` and `SCAN_RUN` need their own loops but stay inside
 one handler invocation.
 
+**The lowering column is a refinement, not the win.** The win is that the loop
+becomes *one* thread-stream op instead of N per element, so the whole dispatch
+cost -- `$next` preamble, `call_indirect`, back edge, `$run` round trip -- is
+gone whatever the handler body then does. A plain byte-at-a-time WAT loop
+already captures roughly an order of magnitude on a 9-dispatches-per-pixel
+blitter; `memory.copy`, `memory.fill` and SWAR scanning are second-order polish
+on top of that.
+
+Two consequences, both simplifying:
+
+* Implement each pattern with the dumbest correct scalar loop first, measure,
+  and only then reach for a bulk op. `LUT_RUN` -- the one that actually hits
+  Heroes II's hot block -- has no bulk-op form at all, and does not need one.
+* Guards that exist purely to *legalize* a bulk op can relax. A scalar loop
+  does not need the run to be contiguous, unit-stride, non-overlapping or
+  within one `g2w` page; it only needs the addresses it actually touches to be
+  translated. So a matched-but-unlowerable-to-`memory.copy` run is still worth
+  matching, and the unit-stride column in 9.4 is a floor on reach, not a gate.
+
 ### 3.2.1 Why there is no blend pattern
 
 Alpha/additive blending is the obvious fifth idiom, and the census killed it
@@ -327,8 +348,26 @@ own entry, prepend a wrapper op that drives the body.
 B keeps one indirect call per op per iteration, and per
 `interpreter-dispatch-perf.md` that mispredicted target is the expensive half
 of a dispatch -- two independent attempts to make dispatch itself cheaper
-measured exactly zero. So the honest expectation for B is **20-30%** off the
-blocks it wraps, not the near-elimination A gets where it matches.
+measured exactly zero. So B cannot approach the near-elimination A gets where
+it matches.
+
+How much it *does* get is worth accounting honestly, because the two columns
+above are not the whole story. Per iteration of an N-op body, B removes N
+copies of the `$next` preamble (all cheap, predictable, non-branching work)
+**plus one** trip through the back edge: `$th_jcc`'s two `$read_thread_word`
+calls and `$eip` write, the return all the way out to `$run` -- jcc handlers
+do **not** tail-call `$next`, they return (`src/05-alu.wat:704`, `:740`,
+`:747`) -- the `$run` preamble (`blocks--`, eip==0, thread-arena headroom,
+`$yield_flag`, `$dbg_any`) and a `$cache_lookup`. That back-edge round trip is
+the single largest item B removes, and it is amortized over N, so B's payoff
+falls as the body grows and is largest on the tightest loops.
+
+An earlier draft of this section put a **20-30%** number here. It is removed
+rather than replaced: it was a guess, and swapping in a different guess buys
+nothing. Per the rule in section 1, B lands with a measurement or it does not
+land. The prediction to test is the shape, not the constant -- speedup should
+scale roughly as `(back-edge cost + N x preamble) / (N x call_indirect +
+back-edge cost)`, i.e. big on 2-4 op loops and small on 12-op ones.
 
 Against that: B needs no shape library, cannot be wrong about semantics (it
 runs the same ops in the same order), and fires on every hand-rolled loop in
@@ -382,6 +421,47 @@ since it is 5.03% by itself.
 A0 is shared: B's precondition (block ends in a Jcc to its own entry) is the
 same structural test A's matcher needs, so building A first makes B mostly
 free.
+
+### 6.1 A0 is smaller than it looks: record op starts, don't declare them
+
+Walking the emitted stream needs op boundaries, and the stream is not
+self-describing: a thread word is `[handler_idx, operand]` = 8 bytes, but some
+handlers pull extra words with `$read_thread_word` (`src/04-cache.wat:192`),
+and how many is written only in each handler's own body.
+
+The obvious fix -- a generated 410-entry `op -> word count` table with a build
+gate -- is the wrong one. It *declares* what handlers eat, and a declaration
+can rot: add a `$read_thread_word` to a handler and the table is silently a
+lie, with a mis-walk rather than a build failure as the symptom.
+
+Instead, **record what the decoder actually did**, which it already knows:
+
+* `$te` (`src/04-cache.wat:143`) is the single choke point for op headers, and
+  `$te_raw` (`:161`) the single one for extra words. The decoder has 376 `$te`
+  and 252 `$te_raw` call sites and every one goes through those two functions.
+* So: reset a counter in `$decode_block` beside its existing
+  `(local.set $tstart (global.get $thread_alloc))`, and append the current
+  `$thread_alloc` to a scratch array inside `$te`. `$te_raw` is untouched --
+  extra words are by definition not op starts.
+
+That is correct by construction, needs no generated table and no build gate,
+and costs one store plus an increment per emitted op. Two things make it safe,
+both already true of the tree:
+
+1. `$thread_alloc` never rewinds during decode --
+   `global.set $thread_alloc` does not appear in `src/07-decoder.wat` at all.
+   Existing fusions decide by lookahead before emitting, never by rewriting
+   after, so the index is append-only. (A's own rewind-to-`$tstart` resets the
+   counter to zero on the same line.) Any future peephole pass that rewinds
+   `$thread_alloc` must rewind the index with it.
+2. Nothing needs the index at runtime. A's match and emit, and B's back-edge
+   detection, all happen inside `$decode_block`; `$next` never walks the
+   stream, it executes it. So the index is scratch, reused by every block, and
+   costs no per-block memory.
+
+The scratch array is capped; a block that overflows it sets a poison flag and
+is simply not matched. Degrading to "no lowering" is always safe, and blocks
+that large are not loop idioms.
 
 Recommended order: A0, A1, measure, then decide whether A2/A3 or B1 comes
 next based on what A1's numbers actually say.
@@ -523,11 +603,21 @@ TOTAL                       5719     44     44      6     19      113   2.0%    
 Design A, for two reasons.
 
 First, the denominator is wrong. `call` (2299) and `multi-branch` (1029) are
-58% of all declines, and neither is a matcher weakness: a loop that calls out
+59% of all declines, and neither is a matcher weakness: a loop that calls out
 or has a second exit is not lowerable to a bulk memory op by any predicate.
-Excluding them leaves 2391 in-scope loops and a 4.7% match rate. Those 3328
-declined loops are precisely Design B's constituency, which is the strongest
-argument yet that A and B ship together rather than A alone.
+Excluding them leaves 2391 in-scope loops and a 4.7% match rate.
+
+Those 3328 loops are **not** Design B's constituency, though an earlier draft
+of this section said they were. B as scoped in section 4 is a *same-block*
+self-loop wrapper, and a `call` or a second conditional branch ends a block in
+our decoder -- so those 3328 are exactly the loops B cannot wrap either. B's
+real constituency is the complement: single-block self-loops, which is
+`5719 - 2299 (call) - 1029 (multi-branch) - 83 (ret)` = **2308 loops, 40% of
+the corpus**. That is still an order of magnitude more sites than A's 113, and
+it includes all 113 of them, so the argument for shipping both stands -- it is
+just a smaller and more precise claim than the one it replaces. Reaching the
+other 3328 needs a multi-block loop wrapper, which is a different design than
+either A or B.
 
 Second, and more important, **match rate is not the metric -- hot-block
 coverage is.** Heroes II's four hot blocks are 12.4% of the profile. The
@@ -536,7 +626,10 @@ also takes its `esi`/`edi`/`eax`/`ebx` twins at `0x004c6c10`, `0x004c6cd2` and
 `0x004c762a` -- one predicate, four sites, no per-variant work. The other
 three hot blocks, `0x004c7341` at 5.03% among them, decline as
 `multi-branch`: they are the multi-exit control-byte decoders of section 5. So
-A buys about 2.3 points of that 12.4, and the remaining ten belong to B.
+A buys about 2.3 points of that 12.4. The remaining ten do **not** fall to B
+either, for the reason above -- multi-exit means multi-block. They are the
+case for a third change, and section 5's local-promotion idea is the current
+best guess at what it should be.
 
 ### 9.5 Two rules the tool forced out
 
