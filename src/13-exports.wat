@@ -2357,6 +2357,20 @@
   (func (export "get_stack_packet_0049dd20_to_e0ad_entries") (result i32)
     (global.get $stack_packet_0049dd20_to_e0ad_entries))
 
+  ;; Loop-idiom matcher (src/07b-loop-match.wat). Decode-time only, so these
+  ;; can be flipped at any point without disturbing a running block.
+  (func (export "set_loop_trace") (param $flag i32) (param $eip i32)
+    (global.set $loop_trace (local.get $flag))
+    (global.set $loop_trace_eip (local.get $eip)))
+  (func (export "get_loop_selfloop_blocks") (result i32)
+    (global.get $loop_selfloop_blocks))
+  (func (export "get_loop_matched_blocks") (result i32)
+    (global.get $loop_matched_blocks))
+  ;; --no-loop-superops: keep matching (and counting) but stop lowering, so a
+  ;; run with and a run without differ in exactly one thing.
+  (func (export "set_loop_emit") (param $flag i32)
+    (global.set $loop_emit_enabled (local.get $flag)))
+
   ;; Threaded-handler histogram. Profiling tools enable this only around a
   ;; measured window. Counts are stored in WAT-private memory and read by JS.
   (func (export "set_handler_hist_enabled") (param $flag i32)

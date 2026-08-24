@@ -136,6 +136,23 @@ const TRACE_ESP = getArg('trace-esp', null); // --trace-esp=LO-HI: per-block (ei
 const TRACE_EIP_RANGE = getArg('trace-eip-range', null); // --trace-eip-range=LO-HI: log every block-entry EIP inside [LO,HI] (module+0xVA OK)
 const TRACE_EIP_DETAIL = hasFlag('trace-eip-detail'); // --trace-eip-detail: include regs/flags/memory with --trace-eip-range
 const TRACE_EIP_DUMP = getArg('trace-eip-dump', null); // --trace-eip-dump=0xADDR:LEN[,..]: compact dump on each detailed EIP hit
+// --trace-loopmatch[=0xEIP]: at decode time, dump the emitted op sequence of
+// every self-loop block (or just the one at 0xEIP). Prints the block's entry,
+// op count and each (handler index, operand) -- the input the Design A matcher
+// in src/07b-loop-match.wat actually sees. See docs/loop-idiom-superops-design.md
+const TRACE_LOOPMATCH = hasFlag('trace-loopmatch') || getArg('trace-loopmatch', null) !== null;
+const TRACE_LOOPMATCH_EIP = (() => {
+  const v = getArg('trace-loopmatch', null);
+  return v && v !== 'true' ? (parseInt(v, 16) | 0) : 0;
+})();
+// The decode-time trace has no channel but log_i32, which lib/host-imports.js
+// gates on DBG_INV. Asking for the flag is asking for the output.
+if (TRACE_LOOPMATCH) process.env.DBG_INV = '1';
+// --no-loop-superops: match and count as usual, but emit the original ops.
+// The A/B pair for measuring the lowering without rebuilding between runs.
+const NO_LOOP_SUPEROPS = hasFlag('no-loop-superops');
+// --loopmatch-stats: print the self-loop/match counts at exit.
+const LOOPMATCH_STATS = hasFlag('loopmatch-stats');
 const TRACE_GDI = hasFlag('trace-gdi');   // --trace-gdi: log GDI calls (CreateBitmap, BitBlt, etc.)
 const GDI_STATS = hasFlag('gdi-stats');   // --gdi-stats: print software-raster span/pixel totals at exit
 const LATENCY_STATS = hasFlag('latency-stats'); // --latency-stats: measure injected input -> next surface blit
@@ -3328,6 +3345,12 @@ async function main() {
   }
   if (TRACE_WIN16 && instance.exports.set_win16_trace) {
     instance.exports.set_win16_trace(1);
+  }
+  if (TRACE_LOOPMATCH && instance.exports.set_loop_trace) {
+    instance.exports.set_loop_trace(1, TRACE_LOOPMATCH_EIP);
+  }
+  if (NO_LOOP_SUPEROPS && instance.exports.set_loop_emit) {
+    instance.exports.set_loop_emit(0);
   }
   if (TRACE_FPU && instance.exports.set_fpu_trace) {
     instance.exports.set_fpu_trace(1);
@@ -6586,6 +6609,12 @@ if (VERBOSE) {
       console.log('gdi: dib arena pages used', st(0), 'free', st(1),
         'largest free run', st(2), 'of', st(3));
     }
+  }
+
+  if ((TRACE_LOOPMATCH || LOOPMATCH_STATS) && instance.exports.get_loop_selfloop_blocks) {
+    console.log('loopmatch: self-loop blocks decoded',
+      instance.exports.get_loop_selfloop_blocks(),
+      'matched', instance.exports.get_loop_matched_blocks());
   }
 
   if (DUMP_VIRTUAL_MAPS) {

@@ -1,0 +1,511 @@
+  ;; ============================================================
+  ;; LOOP-IDIOM MATCHER (Design A)
+  ;; ============================================================
+  ;; docs/loop-idiom-superops-design.md
+  ;;
+  ;; Runs once per block, at the end of $decode_block, over the ops that block
+  ;; just emitted. Decode-time only -- nothing here is on the $next path.
+  ;;
+  ;; Op boundaries come from $OP_INDEX, which $te fills in as it emits (design
+  ;; 6.1). That is a RECORD of what the decoder did, so it cannot disagree with
+  ;; the stream the way a declared word-count table could.
+  ;;
+  ;; The role table below is a different kind of thing, and is safe for a
+  ;; different reason: it is a matcher-side classification whose default is
+  ;; "unknown", and an unknown role declines the whole block. A handler this
+  ;; file has never heard of costs a missed lowering, never a mis-walk. Extra
+  ;; words are only ever read for handlers this file has classified, so the
+  ;; walk cannot desynchronize either.
+
+  ;; -- roles ---------------------------------------------------------------
+  (global $LR_UNKNOWN i32 (i32.const 0))
+  (global $LR_LOAD8   i32 (i32.const 1))  ;; reg8 = byte [base + disp]
+  (global $LR_LOAD8S  i32 (i32.const 2))  ;; reg8 = byte [base + index*scale + disp]
+  (global $LR_STORE8  i32 (i32.const 3))  ;; byte [base + disp] = reg8
+  (global $LR_ADDI    i32 (i32.const 4))  ;; reg += constant
+  (global $LR_ZERO    i32 (i32.const 5))  ;; reg = 0 (xor r,r / sub r,r)
+  (global $LR_MIRROR  i32 (i32.const 6))  ;; [absolute] = reg
+  (global $LR_JCC     i32 (i32.const 7))  ;; conditional branch
+
+  ;; Set from the host: test/run.js --trace-loopmatch[=0xEIP].
+  (global $loop_trace (mut i32) (i32.const 0))
+  (global $loop_trace_eip (mut i32) (i32.const 0))
+  (global $loop_selfloop_blocks (mut i32) (i32.const 0))
+  (global $loop_matched_blocks (mut i32) (i32.const 0))
+  ;; Set from the host: --no-loop-superops, to A/B the lowering without a
+  ;; rebuild. The matcher still runs and still counts, it just does not emit.
+  (global $loop_emit_enabled (mut i32) (i32.const 1))
+
+  ;; Is this handler index a conditional branch? 44 is the generic form
+  ;; (operand = cc); 307..322 are the per-condition specializations. All read
+  ;; the same two extra words: fall-through, then target.
+  (func $loop_is_jcc (param $fn i32) (result i32)
+    (i32.or
+      (i32.eq (local.get $fn) (i32.const 44))
+      (i32.and
+        (i32.ge_u (local.get $fn) (i32.const 307))
+        (i32.le_u (local.get $fn) (i32.const 322)))))
+
+  ;; Classify one handler index. Everything not named here is UNKNOWN.
+  (func $loop_role (param $fn i32) (param $op i32) (result i32)
+    (if (i32.eq (local.get $fn) (i32.const 28))
+      (then (return (global.get $LR_LOAD8))))
+    ;; 149 computes a SIB effective address. With bit 8 of the operand set it
+    ;; also performs the byte load itself -- the fused form the decoder emits
+    ;; for the overwhelmingly common consumer, and the one a LUT lookup takes.
+    ;; Without bit 8 the load lives in the NEXT op, which this matcher does not
+    ;; model, so decline.
+    (if (i32.eq (local.get $fn) (i32.const 149))
+      (then
+        (if (i32.and (local.get $op) (i32.const 0x100))
+          (then (return (global.get $LR_LOAD8S))))
+        (return (global.get $LR_UNKNOWN))))
+    (if (i32.eq (local.get $fn) (i32.const 29))
+      (then (return (global.get $LR_STORE8))))
+    (if (i32.or (i32.eq (local.get $fn) (i32.const 64))
+                (i32.eq (local.get $fn) (i32.const 65)))
+      (then (return (global.get $LR_ADDI))))
+    ;; xor r,r and sub r,r are the zeroing idiom, not arithmetic (design 9.5),
+    ;; but only when both operands name the same register.
+    (if (i32.or (i32.eq (local.get $fn) (i32.const 18))
+                (i32.eq (local.get $fn) (i32.const 17)))
+      (then
+        (if (i32.eq (i32.shr_u (local.get $op) (i32.const 4))
+                    (i32.and (local.get $op) (i32.const 0xF)))
+          (then (return (global.get $LR_ZERO))))
+        (return (global.get $LR_UNKNOWN))))
+    ;; STORE32 to an absolute address -- the spill-to-global "mirror" store.
+    (if (i32.eq (local.get $fn) (i32.const 21))
+      (then (return (global.get $LR_MIRROR))))
+    (if (call $loop_is_jcc (local.get $fn))
+      (then (return (global.get $LR_JCC))))
+    (global.get $LR_UNKNOWN))
+
+  ;; Address of op i in the block just emitted.
+  (func $loop_op_at (param $i i32) (result i32)
+    (i32.load
+      (i32.add (global.get $OP_INDEX)
+        (i32.shl (local.get $i) (i32.const 2)))))
+
+  ;; Does this block end in a conditional branch back to its own entry?
+  (func $loop_is_selfloop (param $start_eip i32) (result i32)
+    (local $p i32)
+    (if (i32.lt_u (global.get $op_index_n) (i32.const 2)) (then (return (i32.const 0))))
+    (local.set $p (call $loop_op_at
+      (i32.sub (global.get $op_index_n) (i32.const 1))))
+    (if (i32.eqz (call $loop_is_jcc (i32.load (local.get $p))))
+      (then (return (i32.const 0))))
+    ;; words after the header: +8 fall-through, +12 target
+    (i32.eq (i32.load offset=12 (local.get $p)) (local.get $start_eip)))
+
+  ;; Flag-gated decode-time dump: marker, entry EIP, op count, then
+  ;; (handler index, operand) per op. Decoded by tools/loopmatch-decode.js.
+  (func $loop_trace_block (param $start_eip i32)
+    (local $i i32) (local $p i32)
+    (call $host_log_i32 (i32.const 0x100B0000))
+    (call $host_log_i32 (local.get $start_eip))
+    (call $host_log_i32 (global.get $op_index_n))
+    (local.set $i (i32.const 0))
+    (block $done
+      (loop $each
+        (br_if $done (i32.ge_u (local.get $i) (global.get $op_index_n)))
+        (local.set $p (call $loop_op_at (local.get $i)))
+        (call $host_log_i32 (i32.load (local.get $p)))
+        (call $host_log_i32 (i32.load offset=4 (local.get $p)))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $each))))
+
+  ;; ------------------------------------------------------------------
+  ;; LUT_RUN
+  ;; ------------------------------------------------------------------
+  ;;   dst[i] = table[src[i]] for a counted run, e.g. Heroes II's shadow
+  ;;   remap at 0x004c755d:
+  ;;
+  ;;     xor eax,eax / inc esi / mov al,[esi-1] / mov [g0],esi
+  ;;     dec edx     / mov [g1],ecx / mov al,[eax+ecx] / mov [esi-1],al / jnz ^
+  ;;
+  ;; The predicate below is written against ROLES, not against that sequence:
+  ;; the registers, the two displacements, the induction stride, the direction
+  ;; of the counter and the presence of the two spill stores are all
+  ;; parameters. Order within the body does not matter except where it changes
+  ;; meaning, and where it does (whether the cursor is bumped before or after
+  ;; the memory access) it is folded into the displacement at match time.
+  ;;
+  ;; Parameter block, emitted as raw words after the super-op header:
+  ;;   0 iv_reg      1 iv_stride   2 src_disp   3 dst_disp
+  ;;   4 tbl_reg     5 acc_reg     6 ctr_reg    7 ctr_step
+  ;;   8 m0_addr     9 m0_reg     10 m0_adj
+  ;;  11 m1_addr    12 m1_reg     13 m1_adj
+  ;;  14 fall_eip   15 back_eip   16 steps_per_iter
+  (global $LOOP_SUPEROP_LUT i32 (i32.const 410))
+  (global $LOOP_LUT_PARAMS i32 (i32.const 17))
+
+  (func $loop_try_lut (param $start_eip i32) (param $tstart i32) (result i32)
+    (local $i i32) (local $n i32) (local $p i32) (local $fn i32) (local $op i32)
+    (local $role i32)
+    (local $iv_reg i32) (local $iv_stride i32) (local $iv_idx i32) (local $iv_cnt i32)
+    (local $ctr_reg i32) (local $ctr_step i32) (local $ctr_idx i32) (local $ctr_cnt i32)
+    (local $acc_reg i32) (local $zero_cnt i32)
+    (local $ld_reg i32) (local $ld_base i32) (local $ld_disp i32) (local $ld_idx i32) (local $ld_cnt i32)
+    (local $tbl_reg i32) (local $lut_cnt i32) (local $lut_idx i32)
+    (local $st_reg i32) (local $st_base i32) (local $st_disp i32) (local $st_idx i32) (local $st_cnt i32)
+    (local $m0_addr i32) (local $m0_reg i32) (local $m0_idx i32)
+    (local $m1_addr i32) (local $m1_reg i32) (local $m1_idx i32)
+    (local $mir_cnt i32) (local $written i32) (local $info i32) (local $b i32) (local $x i32)
+    (local $fall i32)
+
+    (local.set $n (global.get $op_index_n))
+    ;; The shape needs at least zero/iv/load/lut/store/ctr/jcc.
+    (if (i32.lt_u (local.get $n) (i32.const 7)) (then (return (i32.const 0))))
+    (if (i32.gt_u (local.get $n) (i32.const 16)) (then (return (i32.const 0))))
+    (local.set $iv_reg (i32.const -1))
+    (local.set $ctr_reg (i32.const -1))
+    (local.set $acc_reg (i32.const -1))
+    (local.set $tbl_reg (i32.const -1))
+
+    ;; ---- pass 1: roles, and the set of registers the body writes ----
+    (local.set $i (i32.const 0))
+    (block $p1_done
+      (loop $p1
+        (br_if $p1_done (i32.ge_u (local.get $i) (local.get $n)))
+        (local.set $p (call $loop_op_at (local.get $i)))
+        (local.set $fn (i32.load (local.get $p)))
+        (local.set $op (i32.load offset=4 (local.get $p)))
+        (local.set $role (call $loop_role (local.get $fn) (local.get $op)))
+        (if (i32.eq (local.get $role) (global.get $LR_UNKNOWN))
+          (then (return (i32.const 0))))
+
+        (if (i32.eq (local.get $role) (global.get $LR_ADDI))
+          (then
+            ;; inc (64) / dec (65): operand is the register, step is +1 / -1.
+            (local.set $written (i32.or (local.get $written)
+              (i32.shl (i32.const 1) (i32.and (local.get $op) (i32.const 0xF)))))
+            ;; The first ADDI whose register also appears as a memory base is
+            ;; the induction variable; that is decided in pass 2, so record
+            ;; both candidates here.
+            (if (i32.eqz (local.get $iv_cnt))
+              (then
+                (local.set $iv_reg (i32.and (local.get $op) (i32.const 0xF)))
+                (local.set $iv_stride
+                  (select (i32.const 1) (i32.const -1) (i32.eq (local.get $fn) (i32.const 64))))
+                (local.set $iv_idx (local.get $i))
+                (local.set $iv_cnt (i32.const 1)))
+              (else
+                (if (i32.ne (local.get $ctr_cnt) (i32.const 0)) (then (return (i32.const 0))))
+                (local.set $ctr_reg (i32.and (local.get $op) (i32.const 0xF)))
+                (local.set $ctr_step
+                  (select (i32.const 1) (i32.const -1) (i32.eq (local.get $fn) (i32.const 64))))
+                (local.set $ctr_idx (local.get $i))
+                (local.set $ctr_cnt (i32.const 1))))))
+
+        (if (i32.eq (local.get $role) (global.get $LR_ZERO))
+          (then
+            (local.set $zero_cnt (i32.add (local.get $zero_cnt) (i32.const 1)))
+            (local.set $acc_reg (i32.and (local.get $op) (i32.const 0xF)))
+            (local.set $written (i32.or (local.get $written)
+              (i32.shl (i32.const 1) (local.get $acc_reg))))))
+
+        (if (i32.eq (local.get $role) (global.get $LR_LOAD8))
+          (then
+            (local.set $ld_cnt (i32.add (local.get $ld_cnt) (i32.const 1)))
+            (local.set $ld_base (i32.and (local.get $op) (i32.const 0xF)))
+            (local.set $ld_reg (i32.shr_u (local.get $op) (i32.const 4)))
+            (local.set $ld_disp (i32.load offset=8 (local.get $p)))
+            (local.set $ld_idx (local.get $i))
+            ;; A byte load writes only the low 8 bits, but the accumulator is
+            ;; required to have been zeroed in-block, so the whole register is
+            ;; defined here.
+            (local.set $written (i32.or (local.get $written)
+              (i32.shl (i32.const 1) (local.get $ld_reg))))))
+
+        (if (i32.eq (local.get $role) (global.get $LR_LOAD8S))
+          (then
+            (local.set $lut_cnt (i32.add (local.get $lut_cnt) (i32.const 1)))
+            (local.set $lut_idx (local.get $i))
+            (local.set $info (i32.load offset=8 (local.get $p)))
+            ;; A LUT lookup indexes a table with the byte just loaded: scale 1,
+            ;; no displacement, one operand the accumulator and the other a
+            ;; register the body never writes.
+            (if (i32.ne (i32.load offset=12 (local.get $p)) (i32.const 0))
+              (then (return (i32.const 0))))
+            (if (i32.ne (i32.and (i32.shr_u (local.get $info) (i32.const 8)) (i32.const 3))
+                        (i32.const 0))
+              (then (return (i32.const 0))))
+            (local.set $b (i32.and (local.get $info) (i32.const 0xF)))
+            (local.set $x (i32.and (i32.shr_u (local.get $info) (i32.const 4)) (i32.const 0xF)))
+            (if (i32.or (i32.eq (local.get $b) (i32.const 0xF))
+                        (i32.eq (local.get $x) (i32.const 0xF)))
+              (then (return (i32.const 0))))
+            ;; destination byte register, from the fused-consumer operand
+            (local.set $written (i32.or (local.get $written)
+              (i32.shl (i32.const 1) (i32.and (local.get $op) (i32.const 7)))))))
+
+        (if (i32.eq (local.get $role) (global.get $LR_STORE8))
+          (then
+            (local.set $st_cnt (i32.add (local.get $st_cnt) (i32.const 1)))
+            (local.set $st_base (i32.and (local.get $op) (i32.const 0xF)))
+            (local.set $st_reg (i32.shr_u (local.get $op) (i32.const 4)))
+            (local.set $st_disp (i32.load offset=8 (local.get $p)))
+            (local.set $st_idx (local.get $i))))
+
+        (if (i32.eq (local.get $role) (global.get $LR_MIRROR))
+          (then
+            (if (i32.eqz (local.get $mir_cnt))
+              (then
+                (local.set $m0_addr (i32.load offset=8 (local.get $p)))
+                (local.set $m0_reg (local.get $op))
+                (local.set $m0_idx (local.get $i)))
+              (else
+                (if (i32.ge_u (local.get $mir_cnt) (i32.const 2)) (then (return (i32.const 0))))
+                (local.set $m1_addr (i32.load offset=8 (local.get $p)))
+                (local.set $m1_reg (local.get $op))
+                (local.set $m1_idx (local.get $i))))
+            (local.set $mir_cnt (i32.add (local.get $mir_cnt) (i32.const 1)))))
+
+        ;; Only the final op may be the branch.
+        (if (i32.eq (local.get $role) (global.get $LR_JCC))
+          (then
+            (if (i32.ne (local.get $i) (i32.sub (local.get $n) (i32.const 1)))
+              (then (return (i32.const 0))))))
+
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $p1)))
+
+    ;; ---- pass 2: the predicate ----
+    (if (i32.ne (local.get $iv_cnt) (i32.const 1)) (then (return (i32.const 0))))
+    (if (i32.ne (local.get $ctr_cnt) (i32.const 1)) (then (return (i32.const 0))))
+    (if (i32.ne (local.get $zero_cnt) (i32.const 1)) (then (return (i32.const 0))))
+    (if (i32.ne (local.get $ld_cnt) (i32.const 1)) (then (return (i32.const 0))))
+    (if (i32.ne (local.get $lut_cnt) (i32.const 1)) (then (return (i32.const 0))))
+    (if (i32.ne (local.get $st_cnt) (i32.const 1)) (then (return (i32.const 0))))
+
+    ;; The counter must be the register the exit test reads, and must not be
+    ;; the cursor. We only accept the JNZ form: exit when the counter hits 0.
+    (local.set $p (call $loop_op_at (i32.sub (local.get $n) (i32.const 1))))
+    (if (i32.ne (i32.load (local.get $p)) (i32.const 312)) (then (return (i32.const 0))))
+    (if (i32.eq (local.get $ctr_reg) (local.get $iv_reg)) (then (return (i32.const 0))))
+    ;; The counter must be the last flag-setting op before the branch, or the
+    ;; condition is not the one we are modelling.
+    (if (i32.ne (local.get $ctr_idx) (i32.sub (local.get $n) (i32.const 2)))
+      (then
+        ;; Tolerate mirror stores between the counter and the branch: a store
+        ;; to an absolute address does not touch flags.
+        (local.set $i (i32.add (local.get $ctr_idx) (i32.const 1)))
+        (block $tail_ok
+          (loop $tail
+            (br_if $tail_ok (i32.ge_u (local.get $i) (i32.sub (local.get $n) (i32.const 1))))
+            (local.set $x (call $loop_op_at (local.get $i)))
+            (if (i32.ne (call $loop_role (i32.load (local.get $x))
+                          (i32.load offset=4 (local.get $x)))
+                        (global.get $LR_MIRROR))
+              (then
+                ;; A byte load or store leaves flags alone too.
+                (if (i32.eqz (i32.or
+                      (i32.eq (call $loop_role (i32.load (local.get $x))
+                                (i32.load offset=4 (local.get $x)))
+                              (global.get $LR_STORE8))
+                      (i32.or
+                        (i32.eq (call $loop_role (i32.load (local.get $x))
+                                  (i32.load offset=4 (local.get $x)))
+                                (global.get $LR_LOAD8))
+                        (i32.eq (call $loop_role (i32.load (local.get $x))
+                                  (i32.load offset=4 (local.get $x)))
+                                (global.get $LR_LOAD8S)))))
+                  (then (return (i32.const 0))))))
+            (local.set $i (i32.add (local.get $i) (i32.const 1)))
+            (br $tail)))))
+
+    ;; Source and destination must both stream off the cursor.
+    (if (i32.ne (local.get $ld_base) (local.get $iv_reg)) (then (return (i32.const 0))))
+    (if (i32.ne (local.get $st_base) (local.get $iv_reg)) (then (return (i32.const 0))))
+    ;; The accumulator is zeroed, loaded from the source, used as the table
+    ;; index and stored to the destination -- one register throughout.
+    (if (i32.ne (local.get $ld_reg) (local.get $acc_reg)) (then (return (i32.const 0))))
+    (if (i32.ne (local.get $st_reg) (local.get $acc_reg)) (then (return (i32.const 0))))
+    ;; Byte-register indices above 3 name AH/CH/DH/BH, which are not the low
+    ;; byte of the register the xor zeroed. Decline rather than model them.
+    (if (i32.gt_u (local.get $acc_reg) (i32.const 3)) (then (return (i32.const 0))))
+    ;; The fused SIB load's destination is its own operand's low 3 bits.
+    (local.set $p (call $loop_op_at (local.get $ld_idx)))
+    (local.set $i (i32.const 0))
+    (block $find_lut_done
+      (loop $find_lut
+        (br_if $find_lut_done (i32.ge_u (local.get $i) (local.get $n)))
+        (local.set $x (call $loop_op_at (local.get $i)))
+        (if (i32.eq (call $loop_role (i32.load (local.get $x)) (i32.load offset=4 (local.get $x)))
+                    (global.get $LR_LOAD8S))
+          (then
+            (if (i32.ne (i32.and (i32.load offset=4 (local.get $x)) (i32.const 7))
+                        (local.get $acc_reg))
+              (then (return (i32.const 0))))
+            (local.set $info (i32.load offset=8 (local.get $x)))
+            (local.set $b (i32.and (local.get $info) (i32.const 0xF)))
+            (local.set $x (i32.and (i32.shr_u (local.get $info) (i32.const 4)) (i32.const 0xF)))
+            (if (i32.eq (local.get $b) (local.get $acc_reg))
+              (then (local.set $tbl_reg (local.get $x)))
+              (else
+                (if (i32.ne (local.get $x) (local.get $acc_reg)) (then (return (i32.const 0))))
+                (local.set $tbl_reg (local.get $b))))
+            (br $find_lut_done)))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $find_lut)))
+    (if (i32.lt_s (local.get $tbl_reg) (i32.const 0)) (then (return (i32.const 0))))
+    ;; The table base has to be loop-invariant, or it is not a table.
+    (if (i32.and (local.get $written)
+          (i32.shl (i32.const 1) (local.get $tbl_reg)))
+      (then (return (i32.const 0))))
+
+    ;; The source byte must be read before it is used as an index, and the
+    ;; result stored after. Anything else is a different loop.
+    (if (i32.ge_u (local.get $ld_idx) (local.get $lut_idx)) (then (return (i32.const 0))))
+    (if (i32.ge_u (local.get $lut_idx) (local.get $st_idx)) (then (return (i32.const 0))))
+
+    ;; Fold the cursor bump into the displacements. The super-op always bumps
+    ;; the cursor first, so an access the original performed BEFORE the bump
+    ;; saw a cursor one stride behind and needs its displacement pulled back
+    ;; by that much. An access after the bump already agrees and is left alone.
+    (if (i32.gt_u (local.get $iv_idx) (local.get $ld_idx))
+      (then (local.set $ld_disp (i32.sub (local.get $ld_disp) (local.get $iv_stride)))))
+    (if (i32.gt_u (local.get $iv_idx) (local.get $st_idx))
+      (then (local.set $st_disp (i32.sub (local.get $st_disp) (local.get $iv_stride)))))
+
+    ;; A mirror whose register the body writes, other than the cursor, would
+    ;; need its own per-iteration value; decline instead of guessing.
+    (if (i32.ne (local.get $m0_addr) (i32.const 0))
+      (then
+        (if (i32.and (i32.and (local.get $written)
+                       (i32.shl (i32.const 1) (local.get $m0_reg)))
+                     (i32.ne (local.get $m0_reg) (local.get $iv_reg)))
+          (then (return (i32.const 0))))))
+    (if (i32.ne (local.get $m1_addr) (i32.const 0))
+      (then
+        (if (i32.and (i32.and (local.get $written)
+                       (i32.shl (i32.const 1) (local.get $m1_reg)))
+                     (i32.ne (local.get $m1_reg) (local.get $iv_reg)))
+          (then (return (i32.const 0))))))
+
+    ;; ---- emit ----
+    (global.set $loop_matched_blocks
+      (i32.add (global.get $loop_matched_blocks) (i32.const 1)))
+    (if (i32.eqz (global.get $loop_emit_enabled)) (then (return (i32.const 0))))
+
+    (local.set $fall (i32.load offset=8
+      (call $loop_op_at (i32.sub (local.get $n) (i32.const 1)))))
+    ;; Rewind over the ops just emitted and put the super-op in their place.
+    ;; This is the only rewind of $thread_alloc in the decoder, and it happens
+    ;; after every emit for this block, so nothing else can be pointing into
+    ;; the range being reclaimed. The op index is reset with it.
+    (global.set $thread_alloc (local.get $tstart))
+    (global.set $op_index_n (i32.const 0))
+    (call $te (global.get $LOOP_SUPEROP_LUT) (i32.const 0))
+    (call $te_raw (local.get $iv_reg))
+    (call $te_raw (local.get $iv_stride))
+    (call $te_raw (local.get $ld_disp))
+    (call $te_raw (local.get $st_disp))
+    (call $te_raw (local.get $tbl_reg))
+    (call $te_raw (local.get $acc_reg))
+    (call $te_raw (local.get $ctr_reg))
+    (call $te_raw (local.get $ctr_step))
+    (call $te_raw (local.get $m0_addr))
+    (call $te_raw (local.get $m0_reg))
+    ;; A spill of the cursor itself records whatever the cursor held at that
+    ;; point in the body; the super-op writes it once, at exit, from the final
+    ;; value, so a spill that ran before the bump is one stride behind.
+    (call $te_raw (select (i32.sub (i32.const 0) (local.get $iv_stride)) (i32.const 0)
+      (i32.and (i32.eq (local.get $m0_reg) (local.get $iv_reg))
+               (i32.lt_u (local.get $m0_idx) (local.get $iv_idx)))))
+    (call $te_raw (local.get $m1_addr))
+    (call $te_raw (local.get $m1_reg))
+    (call $te_raw (select (i32.sub (i32.const 0) (local.get $iv_stride)) (i32.const 0)
+      (i32.and (i32.eq (local.get $m1_reg) (local.get $iv_reg))
+               (i32.lt_u (local.get $m1_idx) (local.get $iv_idx)))))
+    (call $te_raw (local.get $fall))
+    (call $te_raw (local.get $start_eip))
+    (call $te_raw (local.get $n))
+    (i32.const 1))
+
+  ;; Called from $decode_block just before $cache_store.
+  (func $loop_match_block (param $start_eip i32) (param $tstart i32)
+    (if (global.get $op_index_poison) (then (return)))
+    (if (i32.eqz (call $loop_is_selfloop (local.get $start_eip))) (then (return)))
+    (global.set $loop_selfloop_blocks
+      (i32.add (global.get $loop_selfloop_blocks) (i32.const 1)))
+    (if (global.get $loop_trace)
+      (then
+        (if (i32.or (i32.eqz (global.get $loop_trace_eip))
+                    (i32.eq (global.get $loop_trace_eip) (local.get $start_eip)))
+          (then (call $loop_trace_block (local.get $start_eip))))))
+    (drop (call $loop_try_lut (local.get $start_eip) (local.get $tstart))))
+
+  ;; ------------------------------------------------------------------
+  ;; 410: the LUT_RUN super-op.
+  ;; ------------------------------------------------------------------
+  ;; Runs the whole remap inside one handler invocation. It still charges
+  ;; $steps per iteration -- at the op count of the body it replaced, so batch
+  ;; granularity and the host's grip on the thread are unchanged -- and when
+  ;; the budget runs out it republishes $eip at the loop entry and returns,
+  ;; exactly as if the interpreter had reached the back edge.
+  ;;
+  ;; The spill stores are written on every exit, not every iteration. They are
+  ;; observable only at a block boundary, and every path out of here is one.
+  (func $th_lut_run (param $op i32)
+    (local $iv_reg i32) (local $iv_stride i32) (local $src_disp i32) (local $dst_disp i32)
+    (local $tbl_reg i32) (local $acc_reg i32) (local $ctr_reg i32) (local $ctr_step i32)
+    (local $m0_addr i32) (local $m0_reg i32) (local $m0_adj i32)
+    (local $m1_addr i32) (local $m1_reg i32) (local $m1_adj i32)
+    (local $fall i32) (local $back i32) (local $cost i32)
+    (local $iv i32) (local $ctr i32) (local $tbl i32) (local $old i32) (local $b i32)
+
+    (local.set $iv_reg    (call $read_thread_word))
+    (local.set $iv_stride (call $read_thread_word))
+    (local.set $src_disp  (call $read_thread_word))
+    (local.set $dst_disp  (call $read_thread_word))
+    (local.set $tbl_reg   (call $read_thread_word))
+    (local.set $acc_reg   (call $read_thread_word))
+    (local.set $ctr_reg   (call $read_thread_word))
+    (local.set $ctr_step  (call $read_thread_word))
+    (local.set $m0_addr   (call $read_thread_word))
+    (local.set $m0_reg    (call $read_thread_word))
+    (local.set $m0_adj    (call $read_thread_word))
+    (local.set $m1_addr   (call $read_thread_word))
+    (local.set $m1_reg    (call $read_thread_word))
+    (local.set $m1_adj    (call $read_thread_word))
+    (local.set $fall      (call $read_thread_word))
+    (local.set $back      (call $read_thread_word))
+    (local.set $cost      (call $read_thread_word))
+
+    (local.set $iv  (call $get_reg (local.get $iv_reg)))
+    (local.set $ctr (call $get_reg (local.get $ctr_reg)))
+    (local.set $tbl (call $get_reg (local.get $tbl_reg)))
+
+    (block $exit
+      (loop $iter
+        ;; One iteration, in the original's order.
+        (local.set $iv (i32.add (local.get $iv) (local.get $iv_stride)))
+        (local.set $b (call $gl8 (i32.add (local.get $iv) (local.get $src_disp))))
+        (local.set $b (call $gl8 (i32.add (local.get $b) (local.get $tbl))))
+        (call $gs8 (i32.add (local.get $iv) (local.get $dst_disp)) (local.get $b))
+        (local.set $old (local.get $ctr))
+        (local.set $ctr (i32.add (local.get $ctr) (local.get $ctr_step)))
+        (global.set $steps (i32.sub (global.get $steps) (local.get $cost)))
+        ;; The accumulator was zeroed at the top of every iteration, so after
+        ;; the table load it holds the translated byte and nothing else.
+        (call $set_reg (local.get $acc_reg) (local.get $b))
+        (br_if $exit (i32.eqz (local.get $ctr)))
+        (br_if $exit (i32.le_s (global.get $steps) (i32.const 0)))
+        (br $iter)))
+
+    (call $set_reg (local.get $iv_reg) (local.get $iv))
+    (call $set_reg (local.get $ctr_reg) (local.get $ctr))
+    ;; The original computes these with DEC/INC, whose flags the branch reads.
+    (if (i32.eq (local.get $ctr_step) (i32.const -1))
+      (then (call $set_flags_dec (local.get $old) (local.get $ctr)))
+      (else (call $set_flags_inc (local.get $old) (local.get $ctr))))
+    (if (local.get $m0_addr)
+      (then (call $gs32 (local.get $m0_addr)
+              (i32.add (call $get_reg (local.get $m0_reg)) (local.get $m0_adj)))))
+    (if (local.get $m1_addr)
+      (then (call $gs32 (local.get $m1_addr)
+              (i32.add (call $get_reg (local.get $m1_reg)) (local.get $m1_adj)))))
+    (global.set $eip
+      (select (local.get $back) (local.get $fall) (i32.ne (local.get $ctr) (i32.const 0)))))

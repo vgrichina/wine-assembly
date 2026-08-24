@@ -666,3 +666,71 @@ What is left in the decline histogram after those: `lea` 338, `add r,r` 317,
 `shl` 240. Those are genuine arithmetic bodies and are correctly declined --
 they are neither copies nor translations, and no amount of matcher generality
 turns them into one.
+
+## 10. A0/A1 as built, and what the first measurement says
+
+A0 and A1 are in the tree: `src/07b-loop-match.wat`, the op-start index in
+`$te` (6.1), and handler 410 `$th_lut_run`. The switches are
+`--trace-loopmatch[=0xEIP]` (dump the ops the matcher sees),
+`--loopmatch-stats` (self-loop and match counts at exit) and
+`--no-loop-superops` (match and count, but emit the original ops -- the A/B
+partner, so both sides of a comparison are the same binary).
+
+### 10.1 The number
+
+Heroes II, gameplay window (`--app=heroes2_demo --batch-size=20000
+--max-batches=2600`, three clicks to get into a map):
+
+| | superop off | superop on |
+|---|---|---|
+| handler dispatches | 71,528,708 | 69,598,446 |
+| entries to `0x4c755d` (`--count`) | 229,515 | 62,544 |
+| final frame | -- | pixel-identical (`png-diff`: 0 of 307200) |
+
+So the lowering removes **2.70% of all handler dispatches** and 166,971 of the
+run's block round trips.
+
+Two things in that table are worth more than the headline.
+
+The first is the entry count. Off, every entry to the block is one iteration of
+the loop, so 229,515 entries = 229,515 iterations. On, an entry runs the loop
+to completion, so 62,544 entries = 62,544 *calls* -- an average run length of
+**3.7 bytes**. The design assumed long runs; this loop is called constantly and
+does almost nothing each time. That is why 4.2's "back-edge cost + N x
+preamble" accounting matters so much more than the per-element lowering (3.2):
+at N = 3.7 the per-element work is the small half of the bill, and essentially
+all of the win here is the round trip that no longer happens.
+
+The second is that the win is 2.7% of the *whole run*, which is what this loop
+is worth in Heroes II. Nothing about the mechanism is at fault -- it does what
+it claims, exactly, and for free at runtime. The pattern is just not where most
+of the time goes.
+
+### 10.2 The generality gate is not met
+
+The rule in this document is that a pattern must fire on at least two unrelated
+apps before it lands. LUT_RUN currently fires on one. Startup-and-menu windows
+(800 batches) of six other graphics-heavy apps produce self-loop blocks and
+zero matches:
+
+| app | self-loop blocks | LUT_RUN matches |
+|---|---|---|
+| starcraft_shareware | 59 | 0 |
+| captain_claw_demo | 74 | 0 |
+| worms2_demo | 21 | 0 |
+| diablo_demo | 16 | 0 |
+| caesar3_demo | 9 | 0 |
+| fallout_demo | 4 | 0 |
+| sol | 6 | 0 |
+
+These are weak negatives -- Heroes II only produces its blitter during
+gameplay, and none of these runs reach gameplay. But dumping the blocks that
+*are* produced shows the near-misses are not near: StarCraft's SIB-byte-load
+self-loops at `0x40b984` and `0x40b7f1` are bit-unpack loops with an `idiv` in
+the body, and Claw's `0x4cb624` is a two-stream byte compare. They decline for
+the right reason, not for a missing role.
+
+The honest reading is that LUT_RUN as specified is close to Heroes-II-specific,
+and the next move is not to generalize the LUT predicate. It is either to go
+after the shapes that actually recur (9.1), or to accept 9.4's arithmetic and
+build B, whose constituency is 2308 loops rather than 113.

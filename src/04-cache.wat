@@ -113,6 +113,20 @@
         (if (i32.eqz (global.get $thread_flush_pending))
           (then (call $host_log_i32 (i32.const 0xCA00F10F))))  ;; cache overflow
         (global.set $thread_flush_pending (i32.const 1))))
+    ;; Record where this op starts, before the bump. The thread stream is not
+    ;; self-describing -- a word is 8 bytes but some handlers pull extra ones
+    ;; with $read_thread_word -- and $te is the single choke point through
+    ;; which all 376 decoder emit sites pass, so this is the one place that
+    ;; knows an op boundary without anyone having to declare it. Decode-time
+    ;; only; see docs/loop-idiom-superops-design.md 6.1.
+    (if (i32.lt_u (global.get $op_index_n) (global.get $OP_INDEX_MAX))
+      (then
+        (i32.store
+          (i32.add (global.get $OP_INDEX)
+            (i32.shl (global.get $op_index_n) (i32.const 2)))
+          (global.get $thread_alloc))
+        (global.set $op_index_n (i32.add (global.get $op_index_n) (i32.const 1))))
+      (else (global.set $op_index_poison (i32.const 1))))
     (i32.store (global.get $thread_alloc) (local.get $fn))
     (i32.store offset=4 (global.get $thread_alloc) (local.get $op))
     (global.set $thread_alloc (i32.add (global.get $thread_alloc) (i32.const 8))))
@@ -134,7 +148,7 @@
     ;; whole cache and restart at $eip. The fresh decode will produce
     ;; valid threaded code. This recovers from rare corruption rather
     ;; than trapping with wasm "table index out of bounds".
-    (if (i32.ge_u (local.get $fn) (i32.const 410))
+    (if (i32.ge_u (local.get $fn) (i32.const 411))
       (then
         (call $host_log_i32 (i32.const 0xCAC4BAD0))
         (call $host_log_i32 (local.get $fn))

@@ -1225,7 +1225,9 @@
   ;; 0x07F0D000 8KB      GDI_REGION_TABLE (256 WAT-owned HRGN records)
   ;; 0x07F0F000 4KB      GDI_DC_PATH_TABLE (256 x 16-byte WAT path records)
   ;; 0x07F10000 4KB      HANDLER_HIST_COUNTS (1024 i32 counters)
-  ;; 0x07F11000 512KB    (free -- former HANDLER_PAIR_HIST_COUNTS home, too
+  ;; 0x07F30000 8KB      OP_INDEX (2048 decode-time op-start addresses)
+  ;; 0x07F11000 512KB    (free apart from OP_INDEX above -- former
+  ;;                      HANDLER_PAIR_HIST_COUNTS home, too
   ;;                      small once the handler table passed 361. This block is
   ;;                      packed wall-to-wall with the branch/hot-block tables
   ;;                      below, so the matrix could not grow in place; it now
@@ -1580,6 +1582,16 @@
   ;; tools/check-handler-count.js enforces this. 512*512*4 = 1MB.
   (global $HANDLER_HIST_COUNTS i32 (i32.const 0x07F10000))
   (global $HANDLER_HIST_COUNTS_SIZE i32 (i32.const 0x00001000))
+  ;; Decode-time op-start index (see docs/loop-idiom-superops-design.md 6.1).
+  ;; $te appends the address of every op header it emits; $decode_block resets
+  ;; the counter. Pure scratch -- reused by every block, never read at runtime,
+  ;; so it costs no per-block memory. Overflow sets $op_index_poison and the
+  ;; block is simply not matched.
+  (global $OP_INDEX i32 (i32.const 0x07F30000))
+  (global $OP_INDEX_SIZE i32 (i32.const 0x00002000))
+  (global $OP_INDEX_MAX i32 (i32.const 2048))
+  (global $op_index_n (mut i32) (i32.const 0))
+  (global $op_index_poison (mut i32) (i32.const 0))
   (global $HANDLER_PAIR_HIST_COUNTS i32 (i32.const 0x04000000))
   (global $HANDLER_PAIR_HIST_COUNTS_SIZE i32 (i32.const 0x00100000))
   (global $HANDLER_HIST_COUNT i32 (i32.const 512))

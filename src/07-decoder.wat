@@ -1420,6 +1420,11 @@
         (if (call $thread_arena_flush_if_safe)
           (then (call $host_log_i32 (i32.const 0xCA00F10F))))))
     (local.set $tstart (global.get $thread_alloc))
+    ;; Start a fresh op-start index for this block. Reset here rather than at
+    ;; the end so an early return (the stack-packet path below, a 16-bit
+    ;; bail-out) leaves a consistent -- if unused -- index behind.
+    (global.set $op_index_n (i32.const 0))
+    (global.set $op_index_poison (i32.const 0))
     ;; Ask once, here, whether this block entry is the MSVC small-block-heap
     ;; scan loop. The run loop then only has to compare EIP with the answer.
     (call $sbh_note_candidate (local.get $start_eip))
@@ -3270,6 +3275,9 @@
       (br $decode)
     ))
 
+    ;; Loop-idiom matcher runs on the ops just emitted, before the block is
+    ;; published. See src/07b-loop-match.wat.
+    (call $loop_match_block (local.get $start_eip) (local.get $tstart))
     (call $cache_store (local.get $start_eip) (local.get $tstart))
     (local.get $tstart)
   )
