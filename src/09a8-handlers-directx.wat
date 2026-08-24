@@ -286,6 +286,15 @@
   ;; Set by IDirectDrawSurface::SetPalette
   (global $dx_primary_pal_wa (mut i32) (i32.const 0))
 
+  ;; DX_OBJECTS entry address of the primary surface created most recently.
+  ;; An app that changes display mode mid-run creates a second primary without
+  ;; always releasing the first: Liquid War opens a 16bpp primary, calls
+  ;; SetDisplayMode(640,480,8), then creates the 8bpp primary it actually draws
+  ;; its menu into. Both carry DDSCAPS_PRIMARYSURFACE, so a scan for "the
+  ;; primary" finds the stale one and every palette-driven re-present pushes an
+  ;; all-black 16bpp surface over the menu that was just flushed.
+  (global $dx_primary_wa (mut i32) (i32.const 0))
+
   ;; EnumDisplayModes continuation state
   (global $enum_modes_idx (mut i32) (i32.const 0))       ;; current mode index
   (global $enum_modes_callback (mut i32) (i32.const 0))  ;; callback guest addr
@@ -1292,6 +1301,8 @@
     ;; Apps like donut create a WS_POPUP window at size 0,0 and never call
     ;; SetDisplayMode — without this, SetDIBitsToDevice clips to the 1x1 back-canvas.
     (if (i32.and (local.get $caps) (i32.const 0x200))
+      (then (global.set $dx_primary_wa (local.get $entry))))
+    (if (i32.and (local.get $caps) (i32.const 0x200))
       (then (if (call $dx_target_hwnd) (then
         (call $host_move_window (call $dx_target_hwnd)
           (i32.const 0) (i32.const 0)
@@ -1394,37 +1405,29 @@
 
   ;; Helper: fill DDSD for mode index $enum_modes_idx and jump to callback.
   ;; Mode table: six resolutions × 8/16/32 bpp — idx/3 picks the resolution,
-  ;; idx%3 the depth. A resolution larger than the host screen is skipped: a
-  ;; game that takes the biggest mode we advertise must not end up in a display
-  ;; mode its window can never show. Slots 0-5 (640x480 and 800x600, the two
-  ;; this table advertised unconditionally before the larger modes existed) are
-  ;; never filtered — an app that finds no mode at all usually just quits, and
-  ;; a mode slightly larger than the canvas has always been allowed.
+  ;; idx%3 the depth.
+  ;;
+  ;; Every one of them is advertised, canvas size notwithstanding. This list is
+  ;; what a game's own resolution menu offers — RCT validates the mode it is
+  ;; asked for against exactly this list and refuses an exact-match miss — so
+  ;; filtering it to the canvas silently deletes rows from that menu, and the
+  ;; user picking "Full Screen 1024x768" on a smaller window got a mode change
+  ;; that quietly fell back instead. A mode larger than the canvas is scaled to
+  ;; fit when the primary surface is presented, so it costs sharpness, not
+  ;; correctness.
   (func $enum_modes_dispatch
     (local $ddsd_wa i32) (local $w i32) (local $h i32) (local $bpp i32)
-    (local $pitch i32) (local $idx i32) (local $screen i32)
+    (local $pitch i32) (local $idx i32)
     (local.set $idx (global.get $enum_modes_idx))
-    (local.set $screen (call $host_get_screen_size))
-    (block $found
-      (loop $scan
-        (br_if $found (i32.ge_u (local.get $idx) (i32.const 18)))
-        (local.set $w (call $enum_mode_res_w (i32.div_u (local.get $idx) (i32.const 3))))
-        (local.set $h (call $enum_mode_res_h (i32.div_u (local.get $idx) (i32.const 3))))
-        (br_if $found (i32.le_u (local.get $idx) (i32.const 5)))
-        (br_if $found (i32.and
-          (i32.le_u (local.get $w) (i32.and (local.get $screen) (i32.const 0xFFFF)))
-          (i32.le_u (local.get $h) (i32.shr_u (local.get $screen) (i32.const 16)))))
-        (local.set $idx (i32.add (local.get $idx) (i32.const 1)))
-        (br $scan)))
-    ;; The continuation thunk resumes from the global, so record the skips.
-    (global.set $enum_modes_idx (local.get $idx))
-    (local.set $bpp (i32.shl (i32.const 8) (i32.rem_u (local.get $idx) (i32.const 3))))
     ;; If past end of table, done — return DD_OK to caller
     (if (i32.ge_u (local.get $idx) (i32.const 18))
       (then
         (global.set $eip (global.get $enum_modes_ret))
         (global.set $eax (i32.const 0))  ;; DD_OK
         (return)))
+    (local.set $w (call $enum_mode_res_w (i32.div_u (local.get $idx) (i32.const 3))))
+    (local.set $h (call $enum_mode_res_h (i32.div_u (local.get $idx) (i32.const 3))))
+    (local.set $bpp (i32.shl (i32.const 8) (i32.rem_u (local.get $idx) (i32.const 3))))
     ;; Compute pitch: align (w * bytes_per_pixel) to 4 bytes
     (if (i32.eq (local.get $bpp) (i32.const 8))
       (then (local.set $pitch (i32.and (i32.add (local.get $w) (i32.const 3)) (i32.const 0xFFFFFFFC))))
@@ -2244,6 +2247,8 @@
       (then
         (local.set $surf_bytes (i32.load (i32.add (local.get $entry) (i32.const 24))))
         (global.set $dx_vidmem_used (i32.sub (global.get $dx_vidmem_used) (local.get $surf_bytes)))
+        (if (i32.eq (local.get $entry) (global.get $dx_primary_wa))
+          (then (global.set $dx_primary_wa (i32.const 0))))
         (call $dx_free (local.get $entry))))
     (global.set $eax (select (local.get $rc) (i32.const 0) (i32.gt_s (local.get $rc) (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
@@ -3129,6 +3134,18 @@
   ;; The DirectDraw surface currently standing in for the display.
   (func $dx_primary_entry (result i32)
     (local $i i32) (local $p i32)
+    ;; The newest primary wins: on a mode change the older one is a lost
+    ;; surface the app may never release, and it holds no pixels.
+    (local.set $p (global.get $dx_primary_wa))
+    (if (local.get $p)
+      (then
+        (if (i32.and
+              (i32.and (i32.eq (i32.load (local.get $p)) (i32.const 2))
+                (i32.ne (i32.and (i32.load offset=28 (local.get $p)) (i32.const 1)) (i32.const 0)))
+              (i32.ne (i32.load offset=20 (local.get $p)) (i32.const 0)))
+          (then (return (local.get $p))))
+        (global.set $dx_primary_wa (i32.const 0))))
+    (local.set $p (i32.const 0))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $DX_MAX)))
       (local.set $p (i32.add (global.get $DX_OBJECTS)

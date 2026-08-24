@@ -51,42 +51,30 @@ function pick(width, height, initialByte = 0xff) {
 }
 
 console.log('RCT resolution picked from the screen size:');
-// 1 = fullscreen 640x480, 2 = 800x600, 3 = the 1024x768 case (which is the one
-// re-pointed at the screen when the screen is not a stock mode).
+// The largest of RCT's own stock modes that fits: 1 = fullscreen 640x480,
+// 2 = 800x600, 3 = 1024x768. Only the default is chosen here — all four rows
+// of the game's Display Mode dropdown stay selectable and mean what they say.
 ok(pick(400, 300).value === 1, 'phone-sized 400x300 -> 640x480');
 ok(pick(640, 480).value === 1, '640x480 -> 640x480');
 ok(pick(800, 600).value === 2, '800x600 -> 800x600');
-ok(pick(1024, 768).value === 3, '1024x768 -> the 1024x768 case, unmodified');
-// A wide-but-short screen used to fall back to 800x600 and letterbox; now it
-// gets its own exact mode, which is the whole point of the custom case.
-const shortScreen = pick(1024, 600);
-ok(shortScreen.value === 3, 'wide-but-short 1024x600 -> the re-pointed case');
-ok(/1024x600/.test(LAUNCH_PREFS['rct.exe']({ screenW: 1024, screenH: 600 })[0].label),
-  'at exactly 1024x600, not a 4:3 mode it does not fit');
+ok(pick(1024, 768).value === 3, '1024x768 -> 1024x768');
+ok(pick(1920, 1200).value === 3, 'and anything larger -> 1024x768, the biggest it ships');
+// A wide-but-short screen takes the largest mode whose *height* fits too,
+// rather than one that would be cropped.
+ok(pick(1024, 600).value === 2, 'wide-but-short 1024x600 -> 800x600, not 1024x768');
 
-console.log('A screen that is not a stock mode becomes one:');
-const custom = LAUNCH_PREFS['rct.exe']({ screenW: 1280, screenH: 800 });
-const modePokes = custom.filter(p => p.key === 'rct-custom-mode');
-ok(custom[0].replacement[0] === 3, 'a 1280x800 browser window still selects case 3');
-ok(modePokes.length === 4, 'and re-points its four immediates');
-ok(/1280x800/.test(custom[0].label), 'labelled with the 16:10 size it will run at');
-// Both axes floored to a multiple of 8 and clamped to 1280x1024, matching
-// $enum_mode_host_w/h. Anything else and the game declines its own mode.
-const odd = LAUNCH_PREFS['rct.exe']({ screenW: 1152, screenH: 901 });
-ok(/1152x896/.test(odd[0].label), '1152x901 rounds down to 1152x896 (8-aligned)');
-// Measured engine limits: past 1280 wide nothing is drawn, and a height that is
-// not a multiple of 8 leaves a black strip along the bottom.
-const oversized = LAUNCH_PREFS['rct.exe']({ screenW: 1512, screenH: 850 });
-ok(/1280x848/.test(oversized[0].label),
-  '1512x850 is capped to the 1280x848 the engine can actually paint');
-ok(/1280x1024/.test(LAUNCH_PREFS['rct.exe']({ screenW: 1920, screenH: 1200 })[0].label),
-  'and a 1920x1200 screen to 1280x1024');
-ok(LAUNCH_PREFS['rct.exe']({ screenW: 1024, screenH: 768 })
-  .every(p => p.key !== 'rct-custom-mode'),
-  'an exactly-1024x768 screen leaves video_init alone');
-ok(LAUNCH_PREFS['rct.exe']({ screenW: 640, screenH: 480 })
-  .every(p => p.key !== 'rct-custom-mode'),
-  'so does a small screen, where the stock ladder is right');
+console.log('The game keeps its own mode list — nothing is re-pointed:');
+// An earlier version re-pointed video_init's 1024x768 case at the screen size
+// to fill the window exactly. That mode had to take over one of the four
+// dropdown rows, so "Full Screen 1024x768" meant something else and true
+// 1024x768 became unreachable. Only the default byte is poked now.
+for (const [w, h] of [[1280, 800], [1152, 901], [1512, 850], [1920, 1200]]) {
+  const pokes = LAUNCH_PREFS['rct.exe']({ screenW: w, screenH: h });
+  ok(pokes.length === 1 && pokes[0].key === 'rct-resolution',
+    `${w}x${h} pokes only the mode byte`);
+}
+ok(/1024x768/.test(LAUNCH_PREFS['rct.exe']({ screenW: 1280, screenH: 800 })[0].label),
+  'and is labelled with the stock mode it selects');
 
 console.log('Declines rather than corrupting an unexpected binary:');
 const stale = pick(1024, 768, 0x02);
@@ -131,6 +119,12 @@ ok(/i32\.const 0xFFF8/.test(dx) && /\$enum_mode_clamp/.test(dx),
 ok(/\(i32\.const 640\) \(i32\.const 1280\)/.test(dx) &&
    /\(i32\.const 480\) \(i32\.const 1024\)/.test(dx),
   'to the same 640x480 .. 1280x1024 bounds');
+// The list is a game's resolution *menu*, not a claim about the canvas.
+// Filtering it to the canvas deletes rows from that menu, and picking one of
+// the deleted rows looks like a mode change that does nothing.
+const dispatch = dx.slice(dx.indexOf('(func $enum_modes_dispatch'));
+ok(!/host_get_screen_size/.test(dispatch.slice(0, dispatch.indexOf('(func $', 8))),
+  'and no mode is skipped for being larger than the canvas');
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
