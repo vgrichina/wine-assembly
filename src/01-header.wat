@@ -1368,13 +1368,20 @@
   (global $cur_page_base  (mut i32) (i32.const 0))
   (global $cur_page_index (mut i32) (i32.const 0))
   (global $cur_page_chunk (mut i32) (i32.const 0))
-  ;; Off by default: this is an accelerator under measurement, and everything
-  ;; still runs through the hash cache when it is off.
+  ;; Scaffolding only, and off by default: it exists so the tree builds and runs
+  ;; while the decoder half is still being written. It goes away in the commit
+  ;; that deletes $cache_slot/$cache_lookup/$cache_store.
   (global $paging_enabled (mut i32) (i32.const 0))
   ;; Counters for the A/B in docs/page-compile-design.md section 8.
   (global $page_compiles (mut i32) (i32.const 0))
   (global $page_hits     (mut i32) (i32.const 0))
   (global $page_misses   (mut i32) (i32.const 0))
+  ;; $run's per-call block allowance, hoisted out of a local so that
+  ;; $branch_end can spend it too. A fast-path block transfer never reaches the
+  ;; top of $run, so without this a single run() call would execute as many
+  ;; blocks as the step budget allowed and the host's batch sizing would stop
+  ;; meaning anything.
+  (global $block_budget (mut i32) (i32.const 0))
   (global $API_HASH_TABLE i32 (i32.const 0x07E00000))
   (global $API_HASH_TABLE_SIZE i32 (i32.const 0x00008000))
   ;; Window/class/parent tables (below GUEST_BASE, above the API hash table).

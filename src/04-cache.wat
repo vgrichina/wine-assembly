@@ -304,6 +304,51 @@
     (global.set $page_hits (i32.add (global.get $page_hits) (i32.const 1)))
     (i32.add (global.get $cur_page_chunk) (local.get $off)))
 
+  ;; Every block-terminating handler ends by tail-calling this instead of
+  ;; returning. Returning is what costs: it unwinds to the top of $run, which
+  ;; re-runs the whole guard preamble before it can look the destination up.
+  ;; When the destination is already compiled and none of those guards has
+  ;; anything to say, the guards are exactly the work being removed, so this
+  ;; hands the thread straight to $next.
+  ;;
+  ;; The five tests below are the guards that can actually fire; each is a
+  ;; global that is zero in a plain run, and any non-zero one falls back to the
+  ;; desk rather than trying to reproduce what the desk does:
+  ;;   $dbg_any      OR of the six debug arming flags (watchpoint, breakpoint,
+  ;;                 hit counters, trace-esp, trace-eip, handler histogram)
+  ;;   $code16       16-bit tasks get two extra checks and a separate dispatch
+  ;;   $yield_flag   a handler asked the host for control
+  ;;   $yield_reason a blocking API is parked; $run decides whether to halt
+  ;;   $sbh_eip_a/b  the decoder recognised an MSVC small-block-heap entry, and
+  ;;                 $run runs a scan ahead of those two addresses
+  ;; The thunk zone needs no test here: a thunk page is never compiled, so
+  ;; $page_resolve cannot name one.
+  (func $branch_end
+    (local $t i32)
+    (if (i32.eqz (global.get $paging_enabled)) (then (return)))
+    (if (i32.or (global.get $dbg_any)
+        (i32.or (global.get $code16)
+        (i32.or (global.get $yield_flag) (global.get $yield_reason))))
+      (then (return)))
+    (if (i32.le_s (global.get $block_budget) (i32.const 0)) (then (return)))
+    (if (i32.or (i32.eq (global.get $eip) (global.get $sbh_eip_a))
+                (i32.eq (global.get $eip) (global.get $sbh_eip_b)))
+      (then (return)))
+    (local.set $t (call $page_resolve (global.get $eip)))
+    (if (i32.eqz (local.get $t)) (then (return)))
+    (global.set $block_budget (i32.sub (global.get $block_budget) (i32.const 1)))
+    ;; Kept even on the fast path: these two are what a crash log reads to say
+    ;; which block produced a bad transfer, and a stale answer there is worse
+    ;; than the two stores are expensive.
+    (global.set $dbg_prev2_eip (global.get $dbg_prev_eip))
+    (global.set $dbg_prev_eip (global.get $eip))
+    (global.set $ip (local.get $t))
+    ;; $steps is deliberately NOT refilled. It is the wasm-stack bound: each
+    ;; dispatch adds a frame that only unwinds when the chain ends, so letting
+    ;; one refill of 1000 span a whole fast chain keeps the depth exactly where
+    ;; it is today.
+    (return_call $next))
+
   ;; Recycling the decoded-code arena means resetting $thread_alloc to the base
   ;; and invalidating every cached block. That is only safe between blocks.
   ;; While a synchronous wndproc runs nested inside a handler — SendMessage,

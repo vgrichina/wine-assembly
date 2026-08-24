@@ -6,14 +6,22 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
 
   (func $run (export "run") (param $max_blocks i32)
-    (local $thread i32) (local $blocks i32)
+    (local $thread i32)
     (local $hc_i i32) (local $hc_slot i32)
     (local $prev_eip i32) (local $prev_esp i32)
-    (local.set $blocks (local.get $max_blocks))
+    (local $saved_budget i32)
+    ;; A global rather than a local because $branch_end spends it too — see the
+    ;; comment on $block_budget in 01-header.wat. Saved and restored because
+    ;; run() is re-entrant: a COM class-factory callback is driven by calling
+    ;; run() again from inside the API thunk the outer run() is still executing
+    ;; (lib/storage.js _runComCallback). A plain global would hand the outer
+    ;; loop whatever the nested one left behind, and it would halt early.
+    (local.set $saved_budget (global.get $block_budget))
+    (global.set $block_budget (local.get $max_blocks))
     (block $halt (loop $main
-      (br_if $halt (i32.le_s (local.get $blocks) (i32.const 0)))
+      (br_if $halt (i32.le_s (global.get $block_budget) (i32.const 0)))
       (br_if $halt (i32.eqz (global.get $eip)))
-      (local.set $blocks (i32.sub (local.get $blocks) (i32.const 1)))
+      (global.set $block_budget (i32.sub (global.get $block_budget) (i32.const 1)))
       ;; Reset thread buffer if approaching cache region (leave 4KB margin)
       (if (i32.ge_u (global.get $thread_alloc) (i32.sub (global.get $THREAD_END) (i32.const 4096)))
         (then
@@ -178,7 +186,8 @@
       ;; Set steps high enough to always complete a block
       (global.set $steps (i32.const 1000))
       (call $next)
-      (br $main))))
+      (br $main)))
+    (global.set $block_budget (local.get $saved_budget)))
 
   ;; Hook for test/test-shift-equivalence.js, which checks the unified
   ;; $do_shift against an independent model of the x86 semantics over every

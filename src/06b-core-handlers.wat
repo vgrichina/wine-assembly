@@ -708,7 +708,8 @@
       (local.set $taken (call $eval_cc (local.get $cc))))
     (if (local.get $taken)
       (then (global.set $eip (local.get $target)))
-      (else (global.set $eip (local.get $fall)))))
+      (else (global.set $eip (local.get $fall))))
+    (return_call $branch_end))
 
   ;; 405/406: a run of 2-4 back-to-back absolute MOVs — `mov [abs],reg` or
   ;; `mov reg,[abs]` with nothing in between. Absolute loads and stores are the
@@ -779,7 +780,8 @@
     (local.set $target (call $read_thread_word))
     (if (call $eval_cc (local.get $cc))
       (then (global.set $eip (local.get $target)))
-      (else (global.set $eip (local.get $fall)))))
+      (else (global.set $eip (local.get $fall))))
+    (return_call $branch_end))
 
   ;; 408: 2-4 back-to-back `mov r32,[base+disp]` sharing one base register —
   ;; the frame-local read the compiler emits everywhere, and by a wide margin
@@ -926,7 +928,8 @@
       (then (call $branch_hist_record_jcc (i32.const 5))))
     (if (local.get $r)
       (then (global.set $eip (local.get $target)))
-      (else (global.set $eip (local.get $fall)))))
+      (else (global.set $eip (local.get $fall))))
+    (return_call $branch_end))
 
   ;; 394: Smacker consumes one input bit with SHR EBP,1 and immediately uses
   ;; CF through JB or JAE. op=0 is JB, op=1 is JAE. $do_shift32 publishes the
@@ -947,7 +950,8 @@
         (else (i32.eqz (i32.and (local.get $old) (i32.const 1))))))
     (if (local.get $taken)
       (then (global.set $eip (local.get $target)))
-      (else (global.set $eip (local.get $fall)))))
+      (else (global.set $eip (local.get $fall))))
+    (return_call $branch_end))
 
   ;; 395: Exact Smacker Huffman node walk. op is the absolute byte-counter
   ;; address; words are the original loop EIP and the fall-through EIP. Each
