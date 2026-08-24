@@ -139,7 +139,14 @@ const TRACE_EIP_DUMP = getArg('trace-eip-dump', null); // --trace-eip-dump=0xADD
 const TRACE_GDI = hasFlag('trace-gdi');   // --trace-gdi: log GDI calls (CreateBitmap, BitBlt, etc.)
 const GDI_STATS = hasFlag('gdi-stats');   // --gdi-stats: print software-raster span/pixel totals at exit
 const LATENCY_STATS = hasFlag('latency-stats'); // --latency-stats: measure injected input -> next surface blit
-const FRAME_STATS = hasFlag('frame-stats'); // --frame-stats: guest-frame pacing (interval percentiles + jitter) at exit
+// --frame-stats[=FROM_BATCH]: guest-frame pacing (interval percentiles + jitter)
+// at exit. A benchmark that has to click through a menu to reach gameplay
+// spends most of its batches in the menu, and a menu redrawing on demand paces
+// nothing like a game loop -- mixing them buries the game's own distribution
+// under a much larger, much flatter one. Pass the batch gameplay starts at.
+const FRAME_STATS_ARG = getArg('frame-stats', null);
+const FRAME_STATS = FRAME_STATS_ARG !== null || hasFlag('frame-stats');
+const FRAME_STATS_FROM = Math.max(0, parseInt(FRAME_STATS_ARG, 10) || 0);
 const AUTO_MOUSE = getArg('auto-mouse', null); // --auto-mouse=X0,Y0,X1,Y1[,PERIOD]: sweep the pointer every PERIOD batches
 const TRACE_CTRL = hasFlag('trace-ctrl'); // --trace-ctrl: log every WAT-native control paint + its screen rect
 const TRACE_ERASE = hasFlag('trace-erase'); // --trace-erase: log every window-background erase + the brush it fills with
@@ -1548,12 +1555,27 @@ async function main() {
   // the flush series is a picture of the HARNESS's sampling cadence and its
   // interval collapses to exactly one batch. Reporting that as guest pacing
   // would be measuring our own repaint loop and calling it the game.
+  // The present series is the one to trust for a DirectX app. gdi_surface_upload
+  // is NOT a frame: on DX-Ball it fires 182160 times against 20860 presents,
+  // because it tracks each BltFast of a sprite into the back buffer, about ten
+  // per frame. dx_trace kind 5/6 is the flip itself, it costs one JS call per
+  // frame, and unlike the flush it does not depend on --repaint-every at all --
+  // which matters, because a repaint of a live 640x480 surface costs ~6ms and
+  // repainting often enough to resolve a frame is slower than the run budget.
   const frameStats = {
+    present: { iv: [], lastBatch: -1, lastAt: 0n },
     flush: { iv: [], lastBatch: -1, lastAt: 0n },
-    upload: { iv: [], lastBatch: -1, lastAt: 0n },
   };
   const recordFrame = (series) => {
     const at = process.hrtime.bigint();
+    // Outside the measurement window, still move the anchor forward. Skipping
+    // that would make the first in-window interval span the entire warm-up and
+    // land as a single enormous outlier at the top of every percentile.
+    if (tickStateRef.batch < FRAME_STATS_FROM) {
+      series.lastBatch = tickStateRef.batch;
+      series.lastAt = at;
+      return at;
+    }
     if (series.lastBatch >= 0) {
       series.iv.push({
         batches: tickStateRef.batch - series.lastBatch,
@@ -1581,9 +1603,14 @@ async function main() {
       }
     };
   }
-  if (FRAME_STATS && typeof h.gdi_surface_upload === 'function') {
-    const rawUploadFrame = h.gdi_surface_upload;
-    h.gdi_surface_upload = (...a) => { recordFrame(frameStats.upload); return rawUploadFrame(...a); };
+  if (FRAME_STATS && typeof h.dx_trace === 'function') {
+    const rawDxTrace = h.dx_trace;
+    // kind 5 = Present, 6 = Flip. Every other kind (Lock/Unlock/Blt/SetEntries)
+    // happens several times within one frame and must not count as one.
+    h.dx_trace = (kind, ...a) => {
+      if (kind === 5 || kind === 6) recordFrame(frameStats.present);
+      return rawDxTrace(kind, ...a);
+    };
   }
   // Keep the CLI harness instantiable while optional host-side font resource
   // loading is unavailable; browser/full hosts can provide the real loader.
@@ -6865,8 +6892,9 @@ if (VERBOSE) {
       // would call that run smooth.
       const long = f.filter(x => x.batches >= Math.max(1, med) * 1.75).length;
       const stepsPer = med * BATCH_SIZE;
-      console.log(`  ${label}: ${f.length + 1} over ${MAX_BATCHES} batches`
-        + ` (one per ${(MAX_BATCHES / (f.length + 1)).toFixed(2)} batches ≈ ${stepsPer >= 1000 ? (stepsPer / 1000).toFixed(0) + 'k' : stepsPer} steps)`);
+      const window = MAX_BATCHES - FRAME_STATS_FROM;
+      console.log(`  ${label}: ${f.length + 1} over ${window} batches`
+        + ` (one per ${(window / (f.length + 1)).toFixed(2)} batches ≈ ${stepsPer >= 1000 ? (stepsPer / 1000).toFixed(0) + 'k' : stepsPer} steps)`);
       console.log(`      interval batches p50 ${med}, p90 ${q('batches', 0.9)}, p99 ${q('batches', 0.99)}, max ${q('batches', 1)}`
         + `   long (>=1.75x median) ${long} of ${f.length} (${(100 * long / f.length).toFixed(1)}%)`);
       console.log(`      interval ms      p50 ${q('ms', 0.5).toFixed(1)}, p90 ${q('ms', 0.9).toFixed(1)}, p99 ${q('ms', 0.99).toFixed(1)}   (wall clock — load-sensitive, never diff across runs)`);
@@ -6877,11 +6905,17 @@ if (VERBOSE) {
           + ` Re-run with --batch-size well under ${BATCH_SIZE} to resolve it.`);
       }
     };
-    console.log('\nFrame pacing:');
-    report('guest draws (gdi_surface_upload)', frameStats.upload,
-      'the guest handing pixels to the surface — driven by guest code alone, so this is the game\'s own rate');
-    report('presented   (surface flush)     ', frameStats.flush,
-      `what the browser HUD counts as fps; in the CLI it is gated by the repaint loop (--repaint-every=${REPAINT_EVERY}), not by the guest`);
+    console.log(FRAME_STATS_FROM
+      ? `\nFrame pacing (from batch ${FRAME_STATS_FROM}; earlier frames ignored):`
+      : '\nFrame pacing:');
+    report('guest present (dx_present)    ', frameStats.present,
+      'guest-driven and independent of --repaint-every, but NOT one per frame for every app:'
+      + ' $dx_present runs on each blit that reaches the primary, so an app that composes'
+      + ' straight onto the primary instead of flipping a back buffer trips it several times'
+      + ' per frame. Compare the count against --trace-api IDirectDrawSurface_Blt/Flip before'
+      + ' reading it as a frame rate');
+    report('host flush    (surface upload)', frameStats.flush,
+      `what the browser HUD counts as fps; in the CLI it is gated by the repaint loop (--repaint-every=${REPAINT_EVERY}), so treat it as the harness's cadence unless it agrees with the present count above`);
   }
 
   if (threadManager && threadManager.threads && threadManager.threads.size) {
