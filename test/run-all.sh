@@ -194,6 +194,7 @@ UNIT=(
   test/test-isdialogmessage-enter.js
   test/test-dialog-custom-dispatch.js
   test/test-end-dialog-lifecycle.js
+  test/test-sendmessagetimeout.js
   test/test-directdraw-cooperative-window.js
   test/test-directdraw-create-ex.js
   test/test-directdraw-retained-primary.js

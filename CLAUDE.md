@@ -22,6 +22,13 @@ Build gates, in order: manifest ↔ glob equality, `api_table.json` (id == index
 - **CLI:** `node test/run.js --exe=path/to/exe [options]` — headless execution with auto-build. A registered EXE gets that app's explicit file manifest; an arbitrary bare `--exe` mounts only the executable. Add repeatable/comma-separated `--vfs-include='*.dat,plugins/**/*.dll'` patterns (relative to the EXE directory) for ad-hoc companion assets, or prefer `--app=ID`. Key flags: `--verbose`, `--trace`, `--trace-api`, `--trace-gdi`, `--trace-host=fn1,fn2`, `--no-close`, `--break=0xADDR`, `--break-api=Name`, `--watch=0xADDR`, `--dump-gdi=DIR`, `--max-batches=N`, `--batch-size=N`
 - **CLI, by app id:** `node test/run.js --app=sol` — takes the exe, its DLLs, its data files and its command line from `lib/apps.js`, the same registry the desktop icons read, so the CLI mounts exactly what the browser mounts. `--app=` with an unknown id prints the full id list. An explicit `--exe`/`--args` overrides the registry.
 - **PNG render:** `node test/run.js --exe=path/to/exe --png=output.png`
+- **Bound every run with `timeout -s KILL N`, not plain `timeout N`.** `run.js`
+  installs SIGTERM/SIGINT handlers so it can print hit counts and the MMX tally
+  on the way out, and those handlers only run when the JS event loop gets a
+  turn. A guest stuck inside one long WASM batch never yields, so the default
+  SIGTERM is queued and never delivered: the run sails past its deadline (a
+  `timeout 110` on a Winamp+AVS run was still alive at 14 minutes). SIGKILL is
+  not deliverable to a handler and always lands.
 
 ## Tracing (reach for this BEFORE editing source to add `console.log`)
 

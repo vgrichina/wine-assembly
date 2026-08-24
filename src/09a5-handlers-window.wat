@@ -2668,6 +2668,34 @@
     (global.set $steps (i32.const 0))
   )
 
+  ;; SendMessageTimeoutA(hwnd, msg, wParam, lParam, flags, timeout, lpdwResult)
+  ;; The plug-in side of Winamp uses this rather than SendMessageA precisely
+  ;; because it is calling across threads and does not want to hang on a main
+  ;; window that is busy: AVS asks for the playing state (WM_USER/IPC 201) and
+  ;; the current track title (WM_GETTEXT) from its own render thread.
+  ;;
+  ;; $wnd_send_message runs the target wndproc to completion in the caller's
+  ;; instance and hands back the LRESULT, so the send never blocks and the
+  ;; timeout has nothing to expire -- flags and timeout are therefore read but
+  ;; unused, and that is the whole difference from real Windows here. What the
+  ;; caller does need is the result written through lpdwResult with a nonzero
+  ;; return; a window nobody owns is the documented failure, and returns 0
+  ;; without touching the buffer.
+  (func $handle_SendMessageTimeoutA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $result_ptr i32) (local $lres i32)
+    (local.set $result_ptr (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
+    (if (i32.eqz (call $wnd_table_get (local.get $arg0)))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
+        (return)))
+    (local.set $lres (call $wnd_send_message
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+    (if (local.get $result_ptr)
+      (then (call $gs32 (local.get $result_ptr) (local.get $lres))))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 32))))
+
   ;; 82: SendDlgItemMessageA — STUB: unimplemented
   ;; 82: SendDlgItemMessageA(hDlg, nIDDlgItem, Msg, wParam, lParam)
   ;; Equivalent to SendMessage(GetDlgItem(hDlg, nIDDlgItem), Msg, wParam, lParam)

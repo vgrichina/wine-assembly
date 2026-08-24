@@ -10737,13 +10737,22 @@
     "name": "GetUpdateRgn",
     "nargs": 3,
     "convention": "stdcall",
+    "hash": 3235427389,
     "args": [
-      { "name": "hwnd", "type": "HWND" },
-      { "name": "hrgn", "type": "HANDLE" },
-      { "name": "erase", "type": "BOOL" }
+      {
+        "name": "hwnd",
+        "type": "HWND"
+      },
+      {
+        "name": "hrgn",
+        "type": "HANDLE"
+      },
+      {
+        "name": "erase",
+        "type": "BOOL"
+      }
     ],
-    "ret": "int",
-    "hash": 3235427389
+    "ret": "int"
   },
   {
     "id": 1270,
@@ -23562,5 +23571,44 @@
     "nargs": 5,
     "convention": "stdcall",
     "hash": 196538338
+  },
+  {
+    "id": 2866,
+    "name": "SendMessageTimeoutA",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 3071011016,
+    "args": [
+      {
+        "name": "hwnd",
+        "type": "HWND"
+      },
+      {
+        "name": "msg",
+        "type": "UINT"
+      },
+      {
+        "name": "wP",
+        "type": "DWORD"
+      },
+      {
+        "name": "lP",
+        "type": "DWORD"
+      },
+      {
+        "name": "flags",
+        "type": "DWORD"
+      },
+      {
+        "name": "timeout",
+        "type": "DWORD"
+      },
+      {
+        "name": "result",
+        "type": "LPDWORD",
+        "out": true
+      }
+    ],
+    "ret": "DWORD"
   }
 ]
