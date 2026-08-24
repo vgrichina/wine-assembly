@@ -2034,7 +2034,7 @@
     ;; Taking the screen exclusively puts the device window on it: real
     ;; DirectDraw sizes that window to the display and brings it forward, so
     ;; an app that never calls ShowWindow itself still shows its frames.
-    ;; Monster Truck Madness is one -- it creates its window, goes exclusive,
+    ;; MechWarrior 3 is one -- it creates its window, goes exclusive,
     ;; and flips; without this the compositor saw no visible top-level window
     ;; at all ("path=normal windows=0") and the presented frames sat in a
     ;; layer nothing drew, so a game running at 240k lit pixels a frame
