@@ -2401,6 +2401,22 @@
       (local.set $row (i32.add (local.get $row) (i32.const 1)))
       (br $rlp))))
 
+  ;; Every screen coordinate that reaches the rasterizer comes from a guest
+  ;; float, and a guest is free to hand us a degenerate one: a vertex divided
+  ;; by a zero w, an uninitialized buffer, a projection matrix that has not
+  ;; been set yet. Plain i32.trunc_f32_s traps on NaN and on anything outside
+  ;; i32 range, and a WASM trap is not a dropped triangle -- it kills the whole
+  ;; emulator, taking the app and every other thread with it. Real hardware
+  ;; just rasterizes garbage and moves on, so clamp instead: NaN lands at 0 via
+  ;; trunc_sat, and the +/-1e6 bound keeps the edge-walk arithmetic below the
+  ;; point where the span loop's i32 differences would overflow.
+  ;; Repro before this existed: the DX SDK viewer.exe on any real Mesh .x file
+  ;; crashed in $d3dim_draw_tl_triangle with "float unrepresentable in integer
+  ;; range" as soon as d3drm handed the first triangle to Execute.
+  (func $d3dim_coord_i (param $f f32) (result i32)
+    (i32.trunc_sat_f32_s
+      (f32.min (f32.max (local.get $f) (f32.const -1000000.0)) (f32.const 1000000.0))))
+
   (func $d3dim_texture_sample_rgb (param $tex_entry i32) (param $u f32) (param $v f32) (result i32)
     (local $tw i32) (local $th i32) (local $bpp i32) (local $pitch i32) (local $dib_wa i32)
     (local $tx i32) (local $ty i32) (local $ptr i32) (local $px i32) (local $c i32)
@@ -2418,8 +2434,12 @@
     ;; D3DIM samples commonly use wrapping coordinates.
     (local.set $u (f32.sub (local.get $u) (f32.floor (local.get $u))))
     (local.set $v (f32.sub (local.get $v) (f32.floor (local.get $v))))
-    (local.set $tx (i32.trunc_f32_u (f32.mul (local.get $u) (f32.convert_i32_u (local.get $tw)))))
-    (local.set $ty (i32.trunc_f32_u (f32.mul (local.get $v) (f32.convert_i32_u (local.get $th)))))
+    ;; trunc_sat, not trunc: a NaN texture coordinate survives the wrap above
+    ;; (NaN - floor(NaN) is still NaN) and would trap the module rather than
+    ;; sample a wrong texel. The clamps below already fix up an out-of-range
+    ;; result, and trunc_sat sends NaN to 0, which they accept.
+    (local.set $tx (i32.trunc_sat_f32_u (f32.mul (local.get $u) (f32.convert_i32_u (local.get $tw)))))
+    (local.set $ty (i32.trunc_sat_f32_u (f32.mul (local.get $v) (f32.convert_i32_u (local.get $th)))))
     (if (i32.ge_u (local.get $tx) (local.get $tw)) (then (local.set $tx (i32.sub (local.get $tw) (i32.const 1)))))
     (if (i32.ge_u (local.get $ty) (local.get $th)) (then (local.set $ty (i32.sub (local.get $th) (i32.const 1)))))
     (local.set $ptr (i32.add (local.get $dib_wa) (i32.mul (local.get $ty) (local.get $pitch))))
@@ -2830,7 +2850,7 @@
       (local.set $t (f32.div
         (f32.convert_i32_s (i32.sub (local.get $y) (local.get $y0)))
         (f32.convert_i32_s (local.get $dy_tot))))
-      (local.set $xb (i32.trunc_f32_s (f32.add
+      (local.set $xb (call $d3dim_coord_i (f32.add
         (f32.convert_i32_s (local.get $x0))
         (f32.mul (f32.convert_i32_s (i32.sub (local.get $x2) (local.get $x0))) (local.get $t)))))
       (local.set $ub (f32.add (local.get $u0) (f32.mul (f32.sub (local.get $u2) (local.get $u0)) (local.get $t))))
@@ -2842,7 +2862,7 @@
               (local.set $t (f32.div
                 (f32.convert_i32_s (i32.sub (local.get $y) (local.get $y0)))
                 (f32.convert_i32_s (local.get $dy_upper))))
-              (local.set $xa (i32.trunc_f32_s (f32.add
+              (local.set $xa (call $d3dim_coord_i (f32.add
                 (f32.convert_i32_s (local.get $x0))
                 (f32.mul (f32.convert_i32_s (i32.sub (local.get $x1) (local.get $x0))) (local.get $t)))))
               (local.set $ua (f32.add (local.get $u0) (f32.mul (f32.sub (local.get $u1) (local.get $u0)) (local.get $t))))
@@ -2857,7 +2877,7 @@
               (local.set $t (f32.div
                 (f32.convert_i32_s (i32.sub (local.get $y) (local.get $y1)))
                 (f32.convert_i32_s (local.get $dy_lower))))
-              (local.set $xa (i32.trunc_f32_s (f32.add
+              (local.set $xa (call $d3dim_coord_i (f32.add
                 (f32.convert_i32_s (local.get $x1))
                 (f32.mul (f32.convert_i32_s (i32.sub (local.get $x2) (local.get $x1))) (local.get $t)))))
               (local.set $ua (f32.add (local.get $u1) (f32.mul (f32.sub (local.get $u2) (local.get $u1)) (local.get $t))))
@@ -2961,8 +2981,8 @@
         (br_if $pdone (i32.ge_u (local.get $i) (local.get $dwVertexCount)))
         (local.set $v0 (i32.add (local.get $v_wa) (i32.mul (local.get $i) (i32.const 32))))
         (call $viewport_fill_rect (local.get $rt)
-          (i32.trunc_f32_s (f32.load (local.get $v0)))
-          (i32.trunc_f32_s (f32.load (i32.add (local.get $v0) (i32.const 4))))
+          (call $d3dim_coord_i (f32.load (local.get $v0)))
+          (call $d3dim_coord_i (f32.load (i32.add (local.get $v0) (i32.const 4))))
           (i32.const 2) (i32.const 2)
           (i32.load (i32.add (local.get $v0) (i32.const 16))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
@@ -3090,14 +3110,14 @@
           (local.get $dwVertexCount) (local.get $vtxType) (local.get $idx2) (local.get $t2)))
       (then (return)))
     (call $d3dim_draw_tri_culled (local.get $this) (local.get $rt) (i32.const 0) (i32.const 1)
-      (i32.trunc_f32_s (f32.load (local.get $t0)))
-      (i32.trunc_f32_s (f32.load (i32.add (local.get $t0) (i32.const 4))))
+      (call $d3dim_coord_i (f32.load (local.get $t0)))
+      (call $d3dim_coord_i (f32.load (i32.add (local.get $t0) (i32.const 4))))
       (f32.load (i32.add (local.get $t0) (i32.const 8)))
-      (i32.trunc_f32_s (f32.load (local.get $t1)))
-      (i32.trunc_f32_s (f32.load (i32.add (local.get $t1) (i32.const 4))))
+      (call $d3dim_coord_i (f32.load (local.get $t1)))
+      (call $d3dim_coord_i (f32.load (i32.add (local.get $t1) (i32.const 4))))
       (f32.load (i32.add (local.get $t1) (i32.const 8)))
-      (i32.trunc_f32_s (f32.load (local.get $t2)))
-      (i32.trunc_f32_s (f32.load (i32.add (local.get $t2) (i32.const 4))))
+      (call $d3dim_coord_i (f32.load (local.get $t2)))
+      (call $d3dim_coord_i (f32.load (i32.add (local.get $t2) (i32.const 4))))
       (f32.load (i32.add (local.get $t2) (i32.const 8)))
       (i32.load (i32.add (local.get $t0) (i32.const 16)))))
 
@@ -3218,14 +3238,14 @@
     (param $this i32) (param $rt i32) (param $use_z i32)
     (param $v0 i32) (param $v1 i32) (param $v2 i32)
     (call $d3dim_draw_tri_culled (local.get $this) (local.get $rt) (local.get $use_z) (i32.const 0)
-      (i32.trunc_f32_s (f32.load (local.get $v0)))
-      (i32.trunc_f32_s (f32.load (i32.add (local.get $v0) (i32.const 4))))
+      (call $d3dim_coord_i (f32.load (local.get $v0)))
+      (call $d3dim_coord_i (f32.load (i32.add (local.get $v0) (i32.const 4))))
       (f32.load (i32.add (local.get $v0) (i32.const 8)))
-      (i32.trunc_f32_s (f32.load (local.get $v1)))
-      (i32.trunc_f32_s (f32.load (i32.add (local.get $v1) (i32.const 4))))
+      (call $d3dim_coord_i (f32.load (local.get $v1)))
+      (call $d3dim_coord_i (f32.load (i32.add (local.get $v1) (i32.const 4))))
       (f32.load (i32.add (local.get $v1) (i32.const 8)))
-      (i32.trunc_f32_s (f32.load (local.get $v2)))
-      (i32.trunc_f32_s (f32.load (i32.add (local.get $v2) (i32.const 4))))
+      (call $d3dim_coord_i (f32.load (local.get $v2)))
+      (call $d3dim_coord_i (f32.load (i32.add (local.get $v2) (i32.const 4))))
       (f32.load (i32.add (local.get $v2) (i32.const 8)))
       (i32.load (i32.add (local.get $v0) (i32.const 16)))))
 
@@ -3254,16 +3274,16 @@
         (f32.const 3.0)))
     (call $rasterize_triangle_textured
       (local.get $rt) (local.get $tex)
-      (i32.trunc_f32_s (f32.load (local.get $v0)))
-      (i32.trunc_f32_s (f32.load (i32.add (local.get $v0) (i32.const 4))))
+      (call $d3dim_coord_i (f32.load (local.get $v0)))
+      (call $d3dim_coord_i (f32.load (i32.add (local.get $v0) (i32.const 4))))
       (f32.load (i32.add (local.get $v0) (i32.const 24)))
       (f32.load (i32.add (local.get $v0) (i32.const 28)))
-      (i32.trunc_f32_s (f32.load (local.get $v1)))
-      (i32.trunc_f32_s (f32.load (i32.add (local.get $v1) (i32.const 4))))
+      (call $d3dim_coord_i (f32.load (local.get $v1)))
+      (call $d3dim_coord_i (f32.load (i32.add (local.get $v1) (i32.const 4))))
       (f32.load (i32.add (local.get $v1) (i32.const 24)))
       (f32.load (i32.add (local.get $v1) (i32.const 28)))
-      (i32.trunc_f32_s (f32.load (local.get $v2)))
-      (i32.trunc_f32_s (f32.load (i32.add (local.get $v2) (i32.const 4))))
+      (call $d3dim_coord_i (f32.load (local.get $v2)))
+      (call $d3dim_coord_i (f32.load (i32.add (local.get $v2) (i32.const 4))))
       (f32.load (i32.add (local.get $v2) (i32.const 24)))
       (f32.load (i32.add (local.get $v2) (i32.const 28)))
       (local.get $zbuf) (local.get $zval)))
@@ -3297,24 +3317,24 @@
     (if (i32.eqz (local.get $tex))
       (then
         (call $d3dim_draw_tri_culled (local.get $this) (local.get $rt) (local.get $use_z) (i32.const 1)
-          (i32.trunc_f32_s (f32.load (local.get $v0)))
-          (i32.trunc_f32_s (f32.load (i32.add (local.get $v0) (i32.const 4))))
+          (call $d3dim_coord_i (f32.load (local.get $v0)))
+          (call $d3dim_coord_i (f32.load (i32.add (local.get $v0) (i32.const 4))))
           (f32.load (i32.add (local.get $v0) (i32.const 8)))
-          (i32.trunc_f32_s (f32.load (local.get $v1)))
-          (i32.trunc_f32_s (f32.load (i32.add (local.get $v1) (i32.const 4))))
+          (call $d3dim_coord_i (f32.load (local.get $v1)))
+          (call $d3dim_coord_i (f32.load (i32.add (local.get $v1) (i32.const 4))))
           (f32.load (i32.add (local.get $v1) (i32.const 8)))
-          (i32.trunc_f32_s (f32.load (local.get $v2)))
-          (i32.trunc_f32_s (f32.load (i32.add (local.get $v2) (i32.const 4))))
+          (call $d3dim_coord_i (f32.load (local.get $v2)))
+          (call $d3dim_coord_i (f32.load (i32.add (local.get $v2) (i32.const 4))))
           (f32.load (i32.add (local.get $v2) (i32.const 8)))
           (i32.load (i32.add (local.get $v0) (i32.const 16))))
         (return)))
     (if (call $d3dim_cull_tri (local.get $this)
-          (i32.trunc_f32_s (f32.load (local.get $v0)))
-          (i32.trunc_f32_s (f32.load (i32.add (local.get $v0) (i32.const 4))))
-          (i32.trunc_f32_s (f32.load (local.get $v1)))
-          (i32.trunc_f32_s (f32.load (i32.add (local.get $v1) (i32.const 4))))
-          (i32.trunc_f32_s (f32.load (local.get $v2)))
-          (i32.trunc_f32_s (f32.load (i32.add (local.get $v2) (i32.const 4)))))
+          (call $d3dim_coord_i (f32.load (local.get $v0)))
+          (call $d3dim_coord_i (f32.load (i32.add (local.get $v0) (i32.const 4))))
+          (call $d3dim_coord_i (f32.load (local.get $v1)))
+          (call $d3dim_coord_i (f32.load (i32.add (local.get $v1) (i32.const 4))))
+          (call $d3dim_coord_i (f32.load (local.get $v2)))
+          (call $d3dim_coord_i (f32.load (i32.add (local.get $v2) (i32.const 4)))))
       (then (return)))
     (call $d3dim_draw_tl_triangle_textured
       (local.get $this) (local.get $rt) (local.get $tex) (local.get $use_z)
@@ -3441,8 +3461,8 @@
         (local.set $v (i32.add (local.get $vbase)
           (i32.mul (i32.add (local.get $pfirst) (local.get $j)) (i32.const 32))))
         (call $viewport_fill_rect (local.get $rt)
-          (i32.trunc_f32_s (f32.load (local.get $v)))
-          (i32.trunc_f32_s (f32.load (i32.add (local.get $v) (i32.const 4))))
+          (call $d3dim_coord_i (f32.load (local.get $v)))
+          (call $d3dim_coord_i (f32.load (i32.add (local.get $v) (i32.const 4))))
           (i32.const 2) (i32.const 2)
           (i32.load (i32.add (local.get $v) (i32.const 16))))
         (local.set $j (i32.add (local.get $j) (i32.const 1)))
@@ -3502,10 +3522,10 @@
       (local.set $v1 (i32.add (local.get $vbase) (i32.mul (local.get $iv1) (i32.const 32))))
       (local.set $v2 (i32.add (local.get $vbase) (i32.mul (local.get $iv2) (i32.const 32))))
       (call $rasterize_line_flat (local.get $rt)
-        (i32.trunc_f32_s (f32.load (local.get $v1)))
-        (i32.trunc_f32_s (f32.load (i32.add (local.get $v1) (i32.const 4))))
-        (i32.trunc_f32_s (f32.load (local.get $v2)))
-        (i32.trunc_f32_s (f32.load (i32.add (local.get $v2) (i32.const 4))))
+        (call $d3dim_coord_i (f32.load (local.get $v1)))
+        (call $d3dim_coord_i (f32.load (i32.add (local.get $v1) (i32.const 4))))
+        (call $d3dim_coord_i (f32.load (local.get $v2)))
+        (call $d3dim_coord_i (f32.load (i32.add (local.get $v2) (i32.const 4))))
         (i32.load (i32.add (local.get $v1) (i32.const 16))))
       (local.set $rec_wa (i32.add (local.get $rec_wa) (i32.const 4)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
