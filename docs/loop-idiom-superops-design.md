@@ -781,3 +781,51 @@ recipe. That deadlock is unrelated to this work (zero superops are emitted for
 this app, so the emitted thread stream is byte-identical to the pre-A1 one),
 but it does mean the 26 self-loop blocks are boot-path blocks. The static
 result above is the load-bearing one.
+
+### 10.4 Correction: LUT_RUN is not Heroes-II-specific
+
+10.2 concluded that LUT_RUN "is close to Heroes-II-specific". That conclusion
+was drawn from two things that could not support it: runtime windows that only
+ever reached the boot path of each app, and a static sample of two binaries.
+Running the real predicate over the whole candidate corpus (52 PEs, 37,978
+self-contained loops) says otherwise:
+
+| app | loops | COPY | FILL | LUT | SCAN | matched |
+|---|---|---|---|---|---|---|
+| jazz2.exe | 1961 | 10 | 24 | **36** | 88 | 158 (8.1%) |
+| starcraft.exe | 1932 | 19 | 21 | **17** | 33 | 90 (4.7%) |
+| VirtualDub.exe | 4162 | 52 | 39 | **11** | 138 | 240 (5.8%) |
+| diablo_s.exe | 1719 | 55 | 69 | **9** | 3 | 136 (7.9%) |
+| H2DEMOW.EXE | 1215 | 4 | 5 | **5** | 1 | 15 (1.2%) |
+| tademo.exe | 1700 | 75 | 17 | **3** | 4 | 99 (5.8%) |
+| Falldemo.exe | 1704 | 4 | 22 | **2** | 2 | 30 (1.8%) |
+| scummvm.exe | 4563 | 33 | 80 | **1** | 7 | 121 (2.7%) |
+| QBob.exe | 587 | 7 | 8 | **1** | 1 | 17 (2.9%) |
+| *corpus total* | 37978 | 413 | 429 | **85** | 532 | 1459 (3.8%) |
+
+Nine binaries have static LUT_RUN matches, and Heroes II is fifth among them.
+Jazz Jackrabbit 2 has seven times as many as the app the pattern was designed
+against, and they are unmistakably the same shape -- `0x443d83`, `0x463b49`
+and friends are palette-remap inner loops, byte load, table index, byte store,
+`dec`/`jnz`. StarCraft's sixteen are the same, six of them running backwards
+(stride -1).
+
+So the two-unrelated-apps gate is met on static evidence. What is still
+missing is the runtime half: a gameplay-reaching run of jazz2 and StarCraft
+with `--loopmatch-stats`, to show the matcher fires there and that the blocks
+it fires on are hot. Until that run exists this is a stronger lead than 10.2
+admitted, not a landed result.
+
+**A1 does not cover all of them.** `$th_lut_run` is byte-in/byte-out. Ten of
+the corpus's LUT matches are `size=2` -- a byte index into a 16-bit table with
+a 16-bit store (jazz2 has nine, StarCraft one, e.g. `mov cx, [0x5a3280+ecx*2]`
+followed by `mov [edx-0x2], cx`). Widening the store side is a small extension
+to the handler and the role table, and it is the cheapest way to grow the
+constituency.
+
+**This also weakens the case against chasing COPY/FILL/SCAN.** Corpus-wide
+those are 413 / 429 / 532 loops, not the 31 a two-app sample suggested. The
+other two arguments still stand -- the `rep`-string forms are already single
+handlers (`th_rep_movsb` .. `th_rep_scasw`), and hand-rolled byte copies are
+usually short alignment fixups where 10.1's block-round-trip win is smallest
+-- but "the constituency is tiny" is not one of them.
