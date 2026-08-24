@@ -2730,6 +2730,27 @@ async function main() {
     }
   };
 
+  // set_count writes the address AND zeroes that slot's count, so arming is not
+  // idempotent: the DLL onLoaded hook re-armed every slot on every late
+  // LoadLibrary and threw away whatever had been counted so far. Diablo loads a
+  // DLL around batch 39000, which is why a probe that really was hit 297413
+  // times reported 0 at --max-batches=40000 and the right answer at 35000.
+  // Re-arm a slot only when its resolved address actually changed.
+  const countArmed = new Array(countAddrs.length).fill(null);
+  const armCounts = () => {
+    if (!countAddrs.length || !instance.exports.set_count) return;
+    for (let i = 0; i < countAddrs.length; i++) {
+      if (!Number.isFinite(countAddrs[i])) continue;   // module+0xVA, not resolved yet
+      const addr = countAddrs[i] >>> 0;
+      if (countArmed[i] === addr) continue;
+      countArmed[i] = addr;
+      instance.exports.set_count(i, addr);
+      // A slot armed late has counted nothing before that point -- worth one
+      // line, because a `module+0xVA` probe that resolves after the code ran
+      // is otherwise indistinguishable from an address that never executed.
+      console.log(`[count] slot ${i} armed at ${hex(addr)}`);
+    }
+  };
   if (countAddrs.length && instance.exports.get_count) {
     for (const sig of ['SIGTERM', 'SIGINT']) {
       process.on(sig, () => {
@@ -6405,12 +6426,10 @@ async function main() {
     if (traceEipOn && traceEipArmed && batch === 0 && instance.exports.set_trace_eip_range) {
       instance.exports.set_trace_eip_range(1, traceEipLo, traceEipHi);
     }
-    // Hit counters: register once
-    if (countAddrs.length && batch === 0 && instance.exports.set_count) {
-      for (let i = 0; i < countAddrs.length; i++) {
-        instance.exports.set_count(i, countAddrs[i]);
-      }
-    }
+    // Hit counters: arm any slot whose address is known and not armed yet. A
+    // module-relative slot stays unresolved until its DLL loads, so this cannot
+    // be a batch-0-only job.
+    if (batch === 0) armCounts();
     // Breakpoint check (EIP before run)
     if (breakAddrs.length && breakAddrs.includes(eipBefore)) {
       if (breakThreadFilter !== null && breakThreadFilter !== 0) {
@@ -6737,11 +6756,7 @@ async function main() {
             if (breakAddrs.length) instance.exports.set_bp(breakAddrs[0]);
             else if (traceAtAddr) instance.exports.set_bp(traceAtAddr);
           }
-          if (countAddrs.length && instance.exports.set_count) {
-            for (let i = 0; i < countAddrs.length; i++) {
-              instance.exports.set_count(i, countAddrs[i]);
-            }
-          }
+          armCounts();
           if (traceEipOn && traceEipArmed && instance.exports.set_trace_eip_range) {
             instance.exports.set_trace_eip_range(1, traceEipLo, traceEipHi);
           }

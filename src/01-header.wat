@@ -1210,7 +1210,8 @@
   ;; 0x00011E48    8B    SysLink space literal
   ;; 0x00011E50   32B    OLEAUT32 ordinal-import names
   ;; 0x00011E70   60B    Win16 module names (KERNEL/USER/GDI/... , ends 0x11EAC)
-  ;; 0x00011EAC   84B    Free (up to HIT_COUNT_BASE)
+  ;; 0x00011EAC   84B    Free
+  ;; 0x00011F00  166B    Run-dialog strings (src/09c3-controls.wat), ends 0x11FA6
   ;; --- High WAT-private tables ---
   ;; 0x07E00000 32KB     API dispatch hash table
   ;; 0x07E08000  1KB     TEXT_SCRATCH (Unicode-to-ANSI conversion)
@@ -1259,6 +1260,7 @@
   ;; 0x07F0F000 4KB      GDI_DC_PATH_TABLE (256 x 16-byte WAT path records)
   ;; 0x07F10000 4KB      HANDLER_HIST_COUNTS (1024 i32 counters)
   ;; 0x07F12000 8KB      CODE_PAGE_BITMAP (1 bit per 4KB guest page < 0x10000000)
+  ;; 0x07F20000  256B    HIT_COUNT_BASE (16 --count slots of {addr, count})
   ;; 0x07F30000 8KB      OP_INDEX (2048 decode-time op-start addresses)
   ;; 0x07F11000 512KB    (free apart from the two above -- former
   ;;                      HANDLER_PAIR_HIST_COUNTS home, too
@@ -2584,12 +2586,15 @@
   (global $CONSOLE_INPUT i32 (i32.const 0x07E0F000))
   (global $CONSOLE_INPUT_MAX i32 (i32.const 256))
 
-  ;; EIP hit counters: passive per-block counter at 16 slots (HIT_COUNT_BASE=0x11F00,
-  ;; 8 bytes each: +0 addr i32, +4 count i32). Run loop checks up to $hit_count_n
-  ;; slots per block dispatch. Addresses must be x86 block-entry boundaries.
-  ;; Placed just below GUEST_BASE (0x12000) in the last free 4KB page; nothing else
-  ;; uses that range.
-  (global $HIT_COUNT_BASE i32 (i32.const 0x00011F00))
+  ;; EIP hit counters: passive per-block counter at 16 slots (8 bytes each:
+  ;; +0 addr i32, +4 count i32). Run loop checks up to $hit_count_n slots per
+  ;; block dispatch. Addresses must be x86 block-entry boundaries.
+  ;; It used to sit at 0x11F00, "the last free page below GUEST_BASE" -- but the
+  ;; Run-dialog strings in src/09c3-controls.wat are laid down over 0x11F00-0x11FA5,
+  ;; so 11 of the 16 slots were overwritten at init and --count silently reported 0
+  ;; for addresses that were demonstrably hot. It now lives in the free gap between
+  ;; CODE_PAGE_BITMAP (ends 0x07F14000) and OP_INDEX (0x07F30000).
+  (global $HIT_COUNT_BASE i32 (i32.const 0x07F20000))
   (global $HIT_COUNT_BASE_SIZE i32 (i32.const 0x00000100))
   (global $hit_count_n (mut i32) (i32.const 0))
 
