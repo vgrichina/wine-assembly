@@ -358,3 +358,21 @@ cabextract -F 'mmsys.cpl' -d test/binaries/dlls scratch/win98cabs/BASE4.CAB
 | File | Why |
 |------|-----|
 | mmsys.cpl | Sound Recorder's Edit > Audio Properties does `LoadLibrary("MMSYS.CPL")` then `GetProcAddress("ShowMMCPLPropertySheet")` (ordinal 5). Without it the app probes, fails and silently gives up. |
+
+## Tracker module fixture
+
+**`devhell1.xm`** — used by the `winamp_mod` app entry, which points Winamp at
+`in_mod.dll` (the Mikamp/MikMod module decoder) instead of `in_mp3.dll`.
+
+Source: `https://opengameart.org/content/2-creepy-background-songs` — "2 creepy
+background songs" by **sauer2**, released **CC0 1.0** (public domain
+dedication), downloaded as `modules_0.zip`. The archive holds two MilkyTracker
+XM modules; `devhell1.xm` is the larger (8765 bytes, XM 1.04, 8 channels,
+6 patterns, 4 instruments, 6 orders). CC0 imposes no attribution requirement,
+so it can be redistributed with the fixture pool without conditions.
+
+```bash
+curl -sL -o /tmp/modules_0.zip https://opengameart.org/sites/default/files/modules_0.zip
+unzip -o -d /tmp/modules /tmp/modules_0.zip
+cp /tmp/modules/devhell1.xm binaries/devhell1.xm
+```
