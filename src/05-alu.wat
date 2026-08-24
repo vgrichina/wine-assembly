@@ -61,6 +61,61 @@
     (local.get $a) ;; CMP does not modify dst
   )
 
+  ;; Sized (8- and 16-bit) ALU. $do_alu32 does full 32-bit arithmetic, so a
+  ;; byte or word operation routed straight through it leaves flag_res holding
+  ;; bits above the operand width, and both $get_zf (flag_res == 0) and
+  ;; $get_cf's ADD arm (flag_res < flag_a) read it: `add al,[edi]` with
+  ;; 0xF0 + 0x34 left 0x124 there, so CF came out 0 on a byte carry that
+  ;; really did carry. The register forms ($th_alu_r8_r8, $th_alu_r8_i8) mask
+  ;; per-op, which is why register and memory forms of the same instruction
+  ;; disagreed.
+  ;;
+  ;; ADC and SBB need more than a mask. $do_alu32 detects the b+cf wrap with
+  ;; (b_eff < b), a 32-bit test: at eight bits 0xFF+1 = 0x100 does not wrap
+  ;; 32 bits, so `adc al,0xFF` with CF set reported no carry out — and the
+  ;; fixup it does apply switches to raw mode with flag_b = 0, discarding OF.
+  ;; Both are computed against the operand width here instead.
+  ;;
+  ;; $mask is 0xFF or 0xFFFF; $shift is the matching sign-bit position (7/15)
+  ;; and is left in flag_sign_shift, since every $set_flags_* resets it to 31.
+  (func $do_alu_sized (param $op i32) (param $a i32) (param $b i32)
+                      (param $mask i32) (param $shift i32) (result i32)
+    (local $cf_in i32) (local $sum i32) (local $r i32)
+    (local $sa i32) (local $sb i32) (local $sr i32)
+    ;; 2 = ADC, 3 = SBB — handled here; the other six are exact once masked.
+    (if (i32.or (i32.eq (local.get $op) (i32.const 2)) (i32.eq (local.get $op) (i32.const 3)))
+      (then
+        (local.set $cf_in (call $get_cf))
+        (local.set $sum (i32.add (local.get $b) (local.get $cf_in)))
+        (if (i32.eq (local.get $op) (i32.const 2))
+          (then
+            (local.set $sum (i32.add (local.get $a) (local.get $sum)))
+            (local.set $r (i32.and (local.get $sum) (local.get $mask)))
+            ;; carry out of the operand width
+            (global.set $flag_a (i32.gt_u (local.get $sum) (local.get $mask))))
+          (else
+            (local.set $r (i32.and (i32.sub (local.get $a) (local.get $sum)) (local.get $mask)))
+            ;; borrow: b + cf_in exceeds a
+            (global.set $flag_a (i32.gt_u (local.get $sum) (local.get $a)))))
+        (local.set $sa (i32.and (i32.shr_u (local.get $a) (local.get $shift)) (i32.const 1)))
+        (local.set $sb (i32.and (i32.shr_u (local.get $b) (local.get $shift)) (i32.const 1)))
+        (local.set $sr (i32.and (i32.shr_u (local.get $r) (local.get $shift)) (i32.const 1)))
+        ;; Raw mode: CF in flag_a, OF in flag_b. Both have to be eager here —
+        ;; the lazy forms cannot see the operand width.
+        (if (i32.eq (local.get $op) (i32.const 2))
+          (then (global.set $flag_b
+                  (i32.and (i32.eq (local.get $sa) (local.get $sb)) (i32.ne (local.get $sa) (local.get $sr)))))
+          (else (global.set $flag_b
+                  (i32.and (i32.ne (local.get $sa) (local.get $sb)) (i32.eq (local.get $sb) (local.get $sr))))))
+        (global.set $flag_op (i32.const 8))
+        (global.set $flag_res (local.get $r))
+        (global.set $flag_sign_shift (local.get $shift))
+        (return (local.get $r))))
+    (local.set $r (call $do_alu32 (local.get $op) (local.get $a) (local.get $b)))
+    (global.set $flag_res (i32.and (global.get $flag_res) (local.get $mask)))
+    (global.set $flag_sign_shift (local.get $shift))
+    (i32.and (local.get $r) (local.get $mask)))
+
   ;; ============================================================
   ;; SHIFT / ROTATE — one implementation, parameterized on width
   ;; ============================================================
@@ -827,8 +882,7 @@
     (local.set $alu (i32.shr_u (local.get $op) (i32.const 4)))
     (local.set $reg (i32.and (local.get $op) (i32.const 0xF)))
     (local.set $a (call $gl8 (local.get $addr))) (local.set $b (call $get_reg8 (local.get $reg)))
-    (local.set $r (call $do_alu32 (local.get $alu) (local.get $a) (local.get $b)))
-    (global.set $flag_sign_shift (i32.const 7))
+    (local.set $r (call $do_alu_sized (local.get $alu) (local.get $a) (local.get $b) (i32.const 0xFF) (i32.const 7)))
     (if (i32.ne (local.get $alu) (i32.const 7)) (then (call $gs8 (local.get $addr) (local.get $r))))
     (return_call $next))
   ;; 50: reg OP= [addr] (byte)
@@ -838,8 +892,7 @@
     (local.set $alu (i32.shr_u (local.get $op) (i32.const 4)))
     (local.set $reg (i32.and (local.get $op) (i32.const 0xF)))
     (local.set $a (call $get_reg8 (local.get $reg))) (local.set $b (call $gl8 (local.get $addr)))
-    (local.set $r (call $do_alu32 (local.get $alu) (local.get $a) (local.get $b)))
-    (global.set $flag_sign_shift (i32.const 7))
+    (local.set $r (call $do_alu_sized (local.get $alu) (local.get $a) (local.get $b) (i32.const 0xFF) (i32.const 7)))
     (if (i32.ne (local.get $alu) (i32.const 7)) (then (call $set_reg8 (local.get $reg) (local.get $r))))
     (return_call $next))
   ;; 51: [addr] OP= imm32  (operand=alu_op, addr+imm in next words)
@@ -853,8 +906,7 @@
   (func $th_alu_m8_i8 (param $op i32)
     (local $addr i32) (local $imm i32) (local $val i32)
     (local.set $addr (call $read_addr)) (local.set $imm (i32.and (call $read_thread_word) (i32.const 0xFF)))
-    (local.set $val (call $do_alu32 (local.get $op) (call $gl8 (local.get $addr)) (local.get $imm)))
-    (global.set $flag_sign_shift (i32.const 7))
+    (local.set $val (call $do_alu_sized (local.get $op) (call $gl8 (local.get $addr)) (local.get $imm) (i32.const 0xFF) (i32.const 7)))
     (if (i32.ne (local.get $op) (i32.const 7)) (then (call $gs8 (local.get $addr) (local.get $val))))
     (return_call $next))
 
@@ -2791,12 +2843,10 @@
     (local $alu i32) (local $dst i32) (local $val i32)
     (local.set $alu (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 7)))
     (local.set $dst (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
-    (local.set $val (call $do_alu32 (local.get $alu)
+    (local.set $val (call $do_alu_sized (local.get $alu)
       (i32.and (call $get_reg (local.get $dst)) (i32.const 0xFFFF))
-      (i32.and (call $get_reg (i32.and (local.get $op) (i32.const 0xF))) (i32.const 0xFFFF))))
-    ;; Mask flag_res to 16 bits so ZF/SF/CF compute correctly for 16-bit ops
-    (global.set $flag_res (i32.and (global.get $flag_res) (i32.const 0xFFFF)))
-    (global.set $flag_sign_shift (i32.const 15))
+      (i32.and (call $get_reg (i32.and (local.get $op) (i32.const 0xF))) (i32.const 0xFFFF))
+      (i32.const 0xFFFF) (i32.const 15)))
     (if (i32.ne (local.get $alu) (i32.const 7))
       (then (call $set_reg16 (local.get $dst) (local.get $val))))
     (return_call $next))
@@ -2811,12 +2861,10 @@
     ;; 16-bit answer is "above". Visual Basic tells a standard property from a
     ;; pointer with exactly that comparison, so every standard property on
     ;; every form came out as a pointer into nothing.
-    (local.set $val (call $do_alu32 (local.get $alu)
+    (local.set $val (call $do_alu_sized (local.get $alu)
       (i32.and (call $get_reg (local.get $reg)) (i32.const 0xFFFF))
-      (i32.and (call $read_thread_word) (i32.const 0xFFFF))))
-    ;; Mask flag_res to 16 bits so ZF/SF/CF compute correctly for 16-bit ops
-    (global.set $flag_res (i32.and (global.get $flag_res) (i32.const 0xFFFF)))
-    (global.set $flag_sign_shift (i32.const 15))
+      (i32.and (call $read_thread_word) (i32.const 0xFFFF))
+      (i32.const 0xFFFF) (i32.const 15)))
     (if (i32.ne (local.get $alu) (i32.const 7))
       (then (call $set_reg16 (local.get $reg) (local.get $val))))
     (return_call $next))
