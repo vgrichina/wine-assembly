@@ -385,6 +385,11 @@
     (if (result i32) (global.get $dx_exclusive_fullscreen)
       (then (call $dx_target_hwnd))
       (else (i32.const 0))))
+  ;; The device window of a windowed Direct3D9 device, or 0. Tells the
+  ;; compositor that the surface it is presenting is that window's client
+  ;; area at (0,0) rather than a screen-coordinate DirectDraw primary.
+  (func (export "get_d3d9_windowed_hwnd") (result i32)
+    (global.get $d3d9_windowed_hwnd))
   (func (export "get_flash_state") (param $hwnd i32) (result i32)
     (local $slot i32)
     (local.set $slot (call $wnd_table_find (local.get $hwnd)))
@@ -1842,6 +1847,10 @@
     (call $gdi_object_record (local.get 0)))
   (func (export "test_dx_set_primary_palette_wa") (param i32)
     (global.set $dx_primary_pal_wa (local.get 0)))
+  (func (export "test_dx_set_primary_wa") (param i32)
+    (global.set $dx_primary_wa (local.get 0)))
+  (func (export "test_dx_primary_entry") (result i32)
+    (call $dx_primary_entry))
 
   ;; ---- NC/message plumbing exports (JS host posts messages into WAT's queues) ----
   (func (export "nc_post_paint") (param $hwnd i32)
@@ -2386,8 +2395,16 @@
     (local $base i32)
     (local.set $base (i32.add (global.get $HIT_COUNT_BASE)
                               (i32.shl (local.get $slot) (i32.const 3))))
-    (i32.store          (local.get $base) (local.get $addr))
-    (i32.store offset=4 (local.get $base) (i32.const 0))
+    ;; Arming the same address twice must not throw the count away. The slots
+    ;; live in linear memory, which worker instances share, and every spawn
+    ;; re-arms all of them (lib/thread-manager.js) -- so an app that started a
+    ;; thread mid-run reset every counter to zero and the flag reported 0 for
+    ;; addresses it had already counted hundreds of thousands of times. Use
+    ;; clear_counts to deliberately start over.
+    (if (i32.ne (i32.load (local.get $base)) (local.get $addr))
+      (then
+        (i32.store          (local.get $base) (local.get $addr))
+        (i32.store offset=4 (local.get $base) (i32.const 0))))
     (if (i32.gt_s (i32.add (local.get $slot) (i32.const 1)) (global.get $hit_count_n))
       (then (global.set $hit_count_n (i32.add (local.get $slot) (i32.const 1)))))
     (call $dbg_recompute))
@@ -2464,6 +2481,11 @@
   ;; per-thread instance — mut globals are per-instance.
   (func (export "set_sib_fusion") (param $flag i32)
     (global.set $sib_fusion_enabled (local.get $flag)))
+
+  ;; The unrolled-rectangle fold (handler 422). Same rules: before the first
+  ;; decode, and on every per-thread instance.
+  (func (export "set_rect_run") (param $flag i32)
+    (global.set $rect_run_enabled (local.get $flag)))
 
   ;; Threaded-handler histogram. Profiling tools enable this only around a
   ;; measured window. Counts are stored in WAT-private memory and read by JS.

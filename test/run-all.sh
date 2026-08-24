@@ -203,6 +203,7 @@ UNIT=(
   test/test-sendmessagetimeout.js
   test/test-directdraw-cooperative-window.js
   test/test-directdraw-create-ex.js
+  test/test-directdraw-mode-change-primary.js
   test/test-directdraw-present-force.js
   test/test-directdraw-retained-primary.js
   test/test-directanimation-image-render.js
@@ -210,6 +211,9 @@ UNIT=(
   test/test-directinput8-create.js
   test/test-directx-ordinals.js
   test/test-launch-prefs-resolution.js
+  test/test-d3dim-line-primitives.js
+  test/test-dx-blank-primary-holdover.js
+  test/test-dx-present-window-placement.js
   test/test-dx-vtable-worker-sync.js
   test/test-disabled-dialog-controls.js
   test/test-duplicate-handle.js

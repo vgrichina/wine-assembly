@@ -14979,7 +14979,13 @@
       (call $run (i32.const 1000000))
       (br_if $sync_done (i32.eqz (global.get $eip)))
       (local.set $sync_rounds (i32.add (local.get $sync_rounds) (i32.const 1)))
-      (br_if $sync_done (i32.ge_u (local.get $sync_rounds) (i32.const 64)))
+      (if (i32.ge_u (local.get $sync_rounds) (i32.const 64))
+        (then
+          (call $host_log_i32 (i32.const 0xCADE5000))
+          (call $host_log_i32 (global.get $eip))
+          (call $host_log_i32 (global.get $yield_reason))
+          (call $host_log_i32 (local.get $msg))
+          (br $sync_done)))
       (br $sync_run)))
     (global.set $sync_msg_depth (i32.sub (global.get $sync_msg_depth) (i32.const 1)))
     ;; Capture wndproc result (its EAX) before restoring caller's regs.

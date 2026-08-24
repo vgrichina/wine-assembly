@@ -907,7 +907,13 @@
           (if (i32.and (call $wnd_get_style (local.get $ctrl_hwnd)) (i32.const 0x10000000))
             (then (call $paint_flag_set_inv (local.get $ctrl_hwnd))))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
-          (br $push_loop)))))
+          (br $push_loop)))
+        ;; …and the dialog's own client area. A DlgProc that ignores WM_PAINT
+        ;; costs nothing (the background is already filled and the pump's take
+        ;; clears the flag, so there is no repaint loop), but one that draws
+        ;; its client itself never gets a single paint otherwise. See the
+        ;; matching seed in $handle_DialogBoxParamA.
+        (call $paint_flag_set_inv (local.get $hwnd))))
     ;; Do not synchronously paint children during CreateDialogParamA. Nested
     ;; wizard pages can be created before USER has finalized the parent/child
     ;; visible region, and painting them now leaves pixels that a later parent
@@ -1577,6 +1583,31 @@
     ;; Same reason as GetMessageA: an idle message pump is where a
     ;; WSAAsyncSelect server spends its time, so it has to move the wire.
     (call $vsock_pump)
+    ;; WM_QUIT, before anything else — a game loop pumps with PeekMessage and
+    ;; never calls GetMessage at all, so a $quit_flag only GetMessageA consumed
+    ;; made PostQuitMessage invisible: RollerCoaster Tycoon's Quit Game > Don't
+    ;; Save Game posted the quit and then went right on running.
+    ;; Honours the filter range (WM_QUIT is 0x12) and, unlike GetMessageA's
+    ;; copy, consumes the flag on PM_REMOVE the way the real queue does.
+    ;; Only an explicit PostQuitMessage (flag == 2) is delivered here: the
+    ;; teardown-synthesized quits (flag == 1) fire during window recreation and
+    ;; would kill a healthy app on its very next poll.
+    (if (i32.and
+          (i32.eq (global.get $quit_flag) (i32.const 2))
+          (i32.or
+            (i32.eqz (i32.or (local.get $arg2) (local.get $arg3)))
+            (i32.and
+              (i32.le_u (local.get $arg2) (i32.const 0x0012))
+              (i32.ge_u (local.get $arg3) (i32.const 0x0012)))))
+    (then
+    (if (i32.and (local.get $arg4) (i32.const 1)) ;; PM_REMOVE
+      (then (global.set $quit_flag (i32.const 0))))
+    (call $gs32 (local.get $arg0) (global.get $main_hwnd))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0x0012)) ;; WM_QUIT
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (i32.const 0))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
     ;; Deliver pending child WM_CREATE
     (if (global.get $pending_child_create)
     (then
@@ -2411,7 +2442,13 @@
 
   ;; 79: PostQuitMessage
   (func $handle_PostQuitMessage (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $quit_flag (i32.const 1))
+    ;; 2, not 1: the app really posted a quit. The other writers of $quit_flag
+    ;; synthesize one from a window teardown, and those are guesses — RCT
+    ;; destroys and recreates its main window during video init, which leaves a
+    ;; synthesized quit behind that nothing cancels. GetMessageA treats any
+    ;; non-zero value as WM_QUIT as before; PeekMessageA, which apps poll every
+    ;; frame, only honours this explicit one.
+    (global.set $quit_flag (i32.const 2))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )

@@ -2787,10 +2787,31 @@
     (if (i32.eq (local.get $class) (i32.const 21)) (then (return (i32.const 0x3274)))) ;; toolbar
     (i32.const 0))
 
+  ;; The name a window's class was actually registered under, as a WASM
+  ;; address, or 0 when this hwnd has no class record or the class was named
+  ;; by atom rather than by string.
+  ;;
+  ;; This outranks the built-in name because a superclass is still its own
+  ;; class: Storm registers "SDlgStatic" over USER's Static and then decides
+  ;; which artwork each dialog child gets by strcmp'ing GetClassNameA's answer
+  ;; against that exact string (storm.dll 0x15005112). Answering "Static"
+  ;; makes every lookup miss, and a child with no art record paints black.
+  (func $wnd_registered_class_name (param $hwnd i32) (result i32)
+    (local $slot i32) (local $name i32)
+    (local.set $slot (call $wnd_get_class_slot (local.get $hwnd)))
+    (if (i32.lt_s (local.get $slot) (i32.const 0)) (then (return (i32.const 0))))
+    ;; WNDCLASSA sits at class record + 8; lpszClassName is its +36 field.
+    (local.set $name (i32.load offset=44 (call $class_record_addr (local.get $slot))))
+    ;; A small value is MAKEINTATOM, which names no string to hand back.
+    (if (i32.lt_u (local.get $name) (i32.const 0x10000)) (then (return (i32.const 0))))
+    (call $g2w (local.get $name)))
+
   (func $copy_control_class_name
     (param $hwnd i32) (param $buf i32) (param $max i32) (result i32)
     (local $src i32) (local $len i32)
-    (local.set $src (call $control_class_name_ptr (local.get $hwnd)))
+    (local.set $src (call $wnd_registered_class_name (local.get $hwnd)))
+    (if (i32.eqz (local.get $src))
+      (then (local.set $src (call $control_class_name_ptr (local.get $hwnd)))))
     (if (i32.or (i32.eqz (local.get $src)) (i32.le_s (local.get $max) (i32.const 0)))
       (then (return (i32.const -1))))
     (local.set $len (call $strlen (local.get $src)))
@@ -3808,11 +3829,17 @@
     (local.set $target (call $gl32 (local.get $arg1)))
     (local.set $msg (call $gl32 (i32.add (local.get $arg1) (i32.const 4))))
     (local.set $vk (call $gl32 (i32.add (local.get $arg1) (i32.const 8))))
-    ;; WM_KEYDOWN only; VK_RETURN (0x0D) and VK_ESCAPE (0x1B) only.
+    ;; WM_KEYDOWN only, and only the keys USER itself claims: the two command
+    ;; keys, Tab, and the four arrows. Everything else still falls through.
     (if (i32.ne (local.get $msg) (i32.const 0x0100)) (then (return)))
-    (if (i32.and
-          (i32.ne (local.get $vk) (i32.const 0x0D))
-          (i32.ne (local.get $vk) (i32.const 0x1B)))
+    (if (i32.eqz (i32.or
+          (i32.or
+            (i32.eq (local.get $vk) (i32.const 0x0D))
+            (i32.eq (local.get $vk) (i32.const 0x1B)))
+          (i32.or
+            (i32.eq (local.get $vk) (i32.const 0x09))
+            (i32.and (i32.ge_u (local.get $vk) (i32.const 0x25))
+                     (i32.le_u (local.get $vk) (i32.const 0x28))))))
       (then (return)))
     ;; The message must belong to this dialog or one of its descendants.
     (local.set $inside (i32.eq (local.get $target) (local.get $arg0)))
@@ -3832,6 +3859,34 @@
       (local.get $target) (i32.const 0x0087)
       (local.get $vk) (local.get $arg1)))
     (if (i32.and (local.get $code) (i32.const 0x0004)) (then (return)))
+    ;; Tab and the arrows move the focus, and a control that asked for them
+    ;; (DLGC_WANTTAB / DLGC_WANTARROWS -- an edit or a listbox) keeps them.
+    (if (i32.eq (local.get $vk) (i32.const 0x09))
+      (then
+        (if (i32.and (local.get $code) (i32.const 0x0002)) (then (return)))
+        (local.set $btn (call $dialog_next_tabstop
+          (local.get $arg0) (local.get $target)
+          (select (i32.const -1) (i32.const 1)
+            (i32.and (call $host_get_key_down_state (i32.const 0x10))
+                     (i32.const 0x8000)))))
+        (if (local.get $btn) (then (call $set_focus (local.get $btn))))
+        (global.set $eax (i32.const 1))
+        (return)))
+    (if (i32.and (i32.ge_u (local.get $vk) (i32.const 0x25))
+                 (i32.le_u (local.get $vk) (i32.const 0x28)))
+      (then
+        (if (i32.and (local.get $code) (i32.const 0x0001)) (then (return)))
+        ;; VK_LEFT (0x25) and VK_UP (0x26) go back; VK_RIGHT/VK_DOWN forward.
+        (local.set $btn (call $dialog_next_group_item
+          (local.get $arg0) (local.get $target)
+          (select (i32.const -1) (i32.const 1)
+            (i32.le_u (local.get $vk) (i32.const 0x26)))))
+        (if (i32.and
+              (i32.ne (local.get $btn) (i32.const 0))
+              (i32.ne (local.get $btn) (local.get $target)))
+          (then (call $set_focus (local.get $btn))))
+        (global.set $eax (i32.const 1))
+        (return)))
     (if (i32.eq (local.get $vk) (i32.const 0x1B))
       (then
         (drop (call $wnd_send_message
@@ -3839,6 +3894,23 @@
           (call $ctrl_find_by_id (local.get $arg0) (i32.const 2))))
         (global.set $eax (i32.const 1))
         (return)))
+    ;; VK_RETURN on a focused pushbutton fires that button, not the dialog's
+    ;; default -- USER makes the focused button the default for as long as it
+    ;; holds the focus. Diablo's menus are exactly this shape: five ownerdrawn
+    ;; Buttons and no default id, so without this the arrow keys moved the
+    ;; highlight and Enter still launched the first item.
+    (if (i32.and
+          (i32.ne (local.get $target) (local.get $arg0))
+          (i32.eq (call $ctrl_table_get_class (local.get $target)) (i32.const 1)))
+      (then
+        (if (i32.eqz (i32.and (call $wnd_get_style (local.get $target))
+                              (i32.const 0x08000000)))  ;; !WS_DISABLED
+          (then
+            (drop (call $wnd_send_message
+              (local.get $arg0) (i32.const 0x0111)
+              (call $ctrl_table_get_id (local.get $target)) (local.get $target)))
+            (global.set $eax (i32.const 1))
+            (return)))))
     ;; VK_RETURN: the dialog's own default id when it claims one, IDOK when
     ;; it does not. A default button that exists but is disabled swallows the
     ;; key rather than firing -- an absent one does not.
@@ -4009,6 +4081,16 @@
         (then (call $paint_flag_set_inv (local.get $ctrl_hwnd))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $push_loop)))
+    ;; The dialog's own client area needs a WM_PAINT too. A template DlgProc
+    ;; that ignores it costs nothing — $dlg_fill_bkgnd already painted the
+    ;; COLOR_BTNFACE and the pump's take clears the flag, so there is no
+    ;; repaint loop — but an app that draws its client itself never sees a
+    ;; single paint otherwise. Welcome to Windows 98 is exactly that shape:
+    ;; every visible element (banner bitmap, the seven menu rows, the body
+    ;; text) is drawn by its DLGPROC over invisible SS_SUNKEN statics that
+    ;; exist only as geometry anchors, so the dialog rendered as an empty
+    ;; grey box with nothing but the Close button.
+    (call $paint_flag_set_inv (local.get $hwnd))
     ;; Do not synchronously paint children during DialogBoxParamA creation.
     ;; The modal pump below drains seeded WAT-native paints after the dialog
     ;; is visible and its USER-style visible region is stable.
@@ -6755,9 +6837,30 @@ nW — STUB: unimplemented
   ;; stack untouched and yields; the host scheduler retries the same call after
   ;; giving the owner a chance to run.
   (func $handle_EnterCriticalSection (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $cs i32) (local $owner i32) (local $recursion i32)
+    (local $cs i32) (local $owner i32) (local $recursion i32) (local $round i32)
     (local.set $cs (call $g2w (local.get $arg0)))
     (local.set $owner (i32.load offset=12 (local.get $cs)))
+    ;; Contended from inside a synchronous wndproc: parking is not available.
+    ;; $wnd_send_message runs the procedure on a recursive interpreter frame,
+    ;; and a yield there returns to that loop, not to the host -- so the owning
+    ;; worker never gets a turn, the loop burns its round budget in an instant
+    ;; and silently abandons the wndproc. That is what left Diablo's main menu
+    ;; without its flaming logo: the PCX loader in its WM_INITDIALOG takes a
+    ;; Storm section, and the tail of the handler (which posts the message that
+    ;; starts the flame animation) never ran. Give the owner a bounded inline
+    ;; turn instead, exactly as waitSingleCooperative does for events.
+    (if (i32.and (i32.ne (local.get $owner) (i32.const 0))
+                 (i32.and (i32.ne (local.get $owner) (global.get $current_thread_id))
+                          (i32.ne (global.get $sync_msg_depth) (i32.const 0))))
+      (then
+        (block $pumped (loop $spin
+          (br_if $pumped (i32.eqz (call $host_cs_pump)))
+          (local.set $owner (i32.load offset=12 (local.get $cs)))
+          (br_if $pumped (i32.eqz (local.get $owner)))
+          (br_if $pumped (i32.eq (local.get $owner) (global.get $current_thread_id)))
+          (local.set $round (i32.add (local.get $round) (i32.const 1)))
+          (br_if $pumped (i32.ge_u (local.get $round) (i32.const 16)))
+          (br $spin)))))
     ;; i32.and is bitwise, so the raw owner value cannot be used as its first
     ;; boolean operand: an even thread id (2, 4, ...) AND TRUE is zero. That
     ;; made thread 1 steal sections owned by thread 2 and strand the original
@@ -8149,8 +8252,39 @@ HookEx — no next hook in chain, return 0
   )
 
   ;; RegQueryValueA(hKey, lpSubKey, lpData, lpcbData) — 4 args stdcall
+  ;; RegQueryValue{A,W}(hKey, lpSubKey, lpData, lpcbData) — 4 args stdcall.
+  ;; The Win16-era spelling: it reads the *default* value (name "") of an
+  ;; optional subkey. lpSubKey NULL or empty means hKey itself. This used to
+  ;; return ERROR_FILE_NOT_FOUND unconditionally, so a caller could never read
+  ;; a default value the registry does hold (every file-association lookup is
+  ;; one of these).
+  (func $reg_query_value (param $hkey i32) (param $subkey_g i32)
+                         (param $data_g i32) (param $cb_g i32) (param $wide i32) (result i32)
+    (local $sub i32) (local $res i32)
+    (local.set $sub (local.get $hkey))
+    (if (i32.and (i32.ne (local.get $subkey_g) (i32.const 0))
+                 (i32.ne (i32.load8_u (call $g2w (local.get $subkey_g))) (i32.const 0)))
+      (then
+        (local.set $sub (call $host_reg_open_key
+          (local.get $hkey) (call $g2w (local.get $subkey_g)) (local.get $wide)))
+        (if (i32.eqz (local.get $sub))
+          (then (return (i32.const 2))))))  ;; ERROR_FILE_NOT_FOUND
+    (local.set $res (call $host_reg_query_value
+      (local.get $sub) (i32.const 0) (i32.const 0)
+      (local.get $data_g) (local.get $cb_g) (local.get $wide)))
+    (if (i32.ne (local.get $sub) (local.get $hkey))
+      (then (drop (call $host_reg_close_key (local.get $sub)))))
+    (local.get $res))
+
   (func $handle_RegQueryValueA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 2))
+    (global.set $eax (call $reg_query_value
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  (func $handle_RegQueryValueW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $reg_query_value
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
@@ -11613,9 +11747,14 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 691: GetNextDlgGroupItem — STUB: unimplemented
+  ;; 691: GetNextDlgGroupItem(hDlg, hCtl, bPrevious) — the arrow-key walk, the
+  ;; same one IsDialogMessage uses. bPrevious reverses it; both directions
+  ;; wrap inside the WS_GROUP run, matching USER32.
   (func $handle_GetNextDlgGroupItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax
+      (call $dialog_next_group_item (local.get $arg0) (local.get $arg1)
+        (select (i32.const -1) (i32.const 1) (local.get $arg2))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 692: ClipCursor(lprc) — store the screen-coordinate confinement rect.

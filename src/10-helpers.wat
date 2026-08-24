@@ -2851,6 +2851,99 @@
       (then (return (select (local.get $first) (local.get $last) (local.get $first)))))
     (select (local.get $last) (local.get $first) (local.get $last)))
 
+  ;; Child #idx of a dialog in creation order, or 0 past the end. Arrow-key
+  ;; traversal needs to look both ways from the focused control and to know
+  ;; where the enclosing WS_GROUP run starts and ends, and a one-directional
+  ;; slot walk cannot answer that; indexing can, and dialogs hold few enough
+  ;; children that rescanning per step costs nothing.
+  (func $dlg_child_at (param $dlg i32) (param $idx i32) (result i32)
+    (local $slot i32) (local $i i32)
+    (block $done (loop $scan
+      (local.set $slot (call $wnd_next_child_slot (local.get $dlg) (local.get $slot)))
+      (br_if $done (i32.lt_s (local.get $slot) (i32.const 0)))
+      (if (i32.eq (local.get $i) (local.get $idx))
+        (then (return (call $wnd_slot_hwnd (local.get $slot)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  (func $dlg_child_count (param $dlg i32) (result i32)
+    (local $slot i32) (local $i i32)
+    (block $done (loop $scan
+      (local.set $slot (call $wnd_next_child_slot (local.get $dlg) (local.get $slot)))
+      (br_if $done (i32.lt_s (local.get $slot) (i32.const 0)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $scan)))
+    (local.get $i))
+
+  ;; GetNextDlgGroupItem: the arrow-key walk. Unlike the Tab walk this ignores
+  ;; WS_TABSTOP entirely and stays inside one WS_GROUP run -- the run that
+  ;; begins at the nearest control at or before the focused one carrying
+  ;; WS_GROUP, and ends before the next one that does. A dialog whose template
+  ;; sets WS_GROUP nowhere is therefore one group, which is exactly Diablo's
+  ;; menus: its five ownerdrawn buttons are the only enabled children, so
+  ;; skipping disabled and invisible controls leaves the arrow keys cycling
+  ;; through the menu items and nothing else.
+  (func $dialog_next_group_item (param $dlg i32) (param $focus i32) (param $dir i32) (result i32)
+    (local $n i32) (local $i i32) (local $fi i32)
+    (local $start i32) (local $end i32) (local $ch i32) (local $style i32)
+    (local $steps i32)
+    (local.set $n (call $dlg_child_count (local.get $dlg)))
+    (if (i32.eqz (local.get $n)) (then (return (i32.const 0))))
+    ;; Index of the focused child; an unrelated focus starts the walk at 0.
+    (local.set $fi (i32.const -1))
+    (block $found (loop $scan
+      (br_if $found (i32.ge_s (local.get $i) (local.get $n)))
+      (if (i32.eq (call $dlg_child_at (local.get $dlg) (local.get $i)) (local.get $focus))
+        (then (local.set $fi (local.get $i)) (br $found)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (if (i32.lt_s (local.get $fi) (i32.const 0)) (then (local.set $fi (i32.const 0))))
+    ;; Group bounds around $fi.
+    (local.set $start (i32.const 0))
+    (local.set $i (local.get $fi))
+    (block $done_back (loop $back
+      (br_if $done_back (i32.lt_s (local.get $i) (i32.const 0)))
+      (if (i32.and
+            (call $wnd_get_style (call $dlg_child_at (local.get $dlg) (local.get $i)))
+            (i32.const 0x00020000))  ;; WS_GROUP
+        (then (local.set $start (local.get $i)) (br $done_back)))
+      (local.set $i (i32.sub (local.get $i) (i32.const 1)))
+      (br $back)))
+    (local.set $end (i32.sub (local.get $n) (i32.const 1)))
+    (local.set $i (i32.add (local.get $fi) (i32.const 1)))
+    (block $done_fwd (loop $fwd
+      (br_if $done_fwd (i32.gt_s (local.get $i) (local.get $end)))
+      (if (i32.and
+            (call $wnd_get_style (call $dlg_child_at (local.get $dlg) (local.get $i)))
+            (i32.const 0x00020000))
+        (then (local.set $end (i32.sub (local.get $i) (i32.const 1))) (br $done_fwd)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $fwd)))
+    ;; Step within [start, end], wrapping, until a control that can take the
+    ;; focus turns up. Bounded by the group size so a group of only disabled
+    ;; controls returns the focus unchanged instead of spinning.
+    (local.set $i (local.get $fi))
+    (block $give_up (loop $step
+      (br_if $give_up (i32.gt_s (local.get $steps)
+                                (i32.sub (local.get $end) (local.get $start))))
+      (local.set $steps (i32.add (local.get $steps) (i32.const 1)))
+      (local.set $i (i32.add (local.get $i)
+        (select (i32.const 1) (i32.const -1) (i32.gt_s (local.get $dir) (i32.const 0)))))
+      (if (i32.gt_s (local.get $i) (local.get $end)) (then (local.set $i (local.get $start))))
+      (if (i32.lt_s (local.get $i) (local.get $start)) (then (local.set $i (local.get $end))))
+      (local.set $ch (call $dlg_child_at (local.get $dlg) (local.get $i)))
+      (br_if $give_up (i32.eqz (local.get $ch)))
+      (local.set $style (call $wnd_get_style (local.get $ch)))
+      (if (i32.and
+            (i32.ne (call $wnd_is_effectively_visible (local.get $ch)) (i32.const 0))
+            (i32.eqz (i32.and (local.get $style) (i32.const 0x08000000))))  ;; !WS_DISABLED
+        (then (return (local.get $ch))))
+      (br $step)))
+    (local.get $focus))
+
   (func $dialog_handle_key (param $dlg i32) (param $vk i32) (param $shift i32) (result i32)
     (local $focus i32) (local $target i32) (local $id i32) (local $style i32)
     (if (i32.eqz (local.get $dlg)) (then (return (i32.const 0))))

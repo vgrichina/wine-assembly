@@ -23666,5 +23666,12 @@
       }
     ],
     "ret": "DWORD"
+  },
+  {
+    "id": 2870,
+    "name": "RegQueryValueW",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 400203013
   }
 ]
