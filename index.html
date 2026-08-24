@@ -376,8 +376,18 @@
        is Windows' AppStarting cursor — `progress`, arrow-plus-hourglass, not
        the fully-modal `wait`, because the desktop stays live underneath. The
        descendant rule is what makes it show over the icons and the canvas,
-       both of which set a cursor of their own. */
-    body.app-booting, body.app-booting * { cursor: progress; }
+       both of which set a cursor of their own.
+
+       `!important` is load-bearing, not decoration. Two things write an inline
+       cursor onto the canvas during exactly this interval: the guest's first
+       SetCursor (lib/host-window.js set_cursor, usually IDC_ARROW from the
+       window class, long before anything is painted) and the input layer's
+       hover reset (lib/renderer-input.js). An inline style outranks a normal
+       author rule, so without this the hourglass was dropped seconds early --
+       the boot was still running, the page had just lost the argument. An
+       author !important declaration does outrank inline, and the guest gets
+       its cursor back the moment the class comes off. */
+    body.app-booting, body.app-booting * { cursor: progress !important; }
     /* ?debug on a phone-sized viewport: the toolbar and the log together eat
        two thirds of the screen, which is the whole thing single-app mode is
        for. Once an app is running, collapse them behind a peek button and give
