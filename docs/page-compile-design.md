@@ -562,3 +562,49 @@ of a 4096-slot sweep, and a structure that answers "is this address compiled"
 without a hash. §8.1 says abandon; the honest reading is *do not land this for
 speed*, and decide separately whether the structural properties are worth the
 diff.
+
+### Latency stability, not mean wall clock (2026-08-24)
+
+The mean-wall-clock gate in §8.1 is the wrong instrument for a decode-storage
+change, and `--frame-stats` is not much better: its load-immune series is
+`interval batches`, but a batch is a budget of x86 *steps* and decoding a block
+retires no steps, so a batch that re-decodes a thousand blocks and a batch that
+decodes none are indistinguishable there. Decode cost lands in host CPU, i.e. in
+`interval ms`, which is the load-sensitive series nobody should diff across runs
+on this box.
+
+`test/run.js --decode-stats[=FROM_BATCH]` was added for exactly this: the
+per-batch distribution of block decodes, which is deterministic across runs of
+one build and therefore *is* safe to diff between builds, plus the guest-slice
+wall time beside it for scale.
+
+Pinball, 800 batches, same flags on both trees:
+
+| per batch | fork point | this branch |
+|---|---|---|
+| total decodes | 11803 | 2416 |
+| p50 | 12 | **0** |
+| p90 / p99 / max | 35 / 72 / 339 | 1 / 69 / 408 |
+| decode-free batches | 176 (22.0%) | **718 (89.8%)** |
+| storm batches (≥4× median) | 14, carrying 14.3% of the work | 41, carrying **95.3%** |
+
+That is the shape the design predicted and the fork point cannot have: the
+branch pays for a page once and then does no decoding at all in nine batches out
+of ten, while the hash cache pays a steady twelve-decode drizzle *every* batch
+because it keeps evicting live blocks. The branch's own decode work is almost
+entirely one-time page compilation (95.3% of it inside 5% of the batches).
+
+And it still does not move the latency tail. Interleaved, 4 reps each:
+
+| guest slice ms | fork point | this branch |
+|---|---|---|
+| p50 | 0.20–0.24 | 0.18–0.23 |
+| p99 | 2.08–3.73 | 2.10–3.16 |
+| max | 51.9–78.7 | 54.2–73.3 |
+
+Fully overlapping in both directions, and the ~50-80ms maxima are the same size
+on both trees, so whatever produces the worst frames here is not decoding. Nine
+thousand avoided block decodes over 800 batches is real work removed, and it is
+too small a share of the slice to see. This is the same verdict as the mean
+measurement, reached by an instrument that *can* see the mechanism — which makes
+it the stronger version of the result, not a second guess at it.

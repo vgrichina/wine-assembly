@@ -267,6 +267,24 @@ const ASYNC_MM_TIMER_AFTER = Math.max(0,
   parseInt(getArg('async-mm-timer-after', '0'), 10) || 0);
 const TRACE_YIELD = hasFlag('trace-yield');   // --trace-yield: log yield_reason transitions per thread
 const TRACE_BATCH_TIMING = hasFlag('trace-batch-timing'); // --trace-batch-timing: log run/repaint wall time per batch
+// --decode-stats[=FROM_BATCH]: per-batch distribution of block decodes and of
+// the guest slice's wall time, printed at exit.
+//
+// This exists because --frame-stats cannot see decode cost. Its `interval
+// batches` series is the load-immune one, but a batch is a budget of x86
+// *steps*, and decoding a block advances no EIP -- so a batch that re-decodes a
+// thousand blocks and a batch that decodes none retire the same number of steps
+// and are indistinguishable in that series. The cost lands in host CPU, i.e. in
+// `interval ms`, which is the load-sensitive one.
+//
+// Decodes per batch is both: deterministic (identical across runs of one build)
+// and pointed straight at the mechanism. A block cache that evicts under
+// collision re-decodes in bursts; those bursts are the jank. Read the p99 and
+// the storm share, not the mean -- the mean is just total decodes over batches,
+// which the exit line already prints.
+const DECODE_STATS_ARG = getArg('decode-stats', null);
+const DECODE_STATS = DECODE_STATS_ARG !== null || hasFlag('decode-stats');
+const DECODE_STATS_FROM = Math.max(0, parseInt(DECODE_STATS_ARG, 10) || 0);
 const AUDIO_STATS_RAW = args.find(a => a === '--audio-stats' || a.startsWith('--audio-stats=')); // --audio-stats[=N]: heartbeat every N waveOutWrites
 const AUDIO_STATS = !!AUDIO_STATS_RAW;
 const AUDIO_STATS_STRIDE = (AUDIO_STATS_RAW && AUDIO_STATS_RAW.includes('=')) ? parseInt(AUDIO_STATS_RAW.split('=')[1]) || 50 : 50;
@@ -1629,6 +1647,9 @@ async function main() {
     present: { iv: [], lastBatch: -1, lastAt: 0n },
     flush: { iv: [], lastBatch: -1, lastAt: 0n },
   };
+  // One entry per executed batch, for --decode-stats.
+  const decodeStatsDecodes = [];
+  const decodeStatsSliceUs = [];
   const recordFrame = (series) => {
     const at = process.hrtime.bigint();
     // Outside the measurement window, still move the anchor forward. Skipping
@@ -6468,6 +6489,9 @@ async function main() {
     }
 
     const batchStartMs = TRACE_BATCH_TIMING ? Date.now() : 0;
+    const decodesBefore = DECODE_STATS && instance.exports.get_cache_stores
+      ? instance.exports.get_cache_stores() >>> 0 : 0;
+    const sliceT0 = DECODE_STATS ? process.hrtime.bigint() : 0n;
     try {
       if (!mainExecutionSuspended()) instance.exports.run(BATCH_SIZE);
     } catch (e) {
@@ -6496,6 +6520,14 @@ async function main() {
       if (vtbl !== 0 && vtbl < 0x02200000) {
         console.log(`[CORRUPT-POST] batch=${batch} COM slot2 vtable=${hex(vtbl)} EIP=${hex(instance.exports.get_eip())}`);
       }
+    }
+
+    if (DECODE_STATS && batch >= DECODE_STATS_FROM) {
+      // Wrap-safe: get_cache_stores is a u32 counter read as unsigned.
+      const decodesAfter = instance.exports.get_cache_stores
+        ? instance.exports.get_cache_stores() >>> 0 : 0;
+      decodeStatsDecodes.push((decodesAfter - decodesBefore) >>> 0);
+      decodeStatsSliceUs.push(Number(process.hrtime.bigint() - sliceT0) / 1000);
     }
 
     const afterRunMs = TRACE_BATCH_TIMING ? Date.now() : 0;
@@ -7174,6 +7206,45 @@ if (VERBOSE) {
       + ' reading it as a frame rate');
     report('host flush    (surface upload)', frameStats.flush,
       `what the browser HUD counts as fps; in the CLI it is gated by the repaint loop (--repaint-every=${REPAINT_EVERY}), so treat it as the harness's cadence unless it agrees with the present count above`);
+  }
+
+  if (DECODE_STATS) {
+    const n = decodeStatsDecodes.length;
+    if (n < 2) {
+      console.log(`\nDecode pacing: ${n} batches executed — too few to pace`);
+    } else {
+      const q = (arr, p) => {
+        const v = arr.slice().sort((a, b) => a - b);
+        return v[Math.min(v.length - 1, Math.floor(p * v.length))];
+      };
+      const total = decodeStatsDecodes.reduce((a, b) => a + b, 0);
+      const mean = total / n;
+      // A "storm" is a batch that decodes far more than the median batch. That
+      // is the shape re-decode jank actually has: a cache that evicts under
+      // collision does not decode a little more everywhere, it decodes nothing
+      // for a while and then a burst. The mean cannot see it; this can.
+      const med = q(decodeStatsDecodes, 0.5);
+      const stormFloor = Math.max(8, med * 4);
+      const storms = decodeStatsDecodes.filter(d => d >= stormFloor);
+      const stormWork = storms.reduce((a, b) => a + b, 0);
+      const zero = decodeStatsDecodes.filter(d => d === 0).length;
+      console.log(DECODE_STATS_FROM
+        ? `\nDecode pacing (from batch ${DECODE_STATS_FROM}):`
+        : '\nDecode pacing:');
+      console.log(`  block decodes per batch: total ${total} over ${n} batches, mean ${mean.toFixed(1)}`);
+      console.log(`      p50 ${med}, p90 ${q(decodeStatsDecodes, 0.9)}, p99 ${q(decodeStatsDecodes, 0.99)}, max ${q(decodeStatsDecodes, 1)}`
+        + `   decode-free batches ${zero} of ${n} (${(100 * zero / n).toFixed(1)}%)`);
+      console.log(`      storms (>=${stormFloor} decodes, i.e. 4x median): ${storms.length} batches`
+        + ` carrying ${stormWork} decodes (${total ? (100 * stormWork / total).toFixed(1) : '0.0'}% of all decode work)`);
+      console.log('      deterministic: identical across runs of one build, so this series IS safe to'
+        + ' diff between builds, unlike anything measured in wall clock');
+      console.log(`  guest slice ms per batch: p50 ${(q(decodeStatsSliceUs, 0.5) / 1000).toFixed(2)},`
+        + ` p90 ${(q(decodeStatsSliceUs, 0.9) / 1000).toFixed(2)},`
+        + ` p99 ${(q(decodeStatsSliceUs, 0.99) / 1000).toFixed(2)},`
+        + ` max ${(q(decodeStatsSliceUs, 1) / 1000).toFixed(2)}`);
+      console.log('      wall clock — load-sensitive. Read it only against the decode series above,'
+        + ' and only within one interleaved run.');
+    }
   }
 
   if (threadManager && threadManager.threads && threadManager.threads.size) {
