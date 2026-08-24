@@ -66,6 +66,11 @@ const POST_CLICKS = (argValue('post-clicks') || process.env.POST_CLICKS || '')
     // way to highlight a submenu parent (and read its children) from a script.
     const moveMatch = s.match(/^move:(-?\d+),(-?\d+)$/i);
     if (moveMatch) return { move: true, x: Number(moveMatch[1]), y: Number(moveMatch[2]) };
+    // eval:EXPR — evaluate EXPR in the page and print it. "the click did
+    // nothing" is otherwise unanswerable from here: without this the only
+    // readback is the final JSON, which cannot say where a click landed.
+    const evalMatch = s.match(/^eval:([\s\S]+)$/i);
+    if (evalMatch) return { evalExpr: evalMatch[1] };
     const postCmdMatch = s.match(/^post-cmd:(\d+)$/i);
     if (postCmdMatch) return { postCmd: parseIntAuto(postCmdMatch[1]) };
     const timerMatch = s.match(/^timer-interval:([^,]+),([^,]+)$/i);
@@ -125,7 +130,7 @@ const POST_CLICKS = (argValue('post-clicks') || process.env.POST_CLICKS || '')
     const [x, y, button] = s.split(',').map(p => p.trim());
     return { x: Number(x), y: Number(y), button: button || 'left' };
   })
-  .filter(p => p.profileReset !== undefined || p.move || p.wait !== undefined || p.shot !== undefined || p.postCmd !== undefined || p.timerInterval || p.guest8 || p.clearWorkerCache || p.traceEip || p.schedulerHot || p.schedulerLead || p.drag || (Number.isFinite(p.x) && Number.isFinite(p.y)));
+  .filter(p => p.profileReset !== undefined || p.move || p.wait !== undefined || p.shot !== undefined || p.evalExpr !== undefined || p.postCmd !== undefined || p.timerInterval || p.guest8 || p.clearWorkerCache || p.traceEip || p.schedulerHot || p.schedulerLead || p.drag || (Number.isFinite(p.x) && Number.isFinite(p.y)));
 const ABOUT_TAB = (argValue('about-tab') || process.env.ABOUT_TAB || '').toLowerCase();
 const CREDIT_TAB_WAIT_MS = intArgOrEnv('credit-tab-wait-ms', 'CREDIT_TAB_WAIT_MS', 1500);
 const RETURN_TAB_WAIT_MS = intArgOrEnv('return-tab-wait-ms', 'RETURN_TAB_WAIT_MS', 1500);
@@ -368,7 +373,10 @@ async function main() {
   process.on('exit', cleanup);
 
   let page;
-  for (let i = 0; i < 80; i++) {
+  // 30s, not 8: on a loaded box Chrome stays alive with empty stderr for well
+  // over eight seconds before it lists a page, and the short window turned
+  // that into a bare "Chrome page did not appear" that reads like a crash.
+  for (let i = 0; i < 300; i++) {
     try {
       const pages = await getJson(`http://127.0.0.1:${DEBUG_PORT}/json/list`);
       page = pages.find(p =>
@@ -447,6 +455,16 @@ async function main() {
 
   async function clickClient(x, y, button = 'left') {
     const buttons = button === 'right' ? 2 : 1;
+    // Move first. A real pointer is always somewhere before it is pressed, and
+    // the guest tracks the position from WM_MOUSEMOVE; a bare press/release
+    // pair leaves it hit-testing against wherever the pointer was last.
+    await cdp.send('Input.dispatchMouseEvent', {
+      type: 'mouseMoved',
+      x,
+      y,
+      button: 'none',
+      buttons: 0,
+    });
     await cdp.send('Input.dispatchMouseEvent', {
       type: 'mousePressed',
       x,
@@ -477,14 +495,7 @@ async function main() {
   }
 
   async function clickCanvasPoint(x, y, button = 'left') {
-    const p = await evalExpr(`(() => {
-      const c = document.getElementById('screen');
-      const r = c.getBoundingClientRect();
-      return {
-        x: r.left + (${x} / Math.max(1, c.width)) * r.width,
-        y: r.top + (${y} / Math.max(1, c.height)) * r.height,
-      };
-    })()`);
+    const p = await canvasClientPoint(x, y);
     await clickClient(p.x, p.y, button);
   }
 
@@ -499,13 +510,27 @@ async function main() {
     });
   }
 
+  // Guest pixel -> page coordinate. Single-app mode presents a crop of the
+  // desktop scaled to the display, so guest pixels are NOT canvas pixels:
+  // Winamp's Preferences is 451 wide inside a 756-wide canvas, drawn at
+  // x=131 and scaled 1.095. Treating the two as the same put every scripted
+  // click ~130px left of its target, which read as "the dialog ignores the
+  // mouse". Invert the viewport the way renderer-input maps a tap back.
   async function canvasClientPoint(x, y) {
     return await evalExpr(`(() => {
       const c = document.getElementById('screen');
       const r = c.getBoundingClientRect();
+      const v = typeof sharedRenderer !== 'undefined' && sharedRenderer &&
+        sharedRenderer._exclusivePresentationViewport;
+      let cx = ${x} + 0.5;
+      let cy = ${y} + 0.5;
+      if (v && v.nativeW > 0 && v.nativeH > 0 && v.outputW > 0 && v.outputH > 0) {
+        cx = (v.dstX + (cx - v.nativeX) * v.dstW / v.nativeW) * c.width / v.outputW;
+        cy = (v.dstY + (cy - v.nativeY) * v.dstH / v.nativeH) * c.height / v.outputH;
+      }
       return {
-        x: r.left + (${x} / Math.max(1, c.width)) * r.width,
-        y: r.top + (${y} / Math.max(1, c.height)) * r.height,
+        x: r.left + cx * (r.width / Math.max(1, c.width)),
+        y: r.top + cy * (r.height / Math.max(1, c.height)),
       };
     })()`);
   }
@@ -1331,6 +1356,12 @@ async function main() {
             voiceCount: voices && voices._map ? Object.keys(voices._map).length : 0,
           };
         })()`));
+        continue;
+      }
+      if (p.evalExpr !== undefined) {
+        const value = await evalExpr(`(() => { try { return String(${p.evalExpr}); } catch (e) { return 'ERROR: ' + e.message; } })()`);
+        progress(`eval ${p.evalExpr.slice(0, 60)} => ${value}`);
+        postClickSnapshots.push({ action: 'eval', expr: p.evalExpr, value });
         continue;
       }
       if (p.shot !== undefined) {

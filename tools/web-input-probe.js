@@ -128,10 +128,15 @@ function startStaticServer() {
 
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
+// The on-screen desktop canvas. NOT `querySelector('canvas')`: #screen-present
+// (the GPU presentation target) comes first in the DOM and is display:none, so
+// its bounding rect is all zeroes -- mapping through it silently collapsed
+// every guest pixel to page (0,0) and the clicks landed on BODY.
 // Guest canvas pixel -> page coordinate, through the live bounding rect.
 async function toPage(page, gx, gy) {
   return page.evaluate(([x, y]) => {
-    const c = document.querySelector('canvas');
+    const c = document.getElementById('screen') ||
+      [...document.querySelectorAll('canvas')].find(el => el.getBoundingClientRect().width > 0);
     const r = c.getBoundingClientRect();
     // Exclusive fullscreen and single-app mode present a crop of the desktop
     // canvas scaled to the display, so guest pixels are not canvas pixels.
@@ -152,7 +157,8 @@ async function toPage(page, gx, gy) {
 }
 
 const readCursor = page => page.evaluate(() => {
-  const c = document.querySelector('canvas');
+  const c = document.getElementById('screen') ||
+    [...document.querySelectorAll('canvas')].find(el => el.getBoundingClientRect().width > 0);
   const inline = c.style.cursor;
   const computed = getComputedStyle(c).cursor;
   // A custom cursor is a long data: URL; name it rather than printing 30KB.
