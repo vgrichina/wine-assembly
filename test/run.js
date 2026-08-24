@@ -9,6 +9,7 @@ const { resolveDllGraph, mountLoadedDllFiles, stageAndLoadPe, setExeName, setExt
   handleLoadLibraryYield, handleComDllYield } = require('../lib/process-boot');
 const {
   applyExeCompatibilityPatches: applyProfilePatches,
+  applyLaunchPreferences: applyProfileLaunchPrefs,
   onThreadExit: profileThreadExit,
 } = require('../lib/app-profiles');
 const { processSharedCtx, adoptThreadPrimitives, makeWorkerApiLogger } = require('../lib/worker-imports');
@@ -304,6 +305,13 @@ const ASSET_ENTRY_ID = MATCHED_APP && MATCHED_APP.id;
 const WASM_PATH = getArg('wasm', path.join(ROOT, 'build', 'wine-assembly.wasm')); // --wasm=FILE: isolated prebuilt used with --no-build
 const PNG_OUT = getArg('png', null);     // --png=out.png: render to PNG via node-canvas
 const PNG_CANVAS = hasFlag('png-canvas'); // --png-canvas: always capture the composited screen, never a raw DX surface
+// --dump-image=0xGUESTADDR:W:H:PITCH:BPP:FILE.png (repeatable, comma-separated)
+// Render an arbitrary guest memory region as an image at exit, through the
+// current DirectDraw palette for 8bpp. A blit bug is a disagreement between
+// two buffers -- decoder output vs the surface it was copied into -- and only
+// one of them is a DX surface that --png can already show. A hexdump cannot
+// answer "is this one sheared too"; a picture can.
+const DUMP_IMAGE = getArg('dump-image', null);
 // --dx-raw-index: for an 8bpp DX surface, write the raw palette indices as
 // greyscale instead of looking them up in the colour table. An all-black
 // capture then tells you which of the two things is wrong: nothing there to
@@ -2859,6 +2867,15 @@ async function main() {
   const mem = new Uint8Array(memory.buffer);
   const { entry } = stageAndLoadPe(instance.exports, memory.buffer, exeBytes, console.log);
   applyExeCompatibilityPatches(path.basename(EXE_PATH), instance.exports, memory.buffer);
+  // Screen-size-driven defaults from the same table (lib/app-profiles.js
+  // LAUNCH_PREFS) — the CLI's screen is whatever --screen= asked for, so a
+  // headless run reproduces exactly what a browser of that size would pick.
+  applyProfileLaunchPrefs(path.basename(EXE_PATH), instance.exports, memory.buffer, {
+    skip: process.env.WA_SKIP_LAUNCH_PREFS === '1',
+    hook: (ASSET_ENTRY && ASSET_ENTRY.launchPrefs) || null,
+    screen: renderer && renderer.canvas
+      ? { width: renderer.canvas.width, height: renderer.canvas.height } : null,
+  });
   // A 16-bit task's DLLs load into the same selector arena its own segments
   // went into, so this has to follow load_pe.
   loadWin16Dlls(instance.exports, memory, exeBytes, path.dirname(EXE_PATH),
@@ -7197,6 +7214,31 @@ if (VERBOSE) {
     fs.writeFileSync(outPath, pngBuf);
     return pngBuf.length;
   };
+
+  if (DUMP_IMAGE) {
+    const { mem, surfaces } = getDxSurfaceManifest();
+    const primary = surfaces.find(s => (s.flags & 1)) || surfaces[0];
+    const imgBase = instance.exports.get_image_base() >>> 0;
+    for (const spec of DUMP_IMAGE.split(',')) {
+      const [addrStr, wStr, hStr, pitchStr, bppStr, outPath] = spec.split(':');
+      const guest = parseInt(addrStr, 16) >>> 0;
+      const surface = {
+        dib: (guest - imgBase + 0x12000) >>> 0,
+        w: parseInt(wStr, 10) | 0,
+        h: parseInt(hStr, 10) | 0,
+        pitch: parseInt(pitchStr, 10) | 0,
+        bpp: parseInt(bppStr, 10) | 0,
+        paletteWa: primary ? primary.paletteWa : 0,
+      };
+      if (!surface.w || !surface.h || !surface.pitch || !outPath) {
+        console.log(`[dump-image] bad spec "${spec}" — expected ADDR:W:H:PITCH:BPP:FILE.png`);
+        continue;
+      }
+      const bytes = writeRgbaPng(outPath, surface.w, surface.h, dxSurfaceToRgba(surface, mem));
+      console.log(`[dump-image] wrote ${outPath} (${bytes} bytes) from guest 0x${guest.toString(16)}` +
+        ` ${surface.w}x${surface.h} pitch=${surface.pitch} bpp=${surface.bpp}`);
+    }
+  }
 
   if (DX_SURFACES) {
     const { mem, surfaces } = getDxSurfaceManifest();
