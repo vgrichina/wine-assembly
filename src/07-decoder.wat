@@ -3600,5 +3600,9 @@
     ;; published. See src/07b-loop-match.wat.
     (call $loop_match_block (local.get $start_eip) (local.get $tstart))
     (call $cache_store (local.get $start_eip) (local.get $tstart))
+    ;; After the matcher, because it rewrites the ops in place and may shorten
+    ;; the block; $thread_alloc is the truth about where the block ends either
+    ;; way. See docs/page-compile-design.md.
+    (call $page_publish (local.get $start_eip) (local.get $tstart) (global.get $thread_alloc))
     (local.get $tstart)
   )

@@ -268,6 +268,94 @@
         (global.set $cur_page_index (i32.const 0))
         (global.set $cur_page_chunk (i32.const 0)))))
 
+  ;; Give $page_base an index and a chunk, and leave the page registers loaded
+  ;; on it. Returns 0 (and compiles nothing) if either resource is exhausted.
+  ;; The chunk is bumped off $thread_alloc rather than out of a private arena so
+  ;; that $thread_arena_flush_if_safe and $clear_cache — which already know when
+  ;; recycling decoded code is safe — keep covering it; $clear_cache calls
+  ;; $page_dir_reset for exactly that reason.
+  (func $page_create (param $page_base i32) (result i32)
+    (local $slot i32) (local $idx i32) (local $chunk i32)
+    (local.set $slot (call $page_dir_slot (local.get $page_base)))
+    ;; The directory is direct-mapped, so a live page can be sitting in the slot
+    ;; this one wants. Retire it properly instead of overwriting its index
+    ;; pointer, which would leak the 8KB and leave $cur_page_* naming it.
+    (if (i32.load (local.get $slot))
+      (then (call $page_dir_drop (i32.load (local.get $slot)))))
+    (local.set $idx (call $page_index_alloc))
+    (if (i32.eqz (local.get $idx)) (then (return (i32.const 0))))
+    (if (i32.gt_u
+          (i32.add (global.get $thread_alloc) (global.get $PAGE_CHUNK_BYTES))
+          (i32.sub (global.get $THREAD_END) (i32.const 16384)))
+      (then
+        ;; No room for a chunk. Hand the index straight back rather than
+        ;; stranding it: the arena is about to be flushed anyway.
+        (i32.store (local.get $idx) (global.get $page_index_free))
+        (global.set $page_index_free (local.get $idx))
+        (return (i32.const 0))))
+    (local.set $chunk (global.get $thread_alloc))
+    (global.set $thread_alloc
+      (i32.add (global.get $thread_alloc) (global.get $PAGE_CHUNK_BYTES)))
+    (call $page_index_clear (local.get $idx))
+    (i32.store (local.get $slot) (local.get $page_base))
+    (i32.store offset=4 (local.get $slot) (local.get $idx))
+    (i32.store offset=8 (local.get $slot) (local.get $chunk))
+    (i32.store offset=12 (local.get $slot) (i32.const 0))
+    (global.set $page_compiles (i32.add (global.get $page_compiles) (i32.const 1)))
+    (global.set $cur_page_base (local.get $page_base))
+    (global.set $cur_page_index (local.get $idx))
+    (global.set $cur_page_chunk (local.get $chunk))
+    (i32.const 1))
+
+  ;; Copy a freshly decoded block out of the arena into its page's chunk and
+  ;; index it. Threaded code is position-independent — every operand a handler
+  ;; reads is a guest address, an immediate or a register number, never a
+  ;; pointer into the thread stream — so a block can be relocated with a plain
+  ;; byte copy. That is what lets the decoder stay exactly as it is: it emits
+  ;; where it always did, and this runs afterwards.
+  (func $page_publish (param $start_eip i32) (param $tstart i32) (param $tend i32)
+    (local $base i32) (local $slot i32) (local $used i32) (local $len i32)
+    (local $src i32) (local $dst i32)
+    (if (i32.eqz (global.get $paging_enabled)) (then (return)))
+    (local.set $len (i32.sub (local.get $tend) (local.get $tstart)))
+    (if (i32.le_s (local.get $len) (i32.const 0)) (then (return)))
+    (local.set $base (i32.and (local.get $start_eip) (i32.const 0xFFFFF000)))
+    ;; A block whose x86 runs off the end of its page has instructions that a
+    ;; write to the *next* page would have to retire, and $invalidate_page only
+    ;; ever hears about one page. Leaving those to the ordinary path costs a
+    ;; handful of blocks per page boundary and keeps invalidation honest.
+    (if (i32.ne (i32.and (i32.sub (global.get $d_pc) (i32.const 1)) (i32.const 0xFFFFF000))
+                (local.get $base))
+      (then (return)))
+    (if (i32.ne (local.get $base) (global.get $cur_page_base))
+      (then
+        (if (i32.eqz (call $page_enter (local.get $base)))
+          (then
+            (if (i32.eqz (call $page_create (local.get $base))) (then (return)))))))
+    (local.set $slot (call $page_dir_slot (local.get $base)))
+    (local.set $used (i32.load offset=12 (local.get $slot)))
+    (if (i32.gt_u (i32.add (local.get $used) (local.get $len))
+                  (global.get $PAGE_CHUNK_BYTES))
+      (then
+        ;; The chunk is full. Retiring the page is the whole recovery: the next
+        ;; entry compiles it again from scratch, this time holding only the
+        ;; blocks still being executed.
+        (call $page_dir_drop (local.get $base))
+        (return)))
+    (local.set $src (local.get $tstart))
+    (local.set $dst (i32.add (global.get $cur_page_chunk) (local.get $used)))
+    (block $cdone (loop $copy
+      (br_if $cdone (i32.ge_u (local.get $src) (local.get $tend)))
+      (i32.store (local.get $dst) (i32.load (local.get $src)))
+      (local.set $src (i32.add (local.get $src) (i32.const 4)))
+      (local.set $dst (i32.add (local.get $dst) (i32.const 4)))
+      (br $copy)))
+    (i32.store16
+      (i32.add (global.get $cur_page_index)
+        (i32.shl (i32.and (local.get $start_eip) (i32.const 0xFFF)) (i32.const 1)))
+      (local.get $used))
+    (i32.store offset=12 (local.get $slot) (i32.add (local.get $used) (local.get $len))))
+
   ;; Load the page registers for $page_base if it is already compiled.
   (func $page_enter (param $page_base i32) (result i32)
     (local $slot i32)
@@ -331,6 +419,9 @@
         (i32.or (global.get $yield_flag) (global.get $yield_reason))))
       (then (return)))
     (if (i32.le_s (global.get $block_budget) (i32.const 0)) (then (return)))
+    ;; No test on $steps here. Running out is now a resume, not a restart:
+    ;; $next parks $ip in $resume_ip and $run picks the block up where it left
+    ;; off, without spending a second block from the budget for it.
     (if (i32.or (i32.eq (global.get $eip) (global.get $sbh_eip_a))
                 (i32.eq (global.get $eip) (global.get $sbh_eip_b)))
       (then (return)))
@@ -415,7 +506,12 @@
   (func $next
     (local $fn i32) (local $op i32)
     (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
-    (if (i32.le_s (global.get $steps) (i32.const 0)) (then (return)))
+    (if (i32.le_s (global.get $steps) (i32.const 0))
+      (then
+        ;; Hand $run the op we are declining to run, so it resumes the block
+        ;; instead of restarting it. See $resume_ip in 01-header.wat.
+        (global.set $resume_ip (global.get $ip))
+        (return)))
     (local.set $fn (i32.load (global.get $ip)))
     (local.set $op (i32.load offset=4 (global.get $ip)))
     (global.set $ip (i32.add (global.get $ip) (i32.const 8)))

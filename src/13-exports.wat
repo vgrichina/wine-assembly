@@ -21,6 +21,17 @@
     (block $halt (loop $main
       (br_if $halt (i32.le_s (global.get $block_budget) (i32.const 0)))
       (br_if $halt (i32.eqz (global.get $eip)))
+      ;; A block whose quantum expired part-way through. Give it a fresh one and
+      ;; carry on from the op $next declined to run — looking $eip up again would
+      ;; restart the block and re-run everything before that op. No block is
+      ;; spent from the budget: this is the same block, still in progress.
+      (if (global.get $resume_ip)
+        (then
+          (global.set $ip (global.get $resume_ip))
+          (global.set $resume_ip (i32.const 0))
+          (global.set $steps (i32.const 1000))
+          (call $next)
+          (br $main)))
       (global.set $block_budget (i32.sub (global.get $block_budget) (i32.const 1)))
       ;; Reset thread buffer if approaching cache region (leave 4KB margin)
       (if (i32.ge_u (global.get $thread_alloc) (i32.sub (global.get $THREAD_END) (i32.const 4096)))
@@ -177,9 +188,15 @@
         (then
           (if (call $fast_msvc_sbh_scan)
             (then (br $main)))))
-      (local.set $thread (call $cache_lookup (global.get $eip)))
+      ;; Page index first: it is exact, so it never reports a miss for code it
+      ;; holds. The hash below is still here only until the commit that deletes
+      ;; it — see docs/page-compile-design.md section 4.
+      (local.set $thread (call $page_resolve (global.get $eip)))
       (if (i32.eqz (local.get $thread))
-        (then (local.set $thread (call $decode_block (global.get $eip)))))
+        (then
+          (local.set $thread (call $cache_lookup (global.get $eip)))
+          (if (i32.eqz (local.get $thread))
+            (then (local.set $thread (call $decode_block (global.get $eip)))))))
       (global.set $ip (local.get $thread))
       (if (global.get $handler_hist_enabled)
         (then (global.set $handler_hist_last (i32.const -1))))

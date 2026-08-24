@@ -1340,6 +1340,13 @@
   (global $PAGE_DIR_STRIDE i32 (i32.const 0x4000))
   (global $PAGE_DIR_ENTRIES i32 (i32.const 1024))
   (global $PAGE_DIR_MASK i32 (i32.const 1023))
+  ;; One contiguous chunk per compiled page, carved from the same thread arena
+  ;; the hash cache's blocks come from, so the existing flush machinery already
+  ;; covers it. 16KB because index entries are u16 (so a chunk can never exceed
+  ;; 64KB) and because a page's *executed* code is what lands here, not its
+  ;; whole 4KB of x86: caesar3_demo averages 35 blocks per compiled page, on the
+  ;; order of 3.5KB. Overflow is not an error — the page is dropped and rebuilt.
+  (global $PAGE_CHUNK_BYTES i32 (i32.const 0x4000))
   (global $DLL_TABLE_SIZE i32 (i32.const 0x00000200))
   (global $DLL_RSRC_TABLE_SIZE i32 (i32.const 0x00000200))
   ;; Guest-space thunk bounds (set by PE loader: THUNK_BASE/END - GUEST_BASE + image_base)
@@ -1368,10 +1375,10 @@
   (global $cur_page_base  (mut i32) (i32.const 0))
   (global $cur_page_index (mut i32) (i32.const 0))
   (global $cur_page_chunk (mut i32) (i32.const 0))
-  ;; Scaffolding only, and off by default: it exists so the tree builds and runs
-  ;; while the decoder half is still being written. It goes away in the commit
-  ;; that deletes $cache_slot/$cache_lookup/$cache_store.
-  (global $paging_enabled (mut i32) (i32.const 0))
+  ;; Scaffolding: the switch exists so a bisect has somewhere to stand while the
+  ;; hash cache is still present. It goes away in the commit that deletes
+  ;; $cache_slot/$cache_lookup/$cache_store.
+  (global $paging_enabled (mut i32) (i32.const 1))
   ;; Counters for the A/B in docs/page-compile-design.md section 8.
   (global $page_compiles (mut i32) (i32.const 0))
   (global $page_hits     (mut i32) (i32.const 0))
@@ -1382,6 +1389,16 @@
   ;; blocks as the step budget allowed and the host's batch sizing would stop
   ;; meaning anything.
   (global $block_budget (mut i32) (i32.const 0))
+
+  ;; Where to pick a block up when its step quantum ran out part-way through.
+  ;; $next returns without dispatching once $steps hits zero, leaving $ip on the
+  ;; op it declined to run; $run used to answer that by looking $eip up again,
+  ;; which restarts the block from its first op. That was invisible while every
+  ;; block got a fresh 1000 steps of its own — no block is that long — but
+  ;; $branch_end spends one quantum across a whole chain of blocks, so expiry
+  ;; lands mid-block routinely, and re-running a block's leading pushes moves ESP
+  ;; twice. Non-zero means "resume here"; $run consumes it and clears it.
+  (global $resume_ip (mut i32) (i32.const 0))
   (global $API_HASH_TABLE i32 (i32.const 0x07E00000))
   (global $API_HASH_TABLE_SIZE i32 (i32.const 0x00008000))
   ;; Window/class/parent tables (below GUEST_BASE, above the API hash table).
