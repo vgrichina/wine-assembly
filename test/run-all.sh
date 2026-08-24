@@ -25,10 +25,12 @@ for a in "$@"; do
     -j*)        JOBS="${a#-j}" ;;
     --jobs=*)   JOBS="${a#--jobs=}" ;;
     --heap=*)   TEST_HEAP_MB="${a#--heap=}" ;;
+    --timeout=*) TEST_TIMEOUT="${a#--timeout=}" ;;
     -h|--help)
-      echo "usage: test/run-all.sh [all|unit|quick|e2e|smoke] [-jN|--jobs=N] [--heap=MB]"
+      echo "usage: test/run-all.sh [all|unit|quick|e2e|smoke] [-jN|--jobs=N] [--heap=MB] [--timeout=SEC]"
       echo "  -jN / --jobs=N   tests to run at once (default: CPU count; env JOBS also works)"
       echo "  --heap=MB        per-child JS heap cap (default 2048; env TEST_HEAP_MB)"
+      echo "  --timeout=SEC    kill a test that runs longer (default 300; env TEST_TIMEOUT, 0 disables)"
       exit 0 ;;
     -*)         echo "unknown option: $a" >&2; exit 2 ;;
     *)          TIER="$a" ;;
@@ -526,6 +528,16 @@ if [ -z "${JOBS:-}" ]; then
 fi
 TEST_HEAP_MB="${TEST_HEAP_MB:-2048}"
 
+# A test that never exits used to stall the whole suite indefinitely -- the
+# runner polls for finished slots and has no notion of one taking too long, so
+# a single hung child holds its slot forever and the summary never prints.
+# (test-vlan-match.js is in QUARANTINE for exactly that: "no progress in 400s".)
+# Every child now gets a wall-clock cap and is reported as TIMEOUT, which
+# counts as a failure -- a suite that stalls is a suite nobody waits for.
+# The cap is deliberately far above what any test needs (the slowest gameplay
+# test measures 8.5s) so it catches hangs, not slow machines.
+TEST_TIMEOUT="${TEST_TIMEOUT:-300}"
+
 # bash 3.2 (what macOS ships) has no `wait -n`, so slots are polled.
 run_tier() {
   local tier_name="$1"; shift
@@ -569,6 +581,25 @@ run_tier() {
     i=0
     while [ $i -lt "$JOBS" ]; do
       local pid="${slot_pid[$i]}"
+      # Kill a child that has outlived the cap before checking for exits, so a
+      # hung test frees its slot instead of holding it for the whole run. The
+      # test process usually has a test/run.js child of its own; kill that
+      # first, or it keeps running with nobody left to read its output.
+      if [ -n "$pid" ] && [ "$TEST_TIMEOUT" -gt 0 ] \
+         && [ $((SECONDS - ${slot_start[$i]})) -ge "$TEST_TIMEOUT" ] \
+         && kill -0 "$pid" 2>/dev/null; then
+        pkill -9 -P "$pid" 2>/dev/null
+        kill -9 "$pid" 2>/dev/null
+        wait "$pid" 2>/dev/null || true
+        echo "run-all: killed after ${TEST_TIMEOUT}s wall clock" >>"${slot_log[$i]}"
+        printf "TIME  %-40s  %3ds  %s\n" "${slot_name[$i]}" "$((SECONDS - ${slot_start[$i]}))" "${slot_log[$i]}"
+        failed=$((failed + 1))
+        fail_list+=("${slot_name[$i]} (timeout)")
+        slot_pid[$i]=""
+        running=$((running - 1))
+        reaped=1
+        pid=""
+      fi
       if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
         local status=0
         wait "$pid" || status=$?

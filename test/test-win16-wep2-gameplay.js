@@ -39,7 +39,7 @@ function runGame(app, input, maxBatches) {
     '--repaint-every=5', `--input=${input}`];
   if (built) args.splice(2, 0, '--no-build');
   const output = execFileSync(process.execPath, args, {
-    cwd: ROOT, encoding: 'utf8', timeout: 120000, maxBuffer: 16 * 1024 * 1024,
+    cwd: ROOT, encoding: 'utf8', timeout: 30000, maxBuffer: 16 * 1024 * 1024,   // measures 2s
   });
   built = true;
   return output;

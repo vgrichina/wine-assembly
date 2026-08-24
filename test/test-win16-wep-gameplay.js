@@ -47,7 +47,7 @@ function testPipeDream() {
       '--batch-size=20000', '--max-batches=130', '--quiet-api', '--quiet-blocks',
       `--input=40:mousedown:320:220,41:mouseup:320:220,70:png:${before},` +
         `80:mousedown:100:90,81:mouseup:100:90,100:png:${after},120:stop`,
-    ], { cwd: ROOT, encoding: 'utf8', timeout: 120000, maxBuffer: 16 * 1024 * 1024 });
+    ], { cwd: ROOT, encoding: 'utf8', timeout: 30000, maxBuffer: 16 * 1024 * 1024 });   // whole test measures 3s
     assert.doesNotMatch(output, /\*\*\* CRASH|UNIMPLEMENTED API|RuntimeError/);
     assert(changedPixels(before, after, 74, 69, 124, 119) > 100,
       'the first board cell should visibly change after tile placement');

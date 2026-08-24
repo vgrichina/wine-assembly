@@ -47,7 +47,10 @@ const cmd = ANALYZE_ONLY ? null : `node "${RUN}" --app=caesar3_demo --screen=800
 if (cmd) {
   console.log('$', cmd);
   try {
-    execSync(cmd, { encoding: 'utf-8', timeout: 900000, cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+    // Measures 9s -- the slowest of the gameplay drives, and still nowhere near
+    // the 900s that used to sit here. A cap this far above the real cost cannot
+    // tell a hang from a slow box, which is the only thing a cap is for.
+    execSync(cmd, { encoding: 'utf-8', timeout: 60000, cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
   } catch (e) {
     const out = (e.stdout || '').toString() + (e.stderr || '').toString();
     console.error(out.split('\n').slice(-40).join('\n'));

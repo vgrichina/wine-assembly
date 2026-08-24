@@ -50,7 +50,7 @@ function runGame(app, input, maxBatches, extra = []) {
   if (OPTIONAL_WASM) args.splice(2, 0, '--no-build', `--wasm=${OPTIONAL_WASM}`);
   else if (built) args.splice(2, 0, '--no-build');
   const output = execFileSync(process.execPath, args, {
-    cwd: ROOT, encoding: 'utf8', timeout: 120000, maxBuffer: 16 * 1024 * 1024,
+    cwd: ROOT, encoding: 'utf8', timeout: 60000, maxBuffer: 16 * 1024 * 1024,   // measures 10s
   });
   built = true;
   return output;

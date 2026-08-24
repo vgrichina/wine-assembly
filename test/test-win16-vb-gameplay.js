@@ -64,7 +64,7 @@ function runGame(args) {
   return execFileSync(process.execPath, [RUN, ...args], {
     cwd: ROOT,
     encoding: 'utf8',
-    timeout: 120000,
+    timeout: 60000,   // measures 5s
     maxBuffer: 16 * 1024 * 1024,
   });
 }
