@@ -165,9 +165,17 @@ const TRACE_LOOPMATCH_EIP = (() => {
 // The decode-time trace has no channel but log_i32, which lib/host-imports.js
 // gates on DBG_INV. Asking for the flag is asking for the output.
 if (TRACE_LOOPMATCH) process.env.DBG_INV = '1';
-// --no-loop-superops: match and count as usual, but emit the original ops.
-// The A/B pair for measuring the lowering without rebuilding between runs.
-const NO_LOOP_SUPEROPS = hasFlag('no-loop-superops');
+// The lowering is OFF in the module (it miscompiles Storm's MPQ decompression
+// copy -- see src/07b-loop-match.wat), so the A/B flag that needs plumbing is
+// now the one that turns it back ON. --no-loop-superops stays accepted and is
+// a no-op, so older command lines and scripts keep working.
+const LOOP_SUPEROPS = hasFlag('loop-superops');
+// --no-sib-fusion: decode indexed SIB memory operands as the unfused
+// compute_ea_sib + consumer pair. On by default in the module; this is the
+// A/B partner, so a fusion's op-count delta and its wall-clock effect can be
+// measured on one build. See docs/interpreter-dispatch-perf.md -- fewer
+// dispatches has measured ZERO more than once, so the flag is not optional.
+const NO_SIB_FUSION = hasFlag('no-sib-fusion');
 // --loopmatch-stats: print the self-loop/match counts at exit.
 const LOOPMATCH_STATS = hasFlag('loopmatch-stats');
 const TRACE_GDI = hasFlag('trace-gdi');   // --trace-gdi: log GDI calls (CreateBitmap, BitBlt, etc.)
@@ -187,7 +195,8 @@ const TRACE_ERASE = hasFlag('trace-erase'); // --trace-erase: log every window-b
 const TRACE_RGN = hasFlag('trace-rgn');   // --trace-rgn: log HRGN create/combine/select + branch counts
 const TRACE_DC = hasFlag('trace-dc');     // --trace-dc: log DC→canvas target resolution (hwnd, ox/oy, canvas size)
 const TRACE_CLIP = hasFlag('trace-clip'); // --trace-clip: log _excludeChildrenClip kid/cousin rects + cover size per draw
-const TRACE_DX = hasFlag('trace-dx');     // --trace-dx: log DirectX COM methods with decoded rects/surface metadata
+const TRACE_COMPOSITE = hasFlag('trace-composite'); // --trace-composite: one line per repaint: which path composited, and what each window contributed
+const TRACE_DX = hasFlag('trace-dx');   // --trace-dx: log DirectX COM methods with decoded rects/surface metadata
 const DX_SURFACES = hasFlag('dx-surfaces'); // --dx-surfaces: print the DX_OBJECTS surface manifest at exit
 const TRACE_DX_RAW = hasFlag('trace-dx-raw'); // --trace-dx-raw: on each Execute, walk+hexdump the full instruction stream
 const TRACE_FS = hasFlag('trace-fs');     // --trace-fs: log filesystem CreateFile hits/misses
@@ -1241,6 +1250,7 @@ async function main() {
     const [screenW, screenH] = screenArg ? screenArg.split('=')[1].split('x').map(Number) : [640, 480];
     const canvas = createCanvas(screenW, screenH);
     renderer = new Win98Renderer(canvas);
+    if (TRACE_COMPOSITE) renderer.traceComposite = true;
   }
   let videoRecorder = null;
   if (VIDEO_OUT) {
@@ -3582,8 +3592,14 @@ async function main() {
   if (TRACE_LOOPMATCH && instance.exports.set_loop_trace) {
     instance.exports.set_loop_trace(1, TRACE_LOOPMATCH_EIP);
   }
-  if (NO_LOOP_SUPEROPS && instance.exports.set_loop_emit) {
-    instance.exports.set_loop_emit(0);
+  if (LOOP_SUPEROPS && instance.exports.set_loop_emit) {
+    instance.exports.set_loop_emit(1);
+  }
+  // Per-instance, not once: worker threads are separate WASM instances over
+  // one shared memory, so a mut global set only on the main instance leaves
+  // every worker decoding with the other setting and makes the A/B meaningless.
+  if (NO_SIB_FUSION && instance.exports.set_sib_fusion) {
+    instance.exports.set_sib_fusion(0);
   }
   if (TRACE_FPU && instance.exports.set_fpu_trace) {
     instance.exports.set_fpu_trace(1);
@@ -6724,13 +6740,13 @@ async function main() {
       // A worker is a separate WASM instance: its decoder globals start at the
       // module defaults, so the loop-idiom flags have to be re-applied per
       // thread or they only ever affect main.
-      if (TRACE_LOOPMATCH || NO_LOOP_SUPEROPS) {
+      if (TRACE_LOOPMATCH || LOOP_SUPEROPS) {
         for (const [, t] of threadManager.threads) {
           const e = t.instance && t.instance.exports;
           if (!e || t._loopFlagsArmed) continue;
           t._loopFlagsArmed = true;
           if (TRACE_LOOPMATCH && e.set_loop_trace) e.set_loop_trace(1, TRACE_LOOPMATCH_EIP);
-          if (NO_LOOP_SUPEROPS && e.set_loop_emit) e.set_loop_emit(0);
+          if (LOOP_SUPEROPS && e.set_loop_emit) e.set_loop_emit(1);
         }
       }
     }
@@ -7432,7 +7448,13 @@ if (VERBOSE) {
 
   if (DX_SURFACES) {
     const { mem, surfaces } = getDxSurfaceManifest();
-    console.log(`[dx-surfaces] ${surfaces.length} live surface(s)`);
+    // Every 8bpp upload resolves its colours through the single primary-palette
+    // global, not through the per-surface palette printed below. When those two
+    // disagree the picture is drawn with somebody else's palette, so print both.
+    const globalPal = instance.exports.get_dx_primary_pal_wa
+      ? instance.exports.get_dx_primary_pal_wa() >>> 0 : 0;
+    console.log(`[dx-surfaces] ${surfaces.length} live surface(s)` +
+      ` primaryPal=0x${globalPal.toString(16)}`);
     for (const s of surfaces) {
       const score = dxSurfaceContentScore(s, mem);
       console.log(`  slot=${s.slot} ${s.w}x${s.h} bpp=${s.bpp} pitch=${s.pitch}` +
