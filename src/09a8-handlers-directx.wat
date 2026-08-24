@@ -3037,7 +3037,24 @@
   ;; window-surface seeder uses it for the ordinary top-level windows an app
   ;; stacks over an exclusive-fullscreen primary, which on real hardware share
   ;; that one framebuffer.
+  ;; A windowed (non-exclusive) app Blts to its primary in SCREEN coordinates
+  ;; -- that is what IDirectDrawClipper::SetHWnd means -- so presenting it
+  ;; needs the sub-rect of the primary that lies under the window's client
+  ;; area, landed at the client offset inside the window. $dx and $dy are
+  ;; window-local destination, $sx/$sy the screen-coordinate source origin,
+  ;; and $bw/$bh the size; pass 0,0,0,0 and the full surface size for the
+  ;; exclusive case, where the primary IS the window.
   (func $dx_blit_entry_to_hdc (param $entry_wa i32) (param $hdc i32)
+    (local $w i32) (local $h i32)
+    (local.set $w (i32.load16_u (i32.add (local.get $entry_wa) (i32.const 12))))
+    (local.set $h (i32.load16_u (i32.add (local.get $entry_wa) (i32.const 14))))
+    (call $dx_blit_entry_rect_to_hdc (local.get $entry_wa) (local.get $hdc)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+      (local.get $w) (local.get $h)))
+
+  (func $dx_blit_entry_rect_to_hdc (param $entry_wa i32) (param $hdc i32)
+      (param $dx i32) (param $dy i32) (param $sx i32) (param $sy i32)
+      (param $bw i32) (param $bh i32)
     (local $w i32) (local $h i32) (local $bpp i32) (local $pitch i32)
     (local $dib_wa i32) (local $bmi_wa i32) (local $i i32) (local $val i32)
     (local.set $w (i32.load16_u (i32.add (local.get $entry_wa) (i32.const 12))))
@@ -3081,13 +3098,28 @@
         (i32.store (i32.add (local.get $bmi_wa) (i32.const 40)) (i32.const 0xF800))   ;; R mask
         (i32.store (i32.add (local.get $bmi_wa) (i32.const 44)) (i32.const 0x07E0))   ;; G mask
         (i32.store (i32.add (local.get $bmi_wa) (i32.const 48)) (i32.const 0x001F)))) ;; B mask
+    ;; Clamp the requested source rect to the surface: a window can be wider
+    ;; than the display mode, or hang off the right/bottom edge of it.
+    (if (i32.lt_s (local.get $sx) (i32.const 0)) (then (local.set $sx (i32.const 0))))
+    (if (i32.lt_s (local.get $sy) (i32.const 0)) (then (local.set $sy (i32.const 0))))
+    (if (i32.gt_s (i32.add (local.get $sx) (local.get $bw)) (local.get $w))
+      (then (local.set $bw (i32.sub (local.get $w) (local.get $sx)))))
+    (if (i32.gt_s (i32.add (local.get $sy) (local.get $bh)) (local.get $h))
+      (then (local.set $bh (i32.sub (local.get $h) (local.get $sy)))))
+    (if (i32.or (i32.le_s (local.get $bw) (i32.const 0))
+                (i32.le_s (local.get $bh) (i32.const 0)))
+      (then (return)))
+    ;; Vertical source offset is applied to the bits pointer, not passed as
+    ;; ySrc: SetDIBitsToDevice narrows the source descriptor's height to the
+    ;; band it is given, so a non-zero ySrc would be clipped away against that
+    ;; narrowed height. Rows are top-down here, so row $sy starts $sy pitches in.
     (call $host_gdi_set_dib_to_device
       (local.get $hdc)
-      (i32.const 0) (i32.const 0) ;; xDest, yDest
-      (local.get $w) (local.get $h) ;; w, h
-      (i32.const 0) (i32.const 0) ;; xSrc, ySrc
-      (i32.const 0) (local.get $h) ;; startScan, cLines
-      (local.get $dib_wa) ;; bits WASM addr
+      (local.get $dx) (local.get $dy) ;; xDest, yDest
+      (local.get $bw) (local.get $bh) ;; w, h
+      (local.get $sx) (i32.const 0) ;; xSrc, ySrc
+      (i32.const 0) (local.get $bh) ;; startScan, cLines
+      (i32.add (local.get $dib_wa) (i32.mul (local.get $sy) (local.get $pitch))) ;; bits WASM addr
       (local.get $bmi_wa) ;; bmi WASM addr
       (i32.const 0)) ;; colorUse = DIB_RGB_COLORS
     (drop)
@@ -3167,6 +3199,8 @@
     (local $w i32) (local $h i32) (local $bpp i32) (local $pitch i32)
     (local $dib_wa i32) (local $bmi_wa i32) (local $i i32) (local $val i32)
     (local $surface_id i32) (local $target_hwnd i32) (local $shared i32)
+    (local $cl i32) (local $ct i32) (local $cx i32) (local $cy i32)
+    (local $cw i32) (local $ch i32) (local $offset i32)
     (local.set $w (i32.load16_u (i32.add (local.get $entry_wa) (i32.const 12))))
     (local.set $h (i32.load16_u (i32.add (local.get $entry_wa) (i32.const 14))))
     (local.set $bpp (i32.load16_u (i32.add (local.get $entry_wa) (i32.const 16))))
@@ -3193,7 +3227,35 @@
     ;; land back on top of each new frame.
     (call $dx_reseed_overlays (local.get $entry_wa))
     (local.set $shared (call $dx_window_surface_shared (local.get $target_hwnd)))
-    (if (i32.eqz (local.get $shared))
+    ;; A windowed (non-exclusive) app owns no more of the display than its
+    ;; client area, and its Blts to the primary are in screen coordinates --
+    ;; the clipper it attached with SetHWnd is what makes that legal. So its
+    ;; primary is display-sized while the window is chrome-sized, and handing
+    ;; the whole surface to the window (the exclusive fast path below) put a
+    ;; 640x480 screen over a smaller window: dx_tunnel and dx_twist showed
+    ;; caption and menus with an empty grey client while the frame sat in the
+    ;; primary's top-left. Blit the sub-rect under the client area instead.
+    (if (i32.and (i32.eqz (global.get $dx_exclusive_fullscreen))
+                 (i32.ne (local.get $target_hwnd) (i32.const 0)))
+      (then
+        (local.set $cl (call $client_rect_get_l (local.get $target_hwnd)))
+        (local.set $ct (call $client_rect_get_t (local.get $target_hwnd)))
+        (local.set $cx (call $wnd_client_screen_x (local.get $target_hwnd)))
+        (local.set $cy (call $wnd_client_screen_y (local.get $target_hwnd)))
+        (local.set $cw (call $wnd_client_w_for_clip (local.get $target_hwnd)))
+        (local.set $ch (call $wnd_client_h_for_clip (local.get $target_hwnd)))
+        ;; A window that already covers the display exactly needs none of this,
+        ;; and the direct attach below is far cheaper per frame.
+        (if (i32.and (i32.gt_s (local.get $cw) (i32.const 0))
+                     (i32.gt_s (local.get $ch) (i32.const 0)))
+          (then
+            (if (i32.or
+                  (i32.or (i32.ne (local.get $cx) (i32.const 0))
+                          (i32.ne (local.get $cy) (i32.const 0)))
+                  (i32.or (i32.ne (local.get $cw) (local.get $w))
+                          (i32.ne (local.get $ch) (local.get $h))))
+              (then (local.set $offset (i32.const 1))))))))
+    (if (i32.and (i32.eqz (local.get $shared)) (i32.eqz (local.get $offset)))
       (then
         (if (call $gdi_dx_dc_bind (local.get $surface_id))
           (then
@@ -3202,8 +3264,18 @@
                 (drop (call $host_gdi_surface_upload (local.get $surface_id)
                   (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)))
                 (return)))))))
-    (call $dx_blit_entry_to_hdc (local.get $entry_wa)
-      (i32.add (local.get $target_hwnd) (i32.const 0x40000)))
+    (if (local.get $offset)
+      (then
+        (call $dx_blit_entry_rect_to_hdc (local.get $entry_wa)
+          (i32.add (local.get $target_hwnd) (i32.const 0x40000))
+          ;; hwnd|0x40000 is a client DC: it already offsets by the client
+          ;; origin, so the destination here is client-relative (0,0).
+          (i32.const 0) (i32.const 0)
+          (local.get $cx) (local.get $cy)
+          (local.get $cw) (local.get $ch)))
+      (else
+        (call $dx_blit_entry_to_hdc (local.get $entry_wa)
+          (i32.add (local.get $target_hwnd) (i32.const 0x40000)))))
     ;; The frame just overwrote the whole window surface, controls included.
     ;; Repaint the children -- and only the children: the top-level's own
     ;; WM_PAINT is what renders the next frame, so marking it here would spin
