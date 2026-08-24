@@ -46,9 +46,18 @@ if (cmdArgs.length === 0) {
 
 let rounds = 5;
 let warmup = false;
+// --metric=<regex>: pull a number out of the run's stdout and make THAT the
+// headline instead of elapsed time. Needed for fixed-duration benchmarks --
+// under `--max-seconds=30` every variant takes 30 seconds by construction, so
+// wall clock and CPU time carry no signal at all and the answer is entirely in
+// how far each build got ("Stats: N batches"). The regex must have exactly one
+// capture group holding the number. Higher is better, so the comparison is
+// inverted relative to the timing columns.
+let metric = null;
 const variants = [];
 for (const a of head) {
   if (a.startsWith('--rounds=')) { rounds = parseInt(a.slice(9), 10); continue; }
+  if (a.startsWith('--metric=')) { metric = new RegExp(a.slice(9), 'm'); continue; }
   if (a === '--warmup') { warmup = true; continue; }
   const eq = a.indexOf('=');
   if (eq < 0) { console.error(`ab-time: expected name=dir, got ${a}`); process.exit(2); }
@@ -70,7 +79,11 @@ function runOnce(v) {
   const before = load1();
   const t0 = process.hrtime.bigint();
   const r = spawnSync('/usr/bin/time', ['-p', process.execPath, ...cmdArgs],
-    { cwd: v.dir, stdio: ['ignore', 'ignore', 'pipe'], encoding: 'utf8' });
+    // maxBuffer: spawnSync's 1MB default does not fail the read, it SIGTERMs
+    // the child -- which looks exactly like a crashing variant. run.js prints
+    // well past 1MB on a 30s run, so any --metric use would hit this.
+    { cwd: v.dir, stdio: ['ignore', metric ? 'pipe' : 'ignore', 'pipe'],
+      encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
   const ms = Number(process.hrtime.bigint() - t0) / 1e6;
   if (r.status !== 0) {
     // A variant that fails is not a fast variant. Say so loudly rather than
@@ -89,7 +102,16 @@ function runOnce(v) {
     console.error(`ab-time: could not parse /usr/bin/time output for ${v.name}`);
     process.exit(1);
   }
-  return { ms, cpu, load: (before + load1()) / 2 };
+  let value = NaN;
+  if (metric) {
+    const m = (r.stdout || '').match(metric);
+    if (!m || m[1] === undefined) {
+      console.error(`ab-time: --metric did not match ${v.name}'s stdout (needs one capture group)`);
+      process.exit(1);
+    }
+    value = parseFloat(m[1]);
+  }
+  return { ms, cpu, value, load: (before + load1()) / 2 };
 }
 
 console.log(`ab-time: ${variants.length} variant(s), ${rounds} round(s), interleaved`);
@@ -114,7 +136,7 @@ for (let r = 1; r <= rounds; r++) {
   for (const v of order) {
     const s = runOnce(v);
     v.samples.push(s);
-    cells.push(`${v.name} ${s.cpu.toFixed(0)}c/${s.ms.toFixed(0)}w`);
+    cells.push(metric ? `${v.name} ${s.value}` : `${v.name} ${s.cpu.toFixed(0)}c/${s.ms.toFixed(0)}w`);
   }
   console.log(`  round ${String(r).padStart(2)}  load ${load1().toFixed(1).padStart(5)}  ${cells.join('  ')}`);
 }
@@ -128,6 +150,36 @@ function stats(samples, key) {
 const base = variants[0];
 const baseCpu = stats(base.samples, 'cpu');
 console.log('');
+
+if (metric) {
+  // Throughput mode: bigger is better, and the headline is the MAX for the
+  // same reason the timing headline is the min -- contention is one-sided, so
+  // the best sample is the one least polluted by the rest of the box.
+  const baseVal = stats(base.samples, 'value');
+  console.log(`results (n=${rounds}, headline = max metric; baseline = ${base.name})`);
+  console.log('  variant             metric max    median      spread    vs base');
+  for (const v of variants) {
+    const s = stats(v.samples, 'value');
+    const d = v === base ? '' : `${((s.max / baseVal.max - 1) * 100).toFixed(2)}%`;
+    const spread = `${((s.max / s.min - 1) * 100).toFixed(0)}%`;
+    console.log(`  ${v.name.padEnd(18)} ${s.max.toFixed(0).padStart(10)} ` +
+      `${s.median.toFixed(0).padStart(9)} ${spread.padStart(11)} ${d.padStart(10)}`);
+  }
+  const mFloor = Math.max(...variants.map(v => {
+    const s = stats(v.samples, 'value');
+    return (s.max / s.median - 1) * 100;
+  }));
+  console.log('');
+  console.log(`  noise floor (worst median->max spread): ${mFloor.toFixed(1)}% — ` +
+    `a difference smaller than this is not resolved by this run.`);
+  const ld = variants.flatMap(v => v.samples.map(s => s.load));
+  console.log(`  loadavg over the run: ${Math.min(...ld).toFixed(1)} .. ${Math.max(...ld).toFixed(1)}`);
+  if (Math.max(...ld) > 4) {
+    console.log('  WARNING: load went above 4 — these numbers describe the machine as much as the build.');
+  }
+  process.exit(0);
+}
+
 console.log(`results (n=${rounds}, headline = min CPU time; baseline = ${base.name})`);
 console.log('  variant             cpu min   cpu median      cpu spread    vs base   wall min');
 for (const v of variants) {

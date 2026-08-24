@@ -765,3 +765,78 @@ different points in the game in the same wall clock, and the branch's counter
 fires on a broader set of writes. What is comparable is the shape — 85% of the
 fork point's decodes are re-decodes of blocks it had already compiled, against
 zero evictions and a 100%-exact retirement path on the branch.
+
+### 11.2 Correction: 11's lever test ran the wrong workload (2026-08-24)
+
+Section 11 measured the adjacency lever at 20000 batches with no input script.
+That never leaves Caesar's menus, so it never enters the RLE sprite decoder --
+the entire reason this branch exists. On the real gameplay drive (the input
+sequence from `test/test-caesar3-gameplay.js`, `--batch-size=50000`, 3400
+batches, into a simulating city) the picture is four times bigger:
+
+```
+fall-through branches 30465447 | free 15090229 | paid 15375218 (50.5% headroom)
+```
+
+15.4M paid, against the 3.35M the section-11 lever test moved. Rerun on that
+workload, 3 interleaved rounds, load 3.2-4.5, CPU seconds:
+
+| | round 1 | round 2 | round 3 | min |
+|---|---|---|---|---|
+| adjacency on | 7.61 | 7.65 | 7.67 | **7.61** |
+| adjacency off | 7.79 | 7.73 | 7.98 | **7.73** |
+
+**Adjacency is worth 1.6%**, and every `on` sample beat every `off` sample --
+within-variant spread is 0.8%, so this clears its own noise floor. Section 11's
+"deleting 3.35M lookups-and-dispatches is invisible" was true of the workload it
+measured and false of the one that matters.
+
+So the honest defrag number is not zero. Converting 15.1M fall-throughs to free
+buys 1.6%; defragmentation's remaining headroom is 15.4M more of the same kind,
+so its expected value is **another ~1.6%** -- small, real, and now a prediction
+that a compaction pass can be held to rather than a guess. Whether 1.6% is worth
+an address-ordered emit is a judgement call, but it is no longer the case that
+the measurement says no.
+
+## 13. CASE_CHAIN: the prize, measured (2026-08-24)
+
+Section 6 deferred the switch super-op with "measure this first". Measured, on
+the branch, same gameplay window (batches 3000..3400, `--handler-hist-thread=0
+--hot-block-dump`):
+
+| quantity | value |
+|---|---|
+| dispatches in the window | 57,886,243 |
+| block entries | 13,759,405 |
+| block entries in the RLE decoder `0x40fxxx` | 6,765,659 (49.2%) |
+| block entries in the `cmp/jz` chain | 3,298,295 (**24.0%**) |
+| arrivals at the chain | 934,297 |
+| cases walked per arrival | 3.53 |
+
+**Page compilation did not shrink this at all** -- 24.0% here against 24.1% at
+the fork point. That is not a failure, it is the mechanism: adjacency makes the
+*transfer* between chain blocks free, but each `jz` still ends a block, so the
+entries are still spent, just more cheaply.
+
+A CASE_CHAIN super-op collapses the whole 16-way stack into one op: read the
+byte, index a 256-entry target table, set `eip`. That takes 934,297 arrivals
+from ~3.53 block entries and ~8.2M dispatches down to 934,297 dispatches:
+
+- ~7.3M dispatches removed, **12.6% of all dispatches** in the window
+- 3.3M block entries removed, **24% of all block entries**
+- and, unlike everything else this branch tried, it removes *executed x86
+  instructions* -- up to 16 `cmp`s replaced by one table index -- rather than
+  bookkeeping around them.
+
+That last point is why it is worth trying despite four consecutive negative
+results. Every previous experiment (tail calls, branch stripping, the hash cache
+removal, adjacency) made each unit of interpretation cheaper. This one deletes
+units. Calibrated against 11.2 -- 15.1M freed transfers bought 1.6% -- a
+comparable-magnitude change plus the removed compares puts the estimate at
+roughly **2-4% on Caesar gameplay**.
+
+Two caveats before anyone builds it. It is one hand-written chain in one
+function of one app: nothing here says the idiom is common, and the matcher
+would need a census (`tools/find-loops.js` finds loops, not `cmp/jz` ladders)
+before the generality is known. And the estimate is an extrapolation from a
+different lever, not a measurement of this one.
