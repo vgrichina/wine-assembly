@@ -840,3 +840,42 @@ function of one app: nothing here says the idiom is common, and the matcher
 would need a census (`tools/find-loops.js` finds loops, not `cmp/jz` ladders)
 before the generality is known. And the estimate is an extrapolation from a
 different lever, not a measurement of this one.
+
+### 13.1 Caesar already has one super-op, and this is the other path (2026-08-24)
+
+For the record, because it is easy to conflate the two: **Caesar's blit super-op
+already exists.** `$th_rect_run` (handler 422, `src/06b-core-handlers.wat:508`,
+commit `67906b47`) folds a whole unrolled isometric tile blit into one dispatch
+-- ~787 fully unrolled diamond blitters between `0x0041cf11` and `0x004ffefd`,
+worth 5.20% of handler ops when it landed. It is in this branch (the fork point
+`7d471df9` postdates it), so every number in section 13 is measured *on top of*
+it, and its absence from the top-24 histogram is the fold working, not the fold
+missing.
+
+Caesar draws through two different paths and only one of them is folded:
+
+| path | address range | folded by |
+|---|---|---|
+| unrolled diamond tile blitters | `0x41cf11`..`0x4ffefd` | **H422 `$th_rect_run`** |
+| RLE sprite decoder | `0x40fxxx` (49.2% of block entries) | **nothing** |
+
+The `cmp/jz` ladder is inside the second one. And the pair histogram from that
+same window names it outright, so section 13's estimate does not need the
+extrapolation it was built on:
+
+```
+  H154 $th_alu_r8_i8   3393833 (5.86%)   <- cmp al,imm8
+  H311 $th_jcc_z       3473536 (6.00%)   <- the jz after it
+  top pairs:
+    H154->H311         3392761 (7.69%)   <- the #1 pair in the program
+```
+
+3.39M pair occurrences against 3.30M chain walks means **~97% of every
+`cmp r8,imm8` -> `jz` in the entire program is that one ladder**, and the two
+handlers together are **11.9% of all dispatches** -- directly measured, and
+within a whisker of section 13's extrapolated 12.6%.
+
+So CASE_CHAIN is not a speculative idiom hunt. It is the single largest
+unfolded shape left in the app that this branch was built for, it is the #1
+dispatch pair in the histogram, and the app's *other* drawing path already got
+this treatment and kept 5.20%.
