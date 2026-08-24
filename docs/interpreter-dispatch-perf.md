@@ -145,10 +145,36 @@ way, and it caps what any dispatch reduction can show: `fuse-cmp-jcc`'s −8.43%
 op reduction has at most ~85% of the run to act on even before the ops it removes
 turn out to be the cheap ones.
 
-The hottest named wasm functions in the same profile are `$gl32` (6.2%), `$gl16`
-(5.2%), `$gs8` (3.3%) and `$th_store8_sib` (3.0%) — memory accessors, not
-dispatch. That is consistent with everything else here: the cost is in what the
-handlers *do*, not in getting to them.
+**Corrected 2026-08-23 — the earlier version of this paragraph named the wrong
+functions.** It reported `$gl32` (6.2%), `$gl16` (5.2%), `$gs8` (3.3%) and
+`$th_store8_sib` (3.0%) and concluded "memory accessors, not dispatch". Those
+names came from `tools/func-index.js`, which was counting 8 wrapped imports as
+definitions and so resolved every index 8 too low (fixed in `61dbb724`;
+`tools/wasm-func-name.js` was right all along). Re-taken on the same command:
+
+| ticks | % of total | % of wasm | function |
+|---|---|---|---|
+| 1265 | 14.1% | 26.2% | `$next` |
+| 848 | 9.4% | 17.6% | `$run` |
+| 392 | 4.4% | 8.1% | `$get_reg` |
+| 358 | 4.0% | 7.4% | `$set_reg` |
+| 281 | 3.1% | 5.8% | `$g2w` |
+| 119 | 1.3% | 2.5% | `$do_alu32` |
+| 114 | 1.3% | 2.4% | `$do_alu_sized` |
+
+Wasm is 4823 of 8981 ticks (53.7%) in this run. **The conclusion inverts.**
+Dispatch and the run loop are the top two costs and together are 43.8% of all
+wasm time; the register file (`$get_reg` + `$set_reg`) is another 15.5%, and
+address translation 5.8%. No handler body is above 2.5%. The cost is *not*
+spread across what the handlers do — it is concentrated in getting to them and
+in reading and writing registers on the way.
+
+This does not resurrect the four dispatch variants: their measured op reductions
+are still 5–8% against a noise floor of 41.9% on this box (below), and earlier
+work already measured both tail calls and branch-stripping inside `$next` at
+zero — fewer dispatches did not mean faster. It does say the *target* was right
+and the attempts were the wrong shape — the 26.2% is the mispredicted indirect
+call itself, which fewer or cheaper dispatch branches do not remove.
 
 ### The 361 cap: fusions flatter themselves 2x
 
