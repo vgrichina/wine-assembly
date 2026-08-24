@@ -1730,8 +1730,10 @@ async function main() {
         const treeItems = () => {
           if (!dv) return [];
           const out = [];
-          for (let i = 0; i < 32; i++) {
-            const base = 0x07F00000 + i * 32;
+          const tvBase = e.treeview_get_table_base ? (e.treeview_get_table_base() >>> 0) : 0x07F00000;
+          const tvSlots = e.treeview_get_slot_limit ? (e.treeview_get_slot_limit() | 0) : 32;
+          for (let i = 0; i < tvSlots; i++) {
+            const base = tvBase + i * 32;
             const handle = dv.getUint32(base, true) >>> 0;
             if (!handle) continue;
             const textPtr = dv.getUint32(base + 28, true) >>> 0;

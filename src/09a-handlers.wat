@@ -10311,7 +10311,18 @@ SetColorAdjustment — validate and copy complete per-DC state.
         ;; render. Our renderer paints WAT-native controls out of band, and
         ;; avoiding this chain keeps NSIS treeview paint from re-entering while
         ;; its dialog procedure is unwinding.
-        (if (i32.eq (local.get $arg2) (i32.const 0x000F))
+        ;;
+        ;; But "out of band" stops being true the moment the app owns the
+        ;; WNDPROC: $paint_drain_native_control_paints deliberately leaves a
+        ;; subclassed control's WM_PAINT for the pump, precisely so the app's
+        ;; proc runs. If that proc then chains here for the built-in look --
+        ;; which is what $ctrl_is_subclassed documents as the way to get it --
+        ;; swallowing the message means nobody paints at all. WinHelp's three
+        ;; command buttons are stock "button" children subclassed to one shared
+        ;; proc, and its whole button bar came out flat grey.
+        (if (i32.and
+              (i32.eq (local.get $arg2) (i32.const 0x000F))
+              (i32.eqz (call $ctrl_is_subclassed (local.get $arg1))))
           (then
             (global.set $eax (i32.const 0))
             (global.set $esp (i32.add (global.get $esp) (i32.const 24)))

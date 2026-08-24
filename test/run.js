@@ -5259,13 +5259,27 @@ async function main() {
             const cr = we.get_client_rect_l
               ? `${we.get_client_rect_l(hwnd) | 0},${we.get_client_rect_t(hwnd) | 0},${we.get_client_rect_r(hwnd) | 0},${we.get_client_rect_b(hwnd) | 0}`
               : 'n/a';
-            children.push(`slot=${slot} hwnd=0x${hwnd.toString(16)} parent=0x${par.toString(16)} proc=0x${proc.toString(16)} cls=${cls} id=${id} style=0x${style.toString(16)} buttonFlags=0x${buttonFlags.toString(16)} xy=${xy & 0xffff},${xy >>> 16} wh=${wh & 0xffff}x${wh >>> 16} cr=${cr} dirty=${dirty}`);
+            // The update rect the selector actually reads. `dirty=1 upd=none`
+            // is a flag with no region (the selector drops it); a parent with
+            // `upd=none` never seeds its children at all.
+            const upd = we.update_rect_lt
+              ? (() => {
+                const lt = we.update_rect_lt(hwnd) | 0, rb = we.update_rect_rb(hwnd) | 0;
+                return (lt || rb) ? `${lt & 0xffff},${lt >> 16},${rb & 0xffff},${rb >> 16}` : 'none';
+              })()
+              : 'n/a';
+            children.push(`slot=${slot} hwnd=0x${hwnd.toString(16)} upd=${upd} parent=0x${par.toString(16)} proc=0x${proc.toString(16)} cls=${cls} id=${id} style=0x${style.toString(16)} buttonFlags=0x${buttonFlags.toString(16)} xy=${xy & 0xffff},${xy >>> 16} wh=${wh & 0xffff}x${wh >>> 16} cr=${cr} dirty=${dirty}`);
             slot++;
           }
         }
         const parentNc = we.nc_flags_test ? (we.nc_flags_test(parent) >>> 0) : 0;
         const parentDirty = we.paint_flag_test ? (we.paint_flag_test(parent) | 0) : -1;
-        logs.push(`[input] dump-children${ev.label ? ':' + ev.label : ''}: parent=0x${parent.toString(16)} nc=0x${parentNc.toString(16)} dirty=${parentDirty} ${children.length ? children.join(' | ') : '(none)'}`);
+        const parentUpdLt = we.update_rect_lt ? (we.update_rect_lt(parent) | 0) : 0;
+        const parentUpdRb = we.update_rect_rb ? (we.update_rect_rb(parent) | 0) : 0;
+        const parentUpd = (parentUpdLt || parentUpdRb)
+          ? `${parentUpdLt & 0xffff},${parentUpdLt >> 16},${parentUpdRb & 0xffff},${parentUpdRb >> 16}`
+          : 'none';
+        logs.push(`[input] dump-children${ev.label ? ':' + ev.label : ''}: parent=0x${parent.toString(16)} nc=0x${parentNc.toString(16)} dirty=${parentDirty} upd=${parentUpd} ${children.length ? children.join(' | ') : '(none)'}`);
       } else if (ev.action === 'menu-dump') {
         const we = instance.exports;
         const hwnd = we.menu_open_hwnd ? (we.menu_open_hwnd() >>> 0) : 0;
@@ -5445,8 +5459,9 @@ async function main() {
         const dv = new DataView(memory.buffer);
         const u8 = new Uint8Array(memory.buffer);
         const items = [];
-        const table = 0x07F00000;
-        for (let i = 0; i < 32; i++) {
+        const table = we.treeview_get_table_base ? (we.treeview_get_table_base() >>> 0) : 0x07F00000;
+        const slots = we.treeview_get_slot_limit ? (we.treeview_get_slot_limit() | 0) : 32;
+        for (let i = 0; i < slots; i++) {
           const p = table + i * 32;
           const handle = dv.getUint32(p, true);
           if (!handle) continue;

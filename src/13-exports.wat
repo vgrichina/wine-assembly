@@ -1897,6 +1897,29 @@
     (local.set $slot (call $wnd_table_find (local.get $hwnd)))
     (if (i32.lt_s (local.get $slot) (i32.const 0)) (then (return (i32.const 0))))
     (i32.load8_u (i32.add (global.get $PAINT_FLAGS) (local.get $slot))))
+  ;; The WAT-owned update rect, packed l,t,r,b into two i32s (0 when the
+  ;; window has none). PAINT_FLAGS alone does not get a window painted: the
+  ;; selector also demands a non-empty update rect, and $paint_seed_child_paints
+  ;; propagates a parent's rect, not its flag. So "flag set, rect empty" and
+  ;; "parent rect empty so children were never seeded" are distinct stalls that
+  ;; look identical without this.
+  (func (export "update_rect_lt") (param $hwnd i32) (result i32)
+    (local $r i32)
+    (local.set $r (call $paint_scratch_take))
+    (if (i32.eqz (call $update_get_rect (local.get $hwnd) (local.get $r)))
+      (then (return (i32.const 0))))
+    (i32.or
+      (i32.and (i32.load (local.get $r)) (i32.const 0xFFFF))
+      (i32.shl (i32.load offset=4 (local.get $r)) (i32.const 16))))
+  (func (export "update_rect_rb") (param $hwnd i32) (result i32)
+    (local $r i32)
+    (local.set $r (call $paint_scratch_take))
+    (if (i32.eqz (call $update_get_rect (local.get $hwnd) (local.get $r)))
+      (then (return (i32.const 0))))
+    (i32.or
+      (i32.and (i32.load offset=8 (local.get $r)) (i32.const 0xFFFF))
+      (i32.shl (i32.load offset=12 (local.get $r)) (i32.const 16))))
+
   (func (export "post_message_q")
         (param $hwnd i32) (param $msg i32) (param $wP i32) (param $lP i32) (result i32)
     (call $post_queue_push (local.get $hwnd) (local.get $msg) (local.get $wP) (local.get $lP)))
@@ -4252,6 +4275,14 @@
     (global.set $tv_active_owner (local.get $tv))
     (call $tv_view_set_row (i32.const 0))
     (local.get $tv))
+
+  ;; Where the item table lives and how far the walks go. Debug readers used to
+  ;; hardcode both; the table has since moved and grown, and a hardcoded base
+  ;; silently dumps an empty tree instead of failing.
+  (func (export "treeview_get_table_base") (result i32)
+    (global.get $TV_TABLE))
+  (func (export "treeview_get_slot_limit") (result i32)
+    (call $tv_slot_limit))
 
   (func (export "treeview_get_first_visible_row") (result i32)
     (call $tv_view_row))
