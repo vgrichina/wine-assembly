@@ -96,6 +96,15 @@ const DUMP_DDRAW = getArg('dump-ddraw-surfaces', null); // --dump-ddraw-surfaces
 const DUMP_SDB = getArg('dump-sdb', null); // --dump-sdb=DIR: dump StretchDIBits source DIBs + per-call log
 const DUMP_VIRTUAL_MAPS = hasFlag('dump-virtual-maps'); // --dump-virtual-maps: print raw sparse guest-map records
 const MAX_BATCHES = parseInt(getArg('max-batches', '200'));
+// --max-seconds=N: stop the batch loop after N seconds of wall clock, whatever
+// --max-batches says. For benchmarking, this is the useful axis: an app's cost
+// per batch is not constant (Caesar runs ~0.1ms/batch through its boot and then
+// several times that once a city is simulating), so picking a batch count that
+// lands near a target duration is guesswork that has to be redone per app and
+// breaks the moment the app gets further in the same budget. Fix the duration
+// instead and read the batch count as the throughput: same wall clock on both
+// sides of an A/B, and the faster build is simply the one that got further.
+const MAX_SECONDS = parseFloat(getArg('max-seconds', '0')) || 0;
 // Composite the screen only every Nth batch. Nobody watches a headless run, so
 // intermediate frames exist only to be overwritten -- and they are not free:
 // skia-canvas 3.0.8 leaks roughly 320 bytes of unreclaimable native memory per
@@ -658,6 +667,10 @@ async function main() {
 
   const logs = [];
   let stopped = false;
+  // Batches actually executed. Not the same as MAX_BATCHES once --max-seconds
+  // or an early exit ends the loop, and it is the throughput number a
+  // fixed-duration benchmark is asking for.
+  let batchesRun = 0;
   let netWaits = 0;   // consecutive net_wait yields, reset by any progress
   let apiCount = 0;
   const apiCounts = TRACE_API_COUNTS ? new Map() : null;
@@ -3929,7 +3942,13 @@ async function main() {
       }
     }
   };
+  const deadlineMs = MAX_SECONDS ? Date.now() + MAX_SECONDS * 1000 : 0;
   for (let batch = 0; batch < MAX_BATCHES && !stopped; batch++) {
+    if (deadlineMs && Date.now() >= deadlineMs) {
+      console.log(`[max-seconds] stopping after ${MAX_SECONDS}s at batch ${batch}`);
+      break;
+    }
+    batchesRun = batch + 1;
     if (HANDLER_HIST_THREAD >= 0 && !handlerHistDone) {
       if (!handlerHistArmed && batch >= HANDLER_HIST_START) {
         handlerHistExports = findHandlerHistExports();
@@ -7118,7 +7137,8 @@ if (VERBOSE) {
       `${video.width}x${video.height} at ${video.fps}fps (${video.duration.toFixed(2)}s)`);
   }
 
-  console.log(`\nStats: ${apiCount} API calls, ${MAX_BATCHES} batches`);
+  console.log(`\nStats: ${apiCount} API calls, ${batchesRun} batches`
+    + (MAX_SECONDS ? ` in ${MAX_SECONDS}s (${(batchesRun / MAX_SECONDS).toFixed(0)} batches/s)` : ''));
 
   // --reg-export writes what the run left in the registry/INI store, which is
   // what a browser tab would have kept in localStorage. Feed it back with

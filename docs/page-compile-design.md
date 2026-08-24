@@ -693,3 +693,40 @@ Ninety-six percent of the fork point's decodes there are re-decodes of a block i
 had already compiled and thrown away. The branch removes all of them, decodes
 16× less, and the slice distribution does not move — which is the whole result of
 this branch stated in one app.
+
+### 11.1 The same question at 30 seconds (2026-08-24)
+
+The runs above are seconds long, which on a box at load 5-17 leaves the
+between-variant difference inside the within-variant spread. `test/run.js
+--max-seconds=N` (new) fixes the duration instead of the batch count and reports
+the batches completed as the throughput, which is the right axis for an app
+whose cost per batch is not constant: Caesar runs about 0.1ms/batch through its
+boot and several times that once a city simulates, so a batch count chosen to
+land near 30s has to be re-guessed per app and stops being right the moment the
+app gets further in the same budget.
+
+Three variants -- the fork point, this branch with the adjacency bit ignored,
+and this branch as built -- interleaved, 30s each, batches completed:
+
+| rep | fork point | adjacency off | adjacency on |
+|---|---|---|---|
+| **total_annihilation_demo** ||||
+| 1 | 10619 | 10507 | 10626 |
+| 2 | 10241 | 10107 | 10025 |
+| 3 | 10411 | 10653 | 9926 |
+| mean | 10424 | 10422 | 10192 |
+| **caesar3_demo** ||||
+| 1 | 37700 | 37352 | 37493 |
+| 2 | 37617 | 37764 | 37401 |
+| 3 | 38276 | 39656 | 39354 |
+| mean | 37864 | 38257 | 38083 |
+
+Caesar's spread inside a single variant (37352..39656) is larger than any gap
+between variants, and TA's three variants land within 2% with no consistent
+ordering. In those same 30 seconds the fork point decodes **1,061,804** blocks on
+TA and evicts **1,050,891** live ones; the branch decodes **5730** and evicts
+none. A 185x difference in decode work, and the throughput is the same.
+
+That is the result at the longest measurement this work is allowed to take. It
+does not soften with more samples, it does not depend on which app, and it does
+not depend on whether the app thrashes the old cache to pieces.
