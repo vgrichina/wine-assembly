@@ -2078,6 +2078,13 @@
   (global $wave_out_cb_instance (mut i32) (i32.const 0))
   (global $wave_out_cb_type (mut i32) (i32.const 0))
   (global $wave_out_volume (mut i32) (i32.const 0xFFFFFFFF))  ;; packed L|R, default max
+  ;; MMIO buffered-I/O slots. mmioGetInfo/mmioAdvance hand the app a real
+  ;; read buffer it memcpy's out of, so each open HMMIO that asks for one
+  ;; needs a stable guest-heap block. Lazily allocated table of
+  ;; $MMIO_BUF_SLOTS {hmmio, pchBuffer} pairs; buffers are reused, never freed.
+  (global $mmio_buf_table (mut i32) (i32.const 0))
+  (global $MMIO_BUF_SLOTS i32 (i32.const 8))
+  (global $MMIO_BUF_SIZE i32 (i32.const 8192))
   (global $rgn_counter (mut i32) (i32.const 0))
   ;; _initterm trampoline state
   (global $initterm_ptr (mut i32) (i32.const 0))  ;; current position in fn ptr table

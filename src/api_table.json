@@ -7019,7 +7019,22 @@
     "name": "mmioOpenA",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 873038302
+    "hash": 873038302,
+    "args": [
+      {
+        "name": "szFilename",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "lpmmioinfo",
+        "type": "PTR"
+      },
+      {
+        "name": "dwOpenFlags",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "HANDLE"
   },
   {
     "id": 812,
@@ -10497,7 +10512,27 @@
     "name": "mciSendStringA",
     "nargs": 4,
     "convention": "stdcall",
-    "hash": 2226675570
+    "hash": 2226675570,
+    "args": [
+      {
+        "name": "lpszCommand",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "lpszReturnString",
+        "type": "LPSTR",
+        "out": true
+      },
+      {
+        "name": "cchReturn",
+        "type": "UINT"
+      },
+      {
+        "name": "hwndCallback",
+        "type": "HWND"
+      }
+    ],
+    "ret": "DWORD"
   },
   {
     "id": 1238,
@@ -10737,13 +10772,22 @@
     "name": "GetUpdateRgn",
     "nargs": 3,
     "convention": "stdcall",
+    "hash": 3235427389,
     "args": [
-      { "name": "hwnd", "type": "HWND" },
-      { "name": "hrgn", "type": "HANDLE" },
-      { "name": "erase", "type": "BOOL" }
+      {
+        "name": "hwnd",
+        "type": "HWND"
+      },
+      {
+        "name": "hrgn",
+        "type": "HANDLE"
+      },
+      {
+        "name": "erase",
+        "type": "BOOL"
+      }
     ],
-    "ret": "int",
-    "hash": 3235427389
+    "ret": "int"
   },
   {
     "id": 1270,
@@ -21453,7 +21497,7 @@
       },
       {
         "name": "params",
-        "type": "HANDLE"
+        "type": "DISPPARAMS"
       },
       {
         "name": "result",
@@ -23562,5 +23606,26 @@
     "nargs": 5,
     "convention": "stdcall",
     "hash": 196538338
+  },
+  {
+    "id": 2866,
+    "name": "mmioGetInfo",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3516870985
+  },
+  {
+    "id": 2867,
+    "name": "mmioAdvance",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3780536199
+  },
+  {
+    "id": 2868,
+    "name": "mmioSetInfo",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3535660493
   }
 ]
