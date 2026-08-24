@@ -95,6 +95,7 @@ UNIT=(
   test/test-gdi-p0-p1.js
   test/test-wat-gdi-line.js
   test/test-wat-gdi-raster.js
+  test/test-gdi-fast-blit-paths.js
   test/test-wat-gdi-raster-handlers.js
   test/test-wat-gdi-benchmark.js
   test/test-wat-gdi-bitmap.js
