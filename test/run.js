@@ -137,6 +137,23 @@ const TRACE_ESP = getArg('trace-esp', null); // --trace-esp=LO-HI: per-block (ei
 const TRACE_EIP_RANGE = getArg('trace-eip-range', null); // --trace-eip-range=LO-HI: log every block-entry EIP inside [LO,HI] (module+0xVA OK)
 const TRACE_EIP_DETAIL = hasFlag('trace-eip-detail'); // --trace-eip-detail: include regs/flags/memory with --trace-eip-range
 const TRACE_EIP_DUMP = getArg('trace-eip-dump', null); // --trace-eip-dump=0xADDR:LEN[,..]: compact dump on each detailed EIP hit
+// --trace-loopmatch[=0xEIP]: at decode time, dump the emitted op sequence of
+// every self-loop block (or just the one at 0xEIP). Prints the block's entry,
+// op count and each (handler index, operand) -- the input the Design A matcher
+// in src/07b-loop-match.wat actually sees. See docs/loop-idiom-superops-design.md
+const TRACE_LOOPMATCH = hasFlag('trace-loopmatch') || getArg('trace-loopmatch', null) !== null;
+const TRACE_LOOPMATCH_EIP = (() => {
+  const v = getArg('trace-loopmatch', null);
+  return v && v !== 'true' ? (parseInt(v, 16) | 0) : 0;
+})();
+// The decode-time trace has no channel but log_i32, which lib/host-imports.js
+// gates on DBG_INV. Asking for the flag is asking for the output.
+if (TRACE_LOOPMATCH) process.env.DBG_INV = '1';
+// --no-loop-superops: match and count as usual, but emit the original ops.
+// The A/B pair for measuring the lowering without rebuilding between runs.
+const NO_LOOP_SUPEROPS = hasFlag('no-loop-superops');
+// --loopmatch-stats: print the self-loop/match counts at exit.
+const LOOPMATCH_STATS = hasFlag('loopmatch-stats');
 const TRACE_GDI = hasFlag('trace-gdi');   // --trace-gdi: log GDI calls (CreateBitmap, BitBlt, etc.)
 const GDI_STATS = hasFlag('gdi-stats');   // --gdi-stats: print software-raster span/pixel totals at exit
 const LATENCY_STATS = hasFlag('latency-stats'); // --latency-stats: measure injected input -> next surface blit
@@ -3483,6 +3500,12 @@ async function main() {
   if (TRACE_WIN16 && instance.exports.set_win16_trace) {
     instance.exports.set_win16_trace(1);
   }
+  if (TRACE_LOOPMATCH && instance.exports.set_loop_trace) {
+    instance.exports.set_loop_trace(1, TRACE_LOOPMATCH_EIP);
+  }
+  if (NO_LOOP_SUPEROPS && instance.exports.set_loop_emit) {
+    instance.exports.set_loop_emit(0);
+  }
   if (TRACE_FPU && instance.exports.set_fpu_trace) {
     instance.exports.set_fpu_trace(1);
   }
@@ -6582,6 +6605,18 @@ async function main() {
     // Thread management: spawn pending threads, run worker slices
     if (threadManager._pendingThreads.length) {
       await threadManager.spawnPending();
+      // A worker is a separate WASM instance: its decoder globals start at the
+      // module defaults, so the loop-idiom flags have to be re-applied per
+      // thread or they only ever affect main.
+      if (TRACE_LOOPMATCH || NO_LOOP_SUPEROPS) {
+        for (const [, t] of threadManager.threads) {
+          const e = t.instance && t.instance.exports;
+          if (!e || t._loopFlagsArmed) continue;
+          t._loopFlagsArmed = true;
+          if (TRACE_LOOPMATCH && e.set_loop_trace) e.set_loop_trace(1, TRACE_LOOPMATCH_EIP);
+          if (NO_LOOP_SUPEROPS && e.set_loop_emit) e.set_loop_emit(0);
+        }
+      }
     }
     if (threadManager.hasActiveThreads()) {
       // Give worker threads extra runtime when main thread is idle (e.g., waiting for extraction)
@@ -6745,6 +6780,28 @@ if (VERBOSE) {
     if (instance.exports.get_heap_sparse_end) console.log('heap_sparse_end:', hex(instance.exports.get_heap_sparse_end()));
     if (instance.exports.get_virtual_alloc_top) console.log('virtual_alloc_top:', hex(instance.exports.get_virtual_alloc_top()));
     if (instance.exports.get_heap_base) console.log('heap_base:', hex(instance.exports.get_heap_base()));
+    // A full cache wipe re-decodes the app's whole working set. Per thread,
+    // because each worker owns its own arena and its own counter.
+    if (instance.exports.get_cache_clears) {
+      const parts = [`M ${instance.exports.get_cache_clears()}`];
+      if (threadManager) {
+        for (const [, t] of threadManager.threads) {
+          if (t.instance && t.instance.exports.get_cache_clears) {
+            parts.push(`T${t.tid} ${t.instance.exports.get_cache_clears()}`);
+          }
+        }
+      }
+      console.log('cache: full clears', parts.join('  '));
+      if (instance.exports.get_cache_stores) {
+        console.log('cache: block decodes', instance.exports.get_cache_stores(),
+          'of which evicted a live block', instance.exports.get_cache_evicts());
+      }
+      if (instance.exports.get_cache_invals) {
+        console.log('cache: page invalidations', instance.exports.get_cache_invals(),
+          'that dropped a block', instance.exports.get_cache_inval_hits(),
+          'last', hex(instance.exports.get_cache_inval_page()));
+      }
+    }
     if (instance.exports.gdi_dc_state_used) {
       console.log('gdi: dc_states', instance.exports.gdi_dc_state_used(), '/ 256   objects',
         instance.exports.gdi_object_used(), '/ 256   dc_mark', instance.exports.gdi_table_mark(2));
@@ -6753,6 +6810,23 @@ if (VERBOSE) {
       const st = instance.exports.gdi_dib_arena_stat;
       console.log('gdi: dib arena pages used', st(0), 'free', st(1),
         'largest free run', st(2), 'of', st(3));
+    }
+  }
+
+  if ((TRACE_LOOPMATCH || LOOPMATCH_STATS) && instance.exports.get_loop_selfloop_blocks) {
+    // Each worker thread is its own WASM instance with its own decoder and its
+    // own counters, so a main-only read reports zero for an app whose hot code
+    // runs on a worker (Liquid War parks main in WaitForSingleObject at boot).
+    const report = (label, e) => {
+      if (!e || !e.get_loop_selfloop_blocks) return;
+      console.log(`loopmatch: ${label} self-loop blocks decoded`,
+        e.get_loop_selfloop_blocks(), 'matched', e.get_loop_matched_blocks());
+    };
+    report('M ', instance.exports);
+    if (threadManager) {
+      for (const [, t] of threadManager.threads) {
+        if (t.instance) report(`T${t.tid}`, t.instance.exports);
+      }
     }
   }
 

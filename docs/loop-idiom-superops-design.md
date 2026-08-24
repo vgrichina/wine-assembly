@@ -21,7 +21,9 @@ than on the byte signatures $match_storm_bitreader-style matchers use:
   B  self-loop wrap   any block whose Jcc targets its own entry gets driven by
                       a wrapper handler. Needs no library at all, but keeps one
                       call_indirect per op per iteration, which is the expensive
-                      half. Expect 20-30%, not 90%.
+                      half. Some tens of percent on the blocks it wraps, not
+                      90% -- see 4.2, and note the figure there is reasoned,
+                      not measured.
 
 Neither touches 0x004c7341. That one wants a third, unrelated change:
 promoting a load-modify-store of a fixed global into a block-local.
@@ -183,6 +185,25 @@ There is deliberately no scalar blend pattern -- see 3.2.1.
 for the REP path. `LUT_RUN` and `SCAN_RUN` need their own loops but stay inside
 one handler invocation.
 
+**The lowering column is a refinement, not the win.** The win is that the loop
+becomes *one* thread-stream op instead of N per element, so the whole dispatch
+cost -- `$next` preamble, `call_indirect`, back edge, `$run` round trip -- is
+gone whatever the handler body then does. A plain byte-at-a-time WAT loop
+already captures roughly an order of magnitude on a 9-dispatches-per-pixel
+blitter; `memory.copy`, `memory.fill` and SWAR scanning are second-order polish
+on top of that.
+
+Two consequences, both simplifying:
+
+* Implement each pattern with the dumbest correct scalar loop first, measure,
+  and only then reach for a bulk op. `LUT_RUN` -- the one that actually hits
+  Heroes II's hot block -- has no bulk-op form at all, and does not need one.
+* Guards that exist purely to *legalize* a bulk op can relax. A scalar loop
+  does not need the run to be contiguous, unit-stride, non-overlapping or
+  within one `g2w` page; it only needs the addresses it actually touches to be
+  translated. So a matched-but-unlowerable-to-`memory.copy` run is still worth
+  matching, and the unit-stride column in 9.4 is a floor on reach, not a gate.
+
 ### 3.2.1 Why there is no blend pattern
 
 Alpha/additive blending is the obvious fifth idiom, and the census killed it
@@ -327,8 +348,26 @@ own entry, prepend a wrapper op that drives the body.
 B keeps one indirect call per op per iteration, and per
 `interpreter-dispatch-perf.md` that mispredicted target is the expensive half
 of a dispatch -- two independent attempts to make dispatch itself cheaper
-measured exactly zero. So the honest expectation for B is **20-30%** off the
-blocks it wraps, not the near-elimination A gets where it matches.
+measured exactly zero. So B cannot approach the near-elimination A gets where
+it matches.
+
+How much it *does* get is worth accounting honestly, because the two columns
+above are not the whole story. Per iteration of an N-op body, B removes N
+copies of the `$next` preamble (all cheap, predictable, non-branching work)
+**plus one** trip through the back edge: `$th_jcc`'s two `$read_thread_word`
+calls and `$eip` write, the return all the way out to `$run` -- jcc handlers
+do **not** tail-call `$next`, they return (`src/05-alu.wat:704`, `:740`,
+`:747`) -- the `$run` preamble (`blocks--`, eip==0, thread-arena headroom,
+`$yield_flag`, `$dbg_any`) and a `$cache_lookup`. That back-edge round trip is
+the single largest item B removes, and it is amortized over N, so B's payoff
+falls as the body grows and is largest on the tightest loops.
+
+An earlier draft of this section put a **20-30%** number here. It is removed
+rather than replaced: it was a guess, and swapping in a different guess buys
+nothing. Per the rule in section 1, B lands with a measurement or it does not
+land. The prediction to test is the shape, not the constant -- speedup should
+scale roughly as `(back-edge cost + N x preamble) / (N x call_indirect +
+back-edge cost)`, i.e. big on 2-4 op loops and small on 12-op ones.
 
 Against that: B needs no shape library, cannot be wrong about semantics (it
 runs the same ops in the same order), and fires on every hand-rolled loop in
@@ -382,6 +421,47 @@ since it is 5.03% by itself.
 A0 is shared: B's precondition (block ends in a Jcc to its own entry) is the
 same structural test A's matcher needs, so building A first makes B mostly
 free.
+
+### 6.1 A0 is smaller than it looks: record op starts, don't declare them
+
+Walking the emitted stream needs op boundaries, and the stream is not
+self-describing: a thread word is `[handler_idx, operand]` = 8 bytes, but some
+handlers pull extra words with `$read_thread_word` (`src/04-cache.wat:192`),
+and how many is written only in each handler's own body.
+
+The obvious fix -- a generated 410-entry `op -> word count` table with a build
+gate -- is the wrong one. It *declares* what handlers eat, and a declaration
+can rot: add a `$read_thread_word` to a handler and the table is silently a
+lie, with a mis-walk rather than a build failure as the symptom.
+
+Instead, **record what the decoder actually did**, which it already knows:
+
+* `$te` (`src/04-cache.wat:143`) is the single choke point for op headers, and
+  `$te_raw` (`:161`) the single one for extra words. The decoder has 376 `$te`
+  and 252 `$te_raw` call sites and every one goes through those two functions.
+* So: reset a counter in `$decode_block` beside its existing
+  `(local.set $tstart (global.get $thread_alloc))`, and append the current
+  `$thread_alloc` to a scratch array inside `$te`. `$te_raw` is untouched --
+  extra words are by definition not op starts.
+
+That is correct by construction, needs no generated table and no build gate,
+and costs one store plus an increment per emitted op. Two things make it safe,
+both already true of the tree:
+
+1. `$thread_alloc` never rewinds during decode --
+   `global.set $thread_alloc` does not appear in `src/07-decoder.wat` at all.
+   Existing fusions decide by lookahead before emitting, never by rewriting
+   after, so the index is append-only. (A's own rewind-to-`$tstart` resets the
+   counter to zero on the same line.) Any future peephole pass that rewinds
+   `$thread_alloc` must rewind the index with it.
+2. Nothing needs the index at runtime. A's match and emit, and B's back-edge
+   detection, all happen inside `$decode_block`; `$next` never walks the
+   stream, it executes it. So the index is scratch, reused by every block, and
+   costs no per-block memory.
+
+The scratch array is capped; a block that overflows it sets a poison flag and
+is simply not matched. Degrading to "no lowering" is always safe, and blocks
+that large are not loop idioms.
 
 Recommended order: A0, A1, measure, then decide whether A2/A3 or B1 comes
 next based on what A1's numbers actually say.
@@ -523,11 +603,21 @@ TOTAL                       5719     44     44      6     19      113   2.0%    
 Design A, for two reasons.
 
 First, the denominator is wrong. `call` (2299) and `multi-branch` (1029) are
-58% of all declines, and neither is a matcher weakness: a loop that calls out
+59% of all declines, and neither is a matcher weakness: a loop that calls out
 or has a second exit is not lowerable to a bulk memory op by any predicate.
-Excluding them leaves 2391 in-scope loops and a 4.7% match rate. Those 3328
-declined loops are precisely Design B's constituency, which is the strongest
-argument yet that A and B ship together rather than A alone.
+Excluding them leaves 2391 in-scope loops and a 4.7% match rate.
+
+Those 3328 loops are **not** Design B's constituency, though an earlier draft
+of this section said they were. B as scoped in section 4 is a *same-block*
+self-loop wrapper, and a `call` or a second conditional branch ends a block in
+our decoder -- so those 3328 are exactly the loops B cannot wrap either. B's
+real constituency is the complement: single-block self-loops, which is
+`5719 - 2299 (call) - 1029 (multi-branch) - 83 (ret)` = **2308 loops, 40% of
+the corpus**. That is still an order of magnitude more sites than A's 113, and
+it includes all 113 of them, so the argument for shipping both stands -- it is
+just a smaller and more precise claim than the one it replaces. Reaching the
+other 3328 needs a multi-block loop wrapper, which is a different design than
+either A or B.
 
 Second, and more important, **match rate is not the metric -- hot-block
 coverage is.** Heroes II's four hot blocks are 12.4% of the profile. The
@@ -536,7 +626,10 @@ also takes its `esi`/`edi`/`eax`/`ebx` twins at `0x004c6c10`, `0x004c6cd2` and
 `0x004c762a` -- one predicate, four sites, no per-variant work. The other
 three hot blocks, `0x004c7341` at 5.03% among them, decline as
 `multi-branch`: they are the multi-exit control-byte decoders of section 5. So
-A buys about 2.3 points of that 12.4, and the remaining ten belong to B.
+A buys about 2.3 points of that 12.4. The remaining ten do **not** fall to B
+either, for the reason above -- multi-exit means multi-block. They are the
+case for a third change, and section 5's local-promotion idea is the current
+best guess at what it should be.
 
 ### 9.5 Two rules the tool forced out
 
@@ -573,3 +666,388 @@ What is left in the decline histogram after those: `lea` 338, `add r,r` 317,
 `shl` 240. Those are genuine arithmetic bodies and are correctly declined --
 they are neither copies nor translations, and no amount of matcher generality
 turns them into one.
+
+## 10. A0/A1 as built, and what the first measurement says
+
+A0 and A1 are in the tree: `src/07b-loop-match.wat`, the op-start index in
+`$te` (6.1), and handler 410 `$th_lut_run`. The switches are
+`--trace-loopmatch[=0xEIP]` (dump the ops the matcher sees),
+`--loopmatch-stats` (self-loop and match counts at exit) and
+`--no-loop-superops` (match and count, but emit the original ops -- the A/B
+partner, so both sides of a comparison are the same binary).
+
+### 10.1 The number
+
+Heroes II, gameplay window (`--app=heroes2_demo --batch-size=20000
+--max-batches=2600`, three clicks to get into a map):
+
+| | superop off | superop on |
+|---|---|---|
+| handler dispatches | 71,528,708 | 69,598,446 |
+| entries to `0x4c755d` (`--count`) | 229,515 | 62,544 |
+| final frame | -- | pixel-identical (`png-diff`: 0 of 307200) |
+
+So the lowering removes **2.70% of all handler dispatches** and 166,971 of the
+run's block round trips.
+
+Two things in that table are worth more than the headline.
+
+The first is the entry count. Off, every entry to the block is one iteration of
+the loop, so 229,515 entries = 229,515 iterations. On, an entry runs the loop
+to completion, so 62,544 entries = 62,544 *calls* -- an average run length of
+**3.7 bytes**. The design assumed long runs; this loop is called constantly and
+does almost nothing each time. That is why 4.2's "back-edge cost + N x
+preamble" accounting matters so much more than the per-element lowering (3.2):
+at N = 3.7 the per-element work is the small half of the bill, and essentially
+all of the win here is the round trip that no longer happens.
+
+The second is that the win is 2.7% of the *whole run*, which is what this loop
+is worth in Heroes II. Nothing about the mechanism is at fault -- it does what
+it claims, exactly, and for free at runtime. The pattern is just not where most
+of the time goes.
+
+### 10.2 The generality gate is not met
+
+The rule in this document is that a pattern must fire on at least two unrelated
+apps before it lands. LUT_RUN currently fires on one. Startup-and-menu windows
+(800 batches) of six other graphics-heavy apps produce self-loop blocks and
+zero matches:
+
+| app | self-loop blocks | LUT_RUN matches |
+|---|---|---|
+| starcraft_shareware | 59 | 0 |
+| captain_claw_demo | 74 | 0 |
+| worms2_demo | 21 | 0 |
+| diablo_demo | 16 | 0 |
+| caesar3_demo | 9 | 0 |
+| fallout_demo | 4 | 0 |
+| sol | 6 | 0 |
+
+These are weak negatives -- Heroes II only produces its blitter during
+gameplay, and none of these runs reach gameplay. But dumping the blocks that
+*are* produced shows the near-misses are not near: StarCraft's SIB-byte-load
+self-loops at `0x40b984` and `0x40b7f1` are bit-unpack loops with an `idiv` in
+the body, and Claw's `0x4cb624` is a two-stream byte compare. They decline for
+the right reason, not for a missing role.
+
+The honest reading is that LUT_RUN as specified is close to Heroes-II-specific,
+and the next move is not to generalize the LUT predicate. It is either to go
+after the shapes that actually recur (9.1), or to accept 9.4's arithmetic and
+build B, whose constituency is 2308 loops rather than 113.
+
+### 10.3 Liquid War: the strongest negative so far
+
+Liquid War 5 (`lwwin.exe`) is a useful check because its profile is unusually
+concentrated: two bodies own about 65% of startup -- `0x43ac70`, the packfile
+byte-at-a-time read loop that unpacks the 4.3MB `lw.dat`, and `0x466848`,
+Allegro's `getpixel`, entered once per pixel with two indirect calls inside.
+If Design A had anything to offer a real workload, this is the shape of
+workload where it would show.
+
+It has nothing to offer here, and not marginally:
+
+* **Static.** `tools/match-loops.js lwwin.exe --why` finds 1284 self-contained
+  loops and classifies COPY 12 / FILL 5 / **LUT 0** / SCAN 4. The LUT_RUN
+  predicate cannot fire on this binary at all. 21 loops (1.6%) match something,
+  none of it what A1 lowers. The declines are led by `call` (589) and
+  `multi-branch` (116) -- Design B territory.
+* **Dynamic.** Across the main instance and both worker instances the run
+  decodes 26 self-loop blocks and matches 0.
+* **Neither hot body is a self-loop block.** `tools/disasm_fn.js 0x43ac70`
+  shows the packfile loop running `0x43ac86` to a `jl 0x43ac86` at `0x43acb4`
+  across roughly five basic blocks, with a `call 0x43af80` refill and two
+  conditional exits. Per 9.4 that is not plain Design B either -- a two-exit
+  multi-block loop needs the multi-block wrapper. And `0x466848` is a function
+  *entry* (the `getpixel` prologue with its clip tests), so the cost there is
+  call-per-pixel, which wants inlining, not loop lowering.
+
+This is the same conclusion as 10.2 arrived at from seven weak negatives, but
+reached from a strong one: an app whose profile is dominated by two loops, both
+of which Design A is structurally unable to see.
+
+**Instrumentation note.** `--loopmatch-stats` originally read the counters off
+the main instance only. Every worker thread is a separate WASM instance with
+its own decoder and its own counters, so for an app that parks main and does
+its work on a worker the report was a guaranteed zero that meant nothing. It
+now prints one line per instance (`M`, `T1`, `T2`, ...), and `--trace-loopmatch`
+/ `--no-loop-superops` are re-applied to each worker as it spawns.
+
+**Correction to an earlier caveat.** This section first recorded a headless
+deadlock for `--app=liquid_war` and treated the dynamic half as boot-path only.
+There was no deadlock: the worktree was 16 commits behind main and missing
+`b25ca528 Mount Liquid War's data files where the game looks for them`. After
+the merge the same command reaches a real DirectDraw frame and decodes 22,126
+self-loop blocks on main, still matching **0**. `tools/loopmatch-decode.js
+--why` over that run reduces to 35 unique block shapes, 0 matches, and charges
+**57.1% of the declines to `op-count<7`** -- the self-loops this app actually
+executes are shorter than LUT_RUN's floor. That is the first quantitative
+argument *for* COPY/FILL/SCAN predicates on executed blocks, and it is a
+different argument from the static one in 10.4.
+
+### 10.4 Correction: LUT_RUN is not Heroes-II-specific
+
+10.2 concluded that LUT_RUN "is close to Heroes-II-specific". That conclusion
+was drawn from two things that could not support it: runtime windows that only
+ever reached the boot path of each app, and a static sample of two binaries.
+Running the real predicate over the whole candidate corpus (52 PEs, 37,978
+self-contained loops) says otherwise:
+
+| app | loops | COPY | FILL | LUT | SCAN | matched |
+|---|---|---|---|---|---|---|
+| jazz2.exe | 1961 | 10 | 24 | **36** | 88 | 158 (8.1%) |
+| starcraft.exe | 1932 | 19 | 21 | **17** | 33 | 90 (4.7%) |
+| VirtualDub.exe | 4162 | 52 | 39 | **11** | 138 | 240 (5.8%) |
+| diablo_s.exe | 1719 | 55 | 69 | **9** | 3 | 136 (7.9%) |
+| H2DEMOW.EXE | 1215 | 4 | 5 | **5** | 1 | 15 (1.2%) |
+| tademo.exe | 1700 | 75 | 17 | **3** | 4 | 99 (5.8%) |
+| Falldemo.exe | 1704 | 4 | 22 | **2** | 2 | 30 (1.8%) |
+| scummvm.exe | 4563 | 33 | 80 | **1** | 7 | 121 (2.7%) |
+| QBob.exe | 587 | 7 | 8 | **1** | 1 | 17 (2.9%) |
+| *corpus total* | 37978 | 413 | 429 | **85** | 532 | 1459 (3.8%) |
+
+Nine binaries have static LUT_RUN matches, and Heroes II is fifth among them.
+Jazz Jackrabbit 2 has seven times as many as the app the pattern was designed
+against, and they are unmistakably the same shape -- `0x443d83`, `0x463b49`
+and friends are palette-remap inner loops, byte load, table index, byte store,
+`dec`/`jnz`. StarCraft's sixteen are the same, six of them running backwards
+(stride -1).
+
+So the two-unrelated-apps gate is met on static evidence. What is still
+missing is the runtime half: a gameplay-reaching run of jazz2 and StarCraft
+with `--loopmatch-stats`, to show the matcher fires there and that the blocks
+it fires on are hot. Until that run exists this is a stronger lead than 10.2
+admitted, not a landed result.
+
+**A1 does not cover all of them.** `$th_lut_run` is byte-in/byte-out. Ten of
+the corpus's LUT matches are `size=2` -- a byte index into a 16-bit table with
+a 16-bit store (jazz2 has nine, StarCraft one, e.g. `mov cx, [0x5a3280+ecx*2]`
+followed by `mov [edx-0x2], cx`). Widening the store side is a small extension
+to the handler and the role table, and it is the cheapest way to grow the
+constituency.
+
+**This also weakens the case against chasing COPY/FILL/SCAN.** Corpus-wide
+those are 413 / 429 / 532 loops, not the 31 a two-app sample suggested. The
+other two arguments still stand -- the `rep`-string forms are already single
+handlers (`th_rep_movsb` .. `th_rep_scasw`), and hand-rolled byte copies are
+usually short alignment fixups where 10.1's block-round-trip win is smallest
+-- but "the constituency is tiny" is not one of them.
+
+### 10.5 The block cache was aliasing 1-3-byte-apart blocks (fixed)
+
+Chasing why Liquid War re-decoded one 7-op block 22,054 times in a single
+`--trace-loopmatch` log turned up a defect that has nothing to do with loop
+idioms and costs far more than any of them would save.
+
+`$cache_slot` (was inline in `$cache_lookup`/`$cache_store`) indexed the
+4096-entry direct-mapped block cache with `(ga >> 2) & 0xFFF`. The `>> 2`
+throws away the two low address bits, which is right for a machine with 4-byte
+instructions and wrong for x86, where a basic block starts on any byte. Any two
+blocks 1-3 bytes apart share a slot. In dense code that is exactly the spacing
+of adjacent blocks: Liquid War's `0x466874` and `0x466877`, 6.16M entries each
+in a 9000-batch run, evicted each other on every single entry.
+
+Three counters were added to make this visible, since nothing reported it:
+`get_cache_stores` / `get_cache_evicts` (a decode whose slot already held a
+*different* block -- conflict, as opposed to a compulsory first decode),
+`get_cache_clears` (full arena-overflow wipes), and `get_cache_invals` /
+`get_cache_inval_hits` / `get_cache_inval_page` (self-modifying-code
+invalidations, and the last page that actually dropped a block).
+`test/run.js` prints all of them in the final-state block, per instance for the
+clears.
+
+Indexing on the whole address instead, with the bits above the index width
+folded back in (`(ga ^ (ga >> 12)) & MASK`, which also breaks a fixed 16KB
+stride), on the same fixed 9000-batch Liquid War run:
+
+| | before | after |
+|---|---|---|
+| block decodes | 14,379,380 | 26,788 |
+| of which evicted a live block | 14,366,238 | 24,183 |
+| full cache wipes (main) | 147 | 0 |
+| user CPU for the run | 19.49s | 16.72s |
+
+The wipes are a second-order effect of the same bug: a re-decode allocates
+fresh arena and never reclaims the old copy, so the thrash filled the 4MB
+per-thread arena 147 times, and each overflow throws away every decoded block
+in the process. Page invalidations were 0 throughout -- self-modifying code was
+never involved, which is what ruled out the first two hypotheses.
+
+The 14% CPU figure is the honest speedup, not 537x: the run is a fixed number
+of *blocks*, so it measures overhead removed at constant guest progress, and
+this box was at load 36-60 while measuring. In a real-time game the same saving
+shows up as more guest work per frame. Verified unchanged: minesweeper-click
+(8/8), notepad-editing (10/10), freecell-move (7/7), liquid-war-candidate.
+
+### 10.6 COPY_RUN: the matcher generalizes, the lowering still does not pay
+
+§10.2 asked for a second idiom before believing A1 generalizes. Here it is,
+and it settles two separate questions in opposite directions.
+
+**Where it came from.** `tools/loopmatch-sweep.js` drives ten registered apps
+under `--trace-loopmatch --loopmatch-stats --handler-hist-thread=0` and reports,
+per app, how many self-loop *shapes* actually executed, how many matched, and a
+`hot%` -- the share of the top-20 hottest blocks' entries that are self-loop
+blocks. That last column is the one that mattered. Match rate separated nothing
+(every app but Heroes II matched zero), but `hot%` separated the corpus
+sharply: liquid_war 0.0%, worms2 2.5%, pinball 2.7%, **total_annihilation 31.5%**.
+
+TA's hot self-loops, from `--trace-loopmatch`, are all byte-stream transforms:
+
+| block | share of block entries | shape |
+|---|---|---|
+| 0x497948 | 8.72% | `mov cl,[edx] / inc edx / mov [eax],cl / inc eax / dec [esp+d] / jnz` |
+| 0x481ebd | 6.92% | SIB-addressed masked byte write |
+| 0x4937e1 | 6.55% | byte sum/reduce |
+| 0x4937b0 | 6.48% | two-stream byte transform |
+| 0x497705 | 1.91% | bit unpack |
+
+Together, ~30.6% of all handler dispatches in a 3000-batch run. The first is a
+plain counted byte copy, and it was declined twice over by accidents of
+LUT_RUN's shape rather than of the idiom: it is one op short of the seven-op
+floor, and its trip counter lives on the stack rather than in a register.
+
+**What was built.** A `MEMCTR` role (handler 135, `inc`/`dec dword [base+disp]`)
+and a second predicate, `$loop_try_copy`, lowering to super-op 411
+(`$th_copy_run`). Two cursors with independent strides and displacements, one
+byte register passing through unchanged, and a counter in either a register or
+memory. LUT_RUN declines `MEMCTR` explicitly -- its counting gates would not
+have noticed one, and the super-op would have silently dropped the decrement.
+
+**The matcher generalized.** COPY_RUN fires in 4 of 10 swept apps
+(total_annihilation 7, starcraft 1, diablo 1, pinball 1) where LUT_RUN reached
+one. TA's `hot%` fell 31.5 -> 27.2 as 0x497948 left the hot list entirely:
+1,044,252 iterations collapsed into 245,077 super-op invocations.
+
+**The lowering did not pay.** Min-of-N over a 3000-batch TA run, same build,
+`--no-loop-superops` as the A/B partner:
+
+| | min user CPU | API calls (guest progress) |
+|---|---|---|
+| superops on | 3.24s | 45905 |
+| superops off | 3.21s | 45137 |
+
+A wash, with the lowered build doing 1.7% more guest work. Run-to-run spread on
+this box was ±30%, which is why min-of-N and the progress column are both here.
+This is the second independent demonstration -- LUT_RUN on Heroes II was the
+first -- that removing dispatches from a hot loop does not remove time.
+
+**Why, and what it implies.** The measured average trip count is 4.26
+iterations (245,077 invocations, 1,044,252 iterations, via `--count=0x497948`).
+The block is entered enormously often and does almost nothing each time: about
+1MB copied across 3.6 seconds. So the per-entry cost dominates, and the
+super-op's own prologue is a per-entry cost too -- 14 parameter words, three
+`$get_reg` calls, a `$set_reg8`, a flags update. Reading the parameter block as
+offsets off one base instead of 14 `$read_thread_word` calls, and hoisting the
+memory-counter write-back out of the loop when the destination provably cannot
+cover it, together moved nothing measurable.
+
+The super-op still calls `$gl8`/`$gs8` per byte, and those stayed. That is the
+informative part of the negative: what was removed (dispatch) was not the cost,
+and what remains (bounds-checked, translated per-byte memory access) is. It
+lines up with the earlier `$next`-dispatch negative result -- fewer dispatches
+is simply not the lever on this interpreter.
+
+> **Superseded in part by §10.7.** The A/B above is measured on Total
+> Annihilation, and TA turns out to be decode-bound: its working set blows the
+> block cache, so ~99% of its block decodes evict a live block. An
+> execution-side change cannot show up in that number either way. The negative
+> result is real as a statement about this benchmark; it does not support the
+> conclusion drawn from it below. Read §10.7 first.
+
+**Consequence for Design A.** Do not add a third predicate expecting a speedup.
+The next lever for a byte-stream idiom is a bulk memory primitive --
+`memory.copy` for a `+1/+1` copy with no overlap, which skips the per-byte
+bounds check entirely -- and that only pays where the trip count is long. It is
+not long here. Before building it, measure trip-count distributions, not match
+rates or block-entry shares: 0x497948 looked like 8.7% of the machine and was
+worth approximately nothing.
+
+Verified unchanged: minesweeper-click (8/8), notepad-editing (10/10),
+freecell-move (7/7), liquid-war-candidate, heroes2-gameplay (1722 frames,
+adventure map reached).
+
+### 10.7 Page-chunked memory access, and why TA could never have measured it
+
+§10.6 concluded that the cost left in a super-op was per-byte translated
+memory access, and that Design A had no more to give. The first half was
+right and has now been acted on. The second half rested on a benchmark that
+could not have detected the fix.
+
+**Mappings cannot change inside a super-op.** `$g2w`'s own comment states that
+map records are append-only — `VirtualFree` currently preserves its backing —
+and new records are created only by API calls (`VirtualAlloc`, file mapping,
+DLL load). No guest code runs while a super-op is on the stack, so a
+translation resolved at the top of a run stays valid for the whole run. There
+is nothing to re-validate.
+
+**A page is the largest safe chunk.** Translation is affine per *map record*,
+not per page, and the direct guest window is one affine region spanning
+0..0x8000000 — so region-granular chunking would be even coarser. But a sparse
+reservation committed in pieces gets one record per commit, and `$gl32`'s
+comment spells out the consequence: "adjacent guest pages need not have
+adjacent WASM backing". A page is therefore the largest span whose guest→WASM
+delta is *guaranteed* constant, and it is the same invariant `$gl32`/`$gl16`
+already rely on when they skip their cross-page gather.
+
+**What changed.** Both super-ops now resolve per chunk instead of per byte:
+
+```
+chunk = min(trips_left, steps_budget, page_room(src), page_room(dst))
+  src_wa = g2w(...)            1 call   was 1 per byte ($gl8, page-cached)
+  dst_wa = g2w(...)            1 call   was 1 per byte ($gs8, NOT cached)
+  invalidate_code_write        1 call   was 1 per byte
+  inner: i32.load8_u / i32.store8 / two pointer bumps, nothing else
+```
+
+The code-page test is hoisted to once per chunk because a chunk cannot leave
+the destination page and nothing executes between its first and last store, so
+invalidating up front is exactly what invalidating per byte did. Two shapes
+escape to `chunk = 1`, which is bit-for-bit the old behaviour: a cursor that
+resolves to `NULL_SENTINEL` (four bytes, not a page, and must never be walked),
+and a COPY_RUN whose counter lives in memory the destination might cover.
+
+LUT_RUN gets one more: its 256-byte lookup table is loop-invariant, so its
+translation is hoisted out of the entire run when all 256 entries fit in one
+page (`tbl & 0xFFF <= 0xF00`). A straddling table keeps `$gl8`, whose page
+cache handles two pages well. That takes LUT from three per-byte translations
+to zero.
+
+Byte granularity is kept in the inner loop, so overlap semantics are unchanged
+— the copy still runs in the original's direction, one byte at a time.
+Widening to `memory.copy` or i32 steps is the point at which overlap would
+start to matter.
+
+**TA is decode-bound.** This is the finding that matters most here:
+
+| TA, 1000 batches | |
+|---|---|
+| block decodes | 1,213,167 |
+| of which evicted a live block | 1,201,016 (99.0%) |
+
+Its working set exceeds the block cache, so nearly every decode discards a live
+block and decode cost dominates the run. §10.6's wash is a property of that
+benchmark. If TA is to get faster, the lever is block-cache capacity or
+eviction policy, not the loop matcher.
+
+**Heroes II, the honest measurement, is inconclusive on this box.** Min-of-5,
+2600 batches, load ~5.5, `--no-loop-superops` as the partner:
+
+| | run times (user CPU) | min | median |
+|---|---|---|---|
+| superops on | 3.08 4.36 4.17 3.89 4.72 | 3.08 | 4.17 |
+| superops off | 3.62 4.23 4.42 3.98 4.22 | 3.62 | 4.22 |
+
+Min says 15%, median says 1%. That is noise at this load, and it should not be
+read as a win: `--loopmatch-stats` reports Heroes II matching **6 blocks of
+89**, far too small a slice to plausibly move 15% of a run.
+
+**What this leaves.** The change is justified by argument, not by measurement:
+it strictly removes work per byte and provably cannot change behaviour. What is
+still missing is a way to see it. Before the next attempt at this, build a
+deterministic counter — translations performed per run — so the effect can be
+read off a single run instead of chased through wall-clock on a loaded box.
+That instrument is worth more than another predicate.
+
+Verified unchanged: heroes2-gameplay (byte-identical output — map green 37.3%,
+black 39.4%, panel wood 69.7%, 1722 frames), minesweeper-click (8/8),
+notepad-editing (10/10), freecell-move (7/7).
