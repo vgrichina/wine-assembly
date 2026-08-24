@@ -1197,6 +1197,9 @@
   ;; 0x07E14000 32KB     DIB_PAGE_RUNS
   ;; 0x07E1C000 832KB    GDI_REGION_BANDS (256 x 208 RECT slots)
   ;; 0x079CA000 512B     WIN16_BUILTIN_NAMES (KERNEL/USER/GDI by-name exports)
+  ;; 0x079CA800 16KB     TV_TABLE (512 entries × 32 bytes)
+  ;; 0x079CE800  4KB     TV_IMAGE_TABLE (512 entries × {image, selected image})
+  ;; 0x079CF800  2KB     TV_OWNER_TABLE (owning hwnd per TV_TABLE item)
   ;; 0x079C8000  1KB     WND_Z_ORDER_TABLE (256 × 4-byte sibling z ranks)
   ;; 0x079D0000 32KB     GDI_NEAREST_CACHE (4096 × {colour tag, palette index})
   ;; 0x07EEC000 13KB     GDI_REGION_WORK (4 x 208 RECT buffers)
@@ -1213,10 +1216,8 @@
   ;; 0x07EFA800 8KB      GDI_WINDOW_SURFACE_TABLE (256 x 32-byte records)
   ;; 0x07EFC800 8KB      GDI_DC_AUX_TABLE (256 x 32-byte extended DC state)
   ;; 0x07EFE800 6KB      GDI_COLOR_ADJUST_TABLE (256 x 24-byte structures)
-  ;; 0x07F00000  1KB     TV_TABLE (32 entries × 32 bytes)
   ;; 0x07F00400  3KB     PROP_TABLE (256 entries × 12 bytes)
   ;; 0x07F01000  256B    PAINT_FLAGS (1 byte per window slot)
-  ;; 0x07F01100  256B    TV_IMAGE_TABLE (32 entries × {image, selected image})
   ;; 0x07F01200  256B    TAB_NATIVE_STATE_TABLE (32 × {hwnd, mirror state ptr})
   ;; 0x07F01300  256B    ICON_TABLE (32 entries × {hInstance, resource id})
   ;; 0x07F01400  1KB     SYNC_TABLE (64 entries × 16 bytes)
@@ -1229,7 +1230,8 @@
   ;; 0x07F0A800 3KB      GDI_BITMAP_FONT_TABLE (48 strikes x 64 bytes)
   ;; 0x07F0C000 2KB      GDI_DC_SYSTEM_CLIP_TABLE (256 x {HDC, owned HRGN})
   ;; 0x07F0C800 16B      GDI_TABLE_MARKS (high-water slot counts, 3 used)
-  ;; 0x07F0C900 128B     TV_OWNER_TABLE (owning hwnd per TV_TABLE item)
+  ;; 0x07F0C900   4B     TV_SLOT_MARK (one past the highest TV_TABLE slot used)
+  ;; 0x07F0C904   4B     TV_HANDLE_SEQ (item-handle sequence, shared by threads)
   ;; 0x07F0CA00 256B     TV_VIEW_TABLE (16 x per-TreeView caret/scroll/imagelist)
   ;; 0x07F0D000 8KB      GDI_REGION_TABLE (256 WAT-owned HRGN records)
   ;; 0x07F0F000 4KB      GDI_DC_PATH_TABLE (256 x 16-byte WAT path records)
@@ -1551,8 +1553,22 @@
   (global $GDI_TABLE_MARKS_SIZE i32 (i32.const 0x00000010))
   ;; Which TreeView each TV_TABLE item belongs to, parallel-indexed to it. The
   ;; item records are full at 32 bytes, so the owner has to live beside them.
-  (global $TV_OWNER_TABLE i32 (i32.const 0x07F0C900))
-  (global $TV_OWNER_TABLE_SIZE i32 (i32.const 0x00000080))
+  (global $TV_OWNER_TABLE i32 (i32.const 0x079CF800))
+  (global $TV_OWNER_TABLE_SIZE i32 (i32.const 0x00000800))
+  ;; High-water mark: one past the highest TV_TABLE slot ever allocated. Every
+  ;; scan bounds itself with this rather than with the full slot count, so
+  ;; growing the table costs nothing for the app that only ever shows a dozen
+  ;; items. It lives in memory and not in a global because a worker thread is a
+  ;; separate instance with its own globals but the same linear memory, and
+  ;; Winamp's AVS fills its tree from a worker while the main thread paints it.
+  (global $TV_SLOT_MARK i32 (i32.const 0x07F0C900))
+  (global $TV_SLOT_MARK_SIZE i32 (i32.const 0x00000004))
+  ;; Item-handle sequence, for the same reason: a handle allocated on a worker
+  ;; thread has to be unique against the ones the main thread handed out. Two
+  ;; items with the same handle turn a sibling walk into a cycle, and the walk
+  ;; that appends a child runs until the process is killed.
+  (global $TV_HANDLE_SEQ i32 (i32.const 0x07F0C904))
+  (global $TV_HANDLE_SEQ_SIZE i32 (i32.const 0x00000004))
   ;; Per-TreeView view state, 16 records x 16 bytes:
   ;;   +0 hwnd (0 = free)  +4 caret item  +8 first visible row  +12 image list
   (global $TV_VIEW_TABLE i32 (i32.const 0x07F0CA00))
@@ -1791,10 +1807,16 @@
   ;;   +4: Type (1=Event, 2=Mutex, 3=Semaphore)
   ;;   +8: State (0=Unsignaled, 1=Signaled)
   ;;   +12: ManualReset (1 for Manual, 0 for Auto)
-  (global $TV_TABLE i32 (i32.const 0x07F00000))
-  (global $TV_TABLE_SIZE i32 (i32.const 0x00000400))
-  (global $TV_IMAGE_TABLE i32 (i32.const 0x07F01100))
-  (global $TV_IMAGE_TABLE_SIZE i32 (i32.const 0x00000100))
+  ;; TreeView items, one 32-byte record each. 32 slots was enough while the
+  ;; only trees we ever saw were a Preferences page; Winamp's AVS editor fills
+  ;; its own tree on top of that one, and an app that gets NULL back from
+  ;; TVM_INSERTITEM does not stop asking -- AVS retries the insert forever, so
+  ;; a full table reads as a hang rather than as a truncated tree.
+  (global $TV_TABLE i32 (i32.const 0x079CA800))
+  (global $TV_TABLE_SIZE i32 (i32.const 0x00004000))
+  (global $TV_SLOT_COUNT i32 (i32.const 512))
+  (global $TV_IMAGE_TABLE i32 (i32.const 0x079CE800))
+  (global $TV_IMAGE_TABLE_SIZE i32 (i32.const 0x00001000))
   (global $TAB_NATIVE_STATE_TABLE i32 (i32.const 0x07F01200))
   (global $TAB_NATIVE_STATE_TABLE_SIZE i32 (i32.const 0x00000100))
   ;; ICON_TABLE: what an HICON actually stands for. An icon handle has to

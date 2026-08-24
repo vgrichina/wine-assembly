@@ -20,19 +20,19 @@
 //      the registry-loaded module AND that the walk continues to vis_w behind
 //      it and still shows the page.
 //
-//   C. The bogus handle vis_avs sends to. Winamp 2.91 calls
-//      winampVisGetHeader() with no arguments; AVS 2.8 was built for Winamp 5
-//      and reads an argument anyway, so it sends WM_USER/IPC_GET_API_SERVICE
-//      to whatever that stack slot held -- 0xe0 here, a handle no window ever
-//      had. Windows answers 0. We used to answer with the app's own global
-//      wndproc, and AVS called through the number that came back. The case
-//      pins the 0.
+//   C. AVS starts. The desktop config mounts the AVS 2.6.1 that the Winamp
+//      2.95 installer extracts -- the 2.8 build under plugins/candidates was
+//      made for Winamp 5, reads an argument winampVisGetHeader() was never
+//      called with, and sends its api_service query to whatever that stack
+//      slot held. 2.6.1 has no such call: selecting its row and pressing Start
+//      loads it, creates its "avswnd" from the worker thread Winamp hands it,
+//      loads the fyrewurx APE its preset chain references, and reads its
+//      saved config out of the VFS. The case pins those four.
 //
-// Known gaps, deliberately not asserted: AVS still cannot initialize under
-// this Winamp -- 2.91 has no api_service to hand it (no reference to IPC 3025
-// anywhere in winamp.exe), and AVS dereferences the answer unconditionally, so
-// it is incompatible on real hardware too and stays out of the desktop config.
-// vis_milk2 and vis_nsfs also derail the enumeration walk. MilkDrop itself
+// Known gaps, deliberately not asserted: vis_milk2 and vis_nsfs derail the
+// enumeration walk, and AVS 2.8 still cannot initialize under this Winamp --
+// 2.91 has no api_service to hand it (no reference to IPC 3025 anywhere in
+// winamp.exe), so it is incompatible on real hardware too. MilkDrop itself
 // refuses to render ("This plugin can't run without music") because its
 // IsPlaying query is a cross-thread SendMessage from the plug-in's worker to
 // the main window, which returns without running the target wndproc.
@@ -89,7 +89,8 @@ function assertNoCrash(out, label) {
 
 // Preferences opens at 0,0 and the player at 26,29, the same geometry the
 // browser test drives. Plug-ins > Visualization (54,188) > the wWis row
-// (170,73 -- MilkDrop sorts above it) > Start (184,323) > Stop (244,323) >
+// (170,86 -- the list is in enumeration order, so AVS and MilkDrop sit above
+// it, one 13px row each) > Start (184,323) > Stop (244,323) >
 // Start > close Preferences (440,16) > play (66,129).
 const shotA = path.join(OUT, 'winamp-vis-w.png');
 try { fs.unlinkSync(shotA); } catch (_) {}
@@ -105,7 +106,7 @@ const outA = run([
     '5:273:2',
     '80:post-cmd:40317',
     '360:click:54:188',
-    '440:click:170:73',
+    '440:click:170:86',
     '520:click:184:323',
     '680:click:244:323',
     '840:click:184:323',
@@ -187,29 +188,34 @@ check((outB.match(/ShowWindow\(hwnd=hwnd:0x[0-9a-f]+, cmd=SW_SHOWNA\)/g) || []).
 
 // ---------------------------------------------------------------- case C
 
-const VIS_AVS = path.join(ROOT, 'binaries', 'plugins', 'candidates', 'vis_avs.dll');
+const VIS_AVS = path.join(ROOT, 'binaries', 'plugins', 'vis_avs.dll');
 if (fs.existsSync(VIS_AVS)) {
+  // AVS enumerates first, so its row is the top one (170,60). The run ends
+  // right after Start: everything asserted here happens within a few batches
+  // of the plug-in getting its thread.
   const outC = run([
     RUN,
     '--app=winamp',
     '--screen=756x480',
-    '--max-batches=560',
+    '--max-batches=520',
     '--batch-size=50000',
-    '--dll-seed=binaries/plugins/candidates/vis_avs.dll',
-    '--vfs-mount=binaries/plugins/candidates/vis_avs.dll=c:\\plugins\\vis_avs.dll',
-    '--trace-api=GetProcAddress,SendMessageA',
-    '--input=' + ['5:273:2', '80:post-cmd:40317', '360:click:54:188'].join(','),
+    '--trace-api=LoadLibraryA,GetProcAddress,CreateWindowExA,ReadFile',
+    '--input=' + ['5:273:2', '80:post-cmd:40317', '360:click:54:188',
+      '440:click:170:60', '500:click:184:323'].join(','),
   ], 180000);
 
-  console.log('case C: a message sent to a handle no window ever had');
+  console.log('case C: AVS 2.6.1 starts on its own thread');
   assertNoCrash(outC, 'vis_avs');
-  // WM_USER (1024) with IPC_GET_API_SERVICE (3025) in lParam, to 0xe0.
-  const bogus = outC.match(
-    /SendMessageA\(hwnd=hwnd:0x000000e0, msg=1024, wP=0, lP=3025\)[^\n]*\n\s*=> (\S+)/);
-  if (check(bogus, 'vis_avs: AVS should send its api_service query to the stale handle')) {
-    check(bogus[1] === '0',
-      `vis_avs: a message to a handle that was never issued should answer 0, got ${bogus[1]}`);
-  }
+  check(/\[API T\d+\] LoadLibraryA\(name="C:\\Plugins\\vis_avs\.dll"\)/i.test(outC),
+    'vis_avs: Start should load the plug-in from C:\\Plugins on the worker thread');
+  check(/\[API T\d+\] GetProcAddress\(mod=h:0x[0-9a-f]+, name="winampVisGetHeader"\)/.test(outC),
+    'vis_avs: the worker should read winampVisGetHeader from the loaded module');
+  const avsCreate = outC.match(/\[API T\d+\] CreateWindowExA\(exStyle=\d+, class="avswnd", title="([^"]*)"/);
+  check(avsCreate, 'vis_avs: the plug-in should create its window from its own worker thread');
+  check(/LoadLibraryA\(name="C:\\avs\\fyrewurx\.ape"\)/i.test(outC),
+    'vis_avs: the preset chain should load the fyrewurx APE');
+  check(/ReadFile\([^\n]*path=c:\\vis_avs\.dat\)/i.test(outC),
+    'vis_avs: AVS should read its saved config from the VFS');
 }
 
 // ----------------------------------------------------------------
@@ -219,4 +225,4 @@ if (failures.length) {
   for (const f of failures) console.log(`  - ${f}`);
   process.exit(1);
 }
-console.log('\nPASS  Winamp visualizers: vis_w renders, MilkDrop enumerates');
+console.log('\nPASS  Winamp visualizers: vis_w renders, MilkDrop enumerates, AVS starts');

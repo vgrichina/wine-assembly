@@ -21,7 +21,6 @@
   ;; $tv_active_owner names the window the current operation belongs to; the
   ;; item walks skip anything another window owns.
 
-  (global $tv_next_handle (mut i32) (i32.const 0xCC000001))
   (global $tv_count (mut i32) (i32.const 0))
   (global $tv_active_owner (mut i32) (i32.const 0))
   (global $tv_drag_anchor_y (mut i32) (i32.const 0))
@@ -40,6 +39,12 @@
   (func $tv_image_record (param $slot i32) (result i32)
     (i32.add (global.get $TV_IMAGE_TABLE)
       (i32.mul (local.get $slot) (i32.const 8))))
+
+  ;; One past the highest slot ever handed out. Every table walk stops here,
+  ;; so the table can be large without making an app that inserts a dozen
+  ;; items pay for the slots it never touches.
+  (func $tv_slot_limit (result i32)
+    (i32.load (global.get $TV_SLOT_MARK)))
 
   (func $tv_owner_cell (param $slot i32) (result i32)
     (i32.add (global.get $TV_OWNER_TABLE)
@@ -106,7 +111,7 @@
   (func $tv_owned_count (result i32)
     (local $i i32) (local $count i32)
     (block $done (loop $items
-      (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
+      (br_if $done (i32.ge_u (local.get $i) (call $tv_slot_limit)))
       (if (i32.and
             (i32.ne (i32.load
               (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
@@ -198,28 +203,43 @@
                 (drop (call $host_gdi_delete_dc (local.get $memdc)))))))))
     (local.get $ret))
 
+  ;; An item handle carries its own slot in the low 10 bits, so finding the
+  ;; record behind a handle is one load rather than a walk of the table. The
+  ;; walk was not merely slower: appending the nth child called it n times, and
+  ;; a tree with a few hundred items -- Winamp's AVS editor -- spent whole
+  ;; seconds inside a single TVM_INSERTITEM.
+  (func $tv_handle_for_slot (param $slot i32) (param $seq i32) (result i32)
+    (i32.or (i32.const 0xCC000000)
+      (i32.or (i32.shl (i32.and (local.get $seq) (i32.const 0xFFFF)) (i32.const 10))
+              (local.get $slot))))
+
   ;; Find slot index for a handle, return -1 if not found
   (func $tv_find_slot (param $handle i32) (result i32)
-    (local $i i32)
-    (local.set $i (i32.const 0))
-    (block $done
-      (loop $loop
-        (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
-        (if (i32.eq (i32.load (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32)))) (local.get $handle))
-          (then (return (local.get $i))))
-        (local.set $i (i32.add (local.get $i) (i32.const 1)))
-        (br $loop)))
-    (i32.const -1))
+    (local $slot i32)
+    (if (i32.ne (i32.and (local.get $handle) (i32.const 0xFC000000)) (i32.const 0xCC000000))
+      (then (return (i32.const -1))))
+    (local.set $slot (i32.and (local.get $handle) (i32.const 0x3FF)))
+    (if (i32.ge_u (local.get $slot) (global.get $TV_SLOT_COUNT))
+      (then (return (i32.const -1))))
+    (if (i32.ne
+          (i32.load (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32))))
+          (local.get $handle))
+      (then (return (i32.const -1))))
+    (local.get $slot))
 
-  ;; Find free slot, return index or -1 if full
+  ;; Find free slot, return index or -1 if full. This is the one scan that runs
+  ;; past the high-water mark -- it is what moves it.
   (func $tv_alloc_slot (result i32)
     (local $i i32)
     (local.set $i (i32.const 0))
     (block $done
       (loop $loop
-        (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
+        (br_if $done (i32.ge_u (local.get $i) (global.get $TV_SLOT_COUNT)))
         (if (i32.eqz (i32.load (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32)))))
-          (then (return (local.get $i))))
+          (then
+            (if (i32.gt_u (i32.add (local.get $i) (i32.const 1)) (call $tv_slot_limit))
+              (then (i32.store (global.get $TV_SLOT_MARK) (i32.add (local.get $i) (i32.const 1)))))
+            (return (local.get $i))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $loop)))
     (i32.const -1))
@@ -241,7 +261,7 @@
     (local.set $i (i32.const 0))
     (block $done
       (loop $loop
-        (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
+        (br_if $done (i32.ge_u (local.get $i) (call $tv_slot_limit)))
         (local.set $scan
           (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
         (if (i32.and
@@ -272,16 +292,20 @@
     (local $slot i32) (local $base i32) (local $handle i32)
     (local $image_rec i32)
     (local $hParent i32) (local $state i32) (local $mask i32)
-    (local $parent_slot i32) (local $sib i32)
+    (local $parent_slot i32) (local $sib i32) (local $guard i32)
     (local $text_g i32) (local $text_w i32) (local $text_len i32) (local $text_copy_g i32)
     (local $notify_g i32) (local $notify_w i32) (local $notify_parent i32)
     ;; Allocate slot
     (local.set $slot (call $tv_alloc_slot))
     (if (i32.eq (local.get $slot) (i32.const -1))
       (then (return (i32.const 0))))
-    ;; Generate handle
-    (local.set $handle (global.get $tv_next_handle))
-    (global.set $tv_next_handle (i32.add (global.get $tv_next_handle) (i32.const 1)))
+    ;; Generate handle. The sequence lives in memory, not in a global: worker
+    ;; threads are separate instances with their own globals, and two live
+    ;; items sharing a handle make the sibling walk below run forever.
+    (i32.store (global.get $TV_HANDLE_SEQ)
+      (i32.add (i32.load (global.get $TV_HANDLE_SEQ)) (i32.const 1)))
+    (local.set $handle
+      (call $tv_handle_for_slot (local.get $slot) (i32.load (global.get $TV_HANDLE_SEQ))))
     (global.set $tv_count (i32.add (global.get $tv_count) (i32.const 1)))
     ;; Slot base address
     (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32))))
@@ -423,9 +447,13 @@
                   (i32.add (global.get $TV_TABLE) (i32.mul (local.get $parent_slot) (i32.const 32)))
                   (local.get $handle)))
               (else
-                ;; Find last sibling, append
+                ;; Find last sibling, append. No sibling chain can be longer
+                ;; than the table, so a chain that says otherwise is a cycle:
+                ;; stop rather than walking it until the process is killed.
                 (block $end
                   (loop $find
+                    (local.set $guard (i32.add (local.get $guard) (i32.const 1)))
+                    (br_if $end (i32.gt_u (local.get $guard) (global.get $TV_SLOT_COUNT)))
                     (local.set $slot (call $tv_find_slot (local.get $sib)))
                     (br_if $end (i32.eq (local.get $slot) (i32.const -1)))
                     (if (i32.eqz (i32.load offset=12
@@ -559,7 +587,7 @@
     (block $done
       (loop $walk
         (br_if $done (i32.eqz (local.get $parent)))
-        (if (i32.ge_u (local.get $guard) (i32.const 32))
+        (if (i32.ge_u (local.get $guard) (call $tv_slot_limit))
           (then (return (i32.const 0))))
         (local.set $slot (call $tv_find_slot (local.get $parent)))
         (if (i32.eq (local.get $slot) (i32.const -1))
@@ -581,7 +609,7 @@
         (br_if $done (i32.eqz (local.get $parent)))
         (if (i32.eq (local.get $parent) (local.get $ancestor))
           (then (return (i32.const 1))))
-        (if (i32.ge_u (local.get $guard) (i32.const 32))
+        (if (i32.ge_u (local.get $guard) (call $tv_slot_limit))
           (then (return (i32.const 0))))
         (local.set $slot (call $tv_find_slot (local.get $parent)))
         (if (i32.eq (local.get $slot) (i32.const -1))
@@ -598,7 +626,7 @@
     (local.set $ancestor (i32.load (local.get $base)))
     (local.set $i (i32.const 0))
     (block $done (loop $items
-      (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
+      (br_if $done (i32.ge_u (local.get $i) (call $tv_slot_limit)))
       (local.set $scan_base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
       (if (i32.and
             (i32.ne (i32.load (local.get $scan_base)) (i32.const 0))
@@ -616,7 +644,7 @@
     (local $i i32) (local $base i32) (local $count i32)
     (local.set $i (i32.const 0))
     (block $done (loop $items
-      (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
+      (br_if $done (i32.ge_u (local.get $i) (call $tv_slot_limit)))
       (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
       (if (i32.and
             (i32.and
@@ -687,7 +715,7 @@
         (then (return (i32.load offset=12 (local.get $base)))))
       (local.set $parent (i32.load offset=4 (local.get $base)))
       (br_if $done (i32.eqz (local.get $parent)))
-      (br_if $done (i32.ge_u (local.get $guard) (i32.const 32)))
+      (br_if $done (i32.ge_u (local.get $guard) (call $tv_slot_limit)))
       (local.set $slot (call $tv_find_slot (local.get $parent)))
       (br_if $done (i32.eq (local.get $slot) (i32.const -1)))
       (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32))))
@@ -705,7 +733,7 @@
     ;; Find the first root, then follow the linked hierarchy in display order.
     (local.set $i (i32.const 0))
     (block $root_done (loop $roots
-      (br_if $root_done (i32.ge_u (local.get $i) (i32.const 32)))
+      (br_if $root_done (i32.ge_u (local.get $i) (call $tv_slot_limit)))
       (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
       (if (i32.and
             (i32.and
@@ -733,7 +761,7 @@
         (local.set $i (i32.const 0))
         (block $done
           (loop $loop
-            (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
+            (br_if $done (i32.ge_u (local.get $i) (call $tv_slot_limit)))
             (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
             (if (i32.and (i32.and
                            (i32.ne (i32.load (local.get $base)) (i32.const 0))  ;; handle != 0
@@ -897,7 +925,7 @@
 	              (i32.and (i32.load offset=20 (local.get $base)) (i32.const 0xFFFFFFFD)))))))
     (local.set $i (i32.const 0))
     (block $clear_done (loop $clear_items
-      (br_if $clear_done (i32.ge_u (local.get $i) (i32.const 32)))
+      (br_if $clear_done (i32.ge_u (local.get $i) (call $tv_slot_limit)))
       (local.set $scan_base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
       ;; Only this control's items: dropping TVIS_SELECTED across the whole
       ;; table would deselect the other TreeView's caret item too.
@@ -1019,7 +1047,7 @@
       (then
         (local.set $i (i32.const 0))
         (block $scan_done (loop $scan_items
-          (br_if $scan_done (i32.ge_u (local.get $i) (i32.const 32)))
+          (br_if $scan_done (i32.ge_u (local.get $i) (call $tv_slot_limit)))
           (local.set $scan_base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
           (if (i32.and
                 (i32.and
@@ -1311,7 +1339,7 @@
     (global.set $tv_debug_paint_text (i32.const 0))
     (global.set $tv_debug_paint_iterations (i32.const 0))
     (block $done (loop $items
-      (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
+      (br_if $done (i32.ge_u (local.get $i) (call $tv_slot_limit)))
       (local.set $hItem (call $tv_visible_handle_at_row (local.get $i)))
       (br_if $done (i32.eqz (local.get $hItem)))
       (global.set $tv_debug_paint_iterations
