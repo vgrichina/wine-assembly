@@ -89,6 +89,8 @@ node tools/profile-web-frames.js --app=blobby_volley --seconds=20 --query='?debu
   --report-eval='JSON.stringify(window.WinePerf.snapshot())'
 ```
 
+**`--headful` when the number will be quoted.** Headless Chrome has no compositor surface and no display refresh to pace rAF against, so its frame intervals describe a browser nobody runs — pass `--headful` for anything presented as what the app feels like, and keep headless for pass/fail checks that only need the page to work. `--cpu-profile` is what answers "what is it spending time on" (V8 self time; resolve the `wasm-function[N]` names with `node tools/func-index.js N`), and `--guest-key=VK@atSec:holdSec` holds a guest key down *during* the sample, which is how you measure a scrolling map rather than an idle one.
+
 **Check `uptime` before trusting any of it.** This box regularly sits at load 20-40 with several agent sessions running sweeps, and at that load the browser numbers measure the machine, not the emulator. `profile-web-frames.js` prints `loadavg` either side of every sample and flags anything above 4 for exactly this reason.
 
 **Rule:** before adding a `console.log` to source, check that none of the above already covers it. If tracing a new primitive that isn't wrapped yet, add a `wrap(...)` entry to the `gdi` block (or the appropriate one) — that investment pays off on every future session. Source stays clean between sessions; tracing is a runtime flag, not an edit.

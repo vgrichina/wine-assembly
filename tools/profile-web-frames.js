@@ -49,6 +49,22 @@ const AFTER_LAUNCH = opt('after-launch', '');
 // the guest opens in its first second, say); this is the seam for that.
 const BEFORE_LOAD = opt('before-load', '');
 const CPU_PROFILE = argv.includes('--cpu-profile');
+// --headful: run in a visible Chrome window instead of a headless one. Headless
+// Chrome is a different renderer -- no compositor surface, no display refresh
+// to pace rAF against -- so its frame intervals and long tasks describe a
+// browser nobody is running. Use this whenever the number is going to be quoted
+// as what the app feels like; headless stays the default for pass/fail checks
+// that only need the page to work.
+const HEADFUL = argv.includes('--headful');
+// --guest-key=VK@atSec:holdSec[,...]: hold a guest key down for a while DURING
+// the sample. Scrolling a map is the workload that separates "the app is idle"
+// from "the app is redrawing everything", and it is a held arrow key, not a
+// click. VK is a Windows virtual-key code: 0x25/26/27/28 = left/up/right/down.
+const KEYS = (opt('guest-key', '') || '').split(',').filter(Boolean).map(spec => {
+  const [vk, when] = spec.split('@');
+  const [at, hold] = (when || '0:1').split(':');
+  return { vk: Number(vk), at: Number(at), hold: Number(hold || 1) };
+});
 // --resize-viewport=WxH@Ns[,WxH@Ns]: resize the browser window partway through
 // the sample. The emulator's screen canvas is sized from its wrapper, so this
 // is the only way to exercise renderer.handleScreenResize -- and the windows it
@@ -122,10 +138,14 @@ async function main() {
   const base = ORIGIN || `http://127.0.0.1:${port}`;
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'wine-assembly-frames-'));
   const browser = await puppeteer.launch({
-    headless: true,
+    headless: !HEADFUL,
     executablePath: CHROME,
     userDataDir: profile,
-    args: ['--no-sandbox', '--disable-gpu', '--no-first-run', '--no-default-browser-check'],
+    // --disable-gpu only in headless: forcing software compositing in a visible
+    // window would measure a browser nobody runs, which is the whole reason
+    // --headful exists.
+    args: ['--no-sandbox', '--no-first-run', '--no-default-browser-check']
+      .concat(HEADFUL ? [] : ['--disable-gpu']),
   });
   const problems = [];
   try {
@@ -290,6 +310,22 @@ async function main() {
           .then(() => console.log(`  resized viewport to ${r.w}x${r.h}`))
           .catch(() => {});
       }, r.at * 1000);
+    }
+
+    // Held keys, scheduled inside the sample for the same reason the resizes
+    // are: the frames the scroll costs have to land in the histogram, not
+    // before it.
+    for (const k of KEYS) {
+      setTimeout(() => {
+        page.evaluate(vk => sharedRenderer.handleKeyDown(vk), k.vk)
+          .then(() => console.log(`  key 0x${k.vk.toString(16)} down`))
+          .catch(() => {});
+      }, k.at * 1000);
+      setTimeout(() => {
+        page.evaluate(vk => sharedRenderer.handleKeyUp(vk), k.vk)
+          .then(() => console.log(`  key 0x${k.vk.toString(16)} up`))
+          .catch(() => {});
+      }, (k.at + k.hold) * 1000);
     }
 
     console.log(`sampling ${SECONDS}s ...`);
