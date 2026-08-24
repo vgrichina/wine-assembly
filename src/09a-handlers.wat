@@ -4452,10 +4452,62 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
   )
 
-  ;; 913: FindWindowExA(hwndParent, hwndChildAfter, lpszClass, lpszWindow) — return NULL
+  ;; One candidate against FindWindowEx's two filters. Either guest pointer
+  ;; may be 0, which means "any". A class is matched through the class table
+  ;; rather than by string, so the MAKEINTATOM form of a class key selects the
+  ;; same record its name does; a title is compared case-insensitively against
+  ;; the window's stored text, the way USER's own comparison does.
+  (func $find_window_matches (param $hwnd i32) (param $class_g i32) (param $title_g i32)
+                             (result i32)
+    (local $slot i32) (local $title_wa i32)
+    (if (local.get $class_g)
+      (then
+        (local.set $slot (call $class_find_slot
+          (select (local.get $class_g) (call $g2w (local.get $class_g))
+                  (i32.lt_u (local.get $class_g) (i32.const 0x10000)))))
+        (if (i32.lt_s (local.get $slot) (i32.const 0)) (then (return (i32.const 0))))
+        (if (i32.ne (local.get $slot) (call $wnd_get_class_slot (local.get $hwnd)))
+          (then (return (i32.const 0))))))
+    (if (local.get $title_g)
+      (then
+        (local.set $title_wa (call $title_table_get_ptr (local.get $hwnd)))
+        (if (i32.eqz (local.get $title_wa)) (then (return (i32.const 0))))
+        (if (i32.eqz (call $guest_ansi_eq_wasm_ci
+                       (local.get $title_g) (local.get $title_wa)))
+          (then (return (i32.const 0))))))
+    (i32.const 1))
+
+  ;; 913: FindWindowExA(hwndParent, hwndChildAfter, lpszClass, lpszWindow)
+  ;; Walks hwndParent's children in creation order, resuming after
+  ;; hwndChildAfter when one is given. Winamp's "Winamp Gen" frame locates the
+  ;; embedded plug-in window it has to size with exactly this call --
+  ;; FindWindowEx(parent, 0, 0, 0) from its WM_SIZE/WM_SHOWWINDOW arm -- so
+  ;; while this answered NULL every embedded plug-in kept the 100x100 box it
+  ;; was created with instead of being fitted to the frame's client area. AVS
+  ;; was the visible case: its visualisation drew as a small square over the
+  ;; window's titlebar.
+  ;;
+  ;; A NULL parent means "search top-level windows". That half stays
+  ;; unimplemented and answers NULL, matching $handle_FindWindowA: it is the
+  ;; form single-instance checks use, and nothing needs it yet.
   (func $handle_FindWindowExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $cur i32)
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; stdcall, 4 args
+    (if (i32.eqz (local.get $arg0)) (then (return)))
+    (local.set $cur (select
+      (call $wnd_find_next_sibling (local.get $arg1))
+      (call $wnd_find_first_child (local.get $arg0))
+      (i32.ne (local.get $arg1) (i32.const 0))))
+    (block $done (loop $scan
+      (br_if $done (i32.eqz (local.get $cur)))
+      (if (call $find_window_matches
+            (local.get $cur) (local.get $arg2) (local.get $arg3))
+        (then
+          (global.set $eax (local.get $cur))
+          (return)))
+      (local.set $cur (call $wnd_find_next_sibling (local.get $cur)))
+      (br $scan)))
   )
 
   ;; 190: BringWindowToTop(hWnd) — 1 arg stdcall

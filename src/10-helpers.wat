@@ -1386,6 +1386,21 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l)))
     (i32.const 0))
 
+  ;; Case-insensitive equality between a guest ANSI string and one that is
+  ;; already in WASM memory. Window titles come back from TITLE_TABLE as WASM
+  ;; pointers while the string a caller hands FindWindowEx is a guest pointer,
+  ;; so neither $guest_stricmp nor a plain memcmp can compare the two.
+  (func $guest_ansi_eq_wasm_ci (param $guest i32) (param $wa i32) (result i32)
+    (local $i i32) (local $a i32) (local $b i32)
+    (block $no (loop $l
+      (local.set $a (call $tolower (call $gl8 (i32.add (local.get $guest) (local.get $i)))))
+      (local.set $b (call $tolower (i32.load8_u (i32.add (local.get $wa) (local.get $i)))))
+      (br_if $no (i32.ne (local.get $a) (local.get $b)))
+      (if (i32.eqz (local.get $a)) (then (return (i32.const 1))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $l)))
+    (i32.const 0))
+
   ;; FlatSB entry points are optional comctl32 helpers. The loaded Win9x
   ;; comctl32 implementation expects native subclass state we do not model, so
   ;; callers should take their existing USER32 scrollbar fallback path.

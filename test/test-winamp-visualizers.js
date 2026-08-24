@@ -199,7 +199,7 @@ if (fs.existsSync(VIS_AVS)) {
     '--screen=756x480',
     '--max-batches=520',
     '--batch-size=50000',
-    '--trace-api=LoadLibraryA,GetProcAddress,CreateWindowExA,ReadFile',
+    '--trace-api=LoadLibraryA,GetProcAddress,CreateWindowExA,ReadFile,FindWindowExA,SetWindowPos',
     '--input=' + ['5:273:2', '80:post-cmd:40317', '360:click:54:188',
       '440:click:170:60', '500:click:184:323'].join(','),
   ], 180000);
@@ -216,6 +216,17 @@ if (fs.existsSync(VIS_AVS)) {
     'vis_avs: the preset chain should load the fyrewurx APE');
   check(/ReadFile\([^\n]*path=c:\\vis_avs\.dat\)/i.test(outC),
     'vis_avs: AVS should read its saved config from the VFS');
+  // The plug-in creates its window at a hard-coded 100x100 and never resizes
+  // it itself. Winamp's "Winamp Gen" frame does that, and it locates the child
+  // with FindWindowEx(frame, 0, 0, 0) from its WM_SIZE/WM_SHOWWINDOW arm. The
+  // fit lands at the frame's fixed inset (11, 20) with the frame's client size,
+  // so a resize that keeps 100x100 means the lookup came back NULL and the
+  // visualisation is drawing into a small square over the titlebar.
+  const avsFit = [...outC.matchAll(
+    /\[API T\d+\] SetWindowPos\(0x[0-9a-f]+, 0x0+, 0x0000000b, 0x00000014, 0x([0-9a-f]+), 0x([0-9a-f]+),/g)]
+    .map((m) => [parseInt(m[1], 16), parseInt(m[2], 16)]);
+  check(avsFit.some(([w, h]) => w > 100 && h > 100),
+    'vis_avs: the frame should size the plug-in child to its client area, not leave it 100x100');
 }
 
 // ----------------------------------------------------------------
