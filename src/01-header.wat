@@ -2772,6 +2772,28 @@
   (global $fpu_raw6 (mut i64) (i64.const 0))
   (global $fpu_raw7 (mut i64) (i64.const 0))
 
+  ;; MMX registers. On real hardware these alias the x87 mantissas; we keep them
+  ;; separate because no guest reads one through the other without an EMMS in
+  ;; between, and an independent file costs nothing. i64 rather than v128: the
+  ;; MMX code we run is overwhelmingly whole-register moves, boolean ops and
+  ;; 64-bit shifts, which are one exact i64 instruction each. See src/06c-mmx.wat.
+  (global $mm0 (mut i64) (i64.const 0))
+  (global $mm1 (mut i64) (i64.const 0))
+  (global $mm2 (mut i64) (i64.const 0))
+  (global $mm3 (mut i64) (i64.const 0))
+  (global $mm4 (mut i64) (i64.const 0))
+  (global $mm5 (mut i64) (i64.const 0))
+  (global $mm6 (mut i64) (i64.const 0))
+  (global $mm7 (mut i64) (i64.const 0))
+  ;; CPUID feature advertisement. Zero = the 486DX we have always reported, so
+  ;; every guest takes its scalar fallback; 1 = set EDX bit 23 (MMX) and let the
+  ;; MMX paths run. Exported so a benchmark can A/B the same build.
+  (global $cpu_mmx_enable (mut i32) (i32.const 1))
+  ;; How many MMX instructions the guest actually retired. Without this a
+  ;; pixel-identical A/B is ambiguous: it could mean the MMX path is correct,
+  ;; or that the guest never took it.
+  (global $mmx_exec_count (mut i32) (i32.const 0))
+
   ;; Cosmetic line style phase is reset per LineTo/path and shared across the
   ;; segments of one WAT-rasterized polyline.
   (global $gdi_line_style_phase (mut i32) (i32.const 0))

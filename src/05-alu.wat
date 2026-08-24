@@ -2233,10 +2233,21 @@
       (else
         (if (i32.eq (global.get $eax) (i32.const 1))
           (then
-            (global.set $eax (i32.const 0x00000480)) ;; family 4, model 8 (486DX)
+            ;; Two personalities, picked by $cpu_mmx_enable so one build can be
+            ;; benchmarked both ways. Advertising MMX on the 486DX signature we
+            ;; used to report would be self-contradictory -- detection code
+            ;; commonly gates on family >= 5 before it even looks at the feature
+            ;; bits -- so the MMX personality is a Pentium MMX (P55C, family 5
+            ;; model 4 stepping 3), which is the CPU those bits describe.
+            (if (global.get $cpu_mmx_enable)
+              (then
+                (global.set $eax (i32.const 0x00000543)) ;; family 5, model 4 (Pentium MMX)
+                (global.set $edx (i32.const 0x00800001))) ;; bit 0 FPU, bit 23 MMX
+              (else
+                (global.set $eax (i32.const 0x00000480)) ;; family 4, model 8 (486DX)
+                (global.set $edx (i32.const 0x00000001)))) ;; FPU present bit (so CRT init passes)
             (global.set $ebx (i32.const 0))
-            (global.set $ecx (i32.const 0))
-            (global.set $edx (i32.const 0x00000001))) ;; FPU present bit (so CRT init passes)
+            (global.set $ecx (i32.const 0)))
           (else
             (global.set $eax (i32.const 0))
             (global.set $ebx (i32.const 0))

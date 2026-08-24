@@ -223,6 +223,20 @@
   (func (export "get_staging_size") (result i32) (global.get $PE_STAGING_SIZE))
   (func (export "get_fs_base") (result i32) (global.get $fs_base))
   (func (export "set_fs_base") (param i32) (global.set $fs_base (local.get 0)))
+  ;; Turn the CPUID MMX advertisement off to force guests down their scalar
+  ;; fallbacks. The MMX handlers stay in the build either way, so this is an
+  ;; A/B of the code the guest chooses, which is the only comparison that means
+  ;; anything -- a Pentium-MMX-era app does not have a "use MMX" switch, it has
+  ;; a CPUID check.
+  (func (export "set_cpu_mmx") (param i32) (global.set $cpu_mmx_enable (local.get 0)))
+  (func (export "get_cpu_mmx") (result i32) (global.get $cpu_mmx_enable))
+  (func (export "get_mmx_exec_count") (result i32) (global.get $mmx_exec_count))
+  ;; Test seam for tools/mmx-check.js. $mmx_binop is pure -- two 64-bit inputs
+  ;; and a subop id in, one 64-bit result out -- so it can be checked against a
+  ;; reference model exhaustively without booting a guest, which is the only
+  ;; way to be sure about lane order in the shuffles and pack instructions.
+  (func (export "mmx_binop") (param $a i64) (param $b i64) (param $sub i32) (result i64)
+    (call $mmx_binop (local.get $a) (local.get $b) (local.get $sub)))
   (func (export "get_current_thread_id") (result i32) (global.get $current_thread_id))
   (func (export "get_process_id") (result i32) (call $current_process_id))
   (func (export "set_process_id") (param $pid i32)

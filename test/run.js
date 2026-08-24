@@ -83,6 +83,7 @@ const hasFlag = name => args.includes(`--${name}`);
 const NO_BUILD = hasFlag('no-build');      // --no-build: skip auto-build
 const NO_CLOSE = hasFlag('no-close');      // --no-close: don't inject WM_CLOSE
 const NO_RENDERER = hasFlag('no-renderer'); // --no-renderer: skip CLI canvas/renderer (guest-state diagnostics)
+const NO_MMX = hasFlag('no-mmx');          // --no-mmx: report a 486DX from CPUID so guests take scalar paths
 const DUMP_GDI = getArg('dump-gdi', null); // --dump-gdi=DIR: dump GDI bitmaps as PNGs
 const DUMP_DDRAW = getArg('dump-ddraw-surfaces', null); // --dump-ddraw-surfaces=DIR: dump DirectDraw surface DIBs as PNGs
 const DUMP_SDB = getArg('dump-sdb', null); // --dump-sdb=DIR: dump StretchDIBits source DIBs + per-call log
@@ -2500,15 +2501,30 @@ async function main() {
     }
   };
 
-  if (countAddrs.length && instance.exports.get_count) {
-    for (const sig of ['SIGTERM', 'SIGINT']) {
-      process.on(sig, () => {
-        reportHitCounts(`Hit counts (on ${sig}):`);
-        process.exit(0);
-      });
+  // How many MMX instructions the guest retired, summed over the main
+  // instance and every worker (each is a separate WASM instance with its own
+  // globals). Reported on the way out however the run ends -- a long run that
+  // gets killed at a timeout is exactly the one where you most want to know
+  // whether the guest ever reached its MMX path.
+  var reportMmx = () => {
+    if (!instance.exports.get_mmx_exec_count) return;
+    let mmx = instance.exports.get_mmx_exec_count() >>> 0;
+    for (const t of (threadManager && threadManager.threads ? threadManager.threads.values() : [])) {
+      if (t.instance && t.instance.exports.get_mmx_exec_count) {
+        mmx += t.instance.exports.get_mmx_exec_count() >>> 0;
+      }
     }
+    console.log(`MMX: ${mmx} instructions retired (cpuid mmx bit ${NO_MMX ? 'off' : 'on'})`);
+  };
+  for (const sig of ['SIGTERM', 'SIGINT']) {
+    process.on(sig, () => {
+      if (countAddrs.length && instance.exports.get_count) reportHitCounts(`Hit counts (on ${sig}):`);
+      reportMmx();
+      process.exit(0);
+    });
   }
   if (instance.exports.set_process_id) instance.exports.set_process_id(ctx.processId);
+  if (NO_MMX && instance.exports.set_cpu_mmx) instance.exports.set_cpu_mmx(0);
   if (VLAN_IP && instance.exports.set_vlan_local_ip) {
     const octets = VLAN_IP.split('.').map(Number);
     if (octets.length !== 4 || octets.some(o => !(o >= 0 && o <= 255))) {
@@ -6665,6 +6681,7 @@ if (VERBOSE) {
   }
 
   console.log(`\nStats: ${apiCount} API calls, ${MAX_BATCHES} batches`);
+  reportMmx();
 
   // --reg-export writes what the run left in the registry/INI store, which is
   // what a browser tab would have kept in localStorage. Feed it back with

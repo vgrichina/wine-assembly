@@ -1196,6 +1196,8 @@
     (local $imm i32)
     (local $disp i32)
     (local $a i32)
+    (local $mmxsub i32)        ;; MMX subop id, or -1 when this 0F op is not MMX
+    (local $mmxpc i32)         ;; d_pc before an MMX ModRM, to rewind on a reject
 
     ;; Proactive overflow check BEFORE capturing $tstart. If $te triggers a
     ;; mid-decode reset of $thread_alloc, $tstart would still hold the pre-reset
@@ -2969,6 +2971,70 @@
             (then
               (call $te (i32.const 360) (local.get $prefix_66))
               (br $decode)))
+
+          ;; ---- MMX ----
+          ;; A 66/F2/F3 prefix in front of the 0F turns every one of these
+          ;; opcodes into its xmm form, which is a different register file we
+          ;; do not have. Those must keep falling through to the trap below, so
+          ;; a crash report says "SSE2" honestly instead of quietly computing
+          ;; the right answer in the wrong 64 bits.
+          (if (i32.and (i32.eqz (local.get $prefix_66)) (i32.eqz (local.get $prefix_rep)))
+            (then
+              ;; 0x71/0x72/0x73: shift-by-immediate group. The operation is in
+              ;; the ModRM reg field and the count is an imm8 after it, so this
+              ;; has to look at the ModRM before it can tell whether the opcode
+              ;; is even ours -- hence the d_pc rewind on the reject path.
+              (if (i32.and (i32.ge_u (local.get $op) (i32.const 0x71))
+                           (i32.le_u (local.get $op) (i32.const 0x73)))
+                (then
+                  (local.set $mmxpc (global.get $d_pc))
+                  (call $decode_modrm)
+                  (local.set $mmxsub (call $mmx_group_subop (local.get $op) (global.get $mr_reg)))
+                  (if (i32.and (i32.ne (local.get $mmxsub) (i32.const -1))
+                               (i32.eq (global.get $mr_mod) (i32.const 3)))
+                    (then
+                      (call $te (i32.const 410)
+                        (i32.or (i32.shl (local.get $mmxsub) (i32.const 12))
+                          (i32.or (i32.shl (global.get $mr_val) (i32.const 8))
+                                  (call $d_fetch8))))
+                      (br $decode)))
+                  (global.set $d_pc (local.get $mmxpc))))
+
+              (local.set $mmxsub (call $mmx_opcode_subop (local.get $op)))
+              (if (i32.ne (local.get $mmxsub) (i32.const -1))
+                (then
+                  (local.set $mmxpc (global.get $d_pc))
+                  (call $decode_modrm)
+                  ;; 0x7E (movd r/m32, mm) and 0x7F (movq mm/m64, mm) are the
+                  ;; only two that write the r/m operand; everything else reads
+                  ;; it and writes the reg field.
+                  (if (i32.eq (global.get $mr_mod) (i32.const 3))
+                    (then
+                      (if (i32.or (i32.eq (local.get $op) (i32.const 0x7E))
+                                  (i32.eq (local.get $op) (i32.const 0x7F)))
+                        (then (call $te (i32.const 407)
+                                (i32.or (i32.shl (local.get $mmxsub) (i32.const 8))
+                                  (i32.or (i32.shl (global.get $mr_val) (i32.const 4))
+                                          (global.get $mr_reg)))))
+                        (else (call $te (i32.const 407)
+                                (i32.or (i32.shl (local.get $mmxsub) (i32.const 8))
+                                  (i32.or (i32.shl (global.get $mr_reg) (i32.const 4))
+                                          (global.get $mr_val))))))
+                      (br $decode)))
+                  ;; pmovmskb has no memory form; anything else takes m64 (or
+                  ;; m32 for the two movd encodings).
+                  (if (i32.ne (local.get $op) (i32.const 0xD7))
+                    (then
+                      (local.set $a (call $emit_sib_or_abs))
+                      (call $te
+                        (select (i32.const 409) (i32.const 408)
+                          (i32.or (i32.eq (local.get $op) (i32.const 0x7E))
+                                  (i32.eq (local.get $op) (i32.const 0x7F))))
+                        (i32.or (i32.shl (local.get $mmxsub) (i32.const 8))
+                                (i32.shl (global.get $mr_reg) (i32.const 4))))
+                      (call $te_raw (local.get $a))
+                      (br $decode)))
+                  (global.set $d_pc (local.get $mmxpc))))))
 
           ;; Unknown 0x0F xx — trap rather than loop on it.
           (call $host_log_i32 (i32.or (i32.const 0x0F00) (local.get $op)))
