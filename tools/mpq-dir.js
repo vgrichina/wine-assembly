@@ -109,6 +109,8 @@ function main() {
   const wantPos = posArg ? Number(posArg.slice(6)) : null;
   const tableArg2 = args.find(a => a.startsWith('--table='));
   const tableArg = tableArg2 ? Number(tableArg2.slice(8)) : null;
+  const nameArg = args.find(a => a.startsWith('--name='));
+  const wantName = nameArg ? nameArg.slice(7) : null;
 
   const buf = fs.readFileSync(file);
   const base = findHeader(buf);
@@ -163,6 +165,35 @@ function main() {
     console.log(`\n  blocks covering file offset 0x${wantPos.toString(16)} (archive-relative 0x${relative.toString(16)}):`);
     if (!hits.length) console.log('    none');
     hits.forEach(print);
+    return;
+  }
+
+  if (wantName !== null) {
+    // A stripped archive has no listfile, but the hash table is still keyed by
+    // name: slot = hashA(name,0) & (size-1), then linear probe comparing the
+    // two verification hashes. This is how you get from "ui_art\logo.pcx" to a
+    // block entry (and so to its real decompressed size) without a listfile.
+    const hashes = Buffer.from(
+      buf.subarray(base + hashTablePos, base + hashTablePos + hashTableSize * 16));
+    decryptBlock(hashes, hashString('(hash table)', 3));
+    const start = hashString(wantName, 0) >>> 0;
+    const nameA = hashString(wantName, 1) >>> 0;
+    const nameB = hashString(wantName, 2) >>> 0;
+    let slot = start & (hashTableSize - 1);
+    for (let probe = 0; probe < hashTableSize; probe++) {
+      const off = slot * 16;
+      const blockIndex = hashes.readInt32LE(off + 12);
+      if (blockIndex === -1) break; // empty, never used: the name is absent
+      if (hashes.readUInt32LE(off) === nameA &&
+          hashes.readUInt32LE(off + 4) === nameB &&
+          blockIndex >= 0 && blockIndex < blockTableSize) {
+        console.log(`\n  "${wantName}" -> hash slot ${slot}, block ${blockIndex}:`);
+        print(entries[blockIndex]);
+        return;
+      }
+      slot = (slot + 1) & (hashTableSize - 1);
+    }
+    console.log(`\n  "${wantName}" is not in this archive's hash table`);
     return;
   }
 
