@@ -202,6 +202,7 @@ UNIT=(
   test/test-end-dialog-lifecycle.js
   test/test-directdraw-cooperative-window.js
   test/test-directdraw-create-ex.js
+  test/test-directdraw-mode-change-primary.js
   test/test-directdraw-present-force.js
   test/test-directdraw-retained-primary.js
   test/test-directanimation-image-render.js

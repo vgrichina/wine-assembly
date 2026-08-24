@@ -1828,6 +1828,10 @@
     (call $gdi_object_record (local.get 0)))
   (func (export "test_dx_set_primary_palette_wa") (param i32)
     (global.set $dx_primary_pal_wa (local.get 0)))
+  (func (export "test_dx_set_primary_wa") (param i32)
+    (global.set $dx_primary_wa (local.get 0)))
+  (func (export "test_dx_primary_entry") (result i32)
+    (call $dx_primary_entry))
 
   ;; ---- NC/message plumbing exports (JS host posts messages into WAT's queues) ----
   (func (export "nc_post_paint") (param $hwnd i32)

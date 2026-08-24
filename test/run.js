@@ -6091,6 +6091,17 @@ async function main() {
                 fs.writeFileSync(bcPath, canvasToPng(win._backCanvas));
                 logs.push(`[input] back-canvas ${bcPath}`);
               }
+              // The DirectDraw frame layer is a separate canvas composited over
+              // the back-canvas, so a blank screenshot with a blank back-canvas
+              // says nothing about whether the guest presented a frame. Dump it
+              // too: content here plus a blank screenshot is a compositor bug,
+              // and blank here is a presentation bug.
+              const dxc = win._dxFrameLayer && win._dxFrameLayer.canvas;
+              if (dxc && dxc.toBuffer) {
+                const dxPath = ev.path.replace('.png', `_dxlayer_${hwndStr}.png`);
+                fs.writeFileSync(dxPath, canvasToPng(dxc));
+                logs.push(`[input] dx-layer ${dxPath} (${dxc.width}x${dxc.height})`);
+              }
             }
           }
         } catch (e) {
