@@ -2891,10 +2891,9 @@
           (if (i32.eq (local.get $op) (i32.const 0x1F))
             (then (call $decode_modrm) (call $te (i32.const 0) (i32.const 0)) (br $decode)))
 
-          ;; 0x0F 0x31: RDTSC — stub (return 0 in edx:eax)
+          ;; 0x0F 0x31: RDTSC — real monotonic counter (see $th_rdtsc)
           (if (i32.eq (local.get $op) (i32.const 0x31))
-            (then (call $te (i32.const 2) (i32.const 0)) (call $te_raw (i32.const 0))
-                  (call $te (i32.const 2) (i32.const 2)) (call $te_raw (i32.const 0)) (br $decode)))
+            (then (call $te (i32.const 411) (i32.const 0)) (br $decode)))
 
           ;; 0x0F 0x77: EMMS
           (if (i32.eq (local.get $op) (i32.const 0x77))

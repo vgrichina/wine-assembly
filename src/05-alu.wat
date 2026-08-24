@@ -2237,12 +2237,24 @@
             ;; benchmarked both ways. Advertising MMX on the 486DX signature we
             ;; used to report would be self-contradictory -- detection code
             ;; commonly gates on family >= 5 before it even looks at the feature
-            ;; bits -- so the MMX personality is a Pentium MMX (P55C, family 5
-            ;; model 4 stepping 3), which is the CPU those bits describe.
+            ;; bits -- so the MMX personality names the part whose feature set
+            ;; matches what we execute. That is a Pentium II, not the P55C we
+            ;; first claimed: we implement CMOV, which is a family 6 addition,
+            ;; and a family 5 signature carrying the CMOV bit describes a CPU
+            ;; that never shipped.
+            ;; The feature word names what the interpreter actually executes.
+            ;; TSC (bit 4) is only honest because $th_rdtsc returns a real
+            ;; monotonic counter; while RDTSC was a mov-zero stub this bit had
+            ;; to stay clear, since an app that calibrates with it would divide
+            ;; by a zero delta. CX8 (8) is CMPXCHG8B and CMOV (15) is CMOVcc,
+            ;; both decoded in 07-decoder.wat. Bits we do NOT set are equally
+            ;; deliberate: no SSE (25), so the MMX-extension opcodes
+            ;; (pshufw/psadbw/maskmovq/movntq/pextrw/pinsrw) we don't decode
+            ;; stay unreachable, and no extended leaves, which denies 3DNow.
             (if (global.get $cpu_mmx_enable)
               (then
-                (global.set $eax (i32.const 0x00000543)) ;; family 5, model 4 (Pentium MMX)
-                (global.set $edx (i32.const 0x00800001))) ;; bit 0 FPU, bit 23 MMX
+                (global.set $eax (i32.const 0x00000633)) ;; family 6, model 3 (Pentium II)
+                (global.set $edx (i32.const 0x00808111))) ;; FPU|TSC|CX8|CMOV|MMX
               (else
                 (global.set $eax (i32.const 0x00000480)) ;; family 4, model 8 (486DX)
                 (global.set $edx (i32.const 0x00000001)))) ;; FPU present bit (so CRT init passes)
@@ -2253,6 +2265,30 @@
             (global.set $ebx (i32.const 0))
             (global.set $ecx (i32.const 0))
             (global.set $edx (i32.const 0))))))
+    (return_call $next))
+
+  ;; RDTSC (0F 31) -> EDX:EAX = time-stamp counter.
+  ;;
+  ;; Cycles are derived from the guest millisecond clock, so the counter tracks
+  ;; $host_get_ticks and honours --time-scale the same way GetTickCount and
+  ;; QueryPerformanceCounter do. $TSC_HZ_PER_MS is 200000, i.e. a 200 MHz part,
+  ;; which is in range for the Pentium II we report from CPUID.
+  ;;
+  ;; The clock has millisecond resolution and RDTSC is typically read twice
+  ;; around a short region, so the raw value repeats constantly. A repeat is
+  ;; worse than a wrong value: the usual idiom divides by (end - start), and a
+  ;; zero delta is a divide-by-zero or an infinite calibration spin. So the
+  ;; result is forced strictly increasing -- when the clock has not moved, hand
+  ;; out the previous value plus a plausible short-sequence cost.
+  (func $th_rdtsc (param $op i32)
+    (local $t i64)
+    (local.set $t (i64.mul (i64.extend_i32_u (call $host_get_ticks))
+                           (i64.const 200000)))
+    (if (i64.le_u (local.get $t) (global.get $tsc_last))
+      (then (local.set $t (i64.add (global.get $tsc_last) (i64.const 64)))))
+    (global.set $tsc_last (local.get $t))
+    (global.set $eax (i32.wrap_i64 (local.get $t)))
+    (global.set $edx (i32.wrap_i64 (i64.shr_u (local.get $t) (i64.const 32))))
     (return_call $next))
 
   ;; --- Bit ops ---

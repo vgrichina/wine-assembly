@@ -496,6 +496,48 @@ async function main() {
     addr16Eax, e.get_eax());
 
   // ================================================================
+  // RDTSC and the CPUID feature word
+  // ================================================================
+  //
+  // RDTSC used to be decoded as mov eax,0 / mov edx,0. The value itself is not
+  // what matters -- the usual idiom is two reads subtracted, so a repeat is a
+  // divide-by-zero or an infinite calibration spin. These assert the counter
+  // moves, and that the feature word only claims instructions we execute.
+
+  // rdtsc; mov esi,eax; mov edi,edx; rdtsc — second read into eax/edx.
+  runCode([0x0F, 0x31, 0x89, 0xC6, 0x89, 0xD7, 0x0F, 0x31]);
+  const tsc1 = e.get_esi() >>> 0, tsc1hi = e.get_edi() >>> 0;
+  const tsc2 = e.get_eax() >>> 0, tsc2hi = e.get_edx() >>> 0;
+  test('rdtsc advances between two reads',
+    tsc2hi > tsc1hi || (tsc2hi === tsc1hi && tsc2 > tsc1), true);
+  test('rdtsc is non-zero', tsc1 !== 0 || tsc1hi !== 0, true);
+
+  // cpuid leaf 0 → "GenuineIntel" in EBX/EDX/ECX.
+  runCode([0x31, 0xC0, 0x0F, 0xA2]);
+  test('cpuid leaf 0 EBX = "Genu"', e.get_ebx() >>> 0, 0x756E6547);
+  test('cpuid leaf 0 EDX = "ineI"', e.get_edx() >>> 0, 0x49656E69);
+  test('cpuid leaf 0 ECX = "ntel"', e.get_ecx() >>> 0, 0x6C65746E);
+  test('cpuid leaf 0 reports leaf 1 as the max', e.get_eax() >>> 0, 1);
+
+  // cpuid leaf 1 → signature + features. Each asserted bit names something the
+  // interpreter implements; SSE stays clear so the MMX-extension opcodes we do
+  // not decode stay unreachable.
+  runCode([0xB8, ...le32(1), 0x0F, 0xA2]);
+  const feat = e.get_edx() >>> 0;
+  const family = (e.get_eax() >>> 8) & 0xF;
+  test('cpuid leaf 1 reports family 6 (CMOV is a family 6 addition)', family, 6);
+  test('cpuid advertises FPU', feat & 1, 1);
+  test('cpuid advertises TSC now that RDTSC is real', (feat >>> 4) & 1, 1);
+  test('cpuid advertises CX8 (CMPXCHG8B)', (feat >>> 8) & 1, 1);
+  test('cpuid advertises CMOV', (feat >>> 15) & 1, 1);
+  test('cpuid advertises MMX', (feat >>> 23) & 1, 1);
+  test('cpuid does not advertise SSE', (feat >>> 25) & 1, 0);
+
+  // Extended leaves must stay absent — that is what denies 3DNow.
+  runCode([0xB8, ...le32(0x80000000), 0x0F, 0xA2]);
+  test('cpuid reports no extended leaves', e.get_eax() >>> 0, 0);
+
+  // ================================================================
   // Summary
   // ================================================================
   console.log(`\n${pass} passed, ${fail} failed`);

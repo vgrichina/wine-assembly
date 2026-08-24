@@ -2078,6 +2078,11 @@
   (global $tls_next_index (mut i32) (i32.const 0))
   ;; Performance counter (monotonic, incremented per query)
   (global $perf_counter_lo (mut i32) (i32.const 0))
+  ;; Time-stamp counter, in emulated cycles. RDTSC derives it from the guest
+  ;; millisecond clock at $TSC_HZ_PER_MS, and this global holds the last value
+  ;; handed out so the counter never repeats or goes backwards -- code that
+  ;; times a region by subtracting two reads must never see a zero delta.
+  (global $tsc_last (mut i64) (i64.const 0))
   ;; FS segment base — points to fake TIB (allocated from heap during PE load)
   (global $fs_base (mut i32) (i32.const 0))
   ;; Win32-visible current thread id. Main thread is 1; worker tid N is N+1.

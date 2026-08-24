@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 411 funcref)
+  (table $handlers 412 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -468,4 +468,5 @@
     $th_mmx_rm                ;; 408: mm, m64     operand = sub<<8 | dst<<4 ; addr word follows
     $th_mmx_mr                ;; 409: m64, mm     operand = sub<<8 | src<<4 ; addr word follows
     $th_mmx_ri                ;; 410: mm, imm8    operand = sub<<12 | dst<<8 | imm8
+    $th_rdtsc                 ;; 411: RDTSC -> EDX:EAX
   )
