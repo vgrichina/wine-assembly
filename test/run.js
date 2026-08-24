@@ -7120,6 +7120,12 @@ if (VERBOSE) {
     const bestOffscreen = bestByDiversity(offscreenCandidates);
 
     if (!bestPrimary) {
+      // A flipping chain leaves the primary blank between presents while the
+      // frame sits in the back buffer — every Organic Art screensaver looks
+      // like that at an arbitrary batch count. The back buffer is the frame,
+      // so it outranks any texture regardless of colour count.
+      const bestBack = bestByDiversity(surfaces.filter(s => (s.flags & 2)).map(scored));
+      if (bestBack) return bestBack.surface;
       for (const p of primary) {
         const matching = bestByDiversity(offscreenCandidates.filter(item =>
           item.surface.w === p.w &&
