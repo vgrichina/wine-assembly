@@ -88,10 +88,41 @@ Original VAs. Verify with `node tools/disasm_fn.js storm.dll 0x1500bb20 60`.
 | `storm+0x1500bb20` | audio pump thread body |
 | `storm+0x1500be49` | its `LeaveCriticalSection`, *before* the object at `ebx` is used |
 | `storm+0x1500beb9` | `mov ecx,[ebx+0x18]` + null test — branches away when the sound buffer is null |
-| `storm+0x1500bedd` | `call [edi+0x2c]` — `IDirectSoundBuffer::Lock` through the vtable we synthesize |
+| `storm+0x1500bedd` | `call [edi+0x2c]` — `IDirectSoundBuffer::Lock` through the vtable we synthesize (see below) |
+| `storm+0x1500beeb` | the `rep movsd`/`rep movsb` that fills the buffer Lock handed back |
 | `storm+0x150365e4` / `+0x150365e8` | imported `EnterCriticalSection` / `LeaveCriticalSection` |
 | `storm+0x150316c0` | head of the list the pump walks (next pointer at `+0x30`) |
 | `storm+0x15034b28` | the pump's `CRITICAL_SECTION` |
+
+### The audio pump's `Lock` call, decoded
+
+`0x2c / 4` = vtable slot 11, which for `IDirectSoundBuffer` is `Lock`
+(IUnknown 0-2, GetCaps 3, GetCurrentPosition 4, GetFormat 5, GetVolume 6,
+GetPan 7, GetFrequency 8, GetStatus 9, Initialize 10, Lock 11). The eight
+pushes at `0x1500bec4..0x1500bedc` are, in argument order:
+
+| Argument | Source |
+|---|---|
+| `this` | `[ebx+0x18]` (`ecx`; the vtable is `edi = [ecx]`) |
+| `dwOffset` | `[ebx+0x1c]` |
+| `dwBytes` | `[ebx+0x24]` |
+| `ppvAudioPtr1` | `&[ebx+0x14]` — **Lock must write the locked pointer here** |
+| `pdwAudioBytes1` | `&[ebx+0x24]` — and the byte count here |
+| `ppvAudioPtr2`, `pdwAudioBytes2`, `dwFlags` | `0`, `0`, `0` |
+
+and the pump immediately reads its own out-parameter back:
+
+```
+1500bee0  mov eax,[ebp+0x0]
+1500bee3  mov edi,[ebx+0x14]     ; exactly what Lock stored
+1500beeb  rep movsd / rep movsb
+```
+
+`[ebx+0x14]` already holds something before the call (`esi` is loaded from it at
+`0x1500be7e`), so a `Lock` that returns without writing `*ppvAudioPtr1` leaves
+`edi` pointing at the stale value and the `rep movsd` writes wild. A fault of
+that shape reports its last EIP as the enclosing block entry `0x1500bec4`, not
+as `0x1500beeb` — a mid-block address never shows up in a trace.
 
 Storm is **EBP-less**, so `--trace-stack` returns `frames=[]` on anything inside
 it. Do not spend time on the frame walker here; use `--count` on candidate call
