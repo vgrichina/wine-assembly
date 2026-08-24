@@ -680,6 +680,17 @@
         (global.set $eax (i32.load (i32.add (global.get $DLL_TABLE) (i32.mul (local.get $tmp) (i32.const 32)))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
         (return)))
+    ;; LoadLibrary of the running program is a handle request, not a load:
+    ;; Windows finds the module already mapped and returns its base with the
+    ;; reference count bumped. Winamp's NSIS installer takes this path -- its
+    ;; CDDB plug-in asks for the path GetModuleFileName just gave it -- and
+    ;; loading a second copy of the EXE image runs its entry point again from
+    ;; a worker thread, which is where the extraction used to die.
+    (if (call $dll_name_match (local.get $arg0) (global.get $exe_name_wa))
+      (then
+        (global.set $eax (global.get $image_base))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
     ;; Not already loaded — check if DLL file exists in VFS
     (if (call $host_has_dll_file (call $g2w (local.get $arg0)))
       (then
@@ -3317,9 +3328,12 @@
     ;; MFC also calls EndDialog on dialogs created through CreateDialogParamA.
     ;; Those modeless dialogs have no CACA0004 pump, so do not poison the
     ;; global modal-completion flags unless this hwnd is the active modal.
+    ;; The test reads the shared mirror, not this instance's own
+    ;; $dlg_pump_hwnd: the pump lives on main, and an NSIS installer calls
+    ;; EndDialog from its extraction thread, whose private copy is 0.
     (if (i32.and
-          (i32.ne (global.get $dlg_pump_hwnd) (i32.const 0))
-          (i32.eq (local.get $arg0) (global.get $dlg_pump_hwnd)))
+          (i32.ne (i32.load (global.get $SHARED_DLG_PUMP_HWND)) (i32.const 0))
+          (i32.eq (local.get $arg0) (i32.load (global.get $SHARED_DLG_PUMP_HWND))))
       (then
         (global.set $dlg_ended (i32.const 1))
         (global.set $dlg_result (local.get $arg1))
@@ -3739,6 +3753,7 @@
     ;; CreateDialogParamA can't hijack the pump's hwnd-less fallback)
     (global.set $dlg_hwnd (local.get $hwnd))
     (global.set $dlg_pump_hwnd (local.get $hwnd))
+    (i32.store (global.get $SHARED_DLG_PUMP_HWND) (local.get $hwnd))
     (global.set $dlg_ended (i32.const 0))
     (global.set $dlg_result (i32.const 0))
     (i32.store (global.get $SHARED_DLG_ENDED) (i32.const 0))
@@ -5727,8 +5742,8 @@
       ;; the modal pump; destroying the HWND alone leaves the guest waiting
       ;; forever in the CACA0004 loop.
       (if (i32.and
-            (i32.ne (global.get $dlg_pump_hwnd) (i32.const 0))
-            (i32.eq (local.get $arg0) (global.get $dlg_pump_hwnd)))
+            (i32.ne (i32.load (global.get $SHARED_DLG_PUMP_HWND)) (i32.const 0))
+            (i32.eq (local.get $arg0) (i32.load (global.get $SHARED_DLG_PUMP_HWND))))
         (then
           (global.set $dlg_ended (i32.const 1))
           (global.set $dlg_result (i32.const 2)) ;; IDCANCEL

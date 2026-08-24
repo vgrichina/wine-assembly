@@ -6470,6 +6470,25 @@ async function main() {
       if (TRACE_BATCH_TIMING) {
         console.log(`[batch-timing] batch=${batch} worker=${Date.now() - workerStartMs}ms slices=${slices}`);
       }
+      // Same story for a worker that called LoadLibraryA: the WAT handler has
+      // parked it on yield 5 and only the host can finish the load, which is
+      // asynchronous. Serve it here, then hand the loader's cursors back to
+      // main, because the next slice copies them the other way.
+      for (const thread of threadManager.threadsAwaitingLoadLibrary()) {
+        const e = thread.instance.exports;
+        if (TRACE_YIELD) {
+          console.log(`[yield] T${thread.tid} reason=5 (load_library) eip=${hex(e.get_eip())} esp=${hex(e.get_esp())}`);
+        }
+        await handleLoadLibraryYield({
+          exports: e,
+          memoryBuffer: memory.buffer,
+          resourceHost: ctx,
+          log: console.log,
+          trace: TRACE_YIELD ? console.log : null,
+          findDll: findRuntimeDllBytes,
+        });
+        threadManager.publishWorkerGlobals(e);
+      }
       // A worker parked in a blocking socket call is waiting on a frame that
       // only the event loop can deliver. runSlice cannot await, so the turn
       // has to be given here or the wait never ends.

@@ -4054,8 +4054,9 @@
           (local.get $hdc) (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
           (i32.const 1)))))
     (call $dc_clip_to_parent_client (local.get $hdc) (local.get $hwnd))
-    (call $dc_exclude_visible_children_for_erase
-      (local.get $hdc) (local.get $hwnd) (i32.const 0) (i32.const 0))
+    (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x02000000)) ;; WS_CLIPCHILDREN
+      (then (call $dc_exclude_visible_children_for_erase
+        (local.get $hdc) (local.get $hwnd) (i32.const 0) (i32.const 0))))
     (call $dc_exclude_siblings_for_clip (local.get $hdc) (local.get $hwnd)))
 
   (func $dc_apply_window_clip (param $hdc i32) (param $hwnd i32)

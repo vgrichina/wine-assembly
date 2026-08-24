@@ -1132,7 +1132,8 @@
   ;; 0x00005000  256B    WINDOW_UNICODE_TABLE (one byte per WND_RECORDS slot)
   ;; 0x00005100  4B      SHARED_PROCESS_ID (shared by every thread instance)
   ;; 0x00005104  8B      SHARED_DLG_ENDED / SHARED_DLG_RESULT
-  ;; 0x0000510C  244B    Free
+  ;; 0x0000510C  4B      SHARED_DLG_PUMP_HWND (modal pump hwnd, all instances)
+  ;; 0x00005110  240B    Free
   ;; 0x00005200  4KB     WINDOW_EXTRA_TABLE (256 entries x 16 bytes)
   ;; 0x00006200  1KB     ATOM_LOCAL_TABLE  (128 entries × 8 bytes — AddAtom namespace)
   ;; 0x00006600  1KB     ATOM_GLOBAL_TABLE (128 entries × 8 bytes — GlobalAddAtom namespace)
@@ -2316,6 +2317,15 @@
   (global $SHARED_DLG_ENDED_SIZE i32 (i32.const 0x00000004))
   (global $SHARED_DLG_RESULT i32 (i32.const 0x00005108))
   (global $SHARED_DLG_RESULT_SIZE i32 (i32.const 0x00000004))
+  ;; ...and a mirror of $dlg_pump_hwnd itself, for the same reason. Every
+  ;; "is this hwnd the active modal dialog?" test has to answer the same way
+  ;; on every instance: a worker's own $dlg_pump_hwnd is 0, so EndDialog from
+  ;; an installer's extraction thread used to destroy the dialog tree without
+  ;; ever raising SHARED_DLG_ENDED, leaving main's CACA0004 pump spinning on
+  ;; a dialog that no longer existed (Winamp's NSIS installer, after the
+  ;; "Completed" page).
+  (global $SHARED_DLG_PUMP_HWND i32 (i32.const 0x0000510C))
+  (global $SHARED_DLG_PUMP_HWND_SIZE i32 (i32.const 0x00000004))
   (global $dlg_proc     (mut i32) (i32.const 0))    ;; Dialog proc address
   (global $dlg_ret_addr (mut i32) (i32.const 0))    ;; Return address for DialogBoxParamA
   (global $dlg_loop_thunk (mut i32) (i32.const 0))  ;; Thunk addr for dialog message loop

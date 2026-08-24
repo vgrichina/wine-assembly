@@ -2209,8 +2209,8 @@
       ;; the modal pump; destroying the HWND alone leaves the guest waiting
       ;; forever in the CACA0004 loop.
       (if (i32.and
-            (i32.ne (global.get $dlg_pump_hwnd) (i32.const 0))
-            (i32.eq (local.get $arg0) (global.get $dlg_pump_hwnd)))
+            (i32.ne (i32.load (global.get $SHARED_DLG_PUMP_HWND)) (i32.const 0))
+            (i32.eq (local.get $arg0) (i32.load (global.get $SHARED_DLG_PUMP_HWND))))
         (then
           (global.set $dlg_ended (i32.const 1))
           (global.set $dlg_result (i32.const 2)) ;; IDCANCEL
