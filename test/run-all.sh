@@ -245,6 +245,7 @@ UNIT=(
   test/test-system-metrics.js
   test/test-toolbar-insert.js
   test/test-treeview-scroll.js
+  test/test-treeview-two-controls.js
   test/test-v86-reference-paint-workflows.js
   test/test-vfs-legacy-hfile.js
   test/test-virtual-map-cross-instance.js

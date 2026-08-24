@@ -1229,6 +1229,8 @@
   ;; 0x07F0A800 3KB      GDI_BITMAP_FONT_TABLE (48 strikes x 64 bytes)
   ;; 0x07F0C000 2KB      GDI_DC_SYSTEM_CLIP_TABLE (256 x {HDC, owned HRGN})
   ;; 0x07F0C800 16B      GDI_TABLE_MARKS (high-water slot counts, 3 used)
+  ;; 0x07F0C900 128B     TV_OWNER_TABLE (owning hwnd per TV_TABLE item)
+  ;; 0x07F0CA00 256B     TV_VIEW_TABLE (16 x per-TreeView caret/scroll/imagelist)
   ;; 0x07F0D000 8KB      GDI_REGION_TABLE (256 WAT-owned HRGN records)
   ;; 0x07F0F000 4KB      GDI_DC_PATH_TABLE (256 x 16-byte WAT path records)
   ;; 0x07F10000 4KB      HANDLER_HIST_COUNTS (1024 i32 counters)
@@ -1547,6 +1549,15 @@
   ;;   +0 GDI_DC_CLIP_TABLE  +4 GDI_DC_SYSTEM_CLIP_TABLE  +8 GDI_DC_STATE_TABLE
   (global $GDI_TABLE_MARKS i32 (i32.const 0x07F0C800))
   (global $GDI_TABLE_MARKS_SIZE i32 (i32.const 0x00000010))
+  ;; Which TreeView each TV_TABLE item belongs to, parallel-indexed to it. The
+  ;; item records are full at 32 bytes, so the owner has to live beside them.
+  (global $TV_OWNER_TABLE i32 (i32.const 0x07F0C900))
+  (global $TV_OWNER_TABLE_SIZE i32 (i32.const 0x00000080))
+  ;; Per-TreeView view state, 16 records x 16 bytes:
+  ;;   +0 hwnd (0 = free)  +4 caret item  +8 first visible row  +12 image list
+  (global $TV_VIEW_TABLE i32 (i32.const 0x07F0CA00))
+  (global $TV_VIEW_TABLE_SIZE i32 (i32.const 0x00000100))
+  (global $TV_VIEW_COUNT i32 (i32.const 16))
   ;; Keep WAT-owned object/DC namespaces distinct and outside stock handles.
   (global $gdi_next_object_handle (mut i32) (i32.const 0x00410001))
   (global $gdi_next_dc_handle (mut i32) (i32.const 0x00310001))

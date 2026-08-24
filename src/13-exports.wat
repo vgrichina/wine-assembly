@@ -4142,7 +4142,6 @@
   (func (export "test_create_treeview")
     (param $x i32) (param $y i32) (param $w i32) (param $h i32) (param $style i32) (result i32)
     (local $parent i32) (local $tv i32)
-    (global.set $tv_first_visible_row (i32.const 0))
     (global.set $tv_drag_anchor_y (i32.const 0))
     (global.set $tv_drag_anchor_row (i32.const 0))
     (global.set $tv_debug_expand_notify_count (i32.const 0))
@@ -4157,10 +4156,14 @@
     (local.set $tv (call $ctrl_create_child (local.get $parent) (i32.const 8) (i32.const 100)
                      (local.get $x) (local.get $y) (local.get $w) (local.get $h)
                      (i32.or (i32.const 0x50000000) (local.get $style)) (i32.const 0)))
+    ;; The view state a bare export reads is the one belonging to the control
+    ;; the test just made, so point the active owner at it.
+    (global.set $tv_active_owner (local.get $tv))
+    (call $tv_view_set_row (i32.const 0))
     (local.get $tv))
 
   (func (export "treeview_get_first_visible_row") (result i32)
-    (global.get $tv_first_visible_row))
+    (call $tv_view_row))
   (func (export "treeview_get_visible_count") (result i32)
     (call $tv_visible_count))
 

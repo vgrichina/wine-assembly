@@ -13,12 +13,17 @@
   ;;   +28: pszText     (guest pointer to NUL-terminated text)
   ;; Per-slot image indexes live in TV_IMAGE_TABLE (32 × 8 bytes):
   ;;   +0: iImage, +4: iSelectedImage (-1 means no image)
+  ;; Which window owns each item lives in TV_OWNER_TABLE (32 × 4 bytes), and
+  ;; the caret/scroll/image-list a window sees lives in TV_VIEW_TABLE. Both
+  ;; used to be process-wide, which is invisible while only one TreeView is on
+  ;; screen and wrong the moment there are two: Winamp's AVS editor tree showed
+  ;; the items and the selection of Winamp's own preferences tree.
+  ;; $tv_active_owner names the window the current operation belongs to; the
+  ;; item walks skip anything another window owns.
 
   (global $tv_next_handle (mut i32) (i32.const 0xCC000001))
   (global $tv_count (mut i32) (i32.const 0))
-  (global $tv_selected_handle (mut i32) (i32.const 0))
-  (global $tv_first_visible_row (mut i32) (i32.const 0))
-  (global $tv_image_list (mut i32) (i32.const 0))
+  (global $tv_active_owner (mut i32) (i32.const 0))
   (global $tv_drag_anchor_y (mut i32) (i32.const 0))
   (global $tv_drag_anchor_row (mut i32) (i32.const 0))
   (global $tv_debug_paint_visible (mut i32) (i32.const 0))
@@ -36,6 +41,82 @@
     (i32.add (global.get $TV_IMAGE_TABLE)
       (i32.mul (local.get $slot) (i32.const 8))))
 
+  (func $tv_owner_cell (param $slot i32) (result i32)
+    (i32.add (global.get $TV_OWNER_TABLE)
+      (i32.mul (local.get $slot) (i32.const 4))))
+
+  ;; Does this item belong to the window the current operation is for? An item
+  ;; inserted before any owner was recorded (owner 0) stays visible to
+  ;; everybody, which is what the single-TreeView tests and WinHelp expect.
+  (func $tv_slot_in_view (param $slot i32) (result i32)
+    (local $owner i32)
+    (local.set $owner (i32.load (call $tv_owner_cell (local.get $slot))))
+    (select
+      (i32.const 1)
+      (i32.const 0)
+      (i32.or
+        (i32.eqz (local.get $owner))
+        (i32.eq (local.get $owner) (global.get $tv_active_owner)))))
+
+  ;; The view record for $tv_active_owner, claiming a free one on first use.
+  ;; With every record taken the last one is shared: a process with more than
+  ;; 16 live TreeViews degrades to the old cross-talk rather than losing the
+  ;; caret entirely.
+  (func $tv_view_rec (result i32)
+    (local $i i32) (local $rec i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $TV_VIEW_COUNT)))
+      (local.set $rec
+        (i32.add (global.get $TV_VIEW_TABLE) (i32.mul (local.get $i) (i32.const 16))))
+      (if (i32.eq (i32.load (local.get $rec)) (global.get $tv_active_owner))
+        (then (return (local.get $rec))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.set $i (i32.const 0))
+    (block $free_done (loop $free_scan
+      (br_if $free_done (i32.ge_u (local.get $i) (global.get $TV_VIEW_COUNT)))
+      (local.set $rec
+        (i32.add (global.get $TV_VIEW_TABLE) (i32.mul (local.get $i) (i32.const 16))))
+      (if (i32.eqz (i32.load (local.get $rec)))
+        (then
+          (i32.store (local.get $rec) (global.get $tv_active_owner))
+          (i32.store offset=4 (local.get $rec) (i32.const 0))
+          (i32.store offset=8 (local.get $rec) (i32.const 0))
+          (i32.store offset=12 (local.get $rec) (i32.const 0))
+          (return (local.get $rec))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $free_scan)))
+    (i32.add (global.get $TV_VIEW_TABLE)
+      (i32.mul (i32.sub (global.get $TV_VIEW_COUNT) (i32.const 1)) (i32.const 16))))
+
+  (func $tv_view_sel (result i32)
+    (i32.load offset=4 (call $tv_view_rec)))
+  (func $tv_view_set_sel (param $v i32)
+    (i32.store offset=4 (call $tv_view_rec) (local.get $v)))
+  (func $tv_view_row (result i32)
+    (i32.load offset=8 (call $tv_view_rec)))
+  (func $tv_view_set_row (param $v i32)
+    (i32.store offset=8 (call $tv_view_rec) (local.get $v)))
+  (func $tv_view_iml (result i32)
+    (i32.load offset=12 (call $tv_view_rec)))
+  (func $tv_view_set_iml (param $v i32)
+    (i32.store offset=12 (call $tv_view_rec) (local.get $v)))
+
+  ;; TVM_GETCOUNT is per control, not per process.
+  (func $tv_owned_count (result i32)
+    (local $i i32) (local $count i32)
+    (block $done (loop $items
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
+      (if (i32.and
+            (i32.ne (i32.load
+              (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
+              (i32.const 0))
+            (call $tv_slot_in_view (local.get $i)))
+        (then (local.set $count (i32.add (local.get $count) (i32.const 1)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $items)))
+    (local.get $count))
+
   ;; Accept both the emulator's compact 24-byte ImageList record and the
   ;; authentic Win98 COMCTL32 HIML record. WinHelp ships and runs the latter:
   ;; signature@0, count@4, cx@16, cy@20, image DC@56, mask DC@60.
@@ -45,7 +126,7 @@
     (local $count i32) (local $cx i32) (local $cy i32)
     (local $bmp i32) (local $image_dc i32) (local $mask_dc i32)
     (local $src_x i32) (local $dst_y i32) (local $memdc i32) (local $ret i32)
-    (local.set $himl (global.get $tv_image_list))
+    (local.set $himl (call $tv_view_iml))
     (if (i32.or (i32.eqz (local.get $himl)) (i32.lt_s (local.get $index) (i32.const 0)))
       (then (return (i32.const 0))))
     (if (i32.lt_u (local.get $himl) (global.get $image_base))
@@ -165,7 +246,9 @@
           (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
         (if (i32.and
               (i32.and
-                (i32.ne (i32.load (local.get $scan)) (i32.const 0))
+                (i32.and
+                  (i32.ne (i32.load (local.get $scan)) (i32.const 0))
+                  (call $tv_slot_in_view (local.get $i)))
                 (i32.eqz (i32.load offset=4 (local.get $scan))))
               (i32.ne (i32.load (local.get $scan)) (local.get $handle)))
           (then (local.set $prev_handle (i32.load (local.get $scan)))))
@@ -202,6 +285,7 @@
     (global.set $tv_count (i32.add (global.get $tv_count) (i32.const 1)))
     ;; Slot base address
     (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32))))
+    (i32.store (call $tv_owner_cell (local.get $slot)) (local.get $hwnd))
     (local.set $image_rec (call $tv_image_record (local.get $slot)))
     (i32.store (local.get $image_rec) (i32.const -1))
     (i32.store offset=4 (local.get $image_rec) (i32.const -1))
@@ -360,9 +444,9 @@
       (then (call $tv_link_root_item (local.get $base) (local.get $handle))))
     ;; Win98's TreeView gives the first inserted item the caret. WinHelp
     ;; immediately queries TVGN_CARET and relies on that native default.
-    (if (i32.eqz (global.get $tv_selected_handle))
+    (if (i32.eqz (call $tv_view_sel))
       (then
-        (global.set $tv_selected_handle (local.get $handle))
+        (call $tv_view_set_sel (local.get $handle))
         (i32.store offset=20 (local.get $base)
           (i32.or (i32.load offset=20 (local.get $base)) (i32.const 0x2)))))
     (local.get $handle))
@@ -535,7 +619,9 @@
       (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
       (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
       (if (i32.and
-            (i32.ne (i32.load (local.get $base)) (i32.const 0))
+            (i32.and
+              (i32.ne (i32.load (local.get $base)) (i32.const 0))
+              (call $tv_slot_in_view (local.get $i)))
             (call $tv_item_visible (local.get $base)))
         (then (local.set $count (i32.add (local.get $count) (i32.const 1)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
@@ -566,14 +652,14 @@
       (then (local.set $row (i32.const 0))))
     (if (i32.gt_s (local.get $row) (local.get $max))
       (then (local.set $row (local.get $max))))
-    (global.set $tv_first_visible_row (local.get $row))
+    (call $tv_view_set_row (local.get $row))
     (local.get $row))
 
   (func $tv_scroll_by (param $hwnd i32) (param $delta i32) (result i32)
     (local $sz i32) (local $h i32) (local $old_row i32) (local $new_row i32)
     (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
     (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
-    (local.set $old_row (global.get $tv_first_visible_row))
+    (local.set $old_row (call $tv_view_row))
     (local.set $new_row
       (call $tv_scroll_to_for_h
         (local.get $h)
@@ -585,7 +671,7 @@
     (local.get $new_row))
 
   (func $tv_first_visible (result i32)
-    (call $tv_visible_handle_at_row (global.get $tv_first_visible_row)))
+    (call $tv_visible_handle_at_row (call $tv_view_row)))
 
   (func $tv_next_visible_handle (param $hItem i32) (result i32)
     (local $slot i32) (local $base i32) (local $parent i32) (local $guard i32)
@@ -622,7 +708,9 @@
       (br_if $root_done (i32.ge_u (local.get $i) (i32.const 32)))
       (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
       (if (i32.and
-            (i32.ne (i32.load (local.get $base)) (i32.const 0))
+            (i32.and
+              (i32.ne (i32.load (local.get $base)) (i32.const 0))
+              (call $tv_slot_in_view (local.get $i)))
             (i32.eqz (i32.load offset=4 (local.get $base))))
         (then (local.set $hItem (i32.load (local.get $base))) (br $root_done)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
@@ -647,7 +735,9 @@
           (loop $loop
             (br_if $done (i32.ge_u (local.get $i) (i32.const 32)))
             (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
-            (if (i32.and (i32.ne (i32.load (local.get $base)) (i32.const 0))  ;; handle != 0
+            (if (i32.and (i32.and
+                           (i32.ne (i32.load (local.get $base)) (i32.const 0))  ;; handle != 0
+                           (call $tv_slot_in_view (local.get $i)))
                          (i32.eqz (i32.load offset=4 (local.get $base))))  ;; parent == 0
               (then (return (i32.load (local.get $base)))))
             (local.set $i (i32.add (local.get $i) (i32.const 1)))
@@ -655,7 +745,7 @@
         (return (i32.const 0))))
     ;; TVGN_CARET (9) — selected item.
     (if (i32.eq (local.get $flag) (i32.const 9))
-      (then (return (global.get $tv_selected_handle))))
+      (then (return (call $tv_view_sel))))
     ;; TVGN_FIRSTVISIBLE (5)
     (if (i32.eq (local.get $flag) (i32.const 5))
       (then (return (call $tv_first_visible))))
@@ -796,7 +886,7 @@
           (i32.ne (local.get $hItem) (i32.const 0))
           (i32.eq (call $tv_find_slot (local.get $hItem)) (i32.const -1)))
       (then (return (i32.const 0))))
-    (local.set $old_sel (global.get $tv_selected_handle))
+    (local.set $old_sel (call $tv_view_sel))
     (if (local.get $old_sel)
       (then
         (local.set $slot (call $tv_find_slot (local.get $old_sel)))
@@ -809,7 +899,11 @@
     (block $clear_done (loop $clear_items
       (br_if $clear_done (i32.ge_u (local.get $i) (i32.const 32)))
       (local.set $scan_base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
-      (if (i32.load (local.get $scan_base))
+      ;; Only this control's items: dropping TVIS_SELECTED across the whole
+      ;; table would deselect the other TreeView's caret item too.
+      (if (i32.and
+            (i32.ne (i32.load (local.get $scan_base)) (i32.const 0))
+            (call $tv_slot_in_view (local.get $i)))
         (then
           (i32.store offset=20 (local.get $scan_base)
             (i32.and (i32.load offset=20 (local.get $scan_base)) (i32.const 0xFFFFFFFD)))))
@@ -823,7 +917,7 @@
             (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32))))
             (i32.store offset=20 (local.get $base)
               (i32.or (i32.load offset=20 (local.get $base)) (i32.const 0x0002)))))))
-    (global.set $tv_selected_handle (local.get $hItem))
+    (call $tv_view_set_sel (local.get $hItem))
     (if (i32.ne (local.get $old_sel) (local.get $hItem))
       (then (call $tv_notify_sel_changed
         (local.get $hwnd) (local.get $old_sel) (local.get $hItem) (local.get $action))))
@@ -846,7 +940,7 @@
       (then (local.set $row (i32.const 0)))
       (else
         (local.set $row (i32.div_s (i32.sub (local.get $y) (i32.const 3)) (i32.const 16)))))
-    (local.set $row (i32.add (local.get $row) (global.get $tv_first_visible_row)))
+    (local.set $row (i32.add (local.get $row) (call $tv_view_row)))
     (local.set $hItem (call $tv_visible_handle_at_row (local.get $row)))
     (if (i32.eqz (local.get $hItem))
       (then
@@ -911,9 +1005,9 @@
     (i32.store offset=20 (local.get $base) (local.get $state))
     (if (i32.and
           (i32.eqz (i32.and (local.get $state) (i32.const 0x20)))
-          (i32.ne (global.get $tv_selected_handle) (i32.const 0)))
+          (i32.ne (call $tv_view_sel) (i32.const 0)))
       (then
-        (local.set $sel_slot (call $tv_find_slot (global.get $tv_selected_handle)))
+        (local.set $sel_slot (call $tv_find_slot (call $tv_view_sel)))
         (if (i32.ne (local.get $sel_slot) (i32.const -1))
           (then
             (local.set $sel_base (i32.add (global.get $TV_TABLE)
@@ -928,7 +1022,9 @@
           (br_if $scan_done (i32.ge_u (local.get $i) (i32.const 32)))
           (local.set $scan_base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
           (if (i32.and
-                (i32.ne (i32.load (local.get $scan_base)) (i32.const 0))
+                (i32.and
+                  (i32.ne (i32.load (local.get $scan_base)) (i32.const 0))
+                  (call $tv_slot_in_view (local.get $i)))
                 (i32.ne
                   (i32.and (i32.load offset=20 (local.get $scan_base)) (i32.const 0x0002))
                   (i32.const 0)))
@@ -988,9 +1084,9 @@
                 (global.get $tv_drag_anchor_y)
                 (global.get $tv_drag_anchor_row)
                 (i32.const 0) (local.get $max)))
-            (if (i32.ne (local.get $new_row) (global.get $tv_first_visible_row))
+            (if (i32.ne (local.get $new_row) (call $tv_view_row))
               (then
-                (global.set $tv_first_visible_row (local.get $new_row))
+                (call $tv_view_set_row (local.get $new_row))
                 (call $paint_flag_set_inv (local.get $hwnd))
                 (call $treeview_paint_wat (local.get $hwnd))))))
         (return (i32.const 1))))
@@ -1019,7 +1115,7 @@
           (then
             (local.set $hit (call $scrollbar_hit_part
               (local.get $h) (local.get $y)
-              (global.get $tv_first_visible_row) (i32.const 0) (local.get $max)))
+              (call $tv_view_row) (i32.const 0) (local.get $max)))
             (if (local.get $hit)
               (then
                 (global.set $sb_pressed_hwnd (local.get $hwnd))
@@ -1037,7 +1133,7 @@
                 (if (i32.eq (local.get $hit) (i32.const 5))
                   (then
                     (global.set $tv_drag_anchor_y (local.get $y))
-                    (global.set $tv_drag_anchor_row (global.get $tv_first_visible_row))
+                    (global.set $tv_drag_anchor_row (call $tv_view_row))
                     (global.set $capture_hwnd (local.get $hwnd))))
                 (call $paint_flag_set_inv (local.get $hwnd))
                 (call $treeview_paint_wat (local.get $hwnd))
@@ -1047,7 +1143,7 @@
       (then (local.set $row (i32.const 0)))
       (else
         (local.set $row (i32.div_s (i32.sub (local.get $y) (i32.const 3)) (i32.const 16)))))
-    (local.set $row (i32.add (local.get $row) (global.get $tv_first_visible_row)))
+    (local.set $row (i32.add (local.get $row) (call $tv_view_row)))
     (local.set $hItem (call $tv_visible_handle_at_row (local.get $row)))
     (if (i32.eqz (local.get $hItem))
       (then (return (i32.const 0))))
@@ -1078,7 +1174,20 @@
   )
 
   ;; Main TreeView message dispatcher
+  ;; The two entry points into this control name the window every item walk
+  ;; below is about. They save and restore the previous owner because a
+  ;; TreeView operation can re-enter one: TVN_GETDISPINFO goes out to the
+  ;; parent dialog, which is free to talk to a different tree before returning.
   (func $treeview_dispatch (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    (local $prev i32) (local $ret i32)
+    (local.set $prev (global.get $tv_active_owner))
+    (global.set $tv_active_owner (local.get $hwnd))
+    (local.set $ret (call $treeview_dispatch_owned
+      (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))
+    (global.set $tv_active_owner (local.get $prev))
+    (local.get $ret))
+
+  (func $treeview_dispatch_owned (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $ret i32)
     ;; TVM_INSERTITEMA (0x1100)
     (if (i32.eq (local.get $msg) (i32.const 0x1100))
@@ -1093,10 +1202,11 @@
         (local.set $ret (call $tv_find_slot (local.get $lParam)))
         (if (i32.ne (local.get $ret) (i32.const -1))
           (then
-            (if (i32.eq (global.get $tv_selected_handle) (local.get $lParam))
-              (then (global.set $tv_selected_handle (i32.const 0))))
+            (if (i32.eq (call $tv_view_sel) (local.get $lParam))
+              (then (call $tv_view_set_sel (i32.const 0))))
             (i32.store (i32.add (global.get $TV_TABLE)
               (i32.mul (local.get $ret) (i32.const 32))) (i32.const 0))
+            (i32.store (call $tv_owner_cell (local.get $ret)) (i32.const 0))
             (i32.store (call $tv_image_record (local.get $ret)) (i32.const -1))
             (i32.store offset=4 (call $tv_image_record (local.get $ret)) (i32.const -1))
             (global.set $tv_count (i32.sub (global.get $tv_count) (i32.const 1)))))
@@ -1108,14 +1218,14 @@
           (local.get $hwnd) (local.get $lParam) (local.get $wParam)))))
     ;; TVM_GETCOUNT (0x1105)
     (if (i32.eq (local.get $msg) (i32.const 0x1105))
-      (then (return (global.get $tv_count))))
+      (then (return (call $tv_owned_count))))
     ;; TVM_GETIMAGELIST / TVM_SETIMAGELIST
     (if (i32.eq (local.get $msg) (i32.const 0x1108))
-      (then (return (global.get $tv_image_list))))
+      (then (return (call $tv_view_iml))))
     (if (i32.eq (local.get $msg) (i32.const 0x1109))
       (then
-        (local.set $ret (global.get $tv_image_list))
-        (global.set $tv_image_list (local.get $lParam))
+        (local.set $ret (call $tv_view_iml))
+        (call $tv_view_set_iml (local.get $lParam))
         (return (local.get $ret))))
     ;; TVM_GETNEXTITEM (0x110a)
     (if (i32.eq (local.get $msg) (i32.const 0x110a))
@@ -1177,10 +1287,10 @@
       (then (local.set $max_scroll (i32.const 0))))
     (if (i32.gt_s (local.get $max_scroll) (i32.const 0))
       (then
-        (drop (call $tv_scroll_to_for_h (local.get $h) (global.get $tv_first_visible_row))))
+        (drop (call $tv_scroll_to_for_h (local.get $h) (call $tv_view_row))))
       (else
-        (global.set $tv_first_visible_row (i32.const 0))))
-    (local.set $first_row (global.get $tv_first_visible_row))
+        (call $tv_view_set_row (i32.const 0))))
+    (local.set $first_row (call $tv_view_row))
     (local.set $content_right (local.get $w))
     (if (i32.gt_s (local.get $max_scroll) (i32.const 0))
       (then (local.set $content_right (i32.sub (local.get $w) (i32.const 16)))))
@@ -1291,7 +1401,7 @@
 
               ;; Draw the item's actual image-list glyph. Authentic WinHelp
               ;; uses image 2 for its white topic/question page.
-              (if (global.get $tv_image_list)
+              (if (call $tv_view_iml)
                 (then
                   (local.set $image_index
                     (i32.load (call $tv_image_record (local.get $slot))))
@@ -1357,6 +1467,15 @@
 
   ;; TreeView control wndproc — handles WM_PAINT and TreeView messages
   (func $treeview_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    (local $prev i32) (local $ret i32)
+    (local.set $prev (global.get $tv_active_owner))
+    (global.set $tv_active_owner (local.get $hwnd))
+    (local.set $ret (call $treeview_wndproc_owned
+      (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))
+    (global.set $tv_active_owner (local.get $prev))
+    (local.get $ret))
+
+  (func $treeview_wndproc_owned (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $code i32) (local $delta i32) (local $sz i32) (local $h i32) (local $old_row i32) (local $new_row i32)
     ;; WM_PAINT (0x000F) — draw the tree into the parent's back canvas
     (if (i32.eq (local.get $msg) (i32.const 0x000F))
@@ -1399,7 +1518,7 @@
           (then
             (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
             (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
-            (local.set $old_row (global.get $tv_first_visible_row))
+            (local.set $old_row (call $tv_view_row))
             (local.set $new_row
               (call $tv_scroll_to_for_h
                 (local.get $h)
@@ -1409,14 +1528,14 @@
                 (call $paint_flag_set_inv (local.get $hwnd))
                 (call $treeview_paint_wat (local.get $hwnd))))))
         (if (i32.eq (local.get $code) (i32.const 6))
-          (then (drop (call $tv_scroll_by (local.get $hwnd) (i32.sub (i32.const 0) (global.get $tv_first_visible_row))))))
+          (then (drop (call $tv_scroll_by (local.get $hwnd) (i32.sub (i32.const 0) (call $tv_view_row))))))
         (if (i32.eq (local.get $code) (i32.const 7))
           (then
             (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
             (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
             (drop (call $tv_scroll_by
               (local.get $hwnd)
-              (i32.sub (call $tv_max_scroll_for_h (local.get $h)) (global.get $tv_first_visible_row))))))
+              (i32.sub (call $tv_max_scroll_for_h (local.get $h)) (call $tv_view_row))))))
         (return (i32.const 0))))
     ;; Mouse selection/expand/scrollbar drag.
     (if (i32.or
