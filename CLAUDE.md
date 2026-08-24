@@ -300,3 +300,7 @@ Win98/XP executables in `test/binaries/`. Currently tested:
 - **NT/XP:** mspaint.exe (NT version, requires msvcrt.dll + mfc42u.dll from `test/binaries/dlls/`), winmine.exe (XP)
 - **Other:** Space Cadet Pinball, Winamp extracted app, Winamp 2.91/2.95 NSIS installers
 - **Help files:** `test/binaries/help/` — .hlp files for notepad, calc, freecell, solitaire, mspaint
+
+### Reverse-engineering notes
+
+[docs/re-notes/](docs/re-notes/README.md) — one file per guest binary we have dug into: module load bases and the runtime↔original VA arithmetic, asset/container layout, the app's real API profile, every function entry already identified, headless commands that reach a given screen, and the hypotheses already ruled out. **Read the app's file before starting an investigation on it, and add what you learn when you finish one** — otherwise the same disassembly gets redone every session.
