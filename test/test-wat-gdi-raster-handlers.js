@@ -980,6 +980,53 @@ const { bootRenderHarness } = require('./render-helper');
     ]);
   });
 
+  check('StretchDIBits counts a top-down source rectangle from the lower left too', () => {
+    const surface = makeDib(2, 4);
+    const bmiGa = wat.guest_alloc(40) >>> 0;
+    const bitsGa = wat.guest_alloc(48) >>> 0;
+    const imageBase = wat.get_image_base() >>> 0;
+    const bmiWa = 0x12000 + (bmiGa - imageBase);
+    const bitsWa = 0x12000 + (bitsGa - imageBase);
+    wat.guest_write32(bmiGa, 40);
+    wat.guest_write32(bmiGa + 4, 2);
+    wat.guest_write32(bmiGa + 8, -4);
+    wat.guest_write16(bmiGa + 12, 1);
+    wat.guest_write16(bmiGa + 14, 24);
+    wat.guest_write32(bmiGa + 16, 0);
+    // biHeight's sign says how the scanlines are STORED, not where the source
+    // rectangle is measured from — that stays the lower-left corner. So these
+    // physical rows are already in display order, and ySrc still counts up
+    // from the bottom: ySrc = biHeightAbs - yDest - SrcHeight, the same
+    // relation the bottom-up case above uses.
+    //
+    // RollerCoaster Tycoon windowed is the real-world case: it draws into the
+    // top of a 1024x-768 buffer and presents with ySrc = 768 - 479. Reading
+    // that literally sampled 289 rows below the frame — a black client area
+    // with only the top of the picture in it.
+    bytes.set([
+      0, 0, 255, 0, 0, 255, 0, 0,
+      0, 255, 0, 0, 255, 0, 0, 0,
+      0, 255, 255, 0, 255, 255, 0, 0,
+      255, 0, 0, 255, 0, 0, 0, 0,
+    ], bitsWa);
+
+    assert.strictEqual(wat.test_gdi_stretch_dibits(
+      surface.hdc, 0, 0, 2, 1, 0, 3, 2, 1,
+      bitsWa, bmiWa, 0, 0x00CC0020), 1);
+    assert.strictEqual(wat.test_gdi_stretch_dibits(
+      surface.hdc, 0, 1, 2, 2, 0, 1, 2, 2,
+      bitsWa, bmiWa, 0, 0x00CC0020), 2);
+    assert.strictEqual(wat.test_gdi_stretch_dibits(
+      surface.hdc, 0, 3, 2, 1, 0, 0, 2, 1,
+      bitsWa, bmiWa, 0, 0x00CC0020), 1);
+    assert.deepStrictEqual([0, 1, 2, 3].map(y => packed(surface, 0, y)), [
+      0xFF0000,
+      0x00FF00,
+      0xFFFF00,
+      0x0000FF,
+    ]);
+  });
+
   console.log(`\n${passed}/${passed} checks passed`);
 })().catch(error => {
   console.error(error.stack || error);
