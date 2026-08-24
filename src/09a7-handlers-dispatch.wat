@@ -1071,9 +1071,14 @@
             (then (call $wnd_get_style (local.get $arg0)))
             (else (call $host_get_window_info (local.get $arg0) (i32.const 0)))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+    ;; GWL_EXSTYLE: CreateWindowExA and $dlg_load both record dwExStyle per
+    ;; window, so answer from that rather than reporting 0 for every window.
+    ;; Apps read this to decide whether they already own a style bit before
+    ;; OR-ing another one in; a hardcoded 0 makes every such read-modify-write
+    ;; drop the bits the window was created with.
     (if (i32.eq (local.get $arg1) (i32.const -20))  ;; GWL_EXSTYLE
       (then
-        (global.set $eax (i32.const 0))
+        (global.set $eax (call $ctrl_get_ex_style (local.get $arg0)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
     (if (i32.ge_s (local.get $arg1) (i32.const 0))
       (then

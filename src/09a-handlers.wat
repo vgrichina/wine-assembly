@@ -2766,6 +2766,11 @@
       (then
         (global.set $eax (call $wnd_set_style (local.get $arg0) (local.get $arg2)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (if (i32.eq (local.get $arg1) (i32.const -20))  ;; GWL_EXSTYLE
+      (then
+        (global.set $eax (call $ctrl_get_ex_style (local.get $arg0)))  ;; old value
+        (call $ctrl_set_ex_style (local.get $arg0) (local.get $arg2))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
     ;; Dialog and registered-window extra bytes are independent of application
     ;; GWL_USERDATA. WinHelp's toolbar uses multiple positive LONG offsets.
     (if (i32.ge_s (local.get $arg1) (i32.const 0))

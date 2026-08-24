@@ -252,6 +252,7 @@ UNIT=(
   test/test-wat-gdi-screen-readback.js
   test/test-wat-winsock-hostname.js
   test/test-window-control-id.js
+  test/test-window-exstyle.js
   test/test-compile-wat-unknown-name.js
   test/test-gdi-public-seven.js
   test/test-combobox.js
