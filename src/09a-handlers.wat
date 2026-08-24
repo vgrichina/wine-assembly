@@ -2776,10 +2776,31 @@
     (if (i32.eq (local.get $class) (i32.const 21)) (then (return (i32.const 0x3274)))) ;; toolbar
     (i32.const 0))
 
+  ;; The name a window's class was actually registered under, as a WASM
+  ;; address, or 0 when this hwnd has no class record or the class was named
+  ;; by atom rather than by string.
+  ;;
+  ;; This outranks the built-in name because a superclass is still its own
+  ;; class: Storm registers "SDlgStatic" over USER's Static and then decides
+  ;; which artwork each dialog child gets by strcmp'ing GetClassNameA's answer
+  ;; against that exact string (storm.dll 0x15005112). Answering "Static"
+  ;; makes every lookup miss, and a child with no art record paints black.
+  (func $wnd_registered_class_name (param $hwnd i32) (result i32)
+    (local $slot i32) (local $name i32)
+    (local.set $slot (call $wnd_get_class_slot (local.get $hwnd)))
+    (if (i32.lt_s (local.get $slot) (i32.const 0)) (then (return (i32.const 0))))
+    ;; WNDCLASSA sits at class record + 8; lpszClassName is its +36 field.
+    (local.set $name (i32.load offset=44 (call $class_record_addr (local.get $slot))))
+    ;; A small value is MAKEINTATOM, which names no string to hand back.
+    (if (i32.lt_u (local.get $name) (i32.const 0x10000)) (then (return (i32.const 0))))
+    (call $g2w (local.get $name)))
+
   (func $copy_control_class_name
     (param $hwnd i32) (param $buf i32) (param $max i32) (result i32)
     (local $src i32) (local $len i32)
-    (local.set $src (call $control_class_name_ptr (local.get $hwnd)))
+    (local.set $src (call $wnd_registered_class_name (local.get $hwnd)))
+    (if (i32.eqz (local.get $src))
+      (then (local.set $src (call $control_class_name_ptr (local.get $hwnd)))))
     (if (i32.or (i32.eqz (local.get $src)) (i32.le_s (local.get $max) (i32.const 0)))
       (then (return (i32.const -1))))
     (local.set $len (call $strlen (local.get $src)))
