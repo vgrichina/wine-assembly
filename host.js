@@ -317,6 +317,76 @@ class WineAssembly {
     const base = createHostImports(ctx);
     ctx.sharedGdi = base.gdi;
     const h = base.host;
+
+    // --- DirectDraw presentation: driven by the guest, paced by the display ---
+    //
+    // Presenting used to be a poll -- one run slice in sixteen called
+    // presentBestDxOffscreen(), which then threw the blit away unless a
+    // signature of the surface had changed. That signature samples four bytes
+    // per row, so on a 640x480 primary it looks at 1920 of 307200 pixels: a
+    // small moving sprite (DX-Ball's ball) usually changes none of them and the
+    // frame is discarded, and *which* frames survive depends on where the
+    // sprite happens to be. That reads as irregular lag rather than as a low
+    // frame rate, and no amount of polling faster fixes it.
+    //
+    // The guest already says when it has finished a frame, so listen instead of
+    // guessing. dx_trace kinds, from src/09a8-handlers-directx.wat:
+    //   1 = Lock   2 = Unlock   5 = present   6 = Flip
+    // Wrapping it here (the way test/run.js does) keeps this whole change out
+    // of lib/host-imports.js: presentBestDxOffscreen(true) already bypasses the
+    // signature compare, so nothing inside it needs to change.
+    const dxLockDepth = new Map();
+    const rawDxTrace = h.dx_trace;
+    h.dx_trace = (kind, slot, a1, a2, a3) => {
+      if (kind === 1) {
+        dxLockDepth.set(slot, (dxLockDepth.get(slot) || 0) + 1);
+      } else if (kind === 2) {
+        const left = (dxLockDepth.get(slot) || 0) - 1;
+        if (left > 0) dxLockDepth.set(slot, left); else dxLockDepth.delete(slot);
+        self._dxDirty = true;   // a released write is a finished write
+      } else if (kind === 5 || kind === 6) {
+        self._dxDirty = true;
+      }
+      return rawDxTrace ? rawDxTrace(kind, slot, a1, a2, a3) : undefined;
+    };
+
+    // Run slices are macrotasks and there are far more of them than there are
+    // display frames, so a dirty flag alone would upload the surface hundreds
+    // of times a second to show sixty. This counter ticks once per repaint
+    // opportunity and caps presentation at one canvas upload per frame; using
+    // rAF rather than a timer also means it stops while the tab is hidden.
+    if (typeof requestAnimationFrame === 'function') {
+      const tick = () => { self._dxFrameSeq = (self._dxFrameSeq || 0) + 1; requestAnimationFrame(tick); };
+      requestAnimationFrame(tick);
+    }
+
+    self._presentDxIfDirty = () => {
+      if (!self._dxDirty) return;
+      const gdi = self.hostCtx && self.hostCtx.sharedGdi;
+      if (!gdi || !gdi.presentBestDxOffscreen) return;
+      // One upload per display frame. With no rAF (a non-DOM host) _dxFrameSeq
+      // stays undefined and every dirty slice presents, which is the old
+      // unthrottled behaviour rather than none.
+      if (self._dxFrameSeq !== undefined) {
+        if (self._dxFrameSeq === self._dxPresentedSeq) return;
+        self._dxPresentedSeq = self._dxFrameSeq;
+      }
+      // Don't upload a surface the guest is part-way through writing. Every
+      // Lock measured so far is released inside its own frame (Heroes II
+      // gameplay: 140 Locks, 140 Unlocks), and the Unlock re-marks dirty, so
+      // waiting costs one frame at most. A lock still held several frames
+      // later is a retained pointer into what the guest believes is video
+      // memory -- present it anyway, which is what real DirectDraw does.
+      if (dxLockDepth.size) {
+        self._dxLockHeld = (self._dxLockHeld || 0) + 1;
+        if (self._dxLockHeld < 3) return;
+      } else {
+        self._dxLockHeld = 0;
+      }
+      self._dxDirty = false;
+      gdi.presentBestDxOffscreen(true);
+    };
+
     const traceApiNames = (typeof window !== 'undefined' && window.__waTraceApiNames)
       ? window.__waTraceApiNames
       : null;
@@ -1486,10 +1556,7 @@ class WineAssembly {
             });
           }
           const perfPresentStart = perf ? performance.now() : 0;
-          self._dxPresentTick = ((self._dxPresentTick || 0) + 1) & 15;
-          if (self._dxPresentTick === 0 && self.hostCtx && self.hostCtx.sharedGdi && self.hostCtx.sharedGdi.presentBestDxOffscreen) {
-            self.hostCtx.sharedGdi.presentBestDxOffscreen();
-          }
+          if (self._presentDxIfDirty) self._presentDxIfDirty();
           if (self.renderer && self.renderer.flushRepaint) {
             self.renderer.flushRepaint(true);
           }
@@ -1607,10 +1674,7 @@ class WineAssembly {
             }
             if (perf) perf.mark('workers', performance.now() - perfThreadStart);
             const perfPresentStart2 = perf ? performance.now() : 0;
-            self._dxPresentTick = ((self._dxPresentTick || 0) + 1) & 15;
-            if (self._dxPresentTick === 0 && self.hostCtx && self.hostCtx.sharedGdi && self.hostCtx.sharedGdi.presentBestDxOffscreen) {
-              self.hostCtx.sharedGdi.presentBestDxOffscreen();
-            }
+            if (self._presentDxIfDirty) self._presentDxIfDirty();
             if (self.renderer && self.renderer.flushRepaint) {
               self.renderer.flushRepaint(true);
             }
