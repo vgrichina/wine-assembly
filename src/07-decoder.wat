@@ -8,6 +8,14 @@
   ;; $d_pc is a global used during decoding.
   (global $d_pc (mut i32) (i32.const 0))
 
+  ;; --no-sib-fusion: emit the unfused compute_ea_sib + consumer pair instead
+  ;; of the fused single handler. On by default. This exists because
+  ;; docs/interpreter-dispatch-perf.md's rule for keeping a fusion is an
+  ;; op-count delta AND a zero png-diff AND a timing run — and a fusion that
+  ;; needs a rebuild to switch off cannot be A/B'd on one box in one sitting.
+  ;; Decode-time only, so the flag itself costs nothing on the hot path.
+  (global $sib_fusion_enabled (mut i32) (i32.const 1))
+
   ;; Read next byte from guest at d_pc, advance d_pc
   (func $d_fetch8 (result i32)
     (local $v i32)
@@ -731,6 +739,22 @@
         (local.set $a (global.get $mr_disp))
         (if (call $try_emit_abs_run (i32.const 1) (local.get $src) (local.get $a))
           (then (return)))))
+    ;; Indexed SIB dword stores dominate Caesar III's RLE sprite decoder the
+    ;; way indexed loads dominate StarCraft's Smacker converter: 96.66% of the
+    ;; SIB EAs its city view computes are consumed by exactly this. Fuse the
+    ;; compute_ea_sib + store32(SIB_SENTINEL) pair into handler 420, which
+    ;; keeps the 149 operand encoding. Absolute and segmented forms are
+    ;; unchanged and still go through $emit_sib_or_abs below.
+    (if (i32.and
+          (global.get $sib_fusion_enabled)
+          (i32.and
+            (i32.eqz (global.get $code16))
+            (i32.eqz (call $mr_absolute))))
+      (then
+        (call $te (i32.const 420) (local.get $src))
+        (call $te_raw (call $sib_info_word))
+        (call $te_raw (global.get $mr_disp))
+        (return)))
     (local.set $a (call $emit_sib_or_abs))
     (call $te (i32.const 21) (local.get $src)) (call $te_raw (local.get $a)))
 

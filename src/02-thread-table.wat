@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 420 funcref)
+  (table $handlers 421 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -476,4 +476,5 @@
     $th_movsx_r16_m8_ro       ;; 417: MOVSX r16, byte [base+disp]
     $th_lut_run               ;; 418: whole LUT_RUN loop (src/07b-loop-match.wat)
     $th_copy_run              ;; 419: whole COPY_RUN loop (src/07b-loop-match.wat)
+    $th_store32_sib           ;; 420: MOV dword [base+index*scale+disp], r32
   )

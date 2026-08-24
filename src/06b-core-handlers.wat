@@ -383,6 +383,37 @@
     (call $gs8 (call $sib_ea (local.get $info) (call $read_thread_word)) (local.get $op))
     (return_call $next))
 
+  ;; 420: MOV dword [base+index*scale+disp], r32 — the dword twin of 401.
+  ;; Caesar III's RLE sprite decoder (0x0040f6d9) is the case that forced this
+  ;; one: its per-length unrolled copy runs are `mov eax,[esi+k]` /
+  ;; `mov [edi+edx*1+k],eax` pairs, and a --handler-hist run of the city view
+  ;; attributes 96.66% of every SIB EA computed — 11,248,380 of them — to this
+  ;; single consumer shape. Before the fusion each copied dword paid for a
+  ;; second threaded dispatch and a SIB_SENTINEL word.
+  ;;
+  ;; Separate handler rather than another mode bit in 149, for the reason 389
+  ;; states: an extra branch there is paid by every other SIB operation, and
+  ;; docs/aoe-performance-optimization.md measured broad SIB fusions losing
+  ;; more than they saved. Keeps the 149 encoding (info word, then disp), so
+  ;; the decoder change is only which opcode it emits.
+  (func $th_store32_sib (param $op i32)
+    (local $info i32)
+    ;; Charge the step the fused-away dispatch would have cost. $next bills
+    ;; $steps once per dispatch, so without this the guest advances ~12%
+    ;; further per host batch on this workload and every frame captured at a
+    ;; fixed batch number lands on a different game state -- DX-Ball's
+    ;; ball-animation frames caught it. $th_copy_run's `cost` word is the same
+    ;; contract: how an instruction is LOWERED must not change how much guest
+    ;; work a batch buys. The win here is the removed call_indirect, the
+    ;; SIB_SENTINEL word and the $ea_temp round trip, not the step.
+    (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
+    (local.set $info (call $read_thread_word))
+    (if (global.get $handler_hist_enabled)
+      (then (call $sib_consumer_hist_record (i32.const 21) (local.get $op) (local.get $info))))
+    (call $gs32 (call $sib_ea (local.get $info) (call $read_thread_word))
+      (call $get_reg (local.get $op)))
+    (return_call $next))
+
   ;; 403: the post-increment byte fetch through a pointer *variable*:
   ;;
   ;;   mov ecx,[0x525d80]      ; the stream pointer lives in memory, not a reg

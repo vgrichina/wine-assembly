@@ -2416,6 +2416,13 @@
   (func (export "set_loop_emit") (param $flag i32)
     (global.set $loop_emit_enabled (local.get $flag)))
 
+  ;; --no-sib-fusion: emit the unfused compute_ea_sib + consumer pair, so a
+  ;; fused build and an unfused one differ in exactly one thing and need no
+  ;; rebuild between them. Must be set before the first decode, and on every
+  ;; per-thread instance — mut globals are per-instance.
+  (func (export "set_sib_fusion") (param $flag i32)
+    (global.set $sib_fusion_enabled (local.get $flag)))
+
   ;; Threaded-handler histogram. Profiling tools enable this only around a
   ;; measured window. Counts are stored in WAT-private memory and read by JS.
   (func (export "set_handler_hist_enabled") (param $flag i32)
