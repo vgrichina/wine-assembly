@@ -28,6 +28,12 @@
   ;; this only to bound a wait on something outside this instance.
   (import "host" "real_time_ms" (func $host_real_time_ms (result i32)))
   (import "host" "yield" (func $host_yield (param i32)))
+  ;; One bounded inline turn for the worker threads, for the case where the
+  ;; main instance cannot yield: inside a synchronous wndproc the interpreter
+  ;; frame in $wnd_send_message is on the WASM stack and a yield abandons it.
+  ;; Returns the number of thread slices actually run (0 = nobody to run, or
+  ;; we are already inside a worker and must not re-enter one).
+  (import "host" "cs_pump" (func $host_cs_pump (result i32)))
   (import "host" "resolve_ordinal" (func $host_resolve_ordinal (param i32 i32) (result i32)))
   ;; resolve_ordinal(dll_name_ptr, ordinal) → api_id (-1 if unknown)
   ;; GUI host imports — call into JS canvas renderer

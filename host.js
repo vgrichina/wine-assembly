@@ -676,6 +676,7 @@ class WineAssembly {
         ? self.threadManager.waitMultipleCooperative(n, ha, wa, t)
         : self.threadManager.waitMultiple(n, ha, wa, t);
     };
+    h.cs_pump = () => self.threadManager ? self.threadManager.pumpThreadsOnce() : 0;
     h.create_semaphore = (initial, max) => self.threadManager ? self.threadManager.createSemaphore(initial, max) : 0;
     h.release_semaphore = (handle, count, prev) => self.threadManager ? self.threadManager.releaseSemaphore(handle, count, prev) : 0;
 

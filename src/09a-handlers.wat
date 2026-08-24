@@ -6769,9 +6769,30 @@ nW — STUB: unimplemented
   ;; stack untouched and yields; the host scheduler retries the same call after
   ;; giving the owner a chance to run.
   (func $handle_EnterCriticalSection (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $cs i32) (local $owner i32) (local $recursion i32)
+    (local $cs i32) (local $owner i32) (local $recursion i32) (local $round i32)
     (local.set $cs (call $g2w (local.get $arg0)))
     (local.set $owner (i32.load offset=12 (local.get $cs)))
+    ;; Contended from inside a synchronous wndproc: parking is not available.
+    ;; $wnd_send_message runs the procedure on a recursive interpreter frame,
+    ;; and a yield there returns to that loop, not to the host -- so the owning
+    ;; worker never gets a turn, the loop burns its round budget in an instant
+    ;; and silently abandons the wndproc. That is what left Diablo's main menu
+    ;; without its flaming logo: the PCX loader in its WM_INITDIALOG takes a
+    ;; Storm section, and the tail of the handler (which posts the message that
+    ;; starts the flame animation) never ran. Give the owner a bounded inline
+    ;; turn instead, exactly as waitSingleCooperative does for events.
+    (if (i32.and (i32.ne (local.get $owner) (i32.const 0))
+                 (i32.and (i32.ne (local.get $owner) (global.get $current_thread_id))
+                          (i32.ne (global.get $sync_msg_depth) (i32.const 0))))
+      (then
+        (block $pumped (loop $spin
+          (br_if $pumped (i32.eqz (call $host_cs_pump)))
+          (local.set $owner (i32.load offset=12 (local.get $cs)))
+          (br_if $pumped (i32.eqz (local.get $owner)))
+          (br_if $pumped (i32.eq (local.get $owner) (global.get $current_thread_id)))
+          (local.set $round (i32.add (local.get $round) (i32.const 1)))
+          (br_if $pumped (i32.ge_u (local.get $round) (i32.const 16)))
+          (br $spin)))))
     ;; i32.and is bitwise, so the raw owner value cannot be used as its first
     ;; boolean operand: an even thread id (2, 4, ...) AND TRUE is zero. That
     ;; made thread 1 steal sections owned by thread 2 and strand the original

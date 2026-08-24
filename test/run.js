@@ -651,6 +651,7 @@ async function main() {
   let pendingComApiId = -1; // COM api_id from 0xC0DE0000 marker emitted just BEFORE the '<ord>' name log
   let pendingWin16 = null;  // words following the 0xCA16A9F1 Win16 dispatch marker
   let pendingFpu = null;    // words following the 0xCAF00001 --trace-fpu marker
+  let pendingSyncBail = null; // words following the 0xCADE5000 abandoned-wndproc marker
   let dedupLast = null;    // {line, count} for --trace-api-dedup
   const flushDedup = () => {
     if (dedupLast && dedupLast.count > 1) logs.push(`  (x${dedupLast.count})`);
@@ -2098,6 +2099,22 @@ async function main() {
     // run. Only the F1/F2 markers mean the task stopped.
     // --trace-fpu (06-fpu.wat): the flags, whether they went up or came down,
     // and the EIP of the block that did it.
+    // $wnd_send_message ran out of interpreter rounds and is about to restore
+    // the caller's registers with the wndproc still mid-flight. The guest call
+    // is dropped on the floor, so anything the tail of that handler would have
+    // done simply never happens -- and nothing else in the run says so. Three
+    // words follow: EIP, yield_reason, and the message id.
+    if ((val >>> 0) === 0xCADE5000) { pendingSyncBail = { words: [] }; return; }
+    if (pendingSyncBail) {
+      pendingSyncBail.words.push(val >>> 0);
+      if (pendingSyncBail.words.length < 3) return;
+      const [eip, yr, msg] = pendingSyncBail.words;
+      pendingSyncBail = null;
+      flushDedup();
+      logs.push(`[sync] ABANDONED wndproc msg=0x${msg.toString(16)} at ${hex(eip)} ` +
+        `after 64 rounds (yield_reason=${yr})`);
+      return;
+    }
     if ((val >>> 0) === 0xCAF00001) { pendingFpu = { words: [] }; return; }
     if (pendingFpu) {
       pendingFpu.words.push(val >>> 0);
@@ -2643,6 +2660,8 @@ async function main() {
   h.wait_multiple = (nCount, handlesWA, bWaitAll, timeout) => nestedSyncMessage()
     ? threadManager.waitMultipleCooperative(nCount, handlesWA, bWaitAll, timeout)
     : threadManager.waitMultiple(nCount, handlesWA, bWaitAll, timeout);
+  // The critical-section face of the same problem: see pumpThreadsOnce().
+  h.cs_pump = () => threadManager.pumpThreadsOnce();
   h.create_semaphore = (initialCount, maxCount) => threadManager.createSemaphore(initialCount, maxCount);
   h.release_semaphore = (handle, releaseCount, lpPrevCountWA) => threadManager.releaseSemaphore(handle, releaseCount, lpPrevCountWA);
   // Check if a DLL file exists in VFS or host filesystem
