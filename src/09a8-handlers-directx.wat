@@ -3063,19 +3063,24 @@
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
       (local.set $hwnd (call $wnd_slot_hwnd (local.get $i)))
-      (if (i32.and
-            (i32.and
-              (i32.ne (local.get $hwnd) (i32.const 0))
-              (i32.ne (local.get $hwnd) (local.get $target)))
-            (i32.and
-              (i32.eq (call $wnd_top_level (local.get $hwnd)) (local.get $hwnd))
-              (i32.ne (call $gdi_window_surface_record (local.get $hwnd) (i32.const 0))
-                      (i32.const 0))))
+      ;; Nested, not one flat i32.and. WAT's i32.and is a bitwise operator and
+      ;; does not short-circuit, so the flat form called BOTH $wnd_top_level and
+      ;; $gdi_window_surface_record for every one of the 256 slots -- including
+      ;; the ~250 empty ones whose hwnd is 0 -- and did it again on every
+      ;; present. DX-Ball presents once per BltFast, which put 20% of its entire
+      ;; wasm time inside a lookup for windows that do not exist. Letting the
+      ;; two cheap comparisons gate the two calls costs nothing and skips them.
+      (if (i32.and (i32.ne (local.get $hwnd) (i32.const 0))
+            (i32.ne (local.get $hwnd) (local.get $target)))
         (then
-          (if (call $wnd_is_effectively_visible (local.get $hwnd))
+          (if (i32.eq (call $wnd_top_level (local.get $hwnd)) (local.get $hwnd))
             (then
-              (call $dx_blit_entry_to_hdc (local.get $entry_wa)
-                (i32.add (local.get $hwnd) (i32.const 0x40000)))))))
+              (if (call $gdi_window_surface_record (local.get $hwnd) (i32.const 0))
+                (then
+                  (if (call $wnd_is_effectively_visible (local.get $hwnd))
+                    (then
+                      (call $dx_blit_entry_to_hdc (local.get $entry_wa)
+                        (i32.add (local.get $hwnd) (i32.const 0x40000)))))))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan))))
 
@@ -3558,13 +3563,47 @@
   ;; GetCurrentPosition(this, lpdwCurrentPlayCursor, lpdwCurrentWriteCursor)
   (func $handle_IDirectSoundBuffer_GetCurrentPosition (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $handle i32) (local $pos i32)
+    (local $size i32) (local $align i32) (local $lead i32)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $handle (i32.load (i32.add (local.get $entry) (i32.const 8))))
     (if (local.get $handle)
       (then (local.set $pos (call $host_voice_get_pos (local.get $handle))))
       (else (local.set $pos (i32.const 0))))
     (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (local.get $pos))))
-    (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (local.get $pos))))
+    ;; The write cursor is not the play cursor. DirectSound guarantees it leads
+    ;; by whatever the driver has already committed to the DMA -- on Win98
+    ;; hardware about 15ms -- and the bytes between the two are the one region
+    ;; an app must never write, because they are already on their way out. We
+    ;; reported the same value for both, so an app pacing its refills off the
+    ;; write cursor was told that region was free.
+    (if (local.get $arg2)
+      (then
+        (local.set $size (i32.load (i32.add (local.get $entry) (i32.const 12))))
+        ;; 15ms of this buffer's own format, truncated to a whole sample frame
+        ;; so the lead never lands mid-sample.
+        (local.set $align (i32.div_u
+          (i32.mul (i32.load16_u (i32.add (local.get $entry) (i32.const 16)))
+                   (i32.load16_u (i32.add (local.get $entry) (i32.const 18))))
+          (i32.const 8)))
+        (local.set $lead (i32.const 0))
+        (if (i32.and (i32.gt_u (local.get $size) (i32.const 0))
+                     (i32.gt_u (local.get $align) (i32.const 0)))
+          (then
+            (local.set $lead (i32.mul
+              (i32.div_u
+                (i32.div_u (i32.mul (i32.load (i32.add (local.get $entry) (i32.const 24)))
+                                    (i32.mul (local.get $align) (i32.const 15)))
+                           (i32.const 1000))
+                (local.get $align))
+              (local.get $align)))
+            ;; A buffer shorter than the lead would wrap the write cursor past
+            ;; the play cursor and mark the whole ring unsafe; keep it inside.
+            (if (i32.ge_u (local.get $lead) (local.get $size))
+              (then (local.set $lead (i32.const 0))))))
+        (call $gs32 (local.get $arg2)
+          (if (result i32) (local.get $size)
+            (then (i32.rem_u (i32.add (local.get $pos) (local.get $lead)) (local.get $size)))
+            (else (local.get $pos))))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 

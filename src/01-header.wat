@@ -1233,6 +1233,7 @@
   ;; 0x07EF12D0  16B     WINDOW_RECT_SCRATCH (window geometry queries)
   ;; 0x07EF12E0  80B     GDI_BRUSH_DESC scratch
   ;; 0x07EF1730   4B     GDI_OBJECT_GEN (object-table generation counter)
+  ;; 0x07EF1734   4B     GDI_WINDOW_SURFACE_HWM (window-surface high-water mark)
   ;; 0x07EF1800 24KB     GDI_DC_STATE_TABLE (256 x 96-byte canonical DC state)
   ;; 0x07EF7800 12KB     GDI_OBJECT_TABLE (256 x 48-byte object records)
   ;; 0x07EFA800 8KB      GDI_WINDOW_SURFACE_TABLE (256 x 32-byte records)
@@ -1560,6 +1561,14 @@
   (global $GDI_OBJECT_TABLE_SIZE i32 (i32.const 0x00003000))
   (global $GDI_OBJECT_COUNT i32 (i32.const 256))
   (global $GDI_OBJECT_STRIDE i32 (i32.const 48))
+  ;; One past the highest surface slot ever allocated. Slots are handed out
+  ;; front-first, so every live record is below it and a lookup never has to
+  ;; walk the other 250-odd empty ones. It lives in shared memory rather than in
+  ;; a global for the same reason GDI_OBJECT_GEN does: worker threads are
+  ;; separate WASM instances that share this memory but not their globals, and a
+  ;; per-instance high-water mark would read 0 in a worker and hand out slot 0
+  ;; on top of a live record.
+  (global $GDI_WINDOW_SURFACE_HWM i32 (i32.const 0x07EF1734))
   (global $GDI_WINDOW_SURFACE_TABLE i32 (i32.const 0x07EFA800))
   (global $GDI_WINDOW_SURFACE_TABLE_SIZE i32 (i32.const 0x00002000))
   (global $GDI_WINDOW_SURFACE_COUNT i32 (i32.const 256))

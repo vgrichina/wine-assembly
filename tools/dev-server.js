@@ -381,6 +381,13 @@ async function handlePerf(req, res, opts) {
   };
   const t = new Date().toISOString().slice(11, 19);
   const warn = guestFps > 0 && guestFps < 20 ? ' LAGGY' : '';
+  // Only while the pointer is actually moving. A mouse-driven game can feel
+  // laggy with a spotless step histogram: what the hand notices is how often
+  // the guest samples the pointer and how stale each sample is by then.
+  const inp = snap.input && snap.input.movesPerSec > 0
+    ? `  mouse ${snap.input.movesPerSec.toFixed(0)}/s in ${snap.input.takenPerSec.toFixed(0)}/s taken`
+      + ` age p50 ${snap.input.ageMs.p50.toFixed(1)} p99 ${snap.input.ageMs.p99.toFixed(1)}ms`
+    : '';
   console.log(
     `${t} ${String(batch.session || '?').slice(0, 6)} `
     + `game ${String(guestFps).padStart(3)}fps  page ${String(Math.round(snap.fps || 0)).padStart(2)}  `
@@ -388,7 +395,7 @@ async function handlePerf(req, res, opts) {
     + `step p50 ${pct(totals, 50).toFixed(1)} p99 ${pct(totals, 99).toFixed(1)}ms  `
     + `guest ${share(1)}% thr ${share(2)}% paint ${share(3)}%  `
     + `throttled ${Math.round((throttled / Math.max(1, steps.length)) * 100)}%  `
-    + `${sparkline(steps.map(s => s[0]), 16.7)}${warn}`,
+    + `${sparkline(steps.map(s => s[0]), 16.7)}${inp}${warn}`,
   );
 }
 

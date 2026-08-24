@@ -157,6 +157,7 @@ UNIT=(
   test/test-vfs-miss-async.js
   test/test-pinball-web-lifecycle.js
   test/test-web-touch-input.js
+  test/test-perf-hud-input.js
   test/test-web-fullscreen-consent.js
   test/test-single-app-mode.js
   test/test-mobile-keyboard.js
