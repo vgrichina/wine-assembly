@@ -145,6 +145,7 @@ const TRACE_RGN = hasFlag('trace-rgn');   // --trace-rgn: log HRGN create/combin
 const TRACE_DC = hasFlag('trace-dc');     // --trace-dc: log DC→canvas target resolution (hwnd, ox/oy, canvas size)
 const TRACE_CLIP = hasFlag('trace-clip'); // --trace-clip: log _excludeChildrenClip kid/cousin rects + cover size per draw
 const TRACE_DX = hasFlag('trace-dx');     // --trace-dx: log DirectX COM methods with decoded rects/surface metadata
+const DX_SURFACES = hasFlag('dx-surfaces'); // --dx-surfaces: print the DX_OBJECTS surface manifest at exit
 const TRACE_DX_RAW = hasFlag('trace-dx-raw'); // --trace-dx-raw: on each Execute, walk+hexdump the full instruction stream
 const TRACE_FS = hasFlag('trace-fs');     // --trace-fs: log filesystem CreateFile hits/misses
 const TRACE_INI = hasFlag('trace-ini');   // --trace-ini: log GetPrivateProfileString resolutions
@@ -6831,6 +6832,7 @@ if (VERBOSE) {
     const dv = new DataView(memory.buffer);
     const DX_BASE = 0x07FF0000;
     const DX_SLOTS = 1024; // matches $DX_MAX in src/09a8-handlers-directx.wat
+    const DX_SURF_PAL = 0x07F11000; // matches $DX_SURF_PAL: per-surface palette data addr
     let paletteWa = 0;
     for (let slot = 0; slot < DX_SLOTS; slot++) {
       const entry = DX_BASE + slot * 32;
@@ -6858,7 +6860,12 @@ if (VERBOSE) {
         if (firstNonZero < 0 && v !== 0) firstNonZero = i;
         checksum = (checksum + v) >>> 0;
       }
-      surfaces.push({ slot, flags, w, h, bpp, pitch, dib, firstNonZero, checksum, paletteWa });
+      // A surface that had its own palette attached (an 8bpp texture, say)
+      // must be decoded with that one, not with whichever palette happened to
+      // be allocated first.
+      const ownPal = dv.getUint32(DX_SURF_PAL + slot * 4, true);
+      surfaces.push({ slot, flags, w, h, bpp, pitch, dib, firstNonZero, checksum,
+        paletteWa: ownPal || paletteWa });
     }
     return { mem, surfaces };
   };
@@ -6978,6 +6985,17 @@ if (VERBOSE) {
     fs.writeFileSync(outPath, pngBuf);
     return pngBuf.length;
   };
+
+  if (DX_SURFACES) {
+    const { mem, surfaces } = getDxSurfaceManifest();
+    console.log(`[dx-surfaces] ${surfaces.length} live surface(s)`);
+    for (const s of surfaces) {
+      const score = dxSurfaceContentScore(s, mem);
+      console.log(`  slot=${s.slot} ${s.w}x${s.h} bpp=${s.bpp} pitch=${s.pitch}` +
+        ` flags=0x${s.flags.toString(16)} dib=0x${s.dib.toString(16)}` +
+        ` pal=0x${s.paletteWa.toString(16)} colors=${score.colors} nonZero=${score.nonZero}/${score.total}`);
+    }
+  }
 
   if (PNG_OUT && renderer) {
     const { mem, surfaces } = getDxSurfaceManifest();

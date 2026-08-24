@@ -25,6 +25,13 @@
   (global $D3DIM_MATRIX_MAX i32 (i32.const 256))
   (global $D3DIM_MATRIX_USED i32 (i32.const 0x07FEBF00))
   (global $DX_ENTRY_SIZE i32 (i32.const 32))
+  ;; Per-surface palette: DX_MAX slots × 4 bytes, holding the WASM address of
+  ;; the palette data last handed to that surface's SetPalette. The DX entry
+  ;; itself is full (32 bytes, every field taken), and a single global is wrong
+  ;; for textures: an 8bpp D3D texture carries its own palette while the
+  ;; primary surface carries another.
+  (global $DX_SURF_PAL i32 (i32.const 0x07F11000))
+  (global $DX_SURF_PAL_SIZE i32 (i32.const 0x00001000))
   ;; COM wrapper stubs: DX_MAX × 8 bytes in high memory (safe from guest address collision)
   (global $COM_WRAPPERS i32 (i32.const 0x07FF8000))
   (global $COM_WRAPPERS_SIZE i32 (i32.const 0x00002000))
@@ -393,6 +400,29 @@
   ;; Compute slot index from a DX_OBJECTS entry WASM address.
   (func $dx_slot_of (param $entry_wa i32) (result i32)
     (i32.div_u (i32.sub (local.get $entry_wa) (global.get $DX_OBJECTS)) (i32.const 32)))
+
+  ;; Record the palette data WASM address for one surface entry.
+  (func $dx_surf_pal_set (param $entry_wa i32) (param $pal_wa i32)
+    (local $slot i32)
+    (if (i32.eqz (local.get $entry_wa)) (then (return)))
+    (local.set $slot (call $dx_slot_of (local.get $entry_wa)))
+    (if (i32.ge_u (local.get $slot) (global.get $DX_MAX)) (then (return)))
+    (i32.store (i32.add (global.get $DX_SURF_PAL) (i32.shl (local.get $slot) (i32.const 2)))
+      (local.get $pal_wa)))
+
+  ;; Palette data WASM address for one surface, falling back to the display
+  ;; palette when that surface never had one attached.
+  (func $dx_surf_pal_get (param $entry_wa i32) (result i32)
+    (local $slot i32) (local $pal i32)
+    (if (local.get $entry_wa)
+      (then
+        (local.set $slot (call $dx_slot_of (local.get $entry_wa)))
+        (if (i32.lt_u (local.get $slot) (global.get $DX_MAX))
+          (then
+            (local.set $pal (i32.load
+              (i32.add (global.get $DX_SURF_PAL) (i32.shl (local.get $slot) (i32.const 2)))))))))
+    (if (local.get $pal) (then (return (local.get $pal))))
+    (global.get $dx_primary_pal_wa))
 
   ;; Return a guest pointer to a COM wrapper that reports the given vtbl and
   ;; points to the given DX_OBJECTS slot. If slot's primary wrapper already
@@ -2845,13 +2875,18 @@
 
   ;; SetPalette(this, lpDDPalette) — associate palette with surface
   (func $handle_IDirectDrawSurface_SetPalette (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $pal_entry i32)
+    (local $pal_entry i32) (local $surf_entry i32) (local $pal_wa i32)
     ;; arg0 = this (surface), arg1 = palette COM object guest ptr
     ;; Look up the palette entry and store its data pointer for 8bpp present
     (if (local.get $arg1)
       (then
         (local.set $pal_entry (call $dx_from_this (local.get $arg1)))
-        (global.set $dx_primary_pal_wa (i32.load (i32.add (local.get $pal_entry) (i32.const 20))))))
+        (local.set $pal_wa (i32.load (i32.add (local.get $pal_entry) (i32.const 20))))
+        ;; Per-surface, so an 8bpp texture's palette does not overwrite (or get
+        ;; overwritten by) the display palette.
+        (local.set $surf_entry (call $dx_from_this (local.get $arg0)))
+        (call $dx_surf_pal_set (local.get $surf_entry) (local.get $pal_wa))
+        (global.set $dx_primary_pal_wa (local.get $pal_wa))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 

@@ -2306,6 +2306,7 @@
   (func $d3dim_texture_sample_rgb (param $tex_entry i32) (param $u f32) (param $v f32) (result i32)
     (local $tw i32) (local $th i32) (local $bpp i32) (local $pitch i32) (local $dib_wa i32)
     (local $tx i32) (local $ty i32) (local $ptr i32) (local $px i32) (local $c i32)
+    (local $pal i32)
     (if (i32.eqz (local.get $tex_entry)) (then (return (i32.const 0))))
     (local.set $tw (i32.and (i32.load (i32.add (local.get $tex_entry) (i32.const 12))) (i32.const 0xFFFF)))
     (local.set $th (i32.shr_u (i32.load (i32.add (local.get $tex_entry) (i32.const 12))) (i32.const 16)))
@@ -2338,6 +2339,15 @@
         (i32.const 0x00ffffff)))))
     (if (i32.eq (local.get $bpp) (i32.const 8)) (then
       (local.set $c (i32.load8_u (i32.add (local.get $ptr) (local.get $tx))))
+      ;; 8bpp textures are palettized: the byte is an index, not a grey level.
+      (local.set $pal (call $dx_surf_pal_get (local.get $tex_entry)))
+      (if (local.get $pal) (then
+        (local.set $px (i32.load (i32.add (local.get $pal) (i32.shl (local.get $c) (i32.const 2)))))
+        ;; PALETTEENTRY is (peRed, peGreen, peBlue, peFlags)
+        (return (i32.or (i32.or
+          (i32.shl (i32.and (local.get $px) (i32.const 0xFF)) (i32.const 16))
+          (i32.and (local.get $px) (i32.const 0xFF00)))
+          (i32.and (i32.shr_u (local.get $px) (i32.const 16)) (i32.const 0xFF))))))
       (return (i32.or (i32.or (i32.shl (local.get $c) (i32.const 16)) (i32.shl (local.get $c) (i32.const 8))) (local.get $c)))))
     (i32.const 0))
 
