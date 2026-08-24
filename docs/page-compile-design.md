@@ -10,6 +10,52 @@ different cost and must clear the same bar before any of it is kept.
 
 ---
 
+## 0. Status of each section, 2026-08-24
+
+| Section | State |
+|---|---|
+| 2.1, 3, 3.1 — two-pass discovery, address-ordered whole-page emit | **not built, by instruction.** Everything below is built on top of on-demand block emit into the page's chunk instead. |
+| 2.2, 2.3 — parallel index, fast path | built |
+| 3.2 — code found later, appended as its own run | built |
+| 4, 4.1 — the hash cache is deleted, pages are the only storage | **built.** `$cache_slot` / `$cache_lookup` / `$cache_store` and the 256KB-per-thread `CACHE_INDEX` are gone; `$run`'s lookup ladder is index → decode with nothing in between. |
+| 5 — invalidation per offset | **built**, at block granularity rather than instruction granularity — see the note in 5.1 below. |
+| 5.1 — break the chunk when retiring | **built, and it needed no new opcode.** See below. |
+| 6 — v1 exclusions | unchanged |
+| 8, 8.1 — measurement | **run.** See section 10. |
+
+Two things came out differently from the design as written, and both are
+improvements on it:
+
+**The index entry carries a cover bit, so per-offset invalidation is O(1) at
+zero extra space.** A `PAGE_INDEX` entry is a u16 per guest page byte and is now
+one of three things: `0x0000..0x3FFF` — this byte *starts* a compiled block, at
+that chunk offset; `0x4000..0x7FFF` — this byte is *covered* by the block at
+`(entry & 0x3FFF)`; `0xFFFF` — nothing compiled. Bit 14 is free because a chunk
+is capped at `PAGE_CHUNK_BYTES` = `0x4000`, so a real offset never needs it. A
+write to a code byte therefore reads one entry and learns exactly which block to
+retire. The alternative considered — a second per-byte `own[]` array — wanted
+16MB and the free span between `HANDLER_PAIR_HIST_COUNTS` and
+`THREAD_CACHE_BASE` is 15MB.
+
+As a side effect `$page_resolve`'s miss test collapses to a single compare,
+`off >= PAGE_INDEX_COVER`, which catches "nothing here" and "you are entering
+mid-instruction" together, at the cost of the `== NONE` it replaced.
+
+**The `$th_page_exit` opcode 5.1 asks for already exists.** `$th_block_end`
+(handler index 45, `src/05-alu.wat`) is `eip = op; return_call $branch_end` —
+exactly 8 bytes, no trailing word, which is the whole requirement. So the
+handler table stays at 423 and the `(table $handlers N)` / `(elem ...)` /
+`04-cache.wat` gate do not move. This also dissolves the contradiction between
+§3.2 ("no new handler opcodes at all") and §5.1 ("the one new handler opcode").
+
+One thing the design did not anticipate: with no hash cache behind it, a block
+that cannot be published into a chunk is re-decoded on *every* entry rather than
+being caught by a second store. So the decoder now ends a block at the guest
+page edge, which makes every block publishable and indexable. The price is one
+`$th_block_end` dispatch per page seam, which §6 already accepted.
+
+---
+
 ## 1. The cost being attacked
 
 A block ends, and control returns all the way to the top of `$main` in
@@ -288,7 +334,14 @@ starting at `X-14` with length 2 does not really cover `X` — but conservative 
 free here: it is recompiled on next entry, and it means **no instruction-length
 table is needed**.
 
-### 5.1 The catch, and the one new opcode
+### 5.1 The catch, and the opcode that turned out to already exist
+
+> **As built.** The retire unit is the *block*, not the instruction: without
+> §2.1's whole-page emit there is no per-instruction index to clear, and the
+> cover bits give the block's exact guest extent in one load. And the new opcode
+> below is not new — `$th_block_end`, index 45, is already `eip = op;
+> return_call $branch_end` in exactly 8 bytes. Read the rest of this section for
+> the argument; substitute `$th_block_end` for `$th_page_exit` throughout.
 
 Clearing an index entry stops the instruction being *entered*. It does not stop
 it being *fallen into*, because §2.1's whole point is that fall-through is
@@ -433,3 +486,79 @@ outcome until the number says otherwise.
 Checkpoint after step 4: the structures exist, `set_paging` defaults off, and the
 build must be byte-identical in behaviour to the pinned baseline. That is the
 last point at which this is cheap to abandon.
+
+---
+
+## 10. Result, 2026-08-24
+
+**Correct, structurally better, and exactly as fast. §8.1's wall-clock criterion
+is not met.**
+
+### Correctness
+
+* 7 apps (sol, wordpad, mspaint, explorer98, pinball, tworld, calc): **0 pixels
+  differ** against the pinned baseline, every one.
+* API traces: sol, explorer98, tworld, calc byte-identical. wordpad (14 lines of
+  9223), mspaint (4 of 7164) and pinball (10 of 11786) differ only in GDI handle
+  serials, stack addresses, and where worker-thread calls interleave. That class
+  is inherent to the harness, not to this change: perturbing the *baseline's own*
+  `--batch-size` from 10000 to 9999 moves **1948** main-thread trace lines, two
+  orders of magnitude more than the change does.
+* `test-sparse-generated-code-cache` passes — that is the direct §5 test, a guest
+  page of generated code rewritten in place and re-executed.
+* 10 gameplay tests pass: caesar3, skifree, heroes2, cwordzap, diablo-runtime,
+  liquid-war, pinball-playable, pinball-select-players, win16-wep,
+  win16-solitaire.
+
+### Storage
+
+Caesar III, 400 batches, against the baseline:
+
+| | baseline | pages |
+|---|---|---|
+| block decodes | 6283 (pinball) | 2919 |
+| blocks evicted | 4364 | 0 pages evicted, 53 compiled |
+| index hit rate | — | 100.0% (Caesar), 98.6% (pinball) |
+| hash lookups | ~30M | 0 — the structure is gone |
+
+There is now exactly **one** copy of a decoded block, in its page's chunk. The
+arena is pure emit scratch and `$publish_block` rewinds it. Before this commit
+the branch kept two permanent copies (hash arena *and* chunk); the fork point
+kept one (arena). So this is strictly better than both on storage.
+
+### Speed
+
+Interleaved A/B, same worktree and same `run.js`, only `--wasm=` differs, 5 reps
+each, `--app=caesar3_demo --screen=800x600 --batch-size=20000 --max-batches=1500`.
+A = fork point + tail-call dispatch, B = this branch. Box at **load 5.4-6.4**, so
+these are noisy and are reported as such.
+
+| V8 wasm tier | A min | B min | A median | B median |
+|---|---|---|---|---|
+| default (tier-up) | 2.986 | 2.886 | 3.059 | 3.012 |
+| `--liftoff-only` | 4.614 | 4.313 | 4.918 | 4.845 |
+| `--no-liftoff` (TurboFan) | 2.380 | 2.444 | 2.738 | 2.676 |
+
+**The tier is not the hidden variable.** It matters enormously in absolute terms
+— TurboFan-only is ~1.9x Liftoff-only, and it also beats the default tier-up
+configuration on a run this short, because tier-up is still paying compile cost
+at 1500 batches. But the A/B *ratio* is flat within noise at all three tiers, in
+both directions. Whatever this branch changed, no engine tier rewards it.
+
+`--jitless` cannot answer the question: in V8 23 it disables executable memory
+and WebAssembly with it.
+
+### What this says
+
+It re-confirms the standing result from `project_next_dispatch_negative`, harder
+than before. This branch removed ~30M hash lookups, hit its index 100%, made 22%
+of block transfers cost nothing, cut decodes by more than half, and eliminated
+block eviction entirely — and the clock did not move. Lookup and dispatch
+bookkeeping are not where this interpreter's time goes.
+
+The parts worth keeping are keepable on their own merits, not as a speed-up:
+one copy of decoded code instead of two, no eviction, exact invalidation instead
+of a 4096-slot sweep, and a structure that answers "is this address compiled"
+without a hash. §8.1 says abandon; the honest reading is *do not land this for
+speed*, and decide separately whether the structural properties are worth the
+diff.

@@ -585,7 +585,7 @@
                 (i32.le_u (i32.and (local.get $dst_ga) (i32.const 0xFFF))
                           (i32.sub (i32.const 0x1000) (local.get $row_bytes))))))
         (then
-          (call $invalidate_code_write (local.get $dst_ga))
+          (call $invalidate_code_write (local.get $dst_ga) (local.get $row_bytes))
           (local.set $c (local.get $cols))
           (loop $fast
             (local.set $v (i32.load (local.get $sw)))

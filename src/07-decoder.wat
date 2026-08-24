@@ -1766,11 +1766,9 @@
         ;; decoder. This used to test two literal EIPs from one particular
         ;; build of one particular game, in the decoder every app runs.
         (call $te (i32.const 356) (global.get $stack_packet_variant))
-        (call $cache_store (local.get $start_eip) (local.get $tstart))
-        (global.set $d_block_end (global.get $thread_alloc))
-        (global.set $d_pub_off (i32.const -1))
-        (global.set $d_pub_end (i32.const -1))
-        (return (local.get $tstart))))
+        (return
+          (call $publish_block (local.get $start_eip) (local.get $tstart)
+                (i32.add (local.get $start_eip) (i32.const 1))))))
 
     ;; A 16-bit task can only execute inside the selector arena. Landing
     ;; outside it means a far pointer was used as a linear address somewhere,
@@ -1836,6 +1834,24 @@
       ;; few instructions that emit two or three threaded handlers.
       (local.set $icount (i32.add (local.get $icount) (i32.const 1)))
       (if (i32.gt_u (local.get $icount) (i32.const 256))
+        (then
+          (call $te (i32.const 45) (global.get $d_pc))
+          (br $exit)))
+
+      ;; Stop at the page edge. A block belongs to exactly one compiled page --
+      ;; that page owns the chunk it lives in and the index that names its
+      ;; guest bytes -- so a block that decoded on into the next page could not
+      ;; be indexed for the bytes it covers there, and a write to those bytes
+      ;; would not retire it. The hash cache used to absorb such blocks; with it
+      ;; deleted (docs/page-compile-design.md section 4) an unindexable block is
+      ;; a block re-decoded on every single entry, so cap here instead.
+      ;;
+      ;; The cost is one $th_block_end dispatch per page seam, which section 6
+      ;; already accepted as the price of not doing cross-page discovery. On the
+      ;; first iteration $d_pc is $start_eip, so this can never fire before an
+      ;; instruction has been emitted.
+      (if (i32.ne (i32.and (global.get $d_pc) (i32.const 0xFFFFF000))
+                  (i32.and (local.get $start_eip) (i32.const 0xFFFFF000)))
         (then
           (call $te (i32.const 45) (global.get $d_pc))
           (br $exit)))
@@ -3617,22 +3633,52 @@
     ;; Loop-idiom matcher runs on the ops just emitted, before the block is
     ;; published. See src/07b-loop-match.wat.
     (call $loop_match_block (local.get $start_eip) (local.get $tstart))
-    (call $cache_store (local.get $start_eip) (local.get $tstart))
+    (call $publish_block (local.get $start_eip) (local.get $tstart) (global.get $d_pc))
+  )
+
+  ;; Move a freshly emitted block out of the emit scratch and into its page's
+  ;; chunk, and hand back the address it will actually run from.
+  ;;
+  ;; The scratch is reclaimed. That is new, and it is what deleting the hash
+  ;; cache bought: there used to be two permanent copies of every block -- the
+  ;; arena one the hash pointed at and the chunk one the index pointed at -- and
+  ;; the first execution ran the arena copy while every later one ran the chunk
+  ;; copy. With only the index left there is one copy, the arena is pure scratch,
+  ;; and $thread_alloc rewinds to where the block started.
+  ;;
+  ;; The rewind is conditional for a reason that is easy to miss: $page_publish
+  ;; may itself allocate a 16KB chunk out of $thread_alloc when it opens a new
+  ;; page, and that chunk sits *after* the scratch. Rewinding over it would hand
+  ;; the next block's emit the same memory the page is about to run from. So
+  ;; rewind only when publishing left $thread_alloc exactly where the block
+  ;; ended; otherwise the scratch is simply abandoned, once per compiled page.
+  (func $publish_block (param $start_eip i32) (param $tstart i32) (param $guest_end i32)
+                       (result i32)
+    (call $code_note_decode (local.get $start_eip))
     ;; After the matcher, because it rewrites the ops in place and may shorten
     ;; the block; $thread_alloc is the truth about where the block ends either
-    ;; way. See docs/page-compile-design.md. Captured before publishing, which
-    ;; is the call that can move $thread_alloc for reasons of its own.
+    ;; way. Captured before publishing, which is the call that can move
+    ;; $thread_alloc for reasons of its own.
     (global.set $d_block_end (global.get $thread_alloc))
     (global.set $d_pub_off
-      (call $page_publish (local.get $start_eip) (local.get $tstart) (global.get $thread_alloc)))
+      (call $page_publish (local.get $start_eip) (local.get $tstart)
+            (global.get $thread_alloc) (local.get $guest_end)))
+    (if (i32.lt_s (global.get $d_pub_off) (i32.const 0))
+      (then
+        ;; Nothing to fall back on now: this block has no home and will be
+        ;; decoded again on every entry. Count it -- a non-trivial number here
+        ;; means PAGE_INDEX_SLOTS or PAGE_CHUNK_BYTES is undersized, and the
+        ;; symptom would otherwise be nothing but a slow run.
+        (global.set $page_unpublished
+          (i32.add (global.get $page_unpublished) (i32.const 1)))
+        (global.set $d_pub_end (i32.const -1))
+        (return (local.get $tstart))))
     (global.set $d_pub_end
-      (if (result i32) (i32.lt_s (global.get $d_pub_off) (i32.const 0))
-        (then (i32.const -1))
-        (else
-          (i32.add (global.get $d_pub_off)
-            (i32.sub (global.get $thread_alloc) (local.get $tstart))))))
-    (local.get $tstart)
-  )
+      (i32.add (global.get $d_pub_off)
+        (i32.sub (global.get $d_block_end) (local.get $tstart))))
+    (if (i32.eq (global.get $thread_alloc) (global.get $d_block_end))
+      (then (global.set $thread_alloc (local.get $tstart))))
+    (i32.add (global.get $cur_page_chunk) (global.get $d_pub_off)))
 
   ;; ============================================================
   ;; ADDRESS-ORDERED RUNS
@@ -3718,9 +3764,11 @@
       ;; against the wrong one.
       (br_if $stop (i32.ne (i32.and (local.get $fall) (i32.const 0xFFFFF000))
                            (local.get $page)))
-      ;; Already decoded somewhere: appending a second copy here would be
-      ;; correct but wasteful, and it would repoint the index at the copy.
-      (br_if $stop (call $cache_lookup (local.get $fall)))
+      ;; Already compiled: appending a second copy here would be correct but
+      ;; wasteful, and it would repoint the index at the copy. $page_probe
+      ;; rather than $page_resolve, because this must not move the page
+      ;; registers out from under the run being appended.
+      (br_if $stop (call $page_probe (local.get $fall)))
       ;; The block we are about to extend has to be in the chunk itself, or
       ;; there is nothing for the next one to be adjacent to.
       (local.set $prev_end (global.get $d_pub_end))
@@ -3733,27 +3781,16 @@
       (br_if $stop (i32.ge_u (global.get $thread_alloc)
                              (i32.sub (global.get $THREAD_END) (i32.const 32768))))
       (local.set $tb (call $decode_block (local.get $fall)))
-      ;; The proof, and it has to cover BOTH copies of the run. The chunk copy
-      ;; is what every execution after the first one uses, and the offsets
-      ;; $page_publish reports are its witness: anything that went wrong -- a
-      ;; page swap, a full chunk, a declined publish -- shows up as an offset
-      ;; that is not where the previous block ended.
+      ;; The proof. There is only one copy of a run now -- the chunk -- and the
+      ;; offsets $page_publish reports are its witness: anything that went wrong
+      ;; (a page swap, a full chunk, a declined publish) shows up as an offset
+      ;; that is not where the previous block ended. The emit scratch used to
+      ;; need a second, separate witness because the first execution ran from
+      ;; it; $publish_block reclaims it now, so there is nothing left to check.
       (br_if $stop (i32.ne (global.get $d_pub_off) (local.get $prev_end)))
-      ;; The arena copy is what the *first* execution uses, and it needs its own
-      ;; witness, because publishing the previous block is exactly what can push
-      ;; the two apart: a block that opens a page makes $page_create reserve a
-      ;; whole chunk out of the arena, so the next block is emitted a chunk's
-      ;; width further along and the one before it now falls through into the
-      ;; reservation. That was a real bug and it cost mspaint and WordPad their
-      ;; startup: the run was adjacent where it was checked and not where it
-      ;; first ran.
-      (br_if $stop (i32.ne (local.get $tb) (local.get $alloc)))
-      ;; Set the adjacency bit in both copies of the operand: the arena one the
-      ;; first execution runs from, and the chunk one every later execution
-      ;; does. Forgetting either leaves a branch that is free in one copy and
-      ;; not in the other, which is the kind of bug that only shows up after the
-      ;; page has been re-entered.
-      (i32.store offset=4 (local.get $optr) (i32.const 1))
+      ;; Set the adjacency bit in the chunk, which is the only place the run
+      ;; exists. The operand of the previous block's Jcc terminator sits 12
+      ;; bytes back from where that block ended.
       (i32.store
         (i32.add (global.get $cur_page_chunk) (i32.sub (local.get $prev_end) (i32.const 12)))
         (i32.const 1))

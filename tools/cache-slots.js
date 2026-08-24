@@ -1,6 +1,22 @@
 #!/usr/bin/env node
 'use strict';
 
+// OBSOLETE. This tool models the direct-mapped *hash* block-cache index, and
+// that index no longer exists: docs/page-compile-design.md section 4 replaced it
+// with the per-page byte index, which is exact and cannot alias. There is no
+// $CACHE_MASK in src/01-header.wat any more, so --mask is now mandatory and the
+// tool answers a what-if about a structure the build does not have.
+//
+// Kept because the analysis it does -- distinct blocks vs slots, and the cost of
+// each collision measured in hits into the loser -- is the right shape for the
+// question the page directory now raises: PAGE_INDEX_SLOTS is 128 per thread and
+// two hot code pages 128 pages apart evict each other exactly the way two hot
+// blocks used to. Retargeting it at the directory is a small edit (the index is
+// (page >> 12) % PAGE_INDEX_SLOTS) and nobody has needed it yet; until then, use
+// the `pages: compiled N` and `cache: ... evicted N` counters run.js prints.
+//
+// --- original description, for the structure that is gone ---
+//
 // Does the block cache alias an app's hot blocks, or is it simply too small?
 //
 // The block cache index is direct-mapped: slot = (ga ^ (ga >>> 12)) & CACHE_MASK.
@@ -28,7 +44,12 @@ function headerMask() {
   const header = path.join(__dirname, '..', 'src', '01-header.wat');
   const source = fs.readFileSync(header, 'utf8');
   const match = source.match(/\(global \$CACHE_MASK\s+i32 \(i32\.const\s+(0x[0-9a-fA-F]+|\d+)\)/);
-  if (!match) throw new Error('CACHE_MASK not found in src/01-header.wat');
+  if (!match) {
+    throw new Error(
+      'CACHE_MASK not found in src/01-header.wat — the hash block cache was ' +
+      'deleted (docs/page-compile-design.md section 4). Pass --mask=0x3fff to ' +
+      'run this tool as a pure what-if.');
+  }
   return Number(match[1]) >>> 0;
 }
 

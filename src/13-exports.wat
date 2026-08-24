@@ -188,15 +188,13 @@
         (then
           (if (call $fast_msvc_sbh_scan)
             (then (br $main)))))
-      ;; Page index first: it is exact, so it never reports a miss for code it
-      ;; holds. The hash below is still here only until the commit that deletes
-      ;; it — see docs/page-compile-design.md section 4.
+      ;; The page index is the only lookup there is now: it is exact, so a miss
+      ;; here really does mean nothing is compiled at this address. The hash
+      ;; cache that used to sit between these two rungs is gone --
+      ;; docs/page-compile-design.md section 4.
       (local.set $thread (call $page_resolve (global.get $eip)))
       (if (i32.eqz (local.get $thread))
-        (then
-          (local.set $thread (call $cache_lookup (global.get $eip)))
-          (if (i32.eqz (local.get $thread))
-            (then (local.set $thread (call $decode_run (global.get $eip)))))))
+        (then (local.set $thread (call $decode_run (global.get $eip)))))
       (global.set $ip (local.get $thread))
       (if (global.get $handler_hist_enabled)
         (then (global.set $handler_hist_last (i32.const -1))))
@@ -2196,12 +2194,10 @@
     (global.set $THREAD_BASE (i32.add (i32.const 0x05000000)
       (i32.mul (local.get $tid) (i32.const 0x400000))))
     (global.set $THREAD_END  (i32.add (global.get $THREAD_BASE) (i32.const 0x400000)))
-    (global.set $CACHE_INDEX (i32.add (i32.const 0x07152000)
-      (i32.mul (local.get $tid) (i32.const 0x8000))))
     (global.set $thread_alloc (global.get $THREAD_BASE))
     ;; Page-compilation state is per-instance for the same reason THREAD_BASE
-    ;; and CACHE_INDEX are: a worker is a separate instance over the same
-    ;; memory, and chunk pointers name that thread's own arena partition.
+    ;; is: a worker is a separate instance over the same memory, and chunk
+    ;; pointers name that thread's own arena partition.
     (global.set $PAGE_DIR (i32.add (global.get $PAGE_DIR_BASE)
       (i32.mul (local.get $tid) (global.get $PAGE_DIR_STRIDE))))
     (global.set $PAGE_INDEX (i32.add (global.get $PAGE_INDEX_ARENA)

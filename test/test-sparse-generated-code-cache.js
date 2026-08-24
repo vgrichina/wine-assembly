@@ -18,8 +18,11 @@ const extraWat = String.raw`
     (i32.and
       (i32.ge_u (local.get $guest) (global.get $VIRTUAL_ALLOC_MIN))
       (i32.lt_u (local.get $guest) (global.get $VIRTUAL_ALLOC_TOP_INIT))))
+  ;; $page_probe, not the old $cache_lookup: the hash block cache is gone and the
+  ;; per-page byte index is the only record that an address is compiled
+  ;; (docs/page-compile-design.md section 4).
   (func (export "test_sparse_cache_lookup") (param $guest i32) (result i32)
-    (call $cache_lookup (local.get $guest)))
+    (call $page_probe (local.get $guest)))
 `;
 
 async function main() {
