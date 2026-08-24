@@ -15314,6 +15314,7 @@
   (func $modal_done (param $result i32)
     (local $owner i32)
     (global.set $modal_result (local.get $result))
+    (call $cd_modal_writeback (local.get $result))
     (local.set $owner (call $wnd_get_owner (global.get $modal_dlg_hwnd)))
     (call $wnd_destroy_tree (global.get $modal_dlg_hwnd))
     (call $host_destroy_window (global.get $modal_dlg_hwnd))

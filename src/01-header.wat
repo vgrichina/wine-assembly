@@ -2457,6 +2457,13 @@
   (global $opendlg_current_dir (mut i32) (i32.const 0))
   (global $opendlg_wide (mut i32) (i32.const 0)) ;; current OPENFILENAME is W
 
+  ;; MSComDlg.CommonDialog drives the same WAT-native file dialog through
+  ;; IDispatch instead of GetOpenFileNameA. These hold the automation object
+  ;; and the OPENFILENAME synthesized for it, so the chosen name can be
+  ;; mirrored back onto the FileName property when the dialog closes.
+  (global $cd_dlg_root (mut i32) (i32.const 0))
+  (global $cd_dlg_ofn  (mut i32) (i32.const 0))
+
   ;; STEP 6 — find/replace dialog hwnd tracking. Set when $handle_FindTextA
   ;; calls $create_findreplace_dialog. Test bridge queries these via the
   ;; get_findreplace_dlg / get_findreplace_edit exports.

@@ -9047,6 +9047,199 @@
     (if (local.get $dispids) (then (call $gs32 (local.get $dispids) (i32.const -1))))
     (global.set $eax (i32.const 0x80020006)) ;; DISP_E_UNKNOWNNAME
     (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
+  ;; Store one automation VARIANT into a property slot (dword VARTYPE, dword
+  ;; value). VB6 puts every CommonDialog property through here: Filter,
+  ;; FileName, InitDir and DialogTitle are strings, so refusing VT_BSTR made
+  ;; File > Open raise a hard "Type mismatch" in every VB app.
+  (func $cd_prop_put (param $slot i32) (param $variant i32) (result i32)
+    (local $vt i32) (local $base i32) (local $ptr i32) (local $value i32)
+    (local.set $vt (call $gl16 (local.get $variant)))
+    ;; VB passes most puts as VT_VARIANT|VT_BYREF; unwrap one level.
+    (if (i32.eq (i32.and (local.get $vt) (i32.const 0x4FFF)) (i32.const 0x400C))
+      (then
+        (local.set $ptr (call $gl32 (i32.add (local.get $variant) (i32.const 8))))
+        (if (i32.eqz (local.get $ptr)) (then (return (i32.const 0x80020005))))
+        (local.set $variant (local.get $ptr))
+        (local.set $vt (call $gl16 (local.get $variant)))))
+    (local.set $base (i32.and (local.get $vt) (i32.const 0x0FFF)))
+    (if (i32.and (local.get $vt) (i32.const 0x2000))
+      (then (return (i32.const 0x80020005)))) ;; SAFEARRAY has no slot form
+    (local.set $value (call $gl32 (i32.add (local.get $variant) (i32.const 8))))
+    (if (i32.and (local.get $vt) (i32.const 0x4000))
+      (then
+        (if (i32.eqz (local.get $value)) (then (return (i32.const 0x80020005))))
+        (if (i32.or (i32.eq (local.get $base) (i32.const 2))
+                    (i32.eq (local.get $base) (i32.const 11)))
+          (then (local.set $value (call $gl16 (local.get $value))))
+          (else
+            (if (i32.eq (local.get $base) (i32.const 5))
+              (then (local.set $value (i32.trunc_f64_s
+                (f64.load (call $g2w (local.get $value))))))
+              (else (local.set $value (call $gl32 (local.get $value)))))))))
+    ;; A VT_R8 property (VB hands one over for any untyped numeric literal) has
+    ;; no room in a 4-byte slot; the dialog fields it feeds are all integral.
+    (if (i32.and (i32.eq (local.get $base) (i32.const 5))
+                 (i32.eqz (i32.and (local.get $vt) (i32.const 0x4000))))
+      (then
+        (local.set $value (i32.trunc_f64_s
+          (f64.load (call $g2w (i32.add (local.get $variant) (i32.const 8))))))
+        (local.set $base (i32.const 3))))
+    (if (i32.eq (local.get $base) (i32.const 5)) (then (local.set $base (i32.const 3))))
+    (if (i32.eq (local.get $base) (i32.const 2))
+      (then (local.set $value (i32.shr_s (i32.shl (local.get $value) (i32.const 16)) (i32.const 16)))))
+    (if (i32.eq (local.get $base) (i32.const 11))
+      (then (local.set $value (select (i32.const -1) (i32.const 0) (local.get $value)))))
+    ;; Everything the property bag can retain in one dword.
+    (if (i32.eqz (i32.or
+          (i32.or
+            (i32.or (i32.eq (local.get $base) (i32.const 0))
+                    (i32.eq (local.get $base) (i32.const 1)))
+            (i32.or (i32.eq (local.get $base) (i32.const 2))
+                    (i32.eq (local.get $base) (i32.const 3))))
+          (i32.or
+            (i32.or
+              (i32.or (i32.eq (local.get $base) (i32.const 4))
+                      (i32.eq (local.get $base) (i32.const 8)))
+              (i32.or (i32.eq (local.get $base) (i32.const 10))
+                      (i32.eq (local.get $base) (i32.const 11))))
+            (i32.or
+              (i32.or (i32.eq (local.get $base) (i32.const 16))
+                      (i32.eq (local.get $base) (i32.const 17)))
+              (i32.or
+                (i32.or (i32.eq (local.get $base) (i32.const 18))
+                        (i32.eq (local.get $base) (i32.const 19)))
+                (i32.or (i32.eq (local.get $base) (i32.const 22))
+                        (i32.eq (local.get $base) (i32.const 23))))))))
+      (then (return (i32.const 0x80020005))))
+    ;; The slot owns its string, so a repeated put must not leak the old one.
+    (if (i32.and (i32.eq (call $gl32 (local.get $slot)) (i32.const 8))
+                 (i32.ne (call $gl32 (i32.add (local.get $slot) (i32.const 4))) (i32.const 0)))
+      (then (call $heap_free (i32.sub
+        (call $gl32 (i32.add (local.get $slot) (i32.const 4))) (i32.const 4)))))
+    (if (i32.eq (local.get $base) (i32.const 8))
+      (then (local.set $value (call $ole_font_bstr_dup (local.get $value)))))
+    (call $gs32 (local.get $slot) (local.get $base))
+    (call $gs32 (i32.add (local.get $slot) (i32.const 4)) (local.get $value))
+    (i32.const 0))
+
+  ;; VB's Filter is one string with '|' between the description and its
+  ;; pattern; OPENFILENAME wants NUL between them and a double NUL at the end.
+  (func $cd_filter_to_ofn (param $bstr i32) (result i32)
+    (local $len i32) (local $buf i32) (local $w i32) (local $src i32)
+    (local $i i32) (local $c i32)
+    (if (i32.eqz (local.get $bstr)) (then (return (i32.const 0))))
+    (local.set $len (call $guest_wcslen (local.get $bstr)))
+    (local.set $buf (call $heap_alloc (i32.add (local.get $len) (i32.const 2))))
+    (if (i32.eqz (local.get $buf)) (then (return (i32.const 0))))
+    (local.set $w (call $g2w (local.get $buf)))
+    (local.set $src (call $g2w (local.get $bstr)))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
+      (local.set $c (i32.load16_u
+        (i32.add (local.get $src) (i32.shl (local.get $i) (i32.const 1)))))
+      (if (i32.eq (local.get $c) (i32.const 124)) (then (local.set $c (i32.const 0))))
+      (if (i32.gt_u (local.get $c) (i32.const 255)) (then (local.set $c (i32.const 63))))
+      (i32.store8 (i32.add (local.get $w) (local.get $i)) (local.get $c))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (i32.store8 (i32.add (local.get $w) (local.get $len)) (i32.const 0))
+    (i32.store8 (i32.add (local.get $w) (i32.add (local.get $len) (i32.const 1))) (i32.const 0))
+    (local.get $buf))
+
+  (func $cd_slot_bstr (param $root i32) (param $dispid i32) (result i32)
+    (local $slot i32)
+    (local.set $slot (i32.add (local.get $root)
+      (i32.add (i32.const 180) (i32.mul (local.get $dispid) (i32.const 8)))))
+    (if (i32.ne (call $gl32 (local.get $slot)) (i32.const 8))
+      (then (return (i32.const 0))))
+    (call $gl32 (i32.add (local.get $slot) (i32.const 4))))
+
+  ;; ShowOpen/ShowSave: synthesize the OPENFILENAME the WAT-native dialog
+  ;; already understands out of the property bag, then hand off to exactly the
+  ;; machinery behind GetOpenFileNameA. kind: 0 = Open, 1 = Save As.
+  (func $cd_show_file_dialog (param $root i32) (param $kind i32)
+    (local $ofn i32) (local $buf i32) (local $filter i32) (local $dlg i32) (local $s i32)
+    (local.set $ofn (call $heap_alloc (i32.const 76)))
+    (local.set $buf (call $heap_alloc (i32.const 260)))
+    (if (i32.or (i32.eqz (local.get $ofn)) (i32.eqz (local.get $buf))) (then (return)))
+    (call $zero_memory (call $g2w (local.get $ofn)) (i32.const 76))
+    (call $zero_memory (call $g2w (local.get $buf)) (i32.const 260))
+    (local.set $s (call $cd_slot_bstr (local.get $root) (i32.const 1)))   ;; FileName
+    (if (local.get $s)
+      (then (drop (call $wide_to_ansi (local.get $s) (local.get $buf) (i32.const 260)))))
+    (local.set $filter
+      (call $cd_filter_to_ofn (call $cd_slot_bstr (local.get $root) (i32.const 3))))
+    (call $gs32 (local.get $ofn) (i32.const 76))
+    (call $gs32 (i32.add (local.get $ofn) (i32.const 4)) (global.get $main_hwnd))
+    (call $gs32 (i32.add (local.get $ofn) (i32.const 12)) (local.get $filter))
+    (call $gs32 (i32.add (local.get $ofn) (i32.const 28)) (local.get $buf))
+    (call $gs32 (i32.add (local.get $ofn) (i32.const 32)) (i32.const 260))
+    (global.set $opendlg_wide (i32.const 0))
+    (global.set $cd_dlg_root (local.get $root))
+    (global.set $cd_dlg_ofn (local.get $ofn))
+    (call $modal_capture_nonvolatile)
+    (local.set $dlg (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (call $create_open_dialog (local.get $dlg) (global.get $main_hwnd)
+      (local.get $kind) (local.get $ofn))
+    (call $modal_begin (local.get $dlg) (i32.const 40)))
+
+  ;; Called from $modal_done. VB reads the result back off the FileName
+  ;; property, not out of any structure, so the slot has to carry it.
+  (func $cd_modal_writeback (param $result i32)
+    (local $root i32) (local $ofn i32) (local $name i32) (local $tmp i32)
+    (local $full i32) (local $dir i32) (local $dlen i32) (local $slot i32)
+    (local.set $root (global.get $cd_dlg_root))
+    (local.set $ofn (global.get $cd_dlg_ofn))
+    (if (i32.eqz (local.get $root)) (then (return)))
+    (global.set $cd_dlg_root (i32.const 0))
+    (global.set $cd_dlg_ofn (i32.const 0))
+    (if (local.get $result)
+      (then
+        (local.set $name (call $gl32 (i32.add (local.get $ofn) (i32.const 28))))
+        (local.set $full (call $heap_alloc (i32.const 520)))
+        (if (local.get $full)
+          (then
+            (call $zero_memory (call $g2w (local.get $full)) (i32.const 520))
+            ;; The edit holds a bare name; VB expects the full path.
+            (local.set $dir (global.get $opendlg_current_dir))
+            (if (i32.and
+                  (i32.ne (local.get $dir) (i32.const 0))
+                  (i32.ne (call $gl8 (i32.add (local.get $name) (i32.const 1)))
+                          (i32.const 58)))  ;; ':' => already absolute
+              (then
+                (local.set $dlen (call $guest_strlen (local.get $dir)))
+                (memory.copy (call $g2w (local.get $full)) (call $g2w (local.get $dir))
+                  (local.get $dlen))
+                (if (i32.ne (call $gl8 (i32.add (local.get $dir)
+                      (i32.sub (local.get $dlen) (i32.const 1)))) (i32.const 92))
+                  (then
+                    (call $gs8 (i32.add (local.get $full) (local.get $dlen)) (i32.const 92))
+                    (local.set $dlen (i32.add (local.get $dlen) (i32.const 1)))))))
+            (memory.copy (call $g2w (i32.add (local.get $full) (local.get $dlen)))
+              (call $g2w (local.get $name))
+              (i32.add (call $guest_strlen (local.get $name)) (i32.const 1)))
+            (local.set $tmp (call $heap_alloc (i32.const 1040)))
+            (if (local.get $tmp)
+              (then
+                (drop (call $ansi_to_wide (local.get $full) (local.get $tmp) (i32.const 520)))
+                (local.set $slot (i32.add (local.get $root) (i32.const 188))) ;; FileName
+                (if (i32.and (i32.eq (call $gl32 (local.get $slot)) (i32.const 8))
+                             (i32.ne (call $gl32 (i32.add (local.get $slot) (i32.const 4)))
+                                     (i32.const 0)))
+                  (then (call $heap_free (i32.sub
+                    (call $gl32 (i32.add (local.get $slot) (i32.const 4))) (i32.const 4)))))
+                (call $gs32 (local.get $slot) (i32.const 8))
+                (call $gs32 (i32.add (local.get $slot) (i32.const 4))
+                  (call $ole_font_bstr_dup (local.get $tmp)))
+                (call $heap_free (local.get $tmp))))
+            (call $heap_free (local.get $full))))))
+    (if (local.get $ofn)
+      (then
+        (call $heap_free (call $gl32 (i32.add (local.get $ofn) (i32.const 12))))
+        (call $heap_free (call $gl32 (i32.add (local.get $ofn) (i32.const 28))))
+        (call $heap_free (local.get $ofn)))))
+
   (func $handle_ICommonDialogDispatch_Invoke (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $root i32) (local $params i32) (local $result i32)
     (local $variant i32) (local $vt i32) (local $base_vt i32)
@@ -9054,6 +9247,16 @@
     (local.set $root (i32.sub (local.get $arg0) (i32.const 176)))
     (local.set $params (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
     (local.set $result (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
+    ;; ShowOpen (30) / ShowSave (31) are DISPATCH_METHOD calls, not slots. They
+    ;; park EIP on the modal pump, so they must not touch ESP here: the
+    ;; CACA0006 splice restores it once the dialog is dismissed.
+    (if (i32.and (i32.and (local.get $arg4) (i32.const 1))
+          (i32.or (i32.eq (local.get $arg1) (i32.const 30))
+                  (i32.eq (local.get $arg1) (i32.const 31))))
+      (then
+        (call $cd_show_file_dialog (local.get $root)
+          (i32.sub (local.get $arg1) (i32.const 30)))
+        (return)))
     (if (i32.ge_u (local.get $arg1) (i32.const 32))
       (then (global.set $eax (i32.const 0x80020003))) ;; DISP_E_MEMBERNOTFOUND
       (else
@@ -9066,27 +9269,8 @@
               (then (global.set $eax (i32.const 0x8002000E))) ;; DISP_E_BADPARAMCOUNT
               (else
                 (local.set $variant (call $gl32 (local.get $params)))
-                (local.set $vt (call $gl16 (local.get $variant)))
-                (local.set $base_vt (i32.and (local.get $vt) (i32.const 0x0FFF)))
-                (if (i32.or
-                      (i32.or (i32.eq (local.get $base_vt) (i32.const 2))
-                              (i32.eq (local.get $base_vt) (i32.const 3)))
-                      (i32.or (i32.eq (local.get $base_vt) (i32.const 11))
-                              (i32.eq (local.get $base_vt) (i32.const 19))))
-                  (then
-                    (local.set $value (call $gl32 (i32.add (local.get $variant) (i32.const 8))))
-                    (if (i32.and (local.get $vt) (i32.const 0x4000))
-                      (then
-                        (local.set $value
-                          (select
-                            (call $gl16 (local.get $value))
-                            (call $gl32 (local.get $value))
-                            (i32.or (i32.eq (local.get $base_vt) (i32.const 2))
-                                    (i32.eq (local.get $base_vt) (i32.const 11)))))))
-                    (call $gs32 (local.get $slot) (local.get $base_vt))
-                    (call $gs32 (i32.add (local.get $slot) (i32.const 4)) (local.get $value))
-                    (global.set $eax (i32.const 0)))
-                  (else (global.set $eax (i32.const 0x80020005))))))) ;; DISP_E_TYPEMISMATCH
+                (global.set $eax
+                  (call $cd_prop_put (local.get $slot) (local.get $variant))))))
           (else
             (if (i32.and (local.get $arg4) (i32.const 2)) ;; DISPATCH_PROPERTYGET
               (then
@@ -9094,9 +9278,14 @@
                   (then (global.set $eax (i32.const 0x80004003)))
                   (else
                     (call $zero_memory (call $g2w (local.get $result)) (i32.const 16))
-                    (call $gs16 (local.get $result) (call $gl32 (local.get $slot)))
-                    (call $gs32 (i32.add (local.get $result) (i32.const 8))
-                      (call $gl32 (i32.add (local.get $slot) (i32.const 4))))
+                    (local.set $base_vt (call $gl32 (local.get $slot)))
+                    (local.set $value (call $gl32 (i32.add (local.get $slot) (i32.const 4))))
+                    ;; The caller owns the returned VARIANT and will SysFreeString
+                    ;; it, so a string property must hand back its own copy.
+                    (if (i32.eq (local.get $base_vt) (i32.const 8))
+                      (then (local.set $value (call $ole_font_bstr_dup (local.get $value)))))
+                    (call $gs16 (local.get $result) (local.get $base_vt))
+                    (call $gs32 (i32.add (local.get $result) (i32.const 8)) (local.get $value))
                     (global.set $eax (i32.const 0)))))
               (else (global.set $eax (i32.const 0x80020003))))))) ;; no such method
     (global.set $esp (i32.add (global.get $esp) (i32.const 40))))

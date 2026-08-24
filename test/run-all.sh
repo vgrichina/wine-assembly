@@ -184,6 +184,7 @@ UNIT=(
   test/test-aoe-stack-packet-handler.js
   test/test-clipboard-rtf-api.js
   test/test-coinitialize-ex.js
+  test/test-commondialog-props.js
   test/test-critical-section-threading.js
   test/test-ddraw-surface-dirty-rect.js
   test/test-defer-window-pos-visibility.js
