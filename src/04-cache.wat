@@ -8,6 +8,32 @@
   (global $generated_sparse_code_start (mut i32) (i32.const 0))
   (global $generated_sparse_code_end   (mut i32) (i32.const 0))
 
+  ;; Page-granular record of where code has actually been decoded from. The
+  ;; two ranges above are min/max spans, so they cannot describe generated code
+  ;; that lands in the middle of the ordinary heap without also covering every
+  ;; framebuffer and data allocation between the ends of the span — which would
+  ;; put a full cache scan on every pixel write. A bitmap costs one byte load
+  ;; per store and is exact.
+  (func $code_page_mark (param $ga i32)
+    (local $pi i32) (local $ba i32)
+    (local.set $pi (i32.shr_u (local.get $ga) (i32.const 12)))
+    (if (i32.ge_u (local.get $pi) (global.get $CODE_PAGE_BITMAP_PAGES)) (then (return)))
+    (local.set $ba (i32.add (global.get $CODE_PAGE_BITMAP) (i32.shr_u (local.get $pi) (i32.const 3))))
+    (i32.store8 (local.get $ba)
+      (i32.or (i32.load8_u (local.get $ba))
+              (i32.shl (i32.const 1) (i32.and (local.get $pi) (i32.const 7))))))
+
+  (func $code_page_test (param $ga i32) (result i32)
+    (local $pi i32)
+    (local.set $pi (i32.shr_u (local.get $ga) (i32.const 12)))
+    (if (i32.ge_u (local.get $pi) (global.get $CODE_PAGE_BITMAP_PAGES))
+      (then (return (i32.const 0))))
+    (i32.and
+      (i32.shr_u
+        (i32.load8_u (i32.add (global.get $CODE_PAGE_BITMAP) (i32.shr_u (local.get $pi) (i32.const 3))))
+        (i32.and (local.get $pi) (i32.const 7)))
+      (i32.const 1)))
+
   (func $cache_lookup (param $ga i32) (result i32)
     (local $idx i32)
     (local.set $idx (i32.add (global.get $CACHE_INDEX)
@@ -21,6 +47,7 @@
       (i32.mul (i32.and (i32.shr_u (local.get $ga) (i32.const 2)) (global.get $CACHE_MASK)) (i32.const 8))))
     (i32.store (local.get $idx) (local.get $ga))
     (i32.store offset=4 (local.get $idx) (local.get $off))
+    (call $code_page_mark (local.get $ga))
     (local.set $should_track
       (i32.and
         (i32.ne (global.get $exe_size_of_image) (i32.const 0))
@@ -62,9 +89,24 @@
       (i32.store offset=4 (i32.add (global.get $CACHE_INDEX) (i32.mul (local.get $i) (i32.const 8))) (i32.const 0))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $s))))
+  (func $code_page_clear (param $ga i32)
+    (local $pi i32) (local $ba i32)
+    (local.set $pi (i32.shr_u (local.get $ga) (i32.const 12)))
+    (if (i32.ge_u (local.get $pi) (global.get $CODE_PAGE_BITMAP_PAGES)) (then (return)))
+    (local.set $ba (i32.add (global.get $CODE_PAGE_BITMAP) (i32.shr_u (local.get $pi) (i32.const 3))))
+    (i32.store8 (local.get $ba)
+      (i32.and (i32.load8_u (local.get $ba))
+               (i32.xor (i32.shl (i32.const 1) (i32.and (local.get $pi) (i32.const 7)))
+                        (i32.const 0xFF)))))
+
   (func $invalidate_page (param $ga i32)
     (local $page i32) (local $i i32) (local $idx i32)
     (local.set $page (i32.and (local.get $ga) (i32.const 0xFFFFF000)))
+    ;; Nothing from this page stays cached, so drop its bit too. A page that
+    ;; held code once and is now a data buffer would otherwise scan the whole
+    ;; cache index on every write to it forever; the bit comes back the moment
+    ;; a block is decoded from the page again.
+    (call $code_page_clear (local.get $ga))
     (local.set $i (i32.const 0))
     (block $d (loop $s
       (br_if $d (i32.ge_u (local.get $i) (global.get $CACHE_SIZE)))
