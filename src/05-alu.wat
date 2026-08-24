@@ -750,6 +750,16 @@
   ;; When the budget runs out the return unwinds to $run with $eip already
   ;; naming the fall-through block, so the next batch simply looks it up.
   (func $jcc_end (param $op i32)
+    ;; Headroom counter for the address-ordered page emit that is NOT built
+    ;; (docs/page-compile-design.md sections 2.1/3). Bit 1 says this Jcc fell
+    ;; through; bit 0 says the fall-through block is the very next thing in the
+    ;; chunk. Exactly 2 means "fell through, but its successor lives somewhere
+    ;; else in the chunk" -- the branches a defragmentation pass would convert
+    ;; into free ones. Counting them says how big that prize is before anyone
+    ;; writes the compactor.
+    (if (i32.eq (i32.and (local.get $op) (i32.const 3)) (i32.const 2))
+      (then (global.set $page_ft_missed
+              (i32.add (global.get $page_ft_missed) (i32.const 1)))))
     (if (i32.eq (i32.and (local.get $op) (i32.const 3)) (i32.const 3))
       (then
         (if (i32.eqz (i32.or (global.get $dbg_any)

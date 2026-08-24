@@ -1408,6 +1408,11 @@
   (global $page_ft_chains (mut i32) (i32.const 0))
   (global $page_ft_blocks (mut i32) (i32.const 0))
   (global $page_ft        (mut i32) (i32.const 0))
+  ;; The complement of $page_ft: branches that fell through to a block which
+  ;; exists in the same chunk but not adjacently, so the fall-through paid a
+  ;; full eip store, index lookup and dispatch. This is the headroom an
+  ;; address-ordered emit or a defragmentation pass would be competing for.
+  (global $page_ft_missed (mut i32) (i32.const 0))
   ;; Section 5. $page_retires counts blocks retired one at a time by a write to
   ;; a byte they cover; $page_range_drops counts the times a write was too wide
   ;; to be worth walking and the whole page went instead. The ratio is the

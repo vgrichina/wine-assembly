@@ -2471,6 +2471,7 @@
   (func (export "get_page_misses")   (result i32) (global.get $page_misses))
   (func (export "get_page_fast")     (result i32) (global.get $page_fast))
   (func (export "get_page_ft")       (result i32) (global.get $page_ft))
+  (func (export "get_page_ft_missed")(result i32) (global.get $page_ft_missed))
   (func (export "get_page_ft_chains")(result i32) (global.get $page_ft_chains))
   (func (export "get_page_ft_blocks")(result i32) (global.get $page_ft_blocks))
 

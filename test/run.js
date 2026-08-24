@@ -6993,6 +6993,14 @@ if (VERBOSE) {
           console.log('runs:  extended', instance.exports.get_page_ft_chains(),
             '| blocks chained', instance.exports.get_page_ft_blocks(),
             '| free fall-throughs', instance.exports.get_page_ft());
+          if (instance.exports.get_page_ft_missed) {
+            const free = instance.exports.get_page_ft();
+            const missed = instance.exports.get_page_ft_missed();
+            const fell = free + missed;
+            console.log('       fall-through branches', fell,
+              `| free ${free}`, `| paid ${missed}`,
+              fell ? `(${(100 * missed / fell).toFixed(1)}% of fall-throughs are the defrag headroom)` : '');
+          }
         }
       }
       if (instance.exports.get_cache_invals) {

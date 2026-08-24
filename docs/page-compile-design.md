@@ -608,3 +608,88 @@ thousand avoided block decodes over 800 batches is real work removed, and it is
 too small a share of the slice to see. This is the same verdict as the mean
 measurement, reached by an instrument that *can* see the mechanism — which makes
 it the stronger version of the result, not a second guess at it.
+
+## 11. Page defragmentation: measured headroom, then measured worth (2026-08-24)
+
+The obvious next increment is the one §2.1/§3 describes and this branch skipped:
+lay a page's blocks out in **guest-address order** so that every block's
+fall-through successor is physically the next thing in the chunk. Today
+adjacency only happens when `$decode_run` extended a run through the
+fall-through; a block whose successor was already compiled (a branch target
+reached first, say) stops the run, and that fall-through pays a full eip store,
+index lookup and dispatch forever after. A defragmentation pass — copy the
+chunk's blocks out in address order, rewrite the index offsets and cover marks,
+set the adjacency bits — would convert all of them. Threaded code is
+position-independent, so the copy itself is legal; that was never the question.
+
+### Step 1: how big is the prize
+
+`$page_ft_missed` (new) counts the complement of `$page_ft`: branches that fell
+through to a block living elsewhere in the same chunk. That is exactly the
+population defrag would convert, and `test/run.js` prints it on the `runs:` line.
+
+| app | index hits | fall-throughs | free today | paid = the prize |
+|---|---|---|---|---|
+| diablo_demo | 1.03M | 189k | 170k | 20k (1.9% of hits) |
+| pinball | 700k | 129k | 103k | 26k (3.7%) |
+| dxball | 969k | 419k | 230k | 188k (19.5%) |
+| caesar3_demo | 975k | 626k | 225k | **401k (41%)** |
+| total_annihilation_demo | 10.5M | 3.04M | 1.49M | **1.55M (15%)** |
+
+So it is not uniformly small. On Caesar, four in ten of every lookup the
+interpreter performs is a fall-through that an address-ordered layout would
+delete outright. That is worth an experiment.
+
+### Step 2: what is one free fall-through actually worth
+
+Rather than build the compactor and then measure, measure the lever first, using
+the free fall-throughs that already exist. Change one constant in `$jcc_end` so
+the adjacency bit is never honoured, and every one of them reverts to the paid
+path. Caesar then loses **3.35M** free fall-throughs out of 6.73M, all converted
+into eip store + index lookup + dispatch.
+
+Interleaved, same tree, only the two wasm binaries swapped, 20000 batches, box at
+load 6.5–7.6:
+
+| rep | adjacency off | adjacency on |
+|---|---|---|
+| 1 | 2.167s | 2.139s |
+| 2 | 2.223s | 2.492s |
+| 3 | 2.428s | 2.499s |
+
+Nothing. Deleting 3.35 million lookups-and-dispatches from a 2.2-second run is
+not visible above the noise, and the noise is not even signed in adjacency's
+favour.
+
+### Verdict
+
+**Do not build the defragmentation pass.** Its entire prize is more of a thing
+that has just been measured at zero, and it would cost a compaction pass, a
+trigger policy, an index rewrite and a new class of "the chunk moved under a
+running block" hazard to collect it.
+
+This is the fifth negative result of the same shape. What the branch has now
+proven, five different ways, is that *transfer bookkeeping is not this
+interpreter's cost*: not the hash lookup (§10), not the desk trip (§10), not the
+wasm JIT tier (§10), and now not the lookup-versus-adjacency choice either. The
+time is in the handlers, and the next real win has to come from doing less work
+per x86 instruction, not from arriving at the instruction more cheaply.
+
+### Corpus note: total_annihilation_demo
+
+TA is the most extreme eviction case measured anywhere in this work and belongs
+in any future storage experiment's app set (it is already in
+`tools/cpuprof-sweep.js`'s default list and `test/test-debug-game-apps.js`, so
+no new fixture is needed — it was simply never used here). At 3000 batches:
+
+| | fork point | this branch |
+|---|---|---|
+| block decodes | 62310 | 3849 |
+| of which evicted a live block | **59940 (96%)** | 0 |
+| decode-free batches | 74.0% | 98.5% |
+| guest slice p50 / p99 ms | 0.10 / 0.66 | 0.10 / 0.70 |
+
+Ninety-six percent of the fork point's decodes there are re-decodes of a block it
+had already compiled and thrown away. The branch removes all of them, decodes
+16× less, and the slice distribution does not move — which is the whole result of
+this branch stated in one app.
