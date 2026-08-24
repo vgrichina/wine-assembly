@@ -35,14 +35,69 @@ timeout 300 node test/run.js --app=diablo_shareware --time-scale=30 \
   --input=40000:png:/tmp/f1.png,40100:png:/tmp/f2.png
 ```
 
-Runs are **deterministic**: the same batch number produces a byte-identical PNG
-across runs. Anything that looks like a race is not one — look for a counter or
-a state machine instead.
+Runs are **deterministic, threads included** — the same command line twice gives
+byte-identical output. Measured, with T1 alive, on a loaded box:
+
+```sh
+for i in 1 2; do
+  timeout 120 node test/run.js --app=diablo_shareware --time-scale=30 \
+    --max-batches=40100 --no-close --trace-thread \
+    --count=storm+0x1500c7d9,storm+0x1500bec4,diabloui+0x20001669 \
+    --input=40050:png:/tmp/det$i.png > /tmp/det$i.log 2>&1
+done
+# 150391 log lines each, identical apart from the PNG filename; PNGs cmp equal.
+```
+
+This is by construction, not luck. The CLI has no OS threads: `ThreadManager`
+steps every guest thread from one JS loop, and `test/run.js` hands it a
+**virtual clock** (`now: () => tickState.batch * 200`), so slice deadlines,
+`sleepUntil` and audio-thread priority are all functions of the batch counter.
+`get_ticks` is batch-driven too. Nothing in the scheduler reads the wall clock,
+which is also why adding `--trace-thread` does not perturb the interleave.
+
+What *does* change the interleave is **changing the flags**: `--break`,
+multi-address `--trace-at` (forces `BATCH_SIZE=1`) and anything else that
+alters how many steps run per batch produce a genuinely different execution.
+Two runs are only comparable if the command lines match exactly. The earlier
+claim in this file that "runs are non-deterministic once T1 exists" came from
+comparing three *different* flag configurations, and is withdrawn.
+
+> One real-clock leak did survive until 2026-08-24: a bounded main
+> `WaitForSingleObject` with other threads still active measured its timeout
+> against `Date.now()` in `lib/thread-manager.js`. It now uses the injected
+> `this._now()` like everything else. That also fixed an incoherence — the wait
+> was timed on the wall while the guest's own `GetTickCount` ran on the batch
+> counter, so a 5-second wait advanced the guest's clock by millions of
+> milliseconds. Diablo's frames are byte-identical either side of the change.
+
+`--time-scale=30` is the working setting. **`--time-scale=200` hangs** — five
+sweep captures across a run came back byte-identical, frozen on the Blizzard
+North intro frame with T1 already exited. Do not raise the scale looking for a
+faster repro.
 
 Menu geometry in the 640×480 capture: "SINGLE PLAYER" spans about x=175..465,
 y=200..228, so a click at (320, 213) selects it. Enter also works once the menu
 is actually on screen. `run.js`'s `click` action is invisible to games that
 sample the button once per frame — use `mousedown`, a gap, then `mouseup`.
+
+**Choose Class.** Take Single Player from that menu and hold the input long
+enough to be sampled. Both of these reach it; the resulting frame is stable from
+about batch 39800 through 43900:
+
+```sh
+# keyboard
+timeout 540 node test/run.js --app=diablo_shareware --time-scale=30 \
+  --max-batches=41500 --no-close --repaint-every=200 \
+  --input=39500:keydown:13,39560:keyup:13,41000:png:/tmp/cc.png
+
+# mouse
+timeout 540 node test/run.js --app=diablo_shareware --time-scale=30 \
+  --max-batches=41500 --no-close --repaint-every=200 \
+  --input=39400:mousemove:320:213,39500:mousedown:320:213,39620:mouseup:320:213,41000:png:/tmp/cc.png
+```
+
+`--repaint-every=200` is required for the PNG to be anything but a stale frame,
+and `--no-close` is required for `--png`/`png:` to write at all.
 
 ## Graphics: DirectDraw, and the guest does the drawing
 
@@ -78,6 +133,88 @@ a sector table's decryption key is recovered from known plaintext instead: entry
 0 is the table's own byte length **and** the last entry is the file's compressed
 size. Matching only entry 0 yields false positives (that mistake cost an hour
 here, and is why `detectSeed` trial-decrypts the whole table).
+
+### Host-side ground truth: `tools/mpq-extract.js`
+
+`tools/mpq-dir.js` only reads the tables. `tools/mpq-extract.js` decodes an
+entry all the way to bytes, so the guest's decompressed output can be diffed
+against what the archive actually holds:
+
+```
+node tools/mpq-extract.js <file.mpq> (--name='dir\file.ext' | --block=N)
+                          [--out=PATH] [--png=PATH] [--frame-height=N] [--palette]
+```
+
+The crypt table, `hashString`, `decryptBlock`, `detectSeed`, `flagNames` and the
+header scan now live in `tools/mpq.js`, shared by both scripts; `mpq-dir.js`'s
+CLI output is byte-identical to before the split (verified across the default,
+`--all`, `--pos=`, `--table=` and `--name=` modes).
+
+Facts confirmed while building it:
+
+- **Every `ui_art\*.pcx` in spawn.mpq is `IMPLODE|ENCRYPTED`** (flags
+  `0x80010100`) — never `COMPRESS` (0x200), so there is **no per-sector
+  compression-type byte**; the whole sector is a raw PKWARE DCL stream. No
+  `FIX_KEY`, no `SINGLE_UNIT`, no `SECTOR_CRC` on any of them.
+- The file-data key is `hashString(bare_name, 3)` — the name **after** the last
+  backslash, so `"logo.pcx"`, not `"ui_art\logo.pcx"`. The sector table uses
+  `key - 1`, sector *i* uses `key + i`. With the name known you never need
+  `detectSeed`.
+- A sector whose stored length is **not smaller** than its decompressed length
+  is verbatim; everything else is exploded. Sector size is 4096.
+- The PKWARE DCL explode implementation is in `tools/mpq.js` (no npm
+  dependency). Its three fixed Huffman tables are the run-length form used by
+  Mark Adler's `blast.c` — byte = `(repeat-1) << 4 | bit-length` — and codes are
+  stored **bit-reversed**, which is why `decode()` inverts each bit. Length code
+  0 is 3 and code 1 is 2 (DCL's 2-byte match is not the first code), and a
+  2-byte match always uses 2 distance bits regardless of dictionary size.
+
+#### `ui_art\logo.pcx` real geometry
+
+Block 19, `pos 0x4a32e`, csize 315035, **fsize 535264** (the correctness gate:
+the decode must produce exactly this many bytes).
+
+- PCX v5, **550 x 3240**, 8bpp, 1 plane, bytesPerLine 550, 256-colour palette in
+  the trailing 769 bytes (`0x0C` marker + 768 RGB bytes).
+- **15 frames of 550 x 216** stacked vertically. 3240 / 15 = 216 exactly.
+- The colour key is **index 250 = rgb(0, 255, 0)**, 68.7% of all pixels. Black is
+  a *different* index — 239 = rgb(0,0,0), only 5.9%. So a frame that renders
+  solid black in the emulator is not "the green key went black": the pixel
+  indices themselves are wrong (or all zero), because index 0 is not black-heavy
+  in this image at all. That distinguishes a palette bug from a decompression
+  bug without any further instrumentation.
+
+Regenerate the ground truth (full image plus one PNG per frame,
+`logo.000.png` … `logo.014.png`):
+
+```
+node tools/mpq-extract.js \
+  test/binaries/candidates/diablo-shareware/installed/spawn.mpq \
+  --name='ui_art\logo.pcx' --png=/tmp/logo.png --frame-height=216 --palette
+```
+
+All 15 frames render as a legible flaming "DIABLO" wordmark on the green key.
+
+#### The rest of `ui_art\` (all decode cleanly)
+
+| name | block | fsize | PCX | frames |
+|---|---|---|---|---|
+| `title.pcx` | 0 | 80648 | 640x480 | 1 |
+| `mainmenu.pcx` | 20 | 21788 | 640x480 | 1 |
+| `focus42.pcx` | 21 | 6707 | 42x336 | 8 of 42x42 |
+| `smlogo.pcx` | 22 | 333227 | 390x2310 | 15 of 390x154 |
+| `selhero.pcx` | 23 | 15895 | 640x480 | 1 |
+| `heros.pcx` | 24 | 28929 | 180x304 | 4 of 180x76 |
+| `focus16.pcx` | 25 | 3032 | 20x160 | 8 of 20x20 |
+| `sb_arrow.pcx` | 28 | 2372 | 28x88 | — |
+| `focus.pcx` | 29 | 4873 | 30x240 | 8 of 30x30 |
+| `credits.pcx` | 1002 | 157403 | 640x480 | 1 |
+| `black.pcx` | 994 | 11457 | 640x480 | 1 |
+
+The "pentagram animation" is `focus*.pcx` — three sizes of the same 8-frame
+spinning pentagram used as the menu selection marker, not a separate asset.
+`ui_art\pentspin.pcx`, `ui_art\hf_logo3.pcx` and `ui_art\diablo.pal` are **not**
+in this archive.
 
 ## Named addresses
 
@@ -235,6 +372,36 @@ Sector-loop census over the same repro:
 #   0x006af7db = 4    stored-sector rep-movs copies
 ```
 
+> **Withdrawn (the failure chain above, not the addresses):** re-measured with a
+> single full-speed `--count` run over the same repro, and the chain does not
+> hold.
+>
+> ```
+> node test/run.js --app=diablo_shareware --time-scale=30 --max-batches=40100 --no-close \
+>   --count=storm+0x1500c1eb,storm+0x1500c7d9,storm+0x1500c7db,storm+0x1500c827,storm+0x1500ead4,storm+0x15001f13,diabloui+0x20001610,diabloui+0x20001669
+> #   0x006af1eb = 0     <-- the claimed sector-fill short return NEVER FIRES
+> #   0x006af7d9 = 339   explode call returns
+> #   0x006af7db = 4     stored-sector verbatim copies
+> #   0x006af827 = 84    sector-loop normal exits
+> #   0x006b1ad4 = 1     ERROR_HANDLE_EOF short read
+> #   0x006a4f13 = 18    SFileReadFile body-read landing
+> #   0x006e1610 = 2     animated-art builder (logo + pentagram)
+> #   0x006e1669 = 30    STransCreate (15 + 15)
+> ```
+>
+> Two things fall out of that. `0x1500c1eb` fires **zero** times, so the
+> sector-cache fill never takes the short return the chain was built on. And of
+> the 339 explode calls, every one of 304 sampled returns came back `EAX=0`
+> (`CMP_NO_ERROR`) — explode is not silently failing. 339 + 4 = 343 sectors is
+> approximately every sector of every file the run reads, so the decompression
+> *volume* is not truncated either.
+>
+> What survives from the section above: the addresses, the fact that explode's
+> return value is discarded at `0x1500c7d9`, and the fact that a zero tail in the
+> read buffer paints black because 0x00 is a literal in the PCX RLE loop. What
+> does not survive: "the sector fill short-returns" and "explode is
+> mis-executed". Something else is zeroing the buffer.
+
 #### What I could not determine
 
 Which src/ defect makes Storm stop producing output partway through
@@ -310,6 +477,16 @@ listfile).
   take the single-threaded `0x1500ea5e` path instead — see the count block above.
 - **Decoder fusion options.** `--no-sib-fusion` and `--no-rect-run` each give
   byte-identical sprite sizes (frames 3-14 all 60984).
+- **A stored (uncompressed) sector confusing the loop.** All 131 of
+  `logo.pcx`'s sectors are compressed — every entry of
+  `node tools/mpq-dir.js <spawn.mpq> --table=19` is under the 4096 sector size,
+  so the `cmp ebp,eax / jbe 0x1500c7db` stored-sector branch is not taken for
+  this file at all. The 4 stored copies in the census belong to other files.
+- **Anything specific to the logo.** **Both** animated arts degrade — the logo
+  *and* the pentagrams lose their tail the same way — while every static art on
+  the same screen is intact, and about 2.5 of 15 frames (~20%) come out correct.
+  Whatever this is, it keys on the multi-frame path or on large files, not on
+  one asset.
 
 > **Withdrawn:** the earlier bullet "A truncated MPQ read … the file involved was
 > the title WAV, not the logo." The 82-sector file that stops on a 0x20000
@@ -320,9 +497,152 @@ listfile).
 
 ### Choose Class screen is corrupted
 
-Superimposed title strings, heavy horizontal striping, mostly black with only
-the gold class names and stat labels legible. Given the DirectDraw profile
-above, start at the lock rect / pitch and the palette.
+Symptom as the user states it: "the layout is a mess and clicks and UI don't
+seem to match". What the capture shows is a mostly black screen with only gold
+class names and stat labels legible, sitting on undisturbed leftover pixels from
+the main menu.
+
+> **Withdrawn:** "heavy horizontal striping … start at the lock rect / pitch and
+> the palette." There is no striping to explain. The fully-lit bottom row 479 is
+> a CLI harness composite artifact — it is present on the *working* main-menu
+> PNG too, and absent from the raw DirectDraw surface dump
+> (`--dx-surfaces` + `dd/dx_01_primary_640x480_8bpp.png`). The faint upper lines
+> are leftover main-menu pixels that nothing erased, not a pitch error. Lock
+> rect, pitch and palette are not implicated by any measurement taken here.
+
+**The screen has no art at all, and that is the whole bug.** diabloui's sprite
+array (`diabloui+0x20022478`, runtime `0x702478`) holds 15 live frame pointers
+while the main menu is up and is **entirely NULL** on Choose Class:
+
+```sh
+timeout 280 node test/run.js --app=diablo_shareware --time-scale=30 \
+  --max-batches=39400 --no-close --repaint-every=200 --dump=0x702478:128
+#   0x00702478  30 9c c6 4f 60 9c c6 4f 90 9c c6 4f …   (15 pointers)
+# same run to 41500 with the Single Player input:
+#   0x00702478  00 00 00 00 00 00 00 00 …               (all zero)
+```
+
+The multi-frame loader `diabloui+0x20001610` fires a **third** time for this
+screen (`--count` says 3 by batch 41500, vs the 2 on the menu), so the screen's
+art path does run — it just gets nothing back. Since frame count and per-frame
+rects are derived from the loaded bitmap's dimensions, an element list built on
+top of a zero-sprite load is the most economical explanation for "layout is a
+mess and clicks don't match what's drawn": there is nothing to lay out against.
+**Not measured, and the next thing to do:** read the width/height/frame-count
+the loader stores on the failing call, and compare a drawn element rect against
+the rect the app hit-tests. I could not separate the geometry symptom from the
+art failure, because every art load on this screen fails.
+
+#### The chain, measured end to end
+
+1. `SDlgBeginPaint` (`storm+0x15004f00`) takes its do-nothing STUB tail
+   (`storm+0x15004fed`) for the Choose Class dialog `hwnd 0x1000e` — 1 API call,
+   no `Lock` — while the menu's `0x10006` took the full path (376 API calls).
+2. Not the `WS_EX_TRANSPARENT` branch: `0x1000e`'s `GWL_EXSTYLE` is `0x00010000`.
+   (`0x1001c` is `0x00010020` and its stub *is* correct behaviour.)
+3. It is the record branch: `call storm+0x15005010` returns 0 for `0x1000e`. The
+   `SDlgSetBitmap` record list (head `0x4fc6b380`) holds 18 records — every
+   *child* of `0x1000e` and `0x1001c`, and none for `0x1000e` itself. So
+   `SDlgSetBitmap` (`storm+0x150081e0`) was never called for it.
+4. diabloui's art helper `diabloui+0x200097e0` bailed. `--count`: 3 entries,
+   2 reach the success target of load #1 (`+0x20009818`), 2 reach load #2
+   (`+0x20009860`) — one call fails at the **first** `SBmpLoadImage`, the
+   dimension query. Of its 19 static xrefs only three ever fire; the one that
+   fires here is `diabloui+0x2000df28`, whose string argument is
+   `ui_art\selhero.pcx` (`diabloui+0x2001e960`), return landing `0x6edf2d` = 1.
+5. `SBmpLoadImage` (`storm+0x15001d10`) fails at its 0x80-byte PCX header read:
+   40 entries, 40 successful opens, **4** taking the failure block
+   `storm+0x15001e51` (`xor esi,esi` after `SFileReadFile` returns FALSE). The
+   open-failure exit `storm+0x15002019` is **0** — `SFileOpenFile` never fails.
+6. `SFileReadFile` (`storm+0x1500e730`, see the address list) has two paths,
+   selected at `storm+0x1500e8ae` on `[archive+0x108]`: zero → synchronous
+   `storm+0x1500c0a0`, non-zero → an async path that chunks at `0x20000`, builds
+   one work node per chunk and waits on `WaitForMultipleObjects` with a 255 ms
+   timeout.
+7. **The phase split is the decisive measurement.** To batch 39400 (before the
+   transition): helper 2/2 OK, `SBmpLoadImage` 36/36 OK, sync reader
+   `0x6af0a0` = 88 entries. To batch 41500 (after): helper 3 with 1 failure,
+   `SBmpLoadImage` 40 with **4** failures, sync reader still **88** — not one
+   further synchronous read — and 17 completions on the async path. *Every* MPQ
+   read issued after the Single Player transition takes the async path, and every
+   one of them comes back empty. It is not selhero-specific.
+8. The async path sums per-chunk delivered bytes out of the work nodes; nothing
+   fills them, so the sum is 0, `cmp eax,edx / jnz` at `storm+0x1500eabd` fires
+   and it returns FALSE with `SetLastError(0x26)` = `ERROR_HANDLE_EOF`.
+
+#### This is the same bug as "Storm audio pump thread dies"
+
+The two open bugs are one. `0x1500c8e0` is **not** an audio-only node
+constructor: of its three call sites, `0x1500e97f` — the one the section below
+lists as "the no-DSound path, arg2 = 0" — is **inside `SFileReadFile`'s async
+path**. So `0x150316c0` is Storm's shared async **work** queue and the thread at
+`storm+0x15020cd0` (created ~batch 39184, `CreateThread handle=0xe1000
+start=0x6c3cd0`) is its shared worker, servicing both DirectSound buffer fills
+and MPQ sector reads. `[node+0x18]` is the job discriminator: non-null = sound
+job (`Lock` through the buffer's vtable), null = file job (fall through to
+`storm+0x1500c0a0`).
+
+That is why the thread's death blacks out Choose Class: when the worker is gone,
+every async file read times out with zero bytes. It also cross-confirms the
+blitter-overrun finding below — my run saw `[ebx+0x18] = 0x1fe` with
+`[+0x1c]=0x2a` and `[+0x24]=0xeb`, which are copier opcode bytes, exactly the
+`0x4` / `0xc7ff0788` values that section reports.
+
+Worker loop counts to batch 41500 (`--count`): body `0x6aeeb9` = 30, good tail
+`0x6aef97` = 29, crash block `0x6aeec4` = 17. It is not dying on its first job.
+
+#### Ruled out here, with the measurement
+
+- **Host file I/O.** `--trace-api=ReadFile,CreateFileA`: 474 reads, every one
+  returns exactly the byte count requested. **No host read at `0xcebf2` ever
+  happens** — the failure is entirely upstream of the VFS. The single `n=0x0`
+  read belongs to block 22 on thread 1, not to selhero.
+- **A corrupt MPQ block table in guest memory.** `--dump=0x8155ac:64` gives
+  block 23 = pos `0xcebf2`, csize `0x9e6`, fsize `0x3e17`, flags `0x80010100`,
+  byte-identical to `node tools/mpq-dir.js spawn.mpq --name='ui_art\selhero.pcx'`.
+- **`SFileReadFile` rejecting the handle or the arguments.** Its handle-list-miss
+  exit `0x6b1782` = 0 and its argument-validation exit `0x6b1ae8` = 0.
+- **`SFileOpenFile` failing.** `storm+0x15002019` = 0 over 40 `SBmpLoadImage`
+  calls.
+- **The `WS_EX_TRANSPARENT` branch of `SDlgBeginPaint`.** `0x1000e`'s exstyle is
+  `0x00010000`; the bit is clear.
+- **Striping being a pitch/palette bug.** See the withdrawal above.
+- **Superimposed title strings being part of this.** They are a separate,
+  smaller bug: `hwnd 0x1001b` ("Single Player Characters", 25,161,590×35) is
+  invalidated a second time by `InvalidateRect(0x1001b, NULL, FALSE)` from
+  `0x6e6e69` with no `(…, TRUE)` follow-up, so `fErase` is FALSE, Storm skips
+  the per-control art fill, and the new text lands on the old.
+
+#### Addresses named by this investigation (original VAs)
+
+| VA | What |
+|---|---|
+| `storm+0x15001d10` | `SBmpLoadImage` (export #8); `+0x15001e48` = the 0x80-byte header `SFileReadFile`; `+0x15001e51` = its failure block; `+0x15002019` = open-failed exit |
+| `storm+0x15004f00` | `SDlgBeginPaint` (export #15); `+0x15004fed` = the do-nothing STUB tail |
+| `storm+0x15005010` | `SDlgBeginPaint`'s background-record lookup (0 ⇒ stub tail) |
+| `storm+0x15007e60` | `SDlgDrawBitmap` |
+| `storm+0x150081e0` | `SDlgSetBitmap` (export #33) — builds the record list at `[0x1503110c]` |
+| `storm+0x1500e730` | `SFileReadFile`; `+0x1500e782` handle-miss exit, `+0x1500e8ae` sync/async selector on `[archive+0x108]`, `+0x1500ea5e` sync call, `+0x1500eabd` short-read compare, `+0x1500ead4` `ERROR_HANDLE_EOF` return, `+0x1500eae8` arg-validation exit, `+0x1500e97f` async node enqueue |
+| `storm+0x1500c0a0` | synchronous sector reader, fastcall `ecx`=handle `edx`=filePos, `[esp+4]`=buf `[esp+8]`=size; returns 0 without I/O when `edx >= fsize` |
+| `storm+0x1500c2e0` | the sector reader it calls (cache at `[archive+0x110..0x120]`) |
+| `storm+0x1500be5c` | shared async worker body; `+0x1500bec4` = the sound-job branch it must not take for a file job |
+| `storm+0x15020cd0` | the worker thread's start address (runtime `0x6c3cd0`) |
+| `diabloui+0x200097e0` | art helper; `+0x20009808` dimension-query `SBmpLoadImage`, `+0x2000980d`/`+0x20009857` the two failure tests, `+0x20009949` the shared failure exit |
+| `diabloui+0x2000df28` | the call site that loads `ui_art\selhero.pcx` (string at `diabloui+0x2001e960`) |
+| `diabloui+0x20022478` | the sprite-frame pointer array (runtime `0x702478`) |
+
+Runtime twins used above, for reading traces: `0x6a4d10`/`0x6a4e51`/`0x6a5019`
+(`SBmpLoadImage`), `0x6af0a0` (sync reader), `0x6aeec4` (crash block),
+`0x6b1730`/`0x6b1782`/`0x6b1ae8`/`0x6b1ad4` (`SFileReadFile`), `0x6e97e0`
+/`0x6e9818`/`0x6e9860` (art helper), `0x6edf2d` (selhero call return).
+
+#### Not determined
+
+- Whether the geometry/hit-test mismatch is a *separate* bug or purely a
+  consequence of the zero-sprite load. It cannot be separated until art loads.
+- Whether the uncommitted `src/09a-handlers.wat` / `src/10-helpers.wat` work in
+  the tree at the time of these runs makes this better or worse than `HEAD`;
+  every number above includes it.
 
 ### Storm audio pump thread dies
 
@@ -480,15 +800,31 @@ Only three call sites reach the constructor (`node tools/xrefs.js storm.dll
 
 #### Two things the rest of this file gets wrong
 
-- **"Runs are deterministic" is false once T1 exists.** The fatal `ebx` was
-  `0x4fc69bb0`, `0x4fc69ce0` and `0x4fc69fc0` across three flag configurations,
-  and one `--watch=0x6d7b4c` run at the same batch budget **never created T1 at
+- **Flags change the execution; repetition does not.** The fatal `ebx` was
+  `0x4fc69bb0`, `0x4fc69ce0` and `0x4fc69fc0` — but across three *different*
+  flag configurations, and one `--watch=0x6d7b4c` run **never created T1 at
   all** (`cache: full clears M 1`, no `ThreadManager` lines, `gdi: dc_states 1`
-  instead of 4). Byte-identical PNGs at a fixed batch are a weaker claim than
-  they look.
+  instead of 4). This was first written up as "runs are non-deterministic once
+  T1 exists"; that is **withdrawn** — the same command line twice is
+  byte-identical, see "Getting to a screen headlessly". The real lesson is
+  narrower and sharper: a debugging flag is part of the experiment. Never
+  compare a number taken under `--watch` against one taken under `--break`.
 - **`--break` and `--watch` propagate to worker WASM instances; `--trace-at`
   does not** (armed on the main instance only, `test/run.js` ~line 6436). A
   `--trace-at` that prints nothing for T1 is not evidence of anything.
+- **`--trace-at` fires on *block entry*, not on instruction execution.** A
+  self-loop that iterates thousands of times registers **one** hit, so any
+  iteration count taken from it is meaningless — 191 rows for the sector loop is
+  191 entries into the loop block. Worse, some perfectly real addresses produce
+  no output at all because they are not block entries:
+  `diabloui+0x20001635` (the `rep stosd` right after the PCX loader call) and
+  `storm+0x1500ead4` under `--break` both printed nothing while `--count` says
+  they execute. Prefer `--count`: it is native, full speed, takes up to 16
+  addresses, and does not lie about either.
+- **Cost, measured.** A plain 12000-batch run is 6.5s and a full 40100-batch
+  `--count` run is ~55s. `--trace-at` on a hot address is what makes a run take
+  five minutes and emit a 57k-line log — the batch budget is not the expensive
+  part.
 
 ## Emulator-side context worth knowing here
 
