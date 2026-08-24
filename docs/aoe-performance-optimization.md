@@ -45,6 +45,13 @@ path as the first argument when comparing older histogram runs.
 
 ## Measured Experiments
 
+See also [interpreter-dispatch-perf.md](interpreter-dispatch-perf.md), which
+carries the app-independent dispatch findings (two generic `$next` changes,
+both measured zero) and generalises the SIB/`br_table` reverts below into a
+rule: handler-op count proves two builds did equal WORK, never that one is
+faster. It also records the load-independent `--handler-hist-thread=N` method,
+which is more reliable than single-run Chrome profiles on a busy machine.
+
 Single-run Chrome campaign profiles are noisy, but the direction has been consistent enough to prune several ideas:
 
 ```text

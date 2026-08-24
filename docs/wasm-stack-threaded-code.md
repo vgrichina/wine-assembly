@@ -17,6 +17,16 @@ Recommendation: prototype only after the simple block-local IR skeleton exists,
 and keep it as an optional lowering for hot clean AoE blocks.
 ```
 
+Measured constraints this proposal must respect are in
+[interpreter-dispatch-perf.md](interpreter-dispatch-perf.md). Two findings bear
+on it directly: the dispatch cost is the mispredicted `call_indirect` itself
+(making a dispatch cheaper measured zero twice, so "possibly lower dispatch"
+below is the *only* lever that pays), and reducing dispatch count has already
+been measured as a net LOSS when the replacement handler was bigger — which is
+the central risk for a `th_stack_block` that executes a packet.
+[wasm-engine-support.md](wasm-engine-support.md) records which engines have the
+instructions any such backend might want.
+
 ## Idea
 
 The current interpreter is threaded code in the Forth/direct-threading sense:
