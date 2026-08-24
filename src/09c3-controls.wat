@@ -14259,7 +14259,9 @@
                   (i32.const 16) (local.get $h) (i32.const 1)
                   (i32.load offset=20 (local.get $state_w))
                   (i32.const 0) (i32.sub (local.get $total_lines) (i32.const 1))
-                  (local.get $visible_lines))))
+                  (local.get $visible_lines)
+                  (select (global.get $sb_pressed_part) (i32.const 0)
+                          (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd))))))
             ;; Refresh non-client chrome after the edit reaches its final
             ;; size. Notepad does not send another WM_NCPAINT after sizing its
             ;; child, and client clipping intentionally excludes these strips.
@@ -14404,7 +14406,9 @@
               (i32.const 16) (local.get $h) (i32.const 1)
               (i32.load offset=20 (local.get $state_w))
               (i32.const 0) (i32.sub (local.get $total_lines) (i32.const 1))
-              (local.get $visible_lines))))
+              (local.get $visible_lines)
+              (select (global.get $sb_pressed_part) (i32.const 0)
+                      (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd))))))
         ;; 6) Optional horizontal scrollbar strip. Scrolling state is in
         ;; pixels, since an unwrapped line is measured, not counted. Same
         ;; predicate the prologue reserved the band with, so the strip is
@@ -14426,7 +14430,9 @@
               (i32.load offset=36 (local.get $state_w))
               (i32.const 0)
               (i32.sub (i32.add (local.get $max_hscroll) (local.get $w)) (i32.const 1))
-              (local.get $w))
+              (local.get $w)
+              (select (global.get $sb_pressed_part) (i32.const 0)
+                      (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd))))
             ;; The dead square where the two strips meet is scrollbar-grey,
             ;; not white: it belongs to neither track.
             (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
@@ -14665,10 +14671,19 @@
         (return (call $edit_line_index (local.get $state_w) (local.get $lo)))))
 
     ;; ---------- EM_GETLINECOUNT (0x00BA) ----------
+    ;; Display lines, not paragraphs: on a wrapped multiline edit Windows
+    ;; counts every visual row, which is also the unit EM_GETFIRSTVISIBLELINE
+    ;; and the scrollbar already speak here. Counting hard breaks instead made
+    ;; the two disagree -- Winamp's license viewer reports 24 lines for a text
+    ;; its own scrollbar walks past row 80.
     (if (i32.eq (local.get $msg) (i32.const 0x00BA))
       (then
         (if (i32.eqz (local.get $state)) (then (return (i32.const 1))))
         (local.set $state_w (call $g2w (local.get $state)))
+        (if (call $edit_wraps (local.get $hwnd))
+          (then (return (i32.and
+                  (call $edit_view_metrics (local.get $hwnd) (local.get $state_w))
+                  (i32.const 0xFFFF)))))
         (return (i32.add (call $edit_line_from_char (local.get $state_w)
                            (i32.load offset=4 (local.get $state_w)))
                          (i32.const 1)))))

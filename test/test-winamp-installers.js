@@ -167,10 +167,9 @@ for (const tc of CASES) {
       `--exe="${tc.exe}"`,
       `--max-batches=${LICENSE_PROBE_BATCHES}`,
       '--batch-size=5000',
-      `--input=${LICENSE_WAIT},2:dlg-dump:license`,
+      `--input=${LICENSE_WAIT},2:dlg-dump:license,3:dlg-send:1000:186:0:0`,
       `--png="${pngPath}"`,
       '--quiet-api',
-      '--trace-api=DrawTextA,DrawTextW',
       `--stuck-after=${STUCK_AFTER}`,
     ].join(' ');
 
@@ -191,12 +190,17 @@ for (const tc of CASES) {
 
     const pngOk = fs.existsSync(pngPath) && fs.statSync(pngPath).size > 10000;
     const wizardButtonInk = pngOk
-      ? await countNonBtnFacePixels(pngPath, { x: 8, y: 268, w: 412, h: 40 })
+      ? await countNonBtnFacePixels(pngPath, { x: 8, y: 252, w: 412, h: 28 })
       : 0;
+    // EM_GETLINECOUNT counts display lines, so a wrapped viewer reports far
+    // more rows than the licence has hard breaks (24). Asking the control is
+    // the durable form of this check: the text is rasterised inside WAT now,
+    // so the guest issues no DrawText call to observe.
+    const lineCountMatch = /msg=0xba ret=(\d+)/.exec(licenseOut);
+    const wrappedLines = lineCountMatch ? parseInt(lineCountMatch[1], 10) : 0;
     const licenseChecks = [
       { name: 'license RichEdit mapped to native edit', pass: /id=1000 cls=2 style=0x50a00804/.test(licenseOut) },
-      { name: 'license text uses word-wrapped DrawText', pass:
-        /DrawText[AW]\(hdc=.*lpString="Winamp is a freeware product\..*uFormat=.*DT_WORDBREAK/.test(licenseOut) },
+      { name: `license text is word-wrapped (${wrappedLines} display lines)`, pass: wrappedLines >= 100 },
       { name: 'license page PNG captured', pass: pngOk },
       { name: 'license wizard buttons are visible', pass: wizardButtonInk > 700 },
     ];
@@ -226,14 +230,15 @@ for (const tc of CASES) {
       },
       {
         name: 'canvas scrollbar down arrow scrolls license text',
-        input: `${LICENSE_WAIT},2:click:400:250,4:dlg-send:1000:206:0:0`,
+        input: `${LICENSE_WAIT},2:click:403:235,4:dlg-send:1000:206:0:0`,
         pattern: /dlg-send: id=1000 .* msg=0xce .* firstVisible=1/,
       },
       {
         name: 'canvas scrollbar thumb drag scrolls license text',
-        input: `${LICENSE_WAIT},10:mousedown:403:99,20:mousemove:403:165,30:mouseup:403:165,50:dlg-send:1000:206:0:0`,
+        input: `${LICENSE_WAIT},5:png:PNG_BEFORE,10:mousedown:403:95,20:mousemove:403:165,30:mouseup:403:165,50:dlg-send:1000:206:0:0`,
         pattern: /dlg-send: id=1000 .* msg=0xce .* firstVisible=[1-9][0-9]*/,
         png: path.join(__dirname, 'output', 'winamp295-license-scrolled.png'),
+        pngBefore: path.join(__dirname, 'output', 'winamp295-license-unscrolled.png'),
       },
     ];
 
@@ -241,12 +246,15 @@ for (const tc of CASES) {
       if (probe.png) {
         try { fs.unlinkSync(probe.png); } catch (_) {}
       }
+      if (probe.pngBefore) {
+        try { fs.unlinkSync(probe.pngBefore); } catch (_) {}
+      }
       const scrollCmd = [
         `node "${RUN}"`,
         `--exe="${tc.exe}"`,
         `--max-batches=${LICENSE_PROBE_BATCHES}`,
         '--batch-size=5000',
-        `--input=${probe.input}${probe.png ? `,660:png:${probe.png}` : ''}`,
+        `--input=${probe.input.replace('PNG_BEFORE', probe.pngBefore || '')}${probe.png ? `,660:png:${probe.png}` : ''}`,
         '--quiet-api',
         `--stuck-after=${STUCK_AFTER}`,
       ].join(' ');
@@ -271,14 +279,20 @@ for (const tc of CASES) {
       if (!pass) failed++;
 
       if (probe.png) {
+        // The band above the edit is not empty -- the page header sits there --
+        // so counting dark pixels in it measures the header, not a leak. What
+        // scrolling must not do is *change* that band, so compare it against
+        // the same run's pre-drag frame.
         const pngCaptured = fs.existsSync(probe.png) && fs.statSync(probe.png).size > 10000;
+        const beforeCaptured = probe.pngBefore &&
+          fs.existsSync(probe.pngBefore) && fs.statSync(probe.pngBefore).size > 10000;
         let strayInk = Number.POSITIVE_INFINITY;
-        if (pngCaptured) {
-          strayInk = await countNearBlackPixels(probe.png, { x: 8, y: 22, w: 412, h: 50 });
+        if (pngCaptured && beforeCaptured) {
+          strayInk = await diffPixelsInRect(probe.pngBefore, probe.png, { x: 8, y: 22, w: 412, h: 48 });
         }
-        const clipPass = pngCaptured && strayInk < 500;
+        const clipPass = pngCaptured && beforeCaptured && strayInk < 100;
         console.log((clipPass ? 'PASS  ' : 'FAIL  ') +
-          `scrolled license text stays clipped above RichEdit (${strayInk} stray dark pixels)`);
+          `scrolled license text stays clipped above RichEdit (${strayInk} changed pixels)`);
         if (!clipPass) failed++;
       }
     }
@@ -291,7 +305,7 @@ for (const tc of CASES) {
       `--exe="${tc.exe}"`,
       `--max-batches=${LICENSE_PROBE_BATCHES}`,
       '--batch-size=5000',
-      `--input=${LICENSE_WAIT},50:png:${pressedBase},60:mousedown:400:250,70:png:${pressedHeld},80:mouseup:400:250`,
+      `--input=${LICENSE_WAIT},50:png:${pressedBase},60:mousedown:403:235,70:png:${pressedHeld},80:mouseup:403:235`,
       '--quiet-api',
       `--stuck-after=${STUCK_AFTER}`,
     ].join(' ');
@@ -312,7 +326,7 @@ for (const tc of CASES) {
       fs.existsSync(pressedBase) && fs.statSync(pressedBase).size > 10000 &&
       fs.existsSync(pressedHeld) && fs.statSync(pressedHeld).size > 10000;
     const downArrowDiff = pressedPngsOk
-      ? await diffPixelsInRect(pressedBase, pressedHeld, { x: 397, y: 241, w: 16, h: 16 })
+      ? await diffPixelsInRect(pressedBase, pressedHeld, { x: 396, y: 226, w: 16, h: 16 })
       : 0;
     const pressedChecks = [
       { name: 'scrollbar down arrow shows pressed state while held', pass: downArrowDiff > 20 },
@@ -330,7 +344,7 @@ for (const tc of CASES) {
       `--exe="${tc.exe}"`,
       `--max-batches=${LICENSE_PROBE_BATCHES}`,
       '--batch-size=5000',
-      `--input=${LICENSE_WAIT},2:mousedown:373:283,3:mouseup:373:283`,
+      `--input=${LICENSE_WAIT},2:mousedown:374:265,3:mouseup:374:265`,
       '--quiet-api',
       `--stuck-after=${STUCK_AFTER}`,
     ].join(' ');
@@ -387,8 +401,13 @@ for (const tc of CASES) {
         '160:wait-title:Installation_Folder:1800',
         `210:png:${stagePngs[2].path}`,
         `220:${NEXT_PAGE}`,
-        '240:wait-title:Installing_Files:1800',
-        `300:png:${stagePngs[3].path}`,
+        // The install itself finishes inside a handful of batches, so waiting
+        // on the "Installing Files" title and photographing 60 batches later
+        // photographs an installer that has already exited. Anchor on the
+        // progress bar appearing -- and start that wait on the very next step,
+        // since a wait scheduled 20 batches out can miss the window too.
+        '221:wait-dlg-control:1004:1800',
+        `222:png:${stagePngs[3].path}`,
       ].join(','),
       '--quiet-api',
       `--stuck-after=${STUCK_AFTER}`,
@@ -497,10 +516,10 @@ for (const tc of CASES) {
       ? await countNonBtnFacePixels(folderPng, { x: 24, y: 164, w: 24, h: 24 })
       : Number.POSITIVE_INFINITY;
     const backButtonInk = folderPngOk
-      ? await countNonBtnFacePixels(folderPng, { x: 259, y: 271, w: 75, h: 24 })
+      ? await countNonBtnFacePixels(folderPng, { x: 259, y: 254, w: 75, h: 24 })
       : 0;
     const installButtonInk = folderPngOk
-      ? await countNonBtnFacePixels(folderPng, { x: 337, y: 271, w: 75, h: 24 })
+      ? await countNonBtnFacePixels(folderPng, { x: 337, y: 254, w: 75, h: 24 })
       : 0;
     const folderChecks = [
       { name: 'folder page PNG captured', pass: folderPngOk },
@@ -523,7 +542,7 @@ for (const tc of CASES) {
       `--exe="${tc.exe}"`,
       `--max-batches=${WIZARD_SEQUENCE_BATCHES}`,
       '--batch-size=5000',
-      `--input=${LICENSE_WAIT},10:${NEXT_PAGE},20:wait-title:Installation_Options:1800,30:${NEXT_PAGE},40:wait-title:Installation_Folder:1800,50:${NEXT_PAGE},60:wait-title:Installing_Files:1800,70:dlg-dump:all,80:dlg-send:1004:1025:0:6553600,90:dlg-send:1004:1026:60:0,100:png:${installingPng}`,
+      `--input=${LICENSE_WAIT},10:${NEXT_PAGE},20:wait-title:Installation_Options:1800,30:${NEXT_PAGE},40:wait-title:Installation_Folder:1800,50:${NEXT_PAGE},60:wait-dlg-control:1004:1800,61:dlg-dump:all,62:dlg-send:1004:1025:0:6553600,63:dlg-send:1004:1026:60:0,64:png:${installingPng}`,
       '--quiet-api',
       `--stuck-after=${STUCK_AFTER}`,
     ].join(' ');
@@ -554,7 +573,7 @@ for (const tc of CASES) {
       ? await countHighlightPixels(installingPng, { x: 50, y: 52, w: 358, h: 14 })
       : 0;
     const installingChecks = [
-      { name: 'installing page dialog has WAT child geometry', pass: /hwnd=0x10021 id=0 cls=0 style=0x50000448 xy=10,10 wh=399,227/.test(installingOut) },
+      { name: 'installing page dialog has WAT child geometry', pass: /hwnd=0x10021 id=0 cls=0 style=0x50000448 xy=10,10 wh=399,211/.test(installingOut) },
       { name: 'installing page maps progress controls to native ProgressBar', pass: /id=1004 cls=17/.test(installingOut) && /id=1005 cls=17/.test(installingOut) },
       { name: 'installing page maps details pane to native ListView', pass: /id=1016 cls=18/.test(installingOut) },
       { name: 'installing page PNG captured', pass: installingPngOk },

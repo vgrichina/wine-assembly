@@ -497,10 +497,17 @@
   ;; tables, then calls $defwndproc_ncpaint. No JS-side plumbing.
   ;; ============================================================
   ;; Paint one standard non-client scrollbar from SCROLLINFO state.
+  ;; $pressed is the held part from $sb_pressed_part, or 0 for none. The
+  ;; codes are the ones the hit-testers store: on a vertical strip 1 = up
+  ;; arrow and 2 = down arrow, on a horizontal one 3 = left and 4 = right
+  ;; (5/6 are the thumbs, which do not change appearance while dragged).
+  ;; Without this the arrows always drew raised, so holding one scrolled
+  ;; the text but never sank the button.
   (func $defwndproc_paint_standard_scrollbar
         (param $hdc i32) (param $x i32) (param $y i32)
         (param $w i32) (param $h i32) (param $vert i32)
         (param $pos i32) (param $smin i32) (param $smax i32) (param $page i32)
+        (param $pressed i32)
     (local $long i32) (local $cross i32) (local $arrow i32) (local $track i32)
     (local $total i32) (local $thumb i32) (local $travel i32)
     (local $max_pos i32) (local $range i32) (local $thumb_pos i32)
@@ -521,17 +528,19 @@
           (then
             (call $draw_sb_arrow (local.get $hdc)
               (local.get $x) (local.get $y) (local.get $cross) (local.get $arrow)
-              (i32.const 0) (i32.const 0))
+              (i32.const 0) (i32.eq (local.get $pressed) (i32.const 1)))
             (call $draw_sb_arrow (local.get $hdc)
               (local.get $x) (i32.sub (i32.add (local.get $y) (local.get $long)) (local.get $arrow))
-              (local.get $cross) (local.get $arrow) (i32.const 1) (i32.const 0)))
+              (local.get $cross) (local.get $arrow) (i32.const 1)
+              (i32.eq (local.get $pressed) (i32.const 2))))
           (else
             (call $draw_sb_arrow (local.get $hdc)
               (local.get $x) (local.get $y) (local.get $arrow) (local.get $cross)
-              (i32.const 2) (i32.const 0))
+              (i32.const 2) (i32.eq (local.get $pressed) (i32.const 3)))
             (call $draw_sb_arrow (local.get $hdc)
               (i32.sub (i32.add (local.get $x) (local.get $long)) (local.get $arrow)) (local.get $y)
-              (local.get $arrow) (local.get $cross) (i32.const 3) (i32.const 0))))))
+              (local.get $arrow) (local.get $cross) (i32.const 3)
+              (i32.eq (local.get $pressed) (i32.const 4)))))))
     ;; Geometry lives in $sb_page_* so that whoever hit-tests this scrollbar
     ;; computes the same thumb this draws. It used to be inline here, which is
     ;; why the EDIT could not tell a click on its thumb from a click on text.
@@ -674,13 +683,16 @@
                 (local.get $hdc) (local.get $cr) (local.get $ct)
                 (i32.const 16) (i32.sub (local.get $cb) (local.get $ct)) (i32.const 1)
                 (i32.load offset=12 (local.get $base)) (i32.load offset=16 (local.get $base))
-                (i32.load offset=20 (local.get $base)) (i32.load offset=8 (local.get $aux)))))
+                (i32.load offset=20 (local.get $base)) (i32.load offset=8 (local.get $aux))
+                ;; Frame scrollbars have no press tracking of their own yet.
+                (i32.const 0))))
             (if (i32.and (local.get $style) (i32.const 0x00100000))
               (then (call $defwndproc_paint_standard_scrollbar
                 (local.get $hdc) (local.get $cl) (local.get $cb)
                 (i32.sub (local.get $cr) (local.get $cl)) (i32.const 16) (i32.const 0)
                 (i32.load (local.get $base)) (i32.load offset=4 (local.get $base))
-                (i32.load offset=8 (local.get $base)) (i32.load (local.get $aux)))))
+                (i32.load offset=8 (local.get $base)) (i32.load (local.get $aux))
+                (i32.const 0))))
             (if (i32.eq (i32.and (local.get $style) (i32.const 0x00300000)) (i32.const 0x00300000))
               (then (drop (call $host_gdi_fill_rect (local.get $hdc)
                 (local.get $cr) (local.get $cb)
