@@ -1051,3 +1051,42 @@ That instrument is worth more than another predicate.
 Verified unchanged: heroes2-gameplay (byte-identical output — map green 37.3%,
 black 39.4%, panel wood 69.7%, 1722 frames), minesweeper-click (8/8),
 notepad-editing (10/10), freecell-move (7/7).
+
+## 14. Status 2026-08-23: the lowering is disabled by default
+
+`$loop_emit_enabled` now defaults to **0**. The matcher, the roles, the
+predicates and the counters all still run; nothing is emitted unless the host
+calls `set_loop_emit(1)` (`test/run.js --loop-superops`).
+
+Why: with the lowering on, Diablo shareware's Choose Class screen renders as
+per-pixel colour noise in every panel, while text and the hero portrait
+survive. Same run, same input, `--no-loop-superops` as the only difference:
+correct render. `--trace-loopmatch` says only two self-loop blocks match on the
+main thread out of 387, and both are COPY_RUN at runtime `0x006cf598` =
+`storm.dll 0x1502c598`:
+
+```
+1502c598  8a 01        mov al, [ecx]
+1502c59a  41           inc ecx
+1502c59b  88 02        mov [edx], al
+1502c59d  42           inc edx
+1502c59e  ff 4c 24 10  dec dword [esp+0x10]
+1502c5a2  75 f4        jnz short 0x1502c598
+```
+
+The enclosing code (`cmp dword [edi+0x8], 0x2000`, `lea ebp,[edi+0x1030]`,
+`mov dword [esp+0x14], 0x1000`) is Storm's MPQ decompressor sliding-window
+copy. So the corruption happens while the art is being *decompressed*, before
+any blit -- which is exactly why the panel backgrounds are noise and the text
+drawn afterwards is fine.
+
+What has been ruled out: **chunking is not the cause.** Forcing
+`(local.set $chunk (i32.const 1))` in `$th_copy_run` -- i.e. exactly the
+original per-byte cadence, one `$g2w` per byte, counter published per chunk --
+still renders the broken screen (29.9% of pixels differ from the known-good
+capture, max channel delta 255). The divergence is therefore in the super-op's
+own semantics or in the parameters `$loop_try_copy` extracts for this shape (a
+byte copy with a *memory* counter and both cursors incrementing), not in the
+page/budget chunk arithmetic. That is the next thing to bisect: parameter
+block first (src/dst/disp/ctr_addr against the guest's own registers at entry),
+then the exit publication (`$b`, the two cursors, the DEC flags, `$eip`).

@@ -33,9 +33,15 @@
   (global $loop_trace_eip (mut i32) (i32.const 0))
   (global $loop_selfloop_blocks (mut i32) (i32.const 0))
   (global $loop_matched_blocks (mut i32) (i32.const 0))
-  ;; Set from the host: --no-loop-superops, to A/B the lowering without a
-  ;; rebuild. The matcher still runs and still counts, it just does not emit.
-  (global $loop_emit_enabled (mut i32) (i32.const 1))
+  ;; Off by default: the lowering miscompiles Storm's MPQ decompression byte
+  ;; copy at storm.dll 0x1502c598 (COPY_RUN), which is why Diablo's Choose
+  ;; Class screen renders as colour noise -- the art is corrupted while it is
+  ;; being decompressed, before any blit. Forcing the chunk to one byte does
+  ;; NOT fix it, so the divergence is in the super-op's own semantics, not in
+  ;; the chunking; until that is found, matching still runs (and still counts)
+  ;; but nothing is emitted. Set from the host: --loop-superops turns the
+  ;; lowering back on so the two can be A/B'd without a rebuild.
+  (global $loop_emit_enabled (mut i32) (i32.const 0))
 
   ;; Is this handler index a conditional branch? 44 is the generic form
   ;; (operand = cc); 307..322 are the per-condition specializations. All read
@@ -404,6 +410,13 @@
     ;; ---- emit ----
     (global.set $loop_matched_blocks
       (i32.add (global.get $loop_matched_blocks) (i32.const 1)))
+    ;; Which family claimed which block. The block dump alone cannot say: it is
+    ;; printed before either predicate runs, so a 387-block trace with 2 matches
+    ;; in it names neither. Marker 0x100B0001 = LUT_RUN, then the entry EIP.
+    (if (global.get $loop_trace)
+      (then
+        (call $host_log_i32 (i32.const 0x100B0001))
+        (call $host_log_i32 (local.get $start_eip))))
     (if (i32.eqz (global.get $loop_emit_enabled)) (then (return (i32.const 0))))
 
     (local.set $fall (i32.load offset=8
@@ -625,6 +638,11 @@
     ;; ---- emit ----
     (global.set $loop_matched_blocks
       (i32.add (global.get $loop_matched_blocks) (i32.const 1)))
+    ;; Marker 0x100B0002 = COPY_RUN, then the entry EIP. See the LUT_RUN one.
+    (if (global.get $loop_trace)
+      (then
+        (call $host_log_i32 (i32.const 0x100B0002))
+        (call $host_log_i32 (local.get $start_eip))))
     (if (i32.eqz (global.get $loop_emit_enabled)) (then (return (i32.const 0))))
 
     (local.set $fall (i32.load offset=8
