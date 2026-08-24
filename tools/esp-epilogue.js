@@ -116,6 +116,7 @@ function scan() {
   const { byName } = loadApiTable();
   const files = fs.readdirSync(SRC_DIR).filter(f => f.endsWith('.wat')).sort();
   const rows = [];
+  let eligible = 0;
   for (const file of files) {
     const { lines, found } = handlersIn(file);
     for (const h of found) {
@@ -123,6 +124,7 @@ function scan() {
       const entry = byName[h.name];
       if (!entry || typeof entry.nargs !== 'number') continue;
       if ((entry.convention || 'stdcall') !== 'stdcall') continue;
+      eligible++;
       const expected = 4 * (entry.nargs + 1);
       for (let k = h.startLine; k <= h.endLine; k++) {
         const code = stripNonCode(lines[k]).trim();
@@ -136,8 +138,17 @@ function scan() {
       }
     }
   }
+  rows.eligibleHandlers = eligible;
   return rows;
 }
+
+// A gate that matches nothing reports "OK — 0 handler(s)" and passes, which is
+// indistinguishable from success. That is not hypothetical: the epilogue regex
+// above has already been too strict once (it silently skipped 350 handlers),
+// and a register-file experiment that respelled every `global.set $esp` drove
+// this to 0 of 0 and still went green. So --check also asserts that the scan
+// still recognises most of the handlers it is supposed to be judging.
+const MIN_EPILOGUE_COVERAGE = 0.5;
 
 module.exports = { scan, loadApiTable };
 
@@ -183,6 +194,15 @@ if (require.main === module) {
   }
 
   if (CHECK) {
+    const eligible = rows.eligibleHandlers || 0;
+    const floor = Math.floor(eligible * MIN_EPILOGUE_COVERAGE);
+    if (eligible === 0 || perHandler.size < floor) {
+      console.error(`[esp-epilogue] GATE IS NOT CHECKING ANYTHING: recognised an epilogue in ` +
+        `${perHandler.size} of ${eligible} eligible handler(s), expected at least ${floor}.`);
+      console.error('  Either the epilogue spelling in src/ changed (update the regex in scan()),');
+      console.error('  or handler discovery broke. A pass here would be vacuous, so this is a failure.');
+      process.exit(1);
+    }
     if (wrong.length) {
       console.log(`[esp-epilogue] ${wrong.length} epilogue(s) disagree with api_table.json:`);
       for (const r of wrong) {
@@ -191,7 +211,7 @@ if (require.main === module) {
       }
       process.exit(1);
     }
-    console.log(`[esp-epilogue] OK — ${perHandler.size} handler(s), ${rows.length} epilogue line(s) match nargs`);
+    console.log(`[esp-epilogue] OK — ${perHandler.size} of ${eligible} handler(s), ${rows.length} epilogue line(s) match nargs`);
     process.exit(0);
   }
 
