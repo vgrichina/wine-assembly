@@ -40,6 +40,10 @@
 //
 // --cpu=N applies Chrome's CPU throttling while preserving real browser audio
 // timing, which is useful for scheduler-sensitive game/audio failures.
+//
+// --lan=solo|local|cancel answers the virtual-LAN lobby a `lan:` app puts up
+// before it boots (default solo). Without it the launch waits on a button
+// nobody is there to click and the probe times out.
 
 const fs = require('fs');
 const http = require('http');
@@ -62,6 +66,11 @@ const QUERY = opt('query', '?debug');
 const STEPS = (opt('steps', '') || '').split(';').map(s => s.trim()).filter(Boolean);
 const READY_MS = Number(opt('ready', 6000));
 const CPU_RATE = Number(opt('cpu', 1));
+// A LAN-capable app (lib/apps.js `lan:`) shows the vlan lobby before it boots
+// and the launch blocks on a button nobody clicks in a headless run, so the
+// probe used to time out waiting for runningApps. Answer it the way a person
+// would: solo | local ("Both players here") | cancel.
+const LAN_ANSWER = opt('lan', 'solo');
 // Headless Chrome runs with --disable-gpu by default, which sends presentation
 // down the 2D canvas paths. A real phone browser has WebGL and takes the GPU
 // paths instead, so bugs that only exist there (a viewport crop the shaders
@@ -226,6 +235,23 @@ async function main() {
       await wait(80);
       await page.mouse.click(launchPoint.x, launchPoint.y);
     }
+    // The lobby appears asynchronously (it is awaited inside launchApp), so
+    // poll for it rather than assuming it is up on the next tick.
+    for (let i = 0; i < 60; i++) {
+      const answered = await page.evaluate(answer => {
+        const overlay = document.querySelector('.vln-lobby');
+        if (!overlay) return null;
+        const buttons = [...overlay.querySelectorAll('button')];
+        const want = { solo: /play solo/i, local: /both players/i, cancel: /cancel/i }[answer];
+        const button = want && buttons.find(b => want.test(b.textContent || ''));
+        if (!button) return `no ${answer} button (saw: ${buttons.map(b => b.textContent).join(', ')})`;
+        button.click();
+        return `clicked "${button.textContent}"`;
+      }, LAN_ANSWER);
+      if (answered) { console.log(`lan lobby: ${answered}`); break; }
+      await wait(250);
+    }
+
     await page.waitForFunction(
       'typeof runningApps !== "undefined" && runningApps.length > 0 && typeof sharedRenderer !== "undefined" && sharedRenderer',
       { timeout: 90000 });
