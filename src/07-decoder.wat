@@ -19,6 +19,14 @@
   ;; return values because there are three of them and one is the length.
   (global $fuse_info (mut i32) (i32.const 0))
   (global $fuse_disp (mut i32) (i32.const 0))
+  ;; The unrolled-rectangle fold, on its own switch so it can be A/B'd against
+  ;; the per-pair fold it sits on top of without a rebuild.
+  (global $rect_run_enabled (mut i32) (i32.const 1))
+  ;; $sprite_scan's out-params: where the run ended, how many dwords it moved,
+  ;; and which register the row step adds.
+  (global $sr_end (mut i32) (i32.const 0))
+  (global $sr_pairs (mut i32) (i32.const 0))
+  (global $sr_step (mut i32) (i32.const 0))
 
   ;; Read next byte from guest at d_pc, advance d_pc
   (func $d_fetch8 (result i32)
@@ -737,6 +745,190 @@
     (global.set $d_pc (i32.add (global.get $d_pc) (i32.shr_u (local.get $m) (i32.const 4))))
     (i32.const 1))
 
+  ;; Walk a sprite run starting at $p0 -- the byte just after row 0's first
+  ;; store -- and either measure it ($emit=0) or write out its per-row
+  ;; (cols, dst_disp) words ($emit=1). Returns the row count, and leaves the
+  ;; end position in $sr_end, the total dword count in $sr_pairs and the
+  ;; row-step register in $sr_step.
+  ;;
+  ;; The grammar is one straight line of
+  ;;   mov scratch, [src_base + srcd]
+  ;;   mov [dst_base + idx*scale + dstd], scratch
+  ;; pairs with an `add idx, step` between rows. Source displacements run
+  ;; contiguously across the whole run; each row's destination displacements
+  ;; restart at whatever that row's first store says, which is what lets the
+  ;; rows have different widths -- Caesar's sprites are diamonds, 1, 3, 5, 7
+  ;; dwords wide, not rectangles.
+  ;;
+  ;; Every displacement is *predicted* and then compared against the literal
+  ;; encoding, never deduced from it. That is the whole reason this fold does
+  ;; not need COPY_RUN's caution: a run it accepts is one the instruction
+  ;; stream spelled out.
+  (func $sprite_scan (param $p0 i32) (param $src_base i32) (param $scratch i32)
+                     (param $info i32) (param $dstd0 i32) (param $disp0 i32)
+                     (param $idx i32) (param $dbase i32) (param $emit i32)
+                     (result i32)
+    (local $p i32) (local $q i32) (local $m i32) (local $len i32)
+    (local $cols i32) (local $pairs i32) (local $nrows i32)
+    (local $rowdst i32) (local $srcnext i32) (local $sep i32) (local $step i32)
+    (local $b i32)
+    (local.set $p (local.get $p0))
+    (local.set $cols (i32.const 1))
+    (local.set $pairs (i32.const 1))
+    (local.set $nrows (i32.const 0))
+    (local.set $rowdst (local.get $dstd0))
+    (local.set $srcnext (i32.add (local.get $disp0) (i32.const 4)))
+    (local.set $sep (i32.const -1))
+    (block $done (loop $rl
+      ;; extend the row we are in
+      (block $cdone (loop $cl
+        (br_if $cdone (i32.ge_u (local.get $pairs) (i32.const 65536)))
+        (local.set $m (call $base_mov_at (local.get $p) (local.get $src_base)))
+        (br_if $cdone (i32.eqz (local.get $m)))
+        (br_if $cdone (i32.ne (i32.and (local.get $m) (i32.const 0xF))
+                              (local.get $scratch)))
+        (local.set $len (i32.shr_u (local.get $m) (i32.const 4)))
+        (br_if $cdone (i32.ne (call $base_mov_disp (local.get $p) (local.get $len))
+                              (local.get $srcnext)))
+        (local.set $q (i32.add (local.get $p) (local.get $len)))
+        (local.set $m (call $sib_store_at (local.get $q) (local.get $scratch)))
+        (br_if $cdone (i32.eqz (local.get $m)))
+        (br_if $cdone (i32.ne (global.get $fuse_info) (local.get $info)))
+        (br_if $cdone (i32.ne (global.get $fuse_disp)
+          (i32.add (local.get $rowdst) (i32.shl (local.get $cols) (i32.const 2)))))
+        (local.set $p (i32.add (local.get $q) (i32.shr_u (local.get $m) (i32.const 4))))
+        (local.set $cols (i32.add (local.get $cols) (i32.const 1)))
+        (local.set $pairs (i32.add (local.get $pairs) (i32.const 1)))
+        (local.set $srcnext (i32.add (local.get $srcnext) (i32.const 4)))
+        (br $cl)))
+      (if (local.get $emit)
+        (then (call $te_raw (local.get $cols))
+              (call $te_raw (local.get $rowdst))))
+      (local.set $nrows (i32.add (local.get $nrows) (i32.const 1)))
+      ;; The descriptor has to fit the headroom $decode_block reserves.
+      (br_if $done (i32.ge_u (local.get $nrows) (i32.const 512)))
+
+      ;; the row step -- register form, writing the index register, and
+      ;; byte-identical at every row boundary
+      (br_if $done (i32.ne (call $gl8 (local.get $p)) (i32.const 0x03)))
+      (local.set $b (call $gl8 (i32.add (local.get $p) (i32.const 1))))
+      (if (i32.eq (local.get $sep) (i32.const -1))
+        (then
+          (br_if $done (i32.ne (i32.shr_u (local.get $b) (i32.const 6)) (i32.const 3)))
+          (br_if $done (i32.ne
+            (i32.and (i32.shr_u (local.get $b) (i32.const 3)) (i32.const 7))
+            (local.get $idx)))
+          (local.set $step (i32.and (local.get $b) (i32.const 7)))
+          ;; The handler reads the step once, up front, like every other
+          ;; register here -- so nothing the run writes may be one of them,
+          ;; and stepping the index by itself is not the arithmetic it does.
+          (br_if $done (i32.or (i32.eq (local.get $step) (local.get $idx))
+                       (i32.or (i32.eq (local.get $step) (local.get $scratch))
+                       (i32.or (i32.eq (local.get $step) (local.get $src_base))
+                               (i32.eq (local.get $step) (local.get $dbase))))))
+          (local.set $sep (local.get $b)))
+        (else (br_if $done (i32.ne (local.get $b) (local.get $sep)))))
+
+      ;; A separator only opens a new row if a whole pair follows it; an `add`
+      ;; that ends the sprite stays outside the fold.
+      (local.set $m (call $base_mov_at (i32.add (local.get $p) (i32.const 2))
+        (local.get $src_base)))
+      (br_if $done (i32.eqz (local.get $m)))
+      (br_if $done (i32.ne (i32.and (local.get $m) (i32.const 0xF))
+                           (local.get $scratch)))
+      (local.set $len (i32.shr_u (local.get $m) (i32.const 4)))
+      (br_if $done (i32.ne
+        (call $base_mov_disp (i32.add (local.get $p) (i32.const 2)) (local.get $len))
+        (local.get $srcnext)))
+      (local.set $q (i32.add (i32.add (local.get $p) (i32.const 2)) (local.get $len)))
+      (local.set $m (call $sib_store_at (local.get $q) (local.get $scratch)))
+      (br_if $done (i32.eqz (local.get $m)))
+      (br_if $done (i32.ne (global.get $fuse_info) (local.get $info)))
+      (local.set $rowdst (global.get $fuse_disp))
+      (local.set $p (i32.add (local.get $q) (i32.shr_u (local.get $m) (i32.const 4))))
+      (local.set $cols (i32.const 1))
+      (local.set $pairs (i32.add (local.get $pairs) (i32.const 1)))
+      (local.set $srcnext (i32.add (local.get $srcnext) (i32.const 4)))
+      (br $rl)))
+    (global.set $sr_end (local.get $p))
+    (global.set $sr_pairs (local.get $pairs))
+    (global.set $sr_step (local.get $step))
+    (local.get $nrows))
+
+  ;; Fold a fully unrolled sprite blit into handler 422. Called with the
+  ;; first load already decoded, exactly like $try_emit_copy_sib, and tried
+  ;; before it: when this declines, that one still folds the leading pair, so a
+  ;; near-miss costs nothing but the scan.
+  (func $try_emit_rect_run (param $scratch i32) (param $disp0 i32) (result i32)
+    (local $src_base i32) (local $p i32) (local $q i32) (local $m i32)
+    (local $len i32) (local $info i32) (local $dbase i32) (local $idx i32)
+    (local $dstd i32) (local $cols i32) (local $rows i32) (local $step i32)
+    (local $sep i32) (local $stride i32) (local $n i32)
+    (if (i32.eqz (global.get $rect_run_enabled)) (then (return (i32.const 0))))
+    (if (i32.eqz (global.get $sib_fusion_enabled)) (then (return (i32.const 0))))
+    (if (i32.or (global.get $code16) (global.get $d_addr16))
+      (then (return (i32.const 0))))
+    (if (global.get $d_seg) (then (return (i32.const 0))))
+    (local.set $src_base (global.get $mr_base))
+    (if (i32.eq (local.get $src_base) (i32.const 4)) (then (return (i32.const 0))))
+
+    ;; The first pair's store fixes the destination form every later store has
+    ;; to repeat.
+    (local.set $p (global.get $d_pc))
+    (local.set $m (call $sib_store_at (local.get $p) (local.get $scratch)))
+    (if (i32.eqz (local.get $m)) (then (return (i32.const 0))))
+    (local.set $info (global.get $fuse_info))
+    (local.set $dstd (global.get $fuse_disp))
+    (local.set $dbase (i32.and (local.get $info) (i32.const 0xF)))
+    (local.set $idx (i32.and (i32.shr_u (local.get $info) (i32.const 4)) (i32.const 0xF)))
+    ;; A rectangle needs both a row cursor and a base to hang it off.
+    (if (i32.or (i32.eq (local.get $dbase) (i32.const 0xF))
+                (i32.eq (local.get $idx) (i32.const 0xF)))
+      (then (return (i32.const 0))))
+    ;; The handler reads all four address registers once, up front. That is
+    ;; only equivalent to the unrolled instructions if none of the copy's own
+    ;; writes can reach them -- so the scratch register must not be one.
+    (if (i32.or (i32.eq (local.get $scratch) (local.get $src_base))
+        (i32.or (i32.eq (local.get $scratch) (local.get $dbase))
+                (i32.eq (local.get $scratch) (local.get $idx))))
+      (then (return (i32.const 0))))
+    (local.set $p (i32.add (local.get $p) (i32.shr_u (local.get $m) (i32.const 4))))
+
+    ;; Pass one measures the run, pass two writes it out. Two passes because
+    ;; the descriptor's length is the thing being measured -- the same reason
+    ;; $try_emit_base_run counts its MOVs before it emits any of them.
+    (local.set $rows (call $sprite_scan (local.get $p) (local.get $src_base)
+      (local.get $scratch) (local.get $info) (local.get $dstd) (local.get $disp0)
+      (local.get $idx) (local.get $dbase) (i32.const 0)))
+    ;; One row is not a run, and a handful of dwords does not repay a
+    ;; variable-length descriptor -- 421 already has those at one dispatch a
+    ;; pair, and it costs four words instead of 2*rows + 4.
+    (if (i32.lt_u (local.get $rows) (i32.const 2)) (then (return (i32.const 0))))
+    (if (i32.lt_u (global.get $sr_pairs) (i32.const 8)) (then (return (i32.const 0))))
+    (local.set $step (global.get $sr_step))
+    (local.set $cols (global.get $sr_pairs))
+
+    (call $te (i32.const 422) (i32.or
+      (i32.or (local.get $src_base) (i32.shl (local.get $scratch) (i32.const 4)))
+      (i32.or
+        (i32.or (i32.shl (local.get $dbase) (i32.const 8))
+                (i32.shl (local.get $idx) (i32.const 12)))
+        (i32.or (i32.shl (local.get $step) (i32.const 16))
+                (i32.shl (i32.and (i32.shr_u (local.get $info) (i32.const 8)) (i32.const 3))
+                         (i32.const 20))))))
+    (call $te_raw (local.get $rows))
+    (call $te_raw (local.get $disp0))
+    (call $te_raw (local.get $cols))
+    ;; What the unrolled form billed: three steps a copied dword (load, EA,
+    ;; store) and one for each `add` between rows.
+    (call $te_raw (i32.add (i32.mul (local.get $cols) (i32.const 3))
+      (i32.sub (local.get $rows) (i32.const 1))))
+    (drop (call $sprite_scan (local.get $p) (local.get $src_base)
+      (local.get $scratch) (local.get $info) (local.get $dstd) (local.get $disp0)
+      (local.get $idx) (local.get $dbase) (i32.const 1)))
+    (global.set $d_pc (global.get $sr_end))
+    (i32.const 1))
+
   ;; $fuse says whether the bytes after $d_pc are the next instruction. They
   ;; are for `mov r32,r/m32`, and every fusion below peeks at them; they are
   ;; NOT for `imul r32,r/m32,imm`, whose immediate the decoder has already
@@ -777,6 +969,12 @@
             ;; run of loads is not what this code is -- Caesar's unrolled copy
             ;; cases alternate load/store and $try_emit_base_run declines them
             ;; anyway (the byte after the load is 0x89, not another 0x8B).
+            ;; The whole unrolled rectangle first, the single pair second: a
+            ;; rectangle that folds is 128 pairs Caesar's tile blit no longer
+            ;; dispatches one at a time, and a rectangle that declines leaves
+            ;; the pair fold to pick up its first pair unchanged.
+            (if (call $try_emit_rect_run (local.get $dst) (global.get $mr_disp))
+              (then (return)))
             (if (call $try_emit_copy_sib (local.get $dst) (global.get $mr_disp))
               (then (return)))
             (if (call $try_emit_base_run (local.get $dst) (global.get $mr_disp))

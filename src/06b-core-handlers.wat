@@ -419,12 +419,22 @@
   ;;   mov  r32, [base+disp]                 ; H345 when base is esi
   ;;   mov  [base+index*scale+disp], r32     ; H420 since the fusion above
   ;;
-  ;; which is what Caesar III's RLE sprite decoder (0x0040f6d9) is made of: each
-  ;; `cmp al,imm8 / jz` case is a straight-line unrolled run of exactly this
-  ;; pair, one per dword of the run's length. 420 already removed the second of
-  ;; the three dispatches each dword used to cost; this removes the first, so a
-  ;; copied dword is one dispatch and three operand words instead of three
-  ;; dispatches and four.
+  ;; which is what Caesar III's unrolled sprite blitters are made of -- ~787
+  ;; of them between 0x0041cf11 and 0x004ffefd, one per tile shape, each a
+  ;; diamond of rows 1, 3, 5, 7 ... dwords wide with an `add edx,ecx` between
+  ;; rows and no branch from the prologue to the ret. Together they were
+  ;; 21.3M dispatches, 5.2% of a Caesar gameplay drive. 420 already removed
+  ;; the second of the three dispatches each dword used to cost; this removes
+  ;; the first, so a copied dword is one dispatch and three operand words
+  ;; instead of three dispatches and four. Handler 422 below folds a whole
+  ;; sprite when it can; this stays the fallback for a pair that stands alone
+  ;; and for the tail of a run 422 declined.
+  ;;
+  ;; (Two earlier revisions of this comment named the wrong site. The RLE
+  ;; decoder at 0x0040f6d9 stores through `mov [edi+0x4],eax`, a simple base
+  ;; form that goes to 354, so this never fires there; and the rectangular
+  ;; tile blit at 0x00410407 does not execute at all -- it is absent from
+  ;; every one of the 1859 blocks a gameplay drive enters.)
   ;;
   ;; op = src_base | dst_reg<<4; words follow in x86 order: src disp, then the
   ;; store's 149-style info word, then its disp.
@@ -454,6 +464,162 @@
               (i32.shr_u (local.get $op) (i32.const 4)) (local.get $info))))
     (call $gs32 (call $sib_ea (local.get $info) (call $read_thread_word))
       (local.get $v))
+    (return_call $next))
+
+  ;; 422: the re-rolled sprite run.
+  ;;
+  ;; Caesar III draws its isometric tiles out of fully unrolled blitters --
+  ;; ~787 of them between 0x0041cf11 and 0x004ffefd, one per sprite shape.
+  ;; Each is a diamond: rows of 1, 3, 5, 7 ... dwords, every row a straight
+  ;; line of `mov eax,[esi+k] / mov [edi+edx+d],eax` pairs with an
+  ;; `add edx,ecx` between rows and no branch anywhere from the prologue to
+  ;; the ret. That is still a loop -- it just carries its trip counts and its
+  ;; destination offsets in the instruction encoding instead of in registers,
+  ;; and the row widths differ, which is why a fixed rows x cols rectangle
+  ;; could not describe it. 421 already brought each pair down to one
+  ;; dispatch; this brings a whole sprite down to one.
+  ;;
+  ;; The difference from COPY_RUN (419) is exactly why this one is safe to
+  ;; enable by default while that one is not. 419 has to *infer* its cursors,
+  ;; stride and counter from a loop body, and gets them wrong on Storm's MPQ
+  ;; sliding-window copy. Nothing is inferred here: the decoder reads literal
+  ;; consecutive displacements and refuses unless every one of them is the
+  ;; value the run predicts. It is also dword-granular and two-dimensional,
+  ;; so 419's byte cursors and single counter could not have expressed it
+  ;; even if they were trustworthy.
+  ;;
+  ;;   op   = src_base | scratch<<4 | dst_base<<8 | dst_index<<12
+  ;;          | step_reg<<16 | scale<<20
+  ;;   w0   nrows
+  ;;   w1   src_disp        displacement of the very first load
+  ;;   w2   pairs           dwords copied by the whole run
+  ;;   w3   cost            steps the unrolled form billed
+  ;;   then nrows pairs of (cols, dst_disp) -- the row's width and the
+  ;;   displacement of its first store. Source displacements are not stored:
+  ;;   they run contiguously from w1 across the whole sprite, which the
+  ;;   decoder checked byte by byte.
+  ;;
+  ;; Registers the copy addresses through are read once, before the first
+  ;; store: the decoder guarantees the scratch register is none of them, so
+  ;; there is no address that a store could change under us. The row cursor
+  ;; (dst_index) is stepped arithmetically rather than written back per row,
+  ;; and lands on idx0 + (nrows-1)*step -- the adds sit *between* rows, so
+  ;; there are one fewer of them than there are rows.
+  (func $th_rect_run (param $op i32)
+    (local $tp i32) (local $nrows i32) (local $cols i32) (local $pairs i32)
+    (local $src_disp i32) (local $dst_disp i32) (local $rp i32)
+    (local $cost i32) (local $scale i32)
+    (local $src i32) (local $dbase i32) (local $idx0 i32) (local $step i32)
+    (local $r i32) (local $c i32) (local $idx i32)
+    (local $src_ga i32) (local $dst_ga i32) (local $sw i32) (local $dw i32)
+    (local $row_bytes i32) (local $v i32) (local $info i32) (local $scratch i32)
+
+    (local.set $tp (global.get $ip))
+    (local.set $nrows      (i32.load          (local.get $tp)))
+    (local.set $src_disp   (i32.load offset=4  (local.get $tp)))
+    (local.set $pairs      (i32.load offset=8  (local.get $tp)))
+    (local.set $cost       (i32.load offset=12 (local.get $tp)))
+    (local.set $rp (i32.add (local.get $tp) (i32.const 16)))
+    (global.set $ip
+      (i32.add (local.get $rp) (i32.shl (local.get $nrows) (i32.const 3))))
+
+    ;; Same pacing contract as 420/421: how deep the lowering goes must not
+    ;; change how much guest work a host batch buys. $next already billed one.
+    (global.set $steps
+      (i32.sub (global.get $steps) (i32.sub (local.get $cost) (i32.const 1))))
+
+    (local.set $scratch (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
+    (local.set $scale (i32.and (i32.shr_u (local.get $op) (i32.const 20)) (i32.const 3)))
+    (local.set $src   (call $get_reg (i32.and (local.get $op) (i32.const 0xF))))
+    (local.set $dbase (call $get_reg (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF))))
+    (local.set $idx0  (call $get_reg (i32.and (i32.shr_u (local.get $op) (i32.const 12)) (i32.const 0xF))))
+    (local.set $step  (call $get_reg (i32.and (i32.shr_u (local.get $op) (i32.const 16)) (i32.const 0xF))))
+
+    ;; The histogram has to keep counting one store per copied dword, or the
+    ;; op totals stop being comparable with a build that has this fold off.
+    (if (global.get $handler_hist_enabled)
+      (then
+        (local.set $info (i32.or
+          (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF))
+          (i32.or
+            (i32.shl (i32.and (i32.shr_u (local.get $op) (i32.const 12)) (i32.const 0xF))
+                     (i32.const 4))
+            (i32.shl (local.get $scale) (i32.const 8)))))
+        (local.set $c (local.get $pairs))
+        (block $hdone (loop $h
+          (br_if $hdone (i32.eqz (local.get $c)))
+          (call $sib_consumer_hist_record (i32.const 21)
+            (local.get $scratch) (local.get $info))
+          (local.set $c (i32.sub (local.get $c) (i32.const 1)))
+          (br $h)))))
+
+    (local.set $src_ga (i32.add (local.get $src) (local.get $src_disp)))
+    (local.set $r (i32.const 0))
+    (block $rdone (loop $rl
+      (br_if $rdone (i32.ge_u (local.get $r) (local.get $nrows)))
+      (local.set $cols     (i32.load         (local.get $rp)))
+      (local.set $dst_disp (i32.load offset=4 (local.get $rp)))
+      (local.set $rp (i32.add (local.get $rp) (i32.const 8)))
+      (local.set $row_bytes (i32.shl (local.get $cols) (i32.const 2)))
+      (local.set $idx (i32.add (local.get $idx0)
+        (i32.mul (local.get $r) (local.get $step))))
+      (local.set $dst_ga (i32.add (local.get $dbase) (i32.add
+        (i32.shl (local.get $idx) (local.get $scale)) (local.get $dst_disp))))
+
+      ;; $g2w is affine inside a 4 KB page -- the same invariant $gl32's fast
+      ;; path and $th_copy_run's chunking both rely on -- so a row that starts
+      ;; and ends in one page needs one translation, one bounds decision and
+      ;; one code-page test for all of it. A row that straddles a page, or
+      ;; either end of which is unmapped, takes the ordinary per-dword path;
+      ;; that is not a rare-case shortcut, it is literally what the unrolled
+      ;; instructions did.
+      (local.set $sw (call $g2w (local.get $src_ga)))
+      (local.set $dw (call $g2w (local.get $dst_ga)))
+      (if (i32.and
+            (i32.and (i32.ne (local.get $sw) (global.get $NULL_SENTINEL))
+                     (i32.ne (local.get $dw) (global.get $NULL_SENTINEL)))
+            (i32.and (i32.le_u (local.get $row_bytes) (i32.const 0x1000))
+              (i32.and
+                (i32.le_u (i32.and (local.get $src_ga) (i32.const 0xFFF))
+                          (i32.sub (i32.const 0x1000) (local.get $row_bytes)))
+                (i32.le_u (i32.and (local.get $dst_ga) (i32.const 0xFFF))
+                          (i32.sub (i32.const 0x1000) (local.get $row_bytes))))))
+        (then
+          (call $invalidate_code_write (local.get $dst_ga))
+          (local.set $c (local.get $cols))
+          (loop $fast
+            (local.set $v (i32.load (local.get $sw)))
+            (i32.store (local.get $dw) (local.get $v))
+            (local.set $sw (i32.add (local.get $sw) (i32.const 4)))
+            (local.set $dw (i32.add (local.get $dw) (i32.const 4)))
+            (local.set $c (i32.sub (local.get $c) (i32.const 1)))
+            (br_if $fast (local.get $c)))
+          ;; The slow path leaves $src_ga past the row it just copied; this
+          ;; one walks $sw instead, so it owes that advance here.
+          (local.set $src_ga (i32.add (local.get $src_ga) (local.get $row_bytes))))
+        (else
+          (local.set $c (local.get $cols))
+          (loop $slow
+            (local.set $v (call $gl32 (local.get $src_ga)))
+            (call $gs32 (local.get $dst_ga) (local.get $v))
+            (local.set $src_ga (i32.add (local.get $src_ga) (i32.const 4)))
+            (local.set $dst_ga (i32.add (local.get $dst_ga) (i32.const 4)))
+            (local.set $c (i32.sub (local.get $c) (i32.const 1)))
+            (br_if $slow (local.get $c)))))
+      (local.set $r (i32.add (local.get $r) (i32.const 1)))
+      (br $rl)))
+
+    ;; $v holds the last dword either path moved, which is what the final
+    ;; `mov scratch,[...]` left in the register.
+    (call $set_reg (local.get $scratch) (local.get $v))
+    (local.set $idx (i32.add (local.get $idx0)
+      (i32.mul (i32.sub (local.get $nrows) (i32.const 1)) (local.get $step))))
+    (call $set_reg (i32.and (i32.shr_u (local.get $op) (i32.const 12)) (i32.const 0xF))
+      (local.get $idx))
+    ;; Only the last `add` is observable -- nothing between the rows reads
+    ;; flags -- so publish that one.
+    (call $set_flags_add
+      (i32.sub (local.get $idx) (local.get $step)) (local.get $step) (local.get $idx))
     (return_call $next))
 
   ;; 403: the post-increment byte fetch through a pointer *variable*:

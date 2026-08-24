@@ -176,6 +176,7 @@ const LOOP_SUPEROPS = hasFlag('loop-superops');
 // measured on one build. See docs/interpreter-dispatch-perf.md -- fewer
 // dispatches has measured ZERO more than once, so the flag is not optional.
 const NO_SIB_FUSION = hasFlag('no-sib-fusion');
+const NO_RECT_RUN = hasFlag('no-rect-run');
 // --loopmatch-stats: print the self-loop/match counts at exit.
 const LOOPMATCH_STATS = hasFlag('loopmatch-stats');
 const TRACE_GDI = hasFlag('trace-gdi');   // --trace-gdi: log GDI calls (CreateBitmap, BitBlt, etc.)
@@ -3601,6 +3602,9 @@ async function main() {
   if (NO_SIB_FUSION && instance.exports.set_sib_fusion) {
     instance.exports.set_sib_fusion(0);
   }
+  if (NO_RECT_RUN && instance.exports.set_rect_run) {
+    instance.exports.set_rect_run(0);
+  }
   if (TRACE_FPU && instance.exports.set_fpu_trace) {
     instance.exports.set_fpu_trace(1);
   }
@@ -6747,6 +6751,12 @@ async function main() {
           t._loopFlagsArmed = true;
           if (TRACE_LOOPMATCH && e.set_loop_trace) e.set_loop_trace(1, TRACE_LOOPMATCH_EIP);
           if (LOOP_SUPEROPS && e.set_loop_emit) e.set_loop_emit(1);
+          // Decoder flags are plain mut globals, so a worker -- a separate
+          // instance over the same memory -- keeps the default until told
+          // otherwise. Without these two an A/B on a threaded app measures
+          // the fused build on both sides.
+          if (NO_SIB_FUSION && e.set_sib_fusion) e.set_sib_fusion(0);
+          if (NO_RECT_RUN && e.set_rect_run) e.set_rect_run(0);
         }
       }
     }
@@ -7200,10 +7210,16 @@ if (VERBOSE) {
   }
 
   if (DUMP_SPEC) {
-    const [addrStr, lenStr] = DUMP_SPEC.split(':');
-    const dumpAddr = parseInt(addrStr, 16);
-    const dumpLen = parseInt(lenStr) || 256;
-    hexdump(dumpAddr, dumpLen);
+    // Comma-separated, because the interesting question is almost always a
+    // *relationship* between two structs (a surface descriptor vs the globals
+    // that should agree with it), and one region per run costs a whole rerun
+    // of the app to answer it.
+    for (const spec of DUMP_SPEC.split(',')) {
+      const [addrStr, lenStr] = spec.split(':');
+      const dumpAddr = parseInt(addrStr, 16);
+      const dumpLen = parseInt(lenStr) || 256;
+      hexdump(dumpAddr, dumpLen);
+    }
   }
 
   // --dump-vmap: list the sparse VirtualAlloc mappings, and say for each

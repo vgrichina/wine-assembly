@@ -2423,6 +2423,11 @@
   (func (export "set_sib_fusion") (param $flag i32)
     (global.set $sib_fusion_enabled (local.get $flag)))
 
+  ;; The unrolled-rectangle fold (handler 422). Same rules: before the first
+  ;; decode, and on every per-thread instance.
+  (func (export "set_rect_run") (param $flag i32)
+    (global.set $rect_run_enabled (local.get $flag)))
+
   ;; Threaded-handler histogram. Profiling tools enable this only around a
   ;; measured window. Counts are stored in WAT-private memory and read by JS.
   (func (export "set_handler_hist_enabled") (param $flag i32)
