@@ -3458,9 +3458,18 @@
     ;; MFC also calls EndDialog on dialogs created through CreateDialogParamA.
     ;; Those modeless dialogs have no CACA0004 pump, so do not poison the
     ;; global modal-completion flags unless this hwnd is the active modal.
+    ;; First EndDialog wins. Real USER only records the result and lets the
+    ;; DialogBox loop destroy the window once the DLGPROC has returned, so the
+    ;; WM_DESTROY the app then sees is delivered *after* the result has been
+    ;; read. We destroy inline, so a DLGPROC that calls EndDialog again from
+    ;; its own WM_DESTROY (Disk Cleanup answers WM_DESTROY with
+    ;; EndDialog(hDlg, IDCANCEL)) would otherwise overwrite the IDOK the user
+    ;; actually chose, and the caller would take the cancel path and exit.
     (if (i32.and
-          (i32.ne (global.get $dlg_pump_hwnd) (i32.const 0))
-          (i32.eq (local.get $arg0) (global.get $dlg_pump_hwnd)))
+          (i32.and
+            (i32.ne (global.get $dlg_pump_hwnd) (i32.const 0))
+            (i32.eq (local.get $arg0) (global.get $dlg_pump_hwnd)))
+          (i32.eqz (global.get $dlg_ended)))
       (then
         (global.set $dlg_ended (i32.const 1))
         (global.set $dlg_result (local.get $arg1))
@@ -3479,9 +3488,13 @@
     ;; cleared. Storm's SDlgEndDialog relies on that lifecycle to advance from
     ;; Diablo's modeless class picker. The pump cleanup path below is guarded
     ;; for already-removed dialogs.
-    (if (call $wnd_table_get (local.get $arg0))
+    (if (i32.and
+          (i32.ne (call $wnd_table_get (local.get $arg0)) (i32.const 0))
+          (i32.ne (local.get $arg0) (global.get $dlg_ending_hwnd)))
       (then
-        (call $wnd_destroy_recursive (local.get $arg0))))
+        (global.set $dlg_ending_hwnd (local.get $arg0))
+        (call $wnd_destroy_recursive (local.get $arg0))
+        (global.set $dlg_ending_hwnd (i32.const 0))))
     ;; Don't set quit_flag — that kills the main message loop.
     ;; CACA0004 checks dlg_ended to exit the modal loop.
     (global.set $eax (i32.const 1))

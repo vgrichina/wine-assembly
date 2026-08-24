@@ -2350,6 +2350,15 @@
   (global $dlg_pump_hwnd (mut i32) (i32.const 0))   ;; Modal pump hwnd (DialogBoxParamA only)
   (global $dlg_result   (mut i32) (i32.const 0))    ;; EndDialog return value
   (global $dlg_ended    (mut i32) (i32.const 0))    ;; Flag: EndDialog was called
+  ;; HWND whose EndDialog teardown is currently running. Real USER only marks
+  ;; the dialog finished and lets DialogBox destroy it after the DLGPROC
+  ;; returns, so calling EndDialog twice is harmless there. We destroy inline,
+  ;; and $wnd_destroy_recursive dispatches WM_DESTROY back into the guest --
+  ;; whose handler calls EndDialog again (Disk Cleanup's OK button), which
+  ;; re-enters the teardown for a window still in the table and recurses until
+  ;; the host stack dies. Re-entry for the same HWND records the result and
+  ;; returns instead.
+  (global $dlg_ending_hwnd (mut i32) (i32.const 0))
   ;; Shared-memory mirror for EndDialog calls made from worker-thread WASM
   ;; instances. Thread globals are private; this lets the main modal pump see
   ;; installer worker completion.
