@@ -1052,6 +1052,18 @@
       (then
         (global.set $eax (call $wnd_get_hinstance (local.get $arg0)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
+    ;; GWL_HWNDPARENT: the parent for a child, the owner for a top-level. VCL's
+    ;; TWinControl.UpdateBounds asks for this and only calls ScreenToClient when
+    ;; it comes back non-zero -- returning 0 made it store the screen rect as the
+    ;; control's parent-relative bounds, so every SetBounds round trip shifted
+    ;; the control by the parent's client origin again (Tetravex's tiles walked
+    ;; off the form: 0 -> 124 -> 248 -> ...).
+    (if (i32.eq (local.get $arg1) (i32.const -8))   ;; GWL_HWNDPARENT
+      (then
+        (global.set $eax (call $wnd_get_parent (local.get $arg0)))
+        (if (i32.eqz (global.get $eax))
+          (then (global.set $eax (call $wnd_get_owner (local.get $arg0)))))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)))
     (if (i32.eq (local.get $arg1) (i32.const -16))  ;; GWL_STYLE
       (then
         (global.set $eax
