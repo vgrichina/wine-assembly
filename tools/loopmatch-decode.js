@@ -35,7 +35,7 @@ function handlerNames() {
 
 // Roles, mirroring $loop_role in src/07b-loop-match.wat. Keep in step with it:
 // a role added there and not here makes this tool over-report declines.
-const ROLE = { UNKNOWN: 0, LOAD8: 1, LOAD8S: 2, STORE8: 3, ADDI: 4, ZERO: 5, MIRROR: 6, JCC: 7 };
+const ROLE = { UNKNOWN: 0, LOAD8: 1, LOAD8S: 2, STORE8: 3, ADDI: 4, ZERO: 5, MIRROR: 6, JCC: 7, MEMCTR: 8 };
 const isJcc = fn => fn === 44 || (fn >= 307 && fn <= 322);
 
 function roleOf(fn, op) {
@@ -45,6 +45,7 @@ function roleOf(fn, op) {
   if (fn === 64 || fn === 65) return ROLE.ADDI;
   if (fn === 18 || fn === 17) return ((op >>> 4) === (op & 0xF)) ? ROLE.ZERO : ROLE.UNKNOWN;
   if (fn === 21) return ROLE.MIRROR;
+  if (fn === 135) return (((op >>> 4) & 0xF) <= 1) ? ROLE.MEMCTR : ROLE.UNKNOWN;
   if (isJcc(fn)) return ROLE.JCC;
   return ROLE.UNKNOWN;
 }
@@ -55,12 +56,56 @@ function roleOf(fn, op) {
 // operand encodings this reads (reg<<4|base for the byte accesses, reg for
 // inc/dec) are the ones the matcher reads too, but the displacement folding
 // and mirror bookkeeping are not replayed here.
+// COPY_RUN's gates, in $loop_try_copy's order. A block is only declined
+// outright when BOTH predicates decline it, so this is consulted first for any
+// shape that looks like a copy at all -- otherwise every copy loop would be
+// charged to whichever LUT_RUN gate it happened to trip.
+function copyDeclineReason(ops, names) {
+  const n = ops.length;
+  if (n < 5) return 'op-count<5';
+  if (n > 12) return 'op-count>12';
+
+  const roles = ops.map(([fn, op]) => roleOf(fn, op));
+  const bad = roles.findIndex(r =>
+    r !== ROLE.LOAD8 && r !== ROLE.STORE8 && r !== ROLE.ADDI &&
+    r !== ROLE.MEMCTR && r !== ROLE.JCC);
+  if (bad >= 0) return `copy:unknown-op:${names.get(ops[bad][0]) || ops[bad][0]}`;
+
+  const count = r => roles.filter(x => x === r).length;
+  if (count(ROLE.LOAD8) !== 1) return `copy:load-count=${count(ROLE.LOAD8)}`;
+  if (count(ROLE.STORE8) !== 1) return `copy:store-count=${count(ROLE.STORE8)}`;
+  const ldIdx = roles.indexOf(ROLE.LOAD8), stIdx = roles.indexOf(ROLE.STORE8);
+  const ld = ops[ldIdx], st = ops[stIdx];
+  if ((ld[1] >>> 4) !== (st[1] >>> 4)) return 'copy:byte-reg-differs';
+  if (ldIdx >= stIdx) return 'copy:store-before-load';
+  const ldBase = ld[1] & 0xF, stBase = st[1] & 0xF;
+  if (ldBase === stBase) return 'copy:one-cursor';
+
+  const addi = ops.filter((_, i) => roles[i] === ROLE.ADDI).map(o => o[1] & 0xF);
+  if (addi.filter(r => r === ldBase).length !== 1) return 'copy:src-not-stepped';
+  if (addi.filter(r => r === stBase).length !== 1) return 'copy:dst-not-stepped';
+  const ctrRegs = addi.filter(r => r !== ldBase && r !== stBase).length;
+  if (ctrRegs + count(ROLE.MEMCTR) !== 1) return `copy:counters=${ctrRegs + count(ROLE.MEMCTR)}`;
+
+  if (ops[n - 1][0] !== 312) return `copy:jcc-kind:${names.get(ops[n - 1][0]) || ops[n - 1][0]}`;
+  const ctrIdx = roles.findIndex((r, i) =>
+    (r === ROLE.MEMCTR) || (r === ROLE.ADDI && (ops[i][1] & 0xF) !== ldBase && (ops[i][1] & 0xF) !== stBase));
+  if (ctrIdx !== n - 2) return 'copy:counter-not-last';
+  return null;
+}
+
 function declineReason(ops, names) {
+  const roles = ops.map(([fn, op]) => roleOf(fn, op));
+  // A copy loop has a plain byte load and a byte store and none of LUT_RUN's
+  // machinery; judge those by COPY_RUN's gates.
+  if (roles.includes(ROLE.LOAD8) && roles.includes(ROLE.STORE8) &&
+      !roles.includes(ROLE.LOAD8S) && !roles.includes(ROLE.ZERO)) {
+    return copyDeclineReason(ops, names);
+  }
   const n = ops.length;
   if (n < 7) return 'op-count<7';
   if (n > 16) return 'op-count>16';
 
-  const roles = ops.map(([fn, op]) => roleOf(fn, op));
   const unknown = roles.indexOf(ROLE.UNKNOWN);
   if (unknown >= 0) return `unknown-op:${names.get(ops[unknown][0]) || ops[unknown][0]}`;
 
@@ -108,21 +153,15 @@ function whyReport(blocks, names, list) {
   }
 }
 
-function main() {
-  const args = process.argv.slice(2);
-  const file = args.find(a => !a.startsWith('--'));
-  if (!file) { console.error('usage: loopmatch-decode.js <log> [--eip=0xVA] [--uniq]'); process.exit(1); }
-  const opt = n => { const a = args.find(x => x.startsWith('--' + n + '=')); return a ? a.slice(n.length + 3) : null; };
-  const wantEip = opt('eip') ? parseInt(opt('eip'), 16) >>> 0 : null;
-  const uniq = args.includes('--uniq');
-
-  const names = handlerNames();
+// Pull the [i32] host-log words out of a run.js log and reassemble the
+// self-loop block records. Exported so a sweep over many logs does not need a
+// second copy of the framing.
+function parseBlocks(file) {
   const words = [];
   for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
     const m = /^\[i32\] (0x[0-9a-f]+)/.exec(line);
     if (m) words.push(parseInt(m[1], 16) >>> 0);
   }
-
   const blocks = [];
   for (let i = 0; i < words.length; i++) {
     if (words[i] !== MARKER) continue;
@@ -134,18 +173,39 @@ function main() {
     blocks.push({ eip, ops });
     i += 2 + n * 2;
   }
+  return blocks;
+}
+
+// One entry per distinct op sequence. Counting raw records instead would
+// measure how often a block was decoded, which after the block-cache fix is
+// mostly 1 and before it was thousands -- neither says anything about the
+// matcher.
+function uniqueShapes(blocks) {
+  const byShape = new Map();
+  for (const b of blocks) {
+    const key = b.ops.map(o => `${o[0]}:${o[1]}`).join(',');
+    if (!byShape.has(key)) byShape.set(key, b);
+  }
+  return [...byShape.values()];
+}
+
+function main() {
+  const args = process.argv.slice(2);
+  const file = args.find(a => !a.startsWith('--'));
+  if (!file) { console.error('usage: loopmatch-decode.js <log> [--eip=0xVA] [--uniq]'); process.exit(1); }
+  const opt = n => { const a = args.find(x => x.startsWith('--' + n + '=')); return a ? a.slice(n.length + 3) : null; };
+  const wantEip = opt('eip') ? parseInt(opt('eip'), 16) >>> 0 : null;
+  const uniq = args.includes('--uniq');
+
+  const names = handlerNames();
+  const blocks = parseBlocks(file);
 
   if (args.includes('--why')) {
     // A decline histogram over repeated copies of one block says more about
     // how often that block was decoded than about the matcher, so dedupe by
     // shape first regardless of --uniq.
-    const byShape = new Map();
-    for (const b of blocks) {
-      if (wantEip !== null && b.eip !== wantEip) continue;
-      const key = b.ops.map(o => `${o[0]}:${o[1]}`).join(',');
-      if (!byShape.has(key)) byShape.set(key, b);
-    }
-    whyReport([...byShape.values()], names, args.includes('--why-list'));
+    const scoped = wantEip === null ? blocks : blocks.filter(b => b.eip === wantEip);
+    whyReport(uniqueShapes(scoped), names, args.includes('--why-list'));
     return;
   }
 
@@ -164,4 +224,6 @@ function main() {
   console.log(`\n${blocks.length} self-loop block records, ${shown} shown`);
 }
 
-main();
+if (require.main === module) main();
+
+module.exports = { parseBlocks, uniqueShapes, declineReason, copyDeclineReason, handlerNames, roleOf, ROLE };

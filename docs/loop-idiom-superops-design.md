@@ -877,3 +877,84 @@ of *blocks*, so it measures overhead removed at constant guest progress, and
 this box was at load 36-60 while measuring. In a real-time game the same saving
 shows up as more guest work per frame. Verified unchanged: minesweeper-click
 (8/8), notepad-editing (10/10), freecell-move (7/7), liquid-war-candidate.
+
+### 10.6 COPY_RUN: the matcher generalizes, the lowering still does not pay
+
+§10.2 asked for a second idiom before believing A1 generalizes. Here it is,
+and it settles two separate questions in opposite directions.
+
+**Where it came from.** `tools/loopmatch-sweep.js` drives ten registered apps
+under `--trace-loopmatch --loopmatch-stats --handler-hist-thread=0` and reports,
+per app, how many self-loop *shapes* actually executed, how many matched, and a
+`hot%` -- the share of the top-20 hottest blocks' entries that are self-loop
+blocks. That last column is the one that mattered. Match rate separated nothing
+(every app but Heroes II matched zero), but `hot%` separated the corpus
+sharply: liquid_war 0.0%, worms2 2.5%, pinball 2.7%, **total_annihilation 31.5%**.
+
+TA's hot self-loops, from `--trace-loopmatch`, are all byte-stream transforms:
+
+| block | share of block entries | shape |
+|---|---|---|
+| 0x497948 | 8.72% | `mov cl,[edx] / inc edx / mov [eax],cl / inc eax / dec [esp+d] / jnz` |
+| 0x481ebd | 6.92% | SIB-addressed masked byte write |
+| 0x4937e1 | 6.55% | byte sum/reduce |
+| 0x4937b0 | 6.48% | two-stream byte transform |
+| 0x497705 | 1.91% | bit unpack |
+
+Together, ~30.6% of all handler dispatches in a 3000-batch run. The first is a
+plain counted byte copy, and it was declined twice over by accidents of
+LUT_RUN's shape rather than of the idiom: it is one op short of the seven-op
+floor, and its trip counter lives on the stack rather than in a register.
+
+**What was built.** A `MEMCTR` role (handler 135, `inc`/`dec dword [base+disp]`)
+and a second predicate, `$loop_try_copy`, lowering to super-op 411
+(`$th_copy_run`). Two cursors with independent strides and displacements, one
+byte register passing through unchanged, and a counter in either a register or
+memory. LUT_RUN declines `MEMCTR` explicitly -- its counting gates would not
+have noticed one, and the super-op would have silently dropped the decrement.
+
+**The matcher generalized.** COPY_RUN fires in 4 of 10 swept apps
+(total_annihilation 7, starcraft 1, diablo 1, pinball 1) where LUT_RUN reached
+one. TA's `hot%` fell 31.5 -> 27.2 as 0x497948 left the hot list entirely:
+1,044,252 iterations collapsed into 245,077 super-op invocations.
+
+**The lowering did not pay.** Min-of-N over a 3000-batch TA run, same build,
+`--no-loop-superops` as the A/B partner:
+
+| | min user CPU | API calls (guest progress) |
+|---|---|---|
+| superops on | 3.24s | 45905 |
+| superops off | 3.21s | 45137 |
+
+A wash, with the lowered build doing 1.7% more guest work. Run-to-run spread on
+this box was ±30%, which is why min-of-N and the progress column are both here.
+This is the second independent demonstration -- LUT_RUN on Heroes II was the
+first -- that removing dispatches from a hot loop does not remove time.
+
+**Why, and what it implies.** The measured average trip count is 4.26
+iterations (245,077 invocations, 1,044,252 iterations, via `--count=0x497948`).
+The block is entered enormously often and does almost nothing each time: about
+1MB copied across 3.6 seconds. So the per-entry cost dominates, and the
+super-op's own prologue is a per-entry cost too -- 14 parameter words, three
+`$get_reg` calls, a `$set_reg8`, a flags update. Reading the parameter block as
+offsets off one base instead of 14 `$read_thread_word` calls, and hoisting the
+memory-counter write-back out of the loop when the destination provably cannot
+cover it, together moved nothing measurable.
+
+The super-op still calls `$gl8`/`$gs8` per byte, and those stayed. That is the
+informative part of the negative: what was removed (dispatch) was not the cost,
+and what remains (bounds-checked, translated per-byte memory access) is. It
+lines up with the earlier `$next`-dispatch negative result -- fewer dispatches
+is simply not the lever on this interpreter.
+
+**Consequence for Design A.** Do not add a third predicate expecting a speedup.
+The next lever for a byte-stream idiom is a bulk memory primitive --
+`memory.copy` for a `+1/+1` copy with no overlap, which skips the per-byte
+bounds check entirely -- and that only pays where the trip count is long. It is
+not long here. Before building it, measure trip-count distributions, not match
+rates or block-entry shares: 0x497948 looked like 8.7% of the machine and was
+worth approximately nothing.
+
+Verified unchanged: minesweeper-click (8/8), notepad-editing (10/10),
+freecell-move (7/7), liquid-war-candidate, heroes2-gameplay (1722 frames,
+adventure map reached).
