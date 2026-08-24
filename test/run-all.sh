@@ -36,6 +36,7 @@ for a in "$@"; do
 done
 
 UNIT=(
+  test/test-boot-cursor.js
   test/test-x86-ops.js
   test/test-shift-equivalence.js
   test/test-ne-loader.js
@@ -64,6 +65,7 @@ UNIT=(
   test/test-heroes2-desktop-save.js
   test/test-winhelp-wat-parser.js
   test/test-wide-api.js
+  test/test-static-dx-version.js
   test/test-midi-mci.js
   test/test-thread-manager.js
   test/test-mm-timer-callback.js
@@ -183,6 +185,7 @@ UNIT=(
   test/test-aoe-stack-packet-handler.js
   test/test-clipboard-rtf-api.js
   test/test-coinitialize-ex.js
+  test/test-commondialog-props.js
   test/test-critical-section-threading.js
   test/test-ddraw-surface-dirty-rect.js
   test/test-defer-window-pos-visibility.js

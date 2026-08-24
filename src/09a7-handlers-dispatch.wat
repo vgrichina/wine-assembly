@@ -2665,11 +2665,61 @@
     (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (local.get $obj_guest))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
-  ;; DirectSoundEnumerateA(cb, ctx) → DS_OK; no devices reported, caller
-  ;; falls back to no-audio or default device creation.
+  ;; DirectSoundEnumerateA(lpCallback, lpContext) → DS_OK
+  ;; Fires the callback once for the primary sound driver, then returns DS_OK.
+  ;; Callback: BOOL CALLBACK cb(LPGUID lpGuid, LPCSTR lpcstrDescription,
+  ;;                            LPCSTR lpcstrModule, LPVOID lpContext)
+  ;; A NULL GUID is what real DirectSound reports for the default device.
+  ;;
+  ;; Returning DS_OK without ever calling back is not the same as "no sound
+  ;; hardware" to an app that builds its device list from the enumeration:
+  ;; RollerCoaster Tycoon shows "(None)" in the Options sound dropdown and
+  ;; never calls DirectSoundCreate at all, so it stays silent no matter what
+  ;; the rest of the audio stack can do.
+  ;;
+  ;; DSEnumCallback has the same four-argument shape as DDEnumCallback and the
+  ;; same DS_OK == DD_OK == 0 return, so this reuses the CACA0007
+  ;; $ddenum_ret_thunk continuation rather than adding a second identical one.
   (func $handle_DirectSoundEnumerateA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+    (local $desc i32) (local $module i32) (local $ret_addr i32)
+    ;; No callback means the app only wanted the HRESULT.
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    ;; Save the caller's return address, then drop it and the two stdcall args.
+    (local.set $ret_addr (call $gl32 (global.get $esp)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    ;; "Primary Sound Driver\0" and an empty module name (the default device
+    ;; has no driver DLL of its own).
+    (local.set $desc (call $heap_alloc (i32.const 24)))
+    (local.set $module (call $heap_alloc (i32.const 4)))
+    (i32.store (call $g2w (local.get $desc)) (i32.const 0x6d697250))                          ;; "Prim"
+    (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 4))) (i32.const 0x20797261))  ;; "ary "
+    (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 8))) (i32.const 0x6e756f53))  ;; "Soun"
+    (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 12))) (i32.const 0x72442064)) ;; "d Dr"
+    (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 16))) (i32.const 0x72657669)) ;; "iver"
+    (i32.store8 (call $g2w (i32.add (local.get $desc) (i32.const 20))) (i32.const 0))
+    (i32.store8 (call $g2w (local.get $module)) (i32.const 0))
+    ;; Caller's return address first — the CACA0007 continuation pops it after
+    ;; the callback returns.
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $ret_addr))
+    ;; Callback args, right to left.
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $arg1))    ;; lpContext
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $module))  ;; lpcstrModule
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $desc))    ;; lpcstrDescription
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 0))        ;; lpGuid = NULL (default device)
+    ;; Continuation thunk as the callback's own return address.
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $ddenum_ret_thunk))
+    (global.set $eip (local.get $arg0))
+    (global.set $steps (i32.const 0)))
   ;; mciSendStringA(cmd, retbuf, retlen, hCallback) → MCIERR (0 = no error)
   (func $handle_mciSendStringA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; Clear return buffer if provided, then let the host parse/execute the
