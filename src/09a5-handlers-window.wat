@@ -1888,7 +1888,10 @@
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (i32.const 0))                 ;; dw1
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (global.get $mm_timer_dwuser)) ;; dwUser
+    ;; dwUser rides in the MSG's unused hwnd field. Looking it up by timer id
+    ;; would fail for a one-shot, whose slot is already retired by the time the
+    ;; application pumps the message.
+    (call $gs32 (global.get $esp) (call $gl32 (local.get $arg0)))  ;; dwUser
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (i32.const 0))                 ;; uMsg (always 0)
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))

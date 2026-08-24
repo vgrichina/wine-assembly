@@ -5,6 +5,12 @@
 //   3. `i32.ge_u ... (i32.const N)` guard in src/04-cache.wat
 // Drift causes valid handler indices to be flagged as "cache corruption",
 // producing infinite cache-reset loops (see apps/rct.md for the incident).
+//
+// Also check that the profiling tables in src/01-header.wat can still hold
+// every handler. $handler_hist_record drops any pair whose handler index is
+// >= $HANDLER_HIST_COUNT, so a cap left behind by a growing handler table
+// silently hides exactly the fused superinstructions the pair histogram is
+// read to evaluate (see docs/interpreter-dispatch-perf.md).
 const fs = require('fs');
 const path = require('path');
 
@@ -31,4 +37,32 @@ if (!ok) {
   console.error('  all three must be equal. Bump them together when adding/removing $th_* handlers.');
   process.exit(1);
 }
-console.log(`[check-handler-count] OK ${line}`);
+
+const header = fs.readFileSync(path.join(root, 'src/01-header.wat'), 'utf8');
+function headerGlobal(name) {
+  const m = header.match(new RegExp(`\\(global \\$${name} i32 \\(i32\\.const (0x[0-9A-Fa-f]+|\\d+)\\)\\)`));
+  if (!m) { console.error(`[check-handler-count] could not find $${name} in src/01-header.wat`); process.exit(2); }
+  return Number(m[1]);
+}
+const histCount = headerGlobal('HANDLER_HIST_COUNT');
+const pairSize = headerGlobal('HANDLER_PAIR_HIST_COUNTS_SIZE');
+const countsSize = headerGlobal('HANDLER_HIST_COUNTS_SIZE');
+
+const profErrors = [];
+if (tableSize > histCount) {
+  profErrors.push(`$HANDLER_HIST_COUNT=${histCount} < handler table=${tableSize}: handlers ${histCount}..${tableSize - 1} are invisible in the pair histogram`);
+}
+if (pairSize < histCount * histCount * 4) {
+  profErrors.push(`$HANDLER_PAIR_HIST_COUNTS_SIZE=${pairSize} < ${histCount}*${histCount}*4=${histCount * histCount * 4}`);
+}
+if (countsSize < tableSize * 4) {
+  profErrors.push(`$HANDLER_HIST_COUNTS_SIZE=${countsSize} < handler table ${tableSize}*4=${tableSize * 4}`);
+}
+if (profErrors.length) {
+  console.error('[check-handler-count] profiling tables too small:');
+  for (const e of profErrors) console.error(`  ${e}`);
+  console.error('  raise the globals in src/01-header.wat (and re-check placement with tools/wat-memory-map.js).');
+  process.exit(1);
+}
+
+console.log(`[check-handler-count] OK ${line} hist_count=${histCount} pair_bytes=${pairSize}`);

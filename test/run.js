@@ -9,6 +9,7 @@ const { resolveDllGraph, mountLoadedDllFiles, stageAndLoadPe, setExeName, setExt
   handleLoadLibraryYield, handleComDllYield } = require('../lib/process-boot');
 const {
   applyExeCompatibilityPatches: applyProfilePatches,
+  applyLaunchPreferences: applyProfileLaunchPrefs,
   onThreadExit: profileThreadExit,
 } = require('../lib/app-profiles');
 const { processSharedCtx, adoptThreadPrimitives, makeWorkerApiLogger } = require('../lib/worker-imports');
@@ -45,7 +46,14 @@ const SRC_DIR = path.join(ROOT, 'src');
 // This is hygiene, not a fix for anything measured: it made no difference to
 // memory or runtime. The snapshot memory problem was GPU surfaces -- see the
 // note in renderer.js _createOffscreen.
+// Set by main() once the DirectDraw present path exists. Every capture in this
+// harness goes through canvasToPng, so hooking here is what makes a --png or a
+// --dump land on the frame the guest just finished instead of on whatever the
+// last time-bounded upload left behind.
+let dxPresentHook = null;
+
 function canvasToPng(canvas) {
+  if (dxPresentHook) dxPresentHook();
   return typeof canvas.toBufferSync === 'function'
     ? canvas.toBufferSync('png')
     : canvas.toBuffer('image/png');
@@ -97,6 +105,15 @@ const MAX_BATCHES = parseInt(getArg('max-batches', '200'));
 // a long run pays that leak millions of times over. Snapshot actions call
 // repaint() themselves, so raising this does not affect captured pixels.
 const REPAINT_EVERY = Math.max(1, parseInt(getArg('repaint-every', '1')) || 1);
+// Minimum wall-clock gap between *unforced* DirectDraw surface uploads. An
+// upload of a live 640x480 surface measures ~11ms, about what a 20k-step batch
+// costs, so uploading each finished guest frame doubles a dxball run and a 16ms
+// cap does not help (the batches are already that long). Nothing looks at a
+// headless canvas between captures and every capture forces an upload anyway,
+// so the default is deliberately slow: 10Hz keeps a video recording and any
+// mid-run liveness check honest for ~10% of the run time. Pass 0 to upload
+// every finished frame, which is what measuring the present path itself needs.
+const DX_PRESENT_MIN_MS = Math.max(0, parseFloat(getArg('dx-present-min-ms', '100')) || 0);
 // When multiple --break addrs are passed, the WASM `set_bp` only holds one,
 // so the JS fallback (eipBefore check) must see every block entry. Force
 // batch-size=1 so each block run hits the check loop.
@@ -137,15 +154,51 @@ const TRACE_ESP = getArg('trace-esp', null); // --trace-esp=LO-HI: per-block (ei
 const TRACE_EIP_RANGE = getArg('trace-eip-range', null); // --trace-eip-range=LO-HI: log every block-entry EIP inside [LO,HI] (module+0xVA OK)
 const TRACE_EIP_DETAIL = hasFlag('trace-eip-detail'); // --trace-eip-detail: include regs/flags/memory with --trace-eip-range
 const TRACE_EIP_DUMP = getArg('trace-eip-dump', null); // --trace-eip-dump=0xADDR:LEN[,..]: compact dump on each detailed EIP hit
+// --trace-loopmatch[=0xEIP]: at decode time, dump the emitted op sequence of
+// every self-loop block (or just the one at 0xEIP). Prints the block's entry,
+// op count and each (handler index, operand) -- the input the Design A matcher
+// in src/07b-loop-match.wat actually sees. See docs/loop-idiom-superops-design.md
+const TRACE_LOOPMATCH = hasFlag('trace-loopmatch') || getArg('trace-loopmatch', null) !== null;
+const TRACE_LOOPMATCH_EIP = (() => {
+  const v = getArg('trace-loopmatch', null);
+  return v && v !== 'true' ? (parseInt(v, 16) | 0) : 0;
+})();
+// The decode-time trace has no channel but log_i32, which lib/host-imports.js
+// gates on DBG_INV. Asking for the flag is asking for the output.
+if (TRACE_LOOPMATCH) process.env.DBG_INV = '1';
+// The lowering is OFF in the module (it miscompiles Storm's MPQ decompression
+// copy -- see src/07b-loop-match.wat), so the A/B flag that needs plumbing is
+// now the one that turns it back ON. --no-loop-superops stays accepted and is
+// a no-op, so older command lines and scripts keep working.
+const LOOP_SUPEROPS = hasFlag('loop-superops');
+// --no-sib-fusion: decode indexed SIB memory operands as the unfused
+// compute_ea_sib + consumer pair. On by default in the module; this is the
+// A/B partner, so a fusion's op-count delta and its wall-clock effect can be
+// measured on one build. See docs/interpreter-dispatch-perf.md -- fewer
+// dispatches has measured ZERO more than once, so the flag is not optional.
+const NO_SIB_FUSION = hasFlag('no-sib-fusion');
+// --loopmatch-stats: print the self-loop/match counts at exit.
+const LOOPMATCH_STATS = hasFlag('loopmatch-stats');
 const TRACE_GDI = hasFlag('trace-gdi');   // --trace-gdi: log GDI calls (CreateBitmap, BitBlt, etc.)
 const GDI_STATS = hasFlag('gdi-stats');   // --gdi-stats: print software-raster span/pixel totals at exit
 const LATENCY_STATS = hasFlag('latency-stats'); // --latency-stats: measure injected input -> next surface blit
+// --frame-stats[=FROM_BATCH]: guest-frame pacing (interval percentiles + jitter)
+// at exit. A benchmark that has to click through a menu to reach gameplay
+// spends most of its batches in the menu, and a menu redrawing on demand paces
+// nothing like a game loop -- mixing them buries the game's own distribution
+// under a much larger, much flatter one. Pass the batch gameplay starts at.
+const FRAME_STATS_ARG = getArg('frame-stats', null);
+const FRAME_STATS = FRAME_STATS_ARG !== null || hasFlag('frame-stats');
+const FRAME_STATS_FROM = Math.max(0, parseInt(FRAME_STATS_ARG, 10) || 0);
+const AUTO_MOUSE = getArg('auto-mouse', null); // --auto-mouse=X0,Y0,X1,Y1[,PERIOD]: sweep the pointer every PERIOD batches
 const TRACE_CTRL = hasFlag('trace-ctrl'); // --trace-ctrl: log every WAT-native control paint + its screen rect
 const TRACE_ERASE = hasFlag('trace-erase'); // --trace-erase: log every window-background erase + the brush it fills with
 const TRACE_RGN = hasFlag('trace-rgn');   // --trace-rgn: log HRGN create/combine/select + branch counts
 const TRACE_DC = hasFlag('trace-dc');     // --trace-dc: log DC→canvas target resolution (hwnd, ox/oy, canvas size)
 const TRACE_CLIP = hasFlag('trace-clip'); // --trace-clip: log _excludeChildrenClip kid/cousin rects + cover size per draw
-const TRACE_DX = hasFlag('trace-dx');     // --trace-dx: log DirectX COM methods with decoded rects/surface metadata
+const TRACE_COMPOSITE = hasFlag('trace-composite'); // --trace-composite: one line per repaint: which path composited, and what each window contributed
+const TRACE_DX = hasFlag('trace-dx');   // --trace-dx: log DirectX COM methods with decoded rects/surface metadata
+const DX_SURFACES = hasFlag('dx-surfaces'); // --dx-surfaces: print the DX_OBJECTS surface manifest at exit
 const TRACE_DX_RAW = hasFlag('trace-dx-raw'); // --trace-dx-raw: on each Execute, walk+hexdump the full instruction stream
 const TRACE_FS = hasFlag('trace-fs');     // --trace-fs: log filesystem CreateFile hits/misses
 const TRACE_INI = hasFlag('trace-ini');   // --trace-ini: log GetPrivateProfileString resolutions
@@ -256,6 +309,11 @@ const HANDLER_HIST_THREAD = parseInt(getArg('handler-hist-thread', '-1'), 10);
 const HANDLER_HIST_START = Math.max(0, parseInt(getArg('handler-hist-start', '0'), 10) || 0);
 const HANDLER_HIST_STOP = Math.max(HANDLER_HIST_START + 1,
   parseInt(getArg('handler-hist-stop', String(MAX_BATCHES)), 10) || MAX_BATCHES);
+// --hot-block-dump=FILE: write every distinct block the histogram window saw,
+// as "0xADDR hits", one per line. The printed top-20 is for reading; this is
+// for tools/cache-slots.js, which needs the whole set to say whether the
+// direct-mapped block cache index is aliasing them.
+const HOT_BLOCK_DUMP = getArg('hot-block-dump', null);
 const DUMP_SPEC = getArg('dump', null);   // --dump=0xADDR:LEN: hexdump memory region
 const DUMP_SEH = hasFlag('dump-seh');     // --dump-seh: detailed SEH chain dump at end
 const DUMP_VMAP = hasFlag('dump-vmap');   // --dump-vmap: sparse VirtualAlloc map + which probes are mapped
@@ -315,6 +373,26 @@ const ASSET_ENTRY_ID = MATCHED_APP && MATCHED_APP.id;
 const WASM_PATH = getArg('wasm', path.join(ROOT, 'build', 'wine-assembly.wasm')); // --wasm=FILE: isolated prebuilt used with --no-build
 const PNG_OUT = getArg('png', null);     // --png=out.png: render to PNG via node-canvas
 const PNG_CANVAS = hasFlag('png-canvas'); // --png-canvas: always capture the composited screen, never a raw DX surface
+// --dump-image=0xGUESTADDR:W:H:PITCH:BPP:FILE.png (repeatable, comma-separated)
+// Render an arbitrary guest memory region as an image at exit, through the
+// current DirectDraw palette for 8bpp. A blit bug is a disagreement between
+// two buffers -- decoder output vs the surface it was copied into -- and only
+// one of them is a DX surface that --png can already show. A hexdump cannot
+// answer "is this one sheared too"; a picture can.
+const DUMP_IMAGE = getArg('dump-image', null);
+// --dx-raw-index: for an 8bpp DX surface, write the raw palette indices as
+// greyscale instead of looking them up in the colour table. An all-black
+// capture then tells you which of the two things is wrong: nothing there to
+// draw, or art sitting under a colour table that is still black.
+const DX_RAW_INDEX = hasFlag('dx-raw-index');
+// --dx-slot=N: capture this DirectDraw surface instead of the one the content
+// heuristic picks. The heuristic prefers an offscreen surface whose colour
+// count dwarfs the primary's, which is right for a game that composes into a
+// back buffer and wrong for a 3D app whose texture atlas is more colourful
+// than its rendered frame — every Organic Art screensaver captures its leaf
+// sheet that way and reads as "renders a texture, not a scene". --dx-surfaces
+// prints the slot numbers to choose from.
+const DX_SLOT = getArg('dx-slot', null);
 const VIDEO_OUT = getArg('video', null); // --video=out.webm: record deterministic renderer frames through ffmpeg
 const VIDEO_FPS = parseFloat(getArg('video-fps', '30')); // --video-fps=N: playback rate; one frame is captured per batch
 const VIDEO_START_BATCH = Math.max(0, parseInt(getArg('video-start-batch', '0'), 10) || 0); // --video-start-batch=N: skip setup batches before capture
@@ -436,9 +514,15 @@ const traceAtDumps = TRACE_AT_DUMP ? TRACE_AT_DUMP.split(',').map(s => {
   const addr = /\+/.test(a) ? 0 : (parseInt(a, 16) >>> 0); // resolved later if module-relative
   return { addr, spec: a, len: parseInt(l) || 64, prev: null };
 }) : [];
+// `expr[:len]`, where a leading `*` dereferences (read the dword at the
+// computed address and use that as the address) and `len` of `s` reads a
+// NUL-terminated ASCII string. Stack arguments are pointers, so without those
+// two forms this flag can only ever print the pointer, never the string or
+// struct it names: `*esp+4:s` is "the filename this call was given".
 const traceAtMem = TRACE_AT_MEM ? TRACE_AT_MEM.split(',').map(s => {
   const [expr, l] = s.split(':');
-  return { expr: (expr || '').trim(), len: parseInt(l) || 4 };
+  const str = /^s$/i.test((l || '').trim());
+  return { expr: (expr || '').trim(), len: str ? 0 : (parseInt(l) || 4), str };
 }).filter(d => d.expr) : [];
 const traceEipDumps = TRACE_EIP_DUMP ? TRACE_EIP_DUMP.split(',').map(s => {
   const [a, l] = s.split(':');
@@ -1131,6 +1215,39 @@ async function main() {
     }
     scheduledInput.sort((a, b) => a.batch - b.batch);
   }
+  // --auto-mouse=X0,Y0,X1,Y1[,PERIOD][,START]: a hand on the mouse, scripted.
+  // The browser HUD can only measure what a person does live, which is not a
+  // benchmark: nobody moves the pointer the same way twice. This sweeps it
+  // between two points forever, one move every PERIOD batches, so an input
+  // measurement is repeatable and diffable across builds. PERIOD is in
+  // batches rather than ms on purpose -- a batch is one message-loop turn, so
+  // the sweep keeps pace with the guest instead of with this machine's load.
+  if (AUTO_MOUSE) {
+    const n = AUTO_MOUSE.split(',').map(v => parseInt(v.trim(), 10));
+    const [x0, y0, x1, y1] = n;
+    const period = Math.max(1, n[4] || 4);
+    const start = Math.max(0, n[5] || 0);
+    if ([x0, y0, x1, y1].some(v => !Number.isFinite(v))) {
+      console.error('--auto-mouse needs at least X0,Y0,X1,Y1');
+      process.exit(2);
+    }
+    // Ping-pong, so the pointer never teleports: a jump from one edge back to
+    // the other is not a motion a hand makes, and a game that tracks pointer
+    // DELTA rather than position would see one huge bogus step per sweep.
+    const legs = Math.max(1, Math.floor(((MAX_BATCHES - start) / period) / 2));
+    let k = 0;
+    for (let b = start; b < MAX_BATCHES; b += period, k++) {
+      const leg = Math.floor(k / legs) % 2;
+      const t = (k % legs) / legs;
+      const f = leg ? 1 - t : t;
+      scheduledInput.push({
+        batch: b, action: 'mousemove',
+        x: Math.round(x0 + (x1 - x0) * f),
+        y: Math.round(y0 + (y1 - y0) * f),
+      });
+    }
+    scheduledInput.sort((a, b) => a.batch - b.batch);
+  }
   const sortScheduledInput = (current) => {
     scheduledInput.sort((a, b) =>
       (a.batch - b.batch) || (current ? (a === current ? -1 : (b === current ? 1 : 0)) : 0));
@@ -1154,6 +1271,7 @@ async function main() {
     const [screenW, screenH] = screenArg ? screenArg.split('=')[1].split('x').map(Number) : [640, 480];
     const canvas = createCanvas(screenW, screenH);
     renderer = new Win98Renderer(canvas);
+    if (TRACE_COMPOSITE) renderer.traceComposite = true;
   }
   let videoRecorder = null;
   if (VIDEO_OUT) {
@@ -1499,6 +1617,113 @@ async function main() {
     };
   }
   const tickStateRef = { batch: 0 };
+  // --frame-stats: how evenly the guest presents, not how often. Average fps
+  // is the number that hides judder -- 55fps of even 18ms frames looks
+  // smooth, 55fps of alternating 17/34ms frames does not, and both report
+  // "55".
+  //
+  // Two different events get counted, because in this harness they are not
+  // the same event and only one of them is the guest's.
+  //
+  //   upload — WAT handing a dirty rect to the presentation surface. This is
+  //            the guest drawing, and it is driven by guest code alone.
+  //   flush  — the presentation surface decoding into the canvas. This is
+  //            what lib/host-imports.js counts for the browser HUD.
+  //
+  // In the browser those coincide closely enough to call one "a frame": the
+  // step loop repaints every step and the flush only does work when the guest
+  // actually dirtied something, so the flush rate IS the guest's draw rate.
+  // In the CLI they do NOT coincide: run.js repaints once every REPAINT_EVERY
+  // batches and the flush happens when the compositor reads the canvas, so
+  // the flush series is a picture of the HARNESS's sampling cadence and its
+  // interval collapses to exactly one batch. Reporting that as guest pacing
+  // would be measuring our own repaint loop and calling it the game.
+  // The present series is the one to trust for a DirectX app. gdi_surface_upload
+  // is NOT a frame: on DX-Ball it fires 182160 times against 20860 presents,
+  // because it tracks each BltFast of a sprite into the back buffer, about ten
+  // per frame. dx_trace kind 5/6 is the flip itself, it costs one JS call per
+  // frame, and unlike the flush it does not depend on --repaint-every at all --
+  // which matters, because a repaint of a live 640x480 surface costs ~6ms and
+  // repainting often enough to resolve a frame is slower than the run budget.
+  const frameStats = {
+    present: { iv: [], lastBatch: -1, lastAt: 0n },
+    flush: { iv: [], lastBatch: -1, lastAt: 0n },
+  };
+  const recordFrame = (series) => {
+    const at = process.hrtime.bigint();
+    // Outside the measurement window, still move the anchor forward. Skipping
+    // that would make the first in-window interval span the entire warm-up and
+    // land as a single enormous outlier at the top of every percentile.
+    if (tickStateRef.batch < FRAME_STATS_FROM) {
+      series.lastBatch = tickStateRef.batch;
+      series.lastAt = at;
+      return at;
+    }
+    if (series.lastBatch >= 0) {
+      series.iv.push({
+        batches: tickStateRef.batch - series.lastBatch,
+        ms: Number(at - series.lastAt) / 1e6,
+      });
+    }
+    series.lastBatch = tickStateRef.batch;
+    series.lastAt = at;
+    return at;
+  };
+  if (FRAME_STATS || LATENCY_STATS) {
+    ctx.onGuestFrame = () => {
+      const at = recordFrame(frameStats.flush);
+      // A presented frame is where a pointer move becomes pixels. The
+      // ctrl_paint + surface_upload pair above cannot close a move's sample
+      // in a fullscreen DirectDraw game, because such a game paints no
+      // WAT-native controls at all -- it blits its own back buffer.
+      if (latency.pending && latency.pending.kind === 'mousemove') {
+        latency.samples.push({
+          kind: 'mousemove',
+          batches: tickStateRef.batch - latency.pending.batch,
+          ms: Number(at - latency.pending.at) / 1e6,
+        });
+        latency.pending = null;
+      }
+    };
+  }
+  // The guest tells us when a DirectDraw frame is finished; nothing else can.
+  // Before this the harness polled -- one upload per 128 batches, kept only if
+  // presentBestDxOffscreen's 4-byte-per-row signature happened to differ -- so
+  // what reached the canvas was the harness's cadence, not the game's, and a
+  // ball moving between the sampled columns could stay stale indefinitely.
+  // Two rates, deliberately: correctness is tied to the guest (dirty), cost is
+  // tied to wall clock. Measured on dxball, 800 batches of 20k steps: uploads
+  // effectively off 15.0s, the 10Hz default 17.0s, one per finished frame
+  // 23.3s. Nothing watches a headless canvas between captures and the
+  // canvasToPng hook forces an upload at every capture, so the rate limit costs
+  // no evidence -- a --png still shows the frame the guest just finished.
+  const dxPresent = { dirty: false, lastAt: 0n };
+  const presentDxIfDirty = (minMs) => {
+    if (!dxPresent.dirty || !base.gdi || !base.gdi.presentBestDxOffscreen) return;
+    if (minMs > 0) {
+      const now = process.hrtime.bigint();
+      if (dxPresent.lastAt !== 0n && Number(now - dxPresent.lastAt) / 1e6 < minMs) return;
+      dxPresent.lastAt = now;
+    }
+    dxPresent.dirty = false;
+    // force=true: presentBestDxOffscreen's signature samples 4 bytes per row,
+    // so it cannot be trusted to notice a sprite moving between its columns.
+    base.gdi.presentBestDxOffscreen(true);
+  };
+  dxPresentHook = () => presentDxIfDirty(0);
+  if (typeof h.dx_trace === 'function') {
+    const rawDxTrace = h.dx_trace;
+    // kind 5 = Present, 6 = Flip. Every other kind (Lock/Unlock/Blt/SetEntries)
+    // happens several times within one frame and must not count as one FRAME,
+    // but kind 2 (Unlock) IS a finished write: a released lock means the guest
+    // is done touching those pixels, which is exactly when they are worth
+    // uploading for a game that renders straight into a locked surface.
+    h.dx_trace = (kind, ...a) => {
+      if (kind === 2 || kind === 5 || kind === 6) dxPresent.dirty = true;
+      if (FRAME_STATS && (kind === 5 || kind === 6)) recordFrame(frameStats.present);
+      return rawDxTrace(kind, ...a);
+    };
+  }
   // Keep the CLI harness instantiable while optional host-side font resource
   // loading is unavailable; browser/full hosts can provide the real loader.
   if (!h.add_font_resource) h.add_font_resource = () => 0;
@@ -2174,7 +2399,11 @@ async function main() {
     // Inject button sequence if --buttons provided, else WM_CLOSE.
     // Skip auto-WM_CLOSE when --input is in use — the test is orchestrating
     // its own event timeline and shouldn't be killed prematurely.
-    if (!inputEvent && !inputQueue && !INPUT_SPEC) {
+    // SW_HIDE is not a window coming up, it is one going away: MFC hides its
+    // unused toolbar/status children during frame setup, and closing the app
+    // on that leaves the real frame unpainted (fontview exited before its
+    // first WM_PAINT this way).
+    if (cmd !== 0 && !inputEvent && !inputQueue && !INPUT_SPEC) {
       const btnArg = args.find(a => a.startsWith('--buttons='));
       if (btnArg) {
         inputQueue = btnArg.split('=')[1].split(',').map(Number);
@@ -2758,6 +2987,15 @@ async function main() {
   const mem = new Uint8Array(memory.buffer);
   const { entry } = stageAndLoadPe(instance.exports, memory.buffer, exeBytes, console.log);
   applyExeCompatibilityPatches(path.basename(EXE_PATH), instance.exports, memory.buffer);
+  // Screen-size-driven defaults from the same table (lib/app-profiles.js
+  // LAUNCH_PREFS) — the CLI's screen is whatever --screen= asked for, so a
+  // headless run reproduces exactly what a browser of that size would pick.
+  applyProfileLaunchPrefs(path.basename(EXE_PATH), instance.exports, memory.buffer, {
+    skip: process.env.WA_SKIP_LAUNCH_PREFS === '1',
+    hook: (ASSET_ENTRY && ASSET_ENTRY.launchPrefs) || null,
+    screen: renderer && renderer.canvas
+      ? { width: renderer.canvas.width, height: renderer.canvas.height } : null,
+  });
   // A 16-bit task's DLLs load into the same selector arena its own segments
   // went into, so this has to follow load_pe.
   loadWin16Dlls(instance.exports, memory, exeBytes, path.dirname(EXE_PATH),
@@ -3104,6 +3342,29 @@ async function main() {
 
   }
 
+  // Return addresses up the EBP chain, as a one-line list. The existing walker
+  // in the SEH dump caps EBP at 0x01A00000, which excludes any app whose stack
+  // the loader placed higher (Diablo's is at 0x074f____), so this one bounds
+  // the frame pointer only by "reads back a plausible frame".
+  const ebpChain = (depth = 8) => {
+    const dv = new DataView(memory.buffer);
+    const out = [];
+    let ebp = instance.exports.get_ebp() >>> 0;
+    for (let i = 0; i < depth; i++) {
+      if (!ebp || (ebp & 3)) break;
+      let saved, ret;
+      try {
+        saved = dv.getUint32(g2w(ebp), true) >>> 0;
+        ret = dv.getUint32(g2w(ebp + 4), true) >>> 0;
+      } catch (_) { break; }
+      if (!ret) break;
+      out.push(hex(ret));
+      if (saved <= ebp) break;
+      ebp = saved;
+    }
+    return out.join(' <- ');
+  };
+
   const regs = () => {
     const e = instance.exports;
     const base = `EIP=${hex(e.get_eip())} EAX=${hex(e.get_eax())} ECX=${hex(e.get_ecx())} EDX=${hex(e.get_edx())} EBX=${hex(e.get_ebx())} ESP=${hex(e.get_esp())} EBP=${hex(e.get_ebp())} ESI=${hex(e.get_esi())} EDI=${hex(e.get_edi())}`;
@@ -3382,6 +3643,18 @@ async function main() {
   if (TRACE_WIN16 && instance.exports.set_win16_trace) {
     instance.exports.set_win16_trace(1);
   }
+  if (TRACE_LOOPMATCH && instance.exports.set_loop_trace) {
+    instance.exports.set_loop_trace(1, TRACE_LOOPMATCH_EIP);
+  }
+  if (LOOP_SUPEROPS && instance.exports.set_loop_emit) {
+    instance.exports.set_loop_emit(1);
+  }
+  // Per-instance, not once: worker threads are separate WASM instances over
+  // one shared memory, so a mut global set only on the main instance leaves
+  // every worker decoding with the other setting and makes the A/B meaningless.
+  if (NO_SIB_FUSION && instance.exports.set_sib_fusion) {
+    instance.exports.set_sib_fusion(0);
+  }
   if (TRACE_FPU && instance.exports.set_fpu_trace) {
     instance.exports.set_fpu_trace(1);
   }
@@ -3415,6 +3688,12 @@ async function main() {
       if (!filtered) {
         console.log(`\n*** WATCHPOINT hit at batch ${batch}: [${hex(watchAddr)}] changed`);
         console.log(`  Old: ${hex(watchPrevVal)}  New: ${hex(newVal)}  EIP: ${hex(instance.exports.get_eip())}  prev_eip: ${hex(instance.exports.get_dbg_prev_eip())}`);
+        // The writer's registers name the source of a bad store. A copy loop
+        // that wrote garbage into a surface is only diagnosable from the
+        // pointer it read, and --trace-at cannot stand in for this: it fires
+        // on block entries only, so a store inside a loop body never hits it.
+        console.log('  ' + regs());
+        console.log('  callers: ' + ebpChain());
         hit = true;
       }
       watchPrevVal = newVal;
@@ -3580,12 +3859,16 @@ async function main() {
     if (!e || !e.get_handler_hist_count || !e.get_handler_hist_base) return;
     const u32 = new Uint32Array(memory.buffer);
     const count = e.get_handler_hist_count() | 0;
+    // The pair matrix is count x count; the per-handler counters go further,
+    // and the fused superinstructions all live above `count`. Sum the whole
+    // counter array or the total drops every time a fusion lands.
+    const slots = e.get_handler_hist_slots ? (e.get_handler_hist_slots() | 0) : count;
     const base = (e.get_handler_hist_base() >>> 2) >>> 0;
     const pairBase = e.get_handler_pair_hist_base
       ? ((e.get_handler_pair_hist_base() >>> 2) >>> 0) : 0;
     const handlers = [];
     let total = 0;
-    for (let id = 0; id < count; id++) {
+    for (let id = 0; id < slots; id++) {
       const hits = u32[base + id] >>> 0;
       total += hits;
       if (hits) handlers.push({ id, hits });
@@ -3626,10 +3909,20 @@ async function main() {
         if (addr && hits) blocks.push({ addr, hits });
       }
       blocks.sort((a, b) => b.hits - a.hits);
-      console.log(`  top blocks (collisions=${e.get_hot_block_hist_collisions ? e.get_hot_block_hist_collisions() >>> 0 : 0}):`);
+      // `distinct` is the executed-block working set for the window, which is
+      // what the direct-mapped block cache index (CACHE_MASK + 1 slots) has to
+      // hold. Compare the two before blaming cache size: distinct well under
+      // the slot count with heavy eviction is an index/aliasing problem, not a
+      // capacity one.
+      console.log(`  top blocks (distinct=${blocks.length} collisions=${e.get_hot_block_hist_collisions ? e.get_hot_block_hist_collisions() >>> 0 : 0}):`);
       for (const row of blocks.slice(0, 20)) {
         const pct = blockTotal ? (row.hits * 100 / blockTotal).toFixed(2) : '0.00';
         console.log(`    ${hex(row.addr)} ${row.hits} (${pct}%)`);
+      }
+      if (HOT_BLOCK_DUMP) {
+        fs.writeFileSync(HOT_BLOCK_DUMP,
+          blocks.map(row => `${hex(row.addr)} ${row.hits}`).join('\n') + '\n');
+        console.log(`  wrote ${blocks.length} distinct blocks to ${HOT_BLOCK_DUMP}`);
       }
     }
     if (e.get_sib_consumer_hist_base && e.get_sib_consumer_hist_count) {
@@ -3704,7 +3997,21 @@ async function main() {
       injectedInputThisBatch = true;
       // Start the input->blit clock on events a user would perform. The
       // wrapped gdi_surface_upload stops it at the first blit that follows.
-      if (LATENCY_STATS && /^(keypress|keydown|keyup|click|dblclick)$/.test(ev.action)) {
+      // mousemove counts too: on a mouse-driven game (a paddle, a cursor, a
+      // camera) it is THE event whose latency the player feels, and it is the
+      // one a browser session cannot measure end-to-end. A move never clobbers
+      // an outstanding sample -- with --auto-mouse the moves arrive faster
+      // than the guest paints, and overwriting would restart the clock just
+      // before the blit and report a latency far shorter than the real one.
+      // A move never clobbers an outstanding MOVE -- with --auto-mouse the
+      // moves arrive faster than the guest paints, and overwriting would
+      // restart the clock just before the blit and report a latency far
+      // shorter than the real one. It does replace an outstanding event of
+      // any other kind, because those close on a WAT control paint that a
+      // fullscreen game never performs: left in place, one unclosable keydown
+      // from the menu would block every move for the rest of the run.
+      if (LATENCY_STATS && /^(keypress|keydown|keyup|click|dblclick|mousemove)$/.test(ev.action)
+          && !(latency.pending && latency.pending.kind === 'mousemove' && ev.action === 'mousemove')) {
         latency.pending = { kind: ev.action, batch, at: process.hrtime.bigint(), painted: false };
       }
       // UI-level events go through renderer handlers (mouse/keyboard pump),
@@ -6231,9 +6538,11 @@ async function main() {
     }
 
     const afterRunMs = TRACE_BATCH_TIMING ? Date.now() : 0;
-    if ((batch & 0x7f) === 0 && base.gdi && base.gdi.presentBestDxOffscreen) {
-      base.gdi.presentBestDxOffscreen();
-    }
+    // Upload only when the guest says a frame is finished, rate-limited by wall
+    // clock. This replaced a '(batch & 0x7f) === 0' poll, which uploaded on the
+    // harness's cadence rather than the game's and then discarded the upload
+    // unless a 4-byte-per-row signature happened to change.
+    presentDxIfDirty(DX_PRESENT_MIN_MS);
 
     // Flush deferred repaint so back canvas composites after all GDI writes.
     // The scheduled-repaint flag survives a skipped flush, so coalescing here
@@ -6243,6 +6552,7 @@ async function main() {
       renderer.flushRepaint();
     }
     if (videoRecorder && batch >= VIDEO_START_BATCH) {
+      presentDxIfDirty(0);   // a recorded frame is a capture, not a live view
       await videoRecorder.capture(renderer.canvas);
     }
     if (TRACE_BATCH_TIMING) {
@@ -6307,7 +6617,14 @@ async function main() {
               }
             };
             const parseAddrExpr = (expr) => {
-              const s = String(expr || '').replace(/^\[/, '').replace(/\]$/, '').trim();
+              let s = String(expr || '').replace(/^\[/, '').replace(/\]$/, '').trim();
+              let deref = false;
+              if (s.startsWith('*')) { deref = true; s = s.slice(1).trim(); }
+              const inner = parseAddrExprBase(s);
+              if (inner === null || !deref) return inner;
+              try { return dv.getUint32(g2w(inner), true) >>> 0; } catch (_) { return null; }
+            };
+            const parseAddrExprBase = (s) => {
               const m = s.match(/^(e(?:ax|bx|cx|dx|sp|bp|si|di|ip))\s*([+-])?\s*(0x[0-9a-fA-F]+|\d+)?$/i);
               if (m) {
                 const base = regValue(m[1]);
@@ -6328,6 +6645,17 @@ async function main() {
               try {
                 const wa = g2w(addr);
                 let val;
+                if (d.str) {
+                  const u8 = new Uint8Array(memory.buffer);
+                  let out = '';
+                  for (let i = 0; i < 128; i++) {
+                    const c = u8[wa + i];
+                    if (!c) break;
+                    out += (c >= 0x20 && c < 0x7f) ? String.fromCharCode(c) : '.';
+                  }
+                  parts.push(`${d.expr}@${hex(addr)}="${out}"`);
+                  continue;
+                }
                 if (d.len === 1) val = dv.getUint8(wa);
                 else if (d.len === 2) val = dv.getUint16(wa, true);
                 else if (d.len === 4) val = dv.getUint32(wa, true) >>> 0;
@@ -6463,6 +6791,18 @@ async function main() {
     // Thread management: spawn pending threads, run worker slices
     if (threadManager._pendingThreads.length) {
       await threadManager.spawnPending();
+      // A worker is a separate WASM instance: its decoder globals start at the
+      // module defaults, so the loop-idiom flags have to be re-applied per
+      // thread or they only ever affect main.
+      if (TRACE_LOOPMATCH || LOOP_SUPEROPS) {
+        for (const [, t] of threadManager.threads) {
+          const e = t.instance && t.instance.exports;
+          if (!e || t._loopFlagsArmed) continue;
+          t._loopFlagsArmed = true;
+          if (TRACE_LOOPMATCH && e.set_loop_trace) e.set_loop_trace(1, TRACE_LOOPMATCH_EIP);
+          if (LOOP_SUPEROPS && e.set_loop_emit) e.set_loop_emit(1);
+        }
+      }
     }
     if (threadManager.hasActiveThreads()) {
       // Give worker threads extra runtime when main thread is idle (e.g., waiting for extraction)
@@ -6645,6 +6985,28 @@ if (VERBOSE) {
     if (instance.exports.get_heap_sparse_end) console.log('heap_sparse_end:', hex(instance.exports.get_heap_sparse_end()));
     if (instance.exports.get_virtual_alloc_top) console.log('virtual_alloc_top:', hex(instance.exports.get_virtual_alloc_top()));
     if (instance.exports.get_heap_base) console.log('heap_base:', hex(instance.exports.get_heap_base()));
+    // A full cache wipe re-decodes the app's whole working set. Per thread,
+    // because each worker owns its own arena and its own counter.
+    if (instance.exports.get_cache_clears) {
+      const parts = [`M ${instance.exports.get_cache_clears()}`];
+      if (threadManager) {
+        for (const [, t] of threadManager.threads) {
+          if (t.instance && t.instance.exports.get_cache_clears) {
+            parts.push(`T${t.tid} ${t.instance.exports.get_cache_clears()}`);
+          }
+        }
+      }
+      console.log('cache: full clears', parts.join('  '));
+      if (instance.exports.get_cache_stores) {
+        console.log('cache: block decodes', instance.exports.get_cache_stores(),
+          'of which evicted a live block', instance.exports.get_cache_evicts());
+      }
+      if (instance.exports.get_cache_invals) {
+        console.log('cache: page invalidations', instance.exports.get_cache_invals(),
+          'that dropped a block', instance.exports.get_cache_inval_hits(),
+          'last', hex(instance.exports.get_cache_inval_page()));
+      }
+    }
     if (instance.exports.gdi_dc_state_used) {
       console.log('gdi: dc_states', instance.exports.gdi_dc_state_used(), '/ 256   objects',
         instance.exports.gdi_object_used(), '/ 256   dc_mark', instance.exports.gdi_table_mark(2));
@@ -6653,6 +7015,23 @@ if (VERBOSE) {
       const st = instance.exports.gdi_dib_arena_stat;
       console.log('gdi: dib arena pages used', st(0), 'free', st(1),
         'largest free run', st(2), 'of', st(3));
+    }
+  }
+
+  if ((TRACE_LOOPMATCH || LOOPMATCH_STATS) && instance.exports.get_loop_selfloop_blocks) {
+    // Each worker thread is its own WASM instance with its own decoder and its
+    // own counters, so a main-only read reports zero for an app whose hot code
+    // runs on a worker (Liquid War parks main in WaitForSingleObject at boot).
+    const report = (label, e) => {
+      if (!e || !e.get_loop_selfloop_blocks) return;
+      console.log(`loopmatch: ${label} self-loop blocks decoded`,
+        e.get_loop_selfloop_blocks(), 'matched', e.get_loop_matched_blocks());
+    };
+    report('M ', instance.exports);
+    if (threadManager) {
+      for (const [, t] of threadManager.threads) {
+        if (t.instance) report(`T${t.tid}`, t.instance.exports);
+      }
     }
   }
 
@@ -6788,7 +7167,52 @@ if (VERBOSE) {
         (latency.pending ? ` (1 never blitted)` : ''));
       console.log(`             batches p50 ${pick('batches', 0.5)}, p95 ${pick('batches', 0.95)}, max ${pick('batches', 1)}`);
       console.log(`             ms      p50 ${pick('ms', 0.5).toFixed(2)}, p95 ${pick('ms', 0.95).toFixed(2)}, max ${pick('ms', 1).toFixed(2)}`);
+      const kinds = [...new Set(s.map(x => x.kind))];
+      if (kinds.length > 1 || kinds[0] !== 'mousemove') console.log(`             kinds: ${kinds.join(', ')}`);
     }
+  }
+
+  if (FRAME_STATS) {
+    const report = (label, series, note) => {
+      const f = series.iv;
+      if (f.length < 2) {
+        console.log(`  ${label}: ${f.length + (series.lastBatch >= 0 ? 1 : 0)} events — too few to pace`);
+        return;
+      }
+      const q = (key, p) => {
+        const v = f.map(x => x[key]).sort((a, b) => a - b);
+        return v[Math.min(v.length - 1, Math.floor(p * v.length))];
+      };
+      const med = q('batches', 0.5);
+      // Judder is the share of frames that are not the usual length. A frame
+      // twice the median is one the player sees held on screen; an average
+      // would call that run smooth.
+      const long = f.filter(x => x.batches >= Math.max(1, med) * 1.75).length;
+      const stepsPer = med * BATCH_SIZE;
+      const window = MAX_BATCHES - FRAME_STATS_FROM;
+      console.log(`  ${label}: ${f.length + 1} over ${window} batches`
+        + ` (one per ${(window / (f.length + 1)).toFixed(2)} batches ≈ ${stepsPer >= 1000 ? (stepsPer / 1000).toFixed(0) + 'k' : stepsPer} steps)`);
+      console.log(`      interval batches p50 ${med}, p90 ${q('batches', 0.9)}, p99 ${q('batches', 0.99)}, max ${q('batches', 1)}`
+        + `   long (>=1.75x median) ${long} of ${f.length} (${(100 * long / f.length).toFixed(1)}%)`);
+      console.log(`      interval ms      p50 ${q('ms', 0.5).toFixed(1)}, p90 ${q('ms', 0.9).toFixed(1)}, p99 ${q('ms', 0.99).toFixed(1)}   (wall clock — load-sensitive, never diff across runs)`);
+      if (note) console.log(`      ${note}`);
+      if (med <= 1) {
+        console.log('      NOT RESOLVED: the interval is at or under one batch, so this series is'
+          + ' sampled at the batch rate and its spread is an artifact.'
+          + ` Re-run with --batch-size well under ${BATCH_SIZE} to resolve it.`);
+      }
+    };
+    console.log(FRAME_STATS_FROM
+      ? `\nFrame pacing (from batch ${FRAME_STATS_FROM}; earlier frames ignored):`
+      : '\nFrame pacing:');
+    report('guest present (dx_present)    ', frameStats.present,
+      'guest-driven and independent of --repaint-every, but NOT one per frame for every app:'
+      + ' $dx_present runs on each blit that reaches the primary, so an app that composes'
+      + ' straight onto the primary instead of flipping a back buffer trips it several times'
+      + ' per frame. Compare the count against --trace-api IDirectDrawSurface_Blt/Flip before'
+      + ' reading it as a frame rate');
+    report('host flush    (surface upload)', frameStats.flush,
+      `what the browser HUD counts as fps; in the CLI it is gated by the repaint loop (--repaint-every=${REPAINT_EVERY}), so treat it as the harness's cadence unless it agrees with the present count above`);
   }
 
   if (threadManager && threadManager.threads && threadManager.threads.size) {
@@ -6901,6 +7325,7 @@ if (VERBOSE) {
     const dv = new DataView(memory.buffer);
     const DX_BASE = 0x07FF0000;
     const DX_SLOTS = 1024; // matches $DX_MAX in src/09a8-handlers-directx.wat
+    const DX_SURF_PAL = 0x07F11000; // matches $DX_SURF_PAL: per-surface palette data addr
     let paletteWa = 0;
     for (let slot = 0; slot < DX_SLOTS; slot++) {
       const entry = DX_BASE + slot * 32;
@@ -6928,7 +7353,12 @@ if (VERBOSE) {
         if (firstNonZero < 0 && v !== 0) firstNonZero = i;
         checksum = (checksum + v) >>> 0;
       }
-      surfaces.push({ slot, flags, w, h, bpp, pitch, dib, firstNonZero, checksum, paletteWa });
+      // A surface that had its own palette attached (an 8bpp texture, say)
+      // must be decoded with that one, not with whichever palette happened to
+      // be allocated first.
+      const ownPal = dv.getUint32(DX_SURF_PAL + slot * 4, true);
+      surfaces.push({ slot, flags, w, h, bpp, pitch, dib, firstNonZero, checksum,
+        paletteWa: ownPal || paletteWa });
     }
     return { mem, surfaces };
   };
@@ -6941,7 +7371,7 @@ if (VERBOSE) {
         const di = (y * surface.w + x) * 4;
         let r = 0, g = 0, b = 0;
         if (surface.bpp === 8) {
-          if (surface.paletteWa) {
+          if (surface.paletteWa && !DX_RAW_INDEX) {
             const pi = mem[srcRow + x];
             r = mem[surface.paletteWa + pi * 4];
             g = mem[surface.paletteWa + pi * 4 + 1];
@@ -7021,6 +7451,12 @@ if (VERBOSE) {
     const bestOffscreen = bestByDiversity(offscreenCandidates);
 
     if (!bestPrimary) {
+      // A flipping chain leaves the primary blank between presents while the
+      // frame sits in the back buffer — every Organic Art screensaver looks
+      // like that at an arbitrary batch count. The back buffer is the frame,
+      // so it outranks any texture regardless of colour count.
+      const bestBack = bestByDiversity(surfaces.filter(s => (s.flags & 2)).map(scored));
+      if (bestBack) return bestBack.surface;
       for (const p of primary) {
         const matching = bestByDiversity(offscreenCandidates.filter(item =>
           item.surface.w === p.w &&
@@ -7031,7 +7467,17 @@ if (VERBOSE) {
       return bestOffscreen ? bestOffscreen.surface : null;
     }
 
+    // An offscreen surface may only stand in for a primary that has content
+    // when it is the same size — that is a back buffer the app composes into
+    // and then presents, so it is the frame a moment early. A differently
+    // sized offscreen is a texture, and a texture atlas routinely carries more
+    // colours than the frame drawn with it: every Organic Art screensaver
+    // captured its leaf/marble sheet under the old colour-diversity rule and
+    // read as "renders a texture, never a scene" when the primary in fact held
+    // the rendered geometry. The browser presents the primary; so does this.
     if (bestOffscreen &&
+        bestOffscreen.surface.w === bestPrimary.surface.w &&
+        bestOffscreen.surface.h === bestPrimary.surface.h &&
         bestOffscreen.score.colors >= 16 &&
         bestOffscreen.score.colors >= Math.max(bestPrimary.score.colors + 8, bestPrimary.score.colors * 4)) {
       return bestOffscreen.surface;
@@ -7049,9 +7495,57 @@ if (VERBOSE) {
     return pngBuf.length;
   };
 
+  if (DUMP_IMAGE) {
+    const { mem, surfaces } = getDxSurfaceManifest();
+    const primary = surfaces.find(s => (s.flags & 1)) || surfaces[0];
+    const imgBase = instance.exports.get_image_base() >>> 0;
+    for (const spec of DUMP_IMAGE.split(',')) {
+      const [addrStr, wStr, hStr, pitchStr, bppStr, outPath] = spec.split(':');
+      const guest = parseInt(addrStr, 16) >>> 0;
+      const surface = {
+        dib: (guest - imgBase + 0x12000) >>> 0,
+        w: parseInt(wStr, 10) | 0,
+        h: parseInt(hStr, 10) | 0,
+        pitch: parseInt(pitchStr, 10) | 0,
+        bpp: parseInt(bppStr, 10) | 0,
+        paletteWa: primary ? primary.paletteWa : 0,
+      };
+      if (!surface.w || !surface.h || !surface.pitch || !outPath) {
+        console.log(`[dump-image] bad spec "${spec}" — expected ADDR:W:H:PITCH:BPP:FILE.png`);
+        continue;
+      }
+      const bytes = writeRgbaPng(outPath, surface.w, surface.h, dxSurfaceToRgba(surface, mem));
+      console.log(`[dump-image] wrote ${outPath} (${bytes} bytes) from guest 0x${guest.toString(16)}` +
+        ` ${surface.w}x${surface.h} pitch=${surface.pitch} bpp=${surface.bpp}`);
+    }
+  }
+
+  if (DX_SURFACES) {
+    const { mem, surfaces } = getDxSurfaceManifest();
+    // Every 8bpp upload resolves its colours through the single primary-palette
+    // global, not through the per-surface palette printed below. When those two
+    // disagree the picture is drawn with somebody else's palette, so print both.
+    const globalPal = instance.exports.get_dx_primary_pal_wa
+      ? instance.exports.get_dx_primary_pal_wa() >>> 0 : 0;
+    console.log(`[dx-surfaces] ${surfaces.length} live surface(s)` +
+      ` primaryPal=0x${globalPal.toString(16)}`);
+    for (const s of surfaces) {
+      const score = dxSurfaceContentScore(s, mem);
+      console.log(`  slot=${s.slot} ${s.w}x${s.h} bpp=${s.bpp} pitch=${s.pitch}` +
+        ` flags=0x${s.flags.toString(16)} dib=0x${s.dib.toString(16)}` +
+        ` pal=0x${s.paletteWa.toString(16)} colors=${score.colors} nonZero=${score.nonZero}/${score.total}`);
+    }
+  }
+
   if (PNG_OUT && renderer) {
     const { mem, surfaces } = getDxSurfaceManifest();
-    const surface = PNG_CANVAS ? null : chooseDxPresentationSurface(surfaces, mem);
+    const wantSlot = DX_SLOT === null ? null : (parseInt(DX_SLOT, 10) | 0);
+    const surface = PNG_CANVAS ? null
+      : (wantSlot === null ? chooseDxPresentationSurface(surfaces, mem)
+        : (surfaces.find(s => s.slot === wantSlot) || null));
+    if (wantSlot !== null && !surface) {
+      console.log(`[dx-slot] no live surface in slot ${wantSlot} — falling back to the screen canvas`);
+    }
     if (surface) {
       const bytes = writeRgbaPng(PNG_OUT, surface.w, surface.h, dxSurfaceToRgba(surface, mem));
       console.log(`Wrote ${PNG_OUT} (${bytes} bytes, dx slot ${surface.slot} ${surface.w}x${surface.h})`);

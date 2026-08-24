@@ -15022,7 +15022,30 @@
     (if (i32.ge_s (call $wnd_table_find (local.get $hwnd)) (i32.const 0))
       (then (call $wnd_table_set (local.get $hwnd) (local.get $installed))))
     (if (local.get $handled)
-      (then (return (call $dialog_extra_get (local.get $hwnd) (i32.const 0)))))
+      (then
+        ;; USER's DefDlgProc epilog returns the DLGPROC's own BOOL — not
+        ;; DWL_MSGRESULT — for the handful of messages whose result *is* that
+        ;; BOOL. WM_INITDIALOG is the load-bearing one: its caller reads the
+        ;; return as "did the dialog set the focus itself, or should I focus
+        ;; the control I picked". Storm's dialog manager (Diablo's front end)
+        ;; sends WM_INITDIALOG to its own dialog class, lets the message reach
+        ;; the app through DefDlgProc, and then does
+        ;;     if (!result) focusTarget = NULL;
+        ;; before its SetFocus. Returning DWL_MSGRESULT (zero, because a
+        ;; DLGPROC that returns TRUE normally never writes it) therefore left
+        ;; every Diablo menu and the name-entry field with no focused control
+        ;; at all: keystrokes had nowhere to land.
+        (if (i32.or
+              (i32.eq (local.get $msg) (i32.const 0x0110))    ;; WM_INITDIALOG
+              (i32.or
+                (i32.eq (local.get $msg) (i32.const 0x0039))  ;; WM_COMPAREITEM
+                (i32.or
+                  (i32.eq (local.get $msg) (i32.const 0x002E)) ;; WM_VKEYTOITEM
+                  (i32.or
+                    (i32.eq (local.get $msg) (i32.const 0x002F))   ;; WM_CHARTOITEM
+                    (i32.eq (local.get $msg) (i32.const 0x0037)))))) ;; WM_QUERYDRAGICON
+          (then (return (local.get $handled))))
+        (return (call $dialog_extra_get (local.get $hwnd) (i32.const 0)))))
     (i32.const 0))
 
   ;; Route a client-relative mouse event to the first WAT-managed child
@@ -15291,6 +15314,7 @@
   (func $modal_done (param $result i32)
     (local $owner i32)
     (global.set $modal_result (local.get $result))
+    (call $cd_modal_writeback (local.get $result))
     (local.set $owner (call $wnd_get_owner (global.get $modal_dlg_hwnd)))
     (call $wnd_destroy_tree (global.get $modal_dlg_hwnd))
     (call $host_destroy_window (global.get $modal_dlg_hwnd))

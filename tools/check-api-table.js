@@ -7,6 +7,12 @@
 // hardcoded fast paths in 09b-dispatch.wat. The append-only rule was previously
 // documented only in a memory note; this makes it a build failure.
 //
+// During a merge the rule can only hold against ONE parent: if both branches
+// appended, the resolution has to renumber somebody's tail. So when MERGE_HEAD
+// exists the gate passes if the table is append-only vs *either* parent, and
+// says which one. Keep the trunk's ids stable and renumber the feature branch's
+// own additions -- the trunk's are the ones every later merge diffs against.
+//
 // Usage: node tools/check-api-table.js [--base=<git-rev>]
 'use strict';
 
@@ -40,39 +46,71 @@ for (let i = 0; i < table.length; i++) {
 }
 
 // 2. Append-only vs the base revision: every entry that existed keeps its slot.
-let baseTable = null;
-try {
-  const raw = execFileSync('git', ['show', `${BASE}:${REL}`], {
-    cwd: ROOT, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'],
-  });
-  baseTable = JSON.parse(raw.toString('utf8'));
-} catch {
-  console.log(`api_table: no ${BASE} copy to diff against (new file or shallow tree) — index check only.`);
+function loadBase(rev) {
+  try {
+    const raw = execFileSync('git', ['show', `${rev}:${REL}`], {
+      cwd: ROOT, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return JSON.parse(raw.toString('utf8'));
+  } catch {
+    return null;
+  }
 }
 
-if (baseTable) {
+// Compare against one base; returns the list of complaints (empty == clean).
+function appendOnlyErrors(baseTable, label) {
+  const errors = [];
   if (table.length < baseTable.length) {
-    console.error(`ERROR: ${REL} shrank (${baseTable.length} -> ${table.length}). Entries are append-only; ` +
-      'removing one renumbers every later id and invalidates the compiled hash table.');
-    failed = true;
+    errors.push(`ERROR: ${REL} shrank (${baseTable.length} -> ${table.length}) vs ${label}. Entries are ` +
+      'append-only; removing one renumbers every later id and invalidates the compiled hash table.');
   }
   const n = Math.min(table.length, baseTable.length);
   let moved = 0;
   for (let i = 0; i < n; i++) {
     if (table[i].name !== baseTable[i].name) {
       if (moved < 10) {
-        console.error(`ERROR: index ${i} was "${baseTable[i].name}" at ${BASE}, is now "${table[i].name}". ` +
+        errors.push(`ERROR: index ${i} was "${baseTable[i].name}" at ${label}, is now "${table[i].name}". ` +
           'Add new APIs at the END of the array.');
       }
       moved++;
-      failed = true;
     }
   }
-  if (moved > 10) console.error(`  ...and ${moved - 10} more renumbered entries.`);
-  if (!failed && table.length > baseTable.length) {
-    console.log(`api_table: ${table.length - baseTable.length} new entr${table.length - baseTable.length === 1 ? 'y' : 'ies'} appended.`);
+  if (moved > 10) errors.push(`  ...and ${moved - 10} more renumbered entries.`);
+  return errors;
+}
+
+// A merge resolution can only preserve one parent's ids; accept either.
+// `.git` is a file in a worktree, so ask git for the real gitdir.
+const bases = [{ rev: BASE, table: loadBase(BASE) }];
+try {
+  const gitDir = execFileSync('git', ['rev-parse', '--absolute-git-dir'], {
+    cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+  }).trim();
+  const mergeHead = path.join(gitDir, 'MERGE_HEAD');
+  if (fs.existsSync(mergeHead)) {
+    const other = fs.readFileSync(mergeHead, 'utf8').trim().split('\n')[0];
+    bases.push({ rev: other, table: loadBase(other) });
+  }
+} catch { /* not a git tree — the HEAD lookup below already handles that */ }
+
+let cleanRev = BASE;
+const usable = bases.filter(b => b.table);
+if (!usable.length) {
+  console.log(`api_table: no ${BASE} copy to diff against (new file or shallow tree) — index check only.`);
+} else {
+  const results = usable.map(b => ({ ...b, errors: appendOnlyErrors(b.table, b.rev) }));
+  const clean = results.find(r => !r.errors.length);
+  if (clean) {
+    cleanRev = clean.rev;
+    const added = table.length - clean.table.length;
+    if (added > 0) console.log(`api_table: ${added} new entr${added === 1 ? 'y' : 'ies'} appended vs ${clean.rev}.`);
+  } else {
+    // Report the closest miss so the fix is obvious.
+    const best = results.reduce((a, b) => (a.errors.length <= b.errors.length ? a : b));
+    for (const e of best.errors) console.error(e);
+    failed = true;
   }
 }
 
 if (failed) process.exit(1);
-console.log(`api_table OK: ${table.length} entries, id === index, append-only vs ${BASE}.`);
+console.log(`api_table OK: ${table.length} entries, id === index, append-only vs ${cleanRev}.`);

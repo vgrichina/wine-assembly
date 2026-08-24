@@ -47,6 +47,35 @@ const extraWat = String.raw`
 
   (func (export "test_window_exists") (param $hwnd i32) (result i32)
     (i32.ge_s (call $wnd_table_find (local.get $hwnd)) (i32.const 0)))
+
+  (func (export "test_dlg_result") (result i32)
+    (global.get $dlg_result))
+
+  ;; Reset the shared mirrors too, not just this instance's globals: EndDialog
+  ;; makes both of its decisions -- "is this the pump's dialog" and "has one
+  ;; already ended" -- off the mirrors, so a stale mirror from the previous
+  ;; case would make the next EndDialog a no-op.
+  (func (export "test_reset_modal") (param $hwnd i32)
+    (global.set $dlg_pump_hwnd (local.get $hwnd))
+    (global.set $dlg_ended (i32.const 0))
+    (global.set $dlg_result (i32.const 0))
+    (global.set $yield_flag (i32.const 0))
+    (i32.store (global.get $SHARED_DLG_PUMP_HWND) (local.get $hwnd))
+    (i32.store (global.get $SHARED_DLG_ENDED) (i32.const 0))
+    (i32.store (global.get $SHARED_DLG_RESULT) (i32.const 0)))
+
+  ;; Hand the guest a callable EndDialog: a bare import thunk carrying the API
+  ;; id, so an x86 DLGPROC can re-enter the handler the way a real one does.
+  (func (export "test_make_api_thunk") (param $api_id i32) (result i32)
+    (local $addr i32)
+    (local.set $addr (i32.add (global.get $THUNK_BASE)
+      (i32.mul (global.get $num_thunks) (i32.const 8))))
+    (i32.store (local.get $addr) (i32.const 0))
+    (i32.store offset=4 (local.get $addr) (local.get $api_id))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+    (call $update_thunk_end)
+    (i32.add (i32.sub (local.get $addr) (global.get $GUEST_BASE))
+             (global.get $image_base)))
 `;
 
 function u32(value) {
@@ -108,6 +137,36 @@ function u32(value) {
   e.test_call_EndDialog(modalDialog, 42);
   assert.strictEqual(e.test_yield_flag(), 1,
     'active Wine Assembly modal EndDialog yields to its dialog pump');
+
+  // Disk Cleanup's drive-picker answers WM_DESTROY with EndDialog(hDlg,
+  // IDCANCEL). Since we tear the dialog down inside EndDialog, that arrives
+  // while the first EndDialog is still running: it must neither re-enter the
+  // teardown (which recursed until the host stack died) nor replace the IDOK
+  // the user actually chose.
+  const END_DIALOG_API_ID = 131;
+  const endDialogThunk = e.test_make_api_thunk(END_DIALOG_API_ID) >>> 0;
+  const reentrant = e.guest_alloc(64) >>> 0;
+  bytes.set(Uint8Array.from([
+    0x8b, 0x44, 0x24, 0x08,             // mov eax,[esp+8]   ; msg
+    0x83, 0xf8, 0x02,                   // cmp eax,2         ; WM_DESTROY
+    0x75, 0x0d,                         // jne +13
+    0x8b, 0x4c, 0x24, 0x04,             // mov ecx,[esp+4]   ; hwnd
+    0x6a, 0x02,                         // push IDCANCEL
+    0x51,                               // push hwnd
+    0xb8, ...u32(endDialogThunk),       // mov eax, EndDialog
+    0xff, 0xd0,                         // call eax
+    0xb8, 0x01, 0x00, 0x00, 0x00,       // mov eax,1
+    0xc2, 0x10, 0x00,                   // ret 0x10
+  ]), toWasm(reentrant));
+
+  const reentrantPacked = BigInt.asUintN(64, e.test_create_modeless_dialog(reentrant));
+  const reentrantDialog = Number(reentrantPacked & 0xffffffffn) >>> 0;
+  e.test_reset_modal(reentrantDialog);
+  e.test_call_EndDialog(reentrantDialog, 1); // IDOK
+  assert.strictEqual(e.test_window_exists(reentrantDialog), 0,
+    'a DLGPROC that calls EndDialog from WM_DESTROY still gets torn down once');
+  assert.strictEqual(e.test_dlg_result(), 1,
+    'the first EndDialog result wins over one raised from WM_DESTROY');
 
   console.log('PASS  EndDialog preserves recursive window teardown lifecycle');
 })().catch(error => {

@@ -898,6 +898,17 @@
   ;; its diagnostic/API name separate from GetTimeZoneInformation: the native
   ;; ordinal takes a BOOL refresh flag, not an output-structure pointer.
   (data (i32.const 0x11DB0) "KERNEL32.dll\00KERNEL32_Ordinal99\00")
+  ;; Modules whose exports we dispatch statically: they have no mapped PE
+  ;; image and no DLL-table entry, so GetModuleHandle has to recognize them by
+  ;; name. Lower case and without the ".dll" suffix; the matcher accepts
+  ;; either form. See $guest_name_is_static_system_dll in 09a-handlers.wat.
+  ;; ORDER MATTERS: everything from index $STATIC_SYS_DLL_FIRST_DX onwards is
+  ;; part of DirectX and answers the file-version query with the DirectX
+  ;; version below, so new non-DirectX names belong before "dplayx".
+  (data (i32.const 0x11DD0) "ole32\00dplayx\00ddraw\00dsound\00d3drm\00\00")
+  ;; Where those modules claim to live, and the suffix appended to the stem.
+  (data (i32.const 0x11DF4) "C:\\WINDOWS\\SYSTEM\\\00")
+  (data (i32.const 0x11E08) ".dll\00")
   ;; Exports we answer natively even when the real DLL is loaded — see
   ;; $native_override_export_api_id in src/08b-dll-loader.wat.
   (data (i32.const 0x11E30) "InitCommonControlsEx\00")
@@ -1056,6 +1067,27 @@
   (data (i32.const 0x11243) "Custom colors:\00")
   (data (i32.const 0x11252) "Define Custom Colors >>\00")
 
+  ;; A complete VS_VERSIONINFO block (header + VS_FIXEDFILEINFO, no string
+  ;; tables) reporting DirectX 6.1a — dplayx.dll 4.06.03.0518, the version
+  ;; Windows 98 SE shipped. The file-version APIs hand this back for the
+  ;; DirectX modules we dispatch statically, which have no file on disk to
+  ;; read a real resource out of. Age of Empires II refuses to start below
+  ;; 4.6.3.516, and it asks dplayx, not the display driver.
+  ;;   +0x00 wLength=92  wValueLength=52  wType=0
+  ;;   +0x06 "VS_VERSION_INFO" UTF-16 + NUL, then 2 bytes of padding
+  ;;   +0x28 VS_FIXEDFILEINFO: signature, struct version, file/product
+  ;;         version, flags mask, flags, VOS__WINDOWS32, VFT_DLL, dates
+  (data (i32.const 0x11270)
+    "\5c\00\34\00\00\00"
+    "V\00S\00_\00V\00E\00R\00S\00I\00O\00N\00_\00I\00N\00F\00O\00\00\00"
+    "\00\00"
+    "\bd\04\ef\fe\00\00\01\00"
+    "\06\00\04\00\06\02\03\00"
+    "\06\00\04\00\06\02\03\00"
+    "\3f\00\00\00\00\00\00\00"
+    "\04\00\00\00\02\00\00\00"
+    "\00\00\00\00\00\00\00\00\00\00\00\00")
+
   ;; Dialog-template string class names. Win32 templates may use either
   ;; builtin ordinal classes (0x80..0x85) or string names.
   (data (i32.const 0x3100) "Button\00")
@@ -1211,6 +1243,7 @@
   ;; 0x07EF12D0  16B     WINDOW_RECT_SCRATCH (window geometry queries)
   ;; 0x07EF12E0  80B     GDI_BRUSH_DESC scratch
   ;; 0x07EF1730   4B     GDI_OBJECT_GEN (object-table generation counter)
+  ;; 0x07EF1734   4B     GDI_WINDOW_SURFACE_HWM (window-surface high-water mark)
   ;; 0x07EF1800 24KB     GDI_DC_STATE_TABLE (256 x 96-byte canonical DC state)
   ;; 0x07EF7800 12KB     GDI_OBJECT_TABLE (256 x 48-byte object records)
   ;; 0x07EFA800 8KB      GDI_WINDOW_SURFACE_TABLE (256 x 32-byte records)
@@ -1236,7 +1269,16 @@
   ;; 0x07F0D000 8KB      GDI_REGION_TABLE (256 WAT-owned HRGN records)
   ;; 0x07F0F000 4KB      GDI_DC_PATH_TABLE (256 x 16-byte WAT path records)
   ;; 0x07F10000 4KB      HANDLER_HIST_COUNTS (1024 i32 counters)
-  ;; 0x07F11000 512KB    HANDLER_PAIR_HIST_COUNTS (357 x 357 i32 counters)
+  ;; 0x07F12000 8KB      CODE_PAGE_BITMAP (1 bit per 4KB guest page < 0x10000000)
+  ;; 0x07F30000 8KB      OP_INDEX (2048 decode-time op-start addresses)
+  ;; 0x07F11000 512KB    (free apart from the two above -- former
+  ;;                      HANDLER_PAIR_HIST_COUNTS home, too
+  ;;                      small once the handler table passed 361. This block is
+  ;;                      packed wall-to-wall with the branch/hot-block tables
+  ;;                      below, so the matrix could not grow in place; it now
+  ;;                      lives at 0x04000000, in the unused 16MB gap under
+  ;;                      THREAD_CACHE_BASE. Not 0x08000000 -- that is
+  ;;                      VIRTUAL_BACKING_BASE.)
   ;; 0x07F91000 4KB      BRANCH_CMP_JCC_HIST (16 cc x 64 reg-pair counters)
   ;; 0x07F92000 4KB      BRANCH_TEST_JCC_HIST (16 cc x 64 reg-pair counters)
   ;; 0x07F93000 32KB     BRANCH_ALU_M32_RO_JCC_HIST (16 cc x 512 op/reg/base counters)
@@ -1530,6 +1572,14 @@
   (global $GDI_OBJECT_TABLE_SIZE i32 (i32.const 0x00003000))
   (global $GDI_OBJECT_COUNT i32 (i32.const 256))
   (global $GDI_OBJECT_STRIDE i32 (i32.const 48))
+  ;; One past the highest surface slot ever allocated. Slots are handed out
+  ;; front-first, so every live record is below it and a lookup never has to
+  ;; walk the other 250-odd empty ones. It lives in shared memory rather than in
+  ;; a global for the same reason GDI_OBJECT_GEN does: worker threads are
+  ;; separate WASM instances that share this memory but not their globals, and a
+  ;; per-instance high-water mark would read 0 in a worker and hand out slot 0
+  ;; on top of a live record.
+  (global $GDI_WINDOW_SURFACE_HWM i32 (i32.const 0x07EF1734))
   (global $GDI_WINDOW_SURFACE_TABLE i32 (i32.const 0x07EFA800))
   (global $GDI_WINDOW_SURFACE_TABLE_SIZE i32 (i32.const 0x00002000))
   (global $GDI_WINDOW_SURFACE_COUNT i32 (i32.const 256))
@@ -1601,11 +1651,34 @@
   (global $gdi_screen_height (mut i32) (i32.const 0))
   ;; Threaded-interpreter profiling tables. Enabled only from profiling tools.
   ;; HANDLER_PAIR_HIST_COUNTS is a dense [prev_handler][cur_handler] matrix.
+  ;; HANDLER_HIST_COUNT is the SIDE of that matrix and must stay >= the handler
+  ;; table size in 02-thread-table.wat -- $handler_hist_record drops any pair
+  ;; involving a handler at or above it, so a stale cap silently hides every
+  ;; fused superinstruction from the very table used to pick the next fusion.
+  ;; tools/check-handler-count.js enforces this. 512*512*4 = 1MB.
   (global $HANDLER_HIST_COUNTS i32 (i32.const 0x07F10000))
   (global $HANDLER_HIST_COUNTS_SIZE i32 (i32.const 0x00001000))
-  (global $HANDLER_PAIR_HIST_COUNTS i32 (i32.const 0x07F11000))
-  (global $HANDLER_PAIR_HIST_COUNTS_SIZE i32 (i32.const 0x00080000))
-  (global $HANDLER_HIST_COUNT i32 (i32.const 361))
+  ;; Decode-time op-start index (see docs/loop-idiom-superops-design.md 6.1).
+  ;; $te appends the address of every op header it emits; $decode_block resets
+  ;; the counter. Pure scratch -- reused by every block, never read at runtime,
+  ;; so it costs no per-block memory. Overflow sets $op_index_poison and the
+  ;; block is simply not matched.
+  (global $OP_INDEX i32 (i32.const 0x07F30000))
+  (global $OP_INDEX_SIZE i32 (i32.const 0x00002000))
+  (global $OP_INDEX_MAX i32 (i32.const 2048))
+  (global $op_index_n (mut i32) (i32.const 0))
+  (global $op_index_poison (mut i32) (i32.const 0))
+  ;; One bit per 4KB guest page below $VIRTUAL_ALLOC_MIN, set when a block is
+  ;; decoded out of that page. A store into a marked page invalidates the
+  ;; cached blocks there. The two $generated_code_* / $generated_sparse_code_*
+  ;; ranges only cover code inside the PE image or in the sparse VirtualAlloc
+  ;; reserve; Storm generates its blitters into ordinary HeapAlloc memory,
+  ;; which falls in neither. 0x10000000 >> 12 = 65536 pages = 8KB of bitmap.
+  (global $CODE_PAGE_BITMAP i32 (i32.const 0x07F12000))
+  (global $CODE_PAGE_BITMAP_PAGES i32 (i32.const 65536))
+  (global $HANDLER_PAIR_HIST_COUNTS i32 (i32.const 0x04000000))
+  (global $HANDLER_PAIR_HIST_COUNTS_SIZE i32 (i32.const 0x00100000))
+  (global $HANDLER_HIST_COUNT i32 (i32.const 512))
   (global $BRANCH_CMP_JCC_HIST i32 (i32.const 0x07F91000))
   (global $BRANCH_CMP_JCC_HIST_SIZE i32 (i32.const 0x00001000))
   (global $BRANCH_TEST_JCC_HIST i32 (i32.const 0x07F92000))
@@ -2066,6 +2139,13 @@
   (global $wave_out_cb_instance (mut i32) (i32.const 0))
   (global $wave_out_cb_type (mut i32) (i32.const 0))
   (global $wave_out_volume (mut i32) (i32.const 0xFFFFFFFF))  ;; packed L|R, default max
+  ;; MMIO buffered-I/O slots. mmioGetInfo/mmioAdvance hand the app a real
+  ;; read buffer it memcpy's out of, so each open HMMIO that asks for one
+  ;; needs a stable guest-heap block. Lazily allocated table of
+  ;; $MMIO_BUF_SLOTS {hmmio, pchBuffer} pairs; buffers are reused, never freed.
+  (global $mmio_buf_table (mut i32) (i32.const 0))
+  (global $MMIO_BUF_SLOTS i32 (i32.const 8))
+  (global $MMIO_BUF_SIZE i32 (i32.const 8192))
   (global $rgn_counter (mut i32) (i32.const 0))
   ;; _initterm trampoline state
   (global $initterm_ptr (mut i32) (i32.const 0))  ;; current position in fn ptr table
@@ -2227,14 +2307,19 @@
   (global $TIMER_ENTRY_SIZE i32 (i32.const 20))
   (global $timer_count  (mut i32) (i32.const 0))    ;; Number of active timers
   (global $auto_timer_id (mut i32) (i32.const 0x1000))  ;; Auto-generated timer IDs start here
-  ;; Multimedia timer (timeSetEvent) — single slot, globals only
-  (global $mm_timer_id       (mut i32) (i32.const 0))  ;; 0 = inactive
-  (global $mm_timer_interval (mut i32) (i32.const 0))
-  (global $mm_timer_callback (mut i32) (i32.const 0))
-  (global $mm_timer_dwuser   (mut i32) (i32.const 0))
-  (global $mm_timer_last_tick (mut i32) (i32.const 0))
-  (global $mm_timer_oneshot  (mut i32) (i32.const 0))  ;; 1 = TIME_ONESHOT
-  (global $mm_timer_next_id  (mut i32) (i32.const 1))  ;; auto-increment
+  ;; Multimedia timers (timeSetEvent). A single slot is not enough: one client
+  ;; commonly runs a periodic service timer *and* short one-shots at the same
+  ;; time. Smacker does exactly that — a 31ms periodic audio-service timer plus
+  ;; a one-shot per submitted buffer — and with one slot each one-shot evicted
+  ;; the periodic timer, fired once, and left no timer at all, so the audio
+  ;; buffers were never released and SmackWait spun forever.
+  ;; Slot: +0 id (0 = free), +4 interval, +8 callback, +12 dwUser,
+  ;;       +16 last_tick, +20 oneshot. The word past the table holds the
+  ;;       id allocator (0 reads as 1). Process-wide, hence memory not globals.
+  (global $MM_TIMER_TABLE i32 (i32.const 0x00010800))
+  (global $MM_TIMER_MAX   i32 (i32.const 8))
+  (global $MM_TIMER_ENTRY i32 (i32.const 24))
+  (global $MM_TIMER_NEXT_ID i32 (i32.const 0x000108C0))
   (global $mm_timer_in_cb    (mut i32) (i32.const 0))  ;; re-entrancy guard
   (global $mm_timer_ret_thunk (mut i32) (i32.const 0)) ;; CACA000A return thunk
   (global $font_enum_ret_thunk (mut i32) (i32.const 0)) ;; CACA0011 EnumFontFamilies callback return
@@ -2349,6 +2434,15 @@
   (global $dlg_pump_hwnd (mut i32) (i32.const 0))   ;; Modal pump hwnd (DialogBoxParamA only)
   (global $dlg_result   (mut i32) (i32.const 0))    ;; EndDialog return value
   (global $dlg_ended    (mut i32) (i32.const 0))    ;; Flag: EndDialog was called
+  ;; HWND whose EndDialog teardown is currently running. Real USER only marks
+  ;; the dialog finished and lets DialogBox destroy it after the DLGPROC
+  ;; returns, so calling EndDialog twice is harmless there. We destroy inline,
+  ;; and $wnd_destroy_recursive dispatches WM_DESTROY back into the guest --
+  ;; whose handler calls EndDialog again (Disk Cleanup's OK button), which
+  ;; re-enters the teardown for a window still in the table and recurses until
+  ;; the host stack dies. Re-entry for the same HWND records the result and
+  ;; returns instead.
+  (global $dlg_ending_hwnd (mut i32) (i32.const 0))
   ;; Shared-memory mirror for EndDialog calls made from worker-thread WASM
   ;; instances. Thread globals are private; this lets the main modal pump see
   ;; installer worker completion.
@@ -2448,6 +2542,13 @@
   ;; which frees the old buffer first.
   (global $opendlg_current_dir (mut i32) (i32.const 0))
   (global $opendlg_wide (mut i32) (i32.const 0)) ;; current OPENFILENAME is W
+
+  ;; MSComDlg.CommonDialog drives the same WAT-native file dialog through
+  ;; IDispatch instead of GetOpenFileNameA. These hold the automation object
+  ;; and the OPENFILENAME synthesized for it, so the chosen name can be
+  ;; mirrored back onto the FileName property when the dialog closes.
+  (global $cd_dlg_root (mut i32) (i32.const 0))
+  (global $cd_dlg_ofn  (mut i32) (i32.const 0))
 
   ;; STEP 6 — find/replace dialog hwnd tracking. Set when $handle_FindTextA
   ;; calls $create_findreplace_dialog. Test bridge queries these via the
@@ -2777,6 +2878,19 @@
   (global $win16_ne_off (mut i32) (i32.const 0))
   (global $win16_file_size (mut i32) (i32.const 0))
   (global $win16_res_len (mut i32) (i32.const 0))
+  ;; NUL-separated, double-NUL terminated; see the data segment above.
+  (global $STATIC_SYS_DLL_NAMES i32 (i32.const 0x11DD0))
+  (global $STATIC_SYS_DIR i32 (i32.const 0x11DF4))
+  (global $STATIC_SYS_DLL_EXT i32 (i32.const 0x11E08))
+  ;; Pseudo module handles for those names. They are deliberately outside
+  ;; every mapped image so nothing mistakes one for a real base address; the
+  ;; only operations defined on them are GetProcAddress (which resolves
+  ;; through the API table and ignores the handle) and GetModuleFileName.
+  (global $STATIC_SYS_DLL_HANDLE_BASE i32 (i32.const 0x5D110000))
+  ;; First index in the name list that belongs to DirectX.
+  (global $STATIC_SYS_DLL_FIRST_DX i32 (i32.const 1))
+  (global $DX_VERSION_INFO i32 (i32.const 0x11270))
+  (global $DX_VERSION_INFO_SIZE i32 (i32.const 92))
   (global $WIN16_NAME_KERNEL   i32 (i32.const 0x11E70))
   (global $WIN16_NAME_USER     i32 (i32.const 0x11E77))
   (global $WIN16_NAME_GDI      i32 (i32.const 0x11E7C))

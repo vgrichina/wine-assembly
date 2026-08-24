@@ -45,7 +45,9 @@ if (!ANALYZE_ONLY) {
     + ` --no-close --repaint-every=50 --quiet-api --trace-dx --input='${INPUT}' --png="${OUT}"`;
   console.log('$', cmd);
   try {
-    stdout = execSync(cmd, { encoding: 'utf-8', timeout: 900000, cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+    // The drive above measures 5s. A cap 180x that does not protect anything --
+    // it just means a hang burns fifteen minutes before anyone sees it.
+    stdout = execSync(cmd, { encoding: 'utf-8', timeout: 60000, cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
   } catch (e) {
     const out = (e.stdout || '').toString() + (e.stderr || '').toString();
     console.error(out.split('\n').slice(-40).join('\n'));

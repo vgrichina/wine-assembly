@@ -535,6 +535,7 @@
 
   ;; 805: mmioClose(hmmio, wFlags) — 2 args stdcall
   (func $handle_mmioClose (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $mmio_buf_release (local.get $arg0))
     (drop (call $host_fs_close_handle (local.get $arg0)))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
@@ -587,9 +588,15 @@
         (br_if $done (i32.lt_u (i32.load (local.get $bytes_read_wa)) (i32.const 8)))
         (local.set $ckid (i32.load (local.get $ck_wa)))
         (local.set $cksize (i32.load (i32.add (local.get $ck_wa) (i32.const 4))))
-        ;; For RIFF and LIST chunks, read 4 more bytes for fccType
+        ;; For RIFF and LIST chunks, read 4 more bytes for fccType.
+        ;; dwDataOffset is always the byte after cksize (pos+8) — for a RIFF/LIST
+        ;; chunk the data area *starts with* the form type, so it is not skipped
+        ;; here even though the file pointer is left past it. Apps rely on both
+        ;; halves of that: the MSDN idiom seeks to `dwDataOffset + sizeof(FOURCC)`
+        ;; to reach the first subchunk, and mmioAscend adds cksize (which counts
+        ;; the form type) to dwDataOffset to find the chunk end.
         (local.set $fcc_type (i32.const 0))
-        (local.set $data_offset (call $host_fs_set_file_pointer (local.get $arg0) (i32.const 0) (i32.const 1)))
+        (local.set $data_offset (i32.add (local.get $pos) (i32.const 8)))
         (if (i32.or
               (i32.eq (local.get $ckid) (i32.const 0x46464952))  ;; "RIFF"
               (i32.eq (local.get $ckid) (i32.const 0x5453494C))) ;; "LIST"
@@ -602,7 +609,6 @@
               (i32.const 4)
               (local.get $bytes_read_ga)))
             (local.set $fcc_type (i32.load (i32.add (local.get $ck_wa) (i32.const 8))))
-            (local.set $data_offset (call $host_fs_set_file_pointer (local.get $arg0) (i32.const 0) (i32.const 1)))
           ))
         ;; Store dwDataOffset
         (i32.store (i32.add (local.get $ck_wa) (i32.const 12)) (local.get $data_offset))
@@ -701,6 +707,154 @@
       (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
+
+  ;; --- MMIO buffered I/O ------------------------------------------------
+  ;; MMIOINFO: +0 dwFlags, +4 fccIOProc, +8 pIOProc, +12 wErrorRet, +16 htask,
+  ;;   +20 cchBuffer, +24 pchBuffer, +28 pchNext, +32 pchEndRead,
+  ;;   +36 pchEndWrite, +40 lBufOffset, +44 lDiskOffset, +48 adwInfo[3],
+  ;;   +60 dwReserved1, +64 dwReserved2, +68 hmmio.
+  ;; The app reads straight out of pchBuffer and calls mmioAdvance to refill,
+  ;; so the buffer must be a real guest block that stays put for the life of
+  ;; the handle. $mmio_buf_for binds one 8KB block per HMMIO.
+  (func $mmio_slot_addr (param $slot i32) (result i32)
+    (i32.add (global.get $mmio_buf_table) (i32.mul (local.get $slot) (i32.const 8))))
+
+  ;; Returns the guest buffer bound to $h, binding a free (or recycled) slot
+  ;; on first use. 0 only if the heap is exhausted.
+  (func $mmio_buf_for (param $h i32) (result i32)
+    (local $i i32) (local $addr i32) (local $free i32) (local $buf i32)
+    (if (i32.eqz (global.get $mmio_buf_table))
+      (then
+        (global.set $mmio_buf_table
+          (call $heap_alloc (i32.mul (global.get $MMIO_BUF_SLOTS) (i32.const 8))))
+        (if (i32.eqz (global.get $mmio_buf_table)) (then (return (i32.const 0))))
+        (call $zero_memory (call $g2w (global.get $mmio_buf_table))
+          (i32.mul (global.get $MMIO_BUF_SLOTS) (i32.const 8)))))
+    (local.set $free (i32.const -1))
+    (local.set $i (i32.const 0))
+    (block $done
+      (loop $scan
+        (br_if $done (i32.ge_u (local.get $i) (global.get $MMIO_BUF_SLOTS)))
+        (local.set $addr (call $mmio_slot_addr (local.get $i)))
+        (if (i32.eq (call $gl32 (local.get $addr)) (local.get $h))
+          (then (return (call $gl32 (i32.add (local.get $addr) (i32.const 4))))))
+        (if (i32.and (i32.eq (local.get $free) (i32.const -1))
+                     (i32.eqz (call $gl32 (local.get $addr))))
+          (then (local.set $free (local.get $i))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $scan)))
+    ;; No slot for this handle yet. Recycle deterministically when all are busy.
+    (if (i32.eq (local.get $free) (i32.const -1))
+      (then (local.set $free (i32.and (local.get $h) (i32.const 7)))))
+    (local.set $addr (call $mmio_slot_addr (local.get $free)))
+    (local.set $buf (call $gl32 (i32.add (local.get $addr) (i32.const 4))))
+    (if (i32.eqz (local.get $buf))
+      (then
+        (local.set $buf (call $heap_alloc (global.get $MMIO_BUF_SIZE)))
+        (if (i32.eqz (local.get $buf)) (then (return (i32.const 0))))
+        (call $gs32 (i32.add (local.get $addr) (i32.const 4)) (local.get $buf))))
+    (call $gs32 (local.get $addr) (local.get $h))
+    (local.get $buf))
+
+  ;; Drops the handle→buffer binding (the block itself is kept for reuse).
+  (func $mmio_buf_release (param $h i32)
+    (local $i i32) (local $addr i32)
+    (if (i32.eqz (global.get $mmio_buf_table)) (then (return)))
+    (local.set $i (i32.const 0))
+    (block $done
+      (loop $scan
+        (br_if $done (i32.ge_u (local.get $i) (global.get $MMIO_BUF_SLOTS)))
+        (local.set $addr (call $mmio_slot_addr (local.get $i)))
+        (if (i32.eq (call $gl32 (local.get $addr)) (local.get $h))
+          (then
+            (call $gs32 (local.get $addr) (i32.const 0))
+            (return)))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $scan))))
+
+  ;; Refills lpmmioinfo's buffer from the file. The app's own pchNext says how
+  ;; much of the previous fill it consumed, so the next disk read starts there.
+  (func $mmio_refill (param $h i32) (param $info i32) (result i32)
+    (local $info_wa i32) (local $buf i32) (local $pos i32)
+    (local $read_ga i32) (local $read_wa i32) (local $got i32)
+    (local.set $info_wa (call $g2w (local.get $info)))
+    (local.set $buf (i32.load (i32.add (local.get $info_wa) (i32.const 24))))
+    (if (i32.eqz (local.get $buf)) (then (return (i32.const 259))))  ;; MMIOERR_UNBUFFERED
+    (local.set $pos (i32.add
+      (i32.load (i32.add (local.get $info_wa) (i32.const 40)))       ;; lBufOffset
+      (i32.sub (i32.load (i32.add (local.get $info_wa) (i32.const 28)))  ;; pchNext
+               (local.get $buf))))
+    (drop (call $host_fs_set_file_pointer (local.get $h) (local.get $pos) (i32.const 0)))
+    (local.set $read_ga (i32.sub (global.get $esp) (i32.const 8)))
+    (local.set $read_wa (call $g2w (local.get $read_ga)))
+    (i32.store (local.get $read_wa) (i32.const 0))
+    (drop (call $host_fs_read_file
+      (local.get $h)
+      (local.get $buf)
+      (i32.load (i32.add (local.get $info_wa) (i32.const 20)))       ;; cchBuffer
+      (local.get $read_ga)))
+    (local.set $got (i32.load (local.get $read_wa)))
+    (i32.store (i32.add (local.get $info_wa) (i32.const 28)) (local.get $buf))          ;; pchNext
+    (i32.store (i32.add (local.get $info_wa) (i32.const 32))
+      (i32.add (local.get $buf) (local.get $got)))                                      ;; pchEndRead
+    (i32.store (i32.add (local.get $info_wa) (i32.const 40)) (local.get $pos))          ;; lBufOffset
+    (i32.store (i32.add (local.get $info_wa) (i32.const 44))
+      (i32.add (local.get $pos) (local.get $got)))                                      ;; lDiskOffset
+    (i32.const 0))
+
+  ;; mmioGetInfo(hmmio, lpmmioinfo, wFlags) — 3 args stdcall
+  (func $handle_mmioGetInfo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $info_wa i32) (local $buf i32) (local $pos i32)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    (if (i32.eqz (local.get $arg1))
+      (then (global.set $eax (i32.const 5)) (return)))                ;; MMSYSERR_INVALPARAM
+    (local.set $buf (call $mmio_buf_for (local.get $arg0)))
+    (if (i32.eqz (local.get $buf))
+      (then (global.set $eax (i32.const 7)) (return)))                ;; MMSYSERR_NOMEM
+    (local.set $pos (call $host_fs_set_file_pointer (local.get $arg0) (i32.const 0) (i32.const 1)))
+    (local.set $info_wa (call $g2w (local.get $arg1)))
+    (call $zero_memory (local.get $info_wa) (i32.const 72))
+    (i32.store (local.get $info_wa) (i32.const 0x00010000))           ;; dwFlags = MMIO_ALLOCBUF
+    (i32.store (i32.add (local.get $info_wa) (i32.const 4)) (i32.const 0x454C4946))  ;; fccIOProc "FILE"
+    (i32.store (i32.add (local.get $info_wa) (i32.const 20)) (global.get $MMIO_BUF_SIZE))
+    (i32.store (i32.add (local.get $info_wa) (i32.const 24)) (local.get $buf))       ;; pchBuffer
+    ;; Buffer starts empty: pchNext == pchEndRead makes the app call mmioAdvance.
+    (i32.store (i32.add (local.get $info_wa) (i32.const 28)) (local.get $buf))       ;; pchNext
+    (i32.store (i32.add (local.get $info_wa) (i32.const 32)) (local.get $buf))       ;; pchEndRead
+    (i32.store (i32.add (local.get $info_wa) (i32.const 36))
+      (i32.add (local.get $buf) (global.get $MMIO_BUF_SIZE)))                        ;; pchEndWrite
+    (i32.store (i32.add (local.get $info_wa) (i32.const 40)) (local.get $pos))       ;; lBufOffset
+    (i32.store (i32.add (local.get $info_wa) (i32.const 44)) (local.get $pos))       ;; lDiskOffset
+    (i32.store (i32.add (local.get $info_wa) (i32.const 68)) (local.get $arg0))      ;; hmmio
+    (global.set $eax (i32.const 0)))
+
+  ;; mmioAdvance(hmmio, lpmmioinfo, fuAdvance) — 3 args stdcall
+  (func $handle_mmioAdvance (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    (if (i32.eqz (local.get $arg1))
+      (then (global.set $eax (i32.const 5)) (return)))                ;; MMSYSERR_INVALPARAM
+    (global.set $eax (call $mmio_refill (local.get $arg0) (local.get $arg1))))
+
+  ;; mmioSetInfo(hmmio, lpmmioinfo, wFlags) — 3 args stdcall
+  ;; Hands buffered I/O back. The file pointer has to end up where the app's
+  ;; pchNext left off, or a following mmioRead/mmioSeek reads from the wrong
+  ;; place — mmioAdvance leaves it a whole buffer ahead.
+  (func $handle_mmioSetInfo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $info_wa i32) (local $buf i32)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    (if (i32.eqz (local.get $arg1))
+      (then (global.set $eax (i32.const 5)) (return)))                ;; MMSYSERR_INVALPARAM
+    (local.set $info_wa (call $g2w (local.get $arg1)))
+    (local.set $buf (i32.load (i32.add (local.get $info_wa) (i32.const 24))))
+    (if (local.get $buf)
+      (then
+        (drop (call $host_fs_set_file_pointer (local.get $arg0)
+          (i32.add
+            (i32.load (i32.add (local.get $info_wa) (i32.const 40)))  ;; lBufOffset
+            (i32.sub (i32.load (i32.add (local.get $info_wa) (i32.const 28)))
+                     (local.get $buf)))                               ;; + consumed
+          (i32.const 0)))))
+    (global.set $eax (i32.const 0)))
 
   (func $mci_slot_addr (param $slot i32) (result i32)
     (i32.add (global.get $MCI_DEVICE_TABLE)
@@ -1601,15 +1755,31 @@
   ;; 1246: timeSetEvent(uDelay, uResolution, lpTimeProc, dwUser, fuEvent)
   ;; Returns timer ID (non-zero) on success, 0 on error
   (func $handle_timeSetEvent (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $tid i32)
-    (local.set $tid (global.get $mm_timer_next_id))
-    (global.set $mm_timer_next_id (i32.add (local.get $tid) (i32.const 1)))
-    (global.set $mm_timer_id (local.get $tid))
-    (global.set $mm_timer_interval (local.get $arg0))
-    (global.set $mm_timer_callback (local.get $arg2))
-    (global.set $mm_timer_dwuser (local.get $arg3))
-    (global.set $mm_timer_last_tick (call $host_get_ticks))
-    (global.set $mm_timer_oneshot (i32.eqz (i32.and (local.get $arg4) (i32.const 1))))
+    (local $tid i32) (local $i i32) (local $slot i32)
+    ;; Take the first free slot. Windows lets a client hold several timers at
+    ;; once and Smacker relies on it (periodic mixer + one-shot per buffer),
+    ;; so evicting an existing timer here would silently kill a live one.
+    (block $found (loop $scan
+      (if (i32.ge_u (local.get $i) (global.get $MM_TIMER_MAX))
+        (then
+          ;; Out of slots — TIMERR_NOCANDO, reported as a 0 timer id.
+          (global.set $eax (i32.const 0))
+          (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+          (return)))
+      (local.set $slot (call $mm_timer_slot (local.get $i)))
+      (br_if $found (i32.eqz (i32.load (local.get $slot))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.set $tid (i32.load (global.get $MM_TIMER_NEXT_ID)))
+    (if (i32.eqz (local.get $tid)) (then (local.set $tid (i32.const 1))))
+    (i32.store (global.get $MM_TIMER_NEXT_ID) (i32.add (local.get $tid) (i32.const 1)))
+    (i32.store          (local.get $slot) (local.get $tid))
+    (i32.store offset=4 (local.get $slot) (local.get $arg0))
+    (i32.store offset=8 (local.get $slot) (local.get $arg2))
+    (i32.store offset=12 (local.get $slot) (local.get $arg3))
+    (i32.store offset=16 (local.get $slot) (call $host_get_ticks))
+    (i32.store offset=20 (local.get $slot)
+      (i32.eqz (i32.and (local.get $arg4) (i32.const 1))))
     (global.set $eax (local.get $tid))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
@@ -1617,9 +1787,11 @@
   ;; 1247: timeKillEvent(uTimerID)
   ;; Returns TIMERR_NOERROR (0) if found, MMSYSERR_INVALPARAM (11) if not
   (func $handle_timeKillEvent (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.eq (local.get $arg0) (global.get $mm_timer_id))
+    (local $slot i32)
+    (local.set $slot (call $mm_timer_find (local.get $arg0)))
+    (if (local.get $slot)
       (then
-        (global.set $mm_timer_id (i32.const 0))
+        (i32.store (local.get $slot) (i32.const 0))
         (global.set $eax (i32.const 0)))
       (else
         (global.set $eax (i32.const 11))))

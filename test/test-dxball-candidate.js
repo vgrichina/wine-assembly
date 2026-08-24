@@ -147,6 +147,13 @@ async function main() {
     const gameOutput = runCli([
       `--exe=${gameExe}`,
       ...common,
+      // The installed game sits in the temp VFS, so it is not the registered
+      // dxball app and inherits no asset manifest: run.js mounts a bare --exe
+      // and nothing else. Without this the game opens default.bds, intro.pcx
+      // and candy.sbk, gets FAIL for each, and exits code 1 at 193 API calls
+      // before any scheduled frame -- which reads as "omitted frame", not as
+      // "could not find its data". The install is flat, so one glob covers it.
+      '--vfs-include=*',
       '--batch-size=50000',
       '--max-batches=340',
       '--stuck-after=500',

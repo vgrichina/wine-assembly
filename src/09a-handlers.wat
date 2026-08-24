@@ -124,19 +124,62 @@
   ;; late delivery time. A 5ms periodic timer polled at t=6,12,18 otherwise
   ;; becomes a 6ms timer permanently; advancing to the latest 5ms boundary
   ;; keeps future callbacks aligned while still skipping missed callbacks.
-  (func $mm_timer_consume_due_tick
-    (local $periods i32)
-    (if (i32.eqz (global.get $mm_timer_interval))
-      (then (global.set $mm_timer_last_tick (global.get $tick_count)))
+  (func $mm_timer_consume_due_tick (param $slot i32)
+    (local $periods i32) (local $interval i32)
+    (local.set $interval (i32.load offset=4 (local.get $slot)))
+    (if (i32.eqz (local.get $interval))
+      (then (i32.store offset=16 (local.get $slot) (global.get $tick_count)))
       (else
         (local.set $periods
           (i32.div_u
-            (i32.sub (global.get $tick_count) (global.get $mm_timer_last_tick))
-            (global.get $mm_timer_interval)))
-        (global.set $mm_timer_last_tick
+            (i32.sub (global.get $tick_count) (i32.load offset=16 (local.get $slot)))
+            (local.get $interval)))
+        (i32.store offset=16 (local.get $slot)
           (i32.add
-            (global.get $mm_timer_last_tick)
-            (i32.mul (local.get $periods) (global.get $mm_timer_interval)))))))
+            (i32.load offset=16 (local.get $slot))
+            (i32.mul (local.get $periods) (local.get $interval)))))))
+
+  ;; Address of multimedia-timer slot $i.
+  (func $mm_timer_slot (param $i i32) (result i32)
+    (i32.add (global.get $MM_TIMER_TABLE)
+      (i32.mul (local.get $i) (global.get $MM_TIMER_ENTRY))))
+
+  ;; Slot holding timer id $id, or 0. Id 0 is the free marker, never a timer.
+  (func $mm_timer_find (param $id i32) (result i32)
+    (local $i i32) (local $slot i32)
+    (if (i32.eqz (local.get $id)) (then (return (i32.const 0))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MM_TIMER_MAX)))
+      (local.set $slot (call $mm_timer_slot (local.get $i)))
+      (if (i32.eq (i32.load (local.get $slot)) (local.get $id))
+        (then (return (local.get $slot))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  ;; First slot whose period has elapsed, or 0. Refreshes $tick_count, so the
+  ;; caller does not have to.
+  (func $mm_timer_due_slot (result i32)
+    (local $i i32) (local $slot i32)
+    (global.set $tick_count (call $host_get_ticks))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MM_TIMER_MAX)))
+      (local.set $slot (call $mm_timer_slot (local.get $i)))
+      (if (i32.load (local.get $slot))
+        (then
+          (if (i32.ge_u
+                (i32.sub (global.get $tick_count) (i32.load offset=16 (local.get $slot)))
+                (i32.load offset=4 (local.get $slot)))
+            (then (return (local.get $slot))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  ;; Charge one period to a due slot, retiring it if it was a one-shot.
+  (func $mm_timer_consume_slot (param $slot i32)
+    (call $mm_timer_consume_due_tick (local.get $slot))
+    (if (i32.load offset=20 (local.get $slot))
+      (then (i32.store (local.get $slot) (i32.const 0)))))
 
   ;; $timer_check_due(msg_ptr, consume) — scan timer table, fill MSG with first due timer, return 1 if found
   ;; $consume: 1 = update last_tick (PM_REMOVE/GetMessage), 0 = peek only (PM_NOREMOVE)
@@ -175,22 +218,22 @@
         (br $loop)
       )
     )
-    ;; Check multimedia timer (timeSetEvent)
-    (if (global.get $mm_timer_id)
+    ;; Check multimedia timers (timeSetEvent)
+    (local.set $addr (call $mm_timer_due_slot))
+    (if (local.get $addr)
       (then
-        (local.set $elapsed (i32.sub (global.get $tick_count) (global.get $mm_timer_last_tick)))
-        (if (i32.ge_u (local.get $elapsed) (global.get $mm_timer_interval))
-          (then
-            (if (local.get $consume)
-              (then
-                (call $mm_timer_consume_due_tick)
-                (if (global.get $mm_timer_oneshot)
-                  (then (global.set $mm_timer_id (i32.const 0))))))
-            (call $gs32 (local.get $msg_ptr) (i32.const 0))                                        ;; hwnd=0
-            (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x7FF0))           ;; internal MM_TIMER
-            (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (global.get $mm_timer_id))    ;; wParam=timerID
-            (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (global.get $mm_timer_callback)) ;; lParam=callback
-            (return (i32.const 1))))))
+        ;; The MSG carries dwUser itself: a one-shot retires the moment it is
+        ;; taken, so DispatchMessage can no longer find its slot by timer id.
+        (call $gs32 (local.get $msg_ptr) (i32.load offset=12 (local.get $addr)))          ;; hwnd field = dwUser
+        (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x7FF0))      ;; internal MM_TIMER
+        (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.load (local.get $addr)))  ;; wParam=timerID
+        (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12))
+          (i32.load offset=8 (local.get $addr)))                                          ;; lParam=callback
+        ;; Retire the one-shot only when the caller is really taking the
+        ;; message; a PM_NOREMOVE peek must still see it next time.
+        (if (local.get $consume)
+          (then (call $mm_timer_consume_slot (local.get $addr))))
+        (return (i32.const 1))))
     (i32.const 0)
   )
 
@@ -238,26 +281,152 @@
     (call $host_exit (local.get $arg0)) (global.set $eip (i32.const 0)) (global.set $steps (i32.const 0)) (return)
   )
 
-  ;; Statically dispatched system DLLs do not have a mapped PE image or DLL
-  ;; table entry. Recognize OLE32 explicitly so callers can use its handle with
-  ;; GetProcAddress, which already resolves non-mapped modules through the API
-  ;; table. Accept both the basename and the conventional .DLL suffix.
-  (func $guest_name_is_ole32 (param $name i32) (result i32)
-    (local $p i32)
-    (if (i32.eqz (local.get $name)) (then (return (i32.const 0))))
-    (local.set $p (call $g2w (local.get $name)))
-    (if (i32.ne (i32.or (i32.load8_u (local.get $p)) (i32.const 0x20)) (i32.const 0x6f)) (then (return (i32.const 0)))) ;; o
-    (if (i32.ne (i32.or (i32.load8_u (i32.add (local.get $p) (i32.const 1))) (i32.const 0x20)) (i32.const 0x6c)) (then (return (i32.const 0)))) ;; l
-    (if (i32.ne (i32.or (i32.load8_u (i32.add (local.get $p) (i32.const 2))) (i32.const 0x20)) (i32.const 0x65)) (then (return (i32.const 0)))) ;; e
-    (if (i32.ne (i32.load8_u (i32.add (local.get $p) (i32.const 3))) (i32.const 0x33)) (then (return (i32.const 0)))) ;; 3
-    (if (i32.ne (i32.load8_u (i32.add (local.get $p) (i32.const 4))) (i32.const 0x32)) (then (return (i32.const 0)))) ;; 2
-    (if (i32.eqz (i32.load8_u (i32.add (local.get $p) (i32.const 5)))) (then (return (i32.const 1))))
-    (if (i32.ne (i32.load8_u (i32.add (local.get $p) (i32.const 5))) (i32.const 0x2e)) (then (return (i32.const 0)))) ;; .
-    (if (i32.ne (i32.or (i32.load8_u (i32.add (local.get $p) (i32.const 6))) (i32.const 0x20)) (i32.const 0x64)) (then (return (i32.const 0)))) ;; d
-    (if (i32.ne (i32.or (i32.load8_u (i32.add (local.get $p) (i32.const 7))) (i32.const 0x20)) (i32.const 0x6c)) (then (return (i32.const 0)))) ;; l
-    (if (i32.ne (i32.or (i32.load8_u (i32.add (local.get $p) (i32.const 8))) (i32.const 0x20)) (i32.const 0x6c)) (then (return (i32.const 0)))) ;; l
-    (i32.eqz (i32.load8_u (i32.add (local.get $p) (i32.const 9))))
+  ;; A module stem is followed either by nothing or by the conventional
+  ;; ".dll" suffix — GetModuleHandle callers write it both ways.
+  (func $guest_name_tail_is_dll (param $p i32) (result i32)
+    (local $c i32)
+    (local.set $c (call $gl8 (local.get $p)))
+    (if (i32.eqz (local.get $c)) (then (return (i32.const 1))))
+    (if (i32.ne (local.get $c) (i32.const 0x2e)) (then (return (i32.const 0)))) ;; .
+    (if (i32.ne (call $tolower (call $gl8 (i32.add (local.get $p) (i32.const 1))))
+                (i32.const 0x64)) (then (return (i32.const 0)))) ;; d
+    (if (i32.ne (call $tolower (call $gl8 (i32.add (local.get $p) (i32.const 2))))
+                (i32.const 0x6c)) (then (return (i32.const 0)))) ;; l
+    (if (i32.ne (call $tolower (call $gl8 (i32.add (local.get $p) (i32.const 3))))
+                (i32.const 0x6c)) (then (return (i32.const 0)))) ;; l
+    (i32.eqz (call $gl8 (i32.add (local.get $p) (i32.const 4))))
   )
+
+  ;; Statically dispatched system DLLs do not have a mapped PE image or DLL
+  ;; table entry, so a name lookup is the only way to recognize them. Callers
+  ;; use the handle with GetProcAddress, which already resolves non-mapped
+  ;; modules through the API table, but they also use its mere existence as
+  ;; proof the component is present: Age of Empires II creates a DirectPlay
+  ;; object, queries the DirectX 6 interface off it, then asks for dplayx's
+  ;; module handle — and reports "requires DirectX 6.1a or higher" when that
+  ;; last step answers NULL. The names live at $STATIC_SYS_DLL_NAMES.
+  ;;
+  ;; Returns the 1-based list position, so 0 still reads as "not one of ours".
+  (func $guest_name_is_static_system_dll (param $name i32) (result i32)
+    (local $entry i32) (local $i i32) (local $a i32) (local $b i32)
+    (local $start i32) (local $scan i32) (local $c i32) (local $idx i32)
+    (if (i32.eqz (local.get $name)) (then (return (i32.const 0))))
+    ;; Match on the basename; a full path reaches here as readily as a stem.
+    (block $base_done (loop $base
+      (local.set $c (call $gl8 (i32.add (local.get $name) (local.get $scan))))
+      (br_if $base_done (i32.eqz (local.get $c)))
+      (if (i32.or
+            (i32.or (i32.eq (local.get $c) (i32.const 92))   ;; '\'
+                    (i32.eq (local.get $c) (i32.const 47)))  ;; '/'
+            (i32.eq (local.get $c) (i32.const 58)))          ;; ':'
+        (then (local.set $start (i32.add (local.get $scan) (i32.const 1)))))
+      (local.set $scan (i32.add (local.get $scan) (i32.const 1)))
+      (br $base)))
+    (local.set $entry (global.get $STATIC_SYS_DLL_NAMES))
+    (block $done (loop $names
+      (br_if $done (i32.eqz (i32.load8_u (local.get $entry))))
+      (local.set $i (i32.const 0))
+      (block $mismatch
+        (loop $chars
+          (local.set $b (i32.load8_u (i32.add (local.get $entry) (local.get $i))))
+          (local.set $a (call $tolower (call $gl8
+            (i32.add (local.get $name) (i32.add (local.get $start) (local.get $i))))))
+          (if (i32.eqz (local.get $b))
+            (then
+              (if (call $guest_name_tail_is_dll
+                    (i32.add (local.get $name) (i32.add (local.get $start) (local.get $i))))
+                (then (return (i32.add (local.get $idx) (i32.const 1)))))
+              (br $mismatch)))
+          (br_if $mismatch (i32.ne (local.get $a) (local.get $b)))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $chars)))
+      ;; Step past this entry's NUL to the next one.
+      (block $adv (loop $skip
+        (br_if $adv (i32.eqz (i32.load8_u (local.get $entry))))
+        (local.set $entry (i32.add (local.get $entry) (i32.const 1)))
+        (br $skip)))
+      (local.set $entry (i32.add (local.get $entry) (i32.const 1)))
+      (local.set $idx (i32.add (local.get $idx) (i32.const 1)))
+      (br $names)))
+    (i32.const 0)
+  )
+
+  ;; Address of the 0-based list entry $idx names.
+  (func $static_sys_dll_name_at (param $idx i32) (result i32)
+    (local $entry i32)
+    (local.set $entry (global.get $STATIC_SYS_DLL_NAMES))
+    (block $done (loop $skip
+      (br_if $done (i32.eqz (local.get $idx)))
+      (block $adv (loop $chars
+        (br_if $adv (i32.eqz (i32.load8_u (local.get $entry))))
+        (local.set $entry (i32.add (local.get $entry) (i32.const 1)))
+        (br $chars)))
+      (local.set $entry (i32.add (local.get $entry) (i32.const 1)))
+      (local.set $idx (i32.sub (local.get $idx) (i32.const 1)))
+      (br $skip)))
+    (local.get $entry))
+
+  ;; Is this guest path one of the statically dispatched DirectX components?
+  ;; Those are the tail of the name list, so a list position at or past
+  ;; $STATIC_SYS_DLL_FIRST_DX (0-based) answers with the DirectX version.
+  (func $name_is_static_dx_dll (param $name i32) (result i32)
+    (local $idx i32)
+    (if (i32.eqz (local.get $name)) (then (return (i32.const 0))))
+    (local.set $idx (call $guest_name_is_static_system_dll (local.get $name)))
+    (if (i32.eqz (local.get $idx)) (then (return (i32.const 0))))
+    (i32.ge_u (i32.sub (local.get $idx) (i32.const 1))
+              (global.get $STATIC_SYS_DLL_FIRST_DX)))
+
+  ;; A pseudo module handle back to its 1-based list position, or 0.
+  (func $static_sys_dll_from_handle (param $h i32) (result i32)
+    (local $idx i32)
+    (if (i32.lt_u (local.get $h) (global.get $STATIC_SYS_DLL_HANDLE_BASE))
+      (then (return (i32.const 0))))
+    (local.set $idx (i32.sub (local.get $h) (global.get $STATIC_SYS_DLL_HANDLE_BASE)))
+    ;; Past the end of the list the entry is the terminating empty string.
+    (if (i32.eqz (i32.load8_u (call $static_sys_dll_name_at (local.get $idx))))
+      (then (return (i32.const 0))))
+    (i32.add (local.get $idx) (i32.const 1)))
+
+  ;; Copy a NUL-terminated linear-memory string into a guest buffer at
+  ;; character offset $at, stopping at $limit characters. Returns the cursor.
+  (func $emit_path_part (param $buf_g i32) (param $at i32) (param $limit i32)
+                        (param $src i32) (param $wide i32) (result i32)
+    (local $ch i32) (local $step i32)
+    (local.set $step (select (i32.const 2) (i32.const 1) (local.get $wide)))
+    (block $done (loop $l
+      (local.set $ch (i32.load8_u (local.get $src)))
+      (br_if $done (i32.eqz (local.get $ch)))
+      (br_if $done (i32.ge_u (local.get $at) (local.get $limit)))
+      (call $store_char
+        (i32.add (local.get $buf_g) (i32.mul (local.get $at) (local.get $step)))
+        (local.get $ch) (local.get $wide))
+      (local.set $at (i32.add (local.get $at) (i32.const 1)))
+      (local.set $src (i32.add (local.get $src) (i32.const 1)))
+      (br $l)))
+    (local.get $at))
+
+  ;; "C:\WINDOWS\SYSTEM\<name>.dll" for a statically dispatched module. No such
+  ;; file exists; the path is here because callers feed GetModuleFileName's
+  ;; answer straight into the file-version APIs, which recognize the name back.
+  (func $static_sys_dll_file_name (param $idx i32) (param $buf_g i32)
+                                  (param $size i32) (param $wide i32) (result i32)
+    (local $at i32) (local $limit i32) (local $step i32)
+    (if (i32.eqz (local.get $buf_g)) (then (return (i32.const 0))))
+    (local.set $limit (i32.const 0x7FFFFFFF))
+    (if (local.get $size)
+      (then (local.set $limit (i32.sub (local.get $size) (i32.const 1)))))
+    (local.set $at (call $emit_path_part (local.get $buf_g) (i32.const 0)
+      (local.get $limit) (global.get $STATIC_SYS_DIR) (local.get $wide)))
+    (local.set $at (call $emit_path_part (local.get $buf_g) (local.get $at)
+      (local.get $limit) (call $static_sys_dll_name_at (local.get $idx)) (local.get $wide)))
+    (local.set $at (call $emit_path_part (local.get $buf_g) (local.get $at)
+      (local.get $limit) (global.get $STATIC_SYS_DLL_EXT) (local.get $wide)))
+    (local.set $step (select (i32.const 2) (i32.const 1) (local.get $wide)))
+    (call $store_char
+      (i32.add (local.get $buf_g) (i32.mul (local.get $at) (local.get $step)))
+      (i32.const 0) (local.get $wide))
+    (local.get $at))
 
   ;; 1: GetModuleHandleA(lpModuleName) — NULL→image_base, else search DLL table
   (func $handle_GetModuleHandleA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -276,8 +445,10 @@
               (i32.load (i32.add (global.get $DLL_TABLE)
                 (i32.mul (local.get $idx) (i32.const 32))))))
           (else
-            (if (call $guest_name_is_ole32 (local.get $arg0))
-              (then (local.set $result (global.get $image_base)))
+            (local.set $idx (call $guest_name_is_static_system_dll (local.get $arg0)))
+            (if (local.get $idx)
+              (then (local.set $result (i32.add (global.get $STATIC_SYS_DLL_HANDLE_BASE)
+                      (i32.sub (local.get $idx) (i32.const 1)))))
               (else (local.set $result (i32.const 0))))))))
     (global.set $eax (local.get $result))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
@@ -1831,6 +2002,14 @@
       (else (call $gs8 (local.get $p_g) (local.get $ch)))))
 
   (func $handle_GetModuleFileNameA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $idx i32)
+    (local.set $idx (call $static_sys_dll_from_handle (local.get $arg0)))
+    (if (local.get $idx)
+      (then
+        (global.set $eax (call $static_sys_dll_file_name
+          (i32.sub (local.get $idx) (i32.const 1))
+          (local.get $arg1) (local.get $arg2) (i32.const 0)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
     (global.set $eax (call $module_file_name (local.get $arg1) (local.get $arg2) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
   )
@@ -2777,6 +2956,11 @@
       (then
         (global.set $eax (call $wnd_set_style (local.get $arg0) (local.get $arg2)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (if (i32.eq (local.get $arg1) (i32.const -20))  ;; GWL_EXSTYLE
+      (then
+        (global.set $eax (call $ctrl_get_ex_style (local.get $arg0)))  ;; old value
+        (call $ctrl_set_ex_style (local.get $arg0) (local.get $arg2))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
     ;; Dialog and registered-window extra bytes are independent of application
     ;; GWL_USERDATA. WinHelp's toolbar uses multiple positive LONG offsets.
     (if (i32.ge_s (local.get $arg1) (i32.const 0))
@@ -3328,12 +3512,22 @@
     ;; MFC also calls EndDialog on dialogs created through CreateDialogParamA.
     ;; Those modeless dialogs have no CACA0004 pump, so do not poison the
     ;; global modal-completion flags unless this hwnd is the active modal.
-    ;; The test reads the shared mirror, not this instance's own
-    ;; $dlg_pump_hwnd: the pump lives on main, and an NSIS installer calls
-    ;; EndDialog from its extraction thread, whose private copy is 0.
+    ;; Both tests read the shared mirrors, not this instance's own
+    ;; $dlg_pump_hwnd/$dlg_ended: the pump lives on main, and an NSIS installer
+    ;; calls EndDialog from its extraction thread, whose private copies are 0.
+    ;;
+    ;; First EndDialog wins. Real USER only records the result and lets the
+    ;; DialogBox loop destroy the window once the DLGPROC has returned, so the
+    ;; WM_DESTROY the app then sees is delivered *after* the result has been
+    ;; read. We destroy inline, so a DLGPROC that calls EndDialog again from
+    ;; its own WM_DESTROY (Disk Cleanup answers WM_DESTROY with
+    ;; EndDialog(hDlg, IDCANCEL)) would otherwise overwrite the IDOK the user
+    ;; actually chose, and the caller would take the cancel path and exit.
     (if (i32.and
-          (i32.ne (i32.load (global.get $SHARED_DLG_PUMP_HWND)) (i32.const 0))
-          (i32.eq (local.get $arg0) (i32.load (global.get $SHARED_DLG_PUMP_HWND))))
+          (i32.and
+            (i32.ne (i32.load (global.get $SHARED_DLG_PUMP_HWND)) (i32.const 0))
+            (i32.eq (local.get $arg0) (i32.load (global.get $SHARED_DLG_PUMP_HWND))))
+          (i32.eqz (i32.load (global.get $SHARED_DLG_ENDED))))
       (then
         (global.set $dlg_ended (i32.const 1))
         (global.set $dlg_result (local.get $arg1))
@@ -3352,9 +3546,13 @@
     ;; cleared. Storm's SDlgEndDialog relies on that lifecycle to advance from
     ;; Diablo's modeless class picker. The pump cleanup path below is guarded
     ;; for already-removed dialogs.
-    (if (call $wnd_table_get (local.get $arg0))
+    (if (i32.and
+          (i32.ne (call $wnd_table_get (local.get $arg0)) (i32.const 0))
+          (i32.ne (local.get $arg0) (global.get $dlg_ending_hwnd)))
       (then
-        (call $wnd_destroy_recursive (local.get $arg0))))
+        (global.set $dlg_ending_hwnd (local.get $arg0))
+        (call $wnd_destroy_recursive (local.get $arg0))
+        (global.set $dlg_ending_hwnd (i32.const 0))))
     ;; Don't set quit_flag — that kills the main message loop.
     ;; CACA0004 checks dlg_ended to exit the modal loop.
     (global.set $eax (i32.const 1))
@@ -5626,6 +5824,14 @@
 
   ;; 284: GetModuleFileNameW — write L"C:\<exe_name>\0" as wide string
   (func $handle_GetModuleFileNameW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $idx i32)
+    (local.set $idx (call $static_sys_dll_from_handle (local.get $arg0)))
+    (if (local.get $idx)
+      (then
+        (global.set $eax (call $static_sys_dll_file_name
+          (i32.sub (local.get $idx) (i32.const 1))
+          (local.get $arg1) (local.get $arg2) (i32.const 1)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
     (global.set $eax (call $module_file_name (local.get $arg1) (local.get $arg2) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
   )
@@ -12358,6 +12564,14 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     ;; If lpdwHandle is non-null, set *lpdwHandle = 0
     (if (local.get $arg1)
       (then (call $gs32 (local.get $arg1) (i32.const 0))))
+    ;; A DirectX component we dispatch statically has no file on disk, so the
+    ;; EXE's own resource would be answered instead — which is how an app's
+    ;; "do you have DirectX 6.1a?" probe ends up reading its own version.
+    (if (call $name_is_static_dx_dll (local.get $arg0))
+      (then
+        (global.set $eax (global.get $DX_VERSION_INFO_SIZE))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
     ;; Find RT_VERSION (16) resource with ID 1
     (local.set $entry (call $find_resource (i32.const 16) (i32.const 1)))
     (if (local.get $entry)
@@ -12373,6 +12587,16 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
   ;; Copies the RT_VERSION resource data into the caller's buffer.
   (func $handle_GetFileVersionInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $rva i32) (local $size i32) (local $len i32)
+    (if (call $name_is_static_dx_dll (local.get $arg0))
+      (then
+        (local.set $len (local.get $arg2))
+        (if (i32.gt_u (local.get $len) (global.get $DX_VERSION_INFO_SIZE))
+          (then (local.set $len (global.get $DX_VERSION_INFO_SIZE))))
+        (memory.copy (call $g2w (local.get $arg3))
+          (global.get $DX_VERSION_INFO) (local.get $len))
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
     ;; Find RT_VERSION (16) resource with ID 1
     (local.set $entry (call $find_resource (i32.const 16) (i32.const 1)))
     (if (i32.eqz (local.get $entry))
@@ -12408,7 +12632,7 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
             (i32.eq (i32.load8_u (local.get $sub_wa)) (i32.const 0x5c))
             (i32.eqz (i32.load8_u (i32.add (local.get $sub_wa) (i32.const 1)))))
           (i32.eq (i32.load (i32.add (local.get $block_wa) (i32.const 0x28)))
-                  (i32.const -17825603)))  ;; 0xFEEF04BD
+                  (i32.const 0xFEEF04BD)))
       (then
         ;; Set *lplpBuffer = guest ptr to VS_FIXEDFILEINFO
         (call $gs32 (local.get $arg2)

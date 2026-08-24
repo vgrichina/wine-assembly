@@ -102,6 +102,8 @@ function runGame(app, input, maxBatches, extra = [], batchSize = 20000) {
   const output = execFileSync(process.execPath, args, {
     cwd: ROOT,
     encoding: 'utf8',
+    // Measures 22s -- the slowest gameplay drive in the suite, so this one keeps
+    // a wider cap than its siblings on purpose.
     timeout: 120000,
     maxBuffer: 16 * 1024 * 1024,
   });

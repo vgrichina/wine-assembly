@@ -8,6 +8,18 @@
   ;; $d_pc is a global used during decoding.
   (global $d_pc (mut i32) (i32.const 0))
 
+  ;; --no-sib-fusion: emit the unfused compute_ea_sib + consumer pair instead
+  ;; of the fused single handler. On by default. This exists because
+  ;; docs/interpreter-dispatch-perf.md's rule for keeping a fusion is an
+  ;; op-count delta AND a zero png-diff AND a timing run — and a fusion that
+  ;; needs a rebuild to switch off cannot be A/B'd on one box in one sitting.
+  ;; Decode-time only, so the flag itself costs nothing on the hot path.
+  (global $sib_fusion_enabled (mut i32) (i32.const 1))
+  ;; Where $sib_store_at leaves the operands of the store it just matched. Not
+  ;; return values because there are three of them and one is the length.
+  (global $fuse_info (mut i32) (i32.const 0))
+  (global $fuse_disp (mut i32) (i32.const 0))
+
   ;; Read next byte from guest at d_pc, advance d_pc
   (func $d_fetch8 (result i32)
     (local $v i32)
@@ -452,6 +464,46 @@
     (call $te_raw (call $branch_target (local.get $disp)))
     (i32.const 1))
 
+  ;; `OP dword [base+disp], imm32` whose next instruction is the Jcc reading
+  ;; its flags — the compare-a-local-and-branch shape, and the largest adjacent
+  ;; handler pair left in the Heroes II gameplay histogram. Called after the
+  ;; ModRM and the immediate of the ALU instruction have been consumed; emits
+  ;; handler 407 and returns 1 on a match, having eaten the Jcc, so the caller
+  ;; must end the block. Only the fast [base+disp] form is folded: the SIB and
+  ;; absolute forms go through $emit_sib_or_abs and keep handler 51.
+  (func $try_emit_alu_m32_i_jcc (param $alu_op i32) (param $imm i32) (result i32)
+    (local $b i32) (local $b2 i32) (local $cc i32) (local $disp i32)
+    (if (i32.or (global.get $code16) (global.get $d_addr16)) (then (return (i32.const 0))))
+    (if (i32.eqz (call $mr_simple_base)) (then (return (i32.const 0))))
+    (local.set $b (call $gl8 (global.get $d_pc)))
+    (if (i32.and (i32.ge_u (local.get $b) (i32.const 0x70))
+                 (i32.le_u (local.get $b) (i32.const 0x7F)))
+      (then
+        (local.set $cc (i32.and (local.get $b) (i32.const 0xF)))
+        (local.set $disp
+          (call $sign_ext8 (call $gl8 (i32.add (global.get $d_pc) (i32.const 1)))))
+        (global.set $d_pc (i32.add (global.get $d_pc) (i32.const 2))))
+      (else
+        (local.set $b2 (call $gl8 (i32.add (global.get $d_pc) (i32.const 1))))
+        (if (i32.and
+              (i32.eq (local.get $b) (i32.const 0x0F))
+              (i32.and (i32.ge_u (local.get $b2) (i32.const 0x80))
+                       (i32.le_u (local.get $b2) (i32.const 0x8F))))
+          (then
+            (local.set $cc (i32.and (local.get $b2) (i32.const 0xF)))
+            (local.set $disp (call $gl32 (i32.add (global.get $d_pc) (i32.const 2))))
+            (global.set $d_pc (i32.add (global.get $d_pc) (i32.const 6))))
+          (else (return (i32.const 0))))))
+    (call $te (i32.const 407)
+      (i32.or
+        (i32.or (i32.shl (local.get $alu_op) (i32.const 8)) (global.get $mr_base))
+        (i32.shl (local.get $cc) (i32.const 12))))
+    (call $te_raw (global.get $mr_disp))
+    (call $te_raw (local.get $imm))
+    (call $te_raw (global.get $d_pc))
+    (call $te_raw (call $branch_target (local.get $disp)))
+    (i32.const 1))
+
   ;; One `mov reg,[abs32]` / `mov [abs32],reg` at $p, in its two encodings:
   ;; the EAX short forms (A1/A3, five bytes) and the ModRM forms with mod=00
   ;; rm=101 (8B/89, six bytes). Returns (length<<4)|reg, or 0 when the bytes are
@@ -519,7 +571,178 @@
     (global.set $d_pc (local.get $p))
     (i32.const 1))
 
-  (func $emit_load32 (param $dst i32) (local $a i32)
+  ;; One unprefixed `mov r32,[base+disp]` at $p over the given base register,
+  ;; in its three flat encodings: mod=00 (no displacement, rm != 4/5), mod=01
+  ;; (disp8) and mod=10 (disp32). Returns (length<<4)|reg, or 0 for anything
+  ;; else — a prefix byte in front declines by construction, which is what
+  ;; keeps operand-size, address-size and segment forms out of the run.
+  (func $base_mov_at (param $p i32) (param $base i32) (result i32)
+    (local $modrm i32) (local $mod i32)
+    (if (i32.ne (call $gl8 (local.get $p)) (i32.const 0x8B))
+      (then (return (i32.const 0))))
+    (local.set $modrm (call $gl8 (i32.add (local.get $p) (i32.const 1))))
+    (if (i32.ne (i32.and (local.get $modrm) (i32.const 7)) (local.get $base))
+      (then (return (i32.const 0))))
+    (local.set $mod (i32.shr_u (local.get $modrm) (i32.const 6)))
+    (if (i32.eq (local.get $mod) (i32.const 3)) (then (return (i32.const 0))))
+    ;; rm=4 is a SIB byte and rm=5 with mod=00 is an absolute address; neither
+    ;; is the [base+disp] shape this run encodes.
+    (if (i32.eq (local.get $base) (i32.const 4)) (then (return (i32.const 0))))
+    (if (i32.and (i32.eqz (local.get $mod)) (i32.eq (local.get $base) (i32.const 5)))
+      (then (return (i32.const 0))))
+    (i32.or
+      (i32.shl
+        (if (result i32) (i32.eqz (local.get $mod))
+          (then (i32.const 2))
+          (else (if (result i32) (i32.eq (local.get $mod) (i32.const 1))
+                  (then (i32.const 3)) (else (i32.const 6)))))
+        (i32.const 4))
+      (i32.and (i32.shr_u (local.get $modrm) (i32.const 3)) (i32.const 7))))
+
+  ;; The displacement of the instruction $base_mov_at just matched, sign
+  ;; extended for the disp8 form and zero for the no-displacement form.
+  (func $base_mov_disp (param $p i32) (param $len i32) (result i32)
+    (if (i32.eq (local.get $len) (i32.const 2)) (then (return (i32.const 0))))
+    (if (i32.eq (local.get $len) (i32.const 3))
+      (then (return (call $sign_ext8 (call $gl8 (i32.add (local.get $p) (i32.const 2)))))))
+    (call $gl32 (i32.add (local.get $p) (i32.const 2))))
+
+  ;; Fold a run of up to four `mov r32,[base+disp]` over one base register into
+  ;; handler 408. Called with the first one already decoded (its destination in
+  ;; $dst, its already-segment-adjusted displacement in $disp0); returns 1 once
+  ;; at least one more followed.
+  ;;
+  ;; The aliasing hazard the absolute-address run does not have: once an
+  ;; element writes the base register itself, every later address changes. Such
+  ;; an element is admitted as the LAST one — the handler reads the base once
+  ;; before the first load — and the run ends there.
+  (func $try_emit_base_run (param $dst i32) (param $disp0 i32) (result i32)
+    (local $base i32) (local $p i32) (local $n i32) (local $i i32)
+    (local $m i32) (local $len i32) (local $op i32)
+    (if (i32.or (global.get $code16) (global.get $d_addr16)) (then (return (i32.const 0))))
+    (local.set $base (global.get $mr_base))
+    (if (i32.eq (local.get $base) (i32.const 4)) (then (return (i32.const 0))))
+    ;; the first element already clobbers the base: nothing after it can join
+    (if (i32.eq (local.get $dst) (local.get $base)) (then (return (i32.const 0))))
+    ;; how many follow
+    (local.set $p (global.get $d_pc))
+    (local.set $n (i32.const 1))
+    (block $stop (loop $l
+      (br_if $stop (i32.ge_u (local.get $n) (i32.const 4)))
+      (local.set $m (call $base_mov_at (local.get $p) (local.get $base)))
+      (br_if $stop (i32.eqz (local.get $m)))
+      (local.set $p (i32.add (local.get $p) (i32.shr_u (local.get $m) (i32.const 4))))
+      (local.set $n (i32.add (local.get $n) (i32.const 1)))
+      ;; an element that writes the base ends the run after itself
+      (br_if $stop (i32.eq (i32.and (local.get $m) (i32.const 0xF)) (local.get $base)))
+      (br $l)))
+    (if (i32.lt_u (local.get $n) (i32.const 2)) (then (return (i32.const 0))))
+    ;; the op word needs every register before the first word can be written
+    (local.set $op (i32.or
+      (i32.or (local.get $n) (i32.shl (local.get $base) (i32.const 4)))
+      (i32.shl (local.get $dst) (i32.const 8))))
+    (local.set $p (global.get $d_pc))
+    (local.set $i (i32.const 1))
+    (block $d2 (loop $l2
+      (br_if $d2 (i32.ge_u (local.get $i) (local.get $n)))
+      (local.set $m (call $base_mov_at (local.get $p) (local.get $base)))
+      (local.set $op (i32.or (local.get $op)
+        (i32.shl (i32.and (local.get $m) (i32.const 0xF))
+                 (i32.add (i32.const 8) (i32.shl (local.get $i) (i32.const 2))))))
+      (local.set $p (i32.add (local.get $p) (i32.shr_u (local.get $m) (i32.const 4))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $l2)))
+    (call $te (i32.const 408) (local.get $op))
+    (call $te_raw (local.get $disp0))
+    (local.set $p (global.get $d_pc))
+    (local.set $i (i32.const 1))
+    (block $d3 (loop $l3
+      (br_if $d3 (i32.ge_u (local.get $i) (local.get $n)))
+      (local.set $m (call $base_mov_at (local.get $p) (local.get $base)))
+      (local.set $len (i32.shr_u (local.get $m) (i32.const 4)))
+      (call $te_raw (call $base_mov_disp (local.get $p) (local.get $len)))
+      (local.set $p (i32.add (local.get $p) (local.get $len)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $l3)))
+    (global.set $d_pc (local.get $p))
+    (i32.const 1))
+
+  ;; One unprefixed `mov [base+index*scale+disp], r32` at $p storing the given
+  ;; register: 89 /r with rm=4 (a SIB byte) and mod != 3. Returns the encoded
+  ;; length in the high bits and 1 in the low bit, or 0 for anything else -- a
+  ;; prefix byte in front declines by construction, which keeps operand-size,
+  ;; address-size and segment forms out of the fusion. The info word and the
+  ;; displacement land in $fuse_info / $fuse_disp rather than in the result,
+  ;; because a matcher that returned them would need three return values.
+  ;;
+  ;; Declines the absolute form (no base and no index) for the same reason
+  ;; $emit_store32 does: handler 420's operand encoding is the indexed one.
+  (func $sib_store_at (param $p i32) (param $reg i32) (result i32)
+    (local $modrm i32) (local $mod i32) (local $sib i32)
+    (local $base i32) (local $index i32) (local $nobase i32)
+    (if (i32.ne (call $gl8 (local.get $p)) (i32.const 0x89))
+      (then (return (i32.const 0))))
+    (local.set $modrm (call $gl8 (i32.add (local.get $p) (i32.const 1))))
+    (if (i32.ne (i32.and (i32.shr_u (local.get $modrm) (i32.const 3)) (i32.const 7))
+                (local.get $reg))
+      (then (return (i32.const 0))))
+    (if (i32.ne (i32.and (local.get $modrm) (i32.const 7)) (i32.const 4))
+      (then (return (i32.const 0))))
+    (local.set $mod (i32.shr_u (local.get $modrm) (i32.const 6)))
+    (if (i32.eq (local.get $mod) (i32.const 3)) (then (return (i32.const 0))))
+    (local.set $sib (call $gl8 (i32.add (local.get $p) (i32.const 2))))
+    (local.set $base (i32.and (local.get $sib) (i32.const 7)))
+    (local.set $index (i32.and (i32.shr_u (local.get $sib) (i32.const 3)) (i32.const 7)))
+    ;; index=4 means "no index"; base=5 with mod=00 means "no base, disp32"
+    (if (i32.eq (local.get $index) (i32.const 4))
+      (then (local.set $index (i32.const 0xF))))
+    (local.set $nobase (i32.and (i32.eqz (local.get $mod))
+                                (i32.eq (local.get $base) (i32.const 5))))
+    (if (i32.and (local.get $nobase) (i32.eq (local.get $index) (i32.const 0xF)))
+      (then (return (i32.const 0))))
+    (if (local.get $nobase) (then (local.set $base (i32.const 0xF))))
+    (global.set $fuse_info (i32.or (local.get $base)
+      (i32.or (i32.shl (local.get $index) (i32.const 4))
+              (i32.shl (i32.and (i32.shr_u (local.get $sib) (i32.const 6)) (i32.const 3))
+                       (i32.const 8)))))
+    (if (i32.eq (local.get $mod) (i32.const 1))
+      (then
+        (global.set $fuse_disp
+          (call $sign_ext8 (call $gl8 (i32.add (local.get $p) (i32.const 3)))))
+        (return (i32.const 0x41))))
+    (if (i32.or (i32.eq (local.get $mod) (i32.const 2)) (local.get $nobase))
+      (then
+        (global.set $fuse_disp (call $gl32 (i32.add (local.get $p) (i32.const 3))))
+        (return (i32.const 0x71))))
+    (global.set $fuse_disp (i32.const 0))
+    (i32.const 0x31))
+
+  ;; Fold `mov r32,[base+disp]` and the `mov [base+index*scale+disp],r32` that
+  ;; immediately follows it into handler 421. Called with the load already
+  ;; decoded (its base in $mr_base, its segment-adjusted displacement in
+  ;; $disp0); returns 1 once the store matched.
+  (func $try_emit_copy_sib (param $dst i32) (param $disp0 i32) (result i32)
+    (local $m i32)
+    (if (i32.eqz (global.get $sib_fusion_enabled)) (then (return (i32.const 0))))
+    (if (i32.or (global.get $code16) (global.get $d_addr16))
+      (then (return (i32.const 0))))
+    (if (global.get $d_seg) (then (return (i32.const 0))))
+    (local.set $m (call $sib_store_at (global.get $d_pc) (local.get $dst)))
+    (if (i32.eqz (local.get $m)) (then (return (i32.const 0))))
+    (call $te (i32.const 421)
+      (i32.or (global.get $mr_base) (i32.shl (local.get $dst) (i32.const 4))))
+    (call $te_raw (local.get $disp0))
+    (call $te_raw (global.get $fuse_info))
+    (call $te_raw (global.get $fuse_disp))
+    (global.set $d_pc (i32.add (global.get $d_pc) (i32.shr_u (local.get $m) (i32.const 4))))
+    (i32.const 1))
+
+  ;; $fuse says whether the bytes after $d_pc are the next instruction. They
+  ;; are for `mov r32,r/m32`, and every fusion below peeks at them; they are
+  ;; NOT for `imul r32,r/m32,imm`, whose immediate the decoder has already
+  ;; consumed, so folding there would hoist a later instruction in front of
+  ;; the IMUL that is about to be emitted.
+  (func $emit_load32 (param $dst i32) (param $fuse i32) (local $a i32)
     (call $apply_seg_override)
     (if (call $mr_simple_base)
       (then
@@ -530,8 +753,10 @@
         ;; ordinary decoder paths.
         (if (i32.and
               (i32.and
-                (i32.eqz (global.get $code16))
-                (i32.eqz (global.get $d_addr16)))
+                (i32.ne (local.get $fuse) (i32.const 0))
+                (i32.and
+                  (i32.eqz (global.get $code16))
+                  (i32.eqz (global.get $d_addr16))))
               (i32.and
                 (i32.eqz (global.get $d_seg))
                 (i32.and
@@ -545,6 +770,17 @@
             (call $te_raw (call $gl32 (i32.add (global.get $d_pc) (i32.const 1))))
             (global.set $d_pc (i32.add (global.get $d_pc) (i32.const 5)))
             (return)))
+        (if (local.get $fuse)
+          (then
+            ;; The copied dword: this load and the indexed store of the same
+            ;; register that follows it. Tried before the load run, because a
+            ;; run of loads is not what this code is -- Caesar's unrolled copy
+            ;; cases alternate load/store and $try_emit_base_run declines them
+            ;; anyway (the byte after the load is 0x89, not another 0x8B).
+            (if (call $try_emit_copy_sib (local.get $dst) (global.get $mr_disp))
+              (then (return)))
+            (if (call $try_emit_base_run (local.get $dst) (global.get $mr_disp))
+              (then (return)))))
         (call $te (i32.add (i32.const 339) (global.get $mr_base)) (local.get $dst))
         (call $te_raw (global.get $mr_disp))
         (return)))
@@ -563,12 +799,14 @@
                   (i32.shl (global.get $mr_scale) (i32.const 8)))))
         (call $te_raw (global.get $mr_disp))
         (return)))
-    (if (call $try_emit_ptrvar_fetch8 (local.get $dst)) (then (return)))
-    (if (call $mr_absolute)
+    (if (local.get $fuse)
       (then
-        (local.set $a (global.get $mr_disp))
-        (if (call $try_emit_abs_run (i32.const 0) (local.get $dst) (local.get $a))
-          (then (return)))))
+        (if (call $try_emit_ptrvar_fetch8 (local.get $dst)) (then (return)))
+        (if (call $mr_absolute)
+          (then
+            (local.set $a (global.get $mr_disp))
+            (if (call $try_emit_abs_run (i32.const 0) (local.get $dst) (local.get $a))
+              (then (return)))))))
     (local.set $a (call $emit_sib_or_abs))
     (call $te (i32.const 20) (local.get $dst)) (call $te_raw (local.get $a)))
 
@@ -582,6 +820,22 @@
         (local.set $a (global.get $mr_disp))
         (if (call $try_emit_abs_run (i32.const 1) (local.get $src) (local.get $a))
           (then (return)))))
+    ;; Indexed SIB dword stores dominate Caesar III's RLE sprite decoder the
+    ;; way indexed loads dominate StarCraft's Smacker converter: 96.66% of the
+    ;; SIB EAs its city view computes are consumed by exactly this. Fuse the
+    ;; compute_ea_sib + store32(SIB_SENTINEL) pair into handler 420, which
+    ;; keeps the 149 operand encoding. Absolute and segmented forms are
+    ;; unchanged and still go through $emit_sib_or_abs below.
+    (if (i32.and
+          (global.get $sib_fusion_enabled)
+          (i32.and
+            (i32.eqz (global.get $code16))
+            (i32.eqz (call $mr_absolute))))
+      (then
+        (call $te (i32.const 420) (local.get $src))
+        (call $te_raw (call $sib_info_word))
+        (call $te_raw (global.get $mr_disp))
+        (return)))
     (local.set $a (call $emit_sib_or_abs))
     (call $te (i32.const 21) (local.get $src)) (call $te_raw (local.get $a)))
 
@@ -846,10 +1100,68 @@
     (call $te (i32.const 77) (local.get $imm))
     (call $te_raw (local.get $a)))
 
+  ;; The instruction after a memory unary, when it is an unprefixed Group 1
+  ;; ALU-with-immediate (0x81 or 0x83) against the very same [base+disp]: the
+  ;; `inc dword [ebp-8] / cmp dword [ebp-8],imm` loop counter. Called with the
+  ;; unary's ModRM already decoded and $mr_simple_base true, so the first EA is
+  ;; reg[$mr_base] + $mr_disp and the write cannot disturb its own base
+  ;; register. The second operand is matched on raw bytes in its plain ModRM
+  ;; form only — rm==4 (SIB) and mod==00/rm==101 (absolute) decline, and any
+  ;; operand-size, address-size, segment or LOCK prefix in front declines by
+  ;; construction, since the first byte must be 0x81/0x83. Emits handler 409
+  ;; and consumes the second instruction; returns 0 to leave the ordinary
+  ;; encoding to the caller. A branch into the middle of the pair is safe:
+  ;; blocks are keyed by EIP, so that target decodes as its own block.
+  (func $try_emit_unary_alu_m32 (param $uop i32) (result i32)
+    (local $p i32) (local $b i32) (local $modrm i32) (local $mod i32)
+    (local $rm i32) (local $disp i32) (local $imm i32)
+    (if (i32.or (global.get $code16) (global.get $d_addr16)) (then (return (i32.const 0))))
+    (local.set $p (global.get $d_pc))
+    (local.set $b (call $gl8 (local.get $p)))
+    (if (i32.and (i32.ne (local.get $b) (i32.const 0x81))
+                 (i32.ne (local.get $b) (i32.const 0x83)))
+      (then (return (i32.const 0))))
+    (local.set $modrm (call $gl8 (i32.add (local.get $p) (i32.const 1))))
+    (local.set $mod (i32.and (local.get $modrm) (i32.const 0xC0)))
+    (local.set $rm (i32.and (local.get $modrm) (i32.const 7)))
+    (if (i32.eq (local.get $mod) (i32.const 0xC0)) (then (return (i32.const 0))))
+    (if (i32.eq (local.get $rm) (i32.const 4)) (then (return (i32.const 0))))
+    (if (i32.and (i32.eqz (local.get $mod)) (i32.eq (local.get $rm) (i32.const 5)))
+      (then (return (i32.const 0))))
+    (if (i32.ne (local.get $rm) (global.get $mr_base)) (then (return (i32.const 0))))
+    (local.set $p (i32.add (local.get $p) (i32.const 2)))
+    (if (i32.eq (local.get $mod) (i32.const 0x40))
+      (then
+        (local.set $disp (call $sign_ext8 (call $gl8 (local.get $p))))
+        (local.set $p (i32.add (local.get $p) (i32.const 1)))))
+    (if (i32.eq (local.get $mod) (i32.const 0x80))
+      (then
+        (local.set $disp (call $gl32 (local.get $p)))
+        (local.set $p (i32.add (local.get $p) (i32.const 4)))))
+    (if (i32.ne (local.get $disp) (global.get $mr_disp)) (then (return (i32.const 0))))
+    (if (i32.eq (local.get $b) (i32.const 0x83))
+      (then
+        (local.set $imm (call $sign_ext8 (call $gl8 (local.get $p))))
+        (local.set $p (i32.add (local.get $p) (i32.const 1))))
+      (else
+        (local.set $imm (call $gl32 (local.get $p)))
+        (local.set $p (i32.add (local.get $p) (i32.const 4)))))
+    (call $te (i32.const 409)
+      (i32.or
+        (i32.shl (i32.and (i32.shr_u (local.get $modrm) (i32.const 3)) (i32.const 7))
+                 (i32.const 8))
+        (i32.or (i32.shl (local.get $uop) (i32.const 4)) (global.get $mr_base))))
+    (call $te_raw (global.get $mr_disp))
+    (call $te_raw (local.get $imm))
+    (global.set $d_pc (local.get $p))
+    (i32.const 1))
+
   ;; Unary (inc/dec/not/neg) [mem32]
   (func $emit_unary_m32 (param $uop i32) (local $a i32)
     (if (call $mr_simple_base)
-      (then (call $te (i32.const 135) (i32.or (i32.shl (local.get $uop) (i32.const 4)) (global.get $mr_base)))
+      (then
+            (if (call $try_emit_unary_alu_m32 (local.get $uop)) (then (return)))
+            (call $te (i32.const 135) (i32.or (i32.shl (local.get $uop) (i32.const 4)) (global.get $mr_base)))
             (call $te_raw (global.get $mr_disp)) (return)))
     (local.set $a (call $emit_sib_or_abs))
     (call $te (i32.const 68) (local.get $uop))
@@ -999,25 +1311,30 @@
     (call $te (i32.const 231) (i32.const 0))
     (call $te_raw (local.get $a)))
 
-  ;; MOVZX reg, byte [mem]
-  (func $emit_movzx8 (param $dst i32) (local $a i32)
+  ;; MOVZX reg, byte [mem]. $w16 = the 0x66 form, which writes only the low
+  ;; half of the destination (handlers 414/416 instead of 78/143).
+  (func $emit_movzx8 (param $dst i32) (param $w16 i32) (local $a i32)
     (if (call $mr_simple_base)
-      (then (call $te (i32.const 143) (i32.or (i32.shl (local.get $dst) (i32.const 4)) (global.get $mr_base)))
+      (then (call $te (if (result i32) (local.get $w16) (then (i32.const 416)) (else (i32.const 143)))
+                      (i32.or (i32.shl (local.get $dst) (i32.const 4)) (global.get $mr_base)))
             (call $te_raw (global.get $mr_disp)) (return)))
     (local.set $a (call $emit_sib_or_abs))
-    (call $te (i32.const 78) (local.get $dst))
+    (call $te (if (result i32) (local.get $w16) (then (i32.const 414)) (else (i32.const 78))) (local.get $dst))
     (call $te_raw (local.get $a)))
 
   ;; MOVSX reg, byte [mem]
-  (func $emit_movsx8 (param $dst i32) (local $a i32)
+  (func $emit_movsx8 (param $dst i32) (param $w16 i32) (local $a i32)
     (if (call $mr_simple_base)
-      (then (call $te (i32.const 144) (i32.or (i32.shl (local.get $dst) (i32.const 4)) (global.get $mr_base)))
+      (then (call $te (if (result i32) (local.get $w16) (then (i32.const 417)) (else (i32.const 144)))
+                      (i32.or (i32.shl (local.get $dst) (i32.const 4)) (global.get $mr_base)))
             (call $te_raw (global.get $mr_disp)) (return)))
     ;; MOVSX r32, byte [base+index] is the single hottest SIB consumer in an
     ;; 8bpp sprite blitter — 37.7% of every SIB EA Heroes II computes on its
     ;; adventure map. Fuse it into handler 400.
     (if (i32.and
-          (i32.eqz (global.get $code16))
+          (i32.and
+            (i32.eqz (global.get $code16))
+            (i32.eqz (local.get $w16)))
           (i32.eqz (call $mr_absolute)))
       (then
         (call $te (i32.const 400) (local.get $dst))
@@ -1025,25 +1342,28 @@
         (call $te_raw (global.get $mr_disp))
         (return)))
     (local.set $a (call $emit_sib_or_abs))
-    (call $te (i32.const 79) (local.get $dst))
+    (call $te (if (result i32) (local.get $w16) (then (i32.const 415)) (else (i32.const 79))) (local.get $dst))
     (call $te_raw (local.get $a)))
 
-  ;; MOVZX reg, word [mem]
-  (func $emit_movzx16 (param $dst i32) (local $a i32)
+  ;; MOVZX reg, word [mem]. Under 0x66 both source and destination are 16 bits,
+  ;; so the instruction is just mov r16, [mem] — handlers 164/166.
+  (func $emit_movzx16 (param $dst i32) (param $w16 i32) (local $a i32)
     (if (call $mr_simple_base)
-      (then (call $te (i32.const 145) (i32.or (i32.shl (local.get $dst) (i32.const 4)) (global.get $mr_base)))
+      (then (call $te (if (result i32) (local.get $w16) (then (i32.const 166)) (else (i32.const 145)))
+                      (i32.or (i32.shl (local.get $dst) (i32.const 4)) (global.get $mr_base)))
             (call $te_raw (global.get $mr_disp)) (return)))
     (local.set $a (call $emit_sib_or_abs))
-    (call $te (i32.const 80) (local.get $dst))
+    (call $te (if (result i32) (local.get $w16) (then (i32.const 164)) (else (i32.const 80))) (local.get $dst))
     (call $te_raw (local.get $a)))
 
-  ;; MOVSX reg, word [mem]
-  (func $emit_movsx16 (param $dst i32) (local $a i32)
+  ;; MOVSX reg, word [mem] — same degeneration under 0x66.
+  (func $emit_movsx16 (param $dst i32) (param $w16 i32) (local $a i32)
     (if (call $mr_simple_base)
-      (then (call $te (i32.const 146) (i32.or (i32.shl (local.get $dst) (i32.const 4)) (global.get $mr_base)))
+      (then (call $te (if (result i32) (local.get $w16) (then (i32.const 166)) (else (i32.const 146)))
+                      (i32.or (i32.shl (local.get $dst) (i32.const 4)) (global.get $mr_base)))
             (call $te_raw (global.get $mr_disp)) (return)))
     (local.set $a (call $emit_sib_or_abs))
-    (call $te (i32.const 81) (local.get $dst))
+    (call $te (if (result i32) (local.get $w16) (then (i32.const 164)) (else (i32.const 81))) (local.get $dst))
     (call $te_raw (local.get $a)))
 
   ;; MUL/IMUL/DIV/IDIV [mem32]. type: 0=mul,1=imul,2=div,3=idiv
@@ -1215,6 +1535,11 @@
         (if (call $thread_arena_flush_if_safe)
           (then (call $host_log_i32 (i32.const 0xCA00F10F))))))
     (local.set $tstart (global.get $thread_alloc))
+    ;; Start a fresh op-start index for this block. Reset here rather than at
+    ;; the end so an early return (the stack-packet path below, a 16-bit
+    ;; bail-out) leaves a consistent -- if unused -- index behind.
+    (global.set $op_index_n (i32.const 0))
+    (global.set $op_index_poison (i32.const 0))
     ;; Ask once, here, whether this block entry is the MSVC small-block-heap
     ;; scan loop. The run loop then only has to compare EIP with the answer.
     (call $sbh_note_candidate (local.get $start_eip))
@@ -1592,7 +1917,10 @@
                 (then (call $emit_alu_m8_i (global.get $mr_reg) (local.get $imm)))
                 (else (if (local.get $prefix_66)
                   (then (call $emit_alu_m16_i (global.get $mr_reg) (local.get $imm)))
-                  (else (call $emit_alu_m32_i (global.get $mr_reg) (local.get $imm))))))))
+                  (else
+                    (if (call $try_emit_alu_m32_i_jcc (global.get $mr_reg) (local.get $imm))
+                      (then (local.set $done (i32.const 1)))
+                      (else (call $emit_alu_m32_i (global.get $mr_reg) (local.get $imm))))))))))
           (br $decode)))
 
       ;; ---- 0x84: TEST r/m8, r8 ----
@@ -1674,7 +2002,7 @@
               (if (i32.eq (local.get $op) (i32.const 0x8B))
                 (then (if (local.get $prefix_66)
                   (then (call $emit_load16 (global.get $mr_reg)))
-                  (else (call $emit_load32 (global.get $mr_reg)))))
+                  (else (call $emit_load32 (global.get $mr_reg) (i32.const 1)))))
                 (else (call $emit_load8 (global.get $mr_reg))))))
           (br $decode)))
 
@@ -1865,7 +2193,9 @@
               (if (i32.eq (global.get $mr_mod) (i32.const 3))
                 (then (if (i32.eq (local.get $op) (i32.const 0xF6))
                   (then (call $te (i32.const 215) (global.get $mr_val)))
-                  (else (call $te (i32.const 66) (global.get $mr_val)))))
+                  (else (if (local.get $prefix_66)
+                    (then (call $te (i32.const 410) (global.get $mr_val)))
+                    (else (call $te (i32.const 66) (global.get $mr_val)))))))
                 (else (if (i32.eq (local.get $op) (i32.const 0xF6))
                   (then (call $emit_unary_m8 (i32.const 2)))
                   (else (if (local.get $prefix_66)
@@ -1877,7 +2207,9 @@
               (if (i32.eq (global.get $mr_mod) (i32.const 3))
                 (then (if (i32.eq (local.get $op) (i32.const 0xF6))
                   (then (call $te (i32.const 214) (global.get $mr_val)))
-                  (else (call $te (i32.const 67) (global.get $mr_val)))))
+                  (else (if (local.get $prefix_66)
+                    (then (call $te (i32.const 411) (global.get $mr_val)))
+                    (else (call $te (i32.const 67) (global.get $mr_val)))))))
                 (else (if (i32.eq (local.get $op) (i32.const 0xF6))
                   (then (call $emit_unary_m8 (i32.const 3)))
                   (else (if (local.get $prefix_66)
@@ -2238,7 +2570,7 @@
               (if (i32.eq (global.get $mr_mod) (i32.const 3))
                 (then (call $te (i32.const 59) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val)))
                       (call $te_raw (local.get $imm)))
-                (else (call $emit_load32 (global.get $mr_reg))
+                (else (call $emit_load32 (global.get $mr_reg) (i32.const 0))
                       (call $te (i32.const 59) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_reg)))
                       (call $te_raw (local.get $imm))))))
           (br $decode)))
@@ -2724,24 +3056,27 @@
                               (call $te (i32.const 45) (global.get $d_pc))
                               (local.set $done (i32.const 1)) (br $decode)))))))))
 
-          ;; 0x0F 0xB6: MOVZX r32, r/m8
+          ;; 0x0F 0xB6: MOVZX r32, r/m8 (with 66h → r16, low half only)
           (if (i32.eq (local.get $op) (i32.const 0xB6))
             (then
               (call $decode_modrm)
               (if (i32.eq (global.get $mr_mod) (i32.const 3))
-                (then ;; movzx r32, reg8 — handler 208
-                  (call $te (i32.const 208) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))
-                (else (call $emit_movzx8 (global.get $mr_reg))))
+                (then ;; movzx r32, reg8 — handler 208 (412 for the 16-bit form)
+                  (call $te (if (result i32) (local.get $prefix_66)
+                              (then (i32.const 412)) (else (i32.const 208)))
+                            (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))
+                (else (call $emit_movzx8 (global.get $mr_reg) (local.get $prefix_66))))
               (br $decode)))
 
-          ;; 0x0F 0xB7: MOVZX r32, r/m16
+          ;; 0x0F 0xB7: MOVZX r32, r/m16 (with 66h it degenerates to mov r16, r16)
           (if (i32.eq (local.get $op) (i32.const 0xB7))
             (then
               (call $decode_modrm)
               (if (i32.eq (global.get $mr_mod) (i32.const 3))
-                (then (call $te (i32.const 357)
+                (then (call $te (if (result i32) (local.get $prefix_66)
+                                   (then (i32.const 210)) (else (i32.const 357)))
                   (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))
-                (else (call $emit_movzx16 (global.get $mr_reg))))
+                (else (call $emit_movzx16 (global.get $mr_reg) (local.get $prefix_66))))
               (br $decode)))
 
           ;; 0x0F 0xBE: MOVSX r32, r/m8
@@ -2749,9 +3084,11 @@
             (then
               (call $decode_modrm)
               (if (i32.eq (global.get $mr_mod) (i32.const 3))
-                (then ;; movsx r32, reg8 — handler 209
-                  (call $te (i32.const 209) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))
-                (else (call $emit_movsx8 (global.get $mr_reg))))
+                (then ;; movsx r32, reg8 — handler 209 (413 for the 16-bit form)
+                  (call $te (if (result i32) (local.get $prefix_66)
+                              (then (i32.const 413)) (else (i32.const 209)))
+                            (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))
+                (else (call $emit_movsx8 (global.get $mr_reg) (local.get $prefix_66))))
               (br $decode)))
 
           ;; 0x0F 0xBF: MOVSX r32, r/m16
@@ -2759,9 +3096,10 @@
             (then
               (call $decode_modrm)
               (if (i32.eq (global.get $mr_mod) (i32.const 3))
-                (then (call $te (i32.const 358)
+                (then (call $te (if (result i32) (local.get $prefix_66)
+                                   (then (i32.const 210)) (else (i32.const 358)))
                   (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))
-                (else (call $emit_movsx16 (global.get $mr_reg))))
+                (else (call $emit_movsx16 (global.get $mr_reg) (local.get $prefix_66))))
               (br $decode)))
 
           ;; 0x0F 0xA4/0xA5: SHLD, 0x0F 0xAC/0xAD: SHRD (with 66h → 16-bit)
@@ -2893,7 +3231,7 @@
 
           ;; 0x0F 0x31: RDTSC — real monotonic counter (see $th_rdtsc)
           (if (i32.eq (local.get $op) (i32.const 0x31))
-            (then (call $te (i32.const 411) (i32.const 0)) (br $decode)))
+            (then (call $te (i32.const 426) (i32.const 0)) (br $decode)))
 
           ;; 0x0F 0x77: EMMS
           (if (i32.eq (local.get $op) (i32.const 0x77))
@@ -2992,7 +3330,7 @@
                   (if (i32.and (i32.ne (local.get $mmxsub) (i32.const -1))
                                (i32.eq (global.get $mr_mod) (i32.const 3)))
                     (then
-                      (call $te (i32.const 410)
+                      (call $te (i32.const 425)
                         (i32.or (i32.shl (local.get $mmxsub) (i32.const 12))
                           (i32.or (i32.shl (global.get $mr_val) (i32.const 8))
                                   (call $d_fetch8))))
@@ -3011,11 +3349,11 @@
                     (then
                       (if (i32.or (i32.eq (local.get $op) (i32.const 0x7E))
                                   (i32.eq (local.get $op) (i32.const 0x7F)))
-                        (then (call $te (i32.const 407)
+                        (then (call $te (i32.const 422)
                                 (i32.or (i32.shl (local.get $mmxsub) (i32.const 8))
                                   (i32.or (i32.shl (global.get $mr_val) (i32.const 4))
                                           (global.get $mr_reg)))))
-                        (else (call $te (i32.const 407)
+                        (else (call $te (i32.const 422)
                                 (i32.or (i32.shl (local.get $mmxsub) (i32.const 8))
                                   (i32.or (i32.shl (global.get $mr_reg) (i32.const 4))
                                           (global.get $mr_val))))))
@@ -3026,7 +3364,7 @@
                     (then
                       (local.set $a (call $emit_sib_or_abs))
                       (call $te
-                        (select (i32.const 409) (i32.const 408)
+                        (select (i32.const 424) (i32.const 423)
                           (i32.or (i32.eq (local.get $op) (i32.const 0x7E))
                                   (i32.eq (local.get $op) (i32.const 0x7F))))
                         (i32.or (i32.shl (local.get $mmxsub) (i32.const 8))
@@ -3125,6 +3463,9 @@
       (br $decode)
     ))
 
+    ;; Loop-idiom matcher runs on the ops just emitted, before the block is
+    ;; published. See src/07b-loop-match.wat.
+    (call $loop_match_block (local.get $start_eip) (local.get $tstart))
     (call $cache_store (local.get $start_eip) (local.get $tstart))
     (local.get $tstart)
   )

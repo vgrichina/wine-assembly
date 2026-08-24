@@ -155,8 +155,21 @@ if (verbose) {
     `${skippedDelegating} delegating handler(s)`);
 }
 
+// If handler discovery breaks, `checked` falls to zero, `issues` stays empty,
+// and this gate reports OK while inspecting nothing — a pass that is
+// indistinguishable from success. Assert the scan still sees most of the
+// handlers it found, and print the count so a human sees it shrink.
+const discovered = checked + skippedCom + skippedDelegating;
+const espFloor = Math.floor(discovered * 0.25);
+if (checked === 0 || checked < espFloor) {
+  console.error(`[check-handler-esp] GATE IS NOT CHECKING ANYTHING: inspected ${checked} of ` +
+    `${discovered} discovered handler(s), expected at least ${espFloor}.`);
+  console.error('  Handler discovery or api_table lookup broke. A pass here would be vacuous.');
+  process.exit(1);
+}
+
 if (issues.length === 0) {
-  console.log('[check-handler-esp] OK');
+  console.log(`[check-handler-esp] OK — ${checked} of ${discovered} handler(s) inspected`);
   process.exit(0);
 }
 console.log(`[check-handler-esp] ${issues.length} issue(s):`);

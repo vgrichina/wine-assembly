@@ -45,7 +45,7 @@ function runScenario(name, input, maxBatches = 520) {
     ], {
       cwd: ROOT,
       encoding: 'utf8',
-      timeout: 120000,
+      timeout: 60000,   // measures 6s
       maxBuffer: 16 * 1024 * 1024,
       stdio: ['ignore', 'pipe', 'pipe'],
     });

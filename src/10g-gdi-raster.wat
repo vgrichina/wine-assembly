@@ -5980,21 +5980,25 @@
     (local.set $mdx (call $gdi_line_map_x (local.get $dst) (local.get $dx)))
     (local.set $mdy (call $gdi_line_map_y (local.get $dst) (local.get $dy)))
     (local.set $msy (local.get $sy))
-    ;; StretchDIBits source coordinates follow the DIB's own origin. A
-    ;; bottom-up DIB therefore measures ySrc upward from its lower-left
-    ;; corner, while raster descriptors always use canonical top-left
-    ;; coordinates. Preserve the signed source extent so the shared blitter
-    ;; still owns mirroring semantics.
-    (if (i32.eqz (i32.load offset=20 (local.get $src)))
+    ;; StretchDIBits measures ySrc upward from the DIB's lower-left corner,
+    ;; and does so for a top-down DIB as well: biHeight's sign says which way
+    ;; the scanlines are stored, not where the source rectangle is counted
+    ;; from. Raster descriptors always use canonical top-left coordinates, so
+    ;; the same conversion applies to both orientations. RollerCoaster Tycoon
+    ;; in windowed mode is the case that proves it — it draws its 640x479
+    ;; frame into the top of a 1024x-768 top-down buffer and then presents it
+    ;; with ySrc = 768 - 479, and reading that literally lands 289 rows below
+    ;; the frame, in the background fill (a black client area with the top 190
+    ;; rows of the picture in it). Preserve the signed source extent so the
+    ;; shared blitter still owns mirroring semantics.
+    (if (i32.gt_s (local.get $sh) (i32.const 0))
       (then
-        (if (i32.gt_s (local.get $sh) (i32.const 0))
-          (then
-            (local.set $msy (i32.sub
-              (i32.sub (i32.load offset=8 (local.get $src)) (local.get $sy))
-              (local.get $sh))))
-          (else
-            (local.set $msy (i32.sub
-              (i32.load offset=8 (local.get $src)) (local.get $sy)))))))
+        (local.set $msy (i32.sub
+          (i32.sub (i32.load offset=8 (local.get $src)) (local.get $sy))
+          (local.get $sh))))
+      (else
+        (local.set $msy (i32.sub
+          (i32.load offset=8 (local.get $src)) (local.get $sy)))))
     (local.set $ok (call $gdi_raster_stretch_blt
       (local.get $hdc) (i32.const 0) (local.get $dst) (local.get $mdx) (local.get $mdy)
       (local.get $dw) (local.get $dh) (local.get $src)

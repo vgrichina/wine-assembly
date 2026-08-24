@@ -331,6 +331,12 @@
   (func (export "get_image_base") (result i32) (global.get $image_base))
   (func (export "get_rsrc_rva") (result i32) (global.get $rsrc_rva))
   (func (export "get_thread_alloc") (result i32) (global.get $thread_alloc))
+  (func (export "get_cache_clears") (result i32) (global.get $cache_clears))
+  (func (export "get_cache_stores") (result i32) (global.get $cache_stores))
+  (func (export "get_cache_evicts") (result i32) (global.get $cache_evicts))
+  (func (export "get_cache_invals") (result i32) (global.get $cache_invals))
+  (func (export "get_cache_inval_hits") (result i32) (global.get $cache_inval_hits))
+  (func (export "get_cache_inval_page") (result i32) (global.get $cache_inval_page))
   (func (export "get_wndproc") (result i32) (global.get $wndproc_addr))
   (func (export "get_thunk_base") (result i32) (global.get $thunk_guest_base))
   (func (export "get_thunk_end") (result i32) (global.get $thunk_guest_end))
@@ -370,6 +376,15 @@
   ;; Post queue exports for IPC injection
   (func (export "get_main_hwnd") (result i32) (global.get $main_hwnd))
   (func (export "get_dx_primary_pal_wa") (result i32) (global.get $dx_primary_pal_wa))
+  ;; The window DirectDraw currently owns the whole screen through, or 0.
+  ;; A DDSCL_EXCLUSIVE|DDSCL_FULLSCREEN app's primary surface *is* the display,
+  ;; so its window shows no caption, border or menu bar however it was styled
+  ;; -- the DX SDK's own samples keep WS_CAPTION and a menu and rely on that.
+  ;; The compositor cannot infer this from the style bits alone.
+  (func (export "get_dx_exclusive_hwnd") (result i32)
+    (if (result i32) (global.get $dx_exclusive_fullscreen)
+      (then (call $dx_target_hwnd))
+      (else (i32.const 0))))
   (func (export "get_flash_state") (param $hwnd i32) (result i32)
     (local $slot i32)
     (local.set $slot (call $wnd_table_find (local.get $hwnd)))
@@ -2189,6 +2204,36 @@
     (call $dx_sync_thread_vtables)
   )
 
+  ;; Multimedia-timer state, for debugging a client that waits on a
+  ;; timeSetEvent callback that never arrives. "The guest holds timer id N" and
+  ;; "WAT is still running timer id N" can disagree; only this export can tell
+  ;; them apart from the host side.
+  ;; field: 0=id 1=interval 2=callback 3=dwUser 4=last_tick 5=oneshot
+  ;;        6=next_id (slot ignored) 7=in_cb (slot ignored) 8=slot count
+  (func (export "dbg_mm_timer") (param $slot i32) (param $field i32) (result i32)
+    (local $p i32)
+    (if (i32.eq (local.get $field) (i32.const 6))
+      (then (return (i32.load (global.get $MM_TIMER_NEXT_ID)))))
+    (if (i32.eq (local.get $field) (i32.const 7))
+      (then (return (global.get $mm_timer_in_cb))))
+    (if (i32.eq (local.get $field) (i32.const 8))
+      (then (return (global.get $MM_TIMER_MAX))))
+    (if (i32.ge_u (local.get $slot) (global.get $MM_TIMER_MAX))
+      (then (return (i32.const -1))))
+    (local.set $p (call $mm_timer_slot (local.get $slot)))
+    (if (i32.eqz (local.get $field)) (then (return (i32.load (local.get $p)))))
+    (if (i32.eq (local.get $field) (i32.const 1))
+      (then (return (i32.load offset=4 (local.get $p)))))
+    (if (i32.eq (local.get $field) (i32.const 2))
+      (then (return (i32.load offset=8 (local.get $p)))))
+    (if (i32.eq (local.get $field) (i32.const 3))
+      (then (return (i32.load offset=12 (local.get $p)))))
+    (if (i32.eq (local.get $field) (i32.const 4))
+      (then (return (i32.load offset=16 (local.get $p)))))
+    (if (i32.eq (local.get $field) (i32.const 5))
+      (then (return (i32.load offset=20 (local.get $p)))))
+    (i32.const -1))
+
   ;; Yield state exports
   (func (export "get_yield_reason") (result i32) (global.get $yield_reason))
   (func (export "get_wait_handle") (result i32) (global.get $wait_handle))
@@ -2376,6 +2421,27 @@
   (func (export "get_stack_packet_0049dd20_to_e0ad_entries") (result i32)
     (global.get $stack_packet_0049dd20_to_e0ad_entries))
 
+  ;; Loop-idiom matcher (src/07b-loop-match.wat). Decode-time only, so these
+  ;; can be flipped at any point without disturbing a running block.
+  (func (export "set_loop_trace") (param $flag i32) (param $eip i32)
+    (global.set $loop_trace (local.get $flag))
+    (global.set $loop_trace_eip (local.get $eip)))
+  (func (export "get_loop_selfloop_blocks") (result i32)
+    (global.get $loop_selfloop_blocks))
+  (func (export "get_loop_matched_blocks") (result i32)
+    (global.get $loop_matched_blocks))
+  ;; --no-loop-superops: keep matching (and counting) but stop lowering, so a
+  ;; run with and a run without differ in exactly one thing.
+  (func (export "set_loop_emit") (param $flag i32)
+    (global.set $loop_emit_enabled (local.get $flag)))
+
+  ;; --no-sib-fusion: emit the unfused compute_ea_sib + consumer pair, so a
+  ;; fused build and an unfused one differ in exactly one thing and need no
+  ;; rebuild between them. Must be set before the first decode, and on every
+  ;; per-thread instance — mut globals are per-instance.
+  (func (export "set_sib_fusion") (param $flag i32)
+    (global.set $sib_fusion_enabled (local.get $flag)))
+
   ;; Threaded-handler histogram. Profiling tools enable this only around a
   ;; measured window. Counts are stored in WAT-private memory and read by JS.
   (func (export "set_handler_hist_enabled") (param $flag i32)
@@ -2443,6 +2509,14 @@
   (func (export "get_handler_hist_base") (result i32) (global.get $HANDLER_HIST_COUNTS))
   (func (export "get_handler_pair_hist_base") (result i32) (global.get $HANDLER_PAIR_HIST_COUNTS))
   (func (export "get_handler_hist_count") (result i32) (global.get $HANDLER_HIST_COUNT))
+  ;; How many per-handler counters HANDLER_HIST_COUNTS actually holds. This is
+  ;; NOT get_handler_hist_count: that one is the side of the dense pair matrix,
+  ;; frozen at 361 because the matrix is 361x361. Every handler above it is
+  ;; still counted individually, so a reader that sizes its per-handler loop
+  ;; with the pair bound silently omits the fused superinstructions -- and
+  ;; reports a total that shrinks by construction every time one lands.
+  (func (export "get_handler_hist_slots") (result i32)
+    (i32.shr_u (global.get $HANDLER_HIST_COUNTS_SIZE) (i32.const 2)))
   (func (export "get_branch_cmp_jcc_hist_base") (result i32) (global.get $BRANCH_CMP_JCC_HIST))
   (func (export "get_branch_test_jcc_hist_base") (result i32) (global.get $BRANCH_TEST_JCC_HIST))
   (func (export "get_branch_alu_m32_ro_jcc_hist_base") (result i32) (global.get $BRANCH_ALU_M32_RO_JCC_HIST))
@@ -2513,8 +2587,7 @@
     (global.get $mm_timer_in_cb))
 
   (func $fire_mm_timer (export "fire_mm_timer") (result i32)
-    (local $elapsed i32)
-    (if (i32.eqz (global.get $mm_timer_id)) (then (return (i32.const 0))))
+    (local $slot i32) (local $id i32) (local $dwuser i32) (local $cb i32)
     ;; A yielded Win32 wait keeps its stdcall frame parked for the cooperative
     ;; scheduler. Interrupting that frame would make wait completion mistake
     ;; this callback's continuation thunk for the wait's return address.
@@ -2524,15 +2597,15 @@
     ;; interrupted code may already have entered a deeper call by this poll.
     (if (global.get $mm_timer_in_cb)
       (then (return (i32.const 0))))
-    (global.set $tick_count (call $host_get_ticks))
-    (local.set $elapsed (i32.sub (global.get $tick_count) (global.get $mm_timer_last_tick)))
-    (if (i32.lt_u (local.get $elapsed) (global.get $mm_timer_interval))
-      (then (return (i32.const 0))))
+    (local.set $slot (call $mm_timer_due_slot))
+    (if (i32.eqz (local.get $slot)) (then (return (i32.const 0))))
+    (local.set $id (i32.load (local.get $slot)))
+    (local.set $dwuser (i32.load offset=12 (local.get $slot)))
+    (local.set $cb (i32.load offset=8 (local.get $slot)))
     ;; Timer is due — consume through the latest interval boundary without
-    ;; turning host scheduling lateness into permanent periodic-timer drift.
-    (call $mm_timer_consume_due_tick)
-    (if (global.get $mm_timer_oneshot)
-      (then (global.set $mm_timer_id (i32.const 0))))
+    ;; turning host scheduling lateness into permanent periodic-timer drift,
+    ;; retiring the slot first if it was a one-shot.
+    (call $mm_timer_consume_slot (local.get $slot))
     (global.set $mm_timer_in_cb (i32.const 1))
     ;; Save caller-saved regs + flags (36 bytes, includes EIP for restore)
     (call $save_caller_regs)
@@ -2542,16 +2615,16 @@
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (i32.const 0))                   ;; dw1
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (global.get $mm_timer_dwuser))   ;; dwUser
+    (call $gs32 (global.get $esp) (local.get $dwuser))             ;; dwUser
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (i32.const 0))                   ;; uMsg
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (global.get $mm_timer_id))       ;; uTimerID
+    (call $gs32 (global.get $esp) (local.get $id))                 ;; uTimerID
     ;; Push return address = CACA000A thunk (restores regs when callback returns)
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (global.get $mm_timer_ret_thunk))
     ;; Redirect EIP to callback
-    (global.set $eip (global.get $mm_timer_callback))
+    (global.set $eip (local.get $cb))
     (i32.const 1))
 
   ;; Write guest memory (guest addr)
@@ -3144,6 +3217,24 @@
   (func (export "test_call_GetModuleHandleW") (param $name i32) (result i32)
     (call $handle_GetModuleHandleW (local.get $name)
       (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_GetModuleFileNameA") (param $mod i32) (param $buf i32) (param $size i32) (result i32)
+    (call $handle_GetModuleFileNameA (local.get $mod) (local.get $buf) (local.get $size)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_GetFileVersionInfoSizeA") (param $name i32) (param $handle i32) (result i32)
+    (call $handle_GetFileVersionInfoSizeA (local.get $name) (local.get $handle)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_GetFileVersionInfoA")
+    (param $name i32) (param $handle i32) (param $len i32) (param $data i32) (result i32)
+    (call $handle_GetFileVersionInfoA (local.get $name) (local.get $handle)
+      (local.get $len) (local.get $data) (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_VerQueryValueA")
+    (param $block i32) (param $sub i32) (param $out i32) (param $len i32) (result i32)
+    (call $handle_VerQueryValueA (local.get $block) (local.get $sub)
+      (local.get $out) (local.get $len) (i32.const 0) (i32.const 0))
     (global.get $eax))
   (func (export "test_call_GetCommandLineW") (result i32)
     (call $handle_GetCommandLineW
