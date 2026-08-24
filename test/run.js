@@ -3526,12 +3526,16 @@ async function main() {
     if (!e || !e.get_handler_hist_count || !e.get_handler_hist_base) return;
     const u32 = new Uint32Array(memory.buffer);
     const count = e.get_handler_hist_count() | 0;
+    // The pair matrix is count x count; the per-handler counters go further,
+    // and the fused superinstructions all live above `count`. Sum the whole
+    // counter array or the total drops every time a fusion lands.
+    const slots = e.get_handler_hist_slots ? (e.get_handler_hist_slots() | 0) : count;
     const base = (e.get_handler_hist_base() >>> 2) >>> 0;
     const pairBase = e.get_handler_pair_hist_base
       ? ((e.get_handler_pair_hist_base() >>> 2) >>> 0) : 0;
     const handlers = [];
     let total = 0;
-    for (let id = 0; id < count; id++) {
+    for (let id = 0; id < slots; id++) {
       const hits = u32[base + id] >>> 0;
       total += hits;
       if (hits) handlers.push({ id, hits });

@@ -2424,6 +2424,14 @@
   (func (export "get_handler_hist_base") (result i32) (global.get $HANDLER_HIST_COUNTS))
   (func (export "get_handler_pair_hist_base") (result i32) (global.get $HANDLER_PAIR_HIST_COUNTS))
   (func (export "get_handler_hist_count") (result i32) (global.get $HANDLER_HIST_COUNT))
+  ;; How many per-handler counters HANDLER_HIST_COUNTS actually holds. This is
+  ;; NOT get_handler_hist_count: that one is the side of the dense pair matrix,
+  ;; frozen at 361 because the matrix is 361x361. Every handler above it is
+  ;; still counted individually, so a reader that sizes its per-handler loop
+  ;; with the pair bound silently omits the fused superinstructions -- and
+  ;; reports a total that shrinks by construction every time one lands.
+  (func (export "get_handler_hist_slots") (result i32)
+    (i32.shr_u (global.get $HANDLER_HIST_COUNTS_SIZE) (i32.const 2)))
   (func (export "get_branch_cmp_jcc_hist_base") (result i32) (global.get $BRANCH_CMP_JCC_HIST))
   (func (export "get_branch_test_jcc_hist_base") (result i32) (global.get $BRANCH_TEST_JCC_HIST))
   (func (export "get_branch_alu_m32_ro_jcc_hist_base") (result i32) (global.get $BRANCH_ALU_M32_RO_JCC_HIST))

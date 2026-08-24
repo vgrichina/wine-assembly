@@ -44,6 +44,10 @@ const QUERY = opt('query', '');
 // JS evaluated once after the instance is up, before sampling. Use it to A/B
 // a single page setting against an otherwise identical run.
 const AFTER_LAUNCH = opt('after-launch', '');
+// JS evaluated in every new document BEFORE any page script runs. --after-launch
+// is too late to wrap anything the page touches during startup (an AudioContext
+// the guest opens in its first second, say); this is the seam for that.
+const BEFORE_LOAD = opt('before-load', '');
 const CPU_PROFILE = argv.includes('--cpu-profile');
 // --resize-viewport=WxH@Ns[,WxH@Ns]: resize the browser window partway through
 // the sample. The emulator's screen canvas is sized from its wrapper, so this
@@ -133,6 +137,11 @@ async function main() {
       if (TRACE_APIS.length && /^\[API\]|^\s*=>/.test(t)) console.log(`[page] ${t}`);
       if (/UNIMPLEMENTED API:|RuntimeError|LinkError|crashed|FATAL:/i.test(t)) problems.push(t);
     });
+    if (BEFORE_LOAD) {
+      await page.evaluateOnNewDocument(src => {
+        try { (0, eval)(src); } catch (e) { console.log('[before-load] failed: ' + e); }
+      }, BEFORE_LOAD);
+    }
     if (TRACE_APIS.length) {
       await page.evaluateOnNewDocument(names => {
         globalThis.__waTraceApiNames = new Set(names);

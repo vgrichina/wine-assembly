@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 407 funcref)
+  (table $handlers 410 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -463,4 +463,7 @@
     $th_test_jcc              ;; 404: TEST r,r / TEST r8,r8 + Jcc
     $th_store32_abs_run       ;; 405: 2-4 back-to-back mov [abs],reg
     $th_load32_abs_run        ;; 406: 2-4 back-to-back mov reg,[abs]
+    $th_alu_m32_i_jcc         ;; 407: ALU dword [base+disp], imm + Jcc
+    $th_load32_base_run       ;; 408: 2-4 back-to-back mov reg,[base+disp]
+    $th_unary_alu_m32_ro      ;; 409: inc/dec [base+disp] + ALU [base+disp], imm
   )

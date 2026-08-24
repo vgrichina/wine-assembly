@@ -520,6 +520,110 @@
       (br $l)))
     (return_call $next))
 
+  ;; 407: `OP dword [base+disp], imm32` with the Jcc that immediately follows
+  ;; it. This is the largest remaining adjacent pair in the Heroes II gameplay
+  ;; histogram (537,833 back-to-back 131 -> jcc dispatches): the compare-a-
+  ;; local-against-a-constant-and-branch shape every compiled loop is built
+  ;; from. Unlike the TEST fusion in 404 the condition is not readable off the
+  ;; result — a CMP/ADD/SUB publishes real CF and OF — so the flags are
+  ;; published exactly as handler 131 leaves them and $eval_cc answers from
+  ;; that state. The saving is the second dispatch, not the flag work, and the
+  ;; lazy-flag globals are byte-for-byte what the unfused pair produced, so
+  ;; PUSHFD, SETcc or a second branch after the group still see the truth.
+  ;;
+  ;; op: bits 0-3 base reg, 8-11 the ALU op, 12-15 the condition code.
+  ;; Words: disp, imm32, fall-through EIP, branch target — the 131 payload with
+  ;; the ordinary Jcc payload appended, so the emitter is unchanged apart from
+  ;; which opcode it writes.
+  (func $th_alu_m32_i_jcc (param $op i32)
+    (local $addr i32) (local $alu i32) (local $imm i32) (local $val i32)
+    (local $cc i32) (local $fall i32) (local $target i32)
+    (local.set $cc (i32.and (i32.shr_u (local.get $op) (i32.const 12)) (i32.const 0xF)))
+    (if (global.get $handler_hist_enabled)
+      (then (call $branch_hist_record_jcc (local.get $cc))))
+    (local.set $addr (call $ea_from_op (local.get $op)))
+    (local.set $alu (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF)))
+    (local.set $imm (call $read_thread_word))
+    (local.set $val (call $do_alu32 (local.get $alu) (call $gl32 (local.get $addr)) (local.get $imm)))
+    (if (i32.ne (local.get $alu) (i32.const 7)) (then (call $gs32 (local.get $addr) (local.get $val))))
+    (local.set $fall (call $read_thread_word))
+    (local.set $target (call $read_thread_word))
+    (if (call $eval_cc (local.get $cc))
+      (then (global.set $eip (local.get $target)))
+      (else (global.set $eip (local.get $fall)))))
+
+  ;; 408: 2-4 back-to-back `mov r32,[base+disp]` sharing one base register —
+  ;; the frame-local read the compiler emits everywhere, and by a wide margin
+  ;; the hottest single handler in a real game (11.6% of Heroes II's gameplay
+  ;; dispatches land in $th_load32_ro_base_ebp alone).
+  ;;
+  ;; op is (n) | (base<<4) | (dst_i << (8 + 4*i)); the n words that follow are
+  ;; the displacements, already segment-adjusted by the decoder. The base
+  ;; register is read once, up front: the decoder ends a run at the element
+  ;; whose destination IS the base (`mov ebp,[ebp+0xc]`), so every address in
+  ;; the group is computed from the base value the group started with, which
+  ;; is exactly what the unfused sequence would have done.
+  (func $th_load32_base_run (param $op i32)
+    (local $n i32) (local $i i32) (local $base i32)
+    (local.set $n (i32.and (local.get $op) (i32.const 0xF)))
+    (local.set $base
+      (call $get_reg (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF))))
+    (block $done (loop $l
+      (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+      (call $set_reg
+        (i32.and
+          (i32.shr_u (local.get $op)
+            (i32.add (i32.const 8) (i32.shl (local.get $i) (i32.const 2))))
+          (i32.const 0xF))
+        (call $gl32 (i32.add (local.get $base) (call $read_thread_word))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $l)))
+    (return_call $next))
+
+  ;; 409: a memory unary (inc/dec/not/neg dword [base+disp]) immediately
+  ;; followed by an ALU of an immediate against the SAME [base+disp] — the
+  ;; loop-counter idiom every compiler emits for a counter that lives on the
+  ;; stack rather than in a register:
+  ;;
+  ;;   inc dword [ebp-8]
+  ;;   cmp dword [ebp-8], 0x64
+  ;;
+  ;; Handlers 135 and 131 each recompute the effective address and each pay a
+  ;; dispatch; fused they compute it once, and the second op reads the value
+  ;; the first just stored instead of loading it back.
+  ;;
+  ;; The operations are performed in exactly the order the two handlers would
+  ;; have performed them, using the same helpers, so the lazy-flag state left
+  ;; behind is the ALU op's — whatever $do_alu32 publishes — exactly as in the
+  ;; unfused pair. op: bits 0-3 base reg, 4-7 the unary op, 8-11 the ALU op.
+  ;; Words: the displacement, then the immediate.
+  (func $th_unary_alu_m32_ro (param $op i32)
+    (local $addr i32) (local $uop i32) (local $alu i32)
+    (local $old i32) (local $r i32) (local $imm i32)
+    (local.set $addr (i32.add
+      (call $get_reg (i32.and (local.get $op) (i32.const 0xF)))
+      (call $read_thread_word)))
+    (local.set $imm (call $read_thread_word))
+    (local.set $uop (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
+    (local.set $alu (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF)))
+    (local.set $old (call $gl32 (local.get $addr)))
+    (if (i32.eq (local.get $uop) (i32.const 0))
+      (then (local.set $r (i32.add (local.get $old) (i32.const 1)))
+            (call $set_flags_inc (local.get $old) (local.get $r))))
+    (if (i32.eq (local.get $uop) (i32.const 1))
+      (then (local.set $r (i32.sub (local.get $old) (i32.const 1)))
+            (call $set_flags_dec (local.get $old) (local.get $r))))
+    (if (i32.eq (local.get $uop) (i32.const 2))
+      (then (local.set $r (i32.xor (local.get $old) (i32.const -1)))))
+    (if (i32.eq (local.get $uop) (i32.const 3))
+      (then (local.set $r (i32.sub (i32.const 0) (local.get $old)))
+            (call $set_flags_sub (i32.const 0) (local.get $old) (local.get $r))))
+    (call $gs32 (local.get $addr) (local.get $r))
+    (local.set $r (call $do_alu32 (local.get $alu) (local.get $r) (local.get $imm)))
+    (if (i32.ne (local.get $alu) (i32.const 7))
+      (then (call $gs32 (local.get $addr) (local.get $r))))
+    (return_call $next))
+
   ;; 390: two adjacent SIB LEAs. Words are info1, disp1, info2, disp2 and the
   ;; destination registers are packed into op. The second address is computed
   ;; after committing the first result, preserving dependent LEA semantics.
