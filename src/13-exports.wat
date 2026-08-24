@@ -362,6 +362,15 @@
   ;; Post queue exports for IPC injection
   (func (export "get_main_hwnd") (result i32) (global.get $main_hwnd))
   (func (export "get_dx_primary_pal_wa") (result i32) (global.get $dx_primary_pal_wa))
+  ;; The window DirectDraw currently owns the whole screen through, or 0.
+  ;; A DDSCL_EXCLUSIVE|DDSCL_FULLSCREEN app's primary surface *is* the display,
+  ;; so its window shows no caption, border or menu bar however it was styled
+  ;; -- the DX SDK's own samples keep WS_CAPTION and a menu and rely on that.
+  ;; The compositor cannot infer this from the style bits alone.
+  (func (export "get_dx_exclusive_hwnd") (result i32)
+    (if (result i32) (global.get $dx_exclusive_fullscreen)
+      (then (call $dx_target_hwnd))
+      (else (i32.const 0))))
   (func (export "get_flash_state") (param $hwnd i32) (result i32)
     (local $slot i32)
     (local.set $slot (call $wnd_table_find (local.get $hwnd)))
