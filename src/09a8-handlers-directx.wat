@@ -1352,21 +1352,48 @@
   ;; Games that offer a resolution menu (Roller Coaster Tycoon) validate the
   ;; mode they are asked for against exactly this list and refuse anything not
   ;; in it, so the list is what caps their available resolutions.
+  ;; Slot 5 is the host screen itself — a browser window is almost never one of
+  ;; the five stock 4:3 modes, and a game whose resolution is a patchable pair
+  ;; of immediates (see the RCT launchPrefs hook) can be pointed at exactly it,
+  ;; but only if we enumerated it.
+  ;;
+  ;; Rounded down to a multiple of 8 in both axes and clamped to 640x480 ..
+  ;; 1280x1024. The 8 is measured, not cosmetic: RCT repaints in blocks and a
+  ;; 850-pixel-tall mode leaves the last two rows black forever. The ceiling is
+  ;; measured too — at 1512 wide its engine stops drawing at x=1280, which is
+  ;; also the widest mode it ships. `lib/app-profiles.js` rounds identically;
+  ;; the two must agree exactly or the game refuses the mode it just asked for.
+  (func $enum_mode_clamp (param $v i32) (param $lo i32) (param $hi i32) (result i32)
+    (local.set $v (i32.and (local.get $v) (i32.const 0xFFF8)))
+    (if (i32.lt_u (local.get $v) (local.get $lo)) (then (return (local.get $lo))))
+    (if (i32.gt_u (local.get $v) (local.get $hi)) (then (return (local.get $hi))))
+    (local.get $v))
+  (func $enum_mode_host_w (result i32)
+    (call $enum_mode_clamp
+      (i32.and (call $host_get_screen_size) (i32.const 0xFFFF))
+      (i32.const 640) (i32.const 1280)))
+  (func $enum_mode_host_h (result i32)
+    (call $enum_mode_clamp
+      (i32.shr_u (call $host_get_screen_size) (i32.const 16))
+      (i32.const 480) (i32.const 1024)))
+
   (func $enum_mode_res_w (param $r i32) (result i32)
     (if (i32.eq (local.get $r) (i32.const 1)) (then (return (i32.const 800))))
     (if (i32.eq (local.get $r) (i32.const 2)) (then (return (i32.const 1024))))
     (if (i32.eq (local.get $r) (i32.const 3)) (then (return (i32.const 1152))))
     (if (i32.eq (local.get $r) (i32.const 4)) (then (return (i32.const 1280))))
+    (if (i32.eq (local.get $r) (i32.const 5)) (then (return (call $enum_mode_host_w))))
     (i32.const 640))
   (func $enum_mode_res_h (param $r i32) (result i32)
     (if (i32.eq (local.get $r) (i32.const 1)) (then (return (i32.const 600))))
     (if (i32.eq (local.get $r) (i32.const 2)) (then (return (i32.const 768))))
     (if (i32.eq (local.get $r) (i32.const 3)) (then (return (i32.const 864))))
     (if (i32.eq (local.get $r) (i32.const 4)) (then (return (i32.const 1024))))
+    (if (i32.eq (local.get $r) (i32.const 5)) (then (return (call $enum_mode_host_h))))
     (i32.const 480))
 
   ;; Helper: fill DDSD for mode index $enum_modes_idx and jump to callback.
-  ;; Mode table: five resolutions × 8/16/32 bpp — idx/3 picks the resolution,
+  ;; Mode table: six resolutions × 8/16/32 bpp — idx/3 picks the resolution,
   ;; idx%3 the depth. A resolution larger than the host screen is skipped: a
   ;; game that takes the biggest mode we advertise must not end up in a display
   ;; mode its window can never show. Slots 0-5 (640x480 and 800x600, the two
@@ -1380,7 +1407,7 @@
     (local.set $screen (call $host_get_screen_size))
     (block $found
       (loop $scan
-        (br_if $found (i32.ge_u (local.get $idx) (i32.const 15)))
+        (br_if $found (i32.ge_u (local.get $idx) (i32.const 18)))
         (local.set $w (call $enum_mode_res_w (i32.div_u (local.get $idx) (i32.const 3))))
         (local.set $h (call $enum_mode_res_h (i32.div_u (local.get $idx) (i32.const 3))))
         (br_if $found (i32.le_u (local.get $idx) (i32.const 5)))
@@ -1393,7 +1420,7 @@
     (global.set $enum_modes_idx (local.get $idx))
     (local.set $bpp (i32.shl (i32.const 8) (i32.rem_u (local.get $idx) (i32.const 3))))
     ;; If past end of table, done — return DD_OK to caller
-    (if (i32.ge_u (local.get $idx) (i32.const 15))
+    (if (i32.ge_u (local.get $idx) (i32.const 18))
       (then
         (global.set $eip (global.get $enum_modes_ret))
         (global.set $eax (i32.const 0))  ;; DD_OK
