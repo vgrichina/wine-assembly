@@ -222,6 +222,14 @@ const TRACE_CALLSTACK_RAW = args.find(a => a === '--trace-callstack' || a.starts
 const TRACE_CALLSTACK = !!TRACE_CALLSTACK_RAW;
 const TRACE_CALLSTACK_DEPTH = TRACE_CALLSTACK_RAW && TRACE_CALLSTACK_RAW.includes('=')
   ? Math.min(64, parseInt(TRACE_CALLSTACK_RAW.split('=')[1]) || 16) : 16;
+// --fault-null[=stop]: report every guest access no mapping covers (log, or
+// trap with =stop) instead of letting $g2w quietly absorb it into the NULL
+// sentinel. Off by default because the sentinel is what keeps a guest that
+// dereferences NULL running at all; arm it when a symptom shows up far from
+// whatever corrupted the pointer.
+const FAULT_NULL_RAW = args.find(a => a === '--fault-null' || a.startsWith('--fault-null='));
+const FAULT_NULL = !FAULT_NULL_RAW ? 0
+  : (FAULT_NULL_RAW.split('=')[1] === 'stop' ? 2 : 1);
 const BREAKPOINT = getArg('break', null); // --break=0xADDR[,0xADDR,...]: break at address(es)
 const BREAK_ONCE = hasFlag('break-once'); // --break-once: do NOT re-arm bp after first hit (so prev_eip stays the true caller)
 const TRACE_AT = getArg('trace-at', null); // --trace-at=0xADDR: log regs each time EIP hits addr (non-interactive)
@@ -2730,6 +2738,7 @@ async function main() {
     traceCallstackDepth: TRACE_CALLSTACK_DEPTH,
     traceEipRange: (traceEipOn && traceEipArmed) ? { lo: traceEipLo, hi: traceEipHi } : null,
     countAddrs: countAddrs,
+    faultUnmapped: FAULT_NULL,
     now: () => tickState.batch * 200,
     hasMessage: () => !!(
       inputEvent ||
@@ -3359,6 +3368,13 @@ async function main() {
   // zero cost in the hot path.
   if (TRACE_CALLSTACK && instance.exports.set_callstack_enabled) {
     instance.exports.set_callstack_enabled(1);
+  }
+  // Arm --fault-null. Same deal: the WAT check sits in the $g2w miss path, so
+  // an off-run never reaches it.
+  if (FAULT_NULL && instance.exports.set_fault_unmapped) {
+    instance.exports.set_fault_unmapped(FAULT_NULL);
+    console.log(`[fault] --fault-null armed (mode=${FAULT_NULL}: `
+      + `${FAULT_NULL === 2 ? 'log and trap' : 'log and continue'})`);
   }
   if (TRACE_WIN16_DDE && instance.exports.set_win16_dde_trace) {
     instance.exports.set_win16_dde_trace(1);

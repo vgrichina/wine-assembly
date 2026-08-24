@@ -143,6 +143,14 @@
           (return (i32.add (local.get $backing) (i32.sub (local.get $ga) (local.get $base))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $mapped_scan)))
+    ;; Nothing maps this address. Report it if --fault-null asked us to; the
+    ;; check is here, past every translation attempt, so an armed flag costs
+    ;; the normal path nothing.
+    (if (global.get $fault_unmapped)
+      (then
+        (call $host_unmapped_trace (local.get $ga) (global.get $eip))
+        (if (i32.eq (global.get $fault_unmapped) (i32.const 2))
+          (then (unreachable)))))
     ;; Re-zero the sentinel (in case a prior bad write landed here).
     (i32.store (global.get $NULL_SENTINEL) (i32.const 0))
     (global.get $NULL_SENTINEL)

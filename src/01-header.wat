@@ -556,6 +556,12 @@
   (import "host" "erase_trace"
     (func $host_erase_trace (param i32 i32 i32 i32)))
 
+  ;; A guest address no mapping covers, with the EIP that reached for it.
+  ;; Called only when --fault-null armed $fault_unmapped, so the normal miss
+  ;; path is unchanged.
+  (import "host" "unmapped_trace"
+    (func $host_unmapped_trace (param i32 i32)))
+
   ;; Every standard scrollbar strip as it is painted: control-local rect,
   ;; orientation, and the page model it was handed. A strip that is flat grey
   ;; with no arrows is either a paint that never happened or one whose `long`
@@ -2463,6 +2469,16 @@
   (global $bp_addr (mut i32) (i32.const 0))
   (global $bp_skip_once (mut i32) (i32.const 0))
   (global $bp_first_caller (mut i32) (i32.const 0))
+
+  ;; --fault-null: report a guest access that no mapping covers instead of
+  ;; letting $g2w absorb it into NULL_SENTINEL. 0=off (the shipping behaviour,
+  ;; and the only one that costs nothing: the check lives in the miss path,
+  ;; after every translation attempt has already failed), 1=log and continue,
+  ;; 2=log and trap. A real Windows program that dereferences NULL takes an
+  ;; access violation; the sentinel makes that read zero and write nowhere,
+  ;; which keeps buggy guests alive at the cost of hiding where they went
+  ;; wrong. Turn this on when a symptom appears far from its cause.
+  (global $fault_unmapped (mut i32) (i32.const 0))
 
   ;; --trace-esp: when flag=1, the run loop calls $host_log_block(eip, esp)
   ;; at each block boundary whose EIP falls inside [lo, hi]. hi=0 means
