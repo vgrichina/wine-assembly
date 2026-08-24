@@ -279,6 +279,7 @@ GetMessageA in `09a5-handlers-window.wat` delivers messages in a priority-based 
 - `tools/pe-imports.js` — PE import table dumper (`--all` lists all functions, `--dll=NAME` filters by DLL)
 - `tools/ne-dump.js` — 16-bit NE (New Executable) structure dumper: `node tools/ne-dump.js <file.exe> [--segments] [--imports] [--entries] [--relocs=N] [--all]`. Every other tool here assumes a 32-bit image, so this is the only way to read `test/binaries/win98-16bit/`. Prints the segment table with file positions and flags, the module-reference/imported-name tables, the entry table, and per-segment fixups already resolved to `USER.#113` / `seg 1:0x0` form. Start here for anything about the Win16 games or Explorer's QT_Thunk path.
 - `tools/pe-sections.js` — PE section header dumper
+- `tools/pe-version.js` — dump `VS_VERSION_INFO` from a PE: `node tools/pe-version.js <pe> [<pe>...] [--json]`. Prints the fixed file/product version plus every StringFileInfo pair (FileVersion, ProductName, OriginalFilename…). Use it to answer "which release is this DLL from" — the corpus mixes DirectX/OLE builds and only this resource says which. `parse-rsrc.js` walks menus/dialogs/strings/icons and skips RT_VERSION, and macOS `strings(1)` has no `-e` flag, so the UTF-16 block is invisible to a grep.
 - `tools/render-png.js` — Headless PNG renderer
 - `tools/check-parens.js` — WAT parenthesis balance checker (auto-diffs vs git HEAD)
 - `tools/build.sh` — Build script (gates + concat + `lib/compile-wat.js`)
