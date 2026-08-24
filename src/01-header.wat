@@ -889,6 +889,9 @@
   ;; More WSOCK32 ordinal names. The 0x11300 block ends flush against the
   ;; winmm block at 0x113DC, so later additions live in the free run above the
   ;; richedit tables; the DLL name itself is still matched from 0x11300.
+  ;; This one fills the 18-byte gap between the oleaut32 block (ends 0x1156E)
+  ;; and RICHEDIT_FORMAT_TABLE at 0x11580 — there is no room to grow it.
+  (data (i32.const 0x11570) "WSAAsyncSelect\00")
   (data (i32.const 0x11D80) "ntohl\00WsControl\00")
   ;; if_descr for the one adapter WsControl reports (src/09d-winsock.wat).
   (data (i32.const 0x11D90) "Virtual LAN Adapter\00")
@@ -909,6 +912,11 @@
   ;; Where those modules claim to live, and the suffix appended to the stem.
   (data (i32.const 0x11DF4) "C:\\WINDOWS\\SYSTEM\\\00")
   (data (i32.const 0x11E08) ".dll\00")
+  ;; Two more WSOCK32 ordinal names, in the gap that runs to 0x11E30. Jazz
+  ;; Jackrabbit 2 imports its whole WinSock set by ordinal and calls
+  ;; gethostname during startup, so an unmapped ordinal 57 traps before the
+  ;; game reaches its first frame.
+  (data (i32.const 0x11E10) "gethostname\00getpeername\00")
   ;; Exports we answer natively even when the real DLL is loaded — see
   ;; $native_override_export_api_id in src/08b-dll-loader.wat.
   (data (i32.const 0x11E30) "InitCommonControlsEx\00")
