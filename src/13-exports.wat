@@ -2173,6 +2173,15 @@
     (global.set $CACHE_INDEX (i32.add (i32.const 0x07152000)
       (i32.mul (local.get $tid) (i32.const 0x8000))))
     (global.set $thread_alloc (global.get $THREAD_BASE))
+    ;; Page-compilation state is per-instance for the same reason THREAD_BASE
+    ;; and CACHE_INDEX are: a worker is a separate instance over the same
+    ;; memory, and chunk pointers name that thread's own arena partition.
+    (global.set $PAGE_DIR (i32.add (global.get $PAGE_DIR_BASE)
+      (i32.mul (local.get $tid) (global.get $PAGE_DIR_STRIDE))))
+    (global.set $PAGE_INDEX (i32.add (global.get $PAGE_INDEX_ARENA)
+      (i32.mul (local.get $tid) (global.get $PAGE_INDEX_STRIDE))))
+    (global.set $page_index_next (i32.const 0))
+    (call $page_dir_reset)
     (global.set $image_base (local.get $img_base))
     ;; Resource lookup state is instance-local. PE headers are not mapped into
     ;; guest memory, so a worker cannot reconstruct this RVA by rereading the
@@ -2431,6 +2440,16 @@
   ;; decode, and on every per-thread instance.
   (func (export "set_rect_run") (param $flag i32)
     (global.set $rect_run_enabled (local.get $flag)))
+
+  ;; Page compilation (docs/page-compile-design.md). Off by default: it is an
+  ;; accelerator under measurement, and everything still runs through the hash
+  ;; cache when it is off. Same per-instance rule as the two flags above.
+  (func (export "set_paging") (param $flag i32)
+    (global.set $paging_enabled (local.get $flag))
+    (if (i32.eqz (local.get $flag)) (then (call $page_dir_reset))))
+  (func (export "get_page_compiles") (result i32) (global.get $page_compiles))
+  (func (export "get_page_hits")     (result i32) (global.get $page_hits))
+  (func (export "get_page_misses")   (result i32) (global.get $page_misses))
 
   ;; Threaded-handler histogram. Profiling tools enable this only around a
   ;; measured window. Counts are stored in WAT-private memory and read by JS.

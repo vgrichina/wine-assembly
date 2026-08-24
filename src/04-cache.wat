@@ -116,6 +116,10 @@
   (func $clear_cache
     (local $i i32)
     (global.set $cache_clears (i32.add (global.get $cache_clears) (i32.const 1)))
+    ;; Compiled chunks live in the same arena $thread_arena_flush_if_safe
+    ;; rewinds, and every caller of $clear_cache is either that flush or the
+    ;; corruption recovery in $next. Both mean no chunk pointer can be trusted.
+    (call $page_dir_reset)
     (local.set $i (i32.const 0))
     (block $d (loop $s
       (br_if $d (i32.ge_u (local.get $i) (global.get $CACHE_SIZE)))
@@ -147,6 +151,9 @@
     (local $page i32) (local $i i32) (local $idx i32) (local $hit i32)
     (local.set $page (i32.and (local.get $ga) (i32.const 0xFFFFF000)))
     (global.set $cache_invals (i32.add (global.get $cache_invals) (i32.const 1)))
+    ;; O(1), unlike the 4096-slot sweep below: a compiled page owns its chunk,
+    ;; so retiring it is one directory entry.
+    (call $page_dir_drop (local.get $page))
     ;; NOTE: the page bit is deliberately NOT cleared here. $CACHE_INDEX is
     ;; per-thread (0x07152000 + tid*0x8000) while CODE_PAGE_BITMAP lives in
     ;; shared linear memory, so this sweep retires only the writing thread's
@@ -169,6 +176,133 @@
       (then
         (global.set $cache_inval_hits (i32.add (global.get $cache_inval_hits) (i32.const 1)))
         (global.set $cache_inval_page (local.get $page)))))
+
+  ;; ============================================================
+  ;; PAGE COMPILATION -- see docs/page-compile-design.md
+  ;; ============================================================
+  ;; A compiled page owns one 8KB index (4096 u16 entries, guest page offset ->
+  ;; offset within the page's threaded-code chunk) and one contiguous chunk in
+  ;; this thread's arena. Nothing here is required for correctness: every path
+  ;; that cannot page an address falls back to the hash cache above, which is
+  ;; untouched. That is the property that makes each sizing constant a tuning
+  ;; knob rather than a correctness constraint.
+
+  (func $page_dir_slot (param $page_base i32) (result i32)
+    (i32.add (global.get $PAGE_DIR)
+      (i32.mul
+        (i32.and (i32.shr_u (local.get $page_base) (i32.const 12))
+                 (global.get $PAGE_DIR_MASK))
+        (i32.const 16))))
+
+  ;; Forget every compiled page for this thread. Used at thread init and
+  ;; whenever the arena the chunks live in is recycled underneath them.
+  (func $page_dir_reset
+    (local $i i32) (local $slot i32)
+    (global.set $cur_page_base (i32.const 0))
+    (global.set $cur_page_index (i32.const 0))
+    (global.set $cur_page_chunk (i32.const 0))
+    (global.set $page_index_next (i32.const 0))
+    (global.set $page_index_free (i32.const 0))
+    (local.set $i (i32.const 0))
+    (block $d (loop $s
+      (br_if $d (i32.ge_u (local.get $i) (global.get $PAGE_DIR_ENTRIES)))
+      (local.set $slot
+        (i32.add (global.get $PAGE_DIR) (i32.mul (local.get $i) (i32.const 16))))
+      (i32.store (local.get $slot) (i32.const 0))
+      (i32.store offset=4 (local.get $slot) (i32.const 0))
+      (i32.store offset=8 (local.get $slot) (i32.const 0))
+      (i32.store offset=12 (local.get $slot) (i32.const 0))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $s))))
+
+  ;; Hand out an 8KB index, preferring the free list. Returns 0 when this
+  ;; thread's index arena is exhausted, which simply means the page does not
+  ;; get compiled.
+  (func $page_index_alloc (result i32)
+    (local $p i32)
+    (if (global.get $page_index_free)
+      (then
+        (local.set $p (global.get $page_index_free))
+        (global.set $page_index_free (i32.load (local.get $p)))
+        (return (local.get $p))))
+    (if (i32.ge_u (global.get $page_index_next) (global.get $PAGE_INDEX_SLOTS))
+      (then (return (i32.const 0))))
+    (local.set $p
+      (i32.add (global.get $PAGE_INDEX)
+        (i32.mul (global.get $page_index_next) (global.get $PAGE_INDEX_BYTES))))
+    (global.set $page_index_next (i32.add (global.get $page_index_next) (i32.const 1)))
+    (local.get $p))
+
+  ;; Every entry starts as PAGE_INDEX_NONE: an offset that was never written is
+  ;; either a mid-instruction byte or code pass 1 never reached, and both must
+  ;; miss rather than resolve to chunk offset 0.
+  (func $page_index_clear (param $p i32)
+    (local $i i32)
+    (local.set $i (i32.const 0))
+    (block $d (loop $s
+      (br_if $d (i32.ge_u (local.get $i) (global.get $PAGE_INDEX_BYTES)))
+      (i32.store (i32.add (local.get $p) (local.get $i)) (i32.const 0xFFFFFFFF))
+      (local.set $i (i32.add (local.get $i) (i32.const 4)))
+      (br $s))))
+
+  ;; Retire one page. This is what makes the fast path safe without a
+  ;; generation counter: a dropped page can no longer be named by the page
+  ;; registers, so a stale chunk pointer is unreachable rather than merely
+  ;; unlikely.
+  (func $page_dir_drop (param $page_base i32)
+    (local $slot i32) (local $idx i32)
+    (local.set $slot (call $page_dir_slot (local.get $page_base)))
+    (if (i32.ne (i32.load (local.get $slot)) (local.get $page_base)) (then (return)))
+    (local.set $idx (i32.load offset=4 (local.get $slot)))
+    (if (local.get $idx)
+      (then
+        (i32.store (local.get $idx) (global.get $page_index_free))
+        (global.set $page_index_free (local.get $idx))))
+    (i32.store (local.get $slot) (i32.const 0))
+    (i32.store offset=4 (local.get $slot) (i32.const 0))
+    (i32.store offset=8 (local.get $slot) (i32.const 0))
+    (i32.store offset=12 (local.get $slot) (i32.const 0))
+    (if (i32.eq (global.get $cur_page_base) (local.get $page_base))
+      (then
+        (global.set $cur_page_base (i32.const 0))
+        (global.set $cur_page_index (i32.const 0))
+        (global.set $cur_page_chunk (i32.const 0)))))
+
+  ;; Load the page registers for $page_base if it is already compiled.
+  (func $page_enter (param $page_base i32) (result i32)
+    (local $slot i32)
+    (local.set $slot (call $page_dir_slot (local.get $page_base)))
+    (if (i32.ne (i32.load (local.get $slot)) (local.get $page_base))
+      (then (return (i32.const 0))))
+    (global.set $cur_page_base (local.get $page_base))
+    (global.set $cur_page_index (i32.load offset=4 (local.get $slot)))
+    (global.set $cur_page_chunk (i32.load offset=8 (local.get $slot)))
+    (i32.const 1))
+
+  ;; The hot path. Resolve a guest address to a threaded-code pointer without
+  ;; touching the hash, or 0 to mean "use the ordinary path". Straight-line
+  ;; execution inside one page costs one compare and one load; only a
+  ;; page-crossing transfer consults PAGE_DIR, and it caches the result.
+  (func $page_resolve (param $dest i32) (result i32)
+    (local $base i32) (local $off i32)
+    (if (i32.eqz (global.get $paging_enabled)) (then (return (i32.const 0))))
+    (local.set $base (i32.and (local.get $dest) (i32.const 0xFFFFF000)))
+    (if (i32.ne (local.get $base) (global.get $cur_page_base))
+      (then
+        (if (i32.eqz (call $page_enter (local.get $base)))
+          (then
+            (global.set $page_misses (i32.add (global.get $page_misses) (i32.const 1)))
+            (return (i32.const 0))))))
+    (local.set $off
+      (i32.load16_u
+        (i32.add (global.get $cur_page_index)
+          (i32.shl (i32.and (local.get $dest) (i32.const 0xFFF)) (i32.const 1)))))
+    (if (i32.eq (local.get $off) (global.get $PAGE_INDEX_NONE))
+      (then
+        (global.set $page_misses (i32.add (global.get $page_misses) (i32.const 1)))
+        (return (i32.const 0))))
+    (global.set $page_hits (i32.add (global.get $page_hits) (i32.const 1)))
+    (i32.add (global.get $cur_page_chunk) (local.get $off)))
 
   ;; Recycling the decoded-code arena means resetting $thread_alloc to the base
   ;; and invalidating every cached block. That is only safe between blocks.

@@ -1318,6 +1318,28 @@
   (global $THREAD_CACHE_BASE_SIZE i32 (i32.const 0x02000000))
   (global $CACHE_INDEX_BASE i32 (i32.const 0x07152000))
   (global $CACHE_INDEX_BASE_SIZE i32 (i32.const 0x00040000))
+  ;; Page compilation (docs/page-compile-design.md). Both regions live in the
+  ;; free span 0x04100000..0x05000000 that tools/wat-memory-map.js reports
+  ;; between HANDLER_PAIR_HIST_COUNTS and THREAD_CACHE_BASE.
+  ;;
+  ;; PAGE_INDEX_ARENA: per compiled 4KB guest code page, 4096 u16 entries
+  ;; mapping a page offset to that instruction's offset within the page's
+  ;; threaded-code chunk (0xFFFF = not compiled / mid-instruction). 8KB each,
+  ;; 128 slots per thread, 1MB stride, 8 threads.
+  (global $PAGE_INDEX_ARENA i32 (i32.const 0x04100000))
+  (global $PAGE_INDEX_ARENA_SIZE i32 (i32.const 0x00800000))
+  (global $PAGE_INDEX_STRIDE i32 (i32.const 0x00100000))
+  (global $PAGE_INDEX_BYTES  i32 (i32.const 0x2000))
+  (global $PAGE_INDEX_SLOTS  i32 (i32.const 128))
+  (global $PAGE_INDEX_NONE   i32 (i32.const 0xFFFF))
+  ;; PAGE_DIR: per-thread direct-mapped table keyed on the guest page number.
+  ;; 1024 entries x 16 bytes: +0 page base (0 = empty), +4 index ptr,
+  ;; +8 chunk base, +12 chunk length. 16KB per thread, 8 threads.
+  (global $PAGE_DIR_BASE i32 (i32.const 0x04900000))
+  (global $PAGE_DIR_BASE_SIZE i32 (i32.const 0x00020000))
+  (global $PAGE_DIR_STRIDE i32 (i32.const 0x4000))
+  (global $PAGE_DIR_ENTRIES i32 (i32.const 1024))
+  (global $PAGE_DIR_MASK i32 (i32.const 1023))
   (global $DLL_TABLE_SIZE i32 (i32.const 0x00000200))
   (global $DLL_RSRC_TABLE_SIZE i32 (i32.const 0x00000200))
   ;; Guest-space thunk bounds (set by PE loader: THUNK_BASE/END - GUEST_BASE + image_base)
@@ -1329,6 +1351,30 @@
   ;; T1's thread cache region. Updated in $init_thread per tid.
   (global $THREAD_END   (mut i32) (i32.const 0x05400000))
   (global $CACHE_INDEX  (mut i32) (i32.const 0x07152000))
+  ;; Per-thread page-compilation state. Worker threads are separate WASM
+  ;; instances over the same memory, so every one of these is per-instance and
+  ;; must be re-armed in $init_thread -- see the per-instance-globals rule that
+  ;; already governs THREAD_BASE/THREAD_END/CACHE_INDEX above.
+  (global $PAGE_DIR   (mut i32) (i32.const 0x04900000))
+  (global $PAGE_INDEX (mut i32) (i32.const 0x04100000))
+  ;; Bump allocator over this thread's 128 index slots, plus a free list so a
+  ;; self-modifying app that drops and re-pages the same page repeatedly does
+  ;; not exhaust the arena. A free slot stores the next free pointer in its
+  ;; first four bytes; 0 terminates.
+  (global $page_index_next (mut i32) (i32.const 0))
+  (global $page_index_free (mut i32) (i32.const 0))
+  ;; The page currently executing. Straight-line execution inside one page
+  ;; never touches PAGE_DIR; only a page-crossing transfer does.
+  (global $cur_page_base  (mut i32) (i32.const 0))
+  (global $cur_page_index (mut i32) (i32.const 0))
+  (global $cur_page_chunk (mut i32) (i32.const 0))
+  ;; Off by default: this is an accelerator under measurement, and everything
+  ;; still runs through the hash cache when it is off.
+  (global $paging_enabled (mut i32) (i32.const 0))
+  ;; Counters for the A/B in docs/page-compile-design.md section 8.
+  (global $page_compiles (mut i32) (i32.const 0))
+  (global $page_hits     (mut i32) (i32.const 0))
+  (global $page_misses   (mut i32) (i32.const 0))
   (global $API_HASH_TABLE i32 (i32.const 0x07E00000))
   (global $API_HASH_TABLE_SIZE i32 (i32.const 0x00008000))
   ;; Window/class/parent tables (below GUEST_BASE, above the API hash table).
