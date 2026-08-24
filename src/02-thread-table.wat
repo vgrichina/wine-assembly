@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 410 funcref)
+  (table $handlers 414 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -466,4 +466,8 @@
     $th_alu_m32_i_jcc         ;; 407: ALU dword [base+disp], imm + Jcc
     $th_load32_base_run       ;; 408: 2-4 back-to-back mov reg,[base+disp]
     $th_unary_alu_m32_ro      ;; 409: inc/dec [base+disp] + ALU [base+disp], imm
+    $th_not_r16               ;; 410: NOT r16 (0x66 F7 /2, mod=3) — low half only
+    $th_neg_r16               ;; 411: NEG r16 (0x66 F7 /3, mod=3) — low half only
+    $th_movzx_r16_r8          ;; 412: MOVZX r16, r8 (0x66 0F B6, mod=3) — op=dst<<4|src
+    $th_movsx_r16_r8          ;; 413: MOVSX r16, r8 (0x66 0F BE, mod=3) — op=dst<<4|src
   )

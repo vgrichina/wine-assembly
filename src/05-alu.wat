@@ -1321,6 +1321,35 @@
     (call $set_reg8 (local.get $op) (i32.xor (call $get_reg8 (local.get $op)) (i32.const 0xFF)))
     (return_call $next))
 
+  ;; 410/411: NEG/NOT r16 — the 0x66-prefixed register forms. These must touch
+  ;; only the low half: RollerCoaster Tycoon builds a quadrant index in DI with
+  ;; `neg di` in the middle of the arithmetic, and a 32-bit negate of a small
+  ;; positive value leaves 0xFFFF in the upper half, which then indexes its
+  ;; quadrant table about a gigabyte away from the table.
+  (func $th_neg_r16 (param $op i32)
+    (local $old i32) (local $r i32)
+    (local.set $old (call $get_reg16 (local.get $op)))
+    (local.set $r (i32.and (i32.sub (i32.const 0) (local.get $old)) (i32.const 0xFFFF)))
+    (call $set_reg16 (local.get $op) (local.get $r))
+    (global.set $flag_op (i32.const 2)) (global.set $flag_sign_shift (i32.const 15))
+    (global.set $flag_a (i32.const 0)) (global.set $flag_b (local.get $old)) (global.set $flag_res (local.get $r))
+    (return_call $next))
+  (func $th_not_r16 (param $op i32)
+    (call $set_reg16 (local.get $op) (i32.xor (call $get_reg16 (local.get $op)) (i32.const 0xFFFF)))
+    (return_call $next))
+
+  ;; 412/413: MOVZX/MOVSX r16, r8 — the 0x66-prefixed register forms of
+  ;; 0F B6 / 0F BE. Operand encoding matches handlers 208/209: dst<<4|src.
+  (func $th_movzx_r16_r8 (param $op i32)
+    (call $set_reg16 (i32.shr_u (local.get $op) (i32.const 4))
+                     (call $get_reg8 (i32.and (local.get $op) (i32.const 0xF))))
+    (return_call $next))
+  (func $th_movsx_r16_r8 (param $op i32)
+    (call $set_reg16 (i32.shr_u (local.get $op) (i32.const 4))
+      (i32.and (i32.shr_s (i32.shl (call $get_reg8 (i32.and (local.get $op) (i32.const 0xF)))
+                                   (i32.const 24)) (i32.const 24)) (i32.const 0xFFFF)))
+    (return_call $next))
+
   ;; --- Unary memory ---
   ;; 68: operand = unary_type (0=inc,1=dec,2=not,3=neg), addr in next word
   (func $th_unary_m32 (param $op i32)
