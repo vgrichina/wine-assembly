@@ -3168,6 +3168,7 @@
 
   (func $handle_IDirectDrawPalette_SetEntries (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $pal_wa i32) (local $src_wa i32) (local $skip_copy i32)
+    (local $prim i32)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $pal_wa (i32.load (i32.add (local.get $entry) (i32.const 20))))
     (if (local.get $arg4)
@@ -3189,6 +3190,25 @@
             (i32.mul (local.get $arg3) (i32.const 4)))))))
     (call $host_dx_trace (i32.const 4) (call $dx_slot_of (local.get $entry))
       (local.get $arg2) (local.get $arg3) (local.get $pal_wa))
+    ;; A hardware palette write changes what the display shows without the
+    ;; program touching a single pixel of the framebuffer -- that is the whole
+    ;; point of an 8bpp fade. Diablo's menus are drawn once and then faded in
+    ;; over ~16 SetEntries calls on the primary's palette, so a present that
+    ;; only fires on Unlock leaves the screen holding fade step 0 for good:
+    ;; the artwork is in the surface, its palette entries are still black, and
+    ;; the menu looks like nothing but the text drawn afterwards through GDI.
+    ;; Re-present the primary whenever its own palette changes.
+    (if (i32.and
+          (i32.and
+            (i32.eqz (local.get $skip_copy))
+            (i32.ne (local.get $src_wa) (i32.const 0)))
+          (i32.and
+            (i32.ne (local.get $pal_wa) (i32.const 0))
+            (i32.eq (local.get $pal_wa) (global.get $dx_primary_pal_wa))))
+      (then
+        (local.set $prim (call $dx_primary_entry))
+        (if (local.get $prim)
+          (then (call $dx_present (local.get $prim))))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
