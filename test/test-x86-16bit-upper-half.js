@@ -194,12 +194,27 @@ async function main() {
     ['xchg di, ax',     [0x66, 0x97]],
     ['movzx di, cl',    [0x66, 0x0F, 0xB6, 0xF9]],
     ['movsx di, cl',    [0x66, 0x0F, 0xBE, 0xF9]],
+    // The memory forms take a different path through the decoder for each
+    // addressing mode: absolute, [base+disp], and SIB -- and the SIB one is
+    // fused into a 32-bit superinstruction, which must not fire under 0x66.
+    ['movzx di, byte [mem]',      [0x66, 0x0F, 0xB6, 0x3D, ...abs(src)]],
+    ['movsx di, byte [mem]',      [0x66, 0x0F, 0xBE, 0x3D, ...abs(src)]],
+    ['movzx di, word [mem]',      [0x66, 0x0F, 0xB7, 0x3D, ...abs(src)]],
+    ['movsx di, word [mem]',      [0x66, 0x0F, 0xBF, 0x3D, ...abs(src)]],
+    ['movzx di, byte [ebx+1]',    [0x66, 0x0F, 0xB6, 0x7B, 0x01]],
+    ['movsx di, byte [ebx+1]',    [0x66, 0x0F, 0xBE, 0x7B, 0x01]],
+    ['movzx di, word [ebx]',      [0x66, 0x0F, 0xB7, 0x7B, 0x00]],
+    ['movsx di, word [ebx]',      [0x66, 0x0F, 0xBF, 0x7B, 0x00]],
+    ['movsx di, byte [ebx+esi]',  [0x66, 0x0F, 0xBE, 0x3C, 0x33]],
+    ['movzx di, byte [ebx+esi]',  [0x66, 0x0F, 0xB6, 0x3C, 0x33]],
   ];
   for (const [name, bytes] of sweep) {
     runCode(bytes, () => {
       e.set_edi(0xAAAA8123);        // upper half is a marker, DI already negative
       e.set_eax(0x5555F00D);        // 16-bit source, also negative
       e.set_ecx(0x333300FE);
+      e.set_ebx(src);               // base for the [base+disp] and SIB forms
+      e.set_esi(0);                 // index, so [ebx+esi] is just [src]
       dv.setUint32(g2w(src), 0x7777F00D, true);
     });
     const got = e.get_edi() >>> 0;
@@ -209,6 +224,39 @@ async function main() {
     console.log(`  FAIL ${name} clobbered the upper half of EDI: got ${hex(got)} (want 0xaaaaXXXX)`);
     fail++;
   }
+
+  // 10. The sweep only proves the upper half survived; these pin the value the
+  //     low half is supposed to get, sign extension included. [src] is
+  //     0x7777F00D, so byte [src] = 0x0D, byte [src+1] = 0xF0, word = 0xF00D.
+  const memCase = (name, bytes, expected) => {
+    runCode(bytes, () => {
+      e.set_edi(0xAAAA8123);
+      e.set_ebx(src);
+      e.set_esi(0);
+      dv.setUint32(g2w(src), 0x7777F00D, true);
+    });
+    test(name, e.get_edi(), expected);
+  };
+  memCase('movzx di, byte [mem]', [0x66, 0x0F, 0xB6, 0x3D, ...abs(src)], 0xAAAA000D);
+  memCase('movsx di, byte [mem]', [0x66, 0x0F, 0xBE, 0x3D, ...abs(src)], 0xAAAA000D);
+  memCase('movzx di, byte [ebx+1]', [0x66, 0x0F, 0xB6, 0x7B, 0x01], 0xAAAA00F0);
+  memCase('movsx di, byte [ebx+1]', [0x66, 0x0F, 0xBE, 0x7B, 0x01], 0xAAAAFFF0);
+  memCase('movsx di, byte [ebx+esi] (SIB, must not fuse)',
+    [0x66, 0x0F, 0xBE, 0x3C, 0x33], 0xAAAA000D);
+  memCase('movzx di, word [mem]', [0x66, 0x0F, 0xB7, 0x3D, ...abs(src)], 0xAAAAF00D);
+  memCase('movsx di, word [mem]', [0x66, 0x0F, 0xBF, 0x3D, ...abs(src)], 0xAAAAF00D);
+  memCase('movzx di, word [ebx]', [0x66, 0x0F, 0xB7, 0x7B, 0x00], 0xAAAAF00D);
+  // The unprefixed forms must be untouched by all of the above.
+  memCase('movzx edi, byte [mem] still writes 32 bits',
+    [0x0F, 0xB6, 0x3D, ...abs(src)], 0x0000000D);
+  memCase('movsx edi, byte [ebx+1] still writes 32 bits',
+    [0x0F, 0xBE, 0x7B, 0x01], 0xFFFFFFF0);
+  memCase('movsx edi, byte [ebx+esi] (fused SIB) still writes 32 bits',
+    [0x0F, 0xBE, 0x3C, 0x33], 0x0000000D);
+  memCase('movzx edi, word [mem] still writes 32 bits',
+    [0x0F, 0xB7, 0x3D, ...abs(src)], 0x0000F00D);
+  memCase('movsx edi, word [mem] still writes 32 bits',
+    [0x0F, 0xBF, 0x3D, ...abs(src)], 0xFFFFF00D);
 
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

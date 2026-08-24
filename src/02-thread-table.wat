@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 414 funcref)
+  (table $handlers 418 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -470,4 +470,8 @@
     $th_neg_r16               ;; 411: NEG r16 (0x66 F7 /3, mod=3) — low half only
     $th_movzx_r16_r8          ;; 412: MOVZX r16, r8 (0x66 0F B6, mod=3) — op=dst<<4|src
     $th_movsx_r16_r8          ;; 413: MOVSX r16, r8 (0x66 0F BE, mod=3) — op=dst<<4|src
+    $th_movzx_r16_m8          ;; 414: MOVZX r16, byte [addr] (op=dst, addr in next word)
+    $th_movsx_r16_m8          ;; 415: MOVSX r16, byte [addr]
+    $th_movzx_r16_m8_ro       ;; 416: MOVZX r16, byte [base+disp] (op=dst<<4|base, disp in word)
+    $th_movsx_r16_m8_ro       ;; 417: MOVSX r16, byte [base+disp]
   )

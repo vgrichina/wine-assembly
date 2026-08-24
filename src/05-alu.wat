@@ -1344,6 +1344,24 @@
     (call $set_reg16 (i32.shr_u (local.get $op) (i32.const 4))
                      (call $get_reg8 (i32.and (local.get $op) (i32.const 0xF))))
     (return_call $next))
+  ;; 414-417: the memory forms of the same two instructions under 0x66.
+  ;; 414/415 take the address in the next word; 416/417 are the [base+disp]
+  ;; forms and pack op as dst<<4|base, like handlers 143/144 do for r32.
+  (func $th_movzx_r16_m8 (param $op i32)
+    (call $set_reg16 (local.get $op) (call $gl8 (call $read_addr))) (return_call $next))
+  (func $th_movsx_r16_m8 (param $op i32)
+    (call $set_reg16 (local.get $op)
+      (i32.and (call $sign_ext8 (call $gl8 (call $read_addr))) (i32.const 0xFFFF)))
+    (return_call $next))
+  (func $th_movzx_r16_m8_ro (param $op i32)
+    (call $set_reg16 (i32.shr_u (local.get $op) (i32.const 4))
+      (call $gl8 (call $ea_from_op (local.get $op))))
+    (return_call $next))
+  (func $th_movsx_r16_m8_ro (param $op i32)
+    (call $set_reg16 (i32.shr_u (local.get $op) (i32.const 4))
+      (i32.and (call $sign_ext8 (call $gl8 (call $ea_from_op (local.get $op)))) (i32.const 0xFFFF)))
+    (return_call $next))
+
   (func $th_movsx_r16_r8 (param $op i32)
     (call $set_reg16 (i32.shr_u (local.get $op) (i32.const 4))
       (i32.and (i32.shr_s (i32.shl (call $get_reg8 (i32.and (local.get $op) (i32.const 0xF)))
