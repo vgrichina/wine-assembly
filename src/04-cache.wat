@@ -55,11 +55,15 @@
   (func $cache_lookup (param $ga i32) (result i32)
     (local $idx i32)
     (local.set $idx (call $cache_slot (local.get $ga)))
+    ;; The top 4 bits of the stored offset carry the block's page span, not
+    ;; part of the arena pointer (the arena is well under 256MB). See
+    ;; $cache_store / $invalidate_page.
     (if (result i32) (i32.eq (i32.load (local.get $idx)) (local.get $ga))
-      (then (i32.load offset=4 (local.get $idx)))
+      (then (i32.and (i32.load offset=4 (local.get $idx)) (i32.const 0x0FFFFFFF)))
       (else (i32.const 0))))
   (func $cache_store (param $ga i32) (param $off i32)
     (local $idx i32) (local $page i32) (local $page_end i32) (local $should_track i32)
+    (local $span i32)
     (local.set $idx (call $cache_slot (local.get $ga)))
     ;; Tells conflict/capacity misses (slot held a different block) apart from
     ;; compulsory ones (slot empty -- code being decoded for the first time,
@@ -69,9 +73,35 @@
     (if (i32.and (i32.ne (i32.load (local.get $idx)) (i32.const 0))
                  (i32.ne (i32.load (local.get $idx)) (local.get $ga)))
       (then (global.set $cache_evicts (i32.add (global.get $cache_evicts) (i32.const 1)))))
+    ;; A block is retired by its *start* page, so a write to page P also has to
+    ;; retire blocks that began earlier and ran into P. Record how many pages
+    ;; this block covers in the top 4 bits of the arena offset (the arena is
+    ;; far below 256MB, so those bits are free) and let $invalidate_page use it.
+    ;; Storm's byte copier is a long run of unrolled `mov al,[esi]/inc/…`
+    ;; entered at end-8*count and terminated by a `jmp` it rewrites per call:
+    ;; a copy of more than ~500 bytes starts a page below the patched jump, and
+    ;; without this the block keeps the previous caller's return address.
+    (if (i32.gt_u (global.get $d_pc) (local.get $ga))
+      (then
+        (local.set $span
+          (i32.shr_u
+            (i32.sub (i32.and (i32.sub (global.get $d_pc) (i32.const 1)) (i32.const 0xFFFFF000))
+                     (i32.and (local.get $ga) (i32.const 0xFFFFF000)))
+            (i32.const 12)))
+        (if (i32.gt_u (local.get $span) (i32.const 15))
+          (then (local.set $span (i32.const 15))))))
     (i32.store (local.get $idx) (local.get $ga))
-    (i32.store offset=4 (local.get $idx) (local.get $off))
-    (call $code_page_mark (local.get $ga))
+    (i32.store offset=4 (local.get $idx)
+      (i32.or (local.get $off) (i32.shl (local.get $span) (i32.const 28))))
+    ;; Every page the block covers has to be marked, not just the one it starts
+    ;; on, or a write to its tail is not even recognised as a code write.
+    (local.set $page (i32.and (local.get $ga) (i32.const 0xFFFFF000)))
+    (local.set $page_end (i32.add (local.get $page) (i32.shl (i32.add (local.get $span) (i32.const 1)) (i32.const 12))))
+    (block $marked (loop $mark
+      (br_if $marked (i32.ge_u (local.get $page) (local.get $page_end)))
+      (call $code_page_mark (local.get $page))
+      (local.set $page (i32.add (local.get $page) (i32.const 0x1000)))
+      (br $mark)))
     (local.set $should_track
       (i32.and
         (i32.ne (global.get $exe_size_of_image) (i32.const 0))
@@ -84,7 +114,7 @@
     (if (local.get $should_track)
       (then
         (local.set $page (i32.and (local.get $ga) (i32.const 0xFFFFF000)))
-        (local.set $page_end (i32.add (local.get $page) (i32.const 0x1000)))
+        (local.set $page_end (i32.add (local.get $page) (i32.shl (i32.add (local.get $span) (i32.const 1)) (i32.const 12))))
         (if (i32.or (i32.eqz (global.get $generated_code_start))
                     (i32.lt_u (local.get $page) (global.get $generated_code_start)))
           (then (global.set $generated_code_start (local.get $page))))
@@ -98,7 +128,7 @@
           (i32.lt_u (local.get $ga) (global.get $VIRTUAL_ALLOC_TOP_INIT)))
       (then
         (local.set $page (i32.and (local.get $ga) (i32.const 0xFFFFF000)))
-        (local.set $page_end (i32.add (local.get $page) (i32.const 0x1000)))
+        (local.set $page_end (i32.add (local.get $page) (i32.shl (i32.add (local.get $span) (i32.const 1)) (i32.const 12))))
         (if (i32.or (i32.eqz (global.get $generated_sparse_code_start))
                     (i32.lt_u (local.get $page) (global.get $generated_sparse_code_start)))
           (then (global.set $generated_sparse_code_start (local.get $page))))
@@ -145,6 +175,7 @@
 
   (func $invalidate_page (param $ga i32)
     (local $page i32) (local $i i32) (local $idx i32) (local $hit i32)
+    (local $bs i32) (local $bp i32)
     (local.set $page (i32.and (local.get $ga) (i32.const 0xFFFFF000)))
     (global.set $cache_invals (i32.add (global.get $cache_invals) (i32.const 1)))
     ;; NOTE: the page bit is deliberately NOT cleared here. $CACHE_INDEX is
@@ -159,7 +190,17 @@
     (block $d (loop $s
       (br_if $d (i32.ge_u (local.get $i) (global.get $CACHE_SIZE)))
       (local.set $idx (i32.add (global.get $CACHE_INDEX) (i32.mul (local.get $i) (i32.const 8))))
-      (if (i32.eq (i32.and (i32.load (local.get $idx)) (i32.const 0xFFFFF000)) (local.get $page))
+      (local.set $bs (i32.load (local.get $idx)))
+      (local.set $bp (i32.and (local.get $bs) (i32.const 0xFFFFF000)))
+      (if (i32.and
+            (i32.ne (local.get $bs) (i32.const 0))
+            (i32.and
+              (i32.le_u (local.get $bp) (local.get $page))
+              (i32.ge_u
+                (i32.add (local.get $bp)
+                  (i32.shl (i32.shr_u (i32.load offset=4 (local.get $idx)) (i32.const 28))
+                           (i32.const 12)))
+                (local.get $page))))
         (then
           (local.set $hit (i32.const 1))
           (i32.store (local.get $idx) (i32.const 0)) (i32.store offset=4 (local.get $idx) (i32.const 0))))

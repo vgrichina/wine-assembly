@@ -237,6 +237,25 @@
           (local.get $in_sparse_generated)
           (call $code_page_test (local.get $ga)))
       (then (call $invalidate_page (local.get $ga)))))
+
+  ;; Endpoint-only invalidation is wrong for anything longer than two pages:
+  ;; a bulk copy or fill that starts on page A and ends on page C leaves every
+  ;; decoded block on page B live, and the interpreter keeps running the code
+  ;; those bytes used to be. Storm generates its blitters into a 384KB sparse
+  ;; VirtualAlloc region and rewrites them with rep movsd, so the skipped
+  ;; middle is exactly where its generated code lives.
+  (func $invalidate_code_range (param $ga i32) (param $len i32)
+    (local $p i32) (local $last i32)
+    (if (i32.eqz (local.get $len)) (then (return)))
+    (local.set $p (i32.and (local.get $ga) (i32.const 0xFFFFF000)))
+    (local.set $last
+      (i32.and (i32.add (local.get $ga) (i32.sub (local.get $len) (i32.const 1)))
+               (i32.const 0xFFFFF000)))
+    (block $done (loop $step
+      (call $invalidate_code_write (local.get $p))
+      (br_if $done (i32.ge_u (local.get $p) (local.get $last)))
+      (local.set $p (i32.add (local.get $p) (i32.const 0x1000)))
+      (br $step))))
   (func $gs32 (param $ga i32) (param $v i32)
     (local $wa i32) (local $end_wa i32)
     (local.set $wa (call $g2w (local.get $ga)))

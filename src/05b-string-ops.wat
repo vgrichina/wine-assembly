@@ -163,8 +163,8 @@
           ;; Backward: src/dst point to highest byte, copy from (addr - n + 1)
           (local.set $dst (i32.sub (global.get $edi) (i32.sub (local.get $n) (i32.const 1))))
           (local.set $src (i32.sub (global.get $esi) (i32.sub (local.get $n) (i32.const 1))))
-          (call $invalidate_code_write (local.get $dst))
-          (call $invalidate_code_write (global.get $edi))
+          (call $invalidate_code_range (local.get $dst)
+            (i32.add (i32.sub (global.get $edi) (local.get $dst)) (i32.const 1)))
           (if (i32.or
                 (i32.and
                   (i32.lt_u (local.get $dst) (local.get $src))
@@ -191,8 +191,7 @@
         (else
           (local.set $src (global.get $esi))
           (local.set $dst (global.get $edi))
-          (call $invalidate_code_write (global.get $edi))
-          (call $invalidate_code_write (i32.add (global.get $edi) (i32.sub (local.get $n) (i32.const 1))))
+          (call $invalidate_code_range (global.get $edi) (local.get $n))
           (if (i32.or
                 (i32.and
                   (i32.lt_u (local.get $src) (local.get $dst))
@@ -224,8 +223,8 @@
         (then
           (local.set $dst (i32.sub (global.get $edi) (i32.sub (local.get $bytes) (i32.const 4))))
           (local.set $src (i32.sub (global.get $esi) (i32.sub (local.get $bytes) (i32.const 4))))
-          (call $invalidate_code_write (local.get $dst))
-          (call $invalidate_code_write (global.get $edi))
+          (call $invalidate_code_range (local.get $dst)
+            (i32.add (i32.sub (global.get $edi) (local.get $dst)) (i32.const 1)))
           (if (i32.or
                 (i32.and
                   (i32.lt_u (local.get $dst) (local.get $src))
@@ -252,8 +251,7 @@
         (else
           (local.set $src (global.get $esi))
           (local.set $dst (global.get $edi))
-          (call $invalidate_code_write (global.get $edi))
-          (call $invalidate_code_write (i32.add (global.get $edi) (i32.sub (local.get $bytes) (i32.const 1))))
+          (call $invalidate_code_range (global.get $edi) (local.get $bytes))
           (if (i32.or
                 (i32.and
                   (i32.lt_u (local.get $src) (local.get $dst))
@@ -283,8 +281,8 @@
       (if (global.get $df)
         (then
           (local.set $dst (i32.sub (global.get $edi) (i32.sub (local.get $n) (i32.const 1))))
-          (call $invalidate_code_write (local.get $dst))
-          (call $invalidate_code_write (global.get $edi))
+          (call $invalidate_code_range (local.get $dst)
+            (i32.add (i32.sub (global.get $edi) (local.get $dst)) (i32.const 1)))
           (if (call $string_guest_range_contiguous (local.get $dst) (local.get $n))
             (then
               (memory.fill
@@ -301,8 +299,7 @@
                 (br $fill)))))
           (global.set $edi (i32.sub (global.get $edi) (local.get $n))))
         (else
-          (call $invalidate_code_write (global.get $edi))
-          (call $invalidate_code_write (i32.add (global.get $edi) (i32.sub (local.get $n) (i32.const 1))))
+          (call $invalidate_code_range (global.get $edi) (local.get $n))
           (if (call $string_guest_range_contiguous (global.get $edi) (local.get $n))
             (then
               (memory.fill (call $g2w (global.get $edi))
@@ -339,15 +336,15 @@
         (then
           (if (global.get $df)
             (then
-              (call $invalidate_code_write (i32.sub (global.get $edi) (i32.sub (local.get $bytes) (i32.const 4))))
-              (call $invalidate_code_write (global.get $edi))
+              (call $invalidate_code_range
+                (i32.sub (global.get $edi) (i32.sub (local.get $bytes) (i32.const 4)))
+                (local.get $bytes))
               (memory.fill
                 (call $g2w (i32.sub (global.get $edi) (i32.sub (local.get $bytes) (i32.const 4))))
                 (local.get $al) (local.get $bytes))
               (global.set $edi (i32.sub (global.get $edi) (local.get $bytes))))
             (else
-              (call $invalidate_code_write (global.get $edi))
-              (call $invalidate_code_write (i32.add (global.get $edi) (i32.sub (local.get $bytes) (i32.const 1))))
+              (call $invalidate_code_range (global.get $edi) (local.get $bytes))
               (memory.fill (call $g2w (global.get $edi)) (local.get $al) (local.get $bytes))
               (global.set $edi (i32.add (global.get $edi) (local.get $bytes))))))
         (else
