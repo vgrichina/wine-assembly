@@ -111,6 +111,45 @@ button once per frame, so `run.js`'s `click` (both events in one batch) is
 invisible to it. `--screen=800x600` matches the DirectDraw exclusive mode so
 cursor coordinates need no scaling.
 
+### It is not "mostly gameplay", and only ~4/5 of it is the interpreter
+
+Two things worth knowing before reading any speedup claim on this page as a
+speedup of *Caesar III*.
+
+**The workload is not gameplay-dominated.** CPU time is close to linear in
+`--max-batches`, so prefixes of the run give the phase split directly:
+
+| `--max-batches` | user CPU | phase reached |
+|---|---|---|
+| 1 | 0.10s | process start |
+| 700 | 2.35s | title screen |
+| 1500 | 5.22s | main menu |
+| 2700 | 8.55s | mission briefing |
+| 3400 | 11.16s | city view |
+
+Startup is ~1%; the rest is roughly **title 21% / menu 25% / briefing 29% /
+city 23%**. So a change that only helps the isometric city renderer is being
+graded on a run that is three-quarters *not* the city, and a change that helps
+the menu blitters gets credit that would not survive a longer session. This is
+the same trap as the missing input script, one level down: the command is right,
+but its name ("gameplay") oversells what it spends its time on.
+
+**~15% of it is CLI-only JS rasterization no dispatch change can touch.**
+`node --prof` on the same command: 91.8% of ticks are JavaScript, and inside
+that, wasm accounts for 6350 ticks against 1457 in host JS — **wasm is 81.3%**.
+The top non-wasm entries are all `lib/raster-canvas.js`: `drawImage`
+(`lib/raster-canvas.js:273`) at **11.8% of total ticks**, `putImageData` 2.0%,
+`fillRect` 1.4%. That path exists only in the headless CLI; the browser hands
+those to the real canvas. It is a fixed ~15% tax on every measurement taken this
+way, and it caps what any dispatch reduction can show: `fuse-cmp-jcc`'s −8.43%
+op reduction has at most ~85% of the run to act on even before the ops it removes
+turn out to be the cheap ones.
+
+The hottest named wasm functions in the same profile are `$gl32` (6.2%), `$gl16`
+(5.2%), `$gs8` (3.3%) and `$th_store8_sib` (3.0%) — memory accessors, not
+dispatch. That is consistent with everything else here: the cost is in what the
+handlers *do*, not in getting to them.
+
 ### The 361 cap: fusions flatter themselves 2x
 
 **Fixed 2026-08-23.** `$HANDLER_HIST_COUNT` is now **512**, the matrix is 1MB at
@@ -419,12 +458,56 @@ A register array at a fixed address would give every thread one register file.
 Follow the `$THREAD_BASE = 0x05000000 + tid*0x400000` pattern, via a per-instance
 base global.
 
+## Timing: attempted four ways, resolved nothing (`tools/ab-time.js`)
+
+All four experiments were blocked on "needs a timing run". Four passes were made
+over the five worktrees (`main`, `jccfuse`, `sibfuse`, `regspec`, `regarray`),
+each interleaved, each quoting minima. None of them resolved a difference,
+and the failures are worth recording because each one looked like a result.
+
+| pass | metric | result |
+|---|---|---|
+| 1 (n=6, load 4-7) | wall clock | main alone spanned 9094-13410ms — a 47% spread on **one** binary, larger than any between-variant gap |
+| 2 (n=10, load 4-15) | wall clock, minima | jccfuse −0.09%, sibfuse +1.51%, regspec +7.74%, regarray −0.08% — all inside noise |
+| 3 (n=8, load 4-8) | **CPU** time, fixed order | jccfuse −6.6%, sibfuse −7.3%, regspec −7.1%, regarray −11.3% |
+| 4 (n=10, load 4-9) | CPU time, **rotated** order | jccfuse +3.3%, sibfuse **+17.5%**, regspec −0.9%, regarray −8.4% |
+
+Pass 3 is the instructive one. Every variant beat `main` by 6-11%, *including*
+`regarray`, whose dispatch count is bit-identical to main's — that is not four
+speedups, it is `main` always running in slot 1 of the round and paying for the
+previous round's tail. Interleaving removes drift between variants but not
+between *positions*; `ab-time.js` now rotates the order each round. Pass 4, same
+binaries, flips `sibfuse` from −7.3% to +17.5%.
+
+The CPU-time switch also did not buy what it promised: `/usr/bin/time` user+sys
+tracked elapsed almost exactly (13240c/13899w), because SMT contention and
+frequency scaling are billed to the process. Measured noise floor (worst
+min→median spread) was **24.5%** in pass 3 and **41.9%** in pass 4, against
+effects of 5-8%.
+
+**Conclusion: this box cannot time these changes, and no amount of statistics
+fixes that** — the box has run at load 4-30 with several agent sessions
+sweeping the corpus for the entire investigation. Do not merge any of the four
+on the strength of a timing run taken here. What would settle it: a quiet
+machine, or an in-process metric that is not wall-clock (a cycle counter around
+`$run`, or `--cpu-prof` self-time on the interpreter functions specifically,
+which is how `opus5-rct` got a defensible 64.5% figure for `$invalidate_page`).
+
+Note also that the biggest measured interpreter win found during this work came
+from none of these: it was `$invalidate_page`'s O(CACHE_SIZE) sweep per guest
+write, 64.5% of total CPU on RollerCoaster Tycoon, fixed by per-page version
+counters for a 5.4x wall-clock win with a bit-identical dispatch count. A
+dispatch-count investigation is structurally blind to that class of bug.
+
 ## Method notes
 
 - Primary metric on a loaded box is the op count, not the clock. State the load
   average when quoting any timing; `uptime` before and after.
 - Interleave A/B/C samples in one loop rather than running all of A then all of
   B — background load drifts on the scale of minutes.
+- Rotate the order *within* the round too. A fixed round-robin gives each
+  variant a fixed slot, and slot 1 is measurably penalised; see pass 3 above,
+  where that alone manufactured four 6-11% "speedups".
 - Quote minima, not means, when the noise is one-sided (contention only ever
   makes a run slower).
 - `tools/png-diff.js` against a baseline capture is the cheap correctness gate;

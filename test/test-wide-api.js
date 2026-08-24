@@ -94,8 +94,14 @@ async function main() {
     (e.test_call_GetModuleHandleA(queryA) >>> 0) === (loadAddr >>> 0));
   const ole32A = writeAscii('oLe32.DlL');
   const notOle32A = writeAscii('OLE32X');
+  // A module we dispatch statically has no image, so it answers with a
+  // pseudo-handle: $STATIC_SYS_DLL_HANDLE_BASE plus its position in the name
+  // list, ole32 being first. It has to be distinct from the EXE's own handle,
+  // or GetModuleFileName can't tell the two apart. See
+  // $guest_name_is_static_system_dll in src/09a-handlers.wat.
+  const STATIC_SYS_DLL_HANDLE_BASE = 0x5D110000;
   check('GetModuleHandleA recognizes statically dispatched OLE32',
-    (e.test_call_GetModuleHandleA(ole32A) >>> 0) === (e.get_image_base() >>> 0));
+    (e.test_call_GetModuleHandleA(ole32A) >>> 0) === STATIC_SYS_DLL_HANDLE_BASE);
   const oleExpDir = e.guest_alloc(32);
   const oleDllName = writeAscii('OLE32.DLL');
   const oleLoadAddr = oleExpDir - 0x1800;

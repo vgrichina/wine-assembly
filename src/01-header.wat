@@ -892,6 +892,17 @@
   ;; its diagnostic/API name separate from GetTimeZoneInformation: the native
   ;; ordinal takes a BOOL refresh flag, not an output-structure pointer.
   (data (i32.const 0x11DB0) "KERNEL32.dll\00KERNEL32_Ordinal99\00")
+  ;; Modules whose exports we dispatch statically: they have no mapped PE
+  ;; image and no DLL-table entry, so GetModuleHandle has to recognize them by
+  ;; name. Lower case and without the ".dll" suffix; the matcher accepts
+  ;; either form. See $guest_name_is_static_system_dll in 09a-handlers.wat.
+  ;; ORDER MATTERS: everything from index $STATIC_SYS_DLL_FIRST_DX onwards is
+  ;; part of DirectX and answers the file-version query with the DirectX
+  ;; version below, so new non-DirectX names belong before "dplayx".
+  (data (i32.const 0x11DD0) "ole32\00dplayx\00ddraw\00dsound\00d3drm\00\00")
+  ;; Where those modules claim to live, and the suffix appended to the stem.
+  (data (i32.const 0x11DF4) "C:\\WINDOWS\\SYSTEM\\\00")
+  (data (i32.const 0x11E08) ".dll\00")
   ;; Exports we answer natively even when the real DLL is loaded — see
   ;; $native_override_export_api_id in src/08b-dll-loader.wat.
   (data (i32.const 0x11E30) "InitCommonControlsEx\00")
@@ -1049,6 +1060,27 @@
   (data (i32.const 0x11235) "Basic colors:\00")
   (data (i32.const 0x11243) "Custom colors:\00")
   (data (i32.const 0x11252) "Define Custom Colors >>\00")
+
+  ;; A complete VS_VERSIONINFO block (header + VS_FIXEDFILEINFO, no string
+  ;; tables) reporting DirectX 6.1a — dplayx.dll 4.06.03.0518, the version
+  ;; Windows 98 SE shipped. The file-version APIs hand this back for the
+  ;; DirectX modules we dispatch statically, which have no file on disk to
+  ;; read a real resource out of. Age of Empires II refuses to start below
+  ;; 4.6.3.516, and it asks dplayx, not the display driver.
+  ;;   +0x00 wLength=92  wValueLength=52  wType=0
+  ;;   +0x06 "VS_VERSION_INFO" UTF-16 + NUL, then 2 bytes of padding
+  ;;   +0x28 VS_FIXEDFILEINFO: signature, struct version, file/product
+  ;;         version, flags mask, flags, VOS__WINDOWS32, VFT_DLL, dates
+  (data (i32.const 0x11270)
+    "\5c\00\34\00\00\00"
+    "V\00S\00_\00V\00E\00R\00S\00I\00O\00N\00_\00I\00N\00F\00O\00\00\00"
+    "\00\00"
+    "\bd\04\ef\fe\00\00\01\00"
+    "\06\00\04\00\06\02\03\00"
+    "\06\00\04\00\06\02\03\00"
+    "\3f\00\00\00\00\00\00\00"
+    "\04\00\00\00\02\00\00\00"
+    "\00\00\00\00\00\00\00\00\00\00\00\00")
 
   ;; Dialog-template string class names. Win32 templates may use either
   ;; builtin ordinal classes (0x80..0x85) or string names.
@@ -1225,6 +1257,7 @@
   ;; 0x07F0D000 8KB      GDI_REGION_TABLE (256 WAT-owned HRGN records)
   ;; 0x07F0F000 4KB      GDI_DC_PATH_TABLE (256 x 16-byte WAT path records)
   ;; 0x07F10000 4KB      HANDLER_HIST_COUNTS (1024 i32 counters)
+  ;; 0x07F12000 8KB      CODE_PAGE_BITMAP (1 bit per 4KB guest page < 0x10000000)
   ;; 0x07F11000 512KB    (free -- former HANDLER_PAIR_HIST_COUNTS home, too
   ;;                      small once the handler table passed 361. This block is
   ;;                      packed wall-to-wall with the branch/hot-block tables
@@ -1580,6 +1613,14 @@
   ;; tools/check-handler-count.js enforces this. 512*512*4 = 1MB.
   (global $HANDLER_HIST_COUNTS i32 (i32.const 0x07F10000))
   (global $HANDLER_HIST_COUNTS_SIZE i32 (i32.const 0x00001000))
+  ;; One bit per 4KB guest page below $VIRTUAL_ALLOC_MIN, set when a block is
+  ;; decoded out of that page. A store into a marked page invalidates the
+  ;; cached blocks there. The two $generated_code_* / $generated_sparse_code_*
+  ;; ranges only cover code inside the PE image or in the sparse VirtualAlloc
+  ;; reserve; Storm generates its blitters into ordinary HeapAlloc memory,
+  ;; which falls in neither. 0x10000000 >> 12 = 65536 pages = 8KB of bitmap.
+  (global $CODE_PAGE_BITMAP i32 (i32.const 0x07F12000))
+  (global $CODE_PAGE_BITMAP_PAGES i32 (i32.const 65536))
   (global $HANDLER_PAIR_HIST_COUNTS i32 (i32.const 0x04000000))
   (global $HANDLER_PAIR_HIST_COUNTS_SIZE i32 (i32.const 0x00100000))
   (global $HANDLER_HIST_COUNT i32 (i32.const 512))
@@ -2718,6 +2759,19 @@
   (global $win16_ne_off (mut i32) (i32.const 0))
   (global $win16_file_size (mut i32) (i32.const 0))
   (global $win16_res_len (mut i32) (i32.const 0))
+  ;; NUL-separated, double-NUL terminated; see the data segment above.
+  (global $STATIC_SYS_DLL_NAMES i32 (i32.const 0x11DD0))
+  (global $STATIC_SYS_DIR i32 (i32.const 0x11DF4))
+  (global $STATIC_SYS_DLL_EXT i32 (i32.const 0x11E08))
+  ;; Pseudo module handles for those names. They are deliberately outside
+  ;; every mapped image so nothing mistakes one for a real base address; the
+  ;; only operations defined on them are GetProcAddress (which resolves
+  ;; through the API table and ignores the handle) and GetModuleFileName.
+  (global $STATIC_SYS_DLL_HANDLE_BASE i32 (i32.const 0x5D110000))
+  ;; First index in the name list that belongs to DirectX.
+  (global $STATIC_SYS_DLL_FIRST_DX i32 (i32.const 1))
+  (global $DX_VERSION_INFO i32 (i32.const 0x11270))
+  (global $DX_VERSION_INFO_SIZE i32 (i32.const 92))
   (global $WIN16_NAME_KERNEL   i32 (i32.const 0x11E70))
   (global $WIN16_NAME_USER     i32 (i32.const 0x11E77))
   (global $WIN16_NAME_GDI      i32 (i32.const 0x11E7C))

@@ -64,6 +64,7 @@ UNIT=(
   test/test-heroes2-desktop-save.js
   test/test-winhelp-wat-parser.js
   test/test-wide-api.js
+  test/test-static-dx-version.js
   test/test-midi-mci.js
   test/test-thread-manager.js
   test/test-mm-timer-callback.js
