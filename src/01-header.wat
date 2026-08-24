@@ -2256,14 +2256,19 @@
   (global $TIMER_ENTRY_SIZE i32 (i32.const 20))
   (global $timer_count  (mut i32) (i32.const 0))    ;; Number of active timers
   (global $auto_timer_id (mut i32) (i32.const 0x1000))  ;; Auto-generated timer IDs start here
-  ;; Multimedia timer (timeSetEvent) — single slot, globals only
-  (global $mm_timer_id       (mut i32) (i32.const 0))  ;; 0 = inactive
-  (global $mm_timer_interval (mut i32) (i32.const 0))
-  (global $mm_timer_callback (mut i32) (i32.const 0))
-  (global $mm_timer_dwuser   (mut i32) (i32.const 0))
-  (global $mm_timer_last_tick (mut i32) (i32.const 0))
-  (global $mm_timer_oneshot  (mut i32) (i32.const 0))  ;; 1 = TIME_ONESHOT
-  (global $mm_timer_next_id  (mut i32) (i32.const 1))  ;; auto-increment
+  ;; Multimedia timers (timeSetEvent). A single slot is not enough: one client
+  ;; commonly runs a periodic service timer *and* short one-shots at the same
+  ;; time. Smacker does exactly that — a 31ms periodic audio-service timer plus
+  ;; a one-shot per submitted buffer — and with one slot each one-shot evicted
+  ;; the periodic timer, fired once, and left no timer at all, so the audio
+  ;; buffers were never released and SmackWait spun forever.
+  ;; Slot: +0 id (0 = free), +4 interval, +8 callback, +12 dwUser,
+  ;;       +16 last_tick, +20 oneshot. The word past the table holds the
+  ;;       id allocator (0 reads as 1). Process-wide, hence memory not globals.
+  (global $MM_TIMER_TABLE i32 (i32.const 0x00010800))
+  (global $MM_TIMER_MAX   i32 (i32.const 8))
+  (global $MM_TIMER_ENTRY i32 (i32.const 24))
+  (global $MM_TIMER_NEXT_ID i32 (i32.const 0x000108C0))
   (global $mm_timer_in_cb    (mut i32) (i32.const 0))  ;; re-entrancy guard
   (global $mm_timer_ret_thunk (mut i32) (i32.const 0)) ;; CACA000A return thunk
   (global $font_enum_ret_thunk (mut i32) (i32.const 0)) ;; CACA0011 EnumFontFamilies callback return

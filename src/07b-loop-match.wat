@@ -148,7 +148,7 @@
   ;;   8 m0_addr     9 m0_reg     10 m0_adj
   ;;  11 m1_addr    12 m1_reg     13 m1_adj
   ;;  14 fall_eip   15 back_eip   16 steps_per_iter
-  (global $LOOP_SUPEROP_LUT i32 (i32.const 410))
+  (global $LOOP_SUPEROP_LUT i32 (i32.const 418))
   (global $LOOP_LUT_PARAMS i32 (i32.const 17))
 
   (func $loop_try_lut (param $start_eip i32) (param $tstart i32) (result i32)
@@ -465,7 +465,7 @@
   ;;   3 dst_reg  4 dst_stride  5 dst_disp
   ;;   6 byte_reg 7 ctr_kind (0 reg, 1 mem)  8 ctr_loc  9 ctr_disp
   ;;  10 ctr_step 11 fall_eip  12 back_eip  13 steps_per_iter
-  (global $LOOP_SUPEROP_COPY i32 (i32.const 411))
+  (global $LOOP_SUPEROP_COPY i32 (i32.const 419))
 
   (func $loop_try_copy (param $start_eip i32) (param $tstart i32) (result i32)
     (local $i i32) (local $n i32) (local $p i32) (local $fn i32) (local $op i32)
@@ -662,9 +662,9 @@
     (i32.add (i32.and (local.get $ga) (i32.const 0xFFF)) (i32.const 1)))
 
   ;; ------------------------------------------------------------------
-  ;; 411: the COPY_RUN super-op.
+  ;; 419: the COPY_RUN super-op.
   ;; ------------------------------------------------------------------
-  ;; Same contract as 410: charge $steps at the body's op count so batch
+  ;; Same contract as 418: charge $steps at the body's op count so batch
   ;; granularity is unchanged, and republish $eip at the loop entry when the
   ;; budget runs out.
   ;;
@@ -861,7 +861,7 @@
     (drop (call $loop_try_copy (local.get $start_eip) (local.get $tstart))))
 
   ;; ------------------------------------------------------------------
-  ;; 410: the LUT_RUN super-op.
+  ;; 418: the LUT_RUN super-op.
   ;; ------------------------------------------------------------------
   ;; Runs the whole remap inside one handler invocation. It still charges
   ;; $steps per iteration -- at the op count of the body it replaced, so batch

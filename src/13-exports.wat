@@ -2181,6 +2181,36 @@
     (call $dx_sync_thread_vtables)
   )
 
+  ;; Multimedia-timer state, for debugging a client that waits on a
+  ;; timeSetEvent callback that never arrives. "The guest holds timer id N" and
+  ;; "WAT is still running timer id N" can disagree; only this export can tell
+  ;; them apart from the host side.
+  ;; field: 0=id 1=interval 2=callback 3=dwUser 4=last_tick 5=oneshot
+  ;;        6=next_id (slot ignored) 7=in_cb (slot ignored) 8=slot count
+  (func (export "dbg_mm_timer") (param $slot i32) (param $field i32) (result i32)
+    (local $p i32)
+    (if (i32.eq (local.get $field) (i32.const 6))
+      (then (return (i32.load (global.get $MM_TIMER_NEXT_ID)))))
+    (if (i32.eq (local.get $field) (i32.const 7))
+      (then (return (global.get $mm_timer_in_cb))))
+    (if (i32.eq (local.get $field) (i32.const 8))
+      (then (return (global.get $MM_TIMER_MAX))))
+    (if (i32.ge_u (local.get $slot) (global.get $MM_TIMER_MAX))
+      (then (return (i32.const -1))))
+    (local.set $p (call $mm_timer_slot (local.get $slot)))
+    (if (i32.eqz (local.get $field)) (then (return (i32.load (local.get $p)))))
+    (if (i32.eq (local.get $field) (i32.const 1))
+      (then (return (i32.load offset=4 (local.get $p)))))
+    (if (i32.eq (local.get $field) (i32.const 2))
+      (then (return (i32.load offset=8 (local.get $p)))))
+    (if (i32.eq (local.get $field) (i32.const 3))
+      (then (return (i32.load offset=12 (local.get $p)))))
+    (if (i32.eq (local.get $field) (i32.const 4))
+      (then (return (i32.load offset=16 (local.get $p)))))
+    (if (i32.eq (local.get $field) (i32.const 5))
+      (then (return (i32.load offset=20 (local.get $p)))))
+    (i32.const -1))
+
   ;; Yield state exports
   (func (export "get_yield_reason") (result i32) (global.get $yield_reason))
   (func (export "get_wait_handle") (result i32) (global.get $wait_handle))
@@ -2522,8 +2552,7 @@
     (global.get $mm_timer_in_cb))
 
   (func $fire_mm_timer (export "fire_mm_timer") (result i32)
-    (local $elapsed i32)
-    (if (i32.eqz (global.get $mm_timer_id)) (then (return (i32.const 0))))
+    (local $slot i32) (local $id i32) (local $dwuser i32) (local $cb i32)
     ;; A yielded Win32 wait keeps its stdcall frame parked for the cooperative
     ;; scheduler. Interrupting that frame would make wait completion mistake
     ;; this callback's continuation thunk for the wait's return address.
@@ -2533,15 +2562,15 @@
     ;; interrupted code may already have entered a deeper call by this poll.
     (if (global.get $mm_timer_in_cb)
       (then (return (i32.const 0))))
-    (global.set $tick_count (call $host_get_ticks))
-    (local.set $elapsed (i32.sub (global.get $tick_count) (global.get $mm_timer_last_tick)))
-    (if (i32.lt_u (local.get $elapsed) (global.get $mm_timer_interval))
-      (then (return (i32.const 0))))
+    (local.set $slot (call $mm_timer_due_slot))
+    (if (i32.eqz (local.get $slot)) (then (return (i32.const 0))))
+    (local.set $id (i32.load (local.get $slot)))
+    (local.set $dwuser (i32.load offset=12 (local.get $slot)))
+    (local.set $cb (i32.load offset=8 (local.get $slot)))
     ;; Timer is due — consume through the latest interval boundary without
-    ;; turning host scheduling lateness into permanent periodic-timer drift.
-    (call $mm_timer_consume_due_tick)
-    (if (global.get $mm_timer_oneshot)
-      (then (global.set $mm_timer_id (i32.const 0))))
+    ;; turning host scheduling lateness into permanent periodic-timer drift,
+    ;; retiring the slot first if it was a one-shot.
+    (call $mm_timer_consume_slot (local.get $slot))
     (global.set $mm_timer_in_cb (i32.const 1))
     ;; Save caller-saved regs + flags (36 bytes, includes EIP for restore)
     (call $save_caller_regs)
@@ -2551,16 +2580,16 @@
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (i32.const 0))                   ;; dw1
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (global.get $mm_timer_dwuser))   ;; dwUser
+    (call $gs32 (global.get $esp) (local.get $dwuser))             ;; dwUser
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (i32.const 0))                   ;; uMsg
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (global.get $mm_timer_id))       ;; uTimerID
+    (call $gs32 (global.get $esp) (local.get $id))                 ;; uTimerID
     ;; Push return address = CACA000A thunk (restores regs when callback returns)
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (global.get $mm_timer_ret_thunk))
     ;; Redirect EIP to callback
-    (global.set $eip (global.get $mm_timer_callback))
+    (global.set $eip (local.get $cb))
     (i32.const 1))
 
   ;; Write guest memory (guest addr)

@@ -147,11 +147,14 @@
     (local $page i32) (local $i i32) (local $idx i32) (local $hit i32)
     (local.set $page (i32.and (local.get $ga) (i32.const 0xFFFFF000)))
     (global.set $cache_invals (i32.add (global.get $cache_invals) (i32.const 1)))
-    ;; Nothing from this page stays cached, so drop its bit too. A page that
-    ;; held code once and is now a data buffer would otherwise scan the whole
-    ;; cache index on every write to it forever; the bit comes back the moment
-    ;; a block is decoded from the page again.
-    (call $code_page_clear (local.get $ga))
+    ;; NOTE: the page bit is deliberately NOT cleared here. $CACHE_INDEX is
+    ;; per-thread (0x07152000 + tid*0x8000) while CODE_PAGE_BITMAP lives in
+    ;; shared linear memory, so this sweep retires only the writing thread's
+    ;; blocks. Clearing the shared bit would tell every other thread that the
+    ;; page holds no code, and their stale blocks would never be invalidated
+    ;; again. Storm/Smacker rewrite their generated blitters in place, so that
+    ;; is a real case, not a theoretical one. The cost of keeping the bit set
+    ;; is one extra sweep per write to a page that has stopped holding code.
     (local.set $i (i32.const 0))
     (block $d (loop $s
       (br_if $d (i32.ge_u (local.get $i) (global.get $CACHE_SIZE)))
@@ -241,7 +244,7 @@
     ;; whole cache and restart at $eip. The fresh decode will produce
     ;; valid threaded code. This recovers from rare corruption rather
     ;; than trapping with wasm "table index out of bounds".
-    (if (i32.ge_u (local.get $fn) (i32.const 412))
+    (if (i32.ge_u (local.get $fn) (i32.const 420))
       (then
         (call $host_log_i32 (i32.const 0xCAC4BAD0))
         (call $host_log_i32 (local.get $fn))

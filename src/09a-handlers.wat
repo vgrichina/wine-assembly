@@ -124,19 +124,62 @@
   ;; late delivery time. A 5ms periodic timer polled at t=6,12,18 otherwise
   ;; becomes a 6ms timer permanently; advancing to the latest 5ms boundary
   ;; keeps future callbacks aligned while still skipping missed callbacks.
-  (func $mm_timer_consume_due_tick
-    (local $periods i32)
-    (if (i32.eqz (global.get $mm_timer_interval))
-      (then (global.set $mm_timer_last_tick (global.get $tick_count)))
+  (func $mm_timer_consume_due_tick (param $slot i32)
+    (local $periods i32) (local $interval i32)
+    (local.set $interval (i32.load offset=4 (local.get $slot)))
+    (if (i32.eqz (local.get $interval))
+      (then (i32.store offset=16 (local.get $slot) (global.get $tick_count)))
       (else
         (local.set $periods
           (i32.div_u
-            (i32.sub (global.get $tick_count) (global.get $mm_timer_last_tick))
-            (global.get $mm_timer_interval)))
-        (global.set $mm_timer_last_tick
+            (i32.sub (global.get $tick_count) (i32.load offset=16 (local.get $slot)))
+            (local.get $interval)))
+        (i32.store offset=16 (local.get $slot)
           (i32.add
-            (global.get $mm_timer_last_tick)
-            (i32.mul (local.get $periods) (global.get $mm_timer_interval)))))))
+            (i32.load offset=16 (local.get $slot))
+            (i32.mul (local.get $periods) (local.get $interval)))))))
+
+  ;; Address of multimedia-timer slot $i.
+  (func $mm_timer_slot (param $i i32) (result i32)
+    (i32.add (global.get $MM_TIMER_TABLE)
+      (i32.mul (local.get $i) (global.get $MM_TIMER_ENTRY))))
+
+  ;; Slot holding timer id $id, or 0. Id 0 is the free marker, never a timer.
+  (func $mm_timer_find (param $id i32) (result i32)
+    (local $i i32) (local $slot i32)
+    (if (i32.eqz (local.get $id)) (then (return (i32.const 0))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MM_TIMER_MAX)))
+      (local.set $slot (call $mm_timer_slot (local.get $i)))
+      (if (i32.eq (i32.load (local.get $slot)) (local.get $id))
+        (then (return (local.get $slot))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  ;; First slot whose period has elapsed, or 0. Refreshes $tick_count, so the
+  ;; caller does not have to.
+  (func $mm_timer_due_slot (result i32)
+    (local $i i32) (local $slot i32)
+    (global.set $tick_count (call $host_get_ticks))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MM_TIMER_MAX)))
+      (local.set $slot (call $mm_timer_slot (local.get $i)))
+      (if (i32.load (local.get $slot))
+        (then
+          (if (i32.ge_u
+                (i32.sub (global.get $tick_count) (i32.load offset=16 (local.get $slot)))
+                (i32.load offset=4 (local.get $slot)))
+            (then (return (local.get $slot))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  ;; Charge one period to a due slot, retiring it if it was a one-shot.
+  (func $mm_timer_consume_slot (param $slot i32)
+    (call $mm_timer_consume_due_tick (local.get $slot))
+    (if (i32.load offset=20 (local.get $slot))
+      (then (i32.store (local.get $slot) (i32.const 0)))))
 
   ;; $timer_check_due(msg_ptr, consume) — scan timer table, fill MSG with first due timer, return 1 if found
   ;; $consume: 1 = update last_tick (PM_REMOVE/GetMessage), 0 = peek only (PM_NOREMOVE)
@@ -175,22 +218,22 @@
         (br $loop)
       )
     )
-    ;; Check multimedia timer (timeSetEvent)
-    (if (global.get $mm_timer_id)
+    ;; Check multimedia timers (timeSetEvent)
+    (local.set $addr (call $mm_timer_due_slot))
+    (if (local.get $addr)
       (then
-        (local.set $elapsed (i32.sub (global.get $tick_count) (global.get $mm_timer_last_tick)))
-        (if (i32.ge_u (local.get $elapsed) (global.get $mm_timer_interval))
-          (then
-            (if (local.get $consume)
-              (then
-                (call $mm_timer_consume_due_tick)
-                (if (global.get $mm_timer_oneshot)
-                  (then (global.set $mm_timer_id (i32.const 0))))))
-            (call $gs32 (local.get $msg_ptr) (i32.const 0))                                        ;; hwnd=0
-            (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x7FF0))           ;; internal MM_TIMER
-            (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (global.get $mm_timer_id))    ;; wParam=timerID
-            (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (global.get $mm_timer_callback)) ;; lParam=callback
-            (return (i32.const 1))))))
+        ;; The MSG carries dwUser itself: a one-shot retires the moment it is
+        ;; taken, so DispatchMessage can no longer find its slot by timer id.
+        (call $gs32 (local.get $msg_ptr) (i32.load offset=12 (local.get $addr)))          ;; hwnd field = dwUser
+        (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x7FF0))      ;; internal MM_TIMER
+        (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.load (local.get $addr)))  ;; wParam=timerID
+        (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12))
+          (i32.load offset=8 (local.get $addr)))                                          ;; lParam=callback
+        ;; Retire the one-shot only when the caller is really taking the
+        ;; message; a PM_NOREMOVE peek must still see it next time.
+        (if (local.get $consume)
+          (then (call $mm_timer_consume_slot (local.get $addr))))
+        (return (i32.const 1))))
     (i32.const 0)
   )
 

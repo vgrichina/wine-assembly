@@ -59,7 +59,13 @@ const APP = opt('app', 'mspaint98');
 // This is a diagnostic driver, so default to the debug shell that exposes the
 // Program selector and trusted Launch button.
 const QUERY = opt('query', '?debug');
-const STEPS = (opt('steps', '') || '').split(';').map(s => s.trim()).filter(Boolean);
+// Steps are semicolon-separated, but an `eval:` step is JavaScript and wants
+// semicolons of its own. `\;` escapes one so real statements can be written
+// without contorting them into comma expressions.
+const STEPS = (opt('steps', '') || '')
+  .split(/(?<!\\);/)
+  .map(s => s.trim().replace(/\\;/g, ';'))
+  .filter(Boolean);
 const READY_MS = Number(opt('ready', 6000));
 const CPU_RATE = Number(opt('cpu', 1));
 // Headless Chrome runs with --disable-gpu by default, which sends presentation

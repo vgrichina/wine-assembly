@@ -1206,25 +1206,30 @@
     (call $te (i32.const 231) (i32.const 0))
     (call $te_raw (local.get $a)))
 
-  ;; MOVZX reg, byte [mem]
-  (func $emit_movzx8 (param $dst i32) (local $a i32)
+  ;; MOVZX reg, byte [mem]. $w16 = the 0x66 form, which writes only the low
+  ;; half of the destination (handlers 414/416 instead of 78/143).
+  (func $emit_movzx8 (param $dst i32) (param $w16 i32) (local $a i32)
     (if (call $mr_simple_base)
-      (then (call $te (i32.const 143) (i32.or (i32.shl (local.get $dst) (i32.const 4)) (global.get $mr_base)))
+      (then (call $te (if (result i32) (local.get $w16) (then (i32.const 416)) (else (i32.const 143)))
+                      (i32.or (i32.shl (local.get $dst) (i32.const 4)) (global.get $mr_base)))
             (call $te_raw (global.get $mr_disp)) (return)))
     (local.set $a (call $emit_sib_or_abs))
-    (call $te (i32.const 78) (local.get $dst))
+    (call $te (if (result i32) (local.get $w16) (then (i32.const 414)) (else (i32.const 78))) (local.get $dst))
     (call $te_raw (local.get $a)))
 
   ;; MOVSX reg, byte [mem]
-  (func $emit_movsx8 (param $dst i32) (local $a i32)
+  (func $emit_movsx8 (param $dst i32) (param $w16 i32) (local $a i32)
     (if (call $mr_simple_base)
-      (then (call $te (i32.const 144) (i32.or (i32.shl (local.get $dst) (i32.const 4)) (global.get $mr_base)))
+      (then (call $te (if (result i32) (local.get $w16) (then (i32.const 417)) (else (i32.const 144)))
+                      (i32.or (i32.shl (local.get $dst) (i32.const 4)) (global.get $mr_base)))
             (call $te_raw (global.get $mr_disp)) (return)))
     ;; MOVSX r32, byte [base+index] is the single hottest SIB consumer in an
     ;; 8bpp sprite blitter — 37.7% of every SIB EA Heroes II computes on its
     ;; adventure map. Fuse it into handler 400.
     (if (i32.and
-          (i32.eqz (global.get $code16))
+          (i32.and
+            (i32.eqz (global.get $code16))
+            (i32.eqz (local.get $w16)))
           (i32.eqz (call $mr_absolute)))
       (then
         (call $te (i32.const 400) (local.get $dst))
@@ -1232,25 +1237,28 @@
         (call $te_raw (global.get $mr_disp))
         (return)))
     (local.set $a (call $emit_sib_or_abs))
-    (call $te (i32.const 79) (local.get $dst))
+    (call $te (if (result i32) (local.get $w16) (then (i32.const 415)) (else (i32.const 79))) (local.get $dst))
     (call $te_raw (local.get $a)))
 
-  ;; MOVZX reg, word [mem]
-  (func $emit_movzx16 (param $dst i32) (local $a i32)
+  ;; MOVZX reg, word [mem]. Under 0x66 both source and destination are 16 bits,
+  ;; so the instruction is just mov r16, [mem] — handlers 164/166.
+  (func $emit_movzx16 (param $dst i32) (param $w16 i32) (local $a i32)
     (if (call $mr_simple_base)
-      (then (call $te (i32.const 145) (i32.or (i32.shl (local.get $dst) (i32.const 4)) (global.get $mr_base)))
+      (then (call $te (if (result i32) (local.get $w16) (then (i32.const 166)) (else (i32.const 145)))
+                      (i32.or (i32.shl (local.get $dst) (i32.const 4)) (global.get $mr_base)))
             (call $te_raw (global.get $mr_disp)) (return)))
     (local.set $a (call $emit_sib_or_abs))
-    (call $te (i32.const 80) (local.get $dst))
+    (call $te (if (result i32) (local.get $w16) (then (i32.const 164)) (else (i32.const 80))) (local.get $dst))
     (call $te_raw (local.get $a)))
 
-  ;; MOVSX reg, word [mem]
-  (func $emit_movsx16 (param $dst i32) (local $a i32)
+  ;; MOVSX reg, word [mem] — same degeneration under 0x66.
+  (func $emit_movsx16 (param $dst i32) (param $w16 i32) (local $a i32)
     (if (call $mr_simple_base)
-      (then (call $te (i32.const 146) (i32.or (i32.shl (local.get $dst) (i32.const 4)) (global.get $mr_base)))
+      (then (call $te (if (result i32) (local.get $w16) (then (i32.const 166)) (else (i32.const 146)))
+                      (i32.or (i32.shl (local.get $dst) (i32.const 4)) (global.get $mr_base)))
             (call $te_raw (global.get $mr_disp)) (return)))
     (local.set $a (call $emit_sib_or_abs))
-    (call $te (i32.const 81) (local.get $dst))
+    (call $te (if (result i32) (local.get $w16) (then (i32.const 164)) (else (i32.const 81))) (local.get $dst))
     (call $te_raw (local.get $a)))
 
   ;; MUL/IMUL/DIV/IDIV [mem32]. type: 0=mul,1=imul,2=div,3=idiv
@@ -2078,7 +2086,9 @@
               (if (i32.eq (global.get $mr_mod) (i32.const 3))
                 (then (if (i32.eq (local.get $op) (i32.const 0xF6))
                   (then (call $te (i32.const 215) (global.get $mr_val)))
-                  (else (call $te (i32.const 66) (global.get $mr_val)))))
+                  (else (if (local.get $prefix_66)
+                    (then (call $te (i32.const 410) (global.get $mr_val)))
+                    (else (call $te (i32.const 66) (global.get $mr_val)))))))
                 (else (if (i32.eq (local.get $op) (i32.const 0xF6))
                   (then (call $emit_unary_m8 (i32.const 2)))
                   (else (if (local.get $prefix_66)
@@ -2090,7 +2100,9 @@
               (if (i32.eq (global.get $mr_mod) (i32.const 3))
                 (then (if (i32.eq (local.get $op) (i32.const 0xF6))
                   (then (call $te (i32.const 214) (global.get $mr_val)))
-                  (else (call $te (i32.const 67) (global.get $mr_val)))))
+                  (else (if (local.get $prefix_66)
+                    (then (call $te (i32.const 411) (global.get $mr_val)))
+                    (else (call $te (i32.const 67) (global.get $mr_val)))))))
                 (else (if (i32.eq (local.get $op) (i32.const 0xF6))
                   (then (call $emit_unary_m8 (i32.const 3)))
                   (else (if (local.get $prefix_66)
@@ -2937,24 +2949,27 @@
                               (call $te (i32.const 45) (global.get $d_pc))
                               (local.set $done (i32.const 1)) (br $decode)))))))))
 
-          ;; 0x0F 0xB6: MOVZX r32, r/m8
+          ;; 0x0F 0xB6: MOVZX r32, r/m8 (with 66h → r16, low half only)
           (if (i32.eq (local.get $op) (i32.const 0xB6))
             (then
               (call $decode_modrm)
               (if (i32.eq (global.get $mr_mod) (i32.const 3))
-                (then ;; movzx r32, reg8 — handler 208
-                  (call $te (i32.const 208) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))
-                (else (call $emit_movzx8 (global.get $mr_reg))))
+                (then ;; movzx r32, reg8 — handler 208 (412 for the 16-bit form)
+                  (call $te (if (result i32) (local.get $prefix_66)
+                              (then (i32.const 412)) (else (i32.const 208)))
+                            (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))
+                (else (call $emit_movzx8 (global.get $mr_reg) (local.get $prefix_66))))
               (br $decode)))
 
-          ;; 0x0F 0xB7: MOVZX r32, r/m16
+          ;; 0x0F 0xB7: MOVZX r32, r/m16 (with 66h it degenerates to mov r16, r16)
           (if (i32.eq (local.get $op) (i32.const 0xB7))
             (then
               (call $decode_modrm)
               (if (i32.eq (global.get $mr_mod) (i32.const 3))
-                (then (call $te (i32.const 357)
+                (then (call $te (if (result i32) (local.get $prefix_66)
+                                   (then (i32.const 210)) (else (i32.const 357)))
                   (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))
-                (else (call $emit_movzx16 (global.get $mr_reg))))
+                (else (call $emit_movzx16 (global.get $mr_reg) (local.get $prefix_66))))
               (br $decode)))
 
           ;; 0x0F 0xBE: MOVSX r32, r/m8
@@ -2962,9 +2977,11 @@
             (then
               (call $decode_modrm)
               (if (i32.eq (global.get $mr_mod) (i32.const 3))
-                (then ;; movsx r32, reg8 — handler 209
-                  (call $te (i32.const 209) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))
-                (else (call $emit_movsx8 (global.get $mr_reg))))
+                (then ;; movsx r32, reg8 — handler 209 (413 for the 16-bit form)
+                  (call $te (if (result i32) (local.get $prefix_66)
+                              (then (i32.const 413)) (else (i32.const 209)))
+                            (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))
+                (else (call $emit_movsx8 (global.get $mr_reg) (local.get $prefix_66))))
               (br $decode)))
 
           ;; 0x0F 0xBF: MOVSX r32, r/m16
@@ -2972,9 +2989,10 @@
             (then
               (call $decode_modrm)
               (if (i32.eq (global.get $mr_mod) (i32.const 3))
-                (then (call $te (i32.const 358)
+                (then (call $te (if (result i32) (local.get $prefix_66)
+                                   (then (i32.const 210)) (else (i32.const 358)))
                   (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))
-                (else (call $emit_movsx16 (global.get $mr_reg))))
+                (else (call $emit_movsx16 (global.get $mr_reg) (local.get $prefix_66))))
               (br $decode)))
 
           ;; 0x0F 0xA4/0xA5: SHLD, 0x0F 0xAC/0xAD: SHRD (with 66h → 16-bit)

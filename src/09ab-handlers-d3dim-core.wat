@@ -1481,11 +1481,79 @@
           (i32.trunc_sat_f32_u (f32.mul (f32.min (f32.max (local.get $b) (f32.const 0.0)) (f32.const 1.0)) (f32.const 255.0)))))))
 
   ;; ── Texture binding ───────────────────────────────────────────
+  ;; Decode one texel of any surface into 0x00RRGGBB. $entry is only needed for
+  ;; the 8bpp case, where the byte is a palette index and the palette hangs off
+  ;; the surface rather than the display.
+  (func $d3dim_surf_texel_rgb
+    (param $entry i32) (param $dib_wa i32) (param $bpp i32) (param $pitch i32)
+    (param $x i32) (param $y i32) (result i32)
+    (local $ptr i32) (local $px i32) (local $idx i32) (local $pal i32)
+    (local.set $ptr (i32.add (local.get $dib_wa) (i32.mul (local.get $y) (local.get $pitch))))
+    (if (i32.eq (local.get $bpp) (i32.const 8)) (then
+      (local.set $idx (i32.load8_u (i32.add (local.get $ptr) (local.get $x))))
+      (local.set $pal (call $dx_surf_pal_get (local.get $entry)))
+      (if (local.get $pal) (then
+        ;; PALETTEENTRY is (peRed, peGreen, peBlue, peFlags).
+        (local.set $px (i32.load (i32.add (local.get $pal) (i32.shl (local.get $idx) (i32.const 2)))))
+        (return (i32.or (i32.or
+          (i32.shl (i32.and (local.get $px) (i32.const 0xFF)) (i32.const 16))
+          (i32.and (local.get $px) (i32.const 0xFF00)))
+          (i32.and (i32.shr_u (local.get $px) (i32.const 16)) (i32.const 0xFF))))))
+      (return (i32.or (i32.or
+        (i32.shl (local.get $idx) (i32.const 16))
+        (i32.shl (local.get $idx) (i32.const 8)))
+        (local.get $idx)))))
+    (if (i32.eq (local.get $bpp) (i32.const 16)) (then
+      (local.set $px (i32.load16_u (i32.add (local.get $ptr) (i32.shl (local.get $x) (i32.const 1)))))
+      (return (i32.or (i32.or
+        (i32.shl (i32.shl (i32.and (i32.shr_u (local.get $px) (i32.const 11)) (i32.const 0x1f)) (i32.const 3)) (i32.const 16))
+        (i32.shl (i32.shl (i32.and (i32.shr_u (local.get $px) (i32.const 5)) (i32.const 0x3f)) (i32.const 2)) (i32.const 8)))
+        (i32.shl (i32.and (local.get $px) (i32.const 0x1f)) (i32.const 3))))))
+    (if (i32.eq (local.get $bpp) (i32.const 24)) (then
+      (local.set $ptr (i32.add (local.get $ptr) (i32.mul (local.get $x) (i32.const 3))))
+      (return (i32.or (i32.or
+        (i32.shl (i32.load8_u (i32.add (local.get $ptr) (i32.const 2))) (i32.const 16))
+        (i32.shl (i32.load8_u (i32.add (local.get $ptr) (i32.const 1))) (i32.const 8)))
+        (i32.load8_u (local.get $ptr))))))
+    (if (i32.eq (local.get $bpp) (i32.const 32)) (then
+      (return (i32.and
+        (i32.load (i32.add (local.get $ptr) (i32.shl (local.get $x) (i32.const 2))))
+        (i32.const 0x00FFFFFF)))))
+    (i32.const 0))
+
+  ;; Store 0x00RRGGBB into a 16/24/32bpp surface. 8bpp destinations are not
+  ;; handled here — writing one needs a nearest-entry search against that
+  ;; surface's palette, and no caller has needed it yet.
+  (func $d3dim_surf_put_texel
+    (param $dib_wa i32) (param $bpp i32) (param $pitch i32)
+    (param $x i32) (param $y i32) (param $rgb i32)
+    (local $ptr i32)
+    (local.set $ptr (i32.add (local.get $dib_wa) (i32.mul (local.get $y) (local.get $pitch))))
+    (if (i32.eq (local.get $bpp) (i32.const 16)) (then
+      (i32.store16 (i32.add (local.get $ptr) (i32.shl (local.get $x) (i32.const 1)))
+        (i32.or (i32.or
+          (i32.shl (i32.and (i32.shr_u (local.get $rgb) (i32.const 19)) (i32.const 0x1f)) (i32.const 11))
+          (i32.shl (i32.and (i32.shr_u (local.get $rgb) (i32.const 10)) (i32.const 0x3f)) (i32.const 5)))
+          (i32.and (i32.shr_u (local.get $rgb) (i32.const 3)) (i32.const 0x1f))))
+      (return)))
+    (if (i32.eq (local.get $bpp) (i32.const 32)) (then
+      (i32.store (i32.add (local.get $ptr) (i32.shl (local.get $x) (i32.const 2)))
+        (i32.or (local.get $rgb) (i32.const 0xFF000000)))
+      (return)))
+    (if (i32.eq (local.get $bpp) (i32.const 24)) (then
+      (local.set $ptr (i32.add (local.get $ptr) (i32.mul (local.get $x) (i32.const 3))))
+      (i32.store8 (local.get $ptr) (i32.and (local.get $rgb) (i32.const 0xFF)))
+      (i32.store8 (i32.add (local.get $ptr) (i32.const 1))
+        (i32.and (i32.shr_u (local.get $rgb) (i32.const 8)) (i32.const 0xFF)))
+      (i32.store8 (i32.add (local.get $ptr) (i32.const 2))
+        (i32.and (i32.shr_u (local.get $rgb) (i32.const 16)) (i32.const 0xFF)))
+      (return))))
+
   (func $d3dim_texture_load (param $dst_this i32) (param $src_this i32)
     (local $dst i32) (local $src i32)
     (local $dw i32) (local $dh i32) (local $dbpp i32) (local $dpitch i32) (local $ddib i32)
     (local $sw i32) (local $sh i32) (local $sbpp i32) (local $spitch i32) (local $sdib i32)
-    (local $copy_w i32) (local $copy_h i32) (local $row_bytes i32) (local $row i32) (local $bytespp i32)
+    (local $copy_w i32) (local $copy_h i32) (local $row_bytes i32) (local $row i32) (local $col i32) (local $bytespp i32)
     (if (i32.or (i32.eqz (local.get $dst_this)) (i32.eqz (local.get $src_this))) (then (return)))
     (local.set $dst (call $dx_from_this (local.get $dst_this)))
     (local.set $src (call $dx_from_this (local.get $src_this)))
@@ -1505,8 +1573,38 @@
     (local.set $spitch (i32.shr_u (i32.load (i32.add (local.get $src) (i32.const 16))) (i32.const 16)))
     (local.set $sdib (i32.load (i32.add (local.get $src) (i32.const 20))))
     (if (i32.or (i32.eqz (local.get $ddib)) (i32.eqz (local.get $sdib))) (then (return)))
-    (if (i32.or (i32.ne (local.get $dbpp) (local.get $sbpp)) (i32.lt_u (local.get $dbpp) (i32.const 8)))
-      (then (return)))
+    (if (i32.lt_u (local.get $dbpp) (i32.const 8)) (then (return)))
+    ;; Format conversion is the whole point of Texture::Load: D3DRM builds the
+    ;; system-memory texture in the file's format (8bpp palettized for a GIF)
+    ;; and the video-memory destination in the DEVICE's format (RGB565 here),
+    ;; then Loads one into the other. Refusing the mismatch left every Organic
+    ;; Art screensaver's destination texture uniform, so every textured triangle
+    ;; sampled one constant texel and the leaves came out flat blue and black
+    ;; with correct geometry. An 8bpp destination still declines — that needs a
+    ;; nearest-entry search against the destination palette.
+    (if (i32.ne (local.get $dbpp) (local.get $sbpp)) (then
+      (if (i32.eq (local.get $dbpp) (i32.const 8)) (then (return)))
+      (local.set $copy_w (local.get $dw))
+      (if (i32.lt_u (local.get $sw) (local.get $copy_w)) (then (local.set $copy_w (local.get $sw))))
+      (local.set $copy_h (local.get $dh))
+      (if (i32.lt_u (local.get $sh) (local.get $copy_h)) (then (local.set $copy_h (local.get $sh))))
+      (local.set $row (i32.const 0))
+      (block $cdone (loop $clp
+        (br_if $cdone (i32.ge_u (local.get $row) (local.get $copy_h)))
+        (local.set $col (i32.const 0))
+        (block $rdone (loop $rlp
+          (br_if $rdone (i32.ge_u (local.get $col) (local.get $copy_w)))
+          (call $d3dim_surf_put_texel
+            (local.get $ddib) (local.get $dbpp) (local.get $dpitch)
+            (local.get $col) (local.get $row)
+            (call $d3dim_surf_texel_rgb
+              (local.get $src) (local.get $sdib) (local.get $sbpp) (local.get $spitch)
+              (local.get $col) (local.get $row)))
+          (local.set $col (i32.add (local.get $col) (i32.const 1)))
+          (br $rlp)))
+        (local.set $row (i32.add (local.get $row) (i32.const 1)))
+        (br $clp)))
+      (return)))
     (local.set $bytespp (i32.shr_u (local.get $dbpp) (i32.const 3)))
     (if (i32.eqz (local.get $bytespp)) (then (return)))
     (local.set $copy_w (local.get $dw))

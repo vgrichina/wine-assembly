@@ -1755,15 +1755,31 @@
   ;; 1246: timeSetEvent(uDelay, uResolution, lpTimeProc, dwUser, fuEvent)
   ;; Returns timer ID (non-zero) on success, 0 on error
   (func $handle_timeSetEvent (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $tid i32)
-    (local.set $tid (global.get $mm_timer_next_id))
-    (global.set $mm_timer_next_id (i32.add (local.get $tid) (i32.const 1)))
-    (global.set $mm_timer_id (local.get $tid))
-    (global.set $mm_timer_interval (local.get $arg0))
-    (global.set $mm_timer_callback (local.get $arg2))
-    (global.set $mm_timer_dwuser (local.get $arg3))
-    (global.set $mm_timer_last_tick (call $host_get_ticks))
-    (global.set $mm_timer_oneshot (i32.eqz (i32.and (local.get $arg4) (i32.const 1))))
+    (local $tid i32) (local $i i32) (local $slot i32)
+    ;; Take the first free slot. Windows lets a client hold several timers at
+    ;; once and Smacker relies on it (periodic mixer + one-shot per buffer),
+    ;; so evicting an existing timer here would silently kill a live one.
+    (block $found (loop $scan
+      (if (i32.ge_u (local.get $i) (global.get $MM_TIMER_MAX))
+        (then
+          ;; Out of slots — TIMERR_NOCANDO, reported as a 0 timer id.
+          (global.set $eax (i32.const 0))
+          (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+          (return)))
+      (local.set $slot (call $mm_timer_slot (local.get $i)))
+      (br_if $found (i32.eqz (i32.load (local.get $slot))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.set $tid (i32.load (global.get $MM_TIMER_NEXT_ID)))
+    (if (i32.eqz (local.get $tid)) (then (local.set $tid (i32.const 1))))
+    (i32.store (global.get $MM_TIMER_NEXT_ID) (i32.add (local.get $tid) (i32.const 1)))
+    (i32.store          (local.get $slot) (local.get $tid))
+    (i32.store offset=4 (local.get $slot) (local.get $arg0))
+    (i32.store offset=8 (local.get $slot) (local.get $arg2))
+    (i32.store offset=12 (local.get $slot) (local.get $arg3))
+    (i32.store offset=16 (local.get $slot) (call $host_get_ticks))
+    (i32.store offset=20 (local.get $slot)
+      (i32.eqz (i32.and (local.get $arg4) (i32.const 1))))
     (global.set $eax (local.get $tid))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
@@ -1771,9 +1787,11 @@
   ;; 1247: timeKillEvent(uTimerID)
   ;; Returns TIMERR_NOERROR (0) if found, MMSYSERR_INVALPARAM (11) if not
   (func $handle_timeKillEvent (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.eq (local.get $arg0) (global.get $mm_timer_id))
+    (local $slot i32)
+    (local.set $slot (call $mm_timer_find (local.get $arg0)))
+    (if (local.get $slot)
       (then
-        (global.set $mm_timer_id (i32.const 0))
+        (i32.store (local.get $slot) (i32.const 0))
         (global.set $eax (i32.const 0)))
       (else
         (global.set $eax (i32.const 11))))
