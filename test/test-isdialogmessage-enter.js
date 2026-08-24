@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-// IsDialogMessage is where a dialog's Enter and Escape keys live.
+// IsDialogMessage is where a dialog's Enter, Escape, Tab and arrow keys live.
 //
 // An edit control does not act on VK_RETURN and a plain pushbutton does not
 // act on VK_ESCAPE -- USER turns those two keystrokes into WM_COMMAND for the
@@ -42,6 +42,10 @@ const extraWat = String.raw`
       (local.get $dlg) (i32.const 1) (local.get $id)
       (i32.const 8) (i32.const 8) (i32.const 72) (i32.const 24)
       (i32.const 0x50010000) (i32.const 0)))
+
+  (func (export "test_focus") (result i32) (global.get $focus_hwnd))
+
+  (func (export "test_set_focus") (param $hwnd i32) (global.set $focus_hwnd (local.get $hwnd)))
 
   (func (export "test_is_dialog_message") (param $dlg i32) (param $msg i32) (result i32)
     (call $handle_IsDialogMessageA
@@ -90,7 +94,7 @@ const extraWat = String.raw`
 
   const dlg = e.test_make_dialog(dlgproc) >>> 0;
   const ok = e.test_add_button(dlg, 1) >>> 0;
-  e.test_add_button(dlg, 2);
+  const cancel = e.test_add_button(dlg, 2) >>> 0;
 
   const msg = e.guest_alloc(16) >>> 0;
   const post = (hwnd, message, wParam) => {
@@ -119,10 +123,36 @@ const extraWat = String.raw`
   check(`Escape is claimed (${r.claimed})`, r.claimed === 1);
   check(`Escape arrives as WM_COMMAND IDCANCEL (${r.command})`, r.command === 2);
 
+  // Tab and the arrows are USER's too: they move the focus inside the dialog
+  // and are claimed, so the caller never dispatches them to the control. A
+  // dialog whose controls are ownerdrawn buttons -- Diablo's menus -- has no
+  // other way to be driven from the keyboard.
+  e.test_set_focus(ok);
+  r = post(ok, 0x0100, 0x09);
+  check(`Tab is claimed (${r.claimed})`, r.claimed === 1);
+  check(`Tab moves the focus to the next tabstop (${e.test_focus() >>> 0})`,
+    (e.test_focus() >>> 0) === cancel);
+
+  e.test_set_focus(ok);
+  r = post(ok, 0x0100, 0x28);  // VK_DOWN
+  check(`Down is claimed (${r.claimed})`, r.claimed === 1);
+  check(`Down moves the focus to the next item in the group (${e.test_focus() >>> 0})`,
+    (e.test_focus() >>> 0) === cancel);
+
+  r = post(cancel, 0x0100, 0x26);  // VK_UP
+  check(`Up walks the group backwards (${e.test_focus() >>> 0})`,
+    (e.test_focus() >>> 0) === ok);
+
+  // A pushbutton holding the focus is the default for as long as it holds it,
+  // so Enter on it fires that button's own id rather than the dialog's IDOK.
+  e.test_set_focus(cancel);
+  r = post(cancel, 0x0100, 0x0D);
+  check(`Enter on a focused button fires its own id, not IDOK (${r.command})`,
+    r.command === 2);
+  e.test_set_focus(0);
+
   // Everything else is still the application's to dispatch: answering 0 keeps
   // the caller's own TranslateMessage/DispatchMessage in charge.
-  r = post(ok, 0x0100, 0x09);
-  check('Tab is left to the caller', r.claimed === 0 && r.command === 0);
   r = post(ok, 0x0102, 0x0D);
   check('WM_CHAR is left to the caller', r.claimed === 0 && r.command === 0);
 
@@ -130,7 +160,7 @@ const extraWat = String.raw`
   r = post(0x4321, 0x0100, 0x0D);
   check('a foreign hwnd is left alone', r.claimed === 0 && r.command === 0);
 
-  console.log('PASS  IsDialogMessage turns Enter into IDOK and Escape into IDCANCEL');
+  console.log('PASS  IsDialogMessage routes Enter/Escape as commands and Tab/arrows as focus moves');
 })().catch(error => {
   console.error(error && error.stack || error);
   process.exit(1);

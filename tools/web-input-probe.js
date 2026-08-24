@@ -256,11 +256,21 @@ async function main() {
         continue;
       } else if (kind === 'key') {
         await page.keyboard.press(rest);
-      } else if (kind === 'move' || kind === 'click' || kind === 'down' || kind === 'up') {
+      } else if (kind === 'move' || kind === 'click' || kind === 'dbl'
+                 || kind === 'down' || kind === 'up') {
         const [gx, gy] = rest.split(',').map(Number);
         const p = await toPage(page, gx, gy);
         await page.mouse.move(p.x, p.y);
         if (kind === 'click') { await page.mouse.down(); await wait(60); await page.mouse.up(); }
+        // A double-click has to happen inside one step: every step is followed
+        // by a settle wait, so two `click` steps are always further apart than
+        // any guest's double-click time. Diablo's Choose Class screen confirms
+        // on a double-click and looked unresponsive until this existed.
+        else if (kind === 'dbl') {
+          await page.mouse.click(p.x, p.y, { clickCount: 1 });
+          await wait(40);
+          await page.mouse.click(p.x, p.y, { clickCount: 2 });
+        }
         else if (kind === 'down') await page.mouse.down();
         else if (kind === 'up') await page.mouse.up();
       } else {
