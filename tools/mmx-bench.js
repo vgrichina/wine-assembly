@@ -4,13 +4,19 @@
 //
 //   node tools/mmx-bench.js [--bytes=N] [--reps=N] [--seed=N]
 //
-// Why a synthetic kernel rather than a real app: none of the corpus binaries
-// that *contain* MMX reach it in a headless run (Liquid War never gets past
-// its menu, and the SMACKW32 users have no .smk assets mounted), so timing
-// them would measure a code path that never executes. What an emulator's MMX
-// support actually buys is measurable on its own: the same saturating byte
-// blend costs 7 dispatches per 8 bytes with MMX and ~8.5 dispatches per byte
-// without, and that ratio is what an app's blitter inherits.
+// Why a synthetic kernel rather than a real app: no corpus binary can be run
+// both ways. AVS (binaries/plugins/vis_avs.dll, reached with --app=winamp) is
+// a heavy real MMX workload -- 23.6% of its render thread's dispatches are
+// H422/H423/H425, the top two handlers overall, at ~108M MMX instructions
+// retired over 760 batches -- but it is the MMX-only build of AVS 2.6.1: with
+// --no-mmx it puts up "NO MMX SUPPORT FOUND - CANNOT RUN AVS - GET THE
+// NON-MMX VERSION" and stops. So it proves the handlers are load-bearing and
+// gives a real mix, but it cannot yield a with/without ratio. (Liquid War
+// never gets past its menu headlessly, and the SMACKW32 users have no .smk
+// assets mounted.) What an emulator's MMX support buys is measurable on its
+// own: the same saturating byte blend costs 7 dispatches per 8 bytes with MMX
+// and ~8.5 dispatches per byte without, and that ratio is what an app's
+// blitter inherits.
 //
 // The kernel is hand-assembled x86 written straight into guest memory and run
 // through the shipped wasm, so it exercises the real decoder, the real block
