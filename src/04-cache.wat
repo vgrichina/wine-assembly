@@ -313,11 +313,18 @@
   ;; pointer into the thread stream — so a block can be relocated with a plain
   ;; byte copy. That is what lets the decoder stay exactly as it is: it emits
   ;; where it always did, and this runs afterwards.
-  (func $page_publish (param $start_eip i32) (param $tstart i32) (param $tend i32)
+  ;;
+  ;; Returns the chunk offset the block landed at, or -1 when nothing was
+  ;; published. $decode_run needs that number: the only way it may treat one
+  ;; block's not-taken branch as "just carry on down the stream" is if the next
+  ;; block really did land immediately after this one, and a return of -1 (or of
+  ;; an offset that is not where the previous block ended) is how a page swap, a
+  ;; full chunk or an arena flush announces itself.
+  (func $page_publish (param $start_eip i32) (param $tstart i32) (param $tend i32) (result i32)
     (local $base i32) (local $slot i32) (local $used i32) (local $len i32)
     (local $src i32) (local $dst i32)
     (local.set $len (i32.sub (local.get $tend) (local.get $tstart)))
-    (if (i32.le_s (local.get $len) (i32.const 0)) (then (return)))
+    (if (i32.le_s (local.get $len) (i32.const 0)) (then (return (i32.const -1))))
     (local.set $base (i32.and (local.get $start_eip) (i32.const 0xFFFFF000)))
     ;; A block whose x86 runs off the end of its page has instructions that a
     ;; write to the *next* page would have to retire, and $invalidate_page only
@@ -325,12 +332,13 @@
     ;; handful of blocks per page boundary and keeps invalidation honest.
     (if (i32.ne (i32.and (i32.sub (global.get $d_pc) (i32.const 1)) (i32.const 0xFFFFF000))
                 (local.get $base))
-      (then (return)))
+      (then (return (i32.const -1))))
     (if (i32.ne (local.get $base) (global.get $cur_page_base))
       (then
         (if (i32.eqz (call $page_enter (local.get $base)))
           (then
-            (if (i32.eqz (call $page_create (local.get $base))) (then (return)))))))
+            (if (i32.eqz (call $page_create (local.get $base)))
+              (then (return (i32.const -1))))))))
     (local.set $slot (call $page_dir_slot (local.get $base)))
     (local.set $used (i32.load offset=12 (local.get $slot)))
     (if (i32.gt_u (i32.add (local.get $used) (local.get $len))
@@ -340,7 +348,7 @@
         ;; entry compiles it again from scratch, this time holding only the
         ;; blocks still being executed.
         (call $page_dir_drop (local.get $base))
-        (return)))
+        (return (i32.const -1))))
     (local.set $src (local.get $tstart))
     (local.set $dst (i32.add (global.get $cur_page_chunk) (local.get $used)))
     (block $cdone (loop $copy
@@ -353,7 +361,8 @@
       (i32.add (global.get $cur_page_index)
         (i32.shl (i32.and (local.get $start_eip) (i32.const 0xFFF)) (i32.const 1)))
       (local.get $used))
-    (i32.store offset=12 (local.get $slot) (i32.add (local.get $used) (local.get $len))))
+    (i32.store offset=12 (local.get $slot) (i32.add (local.get $used) (local.get $len)))
+    (local.get $used))
 
   ;; Load the page registers for $page_base if it is already compiled.
   (func $page_enter (param $page_base i32) (result i32)

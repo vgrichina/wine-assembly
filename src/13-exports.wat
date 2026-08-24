@@ -196,7 +196,7 @@
         (then
           (local.set $thread (call $cache_lookup (global.get $eip)))
           (if (i32.eqz (local.get $thread))
-            (then (local.set $thread (call $decode_block (global.get $eip)))))))
+            (then (local.set $thread (call $decode_run (global.get $eip)))))))
       (global.set $ip (local.get $thread))
       (if (global.get $handler_hist_enabled)
         (then (global.set $handler_hist_last (i32.const -1))))
@@ -2474,6 +2474,9 @@
   (func (export "get_page_hits")     (result i32) (global.get $page_hits))
   (func (export "get_page_misses")   (result i32) (global.get $page_misses))
   (func (export "get_page_fast")     (result i32) (global.get $page_fast))
+  (func (export "get_page_ft")       (result i32) (global.get $page_ft))
+  (func (export "get_page_ft_chains")(result i32) (global.get $page_ft_chains))
+  (func (export "get_page_ft_blocks")(result i32) (global.get $page_ft_blocks))
 
   ;; Threaded-handler histogram. Profiling tools enable this only around a
   ;; measured window. Counts are stored in WAT-private memory and read by JS.

@@ -1383,6 +1383,15 @@
   ;; deterministic form of the whole point of the design -- desk trips not taken
   ;; -- and unlike a wall-clock number it means the same thing on a loaded box.
   (global $page_fast     (mut i32) (i32.const 0))
+  ;; Conditional branches whose not-taken side became pure adjacency: the next
+  ;; block was compiled immediately after this one, so falling through costs no
+  ;; eip store, no lookup and no dispatch decision at all. $page_ft_chains counts
+  ;; how many decode runs were extended this way, $page_ft_blocks how many blocks
+  ;; those runs swallowed, and $page_ft counts the branches taken at runtime that
+  ;; paid nothing. See docs/page-compile-design.md section 2.1.
+  (global $page_ft_chains (mut i32) (i32.const 0))
+  (global $page_ft_blocks (mut i32) (i32.const 0))
+  (global $page_ft        (mut i32) (i32.const 0))
   ;; $run's per-call block allowance, hoisted out of a local so that
   ;; $branch_end can spend it too. A fast-path block transfer never reaches the
   ;; top of $run, so without this a single run() call would execute as many

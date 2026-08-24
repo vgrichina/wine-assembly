@@ -6957,6 +6957,11 @@ if (VERBOSE) {
           '| index hits', hits, 'misses', misses,
           total ? `(${(100 * hits / total).toFixed(1)}% hit)` : '',
           '| desk trips skipped', instance.exports.get_page_fast());
+        if (instance.exports.get_page_ft) {
+          console.log('runs:  extended', instance.exports.get_page_ft_chains(),
+            '| blocks chained', instance.exports.get_page_ft_blocks(),
+            '| free fall-throughs', instance.exports.get_page_ft());
+        }
       }
       if (instance.exports.get_cache_invals) {
         console.log('cache: page invalidations', instance.exports.get_cache_invals(),
