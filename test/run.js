@@ -291,6 +291,11 @@ const HANDLER_HIST_THREAD = parseInt(getArg('handler-hist-thread', '-1'), 10);
 const HANDLER_HIST_START = Math.max(0, parseInt(getArg('handler-hist-start', '0'), 10) || 0);
 const HANDLER_HIST_STOP = Math.max(HANDLER_HIST_START + 1,
   parseInt(getArg('handler-hist-stop', String(MAX_BATCHES)), 10) || MAX_BATCHES);
+// --hot-block-dump=FILE: write every distinct block the histogram window saw,
+// as "0xADDR hits", one per line. The printed top-20 is for reading; this is
+// for tools/cache-slots.js, which needs the whole set to say whether the
+// direct-mapped block cache index is aliasing them.
+const HOT_BLOCK_DUMP = getArg('hot-block-dump', null);
 const DUMP_SPEC = getArg('dump', null);   // --dump=0xADDR:LEN: hexdump memory region
 const DUMP_SEH = hasFlag('dump-seh');     // --dump-seh: detailed SEH chain dump at end
 const DUMP_VMAP = hasFlag('dump-vmap');   // --dump-vmap: sparse VirtualAlloc map + which probes are mapped
@@ -479,9 +484,15 @@ const traceAtDumps = TRACE_AT_DUMP ? TRACE_AT_DUMP.split(',').map(s => {
   const addr = /\+/.test(a) ? 0 : (parseInt(a, 16) >>> 0); // resolved later if module-relative
   return { addr, spec: a, len: parseInt(l) || 64, prev: null };
 }) : [];
+// `expr[:len]`, where a leading `*` dereferences (read the dword at the
+// computed address and use that as the address) and `len` of `s` reads a
+// NUL-terminated ASCII string. Stack arguments are pointers, so without those
+// two forms this flag can only ever print the pointer, never the string or
+// struct it names: `*esp+4:s` is "the filename this call was given".
 const traceAtMem = TRACE_AT_MEM ? TRACE_AT_MEM.split(',').map(s => {
   const [expr, l] = s.split(':');
-  return { expr: (expr || '').trim(), len: parseInt(l) || 4 };
+  const str = /^s$/i.test((l || '').trim());
+  return { expr: (expr || '').trim(), len: str ? 0 : (parseInt(l) || 4), str };
 }).filter(d => d.expr) : [];
 const traceEipDumps = TRACE_EIP_DUMP ? TRACE_EIP_DUMP.split(',').map(s => {
   const [a, l] = s.split(':');
@@ -3274,6 +3285,29 @@ async function main() {
 
   }
 
+  // Return addresses up the EBP chain, as a one-line list. The existing walker
+  // in the SEH dump caps EBP at 0x01A00000, which excludes any app whose stack
+  // the loader placed higher (Diablo's is at 0x074f____), so this one bounds
+  // the frame pointer only by "reads back a plausible frame".
+  const ebpChain = (depth = 8) => {
+    const dv = new DataView(memory.buffer);
+    const out = [];
+    let ebp = instance.exports.get_ebp() >>> 0;
+    for (let i = 0; i < depth; i++) {
+      if (!ebp || (ebp & 3)) break;
+      let saved, ret;
+      try {
+        saved = dv.getUint32(g2w(ebp), true) >>> 0;
+        ret = dv.getUint32(g2w(ebp + 4), true) >>> 0;
+      } catch (_) { break; }
+      if (!ret) break;
+      out.push(hex(ret));
+      if (saved <= ebp) break;
+      ebp = saved;
+    }
+    return out.join(' <- ');
+  };
+
   const regs = () => {
     const e = instance.exports;
     const base = `EIP=${hex(e.get_eip())} EAX=${hex(e.get_eax())} ECX=${hex(e.get_ecx())} EDX=${hex(e.get_edx())} EBX=${hex(e.get_ebx())} ESP=${hex(e.get_esp())} EBP=${hex(e.get_ebp())} ESI=${hex(e.get_esi())} EDI=${hex(e.get_edi())}`;
@@ -3589,6 +3623,7 @@ async function main() {
         // pointer it read, and --trace-at cannot stand in for this: it fires
         // on block entries only, so a store inside a loop body never hits it.
         console.log('  ' + regs());
+        console.log('  callers: ' + ebpChain());
         hit = true;
       }
       watchPrevVal = newVal;
@@ -3804,10 +3839,20 @@ async function main() {
         if (addr && hits) blocks.push({ addr, hits });
       }
       blocks.sort((a, b) => b.hits - a.hits);
-      console.log(`  top blocks (collisions=${e.get_hot_block_hist_collisions ? e.get_hot_block_hist_collisions() >>> 0 : 0}):`);
+      // `distinct` is the executed-block working set for the window, which is
+      // what the direct-mapped block cache index (CACHE_MASK + 1 slots) has to
+      // hold. Compare the two before blaming cache size: distinct well under
+      // the slot count with heavy eviction is an index/aliasing problem, not a
+      // capacity one.
+      console.log(`  top blocks (distinct=${blocks.length} collisions=${e.get_hot_block_hist_collisions ? e.get_hot_block_hist_collisions() >>> 0 : 0}):`);
       for (const row of blocks.slice(0, 20)) {
         const pct = blockTotal ? (row.hits * 100 / blockTotal).toFixed(2) : '0.00';
         console.log(`    ${hex(row.addr)} ${row.hits} (${pct}%)`);
+      }
+      if (HOT_BLOCK_DUMP) {
+        fs.writeFileSync(HOT_BLOCK_DUMP,
+          blocks.map(row => `${hex(row.addr)} ${row.hits}`).join('\n') + '\n');
+        console.log(`  wrote ${blocks.length} distinct blocks to ${HOT_BLOCK_DUMP}`);
       }
     }
     if (e.get_sib_consumer_hist_base && e.get_sib_consumer_hist_count) {
@@ -6502,7 +6547,14 @@ async function main() {
               }
             };
             const parseAddrExpr = (expr) => {
-              const s = String(expr || '').replace(/^\[/, '').replace(/\]$/, '').trim();
+              let s = String(expr || '').replace(/^\[/, '').replace(/\]$/, '').trim();
+              let deref = false;
+              if (s.startsWith('*')) { deref = true; s = s.slice(1).trim(); }
+              const inner = parseAddrExprBase(s);
+              if (inner === null || !deref) return inner;
+              try { return dv.getUint32(g2w(inner), true) >>> 0; } catch (_) { return null; }
+            };
+            const parseAddrExprBase = (s) => {
               const m = s.match(/^(e(?:ax|bx|cx|dx|sp|bp|si|di|ip))\s*([+-])?\s*(0x[0-9a-fA-F]+|\d+)?$/i);
               if (m) {
                 const base = regValue(m[1]);
@@ -6523,6 +6575,17 @@ async function main() {
               try {
                 const wa = g2w(addr);
                 let val;
+                if (d.str) {
+                  const u8 = new Uint8Array(memory.buffer);
+                  let out = '';
+                  for (let i = 0; i < 128; i++) {
+                    const c = u8[wa + i];
+                    if (!c) break;
+                    out += (c >= 0x20 && c < 0x7f) ? String.fromCharCode(c) : '.';
+                  }
+                  parts.push(`${d.expr}@${hex(addr)}="${out}"`);
+                  continue;
+                }
                 if (d.len === 1) val = dv.getUint8(wa);
                 else if (d.len === 2) val = dv.getUint16(wa, true);
                 else if (d.len === 4) val = dv.getUint32(wa, true) >>> 0;
