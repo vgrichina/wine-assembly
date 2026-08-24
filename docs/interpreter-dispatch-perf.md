@@ -496,8 +496,21 @@ which is how `opus5-rct` got a defensible 64.5% figure for `$invalidate_page`).
 Note also that the biggest measured interpreter win found during this work came
 from none of these: it was `$invalidate_page`'s O(CACHE_SIZE) sweep per guest
 write, 64.5% of total CPU on RollerCoaster Tycoon, fixed by per-page version
-counters for a 5.4x wall-clock win with a bit-identical dispatch count. A
-dispatch-count investigation is structurally blind to that class of bug.
+counters for a 5.4x wall-clock win with a bit-identical dispatch count
+(`opus5-rct`). A dispatch-count investigation is structurally blind to that
+class of bug — the cost sat entirely in the **store** path, not in a handler,
+and the histogram this page is built on only counts handlers.
+
+Two corollaries from that work worth carrying here:
+
+- **A single-profile self-time reading beats an A/B when the effect is large.**
+  "`$invalidate_page` is 51,348ms of a 79,571ms run" needs no comparison run at
+  all, so none of the position/drift/contention failures above can touch it.
+  Reach for `--cpu-prof` before reaching for a stopwatch.
+- **Pick the batch count from the phase you mean to measure.** RCT runs at 36M
+  ops/s for its first ~2500 batches and 2.9M after — a 12x cliff. Any RCT
+  measurement under 2500 batches sees only the fast half. Same failure mode as
+  the caesar3 title-screen trap above, one level down.
 
 ## Method notes
 
