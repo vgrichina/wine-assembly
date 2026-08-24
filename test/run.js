@@ -7026,6 +7026,17 @@ if (VERBOSE) {
         console.log('cache: page invalidations', instance.exports.get_cache_invals(),
           'that dropped a block', instance.exports.get_cache_inval_hits(),
           'last', hex(instance.exports.get_cache_inval_page()));
+        // Section 5's own scoreboard. A retire is one block taken out by a
+        // write to a byte it covers; a range drop is a write too wide to walk,
+        // where the whole page went instead. The ratio is the thesis: per-offset
+        // invalidation is only worth its complexity if retires dominate.
+        if (instance.exports.get_page_retires) {
+          const ret = instance.exports.get_page_retires();
+          const drop = instance.exports.get_page_range_drops();
+          console.log('       blocks retired one at a time', ret,
+            '| whole-page drops (write too wide to walk)', drop,
+            ret + drop ? `(${(100 * ret / (ret + drop)).toFixed(1)}% exact)` : '');
+        }
       }
     }
     if (instance.exports.gdi_dc_state_used) {

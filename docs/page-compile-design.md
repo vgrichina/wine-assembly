@@ -730,3 +730,38 @@ none. A 185x difference in decode work, and the throughput is the same.
 That is the result at the longest measurement this work is allowed to take. It
 does not soften with more samples, it does not depend on which app, and it does
 not depend on whether the app thrashes the old cache to pieces.
+
+## 12. Section 5 finally has an SMC test: StarCraft (2026-08-24)
+
+Per-offset invalidation was the one structural claim with no measurement behind
+it. Caesar retires nothing, so the cover-bit machinery had never been exercised
+at scale and "exact retirement" was an argument, not a result.
+
+`starcraft_shareware` is the app. It writes code at runtime — the invalidation
+counter's `last` page is `0x4ff64000`, inside the VirtualAlloc arena rather than
+the static image, which is the Storm/Smacker decompression path generating its
+own blitters. 25s run, counters (load-immune):
+
+| | fork point | this branch |
+|---|---|---|
+| block decodes | 27770 | 10383 |
+| of which evicted a live block | 23533 (85%) | 0 |
+| code-write invalidations | 626, each an O(CACHE_SIZE) sweep | 3834 |
+| blocks actually taken out | 572 | 901 |
+| **whole-page drops (write too wide to walk)** | n/a — always the whole sweep | **0** |
+| **exactness** | — | **100.0%** |
+
+Zero range drops is the result. Every code write StarCraft performs is narrow
+enough for the cover-bit walk to name the exact blocks it invalidates, so the
+fallback path — "this write is too wide, drop the page" — never fires in a real
+SMC workload. The per-offset design does what it claimed, and section 5 is no
+longer untested.
+
+`test/run.js` now prints this on its own line under the invalidation counters
+(`$page_retires` / `$page_range_drops` were being maintained but never exported).
+
+Note the counts are not directly comparable between trees: the two runs reach
+different points in the game in the same wall clock, and the branch's counter
+fires on a broader set of writes. What is comparable is the shape — 85% of the
+fork point's decodes are re-decodes of blocks it had already compiled, against
+zero evictions and a 100%-exact retirement path on the branch.
