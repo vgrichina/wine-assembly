@@ -371,6 +371,11 @@
     (if (result i32) (global.get $dx_exclusive_fullscreen)
       (then (call $dx_target_hwnd))
       (else (i32.const 0))))
+  ;; The device window of a windowed Direct3D9 device, or 0. Tells the
+  ;; compositor that the surface it is presenting is that window's client
+  ;; area at (0,0) rather than a screen-coordinate DirectDraw primary.
+  (func (export "get_d3d9_windowed_hwnd") (result i32)
+    (global.get $d3d9_windowed_hwnd))
   (func (export "get_flash_state") (param $hwnd i32) (result i32)
     (local $slot i32)
     (local.set $slot (call $wnd_table_find (local.get $hwnd)))
@@ -2348,8 +2353,16 @@
     (local $base i32)
     (local.set $base (i32.add (global.get $HIT_COUNT_BASE)
                               (i32.shl (local.get $slot) (i32.const 3))))
-    (i32.store          (local.get $base) (local.get $addr))
-    (i32.store offset=4 (local.get $base) (i32.const 0))
+    ;; Arming the same address twice must not throw the count away. The slots
+    ;; live in linear memory, which worker instances share, and every spawn
+    ;; re-arms all of them (lib/thread-manager.js) -- so an app that started a
+    ;; thread mid-run reset every counter to zero and the flag reported 0 for
+    ;; addresses it had already counted hundreds of thousands of times. Use
+    ;; clear_counts to deliberately start over.
+    (if (i32.ne (i32.load (local.get $base)) (local.get $addr))
+      (then
+        (i32.store          (local.get $base) (local.get $addr))
+        (i32.store offset=4 (local.get $base) (i32.const 0))))
     (if (i32.gt_s (i32.add (local.get $slot) (i32.const 1)) (global.get $hit_count_n))
       (then (global.set $hit_count_n (i32.add (local.get $slot) (i32.const 1)))))
     (call $dbg_recompute))

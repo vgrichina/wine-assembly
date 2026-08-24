@@ -210,6 +210,7 @@ UNIT=(
   test/test-directinput8-create.js
   test/test-directx-ordinals.js
   test/test-launch-prefs-resolution.js
+  test/test-dx-present-window-placement.js
   test/test-dx-vtable-worker-sync.js
   test/test-disabled-dialog-controls.js
   test/test-duplicate-handle.js

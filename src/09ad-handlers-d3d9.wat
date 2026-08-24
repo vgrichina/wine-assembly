@@ -4,6 +4,16 @@
   ;; Vtable order is the spec in tools/d3d9-methods.js — do not reorder.
   ;; ============================================================
 
+  ;; The device window of a *windowed* D3D9 device, or 0 for fullscreen and
+  ;; for no device at all. A windowed device's render target holds that
+  ;; window's client area starting at (0,0) -- it is not a screen-coordinate
+  ;; DirectDraw primary, and the compositor has to know which of the two it is
+  ;; being handed. Pawn makes the distinction visible: it creates a
+  ;; screen-sized STATIC child of its 360x400 main window and points the
+  ;; device at the child, so the board pixels live at surface (0,0) while the
+  ;; place they belong on screen is the main window's client origin.
+  (global $d3d9_windowed_hwnd (mut i32) (i32.const 0))
+
   ;; ── IDirect3D9 — 17 methods ─────────────
   ;; IDirect3D9_QueryInterface — 3 args (incl. this)
   (func $handle_IDirect3D9_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -185,6 +195,8 @@
       (local.set $windowed (call $gl32 (i32.add (local.get $pp) (i32.const 32))))))
     (if (i32.eqz (local.get $hwnd)) (then (local.set $hwnd (local.get $arg3))))
     (if (local.get $hwnd) (then (global.set $dx_coop_hwnd (local.get $hwnd))))
+    (global.set $d3d9_windowed_hwnd
+      (select (local.get $hwnd) (i32.const 0) (local.get $windowed)))
     ;; A windowed device may leave the back-buffer size at 0 — that means "the
     ;; client area of the device window", which is also the only size Present
     ;; can land on without scaling. Fullscreen devices fall back to the
