@@ -20,13 +20,22 @@
 //      the registry-loaded module AND that the walk continues to vis_w behind
 //      it and still shows the page.
 //
-// Known gap, deliberately not asserted: vis_avs, vis_milk2 and vis_nsfs load
-// and export winampVisGetHeader, but the enumerator never comes back from
-// calling it, so the Visualization page is never shown. MilkDrop also refuses
-// to render ("This plugin can't run without music") because its IsPlaying
-// query is a cross-thread SendMessage from the plug-in's worker to the main
-// window, which returns without running the target wndproc. Fixing either one
-// turns into more cases here.
+//   C. The bogus handle vis_avs sends to. Winamp 2.91 calls
+//      winampVisGetHeader() with no arguments; AVS 2.8 was built for Winamp 5
+//      and reads an argument anyway, so it sends WM_USER/IPC_GET_API_SERVICE
+//      to whatever that stack slot held -- 0xe0 here, a handle no window ever
+//      had. Windows answers 0. We used to answer with the app's own global
+//      wndproc, and AVS called through the number that came back. The case
+//      pins the 0.
+//
+// Known gaps, deliberately not asserted: AVS still cannot initialize under
+// this Winamp -- 2.91 has no api_service to hand it (no reference to IPC 3025
+// anywhere in winamp.exe), and AVS dereferences the answer unconditionally, so
+// it is incompatible on real hardware too and stays out of the desktop config.
+// vis_milk2 and vis_nsfs also derail the enumeration walk. MilkDrop itself
+// refuses to render ("This plugin can't run without music") because its
+// IsPlaying query is a cross-thread SendMessage from the plug-in's worker to
+// the main window, which returns without running the target wndproc.
 
 const fs = require('fs');
 const path = require('path');
@@ -175,6 +184,33 @@ check(/CreateDialogParamA\(0x[0-9a-f]+, 0x000000e0,/.test(outB),
   'vis_milk: selecting the tree node should create the Visualization page');
 check((outB.match(/ShowWindow\(hwnd=hwnd:0x[0-9a-f]+, cmd=SW_SHOWNA\)/g) || []).length >= 2,
   'vis_milk: the new page should be shown, not left hidden behind the old one');
+
+// ---------------------------------------------------------------- case C
+
+const VIS_AVS = path.join(ROOT, 'binaries', 'plugins', 'candidates', 'vis_avs.dll');
+if (fs.existsSync(VIS_AVS)) {
+  const outC = run([
+    RUN,
+    '--app=winamp',
+    '--screen=756x480',
+    '--max-batches=560',
+    '--batch-size=50000',
+    '--dll-seed=binaries/plugins/candidates/vis_avs.dll',
+    '--vfs-mount=binaries/plugins/candidates/vis_avs.dll=c:\\plugins\\vis_avs.dll',
+    '--trace-api=GetProcAddress,SendMessageA',
+    '--input=' + ['5:273:2', '80:post-cmd:40317', '360:click:54:188'].join(','),
+  ], 180000);
+
+  console.log('case C: a message sent to a handle no window ever had');
+  assertNoCrash(outC, 'vis_avs');
+  // WM_USER (1024) with IPC_GET_API_SERVICE (3025) in lParam, to 0xe0.
+  const bogus = outC.match(
+    /SendMessageA\(hwnd=hwnd:0x000000e0, msg=1024, wP=0, lP=3025\)[^\n]*\n\s*=> (\S+)/);
+  if (check(bogus, 'vis_avs: AVS should send its api_service query to the stale handle')) {
+    check(bogus[1] === '0',
+      `vis_avs: a message to a handle that was never issued should answer 0, got ${bogus[1]}`);
+  }
+}
 
 // ----------------------------------------------------------------
 

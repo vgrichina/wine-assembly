@@ -2598,9 +2598,19 @@
             (global.set $eax (i32.const 0))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
-    ;; Fall back to global wndproc if not in table (skip for child controls 0x20000+)
-    (if (i32.and (i32.eqz (local.get $wndproc))
-                 (i32.lt_u (local.get $arg0) (i32.const 0x20000)))
+    ;; Fall back to global wndproc if not in table (skip for child controls
+    ;; 0x20000+). Only for a handle the HWND allocator actually issued, or the
+    ;; broadcast handle: SendMessage to a handle that never named a window
+    ;; returns 0 on Windows, and guessing a wndproc for it runs the app's own
+    ;; message code on garbage. Winamp's plug-in enumerator calls
+    ;; winampVisGetHeader with no arguments; AVS 2.8 reads an argument anyway
+    ;; and sends WM_USER to whatever that stack slot held, and the reply it got
+    ;; from the fallback was a pointer it then called through.
+    (if (i32.and
+          (i32.and (i32.eqz (local.get $wndproc))
+                   (i32.lt_u (local.get $arg0) (i32.const 0x20000)))
+          (i32.or (call $wnd_hwnd_was_issued (local.get $arg0))
+                  (i32.eq (local.get $arg0) (i32.const 0xFFFF))))
       (then
         (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
           (then (local.set $wndproc (global.get $wndproc_addr)))
