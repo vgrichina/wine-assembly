@@ -1153,8 +1153,22 @@
             (i32.eq (i32.load (local.get $p)) (local.get $owner))))
       (then (return (local.get $p))))
     (local.set $p (i32.const 0))
+    ;; Bounded by the high-water mark, not by GDI_WINDOW_SURFACE_COUNT. The
+    ;; one-entry hint above only caches a HIT, so a lookup for an hwnd with no
+    ;; record walked all 256 slots and cached nothing, then did it again on the
+    ;; next call. A handful of windows are ever live, so bounding the walk to
+    ;; the slots actually in use costs one load and ends it.
+    ;;
+    ;; This bound alone moved no measurement. It was tried first against
+    ;; DX-Ball, where this function was 20% of wasm time, and that share did not
+    ;; shift: the cost there was call VOLUME, from $dx_reseed_overlays asking
+    ;; about all 256 window slots on every present. That is fixed at the call
+    ;; site. Keeping the bound because a scan proportional to the live windows
+    ;; instead of the table size is right on its own, not because it was
+    ;; measured to be worth anything.
     (block $done (loop $scan
-      (br_if $done (i32.ge_u (local.get $i) (global.get $GDI_WINDOW_SURFACE_COUNT)))
+      (br_if $done (i32.ge_u (local.get $i)
+        (i32.load (global.get $GDI_WINDOW_SURFACE_HWM))))
       (local.set $p (i32.add (global.get $GDI_WINDOW_SURFACE_TABLE)
         (i32.mul (local.get $i) (global.get $GDI_WINDOW_SURFACE_STRIDE))))
       (if (i32.eq (i32.load (local.get $p)) (local.get $owner))
@@ -1166,6 +1180,20 @@
         (then (local.set $empty (local.get $p))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
+    ;; No live record. A hole below the mark is reused first, exactly as the
+    ;; full scan used to; only when there is none does the table grow, and that
+    ;; is the one place the mark moves. $gdi_window_surface_release zeroes a
+    ;; slot without lowering it, which is what leaves the hole.
+    (if (i32.and (i32.ne (local.get $create) (i32.const 0))
+          (i32.and (i32.eqz (local.get $empty))
+            (i32.lt_u (i32.load (global.get $GDI_WINDOW_SURFACE_HWM))
+              (global.get $GDI_WINDOW_SURFACE_COUNT))))
+      (then
+        (local.set $empty (i32.add (global.get $GDI_WINDOW_SURFACE_TABLE)
+          (i32.mul (i32.load (global.get $GDI_WINDOW_SURFACE_HWM))
+            (global.get $GDI_WINDOW_SURFACE_STRIDE))))
+        (i32.store (global.get $GDI_WINDOW_SURFACE_HWM)
+          (i32.add (i32.load (global.get $GDI_WINDOW_SURFACE_HWM)) (i32.const 1)))))
     (if (i32.and (i32.ne (local.get $create) (i32.const 0))
           (i32.ne (local.get $empty) (i32.const 0)))
       (then
