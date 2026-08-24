@@ -2775,7 +2775,10 @@
     (if (i32.eqz (local.get $pal_wa))
       (then
         (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (i32.const 0))))
-        (global.set $eax (i32.const 0x887600AB)) ;; DDERR_NOPALETTEATTACHED
+        ;; MAKE_DDHRESULT(572). d3drm's CreateDevice tolerates exactly this
+        ;; value and treats every other failure as fatal, so an approximate
+        ;; error code here reads to it as "this device cannot be created".
+        (global.set $eax (i32.const 0x8876023C)) ;; DDERR_NOPALETTEATTACHED
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
         (return)))
     (local.set $obj_guest (call $dx_create_com_obj (i32.const 3) (global.get $DX_VTBL_DDPAL)))
