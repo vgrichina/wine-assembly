@@ -302,6 +302,14 @@ const PNG_CANVAS = hasFlag('png-canvas'); // --png-canvas: always capture the co
 // capture then tells you which of the two things is wrong: nothing there to
 // draw, or art sitting under a colour table that is still black.
 const DX_RAW_INDEX = hasFlag('dx-raw-index');
+// --dx-slot=N: capture this DirectDraw surface instead of the one the content
+// heuristic picks. The heuristic prefers an offscreen surface whose colour
+// count dwarfs the primary's, which is right for a game that composes into a
+// back buffer and wrong for a 3D app whose texture atlas is more colourful
+// than its rendered frame — every Organic Art screensaver captures its leaf
+// sheet that way and reads as "renders a texture, not a scene". --dx-surfaces
+// prints the slot numbers to choose from.
+const DX_SLOT = getArg('dx-slot', null);
 const VIDEO_OUT = getArg('video', null); // --video=out.webm: record deterministic renderer frames through ffmpeg
 const VIDEO_FPS = parseFloat(getArg('video-fps', '30')); // --video-fps=N: playback rate; one frame is captured per batch
 const VIDEO_START_BATCH = Math.max(0, parseInt(getArg('video-start-batch', '0'), 10) || 0); // --video-start-batch=N: skip setup batches before capture
@@ -7122,7 +7130,17 @@ if (VERBOSE) {
       return bestOffscreen ? bestOffscreen.surface : null;
     }
 
+    // An offscreen surface may only stand in for a primary that has content
+    // when it is the same size — that is a back buffer the app composes into
+    // and then presents, so it is the frame a moment early. A differently
+    // sized offscreen is a texture, and a texture atlas routinely carries more
+    // colours than the frame drawn with it: every Organic Art screensaver
+    // captured its leaf/marble sheet under the old colour-diversity rule and
+    // read as "renders a texture, never a scene" when the primary in fact held
+    // the rendered geometry. The browser presents the primary; so does this.
     if (bestOffscreen &&
+        bestOffscreen.surface.w === bestPrimary.surface.w &&
+        bestOffscreen.surface.h === bestPrimary.surface.h &&
         bestOffscreen.score.colors >= 16 &&
         bestOffscreen.score.colors >= Math.max(bestPrimary.score.colors + 8, bestPrimary.score.colors * 4)) {
       return bestOffscreen.surface;
@@ -7153,7 +7171,13 @@ if (VERBOSE) {
 
   if (PNG_OUT && renderer) {
     const { mem, surfaces } = getDxSurfaceManifest();
-    const surface = PNG_CANVAS ? null : chooseDxPresentationSurface(surfaces, mem);
+    const wantSlot = DX_SLOT === null ? null : (parseInt(DX_SLOT, 10) | 0);
+    const surface = PNG_CANVAS ? null
+      : (wantSlot === null ? chooseDxPresentationSurface(surfaces, mem)
+        : (surfaces.find(s => s.slot === wantSlot) || null));
+    if (wantSlot !== null && !surface) {
+      console.log(`[dx-slot] no live surface in slot ${wantSlot} — falling back to the screen canvas`);
+    }
     if (surface) {
       const bytes = writeRgbaPng(PNG_OUT, surface.w, surface.h, dxSurfaceToRgba(surface, mem));
       console.log(`Wrote ${PNG_OUT} (${bytes} bytes, dx slot ${surface.slot} ${surface.w}x${surface.h})`);
