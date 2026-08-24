@@ -1348,27 +1348,52 @@
     ;; Start enumeration — call $enum_modes_dispatch for the first mode
     (call $enum_modes_dispatch))
 
+  ;; Width/height of resolution slot $r in the enumerated mode table.
+  ;; Games that offer a resolution menu (Roller Coaster Tycoon) validate the
+  ;; mode they are asked for against exactly this list and refuse anything not
+  ;; in it, so the list is what caps their available resolutions.
+  (func $enum_mode_res_w (param $r i32) (result i32)
+    (if (i32.eq (local.get $r) (i32.const 1)) (then (return (i32.const 800))))
+    (if (i32.eq (local.get $r) (i32.const 2)) (then (return (i32.const 1024))))
+    (if (i32.eq (local.get $r) (i32.const 3)) (then (return (i32.const 1152))))
+    (if (i32.eq (local.get $r) (i32.const 4)) (then (return (i32.const 1280))))
+    (i32.const 640))
+  (func $enum_mode_res_h (param $r i32) (result i32)
+    (if (i32.eq (local.get $r) (i32.const 1)) (then (return (i32.const 600))))
+    (if (i32.eq (local.get $r) (i32.const 2)) (then (return (i32.const 768))))
+    (if (i32.eq (local.get $r) (i32.const 3)) (then (return (i32.const 864))))
+    (if (i32.eq (local.get $r) (i32.const 4)) (then (return (i32.const 1024))))
+    (i32.const 480))
+
   ;; Helper: fill DDSD for mode index $enum_modes_idx and jump to callback.
-  ;; Mode table: 640x480 and 800x600 in 8/16/32 bpp.
+  ;; Mode table: five resolutions × 8/16/32 bpp — idx/3 picks the resolution,
+  ;; idx%3 the depth. A resolution larger than the host screen is skipped: a
+  ;; game that takes the biggest mode we advertise must not end up in a display
+  ;; mode its window can never show. Slots 0-5 (640x480 and 800x600, the two
+  ;; this table advertised unconditionally before the larger modes existed) are
+  ;; never filtered — an app that finds no mode at all usually just quits, and
+  ;; a mode slightly larger than the canvas has always been allowed.
   (func $enum_modes_dispatch
     (local $ddsd_wa i32) (local $w i32) (local $h i32) (local $bpp i32)
-    (local $pitch i32) (local $idx i32)
+    (local $pitch i32) (local $idx i32) (local $screen i32)
     (local.set $idx (global.get $enum_modes_idx))
-    ;; Mode table
-    (if (i32.eq (local.get $idx) (i32.const 0))
-      (then (local.set $w (i32.const 640)) (local.set $h (i32.const 480)) (local.set $bpp (i32.const 8))))
-    (if (i32.eq (local.get $idx) (i32.const 1))
-      (then (local.set $w (i32.const 640)) (local.set $h (i32.const 480)) (local.set $bpp (i32.const 16))))
-    (if (i32.eq (local.get $idx) (i32.const 2))
-      (then (local.set $w (i32.const 640)) (local.set $h (i32.const 480)) (local.set $bpp (i32.const 32))))
-    (if (i32.eq (local.get $idx) (i32.const 3))
-      (then (local.set $w (i32.const 800)) (local.set $h (i32.const 600)) (local.set $bpp (i32.const 8))))
-    (if (i32.eq (local.get $idx) (i32.const 4))
-      (then (local.set $w (i32.const 800)) (local.set $h (i32.const 600)) (local.set $bpp (i32.const 16))))
-    (if (i32.eq (local.get $idx) (i32.const 5))
-      (then (local.set $w (i32.const 800)) (local.set $h (i32.const 600)) (local.set $bpp (i32.const 32))))
+    (local.set $screen (call $host_get_screen_size))
+    (block $found
+      (loop $scan
+        (br_if $found (i32.ge_u (local.get $idx) (i32.const 15)))
+        (local.set $w (call $enum_mode_res_w (i32.div_u (local.get $idx) (i32.const 3))))
+        (local.set $h (call $enum_mode_res_h (i32.div_u (local.get $idx) (i32.const 3))))
+        (br_if $found (i32.le_u (local.get $idx) (i32.const 5)))
+        (br_if $found (i32.and
+          (i32.le_u (local.get $w) (i32.and (local.get $screen) (i32.const 0xFFFF)))
+          (i32.le_u (local.get $h) (i32.shr_u (local.get $screen) (i32.const 16)))))
+        (local.set $idx (i32.add (local.get $idx) (i32.const 1)))
+        (br $scan)))
+    ;; The continuation thunk resumes from the global, so record the skips.
+    (global.set $enum_modes_idx (local.get $idx))
+    (local.set $bpp (i32.shl (i32.const 8) (i32.rem_u (local.get $idx) (i32.const 3))))
     ;; If past end of table, done — return DD_OK to caller
-    (if (i32.ge_u (local.get $idx) (i32.const 6))
+    (if (i32.ge_u (local.get $idx) (i32.const 15))
       (then
         (global.set $eip (global.get $enum_modes_ret))
         (global.set $eax (i32.const 0))  ;; DD_OK

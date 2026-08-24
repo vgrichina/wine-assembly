@@ -918,16 +918,28 @@ class WineAssembly {
   // The patch table is lib/app-profiles.js, shared with the CLI harness — it
   // used to be a second hand-copy here, so a patch added on one side never
   // reached the other.
-  _applyExeCompatibilityPatches(exeName) {
+  _applyExeCompatibilityPatches(exeName, launchPrefsHook) {
     const profiles = (typeof window !== 'undefined' && window.appProfiles) ||
       (typeof appProfiles !== 'undefined' ? appProfiles : null);
     if (!profiles || !this.instance) return;
-    profiles.applyExeCompatibilityPatches(
-      exeName, this.instance.exports, this.memory && this.memory.buffer);
+    const buffer = this.memory && this.memory.buffer;
+    profiles.applyExeCompatibilityPatches(exeName, this.instance.exports, buffer);
+    // Screen-size-driven defaults (an app's own resolution setting, say) come
+    // from the same table. The canvas is already sized to the viewport by the
+    // time an exe loads, so this is the real screen the guest will see.
+    if (profiles.applyLaunchPreferences) {
+      const canvas = this.renderer && this.renderer.canvas;
+      profiles.applyLaunchPreferences(exeName, this.instance.exports, buffer, {
+        hook: launchPrefsHook || null,
+        screen: canvas ? { width: canvas.width, height: canvas.height } : null,
+      });
+    }
   }
 
   // `opts.win16Modules` names NE DLLs the task loads by name at runtime rather
   // than importing — see the win16StageModule host import.
+  // `opts.launchPrefs` is the app entry's own screen-size → byte-pokes function
+  // (lib/apps.js), applied right after load_pe.
   async loadExe(url, opts = {}) {
     if (!this.instance) await this.init();
     this._win16ExtraModules = opts.win16Modules || [];
@@ -946,7 +958,7 @@ class WineAssembly {
       this.instance.exports, this.memory.buffer, exeBytes);
 
     const exeName = url.replace(/^.*[\\\/]/, '');
-    this._applyExeCompatibilityPatches(exeName);
+    this._applyExeCompatibilityPatches(exeName, opts.launchPrefs);
 
     // A 16-bit task's DLLs go into the same selector arena its own segments
     // just went into, so this has to follow load_pe and precede its first call
