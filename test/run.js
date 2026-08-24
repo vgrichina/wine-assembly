@@ -46,7 +46,14 @@ const SRC_DIR = path.join(ROOT, 'src');
 // This is hygiene, not a fix for anything measured: it made no difference to
 // memory or runtime. The snapshot memory problem was GPU surfaces -- see the
 // note in renderer.js _createOffscreen.
+// Set by main() once the DirectDraw present path exists. Every capture in this
+// harness goes through canvasToPng, so hooking here is what makes a --png or a
+// --dump land on the frame the guest just finished instead of on whatever the
+// last time-bounded upload left behind.
+let dxPresentHook = null;
+
 function canvasToPng(canvas) {
+  if (dxPresentHook) dxPresentHook();
   return typeof canvas.toBufferSync === 'function'
     ? canvas.toBufferSync('png')
     : canvas.toBuffer('image/png');
@@ -97,6 +104,15 @@ const MAX_BATCHES = parseInt(getArg('max-batches', '200'));
 // a long run pays that leak millions of times over. Snapshot actions call
 // repaint() themselves, so raising this does not affect captured pixels.
 const REPAINT_EVERY = Math.max(1, parseInt(getArg('repaint-every', '1')) || 1);
+// Minimum wall-clock gap between *unforced* DirectDraw surface uploads. An
+// upload of a live 640x480 surface measures ~11ms, about what a 20k-step batch
+// costs, so uploading each finished guest frame doubles a dxball run and a 16ms
+// cap does not help (the batches are already that long). Nothing looks at a
+// headless canvas between captures and every capture forces an upload anyway,
+// so the default is deliberately slow: 10Hz keeps a video recording and any
+// mid-run liveness check honest for ~10% of the run time. Pass 0 to upload
+// every finished frame, which is what measuring the present path itself needs.
+const DX_PRESENT_MIN_MS = Math.max(0, parseFloat(getArg('dx-present-min-ms', '100')) || 0);
 // When multiple --break addrs are passed, the WASM `set_bp` only holds one,
 // so the JS fallback (eipBefore check) must see every block entry. Force
 // batch-size=1 so each block run hits the check loop.
@@ -1628,12 +1644,41 @@ async function main() {
       }
     };
   }
-  if (FRAME_STATS && typeof h.dx_trace === 'function') {
+  // The guest tells us when a DirectDraw frame is finished; nothing else can.
+  // Before this the harness polled -- one upload per 128 batches, kept only if
+  // presentBestDxOffscreen's 4-byte-per-row signature happened to differ -- so
+  // what reached the canvas was the harness's cadence, not the game's, and a
+  // ball moving between the sampled columns could stay stale indefinitely.
+  // Two rates, deliberately: correctness is tied to the guest (dirty), cost is
+  // tied to wall clock. Measured on dxball, 800 batches of 20k steps: uploads
+  // effectively off 15.0s, the 10Hz default 17.0s, one per finished frame
+  // 23.3s. Nothing watches a headless canvas between captures and the
+  // canvasToPng hook forces an upload at every capture, so the rate limit costs
+  // no evidence -- a --png still shows the frame the guest just finished.
+  const dxPresent = { dirty: false, lastAt: 0n };
+  const presentDxIfDirty = (minMs) => {
+    if (!dxPresent.dirty || !base.gdi || !base.gdi.presentBestDxOffscreen) return;
+    if (minMs > 0) {
+      const now = process.hrtime.bigint();
+      if (dxPresent.lastAt !== 0n && Number(now - dxPresent.lastAt) / 1e6 < minMs) return;
+      dxPresent.lastAt = now;
+    }
+    dxPresent.dirty = false;
+    // force=true: presentBestDxOffscreen's signature samples 4 bytes per row,
+    // so it cannot be trusted to notice a sprite moving between its columns.
+    base.gdi.presentBestDxOffscreen(true);
+  };
+  dxPresentHook = () => presentDxIfDirty(0);
+  if (typeof h.dx_trace === 'function') {
     const rawDxTrace = h.dx_trace;
     // kind 5 = Present, 6 = Flip. Every other kind (Lock/Unlock/Blt/SetEntries)
-    // happens several times within one frame and must not count as one.
+    // happens several times within one frame and must not count as one FRAME,
+    // but kind 2 (Unlock) IS a finished write: a released lock means the guest
+    // is done touching those pixels, which is exactly when they are worth
+    // uploading for a game that renders straight into a locked surface.
     h.dx_trace = (kind, ...a) => {
-      if (kind === 5 || kind === 6) recordFrame(frameStats.present);
+      if (kind === 2 || kind === 5 || kind === 6) dxPresent.dirty = true;
+      if (FRAME_STATS && (kind === 5 || kind === 6)) recordFrame(frameStats.present);
       return rawDxTrace(kind, ...a);
     };
   }
@@ -3539,6 +3584,11 @@ async function main() {
       if (!filtered) {
         console.log(`\n*** WATCHPOINT hit at batch ${batch}: [${hex(watchAddr)}] changed`);
         console.log(`  Old: ${hex(watchPrevVal)}  New: ${hex(newVal)}  EIP: ${hex(instance.exports.get_eip())}  prev_eip: ${hex(instance.exports.get_dbg_prev_eip())}`);
+        // The writer's registers name the source of a bad store. A copy loop
+        // that wrote garbage into a surface is only diagnosable from the
+        // pointer it read, and --trace-at cannot stand in for this: it fires
+        // on block entries only, so a store inside a loop body never hits it.
+        console.log('  ' + regs());
         hit = true;
       }
       watchPrevVal = newVal;
@@ -6373,9 +6423,11 @@ async function main() {
     }
 
     const afterRunMs = TRACE_BATCH_TIMING ? Date.now() : 0;
-    if ((batch & 0x7f) === 0 && base.gdi && base.gdi.presentBestDxOffscreen) {
-      base.gdi.presentBestDxOffscreen();
-    }
+    // Upload only when the guest says a frame is finished, rate-limited by wall
+    // clock. This replaced a '(batch & 0x7f) === 0' poll, which uploaded on the
+    // harness's cadence rather than the game's and then discarded the upload
+    // unless a 4-byte-per-row signature happened to change.
+    presentDxIfDirty(DX_PRESENT_MIN_MS);
 
     // Flush deferred repaint so back canvas composites after all GDI writes.
     // The scheduled-repaint flag survives a skipped flush, so coalescing here
@@ -6385,6 +6437,7 @@ async function main() {
       renderer.flushRepaint();
     }
     if (videoRecorder && batch >= VIDEO_START_BATCH) {
+      presentDxIfDirty(0);   // a recorded frame is a capture, not a live view
       await videoRecorder.capture(renderer.canvas);
     }
     if (TRACE_BATCH_TIMING) {
