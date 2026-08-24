@@ -139,6 +139,8 @@ const TRACE_EIP_DUMP = getArg('trace-eip-dump', null); // --trace-eip-dump=0xADD
 const TRACE_GDI = hasFlag('trace-gdi');   // --trace-gdi: log GDI calls (CreateBitmap, BitBlt, etc.)
 const GDI_STATS = hasFlag('gdi-stats');   // --gdi-stats: print software-raster span/pixel totals at exit
 const LATENCY_STATS = hasFlag('latency-stats'); // --latency-stats: measure injected input -> next surface blit
+const FRAME_STATS = hasFlag('frame-stats'); // --frame-stats: guest-frame pacing (interval percentiles + jitter) at exit
+const AUTO_MOUSE = getArg('auto-mouse', null); // --auto-mouse=X0,Y0,X1,Y1[,PERIOD]: sweep the pointer every PERIOD batches
 const TRACE_CTRL = hasFlag('trace-ctrl'); // --trace-ctrl: log every WAT-native control paint + its screen rect
 const TRACE_ERASE = hasFlag('trace-erase'); // --trace-erase: log every window-background erase + the brush it fills with
 const TRACE_RGN = hasFlag('trace-rgn');   // --trace-rgn: log HRGN create/combine/select + branch counts
@@ -1116,6 +1118,39 @@ async function main() {
     }
     scheduledInput.sort((a, b) => a.batch - b.batch);
   }
+  // --auto-mouse=X0,Y0,X1,Y1[,PERIOD][,START]: a hand on the mouse, scripted.
+  // The browser HUD can only measure what a person does live, which is not a
+  // benchmark: nobody moves the pointer the same way twice. This sweeps it
+  // between two points forever, one move every PERIOD batches, so an input
+  // measurement is repeatable and diffable across builds. PERIOD is in
+  // batches rather than ms on purpose -- a batch is one message-loop turn, so
+  // the sweep keeps pace with the guest instead of with this machine's load.
+  if (AUTO_MOUSE) {
+    const n = AUTO_MOUSE.split(',').map(v => parseInt(v.trim(), 10));
+    const [x0, y0, x1, y1] = n;
+    const period = Math.max(1, n[4] || 4);
+    const start = Math.max(0, n[5] || 0);
+    if ([x0, y0, x1, y1].some(v => !Number.isFinite(v))) {
+      console.error('--auto-mouse needs at least X0,Y0,X1,Y1');
+      process.exit(2);
+    }
+    // Ping-pong, so the pointer never teleports: a jump from one edge back to
+    // the other is not a motion a hand makes, and a game that tracks pointer
+    // DELTA rather than position would see one huge bogus step per sweep.
+    const legs = Math.max(1, Math.floor(((MAX_BATCHES - start) / period) / 2));
+    let k = 0;
+    for (let b = start; b < MAX_BATCHES; b += period, k++) {
+      const leg = Math.floor(k / legs) % 2;
+      const t = (k % legs) / legs;
+      const f = leg ? 1 - t : t;
+      scheduledInput.push({
+        batch: b, action: 'mousemove',
+        x: Math.round(x0 + (x1 - x0) * f),
+        y: Math.round(y0 + (y1 - y0) * f),
+      });
+    }
+    scheduledInput.sort((a, b) => a.batch - b.batch);
+  }
   const sortScheduledInput = (current) => {
     scheduledInput.sort((a, b) =>
       (a.batch - b.batch) || (current ? (a === current ? -1 : (b === current ? 1 : 0)) : 0));
@@ -1484,6 +1519,64 @@ async function main() {
     };
   }
   const tickStateRef = { batch: 0 };
+  // --frame-stats: how evenly the guest presents, not how often. Average fps
+  // is the number that hides judder -- 55fps of even 18ms frames looks
+  // smooth, 55fps of alternating 17/34ms frames does not, and both report
+  // "55".
+  //
+  // Two different events get counted, because in this harness they are not
+  // the same event and only one of them is the guest's.
+  //
+  //   upload — WAT handing a dirty rect to the presentation surface. This is
+  //            the guest drawing, and it is driven by guest code alone.
+  //   flush  — the presentation surface decoding into the canvas. This is
+  //            what lib/host-imports.js counts for the browser HUD.
+  //
+  // In the browser those coincide closely enough to call one "a frame": the
+  // step loop repaints every step and the flush only does work when the guest
+  // actually dirtied something, so the flush rate IS the guest's draw rate.
+  // In the CLI they do NOT coincide: run.js repaints once every REPAINT_EVERY
+  // batches and the flush happens when the compositor reads the canvas, so
+  // the flush series is a picture of the HARNESS's sampling cadence and its
+  // interval collapses to exactly one batch. Reporting that as guest pacing
+  // would be measuring our own repaint loop and calling it the game.
+  const frameStats = {
+    flush: { iv: [], lastBatch: -1, lastAt: 0n },
+    upload: { iv: [], lastBatch: -1, lastAt: 0n },
+  };
+  const recordFrame = (series) => {
+    const at = process.hrtime.bigint();
+    if (series.lastBatch >= 0) {
+      series.iv.push({
+        batches: tickStateRef.batch - series.lastBatch,
+        ms: Number(at - series.lastAt) / 1e6,
+      });
+    }
+    series.lastBatch = tickStateRef.batch;
+    series.lastAt = at;
+    return at;
+  };
+  if (FRAME_STATS || LATENCY_STATS) {
+    ctx.onGuestFrame = () => {
+      const at = recordFrame(frameStats.flush);
+      // A presented frame is where a pointer move becomes pixels. The
+      // ctrl_paint + surface_upload pair above cannot close a move's sample
+      // in a fullscreen DirectDraw game, because such a game paints no
+      // WAT-native controls at all -- it blits its own back buffer.
+      if (latency.pending && latency.pending.kind === 'mousemove') {
+        latency.samples.push({
+          kind: 'mousemove',
+          batches: tickStateRef.batch - latency.pending.batch,
+          ms: Number(at - latency.pending.at) / 1e6,
+        });
+        latency.pending = null;
+      }
+    };
+  }
+  if (FRAME_STATS && typeof h.gdi_surface_upload === 'function') {
+    const rawUploadFrame = h.gdi_surface_upload;
+    h.gdi_surface_upload = (...a) => { recordFrame(frameStats.upload); return rawUploadFrame(...a); };
+  }
   // Keep the CLI harness instantiable while optional host-side font resource
   // loading is unavailable; browser/full hosts can provide the real loader.
   if (!h.add_font_resource) h.add_font_resource = () => 0;
@@ -2159,7 +2252,11 @@ async function main() {
     // Inject button sequence if --buttons provided, else WM_CLOSE.
     // Skip auto-WM_CLOSE when --input is in use — the test is orchestrating
     // its own event timeline and shouldn't be killed prematurely.
-    if (!inputEvent && !inputQueue && !INPUT_SPEC) {
+    // SW_HIDE is not a window coming up, it is one going away: MFC hides its
+    // unused toolbar/status children during frame setup, and closing the app
+    // on that leaves the real frame unpainted (fontview exited before its
+    // first WM_PAINT this way).
+    if (cmd !== 0 && !inputEvent && !inputQueue && !INPUT_SPEC) {
       const btnArg = args.find(a => a.startsWith('--buttons='));
       if (btnArg) {
         inputQueue = btnArg.split('=')[1].split(',').map(Number);
@@ -3660,7 +3757,21 @@ async function main() {
       injectedInputThisBatch = true;
       // Start the input->blit clock on events a user would perform. The
       // wrapped gdi_surface_upload stops it at the first blit that follows.
-      if (LATENCY_STATS && /^(keypress|keydown|keyup|click|dblclick)$/.test(ev.action)) {
+      // mousemove counts too: on a mouse-driven game (a paddle, a cursor, a
+      // camera) it is THE event whose latency the player feels, and it is the
+      // one a browser session cannot measure end-to-end. A move never clobbers
+      // an outstanding sample -- with --auto-mouse the moves arrive faster
+      // than the guest paints, and overwriting would restart the clock just
+      // before the blit and report a latency far shorter than the real one.
+      // A move never clobbers an outstanding MOVE -- with --auto-mouse the
+      // moves arrive faster than the guest paints, and overwriting would
+      // restart the clock just before the blit and report a latency far
+      // shorter than the real one. It does replace an outstanding event of
+      // any other kind, because those close on a WAT control paint that a
+      // fullscreen game never performs: left in place, one unclosable keydown
+      // from the menu would block every move for the rest of the run.
+      if (LATENCY_STATS && /^(keypress|keydown|keyup|click|dblclick|mousemove)$/.test(ev.action)
+          && !(latency.pending && latency.pending.kind === 'mousemove' && ev.action === 'mousemove')) {
         latency.pending = { kind: ev.action, batch, at: process.hrtime.bigint(), painted: false };
       }
       // UI-level events go through renderer handlers (mouse/keyboard pump),
@@ -6724,7 +6835,45 @@ if (VERBOSE) {
         (latency.pending ? ` (1 never blitted)` : ''));
       console.log(`             batches p50 ${pick('batches', 0.5)}, p95 ${pick('batches', 0.95)}, max ${pick('batches', 1)}`);
       console.log(`             ms      p50 ${pick('ms', 0.5).toFixed(2)}, p95 ${pick('ms', 0.95).toFixed(2)}, max ${pick('ms', 1).toFixed(2)}`);
+      const kinds = [...new Set(s.map(x => x.kind))];
+      if (kinds.length > 1 || kinds[0] !== 'mousemove') console.log(`             kinds: ${kinds.join(', ')}`);
     }
+  }
+
+  if (FRAME_STATS) {
+    const report = (label, series, note) => {
+      const f = series.iv;
+      if (f.length < 2) {
+        console.log(`  ${label}: ${f.length + (series.lastBatch >= 0 ? 1 : 0)} events — too few to pace`);
+        return;
+      }
+      const q = (key, p) => {
+        const v = f.map(x => x[key]).sort((a, b) => a - b);
+        return v[Math.min(v.length - 1, Math.floor(p * v.length))];
+      };
+      const med = q('batches', 0.5);
+      // Judder is the share of frames that are not the usual length. A frame
+      // twice the median is one the player sees held on screen; an average
+      // would call that run smooth.
+      const long = f.filter(x => x.batches >= Math.max(1, med) * 1.75).length;
+      const stepsPer = med * BATCH_SIZE;
+      console.log(`  ${label}: ${f.length + 1} over ${MAX_BATCHES} batches`
+        + ` (one per ${(MAX_BATCHES / (f.length + 1)).toFixed(2)} batches ≈ ${stepsPer >= 1000 ? (stepsPer / 1000).toFixed(0) + 'k' : stepsPer} steps)`);
+      console.log(`      interval batches p50 ${med}, p90 ${q('batches', 0.9)}, p99 ${q('batches', 0.99)}, max ${q('batches', 1)}`
+        + `   long (>=1.75x median) ${long} of ${f.length} (${(100 * long / f.length).toFixed(1)}%)`);
+      console.log(`      interval ms      p50 ${q('ms', 0.5).toFixed(1)}, p90 ${q('ms', 0.9).toFixed(1)}, p99 ${q('ms', 0.99).toFixed(1)}   (wall clock — load-sensitive, never diff across runs)`);
+      if (note) console.log(`      ${note}`);
+      if (med <= 1) {
+        console.log('      NOT RESOLVED: the interval is at or under one batch, so this series is'
+          + ' sampled at the batch rate and its spread is an artifact.'
+          + ` Re-run with --batch-size well under ${BATCH_SIZE} to resolve it.`);
+      }
+    };
+    console.log('\nFrame pacing:');
+    report('guest draws (gdi_surface_upload)', frameStats.upload,
+      'the guest handing pixels to the surface — driven by guest code alone, so this is the game\'s own rate');
+    report('presented   (surface flush)     ', frameStats.flush,
+      `what the browser HUD counts as fps; in the CLI it is gated by the repaint loop (--repaint-every=${REPAINT_EVERY}), not by the guest`);
   }
 
   if (threadManager && threadManager.threads && threadManager.threads.size) {
