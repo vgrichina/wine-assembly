@@ -1375,14 +1375,14 @@
   (global $cur_page_base  (mut i32) (i32.const 0))
   (global $cur_page_index (mut i32) (i32.const 0))
   (global $cur_page_chunk (mut i32) (i32.const 0))
-  ;; Scaffolding: the switch exists so a bisect has somewhere to stand while the
-  ;; hash cache is still present. It goes away in the commit that deletes
-  ;; $cache_slot/$cache_lookup/$cache_store.
-  (global $paging_enabled (mut i32) (i32.const 1))
   ;; Counters for the A/B in docs/page-compile-design.md section 8.
   (global $page_compiles (mut i32) (i32.const 0))
   (global $page_hits     (mut i32) (i32.const 0))
   (global $page_misses   (mut i32) (i32.const 0))
+  ;; Block transfers $branch_end resolved without unwinding to $run. This is the
+  ;; deterministic form of the whole point of the design -- desk trips not taken
+  ;; -- and unlike a wall-clock number it means the same thing on a loaded box.
+  (global $page_fast     (mut i32) (i32.const 0))
   ;; $run's per-call block allowance, hoisted out of a local so that
   ;; $branch_end can spend it too. A fast-path block transfer never reaches the
   ;; top of $run, so without this a single run() call would execute as many

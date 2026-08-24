@@ -2467,15 +2467,13 @@
   (func (export "set_rect_run") (param $flag i32)
     (global.set $rect_run_enabled (local.get $flag)))
 
-  ;; Page compilation (docs/page-compile-design.md). Off by default: it is an
-  ;; accelerator under measurement, and everything still runs through the hash
-  ;; cache when it is off. Same per-instance rule as the two flags above.
-  (func (export "set_paging") (param $flag i32)
-    (global.set $paging_enabled (local.get $flag))
-    (if (i32.eqz (local.get $flag)) (then (call $page_dir_reset))))
+  ;; Page compilation (docs/page-compile-design.md). There is deliberately no
+  ;; switch: this replaces the storage layer rather than accelerating it, so the
+  ;; thing to compare against is the commit before it, not a flag.
   (func (export "get_page_compiles") (result i32) (global.get $page_compiles))
   (func (export "get_page_hits")     (result i32) (global.get $page_hits))
   (func (export "get_page_misses")   (result i32) (global.get $page_misses))
+  (func (export "get_page_fast")     (result i32) (global.get $page_fast))
 
   ;; Threaded-handler histogram. Profiling tools enable this only around a
   ;; measured window. Counts are stored in WAT-private memory and read by JS.

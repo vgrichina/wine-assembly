@@ -316,7 +316,6 @@
   (func $page_publish (param $start_eip i32) (param $tstart i32) (param $tend i32)
     (local $base i32) (local $slot i32) (local $used i32) (local $len i32)
     (local $src i32) (local $dst i32)
-    (if (i32.eqz (global.get $paging_enabled)) (then (return)))
     (local.set $len (i32.sub (local.get $tend) (local.get $tstart)))
     (if (i32.le_s (local.get $len) (i32.const 0)) (then (return)))
     (local.set $base (i32.and (local.get $start_eip) (i32.const 0xFFFFF000)))
@@ -373,7 +372,6 @@
   ;; page-crossing transfer consults PAGE_DIR, and it caches the result.
   (func $page_resolve (param $dest i32) (result i32)
     (local $base i32) (local $off i32)
-    (if (i32.eqz (global.get $paging_enabled)) (then (return (i32.const 0))))
     (local.set $base (i32.and (local.get $dest) (i32.const 0xFFFFF000)))
     (if (i32.ne (local.get $base) (global.get $cur_page_base))
       (then
@@ -413,7 +411,6 @@
   ;; $page_resolve cannot name one.
   (func $branch_end
     (local $t i32)
-    (if (i32.eqz (global.get $paging_enabled)) (then (return)))
     (if (i32.or (global.get $dbg_any)
         (i32.or (global.get $code16)
         (i32.or (global.get $yield_flag) (global.get $yield_reason))))
@@ -428,6 +425,7 @@
     (local.set $t (call $page_resolve (global.get $eip)))
     (if (i32.eqz (local.get $t)) (then (return)))
     (global.set $block_budget (i32.sub (global.get $block_budget) (i32.const 1)))
+    (global.set $page_fast (i32.add (global.get $page_fast) (i32.const 1)))
     ;; Kept even on the fast path: these two are what a crash log reads to say
     ;; which block produced a bad transfer, and a stale answer there is worse
     ;; than the two stores are expensive.

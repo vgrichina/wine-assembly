@@ -6949,6 +6949,15 @@ if (VERBOSE) {
         console.log('cache: block decodes', instance.exports.get_cache_stores(),
           'of which evicted a live block', instance.exports.get_cache_evicts());
       }
+      if (instance.exports.get_page_fast) {
+        const hits = instance.exports.get_page_hits();
+        const misses = instance.exports.get_page_misses();
+        const total = hits + misses;
+        console.log('pages: compiled', instance.exports.get_page_compiles(),
+          '| index hits', hits, 'misses', misses,
+          total ? `(${(100 * hits / total).toFixed(1)}% hit)` : '',
+          '| desk trips skipped', instance.exports.get_page_fast());
+      }
       if (instance.exports.get_cache_invals) {
         console.log('cache: page invalidations', instance.exports.get_cache_invals(),
           'that dropped a block', instance.exports.get_cache_inval_hits(),
