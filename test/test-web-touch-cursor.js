@@ -119,6 +119,26 @@ async function main() {
     });
     assert.strictEqual(shaped, 'text', 'the cursor must follow canvas.style.cursor');
 
+    // The sprite belongs to the picture, not to the page: the shell blows the
+    // screen canvas up to fill the phone, and a cursor drawn at a fixed size
+    // is a sticker on top of that -- a 2x arrow over a 320x240 game scaled
+    // 1.2x is nearly twice the size of the buttons it points at. One guest
+    // pixel of cursor art must be one guest pixel on screen.
+    const zoomed = await page.evaluate(async () => {
+      const canvas = document.getElementById('screen');
+      const rect = canvas.getBoundingClientRect();
+      const appZoom = rect.width / canvas.width;
+      canvas.style.cursor = 'wait';
+      await new Promise(resolve => setTimeout(resolve, 300));
+      const el = document.getElementById('touch-cursor');
+      // The hourglass art is 13 cursor pixels wide plus one of shadow pad.
+      return { appZoom, cursorZoom: el.getBoundingClientRect().width / 14 };
+    });
+    assert(zoomed.appZoom > 0, 'the screen canvas should have a measurable zoom');
+    assert(Math.abs(zoomed.cursorZoom - zoomed.appZoom) / zoomed.appZoom < 0.05,
+      `the cursor is drawn at ${zoomed.cursorZoom.toFixed(3)}x while the app is at ` +
+      `${zoomed.appZoom.toFixed(3)}x`);
+
     // Track a finger, and stay put when it lifts: the hourglass that matters
     // is the one that appears after the tap that started the work.
     const tracked = await page.evaluate(async () => {
