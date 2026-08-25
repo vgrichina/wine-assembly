@@ -76,6 +76,11 @@ const desktopState = () => {
       rect.top >= 0 && rect.left >= 0 &&
       rect.bottom <= window.innerHeight && rect.right <= window.innerWidth,
     running: typeof runningApps === 'undefined' ? -1 : runningApps.length,
+    // A phone desktop is taller than a phone. If the grid overflows and does
+    // not scroll, the icons past the fold are simply gone.
+    overflows: icons ? icons.scrollHeight > icons.clientHeight + 1 : false,
+    scrollable: style ? (style.overflowY === 'auto' || style.overflowY === 'scroll') : false,
+    takesTouches: style ? style.pointerEvents !== 'none' : false,
   };
 };
 
@@ -147,6 +152,35 @@ async function main() {
     assert(!quit.classes.includes('exclusive-fullscreen'),
       'nothing is running, so nothing owns the display');
     assert(quit.firstIconOnScreen, 'the first icon has to be tappable, not just displayed');
+
+    // Every icon has to be reachable, not just the ones above the fold. The
+    // grid is sized to the guest screen, so on a phone eight rows of icons do
+    // not fit and the ones below are unreachable unless it scrolls itself --
+    // and it can only scroll if it takes the touches, because the canvas sits
+    // over it and preventDefaults them away to the guest.
+    assert(quit.scrollable, 'the phone desktop must scroll');
+    assert(quit.takesTouches, 'a grid with pointer-events:none cannot be scrolled by a finger');
+    if (quit.overflows) {
+      const lastIcon = await page.evaluate(() => {
+        const grid = document.getElementById('desktop-icons');
+        const icons = [...document.querySelectorAll('.desktop-icon')];
+        const last = icons[icons.length - 1];
+        grid.scrollTop = grid.scrollHeight;
+        const rect = last.getBoundingClientRect();
+        const box = grid.getBoundingClientRect();
+        return {
+          scrolled: grid.scrollTop > 0,
+          onScreen: rect.top >= box.top - 1 && rect.bottom <= box.bottom + 1 &&
+            rect.bottom <= window.innerHeight + 1,
+          app: last.dataset.app,
+        };
+      });
+      assert(lastIcon.scrolled, 'an overflowing grid must actually scroll');
+      assert(lastIcon.onScreen,
+        `the last icon (${lastIcon.app}) must be reachable by scrolling`);
+      await page.screenshot({ path: path.join(OUT, 'desktop-scrolled.png') });
+      await page.evaluate(() => { document.getElementById('desktop-icons').scrollTop = 0; });
+    }
 
     // And the desktop has to work, not just appear.
     await page.evaluate(() => {

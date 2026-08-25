@@ -370,6 +370,29 @@
     }
     body.keyboard-open { overscroll-behavior: none; }
     body.single-app.app-running #desktop-icons { display: none; }
+    /* A phone desktop runs out of screen. 32 icons at 84px rows is eight rows,
+       about 700px, and the grid is sized to the guest screen -- so on a 664pt
+       phone the bottom row simply cannot be reached, and every app we add
+       makes it worse. Let the grid scroll itself.
+       It has to come out over the canvas to do it: the canvas sits on top and
+       preventDefaults touchstart to forward taps down to the icons, which
+       eats the scroll gesture. While no app is running there is nothing on
+       that canvas but the desktop background, so the grid can own the touches
+       outright -- and the moment one launches the grid is display:none again
+       and the guest gets them all back. */
+    body.single-app:not(.app-running) #desktop-icons {
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
+      pointer-events: auto;
+      z-index: 3;
+      scrollbar-width: thin;
+    }
+    body.single-app:not(.app-running) #desktop-icons::-webkit-scrollbar { width: 6px; }
+    body.single-app:not(.app-running) #desktop-icons::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.35);
+      border-radius: 3px;
+    }
     /* Between the click and the app's first window nothing moves: the PE, the
        data files and the DLL graph are all being fetched, and the only sign of
        it is status text in the debug toolbar, which the live site hides. This
@@ -589,6 +612,70 @@
       transition: opacity 600ms linear;
     }
     body.page-fullscreen #page-fullscreen-hint.faded { opacity: 0; }
+    /* Scroll-to-collapse: the only way to get Safari's own bars off an iPhone
+       short of installing the page. Safari retracts the URL bar on a
+       user-initiated downward scroll of a document that genuinely overflows,
+       and there is no script call that asks for it. Two things stop that
+       here: the page is exactly one viewport tall, and the canvas swallows
+       every touch (it preventDefaults to route them to the guest). So this
+       mode gives the document a spacer taller than the viewport, and a gutter
+       to start the gesture on that is NOT the canvas.
+
+       The gutter is not permanent. It is on screen only while a collapse is
+       still available; once the bars are down -- visible as innerHeight
+       jumping by their height -- it unmounts and the canvas is PINNED to the
+       taller size, so a stray swipe back up cannot resize the guest a second
+       time. The spacer stays: removing the overflow can snap the bars back. */
+    #scroll-collapse-spacer, #scroll-collapse-gutter { display: none; }
+    body.scroll-collapse { overflow: visible; }
+    body.scroll-collapse #scroll-collapse-spacer {
+      display: block;
+      width: 1px;
+      /* body is a flex column, so a plain height here would be shrunk away to
+         nothing by #shell's flex:1 and the document would not overflow at all
+         -- which is the one thing this element exists to do. */
+      flex: 0 0 auto;
+      height: calc(100dvh + 76px);
+      min-height: calc(100dvh + 76px);
+      pointer-events: none;
+    }
+    body.scroll-collapse:not(.bars-collapsed) #scroll-collapse-gutter {
+      display: flex;
+      position: fixed;
+      top: env(safe-area-inset-top);
+      left: 0;
+      /* Clear of the exit chip (30px at right:4px). A strip that covers the
+         only way out of full screen is worse than no strip. */
+      right: calc(40px + env(safe-area-inset-right));
+      height: 38px;
+      z-index: 39;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      color: #fff;
+      background: linear-gradient(rgba(0, 0, 0, 0.75), rgba(0, 0, 0, 0.25));
+      font: 12px/1 sans-serif;
+      text-shadow: 0 1px 2px #000;
+      /* pan-y is the whole point: this strip hands the gesture to the page
+         scroller instead of to the guest. */
+      touch-action: pan-y;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+    body.scroll-collapse:not(.bars-collapsed) #scroll-collapse-gutter .nudge {
+      animation: gutter-nudge 1.6s ease-in-out infinite;
+    }
+    @keyframes gutter-nudge {
+      0%, 100% { transform: translateY(2px); opacity: 0.55; }
+      50% { transform: translateY(-3px); opacity: 1; }
+    }
+    /* Pinned: hold the height the bars gave us, whatever dvh says now. */
+    body.page-fullscreen.bars-collapsed,
+    body.page-fullscreen.bars-collapsed #shell,
+    body.page-fullscreen.bars-collapsed #content,
+    body.page-fullscreen.bars-collapsed #screen-wrap {
+      height: var(--pinned-vh, 100dvh);
+    }
     #screen-wrap:fullscreen {
       position: fixed;
       inset: 0;
@@ -824,7 +911,9 @@
         </optgroup>
         <optgroup label="Local Candidates">
           <option value="jazz2_demo">Jazz Jackrabbit 2 Demo</option>
+          <option value="quake2_demo">Quake II Demo</option>
           <option value="quake2_demo_installer">Quake II Demo Installer</option>
+          <option value="heroes3_demo">Heroes III Demo</option>
           <option value="heroes3_demo_installer">Heroes III Demo Installer</option>
           <option value="diablo2_demo_installer">Diablo II Demo Installer</option>
           <option value="halflife_uplink_installer">Half-Life: Uplink Installer</option>
@@ -948,6 +1037,12 @@ Resource-aware Win98 emulator
       <a class="item" href="?debug"><span class="ico">&#128295;</span>Debug Mode</a>
     </div>
   </div>
+  <!-- Both belong to scroll-to-collapse and are display:none until it is on.
+       The spacer has to be a child of <body>, not of #screen-wrap: in page
+       fullscreen the wrap is position:fixed and contributes no document
+       height at all, and document height is the entire point. -->
+  <div id="scroll-collapse-gutter" role="status"><span class="nudge">&#x25B2;</span>&nbsp;swipe up here for more screen</div>
+  <div id="scroll-collapse-spacer" aria-hidden="true"></div>
   <script>
     function closeStartMenu() {
       const m = document.getElementById('start-menu');
@@ -1056,6 +1151,51 @@ Resource-aware Win98 emulator
       window.scrollTo(0, 0);
       resizeCanvas();
       showPageFullscreenHint();
+      scrollCollapseArm();
+    }
+
+    // iOS Safari with its own chrome still over the page -- the only browser
+    // where scroll-to-collapse means anything, and only while the page is not
+    // installed (a home-screen app has no bars to collapse).
+    function browserChromeIsRemovableByScroll() {
+      const standalone = window.navigator.standalone === true ||
+        (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+      const iosSafari = /iP(hone|od|ad)/.test(navigator.userAgent) ||
+        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      return iosSafari && !standalone;
+    }
+
+    // Scroll-to-collapse. None of this handles a gesture: the scroll is the
+    // browser's own, and Safari retracts its bars only for a real one. All we
+    // do is make one possible -- a document taller than the viewport, and a
+    // strip to start it on that is not the canvas -- and then notice when it
+    // happened. "It happened" is innerHeight growing, which with the page
+    // sitting still is the bars and nothing else.
+    let pinnedViewportHeight = 0;
+    function scrollCollapseArm() {
+      if (!browserChromeIsRemovableByScroll()) return;
+      pinnedViewportHeight = window.innerHeight;
+      document.body.classList.add('scroll-collapse');
+    }
+    function scrollCollapseDisarm() {
+      document.body.classList.remove('scroll-collapse', 'bars-collapsed');
+      document.documentElement.style.removeProperty('--pinned-vh');
+      pinnedViewportHeight = 0;
+    }
+    function scrollCollapseSample() {
+      if (!document.body.classList.contains('scroll-collapse')) return;
+      const height = window.innerHeight;
+      // A collapse is worth 60-80px. Anything smaller is a rounding wobble,
+      // and anything that makes the viewport SHORTER is the on-screen
+      // keyboard -- neither is worth a guest display resize.
+      if (height <= pinnedViewportHeight + 24) return;
+      pinnedViewportHeight = height;
+      // Pin rather than track: dvh follows the bars both ways, so a stray
+      // swipe back up would resize the guest a second time. Take the taller
+      // size once and keep it; the gutter unmounts with the same class.
+      document.documentElement.style.setProperty('--pinned-vh', height + 'px');
+      document.body.classList.add('bars-collapsed');
+      resizeCanvas();
     }
 
     // Shown only where it is true and actionable: a browser that keeps its own
@@ -1086,6 +1226,7 @@ Resource-aware Win98 emulator
       document.body.classList.remove('page-fullscreen');
       const renderer = sharedRenderer || (wine && wine.renderer);
       if (renderer) renderer._requestedBrowserFullscreen = false;
+      scrollCollapseDisarm();
       resizeCanvas();
     }
     // lib/renderer.js drops the app out of exclusive fullscreen through this,
@@ -1838,6 +1979,13 @@ Resource-aware Win98 emulator
 
     window.addEventListener('resize', resizeCanvas);
     if (window.visualViewport) window.visualViewport.addEventListener('resize', resizeCanvas);
+    // Safari collapsing its bars is a viewport resize and nothing else -- no
+    // event says so, so the height is the only evidence there is.
+    window.addEventListener('resize', scrollCollapseSample);
+    window.addEventListener('scroll', scrollCollapseSample, { passive: true });
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', scrollCollapseSample);
+    }
     document.addEventListener('fullscreenchange', resizeCanvas);
     document.addEventListener('webkitfullscreenchange', resizeCanvas);
     new ResizeObserver(resizeCanvas).observe(document.getElementById('screen-wrap'));

@@ -77,6 +77,9 @@ const layout = () => {
     exitVisible: visible(document.getElementById('page-fullscreen-exit')),
     hintVisible: visible(document.getElementById('page-fullscreen-hint')),
     scrollHeight: document.documentElement.scrollHeight,
+    scrollCollapse: document.body.classList.contains('scroll-collapse'),
+    gutterVisible: visible(document.getElementById('scroll-collapse-gutter')),
+    scrollY: window.scrollY,
   };
 };
 
@@ -158,8 +161,29 @@ async function main() {
     assert(after.canvas.height >= after.viewport.height - 1 &&
            after.canvas.height <= after.viewport.height + 1,
       `canvas height should equal the visible viewport: ${after.canvas.height} vs ${after.viewport.height}`);
-    assert(after.scrollHeight <= after.viewport.height + 1,
-      'a full-screen page must not be scrollable past its own viewport');
+    // Scroll-to-collapse deliberately makes the document overflow -- Safari
+    // retracts its bars only for a real scroll of a document that really is
+    // taller than the viewport. So the old "must not scroll at all" rule is
+    // replaced by the thing a player would actually notice: the overflow is a
+    // spacer's worth and no more, and scrolling never moves the app.
+    assert(after.scrollCollapse, 'an iPhone gets the scroll-to-collapse affordance');
+    assert(after.gutterVisible,
+      'the swipe strip has to exist, because the canvas eats every touch that lands on it');
+    assert(after.scrollHeight > after.viewport.height,
+      'nothing can collapse unless the document genuinely overflows');
+    assert(after.scrollHeight <= after.viewport.height + 120,
+      `the overflow is one spacer, not a long page: ${after.scrollHeight} vs ${after.viewport.height}`);
+    const scrolled = await page.evaluate(() => {
+      window.scrollTo(0, 999);
+      const rect = document.getElementById('screen').getBoundingClientRect();
+      return { top: rect.top, left: rect.left, height: rect.height, scrollY: window.scrollY };
+    });
+    assert(scrolled.scrollY > 0, 'the page really scrolled');
+    assert(Math.abs(scrolled.top) <= 1 && Math.abs(scrolled.left) <= 1,
+      `scrolling must not move the app off screen, got ${scrolled.left},${scrolled.top}`);
+    assert(Math.abs(scrolled.height - after.canvas.height) <= 1,
+      'scrolling alone must not resize the guest display');
+    await page.evaluate(() => window.scrollTo(0, 0));
     assert(after.canvas.width > before.canvas.width || after.canvas.height > before.canvas.height,
       'full screen should give the app more room than the framed page did');
     assert(after.hintVisible,
@@ -172,6 +196,8 @@ async function main() {
     const exited = await page.evaluate(layout);
     assert(exited.consentVisible, 'leaving full screen restores the consent control');
     assert(!exited.exitVisible, 'the exit control belongs to full screen only');
+    assert(!exited.scrollCollapse && !exited.gutterVisible,
+      'the swipe strip and its spacer belong to full screen only');
 
     // The other half -- a guest that closes its exclusive display takes the
     // page back with it -- needs no browser and is checked against a stubbed
