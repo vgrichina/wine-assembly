@@ -288,12 +288,34 @@ function vgaGeometry(v) {
 // stop looking alike.
 const CON_COLS = 80, CON_ROWS = 25;
 
-function newConsole() {
+// The colour text page. This is not a shadow of the screen, it IS the screen:
+// a text-mode DOS program is free to write characters through INT 21h, through
+// the BIOS, or by storing directly into B800 -- and plenty of the demos in this
+// corpus do the last one, because it is the only one that is fast. Backing the
+// grid with the guest's own memory is what makes all three land in the same
+// place, and it is what the hardware does.
+const VRAM_TEXT = 0xB8000;
+
+function newConsole(mem) {
+  const cells = CON_COLS * CON_ROWS;
+  for (let i = 0; i < cells; i++) { mem[VRAM_TEXT + i * 2] = 0x20; mem[VRAM_TEXT + i * 2 + 1] = 0x07; }
   return {
-    cols: CON_COLS, rows: CON_ROWS,
-    // Character and attribute planes, in the same byte order B800 uses.
-    ch: new Uint8Array(CON_COLS * CON_ROWS).fill(0x20),
-    at: new Uint8Array(CON_COLS * CON_ROWS).fill(0x07),
+    cols: CON_COLS, rows: CON_ROWS, cells, mem, base: VRAM_TEXT,
+    getCh(at) { return this.mem[this.base + at * 2]; },
+    getAt(at) { return this.mem[this.base + at * 2 + 1]; },
+    put(at, ch, attr) {
+      this.mem[this.base + at * 2] = ch;
+      this.mem[this.base + at * 2 + 1] = attr;
+    },
+    fillCells(from, to, ch, attr) {
+      for (let i = from; i < to; i++) this.put(i, ch, attr);
+    },
+    // Move `n` rows of cells within the page, source row to destination row.
+    copyRow(dstRow, srcRow) {
+      const b = this.base;
+      this.mem.copyWithin(b + dstRow * this.cols * 2, b + srcRow * this.cols * 2,
+        b + (srcRow + 1) * this.cols * 2);
+    },
     x: 0, y: 0, attr: 0x07,
     // Everything written, in order, so a caller can have the raw stream when a
     // grid is the wrong shape for the question.
@@ -329,10 +351,19 @@ class Machine {
     this.dacSubIndex = 0;
     this.retraceToggle = 0;
     this.vga = newVgaState();
-    this.con = newConsole();
+    this.con = newConsole(mem);
     this.ticks = 0;
     this.exited = false;
     this.exitCode = 0;
+    // Set the first time a BLOCKING key read finds an empty queue. These calls
+    // used to hand back AL=0 and let the guest carry on, which silently answers
+    // every "press any key" prompt in the corpus with a NUL -- a-note.exe put
+    // its whole screen up, took the phantom key, restored mode 3 (clearing the
+    // screen) and exited, all inside 5434 dispatches, and looked from the
+    // outside like a program that had never drawn anything. The driver stops
+    // the run here instead, which is both closer to a real blocking read and
+    // the moment worth photographing.
+    this.blockedOnKey = false;
     this.keys = opts.keys ? [...opts.keys] : [];   // queued as {ah, al}
     this.autoKey = !!opts.autoKey;
     this.forceChained = !!opts.forceChained;
@@ -353,6 +384,15 @@ class Machine {
     // which is where a demo reads time from when it does not hook INT 8.
     mem[0x449] = this.videoMode;
     this.setTicks(0);
+  }
+
+  // The real guest memory arrives after construction, once the wasm instance
+  // exists. The text page lives inside it, so the console has to be re-pointed
+  // and the page re-blanked rather than left addressing the throwaway buffer.
+  setMemory(mem) {
+    this.mem = mem;
+    this.con.mem = mem;
+    this.con.fillCells(0, this.con.cells, 0x20, 0x07);
   }
 
   installIvt() {
@@ -511,8 +551,7 @@ class Machine {
       case 0x09: c.x = Math.min(c.cols - 1, (c.x + 8) & ~7); return;
       default: break;
     }
-    const at = c.y * c.cols + c.x;
-    c.ch[at] = b; c.at[at] = c.attr;
+    c.put(c.y * c.cols + c.x, b, c.attr);
     if (++c.x >= c.cols) { c.x = 0; c.y++; this.conClamp(); }
   }
 
@@ -521,8 +560,8 @@ class Machine {
   conClamp() {
     const c = this.con;
     while (c.y >= c.rows) {
-      c.ch.copyWithin(0, c.cols); c.at.copyWithin(0, c.cols);
-      c.ch.fill(0x20, c.ch.length - c.cols); c.at.fill(c.attr, c.at.length - c.cols);
+      c.mem.copyWithin(c.base, c.base + c.cols * 2, c.base + c.cells * 2);
+      c.fillCells(c.cells - c.cols, c.cells, 0x20, c.attr);
       c.y--;
     }
     if (c.y < 0) c.y = 0;
@@ -565,9 +604,9 @@ class Machine {
         case 'u': c.x = c.savedX; c.y = c.savedY; break;
         case 'J': {
           const at = c.y * c.cols + c.x;
-          const [from, to] = a(0, 0) === 2 ? [0, c.ch.length]
-            : a(0, 0) === 1 ? [0, at] : [at, c.ch.length];
-          c.ch.fill(0x20, from, to); c.at.fill(c.attr, from, to);
+          const [from, to] = a(0, 0) === 2 ? [0, c.cells]
+            : a(0, 0) === 1 ? [0, at] : [at, c.cells];
+          c.fillCells(from, to, 0x20, c.attr);
           if (a(0, 0) === 2) { c.x = 0; c.y = 0; }
           break;
         }
@@ -575,7 +614,7 @@ class Machine {
           const row = c.y * c.cols;
           const [from, to] = a(0, 0) === 2 ? [row, row + c.cols]
             : a(0, 0) === 1 ? [row, row + c.x + 1] : [row + c.x, row + c.cols];
-          c.ch.fill(0x20, from, to); c.at.fill(c.attr, from, to);
+          c.fillCells(from, to, 0x20, c.attr);
           break;
         }
         default: break;
@@ -718,8 +757,7 @@ class Machine {
       const c = this.con, n = Math.max(1, r.get('cx') & 0xFFFF);
       const attr = ah === 0x09 ? (r.get('bx') & 0xFF) : c.attr;
       for (let i = 0; i < n; i++) {
-        const at = c.y * c.cols + Math.min(c.cols - 1, c.x + i);
-        c.ch[at] = al; c.at[at] = attr;
+        c.put(c.y * c.cols + Math.min(c.cols - 1, c.x + i), al, attr);
       }
       c.written += n;
       return true;
@@ -739,9 +777,9 @@ class Machine {
           const y = ah === 0x06 ? k : bot - (k - top);
           const src = ah === 0x06 ? y + 1 : y - 1;
           for (let x = left; x <= right; x++) {
-            const d = y * c.cols + x;
-            if (src < top || src > bot) { c.ch[d] = 0x20; c.at[d] = attr; }
-            else { c.ch[d] = c.ch[src * c.cols + x]; c.at[d] = c.at[src * c.cols + x]; }
+            const d = y * c.cols + x, s = src * c.cols + x;
+            if (src < top || src > bot) c.put(d, 0x20, attr);
+            else c.put(d, c.getCh(s), c.getAt(s));
           }
         }
       }
@@ -763,7 +801,7 @@ class Machine {
         // gets past the prompt; a demo that treats any key as "quit" will quit,
         // which is itself the answer to whether it can be benchmarked.
         || (this.autoKey ? { ah: 0x1C, al: 0x0D } : null);
-      if (!k) { r.set('ax', 0); return true; }   // no key: report nothing
+      if (!k) { this.blockedOnKey = true; r.set('ax', 0); return true; }
       r.set('ax', ((k.ah & 0xFF) << 8) | (k.al & 0xFF));
       return true;
     }
@@ -814,6 +852,7 @@ class Machine {
       // "nothing waiting" through ZF rather than blocking.
       case 0x01: case 0x07: case 0x08: {
         const k = this.keys.shift() || (this.autoKey ? { ah: 0x1C, al: 0x0D } : null);
+        if (!k) this.blockedOnKey = true;
         r.set('ax', (r.get('ax') & 0xFF00) | (k ? k.al & 0xFF : 0));
         return true;
       }

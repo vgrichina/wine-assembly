@@ -52,8 +52,9 @@ const ld32 = (mem, at) =>
 // when either its character or its attribute says something.
 function conCells(con) {
   let n = 0;
-  for (let i = 0; i < con.ch.length; i++) {
-    if ((con.ch[i] !== 0x20 && con.ch[i] !== 0) || (con.at[i] & 0xF0) !== 0) n++;
+  for (let i = 0; i < con.cells; i++) {
+    const ch = con.getCh(i);
+    if ((ch !== 0x20 && ch !== 0) || (con.getAt(i) & 0xF0) !== 0) n++;
   }
   return n;
 }
@@ -64,7 +65,7 @@ function conText(con) {
   for (let y = 0; y < con.rows; y++) {
     let s = '';
     for (let x = 0; x < con.cols; x++) {
-      const b = con.ch[y * con.cols + x];
+      const b = con.getCh(y * con.cols + x);
       s += (b >= 0x20 && b < 0x7F) ? String.fromCharCode(b) : (b === 0 || b === 0x20 ? ' ' : '·');
     }
     rows.push(s.replace(/\s+$/, ''));
@@ -164,9 +165,9 @@ function writeConsolePng(file, con) {
   for (let y = 0; y < con.rows; y++) {
     for (let x = 0; x < con.cols; x++) {
       const at = y * con.cols + x;
-      const a = con.at[at];
+      const a = con.getAt(at);
       const bg = attrRgb(a, false), fgc = attrRgb(a, true);
-      const g = f ? f.glyphs.get(con.ch[at]) : null;
+      const g = f ? f.glyphs.get(con.getCh(at)) : null;
       for (let py = 0; py < ch; py++) {
         for (let px = 0; px < cw; px++) {
           const on = g && px < g.width && g.bits[py * g.width + px];
@@ -237,7 +238,7 @@ async function runDos(o) {
   // a build that decodes 386 encodings but reports an 8086 FLAGS register fails
   // the CPU detection every one of those demos opens with.
   vm.exports.set_cpu(cpu);
-  machine.mem = vm.mem;
+  machine.setMemory(vm.mem);
   machine.installIvt();
   machine.setTicks(0);
   machine.syncVga();     // the VM's buffer, not the throwaway one from before
@@ -308,7 +309,7 @@ async function runDos(o) {
   const ipSamples = new Map();
   const ipSampleLog = [];          // flat [dispatched, ip, dispatched, ip, ...]
 
-  while (dispatched < budget && !machine.exited) {
+  while (dispatched < budget && !machine.exited && !machine.blockedOnKey) {
     const cs = vm.get('cs'), ip = vm.get('gip');
 
     // A guest IP inside the stub segment is a serviced interrupt: the vector
@@ -342,7 +343,7 @@ async function runDos(o) {
       vm.set('cs', rd(2));
       vm.set('flags', rd(4));
       vm.set('sp', (sp + 6) & 0xFFFF);
-      if (machine.exited) break;
+      if (machine.exited || machine.blockedOnKey) break;
       continue;
     }
 
@@ -411,10 +412,17 @@ async function runDos(o) {
     // printing its screen one character at a time hands back at the same INT
     // 21h thunk every time, so README!.COM was being cut off after 201 of its
     // characters and reported as hung while it was working perfectly.
+    //
+    // "Put nothing new on the console" has to mean the text PAGE, not the
+    // teletype counter: a program storing straight into B800 never calls INT
+    // 21h at all, so counting calls would go back to declaring exactly those
+    // programs hung. The page is 4000 bytes and this runs once per handback,
+    // which is a few hundred times over a whole run.
     const key = `${cs.toString(16)}:${vm.get('gip').toString(16)}`;
-    stuck = (key === lastKey && machine.con.written === lastWritten) ? stuck + 1 : 0;
+    const wrote = machine.con.written + (machine.videoMode === 3 ? conCells(machine.con) : 0);
+    stuck = (key === lastKey && wrote === lastWritten) ? stuck + 1 : 0;
     lastKey = key;
-    lastWritten = machine.con.written;
+    lastWritten = wrote;
     if (stuck > 200) { stuckAt = key; break; }
   }
 
@@ -539,7 +547,11 @@ async function main() {
       + ` setreset=${g.gc[0].toString(16)}/${g.gc[1].toString(16)}`
       + `, ${g.maskWrites} mask writes`);
   }
-  if (r.text.written) {
+  // Two numbers, not one, and the cell count is the one that matters: a demo
+  // that stores straight into B800 writes zero characters through DOS and still
+  // fills the screen. a-note.exe is the whole corpus's example -- 0 chars, 632
+  // cells, and it never calls a single output interrupt.
+  if (r.text.written || r.text.cells) {
     console.log(`  console ${r.text.written} chars written, `
       + `${r.text.cells} of ${r.machine.con.cols * r.machine.con.rows} cells non-blank`);
   }
@@ -548,6 +560,7 @@ async function main() {
     console.log(t ? `\n${t}\n` : '  console grid is empty');
   }
   console.log(`  exited=${r.machine.exited}${r.machine.exited ? ` code=${r.machine.exitCode}` : ''}`
+    + `${r.machine.blockedOnKey ? '  waiting for a key' : ''}`
     + `  cs:ip=${r.vm.get('cs').toString(16)}:${r.vm.get('gip').toString(16)}`);
   console.log(`  ${(r.dispatched / 1e6).toFixed(1)}M dispatches, `
     + `${(r.dispatched / r.guestSecs / 1e6).toFixed(1)}M/s in wasm `
