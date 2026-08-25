@@ -130,7 +130,61 @@ answers a blocking console read with Enter so a headless run gets past a "press
 any key" title card; a demo that reads any key as "quit" then quits, which is
 its own answer about whether it can be benchmarked.
 
-### 4.1 Making the harness measure the VM and not itself
+### 4.1 Eight of these demos are not writing pixels at all
+
+Video needed no modelling for a long time, and the reason was a real property of
+mode 13h: A000:0000 is inside the guest's own megabyte, one byte is one pixel,
+so a demo's stores land in the same array the screenshot reads. That is true
+right up until a demo clears bit 3 of the sequencer's memory-mode register.
+
+Unchained — "mode X" — is the same four planes addressed differently. Chain-4
+spreads consecutive bytes across the planes for you (`off` is plane `off & 3` at
+plane offset `off >> 2`); with it off, one A000 offset names a byte in *every*
+plane at once and the sequencer's map mask picks which of them a write reaches.
+A demo gets a 256-colour mode with square-ish pixels, page flipping, a
+four-pixel-wide fill, and a latch copy that moves four pixels without the value
+passing through a register. What it does not get is a linear framebuffer, and
+reading one out of A000 anyway is what made those demos screenshot as a quarter
+of a picture stretched over the whole frame.
+
+`tools/toyvm/video-census.js` answers how much of the corpus this is, and it
+answers it from the registers the guest wrote rather than from the picture —
+`dos.js` now models the sequencer, graphics controller and CRTC register files,
+which costs nothing because those ports were already trapped:
+
+```bash
+node tools/toyvm/video-census.js --dir=/tmp/demos
+```
+
+**8 of 199 programs unchain**: ADDY_II, CARRIE, CORE-ADD, CORE-ADV, DASH,
+DRAGON, DREAM and brainbug. Four more retime the CRTC without unchaining. The
+register files also give the geometry for free instead of assuming 320x200. It
+falls out the way the hardware derives it — vertical display end over max scan
+line for the row count, horizontal display end at half the dot clock for the
+width, the offset register for the logical row stride — so brainbug's 320x400
+and mode 13h's own 320x200 come from one expression, and CORE-ADD turns out to
+be scrolling a 640-pixel-wide logical page behind a 320-pixel window. Five of
+the eight end a run with a nonzero start address, and ADDY_II's walks 0 →
+16128 → 32256 as the run goes on: they are page-flipping, which is most of why
+they wanted mode X in the first place.
+
+**The guard is the cost.** Plane information only exists at the moment of the
+write, so no amount of cleverness at render time can reconstruct it: the routing
+has to happen in `$wr8`, in a VM whose entire purpose is measuring what a
+dispatch costs. It is written as a key compare rather than a flag test so that
+"are we unchained" and "is this address video memory" are the same branch —
+`(lin & 0xF0000) | 1` against a control word that holds `0xA0001` while
+unchained and zero otherwise. One load of a constant address, an and/or/eq, and
+a not-taken branch, against a function that already calls `$lin`. The low bit is
+load-bearing: two callers reset the machine with a whole-buffer `mem.fill(0)`,
+and a guard that accepted 0 as a key would route the entire low 64K — the IVT,
+and every COM program — into the plane store. That bug passed every demo and
+failed 1,855 cases of the 8088 gate, which is what the gate is for.
+
+The guard is identical in all four shells, so it moves every arm of the
+shootout together and no ratio in §5 depends on it.
+
+### 4.2 Making the harness measure the VM and not itself
 
 The first honest run of mars.exe reported 344,376 handbacks per 40M dispatches —
 103 dispatches per JS round trip. At that ratio the benchmark measures the
@@ -441,5 +495,23 @@ VM more realistic; it did not make the corpus render.
   into one function, so §5's `switch` numbers should be treated as measured
   against the 426-handler build until the matrix is re-run. Nothing else in §5
   depends on the count.
+* **The chained side of the CRTC model.** §4.1 derives geometry from the
+  registers, and the unchained path renders from it, but a chained program is
+  still read as 320x200 linear no matter what its CRTC says. BAZIRRE.COM is why:
+  it programs a real 320x66 chunky mode by stretching each row over six scan
+  lines, and reading its 66 rows back at a 320-byte stride produces overlapping
+  text — so something else about mode 13h's addressing (the start address is in
+  dwords, and the offset register still sets the row stride) is not modelled yet.
+  `video-census.js` reports the derived numbers for all 199 programs, and four
+  of them retime the CRTC without unchaining, so this is where that picks up.
+* **Write modes 2 and 3, set/reset, and the bit mask.** Every unchained program
+  in this corpus writes with mode 0 or the mode-1 latch copy, a full `0xFF` bit
+  mask and set/reset disabled — measured, not assumed — so `$vga_wr8` implements
+  exactly that and nothing else. A demo using the EGA-era paths would draw the
+  wrong colours with no diagnostic. `run-dos.js` prints the plane occupancy, the
+  planar read/write counts and the live register values under any unchained run,
+  which is what would name it — "empty planes, two million writes" is a very
+  different report from "the guest never wrote to it", and the picture says
+  neither.
 * **Lazy flags vs eager flags** — the question x86-16 was chosen for, and the
   one thing here that has no bearing on dispatch at all.

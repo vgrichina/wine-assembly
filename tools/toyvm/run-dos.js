@@ -7,6 +7,7 @@
 //   node tools/toyvm/run-dos.js mars.exe --png=/tmp/mars.png --dispatches=200m
 //   node tools/toyvm/run-dos.js mars.exe --variant=switch --mouse=6:0 --shots=/tmp/m
 //   node tools/toyvm/run-dos.js mars.exe --trace-int --report
+//   node tools/toyvm/run-dos.js DASH.EXE --chain4    # pretend it never unchained
 //
 // The point of this is not emulation for its own sake -- it is to get the
 // dispatch variants running the same real workload. Everything that is not the
@@ -29,15 +30,58 @@ const isa = require('./isa');
 const { makeVm } = require('./vm');
 const { compileProgram } = require('./compile');
 const { setCpuLevel } = require('./decode');
-const { Machine, loadExe, VGA_BASE, STUB_SEG } = require('./dos');
+const { Machine, loadExe, vgaGeometry, VGA_BASE, STUB_SEG } = require('./dos');
 
 // --- screenshot -------------------------------------------------------------
-// Mode 13h only: 320x200, one byte per pixel, palette entries are 6-bit.
-function writePng(file, mem, palette, { width = 320, height = 200 } = {}) {
+// One frame of 8-bit pixels, read the way the VGA registers currently say to
+// read it. Everything downstream -- the PNG, the pixel count, the frame hash --
+// goes through this, so none of them can disagree about what the screen is.
+//
+// Chained mode 13h is the easy half: A000 is the picture, one byte per pixel.
+// Unchained mode X is not addressable that way at all -- pixel (x, y) is byte
+// `start + y*(stride/4) + (x>>2)` of plane `x & 3` -- and reading it linearly
+// is what made those demos screenshot as a quarter of a picture stretched over
+// the frame.
+const LINEAR = { width: 320, height: 200, stride: 320, start: 0, planar: false };
+
+const ld32 = (mem, at) =>
+  (mem[at] | (mem[at + 1] << 8) | (mem[at + 2] << 16) | (mem[at + 3] << 24)) >>> 0;
+
+function readFrame(mem, video = LINEAR) {
+  // A chained program is read exactly the way it always was, even when its
+  // CRTC says something other than 320x200. The register model is complete
+  // enough to describe the mode X tweaks and no further: BAZIRRE.COM programs a
+  // genuine 320x66 chunky mode by stretching each row over six scan lines, and
+  // reading its 66 rows back at a 320-byte stride produces overlapping text --
+  // so the chained side of that model is not yet worth trusting over the
+  // assumption it would replace. video-census.js still reports the derived
+  // numbers, which is where that gets picked up again.
+  const g = video && video.planar ? { ...LINEAR, ...video } : LINEAR;
+  const { width, height, stride, start, planar } = g;
+  const out = new Uint8Array(width * height);
+  if (!planar) {
+    const n = Math.min(width * height, 0x10000);
+    out.set(mem.subarray(VGA_BASE, VGA_BASE + n));
+    return { width, height, pixels: out };
+  }
+  const rowBytes = stride >> 2;
+  for (let y = 0; y < height; y++) {
+    const row = start + y * rowBytes;
+    for (let x = 0; x < width; x++) {
+      out[y * width + x] =
+        mem[isa.VGA_PLANES + ((x & 3) << 16) + ((row + (x >> 2)) & 0xFFFF)];
+    }
+  }
+  return { width, height, pixels: out };
+}
+
+// Palette entries are 6-bit, the way the DAC stores them.
+function writePng(file, mem, palette, video) {
   const { PNG } = require(path.join(__dirname, '..', '..', 'node_modules', 'pngjs'));
+  const { width, height, pixels } = readFrame(mem, video);
   const png = new PNG({ width, height });
   for (let i = 0; i < width * height; i++) {
-    const c = mem[VGA_BASE + i];
+    const c = pixels[i];
     const o = i * 4;
     png.data[o] = Math.round(palette[c * 3] * 255 / 63);
     png.data[o + 1] = Math.round(palette[c * 3 + 1] * 255 / 63);
@@ -48,18 +92,20 @@ function writePng(file, mem, palette, { width = 320, height = 200 } = {}) {
   fs.writeFileSync(file, PNG.sync.write(png));
 }
 
-function nonBlack(mem) {
+function nonBlack(mem, video) {
+  const { pixels } = readFrame(mem, video);
   let n = 0;
-  for (let i = 0; i < 320 * 200; i++) if (mem[VGA_BASE + i]) n++;
+  for (let i = 0; i < pixels.length; i++) if (pixels[i]) n++;
   return n;
 }
 
 // A cheap content signature over the frame buffer. Two variants that disagree
 // here executed different code, and no timing comparison between them means
 // anything -- so the bench checks it before it reports a ratio.
-function frameHash(mem) {
+function frameHash(mem, video) {
+  const { pixels } = readFrame(mem, video);
   let h = 0x811c9dc5;
-  for (let i = 0; i < 320 * 200; i++) h = Math.imul(h ^ mem[VGA_BASE + i], 0x01000193);
+  for (let i = 0; i < pixels.length; i++) h = Math.imul(h ^ pixels[i], 0x01000193);
   return (h >>> 0).toString(16).padStart(8, '0');
 }
 
@@ -69,12 +115,12 @@ async function runDos(o) {
     variant = 'tailcall', exe, budget = 200e6, slice = 2e6,
     traceInt = false, noCache = false, shots = null, shotEvery = 20,
     mouse = [0, 0], cpu = 386, report = false, log = console.log, autoKey = false,
-    tickScale = 1, sample = false, sampleAfter = 0,
+    tickScale = 1, sample = false, sampleAfter = 0, forceChained = false,
   } = o;
   setCpuLevel(cpu);
 
   const machine = new Machine(new Uint8Array(0), {
-    log: (s) => traceInt && log(`  ${s}`), autoKey,
+    log: (s) => traceInt && log(`  ${s}`), autoKey, forceChained,
   });
   const vm = await makeVm(variant, {
     portIn: (p, w) => machine.portIn(p, w),
@@ -87,6 +133,7 @@ async function runDos(o) {
   machine.mem = vm.mem;
   machine.installIvt();
   machine.setTicks(0);
+  machine.syncVga();     // the VM's buffer, not the throwaway one from before
 
   const info = loadExe(vm.mem, fs.readFileSync(exe));
   vm.setAll({ cs: info.cs, ip: info.ip, ss: info.ss, sp: info.sp, ds: info.ds, es: info.es });
@@ -248,7 +295,8 @@ async function runDos(o) {
     machine.mouse.dx += mouse[0]; machine.mouse.dy += mouse[1];
 
     if (shots && handbacks % shotEvery === 0 && machine.videoMode === 0x13) {
-      writePng(path.join(shots, `f${String(shotN++).padStart(4, '0')}.png`), vm.mem, machine.palette);
+      writePng(path.join(shots, `f${String(shotN++).padStart(4, '0')}.png`),
+        vm.mem, machine.palette, vgaGeometry(machine.vga));
     }
 
     const key = `${cs.toString(16)}:${vm.get('gip').toString(16)}`;
@@ -263,7 +311,17 @@ async function runDos(o) {
     guestSecs: Number(guestNs) / 1e9,
     dispatched, handbacks, ints, compiles, compiledWords, arenaResets,
     stuckAt, entryHist, unimplemented, ipSamples, ipSampleLog, regions,
-    pixels: nonBlack(vm.mem), frame: frameHash(vm.mem),
+    pixels: nonBlack(vm.mem, vgaGeometry(machine.vga)),
+    frame: frameHash(vm.mem, vgaGeometry(machine.vga)),
+    video: {
+      mode: machine.videoMode,
+      ...vgaGeometry(machine.vga),
+      unchainCount: machine.vga.unchainCount,
+      maskWrites: machine.vga.maskWrites,
+      masksSeen: machine.vga.masksSeen,
+      planeWrites: ld32(vm.mem, isa.VGA_CTL_WRITES),
+      planeReads: ld32(vm.mem, isa.VGA_CTL_READS),
+    },
   };
 }
 
@@ -301,18 +359,47 @@ async function main() {
     cpu: Number(arg('cpu', 386)),
     report,
     autoKey: flag('auto-key'),
+    forceChained: flag('chain4'),
     tickScale: Number(arg('tick-scale', 1)),
   });
 
   const png = arg('png');
-  if (png) writePng(png, r.vm.mem, r.machine.palette);
+  if (png) writePng(png, r.vm.mem, r.machine.palette, vgaGeometry(r.machine.vga));
 
   if (r.stuckAt) console.log(`stuck at ${r.stuckAt} -- no progress in 200 handbacks`);
   console.log(`\n${path.basename(exe)}  variant=${r.variant}  ${r.secs.toFixed(2)}s`);
   console.log(`  ${r.handbacks} handbacks, ${r.ints} interrupts, ${r.compiles} traces `
     + `(${(r.compiledWords * 4 / 1024).toFixed(0)}KB of arena, ${r.arenaResets} recycles)`);
-  console.log(`  video mode ${r.machine.videoMode.toString(16)}h, `
-    + `${r.pixels} non-black pixels of ${320 * 200}, frame=${r.frame}`);
+  const v = r.video;
+  // What was rendered, then what the CRTC says when that is something else --
+  // for a chained program those differ on purpose. See readFrame.
+  const rw = v.planar ? v.width : 320, rh = v.planar ? v.height : 200;
+  console.log(`  video mode ${v.mode.toString(16)}h `
+    + `${v.planar ? `unchained ${rw}x${rh}` : `${rw}x${rh} linear`}`
+    + `${v.planar && v.start ? ` start=${v.start}` : ''}`
+    + `${v.planar && v.stride !== v.width ? ` stride=${v.stride}` : ''}`
+    + `${!v.planar && (v.width !== 320 || v.height !== 200 || v.start)
+        ? ` (crtc says ${v.width}x${v.height}${v.start ? ` start=${v.start}` : ''})` : ''}, `
+    + `${r.pixels} non-black pixels of ${rw * rh}, frame=${r.frame}`);
+  if (v.planar) {
+    // Where the bytes actually are. Empty planes beside a full linear window
+    // mean the guest drew before it unchained, or through a path that never
+    // reached the plane store -- and that is not visible from the picture.
+    const nz = (from, n) => {
+      let c = 0;
+      for (let i = 0; i < n; i++) if (r.vm.mem[from + i]) c++;
+      return c;
+    };
+    console.log(`  planes ${[0, 1, 2, 3].map(p =>
+      nz(isa.VGA_PLANES + p * isa.VGA_PLANE_SIZE, 0x10000)).join('/')}`
+      + `, chained window ${nz(VGA_BASE, 0x10000)}`
+      + `, ${r.video.planeWrites} planar writes / ${r.video.planeReads} reads`);
+    const g = r.machine.vga;
+    console.log(`  seq mask=${(g.seq[2] & 0x0F).toString(2).padStart(4, '0')}`
+      + ` gc mode=${g.gc[5] & 3} readmap=${g.gc[4] & 3} bitmask=${g.gc[8].toString(16)}`
+      + ` setreset=${g.gc[0].toString(16)}/${g.gc[1].toString(16)}`
+      + `, ${g.maskWrites} mask writes`);
+  }
   console.log(`  exited=${r.machine.exited}${r.machine.exited ? ` code=${r.machine.exitCode}` : ''}`
     + `  cs:ip=${r.vm.get('cs').toString(16)}:${r.vm.get('gip').toString(16)}`);
   console.log(`  ${(r.dispatched / 1e6).toFixed(1)}M dispatches, `
@@ -349,6 +436,6 @@ async function main() {
   }
 }
 
-module.exports = { runDos, writePng, nonBlack, frameHash };
+module.exports = { runDos, writePng, readFrame, nonBlack, frameHash };
 
 if (require.main === module) main().catch(e => { console.error(e.stack || String(e)); process.exit(1); });

@@ -115,6 +115,92 @@ function loadCom(mem, buf, { pspSeg = PSP_SEG } = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// VGA registers
+// ---------------------------------------------------------------------------
+// Three index/data port pairs decide what a byte written to A000 means. Mode
+// 13h is the case where the answer is "one pixel", and that is the only case a
+// demo gets for free -- everything else is a tweak of these registers:
+//
+//   3C4/3C5 sequencer   2 = map mask (which planes a write reaches)
+//                       4 = memory mode, bit 3 = chain-4. Clearing it is what
+//                           "unchained"/mode X means: the four planes stop
+//                           being interleaved per byte and A000 addresses one
+//                           byte in each of four 64K planes at once.
+//   3CE/3CF graphics    4 = read map select (which plane a read returns)
+//                       5 = mode, bits 0-1 write mode (1 = copy the latches)
+//                       8 = bit mask
+//   3D4/3D5 CRTC        9 = max scan line (bits 0-4: row doubling)
+//                    C/D = start address (page flipping)
+//                      13 = offset, words per scan line -> logical width
+//                   12/07 = vertical display end -> scan lines
+//
+// Modelling them is nearly free -- the ports are already trapped -- and it is
+// what lets the renderer read the real geometry instead of assuming 320x200.
+const SEQ_MEMORY_MODE = 4, SEQ_MAP_MASK = 2;
+const GC_READ_MAP = 4, GC_MODE = 5, GC_BIT_MASK = 8;
+const CRTC_HDE = 0x01;
+const CRTC_MAX_SCAN = 0x09, CRTC_START_HI = 0x0C, CRTC_START_LO = 0x0D;
+const CRTC_VDE = 0x12, CRTC_OVERFLOW = 0x07, CRTC_OFFSET = 0x13;
+
+function newVgaState() {
+  const v = {
+    seqIndex: 0, seq: new Uint8Array(8),
+    gcIndex: 0, gc: new Uint8Array(16),
+    crtcIndex: 0, crtc: new Uint8Array(32),
+    misc: 0x63,
+    planar: false,
+    // Counters, so a sweep can tell a program that merely indexed the
+    // sequencer from one that actually drove an unchained mode.
+    unchainCount: 0, maskWrites: 0, masksSeen: 0,
+  };
+  resetVgaMode(v, 0x13);
+  return v;
+}
+
+// The register state mode 13h leaves behind, which is what every mode-X tweak
+// starts from. Only the fields the renderer reads are worth setting exactly.
+function resetVgaMode(v, mode) {
+  v.seq.fill(0);
+  v.seq[SEQ_MAP_MASK] = 0x0F;
+  v.seq[SEQ_MEMORY_MODE] = mode === 0x13 ? 0x0E : 0x06;   // chain-4 on for 13h
+  v.gc.fill(0);
+  v.gc[GC_BIT_MASK] = 0xFF;
+  v.gc[GC_MODE] = mode === 0x13 ? 0x40 : 0x00;            // bit 6 = 256-colour
+  v.crtc.fill(0);
+  v.crtc[CRTC_HDE] = 0x4F;             // 80 character clocks -> 320 pixels
+  v.crtc[CRTC_MAX_SCAN] = 0x41;        // max scan line 1: each row drawn twice
+  v.crtc[CRTC_VDE] = 0x8F;
+  v.crtc[CRTC_OVERFLOW] = 0x1F;        // VDE bit 8 -> 400 scan lines
+  v.crtc[CRTC_OFFSET] = 40;            // 40 words per line -> 320 pixels
+  v.planar = false;
+}
+
+// Geometry, derived the way the CRTC actually derives it rather than assumed.
+// 320x200 and 320x240 both fall out of this: mode 13h leaves 400 scan lines
+// with every row doubled, and the classic 320x240 tweak sets 480 with the
+// doubling left in place.
+function vgaGeometry(v) {
+  const vde = v.crtc[CRTC_VDE]
+    | ((v.crtc[CRTC_OVERFLOW] & 0x02) << 7)
+    | ((v.crtc[CRTC_OVERFLOW] & 0x40) << 3);
+  const rows = Math.floor((vde + 1) / ((v.crtc[CRTC_MAX_SCAN] & 0x1F) + 1));
+  // Horizontal display end counts character clocks. A 256-colour mode runs at
+  // half the dot clock, so each of those eight dots is four pixels wide -- and
+  // that is separate from the offset register, which gives the LOGICAL row and
+  // can be wider than the screen when a demo scrolls a big page.
+  const width = (v.crtc[CRTC_HDE] + 1) * 4;
+  const stride = v.crtc[CRTC_OFFSET] * 8;
+  const start = (v.crtc[CRTC_START_HI] << 8) | v.crtc[CRTC_START_LO];
+  return {
+    width: width > 0 && width <= 800 ? width : 320,
+    height: rows > 0 && rows <= 600 ? rows : 200,
+    stride: stride > 0 ? stride : 320,
+    start,
+    planar: v.planar,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // The machine
 // ---------------------------------------------------------------------------
 class Machine {
@@ -126,11 +212,13 @@ class Machine {
     this.dacWriteIndex = 0;
     this.dacSubIndex = 0;
     this.retraceToggle = 0;
+    this.vga = newVgaState();
     this.ticks = 0;
     this.exited = false;
     this.exitCode = 0;
     this.keys = opts.keys ? [...opts.keys] : [];   // queued as {ah, al}
     this.autoKey = !!opts.autoKey;
+    this.forceChained = !!opts.forceChained;
     this.mouse = { x: 160, y: 100, buttons: 0, dx: 0, dy: 0 };
     this.allocTop = DEFAULT_ALLOC_TOP;
     this.unhandled = new Map();
@@ -185,6 +273,16 @@ class Machine {
       if (++this.dacSubIndex === 3) { this.dacSubIndex = 0; this.dacWriteIndex = (this.dacWriteIndex + 1) & 0xFF; }
       return v;
     }
+    // Read-back of the register files. Code that tweaks one bit of the memory
+    // mode does IN/OR/OUT, so returning 0xFF here would set every other bit
+    // as a side effect -- including chain-4, which would undo a mode X set.
+    if (port === 0x3C5) return this.vga.seq[this.vga.seqIndex];
+    if (port === 0x3CF) return this.vga.gc[this.vga.gcIndex];
+    if (port === 0x3D5 || port === 0x3B5) return this.vga.crtc[this.vga.crtcIndex];
+    if (port === 0x3C4) return this.vga.seqIndex;
+    if (port === 0x3CE) return this.vga.gcIndex;
+    if (port === 0x3D4 || port === 0x3B4) return this.vga.crtcIndex;
+    if (port === 0x3CC) return this.vga.misc;
     if (port === 0x60) return 0;            // keyboard data: no key down
     if (port === 0x40 || port === 0x41 || port === 0x42) { this.clock.pit++; return (this.ticks * 13) & 0xFF; }
     return w === 16 ? 0xFFFF : 0xFF;
@@ -200,10 +298,86 @@ class Machine {
       if (++this.dacSubIndex === 3) { this.dacSubIndex = 0; this.dacWriteIndex = (this.dacWriteIndex + 1) & 0xFF; }
       return;
     }
-    // Everything else is accepted and dropped. A mode-13h demo writes the
-    // sequencer and CRTC only when it is building a tweaked mode, which is a
-    // different feature entirely (unchained "mode X") and would need real
-    // planar addressing to be worth modelling.
+    const v = this.vga;
+    // Index/data pairs. A write to the index port with a 16-bit OUT carries
+    // the data in AH, and the recursion at the top of this function has
+    // already split that into two 8-bit writes, so both spellings land here.
+    switch (port) {
+      case 0x3C4: v.seqIndex = value & 0x07; return;
+      case 0x3C5: this.vgaSeqWrite(v.seqIndex, value); return;
+      case 0x3CE: v.gcIndex = value & 0x0F; return;
+      case 0x3CF:
+        v.gc[v.gcIndex] = value;
+        if (v.gcIndex === GC_READ_MAP || v.gcIndex === GC_MODE) this.syncVga();
+        return;
+      case 0x3D4: case 0x3B4: v.crtcIndex = value & 0x1F; return;
+      case 0x3D5: case 0x3B5: v.crtc[v.crtcIndex] = value; return;
+      case 0x3C2: v.misc = value; return;
+      default: return;                       // everything else is dropped
+    }
+  }
+
+  vgaSeqWrite(index, value) {
+    const v = this.vga;
+    v.seq[index] = value;
+    if (index === SEQ_MAP_MASK) {
+      v.maskWrites++;
+      v.masksSeen |= 1 << (value & 0x0F);
+      if (v.planar) this.syncVga();
+      return;
+    }
+    if (index !== SEQ_MEMORY_MODE) return;
+    // Chain-4 off in a 256-colour mode is the whole definition of mode X. It
+    // changes what a byte at A000 means, so the plane store has to be told.
+    //
+    // `forceChained` (--chain4) pins the old behaviour -- every A000 byte is one
+    // pixel in guest RAM -- so a program whose behaviour changes when it
+    // unchains can be A/B'd without a rebuild. It is a lie about the hardware
+    // and purely a debugging aid.
+    const planar = !this.forceChained && this.videoMode === 0x13 && !(value & 0x08);
+    if (planar === v.planar) return;
+    v.planar = planar;
+    if (planar) v.unchainCount++;
+    this.log(`vga ${planar ? 'unchained (mode X)' : 'chained'}`);
+    this.vgaRechain(planar);
+    this.syncVga();
+  }
+
+  // --- the plane store -----------------------------------------------------
+  // The VM reads its four control words straight out of shared memory, so
+  // keeping the hardware model in step is four stores and no import. Call it
+  // after anything that moves the map mask, the read map, the write mode or
+  // the chain-4 bit -- and after run-dos.js swaps in the VM's own buffer.
+  syncVga() {
+    const v = this.vga, m = this.mem;
+    if (m.length <= isa.VGA_CTL_KEY) return;      // a bare Machine, no VM yet
+    const st = (at, val) => {
+      m[at] = val & 0xFF; m[at + 1] = (val >> 8) & 0xFF;
+      m[at + 2] = (val >> 16) & 0xFF; m[at + 3] = (val >>> 24) & 0xFF;
+    };
+    st(isa.VGA_CTL_KEY, v.planar ? isa.VGA_KEY_ON : isa.VGA_KEY_OFF);
+    st(isa.VGA_CTL_MASK, v.seq[SEQ_MAP_MASK] & 0x0F);
+    st(isa.VGA_CTL_READ, v.gc[GC_READ_MAP] & 3);
+    st(isa.VGA_CTL_MODE, v.gc[GC_MODE] & 3);
+  }
+
+  // Carry the picture across a chain-4 change instead of dropping it.
+  //
+  // Chain-4 is not a different memory, it is a different *addressing* of the
+  // same four planes: byte `off` of the A000 window is plane `off & 3` at plane
+  // offset `off >> 2`. The chained path writes the interleaved form straight
+  // into guest RAM, so switching modes is a de-interleave one way and a
+  // re-interleave the other. Demos routinely clear the screen in plain 13h and
+  // only then unchain, and without this that clear -- or a whole loaded image
+  // -- would vanish at the mode switch.
+  vgaRechain(toPlanar) {
+    const m = this.mem;
+    if (m.length <= isa.VGA_PLANES) return;
+    for (let i = 0; i < 0x10000; i++) {
+      const p = isa.VGA_PLANES + ((i & 3) << 16) + (i >> 2);
+      if (toPlanar) m[p] = m[VGA_BASE + i];
+      else m[VGA_BASE + i] = m[p];
+    }
   }
 
   // --- interrupts ----------------------------------------------------------
@@ -240,7 +414,10 @@ class Machine {
     if (ah === 0x00) {
       this.videoMode = al & 0x7F;
       this.mem[0x449] = this.videoMode;
-      // Setting a mode clears the display. Mode 13h is 320x200 linear at A000.
+      // Setting a mode clears the display and re-chains the planes -- a demo
+      // that unchains does it AFTER asking the BIOS for mode 13h.
+      resetVgaMode(this.vga, this.videoMode);
+      this.syncVga();
       if (this.videoMode === 0x13) this.mem.fill(0, VGA_BASE, VGA_BASE + 320 * 200);
       this.log(`int10 set mode ${this.videoMode.toString(16)}h`);
       return true;
@@ -390,7 +567,10 @@ class Machine {
   }
 }
 
-module.exports = { Machine, loadExe, VGA_BASE, STUB_SEG, STUB_BYTE, LOAD_SEG, PSP_SEG };
+module.exports = {
+  Machine, loadExe, vgaGeometry,
+  VGA_BASE, STUB_SEG, STUB_BYTE, LOAD_SEG, PSP_SEG,
+};
 
 if (require.main === module) {
   const file = process.argv[2];

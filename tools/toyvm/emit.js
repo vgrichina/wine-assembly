@@ -2041,11 +2041,79 @@ function helpers() {
     (i32.add (i32.shl (call $sget (local.get $seg)) (i32.const 4)) (local.get $off))
     (i32.const 0xFFFFF)))
 
+;; The A000 window in unchained ("mode X") mode. See isa.js for why the planes
+;; cannot live in the guest's own RAM.
+;;
+;; The guard is what every guest byte access now pays: one load of a constant
+;; address, an and/or/eq, and a branch. It is written as a key compare rather
+;; than a flag test so that "are we unchained" and "is this address video
+;; memory" are the SAME branch instead of two -- and the spare low bit means a
+;; zeroed control block reads as chained, which is what a caller that resets the
+;; machine with mem.fill(0) leaves behind. See isa.js.
+;;
+;; The cost is identical in all four dispatch shells, so it moves every arm of
+;; the shootout together and does not change any ratio it reports.
+(func $vga_plane (param $p i32) (param $lin i32) (result i32)
+  (i32.add (i32.const ${isa.VGA_PLANES})
+    (i32.add (i32.shl (local.get $p) (i32.const 16))
+             (i32.and (local.get $lin) (i32.const 0xFFFF)))))
+
+;; A read loads ALL four latches and returns the plane the read map selects.
+;; The latches are the point: mode X's fast blit is a read that fills them and a
+;; write in mode 1 that spills them into up to four planes at once, moving four
+;; pixels per pair of instructions without the value ever reaching a register.
+(func $vga_rd8 (param $lin i32) (result i32)
+  (i32.store (i32.const ${isa.VGA_CTL_READS})
+    (i32.add (i32.load (i32.const ${isa.VGA_CTL_READS})) (i32.const 1)))
+  (i32.store (i32.const ${isa.VGA_CTL_LATCH})
+    (i32.or
+      (i32.or (i32.load8_u (call $vga_plane (i32.const 0) (local.get $lin)))
+              (i32.shl (i32.load8_u (call $vga_plane (i32.const 1) (local.get $lin)))
+                       (i32.const 8)))
+      (i32.or (i32.shl (i32.load8_u (call $vga_plane (i32.const 2) (local.get $lin)))
+                       (i32.const 16))
+              (i32.shl (i32.load8_u (call $vga_plane (i32.const 3) (local.get $lin)))
+                       (i32.const 24)))))
+  (i32.and
+    (i32.shr_u (i32.load (i32.const ${isa.VGA_CTL_LATCH}))
+               (i32.shl (i32.load (i32.const ${isa.VGA_CTL_READ})) (i32.const 3)))
+    (i32.const 0xFF)))
+
+(func $vga_wr8 (param $lin i32) (param $v i32)
+  (local $p i32) (local $mask i32) (local $src i32)
+  (i32.store (i32.const ${isa.VGA_CTL_WRITES})
+    (i32.add (i32.load (i32.const ${isa.VGA_CTL_WRITES})) (i32.const 1)))
+  (local.set $mask (i32.load (i32.const ${isa.VGA_CTL_MASK})))
+  ;; Write mode 1 ignores the CPU's value entirely and stores the latches.
+  (local.set $src (i32.load (i32.const ${isa.VGA_CTL_LATCH})))
+  (block $done
+    (loop $plane
+      (br_if $done (i32.eq (local.get $p) (i32.const 4)))
+      (if (i32.and (local.get $mask) (i32.shl (i32.const 1) (local.get $p)))
+        (then (i32.store8 (call $vga_plane (local.get $p) (local.get $lin))
+          (if (result i32) (i32.eq (i32.load (i32.const ${isa.VGA_CTL_MODE}))
+                                   (i32.const 1))
+            (then (i32.shr_u (local.get $src)
+                             (i32.shl (local.get $p) (i32.const 3))))
+            (else (local.get $v))))))
+      (local.set $p (i32.add (local.get $p) (i32.const 1)))
+      (br $plane))))
+
 (func $rd8 (param $seg i32) (param $off i32) (result i32)
-  (i32.load8_u (call $lin (local.get $seg) (local.get $off))))
+  (local $l i32)
+  (local.set $l (call $lin (local.get $seg) (local.get $off)))
+  (if (i32.eq (i32.or (i32.and (local.get $l) (i32.const 0xF0000)) (i32.const 1))
+              (i32.load (i32.const ${isa.VGA_CTL_KEY})))
+    (then (return (call $vga_rd8 (local.get $l)))))
+  (i32.load8_u (local.get $l)))
 
 (func $wr8 (param $seg i32) (param $off i32) (param $v i32)
-  (i32.store8 (call $lin (local.get $seg) (local.get $off)) (local.get $v)))
+  (local $l i32)
+  (local.set $l (call $lin (local.get $seg) (local.get $off)))
+  (if (i32.eq (i32.or (i32.and (local.get $l) (i32.const 0xF0000)) (i32.const 1))
+              (i32.load (i32.const ${isa.VGA_CTL_KEY})))
+    (then (call $vga_wr8 (local.get $l) (local.get $v)) (return)))
+  (i32.store8 (local.get $l) (local.get $v)))
 
 ;; Step an offset to the next byte. A 16-bit offset of 0xFFFF wraps to 0x0000
 ;; within the SAME segment -- which is why every multi-byte access is done a
