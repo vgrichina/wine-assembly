@@ -382,6 +382,7 @@ E2E=(
   test/test-web-keyboard-shift-cleared.js
   test/test-web-app-close-frees-memory.js
   test/test-web-failed-launch-recovers.js
+  test/test-web-double-tap-single-launch.js
   test/test-web-single-app-quit.js
   test/test-win16-jigsawed.js
   test/test-win16-jigsawed-menus.js
