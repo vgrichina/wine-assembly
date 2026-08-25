@@ -2307,6 +2307,27 @@ the colour table from the previous one. Everything about the report fits that:
 correct structure, uniformly blue, and the two text overlays unaffected because
 diabloui draws them through GDI with explicit colours.
 
+### Excluded 2026-08-25: a palette *swap* that never re-presents
+
+`$handle_IDirectDrawSurface_SetPalette` (`src/09a8-handlers-directx.wat:2999`)
+does **not** re-present, while `SetEntries` does — so attaching a different
+palette object would leave the canvas holding the previous scene's colours,
+which is this symptom exactly. It is a real gap and it is reported on the
+message board, but **it is not Diablo's**: over a 1000-batch run,
+
+```sh
+node test/run.js --app=diablo_shareware --batch-size=200000 --tick-ms-per-batch=50 \
+  --max-batches=1000 --no-close --quiet-api --repaint-every=100 \
+  --trace-api=IDirectDrawSurface_SetPalette,IDirectDraw_CreatePalette,IDirectDrawPalette_SetEntries
+#   IDirectDraw_CreatePalette          x1
+#   IDirectDrawSurface_SetPalette      x1  (0x083e6008 = the primary, at boot)
+#   IDirectDrawPalette_SetEntries      x3  (all on 0x083e6010, start=1 count=254)
+```
+
+One palette object, created once and attached once. Diablo only ever rewrites
+entries in place, so it always takes the `SetEntries` path that *does*
+re-present. Cross this off.
+
 ### The next measurement
 
 Reproduce it in the browser, which is the only place it has been seen, and
