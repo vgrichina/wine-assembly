@@ -6626,8 +6626,9 @@
     (local.set $record (call $gdi_rgn_record (local.get $hrgn)))
     (if (i32.eqz (local.get $record)) (then (return (i32.const 0))))
     ;; Only tell JS to forget a region it was actually given.
-    (if (i32.and (i32.load offset=24 (local.get $record))
-                 (i32.ne (call $gdi_rgn_mirror_live (local.get $record)) (i32.const 0)))
+    (if (i32.and
+          (i32.ne (i32.load offset=24 (local.get $record)) (i32.const 0))
+          (i32.ne (call $gdi_rgn_mirror_live (local.get $record)) (i32.const 0)))
       (then (drop (call $host_gdi_set_region_bands
         (i32.load offset=24 (local.get $record)) (i32.const 0) (i32.const -1)))))
     (i32.store (local.get $record) (i32.const 0))

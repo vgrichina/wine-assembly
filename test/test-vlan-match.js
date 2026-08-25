@@ -140,6 +140,7 @@ async function main() {
     // default; over a multi-million-batch run it is the whole log. The typed
     // socket traces this gate reads survive --quiet-api.
     '--quiet-api',
+    '--quiet-blocks',
     ...NET_TRACE,
     // The server is up before the client has even reached its own main menu,
     // so it sits in select() for the whole of the client's ~400k-batch boot.
@@ -157,6 +158,7 @@ async function main() {
     `--input=${keystrokes()}`,
     '--trace-api=socket,bind,connect,send,recv,select,closesocket',
     '--quiet-api',
+    '--quiet-blocks',
     ...NET_TRACE,
     '--vlan-max-waits=100000000',
     // Start game lands near batch 440k; the rest is the match itself.

@@ -3,6 +3,7 @@
   "apps": {
     "winhelp-freecell-default": {
       "title": "Windows Help - FreeCell embedded default topic after CNT warning",
+      "skip": "pending a manually reviewed Win98 reference capture",
       "probeSource": "tools/v86-reference/probes/open-winhelp-contents.c",
       "probeName": "PROBE.EXE",
       "launch": "D:\\PROBE.EXE",
@@ -19,6 +20,7 @@
     },
     "winhelp-freecell-topics": {
       "title": "Windows Help - FreeCell mismatched CNT topic list",
+      "skip": "pending a manually reviewed Win98 reference capture",
       "launch": "D:\\WINHLP32.EXE D:\\FREECELL.HLP",
       "waitMs": 4000,
       "postLaunch": [

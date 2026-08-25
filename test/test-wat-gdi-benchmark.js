@@ -113,7 +113,9 @@ function formatNumber(value) {
           wat.test_call_LineTo(target.hdc, 128, 127 - y);
         }
       },
-      verify() { assert.strictEqual(pixel(target, 64, 64), 0x0000FF); },
+      // Every diagonal crosses x=64 at y=63.5. Win98's half-open LineTo
+      // rasterization assigns that tie to the upper pixel.
+      verify() { assert.strictEqual(pixel(target, 64, 63), 0x0000FF); },
     },
     {
       name: 'Rectangle 64x48', count: 300, pixels: 64 * 48, minRate: 25, fastPath: 0,

@@ -2105,3 +2105,50 @@ first deal. Both apps are covered: the disabled control still gets nothing.
 
 After the fix, `down 350,444 -> child 0x1001c of 0x1001c dispatched=1` /
 `up 350,444 -> native child 0x1001c`, and clicking OK advances to Enter Name.
+
+## RESOLVED (2026-08-24): the game sat in the corner of a teal desktop
+
+Reported from the browser as "not scaling to whole screen", with a second
+symptom in the same screenshot: the DIABLO art drawn twice, stacked vertically,
+over an "Invalid name" complaint. Both came from one defect, and neither
+reproduced headlessly.
+
+Diablo takes the display the normal way — `SetCooperativeLevel(hwnd=0x10002,
+DDSCL_EXCLUSIVE|DDSCL_FULLSCREEN|DDSCL_ALLOWREBOOT = 0x13)` then
+`SetDisplayMode(640, 480, 8)`. Our handler stores the mode, installs the 8bpp
+palette, resizes the cooperative window to 640x480 at (0,0), posts
+WM_DISPLAYCHANGE/WM_MOVE/WM_SIZE, and makes `GetSystemMetrics(SM_CXSCREEN)`
+report the mode instead of the host canvas. All of that worked.
+
+What did not is who the compositor asks. `renderer._repaintOnce` tests
+`_isExclusiveFullscreenWindow(top)` — the *topmost* window — and from the main
+menu onward that is not the DirectDraw window. Storm stacks every menu on a
+screen-sized `SDlgDialog` popup **owned by** the game window; measured in the
+browser, hwnd 0x10006 (640x482, z=18, owner=0x10002) sits over hwnd 0x10002
+(640x480, z=17, the one carrying `_dxFrameLayer`). The popup failed the test, so
+the page dropped out of exclusive mode entirely: the desktop canvas stayed
+viewport-sized, the game stayed a 640x480 window at the origin, and the teal
+around it was the Win98 desktop showing through.
+
+The duplicated art is the same fault seen from the other side. The exclusive
+path composites the whole owned stack through one transform and gates each
+window's surface on the newest DirectDraw present (`presentSeq`); the normal
+path drew each dialog's back-canvas at its own offset with no such gating, so
+two menu dialogs each holding a copy of the art stacked visibly.
+
+`_isExclusiveFullscreenWindow` now also accepts a window whose *owner chain*
+reaches the exclusive hwnd (chained — Enter Name is a popup over Choose Class),
+and the transform is computed from the exclusive window rather than the topmost
+popup, since the 640x482 dialog over a 640x480 mode otherwise stretched every
+frame by 482/480. The stack walk below the decision already handled these
+popups; its entry condition simply never fired.
+
+Verified in a real browser (`tools/profile-web-frames.js --screenshot`): the
+main menu fills the page, transform source is the 640x480 exclusive window, and
+Choose Class comes up clean — art intact at the top, portrait and stat panel
+correct, no duplication.
+
+> The "Invalid name" half of that screenshot is *not* explained by this and did
+> not reproduce: headless, `click:425:331` to focus the field and then
+> `keypress` characters puts BOB in it and the screen is correct. The field
+> needs the focus click first, and Diablo rejects names with spaces.

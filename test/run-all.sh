@@ -308,6 +308,16 @@ UNIT=(
   test/test-combobox.js
   test/test-render-combobox.js
   test/test-win16-v86-audit.js
+  # Repaired and recovered from quarantine 2026-08-24.
+  test/test-winhelp-wat-parser.js
+  test/test-wat-gdi-region.js
+  test/test-wat-gdi-benchmark.js
+  test/test-wat-gdi-bitmap-handlers.js
+  test/test-wat-font-metrics-reference.js
+  test/test-web-pinball-assets.js
+  test/test-desktop-surface-color.js
+  test/test-findreplace-matchcase-flags.js
+  test/test-v86-reference-harness.js
 )
 
 E2E=(
@@ -525,6 +535,9 @@ E2E=(
   test/test-liquid-war-candidate.js
   test/test-vlan-tetrinet.js
   test/test-combobox-pinball.js
+  test/test-wm-setcursor-on-show.js
+  test/test-wordpad-ole-roundtrip.js
+  test/test-wordpad-ole-delete-roundtrip.js
 )
 
 SMOKE=(
@@ -541,25 +554,10 @@ SMOKE=(
 # Harness drift: the test calls a host/renderer entry point that no longer
 # exists. Cheap to fix; the product is probably fine.
 QUARANTINE=(
-  # Rechecked serially 2026-08-24; each failure reproduces outside the
-  # aggregate runner. Keep the assertion and measured symptom visible here.
-  test/test-winhelp-wat-parser.js        # 7/621 layout checks: wrap/alignment/tabs/font geometry drift
-  test/test-wat-gdi-region.js            # JS region presentation mirror is absent for a WAT-owned rectangle
-  test/test-wat-gdi-benchmark.js         # expected raster byte 255 is 0
-  test/test-wat-gdi-bitmap-handlers.js   # CreateDIBSection bitmap allocation returns 0
-  test/test-wat-font-metrics-reference.js # Courier New advance/extent exceeds captured Win98 budget
-  test/test-web-pinball-assets.js        # deploy omits binaries/entertainment-pack/tictac.exe
-  test/test-desktop-surface-color.js     # stale worker object counter reuses the live screen bitmap handle
-  test/test-wm-setcursor-on-show.js      # palette animation frames remain byte-identical after 12,000 batches
-  test/test-findreplace-matchcase-flags.js # Replace All drops FR_MATCHCASE (expected 0x24, got 0)
-  # b2a93f7 added winhelp-freecell-default/-topics to apps.json without
-  # capturing their reviewed references; capture.js needs the Win98 v86 state
-  # off the network, and a reference nobody looked at is worse than none.
-  test/test-v86-reference-harness.js    # 2 manifest apps have no reviewed capture
-  test/test-vlan-match.js               # server now listens, then no progress in 400s on 3.0s of CPU
-  # OLE presentation data -- the known static-handler/IDataObject gap.
-  test/test-wordpad-ole-roundtrip.js    # saved RTF carries no DIB presentation
-  test/test-wordpad-ole-delete-roundtrip.js
+  # Rechecked 2026-08-24: a one-batch Down selects Net game, but Enter starts
+  # an unbounded stream of transient CRT threads before the server-address UI
+  # is painted. The client never calls connect; the server's last event is listen.
+  test/test-vlan-match.js
 )
 
 # A test file missing from every array above does not fail, it just never runs.
@@ -590,7 +588,7 @@ TEST_HEAP_MB="${TEST_HEAP_MB:-2048}"
 # A test that never exits used to stall the whole suite indefinitely -- the
 # runner polls for finished slots and has no notion of one taking too long, so
 # a single hung child holds its slot forever and the summary never prints.
-# (test-vlan-match.js is in QUARANTINE for exactly that: "no progress in 400s".)
+# (test-vlan-match.js is in QUARANTINE for exceeding this cap without connect.)
 # Every child now gets a wall-clock cap and is reported as TIMEOUT, which
 # counts as a failure -- a suite that stalls is a suite nobody waits for.
 # The cap is deliberately far above what any test needs (the slowest gameplay

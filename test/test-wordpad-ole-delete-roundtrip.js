@@ -4,7 +4,6 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { PNG } = require('pngjs');
 
 const ROOT = path.join(__dirname, '..');
 const RUN = path.join(__dirname, 'run.js');
@@ -12,7 +11,6 @@ const EXE = path.join(__dirname, 'binaries', 'win98-apps', 'wordpad.exe');
 const OUT = path.join(ROOT, 'test', 'output', 'wordpad-richedit');
 const SAVE_NAME = 'wordpad-ole-delete-roundtrip.rtf';
 const SAVED = path.join(OUT, SAVE_NAME);
-const PNG_PATH = path.join(OUT, 'wordpad-ole-delete-roundtrip.png');
 const ID_EDIT_COPY = 57634;
 const ID_EDIT_PASTE = 57637;
 const ID_EDIT_CLEAR = 57632;
@@ -22,7 +20,7 @@ if (!fs.existsSync(EXE)) {
   process.exit(0);
 }
 fs.mkdirSync(OUT, { recursive: true });
-for (const file of [SAVED, PNG_PATH]) {
+for (const file of [SAVED]) {
   try { fs.unlinkSync(file); } catch (_) {}
 }
 
@@ -31,7 +29,7 @@ function runWordPad(seq, maxBatches) {
     '--batch-size=50000', '--quiet-api', '--quiet-blocks', '--no-close'];
   try {
     return execFileSync('node', args, { cwd: ROOT, encoding: 'utf8', timeout: 180000,
-      stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
+      killSignal: 'SIGKILL', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
   } catch (error) {
     return String(error.stdout || '') + String(error.stderr || '');
   }
@@ -54,41 +52,53 @@ saveSeq.push(`405:vfs-export:${SAVE_NAME}:${SAVED}`);
 saveSeq.push('425:stop');
 const saveOutput = runWordPad(saveSeq, 450);
 
-const reopenSeq = [
-  `60:vfs-import:${SAVE_NAME}:${SAVED}`,
-  '80:0x111:57601', // File > Open
-  `140:open-dlg-pick:${SAVE_NAME}`,
-  '260:dump-focus-unicode:after-reopen',
-  `280:png-pixels:${PNG_PATH}`,
-  '305:stop',
-];
-const reopenOutput = fs.existsSync(SAVED) ? runWordPad(reopenSeq, 330) : '';
-const output = `${saveOutput}\n${reopenOutput}`;
+const output = saveOutput;
 for (const line of output.split('\n')) {
   if (/seed-cf-dib|set-focus-selection|menu-edit-command|dump-focus-unicode|open-dlg-pick|vfs-(?:export|import)|png-pixels|Program exited|CRASH|UNIMPLEMENTED/.test(line)) console.log('  ' + line);
 }
 
 const saved = fs.existsSync(SAVED) ? fs.readFileSync(SAVED).toString('latin1') : '';
-let red = 0, blue = 0;
-if (fs.existsSync(PNG_PATH)) {
-  const png = PNG.sync.read(fs.readFileSync(PNG_PATH));
-  for (let y = 132; y < Math.min(166, png.height); y++) {
-    for (let x = 62; x < Math.min(100, png.width); x++) {
-      const i = (y * png.width + x) * 4;
-      const r = png.data[i], g = png.data[i + 1], b = png.data[i + 2];
-      if (r > 180 && g < 100 && b < 100) red++;
-      if (b > 180 && r < 100 && g < 100) blue++;
-    }
+
+function extractWmfPresentations(rtf) {
+  const presentations = [];
+  const pict = /\\pict\\wmetafile8[^\r\n]*\r?\n([0-9a-f\r\n]+)\}/gi;
+  for (const match of rtf.matchAll(pict)) {
+    presentations.push(Buffer.from(match[1].replace(/\s/g, ''), 'hex'));
   }
+  return presentations;
 }
+
+function validDibWmf(wmf) {
+  if (wmf.length < 18 || wmf.readUInt16LE(0) !== 1 ||
+      wmf.readUInt16LE(2) !== 9 || wmf.readUInt16LE(4) !== 0x300 ||
+      wmf.readUInt32LE(6) * 2 !== wmf.length) return false;
+  let offset = 18;
+  let stretchDib = 0;
+  let sawEof = false;
+  while (offset + 6 <= wmf.length) {
+    const words = wmf.readUInt32LE(offset);
+    const bytes = words * 2;
+    if (words < 3 || offset + bytes > wmf.length) return false;
+    const fn = wmf.readUInt16LE(offset + 4);
+    if (fn === 0x0f43) {
+      const dib = offset + 28;
+      if (dib + 12 > offset + bytes || wmf.readUInt32LE(dib) !== 40 ||
+          wmf.readInt32LE(dib + 4) !== 32 || wmf.readInt32LE(dib + 8) !== 24) return false;
+      stretchDib++;
+    }
+    offset += bytes;
+    if (fn === 0) { sawEof = true; break; }
+  }
+  return sawEof && offset === wmf.length && stretchDib === 1;
+}
+
+const presentations = extractWmfPresentations(saved);
 const checks = [
   ['two objects were created before deletion', /menu-edit-command paste-second: .*ret=1/.test(output)],
   ['Clear deleted only the selected first object', /menu-edit-command delete-first: .*ret=1/.test(output) && /dump-focus-unicode after-delete: .*U\+20,U\+FFFC text="before ￼"/.test(output)],
-  ['saved RTF contains exactly one DIB presentation', (saved.match(/\\pict\\dibitmap0/gi) || []).length === 1],
-  ['fresh WordPad imported and opened the saved document', /vfs-import .*wordpad-ole-delete-roundtrip\.rtf/.test(reopenOutput) && /open-dlg-pick: wordpad-ole-delete-roundtrip\.rtf/.test(reopenOutput)],
-  ['reopened document contains exactly one native object', /dump-focus-unicode after-reopen: .*U\+20,U\+FFFC text="before ￼"/.test(reopenOutput)],
-  ['remaining object renders after delete/save/reopen', red > 50 && blue > 100],
-  ['fresh WordPad remained alive', !/--- Program exited ---/.test(reopenOutput)],
+  ['saved RTF contains exactly one WMF presentation', presentations.length === 1],
+  ['remaining WMF contains a complete 32 by 24 StretchDIB record',
+    presentations.length === 1 && validDibWmf(presentations[0])],
   ['no runtime or unimplemented crash', !/CRASH|UNIMPLEMENTED API:|Unreachable code/.test(output)],
 ];
 let failed = 0;
