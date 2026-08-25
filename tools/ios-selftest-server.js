@@ -89,6 +89,7 @@ function print(stamp, item) {
       `icon@${item.iconTop} hit ${item.hit}  ${zoom} scroll ${item.scroll.join(',')} ` +
       `${kb} wrap "${item.wrapTransform}"  [${item.classes}]`;
     console.log(head);
+    if (item.audio) console.log(`${' '.repeat(stamp.length)}  AUDIO ${item.audio}`);
     if (item.why) console.log(`${' '.repeat(stamp.length)}  WHY ${item.why}`);
     if (item.verdict === 'DEAD-END') console.log(`${' '.repeat(stamp.length)}  ${JSON.stringify(item)}`);
     return;

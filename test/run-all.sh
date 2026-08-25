@@ -385,6 +385,7 @@ E2E=(
   test/test-web-failed-launch-recovers.js
   test/test-web-double-tap-single-launch.js
   test/test-web-touch-cursor.js
+  test/test-web-audio-session.js
   test/test-web-single-app-quit.js
   test/test-win16-jigsawed.js
   test/test-win16-jigsawed-menus.js

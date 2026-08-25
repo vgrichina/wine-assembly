@@ -6,6 +6,25 @@
 // lib/process-boot.js is a classic script loaded ahead of this one.
 const ProcessBoot = (typeof window !== 'undefined' && window.processBoot) || null;
 
+// iOS decides whether a page may be heard at all, and WebAudio alone does not
+// get a say. A page that only ever makes sound through an AudioContext lands
+// in the ambient-style session the ringer switch mutes: the context is
+// running, samples are scheduled, currentTime advances, every level meter
+// reads healthy -- and the phone plays nothing, with no error anywhere. A
+// visitor with the switch flipped (or the volume rocker at its media zero,
+// which is the same thing) hears silence from an emulator that looks fine.
+//
+// Declaring the session 'playback' is the one thing that opts a page out of
+// it. Safari 16.4+; everywhere else the property is absent and this is a
+// no-op. Idempotent because it is called from every launch and every unlock.
+function claimAudioSession() {
+  try {
+    const session = (typeof navigator !== 'undefined') && navigator.audioSession;
+    if (session && session.type !== 'playback') session.type = 'playback';
+  } catch (_) { /* a browser that has the property but refuses the value */ }
+}
+if (typeof window !== 'undefined') window.claimAudioSession = claimAudioSession;
+
 class WineAssembly {
   static SOURCE_VERSION = '223';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
@@ -256,6 +275,7 @@ class WineAssembly {
     const AC = (typeof AudioContext !== 'undefined') ? AudioContext :
                (typeof webkitAudioContext !== 'undefined') ? webkitAudioContext : null;
     if (!AC) return null;
+    claimAudioSession();
     if (this._audioCtx && this._audioCtx.state === 'closed') this._audioCtx = null;
     if (!this._audioCtx) {
       try { this._audioCtx = new AC({ sampleRate: 44100 }); }
@@ -500,6 +520,26 @@ class WineAssembly {
               raw.push(ex.guest_read32((esp + 4 + i * 4) >>> 0) >>> 0);
             }
             suffix = `(${raw.map(v => `0x${v.toString(16).padStart(8, '0')}`).join(', ')})`;
+            // Browser acceptance tests occasionally need to distinguish two
+            // calls whose raw pointers are different but opaque. Keep the
+            // normal lightweight trace unchanged; the opt-in detail flag
+            // decodes only API-table arguments explicitly typed as LPCSTR.
+            if (typeof window !== 'undefined' && window.__waTraceApiDetails &&
+                ex.guest_read8 && Array.isArray(entry.args)) {
+              const details = [];
+              for (let i = 0; i < entry.args.length && i < raw.length; i++) {
+                if (entry.args[i] && entry.args[i].type === 'LPCSTR' && raw[i]) {
+                  let value = '';
+                  for (let j = 0; j < 256; j++) {
+                    const ch = ex.guest_read8((raw[i] + j) >>> 0) & 0xFF;
+                    if (!ch) break;
+                    value += String.fromCharCode(ch);
+                  }
+                  details.push(`${entry.args[i].name || `arg${i}`}=${JSON.stringify(value)}`);
+                }
+              }
+              if (details.length) suffix += ` ${details.join(' ')}`;
+            }
             if (apiName === 'CoCreateInstance' && raw[0]) {
               suffix += ` clsid.d1=0x${(ex.guest_read32(raw[0]) >>> 0).toString(16).padStart(8, '0')}`;
             }
