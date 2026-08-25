@@ -68,11 +68,13 @@ async function runDos(o) {
   const {
     variant = 'tailcall', exe, budget = 200e6, slice = 2e6,
     traceInt = false, noCache = false, shots = null, shotEvery = 20,
-    mouse = [0, 0], cpu = 386, report = false, log = console.log,
+    mouse = [0, 0], cpu = 386, report = false, log = console.log, autoKey = false,
   } = o;
   setCpuLevel(cpu);
 
-  const machine = new Machine(new Uint8Array(0), { log: (s) => traceInt && log(`  ${s}`) });
+  const machine = new Machine(new Uint8Array(0), {
+    log: (s) => traceInt && log(`  ${s}`), autoKey,
+  });
   const vm = await makeVm(variant, {
     portIn: (p, w) => machine.portIn(p, w),
     portOut: (p, v, w) => machine.portOut(p, v, w),
@@ -261,6 +263,7 @@ async function main() {
     mouse: (arg('mouse', '0:0')).split(':').map(Number),
     cpu: Number(arg('cpu', 386)),
     report,
+    autoKey: flag('auto-key'),
   });
 
   const png = arg('png');

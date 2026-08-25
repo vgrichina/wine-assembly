@@ -97,6 +97,7 @@ class Machine {
     this.exited = false;
     this.exitCode = 0;
     this.keys = opts.keys ? [...opts.keys] : [];   // queued as {ah, al}
+    this.autoKey = !!opts.autoKey;
     this.mouse = { x: 160, y: 100, buttons: 0, dx: 0, dy: 0 };
     this.allocTop = DEFAULT_ALLOC_TOP;
     this.unhandled = new Map();
@@ -215,13 +216,20 @@ class Machine {
       return true;
     }
     if (ah === 0x0B || ah === 0x02 || ah === 0x06 || ah === 0x09 || ah === 0x0E) return true;
+    if (ah === 0x08) { r.set('ax', 0x0720); return true; }   // read char+attr: a blank
+    if (ah === 0x03) { r.set('cx', 0x0607); r.set('dx', 0); return true; }  // cursor at 0,0
     if (ah === 0x12 || ah === 0x1A) { r.set('ax', 0); return true; }
     return false;
   }
 
   int16(ah, r) {
     if (ah === 0x00 || ah === 0x10) {
-      const k = this.keys.shift();
+      const k = this.keys.shift()
+        // A blocking read with an empty queue is where a "press any key" title
+        // screen parks forever. autoKey answers it with Enter so a headless run
+        // gets past the prompt; a demo that treats any key as "quit" will quit,
+        // which is itself the answer to whether it can be benchmarked.
+        || (this.autoKey ? { ah: 0x1C, al: 0x0D } : null);
       if (!k) { r.set('ax', 0); return true; }   // no key: report nothing
       r.set('ax', ((k.ah & 0xFF) << 8) | (k.al & 0xFF));
       return true;
@@ -264,6 +272,39 @@ class Machine {
         return true;
       }
       case 0x02: this.log(`dos putc: ${String.fromCharCode(r.get('dx') & 0xFF)}`); return true;
+      // Console input, the DOS-side twins of INT 16h AH=00. AH=06 with DL!=0xFF
+      // is output, not input; only 0xFF asks for a character and it must report
+      // "nothing waiting" through ZF rather than blocking.
+      case 0x01: case 0x07: case 0x08: {
+        const k = this.keys.shift() || (this.autoKey ? { ah: 0x1C, al: 0x0D } : null);
+        r.set('ax', (r.get('ax') & 0xFF00) | (k ? k.al & 0xFF : 0));
+        return true;
+      }
+      case 0x06: {
+        const dl = r.get('dx') & 0xFF;
+        if (dl !== 0xFF) { this.log(`dos putc: ${String.fromCharCode(dl)}`); return true; }
+        const k = this.keys.shift() || (this.autoKey ? { ah: 0x1C, al: 0x0D } : null);
+        r.setResultZf(!k);
+        r.set('ax', (r.get('ax') & 0xFF00) | (k ? k.al & 0xFF : 0));
+        return true;
+      }
+      case 0x0B: {                              // check standard input status
+        r.set('ax', (r.get('ax') & 0xFF00) | (this.keys.length ? 0xFF : 0x00));
+        return true;
+      }
+      case 0x0C: {                              // flush buffer, then one of the above
+        this.keys.length = 0;
+        return al === 0x01 || al === 0x06 || al === 0x07 || al === 0x08 || al === 0x0A
+          ? this.int21(al, 0xFF, r) : true;
+      }
+      case 0x44: {
+        // IOCTL. Only AL=00, "get device information", is asked often enough to
+        // matter: a demo uses it to find out whether stdout is a file or the
+        // console. DX bit 7 set means character device.
+        if (al === 0x00) { r.set('dx', 0x80D3); r.setResultCf(false); return true; }
+        r.setResultCf(true); r.set('ax', 1);    // "invalid function"
+        return true;
+      }
       case 0x48: {                              // allocate paragraphs
         const want = r.get('bx') & 0xFFFF;
         if (this.allocTop + want > 0x9FFF) { r.setResultCf(true); r.set('ax', 8); r.set('bx', 0x9FFF - this.allocTop); return true; }

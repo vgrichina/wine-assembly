@@ -199,7 +199,18 @@ function decodeOne(rd, cs, ip) {
           words.push(H[hn], segOverride === null ? 3 : segOverride);
           break;
         }
-        return null;   // 60/61 PUSHA/POPA, 62 BOUND, 69/6B IMUL imm
+        if (op === 0x60 || op === 0x61) {
+          words.push(H[`${op === 0x60 ? 'pusha' : 'popa'}${opsize}`]);
+          break;
+        }
+        if (op === 0x69 || op === 0x6B) {
+          const m = modrm();
+          const imm = op === 0x69 ? immW() : sx8toW(imm8());
+          if (m.isReg) words.push(H[`imul3_rr${opsize}`], (m.rm & 7) | ((m.reg & 7) << 4), imm);
+          else words.push(H[`imul3_rm${opsize}`], packEa(m), m.disp, imm);
+          break;
+        }
+        return null;   // 62 BOUND
       }
       const d = imm8();
       const fall = (start + n) & 0xFFFF;
@@ -308,6 +319,14 @@ function decodeOne(rd, cs, ip) {
       endsBlock = true;
       break;
     }
+    case 0xC8:
+      if (cpuLevel < 186) return null;
+      words.push(H.enter, imm16(), imm8());
+      break;
+    case 0xC9:
+      if (cpuLevel < 186) return null;
+      words.push(H.leave);
+      break;
     case 0xC3: words.push(H.ret); endsBlock = true; break;
     case 0xC2: words.push(H.ret_imm, imm16()); endsBlock = true; break;
 
@@ -528,7 +547,13 @@ function decodeOne(rd, cs, ip) {
           fixups.push({ index: words.length - 1, ip: ret });
         }
         endsBlock = true;
-      } else return null;   // far indirect (/3, /5) not implemented
+      } else if (w !== 8 && !m.isReg && (m.reg === 3 || m.reg === 5)) {
+        // Far indirect. Only the memory form exists -- a far pointer does not
+        // fit in a register, and the encoding with mod=11 is undefined.
+        if (m.reg === 5) words.push(H.jmp_far_m, packEa(m), m.disp);
+        else words.push(H.call_far_m, packEa(m), m.disp, (start + n) & 0xFFFF);
+        endsBlock = true;
+      } else return null;
       break;
     }
 

@@ -966,6 +966,38 @@ function genArithIO() {
 `);
   }
 
+  // The 186's three-operand IMUL: a named destination instead of DX:AX, and an
+  // immediate second factor. It is how a compiler indexes an array of structs,
+  // so it turns up in the middle of the demos' inner loops rather than in their
+  // startup. Only CF and OF are defined -- set when the full product does not
+  // fit back into the destination width.
+  for (const w of [16, 32]) {
+    const SX = (e) => w === 32 ? e : `(i32.shr_s (i32.shl ${e} (i32.const 16)) (i32.const 16))`;
+    const FITS = w === 32
+      // At 32 bits the product needs 64 to test, so this is the one place the
+      // check cannot be done in i32.
+      ? `(i64.ne (i64.extend_i32_s (i32.wrap_i64 (local.get $q))) (local.get $q))`
+      : `(i32.ne ${SX('(local.get $t7)')} (local.get $t7))`;
+    const MUL = (a, b) => w === 32
+      ? `(local.set $q (i64.mul (i64.extend_i32_s ${a}) (i64.extend_i32_s ${b})))
+         (local.set $t7 (i32.wrap_i64 (local.get $q)))`
+      : `(local.set $t7 (i32.mul ${SX(a)} ${SX(b)}))`;
+    h(`imul3_rr${w}`, 2, `
+  ${ops(2)}
+  ${MUL(`(call $rget${w} (i32.and (local.get $t0) (i32.const 7)))`, '(local.get $t1)')}
+  (call $rset${w} (i32.and (i32.shr_u (local.get $t0) (i32.const 4)) (i32.const 7))
+    (local.get $t7))
+  (call $flags_mul ${FITS})
+`);
+    h(`imul3_rm${w}`, 3, `
+  ${ops(3)}
+  ${EA_SETUP_PRE}
+  ${MUL(`(call $rd${w} (local.get $t5) (local.get $t4))`, '(local.get $t2)')}
+  (call $rset${w} (local.get $t6) (local.get $t7))
+  (call $flags_mul ${FITS})
+`);
+  }
+
   // DIV/IDIV fault to INT 0 on a zero divisor or a quotient that will not fit.
   // The vector is taken the same way INT does, so the last operand carries the
   // guest IP to push.
@@ -1163,6 +1195,80 @@ function genArithIO() {
   (global.set $gip (local.get $t7))
   ${GO_INDIRECT}
 `);
+
+  // FF /5 and FF /3: far JMP and far CALL through a memory operand. Between
+  // them these are the single biggest coverage gap in the demo corpus -- the
+  // `2e ff 2f` (jmp far [cs:bx]) and `26 ff 19` (call far [es:bx+di]) startup
+  // thunks that Turbo-era runtimes open with.
+  h('jmp_far_m', 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  (local.set $t7 (call $rd16 (local.get $t5) (local.get $t4)))
+  (call $sset (i32.const 1) (call $rd16 (local.get $t5)
+    (i32.and (i32.add (local.get $t4) (i32.const 2)) (i32.const 0xFFFF))))
+  (global.set $gip (local.get $t7))
+  ${GO_INDIRECT}
+`);
+  // The far return address is CS:IP of the next instruction. There is no
+  // shadow-stack entry: a far RET can land in a different segment, and the
+  // arena address alone would not say which.
+  h('call_far_m', 3, `
+  ${ops(3)}
+  ${EA_SETUP_PRE}
+  (local.set $t7 (call $rd16 (local.get $t5) (local.get $t4)))
+  (local.set $t3 (call $rd16 (local.get $t5)
+    (i32.and (i32.add (local.get $t4) (i32.const 2)) (i32.const 0xFFFF))))
+  (call $push16 (call $sget (i32.const 1)))
+  (call $push16 (local.get $t2))
+  (call $sset (i32.const 1) (local.get $t3))
+  (global.set $gip (local.get $t7))
+  ${GO_INDIRECT}
+`);
+
+  // ENTER/LEAVE, the 186's stack-frame pair. Every C compiler of the era emits
+  // them, so three of the demos stop at the first `c8 xx xx 00` in their
+  // startup. The nesting level is almost always zero; the display-copy loop is
+  // here anyway because a Pascal-style nested procedure does use it.
+  h('enter', 2, `
+  ${ops(2)}
+  (call $push16 (call $rget16 (i32.const 5)))
+  (local.set $t7 (global.get $sp))
+  (local.set $t1 (i32.and (local.get $t1) (i32.const 31)))
+  (block $done (loop $l
+    (br_if $done (i32.le_u (local.get $t1) (i32.const 1)))
+    (call $rset16 (i32.const 5)
+      (i32.and (i32.sub (call $rget16 (i32.const 5)) (i32.const 2)) (i32.const 0xFFFF)))
+    (call $push16 (call $rd16 (i32.const 2) (call $rget16 (i32.const 5))))
+    (local.set $t1 (i32.sub (local.get $t1) (i32.const 1)))
+    (br $l)))
+  (if (local.get $t1) (then (call $push16 (local.get $t7))))
+  (call $rset16 (i32.const 5) (local.get $t7))
+  (global.set $sp (i32.and (i32.sub (local.get $t7) (local.get $t0)) (i32.const 0xFFFF)))
+`);
+  h('leave', 0, `
+  (global.set $sp (call $rget16 (i32.const 5)))
+  (call $rset16 (i32.const 5) (call $pop16))
+`);
+
+  // PUSHA/POPA and their 32-bit twins. PUSHA stores the SP the instruction
+  // started with, and POPA discards that slot rather than restoring it --
+  // popping into SP would move the stack out from under the remaining pops.
+  for (const w of [16, 32]) {
+    const push = w === 16 ? '$push16' : '$push32';
+    const pop = w === 16 ? '$pop16' : '$pop32';
+    const rset = `$rset${w}`, rget = `$rget${w}`;
+    h(`pusha${w}`, 0, `
+  (local.set $t7 (call ${rget} (i32.const 4)))
+  ${[0, 1, 2, 3].map(r => `(call ${push} (call ${rget} (i32.const ${r})))`).join('\n  ')}
+  (call ${push} (local.get $t7))
+  ${[5, 6, 7].map(r => `(call ${push} (call ${rget} (i32.const ${r})))`).join('\n  ')}
+`);
+    h(`popa${w}`, 0, `
+  ${[7, 6, 5].map(r => `(call ${rset} (i32.const ${r}) (call ${pop}))`).join('\n  ')}
+  (drop (call ${pop}))
+  ${[3, 2, 1, 0].map(r => `(call ${rset} (i32.const ${r}) (call ${pop}))`).join('\n  ')}
+`);
+  }
 
   // LES/LDS load a far pointer into a segment register and a GPR at once.
   for (const [nm, seg] of [['les', 0], ['lds', 3]]) {
