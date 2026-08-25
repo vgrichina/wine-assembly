@@ -2250,6 +2250,82 @@ correct, no duplication.
 > `keypress` characters puts BOB in it and the screen is correct. The field
 > needs the focus click first, and Diablo rejects names with spaces.
 
+## OPEN (2026-08-25): clicking to skip the intro freezes the page for seconds
+
+Reported from the browser: scene changes in the menus are visibly slow, and
+skipping the intro video by clicking hangs the game for a few seconds.
+
+### The guest side is measured and is a burst, not general slowness
+
+`--batch-stats=FROM` windowed either side of the skip click, at the browser's
+own 100000-block slice (`--batch-size=100000 --tick-ms-per-batch=100`, click at
+batch 400):
+
+```
+window 400-700:  batches that spent the whole budget: 178 of 300 (59.3%)
+window 700-1000: batches that spent the whole budget:   0 of 300 ( 0.0%)
+```
+
+Every stalled slice is in the 300 batches after the click and none in the next
+300. `--handler-hist --handler-hist-start=400 --handler-hist-stop=700` prices
+that burst at **412,582,977 ops over 18,118,569 blocks = 22.8 ops/block**, so
+one full-budget slice is 2.28M ops and the burst as a whole is ~412M ops. The
+hot handlers are `$th_load32_ro_base_esp` (10.5%), `$th_inc_r` (7.9%),
+`$th_test_jcc` (7.5%), `$th_store32_ro_base_esp` (7.2%) and `$th_load8_ro`
+(5.6%) — byte-at-a-time decode loops, i.e. Storm tearing down the Smacker
+player and decompressing the menu art (`logo.pcx` 535KB, `smlogo.pcx` 333KB,
+`title.pcx`) out of `spawn.mpq`. The transition really does have seconds of
+work in it; the question is only whether the page stays alive during it.
+
+### A design weakness this exposes, worth knowing before you touch it
+
+`run(max_blocks)` (`src/13-exports.wat:8`) takes a budget in **blocks**, and a
+block is not a unit of work — 22.8 ops/block here against the 282 ops/block
+CLAUDE.md measures in this same game's menu. So the host cannot bound how long
+a slice will hold the thread. Note the asymmetry in `host.js`: the *worker*
+path (`runBudgeted`, ~line 1763) is given `maxWallMs` of 4-16ms and is checked
+between quanta, while the main thread's `run()` has no wall-clock cap at all
+and cannot be interrupted once entered.
+
+### But the obvious fix is NOT the fix — measured, and not shipped
+
+Adding `diablo_shareware` to `autoRunSliceFor` in `lib/browser-shell.js`, the
+way `jazz2_demo` and `halflife_uplink` already are, does not help:
+
+| slice | WinePerf cumulative `blockedMs` | `longTasks` |
+|---|---|---|
+| 100000 (default) | 12159 | 5 |
+| 20000 | 12224 | 7 |
+
+Unchanged. And it is not free — a paired interleaved CLI A/B over identical
+guest work gives mean user CPU 19.9s at 100000, 23.6s at 20000 (+18%), 24.7s at
+10000, 36.3s at 1000 — plus `host.js` derives the *worker* budget from the same
+number (`maxTotalSteps: threadBudget * 4`), so a 5x smaller slice also gives
+Storm's async worker a 5x smaller budget, which is the opposite of what a
+transition bottlenecked on MPQ reads wants. So whatever holds the main thread
+for ~12s is **not** the main guest slice. There is a comment saying so at that
+switch.
+
+### Health warning on any browser number taken here
+
+Two runs at the *same* setting came back 53ms and 12224ms of `blockedMs`. The
+difference tracked `guestFps`/`stepsPerSec` — how far the app happened to get —
+not the setting. This box has been at load 35-175 all day and headless Chrome
+cannot resolve this question on it. Note also that `tools/profile-web-frames.js`
+reports rAF frame intervals, which is *page* fps: it sat at a flat 60.0fps with
+"long tasks: none observed" in runs whose own `blockedMs` was 12 seconds.
+
+### The next measurement
+
+Attribute the long tasks, on a quiet box. `--cpu-profile` is the tool, but
+check the run actually launched before reading it — an attempt here came back
+99.2% `(idle)` with `slice size: null steps` and a 2272-character debug log,
+which is a page that never started the app, not an app that did nothing.
+Candidates not yet excluded: the DirectDraw present path (`putImageData` moved
+670M pixels in one 30s sample), the VFS read of a 535KB MPQ member, and the
+`windowCount === 0` branch in `host.js` that calls the **unbudgeted**
+`runSlice` instead of `runBudgeted`.
+
 ## OPEN (2026-08-25): the title screen was seen in the intro's blue palette
 
 Reported from the browser: the `ui_art\title.pcx` screen — demon face, DIABLO
