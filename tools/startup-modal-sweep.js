@@ -32,8 +32,17 @@
 //                 screensavers, a large one for anything that loads assets.
 //   --batches=N   batch cap per run (default 400000; --seconds usually wins)
 //   --dismiss-every=N  send WM_COMMAND to the top dialog every N batches in
-//                 pass 2 (default 2000). A dlg-cmd with no dialog on screen is
-//                 a no-op, so over-sending is free and beats guessing.
+//                 pass 2. A dlg-cmd with no dialog on screen is a no-op, so
+//                 over-sending is free and beats guessing. The default is
+//                 derived from how far pass 1 actually got in --seconds, which
+//                 matters more than it sounds: a 16-bit game runs ~60
+//                 batches/s, so a fixed "dismiss at 2000, shoot at 4000" is a
+//                 dismiss and a capture that never happen and an app that
+//                 looks stuck when it is only slow.
+//   --tick-ms-per-batch=N  passed to run.js. The headless clock advances 200ms
+//                 per batch by default, which expires a game's own level timer
+//                 in a few hundred batches (Chip's Challenge greets the sweep
+//                 with "Ooops! Out of time!"). Use 5 for anything timed.
 //   --answer=ID   force one command id instead of the per-type default
 //   --no-build    reuse the existing build/wine-assembly.wasm
 //
@@ -41,6 +50,7 @@
 //   clean      no modal at startup
 //   content    a modal, and real pixels behind it once dismissed
 //   modal-only a modal, and the screen behind it is still empty
+//   exits      the app answered its own box by quitting
 //   stuck      the modal did not go away when its own button was pressed
 //   crash      an unimplemented API or a WASM trap
 'use strict';
@@ -64,7 +74,9 @@ const opt = (name, dflt) => {
 
 const SECONDS = parseFloat(opt('seconds', '20')) || 20;
 const BATCHES = parseInt(opt('batches', '400000'), 10);
-const DISMISS_EVERY = Math.max(200, parseInt(opt('dismiss-every', '2000'), 10) || 2000);
+const DISMISS_EVERY = opt('dismiss-every', null)
+  ? Math.max(50, parseInt(opt('dismiss-every', '2000'), 10) || 2000) : null;
+const TICK_MS = opt('tick-ms-per-batch', null);
 const ANSWER = opt('answer', null) ? parseInt(opt('answer', '1'), 10) : null;
 const SHOTS = opt('shots', path.join(os.tmpdir(), 'modal-sweep'));
 const JSON_OUT = opt('json', null);
@@ -105,6 +117,7 @@ function runApp(id, extraInput) {
     `--max-batches=${BATCHES}`, `--max-seconds=${SECONDS}`,
   ];
   if (NO_BUILD) args.push('--no-build');
+  if (TICK_MS != null) args.push(`--tick-ms-per-batch=${TICK_MS}`);
   if (extraInput) args.push(`--input=${extraInput}`);
   try {
     return execFileSync('node', args, {
@@ -137,6 +150,13 @@ function collectBoxes(log) {
   return boxes;
 }
 
+// run.js's exit line: `Stats: N API calls, B batches in Ts (R batches/s)`.
+function reachedBatches(log) {
+  let last = 0;
+  for (const m of log.matchAll(/(\d+) batches in /g)) last = parseInt(m[1], 10);
+  return last;
+}
+
 // The desktop is a flat COLOR_BACKGROUND teal and an untouched DirectDraw
 // primary is flat black; anything else on screen is the app.
 function contentShare(file) {
@@ -167,16 +187,31 @@ for (const id of ids) {
   }
 
   // Pass 2: same run, but keep pressing the button the first box asks for.
+  // Every `--input` batch number past what pass 1 reached is an event that
+  // never fires, so the schedule is built from the run we just watched rather
+  // than from a constant: dismiss through the first four fifths of the reach,
+  // photograph just inside it.
   const answer = ANSWER != null ? ANSWER : (DEFAULT_ANSWER[boxes[0].type & 0xF] ?? 1);
+  const reach = reachedBatches(probe) || BATCHES;
+  // Pass 1 is a bad predictor of pass 2's reach, and wrong in the direction
+  // that hurts: an app sitting behind its own modal is idle and burns through
+  // batches, while the same app with the modal answered is *running* and gets
+  // a fraction as far in the same wall clock (Klotski: 400000 vs 19722). So
+  // don't schedule one capture at a computed batch -- ladder them to the same
+  // path all the way up. Whichever one the run reaches last overwrites the
+  // others, and the file is a picture of the furthest point it got to.
+  // Capped at 500 for the same reason: a heavy app answers its box and then
+  // slows to ~100 batches/s (Motocross Madness runs a video-memory test), so
+  // an interval scaled off the idle pass would put the first dismiss past the
+  // end of the run. Sending into no dialog costs nothing.
+  const every = DISMISS_EVERY || Math.min(500, Math.max(50, Math.floor(reach / 200)));
   const shot = path.join(SHOTS, `${id}.png`);
   const input = [];
-  for (let b = DISMISS_EVERY; b < BATCHES; b += DISMISS_EVERY) {
+  for (let b = every, n = 0; b < reach && input.length < 380; b += every, n++) {
     input.push(`${b}:dlg-cmd:${answer}`);
-    if (b >= BATCHES - DISMISS_EVERY) break;
-    if (input.length > 400) break;   // the tail of a long run is not worth the argv
+    if (n % 4 === 3) input.push(`${b + (every >> 1)}:png:${shot}`);
   }
-  const shotAt = Math.min(BATCHES - 1, DISMISS_EVERY * (input.length + 1));
-  input.push(`${shotAt}:png:${shot}`);
+  if (!input.some(e => e.includes(':png:'))) input.push(`${every + 1}:png:${shot}`);
   const after = runApp(id, input.join(','));
   const share = contentShare(shot);
   const stillModal = collectBoxes(after).length > 0 &&
@@ -184,6 +219,10 @@ for (const id of ids) {
 
   let verdict;
   if (/UNIMPLEMENTED API|CRASH|unreachable/.test(after)) verdict = 'crash';
+  // Answering the box and quitting is its own answer, and a common one: the
+  // box named something the app cannot run without (Imaging's missing Image
+  // Admin control) and ExitProcess follows within a few batches.
+  else if (share == null && /\[Exit\] code=/.test(after)) verdict = 'exits';
   else if (share == null) verdict = 'stuck';
   else if (share > 0.02) verdict = 'content';
   else verdict = stillModal ? 'stuck' : 'modal-only';
@@ -193,7 +232,12 @@ for (const id of ids) {
   for (const box of boxes) {
     console.log(`    "${box.caption}": ${JSON.stringify(box.text).slice(0, 160)}`);
   }
-  if (VERBOSE) console.log(`    shot: ${shot}`);
+  if (VERBOSE) {
+    console.log(`    pass 1 reached ${reach} batches; dismissed every ${every}, ` +
+      `${input.filter(e => e.includes(':png:')).length} captures ` +
+      `(pass 2 reached ${reachedBatches(after)})`);
+    console.log(`    shot: ${shot}`);
+  }
   results.push({ id, verdict, answer, share, shot, boxes });
 }
 
@@ -202,8 +246,8 @@ if (JSON_OUT) {
   console.log(`\nwrote ${JSON_OUT}`);
 }
 
-const bad = results.filter(r => r.verdict === 'crash' || r.verdict === 'stuck' || r.verdict === 'modal-only');
+const bad = results.filter(r => ['crash', 'stuck', 'exits', 'modal-only'].includes(r.verdict));
 console.log(`\n${results.length} apps: ` +
-  ['clean', 'content', 'modal-only', 'stuck', 'crash']
+  ['clean', 'content', 'modal-only', 'exits', 'stuck', 'crash']
     .map(v => `${results.filter(r => r.verdict === v).length} ${v}`).join(', '));
 process.exit(bad.length ? 1 : 0);
