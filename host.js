@@ -7,7 +7,7 @@
 const ProcessBoot = (typeof window !== 'undefined' && window.processBoot) || null;
 
 class WineAssembly {
-  static SOURCE_VERSION = '221';
+  static SOURCE_VERSION = '222';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   static _nextProcessId = 1000;
 
@@ -16,9 +16,30 @@ class WineAssembly {
     return match[1] + '.part' + String(index).padStart(3, '0') + match[2];
   }
 
+  // berrry cannot serve a stored file whose name contains a space: the file is
+  // in its manifest and 404s under every encoding (%20, +, %2520). The deployer
+  // therefore publishes those under a space-free name; this is the read half of
+  // that convention. Only a 404 tries it, so a local dev server -- which serves
+  // the real spaced name fine -- always takes the direct path.
+  static _spaceFreeUrl(url) {
+    const match = String(url).match(/^([^?#]*)(.*)$/);
+    if (!/[ ]|%20/i.test(match[1])) return null;
+    return match[1].replace(/%20/gi, '_').replace(/ /g, '_') + match[2];
+  }
+
   // Keep split assets a transport detail. Normal files take one request; only
   // a 404 tries the deployer's name.part000, name.part001, ... convention.
   static async fetchAssetBytes(url) {
+    try {
+      return await WineAssembly._fetchAssetCandidate(url);
+    } catch (e) {
+      const alt = WineAssembly._spaceFreeUrl(url);
+      if (!alt || !/HTTP 404$/.test(String(e && e.message))) throw e;
+      return await WineAssembly._fetchAssetCandidate(alt);
+    }
+  }
+
+  static async _fetchAssetCandidate(url) {
     const direct = await fetch(url);
     if (direct.ok) return new Uint8Array(await direct.arrayBuffer());
     if (direct.status !== 404) {

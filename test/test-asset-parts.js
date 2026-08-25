@@ -106,6 +106,42 @@ async function run() {
     context.WineAssembly.fetchAssetBytes('truncated.bin'),
     /missing truncated\.bin\.part001/);
 
+  // berrry cannot serve a name containing a space, so the deployer publishes
+  // those as name_with_underscores. A dev server that serves the real name
+  // must never take that path.
+  routes = new Map([['Big Twister.TD4', response(200, [1, 2])]]);
+  calls.length = 0;
+  assert.deepStrictEqual(
+    Array.from(await context.WineAssembly.fetchAssetBytes('Big Twister.TD4')),
+    [1, 2]);
+  assert.deepStrictEqual(calls, ['Big Twister.TD4'],
+    'a served spaced name must not fall back');
+
+  routes = new Map([
+    ['Big Twister.TD4', response(404)],
+    ['Big Twister.TD4.part000', response(404)],
+    ['Big_Twister.TD4', response(200, [3, 4])],
+  ]);
+  calls.length = 0;
+  assert.deepStrictEqual(
+    Array.from(await context.WineAssembly.fetchAssetBytes('Big Twister.TD4')),
+    [3, 4]);
+  assert.deepStrictEqual(calls, [
+    'Big Twister.TD4',
+    'Big Twister.TD4.part000',
+    'Big_Twister.TD4',
+  ]);
+
+  // The URL the page builds is percent-encoded, and the query string survives.
+  routes = new Map([
+    ['Saved%20Games/001?v=9', response(404)],
+    ['Saved%20Games/001.part000?v=9', response(404)],
+    ['Saved_Games/001?v=9', response(200, [5])],
+  ]);
+  assert.deepStrictEqual(
+    Array.from(await context.WineAssembly.fetchAssetBytes('Saved%20Games/001?v=9')),
+    [5]);
+
   console.log('asset part tests passed');
 }
 

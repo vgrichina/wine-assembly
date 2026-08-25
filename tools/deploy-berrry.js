@@ -54,7 +54,18 @@ const LARGE_OK_PATHS = new Set([
 // Binary extensions to include
 const BINARY_EXTS = new Set(['.exe', '.dll', '.manifest', '.hlp', '.chm', '.bmp', '.ico', '.cur', '.wav', '.mp3', '.mid', '.m3u', '.dat', '.inf', '.ini', '.txt', '.png', '.wasm']);
 
+// berrry stores a file whose name contains a space and then cannot serve it:
+// it appears in the app's own file manifest but every request 404s, under %20,
+// `+` and %2520 alike, cache-busted. 31 of RCT's data files are named that way
+// ("Tracks/Big Twister.TD4"), and `requiredFiles: true` turns each 404 into a
+// failed launch. So publish those under a space-free name; WineAssembly's
+// fetchAssetBytes retries it on 404, the same way it retries .partNNN.
+function publishName(rel) {
+  return rel.replace(/ /g, '_');
+}
+
 function encodeBinaryBytes(rel, raw) {
+  rel = publishName(rel);
   if (raw.length <= SERVER_MAX_FILE_SIZE) {
     return [{ name: rel, content: raw.toString('base64'), encoding: 'base64' }];
   }
@@ -155,13 +166,28 @@ const NOT_REDISTRIBUTABLE = new Set([
   'binaries/dlls/msvcrt20.dll',  // Win98 SE OEM, local-only
 ]);
 
+// Registry-named assets that live outside binaries/. The prefix test below is
+// what stops a deploy from shipping test/binaries/candidates wholesale — most
+// of that tree is multi-hundred-MB game data we have no right to publish — so
+// an entry here is a per-app decision made against that app's own terms, not a
+// relaxation of the rule.
+//
+// Heroes II demo: its own license.txt clause (2) — "Feel free to give copies of
+// this demonstration version ... to your friends, as long as you don't sell
+// it." Same footing as the RCT shareware already live.
+const PUBLISHABLE_OUTSIDE_BINARIES = [
+  'test/binaries/candidates/heroes-2-demo/files/',
+];
+
 function desktopAssetPaths() {
   const { APPS, DESKTOP_APPS, LOCAL_CANDIDATE_APPS, DEBUG_ONLY_APPS, appFileUrl } =
     require(path.join(ROOT, 'lib', 'apps.js'));
   const { DLL_PATHS } = require(path.join(ROOT, 'lib', 'dll-registry.js'));
   const out = new Set();
+  const publishable = p => p.startsWith('binaries/') ||
+    PUBLISHABLE_OUTSIDE_BINARIES.some(root => p.startsWith(root));
   const add = p => {
-    if (!p || !p.startsWith('binaries/')) return;
+    if (!p || !publishable(p)) return;
     if (NOT_REDISTRIBUTABLE.has(p)) { blocked.add(p); return; }
     out.add(p);
   };
@@ -362,7 +388,7 @@ function loadExplicitFiles(relList) {
     }
     const ext = path.extname(sourceRel).toLowerCase();
     if (TEXT_EXTS.has(ext)) {
-      files.push({ name: sourceRel, content: fs.readFileSync(full, 'utf-8') });
+      files.push({ name: publishName(sourceRel), content: fs.readFileSync(full, 'utf-8') });
     } else {
       const encoded = encodeBinaryFile(sourceRel, full);
       if (requestedPart) {
@@ -623,6 +649,18 @@ async function deploy() {
   }
 
   let allFiles = [...textFiles, ...binFiles];
+
+  // publishName() folds spaces to underscores, so two distinct source files can
+  // in principle land on one published name. That would silently serve the
+  // wrong bytes, so refuse the deploy instead.
+  const byName = new Map();
+  for (const f of allFiles) {
+    if (byName.has(f.name)) {
+      throw new Error('Published-name collision: ' + f.name +
+        ' (space-folding two different source files onto one name)');
+    }
+    byName.set(f.name, true);
+  }
 
   // What would go up, without going up: the asset set is derived now, so
   // "which files does this deploy think the site is made of" is a question
