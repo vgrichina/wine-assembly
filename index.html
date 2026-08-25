@@ -823,6 +823,11 @@
           <option value="mirc59">mIRC 5.9 Installer</option>
         </optgroup>
         <optgroup label="Local Candidates">
+          <option value="jazz2_demo">Jazz Jackrabbit 2 Demo</option>
+          <option value="quake2_demo_installer">Quake II Demo Installer</option>
+          <option value="heroes3_demo_installer">Heroes III Demo Installer</option>
+          <option value="diablo2_demo_installer">Diablo II Demo Installer</option>
+          <option value="halflife_uplink_installer">Half-Life: Uplink Installer</option>
           <option value="diablo_demo">Diablo (pre-release demo)</option>
           <option value="diablo_shareware">Diablo Shareware (1997)</option>
           <option value="worms2_demo">Worms 2 Demo</option>
@@ -1309,6 +1314,23 @@ Resource-aware Win98 emulator
       },
       onAppRunningChange: running => {
         document.body.classList.toggle('app-running', !!running);
+        // No guest is running, so no guest owns the display. Every one of
+        // these classes hides the desktop icons -- and on a phone the icons
+        // are the only launcher there is, so any of them left set strands the
+        // visitor on a blank teal page with no way to start anything.
+        //
+        // The renderer normally takes exclusive mode down itself, on the
+        // repaint after the last window goes. That is a transition, and a
+        // transition can be missed: an app that drops out of exclusive for a
+        // final dialog and then exits from it never makes the false->false
+        // edge, and page-fullscreen (which has no repaint of its own to hang
+        // off) stays on. Ownership is the thing that is actually knowable
+        // here, so assert it rather than relying on the edge.
+        if (!running) {
+          exitPageFullscreen();
+          document.body.classList.remove('exclusive-fullscreen');
+          if (sharedRenderer) sharedRenderer._exclusiveFullscreen = false;
+        }
         // The desktop reappears at its own size once the guest is gone, and
         // the canvas is no longer sized to a maximized window.
         resizeCanvas();
@@ -1503,7 +1525,8 @@ Resource-aware Win98 emulator
         ? DEFAULT_APPS.concat(LOCAL_CANDIDATE_APPS)
         : DEFAULT_APPS;
       const selectorApps = DEBUG_MODE
-        ? DEFAULT_APPS.concat(DEBUG_ONLY_APPS)
+        ? DEFAULT_APPS.concat(DEBUG_ONLY_APPS,
+            LOCAL_DESKTOP ? LOCAL_CANDIDATE_APPS : [])
         : desktopApps;
       const desktopAppSet = new Set(desktopApps.map(a => a[0]));
       const selectorAppSet = new Set(selectorApps.map(a => a[0]));

@@ -82,6 +82,12 @@ const LAN_ANSWER = opt('lan', 'solo');
 // paths instead, so bugs that only exist there (a viewport crop the shaders
 // ignore) are invisible without --gpu, which swaps in SwiftShader.
 const GPU = argv.includes('--gpu');
+// iPhone Safari exposes NO element Fullscreen API -- not requestFullscreen,
+// not the webkit spelling, on anything that is not a <video>. Chrome always
+// has it, so the only way to drive the fallback the page uses there is to take
+// the API away before any page script runs. --touch alone does not do this:
+// an emulated phone in Chrome still reports full fullscreen support.
+const NO_FULLSCREEN_API = argv.includes('--no-fullscreen-api');
 // Base origin to drive. Empty = serve this working tree over a temp server.
 const URL_BASE = (opt('url', '') || '').replace(/\/+$/, '');
 // A phone is a different page, not a smaller one: single-app mode, no taskbar,
@@ -228,6 +234,14 @@ async function main() {
         if (cats.length) window.__waTraceCategories = new Set(cats);
         if (apis.length) window.__waTraceApiNames = new Set(apis);
       }, TRACE, TRACE_API);
+    }
+    if (NO_FULLSCREEN_API) {
+      await page.evaluateOnNewDocument(() => {
+        for (const name of ['requestFullscreen', 'webkitRequestFullscreen',
+                            'mozRequestFullScreen', 'msRequestFullscreen']) {
+          delete Element.prototype[name];
+        }
+      });
     }
     await page.goto(`${base}/index.html${QUERY}`, { waitUntil: 'load', timeout: 60000 });
     // Start from an empty profile, then RELOAD. lib/storage.js seeds its
