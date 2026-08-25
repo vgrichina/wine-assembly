@@ -704,6 +704,8 @@
   ;; fs_map_view_of_file(hMapping, access, offsetHi, offsetLo, size) → guest addr
   (import "host" "fs_unmap_view" (func $host_fs_unmap_view (param i32) (result i32)))
   ;; fs_unmap_view(baseAddr) → BOOL
+  (import "host" "fs_flush_view" (func $host_fs_flush_view (param i32 i32) (result i32)))
+  ;; fs_flush_view(addrInsideView, bytes | 0 for the rest of the view) → BOOL
   (import "host" "fs_filetime_to_systemtime" (func $host_fs_filetime_to_systemtime (param i32 i32) (result i32)))
   ;; fs_filetime_to_systemtime(ftWasmAddr, stWasmAddr) → BOOL
 

@@ -50,6 +50,7 @@ UNIT=(
   test/test-bignum-mul.js
   test/test-mat4.js
   test/test-vfs.js
+  test/test-flush-view-of-file.js
   test/test-vfs-host-files.js
   test/test-storage-registry.js
   test/test-codepage-dbcs.js

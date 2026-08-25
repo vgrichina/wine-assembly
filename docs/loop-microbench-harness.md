@@ -6,27 +6,55 @@ ASCII TLDR:
 tools/bench-loops.js injects a synthetic guest loop into a live wasm instance
 and times it, with both A/B arms in ONE process alternating every rep.
 
-Measured noise floor: +-1% at load 3.5, against the 24-42% that made every
-whole-app A/B in interpreter-dispatch-perf.md unresolvable. That floor tracks
-the box -- at load 10.9 the same null control read -5.3% -- so run the null
-control in the SAME session and treat it as the threshold, not a constant.
+WHAT IS MEASURED  (8MB working set, box load ~10)
+
+ shape          ns/iter  ops/it  ns/op  B/it   MB/s   blocks/it   what it prices
+ ------------  --------  ------  -----  ----  ------  ---------   ----------------------
+ stack_traffic    178.6     8     22.3     0      --      1.00     store path, never-code
+ lut              179.3     7     25.6     3      16      1.00     Heroes II LUT blit
+ store_stream     215.8     7 *   30.8    16      71      1.00     Caesar SIB store stream
+ cmp_ladder       150.5    14 *   10.8 *   1       6      2.00     switch ladder (control)
+ rep_movsd          0.2   bulk      --     8  46,388      0.00     memory.copy FLOOR
+
+ * fold live (H420/H423): ops/it is the UNFOLDED-EQUIVALENT count, so ns/op is
+   understated in the same proportion. Read blocks/it and time instead.
+
+READ ns/op ACROSS SHAPES. MB/s is bytes/time and these shapes carry 1, 3 and 16
+bytes per iteration -- it ranks them by payload, not by cost. store_stream has
+the best MB/s of the four and the WORST ns/op. Only two MB/s comparisons
+survive: two arms of one shape, or two shapes moving the SAME bytes by
+different routes -- which is the one below.
+
+THE STORE PATH, PRICED           8MB written        ratio
+  per-op path (store_stream)         72 MB/s          1x    $g2w
+  memory.copy  (rep_movsd)       46,388 MB/s        644x    + $invalidate_code_write
+                                                            + page-cross test, per store
+
+CALIBRATION -- run the null control in the SAME session, it tracks the box
+  toggle           load 3.5          load 10.9      verdict
+  case_chain       +57.4 / +57.8       +58.6        real, stable
+  rect_run (null)   +0.7 /  -0.9        -5.3        <- THIS is the threshold
+  noise floor        +-1%               +-5%        vs 24-42% whole-app A/B
+
+OP COUNT REPORTED THE WRONG SIGN
+  case_chain=1   73.8ms   14.00 ops/it   2.00 blocks/it
+  case_chain=0  173.5ms   13.00 ops/it   5.50 blocks/it
+  => +57% FASTER while printing 7.7% MORE ops. The variable that moved is block
+     ENTRIES (~27ns each), which no histogram in this repo counts -- and the
+     handler histogram is what every fusion here has been judged on.
 
 Every shape verifies its own work, because rep_movsd first shipped copying
 zeros onto zeros: a memory.copy that never ran would have been byte-identical
 and reported DRAM bandwidth for doing nothing.
 
-It found something on its first calibration run: CASE_CHAIN is +57% FASTER on
-its own shape while printing 7.7% MORE handler ops. Op count did not just
-understate the win, it reported the wrong SIGN. What actually changed is block
-ENTRIES: 5.50 -> 2.00 per iteration, because every `jz` in an unfolded ladder
-ends a block. ~27ns each.
+UNRESOLVED: case_chain is +57% here and <=2% on the real app, for a shape that
+is 24% of Caesar's block entries. Those do not reconcile. Resolving it is worth
+more than any new fusion -- until then neither harness ranks a change.
 
-Every fusion in this repo has been judged on the handler histogram. The handler
-histogram cannot see block entries.
-
-Second finding, same run: the same 16MB written through the per-op store path
-runs at 122 MB/s and through `rep movsd` (memory.copy) at 52,366 MB/s. A 428x
-gap, and it is all $g2w + $invalidate_code_write + the page-cross test.
+DOES NOT MEASURE: dispatch cost (a periodic loop lets the BTB predict every
+call_indirect; understated by construction). Whether a shape occurs in real
+code (find-loops.js / match-loops.js / --handler-hist). The cold g2w paths --
+every buffer sits in the direct window, so sparse/DIB/code-marked are untouched.
 ```
 
 Companion docs: [interpreter-dispatch-perf.md](interpreter-dispatch-perf.md)
@@ -176,21 +204,23 @@ moving the same bytes by different routes. §4.2 is the one that qualifies.
 \* with a fold live, `ops/iter` is the unfolded-equivalent count, so `ns/op` is
 understated in the same proportion. The tool prints a NOTE.
 
-### 4.2 The store path is 428x slower than `memory.copy`
+### 4.2 The store path is 400-650x slower than `memory.copy`
 
-Same 16MB written, `--bytes=16m`:
+The one MB/s comparison §4.1a leaves standing: the **same bytes** written by two
+different routes.
 
-| shape | throughput |
-|---|---|
-| `store_stream` (`mov [edi+edx*1+disp], eax` ×4) | **122 MB/s** |
-| `rep_movsd` (already lowered to `memory.copy`) | **52,366 MB/s** |
+| run | `store_stream` (per-op path) | `rep_movsd` (`memory.copy`) | ratio |
+|---|---|---|---|
+| `--bytes=16m`, load ~3.5 | 122 MB/s | 52,366 MB/s | **428x** |
+| `--bytes=8m`, load ~10 | 72 MB/s | 46,388 MB/s | **644x** |
+
+The ratio itself moves with load — the interpreted arm is far more sensitive to
+contention than the `memory.copy` arm — so quote it as a band, not a constant.
+Either end of the band is the same finding.
 
 The gap is `$g2w` + `$invalidate_code_write` + the page-cross test, paid per
-store. `rep movsd` pays it once for the whole range. That is the ceiling on any
+store; `rep movsd` pays it once for the whole range. That is the ceiling on any
 "bind once, store many" or region-typed-store work, and it is enormous.
-
-For reference on the same run: `lut` (the Heroes II shape) 32 MB/s, `cmp_ladder`
-13 MB/s.
 
 ### 4.3 The open contradiction
 

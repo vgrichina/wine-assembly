@@ -133,4 +133,9 @@ function main() {
   }
 }
 
-main();
+// The index walk is the one place that knows how a WAT function name maps to a
+// wasm function index, so tools that need the mapping import it rather than
+// re-deriving it (tools/wasm-native.js). Running the file still runs the CLI.
+if (require.main === module) main();
+
+module.exports = { scan };

@@ -1828,6 +1828,15 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; 1 arg
   )
 
+  ;; FlushViewOfFile(lpBaseAddress, dwNumberOfBytesToFlush) — 2 args. Writes
+  ;; the view's bytes back to whatever backs the section while the view stays
+  ;; mapped. Kodak Imaging calls it right after MapViewOfFile on its thumbnail
+  ;; cache and dies on the spot if the call is missing.
+  (func $handle_FlushViewOfFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_fs_flush_view (local.get $arg0) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; 2 args
+  )
+
   ;; 782: MoveFileExW(lpExistingFileName, lpNewFileName, dwFlags) — 3 args
   (func $handle_MoveFileExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (local.get $arg1)
