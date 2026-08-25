@@ -1326,7 +1326,8 @@
   ;; 0x07152000 256KB    Block cache indexes (8 slots × 4096 entries × 8 bytes)
   ;; 0x07192000  8MB     PE staging area (supports PEs up to 8MB)
   ;; 0x07992000  512B    DLL table (16 DLLs × 32 bytes)
-  ;; 0x07992200  512B    DLL resource table (16 DLLs × 8 bytes: rsrc_rva, rsrc_size)
+  ;; 0x07992200  256B    DLL resource table (16 DLLs × 8 bytes: rsrc_rva, rsrc_size)
+  ;; 0x07992300   64B    DLL path table (16 guest string pointers)
   ;; 0x07992400  ...     File mapping zone (MapViewOfFile allocations)
   ;; 0x08000000 320MB    VirtualAlloc backing pool for sparse high guest maps
   ;; 0x1C000000  64MB    Page-aligned CreateDIBSection pixel arena
@@ -2328,6 +2329,9 @@
   (global $DLL_TABLE i32 (i32.const 0x07992000))  ;; 32 bytes x 16 DLLs = 512 bytes
   ;; Parallel to DLL_TABLE: per-DLL resource dir (rsrc_rva, rsrc_size). 8 bytes x 16 = 128B.
   (global $DLL_RSRC_TABLE i32 (i32.const 0x07992200))
+  ;; Full path used to load each module, as a guest string pointer. Keeping it
+  ;; parallel avoids changing the long-established 32-byte DLL table ABI.
+  (global $DLL_PATH_TABLE i32 (i32.const 0x07992300))
   ;; Active resource-lookup context. base=0 means "use main EXE ($image_base / $rsrc_rva)".
   ;; When a Load*/FindResource* handler is called with a DLL hInstance, these are pushed
   ;; to that DLL's load_addr + rsrc_rva for the duration of the lookup, then cleared.

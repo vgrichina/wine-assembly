@@ -1995,6 +1995,34 @@
       (i32.const 0) (local.get $wide))
     (local.get $n))
 
+  ;; Copy a host-recorded loaded-module path from guest memory. The loader
+  ;; records the actual LoadLibrary spelling so self-extractors which validate
+  ;; their own directory (CTL3D32 is a common example) do not see the EXE path.
+  (func $loaded_module_file_name
+      (param $path_g i32) (param $buf_g i32) (param $size i32) (param $wide i32)
+      (result i32)
+    (local $n i32) (local $i i32) (local $step i32)
+    (if (i32.or (i32.eqz (local.get $path_g)) (i32.eqz (local.get $buf_g)))
+      (then (return (i32.const 0))))
+    (local.set $step (select (i32.const 2) (i32.const 1) (local.get $wide)))
+    (local.set $n (call $guest_strlen (local.get $path_g)))
+    ;; Match the existing EXE/static-module behavior by reserving a terminator.
+    (if (i32.and (i32.gt_u (local.get $size) (i32.const 0))
+                 (i32.ge_u (local.get $n) (local.get $size)))
+      (then (local.set $n (i32.sub (local.get $size) (i32.const 1)))))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+      (call $store_char
+        (i32.add (local.get $buf_g) (i32.mul (local.get $i) (local.get $step)))
+        (call $gl8 (i32.add (local.get $path_g) (local.get $i)))
+        (local.get $wide))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (call $store_char
+      (i32.add (local.get $buf_g) (i32.mul (local.get $n) (local.get $step)))
+      (i32.const 0) (local.get $wide))
+    (local.get $n))
+
   ;; One character to a guest address, ANSI or wide.
   (func $store_char (param $p_g i32) (param $ch i32) (param $wide i32)
     (if (local.get $wide)
@@ -2002,7 +2030,7 @@
       (else (call $gs8 (local.get $p_g) (local.get $ch)))))
 
   (func $handle_GetModuleFileNameA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $idx i32)
+    (local $idx i32) (local $path_g i32)
     (local.set $idx (call $static_sys_dll_from_handle (local.get $arg0)))
     (if (local.get $idx)
       (then
@@ -2010,6 +2038,23 @@
           (i32.sub (local.get $idx) (i32.const 1))
           (local.get $arg1) (local.get $arg2) (i32.const 0)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (local.set $idx (i32.const 0))
+    (block $not_loaded (loop $scan_loaded
+      (br_if $not_loaded (i32.ge_u (local.get $idx) (global.get $dll_count)))
+      (if (i32.eq (local.get $arg0)
+            (i32.load (i32.add (global.get $DLL_TABLE)
+              (i32.mul (local.get $idx) (i32.const 32)))))
+        (then
+          (local.set $path_g (i32.load (i32.add (global.get $DLL_PATH_TABLE)
+            (i32.shl (local.get $idx) (i32.const 2)))))
+          (if (local.get $path_g)
+            (then
+              (global.set $eax (call $loaded_module_file_name
+                (local.get $path_g) (local.get $arg1) (local.get $arg2) (i32.const 0)))
+              (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+              (return)))))
+      (local.set $idx (i32.add (local.get $idx) (i32.const 1)))
+      (br $scan_loaded)))
     (global.set $eax (call $module_file_name (local.get $arg1) (local.get $arg2) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
   )
@@ -3081,6 +3126,17 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
+  ;; GetWindowWord(hWnd, nIndex) → WORD. Negative indices and the aligned
+  ;; window-extra offsets used by Win32 applications share GetWindowLong's
+  ;; backing state; return its low word. Both APIs are stdcall(2), so the long
+  ;; handler also performs the correct stack cleanup.
+  (func $handle_GetWindowWord (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_GetWindowLongA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+  )
+
   ;; 102: SetWindowTextA
   (func $handle_SetWindowTextA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $wa i32) (local $len i32)
@@ -4142,6 +4198,16 @@
     (local.set $hwnd (global.get $next_hwnd))
     (call $handle_DialogBoxParamA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
     (call $wnd_unicode_set (local.get $hwnd) (i32.const 1))
+  )
+
+  ;; DialogBoxIndirectParamA uses the same modal creation/pump as
+  ;; DialogBoxParamA, but arg1 already points at a DLGTEMPLATE rather than an
+  ;; RT_DIALOG resource name. $dlg_load consumes and clears this one-shot.
+  (func $handle_DialogBoxIndirectParamA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $dlg_indirect_template_ptr (local.get $arg1))
+    (call $handle_DialogBoxParamA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
  139: OffsetRect — STUB: unimplemented
@@ -5984,7 +6050,7 @@
 
   ;; 284: GetModuleFileNameW — write L"C:\<exe_name>\0" as wide string
   (func $handle_GetModuleFileNameW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $idx i32)
+    (local $idx i32) (local $path_g i32)
     (local.set $idx (call $static_sys_dll_from_handle (local.get $arg0)))
     (if (local.get $idx)
       (then
@@ -5992,6 +6058,23 @@
           (i32.sub (local.get $idx) (i32.const 1))
           (local.get $arg1) (local.get $arg2) (i32.const 1)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (local.set $idx (i32.const 0))
+    (block $not_loaded (loop $scan_loaded
+      (br_if $not_loaded (i32.ge_u (local.get $idx) (global.get $dll_count)))
+      (if (i32.eq (local.get $arg0)
+            (i32.load (i32.add (global.get $DLL_TABLE)
+              (i32.mul (local.get $idx) (i32.const 32)))))
+        (then
+          (local.set $path_g (i32.load (i32.add (global.get $DLL_PATH_TABLE)
+            (i32.shl (local.get $idx) (i32.const 2)))))
+          (if (local.get $path_g)
+            (then
+              (global.set $eax (call $loaded_module_file_name
+                (local.get $path_g) (local.get $arg1) (local.get $arg2) (i32.const 1)))
+              (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+              (return)))))
+      (local.set $idx (i32.add (local.get $idx) (i32.const 1)))
+      (br $scan_loaded)))
     (global.set $eax (call $module_file_name (local.get $arg1) (local.get $arg2) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
   )
@@ -12105,6 +12188,24 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
       (br $lp)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; OemToCharBuffA(lpSrc, lpDst, cchDstLength) — the Win98 US codepage
+  ;; conversion is byte-identical for the installer's ASCII path buffer. The
+  ;; Buff variant copies exactly cchDstLength bytes and does not stop at NUL.
+  (func $handle_OemToCharBuffA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $src i32) (local $dst i32) (local $i i32)
+    (local.set $src (call $g2w (local.get $arg0)))
+    (local.set $dst (call $g2w (local.get $arg1)))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (local.get $arg2)))
+      (i32.store8
+        (i32.add (local.get $dst) (local.get $i))
+        (i32.load8_u (i32.add (local.get $src) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 697: ??1type_info@@UAE@XZ — soft-stub — STUB: unimplemented

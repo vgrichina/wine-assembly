@@ -271,6 +271,98 @@
       }
     },
     {
+      "id": "quake-2-demo-installer",
+      "name": "Quake II Demo",
+      "kind": "installer",
+      "version": "3.14 Win32 demo",
+      "executables": [
+        "q2-314-demo-x86.exe"
+      ],
+      "sourcePage": "https://github.com/Jason2Brownlee/Quake2OfficialArchive",
+      "license": "commercial demo; keep as a local candidate fixture and review bundled terms before public deployment",
+      "packages": [
+        {
+          "url": "https://raw.githubusercontent.com/Jason2Brownlee/Quake2OfficialArchive/main/bin/q2-314-demo-x86.exe",
+          "sha1": "5b4dedc59ceee306956a3e48a8bdf6dd33bc91ed",
+          "type": "file",
+          "destination": "q2-314-demo-x86.exe"
+        }
+      ],
+      "cli": {
+        "maxBatches": 100,
+        "batchSize": 10000
+      }
+    },
+    {
+      "id": "heroes-3-demo-installer",
+      "name": "Heroes of Might and Magic III demo",
+      "kind": "installer",
+      "version": "1999 Restoration of Erathia demo",
+      "executables": [
+        "h3demo.exe"
+      ],
+      "sourcePage": "https://archive.org/details/HeroesOfMightAndMagicIiiTheRestorationOfErathia",
+      "license": "commercial demo; keep as a local candidate fixture and review bundled terms before public deployment",
+      "packages": [
+        {
+          "url": "https://archive.org/download/HeroesOfMightAndMagicIiiTheRestorationOfErathia/h3demo.exe",
+          "sha1": "8d44f794a3fe80bea524f90b38fed3325ca3d1cb",
+          "type": "file",
+          "destination": "h3demo.exe"
+        }
+      ],
+      "cli": {
+        "maxBatches": 100,
+        "batchSize": 10000
+      }
+    },
+    {
+      "id": "diablo-2-demo-installer",
+      "name": "Diablo II Demo",
+      "kind": "installer",
+      "version": "2000 Barbarian demo",
+      "executables": [
+        "DiabloIIDemo.exe"
+      ],
+      "sourcePage": "https://archive.org/details/DiabloIiDemo",
+      "license": "commercial shareware demo; local fixture only unless the bundled license is reviewed for deployment",
+      "packages": [
+        {
+          "url": "https://archive.org/download/DiabloIiDemo/DiabloIIDemo.exe",
+          "sha1": "f7aa7f76b9f4c7584d4980cb32a7de97394a3f05",
+          "type": "file",
+          "destination": "DiabloIIDemo.exe"
+        }
+      ],
+      "cli": {
+        "maxBatches": 100,
+        "batchSize": 10000
+      }
+    },
+    {
+      "id": "half-life-uplink-installer",
+      "name": "Half-Life: Uplink",
+      "kind": "installer",
+      "version": "1999 standalone demo",
+      "executables": [
+        "hluplink.exe"
+      ],
+      "sourcePage": "https://archive.org/details/Half-lifeUplink",
+      "license": "commercial demo; keep as a local candidate fixture and review bundled terms before public deployment",
+      "packages": [
+        {
+          "url": "https://archive.org/download/Half-lifeUplink/hluplink.exe",
+          "sha1": "605e110670ca3d55b2093b7750d1d0138cbf1f4c",
+          "type": "file",
+          "destination": "hluplink.exe"
+        }
+      ],
+      "cli": {
+        "maxBatches": 100,
+        "batchSize": 10000
+      }
+    },
+    {
       "id": "heroes-2-demo",
       "name": "Heroes of Might and Magic II demo",
       "kind": "game",

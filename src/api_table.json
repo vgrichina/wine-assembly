@@ -23832,5 +23832,76 @@
       }
     ],
     "ret": "LONG"
+  },
+  {
+    "id": 2874,
+    "name": "OemToCharBuffA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2547561543,
+    "args": [
+      {
+        "name": "lpszSrc",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "lpszDst",
+        "type": "LPSTR",
+        "out": true
+      },
+      {
+        "name": "cchDstLength",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "BOOL"
+  },
+  {
+    "id": 2875,
+    "name": "DialogBoxIndirectParamA",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1143008472,
+    "args": [
+      {
+        "name": "hInstance",
+        "type": "HINSTANCE"
+      },
+      {
+        "name": "hDialogTemplate",
+        "type": "ptr"
+      },
+      {
+        "name": "hWndParent",
+        "type": "HWND"
+      },
+      {
+        "name": "lpDialogFunc",
+        "type": "ptr"
+      },
+      {
+        "name": "dwInitParam",
+        "type": "LPARAM"
+      }
+    ],
+    "ret": "INT_PTR"
+  },
+  {
+    "id": 2876,
+    "name": "GetWindowWord",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3132977643,
+    "args": [
+      {
+        "name": "hWnd",
+        "type": "HWND"
+      },
+      {
+        "name": "nIndex",
+        "type": "i32"
+      }
+    ],
+    "ret": "WORD"
   }
 ]

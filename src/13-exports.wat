@@ -3020,6 +3020,13 @@
   ;; Get GUEST_BASE for direct WASM memory access
   (func (export "get_guest_base") (result i32) (global.get $GUEST_BASE))
   (func (export "get_dll_table") (result i32) (global.get $DLL_TABLE))
+  (func (export "set_dll_path") (param $idx i32) (param $path_g i32)
+    (if (i32.lt_u (local.get $idx) (i32.const 16))
+      (then
+        (i32.store
+          (i32.add (global.get $DLL_PATH_TABLE)
+            (i32.shl (local.get $idx) (i32.const 2)))
+          (local.get $path_g)))))
   (func (export "set_dll_count") (param $count i32) (global.set $dll_count (local.get $count)))
   (func (export "test_set_dll_count") (param $count i32) (global.set $dll_count (local.get $count)))
   (func (export "get_ansi_code_page") (result i32) (global.get $ansi_code_page))
