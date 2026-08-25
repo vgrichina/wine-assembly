@@ -974,3 +974,755 @@ names the right block when generated code is rewritten at an offset that is not
 a block start. `$page_retire_at` and section 5.1 of
 `docs/page-compile-design.md` are where to look, and `--decode-stats` reports
 `page_retires` / `page_range_drops` / exact-hit share for that window.
+
+### The menu logo's decode buffer, diffed against ground truth (2026-08-24, `diablo-pcx-diff`)
+
+New section; nothing above is rewritten. One withdrawal is marked at the end.
+
+**The animated menu logo is `ui_art\smlogo.pcx` (block 22, 390 × 2310, fsize
+333,227), not `ui_art\logo.pcx`.** Confirmed two ways: the 900,900-byte
+`SMemAlloc` the multi-frame builder makes is exactly 390 × 2310, and all **six**
+static call sites of the builder `diabloui+0x20001610` push
+`diabloui+0x2001e18c = "ui_art\smlogo.pcx"` (`node tools/xrefs.js diabloui.dll
+0x2001e18c`); `"ui_art\logo.pcx"` has one xref and it is not the builder. The
+"Logo blinks on the main menu" section above says the builder loads
+`ui_art\logo.pcx` (390 × 2310) — that filename is **withdrawn**; the geometry it
+quotes was always smlogo's.
+
+#### Getting the guest's buffer out without a src/ change
+
+The builder's decode buffer is `SMemAlloc(w*h)` in `LoadArt`
+(`diabloui+0x20009740`), and Storm's `SMemAlloc` bottoms out in a guest
+`HeapAlloc`, so `--trace-api=HeapAlloc` names it with no instrumentation:
+
+```
+[API #21491] HeapAlloc(hHeap=h:0x00140000, dwFlags=0, dwBytes=0x000dbf30) [ret=0x006c3ff0]
+  => 0x00a7bc04        <-- 900,912 = 900,900 + 12; the image plane starts here
+[API #21538] HeapAlloc(... dwBytes=0x00051530) => 0x00cb130c   <-- the 333,099-byte PCX body read buffer
+```
+
+The block is freed at the end of the builder but **not** overwritten before the
+run ends, so a plain post-run `--dump` recovers it:
+
+```sh
+node test/run.js --app=diablo_shareware --time-scale=30 --max-batches=40100 \
+  --no-close --dump=0xa7bc08:900900
+node tools/mpq-extract.js <spawn.mpq> --name='ui_art\smlogo.pcx' --pixels=/tmp/smlogo.idx
+```
+
+`--pixels=PATH` (new, uncommitted) writes the decoded 8bpp index plane —
+`height * bytesPerLine` bytes, exactly what the guest's buffer should hold.
+`--src-of=N` (also new) reports which byte of the compressed PCX stream produced
+output byte *N*, which is what turns an image-space offset into a sector index.
+
+#### The four answers
+
+1. **First differing byte: image offset 168,597 (0x29295)** — row 432, column
+   117; **frame 2, row 124 of 154**. Everything before it is byte-identical to
+   the archive: frames 0 and 1 are perfect (0 differing bytes of 60,060 each),
+   frame 2 is perfect for its first 124 rows. 18.7% of the image is right, which
+   is the "about 2.5 of 15 frames" the section above measured from the sprites.
+2. **The tail is a short decode, not a mis-decode.** From 168,597 to 891,911 the
+   guest buffer is **all zero** — 723,315 consecutive zero bytes. The only
+   non-zero bytes after the divergence are the last ~9KB, and they are
+   `8b 06 8b 1f 81 c6 04 00 00 00 0b c3 89 07 81 c7 04 00 00 00` repeated —
+   Storm's runtime-built unrolled **dword OR-blit copier**, i.e. the freed block
+   being reused for generated code after the builder returned. That is a
+   dump-after-free artifact, not decode output.
+3. **Sector 15.** `--src-of=168597` says image byte 168,597 comes from PCX file
+   offset **0xFFFF**, which is the **last byte of MPQ sector 15** (4096-byte
+   sectors; sector 15 spans 0xF000–0xFFFF). The token there is a run token whose
+   *value* byte lives at 0x10000 in sector 16; the guest read the run byte and a
+   zero value byte, so it painted a 25-pixel run of index 0 and then literal
+   zeros forever. Input bytes 0x80–0xFFFF were all delivered correctly.
+4. **Exactly on a sector boundary — the 15/16 one, i.e. file offset 0x10000
+   (64 KiB).** Not the 0x20000 chunk boundary, and not an arbitrary offset. The
+   guest received `0x10000 - 0x80 = 0xFF80` = 65,408 bytes of the 333,099 it
+   asked for.
+
+#### What the emulator gets wrong (best-supported statement)
+
+The whole load runs on **worker thread T1**, over Storm's async 0x20000-chunk
+path — which is why every `--trace-at`/`--break` probe on it from the main
+instance comes back empty (`--trace-at` is main-only; `--break --break-thread=T1`
+produced no hit either). `--trace-api=ReadFile,SetFilePointer` shows the entire
+host-side conversation for block 22, and it is *not* short:
+
+```
+[API T1] SetFilePointer(h, 0x0009a361)              ; block 22 base
+[API T1] ReadFile(h, 0x4fc699a0, 0x0000014c, ...)   ; the 83-entry sector table
+[API T1] ReadFile(h, 0x009d702c, 0x00000a19, ...)   ; sector 0 (2585 bytes)
+[API T1] SetFilePointer(h, 0x0009a4ad)              ; sector 0's archive offset
+[API T1] ReadFile(h, 0x009d702c, 0x00000a19, ...)   ; sector 0 again
+[API T1] ReadFile(h, 0x00a67a7c, 0x00014176, ...)   ; 82,294 bytes = sectors 1..31
+... later ...
+[API T1] ReadFile(h, 0x4fc69480, 0x00000000, ...)   ; a ZERO-length read, then it gives up
+```
+
+`0x14176` from archive `0x9aec6` ends exactly at sector 32's archive offset
+`0xaf03c`, so Storm read the compressed bytes for **sectors 0..31 — the full
+first 0x20000 chunk** — and the host handed all of them over. But only
+**sectors 0..15** ever became output. So the compressed input arrived and half
+of it was thrown away between the read and the caller's buffer.
+
+Two numeric coincidences worth chasing, both consistent with everything measured:
+
+- The per-sector loop count in `storm+0x1500c2e0` is `ceil(bytes/0x1000)`
+  (`lea eax,[ecx+edx-1] / sub edx,edx / div ecx` at `0x1500c6db`, count kept in
+  `[esp+0x14]`). 16 iterations instead of 32 means that `bytes` was **0x10000
+  where it should have been 0x20000** — the chunk size halved *after* the
+  read-span computation, which used 0x20000 correctly.
+- Equivalently, delivered `0xFF80` is `0x1FF80 & 0xFFFF`: the chunk's true byte
+  count (0x20000 − 0x80) **truncated to 16 bits**. This run cannot separate the
+  two — the read starts at file offset 0x80, so "stop at the 64 KiB file
+  boundary" and "count truncated to 16 bits" predict the same 0xFF80. A file
+  whose body read starts somewhere other than 0x80 would separate them.
+
+Either way the statement that survives is sharper than the one above: **it is
+not explode. Explode is fed 16 of the chunk's 32 sectors, because the byte count
+that drives the per-sector loop arrives halved (0x10000 for a 0x20000 chunk),
+and `SFileReadFile` then reports the short delivery via ERROR_HANDLE_EOF while
+`SBmpLoadImage` ignores it and RLE-decodes the zero tail into black.** The next
+probe is the register state at `storm+0x1500c6db` (`[esp+0x24]` = the byte count,
+`ecx` = 0x1000) **on T1** — and note that reaching it needs a T1-capable
+breakpoint, since this whole path never executes on main.
+
+#### Corroboration and non-findings
+
+- The divergence is reproducible and flag-independent in the sense that matters:
+  the buffer address `0xa7bc04` and the first-diff offset came from two
+  *different* command lines (`--trace-api=...` and `--dump=...`) and agree.
+- `frames 3–14 all zero` in the diff matches the sprite payload evidence above
+  (12 sprites of exactly 60,992 bytes = the fully-opaque worst case) from a
+  completely independent measurement.
+- A trap for the next agent: `--count` counters live in **shared memory**
+  (`HIT_COUNT_BASE`), so they include worker threads, while `--break`/`--trace-at`
+  arm a **per-instance** global. `--count=diabloui+0x20009740` says 15 while
+  main-only `--trace-at` sees 12 — the missing 3 are T1's, and 3 of them are this
+  bug's. Do not read that gap as a dropped breakpoint.
+
+## Regression test: `test/test-diablo-shareware-art.js` (added 2026-08-24)
+
+The three open bugs above now have one automated check. Run it with:
+
+```sh
+node test/test-diablo-shareware-art.js
+```
+
+(also wired into `test/run-all.sh`'s `E2E` tier). It spawns **one** pinned run —
+`--app=diablo_shareware --time-scale=30 --max-batches=41500 --no-close
+--repaint-every=200 --trace-thread`, 15 logo PNGs at batches 39800+3k, Enter at
+40000/40060, the Choose Class capture at 41400 — and takes 60–95 s. Captures land
+in `build/diablo-shareware-art/`, the run log in
+`build/diablo-shareware-art.log`. `node test/test-diablo-shareware-art.js <dir>`
+re-scores an existing capture directory without re-running.
+
+What it asserts, all three in pixels or in `[thread-event]` JSON, never in exit
+codes or file sizes:
+
+1. **≥13 of 15 logo captures match a frame of `ui_art\smlogo.pcx`.** The 15
+   frames are extracted from `spawn.mpq` by `tools/mpq-extract.js
+   --frame-height=154` at test time, so the archive is the oracle and there is
+   no golden file to rot. Each capture's lit-pixel mask over the 390×154 logo
+   rect at (126,0) is scored by IoU against the best-matching archive frame.
+   Measured separation: correct art **0.74–0.82**, full-bright colour noise
+   **0.25**, solid black **0.00**; the gate is 0.55. Scoring against the archive
+   rather than a brightness threshold matters — this rectangle can come back as
+   noise, which any "is it lit" count would pass. A secondary check requires ≥3
+   *distinct* sprites across the samples, so a frozen animation cannot pass.
+2. **≥7 of 9 `ui_art\selhero.pcx` panel outlines are drawn on Choose Class.**
+   That art is a mostly-black 640×480 background — the whole frame is ~1.1% lit
+   whether or not it loaded — so the assertion is on the nine outline segments,
+   each 100% lit in the archive and 0% today, searched ±4 px for placement.
+3. **No thread exits with `eip=0`.** Parsed from the `[thread-event]` lines
+   `--trace-thread` prints; the test also asserts Storm's worker was spawned at
+   all, so a run that never creates T1 cannot pass by omission.
+
+If the emulator's timing moves and the samples land off the menu, the test says
+so with its own message ("the main menu was not on screen for N of 15 logo
+captures") instead of blaming the art — re-derive `LOGO_FIRST` in that case.
+Changing the flags changes the execution, so treat the command line as part of
+the test.
+
+Failing output on `9b9a98c9` (page-compile main, 2026-08-24):
+
+```
+logo frame IoU vs archive: 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.81 0.82 0.82 0.74 0.00 0.00 0.00 0.00
+logo frames matching the archive: 4/15  (distinct sprites seen: 0,1,2)
+choose class panel segments drawn: 0/9
+  - only 4 of 15 main-menu logo captures match a frame of ui_art\smlogo.pcx
+  - only 0 of 9 ui_art\selhero.pcx panel outlines are drawn on Choose Class
+  - Storm's shared async worker (thread 1) died with EIP=0 at batch 39381
+```
+
+Only sprites 0, 1 and 2 ever match — the same "3 of 15 decode, the rest are
+zeroed" shape the sections above measured from the sprite payload sizes.
+
+## Show Credits
+
+Measured 2026-08-24 on the working tree at `d627e9c5` (which also carried the
+uncommitted `host.js` / `lib/filesystem.js` / `src/09a-handlers.wat` /
+`src/10-helpers.wat` / `tools/mpq-extract.js` hunks other agents owned at the
+time). Every number below includes them.
+
+**Verdict: the screen works; two things on it are broken.** The menu item
+transitions, the credits scroll runs and animates, and Escape returns to the
+menu. The background art is missing (black), and every line of credits text
+renders as a solid white rectangle instead of glyphs. Neither is a new bug in
+the credits code — one is the already-documented dead Storm worker, the other is
+our `ExtTextOut`/`GetDIBits` memory-DC path.
+
+### Repro
+
+"SHOW CREDITS" is the 4th menu item; the five items sit at y ≈ 213, 256, 299,
+342, 385, so it is a click at **(320, 342)**.
+
+```sh
+timeout 500 node test/run.js --app=diablo_shareware --time-scale=30 \
+  --max-batches=41200 --no-close --repaint-every=200 \
+  --input=39400:mousemove:320:342,39500:mousedown:320:342,39620:mouseup:320:342,\
+40000:png:/tmp/cr2.png,40001:png:/tmp/cr3.png,41000:png:/tmp/cr6.png
+```
+
+Escape gets back out:
+
+```sh
+  --input=...,40800:keydown:27,40860:keyup:27,41100:png:/tmp/e1.png
+```
+
+The transition is immediate — the screen is already the credits screen at 39800.
+The scroll really animates: captures at 40000/40001/40002 differ, and by 41000
+different lines are on screen at different widths. It is not a frozen frame.
+
+### 1. The background: the dead shared worker again, nothing new
+
+`ui_art\credits.pcx` is block 1002, csize 115344 / fsize 157403, a single 640x480
+PCX of the Tristram tavern (`node tools/mpq-extract.js <spawn.mpq>
+--name='ui_art\credits.pcx' --png=/tmp/c.png` renders it correctly host-side, so
+the asset and our MPQ decoder are both fine). It is the **only** `ui_art\credits*`
+name in the archive — `creditsw.pcx`, `credits.txt`, `cred.pcx`, `credits_l/r.pcx`,
+`credits.smk`, `credline.pcx` all miss the hash table.
+
+The credits screen loads exactly one art, and it fails. Counter split across the
+transition, same command line, only `--max-batches` differing (39450 vs 41200):
+
+```
+                                        pre    post
+storm+0x15001d10  SBmpLoadImage          36     37
+storm+0x15001e51  its header-read fail    0      1
+storm+0x1500ea5e  SFileReadFile sync     58     58   <-- unchanged
+storm+0x1500e9c7  SFileReadFile async    25     26
+storm+0x1500c8e0  async work-node ctor   33     34
+storm+0x1500ead4  ERROR_HANDLE_EOF        1      2
+diabloui+0x200097e0 art helper            2      3
+diabloui+0x20009949 its failure exit      0      1
+```
+
+So the one extra read took the **async** path, enqueued one work node, and came
+back with zero bytes. `--trace-fs` confirms it never reached the VFS: **zero**
+host `ReadFile`s at `pos=0x2f6024c`, credits.pcx's archive offset, in the whole
+run. T1 dies with the documented signature (`prev_eip=0x6aeec4`, `ecx=0x1fe`,
+EIP=0) long before the click, so this is the *same* failure as "Choose Class
+screen is corrupted", reached by a second route. Nothing credits-specific.
+
+> Note for whoever fixes the worker: `--count` on `storm+0x1500e97f` and
+> `storm+0x1500e9d5` reads 0 even when the async path runs every time. Those are
+> mid-block addresses. `0x1500e9c7` and `0x1500c8e0` are real block entries and
+> are the ones to count.
+
+### 2. The text: our GDI font-sheet rasterization, and it is a *different* bug
+
+The credits are drawn into a plain `SMemAlloc` scroll buffer, not onto a surface.
+`diabloui+0x200076a9` is `UiCreditsDialog`'s init: it takes `GetDlgItem(hDlg,
+0x3e8)`'s rect, `SMemAlloc`s a **580-wide** buffer (`credits.cpp:0x7a`) and parks
+the pointer at `diabloui+0x20020158` (runtime `0x700158`). The scroll geometry
+lives at `0x20022bd0` (= 580, the stride) and `0x20022bd4` (= 311, the row count).
+
+Dump it and look at it directly — this is the decisive measurement, because it
+separates "the text was composed wrong" from "the blit to screen was wrong":
+
+```sh
+timeout 500 node test/run.js --app=diablo_shareware --time-scale=30 \
+  --max-batches=41200 --no-close --repaint-every=200 \
+  --input=39400:mousemove:320:342,39500:mousedown:320:342,39620:mouseup:320:342 \
+  --dump=0x700158:16           # -> buffer pointer, 0x00b75a6c on this run
+  # then re-run with --dump=0xb75a6c:180380 and render at stride 580
+```
+
+The buffer **already contains solid bars**, so nothing about presentation is
+implicated. It holds only **seven distinct byte values** in 180,380 bytes
+(`0x00`:121874, `0xe0`:42266, `0xef`:15184, and ~1056 bytes of `0x21`/`0x2c`/
+`0x29`/`0x20`). Text rows are 20 px tall on a 22 px pitch.
+
+`0xe0` is not a coincidence. The per-line render loop at `diabloui+0x200079d0`
+calls the same helper twice per line: `push 0x1000000` (shadow, colour index 0)
+at (x+2, y+2), then `push 0x10000e0` (index 0xE0) at (x, y). The helper at
+`diabloui+0x20014b76` is `jmp [0x2002758c]` — IAT slot 16 of `storm.dll` =
+**`SGdiTextOut`**. (`0x20014ac8` → slot 43 = `SBltROP3`, the blit of the finished
+buffer to the screen.) The main-menu items use the ArtFont sprites instead, which
+is why they still render as proper gold glyphs — including on the frame *after*
+Escape.
+
+`SGdiTextOut` needs a font sheet, and Storm builds one with **host GDI**, once,
+at credits init. Traced (`--trace-api=...`):
+
+1. `CreateCompatibleDC` → memory DC `0x0031008c`
+2. 256 × `GetTextExtentPoint32A`, one per charcode
+3. `CreateDIBitmap(hdc, &bmih, fdwInit=0, NULL, &bmi, 0)` → `0x0041000b`, 320x320 8bpp
+4. `Rectangle(0,0,320,320)`, `SetTextAlign`, `SetTextColor(#000000)`,
+   `SetBkColor(#ffffff)`, `SetBkMode(OPAQUE)`
+5. **256 × `ExtTextOutA(hdc, x, y, ETO_OPAQUE, lprc=<20x20 cell>, ch, 1, NULL)`** —
+   a 16 × 16 grid of 20 × 20 cells
+6. `GetDIBits(hdc, 0x41000b, 0, 320, buf=0x00b72864, &bmi, 0)`
+
+Dump that readback (`--dump=0xb72864:102400` at `--max-batches=39900`) and render
+it at stride 320. **Only the top ~30% of the sheet has any content, and what is
+there is interlaced — every other scanline blank — with glyph forms far larger
+than the 20 × 20 cells they were clipped to. The bottom two thirds is all zero**
+(0x00 is 82103 of 102400 bytes; the ink/paper values `0x21`/`0xef` are exactly the
+two that survive into the scroll buffer's top rows).
+
+That is the whole text bug. Storm reads the sheet back as "anything that is not
+the paper index is ink", so a cell of zeros is a **fully inked glyph**, and
+`SGdiTextOut` paints the cell solid in the requested colour. 256 solid cells side
+by side is the white bar, and its length still tracks the string length, which is
+why the screen looks like correctly laid-out text with the glyphs painted out.
+
+**Root cause: our memory-DC text path.** `ExtTextOutA` with `ETO_OPAQUE` into a
+DC whose bitmap came from `CreateDIBitmap` (`fdwInit=0`, no initial bits), read
+back with `GetDIBits`, does not produce the raster the guest drew. Whether the
+loss is in the rasterization or in the readback is **not** determined here; both
+are on the same short list. Note it is not a missing API — every call in the list
+above succeeds and returns TRUE.
+
+### 3. Exit
+
+Escape returns to the main menu (`e1.png`/`e2.png` above): the five menu items are
+back and render as correct gold ArtFont glyphs. Two cosmetic leftovers: the
+credits pixels are **not erased** — regular thin white horizontal lines remain
+across the whole 640 width and never go away — and the flaming logo is absent on
+that frame, which is the separately-tracked logo blink and its ~20% duty cycle,
+not something credits did. Exiting by mouse click was not tested.
+
+### 4. No crash, no unimplemented API
+
+No trap, no `crash_unimplemented`, no new thread death. The only thread event in
+the run is the known T1 exit (`[ThreadManager] Thread 1 EIP=0 …
+prev_eip=0x6aeec4 ecx=0x1fe`), which happens before the click and is the cause of
+§1.
+
+### Addresses named by this investigation
+
+| VA | What |
+|---|---|
+| `diabloui+0x200076a9` | `UiCreditsDialog` init; `+0x20007761` loads `ui_art\credits.pcx` via the art helper, `+0x200077ad` `SMemAlloc`s the scroll buffer |
+| `diabloui+0x200079d0` | per-line credits render; `+0x20007ab7` shadow pass (colour `0x01000000`), `+0x20007ad2` text pass (colour `0x010000e0`) |
+| `diabloui+0x20014b76` | thunk → `storm.dll` IAT slot 16 = `SGdiTextOut` |
+| `diabloui+0x20014ac8` | thunk → `storm.dll` IAT slot 43 = `SBltROP3` (scroll buffer → screen) |
+| `diabloui+0x20020158` | scroll buffer pointer (runtime `0x700158`) |
+| `diabloui+0x20022bd0` / `+0x20022bd4` | scroll buffer stride (580) / row count (311) — runtime `0x702bd0` / `0x702bd4` |
+| `storm+0x1500e9c7` | `SFileReadFile` async-dispatch loop exit — a real block entry, unlike `+0x1500e97f` |
+
+`ui_art\credits.pcx` is block 1002, `pos 0x02f6024c`, csize 115344, fsize 157403,
+39 sectors, `IMPLODE|ENCRYPTED`.
+
+#### Follow-up: halved, truncated, or neither? (same session, `diablo-pcx-diff`)
+
+**Neither. It is a use-before-fill race: nothing shrinks the count — the data
+simply has not arrived yet when the decoder reads the buffer.** The 16-bit
+truncation reading in my section above is **withdrawn**; so is the "halved
+0x20000 → 0x10000" reading. Measurements, in order:
+
+**1. The chunk byte count that reaches the work node is correct (0x20000).**
+`storm+0x1500e95f` is the branch target of the `jb` that skips
+`mov eax,0x20000`, so counting it counts the chunks that were *not* clamped:
+
+```
+--count=storm+0x1500e93b,storm+0x1500e95f,storm+0x1500e984,storm+0x1500bead, ...
+  0x006b193b = 2    chunk-dispatch loop back-edges  -> exactly one read had 3 chunks
+  0x006b195f = 13   dispatches that did NOT clamp   -> 2 dispatches DID: two full 0x20000 chunks
+  0x006b1984 = 15   node-constructor returns        -> 15 chunk nodes dispatched in all
+  0x006aeead = 30   worker jobs that called the sector reader storm+0x1500c0a0
+  0x006aeeb9 = 30   worker body entries      0x006aeec4 = 17 sound-job branch
+  0x006b1ad4 = 1    the single ERROR_HANDLE_EOF
+```
+
+`ui_art\smlogo.pcx`'s body read is 333,099 bytes = 3 chunks (0x20000, 0x20000,
+0x1102b), and those are the only two full-size chunks in the whole run. So
+`eax` at `0x1500e963` is a clean 0x20000; `0x20000 & 0xFFFF` is 0, not 0xFF80,
+which kills the truncation story at its only anchor.
+
+**2. The worker is alive and still producing after the give-up — it is not a
+dead worker.** `--watch=0xcc128c --watch-log` on the caller's read buffer
+(`0xcb130c` + 0xFF80, i.e. file offset 0x10000, the first byte the image is
+missing) fires exactly once:
+
+```
+[ThreadManager] T1 WATCH 0xcc128c 0x0 -> 0xe2c1b7fa eip=0x6cf5c8 prev_eip=0x6af8a0 ...
+*** WATCHPOINT hit at batch 39381
+```
+
+`0xe2c1b7fa` is `fa b7 c1 e2` — **exactly** the archive's bytes at file offset
+0x10000. `prev_eip = storm+0x1500c8a0` is explode's **write callback** and
+`eip` is inside `storm+0x1502c3c0`. Sector 16 is decompressed correctly, by the
+live worker, into the right place — just **late**.
+
+**3. Late relative to the decode — shown inside one flag configuration.** Same
+command line, `--max-batches=39381` (so batches 0..39380 run) plus a dump of the
+image buffer: the watchpoint has **not** fired yet, and the decoded image
+already has its final shape — first divergence at 168,593/168,597, zero tail,
+byte-identical to the full run. The picture is finished before the byte that
+would have fixed it is written.
+
+**4. The cut does not move when the interleave granularity changes.**
+`--batch-size=4000 --max-batches=11000` (same total steps, worker slices 4×
+coarser) and `--thread-slices=16` both give a **byte-identical** first
+divergence at 168,593. That is expected under the race, not against it: both
+knobs scale main's and the worker's step budgets together. What decides the cut
+is the *wait deadline*, which is measured in batches:
+`lib/thread-manager.js` `checkMainYield()` expires a bounded wait when
+`this._now() - startedAt >= waitTimeout`, and the CLI's `_now()` is
+`batch * 200`. Storm's `WaitForMultipleObjects(n, handles, TRUE, 255)` at
+`storm+0x1500e9d5` therefore gets ~1.3 batches of worker time — which is 16
+sectors — and then returns WAIT_TIMEOUT. Storm ignores the return, sums the
+per-node delivered bytes, gets 0xFF80 of 0x5152B, and returns FALSE with
+`ERROR_HANDLE_EOF`; `SBmpLoadImage` ignores *that* and RLE-decodes the
+half-filled buffer.
+
+So the emulator defect is: **a bounded `WaitForMultipleObjects` is expired
+against a clock while the worker threads it is waiting on are still runnable and
+their events unsignaled.** On real hardware those three chunk jobs finish in far
+under 255 ms; here 255 ms of emulated clock buys one worker slice.
+
+Two side observations worth recording:
+
+- By the time the late sector-16 write lands (batch 39381), the read buffer has
+  already been **freed and reused** — `$heap_free` (`src/10-helpers.wat:568`)
+  only links the block into the free list, it does not clear, and the 12
+  all-zero `STransCreate` payloads (60,984 bytes each) are what now occupy that
+  address range. So the worker's late write is also a stray store into a live
+  sprite. Post-run dumps of the *read* buffer are therefore contaminated and
+  cannot be used as decode-time evidence; the image buffer (dumped above) can,
+  because nothing reallocated over its first 168 KB.
+- `--count` slots live in shared memory and count worker hits; `--break` and
+  `--trace-at` are per-instance and never fire for T1 on this path. Every number
+  in this subsection came from counters and watchpoints for that reason.
+
+**Smallest instrumentation that would settle what is left** (I could not make
+it): in `lib/thread-manager.js`'s bounded-wait branch, keep polling instead of
+expiring while `hasActiveThreads()` and the waited-on handles are unsignaled
+(or scale `waitTimeout` by the emulation slowdown). That is also the candidate
+fix: with it, the three chunk jobs complete and the diff above should come back
+`identical`.
+
+## Storm's own heap suballocator (`SMemAlloc`), and the double-issue question
+
+*Added 2026-08-24 by the allocator-RE session. Read-only investigation; no
+`src/` or `lib/` edits. All disassembly is of
+`test/binaries/candidates/diablo-shareware/installed/storm.dll`, original VAs.*
+
+Short answer to "does Storm's allocator hand the same bytes out twice": **no.
+Measured at 106 pages / 2866 live blocks, its bookkeeping is exactly
+self-consistent.** What is really happening is one step upstream — the audio
+work-queue head ends up holding an address the allocator *never issued*, and the
+allocator then quite correctly gives that memory to the code generator. Details
+and the measurements are below.
+
+### The call chain
+
+```
+SMemAlloc(size, file, line)        0x150102b0   ret 0xc, takes CS 0x15034b40
+  └ 0x15020f30 → 0x15020f50 → 0x15020fa0        rounds size up to 16
+      ├ size' <= [0x15032fcc]  → 0x15023910     page heap  (the 0x4fc00000 arena)
+      └ else                   → 0x15020fe1     HeapAlloc([0x15035f24], 0, size)
+SMemFree(ptr, file, line)          0x15010690   ret 0xc, same CS
+  └ 0x15021000 → 0x15023860 (ptr → heap/page/record) → 0x150238c0 (release)
+```
+
+`[0x15032fcc]` (runtime `0x6d5fcc`) is **480** in this build, so the sparse
+arena only ever serves allocations of ≤ 480 bytes; anything bigger is a Win32
+`HeapAlloc` and is not in the arena at all.
+
+### 1. Block header layout — there is none in this build
+
+`SMemAlloc` has two modes, selected by `[0x15031f28]` (runtime `0x6d4f28`):
+
+* **Tracking on** (`!= 0`): the block gets a real debug header. Allocation size
+  becomes `size + align4(strlen(file)+1+0x14) + 0xa`; the raw base `ebp` gets
+  `[+0] line`, `[+4] per-file stats record`, `[+8] prev-link`, `[+0xc] next`,
+  `[+0x10] the file-name string`; then, immediately before the returned
+  pointer, an 8-byte mid-header `[-8] pointer to the tail guard`, `[-4] word
+  offset back to the base`, **`[-2] word 0x6f6d ("mo")`** — that is the Storm
+  sentinel — and a **`0xb112` word guard written just past the payload**
+  (`0x15010527`/`0x15010531`). `SMemFree` validates both (`0x150106cf`,
+  `0x150106f7`) and calls the error reporter on a mismatch.
+* **Tracking off** (`== 0`): `SMemAlloc` is a straight `0x15020f30(size)` and
+  `SMemFree` a straight `0x15021000(ptr)`. **No header, no magic, no guard
+  bytes, no free-list links in the payload.**
+
+**Measured: `[0x6d4f28] == 0` in every run here** (`--dump=0x6d4f28:8`). So do
+not go looking for "mo"/`0xb112` in a Diablo dump — Storm is in release mode and
+the returned pointer is the whole block. Every byte of bookkeeping lives in the
+page header instead.
+
+### 2. Free-list structure — a per-page record array, no list and no coalescing
+
+The arena is one heap descriptor (static, `0x150327b0`, runtime `0x6d57b0`,
+0x814 bytes; extra heaps are `HeapAlloc(0x814)` and chained at `[+0]`/`[+4]`):
+
+| offset | meaning |
+|---|---|
+| `+0x000` / `+0x004` | next / prev heap (circular) |
+| `+0x008` | high-water page index |
+| `+0x00c` | lowest decommitted page hint |
+| `+0x010 .. +0x40f` | **one byte per page: free 16-byte units in that page** (`0xff` = page decommitted) |
+| `+0x410 .. +0x80f` | one byte per page: "largest request that failed here" hint (`0xf1` after a free) |
+| `+0x810` | data base = `VirtualAlloc(0, 0x400000, MEM_RESERVE)` → `0x4fc00000` |
+
+`0x150235b0` reserves the 4 MB and commits the first `0x10000`; that is exactly
+the `0x4fc00000` arena this file has been calling "Storm's sparse region".
+
+Each 4 KB page is:
+
+```
+page+0x000  dword cursor   -> next record byte to hand out
+page+0x004  dword units left in the current free run
+page+0x008  0xf0 record bytes, index == unit index
+            0 = free unit, n = an allocated block of n 16-byte units starts here
+page+0x0f8  0xff           -> scan sentinel, stops the zero-run scan
+page+0x100  240 x 16-byte data units
+```
+
+`ptr → record` is `page = ptr & ~0xfff; unit = (ptr-page-0x100)>>4; record =
+page+8+unit` (`0x1502388d`), and `record → ptr` is `page + 0x100 + unit*16`
+(`0x15023bcf`). Maximum arena block is 240 units, but the 480-byte threshold
+caps real requests at 30.
+
+* **Allocation** (`0x15023b90`): fast path takes the tail run at the cursor;
+  otherwise it walks the record array skipping allocated blocks by their length
+  byte and counting runs of zero bytes. First fit. The caller
+  (`0x15023910`/`0x15023a50`) then does `sub [heap+0x10+page], units`.
+* **Free** (`0x150238c0`): `add [heap+0x10+page], record; record = 0; hint =
+  0xf1`. That is the entire operation — **no free list, no LIFO, no size
+  buckets, no coalescing**: adjacency is implicit because a free block is just a
+  run of zero record bytes. It cannot corrupt a neighbour's header because there
+  are no headers to corrupt.
+* When a page reaches `0xf0` free units a counter is bumped, and at 32 such
+  pages `0x15023780` walks from the top `VirtualFree(page, 0x1000,
+  MEM_DECOMMIT)`-ing each fully-free page and marking its byte `0xff`.
+
+### 3. Where the generated copier's memory comes from — plain `SMemAlloc`
+
+`SCODE.CPP` (`0x1502d13c`). The code-generator descriptor `S` holds **two** code
+buffers, and the one the row blitter runs out of is
+`[S+0x40] = SMemAlloc(size, "SCODE.CPP", 0x426)` with `[S+0x44] = size`
+(`0x150046b1`–`0x150046bc`), freed at `0x1500471d`. The second is `[S+0x10]`
+(size `[S+0x14]`), freed at `0x150046e1`. Entry-point tables live at `S+0x18[]`,
+`S+0x30[]` and `S+0x48[]`.
+
+> **Correction to "The generated copier, read properly" earlier in this file:**
+> that section says "`[struct+0x40] = len, [struct+0x44] = buf`". It is the
+> other way round — `+0x40` is the buffer, `+0x44` its length. The stores at
+> `0x15004c65`, `0x15004c7a`, `0x15004cd1` and `0x15004cf8` are all
+> `mov [buf+size-4], rel32`, i.e. each patches the trailing `e9` of a buffer.
+> They therefore write a **rel32, never a pointer** — which matters, because the
+> disputed value in the work-queue head *is* a pointer.
+
+So the answer to the crux is: **the copier is a perfectly ordinary tracked
+`SMemAlloc` block.** In a live dump its cells show up in the record array like
+anything else, e.g. `0x4fc687c0 (2u)`, `0x4fc687e0 (2u)`, `0x4fc69b30 (3u)`,
+`0x4fc69d10 (3u)`, `0x4fc69d40 (3u)`. Nothing is carved out behind the
+allocator's back.
+
+### 4. Integrity walk — the allocator is clean
+
+`tools/` has nothing that reads a live Storm heap, so this was a scratch parser
+over a `--dump` hexdump: for every page, walk the record array, check that every
+allocated block's interior record bytes are zero (an overlap would show as a
+non-zero byte inside a block), that no block runs past unit 240, that the
+`0xff` sentinel is intact, that the cursor is inside the array, and that
+`0xf0 − Σ allocated units == [heap+0x10+page]`.
+
+```sh
+timeout 540 node test/run.js --app=diablo_shareware --time-scale=30 \
+  --max-batches=45000 --no-close --watch=0x6d46c0 --watch-log \
+  --dump=0x6d57b0:0x814,0x4fc00000:0x70000,0x6d46c0:8,0x6d4f28:8,0x6d5fc0:0x10
+```
+
+Result at batch 39380 and again at 45000 (after T1 is already dead):
+**106 pages, 2866 / 2869 live blocks, zero overlaps, zero overruns, every
+sentinel `0xff`, every cursor in range, and the per-page free-unit counter
+exactly equal to `0xf0 − Σ allocated` on every single page.** No cycle is
+possible — the structure is an array, not a list.
+
+Note the arena dump must be `0x4fc00000:0x70000`; `[heap+8]` is a high-water
+*index* (105), so a loop over `< npages` silently skips page `0x4fc69000`, which
+is the page all of this happens in.
+
+### 5. So who writes the work-queue head? Not the allocator, and not the copier
+
+The queue is guarded by its own `CRITICAL_SECTION 0x15034b28` (runtime
+`0x6d7b28`, distinct from the heap's `0x15034b40`/`0x6d7b40`), and both the link
+(`0x1500c9dc`) and the two unlink walks (`0x1500bfe2`, `0x1500c026`) run inside
+it. Node lifetime: ctor `0x1500c8e0` = `SMemAlloc(0x34)` → 4 units (0x40), so
+**every legitimate node address is 0x40-aligned within a page's data area and
+its record byte is 4**. Teardown splits on `[node+0x28]`: non-zero unlinks and
+does *not* free (`0x1500bfba…0x1500bff8`); zero unlinks **and frees**
+(`SMemFree` at `0x1500c033`). Measured to batch 39380: 32 nodes constructed
+(`--count=storm+0x1500c921`), 16 through the freeing teardown
+(`storm+0x1500bffa` = 16, `storm+0x1500c038` = 16).
+
+Three findings, each from a run whose command line is quoted:
+
+1. **The head always ends up pointing at memory the allocator considers free.**
+   Three different executions, three different head values, same verdict:
+   `0x4fc69d60` (unit 198), `0x4fc69bf0` (unit 175), `0x4fc69770` — in each case
+   the record byte for that unit is 0 in the same dump, and in the 45000-batch
+   dump the head is *inside* a live 3-unit copier block (`0x4fc69d40`, offset
+   0x20), which is why the pump reads `88 07 ff c7` as its
+   `IDirectSoundBuffer`.
+
+2. **That address was never issued by the suballocator.** In the execution whose
+   head is `0x4fc69bf0` (unit 175), watching the record byte itself finds *no
+   change at all* for the whole run, on either thread:
+
+   ```sh
+   timeout 300 node test/run.js --app=diablo_shareware --time-scale=30 \
+     --max-batches=39380 --no-close --watch-byte=0x4fc690b7 --watch-log \
+     --dump=0x4fc69000:0x100,0x6d46c0:8      # 0 hits
+   ```
+
+   The probe is good: the identical run with `--watch-byte=0x4fc690bb` (unit
+   179, a copier block) fires `0x0 → 0x3` at batch 39377, and all three runs in
+   this family (`--watch-byte` at `0xb7`, at `0xbb`, and none) end with a
+   byte-identical page dump, so they are the same execution. A record byte that
+   is never set means `SMemAlloc` never returned that unit; and since a
+   lost-record-store would leave `0xf0 − Σ records > [heap+0x10+p]`, and the
+   equality holds exactly on all 106 pages, the store was not lost either.
+
+3. **The copier's own stores are excluded, twice over.** At the disputed head
+   write (`Old 0x0 → New 0x4fc69d60`, batch 39378, reproduced byte-identically
+   across runs) the copier's destination register is `EDI=0x0074c3e7`, nowhere
+   near `0x6d46c0`; the copier writes one byte at a time; and the four
+   generator patch sites write rel32s, not pointers. A watchpoint reports the
+   block where the change was *noticed* — here the row-blitter cell, because
+   that is simply what main was running — so `EIP=0x4fc687d0 /
+   prev_eip=0x006a7d49` names a bystander.
+
+> **Withdrawal.** The earlier claim in "Who clobbers the list head" — "the
+> corruption is a **wild store by the generated blitter**" — is not supported.
+> The blitter is a bystander (point 3). The later hypothesis in "The disputed
+> store is a pointer, not pixels" — an **overlapping allocation** produced by
+> Storm's suballocator — is also disproved (points in §4 and §2 above): the
+> allocator never double-issues, and the address in the head was never one of
+> its allocations. Also withdrawn: "healthy nodes live at `0x4fc684xx..8axx`,
+> the corrupt ones are all at `0x4fc69xxx`" — in these runs T1 links and unlinks
+> perfectly good nodes at `0x4fc695c0`, `0x4fc69670`, `0x4fc696d0`,
+> `0x4fc69a90`, `0x4fc69c80`.
+
+**Where the next session should look.** The remaining suspects for
+`[0x150316c0] = <not an allocation>` are, in order: (a) `esi` being wrong at
+`0x1500c9dc` — i.e. the ctor result surviving in `esi` across our thunk/context
+switches; (b) a node freed by the non-freeing teardown path's *other* owner
+while still linked, followed by the page being decommitted or reissued; (c) a
+genuinely stray dword store from somewhere we have not enumerated. Note that
+`0x1500c9dc` and `0x1500bfe2` are **not block entries** (fall-through), so
+`--count` on them reports 0 — use the jz targets `0x1500c921`, `0x1500bffa`,
+`0x1500c038` instead, or a watchpoint.
+
+**Two methodology notes that cost time here.** A watchpoint *halts* the run loop
+on every change, so watching a hot address perturbs scheduling and gives a
+different execution — only compare runs that watch the same address (verify by
+`md5` of the same `--dump` range). And `test/run.js` auto-builds: two runs
+straddling another agent's commit are two different emulators. This session's
+measurements are all on `9b9a98c9` (post page-compile merge), where the failure
+still reproduces exactly: `Thread 1 EIP=0 … prev_eip=0x6aeec4 ebx=0x4fc69ce0
+ecx=0x4`.
+
+---
+
+## RESOLVED (2026-08-24, `opus5-main`, commit 7d241245): the short MPQ read was a host wait expiring too early
+
+This closes the black menu logo, the black Choose Class panels, and the dead
+Storm worker. All three were one defect in `lib/thread-manager.js`, and it was
+never in the guest, in Storm's allocator, in the code cache, or in the
+decompressor.
+
+### The defect
+
+`checkMainYield()` ages a bounded wait against `this._now()`. The CLI's clock
+is `batch * 200`, so **one host batch costs the guest 200 emulated
+milliseconds** while executing only a batch's worth of instructions. Storm's
+async reader waits `WaitForMultipleObjects(nCount, handles, TRUE, 255)` at
+`storm+0x1500e9d5`; 255 emulated ms is 1.3 batches, a couple of hundred
+thousand guest instructions. The hardware that number was chosen for would
+have given the worker something nearer a hundred million.
+
+So the wait expired with the worker mid-chunk. Storm ignores `WAIT_TIMEOUT`,
+sums the bytes it has, finds them short, returns `ERROR_HANDLE_EOF`, and
+`SBmpLoadImage` decodes the half-filled buffer. The tail is zeros, and zeros
+are opaque black once the PCX RLE loop paints them. That is why the first
+wrong byte of `ui_art\smlogo.pcx` sat exactly on the 64KiB sector 15/16
+boundary (`diablo-pcx-diff`'s measurement above): sixteen of thirty-two
+sectors is simply how many the worker got through in 1.3 batches.
+
+`waitMultipleCooperative()` had the same shape on the INFINITE path — eight
+slices, 800k steps, then `WAIT_FAILED`, which is not an answer to an unbounded
+wait at all.
+
+### The fix
+
+A bounded wait must now *also* have polled a floor of times before it can
+expire, and the floor applies only while `hasActiveThreads()` — a wait nothing
+can signal still takes the pre-existing fast exit (the Age of Empires II
+5000ms self-semaphore case). Nothing is lost when the work finishes early:
+the wait already returns the instant the object is signalled. The floor is
+`min(1024, max(4, timeoutMs))` polls, one poll being one host batch.
+
+`waitMultipleCooperative()`'s INFINITE path now pumps until nothing active is
+left or a slice executes zero instructions, with a 64M-step livelock backstop.
+
+### Measured before and after
+
+`node test/test-diablo-shareware-art.js`:
+
+|                              | before   | after   |
+|------------------------------|----------|---------|
+| logo frames matching archive | 4/15     | **15/15** (IoU 0.82–0.84) |
+| distinct sprites seen        | 0,1,2    | **1,4,7,10,13** |
+| Choose Class panel outlines  | 0/9      | **9/9** (all edges 1.00) |
+| Storm's worker T1            | dead at batch 39381, EIP=0 | **alive at exit** |
+
+Run cost is unchanged in practice: 41500 batches at `--time-scale=30` in about
+140s on a loaded box. The poll floor costs batches only on an object that is
+never signalled, and those already exit early.
+
+Regression-checked: `test-thread-manager`, `test-critical-section-threading`,
+`test-worker-thread-stuck-detect`, `test-thread-resource-sync`,
+`test-wordpad-thread-startup`, `test-vlan-loopback`, `test-waveout-audio`,
+`test-winamp-audio` all pass.
+
+### What this retires, and what it does not
+
+Retired: every hypothesis in this file that tried to explain the short decode
+as corruption. The bytes were always correct — there were just fewer of them
+than Storm believed. The suballocator walk, the copier's shape, the
+invalidation study and the COPY_RUN A/B above are all still accurate and still
+worth keeping; none of them was the cause.
+
+**Still open — a genuinely separate bug:** the Show Credits section below finds
+credit text rendered as solid white bars, and traces it to our host GDI font
+sheet, not to Storm. `SGdiTextOut` builds its 320×320 sheet with
+`CreateCompatibleDC` → `CreateDIBitmap(fdwInit=0)` → 256 × `ExtTextOutA(...,
+ETO_OPAQUE)` → `GetDIBits`, and the readback comes back with only the top ~30%
+populated, interlaced every other scanline, glyphs far larger than their 20×20
+cells, and 80% of the buffer zero. Storm reads "not paper index = ink", so a
+zeroed cell is a fully inked glyph. Whether the loss is in our rasterization or
+in the `GetDIBits` readback is not yet determined. That is the next Diablo
+thing to chase.
+
+**Note for anyone writing a bounded wait test:** the general shape of this bug
+is not Diablo's. Any guest that waits a real-world number of milliseconds on
+work a worker has to do will hit it, because the emulated clock and the
+emulated work rate are two hundred times apart. `--tick-ms-per-batch=N`
+(added the same day) is the other lever on that ratio.
