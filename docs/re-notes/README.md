@@ -45,3 +45,4 @@ finish one, add what you learned.
 | App | File |
 |---|---|
 | Diablo Shareware | [diablo-shareware.md](diablo-shareware.md) |
+| Heroes of Might and Magic II (demo) | [heroes2-demo.md](heroes2-demo.md) |
