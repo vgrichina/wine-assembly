@@ -6185,6 +6185,9 @@ async function main() {
         const down = ev.action === 'di-keydown';
         renderer._asyncKeys[key] = down;
         if (down) renderer._asyncPressedKeys[key] = true;
+        // Event-buffered DirectInput devices must wake for test-injected state
+        // changes just as they do for renderer.handleKeyDown/handleKeyUp.
+        if (renderer._signalDirectInputDevice) renderer._signalDirectInputDevice(1);
         logs.push(`[input] ${ev.action} vk=${ev.code} at batch ${batch}`);
       } else if (ev.action === 'sleep-ms') {
         if (ev.ms > 0) await new Promise(resolve => setTimeout(resolve, ev.ms));

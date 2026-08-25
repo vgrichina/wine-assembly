@@ -6,14 +6,6 @@
 // original lwwin.exe through its own menus with keystrokes — Net game, then
 // the server address field, then Start game — so nothing about the connection
 // is staged on the client side either.
-//
-// The client needs roughly 400k batches to reach its menu; every keystroke
-// batch below is offset from that.
-//
-// Quarantine diagnosis (2026-08-24): a one-batch Down selects Net game
-// correctly, but Enter starts an unbounded stream of short-lived CRT threads
-// before the server-address screen is painted. No client connect call occurs;
-// this is a network-menu/runtime failure rather than a VLAN wire timeout.
 
 'use strict';
 
@@ -40,30 +32,35 @@ if (!fs.existsSync(CLIENT_EXE) || !fs.existsSync(SERVER_EXE)) {
   process.exit(0);
 }
 
-// The menu keystrokes. VK codes; each key is held for 300 batches so the
-// guest's DirectInput poll sees both edges.
-const MENU_ENTER_NET = 400000;   // main menu: Down to "Net game", then Enter
-const FIELD_FOCUS = 420000;      // net screen: Down to the "Server addr" field
-const TYPE_START = 425000;       // clear 127.0.0.1, type the room address
-const START_GAME = 436000;       // Up back to "Start game", then Enter
+// At the current interpreter speed the main menu is live near batch 50k.
+// Liquid War polls DirectInput frequently enough to see a one-batch tap; a
+// hundreds-of-batches hold repeats through several menu entries.
+const MENU_ENTER_NET = 50000;
+const FIELD_FOCUS = 53500;
+const TYPE_START = 54000;
+const START_GAME = 57000;
 
 function keystrokes() {
   const events = [];
-  const tap = (batch, vk, hold = 300) => {
-    events.push(`${batch}:keydown:${vk}`, `${batch + hold}:keyup:${vk}`);
+  const tap = (batch, vk, hold = 1) => {
+    // Liquid War reads DirectInput state but does not drain the Win32 message
+    // queue. A queued WM_KEYUP therefore leaves the key down while the next
+    // menu opens. Clear the physical state directly after delivering the
+    // authentic keydown message.
+    events.push(`${batch}:keydown:${vk}`, `${batch + hold}:di-keyup:${vk}`);
   };
   tap(MENU_ENTER_NET, 40);          // Down -> Net game
-  tap(MENU_ENTER_NET + 10000, 13);  // Enter
+  tap(MENU_ENTER_NET + 500, 13);    // Enter -> Net game settings
   tap(FIELD_FOCUS, 40);             // Down -> Server addr field
   let batch = TYPE_START;
-  for (let i = 0; i < 9; i++) { tap(batch, 8, 200); batch += 600; }  // erase 127.0.0.1
+  for (let i = 0; i < 9; i++) { tap(batch, 8); batch += 100; }  // erase 127.0.0.1
   // 10.77.0.1 — digits are their own VK, '.' is VK_OEM_PERIOD.
   for (const vk of [0x31, 0x30, 0xBE, 0x37, 0x37, 0xBE, 0x30, 0xBE, 0x31]) {
-    tap(batch, vk, 200);
-    batch += 600;
+    tap(batch, vk);
+    batch += 100;
   }
-  tap(START_GAME, 38, 200);         // Up -> Start game
-  tap(START_GAME + 2000, 13, 200);  // Enter
+  tap(START_GAME, 38);              // Up -> Start game
+  tap(START_GAME + 500, 13);        // Enter
   return events.join(',');
 }
 
@@ -166,8 +163,7 @@ async function main() {
     '--quiet-blocks',
     ...NET_TRACE,
     '--vlan-max-waits=100000000',
-    // Start game lands near batch 440k; the rest is the match itself.
-    '--max-batches=3000000',
+    '--max-batches=500000',
     ...CLIENT_ARGS,
   ], 'VLAN_CLIENT_LOG', {});
 

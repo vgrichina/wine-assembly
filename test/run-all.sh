@@ -159,6 +159,7 @@ UNIT=(
   test/test-web-touch-input.js
   test/test-perf-hud-input.js
   test/test-web-fullscreen-consent.js
+  test/test-web-page-fullscreen.js
   test/test-single-app-mode.js
   test/test-mobile-keyboard.js
   test/test-page-script-globals.js
@@ -535,6 +536,7 @@ E2E=(
   test/test-find-mouse-click.js
   test/test-liquid-war-candidate.js
   test/test-vlan-tetrinet.js
+  test/test-vlan-match.js
   test/test-combobox-pinball.js
   test/test-wm-setcursor-on-show.js
   test/test-wordpad-ole-roundtrip.js
@@ -552,13 +554,7 @@ SMOKE=(
 # Every entry carries what it actually reports -- fix the cause, then move the
 # line up into UNIT or E2E. Reasons measured 2026-08-18.
 #
-# The harness-only failures were repaired on 2026-08-24. The sole remaining
-# quarantine below reproduces a runtime failure and carries its measured cause.
 QUARANTINE=(
-  # Rechecked 2026-08-24: a one-batch Down selects Net game, but Enter starts
-  # an unbounded stream of transient CRT threads before the server-address UI
-  # is painted. The client never calls connect; the server's last event is listen.
-  test/test-vlan-match.js
 )
 
 # A test file missing from every array above does not fail, it just never runs.
@@ -589,7 +585,6 @@ TEST_HEAP_MB="${TEST_HEAP_MB:-2048}"
 # A test that never exits used to stall the whole suite indefinitely -- the
 # runner polls for finished slots and has no notion of one taking too long, so
 # a single hung child holds its slot forever and the summary never prints.
-# (test-vlan-match.js is in QUARANTINE for exceeding this cap without connect.)
 # Every child now gets a wall-clock cap and is reported as TIMEOUT, which
 # counts as a failure -- a suite that stalls is a suite nobody waits for.
 # The cap is deliberately far above what any test needs (the slowest gameplay
