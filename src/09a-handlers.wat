@@ -5592,25 +5592,42 @@
     ;; and nobody has been given it yet -- the first paint of a window's life --
     ;; and the class brush is the right answer there too.
     ;;
-    ;; Children answer it the same way. They used to be filled on every single
-    ;; paint, on the grounds that an erase is queued only once, at creation --
-    ;; but $paint_flag_set_inv now marks every system-driven invalidation for
-    ;; erase as USER does, so a child that is created, shown or uncovered still
-    ;; gets its background, and one repainting an animation on its own
-    ;; InvalidateRect(rc, FALSE) no longer has last frame wiped out from under
-    ;; it. Diablo's menu is two stacked children: the frame repaints text every
-    ;; tick and the burning DIABLO logo above it is painted by the other one,
-    ;; and the unconditional fill blacked the logo out on 13 of every 15
-    ;; frames.
+    ;; Bit 1 is a child's answer only. A top-level window is offered its
+    ;; WM_ERASEBKGND by the pump (GetMessageA's startup phase, and
+    ;; $host_erase_background after it), so by the time it reaches BeginPaint
+    ;; the question has already been put to its wndproc and bit 3 records the
+    ;; answer. Honouring the creation-time bit 1 here as well erases a second
+    ;; time, with the class brush, on top of whatever the app painted in
+    ;; between -- and a VB form registers its class with COLOR_WINDOW+1 while
+    ;; painting its real BackColor itself, so that second erase is white.
+    ;; Rodent's Revenge is the visible case: its whole status panel, mouse
+    ;; count, timer and score came out as a white band (7645 px against the
+    ;; reviewed Win98 capture) once this fill started firing.
+    ;;
+    ;; Children have no pump-delivered erase, so for them the creation seed is
+    ;; still the only background they would ever get -- IdleWild's IWINFO pane
+    ;; is white in Win98 for exactly that reason (test-win16-wep1-gameplay).
+    ;; They are also no longer filled on every single paint, which used to
+    ;; black out Diablo's burning logo on 13 frames of every 15: the sibling
+    ;; frame below it repaints on its own InvalidateRect(rc, FALSE), and that
+    ;; leaves bit 1 clear.
     ;; Same --trace-erase line as $host_erase_background: this is the other
     ;; place a window's background gets filled, and telling the two apart is
     ;; the whole point of the trace. Negative height marks the BeginPaint one.
+    ;; The trace fires whether or not the fill below runs -- it reports the
+    ;; question, not the answer.
     (call $host_erase_trace (local.get $arg0) (local.get $brush)
       (i32.and (local.get $cs) (i32.const 0xFFFF))
       (i32.sub (i32.const 0) (i32.shr_u (local.get $cs) (i32.const 16))))
     (if (i32.and (i32.ne (local.get $brush) (i32.const 0))
-          (i32.ne (i32.and (call $nc_flags_test (local.get $arg0))
-                           (i32.const 10)) (i32.const 0)))
+          (i32.or
+            (i32.ne (i32.and (call $nc_flags_test (local.get $arg0))
+                             (i32.const 8)) (i32.const 0))
+            (i32.and
+              (i32.ne (i32.and (call $nc_flags_test (local.get $arg0))
+                               (i32.const 2)) (i32.const 0))
+              (i32.ne (i32.and (call $wnd_get_style (local.get $arg0))
+                               (i32.const 0x40000000)) (i32.const 0)))))
       (then
         (call $nc_flags_clear (local.get $arg0) (i32.const 2))
         (local.set $desc (global.get $GDI_LINE_DESC))
@@ -13048,3 +13065,183 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
         (then (call $g2w (local.get $arg4))) (else (i32.const 0)))
       (call $gl32 (i32.add (global.get $esp) (i32.const 24)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
+
+  ;; Join an ANSI directory and leaf name and ask the VFS whether the result
+  ;; exists. VerFindFileA searches a small, fixed set of directories, so a
+  ;; temporary guest string keeps that lookup inside the same filesystem path
+  ;; normalization used by CreateFile/GetFileAttributes.
+  (func $ver_file_exists_a (param $dir i32) (param $file i32) (result i32)
+    (local $dir_len i32) (local $file_len i32) (local $path i32)
+    (local $attrs i32)
+    (if (i32.or (i32.eqz (local.get $dir)) (i32.eqz (local.get $file)))
+      (then (return (i32.const 0))))
+    (local.set $dir_len (call $guest_strlen (local.get $dir)))
+    (local.set $file_len (call $guest_strlen (local.get $file)))
+    (if (i32.or (i32.eqz (local.get $dir_len)) (i32.eqz (local.get $file_len)))
+      (then (return (i32.const 0))))
+    (local.set $path (call $heap_alloc
+      (i32.add (i32.add (local.get $dir_len) (local.get $file_len)) (i32.const 2))))
+    (if (i32.eqz (local.get $path)) (then (return (i32.const 0))))
+    (call $guest_strcpy (local.get $path) (local.get $dir))
+    (if (i32.ne (call $gl8 (i32.add (local.get $path)
+                     (i32.sub (local.get $dir_len) (i32.const 1)))) (i32.const 0x5c))
+      (then
+        (call $gs8 (i32.add (local.get $path) (local.get $dir_len)) (i32.const 0x5c))
+        (local.set $dir_len (i32.add (local.get $dir_len) (i32.const 1)))))
+    (call $guest_strcpy (i32.add (local.get $path) (local.get $dir_len)) (local.get $file))
+    (local.set $attrs (call $host_fs_get_file_attributes
+      (call $g2w (local.get $path)) (i32.const 0)))
+    (call $heap_free (local.get $path))
+    (i32.ne (local.get $attrs) (i32.const -1)))
+
+  ;; Allocate an ANSI "directory\\leaf" guest path. VERSION.DLL passes the
+  ;; directory and bare filename separately to both VerFindFile and
+  ;; VerInstallFile; using one join helper keeps their VFS normalization
+  ;; identical.
+  (func $ver_join_path_a (param $dir i32) (param $file i32) (result i32)
+    (local $dir_len i32) (local $file_len i32) (local $path i32)
+    (if (i32.or (i32.eqz (local.get $dir)) (i32.eqz (local.get $file)))
+      (then (return (i32.const 0))))
+    (local.set $dir_len (call $guest_strlen (local.get $dir)))
+    (local.set $file_len (call $guest_strlen (local.get $file)))
+    (if (i32.eqz (local.get $file_len)) (then (return (i32.const 0))))
+    (local.set $path (call $heap_alloc
+      (i32.add (i32.add (local.get $dir_len) (local.get $file_len)) (i32.const 2))))
+    (if (i32.eqz (local.get $path)) (then (return (i32.const 0))))
+    (call $guest_strcpy (local.get $path) (local.get $dir))
+    (if (i32.and (i32.ne (local.get $dir_len) (i32.const 0))
+          (i32.ne (call $gl8 (i32.add (local.get $path)
+                    (i32.sub (local.get $dir_len) (i32.const 1)))) (i32.const 0x5c)))
+      (then
+        (call $gs8 (i32.add (local.get $path) (local.get $dir_len)) (i32.const 0x5c))
+        (local.set $dir_len (i32.add (local.get $dir_len) (i32.const 1)))))
+    (call $guest_strcpy (i32.add (local.get $path) (local.get $dir_len)) (local.get $file))
+    (local.get $path))
+
+  ;; VerFindFileA(uFlags, file, winDir, appDir, curDir, curLen, destDir,
+  ;;              destLen) -> VFF_* bitmask.
+  ;;
+  ;; Match the Win9x-relevant search order: private files prefer the app,
+  ;; Windows, then system directories; shared files prefer SYSTEM and fall
+  ;; back to the app only when locating an existing copy. The VFS has no
+  ;; cross-process sharing locks, so VFF_FILEINUSE is never raised.
+  (func $handle_VerFindFileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $cur_len_ptr i32) (local $dest_ptr i32) (local $dest_len_ptr i32)
+    (local $scratch i32) (local $system_dir i32) (local $windows_dir i32)
+    (local $empty i32) (local $cur_dir i32) (local $dest_dir i32)
+    (local $required i32) (local $capacity i32) (local $retval i32)
+    (local.set $cur_len_ptr (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (local.set $dest_ptr (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
+    (local.set $dest_len_ptr (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
+    (local.set $scratch (call $heap_alloc (i32.const 64)))
+    (if (i32.eqz (local.get $scratch))
+      (then
+        (global.set $eax (i32.const 4)) ;; VFF_BUFFTOOSMALL is the closest defined failure
+        (global.set $esp (i32.add (global.get $esp) (i32.const 36)))
+        (return)))
+    (local.set $system_dir (local.get $scratch))
+    (local.set $windows_dir (i32.add (local.get $scratch) (i32.const 24)))
+    (local.set $empty (i32.add (local.get $scratch) (i32.const 40)))
+    ;; "C:\\WINDOWS\\SYSTEM" and "C:\\WINDOWS".
+    (call $gs32 (local.get $system_dir) (i32.const 0x575c3a43))
+    (call $gs32 (i32.add (local.get $system_dir) (i32.const 4)) (i32.const 0x4f444e49))
+    (call $gs32 (i32.add (local.get $system_dir) (i32.const 8)) (i32.const 0x535c5357))
+    (call $gs32 (i32.add (local.get $system_dir) (i32.const 12)) (i32.const 0x45545359))
+    (call $gs16 (i32.add (local.get $system_dir) (i32.const 16)) (i32.const 0x004d))
+    (call $gs32 (local.get $windows_dir) (i32.const 0x575c3a43))
+    (call $gs32 (i32.add (local.get $windows_dir) (i32.const 4)) (i32.const 0x4f444e49))
+    (call $gs16 (i32.add (local.get $windows_dir) (i32.const 8)) (i32.const 0x5357))
+    (call $gs8 (i32.add (local.get $windows_dir) (i32.const 10)) (i32.const 0))
+    (call $gs8 (local.get $empty) (i32.const 0))
+    (local.set $cur_dir (local.get $empty))
+
+    (if (i32.and (local.get $arg0) (i32.const 1)) ;; VFFF_ISSHAREDFILE
+      (then
+        (local.set $dest_dir (local.get $system_dir))
+        (if (local.get $arg1)
+          (then
+            (if (call $ver_file_exists_a (local.get $dest_dir) (local.get $arg1))
+              (then (local.set $cur_dir (local.get $dest_dir)))
+              (else
+                (if (call $ver_file_exists_a (local.get $arg3) (local.get $arg1))
+                  (then (local.set $cur_dir (local.get $arg3))))
+                (local.set $retval (i32.or (local.get $retval) (i32.const 1))))))))
+      (else
+        (local.set $dest_dir (select (local.get $arg3) (local.get $empty)
+          (i32.ne (local.get $arg3) (i32.const 0))))
+        (if (local.get $arg1)
+          (then
+            (if (call $ver_file_exists_a (local.get $dest_dir) (local.get $arg1))
+              (then (local.set $cur_dir (local.get $dest_dir)))
+              (else
+                (if (call $ver_file_exists_a (local.get $windows_dir) (local.get $arg1))
+                  (then (local.set $cur_dir (local.get $windows_dir)))
+                  (else
+                    (if (call $ver_file_exists_a (local.get $system_dir) (local.get $arg1))
+                      (then (local.set $cur_dir (local.get $system_dir))))))))
+            (if (i32.and
+                  (i32.and (i32.ne (local.get $arg3) (i32.const 0))
+                           (i32.ne (call $guest_strlen (local.get $arg3)) (i32.const 0)))
+                  (i32.eqz (call $ver_file_exists_a (local.get $arg3) (local.get $arg1))))
+              (then (local.set $retval (i32.or (local.get $retval) (i32.const 1)))))))))
+
+    ;; Both length outputs include the trailing NUL. lstrcpynA-compatible
+    ;; truncation makes it possible for callers to identify the short buffer.
+    (if (i32.and (i32.ne (local.get $dest_len_ptr) (i32.const 0))
+                 (i32.ne (local.get $dest_ptr) (i32.const 0)))
+      (then
+        (local.set $required (i32.add (call $guest_strlen (local.get $dest_dir)) (i32.const 1)))
+        (local.set $capacity (call $gl32 (local.get $dest_len_ptr)))
+        (if (i32.lt_u (local.get $capacity) (local.get $required))
+          (then (local.set $retval (i32.or (local.get $retval) (i32.const 4)))))
+        (call $guest_strncpy (local.get $dest_ptr) (local.get $dest_dir) (local.get $capacity))
+        (call $gs32 (local.get $dest_len_ptr) (local.get $required))))
+    (if (i32.and (i32.ne (local.get $cur_len_ptr) (i32.const 0))
+                 (i32.ne (local.get $arg4) (i32.const 0)))
+      (then
+        (local.set $required (i32.add (call $guest_strlen (local.get $cur_dir)) (i32.const 1)))
+        (local.set $capacity (call $gl32 (local.get $cur_len_ptr)))
+        (if (i32.lt_u (local.get $capacity) (local.get $required))
+          (then (local.set $retval (i32.or (local.get $retval) (i32.const 4)))))
+        (call $guest_strncpy (local.get $arg4) (local.get $cur_dir) (local.get $capacity))
+        (call $gs32 (local.get $cur_len_ptr) (local.get $required))))
+    (call $heap_free (local.get $scratch))
+    (global.set $eax (local.get $retval))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 36))))
+
+  ;; VerInstallFileA(flags, srcFile, destFile, srcDir, destDir, curDir,
+  ;;                 tmpFile, tmpFileLen) -> VIF_* bitmask.
+  ;;
+  ;; The Win9x InstallShield path exercised here has already selected the
+  ;; destination with VerFindFileA. Install the staged source atomically into
+  ;; that destination. The in-memory VFS has neither sharing locks nor disk
+  ;; exhaustion, so only the observable read-source / generic-create failures
+  ;; can occur; a successful replacement returns zero.
+  (func $handle_VerInstallFileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $tmp_file i32) (local $tmp_len_ptr i32)
+    (local $src_path i32) (local $dest_path i32) (local $retval i32)
+    (local.set $tmp_file (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
+    (local.set $tmp_len_ptr (call $gl32 (i32.add (global.get $esp) (i32.const 32))))
+    ;; No temporary file is left behind on the direct-install path.
+    (if (local.get $tmp_file) (then (call $gs8 (local.get $tmp_file) (i32.const 0))))
+    (if (local.get $tmp_len_ptr) (then (call $gs32 (local.get $tmp_len_ptr) (i32.const 1))))
+    (local.set $src_path (call $ver_join_path_a (local.get $arg3) (local.get $arg1)))
+    (local.set $dest_path (call $ver_join_path_a (local.get $arg4) (local.get $arg2)))
+    (if (i32.or (i32.eqz (local.get $src_path))
+                (i32.eqz (local.get $dest_path)))
+      (then (local.set $retval (i32.const 0x8000))) ;; VIF_OUTOFMEMORY
+      (else
+        (if (i32.eq
+              (call $host_fs_get_file_attributes
+                (call $g2w (local.get $src_path)) (i32.const 0))
+              (i32.const -1))
+          (then (local.set $retval (i32.const 0x10000))) ;; VIF_CANNOTREADSRC
+          (else
+            (if (i32.eqz (call $host_fs_move_file
+                  (call $g2w (local.get $src_path))
+                  (call $g2w (local.get $dest_path)) (i32.const 0)))
+              (then (local.set $retval (i32.const 0x800)))))))) ;; VIF_CANNOTCREATE
+    (if (local.get $src_path) (then (call $heap_free (local.get $src_path))))
+    (if (local.get $dest_path) (then (call $heap_free (local.get $dest_path))))
+    (global.set $eax (local.get $retval))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 36))))
