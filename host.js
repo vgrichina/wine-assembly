@@ -7,8 +7,50 @@
 const ProcessBoot = (typeof window !== 'undefined' && window.processBoot) || null;
 
 class WineAssembly {
-  static SOURCE_VERSION = '219';
+  static SOURCE_VERSION = '221';
+  static ASSET_PART_SIZE = 10 * 1024 * 1024;
   static _nextProcessId = 1000;
+
+  static _assetPartUrl(url, index) {
+    const match = String(url).match(/^([^?#]*)(.*)$/);
+    return match[1] + '.part' + String(index).padStart(3, '0') + match[2];
+  }
+
+  // Keep split assets a transport detail. Normal files take one request; only
+  // a 404 tries the deployer's name.part000, name.part001, ... convention.
+  static async fetchAssetBytes(url) {
+    const direct = await fetch(url);
+    if (direct.ok) return new Uint8Array(await direct.arrayBuffer());
+    if (direct.status !== 404) {
+      throw new Error(`Unable to load ${url}: HTTP ${direct.status}`);
+    }
+
+    const parts = [];
+    let total = 0;
+    for (let index = 0; ; index++) {
+      const partUrl = WineAssembly._assetPartUrl(url, index);
+      const response = await fetch(partUrl);
+      if (response.status === 404) {
+        if (index === 0) throw new Error(`Unable to load ${url}: HTTP 404`);
+        throw new Error(`Unable to load ${url}: missing ${partUrl}`);
+      }
+      if (!response.ok) {
+        throw new Error(`Unable to load ${partUrl}: HTTP ${response.status}`);
+      }
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      parts.push(bytes);
+      total += bytes.length;
+      if (bytes.length < WineAssembly.ASSET_PART_SIZE) break;
+    }
+
+    const joined = new Uint8Array(total);
+    let offset = 0;
+    for (const part of parts) {
+      joined.set(part, offset);
+      offset += part.length;
+    }
+    return joined;
+  }
 
   static hasRemainingAppWindow(destroyed, remainingTopLevel) {
     // A hidden startup/helper window disappearing is not a user-visible app
@@ -162,11 +204,8 @@ class WineAssembly {
     const url = exeDir ? exeDir + baseName : 'binaries/' + baseName;
     const pending = this._missingFetches.get(url);
     if (pending) return pending;
-    const p = fetch(url)
-      .then(r => (r.ok ? r.arrayBuffer() : null))
-      .then(buf => {
-        if (!buf) return null;
-        const data = new Uint8Array(buf);
+    const p = WineAssembly.fetchAssetBytes(url)
+      .then(data => {
         const vfs = instanceVfs || (this._helpCtx && this._helpCtx.vfs);
         if (vfs && vfs.files) {
           vfs.files.set('c:\\' + baseName.toLowerCase(), { data, attrs: 0x20 });
@@ -1026,8 +1065,7 @@ class WineAssembly {
     if (!this.instance) await this.init();
     this._win16ExtraModules = opts.win16Modules || [];
 
-    const resp = await fetch(url);
-    const exeBytes = new Uint8Array(await resp.arrayBuffer());
+    const exeBytes = await WineAssembly.fetchAssetBytes(url);
     this._exeBytes = exeBytes;
 
     // Resource parsing lives in WAT ($find_resource, $dlg_load,
@@ -1083,9 +1121,7 @@ class WineAssembly {
       VfsSeed.win16FileCandidates(name).map(async file => {
         if (files.has(name)) return;
         try {
-          const resp = await fetch(dir + file);
-          if (!resp.ok) return;
-          const bytes = new Uint8Array(await resp.arrayBuffer());
+          const bytes = await WineAssembly.fetchAssetBytes(dir + file);
           if (!files.has(name)) files.set(name, bytes);
         } catch (_) { /* absent is a valid answer */ }
       })));
@@ -1184,12 +1220,7 @@ class WineAssembly {
       const explicit = (typeof item === 'object') ? item.vfsPath : null;
       const explicitPaths = (typeof item === 'object' && Array.isArray(item.vfsPaths)) ? item.vfsPaths : null;
       try {
-        const resp = await fetch(url);
-        if (!resp.ok) {
-          failed++;
-          return;
-        }
-        const data = new Uint8Array(await resp.arrayBuffer());
+        const data = await WineAssembly.fetchAssetBytes(url);
         const decodedImage = (typeof item === 'object' && item.decodeImage)
           ? await this._decodeMountedImage(data, url)
           : null;
@@ -1265,9 +1296,13 @@ class WineAssembly {
     };
     const configs = await Promise.all(dllPaths.map(async item => {
       if (typeof item === 'string') {
-        const resp = await fetch(item);
-        if (!resp.ok) { console.error('Failed to fetch DLL:', item); return null; }
-        const bytes = new Uint8Array(await resp.arrayBuffer());
+        let bytes;
+        try {
+          bytes = await WineAssembly.fetchAssetBytes(item);
+        } catch (_) {
+          console.error('Failed to fetch DLL:', item);
+          return null;
+        }
         const name = item.split('/').pop();
         rememberDllBytes(name, bytes);
         return { name, bytes };
@@ -1325,8 +1360,7 @@ class WineAssembly {
     ].filter(Boolean);
     for (const p of paths) {
       try {
-        const resp = await fetch(p);
-        if (resp.ok) return new Uint8Array(await resp.arrayBuffer());
+        return await WineAssembly.fetchAssetBytes(p);
       } catch (_) {}
     }
     return null;

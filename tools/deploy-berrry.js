@@ -13,7 +13,6 @@ const path = require('path');
 const crypto = require('crypto');
 
 const BERRRY_KEY = process.env.BERRRY_KEY;
-if (!BERRRY_KEY) { console.error('Missing BERRRY_KEY env var (try: set -a; . .env.berrry; set +a)'); process.exit(1); }
 const API_BASE = 'https://berrry.app/api/nomcp/' + BERRRY_KEY;
 const SUBDOMAIN = 'wine-assembly';
 const ROOT = path.resolve(__dirname, '..');
@@ -30,11 +29,11 @@ const SKIP_DIRS = new Set(['node_modules', '.git', '.claude', 'scratch', 'tools'
 // Directories that contain binary assets (base64-encoded)
 const BINARY_DIRS = ['binaries', 'icons', 'build'];
 
-// berrry rejects any single file over this with HTTP 400 and fails the whole
-// batch, so a file above it cannot ship no matter which list names it. This is
-// the server's limit, not a policy of ours: the deploy skips those files with a
-// loud line rather than aborting and leaving the site half-updated.
-const SERVER_MAX_FILE_SIZE = 2 * 1024 * 1024;
+// berrry rejects any single file over this with HTTP 400. Oversized binary
+// assets are therefore published as name.part000, name.part001, ...; the web
+// loader tries that convention only when the unsplit name returns 404.
+const SERVER_MAX_FILE_SIZE = 20 * 1024 * 1024;
+const ASSET_PART_SIZE = 10 * 1024 * 1024;
 
 // Skip individual large files (>500KB) that aren't essential
 const MAX_BINARY_SIZE = 500 * 1024;
@@ -54,6 +53,40 @@ const LARGE_OK_PATHS = new Set([
 
 // Binary extensions to include
 const BINARY_EXTS = new Set(['.exe', '.dll', '.manifest', '.hlp', '.chm', '.bmp', '.ico', '.cur', '.wav', '.mp3', '.mid', '.m3u', '.dat', '.inf', '.ini', '.txt', '.png', '.wasm']);
+
+function encodeBinaryBytes(rel, raw) {
+  if (raw.length <= SERVER_MAX_FILE_SIZE) {
+    return [{ name: rel, content: raw.toString('base64'), encoding: 'base64' }];
+  }
+  const files = [];
+  for (let offset = 0, index = 0; offset < raw.length; offset += ASSET_PART_SIZE, index++) {
+    const part = raw.subarray(offset, Math.min(raw.length, offset + ASSET_PART_SIZE));
+    files.push({
+      name: rel + '.part' + String(index).padStart(3, '0'),
+      content: part.toString('base64'),
+      encoding: 'base64',
+    });
+  }
+  // A short part marks EOF, so stale higher-numbered parts left by Berry after
+  // a file shrinks are never appended. Exact multiples need an empty marker.
+  if (raw.length % ASSET_PART_SIZE === 0) {
+    files.push({
+      name: rel + '.part' + String(files.length).padStart(3, '0'),
+      content: '',
+      encoding: 'base64',
+    });
+  }
+  return files;
+}
+
+function encodeBinaryFile(rel, full) {
+  const files = encodeBinaryBytes(rel, fs.readFileSync(full));
+  if (files.length > 1) {
+    console.log('  SPLIT: ' + rel + ' -> ' + files.length + ' parts (' +
+      (fs.statSync(full).size / 1024).toFixed(0) + 'KB)');
+  }
+  return files;
+}
 
 function walk(dir, base, filter) {
   const results = [];
@@ -172,13 +205,8 @@ function collectBinaries() {
       // warning about weight, not a decision to leave the app broken.
       console.log('  LARGE: ' + rel + ' (' + (stat.size / 1024).toFixed(0) + 'KB)');
     }
-    if (stat.size > SERVER_MAX_FILE_SIZE) {
-      console.log('  CANNOT SHIP (over server 2MB limit): ' + rel +
-        ' (' + (stat.size / 1024).toFixed(0) + 'KB)');
-      continue;
-    }
     seen.add(rel);
-    files.push({ name: rel, content: fs.readFileSync(full).toString('base64'), encoding: 'base64' });
+    files.push(...encodeBinaryFile(rel, full));
   }
 
   // icons/ and build/ have no registry; they are whole directories the page
@@ -197,12 +225,7 @@ function collectBinaries() {
         console.log('  SKIP (too large): ' + f.rel + ' (' + (stat.size / 1024).toFixed(0) + 'KB)');
         continue;
       }
-      if (stat.size > SERVER_MAX_FILE_SIZE) {
-        console.log('  CANNOT SHIP (over server 2MB limit): ' + f.rel +
-          ' (' + (stat.size / 1024).toFixed(0) + 'KB)');
-        continue;
-      }
-      files.push({ name: f.rel, content: fs.readFileSync(f.full).toString('base64'), encoding: 'base64' });
+      files.push(...encodeBinaryFile(f.rel, f.full));
     }
   }
   return files;
@@ -323,13 +346,32 @@ function loadExplicitFiles(relList) {
   const files = [];
   for (const originalRel of relList) {
     const rel = originalRel.replace(/\\/g, '/').replace(/^\.\//, '');
-    const full = path.resolve(ROOT, rel);
-    if (!fs.existsSync(full)) { console.error('SKIP missing: ' + rel); continue; }
-    const ext = path.extname(rel).toLowerCase();
+    let sourceRel = rel;
+    let requestedPart = null;
+    let full = path.resolve(ROOT, sourceRel);
+    if (!fs.existsSync(full)) {
+      const match = rel.match(/^(.*)\.part\d{3}$/);
+      if (match && fs.existsSync(path.resolve(ROOT, match[1]))) {
+        sourceRel = match[1];
+        requestedPart = rel;
+        full = path.resolve(ROOT, sourceRel);
+      } else {
+        console.error('SKIP missing: ' + rel);
+        continue;
+      }
+    }
+    const ext = path.extname(sourceRel).toLowerCase();
     if (TEXT_EXTS.has(ext)) {
-      files.push({ name: rel, content: fs.readFileSync(full, 'utf-8') });
+      files.push({ name: sourceRel, content: fs.readFileSync(full, 'utf-8') });
     } else {
-      files.push({ name: rel, content: fs.readFileSync(full).toString('base64'), encoding: 'base64' });
+      const encoded = encodeBinaryFile(sourceRel, full);
+      if (requestedPart) {
+        const part = encoded.find(f => f.name === requestedPart);
+        if (part) files.push(part);
+        else console.error('SKIP missing generated part: ' + requestedPart);
+      } else {
+        files.push(...encoded);
+      }
     }
   }
   return files;
@@ -352,7 +394,29 @@ function fileByteSize(file) {
 }
 
 // Shared by deploy and rollback so both stay under the same request ceiling.
-const BATCH_LIMIT = 950 * 1024; // stay under berrry.app body limit
+// Leave headroom for multipart framing while taking advantage of Berry's new
+// 20MiB file support. A larger single file still occupies a batch by itself.
+const BATCH_LIMIT = 19 * 1024 * 1024;
+
+// Two halves by byte size, not by count: one 15MiB file beside twenty small
+// ones splits usefully only if the split follows the bytes. Both halves are
+// non-empty by construction -- a "split" that hands back the same batch is an
+// infinite retry loop, which is exactly what a size test alone produces when
+// the biggest file is last.
+function splitInHalf(batch) {
+  const half = batch.reduce((n, f) => n + fileByteSize(f), 0) / 2;
+  const a = [], b = [];
+  let n = 0;
+  for (const f of batch) {
+    if (!a.length || (n + fileByteSize(f) <= half && b.length === 0)) {
+      a.push(f); n += fileByteSize(f);
+    } else {
+      b.push(f);
+    }
+  }
+  if (!b.length) b.push(a.pop());
+  return [a, b];
+}
 
 function splitIntoBatches(files) {
   const batches = [];
@@ -370,7 +434,16 @@ function splitIntoBatches(files) {
 }
 
 async function fetchServerManifest() {
-  const r = await fetch(API_BASE + '/apps/' + SUBDOMAIN + '/files');
+  // The manifest 500s now and then and succeeds on the next call. Without a
+  // retry that transient drops the whole diff -- which means either no deploy
+  // at all, or a --full one that re-uploads 69MB to change three files.
+  let r = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    r = await fetch(API_BASE + '/apps/' + SUBDOMAIN + '/files');
+    if (r.ok) break;
+    console.error('  manifest fetch attempt ' + attempt + ' failed: ' + r.status);
+    await new Promise(res => setTimeout(res, 2000 * attempt));
+  }
   if (!r.ok) { console.error('Failed to fetch manifest:', r.status); return null; }
   const j = await r.json();
   const map = new Map();
@@ -608,8 +681,20 @@ async function deploy() {
       if (r.status >= 400) return;
     } else {
       console.log('Updating (batch ' + (i + 1) + '/' + batches.length + ', ' + batches[i].length + ' files, ' + transport + ')...');
-      const r = await api('PUT', '/apps/' + SUBDOMAIN, body);
+      let r = await api('PUT', '/apps/' + SUBDOMAIN, body);
       console.log('Result:', r.status);
+      // 413 means the batch, not the deploy, is too big: the request ceiling
+      // sits below BATCH_LIMIT for this payload. Halving and retrying costs one
+      // wasted request and finds the real ceiling by itself, which beats
+      // aborting a deploy that then has to be re-run from a fresh manifest --
+      // and beats hand-tuning a constant every time the server moves it.
+      if (r.status === 413 && batches[i].length > 1) {
+        const rest = splitInHalf(batches[i]);
+        console.log('  413: splitting this batch into ' + rest.length + ' smaller ones');
+        batches.splice(i, 1, ...rest);
+        i -= 1;
+        continue;
+      }
       if (r.status >= 400 && r.status !== 404) {
         throw new Error(`batch ${i + 1}/${batches.length} failed with HTTP ${r.status}`
           + ` — the site now has batches 1..${i} of this deploy and the previous`
@@ -657,7 +742,8 @@ async function verifyServed() {
   }
   // Only re-upload what still exists locally; a file the repo dropped is
   // supposed to be gone, and its 404 is the correct answer.
-  const local = missing.filter(n => fs.existsSync(path.join(ROOT, n)));
+  const local = missing.filter(n => fs.existsSync(path.join(ROOT, n)) ||
+    (/\.part\d{3}$/.test(n) && fs.existsSync(path.join(ROOT, n.replace(/\.part\d{3}$/, '')))));
   console.log(`${missing.length} stored-but-not-served file(s); ${local.length} still in the repo:`);
   for (const n of missing) console.log(`  ${n}${local.includes(n) ? '' : '  (gone locally, leaving it)'}`);
   if (!local.length) return;
@@ -671,4 +757,12 @@ async function verifyServed() {
   console.log('Re-uploaded. Run --verify again to confirm.');
 }
 
-deploy().catch(e => { console.error(e); process.exit(1); });
+if (require.main === module) {
+  if (!BERRRY_KEY) {
+    console.error('Missing BERRRY_KEY env var (try: set -a; . .env.berrry; set +a)');
+    process.exit(1);
+  }
+  deploy().catch(e => { console.error(e); process.exit(1); });
+}
+
+module.exports = { ASSET_PART_SIZE, SERVER_MAX_FILE_SIZE, encodeBinaryBytes };
