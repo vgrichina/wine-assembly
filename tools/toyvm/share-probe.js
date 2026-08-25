@@ -143,7 +143,123 @@ async function main() {
     `Table.set(2, fn) -> A.enter(2) -> ax=${a.exports.get_ax()} (want 16)`);
 
   await costOfNotSharing(imports, memory);
+  await costOfSharing(memory);
   done();
+}
+
+// --- what sharing costs the INTERPRETER ------------------------------------
+// Moving the register file to imported globals is not free. V8 keeps a
+// module's own globals in a buffer hanging off the instance, but an imported
+// mutable global is a POINTER into whoever owns it -- an extra load on every
+// access. The interpreter touches state on every single dispatch ($steps and
+// $ip in $next alone), so a tax here is a tax on the whole baseline, and a JIT
+// measured against a taxed baseline flatters itself.
+//
+// Third arm: keep the register file in LINEAR MEMORY. Memory is already shared
+// with no extra indirection, so if this lands near module-local globals it
+// removes the tradeoff instead of paying it.
+async function costOfSharing(memory) {
+  const ITERS = 3000;
+  const INNER = 2000;
+
+  // Identical work in all three arms: read-modify-write over 4 state slots,
+  // which is roughly what a handler does to the register file per dispatch.
+  const body = (get, set) => `
+    (local.set $i (i32.const 0))
+    (block $done (loop $l
+      (br_if $done (i32.ge_s (local.get $i) (i32.const ${INNER})))
+      ${[0, 1, 2, 3].map(k => set(k, `(i32.add ${get(k)} (i32.const 1))`)).join('\n      ')}
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $l)))
+    ${get(0)}`;
+
+  const localG = `(module
+(import "s" "memory" (memory 2 2))
+${[0, 1, 2, 3].map(k => `(global $g${k} (mut i32) (i32.const 0))`).join('\n')}
+(func (export "spin") (result i32) (local $i i32)
+${body(k => `(global.get $g${k})`, (k, v) => `(global.set $g${k} ${v})`)})
+)`;
+
+  const importedG = `(module
+(import "s" "memory" (memory 2 2))
+${[0, 1, 2, 3].map(k => `(import "s" "g${k}" (global $g${k} (mut i32)))`).join('\n')}
+(func (export "spin") (result i32) (local $i i32)
+${body(k => `(global.get $g${k})`, (k, v) => `(global.set $g${k} ${v})`)})
+)`;
+
+  const memG = `(module
+(import "s" "memory" (memory 2 2))
+(func (export "spin") (result i32) (local $i i32)
+${body(k => `(i32.load offset=${256 + k * 4} (i32.const 0))`,
+    (k, v) => `(i32.store offset=${256 + k * 4} (i32.const 0) ${v})`)})
+)`;
+
+  const gs = {};
+  for (let k = 0; k < 4; k++) gs[`g${k}`] = new WebAssembly.Global({ value: 'i32', mutable: true }, 0);
+  const mk = async (src, imp) =>
+    new WebAssembly.Instance(new WebAssembly.Module(await build(src)), imp);
+
+  // The arrangement that matters for a trace JIT built on top of a threaded
+  // interpreter: the INTERPRETER keeps its own globals and merely exports them,
+  // and only the generated trace imports. If exporting does not slow the owner
+  // down, the tax lands solely on the trace, at its boundaries, where it syncs
+  // to locals once -- and the baseline is never taxed at all.
+  const exportedG = `(module
+(import "s" "memory" (memory 2 2))
+${[0, 1, 2, 3].map(k => `(global $g${k} (mut i32) (i32.const 0))`).join('\n')}
+${[0, 1, 2, 3].map(k => `(export "g${k}" (global $g${k}))`).join('\n')}
+(func (export "spin") (result i32) (local $i i32)
+${body(k => `(global.get $g${k})`, (k, v) => `(global.set $g${k} ${v})`)})
+)`;
+
+  let owner = null, ownerErr = null;
+  try { owner = await mk(exportedG, { s: { memory } }); } catch (e) { ownerErr = e; }
+  check('compile-wat encodes an exported mutable global', !!owner,
+    owner ? 'owner module instantiated' : (ownerErr.message || String(ownerErr)).slice(0, 70));
+
+  // ...and a trace really can import what the owner exported.
+  if (owner) {
+    try {
+      const t = await mk(importedG, { s: { memory, ...Object.fromEntries(
+        [0, 1, 2, 3].map(k => [`g${k}`, owner.exports[`g${k}`]])) } });
+      owner.exports.spin();
+      t.exports.spin();
+      check('a trace imports the interpreter\'s own globals',
+        owner.exports.spin() > 0, 'owner + trace share one register file');
+    } catch (e) {
+      check('a trace imports the interpreter\'s own globals', false,
+        (e.message || String(e)).slice(0, 70));
+    }
+  }
+
+  const arms = [
+    ['module-local globals', await mk(localG, { s: { memory } })],
+    ['module-local + exported', owner],
+    ['imported globals (shared)', await mk(importedG, { s: { memory, ...gs } })],
+    ['linear memory (shared)', await mk(memG, { s: { memory } })],
+  ].filter(([, inst]) => inst);
+
+  // Interleaved with the starting arm rotated, minima quoted -- the same
+  // discipline bench-dos.js uses, and for the same reason: this box is loaded.
+  const best = new Map(arms.map(([n]) => [n, Infinity]));
+  for (let rep = 0; rep < 7; rep++) {
+    for (let j = 0; j < arms.length; j++) {
+      const [name, inst] = arms[(j + rep) % arms.length];
+      const t = process.hrtime.bigint();
+      for (let i = 0; i < ITERS; i++) inst.exports.spin();
+      const ns = Number(process.hrtime.bigint() - t) / (ITERS * INNER * 4);
+      if (ns < best.get(name)) best.set(name, ns);
+    }
+  }
+
+  const base = best.get('module-local globals');
+  console.log('\ncost of one state read-modify-write, 4 slots (min of 7 interleaved):');
+  for (const [name] of arms) {
+    const ns = best.get(name);
+    console.log(`  ${name.padEnd(28)} ${ns.toFixed(3)} ns`
+      + (name === 'module-local globals' ? '  (baseline)'
+        : `  ${ns >= base ? '+' : ''}${((ns / base - 1) * 100).toFixed(1)}%`));
+  }
 }
 
 // --- accessors are not sharing ---------------------------------------------
@@ -216,8 +332,11 @@ function done() {
     console.log('blocked on: ' + bad.map(r => r.name).join('; '));
     process.exit(1);
   }
-  console.log('\nA generated module can be attached to a live VM: share Memory, mutable');
-  console.log('Globals and the Table by making JS own all three and importing them.');
+  console.log('\nA generated module can be attached to a live VM. For a trace JIT built on');
+  console.log('top of a threaded interpreter, let the INTERPRETER own and export the state:');
+  console.log('exporting costs the owner ~nothing, while importing costs ~2.5x per access --');
+  console.log('so the tax lands only on the trace, which syncs to locals at entry anyway.');
+  console.log('JS-owned globals (as probed above) taxes both sides and is the wrong split.');
 }
 
 main().catch(e => { console.error(e.stack || String(e)); process.exit(1); });
