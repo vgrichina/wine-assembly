@@ -66,10 +66,20 @@ the creation-time erase seed. A VB form registers its class with
 **white**, over content the app had already drawn: 7645 px against the reviewed
 v86 capture.
 
-`dec5373c` gates that seed on `WS_CHILD`. Known residual: the 32x32 stopwatch
-child is still erased white the same way, one level down — 605 px. Children
-cannot simply lose the seed too; IdleWild's IWINFO pane is white in Win98 for
-exactly that reason and `test-win16-wep1-gameplay` asserts it.
+`dec5373c` gates that seed on `WS_CHILD`. That left the 32x32 stopwatch child
+erased white the same way, one level down — 605 px — because children genuinely
+do need the seed: IdleWild's IWINFO pane is white in Win98 for exactly that
+reason and `test-win16-wep1-gameplay` asserts it.
+
+The fix is ordering, not the seed. `$win16_rearm_visible_child_erases`
+(`src/09e-win16-api.wat`) re-arms the deferred NC sequence for every visible
+guest-wndproc child when a hidden parent is shown, and the erase bit was being
+cashed in lazily at that child's *first BeginPaint* — after VBRUN had already
+stamped the stopwatch into the picture control. USER erases when a window is
+shown, before the app draws. Erasing right there at re-arm time and clearing
+bit 1 restores that order: the capture is now pixel-identical (0 of 307200) to
+the reviewed 2026-08-22 wine-assembly reference, and IdleWild still gets its
+white background because its erase merely happens first instead of last.
 
 The reviewed native reference is
 `test/output/win16-v86-comparison/wep16_rodent/native.png` (`native.json` has
