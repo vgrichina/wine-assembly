@@ -2381,20 +2381,56 @@ must inject **both**, in the browser's order and with the browser's codes —
 `keydown:71` (VK 'G') then `keypress:103` (char 'g'), matching the real session's
 `msg=0x100 wParam=0x47` / `msg=0x102 wParam=0x67`.
 
+### Narrowed further: DefDlgProc never reaches the DLGPROC
+
+Everything up to the DLGPROC checks out, so the break is inside our
+`DefDlgProcA`:
+
+| fact | evidence |
+|---|---|
+| the class really is a dialog class | `RegisterClassA(class="SDlgDialog", wndProc=0x006a9070, cbWndExtra=30)` — exactly `DLGWINDOWEXTRA`, which is what `$wnd_class_is_dialog` keys on |
+| Storm installs the DLGPROC from WM_NCCREATE | `DefDlgProcA(0x10023, 0x81, …)` immediately followed by `SetWindowLongA(0x10023, 0x4, 0x006efec0)` — in that order, in one run |
+| our `SetWindowLongA` files it correctly | `--input=N:dump-windows` prints `hwnd=65571 class="SDlgDialog" wndProc=0x6a9070 dialogProc=0x6efec0` |
+| Storm's focus candidate is the right control | `dump-children` gives `hwnd=0x10024 id=1065 style=0x50010000` at 265,315 320x33 — the `DIABLOEDIT`; Storm passes exactly that as wParam |
+| the message is handed to us | `DefDlgProcA(0x00010023, 0x00000110, 0x00010024, 0x074ffe18)` |
+| **the DLGPROC is never entered for it** | `--trace-at=0x006efec0` over the whole run: **one** hit, `batch=1640`, `[esp+8]=0x2b` (WM_DRAWITEM, reached through Storm's own `CallWindowProcA` at `storm+0x630c`). No hit with `[esp+8]=0x110`. |
+
+So `$handle_DefDlgProcA` (`src/09a5-handlers-window.wat:2421`) is called with
+WM_INITDIALOG, `$dialog_proc_get` has the right proc, and yet
+`$dialog_default_proc` (`src/09c3-controls.wat:15147`) does not run it.
+`$dialog_default_proc` already contains a long comment describing *precisely*
+this Diablo failure and returns the DLGPROC's BOOL for WM_INITDIALOG, so the
+return-value half is fixed; what is broken is one step earlier — the guest
+call itself does not happen.
+
+Note both dialogs that return FALSE (`0x1000e`, `0x10023`) are the two deepest
+ones: their `DefDlgProcA` frames sit at `esp=0x074ff8ac`/`0x074ff9c4` against
+`0x074ffa00` for `0x10003`, which does return TRUE. A nesting-depth or
+re-entrancy bail in `$wnd_send_message` fits that shape.
+
 ### The next measurement
 
-The open question is narrow and specific: **why does Diablo's DLGPROC return
-FALSE from `WM_INITDIALOG` for `0x10023` (and `0x1000e`) but TRUE for
-`0x10006`?** Either it genuinely returns FALSE on the real thing and sets focus
-through a path we do not run, or our `SendMessageA(hDlg, WM_INITDIALOG, ...)`
-loses the DLGPROC's return value for this dialog. Both are testable from the
-same place: `--trace-at=0x6aa238` catches the arguments going in (Storm pushes
-`hDlg, 0x110, defaultFocusHwnd, lParam`), and the wParam it passes is the
-`DIABLOEDIT` HWND if Storm's candidate loop picked it — if wParam is `hDlg`
-instead, the candidate loop is what failed, not the return value, and the
-suspects are `$handle_GetClassNameA` for a `DIABLOEDIT` child and the
-`WS_DISABLED` bit in our window table.
+Instrument the three early-outs between `DefDlgProcA` and the guest call, in
+this order:
+
+1. `$dialog_default_proc`'s `(if (i32.eqz $proc) (return 0))` — ruled out above
+   by `dump-windows`, but confirm it at the moment of the call rather than at
+   batch 1660.
+2. `$wnd_send_message`'s own early returns (`src/09c3-controls.wat`, the
+   `(i32.eqz $wp)` guard, the `$code16` branch and the `WM_COMMAND`
+   `$menu_try_edit_command` short-circuit).
+3. ~~The recursive `$run` loop's 64-round bail, which logs `0xCADE5000` through
+   `$host_log_i32`.~~ **Ruled out (2026-08-25.)** A full run to batch 1660 with
+   `--host-census` prints no `0xCADE5000` at all, and the log does carry other
+   `$host_log_i32` markers (`0xca00f10f` twice) — so this is a real negative,
+   not a silent channel. The recursive run is not giving up; it is not being
+   started.
+
+Per CLAUDE.md the durable form of step 2 is a new `--trace-dlg` category rather
+than a temporary log: DefDlgProc entry, the resolved DLGPROC, and which branch
+of `$wnd_send_message` consumed the message. That answers this bug and every
+future "the dialog never saw the message" report.
 
 Do not "fix" this by giving keyboard input to `main_hwnd` when focus is zero:
 that is what already happens, and it is what real Windows does. The fix belongs
-wherever the `DIABLOEDIT` control fails to become the focus window.
+wherever WM_INITDIALOG fails to reach the DLGPROC.
