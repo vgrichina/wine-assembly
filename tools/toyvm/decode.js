@@ -15,7 +15,7 @@ const { HANDLERS } = require('./emit');
 const H = {};
 for (const x of HANDLERS) H[x.name] = x.index;
 
-const SEG_PREFIX = { 0x26: 0, 0x2E: 1, 0x36: 2, 0x3E: 3 };
+const SEG_PREFIX = { 0x26: 0, 0x2E: 1, 0x36: 2, 0x3E: 3, 0x64: 4, 0x65: 5 };
 
 // x86 lays the ALU group out at 8*code + form. Only the six ops whose handlers
 // exist are listed; ADC (2) and SBB (3) read CF as an input and are absent
@@ -51,12 +51,21 @@ function decodeOne(rd, cs, ip) {
   let n = 0;
   let segOverride = null;
   let repPrefix = null;   // 'rep' (F3) or 'repne' (F2)
+  // In a 16-bit code segment the default operand size is 16 and 0x66 flips it
+  // to 32. Real-mode 386 demos use that constantly -- fixed-point maths in
+  // 32-bit registers while addressing stays 16-bit.
+  let opsize = 16;
 
   // Prefixes. A segment override and a repeat prefix can both be present, and
   // on this part the LAST one of each kind wins.
   for (;;) {
     const b = at(n);
-    if (SEG_PREFIX[b] !== undefined) segOverride = SEG_PREFIX[b];
+    // FS/GS overrides only exist from the 386 on; on an 8088 those two bytes
+    // are conditional-jump aliases, so consuming them as prefixes there would
+    // swallow real instructions.
+    if (SEG_PREFIX[b] !== undefined && (b < 0x64 || cpuLevel >= 386)) segOverride = SEG_PREFIX[b];
+    else if (b === 0x66 && cpuLevel >= 386) opsize = 32;
+    else if (b === 0x67 && cpuLevel >= 386) return null;   // 32-bit addressing: SIB, not modelled
     else if (b === 0xF3) repPrefix = 'rep';
     else if (b === 0xF2) repPrefix = 'repne';
     else if (b === 0xF0) { /* LOCK: no effect with one core */ }
@@ -69,7 +78,9 @@ function decodeOne(rd, cs, ip) {
   // A repeat prefix on anything but a string op does something the 8086 defines
   // only by accident. Refusing the encoding keeps the gate honest instead of
   // silently executing the unprefixed instruction and calling it a pass.
-  if (repPrefix && !(op >= 0xA4 && op <= 0xAF && op !== 0xA8 && op !== 0xA9)) return null;
+  const repeatable = (op >= 0xA4 && op <= 0xAF && op !== 0xA8 && op !== 0xA9)
+    || (cpuLevel >= 186 && op >= 0x6C && op <= 0x6F);
+  if (repPrefix && !repeatable) return null;
   const words = [];
   // Arena addresses are not known until every block is laid out, so branch
   // handlers get a 0 placeholder and a fixup naming the guest IP it stands for.
@@ -96,10 +107,20 @@ function decodeOne(rd, cs, ip) {
     return { isReg: false, reg, kind, disp: disp & 0xFFFF, seg };
   }
 
-  const packEa = (m) => (m.kind & 15) | ((m.seg & 3) << 4) | ((m.reg & 7) << 8);
+  // Bits 0-3 EA form, 4-6 segment (six of them once FS/GS exist), 8-10 the
+  // ModRM reg field.
+  const packEa = (m) => (m.kind & 15) | ((m.seg & 7) << 4) | ((m.reg & 7) << 8);
   const imm8 = () => { const v = at(n); n++; return v; };
   const imm16 = () => { const v = at(n) | (at(n + 1) << 8); n += 2; return v; };
+  const imm32 = () => {
+    const v = at(n) | (at(n + 1) << 8) | (at(n + 2) << 16) | (at(n + 3) << 24);
+    n += 4; return v | 0;
+  };
   const sx8to16 = (v) => (v & 0x80 ? v - 0x100 : v) & 0xFFFF;
+  // The immediate that follows the operand size: two bytes normally, four
+  // behind a 0x66 prefix. Every "imm16" in the 8086 manual is really this.
+  const immW = () => (opsize === 32 ? imm32() : imm16());
+  const sx8toW = (v) => (opsize === 32 ? ((v & 0x80 ? v - 0x100 : v) | 0) : sx8to16(v));
 
   // The ALU group and MOV share these five operand shapes exactly, so emitting
   // them goes through one place.
@@ -121,12 +142,12 @@ function decodeOne(rd, cs, ip) {
     const name = ALU_BY_CODE[op >> 3];
     const form = op & 7;
     if (form <= 3) {
-      const w = (form & 1) ? 16 : 8;
+      const w = (form & 1) ? opsize : 8;
       emitRmR(name, w, modrm(), form < 2);
     } else if (form === 4) {
       words.push(H[`${name}_ri8`], 0, imm8());          // AL
     } else {
-      words.push(H[`${name}_ri16`], 0, imm16());        // AX
+      words.push(H[`${name}_ri${opsize}`], 0, immW());  // AX / EAX
     }
   } else switch (op) {
     // --- ALU with immediate, group 80/81/83 ---------------------------------
@@ -138,20 +159,20 @@ function decodeOne(rd, cs, ip) {
       const name = ALU_BY_CODE[m.reg];
       if (name === undefined) return null;              // ADC/SBB
       if (op === 0x80) emitRmI(name, 8, m, imm8());
-      else if (op === 0x81) emitRmI(name, 16, m, imm16());
-      else emitRmI(name, 16, m, sx8to16(imm8()));
+      else if (op === 0x81) emitRmI(name, opsize, m, immW());
+      else emitRmI(name, opsize, m, sx8toW(imm8()));
       break;
     }
 
     // --- MOV r/m, r and r, r/m ----------------------------------------------
     case 0x88: emitRmR('mov', 8, modrm(), true); break;
-    case 0x89: emitRmR('mov', 16, modrm(), true); break;
+    case 0x89: emitRmR('mov', opsize, modrm(), true); break;
     case 0x8A: emitRmR('mov', 8, modrm(), false); break;
-    case 0x8B: emitRmR('mov', 16, modrm(), false); break;
+    case 0x8B: emitRmR('mov', opsize, modrm(), false); break;
 
     // --- MOV r/m, imm -------------------------------------------------------
     case 0xC6: { const m = modrm(); emitRmI('mov', 8, m, imm8()); break; }
-    case 0xC7: { const m = modrm(); emitRmI('mov', 16, m, imm16()); break; }
+    case 0xC7: { const m = modrm(); emitRmI('mov', opsize, m, immW()); break; }
 
     // --- Conditional jumps, 70-7F ------------------------------------------
     // rel8 is measured from the END of the instruction, so the target can only
@@ -168,7 +189,18 @@ function decodeOne(rd, cs, ip) {
     case 0x74: case 0x75: case 0x76: case 0x77:
     case 0x78: case 0x79: case 0x7A: case 0x7B:
     case 0x7C: case 0x7D: case 0x7E: case 0x7F: {
-      if (op < 0x70 && cpuLevel >= 186) return null;   // real 186 encodings
+      if (op < 0x70 && cpuLevel >= 186) {
+        // On a 186 and later these are the string I/O instructions.
+        if (op >= 0x6C && op <= 0x6F) {
+          const w = (op & 1) ? 16 : 8;
+          const sfx = w === 8 ? 'b' : 'w';
+          const nm = (op < 0x6E ? 'ins' : 'outs') + sfx;
+          const hn = repPrefix ? `rep_${nm}` : nm;
+          words.push(H[hn], segOverride === null ? 3 : segOverride);
+          break;
+        }
+        return null;   // 60/61 PUSHA/POPA, 62 BOUND, 69/6B IMUL imm
+      }
       const d = imm8();
       const fall = (start + n) & 0xFFFF;
       const target = (fall + (d & 0x80 ? d - 0x100 : d)) & 0xFFFF;
@@ -210,33 +242,39 @@ function decodeOne(rd, cs, ip) {
 
     // --- TEST ---------------------------------------------------------------
     case 0x84: emitRmR('test', 8, modrm(), true); break;
-    case 0x85: emitRmR('test', 16, modrm(), true); break;
+    case 0x85: emitRmR('test', opsize, modrm(), true); break;
     case 0xA8: words.push(H.test_ri8, 0, imm8()); break;
-    case 0xA9: words.push(H.test_ri16, 0, imm16()); break;
+    case 0xA9: words.push(H[`test_ri${opsize}`], 0, immW()); break;
 
     // --- LEA, XCHG, segment moves ------------------------------------------
-    case 0x8D: { const m = modrm(); if (m.isReg) return null; words.push(H.lea, packEa(m), m.disp); break; }
+    case 0x8D: { const m = modrm(); if (m.isReg) return null;
+      words.push(H[opsize === 32 ? 'lea32' : 'lea'], packEa(m), m.disp); break; }
     case 0x86: case 0x87: {
-      const m = modrm(); const w = op === 0x87 ? 16 : 8;
+      const m = modrm(); const w = op === 0x87 ? opsize : 8;
       if (m.isReg) words.push(H[`xchg_rr${w}`], (m.rm & 7) | ((m.reg & 7) << 4));
       else words.push(H[`xchg_mr${w}`], packEa(m), m.disp);
       break;
     }
-    case 0x8C: { const m = modrm();
-      if (m.isReg) words.push(H.mov_r_sr, (m.rm & 7) | ((m.reg & 3) << 4));
-      else words.push(H.mov_m_sr, packEa(m), m.disp);
-      break; }
-    case 0x8E: { const m = modrm();
-      if (m.isReg) words.push(H.mov_sr_r, (m.rm & 7) | ((m.reg & 3) << 4));
-      else words.push(H.mov_sr_m, packEa(m), m.disp);
-      break; }
+    // 8C/8E name a segment register in the ModRM reg field. An 8088 decodes
+    // only two bits of it, so reg 4-7 wrap back onto ES/CS/SS/DS -- and the
+    // corpus exercises exactly that. A 386 decodes three bits, where 6 and 7
+    // name nothing.
+    case 0x8C: case 0x8E: {
+      const m = modrm();
+      const sr = cpuLevel >= 386 ? (m.reg & 7) : (m.reg & 3);
+      if (sr > 5) return null;
+      const [rf, mf] = op === 0x8C ? ['mov_r_sr', 'mov_m_sr'] : ['mov_sr_r', 'mov_sr_m'];
+      if (m.isReg) words.push(H[rf], (m.rm & 7) | (sr << 4));
+      else words.push(H[mf], (packEa(m) & ~0x700) | (sr << 8), m.disp);
+      break;
+    }
 
     // --- Stack --------------------------------------------------------------
     case 0x9C: words.push(H.pushf); break;
     case 0x9D: words.push(H.popf); break;
     case 0x8F: { const m = modrm();
-      if (m.isReg) words.push(H.pop_r16, m.rm & 7);
-      else words.push(H.pop_m16, packEa(m), m.disp);
+      if (m.isReg) words.push(H[`pop_r${opsize}`], m.rm & 7);
+      else words.push(H[`pop_m${opsize}`], packEa(m), m.disp);
       break; }
     // PUSH imm is 80186 and later. The 8088 corpus records whatever the real
     // part does with these bytes, which is not a push, so they stay unknown at
@@ -252,7 +290,7 @@ function decodeOne(rd, cs, ip) {
         endsBlock = true;
         break;
       }
-      words.push(H.push_i16, op === 0x68 ? imm16() : sx8to16(imm8()));
+      words.push(H[`push_i${opsize}`], op === 0x68 ? immW() : sx8toW(imm8()));
       break;
     }
 
@@ -261,8 +299,12 @@ function decodeOne(rd, cs, ip) {
       const d = imm16();
       const ret = (start + n) & 0xFFFF;
       const target = (ret + (d & 0x8000 ? d - 0x10000 : d)) & 0xFFFF;
-      words.push(H.call_rel, 0, target, ret);
-      fixups.push({ index: words.length - 3, ip: target });
+      // [arenaTarget][guestTarget][retIp][arenaRet]. The return point is a
+      // fixup like the target is, so the compiler compiles it and the shadow
+      // stack gets a real address to resume at.
+      words.push(H.call_rel, 0, target, ret, 0);
+      fixups.push({ index: words.length - 4, ip: target },
+        { index: words.length - 1, ip: ret });
       endsBlock = true;
       break;
     }
@@ -270,8 +312,8 @@ function decodeOne(rd, cs, ip) {
     case 0xC2: words.push(H.ret_imm, imm16()); endsBlock = true; break;
 
     // --- Sign extend, flag ops ----------------------------------------------
-    case 0x98: words.push(H.cbw); break;
-    case 0x99: words.push(H.cwd); break;
+    case 0x98: words.push(opsize === 32 ? H.cwde : H.cbw); break;
+    case 0x99: words.push(opsize === 32 ? H.cdq : H.cwd); break;
     case 0x9E: words.push(H.sahf); break;
     case 0x9F: words.push(H.lahf); break;
     case 0xF5: words.push(H.cmc); break;
@@ -304,8 +346,8 @@ function decodeOne(rd, cs, ip) {
     case 0xA4: case 0xA5: case 0xA6: case 0xA7:
     case 0xAA: case 0xAB: case 0xAC: case 0xAD:
     case 0xAE: case 0xAF: {
-      const w = (op & 1) ? 16 : 8;
-      const sfx = w === 8 ? 'b' : 'w';
+      const w = (op & 1) ? opsize : 8;
+      const sfx = { 8: 'b', 16: 'w', 32: 'd' }[w];
       const name = { 0xA4: 'movs', 0xA6: 'cmps', 0xAA: 'stos', 0xAC: 'lods', 0xAE: 'scas' }[op & ~1];
       const src = segOverride === null ? 3 : segOverride;   // DS by default
       let hn = `${name}${sfx}`;
@@ -322,7 +364,7 @@ function decodeOne(rd, cs, ip) {
 
     // --- MOV to/from a direct address ---------------------------------------
     case 0xA0: case 0xA1: case 0xA2: case 0xA3: {
-      const w = (op & 1) ? 16 : 8;
+      const w = (op & 1) ? opsize : 8;
       const off = imm16();
       const seg = segOverride === null ? 3 : segOverride;
       words.push(H[op < 0xA2 ? `mov_acc_moffs${w}` : `mov_moffs_acc${w}`], off, seg);
@@ -338,7 +380,7 @@ function decodeOne(rd, cs, ip) {
     case 0xD0: case 0xD1: case 0xD2: case 0xD3:
     case 0xC0: case 0xC1: {
       if ((op === 0xC0 || op === 0xC1) && cpuLevel < 186) return null;
-      const w = (op & 1) ? 16 : 8;
+      const w = (op & 1) ? opsize : 8;
       const m = modrm();
       if (m.reg > 7) return null;
       const count = (op === 0xC0 || op === 0xC1) ? imm8()
@@ -379,6 +421,53 @@ function decodeOne(rd, cs, ip) {
       break;
     }
 
+    // --- 0F: the 80386 two-byte opcodes -------------------------------------
+    case 0x0F: {
+      if (cpuLevel < 386) return null;   // 0F is POP CS on an 8088
+      const op2 = at(n); n++;
+      if (op2 >= 0x80 && op2 <= 0x8F) {          // Jcc rel16
+        const d = imm16();
+        const fall = (start + n) & 0xFFFF;
+        const target = (fall + (d & 0x8000 ? d - 0x10000 : d)) & 0xFFFF;
+        words.push(H[`j${CC_NAMES[op2 & 15]}`], 0, target, 0, fall);
+        fixups.push({ index: words.length - 4, ip: target },
+          { index: words.length - 2, ip: fall });
+        endsBlock = true;
+        break;
+      }
+      if (op2 >= 0x90 && op2 <= 0x9F) {          // SETcc r/m8
+        const m = modrm();
+        const cc = CC_NAMES[op2 & 15];
+        if (m.isReg) words.push(H[`set_${cc}_r8`], m.rm & 7);
+        else words.push(H[`set_${cc}_m8`], packEa(m), m.disp);
+        break;
+      }
+      if (op2 === 0xB6 || op2 === 0xBE || op2 === 0xB7 || op2 === 0xBF) {
+        // MOVZX/MOVSX. Source width from the opcode, destination width from the
+        // operand-size prefix. The 16-bit-source forms only make sense with a
+        // 32-bit destination, but the encoding exists either way.
+        const nm = (op2 === 0xB6 || op2 === 0xB7) ? 'movzx' : 'movsx';
+        const sw = (op2 & 1) ? 16 : 8;
+        const m = modrm();
+        if (m.isReg) words.push(H[`${nm}${sw}_rr${opsize}`], (m.rm & 7) | ((m.reg & 7) << 4));
+        else words.push(H[`${nm}${sw}_rm${opsize}`], packEa(m), m.disp);
+        break;
+      }
+      if (op2 === 0xA4 || op2 === 0xA5 || op2 === 0xAC || op2 === 0xAD) {
+        // SHLD/SHRD. The even opcode takes an imm8 count, the odd one takes CL,
+        // which is passed as the -1 sentinel the single shifts already use.
+        const nm = (op2 & 0x08) ? 'shrd' : 'shld';
+        const m = modrm();
+        const cnt = () => ((op2 & 1) ? -1 : imm8());
+        if (m.isReg) words.push(H[`${nm}_r${opsize}`], (m.rm & 7) | ((m.reg & 7) << 4), cnt());
+        else words.push(H[`${nm}_m${opsize}`], packEa(m), m.disp, cnt());
+        break;
+      }
+      if (op2 === 0xA0 || op2 === 0xA8) { words.push(H.push_seg, op2 === 0xA0 ? 4 : 5); break; }
+      if (op2 === 0xA1 || op2 === 0xA9) { words.push(H.pop_seg, op2 === 0xA1 ? 4 : 5); break; }
+      return null;
+    }
+
     // --- INT ----------------------------------------------------------------
     case 0xCD: { const v = imm8(); words.push(H.int_imm, v, (start + n) & 0xFFFF); endsBlock = true; break; }
     case 0xCF: words.push(H.iret); endsBlock = true; break;
@@ -387,10 +476,10 @@ function decodeOne(rd, cs, ip) {
     // /0 and /1 are both TEST with an immediate; /2 NOT; /3 NEG; /4../7 the
     // widening multiply and divide.
     case 0xF6: case 0xF7: {
-      const w = op === 0xF7 ? 16 : 8;
+      const w = op === 0xF7 ? opsize : 8;
       const m = modrm();
       if (m.reg === 0 || m.reg === 1) {
-        const imm = w === 16 ? imm16() : imm8();
+        const imm = w === 8 ? imm8() : immW();
         emitRmI('test', w, m, imm);
       } else if (m.reg === 2 || m.reg === 3) {
         const nm = m.reg === 2 ? 'not' : 'neg';
@@ -415,26 +504,28 @@ function decodeOne(rd, cs, ip) {
 
     // --- INC/DEC and PUSH through ModRM, FE/FF ------------------------------
     case 0xFE: case 0xFF: {
-      const w = op === 0xFF ? 16 : 8;
+      const w = op === 0xFF ? opsize : 8;
       const m = modrm();
       if (m.reg === 0 || m.reg === 1) {
         const nm = m.reg === 0 ? 'inc' : 'dec';
         if (m.isReg) words.push(H[`${nm}_r${w}`], m.rm & 7);
         else words.push(H[`${nm}_m${w}`], packEa(m), m.disp);
-      } else if (m.reg === 6 && w === 16) {
-        if (m.isReg && m.rm === 4) words.push(H.push_sp);   // same 8086 quirk
-        else if (m.isReg) words.push(H.push_r16, m.rm & 7);
-        else words.push(H.push_m16, packEa(m), m.disp);
-      } else if (w === 16 && (m.reg === 2 || m.reg === 4)) {
+      } else if (m.reg === 6 && w !== 8) {
+        if (m.isReg && m.rm === 4 && w === 16) words.push(H.push_sp);   // same 8086 quirk
+        else if (m.isReg) words.push(H[`push_r${w}`], m.rm & 7);
+        else words.push(H[`push_m${w}`], packEa(m), m.disp);
+      } else if (w !== 8 && (m.reg === 2 || m.reg === 4)) {
         // Indirect near CALL (/2) and JMP (/4). The target is a runtime value,
         // so both end the trace and hand the guest IP back.
         const nm = m.reg === 2 ? 'call' : 'jmp';
-        if (m.isReg) {
-          words.push(H[`${nm}_r16`], m.rm & 7);
-          if (nm === 'call') words.push((start + n) & 0xFFFF);
-        } else {
-          words.push(H[`${nm}_m16`], packEa(m), m.disp);
-          if (nm === 'call') words.push((start + n) & 0xFFFF);
+        const ret = (start + n) & 0xFFFF;
+        if (m.isReg) words.push(H[`${nm}_r16`], m.rm & 7);
+        else words.push(H[`${nm}_m16`], packEa(m), m.disp);
+        if (nm === 'call') {
+          // [retIp][arenaRet], the same pair CALL rel16 carries, so the shadow
+          // return stack works for an indirect call too.
+          words.push(ret, 0);
+          fixups.push({ index: words.length - 1, ip: ret });
         }
         endsBlock = true;
       } else return null;   // far indirect (/3, /5) not implemented
@@ -445,12 +536,15 @@ function decodeOne(rd, cs, ip) {
       // MOV r8, imm8 (B0-B7) and MOV r16, imm16 (B8-BF) encode the register in
       // the opcode itself; so do INC (40-47) and DEC (48-4F).
       if (op >= 0xB0 && op <= 0xB7) words.push(H.mov_ri8, op & 7, imm8());
-      else if (op >= 0xB8 && op <= 0xBF) words.push(H.mov_ri16, op & 7, imm16());
-      else if (op >= 0x40 && op <= 0x47) words.push(H.inc_r16, op & 7);
-      else if (op >= 0x48 && op <= 0x4F) words.push(H.dec_r16, op & 7);
-      else if (op === 0x54) words.push(H.push_sp);   // 8086 pushes SP-2
-      else if (op >= 0x50 && op <= 0x57) words.push(H.push_r16, op & 7);
-      else if (op >= 0x58 && op <= 0x5F) words.push(H.pop_r16, op & 7);
+      else if (op >= 0xB8 && op <= 0xBF) words.push(H[`mov_ri${opsize}`], op & 7, immW());
+      else if (op >= 0x40 && op <= 0x47) words.push(H[`inc_r${opsize}`], op & 7);
+      else if (op >= 0x48 && op <= 0x4F) words.push(H[`dec_r${opsize}`], op & 7);
+      // PUSH SP pushes the already-decremented value on an 8088; the 32-bit
+      // form is a 386 encoding and follows the 386's rule, so it does not need
+      // the quirk.
+      else if (op === 0x54 && opsize === 16) words.push(H.push_sp);
+      else if (op >= 0x50 && op <= 0x57) words.push(H[`push_r${opsize}`], op & 7);
+      else if (op >= 0x58 && op <= 0x5F) words.push(H[`pop_r${opsize}`], op & 7);
       // PUSH/POP segment sit at 0x06 + 8*idx and 0x07 + 8*idx, in ES/CS/SS/DS
       // order -- the same order isa.SEG uses. POP CS (0x0F) is deliberately
       // absent: it exists on the 8086 but nothing sane emits it.
@@ -459,7 +553,7 @@ function decodeOne(rd, cs, ip) {
       // XCHG AX, r16. 0x90 is XCHG AX,AX, which is NOP -- emitted as NOP so the
       // op stream says what the code means.
       else if (op === 0x90) words.push(H.nop);
-      else if (op > 0x90 && op <= 0x97) words.push(H.xchg_rr16, 0 | ((op & 7) << 4));
+      else if (op > 0x90 && op <= 0x97) words.push(H[`xchg_rr${opsize}`], 0 | ((op & 7) << 4));
       else return null;
   }
 

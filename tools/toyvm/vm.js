@@ -45,10 +45,13 @@ async function makeVm(variant, opts = {}) {
 
   const get = (r) => ex[`get_${r}`]() & 0xFFFF;
   const set = (r, v) => ex[`set_${r}`](v & 0xFFFF);
+  // The masked view is what every 16-bit caller wants, but $steps/$left are
+  // counters and the register file is 32 bits wide -- both need the whole word.
+  const raw = (r) => ex[`get_${r}`]();
 
   return {
     variant, wat, bytes, exports: ex, mem,
-    get, set,
+    get, set, raw,
     getAll() {
       const o = {};
       for (const r of REGS) o[r === 'gip' ? 'ip' : r] = get(r);
