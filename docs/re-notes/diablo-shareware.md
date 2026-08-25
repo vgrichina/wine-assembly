@@ -2450,13 +2450,77 @@ USER, in two steps we do not implement:
 Both are general Win32 gaps, not Diablo quirks, and either one alone leaves
 `$focus_hwnd` at 0.
 
-### The fix
+### The fix (landed 2026-08-25, commit 3fe247f2)
 
-Implement DefDlgProc's WM_SETFOCUS rule — when the DLGPROC declines WM_SETFOCUS,
-set focus to the first visible, enabled, `WS_TABSTOP` child (falling back to the
-dialog itself) — and make sure a top-level dialog actually receives WM_SETFOCUS
-when it is shown and activated. Then verify with the 2300-batch recipe above:
-the field should accept `keydown:71` + `keypress:103`.
+Two rules, both in `src/09a5-handlers-window.wat`:
+
+1. **`$handle_DefDlgProcA`** — when the DLGPROC declines `WM_SETFOCUS` (0x0007),
+   move the focus to the first visible, enabled `WS_TABSTOP` child via
+   `$dialog_next_tabstop(hwnd, 0, 1)`, before the `$handle_DefWindowProcA`
+   fallthrough. The new `$dlg_focus_first_tabstop` helper **posts**
+   WM_KILLFOCUS/WM_SETFOCUS rather than sending them: this code runs inside a
+   guest DefDlgProc call, and a nested synchronous send would re-enter the
+   dialog's own wndproc on top of a live x86 frame.
+2. **`$handle_ShowWindow`** — an activating show of a top-level *dialog-class*
+   window (`$wnd_class_is_dialog`, i.e. cbWndExtra ≥ DLGWINDOWEXTRA) takes the
+   focus **only when `$focus_hwnd` is zero**. That guard is what makes this
+   safe: it can supply a focus nobody holds, and can never take one away.
+   Previously only `main_hwnd` ran an activation chain here, which is exactly
+   why a secondary dialog was never told it owned the keyboard.
+
+Verified with the recipe above: `[check_input_hwnd] keyboard → focus 0x10024`
+(the DIABLOEDIT) instead of `keyboard → 0 (main_hwnd)`, the field renders the
+typed text, and OK advances past it. `test/test-dialog-setfocus-tabstop.js`
+covers the four cases (first tab stop wins, a non-tabstop child is skipped, a
+disabled tab stop is skipped, and a dialog with no tab stop is left alone).
 
 Do not "fix" this by giving keyboard input to `main_hwnd` when focus is zero:
 that is what already happens, and it is what real Windows does.
+
+## Single player runs end to end in ~3000 batches (2026-08-25)
+
+With the focus fix in, the whole new-hero chain is drivable headlessly and
+lands in Tristram with a full HUD:
+
+```sh
+node test/run.js --app=diablo_shareware --batch-size=200000 \
+  --tick-ms-per-batch=50 --max-batches=3000 --no-close --repaint-every=20 \
+  --input='1000:mousemove:320:213,1040:mousedown:320:213,1080:mouseup:320:213,\
+1300:mousemove:420:298,1340:mousedown:420:298,1380:mouseup:420:298,\
+1600:mousemove:348:446,1640:mousedown:348:446,1680:mouseup:348:446,\
+1900:keydown:71,1910:keypress:103,1950:keydown:65,1960:keypress:97,\
+2000:keydown:76,2010:keypress:108,\
+2200:mousemove:348:446,2240:mousedown:348:446,2280:mouseup:348:446,\
+2900:png:/tmp/sp6.png'
+```
+
+Menu item y coordinates are the same for both modes — Single Player is the
+first at `(320,213)`, Multi Player the second at `(320,256)`. Choose Class,
+Enter Name and OK are unchanged from the multiplayer recipe. Both the Choose
+Class and Enter Name screens render correctly on this path (no blue portrait
+panel — that was transient on the multiplayer route).
+
+## OPEN (2026-08-25): the multiplayer Select Connection screen is blank
+
+Clicking OK on Enter Name in *multiplayer* now advances — the name is accepted
+and no "Invalid name" box appears — to a new 640x482 top-level dialog `0x10028`
+carrying five connection rows (ids 1069–1073, `WS_TABSTOP`), a "Requirements:"
+pane, and OK/Cancel. OK is created `WS_DISABLED`, which is consistent with "no
+provider selected yet". The screen is entirely black.
+
+Measured, so the usual suspects are already excluded:
+
+- The app is alive: the pump keeps cycling
+  GetTickCount / GetCursorPos / GetPropA / PeekMessageA.
+- The surfaces are alive and uploading every frame — `--trace-gdi` shows
+  `gdi_surface_create` + `gdi_surface_attach(0x200001 → hwnd 0x10002)` +
+  `gdi_surface_upload` for the DirectDraw primary, and `0x610002` created
+  640x482 32bpp and attached to the new dialog `0x10028`.
+- Both are **empty**, not mis-composited: `--dx-surfaces` reports the primary
+  as `nonZero=0/1850`, and `--dump-backcanvas --png=` writes a 2061-byte
+  all-black back-canvas for the game window and a 2074-byte all-black one for
+  `0x10028`.
+
+So nothing is drawing, rather than something drawing to the wrong place. Note
+shareware multiplayer needs a network service provider regardless, so this is
+not on the path to gameplay — single player above is.
