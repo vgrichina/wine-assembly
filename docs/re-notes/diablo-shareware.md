@@ -35,6 +35,22 @@ timeout 300 node test/run.js --app=diablo_shareware --time-scale=30 \
   --input=40000:png:/tmp/f1.png,40100:png:/tmp/f2.png
 ```
 
+**Always pass `--quiet-api`** unless you are actually reading the API log. A
+Diablo run prints one `[API]` line per call — 96,787 of them by the menu alone,
+724,015 by Tristram — and writing them is *blocking* I/O on the same thread the
+guest runs on. Measured back to back, same 1000-batch command line:
+
+| | wall | user CPU |
+|---|---|---|
+| default | 3:53 | 25.1s |
+| `--quiet-api` | **1:17** | 25.1s |
+
+Identical CPU, three times the wall clock: every second of that difference is
+the process waiting on stdout. On a box under load this is the difference
+between a run finishing and a run being SIGKILLed at the timeout, and it is why
+several probe runs in this file were originally reported as "too slow to
+finish".
+
 Runs are **deterministic, threads included** — the same command line twice gives
 byte-identical output. Measured, with T1 alive, on a loaded box:
 
@@ -286,7 +302,48 @@ sites, or `tools/caller_census.js`, to find who called what.
 
 ## Open bugs
 
-### Logo blinks on the main menu
+### FIXED (re-measured 2026-08-25): logo blinks on the main menu
+
+**This no longer reproduces.** Everything below it — the whole "black tail from
+a large MPQ read" chain — is kept as history, because the addresses in it are
+correct and useful, but do not go hunting for the defect again without first
+re-measuring. Two independent checks:
+
+```
+node test/test-diablo-shareware-art.js
+#   logo frame IoU vs archive: 0.81 0.81 0.80 0.83 0.81 0.81 0.81 0.80 0.83 …
+#   logo frames matching the archive: 15/15  (distinct sprites seen: 2,5,8,11,14)
+#   PASS
+```
+
+That test scores each capture against the frames `tools/mpq-extract.js` decodes
+from `spawn.mpq` host-side, so 15/15 is a statement about the *pixel indices*,
+not about brightness: the black-tail bug would score ~0.25.
+
+Second check, on the fast recipe rather than the art test's `--time-scale=30`
+one, so it is not the same run wearing a different hat — ten consecutive menu
+frames, top colour of the logo rect:
+
+```
+node test/run.js --app=diablo_shareware --batch-size=200000 --tick-ms-per-batch=50 \
+  --max-batches=1040 --no-close --quiet-api --input=1000:png:/tmp/f00.png,1004:png:…
+for f in /tmp/f*.png; do node tools/png-stats.js $f --region=126,0,388,154 --top=1; done
+#   distinct colours: 128-132   #000000 65.1-67.5%   on all ten
+```
+
+A blanked frame is ~100% `#000000` and one distinct colour, so a single blink in
+that window would be unmissable. The old repro's duty cycle was ~20% art / 80%
+black over a 45-batch period; ten samples across 40 batches cannot miss that.
+
+Which change fixed it was not bisected. The likeliest candidate is the
+per-offset code-write invalidation described in `docs/page-compile-design.md`:
+the same run now reports `page invalidations 22117 that dropped a block 3081 …
+whole-page drops (write too wide to walk) 1 (100.0% exact)`, and the sparse
+arena at `0x4fc68000` is the last page named — i.e. Storm's runtime-generated
+blitters are now being retired on write, which is exactly the suspect the
+"Still open: why the blitter overruns" note below could not exclude.
+
+#### History: the symptom as it was
 
 The 385×156 logo block appears and disappears across frames while "SHAREWARE",
 the menu items, the pentagrams and the version string all stay put.
@@ -508,7 +565,13 @@ listfile).
 > truncated read is *not* ruled out: it is the mechanism, just one level further
 > down than the sector table can show.
 
-### Choose Class screen is corrupted
+### FIXED (re-measured 2026-08-25): Choose Class screen is corrupted
+
+**This no longer reproduces either.** `test/test-diablo-shareware-art.js` scores
+the nine panel-outline segments of `ui_art\selhero.pcx` against the archive and
+reports `choose class panel segments drawn: 9/9`, every segment at `1.00`. The
+sprite array being NULL was the symptom of the flat-grey palette bug fixed in
+`cfff3789`; kept below as history.
 
 Symptom as the user states it: "the layout is a mess and clicks and UI don't
 seem to match". What the capture shows is a mostly black screen with only gold
@@ -657,7 +720,41 @@ Runtime twins used above, for reading traces: `0x6a4d10`/`0x6a4e51`/`0x6a5019`
   the tree at the time of these runs makes this better or worse than `HEAD`;
   every number above includes it.
 
-### Storm audio pump thread dies
+### FIXED-BUT-INCOMPLETE (re-measured 2026-08-25): Storm audio pump thread dies
+
+**The death no longer reproduces, and the list head is no longer clobbered.**
+Three runs on the fast recipe — 1000 batches (menu), 3200 batches (menu, idle)
+and 3300 batches driven all the way into Tristram — all end with
+
+```
+T1 h=0xe1000 state=active eip=0x6af04f  …  waitH=0xe0001
+Hexdump 0x006d46c0:  00 00 00 00 | 00 00 00 00 | 00 10 0e 00 | 18 60 3e 08
+```
+
+`0x6af04f` is `storm+0x1500c04f`, the pump's own idle head — it reads the list
+head and picks a `Sleep` length from it (`0xfa` when empty, `5` when not), so T1
+is parked in its normal loop, not dead. The head at `0x6d46c0` reads **zero**,
+not `0x4fc69xxx` copier bytes, and `0x6d46c8`/`0x6d46cc` still hold the pump
+thread handle `0xe1000` and the `IDirectSound` object `0x083e6018`. The art test
+asserts the same thing from the `[thread-event]` side and passes.
+
+**What that does not say.** A head of zero means *no stream node was ever
+linked*, so the pump was idle the whole time and the `Lock` path below was never
+re-entered. In other words the wild store is gone, but this measurement does not
+prove the audio path works — it proves it is not crashing. Diablo is silent in
+these runs and finding out why is a separate, unstarted question; start it by
+counting `storm+0x1500ba65` (the return landing of the
+`IDirectSound::CreateSoundBuffer` vtable call).
+
+> **Trap, paid for once here:** `--count=storm+0x1500ba62` reads **0** and means
+> nothing, because `0x1500ba62` is the `call [eax+0xc]` itself and `--count`
+> only fires on basic-block entries. The same goes for `0x1500c9dc` and
+> `0x1500bfe2` in the table below: both are mid-block stores. Probe
+> `0x1500ba65`, `0x1500c9d4` and `0x1500bfdf` instead — a call-return landing
+> and two `jz` fall-throughs. A zero from a bad probe address looks exactly like
+> a zero from code that never runs.
+
+History follows.
 
 Thread 1 ends with EIP=0, last logged block entry `storm+0x1500bec4`, just
 before the `IDirectSoundBuffer::Lock` vtable call.
