@@ -90,6 +90,9 @@ const ALU = {
 // identity and the arithmetic flags go to the *32 helpers, which take a
 // carry-in and a truncated result rather than an oversized one.
 const WM = (w) => ({ 8: '0xFF', 16: '0xFFFF', 32: '-1' })[w];
+const ADD_FLAGS = (w, a, b, s) => w === 32
+  ? `(call $flags_add32 ${a} ${b} (i32.const 0) ${s})`
+  : `(call $flags_add ${a} ${b} ${s} (i32.const ${w}))`;
 const SUB_FLAGS = (w, a, b, s) => w === 32
   ? `(call $flags_sub32 ${a} ${b} (i32.const 0) ${s})`
   : `(call $flags_sub ${a} ${b} ${s} (i32.const ${w}))`;
@@ -1123,6 +1126,25 @@ function genArithIO() {
   (call $rset${w} (local.get $t6) (local.get $t7))
   (call $flags_mul ${FITS})
 `);
+    // The 0F AF two-operand form: destination *= source, both registers or a
+    // register and memory. Same product and the same flag rule as the
+    // three-operand one, only the second factor comes from the destination.
+    h(`imul2_rr${w}`, 1, `
+  ${ops(1)}
+  ${MUL(`(call $rget${w} (i32.and (local.get $t0) (i32.const 7)))`,
+        `(call $rget${w} (i32.and (i32.shr_u (local.get $t0) (i32.const 4)) (i32.const 7)))`)}
+  (call $rset${w} (i32.and (i32.shr_u (local.get $t0) (i32.const 4)) (i32.const 7))
+    (local.get $t7))
+  (call $flags_mul ${FITS})
+`);
+    h(`imul2_rm${w}`, 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  ${MUL(`(call $rd${w} (local.get $t5) (local.get $t4))`,
+        `(call $rget${w} (local.get $t6))`)}
+  (call $rset${w} (local.get $t6) (local.get $t7))
+  (call $flags_mul ${FITS})
+`);
   }
 
   // DIV/IDIV fault to INT 0 on a zero divisor or a quotient that will not fit.
@@ -1398,13 +1420,13 @@ function genArithIO() {
   }
 
   // LES/LDS load a far pointer into a segment register and a GPR at once.
-  for (const [nm, seg] of [['les', 0], ['lds', 3]]) {
+  for (const [nm, seg] of [['les', 0], ['lds', 3], ['lfs', 4], ['lgs', 5]]) {
     h(nm, 2, `
   ${ops(2)}
   ${EA_SETUP_PRE}
   (call $rset16 (local.get $t6) (call $rd16 (local.get $t5) (local.get $t4)))
   (call $sset (i32.const ${seg}) (call $rd16 (local.get $t5)
-    (i32.and (i32.add (local.get $t4) (i32.const 2)) (i32.const 0xFFFF))))
+    (call $off_add (local.get $t4) (i32.const 2))))
 `);
   }
 }
@@ -1495,6 +1517,58 @@ function gen386() {
   (call $rset${dw} (local.get $t6) ${ext(`(call $rd${sw} (local.get $t5) (local.get $t4))`)})
 `);
     }
+  }
+
+  // SMSW, and reading a control register. This machine has exactly one CR0
+  // value -- real mode, no coprocessor -- and never leaves it, because nothing
+  // WRITES a control register: LMSW, MOV CR,r and LGDT/LIDT stay unimplemented,
+  // so a program that genuinely tries to switch mode is reported as blocked
+  // rather than quietly run in the wrong one. Reading is a different matter:
+  // nine corpus programs open with `smsw ax` / `test al,1` to check they are
+  // not already inside a V86 monitor, and the answer to that is no.
+  h('smsw_r16', 1, `
+  ${ops(1)}
+  (call $rset16 (local.get $t0) (global.get $cr0))
+`);
+  h('smsw_m16', 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  (call $wr16 (local.get $t5) (local.get $t4) (global.get $cr0))
+`);
+  // MOV r32, CRn. Only CR0 has a value; CR2 (the page-fault address) and CR3
+  // (the page directory) are zero on a machine that has never paged.
+  h('mov_r_cr', 1, `
+  ${ops(1)}
+  (call $rset32 (i32.and (local.get $t0) (i32.const 7))
+    (select (global.get $cr0) (i32.const 0)
+      (i32.eqz (i32.and (i32.shr_u (local.get $t0) (i32.const 4)) (i32.const 7)))))
+`);
+
+  // XADD (486): the destination gets dst+src and the source gets the OLD dst,
+  // in that order. Reading both before writing either is the whole instruction
+  // -- XADD AX,AX has to leave AX doubled, not squared.
+  for (const w of [8, 16, 32]) {
+    h(`xadd_rr${w}`, 1, `
+  ${ops(1)}
+  (local.set $t1 (i32.and (local.get $t0) (i32.const 7)))
+  (local.set $t2 (i32.and (i32.shr_u (local.get $t0) (i32.const 4)) (i32.const 7)))
+  (local.set $t3 (call $rget${w} (local.get $t1)))
+  (local.set $t4 (call $rget${w} (local.get $t2)))
+  (call $rset${w} (local.get $t2) (local.get $t3))
+  (call $rset${w} (local.get $t1) (i32.add (local.get $t3) (local.get $t4)))
+  ${ADD_FLAGS(w, '(local.get $t3)', '(local.get $t4)',
+    `(i32.add (local.get $t3) (local.get $t4))`)}
+`);
+    h(`xadd_rm${w}`, 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  (local.set $t3 (call $rd${w} (local.get $t5) (local.get $t4)))
+  (local.set $t7 (call $rget${w} (local.get $t6)))
+  (call $rset${w} (local.get $t6) (local.get $t3))
+  (call $wr${w} (local.get $t5) (local.get $t4) (i32.add (local.get $t3) (local.get $t7)))
+  ${ADD_FLAGS(w, '(local.get $t3)', '(local.get $t7)',
+    `(i32.add (local.get $t3) (local.get $t7))`)}
+`);
   }
 }
 
@@ -2015,6 +2089,9 @@ function preamble() {
 (import "host" "port_in" (func $port_in (param i32) (param i32) (result i32)))
 (import "host" "port_out" (func $port_out (param i32) (param i32) (param i32)))
 ${globals}
+;; CR0 as this machine actually is: real mode (PE clear), ET set because the
+;; 386 encodings are available, no paging. Nothing writes it -- see smsw.
+(global $cr0 (mut i32) (i32.const 0x0010))
 ;; The FLAGS shape, defaulting to the 8086's. set_cpu raises it.
 (global $f_res (mut i32) (i32.const ${isa.FLAGS_RESERVED}))
 (global $f_def (mut i32) (i32.const ${isa.FLAGS_DEFINED}))

@@ -528,6 +528,45 @@ function decodeOne(rd, cs, ip) {
       }
       if (op2 === 0xA0 || op2 === 0xA8) { words.push(H.push_seg, op2 === 0xA0 ? 4 : 5); break; }
       if (op2 === 0xA1 || op2 === 0xA9) { words.push(H.pop_seg, op2 === 0xA1 ? 4 : 5); break; }
+      // IMUL r, r/m -- the two-operand form, destination times source.
+      if (op2 === 0xAF) {
+        const m = modrm();
+        if (m.isReg) words.push(H[`imul2_rr${opsize}`], (m.rm & 7) | ((m.reg & 7) << 4));
+        else words.push(H[`imul2_rm${opsize}`], packEa(m), m.disp);
+        break;
+      }
+      // LFS/LGS: LES and LDS with the two segment registers the 386 added.
+      if (op2 === 0xB4 || op2 === 0xB5) {
+        const m = modrm(); if (m.isReg) return null;
+        words.push(H[op2 === 0xB4 ? 'lfs' : 'lgs'], packEa(m), m.disp);
+        break;
+      }
+      // XADD (486).
+      if (op2 === 0xC0 || op2 === 0xC1) {
+        const w = (op2 & 1) ? opsize : 8;
+        const m = modrm();
+        if (m.isReg) words.push(H[`xadd_rr${w}`], (m.rm & 7) | ((m.reg & 7) << 4));
+        else words.push(H[`xadd_rm${w}`], packEa(m), m.disp);
+        break;
+      }
+      // Group 7. Only /4 SMSW is here: reading the machine status word says
+      // "real mode", which is true. The forms that WRITE system state -- LMSW,
+      // LGDT, LIDT -- are left unimplemented on purpose, so a program that
+      // really does switch mode is reported instead of run in the wrong one.
+      if (op2 === 0x01) {
+        const m = modrm();
+        if (m.reg !== 4) return null;
+        if (m.isReg) words.push(H.smsw_r16, m.rm & 7);
+        else words.push(H.smsw_m16, packEa(m), m.disp);
+        break;
+      }
+      // MOV r32, CRn. The mirror image (0F 22) is a mode switch and is not here.
+      if (op2 === 0x20) {
+        const m = modrm();
+        if (!m.isReg) return null;
+        words.push(H.mov_r_cr, (m.rm & 7) | ((m.reg & 7) << 4));
+        break;
+      }
       return null;
     }
 
