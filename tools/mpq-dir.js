@@ -20,82 +20,9 @@
 // decrypted against the ones the archive actually holds.
 
 const fs = require('fs');
-
-const CRYPT = new Uint32Array(0x500);
-(function buildCryptTable() {
-  let seed = 0x00100001;
-  for (let i = 0; i < 0x100; i++) {
-    for (let j = 0, index = i; j < 5; j++, index += 0x100) {
-      seed = (seed * 125 + 3) % 0x2aaaab;
-      const hi = (seed & 0xffff) << 16;
-      seed = (seed * 125 + 3) % 0x2aaaab;
-      CRYPT[index] = (hi | (seed & 0xffff)) >>> 0;
-    }
-  }
-})();
-
-function hashString(text, type) {
-  let seed1 = 0x7fed7fed >>> 0;
-  let seed2 = 0xeeeeeeee >>> 0;
-  for (const rawChar of text) {
-    const ch = rawChar.toUpperCase().charCodeAt(0);
-    seed1 = (CRYPT[(type << 8) + ch] ^ (seed1 + seed2)) >>> 0;
-    seed2 = (ch + seed1 + seed2 + (seed2 << 5) + 3) >>> 0;
-  }
-  return seed1 >>> 0;
-}
-
-function decryptBlock(buf, key) {
-  let seed1 = key >>> 0;
-  let seed2 = 0xeeeeeeee >>> 0;
-  for (let offset = 0; offset + 4 <= buf.length; offset += 4) {
-    seed2 = (seed2 + CRYPT[0x400 + (seed1 & 0xff)]) >>> 0;
-    const value = (buf.readUInt32LE(offset) ^ ((seed1 + seed2) >>> 0)) >>> 0;
-    buf.writeUInt32LE(value, offset);
-    seed1 = ((((~seed1 << 0x15) >>> 0) + 0x11111111) | (seed1 >>> 0x0b)) >>> 0;
-    seed2 = (value + seed2 + (seed2 << 5) + 3) >>> 0;
-  }
-  return buf;
-}
-
-// Recover the key a sector table was encrypted with from its first dword,
-// whose plaintext is always the table's own size in bytes.
-function detectSeed(raw, plain0, cSize) {
-  const saved = ((raw.readUInt32LE(0) ^ plain0) - 0xeeeeeeee) >>> 0;
-  for (let i = 0; i < 0x100; i++) {
-    const seed1 = (saved - CRYPT[0x400 + i]) >>> 0;
-    const trial = decryptBlock(Buffer.from(raw), seed1);
-    // A false positive matches dword 0 and nothing else. The last offset of a
-    // sector table is the file's total compressed size, which pins it.
-    if (trial.readUInt32LE(0) === (plain0 >>> 0) &&
-        trial.readUInt32LE(trial.length - 4) === (cSize >>> 0)) return seed1;
-  }
-  return null;
-}
-
-const FLAGS = [
-  [0x00000100, 'IMPLODE'],
-  [0x00000200, 'COMPRESS'],
-  [0x00010000, 'ENCRYPTED'],
-  [0x00020000, 'FIX_KEY'],
-  [0x00100000, 'PATCH_FILE'],
-  [0x01000000, 'SINGLE_UNIT'],
-  [0x02000000, 'DELETE_MARKER'],
-  [0x04000000, 'SECTOR_CRC'],
-  [0x80000000, 'EXISTS'],
-];
-
-function flagNames(flags) {
-  const names = FLAGS.filter(([bit]) => (flags & bit) !== 0).map(([, name]) => name);
-  return names.length ? names.join('|') : '-';
-}
-
-function findHeader(buf) {
-  for (let offset = 0; offset + 32 <= buf.length; offset += 512) {
-    if (buf.readUInt32LE(offset) === 0x1a51504d) return offset;
-  }
-  return -1;
-}
+// The crypt table, name hashing, block decryption, seed recovery and the flag
+// names all live in tools/mpq.js, shared with tools/mpq-extract.js.
+const { hashString, decryptBlock, detectSeed, flagNames, findHeader } = require('./mpq');
 
 function main() {
   const args = process.argv.slice(2);
