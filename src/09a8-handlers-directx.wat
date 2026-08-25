@@ -1256,9 +1256,28 @@
     (local.set $pitch (i32.and
       (i32.add (i32.mul (local.get $w) (i32.div_u (local.get $bpp) (i32.const 8))) (i32.const 3))
       (i32.const 0xFFFFFFFC)))
-    ;; Allocate DIB
+    ;; Allocate DIB, plus slack rows past the end.
+    ;;
+    ;; A real primary surface is the front of a video-memory aperture that
+    ;; keeps going after the last visible scanline, so a guest that runs a few
+    ;; rows long scribbles on nothing. Ours is a heap block with the next
+    ;; allocation packed directly behind it, and that is not the same machine.
+    ;; Diablo's Storm dialogs are 640x482 windows painted into a 640x480
+    ;; primary: the two extra rows land 8 bytes past the end of the surface,
+    ;; which is exactly where CreatePalette's 1024-byte copy of the colour
+    ;; table had been allocated. Every entry became 0xefefefef -- the
+    ;; background index 239 broadcast to a dword -- so from the moment you
+    ;; picked a class the whole screen presented a real picture through a flat
+    ;; grey palette. Nothing in the trace showed it: the pixels were right, no
+    ;; SetEntries was called, and the surface never reported an error.
+    ;;
+    ;; Sixteen rows is far more than any overrun seen and costs 10KB on a
+    ;; 640x480 primary. $dib_size stays the logical size, so pitch, vidmem
+    ;; accounting and everything that reads the surface are unchanged.
     (local.set $dib_size (i32.mul (local.get $pitch) (local.get $h)))
-    (local.set $dib_guest (call $heap_alloc (local.get $dib_size)))
+    (local.set $dib_guest (call $heap_alloc
+      (i32.add (local.get $dib_size)
+        (i32.add (i32.mul (local.get $pitch) (i32.const 16)) (i32.const 64)))))
     ;; An exhausted heap returns 0, and g2w(0) is the base of the guest image --
     ;; zeroing a 640x480 surface from there wipes the first 300KB of the PE's
     ;; own code, so the app dies executing zeros a long way from the real cause.
@@ -1319,8 +1338,12 @@
           (i32.store16 (i32.add (local.get $back_entry) (i32.const 14)) (local.get $h))
           (i32.store16 (i32.add (local.get $back_entry) (i32.const 16)) (local.get $bpp))
           (i32.store16 (i32.add (local.get $back_entry) (i32.const 18)) (local.get $pitch))
-          ;; Allocate separate DIB for back buffer
-          (local.set $dib_guest (call $heap_alloc (local.get $dib_size)))
+          ;; Allocate separate DIB for back buffer, with the same slack rows as
+          ;; the primary above -- an app that draws a couple of rows long does
+          ;; it to whichever surface it is rendering into.
+          (local.set $dib_guest (call $heap_alloc
+            (i32.add (local.get $dib_size)
+              (i32.add (i32.mul (local.get $pitch) (i32.const 16)) (i32.const 64)))))
           ;; Same guard as the primary above: never zero from g2w(0).
           (if (i32.eqz (local.get $dib_guest))
             (then
