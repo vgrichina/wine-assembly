@@ -915,6 +915,7 @@
           <span>App is using the full page</span>
           <button type="button" onclick="approveBrowserFullscreen(event)">Use browser fullscreen</button>
         </div>
+        <div id="page-fullscreen-hint" role="status">Add to Home Screen to hide Safari&rsquo;s bars too</div>
         <button type="button" id="page-fullscreen-exit" title="Leave full screen"
                 aria-label="Leave full screen" onclick="exitPageFullscreen(event)">&#x2715;</button>
         <textarea id="mobile-keyboard-proxy" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-hidden="true"></textarea>
@@ -1049,6 +1050,27 @@ Resource-aware Win98 emulator
       // down, the top of the app would start off-screen.
       window.scrollTo(0, 0);
       resizeCanvas();
+      showPageFullscreenHint();
+    }
+
+    // Shown only where it is true and actionable: a browser that keeps its own
+    // toolbars over this mode, and a page that is not already installed (an
+    // installed one has no browser chrome to complain about).
+    let pageFullscreenHintShown = false;
+    function showPageFullscreenHint() {
+      const hint = document.getElementById('page-fullscreen-hint');
+      if (!hint || pageFullscreenHintShown) return;
+      const standalone = window.navigator.standalone === true ||
+        (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+      const iosSafari = /iP(hone|od|ad)/.test(navigator.userAgent) ||
+        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      if (standalone || !iosSafari) {
+        hint.style.display = 'none';
+        return;
+      }
+      pageFullscreenHintShown = true;
+      hint.classList.remove('faded');
+      setTimeout(() => hint.classList.add('faded'), 4000);
     }
 
     function exitPageFullscreen(event) {

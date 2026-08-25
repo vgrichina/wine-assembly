@@ -15,6 +15,20 @@ assert(html.includes('App is using the full page'), 'control should explain the 
 assert(html.includes('onclick="approveBrowserFullscreen(event)"'), 'browser fullscreen should require an explicit button action');
 assert(html.includes('async function approveBrowserFullscreen(event)'), 'approval action should own the fullscreen request');
 assert(html.includes('const request = target.requestFullscreen || target.webkitRequestFullscreen'), 'approval should support the browser fullscreen API');
+// iPhone Safari has no element Fullscreen API at all, so the approval button
+// had nothing to call and did nothing. The page itself stands in for it there.
+assert(html.includes('if (!request) return enterPageFullscreen();'),
+  'a browser without the fullscreen API should fall back to the whole page');
+assert(html.includes('function enterPageFullscreen()') && html.includes('function exitPageFullscreen(event)'),
+  'the page-fullscreen fallback should be enterable and exitable');
+assert(html.includes('window.exitPageFullscreen = exitPageFullscreen;'),
+  'the renderer needs a way to release the page when the app leaves fullscreen');
+assert(html.includes('body.page-fullscreen #browser-fullscreen-consent { display: none !important; }'),
+  'the consent bar is chrome and should go away in page fullscreen');
+assert(html.includes('id="page-fullscreen-exit"'),
+  'a phone has no Escape key, so page fullscreen needs its own exit control');
+assert(html.includes('height: 100dvh;'),
+  'page fullscreen must size to the visible viewport, not the taller iOS 100vh one');
 assert(html.includes('body.exclusive-fullscreen #browser-fullscreen-consent { display: flex; }'), 'approval control should appear only for guest fullscreen');
 assert(html.includes('#screen-wrap:fullscreen #browser-fullscreen-consent'), 'approval control should disappear after entering browser fullscreen');
 assert(html.includes('order: -1;'), 'consent banner should be laid out above the canvas');
@@ -46,6 +60,19 @@ try {
   assert.strictEqual(resizeCount, 1, 'dedicated-page mode should resize to the browser viewport');
   assert.strictEqual(requestCount, 0, 'guest fullscreen must not invoke browser fullscreen');
   assert.strictEqual(renderer._requestedBrowserFullscreen, false, 'browser fullscreen should remain unapproved');
+
+  // Leaving guest fullscreen on a browser with no Fullscreen API: there is no
+  // fullscreen element to exit, so the page-fullscreen stand-in is what has to
+  // be taken down. Without this the app shrinks back into a page that is still
+  // showing nothing but a canvas and an exit button.
+  let released = 0;
+  global.window.exitPageFullscreen = () => { released++; };
+  renderer._requestedBrowserFullscreen = true;
+  renderer._setExclusiveFullscreen(false);
+  assert.deepStrictEqual(toggles, [['exclusive-fullscreen', true], ['exclusive-fullscreen', false]],
+    'leaving guest fullscreen should leave dedicated-page mode');
+  assert.strictEqual(released, 1, 'the page-fullscreen fallback should be released with it');
+  assert.strictEqual(renderer._requestedBrowserFullscreen, false, 'the approval should not survive the exit');
 } finally {
   if (previousDocument === undefined) delete global.document;
   else global.document = previousDocument;
