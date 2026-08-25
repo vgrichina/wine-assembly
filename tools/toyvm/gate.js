@@ -15,7 +15,7 @@
 // pass a VM that scribbled on bx.
 
 const { makeVm, REGS } = require('./vm');
-const { loadOpcode, parseOps } = require('../fetch-cputests');
+const { loadOpcode, parseOps, listRemote, CACHE } = require('../fetch-cputests');
 const { VARIANTS } = require('./emit');
 
 function arg(name, fallback) {
@@ -31,11 +31,26 @@ function hex(v, w = 4) { return '0x' + (v >>> 0).toString(16).padStart(w, '0'); 
 // not something an emulator is obliged to reproduce -- but ignoring a flag
 // silently is how a real bug hides, so every masked bit is named here and
 // counted in the summary.
-const AF = 1 << 4;
+const CF = 1 << 0, PF = 1 << 2, AF = 1 << 4, ZF = 1 << 6, SF = 1 << 7, OF = 1 << 11;
 const UNDEFINED_FLAGS = {
   // AND/OR/XOR/TEST clear CF and OF and define SF/ZF/PF; AF is undefined.
   and: AF, or: AF, xor: AF, test: AF,
+  // Shifts and rotates: AF is undefined throughout, and OF is defined only for
+  // a count of one. The corpus mixes both counts in one file, so OF is masked
+  // for the CL forms via the byte check below rather than by mnemonic.
+  rol: AF, ror: AF, rcl: AF, rcr: AF, shl: AF, sal: AF, shr: AF, sar: AF,
+  // MUL/IMUL/DIV/IDIV define CF and OF only; the rest is undefined, and DIV
+  // defines nothing at all.
+  mul: SF | ZF | AF | PF, imul: SF | ZF | AF | PF,
+  div: CF | PF | AF | ZF | SF | OF, idiv: CF | PF | AF | ZF | SF | OF,
 };
+
+// OF after a multi-bit shift is undefined. D2/D3 take the count from CL, and
+// D0/D1 always shift by one, so the opcode byte is the discriminator.
+function extraMask(t) {
+  const op = t.bytes.find(b => b >= 0xD0 && b <= 0xD3);
+  return (op === 0xD2 || op === 0xD3) ? OF : 0;
+}
 
 async function main() {
   const variant = arg('variant', 'tailcall');
@@ -43,7 +58,14 @@ async function main() {
     console.error(`unknown variant ${variant}; have ${VARIANTS.join(', ')}`);
     process.exit(2);
   }
-  const ops = parseOps(arg('ops', '00-05'));
+  // --all is the coverage census: every opcode file the suite has, at whatever
+  // --limit says. It reports two separate numbers per opcode -- how much is
+  // implemented, and how much of what IS implemented is correct -- because
+  // conflating them is how a decoder that quietly refuses half the encodings
+  // scores 100%.
+  const ops = flag('all')
+    ? (await listRemote()).map(e => e.name).sort()
+    : parseOps(arg('ops', '00-05'));
   const limit = Number(arg('limit', 0)) || Infinity;
   const verbose = flag('verbose');
 
@@ -68,7 +90,8 @@ async function main() {
       if (!vm.stepOne()) { opUnimpl++; unimpl++; continue; }
       const after = vm.getAll();
 
-      const mask = UNDEFINED_FLAGS[t.name.split(/\s+/)[0]] || 0;
+      const mnem = t.name.split(/\s+/)[0].replace(/^(rep|repe|repne|repnz|repz|lock)\s*/, '');
+      const mask = (UNDEFINED_FLAGS[mnem] || 0) | extraMask(t);
       const bad = [];
 
       // Every register the corpus lists must match.
@@ -88,12 +111,31 @@ async function main() {
       // And every register it does NOT list must be untouched.
       for (const k of Object.keys(before)) {
         if (t.final.regs[k] !== undefined) continue;
-        if (after[k] !== before[k]) bad.push(`${k} moved ${hex(before[k])}->${hex(after[k])} but corpus says unchanged`);
+        // "Unchanged" is subject to the same undefined-flag mask: the corpus
+        // omitting flags means the real part left them alone, which for an
+        // undefined bit is one permitted outcome among several.
+        const m = k === 'flags' ? mask : 0;
+        if (((after[k] ^ before[k]) & ~m & 0xFFFF) !== 0) {
+          bad.push(`${k} moved ${hex(before[k])}->${hex(after[k])} but corpus says unchanged`);
+        } else if (after[k] !== before[k]) masked++;
       }
       // Memory the corpus says changed.
+      //
+      // One exception: a divide error pushes FLAGS, and DIV/IDIV leave every
+      // flag undefined, so those two stack bytes carry whatever garbage the
+      // real part's microcode left behind. The pushed CS and IP are checked
+      // normally -- it is only the flags word that is not a specification.
+      let skipLo = -1;
+      if ((mnem === 'div' || mnem === 'idiv') && after.ip !== undefined) {
+        const sp = after.sp, ss = after.ss;
+        if (sp !== undefined && ss !== undefined) skipLo = ((ss << 4) + ((sp + 4) & 0xFFFF)) & 0xFFFFF;
+      }
       for (const [addr, want] of (t.final.ram || [])) {
-        const got = vm.mem[addr & 0xFFFFF];
-        if (got !== want) bad.push(`ram[${hex(addr, 5)}] want=${hex(want, 2)} got=${hex(got, 2)}`);
+        const a = addr & 0xFFFFF;
+        const got = vm.mem[a];
+        if (got === want) continue;
+        if (skipLo >= 0 && (a === skipLo || a === ((skipLo + 1) & 0xFFFFF))) { masked++; continue; }
+        bad.push(`ram[${hex(a, 5)}] want=${hex(want, 2)} got=${hex(got, 2)}`);
       }
 
       if (bad.length === 0) { opPass++; pass++; }
@@ -121,7 +163,7 @@ async function main() {
     + `  (${ran ? (100 * pass / ran).toFixed(3) : 0}%)`);
   if (masked) {
     console.log(`${masked} case(s) differed ONLY in a flag the 8086 leaves `
-      + `undefined (AF on AND/OR/XOR/TEST) and were accepted on that basis.`);
+      + `undefined for that mnemonic (see UNDEFINED_FLAGS) and were accepted on that basis.`);
   }
   process.exit(pass === ran && ran > 0 ? 0 : 1);
 }

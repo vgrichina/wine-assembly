@@ -68,13 +68,22 @@ h('end', 1, `
 //   rm  [eaKind|seg<<4|reg<<8][disp]   register destination, memory source
 //   ri  [reg][imm]                     register destination, immediate
 //   mi  [eaKind|seg<<4|reg<<8][disp][imm]
+// `carry` folds CF into the result. ADC/SBB need no special flag rule: with
+// s = a+b+cf the carry out still lands above bit w-1, and the AF and OF
+// formulas are written on (a, b, r) and stay correct.
+const CF_IN = '(i32.and (global.get $flags) (i32.const 1))';
 const ALU = {
   add: { code: 0, flags: 'add', write: true, op: 'i32.add' },
   or: { code: 1, flags: 'logic', write: true, op: 'i32.or' },
+  adc: { code: 2, flags: 'add', write: true, op: 'i32.add', carry: '+' },
+  sbb: { code: 3, flags: 'sub', write: true, op: 'i32.sub', carry: '-' },
   and: { code: 4, flags: 'logic', write: true, op: 'i32.and' },
   sub: { code: 5, flags: 'sub', write: true, op: 'i32.sub' },
   xor: { code: 6, flags: 'logic', write: true, op: 'i32.xor' },
   cmp: { code: 7, flags: 'sub', write: false, op: 'i32.sub' },
+  // TEST is AND without the write-back. It is not part of the 8*code+form
+  // layout -- the decoder reaches it from 84/85, A8/A9 and F6/F7 /0.
+  test: { code: null, flags: 'logic', write: false, op: 'i32.and' },
 };
 
 const EA_SETUP_PRE = `
@@ -93,6 +102,10 @@ function genAlu() {
       // only the masked result -- they define CF and OF as zero and leave AF
       // genuinely undefined on this part, which tools/toyvm/gate.js masks and
       // reports rather than silently ignoring.
+      // ADC/SBB fold CF into the result; everything else is the bare op.
+      const combine = (a, b) => spec.carry
+        ? `(${spec.op} (${spec.op} ${a} ${b}) ${CF_IN})`
+        : `(${spec.op} ${a} ${b})`;
       const flags = (a, b, s) => spec.flags === 'logic'
         ? `(call $flags_logic (i32.and ${s} (i32.const ${mask})) (i32.const ${w}))`
         : `(call $flags_${spec.flags} ${a} ${b} ${s} (i32.const ${w}))`;
@@ -101,7 +114,7 @@ function genAlu() {
   ${ops(1)}
   (local.set $t1 (call ${rget} (i32.and (local.get $t0) (i32.const 7))))
   (local.set $t2 (call ${rget} (i32.and (i32.shr_u (local.get $t0) (i32.const 4)) (i32.const 7))))
-  (local.set $t3 (${spec.op} (local.get $t1) (local.get $t2)))
+  (local.set $t3 ${combine('(local.get $t1)', '(local.get $t2)')})
   ${spec.write ? `(call ${rset} (i32.and (local.get $t0) (i32.const 7)) (i32.and (local.get $t3) (i32.const ${mask})))` : ''}
   ${flags('(local.get $t1)', '(local.get $t2)', '(local.get $t3)')}
 `);
@@ -111,7 +124,7 @@ function genAlu() {
   ${EA_SETUP_PRE}
   (local.set $t2 (call ${rd} (local.get $t5) (local.get $t4)))
   (local.set $t3 (call ${rget} (local.get $t6)))
-  (local.set $t7 (${spec.op} (local.get $t2) (local.get $t3)))
+  (local.set $t7 ${combine('(local.get $t2)', '(local.get $t3)')})
   ${spec.write ? `(call ${wr} (local.get $t5) (local.get $t4) (i32.and (local.get $t7) (i32.const ${mask})))` : ''}
   ${flags('(local.get $t2)', '(local.get $t3)', '(local.get $t7)')}
 `);
@@ -121,7 +134,7 @@ function genAlu() {
   ${EA_SETUP_PRE}
   (local.set $t2 (call ${rget} (local.get $t6)))
   (local.set $t3 (call ${rd} (local.get $t5) (local.get $t4)))
-  (local.set $t7 (${spec.op} (local.get $t2) (local.get $t3)))
+  (local.set $t7 ${combine('(local.get $t2)', '(local.get $t3)')})
   ${spec.write ? `(call ${rset} (local.get $t6) (i32.and (local.get $t7) (i32.const ${mask})))` : ''}
   ${flags('(local.get $t2)', '(local.get $t3)', '(local.get $t7)')}
 `);
@@ -129,7 +142,7 @@ function genAlu() {
       h(`${name}_ri${w}`, 2, `
   ${ops(2)}
   (local.set $t2 (call ${rget} (local.get $t0)))
-  (local.set $t3 (${spec.op} (local.get $t2) (local.get $t1)))
+  (local.set $t3 ${combine('(local.get $t2)', '(local.get $t1)')})
   ${spec.write ? `(call ${rset} (local.get $t0) (i32.and (local.get $t3) (i32.const ${mask})))` : ''}
   ${flags('(local.get $t2)', '(local.get $t1)', '(local.get $t3)')}
 `);
@@ -138,7 +151,7 @@ function genAlu() {
   ${ops(3)}
   ${EA_SETUP_PRE}
   (local.set $t3 (call ${rd} (local.get $t5) (local.get $t4)))
-  (local.set $t7 (${spec.op} (local.get $t3) (local.get $t2)))
+  (local.set $t7 ${combine('(local.get $t3)', '(local.get $t2)')})
   ${spec.write ? `(call ${wr} (local.get $t5) (local.get $t4) (i32.and (local.get $t7) (i32.const ${mask})))` : ''}
   ${flags('(local.get $t3)', '(local.get $t2)', '(local.get $t7)')}
 `);
@@ -250,30 +263,721 @@ function genBranches() {
 `);
 }
 
-// INC/DEC on a 16-bit register. These are their own handlers because they are
-// the one arithmetic pair that must NOT write CF -- getting that wrong is
-// invisible until some later jc reads a carry the instruction never set.
-function genIncDec() {
-  h('inc_r16', 1, `
+// INC/DEC are generated for both widths and both operand kinds inside
+// genExtras(), since they are the one arithmetic pair that must NOT write CF
+// and it would be easy to end up with two definitions that disagree.
+
+// --- Stack, call/ret, unary group, flag ops, INT ----------------------------
+function genExtras() {
+  // Stack. SS is segment index 2.
+  h('push_r16', 1, `
   ${ops(1)}
-  (local.set $t1 (call $rget16 (local.get $t0)))
+  (call $push16 (call $rget16 (local.get $t0)))
+`);
+  h('pop_r16', 1, `
+  ${ops(1)}
+  (call $rset16 (local.get $t0) (call $pop16))
+`);
+  h('push_seg', 1, `
+  ${ops(1)}
+  (call $push16 (call $sget (local.get $t0)))
+`);
+  h('pop_seg', 1, `
+  ${ops(1)}
+  (call $sset (local.get $t0) (call $pop16))
+`);
+  h('push_m16', 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  (call $push16 (call $rd16 (local.get $t5) (local.get $t4)))
+`);
+  h('pop_m16', 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  (call $wr16 (local.get $t5) (local.get $t4) (call $pop16))
+`);
+  h('push_i16', 1, `
+  ${ops(1)}
+  (call $push16 (local.get $t0))
+`);
+  // PUSH SP is its own handler because the 8086 pushes the ALREADY-DECREMENTED
+  // SP, unlike the 80286 and everything after it, which push the original. The
+  // corpus is recorded off real 8088 silicon and fails 1200/1200 on the modern
+  // behaviour, which is how this got noticed.
+  h('push_sp', 0, `
+  (global.set $sp (i32.and (i32.sub (global.get $sp) (i32.const 2)) (i32.const 0xFFFF)))
+  (call $wr16 (i32.const 2) (global.get $sp) (global.get $sp))
+`);
+  h('pushf', 0, `(call $push16 (global.get $flags))`);
+  // POPF must both OR in the bits that always read 1 and MASK OFF the ones that
+  // always read 0 (3 and 5). Only doing the first half leaves whatever the
+  // pushed value had in those bits and fails three quarters of the corpus.
+  h('popf', 0, `
+  (global.set $flags (i32.or
+    (i32.and (call $pop16) (i32.const ${isa.FLAGS_DEFINED}))
+    (i32.const ${isa.FLAGS_RESERVED})))
+`);
+
+  // CALL near, relative. Operands: [arenaTarget][guestTarget][retIp].
+  h('call_rel', 3, `
+  ${ops(3)}
+  (call $push16 (local.get $t2))
+  ${GO('(local.get $t0)', '(local.get $t1)')}
+`);
+  // RET always leaves the trace: the return address is data, so no arena
+  // address can be baked in. The host recompiles from wherever it lands.
+  h('ret', 0, `
+  (global.set $gip (call $pop16))
+  (global.set $steps (i32.const -1))
+`);
+  h('ret_imm', 1, `
+  ${ops(1)}
+  (global.set $gip (call $pop16))
+  (global.set $sp (i32.and (i32.add (global.get $sp) (local.get $t0)) (i32.const 0xFFFF)))
+  (global.set $steps (i32.const -1))
+`);
+
+  // LEA computes the effective address and never touches memory -- which is
+  // why it is here and not a MOV form.
+  h('lea', 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  (call $rset16 (local.get $t6) (local.get $t4))
+`);
+
+  // XCHG. The register/register form is also how NOP encodes (90 = xchg ax,ax).
+  for (const w of [8, 16]) {
+    h(`xchg_rr${w}`, 1, `
+  ${ops(1)}
+  (local.set $t1 (i32.and (local.get $t0) (i32.const 7)))
+  (local.set $t2 (i32.and (i32.shr_u (local.get $t0) (i32.const 4)) (i32.const 7)))
+  (local.set $t3 (call $rget${w} (local.get $t1)))
+  (call $rset${w} (local.get $t1) (call $rget${w} (local.get $t2)))
+  (call $rset${w} (local.get $t2) (local.get $t3))
+`);
+    h(`xchg_mr${w}`, 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  (local.set $t2 (call $rd${w} (local.get $t5) (local.get $t4)))
+  (call $wr${w} (local.get $t5) (local.get $t4) (call $rget${w} (local.get $t6)))
+  (call $rset${w} (local.get $t6) (local.get $t2))
+`);
+
+    // NOT writes no flags at all; NEG is 0 - x and writes them all.
+    h(`not_r${w}`, 1, `
+  ${ops(1)}
+  (call $rset${w} (local.get $t0)
+    (i32.and (i32.xor (call $rget${w} (local.get $t0)) (i32.const -1))
+             (i32.const ${w === 8 ? '0xFF' : '0xFFFF'})))
+`);
+    h(`not_m${w}`, 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  (call $wr${w} (local.get $t5) (local.get $t4)
+    (i32.and (i32.xor (call $rd${w} (local.get $t5) (local.get $t4)) (i32.const -1))
+             (i32.const ${w === 8 ? '0xFF' : '0xFFFF'})))
+`);
+    h(`neg_r${w}`, 1, `
+  ${ops(1)}
+  (local.set $t1 (call $rget${w} (local.get $t0)))
+  (local.set $t2 (i32.sub (i32.const 0) (local.get $t1)))
+  (call $rset${w} (local.get $t0) (i32.and (local.get $t2) (i32.const ${w === 8 ? '0xFF' : '0xFFFF'})))
+  (call $flags_sub (i32.const 0) (local.get $t1) (local.get $t2) (i32.const ${w}))
+`);
+    h(`neg_m${w}`, 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  (local.set $t2 (call $rd${w} (local.get $t5) (local.get $t4)))
+  (local.set $t3 (i32.sub (i32.const 0) (local.get $t2)))
+  (call $wr${w} (local.get $t5) (local.get $t4) (i32.and (local.get $t3) (i32.const ${w === 8 ? '0xFF' : '0xFFFF'})))
+  (call $flags_sub (i32.const 0) (local.get $t2) (local.get $t3) (i32.const ${w}))
+`);
+
+    // INC/DEC on memory and on 8-bit registers. Like the 16-bit register pair
+    // above, these must leave CF alone.
+    h(`inc_r${w}`, 1, `
+  ${ops(1)}
+  (local.set $t1 (call $rget${w} (local.get $t0)))
   (local.set $t2 (i32.add (local.get $t1) (i32.const 1)))
-  (call $rset16 (local.get $t0) (i32.and (local.get $t2) (i32.const 0xFFFF)))
-  (call $flags_inc (local.get $t1) (local.get $t2) (i32.const 16))
+  (call $rset${w} (local.get $t0) (i32.and (local.get $t2) (i32.const ${w === 8 ? '0xFF' : '0xFFFF'})))
+  (call $flags_inc (local.get $t1) (local.get $t2) (i32.const ${w}))
 `);
-  h('dec_r16', 1, `
+    h(`dec_r${w}`, 1, `
   ${ops(1)}
-  (local.set $t1 (call $rget16 (local.get $t0)))
+  (local.set $t1 (call $rget${w} (local.get $t0)))
   (local.set $t2 (i32.sub (local.get $t1) (i32.const 1)))
-  (call $rset16 (local.get $t0) (i32.and (local.get $t2) (i32.const 0xFFFF)))
-  (call $flags_dec (local.get $t1) (local.get $t2) (i32.const 16))
+  (call $rset${w} (local.get $t0) (i32.and (local.get $t2) (i32.const ${w === 8 ? '0xFF' : '0xFFFF'})))
+  (call $flags_dec (local.get $t1) (local.get $t2) (i32.const ${w}))
 `);
+    h(`inc_m${w}`, 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  (local.set $t2 (call $rd${w} (local.get $t5) (local.get $t4)))
+  (local.set $t3 (i32.add (local.get $t2) (i32.const 1)))
+  (call $wr${w} (local.get $t5) (local.get $t4) (i32.and (local.get $t3) (i32.const ${w === 8 ? '0xFF' : '0xFFFF'})))
+  (call $flags_inc (local.get $t2) (local.get $t3) (i32.const ${w}))
+`);
+    h(`dec_m${w}`, 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  (local.set $t2 (call $rd${w} (local.get $t5) (local.get $t4)))
+  (local.set $t3 (i32.sub (local.get $t2) (i32.const 1)))
+  (call $wr${w} (local.get $t5) (local.get $t4) (i32.and (local.get $t3) (i32.const ${w === 8 ? '0xFF' : '0xFFFF'})))
+  (call $flags_dec (local.get $t2) (local.get $t3) (i32.const ${w}))
+`);
+  }
+
+  // Segment register moves. 8C reads one, 8E writes one.
+  h('mov_r_sr', 1, `
+  ${ops(1)}
+  (call $rset16 (i32.and (local.get $t0) (i32.const 7))
+                (call $sget (i32.and (i32.shr_u (local.get $t0) (i32.const 4)) (i32.const 3))))
+`);
+  h('mov_sr_r', 1, `
+  ${ops(1)}
+  (call $sset (i32.and (i32.shr_u (local.get $t0) (i32.const 4)) (i32.const 3))
+              (call $rget16 (i32.and (local.get $t0) (i32.const 7))))
+`);
+  h('mov_m_sr', 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  (call $wr16 (local.get $t5) (local.get $t4)
+              (call $sget (i32.and (local.get $t6) (i32.const 3))))
+`);
+  h('mov_sr_m', 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  (call $sset (i32.and (local.get $t6) (i32.const 3))
+              (call $rd16 (local.get $t5) (local.get $t4)))
+`);
+
+  // Sign extension.
+  h('cbw', 0, `
+  (global.set $ax (i32.and
+    (i32.shr_s (i32.shl (global.get $ax) (i32.const 24)) (i32.const 24))
+    (i32.const 0xFFFF)))
+`);
+  h('cwd', 0, `
+  (global.set $dx (select (i32.const 0xFFFF) (i32.const 0)
+    (i32.and (i32.shr_u (global.get $ax) (i32.const 15)) (i32.const 1))))
+`);
+
+  // Flag-register instructions. Each one is a single bit, but a wrong one here
+  // changes which way a later branch goes, so they are spelled out.
+  const setF = (b, v) => v
+    ? `(global.set $flags (i32.or (global.get $flags) (i32.const ${1 << b})))`
+    : `(global.set $flags (i32.and (global.get $flags) (i32.const ${(~(1 << b)) & 0xFFFF})))`;
+  h('clc', 0, setF(F.CF, 0));
+  h('stc', 0, setF(F.CF, 1));
+  h('cmc', 0, `(global.set $flags (i32.xor (global.get $flags) (i32.const ${1 << F.CF})))`);
+  h('cld', 0, setF(F.DF, 0));
+  h('std', 0, setF(F.DF, 1));
+  h('cli', 0, setF(F.IF, 0));
+  h('sti', 0, setF(F.IF, 1));
+  h('nop', 0, '');
+
+  // SAHF/LAHF move the low byte of FLAGS through AH.
+  h('sahf', 0, `
+  (global.set $flags (i32.or
+    (i32.and (global.get $flags) (i32.const 0xFF00))
+    (i32.or (i32.and (i32.shr_u (global.get $ax) (i32.const 8)) (i32.const 0xD5))
+            (i32.const 2))))
+`);
+  h('lahf', 0, `
+  (global.set $ax (i32.or
+    (i32.and (global.get $ax) (i32.const 0x00FF))
+    (i32.shl (i32.and (global.get $flags) (i32.const 0xFF)) (i32.const 8))))
+`);
+
+  // JCXZ, LOOPZ, LOOPNZ -- the remaining counted-loop terminators.
+  h('jcxz', 4, `
+  ${ops(4)}
+  (if (i32.eqz (global.get $cx))
+    (then ${GO('(local.get $t0)', '(local.get $t1)')})
+    (else ${GO('(local.get $t2)', '(local.get $t3)')}))
+`);
+  for (const [nm, want] of [['loopz', 1], ['loopnz', 0]]) {
+    h(nm, 4, `
+  ${ops(4)}
+  (global.set $cx (i32.and (i32.sub (global.get $cx) (i32.const 1)) (i32.const 0xFFFF)))
+  (if (i32.and (i32.ne (global.get $cx) (i32.const 0))
+               (i32.eq ${bit(F.ZF)} (i32.const ${want})))
+    (then ${GO('(local.get $t0)', '(local.get $t1)')})
+    (else ${GO('(local.get $t2)', '(local.get $t3)')}))
+`);
+  }
+
+  // INT does the architectural thing: push FLAGS/CS/IP, clear IF and TF, and
+  // load CS:IP from the interrupt vector table at physical 0. It does NOT
+  // short-circuit to the host -- doing that failed all 1200 corpus cases,
+  // because the tests supply a real IVT and expect it to be read.
+  //
+  // The host still gets to service DOS and BIOS calls: tools/toyvm/dos.js
+  // points the vectors at a stub whose first byte the decoder refuses, so the
+  // trace ends there and the host sees a guest IP inside its own stub region.
+  // $intno is recorded for its convenience.
+  h('int_imm', 2, `
+  ${ops(2)}
+  (call $push16 (global.get $flags))
+  (call $push16 (call $sget (i32.const 1)))
+  (call $push16 (local.get $t1))
+  (global.set $flags (i32.and (global.get $flags)
+    (i32.const ${(~((1 << F.IF) | (1 << F.TF))) & 0xFFFF})))
+  (global.set $intno (local.get $t0))
+  (local.set $t2 (i32.shl (local.get $t0) (i32.const 2)))
+  (global.set $gip (call $rdphys16 (local.get $t2)))
+  (call $sset (i32.const 1) (call $rdphys16 (i32.add (local.get $t2) (i32.const 2))))
+  (global.set $steps (i32.const -1))
+`);
+  h('iret', 0, `
+  (global.set $gip (call $pop16))
+  (call $sset (i32.const 1) (call $pop16))
+  (global.set $flags (i32.or
+    (i32.and (call $pop16) (i32.const ${isa.FLAGS_DEFINED}))
+    (i32.const ${isa.FLAGS_RESERVED})))
+  (global.set $steps (i32.const -1))
+`);
+}
+
+// --- String operations, with and without REP --------------------------------
+// ES is segment index 0 and is NOT overridable for the destination; the source
+// defaults to DS and is. Direction comes from DF, so every one of these moves
+// backwards when a demo sets STD -- which they do, constantly, for scrolls.
+function genStrings() {
+  const DELTA = (sz) => `(select (i32.const ${-sz}) (i32.const ${sz}) ${bit(F.DF)})`;
+  const bump = (reg, sz) =>
+    `(global.set $${reg} (i32.and (i32.add (global.get $${reg}) ${DELTA(sz)}) (i32.const 0xFFFF)))`;
+
+  // body(w) produces one iteration; `rep` wraps it in a CX loop.
+  const BODIES = {
+    movs: (w, sz) => `
+    (call $wr${w} (i32.const 0) (global.get $di)
+      (call $rd${w} (local.get $t0) (global.get $si)))
+    ${bump('si', sz)} ${bump('di', sz)}`,
+    stos: (w, sz) => `
+    (call $wr${w} (i32.const 0) (global.get $di) (call $rget${w} (i32.const 0)))
+    ${bump('di', sz)}`,
+    lods: (w, sz) => `
+    (call $rset${w} (i32.const 0) (call $rd${w} (local.get $t0) (global.get $si)))
+    ${bump('si', sz)}`,
+    scas: (w, sz) => `
+    (local.set $t2 (call $rget${w} (i32.const 0)))
+    (local.set $t3 (call $rd${w} (i32.const 0) (global.get $di)))
+    (call $flags_sub (local.get $t2) (local.get $t3)
+      (i32.sub (local.get $t2) (local.get $t3)) (i32.const ${w}))
+    ${bump('di', sz)}`,
+    cmps: (w, sz) => `
+    (local.set $t2 (call $rd${w} (local.get $t0) (global.get $si)))
+    (local.set $t3 (call $rd${w} (i32.const 0) (global.get $di)))
+    (call $flags_sub (local.get $t2) (local.get $t3)
+      (i32.sub (local.get $t2) (local.get $t3)) (i32.const ${w}))
+    ${bump('si', sz)} ${bump('di', sz)}`,
+  };
+
+  for (const [name, body] of Object.entries(BODIES)) {
+    for (const w of [8, 16]) {
+      const sz = w >> 3;
+      const suffix = w === 8 ? 'b' : 'w';
+      // Plain form: operand is the source segment index (ignored by STOS/SCAS).
+      h(`${name}${suffix}`, 1, `
+  ${ops(1)}
+  ${body(w, sz)}
+`);
+
+      // REP forms run the whole count inside one dispatch, which is exactly
+      // what the production interpreter's REP handlers do -- and is the reason
+      // a fold like this is worth anything: the loop never pays dispatch again.
+      // CX is the meter, so a super-op like this must also charge the host's
+      // step budget; here that is $steps, decremented per element.
+      const isCompare = name === 'scas' || name === 'cmps';
+      for (const rep of (isCompare ? ['rep', 'repne'] : ['rep'])) {
+        const zWant = rep === 'rep' ? 1 : 0;
+        h(`${rep}_${name}${suffix}`, 1, `
+  ${ops(1)}
+  (block $done
+    (loop $l
+      (br_if $done (i32.eqz (global.get $cx)))
+      ${body(w, sz)}
+      (global.set $cx (i32.and (i32.sub (global.get $cx) (i32.const 1)) (i32.const 0xFFFF)))
+      (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
+      ${isCompare ? `(br_if $done (i32.ne ${bit(F.ZF)} (i32.const ${zWant})))` : ''}
+      (br $l)))
+`);
+      }
+    }
+  }
+}
+
+// --- Shifts and rotates -----------------------------------------------------
+// Done a bit at a time in a loop rather than with a closed form. The 8086 does
+// not mask the count, CF is defined as the last bit shifted out, and OF is only
+// meaningful for a count of one -- a closed form gets at least one of those
+// wrong, and a shift flag error surfaces as a branch going the wrong way much
+// later.
+function genShifts() {
+  for (const w of [8, 16]) {
+    const mask = w === 8 ? 0xFF : 0xFFFF;
+    const msb = w - 1;
+    // One bit of movement per kind. The count is not masked on an 8086 and CF
+    // is defined as the last bit out, so the loop is the specification; a
+    // closed form would have to special-case both.
+    const ONE = {
+      rol: `(local.set $v (i32.or (i32.and (i32.shl (local.get $v) (i32.const 1)) (i32.const ${mask}))
+                                  (i32.shr_u (local.get $v) (i32.const ${msb}))))
+            (local.set $cf (i32.and (local.get $v) (i32.const 1)))`,
+      ror: `(local.set $cf (i32.and (local.get $v) (i32.const 1)))
+            (local.set $v (i32.or (i32.shr_u (local.get $v) (i32.const 1))
+                                  (i32.shl (local.get $cf) (i32.const ${msb}))))`,
+      rcl: `(local.set $t (i32.and (i32.shr_u (local.get $v) (i32.const ${msb})) (i32.const 1)))
+            (local.set $v (i32.or (i32.and (i32.shl (local.get $v) (i32.const 1)) (i32.const ${mask}))
+                                  (local.get $cf)))
+            (local.set $cf (local.get $t))`,
+      rcr: `(local.set $t (i32.and (local.get $v) (i32.const 1)))
+            (local.set $v (i32.or (i32.shr_u (local.get $v) (i32.const 1))
+                                  (i32.shl (local.get $cf) (i32.const ${msb}))))
+            (local.set $cf (local.get $t))`,
+      shl: `(local.set $cf (i32.and (i32.shr_u (local.get $v) (i32.const ${msb})) (i32.const 1)))
+            (local.set $v (i32.and (i32.shl (local.get $v) (i32.const 1)) (i32.const ${mask})))`,
+      shr: `(local.set $cf (i32.and (local.get $v) (i32.const 1)))
+            (local.set $v (i32.shr_u (local.get $v) (i32.const 1)))`,
+      sar: `(local.set $cf (i32.and (local.get $v) (i32.const 1)))
+            (local.set $v (i32.and (i32.shr_s
+                (i32.shr_s (i32.shl (local.get $v) (i32.const ${32 - w})) (i32.const ${32 - w}))
+                (i32.const 1)) (i32.const ${mask})))`,
+    };
+    for (const [kind, one] of Object.entries(ONE)) {
+      const rotate = ['rol', 'ror', 'rcl', 'rcr'].includes(kind);
+      // OF is architecturally defined only for a shift of one. The 8086 still
+      // writes it for longer counts; the corpus marks it undefined there, and
+      // gate.js masks it for these mnemonics.
+      const ofExpr = {
+        rol: `(i32.xor (local.get $cf) (i32.and (i32.shr_u (local.get $v) (i32.const ${msb})) (i32.const 1)))`,
+        rcl: `(i32.xor (local.get $cf) (i32.and (i32.shr_u (local.get $v) (i32.const ${msb})) (i32.const 1)))`,
+        ror: `(i32.xor (i32.and (i32.shr_u (local.get $v) (i32.const ${msb})) (i32.const 1))
+                       (i32.and (i32.shr_u (local.get $v) (i32.const ${msb - 1})) (i32.const 1)))`,
+        rcr: `(i32.xor (i32.and (i32.shr_u (local.get $v) (i32.const ${msb})) (i32.const 1))
+                       (i32.and (i32.shr_u (local.get $v) (i32.const ${msb - 1})) (i32.const 1)))`,
+        shl: `(i32.xor (local.get $cf) (i32.and (i32.shr_u (local.get $v) (i32.const ${msb})) (i32.const 1)))`,
+        shr: `(i32.and (i32.shr_u (local.get $orig) (i32.const ${msb})) (i32.const 1))`,
+        sar: `(i32.const 0)`,
+      }[kind];
+
+      s_shift(kind, w, one, rotate, ofExpr, mask, msb);
+    }
+  }
+}
+
+// Emitted as a helper function per (kind, width) so the shift handlers stay
+// small and the loop is written once.
+const SHIFT_FNS = [];
+function s_shift(kind, w, one, rotate, ofExpr, mask, msb) {
+  SHIFT_FNS.push(`
+(func $sh_${kind}${w} (param $v i32) (param $n i32) (result i32)
+  (local $cf i32) (local $t i32) (local $orig i32) (local $f i32)
+  (local.set $orig (local.get $v))
+  (local.set $cf (i32.and (global.get $flags) (i32.const 1)))
+  (if (i32.eqz (local.get $n)) (then (return (local.get $v))))
+  (block $done (loop $l
+    (br_if $done (i32.eqz (local.get $n)))
+    ${one}
+    (local.set $n (i32.sub (local.get $n) (i32.const 1)))
+    (br $l)))
+  ;; A rotate touches only CF and OF; a shift also defines SF, ZF and PF. Which
+  ;; bits get cleared here has to match, or a rotate silently zeroes the ZF a
+  ;; preceding compare set.
+  (local.set $f (i32.and (global.get $flags)
+    (i32.const ${(~((1 << isa.F.CF) | (1 << isa.F.OF) | (rotate ? 0
+      : ((1 << isa.F.SF) | (1 << isa.F.ZF) | (1 << isa.F.PF))))) & 0xFFFF})))
+  (local.set $f (i32.or (local.get $f) (i32.and (local.get $cf) (i32.const 1))))
+  (local.set $f (i32.or (local.get $f)
+    (i32.shl (i32.and ${ofExpr} (i32.const 1)) (i32.const ${isa.F.OF}))))
+  ${rotate ? '' : `
+  ;; Rotates leave SF/ZF/PF alone; shifts define all three.
+  (local.set $f (i32.or (local.get $f)
+    (i32.shl (i32.and (i32.shr_u (local.get $v) (i32.const ${msb})) (i32.const 1))
+             (i32.const ${isa.F.SF}))))
+  (local.set $f (i32.or (local.get $f)
+    (i32.shl (i32.eqz (local.get $v)) (i32.const ${isa.F.ZF}))))
+  (local.set $f (i32.or (local.get $f)
+    (i32.shl (i32.and (i32.xor (i32.popcnt (i32.and (local.get $v) (i32.const 0xFF)))
+                               (i32.const 1)) (i32.const 1))
+             (i32.const ${isa.F.PF}))))`}
+  (global.set $flags (i32.or (local.get $f) (i32.const ${isa.FLAGS_RESERVED})))
+  (local.get $v))
+`);
+}
+
+// /6 is not a second SHL. On this part it is the undocumented SETMO: the
+// destination becomes all ones and the flags come out as if from a logic op.
+// The count still matters for the CL forms -- a count of zero does nothing at
+// all, flags included.
+const SHIFT_KINDS = ['rol', 'ror', 'rcl', 'rcr', 'shl', 'shr', 'setmo', 'sar'];
+function genSetmo() {
+  for (const w of [8, 16]) {
+    const all = w === 8 ? '0xFF' : '0xFFFF';
+    const guard = (count) => `(if (i32.ne ${count} (i32.const 0)) (then`;
+    h(`sh6_r${w}`, 2, `
+  ${ops(2)}
+  (local.set $t2 (select (i32.and (call $rget8 (i32.const 1)) (i32.const 0xFF))
+                         (local.get $t1) (i32.eq (local.get $t1) (i32.const -1))))
+  ${guard('(local.get $t2)')}
+    (call $rset${w} (local.get $t0) (i32.const ${all}))
+    (call $flags_logic (i32.const ${all}) (i32.const ${w}))))
+`);
+    h(`sh6_m${w}`, 3, `
+  ${ops(3)}
+  ${EA_SETUP_PRE}
+  (local.set $t3 (select (i32.and (call $rget8 (i32.const 1)) (i32.const 0xFF))
+                         (local.get $t2) (i32.eq (local.get $t2) (i32.const -1))))
+  ${guard('(local.get $t3)')}
+    (call $wr${w} (local.get $t5) (local.get $t4) (i32.const ${all}))
+    (call $flags_logic (i32.const ${all}) (i32.const ${w}))))
+`);
+  }
+}
+
+function genShiftHandlers() {
+  for (const w of [8, 16]) {
+    SHIFT_KINDS.forEach((kind, idx) => {
+      if (idx === 6) return;   // SETMO, generated above
+      // Two operand shapes: register or memory destination, count from an
+      // immediate operand (which the decoder fills with 1 for D0/D1 and with CL
+      // at run time for D2/D3 by passing 0xFF as a sentinel).
+      h(`sh${idx}_r${w}`, 2, `
+  ${ops(2)}
+  (call $rset${w} (local.get $t0)
+    (call $sh_${kind}${w} (call $rget${w} (local.get $t0))
+      (select (i32.and (call $rget8 (i32.const 1)) (i32.const 0xFF)) (local.get $t1)
+              (i32.eq (local.get $t1) (i32.const -1)))))
+`);
+      h(`sh${idx}_m${w}`, 3, `
+  ${ops(3)}
+  ${EA_SETUP_PRE}
+  (call $wr${w} (local.get $t5) (local.get $t4)
+    (call $sh_${kind}${w} (call $rd${w} (local.get $t5) (local.get $t4))
+      (select (i32.and (call $rget8 (i32.const 1)) (i32.const 0xFF)) (local.get $t2)
+              (i32.eq (local.get $t2) (i32.const -1)))))
+`);
+    });
+  }
+}
+
+// --- MUL / IMUL, port I/O, XLAT, moffs --------------------------------------
+function genArithIO() {
+  // MUL/IMUL/DIV/IDIV in both operand shapes. The only difference between them
+  // is where the source comes from, so both are generated from one body with
+  // the source expression swapped -- a memory divisor is not rare enough in
+  // real code to leave out.
+  //   reg form: [reg] (+ [ip] for the faulting ones)
+  //   mem form: [ea] [disp] (+ [ip])
+  const SRC = {
+    r: (w) => ({ pre: '', src: `(call $rget${w} (local.get $t0))`, argc: 1 }),
+    m: (w) => ({ pre: EA_SETUP_PRE, src: `(call $rd${w} (local.get $t5) (local.get $t4))`, argc: 2 }),
+  };
+
+  for (const form of ['r', 'm']) {
+    const g = (w) => SRC[form](w);
+    h(`mul_${form}8`, g(8).argc, `
+  ${ops(g(8).argc)}
+  ${g(8).pre}
+  (global.set $ax (i32.mul (i32.and (global.get $ax) (i32.const 0xFF)) ${g(8).src}))
+  (call $flags_mul (i32.and (i32.shr_u (global.get $ax) (i32.const 8)) (i32.const 0xFF)))
+`);
+    h(`mul_${form}16`, g(16).argc, `
+  ${ops(g(16).argc)}
+  ${g(16).pre}
+  (local.set $t7 (i32.mul (global.get $ax) ${g(16).src}))
+  (global.set $dx (i32.and (i32.shr_u (local.get $t7) (i32.const 16)) (i32.const 0xFFFF)))
+  (global.set $ax (i32.and (local.get $t7) (i32.const 0xFFFF)))
+  (call $flags_mul (global.get $dx))
+`);
+    h(`imul_${form}8`, g(8).argc, `
+  ${ops(g(8).argc)}
+  ${g(8).pre}
+  (local.set $t7 (i32.mul
+    (i32.shr_s (i32.shl (global.get $ax) (i32.const 24)) (i32.const 24))
+    (i32.shr_s (i32.shl ${g(8).src} (i32.const 24)) (i32.const 24))))
+  (global.set $ax (i32.and (local.get $t7) (i32.const 0xFFFF)))
+  (call $flags_mul (i32.ne
+    (i32.shr_s (i32.shl (local.get $t7) (i32.const 24)) (i32.const 24)) (local.get $t7)))
+`);
+    h(`imul_${form}16`, g(16).argc, `
+  ${ops(g(16).argc)}
+  ${g(16).pre}
+  (local.set $t7 (i32.mul
+    (i32.shr_s (i32.shl (global.get $ax) (i32.const 16)) (i32.const 16))
+    (i32.shr_s (i32.shl ${g(16).src} (i32.const 16)) (i32.const 16))))
+  (global.set $dx (i32.and (i32.shr_u (local.get $t7) (i32.const 16)) (i32.const 0xFFFF)))
+  (global.set $ax (i32.and (local.get $t7) (i32.const 0xFFFF)))
+  (call $flags_mul (i32.ne
+    (i32.shr_s (i32.shl (local.get $t7) (i32.const 16)) (i32.const 16)) (local.get $t7)))
+`);
+  }
+
+  // DIV/IDIV fault to INT 0 on a zero divisor or a quotient that will not fit.
+  // The vector is taken the same way INT does, so the last operand carries the
+  // guest IP to push.
+  for (const nm of ['div', 'idiv']) for (const form of ['r', 'm']) for (const w of [8, 16]) {
+    const signed = nm[0] === 'i';
+    const g = SRC[form](w);
+    // $t4..$t6 belong to the EA setup in the memory form, so the arithmetic
+    // uses $t7 (divisor) and $t3 (quotient) in both. The IP operand is the last
+    // one loaded, which is $t1 for a register source and $t2 for a memory one.
+    const ip = `(local.get ${form === 'r' ? '$t1' : '$t2'})`;
+    const argc = g.argc + 1;
+    const sxD = w === 8
+      ? '(i32.shr_s (i32.shl (local.get $t7) (i32.const 24)) (i32.const 24))'
+      : '(i32.shr_s (i32.shl (local.get $t7) (i32.const 16)) (i32.const 16))';
+    const num = w === 8
+      ? (signed ? '(i32.shr_s (i32.shl (global.get $ax) (i32.const 16)) (i32.const 16))'
+                : '(global.get $ax)')
+      : '(local.get $t0)';
+    const div = signed ? 'i32.div_s' : 'i32.div_u';
+    const rem = signed ? 'i32.rem_s' : 'i32.rem_u';
+    const dvs = signed ? sxD : '(local.get $t7)';
+    const lim = w === 8
+      ? (signed ? '(i32.or (i32.gt_s (local.get $t3) (i32.const 127)) (i32.lt_s (local.get $t3) (i32.const -128)))'
+                : '(i32.gt_u (local.get $t3) (i32.const 255))')
+      : (signed ? '(i32.or (i32.gt_s (local.get $t3) (i32.const 32767)) (i32.lt_s (local.get $t3) (i32.const -32768)))'
+                : '(i32.gt_u (local.get $t3) (i32.const 65535))');
+    const store = w === 8 ? `
+  (global.set $ax (i32.or (i32.and (local.get $t3) (i32.const 0xFF))
+    (i32.shl (i32.and (${rem} ${num} ${dvs}) (i32.const 0xFF)) (i32.const 8))))`
+      : `
+  (global.set $dx (i32.and (${rem} ${num} ${dvs}) (i32.const 0xFFFF)))
+  (global.set $ax (i32.and (local.get $t3) (i32.const 0xFFFF)))`;
+
+    h(`${nm}_${form}${w}`, argc, `
+  ${ops(argc)}
+  ${g.pre}
+  (local.set $t7 ${g.src})
+  (if (i32.eqz (local.get $t7)) (then (call $fault0 ${ip}) (return)))
+  ${w === 16 ? `(local.set $t0 (i32.or (i32.shl (global.get $dx) (i32.const 16)) (global.get $ax)))` : ''}
+  (local.set $t3 (${div} ${num} ${dvs}))
+  (if ${lim} (then (call $fault0 ${ip}) (return)))
+  ${store}
+`);
+  }
+
+  // Port I/O. Demos reach the VGA palette through 0x3C8/0x3C9 and wait on the
+  // retrace bit of 0x3DA, so these must exist even though nothing here is a
+  // real peripheral -- tools/toyvm/dos.js models the few ports that matter.
+  for (const w of [8, 16]) {
+    h(`in_${w}`, 1, `
+  ${ops(1)}
+  (call $rset${w} (i32.const 0)
+    (call $port_in (select (global.get $dx) (local.get $t0)
+                           (i32.eq (local.get $t0) (i32.const -1)))
+                   (i32.const ${w})))
+`);
+    h(`out_${w}`, 1, `
+  ${ops(1)}
+  (call $port_out (select (global.get $dx) (local.get $t0)
+                          (i32.eq (local.get $t0) (i32.const -1)))
+                  (call $rget${w} (i32.const 0)) (i32.const ${w}))
+`);
+  }
+
+  h('xlat', 1, `
+  ${ops(1)}
+  (call $rset8 (i32.const 0)
+    (call $rd8 (local.get $t0)
+      (i32.and (i32.add (global.get $bx) (i32.and (global.get $ax) (i32.const 0xFF)))
+               (i32.const 0xFFFF))))
+`);
+
+  // MOV to/from a direct address (A0-A3). Common enough in tight code that it
+  // gets its own handlers rather than going through the ModRM path.
+  for (const w of [8, 16]) {
+    h(`mov_acc_moffs${w}`, 2, `
+  ${ops(2)}
+  (call $rset${w} (i32.const 0) (call $rd${w} (local.get $t1) (local.get $t0)))
+`);
+    h(`mov_moffs_acc${w}`, 2, `
+  ${ops(2)}
+  (call $wr${w} (local.get $t1) (local.get $t0) (call $rget${w} (i32.const 0)))
+`);
+  }
+
+  // Far transfers and indirect jumps. All of them land on an address that is
+  // data, so all of them leave the trace.
+  h('jmp_far', 2, `
+  ${ops(2)}
+  (call $sset (i32.const 1) (local.get $t1))
+  (global.set $gip (local.get $t0))
+  (global.set $steps (i32.const -1))
+`);
+  h('call_far', 3, `
+  ${ops(3)}
+  (call $push16 (call $sget (i32.const 1)))
+  (call $push16 (local.get $t2))
+  (call $sset (i32.const 1) (local.get $t1))
+  (global.set $gip (local.get $t0))
+  (global.set $steps (i32.const -1))
+`);
+  h('retf', 0, `
+  (global.set $gip (call $pop16))
+  (call $sset (i32.const 1) (call $pop16))
+  (global.set $steps (i32.const -1))
+`);
+  h('retf_imm', 1, `
+  ${ops(1)}
+  (global.set $gip (call $pop16))
+  (call $sset (i32.const 1) (call $pop16))
+  (global.set $sp (i32.and (i32.add (global.get $sp) (local.get $t0)) (i32.const 0xFFFF)))
+  (global.set $steps (i32.const -1))
+`);
+  h('jmp_r16', 1, `
+  ${ops(1)}
+  (global.set $gip (call $rget16 (local.get $t0)))
+  (global.set $steps (i32.const -1))
+`);
+  h('jmp_m16', 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  (global.set $gip (call $rd16 (local.get $t5) (local.get $t4)))
+  (global.set $steps (i32.const -1))
+`);
+  // The operand is read BEFORE the return address is pushed. `call sp` is the
+  // case that proves it: the real part jumps to the SP the instruction started
+  // with, not the decremented one.
+  h('call_r16', 2, `
+  ${ops(2)}
+  (local.set $t3 (call $rget16 (local.get $t0)))
+  (call $push16 (local.get $t1))
+  (global.set $gip (local.get $t3))
+  (global.set $steps (i32.const -1))
+`);
+  h('call_m16', 3, `
+  ${ops(3)}
+  ${EA_SETUP_PRE}
+  (local.set $t3 (call $rd16 (local.get $t5) (local.get $t4)))
+  (call $push16 (local.get $t2))
+  (global.set $gip (local.get $t3))
+  (global.set $steps (i32.const -1))
+`);
+
+  // LES/LDS load a far pointer into a segment register and a GPR at once.
+  for (const [nm, seg] of [['les', 0], ['lds', 3]]) {
+    h(nm, 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  (call $rset16 (local.get $t6) (call $rd16 (local.get $t5) (local.get $t4)))
+  (call $sset (i32.const ${seg}) (call $rd16 (local.get $t5)
+    (i32.and (i32.add (local.get $t4) (i32.const 2)) (i32.const 0xFFFF))))
+`);
+  }
 }
 
 genAlu();
 genMov();
 genBranches();
-genIncDec();
+genExtras();
+genStrings();
+genShifts();
+genSetmo();
+genShiftHandlers();
+genArithIO();
 
 // The first six handlers were written by hand to prove the gate; genAlu()
 // covers every form they did and forty more, so they are gone rather than
@@ -328,6 +1032,8 @@ function helpers() {
     }));
   s += brTableFn('sget', '(param $i i32)', '(result i32)',
     isa.SEG.map(r => `(return (global.get $${r}))`));
+  s += brTableFn('sset', '(param $i i32) (param $v i32)', '',
+    isa.SEG.map(r => `(global.set $${r} (local.get $v)) (return)`));
 
   // Effective address. Every form masks to 16 bits: the 8086 wraps an EA inside
   // its segment rather than carrying into the segment base.
@@ -373,6 +1079,27 @@ function helpers() {
   (call $wr8 (local.get $seg)
     (i32.and (i32.add (local.get $off) (i32.const 1)) (i32.const 0xFFFF))
     (i32.shr_u (local.get $v) (i32.const 8))))
+
+;; Absolute physical read, for the interrupt vector table at address 0. It is
+;; not reachable through $rd16, which always goes via a segment register.
+(func $rdphys16 (param $lin i32) (result i32)
+  (i32.or
+    (i32.load8_u (i32.and (local.get $lin) (i32.const 0xFFFFF)))
+    (i32.shl (i32.load8_u (i32.and (i32.add (local.get $lin) (i32.const 1))
+                                   (i32.const 0xFFFFF)))
+             (i32.const 8))))
+
+;; Stack. SS is segment index 2. SP wraps at 16 bits like every other offset,
+;; which matters for a .COM that starts with SP=0xFFFE and pushes.
+(func $push16 (param $v i32)
+  (global.set $sp (i32.and (i32.sub (global.get $sp) (i32.const 2)) (i32.const 0xFFFF)))
+  (call $wr16 (i32.const 2) (global.get $sp) (local.get $v)))
+
+(func $pop16 (result i32)
+  (local $v i32)
+  (local.set $v (call $rd16 (i32.const 2) (global.get $sp)))
+  (global.set $sp (i32.and (i32.add (global.get $sp) (i32.const 2)) (i32.const 0xFFFF)))
+  (local.get $v))
 
 ;; Eager flags. $s is the UNMASKED sum, so the carry out is still in it.
 ;; Width is 8 or 16; everything below is written against it rather than
@@ -488,14 +1215,40 @@ function helpers() {
                (i32.const 1))
       (i32.const ${isa.F.PF}))))
   (global.set $flags (i32.or (local.get $f) (i32.const ${isa.FLAGS_RESERVED}))))
-`;
+
+;; MUL/IMUL set CF and OF together from "the upper half carries information"
+;; and leave SF/ZF/AF/PF undefined. $nz is the caller's answer to that question.
+(func $flags_mul (param $nz i32)
+  (local $f i32)
+  (local.set $f (i32.and (global.get $flags)
+    (i32.const ${(~((1 << isa.F.CF) | (1 << isa.F.OF))) & 0xFFFF})))
+  (local.set $nz (i32.ne (local.get $nz) (i32.const 0)))
+  (global.set $flags (i32.or (i32.or (local.get $f)
+    (i32.or (local.get $nz) (i32.shl (local.get $nz) (i32.const ${isa.F.OF}))))
+    (i32.const ${isa.FLAGS_RESERVED}))))
+
+;; Divide error. Same sequence as INT 0 -- and the same handing-back to the
+;; host, since the vector points at whatever the guest installed.
+(func $fault0 (param $ip i32)
+  (call $push16 (global.get $flags))
+  (call $push16 (call $sget (i32.const 1)))
+  (call $push16 (local.get $ip))
+  (global.set $flags (i32.and (global.get $flags)
+    (i32.const ${(~((1 << isa.F.IF) | (1 << isa.F.TF))) & 0xFFFF})))
+  (global.set $intno (i32.const 0))
+  (global.set $gip (call $rdphys16 (i32.const 0)))
+  (call $sset (i32.const 1) (call $rdphys16 (i32.const 2)))
+  (global.set $steps (i32.const -1)))
+${SHIFT_FNS.join('')}`;
   return s;
 }
 
 // Every piece of guest state is a wasm global, exactly as it is in the real
 // interpreter -- that is the thing under test, so the toy must not "improve" on
 // it by putting registers in linear memory.
-const STATE = [...isa.REG16, ...isa.SEG, 'gip', 'flags', 'ip', 'steps'];
+// $intno records which INT vector handed control back, so the host can service
+// DOS and BIOS calls in JS instead of the VM pretending to be DOS.
+const STATE = [...isa.REG16, ...isa.SEG, 'gip', 'flags', 'ip', 'steps', 'intno'];
 
 // Memory is IMPORTED and state is read through accessor functions rather than
 // inline-exported, because that is the shape lib/compile-wat.js actually
@@ -512,6 +1265,8 @@ function preamble() {
 (func (export "set_${g}") (param $v i32) (global.set $${g} (local.get $v)))`).join('');
   return `(module
 (import "host" "memory" (memory ${isa.MEM_PAGES} ${isa.MEM_PAGES}))
+(import "host" "port_in" (func $port_in (param i32) (param i32) (result i32)))
+(import "host" "port_out" (func $port_out (param i32) (param i32) (param i32)))
 ${globals}
 (type $void (func))
 ${accessors}

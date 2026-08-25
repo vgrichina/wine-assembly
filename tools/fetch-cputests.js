@@ -136,7 +136,7 @@ async function main() {
   console.log(`\n${ops.length} opcodes, ${cases} cases`);
 }
 
-module.exports = { loadOpcode, parseOps, CACHE };
+module.exports = { loadOpcode, parseOps, listRemote, CACHE };
 
 if (require.main === module) {
   main().catch(e => { console.error(String(e.message || e)); process.exit(1); });

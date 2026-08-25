@@ -28,11 +28,18 @@ async function buildModule(variant) {
   return { wat, bytes };
 }
 
-async function makeVm(variant) {
+async function makeVm(variant, opts = {}) {
   const { wat, bytes } = await buildModule(variant);
   const module = await WebAssembly.compile(bytes);
   const memory = new WebAssembly.Memory({ initial: isa.MEM_PAGES, maximum: isa.MEM_PAGES });
-  const instance = await WebAssembly.instantiate(module, { host: { memory } });
+  // Ports are a host concern: the VM has no peripherals, and the few a demo
+  // actually touches (VGA DAC, retrace) are modelled in tools/toyvm/dos.js.
+  // The default reads 0xFF, which is what an empty ISA bus returns.
+  const ports = {
+    port_in: opts.portIn || ((_port, w) => (w === 16 ? 0xFFFF : 0xFF)),
+    port_out: opts.portOut || (() => {}),
+  };
+  const instance = await WebAssembly.instantiate(module, { host: { memory, ...ports } });
   const ex = instance.exports;
   const mem = new Uint8Array(memory.buffer);
 
