@@ -143,6 +143,14 @@
           (return (i32.add (local.get $backing) (i32.sub (local.get $ga) (local.get $base))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $mapped_scan)))
+    ;; Nothing maps this address. Report it if --fault-null asked us to; the
+    ;; check is here, past every translation attempt, so an armed flag costs
+    ;; the normal path nothing.
+    (if (global.get $fault_unmapped)
+      (then
+        (call $host_unmapped_trace (local.get $ga) (global.get $eip))
+        (if (i32.eq (global.get $fault_unmapped) (i32.const 2))
+          (then (unreachable)))))
     ;; Re-zero the sentinel (in case a prior bad write landed here).
     (i32.store (global.get $NULL_SENTINEL) (i32.const 0))
     (global.get $NULL_SENTINEL)
@@ -382,8 +390,13 @@
   )
 
   ;; Build EFLAGS from lazy state (for pushfd)
+  ;;
+  ;; PF comes from the same expression $eval_cc uses for JP/SETP, so a program
+  ;; that reads parity out of a pushed EFLAGS word agrees with one that branches
+  ;; on it. $eflags_extra carries every bit we do not model (IF, IOPL, NT, RF,
+  ;; AC, and bit 21 ID) straight back out of the last popfd -- see $load_eflags.
   (func $build_eflags (result i32)
-    (i32.or (i32.or (i32.or
+    (i32.or (i32.or (i32.or (i32.or
       (i32.shl (call $get_cf) (i32.const 0))
       (i32.const 2))  ;; bit 1 always set
       (i32.or
@@ -392,23 +405,45 @@
       (i32.or
         (i32.shl (global.get $df) (i32.const 10))
         (i32.shl (call $get_of) (i32.const 11))))
+      (i32.or
+        (i32.shl (i32.eqz (i32.and (i32.popcnt (i32.and (global.get $flag_res) (i32.const 0xFF))) (i32.const 1)))
+                 (i32.const 2))  ;; PF
+        (global.get $eflags_extra)))
   )
 
   ;; Restore flags from EFLAGS value (for popfd)
   ;; Uses flag_op=8 (raw mode): CF/ZF/SF/OF stored directly in flag globals
   (func $load_eflags (param $f i32)
+    ;; Everything outside the six bits we model is remembered verbatim, so
+    ;; pushfd hands it back. Dropping it used to break the standard CPUID probe
+    ;; (toggle bit 21, pushfd, compare): the toggle never survived, so the ID
+    ;; bit read back unchanged and the program concluded the CPU has no CPUID
+    ;; at all. Allegro does exactly this, which is why Liquid War never even
+    ;; executed the cpuid its binary contains, and so never installed its MMX
+    ;; blitters. Mask = ~(CF|bit1|PF|AF|ZF|SF|DF|OF).
+    (global.set $eflags_extra (i32.and (local.get $f) (i32.const 0xFFFFF328)))
     (global.set $df (i32.and (i32.shr_u (local.get $f) (i32.const 10)) (i32.const 1)))
     (global.set $flag_op (i32.const 8))  ;; raw flags mode
     ;; Store individual flag bits in globals: CF in flag_a, OF in flag_b, ZF/SF encoded in flag_res
     (global.set $flag_a (i32.and (local.get $f) (i32.const 1)))  ;; CF = bit 0
     (global.set $flag_b (i32.and (i32.shr_u (local.get $f) (i32.const 11)) (i32.const 1)))  ;; OF = bit 11
     ;; flag_res: bit 31 = SF, zero iff ZF. This makes get_zf and get_sf work with flag_sign_shift=31.
+    ;;
+    ;; The low byte is otherwise free, and PF is read from it, so the two
+    ;; ZF=0 cases pick between an even- and an odd-parity low byte to carry PF
+    ;; through as well. ZF=1 forces flag_res to 0, hence PF=1 -- which is not a
+    ;; loss: a zero result has a zero low byte, so a genuine flag word with
+    ;; ZF set always has PF set too.
     (global.set $flag_sign_shift (i32.const 31))
     (if (i32.and (local.get $f) (i32.const 0x40))  ;; ZF = bit 6
       (then (global.set $flag_res (i32.const 0)))
       (else (if (i32.and (local.get $f) (i32.const 0x80))  ;; SF = bit 7
-        (then (global.set $flag_res (i32.const 0x80000000)))
-        (else (global.set $flag_res (i32.const 1))))))
+        (then (if (i32.and (local.get $f) (i32.const 4))  ;; PF = bit 2
+          (then (global.set $flag_res (i32.const 0x80000003)))   ;; two set bits: even
+          (else (global.set $flag_res (i32.const 0x80000001))))) ;; one set bit: odd
+        (else (if (i32.and (local.get $f) (i32.const 4))
+          (then (global.set $flag_res (i32.const 3)))
+          (else (global.set $flag_res (i32.const 1))))))))
   )
 
   ;; Save caller-saved registers + lazy flags onto guest stack (9 dwords = 36 bytes)

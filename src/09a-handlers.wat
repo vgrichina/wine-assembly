@@ -851,6 +851,17 @@
         (global.set $eax (i32.load (i32.add (global.get $DLL_TABLE) (i32.mul (local.get $tmp) (i32.const 32)))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
         (return)))
+    ;; LoadLibrary of the running program is a handle request, not a load:
+    ;; Windows finds the module already mapped and returns its base with the
+    ;; reference count bumped. Winamp's NSIS installer takes this path -- its
+    ;; CDDB plug-in asks for the path GetModuleFileName just gave it -- and
+    ;; loading a second copy of the EXE image runs its entry point again from
+    ;; a worker thread, which is where the extraction used to die.
+    (if (call $dll_name_match (local.get $arg0) (global.get $exe_name_wa))
+      (then
+        (global.set $eax (global.get $image_base))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
     ;; Not already loaded — check if DLL file exists in VFS
     (if (call $host_has_dll_file (call $g2w (local.get $arg0)))
       (then
@@ -3523,6 +3534,10 @@
     ;; MFC also calls EndDialog on dialogs created through CreateDialogParamA.
     ;; Those modeless dialogs have no CACA0004 pump, so do not poison the
     ;; global modal-completion flags unless this hwnd is the active modal.
+    ;; Both tests read the shared mirrors, not this instance's own
+    ;; $dlg_pump_hwnd/$dlg_ended: the pump lives on main, and an NSIS installer
+    ;; calls EndDialog from its extraction thread, whose private copies are 0.
+    ;;
     ;; First EndDialog wins. Real USER only records the result and lets the
     ;; DialogBox loop destroy the window once the DLGPROC has returned, so the
     ;; WM_DESTROY the app then sees is delivered *after* the result has been
@@ -3532,9 +3547,9 @@
     ;; actually chose, and the caller would take the cancel path and exit.
     (if (i32.and
           (i32.and
-            (i32.ne (global.get $dlg_pump_hwnd) (i32.const 0))
-            (i32.eq (local.get $arg0) (global.get $dlg_pump_hwnd)))
-          (i32.eqz (global.get $dlg_ended)))
+            (i32.ne (i32.load (global.get $SHARED_DLG_PUMP_HWND)) (i32.const 0))
+            (i32.eq (local.get $arg0) (i32.load (global.get $SHARED_DLG_PUMP_HWND))))
+          (i32.eqz (i32.load (global.get $SHARED_DLG_ENDED))))
       (then
         (global.set $dlg_ended (i32.const 1))
         (global.set $dlg_result (local.get $arg1))
@@ -4023,6 +4038,7 @@
     ;; CreateDialogParamA can't hijack the pump's hwnd-less fallback)
     (global.set $dlg_hwnd (local.get $hwnd))
     (global.set $dlg_pump_hwnd (local.get $hwnd))
+    (i32.store (global.get $SHARED_DLG_PUMP_HWND) (local.get $hwnd))
     (global.set $dlg_ended (i32.const 0))
     (global.set $dlg_result (i32.const 0))
     (i32.store (global.get $SHARED_DLG_ENDED) (i32.const 0))
@@ -4533,10 +4549,62 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
   )
 
-  ;; 913: FindWindowExA(hwndParent, hwndChildAfter, lpszClass, lpszWindow) — return NULL
+  ;; One candidate against FindWindowEx's two filters. Either guest pointer
+  ;; may be 0, which means "any". A class is matched through the class table
+  ;; rather than by string, so the MAKEINTATOM form of a class key selects the
+  ;; same record its name does; a title is compared case-insensitively against
+  ;; the window's stored text, the way USER's own comparison does.
+  (func $find_window_matches (param $hwnd i32) (param $class_g i32) (param $title_g i32)
+                             (result i32)
+    (local $slot i32) (local $title_wa i32)
+    (if (local.get $class_g)
+      (then
+        (local.set $slot (call $class_find_slot
+          (select (local.get $class_g) (call $g2w (local.get $class_g))
+                  (i32.lt_u (local.get $class_g) (i32.const 0x10000)))))
+        (if (i32.lt_s (local.get $slot) (i32.const 0)) (then (return (i32.const 0))))
+        (if (i32.ne (local.get $slot) (call $wnd_get_class_slot (local.get $hwnd)))
+          (then (return (i32.const 0))))))
+    (if (local.get $title_g)
+      (then
+        (local.set $title_wa (call $title_table_get_ptr (local.get $hwnd)))
+        (if (i32.eqz (local.get $title_wa)) (then (return (i32.const 0))))
+        (if (i32.eqz (call $guest_ansi_eq_wasm_ci
+                       (local.get $title_g) (local.get $title_wa)))
+          (then (return (i32.const 0))))))
+    (i32.const 1))
+
+  ;; 913: FindWindowExA(hwndParent, hwndChildAfter, lpszClass, lpszWindow)
+  ;; Walks hwndParent's children in creation order, resuming after
+  ;; hwndChildAfter when one is given. Winamp's "Winamp Gen" frame locates the
+  ;; embedded plug-in window it has to size with exactly this call --
+  ;; FindWindowEx(parent, 0, 0, 0) from its WM_SIZE/WM_SHOWWINDOW arm -- so
+  ;; while this answered NULL every embedded plug-in kept the 100x100 box it
+  ;; was created with instead of being fitted to the frame's client area. AVS
+  ;; was the visible case: its visualisation drew as a small square over the
+  ;; window's titlebar.
+  ;;
+  ;; A NULL parent means "search top-level windows". That half stays
+  ;; unimplemented and answers NULL, matching $handle_FindWindowA: it is the
+  ;; form single-instance checks use, and nothing needs it yet.
   (func $handle_FindWindowExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $cur i32)
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; stdcall, 4 args
+    (if (i32.eqz (local.get $arg0)) (then (return)))
+    (local.set $cur (select
+      (call $wnd_find_next_sibling (local.get $arg1))
+      (call $wnd_find_first_child (local.get $arg0))
+      (i32.ne (local.get $arg1) (i32.const 0))))
+    (block $done (loop $scan
+      (br_if $done (i32.eqz (local.get $cur)))
+      (if (call $find_window_matches
+            (local.get $cur) (local.get $arg2) (local.get $arg3))
+        (then
+          (global.set $eax (local.get $cur))
+          (return)))
+      (local.set $cur (call $wnd_find_next_sibling (local.get $cur)))
+      (br $scan)))
   )
 
   ;; 190: BringWindowToTop(hWnd) — 1 arg stdcall
@@ -6034,8 +6102,8 @@
       ;; the modal pump; destroying the HWND alone leaves the guest waiting
       ;; forever in the CACA0004 loop.
       (if (i32.and
-            (i32.ne (global.get $dlg_pump_hwnd) (i32.const 0))
-            (i32.eq (local.get $arg0) (global.get $dlg_pump_hwnd)))
+            (i32.ne (i32.load (global.get $SHARED_DLG_PUMP_HWND)) (i32.const 0))
+            (i32.eq (local.get $arg0) (i32.load (global.get $SHARED_DLG_PUMP_HWND))))
         (then
           (global.set $dlg_ended (i32.const 1))
           (global.set $dlg_result (i32.const 2)) ;; IDCANCEL
@@ -10449,7 +10517,18 @@ SetColorAdjustment — validate and copy complete per-DC state.
         ;; render. Our renderer paints WAT-native controls out of band, and
         ;; avoiding this chain keeps NSIS treeview paint from re-entering while
         ;; its dialog procedure is unwinding.
-        (if (i32.eq (local.get $arg2) (i32.const 0x000F))
+        ;;
+        ;; But "out of band" stops being true the moment the app owns the
+        ;; WNDPROC: $paint_drain_native_control_paints deliberately leaves a
+        ;; subclassed control's WM_PAINT for the pump, precisely so the app's
+        ;; proc runs. If that proc then chains here for the built-in look --
+        ;; which is what $ctrl_is_subclassed documents as the way to get it --
+        ;; swallowing the message means nobody paints at all. WinHelp's three
+        ;; command buttons are stock "button" children subclassed to one shared
+        ;; proc, and its whole button bar came out flat grey.
+        (if (i32.and
+              (i32.eq (local.get $arg2) (i32.const 0x000F))
+              (i32.eqz (call $ctrl_is_subclassed (local.get $arg1))))
           (then
             (global.set $eax (i32.const 0))
             (global.set $esp (i32.add (global.get $esp) (i32.const 24)))

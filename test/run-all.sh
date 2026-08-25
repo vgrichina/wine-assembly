@@ -203,6 +203,7 @@ UNIT=(
   test/test-isdialogmessage-enter.js
   test/test-dialog-custom-dispatch.js
   test/test-end-dialog-lifecycle.js
+  test/test-sendmessagetimeout.js
   test/test-directdraw-cooperative-window.js
   test/test-directdraw-create-ex.js
   test/test-directdraw-mode-change-primary.js
@@ -261,6 +262,7 @@ UNIT=(
   test/test-system-metrics.js
   test/test-toolbar-insert.js
   test/test-treeview-scroll.js
+  test/test-treeview-two-controls.js
   test/test-v86-reference-paint-workflows.js
   test/test-vfs-legacy-hfile.js
   test/test-virtual-map-cross-instance.js
@@ -451,6 +453,7 @@ E2E=(
   test/test-winamp-audio.js
   test/test-winamp-eq-presets.js
   test/test-winamp-installers.js
+  test/test-winamp-visualizers.js
   test/test-wordpad-advanced-rtf.js
   test/test-wordpad-dialog-lifecycle.js
   test/test-wordpad-format-accelerators.js

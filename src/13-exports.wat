@@ -247,6 +247,20 @@
   (func (export "get_staging_size") (result i32) (global.get $PE_STAGING_SIZE))
   (func (export "get_fs_base") (result i32) (global.get $fs_base))
   (func (export "set_fs_base") (param i32) (global.set $fs_base (local.get 0)))
+  ;; Turn the CPUID MMX advertisement off to force guests down their scalar
+  ;; fallbacks. The MMX handlers stay in the build either way, so this is an
+  ;; A/B of the code the guest chooses, which is the only comparison that means
+  ;; anything -- a Pentium-MMX-era app does not have a "use MMX" switch, it has
+  ;; a CPUID check.
+  (func (export "set_cpu_mmx") (param i32) (global.set $cpu_mmx_enable (local.get 0)))
+  (func (export "get_cpu_mmx") (result i32) (global.get $cpu_mmx_enable))
+  (func (export "get_mmx_exec_count") (result i32) (global.get $mmx_exec_count))
+  ;; Test seam for tools/mmx-check.js. $mmx_binop is pure -- two 64-bit inputs
+  ;; and a subop id in, one 64-bit result out -- so it can be checked against a
+  ;; reference model exhaustively without booting a guest, which is the only
+  ;; way to be sure about lane order in the shuffles and pack instructions.
+  (func (export "mmx_binop") (param $a i64) (param $b i64) (param $sub i32) (result i64)
+    (call $mmx_binop (local.get $a) (local.get $b) (local.get $sub)))
   (func (export "get_current_thread_id") (result i32) (global.get $current_thread_id))
   (func (export "get_process_id") (result i32) (call $current_process_id))
   (func (export "set_process_id") (param $pid i32)
@@ -1952,6 +1966,29 @@
     (local.set $slot (call $wnd_table_find (local.get $hwnd)))
     (if (i32.lt_s (local.get $slot) (i32.const 0)) (then (return (i32.const 0))))
     (i32.load8_u (i32.add (global.get $PAINT_FLAGS) (local.get $slot))))
+  ;; The WAT-owned update rect, packed l,t,r,b into two i32s (0 when the
+  ;; window has none). PAINT_FLAGS alone does not get a window painted: the
+  ;; selector also demands a non-empty update rect, and $paint_seed_child_paints
+  ;; propagates a parent's rect, not its flag. So "flag set, rect empty" and
+  ;; "parent rect empty so children were never seeded" are distinct stalls that
+  ;; look identical without this.
+  (func (export "update_rect_lt") (param $hwnd i32) (result i32)
+    (local $r i32)
+    (local.set $r (call $paint_scratch_take))
+    (if (i32.eqz (call $update_get_rect (local.get $hwnd) (local.get $r)))
+      (then (return (i32.const 0))))
+    (i32.or
+      (i32.and (i32.load (local.get $r)) (i32.const 0xFFFF))
+      (i32.shl (i32.load offset=4 (local.get $r)) (i32.const 16))))
+  (func (export "update_rect_rb") (param $hwnd i32) (result i32)
+    (local $r i32)
+    (local.set $r (call $paint_scratch_take))
+    (if (i32.eqz (call $update_get_rect (local.get $hwnd) (local.get $r)))
+      (then (return (i32.const 0))))
+    (i32.or
+      (i32.and (i32.load offset=8 (local.get $r)) (i32.const 0xFFFF))
+      (i32.shl (i32.load offset=12 (local.get $r)) (i32.const 16))))
+
   (func (export "post_message_q")
         (param $hwnd i32) (param $msg i32) (param $wP i32) (param $lP i32) (result i32)
     (call $post_queue_push (local.get $hwnd) (local.get $msg) (local.get $wP) (local.get $lP)))
@@ -2396,6 +2433,11 @@
   (func (export "set_bp") (param $addr i32) (global.set $bp_addr (local.get $addr)) (global.set $bp_first_caller (i32.const 0)) (call $dbg_recompute))
   (func (export "clear_bp") (global.set $bp_addr (i32.const 0)) (call $dbg_recompute))
   (func (export "get_bp_addr") (result i32) (global.get $bp_addr))
+  ;; --fault-null: 0=off, 1=log unmapped guest accesses, 2=log and trap.
+  ;; Per-instance like every mutable global, so a worker thread needs its own
+  ;; call to see the same setting.
+  (func (export "set_fault_unmapped") (param $mode i32)
+    (global.set $fault_unmapped (local.get $mode)))
   (func (export "get_bp_first_caller") (result i32) (global.get $bp_first_caller))
 
   ;; --trace-esp wiring (test harness uses this). Pass hi=0 to disable the
@@ -4335,7 +4377,6 @@
   (func (export "test_create_treeview")
     (param $x i32) (param $y i32) (param $w i32) (param $h i32) (param $style i32) (result i32)
     (local $parent i32) (local $tv i32)
-    (global.set $tv_first_visible_row (i32.const 0))
     (global.set $tv_drag_anchor_y (i32.const 0))
     (global.set $tv_drag_anchor_row (i32.const 0))
     (global.set $tv_debug_expand_notify_count (i32.const 0))
@@ -4350,10 +4391,22 @@
     (local.set $tv (call $ctrl_create_child (local.get $parent) (i32.const 8) (i32.const 100)
                      (local.get $x) (local.get $y) (local.get $w) (local.get $h)
                      (i32.or (i32.const 0x50000000) (local.get $style)) (i32.const 0)))
+    ;; The view state a bare export reads is the one belonging to the control
+    ;; the test just made, so point the active owner at it.
+    (global.set $tv_active_owner (local.get $tv))
+    (call $tv_view_set_row (i32.const 0))
     (local.get $tv))
 
+  ;; Where the item table lives and how far the walks go. Debug readers used to
+  ;; hardcode both; the table has since moved and grown, and a hardcoded base
+  ;; silently dumps an empty tree instead of failing.
+  (func (export "treeview_get_table_base") (result i32)
+    (global.get $TV_TABLE))
+  (func (export "treeview_get_slot_limit") (result i32)
+    (call $tv_slot_limit))
+
   (func (export "treeview_get_first_visible_row") (result i32)
-    (global.get $tv_first_visible_row))
+    (call $tv_view_row))
   (func (export "treeview_get_visible_count") (result i32)
     (call $tv_visible_count))
 

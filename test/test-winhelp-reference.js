@@ -71,6 +71,12 @@ for (const stem of ['notepad', 'freecell']) {
     path.join(root, 'test', 'run.js'),
     `--exe=${viewer}`,
     `--args=${stem}.hlp`,
+    // A bare --exe mounts only the executable, so the viewer would not find
+    // the help file it is being asked to open, nor the comctl32 next to it.
+    // No *.gid here: generating one is what this run is for, and an include
+    // pattern that matches nothing is a hard error. The .cnt files are the
+    // contents definitions the Help Topics dialog is built from.
+    '--vfs-include=*.hlp,*.cnt,*.dll',
     '--max-batches=500',
     '--no-build',
     '--quiet-api',
@@ -93,6 +99,8 @@ const run = spawnSync(process.execPath, [
   path.join(root, 'test', 'run.js'),
   `--exe=${contentViewer}`,
   '--args=freecell.hlp',
+  // contentDir holds only the viewer, the help file and comctl32 -- no .gid.
+  '--vfs-include=*.hlp,*.dll',
   '--screen=800x600',
   '--max-batches=500',
   '--no-build',
@@ -207,6 +215,7 @@ const contentsRun = spawnSync(process.execPath, [
   path.join(root, 'test', 'run.js'),
   `--exe=${viewer}`,
   '--args=freecell.hlp',
+  '--vfs-include=*.hlp,*.cnt,*.gid,*.dll',
   '--max-batches=320',
   '--no-build',
   '--quiet-api',

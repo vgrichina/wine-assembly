@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 426 funcref)
+  (table $handlers 431 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -478,8 +478,14 @@
     $th_copy_run              ;; 419: whole COPY_RUN loop (src/07b-loop-match.wat)
     $th_store32_sib           ;; 420: MOV dword [base+index*scale+disp], r32
     $th_copy32_ro_to_sib      ;; 421: MOV r32,[base+disp] + MOV [base+idx*s+disp],r32
-    $th_rect_run              ;; 422: a whole unrolled rows x cols dword rect copy
-    $th_case_chain            ;; 423: a whole cmp al,imm8 / jz ladder (a switch)
-    $th_rle_run               ;; 424: a whole run-length sprite blit row
-    $th_load_far_ptr32        ;; 425: LES/LDS r32, m16:32 in a flat task
+    ;; -- MMX (src/06c-mmx.wat) --
+    $th_mmx_rr                ;; 422: mm, mm      operand = sub<<8 | dst<<4 | src
+    $th_mmx_rm                ;; 423: mm, m64     operand = sub<<8 | dst<<4 ; addr word follows
+    $th_mmx_mr                ;; 424: m64, mm     operand = sub<<8 | src<<4 ; addr word follows
+    $th_mmx_ri                ;; 425: mm, imm8    operand = sub<<12 | dst<<8 | imm8
+    $th_rdtsc                 ;; 426: RDTSC -> EDX:EAX
+    $th_rect_run              ;; 427: a whole unrolled rows x cols dword rect copy
+    $th_case_chain            ;; 428: a whole cmp al,imm8 / jz ladder (a switch)
+    $th_rle_run               ;; 429: a whole run-length sprite blit row
+    $th_load_far_ptr32        ;; 430: LES/LDS r32, m16:32 in a flat task
   )

@@ -23743,13 +23743,52 @@
   },
   {
     "id": 2869,
+    "name": "SendMessageTimeoutA",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 3071011016,
+    "args": [
+      {
+        "name": "hwnd",
+        "type": "HWND"
+      },
+      {
+        "name": "msg",
+        "type": "UINT"
+      },
+      {
+        "name": "wP",
+        "type": "DWORD"
+      },
+      {
+        "name": "lP",
+        "type": "DWORD"
+      },
+      {
+        "name": "flags",
+        "type": "DWORD"
+      },
+      {
+        "name": "timeout",
+        "type": "DWORD"
+      },
+      {
+        "name": "result",
+        "type": "LPDWORD",
+        "out": true
+      }
+    ],
+    "ret": "DWORD"
+  },
+  {
+    "id": 2870,
     "name": "RegQueryValueW",
     "nargs": 4,
     "convention": "stdcall",
     "hash": 400203013
   },
   {
-    "id": 2870,
+    "id": 2871,
     "name": "_MyGetFreeSystemResources32@4",
     "nargs": 1,
     "convention": "stdcall",
@@ -23763,7 +23802,7 @@
     "ret": "u32"
   },
   {
-    "id": 2871,
+    "id": 2872,
     "name": "FlushViewOfFile",
     "nargs": 2,
     "convention": "stdcall",

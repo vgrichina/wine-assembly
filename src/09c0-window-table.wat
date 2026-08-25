@@ -227,6 +227,19 @@
         (call $wnd_z_init_slot (local.get $empty))))
   )
 
+  ;; True when the HWND allocator could have issued this handle. Every window
+  ;; we create takes its handle from $next_hwnd, so anything below the base or
+  ;; at/above the high-water mark was never a window -- a plug-in reading a
+  ;; stale local as an HWND, or a caller that guessed. Say nothing about
+  ;; whether the window is still alive: a destroyed handle stays "issued", and
+  ;; the callers that care check the window table itself.
+  ;; HWND_BROADCAST (0xFFFF) is a real target and is not covered here.
+  (func $wnd_hwnd_was_issued (param $hwnd i32) (result i32)
+    (i32.and
+      (i32.ge_u (local.get $hwnd) (i32.const 0x10001))
+      (i32.lt_u (local.get $hwnd) (global.get $next_hwnd)))
+  )
+
   ;; Look up wndproc for hwnd; returns 0 if not found
   (func $wnd_table_get (param $hwnd i32) (result i32)
     (local $i i32) (local $ptr i32)
