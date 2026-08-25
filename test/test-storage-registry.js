@@ -84,6 +84,13 @@ writeGuestU32(cbGA, 0);
 assert.strictEqual(storage.reg_query_value(hKey, g2w(valueNameGA, IMAGE_BASE), 0, 0, cbGA, 0), 0);
 assert.strictEqual(readGuestU32(cbGA), 4);
 
+// RegFlushKey: succeeds for an open handle and for a predefined root, and
+// reports ERROR_INVALID_HANDLE for anything else. Diablo flushes its Multi
+// Player key before starting a game, so a handle it just opened has to pass.
+assert.strictEqual(storage.reg_flush_key(hKey), 0);
+assert.strictEqual(storage.reg_flush_key(0x80000002), 0);
+assert.strictEqual(storage.reg_flush_key(0xDEADBEEF), 6);
+
 const rootHKey = storage.reg_open_key(0x80000001, 0, 0);
 assert(rootHKey, 'predefined registry roots should open without a materialized root record');
 writeGuestU32(enumNameLenGA, 64);

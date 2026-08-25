@@ -23818,5 +23818,19 @@
       }
     ],
     "ret": "BOOL"
+  },
+  {
+    "id": 2873,
+    "name": "RegFlushKey",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3468072164,
+    "args": [
+      {
+        "name": "hKey",
+        "type": "u32"
+      }
+    ],
+    "ret": "LONG"
   }
 ]

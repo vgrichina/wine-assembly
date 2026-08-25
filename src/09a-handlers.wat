@@ -5133,6 +5133,12 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
+  ;; RegFlushKey(hKey) — 1 arg stdcall
+  (func $handle_RegFlushKey (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_reg_flush_key (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
   ;; RegDeleteKeyA(hKey, lpSubKey) — 2 args stdcall
   (func $handle_RegDeleteKeyA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $host_reg_delete_key

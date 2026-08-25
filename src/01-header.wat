@@ -587,6 +587,8 @@
   ;; reg_set_value(hKey, nameWA, type, dataGA, cbData, isWide) → error code
   (import "host" "reg_close_key" (func $host_reg_close_key (param i32) (result i32)))
   ;; reg_close_key(hKey) → 0
+  (import "host" "reg_flush_key" (func $host_reg_flush_key (param i32) (result i32)))
+  ;; reg_flush_key(hKey) → 0, or 6 (ERROR_INVALID_HANDLE) for an unknown handle
   (import "host" "reg_enum_key" (func $host_reg_enum_key (param i32 i32 i32 i32 i32) (result i32)))
   ;; reg_enum_key(hKey, dwIndex, lpNameGA, cchName, isWide) → error code
   ;; NOTE the address space: the name is written through the host's writeStr,
