@@ -12833,21 +12833,31 @@
     (drop (call $edit_scroll_caret_into_view (local.get $hwnd)))
     (call $invalidate_hwnd (local.get $hwnd)))
 
+  ;; A real EDIT does not own a caret of its own: on WM_SETFOCUS it calls
+  ;; CreateCaret + SetCaretPos + ShowCaret and USER draws and blinks it. Doing
+  ;; the same here means one caret mechanism instead of two -- the compositor
+  ;; blinks it, GetCaretPos answers about it, and the page can tell that
+  ;; keystrokes have somewhere to land (which is what raises a phone keyboard)
+  ;; without knowing anything about this control.
   (func $edit_reset_caret_timer (param $hwnd i32) (param $state_w i32)
     (global.set $tick_count (call $host_get_ticks))
     (i32.store offset=24 (local.get $state_w)
       (i32.or (i32.load offset=24 (local.get $state_w)) (i32.const 0x20)))
-    (call $timer_set (local.get $hwnd) (i32.const 0xCA47) (i32.const 530) (i32.const 0)))
+    (global.set $caret_hwnd (local.get $hwnd))
+    (global.set $caret_w (i32.const 2))
+    (global.set $caret_h (i32.const 15))
+    (global.set $caret_visible (i32.const 1)))
 
+  ;; WM_KILLFOCUS: DestroyCaret. The page reads this as "text no longer has
+  ;; anywhere to land", which is what takes a phone's keyboard back down.
   (func $edit_stop_caret_timer (param $hwnd i32) (param $state_w i32)
     (drop (call $timer_kill (local.get $hwnd) (i32.const 0xCA47)))
     (i32.store offset=24 (local.get $state_w)
       (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0xFFFFFFDF)))
-    ;; The caret is gone, so the page must stop believing text has somewhere to
-    ;; land -- otherwise a phone keeps its keyboard up over a control that no
-    ;; longer takes keystrokes.
-    (if (i32.eq (global.get $edit_caret_hwnd) (local.get $hwnd))
-      (then (global.set $edit_caret_hwnd (i32.const 0)))))
+    (if (i32.eq (global.get $caret_hwnd) (local.get $hwnd))
+      (then
+        (global.set $caret_visible (i32.const 0))
+        (global.set $caret_hwnd (i32.const 0)))))
 
   ;; Right-shift n bytes by 1 (memmove src→src+1). Reverse copy so overlap is safe.
   (func $edit_memmove_right (param $src i32) (param $n i32)
@@ -13625,22 +13635,11 @@
         (return (i32.const 0))))
 
     ;; ---------- WM_TIMER (0x0113) ----------
+    ;; Swallowed. 0xCA47 was this control's private caret-blink timer, back when
+    ;; it drew and blinked a caret of its own; USER owns the caret now and
+    ;; nothing sets that timer any more.
     (if (i32.eq (local.get $msg) (i32.const 0x0113))
-      (then
-        (if (i32.ne (local.get $wParam) (i32.const 0xCA47))
-          (then (return (i32.const 0))))
-        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
-        (local.set $state_w (call $g2w (local.get $state)))
-        (local.set $flags (i32.load offset=24 (local.get $state_w)))
-        (if (i32.eqz (i32.and (local.get $flags) (i32.const 0x08)))
-          (then
-            (call $edit_stop_caret_timer (local.get $hwnd) (local.get $state_w))
-            (call $invalidate_hwnd (local.get $hwnd))
-            (return (i32.const 0))))
-        (i32.store offset=24 (local.get $state_w)
-          (i32.xor (local.get $flags) (i32.const 0x20)))
-        (call $invalidate_hwnd (local.get $hwnd))
-        (return (i32.const 0))))
+      (then (return (i32.const 0))))
 
     ;; ---------- WM_CHAR (0x0102) ----------
     (if (i32.eq (local.get $msg) (i32.const 0x0102))
@@ -14465,11 +14464,14 @@
               (local.set $lo (i32.add (local.get $line_end) (i32.const 1)))
               (local.set $line_y (i32.add (local.get $line_y) (i32.const 16)))
               (br $line_loop)))))
-        ;; 4) Caret (only if focused — bit 3 of flags)
+        ;; 4) Caret position (only if focused — bit 3 of flags). This is
+        ;; SetCaretPos, not a draw: the compositor paints and blinks the USER
+        ;; caret, exactly as USER does for a real EDIT. Drawing it here as well
+        ;; would put two carets in the control, on two blink clocks.
         (local.set $flags (i32.load offset=24 (local.get $state_w)))
         (if (i32.eq
-              (i32.and (local.get $flags) (i32.const 0x28))
-              (i32.const 0x28))
+              (i32.and (local.get $flags) (i32.const 0x08))
+              (i32.const 0x08))
           (then
             (local.set $cur (i32.load offset=12 (local.get $state_w)))
             ;; Find which line the cursor is on and the offset within that line.
@@ -14492,21 +14494,12 @@
                   (i32.ge_s (local.get $a) (i32.const 0))
                   (i32.const 1))
               (then
-            (drop (call $host_gdi_fill_rect (local.get $hdc)
-                    (i32.add (local.get $px) (local.get $tx))
-                    (i32.add (local.get $hi) (i32.const 2))
-                    (i32.add (i32.add (local.get $px) (local.get $tx)) (i32.const 2))
-                    (i32.add (local.get $hi) (i32.const 17))
-                    (i32.const 0x30014))) ;; BLACK_BRUSH
-            ;; Publish where it landed. This control owns its caret and never
-            ;; calls CreateCaret/ShowCaret, so without this the page has no way
-            ;; to tell typing in Notepad from clicking on Minesweeper, and a
-            ;; phone never raises its keyboard.
-            (global.set $edit_caret_hwnd (local.get $hwnd))
-            (global.set $edit_caret_x (i32.add (local.get $px) (local.get $tx)))
-            (global.set $edit_caret_y (i32.add (local.get $hi) (i32.const 2)))
-            (global.set $edit_caret_w (i32.const 2))
-            (global.set $edit_caret_h (i32.const 15))))))
+            (global.set $caret_hwnd (local.get $hwnd))
+            (global.set $caret_x (i32.add (local.get $px) (local.get $tx)))
+            (global.set $caret_y (i32.add (local.get $hi) (i32.const 2)))
+            (global.set $caret_w (i32.const 2))
+            (global.set $caret_h (i32.const 15))
+            (global.set $caret_visible (i32.const 1))))))
         ;; 5) Optional vertical scrollbar strip. Scrolling state is line-based.
         (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
           (then

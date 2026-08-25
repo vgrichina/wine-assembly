@@ -4007,16 +4007,6 @@
     (global.get $caret_h))
   (func (export "get_caret_visible") (result i32)
     (global.get $caret_visible))
-  (func (export "get_edit_caret_hwnd") (result i32)
-    (global.get $edit_caret_hwnd))
-  (func (export "get_edit_caret_x") (result i32)
-    (global.get $edit_caret_x))
-  (func (export "get_edit_caret_y") (result i32)
-    (global.get $edit_caret_y))
-  (func (export "get_edit_caret_w") (result i32)
-    (global.get $edit_caret_w))
-  (func (export "get_edit_caret_h") (result i32)
-    (global.get $edit_caret_h))
 
   ;; ============================================================
   ;; Child-window enumeration + control read-back exports

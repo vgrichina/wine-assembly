@@ -209,7 +209,9 @@ async function main() {
       await cdp.send('Emulation.setCPUThrottlingRate', { rate: CPU_RATE });
     }
     await page.setViewport(VIEWPORT);
-    page.on('pageerror', e => problems.push(String(e)));
+    // Stack, not just the message: a bare "Cannot read properties of null"
+    // names neither the file nor the caller, which is most of what you need.
+    page.on('pageerror', e => problems.push((e && e.stack) || String(e)));
     const consoleLines = [];
     page.on('console', m => {
       const t = m.text();
