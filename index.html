@@ -29,9 +29,21 @@
       color: #000;
       display: flex;
       flex-direction: column;
+      /* 100vh on iOS is the LARGE viewport -- the height the page would have
+         if Safari's toolbars were hidden, which they are not. So the bottom
+         ~60-90px of this page has always been behind the URL bar and the tab
+         bar: the last row of desktop icons, and anything anchored to the
+         bottom of the screen. Worse, the desktop grid was then given more
+         height than it could show, so it never overflowed and never scrolled
+         -- the icons were not below the fold, they were behind the browser.
+         dvh is the viewport you can actually see.
+         Kept off a running app on purpose: dvh follows the toolbars both
+         ways, and a guest must not get a display resize because someone
+         swiped. page-fullscreen does its own dvh sizing and pins it. */
       height: 100vh;
       overflow: hidden;
     }
+    body:not(.app-running) { height: 100dvh; }
     #shell {
       flex: 1;
       min-height: 0;
@@ -461,7 +473,10 @@
     body.no-debug.exclusive-fullscreen #content,
     body.no-debug.exclusive-fullscreen #screen-wrap {
       width: 100vw;
+      /* Same trap as on body: 100vh puts the bottom of a full-screen game
+         behind Safari's tab bar. */
       height: 100vh;
+      height: 100dvh;
       margin: 0;
       padding: 0;
       border: 0;

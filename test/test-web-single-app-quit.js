@@ -81,6 +81,14 @@ const desktopState = () => {
     overflows: icons ? icons.scrollHeight > icons.clientHeight + 1 : false,
     scrollable: style ? (style.overflowY === 'auto' || style.overflowY === 'scroll') : false,
     takesTouches: style ? style.pointerEvents !== 'none' : false,
+    // The build watermark is how anyone answers "is this phone on the new
+    // version at all", so it has to be somewhere a phone can see.
+    stamp: (() => {
+      const el = document.getElementById('build-stamp');
+      if (!el || getComputedStyle(el).display === 'none') return null;
+      const r = el.getBoundingClientRect();
+      return { text: el.textContent, onScreen: r.bottom <= window.innerHeight + 1 && r.top >= 0 };
+    })(),
   };
 };
 
@@ -158,8 +166,22 @@ async function main() {
     // not fit and the ones below are unreachable unless it scrolls itself --
     // and it can only scroll if it takes the touches, because the canvas sits
     // over it and preventDefaults them away to the guest.
+    // Chrome's device emulation cannot reproduce this one: it has no
+    // retractable toolbars, so vh and dvh are the same number and the page
+    // measures correct either way. On a real iPhone 100vh is the height the
+    // page would have if Safari's bars were hidden, so the bottom ~70px of
+    // the desktop sits behind them -- and because the grid was then taller
+    // than the screen showed, it never overflowed and never scrolled. Assert
+    // the rule itself, since no measurement here can.
+    const source = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf-8');
+    assert(/body:not\(\.app-running\)\s*\{\s*height:\s*100dvh/.test(source),
+      'the idle desktop must be sized in dvh, or its last row hides behind Safari');
+
     assert(quit.scrollable, 'the phone desktop must scroll');
     assert(quit.takesTouches, 'a grid with pointer-events:none cannot be scrolled by a finger');
+    assert(quit.stamp && quit.stamp.onScreen,
+      `the build watermark has to be visible on the idle desktop, got ${JSON.stringify(quit.stamp)}`);
+    assert(/build /.test(quit.stamp.text), 'the watermark has to name a build');
     if (quit.overflows) {
       const lastIcon = await page.evaluate(() => {
         const grid = document.getElementById('desktop-icons');
