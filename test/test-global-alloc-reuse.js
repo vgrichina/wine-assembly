@@ -12,6 +12,13 @@ const extraWat = String.raw`
     (call $handle_GlobalAlloc (local.get $flags) (local.get $size)
       (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
     (global.get $eax))
+  ;; Test-local scaffolding. The module deliberately exports no heap-cursor
+  ;; setters — JS used to marshal them between instances to fake shared state,
+  ;; and $heap_low_reserve replaces that. A single-instance test still needs a
+  ;; known starting arena, so it plants one itself.
+  (func (export "test_heap_reset") (param $base i32)
+    (global.set $heap_ptr (local.get $base))
+    (global.set $free_list (i32.const 0)))
   (func (export "test_global_free") (param $ptr i32)
     (global.set $image_base (i32.const 0))
     (global.set $esp (i32.const 0x00300000))
@@ -21,8 +28,7 @@ const extraWat = String.raw`
 
 (async () => {
   const { exports: wat } = await bootRenderHarness({ extraWat, fonts: 'none' });
-  wat.set_heap_ptr(0x00100000);
-  wat.set_free_list(0);
+  wat.test_heap_reset(0x00100000);
 
   const size = 0x1e40;
   const first = wat.test_global_alloc(0, size) >>> 0;

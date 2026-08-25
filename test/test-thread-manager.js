@@ -367,25 +367,12 @@ function makeRunnableThread(tid, onRun) {
   };
 }
 
-const allocatorTm = makeThreadManager();
-let mainFreeList = 0x650000;
-allocatorTm.mainInstance.exports.get_free_list = () => mainFreeList;
-allocatorTm.mainInstance.exports.set_free_list = value => { mainFreeList = value >>> 0; };
-const allocatorWorker = makeRunnableThread(1, () => {
-  assert.strictEqual(
-    allocatorWorker.instance.exports.get_free_list(),
-    0x650000,
-    'worker should begin its slice with the process free-list head'
-  );
-  allocatorWorker.instance.exports.set_free_list(0x651000);
-});
-allocatorTm.threads.set(0xe1000, allocatorWorker);
-allocatorTm.runSlice(100);
-assert.strictEqual(
-  mainFreeList,
-  0x651000,
-  'main should receive the worker free-list head after its slice'
-);
+// The free-list head is no longer marshalled between instances around a slice.
+// That only ever worked because exactly one instance ran at a time and JS got a
+// turn in between — neither holds with real threads. Each instance now carves a
+// private arena from a shared-memory cursor ($heap_low_reserve), so there is no
+// per-slice hand-off left to assert. Cross-instance disjointness is covered by
+// test-virtual-map-cross-instance.js.
 
 const suspendedRunTm = makeThreadManager();
 let suspendedRuns = 0;
@@ -510,7 +497,7 @@ assert.strictEqual(
 assert.strictEqual(reentrantRuns, 0, 'reentrant nested wait should not run the worker again');
 
 console.log('PASS  ThreadManager reuses exited worker cache slots');
-console.log('PASS  ThreadManager hands allocator free-list ownership between instances');
+console.log('PASS  ThreadManager schedules, suspends and resumes worker slices');
 console.log('PASS  ThreadManager supports wall-budgeted worker slices');
 console.log('PASS  ThreadManager prioritizes hot audio threads');
 console.log('PASS  ThreadManager notifies thread exits once');

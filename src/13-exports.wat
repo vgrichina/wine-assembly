@@ -520,6 +520,7 @@
   ;; no setters — JS used to marshal them between instances around every slice to
   ;; fake shared state, and that is exactly what $heap_low_reserve replaces.
   (func (export "get_heap_ptr") (result i32) (global.get $heap_ptr))
+  (func (export "get_free_list") (result i32) (global.get $free_list))
   (func (export "get_heap_end") (result i32) (global.get $heap_end))
   (func (export "get_heap_sparse_ptr") (result i32) (global.get $heap_sparse_ptr))
   (func (export "get_heap_sparse_end") (result i32) (global.get $heap_sparse_end))
