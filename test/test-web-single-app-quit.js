@@ -161,12 +161,34 @@ async function main() {
     // windows so the page is bare teal, the icons stay hidden behind
     // body.app-running, and single-app mode refuses every later launch in
     // silence because it still believes something is running.
+    // Plant the window a worker thread of this app would have put up. The
+    // whole app slice is the shell's unit of ownership, so a window from any
+    // of its threads has to go down with it -- when worker bases were derived
+    // from the thread id alone, this one landed outside the slice, outlived
+    // its guest, and the repaint after the stop handed the display straight
+    // back to the dead app.
+    const workerHwnd = await page.evaluate(() => {
+      const app = runningApps.find(item => item && item.name === 'winmine_wep');
+      const hwnd = app.wine.threadManager
+        ? app.wine.threadManager.workerHwndBase(1)
+        : app.wine._hwndBase + 0x8000;
+      app.wine.renderer.windows[hwnd] = {
+        hwnd, x: 0, y: 0, width: 320, height: 200,
+        visible: true, title: 'worker window', wasm: null,
+      };
+      return hwnd;
+    });
+
     await page.evaluate(() => {
       const app = runningApps.find(item => item && item.name === 'winmine_wep');
       app.wine.running = false;
       app.wine.stop({ repaint: false });
       if (app.wine.renderer) app.wine.renderer.repaint();
     });
+    const workerWindowLeft = await page.evaluate(
+      hwnd => !!(sharedRenderer && sharedRenderer.windows[hwnd]), workerHwnd);
+    assert(!workerWindowLeft,
+      `a window from worker thread 1 (hwnd 0x${workerHwnd.toString(16)}) outlived its app`);
     await page.waitForFunction(() => runningApps.length === 0, { timeout: 30000 });
     const quit = await page.evaluate(desktopState);
     await page.screenshot({ path: path.join(OUT, 'after-quit.png') });

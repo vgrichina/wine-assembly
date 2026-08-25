@@ -513,6 +513,33 @@ assert.strictEqual(
 );
 assert.strictEqual(reentrantRuns, 0, 'reentrant nested wait should not run the worker again');
 
+// A worker's hwnds have to come out of its own app's slice. They used to be
+// derived from the thread id alone (0x10001 + tid * 0x10000), which put every
+// worker window outside the range the shell prunes when that app stops -- so a
+// window a worker had put up survived its guest forever, and the repaint after
+// the stop handed the display back to a dead app. Whether it happened at all
+// depended on whether the app ever created a window off a worker thread, which
+// is exactly the "sometimes works, sometimes doesn't" shape. The second app's
+// range also collided with the first app's T1 outright.
+for (const appBase of [0x10001, 0x20001, 0x70001]) {
+  const scoped = makeThreadManager({ hwndBase: () => appBase });
+  const seen = new Set();
+  for (let tid = 1; tid <= scoped._maxWorkerThreads; tid++) {
+    const base = scoped.workerHwndBase(tid);
+    assert(base > appBase && base < appBase + 0x10000,
+      `worker ${tid} of the app at ${appBase.toString(16)} must stay inside its own slice, got ${base.toString(16)}`);
+    assert(!seen.has(base), `worker ${tid} must not share a base with another worker`);
+    seen.add(base);
+  }
+  // Main gets the whole bottom half, so a lifetime of dialogs and controls
+  // cannot walk into T1's numbers.
+  assert.strictEqual(scoped.workerHwndBase(1) - appBase, 0x8000,
+    'the main thread keeps the bottom half of the slice');
+}
+// Defaulting matters too: the CLI host constructs the manager with no base.
+assert.strictEqual(makeThreadManager().workerHwndBase(1), 0x10001 + 0x8000,
+  'with no app base the manager still lands inside the first app slice');
+
 console.log('PASS  ThreadManager reuses exited worker cache slots');
 console.log('PASS  ThreadManager hands allocator free-list ownership between instances');
 console.log('PASS  ThreadManager supports wall-budgeted worker slices');
@@ -524,3 +551,4 @@ console.log('PASS  ThreadManager recycles closed event and semaphore handles');
 console.log('PASS  ThreadManager preserves and atomically consumes wait-all state');
 console.log('PASS  ThreadManager keeps main wait completion logs trace-only');
 console.log('PASS  ThreadManager keeps synchronization-object creation logs trace-only');
+console.log('PASS  ThreadManager keeps every worker hwnd inside its own app slice');
