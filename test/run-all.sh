@@ -51,6 +51,7 @@ UNIT=(
   test/test-mat4.js
   test/test-vfs.js
   test/test-flush-view-of-file.js
+  test/test-heap-free-block-validation.js
   test/test-vfs-host-files.js
   test/test-storage-registry.js
   test/test-codepage-dbcs.js

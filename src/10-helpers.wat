@@ -494,6 +494,36 @@
     (i32.store (call $g2w (local.get $ptr)) (local.get $need))
     (local.get $ptr))
 
+  ;; Is this free-list entry's own header self-consistent? Same extent rules
+  ;; $heap_free applies before linking a block, re-checked at allocation time
+  ;; because a guest that overruns a live block rewrites the header of the free
+  ;; block behind it after the link happened. Returns 1 for "do not serve this".
+  (func $heap_block_bad (param $cur i32) (param $bsz i32) (result i32)
+    (local $end i32)
+    ;; Header must be an aligned allocation extent, never smaller than a block.
+    (if (i32.or
+          (i32.lt_u (local.get $bsz) (i32.const 16))
+          (i32.ne (i32.and (local.get $bsz) (i32.const 7)) (i32.const 0)))
+      (then (return (i32.const 1))))
+    (local.set $end (i32.add (local.get $cur) (local.get $bsz)))
+    (if (i32.lt_u (local.get $end) (local.get $cur)) (then (return (i32.const 1))))
+    (if (i32.lt_u (local.get $cur) (global.get $heap_ptr))
+      (then
+        ;; Direct arena: the block has to start inside it and end at or before
+        ;; the bump pointer, which is the high-water mark of everything handed
+        ;; out so far.
+        (return
+          (i32.or
+            (i32.lt_u (local.get $cur) (global.get $heap_base))
+            (i32.gt_u (local.get $end) (global.get $heap_ptr))))))
+    ;; Sparse arena: same bounded range $heap_free uses, so a stale high handle
+    ;; or FOURCC that got linked cannot be split and returned.
+    (i32.or
+      (i32.eqz (global.get $heap_sparse_ptr))
+      (i32.or
+        (i32.lt_u (local.get $cur) (global.get $virtual_alloc_top))
+        (i32.gt_u (local.get $end) (global.get $heap_sparse_ptr)))))
+
   ;; Free-list allocator. Each allocated block has a 4-byte size header at ptr-4.
   ;; Free blocks: [size:4][next_guest_ptr:4][...]. Min block = 16 bytes.
   ;; Falls back to bump allocation when no free block fits.
@@ -516,6 +546,21 @@
       (br_if $scan (i32.eqz (local.get $cur)))
       (local.set $cur_w (call $g2w (local.get $cur)))
       (local.set $bsz (i32.load (local.get $cur_w)))
+      ;; A free block has to fit inside the arena it claims to live in. Serving
+      ;; one that does not is far worse than losing the list: Pawn reaches a
+      ;; header reading 0x03d09020, and a 64 MB "fit" is split, handed back as
+      ;; a low pointer, and then zeroed by HEAP_ZERO_MEMORY straight through
+      ;; the thread cache and everything else the emulator keeps in linear
+      ;; memory -- which is why it dies decoding a block of zeros rather than
+      ;; anywhere near the heap. The chain's next pointer sits in the same
+      ;; block we just decided to distrust, so stop the walk here and bump
+      ;; allocate instead of following it.
+      (if (call $heap_block_bad (local.get $cur) (local.get $bsz))
+        (then
+          (if (local.get $prev_w)
+            (then (i32.store (i32.add (local.get $prev_w) (i32.const 4)) (i32.const 0)))
+            (else (global.set $free_list (i32.const 0))))
+          (br $scan)))
       (if (i32.ge_u (local.get $bsz) (local.get $need))
         (then
           ;; Found a fit. Split if remainder >= 16, else use whole block.
