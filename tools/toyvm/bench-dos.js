@@ -57,6 +57,9 @@ async function main() {
   const reps = Number(arg('reps', 5));
   const budget = count(arg('dispatches'), 20e6);
   const cpu = Number(arg('cpu', 386));
+  // Most intros open on a title card that blocks in INT 16h/21h. Without this
+  // the arms all park at the prompt and the benchmark times the prompt.
+  const autoKey = !process.argv.slice(2).includes('--no-auto-key');
   const quiet = () => {};
 
   // Printed either side of the run for the same reason profile-web-frames.js
@@ -67,7 +70,7 @@ async function main() {
   for (const exe of exes) {
     // best[v] is the fastest observed guest-time for that arm; the first rep
     // also records what the program actually produced, for the agreement check.
-    const best = new Map(), seen = new Map();
+    const samples = new Map(), seen = new Map();
     let failed = null;
 
     for (let rep = 0; rep < reps && !failed; rep++) {
@@ -78,7 +81,7 @@ async function main() {
       for (const v of order) {
         let r;
         try {
-          r = await runDos({ exe, variant: v, budget, cpu, log: quiet });
+          r = await runDos({ exe, variant: v, budget, cpu, log: quiet, autoKey });
         } catch (e) {
           failed = `${v}: ${(e.message || String(e)).split('\n')[0]}`;
           break;
@@ -86,8 +89,8 @@ async function main() {
         const sig = `${r.dispatched}/${r.frame}`;
         if (!seen.has(v)) seen.set(v, { sig, r });
         else if (seen.get(v).sig !== sig) failed = `${v} is not deterministic across reps`;
-        const nsPer = r.guestSecs * 1e9 / r.dispatched;
-        if (!best.has(v) || nsPer < best.get(v)) best.set(v, nsPer);
+        if (!samples.has(v)) samples.set(v, []);
+        samples.get(v).push(r.guestSecs * 1e9 / r.dispatched);
       }
     }
 
@@ -104,14 +107,39 @@ async function main() {
       continue;
     }
 
-    const base = best.get(variants[0]);
+    // Minimum is the headline, but the min-to-median spread is printed beside
+    // it because on a loaded box that spread is often wider than the difference
+    // between two arms -- and a reader who cannot see it will over-read a 5%.
+    const stat = (v) => {
+      const s = [...samples.get(v)].sort((a, b) => a - b);
+      return { min: s[0], med: s[(s.length - 1) >> 1], max: s[s.length - 1] };
+    };
+    const base = stat(variants[0]).min;
     for (const v of variants) {
-      const ns = best.get(v);
-      const rel = base / ns;
-      console.log(`  ${v.padEnd(10)} ${ns.toFixed(2)} ns/dispatch  `
-        + `${(1 / ns * 1000).toFixed(1)}M/s  ${v === variants[0] ? '(baseline)'
-          : `${rel >= 1 ? '+' : ''}${((rel - 1) * 100).toFixed(1)}%`}`);
-      rows.push({ exe: name, variant: v, nsPerDispatch: Number(ns.toFixed(3)), rel: Number(rel.toFixed(4)) });
+      const { min, med, max } = stat(v);
+      const rel = base / min;
+      console.log(`  ${v.padEnd(14)} ${min.toFixed(2)} ns/dispatch  `
+        + `${(1000 / min).toFixed(1)}M/s  `
+        + `${v === variants[0] ? '(baseline)'
+          : `${rel >= 1 ? '+' : ''}${((rel - 1) * 100).toFixed(1)}%`}`
+        + `   [med ${med.toFixed(2)} max ${max.toFixed(2)}, spread ${((max / min - 1) * 100).toFixed(0)}%]`);
+      rows.push({
+        exe: name, variant: v, rel: Number(rel.toFixed(4)),
+        nsMin: Number(min.toFixed(3)), nsMed: Number(med.toFixed(3)), nsMax: Number(max.toFixed(3)),
+      });
+    }
+  }
+
+  // Geometric mean across programs, because a ratio averaged arithmetically
+  // over-weights whichever program happened to be slowest.
+  if (rows.length) {
+    console.log('\ngeomean across programs (baseline = first variant):');
+    for (const v of variants) {
+      const rs = rows.filter(r => r.variant === v).map(r => r.rel);
+      if (!rs.length) continue;
+      const g = Math.exp(rs.reduce((a, b) => a + Math.log(b), 0) / rs.length);
+      console.log(`  ${v.padEnd(14)} ${g >= 1 ? '+' : ''}${((g - 1) * 100).toFixed(1)}%`
+        + `   (best on ${rows.filter(r => r.variant === v && r.rel >= 1).length}/${rs.length})`);
     }
   }
 

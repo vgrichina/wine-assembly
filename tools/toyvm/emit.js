@@ -1881,6 +1881,36 @@ function emitTailcall() {
   return s + ')\n';
 }
 
+// Replicated tail-call dispatch: the same handlers, but each one ends with its
+// OWN copy of the dispatch sequence instead of tail-calling a shared $next. The
+// machine code is nearly identical; what changes is that there are N indirect
+// branch sites rather than one, so the predictor gets a separate history per
+// handler. That is the classic threaded-code replication trick, and it is the
+// one structural idea in this comparison that costs nothing but code size.
+//
+// There is deliberately no replicated br_table twin. A br_table's arm labels
+// are only in scope at the innermost point of the block nest, so an arm cannot
+// re-dispatch after its own block has closed -- replicating it would mean N
+// copies of an N-arm nest, which is quadratic in handler count.
+function emitReplTailcall() {
+  let s = preamble() + helpers();
+  s += `(table $h ${HANDLERS.length} funcref)\n`;
+  s += `(elem (i32.const 0) ${HANDLERS.map(x => `$${x.name}`).join(' ')})\n`;
+  const dispatch = `
+  (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
+  (if (i32.lt_s (global.get $steps) (i32.const 0)) (then (return)))
+  (local.set $fn (i32.load (global.get $ip)))
+  (global.set $ip (i32.add (global.get $ip) (i32.const 4)))
+  (return_call_indirect $h (type $void) (local.get $fn))`;
+  // $next still exists as the entry point run() calls into.
+  s += `(func $next (local $fn i32)${dispatch})\n`;
+  for (const x of HANDLERS) {
+    s += `(func $${x.name} (local $fn i32) ${LOCALS}\n${x.body}\n${dispatch})\n`;
+  }
+  s += runExport();
+  return s + ')\n';
+}
+
 function emitCalls() {
   let s = preamble() + helpers();
   s += `(table $h ${HANDLERS.length} funcref)\n`;
@@ -1904,7 +1934,7 @@ function emitCalls() {
   return s + ')\n';
 }
 
-function emitSwitch(replicated) {
+function emitSwitch() {
   let s = preamble() + helpers();
   // Every handler body inlined as one arm of a single br_table. No calls, no
   // frames, no signature check -- and, in the non-replicated form, still just
@@ -1923,10 +1953,10 @@ function emitSwitch(replicated) {
   s += `\n${dispatch}\n`;
   for (let i = 0; i < HANDLERS.length; i++) {
     s += `)\n${HANDLERS[i].body}\n`;
-    // Replicated: each arm re-runs the whole dispatch itself, so each gets its
-    // own branch site and its own predictor history. Non-replicated: fall out
-    // to the shared loop back-edge and through the one site again.
-    s += replicated ? `${dispatch}\n` : `(br $l)\n`;
+    // Every arm falls out to the shared loop back-edge and through the one
+    // branch site again. See emitReplTailcall for why there is no replicated
+    // twin of this shell.
+    s += `(br $l)\n`;
   }
   s += `)\n(unreachable)\n)\n)\n`;
   s += runExport();
@@ -1945,8 +1975,9 @@ function runExport() {
 
 const VARIANTS = {
   tailcall: emitTailcall,
+  repl_tailcall: emitReplTailcall,
   calls: emitCalls,
-  switch: () => emitSwitch(false),
+  switch: emitSwitch,
 };
 
 function emit(variant) {
