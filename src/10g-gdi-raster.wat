@@ -3512,6 +3512,26 @@
       (i32.add (i32.mul (local.get $row) (i32.load offset=12 (local.get $desc)))
         (i32.shl (local.get $x) (i32.const 2)))))
 
+  (func $gdi_raster_row_ptr_8 (param $desc i32) (param $x i32) (param $y i32)
+        (result i32)
+    (local $row i32)
+    (local.set $row (select (local.get $y)
+      (i32.sub (i32.sub (i32.load offset=8 (local.get $desc)) (i32.const 1)) (local.get $y))
+      (i32.ne (i32.load offset=20 (local.get $desc)) (i32.const 0))))
+    (i32.add (i32.load (local.get $desc))
+      (i32.add (i32.mul (local.get $row) (i32.load offset=12 (local.get $desc)))
+        (local.get $x))))
+
+  (func $gdi_raster_row_ptr_16 (param $desc i32) (param $x i32) (param $y i32)
+        (result i32)
+    (local $row i32)
+    (local.set $row (select (local.get $y)
+      (i32.sub (i32.sub (i32.load offset=8 (local.get $desc)) (i32.const 1)) (local.get $y))
+      (i32.ne (i32.load offset=20 (local.get $desc)) (i32.const 0))))
+    (i32.add (i32.load (local.get $desc))
+      (i32.add (i32.mul (local.get $row) (i32.load offset=12 (local.get $desc)))
+        (i32.shl (local.get $x) (i32.const 1)))))
+
   ;; Return one COLORREF for solid/system/stock brushes, or a value above the
   ;; COLORREF range when sampling must remain per pixel.
   (func $gdi_brush_solid_color (param $hdc i32) (param $brush i32) (result i32)
@@ -3738,6 +3758,52 @@
         (global.set $gdi_pal_count (i32.load offset=28 (local.get $desc)))
         (return (local.get $palette))))
     (i32.const 0))
+
+  ;; Do two indexed surfaces address colour through the same table?
+  ;;
+  ;; When they do, an 8bpp SRCCOPY between them is an index copy, and the whole
+  ;; palette_color -> RGB -> nearest_index round trip the generic loop performs
+  ;; per pixel is dead work. Real GDI copies indexes in exactly this case.
+  ;;
+  ;; Only the low three bytes of an entry are compared: the fourth is
+  ;; PALETTEENTRY's peFlags / RGBQUAD's reserved byte and names no colour.
+  ;; The two sides commonly disagree on byte order: a DirectDraw surface
+  ;; resolves to PALETTEENTRY (R,G,B) while a bitmap object resolves to RGBQUAD
+  ;; (B,G,R). That is a layout difference, not a colour difference, so the
+  ;; second table is swizzled before comparison rather than declined -- the
+  ;; DirectDraw-surface-to-loaded-bitmap blit is the main case this exists for.
+  (func $gdi_raster_palettes_match (param $a i32) (param $b i32) (result i32)
+    (local $pa i32) (local $ca i32) (local $da i32) (local $swap i32)
+    (local $pb i32) (local $cb i32) (local $i i32) (local $ea i32) (local $eb i32)
+    (local.set $pa (call $gdi_raster_palette_base (local.get $a)))
+    (local.set $ca (global.get $gdi_pal_count))
+    (local.set $da (global.get $gdi_pal_dx))
+    (local.set $pb (call $gdi_raster_palette_base (local.get $b)))
+    (local.set $cb (global.get $gdi_pal_count))
+    (if (i32.or (i32.eqz (local.get $pa)) (i32.eqz (local.get $pb)))
+      (then (return (i32.const 0))))
+    (local.set $swap (i32.ne (local.get $da) (global.get $gdi_pal_dx)))
+    ;; Unequal counts mean an index legal in one table is out of range in the
+    ;; other, where $gdi_raster_palette_color falls back to a default palette.
+    (if (i32.ne (local.get $ca) (local.get $cb))
+      (then (return (i32.const 0))))
+    (if (i32.and (i32.eq (local.get $pa) (local.get $pb)) (i32.eqz (local.get $swap)))
+      (then (return (i32.const 1))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $ca)))
+      (local.set $ea (i32.add (local.get $pa) (i32.shl (local.get $i) (i32.const 2))))
+      (local.set $eb (i32.load (i32.add (local.get $pb) (i32.shl (local.get $i) (i32.const 2)))))
+      (if (local.get $swap)
+        (then (local.set $eb (i32.or
+          (i32.or (i32.shl (i32.and (local.get $eb) (i32.const 0xFF)) (i32.const 16))
+                  (i32.and (local.get $eb) (i32.const 0xFF00)))
+          (i32.and (i32.shr_u (local.get $eb) (i32.const 16)) (i32.const 0xFF))))))
+      (if (i32.ne (i32.and (i32.load (local.get $ea)) (i32.const 0xFFFFFF))
+            (i32.and (local.get $eb) (i32.const 0xFFFFFF)))
+        (then (return (i32.const 0))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 1))
 
   ;; Exact-match memo for $gdi_raster_nearest_index: direct-mapped, 4096 slots
   ;; of {tag, index}. A blit into an 8bpp surface asks for the index of the
@@ -4252,6 +4318,10 @@
     (local $dp i32) (local $sp i32) (local $s i32) (local $d i32) (local $value i32)
     (local $color i32) (local $source_mode i32)
     (local $app_clip i32) (local $system_clip i32) (local $bound i32)
+    (local $src_bpp i32)
+    (local $r_mask i32) (local $g_mask i32) (local $b_mask i32)
+    (local $r_shift i32) (local $g_shift i32) (local $b_shift i32)
+    (local $r_max i32) (local $g_max i32) (local $b_max i32)
     (local.set $app_clip (call $gdi_raster_app_clip_record (local.get $hdc)))
     (local.set $system_clip (call $gdi_raster_system_clip_record (local.get $hdc)))
     (if (i32.or (i32.ne (i32.load offset=16 (local.get $dst)) (i32.const 32))
@@ -4279,9 +4349,34 @@
               (i32.or (i32.lt_s (local.get $sy) (i32.const -1073741823))
                 (i32.gt_s (local.get $sy) (i32.const 1073741823))))
           (then (return (i32.const -1))))
+        ;; A 16bpp source is the DirectDraw case: a windowed DX app presents its
+        ;; primary through SetDIBitsToDevice, and the display mode -- not the
+        ;; window surface -- picks the depth. Requiring 32bpp on both sides sent
+        ;; every one of those presents down the generic per-pixel loop, which
+        ;; re-resolves the clip, the DC state and the channel masks for each of
+        ;; the ~85k pixels in a frame: 57% of dx_tunnel's wasm time. Unpack it
+        ;; here instead, with the masks hoisted, and keep the arithmetic
+        ;; bit-identical to $gdi_raster_unpack_channel.
+        (local.set $src_bpp (i32.load offset=16 (local.get $src)))
         (if (i32.or (i32.eqz (local.get $src))
-              (i32.ne (i32.load offset=16 (local.get $src)) (i32.const 32)))
+              (i32.and (i32.ne (local.get $src_bpp) (i32.const 32))
+                       (i32.ne (local.get $src_bpp) (i32.const 16))))
           (then (return (i32.const -1))))
+        (if (i32.eq (local.get $src_bpp) (i32.const 16))
+          (then
+            (local.set $r_mask (call $gdi_raster_channel_mask (local.get $src) (i32.const 0)))
+            (local.set $g_mask (call $gdi_raster_channel_mask (local.get $src) (i32.const 1)))
+            (local.set $b_mask (call $gdi_raster_channel_mask (local.get $src) (i32.const 2)))
+            ;; A degenerate mask would divide by zero in the unpack below.
+            (if (i32.or (i32.eqz (local.get $r_mask))
+                  (i32.or (i32.eqz (local.get $g_mask)) (i32.eqz (local.get $b_mask))))
+              (then (return (i32.const -1))))
+            (local.set $r_shift (i32.ctz (local.get $r_mask)))
+            (local.set $g_shift (i32.ctz (local.get $g_mask)))
+            (local.set $b_shift (i32.ctz (local.get $b_mask)))
+            (local.set $r_max (i32.sub (i32.shl (i32.const 1) (i32.popcnt (local.get $r_mask))) (i32.const 1)))
+            (local.set $g_max (i32.sub (i32.shl (i32.const 1) (i32.popcnt (local.get $g_mask))) (i32.const 1)))
+            (local.set $b_max (i32.sub (i32.shl (i32.const 1) (i32.popcnt (local.get $b_mask))) (i32.const 1)))))
         ;; Overlap requires direction-aware semantics; retain the proven generic
         ;; traversal until a row-level memmove path covers every orientation.
         (if (i32.eq (i32.load (local.get $dst)) (i32.load (local.get $src)))
@@ -4389,13 +4484,45 @@
       (local.set $dp (call $gdi_raster_row_ptr_32 (local.get $dst)
         (i32.add (local.get $dx) (local.get $x0)) (i32.add (local.get $dy) (local.get $y))))
       (if (local.get $source_mode)
-        (then (local.set $sp (call $gdi_raster_row_ptr_32 (local.get $src)
-          (i32.add (local.get $sx) (local.get $x0)) (i32.add (local.get $sy) (local.get $y))))))
+        (then
+          (if (i32.eq (local.get $src_bpp) (i32.const 16))
+            (then (local.set $sp (call $gdi_raster_row_ptr_16 (local.get $src)
+              (i32.add (local.get $sx) (local.get $x0)) (i32.add (local.get $sy) (local.get $y)))))
+            (else (local.set $sp (call $gdi_raster_row_ptr_32 (local.get $src)
+              (i32.add (local.get $sx) (local.get $x0)) (i32.add (local.get $sy) (local.get $y))))))))
       (local.set $x (local.get $x0))
       (block $cols_done (loop $cols
         (br_if $cols_done (i32.ge_s (local.get $x) (local.get $x1)))
         (if (local.get $source_mode)
-          (then (local.set $s (i32.and (i32.load (local.get $sp)) (i32.const 0xFFFFFF)))))
+          (then
+            (if (i32.eq (local.get $src_bpp) (i32.const 16))
+              (then
+                (local.set $value (i32.load16_u (local.get $sp)))
+                (local.set $s (i32.or
+                  (i32.shl
+                    (i32.div_u
+                      (i32.add
+                        (i32.mul (i32.shr_u (i32.and (local.get $value) (local.get $r_mask))
+                          (local.get $r_shift)) (i32.const 255))
+                        (i32.shr_u (local.get $r_max) (i32.const 1)))
+                      (local.get $r_max))
+                    (i32.const 16))
+                  (i32.or
+                    (i32.shl
+                      (i32.div_u
+                        (i32.add
+                          (i32.mul (i32.shr_u (i32.and (local.get $value) (local.get $g_mask))
+                            (local.get $g_shift)) (i32.const 255))
+                          (i32.shr_u (local.get $g_max) (i32.const 1)))
+                        (local.get $g_max))
+                      (i32.const 8))
+                    (i32.div_u
+                      (i32.add
+                        (i32.mul (i32.shr_u (i32.and (local.get $value) (local.get $b_mask))
+                          (local.get $b_shift)) (i32.const 255))
+                        (i32.shr_u (local.get $b_max) (i32.const 1)))
+                      (local.get $b_max))))))
+              (else (local.set $s (i32.and (i32.load (local.get $sp)) (i32.const 0xFFFFFF)))))))
         (if (i32.or (i32.eq (local.get $rop3) (i32.const 0x55))
               (i32.or (i32.eq (local.get $rop3) (i32.const 0x66))
                 (i32.or (i32.eq (local.get $rop3) (i32.const 0x88))
@@ -4420,7 +4547,10 @@
           (then (local.set $value (i32.or (local.get $s) (local.get $d)))))
         (i32.store (local.get $dp) (local.get $value))
         (local.set $dp (i32.add (local.get $dp) (i32.const 4)))
-        (if (local.get $source_mode) (then (local.set $sp (i32.add (local.get $sp) (i32.const 4)))))
+        (if (local.get $source_mode)
+          (then (local.set $sp (i32.add (local.get $sp)
+            (select (i32.const 2) (i32.const 4)
+              (i32.eq (local.get $src_bpp) (i32.const 16)))))))
         (local.set $x (i32.add (local.get $x) (i32.const 1)))
         (br $cols)))
       (local.set $y (i32.add (local.get $y) (i32.const 1)))
@@ -4435,13 +4565,26 @@
     (local $x i32) (local $y i32) (local $ux i32) (local $uy i32)
     (local $dp i32) (local $sp i32) (local $limit i32) (local $size i32)
     (local $app_clip i32) (local $system_clip i32) (local $bound i32)
+    (local $indexed i32)
     (local.set $app_clip (call $gdi_raster_app_clip_record (local.get $hdc)))
     (local.set $system_clip (call $gdi_raster_system_clip_record (local.get $hdc)))
-    (if (i32.or (i32.ne (local.get $rop3) (i32.const 0xCC))
-          (i32.or (i32.eqz (local.get $src))
-            (i32.or (i32.ne (i32.load offset=16 (local.get $dst)) (i32.const 32))
-              (i32.ne (i32.load offset=16 (local.get $src)) (i32.const 32)))))
-      (then (return (i32.const -1))))
+    (if (i32.ne (local.get $rop3) (i32.const 0xCC)) (then (return (i32.const -1))))
+    (if (i32.eqz (local.get $src)) (then (return (i32.const -1))))
+    ;; 8bpp on both sides sharing one colour table is the DirectDraw case:
+    ;; dx_donuts GetDCs its 8bpp back buffer once a frame and StretchBlts a
+    ;; palettised bitmap onto it. Through the generic loop that is six calls a
+    ;; pixel -- pixel_ptr, clip_visible, read, palette_color, nearest_index,
+    ;; write -- for 300k pixels, and it was 77s of a 3000-batch run. Copying the
+    ;; index straight across is what real GDI does when the tables agree.
+    (if (i32.and (i32.eq (i32.load offset=16 (local.get $dst)) (i32.const 8))
+                 (i32.eq (i32.load offset=16 (local.get $src)) (i32.const 8)))
+      (then (local.set $indexed
+        (call $gdi_raster_palettes_match (local.get $dst) (local.get $src)))))
+    (if (i32.eqz (local.get $indexed))
+      (then
+        (if (i32.or (i32.ne (i32.load offset=16 (local.get $dst)) (i32.const 32))
+              (i32.ne (i32.load offset=16 (local.get $src)) (i32.const 32)))
+          (then (return (i32.const -1))))))
     (if (i32.or (i32.eq (i32.load (local.get $dst)) (i32.load (local.get $src)))
           (i32.or (i32.eqz (local.get $app_clip)) (i32.eqz (local.get $system_clip))))
       (then (return (i32.const -1))))
@@ -4536,17 +4679,27 @@
       (br_if $rows_done (i32.ge_s (local.get $y) (local.get $y1)))
       (local.set $uy (i32.add (local.get $sy)
         (i32.div_u (i32.mul (local.get $y) (local.get $sh)) (local.get $dh))))
-      (local.set $dp (call $gdi_raster_row_ptr_32 (local.get $dst)
-        (i32.add (local.get $dx) (local.get $x0)) (i32.add (local.get $dy) (local.get $y))))
+      (if (local.get $indexed)
+        (then (local.set $dp (call $gdi_raster_row_ptr_8 (local.get $dst)
+          (i32.add (local.get $dx) (local.get $x0)) (i32.add (local.get $dy) (local.get $y)))))
+        (else (local.set $dp (call $gdi_raster_row_ptr_32 (local.get $dst)
+          (i32.add (local.get $dx) (local.get $x0)) (i32.add (local.get $dy) (local.get $y))))))
       (local.set $x (local.get $x0))
       (block $cols_done (loop $cols
         (br_if $cols_done (i32.ge_s (local.get $x) (local.get $x1)))
         (local.set $ux (i32.add (local.get $sx)
           (i32.div_u (i32.mul (local.get $x) (local.get $sw)) (local.get $dw))))
-        (local.set $sp (call $gdi_raster_row_ptr_32
-          (local.get $src) (local.get $ux) (local.get $uy)))
-        (i32.store (local.get $dp) (i32.and (i32.load (local.get $sp)) (i32.const 0xFFFFFF)))
-        (local.set $dp (i32.add (local.get $dp) (i32.const 4)))
+        (if (local.get $indexed)
+          (then
+            (local.set $sp (call $gdi_raster_row_ptr_8
+              (local.get $src) (local.get $ux) (local.get $uy)))
+            (i32.store8 (local.get $dp) (i32.load8_u (local.get $sp)))
+            (local.set $dp (i32.add (local.get $dp) (i32.const 1))))
+          (else
+            (local.set $sp (call $gdi_raster_row_ptr_32
+              (local.get $src) (local.get $ux) (local.get $uy)))
+            (i32.store (local.get $dp) (i32.and (i32.load (local.get $sp)) (i32.const 0xFFFFFF)))
+            (local.set $dp (i32.add (local.get $dp) (i32.const 4)))))
         (local.set $x (i32.add (local.get $x) (i32.const 1)))
         (br $cols)))
       (local.set $y (i32.add (local.get $y) (i32.const 1)))

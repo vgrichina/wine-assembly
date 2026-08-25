@@ -2970,3 +2970,52 @@
   )
 
   ;; CommandLineToArgvW — already handled above as crash stub replacement
+
+  ;; _MyGetFreeSystemResources32@4(dwResType) — 1 arg stdcall, RSRC32.DLL.
+  ;;
+  ;; The number behind Resource Meter (rsrcmtr.exe) and the Win98 System
+  ;; Monitor "System Resources" readout: a percentage, 0..100, of the free
+  ;; space in the 16-bit GDI and USER local heaps. dwResType selects which
+  ;; heap: 0 = system (Windows reports the lower of the two), 1 = GDI,
+  ;; 2 = USER.
+  ;;
+  ;; We have no 64KB local heaps, but we do have the two fixed-size tables
+  ;; those heaps stood for, so report the free share of them. The value then
+  ;; moves for the same reason the real one did — objects and windows being
+  ;; created and destroyed — instead of being a frozen constant that makes
+  ;; every bar in Resource Meter look identical.
+  (func $handle__MyGetFreeSystemResources32@4 (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $i i32) (local $used i32) (local $gdi i32) (local $user i32)
+    ;; GDI: free share of the GDI object table.
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $GDI_OBJECT_COUNT)))
+      (if (i32.load (i32.add (global.get $GDI_OBJECT_TABLE)
+            (i32.mul (local.get $i) (global.get $GDI_OBJECT_STRIDE))))
+        (then (local.set $used (i32.add (local.get $used) (i32.const 1)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.set $gdi (i32.div_u
+      (i32.mul (i32.sub (global.get $GDI_OBJECT_COUNT) (local.get $used))
+               (i32.const 100))
+      (global.get $GDI_OBJECT_COUNT)))
+    ;; USER: free share of the window table.
+    (local.set $i (i32.const 0))
+    (local.set $used (i32.const 0))
+    (block $done2 (loop $scan2
+      (br_if $done2 (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (if (call $wnd_slot_hwnd (local.get $i))
+        (then (local.set $used (i32.add (local.get $used) (i32.const 1)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan2)))
+    (local.set $user (i32.div_u
+      (i32.mul (i32.sub (global.get $MAX_WINDOWS) (local.get $used))
+               (i32.const 100))
+      (global.get $MAX_WINDOWS)))
+    (global.set $eax
+      (if (result i32) (i32.eq (local.get $arg0) (i32.const 1))
+        (then (local.get $gdi))
+        (else (if (result i32) (i32.eq (local.get $arg0) (i32.const 2))
+          (then (local.get $user))
+          (else (select (local.get $gdi) (local.get $user)
+                        (i32.lt_u (local.get $gdi) (local.get $user))))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))

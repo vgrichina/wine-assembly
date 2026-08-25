@@ -84,6 +84,45 @@ async function main() {
   assert.strictEqual(execute(), 0x55667788,
     'rewriting sparse generated code must invalidate its decoded block');
 
+  // A decoded block is retired by the page it STARTS on, so a block that
+  // begins near the end of one page and runs into the next used to survive a
+  // rewrite of its own tail. Storm's byte copier is exactly that shape: a long
+  // run of unrolled `mov al,[esi]/inc esi/mov [edi],al/inc edi` entered at
+  // end-8*count and terminated by a `jmp` it patches per call, so a copy of
+  // more than ~500 bytes starts a page below the jump it rewrites.
+  const spanCode = 0x4ff70ff0;
+  assert.strictEqual(e.test_sparse_map_for_code(0x4ff70000, 0x2000) >>> 0, 0x4ff70000);
+
+  function installSpanning(value) {
+    // 16 nops carry the block across the page boundary; the payload the test
+    // rewrites sits on the second page.
+    const machineCode = [...new Array(16).fill(0x90), 0xb8, ...le32(value), 0xc3];
+    machineCode.forEach((byte, index) => e.guest_write8(spanCode + index, byte));
+  }
+
+  function executeSpanning() {
+    e.set_esp(stack);
+    e.guest_write32(stack, 0);
+    e.set_eip(spanCode);
+    e.run(1000);
+    assert.strictEqual(e.get_eip() >>> 0, 0, 'spanning probe should return to the sentinel');
+    return e.get_eax() >>> 0;
+  }
+
+  // The rewrite has to touch ONLY the second page: writing the whole probe
+  // again would invalidate the start page too and the test would pass either
+  // way.
+  function patchSpanning(value) {
+    le32(value).forEach((byte, index) => e.guest_write8(spanCode + 17 + index, byte));
+  }
+
+  installSpanning(0x0a0b0c0d);
+  assert.strictEqual(executeSpanning(), 0x0a0b0c0d,
+    'page-spanning sparse block should execute');
+  patchSpanning(0x1a1b1c1d);
+  assert.strictEqual(executeSpanning(), 0x1a1b1c1d,
+    'rewriting the tail of a page-spanning block must invalidate it');
+
   console.log('PASS  sparse generated-code writes invalidate decoded blocks');
 }
 

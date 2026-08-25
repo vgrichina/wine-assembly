@@ -683,6 +683,7 @@ async function main() {
   let pendingComApiId = -1; // COM api_id from 0xC0DE0000 marker emitted just BEFORE the '<ord>' name log
   let pendingWin16 = null;  // words following the 0xCA16A9F1 Win16 dispatch marker
   let pendingFpu = null;    // words following the 0xCAF00001 --trace-fpu marker
+  let pendingSyncBail = null; // words following the 0xCADE5000 abandoned-wndproc marker
   let dedupLast = null;    // {line, count} for --trace-api-dedup
   const flushDedup = () => {
     if (dedupLast && dedupLast.count > 1) logs.push(`  (x${dedupLast.count})`);
@@ -2133,6 +2134,22 @@ async function main() {
     // run. Only the F1/F2 markers mean the task stopped.
     // --trace-fpu (06-fpu.wat): the flags, whether they went up or came down,
     // and the EIP of the block that did it.
+    // $wnd_send_message ran out of interpreter rounds and is about to restore
+    // the caller's registers with the wndproc still mid-flight. The guest call
+    // is dropped on the floor, so anything the tail of that handler would have
+    // done simply never happens -- and nothing else in the run says so. Three
+    // words follow: EIP, yield_reason, and the message id.
+    if ((val >>> 0) === 0xCADE5000) { pendingSyncBail = { words: [] }; return; }
+    if (pendingSyncBail) {
+      pendingSyncBail.words.push(val >>> 0);
+      if (pendingSyncBail.words.length < 3) return;
+      const [eip, yr, msg] = pendingSyncBail.words;
+      pendingSyncBail = null;
+      flushDedup();
+      logs.push(`[sync] ABANDONED wndproc msg=0x${msg.toString(16)} at ${hex(eip)} ` +
+        `after 64 rounds (yield_reason=${yr})`);
+      return;
+    }
     if ((val >>> 0) === 0xCAF00001) { pendingFpu = { words: [] }; return; }
     if (pendingFpu) {
       pendingFpu.words.push(val >>> 0);
@@ -2678,6 +2695,8 @@ async function main() {
   h.wait_multiple = (nCount, handlesWA, bWaitAll, timeout) => nestedSyncMessage()
     ? threadManager.waitMultipleCooperative(nCount, handlesWA, bWaitAll, timeout)
     : threadManager.waitMultiple(nCount, handlesWA, bWaitAll, timeout);
+  // The critical-section face of the same problem: see pumpThreadsOnce().
+  h.cs_pump = () => threadManager.pumpThreadsOnce();
   h.create_semaphore = (initialCount, maxCount) => threadManager.createSemaphore(initialCount, maxCount);
   h.release_semaphore = (handle, releaseCount, lpPrevCountWA) => threadManager.releaseSemaphore(handle, releaseCount, lpPrevCountWA);
   // Check if a DLL file exists in VFS or host filesystem
@@ -2765,6 +2784,27 @@ async function main() {
     }
   };
 
+  // set_count writes the address AND zeroes that slot's count, so arming is not
+  // idempotent: the DLL onLoaded hook re-armed every slot on every late
+  // LoadLibrary and threw away whatever had been counted so far. Diablo loads a
+  // DLL around batch 39000, which is why a probe that really was hit 297413
+  // times reported 0 at --max-batches=40000 and the right answer at 35000.
+  // Re-arm a slot only when its resolved address actually changed.
+  const countArmed = new Array(countAddrs.length).fill(null);
+  const armCounts = () => {
+    if (!countAddrs.length || !instance.exports.set_count) return;
+    for (let i = 0; i < countAddrs.length; i++) {
+      if (!Number.isFinite(countAddrs[i])) continue;   // module+0xVA, not resolved yet
+      const addr = countAddrs[i] >>> 0;
+      if (countArmed[i] === addr) continue;
+      countArmed[i] = addr;
+      instance.exports.set_count(i, addr);
+      // A slot armed late has counted nothing before that point -- worth one
+      // line, because a `module+0xVA` probe that resolves after the code ran
+      // is otherwise indistinguishable from an address that never executed.
+      console.log(`[count] slot ${i} armed at ${hex(addr)}`);
+    }
+  };
   if (countAddrs.length && instance.exports.get_count) {
     for (const sig of ['SIGTERM', 'SIGINT']) {
       process.on(sig, () => {
@@ -6449,12 +6489,10 @@ async function main() {
     if (traceEipOn && traceEipArmed && batch === 0 && instance.exports.set_trace_eip_range) {
       instance.exports.set_trace_eip_range(1, traceEipLo, traceEipHi);
     }
-    // Hit counters: register once
-    if (countAddrs.length && batch === 0 && instance.exports.set_count) {
-      for (let i = 0; i < countAddrs.length; i++) {
-        instance.exports.set_count(i, countAddrs[i]);
-      }
-    }
+    // Hit counters: arm any slot whose address is known and not armed yet. A
+    // module-relative slot stays unresolved until its DLL loads, so this cannot
+    // be a batch-0-only job.
+    if (batch === 0) armCounts();
     // Breakpoint check (EIP before run)
     if (breakAddrs.length && breakAddrs.includes(eipBefore)) {
       if (breakThreadFilter !== null && breakThreadFilter !== 0) {
@@ -6792,11 +6830,7 @@ async function main() {
             if (breakAddrs.length) instance.exports.set_bp(breakAddrs[0]);
             else if (traceAtAddr) instance.exports.set_bp(traceAtAddr);
           }
-          if (countAddrs.length && instance.exports.set_count) {
-            for (let i = 0; i < countAddrs.length; i++) {
-              instance.exports.set_count(i, countAddrs[i]);
-            }
-          }
+          armCounts();
           if (traceEipOn && traceEipArmed && instance.exports.set_trace_eip_range) {
             instance.exports.set_trace_eip_range(1, traceEipLo, traceEipHi);
           }

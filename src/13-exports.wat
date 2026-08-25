@@ -395,6 +395,47 @@
     (if (result i32) (global.get $dx_exclusive_fullscreen)
       (then (call $dx_target_hwnd))
       (else (i32.const 0))))
+  ;; The device window of a windowed Direct3D9 device, or 0. Tells the
+  ;; compositor that the surface it is presenting is that window's client
+  ;; area at (0,0) rather than a screen-coordinate DirectDraw primary.
+  (func (export "get_d3d9_windowed_hwnd") (result i32)
+    (global.get $d3d9_windowed_hwnd))
+  ;; The window a DirectDraw/Direct3D frame should be presented into.
+  ;;
+  ;; Normally that is $main_hwnd, but $main_hwnd is a *per-instance* mutable
+  ;; global and a worker thread is a separate WASM instance sharing only the
+  ;; linear memory. Liquid War (Allegro) creates its window on T1, so the main
+  ;; instance -- the one the compositor asks -- reports $main_hwnd == 0 and
+  ;; every finished frame was dropped before it reached a window surface:
+  ;; --trace-dx showed 17 `Present` lines and zero `Upload` lines.
+  ;;
+  ;; WND_RECORDS *is* shared memory, so when this instance has no main window
+  ;; of its own, fall back to the topmost visible top-level window recorded
+  ;; there. $dx_coop_hwnd is no help here -- it is a per-instance global too.
+  (func (export "get_dx_present_hwnd") (result i32)
+    (local $i i32) (local $hwnd i32) (local $best i32) (local $best_z i32)
+    (local $z i32)
+    (if (global.get $main_hwnd)
+      (then (return (global.get $main_hwnd))))
+    (local.set $i (i32.const 0))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (local.set $hwnd (call $wnd_slot_hwnd (local.get $i)))
+      (if (i32.and
+            (i32.and (i32.ne (local.get $hwnd) (i32.const 0))
+                     (i32.eqz (call $wnd_get_parent (local.get $hwnd))))
+            (i32.ne (i32.and (call $wnd_get_style (local.get $hwnd))
+                             (i32.const 0x10000000))          ;; WS_VISIBLE
+                    (i32.const 0)))
+        (then
+          (local.set $z (call $wnd_z_get (local.get $hwnd)))
+          (if (i32.or (i32.eqz (local.get $best))
+                      (i32.gt_s (local.get $z) (local.get $best_z)))
+            (then (local.set $best (local.get $hwnd))
+                  (local.set $best_z (local.get $z))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $best))
   (func (export "get_flash_state") (param $hwnd i32) (result i32)
     (local $slot i32)
     (local.set $slot (call $wnd_table_find (local.get $hwnd)))
@@ -2379,8 +2420,16 @@
     (local $base i32)
     (local.set $base (i32.add (global.get $HIT_COUNT_BASE)
                               (i32.shl (local.get $slot) (i32.const 3))))
-    (i32.store          (local.get $base) (local.get $addr))
-    (i32.store offset=4 (local.get $base) (i32.const 0))
+    ;; Arming the same address twice must not throw the count away. The slots
+    ;; live in linear memory, which worker instances share, and every spawn
+    ;; re-arms all of them (lib/thread-manager.js) -- so an app that started a
+    ;; thread mid-run reset every counter to zero and the flag reported 0 for
+    ;; addresses it had already counted hundreds of thousands of times. Use
+    ;; clear_counts to deliberately start over.
+    (if (i32.ne (i32.load (local.get $base)) (local.get $addr))
+      (then
+        (i32.store          (local.get $base) (local.get $addr))
+        (i32.store offset=4 (local.get $base) (i32.const 0))))
     (if (i32.gt_s (i32.add (local.get $slot) (i32.const 1)) (global.get $hit_count_n))
       (then (global.set $hit_count_n (i32.add (local.get $slot) (i32.const 1)))))
     (call $dbg_recompute))
@@ -2664,6 +2713,14 @@
     ;; Redirect EIP to callback
     (global.set $eip (local.get $cb))
     (i32.const 1))
+
+  ;; A host-side writer that fills guest memory directly (ReadFile into the
+  ;; guest's buffer, a mapped view, a decompressed resource) bypasses every
+  ;; store handler, so nothing retires the decoded blocks it just overwrote.
+  ;; Storm keeps its generated code and its file buffers in the same heap
+  ;; region, so that is a real collision, not a theoretical one.
+  (func (export "invalidate_code_range") (param $ga i32) (param $len i32)
+    (call $invalidate_code_range (local.get $ga) (local.get $len)))
 
   ;; Write guest memory (guest addr)
   (func (export "guest_write32") (param $ga i32) (param $val i32)

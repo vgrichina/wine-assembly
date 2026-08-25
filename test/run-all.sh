@@ -95,6 +95,7 @@ UNIT=(
   test/test-gdi-p0-p1.js
   test/test-wat-gdi-line.js
   test/test-wat-gdi-raster.js
+  test/test-gdi-fast-blit-paths.js
   test/test-wat-gdi-raster-handlers.js
   test/test-wat-gdi-benchmark.js
   test/test-wat-gdi-bitmap.js
@@ -210,6 +211,11 @@ UNIT=(
   test/test-directinput8-create.js
   test/test-directx-ordinals.js
   test/test-launch-prefs-resolution.js
+  test/test-d3dim-line-primitives.js
+  test/test-d3dim-viewport-background-texture.js
+  test/test-wm-setcursor-on-show.js
+  test/test-dx-blank-primary-holdover.js
+  test/test-dx-present-window-placement.js
   test/test-dx-vtable-worker-sync.js
   test/test-disabled-dialog-controls.js
   test/test-duplicate-handle.js

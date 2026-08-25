@@ -2031,6 +2031,21 @@
     ;; ALLOWREBOOT). Dropping back to DDSCL_NORMAL clears it again.
     (global.set $dx_exclusive_fullscreen
       (i32.ne (i32.and (local.get $arg2) (i32.const 0x10)) (i32.const 0)))
+    ;; Taking the screen exclusively puts the device window on it: real
+    ;; DirectDraw sizes that window to the display and brings it forward, so
+    ;; an app that never calls ShowWindow itself still shows its frames.
+    ;; MechWarrior 3 is one -- it creates its window, goes exclusive,
+    ;; and flips; without this the compositor saw no visible top-level window
+    ;; at all ("path=normal windows=0") and the presented frames sat in a
+    ;; layer nothing drew, so a game running at 240k lit pixels a frame
+    ;; showed a bare desktop.
+    (if (i32.and
+          (i32.ne (i32.and (local.get $arg2) (i32.const 0x10)) (i32.const 0))
+          (i32.ge_s (call $wnd_table_find (local.get $arg1)) (i32.const 0)))
+      (then
+        (if (i32.eqz (i32.and (call $wnd_get_style (local.get $arg1))
+                              (i32.const 0x10000000))) ;; WS_VISIBLE
+          (then (drop (call $host_show_window (local.get $arg1) (i32.const 5)))))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 

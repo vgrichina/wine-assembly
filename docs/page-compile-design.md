@@ -938,3 +938,51 @@ three and a half block transfers — and *that* removal measured at ≤2%. Whate
 the compares cost is a fraction of a number already inside the noise floor of
 this box. Optimising the scan cannot be measured here, so it should not be
 built here.
+
+## 15. Merging into main: what 6b801a9d's mechanism became (2026-08-24)
+
+`perf/page-compile` merged main at `32765817`. Eight files overlapped; five
+auto-merged; the three real conflicts were all the same commit, opus5-diablo's
+`6b801a9d` "Invalidate a decoded block by every page it covers, not just its
+first", and all three resolved to the branch side. Why, in detail, because this
+is the one place the merge threw away working code:
+
+`6b801a9d` fixes a bug **this branch cannot have**. Its bug is a block stored
+under its start address, retired by the page that address falls in, that runs
+into the *next* page and so survives a rewrite of its own tail. On the branch:
+
+- **A block cannot cross a page.** `src/07-decoder.wat` cuts the block at the
+  4KB edge (`(call $te (i32.const 45) (global.get $d_pc)) (br $exit)`), because
+  a compiled page owns its blocks. So there is no block with a tail on another
+  page to miss.
+- **There is no hash cache.** `6b801a9d` carries the block's page span in the
+  top four bits of the cached arena offset and teaches the 4096-slot sweep to
+  read it. Section 4 deleted both the field's container and the sweep.
+- **The range walk already covers the middle.** `$invalidate_code_range`
+  (`src/04-cache.wat`) loops page by page from `ga` to `ga+len`, retiring per
+  offset inside each. That *is* `6b801a9d`'s "every page it covers", arriving as
+  a property of the walk instead of as a second function.
+
+Both sides also, independently, wrote a function named `$invalidate_code_range`
+with the same signature and the same purpose. Only one can survive; the branch's
+is the one that does per-offset retirement, so main's was dropped.
+
+The one part of `6b801a9d` that is **kept**, because it is orthogonal, is its
+`src/05b-string-ops.wat` change: `rep movs`/`stos` now invalidate their whole
+destination extent rather than the two endpoints. The branch made the same fix
+at the same eight sites, spelled `$invalidate_code_write(addr, len)` (two
+params; it declines cheaply for a single-page write, else delegates to the range
+walk). On the backward-dword case the branch's extent is 3 bytes *wider* than
+main's endpoint arithmetic — `edi - dst + 1` misses the last dword's tail.
+
+`test/test-sparse-generated-code-cache.js`, the test `6b801a9d` shipped, passes
+on the merge, as do the other six tests main added over the same window.
+
+**Diablo is the open risk and is knowingly accepted.** On the merged build, the
+main menu renders the flaming logo at batch 40000 and no logo at 40100/40200.
+That is the shape of the symptom `6b801a9d` addressed, but it is also the shape
+of a *separate* still-open bug the board describes: Storm's PKWARE explode
+short-reads `ui_art\logo.pcx`, so 12 of the 15 logo sprites are solid black at
+load time regardless of invalidation. I did not run main's build side by side to
+tell those apart — the merge was taken with Diablo's state explicitly sacrificed
+and handed to its owner. See `docs/re-notes/diablo-shareware.md`.

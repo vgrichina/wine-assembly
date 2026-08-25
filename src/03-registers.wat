@@ -257,6 +257,10 @@
                   (i32.const 4096))
       (then
         (if (i32.eqz (call $code_write_is_code (local.get $ga))) (then (return)))))
+    ;; Multi-page spans need every page in between retired, not just the two
+    ;; ends -- main fixed that with its own $invalidate_code_range, and the
+    ;; page-compile one below already walks page by page, so that fix arrives
+    ;; here as a property of the range walk rather than a second function.
     (call $invalidate_code_range (local.get $ga) (local.get $len)))
   (func $gs32 (param $ga i32) (param $v i32)
     (local $wa i32) (local $end_wa i32)

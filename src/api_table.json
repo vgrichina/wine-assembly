@@ -3312,7 +3312,22 @@
     "name": "HeapAlloc",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 25488756
+    "hash": 25488756,
+    "args": [
+      {
+        "name": "hHeap",
+        "type": "HANDLE"
+      },
+      {
+        "name": "dwFlags",
+        "type": "DWORD"
+      },
+      {
+        "name": "dwBytes",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "LPVOID"
   },
   {
     "id": 381,
@@ -3477,7 +3492,22 @@
     "name": "InvalidateRect",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 2467316494
+    "hash": 2467316494,
+    "args": [
+      {
+        "name": "hWnd",
+        "type": "HWND"
+      },
+      {
+        "name": "lpRect",
+        "type": "LPRECT"
+      },
+      {
+        "name": "bErase",
+        "type": "BOOL"
+      }
+    ],
+    "ret": "BOOL"
   },
   {
     "id": 400,
@@ -5089,7 +5119,15 @@
     "name": "SendDlgItemMessageA",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 667488445
+    "hash": 667488445,
+    "args": [
+      { "name": "hDlg", "type": "HWND" },
+      { "name": "nIDDlgItem", "type": "i32" },
+      { "name": "Msg", "type": "u32" },
+      { "name": "wParam", "type": "u32" },
+      { "name": "lParam", "type": "u32" }
+    ],
+    "ret": "i32"
   },
   {
     "id": 583,
@@ -23634,5 +23672,19 @@
     "nargs": 4,
     "convention": "stdcall",
     "hash": 400203013
+  },
+  {
+    "id": 2870,
+    "name": "_MyGetFreeSystemResources32@4",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1398495385,
+    "args": [
+      {
+        "name": "dwResType",
+        "type": "u32"
+      }
+    ],
+    "ret": "u32"
   }
 ]

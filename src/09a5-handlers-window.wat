@@ -1216,6 +1216,20 @@
                      (i32.lt_u (local.get $wndproc) (i32.const 0xFFFF0000)))
           (then
             (global.set $show_window_activated (i32.const 1))
+            ;; A window shown under the cursor gets a WM_SETCURSOR: on Win98
+            ;; the pointer is already inside it, and USER asks the window what
+            ;; shape to use as soon as it owns the pixels beneath the pointer.
+            ;; Apps treat that as "we are on screen now" and do real work in
+            ;; it. The DX SDK wormhole sample seeds its palette-cycling array
+            ;; with IDirectDrawPalette::GetEntries there and nowhere else, so
+            ;; without this its rotation shuffles an all-zero table forever
+            ;; and the tunnel is drawn once and never animates again.
+            ;; Posted rather than sent: it lands after the activation chain
+            ;; below finishes, which is the order Win98 produces.
+            (drop (call $post_queue_push (global.get $main_hwnd)
+              (i32.const 0x0020)                    ;; WM_SETCURSOR
+              (global.get $main_hwnd)               ;; wParam = hwnd under cursor
+              (i32.const 0x02000001)))              ;; HTCLIENT | WM_MOUSEMOVE<<16
             ;; Save ShowWindow's return address; pop ShowWindow frame (ret + 2 args = 12).
             (local.set $packed (call $gl32 (global.get $esp)))
             (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
@@ -1583,6 +1597,31 @@
     ;; Same reason as GetMessageA: an idle message pump is where a
     ;; WSAAsyncSelect server spends its time, so it has to move the wire.
     (call $vsock_pump)
+    ;; WM_QUIT, before anything else — a game loop pumps with PeekMessage and
+    ;; never calls GetMessage at all, so a $quit_flag only GetMessageA consumed
+    ;; made PostQuitMessage invisible: RollerCoaster Tycoon's Quit Game > Don't
+    ;; Save Game posted the quit and then went right on running.
+    ;; Honours the filter range (WM_QUIT is 0x12) and, unlike GetMessageA's
+    ;; copy, consumes the flag on PM_REMOVE the way the real queue does.
+    ;; Only an explicit PostQuitMessage (flag == 2) is delivered here: the
+    ;; teardown-synthesized quits (flag == 1) fire during window recreation and
+    ;; would kill a healthy app on its very next poll.
+    (if (i32.and
+          (i32.eq (global.get $quit_flag) (i32.const 2))
+          (i32.or
+            (i32.eqz (i32.or (local.get $arg2) (local.get $arg3)))
+            (i32.and
+              (i32.le_u (local.get $arg2) (i32.const 0x0012))
+              (i32.ge_u (local.get $arg3) (i32.const 0x0012)))))
+    (then
+    (if (i32.and (local.get $arg4) (i32.const 1)) ;; PM_REMOVE
+      (then (global.set $quit_flag (i32.const 0))))
+    (call $gs32 (local.get $arg0) (global.get $main_hwnd))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (i32.const 0x0012)) ;; WM_QUIT
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 8)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $arg0) (i32.const 12)) (i32.const 0))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
     ;; Deliver pending child WM_CREATE
     (if (global.get $pending_child_create)
     (then
@@ -2417,7 +2456,13 @@
 
   ;; 79: PostQuitMessage
   (func $handle_PostQuitMessage (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $quit_flag (i32.const 1))
+    ;; 2, not 1: the app really posted a quit. The other writers of $quit_flag
+    ;; synthesize one from a window teardown, and those are guesses — RCT
+    ;; destroys and recreates its main window during video init, which leaves a
+    ;; synthesized quit behind that nothing cancels. GetMessageA treats any
+    ;; non-zero value as WM_QUIT as before; PeekMessageA, which apps poll every
+    ;; frame, only honours this explicit one.
+    (global.set $quit_flag (i32.const 2))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
