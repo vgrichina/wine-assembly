@@ -80,6 +80,7 @@ async function runOne(exe, o) {
   // --- the four interpreter shells ---
   const variants = o.variants;
   const samples = new Map(), seen = new Map();
+  let nondet = null;
   try {
     for (let rep = 0; rep < o.reps; rep++) {
       for (let i = 0; i < variants.length; i++) {
@@ -87,8 +88,15 @@ async function runOne(exe, o) {
         const r = await runDos({
           exe, variant: v, budget: o.budget, cpu: o.cpu, log: quiet, autoKey: true,
         });
+        // Two checks, and they catch different things. ACROSS variants: four
+        // shells that did not execute the same instructions cannot be compared,
+        // which is what `arms-disagree` reports. ACROSS reps of ONE variant:
+        // a program whose output changes run to run is not a fixed workload at
+        // all, and its four timings are four different computations no matter
+        // how well the variants agree with each other on any single rep.
         const sig = `${r.dispatched}/${r.frame}`;
         if (!seen.has(v)) seen.set(v, { sig, r });
+        else if (seen.get(v).sig !== sig) nondet = nondet || `${v} is not deterministic across reps`;
         if (!samples.has(v)) samples.set(v, []);
         samples.get(v).push(r.guestSecs * 1e9 / r.dispatched);
       }
@@ -116,6 +124,8 @@ async function runOne(exe, o) {
     const sigs = new Set([...seen.values()].map(s => s.sig));
     if (sigs.size > 1) {
       row.shells = { ok: false, reason: 'arms-disagree', sigs: [...sigs] };
+    } else if (nondet) {
+      row.shells = { ok: false, reason: 'nondeterministic', detail: nondet };
     } else {
       const ns = {};
       for (const v of variants) {
