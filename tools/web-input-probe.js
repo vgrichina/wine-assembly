@@ -230,6 +230,14 @@ async function main() {
       }, TRACE, TRACE_API);
     }
     await page.goto(`${base}/index.html${QUERY}`, { waitUntil: 'load', timeout: 60000 });
+    // Start from an empty profile, then RELOAD. lib/storage.js seeds its
+    // default registry (RCT's install Path, Plus!98 MediaDirectory, ...) once
+    // at script load, so clearing localStorage after the page is up deletes
+    // seeds nothing puts back: RCT then reads an empty install path, writes
+    // its scenario index to the drive root and dies in its own GSK Error
+    // Trapper -- a failure no real visitor can reach.
+    await page.evaluate(() => { try { localStorage.clear(); } catch (_) {} });
+    await page.reload({ waitUntil: 'load', timeout: 60000 });
     await page.waitForFunction('typeof launchApp === "function"', { timeout: 60000 });
 
     console.log(`launching ${APP} ...`);
@@ -241,7 +249,6 @@ async function main() {
         o.value = app; o.textContent = app; sel.appendChild(o);
       }
       stopAllApps();
-      localStorage.clear();
       sel.value = app;
     }, APP);
     // Use a trusted browser gesture for launch. AudioContext.resume() is
