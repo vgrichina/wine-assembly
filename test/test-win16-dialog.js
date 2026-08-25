@@ -39,6 +39,9 @@ function run(inputs, batches) {
   return execFileSync('node', [
     path.join(ROOT, 'test', 'run.js'), `--exe=${EXE}`,
     `--max-batches=${batches}`, `--input=${inputs}`,
+    // Control paints carry their screen rect, which is what the button checks
+    // below measure against instead of a hardcoded literal.
+    '--trace-ctrl',
   ], { encoding: 'utf8', timeout: 120000, maxBuffer: 64 * 1024 * 1024 });
 }
 
@@ -93,12 +96,38 @@ function main() {
     /\bid=1\b/.test(controls[11]) && /\bid=2\b/.test(controls[12]));
 
   const png = readPng(shot);
-  // The dialog opens at 48,56 with its client at 51,79. OK is at client
-  // (168,168) and Cancel at (249,168), both 75x24.
-  const ok = png.inked(219, 247, 294, 271);
-  const cancel = png.inked(300, 247, 375, 271);
-  check(`OK button is drawn (${(ok * 100).toFixed(0)}% ink)`, ok > 0.05);
-  check(`Cancel button is drawn (${(cancel * 100).toFixed(0)}% ink)`, cancel > 0.05);
+  // Ask where the buttons actually are rather than hardcoding a rect. These
+  // used to be screen literals derived from a 75x24 button at client
+  // (168,168), and they went stale the moment dialog-unit scaling changed:
+  // the buttons became 100x28 at client (224,192) and the test reported
+  // "OK button is drawn (0% ink)" while the dialog was rendering perfectly.
+  // A stale coordinate and an unpainted control are indistinguishable to an
+  // ink check, and only one of them is a bug -- so take the rect from the
+  // paint itself. `--trace-ctrl` logs every native control paint with its
+  // screen rect, which also means a missing line here is itself the failure.
+  const rectOf = (hwnd) => {
+    const re = new RegExp(
+      `\\[ctrl\\] paint hwnd=0x${hwnd.toString(16)} \\S+ at (\\d+),(\\d+) (\\d+)x(\\d+)`, 'g');
+    let m, last = null;
+    while ((m = re.exec(log)) !== null) last = m;
+    return last && { x: +last[1], y: +last[2], w: +last[3], h: +last[4] };
+  };
+  const hwndOf = (id) => {
+    const hit = controls.find(c => new RegExp(`\\bid=${id}\\b`).test(c));
+    const m = hit && /hwnd=0x([0-9a-f]+)/.exec(hit);
+    return m && parseInt(m[1], 16);
+  };
+  const rects = {};
+  for (const [name, id] of [['OK', 1], ['Cancel', 2]]) {
+    const hwnd = hwndOf(id);
+    assert(hwnd, `no hwnd in dump-children for ${name} (id=${id})`);
+    const r = rectOf(hwnd);
+    check(`${name} painted at all (hwnd=0x${hwnd.toString(16)})`, !!r);
+    rects[name] = r;
+    const ink = png.inked(r.x, r.y, r.x + r.w, r.y + r.h);
+    check(`${name} button is drawn (${(ink * 100).toFixed(0)}% ink at ` +
+      `${r.x},${r.y} ${r.w}x${r.h})`, ink > 0.05);
+  }
   // The caption bar is DefDlgProc's, not the DLGPROC's: a Win16 dialog
   // procedure answers "not mine" to WM_NCPAINT by returning FALSE, and there is
   // no default behind it unless the pump keeps that message to itself.
@@ -106,8 +135,14 @@ function main() {
 
   // Cancel ends the dialog: EndDialog sets the result, the procedure returns,
   // and the pump splices the DialogBox call back together at its far return.
+  // Aim at the button we just measured. This click was a literal too, and once
+  // the buttons moved it landed on empty dialog face -- so the dialog stayed
+  // up and the failure read as "Cancel does not close the dialog", which is a
+  // far more alarming thing than the truth.
+  const cx = rects.Cancel.x + (rects.Cancel.w >> 1);
+  const cy = rects.Cancel.y + (rects.Cancel.h >> 1);
   const log2 = run(`1500:click:${GAME_MENU},1700:click:${OPTIONS_ITEM},`
-    + `4000:click:320:258,8000:png:${closed}`, 20000);
+    + `4000:click:${cx}:${cy},8000:png:${closed}`, 20000);
   check('Cancel closed the dialog without a crash', !/CRASH|UNIMPLEMENTED API/.test(log2));
   const after = readPng(closed);
   // Where the dialog was is green baize again.
