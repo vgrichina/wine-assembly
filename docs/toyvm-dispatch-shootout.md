@@ -521,6 +521,37 @@ now stop at the next wall along instead. The FPU is right (48 hand-computed
 cases in `tools/toyvm/fpu-check.js`, green on all four shells) and it makes the
 VM more realistic; it did not make the corpus render.
 
+### 7.2 The 386 bit group
+
+`0f ba` appears in the census table above at two programs, and one of them —
+bit.exe — was the only site in the corpus that is unambiguously a real
+instruction rather than a linear decode walking into data. The whole group is
+now implemented: `0f ba /4../7` (BT/BTS/BTR/BTC with an imm8 index), the
+register-index forms `0f a3/ab/b3/bb`, and BSF/BSR at `0f bc/bd`, at both
+operand sizes.
+
+The part worth writing down is the addressing rule, because getting it wrong
+passes every ordinary bitmap test. A **register** destination masks the bit
+index to the operand width, so `bts ax,17` touches bit 1 of AX and nothing
+else. A **memory** destination does not mask: the index is a *signed bit
+displacement* from the effective address, so `bt [addr],ax` with `ax = -1`
+reads the top bit of the byte *before* `addr`, and with `ax = 20` reads a byte
+two past the end of the addressed word. Modelling that as a byte address plus a
+bit-in-byte is both exact and width-agnostic, which is why every memory form
+reads and writes through `$rd8`/`$wr8` whatever the operand size says.
+
+There is no ground truth to fetch for any of this — the SingleStepTests/8088
+corpus `gate.js` runs against was recorded off a part where `0f` is `POP CS` —
+so `tools/toyvm/bitops-check.js` is the substitute, in the same shape as
+`fpu-check.js`: 20 hand-computed cases stepped through the real decoder and the
+real handlers, including both signs of memory offset. Green on all four shells.
+
+**It did not unblock bit.exe.** The program is PKLITE-compressed, and after the
+bit group landed its only remaining give-up site is a run of `ff` padding at
+`110:ffff` that it reaches by a wild far jump out of the depacker stub — a
+different bug in a different layer, and the third case in this document of an
+ISA fill being correct and buying no pixels.
+
 ## 8. Still open
 
 * Run the matrix on SpiderMonkey and JavaScriptCore, not just node's V8, and on

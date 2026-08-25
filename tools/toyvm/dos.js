@@ -271,6 +271,52 @@ function vgaGeometry(v) {
 }
 
 // ---------------------------------------------------------------------------
+// The text console
+// ---------------------------------------------------------------------------
+// Four fifths of the demo corpus never leaves mode 3h, and a screenshot of
+// those was a black rectangle -- not because they had failed, but because
+// nothing was collecting what they wrote. README!.COM is the shape of it: 202
+// calls to INT 21h AH=02 carrying `1b 5b 31 3b 33 30 6d`, which is an ANSI
+// colour escape. It is painting a text screen correctly and we were dropping it
+// a character at a time.
+//
+// So the console is a real 80x25 grid of {char, attribute} written through a
+// cursor, exactly like the hardware's B800 page, plus enough of the ANSI
+// sequence set that colour and cursor movement land where the program meant
+// them. That makes text-mode programs renderable and, just as usefully,
+// measurable: "wrote nothing at all" and "painted a screen we could not see"
+// stop looking alike.
+const CON_COLS = 80, CON_ROWS = 25;
+
+function newConsole() {
+  return {
+    cols: CON_COLS, rows: CON_ROWS,
+    // Character and attribute planes, in the same byte order B800 uses.
+    ch: new Uint8Array(CON_COLS * CON_ROWS).fill(0x20),
+    at: new Uint8Array(CON_COLS * CON_ROWS).fill(0x07),
+    x: 0, y: 0, attr: 0x07,
+    // Everything written, in order, so a caller can have the raw stream when a
+    // grid is the wrong shape for the question.
+    raw: [],
+    written: 0,
+    // Partial ANSI escape, accumulated across calls -- a program emitting one
+    // character per INT 21h splits every sequence it writes.
+    esc: null,
+    savedX: 0, savedY: 0,
+  };
+}
+
+// The 16 CGA text colours as 6-bit DAC triples, in attribute-byte order.
+const CGA_DAC = [
+  [0, 0, 0], [0, 0, 42], [0, 42, 0], [0, 42, 42],
+  [42, 0, 0], [42, 0, 42], [42, 21, 0], [42, 42, 42],
+  [21, 21, 21], [21, 21, 63], [21, 63, 21], [21, 63, 63],
+  [63, 21, 21], [63, 21, 63], [63, 63, 21], [63, 63, 63],
+];
+// ANSI SGR colour numbers are ordered R/G/B where the attribute byte is B/G/R.
+const ANSI_TO_CGA = [0, 4, 2, 6, 1, 5, 3, 7];
+
+// ---------------------------------------------------------------------------
 // The machine
 // ---------------------------------------------------------------------------
 class Machine {
@@ -283,6 +329,7 @@ class Machine {
     this.dacSubIndex = 0;
     this.retraceToggle = 0;
     this.vga = newVgaState();
+    this.con = newConsole();
     this.ticks = 0;
     this.exited = false;
     this.exitCode = 0;
@@ -445,6 +492,105 @@ class Machine {
     for (let i = 0; i < 9; i++) st(isa.VGA_CTL_GC + i * 4, v.gc[i]);
   }
 
+  // --- the text console ----------------------------------------------------
+  // One character, through the cursor, with ANSI sequences interpreted rather
+  // than printed. Everything that writes text -- DOS teletype, DOS string
+  // print, the BIOS TTY call -- funnels here so there is one cursor and one
+  // grid no matter which route a program picked.
+  conPutc(b) {
+    const c = this.con;
+    c.written++;
+    c.raw.push(b);
+    if (c.esc !== null) { this.conEsc(b); return; }
+    switch (b) {
+      case 0x1B: c.esc = ''; return;
+      case 0x0D: c.x = 0; return;
+      case 0x0A: c.y++; this.conClamp(); return;
+      case 0x08: if (c.x > 0) c.x--; return;
+      case 0x07: return;                                   // bell
+      case 0x09: c.x = Math.min(c.cols - 1, (c.x + 8) & ~7); return;
+      default: break;
+    }
+    const at = c.y * c.cols + c.x;
+    c.ch[at] = b; c.at[at] = c.attr;
+    if (++c.x >= c.cols) { c.x = 0; c.y++; this.conClamp(); }
+  }
+
+  // Scroll rather than run off the bottom, which is what a real console does
+  // and what an 80x25 ANSI screen is drawn assuming.
+  conClamp() {
+    const c = this.con;
+    while (c.y >= c.rows) {
+      c.ch.copyWithin(0, c.cols); c.at.copyWithin(0, c.cols);
+      c.ch.fill(0x20, c.ch.length - c.cols); c.at.fill(c.attr, c.at.length - c.cols);
+      c.y--;
+    }
+    if (c.y < 0) c.y = 0;
+  }
+
+  // The ANSI subset this corpus actually emits: SGR colour, cursor position and
+  // movement, save/restore, and the three erase forms. An unrecognised final
+  // byte ends the sequence and is dropped rather than printed, which is what a
+  // terminal does and keeps a stray escape from spraying the grid.
+  conEsc(b) {
+    const c = this.con;
+    if (c.esc === '' && b !== 0x5B) {                      // not a CSI
+      c.esc = null;
+      return;
+    }
+    if (b >= 0x40 && b !== 0x5B) {                         // final byte
+      const seq = c.esc.slice(1);
+      const n = seq.split(';').map(s => (s === '' ? null : parseInt(s, 10) | 0));
+      const a = (i, d) => (n[i] == null ? d : n[i]);
+      switch (String.fromCharCode(b)) {
+        case 'm':
+          for (const raw of n.length ? n : [0]) {
+            const v = raw == null ? 0 : raw;
+            if (v === 0) c.attr = 0x07;
+            else if (v === 1) c.attr |= 0x08;              // bold -> intensity
+            else if (v === 5) c.attr |= 0x80;              // blink
+            else if (v === 7) c.attr = ((c.attr & 0x0F) << 4) | ((c.attr >> 4) & 0x0F);
+            else if (v >= 30 && v <= 37) c.attr = (c.attr & 0xF8) | ANSI_TO_CGA[v - 30];
+            else if (v >= 40 && v <= 47) c.attr = (c.attr & 0x8F) | (ANSI_TO_CGA[v - 40] << 4);
+          }
+          break;
+        case 'H': case 'f':
+          c.y = Math.max(0, a(0, 1) - 1); c.x = Math.max(0, a(1, 1) - 1);
+          break;
+        case 'A': c.y -= a(0, 1); break;
+        case 'B': c.y += a(0, 1); break;
+        case 'C': c.x += a(0, 1); break;
+        case 'D': c.x -= a(0, 1); break;
+        case 's': c.savedX = c.x; c.savedY = c.y; break;
+        case 'u': c.x = c.savedX; c.y = c.savedY; break;
+        case 'J': {
+          const at = c.y * c.cols + c.x;
+          const [from, to] = a(0, 0) === 2 ? [0, c.ch.length]
+            : a(0, 0) === 1 ? [0, at] : [at, c.ch.length];
+          c.ch.fill(0x20, from, to); c.at.fill(c.attr, from, to);
+          if (a(0, 0) === 2) { c.x = 0; c.y = 0; }
+          break;
+        }
+        case 'K': {
+          const row = c.y * c.cols;
+          const [from, to] = a(0, 0) === 2 ? [row, row + c.cols]
+            : a(0, 0) === 1 ? [row, row + c.x + 1] : [row + c.x, row + c.cols];
+          c.ch.fill(0x20, from, to); c.at.fill(c.attr, from, to);
+          break;
+        }
+        default: break;
+      }
+      c.x = Math.max(0, Math.min(c.cols - 1, c.x));
+      this.conClamp();
+      c.esc = null;
+      return;
+    }
+    c.esc += String.fromCharCode(b);
+    if (c.esc.length > 32) c.esc = null;      // runaway: not a sequence
+  }
+
+  conPuts(s) { for (let i = 0; i < s.length; i++) this.conPutc(s.charCodeAt(i) & 0xFF); }
+
   // A mode set on real hardware leaves the planes cleared. Doing it here rather
   // than in vgaRechain keeps the two apart: rechaining CARRIES a picture across
   // an addressing change, this throws one away.
@@ -555,7 +701,54 @@ class Machine {
       for (let i = 0; i < count * 3; i++) this.palette[(first * 3 + i) % 768] = this.mem[(src + i) & 0xFFFFF] & 0x3F;
       return true;
     }
-    if (ah === 0x0B || ah === 0x02 || ah === 0x06 || ah === 0x09 || ah === 0x0E) return true;
+    // The BIOS text calls. These used to all be accepted and dropped, which is
+    // why a program that wrote its screen through the BIOS instead of DOS came
+    // out just as blank as one that wrote nothing.
+    if (ah === 0x0E) {                        // teletype output
+      this.conPutc(al);
+      return true;
+    }
+    if (ah === 0x02) {                        // set cursor position
+      const dx = r.get('dx');
+      this.con.y = Math.min(this.con.rows - 1, (dx >> 8) & 0xFF);
+      this.con.x = Math.min(this.con.cols - 1, dx & 0xFF);
+      return true;
+    }
+    if (ah === 0x09 || ah === 0x0A) {          // write char (+ attribute) at cursor
+      const c = this.con, n = Math.max(1, r.get('cx') & 0xFFFF);
+      const attr = ah === 0x09 ? (r.get('bx') & 0xFF) : c.attr;
+      for (let i = 0; i < n; i++) {
+        const at = c.y * c.cols + Math.min(c.cols - 1, c.x + i);
+        c.ch[at] = al; c.at[at] = attr;
+      }
+      c.written += n;
+      return true;
+    }
+    if (ah === 0x06 || ah === 0x07) {          // scroll window up / down
+      const c = this.con, cx = r.get('cx'), dx = r.get('dx');
+      const top = (cx >> 8) & 0xFF, left = cx & 0xFF;
+      const bot = Math.min(c.rows - 1, (dx >> 8) & 0xFF);
+      const right = Math.min(c.cols - 1, dx & 0xFF);
+      const attr = (r.get('bx') >> 8) & 0xFF;
+      const lines = al === 0 ? (bot - top + 1) : al;       // AL=0 means clear
+      for (let i = 0; i < lines; i++) {
+        // Scrolling up copies from below, so it must walk downwards; scrolling
+        // down copies from above and must walk upwards. Getting this backwards
+        // smears one row over the whole window instead of moving it.
+        for (let k = top; k <= bot; k++) {
+          const y = ah === 0x06 ? k : bot - (k - top);
+          const src = ah === 0x06 ? y + 1 : y - 1;
+          for (let x = left; x <= right; x++) {
+            const d = y * c.cols + x;
+            if (src < top || src > bot) { c.ch[d] = 0x20; c.at[d] = attr; }
+            else { c.ch[d] = c.ch[src * c.cols + x]; c.at[d] = c.at[src * c.cols + x]; }
+          }
+        }
+      }
+      c.written++;
+      return true;
+    }
+    if (ah === 0x0B) return true;
     if (ah === 0x08) { r.set('ax', 0x0720); return true; }   // read char+attr: a blank
     if (ah === 0x03) { r.set('cx', 0x0607); r.set('dx', 0); return true; }  // cursor at 0,0
     if (ah === 0x12 || ah === 0x1A) { r.set('ax', 0); return true; }
@@ -609,9 +802,13 @@ class Machine {
         let p = ((r.get('ds') << 4) + r.get('dx')) & 0xFFFFF, s = '';
         while (this.mem[p] !== 0x24 && s.length < 4096) s += String.fromCharCode(this.mem[p++]);
         this.log(`dos print: ${s}`);
+        this.conPuts(s);
         return true;
       }
-      case 0x02: this.log(`dos putc: ${String.fromCharCode(r.get('dx') & 0xFF)}`); return true;
+      case 0x02:
+        this.log(`dos putc: ${String.fromCharCode(r.get('dx') & 0xFF)}`);
+        this.conPutc(r.get('dx') & 0xFF);
+        return true;
       // Console input, the DOS-side twins of INT 16h AH=00. AH=06 with DL!=0xFF
       // is output, not input; only 0xFF asks for a character and it must report
       // "nothing waiting" through ZF rather than blocking.
@@ -622,7 +819,11 @@ class Machine {
       }
       case 0x06: {
         const dl = r.get('dx') & 0xFF;
-        if (dl !== 0xFF) { this.log(`dos putc: ${String.fromCharCode(dl)}`); return true; }
+        if (dl !== 0xFF) {
+          this.log(`dos putc: ${String.fromCharCode(dl)}`);
+          this.conPutc(dl);
+          return true;
+        }
         const k = this.keys.shift() || (this.autoKey ? { ah: 0x1C, al: 0x0D } : null);
         r.setResultZf(!k);
         r.set('ax', (r.get('ax') & 0xFF00) | (k ? k.al & 0xFF : 0));
@@ -636,6 +837,19 @@ class Machine {
         this.keys.length = 0;
         return al === 0x01 || al === 0x06 || al === 0x07 || al === 0x08 || al === 0x0A
           ? this.int21(al, 0xFF, r) : true;
+      }
+      case 0x40: {
+        // Write to a handle. 1 and 2 are stdout and stderr and go to the
+        // console; anything else has no file behind it, so report the bytes as
+        // written rather than failing a program over a log it opened.
+        const h = r.get('bx') & 0xFFFF, n = r.get('cx') & 0xFFFF;
+        const src = ((r.get('ds') << 4) + r.get('dx')) & 0xFFFFF;
+        if (h === 1 || h === 2) {
+          for (let i = 0; i < n; i++) this.conPutc(this.mem[(src + i) & 0xFFFFF]);
+        }
+        r.set('ax', n);
+        r.setResultCf(false);
+        return true;
       }
       case 0x44: {
         // IOCTL. Only AL=00, "get device information", is asked often enough to

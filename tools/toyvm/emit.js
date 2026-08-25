@@ -1044,6 +1044,99 @@ function genDoubleShifts() {
   }
 }
 
+// --- bit test / bit scan (386) ----------------------------------------------
+// BT/BTS/BTR/BTC and BSF/BSR. Two things here are worth stating rather than
+// inferring from the code:
+//
+// A register destination masks the bit index to the operand width, so BTS
+// AX,17 touches bit 1 and nothing outside AX. A MEMORY destination does not:
+// the index is a SIGNED bit displacement from the effective address, so
+// BT [BX],-1 reads the top bit of the byte BEFORE the one BX names. Modelling
+// that as a byte address plus a bit-in-byte is both exact and width-agnostic,
+// which is why every memory form below reads and writes through $rd8/$wr8
+// regardless of operand size.
+//
+// Only CF is architecturally defined by the bit tests (BSF/BSR define only ZF).
+// The rest are left as they were rather than zeroed -- a program that reads
+// them is reading undefined state on real silicon too, and leaving them alone
+// keeps the difference visible instead of inventing a value.
+const BIT_OPS = {
+  bt: null,
+  bts: (v, m) => `(i32.or ${v} ${m})`,
+  btr: (v, m) => `(i32.and ${v} (i32.xor ${m} (i32.const -1)))`,
+  btc: (v, m) => `(i32.xor ${v} ${m})`,
+};
+function genBitOps() {
+  const CF_ONLY = (cf) => `(global.set $flags (i32.or
+    (i32.and (global.get $flags) (i32.const 0xFFFE)) (i32.and ${cf} (i32.const 1))))`;
+
+  for (const w of [16, 32]) {
+    const mask = WM(w);
+    // The bit index: an immediate when the decoder passed one, otherwise the
+    // register named in the ModRM reg field. -1 is the "from a register"
+    // sentinel, the same shape the shifts use for their CL forms.
+    const IDX = (imm, reg) => `(select ${imm} ${reg} (i32.ne ${imm} (i32.const -1)))`;
+    const SEXT = (v) => (w === 16
+      ? `(i32.shr_s (i32.shl ${v} (i32.const 16)) (i32.const 16))` : v);
+
+    for (const [nm, apply] of Object.entries(BIT_OPS)) {
+      h(`${nm}_r${w}`, 2, `
+  ${ops(2)}
+  (local.set $t2 (i32.and (local.get $t0) (i32.const 7)))
+  (local.set $t3 (i32.and ${IDX('(local.get $t1)',
+        `(call $rget${w} (i32.and (i32.shr_u (local.get $t0) (i32.const 4)) (i32.const 7)))`)}
+    (i32.const ${w - 1})))
+  (local.set $t7 (call $rget${w} (local.get $t2)))
+  ${CF_ONLY('(i32.shr_u (local.get $t7) (local.get $t3))')}
+  ${apply ? `(call $rset${w} (local.get $t2) (i32.and
+    ${apply('(local.get $t7)', '(i32.shl (i32.const 1) (local.get $t3))')}
+    (i32.const ${mask})))` : ''}
+`);
+      h(`${nm}_m${w}`, 3, `
+  ${ops(3)}
+  ${EA_SETUP_PRE}
+  (local.set $t3 ${IDX('(local.get $t2)', SEXT(`(call $rget${w} (local.get $t6))`))})
+  (local.set $t7 (i32.and
+    (i32.add (local.get $t4) (i32.shr_s (local.get $t3) (i32.const 3)))
+    (i32.const 0xFFFF)))
+  (local.set $t3 (i32.and (local.get $t3) (i32.const 7)))
+  (local.set $t2 (call $rd8 (local.get $t5) (local.get $t7)))
+  ${CF_ONLY('(i32.shr_u (local.get $t2) (local.get $t3))')}
+  ${apply ? `(call $wr8 (local.get $t5) (local.get $t7) (i32.and
+    ${apply('(local.get $t2)', '(i32.shl (i32.const 1) (local.get $t3))')}
+    (i32.const 0xFF)))` : ''}
+`);
+    }
+
+    // BSF/BSR. A zero source sets ZF and leaves the destination alone -- not
+    // zeroes it, which is the tempting simplification and is wrong: the 386
+    // documents the destination as undefined there, and real code relies on it
+    // still holding the value it had.
+    for (const nm of ['bsf', 'bsr']) {
+      const scan = nm === 'bsf'
+        ? '(i32.ctz (local.get $t7))'
+        : `(i32.sub (i32.const 31) (i32.clz (local.get $t7)))`;
+      const body = (src, dst) => `
+  (local.set $t7 (i32.and ${src} (i32.const ${mask})))
+  (global.set $flags (i32.or
+    (i32.and (global.get $flags) (i32.const ${(~(1 << isa.F.ZF)) & 0xFFFF}))
+    (i32.shl (i32.eqz (local.get $t7)) (i32.const ${isa.F.ZF}))))
+  (if (local.get $t7) (then (call $rset${w} ${dst} ${scan})))
+`;
+      h(`${nm}_rr${w}`, 1, `
+  ${ops(1)}
+  ${body(`(call $rget${w} (i32.and (local.get $t0) (i32.const 7)))`,
+    '(i32.and (i32.shr_u (local.get $t0) (i32.const 4)) (i32.const 7))')}
+`);
+      h(`${nm}_rm${w}`, 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  ${body(`(call $rd${w} (local.get $t5) (local.get $t4))`, '(local.get $t6)')}
+`);
+    }
+  }
+}
+
 // --- MUL / IMUL, port I/O, XLAT, moffs --------------------------------------
 function genArithIO() {
   // MUL/IMUL/DIV/IDIV in both operand shapes. The only difference between them
@@ -1918,6 +2011,7 @@ genShifts();
 genSetmo();
 genShiftHandlers();
 genDoubleShifts();
+genBitOps();
 genArithIO();
 
 // The first six handlers were written by hand to prove the gate; genAlu()

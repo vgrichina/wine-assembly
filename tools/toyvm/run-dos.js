@@ -47,6 +47,32 @@ const LINEAR = { width: 320, height: 200, stride: 320, start: 0, planar: false }
 const ld32 = (mem, at) =>
   (mem[at] | (mem[at + 1] << 8) | (mem[at + 2] << 16) | (mem[at + 3] << 24)) >>> 0;
 
+// Cells of the console grid that are not a blank on a black ground. A screen
+// full of spaces coloured by a background is still a screen, so a cell counts
+// when either its character or its attribute says something.
+function conCells(con) {
+  let n = 0;
+  for (let i = 0; i < con.ch.length; i++) {
+    if ((con.ch[i] !== 0x20 && con.ch[i] !== 0) || (con.at[i] & 0xF0) !== 0) n++;
+  }
+  return n;
+}
+
+// The console grid as plain text, trailing blank rows and columns trimmed.
+function conText(con) {
+  const rows = [];
+  for (let y = 0; y < con.rows; y++) {
+    let s = '';
+    for (let x = 0; x < con.cols; x++) {
+      const b = con.ch[y * con.cols + x];
+      s += (b >= 0x20 && b < 0x7F) ? String.fromCharCode(b) : (b === 0 || b === 0x20 ? ' ' : '·');
+    }
+    rows.push(s.replace(/\s+$/, ''));
+  }
+  while (rows.length && rows[rows.length - 1] === '') rows.pop();
+  return rows.join('\n');
+}
+
 function readFrame(mem, video = LINEAR) {
   // A chained program is read exactly the way it always was, even when its
   // CRTC says something other than 320x200. The register model is complete
@@ -94,6 +120,66 @@ function readFrame(mem, video = LINEAR) {
     }
   }
   return { width, height, pixels: out };
+}
+
+// --- text-mode rendering ----------------------------------------------------
+// The console grid, drawn with the real OEM font. `fonts/Terminal.fon` is the
+// CP437 strike Windows shipped for exactly this character set, so the box
+// drawing and block glyphs an ANSI screen is made of come out right instead of
+// being approximated. Loaded once, lazily, because a graphics-mode run never
+// needs it.
+let TERMINAL_FONT;
+function terminalFont() {
+  if (TERMINAL_FONT !== undefined) return TERMINAL_FONT;
+  try {
+    const { readStrikes, pickStrike } = require(path.join(__dirname, '..', 'fnt-read'));
+    const file = path.join(__dirname, '..', '..', 'fonts', 'Terminal.fon');
+    TERMINAL_FONT = pickStrike(readStrikes(file), 12) || null;
+  } catch {
+    TERMINAL_FONT = null;
+  }
+  return TERMINAL_FONT;
+}
+
+// One 8-bit CGA attribute: low nibble foreground, high nibble background, and
+// the top bit is blink -- which on a still frame is just a bright background.
+function attrRgb(a, fg) {
+  const i = fg ? (a & 0x0F) : ((a >> 4) & 0x07);
+  const c = CGA_TEXT[i];
+  return [c[0] * 255 / 63, c[1] * 255 / 63, c[2] * 255 / 63];
+}
+const CGA_TEXT = [
+  [0, 0, 0], [0, 0, 42], [0, 42, 0], [0, 42, 42],
+  [42, 0, 0], [42, 0, 42], [42, 21, 0], [42, 42, 42],
+  [21, 21, 21], [21, 21, 63], [21, 63, 21], [21, 63, 63],
+  [63, 21, 21], [63, 21, 63], [63, 63, 21], [63, 63, 63],
+];
+
+function writeConsolePng(file, con) {
+  const { PNG } = require(path.join(__dirname, '..', '..', 'node_modules', 'pngjs'));
+  const f = terminalFont();
+  const cw = (f && (f.pixWidth || f.maxWidth)) || 8;
+  const ch = (f && f.height) || 12;
+  const png = new PNG({ width: con.cols * cw, height: con.rows * ch });
+  for (let y = 0; y < con.rows; y++) {
+    for (let x = 0; x < con.cols; x++) {
+      const at = y * con.cols + x;
+      const a = con.at[at];
+      const bg = attrRgb(a, false), fgc = attrRgb(a, true);
+      const g = f ? f.glyphs.get(con.ch[at]) : null;
+      for (let py = 0; py < ch; py++) {
+        for (let px = 0; px < cw; px++) {
+          const on = g && px < g.width && g.bits[py * g.width + px];
+          const c = on ? fgc : bg;
+          const o = ((y * ch + py) * png.width + x * cw + px) * 4;
+          png.data[o] = c[0]; png.data[o + 1] = c[1]; png.data[o + 2] = c[2];
+          png.data[o + 3] = 255;
+        }
+      }
+    }
+  }
+  fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
+  fs.writeFileSync(file, PNG.sync.write(png));
 }
 
 // Palette entries are 6-bit, the way the DAC stores them.
@@ -217,7 +303,7 @@ async function runDos(o) {
   const t0 = process.hrtime.bigint();
   let guestNs = 0n;
   let dispatched = 0, handbacks = 0, ints = 0, shotN = 0, stuck = 0, stuckAt = null;
-  let lastKey = '';
+  let lastKey = '', lastWritten = 0;
   const entryHist = new Map();
   const ipSamples = new Map();
   const ipSampleLog = [];          // flat [dispatched, ip, dispatched, ip, ...]
@@ -320,9 +406,15 @@ async function runDos(o) {
         vm.mem, machine.palette, vgaGeometry(machine.vga));
     }
 
+    // "No progress" means the guest re-entered at the same address AND put
+    // nothing new on the console. The address alone is not enough: a program
+    // printing its screen one character at a time hands back at the same INT
+    // 21h thunk every time, so README!.COM was being cut off after 201 of its
+    // characters and reported as hung while it was working perfectly.
     const key = `${cs.toString(16)}:${vm.get('gip').toString(16)}`;
-    stuck = (key === lastKey) ? stuck + 1 : 0;
+    stuck = (key === lastKey && machine.con.written === lastWritten) ? stuck + 1 : 0;
     lastKey = key;
+    lastWritten = machine.con.written;
     if (stuck > 200) { stuckAt = key; break; }
   }
 
@@ -343,6 +435,11 @@ async function runDos(o) {
       planeWrites: ld32(vm.mem, isa.VGA_CTL_WRITES),
       planeReads: ld32(vm.mem, isa.VGA_CTL_READS),
     },
+    // How much text the program put on the console, and how many cells of the
+    // 80x25 grid it left non-blank. Two numbers rather than one because a
+    // program can write thousands of characters and leave an empty screen --
+    // that is what a cleared screen or an animation ending on blank looks like.
+    text: { written: machine.con.written, cells: conCells(machine.con) },
   };
 }
 
@@ -384,8 +481,17 @@ async function main() {
     tickScale: Number(arg('tick-scale', 1)),
   });
 
+  // A text-mode program's picture is its console, not the graphics window --
+  // capturing A000 for one of those is how 159 of the 199 demos in this corpus
+  // used to screenshot as identical black rectangles.
   const png = arg('png');
-  if (png) writePng(png, r.vm.mem, r.machine.palette, vgaGeometry(r.machine.vga));
+  if (png) {
+    if (r.machine.videoMode === 3 && r.text.cells > 0) {
+      writeConsolePng(png, r.machine.con);
+    } else {
+      writePng(png, r.vm.mem, r.machine.palette, vgaGeometry(r.machine.vga));
+    }
+  }
 
   if (r.stuckAt) console.log(`stuck at ${r.stuckAt} -- no progress in 200 handbacks`);
   console.log(`\n${path.basename(exe)}  variant=${r.variant}  ${r.secs.toFixed(2)}s`);
@@ -433,6 +539,14 @@ async function main() {
       + ` setreset=${g.gc[0].toString(16)}/${g.gc[1].toString(16)}`
       + `, ${g.maskWrites} mask writes`);
   }
+  if (r.text.written) {
+    console.log(`  console ${r.text.written} chars written, `
+      + `${r.text.cells} of ${r.machine.con.cols * r.machine.con.rows} cells non-blank`);
+  }
+  if (flag('text')) {
+    const t = conText(r.machine.con);
+    console.log(t ? `\n${t}\n` : '  console grid is empty');
+  }
   console.log(`  exited=${r.machine.exited}${r.machine.exited ? ` code=${r.machine.exitCode}` : ''}`
     + `  cs:ip=${r.vm.get('cs').toString(16)}:${r.vm.get('gip').toString(16)}`);
   console.log(`  ${(r.dispatched / 1e6).toFixed(1)}M dispatches, `
@@ -469,6 +583,6 @@ async function main() {
   }
 }
 
-module.exports = { runDos, writePng, readFrame, nonBlack, frameHash };
+module.exports = { runDos, writePng, writeConsolePng, readFrame, nonBlack, frameHash };
 
 if (require.main === module) main().catch(e => { console.error(e.stack || String(e)); process.exit(1); });

@@ -651,6 +651,35 @@ function decodeOne(rd, cs, ip) {
         else words.push(H[`${nm}_m${opsize}`], packEa(m), m.disp, cnt());
         break;
       }
+      // Bit test group. 0F BA carries the operation in the ModRM reg field and
+      // the bit index as an imm8; A3/AB/B3/BB take the index from a register.
+      // -1 in the index operand is the "from the reg field" sentinel.
+      if (op2 === 0xBA || op2 === 0xA3 || op2 === 0xAB || op2 === 0xB3 || op2 === 0xBB) {
+        const m = modrm();
+        let nm;
+        if (op2 === 0xBA) {
+          if (m.reg < 4) return null;   // /0../3 are not encodings on any part
+          nm = ['bt', 'bts', 'btr', 'btc'][m.reg - 4];
+        } else {
+          nm = { 0xA3: 'bt', 0xAB: 'bts', 0xB3: 'btr', 0xBB: 'btc' }[op2];
+        }
+        if (m.isReg) {
+          words.push(H[`${nm}_r${opsize}`], (m.rm & 7) | ((m.reg & 7) << 4),
+            op2 === 0xBA ? imm8() : -1);
+        } else {
+          words.push(H[`${nm}_m${opsize}`], packEa(m), m.disp,
+            op2 === 0xBA ? imm8() : -1);
+        }
+        break;
+      }
+      // BSF/BSR: scan for the lowest or highest set bit.
+      if (op2 === 0xBC || op2 === 0xBD) {
+        const nm = op2 === 0xBC ? 'bsf' : 'bsr';
+        const m = modrm();
+        if (m.isReg) words.push(H[`${nm}_rr${opsize}`], (m.rm & 7) | ((m.reg & 7) << 4));
+        else words.push(H[`${nm}_rm${opsize}`], packEa(m), m.disp);
+        break;
+      }
       if (op2 === 0xA0 || op2 === 0xA8) { words.push(H.push_seg, op2 === 0xA0 ? 4 : 5); break; }
       if (op2 === 0xA1 || op2 === 0xA9) { words.push(H.pop_seg, op2 === 0xA1 ? 4 : 5); break; }
       // IMUL r, r/m -- the two-operand form, destination times source.
