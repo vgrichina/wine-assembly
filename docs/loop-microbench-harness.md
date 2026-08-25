@@ -6,18 +6,31 @@ ASCII TLDR:
 tools/bench-loops.js injects a synthetic guest loop into a live wasm instance
 and times it, with both A/B arms in ONE process alternating every rep.
 
-WHAT IS MEASURED  (8MB working set, box load ~10)
+WHAT IS MEASURED  (8MB working set, box load ~5)
 
  shape          ns/iter  ops/it  ns/op  B/it   MB/s   blocks/it   what it prices
  ------------  --------  ------  -----  ----  ------  ---------   ----------------------
- stack_traffic    178.6     8     22.3     0      --      1.00     store path, never-code
- lut              179.3     7     25.6     3      16      1.00     Heroes II LUT blit
- store_stream     215.8     7 *   30.8    16      71      1.00     Caesar SIB store stream
- cmp_ladder       150.5    14 *   10.8 *   1       6      2.00     switch ladder (control)
- rep_movsd          0.2   bulk      --     8  46,388      0.00     memory.copy FLOOR
+ cmp_ladder        81.4    14 *    5.8 *   1      12      2.00     switch ladder (control)
+ lut               92.7     7     13.2     3      31      1.00     Heroes II LUT blit
+ stack_traffic     96.6     8     12.1     0      --      1.00     store path, never-code
+ store_stream     117.1     7 *   16.7    16     130      1.00     Caesar SIB store stream
+ nop_chain        116.0    10     11.6     0      --      1.00  \  the block-entry pair:
+ jmp_chain        214.8    10     21.5     0      --      9.00  /  subtract them
+ rep_movsd          0.1   bulk      --     8  60,000      0.00     memory.copy FLOOR
 
  * fold live (H420/H423): ops/it is the UNFOLDED-EQUIVALENT count, so ns/op is
    understated in the same proportion. Read blocks/it and time instead.
+
+THE TWO PRIMITIVE COSTS, measured with dispatch count held EQUAL by
+construction (nop and jmp $+0 are one dispatch each; only the jmp ends a block):
+
+  one dispatch          ~8 ns      nop_chain, 77.6 ns / 10 ops
+  one block transfer    ~9 ns      (jmp_chain - nop_chain) / 8 entries
+                                   ON TOP of the dispatch that caused it
+
+That reproduces cmp_ladder's whole A/B arithmetically: 3.5 entries x 9.3 plus
+7 dispatches x 9.4 = 98 ns against 98.2 ns measured. This repo has never had
+either number.
 
 READ ns/op ACROSS SHAPES. MB/s is bytes/time and these shapes carry 1, 3 and 16
 bytes per iteration -- it ranks them by payload, not by cost. store_stream has
@@ -37,19 +50,25 @@ CALIBRATION -- run the null control in the SAME session, it tracks the box
   noise floor        +-1%               +-5%        vs 24-42% whole-app A/B
 
 OP COUNT REPORTED THE WRONG SIGN
-  case_chain=1   73.8ms   14.00 ops/it   2.00 blocks/it
-  case_chain=0  173.5ms   13.00 ops/it   5.50 blocks/it
+  case_chain=1   73.1ms   14.00 ops/it   2.00 blocks/it
+  case_chain=0  171.3ms   13.00 ops/it   5.50 blocks/it
   => +57% FASTER while printing 7.7% MORE ops. The variable that moved is block
-     ENTRIES (~27ns each), which no histogram in this repo counts -- and the
-     handler histogram is what every fusion here has been judged on.
+     ENTRIES, which no histogram in this repo counts -- and the handler
+     histogram is what every fusion here has been judged on.
 
 Every shape verifies its own work, because rep_movsd first shipped copying
 zeros onto zeros: a memory.copy that never ran would have been byte-identical
 and reported DRAM bandwidth for doing nothing.
 
-UNRESOLVED: case_chain is +57% here and <=2% on the real app, for a shape that
-is 24% of Caesar's block entries. Those do not reconcile. Resolving it is worth
-more than any new fusion -- until then neither harness ranks a change.
+RESOLVED -- the +57% here and the <=2% on the real app AGREE. A microbench
+prices the machinery it isolates; to predict an app you scale by that
+machinery's profile share. Caesar: block-entry machinery ~8% of ticks, $next
+18.4%; the fold removes 20.5% of entries and ~12.7% of dispatches, so it
+predicts 2-4%. Measured on the app: 2.1%. The harness was never in conflict
+with the app -- reading its raw % as an app number was the error.
+
+NEVER QUOTE A MICROBENCH % AS AN APP %. Multiply it by the profile share of
+what it exercises. That is the whole discipline this tool needs.
 
 DOES NOT MEASURE: dispatch cost (a periodic loop lets the BTB predict every
 call_indirect; understated by construction). Whether a shape occurs in real
@@ -176,12 +195,44 @@ dispatch count. The tool prints a NOTE whenever one is live.
 **And the real variable is block entries, which no histogram in this repo
 counts.** Every `jz` in an unfolded ladder ends a block, and a block entry costs
 an eip store, a cache lookup and a trip round `$run`'s loop — none of which is a
-handler dispatch. 99.7ms saved over 3.5 removed entries × 1,048,576 iterations
-is roughly **27ns per block entry**.
+handler dispatch.
 
 Every fusion in this repo has been judged on the handler histogram. That is why
 `blocks/iter` is in the output: it comes free from the hot-block histogram,
 which `13-exports.wat:181` already records under the same gate.
+
+### 4.1b Pricing a block entry: the nop_chain / jmp_chain pair
+
+Do **not** price it by diffing the two arms of `cmp_ladder`. That diff is
+confounded — the unfolded arm runs ~7 more real dispatches per iteration as
+well as 3.5 more block entries — and charging the whole delta to entries put
+this doc's first estimate at 27ns, about 3x too high.
+
+`nop_chain` and `jmp_chain` exist only to be subtracted. Both run 8 filler ops
+per iteration; the filler is `nop` in one and `jmp $+0` in the other. Each is
+**one dispatch**, so dispatch count is equal by construction (the tool confirms
+it: 10.00 ops/iter for both) and only the jmp ends a block.
+
+```text
+  nop_chain    77.6 ns/iter   10 ops   1.00 blocks/iter
+  jmp_chain   151.8 ns/iter   10 ops   9.00 blocks/iter
+```
+
+| primitive | cost |
+|---|---|
+| one dispatch | **~8 ns** (77.6 / 10) |
+| one block transfer | **~9 ns**, on top of the dispatch that caused it |
+
+Check: that reproduces `cmp_ladder`'s A/B arithmetically — 3.5 entries × 9.3 +
+7 dispatches × 9.4 = 98 ns, against 98.2 ns measured.
+
+**The collision trap.** `jmp_chain` first read 5.00 blocks/iter against a true
+9.00 (8 jumps + the loop top). The hot-block histogram is a 4-way bucket, and
+`$hot_block_hist_record` (`04-cache.wat:727`) bumps a collision counter exactly
+once per entry it cannot place — so recorded + collisions is the exact count,
+and the recorded half alone was 44% short. The tool now adds them and says how
+many came from the counter. Two compounding errors — over-attribution and an
+undercounted denominator — are what made 9ns read as 27ns.
 
 ### 4.1a MB/s does not compare across shapes — ns/op does
 
@@ -222,23 +273,42 @@ The gap is `$g2w` + `$invalidate_code_write` + the page-cross test, paid per
 store; `rep movsd` pays it once for the whole range. That is the ceiling on any
 "bind once, store many" or region-typed-store work, and it is enormous.
 
-### 4.3 The open contradiction
+### 4.3 The apparent contradiction, resolved
 
-CASE_CHAIN is **+57%** on its own shape here and was measured at **≤2%,
-indistinguishable from zero** on the real app (`page-compile-design.md` §14) —
-for a shape that is 24% of Caesar's block entries. Those two numbers do not
-reconcile, and one of them is wrong. Candidates:
+CASE_CHAIN is **+57%** on its own shape here and was measured at **≤2%** on the
+real app (`page-compile-design.md` §14). That looked like a conflict. It is not
+one — the two numbers agree once the microbench figure is scaled.
 
-- The whole-app measurement was taken at a 24-42% noise floor and ≤2% is simply
-  what "unresolvable" looks like.
-- The microbench's block entries are cheaper or dearer in isolation than amid a
-  1861-block working set (`tools/cache-slots.js` is the tool for that half).
-- Caesar spends its remaining time somewhere that dilutes a 24% share far more
-  than arithmetic suggests.
+A microbench prices the **machinery it isolates**. To predict an app you
+multiply by that machinery's share of the app's profile and by the fraction of
+it the change touches. Caesar's gameplay profile (`node --prof`, 6000 batches,
+recorded in the caesar3-gameplay notes) gives both shares directly:
 
-**Resolving this is the next piece of work, and it is worth more than any new
-fusion**, because until it resolves neither harness can be trusted to rank a
-change.
+| | share of all ticks |
+|---|---|
+| `$next` (dispatch) | 18.4% |
+| `$branch_end` + `$jcc_end` + `$page_enter` (block transfer) | ~8% |
+
+And `page-compile-design.md` §14 gives what the fold removes in the 3000..3400
+window: **2,340,000 of 11.4M block entries** (20.5%) and ~7.3M dispatches
+(~12.7%).
+
+```text
+  block entries   0.205 x  8.0%  =  1.6%
+  dispatches      0.127 x 18.4%  =  2.3%
+                                    ----
+  predicted app-level win           ~2-4%
+  measured on the app                2.1%   (mean pairwise, 9 interleaved pairs)
+```
+
+The +57% is what happens when that same machinery is ~100% of the workload
+instead of ~26% of it. **The harness was never in conflict with the app.
+Reading its raw percentage as an app percentage was the error**, and it is the
+error this tool will invite on every future result.
+
+**Rule: never quote a microbench % as an app %.** Multiply it by the profile
+share of what it exercises. `--handler-hist` and a `node --prof` self-time
+reading are where those shares come from.
 
 ## 5. What it does NOT measure
 

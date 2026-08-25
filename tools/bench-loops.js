@@ -88,6 +88,30 @@ function loopBack(body) {
 // session notes. `emit` returns { code, iters, bytesTouched, setup }.
 // `setup` runs OUTSIDE the timed region.
 // ---------------------------------------------------------------------------
+// The block-entry pair (see nop_chain / jmp_chain below). K filler ops per
+// iteration, identical except that `jmp $+0` ends a block and `nop` does not.
+const BLOCK_ENTRY_K = 8;
+
+function blockEntryShape(a, useJmp) {
+  const n = a.iterOverride || 1_000_000;
+  const filler = [];
+  for (let i = 0; i < BLOCK_ENTRY_K; i++) {
+    // One dispatch each — that is the invariant that has to hold. The byte
+    // counts differ (2 vs 1) but bytes only cost decode, which is once per rep.
+    if (useJmp) filler.push(0xEB, 0x00);   // jmp $+0 — falls through, ends a block
+    else filler.push(0x90);                // nop — same dispatch, no block end
+  }
+  return {
+    iters: n,
+    bytesTouched: 0,
+    code: loopBack(filler),
+    setup(e) { e.set_ecx(n); },
+    verify(e) {
+      return e.get_ecx() === 0 ? null : `ecx=${e.get_ecx()}, expected 0`;
+    },
+  };
+}
+
 const SHAPES = {
   lut: {
     describe: 'dst[i] = lut[src[i]] byte loop (Heroes II ICN 0x004c755d, ~9 dispatches/pixel)',
@@ -228,6 +252,31 @@ const SHAPES = {
         },
       };
     },
+  },
+
+  // --- the block-entry pair -------------------------------------------------
+  // These two exist only to be subtracted from each other. Both run K filler
+  // ops per iteration and are otherwise identical; the filler is a NOP in one
+  // and a `jmp $+0` in the other. A NOP is one dispatch. A `jmp $+0` is one
+  // dispatch AND one block end, so it costs an eip store, a cache lookup and a
+  // trip round $run's loop on top.
+  //
+  //   (jmp_chain - nop_chain) / K  =  what a block entry costs
+  //
+  // Needed because the obvious way to price a block entry -- diff the two arms
+  // of cmp_ladder -- is confounded: the unfolded arm runs ~7 MORE real
+  // dispatches per iteration as well as 3.5 more block entries, so charging the
+  // whole delta to entries overstates them. This pair holds dispatch count
+  // equal by construction.
+  nop_chain: {
+    describe: 'K nops per iteration — the dispatch-only half of the block-entry pair',
+    real: 'subtract from jmp_chain to price one block entry',
+    emit: a => blockEntryShape(a, false),
+  },
+  jmp_chain: {
+    describe: 'K jmp $+0 per iteration — same dispatches as nop_chain plus K block ends',
+    real: 'subtract nop_chain to price one block entry',
+    emit: a => blockEntryShape(a, true),
   },
 
   rep_movsd: {
@@ -420,7 +469,15 @@ function countOps(inst, shape, a, repIndex) {
       blockEntries += dv.getUint32(hbBase + i * 8 + 4, true);
     }
   }
-  return { total, blockEntries, top: perHandler.slice(0, TOP_N), all: perHandler };
+  // The hot-block histogram is a 4-way bucket, and $hot_block_hist_record
+  // (04-cache.wat:727) bumps the collision counter exactly once per entry it
+  // could not place. So recorded + collisions is the EXACT entry count, not an
+  // estimate — and the recorded half alone can be wildly short. jmp_chain
+  // records 5.00 blocks/iter against a true 9.00, which put this tool's first
+  // block-entry price at 25ns instead of 11.5ns.
+  const blockCollisions = e.get_hot_block_hist_collisions();
+  blockEntries += blockCollisions;
+  return { total, blockEntries, blockCollisions, top: perHandler.slice(0, TOP_N), all: perHandler };
 }
 
 // ---------------------------------------------------------------------------
@@ -518,6 +575,7 @@ async function main() {
           bytesPerIter: built.bytesTouched / built.iters,
           blockEntries: ops.blockEntries,
           blocksPerIter: ops.blockEntries / built.iters,
+          blockCollisions: ops.blockCollisions,
           // Handlers 420-424 deliberately re-record the ops they replaced into
           // the histogram so totals stay comparable with a fold-off build (see
           // $th_case_chain in 06b-core-handlers.wat). When one of them is live,
@@ -563,6 +621,10 @@ async function main() {
         `${arm.opsPerIter.toFixed(2)} ops/iter  ${arm.bytesPerIter} B/iter  ` +
         `${arm.blocksPerIter.toFixed(2)} blocks/iter${mb}`);
       console.log(`    ${' '.repeat(16)} top handlers: ${arm.topHandlers.map(([i, c]) => `H${i}:${fmt(c)}`).join('  ')}`);
+      if (arm.blockCollisions) {
+        console.log(`    ${' '.repeat(16)} (${fmt(arm.blockCollisions)} of those entries came from the collision counter, ` +
+          `not the bucket)`);
+      }
       if (arm.foldsLive.length) {
         console.log(`    ${' '.repeat(16)} NOTE: ${arm.foldsLive.join(',')} live — ops/iter is the unfolded-equivalent`);
         console.log(`    ${' '.repeat(16)}       count, not the dispatch count, so ns/op is understated too.`);
