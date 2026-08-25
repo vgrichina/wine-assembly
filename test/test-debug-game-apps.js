@@ -3,15 +3,22 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { APPS, DEBUG_ONLY_APPS } = require('../lib/apps');
+const { APPS, DESKTOP_APPS, DEBUG_ONLY_APPS } = require('../lib/apps');
 
 const root = path.join(__dirname, '..');
 const debugIds = new Set(DEBUG_ONLY_APPS.map(([id]) => id));
-for (const id of ['diablo_demo', 'diablo_shareware', 'worms2_demo', 'starcraft_shareware', 'fallout_demo', 'heroes2_demo',
+for (const id of ['diablo_demo', 'diablo_shareware', 'worms2_demo', 'starcraft_shareware', 'fallout_demo',
   'total_annihilation_demo', 'caesar3_demo', 'captain_claw_demo']) {
   assert(debugIds.has(id), `${id} is reachable from the debug app selector`);
   assert(APPS[id], `${id} has an app manifest`);
 }
+
+// Heroes II ships its own freely-copyable demo data and its assets deploy, so
+// it graduated from the debug selector to the public desktop.
+const desktopIds = new Set(DESKTOP_APPS.map(([id]) => id));
+assert(desktopIds.has('heroes2_demo'), 'Heroes II is a desktop app');
+assert(!debugIds.has('heroes2_demo'), 'Heroes II is not listed twice');
+assert(APPS.heroes2_demo, 'heroes2_demo has an app manifest');
 
 const starcraft = APPS.starcraft_shareware;
 assert.strictEqual(starcraft.args, 'ophelia terran1 nosound');
