@@ -142,13 +142,61 @@ const CRTC_HDE = 0x01;
 const CRTC_MAX_SCAN = 0x09, CRTC_START_HI = 0x0C, CRTC_START_LO = 0x0D;
 const CRTC_VDE = 0x12, CRTC_OVERFLOW = 0x07, CRTC_OFFSET = 0x13;
 
+// The EGA 16-colour graphics modes. These are planar the way mode X is planar,
+// but they are FOUR-bit: a byte in a plane is eight pixels rather than one, and
+// a pixel's colour is one bit taken from each of the four planes. Nothing has
+// to be unchained to get there -- chain-4 is a 256-colour feature and these
+// modes are simply born planar, which is why they were invisible to a model
+// that only watched the memory-mode register.
+//
+//   0Dh 320x200   0Eh 640x200   10h 640x350   12h 640x480
+const EGA_MODES = new Map([
+  [0x0D, { hde: 0x27, offset: 20, maxScan: 1, vde: 0x8F }],
+  [0x0E, { hde: 0x4F, offset: 40, maxScan: 1, vde: 0x8F }],
+  [0x10, { hde: 0x4F, offset: 40, maxScan: 0, vde: 0x5D }],
+  [0x12, { hde: 0x4F, offset: 40, maxScan: 0, vde: 0xDF }],
+]);
+
+// The attribute palette the BIOS leaves behind. A 4-bit pixel indexes these 16
+// registers; the register's value then indexes the DAC. Note it does NOT point
+// at the first sixteen DAC entries: 6 is at 0x14 and 8-15 are at 0x38-0x3F.
+const EGA_ATTR = [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x14, 0x07,
+                  0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F];
+
+// ...which is only true because the VGA BIOS fills the first 64 DAC entries
+// with the EGA's own 6-bit colour space, so that an attribute value written by
+// EGA-era code means on a VGA what it meant on an EGA. The value is `rgbRGB`:
+// bits 2-0 select primary red/green/blue, bits 5-3 the secondary (half
+// intensity) ones, and a component lit by both is full brightness.
+//
+// Seeding all 64 rather than just the 16 the default palette names is what
+// makes a demo that reprograms the attribute palette come out the right colour
+// -- and reprogramming it is exactly what an EGA demo does instead of touching
+// the DAC, because on an EGA there was no DAC to touch.
+function egaDacTable() {
+  const t = new Uint8Array(64 * 3);
+  const level = (pri, sec) => pri * 0x2A + sec * 0x15;
+  for (let n = 0; n < 64; n++) {
+    t[n * 3] = level((n >> 2) & 1, (n >> 5) & 1);
+    t[n * 3 + 1] = level((n >> 1) & 1, (n >> 4) & 1);
+    t[n * 3 + 2] = level(n & 1, (n >> 3) & 1);
+  }
+  return t;
+}
+const EGA_DAC = egaDacTable();
+
 function newVgaState() {
   const v = {
     seqIndex: 0, seq: new Uint8Array(8),
     gcIndex: 0, gc: new Uint8Array(16),
     crtcIndex: 0, crtc: new Uint8Array(32),
+    // Attribute controller: one index/data port sharing a flip-flop that a read
+    // of the status register resets. Its low 16 registers are the palette a
+    // 4-bit pixel is looked up in.
+    attrIndex: 0, attrFlip: 0, attr: new Uint8Array(32),
     misc: 0x63,
     planar: false,
+    bpp: 8,
     // Counters, so a sweep can tell a program that merely indexed the
     // sequencer from one that actually drove an unchained mode.
     unchainCount: 0, maskWrites: 0, masksSeen: 0,
@@ -160,19 +208,33 @@ function newVgaState() {
 // The register state mode 13h leaves behind, which is what every mode-X tweak
 // starts from. Only the fields the renderer reads are worth setting exactly.
 function resetVgaMode(v, mode) {
+  const ega = EGA_MODES.get(mode);
   v.seq.fill(0);
   v.seq[SEQ_MAP_MASK] = 0x0F;
   v.seq[SEQ_MEMORY_MODE] = mode === 0x13 ? 0x0E : 0x06;   // chain-4 on for 13h
   v.gc.fill(0);
   v.gc[GC_BIT_MASK] = 0xFF;
   v.gc[GC_MODE] = mode === 0x13 ? 0x40 : 0x00;            // bit 6 = 256-colour
+  v.attr.fill(0);
+  v.attr.set(EGA_ATTR);
+  v.attrFlip = 0;
   v.crtc.fill(0);
-  v.crtc[CRTC_HDE] = 0x4F;             // 80 character clocks -> 320 pixels
-  v.crtc[CRTC_MAX_SCAN] = 0x41;        // max scan line 1: each row drawn twice
-  v.crtc[CRTC_VDE] = 0x8F;
-  v.crtc[CRTC_OVERFLOW] = 0x1F;        // VDE bit 8 -> 400 scan lines
-  v.crtc[CRTC_OFFSET] = 40;            // 40 words per line -> 320 pixels
-  v.planar = false;
+  v.crtc[CRTC_OVERFLOW] = 0x1F;        // VDE bit 8; bit 6 (bit 9) left clear
+  if (ega) {
+    v.crtc[CRTC_HDE] = ega.hde;
+    v.crtc[CRTC_MAX_SCAN] = ega.maxScan;
+    v.crtc[CRTC_VDE] = ega.vde;
+    v.crtc[CRTC_OFFSET] = ega.offset;
+  } else {
+    v.crtc[CRTC_HDE] = 0x4F;           // 80 character clocks -> 320 pixels
+    v.crtc[CRTC_MAX_SCAN] = 0x41;      // max scan line 1: each row drawn twice
+    v.crtc[CRTC_VDE] = 0x8F;
+    v.crtc[CRTC_OFFSET] = 40;          // 40 words per line -> 320 pixels
+  }
+  // An EGA graphics mode is planar from the moment it is set; mode 13h only
+  // becomes planar when the guest clears chain-4.
+  v.bpp = ega ? 4 : (mode === 0x13 ? 8 : 0);
+  v.planar = !!ega;
 }
 
 // Geometry, derived the way the CRTC actually derives it rather than assumed.
@@ -188,8 +250,12 @@ function vgaGeometry(v) {
   // half the dot clock, so each of those eight dots is four pixels wide -- and
   // that is separate from the offset register, which gives the LOGICAL row and
   // can be wider than the screen when a demo scrolls a big page.
-  const width = (v.crtc[CRTC_HDE] + 1) * 4;
-  const stride = v.crtc[CRTC_OFFSET] * 8;
+  // A 4-bit mode runs the full dot clock and packs eight pixels into each
+  // plane byte, so the same registers describe twice the pixels per character
+  // clock and four times the pixels per offset word.
+  const dots = v.bpp === 4 ? 8 : 4;
+  const width = (v.crtc[CRTC_HDE] + 1) * dots;
+  const stride = v.crtc[CRTC_OFFSET] * (v.bpp === 4 ? 16 : 8);
   const start = (v.crtc[CRTC_START_HI] << 8) | v.crtc[CRTC_START_LO];
   return {
     width: width > 0 && width <= 800 ? width : 320,
@@ -197,6 +263,10 @@ function vgaGeometry(v) {
     stride: stride > 0 ? stride : 320,
     start,
     planar: v.planar,
+    bpp: v.bpp,
+    // The attribute palette, so the renderer can turn a 4-bit pixel into the
+    // DAC entry the hardware would have looked it up in.
+    attr: Array.from(v.attr.subarray(0, 16)),
   };
 }
 
@@ -266,6 +336,9 @@ class Machine {
       // spins forever, so this alternates on every read.
       this.clock.retrace++;
       this.retraceToggle ^= 1;
+      // Reading the status register is also how the attribute controller's
+      // shared index/data flip-flop is put back into "next write is an index".
+      this.vga.attrFlip = 0;
       return this.retraceToggle ? 0x09 : 0x00;
     }
     if (port === 0x3C9) {
@@ -308,7 +381,14 @@ class Machine {
       case 0x3CE: v.gcIndex = value & 0x0F; return;
       case 0x3CF:
         v.gc[v.gcIndex] = value;
-        if (v.gcIndex === GC_READ_MAP || v.gcIndex === GC_MODE) this.syncVga();
+        // Every graphics register now feeds the write pipeline, so mirror the
+        // whole file rather than picking out the two mode X happened to need.
+        this.syncVga();
+        return;
+      case 0x3C0:
+        // Index and data alternate through one port.
+        if (v.attrFlip === 0) { v.attrIndex = value & 0x1F; v.attrFlip = 1; }
+        else { v.attr[v.attrIndex] = value; v.attrFlip = 0; }
         return;
       case 0x3D4: case 0x3B4: v.crtcIndex = value & 0x1F; return;
       case 0x3D5: case 0x3B5: v.crtc[v.crtcIndex] = value; return;
@@ -334,6 +414,11 @@ class Machine {
     // pixel in guest RAM -- so a program whose behaviour changes when it
     // unchains can be A/B'd without a rebuild. It is a lie about the hardware
     // and purely a debugging aid.
+    //
+    // A 4-bit EGA mode is planar whatever this register says -- chain-4 is a
+    // 256-colour feature and the bit is not even meaningful there -- so only
+    // mode 13h is allowed to change its mind here.
+    if (v.bpp === 4) return;
     const planar = !this.forceChained && this.videoMode === 0x13 && !(value & 0x08);
     if (planar === v.planar) return;
     v.planar = planar;
@@ -357,8 +442,16 @@ class Machine {
     };
     st(isa.VGA_CTL_KEY, v.planar ? isa.VGA_KEY_ON : isa.VGA_KEY_OFF);
     st(isa.VGA_CTL_MASK, v.seq[SEQ_MAP_MASK] & 0x0F);
-    st(isa.VGA_CTL_READ, v.gc[GC_READ_MAP] & 3);
-    st(isa.VGA_CTL_MODE, v.gc[GC_MODE] & 3);
+    for (let i = 0; i < 9; i++) st(isa.VGA_CTL_GC + i * 4, v.gc[i]);
+  }
+
+  // A mode set on real hardware leaves the planes cleared. Doing it here rather
+  // than in vgaRechain keeps the two apart: rechaining CARRIES a picture across
+  // an addressing change, this throws one away.
+  clearPlanes() {
+    const m = this.mem;
+    if (m.length <= isa.VGA_PLANES) return;
+    m.fill(0, isa.VGA_PLANES, isa.VGA_PLANES + isa.VGA_PLANE_SIZE * 4);
   }
 
   // Carry the picture across a chain-4 change instead of dropping it.
@@ -419,12 +512,41 @@ class Machine {
       resetVgaMode(this.vga, this.videoMode);
       this.syncVga();
       if (this.videoMode === 0x13) this.mem.fill(0, VGA_BASE, VGA_BASE + 320 * 200);
+      if (this.vga.bpp === 4) {
+        this.clearPlanes();
+        this.palette.set(EGA_DAC);         // the EGA-compatible first 64 entries
+      }
       this.log(`int10 set mode ${this.videoMode.toString(16)}h`);
       return true;
     }
     if (ah === 0x0F) {                      // get current mode
       r.set('ax', (this.videoMode & 0xFF) | (80 << 8));
       r.set('bx', (r.get('bx') & 0x00FF));
+      return true;
+    }
+    // The attribute palette, through the BIOS. EGA-era code sets its colours
+    // this way rather than through the DAC -- on an EGA the palette registers
+    // WERE the colours -- so a demo that never touches port 0x3C9 is not
+    // running without a palette, it is setting one we were not listening for.
+    if (ah === 0x10 && al === 0x00) {       // set one palette register
+      const bx = r.get('bx');
+      this.vga.attr[bx & 0x1F] = (bx >> 8) & 0x3F;
+      return true;
+    }
+    if (ah === 0x10 && al === 0x02) {       // set all 16 + overscan, from ES:DX
+      const src = ((r.get('es') << 4) + r.get('dx')) & 0xFFFFF;
+      for (let i = 0; i < 17; i++) this.vga.attr[i] = this.mem[(src + i) & 0xFFFFF] & 0x3F;
+      return true;
+    }
+    if (ah === 0x10 && al === 0x07) {       // read one palette register
+      r.set('bx', (r.get('bx') & 0xFF) | ((this.vga.attr[r.get('bx') & 0x1F]) << 8));
+      return true;
+    }
+    if (ah === 0x10 && al === 0x10) {       // set one DAC register
+      const at = (r.get('bx') & 0xFF) * 3, cx = r.get('cx'), dx = r.get('dx');
+      this.palette[at] = (dx >> 8) & 0x3F;
+      this.palette[at + 1] = (cx >> 8) & 0x3F;
+      this.palette[at + 2] = cx & 0x3F;
       return true;
     }
     if (ah === 0x10 && al === 0x12) {       // set block of DAC registers

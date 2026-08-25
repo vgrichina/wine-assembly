@@ -64,6 +64,27 @@ function readFrame(mem, video = LINEAR) {
     out.set(mem.subarray(VGA_BASE, VGA_BASE + n));
     return { width, height, pixels: out };
   }
+  if (g.bpp === 4) {
+    // EGA 16-colour: eight pixels per plane byte, one bit each, most
+    // significant bit leftmost. The colour is the four bits assembled across
+    // the planes, and that 0-15 value then indexes the attribute palette to
+    // reach the DAC entry the hardware would have displayed.
+    const rowBytes = stride >> 3;
+    const attr = g.attr || null;
+    for (let y = 0; y < height; y++) {
+      const row = start + y * rowBytes;
+      for (let x = 0; x < width; x++) {
+        const at = (row + (x >> 3)) & 0xFFFF;
+        const bit = 7 - (x & 7);
+        let c = 0;
+        for (let p = 0; p < 4; p++) {
+          c |= ((mem[isa.VGA_PLANES + (p << 16) + at] >> bit) & 1) << p;
+        }
+        out[y * width + x] = attr ? (attr[c] & 0x3F) : c;
+      }
+    }
+    return { width, height, pixels: out };
+  }
   const rowBytes = stride >> 2;
   for (let y = 0; y < height; y++) {
     const row = start + y * rowBytes;
@@ -375,7 +396,7 @@ async function main() {
   // for a chained program those differ on purpose. See readFrame.
   const rw = v.planar ? v.width : 320, rh = v.planar ? v.height : 200;
   console.log(`  video mode ${v.mode.toString(16)}h `
-    + `${v.planar ? `unchained ${rw}x${rh}` : `${rw}x${rh} linear`}`
+    + `${v.planar ? `${v.bpp === 4 ? 'EGA planar' : 'unchained'} ${rw}x${rh}` : `${rw}x${rh} linear`}`
     + `${v.planar && v.start ? ` start=${v.start}` : ''}`
     + `${v.planar && v.stride !== v.width ? ` stride=${v.stride}` : ''}`
     + `${!v.planar && (v.width !== 320 || v.height !== 200 || v.start)
@@ -395,6 +416,18 @@ async function main() {
       + `, chained window ${nz(VGA_BASE, 0x10000)}`
       + `, ${r.video.planeWrites} planar writes / ${r.video.planeReads} reads`);
     const g = r.machine.vga;
+    if (v.bpp === 4) {
+      // Which DAC entry each of the 16 pixel values actually reaches, and how
+      // many of those entries the program set itself. A picture whose colours
+      // look wrong is one of two different bugs -- an attribute palette we got
+      // wrong, or a DAC the program never wrote -- and this separates them.
+      const attr = v.attr.map(a => (a & 0x3F).toString(16).padStart(2, '0'));
+      const own = v.attr.filter(a => {
+        const d = (a & 0x3F) * 3, p = r.machine.palette;
+        return p[d] || p[d + 1] || p[d + 2];
+      }).length;
+      console.log(`  attr palette ${attr.join(' ')} (${own}/16 non-black in the DAC)`);
+    }
     console.log(`  seq mask=${(g.seq[2] & 0x0F).toString(2).padStart(4, '0')}`
       + ` gc mode=${g.gc[5] & 3} readmap=${g.gc[4] & 3} bitmask=${g.gc[8].toString(16)}`
       + ` setreset=${g.gc[0].toString(16)}/${g.gc[1].toString(16)}`

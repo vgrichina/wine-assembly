@@ -79,15 +79,18 @@ function jhash(cs, ip) {
 // -- which builds its own module around the same helpers -- inherits it without
 // a new import.
 const VGA_CTL = (JTAB_BASE + JTAB_SIZE + 0xFFFF) & ~0xFFFF;
-const VGA_CTL_KEY = VGA_CTL + 0;    // VGA_KEY_ON while unchained, else 0
+const VGA_CTL_KEY = VGA_CTL + 0;    // VGA_KEY_ON while planar, else 0
 const VGA_CTL_MASK = VGA_CTL + 4;   // sequencer map mask, low 4 bits
-const VGA_CTL_READ = VGA_CTL + 8;   // graphics read map select, 0-3
-const VGA_CTL_MODE = VGA_CTL + 12;  // graphics write mode, 0-3
 const VGA_CTL_LATCH = VGA_CTL + 16; // the four plane latches, one byte each
 // Counters, so "the picture is empty" can be told apart from "the guest never
 // wrote to it". Bumped only on the planar path, so a chained run pays nothing.
 const VGA_CTL_WRITES = VGA_CTL + 20;
 const VGA_CTL_READS = VGA_CTL + 24;
+// The graphics controller's nine registers, one word each, mirrored here by the
+// host on every write to port 0x3CF. All of them: an EGA 16-colour mode drives
+// set/reset, the bit mask and the ALU function on nearly every store, so the
+// subset mode X happens to need is not enough.
+const VGA_CTL_GC = VGA_CTL + 32;
 const VGA_PLANES = VGA_CTL + 0x100;
 const VGA_PLANE_SIZE = 0x10000;
 // The guard compares the key against `(lin & 0xF0000) | 1`, and the low bit is
@@ -129,7 +132,7 @@ module.exports = {
   GUEST_RAM, GUEST_RAM_SIZE, THREAD_BASE, THREAD_SIZE, MEM_PAGES,
   RSTACK_BASE, RSTACK_ENTRIES, RSTACK_SIZE,
   JTAB_BASE, JTAB_ENTRIES, JTAB_SIZE, JTAB_HASH_MUL, jhash,
-  VGA_CTL, VGA_CTL_KEY, VGA_CTL_MASK, VGA_CTL_READ, VGA_CTL_MODE, VGA_CTL_LATCH,
+  VGA_CTL, VGA_CTL_KEY, VGA_CTL_MASK, VGA_CTL_LATCH, VGA_CTL_GC,
   VGA_CTL_WRITES, VGA_CTL_READS,
   VGA_PLANES, VGA_PLANE_SIZE, VGA_KEY_OFF, VGA_KEY_ON,
   EA, EA_DEFAULT_SEG, EA_A32,

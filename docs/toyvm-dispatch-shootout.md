@@ -184,7 +184,49 @@ failed 1,855 cases of the 8088 gate, which is what the gate is for.
 The guard is identical in all four shells, so it moves every arm of the
 shootout together and no ratio in §5 depends on it.
 
-### 4.2 Making the harness measure the VM and not itself
+### 4.2 Three more were writing to a different shape of plane
+
+Fixing mode X left three screenshots still wrong, and they were wrong the same
+way for a different reason: ZERO-BBS.EXE is mode `0Eh` and BAGGER.EXE and
+DSTNFO.EXE are mode `10h` — EGA 16-colour modes, which are planar too but at
+**four bits per pixel, not eight**. A byte in a plane is eight *pixels* there
+rather than one, and a pixel's colour is one bit taken from each of the four
+planes. Nothing has to be unchained to get there: chain-4 is a 256-colour
+feature and these modes are born planar, so a model that only watched the
+memory-mode register could not see them at all. They are in `dos.js` as
+`EGA_MODES` now, and each carries its own CRTC seed, so 640x200 and 640x350
+come out of the same derivation as everything else.
+
+Three things had to be real before the pictures were:
+
+* **The whole graphics-controller write pipeline.** Mode X needs almost none of
+  it — write mode 0 with an all-ones bit mask is a plain store. A 16-colour mode
+  drives set/reset, the bit mask and the ALU function on nearly every store,
+  because touching one pixel means a read-modify-write of a byte holding eight
+  of them, and the hardware performs it. `$vga_wr8` now does the full thing:
+  data rotate, the four write modes, set/reset gated by enable-set/reset,
+  AND/OR/XOR against the latch, then the bit-mask merge. `$vga_rd8` gained read
+  mode 1's colour compare. The control block grew from four words to the full
+  nine-register file.
+* **The attribute controller.** A 4-bit pixel does not index the DAC, it indexes
+  16 attribute-palette registers which *then* index the DAC — and the BIOS
+  default scatters them (`00 01 02 03 04 05 14 07 38…3F`), so an identity
+  assumption puts eight of the sixteen colours in the wrong place.
+* **`int 10h` AH=10h.** All three demos set their palette through the BIOS, not
+  through port 0x3C9, which is what EGA-era code does — on an EGA the palette
+  registers *were* the colours. Only the `AL=12h` DAC-block call was
+  implemented, so those writes were being counted as unhandled and dropped.
+  With `AL=00/02/07/10` in, all three set the attribute palette to identity and
+  fill 15-16 of their 16 colours; before that, DSTNFO's info file rendered as a
+  legible picture in entirely the wrong palette, which is a much more
+  convincing kind of wrong than a blank screen.
+
+`run-dos.js` prints the attribute palette and how many of the entries it names
+are non-black in the DAC under any 4-bit run, because "the colours look wrong"
+is two different bugs — a palette we got wrong, or one the program set by a
+route we were not listening on — and that line separates them.
+
+### 4.3 Making the harness measure the VM and not itself
 
 The first honest run of mars.exe reported 344,376 handbacks per 40M dispatches —
 103 dispatches per JS round trip. At that ratio the benchmark measures the
@@ -504,14 +546,10 @@ VM more realistic; it did not make the corpus render.
   dwords, and the offset register still sets the row stride) is not modelled yet.
   `video-census.js` reports the derived numbers for all 199 programs, and four
   of them retime the CRTC without unchaining, so this is where that picks up.
-* **Write modes 2 and 3, set/reset, and the bit mask.** Every unchained program
-  in this corpus writes with mode 0 or the mode-1 latch copy, a full `0xFF` bit
-  mask and set/reset disabled — measured, not assumed — so `$vga_wr8` implements
-  exactly that and nothing else. A demo using the EGA-era paths would draw the
-  wrong colours with no diagnostic. `run-dos.js` prints the plane occupancy, the
-  planar read/write counts and the live register values under any unchained run,
-  which is what would name it — "empty planes, two million writes" is a very
-  different report from "the guest never wrote to it", and the picture says
-  neither.
+* **Text mode is still read as if it were graphics.** ACME-SUX.EXE and
+  AKM_DOB.EXE never leave mode 3h, and the census reports ~61,700 "pixels" for
+  each: it is reading A000 as an 8bpp frame when the picture is a character
+  buffer at B800 that nothing renders. The count is meaningless rather than
+  wrong-looking, which is the worse failure of the two.
 * **Lazy flags vs eager flags** — the question x86-16 was chosen for, and the
   one thing here that has no bearing on dispatch at all.
