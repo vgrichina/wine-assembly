@@ -27,8 +27,9 @@ assert(html.includes('const phoneScreen ='),
   'a phone-sized physical screen also qualifies, for a browser that reports no pointer type');
 assert(html.includes('const vv = window.visualViewport'),
   'the page, not window.screen, is what a device simulator scales down');
-assert(html.includes('Math.min(sw, sh) <= 500 && Math.max(sw, sh) <= 950'),
-  'a tablet-sized viewport is a small desktop: only phone-sized ones qualify');
+assert(html.includes('const phoneSized = sw < 640 || sh < 520'),
+  'the threshold is whether a 640x480 guest screen and its taskbar fit at 1:1 — '
+  + '800x600 was a comfortable desktop in 1998 and is still a desktop here');
 assert(html.includes('function applySingleAppMode()') && html.includes('applySingleAppMode();\n      const canvas'),
   'resizing across the threshold should switch the mode, not require a reload');
 assert(html.includes("params.has('single-app')"), 'single-app mode should be forceable for testing');

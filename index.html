@@ -956,7 +956,13 @@ Resource-aware Win98 emulator
       const sw = (vv && vv.width) || window.innerWidth || 0;
       const sh = (vv && vv.height) || window.innerHeight || 0;
       if (!sw || !sh) return false;
-      const phoneSized = Math.min(sw, sh) <= 500 && Math.max(sw, sh) <= 950;
+      // The threshold is the era's own desktop, not a modern phone/tablet
+      // breakpoint: Win98 shipped on 640x480, and 800x600 was a comfortable
+      // desktop. So the question is simply whether a 640x480 guest screen plus
+      // the taskbar fits at 1:1. If it does, this is a desktop however small
+      // the window is; if it does not, no amount of shell furniture will help
+      // and the app should own the screen.
+      const phoneSized = sw < 640 || sh < 520;
       if (!phoneSized) return false;
       // Size alone is not enough, because visualViewport is measured in CSS
       // pixels: a desktop browser at 175% zoom, or with its window dragged
@@ -966,9 +972,11 @@ Resource-aware Win98 emulator
       // pointer is a finger; a zoomed desktop window is neither, and a device
       // simulator (which fakes the pointer but not screen.width) is the
       // second.
+      // screen.width/height are CSS pixels too, so this is the same 1:1 test
+      // against the physical display rather than the current window.
       const scr = window.screen || {};
       const phoneScreen = !!scr.width && !!scr.height &&
-        Math.min(scr.width, scr.height) <= 500 && Math.max(scr.width, scr.height) <= 950;
+        (scr.width < 640 || scr.height < 520);
       const coarsePointer = !!(window.matchMedia &&
         (window.matchMedia('(pointer: coarse)').matches ||
          window.matchMedia('(hover: none)').matches));
