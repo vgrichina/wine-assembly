@@ -2065,3 +2065,43 @@ Wall-clock costs are **not** quoted here on purpose. This box regularly sits at
 load 10-40 with other agents sweeping, and the same run measured 45s and 75s
 twenty minutes apart. Quote batch counts and step counts, which are stable, and
 check `uptime` before believing any seconds figure.
+
+## RESOLVED (2026-08-24): OK on Choose Class could not be clicked
+
+Reported from the browser — pick a class, and the OK button never responds. It
+reproduces headlessly too, and it was two stacked defects in
+`lib/renderer-input.js`, neither of which is Diablo-specific.
+
+**Why nothing shows up in a trace.** A click that is swallowed by an early
+return in `handleMouseDown`/`handleMouseUp` never reaches the guest, so it
+makes no API call: `--trace-api` shows a perfectly healthy message pump and
+nothing else. `--trace-input` (added with this fix) prints the routing decision
+instead, and named the cause on the first run. Reach for it before
+disassembling anything.
+
+**Defect 1 — the UP never arrived.** `_dispatchMouseEvent` ended in a flat
+`return false`. Its one caller that reads the result records
+`_directMouseDown` — the target that owes a matching `WM_LBUTTONUP` — only
+`if (dispatchedDirect)`, so for guest-owned child controls that state was never
+set and the up-delivery branch was unreachable. Those controls received every
+DOWN and never a single UP. A Win32 button fires `BN_CLICKED` on the **up**, so
+a single click on one did nothing; double-clicking worked, because
+`WM_LBUTTONDBLCLK` is acted on directly. That is exactly the Choose Class
+symptom: single-clicking a class never completed, so the game never enabled OK.
+
+**Defect 2 — a click over a disabled child was dropped.** OK and Cancel are
+created `WS_DISABLED|BS_OWNERDRAW`; Storm subclasses them
+(`SetWindowLongA(hwnd, -4, 0x006aa3c0)`), draws them itself and hit-tests them
+against the `GetCursorPos` position it polls every frame. Real `WindowFromPoint`
+treats a disabled child as *transparent* and returns the window behind it, so
+USER delivers the click to the parent — which is how that idiom works at all.
+We returned instead, so the parent never saw it and OK was unclickable by any
+means. The gate now clears `deep` and falls through to the parent; a disabled
+*top-level* still swallows the event, since there is nothing behind it.
+
+The `_isMouseInputDisabled` gate itself stays — it was added for Dr. Black
+Jack, whose grey Split button used to depress and post `WM_COMMAND` before the
+first deal. Both apps are covered: the disabled control still gets nothing.
+
+After the fix, `down 350,444 -> child 0x1001c of 0x1001c dispatched=1` /
+`up 350,444 -> native child 0x1001c`, and clicking OK advances to Enter Name.

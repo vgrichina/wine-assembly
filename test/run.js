@@ -204,6 +204,11 @@ const FRAME_STATS = FRAME_STATS_ARG !== null || hasFlag('frame-stats');
 const FRAME_STATS_FROM = Math.max(0, parseInt(FRAME_STATS_ARG, 10) || 0);
 const AUTO_MOUSE = getArg('auto-mouse', null); // --auto-mouse=X0,Y0,X1,Y1[,PERIOD]: sweep the pointer every PERIOD batches
 const TRACE_CTRL = hasFlag('trace-ctrl'); // --trace-ctrl: log every WAT-native control paint + its screen rect
+// --trace-input: which routing branch in lib/renderer-input.js consumed each
+// mouse event. Reach for it on "the click does nothing": a swallowed click
+// makes no API call, so an API trace shows a healthy-looking message pump and
+// nothing else. This names the early return that ate it.
+const TRACE_INPUT = hasFlag('trace-input');
 const TRACE_ERASE = hasFlag('trace-erase'); // --trace-erase: log every window-background erase + the brush it fills with
 const TRACE_RGN = hasFlag('trace-rgn');   // --trace-rgn: log HRGN create/combine/select + branch counts
 const TRACE_DC = hasFlag('trace-dc');     // --trace-dc: log DC→canvas target resolution (hwnd, ox/oy, canvas size)
@@ -1338,6 +1343,7 @@ async function main() {
     const canvas = createCanvas(screenW, screenH);
     renderer = new Win98Renderer(canvas);
     if (TRACE_COMPOSITE) renderer.traceComposite = true;
+    if (TRACE_INPUT) renderer.onInputTrace = (what) => console.log(`[input-route] ${what}`);
   }
   let videoRecorder = null;
   if (VIDEO_OUT) {
