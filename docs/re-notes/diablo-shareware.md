@@ -2222,3 +2222,179 @@ paper the refresh should happen. What is worth checking first is
 rect **before** it calls `_refreshGdiSurfacePalette`, and returns early when
 there is no dirty rect. Any path that changes the palette without producing one
 leaves the canvas holding the previous colours, which is exactly this symptom.
+
+## SOLVED-TO-THE-EDGE (2026-08-25): "Invalid name" is a dialog-focus failure
+
+The multiplayer hero flow now reaches **Enter Name** headlessly, and the
+"Invalid name" complaint reproduces there: the field stays empty no matter what
+you type, so Diablo validates an empty string. Nothing about the name is wrong —
+**not one keystroke reaches the control**.
+
+### Reaching the screen (fast recipe, ~3 min under load)
+
+The `--time-scale=30 --max-batches=39400` recipes elsewhere in this file are the
+slow way in. This is the same journey in 2300 batches:
+
+```sh
+node test/run.js --app=diablo_shareware --batch-size=200000 \
+  --tick-ms-per-batch=50 --max-batches=2300 --no-close --repaint-every=20 \
+  --input='1000:mousemove:320:256,1040:mousedown:320:256,1080:mouseup:320:256,\
+1300:mousemove:420:298,1340:mousedown:420:298,1380:mouseup:420:298,\
+1600:mousemove:348:446,1640:mousedown:348:446,1680:mouseup:348:446,\
+2200:png:/tmp/name.png'
+```
+
+Batch ~900 is the main menu (items at y = 213/256/299/342/385, so Multi Player
+is `(320,256)`); the Choose Class panel is up by ~1300 (Warrior `(420,298)`,
+Rogue `(420,341)`, Sorcerer `(420,364)`); `OK` is `(348,446)`. Warrior's panel
+comes out right — portrait correct, Level 1 / 30 / 10 / 20 / 25 — so everything
+up to here works.
+
+### Where the keystroke dies
+
+`--trace-api=PeekMessageA --trace-api-dedup` at the Enter Name screen:
+
+```
+[check_input] msg=0x100 wParam=0x47 lParam=0x0 packed=0x470100
+[check_input_hwnd] keyboard → 0 (main_hwnd)
+  out: msg=&{hwnd=0x00010002 msg=0x00000100 wP=0x00000047 lP=0x00000000}
+[API] IsDialogMessageA        <- called with hDlg=0x00010023
+[API] TranslateMessage
+[API] DispatchMessageA
+[API] DefWindowProcA          <- dropped here
+```
+
+`inputEventHwnd` (`lib/host-window.js:20`) routes keyboard to
+`get_focus_hwnd()` and falls back to `main_hwnd` when it is zero. It is zero.
+So the key is addressed to the *game* window `0x10002`, `IsDialogMessageA`
+correctly declines a message that belongs to neither the dialog nor its
+children, and `DefWindowProc` eats it. **The routing is right; the focus is
+missing.** Real Win98 behaves the same way with a NULL focus window, so this is
+not a place where we merely differ — it would fail on the real thing too, which
+means focus is supposed to be set and is not.
+
+### There is a real control to focus, and it is not a Static
+
+`node tools/parse-rsrc.js diabloui.dll --out=ui.json` then
+
+```sh
+jq -r '.dialogs | to_entries[] | "\(.key) [" +
+  ([.value.controls[] | "\(.className):\(.id):st=\(.style)"] | join(" ")) + "]"' ui.json
+```
+
+Two of the 29 templates carry a custom class:
+
+```
+2147486722 [DIABLOEDIT:1065:st=1342242816 Static:1038 Button:1054 Button:1056]
+2147487066 [DIABLOEDIT:1116:st=1342242816 Static:1038 Button:1054 Button:1056]
+```
+
+`0x50010000` = `WS_CHILD|WS_VISIBLE|WS_TABSTOP`. `DIABLOEDIT` is registered by
+diabloui at startup (`RegisterClassA wndProc=0x006ea130`), and the control is
+really created — confirmed at runtime:
+
+```
+CreateWindowExA(class="DIABLOEDIT", style=WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+  x=265, y=315, w=320, h=33, parent=hwnd:0x00010023, menu=hmenu:0x00000429)
+```
+
+So the target exists, is visible, is a tab stop, and is the dialog's first
+control. Diablo draws the typed text itself (the pump shows `GetDlgItem` →
+`GetWindowRect` → `ScreenToClient` → `InvalidateRect` on `0x10023/0x429` every
+frame) and reads it back with `GetDlgItemTextA`.
+
+### Storm owns the dialog manager, and it decided not to set focus
+
+Storm implements dialogs itself — `storm.dll` imports `EndDialog`, `GetDlgItem`,
+`GetDlgItemTextA`, `SetFocus` and `IsDialogMessageA` from USER32 but **no
+`CreateDialog*`/`DialogBox*` at all**, which is why tracing those APIs returns
+nothing. `diabloui.dll` reaches it through `SDlgDialogBox` /
+`SDlgDialogBoxParam` / `SDlgCreateDialogParam`.
+
+Storm's builder is at `storm+0x7000` (loaded at `0x6a3000`, origBase
+`0x15000000`, so runtime = orig - 0x15000000 + 0x6a3000). The relevant tail:
+
+```
+15007199  test esi,esi                 ; per created control
+1500719d  mov eax,[esp+0x10]           ; hDlg
+150071a1  mov ecx,[esp+0x2c]           ; current default-focus candidate
+150071a5  cmp eax,ecx / jnz            ; only the FIRST candidate wins
+150071ab  test [ebx],0x8000000         ; WS_DISABLED -> skip
+150071b6  "Static"     -> skip
+150071cc  "SDlgStatic" -> skip
+150071de  mov [esp+0x2c],esi           ; else: this control is default focus
+...
+15007232  push 0x110 / call SendMessageA   ; WM_INITDIALOG
+1500723e  test eax,eax
+15007240  jnz 0x1500724a
+15007242  mov dword [esp+0x2c],0x0     ; <-- FALSE means "app set focus itself"
+...
+1500734e  GetPropA(hDlg,"SDlg_EndDialog") ; nonzero -> skip show+focus
+15007365  mov eax,[esp+0x2c]
+15007369  test eax,eax / jz            ; nothing to focus -> skip
+1500736e  call SetFocus                ; ret lands at 0x15007374 = 0x006aa374
+```
+
+`--trace-at=0x6aa23e` reads EAX at `0x1500723e`, i.e. exactly what
+`WM_INITDIALOG` returned, once per dialog:
+
+```
+[TRACE-AT #2] batch=792  EIP=0x006aa23e EAX=0x00000001  EDX=0x00010006
+[TRACE-AT #3] batch=1040 EIP=0x006aa23e EAX=0x00000000  EDX=0x0001000e
+[TRACE-AT #4] batch=1640 EIP=0x006aa23e EAX=0x00000000  EDX=0x00010023  <- Enter Name
+```
+
+Dialog `0x10006` returns TRUE and duly gets `SetFocus(0x00010007)` at
+`ret=0x006aa374`. The Enter Name dialog `0x10023` returns **FALSE**, Storm
+zeroes its candidate, `SetFocus` is skipped, `$focus_hwnd` stays 0, and every
+keystroke afterwards is delivered to the wrong window.
+
+`SetFocus` fires only 4 times in the whole run — `0x10002`, `0x10003`,
+`0x10007` (all `ret=0x006aa374`, i.e. Storm's dialog manager) and `0x10008`
+(`ret=0x006eaf65` = `diabloui+0x9f65`, a small helper that does
+`old=GetFocus(); SetFocus(new); invalidate(old); invalidate(new)`). None of
+them names `0x10023` or its `DIABLOEDIT`.
+
+### Proof that focus is the whole story
+
+Clicking inside the Enter Name box before typing moves focus and changes the
+routing, and only the routing:
+
+```sh
+  ...,1850:mousemove:430:300,1880:mousedown:430:300,1920:mouseup:430:300,
+  1980:keydown:71,1990:keypress:103,2000:keyup:71,...
+# [check_input_hwnd] keyboard → focus 0x10023
+# [check_input] msg=0x102 wParam=0x67   <- WM_CHAR really is delivered
+```
+
+The characters now arrive at the *dialog*, and the field is still empty —
+because the dialog is not the control. `DIABLOEDIT` (`0x429`) is what has to
+hold the focus. That is consistent with the whole diagnosis rather than a second
+bug: we moved focus one level too high.
+
+### Note on `keypress`
+
+`run.js`'s `keypress` is `WM_CHAR` and `keydown` is `WM_KEYDOWN`; our
+`$handle_TranslateMessage` is a no-op that returns 1 and never synthesizes a
+character, because the host posts both messages itself. So a text-entry probe
+must inject **both**, in the browser's order and with the browser's codes —
+`keydown:71` (VK 'G') then `keypress:103` (char 'g'), matching the real session's
+`msg=0x100 wParam=0x47` / `msg=0x102 wParam=0x67`.
+
+### The next measurement
+
+The open question is narrow and specific: **why does Diablo's DLGPROC return
+FALSE from `WM_INITDIALOG` for `0x10023` (and `0x1000e`) but TRUE for
+`0x10006`?** Either it genuinely returns FALSE on the real thing and sets focus
+through a path we do not run, or our `SendMessageA(hDlg, WM_INITDIALOG, ...)`
+loses the DLGPROC's return value for this dialog. Both are testable from the
+same place: `--trace-at=0x6aa238` catches the arguments going in (Storm pushes
+`hDlg, 0x110, defaultFocusHwnd, lParam`), and the wParam it passes is the
+`DIABLOEDIT` HWND if Storm's candidate loop picked it — if wParam is `hDlg`
+instead, the candidate loop is what failed, not the return value, and the
+suspects are `$handle_GetClassNameA` for a `DIABLOEDIT` child and the
+`WS_DISABLED` bit in our window table.
+
+Do not "fix" this by giving keyboard input to `main_hwnd` when focus is zero:
+that is what already happens, and it is what real Windows does. The fix belongs
+wherever the `DIABLOEDIT` control fails to become the focus window.
