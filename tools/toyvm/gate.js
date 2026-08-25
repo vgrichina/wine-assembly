@@ -83,6 +83,17 @@ async function main() {
   const failures = [];
 
   for (const op of ops) {
+    // D8-DF were recorded on a board with no 8087 fitted, so the corpus
+    // documents ESC as a dummy memory read that changes nothing. The VM models
+    // a coprocessor, so agreeing with those vectors would mean NOT having an
+    // FPU. They pass today only because a store lands at an address the vector
+    // does not list and unlisted memory is not checked -- which is luck, not a
+    // result. tools/toyvm/fpu-check.js is the real gate for these.
+    if (/^D[89A-Fa-f]/i.test(op)) {
+      console.log(`${op}  ${' '.repeat(6)}skipped -- no 8087 on the recording board; `
+        + `see tools/toyvm/fpu-check.js`);
+      continue;
+    }
     const tests = await loadOpcode(op, { quiet: true });
     let opPass = 0, opTotal = 0, opUnimpl = 0;
 

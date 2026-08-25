@@ -29,6 +29,115 @@ const ALU_BY_CODE = {
 const CC_NAMES = ['o', 'no', 'b', 'ae', 'z', 'nz', 'be', 'a',
   's', 'ns', 'p', 'np', 'l', 'ge', 'le', 'g'];
 
+// The x87 escape opcodes, split the way the encoding splits: a ModRM below 0xC0
+// selects a memory form off the reg field, and one at 0xC0 or above is a flat
+// table off the whole byte.
+//
+// Both tables return null for the encodings that are not modelled rather than
+// guessing, so a program using them is reported instead of quietly running the
+// wrong instruction. What is missing is the transcendentals (F2XM1, FYL2X,
+// FPTAN, FPATAN, FSIN, FCOS -- wasm has no primitive for any of them), the
+// environment save/restore pair, and packed BCD.
+const FPU_ARITH = ['fadd', 'fmul', 'fcom', 'fcomp', 'fsub', 'fsubr', 'fdiv', 'fdivr'];
+
+function fpuMem(esc, reg) {
+  const nm = FPU_ARITH[reg];
+  // D8 and DC are the real forms, DA and DE the integer ones. FCOM/FCOMP get
+  // the same treatment, hence the `mi` prefix on the integer compare names.
+  if (esc === 0 || esc === 4 || esc === 2 || esc === 6) {
+    // FCOM and FCOMP sit inside the arithmetic group at /2 and /3 and take the
+    // same four formats, so they need no special case here.
+    return `${nm}_${{ 0: 'm32', 4: 'm64', 2: 'mi32', 6: 'mi16' }[esc]}`;
+  }
+  if (esc === 1) {   // D9: real load/store and the control word
+    if (reg === 0) return 'fld_m32';
+    if (reg === 2) return 'fst_m32';
+    if (reg === 3) return 'fstp_m32';
+    if (reg === 5) return 'fldcw';
+    if (reg === 7) return 'fnstcw';
+    return null;
+  }
+  if (esc === 3) {   // DB: 32-bit integer, and 80-bit extended
+    if (reg === 0) return 'fld_i32';
+    if (reg === 2) return 'fst_i32';
+    if (reg === 3) return 'fstp_i32';
+    if (reg === 5) return 'fld_m80';
+    if (reg === 7) return 'fstp_m80';
+    return null;
+  }
+  if (esc === 5) {   // DD: 64-bit real, and the status word
+    if (reg === 0) return 'fld_m64';
+    if (reg === 2) return 'fst_m64';
+    if (reg === 3) return 'fstp_m64';
+    if (reg === 7) return 'fnstsw_m';
+    return null;
+  }
+  if (esc === 7) {   // DF: 16-bit and 64-bit integer
+    if (reg === 0) return 'fld_i16';
+    if (reg === 2) return 'fst_i16';
+    if (reg === 3) return 'fstp_i16';
+    if (reg === 5) return 'fld_i64';
+    if (reg === 7) return 'fstp_i64';
+    return null;
+  }
+  return null;
+}
+
+function fpuReg(esc, b) {
+  const i = b & 7, hi = b & 0xF8;
+  const one = (nm) => [H[nm]];
+  const withI = (nm) => [H[nm], i];
+  // D8/DC/DE are the same eight arithmetic blocks; they differ in which
+  // register is the destination and whether a pop follows. DC and DE also swap
+  // the sense of SUB/SUBR and DIV/DIVR, which is not a typo in the manual.
+  if (esc === 0 || esc === 4 || esc === 6) {
+    const dst = esc === 0 ? 'st0i' : (esc === 6 ? 'sti0p' : 'sti0');
+    const swap = esc !== 0;   // DC/DE: E0 is SUBR, E8 is SUB
+    switch (hi) {
+      case 0xC0: return withI(`fadd_${dst}`);
+      case 0xC8: return withI(`fmul_${dst}`);
+      case 0xD0: return esc === 0 ? withI('fcom_st') : null;
+      // DE D9 is FCOMPP, which compares ST(0) with ST(1) and pops twice -- and
+      // i is 1 there, so the shared ST(i) operand is already the right one.
+      case 0xD8: return esc === 0 ? withI('fcomp_st')
+        : (esc === 6 && b === 0xD9 ? withI('fcompp_st') : null);
+      case 0xE0: return withI(`${swap ? 'fsubr' : 'fsub'}_${dst}`);
+      case 0xE8: return withI(`${swap ? 'fsub' : 'fsubr'}_${dst}`);
+      case 0xF0: return withI(`${swap ? 'fdivr' : 'fdiv'}_${dst}`);
+      case 0xF8: return withI(`${swap ? 'fdiv' : 'fdivr'}_${dst}`);
+      default: return null;
+    }
+  }
+  if (esc === 1) {   // D9
+    if (hi === 0xC0) return withI('fld_st');
+    if (hi === 0xC8) return withI('fxch');
+    const ONE = {
+      0xD0: 'fnop', 0xE0: 'fchs', 0xE1: 'fabs', 0xE4: 'ftst', 0xE5: 'fxam',
+      0xE8: 'fld1', 0xE9: 'fldl2t', 0xEA: 'fldl2e', 0xEB: 'fldpi',
+      0xEC: 'fldlg2', 0xED: 'fldln2', 0xEE: 'fldz',
+      0xF6: 'fdecstp', 0xF7: 'fincstp', 0xF8: 'fprem', 0xFA: 'fsqrt',
+      0xFC: 'frndint', 0xFD: 'fscale',
+    };
+    return ONE[b] ? one(ONE[b]) : null;
+  }
+  if (esc === 3) {   // DB: FNINIT and FNCLEX, plus the 8087-era enable pair
+    if (b === 0xE3) return one('finit');
+    if (b === 0xE2) return one('fclex');
+    if (b === 0xE0 || b === 0xE1 || b === 0xE4) return one('fnop');
+    return null;
+  }
+  if (esc === 5) {   // DD
+    if (hi === 0xC0) return withI('ffree');
+    if (hi === 0xD0) return withI('fst_st');
+    if (hi === 0xD8) return withI('fstp_st');
+    if (hi === 0xE0) return withI('fcom_st');    // FUCOM, minus the NaN rule
+    if (hi === 0xE8) return withI('fcomp_st');
+    return null;
+  }
+  if (esc === 7 && b === 0xE0) return one('fnstsw_ax');
+  return null;
+}
+
 // Which CPU the decoder is pretending to be. The SingleStepTests corpus is
 // recorded off an 8088, so conformance runs must stay at 8086 level or they
 // will "pass" instructions the real part does not have. Demos, on the other
@@ -570,6 +679,29 @@ function decodeOne(rd, cs, ip) {
       return null;
     }
 
+    // --- x87 escapes, D8-DF -------------------------------------------------
+    // The memory forms are a 6-way arithmetic group plus load/store, indexed by
+    // the ModRM reg field; the register forms are a flat table off the second
+    // byte. WAIT (0x9B) in front of any of them is the "wait for the
+    // coprocessor" pairing and means nothing here, so it decodes as NOP above.
+    case 0xD8: case 0xD9: case 0xDA: case 0xDB:
+    case 0xDC: case 0xDD: case 0xDE: case 0xDF: {
+      const esc = op & 7;
+      const b = at(n);
+      if (b < 0xC0) {                                  // memory form
+        const m = modrm();
+        const w = fpuMem(esc, m.reg);
+        if (!w) return null;
+        words.push(H[w], packEa(m), m.disp);
+        break;
+      }
+      n++;                                             // register form
+      const ws = fpuReg(esc, b);
+      if (!ws) return null;
+      words.push(...ws);
+      break;
+    }
+
     // --- INT ----------------------------------------------------------------
     case 0xCD: { const v = imm8(); words.push(H.int_imm, v, (start + n) & 0xFFFF); endsBlock = true; break; }
     // INT3 is the one-byte breakpoint form of INT 3.
@@ -578,6 +710,10 @@ function decodeOne(rd, cs, ip) {
     // the fall-through is the common case and stays in the same trace.
     case 0xCE: words.push(H.into, (start + n) & 0xFFFF); break;
     case 0xCF: words.push(H.iret); endsBlock = true; break;
+    // WAIT. It synchronises with a coprocessor that is not a separate part
+    // here, so there is nothing to wait for -- but the byte is everywhere,
+    // usually as the 9B of a `9B DB E3` FINIT.
+    case 0x9B: words.push(H.nop); break;
 
     // --- BCD / ASCII adjust --------------------------------------------------
     case 0x27: words.push(H.daa); break;

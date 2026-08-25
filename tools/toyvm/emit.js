@@ -1572,9 +1572,256 @@ function gen386() {
   }
 }
 
+// --- x87 handlers -----------------------------------------------------------
+// The escape opcodes are extremely regular: six arithmetic operations across
+// four memory formats and three register forms, then a long tail of one-off
+// register instructions. Generating the regular part is what keeps the tail
+// readable.
+function genFpu() {
+  // Memory sources, by the four formats the arithmetic takes. `pop` is the
+  // integer forms' sign extension; the reals need none.
+  const SRC_M = {
+    m32: '(call $fmr32 (local.get $t5) (local.get $t4))',
+    m64: '(call $fmr64 (local.get $t5) (local.get $t4))',
+    mi16: `(f64.convert_i32_s (i32.shr_s (i32.shl
+      (call $rd16 (local.get $t5) (local.get $t4)) (i32.const 16)) (i32.const 16)))`,
+    mi32: '(f64.convert_i32_s (call $rd32 (local.get $t5) (local.get $t4)))',
+  };
+  // ST(0) is the left operand of the `_st0i` form and the RIGHT operand of the
+  // `_sti0` form -- which is the whole reason FSUB and FSUBR both exist, and
+  // the reason DC E0 is FSUBR while DE E0 is FSUBRP.
+  const OPS = {
+    fadd: (a, b) => `(f64.add ${a} ${b})`,
+    fmul: (a, b) => `(f64.mul ${a} ${b})`,
+    fsub: (a, b) => `(f64.sub ${a} ${b})`,
+    fsubr: (a, b) => `(f64.sub ${b} ${a})`,
+    fdiv: (a, b) => `(f64.div ${a} ${b})`,
+    fdivr: (a, b) => `(f64.div ${b} ${a})`,
+  };
+  const ST0 = '(call $fst_get (i32.const 0))';
+  const STI = '(call $fst_get (local.get $t0))';
+
+  for (const [nm, f] of Object.entries(OPS)) {
+    for (const [fmt, src] of Object.entries(SRC_M)) {
+      h(`${nm}_${fmt}`, 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  (call $fst_set (i32.const 0) ${f(ST0, src)})
+`);
+    }
+    // ST(0) = ST(0) op ST(i)
+    h(`${nm}_st0i`, 1, `
+  ${ops(1)}
+  (call $fst_set (i32.const 0) ${f(ST0, STI)})
+`);
+    // ST(i) = ST(i) op ST(0), with and without the pop that follows it.
+    for (const p of ['', 'p']) {
+      h(`${nm}_sti0${p}`, 1, `
+  ${ops(1)}
+  (call $fst_set (local.get $t0) ${f(STI, ST0)})
+  ${p ? '(call $fpop)' : ''}
+`);
+    }
+  }
+
+  // Loads and stores.
+  for (const [fmt, ld] of Object.entries({
+    m32: '(call $fmr32 (local.get $t5) (local.get $t4))',
+    m64: '(call $fmr64 (local.get $t5) (local.get $t4))',
+    m80: '(call $fmr80 (local.get $t5) (local.get $t4))',
+    i16: `(f64.convert_i32_s (i32.shr_s (i32.shl
+      (call $rd16 (local.get $t5) (local.get $t4)) (i32.const 16)) (i32.const 16)))`,
+    i32: '(f64.convert_i32_s (call $rd32 (local.get $t5) (local.get $t4)))',
+    i64: `(f64.convert_i64_s (i64.or
+      (i64.extend_i32_u (call $rd32 (local.get $t5) (local.get $t4)))
+      (i64.shl (i64.extend_i32_u (call $rd32 (local.get $t5)
+        (call $off_add (local.get $t4) (i32.const 4)))) (i64.const 32))))`,
+  })) {
+    h(`fld_${fmt}`, 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  (call $fpush ${ld})
+`);
+  }
+  // The integer stores round through the control word first: an FISTP with RC
+  // set to truncate and one set to nearest differ by a pixel, every pixel.
+  // trunc_sat and not trunc: a NaN coordinate must produce a wrong number, not
+  // take the whole VM down with a trap.
+  for (const [fmt, store] of Object.entries({
+    m32: '(call $fmw32 (local.get $t5) (local.get $t4) (call $fst_get (i32.const 0)))',
+    m64: '(call $fmw64 (local.get $t5) (local.get $t4) (call $fst_get (i32.const 0)))',
+    m80: '(call $fmw80 (local.get $t5) (local.get $t4) (call $fst_get (i32.const 0)))',
+    i16: `(call $wr16 (local.get $t5) (local.get $t4)
+      (i32.trunc_sat_f64_s (call $fround (call $fst_get (i32.const 0)))))`,
+    i32: `(call $wr32 (local.get $t5) (local.get $t4)
+      (i32.trunc_sat_f64_s (call $fround (call $fst_get (i32.const 0)))))`,
+    i64: `(local.set $q (i64.trunc_sat_f64_s (call $fround (call $fst_get (i32.const 0)))))
+      (call $wr32 (local.get $t5) (local.get $t4) (i32.wrap_i64 (local.get $q)))
+      (call $wr32 (local.get $t5) (call $off_add (local.get $t4) (i32.const 4))
+        (i32.wrap_i64 (i64.shr_u (local.get $q) (i64.const 32))))`,
+  })) {
+    for (const p of ['', 'p']) {
+      h(`fst${p}_${fmt}`, 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  ${store}
+  ${p ? '(call $fpop)' : ''}
+`);
+    }
+  }
+
+  // The register-to-register moves.
+  h('fld_st', 1, `
+  ${ops(1)}
+  (call $fpush ${STI})
+`);
+  for (const p of ['', 'p']) {
+    h(`fst${p}_st`, 1, `
+  ${ops(1)}
+  (call $fst_set (local.get $t0) ${ST0})
+  ${p ? '(call $fpop)' : ''}
+`);
+  }
+  h('fxch', 1, `
+  ${ops(1)}
+  (local.set $f0 ${ST0})
+  (call $fst_set (i32.const 0) ${STI})
+  (call $fst_set (local.get $t0) (local.get $f0))
+`);
+
+  // Compares. FUCOM differs from FCOM only in which NaN raises an exception,
+  // and no exception is raised here, so they share an implementation.
+  for (const [fmt, src] of Object.entries({
+    m32: '(call $fmr32 (local.get $t5) (local.get $t4))',
+    m64: '(call $fmr64 (local.get $t5) (local.get $t4))',
+    mi16: `(f64.convert_i32_s (i32.shr_s (i32.shl
+      (call $rd16 (local.get $t5) (local.get $t4)) (i32.const 16)) (i32.const 16)))`,
+    mi32: '(f64.convert_i32_s (call $rd32 (local.get $t5) (local.get $t4)))',
+  })) {
+    for (const p of ['', 'p']) {
+      h(`fcom${p}_${fmt}`, 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  (call $fcmp ${ST0} ${src})
+  ${p ? '(call $fpop)' : ''}
+`);
+    }
+  }
+  for (const p of ['', 'p', 'pp']) {
+    h(`fcom${p}_st`, 1, `
+  ${ops(1)}
+  (call $fcmp ${ST0} ${STI})
+  ${p.length >= 1 ? '(call $fpop)' : ''}
+  ${p.length === 2 ? '(call $fpop)' : ''}
+`);
+  }
+
+  // The one-off register instructions.
+  const UN = {
+    fchs: `(f64.neg ${ST0})`,
+    fabs: `(f64.abs ${ST0})`,
+    fsqrt: `(f64.sqrt ${ST0})`,
+    frndint: `(call $fround ${ST0})`,
+  };
+  for (const [nm, e] of Object.entries(UN)) {
+    h(nm, 0, `(call $fst_set (i32.const 0) ${e})`);
+  }
+  // The seven constants FLD can produce without a memory operand.
+  const CONSTS = {
+    fld1: '1', fldl2t: '3.321928094887362', fldl2e: '1.4426950408889634',
+    fldpi: '3.141592653589793', fldlg2: '0.30102999566398120',
+    fldln2: '0.69314718055994531', fldz: '0',
+  };
+  for (const [nm, v] of Object.entries(CONSTS)) {
+    h(nm, 0, `(call $fpush (f64.const ${v}))`);
+  }
+
+  h('ftst', 0, `(call $fcmp ${ST0} (f64.const 0))`);
+  // FXAM reports what ST(0) IS rather than how it compares: C3/C2/C0 name the
+  // class and C1 carries the sign. Only the classes a demo can produce are
+  // distinguished -- empty, zero, normal, NaN.
+  h('fxam', 0, `
+  (local.set $t0 (i32.const ${(1 << 14) | (1 << 8)}))
+  (if (i32.and (global.get $ftag) (i32.shl (i32.const 1) (global.get $ftop)))
+    (then
+      (local.set $t0 (i32.const ${1 << 10}))
+      (if (f64.eq ${ST0} (f64.const 0)) (then (local.set $t0 (i32.const ${1 << 14}))))
+      (if (f64.ne ${ST0} ${ST0}) (then (local.set $t0 (i32.const ${1 << 8}))))))
+  (global.set $fsw (i32.or
+    (i32.and (global.get $fsw)
+      (i32.const ${~((1 << 14) | (1 << 10) | (1 << 9) | (1 << 8)) & 0xFFFF}))
+    (i32.or (local.get $t0)
+      (i32.shl (f64.lt ${ST0} (f64.const 0)) (i32.const 9)))))
+`);
+
+  // FSCALE multiplies by a power of two taken from ST(1); FPREM is the
+  // remainder with the quotient's low bits reported in the condition codes,
+  // which nothing in this corpus reads, so Q is left alone.
+  h('fscale', 0, `
+  (call $fst_set (i32.const 0) (f64.mul ${ST0}
+    (call $pow2 (i32.trunc_sat_f64_s (f64.trunc (call $fst_get (i32.const 1)))))))
+`);
+  h('fprem', 0, `
+  (local.set $t0 (i32.const 0))
+  (call $fst_set (i32.const 0) (f64.sub ${ST0}
+    (f64.mul (f64.trunc (f64.div ${ST0} (call $fst_get (i32.const 1))))
+             (call $fst_get (i32.const 1)))))
+  (global.set $fsw (i32.and (global.get $fsw) (i32.const ${~(1 << 10) & 0xFFFF})))
+`);
+
+  h('fnop', 0, '');
+  h('fincstp', 0, `
+  (global.set $ftop (i32.and (i32.add (global.get $ftop) (i32.const 1)) (i32.const 7)))
+`);
+  h('fdecstp', 0, `
+  (global.set $ftop (i32.and (i32.sub (global.get $ftop) (i32.const 1)) (i32.const 7)))
+`);
+  h('ffree', 1, `
+  ${ops(1)}
+  (global.set $ftag (i32.and (global.get $ftag) (i32.xor
+    (i32.shl (i32.const 1) (i32.and (i32.add (global.get $ftop) (local.get $t0))
+                                    (i32.const 7)))
+    (i32.const -1))))
+`);
+
+  // FNINIT is where nearly every corpus program stopped: it is the first FPU
+  // instruction a demo executes and it appears both bare (DB E3) and behind a
+  // WAIT (9B DB E3).
+  h('finit', 0, `
+  (global.set $ftop (i32.const 0))
+  (global.set $ftag (i32.const 0))
+  (global.set $fsw (i32.const 0))
+  (global.set $fcw (i32.const 0x037F))
+`);
+  h('fclex', 0, `
+  (global.set $fsw (i32.and (global.get $fsw) (i32.const 0x7F00)))
+`);
+  h('fldcw', 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  (global.set $fcw (call $rd16 (local.get $t5) (local.get $t4)))
+`);
+  h('fnstcw', 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  (call $wr16 (local.get $t5) (local.get $t4) (global.get $fcw))
+`);
+  // The status word carries TOP in bits 11-13, so it is assembled on the way
+  // out rather than kept in $fsw.
+  const SW = `(i32.or (i32.and (global.get $fsw) (i32.const 0xC7FF))
+    (i32.shl (global.get $ftop) (i32.const 11)))`;
+  h('fnstsw_ax', 0, `(call $rset16 (i32.const 0) ${SW})`);
+  h('fnstsw_m', 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  (call $wr16 (local.get $t5) (local.get $t4) ${SW})
+`);
+}
+
 genStrings();
 gen186StringIO();
 gen386();
+genFpu();
 genShifts();
 genSetmo();
 genShiftHandlers();
@@ -2055,7 +2302,143 @@ function helpers() {
   (if (i32.eq (i32.load offset=0 (local.get $a)) (local.get $k))
     (then (return (i32.load offset=4 (local.get $a)))))
   (i32.const 0))
-${SHIFT_FNS.join('')}`;
+${SHIFT_FNS.join('')}${fpuHelpers()}`;
+  return s;
+}
+
+// --- x87 --------------------------------------------------------------------
+// Eight f64 globals and a rotating TOP, which is what the register file
+// actually is: ST(i) names the global at (TOP + i) & 7, and a push moves TOP
+// rather than moving eight values. f64 and not the real 80-bit format -- the
+// 11 extra mantissa bits change the last digit of a fixed-point coordinate and
+// nothing a demo puts on screen, and modelling them would mean an f80 softfloat
+// under every arithmetic handler.
+//
+// $ftag is one bit per physical register, set when it holds something. The real
+// tag word is two bits and distinguishes zero and special from valid; only
+// empty-vs-occupied is ever read here (FFREE, FXAM, and the stack-fault check
+// that is not modelled).
+function fpuHelpers() {
+  const idx = '(i32.and (i32.add (global.get $ftop) (local.get $i)) (i32.const 7))';
+  let s = brTableFn('fget', '(param $i i32)', '(result f64)',
+    [...Array(8).keys()].map(i => `(return (global.get $st${i}))`));
+  s += brTableFn('fset', '(param $i i32) (param $v f64)', '',
+    [...Array(8).keys()].map(i => `(global.set $st${i} (local.get $v)) (return)`));
+  s += `
+;; ST(i), by the rotating top.
+(func $fst_get (param $i i32) (result f64) (call $fget ${idx}))
+(func $fst_set (param $i i32) (param $v f64) (call $fset ${idx} (local.get $v)))
+
+(func $fpush (param $v f64)
+  (global.set $ftop (i32.and (i32.sub (global.get $ftop) (i32.const 1)) (i32.const 7)))
+  (global.set $ftag (i32.or (global.get $ftag) (i32.shl (i32.const 1) (global.get $ftop))))
+  (call $fset (global.get $ftop) (local.get $v)))
+
+(func $fpop
+  (global.set $ftag (i32.and (global.get $ftag)
+    (i32.xor (i32.shl (i32.const 1) (global.get $ftop)) (i32.const -1))))
+  (global.set $ftop (i32.and (i32.add (global.get $ftop) (i32.const 1)) (i32.const 7))))
+
+;; Single and double precision in memory. Both go through the byte-at-a-time
+;; accessors so a 16-bit offset still wraps inside its segment.
+(func $fmr32 (param $seg i32) (param $off i32) (result f64)
+  (f64.promote_f32 (f32.reinterpret_i32 (call $rd32 (local.get $seg) (local.get $off)))))
+(func $fmw32 (param $seg i32) (param $off i32) (param $v f64)
+  (call $wr32 (local.get $seg) (local.get $off)
+    (i32.reinterpret_f32 (f32.demote_f64 (local.get $v)))))
+(func $fmr64 (param $seg i32) (param $off i32) (result f64)
+  (f64.reinterpret_i64 (i64.or
+    (i64.extend_i32_u (call $rd32 (local.get $seg) (local.get $off)))
+    (i64.shl (i64.extend_i32_u (call $rd32 (local.get $seg)
+                                 (call $off_add (local.get $off) (i32.const 4))))
+             (i64.const 32)))))
+(func $fmw64 (param $seg i32) (param $off i32) (param $v f64)
+  (local $b i64)
+  (local.set $b (i64.reinterpret_f64 (local.get $v)))
+  (call $wr32 (local.get $seg) (local.get $off) (i32.wrap_i64 (local.get $b)))
+  (call $wr32 (local.get $seg) (call $off_add (local.get $off) (i32.const 4))
+    (i32.wrap_i64 (i64.shr_u (local.get $b) (i64.const 32)))))
+
+;; 80-bit extended, the format FLD/FSTP m80 and the FPU's own save area use.
+;; Sign and a 15-bit exponent in the top word, an explicit 64-bit mantissa
+;; below it -- explicit, unlike every other IEEE format, so there is no hidden
+;; bit to restore. The value is mantissa * 2^(exp - 16383 - 63).
+(func $fmr80 (param $seg i32) (param $off i32) (result f64)
+  (local $m i64) (local $e i32) (local $v f64)
+  (local.set $m (i64.or
+    (i64.extend_i32_u (call $rd32 (local.get $seg) (local.get $off)))
+    (i64.shl (i64.extend_i32_u (call $rd32 (local.get $seg)
+                                 (call $off_add (local.get $off) (i32.const 4))))
+             (i64.const 32))))
+  (local.set $e (call $rd16 (local.get $seg) (call $off_add (local.get $off) (i32.const 8))))
+  (local.set $v (f64.mul
+    (f64.convert_i64_u (local.get $m))
+    (call $pow2 (i32.sub (i32.and (local.get $e) (i32.const 0x7FFF)) (i32.const 16446)))))
+  (if (i32.and (local.get $e) (i32.const 0x8000))
+    (then (local.set $v (f64.neg (local.get $v)))))
+  (local.get $v))
+
+(func $fmw80 (param $seg i32) (param $off i32) (param $v f64)
+  (local $b i64) (local $e i32) (local $m i64)
+  (local.set $b (i64.reinterpret_f64 (local.get $v)))
+  (local.set $e (i32.wrap_i64 (i64.and (i64.shr_u (local.get $b) (i64.const 52))
+                                       (i64.const 0x7FF))))
+  (local.set $m (i64.and (local.get $b) (i64.const 0xFFFFFFFFFFFFF)))
+  (if (i32.eqz (local.get $e))
+    ;; Zero or subnormal: an f64 subnormal is far below the 80-bit format's
+    ;; range boundary, so it stores as a zero-exponent value with no implicit
+    ;; bit rather than being renormalised.
+    (then (local.set $m (i64.shl (local.get $m) (i64.const 11))))
+    (else
+      (local.set $m (i64.or (i64.shl (local.get $m) (i64.const 11))
+                            (i64.const 0x8000000000000000)))
+      (local.set $e (i32.add (local.get $e) (i32.const ${16383 - 1023})))))
+  (call $wr32 (local.get $seg) (local.get $off) (i32.wrap_i64 (local.get $m)))
+  (call $wr32 (local.get $seg) (call $off_add (local.get $off) (i32.const 4))
+    (i32.wrap_i64 (i64.shr_u (local.get $m) (i64.const 32))))
+  (call $wr16 (local.get $seg) (call $off_add (local.get $off) (i32.const 8))
+    (i32.or (local.get $e)
+      (i32.wrap_i64 (i64.shr_u (i64.and (local.get $b) (i64.const 0x8000000000000000))
+                               (i64.const 48))))))
+
+;; 2^k, built out of the exponent field rather than by multiplying. Saturates
+;; to 0 and infinity outside f64's range, which is what the arithmetic that
+;; follows would produce anyway.
+(func $pow2 (param $k i32) (result f64)
+  (if (i32.lt_s (local.get $k) (i32.const -1074)) (then (return (f64.const 0))))
+  (if (i32.gt_s (local.get $k) (i32.const 1023))
+    (then (return (f64.reinterpret_i64 (i64.const 0x7FF0000000000000)))))
+  (if (i32.lt_s (local.get $k) (i32.const -1022))
+    ;; Subnormal territory: halve twice rather than build a denormal bit pattern.
+    (then (return (f64.mul (call $pow2 (i32.add (local.get $k) (i32.const 512)))
+                           (call $pow2 (i32.const -512))))))
+  (f64.reinterpret_i64 (i64.shl
+    (i64.extend_i32_u (i32.add (local.get $k) (i32.const 1023))) (i64.const 52))))
+
+;; Rounding, per the control word's RC field. 00 nearest-even, 01 down, 10 up,
+;; 11 truncate -- and 11 is not a corner case: a demo that converts floats to
+;; screen coordinates sets it once at startup and leaves it there, so getting
+;; this wrong moves every pixel it draws.
+(func $fround (param $v f64) (result f64)
+  (local $rc i32)
+  (local.set $rc (i32.and (i32.shr_u (global.get $fcw) (i32.const 10)) (i32.const 3)))
+  (if (i32.eqz (local.get $rc)) (then (return (f64.nearest (local.get $v)))))
+  (if (i32.eq (local.get $rc) (i32.const 1)) (then (return (f64.floor (local.get $v)))))
+  (if (i32.eq (local.get $rc) (i32.const 2)) (then (return (f64.ceil (local.get $v)))))
+  (f64.trunc (local.get $v)))
+
+;; The three condition-code bits FCOM writes, in status-word positions.
+;; Unordered sets all three, which is how a NaN compare is told from a real one.
+(func $fcmp (param $a f64) (param $b f64)
+  (local $c i32)
+  (local.set $c (i32.const ${(1 << 14) | (1 << 10) | (1 << 8)}))   ;; C3 C2 C0
+  (if (f64.eq (local.get $a) (local.get $b)) (then (local.set $c (i32.const ${1 << 14}))))
+  (if (f64.lt (local.get $a) (local.get $b)) (then (local.set $c (i32.const ${1 << 8}))))
+  (if (f64.gt (local.get $a) (local.get $b)) (then (local.set $c (i32.const 0))))
+  (global.set $fsw (i32.or
+    (i32.and (global.get $fsw) (i32.const ${~((1 << 14) | (1 << 10) | (1 << 9) | (1 << 8)) & 0xFFFF}))
+    (local.get $c))))
+`;
   return s;
 }
 
@@ -2089,6 +2472,12 @@ function preamble() {
 (import "host" "port_in" (func $port_in (param i32) (param i32) (result i32)))
 (import "host" "port_out" (func $port_out (param i32) (param i32) (param i32)))
 ${globals}
+;; The x87 register file: eight f64 values and a rotating TOP. See fpuHelpers.
+${[...Array(8).keys()].map(i => `(global $st${i} (mut f64) (f64.const 0))`).join('\n')}
+(global $ftop (mut i32) (i32.const 0))
+(global $ftag (mut i32) (i32.const 0))
+(global $fsw (mut i32) (i32.const 0))
+(global $fcw (mut i32) (i32.const 0x037F))
 ;; CR0 as this machine actually is: real mode (PE clear), ET set because the
 ;; 386 encodings are available, no paging. Nothing writes it -- see smsw.
 (global $cr0 (mut i32) (i32.const 0x0010))
@@ -2112,7 +2501,10 @@ const LOCALS = '(local $t0 i32) (local $t1 i32) (local $t2 i32) (local $t3 i32) 
   + '(local $t4 i32) (local $t5 i32) (local $t6 i32) (local $t7 i32) '
   // The only i64 locals in the VM: 32-bit MUL and DIV need 64 bits of product.
   // Everything else is deliberately i32, so these three are the whole cost.
-  + '(local $q i64) (local $d i64) (local $r i64)';
+  + '(local $q i64) (local $d i64) (local $r i64) '
+  // One f64 scratch, for FXCH. The x87 register file lives in globals like
+  // every other piece of guest state.
+  + '(local $f0 f64)';
 
 // ---------------------------------------------------------------------------
 // The six shells.
