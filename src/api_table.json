@@ -23761,5 +23761,23 @@
       }
     ],
     "ret": "u32"
+  },
+  {
+    "id": 2871,
+    "name": "FlushViewOfFile",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2929197479,
+    "args": [
+      {
+        "name": "lpBaseAddress",
+        "type": "ptr"
+      },
+      {
+        "name": "dwNumberOfBytesToFlush",
+        "type": "u32"
+      }
+    ],
+    "ret": "BOOL"
   }
 ]
