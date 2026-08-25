@@ -1,0 +1,349 @@
+#!/usr/bin/env node
+
+'use strict';
+
+// Every DOS binary in the corpus against every version of the VM: the four
+// interpreter dispatch shells AND the two JIT tiers, one row per program.
+//
+//   node tools/toyvm/sweep-dos.js --dir=/tmp/demos --out=/tmp/sweep.json
+//   node tools/toyvm/sweep-dos.js --dir=/tmp/demos --md=/tmp/sweep.md --reps=3
+//   node tools/toyvm/sweep-dos.js --one=DEMO.EXE            # child mode, one JSON line
+//
+// Why this exists rather than bench-dos.js --dir:
+//
+//   bench-dos.js   sweep-dos.js
+//   -----------    ------------
+//   4 shells       4 shells + tier 0/1/2 JIT, same program, same run
+//   one process    one child process per program
+//   prose          JSON per program, plus a markdown table
+//
+// The per-program child process is the load-bearing part. Over ~85 real 1993-95
+// demos a good fraction hit an unimplemented opcode, spin forever, or run the
+// decoder into unwritten memory, and in a single process the first one that
+// traps or wedges takes the whole sweep with it. A child per program turns
+// every one of those into a row that says what happened.
+//
+// Two independent measurements per program, and they answer different
+// questions. Do not average them together:
+//
+//   shells  ns per DISPATCH over the whole program run. This is the number the
+//           dispatch shootout reports, and it covers the real op mix including
+//           the host calls and the DOS services.
+//   tiers   ns per guest OP over the program's HOTTEST TRACE only, straight
+//           line, no side exits. It is an upper bound on what a trace JIT buys
+//           on the code it would actually compile, not a whole-program number.
+//
+// Both arms are interleaved rep by rep with the starting arm rotated and
+// reported as the minimum, because this box regularly sits at load 10-40 and a
+// sequential arm-then-arm layout there measures the machine. Both check that
+// their arms computed the same thing before printing any ratio.
+
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const { spawn } = require('child_process');
+
+function arg(name, fallback) {
+  const hit = process.argv.slice(2).find(a => a.startsWith(`--${name}=`));
+  return hit === undefined ? fallback : hit.slice(name.length + 3);
+}
+const flag = (n) => process.argv.slice(2).includes(`--${n}`);
+
+function count(s, d) {
+  if (s === undefined) return d;
+  const m = /^(\d+(?:\.\d+)?)([kmb]?)$/i.exec(String(s).trim());
+  if (!m) throw new Error(`not a count: ${s}`);
+  return Math.round(Number(m[1]) * ({ '': 1, k: 1e3, m: 1e6, b: 1e9 })[m[2].toLowerCase()]);
+}
+
+function findExes(dir) {
+  const out = [];
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true }).sort((a, b) => a.name < b.name ? -1 : 1)) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/\.(exe|com)$/i.test(e.name)) out.push(p);
+    }
+  };
+  walk(dir);
+  return out;
+}
+
+// --- child: one program, all versions ---------------------------------------
+async function runOne(exe, o) {
+  const { runDos } = require('./run-dos');
+  const { VARIANTS } = require('./emit');
+  const { jitTiers } = require('./trace-jit');
+  const quiet = () => {};
+  const row = { exe, name: path.basename(exe) };
+
+  // --- the four interpreter shells ---
+  const variants = o.variants;
+  const samples = new Map(), seen = new Map();
+  try {
+    for (let rep = 0; rep < o.reps; rep++) {
+      for (let i = 0; i < variants.length; i++) {
+        const v = variants[(i + rep) % variants.length];
+        const r = await runDos({
+          exe, variant: v, budget: o.budget, cpu: o.cpu, log: quiet, autoKey: true,
+        });
+        const sig = `${r.dispatched}/${r.frame}`;
+        if (!seen.has(v)) seen.set(v, { sig, r });
+        if (!samples.has(v)) samples.set(v, []);
+        samples.get(v).push(r.guestSecs * 1e9 / r.dispatched);
+      }
+    }
+  } catch (e) {
+    row.shells = { ok: false, reason: 'crash', detail: (e.message || String(e)).split('\n')[0] };
+  }
+
+  if (!row.shells) {
+    const any = [...seen.values()][0].r;
+    row.dispatched = any.dispatched;
+    row.handbacks = any.handbacks;
+    row.pixels = any.pixels;
+    row.frame = any.frame;
+    row.stuckAt = any.stuckAt || null;
+    // The byte the decoder refused, at the site it refused it. This is the
+    // corpus's own to-do list for the ISA, and it is the difference between
+    // "this program does not run" and "this program needs DAA".
+    row.gaveUp = [];
+    for (const [site] of (any.unimplemented || new Map())) {
+      const lin = ((parseInt(site.split(':')[0], 16) << 4)
+        + parseInt(site.split(':')[1], 16)) & 0xFFFFF;
+      row.gaveUp.push({ site, byte: any.vm.mem[lin].toString(16).padStart(2, '0') });
+    }
+    const sigs = new Set([...seen.values()].map(s => s.sig));
+    if (sigs.size > 1) {
+      row.shells = { ok: false, reason: 'arms-disagree', sigs: [...sigs] };
+    } else {
+      const ns = {};
+      for (const v of variants) {
+        const s = [...samples.get(v)].sort((a, b) => a - b);
+        ns[v] = { min: s[0], med: s[(s.length - 1) >> 1], max: s[s.length - 1] };
+      }
+      const base = ns[variants[0]].min;
+      row.shells = { ok: true, base: variants[0], ns, rel: Object.fromEntries(
+        variants.map(v => [v, base / ns[v].min])) };
+    }
+  }
+
+  // --- the two JIT tiers, on this program's hottest trace ---
+  try {
+    row.jit = await jitTiers(exe, {
+      budget: o.budget, slice: o.slice, cpu: o.cpu,
+      sampleAfter: o.sampleAfter, sampleFrom: o.sampleFrom,
+      bench: true, iters: o.iters, reps: o.reps, log: quiet,
+    });
+    delete row.jit.fingerprints;    // large, and the boolean is the finding
+  } catch (e) {
+    row.jit = { ok: false, reason: 'crash', detail: (e.message || String(e)).split('\n')[0] };
+  }
+  return row;
+}
+
+// --- parent -----------------------------------------------------------------
+function child(exe, o) {
+  return new Promise((resolve) => {
+    const args = [__filename, `--one=${exe}`, `--dispatches=${o.budget}`,
+      `--reps=${o.reps}`, `--iters=${o.iters}`, `--cpu=${o.cpu}`,
+      `--sample-after=${o.sampleAfter}`, `--sample-from=${o.sampleFrom}`,
+      `--variants=${o.variants.join(',')}`];
+    const p = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '', err = '';
+    p.stdout.on('data', (d) => { out += d; });
+    p.stderr.on('data', (d) => { err += d; });
+    const kill = setTimeout(() => p.kill('SIGKILL'), o.timeout * 1000);
+    p.on('close', (code, sig) => {
+      clearTimeout(kill);
+      const line = out.trim().split('\n').filter(l => l.startsWith('{')).pop();
+      if (line) { try { return resolve(JSON.parse(line)); } catch (e) { /* fall through */ } }
+      resolve({
+        exe, name: path.basename(exe),
+        shells: { ok: false, reason: sig === 'SIGKILL' ? 'timeout' : 'child-died',
+          detail: err.trim().split('\n').slice(-1)[0] || `exit ${code}` },
+        jit: { ok: false, reason: sig === 'SIGKILL' ? 'timeout' : 'child-died' },
+      });
+    });
+  });
+}
+
+function geomean(xs) {
+  const v = xs.filter(x => Number.isFinite(x) && x > 0);
+  return v.length ? Math.exp(v.reduce((a, b) => a + Math.log(b), 0) / v.length) : NaN;
+}
+
+function markdown(rows, variants) {
+  const L = [];
+  // A program the decoder bailed out of after a few hundred dispatches still
+  // produces four timings, and they are meaningless: at that length the number
+  // is startup and compilation, not dispatch. CAVEIRA.COM stopped on an
+  // unimplemented DAA after 13 guest bytes and reported 154 ns/dispatch, which
+  // is 8x the corpus norm and would have dragged the geomean on its own.
+  const MIN_DISPATCH = 1e6;
+  const all = rows.filter(r => r.shells && r.shells.ok);
+  const ok = all.filter(r => r.dispatched >= MIN_DISPATCH);
+  const tooShort = all.length - ok.length;
+  const jit = rows.filter(r => r.jit && r.jit.ok && r.jit.reason === 'benched');
+
+  L.push('| program | dispatches | px | ' + variants.map(v => `\`${v}\``).join(' | ')
+    + ' | hot trace | tier 1 | tier 2 |');
+  L.push('|---|---:|---:|' + variants.map(() => '---:|').join('') + '---|---:|---:|');
+  for (const r of rows) {
+    const cells = [];
+    if (r.shells && r.shells.ok) {
+      for (const v of variants) {
+        const rel = r.shells.rel[v];
+        cells.push(v === r.shells.base ? `${r.shells.ns[v].min.toFixed(2)} ns`
+          : `${rel >= 1 ? '+' : ''}${((rel - 1) * 100).toFixed(1)}%`);
+      }
+    } else {
+      cells.push(`_${(r.shells || {}).reason || 'n/a'}_`, ...variants.slice(1).map(() => ''));
+    }
+    const j = r.jit || {};
+    const trace = j.trace ? `${j.trace.ops} ops, ${j.trace.share.toFixed(0)}%` : '';
+    const t1 = j.speedup ? `${j.speedup.t01.toFixed(2)}x` : `_${j.reason || ''}_`;
+    const t2 = j.speedup ? `${j.speedup.t02.toFixed(2)}x` : '';
+    L.push(`| ${r.name} | ${r.dispatched ? (r.dispatched / 1e6).toFixed(1) + 'M' : ''} | `
+      + `${r.pixels === undefined ? '' : r.pixels} | ${cells.join(' | ')} | ${trace} | ${t1} | ${t2} |`);
+  }
+
+  L.push('');
+  const rel = (rows_, v) => {
+    const g = geomean(rows_.map(r => r.shells.rel[v]));
+    return v === variants[0] ? 'baseline' : `${g >= 1 ? '+' : ''}${((g - 1) * 100).toFixed(1)}%`;
+  };
+  L.push(`**geomean over ${ok.length} programs that ran ≥${(MIN_DISPATCH / 1e6).toFixed(0)}M `
+    + `dispatches** (baseline \`${variants[0]}\`, ${tooShort} excluded as too short): `
+    + variants.map(v => `\`${v}\` ${rel(ok, v)}`).join(', '));
+
+  // Split by whether the program drew anything. A demo that lights no pixels is
+  // not necessarily broken -- it may still be unpacking or precomputing -- but
+  // it is also where a program stuck in a two-instruction spin ends up, and
+  // such a program's ns/dispatch describes that spin rather than a demo. If the
+  // two halves agree, the ranking is not an artifact of the stuck ones.
+  const drew = ok.filter(r => r.pixels > 0);
+  const blank = ok.filter(r => !(r.pixels > 0));
+  if (drew.length && blank.length) {
+    L.push('');
+    L.push(`  ...of which the ${drew.length} that lit pixels: `
+      + variants.map(v => `\`${v}\` ${rel(drew, v)}`).join(', '));
+    L.push(`  ...and the ${blank.length} that did not: `
+      + variants.map(v => `\`${v}\` ${rel(blank, v)}`).join(', '));
+  }
+  if (jit.length) {
+    L.push('');
+    L.push(`**geomean over ${jit.length} programs with a benchable hot trace**: `
+      + `tier 0->1 ${geomean(jit.map(r => r.jit.speedup.t01)).toFixed(2)}x, `
+      + `tier 1->2 ${geomean(jit.map(r => r.jit.speedup.t12)).toFixed(2)}x, `
+      + `tier 0->2 ${geomean(jit.map(r => r.jit.speedup.t02)).toFixed(2)}x`);
+  }
+  // Programs whose hottest trace is byte-identical to another program's. These
+  // are not independent measurements: this corpus ships compressed, and the
+  // LZEXE/PKLITE depacker is the same code in every one of them, so a profile
+  // that starts at dispatch zero can report the same unpacking loop as the hot
+  // trace of a dozen unrelated demos. Counting those as a dozen data points
+  // would be counting one loop twelve times.
+  const byBytes = new Map();
+  for (const r of jit) {
+    const k = r.jit.trace.bytes;
+    if (!byBytes.has(k)) byBytes.set(k, []);
+    byBytes.get(k).push(r.name);
+  }
+  const shared = [...byBytes.entries()].filter(([, ns]) => ns.length > 1)
+    .sort((a, b) => b[1].length - a[1].length);
+  if (shared.length) {
+    L.push('');
+    L.push('**shared hot traces** (same guest bytes in more than one program — one loop, not N):');
+    for (const [bytes, names] of shared) {
+      L.push(`- \`${bytes.slice(0, 23)}…\` × ${names.length}: ${names.join(', ')}`);
+    }
+    const uniq = jit.filter(r => byBytes.get(r.jit.trace.bytes)[0] === r.name);
+    L.push('');
+    L.push(`**geomean counting each distinct trace once** (${uniq.length} traces): `
+      + `tier 0->1 ${geomean(uniq.map(r => r.jit.speedup.t01)).toFixed(2)}x, `
+      + `tier 1->2 ${geomean(uniq.map(r => r.jit.speedup.t12)).toFixed(2)}x, `
+      + `tier 0->2 ${geomean(uniq.map(r => r.jit.speedup.t02)).toFixed(2)}x`);
+  }
+
+  const tally = {};
+  for (const r of rows) {
+    const k = r.shells && r.shells.ok ? ((r.jit || {}).reason || 'no-jit') : `shells:${(r.shells || {}).reason}`;
+    tally[k] = (tally[k] || 0) + 1;
+  }
+  L.push('');
+  L.push('outcomes: ' + Object.entries(tally).sort((a, b) => b[1] - a[1])
+    .map(([k, n]) => `${k} ${n}`).join(', '));
+
+  // Which opcodes the corpus is actually blocked on, ranked. This is the ISA
+  // to-do list, ordered by how many programs each byte would unblock.
+  const opcodes = new Map();
+  for (const r of rows) {
+    for (const b of new Set((r.gaveUp || []).map(g => g.byte))) {
+      if (!opcodes.has(b)) opcodes.set(b, new Set());
+      opcodes.get(b).add(r.name);
+    }
+  }
+  const ranked = [...opcodes.entries()].sort((a, b) => b[1].size - a[1].size).slice(0, 12);
+  if (ranked.length) {
+    L.push('');
+    L.push('**opcodes the decoder refused**, by how many programs hit them:');
+    for (const [b, names] of ranked) {
+      L.push(`- \`0x${b}\` — ${names.size} program${names.size > 1 ? 's' : ''}`
+        + ` (${[...names].slice(0, 5).join(', ')}${names.size > 5 ? ', …' : ''})`);
+    }
+  }
+  return L.join('\n');
+}
+
+async function main() {
+  const { VARIANTS } = require('./emit');
+  const o = {
+    budget: count(arg('dispatches'), 8e6),
+    slice: count(arg('slice'), 20000),
+    sampleAfter: count(arg('sample-after'), 0),
+    sampleFrom: Number(arg('sample-from', 0.5)),
+    iters: count(arg('iters'), 20000),
+    reps: Number(arg('reps', 3)),
+    cpu: Number(arg('cpu', 386)),
+    timeout: Number(arg('timeout', 180)),
+    variants: arg('variants', VARIANTS.join(',')).split(',').filter(Boolean),
+  };
+
+  const one = arg('one');
+  if (one) {
+    const row = await runOne(one, o);
+    console.log(JSON.stringify(row));
+    return;
+  }
+
+  const dir = arg('dir');
+  const exes = process.argv.slice(2).filter(a => !a.startsWith('--'));
+  if (dir) exes.push(...findExes(dir));
+  if (!exes.length) {
+    console.log('usage: node tools/toyvm/sweep-dos.js --dir=D [--out=J] [--md=M] [--reps=] [--dispatches=]');
+    process.exit(2);
+  }
+
+  console.log(`${exes.length} programs x ${o.variants.length} shells + 3 JIT tiers`);
+  console.log(`load average ${os.loadavg()[0].toFixed(2)} at start\n`);
+  const rows = [];
+  const t0 = Date.now();
+  for (const [i, exe] of exes.entries()) {
+    const r = await child(exe, o);
+    rows.push(r);
+    const sh = r.shells && r.shells.ok ? `${r.shells.ns[o.variants[0]].min.toFixed(1)}ns` : (r.shells || {}).reason;
+    const jt = r.jit && r.jit.speedup ? `${r.jit.speedup.t02.toFixed(2)}x` : (r.jit || {}).reason;
+    console.log(`  [${String(i + 1).padStart(3)}/${exes.length}] ${r.name.padEnd(14)} `
+      + `shells ${String(sh).padEnd(14)} jit ${jt}`);
+    if (arg('out')) fs.writeFileSync(arg('out'), JSON.stringify({ opts: o, rows }, null, 1));
+    if (arg('md')) fs.writeFileSync(arg('md'), markdown(rows, o.variants));
+  }
+  console.log(`\ndone in ${((Date.now() - t0) / 1000).toFixed(0)}s, `
+    + `load average ${os.loadavg()[0].toFixed(2)} at end\n`);
+  console.log(markdown(rows, o.variants));
+}
+
+module.exports = { findExes, markdown, geomean };
+
+if (require.main === module) main().catch(e => { console.error(e.stack || String(e)); process.exit(1); });

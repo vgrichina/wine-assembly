@@ -39,7 +39,12 @@ const DEFAULT_ALLOC_TOP = 0x9000;
 // pointers are stored relative to the load segment and have to be fixed up
 // before anything far runs.
 function loadExe(mem, buf, { loadSeg = LOAD_SEG, pspSeg = PSP_SEG } = {}) {
-  if (buf[0] !== 0x4D || buf[1] !== 0x5A) throw new Error('not an MZ executable');
+  // Dispatch on the signature, not on the file extension. A .COM is a flat
+  // image with no header and no relocations -- it loads at PSP:0x100 with every
+  // segment register equal, which is why it needs no fixups at all. The corpus
+  // has both, and several .COM files are named .EXE and vice versa, so the
+  // first two bytes are the only trustworthy test.
+  if (buf[0] !== 0x4D || buf[1] !== 0x5A) return loadCom(mem, buf, { pspSeg });
   const u16 = (o) => buf.readUInt16LE(o);
   const lastPage = u16(0x02), pages = u16(0x04);
   const relocCount = u16(0x06), headerParas = u16(0x08);
@@ -78,6 +83,34 @@ function loadExe(mem, buf, { loadSeg = LOAD_SEG, pspSeg = PSP_SEG } = {}) {
     ss: (ss + loadSeg) & 0xFFFF, sp,
     ds: pspSeg, es: pspSeg,
     loadSeg, pspSeg, imageBytes,
+  };
+}
+
+// A .COM image: no header, no relocations, one segment. It is copied straight
+// to pspSeg:0x100 and entered there with CS=DS=ES=SS=pspSeg. SP starts at
+// 0xFFFE with a zero word pushed, so a `ret` exit lands on the PSP's INT 20h
+// exactly the way DOS arranges it.
+function loadCom(mem, buf, { pspSeg = PSP_SEG } = {}) {
+  const base = pspSeg << 4;
+  const max = 0x10000 - 0x100 - 2;                 // segment, less PSP and the pushed word
+  const image = buf.subarray(0, Math.min(buf.length, max));
+  mem.set(image, base + 0x100);
+
+  const psp = base;
+  mem[psp] = 0xCD; mem[psp + 1] = 0x20;
+  mem[psp + 2] = DEFAULT_ALLOC_TOP & 0xFF;
+  mem[psp + 3] = (DEFAULT_ALLOC_TOP >> 8) & 0xFF;
+  mem[psp + 0x80] = 0;
+  mem[psp + 0x81] = 0x0D;
+
+  const sp = 0xFFFE;
+  mem[base + sp] = 0; mem[base + sp + 1] = 0;      // ret -> PSP:0000 -> INT 20h
+
+  return {
+    cs: pspSeg, ip: 0x100,
+    ss: pspSeg, sp,
+    ds: pspSeg, es: pspSeg,
+    loadSeg: pspSeg, pspSeg, imageBytes: image.length, com: true,
   };
 }
 

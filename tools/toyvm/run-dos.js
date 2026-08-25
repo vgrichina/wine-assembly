@@ -69,7 +69,7 @@ async function runDos(o) {
     variant = 'tailcall', exe, budget = 200e6, slice = 2e6,
     traceInt = false, noCache = false, shots = null, shotEvery = 20,
     mouse = [0, 0], cpu = 386, report = false, log = console.log, autoKey = false,
-    tickScale = 1, sample = false,
+    tickScale = 1, sample = false, sampleAfter = 0,
   } = o;
   setCpuLevel(cpu);
 
@@ -148,6 +148,7 @@ async function runDos(o) {
   let lastKey = '';
   const entryHist = new Map();
   const ipSamples = new Map();
+  const ipSampleLog = [];          // flat [dispatched, ip, dispatched, ip, ...]
 
   while (dispatched < budget && !machine.exited) {
     const cs = vm.get('cs'), ip = vm.get('gip');
@@ -210,9 +211,21 @@ async function runDos(o) {
     // is a genuine program-counter sample -- unlike $gip, which only moves when
     // a trace ENDS and is therefore blind to exactly the hot loops that never
     // end. With a small slice this is a sampling profiler over the arena.
-    if (sample && left < 0) {
+    // `sampleAfter` skips the program's first N dispatches. Most of this corpus
+    // ships compressed (LZEXE/PKLITE), so a profile from dispatch zero finds
+    // the DEPACKER, not the demo -- and the depacker is the same handful of
+    // instructions in every one of them, which is how eight unrelated demos
+    // came back with byte-identical "hottest traces".
+    if (sample && left < 0 && dispatched >= sampleAfter) {
       const at = vm.raw('ip');
       ipSamples.set(at, (ipSamples.get(at) || 0) + 1);
+      // Each sample is also kept WITH the dispatch count it was taken at, so a
+      // caller can restrict the profile to the tail of the run after the fact.
+      // An absolute `sampleAfter` cannot do that job: pick 4M and every program
+      // that finishes in 3M reports no samples at all, which is how 27 programs
+      // vanished from a corpus sweep that was only trying to skip their
+      // unpackers. A fraction of each program's OWN run costs one array.
+      ipSampleLog.push(dispatched, at);
     }
 
     // Time moves with work, not with the wall clock: a demo that spins on the
@@ -245,7 +258,7 @@ async function runDos(o) {
     secs: Number(process.hrtime.bigint() - t0) / 1e9,
     guestSecs: Number(guestNs) / 1e9,
     dispatched, handbacks, ints, compiles, compiledWords, arenaResets,
-    stuckAt, entryHist, unimplemented, ipSamples, regions,
+    stuckAt, entryHist, unimplemented, ipSamples, ipSampleLog, regions,
     pixels: nonBlack(vm.mem), frame: frameHash(vm.mem),
   };
 }

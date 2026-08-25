@@ -55,8 +55,28 @@ function count(s, d) {
 // --- find the hot trace ------------------------------------------------------
 // $ip is sampled whenever a slice's budget expires, which is a true arena
 // program counter. Map each sample back to the block that contains it.
-async function findHotTrace(exe, { budget, slice, cpu }) {
-  const r = await runDos({ exe, budget, slice, cpu, sample: true, autoKey: true, log: () => {} });
+async function findHotTrace(exe, { budget, slice, cpu, sampleAfter = 0, sampleFrom = 0 }) {
+  const r = await runDos({
+    exe, budget, slice, cpu, sample: true, sampleAfter, autoKey: true, log: () => {},
+  });
+
+  // `sampleFrom` is a fraction of the run this program ACTUALLY did, applied
+  // after the fact. sampleFrom=0.5 profiles the second half, which is what it
+  // takes to see past a startup depacker in a corpus where programs differ in
+  // length by three orders of magnitude.
+  let samples = r.ipSamples;
+  if (sampleFrom > 0 && r.ipSampleLog.length) {
+    const cut = r.dispatched * sampleFrom;
+    samples = new Map();
+    for (let i = 0; i < r.ipSampleLog.length; i += 2) {
+      if (r.ipSampleLog[i] < cut) continue;
+      const at = r.ipSampleLog[i + 1];
+      samples.set(at, (samples.get(at) || 0) + 1);
+    }
+    // A program short enough that the tail holds nothing keeps its whole
+    // profile rather than reporting no samples at all.
+    if (samples.size === 0) samples = r.ipSamples;
+  }
 
   // arena address -> owning block, over every region compiled during the run.
   const heads = [];
@@ -77,7 +97,7 @@ async function findHotTrace(exe, { budget, slice, cpu }) {
 
   const perBlock = new Map();
   let total = 0;
-  for (const [at, n] of r.ipSamples) {
+  for (const [at, n] of samples) {
     const o = owner(at);
     if (!o) continue;
     const k = `${o.cs.toString(16)}:${o.bip.toString(16)}`;
@@ -107,27 +127,32 @@ function readTrace(mem32, addrWordIdx, maxOps = 512) {
   return { ops, end: 'too-long', nextWord: w };
 }
 
-async function main() {
-  const exe = process.argv[2];
-  if (!exe || exe.startsWith('--')) {
-    console.log('usage: node tools/toyvm/trace-jit.js <file.exe> [--bench] [--dispatches=] [--top=]');
-    process.exit(2);
-  }
-  const budget = count(arg('dispatches'), 15e6);
-  const slice = count(arg('slice'), 20000);
-  const cpu = Number(arg('cpu', 386));
-  const top = Number(arg('top', 6));
+// Profile one program, pick its hottest real trace and (optionally) price the
+// three tiers on it. Returns structure rather than prose so a corpus sweep can
+// call it; `log` is where the prose goes when a human is driving.
+//
+// Every way this can decline is a named `reason`, never a throw and never a
+// silent zero: `no-samples`, `padding`, `unfoldable` (a handler body whose
+// operand preamble does not match the shape tier 1 rewrites), `mismatch` (the
+// arms disagreed on registers or memory). A declined program is a fact about
+// the corpus, and the sweep reports it as one.
+async function jitTiers(exe, {
+  budget = 15e6, slice = 20000, cpu = 386, top = 6, sampleAfter = 0, sampleFrom = 0,
+  bench = false, iters = 20000, reps = 7, cx = 8, log = () => {},
+} = {}) {
+  log(`profiling ${path.basename(exe)} -- ${(budget / 1e6).toFixed(0)}M dispatches, `
+    + `${slice} per sample`
+    + (sampleAfter ? `, first ${(sampleAfter / 1e6).toFixed(1)}M not sampled` : '')
+    + (sampleFrom ? `, last ${((1 - sampleFrom) * 100).toFixed(0)}% of the run profiled` : '') + '\n');
+  const { r: rr, ranked, total } = await findHotTrace(exe,
+    { budget, slice, cpu, sampleAfter, sampleFrom });
+  if (!ranked.length) { log('no samples landed in a known block'); return { ok: false, reason: 'no-samples' }; }
 
-  console.log(`profiling ${path.basename(exe)} -- ${(budget / 1e6).toFixed(0)}M dispatches, `
-    + `${slice} per sample\n`);
-  const { r: rr, ranked, total } = await findHotTrace(exe, { budget, slice, cpu });
-  if (!ranked.length) { console.log('no samples landed in a known block'); return; }
-
-  console.log(`${total} samples over ${ranked.length} blocks\n`);
-  console.log('  share  cs:ip        arena      ops  ends with');
+  log(`${total} samples over ${ranked.length} blocks\n`);
+  log('  share  cs:ip        arena      ops  ends with');
   for (const b of ranked.slice(0, top)) {
     const t = readTrace(b.prog.words, (b.addr - b.prog.arenaBase) >> 2);
-    console.log(`  ${(100 * b.samples / total).toFixed(1).padStart(5)}%  `
+    log(`  ${(100 * b.samples / total).toFixed(1).padStart(5)}%  `
       + `${b.cs.toString(16)}:${b.bip.toString(16)}`.padEnd(12)
       + `0x${b.addr.toString(16)}`.padEnd(11)
       + `${String(t.ops.length).padStart(4)}  ${t.end}`);
@@ -146,45 +171,99 @@ async function main() {
   const hot = ranked[0];
   const t = readTrace(hot.prog.words, (hot.addr - hot.prog.arenaBase) >> 2);
   const bytes = guestBytes(rr, hot.cs, hot.bip, 16);
+  // Three signatures of a trace compiled out of unwritten memory, because one
+  // was not enough. The first version only caught a run of identical
+  // (handler, operands) pairs, and cchop.exe walked straight past it with an
+  // 11.5x "speedup": its bytes are 13/16 zero, but the zeros decode to
+  // `add [bx+si],al` at *advancing* addresses, so the operands differ even
+  // though the handler never does. Zero bytes and a run of one handler are
+  // each sufficient on their own.
+  const zeros = bytes.filter(b => b === 0).length;
+  const distinctOps = new Set(t.ops.map(o => o.fn)).size;
   const uniform = t.ops.length > 8
-    && new Set(t.ops.map(o => `${o.fn}:${o.args.join()}`)).size <= 2;
-  console.log(`\nhottest trace ${hot.cs.toString(16)}:${hot.bip.toString(16)} `
-    + `-- ${t.ops.length} ops, ${(100 * hot.samples / total).toFixed(1)}% of samples`);
-  console.log(`  guest bytes: ${bytes.map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
+    && (new Set(t.ops.map(o => `${o.fn}:${o.args.join()}`)).size <= 2
+      // hit the readTrace cap without ever reaching a terminator, and did it
+      // with one or two handlers: a straight run, not a loop body.
+      || (t.end === 'too-long' && distinctOps <= 2)
+      || zeros >= 12);
+  const share = 100 * hot.samples / total;
+  const trace = {
+    cs: hot.cs, ip: hot.bip, ops: t.ops.length, end: t.end,
+    share, samples: total,
+    bytes: bytes.map(b => b.toString(16).padStart(2, '0')).join(' '),
+  };
+  log(`\nhottest trace ${hot.cs.toString(16)}:${hot.bip.toString(16)} `
+    + `-- ${t.ops.length} ops, ${share.toFixed(1)}% of samples`);
+  log(`  guest bytes: ${trace.bytes}`);
   if (uniform || bytes.every(b => b === 0)) {
-    console.log('  *** this is decoded PADDING, not code -- the compiler walked into an');
-    console.log('  *** unwritten region. Not a JIT benchmark. Pick another program.');
-    return;
+    log('  *** this is decoded PADDING, not code -- the compiler walked into an');
+    log('  *** unwritten region. Not a JIT benchmark. Pick another program.');
+    return { ok: false, reason: 'padding', trace };
   }
-  console.log('');
+  log('');
   for (const [i, op] of t.ops.entries()) {
-    console.log(`  ${String(i).padStart(3)}  ${op.name.padEnd(18)} `
+    log(`  ${String(i).padStart(3)}  ${op.name.padEnd(18)} `
       + op.args.map(a => (a >>> 0).toString(16)).join(' '));
   }
   // What a stitcher can fold away, counted before anything is built.
-  const flagOps = t.ops.filter(o => /flags_|_flags/.test(HANDLERS[o.fn].body)).length;
-  const regCalls = t.ops.reduce((n, o) =>
+  trace.flagOps = t.ops.filter(o => /flags_|_flags/.test(HANDLERS[o.fn].body)).length;
+  trace.regCalls = t.ops.reduce((n, o) =>
     n + (HANDLERS[o.fn].body.match(/call \$rget|call \$rset/g) || []).length, 0);
-  console.log(`\n  ${t.ops.length} dispatches, ${t.ops.length} operand loads, `
+  log(`\n  ${t.ops.length} dispatches, ${t.ops.length} operand loads, `
     + `${t.ops.length} $ip advances   <- tier 1 removes these`);
-  console.log(`  ${flagOps} flag computations, ${regCalls} register-file calls`
+  log(`  ${trace.flagOps} flag computations, ${trace.regCalls} register-file calls`
     + `   <- only tier 2 removes these`);
 
-  if (!flag('bench')) return;
+  if (!bench) return { ok: true, reason: 'profiled', trace };
 
   // Real guest memory and a real register set, so the string ops address live
-  // data rather than zeroes. CX is clamped because the trace ends in rep movsb
-  // and an inherited 65535 would make that one op swamp the other seventy --
+  // data rather than zeroes. CX is clamped because a trace ending in rep movsb
+  // with an inherited 65535 would make that one op swamp the other seventy --
   // identically in every arm, but it would measure memcpy, not dispatch.
   hot.memSnapshot = rr.vm.mem.slice();
   hot.regSnapshot = {};
   for (const g of STATE) if (rr.vm.exports[`get_${g}`]) hot.regSnapshot[g] = rr.vm.raw(g);
-  hot.regSnapshot.cx = Number(arg('cx', 8));
+  hot.regSnapshot.cx = cx;
 
-  await benchTiers(exe, hot, t.ops, {
+  let bres;
+  try {
+    bres = await benchTiers(exe, hot, t.ops, { iters, reps, log });
+  } catch (e) {
+    // Two very different failures used to share this label. `unfoldable` is a
+    // handler body whose operand preamble drifted from ops()'s shape, which
+    // tier 1 refuses to guess at. `trap` is one of the arms actually faulting
+    // while running -- a guest address the straight-line arm reaches that the
+    // real control flow never would. Reporting the second as the first sent
+    // one program's row to the wrong column.
+    const fold = /cannot fold operands/.test(e.message || '');
+    log(`\ncannot build the tiers: ${e.message}`);
+    return { ok: false, reason: fold ? 'unfoldable' : 'trap', detail: e.message, trace };
+  }
+  if (!bres.agree) return { ok: false, reason: 'mismatch', trace, fingerprints: bres.fingerprints };
+  return { ok: true, reason: 'benched', trace, ...bres };
+}
+
+async function main() {
+  const exe = process.argv[2];
+  if (!exe || exe.startsWith('--')) {
+    console.log('usage: node tools/toyvm/trace-jit.js <file.exe> [--bench] [--json] [--dispatches=] [--top=]');
+    process.exit(2);
+  }
+  const json = flag('json');
+  const res = await jitTiers(exe, {
+    budget: count(arg('dispatches'), 15e6),
+    slice: count(arg('slice'), 20000),
+    cpu: Number(arg('cpu', 386)),
+    top: Number(arg('top', 6)),
+    sampleAfter: count(arg('sample-after'), 0),
+    sampleFrom: Number(arg('sample-from', 0)),
+    bench: flag('bench'),
     iters: count(arg('iters'), 20000),
     reps: Number(arg('reps', 7)),
+    cx: Number(arg('cx', 8)),
+    log: json ? () => {} : console.log,
   });
+  if (json) console.log(JSON.stringify({ exe, ...res }));
 }
 
 // --- tier 1: stitch the bodies ----------------------------------------------
@@ -433,14 +512,14 @@ function straightLineProgram(ops, base) {
   return words;
 }
 
-async function benchTiers(exe, hot, ops, { iters, reps }) {
+async function benchTiers(exe, hot, ops, { iters, reps, log = console.log }) {
   const { makeVm } = require('./vm');
   const { compileWat } = require(path.join(__dirname, '..', '..', 'lib', 'compile-wat.js'));
 
   const t1 = emitTier1(ops, {});
   const t2 = emitTier2(ops);
-  console.log(`\ntier 1: ${ops.length} bodies stitched, operands folded`);
-  console.log(`tier 2: + ${t2.propagated} operand constants propagated, `
+  log(`\ntier 1: ${ops.length} bodies stitched, operands folded`);
+  log(`tier 2: + ${t2.propagated} operand constants propagated, `
     + `${t2.folded} register-file calls folded to direct globals, `
     + `${t2.killed} dead flag computations removed`);
 
@@ -464,8 +543,18 @@ async function benchTiers(exe, hot, ops, { iters, reps }) {
     const bytes = await compileWat(() => moduleWat(src),
       { files: [file], cacheKey: `trace-jit:${name}:${hot.bip}` });
     const memory = new WebAssembly.Memory({ initial: isa.MEM_PAGES, maximum: isa.MEM_PAGES });
+    // These MUST match makeVm's defaults exactly. They did not: the shipped
+    // interpreter answers a 16-bit port read with 0xFFFF and this answered
+    // 0xFF, so any trace touching a word-wide port landed on different
+    // registers in tier 0 than in tiers 1 and 2 -- and the agreement check
+    // correctly refused to compare them. The bug was in the harness, not in
+    // the optimizer it was accusing.
     const inst = await WebAssembly.instantiate(new WebAssembly.Module(bytes), {
-      host: { memory, port_in: () => 0xFF, port_out: () => {} },
+      host: {
+        memory,
+        port_in: (_port, w) => (w === 16 ? 0xFFFF : 0xFF),
+        port_out: () => {},
+      },
     });
     const ex = inst.exports;
     arms.push({
@@ -500,11 +589,11 @@ async function benchTiers(exe, hot, ops, { iters, reps }) {
     fingerprints.push({ name: arm.name, regs, mem: memHash(arm.vm ? arm.vm.mem : arm.mem) });
   }
   const agree = new Set(fingerprints.map(f => `${f.regs}|${f.mem}`)).size === 1;
-  console.log(`\nagreement after ${iters} iterations: ${agree ? 'ALL THREE MATCH' : 'MISMATCH'}`);
+  log(`\nagreement after ${iters} iterations: ${agree ? 'ALL THREE MATCH' : 'MISMATCH'}`);
   if (!agree) {
-    for (const f of fingerprints) console.log(`  ${f.name}\n    ${f.regs}\n    mem=${f.mem}`);
-    console.log('\nnot comparable -- an arm that computes something else is not faster.');
-    return;
+    for (const f of fingerprints) log(`  ${f.name}\n    ${f.regs}\n    mem=${f.mem}`);
+    log('\nnot comparable -- an arm that computes something else is not faster.');
+    return { agree: false, fingerprints };
   }
 
   const best = new Map(arms.map(a => [a.name, Infinity]));
@@ -520,20 +609,28 @@ async function benchTiers(exe, hot, ops, { iters, reps }) {
   }
 
   const b0 = best.get('tier 0  interpreter');
-  console.log(`\nns per guest op (min of ${reps} interleaved reps, ${iters} iterations each):`);
+  log(`\nns per guest op (min of ${reps} interleaved reps, ${iters} iterations each):`);
   for (const a of arms) {
     const ns = best.get(a.name);
-    console.log(`  ${a.name.padEnd(22)} ${ns.toFixed(2)} ns`
+    log(`  ${a.name.padEnd(22)} ${ns.toFixed(2)} ns`
       + (a.name.startsWith('tier 0') ? '   (baseline)'
         : `   ${(b0 / ns).toFixed(2)}x`));
   }
   const t1ns = best.get('tier 1  stitched'), t2ns = best.get('tier 2  optimized');
-  console.log(`\n  tier 0 -> 1  ${(b0 / t1ns).toFixed(2)}x   (dispatch, operand load, ip advance)`);
-  console.log(`  tier 1 -> 2  ${(t1ns / t2ns).toFixed(2)}x   (register folding + dead flags)`);
-  console.log(`  tier 0 -> 2  ${(b0 / t2ns).toFixed(2)}x   total`);
+  log(`\n  tier 0 -> 1  ${(b0 / t1ns).toFixed(2)}x   (dispatch, operand load, ip advance)`);
+  log(`  tier 1 -> 2  ${(t1ns / t2ns).toFixed(2)}x   (register folding + dead flags)`);
+  log(`  tier 0 -> 2  ${(b0 / t2ns).toFixed(2)}x   total`);
+  return {
+    agree: true, fingerprints,
+    ns: { tier0: b0, tier1: t1ns, tier2: t2ns },
+    speedup: { t01: b0 / t1ns, t12: t1ns / t2ns, t02: b0 / t2ns },
+    opt: { propagated: t2.propagated, folded: t2.folded, killed: t2.killed },
+    iters, reps,
+  };
 }
 
 module.exports = {
+  jitTiers, benchTiers,
   findHotTrace, readTrace, foldOperands, emitTier1, emitTier2,
   foldRegisterFile, killDeadFlags, moduleWat, memHash, straightLineProgram,
 };

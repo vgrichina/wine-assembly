@@ -223,6 +223,115 @@ read, so a wait always completes in two reads. On real hardware those polls
 would block until the beam came round, which is the *other* reason none of these
 are time-starved here.)
 
+## 5.2 The whole corpus, and both JIT tiers
+
+§5's table is ten programs picked because they run well. `tools/toyvm/sweep-dos.js`
+runs **all 94**, against every version of the VM there is — the four dispatch
+shells and the three JIT tiers from
+[toyvm-trace-jit.md](toyvm-trace-jit.md) — one child process per program, so a
+program that traps or wedges becomes a row instead of taking the sweep with it.
+
+```bash
+node tools/toyvm/sweep-dos.js --dir=/tmp/demos --dispatches=12m \
+  --sample-from=0.5 --reps=5 --out=/tmp/sweep.json --md=/tmp/sweep.md
+```
+
+The shells, over the 50 programs that run at least 1M dispatches:
+
+| shell | geomean vs `tailcall` | the 17 that lit pixels | the 33 that did not |
+|---|---:|---:|---:|
+| `tailcall` | baseline | baseline | baseline |
+| `repl_tailcall` | **+10.5%** | **+11.3%** | **+10.0%** |
+| `calls` | −4.1% | −3.4% | −4.4% |
+| `switch` | +11.9% | +5.4% | +15.5% |
+
+**`repl_tailcall` is the one result that does not move.** Ten programs gave
++10.6%, and three independent 94-program sweeps gave +9.7%, +9.9% and +10.5%.
+It is the same conclusion §5 reached, now with 5x the corpus and a split that
+shows it does not depend on whether the program was drawing anything.
+
+`switch` is the opposite: +14.9%/+12.3%/+11.9% across the three sweeps, and the
+pixels split pulls it apart — +15.5% on programs that render nothing against
++5.4% on programs that do. A program that renders nothing is disproportionately
+one sitting in a tight spin, which is exactly the shape §5.1 already identified
+as `switch`'s best case. **Do not read the corpus geomean as `switch`'s value on
+a working demo**; the 17-program column is the one that answers that.
+
+And the JIT tiers, over the 34 programs with a hot trace that survived the
+padding check:
+
+| | all 34 | 23 **distinct** traces |
+|---|---:|---:|
+| tier 0 → 1 (stitching) | 1.97x | 1.83x |
+| tier 1 → 2 (optimizing) | 1.68x | 1.76x |
+| tier 0 → 2 | 3.31x | **3.22x** |
+
+The right-hand column is the honest one, and the reason it exists is §5.3.
+
+### 5.3 Half the corpus shares one hot trace
+
+Eight programs came back with a byte-identical hottest trace, and three more
+shared a second one:
+
+```
+d1 ed 4a 74 f4 73 f8 33…  x8   AKM-ZORL, CMA_SHRT, CORE-ADV, RUNME2ND,
+                               DASH, DIESEL, DRAGON, BKSNOTE
+d1 ed 4a 74 f1 73 f5 33…  x3   MINTRO, cd2, B-STEEL
+```
+
+`d1 ed` = `shr bp,1`, `4a` = `dec dx`, `74` = `jz`: this is the LZEXE/PKLITE
+bit-reader. Nearly everything in this corpus ships compressed, and the depacker
+is the *same code* in all of them. A profile that starts at dispatch zero
+therefore reports one decompression loop as the hot trace of a dozen unrelated
+demos — and averaging that as a dozen data points is counting one loop twelve
+times. `--sample-from=0.5` profiles only the tail of each program's own run and
+the sweep reports shared traces explicitly, so both numbers are visible.
+
+Two things it took a wrong answer to learn. An absolute `--sample-after=4m`
+does **not** work: 27 programs never reach 4M dispatches and silently reported
+no samples at all. And even profiling the back half, the depacker still wins in
+eight programs — those spend more than half of a 12M-dispatch run unpacking, or
+never get past it.
+
+### 5.4 What the sweep says about coverage
+
+Of 94 programs, 50 run ≥1M dispatches and **17 light a pixel**. That is the
+real coverage number, and it is much lower than "94 programs benchmarked"
+suggests. The sweep prints the corpus's own ISA to-do list, ranked by how many
+programs each refused byte would unblock:
+
+| byte | what it is | programs |
+|---|---|---:|
+| `0x67` | 32-bit address override in real mode | 7 |
+| `0xdb`, `0xde`, `0x9b` | x87 — the VM still has none | 5, 2, 2 |
+| `0x0f` | two-byte opcodes | 4 |
+| `0x66` | operand-size override | 3 |
+| `0xf0`, `0xfe`, `0xff`, `0x82`, `0x27`, `0xcc` | LOCK, INC/DEC r/m8, group 5, group 1, DAA, INT3 | 1–2 each |
+
+`0x67` is the same gap §7 named, now counted: it is the single highest-value
+opcode in the corpus.
+
+Three harness defects had to be fixed before any of these numbers meant
+anything, and each one had been quietly producing a plausible wrong answer:
+
+* **`.COM` files did not load at all** — 13 programs failed as "not an MZ
+  executable". A `.COM` is a flat image at `PSP:0x100`; `loadExe` now dispatches
+  on the signature rather than the extension, because the corpus has `.COM`
+  files named `.EXE`.
+* **The JIT arms answered a 16-bit port read with `0xFF`** where the
+  interpreter answers `0xFFFF`. Every trace touching a word-wide port landed on
+  different registers, and the agreement check correctly refused to compare
+  them — reporting a harness bug as `mismatch`, which reads as an optimizer bug.
+* **The padding detector missed zero-byte traces.** It caught runs of identical
+  (handler, operands) pairs, but `cchop.exe`'s zeros decode to
+  `add [bx+si],al` at *advancing* addresses, so the operands differ while the
+  handler does not — and it scored **11.5x**, the largest speedup in the corpus,
+  on decoded emptiness. Zero bytes are now sufficient on their own.
+
+The general lesson is the one already in [CLAUDE.md](../CLAUDE.md) about
+`--handler-hist`: **an arena-side profile cannot tell code from padding**, and
+the biggest number in a sweep is the one most likely to be an artifact.
+
 ## 6. Reading this against the microbench
 
 [loop-microbench-harness.md](loop-microbench-harness.md) already carries the
