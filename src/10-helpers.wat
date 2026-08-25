@@ -1652,15 +1652,21 @@
   ;; this for WAT-internal paint triggers that don't go through Win32
   ;; InvalidateRect; using $paint_flag_set alone leaves the rgn empty and the
   ;; region pump silently drops the paint.
-  ;; The erase comes with it. Every caller here is a system-driven invalidation
-  ;; -- a window being created, shown, or uncovered -- and USER marks those
-  ;; update regions for erase, which is what makes BeginPaint answer
-  ;; ps.fErase = TRUE for a class with no background brush. Only an app's own
-  ;; InvalidateRect(hwnd, rc, FALSE) leaves the bit alone.
+  ;; The erase does NOT come with it. USER can mark a system-driven
+  ;; invalidation for erase because there every window owns its own surface;
+  ;; here children share the top-level back-canvas, so a queued erase that is
+  ;; handed out after the children have already painted floods the class brush
+  ;; straight over their pixels and nothing repaints them. WordPad's two
+  ;; toolbars and its status bar came out as bare COLOR_BTNFACE bands that way
+  ;; (test-wordpad-toolbar 21/23: no bitmap icons, no sunken edge on the
+  ;; checked button), and the native-control drain also defers any child whose
+  ;; ancestor has the bit set, which cost test-nested-child-paint its
+  ;; grandchild and test-parent-child-paint-order its child paint entirely.
+  ;; Erase stays with the invalidations that are paired with a paint:
+  ;; CreateWindowExA's initial seed and an app's own InvalidateRect(..., TRUE).
   (func $paint_flag_set_inv (param $hwnd i32)
     (if (i32.eqz (local.get $hwnd)) (then (return)))
     (call $paint_flag_set (local.get $hwnd))
-    (call $nc_flags_set (local.get $hwnd) (i32.const 2))
     (call $update_invalidate_full (local.get $hwnd))
     (call $host_invalidate (local.get $hwnd)))
 
