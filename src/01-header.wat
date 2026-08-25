@@ -1461,6 +1461,19 @@
   ;; meaning anything.
   (global $block_budget (mut i32) (i32.const 0))
 
+  ;; How much of its block budget the last run() call actually spent, and what
+  ;; stopped it. The host sizes a batch in blocks, but a batch is free to end
+  ;; long before that budget is gone -- a blocking API yields, a WM_TIMER sets
+  ;; $yield_flag, EIP goes to zero -- and from the outside a batch that ran 1000
+  ;; blocks and one that ran 12 look identical. That difference is the whole
+  ;; question behind "why is this region of the run so much slower per batch
+  ;; than that one": genuine work per block, or a batch that keeps bailing after
+  ;; a handful of blocks and paying the host's per-batch overhead each time.
+  ;; Halt reasons: 1 budget exhausted, 2 EIP zero, 3 $yield_flag,
+  ;; 4 blocking-wait $yield_reason, 5 a debug facility (watchpoint/breakpoint).
+  (global $last_run_blocks (mut i32) (i32.const 0))
+  (global $last_run_halt   (mut i32) (i32.const 0))
+
   ;; Where to pick a block up when its step quantum ran out part-way through.
   ;; $next returns without dispatching once $steps hits zero, leaving $ip on the
   ;; op it declined to run; $run used to answer that by looking $eip up again,

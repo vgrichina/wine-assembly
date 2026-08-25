@@ -19,8 +19,10 @@
     (local.set $saved_budget (global.get $block_budget))
     (global.set $block_budget (local.get $max_blocks))
     (block $halt (loop $main
-      (br_if $halt (i32.le_s (global.get $block_budget) (i32.const 0)))
-      (br_if $halt (i32.eqz (global.get $eip)))
+      (if (i32.le_s (global.get $block_budget) (i32.const 0))
+        (then (global.set $last_run_halt (i32.const 1)) (br $halt)))
+      (if (i32.eqz (global.get $eip))
+        (then (global.set $last_run_halt (i32.const 2)) (br $halt)))
       ;; A block whose quantum expired part-way through. Give it a fresh one and
       ;; carry on from the op $next declined to run — looking $eip up again would
       ;; restart the block and re-run everything before that op. No block is
@@ -42,6 +44,7 @@
       (if (global.get $yield_flag)
         (then
           (global.set $yield_flag (i32.const 0))
+          (global.set $last_run_halt (i32.const 3))
           (br $halt)))
       ;; Everything below to the end of this block is a debug facility, and all
       ;; of them are off in a normal run. $dbg_any is the OR of the six arming
@@ -53,6 +56,7 @@
           (if (i32.ne (call $watch_load (global.get $watch_addr)) (global.get $watch_val))
             (then
               (global.set $watch_val (call $watch_load (global.get $watch_addr)))
+              (global.set $last_run_halt (i32.const 5))
               (br $halt)))))
       ;; EIP breakpoint. On halt we set $bp_skip_once so re-entry (same $eip)
       ;; dispatches the block once before the bp can fire again — without this,
@@ -67,7 +71,9 @@
             (then (global.set $bp_first_caller (global.get $dbg_prev_eip))))
           (if (global.get $bp_skip_once)
             (then (global.set $bp_skip_once (i32.const 0)))
-            (else (global.set $bp_skip_once (i32.const 1)) (br $halt)))))
+            (else (global.set $bp_skip_once (i32.const 1))
+                  (global.set $last_run_halt (i32.const 5))
+                  (br $halt)))))
       ;; EIP hit counters (passive): increment count for any slot whose addr==eip.
       ;; Early-out via $hit_count_n (0 when no --count= flags active).
       (if (global.get $hit_count_n)
@@ -108,7 +114,7 @@
               (unreachable)))))
 
       ;; Exit if a blocking API yielded. JS owns resuming these waits.
-      (br_if $halt (i32.or
+      (if (i32.or
         (i32.eq (global.get $yield_reason) (i32.const 1))
         (i32.or
           (i32.eq (global.get $yield_reason) (i32.const 5))
@@ -116,7 +122,8 @@
             (i32.eq (global.get $yield_reason) (i32.const 7))
             (i32.or
               (i32.eq (global.get $yield_reason) (i32.const 8))
-              (i32.eq (global.get $yield_reason) (i32.const 9)))))))
+              (i32.eq (global.get $yield_reason) (i32.const 9))))))
+        (then (global.set $last_run_halt (i32.const 4)) (br $halt)))
       ;; The 16-bit twin of the thunk-zone check below. A far call or return
       ;; into the thunk segment is caught at the transfer, but EIP can also be
       ;; *parked* there — a modal message box owns the task until it is
@@ -202,7 +209,17 @@
       (global.set $steps (i32.const 1000))
       (call $next)
       (br $main)))
+    ;; What this call actually got through. $block_budget can end up negative --
+    ;; a fold retires k blocks in one go and subtracts all k -- so this can read
+    ;; slightly above the budget it was given; that is honest, not a wrap.
+    (global.set $last_run_blocks
+      (i32.sub (local.get $max_blocks) (global.get $block_budget)))
     (global.set $block_budget (local.get $saved_budget)))
+
+  ;; Blocks the last run() call retired, and the halt reason behind it (see the
+  ;; $last_run_halt comment in 01-header.wat for the codes).
+  (func (export "get_last_run_blocks") (result i32) (global.get $last_run_blocks))
+  (func (export "get_last_run_halt")   (result i32) (global.get $last_run_halt))
 
   ;; Hook for test/test-shift-equivalence.js, which checks the unified
   ;; $do_shift against an independent model of the x86 semantics over every

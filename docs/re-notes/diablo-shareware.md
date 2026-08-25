@@ -2008,13 +2008,26 @@ calls against 62 surface Lock/Unlock pairs**. The player is pacing itself off
 the clock and the clock is running away from it.
 
 **The headless CPU is emulated far too slow relative to the guest clock.** The
-guest-visible speed is `BATCH_SIZE / TICK_MS_PER_BATCH` steps per guest-second:
+guest-visible speed is `BATCH_SIZE / TICK_MS_PER_BATCH` — but **`BATCH_SIZE` is
+a budget of blocks, not steps, and a block is not a fixed amount of work**, so
+that ratio is not a constant. Measured here with `--batch-stats` and
+`--handler-hist-thread=0`:
 
-| config | steps per guest-second | vs a real Pentium |
-|---|---|---|
-| defaults (1000 steps / 200ms) | 5,000 | ~20,000x too slow |
-| `--tick-ms-per-batch=20` | 50,000 | ~2,000x too slow |
-| `--batch-size=200000 --tick-ms-per-batch=50` | 4,000,000 | ~25x too slow |
+| region | ops | blocks | ops/block | ops per guest-second at the 200ms default |
+|---|---|---|---|---|
+| Smacker intro (batches 1000-6000) | 34.1M | 4.95M | **6.9** | ~34,500 |
+| main menu (batches 38400+) | 335.3M | 1.19M | **282** | ~1.4M |
+
+A real Pentium retires ~100M instructions a second, so the intro is being run on
+a machine roughly 3,000x too slow *and the menu on one only 70x too slow* — the
+same emulator, the same build, 41x apart. Ops per second is flat at 7-9M in both
+regions, so nothing is actually slower in the menu; only the unit changed.
+
+**The coupling runs the wrong way.** Guest time advances once per batch, but
+work per batch collapses precisely when an app sits in a tight polling loop
+waiting for time to pass — short blocks, few ops, clock advancing at full speed.
+The more the app waits, the less CPU it is granted per guest-second. That is the
+feedback loop behind the frozen logo.
 
 Anything that paces itself against `timeGetTime`/`GetTickCount` — intro videos,
 animated menus, fades — therefore renders a fraction of a frame per guest second

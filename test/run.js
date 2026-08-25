@@ -291,10 +291,10 @@ const TRACE_BATCH_TIMING = hasFlag('trace-batch-timing'); // --trace-batch-timin
 // the guest slice's wall time, printed at exit.
 //
 // This exists because --frame-stats cannot see decode cost. Its `interval
-// batches` series is the load-immune one, but a batch is a budget of x86
-// *steps*, and decoding a block advances no EIP -- so a batch that re-decodes a
-// thousand blocks and a batch that decodes none retire the same number of steps
-// and are indistinguishable in that series. The cost lands in host CPU, i.e. in
+// batches` series is the load-immune one, but a batch is a budget of *blocks*,
+// and decoding a block advances no EIP -- so a batch that re-decodes a thousand
+// blocks and a batch that decodes none retire the same number of blocks and are
+// indistinguishable in that series. The cost lands in host CPU, i.e. in
 // `interval ms`, which is the load-sensitive one.
 //
 // Decodes per batch is both: deterministic (identical across runs of one build)
@@ -302,6 +302,21 @@ const TRACE_BATCH_TIMING = hasFlag('trace-batch-timing'); // --trace-batch-timin
 // collision re-decodes in bursts; those bursts are the jank. Read the p99 and
 // the storm share, not the mean -- the mean is just total decodes over batches,
 // which the exit line already prints.
+// --batch-stats[=FROM_BATCH]: how many blocks each batch actually retired, and
+// why it stopped, printed at exit.
+//
+// `--batch-size=N` is a budget of N *blocks*, not steps, and a batch is free to
+// end long before it spends that budget: a blocking API yields, a WM_TIMER sets
+// $yield_flag, EIP goes to zero. From the outside a batch that ran 1000 blocks
+// and one that ran 12 look the same, so a region that is slow per batch is
+// ambiguous -- it is either genuine work per block, or a batch that keeps
+// bailing after a handful of blocks and paying the host's per-batch overhead
+// every time. Those two want opposite fixes, and this is the series that tells
+// them apart. Deterministic, so it is safe to diff between builds; the halt
+// histogram beside it names what is cutting the batches short.
+const BATCH_STATS_ARG = getArg('batch-stats', null);
+const BATCH_STATS = BATCH_STATS_ARG !== null || hasFlag('batch-stats');
+const BATCH_STATS_FROM = Math.max(0, parseInt(BATCH_STATS_ARG, 10) || 0);
 const DECODE_STATS_ARG = getArg('decode-stats', null);
 const DECODE_STATS = DECODE_STATS_ARG !== null || hasFlag('decode-stats');
 const DECODE_STATS_FROM = Math.max(0, parseInt(DECODE_STATS_ARG, 10) || 0);
@@ -1703,6 +1718,10 @@ async function main() {
   // One entry per executed batch, for --decode-stats.
   const decodeStatsDecodes = [];
   const decodeStatsSliceUs = [];
+  // One entry per executed batch, for --batch-stats; halts is indexed by the
+  // reason code $run reports (see $last_run_halt in src/01-header.wat).
+  const batchStatsBlocks = [];
+  const batchStatsHalts = [0, 0, 0, 0, 0, 0];
   const recordFrame = (series) => {
     const at = process.hrtime.bigint();
     // Outside the measurement window, still move the anchor forward. Skipping
@@ -6685,6 +6704,12 @@ async function main() {
       }
     }
 
+    if (BATCH_STATS && batch >= BATCH_STATS_FROM && instance.exports.get_last_run_blocks) {
+      batchStatsBlocks.push(instance.exports.get_last_run_blocks() | 0);
+      const why = instance.exports.get_last_run_halt() | 0;
+      if (why >= 0 && why < batchStatsHalts.length) batchStatsHalts[why]++;
+    }
+
     if (DECODE_STATS && batch >= DECODE_STATS_FROM) {
       // Wrap-safe: get_cache_stores is a u32 counter read as unsigned.
       const decodesAfter = instance.exports.get_cache_stores
@@ -7424,6 +7449,39 @@ if (VERBOSE) {
       + ' reading it as a frame rate');
     report('host flush    (surface upload)', frameStats.flush,
       `what the browser HUD counts as fps; in the CLI it is gated by the repaint loop (--repaint-every=${REPAINT_EVERY}), so treat it as the harness's cadence unless it agrees with the present count above`);
+  }
+
+  if (BATCH_STATS) {
+    const n = batchStatsBlocks.length;
+    if (n < 2) {
+      console.log(`\nBatch pacing: ${n} batches executed — too few to pace`);
+    } else {
+      const q = (arr, p) => {
+        const v = arr.slice().sort((a, b) => a - b);
+        return v[Math.min(v.length - 1, Math.floor(p * v.length))];
+      };
+      const total = batchStatsBlocks.reduce((a, b) => a + b, 0);
+      const full = batchStatsBlocks.filter(b => b >= BATCH_SIZE).length;
+      const tiny = batchStatsBlocks.filter(b => b < BATCH_SIZE / 100).length;
+      const names = ['(none)', 'budget spent', 'EIP zero', 'yield_flag',
+                     'blocking wait', 'debug facility'];
+      console.log(BATCH_STATS_FROM
+        ? `\nBatch pacing (from batch ${BATCH_STATS_FROM}):`
+        : '\nBatch pacing:');
+      console.log(`  blocks retired per batch (budget ${BATCH_SIZE}): total ${total} over ${n} batches,`
+        + ` mean ${(total / n).toFixed(1)}`);
+      console.log(`      p50 ${q(batchStatsBlocks, 0.5)}, p90 ${q(batchStatsBlocks, 0.9)},`
+        + ` p99 ${q(batchStatsBlocks, 0.99)}, max ${q(batchStatsBlocks, 1)}`);
+      console.log(`      batches that spent the whole budget: ${full} of ${n}`
+        + ` (${(100 * full / n).toFixed(1)}%);`
+        + ` batches that retired under 1% of it: ${tiny} (${(100 * tiny / n).toFixed(1)}%)`);
+      console.log('      why each batch stopped: '
+        + batchStatsHalts.map((c, i) => c ? `${names[i]} ${c}` : null)
+            .filter(Boolean).join(', '));
+      console.log('      A low p50 with "budget spent" rare means the batches are not doing the work'
+        + ' you sized them for — the host pays its per-batch cost either way, so the guest is'
+        + ' being charged overhead for blocks it never ran.');
+    }
   }
 
   if (DECODE_STATS) {
