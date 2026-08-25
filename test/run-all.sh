@@ -316,6 +316,7 @@ E2E=(
   test/test-notepad-find.js
   test/test-notepad-menu.js
   test/test-notepad-menu-items.js
+  test/test-class-menu-from-dll.js
   test/test-notepad-typing-latency.js
   test/test-notepad-typing-scroll.js
   test/test-notepad-scrollbar-cursor.js

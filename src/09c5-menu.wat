@@ -2269,9 +2269,14 @@
     (local $slot i32) (local $tbl i32) (local $old i32)
     (local $entry i32) (local $bytes_g i32) (local $bytes_w i32)
     (local $size i32) (local $total i32) (local $newg i32)
-    (local $source_id i32) (local $from_last_load i32)
+    (local $source_id i32) (local $from_last_load i32) (local $ctx_hinst i32)
     (local $version i32) (local $headerOffset i32) (local $items_w i32)
     (local.set $source_id (local.get $menu_id))
+    ;; Consume the one-shot class-menu module (see $class_menu_hinst). Taken
+    ;; here rather than at the resolve site so an early return below can't leave
+    ;; it armed for an unrelated later menu_load.
+    (local.set $ctx_hinst (global.get $class_menu_hinst))
+    (global.set $class_menu_hinst (i32.const 0))
     (local.set $slot (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $slot) (i32.const -1)) (then (return)))
     (local.set $tbl (call $menu_data_table_addr (local.get $slot)))
@@ -2320,20 +2325,31 @@
         ;; recent LoadMenuA/W call; direct class-menu pointers remain ANSI in
         ;; the current executable as before.
         (if (local.get $from_last_load)
-          (then (call $push_rsrc_ctx (global.get $last_load_menu_hinst))))
+          (then (call $push_rsrc_ctx (global.get $last_load_menu_hinst)))
+          (else
+            (if (local.get $ctx_hinst)
+              (then (call $push_rsrc_ctx (local.get $ctx_hinst))))))
         (local.set $entry
           (if (result i32) (i32.and (local.get $from_last_load)
                 (global.get $last_load_menu_wide))
             (then (call $find_resource_w (i32.const 4) (local.get $menu_id)))
             (else (call $find_resource (i32.const 4) (local.get $menu_id)))))
-        (if (local.get $from_last_load) (then (call $pop_rsrc_ctx)))
-        (if (i32.eqz (local.get $entry)) (then (return)))
+        ;; $entry and the RVA it points at are both relative to the module the
+        ;; lookup ran in, so the context has to stay pushed until the bytes are
+        ;; resolved — popping first silently re-based a DLL menu on the EXE.
+        (if (i32.eqz (local.get $entry))
+          (then
+            (if (i32.or (local.get $from_last_load) (i32.ne (local.get $ctx_hinst) (i32.const 0)))
+              (then (call $pop_rsrc_ctx)))
+            (return)))
         ;; data entry: i32 RVA, i32 size
         (local.set $bytes_g (i32.add (call $r_base)
                               (i32.load (call $g2w (i32.add (call $r_base) (local.get $entry))))))
         (local.set $size (i32.load (call $g2w (i32.add (call $r_base)
                                                         (i32.add (local.get $entry) (i32.const 4))))))
-        (local.set $bytes_w (call $g2w (local.get $bytes_g)))))
+        (local.set $bytes_w (call $g2w (local.get $bytes_g)))
+        (if (i32.or (local.get $from_last_load) (i32.ne (local.get $ctx_hinst) (i32.const 0)))
+          (then (call $pop_rsrc_ctx)))))
     (if (i32.lt_u (local.get $size) (i32.const 8)) (then (return)))
     (local.set $version (i32.load16_u (local.get $bytes_w)))
     (local.set $headerOffset (i32.load16_u (i32.add (local.get $bytes_w) (i32.const 2))))
