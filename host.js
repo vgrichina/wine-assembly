@@ -420,8 +420,23 @@ class WineAssembly {
     // of times a second to show sixty. This counter ticks once per repaint
     // opportunity and caps presentation at one canvas upload per frame; using
     // rAF rather than a timer also means it stops while the tab is hidden.
+    //
+    // It has to stop when the app does. This loop closes over `self`, so as
+    // long as it is scheduled the browser holds the whole WineHost alive --
+    // and a WineHost owns a 512MB shared WebAssembly.Memory (8192 pages,
+    // initial == maximum, so committed at instantiate). Left
+    // running, every launch in a session leaked half a gigabyte that nothing
+    // could ever collect: measured 3 launch/close cycles = 1536MB still
+    // alive, with runningApps empty and the desktop looking perfectly
+    // healthy. A phone does not have three of those, so the second or third
+    // app a visitor opened failed with "Out of memory" -- which is what
+    // "sometimes it closes properly, sometimes it doesn't" actually was.
     if (typeof requestAnimationFrame === 'function') {
-      const tick = () => { self._dxFrameSeq = (self._dxFrameSeq || 0) + 1; requestAnimationFrame(tick); };
+      const tick = () => {
+        if (self._stopped) return;
+        self._dxFrameSeq = (self._dxFrameSeq || 0) + 1;
+        requestAnimationFrame(tick);
+      };
       requestAnimationFrame(tick);
     }
 
@@ -838,6 +853,11 @@ class WineAssembly {
     // Create shared memory externally
     this.memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
     imports.host.memory = this.memory;
+    // Kept so stop() can put it back to null. Every closure in getImports()
+    // captures this object, and several of them outlive the app (the audio
+    // unlock listener on window, the DX present hook), so `host.memory` is
+    // the reference that actually pins the 512MB -- see _releaseGuestMemory.
+    this._hostImports = imports.host;
 
     this.instance = await WebAssembly.instantiate(wasmModule, imports);
     if (this.instance.exports.set_process_id) {
@@ -1466,6 +1486,11 @@ class WineAssembly {
   // screen. Repainting last, once, fixes both.
   stop(options = {}) {
     this.running = false;
+    // Read by every self-rescheduling loop this host owns. `running` cannot
+    // do that job: it goes false and true again over a host's life, and a
+    // loop that restarted itself on the second launch would be back to
+    // holding a dead host forever.
+    this._stopped = true;
     this._cleanupAudio();
     // A deferred last-window teardown has nothing left to finish, and leaving
     // the deadline armed would run this a second time.
@@ -1497,6 +1522,93 @@ class WineAssembly {
     // will repaint once at the end.
     if (options.repaint !== false && this.renderer && this.renderer.repaint) {
       this.renderer.repaint();
+    }
+    // Deferred by a turn, not because the release is slow, but because most
+    // stops come from *inside* a guest slice -- h.exit during a WASM call, a
+    // trap, the no-windows-left check -- and the step that called us still has
+    // `self.instance.exports.get_eip()` ahead of it on the way out. Dropping
+    // the references under it would turn a clean exit into a TypeError.
+    //
+    // Browser only. The CLI reads the guest's memory and exports *after* the
+    // run is over -- --png, --dump, the hit counts and the MMX tally at exit
+    // -- and it gets its memory back by exiting the process, so it has
+    // nothing to gain here and everything to lose.
+    if (typeof window !== 'undefined' && !this._releaseTimer) {
+      this._releaseTimer = setTimeout(() => {
+        this._releaseTimer = null;
+        if (this._stopped) this._releaseGuestMemory();
+      }, 0);
+    }
+  }
+
+  // Every launch commits a 512MB guest memory (`initial === maximum` and
+  // `shared`, so it is all resident the moment it is instantiated). Nothing
+  // reclaims that unless the WebAssembly.Memory itself becomes unreachable --
+  // and the renderer is a page-lifetime singleton that has been handed this
+  // host's instance and memory, so closing an app left the whole half gigabyte
+  // pinned. Measured in Chrome with forced GC between cycles: launch/close
+  // Notepad three times and the page holds 3 live guest memories / 1536MB,
+  // while every check the shell makes reads healthy (runningApps 0, no
+  // windows, icons visible). On a phone the second or third launch simply
+  // fails -- `REJECT Out of memory` -- which is the "can't launch new apps"
+  // state, and the only way out is a reload.
+  //
+  // So drop the references this host owns, and the renderer's four only if
+  // they still point at us: a later app has already overwritten them with its
+  // own and must not be unwired by a straggling stop().
+  _releaseGuestMemory() {
+    this._deleteOwnSurfacePresentations();
+    const renderer = this.renderer;
+    if (renderer) {
+      if (renderer.wasm === this.instance) renderer.wasm = null;
+      if (renderer.mainWasm === this.instance) renderer.mainWasm = null;
+      if (renderer.wasmMemory === this.memory) renderer.wasmMemory = null;
+      if (renderer.mainWasmMemory === this.memory) renderer.mainWasmMemory = null;
+      // Set by _setKeyboardInputOwner (lib/renderer-input.js) and never
+      // cleared: _restoreKeyboardInputOwner only ever replaces it, so with no
+      // windows left the last app to hold focus keeps its instance alive.
+      if (renderer._keyboardInputWasm === this.instance) renderer._keyboardInputWasm = null;
+      if (renderer._keyboardInputMemory === this.memory) renderer._keyboardInputMemory = null;
+    }
+    // The two paths a heap snapshot actually blamed after everything above
+    // was already cleared: window's "unlock" audio listener -> _readVfsFile's
+    // scope -> host imports -> .memory, and wineShell.stopAllApps -> a stale
+    // WineAssembly -> _presentDxIfDirty -> the same host imports object.
+    if (this._hostImports) this._hostImports.memory = null;
+    this._hostImports = null;
+    // Holds the same memory and instance plus one per worker thread.
+    this.threadManager = null;
+    this.instance = null;
+    this.memory = null;
+    this._wasmModule = null;
+    // `ctx` closes over `self`, and is handed to worker imports and the help
+    // system, both of which outlive the run loop.
+    this.hostCtx = null;
+    this._helpCtx = null;
+  }
+
+  // A guest that exits without deleting its GDI surfaces leaves entries in the
+  // shared presentation map, and each one holds a GdiSurface whose `storage`
+  // is a Uint8Array over the guest's SharedArrayBuffer -- so one undeleted
+  // surface pins the whole 512MB just as surely as the instance does. The map
+  // is shared with worker threads and, in multi-app mode, with other apps, so
+  // ownership is decided by the only thing that cannot be faked: which memory
+  // the surface's storage is a view of.
+  _deleteOwnSurfacePresentations() {
+    const gdi = this.hostCtx && this.hostCtx.sharedGdi;
+    const presentations = gdi && gdi.surfacePresentations;
+    const del = this._hostImports && this._hostImports.gdi_surface_delete;
+    if (!presentations || typeof del !== 'function' || !this.memory) return;
+    const buffer = this.memory.buffer;
+    const mine = [];
+    for (const [id, presentation] of presentations) {
+      const storage = presentation && presentation.surface && presentation.surface.storage;
+      if (storage && storage.buffer === buffer) mine.push(id);
+    }
+    // Deleting detaches window/overlay/desktop surfaces and drops the
+    // canvas's _waCanonicalPresentation, which is the other half of the leak.
+    for (const id of mine) {
+      try { del(id); } catch (_) {}
     }
   }
 
@@ -1585,6 +1697,7 @@ class WineAssembly {
   run(stepsPerSlice = 100000) {
     this.stepsPerSlice = stepsPerSlice;
     this.running = true;
+    this._stopped = false;
     const self = this;
     const step = async () => {
       if (!self.running) return;

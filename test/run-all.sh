@@ -79,6 +79,16 @@ UNIT=(
   test/test-mci-get-device-id.js
   test/test-thread-manager.js
   test/test-mm-timer-callback.js
+  test/test-run-budget-completes-resume.js
+  test/test-cmp-memory-jb.js
+  test/test-browser-waveout-pump.js
+  test/test-dll-init-order.js
+  test/test-getmessage-teardown-quit.js
+  test/test-gpu-backend.js
+  test/test-keyboard-message-lparam.js
+  test/test-opengl-fixed-function.js
+  test/test-opengl-swapbuffers.js
+  test/test-renderer-dialog-button-queue.js
   test/test-nc-flags-message-wake.js
   test/test-browser-step-scheduler.js
   test/test-console-input.js
@@ -355,9 +365,14 @@ E2E=(
   test/test-diablo-shareware-gameplay.js
   test/test-heroes2-gameplay.js
   test/test-heroes3-demo-launch.js
+  test/test-heroes3-demo-gameplay.js
   test/test-heroes3-demo-installer.js
   test/test-quake2-demo-installer.js
   test/test-quake2-demo-web.js
+  test/test-quake2-gl-switch-web.js
+  test/test-quake2-gl-web.js
+  test/test-quake2-menu-keys-web.js
+  test/test-jazz2-demo-web.js
   test/test-diablo2-demo-installer.js
   test/test-diablo2-demo-installed.js
   test/test-diablo2-demo-gameplay.js
@@ -365,6 +380,8 @@ E2E=(
   test/test-half-life-uplink-web.js
   test/test-web-notepad-close-desktop.js
   test/test-web-keyboard-shift-cleared.js
+  test/test-web-app-close-frees-memory.js
+  test/test-web-failed-launch-recovers.js
   test/test-web-single-app-quit.js
   test/test-win16-jigsawed.js
   test/test-win16-jigsawed-menus.js

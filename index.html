@@ -1156,6 +1156,11 @@ Resource-aware Win98 emulator
   <script src="lib/apps.js?v=2"></script>
   <script src="lib/browser-input.js?v=3"></script>
   <script src="lib/mobile-keyboard.js?v=2"></script>
+  <!-- Inert unless ?diag is on the URL. It watches the one invariant a phone
+       desktop has -- a tap at the first icon's centre lands on that icon --
+       and posts the failing state to /ios-report, because the machine this
+       breaks on is the one machine with no debugger. -->
+  <script src="lib/phone-diag.js?v=1"></script>
   <script src="lib/vfs-persistence.js?v=1"></script>
   <script src="lib/browser-shell.js?v=6"></script>
   <script src="lib/pe.js?v=1"></script>

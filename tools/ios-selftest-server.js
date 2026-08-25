@@ -77,6 +77,22 @@ function print(stamp, item) {
     console.log(`${stamp}  ${item.text}`);
     return;
   }
+  // lib/phone-diag.js posts one of these twice a second while a phone is
+  // being driven. Printed raw they are unreadable at that rate, and the
+  // verdict is the only part worth watching live -- the rest is there for
+  // when it says DEAD-END, and the full record is in --log either way.
+  if (item && item.verdict) {
+    const kb = `kb ${item.kbInset}/${item.kbShift}`;
+    const zoom = item.vv ? `z${item.vv.scale}` : 'z?';
+    const head = `${stamp}  ${item.verdict.padEnd(14)} run ${item.running} win ${item.windows} ` +
+      `mem ${item.mem || '?'}  ` +
+      `icon@${item.iconTop} hit ${item.hit}  ${zoom} scroll ${item.scroll.join(',')} ` +
+      `${kb} wrap "${item.wrapTransform}"  [${item.classes}]`;
+    console.log(head);
+    if (item.why) console.log(`${' '.repeat(stamp.length)}  WHY ${item.why}`);
+    if (item.verdict === 'DEAD-END') console.log(`${' '.repeat(stamp.length)}  ${JSON.stringify(item)}`);
+    return;
+  }
   console.log(`${stamp}  ${JSON.stringify(item)}`);
 }
 
