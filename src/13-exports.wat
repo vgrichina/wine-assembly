@@ -426,6 +426,12 @@
     (if (result i32) (global.get $dx_exclusive_fullscreen)
       (then (call $dx_target_hwnd))
       (else (i32.const 0))))
+  ;; 1 while the guest holds a ChangeDisplaySettings(CDS_FULLSCREEN) mode.
+  ;; This is the explicit signal from an app that does not use DirectDraw:
+  ;; without it the compositor would have to guess a fullscreen takeover from
+  ;; window geometry, which a maximized ordinary app matches.
+  (func (export "get_display_fullscreen") (result i32)
+    (global.get $display_fullscreen))
   ;; The device window of a windowed Direct3D9 device, or 0. Tells the
   ;; compositor that the surface it is presenting is that window's client
   ;; area at (0,0) rather than a screen-coordinate DirectDraw primary.

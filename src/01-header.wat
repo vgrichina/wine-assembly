@@ -3173,3 +3173,11 @@
   ;; click-driven "close on selection" path so keyboard nav can scroll
   ;; through items without dismissing the dropdown.
   (global $combo_kbd_nav_active (mut i32) (i32.const 0))
+
+  ;; Set by ChangeDisplaySettingsA(lpDevMode, CDS_FULLSCREEN) and cleared by
+  ;; ChangeDisplaySettingsA(NULL, ...), which is how a non-DirectDraw app says
+  ;; "I own the display now" and "I am done" respectively. The compositor reads
+  ;; it through get_display_fullscreen: a full-page, chrome-less takeover is
+  ;; something the guest has to ask for, never something inferred from the
+  ;; shape of a window.
+  (global $display_fullscreen (mut i32) (i32.const 0))
