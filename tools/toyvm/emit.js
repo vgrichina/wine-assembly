@@ -180,8 +180,100 @@ function genMov() {
   }
 }
 
+// --- Control flow -----------------------------------------------------------
+// Branch operands carry BOTH an arena address and a guest IP, for each of the
+// taken and not-taken paths:
+//
+//   [arenaTaken][guestTaken][arenaFall][guestFall]
+//
+// An arena address of 0 means "this successor is not compiled" and the handler
+// hands control back to the host after writing the guest IP. That single
+// convention makes one handler serve two very different callers: the gate,
+// which compiles exactly one instruction and always gets 0, and the block
+// compiler, which resolves both successors and keeps the whole loop running
+// inside wasm. Without the second case there is nothing to time -- a host call
+// per instruction swamps dispatch entirely.
+const F = isa.F;
+const bit = (b) => `(i32.and (i32.shr_u (global.get $flags) (i32.const ${b})) (i32.const 1))`;
+const CONDS = {
+  o: bit(F.OF),
+  no: `(i32.eqz ${bit(F.OF)})`,
+  b: bit(F.CF),
+  ae: `(i32.eqz ${bit(F.CF)})`,
+  z: bit(F.ZF),
+  nz: `(i32.eqz ${bit(F.ZF)})`,
+  be: `(i32.or ${bit(F.CF)} ${bit(F.ZF)})`,
+  a: `(i32.eqz (i32.or ${bit(F.CF)} ${bit(F.ZF)}))`,
+  s: bit(F.SF),
+  ns: `(i32.eqz ${bit(F.SF)})`,
+  p: bit(F.PF),
+  np: `(i32.eqz ${bit(F.PF)})`,
+  l: `(i32.ne ${bit(F.SF)} ${bit(F.OF)})`,
+  ge: `(i32.eq ${bit(F.SF)} ${bit(F.OF)})`,
+  le: `(i32.or ${bit(F.ZF)} (i32.ne ${bit(F.SF)} ${bit(F.OF)}))`,
+  g: `(i32.eqz (i32.or ${bit(F.ZF)} (i32.ne ${bit(F.SF)} ${bit(F.OF)})))`,
+};
+
+// Shared tail: commit one successor. $arena is the arena address (0 = stop),
+// $guest is the guest IP to record either way.
+const GO = (arena, guest) => `
+  (global.set $gip ${guest})
+  (if ${arena}
+    (then (global.set $ip ${arena}))
+    (else (global.set $steps (i32.const -1))))`;
+
+function genBranches() {
+  for (const [cc, expr] of Object.entries(CONDS)) {
+    h(`j${cc}`, 4, `
+  ${ops(4)}
+  (if ${expr}
+    (then ${GO('(local.get $t0)', '(local.get $t1)')})
+    (else ${GO('(local.get $t2)', '(local.get $t3)')}))
+`);
+  }
+
+  // Unconditional jump: one successor, so two operands.
+  h('jmp', 2, `
+  ${ops(2)}
+  ${GO('(local.get $t0)', '(local.get $t1)')}
+`);
+
+  // LOOP decrements CX and branches on non-zero WITHOUT touching flags. It is
+  // the shape every counted loop in real 16-bit code ends with, which is why
+  // it is here rather than left to dec+jnz.
+  h('loop', 4, `
+  ${ops(4)}
+  (global.set $cx (i32.and (i32.sub (global.get $cx) (i32.const 1)) (i32.const 0xFFFF)))
+  (if (global.get $cx)
+    (then ${GO('(local.get $t0)', '(local.get $t1)')})
+    (else ${GO('(local.get $t2)', '(local.get $t3)')}))
+`);
+}
+
+// INC/DEC on a 16-bit register. These are their own handlers because they are
+// the one arithmetic pair that must NOT write CF -- getting that wrong is
+// invisible until some later jc reads a carry the instruction never set.
+function genIncDec() {
+  h('inc_r16', 1, `
+  ${ops(1)}
+  (local.set $t1 (call $rget16 (local.get $t0)))
+  (local.set $t2 (i32.add (local.get $t1) (i32.const 1)))
+  (call $rset16 (local.get $t0) (i32.and (local.get $t2) (i32.const 0xFFFF)))
+  (call $flags_inc (local.get $t1) (local.get $t2) (i32.const 16))
+`);
+  h('dec_r16', 1, `
+  ${ops(1)}
+  (local.set $t1 (call $rget16 (local.get $t0)))
+  (local.set $t2 (i32.sub (local.get $t1) (i32.const 1)))
+  (call $rset16 (local.get $t0) (i32.and (local.get $t2) (i32.const 0xFFFF)))
+  (call $flags_dec (local.get $t1) (local.get $t2) (i32.const 16))
+`);
+}
+
 genAlu();
 genMov();
+genBranches();
+genIncDec();
 
 // The first six handlers were written by hand to prove the gate; genAlu()
 // covers every form they did and forty more, so they are gone rather than
@@ -360,6 +452,23 @@ function helpers() {
                (i32.const 1))
       (i32.const ${isa.F.PF}))))
   (global.set $flags (i32.or (local.get $f) (i32.const ${isa.FLAGS_RESERVED}))))
+
+;; INC/DEC are add/sub by one that leave CF ALONE. Saving and restoring the
+;; bit around the shared helper is cheaper than a second copy of the whole
+;; flag computation, and cannot drift from it.
+(func $flags_inc (param $a i32) (param $s i32) (param $w i32)
+  (local $cf i32)
+  (local.set $cf (i32.and (global.get $flags) (i32.const 1)))
+  (call $flags_add (local.get $a) (i32.const 1) (local.get $s) (local.get $w))
+  (global.set $flags (i32.or (i32.and (global.get $flags) (i32.const 0xFFFE))
+                             (local.get $cf))))
+
+(func $flags_dec (param $a i32) (param $s i32) (param $w i32)
+  (local $cf i32)
+  (local.set $cf (i32.and (global.get $flags) (i32.const 1)))
+  (call $flags_sub (local.get $a) (i32.const 1) (local.get $s) (local.get $w))
+  (global.set $flags (i32.or (i32.and (global.get $flags) (i32.const 0xFFFE))
+                             (local.get $cf))))
 
 ;; AND/OR/XOR. CF and OF are architecturally cleared; AF is genuinely
 ;; UNDEFINED on this part, so writing 0 here is a choice, not a claim -- the

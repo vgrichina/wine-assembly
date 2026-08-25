@@ -23,6 +23,10 @@ const SEG_PREFIX = { 0x26: 0, 0x2E: 1, 0x36: 2, 0x3E: 3 };
 // than as something plausible-looking.
 const ALU_BY_CODE = { 0: 'add', 1: 'or', 4: 'and', 5: 'sub', 6: 'xor', 7: 'cmp' };
 
+// Jcc condition names in opcode order, 70..7F. Same order as x86's tttn field.
+const CC_NAMES = ['o', 'no', 'b', 'ae', 'z', 'nz', 'be', 'a',
+  's', 'ns', 'p', 'np', 'l', 'ge', 'le', 'g'];
+
 // Decode exactly one instruction at cs:ip. `rd` reads one physical byte.
 // Returns { words, nextIp } or null if the opcode is not implemented yet --
 // partial coverage is the honest state of this thing and callers report it.
@@ -44,6 +48,12 @@ function decodeOne(rd, cs, ip) {
 
   const op = at(n); n++;
   const words = [];
+  // Arena addresses are not known until every block is laid out, so branch
+  // handlers get a 0 placeholder and a fixup naming the guest IP it stands for.
+  // tools/toyvm/compile.js resolves them; the gate leaves them 0, which the
+  // handlers read as "hand control back".
+  const fixups = [];
+  let endsBlock = false;
 
   function modrm() {
     const m = at(n); n++;
@@ -120,15 +130,63 @@ function decodeOne(rd, cs, ip) {
     case 0xC6: { const m = modrm(); emitRmI('mov', 8, m, imm8()); break; }
     case 0xC7: { const m = modrm(); emitRmI('mov', 16, m, imm16()); break; }
 
+    // --- Conditional jumps, 70-7F ------------------------------------------
+    // rel8 is measured from the END of the instruction, so the target can only
+    // be computed after the displacement byte is consumed.
+    case 0x70: case 0x71: case 0x72: case 0x73:
+    case 0x74: case 0x75: case 0x76: case 0x77:
+    case 0x78: case 0x79: case 0x7A: case 0x7B:
+    case 0x7C: case 0x7D: case 0x7E: case 0x7F: {
+      const d = imm8();
+      const fall = (start + n) & 0xFFFF;
+      const target = (fall + (d & 0x80 ? d - 0x100 : d)) & 0xFFFF;
+      words.push(H[`j${CC_NAMES[op & 15]}`], 0, target, 0, fall);
+      fixups.push({ index: words.length - 4, ip: target },
+        { index: words.length - 2, ip: fall });
+      endsBlock = true;
+      break;
+    }
+
+    case 0xE2: {   // LOOP rel8
+      const d = imm8();
+      const fall = (start + n) & 0xFFFF;
+      const target = (fall + (d & 0x80 ? d - 0x100 : d)) & 0xFFFF;
+      words.push(H.loop, 0, target, 0, fall);
+      fixups.push({ index: words.length - 4, ip: target },
+        { index: words.length - 2, ip: fall });
+      endsBlock = true;
+      break;
+    }
+
+    case 0xEB: {   // JMP rel8
+      const d = imm8();
+      const target = (((start + n) & 0xFFFF) + (d & 0x80 ? d - 0x100 : d)) & 0xFFFF;
+      words.push(H.jmp, 0, target);
+      fixups.push({ index: words.length - 2, ip: target });
+      endsBlock = true;
+      break;
+    }
+
+    case 0xE9: {   // JMP rel16
+      const d = imm16();
+      const target = (((start + n) & 0xFFFF) + (d & 0x8000 ? d - 0x10000 : d)) & 0xFFFF;
+      words.push(H.jmp, 0, target);
+      fixups.push({ index: words.length - 2, ip: target });
+      endsBlock = true;
+      break;
+    }
+
     default:
       // MOV r8, imm8 (B0-B7) and MOV r16, imm16 (B8-BF) encode the register in
-      // the opcode itself.
+      // the opcode itself; so do INC (40-47) and DEC (48-4F).
       if (op >= 0xB0 && op <= 0xB7) words.push(H.mov_ri8, op & 7, imm8());
       else if (op >= 0xB8 && op <= 0xBF) words.push(H.mov_ri16, op & 7, imm16());
+      else if (op >= 0x40 && op <= 0x47) words.push(H.inc_r16, op & 7);
+      else if (op >= 0x48 && op <= 0x4F) words.push(H.dec_r16, op & 7);
       else return null;
   }
 
-  return { words, nextIp: (start + n) & 0xFFFF, length: n };
+  return { words, nextIp: (start + n) & 0xFFFF, length: n, fixups, endsBlock };
 }
 
 module.exports = { decodeOne, H };

@@ -59,7 +59,12 @@ async function makeVm(variant) {
       const cs = get('cs'), ip = get('gip');
       const d = decodeOne((lin) => mem[lin], cs, ip);
       if (!d) return false;
-      const words = [...d.words, require('./decode').H.end, d.nextIp];
+      // A branch writes the guest IP itself and stops, since both its arena
+      // successors are 0 here. Appending `end` after it would overwrite that
+      // with the fall-through address and silently pass every taken branch.
+      const words = d.endsBlock
+        ? d.words
+        : [...d.words, require('./decode').H.end, d.nextIp];
       const view = new Int32Array(memory.buffer, isa.THREAD_BASE, words.length);
       view.set(words);
       ex.run(isa.THREAD_BASE, 1000);
