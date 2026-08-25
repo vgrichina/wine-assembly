@@ -552,8 +552,8 @@ SMOKE=(
 # Every entry carries what it actually reports -- fix the cause, then move the
 # line up into UNIT or E2E. Reasons measured 2026-08-18.
 #
-# Harness drift: the test calls a host/renderer entry point that no longer
-# exists. Cheap to fix; the product is probably fine.
+# The harness-only failures were repaired on 2026-08-24. The sole remaining
+# quarantine below reproduces a runtime failure and carries its measured cause.
 QUARANTINE=(
   # Rechecked 2026-08-24: a one-batch Down selects Net game, but Enter starts
   # an unbounded stream of transient CRT threads before the server-address UI

@@ -9,6 +9,11 @@
 //
 // The client needs roughly 400k batches to reach its menu; every keystroke
 // batch below is offset from that.
+//
+// Quarantine diagnosis (2026-08-24): a one-batch Down selects Net game
+// correctly, but Enter starts an unbounded stream of short-lived CRT threads
+// before the server-address screen is painted. No client connect call occurs;
+// this is a network-menu/runtime failure rather than a VLAN wire timeout.
 
 'use strict';
 
