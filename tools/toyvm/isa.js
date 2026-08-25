@@ -71,15 +71,28 @@ const MEM_PAGES = ((JTAB_BASE + JTAB_SIZE + 0xFFFF) & ~0xFFFF) >> 16;
 // mod=00,rm=110 special case: a bare disp16 with no base at all.
 const EA = {
   BX_SI: 0, BX_DI: 1, BP_SI: 2, BP_DI: 3, SI: 4, DI: 5, BP: 6, BX: 7, DISP: 8,
+  // Kind 9 is the whole of 386 32-bit addressing: base + index*scale + disp32.
+  // It cannot be enumerated the way the 16-bit forms can -- 8 bases x 8 indices
+  // x 4 scales is 256 shapes -- so the packed operand carries the fields and
+  // one arm decodes them. See EA_A32 below for the layout.
+  A32: 9,
 };
 // Which segment each kind defaults to when no prefix overrides it. Anything
-// built on BP is stack-relative; everything else is data.
-const EA_DEFAULT_SEG = [3, 3, 2, 2, 3, 3, 2, 3, 3]; // index into SEG
+// built on BP is stack-relative; everything else is data. Kind 9's default is
+// worked out at decode time from its base register, so its entry is never read.
+const EA_DEFAULT_SEG = [3, 3, 2, 2, 3, 3, 2, 3, 3, 3]; // index into SEG
+
+// Extra fields the A32 kind packs into the same operand word, above the ones
+// every EA uses (kind 0-3, segment 4-6, ModRM reg 8-10).
+const EA_A32 = {
+  BASE_SHIFT: 12, INDEX_SHIFT: 15, SCALE_SHIFT: 18,
+  NO_BASE: 1 << 20, NO_INDEX: 1 << 21,
+};
 
 module.exports = {
   REG16, REG8, SEG, F, FLAGS_RESERVED, FLAGS_DEFINED, FLAGS_ARITH,
   GUEST_RAM, GUEST_RAM_SIZE, THREAD_BASE, THREAD_SIZE, MEM_PAGES,
   RSTACK_BASE, RSTACK_ENTRIES, RSTACK_SIZE,
   JTAB_BASE, JTAB_ENTRIES, JTAB_SIZE, JTAB_HASH_MUL, jhash,
-  EA, EA_DEFAULT_SEG,
+  EA, EA_DEFAULT_SEG, EA_A32,
 };

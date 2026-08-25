@@ -52,6 +52,10 @@ function decodeOne(rd, cs, ip) {
   // to 32. Real-mode 386 demos use that constantly -- fixed-point maths in
   // 32-bit registers while addressing stays 16-bit.
   let opsize = 16;
+  // 0x67 flips addressing the same way. It is rarer than 0x66 but not rare: a
+  // demo that has been through unreal mode addresses video and extended memory
+  // through 32-bit registers while its code stays 16-bit.
+  let asize = 16;
 
   // Prefixes. A segment override and a repeat prefix can both be present, and
   // on this part the LAST one of each kind wins.
@@ -62,7 +66,7 @@ function decodeOne(rd, cs, ip) {
     // swallow real instructions.
     if (SEG_PREFIX[b] !== undefined && (b < 0x64 || cpuLevel >= 386)) segOverride = SEG_PREFIX[b];
     else if (b === 0x66 && cpuLevel >= 386) opsize = 32;
-    else if (b === 0x67 && cpuLevel >= 386) return null;   // 32-bit addressing: SIB, not modelled
+    else if (b === 0x67 && cpuLevel >= 386) asize = 32;
     else if (b === 0xF3) repPrefix = 'rep';
     else if (b === 0xF2) repPrefix = 'repne';
     else if (b === 0xF0) { /* LOCK: no effect with one core */ }
@@ -78,6 +82,12 @@ function decodeOne(rd, cs, ip) {
   const repeatable = (op >= 0xA4 && op <= 0xAF && op !== 0xA8 && op !== 0xA9)
     || (cpuLevel >= 186 && op >= 0x6C && op <= 0x6F);
   if (repPrefix && !repeatable) return null;
+  // 0x67 also redirects the implicit addressing of the string ops, XLAT, the
+  // moffs MOVs and the counted-loop terminators -- none of which go through
+  // modrm(). Refusing them is the honest option; running the 16-bit version
+  // would read SI where the program meant ESI and look like it worked.
+  if (asize === 32 && ((op >= 0xA4 && op <= 0xAF) || (op >= 0x6C && op <= 0x6F)
+    || op === 0xD7 || (op >= 0xE0 && op <= 0xE3))) return null;
   const words = [];
   // Arena addresses are not known until every block is laid out, so branch
   // handlers get a 0 placeholder and a fixup naming the guest IP it stands for.
@@ -86,10 +96,35 @@ function decodeOne(rd, cs, ip) {
   const fixups = [];
   let endsBlock = false;
 
+  // The 386 ModRM: rm=100 means a SIB byte follows, rm=101 with mod=00 is a
+  // bare disp32, and mod=10's displacement is four bytes rather than two.
+  // Everything the form encodes goes into the packed operand -- see isa.EA_A32.
+  function modrm32(m, mod, reg, rm) {
+    let base = rm, index = 4, scale = 0;   // index 100 is the "no index" code
+    if (rm === 4) {
+      const sib = at(n); n++;
+      scale = sib >> 6; index = (sib >> 3) & 7; base = sib & 7;
+    }
+    let noBase = false, disp = 0;
+    if (rm === 5 && mod === 0) { noBase = true; disp = imm32(); }
+    else if (base === 5 && mod === 0 && rm === 4) { noBase = true; disp = imm32(); }
+    else if (mod === 1) { disp = at(n); n++; if (disp & 0x80) disp -= 0x100; }
+    else if (mod === 2) disp = imm32();
+    // ESP and EBP as a BASE are stack-relative; an index of EBP is not, which
+    // is why this reads `base` and not the ModRM rm field.
+    const stack = !noBase && (base === 4 || base === 5);
+    return {
+      isReg: false, reg, kind: isa.EA.A32, disp: disp | 0,
+      seg: segOverride === null ? (stack ? 2 : 3) : segOverride,
+      a32: { base, index, scale, noBase, noIndex: index === 4 },
+    };
+  }
+
   function modrm() {
     const m = at(n); n++;
     const mod = m >> 6, reg = (m >> 3) & 7, rm = m & 7;
     if (mod === 3) return { isReg: true, reg, rm };
+    if (asize === 32) return modrm32(m, mod, reg, rm);
     let kind = rm, disp = 0;
     if (mod === 0 && rm === 6) {
       kind = isa.EA.DISP;
@@ -105,8 +140,15 @@ function decodeOne(rd, cs, ip) {
   }
 
   // Bits 0-3 EA form, 4-6 segment (six of them once FS/GS exist), 8-10 the
-  // ModRM reg field.
-  const packEa = (m) => (m.kind & 15) | ((m.seg & 7) << 4) | ((m.reg & 7) << 8);
+  // ModRM reg field. A 32-bit address adds its base/index/scale above that,
+  // at the offsets isa.EA_A32 names.
+  const A = isa.EA_A32;
+  const packEa = (m) => (m.kind & 15) | ((m.seg & 7) << 4) | ((m.reg & 7) << 8)
+    | (m.a32 ? ((m.a32.base & 7) << A.BASE_SHIFT)
+      | ((m.a32.index & 7) << A.INDEX_SHIFT)
+      | ((m.a32.scale & 3) << A.SCALE_SHIFT)
+      | (m.a32.noBase ? A.NO_BASE : 0)
+      | (m.a32.noIndex ? A.NO_INDEX : 0) : 0);
   const imm8 = () => { const v = at(n); n++; return v; };
   const imm16 = () => { const v = at(n) | (at(n + 1) << 8); n += 2; return v; };
   const imm32 = () => {
@@ -383,7 +425,10 @@ function decodeOne(rd, cs, ip) {
     // --- MOV to/from a direct address ---------------------------------------
     case 0xA0: case 0xA1: case 0xA2: case 0xA3: {
       const w = (op & 1) ? opsize : 8;
-      const off = imm16();
+      // The one implicit-addressing form 0x67 needs nothing new for: the
+      // offset is a literal, so a 32-bit address size just makes it four bytes
+      // wide. $lin still folds the segment base under it.
+      const off = asize === 32 ? imm32() : imm16();
       const seg = segOverride === null ? 3 : segOverride;
       words.push(H[op < 0xA2 ? `mov_acc_moffs${w}` : `mov_moffs_acc${w}`], off, seg);
       break;

@@ -80,6 +80,10 @@ async function runDos(o) {
     portIn: (p, w) => machine.portIn(p, w),
     portOut: (p, v, w) => machine.portOut(p, v, w),
   });
+  // The decoder's CPU level and the module's FLAGS shape have to move together:
+  // a build that decodes 386 encodings but reports an 8086 FLAGS register fails
+  // the CPU detection every one of those demos opens with.
+  vm.exports.set_cpu(cpu);
   machine.mem = vm.mem;
   machine.installIvt();
   machine.setTicks(0);

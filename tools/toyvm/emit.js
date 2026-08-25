@@ -99,7 +99,7 @@ const DEC_FLAGS = (w, a, s) => w === 32
   ? `(call $flags_dec32 ${a} ${s})` : `(call $flags_dec ${a} ${s} (i32.const ${w}))`;
 
 const EA_SETUP_PRE = `
-  (local.set $t4 (call $ea (i32.and (local.get $t0) (i32.const 15)) (local.get $t1)))
+  (local.set $t4 (call $ea (local.get $t0) (local.get $t1)))
   (local.set $t5 (i32.and (i32.shr_u (local.get $t0) (i32.const 4)) (i32.const 7)))
   (local.set $t6 (i32.and (i32.shr_u (local.get $t0) (i32.const 8)) (i32.const 7)))
 `;
@@ -223,6 +223,24 @@ function genMov() {
 // inside wasm. Without the second case there is nothing to time -- a host call
 // per instruction swamps dispatch entirely.
 const F = isa.F;
+
+// Which FLAGS bits are always set, and which the guest may write. They are
+// globals rather than constants because they are the ONE thing that differs
+// between the 8086 the conformance corpus was recorded on and the 386 the
+// demos assume, and the handler bodies are generated once at load time.
+//
+// On an 8086 bits 12-15 read 1 always. On a 386 in real mode IOPL (12-13) and
+// NT (14) are writable and bit 15 reads 0 -- which is exactly what every
+// CPU-detection routine of the era tests, by clearing them and reading back.
+// RACE.EXE prints "386 or better not detected!!!" against the 8086 word.
+//
+// They have to be used EVERYWHERE, not just in POPF and IRET: each flag helper
+// preserves the bits it does not compute and then ORs the always-set ones back
+// in, so an 0xF002 there forces bits 12-15 on after every arithmetic
+// instruction and undoes the detection two instructions later.
+const RESERVED = '(global.get $f_res)';
+const DEFINED = '(global.get $f_def)';
+
 const bit = (b) => `(i32.and (i32.shr_u (global.get $flags) (i32.const ${b})) (i32.const 1))`;
 const CONDS = {
   o: bit(F.OF),
@@ -359,8 +377,8 @@ function genExtras() {
   // pushed value had in those bits and fails three quarters of the corpus.
   h('popf', 0, `
   (global.set $flags (i32.or
-    (i32.and (call $pop16) (i32.const ${isa.FLAGS_DEFINED}))
-    (i32.const ${isa.FLAGS_RESERVED})))
+    (i32.and (call $pop16) ${DEFINED})
+    ${RESERVED}))
 `);
 
   // CALL near, relative. Operands: [arenaTarget][guestTarget][retIp][arenaRet].
@@ -706,8 +724,8 @@ function genExtras() {
   (global.set $gip (call $pop16))
   (call $sset (i32.const 1) (call $pop16))
   (global.set $flags (i32.or
-    (i32.and (call $pop16) (i32.const ${isa.FLAGS_DEFINED}))
-    (i32.const ${isa.FLAGS_RESERVED})))
+    (i32.and (call $pop16) ${DEFINED})
+    ${RESERVED}))
   (global.set $left (global.get $steps)) (global.set $steps (i32.const -1))
 `);
 }
@@ -884,7 +902,7 @@ function s_shift(kind, w, one, rotate, ofExpr, mask, msb) {
     (i32.shl (i32.and (i32.xor (i32.popcnt (i32.and (local.get $v) (i32.const 0xFF)))
                                (i32.const 1)) (i32.const 1))
              (i32.const ${isa.F.PF}))))`}
-  (global.set $flags (i32.or (local.get $f) (i32.const ${isa.FLAGS_RESERVED})))
+  (global.set $flags (i32.or (local.get $f) ${RESERVED}))
   (local.get $v))
 `);
 }
@@ -995,7 +1013,7 @@ function genDoubleShifts() {
     (i32.and (i32.xor (i32.popcnt (i32.and (local.get $r) (i32.const 0xFF))) (i32.const 1))
              (i32.const 1))
     (i32.const ${isa.F.PF}))))
-  (global.set $flags (i32.or (local.get $f) (i32.const ${isa.FLAGS_RESERVED})))
+  (global.set $flags (i32.or (local.get $f) ${RESERVED}))
   (local.get $r))
 `);
       // -1 as the count operand means "take it from CL", the same sentinel the
@@ -1499,7 +1517,7 @@ genArithIO();
 // part of what the JIT sees, and whether it inlines them is exactly the kind of
 // thing tools/wasm-native.js is for.
 // ---------------------------------------------------------------------------
-function brTableFn(name, params, result, arms) {
+function brTableFn(name, params, result, arms, idx = '(local.get $i)') {
   // Build the nested-block br_table shape by hand; it is the same one
   // $get_reg uses in src/03-registers.wat.
   // Block nesting order is load-bearing and easy to get backwards: branching to
@@ -1508,7 +1526,7 @@ function brTableFn(name, params, result, arms) {
   const n = arms.length;
   let s = `(func $${name} ${params} ${result}\n(block $bad\n`;
   for (let i = n - 1; i >= 0; i--) s += `(block $b${i} `;
-  s += `\n(br_table ${arms.map((_, i) => `$b${i}`).join(' ')} $bad (local.get $i))\n`;
+  s += `\n(br_table ${arms.map((_, i) => `$b${i}`).join(' ')} $bad ${idx})\n`;
   for (let i = 0; i < n; i++) s += `)\n${arms[i]}\n`;
   s += `)\n(unreachable)\n)\n`;
   return s;
@@ -1571,8 +1589,36 @@ function helpers() {
     '(return (i32.and (i32.add (global.get $bp) (local.get $d)) (i32.const 0xFFFF)))',
     '(return (i32.and (i32.add (global.get $bx) (local.get $d)) (i32.const 0xFFFF)))',
     '(return (i32.and (local.get $d) (i32.const 0xFFFF)))',
+    // 32-bit addressing. The fields do not fit in a br_table arm, and this is
+    // the one EA form the 16-bit corpus almost never takes, so it costs the
+    // fast path a call it does not make.
+    '(return (call $ea32 (local.get $i) (local.get $d)))',
   ];
-  s += brTableFn('ea', '(param $i i32) (param $d i32)', '(result i32)', eaArms);
+  // The index is masked here rather than at every call site: the callers pass
+  // the whole packed operand, because arm 9 needs the bits above the kind.
+  s += brTableFn('ea', '(param $i i32) (param $d i32)', '(result i32)', eaArms,
+    '(i32.and (local.get $i) (i32.const 15))');
+
+  // base + index*scale + disp, at full 32 bits and NOT wrapped to 64K -- that
+  // is the whole point of the encoding. Real mode still puts (seg<<4) under it
+  // and $lin still wraps the sum at 1MB, which is what an unreal-mode demo
+  // reaching past 0xFFFF within a zero-based segment actually wants.
+  s += `
+(func $ea32 (param $i i32) (param $d i32) (result i32)
+  (local $a i32)
+  (local.set $a (local.get $d))
+  (if (i32.eqz (i32.and (local.get $i) (i32.const ${isa.EA_A32.NO_BASE})))
+    (then (local.set $a (i32.add (local.get $a) (call $rget32
+      (i32.and (i32.shr_u (local.get $i) (i32.const ${isa.EA_A32.BASE_SHIFT}))
+               (i32.const 7)))))))
+  (if (i32.eqz (i32.and (local.get $i) (i32.const ${isa.EA_A32.NO_INDEX})))
+    (then (local.set $a (i32.add (local.get $a) (i32.shl
+      (call $rget32 (i32.and (i32.shr_u (local.get $i) (i32.const ${isa.EA_A32.INDEX_SHIFT}))
+                             (i32.const 7)))
+      (i32.and (i32.shr_u (local.get $i) (i32.const ${isa.EA_A32.SCALE_SHIFT}))
+               (i32.const 3)))))))
+  (local.get $a))
+`;
 
   // Linear address: (segment << 4) + offset, wrapped at 1MB the way the 8086's
   // 20 address lines do.
@@ -1588,34 +1634,41 @@ function helpers() {
 (func $wr8 (param $seg i32) (param $off i32) (param $v i32)
   (i32.store8 (call $lin (local.get $seg) (local.get $off)) (local.get $v)))
 
-;; 16-bit access is done a byte at a time on purpose: an offset of 0xFFFF wraps
-;; to 0x0000 within the SAME segment, which a single i32.load16_u would get
-;; wrong. The test vectors exercise it.
+;; Step an offset to the next byte. A 16-bit offset of 0xFFFF wraps to 0x0000
+;; within the SAME segment -- which is why every multi-byte access is done a
+;; byte at a time and not as one i32.load16_u, and the 8088 vectors exercise it.
+;; But a 32-bit address (a 0x67 prefix, an unreal-mode demo reaching 0xA0000
+;; through a zero-based segment) must NOT wrap at 64K, or the second byte of
+;; every word lands at offset 1. Wrapping inside the 64K page the offset is
+;; already in satisfies both, branch-free: identical to the old mask for any
+;; offset that fits in 16 bits.
+(func $off_add (param $off i32) (param $n i32) (result i32)
+  (i32.or
+    (i32.and (i32.add (i32.and (local.get $off) (i32.const 0xFFFF)) (local.get $n))
+             (i32.const 0xFFFF))
+    (i32.and (local.get $off) (i32.const 0x7FFF0000))))
+
 (func $rd16 (param $seg i32) (param $off i32) (result i32)
   (i32.or
     (call $rd8 (local.get $seg) (local.get $off))
-    (i32.shl (call $rd8 (local.get $seg)
-               (i32.and (i32.add (local.get $off) (i32.const 1)) (i32.const 0xFFFF)))
+    (i32.shl (call $rd8 (local.get $seg) (call $off_add (local.get $off) (i32.const 1)))
              (i32.const 8))))
 
 (func $wr16 (param $seg i32) (param $off i32) (param $v i32)
   (call $wr8 (local.get $seg) (local.get $off) (i32.and (local.get $v) (i32.const 0xFF)))
-  (call $wr8 (local.get $seg)
-    (i32.and (i32.add (local.get $off) (i32.const 1)) (i32.const 0xFFFF))
+  (call $wr8 (local.get $seg) (call $off_add (local.get $off) (i32.const 1))
     (i32.shr_u (local.get $v) (i32.const 8))))
 
 ;; 32-bit access, built from the 16-bit pair so it inherits the same wrap.
 (func $rd32 (param $seg i32) (param $off i32) (result i32)
   (i32.or
     (call $rd16 (local.get $seg) (local.get $off))
-    (i32.shl (call $rd16 (local.get $seg)
-               (i32.and (i32.add (local.get $off) (i32.const 2)) (i32.const 0xFFFF)))
+    (i32.shl (call $rd16 (local.get $seg) (call $off_add (local.get $off) (i32.const 2)))
              (i32.const 16))))
 
 (func $wr32 (param $seg i32) (param $off i32) (param $v i32)
   (call $wr16 (local.get $seg) (local.get $off) (local.get $v))
-  (call $wr16 (local.get $seg)
-    (i32.and (i32.add (local.get $off) (i32.const 2)) (i32.const 0xFFFF))
+  (call $wr16 (local.get $seg) (call $off_add (local.get $off) (i32.const 2))
     (i32.shr_u (local.get $v) (i32.const 16))))
 
 ;; CX as a 16-bit counter with ECX's upper half preserved. Every counted loop
@@ -1701,7 +1754,7 @@ function helpers() {
       (i32.and (i32.xor (i32.popcnt (i32.and (local.get $r) (i32.const 0xFF))) (i32.const 1))
                (i32.const 1))
       (i32.const ${isa.F.PF}))))
-  (global.set $flags (i32.or (local.get $f) (i32.const ${isa.FLAGS_RESERVED}))))
+  (global.set $flags (i32.or (local.get $f) ${RESERVED})))
 
 ;; SUB/CMP. Same shape as add; only CF and OF read differently.
 ;; $s is the unmasked difference, so a borrow is still visible above bit w-1.
@@ -1738,7 +1791,7 @@ function helpers() {
       (i32.and (i32.xor (i32.popcnt (i32.and (local.get $r) (i32.const 0xFF))) (i32.const 1))
                (i32.const 1))
       (i32.const ${isa.F.PF}))))
-  (global.set $flags (i32.or (local.get $f) (i32.const ${isa.FLAGS_RESERVED}))))
+  (global.set $flags (i32.or (local.get $f) ${RESERVED})))
 
 ;; INC/DEC are add/sub by one that leave CF ALONE. Saving and restoring the
 ;; bit around the shared helper is cheaper than a second copy of the whole
@@ -1774,7 +1827,7 @@ function helpers() {
       (i32.and (i32.xor (i32.popcnt (i32.and (local.get $r) (i32.const 0xFF))) (i32.const 1))
                (i32.const 1))
       (i32.const ${isa.F.PF}))))
-  (global.set $flags (i32.or (local.get $f) (i32.const ${isa.FLAGS_RESERVED}))))
+  (global.set $flags (i32.or (local.get $f) ${RESERVED})))
 
 ;; The 32-bit forms cannot share the 8/16 path: those keep the carry visible
 ;; above the operand width in an unmasked 32-bit result, and at width 32 there
@@ -1809,7 +1862,7 @@ function helpers() {
     (i32.shl (i32.and (i32.xor (i32.popcnt (i32.and (local.get $r) (i32.const 0xFF)))
                                (i32.const 1)) (i32.const 1))
       (i32.const ${isa.F.PF}))))
-  (global.set $flags (i32.or (local.get $f) (i32.const ${isa.FLAGS_RESERVED}))))
+  (global.set $flags (i32.or (local.get $f) ${RESERVED})))
 
 (func $flags_sub32 (param $a i32) (param $b i32) (param $cin i32) (param $r i32)
   (local $f i32)
@@ -1837,7 +1890,7 @@ function helpers() {
     (i32.shl (i32.and (i32.xor (i32.popcnt (i32.and (local.get $r) (i32.const 0xFF)))
                                (i32.const 1)) (i32.const 1))
       (i32.const ${isa.F.PF}))))
-  (global.set $flags (i32.or (local.get $f) (i32.const ${isa.FLAGS_RESERVED}))))
+  (global.set $flags (i32.or (local.get $f) ${RESERVED})))
 
 (func $flags_inc32 (param $a i32) (param $r i32)
   (local $cf i32)
@@ -1862,7 +1915,7 @@ function helpers() {
   (local.set $nz (i32.ne (local.get $nz) (i32.const 0)))
   (global.set $flags (i32.or (i32.or (local.get $f)
     (i32.or (local.get $nz) (i32.shl (local.get $nz) (i32.const ${isa.F.OF}))))
-    (i32.const ${isa.FLAGS_RESERVED}))))
+    ${RESERVED})))
 
 ;; A CPU-raised interrupt. Same sequence as INT -- and the same handing-back to
 ;; the host, since the vector points at whatever the guest installed.
@@ -1962,6 +2015,17 @@ function preamble() {
 (import "host" "port_in" (func $port_in (param i32) (param i32) (result i32)))
 (import "host" "port_out" (func $port_out (param i32) (param i32) (param i32)))
 ${globals}
+;; The FLAGS shape, defaulting to the 8086's. set_cpu raises it.
+(global $f_res (mut i32) (i32.const ${isa.FLAGS_RESERVED}))
+(global $f_def (mut i32) (i32.const ${isa.FLAGS_DEFINED}))
+(func (export "set_cpu") (param $level i32)
+  (if (i32.ge_u (local.get $level) (i32.const 386))
+    (then
+      (global.set $f_res (i32.const 2))
+      (global.set $f_def (i32.const ${isa.FLAGS_DEFINED | 0x7000})))
+    (else
+      (global.set $f_res (i32.const ${isa.FLAGS_RESERVED}))
+      (global.set $f_def (i32.const ${isa.FLAGS_DEFINED})))))
 (type $void (func))
 ${accessors}
 `;
