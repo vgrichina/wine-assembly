@@ -82,7 +82,10 @@ const layout = () => {
 
 async function main() {
   fs.mkdirSync(OUT, { recursive: true });
-  const server = await startStaticServer();
+  // BASE_URL points the same checks at a deployed site, so "it works on my
+  // machine" and "it works on the phone the report came from" are one test.
+  const server = process.env.BASE_URL ? null : await startStaticServer();
+  const base = process.env.BASE_URL || `http://127.0.0.1:${server.address().port}`;
   const browser = await puppeteer.launch({
     executablePath: CHROME,
     headless: true,
@@ -102,7 +105,7 @@ async function main() {
         delete Element.prototype[name];
       }
     });
-    await page.goto(`http://127.0.0.1:${server.address().port}/index.html?page-fs=${Date.now()}`,
+    await page.goto(`${base}/index.html?page-fs=${Date.now()}`,
       { waitUntil: 'load', timeout: 60000 });
     await page.waitForFunction(
       () => typeof approveBrowserFullscreen === 'function' && document.getElementById('screen'),
@@ -177,7 +180,7 @@ async function main() {
     console.log('PASS  fullscreen button gives the app the whole page where the Fullscreen API is missing');
   } finally {
     await browser.close();
-    server.close();
+    if (server) server.close();
   }
 }
 
