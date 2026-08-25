@@ -2381,56 +2381,82 @@ must inject **both**, in the browser's order and with the browser's codes —
 `keydown:71` (VK 'G') then `keypress:103` (char 'g'), matching the real session's
 `msg=0x100 wParam=0x47` / `msg=0x102 wParam=0x67`.
 
-### Narrowed further: DefDlgProc never reaches the DLGPROC
+### CORRECTION (2026-08-25): `--trace-at` is blind to a nested synchronous call
 
-Everything up to the DLGPROC checks out, so the break is inside our
-`DefDlgProcA`:
+An earlier revision of this section claimed "the DLGPROC is never entered for
+WM_INITDIALOG", on the strength of `--trace-at=0x006efec0` firing exactly once
+in a whole run (and then for WM_DRAWITEM). **That claim was wrong, and the
+method was wrong.**
 
-| fact | evidence |
-|---|---|
-| the class really is a dialog class | `RegisterClassA(class="SDlgDialog", wndProc=0x006a9070, cbWndExtra=30)` — exactly `DLGWINDOWEXTRA`, which is what `$wnd_class_is_dialog` keys on |
-| Storm installs the DLGPROC from WM_NCCREATE | `DefDlgProcA(0x10023, 0x81, …)` immediately followed by `SetWindowLongA(0x10023, 0x4, 0x006efec0)` — in that order, in one run |
-| our `SetWindowLongA` files it correctly | `--input=N:dump-windows` prints `hwnd=65571 class="SDlgDialog" wndProc=0x6a9070 dialogProc=0x6efec0` |
-| Storm's focus candidate is the right control | `dump-children` gives `hwnd=0x10024 id=1065 style=0x50010000` at 265,315 320x33 — the `DIABLOEDIT`; Storm passes exactly that as wParam |
-| the message is handed to us | `DefDlgProcA(0x00010023, 0x00000110, 0x00010024, 0x074ffe18)` |
-| **the DLGPROC is never entered for it** | `--trace-at=0x006efec0` over the whole run: **one** hit, `batch=1640`, `[esp+8]=0x2b` (WM_DRAWITEM, reached through Storm's own `CallWindowProcA` at `storm+0x630c`). No hit with `[esp+8]=0x110`. |
+`--trace-at` arms a WASM breakpoint and JS inspects EIP *after the exported
+`run()` returns*. `$wnd_send_message_inner` runs the guest procedure in a
+**nested** `$run`: the nested run hits the breakpoint and returns with EIP
+unchanged, the sender immediately loops and calls `$run` again, the CACA0005
+return thunk zeroes EIP, and the caller's EIP is restored before control ever
+gets back to JS. Every nested synchronous entry is therefore invisible to
+`--trace-at`.
 
-So `$handle_DefDlgProcA` (`src/09a5-handlers-window.wat:2421`) is called with
-WM_INITDIALOG, `$dialog_proc_get` has the right proc, and yet
-`$dialog_default_proc` (`src/09c3-controls.wat:15147`) does not run it.
-`$dialog_default_proc` already contains a long comment describing *precisely*
-this Diablo failure and returns the DLGPROC's BOOL for WM_INITDIALOG, so the
-return-value half is fixed; what is broken is one step earlier — the guest
-call itself does not happen.
+`--count` is a native in-interpreter counter and does not have this blind spot:
 
-Note both dialogs that return FALSE (`0x1000e`, `0x10023`) are the two deepest
-ones: their `DefDlgProcA` frames sit at `esp=0x074ff8ac`/`0x074ff9c4` against
-`0x074ffa00` for `0x10003`, which does return TRUE. A nesting-depth or
-re-entrancy bail in `$wnd_send_message` fits that shape.
+```sh
+node test/run.js --app=diablo_shareware ... --count=0x006efec0
+# Hit counts:
+#   0x006efec0 = 25
+```
 
-### The next measurement
+**Twenty-five entries, not one.** The DLGPROC runs fine; WM_INITDIALOG reaches
+it; `$dialog_default_proc` is not broken.
 
-Instrument the three early-outs between `DefDlgProcA` and the guest call, in
-this order:
+> Rule for this codebase: `--trace-at` answers "did the *pump* reach this
+> address". For anything invoked through `$wnd_send_message` — a wndproc, a
+> DLGPROC, a control procedure — use `--count`, or you will measure the
+> nesting rather than the code.
 
-1. `$dialog_default_proc`'s `(if (i32.eqz $proc) (return 0))` — ruled out above
-   by `dump-windows`, but confirm it at the moment of the call rather than at
-   batch 1660.
-2. `$wnd_send_message`'s own early returns (`src/09c3-controls.wat`, the
-   `(i32.eqz $wp)` guard, the `$code16` branch and the `WM_COMMAND`
-   `$menu_try_edit_command` short-circuit).
-3. ~~The recursive `$run` loop's 64-round bail, which logs `0xCADE5000` through
-   `$host_log_i32`.~~ **Ruled out (2026-08-25.)** A full run to batch 1660 with
-   `--host-census` prints no `0xCADE5000` at all, and the log does carry other
-   `$host_log_i32` markers (`0xca00f10f` twice) — so this is a real negative,
-   not a silent channel. The recursive run is not giving up; it is not being
-   started.
+### The actual cause: nothing ever gives the dialog the focus
 
-Per CLAUDE.md the durable form of step 2 is a new `--trace-dlg` category rather
-than a temporary log: DefDlgProc entry, the resolved DLGPROC, and which branch
-of `$wnd_send_message` consumed the message. That answers this bug and every
-future "the dialog never saw the message" report.
+With the DLGPROC confirmed running, disassembling it settles the question.
+Diablo's name-dialog DLGPROC is `diabloui+0xeec0` (runtime `0x006efec0`); its
+message switch sends WM_INITDIALOG (`eax = msg - 0x110 = 0`, index byte
+`[0x2000f24c] = 0`) to `0x2000ef78`, and that handler ends:
+
+```
+2000f04b  33 c0      xor eax, eax
+2000f04d  5d         pop ebp
+...
+2000f054  c2 10 00   ret 0x10
+```
+
+**It returns FALSE unconditionally, and it never calls `SetFocus`.** Nor does
+Storm: the loop it runs after WM_INITDIALOG (`storm+0x72c0`) only ORs style
+bits into Buttons and Statics (that is the traced
+`SetWindowLongA(0x10026, -16, 0x5800400b)`), and its one `SetFocus` at
+`storm+0x736e` is gated on the candidate it just zeroed.
+
+So on real Win98 the focus does not come from the app at all — it comes from
+USER, in two steps we do not implement:
+
+1. **Showing/activating a top-level dialog gives it the focus.** Storm calls
+   `ShowWindow(hDlg, SW_SHOWNORMAL)` at `storm+0x735f`; real USER activates the
+   window and sends it WM_SETFOCUS. In our run the Enter Name dialog **never
+   receives WM_SETFOCUS at all** — over the whole run exactly one WM_SETFOCUS
+   reaches `DefDlgProcA`, and it is `DefDlgProcA(0x00010003, 0x7, 0x00010002, 0)`,
+   the one dialog Storm focuses explicitly.
+2. **`DefDlgProc`'s WM_SETFOCUS handler focuses the dialog's first tab stop.**
+   That is documented USER behaviour and is precisely what would put the caret
+   in `DIABLOEDIT` (`0x10024`, id 1065, `WS_TABSTOP`, the first control in the
+   template). Our `$handle_DefDlgProcA` offers WM_SETFOCUS to the DLGPROC and
+   then falls through to `$handle_DefWindowProcA`, which has no such rule.
+
+Both are general Win32 gaps, not Diablo quirks, and either one alone leaves
+`$focus_hwnd` at 0.
+
+### The fix
+
+Implement DefDlgProc's WM_SETFOCUS rule — when the DLGPROC declines WM_SETFOCUS,
+set focus to the first visible, enabled, `WS_TABSTOP` child (falling back to the
+dialog itself) — and make sure a top-level dialog actually receives WM_SETFOCUS
+when it is shown and activated. Then verify with the 2300-batch recipe above:
+the field should accept `keydown:71` + `keypress:103`.
 
 Do not "fix" this by giving keyboard input to `main_hwnd` when focus is zero:
-that is what already happens, and it is what real Windows does. The fix belongs
-wherever WM_INITDIALOG fails to reach the DLGPROC.
+that is what already happens, and it is what real Windows does.
