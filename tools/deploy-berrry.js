@@ -651,6 +651,14 @@ async function deploy() {
   let textFiles, binFiles;
   if (filesArg) {
     const list = filesArg.slice('--files='.length).split(',').filter(Boolean);
+    // The watermark rides along whether or not it was asked for. It is the
+    // only thing on the page that can answer "is the phone on the new build",
+    // and an explicit list is exactly when it goes stale: the deploy pushes
+    // new code under a stamp naming the previous one, so the watermark says
+    // the reload did not take when it did. writeBuildInfo() otherwise runs
+    // only inside collectTextFiles(), which this branch never reaches.
+    writeBuildInfo();
+    if (!list.includes('build-info.js')) list.push('build-info.js');
     console.log('Uploading explicit file list (' + list.length + '):');
     const explicit = loadExplicitFiles(list);
     for (const f of explicit) {
