@@ -233,6 +233,11 @@ class WineAssembly {
       // their fixed-table slots instead of leaking until creation fails.
       closeSyncHandle: handle => self._closeSyncHandle(handle),
       traceHost: opts.traceHost || (typeof window !== 'undefined' ? window.__waTraceHostNames : null),
+      // Trace categories (the browser twin of test/run.js's --trace-dx etc).
+      // lib/host-imports.js reads ctx.trace, so setting window.__waTraceCategories
+      // before launch turns the same [dx]/[gdi]/[ctrl] logs on in the page —
+      // the only way to see which surface the browser actually uploads.
+      trace: opts.trace || (typeof window !== 'undefined' ? window.__waTraceCategories : null),
       threadId: opts.threadId | 0,
       vfs: opts.vfs || null,
       // The virtual LAN segment this page is joined to, or null when it is
@@ -786,6 +791,12 @@ class WineAssembly {
     this.instance = await WebAssembly.instantiate(wasmModule, imports);
     if (this.instance.exports.set_process_id) {
       this.instance.exports.set_process_id(this.processId);
+    }
+    // Decode-time superop switches, applied before the first decode. These are
+    // per-instance mut globals, so a worker thread has to be told separately
+    // (see thread-manager.js) or an A/B measures the folded build on one side.
+    if (window.WineSuperops && this.instance.exports.set_rle_run) {
+      this.instance.exports.set_rle_run(window.WineSuperops.rleRun === false ? 0 : 1);
     }
     this._wasmModule = wasmModule;
     if (this.renderer) {
