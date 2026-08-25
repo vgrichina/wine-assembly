@@ -956,9 +956,33 @@ Resource-aware Win98 emulator
       const sw = (vv && vv.width) || window.innerWidth || 0;
       const sh = (vv && vv.height) || window.innerHeight || 0;
       if (!sw || !sh) return false;
-      return Math.min(sw, sh) <= 500 && Math.max(sw, sh) <= 950;
+      const phoneSized = Math.min(sw, sh) <= 500 && Math.max(sw, sh) <= 950;
+      if (!phoneSized) return false;
+      // Size alone is not enough, because visualViewport is measured in CSS
+      // pixels: a desktop browser at 175% zoom, or with its window dragged
+      // narrow, reports a phone-sized page and used to be handed the phone
+      // layout -- one app at a time, no taskbar, no icons. That is a desktop,
+      // and it has a mouse. Either the physical screen is a phone's, or the
+      // pointer is a finger; a zoomed desktop window is neither, and a device
+      // simulator (which fakes the pointer but not screen.width) is the
+      // second.
+      const scr = window.screen || {};
+      const phoneScreen = !!scr.width && !!scr.height &&
+        Math.min(scr.width, scr.height) <= 500 && Math.max(scr.width, scr.height) <= 950;
+      const coarsePointer = !!(window.matchMedia &&
+        (window.matchMedia('(pointer: coarse)').matches ||
+         window.matchMedia('(hover: none)').matches));
+      return phoneScreen || coarsePointer;
     }
     let SINGLE_APP_MODE = detectSingleAppMode();
+    // Printed unconditionally: "why is my desktop browser in phone mode" is
+    // otherwise a guess about numbers only the visitor's browser knows.
+    console.log('[shell] single-app=' + SINGLE_APP_MODE +
+      ' viewport=' + Math.round((window.visualViewport || window).width || window.innerWidth) +
+      'x' + Math.round((window.visualViewport || window).height || window.innerHeight) +
+      ' screen=' + (window.screen ? window.screen.width + 'x' + window.screen.height : '?') +
+      ' dpr=' + window.devicePixelRatio +
+      ' coarse=' + !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches));
     // Built once the DOM helpers below exist; screenCanvasSize() asks it for
     // the frozen height, so it has to be declared before either of them.
     let keyboardController = null;
