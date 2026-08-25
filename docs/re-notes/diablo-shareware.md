@@ -2152,3 +2152,73 @@ correct, no duplication.
 > not reproduce: headless, `click:425:331` to focus the field and then
 > `keypress` characters puts BOB in it and the screen is correct. The field
 > needs the focus click first, and Diablo rejects names with spaces.
+
+## OPEN (2026-08-25): the title screen was seen in the intro's blue palette
+
+Reported from the browser: the `ui_art\title.pcx` screen — demon face, DIABLO
+wordmark, copyright line — came up **blue** instead of dark red. The wordmark
+and both text lines were the right bone/beige, so it is not a channel swap of
+the whole frame.
+
+**Not the 8bpp blit fast path** (commit `3d83bc2d`). A/B'd directly: built with
+an early `(return (i32.const -1))` in the `src_bpp == 8` branch of
+`$gdi_raster_bitblt_fast32`, captured the same frame, and the colours are
+identical either way. The fast path resolves the palette base once per *blit*,
+so the only thing it could miss is a palette change occurring inside a single
+blit, which cannot happen.
+
+**Does not reproduce headlessly**, at either resolution:
+
+```sh
+node test/run.js --app=diablo_shareware --batch-size=200000 \
+  --tick-ms-per-batch=50 --max-batches=800 --no-close --repaint-every=20 \
+  --input='760:png:/tmp/title.png'
+# add --screen=1280x866 for the browser's canvas size
+```
+
+Batch ~760 is the title screen and it is correct at 640x480 and at 1280x866:
+red demon, yellow fire, white wordmark. Ground truth to diff against comes from
+the archive itself, no emulator in the loop:
+
+```sh
+node tools/mpq-extract.js test/binaries/candidates/diablo-shareware/installed/spawn.mpq \
+  --name='ui_art\title.pcx' --png=/tmp/title_truth.png
+```
+
+An 11% pixel difference against that file is expected and correct — it is the
+DIABLO wordmark and the two text lines, which diabloui draws on top afterwards.
+
+### What the palette measurements say
+
+- Only **2** `SetEntries` calls in the first 5100 batches of the intro, both
+  `start=1 count=254` on palette slot 2. `$handle_IDirectDrawPalette_SetEntries`
+  honours `start` correctly (`memcpy` to `pal_wa + arg2*4`).
+- A `--watch` on the live table found exactly two writers and both are Diablo's
+  own `SetEntries`; nothing else scribbles on it.
+- At batch 850 the table matches `title.pcx`'s own palette entry for entry,
+  in `PALETTEENTRY` (R,G,B,flags) order: `c0c0c0`, `c0dcc0`, `a6caf0`,
+  `b46400`, `c06c00`, `c88000`, `c88420`, `d09400`, `d4a400`. Entries 0-6 stay
+  at the Windows system colours (`0x80` reds, not the PCX's `0xbf`) because
+  Diablo starts at index 1 — that is correct, not a bug.
+- **The blue ramp is real and is the intro's.** During the Blizzard logo the
+  table is `(0,0,4)`, `(0,0,8)`, `(0,0,12)` … and the Blizzard Entertainment
+  logo genuinely is blue in this game. A capture of it at batch 240 matches.
+
+So the leading hypothesis is that the reported frame is **the title art shown
+while the intro's palette is still installed** — the picture from one scene and
+the colour table from the previous one. Everything about the report fits that:
+correct structure, uniformly blue, and the two text overlays unaffected because
+diabloui draws them through GDI with explicit colours.
+
+### The next measurement
+
+Reproduce it in the browser, which is the only place it has been seen, and
+capture the palette at that instant. Both hosts re-present on a palette change
+(`$handle_IDirectDrawPalette_SetEntries` calls `$dx_present` when the written
+table is `$dx_primary_pal_wa`), and on the browser's direct-attach path that
+becomes `host_gdi_surface_upload`, which marks the whole surface dirty — so on
+paper the refresh should happen. What is worth checking first is
+`_flushGdiSurfacePresentation` in `lib/host-imports.js`: it takes the dirty
+rect **before** it calls `_refreshGdiSurfacePalette`, and returns early when
+there is no dirty rect. Any path that changes the palette without producing one
+leaves the canvas holding the previous colours, which is exactly this symptom.
