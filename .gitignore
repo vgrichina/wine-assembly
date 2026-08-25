@@ -30,6 +30,8 @@ binaries
 *.mid
 *.MID
 messageboard.txt
+*.orig
+stdout.txt
 *.DAT
 *.bmp
 *.mp3
