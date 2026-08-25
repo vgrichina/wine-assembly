@@ -43,3 +43,4 @@ test/binaries/wep32-community/
 test/binaries/dlls/
 !test/binaries/dlls/SOURCES.md
 !test/binaries/SOURCES.md
+test/corpus/
