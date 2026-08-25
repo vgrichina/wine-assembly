@@ -179,7 +179,16 @@
             ;; via $rsrc_find_entry's string-vs-id branch, so freecell-style
             ;; named menus work the same as integer-IDed ones.
             (if (i32.ne (local.get $v) (i32.const 0))
-              (then (local.set $tmp (local.get $v))))))))
+              (then
+                (local.set $tmp (local.get $v))
+                ;; WNDCLASSA.hInstance(+16) — the module that owns the menu
+                ;; resource named here, which need not be the EXE. Only a
+                ;; foreign module is worth recording; leaving it 0 for the EXE
+                ;; keeps the common case on the untouched lookup path.
+                (local.set $v (i32.load offset=16 (call $class_wndclass_addr (local.get $i))))
+                (if (i32.and (i32.ne (local.get $v) (i32.const 0))
+                             (i32.ne (local.get $v) (global.get $image_base)))
+                  (then (global.set $class_menu_hinst (local.get $v))))))))))
     ;; Seed the top-level WND_RECORD before the host creates the renderer
     ;; surface. The host may synchronously ask WAT for style/client/menu state
     ;; while creating the canvas; Win98 USER already has the window record at

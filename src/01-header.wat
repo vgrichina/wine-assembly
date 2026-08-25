@@ -2373,6 +2373,13 @@
   (global $next_hmenu   (mut i32) (i32.const 0x800001)) ;; HMENU allocator — opaque handle, no backing state (AppendMenu is no-op; menu bar rendered from PE resources)
   (global $last_load_menu_id (mut i32) (i32.const 0)) ;; low-word resource id from most recent LoadMenuA/W
   (global $last_load_menu_hinst (mut i32) (i32.const 0)) ;; hInstance paired with $last_load_menu_id
+  ;; One-shot: the WNDCLASS.hInstance whose lpszMenuName CreateWindowExA just
+  ;; adopted as the new window's menu. The class that owns the menu resource is
+  ;; often a DLL (HyperTerminal registers SESSION_WINDOW with menu="MainMenu"
+  ;; from hypertrm.dll and never calls LoadMenu at all), so the resource lookup
+  ;; has to run against that module rather than the EXE. $menu_load consumes and
+  ;; clears it on entry.
+  (global $class_menu_hinst (mut i32) (i32.const 0))
   ;; ATOM_LOCAL_TABLE / ATOM_GLOBAL_TABLE: string-keyed atom tables. Win32 keeps
   ;; the process-local (AddAtom) and system-global (GlobalAddAtom) namespaces
   ;; separate, and apps rely on that: the same string added to both yields two
