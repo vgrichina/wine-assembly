@@ -22,6 +22,7 @@ const renderer = {
   _nextZ: 100,
   repaintScheduled: false,
   _computeClientRect() {},
+  _clampToolbarWidth() { return false; },
   scheduleRepaint() {
     this.repaintScheduled = true;
   },

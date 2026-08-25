@@ -51,7 +51,9 @@ assert(indexSource.includes('onchange="setRuntimeLogging(this.checked)"'), 'the 
 assert(indexSource.includes("const RUNTIME_LOG_KEY = 'wine-assembly:runtime-log'"), 'the runtime log preference has a stable storage key');
 assert(indexSource.includes("localStorage.setItem(RUNTIME_LOG_KEY, on ? '1' : '0')"), 'the runtime log preference persists');
 assert(indexSource.includes('window.WINE_RUNTIME_LOGGING = initialRuntimeLogging'), 'future app instances inherit the saved logging preference');
-assert(indexSource.includes('host.js?v=217'), 'the page cache-busts the gated browser host');
-assert(hostSource.includes("static SOURCE_VERSION = '217'"), 'the host cache-busts its browser artifacts consistently');
+const sourceVersion = hostSource.match(/static SOURCE_VERSION = '([^']+)'/);
+assert(sourceVersion, 'the browser host declares an artifact source version');
+assert(indexSource.includes(`host.js?v=${sourceVersion[1]}`),
+  'the page and browser host use the same cache-bust version');
 
 console.log('PASS  runtime logging checkbox gates console and DOM output immediately');

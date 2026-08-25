@@ -202,18 +202,23 @@ async function main() {
   const laterRoot = insertItem('Later root');
   const childA = insertItem('Child A', parent);
   const childB = insertItem('Child B', parent);
-  check('collapsed parent hides both children', e.treeview_get_visible_count() === 14);
+  // Three consecutive slot-encoded handles guarantee that at least one has
+  // TVIS_SELECTED's bit clear. The regression below needs that shape to catch
+  // code that accidentally ANDs a handle value with a state bit.
+  const childC = insertItem('Child C', parent);
+  check('collapsed parent hides all children', e.treeview_get_visible_count() === 14);
   check('TVGN_CHILD returns first hierarchical child',
     (e.send_message(tv, TVM_GETNEXTITEM, 4, parent) >>> 0) === childA);
   check('TVGN_PARENT returns hierarchical parent',
     (e.send_message(tv, TVM_GETNEXTITEM, 3, childB) >>> 0) === parent);
   const beforeExpandNotify = e.treeview_get_debug_expand_notify_count();
-  check('TVM_EXPAND reveals both children',
+  check('TVM_EXPAND reveals all children',
     e.send_message(tv, TVM_EXPAND, TVE_EXPAND, parent) === 1 &&
-      e.treeview_get_visible_count() === 16);
-  const selectedChild = [childA, childB].find(handle => (handle & 0x0002) === 0);
+      e.treeview_get_visible_count() === 17);
+  const selectedChild = [childA, childB, childC].find(handle => (handle & 0x0002) === 0);
   check('test has a selected child whose handle does not share TVIS_SELECTED bit',
-    !!selectedChild, `childA=0x${childA.toString(16)} childB=0x${childB.toString(16)}`);
+    !!selectedChild,
+    `childA=0x${childA.toString(16)} childB=0x${childB.toString(16)} childC=0x${childC.toString(16)}`);
   check('selected-descendant scan treats handle and state as booleans',
     !!selectedChild &&
       e.send_message(tv, TVM_SELECTITEM, TVGN_CARET, selectedChild) === 1 &&
@@ -221,7 +226,7 @@ async function main() {
   e.send_message(tv, TVM_SELECTITEM, TVGN_CARET, parent);
   check('TVGN_NEXTVISIBLE follows depth-first tree order, not allocation order',
     (e.send_message(tv, TVM_GETNEXTITEM, TVGN_NEXTVISIBLE, parent) >>> 0) === childA &&
-      (e.send_message(tv, TVM_GETNEXTITEM, TVGN_NEXTVISIBLE, childB) >>> 0) === laterRoot);
+      (e.send_message(tv, TVM_GETNEXTITEM, TVGN_NEXTVISIBLE, childC) >>> 0) === laterRoot);
   check('TVM_EXPAND emits expanding/expanded notifications',
     e.treeview_get_debug_expand_notify_count() === beforeExpandNotify + 2 &&
       (e.treeview_get_debug_expand_notify_code() | 0) === TVN_ITEMEXPANDEDA &&
@@ -229,7 +234,7 @@ async function main() {
       (e.treeview_get_debug_expand_notify_item() >>> 0) === parent &&
       e.treeview_get_debug_expand_notify_children() === 1);
   const beforeCollapseNotify = e.treeview_get_debug_expand_notify_count();
-  check('TVM_EXPAND collapse hides both children again',
+  check('TVM_EXPAND collapse hides all children again',
     e.send_message(tv, TVM_EXPAND, TVE_COLLAPSE, parent) === 1 &&
       e.treeview_get_visible_count() === 14);
   check('TVM_EXPAND collapse emits expanding/expanded notifications',

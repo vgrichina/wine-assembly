@@ -139,6 +139,7 @@ function makeRenderer(wasm) {
   r.handleMouseUp(327, 30, 1);
 
   assert.deepStrictEqual(calls, [
+    { fn: 'send_message', hwnd: 200, msg: 0x0112, wParam: 0xF060, lParam: 0 },
     { fn: 'send_message', hwnd: 200, msg: 0x0010, wParam: 0, lParam: 0 },
     { fn: 'wnd_destroy_tree', hwnd: 200 },
     { fn: 'destroy_dialog_frame', hwnd: 200 },
