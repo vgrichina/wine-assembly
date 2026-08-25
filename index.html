@@ -1154,8 +1154,8 @@ Resource-aware Win98 emulator
   <script src="lib/renderer.js?v=188"></script>
   <script src="lib/dll-registry.js?v=1"></script>
   <script src="lib/apps.js?v=2"></script>
-  <script src="lib/browser-input.js?v=2"></script>
-  <script src="lib/mobile-keyboard.js?v=1"></script>
+  <script src="lib/browser-input.js?v=3"></script>
+  <script src="lib/mobile-keyboard.js?v=2"></script>
   <script src="lib/vfs-persistence.js?v=1"></script>
   <script src="lib/browser-shell.js?v=6"></script>
   <script src="lib/pe.js?v=1"></script>
@@ -1644,6 +1644,18 @@ Resource-aware Win98 emulator
             // silently deny full screen to every app launched afterwards.
             sharedRenderer._fullscreenDeclined = false;
           }
+          // The on-screen keyboard belonged to the app that just went away,
+          // and everything about it has to go with it. This is not a tidy-up:
+          // the keyboard controller translates #screen-wrap upward to keep the
+          // guest's caret above the keys, and #desktop-icons is a child of
+          // that element -- so a shift left behind takes the desktop's only
+          // launcher off the top of the screen and leaves bare teal.
+          const proxy = document.getElementById('mobile-keyboard-proxy');
+          if (proxy && document.activeElement === proxy) {
+            proxy.value = '';
+            try { proxy.blur(); } catch (_) {}
+          }
+          if (keyboardController && keyboardController.reset) keyboardController.reset();
           // A pinch-zoomed page stays zoomed and panned after the app that was
           // filling it goes away, and what is under the pan is teal
           // background rather than the icon grid: a dead end, because on a

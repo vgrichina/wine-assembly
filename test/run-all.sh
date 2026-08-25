@@ -364,6 +364,7 @@ E2E=(
   test/test-half-life-uplink-installed.js
   test/test-half-life-uplink-web.js
   test/test-web-notepad-close-desktop.js
+  test/test-web-keyboard-shift-cleared.js
   test/test-web-single-app-quit.js
   test/test-win16-jigsawed.js
   test/test-win16-jigsawed-menus.js
