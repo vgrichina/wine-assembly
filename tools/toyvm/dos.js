@@ -328,6 +328,30 @@ function newConsole(mem) {
   };
 }
 
+// What autoKey answers a blocking read with, in order, rotating.
+//
+// Enter alone is not enough, and the text screens are what showed it: about ten
+// programs in this corpus open on a sound-device menu that ignores Enter
+// completely -- "a. PC Speaker / p. No sound / Select an output device :",
+// "MUSIC [Y/N]", "[1] a GUS or no Sound card at all or [2] a Soundblaster".
+// Each of those wants one specific character, and a headless run wants the
+// silent option in every case, so the rotation leads with the keys that mean
+// "no sound" and only then tries the generic ones. A menu polling in a loop
+// gets a different key each time round and moves on as soon as one is accepted.
+//
+// AH is the scancode, which the INT 16h forms return alongside the character;
+// a program reading only AL never looks at it, but the ones that read the whole
+// word do.
+const AUTO_KEYS = [
+  { ah: 0x19, al: 0x70 },   // p -- "No sound" in every GoldPlay setup here
+  { ah: 0x31, al: 0x6E },   // n -- "MUSIC [Y/N]", "do you have a GUS"
+  { ah: 0x02, al: 0x31 },   // 1 -- first entry of a numbered menu
+  { ah: 0x1C, al: 0x0D },   // Enter
+  { ah: 0x39, al: 0x20 },   // space
+  { ah: 0x15, al: 0x79 },   // y
+  { ah: 0x1E, al: 0x61 },   // a
+];
+
 // The 16 CGA text colours as 6-bit DAC triples, in attribute-byte order.
 const CGA_DAC = [
   [0, 0, 0], [0, 0, 42], [0, 42, 0], [0, 42, 42],
@@ -366,6 +390,7 @@ class Machine {
     this.blockedOnKey = false;
     this.keys = opts.keys ? [...opts.keys] : [];   // queued as {ah, al}
     this.autoKey = !!opts.autoKey;
+    this.autoKeyAt = 0;
     this.forceChained = !!opts.forceChained;
     this.mouse = { x: 160, y: 100, buttons: 0, dx: 0, dy: 0 };
     this.allocTop = DEFAULT_ALLOC_TOP;
@@ -389,6 +414,13 @@ class Machine {
   // The real guest memory arrives after construction, once the wasm instance
   // exists. The text page lives inside it, so the console has to be re-pointed
   // and the page re-blanked rather than left addressing the throwaway buffer.
+  // One synthetic keystroke, or null when autoKey is off. Rotates, so a menu
+  // that refuses the first answer is offered the next one on its next poll.
+  autoKeyNext() {
+    if (!this.autoKey) return null;
+    return AUTO_KEYS[this.autoKeyAt++ % AUTO_KEYS.length];
+  }
+
   setMemory(mem) {
     this.mem = mem;
     this.con.mem = mem;
@@ -828,10 +860,10 @@ class Machine {
     if (ah === 0x00 || ah === 0x10) {
       const k = this.keys.shift()
         // A blocking read with an empty queue is where a "press any key" title
-        // screen parks forever. autoKey answers it with Enter so a headless run
-        // gets past the prompt; a demo that treats any key as "quit" will quit,
-        // which is itself the answer to whether it can be benchmarked.
-        || (this.autoKey ? { ah: 0x1C, al: 0x0D } : null);
+        // screen parks forever. autoKey answers it from AUTO_KEYS so a headless
+        // run gets past the prompt; a demo that treats any key as "quit" will
+        // quit, which is itself the answer to whether it can be benchmarked.
+        || (this.autoKeyNext());
       if (!k) { this.blockedOnKey = true; r.set('ax', 0); return true; }
       r.set('ax', ((k.ah & 0xFF) << 8) | (k.al & 0xFF));
       return true;
@@ -882,7 +914,7 @@ class Machine {
       // is output, not input; only 0xFF asks for a character and it must report
       // "nothing waiting" through ZF rather than blocking.
       case 0x01: case 0x07: case 0x08: {
-        const k = this.keys.shift() || (this.autoKey ? { ah: 0x1C, al: 0x0D } : null);
+        const k = this.keys.shift() || (this.autoKeyNext());
         if (!k) this.blockedOnKey = true;
         r.set('ax', (r.get('ax') & 0xFF00) | (k ? k.al & 0xFF : 0));
         return true;
@@ -894,7 +926,7 @@ class Machine {
           this.conPutc(dl);
           return true;
         }
-        const k = this.keys.shift() || (this.autoKey ? { ah: 0x1C, al: 0x0D } : null);
+        const k = this.keys.shift() || (this.autoKeyNext());
         r.setResultZf(!k);
         r.set('ax', (r.get('ax') & 0xFF00) | (k ? k.al & 0xFF : 0));
         return true;
