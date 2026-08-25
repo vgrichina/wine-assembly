@@ -183,6 +183,46 @@ why the harness interleaves, rotates the starting arm, quotes minima, and prints
 load average either side. A sequential arm-then-arm layout on this box would
 have produced a confident number for whichever arm ran during a quiet minute.
 
+### 5.1 None of these programs is waiting for the clock
+
+A batch-driven guest clock is how the main emulator got fooled into reading a
+perfectly good Smacker decoder as broken, so the same question has to be asked
+here — and the answer is not assumable, because this harness advances **one tick
+per handback**, and handbacks range from 31 dispatches (CORE-ADD) to 1.4M
+(COPPER). Guest time therefore runs at wildly different speeds relative to guest
+*work* depending on the program.
+
+`tools/toyvm/clock-probe.js` settles it by running each program three times at
+one dispatch budget with the clock stopped, normal and 16x, and diffing what it
+drew:
+
+```bash
+node tools/toyvm/clock-probe.js --dir=demos --dispatches=15m
+```
+
+**Nine of ten are byte-identical across all three clock rates** — they never read
+a clock at all, so the only thing that gets them further is more dispatches.
+The tenth, mars.exe, draws a *different but equally complete* landscape at each
+rate: it calls INT 1Ah exactly once and seeds its fractal terrain from the tick
+count. Clock-sensitive, not clock-starved. Same 51,218 pixels lit every time.
+
+That makes the benchmark numbers in §5 pure interpreter throughput, which is
+what they needed to be.
+
+The counters print beside the verdict and name a second thing worth knowing:
+**DSTNFO polls the 0x3DA retrace bit 719,968 times** in 15M dispatches, and
+CONTACT 81,600 times. A retrace wait is `in al,dx` / `test` / `jcc`, so at three
+ops per poll DSTNFO spends **at least 14% of its entire budget** in a three-op
+spin loop — and DSTNFO is exactly the program where the giant `br_table` posts
+its +40.1% outlier. A tiny hot loop of trivial handler bodies is the one shape
+where inlining every arm should win, and it is not representative of the rest of
+the corpus.
+
+(In this machine that spin is free: `portIn` toggles the retrace bit on every
+read, so a wait always completes in two reads. On real hardware those polls
+would block until the beam came round, which is the *other* reason none of these
+are time-starved here.)
+
 ## 6. Reading this against the microbench
 
 [loop-microbench-harness.md](loop-microbench-harness.md) already carries the

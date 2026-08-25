@@ -102,6 +102,13 @@ class Machine {
     this.allocTop = DEFAULT_ALLOC_TOP;
     this.unhandled = new Map();
     this.intCount = new Map();
+    // Which clock, if any, a program is pacing itself off. A demo that never
+    // touches any of these cannot be waiting for time and is compute-bound by
+    // construction; one that hammers retrace is frame-paced. Does NOT see a
+    // program polling the BIOS tick word in memory directly -- that one is
+    // only visible by changing tickScale and watching the frame move. The
+    // interrupt-driven clocks (INT 1Ah, 15h, 16h) are already in `intCount`.
+    this.clock = { retrace: 0, pit: 0 };
 
     this.installIvt();
     // BIOS data area: video mode byte and the 55ms tick counter at 0040:006C,
@@ -136,6 +143,7 @@ class Machine {
       // Bit 3 is vertical retrace, bit 0 "display disabled". A demo that waits
       // for retrace to start needs to see the bit both clear and set or it
       // spins forever, so this alternates on every read.
+      this.clock.retrace++;
       this.retraceToggle ^= 1;
       return this.retraceToggle ? 0x09 : 0x00;
     }
@@ -145,7 +153,7 @@ class Machine {
       return v;
     }
     if (port === 0x60) return 0;            // keyboard data: no key down
-    if (port === 0x40 || port === 0x41 || port === 0x42) return (this.ticks * 13) & 0xFF;
+    if (port === 0x40 || port === 0x41 || port === 0x42) { this.clock.pit++; return (this.ticks * 13) & 0xFF; }
     return w === 16 ? 0xFFFF : 0xFF;
   }
 

@@ -69,6 +69,7 @@ async function runDos(o) {
     variant = 'tailcall', exe, budget = 200e6, slice = 2e6,
     traceInt = false, noCache = false, shots = null, shotEvery = 20,
     mouse = [0, 0], cpu = 386, report = false, log = console.log, autoKey = false,
+    tickScale = 1,
   } = o;
   setCpuLevel(cpu);
 
@@ -207,7 +208,16 @@ async function runDos(o) {
     // Time moves with work, not with the wall clock: a demo that spins on the
     // BIOS tick has to see it advance, and a wall clock would make a headless
     // run's speed change what the guest computes.
-    machine.setTicks(machine.ticks + 1);
+    //
+    // But note WHAT it moves with: one tick per HANDBACK, and handbacks vary by
+    // five orders of magnitude across the corpus (31 dispatches for CORE-ADD,
+    // 1.4M for COPPER). So the guest clock runs at wildly different speeds
+    // relative to guest work depending on the program -- exactly the trap
+    // documented for the main emulator's `batch * TICK_MS_PER_BATCH`. tickScale
+    // is the A/B knob: run the same program at 0, 1 and 16 and compare frames.
+    // Identical across all three means the program never reads a clock and is
+    // purely compute-bound; a frame that advances at 16 means it was waiting.
+    machine.setTicks(machine.ticks + tickScale);
     machine.mouse.dx += mouse[0]; machine.mouse.dy += mouse[1];
 
     if (shots && handbacks % shotEvery === 0 && machine.videoMode === 0x13) {
@@ -264,6 +274,7 @@ async function main() {
     cpu: Number(arg('cpu', 386)),
     report,
     autoKey: flag('auto-key'),
+    tickScale: Number(arg('tick-scale', 1)),
   });
 
   const png = arg('png');
