@@ -342,15 +342,56 @@
     (call $wnd_table_remove (local.get $hwnd))
   )
 
+  ;; The two slots this instance resolved most recently, or -1. This lookup is
+  ;; on the GDI blit path -- every DC bound to a window resolves its clip
+  ;; through here -- and the scan below is 256 iterations with a call in each
+  ;; one, so an unaided miss-shaped hit is expensive out of all proportion to
+  ;; what it computes. Measured in Chrome on Diablo's Choose Class screen (a
+  ;; screen that is 90% GDI rasterization), $wnd_table_find alone was **25.4%
+  ;; of all CPU time**, ahead of every rasterizer function and 15x the x86
+  ;; interpreter's $next.
+  ;;
+  ;; Two entries rather than one because the painting pattern alternates: a
+  ;; control's clip resolves the child and then its parent, and a single hint
+  ;; thrashes between them and never hits.
+  ;;
+  ;; A stale hint is harmless -- the hwnd stored in the slot is compared before
+  ;; the slot is returned, so a recycled or destroyed slot simply misses and
+  ;; falls through to the scan. That is what makes this safe without any
+  ;; invalidation hook in $wnd_table_set / $wnd_table_remove.
+  (global $wnd_find_hint0 (mut i32) (i32.const -1))
+  (global $wnd_find_hint1 (mut i32) (i32.const -1))
+
   ;; Find window table slot index for hwnd; returns -1 if not found
   (func $wnd_table_find (param $hwnd i32) (result i32)
-    (local $i i32) (local $ptr i32)
+    (local $i i32) (local $ptr i32) (local $hint i32)
+    ;; hwnd 0 keeps the original exhaustive semantics. A caller passing it is
+    ;; asking for the first *empty* slot, which is a position in the table and
+    ;; not a window, so it must never be answered from a hint.
+    (if (local.get $hwnd) (then
+      (local.set $hint (global.get $wnd_find_hint0))
+      (if (i32.ge_s (local.get $hint) (i32.const 0)) (then
+        (if (i32.eq (i32.load (call $wnd_record_addr (local.get $hint))) (local.get $hwnd))
+          (then (return (local.get $hint))))))
+      (local.set $hint (global.get $wnd_find_hint1))
+      (if (i32.ge_s (local.get $hint) (i32.const 0)) (then
+        (if (i32.eq (i32.load (call $wnd_record_addr (local.get $hint))) (local.get $hwnd))
+          (then
+            ;; Promote: the two windows swap roles as painting moves between a
+            ;; parent and its children, and the hot one should stay in hint0.
+            (global.set $wnd_find_hint1 (global.get $wnd_find_hint0))
+            (global.set $wnd_find_hint0 (local.get $hint))
+            (return (local.get $hint))))))))
     (local.set $i (i32.const 0))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
       (local.set $ptr (call $wnd_record_addr (local.get $i)))
       (if (i32.eq (i32.load (local.get $ptr)) (local.get $hwnd))
-        (then (return (local.get $i))))
+        (then
+          (if (local.get $hwnd) (then
+            (global.set $wnd_find_hint1 (global.get $wnd_find_hint0))
+            (global.set $wnd_find_hint0 (local.get $i))))
+          (return (local.get $i))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (i32.const -1)
