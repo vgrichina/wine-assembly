@@ -1380,6 +1380,16 @@ Resource-aware Win98 emulator
         el.addEventListener('click', () => {
           for (const e of grid.querySelectorAll('.desktop-icon.selected')) e.classList.remove('selected');
           el.classList.add('selected');
+          // Double-click to open is a desktop convention and a mouse one. A
+          // phone has no hover, no "select without opening" gesture worth the
+          // name, and double-tap is the browser's own zoom: on single-app the
+          // first tap opens. Without this, closing an app leaves a desktop
+          // where tapping an icon appears to do nothing at all.
+          if (SINGLE_APP_MODE) {
+            sel.value = value;
+            launchApp();
+            return;
+          }
           const now = Date.now();
           if (now - lastClick < 500) {
             sel.value = value;
