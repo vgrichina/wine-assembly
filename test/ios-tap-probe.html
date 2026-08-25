@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>iOS tap probe</title>
+<style>
+  html, body { margin: 0; height: 100%; font: 16px -apple-system, sans-serif; }
+  body { background: #204; color: #fff; touch-action: manipulation; }
+  #out { padding: 12px; font-size: 20px; line-height: 1.4; }
+</style>
+</head>
+<body>
+<!--
+  Calibration target for tools/ios-sim-tap.js.
+
+  Clicking the Simulator window is the only way to give the page a real touch
+  (there is no WebDriver into Simulator Safari without WebDriverAgent), and a
+  real touch is the point: the iOS behaviours we keep getting wrong -- the
+  focus-triggered page zoom, the toolbar collapse -- only happen for genuine
+  gestures. But a macOS screen coordinate is not a CSS coordinate, and the
+  offset depends on where the window sits and how much chrome it has. So the
+  tool clicks known screen points, and this page reports back where they
+  actually landed. Two points give the affine map.
+-->
+<div id="out">tap anywhere</div>
+<script>
+  const out = document.getElementById('out');
+  function post(body) {
+    try {
+      fetch('/ios-report', { method: 'POST', body: JSON.stringify(body) });
+    } catch (_) {}
+  }
+  function show(event) {
+    const touch = event.changedTouches ? event.changedTouches[0] : event;
+    const point = { kind: 'tap', x: touch.clientX, y: touch.clientY,
+                    inner: window.innerWidth + 'x' + window.innerHeight,
+                    scale: window.visualViewport ? window.visualViewport.scale : null };
+    out.textContent = JSON.stringify(point);
+    post(point);
+  }
+  document.addEventListener('touchend', show);
+  document.addEventListener('click', show);
+  post({ kind: 'log', text: 'probe ready inner=' + window.innerWidth + 'x' + window.innerHeight +
+                            ' dpr=' + window.devicePixelRatio });
+</script>
+</body>
+</html>

@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>iOS launch/close self-test</title>
+<style>
+  html, body { margin: 0; height: 100%; font: 13px -apple-system, sans-serif; background: #111; color: #eee; }
+  #frame { position: fixed; left: 0; top: 0; width: 100%; height: 100%; border: 0; }
+  #panel { position: fixed; left: 0; right: 0; top: 0; z-index: 10; background: rgba(0,0,0,0.86);
+           padding: 8px 10px; font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+           line-height: 1.35; white-space: pre-wrap; max-height: 55%; overflow: auto; }
+  #verdict { font-size: 22px; font-weight: 700; }
+  .pass { color: #6f6; } .fail { color: #f66; } .run { color: #fd6; }
+</style>
+</head>
+<body>
+<!--
+  Drives the real shell, in the Simulator, under real WebKit.
+
+  Chrome device emulation has never reproduced a single one of the phone bugs
+  in this shell: it has no retractable toolbars, no visual viewport separate
+  from the layout viewport, and not WebKit's timing. This page loads the real
+  index.html in an iframe, runs launch/close cycles against it, and posts what
+  it finds to tools/ios-selftest-server.js -- because simctl can read pixels
+  but not the DOM, and a verdict that only exists as a screenshot is a verdict
+  somebody has to squint at.
+
+  The bug being chased is intermittent by the user's own report ("sometimes the
+  app closes properly, sometimes not"), which is why this loops rather than
+  doing one cycle and declaring victory.
+
+  Cycles alternate: half of them focus the guest's hidden keyboard proxy
+  first, which is what tapping into Notepad's edit area does. That is the
+  suspected trigger -- iOS zooms the page for any focused control under 16px,
+  and does not zoom back out on blur, so the desktop underneath comes back
+  zoomed and panned off its own icon grid.
+
+    node tools/ios-selftest-server.js --port=8099
+    xcrun simctl openurl booted http://127.0.0.1:8099/test/ios-selftest.html
+    xcrun simctl io booted screenshot out.png     # or just read the server log
+-->
+<div id="panel"><span id="verdict" class="run">starting…</span>
+<span id="lines"></span></div>
+<iframe id="frame" src="/index.html?single-app=1"></iframe>
+<script>
+'use strict';
+
+const CYCLES = Number(new URLSearchParams(location.search).get('cycles') || 4);
+const APP = new URLSearchParams(location.search).get('app') || 'notepad';
+const frame = document.getElementById('frame');
+const linesEl = document.getElementById('lines');
+const verdictEl = document.getElementById('verdict');
+const results = [];
+
+function post(body) {
+  try { fetch('/ios-report', { method: 'POST', body: JSON.stringify(body) }); } catch (_) {}
+}
+function say(text) {
+  linesEl.textContent += '\n' + text;
+  post({ kind: 'log', text });
+}
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+// index.html declares its shell globals with `const`, so they live in that
+// window's script scope and are not properties of contentWindow. eval() inside
+// the frame is how you reach them from out here.
+function fx(expr) { return frame.contentWindow.eval(expr); }
+
+async function waitFor(expr, timeoutMs, label) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    let value = null;
+    try { value = fx(expr); } catch (_) {}
+    if (value) return value;
+    if (Date.now() > deadline) throw new Error('timeout waiting for ' + (label || expr));
+    await sleep(200);
+  }
+}
+
+function scale() {
+  const vv = frame.contentWindow.visualViewport || window.visualViewport;
+  return vv ? Number(vv.scale.toFixed(3)) : null;
+}
+
+// Everything a bare teal desktop would show, in one object.
+function desktopState() {
+  return fx(`(() => {
+    const grid = document.getElementById('desktop-icons');
+    const icon = grid && grid.querySelector('.desktop-icon');
+    const rect = icon ? icon.getBoundingClientRect() : null;
+    const renderer = (typeof sharedRenderer !== 'undefined' && sharedRenderer) || null;
+    return {
+      running: (typeof runningApps !== 'undefined' && runningApps) ? runningApps.length : -1,
+      classes: document.body.className,
+      display: grid ? getComputedStyle(grid).display : 'none',
+      firstIconOnScreen: !!(rect && rect.width > 0 && rect.height > 0 &&
+        rect.bottom > 0 && rect.right > 0 &&
+        rect.top < innerHeight && rect.left < innerWidth),
+      windows: renderer ? Object.keys(renderer.windows || {}).length : -1,
+      pageScroll: Math.round(scrollY),
+    };
+  })()`);
+}
+
+// The zoom hypothesis, measured rather than argued: focus a control smaller
+// than 16px and see whether WebKit zoomed the page.
+async function zoomProbe() {
+  const doc = frame.contentDocument;
+  const make = size => {
+    const el = doc.createElement('textarea');
+    el.style.cssText = `position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;font-size:${size}px`;
+    doc.body.appendChild(el);
+    return el;
+  };
+  const out = {};
+  for (const size of [16, 13]) {
+    const el = make(size);
+    const before = scale();
+    try { el.focus({ preventScroll: true }); } catch (_) { el.focus(); }
+    await sleep(900);
+    out[size + 'px'] = { before, after: scale() };
+    el.blur();
+    el.remove();
+    await sleep(600);
+  }
+  return out;
+}
+
+async function cycle(index) {
+  const touchText = index % 2 === 1;
+  say(`cycle ${index + 1}/${CYCLES} launch ${APP}${touchText ? ' (+focus keyboard proxy)' : ''}`);
+  fx(`document.querySelector('.desktop-icon[data-app="${APP}"]').dispatchEvent(
+        new MouseEvent('click', { bubbles: true, cancelable: true }))`);
+  await waitFor('runningApps.length === 1', 60000, 'app to start');
+  const hwnd = await waitFor(`(() => {
+    const app = runningApps[0];
+    const base = app.wine._hwndBase || 0x10001;
+    for (const key of Object.keys(sharedRenderer.windows || {})) {
+      const w = sharedRenderer.windows[key];
+      const h = Number(key);
+      if (h >= base && h < base + 0x10000 && w && !w.parent) return h;
+    }
+    return 0;
+  })()`, 90000, 'a top-level window');
+  await sleep(1500);
+
+  if (touchText) {
+    fx(`(() => { const p = document.getElementById('mobile-keyboard-proxy');
+                 if (p) { try { p.focus({ preventScroll: true }); } catch (_) { p.focus(); } } })()`);
+    await sleep(1200);
+  }
+  const scaleWhileRunning = scale();
+
+  fx(`sharedRenderer._closeWatDialogFrame(${hwnd}, runningApps[0].wine.instance)`);
+  let closed = true;
+  try { await waitFor('runningApps.length === 0', 25000, 'the app to go away'); }
+  catch (_) { closed = false; }
+  await sleep(1200);
+
+  const state = desktopState();
+  const bad = [];
+  if (!closed || state.running !== 0) bad.push('app still running');
+  for (const cls of ['app-running', 'exclusive-fullscreen', 'page-fullscreen']) {
+    if (state.classes.includes(cls)) bad.push('class ' + cls + ' left set');
+  }
+  if (state.display === 'none') bad.push('icon grid display:none');
+  if (!state.firstIconOnScreen) bad.push('no icon on screen');
+  if (state.windows !== 0) bad.push(state.windows + ' renderer windows left');
+  if (scale() > 1.02) bad.push('page left zoomed at ' + scale());
+
+  const result = { kind: 'cycle', cycle: index + 1, touchText, ok: bad.length === 0,
+                   bad, scaleWhileRunning, scaleAfter: scale(), state };
+  results.push(result);
+  post(result);
+  say((result.ok ? 'PASS  ' : 'FAIL  ') + JSON.stringify(result.state) +
+      ' scale ' + scaleWhileRunning + '->' + result.scaleAfter +
+      (bad.length ? '  <<< ' + bad.join('; ') : ''));
+  return result;
+}
+
+async function main() {
+  await new Promise(resolve => {
+    if (frame.contentDocument && frame.contentDocument.readyState === 'complete') resolve();
+    else frame.addEventListener('load', resolve, { once: true });
+  });
+  await waitFor(`!!document.querySelector('.desktop-icon[data-app="${APP}"]')`, 30000, 'the desktop');
+  say('shell ready ' + JSON.stringify(desktopState()));
+
+  const zoom = await zoomProbe();
+  say('zoom probe ' + JSON.stringify(zoom));
+  post({ kind: 'zoom', zoom });
+
+  for (let i = 0; i < CYCLES; i++) {
+    try { await cycle(i); }
+    catch (error) {
+      const result = { kind: 'cycle', cycle: i + 1, ok: false, bad: [String(error && error.message || error)] };
+      results.push(result);
+      post(result);
+      say('FAIL  ' + result.bad[0]);
+    }
+  }
+  const failed = results.filter(r => !r.ok).length;
+  verdictEl.className = failed ? 'fail' : 'pass';
+  verdictEl.textContent = failed ? `FAIL ${failed}/${results.length}` : `PASS ${results.length}/${results.length}`;
+  post({ kind: 'verdict', failed, total: results.length });
+}
+
+main().catch(error => {
+  verdictEl.className = 'fail';
+  verdictEl.textContent = 'FAIL harness';
+  say('harness error: ' + (error && error.stack || error));
+  post({ kind: 'verdict', failed: -1, error: String(error) });
+});
+</script>
+</body>
+</html>

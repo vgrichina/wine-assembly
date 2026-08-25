@@ -155,6 +155,16 @@
       outline: none;
       pointer-events: none;
       z-index: -1;
+      /* NOT cosmetic -- this element is invisible. iOS Safari zooms the whole
+         page whenever a form control with a font smaller than 16px takes
+         focus, and it does not zoom back out when the field blurs. This
+         textarea inherits body's 13px, and browser-input.js focuses it on a
+         user gesture whenever the guest shows a caret -- so the first tap
+         inside Notepad's edit area silently zoomed the page. The app itself
+         still looked right (it fills the screen), but closing it left the
+         desktop zoomed and panned off the icon grid: bare teal with no
+         launcher. 16px is the documented threshold. */
+      font-size: 16px;
     }
     #browser-fullscreen-consent {
       display: none;
@@ -362,6 +372,10 @@
       cursor: pointer;
       user-select: none;
       padding: 2px;
+      /* touch-action is not inherited, and the touch starts on this element,
+         not on the grid -- so the grid's opt-out has to be repeated here. */
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
     }
     .desktop-icon .icon-img {
       width: 32px; height: 32px;
@@ -418,6 +432,15 @@
       pointer-events: auto;
       z-index: 3;
       scrollbar-width: thin;
+      /* One tap opens an app here (see the icon click handler), so the second
+         tap of an impatient double-tap has no job to do -- except Safari's,
+         which is to zoom the page. The app then launches into a zoomed
+         viewport, and when it closes the desktop comes back zoomed and panned
+         off its own icon grid: a teal screen with no launcher on it. The guest
+         canvas already opts out with touch-action:none; the icons never did.
+         `manipulation` keeps scrolling and pinch and drops only double-tap
+         zoom, which is the one gesture that is purely harmful here. */
+      touch-action: manipulation;
     }
     body.single-app:not(.app-running) #desktop-icons::-webkit-scrollbar { width: 6px; }
     body.single-app:not(.app-running) #desktop-icons::-webkit-scrollbar-thumb {
@@ -1427,6 +1450,25 @@ Resource-aware Win98 emulator
       ' screen=' + (window.screen ? window.screen.width + 'x' + window.screen.height : '?') +
       ' dpr=' + window.devicePixelRatio +
       ' coarse=' + !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches));
+    // Put the page back at 1:1 after a guest hands the screen back.
+    //
+    // iOS has no API for this -- there is no window.setZoom -- but Safari does
+    // re-evaluate the zoom when the viewport meta changes, so briefly pinning
+    // maximum-scale forces it back to 1 and putting the tag back restores the
+    // visitor's ability to pinch. That is worth doing on exactly one
+    // transition: an app that was filling the screen has gone away, and a
+    // zoomed, panned desktop shows nothing but teal background with the icon
+    // grid -- the only launcher in single-app mode -- somewhere off-screen.
+    // Anywhere else, silently undoing someone's zoom would be rude.
+    function resetPageZoom() {
+      const vv = window.visualViewport;
+      if (!vv || !(vv.scale > 1.02)) return;
+      const meta = document.querySelector('meta[name="viewport"]');
+      if (!meta) return;
+      const original = meta.getAttribute('content');
+      meta.setAttribute('content', original + ', maximum-scale=1, user-scalable=0');
+      setTimeout(() => meta.setAttribute('content', original), 400);
+    }
     // Built once the DOM helpers below exist; screenCanvasSize() asks it for
     // the frozen height, so it has to be declared before either of them.
     let keyboardController = null;
@@ -1602,6 +1644,14 @@ Resource-aware Win98 emulator
             // silently deny full screen to every app launched afterwards.
             sharedRenderer._fullscreenDeclined = false;
           }
+          // A pinch-zoomed page stays zoomed and panned after the app that was
+          // filling it goes away, and what is under the pan is teal
+          // background rather than the icon grid: a dead end, because on a
+          // phone the icons are the only launcher there is.
+          if (SINGLE_APP_MODE) resetPageZoom();
+          try { window.scrollTo(0, 0); } catch (_) {}
+          const icons = document.getElementById('desktop-icons');
+          if (icons) icons.scrollTop = 0;
         }
         // The desktop reappears at its own size once the guest is gone, and
         // the canvas is no longer sized to a maximized window.
