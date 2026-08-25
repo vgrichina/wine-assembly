@@ -38,6 +38,19 @@ async function makeVm(variant, opts = {}) {
   const ports = {
     port_in: opts.portIn || ((_port, w) => (w === 16 ? 0xFFFF : 0xFF)),
     port_out: opts.portOut || (() => {}),
+    // The transcendentals, by the selector emit.js bakes into each handler.
+    // Keep this table and the `M(op, ...)` calls in genFpu in step.
+    fmath: (op, a, b) => {
+      switch (op) {
+        case 0: return Math.sin(a);
+        case 1: return Math.cos(a);
+        case 2: return Math.tan(a);
+        case 3: return Math.atan2(a, b);
+        case 4: return Math.log2(a);
+        case 5: return 2 ** a;
+        default: return 0;
+      }
+    },
   };
   const instance = await WebAssembly.instantiate(module, { host: { memory, ...ports } });
   const ex = instance.exports;

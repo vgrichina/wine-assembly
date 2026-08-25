@@ -1816,6 +1816,98 @@ function genFpu() {
   ${EA_SETUP_PRE}
   (call $wr16 (local.get $t5) (local.get $t4) ${SW})
 `);
+
+  // The environment and whole-state moves. A demo that wants to know whether a
+  // coprocessor is present writes a known control word, FSTENVs, and reads the
+  // word back -- so refusing these reads as "no FPU fitted" even with every
+  // arithmetic instruction implemented.
+  for (const [nm, call] of Object.entries({
+    fnstenv: '(call $fenv_save (local.get $t5) (local.get $t4))',
+    fldenv: '(call $fenv_load (local.get $t5) (local.get $t4))',
+    fnsave: '(call $fstate_save (local.get $t5) (local.get $t4))',
+    frstor: '(call $fstate_load (local.get $t5) (local.get $t4))',
+    fbld: '(call $fpush (call $fbcd_read (local.get $t5) (local.get $t4)))',
+    fbstp: `(call $fbcd_write (local.get $t5) (local.get $t4) ${ST0}) (call $fpop)`,
+  })) {
+    // FNSAVE reinitialises the unit once the state is safely in memory, which
+    // is the whole reason a program calls it before handing the FPU to someone
+    // else. FNSTENV does not.
+    const reinit = nm === 'fnsave' ? `
+  (global.set $ftop (i32.const 0))
+  (global.set $ftag (i32.const 0))
+  (global.set $fsw (i32.const 0))
+  (global.set $fcw (i32.const 0x037F))` : '';
+    h(nm, 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  ${call}${reinit}
+`);
+  }
+
+  // The transcendentals. Every one of these is defined on ST(0) and most write
+  // ST(1) as well, so the operand order below is the manual's, not the obvious
+  // one: FYL2X is "y times log2 x" with y in ST(1) and x in ST(0), and the
+  // result replaces ST(1) before the pop.
+  const M = (op, a, b = '(f64.const 0)') => `(call $fmath (i32.const ${op}) ${a} ${b})`;
+  const ST1 = '(call $fst_get (i32.const 1))';
+  // C2 is the out-of-range flag on FPTAN and the sin/cos pair. The reduction
+  // these need is done in f64 by the host, which has no |x| < 2^63 limit, so it
+  // is always cleared.
+  const C2_CLEAR = `(global.set $fsw (i32.and (global.get $fsw) (i32.const ${~(1 << 10) & 0xFFFF})))`;
+
+  h('f2xm1', 0, `(call $fst_set (i32.const 0) (f64.sub ${M(5, ST0)} (f64.const 1)))`);
+  h('fsin', 0, `(call $fst_set (i32.const 0) ${M(0, ST0)}) ${C2_CLEAR}`);
+  h('fcos', 0, `(call $fst_set (i32.const 0) ${M(1, ST0)}) ${C2_CLEAR}`);
+  h('fsincos', 0, `
+  (local.set $f0 ${ST0})
+  (call $fst_set (i32.const 0) ${M(0, '(local.get $f0)')})
+  (call $fpush ${M(1, '(local.get $f0)')})
+  ${C2_CLEAR}
+`);
+  h('fptan', 0, `
+  (call $fst_set (i32.const 0) ${M(2, ST0)})
+  (call $fpush (f64.const 1))
+  ${C2_CLEAR}
+`);
+  h('fpatan', 0, `
+  (call $fst_set (i32.const 1) ${M(3, ST1, ST0)})
+  (call $fpop)
+`);
+  h('fyl2x', 0, `
+  (call $fst_set (i32.const 1) (f64.mul ${ST1} ${M(4, ST0)}))
+  (call $fpop)
+`);
+  h('fyl2xp1', 0, `
+  (call $fst_set (i32.const 1) (f64.mul ${ST1} ${M(4, `(f64.add ${ST0} (f64.const 1))`)}))
+  (call $fpop)
+`);
+  // FXTRACT splits ST(0) into its exponent and its significand in [1,2), the
+  // exponent replacing ST(0) and the significand pushed on top. Reading it
+  // straight out of the f64 exponent field is both exact and shorter than the
+  // log2 the definition suggests. Subnormals come back as zero, which is the
+  // same answer the rest of this FPU gives for them.
+  h('fxtract', 0, `
+  (local.set $q (i64.reinterpret_f64 ${ST0}))
+  (local.set $t0 (i32.wrap_i64 (i64.and (i64.shr_u (local.get $q) (i64.const 52))
+                                        (i64.const 0x7FF))))
+  (if (i32.eqz (local.get $t0))
+    (then
+      (call $fst_set (i32.const 0) (f64.const 0))
+      (call $fpush (f64.const 0)))
+    (else
+      (call $fst_set (i32.const 0)
+        (f64.convert_i32_s (i32.sub (local.get $t0) (i32.const 1023))))
+      (call $fpush (f64.reinterpret_i64 (i64.or
+        (i64.and (local.get $q) (i64.const 0x800FFFFFFFFFFFFF))
+        (i64.const 0x3FF0000000000000))))))
+`);
+  // FPREM1 differs from FPREM only in rounding the implied quotient to nearest
+  // rather than toward zero, which is what makes it the IEEE remainder.
+  h('fprem1', 0, `
+  (call $fst_set (i32.const 0) (f64.sub ${ST0}
+    (f64.mul (f64.nearest (f64.div ${ST0} ${ST1})) ${ST1})))
+  ${C2_CLEAR}
+`);
 }
 
 genStrings();
@@ -2438,6 +2530,129 @@ function fpuHelpers() {
   (global.set $fsw (i32.or
     (i32.and (global.get $fsw) (i32.const ${~((1 << 14) | (1 << 10) | (1 << 9) | (1 << 8)) & 0xFFFF}))
     (local.get $c))))
+
+;; The 14-byte real-mode environment FSTENV/FLDENV move, and the 94-byte block
+;; FSAVE/FRSTOR move on top of it (env + eight 80-bit registers, top of stack
+;; first). The four instruction/data pointer fields are written as zero: they
+;; record where the last FPU instruction and its operand were, which only a
+;; numeric exception handler reads, and nothing here raises one. A program that
+;; uses FSTENV to find out what its own control word is -- which is the common
+;; real use -- gets the right answer.
+(func $fenv_save (param $seg i32) (param $off i32)
+  (local $i i32) (local $tw i32)
+  ;; Tag word: two bits per PHYSICAL register, 00 valid and 11 empty. $ftag is
+  ;; one bit per physical register, so this is a spread, not a copy.
+  (local.set $tw (i32.const 0))
+  (local.set $i (i32.const 0))
+  (block $done (loop $l
+    (br_if $done (i32.eq (local.get $i) (i32.const 8)))
+    (if (i32.eqz (i32.and (global.get $ftag) (i32.shl (i32.const 1) (local.get $i))))
+      (then (local.set $tw (i32.or (local.get $tw)
+        (i32.shl (i32.const 3) (i32.shl (local.get $i) (i32.const 1)))))))
+    (local.set $i (i32.add (local.get $i) (i32.const 1)))
+    (br $l)))
+  (call $wr16 (local.get $seg) (local.get $off) (global.get $fcw))
+  (call $wr16 (local.get $seg) (call $off_add (local.get $off) (i32.const 2))
+    (i32.or (i32.and (global.get $fsw) (i32.const 0xC7FF))
+            (i32.shl (global.get $ftop) (i32.const 11))))
+  (call $wr16 (local.get $seg) (call $off_add (local.get $off) (i32.const 4))
+    (local.get $tw))
+  (local.set $i (i32.const 6))
+  (block $z (loop $m
+    (br_if $z (i32.eq (local.get $i) (i32.const 14)))
+    (call $wr16 (local.get $seg) (call $off_add (local.get $off) (local.get $i))
+      (i32.const 0))
+    (local.set $i (i32.add (local.get $i) (i32.const 2)))
+    (br $m))))
+
+(func $fenv_load (param $seg i32) (param $off i32)
+  (local $i i32) (local $tw i32) (local $sw i32)
+  (global.set $fcw (call $rd16 (local.get $seg) (local.get $off)))
+  (local.set $sw (call $rd16 (local.get $seg) (call $off_add (local.get $off) (i32.const 2))))
+  (global.set $ftop (i32.and (i32.shr_u (local.get $sw) (i32.const 11)) (i32.const 7)))
+  (global.set $fsw (i32.and (local.get $sw) (i32.const 0xC7FF)))
+  (local.set $tw (call $rd16 (local.get $seg) (call $off_add (local.get $off) (i32.const 4))))
+  (local.set $i (i32.const 0))
+  (global.set $ftag (i32.const 0))
+  (block $done (loop $l
+    (br_if $done (i32.eq (local.get $i) (i32.const 8)))
+    (if (i32.ne (i32.and (i32.shr_u (local.get $tw) (i32.shl (local.get $i) (i32.const 1)))
+                         (i32.const 3))
+                (i32.const 3))
+      (then (global.set $ftag (i32.or (global.get $ftag)
+        (i32.shl (i32.const 1) (local.get $i))))))
+    (local.set $i (i32.add (local.get $i) (i32.const 1)))
+    (br $l))))
+
+(func $fstate_save (param $seg i32) (param $off i32)
+  (local $i i32)
+  (call $fenv_save (local.get $seg) (local.get $off))
+  (local.set $i (i32.const 0))
+  (block $done (loop $l
+    (br_if $done (i32.eq (local.get $i) (i32.const 8)))
+    (call $fmw80 (local.get $seg)
+      (call $off_add (local.get $off) (i32.add (i32.const 14)
+        (i32.mul (local.get $i) (i32.const 10))))
+      (call $fst_get (local.get $i)))
+    (local.set $i (i32.add (local.get $i) (i32.const 1)))
+    (br $l))))
+
+(func $fstate_load (param $seg i32) (param $off i32)
+  (local $i i32)
+  (call $fenv_load (local.get $seg) (local.get $off))
+  (local.set $i (i32.const 0))
+  (block $done (loop $l
+    (br_if $done (i32.eq (local.get $i) (i32.const 8)))
+    (call $fst_set (local.get $i) (call $fmr80 (local.get $seg)
+      (call $off_add (local.get $off) (i32.add (i32.const 14)
+        (i32.mul (local.get $i) (i32.const 10))))))
+    (local.set $i (i32.add (local.get $i) (i32.const 1)))
+    (br $l))))
+
+;; Packed BCD, the 10-byte format FBLD and FBSTP move: eighteen digits, two per
+;; byte low nibble first, and a sign bit at the top of byte 9. It exists because
+;; a DOS program printing a float in decimal has no other cheap way to get the
+;; digits, so a demo's score display can depend on it.
+(func $fbcd_read (param $seg i32) (param $off i32) (result f64)
+  (local $i i32) (local $b i32) (local $v f64)
+  (local.set $v (f64.const 0))
+  (local.set $i (i32.const 8))
+  (block $done (loop $l
+    (br_if $done (i32.lt_s (local.get $i) (i32.const 0)))
+    (local.set $b (call $rd8 (local.get $seg)
+      (call $off_add (local.get $off) (local.get $i))))
+    (local.set $v (f64.add (f64.mul (local.get $v) (f64.const 100))
+      (f64.convert_i32_u (i32.add
+        (i32.mul (i32.shr_u (local.get $b) (i32.const 4)) (i32.const 10))
+        (i32.and (local.get $b) (i32.const 15))))))
+    (local.set $i (i32.sub (local.get $i) (i32.const 1)))
+    (br $l)))
+  (if (i32.and (call $rd8 (local.get $seg)
+                 (call $off_add (local.get $off) (i32.const 9)))
+               (i32.const 0x80))
+    (then (local.set $v (f64.neg (local.get $v)))))
+  (local.get $v))
+
+(func $fbcd_write (param $seg i32) (param $off i32) (param $v f64)
+  (local $i i32) (local $n i64) (local $d i32)
+  ;; Round first: FBSTP stores an integer, and the control word's RC decides
+  ;; which one, exactly as it does for FISTP.
+  (local.set $n (i64.trunc_sat_f64_s (call $fround (f64.abs (local.get $v)))))
+  (local.set $i (i32.const 0))
+  (block $done (loop $l
+    (br_if $done (i32.eq (local.get $i) (i32.const 9)))
+    (local.set $d (i32.or
+      (i32.wrap_i64 (i64.rem_u (local.get $n) (i64.const 10)))
+      (i32.shl (i32.wrap_i64 (i64.rem_u (i64.div_u (local.get $n) (i64.const 10))
+                                        (i64.const 10)))
+               (i32.const 4))))
+    (call $wr8 (local.get $seg) (call $off_add (local.get $off) (local.get $i))
+      (local.get $d))
+    (local.set $n (i64.div_u (local.get $n) (i64.const 100)))
+    (local.set $i (i32.add (local.get $i) (i32.const 1)))
+    (br $l)))
+  (call $wr8 (local.get $seg) (call $off_add (local.get $off) (i32.const 9))
+    (select (i32.const 0x80) (i32.const 0) (f64.lt (local.get $v) (f64.const 0)))))
 `;
   return s;
 }
@@ -2461,17 +2676,12 @@ const STATE = [...isa.REG16, ...isa.SEG, 'gip', 'flags', 'ip', 'steps', 'intno',
 // type 0x00, producing a module the engine rejects at +84. Production WAT
 // imports its memory (src/01-header.wat:805) and exports state through
 // functions in src/13-exports.wat, so neither form has ever been exercised.
-function preamble() {
-  const globals = STATE
-    .map(g => `(global $${g} (mut i32) (i32.const 0))`).join('\n');
-  const accessors = STATE.map(g => `
-(func (export "get_${g}") (result i32) (global.get $${g}))
-(func (export "set_${g}") (param $v i32) (global.set $${g} (local.get $v)))`).join('');
-  return `(module
-(import "host" "memory" (memory ${isa.MEM_PAGES} ${isa.MEM_PAGES}))
-(import "host" "port_in" (func $port_in (param i32) (param i32) (result i32)))
-(import "host" "port_out" (func $port_out (param i32) (param i32) (param i32)))
-${globals}
+// Guest state that is NOT one of the i32 registers in STATE, and so has no
+// get_/set_ accessor pair. It lives here rather than inline in preamble()
+// because tools/toyvm/trace-jit.js builds its own module around the same
+// helpers() body: when these were only in preamble, every one added broke that
+// tool with `compile-wat: unknown global`, and nothing in the build says so.
+const EXTRA_GLOBALS = `
 ;; The x87 register file: eight f64 values and a rotating TOP. See fpuHelpers.
 ${[...Array(8).keys()].map(i => `(global $st${i} (mut f64) (f64.const 0))`).join('\n')}
 (global $ftop (mut i32) (i32.const 0))
@@ -2483,7 +2693,26 @@ ${[...Array(8).keys()].map(i => `(global $st${i} (mut f64) (f64.const 0))`).join
 (global $cr0 (mut i32) (i32.const 0x0010))
 ;; The FLAGS shape, defaulting to the 8086's. set_cpu raises it.
 (global $f_res (mut i32) (i32.const ${isa.FLAGS_RESERVED}))
-(global $f_def (mut i32) (i32.const ${isa.FLAGS_DEFINED}))
+(global $f_def (mut i32) (i32.const ${isa.FLAGS_DEFINED}))`;
+
+function preamble() {
+  const globals = STATE
+    .map(g => `(global $${g} (mut i32) (i32.const 0))`).join('\n');
+  const accessors = STATE.map(g => `
+(func (export "get_${g}") (result i32) (global.get $${g}))
+(func (export "set_${g}") (param $v i32) (global.set $${g} (local.get $v)))`).join('');
+  return `(module
+(import "host" "memory" (memory ${isa.MEM_PAGES} ${isa.MEM_PAGES}))
+(import "host" "port_in" (func $port_in (param i32) (param i32) (result i32)))
+(import "host" "port_out" (func $port_out (param i32) (param i32) (param i32)))
+;; The transcendentals. Wasm has no sin/cos/tan/atan2/log2/exp2 primitive and
+;; a series expansion good enough for FSIN would be longer than the rest of the
+;; FPU put together, so they go out to the host -- which is exactly what the
+;; production interpreter's src/06-fpu.wat does with its $host_math_* imports.
+;; One import with a selector rather than six, since none of them is hot.
+(import "host" "fmath" (func $fmath (param i32) (param f64) (param f64) (result f64)))
+${globals}
+${EXTRA_GLOBALS}
 (func (export "set_cpu") (param $level i32)
   (if (i32.ge_u (local.get $level) (i32.const 386))
     (then
@@ -2638,7 +2867,10 @@ function emit(variant) {
 // a standalone module out of the SAME handler bodies. It duplicates the helper
 // text rather than importing the interpreter's copies on purpose: a cross-module
 // call per $rget16 would be measuring module boundaries, not code generation.
-module.exports = { emit, HANDLERS, VARIANTS: Object.keys(VARIANTS), helpers, LOCALS, STATE };
+module.exports = {
+  emit, HANDLERS, VARIANTS: Object.keys(VARIANTS), helpers, LOCALS, STATE,
+  EXTRA_GLOBALS,
+};
 
 // CLI: dump one variant's WAT, for eyeballing or for handing to wat2wasm.
 //   node tools/toyvm/emit.js --variant=tailcall > /tmp/t.wat

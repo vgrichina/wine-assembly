@@ -448,7 +448,7 @@ function emitTier2(ops) {
 // So this prices dispatch and code quality over a real op mix, and it does NOT
 // price side exits. That is the honest limit of the measurement: a trace JIT
 // also has to pay for leaving the trace, and this says nothing about it.
-const { helpers, LOCALS, STATE } = require('./emit');
+const { helpers, LOCALS, STATE, EXTRA_GLOBALS } = require('./emit');
 
 function moduleWat(body) {
   const globals = STATE.map(g => `(global $${g} (mut i32) (i32.const 0))`).join('\n');
@@ -459,7 +459,9 @@ function moduleWat(body) {
 (import "host" "memory" (memory ${isa.MEM_PAGES} ${isa.MEM_PAGES}))
 (import "host" "port_in" (func $port_in (param i32) (param i32) (result i32)))
 (import "host" "port_out" (func $port_out (param i32) (param i32) (param i32)))
+(import "host" "fmath" (func $fmath (param i32) (param f64) (param f64) (result f64)))
 ${globals}
+${EXTRA_GLOBALS}
 (type $void (func))
 ${accessors}
 ${helpers()}
@@ -554,6 +556,9 @@ async function benchTiers(exe, hot, ops, { iters, reps, log = console.log }) {
         memory,
         port_in: (_port, w) => (w === 16 ? 0xFFFF : 0xFF),
         port_out: () => {},
+        // No trace this tool has ever picked contains a transcendental, and a
+        // stub returning 0 would make one look like it agreed across tiers.
+        fmath: (op) => { throw new Error(`fmath(${op}) in a JIT trace: teach this tool the FPU`); },
       },
     });
     const ex = inst.exports;

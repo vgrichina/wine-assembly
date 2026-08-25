@@ -49,11 +49,13 @@ function fpuMem(esc, reg) {
     // same four formats, so they need no special case here.
     return `${nm}_${{ 0: 'm32', 4: 'm64', 2: 'mi32', 6: 'mi16' }[esc]}`;
   }
-  if (esc === 1) {   // D9: real load/store and the control word
+  if (esc === 1) {   // D9: real load/store, the control word and the environment
     if (reg === 0) return 'fld_m32';
     if (reg === 2) return 'fst_m32';
     if (reg === 3) return 'fstp_m32';
+    if (reg === 4) return 'fldenv';
     if (reg === 5) return 'fldcw';
+    if (reg === 6) return 'fnstenv';
     if (reg === 7) return 'fnstcw';
     return null;
   }
@@ -65,18 +67,22 @@ function fpuMem(esc, reg) {
     if (reg === 7) return 'fstp_m80';
     return null;
   }
-  if (esc === 5) {   // DD: 64-bit real, and the status word
+  if (esc === 5) {   // DD: 64-bit real, the status word and the whole state
     if (reg === 0) return 'fld_m64';
     if (reg === 2) return 'fst_m64';
     if (reg === 3) return 'fstp_m64';
+    if (reg === 4) return 'frstor';
+    if (reg === 6) return 'fnsave';
     if (reg === 7) return 'fnstsw_m';
     return null;
   }
-  if (esc === 7) {   // DF: 16-bit and 64-bit integer
+  if (esc === 7) {   // DF: 16-bit and 64-bit integer, and packed BCD
     if (reg === 0) return 'fld_i16';
     if (reg === 2) return 'fst_i16';
     if (reg === 3) return 'fstp_i16';
+    if (reg === 4) return 'fbld';
     if (reg === 5) return 'fld_i64';
+    if (reg === 6) return 'fbstp';
     if (reg === 7) return 'fstp_i64';
     return null;
   }
@@ -115,8 +121,11 @@ function fpuReg(esc, b) {
       0xD0: 'fnop', 0xE0: 'fchs', 0xE1: 'fabs', 0xE4: 'ftst', 0xE5: 'fxam',
       0xE8: 'fld1', 0xE9: 'fldl2t', 0xEA: 'fldl2e', 0xEB: 'fldpi',
       0xEC: 'fldlg2', 0xED: 'fldln2', 0xEE: 'fldz',
-      0xF6: 'fdecstp', 0xF7: 'fincstp', 0xF8: 'fprem', 0xFA: 'fsqrt',
-      0xFC: 'frndint', 0xFD: 'fscale',
+      0xF0: 'f2xm1', 0xF1: 'fyl2x', 0xF2: 'fptan', 0xF3: 'fpatan',
+      0xF4: 'fxtract', 0xF5: 'fprem1',
+      0xF6: 'fdecstp', 0xF7: 'fincstp', 0xF8: 'fprem', 0xF9: 'fyl2xp1',
+      0xFA: 'fsqrt', 0xFB: 'fsincos', 0xFC: 'frndint', 0xFD: 'fscale',
+      0xFE: 'fsin', 0xFF: 'fcos',
     };
     return ONE[b] ? one(ONE[b]) : null;
   }
@@ -486,6 +495,13 @@ function decodeOne(rd, cs, ip) {
     case 0x9E: words.push(H.sahf); break;
     case 0x9F: words.push(H.lahf); break;
     case 0xF5: words.push(H.cmc); break;
+    // HLT parks the part until an interrupt arrives. Nothing inside the VM can
+    // deliver one -- the host services INT and advances the clock between
+    // slices -- so the honest model is to hand control back at the instruction
+    // AFTER the HLT and let the host decide what happens next. A program that
+    // HLTs in a wait loop then spins through the host instead of inside the
+    // trace, which is slow and correct rather than fast and hung.
+    case 0xF4: words.push(H.end, (start + n) & 0xFFFF); endsBlock = true; break;
     case 0xF8: words.push(H.clc); break;
     case 0xF9: words.push(H.stc); break;
     case 0xFA: words.push(H.cli); break;

@@ -307,6 +307,163 @@ const CASES = [
     want: (dv) => dv.getFloat64(OUT, true) === 100.5,
   },
   {
+    name: 'fnstenv reports the control word a program just set',
+    // The commonest real use: write a known CW, save the environment, read the
+    // CW field back. A program that gets a stale or zero word here concludes
+    // there is no coprocessor, whatever else is implemented.
+    pre: (dv) => dv.setUint16(IN, 0x0272, true),
+    code: [...mem(0xD9, 5, IN), ...mem(0xD9, 6, OUT)],
+    want: (dv) => dv.getUint16(OUT, true) === 0x0272,
+  },
+  {
+    name: 'fnstenv tag word marks empty vs occupied',
+    // Two values pushed leaves TOP at 6, so physical registers 6 and 7 are the
+    // occupied pair and the other six read as 11 (empty).
+    code: [
+      0xD9, 0xE8, 0xD9, 0xE8,
+      ...mem(0xD9, 6, OUT),
+    ],
+    want: (dv) => dv.getUint16(OUT + 4, true) === 0x0FFF
+      && ((dv.getUint16(OUT + 2, true) >> 11) & 7) === 6,
+  },
+  {
+    name: 'fldenv restores what fnstenv wrote',
+    pre: (dv) => dv.setUint16(IN, 0x0F7F, true),
+    code: [
+      ...mem(0xD9, 5, IN),          // fldcw   -- RC = truncate
+      ...mem(0xD9, 6, OUT),         // fnstenv
+      0xDB, 0xE3,                   // fninit  -- CW back to 0x037F
+      ...mem(0xD9, 4, OUT),         // fldenv  -- and back again
+      ...mem(0xD9, 7, OUT + 0x20),  // fnstcw
+    ],
+    want: (dv) => dv.getUint16(OUT + 0x20, true) === 0x0F7F,
+  },
+  {
+    name: 'fnsave / frstor round trip the stack',
+    pre: (dv) => { dv.setFloat64(IN, 3.75, true); dv.setFloat64(IN + 8, -19, true); },
+    code: [
+      ...mem(0xDD, 0, IN), ...mem(0xDD, 0, IN + 8),
+      ...mem(0xDD, 6, OUT),         // fnsave  -- and reinitialise
+      ...mem(0xDD, 4, OUT),         // frstor
+      ...mem(0xDD, 3, OUT + 0x60), ...mem(0xDD, 3, OUT + 0x68),
+    ],
+    want: (dv) => dv.getFloat64(OUT + 0x60, true) === -19
+      && dv.getFloat64(OUT + 0x68, true) === 3.75,
+  },
+  {
+    name: 'fnsave reinitialises the unit',
+    code: [
+      0xD9, 0xE8, ...mem(0xDD, 6, OUT), 0xDF, 0xE0,
+    ],
+    want: (dv, vm) => (vm.get('ax') & 0xFFFF) === 0,
+  },
+  {
+    name: 'fbstp writes packed BCD',
+    pre: (dv) => dv.setFloat64(IN, -1234567, true),
+    code: [...mem(0xDD, 0, IN), ...mem(0xDF, 6, OUT)],
+    want: (dv) => dv.getUint8(OUT) === 0x67 && dv.getUint8(OUT + 1) === 0x45
+      && dv.getUint8(OUT + 2) === 0x23 && dv.getUint8(OUT + 3) === 0x01
+      && dv.getUint8(OUT + 4) === 0 && dv.getUint8(OUT + 9) === 0x80,
+  },
+  {
+    name: 'fbld reads packed BCD back',
+    pre: (dv) => dv.setFloat64(IN, 90210, true),
+    code: [
+      ...mem(0xDD, 0, IN), ...mem(0xDF, 6, OUT),
+      ...mem(0xDF, 4, OUT), ...mem(0xDD, 3, OUT + 0x10),
+    ],
+    want: (dv) => dv.getFloat64(OUT + 0x10, true) === 90210,
+  },
+  {
+    name: 'fsin / fcos',
+    pre: (dv) => dv.setFloat64(IN, 0.5, true),
+    code: [
+      ...mem(0xDD, 0, IN), 0xD9, 0xFE, ...mem(0xDD, 3, OUT),
+      ...mem(0xDD, 0, IN), 0xD9, 0xFF, ...mem(0xDD, 3, OUT + 8),
+    ],
+    want: (dv) => Math.abs(dv.getFloat64(OUT, true) - Math.sin(0.5)) < 1e-15
+      && Math.abs(dv.getFloat64(OUT + 8, true) - Math.cos(0.5)) < 1e-15,
+  },
+  {
+    name: 'fsincos pushes the cosine on top',
+    pre: (dv) => dv.setFloat64(IN, 0.75, true),
+    code: [
+      ...mem(0xDD, 0, IN), 0xD9, 0xFB,
+      ...mem(0xDD, 3, OUT),         // st(0) = cos
+      ...mem(0xDD, 3, OUT + 8),     // st(1) = sin
+    ],
+    want: (dv) => Math.abs(dv.getFloat64(OUT, true) - Math.cos(0.75)) < 1e-15
+      && Math.abs(dv.getFloat64(OUT + 8, true) - Math.sin(0.75)) < 1e-15,
+  },
+  {
+    name: 'fptan leaves tan and a 1',
+    pre: (dv) => dv.setFloat64(IN, 0.3, true),
+    code: [
+      ...mem(0xDD, 0, IN), 0xD9, 0xF2,
+      ...mem(0xDD, 3, OUT),         // the pushed 1.0
+      ...mem(0xDD, 3, OUT + 8),     // the tangent
+    ],
+    want: (dv) => dv.getFloat64(OUT, true) === 1
+      && Math.abs(dv.getFloat64(OUT + 8, true) - Math.tan(0.3)) < 1e-15,
+  },
+  {
+    name: 'fpatan(st(1), st(0))',
+    pre: (dv) => { dv.setFloat64(IN, 1, true); dv.setFloat64(IN + 8, 2, true); },
+    code: [
+      ...mem(0xDD, 0, IN),          // st(1) = 1  (y)
+      ...mem(0xDD, 0, IN + 8),      // st(0) = 2  (x)
+      0xD9, 0xF3, ...mem(0xDD, 3, OUT),
+    ],
+    want: (dv) => Math.abs(dv.getFloat64(OUT, true) - Math.atan2(1, 2)) < 1e-15,
+  },
+  {
+    name: 'f2xm1',
+    pre: (dv) => dv.setFloat64(IN, 0.25, true),
+    code: [...mem(0xDD, 0, IN), 0xD9, 0xF0, ...mem(0xDD, 3, OUT)],
+    want: (dv) => Math.abs(dv.getFloat64(OUT, true) - (2 ** 0.25 - 1)) < 1e-15,
+  },
+  {
+    name: 'fyl2x: y * log2(x)',
+    pre: (dv) => { dv.setFloat64(IN, 3, true); dv.setFloat64(IN + 8, 8, true); },
+    code: [
+      ...mem(0xDD, 0, IN),          // y = 3
+      ...mem(0xDD, 0, IN + 8),      // x = 8
+      0xD9, 0xF1, ...mem(0xDD, 3, OUT),
+    ],
+    want: (dv) => dv.getFloat64(OUT, true) === 9,
+  },
+  {
+    name: 'fyl2xp1: y * log2(1 + x)',
+    pre: (dv) => { dv.setFloat64(IN, 5, true); dv.setFloat64(IN + 8, 1, true); },
+    code: [
+      ...mem(0xDD, 0, IN), ...mem(0xDD, 0, IN + 8),
+      0xD9, 0xF9, ...mem(0xDD, 3, OUT),
+    ],
+    want: (dv) => dv.getFloat64(OUT, true) === 5,
+  },
+  {
+    name: 'fxtract splits exponent and significand',
+    pre: (dv) => dv.setFloat64(IN, 40, true),
+    code: [
+      ...mem(0xDD, 0, IN), 0xD9, 0xF4,
+      ...mem(0xDD, 3, OUT),         // significand, in [1,2)
+      ...mem(0xDD, 3, OUT + 8),     // exponent
+    ],
+    want: (dv) => dv.getFloat64(OUT, true) === 1.25
+      && dv.getFloat64(OUT + 8, true) === 5,
+  },
+  {
+    name: 'fprem1 rounds the quotient to nearest',
+    // 17 / 5 is 3.4, so FPREM (truncate) gives 2 and FPREM1 (nearest) gives 2
+    // as well; 23 / 5 is 4.6 and separates them: 3 against -2.
+    pre: (dv) => { dv.setFloat64(IN, 5, true); dv.setFloat64(IN + 8, 23, true); },
+    code: [
+      ...mem(0xDD, 0, IN), ...mem(0xDD, 0, IN + 8),
+      0xD9, 0xF5, ...mem(0xDD, 3, OUT),
+    ],
+    want: (dv) => dv.getFloat64(OUT, true) === -2,
+  },
+  {
     name: 'fst m64 leaves the value on the stack',
     pre: (dv) => dv.setFloat64(IN, 8.125, true),
     code: [
