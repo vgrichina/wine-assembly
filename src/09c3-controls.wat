@@ -12842,7 +12842,12 @@
   (func $edit_stop_caret_timer (param $hwnd i32) (param $state_w i32)
     (drop (call $timer_kill (local.get $hwnd) (i32.const 0xCA47)))
     (i32.store offset=24 (local.get $state_w)
-      (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0xFFFFFFDF))))
+      (i32.and (i32.load offset=24 (local.get $state_w)) (i32.const 0xFFFFFFDF)))
+    ;; The caret is gone, so the page must stop believing text has somewhere to
+    ;; land -- otherwise a phone keeps its keyboard up over a control that no
+    ;; longer takes keystrokes.
+    (if (i32.eq (global.get $edit_caret_hwnd) (local.get $hwnd))
+      (then (global.set $edit_caret_hwnd (i32.const 0)))))
 
   ;; Right-shift n bytes by 1 (memmove src→src+1). Reverse copy so overlap is safe.
   (func $edit_memmove_right (param $src i32) (param $n i32)
@@ -14492,7 +14497,16 @@
                     (i32.add (local.get $hi) (i32.const 2))
                     (i32.add (i32.add (local.get $px) (local.get $tx)) (i32.const 2))
                     (i32.add (local.get $hi) (i32.const 17))
-                    (i32.const 0x30014))))))) ;; BLACK_BRUSH
+                    (i32.const 0x30014))) ;; BLACK_BRUSH
+            ;; Publish where it landed. This control owns its caret and never
+            ;; calls CreateCaret/ShowCaret, so without this the page has no way
+            ;; to tell typing in Notepad from clicking on Minesweeper, and a
+            ;; phone never raises its keyboard.
+            (global.set $edit_caret_hwnd (local.get $hwnd))
+            (global.set $edit_caret_x (i32.add (local.get $px) (local.get $tx)))
+            (global.set $edit_caret_y (i32.add (local.get $hi) (i32.const 2)))
+            (global.set $edit_caret_w (i32.const 2))
+            (global.set $edit_caret_h (i32.const 15))))))
         ;; 5) Optional vertical scrollbar strip. Scrolling state is line-based.
         (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
           (then

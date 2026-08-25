@@ -2381,6 +2381,20 @@
   (global $caret_h (mut i32) (i32.const 13))          ;; USER caret height
   (global $caret_visible (mut i32) (i32.const 0))     ;; ShowCaret-visible latch
   (global $caret_blink_time (mut i32) (i32.const 530)) ;; ms; Windows' default
+
+  ;; Where the WAT-native EDIT control last painted its own caret, in client
+  ;; coordinates of that control. The native EDIT never calls CreateCaret /
+  ;; ShowCaret -- it owns its caret and blinks it from its own timer -- so the
+  ;; USER $caret_* globals above stay zero while the user is typing in Notepad.
+  ;; The page reads these to know that text is going somewhere, which is what
+  ;; decides whether a phone raises its software keyboard. Published, not
+  ;; painted: the control still draws the caret itself, and the compositor must
+  ;; not draw a second one over it.
+  (global $edit_caret_hwnd (mut i32) (i32.const 0))
+  (global $edit_caret_x (mut i32) (i32.const 0))
+  (global $edit_caret_y (mut i32) (i32.const 0))
+  (global $edit_caret_w (mut i32) (i32.const 2))
+  (global $edit_caret_h (mut i32) (i32.const 15))
   (global $win_ini_name_ptr i32 (i32.const 0x100))   ;; WASM ptr to "win.ini\0" string constant
   (global $main_hwnd    (mut i32) (i32.const 0))    ;; Main window handle
   (global $shell_hwnd   (mut i32) (i32.const 0))    ;; USER32 Set/GetShellWindow process state

@@ -4007,6 +4007,16 @@
     (global.get $caret_h))
   (func (export "get_caret_visible") (result i32)
     (global.get $caret_visible))
+  (func (export "get_edit_caret_hwnd") (result i32)
+    (global.get $edit_caret_hwnd))
+  (func (export "get_edit_caret_x") (result i32)
+    (global.get $edit_caret_x))
+  (func (export "get_edit_caret_y") (result i32)
+    (global.get $edit_caret_y))
+  (func (export "get_edit_caret_w") (result i32)
+    (global.get $edit_caret_w))
+  (func (export "get_edit_caret_h") (result i32)
+    (global.get $edit_caret_h))
 
   ;; ============================================================
   ;; Child-window enumeration + control read-back exports
@@ -4372,7 +4382,9 @@
   ;; SetWindowLongPtr stash.
   (func (export "test_create_find_dialog") (result i32)
     (local $dlg i32) (local $fr i32)
-    (local.set $fr (call $heap_alloc (i32.const 32)))
+    (local.set $fr (call $heap_alloc (i32.const 40)))
+    (memory.fill (call $g2w (local.get $fr)) (i32.const 0) (i32.const 40))
+    (i32.store (call $g2w (local.get $fr)) (i32.const 40))
     (local.set $dlg (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
     (call $create_findreplace_dialog (local.get $dlg) (i32.const 0) (local.get $fr) (i32.const 0))
@@ -4382,8 +4394,9 @@
   ;; A standalone owner is unnecessary for validating WM_COMMAND flag assembly.
   (func (export "test_create_replace_dialog") (result i32)
     (local $dlg i32) (local $fr i32)
-    (local.set $fr (call $heap_alloc (i32.const 32)))
-    (memory.fill (call $g2w (local.get $fr)) (i32.const 0) (i32.const 32))
+    (local.set $fr (call $heap_alloc (i32.const 40)))
+    (memory.fill (call $g2w (local.get $fr)) (i32.const 0) (i32.const 40))
+    (i32.store (call $g2w (local.get $fr)) (i32.const 40))
     (local.set $dlg (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
     (call $create_findreplace_dialog (local.get $dlg) (i32.const 0) (local.get $fr) (i32.const 1))
