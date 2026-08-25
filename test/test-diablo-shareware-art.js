@@ -108,13 +108,27 @@ if (!ANALYZE_ONLY) {
     + ` --input='${input.join(',')}' > "${LOG}" 2>&1`;
   console.log('$', cmd);
   try {
-    // Measures ~40s. The cap is well above that so it can only catch a hang.
-    execSync(cmd, { encoding: 'utf-8', timeout: 240000, cwd: ROOT });
+    // Measured ~140s on an idle box (41,500 batches of real interpretation --
+    // the menu alone is ~39,400 in). This box routinely sits at load 20+ with
+    // other agents sweeping, where the same run takes several times that, so
+    // the cap is generous on purpose: a tight one turns a busy machine into a
+    // "Diablo regressed" report, which is a much more alarming claim than the
+    // truth. Only a genuine hang should reach it.
+    execSync(cmd, { encoding: 'utf-8', timeout: 900000, cwd: ROOT });
   } catch (e) {
     const tail = fs.existsSync(LOG)
       ? fs.readFileSync(LOG, 'utf-8').split('\n').slice(-40).join('\n') : '';
     console.error(tail);
-    throw new Error('the Diablo Shareware run did not finish');
+    // Say which of the two it was. A killed-by-timeout run and a crashed one
+    // look identical from here otherwise, and they need opposite responses:
+    // one is "the box is loaded, run it again", the other is a real defect.
+    const timedOut = e.killed || e.signal === 'SIGTERM';
+    const finished = /Stats: \d+ API calls/.test(tail);
+    throw new Error(timedOut && !finished
+      ? 'the Diablo Shareware run was killed by the harness timeout before it '
+        + 'finished — check the box load (uptime) and re-run before reading '
+        + 'this as a regression'
+      : 'the Diablo Shareware run did not finish');
   }
 }
 
