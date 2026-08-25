@@ -141,9 +141,15 @@ entry all the way to bytes, so the guest's decompressed output can be diffed
 against what the archive actually holds:
 
 ```
-node tools/mpq-extract.js <file.mpq> (--name='dir\file.ext' | --block=N)
+node tools/mpq-extract.js <file.mpq> (--name='dir\file.ext' | --block=N | --verify)
                           [--out=PATH] [--png=PATH] [--frame-height=N] [--palette]
 ```
+
+`--verify` decodes every live block by index and checks each against its
+`fsize`. On spawn.mpq: **695 exact, 330 whose key could not be guessed, 3 wrong**
+— and all three "wrong" ones are *also* key failures that slipped through, see
+the `detectSeed` correction below. Extraction by `--name=` needs no guessing and
+is the mode to trust.
 
 The crypt table, `hashString`, `decryptBlock`, `detectSeed`, `flagNames` and the
 header scan now live in `tools/mpq.js`, shared by both scripts; `mpq-dir.js`'s
@@ -160,6 +166,13 @@ Facts confirmed while building it:
   backslash, so `"logo.pcx"`, not `"ui_art\logo.pcx"`. The sector table uses
   `key - 1`, sector *i* uses `key + i`. With the name known you never need
   `detectSeed`.
+- **Correction to the paragraph above this subsection:** matching *both* dword 0
+  and the last dword does **not** pin the sector-table key either. Measured on
+  spawn.mpq block 0 (`ui_art\title.pcx`): the real file key is `0xe19c3ed3`, so
+  the table key is `0xe19c3ed2`, but `detectSeed` returns `0xfce59174` — a
+  collision that decrypts dword 0 and the last dword correctly and everything
+  in between to garbage. 3 of 1028 blocks hit this. `detectSeed` is a fallback
+  for a nameless block, not a substitute for the name.
 - A sector whose stored length is **not smaller** than its decompressed length
   is verbatim; everything else is exploded. Sector size is 4096.
 - The PKWARE DCL explode implementation is in `tools/mpq.js` (no npm
@@ -835,3 +848,78 @@ Only three call sites reach the constructor (`node tools/xrefs.js storm.dll
 - `--loop-superops` is off by default because `COPY_RUN` miscompiles Storm's MPQ
   decompression byte copy and renders Diablo's menus as colour noise. If menus
   look like noise, check that flag before investigating anything else.
+
+### The generated copier, read properly
+
+The description above ("8 code bytes per copied byte, terminated by an
+`e9 rel32`") is right about the unit and wrong about the shape. Dumped live at
+the moment of the disputed store
+(`--watch=0x6d46c0 --watch-log --dump=0x4fc687a0:0x60`):
+
+```
+0x4fc687c0  8a 06 ff c6 88 07 ff c7  8a 06 ff c6 88 07 ff c7
+0x4fc687d0  8a 06 ff c6 88 07 ff c7  e9 d7 f2 cc b0 00 00 00
+0x4fc687e0  8a 06 ff c6 88 07 ff c7  8a 06 ff c6 88 07 ff c7
+0x4fc687f0  8a 06 ff c6 88 07 ff c7  e9 43 f5 a3 b0 00 00 00
+```
+
+The unit is `8a 06 / ff c6 / 88 07 / ff c7` — `mov al,[esi]; inc esi;
+mov [edi],al; inc edi` — and this variant has no `0a c3` (`or al,bl`), so it is
+a plain copy, not the OR-blit. It is **not one long unrolled run**: it is a
+table of `0x20`-byte cells, each three copy units plus a jump and three bytes of
+padding. Entering at a cell's first, second or third unit copies 3, 2 or 1 bytes
+before the jump, which is how the generator handles a length remainder.
+
+**Both terminators in that window resolve correctly**, so there is no stale
+`e9` and the code-invalidation theory gets no support here:
+
+| terminator | rel32 | target | what it is |
+|---|---|---|---|
+| `0x4fc687d8` | `0xb0ccf2d7` | `0x00937ab4` | an address the run really does execute |
+| `0x4fc687f8` | `0xb0a3f543` | `0x006a7d40` | `storm+0x15004d40`, the row trampoline |
+
+Do the arithmetic as `next_insn + (rel32 - 0x100000000)`; getting the borrow
+wrong yields a target off by exactly `0x10000000` and invents a bug that is not
+there. (It did here, for a while.)
+
+Code invalidation also looks sound by inspection rather than by theory:
+`$invalidate_code_write` (`src/03-registers.wat:215`) has an explicit
+`$generated_sparse_code_start..end` test *in addition to* `$code_page_test`,
+precisely for this arena, and all three store widths (`$gs8`/`$gs16`/`$gs32`)
+call it, with `$invalidate_code_range` covering the interior pages of a bulk
+copy. If the copier is the culprit, it is not because we missed the write.
+
+### The disputed store is a pointer, not pixels
+
+`[0x6d46c0]` changing `0 → 0x4fc69d60` was read as "a wild store by the
+generated blitter". Treat that with suspicion: `0x4fc69d60` is a well-formed
+pointer into the arena, and the copier writes **one byte at a time**, so four
+consecutive blitted pixels would have to spell a valid allocation address.
+`0x1500c9dc` (`mov [0x150316c0],esi`) stores exactly such a pointer as its
+normal job.
+
+The overlap that would explain it is real enough to test, and the test is
+one run:
+
+```sh
+timeout 260 node test/run.js --app=diablo_shareware --time-scale=30 \
+  --max-batches=39200 --no-close --watch=0x4fc69d60 --watch-log
+# one change all run: 0 -> 0x0000ea9c, EIP 0x4fc687f8, prev_eip 0x00937ec4
+```
+
+So `0x4fc69d60` is written **as blit output** by the copier — that region is a
+destination buffer at that moment, while Storm's node list head elsewhere holds
+it as an allocation. Two different roles for one address is the shape of an
+**overlapping allocation**, not of a stray store. That is now the leading
+hypothesis for the audio-worker death, and it is *not* yet proved: `--dump-vmap`
+reports 11 mappings with zero overlaps, so if the arena is being double-issued
+it happens above `VirtualAlloc`, inside Storm's own suballocator, which means
+our bug is whatever makes Storm's bookkeeping disagree with itself.
+
+**Caveat on the EIP field.** A watchpoint is checked at block boundaries, so its
+`EIP` is where the change was *detected*, not the instruction that made it. In
+the `0x6d46c0` hit the register dump (`EAX == EIP == 0x4fc687d0`, consistent
+with the `jmp eax` at `0x15004d3c`) shows `EDI = 0x007540e7` — nowhere near the
+watched address, which on its own rules out "that block's `mov [edi],al` did
+it". Use `prev_eip`, and prefer `--count` on a candidate store site to a
+watchpoint's EIP.
