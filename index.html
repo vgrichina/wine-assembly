@@ -321,6 +321,25 @@
       z-index: 1;
       transform-origin: top left;
     }
+    /* Which build am I looking at? A phone gives you no way to ask, and a
+       stale page is indistinguishable from a broken one -- so the desktop
+       says, the way an evaluation copy of Windows did. Filled from
+       build-info.js, which the deploy tool writes; absent locally, where it
+       reads "dev". */
+    #build-stamp { display: none; }
+    body.no-debug:not(.app-running) #build-stamp {
+      display: block;
+      position: absolute;
+      right: 8px;
+      bottom: 8px;
+      z-index: 4;
+      color: rgba(255, 255, 255, 0.55);
+      font: 10px/1.3 "MS Sans Serif", Tahoma, sans-serif;
+      text-align: right;
+      text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.5);
+      pointer-events: none;
+      user-select: none;
+    }
     .desktop-icon {
       pointer-events: auto;
       width: 80px;
@@ -1001,6 +1020,7 @@
     <div id="content">
       <div id="screen-wrap">
         <div id="desktop-icons"></div>
+        <div id="build-stamp" aria-hidden="true"></div>
         <div id="screen-canvas-stack">
           <canvas id="screen-present" aria-hidden="true"></canvas>
           <canvas id="screen"></canvas>
@@ -1073,6 +1093,9 @@ Resource-aware Win98 emulator
     });
   </script>
 
+  <!-- Written by tools/deploy-berrry.js, absent in a local tree. A 404 here is
+       expected off the deployed site and costs nothing. -->
+  <script src="build-info.js"></script>
   <script src="lib/mem-utils.js?v=168"></script>
   <script src="lib/dib.js?v=168"></script>
   <script src="lib/gdi-surface.js?v=2"></script>
@@ -1738,6 +1761,18 @@ Resource-aware Win98 emulator
         grid.appendChild(el);
       }
     }
+    // The desktop watermark. Two lines, the way Windows put its build number
+    // in the corner: what this is, and exactly which build of it.
+    function showBuildStamp() {
+      const el = document.getElementById('build-stamp');
+      if (!el) return;
+      el.textContent = 'Wine-Assembly';
+      const build = document.createElement('div');
+      build.textContent = 'build ' + (window.WINE_BUILD || 'dev');
+      el.appendChild(build);
+    }
+    showBuildStamp();
+
     if (!DEBUG_MODE) {
       document.body.classList.add('no-debug');
       if (document.readyState === 'loading') {

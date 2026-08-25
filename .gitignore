@@ -44,3 +44,4 @@ test/binaries/dlls/
 !test/binaries/dlls/SOURCES.md
 !test/binaries/SOURCES.md
 test/corpus/
+build-info.js
