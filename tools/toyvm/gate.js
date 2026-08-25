@@ -43,6 +43,11 @@ const UNDEFINED_FLAGS = {
   // defines nothing at all.
   mul: SF | ZF | AF | PF, imul: SF | ZF | AF | PF,
   div: CF | PF | AF | ZF | SF | OF, idiv: CF | PF | AF | ZF | SF | OF,
+  // The decimal adjusts. DAA/DAS define everything but OF; AAA/AAS define only
+  // CF and AF; AAM/AAD define only SF, ZF and PF.
+  daa: OF, das: OF,
+  aaa: OF | SF | ZF | PF, aas: OF | SF | ZF | PF,
+  aam: OF | AF | CF, aad: OF | AF | CF,
 };
 
 // OF after a multi-bit shift is undefined. D2/D3 take the count from CL, and
@@ -68,6 +73,10 @@ async function main() {
     : parseOps(arg('ops', '00-05'));
   const limit = Number(arg('limit', 0)) || Infinity;
   const verbose = flag('verbose');
+  // How many failures to keep for the report. Ten is enough to see that
+  // something is wrong; working out WHICH inputs a flag rule is wrong for needs
+  // the whole set, so the cap is adjustable.
+  const maxFails = Number(arg('fails', 10));
 
   const vm = await makeVm(variant);
   let total = 0, pass = 0, unimpl = 0, masked = 0;
@@ -139,8 +148,10 @@ async function main() {
       }
 
       if (bad.length === 0) { opPass++; pass++; }
-      else if (failures.length < 10) {
-        failures.push({ op, name: t.name, bytes: t.bytes, bad });
+      else if (failures.length < maxFails) {
+        // The entry state is part of the report: a flag rule that is wrong for
+        // one input range cannot be diagnosed from the outputs alone.
+        failures.push({ op, name: t.name, bytes: t.bytes, bad, before });
       }
     }
 
@@ -153,6 +164,7 @@ async function main() {
   if (verbose || failures.length) {
     for (const f of failures) {
       console.log(`\n  ${f.op} "${f.name}"  bytes=${f.bytes.map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
+      console.log(`      in: ax=${hex(f.before.ax)} flags=${hex(f.before.flags)}`);
       for (const b of f.bad) console.log(`      ${b}`);
     }
   }

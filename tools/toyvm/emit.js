@@ -554,6 +554,115 @@ function genExtras() {
     (i32.shl (i32.and (global.get $flags) (i32.const 0xFF)) (i32.const 8))))
 `);
 
+  // --- BCD and ASCII adjust -------------------------------------------------
+  // The four packed/unpacked decimal fixups. They are rare in compiler output
+  // and common in hand-written demo and depacker code, which is exactly the
+  // corpus this VM runs. Each one is spelled out from the Intel pseudo-code
+  // rather than folded together: the second test in DAA/DAS reads the value AL
+  // had BEFORE the first adjustment, and sharing a local between the two is the
+  // classic way to get that wrong.
+  //
+  // $flags_logic sets SF/ZF/PF from the result and clears CF/AF/OF, so each
+  // handler recomputes CF and AF afterwards. OF is architecturally undefined
+  // for all four and is left cleared.
+  // Both halves test the value AL held on entry, and CF comes out of the high
+  // test alone -- a borrow out of `AL - 6` does not survive into it, which is
+  // where the manual's pseudo-code and the physical 8088 first part company
+  // (DAS on AL=0x03 with AF set leaves CF clear on the real part).
+  //
+  // And they part company again on the high threshold. The manual's `old_AL >
+  // 0x99` holds only with AF clear on entry; with AF set the band 0x9A..0x9F
+  // does NOT adjust, so the effective threshold there is 0x9F. Both mnemonics
+  // behave the same way and the corpus is unanimous on all four corners --
+  // e.g. DAA on AL=0x9E adjusts to 0x04 with AF clear and stops at 0xA4 with
+  // AF set. No valid BCD add or subtract can land in that band, which is
+  // presumably why the manual never had to be right about it.
+  for (const [nm, sign] of [['daa', '+'], ['das', '-']]) {
+    const add = sign === '+' ? 'i32.add' : 'i32.sub';
+    h(nm, 0, `
+  (local.set $t0 (call $rget8 (i32.const 0)))
+  (local.set $t2 (i32.or (i32.or (i32.gt_u (local.get $t0) (i32.const 0x9F)) ${bit(F.CF)})
+    (i32.and (i32.gt_u (local.get $t0) (i32.const 0x99)) (i32.eqz ${bit(F.AF)}))))
+  (local.set $t3 (i32.const 0))
+  (if (i32.or (i32.gt_u (i32.and (local.get $t0) (i32.const 0x0F)) (i32.const 9))
+              ${bit(F.AF)})
+    (then
+      (local.set $t3 (i32.const 1))
+      (local.set $t0 (i32.and (${add} (local.get $t0) (i32.const 6)) (i32.const 0xFF)))))
+  (if (local.get $t2)
+    (then
+      (local.set $t0 (i32.and (${add} (local.get $t0) (i32.const 0x60)) (i32.const 0xFF)))))
+  (call $rset8 (i32.const 0) (local.get $t0))
+  (call $flags_logic (local.get $t0) (i32.const 8))
+  (global.set $flags (i32.or (global.get $flags)
+    (i32.or (local.get $t2) (i32.shl (local.get $t3) (i32.const ${F.AF})))))
+`);
+  }
+
+  // AAA/AAS unpack one BCD digit: the adjustment carries into AH, and AL keeps
+  // only its low nibble. SF/ZF/PF are undefined here (unlike DAA/DAS), so the
+  // flag word is edited in place rather than recomputed.
+  for (const [nm, sign] of [['aaa', '+'], ['aas', '-']]) {
+    const add = sign === '+' ? 'i32.add' : 'i32.sub';
+    h(nm, 0, `
+  (local.set $t0 (call $rget8 (i32.const 0)))
+  (local.set $t2 (i32.const 0))
+  (if (i32.or (i32.gt_u (i32.and (local.get $t0) (i32.const 0x0F)) (i32.const 9))
+              ${bit(F.AF)})
+    (then
+      (local.set $t0 (i32.and (${add} (local.get $t0) (i32.const 6)) (i32.const 0xFF)))
+      (call $rset8 (i32.const 4)
+        (i32.and (${add} (call $rget8 (i32.const 4)) (i32.const 1)) (i32.const 0xFF)))
+      (local.set $t2 (i32.const 1))))
+  (call $rset8 (i32.const 0) (i32.and (local.get $t0) (i32.const 0x0F)))
+  (global.set $flags (i32.or
+    (i32.and (global.get $flags)
+             (i32.const ${(~((1 << F.CF) | (1 << F.AF))) & 0xFFFF}))
+    (i32.or (local.get $t2) (i32.shl (local.get $t2) (i32.const ${F.AF})))))
+`);
+  }
+
+  // AAM divides AL by the immediate (10 in every sane encoding, but the byte is
+  // real and the corpus exercises other values); AAD multiplies back. A zero
+  // divisor faults exactly like DIV does, so the operand carries the guest IP.
+  h('aam', 2, `
+  ${ops(2)}
+  ;; A zero divisor faults, but not before the flags are written -- the part
+  ;; sets SF/ZF/PF as though the result were zero and then takes INT 0, so the
+  ;; flags word the fault pushes carries them. DIV does not do this; AAM does.
+  (if (i32.eqz (local.get $t0))
+    (then
+      (call $flags_logic (i32.const 0) (i32.const 8))
+      (call $fault0 (local.get $t1))
+      (return)))
+  (local.set $t2 (call $rget8 (i32.const 0)))
+  (call $rset16 (i32.const 0) (i32.or
+    (i32.rem_u (local.get $t2) (local.get $t0))
+    (i32.shl (i32.div_u (local.get $t2) (local.get $t0)) (i32.const 8))))
+  (call $flags_logic (i32.rem_u (local.get $t2) (local.get $t0)) (i32.const 8))
+`);
+  h('aad', 1, `
+  ${ops(1)}
+  (local.set $t2 (i32.and (i32.add (call $rget8 (i32.const 0))
+    (i32.mul (call $rget8 (i32.const 4)) (local.get $t0))) (i32.const 0xFF)))
+  (call $rset16 (i32.const 0) (local.get $t2))
+  (call $flags_logic (local.get $t2) (i32.const 8))
+`);
+
+  // SALC (undocumented, 0xD6): AL = CF ? 0xFF : 0, no flags touched. It is a
+  // one-byte "set AL from carry" that assembly-language demo code does use.
+  h('salc', 0, `
+  (call $rset8 (i32.const 0) (i32.sub (i32.const 0) ${bit(F.CF)}))
+`);
+
+  // INTO takes INT 4 only when OF is set, and otherwise falls through -- so
+  // unlike INT it does not end the block, and the fall-through path leaves $ip
+  // alone for the next op in the arena.
+  h('into', 1, `
+  ${ops(1)}
+  (if ${bit(F.OF)} (then (call $fault (i32.const 4) (local.get $t0))))
+`);
+
   // JCXZ, LOOPZ, LOOPNZ -- the remaining counted-loop terminators.
   h('jcxz', 4, `
   ${ops(4)}
@@ -1755,18 +1864,24 @@ function helpers() {
     (i32.or (local.get $nz) (i32.shl (local.get $nz) (i32.const ${isa.F.OF}))))
     (i32.const ${isa.FLAGS_RESERVED}))))
 
-;; Divide error. Same sequence as INT 0 -- and the same handing-back to the
-;; host, since the vector points at whatever the guest installed.
-(func $fault0 (param $ip i32)
+;; A CPU-raised interrupt. Same sequence as INT -- and the same handing-back to
+;; the host, since the vector points at whatever the guest installed.
+(func $fault (param $vec i32) (param $ip i32)
+  (local $v i32)
   (call $push16 (global.get $flags))
   (call $push16 (call $sget (i32.const 1)))
   (call $push16 (local.get $ip))
   (global.set $flags (i32.and (global.get $flags)
     (i32.const ${(~((1 << isa.F.IF) | (1 << isa.F.TF))) & 0xFFFF})))
-  (global.set $intno (i32.const 0))
-  (global.set $gip (call $rdphys16 (i32.const 0)))
-  (call $sset (i32.const 1) (call $rdphys16 (i32.const 2)))
+  (global.set $intno (local.get $vec))
+  (local.set $v (i32.shl (local.get $vec) (i32.const 2)))
+  (global.set $gip (call $rdphys16 (local.get $v)))
+  (call $sset (i32.const 1) (call $rdphys16 (i32.add (local.get $v) (i32.const 2))))
   (global.set $left (global.get $steps)) (global.set $steps (i32.const -1)))
+
+;; Divide error -- the only fault the arithmetic handlers raise.
+(func $fault0 (param $ip i32)
+  (call $fault (i32.const 0) (local.get $ip)))
 
 ;; --- shadow return stack --------------------------------------------------
 ;; Push is skipped, not truncated, when there is no arena address to resume at

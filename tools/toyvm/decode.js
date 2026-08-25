@@ -17,10 +17,7 @@ for (const x of HANDLERS) H[x.name] = x.index;
 
 const SEG_PREFIX = { 0x26: 0, 0x2E: 1, 0x36: 2, 0x3E: 3, 0x64: 4, 0x65: 5 };
 
-// x86 lays the ALU group out at 8*code + form. Only the six ops whose handlers
-// exist are listed; ADC (2) and SBB (3) read CF as an input and are absent
-// until that plumbing lands, so their opcodes decode as unimplemented rather
-// than as something plausible-looking.
+// x86 lays the ALU group out at 8*code + form.
 // Note the fast path below tests (op & 7) < 6, which is what keeps the
 // non-ALU opcodes that share the 8*code block -- PUSH/POP seg at x6/x7 and
 // DAA/AAA at x7 -- from being decoded as arithmetic.
@@ -154,11 +151,13 @@ function decodeOne(rd, cs, ip) {
     // The op comes from the ModRM reg field rather than the opcode. 83 is the
     // sign-extended-imm8 form, which is what compilers emit for small
     // constants and is therefore everywhere in real code.
-    case 0x80: case 0x81: case 0x83: {
+    // 0x82 is an undocumented alias of 0x80 -- same r/m8, imm8 encoding. Real
+    // assemblers of the era emitted it, so the corpus contains it.
+    case 0x80: case 0x82: case 0x81: case 0x83: {
       const m = modrm();
       const name = ALU_BY_CODE[m.reg];
-      if (name === undefined) return null;              // ADC/SBB
-      if (op === 0x80) emitRmI(name, 8, m, imm8());
+      if (name === undefined) return null;
+      if (op === 0x80 || op === 0x82) emitRmI(name, 8, m, imm8());
       else if (op === 0x81) emitRmI(name, opsize, m, immW());
       else emitRmI(name, opsize, m, sx8toW(imm8()));
       break;
@@ -489,7 +488,22 @@ function decodeOne(rd, cs, ip) {
 
     // --- INT ----------------------------------------------------------------
     case 0xCD: { const v = imm8(); words.push(H.int_imm, v, (start + n) & 0xFFFF); endsBlock = true; break; }
+    // INT3 is the one-byte breakpoint form of INT 3.
+    case 0xCC: words.push(H.int_imm, 3, (start + n) & 0xFFFF); endsBlock = true; break;
+    // INTO only takes the vector when OF is set, so it does not end the block:
+    // the fall-through is the common case and stays in the same trace.
+    case 0xCE: words.push(H.into, (start + n) & 0xFFFF); break;
     case 0xCF: words.push(H.iret); endsBlock = true; break;
+
+    // --- BCD / ASCII adjust --------------------------------------------------
+    case 0x27: words.push(H.daa); break;
+    case 0x2F: words.push(H.das); break;
+    case 0x37: words.push(H.aaa); break;
+    case 0x3F: words.push(H.aas); break;
+    case 0xD4: words.push(H.aam, imm8(), (start + n) & 0xFFFF); break;
+    case 0xD5: words.push(H.aad, imm8()); break;
+    // SALC: undocumented, no operands, sets AL from CF.
+    case 0xD6: words.push(H.salc); break;
 
     // --- Unary group F6/F7 --------------------------------------------------
     // /0 and /1 are both TEST with an immediate; /2 NOT; /3 NEG; /4../7 the
