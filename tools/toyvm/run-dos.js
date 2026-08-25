@@ -432,7 +432,13 @@ async function runDos(o) {
     guestSecs: Number(guestNs) / 1e9,
     dispatched, handbacks, ints, compiles, compiledWords, arenaResets,
     stuckAt, entryHist, unimplemented, ipSamples, ipSampleLog, regions,
-    pixels: nonBlack(vm.mem, vgaGeometry(machine.vga)),
+    // A program that never put the adapter in a graphics mode has no frame to
+    // count, and reading A000 anyway is how ACME-SUX.EXE and AKM_DOB.EXE came
+    // back with ~61,700 "pixels" each while sitting in text mode the whole run.
+    // vga.bpp is 0 until resetVgaMode establishes a graphics mode, so it is the
+    // question being asked, where the mode number alone is not: a demo can
+    // reprogram the CRTC underneath mode 13h and still be in graphics.
+    pixels: machine.vga.bpp === 0 ? 0 : nonBlack(vm.mem, vgaGeometry(machine.vga)),
     frame: frameHash(vm.mem, vgaGeometry(machine.vga)),
     video: {
       mode: machine.videoMode,
@@ -494,7 +500,7 @@ async function main() {
   // used to screenshot as identical black rectangles.
   const png = arg('png');
   if (png) {
-    if (r.machine.videoMode === 3 && r.text.cells > 0) {
+    if (r.machine.vga.bpp === 0) {
       writeConsolePng(png, r.machine.con);
     } else {
       writePng(png, r.vm.mem, r.machine.palette, vgaGeometry(r.machine.vga));

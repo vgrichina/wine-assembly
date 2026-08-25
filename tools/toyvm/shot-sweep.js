@@ -72,7 +72,7 @@ async function runOne(exe, png, o) {
   const r = await runDos({
     exe, variant: 'tailcall', budget: o.budget, cpu: o.cpu, log: () => {}, autoKey: o.autoKey,
   });
-  const text = r.machine.videoMode === 3 && r.text.cells > 0;
+  const text = r.machine.vga.bpp === 0;   // never entered a graphics mode
   if (text) writeConsolePng(png, r.machine.con);
   else writePng(png, r.vm.mem, r.machine.palette, vgaGeometry(r.machine.vga));
   return {
