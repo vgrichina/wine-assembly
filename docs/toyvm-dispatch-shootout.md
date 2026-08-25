@@ -77,6 +77,20 @@ Things the corpus taught that no manual says plainly:
   `call sp` is the case that proves it.
 * A divide error pushes the **next** instruction's address, and DIV/IDIV leave
   every flag undefined, so the pushed FLAGS word is microcode garbage.
+* **DAA and DAS share one rule**, and it is not the manual's two: the high
+  correction fires when `old_CF || old_AL > 0x9F || (old_AL > 0x99 && AF_in == 0)`,
+  for both. Asymmetric thresholds fix one and break the other. DAS also does
+  *not* take CF from the borrow out of `AL-6`.
+* **`AAM 0` writes SF/ZF/PF as though the result were zero before it faults**,
+  so those bits reach the handler in the pushed FLAGS word. `DIV` by zero does
+  not do this.
+
+**D8–DF are skipped, not passing.** The board had no 8087 fitted, so those
+vectors record ESC as a dummy read that changes nothing, and a VM that agreed
+with them would be a VM without an FPU. They were reporting 100% only because a
+store lands at an address the vector does not list and unlisted memory is not
+checked. `tools/toyvm/fpu-check.js` is the gate for those: 48 hand-computed
+cases through the same `vm.stepOne()`, run on every shell.
 
 ## 3. The four shells
 
@@ -311,6 +325,13 @@ programs each refused byte would unblock:
 `0x67` is the same gap §7 named, now counted: it is the single highest-value
 opcode in the corpus.
 
+**Every gap in that table has since been implemented, and the table itself was
+misleading.** It ranks a *byte*, and a linear sweep decodes string tables and
+runs of zeros as code, so several of these counts were data. §7 replaces it with
+`opcode-census.js`, which prints the following bytes so the two can be told
+apart, and §7.1 has what filling the gaps was worth on screen — which for `0x67`
+was nine programs, and for x87 was none.
+
 Three harness defects had to be fixed before any of these numbers meant
 anything, and each one had been quietly producing a plausible wrong answer:
 
@@ -346,18 +367,63 @@ advantage and replication starts being one.
 
 ## 7. Coverage: what the demos still stop on
 
-Sweeping the corpus with `--report` names the remaining gaps by frequency:
+`tools/toyvm/opcode-census.js` runs every program once and ranks the refused
+bytes by how many programs each one would unblock — the leading byte alone is
+not enough to name the gap, so it prints the bytes that follow as well, which is
+what tells a real instruction from ASCII being decoded as code:
 
-| gap | what it is | apps blocked |
-|---|---|---|
-| `db e3`, `de 43`, `df d6` | x87 FPU — the VM has none at all | 3 |
-| `67 88 84 …` | 0x67 32-bit addressing with SIB in real mode | 2 |
-| `0f 01 e0` | `SMSW`/protected-mode probes | 1 |
-| self-modifying decryptors | a trace compiled before the code decrypts itself | 2 |
+```bash
+node tools/toyvm/opcode-census.js --dir=/tmp/demos --dispatches=12m --json=/tmp/census.json
+```
 
-The 0x67 gap is the awkward one: the current EA encoding packs kind, segment and
-register into one operand word and has no room for base + index + scale + disp32.
-Adding it means a third operand word and a second `$ea`.
+On 199 programs, **31 stop on an unimplemented opcode** and 43 stop making
+progress for any reason. The census's own ranked table, measured 2026-08-25:
+
+| byte | what it is | programs |
+|---|---|---:|
+| `f0` | `LOCK` — but every site is `f0 0f 00 00` / `f0 62 00 00`, i.e. zeroed data | 10 |
+| `ff` | group 5 `/7`, which does not exist; `ff ff`, `ff f8` — data | 5 |
+| `0f` | `SGDT`, `MOV r,DR`, `LSL` — protected-mode probes, deliberately refused | 4 |
+| `63` | `ARPL` — protected mode, and two sites are the ASCII of "cal", "cess" | 4 |
+| `fe` | `INC/DEC r/m8` group `/2`..`/7`, which do not exist — data | 4 |
+| `67` | one real site; the rest are the ASCII of "got ", "gn" | 4 |
+| `62`, `f3`, `f1`, `66` | `BOUND`, a `REP` on something unrepeatable, `ICEBP`, `0f ba` | 2–3 each |
+
+**Most of what is left is not an ISA gap.** The census exists because the earlier
+sweep's ranked list — where `0x67` topped the table at 7 programs — could not
+tell a refused instruction from a refused *byte*, and half of these entries are
+a linear decode walking into a string table or a run of zeros. The honest
+remaining work list is short: the protected-mode group behind `0f`, and the
+handful of programs whose real code is behind a decryptor the trace compiler
+reaches before the program has decrypted it.
+
+### 7.1 What the two ISA rounds actually bought
+
+Two rounds of filling gaps, each re-measured against the same 199 programs:
+
+| | blocked | stuck | programs newly drawing |
+|---|--:|--:|---|
+| before | 59 | — | — |
+| 32-bit addressing (`0x67` + SIB), 386 FLAGS, the `0f` extras | 42 | — | 9 |
+| x87 | 31 | 43 | 0 |
+| FPU environment/BCD/transcendentals, `HLT` | 31 | 43 | 0 |
+
+The first round is the one that shows on screen: nine programs went from blank
+to rendering, among them chaos386, CARRIE, MOUSETRO, UKKO and RUNME2ND, and two
+more (ACME-VIC, DASH) roughly doubled their pixel count. The 386 FLAGS fix is
+the reason — the VM forced bits 12–15 set, as an 8086 does, so every CPU
+detection routine in the corpus concluded it was on an 8086 and took its 16-bit
+path. RACE.EXE printed "386 or better not detected!!!" until `set_cpu` existed.
+
+The x87 rounds are the opposite, and the table is more useful for saying so than
+a coverage percentage would be. FNINIT is the first FPU instruction a demo
+executes and it was the single commonest give-up site in the corpus, so
+implementing it moved 22 programs off that wall — but **not one of them draws a
+pixel it did not draw before**. Most of those sites sit on paths the trace
+compiler reaches statically and the program never runs, and the ones that do run
+now stop at the next wall along instead. The FPU is right (48 hand-computed
+cases in `tools/toyvm/fpu-check.js`, green on all four shells) and it makes the
+VM more realistic; it did not make the corpus render.
 
 ## 8. Still open
 
@@ -367,8 +433,13 @@ Adding it means a third operand word and a second `$ea`.
   [performance-summary.md](performance-summary.md) §6 lists as lever 2 for the
   production interpreter. Needs the `0x70` funcref byte in `lib/compile-wat.js`
   (lines 677, 1189) or `wat2wasm`.
-* **Handler-count scaling.** Pad to 426 handlers and re-measure. If `switch`
-  loses further, the answer to "does the giant br_table scale" is no, and that
-  is directly actionable for the production interpreter.
+* **Handler-count scaling — and the numbers above are now for a smaller VM.**
+  The open question was to pad the table and re-measure. It has been padded for
+  real instead: filling the ISA gaps in §7.1 took the handler table from 426 to
+  **586**, with the x87 bodies among the largest in the module. That is exactly
+  the axis `switch` is expected to be sensitive to, since it inlines every body
+  into one function, so §5's `switch` numbers should be treated as measured
+  against the 426-handler build until the matrix is re-run. Nothing else in §5
+  depends on the count.
 * **Lazy flags vs eager flags** — the question x86-16 was chosen for, and the
   one thing here that has no bearing on dispatch at all.
