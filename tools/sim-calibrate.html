@@ -1,0 +1,55 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>sim-touch calibration</title>
+<style>
+  /* Three markers at known CSS offsets from the visual viewport's top-left.
+     position:fixed is what makes this work: a fixed element sits in the
+     VISUAL viewport, so the markers follow Safari's chrome as it retracts
+     and the calibration measures the page as it actually is right now --
+     which matters, because toolbar collapse is the thing under test and it
+     moves every coordinate on the page by ~70px when it happens.
+
+     Only the spacing is load-bearing (200 CSS px on each axis), so the
+     device size is never needed on the host side. Colours are the three
+     pure primaries so a nearest-colour search cannot confuse them with
+     anything Safari draws. */
+  html, body { margin: 0; padding: 0; background: #ffffff; }
+  .mark { position: fixed; width: 16px; height: 16px; z-index: 2147483647; }
+  #m-origin { left: 0;     top: 0;     background: #ff0000; }
+  #m-x      { left: 200px; top: 0;     background: #00ff00; }
+  #m-y      { left: 0;     top: 200px; background: #0000ff; }
+  /* Tall enough to scroll, so this page also answers "does a swipe from
+     sim-touch actually retract the toolbars at all" before any of it is
+     pointed at the emulator. */
+  #tall { height: 400vh; }
+  #readout {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    font: 13px -apple-system, sans-serif; text-align: center;
+    padding: 6px 0; background: #eee; color: #111;
+  }
+</style>
+</head>
+<body>
+  <div class="mark" id="m-origin"></div>
+  <div class="mark" id="m-x"></div>
+  <div class="mark" id="m-y"></div>
+  <div id="tall"></div>
+  <div id="readout"></div>
+  <script>
+    // Shown, not posted anywhere: the host reads the markers off a
+    // screenshot, and this line is for a human looking at the Simulator.
+    function show() {
+      document.getElementById('readout').textContent =
+        'inner ' + window.innerWidth + 'x' + window.innerHeight +
+        '  scrollY ' + Math.round(window.scrollY) +
+        '  max ' + Math.round(document.documentElement.scrollHeight);
+    }
+    show();
+    window.addEventListener('scroll', show, { passive: true });
+    window.addEventListener('resize', show);
+  </script>
+</body>
+</html>
