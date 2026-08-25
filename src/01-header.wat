@@ -618,6 +618,8 @@
   ;; mci_command(host_id, command, flags, params_wa) → MCIERR_*
   (import "host" "mci_string" (func $host_mci_string (param i32 i32 i32) (result i32)))
   ;; mci_string(cmd_wa, retbuf_wa, retlen) → MCIERR_*
+  (import "host" "mci_get_device_id" (func $host_mci_get_device_id (param i32) (result i32)))
+  ;; mci_get_device_id(name_wa) → host device id for an mciSendStringA alias, or 0
   (import "host" "midi_num_devs" (func $host_midi_num_devs (result i32)))
   ;; midi_num_devs() → number of MIDI output devices
   (import "host" "midi_out_open" (func $host_midi_out_open (param i32 i32 i32 i32) (result i32)))
@@ -1018,7 +1020,6 @@
     "\14GETPRIVATEPROFILEINT\7f\10"
     "\00")
   (data (i32.const 0x11EE0) "Hearts$\00MSHearts\00Hearts\00\00")
-
   ;; MessageBox system strings mirrored in the WAT-owned reserved page just
   ;; below guest memory. The legacy low-page copies above are kept for older
   ;; dialog helpers, but apps can disturb that scratch/null-page area during
@@ -1272,7 +1273,7 @@
   ;; 0x07F01000  256B    PAINT_FLAGS (1 byte per window slot)
   ;; 0x07F01200  256B    TAB_NATIVE_STATE_TABLE (32 × {hwnd, mirror state ptr})
   ;; 0x07F01300  256B    ICON_TABLE (32 entries × {hInstance, resource id})
-  ;; 0x07F01400  1KB     SYNC_TABLE (64 entries × 16 bytes)
+  ;; 0x07F01400  1KB     (free; former 64-entry SYNC_TABLE)
   ;; 0x07F01800  3KB     EDIT_LAYOUT_SCRATCH (384 entries × 8 bytes)
   ;; 0x07F02400 16B      VIRTUAL_MAP_STATE (count, backing bump pointer)
   ;; 0x07F02410 32KB     VIRTUAL_MAP_TABLE (2048 entries x 16 bytes)
@@ -1288,10 +1289,12 @@
   ;; 0x07F0D000 8KB      GDI_REGION_TABLE (256 WAT-owned HRGN records)
   ;; 0x07F0F000 4KB      GDI_DC_PATH_TABLE (256 x 16-byte WAT path records)
   ;; 0x07F10000 4KB      HANDLER_HIST_COUNTS (1024 i32 counters)
+  ;; 0x07F11000 4KB      DX_SURF_PAL (1024 per-surface palette pointers)
   ;; 0x07F12000 8KB      CODE_PAGE_BITMAP (1 bit per 4KB guest page < 0x10000000)
+  ;; 0x07F14000 8KB      SYNC_TABLE (512 entries × 16 bytes)
   ;; 0x07F20000  256B    HIT_COUNT_BASE (16 --count slots of {addr, count})
   ;; 0x07F30000 8KB      OP_INDEX (2048 decode-time op-start addresses)
-  ;; 0x07F11000 512KB    (free apart from the two above -- former
+  ;; 0x07F16000 492KB    (free apart from the tables listed above -- former
   ;;                      HANDLER_PAIR_HIST_COUNTS home, too
   ;;                      small once the handler table passed 361. This block is
   ;;                      packed wall-to-wall with the branch/hot-block tables
@@ -2051,9 +2054,9 @@
   (global $DI_MASK   i32 (i32.const 1))
   (global $DI_IMAGE  i32 (i32.const 2))
   (global $DI_NORMAL i32 (i32.const 3))
-  (global $SYNC_TABLE i32 (i32.const 0x07F01400))
-  (global $SYNC_TABLE_SIZE i32 (i32.const 0x00000400))
-  (global $MAX_SYNC_OBJECTS i32 (i32.const 64))
+  (global $SYNC_TABLE i32 (i32.const 0x07F14000))
+  (global $SYNC_TABLE_SIZE i32 (i32.const 0x00002000))
+  (global $MAX_SYNC_OBJECTS i32 (i32.const 512))
   ;; Sparse VirtualAlloc mapping table. Guest reserve addresses are high
   ;; virtual addresses; committed chunks are backed here so they do not collide
   ;; with the low HeapAlloc arena.

@@ -261,6 +261,34 @@
   ;; WinSock 1.1 commonly imports WSOCK32 by ordinal. Resolve ordinals for
   ;; APIs already handled by the normal dispatch table; leave unsupported
   ;; ordinals explicit so they still produce the diagnostic marker below.
+  (func $guest_name_has_basename8_ci
+        (param $name i32)
+        (param $c0 i32) (param $c1 i32) (param $c2 i32) (param $c3 i32)
+        (param $c4 i32) (param $c5 i32) (param $c6 i32) (param $c7 i32)
+        (result i32)
+    (local $start i32) (local $scan i32) (local $c i32)
+    (if (i32.eqz (local.get $name)) (then (return (i32.const 0))))
+    (block $base_done (loop $base
+      (local.set $c (call $gl8 (i32.add (local.get $name) (local.get $scan))))
+      (br_if $base_done (i32.eqz (local.get $c)))
+      (if (i32.or
+            (i32.or (i32.eq (local.get $c) (i32.const 92))
+                    (i32.eq (local.get $c) (i32.const 47)))
+            (i32.eq (local.get $c) (i32.const 58)))
+        (then (local.set $start (i32.add (local.get $scan) (i32.const 1)))))
+      (local.set $scan (i32.add (local.get $scan) (i32.const 1)))
+      (br $base)))
+    (if (i32.ne (call $tolower (call $gl8 (i32.add (local.get $name) (local.get $start)))) (local.get $c0)) (then (return (i32.const 0))))
+    (if (i32.ne (call $tolower (call $gl8 (i32.add (local.get $name) (i32.add (local.get $start) (i32.const 1))))) (local.get $c1)) (then (return (i32.const 0))))
+    (if (i32.ne (call $tolower (call $gl8 (i32.add (local.get $name) (i32.add (local.get $start) (i32.const 2))))) (local.get $c2)) (then (return (i32.const 0))))
+    (if (i32.ne (call $tolower (call $gl8 (i32.add (local.get $name) (i32.add (local.get $start) (i32.const 3))))) (local.get $c3)) (then (return (i32.const 0))))
+    (if (i32.ne (call $tolower (call $gl8 (i32.add (local.get $name) (i32.add (local.get $start) (i32.const 4))))) (local.get $c4)) (then (return (i32.const 0))))
+    (if (i32.ne (call $tolower (call $gl8 (i32.add (local.get $name) (i32.add (local.get $start) (i32.const 5))))) (local.get $c5)) (then (return (i32.const 0))))
+    (if (i32.ne (call $tolower (call $gl8 (i32.add (local.get $name) (i32.add (local.get $start) (i32.const 6))))) (local.get $c6)) (then (return (i32.const 0))))
+    (if (i32.ne (call $tolower (call $gl8 (i32.add (local.get $name) (i32.add (local.get $start) (i32.const 7))))) (local.get $c7)) (then (return (i32.const 0))))
+    (call $guest_name_tail_is_dll
+      (i32.add (local.get $name) (i32.add (local.get $start) (i32.const 8)))))
+
   (func $system_ordinal_api_id (param $dll_name_ga i32) (param $ordinal i32) (result i32)
     ;; Authentic Win98 SE KERNEL32.DLL: ordinal 99 is unnamed, RVA 0x1e260.
     ;; Its native body takes one BOOL refresh flag and returns the current
@@ -307,6 +335,27 @@
     (if (call $dll_name_match (local.get $dll_name_ga) (i32.const 0x113DC))
       (then
         (if (i32.eq (local.get $ordinal) (i32.const 2)) (then (return (call $lookup_api_id (i32.const 0x113E6))))) ;; PlaySoundA
+      ))
+    ;; Authentic Win98 DSOUND exports. Diablo II's D2Sound imports both by
+    ;; ordinal: 2 enumerates the default driver, then 1 creates it. DSOUND is
+    ;; entry 4 in STATIC_SYS_DLL_NAMES; those API ids are append-only table
+    ;; positions and therefore as stable as the generated dispatch itself.
+    (if (i32.eq (call $guest_name_is_static_system_dll (local.get $dll_name_ga))
+                (i32.const 4))
+      (then
+        (if (i32.eq (local.get $ordinal) (i32.const 1)) (then (return (i32.const 976))))  ;; DirectSoundCreate
+        (if (i32.eq (local.get $ordinal) (i32.const 2)) (then (return (i32.const 1236)))) ;; DirectSoundEnumerateA
+      ))
+    ;; Authentic Win98 COMCTL32 ordinal 17 is InitCommonControls. InstallShield
+    ;; setup helpers (including Heroes III's chkreqs.dll) import it without a
+    ;; name. Match the module stem directly so a full path works as well.
+    (if (call $guest_name_has_basename8_ci
+          (local.get $dll_name_ga)
+          (i32.const 0x63) (i32.const 0x6f) (i32.const 0x6d) (i32.const 0x63)
+          (i32.const 0x74) (i32.const 0x6c) (i32.const 0x33) (i32.const 0x32)) ;; comctl32
+      (then
+        (if (i32.eq (local.get $ordinal) (i32.const 17))
+          (then (return (i32.const 877)))) ;; InitCommonControls
       ))
     ;; OLEAUT32. Kodak Imaging imports the VARIANT/BSTR set by ordinal only.
     (if (call $dll_name_match (local.get $dll_name_ga) (i32.const 0x11500))

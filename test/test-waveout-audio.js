@@ -178,6 +178,36 @@ try {
   pacedImports.host.wave_out_close(pacedHandle);
   console.log('PASS  non-browser waveOut completion follows the simulated audio clock');
 
+  const functionCalls = [];
+  pacedCtx.exports.fire_wave_out_callback = (hwo, waveHdr) => {
+    functionCalls.push([hwo >>> 0, waveHdr >>> 0]);
+    return 1;
+  };
+  const functionHandle = pacedImports.host.wave_out_open(rate, channels, bits, 3);
+  const functionHdrWA = 0x24000;
+  const functionHdrGA = 0x405000;
+  pacedDv.setUint32(0xD164, 0x651300, true);
+  pacedDv.setUint32(0xD168, 0x12345678, true);
+  pacedDv.setUint32(0xD16C, 3, true);
+  pacedDv.setUint32(functionHdrWA + 16, WHDR_PREPARED | WHDR_INQUEUE, true);
+  pacedImports.host.wave_out_write(functionHandle, pcmPtr, oneSecond);
+  pacedImports.host.wave_out_schedule_done(
+    functionHandle, functionHdrWA, functionHdrGA, oneSecond);
+  assert.strictEqual(pacedCtx.pumpAudioCompletions(), 0,
+    'CALLBACK_FUNCTION should wait for the audio clock');
+  assert.deepStrictEqual(functionCalls, [],
+    'CALLBACK_FUNCTION must not interrupt an in-flight waveOutWrite');
+  clockMs = 2000;
+  assert.strictEqual(pacedCtx.pumpAudioCompletions(), 1,
+    'CALLBACK_FUNCTION should complete at buffer duration');
+  assert.deepStrictEqual(functionCalls, [[functionHandle, functionHdrGA]],
+    'CALLBACK_FUNCTION WOM_DONE should enter the guest callback at a slice boundary');
+  assert.strictEqual(pacedDv.getUint32(functionHdrWA + 16, true),
+    WHDR_PREPARED | WHDR_DONE,
+    'CALLBACK_FUNCTION completion should clear WHDR_INQUEUE');
+  pacedImports.host.wave_out_close(functionHandle);
+  console.log('PASS  waveOut CALLBACK_FUNCTION dispatches WOM_DONE between guest slices');
+
   globalThis.AudioContext = FakeAudioContext;
   const browserMem = new ArrayBuffer(512 * 1024);
   const browserBytes = new Uint8Array(browserMem);

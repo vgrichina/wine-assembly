@@ -23903,5 +23903,242 @@
       }
     ],
     "ret": "WORD"
+  },
+  {
+    "id": 2877,
+    "name": "VerFindFileA",
+    "nargs": 8,
+    "convention": "stdcall",
+    "hash": 3347819014,
+    "args": [
+      {
+        "name": "uFlags",
+        "type": "DWORD"
+      },
+      {
+        "name": "szFileName",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "szWinDir",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "szAppDir",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "szCurDir",
+        "type": "LPSTR",
+        "out": true
+      },
+      {
+        "name": "puCurDirLen",
+        "type": "ptr",
+        "out": true
+      },
+      {
+        "name": "szDestDir",
+        "type": "LPSTR",
+        "out": true
+      },
+      {
+        "name": "puDestDirLen",
+        "type": "ptr",
+        "out": true
+      }
+    ],
+    "ret": "DWORD"
+  },
+  {
+    "id": 2878,
+    "name": "VerInstallFileA",
+    "nargs": 8,
+    "convention": "stdcall",
+    "hash": 4263819170,
+    "args": [
+      {
+        "name": "uFlags",
+        "type": "DWORD"
+      },
+      {
+        "name": "szSrcFileName",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "szDestFileName",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "szSrcDir",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "szDestDir",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "szCurDir",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "szTmpFile",
+        "type": "LPSTR",
+        "out": true
+      },
+      {
+        "name": "puTmpFileLen",
+        "type": "ptr",
+        "out": true
+      }
+    ],
+    "ret": "DWORD"
+  },
+  {
+    "id": 2879,
+    "name": "_vsnprintf",
+    "nargs": 4,
+    "convention": "cdecl",
+    "hash": 2981730466,
+    "args": [
+      {
+        "name": "buffer",
+        "type": "LPSTR"
+      },
+      {
+        "name": "count",
+        "type": "DWORD"
+      },
+      {
+        "name": "format",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "argptr",
+        "type": "ptr"
+      }
+    ],
+    "ret": "int"
+  },
+  {
+    "id": 2880,
+    "name": "ImageList_ReplaceIcon",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 697901008,
+    "args": [
+      {
+        "name": "himl",
+        "type": "HANDLE"
+      },
+      {
+        "name": "i",
+        "type": "int"
+      },
+      {
+        "name": "hicon",
+        "type": "HANDLE"
+      }
+    ],
+    "ret": "int"
+  },
+  {
+    "id": 2881,
+    "name": "ImageList_GetIcon",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1560742256,
+    "args": [
+      {
+        "name": "himl",
+        "type": "HANDLE"
+      },
+      {
+        "name": "i",
+        "type": "int"
+      },
+      {
+        "name": "flags",
+        "type": "UINT"
+      }
+    ],
+    "ret": "HANDLE"
+  },
+  {
+    "id": 2882,
+    "name": "mciGetDeviceIDA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2804157078,
+    "args": [
+      {
+        "name": "pszDevice",
+        "type": "LPCSTR"
+      }
+    ],
+    "ret": "DWORD"
+  },
+  {
+    "id": 2883,
+    "name": "waveOutGetID",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1520898825,
+    "args": [
+      {
+        "name": "hwo",
+        "type": "HANDLE"
+      },
+      {
+        "name": "puDeviceID",
+        "type": "LPDWORD",
+        "out": true
+      }
+    ],
+    "ret": "MMRESULT"
+  },
+  {
+    "id": 2884,
+    "name": "strncmp",
+    "nargs": 3,
+    "convention": "cdecl",
+    "hash": 2648949334,
+    "args": [
+      {
+        "name": "string1",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "string2",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "count",
+        "type": "size_t"
+      }
+    ],
+    "ret": "int"
+  },
+  {
+    "id": 2885,
+    "name": "_strnicmp",
+    "nargs": 3,
+    "convention": "cdecl",
+    "hash": 992762672,
+    "args": [
+      {
+        "name": "string1",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "string2",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "count",
+        "type": "size_t"
+      }
+    ],
+    "ret": "int"
   }
 ]

@@ -13,6 +13,20 @@ const context = { console };
 vm.runInNewContext(source + '\n;globalThis.WineAssembly = WineAssembly;', context);
 
 const keep = context.WineAssembly.hasRemainingAppWindow;
+const defaultWine = new context.WineAssembly();
+assert.strictEqual(defaultWine.windowlessGraceMs, 750,
+  'ordinary apps retain the short last-window grace period');
+
+const longStartupWine = new context.WineAssembly();
+longStartupWine.windowlessGraceMs = 60000;
+longStartupWine._hwndBase = 0x30001;
+longStartupWine.renderer = { windows: {} };
+longStartupWine._lastWindowStopAt = Date.now() + longStartupWine.windowlessGraceMs;
+let prematureStops = 0;
+longStartupWine.stop = () => { prematureStops++; };
+longStartupWine._checkLastWindowStop();
+assert.strictEqual(prematureStops, 0,
+  'an opted-in app remains alive during its long windowless startup gap');
 
 const hiddenPinballMain = {
   hwnd: 0x10002,

@@ -2786,6 +2786,38 @@
     (global.set $eip (local.get $cb))
     (i32.const 1))
 
+  ;; Deliver one completed waveOut buffer to a CALLBACK_FUNCTION client.
+  ;; The host queues WOM_DONE notifications until a slice boundary, then calls
+  ;; this export. Reuse the multimedia-timer continuation because it already
+  ;; saves/restores the interrupted x86 caller state and rejects nested async
+  ;; callbacks. waveOutProc(hwo, WOM_DONE, instance, waveHdr, 0) is stdcall.
+  (func (export "fire_wave_out_callback")
+      (param $handle i32) (param $wave_hdr i32) (result i32)
+    (local $cb i32) (local $instance i32)
+    (if (global.get $yield_reason) (then (return (i32.const 0))))
+    (if (global.get $mm_timer_in_cb) (then (return (i32.const 0))))
+    (if (i32.ne (i32.load (i32.const 0xD16C)) (i32.const 3))
+      (then (return (i32.const 0))))
+    (local.set $cb (i32.load (i32.const 0xD164)))
+    (if (i32.eqz (local.get $cb)) (then (return (i32.const 0))))
+    (local.set $instance (i32.load (i32.const 0xD168)))
+    (global.set $mm_timer_in_cb (i32.const 1))
+    (call $save_caller_regs)
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 0))                    ;; dwParam2
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $wave_hdr))            ;; dwParam1
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $instance))            ;; dwInstance
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 0x03BD))               ;; WOM_DONE
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $handle))              ;; hwo
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $mm_timer_ret_thunk))
+    (global.set $eip (local.get $cb))
+    (i32.const 1))
+
   ;; A host-side writer that fills guest memory directly (ReadFile into the
   ;; guest's buffer, a mapped view, a decompressed resource) bypasses every
   ;; store handler, so nothing retires the decoded blocks it just overwrote.

@@ -15,6 +15,7 @@ const {
 const { processSharedCtx, adoptThreadPrimitives, makeWorkerApiLogger } = require('../lib/worker-imports');
 const { seedExeImage, win16FileCandidates } = require('../lib/vfs-seed');
 const { expandIncludePatterns } = require('../lib/vfs-host-files');
+const { saveVfsToHost } = require('../lib/vfs-export');
 const { decodeMfcCString, g2w: translateGuest } = require('../lib/mem-utils');
 const { formatCall: fmtApiCall, formatRet: fmtApiRet, formatOutParams: fmtApiOutParams, walkFrames } = require('../lib/api-format');
 const { fontMounts, BUNDLED_BITMAP_FONTS } = require('../lib/font-substitutions');
@@ -796,6 +797,9 @@ async function main() {
   //   B:wheel-main-edit:DELTA — send WM_MOUSEWHEEL to the main edit
   //   B:drag-main-edit:X1:Y1:X2:Y2 — mouse-drag inside the main edit
   //   B:dlg-cmd:CMD — send WM_COMMAND wParam=CMD to the topmost visible dialog
+  //   B:dlg-post-cmd:CMD — post WM_COMMAND to the topmost visible dialog
+  //   B:dlg-input-cmd:CMD — deliver WM_COMMAND through check_input to that dialog
+  //   B:dlg-input-click:CTRL_ID — deliver an asynchronous BN_CLICKED WM_COMMAND
   //   B:dlg-click:CTRL_ID — click a control by id in the topmost visible dialog
   //   B:dlg-send:CTRL_ID:MSG:WPARAM:LPARAM — send a message to a dialog control by id
   //   B:dlg-set-edit:CTRL_ID:TEXT — set an Edit control by id in the topmost visible dialog
@@ -940,6 +944,12 @@ async function main() {
           ctrlClass: parseInt(parts[2]), cmdId: parseInt(parts[3]) });
       } else if (kind === 'dlg-cmd') {
         scheduledInput.push({ batch, action: 'dlg-cmd', cmdId: parseInt(parts[2]) });
+      } else if (kind === 'dlg-post-cmd') {
+        scheduledInput.push({ batch, action: 'dlg-post-cmd', cmdId: parseInt(parts[2]) });
+      } else if (kind === 'dlg-input-cmd') {
+        scheduledInput.push({ batch, action: 'dlg-input-cmd', cmdId: parseInt(parts[2]) });
+      } else if (kind === 'dlg-input-click') {
+        scheduledInput.push({ batch, action: 'dlg-input-click', ctrlId: parseInt(parts[2]) });
       } else if (kind === 'dlg-click') {
         scheduledInput.push({ batch, action: 'dlg-click', ctrlId: parseInt(parts[2]) });
       } else if (kind === 'ctrl-click') {
@@ -5013,6 +5023,103 @@ async function main() {
         } else {
           logs.push(`[input] dlg-cmd: cmd=${ev.cmdId} NO DIALOG at batch ${batch}`);
         }
+      } else if (ev.action === 'dlg-post-cmd') {
+        const we = instance.exports;
+        let dlg = 0;
+        if (renderer) {
+          const wins = Object.values(renderer.windows || {})
+            .filter(w => w && w.visible && w.isDialog)
+            .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0));
+          if (wins.length) dlg = wins[0].hwnd | 0;
+        }
+        if (!dlg && we.wnd_slot_hwnd && we.dlg_get_style) {
+          for (let s = 255; s >= 0; s--) {
+            const hwnd = we.wnd_slot_hwnd(s);
+            if (hwnd && we.dlg_get_style(hwnd)) { dlg = hwnd; break; }
+          }
+        }
+        // Match dlg-cmd's property-sheet behavior: commands belong to the
+        // outer frame rather than its higher-z-order active page.
+        if (dlg && we.wnd_get_parent) {
+          for (let guard = 0; guard < 16; guard++) {
+            const parent = we.wnd_get_parent(dlg) | 0;
+            const parentWin = parent && renderer && renderer.windows
+              ? renderer.windows[parent]
+              : null;
+            if (!parent || !parentWin || !parentWin.isDialog) break;
+            dlg = parent;
+          }
+        }
+        if (dlg && we.post_message_q) {
+          const queued = we.post_message_q(dlg, 0x0111, ev.cmdId, 0) | 0;
+          logs.push(`[input] dlg-post-cmd: cmd=${ev.cmdId} hwnd=0x${dlg.toString(16)} queued=${queued} at batch ${batch}`);
+        } else if (dlg) {
+          logs.push(`[input] dlg-post-cmd: cmd=${ev.cmdId} hwnd=0x${dlg.toString(16)} NO POST QUEUE at batch ${batch}`);
+        } else {
+          logs.push(`[input] dlg-post-cmd: cmd=${ev.cmdId} NO DIALOG at batch ${batch}`);
+        }
+      } else if (ev.action === 'dlg-input-cmd') {
+        const we = instance.exports;
+        let dlg = 0;
+        if (renderer) {
+          const wins = Object.values(renderer.windows || {})
+            .filter(w => w && w.visible && w.isDialog)
+            .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0));
+          if (wins.length) dlg = wins[0].hwnd | 0;
+        }
+        if (!dlg && we.wnd_slot_hwnd && we.dlg_get_style) {
+          for (let s = 255; s >= 0; s--) {
+            const hwnd = we.wnd_slot_hwnd(s);
+            if (hwnd && we.dlg_get_style(hwnd)) { dlg = hwnd; break; }
+          }
+        }
+        if (dlg) {
+          inputEvent = { msg: 0x0111, wParam: ev.cmdId, lParam: 0, hwnd: dlg };
+          logs.push(`[input] dlg-input-cmd: cmd=${ev.cmdId} hwnd=0x${dlg.toString(16)} at batch ${batch}`);
+        } else {
+          logs.push(`[input] dlg-input-cmd: cmd=${ev.cmdId} NO DIALOG at batch ${batch}`);
+        }
+      } else if (ev.action === 'dlg-input-click') {
+        const we = instance.exports;
+        let dlg = 0;
+        if (renderer) {
+          const wins = Object.values(renderer.windows || {})
+            .filter(w => w && w.visible && w.isDialog)
+            .sort((a, b) => (b.zOrder || 0) - (a.zOrder || 0));
+          if (wins.length) dlg = wins[0].hwnd | 0;
+        }
+        if (!dlg && we.wnd_slot_hwnd && we.dlg_get_style) {
+          for (let s = 255; s >= 0; s--) {
+            const hwnd = we.wnd_slot_hwnd(s);
+            if (hwnd && we.dlg_get_style(hwnd)) { dlg = hwnd; break; }
+          }
+        }
+        let child = 0;
+        if (dlg && we.wnd_next_child_slot && we.wnd_slot_hwnd && we.ctrl_get_id) {
+          const seen = new Set();
+          const findChildById = parent => {
+            if (!parent || seen.has(parent)) return 0;
+            seen.add(parent);
+            let s = 0;
+            while ((s = we.wnd_next_child_slot(parent, s)) !== -1) {
+              const hwnd = we.wnd_slot_hwnd(s);
+              if (hwnd && we.ctrl_get_id(hwnd) === ev.ctrlId) return hwnd;
+              const nested = findChildById(hwnd);
+              if (nested) return nested;
+              s++;
+            }
+            return 0;
+          };
+          child = findChildById(dlg);
+        }
+        if (dlg && child) {
+          inputEvent = { msg: 0x0111, wParam: ev.ctrlId, lParam: child, hwnd: dlg };
+          logs.push(`[input] dlg-input-click: id=${ev.ctrlId} child=0x${child.toString(16)} dlg=0x${dlg.toString(16)} at batch ${batch}`);
+        } else if (dlg) {
+          logs.push(`[input] dlg-input-click: id=${ev.ctrlId} NOT FOUND dlg=0x${dlg.toString(16)} at batch ${batch}`);
+        } else {
+          logs.push(`[input] dlg-input-click: id=${ev.ctrlId} NO DIALOG at batch ${batch}`);
+        }
       } else if (ev.action === 'dlg-click') {
         const we = instance.exports;
         let dlg = 0;
@@ -7579,15 +7686,11 @@ if (VERBOSE) {
   }
 
   if (SAVE_VFS && ctx.vfs) {
-    for (const [k, v] of ctx.vfs.files.entries()) {
-      if (k === 'c:\\app.exe') continue;
-      if (SAVE_VFS_SUFFIX && !k.toLowerCase().endsWith(SAVE_VFS_SUFFIX.toLowerCase())) continue;
-      const rel = k.replace(/^c:\\/, '');
-      const outPath = path.join(SAVE_VFS, ...rel.split('\\'));
-      fs.mkdirSync(path.dirname(outPath), { recursive: true });
-      fs.writeFileSync(outPath, Buffer.from(v.data));
-      console.log(`[save-vfs] ${outPath} (${v.data.length} bytes)`);
-    }
+    saveVfsToHost(ctx.vfs, SAVE_VFS, {
+      suffix: SAVE_VFS_SUFFIX,
+      skipPaths: ['c:\\app.exe'],
+      log: line => console.log(line),
+    });
   }
 
   if (DUMP_SPEC) {

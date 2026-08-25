@@ -7,7 +7,7 @@
 const ProcessBoot = (typeof window !== 'undefined' && window.processBoot) || null;
 
 class WineAssembly {
-  static SOURCE_VERSION = '222';
+  static SOURCE_VERSION = '223';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   static _nextProcessId = 1000;
 
@@ -112,6 +112,11 @@ class WineAssembly {
     this.threadManager = null;
     this._wasmModule = null;
     this.stepsPerSlice = 100000;
+    // Most programs replace a destroyed startup window immediately. A few
+    // games tear down a warning/splash before doing substantial renderer
+    // initialization, so the browser launcher may opt them into a longer
+    // no-window interval without weakening normal last-window teardown.
+    this.windowlessGraceMs = 750;
     this.verbose = false;
     // Some WinMM clients intentionally wait for a timeSetEvent callback while
     // they are not pumping messages. This remains opt-in per app: the normal
@@ -359,8 +364,12 @@ class WineAssembly {
         // splash closed killed it in between. Give the guest a short grace
         // period to put another top-level window up; _checkLastWindowStop
         // finishes the teardown if it does not.
-        if (!stillHasTopLevel) self._lastWindowStopAt = Date.now() + 750;
-        else self._lastWindowStopAt = 0;
+        if (!stillHasTopLevel) {
+          const graceMs = Number.isFinite(self.windowlessGraceMs)
+            ? Math.max(0, self.windowlessGraceMs)
+            : 750;
+          self._lastWindowStopAt = Date.now() + graceMs;
+        } else self._lastWindowStopAt = 0;
       },
       onExit: (code) => {
         self.stop({ repaint: false });

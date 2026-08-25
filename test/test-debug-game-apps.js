@@ -14,7 +14,9 @@ const expectedLocalCandidates = new Map([
   ['quake2_demo_installer', 'test/binaries/candidates/quake-2-demo-installer/q2-314-demo-x86.exe'],
   ['heroes3_demo', 'test/binaries/candidates/heroes-3-demo-installer/installed-extracted/Program_Files/h3demo.exe'],
   ['heroes3_demo_installer', 'test/binaries/candidates/heroes-3-demo-installer/installer-engine/_ins5576._mp'],
+  ['diablo2_demo', 'test/binaries/candidates/diablo-2-demo-installer/installed-extracted/diablo ii.exe'],
   ['diablo2_demo_installer', 'test/binaries/candidates/diablo-2-demo-installer/DiabloIIDemo.exe'],
+  ['halflife_uplink', 'test/binaries/candidates/half-life-uplink-installer/installed/hldemo.exe'],
   ['halflife_uplink_installer', 'test/binaries/candidates/half-life-uplink-installer/hluplink.exe'],
 ]);
 for (const [id, exe] of expectedLocalCandidates) {
@@ -27,6 +29,31 @@ assert(APPS.jazz2_demo, 'Jazz Jackrabbit 2 has an app manifest');
 assert.strictEqual(APPS.jazz2_demo.requiredFiles, true);
 assert(APPS.jazz2_demo.files.some(file => file.endsWith('/share1.j2l')),
   'Jazz Jackrabbit 2 mounts its playable shareware level');
+assert.strictEqual(APPS.halflife_uplink.requiredFiles, true);
+assert.strictEqual(APPS.halflife_uplink.windowlessGraceMs, 60000,
+  'Half-Life Uplink survives the renderer-init gap after its socket warning');
+assert.deepStrictEqual(APPS.halflife_uplink.dlls, [
+  'test/binaries/candidates/half-life-uplink-installer/installed/hw.dll',
+  'test/binaries/candidates/half-life-uplink-installer/installed/sw.dll',
+  'test/binaries/candidates/half-life-uplink-installer/installed/hl_res.dll',
+  'test/binaries/candidates/half-life-uplink-installer/installed/a3dapi.dll',
+  'test/binaries/candidates/half-life-uplink-installer/installed/valve/dlls/hl.dll',
+  'test/binaries/candidates/half-life-uplink-installer/installed/valve/cl_dlls/client.dll',
+]);
+assert(APPS.halflife_uplink.files.some(file =>
+  file.url.endsWith('/valve/pak0.pak') && file.vfsPath === 'c:\\valve\\pak0.pak'),
+'Half-Life Uplink mounts the complete installer-produced PAK');
+assert(APPS.halflife_uplink.files.some(file =>
+  file.url.endsWith('/media/intro.avi') && file.vfsPath === 'c:\\media\\intro.avi'),
+'Half-Life Uplink mounts its MCI intro video at the runtime path');
+assert.strictEqual(APPS.diablo2_demo.requiredFiles, true);
+assert.strictEqual(APPS.diablo2_demo.fileConcurrency, 10);
+assert(APPS.diablo2_demo.dlls.some(file => file.endsWith('/d2ddraw.dll')),
+  'Diablo II preloads its selected DirectDraw renderer');
+assert(APPS.diablo2_demo.files.some(file => file.endsWith('/d2data.mpq')),
+  'Diablo II mounts its installer-produced data archive');
+assert(APPS.diablo2_demo.files.some(file => file.endsWith('/d2music.mpq')),
+  'Diablo II mounts its installer-produced music archive');
 for (const id of ['diablo_demo', 'diablo_shareware', 'worms2_demo', 'starcraft_shareware', 'fallout_demo',
   'total_annihilation_demo', 'caesar3_demo', 'captain_claw_demo']) {
   assert(debugIds.has(id), `${id} is reachable from the debug app selector`);

@@ -5,8 +5,11 @@ const path = require('path');
 const { ThreadManager } = require('../lib/thread-manager');
 
 const handlersWat = fs.readFileSync(path.join(__dirname, '..', 'src', '09a-handlers.wat'), 'utf8');
+const headerWat = fs.readFileSync(path.join(__dirname, '..', 'src', '01-header.wat'), 'utf8');
 assert(!handlersWat.includes('(call $host_log_i32 (global.get $eax))'),
   'synchronization handlers must not cross to the host solely to print return values');
+assert(headerWat.includes('(global $MAX_SYNC_OBJECTS i32 (i32.const 512))'),
+  'the WAT synchronization table must match the host manager capacity');
 
 function makeThreadManager(opts) {
   return makeThreadManagerWithMemory(new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true }), opts);
@@ -128,10 +131,11 @@ assert.strictEqual(currentProcessTm.waitSingle(0x000E23E8, 0xFFFFFFFF), 0xFFFF,
 
 const syncLifecycleTm = makeThreadManager();
 const syncHandles = [];
-for (let i = 0; i < 64; i++) {
+for (let i = 0; i < 512; i++) {
   syncHandles.push(syncLifecycleTm.createEvent(false, false));
 }
-assert(syncHandles.every(Boolean), 'all 64 synchronization slots should allocate');
+assert(syncHandles.every(Boolean),
+  'all 512 synchronization slots should allocate, leaving room beyond Diablo II\'s startup event pool');
 assert.strictEqual(syncLifecycleTm.createEvent(false, false), 0, 'the full synchronization table rejects another event');
 assert.strictEqual(syncLifecycleTm.closeSyncHandle(syncHandles[17]), true, 'CloseHandle should release an event slot');
 const staleEvent = syncHandles[17];
