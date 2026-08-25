@@ -789,7 +789,38 @@ class Machine {
     if (ah === 0x0B) return true;
     if (ah === 0x08) { r.set('ax', 0x0720); return true; }   // read char+attr: a blank
     if (ah === 0x03) { r.set('cx', 0x0607); r.set('dx', 0); return true; }  // cursor at 0,0
-    if (ah === 0x12 || ah === 0x1A) { r.set('ax', 0); return true; }
+    // "You need a VGA card to run this." Seven programs in this corpus print
+    // some version of that line and quit, and none of them is wrong about what
+    // it was told: both of the calls a 1994 demo uses to find a VGA were being
+    // answered with AX=0, which is precisely the "function not supported" reply
+    // an 8086-era CGA BIOS gives. The detection was working; the machine was
+    // claiming not to be a VGA.
+    //
+    // AH=1Ah, get display combination code. AL comes back as 1Ah to say the
+    // call exists at all -- that is the presence test -- and BL names the
+    // active display: 08h is "VGA with an analogue colour monitor".
+    if (ah === 0x1A) {
+      if (al === 0x00) {
+        r.set('ax', 0x1A00 | 0x1A);
+        r.set('bx', (r.get('bx') & 0xFF00) | 0x08);
+        return true;
+      }
+      r.set('ax', (r.get('ax') & 0xFF00) | 0x1A);   // AL=1Ah: set is accepted too
+      return true;
+    }
+    // AH=12h, alternate select. BL=10h is the EGA/VGA information call, and the
+    // presence test is that BL comes back CHANGED: an adapter that does not
+    // implement the call leaves 10h sitting there. BH=0 is colour mode, BL=3 is
+    // 256KB of display memory, CH is the feature-connector bits and CL the
+    // configuration switches.
+    if (ah === 0x12) {
+      const bl = r.get('bx') & 0xFF;
+      if (bl === 0x10) { r.set('bx', 0x0003); r.set('cx', 0x0009); return true; }
+      // 30h-34h are the VGA-only scan-line/palette/cursor/display selects; AL=12h
+      // is the "supported" answer to every one of them.
+      r.set('ax', (r.get('ax') & 0xFF00) | 0x12);
+      return true;
+    }
     return false;
   }
 
