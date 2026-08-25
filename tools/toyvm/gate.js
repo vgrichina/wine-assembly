@@ -26,11 +26,16 @@ const flag = (n) => process.argv.slice(2).includes(`--${n}`);
 
 function hex(v, w = 4) { return '0x' + (v >>> 0).toString(16).padStart(w, '0'); }
 
-// Which flag bits the 8086 leaves undefined for a given mnemonic. ADD defines
-// all of them, so this is empty today -- but the moment MUL/DIV/shifts arrive
-// their undefined bits must be named here rather than quietly ignored, and the
-// gate reports what it masked.
-const UNDEFINED_FLAGS = {};
+// Which flag bits the 8086 leaves architecturally UNDEFINED for a given
+// mnemonic. The corpus records what the physical part happened to do, which is
+// not something an emulator is obliged to reproduce -- but ignoring a flag
+// silently is how a real bug hides, so every masked bit is named here and
+// counted in the summary.
+const AF = 1 << 4;
+const UNDEFINED_FLAGS = {
+  // AND/OR/XOR/TEST clear CF and OF and define SF/ZF/PF; AF is undefined.
+  and: AF, or: AF, xor: AF, test: AF,
+};
 
 async function main() {
   const variant = arg('variant', 'tailcall');
@@ -43,7 +48,7 @@ async function main() {
   const verbose = flag('verbose');
 
   const vm = await makeVm(variant);
-  let total = 0, pass = 0, unimpl = 0;
+  let total = 0, pass = 0, unimpl = 0, masked = 0;
   const failures = [];
 
   for (const op of ops) {
@@ -72,6 +77,7 @@ async function main() {
         const got = after[k];
         if (got === undefined) continue;
         if (k === 'flags') {
+          if (mask && ((got ^ want) & mask) !== 0) masked++;
           if (((got ^ want) & ~mask & 0xFFFF) !== 0) {
             bad.push(`flags want=${hex(want)} got=${hex(got)} diff=${hex((got ^ want) & ~mask & 0xFFFF)}`);
           }
@@ -113,6 +119,10 @@ async function main() {
   console.log(`\nvariant=${variant}  ${pass}/${ran} pass`
     + (unimpl ? `, ${unimpl} skipped as unimplemented` : '')
     + `  (${ran ? (100 * pass / ran).toFixed(3) : 0}%)`);
+  if (masked) {
+    console.log(`${masked} case(s) differed ONLY in a flag the 8086 leaves `
+      + `undefined (AF on AND/OR/XOR/TEST) and were accepted on that basis.`);
+  }
   process.exit(pass === ran && ran > 0 ? 0 : 1);
 }
 

@@ -55,94 +55,137 @@ h('end', 1, `
   (global.set $steps (i32.const -1))
 `);
 
-// --- ADD, register/register -------------------------------------------------
-// operand word: dstReg | srcReg<<4
-h('add_r16_r16', 1, `
-  ${ops(1)}
-  (local.set $t1 (call $rget16 (i32.and (local.get $t0) (i32.const 7))))
-  (local.set $t2 (call $rget16 (i32.and (i32.shr_u (local.get $t0) (i32.const 4)) (i32.const 7))))
-  (local.set $t3 (i32.add (local.get $t1) (local.get $t2)))
-  (call $rset16 (i32.and (local.get $t0) (i32.const 7))
-                (i32.and (local.get $t3) (i32.const 0xFFFF)))
-  (call $flags_add (local.get $t1) (local.get $t2) (local.get $t3) (i32.const 16))
-`);
+// --- ALU + MOV families, generated -----------------------------------------
+// x86 encodes six of the ALU ops at 8*code + form, and every one shares the
+// same operand plumbing -- only the arithmetic and the flag rule differ.
+// Generating them keeps that shape identical across handlers on purpose: once
+// we start timing, drift between two hand-written handlers is indistinguishable
+// from a dispatch effect.
+//
+// Forms, and the operand words each consumes:
+//   rr  [dst | src<<4]                 register, register
+//   mr  [eaKind|seg<<4|reg<<8][disp]   memory destination, register source
+//   rm  [eaKind|seg<<4|reg<<8][disp]   register destination, memory source
+//   ri  [reg][imm]                     register destination, immediate
+//   mi  [eaKind|seg<<4|reg<<8][disp][imm]
+const ALU = {
+  add: { code: 0, flags: 'add', write: true, op: 'i32.add' },
+  or: { code: 1, flags: 'logic', write: true, op: 'i32.or' },
+  and: { code: 4, flags: 'logic', write: true, op: 'i32.and' },
+  sub: { code: 5, flags: 'sub', write: true, op: 'i32.sub' },
+  xor: { code: 6, flags: 'logic', write: true, op: 'i32.xor' },
+  cmp: { code: 7, flags: 'sub', write: false, op: 'i32.sub' },
+};
 
-h('add_r8_r8', 1, `
-  ${ops(1)}
-  (local.set $t1 (call $rget8 (i32.and (local.get $t0) (i32.const 7))))
-  (local.set $t2 (call $rget8 (i32.and (i32.shr_u (local.get $t0) (i32.const 4)) (i32.const 7))))
-  (local.set $t3 (i32.add (local.get $t1) (local.get $t2)))
-  (call $rset8 (i32.and (local.get $t0) (i32.const 7))
-               (i32.and (local.get $t3) (i32.const 0xFF)))
-  (call $flags_add (local.get $t1) (local.get $t2) (local.get $t3) (i32.const 8))
-`);
-
-// --- ADD, memory destination ------------------------------------------------
-// operands: [eaKind | seg<<4 | reg<<8][disp16]
-// $t4 holds the effective offset and $t5 the segment index for the whole body.
-const EA_SETUP = `
+const EA_SETUP_PRE = `
   (local.set $t4 (call $ea (i32.and (local.get $t0) (i32.const 15)) (local.get $t1)))
   (local.set $t5 (i32.and (i32.shr_u (local.get $t0) (i32.const 4)) (i32.const 3)))
   (local.set $t6 (i32.and (i32.shr_u (local.get $t0) (i32.const 8)) (i32.const 7)))
 `;
 
-h('add_m16_r16', 2, `
-  ${ops(2)}
-  ${EA_SETUP}
-  (local.set $t2 (call $rd16 (local.get $t5) (local.get $t4)))
-  (local.set $t3 (call $rget16 (local.get $t6)))
-  (local.set $t7 (i32.add (local.get $t2) (local.get $t3)))
-  (call $wr16 (local.get $t5) (local.get $t4) (i32.and (local.get $t7) (i32.const 0xFFFF)))
-  (call $flags_add (local.get $t2) (local.get $t3) (local.get $t7) (i32.const 16))
+function genAlu() {
+  for (const [name, spec] of Object.entries(ALU)) {
+    for (const w of [8, 16]) {
+      const mask = w === 8 ? '0xFF' : '0xFFFF';
+      const rget = `$rget${w}`, rset = `$rset${w}`;
+      const rd = `$rd${w}`, wr = `$wr${w}`;
+      // Flag call, given the two inputs and the UNMASKED result. Logic ops take
+      // only the masked result -- they define CF and OF as zero and leave AF
+      // genuinely undefined on this part, which tools/toyvm/gate.js masks and
+      // reports rather than silently ignoring.
+      const flags = (a, b, s) => spec.flags === 'logic'
+        ? `(call $flags_logic (i32.and ${s} (i32.const ${mask})) (i32.const ${w}))`
+        : `(call $flags_${spec.flags} ${a} ${b} ${s} (i32.const ${w}))`;
+
+      h(`${name}_rr${w}`, 1, `
+  ${ops(1)}
+  (local.set $t1 (call ${rget} (i32.and (local.get $t0) (i32.const 7))))
+  (local.set $t2 (call ${rget} (i32.and (i32.shr_u (local.get $t0) (i32.const 4)) (i32.const 7))))
+  (local.set $t3 (${spec.op} (local.get $t1) (local.get $t2)))
+  ${spec.write ? `(call ${rset} (i32.and (local.get $t0) (i32.const 7)) (i32.and (local.get $t3) (i32.const ${mask})))` : ''}
+  ${flags('(local.get $t1)', '(local.get $t2)', '(local.get $t3)')}
 `);
 
-h('add_r16_m16', 2, `
+      h(`${name}_mr${w}`, 2, `
   ${ops(2)}
-  ${EA_SETUP}
-  (local.set $t2 (call $rget16 (local.get $t6)))
-  (local.set $t3 (call $rd16 (local.get $t5) (local.get $t4)))
-  (local.set $t7 (i32.add (local.get $t2) (local.get $t3)))
-  (call $rset16 (local.get $t6) (i32.and (local.get $t7) (i32.const 0xFFFF)))
-  (call $flags_add (local.get $t2) (local.get $t3) (local.get $t7) (i32.const 16))
+  ${EA_SETUP_PRE}
+  (local.set $t2 (call ${rd} (local.get $t5) (local.get $t4)))
+  (local.set $t3 (call ${rget} (local.get $t6)))
+  (local.set $t7 (${spec.op} (local.get $t2) (local.get $t3)))
+  ${spec.write ? `(call ${wr} (local.get $t5) (local.get $t4) (i32.and (local.get $t7) (i32.const ${mask})))` : ''}
+  ${flags('(local.get $t2)', '(local.get $t3)', '(local.get $t7)')}
 `);
 
-h('add_m8_r8', 2, `
+      h(`${name}_rm${w}`, 2, `
   ${ops(2)}
-  ${EA_SETUP}
-  (local.set $t2 (call $rd8 (local.get $t5) (local.get $t4)))
-  (local.set $t3 (call $rget8 (local.get $t6)))
-  (local.set $t7 (i32.add (local.get $t2) (local.get $t3)))
-  (call $wr8 (local.get $t5) (local.get $t4) (i32.and (local.get $t7) (i32.const 0xFF)))
-  (call $flags_add (local.get $t2) (local.get $t3) (local.get $t7) (i32.const 8))
+  ${EA_SETUP_PRE}
+  (local.set $t2 (call ${rget} (local.get $t6)))
+  (local.set $t3 (call ${rd} (local.get $t5) (local.get $t4)))
+  (local.set $t7 (${spec.op} (local.get $t2) (local.get $t3)))
+  ${spec.write ? `(call ${rset} (local.get $t6) (i32.and (local.get $t7) (i32.const ${mask})))` : ''}
+  ${flags('(local.get $t2)', '(local.get $t3)', '(local.get $t7)')}
 `);
 
-h('add_r8_m8', 2, `
+      h(`${name}_ri${w}`, 2, `
   ${ops(2)}
-  ${EA_SETUP}
-  (local.set $t2 (call $rget8 (local.get $t6)))
-  (local.set $t3 (call $rd8 (local.get $t5) (local.get $t4)))
-  (local.set $t7 (i32.add (local.get $t2) (local.get $t3)))
-  (call $rset8 (local.get $t6) (i32.and (local.get $t7) (i32.const 0xFF)))
-  (call $flags_add (local.get $t2) (local.get $t3) (local.get $t7) (i32.const 8))
+  (local.set $t2 (call ${rget} (local.get $t0)))
+  (local.set $t3 (${spec.op} (local.get $t2) (local.get $t1)))
+  ${spec.write ? `(call ${rset} (local.get $t0) (i32.and (local.get $t3) (i32.const ${mask})))` : ''}
+  ${flags('(local.get $t2)', '(local.get $t1)', '(local.get $t3)')}
 `);
 
-// --- ADD, immediate into the accumulator ------------------------------------
-// operands: [reg][imm]
-h('add_r16_i16', 2, `
-  ${ops(2)}
-  (local.set $t2 (call $rget16 (local.get $t0)))
-  (local.set $t3 (i32.add (local.get $t2) (local.get $t1)))
-  (call $rset16 (local.get $t0) (i32.and (local.get $t3) (i32.const 0xFFFF)))
-  (call $flags_add (local.get $t2) (local.get $t1) (local.get $t3) (i32.const 16))
+      h(`${name}_mi${w}`, 3, `
+  ${ops(3)}
+  ${EA_SETUP_PRE}
+  (local.set $t3 (call ${rd} (local.get $t5) (local.get $t4)))
+  (local.set $t7 (${spec.op} (local.get $t3) (local.get $t2)))
+  ${spec.write ? `(call ${wr} (local.get $t5) (local.get $t4) (i32.and (local.get $t7) (i32.const ${mask})))` : ''}
+  ${flags('(local.get $t3)', '(local.get $t2)', '(local.get $t7)')}
 `);
+    }
+  }
+}
 
-h('add_r8_i8', 2, `
-  ${ops(2)}
-  (local.set $t2 (call $rget8 (local.get $t0)))
-  (local.set $t3 (i32.add (local.get $t2) (local.get $t1)))
-  (call $rset8 (local.get $t0) (i32.and (local.get $t3) (i32.const 0xFF)))
-  (call $flags_add (local.get $t2) (local.get $t1) (local.get $t3) (i32.const 8))
+// MOV is the same five forms with no arithmetic and no flags at all. It gets
+// its own generator rather than an ALU entry with a null flag rule, because a
+// handler that writes no flags is exactly the shape a lazy-flag design is
+// supposed to profit from, and it must not accidentally inherit a flag call.
+function genMov() {
+  for (const w of [8, 16]) {
+    const rget = `$rget${w}`, rset = `$rset${w}`, rd = `$rd${w}`, wr = `$wr${w}`;
+    h(`mov_rr${w}`, 1, `
+  ${ops(1)}
+  (call ${rset} (i32.and (local.get $t0) (i32.const 7))
+                (call ${rget} (i32.and (i32.shr_u (local.get $t0) (i32.const 4)) (i32.const 7))))
 `);
+    h(`mov_mr${w}`, 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  (call ${wr} (local.get $t5) (local.get $t4) (call ${rget} (local.get $t6)))
+`);
+    h(`mov_rm${w}`, 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  (call ${rset} (local.get $t6) (call ${rd} (local.get $t5) (local.get $t4)))
+`);
+    h(`mov_ri${w}`, 2, `
+  ${ops(2)}
+  (call ${rset} (local.get $t0) (local.get $t1))
+`);
+    h(`mov_mi${w}`, 3, `
+  ${ops(3)}
+  ${EA_SETUP_PRE}
+  (call ${wr} (local.get $t5) (local.get $t4) (local.get $t2))
+`);
+  }
+}
+
+genAlu();
+genMov();
+
+// The first six handlers were written by hand to prove the gate; genAlu()
+// covers every form they did and forty more, so they are gone rather than
+// kept as a second definition of the same arithmetic.
 
 // ---------------------------------------------------------------------------
 // Shared helper functions. These are called from bodies and are identical in
@@ -274,6 +317,62 @@ function helpers() {
   ;; PF is parity of the LOW BYTE only, at every width, and is SET for EVEN
   ;; parity -- hence the xor 1, which is the whole of the negation. Doing it
   ;; again below would invert it back; that cost one gate run to find.
+  (local.set $f (i32.or (local.get $f)
+    (i32.shl
+      (i32.and (i32.xor (i32.popcnt (i32.and (local.get $r) (i32.const 0xFF))) (i32.const 1))
+               (i32.const 1))
+      (i32.const ${isa.F.PF}))))
+  (global.set $flags (i32.or (local.get $f) (i32.const ${isa.FLAGS_RESERVED}))))
+
+;; SUB/CMP. Same shape as add; only CF and OF read differently.
+;; $s is the unmasked difference, so a borrow is still visible above bit w-1.
+(func $flags_sub (param $a i32) (param $b i32) (param $s i32) (param $w i32)
+  (local $r i32) (local $msb i32) (local $f i32)
+  (local.set $r (i32.and (local.get $s)
+    (i32.sub (i32.shl (i32.const 1) (local.get $w)) (i32.const 1))))
+  (local.set $msb (i32.sub (local.get $w) (i32.const 1)))
+  (local.set $f (i32.and (global.get $flags) (i32.const ${(~isa.FLAGS_ARITH) & 0xFFFF})))
+  ;; CF is a borrow: a - b went negative, which leaves the bit set above the
+  ;; operand width in the 32-bit difference.
+  (local.set $f (i32.or (local.get $f)
+    (i32.shl (i32.and (i32.shr_u (local.get $s) (local.get $w)) (i32.const 1))
+             (i32.const ${isa.F.CF}))))
+  (local.set $f (i32.or (local.get $f)
+    (i32.shl (i32.and (i32.shr_u
+        (i32.xor (i32.xor (local.get $a) (local.get $b)) (local.get $r))
+        (i32.const 4)) (i32.const 1))
+      (i32.const ${isa.F.AF}))))
+  ;; OF: the operands differed in sign AND the result took the source's sign.
+  (local.set $f (i32.or (local.get $f)
+    (i32.shl (i32.and (i32.shr_u
+        (i32.and (i32.xor (local.get $a) (local.get $b))
+                 (i32.xor (local.get $a) (local.get $r)))
+        (local.get $msb)) (i32.const 1))
+      (i32.const ${isa.F.OF}))))
+  (local.set $f (i32.or (local.get $f)
+    (i32.shl (i32.and (i32.shr_u (local.get $r) (local.get $msb)) (i32.const 1))
+             (i32.const ${isa.F.SF}))))
+  (local.set $f (i32.or (local.get $f)
+    (i32.shl (i32.eqz (local.get $r)) (i32.const ${isa.F.ZF}))))
+  (local.set $f (i32.or (local.get $f)
+    (i32.shl
+      (i32.and (i32.xor (i32.popcnt (i32.and (local.get $r) (i32.const 0xFF))) (i32.const 1))
+               (i32.const 1))
+      (i32.const ${isa.F.PF}))))
+  (global.set $flags (i32.or (local.get $f) (i32.const ${isa.FLAGS_RESERVED}))))
+
+;; AND/OR/XOR. CF and OF are architecturally cleared; AF is genuinely
+;; UNDEFINED on this part, so writing 0 here is a choice, not a claim -- the
+;; gate masks AF for these mnemonics and says so in its output.
+(func $flags_logic (param $r i32) (param $w i32)
+  (local $f i32)
+  (local.set $f (i32.and (global.get $flags) (i32.const ${(~isa.FLAGS_ARITH) & 0xFFFF})))
+  (local.set $f (i32.or (local.get $f)
+    (i32.shl (i32.and (i32.shr_u (local.get $r)
+        (i32.sub (local.get $w) (i32.const 1))) (i32.const 1))
+      (i32.const ${isa.F.SF}))))
+  (local.set $f (i32.or (local.get $f)
+    (i32.shl (i32.eqz (local.get $r)) (i32.const ${isa.F.ZF}))))
   (local.set $f (i32.or (local.get $f)
     (i32.shl
       (i32.and (i32.xor (i32.popcnt (i32.and (local.get $r) (i32.const 0xFF))) (i32.const 1))
