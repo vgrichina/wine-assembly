@@ -1990,6 +1990,13 @@ both orbs, the belt with two potions. No flat grey, no scanline artefacts, no
 missing sprites. Two captures 1500 batches apart are byte-identical, which is
 correct for an idle character.
 
+**It plays, not just draws.** Clicking the ground at (520,250) and then at
+(150,260) walks the character and scrolls the world both ways: the cottage, the
+stone wall and the river all move together, with no tearing, no stale tiles and
+no black seams at the scroll edge, and the character sprite is correctly
+occluded when it walks behind a tree. So the depth sort and the scroll path are
+both right, not just the first painted frame.
+
 ### The Blizzard North logo was never a decoder bug
 
 The intro logo appears to freeze: at `--tick-ms-per-batch=20` it is
