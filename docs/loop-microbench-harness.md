@@ -7,7 +7,13 @@ tools/bench-loops.js injects a synthetic guest loop into a live wasm instance
 and times it, with both A/B arms in ONE process alternating every rep.
 
 Measured noise floor: +-1% at load 3.5, against the 24-42% that made every
-whole-app A/B in interpreter-dispatch-perf.md unresolvable.
+whole-app A/B in interpreter-dispatch-perf.md unresolvable. That floor tracks
+the box -- at load 10.9 the same null control read -5.3% -- so run the null
+control in the SAME session and treat it as the threshold, not a constant.
+
+Every shape verifies its own work, because rep_movsd first shipped copying
+zeros onto zeros: a memory.copy that never ran would have been byte-identical
+and reported DRAM bandwidth for doing nothing.
 
 It found something on its first calibration run: CASE_CHAIN is +57% FASTER on
 its own shape while printing 7.7% MORE handler ops. Op count did not just
@@ -90,9 +96,34 @@ interleaving, the same rotation, with a toggle that changes nothing. It comes
 back at ±1%. That is the noise floor, and it is 25x tighter than the whole-app
 harness.
 
-**Run the null control whenever you add a shape.** A shape whose null control
-does not come back near zero has a layout or aliasing problem, and none of its
-other numbers mean anything.
+**Run the null control in the SAME session as the real measurement, every
+time.** It is not a one-time calibration, it is an instrument that reports the
+noise floor *at that moment*. Re-run an hour later at load 10.9 and the same
+null control came back at **−5.3%**, with the real toggle still at +58.6%. The
+floor tracks the box; only the null control tells you where it is, and a result
+smaller than the concurrent null control is not a result.
+
+A new shape whose null control does not come back near zero on a quiet box has a
+layout or aliasing problem, and none of its other numbers mean anything.
+
+## 3.1 Every shape verifies its own work
+
+Each shape carries a `verify` hook, run unconditionally outside the timed
+region, that checks the loop actually had its memory and register effect. A
+failure is a hard error, not a warning.
+
+This is not defensive decoration. `rep_movsd` originally shipped with an
+unfilled source buffer — copying zeros onto zeros, where a `memory.copy` that
+never ran is byte-identical to one that did. It would have reported the
+machine's DRAM bandwidth for doing nothing, which reads exactly like a
+spectacular result. Two of the first verifiers had the same hole one level down
+(`lut`'s table mapped 0 → 0, so checking `dst[0] == 0` passed on a loop that
+never ran; `stack_traffic` checked spill slots it had not cleared, so it passed
+on the previous rep's data). Destination bytes are now explicitly cleared before
+each rep and the expected values are non-zero by construction.
+
+When adding a shape: make the expected result impossible to reach by accident,
+then confirm the verifier fails when you disable the loop body.
 
 ## 4. What it found on the calibration run
 

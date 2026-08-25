@@ -42,6 +42,9 @@
 //   --shapes=cmp_ladder --toggle=rect_run     +0.7%,  -0.9%   (null control:
 //                                             a toggle this shape cannot use)
 // So the noise floor here is about +-1%, against 24-42% for the whole-app A/B.
+// It TRACKS THE BOX: re-run at load 10.9 and the null control read -5.3% while
+// the real toggle held at +58.6%. Run the null control in the same session as
+// the real measurement and treat it as the threshold, never as a constant.
 //
 // AND THE FIRST THING IT FOUND IS THAT OP COUNT LIES ABOUT ITS OWN SIGN.
 // On cmp_ladder the fold is +57% FASTER while printing 7.7% MORE handler ops.
@@ -103,9 +106,20 @@ const SHAPES = {
           0x47,                   // inc   edi
         ]),
         setup(e, mem, g2w) {
-          for (let i = 0; i < 256; i++) mem[g2w(lut) + i] = (i * 7) & 0xFF;
+          // +13 so no index maps to itself and, critically, so lut[0] != 0 —
+          // otherwise verifying dst[0]==0 passes on a loop that never ran.
+          for (let i = 0; i < 256; i++) mem[g2w(lut) + i] = (i * 7 + 13) & 0xFF;
           for (let i = 0; i < n; i++) mem[g2w(src) + i] = i & 0xFF;
+          mem[g2w(dst)] = 0; mem[g2w(dst) + n - 1] = 0;
           e.set_esi(src); e.set_edi(dst); e.set_ebx(lut); e.set_ecx(n); e.set_eax(0);
+        },
+        verify(e, mem, g2w) {
+          for (const i of [0, 1, n >> 1, n - 1]) {
+            const want = ((i & 0xFF) * 7 + 13) & 0xFF;
+            if (mem[g2w(dst) + i] !== want) return `dst[${i}]=${mem[g2w(dst) + i]} want ${want}`;
+          }
+          if (e.get_ecx() !== 0) return `ecx=${e.get_ecx()}, expected 0`;
+          return null;
         },
       };
     },
@@ -126,8 +140,20 @@ const SHAPES = {
           0x89, 0x44, 0x17, 0x0C,       // mov [edi+edx*1+12], eax
           0x83, 0xC2, 0x10,             // add edx, 16
         ]),
-        setup(e) {
+        setup(e, mem, g2w) {
+          const dv = new DataView(mem.buffer);
+          dv.setUint32(g2w(a.buf), 0, true);
+          dv.setUint32(g2w(a.buf) + n * 16 - 4, 0, true);
           e.set_edi(a.buf); e.set_edx(0); e.set_ecx(n); e.set_eax(0xA5A5A5A5 | 0);
+        },
+        verify(e, mem, g2w) {
+          const dv = new DataView(mem.buffer);
+          for (const off of [0, 4, (n * 16) >> 1, n * 16 - 4]) {
+            const got = dv.getUint32(g2w(a.buf) + off, true);
+            if (got !== 0xA5A5A5A5) return `[buf+0x${off.toString(16)}]=0x${got.toString(16)} want 0xa5a5a5a5`;
+          }
+          if (e.get_edx() !== n * 16) return `edx=${e.get_edx()}, expected ${n * 16}`;
+          return null;
         },
       };
     },
@@ -149,9 +175,22 @@ const SHAPES = {
           0x5B,                   // pop ebx
           0x58,                   // pop eax
         ]),
-        setup(e) {
+        setup(e, mem, g2w) {
+          const dv = new DataView(mem.buffer);
+          // Clear the spill slots, or verify passes on the previous rep's data.
+          dv.setUint32(g2w(a.stackTop - 0x100) - 4, 0, true);
+          dv.setUint32(g2w(a.stackTop - 0x100) - 8, 0, true);
           e.set_ebp(a.stackTop - 0x100);
           e.set_ecx(n); e.set_eax(1); e.set_ebx(2);
+        },
+        verify(e, mem, g2w) {
+          const dv = new DataView(mem.buffer);
+          // The push/pop pairs must balance and the spills must have landed.
+          if (e.get_eax() !== 1 || e.get_ebx() !== 2) return `eax=${e.get_eax()} ebx=${e.get_ebx()}, expected 1/2`;
+          if (dv.getUint32(g2w(a.stackTop - 0x100) - 4, true) !== 1) return '[ebp-4] never written';
+          if (dv.getUint32(g2w(a.stackTop - 0x100) - 8, true) !== 2) return '[ebp-8] never written';
+          if (e.get_ecx() !== 0) return `ecx=${e.get_ecx()}, expected 0`;
+          return null;
         },
       };
     },
@@ -179,6 +218,14 @@ const SHAPES = {
           for (let i = 0; i < n; i++) mem[g2w(a.buf) + i] = i % CASES;
           e.set_esi(a.buf); e.set_ecx(n); e.set_eax(0);
         },
+        verify(e) {
+          // The ladder has no memory effect, so the proof it ran is that the
+          // cursor walked the whole buffer and AL holds the last token.
+          if (e.get_esi() !== a.buf + n) return `esi=0x${e.get_esi().toString(16)}, expected 0x${(a.buf + n).toString(16)}`;
+          if ((e.get_eax() & 0xFF) !== (n - 1) % CASES) return `al=${e.get_eax() & 0xFF}, expected ${(n - 1) % CASES}`;
+          if (e.get_ecx() !== 0) return `ecx=${e.get_ecx()}, expected 0`;
+          return null;
+        },
       };
     },
   },
@@ -188,12 +235,31 @@ const SHAPES = {
     real: 'every blitter; shows what the store path costs when it is absent entirely',
     emit(a) {
       const n = Math.floor(a.bufBytes / 2 / 4);
+      const src = a.buf, dst = a.buf + n * 4;
       return {
         iters: n,
         bytesTouched: n * 8,
         code: [0xF3, 0xA5],           // rep movsd
-        setup(e) {
-          e.set_esi(a.buf); e.set_edi(a.buf + n * 4); e.set_ecx(n);
+        setup(e, mem, g2w) {
+          // The source MUST carry a pattern. Left zeroed, this shape copies
+          // zeros onto zeros and a memory.copy that never ran is byte-identical
+          // to one that did — the benchmark would report DRAM bandwidth for
+          // doing nothing. `verify` below is what makes that impossible.
+          const dv = new DataView(mem.buffer);
+          for (let i = 0; i < n; i++) dv.setUint32(g2w(src) + i * 4, i ^ 0x5A5A0000, true);
+          dv.setUint32(g2w(dst), 0, true);
+          dv.setUint32(g2w(dst) + (n - 1) * 4, 0, true);
+          e.set_esi(src); e.set_edi(dst); e.set_ecx(n);
+        },
+        verify(e, mem, g2w) {
+          const dv = new DataView(mem.buffer);
+          for (const i of [0, 1, n >> 1, n - 1]) {
+            const got = dv.getUint32(g2w(dst) + i * 4, true);
+            const want = (i ^ 0x5A5A0000) >>> 0;
+            if (got !== want) return `dst[${i}]=0x${got.toString(16)} want 0x${want.toString(16)}`;
+          }
+          if (e.get_ecx() !== 0) return `ecx=${e.get_ecx()}, expected 0`;
+          return null;
         },
       };
     },
@@ -309,6 +375,14 @@ function oneRep({ e, mem, g2w }, shape, a, repIndex) {
   const ok = runToCompletion(e, codeAddr, a.stackTop);
   const t1 = process.hrtime.bigint();
   if (!ok) throw new Error(`${shape.name}: guest loop did not return (EIP=0x${e.get_eip().toString(16)})`);
+  // Every rep is verified, outside the timed region and unconditionally. A
+  // shape that silently does nothing reports the machine's memory bandwidth
+  // for doing nothing, which reads exactly like a spectacular result — this is
+  // how rep_movsd shipped copying zeros onto zeros.
+  if (built.verify) {
+    const why = built.verify(e, mem, g2w);
+    if (why) throw new Error(`${shape.name}: shape did not do its work — ${why}`);
+  }
   return { ns: Number(t1 - t0), built };
 }
 
