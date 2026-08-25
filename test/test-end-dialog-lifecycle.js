@@ -126,12 +126,13 @@ function u32(value) {
   e.test_call_EndDialog(modalDialog, 42);
   assert.strictEqual(e.test_yield_flag(), 1,
     'active Wine Assembly modal EndDialog yields to its dialog pump');
+  assert.strictEqual(e.test_window_exists(modalDialog), 1,
+    'a modal EndDialog only records the result; the CACA0004 pump destroys it');
 
   // Disk Cleanup's drive-picker answers WM_DESTROY with EndDialog(hDlg,
-  // IDCANCEL). Since we tear the dialog down inside EndDialog, that arrives
-  // while the first EndDialog is still running: it must neither re-enter the
-  // teardown (which recursed until the host stack died) nor replace the IDOK
-  // the user actually chose.
+  // IDCANCEL). Deferring the modal teardown to the pump keeps that reentry
+  // from happening at all inside EndDialog, and the IDOK the user chose must
+  // survive as the recorded result.
   const END_DIALOG_API_ID = 131;
   const endDialogThunk = e.test_make_api_thunk(END_DIALOG_API_ID) >>> 0;
   const reentrant = e.guest_alloc(64) >>> 0;
@@ -152,10 +153,20 @@ function u32(value) {
   const reentrantDialog = Number(reentrantPacked & 0xffffffffn) >>> 0;
   e.test_reset_modal(reentrantDialog);
   e.test_call_EndDialog(reentrantDialog, 1); // IDOK
-  assert.strictEqual(e.test_window_exists(reentrantDialog), 0,
-    'a DLGPROC that calls EndDialog from WM_DESTROY still gets torn down once');
+  assert.strictEqual(e.test_window_exists(reentrantDialog), 1,
+    'the modal dialog outlives EndDialog; its pump tears it down after the DLGPROC returns');
   assert.strictEqual(e.test_dlg_result(), 1,
     'the first EndDialog result wins over one raised from WM_DESTROY');
+
+  // The same DLGPROC as a *modeless* dialog still gets the inline recursive
+  // teardown, and the WM_DESTROY reentry must not recurse or overwrite IDOK.
+  const modelessReentrantPacked =
+    BigInt.asUintN(64, e.test_create_modeless_dialog(reentrant));
+  const modelessReentrant = Number(modelessReentrantPacked & 0xffffffffn) >>> 0;
+  e.test_reset_modal(0);
+  e.test_call_EndDialog(modelessReentrant, 1); // IDOK
+  assert.strictEqual(e.test_window_exists(modelessReentrant), 0,
+    'a modeless DLGPROC that calls EndDialog from WM_DESTROY still gets torn down once');
 
   console.log('PASS  EndDialog preserves recursive window teardown lifecycle');
 })().catch(error => {

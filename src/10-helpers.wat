@@ -1592,9 +1592,15 @@
   ;; this for WAT-internal paint triggers that don't go through Win32
   ;; InvalidateRect; using $paint_flag_set alone leaves the rgn empty and the
   ;; region pump silently drops the paint.
+  ;; The erase comes with it. Every caller here is a system-driven invalidation
+  ;; -- a window being created, shown, or uncovered -- and USER marks those
+  ;; update regions for erase, which is what makes BeginPaint answer
+  ;; ps.fErase = TRUE for a class with no background brush. Only an app's own
+  ;; InvalidateRect(hwnd, rc, FALSE) leaves the bit alone.
   (func $paint_flag_set_inv (param $hwnd i32)
     (if (i32.eqz (local.get $hwnd)) (then (return)))
     (call $paint_flag_set (local.get $hwnd))
+    (call $nc_flags_set (local.get $hwnd) (i32.const 2))
     (call $update_invalidate_full (local.get $hwnd))
     (call $host_invalidate (local.get $hwnd)))
 
