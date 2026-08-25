@@ -155,6 +155,27 @@ Every fusion in this repo has been judged on the handler histogram. That is why
 `blocks/iter` is in the output: it comes free from the hot-block histogram,
 which `13-exports.wat:181` already records under the same gate.
 
+### 4.1a MB/s does not compare across shapes — ns/op does
+
+The shapes move **1, 3 and 16 bytes per iteration**, so a bytes-per-second
+figure ranks them by how much data each op happens to carry, not by how much
+the interpreter costs. Measured 8MB, load ~10:
+
+| shape | ns/iter | ops/iter | ns/op | B/iter | MB/s |
+|---|---|---|---|---|---|
+| `lut` | 179.3 | 7 | **25.6** | 3 | 16 |
+| `store_stream` | 215.8 | 7 | **30.8** | 16 | 71 |
+| `stack_traffic` | 178.6 | 8 | **22.3** | 0 | — |
+| `cmp_ladder` | 150.5 | 14\* | 10.8\* | 1 | 6 |
+
+`store_stream` has the highest MB/s of the four and is the **slowest per op** —
+it just carries four bytes per store where `lut` carries one. Read `ns/op`
+across shapes; `MB/s` only between two arms of one shape, or between two shapes
+moving the same bytes by different routes. §4.2 is the one that qualifies.
+
+\* with a fold live, `ops/iter` is the unfolded-equivalent count, so `ns/op` is
+understated in the same proportion. The tool prints a NOTE.
+
 ### 4.2 The store path is 428x slower than `memory.copy`
 
 Same 16MB written, `--bytes=16m`:

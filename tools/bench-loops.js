@@ -514,6 +514,8 @@ async function main() {
           nsPerIter: min / built.iters,
           opsTotal: ops.total,
           opsPerIter: ops.total / built.iters,
+          nsPerOp: ops.total ? min / ops.total : 0,
+          bytesPerIter: built.bytesTouched / built.iters,
           blockEntries: ops.blockEntries,
           blocksPerIter: ops.blockEntries / built.iters,
           // Handlers 420-424 deliberately re-record the ops they replaced into
@@ -547,14 +549,24 @@ async function main() {
     console.log(`${r.shape}  —  ${SHAPES[r.shape].describe}`);
     console.log(`  ${fmt(r.iters)} iterations, ${fmt(r.bytesTouched)} guest bytes touched`);
     for (const arm of r.arms) {
-      const mb = arm.guestMBps === null ? '' : `  ${arm.guestMBps.toFixed(0)} MB/s`;
+      // MB/s is bytes/time, and the shapes move 1, 3 and 16 bytes per
+      // iteration — so it is NOT comparable ACROSS shapes, only between two
+      // arms of one shape, or between two shapes moving the same bytes by
+      // different routes (store_stream vs rep_movsd is the one that matters).
+      // ns/op is the cross-shape number: it says what one interpreted x86
+      // instruction of this kind costs.
+      const mb = arm.guestMBps === null ? '' : `  ${arm.guestMBps.toFixed(0)} MB/s(same-shape only)`;
       console.log(`    ${arm.arm.padEnd(16)} min ${arm.minMs.toFixed(1)}ms  med ${arm.medianMs.toFixed(1)}ms  ` +
-        `${arm.nsPerIter.toFixed(1)} ns/iter  ${arm.opsPerIter.toFixed(2)} ops/iter  ` +
+        // A REP is one op for the whole range, so per-op cost is not a
+        // per-instruction number there and printing it invites nonsense.
+        `${arm.nsPerIter.toFixed(1)} ns/iter  ${arm.opsPerIter >= 1 ? `${arm.nsPerOp.toFixed(1)} ns/op` : '(bulk op)'}  ` +
+        `${arm.opsPerIter.toFixed(2)} ops/iter  ${arm.bytesPerIter} B/iter  ` +
         `${arm.blocksPerIter.toFixed(2)} blocks/iter${mb}`);
       console.log(`    ${' '.repeat(16)} top handlers: ${arm.topHandlers.map(([i, c]) => `H${i}:${fmt(c)}`).join('  ')}`);
       if (arm.foldsLive.length) {
         console.log(`    ${' '.repeat(16)} NOTE: ${arm.foldsLive.join(',')} live — ops/iter is the unfolded-equivalent`);
-        console.log(`    ${' '.repeat(16)}       count, not the dispatch count. Compare blocks/iter and time.`);
+        console.log(`    ${' '.repeat(16)}       count, not the dispatch count, so ns/op is understated too.`);
+        console.log(`    ${' '.repeat(16)}       Compare blocks/iter and time.`);
       }
     }
     if (r.delta) {
