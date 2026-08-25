@@ -139,7 +139,7 @@ async function main() {
       if (!rs.length) continue;
       const g = Math.exp(rs.reduce((a, b) => a + Math.log(b), 0) / rs.length);
       console.log(`  ${v.padEnd(14)} ${g >= 1 ? '+' : ''}${((g - 1) * 100).toFixed(1)}%`
-        + `   (best on ${rows.filter(r => r.variant === v && r.rel >= 1).length}/${rs.length})`);
+        + `   (beat baseline on ${rows.filter(r => r.variant === v && r.rel >= 1).length}/${rs.length})`);
     }
   }
 

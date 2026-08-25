@@ -146,7 +146,12 @@ is landing on the axis that is not binding.
    "`$th_cmp_r_i32` is usually followed by `$th_jcc_nz`". Inlining the dispatch tail
    into the top-10 handlers gives each its own site and its own history. **This is not
    what the recorded negative covered** — that experiment left the single-site
-   structure intact.
+   structure intact. **Now measured on a second interpreter**: the toy VM's
+   `repl_tailcall` shell beats its shared-`$next` shell on **10 of 10 real DOS
+   programs, geomean +10.6%**
+   ([toyvm-dispatch-shootout.md](toyvm-dispatch-shootout.md) §5). That is the
+   strongest evidence any lever on this list has, and it is the one to spend a
+   worktree on next.
 2. **Type the handler table.** `(table $handlers 426 funcref)` is untyped, which is why
    the engine emits the signature check whose load is the *last* link in the dependency
    chain. `(ref null $handler_t)` makes it static. Probed: V8 (node 23 / Chrome 151)
@@ -189,6 +194,7 @@ Declined with a measurement, not an opinion:
 | [loop-idiom-superops-design.md](loop-idiom-superops-design.md) | Design A/B, the shape library, the corpus census, LUT_RUN/COPY_RUN/RLE_RUN results |
 | [page-compile-design.md](page-compile-design.md) | address-ordered storage, the parallel index, the §10 verdict, CASE_CHAIN §13–14 |
 | [loop-microbench-harness.md](loop-microbench-harness.md) | `tools/bench-loops.js`: shapes, calibration, the ±1% floor and its boundary |
+| [toyvm-dispatch-shootout.md](toyvm-dispatch-shootout.md) | four dispatch shells generated from one ISA description, gated on 8088 silicon vectors and timed on ten real DOS demos: replication +10.6%, giant `br_table` only +4.2% and bimodal |
 | [aoe-performance-optimization.md](aoe-performance-optimization.md) | the older experiment table, branch/flag-liveness probes, external references |
 | [tracing-performance.md](tracing-performance.md) | what each debug flag costs in the hot loop |
 | [re-notes/](re-notes/README.md) | per-binary hot bodies and the commands that reach them |
