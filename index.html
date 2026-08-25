@@ -1118,7 +1118,7 @@ Resource-aware Win98 emulator
   <script src="lib/resources-icon.js?v=170"></script>
   <script src="lib/renderer-input.js?v=191"></script>
   <script src="lib/presentation-filter.js?v=5"></script>
-  <script src="lib/renderer.js?v=186"></script>
+  <script src="lib/renderer.js?v=187"></script>
   <script src="lib/dll-registry.js?v=1"></script>
   <script src="lib/apps.js?v=2"></script>
   <script src="lib/browser-input.js?v=2"></script>
@@ -1191,6 +1191,23 @@ Resource-aware Win98 emulator
       showPageFullscreenHint();
       scrollCollapseArm();
     }
+
+    // A browser with no element Fullscreen API has nothing behind the consent
+    // button except this same function, so there the button is a dead step: it
+    // asks permission for the only thing on offer, and the reward for pressing
+    // it is a page that Safari still covers with two toolbars. The renderer
+    // calls this as a guest takes the display, so an iPhone goes straight to
+    // the page-fullscreen layout and the swipe strip -- which is the only
+    // thing on iOS that can actually remove those toolbars. Browsers that DO
+    // have the API keep the button: there the real fullscreen is better, and
+    // it needs a user gesture anyway.
+    function enterPageFullscreenIfNoApi() {
+      const target = document.getElementById('screen-wrap');
+      if (!target) return;
+      if (target.requestFullscreen || target.webkitRequestFullscreen) return;
+      enterPageFullscreen();
+    }
+    window.enterPageFullscreenIfNoApi = enterPageFullscreenIfNoApi;
 
     // iOS Safari with its own chrome still over the page -- the only browser
     // where scroll-to-collapse means anything, and only while the page is not

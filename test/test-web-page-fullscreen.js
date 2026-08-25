@@ -73,6 +73,7 @@ const layout = () => {
     canvas: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
     viewport: { width: window.innerWidth, height: window.innerHeight },
     consentVisible: visible(document.getElementById('browser-fullscreen-consent')),
+    classes: document.body.className,
     taskbarVisible: visible(document.getElementById('taskbar')),
     exitVisible: visible(document.getElementById('page-fullscreen-exit')),
     hintVisible: visible(document.getElementById('page-fullscreen-hint')),
@@ -132,20 +133,34 @@ async function main() {
       return !!(app && app.wine.running && app.wine._runSliceCount >= 40);
     }, { timeout: 120000 });
 
-    // A guest app taking the display is what puts the consent bar on screen.
-    await page.evaluate(() => {
-      document.body.classList.add('exclusive-fullscreen');
-      resizeCanvas();
+    // A guest taking the display, through the renderer's own transition rather
+    // than by setting the class -- the class is the *symptom*, and the thing
+    // under test is what the renderer does on the way there. Setting it by
+    // hand is what let the "Use browser fullscreen" button survive on iPhone:
+    // the test never ran the code that is supposed to skip it.
+    const framed = await page.evaluate(layout);
+    assert(!framed.pageFullscreen, 'a windowed app does not own the page');
+    const before = await page.evaluate(() => {
+      const app = runningApps.find(item => item && item.name === 'winmine_wep');
+      app.wine.renderer._setExclusiveFullscreen(true);
+      const canvas = document.getElementById('screen');
+      const rect = canvas.getBoundingClientRect();
+      return {
+        pageFullscreen: document.body.classList.contains('page-fullscreen'),
+        consentVisible: getComputedStyle(
+          document.getElementById('browser-fullscreen-consent')).display !== 'none',
+        canvas: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+      };
     });
     await page.screenshot({ path: path.join(OUT, 'framed.png') });
-    const before = await page.evaluate(layout);
-    assert(before.consentVisible, 'an exclusive-fullscreen app offers the fullscreen control');
-    assert(!before.pageFullscreen, 'the page is not commandeered until the button is pressed');
 
-    // Press it the way a finger does, not by calling the function.
-    await page.click('#browser-fullscreen-consent button');
-    await page.waitForFunction(() => document.body.classList.contains('page-fullscreen'),
-      { timeout: 5000 });
+    // On a browser with no element Fullscreen API there is nothing behind the
+    // consent button but the page fallback, so asking is a dead step: the
+    // renderer hands the page over as the guest takes the display.
+    assert(before.pageFullscreen,
+      'with no Fullscreen API, an exclusive app should get the page without being asked for');
+    assert(!before.consentVisible,
+      'no button that only leads to the thing that already happened');
     const after = await page.evaluate(layout);
     await page.screenshot({ path: path.join(OUT, 'page-fullscreen.png') });
 
@@ -184,8 +199,6 @@ async function main() {
     assert(Math.abs(scrolled.height - after.canvas.height) <= 1,
       'scrolling alone must not resize the guest display');
     await page.evaluate(() => window.scrollTo(0, 0));
-    assert(after.canvas.width > before.canvas.width || after.canvas.height > before.canvas.height,
-      'full screen should give the app more room than the framed page did');
     assert(after.hintVisible,
       'iOS Safari keeps its own toolbars over this mode, so say what actually removes them');
 
@@ -194,10 +207,30 @@ async function main() {
     await page.waitForFunction(() => !document.body.classList.contains('page-fullscreen'),
       { timeout: 5000 });
     const exited = await page.evaluate(layout);
-    assert(exited.consentVisible, 'leaving full screen restores the consent control');
     assert(!exited.exitVisible, 'the exit control belongs to full screen only');
+    // The consent bar is the way back IN after the exit chip, so it has to
+    // return for an app that still holds the display. Asserted off the class
+    // rather than off the run, because winmine is not really an exclusive app
+    // and the renderer takes the display back on its next repaint -- which is
+    // itself correct, and is why `exited` above shows neither class.
+    const backIn = await page.evaluate(() => {
+      document.body.classList.add('exclusive-fullscreen');
+      const el = document.getElementById('browser-fullscreen-consent');
+      const shown = getComputedStyle(el).display !== 'none';
+      document.body.classList.remove('exclusive-fullscreen');
+      return shown;
+    });
+    assert(backIn, 'an app still holding the display offers the way back into full screen');
     assert(!exited.scrollCollapse && !exited.gutterVisible,
       'the swipe strip and its spacer belong to full screen only');
+    // Deliberately NOT asserting that full screen is taller than the framed
+    // page. In no-debug mode our own chrome is already gone, so on this
+    // viewport both are the full 664 and the numbers are equal -- what the
+    // mode actually buys on iOS is Safari's two toolbars, and Chrome has no
+    // retractable toolbars to give back. The spacer/gutter checks above are
+    // the only thing that can be asserted about that from here.
+    assert(after.canvas.height >= framed.canvas.height - 1,
+      `full screen must never give the app less room: ${after.canvas.height} vs ${framed.canvas.height}`);
 
     // The other half -- a guest that closes its exclusive display takes the
     // page back with it -- needs no browser and is checked against a stubbed
