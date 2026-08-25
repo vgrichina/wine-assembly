@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 425 funcref)
+  (table $handlers 426 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -481,4 +481,5 @@
     $th_rect_run              ;; 422: a whole unrolled rows x cols dword rect copy
     $th_case_chain            ;; 423: a whole cmp al,imm8 / jz ladder (a switch)
     $th_rle_run               ;; 424: a whole run-length sprite blit row
+    $th_load_far_ptr32        ;; 425: LES/LDS r32, m16:32 in a flat task
   )

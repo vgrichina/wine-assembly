@@ -2862,9 +2862,22 @@
       ;; ---- 0xC4: LES r16, m16:16 / 0xC5: LDS r16, m16:16 ----
       ;; The bread and butter of far-pointer code: load an offset into a
       ;; register and its selector into ES or DS in one instruction.
+      ;;
+      ;; A flat 32-bit task can reach one too — Watcom's va_arg walker emits
+      ;; `les eax, [edx-8]`, which is how Fallout's demo gets here — so this is
+      ;; not a $win16_only opcode. There the operand is m16:32 and every
+      ;; selector is flat, so op 425 takes the offset and drops the selector.
       (if (i32.or (i32.eq (local.get $op) (i32.const 0xC4)) (i32.eq (local.get $op) (i32.const 0xC5)))
         (then
-          (call $win16_only (local.get $op))
+          (if (i32.eqz (global.get $code16))
+            (then
+              (call $decode_modrm)
+              (local.set $a (call $emit_sib_or_abs))
+              (call $te (i32.const 425)
+                (i32.or (i32.shl (local.get $prefix_66) (i32.const 4))
+                        (global.get $mr_reg)))
+              (call $te_raw (local.get $a))
+              (br $decode)))
           (call $decode_modrm)
           (local.set $a (call $emit_sib_or_abs))
           ;; 0xC4 loads ES (sreg 0), 0xC5 loads DS (sreg 3).
