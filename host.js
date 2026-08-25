@@ -1602,7 +1602,29 @@ class WineAssembly {
         const mainThreadWaiting = self.threadManager &&
           (self._isMainExecutionSuspended() || self.threadManager.checkMainYield());
         if (mainThreadWaiting) {
-          // Main still waiting — just run worker threads
+          // Main still waiting — just run worker threads.
+          //
+          // But the deferred last-window teardown still has to be able to
+          // finish here, and it used to be checked only on the other branch.
+          // A parked main thread is precisely the case it exists for: the app
+          // destroyed its last top-level window and then blocked instead of
+          // reaching ExitProcess -- waiting on a message that will never come,
+          // or on a handle nothing will signal. The grace deadline then passed
+          // with nobody looking at it, so `running` stayed true forever. On a
+          // desktop that is an invisible leak; on a phone it is the end of the
+          // session, because body.app-running hides the desktop icons and they
+          // are the only launcher there is: closing Notepad left a bare teal
+          // page that could not start anything. Whether an app happened to
+          // park before or after its final slice is a race, which is what made
+          // it intermittent.
+          self._checkLastWindowStop();
+          if (!self.running) {
+            if (self.renderer && self._multiApp) {
+              self._removeAppWindows();
+              self.renderer.repaint();
+            }
+            return;
+          }
         } else {
           if (self.renderer) {
             self.renderer.wasm = self.instance;
