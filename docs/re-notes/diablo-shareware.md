@@ -1304,6 +1304,11 @@ across the whole 640 width and never go away — and the flaming logo is absent 
 that frame, which is the separately-tracked logo blink and its ~20% duty cycle,
 not something credits did. Exiting by mouse click was not tested.
 
+> **Both leftovers are gone as of 59f11790** (re-measured 2026-08-24, same
+> recipe). The "scanlines" were the solid white text bars of §2 seen after the
+> fact, not a failed erase — see "State of Diablo Shareware" at the end of this
+> file. The logo was present on both re-captured exit frames.
+
 ### 4. No crash, no unimplemented API
 
 No trap, no `crash_unimplemented`, no new thread death. The only thread event in
@@ -1811,5 +1816,21 @@ minutes-scale symptom. Two gotchas when you do:
 
 Menu logo animates (15/15 frames), Choose Class draws its panels (9/9), Storm's
 worker survives, and Show Credits renders readable text over the tavern art.
-The one cosmetic leftover the Show Credits section names is still open: credits
-pixels are never erased on exit, leaving thin white scanlines on the menu.
+
+**The credits-exit scanlines are gone too, and were never a separate bug.**
+Re-measured 2026-08-24 on 59f11790 with the recipe in the Show Credits section
+(click (320,342) at 39500, Escape at 40800, capture at 41100 and 41300): both
+exit frames are the clean menu -- five gold ArtFont items, the flaming logo
+present, pure black where the credits had been, no residue at any width. The
+"regular thin white horizontal lines across the whole 640 width" that section
+records *were the credit lines*: each one was a solid white rectangle spanning
+the text's full run, and a row of those reads exactly like scanlines. With real
+glyphs there is nothing left to erase. Nothing about the erase path was ever
+wrong, so do not go looking for one.
+
+The credits frame itself (`/tmp/cred-exit/c1.png` in that run) now shows white
+credit text with its shadow pass over the Tristram tavern art -- both of the two
+defects the Show Credits section opened with, the black background and the solid
+bars, are closed by 7d241245 and 59f11790 respectively.
+
+No named rendering defect on Diablo Shareware's menu path is open.
