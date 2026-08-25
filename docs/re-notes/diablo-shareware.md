@@ -1977,3 +1977,71 @@ that leaves the field empty and looks like a dead control. OK is at (350,444).
 `--wait-slices` (added in ee9ba711) matters here too: while the main thread is
 parked in a blocking wait, workers now get 64 slices a batch instead of 4, which
 took the Choose Class capture from not finishing inside 75s to 53s.
+
+## Gameplay reached, and what the frozen intro actually was (2026-08-24)
+
+**Diablo Shareware reaches Tristram and renders it correctly.** Verified end to
+end on cfff3789: main menu → SINGLE PLAYER → Warrior (double-click) → name field
+(click to focus, then type) → OK → loading screen with progress bar → gameplay.
+The gameplay frame is right: the cottage and its thatched roof, the player
+character beside the door, the stone wall and the river, bare trees, and the
+full control panel — CHAR/QUESTS/MAP/MENU on the left, INV/SPELLS on the right,
+both orbs, the belt with two potions. No flat grey, no scanline artefacts, no
+missing sprites. Two captures 1500 batches apart are byte-identical, which is
+correct for an idle character.
+
+### The Blizzard North logo was never a decoder bug
+
+The intro logo appears to freeze: at `--tick-ms-per-batch=20` it is
+byte-identical from batch 15,000 to batch 37,500, and clicks at 15,500 do not
+break it. Every earlier note here treated that as a stalled Smacker decode.
+It is not. `--trace-sched` shows the main thread inside smackw32 the whole time,
+doing real work — and an API census over the region shows **10,068 timeGetTime
+calls against 62 surface Lock/Unlock pairs**. The player is pacing itself off
+the clock and the clock is running away from it.
+
+**The headless CPU is emulated far too slow relative to the guest clock.** The
+guest-visible speed is `BATCH_SIZE / TICK_MS_PER_BATCH` steps per guest-second:
+
+| config | steps per guest-second | vs a real Pentium |
+|---|---|---|
+| defaults (1000 steps / 200ms) | 5,000 | ~20,000x too slow |
+| `--tick-ms-per-batch=20` | 50,000 | ~2,000x too slow |
+| `--batch-size=200000 --tick-ms-per-batch=50` | 4,000,000 | ~25x too slow |
+
+Anything that paces itself against `timeGetTime`/`GetTickCount` — intro videos,
+animated menus, fades — therefore renders a fraction of a frame per guest second
+and looks stalled. **Raise `--batch-size`, not just the tick.** At
+`--batch-size=200000 --tick-ms-per-batch=20` the intro plays through and the
+main menu appears at batch ~1500 **with no skip-clicks at all**; the skip-click
+recipe below exists only to work around the slow-CPU symptom.
+
+This is not Diablo-specific. Any app whose behaviour depends on how fast the
+machine is — a video, a timed fade, a benchmark, a frame-rate governor — is
+being told it is running on a 5 kHz machine at our defaults.
+
+### Two working recipes
+
+Cheap-clock (what the art regression test uses), gameplay at batch ~45,000:
+
+```
+node test/run.js --app=diablo_shareware --tick-ms-per-batch=20 \
+  --max-batches=47000 --no-close --repaint-every=400 \
+  --input='38400:mousedown:20:460,38460:mouseup:20:460,...,39900:mousedown:20:460,39960:mouseup:20:460,\
+40200:mousemove:320:214,40250:mousedown:320:214,40370:mouseup:320:214,\
+41000:mousemove:320:298,41100:dblclick:320:298,\
+41300:mousedown:425:331,41360:mouseup:425:331,\
+41450:keydown:87,41460:keypress:87,41470:keyup:87,41500:keypress:97,41530:keypress:114,\
+41700:keydown:13,41760:keyup:13,45000:png:/tmp/tristram.png'
+```
+
+Realistic-clock, menu at batch ~260 with skip-clicks (~52M steps of guest work):
+
+```
+node test/run.js --app=diablo_shareware --batch-size=200000 --tick-ms-per-batch=50 ...
+```
+
+Wall-clock costs are **not** quoted here on purpose. This box regularly sits at
+load 10-40 with other agents sweeping, and the same run measured 45s and 75s
+twenty minutes apart. Quote batch counts and step counts, which are stable, and
+check `uptime` before believing any seconds figure.
