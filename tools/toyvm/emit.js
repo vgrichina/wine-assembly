@@ -1986,7 +1986,11 @@ function emit(variant) {
   return fn();
 }
 
-module.exports = { emit, HANDLERS, VARIANTS: Object.keys(VARIANTS) };
+// helpers/LOCALS/STATE are exported for tools/toyvm/trace-jit.js, which builds
+// a standalone module out of the SAME handler bodies. It duplicates the helper
+// text rather than importing the interpreter's copies on purpose: a cross-module
+// call per $rget16 would be measuring module boundaries, not code generation.
+module.exports = { emit, HANDLERS, VARIANTS: Object.keys(VARIANTS), helpers, LOCALS, STATE };
 
 // CLI: dump one variant's WAT, for eyeballing or for handing to wat2wasm.
 //   node tools/toyvm/emit.js --variant=tailcall > /tmp/t.wat

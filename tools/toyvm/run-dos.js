@@ -69,7 +69,7 @@ async function runDos(o) {
     variant = 'tailcall', exe, budget = 200e6, slice = 2e6,
     traceInt = false, noCache = false, shots = null, shotEvery = 20,
     mouse = [0, 0], cpu = 386, report = false, log = console.log, autoKey = false,
-    tickScale = 1,
+    tickScale = 1, sample = false,
   } = o;
   setCpuLevel(cpu);
 
@@ -147,6 +147,7 @@ async function runDos(o) {
   let dispatched = 0, handbacks = 0, ints = 0, shotN = 0, stuck = 0, stuckAt = null;
   let lastKey = '';
   const entryHist = new Map();
+  const ipSamples = new Map();
 
   while (dispatched < budget && !machine.exited) {
     const cs = vm.get('cs'), ip = vm.get('gip');
@@ -205,6 +206,15 @@ async function runDos(o) {
     dispatched += left < 0 ? slice : slice - left;
     handbacks++;
 
+    // A budget-expiry return leaves $ip pointing at the next arena word, so it
+    // is a genuine program-counter sample -- unlike $gip, which only moves when
+    // a trace ENDS and is therefore blind to exactly the hot loops that never
+    // end. With a small slice this is a sampling profiler over the arena.
+    if (sample && left < 0) {
+      const at = vm.raw('ip');
+      ipSamples.set(at, (ipSamples.get(at) || 0) + 1);
+    }
+
     // Time moves with work, not with the wall clock: a demo that spins on the
     // BIOS tick has to see it advance, and a wall clock would make a headless
     // run's speed change what the guest computes.
@@ -235,7 +245,7 @@ async function runDos(o) {
     secs: Number(process.hrtime.bigint() - t0) / 1e9,
     guestSecs: Number(guestNs) / 1e9,
     dispatched, handbacks, ints, compiles, compiledWords, arenaResets,
-    stuckAt, entryHist, unimplemented,
+    stuckAt, entryHist, unimplemented, ipSamples, regions,
     pixels: nonBlack(vm.mem), frame: frameHash(vm.mem),
   };
 }
