@@ -186,7 +186,13 @@ async function main() {
       'the swipe strip has to exist, because the canvas eats every touch that lands on it');
     assert(after.scrollHeight > after.viewport.height,
       'nothing can collapse unless the document genuinely overflows');
-    assert(after.scrollHeight <= after.viewport.height + 120,
+    // A whole extra viewport of it, deliberately: Safari ignores a token
+    // scroll, and the 76px this started as reached its end in one flick with
+    // the bars straight back on the rubber-band. Capped at two viewports so a
+    // regression that makes the page endlessly long still fails.
+    assert(after.scrollHeight >= after.viewport.height * 1.9,
+      `a real gesture needs a real page: ${after.scrollHeight} vs ${after.viewport.height}`);
+    assert(after.scrollHeight <= after.viewport.height * 2.2,
       `the overflow is one spacer, not a long page: ${after.scrollHeight} vs ${after.viewport.height}`);
     const scrolled = await page.evaluate(() => {
       window.scrollTo(0, 999);

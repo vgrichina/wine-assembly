@@ -1456,7 +1456,6 @@ class WineAssembly {
   }
 
   stop(options = {}) {
-    const wasRunning = this.running;
     this.running = false;
     this._cleanupAudio();
     if (this.renderer) {
@@ -1470,7 +1469,17 @@ class WineAssembly {
         this.renderer.repaint();
       }
     }
-    if (wasRunning && typeof this.onStopped === 'function') {
+    // Notify whether or not `running` was still set. The listener is
+    // unregisterRunningApp, which is idempotent, and the guard was costing
+    // more than it saved: anything that cleared `running` on its own -- an
+    // exit taken inside the run loop, a trap, a second stop() -- swallowed
+    // the only notification the shell gets, and its runningApps entry then
+    // lived forever. On a phone that is fatal rather than untidy: the
+    // renderer has already dropped the guest's windows, so the page is bare
+    // teal, the desktop icons stay hidden behind body.app-running, and
+    // single-app mode silently refuses every later launch because it still
+    // believes something is running. No way out but a reload.
+    if (typeof this.onStopped === 'function') {
       try { this.onStopped(this); } catch (_) {}
     }
   }

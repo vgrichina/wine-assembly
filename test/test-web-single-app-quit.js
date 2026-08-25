@@ -142,9 +142,28 @@ async function main() {
     // the page went full screen for it, and neither got taken down by an
     // event. This is the state, not a way of producing it -- the point is
     // that stopping the guest has to clear it however it came about.
+    // Driven through the renderer, not by setting the classes: on a browser
+    // with no Fullscreen API the display grab now takes the page with it
+    // (index.html's enterPageFullscreenIfNoApi), and setting the classes by
+    // hand skips exactly the code that has to be undone again on the way out.
     await page.evaluate(() => {
-      document.body.classList.add('exclusive-fullscreen', 'page-fullscreen');
       const app = runningApps.find(item => item && item.name === 'winmine_wep');
+      app.wine.renderer._setExclusiveFullscreen(true);
+    });
+    const owned = await page.evaluate(() => document.body.className);
+    assert(owned.includes('page-fullscreen'),
+      `an exclusive app on an API-less browser should own the page, got "${owned}"`);
+    // Stopped the pathological way, not the tidy way: something cleared
+    // `running` before stop() was reached -- an exit taken inside the run
+    // loop, a trap, a second stop() -- which used to swallow the shell's only
+    // notification. The entry then lived forever in runningApps, and on a
+    // phone that is terminal: the renderer has already dropped the guest's
+    // windows so the page is bare teal, the icons stay hidden behind
+    // body.app-running, and single-app mode refuses every later launch in
+    // silence because it still believes something is running.
+    await page.evaluate(() => {
+      const app = runningApps.find(item => item && item.name === 'winmine_wep');
+      app.wine.running = false;
       app.wine.stop({ repaint: false });
       if (app.wine.renderer) app.wine.renderer.repaint();
     });
