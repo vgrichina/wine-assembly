@@ -1834,3 +1834,146 @@ defects the Show Credits section opened with, the black background and the solid
 bars, are closed by 7d241245 and 59f11790 respectively.
 
 No named rendering defect on Diablo Shareware's menu path is open.
+
+## RESOLVED (2026-08-24, `opus5-main`, commit cfff3789): the whole screen went flat grey the instant you picked a class
+
+Past the menu, Single Player → Choose Class rendered correctly and then, from
+the moment a class was double-clicked, **every subsequent frame was a uniform
+light grey** (`#efefef`) — Enter Name, and everything after it. It looked like
+the app had stopped drawing.
+
+It had not. It was drawing perfectly, through a destroyed palette.
+
+### What every trace said, and why none of it helped
+
+This defect is worth recording mostly for how well it hid:
+
+- `--trace-ctrl`: no control paints for the new dialog — true, and irrelevant;
+  Diablo does not paint through our control path at all.
+- `--dump-backcanvas`: **empty directory**. Diablo renders through DirectDraw
+  surfaces, not per-window back-canvases, so this probe cannot see it.
+- `--count` on Storm's failure blocks — `SBmpLoadImage`'s failure block
+  (`storm+0x15001e51`), `SFileReadFile`'s `ERROR_HANDLE_EOF` return
+  (`+0x1500ead4`), `SFileOpenFile`'s open-failed exit (`+0x15002019`): **all
+  zero**. No art load failed and no read came up short. (Three hits on
+  `SDlgBeginPaint`'s stub tail, which is the documented correct behaviour for
+  the `WS_EX_TRANSPARENT` dialogs.)
+- Every API returned success. Nothing was unimplemented, nothing trapped.
+
+`--trace-dx` is what turned it around, and only because it prints a colour
+histogram beside the surface contents:
+
+```
+[dx] Present slot=1 bpp=8 dib=0x3514e4 nzBytes=303410 pal=0x39c4ec
+     top=239x261913=#efefef 83x4371=#efefef 0x3790=#efefef 238x2232=#efefef
+```
+
+303410 non-zero bytes and many *distinct* indices — a real picture — but
+indices 239, 83 and 238 all resolve to the same `#efefef`. The pixels were
+never the problem. The palette was.
+
+### The measurement that named it
+
+`$handle_IDirectDraw_CreatePalette` `heap_alloc`s 1024 bytes and memcpys the
+caller's table into it; `dx_free` only zeroes the DX_OBJECTS type and never
+returns that block, so nothing of ours can free it. And `--trace-dx` showed the
+palette contents changing with **no `IDirectDrawPalette_SetEntries` anywhere
+near** — 45 `SetPal` calls in the run, the last one thousands of lines earlier.
+
+So watch the block. Its guest address is `g2w`'s inverse of the `pal=` value:
+`0x39c4ec - 0x12000 + 0x400000 = 0x78a4ec`.
+
+```sh
+node test/run.js --app=diablo_shareware --tick-ms-per-batch=20 \
+  --max-batches=41400 --no-close --trace-dx --watch=0x78a4ec --watch-log
+# *** WATCHPOINT hit at batch 41102: [0x0078a4ec] changed
+#   Old: 0x00000000  New: 0xefefefef  EIP: 0x006a8441  prev_eip: 0x006a843b
+```
+
+One write, at the exact batch of the class double-click, from inside storm.dll.
+`0xefefefef` is not a pointer or a flag — it is the background index **239**
+broadcast to a dword, the signature of a byte fill.
+
+### The arithmetic, which is exact
+
+| | |
+|---|---|
+| primary DIB, WASM | `0x3514e4` |
+| primary DIB, guest | `0x73f4e4` |
+| 640×480 bytes | `0x4b000` |
+| **end of surface** | **`0x78a4e4`** |
+| palette copy, guest | `0x78a4ec` — end + 8 |
+
+The palette is the very next heap block, eight bytes past the last scanline.
+And every Storm dialog is created **640×482** (`[CreateWindow] hwnd=0x1001c
+style=0x80000040 pos=0,0 size=640x482`) while the primary is 640×480 — the main
+window `0x10002` is the only 640×480 one. Two extra rows is 1280 bytes, which
+starting 8 bytes past the end covers the whole 1024-byte palette. Not
+approximately: exactly.
+
+### The fix, and why it is not a workaround
+
+A real primary surface is the front of a video-memory aperture that keeps going
+after the last visible scanline. An app that paints a couple of rows long
+scribbles on unused VRAM and nobody ever notices — which is presumably why this
+shipped. Ours was a heap block with the next allocation packed directly behind
+it, so the same two rows landed on live emulator state.
+
+`CreateSurface` now allocates 16 slack rows past the end of every surface DIB,
+primary and back buffer (~10KB on a 640×480 primary). `dib_size` stays the
+logical size, so pitch, vidmem accounting and every reader are unchanged.
+
+**Not Diablo-specific.** Any 8bpp app whose colours come out flat or wrong out
+of a DirectDraw surface should be retested on cfff3789.
+
+### Ruled out, with the measurement
+
+- **A `$heap_alloc` double-issue.** `--trace-api=HeapAlloc,HeapFree,HeapReAlloc`
+  over the whole run: no allocation ever returned a block at or near
+  `0x78a4ec`. The neighbour was issued correctly; the guest ran over it. (An
+  earlier board entry of mine offered this as evidence for the free-list work
+  in `src/10-helpers.wat` — that entry is withdrawn.)
+- **A failed art load / short MPQ read**, i.e. a relapse of 7d241245: the three
+  Storm counters above are zero.
+- **The palette not being copied.** `SetEntries` does `memcpy` into
+  `[entry+20]`, and `CreatePalette` allocates its own 1024 bytes rather than
+  keeping the caller's pointer. Both are correct.
+
+## Driving Diablo to gameplay headlessly, cheaply (2026-08-24)
+
+The 500-second runs this file used to open with were mostly self-inflicted.
+
+**`--tick-ms-per-batch=20`, not `--time-scale=30`.** The CLI's guest clock is
+`batch * TICK_MS_PER_BATCH`, default **200ms a batch** — so at the default each
+batch advances a fifth of a second of game time and the menu renders about four
+frames of its animated logo per batch. Dropping the tick to 20ms cut the cost of
+the menu region from 41s to 9s. `--time-scale` does not help here: it scales
+`guestNowMs` for the scheduler, not `get_ticks`, which is what the game reads.
+
+It also *fixes the intro*: at 200ms a batch the Blizzard North logo never
+advances — a permanently dark logo through 38,000 batches, which reads
+convincingly as a stalled decoder. At 20ms the intro plays and the title card
+appears.
+
+**Click to skip, and only late.** Escape on the main menu is "Exit Diablo" and
+will end your run (`PostQuitMessage`, `[Exit] code=0`). Clicks in a harmless
+corner at 38400/38800/39200/39500/39700/39900 take the menu from batch 40900 to
+40150 and the run from 50s to 26s. Clicking *earlier* than 38400 makes it
+slower, not faster.
+
+**Reaching each screen** (all with `--no-close --repaint-every=200`):
+
+| Screen | Batch | Cost |
+|---|---|---|
+| Main menu | ~40,150 | 26s |
+| Choose Class | ~40,900 | 53s |
+| Enter Name | ~41,600 | ~70s |
+
+Menu geometry: SINGLE PLAYER at (320,214). The class list advances on
+**BN_DOUBLECLICKED** — `dblclick:320:298` for Warrior. The name field needs a
+**click to focus** at (425,331) before any `keypress` reaches it; typing without
+that leaves the field empty and looks like a dead control. OK is at (350,444).
+
+`--wait-slices` (added in ee9ba711) matters here too: while the main thread is
+parked in a blocking wait, workers now get 64 slices a batch instead of 4, which
+took the Choose Class capture from not finishing inside 75s to 53s.
