@@ -392,6 +392,25 @@ async function main() {
     ]);
   });
 
+  check('WordZap lightning fills after its tall anisotropic mapping', () => {
+    const t = target(640, 480);
+    // WordZap draws in a 640x187 logical viewport stretched to 632x434.
+    // The resulting 348-row concave polygon exceeds the persistent HRGN
+    // band's fixed capacity, but Polygon itself must still rasterize it.
+    dv.setInt32(t.desc + 40, 640, true);
+    dv.setInt32(t.desc + 44, 187, true);
+    dv.setInt32(t.desc + 56, 632, true);
+    dv.setInt32(t.desc + 60, 434, true);
+    const yellow = object(2, 0, 0, 0x0000FFFF);
+    const lightning = points([
+      [313, 99], [363, 9], [343, 79],
+      [393, 59], [333, 159], [363, 79],
+    ]);
+    assert.strictEqual(wat.test_gdi_polygon_desc(
+      t.hdc, t.desc, lightning, 6, 0x30017, yellow, 13, 1), 1);
+    assert.strictEqual(colorAt(t, 344, 100), 0xFFFF00);
+  });
+
   check('polygon brush-only triangle has deterministic scanline coverage', () => {
     const t = target(9, 7, 24, false);
     const green = object(2, 0, 0, 0x0000FF00);

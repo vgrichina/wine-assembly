@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 389 funcref)
+  (table $handlers 426 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -445,4 +445,41 @@
     $th_string16            ;; 386: 16-bit string op (MOVS/STOS/LODS/CMPS/SCAS + REP)
     $th_xlat16              ;; 387: XLAT (16-bit)
     $th_int                 ;; 388: INT imm8 (operand=vector, resume EIP in next word)
+    $th_load32_sib          ;; 389: MOV r32,[base+index*scale+disp]
+    $th_lea_sib_pair        ;; 390: two adjacent SIB LEAs (op=dst1|dst2<<4)
+    $th_load_eax_edx_test_i32 ;; 391: MOV EAX,[EDX+disp] + TEST EAX,imm32
+    $th_add_edx_eax_load_test ;; 392: ADD EDX,EAX + MOV EAX,[EDX] + TEST EAX,imm32
+    $th_dec_m8_abs_jnz        ;; 393: DEC byte [abs] + JNZ rel8
+    $th_shr_ebp_1_jcc_b       ;; 394: SHR EBP,1 + JB/JAE rel8 (op=0/1)
+    $th_smack_huff_walk       ;; 395: bounded Smacker Huffman node walk
+    $th_storm_bitreader       ;; 396: exact Storm PKWARE bit-reservoir helper
+    $th_aam                   ;; 397: AAM imm8
+    $th_port_io               ;; 398: IN/OUT accumulator, imm8/DX port
+    $th_enter                 ;; 399: ENTER imm16,0 (32-bit frame)
+    $th_movsx8_sib            ;; 400: MOVSX r32, byte [base+index*scale+disp]
+    $th_store8_sib            ;; 401: MOV byte [base+index*scale+disp], r8
+    $th_mov_m8_i8_sib         ;; 402: MOV byte [base+index*scale+disp], imm8
+    $th_ptrvar_fetch8         ;; 403: mov r,[abs] + inc r + mov [abs],r (+ mov r8,[r+disp])
+    $th_test_jcc              ;; 404: TEST r,r / TEST r8,r8 + Jcc
+    $th_store32_abs_run       ;; 405: 2-4 back-to-back mov [abs],reg
+    $th_load32_abs_run        ;; 406: 2-4 back-to-back mov reg,[abs]
+    $th_alu_m32_i_jcc         ;; 407: ALU dword [base+disp], imm + Jcc
+    $th_load32_base_run       ;; 408: 2-4 back-to-back mov reg,[base+disp]
+    $th_unary_alu_m32_ro      ;; 409: inc/dec [base+disp] + ALU [base+disp], imm
+    $th_not_r16               ;; 410: NOT r16 (0x66 F7 /2, mod=3) — low half only
+    $th_neg_r16               ;; 411: NEG r16 (0x66 F7 /3, mod=3) — low half only
+    $th_movzx_r16_r8          ;; 412: MOVZX r16, r8 (0x66 0F B6, mod=3) — op=dst<<4|src
+    $th_movsx_r16_r8          ;; 413: MOVSX r16, r8 (0x66 0F BE, mod=3) — op=dst<<4|src
+    $th_movzx_r16_m8          ;; 414: MOVZX r16, byte [addr] (op=dst, addr in next word)
+    $th_movsx_r16_m8          ;; 415: MOVSX r16, byte [addr]
+    $th_movzx_r16_m8_ro       ;; 416: MOVZX r16, byte [base+disp] (op=dst<<4|base, disp in word)
+    $th_movsx_r16_m8_ro       ;; 417: MOVSX r16, byte [base+disp]
+    $th_lut_run               ;; 418: whole LUT_RUN loop (src/07b-loop-match.wat)
+    $th_copy_run              ;; 419: whole COPY_RUN loop (src/07b-loop-match.wat)
+    $th_store32_sib           ;; 420: MOV dword [base+index*scale+disp], r32
+    $th_copy32_ro_to_sib      ;; 421: MOV r32,[base+disp] + MOV [base+idx*s+disp],r32
+    $th_rect_run              ;; 422: a whole unrolled rows x cols dword rect copy
+    $th_case_chain            ;; 423: a whole cmp al,imm8 / jz ladder (a switch)
+    $th_rle_run               ;; 424: a whole run-length sprite blit row
+    $th_load_far_ptr32        ;; 425: LES/LDS r32, m16:32 in a flat task
   )

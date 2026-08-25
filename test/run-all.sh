@@ -25,10 +25,12 @@ for a in "$@"; do
     -j*)        JOBS="${a#-j}" ;;
     --jobs=*)   JOBS="${a#--jobs=}" ;;
     --heap=*)   TEST_HEAP_MB="${a#--heap=}" ;;
+    --timeout=*) TEST_TIMEOUT="${a#--timeout=}" ;;
     -h|--help)
-      echo "usage: test/run-all.sh [all|unit|quick|e2e|smoke] [-jN|--jobs=N] [--heap=MB]"
+      echo "usage: test/run-all.sh [all|unit|quick|e2e|smoke] [-jN|--jobs=N] [--heap=MB] [--timeout=SEC]"
       echo "  -jN / --jobs=N   tests to run at once (default: CPU count; env JOBS also works)"
       echo "  --heap=MB        per-child JS heap cap (default 2048; env TEST_HEAP_MB)"
+      echo "  --timeout=SEC    kill a test that runs longer (default 300; env TEST_TIMEOUT, 0 disables)"
       exit 0 ;;
     -*)         echo "unknown option: $a" >&2; exit 2 ;;
     *)          TIER="$a" ;;
@@ -36,39 +38,58 @@ for a in "$@"; do
 done
 
 UNIT=(
+  test/test-boot-cursor.js
   test/test-x86-ops.js
   test/test-shift-equivalence.js
   test/test-ne-loader.js
   test/test-win16-exec.js
   test/test-fs-prefix.js
+  test/test-create-directory-last-error.js
+  test/test-unhandled-exception-filter.js
+  test/test-cxx-throw-report.js
   test/test-bignum-mul.js
   test/test-mat4.js
   test/test-vfs.js
+  test/test-flush-view-of-file.js
+  test/test-heap-free-block-validation.js
   test/test-vfs-host-files.js
   test/test-storage-registry.js
   test/test-codepage-dbcs.js
   test/test-atom-table.js
   test/test-menu-insert.js
+  test/test-insert-menu-item-host-bar.js
   test/test-menu-popup-text.js
+  test/test-dynamic-menu-bar.js
   test/test-sscanf.js
   test/test-format-message-inserts.js
   test/test-ole-clipboard-wrap.js
   test/test-ole-insert-object-dlg.js
   test/test-wat-dib-rle.js
   test/test-icon-extract.js
+  test/test-heroes2-desktop-save.js
   test/test-winhelp-wat-parser.js
   test/test-wide-api.js
+  test/test-static-dx-version.js
   test/test-midi-mci.js
   test/test-thread-manager.js
   test/test-mm-timer-callback.js
+  test/test-nc-flags-message-wake.js
+  test/test-browser-step-scheduler.js
+  test/test-console-input.js
   test/test-browser-mm-timer.js
+  test/test-runtime-log-toggle.js
   test/test-diablo-runtime-apis.js
+  test/test-starcraft-dll-policy.js
+  test/test-debug-game-apps.js
+  test/test-dllmain-load-context.js
   test/test-debug-thread-state.js
   test/test-dev-server.js
   test/test-vlan-rtc.js
   test/test-waveout-audio.js
   test/test-wavein-audio.js
   test/test-audio-mixer.js
+  test/test-directsound-loop-refresh.js
+  test/test-directsound3d-web-audio.js
   test/test-core-no-app-fast-paths.js
   test/test-wat-gdi-region.js
   test/test-wat-gdi-select-clip-path.js
@@ -76,6 +97,7 @@ UNIT=(
   test/test-gdi-p0-p1.js
   test/test-wat-gdi-line.js
   test/test-wat-gdi-raster.js
+  test/test-gdi-fast-blit-paths.js
   test/test-wat-gdi-raster-handlers.js
   test/test-wat-gdi-benchmark.js
   test/test-wat-gdi-bitmap.js
@@ -97,6 +119,7 @@ UNIT=(
   test/test-font-enum-sizes.js
   test/test-wat-gdi-fixed-stock-font.js
   test/test-wat-truetype-metrics.js
+  test/test-wat-truetype-hinting.js
   test/test-font-substitutions.js
   test/test-font-subsets.js
   test/test-wat-truetype-substitution.js
@@ -109,6 +132,7 @@ UNIT=(
   test/test-compatible-bitmap-wat.js
   test/test-gdi-patblt-brush.js
   test/test-gdi-surface.js
+  test/test-gdi-object-record-cache.js
   test/test-gdi-deferred-presentation.js
   test/test-heap-partition.js
   test/test-wat-atomics.js
@@ -147,7 +171,11 @@ UNIT=(
   test/test-vfs-miss-async.js
   test/test-pinball-web-lifecycle.js
   test/test-web-touch-input.js
+  test/test-perf-hud-input.js
   test/test-web-fullscreen-consent.js
+  test/test-single-app-mode.js
+  test/test-mobile-keyboard.js
+  test/test-page-script-globals.js
   test/test-web-pwa-metadata.js
   test/test-radio-mutex.js
   test/test-listbox.js
@@ -162,6 +190,7 @@ UNIT=(
   test/test-canvas-keydown-preventdefault.js
   test/test-renderer-input-cursor.js
   test/test-renderer-mouse-drag-mask.js
+  test/test-renderer-letterbox-input.js
   test/test-renderer-dialog-caption-drag.js
   test/test-renderer-shell-dialog.js
   test/test-renderer-multi-app-modal.js
@@ -171,17 +200,33 @@ UNIT=(
   test/test-aoe-stack-packet-handler.js
   test/test-clipboard-rtf-api.js
   test/test-coinitialize-ex.js
+  test/test-commondialog-props.js
   test/test-critical-section-threading.js
   test/test-ddraw-surface-dirty-rect.js
   test/test-defer-window-pos-visibility.js
   test/test-delphi-seh-mutated-chain.js
   test/test-desktop-surface-color.js
+  test/test-button-focus-notify.js
+  test/test-def-dlg-proc.js
   test/test-dialog-idok-handled.js
+  test/test-isdialogmessage-enter.js
+  test/test-dialog-custom-dispatch.js
+  test/test-end-dialog-lifecycle.js
   test/test-directdraw-cooperative-window.js
   test/test-directdraw-create-ex.js
+  test/test-directdraw-mode-change-primary.js
+  test/test-directdraw-present-force.js
+  test/test-directdraw-retained-primary.js
+  test/test-directanimation-image-render.js
   test/test-directinput-device.js
   test/test-directinput8-create.js
   test/test-directx-ordinals.js
+  test/test-launch-prefs-resolution.js
+  test/test-d3dim-line-primitives.js
+  test/test-d3dim-viewport-background-texture.js
+  test/test-wm-setcursor-on-show.js
+  test/test-dx-blank-primary-holdover.js
+  test/test-dx-present-window-placement.js
   test/test-dx-vtable-worker-sync.js
   test/test-disabled-dialog-controls.js
   test/test-duplicate-handle.js
@@ -190,6 +235,7 @@ UNIT=(
   test/test-gdi-exttextout-clipping.js
   test/test-gdi-transparent-blt.js
   test/test-gdi-scroll-window-rect.js
+  test/test-rect-in-region.js
   test/test-listview.js
   test/test-edit-wrap-resize.js
   test/test-isequalguid.js
@@ -219,6 +265,7 @@ UNIT=(
   test/test-solitaire-web.js
   test/test-sparse-width-boundary.js
   test/test-string-ops-sparse-boundary.js
+  test/test-sparse-generated-code-cache.js
   test/test-surface.js
   test/test-system-metrics.js
   test/test-toolbar-insert.js
@@ -231,15 +278,33 @@ UNIT=(
   test/test-wat-gdi-screen-readback.js
   test/test-wat-winsock-hostname.js
   test/test-window-control-id.js
+  test/test-window-exstyle.js
   test/test-compile-wat-unknown-name.js
   test/test-gdi-public-seven.js
   test/test-combobox.js
   test/test-render-combobox.js
+  test/test-win16-v86-audit.js
 )
 
 E2E=(
   test/test-win16-wep-gameplay.js
+  test/test-win16-vb-gameplay.js
+  test/test-win16-wep1-gameplay.js
+  test/test-win16-wep2-gameplay.js
+  test/test-win16-wep3-gameplay.js
+  test/test-win16-wep4-gameplay.js
+  test/test-win16-wep-class-menu.js
   test/test-win16-pipe-help.js
+  test/test-win16-pipe-about.js
+  test/test-win16-idlewild-handle-map.js
+  test/test-worker-thread-stuck-detect.js
+  test/test-tapi-line-init.js
+  test/test-caesar3-fullscreen-metrics.js
+  test/test-caesar3-gameplay.js
+  test/test-diablo-shareware-art.js
+  test/test-heroes2-gameplay.js
+  test/test-win16-jigsawed.js
+  test/test-win16-jigsawed-menus.js
   test/test-win16-entertainment-manifests.js
   test/test-cli-vfs-include.js
   test/test-winhelp-reference.js
@@ -263,6 +328,9 @@ E2E=(
   test/test-notepad-find.js
   test/test-notepad-menu.js
   test/test-notepad-menu-items.js
+  test/test-class-menu-from-dll.js
+  test/test-listbox-ownerdraw.js
+  test/test-les-flat.js
   test/test-notepad-typing-latency.js
   test/test-notepad-typing-scroll.js
   test/test-notepad-scrollbar-cursor.js
@@ -287,6 +355,7 @@ E2E=(
   test/test-funtris-new-game.js
   test/test-funtris-web-launch.js
   test/test-win98-audio-web.js
+  test/test-explorer98-web.js
   test/test-local-candidate-desktop-web.js
   test/test-win16-web.js
   test/test-worker-guest.js
@@ -484,6 +553,16 @@ if [ -z "${JOBS:-}" ]; then
 fi
 TEST_HEAP_MB="${TEST_HEAP_MB:-2048}"
 
+# A test that never exits used to stall the whole suite indefinitely -- the
+# runner polls for finished slots and has no notion of one taking too long, so
+# a single hung child holds its slot forever and the summary never prints.
+# (test-vlan-match.js is in QUARANTINE for exactly that: "no progress in 400s".)
+# Every child now gets a wall-clock cap and is reported as TIMEOUT, which
+# counts as a failure -- a suite that stalls is a suite nobody waits for.
+# The cap is deliberately far above what any test needs (the slowest gameplay
+# test measures 8.5s) so it catches hangs, not slow machines.
+TEST_TIMEOUT="${TEST_TIMEOUT:-300}"
+
 # bash 3.2 (what macOS ships) has no `wait -n`, so slots are polled.
 run_tier() {
   local tier_name="$1"; shift
@@ -527,6 +606,25 @@ run_tier() {
     i=0
     while [ $i -lt "$JOBS" ]; do
       local pid="${slot_pid[$i]}"
+      # Kill a child that has outlived the cap before checking for exits, so a
+      # hung test frees its slot instead of holding it for the whole run. The
+      # test process usually has a test/run.js child of its own; kill that
+      # first, or it keeps running with nobody left to read its output.
+      if [ -n "$pid" ] && [ "$TEST_TIMEOUT" -gt 0 ] \
+         && [ $((SECONDS - ${slot_start[$i]})) -ge "$TEST_TIMEOUT" ] \
+         && kill -0 "$pid" 2>/dev/null; then
+        pkill -9 -P "$pid" 2>/dev/null
+        kill -9 "$pid" 2>/dev/null
+        wait "$pid" 2>/dev/null || true
+        echo "run-all: killed after ${TEST_TIMEOUT}s wall clock" >>"${slot_log[$i]}"
+        printf "TIME  %-40s  %3ds  %s\n" "${slot_name[$i]}" "$((SECONDS - ${slot_start[$i]}))" "${slot_log[$i]}"
+        failed=$((failed + 1))
+        fail_list+=("${slot_name[$i]} (timeout)")
+        slot_pid[$i]=""
+        running=$((running - 1))
+        reaped=1
+        pid=""
+      fi
       if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
         local status=0
         wait "$pid" || status=$?

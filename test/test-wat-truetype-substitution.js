@@ -149,6 +149,8 @@ const manifest = JSON.parse(fs.readFileSync(
   assert.strictEqual(lookup('ARIAL'), expected.get('Arial').regular);
   assert.strictEqual(lookup('times new roman'),
     expected.get('Times New Roman').regular);
+  assert.strictEqual(lookup('Tms Rmn'), expected.get('Times New Roman').regular,
+    'the Win 3.x Times compatibility alias resolves to the serif face');
 
   // Tahoma ships no italic file. Falling back to the upright file is the
   // honest answer; returning nothing would drop the face to Canvas, and
@@ -370,8 +372,16 @@ const manifest = JSON.parse(fs.readFileSync(
   const bold = readStrike(
     wat.test_tt_strike_ensure(guestPath('Arial'), -16, 700, 0) >>> 0);
   assert.notStrictEqual(bold.record, strike.record, 'bold is its own strike');
-  assert.ok(bold.glyph(capital).width > strike.glyph(capital).width,
-    'bold A must be wider than regular A');
+  const glyphBits = (fontStrike, code) => {
+    const { width } = fontStrike.glyph(code);
+    const bits = [];
+    for (let y = 0; y < fontStrike.height; y += 1) {
+      for (let x = 0; x < width; x += 1) bits.push(fontStrike.pixel(code, x, y));
+    }
+    return { width, height: fontStrike.height, bits };
+  };
+  assert.notDeepStrictEqual(glyphBits(bold, capital), glyphBits(strike, capital),
+    'bold A must have a distinct hinted raster from regular A');
 
   const large = readStrike(
     wat.test_tt_strike_ensure(guestPath('Arial'), -32, 400, 0) >>> 0);

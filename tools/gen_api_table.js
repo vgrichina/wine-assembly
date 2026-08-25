@@ -194,6 +194,9 @@ const extra = [
   { name: '_CIpow', nargs: 0, convention: 'cdecl' },
   { name: 'memset', nargs: 3 },
   { name: 'memcpy', nargs: 3 },
+  { name: '_strupr', nargs: 1, convention: 'cdecl' },
+  { name: '_fullpath', nargs: 3, convention: 'cdecl' },
+  { name: 'qsort', nargs: 4, convention: 'cdecl' },
   { name: '_XcptFilter', nargs: 2 },
   { name: '__CxxFrameHandler', nargs: 4 },
   { name: '_global_unwind2', nargs: 1 },
@@ -577,6 +580,31 @@ const extra = [
   { name: 'IDirectSoundBuffer_Stop', nargs: 1 },
   { name: 'IDirectSoundBuffer_Unlock', nargs: 5 },
   { name: 'IDirectSoundBuffer_Restore', nargs: 1 },
+  // IDirectSound3DBuffer vtable (21 methods). This is an auxiliary interface
+  // returned by IDirectSoundBuffer::QueryInterface for a DSBCAPS_CTRL3D buffer.
+  { name: 'IDirectSound3DBuffer_QueryInterface', nargs: 3 },
+  { name: 'IDirectSound3DBuffer_AddRef', nargs: 1 },
+  { name: 'IDirectSound3DBuffer_Release', nargs: 1 },
+  { name: 'IDirectSound3DBuffer_GetAllParameters', nargs: 2 },
+  { name: 'IDirectSound3DBuffer_GetConeAngles', nargs: 3 },
+  { name: 'IDirectSound3DBuffer_GetConeOrientation', nargs: 2 },
+  { name: 'IDirectSound3DBuffer_GetConeOutsideVolume', nargs: 2 },
+  { name: 'IDirectSound3DBuffer_GetMaxDistance', nargs: 2 },
+  { name: 'IDirectSound3DBuffer_GetMinDistance', nargs: 2 },
+  { name: 'IDirectSound3DBuffer_GetMode', nargs: 2 },
+  { name: 'IDirectSound3DBuffer_GetPosition', nargs: 2 },
+  { name: 'IDirectSound3DBuffer_GetVelocity', nargs: 2 },
+  { name: 'IDirectSound3DBuffer_SetAllParameters', nargs: 3 },
+  { name: 'IDirectSound3DBuffer_SetConeAngles', nargs: 4 },
+  { name: 'IDirectSound3DBuffer_SetConeOrientation', nargs: 5 },
+  { name: 'IDirectSound3DBuffer_SetConeOutsideVolume', nargs: 3 },
+  { name: 'IDirectSound3DBuffer_SetMaxDistance', nargs: 3 },
+  { name: 'IDirectSound3DBuffer_SetMinDistance', nargs: 3 },
+  { name: 'IDirectSound3DBuffer_SetMode', nargs: 3 },
+  { name: 'IDirectSound3DBuffer_SetPosition', nargs: 5 },
+  { name: 'IDirectSound3DBuffer_SetVelocity', nargs: 5 },
+  // USER32 ANSI character classification used by Total Annihilation.
+  { name: 'IsCharAlphaA', nargs: 1 },
   // IDirectInputA vtable (8 methods)
   { name: 'IDirectInput_QueryInterface', nargs: 3 },
   { name: 'IDirectInput_AddRef', nargs: 1 },
@@ -647,6 +675,22 @@ const extra = [
   { name: 'EnumWindows', nargs: 2 },
   { name: 'EnumThreadWindows', nargs: 3 },
   { name: 'EnumSystemCodePagesA', nargs: 2 },
+  { name: 'GetNumberFormatA', nargs: 6,
+    args: [
+      { name: 'Locale', type: 'DWORD' },
+      { name: 'dwFlags', type: 'DWORD' },
+      { name: 'lpValue', type: 'LPCSTR' },
+      { name: 'lpFormat', type: 'DWORD' },
+      { name: 'lpNumberStr', type: 'DWORD', out: true },
+      { name: 'cchNumber', type: 'DWORD' },
+    ], ret: 'DWORD' },
+  { name: 'SHChangeNotify', nargs: 4,
+    args: [
+      { name: 'wEventId', type: 'DWORD' },
+      { name: 'uFlags', type: 'DWORD' },
+      { name: 'dwItem1', type: 'DWORD' },
+      { name: 'dwItem2', type: 'DWORD' },
+    ] },
   { name: 'LocalSize', nargs: 1 },
   { name: 'LoadLibraryExA', nargs: 3 },
   { name: 'DdeInitializeA', nargs: 4 },
@@ -654,6 +698,19 @@ const extra = [
   { name: 'DdeNameService', nargs: 4 },
   { name: 'DdeFreeStringHandle', nargs: 2 },
   { name: 'DdeUninitialize', nargs: 1 },
+  { name: 'DdeConnect', nargs: 4 },
+  { name: 'DdeDisconnect', nargs: 1 },
+  { name: 'DdeClientTransaction', nargs: 8 },
+  { name: 'DdeGetLastError', nargs: 1 },
+  { name: 'DdeFreeDataHandle', nargs: 1 },
+  { name: 'DdeGetData', nargs: 4 },
+  { name: 'InitializeSecurityDescriptor', nargs: 2 },
+  { name: 'AllocateAndInitializeSid', nargs: 11 },
+  { name: 'SetSecurityDescriptorOwner', nargs: 3 },
+  { name: 'FreeSid', nargs: 1 },
+  { name: 'EqualSid', nargs: 2 },
+  { name: 'OpenSCManagerA', nargs: 3 },
+  { name: 'CloseServiceHandle', nargs: 1 },
   { name: 'DosDateTimeToFileTime', nargs: 3 },
   { name: 'PlaySoundA', nargs: 3 },
   // IDirectDrawFactory vtable (5 methods) — CLSID_DirectDrawFactory from ddrawex.dll,
@@ -1052,6 +1109,18 @@ const extra = [
   { name: '??3@YAXPAX@Z', nargs: 1, convention: 'cdecl' },
   { name: '??_U@YAPAXI@Z', nargs: 1, convention: 'cdecl' },
   { name: '??_V@YAXPAX@Z', nargs: 1, convention: 'cdecl' },
+  // D3D9 entry point. Apps reach it through GetProcAddress on a d3d9.dll we
+  // never load, which falls back to a name-keyed Win32 thunk — so an entry
+  // here is all it takes for Direct3DCreate9 to resolve.
+  { name: 'Direct3DCreate9', nargs: 1 },
+  // dinput.dll's GetProcAddress-only entry point (v5/v7 apps).
+  { name: 'DirectInputCreateEx', nargs: 5 },
+  // IDirectInput7 = the v1 vtable + these two. Keep them adjacent: the
+  // vtable is built from a contiguous api-id run.
+  { name: 'CreateAcceleratorTableA', nargs: 2 },
+  { name: 'DestroyAcceleratorTable', nargs: 1 },
+  { name: 'IDirectInput7_FindDevice', nargs: 5 },
+  { name: 'IDirectInput7_CreateDeviceEx', nargs: 5 },
 ];
 for (const api of extra) {
   if (!seen.has(api.name)) {
@@ -1076,13 +1145,13 @@ const cdeclCrtApis = new Set([
   '_XcptFilter', '__CxxFrameHandler', '__GetMainArgs', '__dllonexit',
   '__getmainargs', '__p__acmdln', '__p__commode', '__p__fmode', '__p__wcmdln',
   '__set_app_type', '__setusermatherr', '__wgetmainargs', '_adjust_fdiv',
-  '_controlfp', '_exit', '_ftol', '_getcwd', '_getdcwd', '_global_unwind2', '_initterm',
+  '_controlfp', '_exit', '_ftol', '_fullpath', '_getcwd', '_getdcwd', '_global_unwind2', '_initterm',
   '_itoa', '_itow', '_ltoa', '_mbschr', '_mbsinc', '_mbsnbcmp', '_mbsrchr', '_onexit',
   '_purecall', '_splitpath', '_strdup', '_stricmp', '_strlwr', '_strrev',
   '_wcsicmp', '_wtoi',
   'atoi', 'atol', 'bsearch', 'calloc', 'exit', 'free', 'malloc', 'memcpy',
   'memmove', 'memset', 'rand', 'realloc', 'sprintf', 'sscanf', 'srand', 'strcat',
-  'strchr', 'strcmp', 'strcpy', 'strlen', 'strncpy', 'strrchr', 'time',
+  'strchr', 'strcmp', 'strcpy', 'strlen', 'strncpy', 'strrchr', 'time', 'qsort',
   'toupper', 'wcscmp', 'wcslen', 'wcsncpy', 'wcsrchr', 'mbstowcs', 'wcstombs',
   'ceil', 'sqrt', 'sin', 'pow', '_CIpow',
 ]);
@@ -1098,6 +1167,18 @@ for (const iface of d3dimIfaces) {
     if (!seen.has(fullName)) {
       // Use 5 here to match the existing IDirect3D{,3,Device3,Viewport3,...}
       // convention — handlers are wired with 5-arg + name_ptr signature.
+      existing.push({ id: existing.length, name: fullName, nargs: 5, convention: 'stdcall', hash: 0 });
+      seen.add(fullName);
+    }
+  }
+}
+
+// Pull Direct3D 9 methods from shared spec (used by gen_d3d9_stubs.js too)
+const { interfaces: d3d9Ifaces } = require('./d3d9-methods');
+for (const iface of d3d9Ifaces) {
+  for (const m of iface.methods) {
+    const fullName = iface.prefix + '_' + m.name;
+    if (!seen.has(fullName)) {
       existing.push({ id: existing.length, name: fullName, nargs: 5, convention: 'stdcall', hash: 0 });
       seen.add(fullName);
     }

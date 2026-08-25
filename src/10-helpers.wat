@@ -428,6 +428,7 @@
     (local $count i32) (local $backing_ptr i32) (local $guest_end i32)
     (local $i i32) (local $rec i32) (local $base i32) (local $map_size i32)
     (local $backing i32) (local $map_end i32) (local $backing_end i32)
+    (local $extended i32)
     (local.set $guest_end (i32.add (local.get $guest) (local.get $size)))
     (local.set $count (i32.load (global.get $VIRTUAL_MAP_STATE)))
     (local.set $backing_ptr (i32.load (i32.add (global.get $VIRTUAL_MAP_STATE) (i32.const 4))))
@@ -447,6 +448,24 @@
             (i32.ge_u (local.get $guest) (local.get $base))
             (i32.le_u (local.get $guest_end) (local.get $map_end)))
         (then (return (local.get $guest))))
+      ;; Commit APIs may repeat the reservation base with a larger size
+      ;; (MSVBVM60), or start inside an existing committed run and extend past
+      ;; its end (the MSVC small-block heap in Total Annihilation). Appending
+      ;; either request as a full map gives the overlap two distinct backings;
+      ;; g2w can then read an empty shadow instead of bytes the guest wrote.
+      ;; Commit only the new tail. The recursive call coalesces it when this
+      ;; map owns the backing bump, or records one non-overlapping extension
+      ;; when commits interleave.
+      (if (i32.and
+            (i32.and
+              (i32.ge_u (local.get $guest) (local.get $base))
+              (i32.lt_u (local.get $guest) (local.get $map_end)))
+            (i32.gt_u (local.get $guest_end) (local.get $map_end)))
+        (then
+          (local.set $extended (call $virtual_map_commit
+            (local.get $map_end) (i32.sub (local.get $guest_end) (local.get $map_end))))
+          (return (select (local.get $guest) (i32.const 0)
+            (i32.ne (local.get $extended) (i32.const 0))))))
       (if (i32.and
             (i32.eq (local.get $guest) (local.get $map_end))
             (i32.eq (local.get $backing_ptr) (local.get $backing_end)))
@@ -583,6 +602,54 @@
     (global.set $heap_end (i32.add (local.get $cursor) (local.get $chunk)))
     (local.get $cursor))
 
+  ;; Remove an exact sparse mapping on VirtualFree(..., MEM_RELEASE). Compact
+  ;; the live prefix so g2w's linear scan and MAX_VIRTUAL_MAPS bound keep their
+  ;; existing representation. Backing is a bump arena, therefore only the
+  ;; most recently committed extent can be reclaimed without a free list; all
+  ;; other releases still recover their map-table slot immediately.
+  (func $virtual_map_release (param $guest i32) (result i32)
+    (local $count i32) (local $i i32) (local $rec i32) (local $last i32)
+    (local $last_rec i32) (local $size i32) (local $backing i32)
+    (local $backing_ptr i32)
+    (local.set $count (i32.load (global.get $VIRTUAL_MAP_STATE)))
+    (local.set $i (i32.const 0))
+    (block $not_found (loop $scan
+      (br_if $not_found (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $rec
+        (i32.add (global.get $VIRTUAL_MAP_TABLE)
+          (i32.shl (local.get $i) (i32.const 4))))
+      (if (i32.eq (i32.load (local.get $rec)) (local.get $guest))
+        (then
+          (local.set $size (i32.load (i32.add (local.get $rec) (i32.const 4))))
+          (local.set $backing (i32.load (i32.add (local.get $rec) (i32.const 8))))
+          (local.set $backing_ptr
+            (i32.load (i32.add (global.get $VIRTUAL_MAP_STATE) (i32.const 4))))
+          (if (i32.eq
+                (i32.add (local.get $backing) (local.get $size))
+                (local.get $backing_ptr))
+            (then
+              (i32.store (i32.add (global.get $VIRTUAL_MAP_STATE) (i32.const 4))
+                (local.get $backing))))
+          (local.set $last (i32.sub (local.get $count) (i32.const 1)))
+          (local.set $last_rec
+            (i32.add (global.get $VIRTUAL_MAP_TABLE)
+              (i32.shl (local.get $last) (i32.const 4))))
+          (if (i32.ne (local.get $i) (local.get $last))
+            (then
+              (i32.store (local.get $rec) (i32.load (local.get $last_rec)))
+              (i32.store offset=4 (local.get $rec) (i32.load offset=4 (local.get $last_rec)))
+              (i32.store offset=8 (local.get $rec) (i32.load offset=8 (local.get $last_rec)))
+              (i32.store offset=12 (local.get $rec) (i32.load offset=12 (local.get $last_rec)))))
+          (i32.store (local.get $last_rec) (i32.const 0))
+          (i32.store offset=4 (local.get $last_rec) (i32.const 0))
+          (i32.store offset=8 (local.get $last_rec) (i32.const 0))
+          (i32.store offset=12 (local.get $last_rec) (i32.const 0))
+          (i32.store (global.get $VIRTUAL_MAP_STATE) (local.get $last))
+          (return (i32.const 1))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
   ;; HeapAlloc starts in the low direct guest window for compatibility, then
   ;; spills to sparse high guest chunks when that window reaches emulator-private
   ;; memory. This keeps Windows heap pointers valid without moving code caches.
@@ -615,6 +682,36 @@
     (i32.store (call $g2w (local.get $ptr)) (local.get $need))
     (local.get $ptr))
 
+  ;; Is this free-list entry's own header self-consistent? Same extent rules
+  ;; $heap_free applies before linking a block, re-checked at allocation time
+  ;; because a guest that overruns a live block rewrites the header of the free
+  ;; block behind it after the link happened. Returns 1 for "do not serve this".
+  (func $heap_block_bad (param $cur i32) (param $bsz i32) (result i32)
+    (local $end i32)
+    ;; Header must be an aligned allocation extent, never smaller than a block.
+    (if (i32.or
+          (i32.lt_u (local.get $bsz) (i32.const 16))
+          (i32.ne (i32.and (local.get $bsz) (i32.const 7)) (i32.const 0)))
+      (then (return (i32.const 1))))
+    (local.set $end (i32.add (local.get $cur) (local.get $bsz)))
+    (if (i32.lt_u (local.get $end) (local.get $cur)) (then (return (i32.const 1))))
+    (if (i32.lt_u (local.get $cur) (global.get $heap_ptr))
+      (then
+        ;; Direct arena: the block has to start inside it and end at or before
+        ;; the bump pointer, which is the high-water mark of everything handed
+        ;; out so far.
+        (return
+          (i32.or
+            (i32.lt_u (local.get $cur) (global.get $heap_base))
+            (i32.gt_u (local.get $end) (global.get $heap_ptr))))))
+    ;; Sparse arena: same bounded range $heap_free uses, so a stale high handle
+    ;; or FOURCC that got linked cannot be split and returned.
+    (i32.or
+      (i32.eqz (global.get $heap_sparse_ptr))
+      (i32.or
+        (i32.lt_u (local.get $cur) (global.get $virtual_alloc_top))
+        (i32.gt_u (local.get $end) (global.get $heap_sparse_ptr)))))
+
   ;; Free-list allocator. Each allocated block has a 4-byte size header at ptr-4.
   ;; Free blocks: [size:4][next_guest_ptr:4][...]. Min block = 16 bytes.
   ;; Falls back to bump allocation when no free block fits.
@@ -637,6 +734,21 @@
       (br_if $scan (i32.eqz (local.get $cur)))
       (local.set $cur_w (call $g2w (local.get $cur)))
       (local.set $bsz (i32.load (local.get $cur_w)))
+      ;; A free block has to fit inside the arena it claims to live in. Serving
+      ;; one that does not is far worse than losing the list: Pawn reaches a
+      ;; header reading 0x03d09020, and a 64 MB "fit" is split, handed back as
+      ;; a low pointer, and then zeroed by HEAP_ZERO_MEMORY straight through
+      ;; the thread cache and everything else the emulator keeps in linear
+      ;; memory -- which is why it dies decoding a block of zeros rather than
+      ;; anywhere near the heap. The chain's next pointer sits in the same
+      ;; block we just decided to distrust, so stop the walk here and bump
+      ;; allocate instead of following it.
+      (if (call $heap_block_bad (local.get $cur) (local.get $bsz))
+        (then
+          (if (local.get $prev_w)
+            (then (i32.store (i32.add (local.get $prev_w) (i32.const 4)) (i32.const 0)))
+            (else (global.set $free_list (i32.const 0))))
+          (br $scan)))
       (if (i32.ge_u (local.get $bsz) (local.get $need))
         (then
           ;; Found a fit. Split if remainder >= 16, else use whole block.
@@ -689,21 +801,61 @@
 
   ;; heap_free: return block to free list
   (func $heap_free (param $guest_ptr i32)
-    (local $block i32) (local $w i32)
+    (local $block i32) (local $w i32) (local $size i32) (local $end i32)
+    (local $direct i32)
     (if (i32.eqz (local.get $guest_ptr)) (then (return)))
-    ;; Only free blocks in our heap range — ignore foreign blocks
-    ;; (e.g., msvcrt sbh blocks that shouldn't reach our free list). $heap_base
-    ;; is per-instance and only the PE-loading instance sets it, so a zero here
-    ;; would let a worker admit foreign blocks and then reissue them; read the
-    ;; shared copy when this instance has none.
+    ;; Only free blocks owned by this allocator. $heap_base is per-instance and
+    ;; only the PE-loading instance sets it, so a zero here would let a worker
+    ;; admit foreign blocks and then reissue them; read the shared copy when
+    ;; this instance has none.
     (if (i32.eqz (global.get $heap_base))
       (then (global.set $heap_base
         (i32.load (i32.add (global.get $HEAP_SHARED) (i32.const 4))))))
     (if (i32.eqz (global.get $heap_base)) (then (return)))
-    (if (i32.lt_u (local.get $guest_ptr) (global.get $heap_base)) (then (return)))
+    ;; The old lower-bound-only check accepted every high foreign value as a
+    ;; heap pointer. A stale per-window title slot containing the bytes "ACTR"
+    ;; therefore installed 0x52544341 as the free-list head, and the next small
+    ;; allocation walked arbitrary guest memory forever.
+    (if (i32.lt_u (local.get $guest_ptr)
+          (i32.add (global.get $heap_base) (i32.const 4)))
+      (then (return)))
+    ;; Upper bound of the low window is the process-wide chunk cursor, not this
+    ;; instance's own bump pointer: another instance's arena sits above ours and
+    ;; blocks it handed out are still this allocator's to take back.
+    (local.set $direct (call $heap_low_watermark))
+    (if (i32.lt_u (local.get $direct) (global.get $heap_ptr))
+      (then (local.set $direct (global.get $heap_ptr))))
+    (local.set $direct
+      (i32.lt_u (local.get $guest_ptr) (local.get $direct)))
+    (if (i32.eqz (local.get $direct))
+      (then
+        ;; Sparse heap blocks live in the high reserved arena. This bounded
+        ;; range also rejects arbitrary high handles/FOURCCs without disabling
+        ;; frees from the current sparse chunk.
+        (if (i32.or
+              (i32.eqz (global.get $heap_sparse_ptr))
+              (i32.or
+                (i32.lt_u (local.get $guest_ptr) (global.get $virtual_alloc_top))
+                (i32.ge_u (local.get $guest_ptr) (global.get $heap_sparse_ptr))))
+          (then (return)))))
     ;; Block starts 4 bytes before the user pointer
     (local.set $block (i32.sub (local.get $guest_ptr) (i32.const 4)))
     (local.set $w (call $g2w (local.get $block)))
+    ;; Every block header is an aligned allocation extent. Validate it before
+    ;; linking the block so even an in-range stale pointer cannot corrupt the
+    ;; list or manufacture a cycle.
+    (local.set $size (i32.load (local.get $w)))
+    (if (i32.or
+          (i32.lt_u (local.get $size) (i32.const 16))
+          (i32.ne (i32.and (local.get $size) (i32.const 7)) (i32.const 0)))
+      (then (return)))
+    (local.set $end (i32.add (local.get $block) (local.get $size)))
+    (if (i32.lt_u (local.get $end) (local.get $block)) (then (return)))
+    (if (local.get $direct)
+      (then
+        (if (i32.gt_u (local.get $end) (global.get $heap_ptr)) (then (return))))
+      (else
+        (if (i32.gt_u (local.get $end) (global.get $heap_sparse_ptr)) (then (return)))))
     ;; Prepend to free list: store next = old head
     (i32.store (i32.add (local.get $w) (i32.const 4)) (global.get $free_list))
     (global.set $free_list (local.get $block)))
@@ -845,7 +997,13 @@
 
   ;; Find resource entry in PE resource directory
   ;; Returns offset of data entry (relative to image_base) or 0
-  ;; Compare ASCII string at guest $str_ptr with Unicode resource name at rsrc offset $name_off
+  ;; Named-resource API variants carry either ANSI or UTF-16 guest strings.
+  ;; $find_resource uses ANSI; $find_resource_w temporarily selects UTF-16.
+  (global $rsrc_name_char_stride (mut i32) (i32.const 1))
+
+  ;; Compare a guest string with the Unicode resource name at rsrc offset
+  ;; $name_off. The guest character width is selected by the public lookup
+  ;; wrapper, while PE resource-directory names are always UTF-16.
   ;; Resource name format: u16 length, then u16[] chars. Returns 1 if match (case-insensitive).
   (func $rsrc_name_match (param $str_ptr i32) (param $name_off i32) (result i32)
     (local $str_wa i32) (local $name_wa i32) (local $len i32) (local $j i32)
@@ -857,8 +1015,9 @@
     (local.set $j (i32.const 0))
     (block $done (loop $cmp
       (br_if $done (i32.ge_u (local.get $j) (local.get $len)))
-      (local.set $ch_a (i32.load8_u (i32.add (local.get $str_wa) (local.get $j))))
-      (if (i32.eqz (local.get $ch_a)) (then (return (i32.const 0)))) ;; ASCII shorter
+      (local.set $ch_a (i32.load8_u (i32.add (local.get $str_wa)
+        (i32.mul (local.get $j) (global.get $rsrc_name_char_stride)))))
+      (if (i32.eqz (local.get $ch_a)) (then (return (i32.const 0)))) ;; guest string shorter
       (local.set $ch_r (i32.load16_u (i32.add (local.get $name_wa)
         (i32.add (i32.const 2) (i32.mul (local.get $j) (i32.const 2))))))
       ;; Uppercase both for case-insensitive compare
@@ -869,8 +1028,9 @@
       (if (i32.ne (local.get $ch_a) (local.get $ch_r)) (then (return (i32.const 0))))
       (local.set $j (i32.add (local.get $j) (i32.const 1)))
       (br $cmp)))
-    ;; Matched all $len resource chars — ensure ASCII string ends here too
-    (i32.eqz (i32.load8_u (i32.add (local.get $str_wa) (local.get $len)))))
+    ;; Matched all $len resource chars — ensure the guest string ends here too.
+    (i32.eqz (i32.load8_u (i32.add (local.get $str_wa)
+      (i32.mul (local.get $len) (global.get $rsrc_name_char_stride))))))
 
   ;; Raw eid (name-level directory entry dword, with 0x80000000 set for
   ;; named entries) of the most-recent successful name-level $rsrc_find_entry
@@ -883,6 +1043,43 @@
   (func $rsrc_find_entry (param $dir_off i32) (param $id i32) (result i32)
     (local $named i32) (local $ids i32) (local $total i32)
     (local $e i32) (local $i i32) (local $eid i32) (local $doff i32)
+    (local $str_wa i32) (local $j i32) (local $ch i32)
+    (local $decimal_id i32) (local $decimal_valid i32)
+    ;; Win32 also accepts string-form integer identifiers such as "#130".
+    ;; Resource compiler helpers emit these surprisingly often, so resolve a
+    ;; complete bounded decimal string exactly like MAKEINTRESOURCE(130)
+    ;; before deciding whether to scan named entries.
+    (if (i32.ge_u (local.get $id) (i32.const 0x10000))
+      (then
+        (local.set $str_wa (call $g2w (local.get $id)))
+        (if (i32.eq (i32.load8_u (local.get $str_wa)) (i32.const 0x23)) ;; '#'
+          (then
+            (local.set $j (i32.const 1))
+            (local.set $decimal_valid (i32.const 1))
+            (block $decimal_done
+              (loop $decimal
+                (local.set $ch (i32.load8_u (i32.add (local.get $str_wa)
+                  (i32.mul (local.get $j) (global.get $rsrc_name_char_stride)))))
+                (br_if $decimal_done (i32.eqz (local.get $ch)))
+                (if (i32.or
+                      (i32.lt_u (local.get $ch) (i32.const 0x30))
+                      (i32.gt_u (local.get $ch) (i32.const 0x39)))
+                  (then
+                    (local.set $decimal_valid (i32.const 0))
+                    (br $decimal_done)))
+                (local.set $decimal_id (i32.add
+                  (i32.mul (local.get $decimal_id) (i32.const 10))
+                  (i32.sub (local.get $ch) (i32.const 0x30))))
+                (if (i32.gt_u (local.get $decimal_id) (i32.const 0xffff))
+                  (then
+                    (local.set $decimal_valid (i32.const 0))
+                    (br $decimal_done)))
+                (local.set $j (i32.add (local.get $j) (i32.const 1)))
+                (br $decimal)))
+            (if (i32.and
+                  (local.get $decimal_valid)
+                  (i32.gt_u (local.get $j) (i32.const 1)))
+              (then (local.set $id (local.get $decimal_id))))))))
     ;; dir_off = offset from image_base to resource directory
     ;; Read number of named + id entries
     (local.set $named (i32.load16_u (call $g2w (i32.add (call $r_base)
@@ -998,6 +1195,16 @@
     ;; d is now the offset of the data entry (RVA, size, codepage, reserved) relative to rsrc start
     ;; Return as offset from image_base (rsrc_rva + d)
     (i32.add (call $r_rva) (local.get $d)))
+
+  ;; Wide-name companion used by APIs such as LoadMenuW. Keep the ordinary
+  ;; finder ANSI so existing A-entry points and named class resources retain
+  ;; their exact behavior.
+  (func $find_resource_w (param $type_id i32) (param $name_id i32) (result i32)
+    (local $entry i32)
+    (global.set $rsrc_name_char_stride (i32.const 2))
+    (local.set $entry (call $find_resource (local.get $type_id) (local.get $name_id)))
+    (global.set $rsrc_name_char_stride (i32.const 1))
+    (local.get $entry))
 
   ;; Find a WAVE resource by name ID. Walks L1 looking for named type "WAVE",
   ;; then L2 by integer name_id, then takes first lang entry.
@@ -1644,11 +1851,26 @@
   ;; this for WAT-internal paint triggers that don't go through Win32
   ;; InvalidateRect; using $paint_flag_set alone leaves the rgn empty and the
   ;; region pump silently drops the paint.
+  ;; The erase comes with it. Every caller here is a system-driven invalidation
+  ;; -- a window being created, shown, or uncovered -- and USER marks those
+  ;; update regions for erase, which is what makes BeginPaint answer
+  ;; ps.fErase = TRUE for a class with no background brush. Only an app's own
+  ;; InvalidateRect(hwnd, rc, FALSE) leaves the bit alone.
   (func $paint_flag_set_inv (param $hwnd i32)
     (if (i32.eqz (local.get $hwnd)) (then (return)))
     (call $paint_flag_set (local.get $hwnd))
+    (call $nc_flags_set (local.get $hwnd) (i32.const 2))
     (call $update_invalidate_full (local.get $hwnd))
     (call $host_invalidate (local.get $hwnd)))
+
+  ;; Is this window still owed a WM_PAINT? DefWindowProc's WM_ERASEBKGND uses
+  ;; it to tell an erase our pump ran early from one that is the window's last
+  ;; chance to get a background.
+  (func $paint_flag_test_hwnd (param $hwnd i32) (result i32)
+    (local $idx i32)
+    (local.set $idx (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
+    (i32.load8_u (i32.add (global.get $PAINT_FLAGS) (local.get $idx))))
 
   ;; $paint_flag_clear_hwnd(hwnd): clear the slot bit for hwnd if any.
   (func $paint_flag_clear_hwnd (param $hwnd i32)
@@ -1905,7 +2127,12 @@
                 ;; in silence however often it is invalidated.
                 (call $ctrl_paint_trace_emit
                   (local.get $hwnd) (i32.const 0) (i32.const 4))))
-            (if (call $ctrl_table_get_class (local.get $hwnd))
+            ;; A subclassed control paints from its own WNDPROC. Leave its
+            ;; PAINT_FLAGS bit set so $paint_select_next_dirty hands the
+            ;; WM_PAINT to the pump, which dispatches it to that proc.
+            (if (i32.and
+                  (i32.ne (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 0))
+                  (i32.eqz (call $ctrl_is_subclassed (local.get $hwnd))))
               (then
                 (if (i32.or
                       (call $wnd_has_pending_ancestor_erase (local.get $hwnd))
@@ -1960,7 +2187,15 @@
       (local.set $style (call $wnd_get_style (local.get $ch)))
       (if (call $wnd_is_effectively_visible (local.get $ch))
         (then
-          (if (call $ctrl_table_get_class (local.get $ch))
+          ;; A subclassed control draws itself. Queue its WM_PAINT for the
+          ;; pump instead of running the built-in painter over its art.
+          (if (call $ctrl_is_subclassed (local.get $ch))
+            (then
+              (call $update_invalidate_full (local.get $ch))
+              (call $paint_flag_set_inv (local.get $ch))))
+          (if (i32.and
+                (i32.ne (call $ctrl_table_get_class (local.get $ch)) (i32.const 0))
+                (i32.eqz (call $ctrl_is_subclassed (local.get $ch))))
             (then
               (if (call $wnd_has_pending_ancestor_erase (local.get $ch))
                 (then
@@ -2011,7 +2246,15 @@
       (local.set $style (call $wnd_get_style (local.get $ch)))
       (if (i32.and (local.get $style) (i32.const 0x10000000)) ;; WS_VISIBLE
         (then
-          (if (call $ctrl_table_get_class (local.get $ch))
+          ;; A subclassed control draws itself. Queue its WM_PAINT for the
+          ;; pump instead of running the built-in painter over its art.
+          (if (call $ctrl_is_subclassed (local.get $ch))
+            (then
+              (call $update_invalidate_full (local.get $ch))
+              (call $paint_flag_set_inv (local.get $ch))))
+          (if (i32.and
+                (i32.ne (call $ctrl_table_get_class (local.get $ch)) (i32.const 0))
+                (i32.eqz (call $ctrl_is_subclassed (local.get $ch))))
             (then
               ;; host_show_window already attached/resized the canonical
               ;; surface. Draw now even if the newly shown parent still has a
@@ -2857,6 +3100,99 @@
     (if (i32.gt_s (local.get $dir) (i32.const 0))
       (then (return (select (local.get $first) (local.get $last) (local.get $first)))))
     (select (local.get $last) (local.get $first) (local.get $last)))
+
+  ;; Child #idx of a dialog in creation order, or 0 past the end. Arrow-key
+  ;; traversal needs to look both ways from the focused control and to know
+  ;; where the enclosing WS_GROUP run starts and ends, and a one-directional
+  ;; slot walk cannot answer that; indexing can, and dialogs hold few enough
+  ;; children that rescanning per step costs nothing.
+  (func $dlg_child_at (param $dlg i32) (param $idx i32) (result i32)
+    (local $slot i32) (local $i i32)
+    (block $done (loop $scan
+      (local.set $slot (call $wnd_next_child_slot (local.get $dlg) (local.get $slot)))
+      (br_if $done (i32.lt_s (local.get $slot) (i32.const 0)))
+      (if (i32.eq (local.get $i) (local.get $idx))
+        (then (return (call $wnd_slot_hwnd (local.get $slot)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  (func $dlg_child_count (param $dlg i32) (result i32)
+    (local $slot i32) (local $i i32)
+    (block $done (loop $scan
+      (local.set $slot (call $wnd_next_child_slot (local.get $dlg) (local.get $slot)))
+      (br_if $done (i32.lt_s (local.get $slot) (i32.const 0)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $scan)))
+    (local.get $i))
+
+  ;; GetNextDlgGroupItem: the arrow-key walk. Unlike the Tab walk this ignores
+  ;; WS_TABSTOP entirely and stays inside one WS_GROUP run -- the run that
+  ;; begins at the nearest control at or before the focused one carrying
+  ;; WS_GROUP, and ends before the next one that does. A dialog whose template
+  ;; sets WS_GROUP nowhere is therefore one group, which is exactly Diablo's
+  ;; menus: its five ownerdrawn buttons are the only enabled children, so
+  ;; skipping disabled and invisible controls leaves the arrow keys cycling
+  ;; through the menu items and nothing else.
+  (func $dialog_next_group_item (param $dlg i32) (param $focus i32) (param $dir i32) (result i32)
+    (local $n i32) (local $i i32) (local $fi i32)
+    (local $start i32) (local $end i32) (local $ch i32) (local $style i32)
+    (local $steps i32)
+    (local.set $n (call $dlg_child_count (local.get $dlg)))
+    (if (i32.eqz (local.get $n)) (then (return (i32.const 0))))
+    ;; Index of the focused child; an unrelated focus starts the walk at 0.
+    (local.set $fi (i32.const -1))
+    (block $found (loop $scan
+      (br_if $found (i32.ge_s (local.get $i) (local.get $n)))
+      (if (i32.eq (call $dlg_child_at (local.get $dlg) (local.get $i)) (local.get $focus))
+        (then (local.set $fi (local.get $i)) (br $found)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (if (i32.lt_s (local.get $fi) (i32.const 0)) (then (local.set $fi (i32.const 0))))
+    ;; Group bounds around $fi.
+    (local.set $start (i32.const 0))
+    (local.set $i (local.get $fi))
+    (block $done_back (loop $back
+      (br_if $done_back (i32.lt_s (local.get $i) (i32.const 0)))
+      (if (i32.and
+            (call $wnd_get_style (call $dlg_child_at (local.get $dlg) (local.get $i)))
+            (i32.const 0x00020000))  ;; WS_GROUP
+        (then (local.set $start (local.get $i)) (br $done_back)))
+      (local.set $i (i32.sub (local.get $i) (i32.const 1)))
+      (br $back)))
+    (local.set $end (i32.sub (local.get $n) (i32.const 1)))
+    (local.set $i (i32.add (local.get $fi) (i32.const 1)))
+    (block $done_fwd (loop $fwd
+      (br_if $done_fwd (i32.gt_s (local.get $i) (local.get $end)))
+      (if (i32.and
+            (call $wnd_get_style (call $dlg_child_at (local.get $dlg) (local.get $i)))
+            (i32.const 0x00020000))
+        (then (local.set $end (i32.sub (local.get $i) (i32.const 1))) (br $done_fwd)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $fwd)))
+    ;; Step within [start, end], wrapping, until a control that can take the
+    ;; focus turns up. Bounded by the group size so a group of only disabled
+    ;; controls returns the focus unchanged instead of spinning.
+    (local.set $i (local.get $fi))
+    (block $give_up (loop $step
+      (br_if $give_up (i32.gt_s (local.get $steps)
+                                (i32.sub (local.get $end) (local.get $start))))
+      (local.set $steps (i32.add (local.get $steps) (i32.const 1)))
+      (local.set $i (i32.add (local.get $i)
+        (select (i32.const 1) (i32.const -1) (i32.gt_s (local.get $dir) (i32.const 0)))))
+      (if (i32.gt_s (local.get $i) (local.get $end)) (then (local.set $i (local.get $start))))
+      (if (i32.lt_s (local.get $i) (local.get $start)) (then (local.set $i (local.get $end))))
+      (local.set $ch (call $dlg_child_at (local.get $dlg) (local.get $i)))
+      (br_if $give_up (i32.eqz (local.get $ch)))
+      (local.set $style (call $wnd_get_style (local.get $ch)))
+      (if (i32.and
+            (i32.ne (call $wnd_is_effectively_visible (local.get $ch)) (i32.const 0))
+            (i32.eqz (i32.and (local.get $style) (i32.const 0x08000000))))  ;; !WS_DISABLED
+        (then (return (local.get $ch))))
+      (br $step)))
+    (local.get $focus))
 
   (func $dialog_handle_key (param $dlg i32) (param $vk i32) (param $shift i32) (result i32)
     (local $focus i32) (local $target i32) (local $id i32) (local $style i32)
@@ -3969,7 +4305,7 @@
 
   (func $dc_exclude_siblings_for_clip (param $hdc i32) (param $hwnd i32)
     (local $style i32) (local $parent i32) (local $myxy i32) (local $myx i32) (local $myy i32)
-    (local $slot i32) (local $my_slot i32) (local $sib i32) (local $sstyle i32)
+    (local $slot i32) (local $my_slot i32) (local $my_z i32) (local $sib i32)
     (local $xy i32) (local $wh i32) (local $sx i32) (local $sy i32) (local $sw i32) (local $sh i32)
     (local.set $style (call $wnd_get_style (local.get $hwnd)))
     (if (i32.eqz (i32.and (local.get $style) (i32.const 0x04000000))) ;; WS_CLIPSIBLINGS
@@ -3978,36 +4314,30 @@
     (if (i32.eqz (local.get $parent)) (then (return)))
     (local.set $my_slot (call $wnd_table_find (local.get $hwnd)))
     (if (i32.lt_s (local.get $my_slot) (i32.const 0)) (then (return)))
+    (local.set $my_z (call $wnd_z_get (local.get $hwnd)))
     (local.set $myx (call $ctrl_get_x_s (local.get $hwnd)))
     (local.set $myy (call $ctrl_get_y_s (local.get $hwnd)))
-    ;; Later slots are treated as above us; this matches existing WAT
-    ;; sibling enumeration until an explicit z-order table exists.
-    (local.set $slot (i32.add (local.get $my_slot) (i32.const 1)))
+    (local.set $slot (i32.const 0))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $slot) (global.get $MAX_WINDOWS)))
       (local.set $sib (call $wnd_slot_hwnd (local.get $slot)))
-      (if (i32.and
-            (i32.ne (local.get $sib) (i32.const 0))
-            (i32.eq (call $wnd_get_parent (local.get $sib)) (local.get $parent)))
+      (if (call $wnd_z_is_above_sibling (local.get $hwnd) (local.get $sib))
         (then
-          (local.set $sstyle (call $wnd_get_style (local.get $sib)))
-          (if (i32.and (local.get $sstyle) (i32.const 0x10000000)) ;; WS_VISIBLE
+          (local.set $wh (call $ctrl_get_wh_packed (local.get $sib)))
+          (local.set $sx (call $ctrl_get_x_s (local.get $sib)))
+          (local.set $sy (call $ctrl_get_y_s (local.get $sib)))
+          (local.set $sw (i32.and (local.get $wh) (i32.const 0xFFFF)))
+          (local.set $sh (i32.shr_u (local.get $wh) (i32.const 16)))
+          (if (i32.and (i32.gt_s (local.get $sw) (i32.const 0))
+                       (i32.gt_s (local.get $sh) (i32.const 0)))
             (then
-              (local.set $wh (call $ctrl_get_wh_packed (local.get $sib)))
-              (local.set $sx (call $ctrl_get_x_s (local.get $sib)))
-              (local.set $sy (call $ctrl_get_y_s (local.get $sib)))
-              (local.set $sw (i32.and (local.get $wh) (i32.const 0xFFFF)))
-              (local.set $sh (i32.shr_u (local.get $wh) (i32.const 16)))
-              (if (i32.and (i32.gt_s (local.get $sw) (i32.const 0))
-                           (i32.gt_s (local.get $sh) (i32.const 0)))
-                (then
-                  (drop (call $gdi_dc_system_clip_rect
-                    (local.get $hdc)
-                    (i32.sub (local.get $sx) (local.get $myx))
-                    (i32.sub (local.get $sy) (local.get $myy))
-                    (i32.add (i32.sub (local.get $sx) (local.get $myx)) (local.get $sw))
-                    (i32.add (i32.sub (local.get $sy) (local.get $myy)) (local.get $sh))
-                    (i32.const 4))))))))))
+              (drop (call $gdi_dc_system_clip_rect
+                (local.get $hdc)
+                (i32.sub (local.get $sx) (local.get $myx))
+                (i32.sub (local.get $sy) (local.get $myy))
+                (i32.add (i32.sub (local.get $sx) (local.get $myx)) (local.get $sw))
+                (i32.add (i32.sub (local.get $sy) (local.get $myy)) (local.get $sh))
+                (i32.const 4)))))))
       (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
       (br 0))))
 
@@ -4482,6 +4812,13 @@
     (local $class_val i32) (local $class_enum i32) (local $class_ptr i32)
     (local $custom_wndproc i32) (local $native_tab i32)
     (local $text_ptr i32) (local $text_ord i32) (local $cs i32)
+    (local $base_x i32) (local $base_y i32)
+    ;; Win16 USER uses the classic 8x16 SYSTEM_FONT dialog base. Win32
+    ;; dialogs in this runtime use the measured 8pt MS Sans Serif 6x13 base.
+    (local.set $base_x
+      (select (i32.const 8) (i32.const 6) (global.get $is_win16)))
+    (local.set $base_y
+      (select (i32.const 16) (i32.const 13) (global.get $is_win16)))
     ;; Find the dialog slot — caller must have inserted it already
     (local.set $dlg_slot (call $wnd_table_find (local.get $dlg_hwnd)))
     (if (i32.lt_s (local.get $dlg_slot) (i32.const 0)) (then (return (i32.const 0))))
@@ -4573,18 +4910,19 @@
     ;; Child dialog pages have no separately composed top-level chrome, so
     ;; their template dimensions remain unchanged.
     (call $ctrl_geom_set (local.get $dlg_slot)
-      (i32.div_u (i32.mul (local.get $dlg_x) (i32.const 3)) (i32.const 2))
-      (i32.div_u (i32.add (i32.mul (local.get $dlg_y) (i32.const 13)) (i32.const 4)) (i32.const 8))
+      (i32.div_u (i32.mul (local.get $dlg_x) (local.get $base_x)) (i32.const 4))
+      (i32.div_u (i32.add (i32.mul (local.get $dlg_y) (local.get $base_y)) (i32.const 4)) (i32.const 8))
       (i32.add
-        (i32.div_u (i32.mul (local.get $dlg_cx) (i32.const 3)) (i32.const 2))
+        (i32.div_u (i32.mul (local.get $dlg_cx) (local.get $base_x)) (i32.const 4))
         (select
-          (i32.const 8) (i32.const 0)
+          (select (i32.const 5) (i32.const 8) (global.get $is_win16))
+          (i32.const 0)
           (i32.eqz (i32.and (local.get $style) (i32.const 0x40000000)))))
       (i32.add
-        (i32.div_u (i32.add (i32.mul (local.get $dlg_cy) (i32.const 13)) (i32.const 4)) (i32.const 8))
+        (i32.div_u (i32.add (i32.mul (local.get $dlg_cy) (local.get $base_y)) (i32.const 4)) (i32.const 8))
         (select
           (i32.add
-            (i32.const 30)
+            (select (i32.const 24) (i32.const 30) (global.get $is_win16))
             (select
               (i32.const 18) (i32.const 0)
               (i32.ne (local.get $menu_key) (i32.const 0))))
@@ -4738,12 +5076,10 @@
           ;; live text via existing button_get_text / edit / static
           ;; accessors, so we don't need to stash a parallel copy in
           ;; CONTROL_TABLE.
-          ;; DLU → pixel geometry (x*3/2, y*13/8). The vertical factor is
-          ;; tmHeight/8 for the dialog font, and a real Win98 probe measures
-          ;; MS Sans Serif 8pt at tmHeight=13 (test/fixtures/font-metrics.json)
-          ;; -- we used 7/4 for a long time, which is a 14px cell and made
-          ;; every dialog ~8% too tall. The +4 rounds the way MapDialogRect's
-          ;; MulDiv does; truncating turns the canonical 14-DLU button into
+          ;; DLU → pixel geometry. Win16 uses the classic 8x16 SYSTEM_FONT
+          ;; base; Win32 uses the measured 8pt MS Sans Serif 6x13 base
+          ;; (test/fixtures/font-metrics.json). The +4 rounds the vertical
+          ;; MulDiv; truncating turns the canonical 14-DLU Win32 button into
           ;; 22px instead of 23. For comboboxes (class 5),
           ;; the template's ch is the full dropped-down extent per Win32
           ;; convention — clamp the window/hit-test rect to the field
@@ -4752,12 +5088,12 @@
           ;; (pinball Player Controls: 6 combos at y=85/108/133 with
           ;; ch=70 each were all ~120px tall pre-clamp).
           (call $ctrl_geom_set (local.get $ctrl_slot)
-            (i32.div_u (i32.mul (local.get $cx) (i32.const 3)) (i32.const 2))
-            (i32.div_u (i32.add (i32.mul (local.get $cy) (i32.const 13)) (i32.const 4)) (i32.const 8))
-            (i32.div_u (i32.mul (local.get $cw) (i32.const 3)) (i32.const 2))
+            (i32.div_u (i32.mul (local.get $cx) (local.get $base_x)) (i32.const 4))
+            (i32.div_u (i32.add (i32.mul (local.get $cy) (local.get $base_y)) (i32.const 4)) (i32.const 8))
+            (i32.div_u (i32.mul (local.get $cw) (local.get $base_x)) (i32.const 4))
             (select
               (i32.const 21)
-              (i32.div_u (i32.add (i32.mul (local.get $ch) (i32.const 13)) (i32.const 4)) (i32.const 8))
+              (i32.div_u (i32.add (i32.mul (local.get $ch) (local.get $base_y)) (i32.const 4)) (i32.const 8))
               (i32.and
                 (i32.eq (local.get $class_enum) (i32.const 5))
                 (i32.ne (i32.and (local.get $ctrl_style) (i32.const 0x3))
@@ -4771,10 +5107,10 @@
       (i32.store offset=4  (call $g2w (local.get $cs)) (i32.const 0))
       (i32.store offset=8  (call $g2w (local.get $cs)) (local.get $ctrl_id))
       (i32.store offset=12 (call $g2w (local.get $cs)) (local.get $dlg_hwnd))
-      (i32.store offset=16 (call $g2w (local.get $cs)) (i32.div_u (i32.add (i32.mul (local.get $ch) (i32.const 13)) (i32.const 4)) (i32.const 8)))
-      (i32.store offset=20 (call $g2w (local.get $cs)) (i32.div_u (i32.mul (local.get $cw) (i32.const 3)) (i32.const 2)))
-      (i32.store offset=24 (call $g2w (local.get $cs)) (i32.div_u (i32.add (i32.mul (local.get $cy) (i32.const 13)) (i32.const 4)) (i32.const 8)))
-      (i32.store offset=28 (call $g2w (local.get $cs)) (i32.div_u (i32.mul (local.get $cx) (i32.const 3)) (i32.const 2)))
+      (i32.store offset=16 (call $g2w (local.get $cs)) (i32.div_u (i32.add (i32.mul (local.get $ch) (local.get $base_y)) (i32.const 4)) (i32.const 8)))
+      (i32.store offset=20 (call $g2w (local.get $cs)) (i32.div_u (i32.mul (local.get $cw) (local.get $base_x)) (i32.const 4)))
+      (i32.store offset=24 (call $g2w (local.get $cs)) (i32.div_u (i32.add (i32.mul (local.get $cy) (local.get $base_y)) (i32.const 4)) (i32.const 8)))
+      (i32.store offset=28 (call $g2w (local.get $cs)) (i32.div_u (i32.mul (local.get $cx) (local.get $base_x)) (i32.const 4)))
       (i32.store offset=32 (call $g2w (local.get $cs)) (local.get $ctrl_style))
       (i32.store offset=36 (call $g2w (local.get $cs))
         (select
@@ -4899,6 +5235,137 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (local.get $i))
+
+  ;; Inspect a '%' at src[i].  When it has a closing '%', store that closing
+  ;; byte index in scratch[0] and return the matching environment entry (or 0
+  ;; when the variable is unknown).  An unmatched '%' leaves scratch[0] at -1.
+  ;; scratch+4 holds the temporary NUL-terminated variable name.
+  (func $env_expand_var (param $src i32) (param $i i32) (param $scratch i32) (result i32)
+    (local $j i32) (local $k i32) (local $ch i32)
+    (call $gs32 (local.get $scratch) (i32.const -1))
+    (local.set $j (i32.add (local.get $i) (i32.const 1)))
+    (block $scanned (loop $scan
+      (local.set $ch (call $gl8 (i32.add (local.get $src) (local.get $j))))
+      (br_if $scanned (i32.or (i32.eqz (local.get $ch))
+        (i32.eq (local.get $ch) (i32.const 0x25))))
+      (local.set $j (i32.add (local.get $j) (i32.const 1)))
+      (br $scan)))
+    (if (i32.eqz (local.get $ch)) (then (return (i32.const 0))))
+    (call $gs32 (local.get $scratch) (local.get $j))
+    (local.set $k (i32.add (local.get $i) (i32.const 1)))
+    (block $copied (loop $copy
+      (br_if $copied (i32.ge_u (local.get $k) (local.get $j)))
+      (call $gs8
+        (i32.add (i32.add (local.get $scratch) (i32.const 4))
+          (i32.sub (local.get $k) (i32.add (local.get $i) (i32.const 1))))
+        (call $gl8 (i32.add (local.get $src) (local.get $k))))
+      (local.set $k (i32.add (local.get $k) (i32.const 1)))
+      (br $copy)))
+    (call $gs8
+      (i32.add (i32.add (local.get $scratch) (i32.const 4))
+        (i32.sub (local.get $j) (i32.add (local.get $i) (i32.const 1))))
+      (i32.const 0))
+    (call $env_find (i32.add (local.get $scratch) (i32.const 4)) (i32.const 0)))
+
+  ;; ExpandEnvironmentStringsA core.  Unknown or unterminated %NAME% tokens
+  ;; remain literal.  Build into a temporary buffer after a sizing pass so
+  ;; source and destination may alias without corrupting the scan.
+  (func $env_expand_a (param $src i32) (param $dst i32) (param $size i32) (result i32)
+    (local $src_len i32) (local $scratch i32) (local $tmp i32)
+    (local $i i32) (local $j i32) (local $k i32) (local $ch i32)
+    (local $entry i32) (local $value i32) (local $value_len i32)
+    (local $out_len i32) (local $required i32)
+    (if (i32.eqz (local.get $src)) (then (return (i32.const 0))))
+    (local.set $src_len (call $guest_strlen (local.get $src)))
+    (local.set $scratch (call $heap_alloc (i32.add (local.get $src_len) (i32.const 5))))
+
+    ;; First pass: exact required character count, excluding the final NUL.
+    (block $counted (loop $count
+      (local.set $ch (call $gl8 (i32.add (local.get $src) (local.get $i))))
+      (br_if $counted (i32.eqz (local.get $ch)))
+      (block $advanced
+        (if (i32.eq (local.get $ch) (i32.const 0x25))
+          (then
+            (local.set $entry (call $env_expand_var
+              (local.get $src) (local.get $i) (local.get $scratch)))
+            (local.set $j (call $gl32 (local.get $scratch)))
+            (if (i32.ne (local.get $j) (i32.const -1))
+              (then
+                (if (local.get $entry)
+                  (then
+                    (local.set $value (i32.add (local.get $entry)
+                      (i32.add (call $env_name_len (local.get $entry)) (i32.const 1))))
+                    (local.set $out_len (i32.add (local.get $out_len)
+                      (call $guest_strlen (local.get $value)))))
+                  (else
+                    (local.set $out_len (i32.add (local.get $out_len)
+                      (i32.add (i32.sub (local.get $j) (local.get $i)) (i32.const 1))))))
+                (local.set $i (i32.add (local.get $j) (i32.const 1)))
+                (br $advanced)))))
+        (local.set $out_len (i32.add (local.get $out_len) (i32.const 1)))
+        (local.set $i (i32.add (local.get $i) (i32.const 1))))
+      (br $count)))
+    (local.set $required (i32.add (local.get $out_len) (i32.const 1)))
+    (local.set $tmp (call $heap_alloc (local.get $required)))
+
+    ;; Second pass: materialize the complete expanded string in guest memory.
+    (local.set $i (i32.const 0))
+    (local.set $out_len (i32.const 0))
+    (block $expanded (loop $expand
+      (local.set $ch (call $gl8 (i32.add (local.get $src) (local.get $i))))
+      (br_if $expanded (i32.eqz (local.get $ch)))
+      (block $advanced
+        (if (i32.eq (local.get $ch) (i32.const 0x25))
+          (then
+            (local.set $entry (call $env_expand_var
+              (local.get $src) (local.get $i) (local.get $scratch)))
+            (local.set $j (call $gl32 (local.get $scratch)))
+            (if (i32.ne (local.get $j) (i32.const -1))
+              (then
+                (if (local.get $entry)
+                  (then
+                    (local.set $value (i32.add (local.get $entry)
+                      (i32.add (call $env_name_len (local.get $entry)) (i32.const 1))))
+                    (local.set $value_len (call $guest_strlen (local.get $value)))
+                    (local.set $k (i32.const 0))
+                    (block $value_done (loop $copy_value
+                      (br_if $value_done (i32.ge_u (local.get $k) (local.get $value_len)))
+                      (call $gs8 (i32.add (local.get $tmp) (local.get $out_len))
+                        (call $gl8 (i32.add (local.get $value) (local.get $k))))
+                      (local.set $out_len (i32.add (local.get $out_len) (i32.const 1)))
+                      (local.set $k (i32.add (local.get $k) (i32.const 1)))
+                      (br $copy_value))))
+                  (else
+                    (local.set $k (local.get $i))
+                    (block $literal_done (loop $copy_literal
+                      (br_if $literal_done (i32.gt_u (local.get $k) (local.get $j)))
+                      (call $gs8 (i32.add (local.get $tmp) (local.get $out_len))
+                        (call $gl8 (i32.add (local.get $src) (local.get $k))))
+                      (local.set $out_len (i32.add (local.get $out_len) (i32.const 1)))
+                      (local.set $k (i32.add (local.get $k) (i32.const 1)))
+                      (br $copy_literal)))))
+                (local.set $i (i32.add (local.get $j) (i32.const 1)))
+                (br $advanced)))))
+        (call $gs8 (i32.add (local.get $tmp) (local.get $out_len)) (local.get $ch))
+        (local.set $out_len (i32.add (local.get $out_len) (i32.const 1)))
+        (local.set $i (i32.add (local.get $i) (i32.const 1))))
+      (br $expand)))
+    (call $gs8 (i32.add (local.get $tmp) (local.get $out_len)) (i32.const 0))
+
+    ;; Windows returns the required size including NUL when cchDest is short.
+    (if (i32.and (i32.ne (local.get $dst) (i32.const 0))
+                 (i32.ge_u (local.get $size) (local.get $required)))
+      (then
+        (local.set $k (i32.const 0))
+        (block $dest_done (loop $copy_dest
+          (br_if $dest_done (i32.ge_u (local.get $k) (local.get $required)))
+          (call $gs8 (i32.add (local.get $dst) (local.get $k))
+            (call $gl8 (i32.add (local.get $tmp) (local.get $k))))
+          (local.set $k (i32.add (local.get $k) (i32.const 1)))
+          (br $copy_dest)))))
+    (call $heap_free (local.get $tmp))
+    (call $heap_free (local.get $scratch))
+    (local.get $required))
 
   ;; SetEnvironmentVariable: replaces or removes one entry. A NULL value
   ;; deletes. Returns TRUE unless the block has no room left.

@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <title>Indexed-color undithering testbed</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <div>
+      <p class="eyebrow">Standalone experiment</p>
+      <h1>Indexed-color undithering testbed</h1>
+      <p class="lede">Real WineAssembly corpus frames, exact nearest-pixel inspection, and deliberately competing reconstruction algorithms.</p>
+    </div>
+    <div class="header-note">PNG captures retain displayed RGB colors, not original palette indices. The extracted swatches are the used displayed palette only.</div>
+  </header>
+
+  <main>
+    <aside class="controls">
+      <section>
+        <h2>Source</h2>
+        <label>Corpus frame
+          <select id="sample"></select>
+        </label>
+        <label>Inspection region
+          <select id="region"></select>
+        </label>
+        <label>Or open a local PNG
+          <input id="file" type="file" accept="image/png,image/*">
+        </label>
+        <p id="expectation" class="callout"></p>
+        <p id="provenance" class="minor"></p>
+      </section>
+
+      <section>
+        <h2>Reconstruction</h2>
+        <label>Algorithm
+          <select id="algorithm"></select>
+        </label>
+        <p id="algorithm-description" class="minor"></p>
+
+        <label class="slider">Radius <output id="radius-value"></output>
+          <input id="radius" type="range" min="1" max="4" value="2">
+        </label>
+        <label class="slider">Strength <output id="strength-value"></output>
+          <input id="strength" type="range" min="0" max="100" value="100">
+        </label>
+        <label class="slider">Color / confidence threshold <output id="threshold-value"></output>
+          <input id="threshold" type="range" min="4" max="120" value="36">
+        </label>
+        <label class="slider">Iterations <output id="iterations-value"></output>
+          <input id="iterations" type="range" min="1" max="10" value="4">
+        </label>
+        <label>Ordered matrix
+          <select id="matrix-size">
+            <option value="2">2 × 2</option>
+            <option value="4">4 × 4</option>
+          </select>
+        </label>
+      </section>
+
+      <section>
+        <h2>View</h2>
+        <label class="slider">Nearest zoom <output id="zoom-value"></output>
+          <input id="zoom" type="range" min="1" max="8" value="2">
+        </label>
+        <label class="check"><input id="sync-scroll" type="checkbox" checked> Synchronize A/B scrolling</label>
+        <button id="download" type="button">Download reconstructed PNG</button>
+      </section>
+
+      <section>
+        <h2>Measured result</h2>
+        <dl id="stats"></dl>
+        <div id="palette" class="palette" aria-label="Recovered displayed colors"></div>
+      </section>
+    </aside>
+
+    <section class="workspace" aria-live="polite">
+      <div id="status" class="status">Loading corpus…</div>
+      <div class="compare-grid">
+        <figure>
+          <figcaption>Original</figcaption>
+          <div class="viewport" id="original-viewport"><canvas id="original-view"></canvas></div>
+        </figure>
+        <figure>
+          <figcaption>Reconstructed</figcaption>
+          <div class="viewport" id="output-viewport"><canvas id="output-view"></canvas></div>
+        </figure>
+        <figure id="reference-figure" hidden>
+          <figcaption>Author-provided reference</figcaption>
+          <div class="viewport"><canvas id="reference-view"></canvas></div>
+        </figure>
+      </div>
+      <figure class="difference">
+        <figcaption>Absolute difference ×4 <span>(black means unchanged)</span></figcaption>
+        <div class="viewport"><canvas id="difference-view"></canvas></div>
+      </figure>
+    </section>
+  </main>
+
+  <canvas id="original-full" hidden></canvas>
+  <canvas id="output-full" hidden></canvas>
+  <canvas id="difference-full" hidden></canvas>
+  <canvas id="reference-full" hidden></canvas>
+  <script src="wine-assembly-presentation-filter.js"></script>
+  <script src="prior-art.js"></script>
+  <script src="algorithms.js"></script>
+  <script src="samples.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

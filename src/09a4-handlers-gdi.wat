@@ -594,6 +594,10 @@
       (i32.load8_u (i32.add (local.get $lf) (i32.const 20))) ;; italic
       (i32.add (local.get $lf) (i32.const 28))               ;; faceName WASM ptr
     ))
+    (call $gdi_font_set_width (local.get $handle)
+      (i32.load offset=4 (local.get $lf)))
+    (call $gdi_font_set_pitch_and_family (local.get $handle)
+      (i32.load8_u offset=27 (local.get $lf)))
     (call $gdi_bitmap_font_bind (local.get $handle)
       (i32.add (local.get $lf) (i32.const 28)))
     (global.set $eax (local.get $handle))
@@ -620,14 +624,39 @@
       (local.get $italic)                                            ;; italic
       (local.get $face)                                              ;; faceName
     ))
+    (call $gdi_font_set_width (local.get $handle)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 8))))
+    (call $gdi_font_set_pitch_and_family (local.get $handle)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 52))))
     (call $gdi_bitmap_font_bind (local.get $handle) (local.get $face))
     (global.set $eax (local.get $handle))
     (global.set $esp (i32.add (global.get $esp) (i32.const 60))) (return)
   )
 
+  ;; CreateDC("DISPLAY", ...) is the ordinary way to ask for a screen DC when
+  ;; there is no window yet — Pawn uses one only to read LOGPIXELSY before
+  ;; sizing its piece font. Handing that caller the printer page made
+  ;; GetDeviceCaps answer 300 dpi, and every point size came out 3.1x too
+  ;; large. Case-insensitive compare of "display" as two dwords; byte 7 must be
+  ;; the terminator, so its OR mask is zero.
+  (func $gdi_driver_is_display (param $name i32) (result i32)
+    (local $wa i32)
+    (if (i32.eqz (local.get $name)) (then (return (i32.const 0))))
+    (local.set $wa (call $g2w (local.get $name)))
+    (i32.and
+      (i32.eq (i32.or (i32.load (local.get $wa)) (i32.const 0x20202020))
+              (i32.const 0x70736964))                      ;; "disp"
+      (i32.eq (i32.or (i32.load offset=4 (local.get $wa)) (i32.const 0x00202020))
+              (i32.const 0x0079616C))))                    ;; "lay\0"
+
   ;; CreateDCA(lpszDriver, lpszDevice, lpszOutput, lpInitData) — 4 args stdcall.
   ;; Allocate a WAT-owned printable Letter page and tag it for printer caps.
   (func $handle_CreateDCA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (call $gdi_driver_is_display (local.get $arg0))
+      (then
+        (global.set $eax (call $host_alloc_screen_dc))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
     (global.set $printer_hdc (call $gdi_printer_dc_alloc))
     (global.set $eax (global.get $printer_hdc))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
@@ -962,6 +991,18 @@
     (global.set $eax (call $gdi_rgn_point_in
       (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_RectInRegion (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (local.get $arg1))
+      (then (global.set $eax (i32.const 0)))
+      (else
+        (global.set $eax (call $gdi_rgn_rect_in
+          (local.get $arg0)
+          (call $gl32 (local.get $arg1))
+          (call $gl32 (i32.add (local.get $arg1) (i32.const 4)))
+          (call $gl32 (i32.add (local.get $arg1) (i32.const 8)))
+          (call $gl32 (i32.add (local.get $arg1) (i32.const 12)))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_GetRegionData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $gdi_rgn_get_data
@@ -1669,6 +1710,10 @@
       (i32.load8_u (i32.add (local.get $lf) (i32.const 20))) ;; italic
       (call $g2w (local.get $face))                          ;; faceName WASM ptr
     ))
+    (call $gdi_font_set_width (local.get $handle)
+      (i32.load offset=4 (local.get $lf)))
+    (call $gdi_font_set_pitch_and_family (local.get $handle)
+      (i32.load8_u offset=27 (local.get $lf)))
     (call $gdi_bitmap_font_bind (local.get $handle) (call $g2w (local.get $face)))
     (if (local.get $face) (then (call $heap_free (local.get $face))))
     (global.set $eax (local.get $handle))
@@ -1911,8 +1956,30 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
+  ;; UTF-16 twin of $gdi_driver_is_display.
+  (func $gdi_driver_is_display_w (param $name i32) (result i32)
+    (local $wa i32)
+    (if (i32.eqz (local.get $name)) (then (return (i32.const 0))))
+    (local.set $wa (call $g2w (local.get $name)))
+    (i32.and
+      (i32.and
+        (i32.eq (i32.or (i32.load (local.get $wa)) (i32.const 0x00200020))
+                (i32.const 0x00690064))                    ;; "di"
+        (i32.eq (i32.or (i32.load offset=4 (local.get $wa)) (i32.const 0x00200020))
+                (i32.const 0x00700073)))                   ;; "sp"
+      (i32.and
+        (i32.eq (i32.or (i32.load offset=8 (local.get $wa)) (i32.const 0x00200020))
+                (i32.const 0x0061006C))                    ;; "la"
+        (i32.eq (i32.or (i32.load offset=12 (local.get $wa)) (i32.const 0x00000020))
+                (i32.const 0x00000079)))))                 ;; "y\0"
+
   ;; 372: CreateDCW — wide printer/display DC owns a canonical page surface.
   (func $handle_CreateDCW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (call $gdi_driver_is_display_w (local.get $arg0))
+      (then
+        (global.set $eax (call $host_alloc_screen_dc))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
     (global.set $printer_hdc (call $gdi_printer_dc_alloc))
     (global.set $eax (global.get $printer_hdc))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
@@ -2982,6 +3049,10 @@
     (local.set $handle (call $gdi_font_create
       (local.get $arg0) (local.get $weight) (local.get $italic)
       (call $g2w (local.get $face))))
+    (call $gdi_font_set_width (local.get $handle)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 8))))
+    (call $gdi_font_set_pitch_and_family (local.get $handle)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 52))))
     (call $gdi_bitmap_font_bind (local.get $handle) (call $g2w (local.get $face)))
     (if (local.get $face) (then (call $heap_free (local.get $face))))
     (global.set $eax (local.get $handle))

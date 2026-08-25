@@ -35,6 +35,16 @@ window.startReferenceVm = function startReferenceVm(config) {
 };
 
 window.referenceVm = {
+  async savePristine() {
+    window.referencePristineState = await window.emulator.save_state();
+  },
+
+  async restorePristine() {
+    if (!window.referencePristineState) throw new Error("no pristine VM state was saved");
+    await window.emulator.restore_state(window.referencePristineState);
+    window.referenceSerialText = "";
+  },
+
   async insertCd(url) {
     const response = await fetch(url);
     if (!response.ok) {

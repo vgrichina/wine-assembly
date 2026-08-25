@@ -271,6 +271,28 @@
       }
     },
     {
+      "id": "heroes-2-demo",
+      "name": "Heroes of Might and Magic II demo",
+      "kind": "game",
+      "version": "1996 demo",
+      "executables": [
+        "H2DEMOW.EXE"
+      ],
+      "sourcePage": "https://archive.org/details/HeroesofMightandMagicIITheSuccessionWars_1020",
+      "license": "commercial demo; verify redistribution terms",
+      "packages": [
+        {
+          "url": "https://archive.org/download/HeroesofMightandMagicIITheSuccessionWars_1020/h2demo.zip",
+          "sha1": "f324b626e69a6e087364be5f69e5dd13dde814d2",
+          "type": "archive"
+        }
+      ],
+      "cli": {
+        "maxBatches": 1200,
+        "batchSize": 25000
+      }
+    },
+    {
       "id": "fallout-demo",
       "name": "Fallout demo",
       "kind": "game",
@@ -308,6 +330,22 @@
       "license": "commercial shareware; verify redistribution terms",
       "packages": [],
       "manual": "Large CCD/IMG disc image intentionally remains manual. Extract it beneath this fixture directory before running the candidate suite."
+    },
+    {
+      "id": "diablo-shareware",
+      "name": "Diablo Shareware",
+      "kind": "game",
+      "version": "1997 shareware CD",
+      "executables": [
+        "disc/AUTORUN.EXE",
+        "disc/SETUP.EXE",
+        "disc/BLIZDEMO.EXE",
+        "installed/diablo_s.exe"
+      ],
+      "sourcePage": "https://archive.org/details/DiabloSharewareWindowsBlizzardEntertainment1997",
+      "license": "commercial shareware; verify redistribution terms",
+      "packages": [],
+      "manual": "Download the pinned 137576448-byte DIABLOSW.iso (SHA-1 bf1a62b24ce01ce39993955bff4b3c4d4ab9d647), extract its five root files beneath disc/, then run disc/AUTORUN.EXE inside Wine Assembly to produce installed/diablo_s.exe and its untouched companion files. BLIZDEMO.EXE is a promotional reel, not the shareware game."
     },
     {
       "id": "icy-tower",

@@ -480,8 +480,28 @@
       (br $purge)))
     (i32.const 1))
 
+  ;; Unlike pens, brushes, and fonts, a non-stock bitmap can be selected into
+  ;; only one memory DC at a time. Keep the ownership test derived from the DC
+  ;; table so deletion and stock-bitmap restoration cannot leave stale state.
+  (func $gdi_bitmap_selected_elsewhere (param $handle i32) (param $hdc i32) (result i32)
+    (local $i i32) (local $entry i32) (local $limit i32)
+    (local.set $limit (call $gdi_table_mark_limit
+      (i32.const 2) (global.get $GDI_DC_STATE_COUNT)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $limit)))
+      (local.set $entry (i32.add (global.get $GDI_DC_STATE_TABLE)
+        (i32.mul (local.get $i) (global.get $GDI_DC_STATE_STRIDE))))
+      (if (i32.and
+            (i32.and (i32.ne (i32.load (local.get $entry)) (i32.const 0))
+              (i32.ne (i32.load (local.get $entry)) (local.get $hdc)))
+            (i32.eq (i32.load offset=84 (local.get $entry)) (local.get $handle)))
+        (then (return (i32.const 1))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
   (func $gdi_dc_select_owned_object (param $hdc i32) (param $handle i32) (result i32)
-    (local $type i32)
+    (local $type i32) (local $dc i32)
     (local.set $type (call $gdi_object_type (local.get $handle)))
     (if (i32.eq (local.get $type) (i32.const 1))
       (then (return (call $gdi_dc_set_field
@@ -490,8 +510,23 @@
       (then (return (call $gdi_dc_set_field
         (local.get $hdc) (i32.const 8) (local.get $handle) (i32.const 0x30010)))))
     (if (i32.eq (local.get $type) (i32.const 3))
-      (then (return (call $gdi_dc_set_field
-        (local.get $hdc) (i32.const 84) (local.get $handle) (i32.const 0x30007)))))
+      (then
+        ;; A bitmap may only be selected into a memory DC. Window, child,
+        ;; whole-window, and CS_OWNDC records carry an HWND binding at +92;
+        ;; accepting a bitmap there redirects every later paint away from the
+        ;; attached window surface. VB1's PictureBox runtime probes this rule
+        ;; while constructing JigSawed pieces and expects SelectObject to fail.
+        (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
+        (if (i32.and (i32.ne (local.get $dc) (i32.const 0))
+              (i32.ne (i32.load offset=92 (local.get $dc)) (i32.const 0)))
+          (then (return (i32.const -1))))
+        (if (i32.and
+              (i32.and (i32.ne (local.get $handle) (i32.const 0x30007))
+                (i32.ne (local.get $handle) (i32.const 0x30001)))
+              (call $gdi_bitmap_selected_elsewhere (local.get $handle) (local.get $hdc)))
+          (then (return (i32.const -1))))
+        (return (call $gdi_dc_set_field
+          (local.get $hdc) (i32.const 84) (local.get $handle) (i32.const 0x30007)))))
     (if (i32.eq (local.get $type) (i32.const 4))
       (then (return (call $gdi_dc_set_field
         (local.get $hdc) (i32.const 88) (local.get $handle) (i32.const 0x3001D)))))
@@ -513,6 +548,44 @@
           (i32.eq (local.get $handle) (i32.const 0x30022)))
       (then (return (i32.const 11))))
     (i32.const 12))
+
+  ;; LOGFONT.lfWidth is an average-character-width request. Keep it separate
+  ;; from the object allocator's four legacy font fields so existing internal
+  ;; font creation continues to default to the natural aspect ratio.
+  (func $gdi_font_width (param $handle i32) (result i32)
+    (local $p i32)
+    (local.set $p (call $gdi_object_record (local.get $handle)))
+    (if (i32.and (i32.ne (local.get $p) (i32.const 0))
+          (i32.eq (i32.load offset=4 (local.get $p)) (i32.const 4)))
+      (then (return (i32.load offset=32 (local.get $p)))))
+    (i32.const 0))
+
+  (func $gdi_font_set_width (param $handle i32) (param $width i32)
+    (local $p i32)
+    (local.set $p (call $gdi_object_record (local.get $handle)))
+    (if (i32.and (i32.ne (local.get $p) (i32.const 0))
+          (i32.eq (i32.load offset=4 (local.get $p)) (i32.const 4)))
+      (then (i32.store offset=32 (local.get $p) (local.get $width)))))
+
+  ;; Preserve LOGFONT.lfPitchAndFamily as mapper input.  In particular, an
+  ;; unnamed FF_SCRIPT font is not the same request as an unnamed UI font:
+  ;; classic Win16 games use it together with lfWidth for decorative display
+  ;; text.  The remaining object-record words are private font metadata.
+  (func $gdi_font_pitch_and_family (param $handle i32) (result i32)
+    (local $p i32)
+    (local.set $p (call $gdi_object_record (local.get $handle)))
+    (if (i32.and (i32.ne (local.get $p) (i32.const 0))
+          (i32.eq (i32.load offset=4 (local.get $p)) (i32.const 4)))
+      (then (return (i32.load offset=36 (local.get $p)))))
+    (i32.const 0))
+
+  (func $gdi_font_set_pitch_and_family (param $handle i32) (param $value i32)
+    (local $p i32)
+    (local.set $p (call $gdi_object_record (local.get $handle)))
+    (if (i32.and (i32.ne (local.get $p) (i32.const 0))
+          (i32.eq (i32.load offset=4 (local.get $p)) (i32.const 4)))
+      (then (i32.store offset=36 (local.get $p)
+        (i32.and (local.get $value) (i32.const 0xFF))))))
 
   (func $gdi_font_weight (param $handle i32) (result i32)
     (local $p i32)
@@ -598,9 +671,11 @@
     (if (i32.lt_u (local.get $size) (local.get $required)) (then (return (i32.const 0))))
     (memory.fill (local.get $dest) (i32.const 0) (local.get $required))
     (i32.store (local.get $dest) (call $gdi_font_height (local.get $handle)))
+    (i32.store offset=4 (local.get $dest) (call $gdi_font_width (local.get $handle)))
     (i32.store offset=16 (local.get $dest) (call $gdi_font_weight (local.get $handle)))
     (i32.store8 offset=20 (local.get $dest) (call $gdi_font_italic (local.get $handle)))
-    (i32.store8 offset=27 (local.get $dest) (i32.const 0x22))
+    (i32.store8 offset=27 (local.get $dest)
+      (call $gdi_font_pitch_and_family (local.get $handle)))
     (local.set $face (call $gdi_font_face (local.get $handle)))
     (block $done (loop $copy
       (br_if $done (i32.ge_u (local.get $i) (i32.const 31)))
@@ -621,7 +696,9 @@
     (local $copy_count i32) (local $i i32) (local $ch i32)
     (local.set $handle (call $gdi_dc_get_field
       (local.get $hdc) (i32.const 88) (i32.const 0x3001D)))
-    (local.set $face (call $gdi_font_face (local.get $handle)))
+    ;; GetTextFace reports the realized mapper face, while GetObject above
+    ;; continues to serialize the application's requested LOGFONT face.
+    (local.set $face (call $gdi_font_mapper_face (local.get $handle)))
     (block $length_done (loop $length_scan
       (br_if $length_done (i32.ge_u (local.get $length) (i32.const 31)))
       (br_if $length_done (i32.eqz
@@ -658,8 +735,12 @@
         (param $size i32) (result i32)
     (local $record i32) (local $type i32) (local $required i32)
     (local.set $record (call $gdi_object_record (local.get $handle)))
-    (if (i32.eqz (local.get $record)) (then (return (i32.const 0))))
-    (local.set $type (i32.load offset=4 (local.get $record)))
+    ;; Stock pens and brushes have no dynamic object record, but GetObject
+    ;; must still serialize their LOGPEN/LOGBRUSH values.  In particular,
+    ;; NULL_BRUSH must report BS_NULL rather than leave the caller's buffer
+    ;; untouched; VBRUN copies this structure when it constructs AutoRedraw
+    ;; memory DCs.
+    (local.set $type (call $gdi_object_type (local.get $handle)))
     (if (i32.eq (local.get $type) (i32.const 1))
       (then (local.set $required (i32.const 16)))
       (else (if (i32.eq (local.get $type) (i32.const 2))
@@ -669,6 +750,18 @@
     (if (i32.lt_u (local.get $size) (local.get $required))
       (then (return (i32.const 0))))
     (memory.fill (local.get $dest) (i32.const 0) (local.get $required))
+    (if (i32.eqz (local.get $record))
+      (then
+        (i32.store (local.get $dest) (call $gdi_object_style (local.get $handle)))
+        (if (i32.eq (local.get $type) (i32.const 1))
+          (then
+            (i32.store offset=4 (local.get $dest) (i32.const 1))
+            (i32.store offset=12 (local.get $dest)
+              (call $gdi_object_color (local.get $handle))))
+          (else
+            (i32.store offset=4 (local.get $dest)
+              (call $gdi_object_color (local.get $handle)))))
+        (return (local.get $required))))
     (i32.store (local.get $dest) (i32.or
       (i32.load offset=8 (local.get $record))
       (i32.and (i32.load offset=20 (local.get $record)) (i32.const 0x000F0F00))))
@@ -818,6 +911,58 @@
         (drop (call $gdi_dc_delete (local.get $hdc)))
         (return (i32.const 0))))
     (local.get $hdc))
+
+  ;; Restore a newly exposed screen rectangle to COLOR_DESKTOP. GetDC(NULL)
+  ;; writes into the retained canonical screen bitmap, so pixels drawn by a
+  ;; popup remain there after the host window is destroyed unless the exposed
+  ;; rectangle is cleared before the windows underneath repaint. Clear only
+  ;; that rectangle: resetting the whole desktop briefly erases unrelated
+  ;; window presentation (and Tetris' authentic tiled main-window background).
+  (func $gdi_screen_surface_clear_rect
+        (param $x i32) (param $y i32) (param $w i32) (param $h i32)
+    (local $bitmap i32) (local $record i32) (local $bits i32)
+    (local $stride i32) (local $l i32) (local $t i32)
+    (local $r i32) (local $b i32) (local $px i32) (local $py i32)
+    (local.set $bitmap (global.get $gdi_screen_bitmap))
+    (if (i32.or (i32.eqz (local.get $bitmap))
+          (i32.or (i32.le_s (local.get $w) (i32.const 0))
+                  (i32.le_s (local.get $h) (i32.const 0))))
+      (then (return)))
+    (local.set $record (call $gdi_object_record (local.get $bitmap)))
+    (if (i32.eqz (local.get $record)) (then (return)))
+    (local.set $bits (i32.load offset=24 (local.get $record)))
+    (local.set $stride (i32.load offset=28 (local.get $record)))
+    (local.set $l (select (local.get $x) (i32.const 0)
+      (i32.gt_s (local.get $x) (i32.const 0))))
+    (local.set $t (select (local.get $y) (i32.const 0)
+      (i32.gt_s (local.get $y) (i32.const 0))))
+    (local.set $r (i32.add (local.get $x) (local.get $w)))
+    (if (i32.gt_s (local.get $r) (global.get $gdi_screen_width))
+      (then (local.set $r (global.get $gdi_screen_width))))
+    (local.set $b (i32.add (local.get $y) (local.get $h)))
+    (if (i32.gt_s (local.get $b) (global.get $gdi_screen_height))
+      (then (local.set $b (global.get $gdi_screen_height))))
+    (if (i32.or (i32.le_s (local.get $r) (local.get $l))
+                (i32.le_s (local.get $b) (local.get $t)))
+      (then (return)))
+    (local.set $py (local.get $t))
+    (block $rows_done (loop $rows
+      (br_if $rows_done (i32.ge_s (local.get $py) (local.get $b)))
+      (local.set $px (local.get $l))
+      (block $cols_done (loop $cols
+        (br_if $cols_done (i32.ge_s (local.get $px) (local.get $r)))
+        (i32.store
+          (i32.add (i32.add (local.get $bits)
+            (i32.mul (local.get $py) (local.get $stride)))
+            (i32.shl (local.get $px) (i32.const 2)))
+          (i32.const 0x00008080))
+        (local.set $px (i32.add (local.get $px) (i32.const 1)))
+        (br $cols)))
+      (local.set $py (i32.add (local.get $py) (i32.const 1)))
+      (br $rows)))
+    (drop (call $host_gdi_surface_upload (local.get $bitmap)
+      (local.get $l) (local.get $t)
+      (local.get $r) (local.get $b))))
 
   (func $host_alloc_screen_dc (result i32)
     (call $gdi_screen_dc_alloc))
@@ -1008,8 +1153,22 @@
             (i32.eq (i32.load (local.get $p)) (local.get $owner))))
       (then (return (local.get $p))))
     (local.set $p (i32.const 0))
+    ;; Bounded by the high-water mark, not by GDI_WINDOW_SURFACE_COUNT. The
+    ;; one-entry hint above only caches a HIT, so a lookup for an hwnd with no
+    ;; record walked all 256 slots and cached nothing, then did it again on the
+    ;; next call. A handful of windows are ever live, so bounding the walk to
+    ;; the slots actually in use costs one load and ends it.
+    ;;
+    ;; This bound alone moved no measurement. It was tried first against
+    ;; DX-Ball, where this function was 20% of wasm time, and that share did not
+    ;; shift: the cost there was call VOLUME, from $dx_reseed_overlays asking
+    ;; about all 256 window slots on every present. That is fixed at the call
+    ;; site. Keeping the bound because a scan proportional to the live windows
+    ;; instead of the table size is right on its own, not because it was
+    ;; measured to be worth anything.
     (block $done (loop $scan
-      (br_if $done (i32.ge_u (local.get $i) (global.get $GDI_WINDOW_SURFACE_COUNT)))
+      (br_if $done (i32.ge_u (local.get $i)
+        (i32.load (global.get $GDI_WINDOW_SURFACE_HWM))))
       (local.set $p (i32.add (global.get $GDI_WINDOW_SURFACE_TABLE)
         (i32.mul (local.get $i) (global.get $GDI_WINDOW_SURFACE_STRIDE))))
       (if (i32.eq (i32.load (local.get $p)) (local.get $owner))
@@ -1021,6 +1180,20 @@
         (then (local.set $empty (local.get $p))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
+    ;; No live record. A hole below the mark is reused first, exactly as the
+    ;; full scan used to; only when there is none does the table grow, and that
+    ;; is the one place the mark moves. $gdi_window_surface_release zeroes a
+    ;; slot without lowering it, which is what leaves the hole.
+    (if (i32.and (i32.ne (local.get $create) (i32.const 0))
+          (i32.and (i32.eqz (local.get $empty))
+            (i32.lt_u (i32.load (global.get $GDI_WINDOW_SURFACE_HWM))
+              (global.get $GDI_WINDOW_SURFACE_COUNT))))
+      (then
+        (local.set $empty (i32.add (global.get $GDI_WINDOW_SURFACE_TABLE)
+          (i32.mul (i32.load (global.get $GDI_WINDOW_SURFACE_HWM))
+            (global.get $GDI_WINDOW_SURFACE_STRIDE))))
+        (i32.store (global.get $GDI_WINDOW_SURFACE_HWM)
+          (i32.add (i32.load (global.get $GDI_WINDOW_SURFACE_HWM)) (i32.const 1)))))
     (if (i32.and (i32.ne (local.get $create) (i32.const 0))
           (i32.ne (local.get $empty) (i32.const 0)))
       (then
@@ -1088,7 +1261,12 @@
     (if (i32.and (i32.eq (i32.load offset=8 (local.get $p)) (local.get $w))
           (i32.eq (i32.load offset=12 (local.get $p)) (local.get $h)))
       (then
-        (drop (call $host_gdi_surface_attach (local.get $id) (local.get $owner)))
+        ;; Acquiring a DC is not itself a presentation boundary. In
+        ;; particular, fullscreen DirectDraw games may probe GetDC(hwnd)
+        ;; between primary-surface presents. Reattaching this untouched
+        ;; COLOR_BTNFACE backing here publishes a one-frame grey flash before
+        ;; the next DirectDraw present. The host reattaches this surface when
+        ;; a raster operation actually uploads changed pixels.
         (return (local.get $p))))
     ;; Reaching here means the window changed size, so the surface it was
     ;; drawn on is about to be thrown away and replaced with a blank one.
@@ -1136,6 +1314,13 @@
         (i32.store offset=12 (local.get $p) (i32.const 0))
         (i32.store offset=16 (local.get $p) (i32.const 0))
         (return (i32.const 0))))
+    ;; A window an app stacks over its DirectDraw exclusive-fullscreen primary
+    ;; shares the one framebuffer that primary is, so the frame shows through
+    ;; wherever the window does not paint. Start its surface at the presented
+    ;; frame rather than at COLOR_BTNFACE; Storm hangs every Diablo menu on a
+    ;; screen-sized WS_POPUP owned by the game window and paints only text
+    ;; into it, so a grey backing there covers the whole game.
+    (call $dx_seed_overlay_surface (local.get $owner))
     (if (i32.and (i32.ne (local.get $had_surface) (i32.const 0))
           (i32.eqz (global.get $gdi_surface_resize_repaint)))
       (then
@@ -1258,12 +1443,14 @@
 
   (func $host_release_dc (param $hdc i32) (result i32)
     ;; A private DC survives ReleaseDC and EndPaint — that is what makes its
-    ;; selected objects persist. Its clip and aux scratch are per-acquisition
-    ;; and still go; only the state record, which holds the selections, stays.
+    ;; selected objects persist. Keep its USER visible-region clip too: code
+    ;; holding a CS_OWNDC HDC can draw again before its next GetDC/BeginPaint,
+    ;; and that draw must still be constrained to the window hierarchy. The
+    ;; next acquisition rebuilds both application and system clips from a
+    ;; clean state in $host_alloc_window_dc.
     (if (call $wnd_own_dc_is_private (local.get $hdc))
       (then
         (call $gdi_dc_aux_release (local.get $hdc))
-        (call $gdi_dc_clip_release (local.get $hdc))
         (return (i32.const 1))))
     (call $gdi_dc_aux_release (local.get $hdc))
     (call $gdi_dc_clip_release (local.get $hdc))

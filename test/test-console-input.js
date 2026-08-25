@@ -1,0 +1,184 @@
+#!/usr/bin/env node
+
+'use strict';
+
+// The console keyboard side: the shared input queue that ReadConsoleA,
+// ReadConsoleInputA, PeekConsoleInputA and GetNumberOfConsoleInputEvents all
+// read. telnet.exe hangs forever without it — its worker thread calls
+// ReadConsoleW in a loop and spins on whatever it returns.
+
+const assert = require('assert');
+const { bootRenderHarness } = require('./render-helper');
+
+const extraWat = String.raw`
+  (func (export "test_console_reset")
+    (i32.store (global.get $CONSOLE_INPUT) (i32.const 0))
+    (i32.store (i32.add (global.get $CONSOLE_INPUT) (i32.const 4)) (i32.const 0))
+    (i32.store (i32.add (global.get $CONSOLE_INPUT) (i32.const 12)) (i32.const 0))
+    (global.set $yield_flag (i32.const 0))
+    (global.set $yield_reason (i32.const 0))
+    (global.set $handler_set_eip (i32.const 0)))
+
+  (func (export "test_console_push") (param $ch i32) (param $vk i32)
+    (call $console_input_push (local.get $ch) (local.get $vk)))
+
+  (func (export "test_console_count") (result i32)
+    (call $console_input_count))
+
+  (func (export "test_console_set_mode") (param $mode i32)
+    (call $console_input_set_mode (local.get $mode)))
+
+  (func (export "test_console_mode") (result i32)
+    (call $console_input_mode))
+
+  (func (export "test_yield_flag") (result i32)
+    (global.get $yield_flag))
+
+  (func (export "test_alloc") (param $n i32) (result i32)
+    (call $heap_alloc (local.get $n)))
+
+  (func (export "test_peek8") (param $g i32) (result i32)
+    (i32.load8_u (call $g2w (local.get $g))))
+
+  (func (export "test_peek16") (param $g i32) (result i32)
+    (i32.load16_u (call $g2w (local.get $g))))
+
+  (func (export "test_peek32") (param $g i32) (result i32)
+    (i32.load (call $g2w (local.get $g))))
+
+  (func (export "test_call_ReadConsoleA") (param $buf i32) (param $max i32) (param $pread i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_ReadConsoleA
+      (i32.const 1) (local.get $buf) (local.get $max) (local.get $pread)
+      (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+
+  (func (export "test_call_GetNumberOfConsoleInputEvents") (param $out i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetNumberOfConsoleInputEvents
+      (i32.const 1) (local.get $out) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+
+  (func (export "test_call_PeekConsoleInputA") (param $buf i32) (param $nrec i32) (param $pread i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_PeekConsoleInputA
+      (i32.const 1) (local.get $buf) (local.get $nrec) (local.get $pread)
+      (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+
+  (func (export "test_call_ReadConsoleInputA") (param $buf i32) (param $nrec i32) (param $pread i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_ReadConsoleInputA
+      (i32.const 1) (local.get $buf) (local.get $nrec) (local.get $pread)
+      (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+
+  ;; Tab expansion lives in the character writer, so drive it directly.
+  (func (export "test_put_chars") (param $a i32) (param $b i32) (param $c i32)
+    (call $console_cells_ensure)
+    (global.set $console_cursor_x (i32.const 0))
+    (global.set $console_cursor_y (i32.const 0))
+    (call $console_put_char (local.get $a))
+    (call $console_put_char (local.get $b))
+    (call $console_put_char (local.get $c)))
+
+  (func (export "test_cursor_x") (result i32)
+    (global.get $console_cursor_x))
+
+  (func (export "test_cell_char") (param $i i32) (result i32)
+    (i32.load16_u (i32.add (global.get $CONSOLE_TEXT) (i32.mul (local.get $i) (i32.const 2)))))
+`;
+
+function pushString(e, text) {
+  for (const ch of text) e.test_console_push(ch.charCodeAt(0), 0);
+}
+
+function readAnsi(e, buf, n) {
+  let out = '';
+  for (let i = 0; i < n; i++) out += String.fromCharCode(e.test_peek8(buf + i));
+  return out;
+}
+
+(async () => {
+  const { exports: e } = await bootRenderHarness({ extraWat });
+
+  const buf = e.test_alloc(256);
+  const pread = e.test_alloc(4);
+  assert.ok(buf, 'heap allocation succeeded');
+
+  // --- line mode: an incomplete line still blocks -------------------------
+  e.test_console_reset();
+  e.test_console_set_mode(3);            // PROCESSED_INPUT | LINE_INPUT
+  assert.strictEqual(e.test_console_mode(), 3, 'SetConsoleMode is visible to readers');
+  pushString(e, 'hi');
+  e.test_call_ReadConsoleA(buf, 256, pread);
+  assert.strictEqual(e.test_yield_flag(), 1,
+    'no Enter yet, so the read parks instead of returning a short line');
+  assert.strictEqual(e.test_console_count(), 2, 'a parked read consumes nothing');
+
+  // --- line mode: Enter completes it, and reads back as CRLF --------------
+  e.test_console_push(13, 0x0D);
+  assert.strictEqual(e.test_call_ReadConsoleA(buf, 256, pread), 1);
+  assert.strictEqual(e.test_peek32(pread), 4, 'hi + CR + LF');
+  assert.strictEqual(readAnsi(e, buf, 4), 'hi\r\n');
+  assert.strictEqual(e.test_console_count(), 0, 'the whole line is drained');
+
+  // --- raw mode: whatever is queued comes back immediately ----------------
+  e.test_console_reset();
+  e.test_console_set_mode(0);
+  pushString(e, 'ab');
+  assert.strictEqual(e.test_call_ReadConsoleA(buf, 256, pread), 1,
+    'without LINE_INPUT there is nothing to wait for');
+  assert.strictEqual(e.test_peek32(pread), 2);
+  assert.strictEqual(readAnsi(e, buf, 2), 'ab');
+
+  // --- event count / peek / read ------------------------------------------
+  e.test_console_reset();
+  e.test_console_set_mode(0);
+  e.test_console_push(0x41, 0x41);
+  e.test_console_push(0, 0x70);          // F1: a key with no character
+  assert.strictEqual(e.test_call_GetNumberOfConsoleInputEvents(pread), 1);
+  assert.strictEqual(e.test_peek32(pread), 2);
+
+  assert.strictEqual(e.test_call_PeekConsoleInputA(buf, 2, pread), 1);
+  assert.strictEqual(e.test_peek32(pread), 2);
+  assert.strictEqual(e.test_peek16(buf), 1, 'KEY_EVENT');
+  assert.strictEqual(e.test_peek32(buf + 4), 1, 'bKeyDown');
+  assert.strictEqual(e.test_peek16(buf + 10), 0x41, 'wVirtualKeyCode');
+  assert.strictEqual(e.test_peek16(buf + 14), 0x41, 'uChar');
+  assert.strictEqual(e.test_peek16(buf + 20 + 10), 0x70, 'second record is F1');
+  assert.strictEqual(e.test_console_count(), 2, 'Peek is non-destructive');
+
+  assert.strictEqual(e.test_call_ReadConsoleInputA(buf, 1, pread), 1);
+  assert.strictEqual(e.test_peek32(pread), 1);
+  assert.strictEqual(e.test_console_count(), 1, 'ReadConsoleInput drains what it returned');
+
+  // --- an empty queue parks ReadConsoleInput too ---------------------------
+  e.test_console_reset();
+  // A park leaves EAX alone — the call has not returned to the guest yet — so
+  // the yield flag is the only thing worth asserting on.
+  e.test_call_ReadConsoleInputA(buf, 1, pread);
+  assert.strictEqual(e.test_yield_flag(), 1);
+
+  // --- tabs advance to the next 8-column stop ------------------------------
+  e.test_console_reset();
+  e.test_put_chars(0x63, 9, 0x78);        // 'c', TAB, 'x'
+  assert.strictEqual(e.test_cursor_x(), 9, 'TAB from column 1 lands on column 8');
+  assert.strictEqual(e.test_cell_char(0), 0x63);
+  assert.strictEqual(e.test_cell_char(1), 32, 'the tab is padded with spaces');
+  assert.strictEqual(e.test_cell_char(8), 0x78);
+
+  console.log('PASS  console input queue: line/raw reads, peek vs read, tab stops');
+})().catch(error => {
+  console.error(error && error.stack || error);
+  process.exit(1);
+});

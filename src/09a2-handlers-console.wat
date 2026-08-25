@@ -153,36 +153,266 @@
   ;; $CONSOLE_TEXT/$CONSOLE_ATTR, never called $console_cells_ensure, and never
   ;; refreshed, so ANSI console output landed in unrelated memory and was
   ;; invisible.
+  (func $console_put_char (param $ch i32)
+    (local $off i32)
+    (if (i32.eq (local.get $ch) (i32.const 10)) ;; newline
+      (then
+        (global.set $console_cursor_x (i32.const 0))
+        (global.set $console_cursor_y (i32.add (global.get $console_cursor_y) (i32.const 1))))
+      (else (if (i32.eq (local.get $ch) (i32.const 13)) ;; carriage return
+        (then (global.set $console_cursor_x (i32.const 0)))
+        (else (if (i32.eq (local.get $ch) (i32.const 9)) ;; tab: next 8-column stop
+          (then
+            (local.set $off (i32.sub (i32.const 8)
+              (i32.rem_u (global.get $console_cursor_x) (i32.const 8))))
+            (block $tab_done (loop $tab
+              (br_if $tab_done (i32.eqz (local.get $off)))
+              (call $console_put_char (i32.const 32))
+              (local.set $off (i32.sub (local.get $off) (i32.const 1)))
+              (br $tab))))
+          (else
+          (local.set $off (i32.add (i32.mul (global.get $console_cursor_y) (global.get $console_width)) (global.get $console_cursor_x)))
+          (if (i32.lt_u (local.get $off) (i32.mul (global.get $console_width) (global.get $console_height)))
+            (then
+              (i32.store16 (i32.add (global.get $CONSOLE_TEXT) (i32.mul (local.get $off) (i32.const 2))) (local.get $ch))
+              (i32.store16 (i32.add (global.get $CONSOLE_ATTR) (i32.mul (local.get $off) (i32.const 2))) (global.get $console_attr))))
+          (global.set $console_cursor_x (i32.add (global.get $console_cursor_x) (i32.const 1)))
+          (if (i32.ge_u (global.get $console_cursor_x) (global.get $console_width))
+            (then
+              (global.set $console_cursor_x (i32.const 0))
+              (global.set $console_cursor_y (i32.add (global.get $console_cursor_y) (i32.const 1))))))))))))
+
   (func $console_write (param $buf_g i32) (param $count i32) (param $wide i32)
-    (local $i i32) (local $ch i32) (local $off i32) (local $src i32) (local $step i32)
+    (local $i i32) (local $src i32) (local $step i32)
     (call $console_cells_ensure)
     (local.set $step (select (i32.const 2) (i32.const 1) (local.get $wide)))
     (local.set $src (call $g2w (local.get $buf_g)))
     (local.set $i (i32.const 0))
     (block $done (loop $write
       (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
-      (local.set $ch (call $load_char
+      (call $console_put_char (call $load_char
         (i32.add (local.get $src) (i32.mul (local.get $i) (local.get $step))) (local.get $wide)))
-      (if (i32.eq (local.get $ch) (i32.const 10)) ;; newline
-        (then
-          (global.set $console_cursor_x (i32.const 0))
-          (global.set $console_cursor_y (i32.add (global.get $console_cursor_y) (i32.const 1))))
-        (else (if (i32.eq (local.get $ch) (i32.const 13)) ;; carriage return
-          (then (global.set $console_cursor_x (i32.const 0)))
-          (else
-            (local.set $off (i32.add (i32.mul (global.get $console_cursor_y) (global.get $console_width)) (global.get $console_cursor_x)))
-            (if (i32.lt_u (local.get $off) (i32.mul (global.get $console_width) (global.get $console_height)))
-              (then
-                (i32.store16 (i32.add (global.get $CONSOLE_TEXT) (i32.mul (local.get $off) (i32.const 2))) (local.get $ch))
-                (i32.store16 (i32.add (global.get $CONSOLE_ATTR) (i32.mul (local.get $off) (i32.const 2))) (global.get $console_attr))))
-            (global.set $console_cursor_x (i32.add (global.get $console_cursor_x) (i32.const 1)))
-            (if (i32.ge_u (global.get $console_cursor_x) (global.get $console_width))
-              (then
-                (global.set $console_cursor_x (i32.const 0))
-                (global.set $console_cursor_y (i32.add (global.get $console_cursor_y) (i32.const 1)))))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $write)))
     (call $console_refresh))
+
+  ;; ---- Console input queue -------------------------------------------------
+  ;; The keyboard side of the console. Everything a console app can read comes
+  ;; through here: the console window's wndproc pushes key events, and
+  ;; ReadConsole / ReadConsoleInput / PeekConsoleInput / GetNumberOfConsoleInputEvents
+  ;; drain them. See the $CONSOLE_INPUT comment in 01-header.wat for the layout.
+
+  (func $console_input_count (result i32)
+    (i32.load (global.get $CONSOLE_INPUT)))
+
+  ;; The console window's hwnd, as every thread must see it. $console_hwnd is a
+  ;; per-instance global, and the thread that first writes to the console (and
+  ;; so creates the window) is usually not the thread that pumps messages — for
+  ;; telnet the worker writes and the main thread pumps. Keyboard routing runs
+  ;; on the pumping thread, so the hwnd has to come out of shared memory.
+  (func $console_shared_hwnd (result i32)
+    (i32.load (i32.add (global.get $CONSOLE_INPUT) (i32.const 16))))
+
+  (func $console_shared_hwnd_set (param $hwnd i32)
+    (i32.store (i32.add (global.get $CONSOLE_INPUT) (i32.const 16)) (local.get $hwnd)))
+
+  ;; Address of the ring slot holding the i-th oldest queued event.
+  (func $console_input_slot (param $i i32) (result i32)
+    (i32.add
+      (i32.add (global.get $CONSOLE_INPUT) (i32.const 32))
+      (i32.mul
+        (i32.rem_u
+          (i32.add (i32.load (i32.add (global.get $CONSOLE_INPUT) (i32.const 4))) (local.get $i))
+          (global.get $CONSOLE_INPUT_MAX))
+        (i32.const 8))))
+
+  (func $console_input_char (param $i i32) (result i32)
+    (i32.load (call $console_input_slot (local.get $i))))
+
+  (func $console_input_vk (param $i i32) (result i32)
+    (i32.load offset=4 (call $console_input_slot (local.get $i))))
+
+  ;; The mode as the *reading* thread must see it. SetConsoleMode mirrors it
+  ;; into shared memory because $console_mode is per-instance and the thread
+  ;; that sets the mode is often not the thread that reads.
+  (func $console_input_mode (result i32)
+    (local $m i32)
+    (local.set $m (i32.load (i32.add (global.get $CONSOLE_INPUT) (i32.const 12))))
+    (if (result i32) (local.get $m)
+      (then (i32.sub (local.get $m) (i32.const 1)))
+      (else (global.get $console_mode))))
+
+  (func $console_input_set_mode (param $mode i32)
+    (i32.store (i32.add (global.get $CONSOLE_INPUT) (i32.const 12))
+      (i32.add (local.get $mode) (i32.const 1))))
+
+  ;; Lazily created wake event. A blocked ReadConsole parks on it so the host
+  ;; scheduler has something to name, and a push signals it.
+  (func $console_input_event (result i32)
+    (local $h i32)
+    (local.set $h (i32.load (i32.add (global.get $CONSOLE_INPUT) (i32.const 8))))
+    (if (i32.eqz (local.get $h))
+      (then
+        (local.set $h (call $host_create_event
+          (i32.const 1) (i32.const 0) (i32.const 0) (i32.const 0)))
+        (i32.store (i32.add (global.get $CONSOLE_INPUT) (i32.const 8)) (local.get $h))))
+    (local.get $h))
+
+  (func $console_input_push (param $ch i32) (param $vk i32)
+    (local $count i32) (local $slot i32)
+    (local.set $count (i32.load (global.get $CONSOLE_INPUT)))
+    ;; A full queue drops the keystroke, which is what a real console does once
+    ;; its input buffer fills.
+    (if (i32.ge_u (local.get $count) (global.get $CONSOLE_INPUT_MAX)) (then (return)))
+    (local.set $slot (call $console_input_slot (local.get $count)))
+    (i32.store (local.get $slot) (local.get $ch))
+    (i32.store offset=4 (local.get $slot) (local.get $vk))
+    (i32.store (global.get $CONSOLE_INPUT) (i32.add (local.get $count) (i32.const 1)))
+    (drop (call $host_set_event (call $console_input_event)))
+    ;; ENABLE_ECHO_INPUT only echoes in line mode, as on Windows.
+    (if (i32.and
+          (i32.ne (local.get $ch) (i32.const 0))
+          (i32.eq (i32.and (call $console_input_mode) (i32.const 6)) (i32.const 6)))
+      (then
+        (call $console_cells_ensure)
+        (call $console_put_char (local.get $ch))
+        (if (i32.eq (local.get $ch) (i32.const 13))
+          (then (call $console_put_char (i32.const 10))))
+        (call $console_refresh))))
+
+  (func $console_input_drop (param $n i32)
+    (local $count i32)
+    (local.set $count (i32.load (global.get $CONSOLE_INPUT)))
+    (if (i32.gt_u (local.get $n) (local.get $count)) (then (local.set $n (local.get $count))))
+    (i32.store (i32.add (global.get $CONSOLE_INPUT) (i32.const 4))
+      (i32.rem_u
+        (i32.add (i32.load (i32.add (global.get $CONSOLE_INPUT) (i32.const 4))) (local.get $n))
+        (global.get $CONSOLE_INPUT_MAX)))
+    (i32.store (global.get $CONSOLE_INPUT) (i32.sub (local.get $count) (local.get $n)))
+    (if (i32.eqz (i32.load (global.get $CONSOLE_INPUT)))
+      (then (drop (call $host_reset_event (call $console_input_event))))))
+
+  ;; Number of queued events up to and including the first Enter, or 0 when no
+  ;; complete line is queued yet.
+  (func $console_input_line_len (result i32)
+    (local $i i32) (local $count i32)
+    (local.set $count (call $console_input_count))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (if (i32.eq (call $console_input_char (local.get $i)) (i32.const 13))
+        (then (return (i32.add (local.get $i) (i32.const 1)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  ;; Keyboard routing for console apps. On Windows the console window belongs
+  ;; to the console host, not to the process, so keystrokes typed into it never
+  ;; reach the app's own message queue — they land in the console input buffer.
+  ;; Telnet is the case that needs this: it owns a real but never-shown window,
+  ;; which is where host input would otherwise be delivered and dropped. Only
+  ;; claim the key when the app has no visible window of its own to type into.
+  (func $console_input_target (param $hwnd i32) (param $msg i32) (result i32)
+    (local $con i32)
+    (local.set $con (call $console_shared_hwnd))
+    (if (i32.eqz (local.get $con)) (then (return (local.get $hwnd))))
+    (if (i32.eqz (i32.or
+          (i32.or (i32.eq (local.get $msg) (i32.const 0x0100))   ;; WM_KEYDOWN
+                  (i32.eq (local.get $msg) (i32.const 0x0101)))  ;; WM_KEYUP
+          (i32.or (i32.eq (local.get $msg) (i32.const 0x0102))   ;; WM_CHAR
+                  (i32.eq (local.get $msg) (i32.const 0x0103))))) ;; WM_DEADCHAR
+      (then (return (local.get $hwnd))))
+    (if (i32.and
+          (i32.ne (local.get $hwnd) (i32.const 0))
+          (i32.ne (local.get $hwnd) (local.get $con)))
+      (then
+        ;; WS_VISIBLE on the nominal target means the app really is showing a
+        ;; window; leave its keyboard alone.
+        (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x10000000))
+          (then (return (local.get $hwnd))))))
+    (local.get $con))
+
+  ;; Park the calling thread on its import thunk without consuming the stdcall
+  ;; frame — the $cs_block pattern, which is the only one that survives the
+  ;; inline CALL/JMP dispatch path. Resuming at the caller's decoded block
+  ;; instead would re-run its PUSH/CALL and walk ESP down a frame on every
+  ;; retry. Yield reason 9 is "parked on an import thunk, retry next turn" to
+  ;; the host scheduler; the handler must return without touching ESP.
+  (func $console_input_block
+    (drop (call $console_input_event))
+    (if (global.get $current_thunk_eip)
+      (then (global.set $eip (global.get $current_thunk_eip))))
+    (global.set $handler_set_eip (i32.const 1))
+    (global.set $yield_reason (i32.const 9))
+    (global.set $yield_flag (i32.const 1))
+    (global.set $steps (i32.const 0)))
+
+  ;; The shared body of ReadConsoleA/W. Returns 1 when it parked (caller must
+  ;; return immediately, leaving ESP alone) and 0 when it filled the buffer.
+  (func $console_read (param $buf_g i32) (param $maxch i32) (param $pread i32)
+                      (param $wide i32) (result i32)
+    (local $avail i32) (local $i i32) (local $out i32) (local $ch i32) (local $dst i32)
+    (if (i32.and (call $console_input_mode) (i32.const 2))
+      (then (local.set $avail (call $console_input_line_len)))
+      (else (local.set $avail (call $console_input_count))))
+    (if (i32.eqz (local.get $avail))
+      (then
+        (call $console_input_block)
+        (return (i32.const 1))))
+    ;; A previous park left the auto-pop suppressed; this call completes its
+    ;; own frame, so hand the flag back before returning.
+    (global.set $handler_set_eip (i32.const 0))
+    (local.set $dst (call $g2w (local.get $buf_g)))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (local.get $avail)))
+      (br_if $done (i32.ge_u (local.get $out) (local.get $maxch)))
+      (local.set $ch (call $console_input_char (local.get $i)))
+      (if (local.get $ch)
+        (then
+          (if (local.get $wide)
+            (then (i32.store16 (i32.add (local.get $dst) (i32.mul (local.get $out) (i32.const 2))) (local.get $ch)))
+            (else (i32.store8 (i32.add (local.get $dst) (local.get $out)) (local.get $ch))))
+          (local.set $out (i32.add (local.get $out) (i32.const 1)))
+          ;; Enter reads back as CRLF, the way a real line-mode read does.
+          (if (i32.and (i32.eq (local.get $ch) (i32.const 13))
+                       (i32.lt_u (local.get $out) (local.get $maxch)))
+            (then
+              (if (local.get $wide)
+                (then (i32.store16 (i32.add (local.get $dst) (i32.mul (local.get $out) (i32.const 2))) (i32.const 10)))
+                (else (i32.store8 (i32.add (local.get $dst) (local.get $out)) (i32.const 10))))
+              (local.set $out (i32.add (local.get $out) (i32.const 1)))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (call $console_input_drop (local.get $i))
+    (if (local.get $pread)
+      (then (i32.store (call $g2w (local.get $pread)) (local.get $out))))
+    (i32.const 0))
+
+  ;; Fill INPUT_RECORDs from the queue. Returns the number of records written.
+  ;; KEY_EVENT layout: +0 EventType, +4 bKeyDown, +8 wRepeatCount,
+  ;; +10 wVirtualKeyCode, +12 wVirtualScanCode, +14 uChar, +16 dwControlKeyState.
+  (func $console_read_input (param $buf_g i32) (param $nrec i32) (param $wide i32)
+                            (result i32)
+    (local $i i32) (local $rec i32) (local $count i32)
+    (local.set $count (call $console_input_count))
+    (if (i32.gt_u (local.get $nrec) (local.get $count)) (then (local.set $nrec (local.get $count))))
+    (local.set $rec (call $g2w (local.get $buf_g)))
+    (block $done (loop $fill
+      (br_if $done (i32.ge_u (local.get $i) (local.get $nrec)))
+      (i32.store16 (local.get $rec) (i32.const 1))          ;; KEY_EVENT
+      (i32.store offset=4 (local.get $rec) (i32.const 1))   ;; bKeyDown
+      (i32.store16 offset=8 (local.get $rec) (i32.const 1)) ;; wRepeatCount
+      (i32.store16 offset=10 (local.get $rec) (call $console_input_vk (local.get $i)))
+      (i32.store16 offset=12 (local.get $rec) (i32.const 0))
+      (i32.store16 offset=14 (local.get $rec)
+        (select
+          (call $console_input_char (local.get $i))
+          (i32.and (call $console_input_char (local.get $i)) (i32.const 0xFF))
+          (local.get $wide)))
+      (i32.store offset=16 (local.get $rec) (i32.const 0))
+      (local.set $rec (i32.add (local.get $rec) (i32.const 20)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $fill)))
+    (local.get $nrec))
 
   ;; WriteConsoleW(hConsole, lpBuffer, nNumberOfCharsToWrite, lpNumberOfCharsWritten, lpReserved) → BOOL
   (func $handle_WriteConsoleW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -290,15 +520,29 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
   ;; ReadConsoleW(hConsole, lpBuffer, nNumberOfCharsToRead, lpNumberOfCharsRead, pInputControl) → BOOL
-  ;; No input available — return 0 chars read
+  ;; Blocks until the console input queue can satisfy the read. Returning
+  ;; "success, 0 chars" instead is what used to hang Telnet: its reader thread
+  ;; span on this call forever because the call never failed and never waited.
   (func $handle_ReadConsoleW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_ReadConsoleA
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+    (if (call $console_read (local.get $arg1) (local.get $arg2) (local.get $arg3) (i32.const 1))
+      (then (return)))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
-  ;; ReadConsoleInputW — same as A version
+  ;; ReadConsoleInputW(hConsole, lpBuffer, nLength, lpNumberOfEventsRead) → BOOL
   (func $handle_ReadConsoleInputW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_ReadConsoleInputA
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+    (local $n i32)
+    (if (i32.eqz (call $console_input_count))
+      (then
+        (call $console_input_block)
+        (return)))
+    (global.set $handler_set_eip (i32.const 0))
+    (local.set $n (call $console_read_input (local.get $arg1) (local.get $arg2) (i32.const 1)))
+    (call $console_input_drop (local.get $n))
+    (if (local.get $arg3)
+      (then (i32.store (call $g2w (local.get $arg3)) (local.get $n))))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; ReadConsoleOutputW(hConsole, lpBuffer, dwBufferSize, dwBufferCoord, lpReadRegion) → BOOL
   ;; Read CHAR_INFO from console buffer
@@ -508,6 +752,41 @@
         (return (i32.const 0))))
     ;; WM_ERASEBKGND — WM_PAINT grounds the client itself.
     (if (i32.eq (local.get $msg) (i32.const 0x0014)) (then (return (i32.const 1))))
+    ;; WM_CHAR — the character keys. TranslateMessage has already folded the
+    ;; keyboard state into wParam, so this is the text the app should read.
+    (if (i32.eq (local.get $msg) (i32.const 0x0102))
+      (then
+        (call $console_input_push
+          (local.get $wParam) (call $console_vk_for_char (local.get $wParam)))
+        (return (i32.const 0))))
+    ;; WM_KEYDOWN — only for the keys that never produce a WM_CHAR. Pushing
+    ;; every keydown would queue each printable key twice.
+    (if (i32.eq (local.get $msg) (i32.const 0x0100))
+      (then
+        (if (i32.or
+              (i32.and (i32.ge_u (local.get $wParam) (i32.const 0x21))
+                       (i32.le_u (local.get $wParam) (i32.const 0x2F)))
+              (i32.and (i32.ge_u (local.get $wParam) (i32.const 0x70))
+                       (i32.le_u (local.get $wParam) (i32.const 0x87))))
+          (then (call $console_input_push (i32.const 0) (local.get $wParam))))
+        (return (i32.const 0))))
+    (i32.const 0))
+
+  ;; Best-effort virtual key for an echoed character. Only ReadConsoleInput
+  ;; callers see this field, and WM_CHAR has already discarded the real one.
+  (func $console_vk_for_char (param $ch i32) (result i32)
+    (if (i32.and (i32.ge_u (local.get $ch) (i32.const 97))
+                 (i32.le_u (local.get $ch) (i32.const 122)))
+      (then (return (i32.sub (local.get $ch) (i32.const 32)))))
+    (if (i32.or
+          (i32.and (i32.ge_u (local.get $ch) (i32.const 65)) (i32.le_u (local.get $ch) (i32.const 90)))
+          (i32.and (i32.ge_u (local.get $ch) (i32.const 48)) (i32.le_u (local.get $ch) (i32.const 57))))
+      (then (return (local.get $ch))))
+    (if (i32.eq (local.get $ch) (i32.const 13)) (then (return (i32.const 0x0D))))
+    (if (i32.eq (local.get $ch) (i32.const 8)) (then (return (i32.const 0x08))))
+    (if (i32.eq (local.get $ch) (i32.const 9)) (then (return (i32.const 0x09))))
+    (if (i32.eq (local.get $ch) (i32.const 27)) (then (return (i32.const 0x1B))))
+    (if (i32.eq (local.get $ch) (i32.const 32)) (then (return (i32.const 0x20))))
     (i32.const 0))
 
   ;; Create the console window on first output. Sized to the buffer, so an app
@@ -521,6 +800,12 @@
   (func $console_ensure_window
     (local $hwnd i32)
     (if (global.get $console_hwnd) (then (return)))
+    ;; Another thread may already have created it — WND_RECORDS is shared, so
+    ;; adopt that window rather than opening a second one.
+    (if (call $console_shared_hwnd)
+      (then
+        (global.set $console_hwnd (call $console_shared_hwnd))
+        (return)))
     (call $console_cells_ensure)
     (local.set $hwnd (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
@@ -530,6 +815,7 @@
     (call $wnd_table_set (local.get $hwnd) (global.get $WNDPROC_CONSOLE_NATIVE))
     (drop (call $wnd_set_style (local.get $hwnd) (i32.const 0x10CF0000)))
     (global.set $console_hwnd (local.get $hwnd))
+    (call $console_shared_hwnd_set (local.get $hwnd))
     (drop (call $host_create_window
       (local.get $hwnd)
       (i32.const 0x10CF0000)   ;; WS_OVERLAPPEDWINDOW | WS_VISIBLE

@@ -52,6 +52,7 @@
   (global $HELP_COMMAND_CONTEXT i32 (i32.const 0x0001))
   (global $HELP_COMMAND_QUIT i32 (i32.const 0x0002))
   (global $HELP_COMMAND_CONTENTS i32 (i32.const 0x0003))
+  (global $HELP_COMMAND_HELPONHELP i32 (i32.const 0x0004))
   (global $HELP_COMMAND_SETCONTENTS i32 (i32.const 0x0005))
   (global $HELP_COMMAND_CONTEXTPOPUP i32 (i32.const 0x0008))
   (global $HELP_COMMAND_CONTEXTMENU i32 (i32.const 0x000a))
@@ -1441,6 +1442,16 @@
         (return (call $help_session_commit_topic
           (local.get $caller) (local.get $command) (local.get $topic_ref)
           (i32.const 1)))))
+
+    ;; HELP_HELPONHELP normally opens WinHelp's own bundled manual. We do not
+    ;; ship that separate system file, so expose the loaded document through
+    ;; the full Topics UI. This preserves the command's purpose -- presenting
+    ;; the navigation controls themselves -- instead of accepting a silent
+    ;; no-op as older callers such as JigSawed invoke it.
+    (if (i32.eq (local.get $command) (global.get $HELP_COMMAND_HELPONHELP))
+      (then
+        (return (call $help_session_commit_dialog
+          (local.get $caller) (local.get $command) (i32.const 4) (i32.const -1)))))
 
     (if (i32.eq (local.get $command) (global.get $HELP_COMMAND_FINDER))
       (then

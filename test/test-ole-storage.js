@@ -8,9 +8,101 @@ const { compileWat } = require('../lib/compile-wat');
 
 const ROOT = path.join(__dirname, '..');
 const SRC = path.join(ROOT, 'src');
+const extraWat = String.raw`
+  (func (export "test_call_StgCreateDocfile")
+        (param $name i32) (param $mode i32) (param $out i32) (result i32)
+    (call $handle_StgCreateDocfile (local.get $name) (local.get $mode)
+      (i32.const 0) (local.get $out) (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_CoGetClassObject")
+        (param $clsid i32) (param $ctx i32) (param $reserved i32)
+        (param $iid i32) (param $out i32) (result i32)
+    (call $handle_CoGetClassObject (local.get $clsid) (local.get $ctx)
+      (local.get $reserved) (local.get $iid) (local.get $out) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_CoGetClassObject_yield")
+        (param $clsid i32) (param $iid i32) (param $out i32) (result i32)
+    (local $saved_esp i32) (local $saved_eip i32)
+    (local $saved_thunk i32) (local $bits i32)
+    (local.set $saved_esp (global.get $esp))
+    (local.set $saved_eip (global.get $eip))
+    (local.set $saved_thunk (global.get $current_thunk_eip))
+    (global.set $current_thunk_eip (i32.const 0x0BADF00D))
+    (call $handle_CoGetClassObject (local.get $clsid) (i32.const 3)
+      (i32.const 0) (local.get $iid) (local.get $out) (i32.const 0))
+    (if (i32.eq (global.get $yield_reason) (i32.const 3))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 1)))))
+    (if (i32.eq (global.get $esp) (local.get $saved_esp))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 2)))))
+    (if (global.get $handler_set_eip)
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 4)))))
+    (if (global.get $yield_flag)
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 8)))))
+    (if (i32.eq (global.get $eip) (global.get $current_thunk_eip))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 16)))))
+    (global.set $esp (local.get $saved_esp))
+    (global.set $eip (local.get $saved_eip))
+    (global.set $current_thunk_eip (local.get $saved_thunk))
+    (global.set $yield_reason (i32.const 0))
+    (global.set $yield_flag (i32.const 0))
+    (global.set $handler_set_eip (i32.const 0))
+    (local.get $bits))
+  (func (export "test_common_dialog_persiststreaminit")
+        (param $clsid i32) (param $iid i32) (param $out i32) (result i32)
+    (local $obj i32) (local $hr i32)
+    (local.set $obj (call $ole_create_static_handler (local.get $clsid)))
+    (if (i32.eqz (local.get $obj)) (then (return (i32.const 0x8007000e))))
+    (local.set $hr (call $ole_static_query_interface
+      (local.get $obj) (local.get $iid) (local.get $out)))
+    (drop (call $ole_obj_release (local.get $obj)))
+    (local.get $hr))
+  (func (export "test_common_dialog_scalar_dispatch")
+        (param $clsid i32) (param $iid i32) (param $out i32) (result i32)
+    (local $obj i32) (local $dispatch i32) (local $bits i32)
+    (local.set $obj (call $ole_create_static_handler (local.get $clsid)))
+    (if (i32.eqz (local.get $obj)) (then (return (i32.const 0))))
+    (if (call $ole_static_query_interface
+          (local.get $obj) (local.get $iid) (local.get $out))
+      (then (drop (call $ole_obj_release (local.get $obj))) (return (i32.const 0))))
+    (local.set $dispatch (call $gl32 (local.get $out)))
+    (if (local.get $dispatch) (then (local.set $bits (i32.const 1))))
+    ;; DISPPARAMS at 0x2c00, one VT_I4|VT_BYREF value at 0x2c20.
+    (call $gs32 (i32.const 0x2c00) (i32.const 0x2c20))
+    (call $gs32 (i32.const 0x2c08) (i32.const 1))
+    (call $gs32 (i32.const 0x2c0c) (i32.const 1))
+    (call $gs16 (i32.const 0x2c20) (i32.const 0x4003))
+    (call $gs32 (i32.const 0x2c28) (i32.const 0x2c40))
+    (call $gs32 (i32.const 0x2c40) (i32.const 112))
+    (global.set $esp (i32.const 0x00300000))
+    (call $gs32 (i32.const 0x00300018) (i32.const 0x2c00))
+    (call $handle_ICommonDialogDispatch_Invoke
+      (local.get $dispatch) (i32.const 6) (i32.const 0) (i32.const 1033)
+      (i32.const 4) (i32.const 0))
+    (if (i32.eqz (global.get $eax))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 2)))))
+    (global.set $esp (i32.const 0x00300000))
+    (call $gs32 (i32.const 0x00300018) (i32.const 0))
+    (call $gs32 (i32.const 0x0030001c) (i32.const 0x2c60))
+    (call $handle_ICommonDialogDispatch_Invoke
+      (local.get $dispatch) (i32.const 6) (i32.const 0) (i32.const 1033)
+      (i32.const 2) (i32.const 0))
+    (if (i32.and
+          (i32.eqz (global.get $eax))
+          (i32.and
+            (i32.eq (call $gl16 (i32.const 0x2c60)) (i32.const 3))
+            (i32.eq (call $gl32 (i32.const 0x2c68)) (i32.const 112))))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 4)))))
+    (drop (call $ole_obj_release (local.get $obj)))
+    (drop (call $ole_obj_release (local.get $obj)))
+    (local.get $bits))
+`;
 
 async function main() {
-  const wasm = await compileWat(file => fs.promises.readFile(path.join(SRC, file), 'utf8'));
+  const wasm = await compileWat(async file => {
+    const source = await fs.promises.readFile(path.join(SRC, file), 'utf8');
+    if (file !== '13-exports.wat') return source;
+    return source.replace(/\n\)\s*$/, `\n${extraWat}\n)\n`);
+  });
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   const ctx = { getMemory: () => memory.buffer, renderer: null, resourceJson: {} };
   const imports = createHostImports(ctx);
@@ -22,10 +114,22 @@ async function main() {
   imports.host.reset_event = () => 0;
   imports.host.wait_single = () => 0;
   imports.host.wait_multiple = () => 0;
-  imports.host.com_create_instance = () => 0x80004002;
+  let comArgs = null;
+  let comShouldYield = false;
+  let testExports = null;
+  imports.host.com_create_instance = (...args) => {
+    comArgs = args;
+    if (comShouldYield) return 0x800401f0;
+    if (args[4] && testExports) {
+      const outWa = args[4] - testExports.get_image_base() + testExports.get_guest_base();
+      new DataView(memory.buffer).setUint32(outWa, 0x456789, true);
+    }
+    return 0;
+  };
 
   const { instance } = await WebAssembly.instantiate(wasm, imports);
   const e = instance.exports;
+  testExports = e;
   e.init_dx_com_thunks();
   const u8 = new Uint8Array(memory.buffer);
   const dv = new DataView(memory.buffer);
@@ -58,6 +162,61 @@ async function main() {
     u8.set(bytes, wa(gp));
     return gp;
   }
+
+  const comClsid = writeBytes(new Uint8Array(16));
+  const comIid = writeBytes(new Uint8Array(16));
+  const classOut = alloc(4);
+  const savedEsp = e.get_esp();
+  const classHr = e.test_call_CoGetClassObject(comClsid, 3, 0, comIid, classOut);
+  const classOutValue = dv.getUint32(wa(classOut), true);
+  check('CoGetClassObject requests a class factory through the shared COM host bridge',
+    classHr === 0 &&
+    comArgs !== null && comArgs[0] === wa(comClsid) && comArgs[1] === 0 &&
+    (comArgs[2] >>> 0) === 0x80000003 && comArgs[3] === wa(comIid) &&
+    comArgs[4] === classOut && classOutValue === 0x456789,
+    `hr=0x${(classHr >>> 0).toString(16)} args=${JSON.stringify(comArgs)} out=0x${classOutValue.toString(16)}`);
+  e.set_esp(savedEsp);
+
+  comShouldYield = true;
+  check('CoGetClassObject parks its unchanged frame at the thunk for async DLL loading',
+    e.test_call_CoGetClassObject_yield(comClsid, comIid, classOut) === 0x1f);
+  comShouldYield = false;
+
+  dv.setUint32(wa(comClsid), 0xf9043c85, true);
+  dv.setUint32(wa(classOut), 0, true);
+  comArgs = null;
+  const commonFactoryHr = e.test_call_CoGetClassObject(comClsid, 3, 0, comIid, classOut);
+  const commonFactory = dv.getUint32(wa(classOut), true);
+  check('CoGetClassObject provides the built-in Common Dialog class factory',
+    commonFactoryHr === 0 && comArgs === null && commonFactory !== 0 &&
+    dv.getUint32(wa(commonFactory), true) !== 0 &&
+    dv.getUint32(wa(commonFactory) + 4, true) === 1);
+  e.set_esp(savedEsp);
+
+  const persistStreamInitIid = writeBytes(new Uint8Array(16));
+  dv.setUint32(wa(persistStreamInitIid), 0x7fd52380, true);
+  dv.setUint32(wa(classOut), 0, true);
+  check('Common Dialog exposes the IPersistStreamInit face required by VB6',
+    e.test_common_dialog_persiststreaminit(comClsid, persistStreamInitIid, classOut) === 0 &&
+    dv.getUint32(wa(classOut), true) !== 0);
+
+  const dispatchIid = writeBytes(new Uint8Array(16));
+  dv.setUint32(wa(dispatchIid), 0x00020400, true);
+  dv.setUint32(wa(classOut), 0, true);
+  check('Common Dialog exposes IDispatch and round-trips scalar properties',
+    e.test_common_dialog_scalar_dispatch(comClsid, dispatchIid, classOut) === 7);
+
+  const anonymousOut = alloc(4);
+  check('StgCreateDocfile creates a functional anonymous temporary storage',
+    e.test_call_StgCreateDocfile(0, 0x04000012, anonymousOut) === 0 &&
+    (() => {
+      const anonymous = dv.getUint32(wa(anonymousOut), true);
+      const ok = anonymous !== 0 && dv.getUint32(wa(anonymous) + 8, true) === 2;
+      if (anonymous) e.test_ole_release(anonymous);
+      return ok;
+    })());
+  check('StgCreateDocfile rejects a missing output pointer',
+    (e.test_call_StgCreateDocfile(0, 0x04000012, 0) >>> 0) === 0x80004003);
 
   const lockbytes = e.test_ole_create_lockbytes(0, 1) >>> 0;
   const storage = e.test_ole_create_storage(lockbytes) >>> 0;

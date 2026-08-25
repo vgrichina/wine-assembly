@@ -256,20 +256,20 @@
     },
     {
       "win98": "Comic Sans MS",
-      "tier": 3,
-      "substitute": "Liberation Sans",
+      "tier": 1,
+      "substitute": "Comic Relief",
       "cssFamily": "WA Comic Sans MS",
       "license": "SIL OFL 1.1",
       "charset": "ANSI",
       "styles": {
-        "regular": "liberation/LiberationSans-Regular.ttf",
-        "bold": "liberation/LiberationSans-Bold.ttf"
+        "regular": "comic-relief/ComicRelief-Regular.ttf",
+        "bold": "comic-relief/ComicRelief-Bold.ttf"
       },
       "win98Files": {
         "regular": "comic.ttf",
         "bold": "comicbd.ttf"
       },
-      "note": "Named by MARBLES, CWordZap, Rodent2000 and two DX SDK samples. The visual mismatch is the worst of any entry here - a casual script replaced by a grotesque - and Comic Relief is the metric-compatible answer once its GPL+FE licence has been reviewed. Deterministic beats close: a host Comic Sans that exists on one machine and not another is the failure this whole path removes."
+      "note": "Named by Klotski through FF_SCRIPT fallback, MARBLES, CWordZap, Rodent2000 and two DX SDK samples. Comic Relief v1.210 is the upstream SIL-OFL metric-compatible replacement for Comic Sans MS."
     },
     {
       "win98": "Impact",

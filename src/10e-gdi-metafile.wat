@@ -250,6 +250,23 @@
     (select (local.get $palette) (i32.const 0x3001F)
       (i32.ne (local.get $palette) (i32.const 0))))
 
+  ;; Resolve the two palette-qualified COLORREF forms at draw time, when the
+  ;; destination DC (and therefore its selected logical palette) is known.
+  ;; PALETTEINDEX is 0x01xxxxxx with the logical index in the low word;
+  ;; PALETTERGB is 0x02BBGGRR and already carries its literal color.
+  (func $gdi_dc_resolve_colorref (param $hdc i32) (param $color i32) (result i32)
+    (local $resolved i32)
+    (if (i32.eq (i32.and (local.get $color) (i32.const 0xFF000000))
+          (i32.const 0x01000000))
+      (then
+        (local.set $resolved (call $gdi_palette_colorref
+          (call $gdi_dc_selected_palette (local.get $hdc))
+          (i32.and (local.get $color) (i32.const 0xFFFF))))
+        (if (i32.ne (local.get $resolved) (i32.const -1))
+          (then (return (local.get $resolved))))
+        (return (i32.const 0))))
+    (i32.and (local.get $color) (i32.const 0x00FFFFFF)))
+
   (func $gdi_dc_select_palette (param $hdc i32) (param $palette i32) (result i32)
     (local $meta i32) (local $previous i32)
     (if (i32.or (i32.eqz (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
@@ -357,6 +374,11 @@
     (local $p i32)
     (local.set $p (call $gdi_object_record (local.get $handle)))
     (if (local.get $p) (then (return (i32.load offset=8 (local.get $p)))))
+    ;; Stock NULL_BRUSH is BS_NULL/BS_HOLLOW.  Returning BS_SOLID here makes
+    ;; GetObject callers clone it as a painting brush; VB1 does exactly that
+    ;; while creating a PictureBox AutoRedraw DC.
+    (if (i32.eq (local.get $handle) (i32.const 0x30015))
+      (then (return (i32.const 1))))
     (select (i32.const 5) (i32.const 0)
       (i32.eq (local.get $handle) (i32.const 0x30018))))
 
@@ -824,6 +846,8 @@
       (i32.load8_u offset=16 (local.get $record))
       (global.get $TEXT_SCRATCH)))
     (if (i32.eqz (local.get $handle)) (then (return (i32.const 0))))
+    (call $gdi_font_set_width (local.get $handle)
+      (i32.load16_s offset=8 (local.get $record)))
     (call $gdi_bitmap_font_bind (local.get $handle) (global.get $TEXT_SCRATCH))
     (local.get $handle))
 

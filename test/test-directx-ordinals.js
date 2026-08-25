@@ -13,6 +13,7 @@ bytes.set(Buffer.from('DSOUND.dll\0', 'ascii'), dllNameWA);
 const apiTable = [
   { id: 470, name: 'DirectSoundCreate' },
   { id: 1236, name: 'DirectSoundEnumerateA' },
+  { id: 2600, name: 'KERNEL32_Ordinal99' },
 ];
 const { host } = createHostImports({
   getMemory: () => memory.buffer,
@@ -28,4 +29,11 @@ assert.strictEqual(host.resolve_ordinal(dllNameWA, 2), 1236,
 assert.strictEqual(host.resolve_ordinal(dllNameWA, 99), -1,
   'unknown DirectSound ordinals remain fail-fast diagnostics');
 
-console.log('PASS  DirectSound ordinal imports resolve to named handlers');
+bytes.fill(0, dllNameWA, dllNameWA + 32);
+bytes.set(Buffer.from('KERNEL32.dll\0', 'ascii'), dllNameWA);
+assert.strictEqual(host.resolve_ordinal(dllNameWA, 99), 2600,
+  'Win98 KERNEL32 ordinal 99 resolves to its one-argument timezone classifier');
+assert.strictEqual(host.resolve_ordinal(dllNameWA, 98), -1,
+  'unknown KERNEL32 ordinals remain fail-fast diagnostics');
+
+console.log('PASS  DirectSound and Win98 KERNEL32 ordinal imports resolve to named handlers');

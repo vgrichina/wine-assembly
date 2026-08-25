@@ -141,6 +141,31 @@ async function main() {
     [192, 192, 192, 255],
     'attached presentation must expose untouched canonical window pixels');
 
+  // StarCraft periodically acquires the HWND DC while its 8-bpp DirectDraw
+  // primary owns the fullscreen window. GetDC alone must not swap the
+  // untouched COLOR_BTNFACE GDI backing onto screen; a real GDI write remains
+  // a presentation boundary and restores that surface.
+  const dxSurfaceId = 0x200002;
+  const dxBits = 0x20000;
+  assert.strictEqual(base.host.gdi_surface_create(
+    dxSurfaceId, 40, 30, 8, dxBits, 40, 1, 0, 0, 0, 0, 0), 1);
+  assert.strictEqual(base.host.gdi_surface_attach(dxSurfaceId, HWND), 1);
+  const dxCanvas = base.gdi.surfacePresentations.get(dxSurfaceId).canvas;
+  assert.strictEqual(canvas, dxCanvas, 'the DirectDraw primary should own the window');
+  const probeDc = wat.test_call_GetDC(HWND) >>> 0;
+  assert(probeDc, 'a GetDC-only probe must still return a usable DC');
+  assert.strictEqual(canvas, dxCanvas,
+    'GetDC alone must not replace an attached DirectDraw primary');
+  assert.strictEqual(wat.test_call_SetPixel(probeDc, 0, 0, 0x000000FF), 0x000000FF);
+  const windowCanvas = base.gdi.surfacePresentations.get(surfaceId).canvas;
+  assert.strictEqual(canvas, windowCanvas,
+    'the first real GDI upload should restore the window GDI surface');
+  assert.deepStrictEqual(
+    [...windowCanvas.getContext('2d').getImageData(3, 5, 1, 1).data.subarray(0, 3)],
+    [255, 0, 0], 'the restoring GDI upload must retain its changed pixel');
+  assert.strictEqual(wat.test_call_ReleaseDC(HWND, probeDc), 1);
+  assert.strictEqual(base.host.gdi_surface_delete(dxSurfaceId), 1);
+
   const clipCopy = wat.test_gdi_rgn_alloc_rect(0, 0, 0, 0) >>> 0;
   assert.strictEqual(wat.test_gdi_dc_clip_get(hdc, clipCopy), 0,
     'GetDC system visibility must not appear as an application-selected clip');
@@ -179,6 +204,61 @@ async function main() {
   wat.wnd_set_style_export(HWND, 0x10000000);
   wat.wnd_set_style_export(SECOND_CHILD, 0x40000000);
   wat.dc_apply_client_clip(hdc, HWND);
+
+  // Overlapping WS_CLIPSIBLINGS children use current z-order, not allocation
+  // slots. TriPeaks creates cards in reverse layout order, then raises each
+  // hidden card as it deals; static slot order leaves the covered cards above
+  // the playable face row.
+  wat.ctrl_set_geom(SECOND_CHILD, 10, 13, 5, 5);
+  wat.wnd_set_style_export(CHILD, 0x54000000);
+  wat.wnd_set_style_export(SECOND_CHILD, 0x54000000);
+  const wndSlot = hwnd => {
+    for (let slot = 0; slot < 256; slot++) {
+      if (dv.getUint32(0x7000 + slot * 24, true) === hwnd) return slot;
+    }
+    return -1;
+  };
+  const childSlot = wndSlot(CHILD);
+  const secondChildSlot = wndSlot(SECOND_CHILD);
+  assert(childSlot >= 0 && secondChildSlot >= 0, 'sibling windows need table slots');
+  dv.setInt32(0x079C8000 + childSlot * 4, 100, true);
+  dv.setInt32(0x079C8000 + secondChildSlot * 4, 200, true);
+  assert.strictEqual(wat.wnd_z_get(CHILD), 100);
+  assert.strictEqual(wat.wnd_z_get(SECOND_CHILD), 200);
+  assert.strictEqual(wat.wnd_get_parent(CHILD), HWND);
+  assert.strictEqual(wat.wnd_get_parent(SECOND_CHILD), HWND);
+  assert.strictEqual(wat.wnd_get_style_export(CHILD) >>> 0, 0x54000000);
+  assert.strictEqual(wat.wnd_get_style_export(SECOND_CHILD) >>> 0, 0x54000000);
+  assert.strictEqual(wat.ctrl_get_xy(CHILD) >>> 0, (12 << 16) | 7);
+  assert.strictEqual(wat.ctrl_get_xy(SECOND_CHILD) >>> 0, (13 << 16) | 10);
+  assert.strictEqual(wat.ctrl_get_wh(SECOND_CHILD) >>> 0, (5 << 16) | 5);
+  assert.strictEqual(wat.wnd_z_is_above_sibling(CHILD, SECOND_CHILD), 1);
+  const siblingDc = wat.test_call_GetDC(CHILD) >>> 0;
+  let systemClip = 0;
+  for (let slot = 0; slot < 256; slot++) {
+    const entry = 0x07F0C000 + slot * 8;
+    if (dv.getUint32(entry, true) === siblingDc) {
+      systemClip = dv.getUint32(entry + 4, true);
+      break;
+    }
+  }
+  assert(systemClip, 'child DC needs a retained USER system clip');
+  const systemClipRecord = 0x07F0D000 + ((systemClip & 0xFF) - 1) * 32;
+  const systemClipRects = dv.getUint32(systemClipRecord + 28, true);
+  const systemClipBox = [8, 12, 16, 20].map(offset =>
+    dv.getInt32(systemClipRecord + offset, true));
+  assert(systemClipRects > 1,
+    `excluding the overlapping sibling should make a complex clip ` +
+    `(rects=${systemClipRects}, box=${systemClipBox.join(',')})`);
+  assert.strictEqual(wat.test_gdi_dc_clip_point_visible(siblingDc, 3, 1), 0,
+    'a higher-z overlapping sibling must be excluded from the child DC');
+  dv.setInt32(0x079C8000 + childSlot * 4, 300, true);
+  wat.dc_apply_client_clip(siblingDc, CHILD);
+  assert.strictEqual(wat.test_gdi_dc_clip_point_visible(siblingDc, 3, 1), 1,
+    'raising the child above its sibling must restore the overlap');
+  assert.strictEqual(wat.test_call_ReleaseDC(CHILD, siblingDc), 1);
+  wat.wnd_set_style_export(CHILD, 0x50000000);
+  wat.wnd_set_style_export(SECOND_CHILD, 0x40000000);
 
   // SkiFree acquires and retains its drawing DC from WM_CREATE, before the
   // main window is shown. Its system clip must follow later visibility
@@ -256,6 +336,10 @@ async function main() {
   const sourceBitmap = wat.test_call_CreateDIBSection(0, bmi, bitsOut) >>> 0;
   const sourceDc = wat.test_call_CreateCompatibleDC(0) >>> 0;
   assert(sourceBitmap && sourceDc);
+  assert.strictEqual(wat.test_call_SelectObject(hdc, sourceBitmap) >>> 0, 0,
+    'SelectObject must reject bitmaps on a display/window DC');
+  assert.strictEqual(wat.test_gdi_dc_get_field(hdc, 84, 0) >>> 0, 0x30007,
+    'a rejected bitmap must not redirect later window painting');
   assert.strictEqual(wat.test_call_GetDCOrgEx(sourceDc, dcOrigin), 1);
   assert.deepStrictEqual([
     wat.guest_read32(dcOrigin) | 0,

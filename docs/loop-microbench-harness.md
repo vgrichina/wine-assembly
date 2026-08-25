@@ -1,0 +1,355 @@
+# Loop Microbenchmark Harness
+
+ASCII TLDR:
+
+```text
+tools/bench-loops.js injects a synthetic guest loop into a live wasm instance
+and times it, with both A/B arms in ONE process alternating every rep.
+
+WHAT IS MEASURED  (8MB working set, box load ~5)
+
+ shape          ns/iter  ops/it  ns/op  B/it   MB/s   blocks/it   what it prices
+ ------------  --------  ------  -----  ----  ------  ---------   ----------------------
+ cmp_ladder        81.4    14 *    5.8 *   1      12      2.00     switch ladder (control)
+ lut               92.7     7     13.2     3      31      1.00     Heroes II LUT blit
+ stack_traffic     96.6     8     12.1     0      --      1.00     store path, never-code
+ store_stream     117.1     7 *   16.7    16     130      1.00     Caesar SIB store stream
+ nop_chain        116.0    10     11.6     0      --      1.00  \  the block-entry pair:
+ jmp_chain        214.8    10     21.5     0      --      9.00  /  subtract them
+ rep_movsd          0.1   bulk      --     8  60,000      0.00     memory.copy FLOOR
+
+ * fold live (H420/H423): ops/it is the UNFOLDED-EQUIVALENT count, so ns/op is
+   understated in the same proportion. Read blocks/it and time instead.
+
+THE TWO PRIMITIVE COSTS, measured with dispatch count held EQUAL by
+construction (nop and jmp $+0 are one dispatch each; only the jmp ends a block):
+
+  one dispatch          ~8 ns      nop_chain, 77.6 ns / 10 ops
+  one block transfer    ~9 ns      (jmp_chain - nop_chain) / 8 entries
+                                   ON TOP of the dispatch that caused it
+
+That reproduces cmp_ladder's whole A/B arithmetically: 3.5 entries x 9.3 plus
+7 dispatches x 9.4 = 98 ns against 98.2 ns measured. This repo has never had
+either number.
+
+READ ns/op ACROSS SHAPES. MB/s is bytes/time and these shapes carry 1, 3 and 16
+bytes per iteration -- it ranks them by payload, not by cost. store_stream has
+the best MB/s of the four and the WORST ns/op. Only two MB/s comparisons
+survive: two arms of one shape, or two shapes moving the SAME bytes by
+different routes -- which is the one below.
+
+THE STORE PATH, PRICED           8MB written        ratio
+  per-op path (store_stream)         72 MB/s          1x    $g2w
+  memory.copy  (rep_movsd)       46,388 MB/s        644x    + $invalidate_code_write
+                                                            + page-cross test, per store
+
+CALIBRATION -- run the null control in the SAME session, it tracks the box
+  toggle           load 3.5          load 10.9      verdict
+  case_chain       +57.4 / +57.8       +58.6        real, stable
+  rect_run (null)   +0.7 /  -0.9        -5.3        <- THIS is the threshold
+  noise floor        +-1%               +-5%        vs 24-42% whole-app A/B
+
+OP COUNT REPORTED THE WRONG SIGN
+  case_chain=1   73.1ms   14.00 ops/it   2.00 blocks/it
+  case_chain=0  171.3ms   13.00 ops/it   5.50 blocks/it
+  => +57% FASTER while printing 7.7% MORE ops. The variable that moved is block
+     ENTRIES, which no histogram in this repo counts -- and the handler
+     histogram is what every fusion here has been judged on.
+
+Every shape verifies its own work, because rep_movsd first shipped copying
+zeros onto zeros: a memory.copy that never ran would have been byte-identical
+and reported DRAM bandwidth for doing nothing.
+
+RESOLVED -- the +57% here and the <=2% on the real app AGREE. A microbench
+prices the machinery it isolates; to predict an app you scale by that
+machinery's profile share. Caesar: block-entry machinery ~8% of ticks, $next
+18.4%; the fold removes 20.5% of entries and ~12.7% of dispatches, so it
+predicts 2-4%. Measured on the app: 2.1%. The harness was never in conflict
+with the app -- reading its raw % as an app number was the error.
+
+NEVER QUOTE A MICROBENCH % AS AN APP %. Multiply it by the profile share of
+what it exercises. That is the whole discipline this tool needs.
+
+DOES NOT MEASURE: dispatch cost (a periodic loop lets the BTB predict every
+call_indirect; understated by construction). Whether a shape occurs in real
+code (find-loops.js / match-loops.js / --handler-hist). The cold g2w paths --
+every buffer sits in the direct window, so sparse/DIB/code-marked are untouched.
+```
+
+Companion docs: [interpreter-dispatch-perf.md](interpreter-dispatch-perf.md)
+(the four timing passes that resolved nothing, and why),
+[page-compile-design.md](page-compile-design.md) §14 (CASE_CHAIN's whole-app
+result), [loop-idiom-superops-design.md](loop-idiom-superops-design.md).
+
+## 1. Why
+
+`docs/interpreter-dispatch-perf.md` closes with *"this box cannot time these
+changes, and no amount of statistics fixes that."* Four passes over five
+worktrees; a 24.5-41.9% noise floor against effects of 5-8%; one pass that
+manufactured four fake 6-11% "speedups" purely out of position in the round.
+Four built, correct, execution-identical branches are still sitting unmerged
+because nobody could measure them.
+
+The fix is not better statistics. It is a bigger effect and a tighter loop:
+
+- **Bigger effect.** A synthetic loop that *is* the workload turns a 2%
+  whole-app change into a 57% microbenchmark change.
+- **Tighter loop.** Both arms run in one process, alternating every rep, with
+  the order rotated within each rep. Background drift becomes common-mode
+  instead of between-variant, and position bias cancels.
+
+It needs no new WAT and no PE emitter. `test/test-x86-ops.js` already had the
+pattern — load a PE for an image base, write raw x86 bytes into it, `set_eip`,
+`run` — and `13-exports.wat` already had the counters and the fold toggles.
+
+## 2. Use
+
+```bash
+node tools/bench-loops.js --list
+node tools/bench-loops.js --bytes=16m --reps=5
+node tools/bench-loops.js --shapes=cmp_ladder --toggle=case_chain
+node tools/bench-loops.js --shapes=store_stream --bytes=64m --json
+```
+
+| flag | meaning |
+|---|---|
+| `--shapes=a,b` | which loop shapes (default: all) |
+| `--bytes=N[k\|m\|g]` | working-set size (default 4m) |
+| `--reps=N` | interleaved timed reps (default 9); minima are quoted |
+| `--toggle=NAME` | A/B a runtime fold: `case_chain`, `rle_run`, `rect_run` |
+| `--top=N` | handlers listed per arm (default 6) |
+| `--json` | machine-readable, includes the full per-handler histogram |
+
+Each shape gets a fresh wasm instance, so a block cache or code-page bitmap
+carried over from the previous shape cannot make one shape's numbers depend on
+run order. Within a shape, the loop is re-emitted at a **fresh code address**
+every rep: that is what makes a decode-time fold toggle take effect without a
+`clear_cache` export, and it keeps both arms paying the same decode cost.
+
+## 3. Calibrate before believing it
+
+The harness's first job is not to measure anything new. It is to reproduce a
+**known sign**, using the runtime fold toggles that already exist.
+
+Measured 2026-08-24, box at load 3.5, `--shapes=cmp_ladder --bytes=1m --reps=6`:
+
+| toggle | run 1 | run 2 |
+|---|---|---|
+| `case_chain` (the fold this shape uses) | **+57.4%** | **+57.8%** |
+| `rect_run` (a fold this shape cannot use — null control) | **+0.7%** | **−0.9%** |
+
+The null control is the part that matters: it is the same code path, the same
+interleaving, the same rotation, with a toggle that changes nothing. It comes
+back at ±1%. That is the noise floor, and it is 25x tighter than the whole-app
+harness.
+
+**Run the null control in the SAME session as the real measurement, every
+time.** It is not a one-time calibration, it is an instrument that reports the
+noise floor *at that moment*. Re-run an hour later at load 10.9 and the same
+null control came back at **−5.3%**, with the real toggle still at +58.6%. The
+floor tracks the box; only the null control tells you where it is, and a result
+smaller than the concurrent null control is not a result.
+
+A new shape whose null control does not come back near zero on a quiet box has a
+layout or aliasing problem, and none of its other numbers mean anything.
+
+## 3.1 Every shape verifies its own work
+
+Each shape carries a `verify` hook, run unconditionally outside the timed
+region, that checks the loop actually had its memory and register effect. A
+failure is a hard error, not a warning.
+
+This is not defensive decoration. `rep_movsd` originally shipped with an
+unfilled source buffer — copying zeros onto zeros, where a `memory.copy` that
+never ran is byte-identical to one that did. It would have reported the
+machine's DRAM bandwidth for doing nothing, which reads exactly like a
+spectacular result. Two of the first verifiers had the same hole one level down
+(`lut`'s table mapped 0 → 0, so checking `dst[0] == 0` passed on a loop that
+never ran; `stack_traffic` checked spill slots it had not cleared, so it passed
+on the previous rep's data). Destination bytes are now explicitly cleared before
+each rep and the expected values are non-zero by construction.
+
+When adding a shape: make the expected result impossible to reach by accident,
+then confirm the verifier fails when you disable the loop body.
+
+## 4. What it found on the calibration run
+
+### 4.1 Op count reported the wrong sign
+
+```text
+  case_chain=1   min  73.8ms   14.00 ops/iter   2.00 blocks/iter
+  case_chain=0   min 173.5ms   13.00 ops/iter   5.50 blocks/iter
+  => +57.4% time, -7.7% ops, +63.6% block entries
+```
+
+The folded arm is 57% faster *while printing more handler ops*. Two things are
+going on and both are worth knowing:
+
+**Handlers 420-424 re-record the ops they replaced.** `$th_case_chain`
+(`src/06b-core-handlers.wat:522`) deliberately writes the cmps and jzs it
+replaced back into the histogram, so totals stay comparable with a
+`--no-case-chain` build. So with a fold live, `ops/iter` is the
+*unfolded-equivalent* count plus the fold's own dispatch — it is not the
+dispatch count. The tool prints a NOTE whenever one is live.
+
+**And the real variable is block entries, which no histogram in this repo
+counts.** Every `jz` in an unfolded ladder ends a block, and a block entry costs
+an eip store, a cache lookup and a trip round `$run`'s loop — none of which is a
+handler dispatch.
+
+Every fusion in this repo has been judged on the handler histogram. That is why
+`blocks/iter` is in the output: it comes free from the hot-block histogram,
+which `13-exports.wat:181` already records under the same gate.
+
+### 4.1b Pricing a block entry: the nop_chain / jmp_chain pair
+
+Do **not** price it by diffing the two arms of `cmp_ladder`. That diff is
+confounded — the unfolded arm runs ~7 more real dispatches per iteration as
+well as 3.5 more block entries — and charging the whole delta to entries put
+this doc's first estimate at 27ns, about 3x too high.
+
+`nop_chain` and `jmp_chain` exist only to be subtracted. Both run 8 filler ops
+per iteration; the filler is `nop` in one and `jmp $+0` in the other. Each is
+**one dispatch**, so dispatch count is equal by construction (the tool confirms
+it: 10.00 ops/iter for both) and only the jmp ends a block.
+
+```text
+  nop_chain    77.6 ns/iter   10 ops   1.00 blocks/iter
+  jmp_chain   151.8 ns/iter   10 ops   9.00 blocks/iter
+```
+
+| primitive | cost |
+|---|---|
+| one dispatch | **~8 ns** (77.6 / 10) |
+| one block transfer | **~9 ns**, on top of the dispatch that caused it |
+
+Check: that reproduces `cmp_ladder`'s A/B arithmetically — 3.5 entries × 9.3 +
+7 dispatches × 9.4 = 98 ns, against 98.2 ns measured.
+
+**The collision trap.** `jmp_chain` first read 5.00 blocks/iter against a true
+9.00 (8 jumps + the loop top). The hot-block histogram is a 4-way bucket, and
+`$hot_block_hist_record` (`04-cache.wat:727`) bumps a collision counter exactly
+once per entry it cannot place — so recorded + collisions is the exact count,
+and the recorded half alone was 44% short. The tool now adds them and says how
+many came from the counter. Two compounding errors — over-attribution and an
+undercounted denominator — are what made 9ns read as 27ns.
+
+### 4.1a MB/s does not compare across shapes — ns/op does
+
+The shapes move **1, 3 and 16 bytes per iteration**, so a bytes-per-second
+figure ranks them by how much data each op happens to carry, not by how much
+the interpreter costs. Measured 8MB, load ~10:
+
+| shape | ns/iter | ops/iter | ns/op | B/iter | MB/s |
+|---|---|---|---|---|---|
+| `lut` | 179.3 | 7 | **25.6** | 3 | 16 |
+| `store_stream` | 215.8 | 7 | **30.8** | 16 | 71 |
+| `stack_traffic` | 178.6 | 8 | **22.3** | 0 | — |
+| `cmp_ladder` | 150.5 | 14\* | 10.8\* | 1 | 6 |
+
+`store_stream` has the highest MB/s of the four and is the **slowest per op** —
+it just carries four bytes per store where `lut` carries one. Read `ns/op`
+across shapes; `MB/s` only between two arms of one shape, or between two shapes
+moving the same bytes by different routes. §4.2 is the one that qualifies.
+
+\* with a fold live, `ops/iter` is the unfolded-equivalent count, so `ns/op` is
+understated in the same proportion. The tool prints a NOTE.
+
+### 4.2 The store path is 400-650x slower than `memory.copy`
+
+The one MB/s comparison §4.1a leaves standing: the **same bytes** written by two
+different routes.
+
+| run | `store_stream` (per-op path) | `rep_movsd` (`memory.copy`) | ratio |
+|---|---|---|---|
+| `--bytes=16m`, load ~3.5 | 122 MB/s | 52,366 MB/s | **428x** |
+| `--bytes=8m`, load ~10 | 72 MB/s | 46,388 MB/s | **644x** |
+
+The ratio itself moves with load — the interpreted arm is far more sensitive to
+contention than the `memory.copy` arm — so quote it as a band, not a constant.
+Either end of the band is the same finding.
+
+The gap is `$g2w` + `$invalidate_code_write` + the page-cross test, paid per
+store; `rep movsd` pays it once for the whole range. That is the ceiling on any
+"bind once, store many" or region-typed-store work, and it is enormous.
+
+### 4.3 The apparent contradiction, resolved
+
+CASE_CHAIN is **+57%** on its own shape here and was measured at **≤2%** on the
+real app (`page-compile-design.md` §14). That looked like a conflict. It is not
+one — the two numbers agree once the microbench figure is scaled.
+
+A microbench prices the **machinery it isolates**. To predict an app you
+multiply by that machinery's share of the app's profile and by the fraction of
+it the change touches. Caesar's gameplay profile (`node --prof`, 6000 batches,
+recorded in the caesar3-gameplay notes) gives both shares directly:
+
+| | share of all ticks |
+|---|---|
+| `$next` (dispatch) | 18.4% |
+| `$branch_end` + `$jcc_end` + `$page_enter` (block transfer) | ~8% |
+
+And `page-compile-design.md` §14 gives what the fold removes in the 3000..3400
+window: **2,340,000 of 11.4M block entries** (20.5%) and ~7.3M dispatches
+(~12.7%).
+
+```text
+  block entries   0.205 x  8.0%  =  1.6%
+  dispatches      0.127 x 18.4%  =  2.3%
+                                    ----
+  predicted app-level win           ~2-4%
+  measured on the app                2.1%   (mean pairwise, 9 interleaved pairs)
+```
+
+The +57% is what happens when that same machinery is ~100% of the workload
+instead of ~26% of it. **The harness was never in conflict with the app.
+Reading its raw percentage as an app percentage was the error**, and it is the
+error this tool will invite on every future result.
+
+**Rule: never quote a microbench % as an app %.** Multiply it by the profile
+share of what it exercises. `--handler-hist` and a `node --prof` self-time
+reading are where those shares come from.
+
+## 5. What it does NOT measure
+
+- **Dispatch cost is understated, systematically.** A periodic short loop lets
+  the BTB predict every `call_indirect` target perfectly, and the mispredict
+  *is* the ~23% `$next` cost in a real profile. A change that wins only on
+  dispatch count needs a whole-app confirmation. A change that wins on the
+  memory path reproduces here honestly.
+- **Whether the shape occurs in real code.** `tools/find-loops.js`,
+  `tools/match-loops.js`, `tools/find-rle-nests.js` and `--handler-hist` answer
+  that; `find-rle-nests.js` says the Caesar RLE nest is **1 of 287 PEs**. Quote
+  that number next to any result from this tool.
+- **The cold g2w paths.** Every shape's buffer sits in the direct guest window,
+  so only `$g2w`'s fast path runs. The sparse `VirtualAlloc` ranges, the DIB
+  range and the code-marked-page retire walk are all untouched. See §6.
+
+## 6. Next: warm mode
+
+Cold mode makes the store path look *cheaper* than it is, in four specific
+ways, all pointing the same direction:
+
+| | cold (freshly-loaded notepad) | after a real app has run |
+|---|---|---|
+| `$g2w` | `VIRTUAL_MAP_TABLE` empty — returns on the first compare, every time | real distribution across 4 cached sparse ranges and the scan |
+| `$code_write_is_code` | code-page bitmap nearly empty — declines fast and predicts perfectly | populated, branch is real |
+| block cache | empty, no eviction or index contention | Caesar's working set is 1861 blocks in 4096 slots |
+| icache | a handful of handlers warm | hundreds |
+
+Warm mode: boot `--app=caesar3_demo` (or RCT, which has a 12x throughput cliff
+after ~2500 batches) to a named batch, snapshot EIP/ESP, point EIP at the
+injected loop, run, exit. Every export it needs already exists —
+`set_eip`/`set_esp`/`run`/`get_eip`, plus `get_virtual_alloc_top` /
+`set_virtual_alloc_top` (`13-exports.wat:379`) to carve the streaming buffer out
+of the *sparse* range deliberately, so the loop exercises sparse translation
+instead of the direct window.
+
+That turns buffer residency into a first-class axis: direct window / sparse
+range / DIB range / code-marked page are the four branches the store path
+actually has, and only a booted app presents them honestly.
+
+One trap to build in from the start: injecting into a booted app corrupts that
+app's state, so a warm run is one-shot. Snapshot, inject, measure, exit. Do not
+resume the app afterward and do not reuse the instance across shapes, or you
+are measuring the previous shape's damage.

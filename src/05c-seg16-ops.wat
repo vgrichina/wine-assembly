@@ -303,6 +303,26 @@
       (call $gl16 (i32.add (local.get $addr) (i32.const 2))))
     (return_call $next))
 
+  ;; 425: LES/LDS r32, m16:32 in a *flat* task — op = 16bit<<4 | reg, address
+  ;; in the next word.
+  ;;
+  ;; LES and LDS are not 16-bit-only instructions: they are legal in 32-bit
+  ;; protected mode, and Watcom emits `les eax, [edx-8]` in its va_arg walker,
+  ;; which is how Fallout's demo reaches one. Every selector in a Win32 process
+  ;; is flat, so the segment half is a value we would only load to throw away —
+  ;; the offset half is the whole instruction here. Loading it and dropping the
+  ;; selector is what a flat task actually observes; touching $seg_base_es
+  ;; instead would move every later ES-relative access off the flat mapping.
+  (func $th_load_far_ptr32 (param $op i32)
+    (local $addr i32)
+    (local.set $addr (call $read_addr))
+    (if (i32.and (local.get $op) (i32.const 0x10))
+      (then (call $set_reg16 (i32.and (local.get $op) (i32.const 0xF))
+              (call $gl16 (local.get $addr))))
+      (else (call $set_reg (i32.and (local.get $op) (i32.const 0xF))
+              (call $gl32 (local.get $addr)))))
+    (return_call $next))
+
   ;; 377: MOV r16, Sreg — op = sreg<<4 | reg
   (func $th_mov_r16_sreg (param $op i32)
     (call $set_reg16 (i32.and (local.get $op) (i32.const 0xF))

@@ -134,8 +134,12 @@ assert(webApp.includes('<option value="diablo_demo">Diablo (pre-release demo)</o
   'debug app selector should expose the local Diablo demo candidate');
 assert(/DEBUG_ONLY_APPS\s*=\s*\[[\s\S]*\[\s*'diablo_demo'\s*,\s*'Diablo Demo'/s.test(webApp),
   'Diablo should remain debug-only rather than becoming a desktop app');
-assert(/diablo_demo:\s*\{[\s\S]*?exe:\s*diabloCandidateRoot \+ 'DIABDEMO\.EXE'[\s\S]*?dlls:\s*\[diabloCandidateRoot \+ 'STORM\.DLL'\][\s\S]*?vfsPaths:\s*\['c:\\\\diablo\.exe', 'z:\\\\diablo\.exe'\][\s\S]*?requiredFiles:\s*true[\s\S]*?\n\s*\},\n\s*funtris:/s.test(webApp),
+assert(/diablo_demo:\s*\{[\s\S]*?exe:\s*diabloCandidateRoot \+ 'DIABDEMO\.EXE'[\s\S]*?dlls:\s*\[diabloCandidateRoot \+ 'STORM\.DLL'\][\s\S]*?persistFiles:\s*\['c:\\\\save\\\\\*\.sav'\][\s\S]*?vfsPaths:\s*\['c:\\\\diablo\.exe', 'z:\\\\diablo\.exe'\][\s\S]*?requiredFiles:\s*true[\s\S]*?\n\s*\},\n\s*funtris:/s.test(webApp),
   'Diablo debug launch should load the extracted game, Storm, and its MPQ package on C: and Z:');
+assert(pageHtml.includes('lib/vfs-persistence.js?v=1'),
+  'web host should load bounded per-app VFS persistence');
+assert(pageHtml.includes('lib/browser-shell.js?v=3'),
+  'web host should cache-bust save-file restoration in the launcher');
 assert(!deployJs.includes('test/binaries/candidates/diablo'),
   'public deploy should exclude the local Diablo demo payload');
 assert(webApp.includes('playDebugMidi()'), 'debug toolbar should expose direct MIDI playback');
@@ -278,20 +282,29 @@ assert(fs.existsSync(path.join(ROOT, 'binaries', 'whatsnew.txt')), 'Winamp versi
 assert(fs.statSync(path.join(ROOT, 'binaries', 'whatsnew.txt')).size > 0, 'Winamp version history text should not be empty');
 assert(!webApp.includes('wine.waitForMainHwnd(() =>'), 'Winamp web launch should not auto-drive playback through IPC');
 assert(!webApp.includes('?v=55'), 'index.html should not keep stale cache-buster v55');
-assert(webApp.includes('lib/renderer-input.js?v=190'), 'web host should cache-bust renderer input after top-window hover routing');
-assert(webApp.includes('lib/renderer.js?v=178'), 'web host should cache-bust renderer after fullscreen consent changes');
+assert(webApp.includes('lib/renderer-input.js?v=191'), 'web host should cache-bust renderer input after WM_MOUSEMOVE coalescing');
+assert(webApp.includes('lib/renderer.js?v=180'), 'web host should cache-bust renderer after dynamic Win16 menu installation');
+assert(webApp.includes('lib/pe.js?v=1'), 'web host should load the shared PE section reader');
+assert(webApp.includes('lib/process-boot.js?v=2'), 'web host should cache-bust oversized PE section hydration');
+assert(webApp.includes('lib/host-window.js?v=2'), 'web host should cache-bust dynamic Win16 menu serialization');
 assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
 assert(webApp.includes('lib/storage.js?v=169'), 'web host should cache-bust storage after Media Player association changes');
 assert(webApp.includes('lib/gdi-surface.js?v=2'), 'web host should load the canonical GDI surface module');
 assert(webApp.indexOf('lib/gdi-surface.js?v=2') < webApp.indexOf('lib/host-imports.js?v=203'),
   'web host should load the GDI surface module before host imports');
 assert(webApp.includes('lib/host-imports.js?v=203'), 'web host should cache-bust binary text rasterization');
-assert(webApp.includes('lib/thread-manager.js?v=179'), 'web host should cache-bust thread manager after resumable owner-thread sends');
+assert(webApp.includes('lib/thread-manager.js?v=180'), 'web host should cache-bust thread manager after the main merge');
 assert(webApp.includes('lib/compile-wat.js?v=169'), 'web host should cache-bust the snapshot-capable WAT compiler');
 assert(webApp.includes('lib/guest-thread-host.js?v=4'), 'web host should cache-bust the owner-thread send protocol');
-assert(webApp.includes('lib/debug-thread-state.js?v=2'), 'web host should cache-bust corrected guest thread ownership diagnostics');
-assert(webApp.includes('host.js?v=212'), 'web host should cache-bust host.js after the current source update');
-assert(hostJs.includes("static SOURCE_VERSION = '209'"), 'web host should cache-bust WASM artifacts and WAT source compilation');
+assert(webApp.includes('lib/debug-thread-state.js?v=5'), 'web host should cache-bust whole-list cycle diagnostics');
+assert(webApp.includes('host.js?v=220'), 'web host should cache-bust host.js after the current source update');
+assert(hostJs.includes("static SOURCE_VERSION = '220'"), 'web host should cache-bust WASM artifacts and WAT source compilation');
+assert(hostJs.includes("const fetchOptions = debugFetch ? { cache: 'no-store' } : undefined;"),
+  'debug sessions should select a no-store fetch policy');
+assert(hostJs.includes('fetch(`${artifact}?v=${WineAssembly.SOURCE_VERSION}`, fetchOptions)'),
+  'debug sessions should apply their cache policy when loading rebuilt WASM artifacts');
+assert(/constructor\(\)[\s\S]*has\('debug'\)[\s\S]*WineAssembly\._wasmModulePromise = null;/.test(hostJs),
+  'new debug processes should discard the page-level compiled WASM module cache');
 assert(webApp.includes("['mspaint98',   'Paint'"), 'normal desktop should expose Paint without the downscaled debug pane');
 assert(webApp.includes("mplay32:  { exe: 'binaries/win98-apps/mplay32.exe' }"),
   'Media Player 32 should use normal DLL auto-detection now that native and WAT toolbars are supported');

@@ -1,6 +1,6 @@
 {
   "generated_from": "src/01-header.wat",
-  "count": 185,
+  "count": 200,
   "sigs": {
     "log": {
       "params": [
@@ -37,6 +37,21 @@
         "i32",
         "i32",
         "i32",
+        "i32"
+      ],
+      "results": []
+    },
+    "unhandled_exception": {
+      "params": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "results": []
+    },
+    "cxx_throw": {
+      "params": [
         "i32"
       ],
       "results": []
@@ -95,6 +110,12 @@
         "i32"
       ],
       "results": []
+    },
+    "cs_pump": {
+      "params": [],
+      "results": [
+        "i32"
+      ]
     },
     "resolve_ordinal": {
       "params": [
@@ -174,6 +195,13 @@
         "i32",
         "i32",
         "i32",
+        "i32",
+        "i32"
+      ],
+      "results": []
+    },
+    "set_window_zorder": {
+      "params": [
         "i32",
         "i32"
       ],
@@ -297,6 +325,17 @@
     "menu_append": {
       "params": [
         "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
+    "menu_remove": {
+      "params": [
         "i32",
         "i32",
         "i32",
@@ -564,11 +603,43 @@
       ],
       "results": []
     },
+    "da_image_resolve": {
+      "params": [
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
+    "da_image_blit": {
+      "params": [
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
     "ctrl_paint_trace": {
       "params": [
         "i32",
         "i32",
         "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "results": []
+    },
+    "erase_trace": {
+      "params": [
         "i32",
         "i32",
         "i32",
@@ -1297,6 +1368,15 @@
         "i32"
       ]
     },
+    "fs_flush_view": {
+      "params": [
+        "i32",
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
     "fs_filetime_to_systemtime": {
       "params": [
         "i32",
@@ -1326,6 +1406,25 @@
         "i32"
       ]
     },
+    "com_register_class_object": {
+      "params": [
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
+    "com_revoke_class_object": {
+      "params": [
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
     "com_get_pending_dll": {
       "params": [],
       "results": [
@@ -1337,6 +1436,14 @@
         "i32",
         "i32",
         "i32",
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
+    "duplicate_current_thread": {
+      "params": [
         "i32"
       ],
       "results": [
@@ -1624,6 +1731,14 @@
         "i32"
       ]
     },
+    "voice_is_playing": {
+      "params": [
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
     "voice_set_volume_linear": {
       "params": [
         "i32",
@@ -1651,6 +1766,25 @@
         "i32"
       ],
       "results": []
+    },
+    "voice_3d_set": {
+      "params": [
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "results": []
+    },
+    "voice_3d_get": {
+      "params": [
+        "i32",
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
     },
     "net_frame_send": {
       "params": [

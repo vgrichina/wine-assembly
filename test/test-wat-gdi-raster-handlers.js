@@ -81,6 +81,31 @@ const { bootRenderHarness } = require('./render-helper');
     assert.strictEqual(packed(dst, 0, 0), 0);
   });
 
+  check('stock DKGRAY_BRUSH realizes as the native low-color checker', () => {
+    const surface = makeDib(4, 4);
+    const darkGray = 0x30013;
+    assert.deepStrictEqual([
+      wat.test_gdi_brush_sample(surface.hdc, darkGray, 0, 0) >>> 0,
+      wat.test_gdi_brush_sample(surface.hdc, darkGray, 1, 0) >>> 0,
+      wat.test_gdi_brush_sample(surface.hdc, darkGray, 0, 1) >>> 0,
+      wat.test_gdi_brush_sample(surface.hdc, darkGray, 1, 1) >>> 0,
+    ], [0x000000, 0x808080, 0x808080, 0x000000]);
+    wat.test_call_SelectObject(surface.hdc, darkGray);
+    assert.strictEqual(wat.test_call_PatBlt(
+      surface.hdc, 0, 0, 4, 4, 0x00F00021), 1);
+    assert.deepStrictEqual([
+      packed(surface, 0, 0), packed(surface, 1, 0),
+      packed(surface, 0, 1), packed(surface, 1, 1),
+    ], [0x000000, 0x808080, 0x808080, 0x000000]);
+    assert.strictEqual(canvasRgb(surface, 1, 0), 0x808080);
+
+    wat.test_call_SetBrushOrgEx(surface.hdc, 1, 0, 0);
+    assert.strictEqual(
+      wat.test_gdi_brush_sample(surface.hdc, darkGray, 0, 0) >>> 0,
+      0x808080,
+      'the realized checker must honor the DC brush origin');
+  });
+
   check('PatBlt samples hatch brushes per pixel and honors brush origin', () => {
     const surface = makeDib(10, 4);
     const hatch = wat.test_call_CreateHatchBrush(1, 0x000000FF) >>> 0;
@@ -383,6 +408,101 @@ const { bootRenderHarness } = require('./render-helper');
       target.hdc, 0, 0, 2, 1, sprite.hdc, 0, 0, 0x00660046), 1); // SRCINVERT
     assert.deepStrictEqual([packed(target, 0, 0), packed(target, 1, 0)], [
       0xC0C0C0, 0x00FF00,
+    ]);
+  });
+
+  check('indexed color-to-mono BitBlt maps the source background through its palette', () => {
+    const imageBase = wat.get_image_base() >>> 0;
+    const bmiGa = wat.guest_alloc(40 + 16 * 4) >>> 0;
+    const bitsOutGa = wat.guest_alloc(4) >>> 0;
+    const bmiWa = 0x12000 + (bmiGa - imageBase);
+    bytes.fill(0, bmiWa, bmiWa + 40 + 16 * 4);
+    wat.guest_write32(bmiGa, 40);
+    wat.guest_write32(bmiGa + 4, 2);
+    wat.guest_write32(bmiGa + 8, -1);
+    wat.guest_write16(bmiGa + 12, 1);
+    wat.guest_write16(bmiGa + 14, 4);
+    wat.guest_write32(bmiGa + 32, 16);
+    // Media Player's RT_BITMAP 101 uses index 8 for COLOR_BTNFACE and index 0
+    // for its glyphs.
+    bytes.set([0xC0, 0xC0, 0xC0, 0], bmiWa + 40 + 8 * 4);
+    const bitmap = wat.test_call_CreateDIBSection(0, bmiGa, bitsOutGa) >>> 0;
+    const bitsGa = wat.guest_read32(bitsOutGa) >>> 0;
+    const bitsWa = 0x1C000000 + (bitsGa - 0x50000000);
+    const indexed = wat.test_call_CreateCompatibleDC(0) >>> 0;
+    assert(bitmap && indexed && bitsGa);
+    wat.test_call_SelectObject(indexed, bitmap);
+    bytes[bitsWa] = 0x80; // gray palette index 8, then black palette index 0
+    wat.test_gdi_dc_set_field(indexed, 24, 0x00C0C0C0, 0xFFFFFF);
+
+    // Native comctl32 temporarily installs a one-hot mask palette before
+    // copying the indexed DIB into a monochrome DDB. COLOR_BTNFACE is no
+    // longer present exactly, so GDI maps it to the nearest entry (white,
+    // index 8) and compares source indexes rather than resolved RGB values.
+    const maskPaletteGa = wat.guest_alloc(16 * 4) >>> 0;
+    const maskPaletteWa = 0x12000 + (maskPaletteGa - imageBase);
+    bytes.fill(0, maskPaletteWa, maskPaletteWa + 16 * 4);
+    bytes.set([0xFF, 0xFF, 0xFF, 0], maskPaletteWa + 8 * 4);
+    assert.strictEqual(wat.test_gdi_set_dib_color_table(
+      indexed, 0, 16, maskPaletteWa), 16);
+
+    const maskBitmap = wat.test_call_CreateBitmap(2, 1, 1, 1, 0) >>> 0;
+    const mask = wat.test_call_CreateCompatibleDC(0) >>> 0;
+    wat.test_call_SelectObject(mask, maskBitmap);
+    assert.strictEqual(wat.test_call_BitBlt(
+      mask, 0, 0, 2, 1, indexed, 0, 0, 0x00CC0020), 1);
+
+    const target = makeDib(2, 1);
+    wat.test_gdi_dc_set_field(target.hdc, 20, 0x000000FF, 0); // red
+    wat.test_gdi_dc_set_field(target.hdc, 24, 0x0000FF00, 0xFFFFFF); // green
+    assert.strictEqual(wat.test_call_BitBlt(
+      target.hdc, 0, 0, 2, 1, mask, 0, 0, 0x00CC0020), 1);
+    assert.deepStrictEqual([packed(target, 0, 0), packed(target, 1, 0)], [
+      0x00FF00, 0xFF0000,
+    ]);
+  });
+
+  check('native ImageList disabled emboss sequence preserves the glyph mask', () => {
+    const color = makeDib(3, 1);
+    wat.test_call_SetPixel(color.hdc, 0, 0, 0x00C0C0C0);
+    wat.test_call_SetPixel(color.hdc, 1, 0, 0x00000000);
+    wat.test_call_SetPixel(color.hdc, 2, 0, 0x00C0C0C0);
+    wat.test_gdi_dc_set_field(color.hdc, 24, 0x00C0C0C0, 0xFFFFFF);
+
+    const maskBitmap = wat.test_call_CreateBitmap(3, 1, 1, 1, 0) >>> 0;
+    const mask = wat.test_call_CreateCompatibleDC(0) >>> 0;
+    wat.test_call_SelectObject(mask, maskBitmap);
+    assert.strictEqual(wat.test_call_BitBlt(
+      mask, 0, 0, 3, 1, color.hdc, 0, 0, 0x00CC0020), 1);
+
+    const temp = makeDib(3, 1);
+    wat.test_gdi_dc_set_field(temp.hdc, 20, 0x00000000, 0);
+    wat.test_gdi_dc_set_field(temp.hdc, 24, 0x00FFFFFF, 0xFFFFFF);
+    const white = wat.test_call_CreateSolidBrush(0x00FFFFFF) >>> 0;
+    wat.test_call_SelectObject(temp.hdc, white);
+    wat.test_call_PatBlt(temp.hdc, 0, 0, 3, 1, 0x00F00021);
+    wat.test_call_BitBlt(temp.hdc, 0, 0, 3, 1, color.hdc, 0, 0, 0x00CC0020);
+    wat.test_gdi_dc_set_field(mask, 24, 0x00FFFFFF, 0xFFFFFF);
+    wat.test_call_BitBlt(temp.hdc, 0, 0, 3, 1, mask, 0, 0, 0x00EE0086);
+    assert.deepStrictEqual([0, 1, 2].map(x => packed(temp, x, 0)), [
+      0xFFFFFF, 0x000000, 0xFFFFFF,
+    ]);
+
+    const target = makeDib(5, 2);
+    const face = wat.test_call_CreateSolidBrush(0x00C0C0C0) >>> 0;
+    wat.test_call_SelectObject(target.hdc, face);
+    wat.test_call_PatBlt(target.hdc, 0, 0, 5, 2, 0x00F00021);
+    const highlight = wat.test_call_CreateSolidBrush(0x00FFFFFF) >>> 0;
+    wat.test_call_SelectObject(target.hdc, highlight);
+    wat.test_call_BitBlt(target.hdc, 1, 1, 3, 1, temp.hdc, 0, 0, 0x00B8074A);
+    const shadow = wat.test_call_CreateSolidBrush(0x00808080) >>> 0;
+    wat.test_call_SelectObject(target.hdc, shadow);
+    wat.test_call_BitBlt(target.hdc, 0, 0, 3, 1, temp.hdc, 0, 0, 0x00B8074A);
+    assert.deepStrictEqual([0, 1, 2, 3].map(x => packed(target, x, 0)), [
+      0xC0C0C0, 0x808080, 0xC0C0C0, 0xC0C0C0,
+    ]);
+    assert.deepStrictEqual([0, 1, 2, 3].map(x => packed(target, x, 1)), [
+      0xC0C0C0, 0xC0C0C0, 0xFFFFFF, 0xC0C0C0,
     ]);
   });
 
@@ -843,6 +963,53 @@ const { bootRenderHarness } = require('./render-helper');
 
     // Pinball uses this relation for its 600x416 back buffer:
     // ySrc = biHeight - yDest - SrcHeight.
+    assert.strictEqual(wat.test_gdi_stretch_dibits(
+      surface.hdc, 0, 0, 2, 1, 0, 3, 2, 1,
+      bitsWa, bmiWa, 0, 0x00CC0020), 1);
+    assert.strictEqual(wat.test_gdi_stretch_dibits(
+      surface.hdc, 0, 1, 2, 2, 0, 1, 2, 2,
+      bitsWa, bmiWa, 0, 0x00CC0020), 2);
+    assert.strictEqual(wat.test_gdi_stretch_dibits(
+      surface.hdc, 0, 3, 2, 1, 0, 0, 2, 1,
+      bitsWa, bmiWa, 0, 0x00CC0020), 1);
+    assert.deepStrictEqual([0, 1, 2, 3].map(y => packed(surface, 0, y)), [
+      0xFF0000,
+      0x00FF00,
+      0xFFFF00,
+      0x0000FF,
+    ]);
+  });
+
+  check('StretchDIBits counts a top-down source rectangle from the lower left too', () => {
+    const surface = makeDib(2, 4);
+    const bmiGa = wat.guest_alloc(40) >>> 0;
+    const bitsGa = wat.guest_alloc(48) >>> 0;
+    const imageBase = wat.get_image_base() >>> 0;
+    const bmiWa = 0x12000 + (bmiGa - imageBase);
+    const bitsWa = 0x12000 + (bitsGa - imageBase);
+    wat.guest_write32(bmiGa, 40);
+    wat.guest_write32(bmiGa + 4, 2);
+    wat.guest_write32(bmiGa + 8, -4);
+    wat.guest_write16(bmiGa + 12, 1);
+    wat.guest_write16(bmiGa + 14, 24);
+    wat.guest_write32(bmiGa + 16, 0);
+    // biHeight's sign says how the scanlines are STORED, not where the source
+    // rectangle is measured from — that stays the lower-left corner. So these
+    // physical rows are already in display order, and ySrc still counts up
+    // from the bottom: ySrc = biHeightAbs - yDest - SrcHeight, the same
+    // relation the bottom-up case above uses.
+    //
+    // RollerCoaster Tycoon windowed is the real-world case: it draws into the
+    // top of a 1024x-768 buffer and presents with ySrc = 768 - 479. Reading
+    // that literally sampled 289 rows below the frame — a black client area
+    // with only the top of the picture in it.
+    bytes.set([
+      0, 0, 255, 0, 0, 255, 0, 0,
+      0, 255, 0, 0, 255, 0, 0, 0,
+      0, 255, 255, 0, 255, 255, 0, 0,
+      255, 0, 0, 255, 0, 0, 0, 0,
+    ], bitsWa);
+
     assert.strictEqual(wat.test_gdi_stretch_dibits(
       surface.hdc, 0, 0, 2, 1, 0, 3, 2, 1,
       bitsWa, bmiWa, 0, 0x00CC0020), 1);

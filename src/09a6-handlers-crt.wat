@@ -517,6 +517,35 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
+  ;; _fullpath(absPath, relPath, maxLength) — cdecl. The VFS owns DOS drive,
+  ;; root-relative, current-directory, and dot-component normalization, so use
+  ;; the same resolver as GetFullPathNameA. A NULL destination asks the CRT to
+  ;; allocate the result buffer.
+  (func $handle__fullpath (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $buf i32) (local $cap i32) (local $len i32) (local $owned i32)
+    (local.set $cap (local.get $arg2))
+    (if (i32.le_s (local.get $cap) (i32.const 0))
+      (then (local.set $cap (i32.const 260))))
+    (local.set $buf (local.get $arg0))
+    (if (i32.eqz (local.get $buf))
+      (then
+        (local.set $buf (call $heap_alloc (local.get $cap)))
+        (local.set $owned (i32.const 1))))
+    (if (i32.and (i32.ne (local.get $buf) (i32.const 0))
+                 (i32.ne (local.get $arg1) (i32.const 0)))
+      (then
+        (local.set $len (call $host_fs_get_full_path_name
+          (call $g2w (local.get $arg1)) (local.get $cap) (local.get $buf)
+          (i32.const 0) (i32.const 0)))))
+    (if (i32.or (i32.eqz (local.get $len))
+                (i32.ge_u (local.get $len) (local.get $cap)))
+      (then
+        (if (local.get $owned) (then (call $heap_free (local.get $buf))))
+        (global.set $eax (i32.const 0)))
+      (else (global.set $eax (local.get $buf))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
   (func $handle__itoa (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $crt_itoa (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
@@ -924,14 +953,30 @@
 
   ;; 734: _strlwr(str) — cdecl, lowercase string in-place
   (func $handle__strlwr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32) (local $ch i32)
-    (local.set $wa (call $g2w (local.get $arg0)))
+    (local $guest i32) (local $ch i32)
+    (local.set $guest (local.get $arg0))
     (block $d (loop $l
-      (local.set $ch (i32.load8_u (local.get $wa)))
+      (local.set $ch (call $gl8 (local.get $guest)))
       (br_if $d (i32.eqz (local.get $ch)))
       (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x41)) (i32.le_u (local.get $ch) (i32.const 0x5A)))
-        (then (i32.store8 (local.get $wa) (i32.or (local.get $ch) (i32.const 0x20)))))
-      (local.set $wa (i32.add (local.get $wa) (i32.const 1))) (br $l)))
+        (then (call $gs8 (local.get $guest) (i32.or (local.get $ch) (i32.const 0x20)))))
+      (local.set $guest (i32.add (local.get $guest) (i32.const 1))) (br $l)))
+    (global.set $eax (local.get $arg0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  ;; _strupr(str) — cdecl, uppercase ASCII string in-place. Storm uses this
+  ;; during DllMain to normalize its app-local search path.
+  (func $handle__strupr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $guest i32) (local $ch i32)
+    (local.set $guest (local.get $arg0))
+    (block $d (loop $l
+      (local.set $ch (call $gl8 (local.get $guest)))
+      (br_if $d (i32.eqz (local.get $ch)))
+      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x61)) (i32.le_u (local.get $ch) (i32.const 0x7A)))
+        (then (call $gs8 (local.get $guest) (i32.sub (local.get $ch) (i32.const 0x20)))))
+      (local.set $guest (i32.add (local.get $guest) (i32.const 1)))
+      (br $l)))
     (global.set $eax (local.get $arg0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
@@ -985,6 +1030,90 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
         (return)))
     (call $bsearch_probe)
+  )
+
+  ;; qsort(base, nmemb, size, compar) — cdecl. A callback-driven adjacent sort
+  ;; is intentionally simple but complete; the guest comparator defines the
+  ;; ordering, and byte swaps remain correct when an element crosses sparse
+  ;; guest-page backing boundaries.
+  (func $qsort_finish
+    (global.set $eax (i32.const 0))
+    (global.set $eip (global.get $qsort_ret))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  (func $qsort_probe
+    (local $limit i32) (local $left i32) (local $right i32)
+    (if (i32.or
+          (i32.or (i32.lt_u (global.get $qsort_count) (i32.const 2))
+                  (i32.eqz (global.get $qsort_size)))
+          (i32.eqz (global.get $qsort_compar)))
+      (then (call $qsort_finish) (return)))
+    (if (i32.ge_u (global.get $qsort_pass)
+                   (i32.sub (global.get $qsort_count) (i32.const 1)))
+      (then (call $qsort_finish) (return)))
+    (local.set $limit
+      (i32.sub (global.get $qsort_count) (global.get $qsort_pass)))
+    (if (i32.ge_u (i32.add (global.get $qsort_index) (i32.const 1))
+                   (local.get $limit))
+      (then
+        (global.set $qsort_pass (i32.add (global.get $qsort_pass) (i32.const 1)))
+        (global.set $qsort_index (i32.const 0))
+        (call $qsort_probe)
+        (return)))
+    (local.set $left (i32.add (global.get $qsort_base)
+      (i32.mul (global.get $qsort_index) (global.get $qsort_size))))
+    (local.set $right (i32.add (local.get $left) (global.get $qsort_size)))
+    ;; compar(left, right), cdecl: push right-to-left and leave its two args
+    ;; for CACA002D to discard after the callback's plain RET.
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $right))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $left))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $qsort_thunk))
+    (global.set $eip (global.get $qsort_compar))
+    (global.set $steps (i32.const 0))
+  )
+
+  (func $qsort_continue
+    (local $left i32) (local $right i32) (local $i i32) (local $byte i32)
+    ;; The comparator's RET consumed the thunk; discard its cdecl arguments.
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    (if (i32.gt_s (global.get $eax) (i32.const 0))
+      (then
+        (local.set $left (i32.add (global.get $qsort_base)
+          (i32.mul (global.get $qsort_index) (global.get $qsort_size))))
+        (local.set $right (i32.add (local.get $left) (global.get $qsort_size)))
+        (block $done (loop $swap
+          (br_if $done (i32.ge_u (local.get $i) (global.get $qsort_size)))
+          (local.set $byte (call $gl8 (i32.add (local.get $left) (local.get $i))))
+          (call $gs8 (i32.add (local.get $left) (local.get $i))
+            (call $gl8 (i32.add (local.get $right) (local.get $i))))
+          (call $gs8 (i32.add (local.get $right) (local.get $i)) (local.get $byte))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $swap)))))
+    (global.set $qsort_index (i32.add (global.get $qsort_index) (i32.const 1)))
+    (call $qsort_probe)
+  )
+
+  (func $handle_qsort (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.or
+          (i32.or (i32.lt_u (local.get $arg1) (i32.const 2))
+                  (i32.eqz (local.get $arg2)))
+          (i32.eqz (local.get $arg3)))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+        (return)))
+    (global.set $qsort_ret (call $gl32 (global.get $esp)))
+    (global.set $qsort_base (local.get $arg0))
+    (global.set $qsort_count (local.get $arg1))
+    (global.set $qsort_size (local.get $arg2))
+    (global.set $qsort_compar (local.get $arg3))
+    (global.set $qsort_pass (i32.const 0))
+    (global.set $qsort_index (i32.const 0))
+    (call $qsort_probe)
   )
 
   ;; IsEqualGUID(rguid1, rguid2) — compare all 16 bytes of the two GUIDs.

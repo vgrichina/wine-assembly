@@ -6,7 +6,7 @@ const assert = require('assert');
 // module-level helper the class calls, so the day filesystem.js grew an
 // entrySize() helper these tests started failing with "entrySize is not
 // defined" against working code. Require the module.
-const { VirtualFS } = require('../lib/filesystem');
+const { VirtualFS, createFilesystemImports } = require('../lib/filesystem');
 
 function makeVFS(files) {
   const vfs = new VirtualFS();
@@ -55,6 +55,15 @@ test('basename fallback finds file by name on wrong drive', () => {
   assert.strictEqual(r.entry.name, 'demoopen.ddv');
 });
 
+test('exact lookup in an existing directory does not find a nested basename', () => {
+  const vfs = makeVFS({
+    'c:\\windows\\temp\\_istmp0.dir\\isuninst.exe': 314880,
+  });
+  vfs.dirs.add('c:\\windows\\temp\\_istmp0.dir');
+  const r = vfs.findFirstFile('C:\\WINDOWS\\IsUninst.exe');
+  assert(!r.handle, 'FindFirstFile must not recurse below an existing directory');
+});
+
 test('wildcard *.ddv finds only .ddv files', () => {
   const vfs = makeVFS({ 'c:\\a.ddv': 1, 'c:\\b.txt': 2, 'c:\\c.ddv': 3 });
   const r = vfs.findFirstFile('.\\*.ddv');
@@ -76,6 +85,12 @@ test('relative missing subdir wildcard falls back to current directory', () => {
   let next;
   while ((next = vfs.findNextFile(r.handle))) names.push(next.name);
   assert.deepStrictEqual(names, ['armies_1.cpn', 'reigno_1.cpn']);
+});
+
+test('broad wildcard in a missing relative directory does not enumerate the root', () => {
+  const vfs = makeVFS({ 'c:\\game.exe': 1, 'c:\\readme.txt': 2 });
+  const r = vfs.findFirstFile('palettes\\*');
+  assert(!r.handle, 'a missing palettes directory must not expose root entries');
 });
 
 test('absolute missing subdir wildcard does not use flat fallback', () => {
@@ -147,6 +162,23 @@ test('setCurrentDirectory normalizes trailing backslash', () => {
   assert.strictEqual(vfs.getCurrentDirectory(), 'c:\\game\\');
   vfs.setCurrentDirectory('C:\\');
   assert.strictEqual(vfs.getCurrentDirectory(), 'c:\\');
+});
+
+test('SearchPath finds an installed DLL in the Win98 system directory', () => {
+  const memory = new ArrayBuffer(0x1000);
+  const bytes = new Uint8Array(memory);
+  const writeA = (addr, value) => {
+    for (let i = 0; i < value.length; i++) bytes[addr + i] = value.charCodeAt(i);
+    bytes[addr + value.length] = 0;
+  };
+  const vfs = makeVFS({ 'c:\\windows\\system\\shell32.dll': 64 });
+  const imports = createFilesystemImports({ vfs, getMemory: () => memory });
+  writeA(0x100, 'shell32.dll');
+  assert.strictEqual(imports.fs_search_path(0, 0x100, 0, 260, 0x200, 0, 0), 29);
+  assert.strictEqual(
+    Buffer.from(bytes.subarray(0x200, 0x200 + 29)).toString('latin1').toLowerCase(),
+    'c:\\windows\\system\\shell32.dll'
+  );
 });
 
 // --- AbeDemo specific scenario ---

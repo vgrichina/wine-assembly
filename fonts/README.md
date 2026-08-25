@@ -32,13 +32,13 @@ this whole path exists to avoid.
 
 ## Faces with no vendored look-alike
 
-Win98 shipped six scalable faces we have no open look-alike for: Verdana,
-Comic Sans MS, Impact, Lucida Console, Lucida Sans Unicode and Microsoft Sans
-Serif. Each still has an entry in `substitutions.json` mapping it to the
+Win98 shipped five scalable faces we have no open look-alike for: Verdana,
+Impact, Lucida Console, Lucida Sans Unicode and Microsoft Sans Serif. Each
+still has an entry in `substitutions.json` mapping it to the
 filename a real `C:\WINDOWS\FONTS` held, mounted from the closest family we
 already vendor — Liberation Sans for the proportional ones, Liberation Mono
 for Lucida Console. They are Tier 3: the metrics are not Win98's and, for
-Comic Sans MS and Impact, neither are the shapes.
+Impact, neither are the shapes.
 
 They are not enumerated. `EnumFontFamilies` lists what is installed, and a
 Win98 machine without these fonts did not list them; claiming them would also
@@ -52,8 +52,7 @@ a file of its own. A user who owns the Microsoft font can put `VERDANA.TTF`
 into the guest's `C:\WINDOWS\FONTS` and it will answer instead — a real font
 installed at the path GDI would have opened, which is exactly how Windows
 worked. The note on each entry records which open font would be the closer
-substitute to vendor if it ever matters: Comic Relief for Comic Sans MS
-(pending a GPL+FE licence review) and Anton for Impact.
+substitute to vendor if it ever matters, currently Anton for Impact.
 
 A face name that appears in no table at all resolves to the default face
 rather than to nothing, so a guest can never name a font that draws no text.
@@ -140,30 +139,35 @@ advance widths, different outlines — so guest layout math stays correct:
 | Arial | `liberation/LiberationSans-*.ttf` | SIL OFL 1.1 |
 | Times New Roman | `liberation/LiberationSerif-*.ttf` | SIL OFL 1.1 |
 | Courier New | `liberation/LiberationMono-*.ttf` | SIL OFL 1.1 |
+| Comic Sans MS | `comic-relief/ComicRelief-*.ttf` | SIL OFL 1.1 |
 
-All four styles (Regular, Bold, Italic, BoldItalic) are present for each family,
-so no synthetic emboldening or obliquing is needed. Source release tarball
+All four styles (Regular, Bold, Italic, BoldItalic) are present for each
+Liberation family, so no synthetic emboldening or obliquing is needed. Source release tarball
 `liberation-fonts-ttf-2.1.5.tar.gz`, SHA-256
 `7191c669bf38899f73a2094ed00f7b800553364f90e2637010a69c0e268f25d0`, downloaded
 2026-08-14; per-file hashes are reproducible from that archive. The license text
 is `liberation/LICENSE`.
 
+Comic Relief v1.210 is upstream's metric-compatible replacement for Comic
+Sans MS. The official release archive was downloaded 2026-08-22 with SHA-256
+`0df0b733ec0f37d96a841b2757a1a5756492d9b80adfa86d11300f4150bf4862`.
+The complete SIL OFL 1.1 text is in `comic-relief/OFL.txt`.
+
 Wine's own Win9x substitutes for Tahoma, Tahoma Bold, Small Fonts, Marlett,
 Symbol, Wingdings, and Webdings are pinned in `wine/` alongside the bitmap
 sources; see `wine/UPSTREAM.md` for hashes and caveats.
 
-Metric compatibility is a statement of upstream design intent until the v86
-Win98 reference comparison described in the design doc exists. It has not been
-measured in this repository yet.
+Metric compatibility is also checked against native Win98 application output;
+Klotski's FF_SCRIPT fallback is the first measured Comic Sans comparison.
 
 ## Deployed subsets
 
-The vendored TTFs above are 4.7 MB, all of which the browser would fetch before
+The vendored TTFs above are 4,803,932 bytes, all of which the browser would fetch before
 a guest could draw its first character. `tools/gen-font-subsets.sh` cuts each
 ANSI face to the Windows-1252 repertoire — the only codepoints
-`$tt_cp1252_to_unicode` can ask for — and drops hinting, since
-`docs/scalable-font-design.md` deliberately has no TrueType bytecode
-interpreter. That is 302 KB deployed instead of 4,577 KB.
+`$tt_cp1252_to_unicode` can ask for — and retains TrueType hinting so deployed
+glyphs take the same WAT hinting path as the full source fonts.
+That is 617,924 bytes deployed instead of 4,803,932 bytes.
 
 The four symbol faces are copied **verbatim**. They are addressed through the
 Microsoft `(3,0)` cmap with the `0xF000` bias, and subsetting them by codepoint
@@ -188,22 +192,24 @@ reproducible source, and are not deployed.
 
 | Runtime file | Bytes | SHA-256 |
 |---|---|---|
-| `LiberationMono-Bold.ttf` | 17,776 | `9412f3acea216a3899fd5cecb6733bb7674ca2f5cb728b667e1edf90bf5f713d` |
-| `LiberationMono-BoldItalic.ttf` | 18,796 | `3b0f02b007e241feec75128575f81ada171029cbe23a67f40659975007d32366` |
-| `LiberationMono-Italic.ttf` | 18,796 | `3a3c724c5d7747befe26cbe01e56d907ae2c95e9b9a68f1f607d7f0c81c32338` |
-| `LiberationMono-Regular.ttf` | 17,636 | `656b5ff9fe4dc8e1e738573ab62a0bdfb79693a49d13a26820c14da2726950a0` |
-| `LiberationSans-Bold.ttf` | 18,344 | `8faceadd14e4aedc30b50f01deefe4f514faefa2697888b0c6f974d740ffad91` |
-| `LiberationSans-BoldItalic.ttf` | 19,088 | `b5a6dd30998f2706ba31b71ec25d2a7ed69e9d4d26194d915db5d48c30035139` |
-| `LiberationSans-Italic.ttf` | 18,988 | `e42a058e3af5110c5c16a7b45746923ff999c014eaf92c8154ff94a2827ea1dc` |
-| `LiberationSans-Regular.ttf` | 18,228 | `c6ec3a6ecba473216118ec094aba94b9e79d2f1fd0a8d3c167b5e77a50de10aa` |
-| `LiberationSerif-Bold.ttf` | 19,388 | `b4b4c5877b64959130847c9f78c27444e0697645bdfed97f4011a69efd6f2473` |
-| `LiberationSerif-BoldItalic.ttf` | 20,004 | `050e371b1c01b92adce36c029c4a68451070709de72bfccba9d4107cf783823c` |
-| `LiberationSerif-Italic.ttf` | 20,016 | `c097d63930b70a21c755bcd19d77311695693da304619a85dcda93830e508b3d` |
-| `LiberationSerif-Regular.ttf` | 19,256 | `0509a0fcc1e9fd0d25f11e277f68fd240a20e50385e7dbce4ae65339a05a16a6` |
+| `ComicRelief-Bold.ttf` | 27,616 | `418315433348d4c22069e8183164b03a2d242bd70a4f991a17afb15ac55528f7` |
+| `ComicRelief-Regular.ttf` | 22,776 | `03895913b5f3aa6ed3887b65a460d79d032f929408aa54b18b7272fe31983e00` |
+| `LiberationMono-Bold.ttf` | 34,148 | `b1342eb3319519ed3a9c8e5fd2f434572905773ef2df41f1274b737d385b7110` |
+| `LiberationMono-BoldItalic.ttf` | 30,408 | `a375703d0e2e24e92a21ccf6a94ba86d09ec64813b7a6d605849ac22009f6264` |
+| `LiberationMono-Italic.ttf` | 30,056 | `7fb459c1a1005354e5224cad4a82bc99ad17c19d58f7a8a16d371e7ea8b0d705` |
+| `LiberationMono-Regular.ttf` | 34,044 | `d7343a4c29424b95a3b0c2eeb8f0c93f2f8e8f53c343770f27c30d4fd372e9c7` |
+| `LiberationSans-Bold.ttf` | 40,984 | `73c84e92eb8e62a655704e32b674411ea691636cb64122d42d39f8a52823f253` |
+| `LiberationSans-BoldItalic.ttf` | 41,104 | `4e40b378a7f0ae604d03a04e5ba82cf06af9e9be9c7076cb3311eb0127f2fcd7` |
+| `LiberationSans-Italic.ttf` | 40,848 | `d6c28903b87bd89bfde52531e6e115ffa1927ae1fad8eb9fb4c29e787c1161e8` |
+| `LiberationSans-Regular.ttf` | 42,460 | `88285b035e7c0424d0dff4d5861d67013866fdd73c41a89e92eada8d72a20042` |
+| `LiberationSerif-Bold.ttf` | 45,140 | `cb268f2aba012bcf8eaebce71cf494ea0c70377d5f647f1843b6d7b8c972f85a` |
+| `LiberationSerif-BoldItalic.ttf` | 45,144 | `581b1e896db076dfe82377a28c71d59d18426f5070a966805370b08e43753893` |
+| `LiberationSerif-Italic.ttf` | 46,840 | `7ff206ea16b4b670e994ff4f2cec5117af9c7a463021203dacc9f3382ee63451` |
+| `LiberationSerif-Regular.ttf` | 52,440 | `eab2ab50aede4b588231fb88325f6213cc3de9732f5ea1cdf5cf1320187905a9` |
 | `marlett.ttf` | 6,136 | `1a9b951ca1815344050ae6158263991e2145918bc74ad65d82bc6ec4056a57d1` |
 | `symbol.ttf` | 26,028 | `d79da0fbd9a9f3cf806059bb1f2c9d7ce43dd9e3e4c7d4dcc5d9f2759b81196f` |
-| `tahoma.ttf` | 18,692 | `badded24db63cbbc65af1b98b31ed2cf66328e1fd4e346b3ad3d0de9b67c7b2d` |
-| `tahomabd.ttf` | 19,196 | `afbee425b5ac39c199432849690e32d42c65f628096c598f5c92e9a4ad60d6e9` |
+| `tahoma.ttf` | 18,712 | `b9a2f7d46e1e117106d36d2d8d12a0919a8e302d51b9e29c10a3c3010a8ec459` |
+| `tahomabd.ttf` | 19,216 | `6179a426c8f0b5c9c500abed8503e79004f759ac29eec4d28442c2f7d12182ab` |
 | `webdings.ttf` | 4,300 | `bbaf4df7911928cbb196fc48f1c7237f68aba2aec3e53c01761b89fdd038ac7a` |
 | `wingding.ttf` | 9,524 | `cf5784b53e365ecfad1661b8b23d133effa1d3b54fb7a51137c8a9548f0db08e` |
 

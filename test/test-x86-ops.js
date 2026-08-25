@@ -176,6 +176,24 @@ async function main() {
     bytesAt(scratchA, 10),
     [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x9c, 0x0d, 0x40]);
 
+  // VBRUN100 checks FXAM's C1 sign bit before evaluating a negative base.
+  // The condition-code mask is C3:C2:C1:C0 at status bits 14,10,9,8.
+  const fxamStatus = value => {
+    setFloat(scratch, value);
+    runCode([
+      0xDD, 0x05, ...le32(scratch), // fld qword ptr [scratch]
+      0xD9, 0xE5,                   // fxam
+      0xDF, 0xE0,                   // fnstsw ax
+      0xDD, 0xD8,                   // fstp st(0)
+    ]);
+    return e.get_eax() & 0x4700;
+  };
+  test('FXAM classifies positive normal', fxamStatus(10), 0x0400);
+  test('FXAM preserves negative-normal sign in C1', fxamStatus(-10), 0x0600);
+  test('FXAM classifies positive zero', fxamStatus(0), 0x4000);
+  test('FXAM preserves negative-zero sign in C1', fxamStatus(-0), 0x4200);
+  test('FXAM classifies positive infinity', fxamStatus(Infinity), 0x0500);
+
   // ================================================================
   // MUL dword [mem] — unsigned 32×32→64 multiply
   // ================================================================
@@ -476,6 +494,91 @@ async function main() {
   runCode([0x64, 0xA1, 0x00, 0x00, 0x00, 0x00]);
   test('addr16 moffs reads the same address as the 32-bit encoding',
     addr16Eax, e.get_eax());
+
+  // ================================================================
+  // Sized ALU with a memory operand — flags come from the operand width
+  // ================================================================
+  // The register forms mask the result to 8/16 bits before publishing flags;
+  // the memory forms used to hand the full 32-bit result to the lazy-flag
+  // machinery, so `add al,[edi]` never reported a carry out of the byte and
+  // reported ZF=0 for a result that was zero in AL. Each case below is chosen
+  // so the 32-bit answer and the sized answer disagree.
+  const flagBuf = imageBase + 0x8600;
+  const memByte = v => () => { e.set_edi(flagBuf); mem[g2w(flagBuf)] = v; };
+
+  runCode([
+    0xB0, 0xF0,             // mov al, 0xF0
+    0x02, 0x07,             // add al, [edi]
+    0x0F, 0x92, 0xC1,       // setc cl
+  ], memByte(0x34));
+  test('add al,[edi] result', e.get_eax() & 0xFF, 0x24);
+  test('add al,[edi] sets CF on a byte carry', e.get_ecx() & 0xFF, 1);
+
+  runCode([
+    0xB0, 0xF0,             // mov al, 0xF0
+    0x02, 0x07,             // add al, [edi]
+    0x0F, 0x94, 0xC1,       // setz cl
+  ], memByte(0x10));
+  test('add al,[edi] wrapping to zero sets ZF', e.get_ecx() & 0xFF, 1);
+
+  runCode([
+    0xB0, 0x7F,             // mov al, 0x7F
+    0x02, 0x07,             // add al, [edi]
+    0x0F, 0x90, 0xC1,       // seto cl
+  ], memByte(0x01));
+  test('add al,[edi] sets OF on signed byte overflow', e.get_ecx() & 0xFF, 1);
+
+  runCode([
+    0xB0, 0x20,             // mov al, 0x20
+    0x00, 0x07,             // add [edi], al
+    0x0F, 0x92, 0xC1,       // setc cl
+  ], memByte(0xF0));
+  test('add [edi],al stores the byte result', mem[g2w(flagBuf)], 0x10);
+  test('add [edi],al sets CF on a byte carry', e.get_ecx() & 0xFF, 1);
+
+  // A sign-extended imm8 must be compared as a byte, not as 0xFFFFFF80.
+  runCode([
+    0x80, 0x3F, 0x80,       // cmp byte [edi], 0x80
+    0x0F, 0x92, 0xC1,       // setc cl
+  ], memByte(0x90));
+  test('cmp byte [edi],0x80 compares within the byte', e.get_ecx() & 0xFF, 0);
+
+  // ADC's carry has to come out of the operand width: 0xFF + CF does not wrap
+  // 32 bits, which is the only wrap $do_alu32 could see.
+  runCode([
+    0xF9,                   // stc
+    0xB0, 0x10,             // mov al, 0x10
+    0x12, 0x07,             // adc al, [edi]
+    0x0F, 0x92, 0xC1,       // setc cl
+  ], memByte(0xFF));
+  test('adc al,[edi] result', e.get_eax() & 0xFF, 0x10);
+  test('adc al,[edi] sets CF when b+CF exceeds the byte', e.get_ecx() & 0xFF, 1);
+
+  runCode([
+    0xF9,                   // stc
+    0xB0, 0x00,             // mov al, 0
+    0x1A, 0x07,             // sbb al, [edi]
+    0x0F, 0x92, 0xC1,       // setc cl
+  ], memByte(0xFF));
+  test('sbb al,[edi] result', e.get_eax() & 0xFF, 0x00);
+  test('sbb al,[edi] sets CF when b+CF exceeds a', e.get_ecx() & 0xFF, 1);
+
+  runCode([
+    0x66, 0xB8, 0x00, 0xF0, // mov ax, 0xF000
+    0x66, 0x03, 0x07,       // add ax, [edi]
+    0x0F, 0x92, 0xC1,       // setc cl
+  ], () => { e.set_edi(flagBuf); dv.setUint16(g2w(flagBuf), 0x2000, true); });
+  test('add ax,[edi] result', e.get_eax() & 0xFFFF, 0x1000);
+  test('add ax,[edi] sets CF on a word carry', e.get_ecx() & 0xFF, 1);
+
+  runCode([
+    0xF9,                   // stc
+    0x66, 0xB8, 0x10, 0x00, // mov ax, 0x10
+    0x66, 0x13, 0x07,       // adc ax, [edi]
+    0x0F, 0x92, 0xC1,       // setc cl
+  ], () => { e.set_edi(flagBuf); dv.setUint16(g2w(flagBuf), 0xFFFF, true); });
+  test('adc ax,[edi] result', e.get_eax() & 0xFFFF, 0x0010);
+  test('adc ax,[edi] sets CF when b+CF exceeds the word', e.get_ecx() & 0xFF, 1);
 
   // ================================================================
   // Summary

@@ -43,7 +43,7 @@ console.log('$', [process.execPath, ...args].join(' ').replace(ROOT, '.'));
 const run = spawnSync(process.execPath, args, {
   cwd: ROOT,
   encoding: 'utf8',
-  timeout: 120000,
+  timeout: 30000,   // measures 1s
   maxBuffer: 32 * 1024 * 1024,
 });
 const output = `${run.stdout || ''}${run.stderr || ''}`;

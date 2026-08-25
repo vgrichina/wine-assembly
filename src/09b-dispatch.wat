@@ -212,7 +212,7 @@
         (global.set $steps (i32.const 0))
         (return)))
 
-    ;; CACA0026: Child CBT hook returned — now dispatch WM_CREATE synchronously
+    ;; CACA0026: Child CBT hook returned — now dispatch WM_NCCREATE synchronously
     ;; via the subclassed wndproc (MFC installed AfxWndProc via SetWindowLongA
     ;; during the CBT hook). Synchronous dispatch matters because
     ;; CREATESTRUCT.lpCreateParams is typically a CCreateContext* on the
@@ -221,7 +221,7 @@
     ;; attach. CACA0027 pops saved state and returns the hwnd to the caller.
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0026))
       (then
-        ;; Clear pending_child_create — WM_CREATE is now delivered synchronously.
+        ;; Clear pending_child_create — the full create chain is now synchronous.
         ;; (pending_child_size is kept; it flows through the message loop.)
         (global.set $pending_child_create (i32.const 0))
         ;; Push saved_size + saved_hwnd + saved_ret on stack for CACA0027.
@@ -241,7 +241,31 @@
         (call $gs32 (global.get $esp) (global.get $child_cbt_saved_hwnd))
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
         (call $gs32 (global.get $esp) (global.get $child_cbt_saved_ret))
-        ;; Push WndProc args: hwnd, WM_CREATE, 0, &CREATESTRUCT
+        ;; Push WndProc args: hwnd, WM_NCCREATE, 0, &CREATESTRUCT
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (i32.add (global.get $image_base) (i32.const 0x100)))
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (i32.const 0))
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (i32.const 0x0081))
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (global.get $child_cbt_saved_hwnd))
+        ;; Push CACA002E, which sends WM_CREATE then reaches CACA0027.
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (global.get $child_create_nccreate_ret_thunk))
+        ;; Jump to the child's (possibly-subclassed) wndproc
+        (global.set $eip (call $wnd_table_get (global.get $child_cbt_saved_hwnd)))
+        (if (i32.eqz (global.get $eip))
+          (then (global.set $eip (global.get $wndproc_addr))))
+        (global.set $steps (i32.const 0))
+        (return)))
+
+    ;; CACA002E: child WM_NCCREATE returned. The stack still contains
+    ;; saved_ret, saved_hwnd, saved_size; dispatch WM_CREATE and let CACA0027
+    ;; deliver the paired WM_SIZE before returning the HWND to CreateWindowEx.
+    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA002E))
+      (then
+        (local.set $arg0 (call $gl32 (i32.add (global.get $esp) (i32.const 4))))
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
         (call $gs32 (global.get $esp) (i32.add (global.get $image_base) (i32.const 0x100)))
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
@@ -249,12 +273,10 @@
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
         (call $gs32 (global.get $esp) (i32.const 0x0001))
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-        (call $gs32 (global.get $esp) (global.get $child_cbt_saved_hwnd))
-        ;; Push CACA0027 return thunk
+        (call $gs32 (global.get $esp) (local.get $arg0))
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
         (call $gs32 (global.get $esp) (global.get $child_create_ret_thunk))
-        ;; Jump to the child's (possibly-subclassed) wndproc
-        (global.set $eip (call $wnd_table_get (global.get $child_cbt_saved_hwnd)))
+        (global.set $eip (call $wnd_table_get (local.get $arg0)))
         (if (i32.eqz (global.get $eip))
           (then (global.set $eip (global.get $wndproc_addr))))
         (global.set $steps (i32.const 0))
@@ -348,7 +370,8 @@
         (global.set $eax (global.get $dialog_cbt_saved_hwnd))
         (return)))
 
-    ;; CBT hook continuation — hook returned, now dispatch WM_CREATE
+    ;; CBT hook continuation — hook returned, now dispatch WM_NCCREATE. The
+    ;; CACA0029 continuation follows with WM_CREATE using the same CREATESTRUCT.
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0002))
       (then
         ;; Push saved_hwnd and saved_ret below WndProc args (for CACA0001 to pop)
@@ -356,19 +379,18 @@
         (call $gs32 (global.get $esp) (global.get $createwnd_saved_hwnd))
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
         (call $gs32 (global.get $esp) (global.get $createwnd_saved_ret))
-        ;; Push WndProc args: hwnd, WM_CREATE, 0, &CREATESTRUCT
+        ;; Push WndProc args: hwnd, WM_NCCREATE, 0, &CREATESTRUCT
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
         (call $gs32 (global.get $esp) (i32.add (global.get $image_base) (i32.const 0x100)))
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
         (call $gs32 (global.get $esp) (i32.const 0))
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-        (call $gs32 (global.get $esp) (i32.const 0x0001))
+        (call $gs32 (global.get $esp) (i32.const 0x0081))
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
         (call $gs32 (global.get $esp) (global.get $createwnd_saved_hwnd))
-        ;; Push return thunk: WM_CREATE returns directly (CACA0001).
-        ;; Activation chain runs later from first ShowWindow.
+        ;; CACA0029 dispatches WM_CREATE, whose return then reaches CACA0001.
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-        (call $gs32 (global.get $esp) (global.get $createwnd_ret_thunk))
+        (call $gs32 (global.get $esp) (global.get $createwnd_nccreate_ret_thunk))
         ;; Get WndProc from window table (may have been updated by CBT hook)
         (global.set $eip (call $wnd_table_get (global.get $createwnd_saved_hwnd)))
         (if (i32.eqz (global.get $eip))
@@ -703,6 +725,12 @@
           (else (global.set $bsearch_low
             (i32.add (global.get $bsearch_mid) (i32.const 1)))))
         (call $bsearch_probe)
+        (return)))
+
+    ;; qsort comparator returned; swap if needed and schedule the next pair.
+    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA002D))
+      (then
+        (call $qsort_continue)
         (return)))
 
     ;; DirectDrawEnumerateA callback returned — set EAX=DD_OK and return to caller

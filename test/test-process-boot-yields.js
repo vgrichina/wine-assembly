@@ -9,7 +9,27 @@
 // the kind of bug that surfaces thousands of instructions later.
 
 const assert = require('assert');
-const { readGuestCString, handleLoadLibraryYield, handleComDllYield } = require('../lib/process-boot');
+const { mountLoadedDllFiles, stageAndLoadPe, readGuestCString,
+  handleLoadLibraryYield, handleComDllYield } = require('../lib/process-boot');
+
+function syntheticLargePe() {
+  const bytes = Buffer.alloc(0x300);
+  bytes.writeUInt16LE(0x5a4d, 0);
+  bytes.writeUInt32LE(0x80, 0x3c);
+  bytes.writeUInt32LE(0x00004550, 0x80);
+  bytes.writeUInt16LE(1, 0x86);
+  bytes.writeUInt16LE(0xe0, 0x94);
+  bytes.writeUInt32LE(0x1000, 0x80 + 40);
+  bytes.writeUInt32LE(0x400000, 0x80 + 52);
+  const section = 0x80 + 24 + 0xe0;
+  bytes.write('.rsrc\0\0\0', section, 'ascii');
+  bytes.writeUInt32LE(0x100, section + 8);
+  bytes.writeUInt32LE(0x1000, section + 12);
+  bytes.writeUInt32LE(0x100, section + 16);
+  bytes.writeUInt32LE(0x200, section + 20);
+  for (let i = 0x200; i < bytes.length; i++) bytes[i] = i & 0xff;
+  return bytes;
+}
 
 function fakeGuest(name, { nameGetter }) {
   const memory = new ArrayBuffer(0x20000);
@@ -31,6 +51,36 @@ function fakeGuest(name, { nameGetter }) {
 }
 
 (async () => {
+  const peBytes = syntheticLargePe();
+  const peMemory = new ArrayBuffer(0x5000);
+  const peMem = new Uint8Array(peMemory);
+  const peExports = {
+    get_staging: () => 0x100,
+    get_staging_size: () => 0x240,
+    get_guest_base: () => 0x2000,
+    load_pe: size => {
+      assert.strictEqual(size, 0x240);
+      assert.deepStrictEqual([...peMem.subarray(0x3040, 0x3080)], [...peBytes.subarray(0x240, 0x280)],
+        'section bytes beyond staging must exist before WAT processes imports/resources');
+      return 0x401000;
+    },
+  };
+  const stagedPe = stageAndLoadPe(peExports, peMemory, peBytes, () => {});
+  assert.strictEqual(stagedPe.entry, 0x401000);
+  assert.deepStrictEqual([...peMem.subarray(0x100, 0x140)], [...peBytes.subarray(0, 0x40)],
+    'the bounded staging prefix is still copied normally');
+  console.log('PASS  oversized PE section tails are prehydrated before WAT loading');
+
+  const dllVfs = { files: new Map() };
+  const stockShell = Uint8Array.of(0x4d, 0x5a, 0x90, 0);
+  assert.strictEqual(mountLoadedDllFiles(dllVfs, [
+    { name: 'SHELL32.DLL', bytes: stockShell },
+  ]), 1);
+  assert.strictEqual(dllVfs.files.get('c:\\shell32.dll').data, stockShell);
+  assert.strictEqual(dllVfs.files.get('c:\\windows\\system\\shell32.dll').data, stockShell,
+    'the file reopened by stock shell code must be the exact loaded PE bytes');
+  console.log('PASS  loaded DLL bytes remain visible in the Win98 system directory');
+
   const g = fakeGuest('C:\\Plugins\\in_mp3.dll', { nameGetter: 'get_loadlib_name' });
   assert.strictEqual(readGuestCString(g.memory, g.at), 'C:\\Plugins\\in_mp3.dll');
 

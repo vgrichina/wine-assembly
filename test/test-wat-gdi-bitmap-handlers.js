@@ -302,6 +302,13 @@ function readBitmapObject(wat, handle, wide = false) {
       'missing resources must not fabricate a placeholder bitmap');
   });
 
+  check('string-form #decimal resource IDs resolve like MAKEINTRESOURCE', () => {
+    const decimalName = rw.guest_alloc(5) >>> 0;
+    writeGuestBytes(rw, decimalName, [...Buffer.from('#101\0', 'ascii')]);
+    assert(rw.test_call_LoadBitmapA(0, decimalName) >>> 0,
+      '"#101" should resolve numeric RT_BITMAP id 101');
+  });
+
   console.log(`\n${passed}/${passed} checks passed`);
 })().catch(error => {
   console.error(error.stack || error);

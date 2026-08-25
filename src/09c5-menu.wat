@@ -42,6 +42,11 @@
   ;;   dropdown label inset  = 20 (from dropdown left)
   ;;   dropdown shortcut inset = 20 (from dropdown right)
 
+  ;; The fake LoadMenu handle keeps the most recent resource name as its
+  ;; stable identity. Named W calls need their original character width when
+  ;; SetMenu later resolves that opaque handle into RT_MENU bytes.
+  (global $last_load_menu_wide (mut i32) (i32.const 0))
+
   ;; --------- MENU_DATA_TABLE accessors ---------
 
   (func $menu_data_table_addr (param $slot i32) (result i32)
@@ -288,6 +293,66 @@
     (call $heap_free (local.get $hmenu))
     (i32.const 1))
 
+  ;; Remove one item from a WAT-owned popup. Return -1 when the handle is not
+  ;; dynamic so the caller can fall through to the host-owned CreateMenu tree;
+  ;; otherwise return the Win32 BOOL result. DeleteMenu passes $destroy=1 and
+  ;; owns a removed popup's submenu, whereas RemoveMenu leaves it alive.
+  (func $dynamic_menu_remove
+        (param $hmenu i32) (param $item i32) (param $by_position i32)
+        (param $destroy i32) (result i32)
+    (local $sw i32) (local $count i32) (local $idx i32)
+    (local $i i32) (local $dst i32) (local $src i32) (local $submenu i32)
+    (local.set $sw (call $dynamic_menu_state_w (local.get $hmenu)))
+    (if (i32.eqz (local.get $sw)) (then (return (i32.const -1))))
+    (local.set $count (i32.load offset=4 (local.get $sw)))
+    (local.set $idx
+      (if (result i32) (local.get $by_position)
+        (then (local.get $item))
+        (else (call $dynamic_menu_index_of_id (local.get $sw) (local.get $item)))))
+    (if (i32.or
+          (i32.lt_s (local.get $idx) (i32.const 0))
+          (i32.ge_u (local.get $idx) (local.get $count)))
+      (then (return (i32.const 0))))
+    (local.set $dst
+      (i32.add (local.get $sw)
+        (i32.add (i32.const 16) (i32.mul (local.get $idx) (i32.const 16)))))
+    (local.set $submenu (i32.load offset=12 (local.get $dst)))
+    (local.set $i (local.get $idx))
+    (block $done (loop $shift
+      (br_if $done
+        (i32.ge_u (i32.add (local.get $i) (i32.const 1)) (local.get $count)))
+      (local.set $src (i32.add (local.get $dst) (i32.const 16)))
+      (i32.store         (local.get $dst) (i32.load         (local.get $src)))
+      (i32.store offset=4  (local.get $dst) (i32.load offset=4  (local.get $src)))
+      (i32.store offset=8  (local.get $dst) (i32.load offset=8  (local.get $src)))
+      (i32.store offset=12 (local.get $dst) (i32.load offset=12 (local.get $src)))
+      (local.set $dst (local.get $src))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $shift)))
+    (call $zero_memory (local.get $dst) (i32.const 16))
+    (i32.store offset=4 (local.get $sw) (i32.sub (local.get $count) (i32.const 1)))
+    (if (i32.and
+          (i32.ne (local.get $destroy) (i32.const 0))
+          (i32.ne (local.get $submenu) (i32.const 0)))
+      (then
+        (if (i32.eqz (call $dynamic_menu_destroy (local.get $submenu)))
+          (then (drop (call $host_menu_destroy (local.get $submenu)))))))
+    (i32.const 1))
+
+  (func $menu_remove_item
+        (param $hmenu i32) (param $item i32) (param $flags i32)
+        (param $destroy i32) (result i32)
+    (local $result i32)
+    (local.set $result
+      (call $dynamic_menu_remove
+        (local.get $hmenu) (local.get $item)
+        (i32.ne (i32.and (local.get $flags) (i32.const 0x400)) (i32.const 0))
+        (local.get $destroy)))
+    (if (i32.ne (local.get $result) (i32.const -1))
+      (then (return (local.get $result))))
+    (call $host_menu_remove
+      (local.get $hmenu) (local.get $item) (local.get $flags) (local.get $destroy)))
+
   (func $hex_ascii (param $n i32) (result i32)
     (local.set $n (i32.and (local.get $n) (i32.const 0x0F)))
     (if (i32.lt_u (local.get $n) (i32.const 10))
@@ -458,7 +523,41 @@
     (call $memcpy
       (call $g2w (i32.add (local.get $newg) (i32.const 8)))
       (local.get $src_wa) (local.get $len))
-    (i32.store (local.get $tbl) (i32.add (local.get $newg) (i32.const 8))))
+    (i32.store (local.get $tbl) (i32.add (local.get $newg) (i32.const 8)))
+    ;; Host-built menus are serialized only after SetMenu has returned to the
+    ;; browser bridge. Recompute now that menu_bar_count can see the blob.
+    (call $defwndproc_do_nccalcsize (local.get $hwnd)))
+
+  ;; Host-created menu bars have no RT_MENU resource key, but GetMenu and the
+  ;; handle-based mutation APIs still need the CreateMenu handle as identity.
+  ;; Keep the ordinary three-argument menu_set for tests/tools and let the
+  ;; runtime bridge supply the source handle through this variant.
+  (func $menu_set_source (export "menu_set_source")
+        (param $hwnd i32) (param $src_wa i32) (param $len i32) (param $source i32)
+    (local $slot i32) (local $tbl i32) (local $old i32) (local $newg i32)
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.eq (local.get $slot) (i32.const -1)) (then (return)))
+    (local.set $tbl (call $menu_data_table_addr (local.get $slot)))
+    (local.set $old (i32.load (local.get $tbl)))
+    (if (local.get $old)
+      (then (call $heap_free (i32.sub (local.get $old) (i32.const 8)))))
+    (i32.store (local.get $tbl) (i32.const 0))
+    (if (i32.eqz (local.get $len)) (then (return)))
+    (local.set $newg (call $heap_alloc (i32.add (local.get $len) (i32.const 8))))
+    (i32.store (call $g2w (local.get $newg)) (local.get $source))
+    (i32.store offset=4 (call $g2w (local.get $newg)) (local.get $len))
+    (call $memcpy
+      (call $g2w (i32.add (local.get $newg) (i32.const 8)))
+      (local.get $src_wa) (local.get $len))
+    (i32.store (local.get $tbl) (i32.add (local.get $newg) (i32.const 8)))
+    (call $defwndproc_do_nccalcsize (local.get $hwnd)))
+
+  ;; Browser hosts do not carry a JS guest-address translator. Let them fill a
+  ;; temporary guest allocation through guest_write8 and translate it here.
+  (func (export "menu_set_source_guest")
+        (param $hwnd i32) (param $src_g i32) (param $len i32) (param $source i32)
+    (call $menu_set_source (local.get $hwnd) (call $g2w (local.get $src_g))
+      (local.get $len) (local.get $source)))
 
   ;; Drop a window's menu (called from $host_destroy_window path).
   (func (export "menu_clear") (param $hwnd i32)
@@ -2170,9 +2269,14 @@
     (local $slot i32) (local $tbl i32) (local $old i32)
     (local $entry i32) (local $bytes_g i32) (local $bytes_w i32)
     (local $size i32) (local $total i32) (local $newg i32)
-    (local $source_id i32)
+    (local $source_id i32) (local $from_last_load i32) (local $ctx_hinst i32)
     (local $version i32) (local $headerOffset i32) (local $items_w i32)
     (local.set $source_id (local.get $menu_id))
+    ;; Consume the one-shot class-menu module (see $class_menu_hinst). Taken
+    ;; here rather than at the resolve site so an early return below can't leave
+    ;; it armed for an unrelated later menu_load.
+    (local.set $ctx_hinst (global.get $class_menu_hinst))
+    (global.set $class_menu_hinst (i32.const 0))
     (local.set $slot (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $slot) (i32.const -1)) (then (return)))
     (local.set $tbl (call $menu_data_table_addr (local.get $slot)))
@@ -2190,6 +2294,8 @@
     (if (i32.eq (i32.and (local.get $menu_id) (i32.const 0xFFFF0000))
                 (i32.const 0x00BE0000))
       (then (local.set $menu_id (i32.and (local.get $menu_id) (i32.const 0xFFFF)))))
+    (local.set $from_last_load
+      (i32.eq (local.get $menu_id) (global.get $last_load_menu_id)))
     ;; Resolve resource bytes. An NE image keeps its menus in a flat resource
     ;; table with none of the PE tree, and stores the same MENUITEMTEMPLATE
     ;; with ANSI rather than UTF-16 labels — which is the whole difference, so
@@ -2197,19 +2303,53 @@
     (if (global.get $code16)
       (then
         (global.set $ml_char_stride (i32.const 1))
-        (local.set $bytes_w (call $win16_find_resource (i32.const 4) (local.get $menu_id)))
+        ;; A Win16 WNDCLASS.lpszMenuName is a far pointer, not the integer
+        ;; resource id Win32 commonly puts there. RegisterClass widens that
+        ;; pointer to its linear guest address before storing the shared
+        ;; WNDCLASSA. Treating the address as an id leaves class-owned named
+        ;; menus (Cruel/Golf use "CRUEL"/"GOLF") absent even though the
+        ;; RT_NAMETABLE maps each name to a real RT_MENU entry.
+        (if (i32.ge_u (local.get $menu_id) (i32.const 0x10000))
+          (then
+            (local.set $bytes_w (call $win16_find_resource_ex
+              (i32.const 4) (i32.const 0) (call $g2w (local.get $menu_id)))))
+          (else
+            (local.set $bytes_w (call $win16_find_resource
+              (i32.const 4) (local.get $menu_id)))))
         (if (i32.eqz (local.get $bytes_w)) (then (return)))
         (local.set $size (global.get $win16_res_len)))
       (else
         (global.set $ml_char_stride (i32.const 2))
-        (local.set $entry (call $find_resource (i32.const 4) (local.get $menu_id)))
-        (if (i32.eqz (local.get $entry)) (then (return)))
+        ;; LoadMenu can target a DLL and can carry a named ANSI/UTF-16 key.
+        ;; Resolve it in the module and character width captured by the most
+        ;; recent LoadMenuA/W call; direct class-menu pointers remain ANSI in
+        ;; the current executable as before.
+        (if (local.get $from_last_load)
+          (then (call $push_rsrc_ctx (global.get $last_load_menu_hinst)))
+          (else
+            (if (local.get $ctx_hinst)
+              (then (call $push_rsrc_ctx (local.get $ctx_hinst))))))
+        (local.set $entry
+          (if (result i32) (i32.and (local.get $from_last_load)
+                (global.get $last_load_menu_wide))
+            (then (call $find_resource_w (i32.const 4) (local.get $menu_id)))
+            (else (call $find_resource (i32.const 4) (local.get $menu_id)))))
+        ;; $entry and the RVA it points at are both relative to the module the
+        ;; lookup ran in, so the context has to stay pushed until the bytes are
+        ;; resolved — popping first silently re-based a DLL menu on the EXE.
+        (if (i32.eqz (local.get $entry))
+          (then
+            (if (i32.or (local.get $from_last_load) (i32.ne (local.get $ctx_hinst) (i32.const 0)))
+              (then (call $pop_rsrc_ctx)))
+            (return)))
         ;; data entry: i32 RVA, i32 size
         (local.set $bytes_g (i32.add (call $r_base)
                               (i32.load (call $g2w (i32.add (call $r_base) (local.get $entry))))))
         (local.set $size (i32.load (call $g2w (i32.add (call $r_base)
                                                         (i32.add (local.get $entry) (i32.const 4))))))
-        (local.set $bytes_w (call $g2w (local.get $bytes_g)))))
+        (local.set $bytes_w (call $g2w (local.get $bytes_g)))
+        (if (i32.or (local.get $from_last_load) (i32.ne (local.get $ctx_hinst) (i32.const 0)))
+          (then (call $pop_rsrc_ctx)))))
     (if (i32.lt_u (local.get $size) (i32.const 8)) (then (return)))
     (local.set $version (i32.load16_u (local.get $bytes_w)))
     (local.set $headerOffset (i32.load16_u (i32.add (local.get $bytes_w) (i32.const 2))))
@@ -3158,16 +3298,19 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 137: LoadMenuA(hInstance, lpMenuName) — 2 args stdcall
-  ;; Return menu resource ID as handle (host renderer resolves by ID)
+  ;; 137: LoadMenuA(hInstance, lpMenuName) — 2 args stdcall.
+  ;; Integer resources retain the compact tagged handle. A named resource uses
+  ;; its guest pointer as the opaque identity so SetMenu can resolve the same
+  ;; name instead of silently substituting ordinal 1.
   (func $handle_LoadMenuA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $last_load_menu_id (local.get $arg1))
+    (global.set $last_load_menu_hinst (local.get $arg0))
+    (global.set $last_load_menu_wide (i32.const 0))
     ;; If lpMenuName < 0x10000, it's MAKEINTRESOURCE (resource ID)
     (if (i32.lt_u (local.get $arg1) (i32.const 0x10000))
       (then
-        (global.set $last_load_menu_id (i32.and (local.get $arg1) (i32.const 0xFFFF)))
-        (global.set $last_load_menu_hinst (local.get $arg0))
         (global.set $eax (i32.or (local.get $arg1) (i32.const 0x00BE0000))))
-      (else (global.set $eax (i32.const 0x00BE0001))))
+      (else (global.set $eax (local.get $arg1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
@@ -3178,19 +3321,21 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
-  ;; 292: LoadMenuW — a menu is named by ordinal here (the menu itself comes
-  ;; from the PE resource), and an ordinal has no encoding, so this is
-  ;; LoadMenuA.
+  ;; 292: LoadMenuW — ordinals share the A path; named resources keep the
+  ;; pointer identity but select UTF-16 matching for the later SetMenu load.
   (func $handle_LoadMenuW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $handle_LoadMenuA (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+    (if (i32.ge_u (local.get $arg1) (i32.const 0x10000))
+      (then (global.set $last_load_menu_wide (i32.const 1))))
   )
 
-  ;; 407: RemoveMenu(hMenu, uPosition, uFlags) — return TRUE.
-  ;; AppendMenuA/InsertMenuA are no-ops in this build (the menu bar is parsed
-  ;; from the PE resource), so RemoveMenu has nothing real to remove either.
+  ;; 407: RemoveMenu(hMenu, uPosition, uFlags). Unlike DeleteMenu, a removed
+  ;; popup remains owned by the caller.
   (func $handle_RemoveMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (global.set $eax
+      (call $menu_remove_item
+        (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
@@ -3282,8 +3427,12 @@
 
   ;; InsertMenuA(hMenu, uPosition, uFlags, uIDNewItem, lpNewItem)
   ;; MF_BYPOSITION is 0x400; without it uPosition names the item to insert
-  ;; before by command id. Resource-backed menu blobs are not mutable yet, so
-  ;; those handles keep reporting success as they always have.
+  ;; before by command id. CreateMenu is host-backed (unlike CreatePopupMenu's
+  ;; MNUD table), and VB6 builds menu bars by repeatedly inserting at -1. Feed
+  ;; that append form into the existing host tree so SetMenu can serialize the
+  ;; completed hierarchy into WAT. Resource-backed menu blobs and non-tail
+  ;; host insertion are not mutable yet, so those cases retain the historical
+  ;; success/no-op result.
   (func $handle_InsertMenuA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $dyn i32)
     (local.set $dyn
@@ -3296,33 +3445,61 @@
         (if (result i32) (i32.and (local.get $arg2) (i32.const 0x10))
           (then (local.get $arg3))
           (else (i32.const 0)))))
-    (global.set $eax
-      (if (result i32) (i32.eq (local.get $dyn) (i32.const -1))
-        (then (i32.const 1))
-        (else (local.get $dyn))))
+    (if (i32.ne (local.get $dyn) (i32.const -1))
+      (then (global.set $eax (local.get $dyn)))
+      (else
+        (if (i32.and
+              (i32.ne (i32.and (local.get $arg2) (i32.const 0x400))
+                      (i32.const 0))
+              (i32.eq (local.get $arg1) (i32.const -1)))
+          (then
+            (global.set $eax (call $host_menu_append
+              (local.get $arg0) (local.get $arg2) (local.get $arg3)
+              (call $g2w (local.get $arg4)) (i32.const 0))))
+          (else (global.set $eax (i32.const 1))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
   ;; InsertMenuItemA/W(hMenu, uItem, fByPosition, lpmii)
-  (func $handle_InsertMenuItemA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  ;; Same host fallback as InsertMenuA: a menu bar from CreateMenu is host-backed,
+  ;; and Delphi/VB-style code fills it with repeated appends (uItem == -1). Without
+  ;; the fallback those items were dropped, so SetMenu serialized an empty tree and
+  ;; the window came up with no menu bar at all (tetravex).
+  (func $insert_menu_item_common (param $hmenu i32) (param $item i32) (param $bypos i32)
+                                 (param $mii i32) (param $wide i32) (result i32)
     (local $dyn i32) (local $flags i32)
-    (local.set $flags (call $menu_item_info_decode (local.get $arg3)))
+    (local.set $flags (call $menu_item_info_decode (local.get $mii)))
     (local.set $dyn
       (call $dynamic_menu_insert
-        (local.get $arg0)
-        (call $dynamic_menu_resolve_pos (local.get $arg0) (local.get $arg1) (local.get $arg2))
+        (local.get $hmenu)
+        (call $dynamic_menu_resolve_pos (local.get $hmenu) (local.get $item) (local.get $bypos))
         (local.get $flags) (global.get $mii_out_id) (global.get $mii_out_data)
         (global.get $mii_out_submenu)))
-    (global.set $eax
-      (if (result i32) (i32.eq (local.get $dyn) (i32.const -1))
-        (then (i32.const 1))
-        (else (local.get $dyn))))
+    (if (i32.ne (local.get $dyn) (i32.const -1))
+      (then (return (local.get $dyn))))
+    (if (i32.eq (local.get $item) (i32.const -1))
+      (then (return (call $host_menu_append
+        (local.get $hmenu) (local.get $flags)
+        ;; MF_POPUP: the host stores the submenu handle in the id slot.
+        (if (result i32) (global.get $mii_out_submenu)
+          (then (global.get $mii_out_submenu))
+          (else (global.get $mii_out_id)))
+        (if (result i32) (global.get $mii_out_data)
+          (then (call $g2w (global.get $mii_out_data)))
+          (else (i32.const 0)))
+        (local.get $wide)))))
+    (i32.const 1))
+
+  (func $handle_InsertMenuItemA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $insert_menu_item_common
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   (func $handle_InsertMenuItemW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_InsertMenuItemA (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+    (global.set $eax (call $insert_menu_item_common
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
   ;; ModifyMenuA(hMnu, uPosition, uFlags, uIDNewItem, lpNewItem) — return TRUE
@@ -3331,10 +3508,13 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
-  ;; 656: DeleteMenu — STUB: unimplemented
+  ;; 656: DeleteMenu(hMenu, uPosition, uFlags). Return FALSE when the requested
+  ;; item is absent; callers commonly clear a menu with
+  ;; `while (DeleteMenu(menu, 0, MF_BYPOSITION))`.
   (func $handle_DeleteMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; DeleteMenu(hMenu, uPosition, uFlags) — return TRUE
-    (global.set $eax (i32.const 1))
+    (global.set $eax
+      (call $menu_remove_item
+        (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 

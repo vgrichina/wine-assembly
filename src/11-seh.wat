@@ -79,6 +79,14 @@
 
   (func $raise_delphi_exception (param $code i32) (param $flags i32) (param $nargs i32) (param $args_ptr i32)
     (local $seh_rec i32) (local $rec i32) (local $i i32) (local $n i32)
+    ;; Name the thrown C++ type before the chain walk decides its fate. Once a
+    ;; frame accepts it the payload is gone, and the only trace left is the
+    ;; CRT's ExitProcess(0xE06D7363) -- a code that says "a C++ exception"
+    ;; and nothing about which one.
+    (if (i32.and
+          (i32.eq (local.get $code) (i32.const 0xe06d7363))
+          (i32.ge_u (local.get $nargs) (i32.const 3)))
+      (then (call $host_cxx_throw (local.get $args_ptr))))
     (local.set $seh_rec (call $gl32 (global.get $fs_base)))
     (if (i32.or
           (i32.eq (local.get $seh_rec) (i32.const 0xFFFFFFFF))

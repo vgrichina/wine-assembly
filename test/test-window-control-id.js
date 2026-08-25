@@ -36,6 +36,58 @@ const extraWat = String.raw`
     (global.set $esp (local.get $saved_esp))
     (global.get $eax))
 
+  (func (export "test_call_GetWindowLongA_hinstance")
+    (param $hwnd i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetWindowLongA
+      (local.get $hwnd) (i32.const -6) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+
+  (func (export "test_set_window_hinstance")
+    (param $hwnd i32) (param $hinstance i32)
+    (call $wnd_set_hinstance (local.get $hwnd) (local.get $hinstance)))
+
+  (func (export "test_call_SetWindowContextHelpId")
+    (param $hwnd i32) (param $help_id i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_SetWindowContextHelpId
+      (local.get $hwnd) (local.get $help_id) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+
+  (func (export "test_call_GetQueueStatus")
+    (param $flags i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetQueueStatus
+      (local.get $flags) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+
+  (func (export "test_set_post_queue_count") (param $count i32)
+    (global.set $post_queue_count (local.get $count)))
+
+  (func (export "test_default_paint_validates")
+    (param $hwnd i32) (result i32)
+    (local $saved_esp i32) (local $before i32)
+    (call $update_invalidate_rect
+      (local.get $hwnd) (i32.const 1) (i32.const 2)
+      (i32.const 30) (i32.const 40))
+    (local.set $before (call $update_get_rect (local.get $hwnd) (i32.const 0)))
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_DefWindowProcA
+      (local.get $hwnd) (i32.const 0x000F) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (i32.or (i32.shl (local.get $before) (i32.const 1))
+      (call $update_get_rect (local.get $hwnd) (i32.const 0))))
+
   (func (export "test_call_GetDlgItem_id")
     (param $parent i32) (param $id i32) (result i32)
     (local $saved_esp i32)
@@ -56,6 +108,21 @@ const extraWat = String.raw`
     'new child starts with its creation-time control ID');
   assert.strictEqual(e.test_call_GetWindowLongA_id(child), 100,
     'GetWindowLongA(GWL_ID) returns the creation-time control ID');
+  e.test_set_window_hinstance(child, 0x0058D000);
+  assert.strictEqual(e.test_call_GetWindowLongA_hinstance(child) >>> 0, 0x0058D000,
+    'GetWindowLongA(GWL_HINSTANCE) retains a DLL-owned window module');
+  assert.strictEqual(e.test_call_SetWindowContextHelpId(child, -1), 1,
+    'SetWindowContextHelpId accepts a valid framework-owned window');
+  assert.strictEqual(e.test_call_SetWindowContextHelpId(0x7FFFFFFF, -1), 0,
+    'SetWindowContextHelpId rejects an invalid window');
+  assert.strictEqual(e.test_call_GetQueueStatus(0x0040), 0,
+    'GetQueueStatus leaves unsupported QS_SENDMESSAGE clear');
+  e.test_set_post_queue_count(1);
+  assert.strictEqual(e.test_call_GetQueueStatus(0x0008) >>> 0, 0x00080000,
+    'GetQueueStatus reports queued QS_POSTMESSAGE state in the high word');
+  e.test_set_post_queue_count(0);
+  assert.strictEqual(e.test_default_paint_validates(child), 2,
+    'DefWindowProcA(WM_PAINT) validates an outstanding update region');
   assert.strictEqual(e.test_call_GetDlgItem_id(parent, 100) >>> 0, child,
     'parent resolves the original child ID');
 

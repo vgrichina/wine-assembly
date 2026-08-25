@@ -7,7 +7,7 @@
 const ProcessBoot = (typeof window !== 'undefined' && window.processBoot) || null;
 
 class WineAssembly {
-  static SOURCE_VERSION = '209';
+  static SOURCE_VERSION = '220';
   static _nextProcessId = 1000;
 
   static hasRemainingAppWindow(destroyed, remainingTopLevel) {
@@ -30,6 +30,13 @@ class WineAssembly {
   }
 
   constructor() {
+    // A debug tab is a live-worktree harness. Stop/Launch creates a new
+    // process and must see a newly rebuilt module even when the page itself
+    // was not reloaded; production keeps sharing one compiled module.
+    if (typeof location !== 'undefined' &&
+        new URLSearchParams(location.search).has('debug')) {
+      WineAssembly._wasmModulePromise = null;
+    }
     // One WineAssembly object models one Win32 process. Worker WASM instances
     // created by ThreadManager are threads of this process and share its PID
     // through the process's SharedArrayBuffer-backed memory.
@@ -61,6 +68,25 @@ class WineAssembly {
     if (!this.asyncMultimediaTimer || !ex || !ex.fire_mm_timer) return 0;
     if (ex.get_eip && !(ex.get_eip() >>> 0)) return 0;
     return ex.fire_mm_timer() | 0;
+  }
+
+  _isMainExecutionSuspended() {
+    if (!this.threadManager || !this.threadManager.isMainThreadSuspended ||
+        !this.threadManager.isMainThreadSuspended()) return false;
+    const ex = this.instance && this.instance.exports;
+    // timeSetEvent runs on a system timer thread on Win32. The cooperative
+    // backend serializes that callback through the main WASM instance, so a
+    // callback such as Miles' mixer may suspend the saved application thread
+    // while it services audio. Let the borrowed callback context reach its
+    // matching ResumeThread; the interrupted application context remains
+    // parked until the callback continuation restores it.
+    return !(ex && ex.is_mm_timer_callback_active &&
+      (ex.is_mm_timer_callback_active() | 0));
+  }
+
+  _closeSyncHandle(handle) {
+    return !!(this.threadManager && this.threadManager.closeSyncHandle &&
+      this.threadManager.closeSyncHandle(handle >>> 0));
   }
 
   _guestTickState(sharedAudio) {
@@ -208,7 +234,17 @@ class WineAssembly {
         return instance ? instance.exports : null;
       },
       get processId() { return self.processId; },
+      // CloseHandle is shared by VFS files and process synchronization
+      // objects. The CLI installs this scheduler callback explicitly; keep the
+      // browser context on the same path so short-lived Storm events release
+      // their fixed-table slots instead of leaking until creation fails.
+      closeSyncHandle: handle => self._closeSyncHandle(handle),
       traceHost: opts.traceHost || (typeof window !== 'undefined' ? window.__waTraceHostNames : null),
+      // Trace categories (the browser twin of test/run.js's --trace-dx etc).
+      // lib/host-imports.js reads ctx.trace, so setting window.__waTraceCategories
+      // before launch turns the same [dx]/[gdi]/[ctrl] logs on in the page —
+      // the only way to see which surface the browser actually uploads.
+      trace: opts.trace || (typeof window !== 'undefined' ? window.__waTraceCategories : null),
       threadId: opts.threadId | 0,
       vfs: opts.vfs || null,
       // The virtual LAN segment this page is joined to, or null when it is
@@ -293,10 +329,81 @@ class WineAssembly {
     const base = createHostImports(ctx);
     ctx.sharedGdi = base.gdi;
     const h = base.host;
+
+    // --- DirectDraw presentation: driven by the guest, paced by the display ---
+    //
+    // Presenting used to be a poll -- one run slice in sixteen called
+    // presentBestDxOffscreen(), which then threw the blit away unless a
+    // signature of the surface had changed. That signature samples four bytes
+    // per row, so on a 640x480 primary it looks at 1920 of 307200 pixels: a
+    // small moving sprite (DX-Ball's ball) usually changes none of them and the
+    // frame is discarded, and *which* frames survive depends on where the
+    // sprite happens to be. That reads as irregular lag rather than as a low
+    // frame rate, and no amount of polling faster fixes it.
+    //
+    // The guest already says when it has finished a frame, so listen instead of
+    // guessing. dx_trace kinds, from src/09a8-handlers-directx.wat:
+    //   1 = Lock   2 = Unlock   5 = present   6 = Flip
+    // Wrapping it here (the way test/run.js does) keeps this whole change out
+    // of lib/host-imports.js: presentBestDxOffscreen(true) already bypasses the
+    // signature compare, so nothing inside it needs to change.
+    const dxLockDepth = new Map();
+    const rawDxTrace = h.dx_trace;
+    h.dx_trace = (kind, slot, a1, a2, a3) => {
+      if (kind === 1) {
+        dxLockDepth.set(slot, (dxLockDepth.get(slot) || 0) + 1);
+      } else if (kind === 2) {
+        const left = (dxLockDepth.get(slot) || 0) - 1;
+        if (left > 0) dxLockDepth.set(slot, left); else dxLockDepth.delete(slot);
+        self._dxDirty = true;   // a released write is a finished write
+      } else if (kind === 5 || kind === 6) {
+        self._dxDirty = true;
+      }
+      return rawDxTrace ? rawDxTrace(kind, slot, a1, a2, a3) : undefined;
+    };
+
+    // Run slices are macrotasks and there are far more of them than there are
+    // display frames, so a dirty flag alone would upload the surface hundreds
+    // of times a second to show sixty. This counter ticks once per repaint
+    // opportunity and caps presentation at one canvas upload per frame; using
+    // rAF rather than a timer also means it stops while the tab is hidden.
+    if (typeof requestAnimationFrame === 'function') {
+      const tick = () => { self._dxFrameSeq = (self._dxFrameSeq || 0) + 1; requestAnimationFrame(tick); };
+      requestAnimationFrame(tick);
+    }
+
+    self._presentDxIfDirty = () => {
+      if (!self._dxDirty) return;
+      const gdi = self.hostCtx && self.hostCtx.sharedGdi;
+      if (!gdi || !gdi.presentBestDxOffscreen) return;
+      // One upload per display frame. With no rAF (a non-DOM host) _dxFrameSeq
+      // stays undefined and every dirty slice presents, which is the old
+      // unthrottled behaviour rather than none.
+      if (self._dxFrameSeq !== undefined) {
+        if (self._dxFrameSeq === self._dxPresentedSeq) return;
+        self._dxPresentedSeq = self._dxFrameSeq;
+      }
+      // Don't upload a surface the guest is part-way through writing. Every
+      // Lock measured so far is released inside its own frame (Heroes II
+      // gameplay: 140 Locks, 140 Unlocks), and the Unlock re-marks dirty, so
+      // waiting costs one frame at most. A lock still held several frames
+      // later is a retained pointer into what the guest believes is video
+      // memory -- present it anyway, which is what real DirectDraw does.
+      if (dxLockDepth.size) {
+        self._dxLockHeld = (self._dxLockHeld || 0) + 1;
+        if (self._dxLockHeld < 3) return;
+      } else {
+        self._dxLockHeld = 0;
+      }
+      self._dxDirty = false;
+      gdi.presentBestDxOffscreen(true);
+    };
+
     const traceApiNames = (typeof window !== 'undefined' && window.__waTraceApiNames)
       ? window.__waTraceApiNames
       : null;
     let lastTraceApi = false;
+    let pendingTraceComApiId = -1;
 
     // --- Browser-specific overrides ---
     h.log = (ptr, len) => {
@@ -307,10 +414,29 @@ class WineAssembly {
       }
       lastTraceApi = false;
       if (traceApiNames && traceApiNames.size) {
-        const apiName = text.replace(/\0.*$/, '');
+        let apiName = text.replace(/\0.*$/, '');
+        if (pendingTraceComApiId >= 0) {
+          const resolved = self.apiTable && self.apiTable[pendingTraceComApiId];
+          if (resolved && resolved.name) apiName = resolved.name;
+          pendingTraceComApiId = -1;
+        }
         if (traceApiNames.has(apiName)) {
           lastTraceApi = true;
-          console.log(`[API] ${apiName}`);
+          let suffix = '';
+          const ex = self.instance && self.instance.exports;
+          const entry = self.apiTable && self.apiTable.find(item => item.name === apiName);
+          if (ex && ex.get_esp && ex.guest_read32 && entry) {
+            const raw = [];
+            const esp = ex.get_esp() >>> 0;
+            for (let i = 0; i < Math.min(entry.nargs || 0, 8); i++) {
+              raw.push(ex.guest_read32((esp + 4 + i * 4) >>> 0) >>> 0);
+            }
+            suffix = `(${raw.map(v => `0x${v.toString(16).padStart(8, '0')}`).join(', ')})`;
+            if (apiName === 'CoCreateInstance' && raw[0]) {
+              suffix += ` clsid.d1=0x${(ex.guest_read32(raw[0]) >>> 0).toString(16).padStart(8, '0')}`;
+            }
+          }
+          console.log(`[API] ${apiName}${suffix}`);
         }
       }
       if (self.verbose) {
@@ -319,6 +445,11 @@ class WineAssembly {
       }
     };
     h.log_i32 = (val) => {
+      if (((val >>> 0) >>> 16) === 0xC0DE) {
+        pendingTraceComApiId = (val >>> 0) & 0xFFFF;
+        lastTraceApi = false;
+        return;
+      }
       if (lastTraceApi) console.log(`  => 0x${(val >>> 0).toString(16)}`);
       if (self.verbose) {
         console.log('[wine-asm] i32:', '0x' + (val >>> 0).toString(16));
@@ -394,6 +525,25 @@ class WineAssembly {
       self.logToUI(`[ShellAbout] ${appName}`);
       return 1;
     };
+    // ShellExecute("open", "wordpad.exe") is a real process launch, not a
+    // log line: WRITE.EXE's entire body is that call followed by
+    // ExitProcess, so a stub that only returns 33 leaves a blank screen.
+    // Resolve the exe against the app registry and boot it as a second
+    // guest; anything that is not a registered exe keeps the base behaviour
+    // (open http links in a tab, otherwise report success).
+    h.shell_execute = (hwnd, opWa, fileWa, paramsWa, dirWa, nShow) => {
+      const file = fileWa ? self.readString(fileWa) : '';
+      const op = opWa ? self.readString(opWa) : 'open';
+      const params = paramsWa ? self.readString(paramsWa) : '';
+      console.log(`[ShellExecute] hwnd=0x${hwnd.toString(16)} op="${op}" file="${file}" params="${params}"`);
+      const shell = window.wineShell;
+      if (shell && /\.exe$/i.test(file) && shell.launchExe(file)) {
+        self.logToUI(`[ShellExecute] launching ${file}`);
+        return 33;
+      }
+      if (/^https?:/i.test(file)) window.open(file, '_blank');
+      return 33;
+    };
     h.message_box = (hWnd, textPtr, captionPtr, uType) => {
       const text = self.readString(textPtr);
       const caption = self.readString(captionPtr);
@@ -447,9 +597,10 @@ class WineAssembly {
       console.log(`[SetWindowText] hwnd=0x${hwnd.toString(16)} "${text}"`);
       if (self.renderer) self.renderer.setWindowText(hwnd, text);
     };
+    const installHostMenu = h.set_menu;
     h.set_menu = (hwnd, menuResId) => {
       console.log(`[SetMenu] hwnd=0x${hwnd.toString(16)} menuRes=${menuResId}`);
-      if (self.renderer) self.renderer.setMenu(hwnd, menuResId);
+      installHostMenu(hwnd, menuResId);
     };
 
     // --- Input ---
@@ -498,6 +649,7 @@ class WineAssembly {
 
     // Wire thread/event imports to ThreadManager
     h.create_thread = (s, p, sz, flags) => self.threadManager ? self.threadManager.createThread(s, p, sz, flags) : 0;
+    h.duplicate_current_thread = (tid) => self.threadManager ? self.threadManager.duplicateCurrentThread(tid) : 0;
     h.suspend_thread = (handle) => self.threadManager ? self.threadManager.suspendThread(handle) : 0xFFFFFFFF;
     h.resume_thread = (handle) => self.threadManager ? self.threadManager.resumeThread(handle) : 0xFFFFFFFF;
     h.exit_thread = (c) => self.threadManager && self.threadManager.exitThread(c);
@@ -520,21 +672,29 @@ class WineAssembly {
       ? self.threadManager.openEvent(readSyncObjectName(nameWa, wide)) : 0;
     h.set_event = (handle) => self.threadManager ? self.threadManager.setEvent(handle) : 1;
     h.reset_event = (handle) => self.threadManager ? self.threadManager.resetEvent(handle) : 1;
+    // The cooperative variant exists to run OTHER guest threads from inside a
+    // nested synchronous callback, on this thread. With the worker backend
+    // there is nothing to run here — the other threads are already running,
+    // somewhere else — and its runSlice would walk thread records that have a
+    // Worker where it expects an instance.
+    const nestedSyncMessage = () => {
+      if (self.threadManager && self.threadManager.backend === 'worker') return false;
+      const e = ctx.exports;
+      return !!(e && e.get_sync_msg_depth && (e.get_sync_msg_depth() | 0));
+    };
     h.wait_single = (handle, t) => {
       if (!self.threadManager) return 0;
-      const e = ctx.exports;
-      // The cooperative variant exists to run OTHER guest threads from inside a
-      // nested synchronous callback, on this thread. With the worker backend
-      // there is nothing to run here — the other threads are already running,
-      // somewhere else — and its runSlice would walk thread records that have a
-      // Worker where it expects an instance.
-      const nestedSyncMessage = self.threadManager.backend !== 'worker'
-        && !!(e && e.get_sync_msg_depth && (e.get_sync_msg_depth() | 0));
-      return nestedSyncMessage
+      return nestedSyncMessage()
         ? self.threadManager.waitSingleCooperative(handle, t)
         : self.threadManager.waitSingle(handle, t);
     };
-    h.wait_multiple = (n, ha, wa, t) => self.threadManager ? self.threadManager.waitMultiple(n, ha, wa, t) : 0;
+    h.wait_multiple = (n, ha, wa, t) => {
+      if (!self.threadManager) return 0;
+      return nestedSyncMessage()
+        ? self.threadManager.waitMultipleCooperative(n, ha, wa, t)
+        : self.threadManager.waitMultiple(n, ha, wa, t);
+    };
+    h.cs_pump = () => self.threadManager ? self.threadManager.pumpThreadsOnce() : 0;
     h.create_semaphore = (initial, max) => self.threadManager ? self.threadManager.createSemaphore(initial, max) : 0;
     h.release_semaphore = (handle, count, prev) => self.threadManager ? self.threadManager.releaseSemaphore(handle, count, prev) : 0;
 
@@ -550,6 +710,7 @@ class WineAssembly {
   // session got steadily slower at exactly the moments the user was interacting.
   // Appending a text node is O(1), and the ring keeps the DOM bounded.
   logToUI(msg) {
+    if (typeof window !== 'undefined' && window.WINE_RUNTIME_LOGGING === false) return;
     console.log(msg);
     const el = document.getElementById('log');
     if (!el) return;
@@ -643,6 +804,12 @@ class WineAssembly {
     this.instance = await WebAssembly.instantiate(wasmModule, imports);
     if (this.instance.exports.set_process_id) {
       this.instance.exports.set_process_id(this.processId);
+    }
+    // Decode-time superop switches, applied before the first decode. These are
+    // per-instance mut globals, so a worker thread has to be told separately
+    // (see thread-manager.js) or an A/B measures the folded build on one side.
+    if (window.WineSuperops && this.instance.exports.set_rle_run) {
+      this.instance.exports.set_rle_run(window.WineSuperops.rleRun === false ? 0 : 1);
     }
     this._wasmModule = wasmModule;
     // Kept so an experimental guest worker can be handed the SAME host import
@@ -788,6 +955,12 @@ class WineAssembly {
       const modulePromise = (async () => {
         const tailCalls = WineAssembly.supportsWasmTailCalls();
         console.log(`[host] wasm tail calls ${tailCalls ? 'enabled' : 'not available; using compatibility dispatch'}`);
+        // Debug sessions run directly from a changing worktree. A stable
+        // production cache key can otherwise leave Safari executing an older
+        // WASM artifact after tools/build.sh replaces the file underneath it.
+        const debugFetch = typeof location !== 'undefined' &&
+          new URLSearchParams(location.search).has('debug');
+        const fetchOptions = debugFetch ? { cache: 'no-store' } : undefined;
         const forceSourceCompile = typeof location !== 'undefined' &&
           new URLSearchParams(location.search).has('compile-wat');
         if (!forceSourceCompile) {
@@ -795,7 +968,7 @@ class WineAssembly {
             ? 'build/wine-assembly.wasm'
             : 'build/wine-assembly.compat.wasm';
           try {
-            const response = await fetch(`${artifact}?v=${WineAssembly.SOURCE_VERSION}`);
+            const response = await fetch(`${artifact}?v=${WineAssembly.SOURCE_VERSION}`, fetchOptions);
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             return await WebAssembly.compile(await response.arrayBuffer());
           } catch (error) {
@@ -804,7 +977,7 @@ class WineAssembly {
         }
         const bytes = await compileWatSnapshot(
           async file => {
-            const response = await fetch(`src/${file}?v=${WineAssembly.SOURCE_VERSION}`);
+            const response = await fetch(`src/${file}?v=${WineAssembly.SOURCE_VERSION}`, fetchOptions);
             if (!response.ok) throw new Error(`Unable to load ${file}: HTTP ${response.status}`);
             return response.text();
           },
@@ -858,12 +1031,22 @@ class WineAssembly {
   // The patch table is lib/app-profiles.js, shared with the CLI harness — it
   // used to be a second hand-copy here, so a patch added on one side never
   // reached the other.
-  _applyExeCompatibilityPatches(exeName) {
+  _applyExeCompatibilityPatches(exeName, launchPrefsHook) {
     const profiles = (typeof window !== 'undefined' && window.appProfiles) ||
       (typeof appProfiles !== 'undefined' ? appProfiles : null);
     if (!profiles || !this.instance) return;
-    profiles.applyExeCompatibilityPatches(
-      exeName, this.instance.exports, this.memory && this.memory.buffer);
+    const buffer = this.memory && this.memory.buffer;
+    profiles.applyExeCompatibilityPatches(exeName, this.instance.exports, buffer);
+    // Screen-size-driven defaults (an app's own resolution setting, say) come
+    // from the same table. The canvas is already sized to the viewport by the
+    // time an exe loads, so this is the real screen the guest will see.
+    if (profiles.applyLaunchPreferences) {
+      const canvas = this.renderer && this.renderer.canvas;
+      profiles.applyLaunchPreferences(exeName, this.instance.exports, buffer, {
+        hook: launchPrefsHook || null,
+        screen: canvas ? { width: canvas.width, height: canvas.height } : null,
+      });
+    }
   }
 
   // EXPERIMENTAL: run the guest's main thread in a Worker.
@@ -909,6 +1092,8 @@ class WineAssembly {
 
   // `opts.win16Modules` names NE DLLs the task loads by name at runtime rather
   // than importing — see the win16StageModule host import.
+  // `opts.launchPrefs` is the app entry's own screen-size → byte-pokes function
+  // (lib/apps.js), applied right after load_pe.
   async loadExe(url, opts = {}) {
     if (!this.instance) await this.init();
     this._win16ExtraModules = opts.win16Modules || [];
@@ -949,7 +1134,7 @@ class WineAssembly {
     }
 
     const exeName = url.replace(/^.*[\\\/]/, '');
-    this._applyExeCompatibilityPatches(exeName);
+    this._applyExeCompatibilityPatches(exeName, opts.launchPrefs);
 
     // A 16-bit task's DLLs go into the same selector arena its own segments
     // just went into, so this has to follow load_pe and precede its first call
@@ -1046,6 +1231,40 @@ class WineAssembly {
     })), { required: false });
   }
 
+  async _decodeMountedImage(data, url) {
+    if (typeof document === 'undefined') return null;
+    const lower = String(url || '').toLowerCase();
+    const type = lower.endsWith('.png') ? 'image/png' : 'image/jpeg';
+    const blob = new Blob([data], { type });
+    if (typeof createImageBitmap === 'function') {
+      const source = await createImageBitmap(blob);
+      return { width: source.width, height: source.height, source };
+    }
+
+    // Safari versions without createImageBitmap still decode through the
+    // native HTML image pipeline. Materialize RGBA before revoking the blob
+    // URL so the synchronous DirectAnimation host call owns stable pixels.
+    const objectUrl = URL.createObjectURL(blob);
+    try {
+      const source = await new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error(`failed to decode image: ${url}`));
+        image.src = objectUrl;
+      });
+      const canvas = document.createElement('canvas');
+      canvas.width = source.naturalWidth || source.width;
+      canvas.height = source.naturalHeight || source.height;
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      context.drawImage(source, 0, 0);
+      const rgba = new Uint8Array(context.getImageData(
+        0, 0, canvas.width, canvas.height).data);
+      return { width: canvas.width, height: canvas.height, rgba };
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  }
+
   async loadFiles(urls, options = {}) {
     const vfs = this._helpCtx && this._helpCtx.vfs;
     if (!vfs) return;
@@ -1065,6 +1284,9 @@ class WineAssembly {
           return;
         }
         const data = new Uint8Array(await resp.arrayBuffer());
+        const decodedImage = (typeof item === 'object' && item.decodeImage)
+          ? await this._decodeMountedImage(data, url)
+          : null;
         const addFile = (rawPath) => {
           let vfsPath = String(rawPath).toLowerCase().replace(/\//g, '\\');
           if (!/^[a-z]:/.test(vfsPath)) vfsPath = 'c:\\' + vfsPath.replace(/^\\+/, '');
@@ -1076,7 +1298,7 @@ class WineAssembly {
             p = p.slice(0, idx);
             vfs.dirs.add(p);
           }
-          vfs.files.set(vfsPath, { data, attrs: 0x20 });
+          vfs.files.set(vfsPath, { data, attrs: 0x20, decodedImage });
         };
         if (explicitPaths && explicitPaths.length) {
           for (const p of explicitPaths) addFile(p);
@@ -1128,8 +1350,11 @@ class WineAssembly {
       this._loadedDllBytesByName = this._loadedDllBytesByName || {};
       this._loadedDllBytesByName[key] = bytes;
       const vfs = this._helpCtx && this._helpCtx.vfs;
-      if (vfs && vfs.files) {
+      if (typeof processBootApi !== 'undefined' && processBootApi.mountLoadedDllFiles) {
+        processBootApi.mountLoadedDllFiles(vfs, [{ name: key, bytes }]);
+      } else if (vfs && vfs.files) {
         vfs.files.set('c:\\' + key, { data: bytes, attrs: 0x20 });
+        vfs.files.set('c:\\windows\\system\\' + key, { data: bytes, attrs: 0x20 });
       }
     };
     const configs = await Promise.all(dllPaths.map(async item => {
@@ -1168,6 +1393,12 @@ class WineAssembly {
       if (register) register(readyConfigs, results);
     } else {
       results = _loadDlls(this.instance.exports, this.memory.buffer, exeBytes, readyConfigs, console.log, opts);
+    }
+    // Cooperative threads get their DLL set (and the DllMain entry caller) from
+    // here; the worker backend loads them inside each worker instead.
+    if (this.threadManager && this.threadManager.setLoadedDlls) {
+      const entryCaller = (typeof DllLoader !== 'undefined' && DllLoader.callDllMain) || null;
+      this.threadManager.setLoadedDlls(results, entryCaller);
     }
     this._inDllInit = false;
     this.running = true;
@@ -1666,7 +1897,11 @@ class WineAssembly {
       this._stepPort = null;
       if (typeof MessageChannel === 'function') {
         const chan = new MessageChannel();
-        chan.port1.onmessage = () => {
+        // Keep both ends alive. An entangled sending port does not require the
+        // browser to retain an otherwise unreachable listener wrapper; image
+        // decode pressure made that listener collectable after a few slices.
+        this._stepListenPort = chan.port1;
+        this._stepListenPort.onmessage = () => {
           const fn = this._pendingStep;
           this._pendingStep = null;
           if (fn) fn();
@@ -1701,7 +1936,8 @@ class WineAssembly {
         self._beginGuestTickBatch();
         // Check if main thread is waiting
         if (self.threadManager) await self.threadManager.resolveMainThreadSend();
-        const mainThreadWaiting = self.threadManager && self.threadManager.checkMainYield();
+        const mainThreadWaiting = self.threadManager &&
+          (self._isMainExecutionSuspended() || self.threadManager.checkMainYield());
         if (mainThreadWaiting) {
           // Main still waiting — just run worker threads
         } else {
@@ -1749,10 +1985,7 @@ class WineAssembly {
             });
           }
           const perfPresentStart = perf ? performance.now() : 0;
-          self._dxPresentTick = ((self._dxPresentTick || 0) + 1) & 15;
-          if (self._dxPresentTick === 0 && self.hostCtx && self.hostCtx.sharedGdi && self.hostCtx.sharedGdi.presentBestDxOffscreen) {
-            self.hostCtx.sharedGdi.presentBestDxOffscreen();
-          }
+          if (self._presentDxIfDirty) self._presentDxIfDirty();
           if (self.renderer && self.renderer.flushRepaint) {
             self.renderer.flushRepaint(true);
           }
@@ -1879,10 +2112,7 @@ class WineAssembly {
             }
             if (perf) perf.mark('workers', performance.now() - perfThreadStart);
             const perfPresentStart2 = perf ? performance.now() : 0;
-            self._dxPresentTick = ((self._dxPresentTick || 0) + 1) & 15;
-            if (self._dxPresentTick === 0 && self.hostCtx && self.hostCtx.sharedGdi && self.hostCtx.sharedGdi.presentBestDxOffscreen) {
-              self.hostCtx.sharedGdi.presentBestDxOffscreen();
-            }
+            if (self._presentDxIfDirty) self._presentDxIfDirty();
             if (self.renderer && self.renderer.flushRepaint) {
               self.renderer.flushRepaint(true);
             }

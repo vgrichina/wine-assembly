@@ -6,9 +6,9 @@
 # corpus are CP1252 (or symbol-encoded), so the emulator can only ever ask for
 # ~220 codepoints per face - everything else is payload nobody reads.
 #
-# Hinting goes too. docs/scalable-font-design.md deliberately has no TrueType
-# bytecode interpreter, so `fpgm`/`prep`/`cvt ` and per-glyph instructions are
-# bytes the rasterizer will never execute.
+# Runtime grid fitting needs `fpgm`, `prep`, `cvt `, and each retained glyph's
+# instruction stream. fontTools rewrites point references while subsetting;
+# never add --no-hinting here or deployed text silently reverts to outlines.
 #
 # The full TTFs stay in the repo as the pinned, reproducible source; only the
 # subsets are deployed. Do not hand-edit anything in fonts/subset/ - regenerate
@@ -81,7 +81,6 @@ subset() {
 
   python3 -m fontTools.subset "$src" \
     --unicodes="$unicodes" \
-    --no-hinting \
     --notdef-outline \
     --layout-features='' \
     --legacy-kern \
@@ -119,6 +118,7 @@ subset() {
 # purpose: it has no win98Files entry because Win98 shipped it as SMALLE.FON,
 # so nothing can ever open a scalable copy of it.
 for f in fonts/liberation/Liberation*.ttf; do subset "$f" ansi; done
+for f in fonts/comic-relief/ComicRelief-*.ttf; do subset "$f" ansi; done
 subset fonts/wine/tahoma.ttf       ansi
 subset fonts/wine/tahomabd.ttf     ansi
 subset fonts/wine/marlett.ttf      symbol
@@ -126,7 +126,8 @@ subset fonts/wine/symbol.ttf       symbol
 subset fonts/wine/wingding.ttf     symbol
 subset fonts/wine/webdings.ttf     symbol
 
-full=$(cat fonts/liberation/Liberation*.ttf fonts/wine/tahoma.ttf \
+full=$(cat fonts/liberation/Liberation*.ttf fonts/comic-relief/ComicRelief-*.ttf \
+  fonts/wine/tahoma.ttf \
   fonts/wine/tahomabd.ttf fonts/wine/marlett.ttf \
   fonts/wine/symbol.ttf fonts/wine/wingding.ttf fonts/wine/webdings.ttf \
   | wc -c | tr -d ' ')

@@ -73,12 +73,17 @@ for (const face of manifest.faces) {
       `(sfnt version 0x${version.toString(16)})`);
   }
 
-  // Tier 1 exists to make layout exact, and layout goes wrong at the first
-  // bold or italic run if a style has to be synthesized.
+  // Tier 1 exists to make layout exact for every style the native family
+  // actually shipped. Comic Sans MS on Win98 had regular and bold files only;
+  // italic was synthesized by native GDI too, so requiring invented italic
+  // source files here would reject its metric-compatible open replacement.
   if (face.tier === 1) {
-    for (const style of STYLES) {
+    const nativeStyles = Object.keys(face.win98Files || {});
+    assert.ok(nativeStyles.length > 0,
+      `tier 1 ${where} must list the native style files it replaces`);
+    for (const style of nativeStyles) {
       assert.ok(face.styles[style],
-        `tier 1 ${where} must ship ${style}: synthesizing it would change metrics`);
+        `tier 1 ${where} must ship native ${style}: substituting it would change metrics`);
     }
   }
 

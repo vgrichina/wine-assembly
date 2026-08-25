@@ -31,7 +31,11 @@ assert(html.includes('e.preventDefault();'), 'touch handlers should prevent brow
 assert(html.includes('name="viewport" content="width=device-width, initial-scale=1"'), 'mobile layout viewport should match the browser viewport');
 assert(!html.includes('viewport-fit=cover'), 'page should not render under iOS safe-area browser chrome');
 assert(!html.includes('MIN_VIEWPORT_WIDTH'), '640px minimum should apply to the emulated backing store, not the DOM layout viewport');
-assert(html.includes('const MIN_BACKING_WIDTH = 640'), 'small screens should still get at least a 640px emulated backing width');
+// A narrow *browser window* still emulates a 640px-wide screen. Only a phone,
+// which runs single-app mode, reports a phone-sized screen instead — see
+// test/test-single-app-mode.js.
+assert(html.includes('const MIN_BACKING_WIDTH = SINGLE_APP_MODE ? 400 : 640'),
+  'small screens should still get at least a 640px emulated backing width unless single-app mode');
 assert(html.includes('displayW') && html.includes('displayH'), 'canvas backing size should be separate from CSS display size');
 assert(html.includes('Math.max(1, MIN_BACKING_WIDTH / displayW)'), 'narrow viewports should scale backing height proportionally');
 assert(html.includes("canvas.style.width = displayW + 'px'"), 'fullscreen CSS width should use physical display width, not minimum backing width');
@@ -39,5 +43,12 @@ assert(html.includes("desktopIcons.style.width = w + 'px'"), 'desktop icon overl
 assert(html.includes('desktopIcons.style.transform = `scale(${sx}, ${sy})`'), 'desktop icon overlay should scale with the canvas');
 assert(html.includes("window.visualViewport.addEventListener('resize', resizeCanvas)"), 'mobile browser chrome viewport changes should resize the canvas');
 assert(html.includes('requestAnimationFrame(resizeCanvas)'), 'desktop icon overlay should be scaled on initial paint');
+assert(html.includes('@media (max-width: 760px)'), 'narrow browser layouts should have a responsive debug breakpoint');
+assert(html.includes('body:not(.no-debug) #content { flex-direction: column; }'),
+  'narrow debug mode should stack the runtime log below the emulator');
+assert(html.includes('body:not(.no-debug) #screen-wrap'),
+  'narrow debug mode should preserve a full-width emulator surface');
+assert(html.includes('body:not(.no-debug) #log'),
+  'narrow debug mode should size the log independently below the emulator');
 
 console.log('PASS  web canvas supports mobile touch input');

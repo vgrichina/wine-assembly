@@ -94,14 +94,39 @@ async function main() {
     (e.test_call_GetModuleHandleA(queryA) >>> 0) === (loadAddr >>> 0));
   const ole32A = writeAscii('oLe32.DlL');
   const notOle32A = writeAscii('OLE32X');
+  // A module we dispatch statically has no image, so it answers with a
+  // pseudo-handle: $STATIC_SYS_DLL_HANDLE_BASE plus its position in the name
+  // list, ole32 being first. It has to be distinct from the EXE's own handle,
+  // or GetModuleFileName can't tell the two apart. See
+  // $guest_name_is_static_system_dll in src/09a-handlers.wat.
+  const STATIC_SYS_DLL_HANDLE_BASE = 0x5D110000;
   check('GetModuleHandleA recognizes statically dispatched OLE32',
-    (e.test_call_GetModuleHandleA(ole32A) >>> 0) === (e.get_image_base() >>> 0));
+    (e.test_call_GetModuleHandleA(ole32A) >>> 0) === STATIC_SYS_DLL_HANDLE_BASE);
+  const oleExpDir = e.guest_alloc(32);
+  const oleDllName = writeAscii('OLE32.DLL');
+  const oleLoadAddr = oleExpDir - 0x1800;
+  e.guest_write32(oleExpDir + 12, oleDllName - oleLoadAddr);
+  dv.setUint32(e.get_dll_table() + 32, oleLoadAddr >>> 0, true);
+  dv.setUint32(e.get_dll_table() + 40, 0x1800, true);
+  e.test_set_dll_count(2);
+  check('GetModuleHandleA prefers a mapped OLE32 over the static fallback',
+    (e.test_call_GetModuleHandleA(ole32A) >>> 0) === (oleLoadAddr >>> 0));
   check('GetModuleHandleA does not prefix-match static module names',
     (e.test_call_GetModuleHandleA(notOle32A) >>> 0) === 0);
   check('GetModuleHandleW returns NULL module as image base',
     (e.test_call_GetModuleHandleW(0) >>> 0) === (e.get_image_base() >>> 0));
   check('GetModuleHandleW finds DLL table entry case-insensitively',
     (e.test_call_GetModuleHandleW(queryW) >>> 0) === (loadAddr >>> 0));
+
+  const ansiClass1 = writeAscii('AnsiClassOne');
+  const ansiClass2 = writeAscii('AnsiClassTwo');
+  const wcA1 = writeDwords([0, 0x11111111, 0, 0, 0, 0, 0, 0, 0, ansiClass1]);
+  const wcA2 = writeDwords([0, 0x22222222, 0, 0, 0, 0, 0, 0, 0, ansiClass2]);
+  const atomA1 = e.test_call_RegisterClassA(wcA1) >>> 0;
+  const atomA2 = e.test_call_RegisterClassA(wcA2) >>> 0;
+  check('RegisterClassA returns a nonzero atom for each class', atomA1 !== 0 && atomA2 !== 0);
+  check('RegisterClassA preserves distinct class atom identity', atomA1 !== atomA2,
+    `first=0x${atomA1.toString(16)} second=0x${atomA2.toString(16)}`);
 
   const className = writeWide('WideMainWindow');
   const wc = e.guest_alloc(40);

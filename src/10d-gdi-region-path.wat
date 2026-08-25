@@ -760,6 +760,39 @@
         (return (local.get $empty))))
     (i32.const 0))
 
+  ;; TRUE when any part of a half-open RECT overlaps any canonical region
+  ;; band. Regions are already normalized into sorted, disjoint rectangles,
+  ;; so an exact query needs no temporary HRGN or host-side mirror.
+  (func $gdi_rgn_rect_in
+    (param $hrgn i32) (param $left i32) (param $top i32)
+    (param $right i32) (param $bottom i32) (result i32)
+    (local $record i32) (local $base i32) (local $count i32)
+    (local $i i32) (local $p i32)
+    (if (i32.or
+          (i32.ge_s (local.get $left) (local.get $right))
+          (i32.ge_s (local.get $top) (local.get $bottom)))
+      (then (return (i32.const 0))))
+    (local.set $record (call $gdi_rgn_record (local.get $hrgn)))
+    (if (i32.eqz (local.get $record)) (then (return (i32.const 0))))
+    (local.set $base (call $gdi_rgn_bands (local.get $record)))
+    (local.set $count (i32.load offset=28 (local.get $record)))
+    (local.set $i (i32.const 0))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $p
+        (i32.add (local.get $base) (i32.shl (local.get $i) (i32.const 4))))
+      (if (i32.and
+            (i32.lt_s (local.get $left) (i32.load offset=8 (local.get $p)))
+            (i32.and
+              (i32.gt_s (local.get $right) (i32.load (local.get $p)))
+              (i32.and
+                (i32.lt_s (local.get $top) (i32.load offset=12 (local.get $p)))
+                (i32.gt_s (local.get $bottom) (i32.load offset=4 (local.get $p))))))
+        (then (return (i32.const 1))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
   (func $gdi_dc_clip_sync (param $hdc i32) (param $entry i32) (result i32)
     (local $hrgn i32)
     (local.set $hrgn (i32.load offset=4 (local.get $entry)))
@@ -3718,7 +3751,19 @@
   ;; bitsWa@24, stride@28, paletteWa@32, paletteCount@36, surfaceId@40.
   ;; Palette fields are count@8, capacity@12, version@16, flags@20,
   ;; PALETTEENTRY storage WA@24. Palette storage is always WAT-owned.
+  ;; Two positive hints, not one: a blit resolves the source handle and the
+  ;; destination handle alternately for every single pixel, and a single hint
+  ;; thrashes between them so neither ever hits. The two $gdi_object_miss slots
+  ;; are the negative twin — handles that are not in this table at all
+  ;; (DirectDraw surface handles are the hot case, and a blit again alternates
+  ;; between two of them) otherwise pay a full GDI_OBJECT_COUNT scan on every
+  ;; lookup and never populate a hint. Both negative slots share one generation
+  ;; stamp, and every writer that can turn a miss into a hit bumps it.
   (global $gdi_object_hint (mut i32) (i32.const 0))
+  (global $gdi_object_hint2 (mut i32) (i32.const 0))
+  (global $gdi_object_miss (mut i32) (i32.const 0))
+  (global $gdi_object_miss2 (mut i32) (i32.const 0))
+  (global $gdi_object_miss_gen (mut i32) (i32.const -1))
   (func $gdi_object_record (param $handle i32) (result i32)
     (local $i i32) (local $p i32)
     (if (i32.eqz (local.get $handle)) (then (return (i32.const 0))))
@@ -3726,6 +3771,23 @@
     (if (i32.and (i32.ne (local.get $p) (i32.const 0))
           (i32.eq (i32.load (local.get $p)) (local.get $handle)))
       (then (return (local.get $p))))
+    (local.set $p (global.get $gdi_object_hint2))
+    (if (i32.and (i32.ne (local.get $p) (i32.const 0))
+          (i32.eq (i32.load (local.get $p)) (local.get $handle)))
+      (then
+        (global.set $gdi_object_hint2 (global.get $gdi_object_hint))
+        (global.set $gdi_object_hint (local.get $p))
+        (return (local.get $p))))
+    (if (i32.eq (global.get $gdi_object_miss_gen)
+          (i32.load (global.get $GDI_OBJECT_GEN)))
+      (then
+        (if (i32.eq (global.get $gdi_object_miss) (local.get $handle))
+          (then (return (i32.const 0))))
+        (if (i32.eq (global.get $gdi_object_miss2) (local.get $handle))
+          (then
+            (global.set $gdi_object_miss2 (global.get $gdi_object_miss))
+            (global.set $gdi_object_miss (local.get $handle))
+            (return (i32.const 0))))))
     (local.set $p (i32.const 0))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $GDI_OBJECT_COUNT)))
@@ -3733,10 +3795,18 @@
         (i32.mul (local.get $i) (global.get $GDI_OBJECT_STRIDE))))
       (if (i32.eq (i32.load (local.get $p)) (local.get $handle))
         (then
+          (global.set $gdi_object_hint2 (global.get $gdi_object_hint))
           (global.set $gdi_object_hint (local.get $p))
           (return (local.get $p))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
+    (if (i32.ne (global.get $gdi_object_miss_gen)
+          (i32.load (global.get $GDI_OBJECT_GEN)))
+      (then
+        (global.set $gdi_object_miss2 (i32.const 0))
+        (global.set $gdi_object_miss_gen (i32.load (global.get $GDI_OBJECT_GEN))))
+      (else (global.set $gdi_object_miss2 (global.get $gdi_object_miss))))
+    (global.set $gdi_object_miss (local.get $handle))
     (i32.const 0))
 
   (func $gdi_object_adopt (param $handle i32) (param $type i32) (param $style i32)
@@ -3757,11 +3827,22 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (if (i32.eqz (local.get $empty)) (then (return (i32.const 0))))
+    ;; A handle just became resolvable: retire every instance's negative cache.
+    (i32.store (global.get $GDI_OBJECT_GEN)
+      (i32.add (i32.load (global.get $GDI_OBJECT_GEN)) (i32.const 1)))
     (i32.store (local.get $empty) (local.get $handle))
     (i32.store offset=4 (local.get $empty) (local.get $type))
     (i32.store offset=8 (local.get $empty) (local.get $style))
     (i32.store offset=12 (local.get $empty) (local.get $width))
-    (i32.store offset=16 (local.get $empty) (i32.and (local.get $color) (i32.const 0xFFFFFF)))
+    ;; Pens and brushes retain the PALETTEINDEX/PALETTERGB qualifier in the
+    ;; high byte.  Their literal color cannot be known until they are drawn
+    ;; into a DC with a selected logical palette.  Other object types keep the
+    ;; historical 24-bit payload here.
+    (i32.store offset=16 (local.get $empty)
+      (i32.and (local.get $color)
+        (select (i32.const 0x03FFFFFF) (i32.const 0x00FFFFFF)
+          (i32.or (i32.eq (local.get $type) (i32.const 1))
+            (i32.eq (local.get $type) (i32.const 2))))))
     (i32.store offset=20 (local.get $empty) (local.get $flags))
     (local.get $handle))
 

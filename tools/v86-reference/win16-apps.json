@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "description": "Registered Win16 applications compared against the native Windows 98 v86 reference.",
+  "apps": [
+    { "id": "freecell16", "title": "FreeCell (Windows 98)", "payloadDir": "test/binaries/win98-16bit", "exe": "FREECELL.EXE", "extraFiles": ["CARDS.DLL"] },
+    { "id": "sol16", "title": "Solitaire (Windows 98)", "payloadDir": "test/binaries/win98-16bit", "exe": "SOL.EXE", "extraFiles": ["CARDS.DLL"] },
+    { "id": "winmine16", "title": "Minesweeper (Windows 98)", "payloadDir": "test/binaries/win98-16bit", "exe": "WINMINE.EXE" },
+    { "id": "mshearts16", "title": "Hearts (Windows 98)", "payloadDir": "test/binaries/win98-16bit", "exe": "MSHEARTS.EXE", "extraFiles": ["CARDS.DLL"], "nativeWaitMs": 12000, "localBatches": 600 },
+
+    { "id": "wep16_cruel", "title": "Cruel", "payloadDir": "test/binaries/wep16/WEP1", "exe": "CRUEL.EXE" },
+    { "id": "wep16_golf", "title": "Golf", "payloadDir": "test/binaries/wep16/WEP1", "exe": "GOLF.EXE" },
+    { "id": "wep16_idlewild", "title": "IdleWild", "payloadDir": "test/binaries/wep16/WEP1", "exe": "IDLEWILD.EXE", "includeExtensions": [".IW"] },
+    { "id": "wep16_pegged", "title": "Pegged", "payloadDir": "test/binaries/wep16/WEP1", "exe": "PEGGED.EXE" },
+    { "id": "wep16_tetris", "title": "Tetris", "payloadDir": "test/binaries/wep16/WEP1", "exe": "TETRIS.EXE" },
+    { "id": "wep16_tic", "title": "TicTactics", "payloadDir": "test/binaries/wep16/WEP1", "exe": "TIC.EXE" },
+    { "id": "wep16_tp", "title": "Taipei", "payloadDir": "test/binaries/wep16/WEP1", "exe": "TP.EXE" },
+    { "id": "wep16_winmine", "title": "Minesweeper (Entertainment Pack)", "payloadDir": "test/binaries/wep16/WEP1", "exe": "WINMINE.EXE" },
+
+    { "id": "wep16_freecell", "title": "FreeCell (Entertainment Pack)", "payloadDir": "test/binaries/wep16/WEP2", "exe": "FREECELL.EXE" },
+    { "id": "wep16_jigsawed", "title": "JigSawed", "payloadDir": "test/binaries/wep16/WEP2", "exe": "JIGSAWED.EXE" },
+    { "id": "wep16_pipe", "title": "Pipe Dream", "payloadDir": "test/binaries/wep16/WEP2", "exe": "PIPE.EXE" },
+    { "id": "wep16_rattler", "title": "Rattler Race", "payloadDir": "test/binaries/wep16/WEP2", "exe": "RATTLER.EXE" },
+    { "id": "wep16_rodent", "title": "Rodent's Revenge", "payloadDir": "test/binaries/wep16/WEP2", "exe": "RODENT.EXE" },
+    { "id": "wep16_stones", "title": "Stones", "payloadDir": "test/binaries/wep16/WEP2", "exe": "STONES.EXE" },
+    { "id": "wep16_tutstomb", "title": "Tut's Tomb", "payloadDir": "test/binaries/wep16/WEP2", "exe": "TUTSTOMB.EXE" },
+
+    {
+      "id": "wep16_fujigolf",
+      "title": "Fuji Golf",
+      "payloadDir": "test/binaries/wep16/WEP3",
+      "exe": "FUJIGOLF.EXE",
+      "nativeWaitMs": 12000,
+      "nativePostLaunch": [
+        { "waitMs": 2500, "scancodes": [28, 156] }
+      ]
+    },
+    { "id": "wep16_klotski", "title": "Klotski", "payloadDir": "test/binaries/wep16/WEP3", "exe": "KLOTSKI.EXE" },
+    { "id": "wep16_lifegen", "title": "LifeGenesis", "payloadDir": "test/binaries/wep16/WEP3", "exe": "LIFEGEN.EXE" },
+    { "id": "wep16_ski", "title": "SkiFree", "payloadDir": "test/binaries/wep16/WEP3", "exe": "SKI.EXE" },
+    { "id": "wep16_tetravex", "title": "TetraVex", "payloadDir": "test/binaries/wep16/WEP3", "exe": "TETRAVEX.EXE" },
+    {
+      "id": "wep16_tripeaks",
+      "title": "TriPeaks",
+      "payloadDir": "test/binaries/wep16/WEP3",
+      "exe": "TRIPEAKS.EXE",
+      "nativePostLaunch": [
+        { "waitMs": 2500, "scancodes": [28, 156] },
+        { "waitMs": 1000, "scancodes": [60, 188] }
+      ],
+      "localInput": "30:dlg-cmd:1,80:keydown:113,81:keyup:113",
+      "localBatches": 210,
+      "localTimeoutMs": 600000
+    },
+    { "id": "wep16_wordzap", "title": "WordZap", "payloadDir": "test/binaries/wep16/WEP3", "exe": "WORDZAP.EXE" },
+
+    {
+      "id": "wep16_blakjak",
+      "title": "Dr. Black Jack",
+      "payloadDir": "test/binaries/wep16/WEP4",
+      "exe": "BLAKJAK.EXE",
+      "nativePostLaunch": [
+        { "waitMs": 2500, "scancodes": [28, 156] },
+        { "waitMs": 1000, "mouse": { "type": "click", "x": 390, "y": 447 } }
+      ],
+      "localInput": "50:dlg-cmd:1,140:mousedown:393:455,141:mouseup:393:455",
+      "localBatches": 300
+    },
+    { "id": "wep16_chess", "title": "Chess", "payloadDir": "test/binaries/wep16/WEP4", "exe": "CHESS.EXE", "nativeWaitMs": 12000 },
+    { "id": "wep16_chips", "title": "Chip's Challenge", "payloadDir": "test/binaries/wep16/WEP4", "exe": "CHIPS.EXE", "nativeWaitMs": 12000 },
+    { "id": "wep16_gofigure", "title": "Go Figure!", "payloadDir": "test/binaries/wep16/WEP4", "exe": "GOFIGURE.EXE", "nativeWaitMs": 12000, "localBatches": 110 },
+    { "id": "wep16_jezzball", "title": "JezzBall", "payloadDir": "test/binaries/wep16/WEP4", "exe": "JEZZBALL.EXE" },
+    { "id": "wep16_maxwell", "title": "Maxwell's Maniac", "payloadDir": "test/binaries/wep16/WEP4", "exe": "MAXWELL.EXE" },
+    {
+      "id": "wep16_tictacdp",
+      "title": "Tic Tac Drop",
+      "payloadDir": "test/binaries/wep16/WEP4",
+      "exe": "TICTACDP.EXE",
+      "nativePostLaunch": [
+        { "waitMs": 2500, "mouse": { "type": "click", "x": 320, "y": 240 } }
+      ],
+      "localInput": "50:mousedown:320:240,51:mouseup:320:240",
+      "localBatches": 140
+    }
+  ]
+}

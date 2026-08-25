@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const { ThreadManager } = require('../lib/thread-manager');
+
+const handlersWat = fs.readFileSync(path.join(__dirname, '..', 'src', '09a-handlers.wat'), 'utf8');
+assert(!handlersWat.includes('(call $host_log_i32 (global.get $eax))'),
+  'synchronization handlers must not cross to the host solely to print return values');
 
 function makeThreadManager(opts) {
   return makeThreadManagerWithMemory(new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true }), opts);
@@ -57,6 +63,40 @@ assert.strictEqual(suspendTm.resumeThread(suspendedHandle), 0, 'resuming a runni
 assert.strictEqual(suspendTm.suspendThread(0xdeadbeef), 0xFFFFFFFF, 'invalid suspend handle fails');
 assert.strictEqual(suspendTm.resumeThread(0xdeadbeef), 0xFFFFFFFF, 'invalid resume handle fails');
 
+const duplicateTm = makeThreadManager();
+const duplicatedMainA = duplicateTm.duplicateCurrentThread(1);
+const duplicatedMainB = duplicateTm.duplicateCurrentThread(1);
+assert(duplicatedMainA && duplicatedMainB && duplicatedMainA !== duplicatedMainB,
+  'each DuplicateHandle call returns a distinct real current-thread handle');
+assert.notStrictEqual(duplicatedMainA >>> 0, 0xfffffffe,
+  'a duplicated current-thread handle must not preserve the contextual pseudo handle');
+assert.strictEqual(duplicateTm.suspendThread(duplicatedMainA), 0,
+  'the first duplicated-handle suspend returns the previous main-thread count');
+assert.strictEqual(duplicateTm.isMainThreadSuspended(), true,
+  'a duplicated main-thread handle controls main scheduling state');
+assert.strictEqual(duplicateTm.suspendThread(duplicatedMainB), 1,
+  'duplicates share the underlying thread suspend count');
+assert.strictEqual(duplicateTm.resumeThread(duplicatedMainA), 2);
+assert.strictEqual(duplicateTm.resumeThread(duplicatedMainB), 1);
+assert.strictEqual(duplicateTm.isMainThreadSuspended(), false);
+assert.strictEqual(duplicateTm.getExitCodeThread(duplicatedMainA), 0x103,
+  'GetExitCodeThread accepts duplicated main-thread handles');
+assert.strictEqual(duplicateTm.closeSyncHandle(duplicatedMainA), true,
+  'CloseHandle releases a duplicated thread-handle identity');
+assert.strictEqual(duplicateTm.suspendThread(duplicatedMainA), 0xFFFFFFFF,
+  'a closed duplicated thread handle is invalid');
+assert.strictEqual(duplicateTm.suspendThread(duplicatedMainB), 0,
+  'closing one duplicate leaves another handle to the same thread usable');
+assert.strictEqual(duplicateTm.resumeThread(duplicatedMainB), 1);
+
+duplicateTm.createThread(0x6200, 0, 0, 0);
+const duplicatedWorker = duplicateTm.duplicateCurrentThread(2);
+assert(duplicatedWorker, 'a worker can duplicate its own current-thread pseudo handle');
+assert.strictEqual(duplicateTm.suspendThread(duplicatedWorker), 0,
+  'the duplicated worker handle shares its pending thread suspend state');
+assert.strictEqual(duplicateTm._pendingThreads[0].suspendCount, 1);
+assert.strictEqual(duplicateTm.resumeThread(duplicatedWorker), 1);
+
 const pendingWaitTm = makeThreadManager();
 const pendingWaitHandle = pendingWaitTm.createThread(0x6100, 0, 0, 0x4);
 const pendingWaitEvent = pendingWaitTm.createEvent(false, false);
@@ -80,6 +120,12 @@ assert.strictEqual(
   'GetExitCodeThread reports a pending worker as STILL_ACTIVE'
 );
 
+const currentProcessTm = makeThreadManager();
+assert.strictEqual(currentProcessTm.waitSingle(0x000E23E8, 0), 0x102,
+  'a zero-time wait reports the current process handle as still active');
+assert.strictEqual(currentProcessTm.waitSingle(0x000E23E8, 0xFFFFFFFF), 0xFFFF,
+  'an infinite current-process wait parks for cooperative scheduling');
+
 const syncLifecycleTm = makeThreadManager();
 const syncHandles = [];
 for (let i = 0; i < 64; i++) {
@@ -88,15 +134,38 @@ for (let i = 0; i < 64; i++) {
 assert(syncHandles.every(Boolean), 'all 64 synchronization slots should allocate');
 assert.strictEqual(syncLifecycleTm.createEvent(false, false), 0, 'the full synchronization table rejects another event');
 assert.strictEqual(syncLifecycleTm.closeSyncHandle(syncHandles[17]), true, 'CloseHandle should release an event slot');
+const staleEvent = syncHandles[17];
+const replacementEvent = syncLifecycleTm.createEvent(true, true);
 assert.strictEqual(
-  syncLifecycleTm.createEvent(true, true),
-  syncHandles[17],
-  'the next event should reuse the released table slot'
+  syncLifecycleTm._getSyncIdx(replacementEvent),
+  17,
+  'the next event should reuse the released table slot with a new identity'
 );
+assert.notStrictEqual(replacementEvent, staleEvent,
+  'a recycled synchronization slot must advance its handle generation');
+assert.strictEqual(syncLifecycleTm.closeSyncHandle(staleEvent), false,
+  'a stale CloseHandle must not close the replacement event');
+syncLifecycleTm.resetEvent(replacementEvent);
+syncLifecycleTm.setEvent(staleEvent);
+assert.strictEqual(syncLifecycleTm.waitSingle(replacementEvent, 0), 0x102,
+  'a delayed SetEvent for the old generation must not signal the replacement');
+const issuedEventHandles = new Set([staleEvent, replacementEvent]);
+let churnedEvent = replacementEvent;
+for (let i = 0; i < 128; i++) {
+  assert.strictEqual(syncLifecycleTm.closeSyncHandle(churnedEvent), true);
+  churnedEvent = syncLifecycleTm.createEvent(false, false);
+  assert.strictEqual(syncLifecycleTm._getSyncIdx(churnedEvent), 17);
+  assert(!issuedEventHandles.has(churnedEvent),
+    'rapid synchronization churn must not wrap back to an earlier handle identity');
+  issuedEventHandles.add(churnedEvent);
+}
 assert.strictEqual(syncLifecycleTm.closeSyncHandle(0xdeadbeef), false, 'an unrelated handle is not a synchronization object');
 assert.strictEqual(syncLifecycleTm.closeSyncHandle(syncHandles[18]), true, 'semaphore test should begin with a free slot');
 const reusedSemaphore = syncLifecycleTm.createSemaphore(2, 4);
-assert.strictEqual(reusedSemaphore, syncHandles[18], 'semaphores should share and reuse the synchronization table');
+assert.strictEqual(syncLifecycleTm._getSyncIdx(reusedSemaphore), 18,
+  'semaphores should share and reuse synchronization slots with a new identity');
+assert.notStrictEqual(reusedSemaphore, syncHandles[18],
+  'a recycled semaphore slot must also advance its handle generation');
 assert.strictEqual(syncLifecycleTm.closeSyncHandle(reusedSemaphore), true, 'CloseHandle should release a semaphore slot');
 
 const namedEventTm = makeThreadManager();
@@ -134,7 +203,7 @@ assert.strictEqual(
   'wait-all remains blocked while only one object is signaled'
 );
 assert.strictEqual(
-  Atomics.load(waitAllTm.syncView, (waitAllA - 0xE0000) * 4 + 2),
+  Atomics.load(waitAllTm.syncView, waitAllTm._getSyncIdx(waitAllA) * 4 + 2),
   1,
   'an incomplete wait-all must not consume an already-signaled auto-reset event'
 );
@@ -144,8 +213,114 @@ assert.strictEqual(
   0,
   'wait-all completes once every object is signaled'
 );
-assert.strictEqual(Atomics.load(waitAllTm.syncView, (waitAllA - 0xE0000) * 4 + 2), 0);
-assert.strictEqual(Atomics.load(waitAllTm.syncView, (waitAllB - 0xE0000) * 4 + 2), 0);
+assert.strictEqual(Atomics.load(waitAllTm.syncView, waitAllTm._getSyncIdx(waitAllA) * 4 + 2), 0);
+assert.strictEqual(Atomics.load(waitAllTm.syncView, waitAllTm._getSyncIdx(waitAllB) * 4 + 2), 0);
+
+const inputDuringWaitAllTm = makeThreadManager({ hasMessage: () => true });
+const inputDuringWaitAllEvent = inputDuringWaitAllTm.createEvent(false, false);
+const inputDuringWaitAllHandlesWA = 0x1c0;
+new Int32Array(inputDuringWaitAllTm.memory.buffer)[inputDuringWaitAllHandlesWA >>> 2] = inputDuringWaitAllEvent;
+let inputDuringWaitAllCompleted = false;
+inputDuringWaitAllTm.mainInstance.exports = {
+  get_yield_reason: () => 1,
+  get_wait_handle: () => 1,
+  get_wait_handles_ptr: () => inputDuringWaitAllHandlesWA,
+  get_wait_all: () => 1,
+  get_wait_timeout: () => 0xFFFFFFFF,
+  get_wait_stack_bytes: () => 20,
+  get_esp: () => 0x200,
+  guest_read32: () => 0x401234,
+  clear_yield: () => { inputDuringWaitAllCompleted = true; },
+  set_eax: () => {},
+  set_esp: () => {},
+  set_eip: () => {},
+};
+assert.strictEqual(
+  inputDuringWaitAllTm.checkMainYield(),
+  true,
+  'queued browser input must not satisfy an ordinary WaitForMultipleObjects'
+);
+assert.strictEqual(inputDuringWaitAllCompleted, false,
+  'ordinary multi-object waits remain parked until their synchronization objects are ready');
+
+function completeMainEventWait(traceThread) {
+  const waitTm = makeThreadManager({ traceThread });
+  const waitEvent = waitTm.createEvent(false, true);
+  const emitted = [];
+  let esp = 0x100;
+  waitTm._log = line => emitted.push(line);
+  waitTm.mainInstance.exports = {
+    get_yield_reason: () => 1,
+    get_wait_handle: () => waitEvent,
+    get_wait_handles_ptr: () => 0,
+    get_wait_all: () => 0,
+    get_wait_timeout: () => 0xFFFFFFFF,
+    get_wait_stack_bytes: () => 12,
+    get_esp: () => esp,
+    guest_read32: addr => addr === esp ? 0x401234 : 0,
+    clear_yield: () => {},
+    set_eax: () => {},
+    set_esp: value => { esp = value >>> 0; },
+    set_eip: () => {},
+  };
+  assert.strictEqual(waitTm.checkMainYield(), false, 'a signaled main-thread wait completes');
+  return emitted;
+}
+
+assert.deepStrictEqual(
+  completeMainEventWait(false),
+  [],
+  'ordinary main-thread wait completions must not emit console diagnostics'
+);
+assert.strictEqual(
+  completeMainEventWait(true).length,
+  1,
+  'thread tracing retains the main-thread wait completion diagnostic'
+);
+
+let mainSleepNow = 100;
+let mainSleepPending = 1;
+const mainSleepTm = makeThreadManager({ now: () => mainSleepNow });
+mainSleepTm.mainInstance.exports = {
+  get_sleep_yielded: () => {
+    const pending = mainSleepPending;
+    mainSleepPending = 0;
+    return pending;
+  },
+  get_sleep_timeout: () => 10,
+  get_yield_reason: () => 0,
+};
+assert.strictEqual(mainSleepTm.checkMainYield(), true,
+  'main-thread Sleep parks the main instance until its wall-clock deadline');
+assert.strictEqual(mainSleepTm._mainSleepUntil, 110);
+mainSleepNow = 109;
+assert.strictEqual(mainSleepTm.checkMainYield(), true,
+  'main-thread Sleep remains parked before the full timeout elapses');
+mainSleepNow = 110;
+assert.strictEqual(mainSleepTm.checkMainYield(), false,
+  'main-thread Sleep resumes when the full timeout has elapsed');
+assert.strictEqual(mainSleepTm._mainSleepUntil, 0);
+
+function createSyncObjects(traceThread) {
+  const syncTm = makeThreadManager({ traceThread });
+  const emitted = [];
+  syncTm._log = line => emitted.push(line);
+  const event = syncTm.createEvent(false, false);
+  syncTm.setEvent(event);
+  syncTm.createSemaphore(0, 1);
+  return emitted;
+}
+
+assert.deepStrictEqual(
+  createSyncObjects(false),
+  [],
+  'ordinary synchronization-object creation must not emit console diagnostics'
+);
+assert.strictEqual(
+  createSyncObjects(true).length,
+  3,
+  'thread tracing retains synchronization-object and signal diagnostics'
+);
 
 const lifecycleEvents = suspendTm.getThreadEvents();
 assert.deepStrictEqual(
@@ -168,6 +343,7 @@ assert(cacheBytes.every(byte => byte === 0), 'reused worker slot should clear it
 
 function makeRunnableThread(tid, onRun) {
   let heapPtr = 0;
+  let freeList = 0;
   return {
     tid,
     state: 'active',
@@ -181,6 +357,8 @@ function makeRunnableThread(tid, onRun) {
         get_eip: () => 0x401000,
         set_heap_ptr: v => { heapPtr = v >>> 0; },
         get_heap_ptr: () => heapPtr,
+        set_free_list: v => { freeList = v >>> 0; },
+        get_free_list: () => freeList,
         run: onRun,
         get_bp_addr: () => 0,
         get_sleep_yielded: () => 0,
@@ -188,6 +366,26 @@ function makeRunnableThread(tid, onRun) {
     },
   };
 }
+
+const allocatorTm = makeThreadManager();
+let mainFreeList = 0x650000;
+allocatorTm.mainInstance.exports.get_free_list = () => mainFreeList;
+allocatorTm.mainInstance.exports.set_free_list = value => { mainFreeList = value >>> 0; };
+const allocatorWorker = makeRunnableThread(1, () => {
+  assert.strictEqual(
+    allocatorWorker.instance.exports.get_free_list(),
+    0x650000,
+    'worker should begin its slice with the process free-list head'
+  );
+  allocatorWorker.instance.exports.set_free_list(0x651000);
+});
+allocatorTm.threads.set(0xe1000, allocatorWorker);
+allocatorTm.runSlice(100);
+assert.strictEqual(
+  mainFreeList,
+  0x651000,
+  'main should receive the worker free-list head after its slice'
+);
 
 const suspendedRunTm = makeThreadManager();
 let suspendedRuns = 0;
@@ -312,6 +510,7 @@ assert.strictEqual(
 assert.strictEqual(reentrantRuns, 0, 'reentrant nested wait should not run the worker again');
 
 console.log('PASS  ThreadManager reuses exited worker cache slots');
+console.log('PASS  ThreadManager hands allocator free-list ownership between instances');
 console.log('PASS  ThreadManager supports wall-budgeted worker slices');
 console.log('PASS  ThreadManager prioritizes hot audio threads');
 console.log('PASS  ThreadManager notifies thread exits once');
@@ -319,3 +518,5 @@ console.log('PASS  ThreadManager completes nested infinite waits without losing 
 console.log('PASS  ThreadManager keeps pending worker handles unsignaled');
 console.log('PASS  ThreadManager recycles closed event and semaphore handles');
 console.log('PASS  ThreadManager preserves and atomically consumes wait-all state');
+console.log('PASS  ThreadManager keeps main wait completion logs trace-only');
+console.log('PASS  ThreadManager keeps synchronization-object creation logs trace-only');

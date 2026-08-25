@@ -35,7 +35,21 @@ function check(label, fn) {
 }
 
 (async () => {
-  const harness = await bootRenderHarness();
+  const harness = await bootRenderHarness({ extraWat: `
+    (func (export "test_call_CreateMenu_bridge") (result i32)
+      (call $handle_CreateMenu
+        (i32.const 0) (i32.const 0) (i32.const 0)
+        (i32.const 0) (i32.const 0) (i32.const 0))
+      (global.get $eax))
+    (func (export "test_register_menu_window") (param $hwnd i32)
+      (call $wnd_table_set (local.get $hwnd) (global.get $WNDPROC_CTRL_NATIVE)))
+    (func (export "test_call_SetMenu_bridge")
+        (param $hwnd i32) (param $hmenu i32) (result i32)
+      (call $handle_SetMenu
+        (local.get $hwnd) (local.get $hmenu) (i32.const 0)
+        (i32.const 0) (i32.const 0) (i32.const 0))
+      (global.get $eax))
+  ` });
   const wat = harness.exports;
 
   const allocated = [];
@@ -206,6 +220,34 @@ function check(label, fn) {
         menuItemInfo({ mask: MIIM_ID | MIIM_STRING, id: 1, typeData: strA('Item') })), 1);
     assert.strictEqual(
       wat.test_call_InsertMenuA(resourceHandle, 0, MF_BYPOSITION, 1, strA('Item')), 1);
+  });
+
+  check('CreateMenu + tail InsertMenuA reaches the attached WAT menu bar', () => {
+    const root = wat.test_call_CreateMenu_bridge() >>> 0;
+    const file = wat.test_call_CreateMenu_bridge() >>> 0;
+    assert(root && file, 'CreateMenu should return distinct host handles');
+    assert.notStrictEqual(root, file);
+    assert.strictEqual(
+      wat.test_call_InsertMenuA(file, -1, MF_BYPOSITION | MF_STRING,
+        42, strA('&New Game')), 1);
+    assert.strictEqual(
+      wat.test_call_InsertMenuA(root, -1, MF_BYPOSITION | MF_POPUP,
+        file, strA('&Game')), 1);
+    assert.strictEqual(harness.hostCtx._hostMenus.get(root).length, 1,
+      'InsertMenuA should append the top-level popup to the host tree');
+    assert.strictEqual(harness.hostCtx._hostMenus.get(file).length, 1,
+      'InsertMenuA should append the command to the host submenu');
+
+    const hwnd = 0x10002;
+    wat.test_register_menu_window(hwnd);
+    assert.strictEqual(wat.test_call_SetMenu_bridge(hwnd, root), 1);
+    assert.strictEqual(wat.menu_bar_count(hwnd), 1,
+      'SetMenu should serialize the host-created bar into WAT');
+    assert.strictEqual(wat.menu_child_count(hwnd, 0), 1);
+    assert.strictEqual(wat.menu_child_id(hwnd, 0, 0), 42);
+    wat.menu_clear(hwnd);
+    wat.test_call_DestroyMenu(file);
+    wat.test_call_DestroyMenu(root);
   });
 
   check('a full menu reports failure instead of overrunning its capacity', () => {

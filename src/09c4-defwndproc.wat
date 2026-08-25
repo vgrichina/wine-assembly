@@ -112,9 +112,30 @@
     (if (local.get $simple_child_border)
       (then
         ;; Plain WS_CHILD|WS_BORDER controls get a simple 1px border, not
-        ;; a top-level raised frame. The NC clip excludes the client inset.
+        ;; a top-level raised frame.
+        ;;
+        ;; Draw the four edges explicitly rather than flooding the window rect
+        ;; and letting the NC clip carve the client area back out. That clip is
+        ;; only an exclusion when CLIENT_RECT holds a real rect, and a
+        ;; WAT-native control never runs $defwndproc_do_nccalcsize -- it draws
+        ;; its own chrome -- so its client rect stays empty and the exclusion
+        ;; step is skipped entirely. The flood then covered the whole control:
+        ;; the NSIS installer's licence Edit painted its text and scrollbar and
+        ;; was immediately turned into a solid black box by its own NC paint.
         (drop (call $host_gdi_fill_rect (local.get $hdc)
                 (i32.const 0) (i32.const 0)
+                (local.get $w) (i32.const 1)
+                (i32.const 0x30014)))
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.const 0) (i32.sub (local.get $h) (i32.const 1))
+                (local.get $w) (local.get $h)
+                (i32.const 0x30014)))
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.const 0) (i32.const 0)
+                (i32.const 1) (local.get $h)
+                (i32.const 0x30014)))
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.sub (local.get $w) (i32.const 1)) (i32.const 0)
                 (local.get $w) (local.get $h)
                 (i32.const 0x30014)))
         (drop (call $host_release_dc (local.get $hdc)))

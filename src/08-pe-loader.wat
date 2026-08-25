@@ -9,6 +9,7 @@
     (local $tls_index_addr i32) (local $tls_index i32) (local $tls_data i32)
     (local $tls_raw_size i32) (local $tls_zero_size i32)
     (local $src i32) (local $dst i32) (local $characteristics i32)
+    (local $mapped_size i32) (local $copy_size i32) (local $initialized_size i32)
 
     (if (i32.ne (i32.load16_u (global.get $PE_STAGING)) (i32.const 0x5A4D)) (then (return (i32.const -1))))
     (local.set $pe_off (i32.add (global.get $PE_STAGING)
@@ -41,6 +42,11 @@
       (i32.add (global.get $image_base) (global.get $exe_size_of_image)))
     (global.set $heap_sparse_ptr (i32.const 0))
     (global.set $heap_sparse_end (i32.const 0))
+    (global.set $g2w_sparse_size (i32.const 0))
+    (global.set $g2w_sparse_size1 (i32.const 0))
+    (global.set $g2w_sparse_size2 (i32.const 0))
+    (global.set $g2w_sparse_size3 (i32.const 0))
+    (global.set $g2w_gl8_page (i32.const -1))
     ;; VirtualAlloc(NULL, MEM_RESERVE) uses sparse high guest addresses. Commits
     ;; get backing memory through $virtual_map_commit instead of consuming the
     ;; low HeapAlloc arena.
@@ -63,18 +69,47 @@
       (local.set $raw_size (i32.load (i32.add (local.get $section_off) (i32.const 16))))
       (local.set $raw_off (i32.load (i32.add (local.get $section_off) (i32.const 20))))
       (local.set $characteristics (i32.load (i32.add (local.get $section_off) (i32.const 36))))
+      ;; Watcom PE images use VirtualSize=0 and put the committed extent in
+      ;; SizeOfRawData, including for IMAGE_SCN_CNT_UNINITIALIZED_DATA sections
+      ;; whose PointerToRawData is zero. Map the larger declared span, but never
+      ;; copy file bytes into an uninitialized section.
+      (local.set $mapped_size
+        (if (result i32) (i32.gt_u (local.get $vsize) (local.get $raw_size))
+          (then (local.get $vsize))
+          (else (local.get $raw_size))))
+      (local.set $copy_size
+        (if (result i32)
+            (i32.or
+              (i32.ne
+                (i32.and (local.get $characteristics) (i32.const 0x80))
+                (i32.const 0))
+              (i32.eqz (local.get $raw_off)))
+          (then (i32.const 0))
+          (else (local.get $raw_size))))
+      (local.set $initialized_size (local.get $copy_size))
+      ;; The host prehydrates initialized section bytes whose file offsets lie
+      ;; beyond the fixed staging buffer. Copy only bytes that are actually in
+      ;; staging, but preserve the full initialized extent so imports and PE
+      ;; resources can consume that prehydrated tail during this load.
+      (if (i32.gt_u (i32.add (local.get $raw_off) (local.get $copy_size)) (local.get $size))
+        (then
+          (local.set $copy_size
+            (if (result i32) (i32.lt_u (local.get $raw_off) (local.get $size))
+              (then (i32.sub (local.get $size) (local.get $raw_off)))
+              (else (i32.const 0))))))
       (local.set $dst (i32.add (global.get $GUEST_BASE) (local.get $vaddr)))
       (local.set $src (i32.add (global.get $PE_STAGING) (local.get $raw_off)))
-      (call $memcpy (local.get $dst) (local.get $src) (local.get $raw_size))
-      ;; Zero BSS portion: if VirtualSize > RawSize, zero the remainder
-      (if (i32.gt_u (local.get $vsize) (local.get $raw_size))
+      (if (local.get $copy_size)
+        (then (call $memcpy (local.get $dst) (local.get $src) (local.get $copy_size))))
+      ;; Zero BSS/unbacked tail through the complete mapped section extent.
+      (if (i32.gt_u (local.get $mapped_size) (local.get $initialized_size))
         (then (call $zero_memory
-          (i32.add (local.get $dst) (local.get $raw_size))
-          (i32.sub (local.get $vsize) (local.get $raw_size)))))
+          (i32.add (local.get $dst) (local.get $initialized_size))
+          (i32.sub (local.get $mapped_size) (local.get $initialized_size)))))
       (if (i32.and (local.get $characteristics) (i32.const 0x20))
         (then
           (global.set $code_start (i32.add (global.get $image_base) (local.get $vaddr)))
-          (global.set $code_end (i32.add (global.get $code_start) (local.get $vsize)))))
+          (global.set $code_end (i32.add (global.get $code_start) (local.get $mapped_size)))))
       (local.set $section_off (i32.add (local.get $section_off) (i32.const 40)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $sl)))
@@ -308,6 +343,15 @@
       (i32.const 0xCACA000C))
     (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
 
+    ;; Allocate qsort comparator continuation thunk (marker 0xCACA002D).
+    (global.set $qsort_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA002D))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
     ;; Allocate CBT hook continuation thunk (marker 0xCACA0002)
     (global.set $cbt_hook_ret_thunk (i32.add
       (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
@@ -385,6 +429,17 @@
       (global.get $image_base)))
     (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
       (i32.const 0xCACA0029))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
+
+    ;; Child WM_NCCREATE-to-WM_CREATE continuation (marker 0xCACA002E).
+    ;; Unlike CACA0029, this retains the child-specific saved WM_SIZE word so
+    ;; CACA0027 can finish the complete create sequence.
+    (global.set $child_create_nccreate_ret_thunk (i32.add
+      (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+               (global.get $GUEST_BASE))
+      (global.get $image_base)))
+    (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
+      (i32.const 0xCACA002E))
     (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
 
     ;; SetFocus WM_SETFOCUS return continuation (marker 0xCACA002A).

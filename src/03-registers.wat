@@ -74,7 +74,7 @@
   ;; (simulating Windows null-page behavior) and writes go to a harmless sink.
   (global $NULL_SENTINEL i32 (i32.const 0xF0))
   (func $g2w (param $ga i32) (result i32)
-    (local $wa i32) (local $i i32) (local $count i32)
+    (local $wa i32) (local $i i32) (local $count i32) (local $off i32)
     (local $rec i32) (local $base i32) (local $size i32) (local $backing i32)
     (local.set $wa (i32.add (i32.sub (local.get $ga) (global.get $image_base)) (global.get $GUEST_BASE)))
     (if (i32.eqz (i32.or (i32.lt_s (local.get $wa) (i32.const 0))
@@ -91,8 +91,31 @@
           (global.get $DIB_BACKING_BASE)
           (i32.sub (local.get $ga) (global.get $DIB_GUEST_BASE))))))
     ;; Sparse VirtualAlloc mappings live outside the direct image-relative
-    ;; window. Scan only after direct translation failed, keeping normal guest
-    ;; memory accesses on the cheap arithmetic path.
+    ;; window. Map records are append-only (VirtualFree currently preserves
+    ;; its backing), so a successful last-range translation remains valid even
+    ;; when another thread appends or extends a record. An extension can miss
+    ;; the old cached size once, then the scan below refreshes it.
+    (local.set $off
+      (i32.sub (local.get $ga) (global.get $g2w_sparse_base)))
+    (if (i32.lt_u (local.get $off) (global.get $g2w_sparse_size))
+      (then
+        (return (i32.add (global.get $g2w_sparse_backing) (local.get $off)))))
+    (local.set $off
+      (i32.sub (local.get $ga) (global.get $g2w_sparse_base1)))
+    (if (i32.lt_u (local.get $off) (global.get $g2w_sparse_size1))
+      (then
+        (return (i32.add (global.get $g2w_sparse_backing1) (local.get $off)))))
+    (local.set $off
+      (i32.sub (local.get $ga) (global.get $g2w_sparse_base2)))
+    (if (i32.lt_u (local.get $off) (global.get $g2w_sparse_size2))
+      (then
+        (return (i32.add (global.get $g2w_sparse_backing2) (local.get $off)))))
+    (local.set $off
+      (i32.sub (local.get $ga) (global.get $g2w_sparse_base3)))
+    (if (i32.lt_u (local.get $off) (global.get $g2w_sparse_size3))
+      (then
+        (return (i32.add (global.get $g2w_sparse_backing3) (local.get $off)))))
+    ;; Scan only after direct, DIB, and cached sparse translation failed.
     ;; The count and each record's size are the two fields $virtual_map_commit
     ;; publishes LAST, after the memory they describe is mapped and zeroed. Read
     ;; them atomically so this scan cannot be reordered ahead of the record it is
@@ -110,6 +133,18 @@
             (i32.lt_u (local.get $ga) (i32.add (local.get $base) (local.get $size))))
         (then
           (local.set $backing (i32.load (i32.add (local.get $rec) (i32.const 8))))
+          (global.set $g2w_sparse_base3 (global.get $g2w_sparse_base2))
+          (global.set $g2w_sparse_size3 (global.get $g2w_sparse_size2))
+          (global.set $g2w_sparse_backing3 (global.get $g2w_sparse_backing2))
+          (global.set $g2w_sparse_base2 (global.get $g2w_sparse_base1))
+          (global.set $g2w_sparse_size2 (global.get $g2w_sparse_size1))
+          (global.set $g2w_sparse_backing2 (global.get $g2w_sparse_backing1))
+          (global.set $g2w_sparse_base1 (global.get $g2w_sparse_base))
+          (global.set $g2w_sparse_size1 (global.get $g2w_sparse_size))
+          (global.set $g2w_sparse_backing1 (global.get $g2w_sparse_backing))
+          (global.set $g2w_sparse_base (local.get $base))
+          (global.set $g2w_sparse_size (local.get $size))
+          (global.set $g2w_sparse_backing (local.get $backing))
           (return (i32.add (local.get $backing) (i32.sub (local.get $ga) (local.get $base))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $mapped_scan)))
@@ -166,35 +201,81 @@
     (i32.or
       (i32.load8_u (local.get $wa))
       (i32.shl (i32.load8_u (local.get $end_wa)) (i32.const 8))))
-  (func $gl8 (param $ga i32) (result i32) (i32.load8_u (call $g2w (local.get $ga))))
-  (func $invalidate_code_write (param $ga i32)
-    (local $in_code i32) (local $in_generated i32)
+  (func $gl8 (param $ga i32) (result i32)
+    (local $page i32) (local $wa i32)
+    (local.set $page (i32.and (local.get $ga) (i32.const 0xFFFFF000)))
+    (if (i32.eq (local.get $page) (global.get $g2w_gl8_page))
+      (then
+        (return (i32.load8_u
+          (i32.add (local.get $ga) (global.get $g2w_gl8_delta))))))
+    (local.set $wa (call $g2w (local.get $ga)))
+    ;; Never cache an invalid translation: NULL_SENTINEL is four bytes, not a
+    ;; backing page, and adding an address offset to it would turn later bad
+    ;; reads into arbitrary linear-memory reads.
+    (if (i32.ne (local.get $wa) (global.get $NULL_SENTINEL))
+      (then
+        (global.set $g2w_gl8_page (local.get $page))
+        (global.set $g2w_gl8_delta (i32.sub (local.get $wa) (local.get $ga)))))
+    (i32.load8_u (local.get $wa)))
+  ;; Cheap "could a write here be touching code?" test, for one guest address.
+  ;; Split out of $invalidate_code_write so the range form can skip it when the
+  ;; write spans pages and the per-page walk will ask the question anyway.
+  (func $code_write_is_code (param $ga i32) (result i32)
+    (local $in_sparse_generated i32)
+    (local.set $in_sparse_generated
+      (i32.and
+        (i32.ne (global.get $generated_sparse_code_start) (i32.const 0))
+        (i32.and (i32.ge_u (local.get $ga) (global.get $generated_sparse_code_start))
+                 (i32.lt_u (local.get $ga) (global.get $generated_sparse_code_end)))))
+    (i32.or
+      (local.get $in_sparse_generated)
+      (call $code_page_test (local.get $ga))))
+
+  ;; A write of $len bytes starting at $ga. The length is not decoration: with
+  ;; per-offset invalidation (docs/page-compile-design.md section 5) the retire
+  ;; walk needs the real extent, because it retires the blocks that cover the
+  ;; bytes named and nothing else. Passing only the first and last byte of a
+  ;; REP MOVS -- which is what the page-granularity design got away with, since
+  ;; two endpoints named every page in between as long as there were at most
+  ;; two -- would now leave every block in the middle live over rewritten bytes.
+  (func $invalidate_code_write (param $ga i32) (param $len i32)
     ;; Invalidate decoded blocks only when writes can affect already-decoded
     ;; executable bytes. RCT mutates large image-data buffers during startup;
     ;; treating every image write as self-modifying code makes each byte/word
     ;; update scan the whole block-cache index.
+    ;;
+    ;; $code_page_test answers that exactly for every guest page below
+    ;; $VIRTUAL_ALLOC_MIN: its bit is set by $cache_store, so it is on iff a
+    ;; block was decoded out of that page. It replaces the old code_start..end
+    ;; and generated_code_start..end span tests, which were both coarser (a
+    ;; span covers every data page between its ends — RCT executes and writes
+    ;; inside one CodeSeg section) and blind to code generated into ordinary
+    ;; heap memory, which lies in neither span. Storm's runtime blitters are
+    ;; exactly that case.
     (if (i32.eqz (global.get $exe_size_of_image)) (then (return)))
-    (local.set $in_code
-      (i32.and
-        (i32.ge_u (local.get $ga) (global.get $code_start))
-        (i32.lt_u (local.get $ga) (global.get $code_end))))
-    (local.set $in_generated
-      (i32.and
-        (i32.ne (global.get $generated_code_start) (i32.const 0))
-        (i32.and (i32.ge_u (local.get $ga) (global.get $generated_code_start))
-                 (i32.lt_u (local.get $ga) (global.get $generated_code_end)))))
-    (if (i32.or (local.get $in_code) (local.get $in_generated))
-      (then (call $invalidate_page (local.get $ga)))))
+    ;; The hot case is a 1/2/4-byte write inside one page: answer it with the
+    ;; bitmap and decline without a call. A write that spans pages goes straight
+    ;; to the range walk, which tests each page's directory slot itself -- a
+    ;; first-page test would be wrong there, since the code could be in the last
+    ;; page of the span.
+    (if (i32.le_u (i32.add (i32.and (local.get $ga) (i32.const 0xFFF)) (local.get $len))
+                  (i32.const 4096))
+      (then
+        (if (i32.eqz (call $code_write_is_code (local.get $ga))) (then (return)))))
+    ;; Multi-page spans need every page in between retired, not just the two
+    ;; ends -- main fixed that with its own $invalidate_code_range, and the
+    ;; page-compile one below already walks page by page, so that fix arrives
+    ;; here as a property of the range walk rather than a second function.
+    (call $invalidate_code_range (local.get $ga) (local.get $len)))
   (func $gs32 (param $ga i32) (param $v i32)
     (local $wa i32) (local $end_wa i32)
     (local.set $wa (call $g2w (local.get $ga)))
-    (call $invalidate_code_write (local.get $ga))
+    (call $invalidate_code_write (local.get $ga) (i32.const 4))
     (if (i32.le_u (i32.and (local.get $ga) (i32.const 0xFFF)) (i32.const 0xFFC))
       (then (i32.store (local.get $wa) (local.get $v)) (return)))
     (local.set $end_wa (call $g2w (i32.add (local.get $ga) (i32.const 3))))
     (if (i32.eq (local.get $end_wa) (i32.add (local.get $wa) (i32.const 3)))
       (then (i32.store (local.get $wa) (local.get $v)) (return)))
-    (call $invalidate_code_write (i32.add (local.get $ga) (i32.const 3)))
     (i32.store8 (local.get $wa) (local.get $v))
     (i32.store8
       (call $g2w (i32.add (local.get $ga) (i32.const 1)))
@@ -206,19 +287,18 @@
   (func $gs16 (param $ga i32) (param $v i32)
     (local $wa i32) (local $end_wa i32)
     (local.set $wa (call $g2w (local.get $ga)))
-    (call $invalidate_code_write (local.get $ga))
+    (call $invalidate_code_write (local.get $ga) (i32.const 2))
     (if (i32.ne (i32.and (local.get $ga) (i32.const 0xFFF)) (i32.const 0xFFF))
       (then (i32.store16 (local.get $wa) (local.get $v)) (return)))
     (local.set $end_wa (call $g2w (i32.add (local.get $ga) (i32.const 1))))
     (if (i32.eq (local.get $end_wa) (i32.add (local.get $wa) (i32.const 1)))
       (then (i32.store16 (local.get $wa) (local.get $v)) (return)))
-    (call $invalidate_code_write (i32.add (local.get $ga) (i32.const 1)))
     (i32.store8 (local.get $wa) (local.get $v))
     (i32.store8 (local.get $end_wa) (i32.shr_u (local.get $v) (i32.const 8))))
   (func $gs8 (param $ga i32) (param $v i32)
     (local $wa i32)
     (local.set $wa (call $g2w (local.get $ga)))
-    (call $invalidate_code_write (local.get $ga))
+    (call $invalidate_code_write (local.get $ga) (i32.const 1))
     (i32.store8 (local.get $wa) (local.get $v)))
 
   ;; ============================================================

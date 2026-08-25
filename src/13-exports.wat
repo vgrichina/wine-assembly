@@ -6,14 +6,33 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
 
   (func $run (export "run") (param $max_blocks i32)
-    (local $thread i32) (local $blocks i32)
+    (local $thread i32)
     (local $hc_i i32) (local $hc_slot i32)
     (local $prev_eip i32) (local $prev_esp i32)
-    (local.set $blocks (local.get $max_blocks))
+    (local $saved_budget i32)
+    ;; A global rather than a local because $branch_end spends it too — see the
+    ;; comment on $block_budget in 01-header.wat. Saved and restored because
+    ;; run() is re-entrant: a COM class-factory callback is driven by calling
+    ;; run() again from inside the API thunk the outer run() is still executing
+    ;; (lib/storage.js _runComCallback). A plain global would hand the outer
+    ;; loop whatever the nested one left behind, and it would halt early.
+    (local.set $saved_budget (global.get $block_budget))
+    (global.set $block_budget (local.get $max_blocks))
     (block $halt (loop $main
-      (br_if $halt (i32.le_s (local.get $blocks) (i32.const 0)))
+      (br_if $halt (i32.le_s (global.get $block_budget) (i32.const 0)))
       (br_if $halt (i32.eqz (global.get $eip)))
-      (local.set $blocks (i32.sub (local.get $blocks) (i32.const 1)))
+      ;; A block whose quantum expired part-way through. Give it a fresh one and
+      ;; carry on from the op $next declined to run — looking $eip up again would
+      ;; restart the block and re-run everything before that op. No block is
+      ;; spent from the budget: this is the same block, still in progress.
+      (if (global.get $resume_ip)
+        (then
+          (global.set $ip (global.get $resume_ip))
+          (global.set $resume_ip (i32.const 0))
+          (global.set $steps (i32.const 1000))
+          (call $next)
+          (br $main)))
+      (global.set $block_budget (i32.sub (global.get $block_budget) (i32.const 1)))
       ;; Reset thread buffer if approaching cache region (leave 4KB margin)
       (if (i32.ge_u (global.get $thread_alloc) (i32.sub (global.get $THREAD_END) (i32.const 4096)))
         (then
@@ -171,16 +190,21 @@
         (then
           (if (call $fast_msvc_sbh_scan)
             (then (br $main)))))
-      (local.set $thread (call $cache_lookup (global.get $eip)))
+      ;; The page index is the only lookup there is now: it is exact, so a miss
+      ;; here really does mean nothing is compiled at this address. The hash
+      ;; cache that used to sit between these two rungs is gone --
+      ;; docs/page-compile-design.md section 4.
+      (local.set $thread (call $page_resolve (global.get $eip)))
       (if (i32.eqz (local.get $thread))
-        (then (local.set $thread (call $decode_block (global.get $eip)))))
+        (then (local.set $thread (call $decode_run (global.get $eip)))))
       (global.set $ip (local.get $thread))
       (if (global.get $handler_hist_enabled)
         (then (global.set $handler_hist_last (i32.const -1))))
       ;; Set steps high enough to always complete a block
       (global.set $steps (i32.const 1000))
       (call $next)
-      (br $main))))
+      (br $main)))
+    (global.set $block_budget (local.get $saved_budget)))
 
   ;; Hook for test/test-shift-equivalence.js, which checks the unified
   ;; $do_shift against an independent model of the x86 semantics over every
@@ -433,7 +457,14 @@
     (call $wnd_get_thread (local.get $hwnd)))
   (func (export "set_current_thread_id") (param i32) (global.set $current_thread_id (local.get 0)))
   (func (export "get_image_base") (result i32) (global.get $image_base))
+  (func (export "get_rsrc_rva") (result i32) (global.get $rsrc_rva))
   (func (export "get_thread_alloc") (result i32) (global.get $thread_alloc))
+  (func (export "get_cache_clears") (result i32) (global.get $cache_clears))
+  (func (export "get_cache_stores") (result i32) (global.get $cache_stores))
+  (func (export "get_cache_evicts") (result i32) (global.get $cache_evicts))
+  (func (export "get_cache_invals") (result i32) (global.get $cache_invals))
+  (func (export "get_cache_inval_hits") (result i32) (global.get $cache_inval_hits))
+  (func (export "get_cache_inval_page") (result i32) (global.get $cache_inval_page))
   (func (export "get_wndproc") (result i32) (global.get $wndproc_addr))
   (func (export "get_thunk_base") (result i32) (global.get $thunk_guest_base))
   (func (export "get_thunk_end") (result i32) (global.get $thunk_guest_end))
@@ -505,6 +536,56 @@
   ;; Post queue exports for IPC injection
   (func (export "get_main_hwnd") (result i32) (global.get $main_hwnd))
   (func (export "get_dx_primary_pal_wa") (result i32) (global.get $dx_primary_pal_wa))
+  ;; The window DirectDraw currently owns the whole screen through, or 0.
+  ;; A DDSCL_EXCLUSIVE|DDSCL_FULLSCREEN app's primary surface *is* the display,
+  ;; so its window shows no caption, border or menu bar however it was styled
+  ;; -- the DX SDK's own samples keep WS_CAPTION and a menu and rely on that.
+  ;; The compositor cannot infer this from the style bits alone.
+  (func (export "get_dx_exclusive_hwnd") (result i32)
+    (if (result i32) (global.get $dx_exclusive_fullscreen)
+      (then (call $dx_target_hwnd))
+      (else (i32.const 0))))
+  ;; The device window of a windowed Direct3D9 device, or 0. Tells the
+  ;; compositor that the surface it is presenting is that window's client
+  ;; area at (0,0) rather than a screen-coordinate DirectDraw primary.
+  (func (export "get_d3d9_windowed_hwnd") (result i32)
+    (global.get $d3d9_windowed_hwnd))
+  ;; The window a DirectDraw/Direct3D frame should be presented into.
+  ;;
+  ;; Normally that is $main_hwnd, but $main_hwnd is a *per-instance* mutable
+  ;; global and a worker thread is a separate WASM instance sharing only the
+  ;; linear memory. Liquid War (Allegro) creates its window on T1, so the main
+  ;; instance -- the one the compositor asks -- reports $main_hwnd == 0 and
+  ;; every finished frame was dropped before it reached a window surface:
+  ;; --trace-dx showed 17 `Present` lines and zero `Upload` lines.
+  ;;
+  ;; WND_RECORDS *is* shared memory, so when this instance has no main window
+  ;; of its own, fall back to the topmost visible top-level window recorded
+  ;; there. $dx_coop_hwnd is no help here -- it is a per-instance global too.
+  (func (export "get_dx_present_hwnd") (result i32)
+    (local $i i32) (local $hwnd i32) (local $best i32) (local $best_z i32)
+    (local $z i32)
+    (if (global.get $main_hwnd)
+      (then (return (global.get $main_hwnd))))
+    (local.set $i (i32.const 0))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (local.set $hwnd (call $wnd_slot_hwnd (local.get $i)))
+      (if (i32.and
+            (i32.and (i32.ne (local.get $hwnd) (i32.const 0))
+                     (i32.eqz (call $wnd_get_parent (local.get $hwnd))))
+            (i32.ne (i32.and (call $wnd_get_style (local.get $hwnd))
+                             (i32.const 0x10000000))          ;; WS_VISIBLE
+                    (i32.const 0)))
+        (then
+          (local.set $z (call $wnd_z_get (local.get $hwnd)))
+          (if (i32.or (i32.eqz (local.get $best))
+                      (i32.gt_s (local.get $z) (local.get $best_z)))
+            (then (local.set $best (local.get $hwnd))
+                  (local.set $best_z (local.get $z))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $best))
   (func (export "get_flash_state") (param $hwnd i32) (result i32)
     (local $slot i32)
     (local.set $slot (call $wnd_table_find (local.get $hwnd)))
@@ -775,8 +856,10 @@
     ;; fdwItalic the 6th at esp+24, lpszFace the 14th at esp+56. This helper
     ;; used to lay them out one slot short, matching the handler's own
     ;; off-by-one, so no test could see that every created font was nameless.
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 8)) (i32.const 0))
     (call $gs32 (i32.add (local.get $saved_esp) (i32.const 20)) (local.get 1))
     (call $gs32 (i32.add (local.get $saved_esp) (i32.const 24)) (local.get 2))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 52)) (i32.const 0))
     (call $gs32 (i32.add (local.get $saved_esp) (i32.const 56)) (local.get 3))
     (call $handle_CreateFontW
       (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)
@@ -2029,6 +2112,10 @@
     (call $gdi_object_record (local.get 0)))
   (func (export "test_dx_set_primary_palette_wa") (param i32)
     (global.set $dx_primary_pal_wa (local.get 0)))
+  (func (export "test_dx_set_primary_wa") (param i32)
+    (global.set $dx_primary_wa (local.get 0)))
+  (func (export "test_dx_primary_entry") (result i32)
+    (call $dx_primary_entry))
 
   ;; ---- NC/message plumbing exports (JS host posts messages into WAT's queues) ----
   (func (export "nc_post_paint") (param $hwnd i32)
@@ -2254,6 +2341,8 @@
         (then (global.set $dialog_cbt_ret_thunk (local.get $guest))))
       (if (i32.eq (local.get $marker) (i32.const 0xCACA0029))
         (then (global.set $createwnd_nccreate_ret_thunk (local.get $guest))))
+      (if (i32.eq (local.get $marker) (i32.const 0xCACA002E))
+        (then (global.set $child_create_nccreate_ret_thunk (local.get $guest))))
       (if (i32.eq (local.get $marker) (i32.const 0xCACA002A))
         (then (global.set $setfocus_ret_thunk (local.get $guest))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
@@ -2325,22 +2414,34 @@
   (func (export "init_thread") (param $tid i32)
       (param $img_base i32) (param $code_s i32) (param $code_e i32)
       (param $thunk_gs i32) (param $thunk_ge i32) (param $num_th i32)
+      (param $main_rsrc_rva i32)
     (local $pe_off i32)
     (global.set $THREAD_BASE (i32.add (i32.const 0x05000000)
       (i32.mul (local.get $tid) (i32.const 0x400000))))
     (global.set $THREAD_END  (i32.add (global.get $THREAD_BASE) (i32.const 0x400000)))
-    (global.set $CACHE_INDEX (i32.add (i32.const 0x07152000)
-      (i32.mul (local.get $tid) (i32.const 0x8000))))
     (global.set $thread_alloc (global.get $THREAD_BASE))
+    ;; Page-compilation state is per-instance for the same reason THREAD_BASE
+    ;; is: a worker is a separate instance over the same memory, and chunk
+    ;; pointers name that thread's own arena partition.
+    (global.set $PAGE_DIR (i32.add (global.get $PAGE_DIR_BASE)
+      (i32.mul (local.get $tid) (global.get $PAGE_DIR_STRIDE))))
+    (global.set $PAGE_INDEX (i32.add (global.get $PAGE_INDEX_ARENA)
+      (i32.mul (local.get $tid) (global.get $PAGE_INDEX_STRIDE))))
+    (global.set $page_index_next (i32.const 0))
+    (call $page_dir_reset)
     (global.set $image_base (local.get $img_base))
-    ;; Resource lookup state is instance-local. The main instance populates
-    ;; $rsrc_rva while loading the PE, but worker instances start with zero.
-    ;; The mapped DOS/PE headers live in shared memory, so recover the same
-    ;; resource-directory RVA when initializing each worker.
-    (local.set $pe_off (i32.add (local.get $img_base)
-      (i32.load (call $g2w (i32.add (local.get $img_base) (i32.const 0x3C))))))
-    (global.set $rsrc_rva
-      (i32.load (call $g2w (i32.add (local.get $pe_off) (i32.const 136)))))
+    ;; Resource lookup state is instance-local: the loading instance populates
+    ;; $rsrc_rva, every other one starts at zero. A cooperative thread is handed
+    ;; the value the main loader retained. The worker backend has none to hand
+    ;; over — nothing loaded the PE on the main-thread instance — but there the
+    ;; mapped DOS/PE headers do live in shared memory, so reread them.
+    (if (local.get $main_rsrc_rva)
+      (then (global.set $rsrc_rva (local.get $main_rsrc_rva)))
+      (else
+        (local.set $pe_off (i32.add (local.get $img_base)
+          (i32.load (call $g2w (i32.add (local.get $img_base) (i32.const 0x3C))))))
+        (global.set $rsrc_rva
+          (i32.load (call $g2w (i32.add (local.get $pe_off) (i32.const 136)))))))
     ;; Allocator cursors are per-instance and describe one process-wide arena, so
     ;; a worker must NOT inherit main's: zero them and let the first allocation
     ;; reserve a private chunk from the shared cursors. heap_base is immutable
@@ -2364,6 +2465,36 @@
     ;; vtable global eagerly so those calls never dispatch through address 0.
     (call $dx_sync_thread_vtables)
   )
+
+  ;; Multimedia-timer state, for debugging a client that waits on a
+  ;; timeSetEvent callback that never arrives. "The guest holds timer id N" and
+  ;; "WAT is still running timer id N" can disagree; only this export can tell
+  ;; them apart from the host side.
+  ;; field: 0=id 1=interval 2=callback 3=dwUser 4=last_tick 5=oneshot
+  ;;        6=next_id (slot ignored) 7=in_cb (slot ignored) 8=slot count
+  (func (export "dbg_mm_timer") (param $slot i32) (param $field i32) (result i32)
+    (local $p i32)
+    (if (i32.eq (local.get $field) (i32.const 6))
+      (then (return (i32.load (global.get $MM_TIMER_NEXT_ID)))))
+    (if (i32.eq (local.get $field) (i32.const 7))
+      (then (return (global.get $mm_timer_in_cb))))
+    (if (i32.eq (local.get $field) (i32.const 8))
+      (then (return (global.get $MM_TIMER_MAX))))
+    (if (i32.ge_u (local.get $slot) (global.get $MM_TIMER_MAX))
+      (then (return (i32.const -1))))
+    (local.set $p (call $mm_timer_slot (local.get $slot)))
+    (if (i32.eqz (local.get $field)) (then (return (i32.load (local.get $p)))))
+    (if (i32.eq (local.get $field) (i32.const 1))
+      (then (return (i32.load offset=4 (local.get $p)))))
+    (if (i32.eq (local.get $field) (i32.const 2))
+      (then (return (i32.load offset=8 (local.get $p)))))
+    (if (i32.eq (local.get $field) (i32.const 3))
+      (then (return (i32.load offset=12 (local.get $p)))))
+    (if (i32.eq (local.get $field) (i32.const 4))
+      (then (return (i32.load offset=16 (local.get $p)))))
+    (if (i32.eq (local.get $field) (i32.const 5))
+      (then (return (i32.load offset=20 (local.get $p)))))
+    (i32.const -1))
 
   ;; Yield state exports
   (func (export "get_yield_reason") (result i32) (global.get $yield_reason))
@@ -2412,7 +2543,12 @@
     (if (call $shared_post_queue_read (call $paint_scratch_take) (i32.const 0))
       (then (return (i32.const 1))))
     (if (global.get $pending_wm_size) (then (return (i32.const 1))))
-    (if (global.get $nc_flags_count) (then (return (i32.const 1))))
+    ;; Bit 3 is persistent state: it records that DefWindowProc owns the
+    ;; window's background erase. Only bits 0..2 represent queued NC work.
+    ;; Treating any non-zero slot as pending parks GetMessage in a permanent
+    ;; wake/retry loop after the first default WM_ERASEBKGND.
+    (if (call $nc_flags_scan (i32.const 7))
+      (then (return (i32.const 1))))
     (if (call $paint_flag_any) (then (return (i32.const 1))))
     (if (call $timer_check_due (call $paint_scratch_take) (i32.const 0))
       (then (return (i32.const 1))))
@@ -2557,8 +2693,16 @@
     (local $base i32)
     (local.set $base (i32.add (global.get $HIT_COUNT_BASE)
                               (i32.shl (local.get $slot) (i32.const 3))))
-    (i32.store          (local.get $base) (local.get $addr))
-    (i32.store offset=4 (local.get $base) (i32.const 0))
+    ;; Arming the same address twice must not throw the count away. The slots
+    ;; live in linear memory, which worker instances share, and every spawn
+    ;; re-arms all of them (lib/thread-manager.js) -- so an app that started a
+    ;; thread mid-run reset every counter to zero and the flag reported 0 for
+    ;; addresses it had already counted hundreds of thousands of times. Use
+    ;; clear_counts to deliberately start over.
+    (if (i32.ne (i32.load (local.get $base)) (local.get $addr))
+      (then
+        (i32.store          (local.get $base) (local.get $addr))
+        (i32.store offset=4 (local.get $base) (i32.const 0))))
     (if (i32.gt_s (i32.add (local.get $slot) (i32.const 1)) (global.get $hit_count_n))
       (then (global.set $hit_count_n (i32.add (local.get $slot) (i32.const 1)))))
     (call $dbg_recompute))
@@ -2614,6 +2758,56 @@
     (global.get $stack_packet_0049dd20_to_ddc7_entries))
   (func (export "get_stack_packet_0049dd20_to_e0ad_entries") (result i32)
     (global.get $stack_packet_0049dd20_to_e0ad_entries))
+
+  ;; Loop-idiom matcher (src/07b-loop-match.wat). Decode-time only, so these
+  ;; can be flipped at any point without disturbing a running block.
+  (func (export "set_loop_trace") (param $flag i32) (param $eip i32)
+    (global.set $loop_trace (local.get $flag))
+    (global.set $loop_trace_eip (local.get $eip)))
+  (func (export "get_loop_selfloop_blocks") (result i32)
+    (global.get $loop_selfloop_blocks))
+  (func (export "get_loop_matched_blocks") (result i32)
+    (global.get $loop_matched_blocks))
+  ;; --no-loop-superops: keep matching (and counting) but stop lowering, so a
+  ;; run with and a run without differ in exactly one thing.
+  (func (export "set_loop_emit") (param $flag i32)
+    (global.set $loop_emit_enabled (local.get $flag)))
+
+  ;; --no-sib-fusion: emit the unfused compute_ea_sib + consumer pair, so a
+  ;; fused build and an unfused one differ in exactly one thing and need no
+  ;; rebuild between them. Must be set before the first decode, and on every
+  ;; per-thread instance — mut globals are per-instance.
+  (func (export "set_sib_fusion") (param $flag i32)
+    (global.set $sib_fusion_enabled (local.get $flag)))
+
+  ;; The unrolled-rectangle fold (handler 422). Same rules: before the first
+  ;; decode, and on every per-thread instance.
+  (func (export "set_rect_run") (param $flag i32)
+    (global.set $rect_run_enabled (local.get $flag)))
+
+  (func (export "set_case_chain") (param $flag i32)
+    (global.set $case_chain_enabled (local.get $flag)))
+
+  ;; The run-length blit fold (handler 424). Decode-time, so this only steers
+  ;; blocks decoded after it is called -- set it before the first decode for a
+  ;; clean A/B, and on every per-thread instance.
+  (func (export "set_rle_run") (param $flag i32)
+    (global.set $rle_run_enabled (local.get $flag)))
+  (func (export "get_rle_run") (result i32) (global.get $rle_run_enabled))
+
+  ;; Page compilation (docs/page-compile-design.md). There is deliberately no
+  ;; switch: this replaces the storage layer rather than accelerating it, so the
+  ;; thing to compare against is the commit before it, not a flag.
+  (func (export "get_page_compiles") (result i32) (global.get $page_compiles))
+  (func (export "get_page_hits")     (result i32) (global.get $page_hits))
+  (func (export "get_page_misses")   (result i32) (global.get $page_misses))
+  (func (export "get_page_fast")     (result i32) (global.get $page_fast))
+  (func (export "get_page_ft")       (result i32) (global.get $page_ft))
+  (func (export "get_page_ft_missed")(result i32) (global.get $page_ft_missed))
+  (func (export "get_page_retires")  (result i32) (global.get $page_retires))
+  (func (export "get_page_range_drops")(result i32) (global.get $page_range_drops))
+  (func (export "get_page_ft_chains")(result i32) (global.get $page_ft_chains))
+  (func (export "get_page_ft_blocks")(result i32) (global.get $page_ft_blocks))
 
   ;; Threaded-handler histogram. Profiling tools enable this only around a
   ;; measured window. Counts are stored in WAT-private memory and read by JS.
@@ -2682,6 +2876,14 @@
   (func (export "get_handler_hist_base") (result i32) (global.get $HANDLER_HIST_COUNTS))
   (func (export "get_handler_pair_hist_base") (result i32) (global.get $HANDLER_PAIR_HIST_COUNTS))
   (func (export "get_handler_hist_count") (result i32) (global.get $HANDLER_HIST_COUNT))
+  ;; How many per-handler counters HANDLER_HIST_COUNTS actually holds. This is
+  ;; NOT get_handler_hist_count: that one is the side of the dense pair matrix,
+  ;; frozen at 361 because the matrix is 361x361. Every handler above it is
+  ;; still counted individually, so a reader that sizes its per-handler loop
+  ;; with the pair bound silently omits the fused superinstructions -- and
+  ;; reports a total that shrinks by construction every time one lands.
+  (func (export "get_handler_hist_slots") (result i32)
+    (i32.shr_u (global.get $HANDLER_HIST_COUNTS_SIZE) (i32.const 2)))
   (func (export "get_branch_cmp_jcc_hist_base") (result i32) (global.get $BRANCH_CMP_JCC_HIST))
   (func (export "get_branch_test_jcc_hist_base") (result i32) (global.get $BRANCH_TEST_JCC_HIST))
   (func (export "get_branch_alu_m32_ro_jcc_hist_base") (result i32) (global.get $BRANCH_ALU_M32_RO_JCC_HIST))
@@ -2748,9 +2950,11 @@
   ;; fire_mm_timer: check if multimedia timer is due, inject callback if so.
   ;; Saves current EIP as return address so execution resumes after callback returns.
   ;; Returns 1 if timer was fired, 0 if not due or no timer active.
+  (func (export "is_mm_timer_callback_active") (result i32)
+    (global.get $mm_timer_in_cb))
+
   (func $fire_mm_timer (export "fire_mm_timer") (result i32)
-    (local $elapsed i32)
-    (if (i32.eqz (global.get $mm_timer_id)) (then (return (i32.const 0))))
+    (local $slot i32) (local $id i32) (local $dwuser i32) (local $cb i32)
     ;; A yielded Win32 wait keeps its stdcall frame parked for the cooperative
     ;; scheduler. Interrupting that frame would make wait completion mistake
     ;; this callback's continuation thunk for the wait's return address.
@@ -2760,14 +2964,15 @@
     ;; interrupted code may already have entered a deeper call by this poll.
     (if (global.get $mm_timer_in_cb)
       (then (return (i32.const 0))))
-    (global.set $tick_count (call $host_get_ticks))
-    (local.set $elapsed (i32.sub (global.get $tick_count) (global.get $mm_timer_last_tick)))
-    (if (i32.lt_u (local.get $elapsed) (global.get $mm_timer_interval))
-      (then (return (i32.const 0))))
-    ;; Timer is due — update last tick
-    (global.set $mm_timer_last_tick (global.get $tick_count))
-    (if (global.get $mm_timer_oneshot)
-      (then (global.set $mm_timer_id (i32.const 0))))
+    (local.set $slot (call $mm_timer_due_slot))
+    (if (i32.eqz (local.get $slot)) (then (return (i32.const 0))))
+    (local.set $id (i32.load (local.get $slot)))
+    (local.set $dwuser (i32.load offset=12 (local.get $slot)))
+    (local.set $cb (i32.load offset=8 (local.get $slot)))
+    ;; Timer is due — consume through the latest interval boundary without
+    ;; turning host scheduling lateness into permanent periodic-timer drift,
+    ;; retiring the slot first if it was a one-shot.
+    (call $mm_timer_consume_slot (local.get $slot))
     (global.set $mm_timer_in_cb (i32.const 1))
     ;; Save caller-saved regs + flags (36 bytes, includes EIP for restore)
     (call $save_caller_regs)
@@ -2777,17 +2982,25 @@
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (i32.const 0))                   ;; dw1
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (global.get $mm_timer_dwuser))   ;; dwUser
+    (call $gs32 (global.get $esp) (local.get $dwuser))             ;; dwUser
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (i32.const 0))                   ;; uMsg
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-    (call $gs32 (global.get $esp) (global.get $mm_timer_id))       ;; uTimerID
+    (call $gs32 (global.get $esp) (local.get $id))                 ;; uTimerID
     ;; Push return address = CACA000A thunk (restores regs when callback returns)
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (global.get $mm_timer_ret_thunk))
     ;; Redirect EIP to callback
-    (global.set $eip (global.get $mm_timer_callback))
+    (global.set $eip (local.get $cb))
     (i32.const 1))
+
+  ;; A host-side writer that fills guest memory directly (ReadFile into the
+  ;; guest's buffer, a mapped view, a decompressed resource) bypasses every
+  ;; store handler, so nothing retires the decoded blocks it just overwrote.
+  ;; Storm keeps its generated code and its file buffers in the same heap
+  ;; region, so that is a real collision, not a theoretical one.
+  (func (export "invalidate_code_range") (param $ga i32) (param $len i32)
+    (call $invalidate_code_range (local.get $ga) (local.get $len)))
 
   ;; Write guest memory (guest addr)
   (func (export "guest_write32") (param $ga i32) (param $val i32)
@@ -3383,6 +3596,24 @@
     (call $handle_GetModuleHandleW (local.get $name)
       (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
     (global.get $eax))
+  (func (export "test_call_GetModuleFileNameA") (param $mod i32) (param $buf i32) (param $size i32) (result i32)
+    (call $handle_GetModuleFileNameA (local.get $mod) (local.get $buf) (local.get $size)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_GetFileVersionInfoSizeA") (param $name i32) (param $handle i32) (result i32)
+    (call $handle_GetFileVersionInfoSizeA (local.get $name) (local.get $handle)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_GetFileVersionInfoA")
+    (param $name i32) (param $handle i32) (param $len i32) (param $data i32) (result i32)
+    (call $handle_GetFileVersionInfoA (local.get $name) (local.get $handle)
+      (local.get $len) (local.get $data) (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_VerQueryValueA")
+    (param $block i32) (param $sub i32) (param $out i32) (param $len i32) (result i32)
+    (call $handle_VerQueryValueA (local.get $block) (local.get $sub)
+      (local.get $out) (local.get $len) (i32.const 0) (i32.const 0))
+    (global.get $eax))
   (func (export "test_call_GetCommandLineW") (result i32)
     (call $handle_GetCommandLineW
       (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
@@ -3708,6 +3939,10 @@
     (global.get $eax))
   (func (export "test_call_RegisterClassW") (param $wc i32) (result i32)
     (call $handle_RegisterClassW (local.get $wc)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_RegisterClassA") (param $wc i32) (result i32)
+    (call $handle_RegisterClassA (local.get $wc)
       (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
     (global.get $eax))
   (func (export "test_call_RegisterClassExW") (param $wcx i32) (result i32)
@@ -4074,6 +4309,12 @@
     (call $ctrl_get_xy_packed (local.get $hwnd)))
   (func (export "ctrl_get_wh") (param $hwnd i32) (result i32)
     (call $ctrl_get_wh_packed (local.get $hwnd)))
+  (func (export "wnd_z_get") (param $hwnd i32) (result i32)
+    (call $wnd_z_get (local.get $hwnd)))
+  (func (export "wnd_z_set_after") (param $hwnd i32) (param $after i32)
+    (call $wnd_z_set_after (local.get $hwnd) (local.get $after)))
+  (func (export "wnd_z_is_above_sibling") (param $hwnd i32) (param $sibling i32) (result i32)
+    (call $wnd_z_is_above_sibling (local.get $hwnd) (local.get $sibling)))
 
   ;; Standard window scrollbar state for renderer non-client hit-testing.
   ;; $bar is SB_HORZ=0 or SB_VERT=1.

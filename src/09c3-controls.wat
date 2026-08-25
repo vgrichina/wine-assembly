@@ -91,7 +91,7 @@
   ;; ---- StaticState accessors ----
   ;;
   ;; Same rules as the button block above: $sw is the WASM address. SysLink
-  ;; allocates this same 16-byte layout (it is a static that paints part of its
+  ;; allocates this same 20-byte layout (it is a static that paints part of its
   ;; caption blue), so both wndprocs read through these; that shared shape is
   ;; invisible when both files spell out `offset=8`.
   ;;
@@ -115,6 +115,10 @@
     (i32.load offset=12 (local.get $sw)))
   (func $static_set_image_ord (param $sw i32) (param $v i32)
     (i32.store offset=12 (local.get $sw) (local.get $v)))
+  (func $static_font (param $sw i32) (result i32)
+    (i32.load offset=16 (local.get $sw)))
+  (func $static_set_font (param $sw i32) (param $v i32)
+    (i32.store offset=16 (local.get $sw) (local.get $v)))
 
   ;; ---- ProgressState accessors ----
   ;;
@@ -254,10 +258,40 @@
     (i32.load offset=44 (local.get $sw)))
   (func $lb_set_sel_ptr (param $sw i32) (param $v i32)
     (i32.store offset=44 (local.get $sw) (local.get $v)))
+  ;; +52 item_h: 0 until an owner-draw listbox has been measured; after that
+  ;; the height WM_MEASUREITEM asked for. Everything else keeps the Win98
+  ;; default, so $lb_row_height is what paint, hit-testing and scrolling all
+  ;; ask instead of the 16 they used to hardcode.
+  (func $lb_item_h (param $sw i32) (result i32)
+    (i32.load offset=52 (local.get $sw)))
+  (func $lb_set_item_h (param $sw i32) (param $v i32)
+    (i32.store offset=52 (local.get $sw) (local.get $v)))
+  (func $lb_row_height (param $sw i32) (result i32)
+    (if (i32.eqz (local.get $sw)) (then (return (i32.const 16))))
+    (select (call $lb_item_h (local.get $sw)) (i32.const 16)
+      (call $lb_item_h (local.get $sw))))
   (func $lb_sel_cap (param $sw i32) (result i32)
     (i32.load offset=48 (local.get $sw)))
   (func $lb_set_sel_cap (param $sw i32) (param $v i32)
     (i32.store offset=48 (local.get $sw) (local.get $v)))
+
+  ;; USER hides a listbox's WS_VSCROLL strip while every item fits, unless
+  ;; LBS_DISABLENOSCROLL explicitly asks for a disabled strip. Paint and
+  ;; hit-test share this decision so a hidden strip cannot steal clicks.
+  (func $listbox_vscroll_visible (param $hwnd i32) (param $sw i32) (result i32)
+    (local $style i32) (local $sz i32) (local $h i32) (local $visible i32)
+    (local.set $style (call $wnd_get_style (local.get $hwnd)))
+    (if (i32.eqz (i32.and (local.get $style) (i32.const 0x00200000)))
+      (then (return (i32.const 0))))
+    (if (i32.and (local.get $style) (i32.const 0x00001000)) ;; LBS_DISABLENOSCROLL
+      (then (return (i32.const 1))))
+    (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+    (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+    (if (i32.le_s (local.get $h) (i32.const 4))
+      (then (return (i32.const 1))))
+    (local.set $visible
+      (i32.div_u (i32.sub (local.get $h) (i32.const 4)) (i32.const 16)))
+    (i32.gt_s (call $lb_count (local.get $sw)) (local.get $visible)))
 
   ;; ---- ComboBoxState accessors (40 bytes) ----
   ;;
@@ -1039,13 +1073,26 @@
                      (i32.const 26))))))
 
   ;; Dispatch to the correct control wndproc based on control class
-  (func $control_wndproc_dispatch (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+  (func $control_wndproc_dispatch (export "control_wndproc_dispatch")
+    (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $class i32)
     (local.set $class (call $ctrl_table_get_class (local.get $hwnd)))
     (if (i32.and (i32.eq (local.get $msg) (i32.const 0x000F))
           (i32.ne (local.get $class) (i32.const 0)))
-      (then (call $ctrl_paint_trace_emit
-              (local.get $hwnd) (local.get $class) (i32.const 0))))
+      (then
+        ;; USER never sends WM_PAINT to a window with no visible region, and a
+        ;; hidden child has none. Our children share the top-level's backing
+        ;; canvas, so a paint that slips through here is not merely wasted: it
+        ;; stamps pixels nothing will ever erase. mIRC's installer creates every
+        ;; wizard page's controls up front and hides all but one, and every
+        ;; page's text was landing on the same dialog face at once.
+        (if (i32.eqz (call $wnd_is_effectively_visible (local.get $hwnd)))
+          (then
+            (call $ctrl_paint_trace_emit
+              (local.get $hwnd) (local.get $class) (i32.const 2))
+            (return (i32.const 0))))
+        (call $ctrl_paint_trace_emit
+          (local.get $hwnd) (local.get $class) (i32.const 0))))
     ;; Class 1 = Button
     (if (i32.eq (local.get $class) (i32.const 1))
       (then (return (call $button_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
@@ -1871,7 +1918,7 @@
             (i32.const 90) (i32.sub (local.get $h) (i32.const 56))
             (i32.const 80) (i32.const 24)
             (i32.const 0x50010001)
-            (call $wat_str_to_heap (i32.const 0x1D9) (i32.const 2)))))
+            (call $wat_str_to_heap (i32.const 0x1D9) (i32.const 2))))
     ;; Lines 2 + 3: split other_g on the first '\n'. If the app passes
     ;; NULL, ShellAbout still fills the dialog with the standard Windows
     ;; version/copyright block.
@@ -1908,7 +1955,6 @@
             (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
                     (i32.const 12) (i32.const 50) (i32.const 236) (i32.const 18)
                     (i32.const 0x50000000) (local.get $line3_w)))))))
-      ))
     ;; ShellAbout is a modal shell-owned dialog on Win98: by the time the
     ;; caller observes it, USER has already exposed/erased the dialog and
     ;; delivered paint to built-in child controls. Our ShellAbout handler is
@@ -2183,7 +2229,8 @@
     (local $text_g i32) (local $w i32) (local $h i32)
     (local $btn_kind i32) (local $n_btn i32) (local $row_w i32)
     (local $bx i32) (local $by i32) (local $longest i32)
-    (local $slot i32) (local $ch i32)
+    (local $slot i32) (local $ch i32) (local $scan i32)
+    (local $line_len i32) (local $line_last i32) (local $line_started i32)
     (local.set $text_len (call $strlen (local.get $text_wa)))
     (if (i32.eqz (local.get $caption_wa))
       (then (local.set $cap_len (i32.const 0)))
@@ -2208,20 +2255,59 @@
     (local.set $row_w (i32.add
       (i32.mul (local.get $n_btn) (i32.const 76))
       (i32.const 8)))
-    ;; Pick width: max of (longer string * 6 + 60), button row + 32, 220 floor.
-    (local.set $longest (select (local.get $text_len) (local.get $cap_len)
-      (i32.gt_u (local.get $text_len) (local.get $cap_len))))
-    (local.set $w (i32.add (i32.mul (local.get $longest) (i32.const 6)) (i32.const 60)))
+    ;; Measure the longest visible message line. Win98 does not size a box
+    ;; from the total byte count (nor from leading/trailing centering spaces),
+    ;; so multiline Win16 strings such as Klotski's compact Welcome box must
+    ;; not turn into a desktop-wide dialog.
+    (block $measure_done (loop $measure
+      (br_if $measure_done (i32.ge_u (local.get $scan) (local.get $text_len)))
+      (local.set $ch (i32.load8_u (i32.add (local.get $text_wa) (local.get $scan))))
+      (if (i32.or (i32.eq (local.get $ch) (i32.const 10))
+            (i32.eq (local.get $ch) (i32.const 13)))
+        (then
+          (if (i32.gt_u (local.get $line_last) (local.get $longest))
+            (then (local.set $longest (local.get $line_last))))
+          (local.set $line_len (i32.const 0))
+          (local.set $line_last (i32.const 0))
+          (local.set $line_started (i32.const 0)))
+        (else
+          (if (i32.or (i32.ne (local.get $ch) (i32.const 32))
+                (local.get $line_started))
+            (then
+              (local.set $line_started (i32.const 1))
+              (local.set $line_len (i32.add (local.get $line_len) (i32.const 1)))
+              (if (i32.ne (local.get $ch) (i32.const 32))
+                (then (local.set $line_last (local.get $line_len))))))))
+      (local.set $scan (i32.add (local.get $scan) (i32.const 1)))
+      (br $measure)))
+    (if (i32.gt_u (local.get $line_last) (local.get $longest))
+      (then (local.set $longest (local.get $line_last))))
+    ;; Classic small-font metrics are about five pixels per message character.
+    ;; Caption sizing keeps enough room for the frame buttons independently.
+    (local.set $w (i32.add
+      (i32.div_u (i32.mul (local.get $longest) (i32.const 11)) (i32.const 2))
+      (i32.const 32)))
+    (if (i32.lt_u (local.get $w)
+          (i32.add (i32.mul (local.get $cap_len) (i32.const 6)) (i32.const 60)))
+      (then (local.set $w
+        (i32.add (i32.mul (local.get $cap_len) (i32.const 6)) (i32.const 60)))))
     (if (i32.lt_u (local.get $w) (i32.add (local.get $row_w) (i32.const 32)))
       (then (local.set $w (i32.add (local.get $row_w) (i32.const 32)))))
-    (if (i32.lt_u (local.get $w) (i32.const 220)) (then (local.set $w (i32.const 220))))
+    (if (i32.lt_u (local.get $w) (i32.const 148)) (then (local.set $w (i32.const 148))))
     (if (i32.gt_u (local.get $w) (i32.const 420)) (then (local.set $w (i32.const 420))))
-    (local.set $h (i32.const 140))
+    (local.set $h (i32.const 124))
     (call $host_register_dialog_frame
       (local.get $dlg) (local.get $owner)
       (local.get $caption_wa)
       (local.get $w) (local.get $h)
       (i32.const 1))
+    (if (i32.and (i32.ge_u (global.get $gdi_screen_width) (local.get $w))
+          (i32.ge_u (global.get $gdi_screen_height) (local.get $h)))
+      (then
+        (call $host_move_window (local.get $dlg)
+          (i32.div_u (i32.sub (global.get $gdi_screen_width) (local.get $w)) (i32.const 2))
+          (i32.div_u (i32.sub (global.get $gdi_screen_height) (local.get $h)) (i32.const 2))
+          (local.get $w) (local.get $h) (i32.const 0))))
     (call $wnd_table_set (local.get $dlg) (global.get $WNDPROC_CTRL_NATIVE))
     (if (local.get $caption_wa)
       (then (call $title_table_set (local.get $dlg) (local.get $caption_wa)
@@ -2245,7 +2331,11 @@
     (local.set $text_g (call $wat_str_to_heap (local.get $text_wa) (local.get $text_len)))
     (drop (call $ctrl_create_child (local.get $dlg) (i32.const 3) (i32.const 0xFFFF)
             (i32.const 16) (i32.const 24)
-            (i32.sub (local.get $w) (i32.const 32)) (i32.const 45)
+            ;; Stop at the button row. WAT-native sibling windows do not get
+            ;; USER's WS_CLIPSIBLINGS exclusion automatically; an invalidated
+            ;; message static otherwise repaints over the top eight pixels of
+            ;; Klotski's OK button after focus has already drawn the button.
+            (i32.sub (local.get $w) (i32.const 32)) (i32.const 40)
             (i32.const 0x50000000)
             (local.get $text_g)))
     ;; Button row, left edge centered around dialog midpoint.
@@ -2254,7 +2344,7 @@
     ;; place the row relative to the client bottom rather than the outer
     ;; window bottom.
     (local.set $bx (i32.div_u (i32.sub (local.get $w) (local.get $row_w)) (i32.const 2)))
-    (local.set $by (i32.sub (local.get $h) (i32.const 63)))
+    (local.set $by (i32.sub (local.get $h) (i32.const 60)))
     ;; Layout per MB_* mask. IDs match winuser.h.
     (block $done
       ;; MB_OK (0)
@@ -4364,6 +4454,11 @@
   ;;   +0x10 itemState (ODS_SELECTED 0x01 | ODS_FOCUS 0x10 | ODS_DEFAULT 0x20)
   ;;   +0x14 hwndItem                +0x18 hDC
   ;;   +0x1C..+0x2B RECT rcItem      +0x2C itemData=0
+  ;; The shared WEP About DLLs use a 260x65 owner-draw button as a monochrome
+  ;; branding panel. The Win16 BitBlt adapter consults this while WM_DRAWITEM
+  ;; is live so it can reproduce USER's embossed presentation of that panel.
+  (global $btn_about_logo_hdc (mut i32) (i32.const 0))
+
   (func $btn_send_drawitem (param $hwnd i32) (param $state_w i32) (param $flags i32)
     (local $dis i32) (local $disw i32) (local $sz i32) (local $w i32) (local $h i32)
     (local $ctrl_id i32) (local $hdc i32) (local $state_bits i32)
@@ -4396,10 +4491,24 @@
     ;; Calc owner-draw button labels move by 1px while pressed. Its draw code
     ;; uses transparent text, so clear the child DC first or stale glyph pixels
     ;; from the previous offset remain visible.
-    (drop (call $host_gdi_fill_rect (local.get $hdc)
-            (i32.const 0) (i32.const 0)
-            (local.get $w) (local.get $h)
-            (i32.const 0x30011)))
+    (if (call $ownerdraw_prefill_allowed (local.get $hwnd))
+      (then
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (i32.const 0) (i32.const 0)
+                (local.get $w) (local.get $h)
+                (i32.const 0x30011)))))
+    ;; Win98 supplies owner-draw button DCs with the standard 3-D colors.
+    ;; Monochrome BitBlt maps source 1 through TextColor and source 0 through
+    ;; BkColor; ABOUT.DLL relies on this to emboss resource 999 instead of
+    ;; painting a literal black-and-white logo.
+    (drop (call $host_gdi_set_text_color (local.get $hdc)
+      (call $win98_sys_color (i32.const 15))))
+    (drop (call $host_gdi_set_bk_color (local.get $hdc)
+      (call $win98_sys_color (i32.const 20))))
+    (global.set $btn_about_logo_hdc
+      (select (local.get $hdc) (i32.const 0)
+        (i32.and (i32.eq (local.get $w) (i32.const 260))
+          (i32.eq (local.get $h) (i32.const 65)))))
     (drop (call $wnd_send_message
             (call $wnd_get_parent (local.get $hwnd))
             (i32.const 0x002B)
@@ -4407,8 +4516,21 @@
             (local.get $dis)))
     (call $heap_free (local.get $dis)))
 
+  ;; Real Win32 hands an owner-draw item's DC to the owner untouched -- the
+  ;; owner paints the whole item. We pre-fill COLOR_BTNFACE first because our
+  ;; children share the top-level back-canvas, so an owner that draws
+  ;; transparent text (Calc's keypad) would otherwise keep stale glyphs. Over
+  ;; an app's DirectDraw exclusive-fullscreen primary that pre-fill is
+  ;; destructive: such a window shares the game's framebuffer and its surface
+  ;; already holds the presented frame, and Diablo's menus are nothing but
+  ;; transparent white text over it.
+  (func $ownerdraw_prefill_allowed (param $hwnd i32) (result i32)
+    (i32.eqz
+      (i32.and (i32.ne (global.get $dx_exclusive_fullscreen) (i32.const 0))
+        (i32.ne (call $wnd_top_level (local.get $hwnd)) (call $dx_target_hwnd)))))
+
   (func $dialog_default_idok_close (param $parent i32)
-    (local $dlg_rec i32)
+    (local $dlg_rec i32) (local $slot i32) (local $kid i32)
     ;; Only DialogBoxParamA's modal pump supplies a default IDOK close.
     ;; CreateDialogParamA dialogs are modeless: their application owns the
     ;; lifetime even when the dialog proc returns FALSE for WM_COMMAND.
@@ -4421,6 +4543,23 @@
     (local.set $dlg_rec (call $dlg_record_for_hwnd (local.get $parent)))
     (if (i32.eqz (local.get $dlg_rec)) (then (return)))
     (if (i32.eqz (i32.load offset=4 (local.get $dlg_rec))) (then (return)))
+    ;; A wizard frame hosts each page as a child dialog of its own: one outer
+    ;; modal window with an inner template-loaded dialog swapped in and out.
+    ;; Its IDOK button is "Next", not "OK" -- the app's dlgproc destroys the
+    ;; current page, creates the next one, and returns FALSE because it has
+    ;; nothing to tell USER. Closing the frame on that FALSE ends the whole
+    ;; session: the NSIS installers exited with code 1 the instant "I Agree"
+    ;; moved them off the licence page.
+    (local.set $slot (i32.const 0))
+    (block $kids_done (loop $kids
+      (local.set $slot (call $wnd_next_child_slot (local.get $parent) (local.get $slot)))
+      (br_if $kids_done (i32.eq (local.get $slot) (i32.const -1)))
+      (local.set $kid (call $dlg_record_for_hwnd (call $wnd_slot_hwnd (local.get $slot))))
+      (if (i32.and (i32.ne (local.get $kid) (i32.const 0))
+                   (i32.ne (i32.load offset=28 (local.get $kid)) (i32.const 0)))
+        (then (return)))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $kids)))
     (global.set $dlg_ended (i32.const 1))
     (global.set $dlg_result (i32.const 1))
     (i32.store (global.get $SHARED_DLG_ENDED) (i32.const 1))
@@ -4520,6 +4659,24 @@
             (call $btn_set_flags (local.get $state_w)
               (i32.or (call $btn_flags (local.get $state_w)) (i32.const 0x0C))) ;; focused | default
             (call $invalidate_hwnd (local.get $hwnd))))
+        ;; BS_NOTIFY asks USER to tell the parent when a button gains focus.
+        ;; Diablo's class picker uses BN_SETFOCUS to select the highlighted
+        ;; hero and populate its stats; BN_CLICKED only accepts that choice.
+        (if (i32.and
+              (i32.ne
+                (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00004000))
+                (i32.const 0))
+              (i32.ne (local.get $state) (i32.const 0)))
+          (then
+            (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+            (if (local.get $parent)
+              (then
+                (drop (call $wnd_send_message
+                  (local.get $parent) (i32.const 0x0111)
+                  (i32.or
+                    (i32.and (call $btn_ctrl_id (local.get $state_w)) (i32.const 0xFFFF))
+                    (i32.shl (i32.const 6) (i32.const 16))) ;; BN_SETFOCUS
+                  (local.get $hwnd)))))))
         (return (i32.const 0))))
 
     ;; ---------- WM_KILLFOCUS (0x0008) ----------
@@ -4545,7 +4702,20 @@
                 (call $btn_set_flags (local.get $state_w)
                   (i32.and (call $btn_flags (local.get $state_w)) (i32.const 0xFFFFFFFB)))
                 (call $btn_restore_real_default (local.get $hwnd))))
-            (call $invalidate_hwnd (local.get $hwnd))))
+            (call $invalidate_hwnd (local.get $hwnd))
+            (if (i32.ne
+                  (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00004000))
+                  (i32.const 0))
+              (then
+                (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+                (if (local.get $parent)
+                  (then
+                    (drop (call $wnd_send_message
+                      (local.get $parent) (i32.const 0x0111)
+                      (i32.or
+                        (i32.and (call $btn_ctrl_id (local.get $state_w)) (i32.const 0xFFFF))
+                        (i32.shl (i32.const 7) (i32.const 16))) ;; BN_KILLFOCUS
+                      (local.get $hwnd)))))))))
         (return (i32.const 0))))
 
     ;; ---------- WM_KEYDOWN (0x0100) ----------
@@ -4616,8 +4786,10 @@
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
         (return (call $btn_text_len (call $g2w (local.get $state))))))
 
-    ;; ---------- WM_LBUTTONDOWN (0x0201) ----------
-    (if (i32.eq (local.get $msg) (i32.const 0x0201))
+    ;; ---------- WM_LBUTTONDOWN (0x0201) / WM_LBUTTONDBLCLK (0x0203) ----------
+    (if (i32.or
+          (i32.eq (local.get $msg) (i32.const 0x0201))
+          (i32.eq (local.get $msg) (i32.const 0x0203)))
       (then
         (if (local.get $state)
           (then
@@ -4633,7 +4805,34 @@
               (then (call $btn_send_drawitem (local.get $hwnd) (local.get $state_w) (local.get $flags)))
               (else
                 (drop (call $wnd_send_message
-                  (local.get $hwnd) (i32.const 0x000F) (i32.const 0) (i32.const 0)))))))
+                  (local.get $hwnd) (i32.const 0x000F) (i32.const 0) (i32.const 0)))))
+            ;; BUTTON sends BN_DOUBLECLICKED immediately for the historical
+            ;; radio/user/owner-draw kinds, and for any kind with BS_NOTIFY.
+            ;; Diablo uses BS_OWNERDRAW|BS_NOTIFY class buttons and advances
+            ;; from Choose Class on this notification while OK stays disabled.
+            (if (i32.eq (local.get $msg) (i32.const 0x0203))
+              (then
+                (local.set $w
+                  (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0F)))
+                (if (i32.or
+                      (i32.ne
+                        (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00004000))
+                        (i32.const 0))
+                      (i32.or
+                        (i32.or (i32.eq (local.get $w) (i32.const 4))
+                                (i32.eq (local.get $w) (i32.const 8)))
+                        (i32.or (i32.eq (local.get $w) (i32.const 9))
+                                (i32.eq (local.get $w) (i32.const 11)))))
+                  (then
+                    (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+                    (if (local.get $parent)
+                      (then
+                        (drop (call $wnd_send_message
+                          (local.get $parent) (i32.const 0x0111)
+                          (i32.or
+                            (i32.and (call $btn_ctrl_id (local.get $state_w)) (i32.const 0xFFFF))
+                            (i32.shl (i32.const 5) (i32.const 16))) ;; BN_DOUBLECLICKED
+                          (local.get $hwnd)))))))))))
         (return (i32.const 0))))
 
     ;; ---------- WM_LBUTTONUP (0x0202) ----------
@@ -4990,11 +5189,29 @@
             (i32.store offset=40 (local.get $edge_flags) (local.get $h)) ;; rcItem.bottom
             (i32.store offset=44 (local.get $edge_flags) (i32.const 0)) ;; itemData
             ;; Clear stale transparent text before delegating to the owner.
-            (drop (call $host_gdi_fill_rect (local.get $hdc)
-                    (i32.const 0) (i32.const 0)
-                    (local.get $w) (local.get $h)
-                    (i32.const 0x30011)))
-            ;; Post WM_DRAWITEM (0x002B) to parent
+            ;; Real Win32 does not do this -- the owner is what paints the
+            ;; whole item -- and it is only safe because our children share
+            ;; the top-level back-canvas. Over a DirectDraw exclusive-
+            ;; fullscreen primary it is actively wrong: that surface holds the
+            ;; presented frame the window shares with the game, and Diablo's
+            ;; menu buttons are transparent text over it, so filling
+            ;; COLOR_BTNFACE first punches a grey slab through the game.
+            (if (call $ownerdraw_prefill_allowed (local.get $hwnd))
+              (then
+                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                        (i32.const 0) (i32.const 0)
+                        (local.get $w) (local.get $h)
+                        (i32.const 0x30011)))))
+            (drop (call $host_gdi_set_text_color (local.get $hdc)
+              (call $win98_sys_color (i32.const 15))))
+            (drop (call $host_gdi_set_bk_color (local.get $hdc)
+              (call $win98_sys_color (i32.const 20))))
+            ;; Keep the live owner-draw destination visible to the Win16
+            ;; BitBlt compatibility path while the parent paints it.
+            (global.set $btn_about_logo_hdc
+              (select (local.get $hdc) (i32.const 0)
+                (i32.and (i32.eq (local.get $w) (i32.const 260))
+                  (i32.eq (local.get $h) (i32.const 65)))))
             (drop (call $wnd_send_message
               (call $wnd_get_parent (local.get $hwnd))
               (i32.const 0x002B)
@@ -5087,7 +5304,7 @@
     (local $name_ptr i32) (local $text_len i32) (local $style i32)
     (local $fmt i32) (local $ex i32) (local $tx_l i32) (local $tx_t i32)
     (local $tx_r i32) (local $tx_b i32) (local $brush i32) (local $ctrl_id i32)
-    (local $origin_clip i32)
+    (local $origin_clip i32) (local $image i32) (local $previous i32)
 
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
 
@@ -5108,12 +5325,13 @@
         (local.set $cs_w (call $g2w (local.get $lParam)))
         (local.set $name_ptr (i32.load offset=36 (local.get $cs_w)))
         (local.set $style    (i32.load offset=32 (local.get $cs_w)))
-        (local.set $state (call $heap_alloc (i32.const 16)))
+        (local.set $state (call $heap_alloc (i32.const 20)))
         (local.set $state_w (call $g2w (local.get $state)))
         (call $static_set_text_ptr  (local.get $state_w) (i32.const 0))
         (call $static_set_text_len  (local.get $state_w) (i32.const 0))
         (call $static_set_style     (local.get $state_w) (local.get $style))
         (call $static_set_image_ord (local.get $state_w) (i32.const 0))
+        (call $static_set_font      (local.get $state_w) (i32.const 0))
         (if (local.get $name_ptr)
           (then
             (if (i32.lt_u (local.get $name_ptr) (i32.const 0x10000))
@@ -5181,6 +5399,52 @@
         (if (local.get $state)
           (then (return (call $static_text_len (call $g2w (local.get $state))))))
         (return (i32.const 0))))
+
+    ;; ---------- WM_SETFONT / WM_GETFONT ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x0030))
+      (then
+        (if (local.get $state)
+          (then
+            (call $static_set_font (call $g2w (local.get $state)) (local.get $wParam))
+            (if (local.get $lParam) (then (call $invalidate_hwnd (local.get $hwnd))))))
+        (return (i32.const 0))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0031))
+      (then
+        (if (local.get $state)
+          (then (return (call $static_font (call $g2w (local.get $state))))))
+        (return (i32.const 0))))
+
+    ;; ---------- STM_SETICON / STM_GETICON ----------
+    ;; Win16 STATIC messages are translated from 0x400/0x401 to the Win32
+    ;; numbers before arriving here. Preserve the actual interned HICON, not
+    ;; merely a template resource ordinal, so dynamically assigned icons paint.
+    (if (i32.eq (local.get $msg) (i32.const 0x0170))
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (local.set $state_w (call $g2w (local.get $state)))
+        (local.set $previous (call $static_image_ord (local.get $state_w)))
+        (local.set $image
+          (select (call $win16_h32 (local.get $wParam)) (local.get $wParam)
+            (global.get $is_win16)))
+        (call $static_set_image_ord (local.get $state_w) (local.get $image))
+        ;; A zero-sized SS_ICON template asks USER to adopt the icon's natural
+        ;; dimensions. WEPUTIL uses exactly this form for its About icon.
+        (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+        (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
+        (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+        (if (i32.or (i32.eqz (local.get $w)) (i32.eqz (local.get $h)))
+          (then
+            (call $ctrl_geom_set (call $wnd_table_find (local.get $hwnd))
+              (call $ctrl_get_x_s (local.get $hwnd))
+              (call $ctrl_get_y_s (local.get $hwnd))
+              (select (local.get $w) (i32.const 32) (local.get $w))
+              (select (local.get $h) (i32.const 32) (local.get $h)))))
+        (call $invalidate_hwnd (local.get $hwnd))
+        (return (local.get $previous))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0171))
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (return (call $static_image_ord (call $g2w (local.get $state))))))
 
     ;; ---------- WM_PAINT ----------
     (if (i32.eq (local.get $msg) (i32.const 0x000F))
@@ -5277,14 +5541,23 @@
             (if (i32.or (i32.lt_u (local.get $style) (i32.const 4))
                         (i32.gt_u (local.get $style) (i32.const 9)))
               (then
+                ;; VB's bordered ThunderLabel fields use a white BackColor;
+                ;; plain captions inherit the form face.
+                (local.set $brush
+                  (select (i32.const 0x30010) (i32.const 0x30011)
+                    (i32.ne (i32.and (call $wnd_get_style (local.get $hwnd))
+                      (i32.const 0x00800000)) (i32.const 0))))
                 (drop (call $host_gdi_fill_rect (local.get $hdc)
                         (i32.const 0) (i32.const 0)
                         (local.get $w) (local.get $h)
-                        (i32.const 0x30011)))))))  ;; LTGRAY_BRUSH ≈ COLOR_3DFACE (stock obj 1)
-        ;; Select DEFAULT_GUI_FONT (8pt MS Sans Serif) for the dialog look.
+                        (local.get $brush)))))))
+        ;; Use the font supplied through WM_SETFONT, falling back to the
+        ;; Win98 default GUI font for ordinary dialog labels.
         ;; TRANSPARENT bk mode so the label glyphs let the fill color show
         ;; through instead of painting an opaque white box behind every word.
-        (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
+        (drop (call $host_gdi_select_object (local.get $hdc)
+          (select (call $static_font (local.get $state_w)) (i32.const 0x30021)
+            (i32.ne (call $static_font (local.get $state_w)) (i32.const 0)))))
         (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
         ;; SS_ICON dialog controls preserve their RT_GROUP_ICON ordinal in the
         ;; static state. Decode the color plane and transparency mask through
@@ -5298,12 +5571,20 @@
             (local.set $origin_clip
               (i32.and (i32.le_u (local.get $w) (i32.const 16))
                        (i32.le_u (local.get $h) (i32.const 16))))
-            (if (call $gdi_icon_draw_resource
-                  (local.get $hdc)
-                  (call $static_image_ord (local.get $state_w))
-                  (local.get $w) (local.get $h)
-                  (local.get $origin_clip))
-              (then (return (i32.const 0))))))
+            (local.set $image (call $static_image_ord (local.get $state_w)))
+            (if (i32.eq
+                  (i32.and (local.get $image) (i32.const 0xFFFF0000))
+                  (global.get $ICON_HANDLE_TAG))
+              (then
+                (if (call $icon_draw_handle (local.get $image) (local.get $hdc)
+                      (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
+                      (global.get $DI_NORMAL))
+                  (then (return (i32.const 0)))))
+              (else
+                (if (call $gdi_icon_draw_resource
+                      (local.get $hdc) (local.get $image)
+                      (local.get $w) (local.get $h) (local.get $origin_clip))
+                  (then (return (i32.const 0))))))))
         ;; A few mixer builds reference absent speaker resources 301/302.
         ;; Preserve the compact monochrome fallback for those missing icons.
         (if (i32.and
@@ -5416,12 +5697,13 @@
         (local.set $cs_w (call $g2w (local.get $lParam)))
         (local.set $name_ptr (i32.load offset=36 (local.get $cs_w)))
         (local.set $style    (i32.load offset=32 (local.get $cs_w)))
-        (local.set $state (call $heap_alloc (i32.const 16)))
+        (local.set $state (call $heap_alloc (i32.const 20)))
         (local.set $state_w (call $g2w (local.get $state)))
         (call $static_set_text_ptr  (local.get $state_w) (i32.const 0))
         (call $static_set_text_len  (local.get $state_w) (i32.const 0))
         (call $static_set_style     (local.get $state_w) (local.get $style))
         (call $static_set_image_ord (local.get $state_w) (i32.const 0))
+        (call $static_set_font      (local.get $state_w) (i32.const 0))
         ;; A SysLink caption is always a real string; ordinal captions are a
         ;; static-only convention and would be a template authoring error here.
         (if (i32.gt_u (local.get $name_ptr) (i32.const 0xFFFF))
@@ -5841,7 +6123,7 @@
                                (i32.ge_s (local.get $h) (i32.const 12))))
                   (then
                     (call $statusbar_draw_size_grip
-                      (local.get $hdc) (local.get $w) (local.get $h))))))))))
+                      (local.get $hdc) (local.get $w) (local.get $h))))))))
         (return (i32.const 0))))
     (i32.const 0))
 
@@ -5989,7 +6271,7 @@
   ;; enough for RegEdit/installer details panes to become stateful and for the
   ;; shared Win98 scrollbar helpers to be reused here.
   ;;
-  ;; ListViewState (76 bytes, allocated in WM_CREATE)
+  ;; ListViewState (80 bytes, allocated in WM_CREATE)
   ;;   +0   item_count
   ;;   +4   item_cap
   ;;   +8   item_cells_ptr   guest ptr to item_cap * 44-byte rows:
@@ -6011,6 +6293,7 @@
   ;;   +64  text_color COLORREF
   ;;   +68  text_bk_color COLORREF or CLR_NONE
   ;;   +72  state_image_list handle from LVM_SETIMAGELIST(LVSIL_STATE)
+  ;;   +76  normal_image_list handle from LVM_SETIMAGELIST(LVSIL_NORMAL)
 
   ;; ---- ListViewState accessors ----
   ;;
@@ -6093,6 +6376,10 @@
     (i32.load offset=72 (local.get $sw)))
   (func $lv_set_state_image_list (param $sw i32) (param $v i32)
     (i32.store offset=72 (local.get $sw) (local.get $v)))
+  (func $lv_normal_image_list (param $sw i32) (result i32)
+    (i32.load offset=76 (local.get $sw)))
+  (func $lv_set_normal_image_list (param $sw i32) (param $v i32)
+    (i32.store offset=76 (local.get $sw) (local.get $v)))
 
   (func $lv_header_h (param $sw i32) (result i32)
     (if (result i32) (i32.gt_s (call $lv_col_count (local.get $sw)) (i32.const 0))
@@ -6700,6 +6987,154 @@
     (drop (call $host_gdi_delete_dc (local.get $img_memdc)))
     (local.get $ret))
 
+  (func $lv_paint_normal_icon
+    (param $hdc i32) (param $sw i32) (param $row i32) (param $x i32) (param $y i32) (result i32)
+    (local $img_list i32) (local $img_idx i32) (local $img_sw i32)
+    (local $img_cx i32) (local $img_cy i32) (local $img_count i32) (local $img_bmp i32)
+    (local $img_bmp_w i32) (local $img_bmp_h i32) (local $img_src_x i32)
+    (local $draw_w i32) (local $draw_h i32) (local $dst_x i32) (local $dst_y i32)
+    (local $memdc i32) (local $image_dc i32) (local $mask_dc i32)
+    (local $stock_himl i32) (local $ret i32)
+    (local.set $img_list (call $lv_normal_image_list (local.get $sw)))
+    (if (i32.eqz (local.get $img_list))
+      (then (local.set $img_list (call $lv_image_list (local.get $sw)))))
+    (if (i32.eqz (local.get $img_list)) (then (return (i32.const 0))))
+    (local.set $img_idx (i32.load (call $lv_item_image_addr (local.get $sw) (local.get $row))))
+    (if (i32.lt_s (local.get $img_idx) (i32.const 0)) (then (return (i32.const 0))))
+    (local.set $img_sw (call $g2w (local.get $img_list)))
+    (local.set $stock_himl
+      (i32.eq (i32.load (local.get $img_sw)) (i32.const 0x4C4D4948))) ;; "HIML"
+    (if (local.get $stock_himl)
+      (then
+        ;; Authentic Win98 COMCTL32 image-list object. The stock DLL keeps
+        ;; ready-to-blit colour/mask DCs in the object, as TreeView already
+        ;; consumes, rather than our bounded bitmap-strip wrapper.
+        (local.set $img_count (i32.load offset=4 (local.get $img_sw)))
+        (local.set $img_cx (i32.load offset=16 (local.get $img_sw)))
+        (local.set $img_cy (i32.load offset=20 (local.get $img_sw)))
+        (local.set $image_dc (i32.load offset=56 (local.get $img_sw)))
+        (local.set $mask_dc (i32.load offset=60 (local.get $img_sw))))
+      (else
+        (local.set $img_cx (i32.load (local.get $img_sw)))
+        (local.set $img_cy (i32.load offset=4 (local.get $img_sw)))
+        (local.set $img_count (i32.load offset=12 (local.get $img_sw)))
+        (local.set $img_bmp (i32.load offset=16 (local.get $img_sw)))))
+    (if (i32.or
+          (i32.or (i32.le_s (local.get $img_cx) (i32.const 0))
+                  (i32.or (i32.le_s (local.get $img_cy) (i32.const 0))
+                          (i32.gt_s (local.get $img_cx) (i32.const 256))))
+          (i32.or (i32.le_s (local.get $img_count) (local.get $img_idx))
+                  (i32.and (i32.eqz (local.get $image_dc))
+                           (i32.eqz (local.get $img_bmp)))))
+      (then (return (i32.const 0))))
+    (local.set $img_src_x (i32.mul (local.get $img_idx) (local.get $img_cx)))
+    (if (local.get $img_bmp)
+      (then
+        (local.set $img_bmp_w (call $host_gdi_get_object_w (local.get $img_bmp)))
+        (local.set $img_bmp_h (call $host_gdi_get_object_h (local.get $img_bmp)))
+        (if (i32.or
+              (i32.gt_s (i32.add (local.get $img_src_x) (local.get $img_cx)) (local.get $img_bmp_w))
+              (i32.gt_s (local.get $img_cy) (local.get $img_bmp_h)))
+          (then (return (i32.const 0))))))
+    (local.set $draw_w (local.get $img_cx))
+    (if (i32.gt_s (local.get $draw_w) (i32.const 32))
+      (then (local.set $draw_w (i32.const 32))))
+    (local.set $draw_h (local.get $img_cy))
+    (if (i32.gt_s (local.get $draw_h) (i32.const 32))
+      (then (local.set $draw_h (i32.const 32))))
+    (local.set $dst_x (i32.add (local.get $x)
+      (i32.div_s (i32.sub (i32.const 32) (local.get $draw_w)) (i32.const 2))))
+    (local.set $dst_y (i32.add (local.get $y)
+      (i32.div_s (i32.sub (i32.const 32) (local.get $draw_h)) (i32.const 2))))
+    (if (local.get $image_dc)
+      (then
+        (if (local.get $mask_dc)
+          (then
+            (drop (call $host_gdi_bitblt
+              (local.get $hdc) (local.get $dst_x) (local.get $dst_y)
+              (local.get $draw_w) (local.get $draw_h)
+              (local.get $mask_dc) (local.get $img_src_x) (i32.const 0)
+              (i32.const 0x008800C6))) ;; SRCAND
+            (local.set $ret (call $host_gdi_bitblt
+              (local.get $hdc) (local.get $dst_x) (local.get $dst_y)
+              (local.get $draw_w) (local.get $draw_h)
+              (local.get $image_dc) (local.get $img_src_x) (i32.const 0)
+              (i32.const 0x00EE0086)))) ;; SRCPAINT
+          (else
+            (local.set $ret (call $host_gdi_bitblt
+              (local.get $hdc) (local.get $dst_x) (local.get $dst_y)
+              (local.get $draw_w) (local.get $draw_h)
+              (local.get $image_dc) (local.get $img_src_x) (i32.const 0)
+              (i32.const 0x00CC0020)))))) ;; SRCCOPY
+      (else
+        (local.set $memdc (call $host_gdi_create_compat_dc (local.get $hdc)))
+        (if (i32.eqz (local.get $memdc)) (then (return (i32.const 0))))
+        (drop (call $host_gdi_select_object (local.get $memdc) (local.get $img_bmp)))
+        (local.set $ret (call $host_gdi_transparent_blt
+          (local.get $hdc) (local.get $dst_x) (local.get $dst_y)
+          (local.get $draw_w) (local.get $draw_h)
+          (local.get $memdc) (local.get $img_src_x) (i32.const 0)
+          (i32.load offset=20 (local.get $img_sw))))
+        (drop (call $host_gdi_delete_dc (local.get $memdc)))))
+    (local.get $ret))
+
+  ;; Resolve LPSTR_TEXTCALLBACKA/I_IMAGECALLBACK while the item is inserted.
+  ;; The stock desktop DefView uses both callbacks: it owns the PIDLs and lets
+  ;; SysListView32 ask for the visible names and system-image-list indices.
+  ;; Retain private values exactly as the TreeView callback path does so later
+  ;; paints never depend on the parent's temporary NMLVDISPINFO buffer.
+  (func $lv_resolve_insert_callbacks
+      (param $hwnd i32) (param $sw i32) (param $item i32)
+      (param $want_text i32) (param $want_image i32)
+    (local $parent i32) (local $notify_g i32) (local $notify_w i32)
+    (local $mask i32) (local $text_g i32)
+    (if (i32.eqz (i32.or (local.get $want_text) (local.get $want_image)))
+      (then (return)))
+    (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+    (if (i32.eqz (local.get $parent)) (then (return)))
+    ;; NMLVDISPINFOA (NMHDR + LVITEMA = 52 bytes), followed by MAX_PATH.
+    (local.set $notify_g (call $heap_alloc (i32.const 312)))
+    (if (i32.eqz (local.get $notify_g)) (then (return)))
+    (local.set $notify_w (call $g2w (local.get $notify_g)))
+    (call $zero_memory (local.get $notify_w) (i32.const 312))
+    (local.set $mask (i32.const 0x0004)) ;; LVIF_PARAM
+    (if (local.get $want_text)
+      (then (local.set $mask (i32.or (local.get $mask) (i32.const 0x0001)))))
+    (if (local.get $want_image)
+      (then (local.set $mask (i32.or (local.get $mask) (i32.const 0x0002)))))
+    ;; NMHDR.
+    (i32.store          (local.get $notify_w) (local.get $hwnd))
+    (i32.store offset=4 (local.get $notify_w) (call $ctrl_table_get_id (local.get $hwnd)))
+    (i32.store offset=8 (local.get $notify_w) (i32.const -150)) ;; LVN_GETDISPINFOA
+    ;; LVITEMA at +12.
+    (i32.store offset=12 (local.get $notify_w) (local.get $mask))
+    (i32.store offset=16 (local.get $notify_w) (local.get $item))
+    (i32.store offset=20 (local.get $notify_w) (i32.const 0))
+    (i32.store offset=24 (local.get $notify_w)
+      (i32.load (call $lv_item_state_addr (local.get $sw) (local.get $item))))
+    (i32.store offset=32 (local.get $notify_w)
+      (i32.add (local.get $notify_g) (i32.const 52)))
+    (i32.store offset=36 (local.get $notify_w) (i32.const 260))
+    (i32.store offset=40 (local.get $notify_w) (i32.const -1))
+    (i32.store offset=44 (local.get $notify_w)
+      (i32.load (call $lv_item_param_addr (local.get $sw) (local.get $item))))
+    (drop (call $wnd_send_message
+      (local.get $parent) (i32.const 0x004E)
+      (call $ctrl_table_get_id (local.get $hwnd)) (local.get $notify_g)))
+    (if (local.get $want_text)
+      (then
+        (local.set $text_g (i32.load offset=32 (local.get $notify_w)))
+        (if (i32.and
+              (i32.ne (local.get $text_g) (i32.const 0))
+              (i32.lt_u (local.get $text_g) (i32.const 0xFFFF0000)))
+          (then (call $lv_set_cell_text
+            (local.get $sw) (local.get $item) (i32.const 0) (local.get $text_g))))))
+    (if (local.get $want_image)
+      (then (i32.store
+        (call $lv_item_image_addr (local.get $sw) (local.get $item))
+        (i32.load offset=40 (local.get $notify_w)))))
+    (call $heap_free (local.get $notify_g)))
+
   ;; Does this LVM_* message change what the control looks like?
   ;;
   ;; A real SysListView32 invalidates itself whenever its content, columns
@@ -6759,9 +7194,9 @@
     (if (i32.eq (local.get $msg) (i32.const 0x0001))
       (then
         (local.set $cs_w (call $g2w (local.get $lParam)))
-        (local.set $state (call $heap_alloc (i32.const 76)))
+        (local.set $state (call $heap_alloc (i32.const 80)))
         (local.set $sw (call $g2w (local.get $state)))
-        (call $zero_memory (local.get $sw) (i32.const 76))
+        (call $zero_memory (local.get $sw) (i32.const 80))
         (call $lv_set_selected (local.get $sw) (i32.const -1))
         (call $lv_set_ctrl_id (local.get $sw) (i32.load offset=8 (local.get $cs_w)))
         (call $lv_set_bk_color (local.get $sw) (i32.const 0x00FFFFFF))
@@ -6791,12 +7226,24 @@
     (if (call $lv_msg_repaints (local.get $msg))
       (then (call $invalidate_hwnd (local.get $hwnd))))
 
-    ;; LVM_GETIMAGELIST / LVM_SETIMAGELIST. Keep the assigned small-image
-    ;; list handle so report rows reserve authentic icon space.
+    ;; LVM_GETIMAGELIST / LVM_SETIMAGELIST. Keep normal and small image lists
+    ;; separate: report rows use LVSIL_SMALL while desktop LVS_ICON uses the
+    ;; authentic 32x32 LVSIL_NORMAL strip.
     (if (i32.eq (local.get $msg) (i32.const 0x1002))
-      (then (return (call $lv_image_list (local.get $sw)))))
+      (then
+        (if (i32.eqz (local.get $wParam))
+          (then (return (call $lv_normal_image_list (local.get $sw)))))
+        (if (i32.eq (local.get $wParam) (i32.const 2))
+          (then (return (call $lv_state_image_list (local.get $sw)))))
+        (return (call $lv_image_list (local.get $sw)))))
     (if (i32.eq (local.get $msg) (i32.const 0x1003))
       (then
+        ;; LVSIL_NORMAL (0).
+        (if (i32.eqz (local.get $wParam))
+          (then
+            (local.set $old (call $lv_normal_image_list (local.get $sw)))
+            (call $lv_set_normal_image_list (local.get $sw) (local.get $lParam))
+            (return (local.get $old))))
         ;; LVSIL_STATE (2) is how a pre-XP app asks for check boxes: it hands
         ;; over a two-image list and then sets each item's state-image index.
         ;; Keep it apart from the small-icon list -- what it selects is not an
@@ -7321,13 +7768,21 @@
           (then
             (i32.store
               (call $lv_item_param_addr (local.get $sw) (local.get $idx))
-              (i32.load offset=36 (local.get $lvi_w)))))
+              (i32.load offset=32 (local.get $lvi_w)))))
         (if (i32.and (local.get $mask) (i32.const 0x0008))
           (then
             (if (i32.and (i32.load offset=16 (local.get $lvi_w)) (i32.const 0x0002))
               (then
                 (if (i32.and (i32.load offset=12 (local.get $lvi_w)) (i32.const 0x0002))
                   (then (drop (call $lv_select_item (local.get $hwnd) (local.get $sw) (local.get $idx)))))))))
+        (call $lv_resolve_insert_callbacks
+          (local.get $hwnd) (local.get $sw) (local.get $idx)
+          (i32.and
+            (i32.ne (i32.and (local.get $mask) (i32.const 0x0001)) (i32.const 0))
+            (i32.eq (i32.load offset=20 (local.get $lvi_w)) (i32.const -1)))
+          (i32.and
+            (i32.ne (i32.and (local.get $mask) (i32.const 0x0002)) (i32.const 0))
+            (i32.eq (i32.load offset=28 (local.get $lvi_w)) (i32.const -1))))
         (call $paint_flag_set_inv (local.get $hwnd))
         (return (local.get $idx))))
 
@@ -7356,7 +7811,7 @@
           (then
             (i32.store
               (call $lv_item_param_addr (local.get $sw) (local.get $idx))
-              (i32.load offset=36 (local.get $lvi_w)))))
+              (i32.load offset=32 (local.get $lvi_w)))))
         (if (i32.and (i32.load (local.get $lvi_w)) (i32.const 0x0008))
           (then
             (if (i32.and (i32.load offset=16 (local.get $lvi_w)) (i32.const 0x0002))
@@ -7370,6 +7825,22 @@
                       (then
                         (if (i32.eqz (call $lv_select_item (local.get $hwnd) (local.get $sw) (i32.const -1)))
                           (then (return (i32.const 0))))))))))))
+        ;; DefView commonly inserts the PIDL/lParam first and assigns
+        ;; LPSTR_TEXTCALLBACKA/I_IMAGECALLBACK with a later LVM_SETITEMA.
+        ;; Resolve that form too; handling only INSERTITEM left stock desktop
+        ;; rows permanently anonymous even though their private PIDLs existed.
+        (call $lv_resolve_insert_callbacks
+          (local.get $hwnd) (local.get $sw) (local.get $idx)
+          (i32.and
+            (i32.or
+              (i32.eq (local.get $msg) (i32.const 0x102E))
+              (i32.ne (i32.and (i32.load (local.get $lvi_w)) (i32.const 0x0001)) (i32.const 0)))
+            (i32.eq (i32.load offset=20 (local.get $lvi_w)) (i32.const -1)))
+          (i32.and
+            (i32.eq (local.get $msg) (i32.const 0x1006))
+            (i32.and
+              (i32.ne (i32.and (i32.load (local.get $lvi_w)) (i32.const 0x0002)) (i32.const 0))
+              (i32.eq (i32.load offset=28 (local.get $lvi_w)) (i32.const -1)))))
         (call $paint_flag_set_inv (local.get $hwnd))
         (return (i32.const 1))))
 
@@ -7391,7 +7862,7 @@
                   (i32.load (call $lv_item_image_addr (local.get $sw) (local.get $idx))))))
             (if (i32.and (i32.load (local.get $lvi_w)) (i32.const 0x0004))
               (then
-                (i32.store offset=36 (local.get $lvi_w)
+                (i32.store offset=32 (local.get $lvi_w)
                   (i32.load (call $lv_item_param_addr (local.get $sw) (local.get $idx))))))
             (if (i32.and (i32.load (local.get $lvi_w)) (i32.const 0x0008))
               (then
@@ -7845,15 +8316,86 @@
             (local.set $bk_brush
               (call $host_gdi_create_solid_brush
                 (i32.and (call $lv_bk_color (local.get $sw)) (i32.const 0x00FFFFFF))))))
-        (drop (call $host_gdi_fill_rect (local.get $hdc)
-                (i32.const 0) (i32.const 0)
-                (local.get $w) (local.get $h)
-                (select (local.get $bk_brush) (i32.const 0x30010) (i32.ne (local.get $bk_brush) (i32.const 0)))))
+        ;; CLR_NONE is meaningful for icon views: the shell's desktop has
+        ;; already painted wallpaper/COLOR_DESKTOP into the shared surface.
+        ;; Report views keep their historical white fallback.
+        (if (i32.or
+              (i32.eq (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 3)) (i32.const 1))
+              (i32.ne (call $lv_bk_color (local.get $sw)) (i32.const -1)))
+          (then
+            (drop (call $host_gdi_fill_rect (local.get $hdc)
+              (i32.const 0) (i32.const 0)
+              (local.get $w) (local.get $h)
+              (select (local.get $bk_brush) (i32.const 0x30010)
+                (i32.ne (local.get $bk_brush) (i32.const 0)))))))
         (if (local.get $bk_brush)
           (then (drop (call $host_gdi_delete_object (local.get $bk_brush)))))
         (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
         (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
-        (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00000000)))
+        (drop (call $host_gdi_set_text_color (local.get $hdc)
+          (i32.and (call $lv_text_color (local.get $sw)) (i32.const 0x00FFFFFF))))
+
+        ;; LVS_ICON/LVS_SMALLICON/LVS_LIST. The desktop is LVS_ICON with
+        ;; LVS_ALIGNLEFT|LVS_AUTOARRANGE: arrange 75x70 cells down the left,
+        ;; draw the normal image list, and center the callback-resolved label.
+        ;; Non-report modes intentionally do not expose report columns/header.
+        (if (i32.ne
+              (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 3))
+              (i32.const 1))
+          (then
+            (local.set $visible (i32.div_u (local.get $h) (i32.const 70)))
+            (if (i32.eqz (local.get $visible))
+              (then (local.set $visible (i32.const 1))))
+            (local.set $i (i32.const 0))
+            (block $icon_items_done (loop $icon_items
+              (br_if $icon_items_done
+                (i32.ge_u (local.get $i) (call $lv_item_count (local.get $sw))))
+              ;; Callback data may not be available during insertion while
+              ;; DefView is still constructing its PIDL array. Common controls
+              ;; ask again when a row is displayed, so retry unresolved text
+              ;; or image fields at the paint boundary.
+              (call $lv_resolve_insert_callbacks
+                (local.get $hwnd) (local.get $sw) (local.get $i)
+                (i32.eqz
+                  (i32.load (call $lv_cell_addr
+                    (local.get $sw) (local.get $i) (i32.const 0))))
+                (i32.eq
+                  (i32.load (call $lv_item_image_addr (local.get $sw) (local.get $i)))
+                  (i32.const -1)))
+              (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0800))
+                (then
+                  (local.set $x (i32.add (i32.const 8)
+                    (i32.mul (i32.div_u (local.get $i) (local.get $visible)) (i32.const 75))))
+                  (local.set $y (i32.add (i32.const 8)
+                    (i32.mul (i32.rem_u (local.get $i) (local.get $visible)) (i32.const 70)))))
+                (else
+                  (local.set $width (i32.div_u (local.get $w) (i32.const 75)))
+                  (if (i32.eqz (local.get $width)) (then (local.set $width (i32.const 1))))
+                  (local.set $x (i32.add (i32.const 8)
+                    (i32.mul (i32.rem_u (local.get $i) (local.get $width)) (i32.const 75))))
+                  (local.set $y (i32.add (i32.const 8)
+                    (i32.mul (i32.div_u (local.get $i) (local.get $width)) (i32.const 70))))))
+              (drop (call $lv_paint_normal_icon
+                (local.get $hdc) (local.get $sw) (local.get $i)
+                (i32.add (local.get $x) (i32.const 20)) (local.get $y)))
+              (local.set $cell_g
+                (i32.load (call $lv_cell_addr (local.get $sw) (local.get $i) (i32.const 0))))
+              (if (local.get $cell_g)
+                (then
+                  (local.set $cell_w (call $g2w (local.get $cell_g)))
+                  (local.set $text_len (call $strlen (local.get $cell_w)))
+                  (if (local.get $text_len)
+                    (then
+                      (drop (call $host_gdi_draw_text
+                        (local.get $hdc) (local.get $cell_w) (local.get $text_len)
+                        (call $paint_rect
+                          (local.get $x) (i32.add (local.get $y) (i32.const 36))
+                          (i32.add (local.get $x) (i32.const 72))
+                          (i32.add (local.get $y) (i32.const 69)))
+                        (i32.const 0x0811) (i32.const 0))))))) ;; CENTER|WORDBREAK|NOPREFIX
+              (local.set $i (i32.add (local.get $i) (i32.const 1)))
+              (br $icon_items)))
+            (return (i32.const 0))))
 
         ;; Header.
         (local.set $col_count (call $lv_col_count (local.get $sw)))
@@ -9916,6 +10458,84 @@
       (br $lp)))
     (i32.const 1))
 
+  ;; An owner-draw listbox gets its row height from the owner, not from us:
+  ;; USER sends WM_MEASUREITEM and the owner fills in itemHeight. HyperTerminal
+  ;; asks for a 32px row so a full icon fits; against our fixed 16 it drew each
+  ;; icon 8px above the row it belonged to and the list came out empty-looking.
+  ;;
+  ;; MEASUREITEMSTRUCT: +0 CtlType, +4 CtlID, +8 itemID, +12 itemWidth,
+  ;; +16 itemHeight, +20 itemData. We ask once, for item 0, which is exactly
+  ;; right for LBS_OWNERDRAWFIXED; a VARIABLE listbox gets item 0's height for
+  ;; every row, which is still far closer than ignoring the owner entirely.
+  (func $lb_measure_item (param $hwnd i32) (param $sw i32) (result i32)
+    (local $mis i32) (local $misw i32) (local $h i32)
+    (local.set $mis (call $heap_alloc (i32.const 24)))
+    (local.set $misw (call $g2w (local.get $mis)))
+    (i32.store           (local.get $misw) (i32.const 2))   ;; ODT_LISTBOX
+    (i32.store offset=4  (local.get $misw) (call $lb_ctrl_id (local.get $sw)))
+    (i32.store offset=8  (local.get $misw) (i32.const 0))
+    (i32.store offset=12 (local.get $misw) (i32.const 0))
+    (i32.store offset=16 (local.get $misw) (i32.const 16))
+    (i32.store offset=20 (local.get $misw) (i32.const 0))
+    (drop (call $wnd_send_message
+            (call $wnd_get_parent (local.get $hwnd))
+            (i32.const 0x002C)
+            (call $lb_ctrl_id (local.get $sw))
+            (local.get $mis)))
+    (local.set $h (i32.load offset=16 (local.get $misw)))
+    (call $heap_free (local.get $mis))
+    ;; An owner that ignores the message leaves our 16 in place; one that
+    ;; answers with nonsense must not divide the row loop by zero.
+    (if (i32.or (i32.lt_s (local.get $h) (i32.const 1))
+                (i32.gt_s (local.get $h) (i32.const 255)))
+      (then (local.set $h (i32.const 16))))
+    (local.get $h))
+
+  ;; An LBS_OWNERDRAW* listbox draws none of its own rows: USER hands each
+  ;; visible item to the owner as WM_DRAWITEM and the owner paints it. Without
+  ;; this we fell through to $host_gdi_text_out on the item string, which for
+  ;; such a listbox is not a label at all -- HyperTerminal's icon picker stores
+  ;; "Hilgraeve is Great !!!" in every slot and paints the icon from itemData,
+  ;; so the dialog came up with the same joke string repeated down the list.
+  ;;
+  ;; Modelled on $btn_send_drawitem: DRAWITEMSTRUCT is 48 bytes on the heap,
+  ;; sent synchronously, then freed. The rect is in the listbox's own client
+  ;; coordinates, which is what the child DC (hwnd + 0x40000) is already based
+  ;; on, so no translation is needed.
+  (func $lb_send_drawitem
+      (param $hwnd i32) (param $sw i32) (param $idx i32)
+      (param $row_y i32) (param $w i32) (param $row_h i32) (param $selected i32)
+    (local $dis i32) (local $disw i32) (local $hdc i32) (local $data i32)
+    (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+    ;; itemData is whatever LB_SETITEMDATA stored; a listbox that was never
+    ;; given any keeps the field zero rather than reading off the null array.
+    (if (call $lb_data_ptr (local.get $sw))
+      (then
+        (local.set $data
+          (i32.load (i32.add (call $g2w (call $lb_data_ptr (local.get $sw)))
+                             (i32.mul (local.get $idx) (i32.const 4)))))))
+    (local.set $dis (call $heap_alloc (i32.const 48)))
+    (local.set $disw (call $g2w (local.get $dis)))
+    (i32.store           (local.get $disw) (i32.const 2))    ;; ODT_LISTBOX
+    (i32.store offset=4  (local.get $disw) (call $lb_ctrl_id (local.get $sw)))
+    (i32.store offset=8  (local.get $disw) (local.get $idx))
+    (i32.store offset=12 (local.get $disw) (i32.const 1))     ;; ODA_DRAWENTIRE
+    (i32.store offset=16 (local.get $disw)
+      (select (i32.const 0x0001) (i32.const 0) (local.get $selected)))
+    (i32.store offset=20 (local.get $disw) (local.get $hwnd))
+    (i32.store offset=24 (local.get $disw) (local.get $hdc))
+    (i32.store offset=28 (local.get $disw) (i32.const 2))
+    (i32.store offset=32 (local.get $disw) (local.get $row_y))
+    (i32.store offset=36 (local.get $disw) (local.get $w))
+    (i32.store offset=40 (local.get $disw) (i32.add (local.get $row_y) (local.get $row_h)))
+    (i32.store offset=44 (local.get $disw) (local.get $data))
+    (drop (call $wnd_send_message
+            (call $wnd_get_parent (local.get $hwnd))
+            (i32.const 0x002B)
+            (call $lb_ctrl_id (local.get $sw))
+            (local.get $dis)))
+    (call $heap_free (local.get $dis)))
+
   ;; ============================================================
   ;; ListBox WndProc  (control class 4)
   ;; ============================================================
@@ -9961,6 +10581,7 @@
     (local $brush i32)
     (local $find_handle i32) (local $fd_g i32) (local $fd_w i32) (local $attrs i32)
     (local $last i32) (local $tmp_g i32) (local $tmp_w i32)
+    (local $ownerdraw i32)
 
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
 
@@ -9995,8 +10616,9 @@
     (if (i32.eq (local.get $msg) (i32.const 0x0001))
       (then
         (local.set $cs_w (call $g2w (local.get $lParam)))
-        (local.set $state (call $heap_alloc (i32.const 52)))
+        (local.set $state (call $heap_alloc (i32.const 56)))
         (local.set $sw (call $g2w (local.get $state)))
+        (call $lb_set_item_h (local.get $sw) (i32.const 0))
         (call $lb_set_items_ptr (local.get $sw) (i32.const 0))
         (call $lb_set_items_used (local.get $sw) (i32.const 0))
         (call $lb_set_items_cap (local.get $sw) (i32.const 0))
@@ -10240,9 +10862,10 @@
         (return (local.get $sel))))
 
     ;; ---------- LB_GETITEMHEIGHT (0x01A1) ----------
-    ;; The renderer and mouse hit-testing use the Win98 default 16px row.
+    ;; The Win98 default 16px row, or whatever an owner-draw listbox's owner
+    ;; asked for in WM_MEASUREITEM.
     (if (i32.eq (local.get $msg) (i32.const 0x01A1))
-      (then (return (i32.const 16))))
+      (then (return (call $lb_row_height (local.get $sw)))))
 
     ;; ---------- LB_SETCURSEL (0x0186) ----------
     ;; wParam = index (-1 to clear). Clamp to count-1 if out of range.
@@ -10316,10 +10939,10 @@
                 (i32.eq (local.get $msg) (i32.const 0x0203)))
       (then
         (local.set $count (call $lb_count (local.get $sw)))
-        ;; --- WS_VSCROLL strip hit-test (arrows only) ---
+        ;; --- visible WS_VSCROLL strip hit-test (arrows only) ---
         ;; If the click lands in the right-edge 16px scrollbar strip, adjust
         ;; top_index and short-circuit before the row-select path.
-        (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
+        (if (call $listbox_vscroll_visible (local.get $hwnd) (local.get $sw))
           (then
             (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
             (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
@@ -10329,7 +10952,7 @@
             (if (i32.ge_s (local.get $row) (i32.sub (local.get $w) (i32.const 16)))
               (then
                 ;; visible rows based on strip-reduced client
-                (local.set $visible (i32.div_u (i32.sub (local.get $h) (i32.const 4)) (i32.const 16)))
+                (local.set $visible (i32.div_u (i32.sub (local.get $h) (i32.const 4)) (call $lb_row_height (local.get $sw))))
                 (local.set $top (call $lb_top_index (local.get $sw)))
                 (local.set $max (i32.sub (local.get $count) (local.get $visible)))
                 (if (i32.lt_s (local.get $max) (i32.const 0))
@@ -10373,7 +10996,7 @@
         (if (i32.eqz (local.get $count)) (then (return (i32.const 0))))
         ;; y from hi 16 bits of lParam
         (local.set $row (i32.shr_u (i32.and (local.get $lParam) (i32.const 0xFFFF0000)) (i32.const 16)))
-        (local.set $row (i32.div_s (local.get $row) (i32.const 16)))
+        (local.set $row (i32.div_s (local.get $row) (call $lb_row_height (local.get $sw))))
         (local.set $row (i32.add (local.get $row) (call $lb_top_index (local.get $sw))))
         (if (i32.lt_s (local.get $row) (i32.const 0))
           (then (local.set $row (i32.const 0))))
@@ -10460,7 +11083,7 @@
             (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
             (local.set $row_y (i32.shr_s (local.get $lParam) (i32.const 16)))
             (local.set $count (call $lb_count (local.get $sw)))
-            (local.set $visible (i32.div_u (i32.sub (local.get $h) (i32.const 4)) (i32.const 16)))
+            (local.set $visible (i32.div_u (i32.sub (local.get $h) (i32.const 4)) (call $lb_row_height (local.get $sw))))
             (local.set $max (i32.sub (local.get $count) (local.get $visible)))
             (if (i32.lt_s (local.get $max) (i32.const 0))
               (then (local.set $max (i32.const 0))))
@@ -10483,7 +11106,7 @@
         ;; Compute visible rows for PGUP/PGDN
         (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
         (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
-        (local.set $visible (i32.div_u (i32.sub (local.get $h) (i32.const 4)) (i32.const 16)))
+        (local.set $visible (i32.div_u (i32.sub (local.get $h) (i32.const 4)) (call $lb_row_height (local.get $sw))))
         (if (i32.lt_s (local.get $visible) (i32.const 1))
           (then (local.set $visible (i32.const 1))))
         (local.set $row (local.get $sel))
@@ -10810,8 +11433,8 @@
         (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
         (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
         (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
-        ;; Reserve right strip for WS_VSCROLL (0x00200000). Content uses w'=w-16.
-        (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
+        ;; Reserve the right strip only while USER would make it visible.
+        (if (call $listbox_vscroll_visible (local.get $hwnd) (local.get $sw))
           (then (local.set $w (i32.sub (local.get $w) (i32.const 16)))))
         ;; White interior + sunken edge (content rect only).
         (drop (call $host_gdi_fill_rect (local.get $hdc)
@@ -10823,7 +11446,16 @@
         (local.set $count (call $lb_count (local.get $sw)))
         (local.set $sel   (call $lb_cur_sel (local.get $sw)))
         (local.set $top   (call $lb_top_index (local.get $sw)))
-        (local.set $row_h (i32.const 16))
+        ;; LBS_OWNERDRAWFIXED (0x0010) / LBS_OWNERDRAWVARIABLE (0x0020).
+        (local.set $ownerdraw
+          (i32.ne (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0030))
+                  (i32.const 0)))
+        ;; Measure once, on the first paint: by now the owner's dlgproc is
+        ;; installed, which it need not be while the control is being created.
+        (if (i32.and (local.get $ownerdraw) (i32.eqz (call $lb_item_h (local.get $sw))))
+          (then (call $lb_set_item_h (local.get $sw)
+                  (call $lb_measure_item (local.get $hwnd) (local.get $sw)))))
+        (local.set $row_h (call $lb_row_height (local.get $sw)))
         (local.set $visible (i32.div_u (i32.sub (local.get $h) (i32.const 4)) (local.get $row_h)))
         ;; Walk to the first visible item.
         (local.set $items_w (call $g2w (call $lb_items_ptr (local.get $sw))))
@@ -10844,6 +11476,16 @@
           (br_if $rows_done (i32.ge_u (local.get $idx) (local.get $count)))
           (local.set $row_y (i32.add (i32.const 2) (i32.mul (local.get $row) (local.get $row_h))))
           (local.set $slen (call $strlen (local.get $p)))
+          (if (local.get $ownerdraw)
+            (then
+              (call $lb_send_drawitem (local.get $hwnd) (local.get $sw) (local.get $idx)
+                (local.get $row_y) (local.get $w) (local.get $row_h)
+                (i32.load8_u (i32.add (call $g2w (call $lb_sel_ptr (local.get $sw)))
+                                      (local.get $idx))))
+              ;; The owner owns the whole row; skip our own text/highlight pass.
+              (local.set $p (i32.add (local.get $p) (i32.add (local.get $slen) (i32.const 1))))
+              (local.set $row (i32.add (local.get $row) (i32.const 1)))
+              (br $rows)))
           (if (i32.load8_u
                 (i32.add (call $g2w (call $lb_sel_ptr (local.get $sw))) (local.get $idx)))
             (then
@@ -10871,10 +11513,10 @@
           (local.set $p (i32.add (local.get $p) (i32.add (local.get $slen) (i32.const 1))))
           (local.set $row (i32.add (local.get $row) (i32.const 1)))
           (br $rows)))
-        ;; WS_VSCROLL strip. $w here is already reduced; full width is via sz.
-        (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
+        ;; Visible WS_VSCROLL strip. $w here is already reduced; full width is via sz.
+        (if (call $listbox_vscroll_visible (local.get $hwnd) (local.get $sw))
           (then
-            (local.set $visible (i32.div_u (i32.sub (local.get $h) (i32.const 4)) (i32.const 16)))
+            (local.set $visible (i32.div_u (i32.sub (local.get $h) (i32.const 4)) (call $lb_row_height (local.get $sw))))
             (local.set $max (i32.sub (local.get $count) (local.get $visible)))
             (if (i32.lt_s (local.get $max) (i32.const 0))
               (then (local.set $max (i32.const 0))))
@@ -14434,7 +15076,13 @@
       (call $run (i32.const 1000000))
       (br_if $sync_done (i32.eqz (global.get $eip)))
       (local.set $sync_rounds (i32.add (local.get $sync_rounds) (i32.const 1)))
-      (br_if $sync_done (i32.ge_u (local.get $sync_rounds) (i32.const 64)))
+      (if (i32.ge_u (local.get $sync_rounds) (i32.const 64))
+        (then
+          (call $host_log_i32 (i32.const 0xCADE5000))
+          (call $host_log_i32 (global.get $eip))
+          (call $host_log_i32 (global.get $yield_reason))
+          (call $host_log_i32 (local.get $msg))
+          (br $sync_done)))
       (br $sync_run)))
     (global.set $sync_msg_depth (i32.sub (global.get $sync_msg_depth) (i32.const 1)))
     ;; Capture wndproc result (its EAX) before restoring caller's regs.
@@ -14492,7 +15140,30 @@
     (if (i32.ge_s (call $wnd_table_find (local.get $hwnd)) (i32.const 0))
       (then (call $wnd_table_set (local.get $hwnd) (local.get $installed))))
     (if (local.get $handled)
-      (then (return (call $dialog_extra_get (local.get $hwnd) (i32.const 0)))))
+      (then
+        ;; USER's DefDlgProc epilog returns the DLGPROC's own BOOL — not
+        ;; DWL_MSGRESULT — for the handful of messages whose result *is* that
+        ;; BOOL. WM_INITDIALOG is the load-bearing one: its caller reads the
+        ;; return as "did the dialog set the focus itself, or should I focus
+        ;; the control I picked". Storm's dialog manager (Diablo's front end)
+        ;; sends WM_INITDIALOG to its own dialog class, lets the message reach
+        ;; the app through DefDlgProc, and then does
+        ;;     if (!result) focusTarget = NULL;
+        ;; before its SetFocus. Returning DWL_MSGRESULT (zero, because a
+        ;; DLGPROC that returns TRUE normally never writes it) therefore left
+        ;; every Diablo menu and the name-entry field with no focused control
+        ;; at all: keystrokes had nowhere to land.
+        (if (i32.or
+              (i32.eq (local.get $msg) (i32.const 0x0110))    ;; WM_INITDIALOG
+              (i32.or
+                (i32.eq (local.get $msg) (i32.const 0x0039))  ;; WM_COMPAREITEM
+                (i32.or
+                  (i32.eq (local.get $msg) (i32.const 0x002E)) ;; WM_VKEYTOITEM
+                  (i32.or
+                    (i32.eq (local.get $msg) (i32.const 0x002F))   ;; WM_CHARTOITEM
+                    (i32.eq (local.get $msg) (i32.const 0x0037)))))) ;; WM_QUERYDRAGICON
+          (then (return (local.get $handled))))
+        (return (call $dialog_extra_get (local.get $hwnd) (i32.const 0)))))
     (i32.const 0))
 
   ;; Route a client-relative mouse event to the first WAT-managed child
@@ -14761,6 +15432,7 @@
   (func $modal_done (param $result i32)
     (local $owner i32)
     (global.set $modal_result (local.get $result))
+    (call $cd_modal_writeback (local.get $result))
     (local.set $owner (call $wnd_get_owner (global.get $modal_dlg_hwnd)))
     (call $wnd_destroy_tree (global.get $modal_dlg_hwnd))
     (call $host_destroy_window (global.get $modal_dlg_hwnd))

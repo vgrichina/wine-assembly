@@ -23,6 +23,8 @@
   (global $GDI_BITMAP_FONT_TERMINAL_PATH i32 (i32.const 0x07F0A5B0))
   (global $GDI_BITMAP_FONT_TERMINAL_STATE i32 (i32.const 0x07F0A5D0))
   (global $GDI_BITMAP_FONT_WESTERN i32 (i32.const 0x07F0A5D4))
+  (global $GDI_FONT_MAPPER_FONT i32 (i32.const 0x07F0A5E0))
+  (global $GDI_FONT_MAPPER_COMIC_SANS i32 (i32.const 0x07F0A5E8))
 
   ;; Last-use stamp per strike slot, parallel to the table so the 64-byte
   ;; record layout stays as the .FON parser writes it. The table holds every
@@ -58,6 +60,8 @@
   (data (i32.const 0x07F0A590) "MS Shell Dlg 2\00")
   (data (i32.const 0x07F0A5A0) "Terminal\00")
   (data (i32.const 0x07F0A5D4) "Western\00")
+  (data (i32.const 0x07F0A5E0) "FONT\00")
+  (data (i32.const 0x07F0A5E8) "Comic Sans MS\00")
 
   (func $gdi_bitmap_font_record (param $index i32) (result i32)
     (i32.add (global.get $GDI_BITMAP_FONT_TABLE)
@@ -145,6 +149,29 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (i32.const 0))
+
+  (func $gdi_font_is_script_request (param $handle i32) (result i32)
+    (i32.eq
+      (i32.and (call $gdi_font_pitch_and_family (local.get $handle))
+        (i32.const 0xF0))
+      (i32.const 0x40)))
+
+  (func $gdi_font_is_script_placeholder (param $handle i32) (result i32)
+    (i32.and (call $gdi_font_is_script_request (local.get $handle))
+      (call $gdi_bitmap_font_face_equal
+        (call $gdi_font_face (local.get $handle))
+        (global.get $GDI_FONT_MAPPER_FONT))))
+
+  ;; The Klotski Win16 binary deliberately names the placeholder face "FONT"
+  ;; and supplies FF_SCRIPT as the mapper family.  A native Win98 probe maps
+  ;; both of its 22x22 and 9x9 requests to Comic Sans MS.  Preserve the face in
+  ;; GetObject's LOGFONT, but use and report the realized face after selection.
+  (func $gdi_font_mapper_face (param $handle i32) (result i32)
+    (local $face i32)
+    (local.set $face (call $gdi_font_face (local.get $handle)))
+    (if (call $gdi_font_is_script_placeholder (local.get $handle))
+      (then (return (global.get $GDI_FONT_MAPPER_COMIC_SANS))))
+    (local.get $face))
 
   (func $gdi_bitmap_font_face_matches (param $requested i32) (param $installed i32)
         (result i32)
@@ -990,6 +1017,47 @@
           (i32.or (i32.load offset=20 (local.get $object)) (i32.const 1)))
         (i32.store offset=24 (local.get $object) (local.get $best)))))
 
+  ;; TrueType substitutes must be rasterized at the font's mapped device
+  ;; height, not at its untransformed logical height. WordZap asks for a
+  ;; 10-unit Tms Rmn font in an anisotropic 434/187 DC: synthesizing a 10px
+  ;; strike and enlarging that monochrome bitmap to 21px destroys the serifs.
+  ;; Native GDI instead hints the outline at the device size.
+  (func $gdi_font_strike_height_for_dc (param $hdc i32) (param $handle i32)
+        (result i32)
+    (local $dc i32) (local $height i32) (local $negative i32)
+    (local $win i32) (local $vp i32)
+    (local.set $height (call $gdi_font_height (local.get $handle)))
+    (local.set $negative (i32.lt_s (local.get $height) (i32.const 0)))
+    (if (local.get $negative)
+      (then (local.set $height (i32.sub (i32.const 0) (local.get $height)))))
+    (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
+    (if (local.get $dc)
+      (then
+        (local.set $win (i32.load offset=52 (local.get $dc)))
+        (local.set $vp (i32.load offset=68 (local.get $dc)))
+        (if (i32.lt_s (local.get $win) (i32.const 0))
+          (then (local.set $win (i32.sub (i32.const 0) (local.get $win)))))
+        (if (i32.lt_s (local.get $vp) (i32.const 0))
+          (then (local.set $vp (i32.sub (i32.const 0) (local.get $vp)))))
+        (if (i32.and (i32.ne (local.get $win) (i32.const 0))
+              (i32.ne (local.get $vp) (i32.const 0)))
+          (then (local.set $height (call $gdi_round_ratio
+            (i64.mul (i64.extend_i32_u (local.get $height))
+              (i64.extend_i32_u (local.get $vp)))
+            (i64.extend_i32_u (local.get $win))))))))
+    ;; Explicit-width scalable fonts take the same slightly smaller mapper
+    ;; choice used by $gdi_bitmap_font_height below.
+    (if (i32.and
+          (i32.ne (call $gdi_font_width (local.get $handle)) (i32.const 0))
+          (i32.eqz (call $gdi_font_is_script_request (local.get $handle))))
+      (then (local.set $height (call $gdi_round_ratio
+        (i64.mul (i64.extend_i32_u (local.get $height)) (i64.const 9))
+        (i64.const 10)))))
+    (if (i32.le_s (local.get $height) (i32.const 0))
+      (then (local.set $height (i32.const 1))))
+    (select (i32.sub (i32.const 0) (local.get $height)) (local.get $height)
+      (local.get $negative)))
+
   (func $gdi_bitmap_font_selected (param $hdc i32) (result i32)
     (local $dc i32) (local $handle i32) (local $object i32) (local $strike i32)
     (local $substitute i32)
@@ -1021,8 +1089,9 @@
                     (i32.const 0)))
               (then
                 (local.set $substitute (call $tt_strike_ensure
-                  (call $gdi_font_face (local.get $handle))
-                  (call $gdi_font_height (local.get $handle))
+                  (call $gdi_font_mapper_face (local.get $handle))
+                  (call $gdi_font_strike_height_for_dc
+                    (local.get $hdc) (local.get $handle))
                   (call $gdi_font_weight (local.get $handle))
                   (call $gdi_font_italic (local.get $handle))))
                 (if (local.get $substitute)
@@ -1063,8 +1132,8 @@
     ;; without a strike is a LOGFONT that named no face at all, or a font file
     ;; that failed to load.
     (local.set $substitute (call $tt_strike_ensure
-      (call $gdi_font_face (local.get $handle))
-      (call $gdi_font_height (local.get $handle))
+      (call $gdi_font_mapper_face (local.get $handle))
+      (call $gdi_font_strike_height_for_dc (local.get $hdc) (local.get $handle))
       (call $gdi_font_weight (local.get $handle))
       (call $gdi_font_italic (local.get $handle))))
     (if (local.get $substitute) (then (return (local.get $substitute))))
@@ -1153,6 +1222,16 @@
       (then (local.set $height (call $gdi_round_ratio
         (i64.mul (i64.extend_i32_u (local.get $height)) (i64.extend_i32_u (local.get $vp)))
         (i64.extend_i32_u (local.get $win))))))
+    ;; Win9x's scalable mapper chooses a slightly smaller character cell for
+    ;; explicit-width fonts than our nearest substitute strike. WordZap's
+    ;; Tms Rmn requests exercise this path: preserve their requested aspect
+    ;; below, but reduce the 20px substitute cell to the native 18px result.
+    (if (i32.and
+          (i32.ne (call $gdi_font_width (local.get $handle)) (i32.const 0))
+          (i32.eqz (call $gdi_font_is_script_request (local.get $handle))))
+      (then (local.set $height (call $gdi_round_ratio
+        (i64.mul (i64.extend_i32_u (local.get $height)) (i64.const 9))
+        (i64.const 10)))))
     (if (i32.gt_s (local.get $height) (i32.const 4096))
       (then (local.set $height (i32.const 4096))))
     (select (local.get $height) (i32.const 1) (i32.gt_s (local.get $height) (i32.const 0))))
@@ -1168,6 +1247,84 @@
             (i32.const 0x07F0A528)))
       (then (return (i32.const 75))))
     (local.get $height))
+
+  ;; Convert LOGFONT.lfWidth into the equivalent horizontal scale-height for
+  ;; this strike. The Win9x font mapper treats a requested average width as a
+  ;; match preference, not a hard affine width: it retains part of the face's
+  ;; natural aspect. A 5/8 requested + 3/8 natural blend reproduces the classic
+  ;; Tms Rmn choices used by WordZap instead of either ignoring lfWidth or
+  ;; squeezing the scalable substitute to the literal ratio.
+  (func $gdi_bitmap_font_width_height_dc
+        (param $hdc i32) (param $strike i32) (param $height i32) (result i32)
+    (local $dc i32) (local $handle i32) (local $request i32)
+    (local $logical_height i32) (local $mapped i32) (local $win_x i32)
+    (local $vp_x i32)
+    (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
+    (if (i32.eqz (local.get $dc))
+      (then (return (call $gdi_bitmap_font_width_height
+        (local.get $strike) (local.get $height)))))
+    (local.set $handle (i32.load offset=88 (local.get $dc)))
+    (local.set $request (call $gdi_font_width (local.get $handle)))
+    (local.set $logical_height (call $gdi_font_height (local.get $handle)))
+    (if (i32.lt_s (local.get $request) (i32.const 0))
+      (then (local.set $request (i32.sub (i32.const 0) (local.get $request)))))
+    (if (i32.lt_s (local.get $logical_height) (i32.const 0))
+      (then (local.set $logical_height
+        (i32.sub (i32.const 0) (local.get $logical_height)))))
+    (if (i32.or (i32.eqz (local.get $request))
+          (i32.eqz (local.get $logical_height)))
+      (then (return (call $gdi_bitmap_font_width_height
+        (local.get $strike) (local.get $height)))))
+    ;; Win98 treats an explicit width on an FF_SCRIPT request as the desired
+    ;; average character width.  Klotski asks for the nonexistent face "FONT"
+    ;; at 22x22 and 9x9 and relies on family fallback; blending the width back
+    ;; toward MS Sans Serif's natural aspect compresses DAISY/Stop to roughly
+    ;; half the native width.  Map the requested X width through the DC and
+    ;; convert it to this strike's scale height using dfAvgWidth. Comic Relief
+    ;; deliberately copies Comic Sans's per-glyph advances, but its OS/2
+    ;; xAvgCharWidth is 1239 rather than the original face's 959. Correct that
+    ;; table-level difference when turning the requested average width into an
+    ;; X scale; otherwise the compatible outlines are still about 23% narrow.
+    ;; Other font families retain the measured mapper blend below (notably
+    ;; WordZap's Tms Rmn requests).
+    (if (call $gdi_font_is_script_placeholder (local.get $handle))
+      (then
+        (local.set $win_x (i32.load offset=48 (local.get $dc)))
+        (local.set $vp_x (i32.load offset=64 (local.get $dc)))
+        (if (i32.lt_s (local.get $win_x) (i32.const 0))
+          (then (local.set $win_x (i32.sub (i32.const 0) (local.get $win_x)))))
+        (if (i32.lt_s (local.get $vp_x) (i32.const 0))
+          (then (local.set $vp_x (i32.sub (i32.const 0) (local.get $vp_x)))))
+        (if (i32.and (i32.ne (local.get $win_x) (i32.const 0))
+              (i32.ne (local.get $vp_x) (i32.const 0)))
+          (then (local.set $request (call $gdi_round_ratio
+            (i64.mul (i64.extend_i32_u (local.get $request))
+              (i64.extend_i32_u (local.get $vp_x)))
+            (i64.extend_i32_u (local.get $win_x))))))
+        (if (i32.ne (i32.load offset=28 (local.get $strike)) (i32.const 0))
+          (then (return (call $gdi_round_ratio
+            (i64.mul
+              (i64.mul (i64.extend_i32_u (local.get $request))
+                (i64.extend_i32_u (i32.load offset=20 (local.get $strike))))
+              (i64.const 1239))
+            (i64.mul
+              (i64.extend_i32_u (i32.load offset=28 (local.get $strike)))
+              (i64.const 959))))))))
+    (local.set $mapped (call $gdi_round_ratio
+      (i64.mul (i64.extend_i32_u (local.get $height))
+        (i64.extend_i32_u (i32.add
+          (i32.mul (local.get $logical_height) (i32.const 3))
+          (i32.mul (local.get $request) (i32.const 5)))))
+      (i64.extend_i32_u (i32.mul (local.get $logical_height) (i32.const 8)))))
+    ;; $height already carries the mapper's 9/10 cell choice. Compensate that
+    ;; reduction and the device-size hinter's tighter integer advances. The
+    ;; resulting 11/9 factor retains the native WordZap line widths while the
+    ;; outline itself is hinted at full device resolution.
+    (local.set $mapped (call $gdi_round_ratio
+      (i64.mul (i64.extend_i32_u (local.get $mapped)) (i64.const 11))
+      (i64.const 9)))
+    (select (local.get $mapped) (i32.const 1)
+      (i32.gt_s (local.get $mapped) (i32.const 0))))
 
   (func $gdi_bitmap_font_glyph (param $strike i32) (param $code i32) (result i32)
     (local $first i32) (local $last i32) (local $version i32) (local $entry_size i32)
@@ -1187,11 +1344,65 @@
           (i32.eq (local.get $version) (i32.const 0x0200)))
         (i32.mul (i32.sub (local.get $code) (local.get $first)) (local.get $entry_size)))))
 
-  (func $gdi_bitmap_font_scaled_width (param $strike i32) (param $glyph i32)
+  ;; Synthetic TrueType strikes retain the FNT width as the advance, but put
+  ;; the cached outline bitmap's signed left bearing and ink width in a private
+  ;; v3-header extension. Installed bitmap strikes have no such table.
+  (func $gdi_bitmap_font_glyph_meta (param $strike i32) (param $glyph i32)
+        (result i32)
+    (local $source i32) (local $index i32) (local $offset i32)
+    (if (i32.ne (i32.load (local.get $strike)) (i32.const 2))
+      (then (return (i32.const 0))))
+    (local.set $source (i32.load offset=8 (local.get $strike)))
+    (if (i32.ne (i32.load offset=132 (local.get $source))
+          (i32.const 0x58455454)) ;; "TTEX"
+      (then (return (i32.const 0))))
+    (if (i32.lt_u (local.get $glyph)
+          (i32.add (local.get $source) (i32.const 148)))
+      (then (return (i32.const 0))))
+    (local.set $index (i32.div_u
+      (i32.sub (local.get $glyph) (i32.add (local.get $source) (i32.const 148)))
+      (i32.const 6)))
+    (if (i32.ge_u (local.get $index) (i32.const 256))
+      (then (return (i32.const 0))))
+    (local.set $offset (i32.load offset=136 (local.get $source)))
+    (if (i32.or (i32.lt_u (local.get $offset) (i32.const 148))
+          (i32.gt_u (i32.add (local.get $offset) (i32.const 1024))
+            (i32.load offset=12 (local.get $strike))))
+      (then (return (i32.const 0))))
+    (i32.add (i32.add (local.get $source) (local.get $offset))
+      (i32.mul (local.get $index) (i32.const 4))))
+
+  (func $gdi_bitmap_font_glyph_ink_left (param $strike i32) (param $glyph i32)
+        (result i32)
+    (local $meta i32)
+    (local.set $meta (call $gdi_bitmap_font_glyph_meta
+      (local.get $strike) (local.get $glyph)))
+    (if (local.get $meta)
+      (then (return (i32.load16_s (local.get $meta)))))
+    (i32.const 0))
+
+  (func $gdi_bitmap_font_glyph_ink_width (param $strike i32) (param $glyph i32)
+        (result i32)
+    (local $meta i32)
+    (local.set $meta (call $gdi_bitmap_font_glyph_meta
+      (local.get $strike) (local.get $glyph)))
+    (if (local.get $meta)
+      (then (return (i32.load16_u offset=2 (local.get $meta)))))
+    (i32.load16_u (local.get $glyph)))
+
+  (func $gdi_bitmap_font_scaled_ink_value (param $hdc i32) (param $strike i32)
+        (param $value i32) (param $height i32) (result i32)
+    (call $gdi_round_ratio
+      (i64.mul (i64.extend_i32_s (local.get $value))
+        (i64.extend_i32_u (call $gdi_bitmap_font_width_height_dc
+          (local.get $hdc) (local.get $strike) (local.get $height))))
+      (i64.extend_i32_u (i32.load offset=20 (local.get $strike)))))
+
+  (func $gdi_bitmap_font_scaled_width (param $hdc i32) (param $strike i32) (param $glyph i32)
         (param $height i32) (result i32)
     (local $width i32)
-    (local.set $height (call $gdi_bitmap_font_width_height
-      (local.get $strike) (local.get $height)))
+    (local.set $height (call $gdi_bitmap_font_width_height_dc
+      (local.get $hdc) (local.get $strike) (local.get $height)))
     (local.set $width (call $gdi_round_ratio
       (i64.mul (i64.extend_i32_u (i32.load16_u (local.get $glyph)))
         (i64.extend_i32_u (local.get $height)))
@@ -1262,7 +1473,7 @@
     (local.set $height (call $gdi_bitmap_font_height
       (local.get $hdc) (local.get $strike)))
     (local.set $width (call $gdi_bitmap_font_scaled_width
-      (local.get $strike) (local.get $glyph) (local.get $height)))
+      (local.get $hdc) (local.get $strike) (local.get $glyph) (local.get $height)))
     (if (i32.or (i32.gt_u (local.get $width) (i32.const 4096))
           (i32.gt_u (local.get $height) (i32.const 4096)))
       (then (return (i32.const -1))))
@@ -1362,7 +1573,7 @@
         (local.set $height (call $gdi_bitmap_font_height
           (local.get $hdc) (local.get $strike)))
         (return (call $gdi_bitmap_font_scaled_width
-          (local.get $strike) (local.get $glyph) (local.get $height)))))
+          (local.get $hdc) (local.get $strike) (local.get $glyph) (local.get $height)))))
     (if (local.get $wide)
       (then
         (i32.store16 (global.get $TEXT_SCRATCH) (local.get $character))
@@ -1544,7 +1755,7 @@
         (i32.and (i32.load16_u (i32.add (local.get $text) (i32.shl (local.get $i) (i32.const 1)))) (i32.const 0xFF))
         (i32.eqz (local.get $wide))))
       (local.set $width (i32.add (local.get $width)
-        (call $gdi_bitmap_font_scaled_width (local.get $strike)
+        (call $gdi_bitmap_font_scaled_width (local.get $hdc) (local.get $strike)
           (call $gdi_bitmap_font_glyph (local.get $strike) (local.get $code)) (local.get $height))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
@@ -1557,8 +1768,8 @@
     (local.set $height (call $gdi_bitmap_font_height (local.get $hdc) (local.get $strike)))
     (local.set $average (call $gdi_round_ratio
       (i64.mul (i64.extend_i32_u (i32.load offset=28 (local.get $strike)))
-        (i64.extend_i32_u (call $gdi_bitmap_font_width_height
-          (local.get $strike) (local.get $height))))
+        (i64.extend_i32_u (call $gdi_bitmap_font_width_height_dc
+          (local.get $hdc) (local.get $strike) (local.get $height))))
       (i64.extend_i32_u (i32.load offset=20 (local.get $strike)))))
     (i32.or (i32.and (local.get $height) (i32.const 0xFFFF))
       (i32.shl (i32.and (local.get $average) (i32.const 0xFFFF)) (i32.const 16))))
@@ -1571,6 +1782,7 @@
   (func $gdi_bitmap_text_metrics_write (param $hdc i32) (param $out i32)
         (param $wide i32) (result i32)
     (local $strike i32) (local $source i32) (local $height i32)
+    (local $width_height i32)
     (local $native_height i32) (local $ascent i32) (local $descent i32)
     (local $internal i32) (local $external i32) (local $average i32)
     (local $maximum i32) (local $first i32) (local $last i32)
@@ -1583,6 +1795,8 @@
     (if (i32.eqz (local.get $native_height)) (then (return (i32.const 0))))
     (local.set $height (call $gdi_bitmap_font_height
       (local.get $hdc) (local.get $strike)))
+    (local.set $width_height (call $gdi_bitmap_font_width_height_dc
+      (local.get $hdc) (local.get $strike) (local.get $height)))
     (local.set $ascent (call $gdi_round_ratio
       (i64.mul (i64.extend_i32_u (i32.load offset=24 (local.get $strike)))
         (i64.extend_i32_u (local.get $height)))
@@ -1604,11 +1818,11 @@
       (i64.extend_i32_u (local.get $native_height))))
     (local.set $average (call $gdi_round_ratio
       (i64.mul (i64.extend_i32_u (i32.load offset=28 (local.get $strike)))
-        (i64.extend_i32_u (local.get $height)))
+        (i64.extend_i32_u (local.get $width_height)))
       (i64.extend_i32_u (local.get $native_height))))
     (local.set $maximum (call $gdi_round_ratio
       (i64.mul (i64.extend_i32_u (i32.load offset=32 (local.get $strike)))
-        (i64.extend_i32_u (local.get $height)))
+        (i64.extend_i32_u (local.get $width_height)))
       (i64.extend_i32_u (local.get $native_height))))
     (local.set $first (i32.load offset=36 (local.get $strike)))
     (local.set $last (i32.load offset=40 (local.get $strike)))
@@ -1849,8 +2063,8 @@
           (local.get $hdc) (local.get $strike)))
         (local.set $average (call $gdi_round_ratio
           (i64.mul (i64.extend_i32_u (i32.load offset=28 (local.get $strike)))
-            (i64.extend_i32_u (call $gdi_bitmap_font_width_height
-              (local.get $strike) (local.get $height))))
+            (i64.extend_i32_u (call $gdi_bitmap_font_width_height_dc
+              (local.get $hdc) (local.get $strike) (local.get $height))))
           (i64.extend_i32_u (i32.load offset=20 (local.get $strike))))))
       (else
         (local.set $average (i32.shr_u
@@ -2284,6 +2498,7 @@
     (local $desc i32) (local $align i32) (local $width i32) (local $cursor i32) (local $top i32)
     (local $line_origin i32) (local $raw_code i32) (local $is_tab i32)
     (local $i i32) (local $code i32) (local $glyph i32) (local $glyph_width i32)
+    (local $native_ink_width i32) (local $ink_width i32) (local $ink_left i32)
     (local $glyph_offset i32) (local $sx i32) (local $sy i32) (local $dx i32) (local $dy i32)
     (local $bit i32) (local $text_color i32) (local $bk_color i32)
     (local $char_extra i32) (local $justify_extra i32) (local $justify_count i32) (local $add i32)
@@ -2416,11 +2631,17 @@
             (i32.eq (local.get $code) (i32.const 9))))
           (local.set $glyph (call $gdi_bitmap_font_glyph (local.get $strike) (local.get $code)))
           (local.set $glyph_width (call $gdi_bitmap_font_scaled_width
-            (local.get $strike) (local.get $glyph) (local.get $height)))
+            (local.get $hdc) (local.get $strike) (local.get $glyph) (local.get $height)))
+          (local.set $ink_width (call $gdi_bitmap_font_scaled_ink_value
+            (local.get $hdc) (local.get $strike)
+            (call $gdi_bitmap_font_glyph_ink_width
+              (local.get $strike) (local.get $glyph)) (local.get $height)))
           (if (i32.eqz (local.get $is_tab))
             (then
               (local.set $path_points (i64.add (local.get $path_points)
-                (i64.mul (i64.extend_i32_u (local.get $glyph_width))
+                (i64.mul (i64.extend_i32_u
+                    (select (local.get $ink_width) (local.get $glyph_width)
+                      (i32.gt_u (local.get $ink_width) (local.get $glyph_width))))
                   (i64.mul (i64.extend_i32_u (local.get $height)) (i64.const 4)))))
               (if (call $gdi_bitmap_text_is_prefix
                     (local.get $text) (local.get $i))
@@ -2469,7 +2690,16 @@
         (i32.eq (local.get $code) (i32.const 9))))
       (local.set $glyph (call $gdi_bitmap_font_glyph (local.get $strike) (local.get $code)))
       (local.set $glyph_width (call $gdi_bitmap_font_scaled_width
-        (local.get $strike) (local.get $glyph) (local.get $height)))
+        (local.get $hdc) (local.get $strike) (local.get $glyph) (local.get $height)))
+      (local.set $native_ink_width (call $gdi_bitmap_font_glyph_ink_width
+        (local.get $strike) (local.get $glyph)))
+      (local.set $ink_width (call $gdi_bitmap_font_scaled_ink_value
+        (local.get $hdc) (local.get $strike) (local.get $native_ink_width)
+        (local.get $height)))
+      (local.set $ink_left (call $gdi_bitmap_font_scaled_ink_value
+        (local.get $hdc) (local.get $strike)
+        (call $gdi_bitmap_font_glyph_ink_left
+          (local.get $strike) (local.get $glyph)) (local.get $height)))
       (if (local.get $is_tab)
         (then (local.set $glyph_width (i32.sub
           (call $gdi_bitmap_text_next_tab (local.get $cursor) (local.get $line_origin)
@@ -2478,12 +2708,16 @@
       (local.set $glyph_offset (select (i32.load16_u offset=2 (local.get $glyph))
         (i32.load offset=2 (local.get $glyph))
         (i32.eq (i32.load offset=16 (local.get $strike)) (i32.const 0x0200))))
-      (if (i32.lt_s (local.get $cursor) (local.get $dirty_left))
-        (then (local.set $dirty_left (local.get $cursor))))
-      (if (i32.gt_s (i32.add (local.get $cursor) (local.get $glyph_width))
+      (if (i32.lt_s (i32.add (local.get $cursor) (local.get $ink_left))
+            (local.get $dirty_left))
+        (then (local.set $dirty_left
+          (i32.add (local.get $cursor) (local.get $ink_left)))))
+      (if (i32.gt_s (i32.add (i32.add (local.get $cursor) (local.get $ink_left))
+              (local.get $ink_width))
             (local.get $dirty_right))
         (then (local.set $dirty_right
-          (i32.add (local.get $cursor) (local.get $glyph_width)))))
+          (i32.add (i32.add (local.get $cursor) (local.get $ink_left))
+            (local.get $ink_width)))))
       (if (i32.lt_s (local.get $top) (local.get $dirty_top))
         (then (local.set $dirty_top (local.get $top))))
       (if (i32.gt_s (i32.add (local.get $top) (local.get $height))
@@ -2495,9 +2729,10 @@
         (local.set $sy (i32.div_u (i32.mul (local.get $dy) (local.get $native_height)) (local.get $height)))
         (local.set $dx (i32.const 0))
         (block $row_done (loop $glyph_row
-          (br_if $row_done (i32.ge_s (local.get $dx) (local.get $glyph_width)))
-          (local.set $sx (i32.div_u (i32.mul (local.get $dx) (i32.load16_u (local.get $glyph)))
-            (local.get $glyph_width)))
+          (br_if $row_done (i32.ge_s (local.get $dx) (local.get $ink_width)))
+          (local.set $sx (i32.div_u
+            (i32.mul (local.get $dx) (local.get $native_ink_width))
+            (local.get $ink_width)))
           (local.set $bit (i32.and (i32.load8_u (i32.add
             (i32.add (i32.load offset=8 (local.get $strike)) (local.get $glyph_offset))
             (i32.add (i32.mul (i32.shr_u (local.get $sx) (i32.const 3)) (local.get $native_height))
@@ -2508,17 +2743,21 @@
             (then
               (if (local.get $path_open)
                 (then (drop (call $gdi_dc_path_append_device_rect (local.get $path_entry)
-                  (i32.sub (i32.add (local.get $cursor) (local.get $dx))
+                  (i32.sub (i32.add
+                      (i32.add (local.get $cursor) (local.get $ink_left))
+                      (local.get $dx))
                     (local.get $path_origin_x))
                   (i32.sub (i32.add (local.get $top) (local.get $dy))
                     (local.get $path_origin_y))
-                  (i32.sub (i32.add (i32.add (local.get $cursor) (local.get $dx))
-                    (i32.const 1)) (local.get $path_origin_x))
+                  (i32.sub (i32.add (i32.add
+                      (i32.add (local.get $cursor) (local.get $ink_left))
+                      (local.get $dx)) (i32.const 1)) (local.get $path_origin_x))
                   (i32.sub (i32.add (i32.add (local.get $top) (local.get $dy))
                     (i32.const 1)) (local.get $path_origin_y)))))
                 (else (drop (call $gdi_bitmap_text_pixel_rect
                   (local.get $hdc) (local.get $desc)
-                  (i32.add (local.get $cursor) (local.get $dx))
+                  (i32.add (i32.add (local.get $cursor) (local.get $ink_left))
+                    (local.get $dx))
                   (i32.add (local.get $top) (local.get $dy)) (local.get $text_color)
                   (local.get $clip) (local.get $clip_left) (local.get $clip_top)
                   (local.get $clip_right) (local.get $clip_bottom)))))))
@@ -2811,11 +3050,17 @@
     (drop (call $gdi_dc_set_field (local.get $hdc) (i32.const 32)
       (local.get $draw_align) (i32.const 0)))
     (local.set $device_y (local.get $top_device))
-    (if (i32.and (local.get $format) (i32.const 8))
+    ;; Win32/Win16 USER only applies DT_BOTTOM and DT_VCENTER to a
+    ;; DT_SINGLELINE layout. Without that flag both are ignored and drawing
+    ;; starts at the rectangle top. Klotski intentionally uses
+    ;; DT_CENTER|DT_VCENTER without DT_SINGLELINE for its puzzle caption.
+    (if (i32.and (local.get $single_line)
+          (i32.ne (i32.and (local.get $format) (i32.const 8)) (i32.const 0)))
       (then (local.set $device_y (i32.sub (local.get $bottom_device)
         (i32.mul (local.get $line_count) (local.get $height)))))
       (else
-        (if (i32.and (local.get $format) (i32.const 4))
+        (if (i32.and (local.get $single_line)
+              (i32.ne (i32.and (local.get $format) (i32.const 4)) (i32.const 0)))
           (then (local.set $device_y (i32.add (local.get $top_device)
             (i32.shr_s (i32.sub (i32.sub (local.get $bottom_device) (local.get $top_device))
               (i32.mul (local.get $line_count) (local.get $height))) (i32.const 1))))))))
