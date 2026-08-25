@@ -24,13 +24,13 @@ const mpq = require('./mpq');
 function usage(code) {
   console.error(
     "usage: node tools/mpq-extract.js <file.mpq> (--name='dir\\file.ext' | --block=N | --verify)\n" +
-    '                                 [--out=PATH] [--png=PATH] [--frame-height=N] [--palette]');
+    '                                 [--out=PATH] [--png=PATH] [--pixels=PATH] [--frame-height=N] [--palette]');
   process.exit(code);
 }
 
 // --- PCX -------------------------------------------------------------------
 
-function decodePcx(buf) {
+function decodePcx(buf, opts) {
   if (buf[0] !== 0x0a) throw new Error(`not a PCX: magic 0x${buf[0].toString(16)}`);
   const version = buf[1];
   const encoding = buf[2];
@@ -48,15 +48,23 @@ function decodePcx(buf) {
 
   const total = bytesPerLine * height;
   const pixels = Buffer.alloc(total);
+  // srcOf[k] = the file offset of the RLE token that produced output byte k,
+  // recorded only when a mark is asked for (--src-of=N) so the common path
+  // stays allocation-free.
+  const marks = (opts && opts.srcOf) || [];
+  const marksHit = [];
   let src = 128, dst = 0;
   while (dst < total && src < buf.length) {
+    const tokenAt = src;
     const b = buf[src++];
     if ((b & 0xc0) === 0xc0) {
       const run = b & 0x3f;
       const value = buf[src++];
       pixels.fill(value, dst, Math.min(dst + run, total));
+      for (const m of marks) if (m >= dst && m < dst + run) marksHit.push({ out: m, src: tokenAt, run, value });
       dst += run;
     } else {
+      for (const m of marks) if (m === dst) marksHit.push({ out: m, src: tokenAt, run: 1, value: b });
       pixels[dst++] = b;
     }
   }
@@ -68,7 +76,7 @@ function decodePcx(buf) {
   }
 
   return { version, bpp, planes, width, height, bytesPerLine, pixels, palette,
-           rleEnd: src, trailing: buf.length - src };
+           rleEnd: src, trailing: buf.length - src, marks: marksHit };
 }
 
 function toRgba(pcx, y0, rows) {
@@ -107,6 +115,8 @@ function main() {
   const outPath = opt('out');
   const pngPath = opt('png');
   const frameHeight = opt('frame-height') ? Number(opt('frame-height')) : null;
+  const pixelsPath = opt('pixels');
+  const srcOf = opt('src-of') ? opt('src-of').split(',').map(v => Number(v)) : null;
   if (name === null && blockArg === null && !args.includes('--verify')) usage(2);
 
   const a = mpq.openArchive(file);
@@ -211,7 +221,30 @@ function main() {
     }
   }
 
-  if (!outPath && !pngPath) console.log('  (no --out= or --png=, nothing written)');
+  // --src-of=N[,N...]: which byte of the *compressed* PCX stream produced
+  // output byte N of the decoded image. Turns an image-space divergence
+  // offset into a file offset, and hence into an MPQ sector index.
+  if (srcOf) {
+    const pcx = decodePcx(data, { srcOf });
+    for (const m of pcx.marks) {
+      console.log(`  image byte ${m.out} (row ${Math.floor(m.out / pcx.bytesPerLine)}` +
+        ` col ${m.out % pcx.bytesPerLine}) <- PCX file offset 0x${m.src.toString(16)} (${m.src})` +
+        `  token run=${m.run} value=0x${m.value.toString(16)}` +
+        `  => MPQ sector ${Math.floor(m.src / 4096)} offset 0x${(m.src % 4096).toString(16)}`);
+    }
+  }
+
+  // --pixels=PATH: the decoded 8bpp index plane (height * bytesPerLine bytes),
+  // i.e. exactly what a guest PCX reader is supposed to leave in its own decode
+  // buffer. Diff a dump of that buffer against this file to pin a mis-decode.
+  if (pixelsPath) {
+    const pcx = decodePcx(data);
+    fs.writeFileSync(pixelsPath, Buffer.from(pcx.pixels));
+    console.log(`  wrote ${pcx.pixels.length} index bytes (${pcx.width}x${pcx.height}, ` +
+      `bytesPerLine ${pcx.bytesPerLine}) to ${pixelsPath}`);
+  }
+
+  if (!outPath && !pngPath && !pixelsPath && !srcOf) console.log('  (no --out=, --png= or --pixels=, nothing written)');
 }
 
 main();
