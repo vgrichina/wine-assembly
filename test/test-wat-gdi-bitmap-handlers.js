@@ -186,7 +186,7 @@ function readBitmapObject(wat, handle, wide = false) {
   rbytes.set([0, 0, 0, 0, 0x30, 0x20, 0x10, 0], payload + 40);
   const resourcePixels = [1, 0, 0xAA, 0xAB, 0, 1, 0xBA, 0xBB];
   rbytes.set(resourcePixels, payload + 48);
-  rw.init_thread(0, 0, 0, 0, 0, 0, 0);
+  rw.init_thread(0, 0, 0, 0, 0, 0, 0, 0x1000);
 
   check('LoadBitmapA resolves raw RT_BITMAP bytes and owns an exact copy', () => {
     const bitmap = rw.test_call_LoadBitmapA(0, 101) >>> 0;

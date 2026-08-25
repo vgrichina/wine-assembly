@@ -113,6 +113,41 @@ per-engine at load time, which is precisely why the compat build exists. And per
 [interpreter-dispatch-perf.md](interpreter-dispatch-perf.md), tail calls measured
 *zero* benefit for our dispatch loop anyway, so nothing rides on the answer.
 
+## Typed function-reference tables
+
+Measured 2026-08-24.
+
+|                          | V8 (node 23 / Chrome 151) | JavaScriptCore (Safari 26.4) |
+|--------------------------|---------------------------|------------------------------|
+| `(table N (ref null $t))` | YES                      | NO                           |
+| `call_indirect` through it | YES                     | NO                           |
+
+The interest is the dispatch tail. Our handler table is declared
+`(table $handlers 426 funcref)` — untyped — so every `call_indirect` carries a
+runtime signature check. In the SpiderMonkey Ion disassembly of `$next`
+(`node tools/wasm-native.js --func='$next'`) that check is a load of a type word
+out of the *callee's own code* followed by a compare, and it sits at the end of
+the dependent load chain that produces the indirect branch target:
+
+```
+table bounds load -> table base load -> entry load -> instance ptr -> code ptr
+    -> signature word (from the callee) -> br x8
+```
+
+Declaring the table with a concrete element type (`reftype 0x63` followed by the
+type index, i.e. `(ref null $handler_t)`) makes the signature statically known
+and lets an engine drop that last load and compare. V8 accepts such a table
+today; JavaScriptCore rejects it outright, so it cannot be an unconditional
+change — though note Safari is already conditional on tail calls, which the JSC
+shell has off by default.
+
+Compiler side, `lib/compile-wat.js` hardcodes the `0x70` (funcref) element byte
+in the table section (two sites, one per emit path) and would need to emit the
+typed encoding instead.
+
+The negative control here is a non-nullable `(ref $t)` table declared with no
+init expression, which every engine must reject; it does.
+
 ## Compiler-side gap
 
 `lib/compile-wat.js` cannot emit either extension without work:

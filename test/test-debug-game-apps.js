@@ -3,15 +3,42 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { APPS, DEBUG_ONLY_APPS } = require('../lib/apps');
+const { APPS, DESKTOP_APPS, LOCAL_CANDIDATE_APPS, DEBUG_ONLY_APPS } = require('../lib/apps');
 
 const root = path.join(__dirname, '..');
 const debugIds = new Set(DEBUG_ONLY_APPS.map(([id]) => id));
-for (const id of ['diablo_demo', 'diablo_shareware', 'worms2_demo', 'starcraft_shareware', 'fallout_demo', 'heroes2_demo',
+const localCandidateIds = new Set(LOCAL_CANDIDATE_APPS.map(([id]) => id));
+const expectedLocalCandidates = new Map([
+  ['jazz2_demo', 'test/binaries/candidates/jazz-jackrabbit-2-demo-installer/installed/jazz2.exe'],
+  ['quake2_demo', 'test/binaries/candidates/quake-2-demo-installer/installed-extracted/Install/Data/quake2.exe'],
+  ['quake2_demo_installer', 'test/binaries/candidates/quake-2-demo-installer/q2-314-demo-x86.exe'],
+  ['heroes3_demo', 'test/binaries/candidates/heroes-3-demo-installer/installed-extracted/Program_Files/h3demo.exe'],
+  ['heroes3_demo_installer', 'test/binaries/candidates/heroes-3-demo-installer/installer-engine/_ins5576._mp'],
+  ['diablo2_demo_installer', 'test/binaries/candidates/diablo-2-demo-installer/DiabloIIDemo.exe'],
+  ['halflife_uplink_installer', 'test/binaries/candidates/half-life-uplink-installer/hluplink.exe'],
+]);
+for (const [id, exe] of expectedLocalCandidates) {
+  assert(localCandidateIds.has(id),
+    `${id} is reachable from the localhost-only app dropdown`);
+  assert(APPS[id], `${id} has an app manifest`);
+  assert.strictEqual(APPS[id].exe, exe, `${id} launches the pinned local payload`);
+}
+assert(APPS.jazz2_demo, 'Jazz Jackrabbit 2 has an app manifest');
+assert.strictEqual(APPS.jazz2_demo.requiredFiles, true);
+assert(APPS.jazz2_demo.files.some(file => file.endsWith('/share1.j2l')),
+  'Jazz Jackrabbit 2 mounts its playable shareware level');
+for (const id of ['diablo_demo', 'diablo_shareware', 'worms2_demo', 'starcraft_shareware', 'fallout_demo',
   'total_annihilation_demo', 'caesar3_demo', 'captain_claw_demo']) {
   assert(debugIds.has(id), `${id} is reachable from the debug app selector`);
   assert(APPS[id], `${id} has an app manifest`);
 }
+
+// Heroes II ships its own freely-copyable demo data and its assets deploy, so
+// it graduated from the debug selector to the public desktop.
+const desktopIds = new Set(DESKTOP_APPS.map(([id]) => id));
+assert(desktopIds.has('heroes2_demo'), 'Heroes II is a desktop app');
+assert(!debugIds.has('heroes2_demo'), 'Heroes II is not listed twice');
+assert(APPS.heroes2_demo, 'heroes2_demo has an app manifest');
 
 const starcraft = APPS.starcraft_shareware;
 assert.strictEqual(starcraft.args, 'ophelia terran1 nosound');
@@ -125,6 +152,14 @@ assert.strictEqual(captainClawReg.get('Skip Title Screen'), 1);
 assert.strictEqual(captainClawReg.get('Skip Logo Movies'), 1);
 
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+assert(/<option value=["']jazz2_demo["']>Jazz Jackrabbit 2 Demo<\/option>/.test(html),
+  'Jazz Jackrabbit 2 has a static option for the localhost debug dropdown');
+for (const id of expectedLocalCandidates.keys()) {
+  assert(new RegExp(`<option value=["']${id}["']>`).test(html),
+    `${id} has a static option for the localhost debug dropdown`);
+}
+assert(/DEFAULT_APPS\.concat\(DEBUG_ONLY_APPS,\s*LOCAL_DESKTOP\s*\?\s*LOCAL_CANDIDATE_APPS\s*:\s*\[\]\)/s.test(html),
+  'debug mode retains localhost-only candidates when running on a local origin');
 for (const id of ['diablo_demo', 'diablo_shareware', 'worms2_demo', 'starcraft_shareware', 'fallout_demo', 'heroes2_demo',
   'total_annihilation_demo', 'caesar3_demo', 'captain_claw_demo']) {
   assert(new RegExp(`<option value=["']${id}["']>`).test(html),

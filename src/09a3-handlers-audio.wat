@@ -1189,8 +1189,17 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; 812: ChangeDisplaySettingsA(lpDevMode, dwFlags) — 2 args stdcall
+  ;; 812: ChangeDisplaySettingsA(lpDevMode, dwFlags) — 2 args stdcall.
+  ;; The mode itself is not honoured (the guest screen size is fixed), but the
+  ;; *intent* is recorded: CDS_FULLSCREEN (0x4) with a mode is an app taking
+  ;; the display, and a NULL lpDevMode is the documented "go back to the
+  ;; registry mode" call that ends it. That flag is the only explicit
+  ;; fullscreen signal a non-DirectDraw app gives, so the compositor uses it
+  ;; instead of guessing from window geometry.
   (func $handle_ChangeDisplaySettingsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $display_fullscreen
+      (i32.and (i32.ne (local.get $arg0) (i32.const 0))
+               (i32.ne (i32.and (local.get $arg1) (i32.const 0x4)) (i32.const 0))))
     (global.set $eax (i32.const 0))  ;; DISP_CHANGE_SUCCESSFUL
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )

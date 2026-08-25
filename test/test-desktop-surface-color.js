@@ -17,6 +17,8 @@ const extraWat = String.raw`
     (global.get $gdi_screen_bitmap))
   (func (export "test_printer_bitmap") (result i32)
     (global.get $printer_bitmap))
+  (func (export "test_touch_printer_dc") (param $hdc i32) (result i32)
+    (call $gdi_dc_target_size (local.get $hdc)))
   (func (export "test_reset_thread_gdi_counters")
     ;; Model a newly instantiated worker: tables are shared, globals restart.
     (global.set $gdi_next_object_handle (i32.const 0x00410001))
@@ -39,6 +41,8 @@ const extraWat = String.raw`
 
   e.test_reset_thread_gdi_counters();
   const printerDc = e.test_alloc_printer_dc() >>> 0;
+  assert(e.test_touch_printer_dc(printerDc),
+    'first use should materialize the lazy printer page');
   const printerBitmap = e.test_printer_bitmap() >>> 0;
   assert(printerDc && printerDc !== screenDc,
     'a worker-style stale DC counter must skip the active screen DC handle');

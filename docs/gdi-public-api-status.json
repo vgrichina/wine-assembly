@@ -2,18 +2,26 @@
   "schemaVersion": 1,
   "scope": "Distinct named GDI32.dll imports in PE files under test/binaries.",
   "corpus": {
-    "peFileCount": 313,
-    "importCount": 239,
-    "sortedImportSha256": "2d3c702dc57c830da036be4f05723e80b4346152bb7d64a22bd3a4dde83262ba",
-    "representedInApiTable": 239
+    "peFileCount": 370,
+    "importCount": 243,
+    "sortedImportSha256": "c664d59337ac91e630fc5b9103d985c7a48089ffc2ba4869e8aedcb9c488791a",
+    "representedInApiTable": 240
   },
   "handlerCoverage": {
-    "dispatchable": 239,
-    "missing": [],
+    "dispatchable": 240,
+    "missing": [
+      "EnumEnhMetaFile",
+      "PlayEnhMetaFileRecord",
+      "SetBitmapDimensionEx"
+    ],
     "crashStub": [],
     "meaning": "Every named corpus import reaches a WAT handler without crash_unimplemented. This is a dispatchability gate; the partial-fidelity contracts below remain explicit and are not counted as complete semantics."
   },
-  "notExposed": [],
+  "notExposed": [
+    "EnumEnhMetaFile",
+    "PlayEnhMetaFileRecord",
+    "SetBitmapDimensionEx"
+  ],
   "knownPartialOrUnsupported": {
     "metafile": [
       "CopyMetaFileA",

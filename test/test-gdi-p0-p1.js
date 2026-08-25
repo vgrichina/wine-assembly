@@ -73,6 +73,10 @@ async function main() {
   }
 
   check('all nine corpus APIs are append-only public dispatch entries', () => {
+    // Anchored on the first entry's actual id rather than a literal: the ids
+    // are array positions in api_table.json, so anything appended on either
+    // side of a merge shifts them. The invariant under test is that the block
+    // stays contiguous and in order, which this still checks.
     const firstId = table.find(entry => entry.name === expected.keys().next().value).id;
     const entries = table.slice(firstId, firstId + expected.size);
     assert.deepStrictEqual(entries.map(x => x.name), [...expected.keys()]);

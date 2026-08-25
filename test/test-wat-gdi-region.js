@@ -107,6 +107,9 @@ async function main() {
     const record = recordFor(handle);
     const mirror = dv.getUint32(record + 24, true);
     assert.strictEqual(mirror, handle);
+    assert.strictEqual(base.gdi.regionPresentations[mirror], undefined,
+      'a canonical WAT region should not allocate a JS mirror before presentation');
+    assert.strictEqual(wat.gdi_rgn_mirror_ensure(handle), 1);
     assert.deepStrictEqual(base.gdi.regionPresentations[mirror].bbox, { l: 1, t: 2, r: 7, b: 8 });
 
     assert.strictEqual(wat.test_gdi_rgn_set_rect(handle, -4, -3, 5, 6), 1);
@@ -141,6 +144,7 @@ async function main() {
       assert.deepStrictEqual(bands(dst), rects, `mode ${mode}`);
       assert.strictEqual(dv.getUint32(recordFor(dst), true), rects.length === 1 ? 1 : 2);
       const mirror = dv.getUint32(recordFor(dst) + 24, true);
+      assert.strictEqual(wat.gdi_rgn_mirror_ensure(dst), 1);
       assert.deepStrictEqual(base.gdi.regionPresentations[mirror].rects,
         rects.map(([l, t, r, btm]) => ({ x: l, y: t, w: r - l, h: btm - t })));
     }
@@ -248,6 +252,7 @@ async function main() {
 
   check('delete invalidates stale generations before reusing a slot', () => {
     const oldHandle = wat.test_gdi_rgn_alloc_rect(1, 1, 2, 2);
+    assert.strictEqual(wat.gdi_rgn_mirror_ensure(oldHandle), 1);
     assert(base.gdi.regionPresentations[oldHandle]);
     assert.strictEqual(wat.test_gdi_rgn_delete(oldHandle), 1);
     assert.strictEqual(base.gdi.regionPresentations[oldHandle], undefined);

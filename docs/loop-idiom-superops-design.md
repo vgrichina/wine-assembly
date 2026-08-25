@@ -1090,3 +1090,131 @@ byte copy with a *memory* counter and both cursors incrementing), not in the
 page/budget chunk arithmetic. That is the next thing to bisect: parameter
 block first (src/dst/disp/ctr_addr against the guest's own registers at entry),
 then the exit publication (`$b`, the two cursors, the DEC flags, `$eip`).
+
+## 15. Status 2026-08-24: the §14 miscompile does not reproduce
+
+Re-ran §14's claim on today's `main` (page-compiled decoded code, `9b9a98c9`
+merged; measured at `d627e9c5`). **It does not reproduce.** Everything below is
+measured, one flag at a time, with `--loop-superops` the only difference
+between the two command lines of each pair.
+
+### 15.1 The flag is live: lowering really is emitted
+
+`bbf4ca05` flipped `$loop_emit_enabled` to 0 but only taught `test/run.js`
+`--no-loop-superops`; the positive `--loop-superops` came later. So **at
+`bbf4ca05` itself the lowering can no longer be turned on at all** — an A/B
+there is two identical runs. On `main` the flag does something: same build,
+same 15-frame command line, only the flag differing,
+
+```
+              block decodes   pages compiled
+  flag off          10571              336
+  flag on           12164              432
+```
+
+and `--loopmatch-stats` reports `matched 2` on the main thread either way.
+
+### 15.2 The two loops COPY_RUN lowers in Diablo
+
+`--loop-superops --trace-loopmatch` + `tools/loopmatch-decode.js`, marker
+`0x100B0002`, runtime VAs `0x006cf598` and `0x006cfa42` (storm delta
+`0x1495D000` in that run):
+
+```
+storm+0x1502c598   6 ops        storm+0x1502ca42   6 ops
+   28  th_load8_ro    op=0x1       28  th_load8_ro    op=0x32
+   64  th_inc_r       op=0x1       64  th_inc_r       op=0x2
+   29  th_store8_ro   op=0x2       29  th_store8_ro   op=0x31
+   64  th_inc_r       op=0x2       64  th_inc_r       op=0x1
+  135  th_unary_m32_ro op=0x14     65  th_dec_r       op=0x0
+  312  th_jcc_nz                  312  th_jcc_nz
+```
+
+`storm+0x1502c598` is the one §14 names, and it is the **PKWARE explode
+back-reference copy**, i.e. an *overlapping* copy — the four instructions above
+it are
+
+```
+1502c584  mov ebp,[edi+8] / lea edx,[ebp+edi+0x30] / mov ecx,edx / sub ecx,eax
+```
+
+so `ecx = edx - distance`: source and destination are the same buffer, dst
+ahead of src, and short distances are meant to replicate bytes forward. That is
+the assumption COPY_RUN's predicate is weakest on (it only requires the two
+*base registers* to differ, never that the ranges are disjoint) — and it turns
+out to be safe, because `$th_copy_run`'s inner loop is byte-at-a-time ascending
+into the same linear memory, which is exactly the semantics the guest's own
+loop has. Chunking does not break it either: a chunk never leaves either
+cursor's 4 KB page, so every byte still reads whatever the previous byte wrote.
+
+### 15.3 The pixels
+
+* **Choose Class**, the screen §14 says renders as colour noise:
+
+  ```sh
+  node test/run.js --app=diablo_shareware --time-scale=30 --max-batches=41500 \
+    --no-close --repaint-every=200 \
+    --input=39500:keydown:13,39560:keyup:13,41000:png:/tmp/cc.png [--loop-superops]
+  ```
+
+  `tools/png-diff.js`: **0 of 307200 pixels differ**. Byte-identical with and
+  without the lowering. The art decompresses bit-exactly through COPY_RUN.
+
+* **Main menu**, 15 frames three batches apart from 40000 in each config: the
+  flag-on run's frame 10 is **pixel-identical over the logo box (100,0
+  440x180) to the flag-off run's frame 0**, and 0.46% different full-frame,
+  entirely in the y=193..232 band — the pulsing "SINGLE PLAYER" highlight.
+  Enabling the lowering shifts the animation phase; it does not change what
+  the art looks like.
+
+* No colour noise appears in any of the 30 captures.
+
+### 15.4 The blank-logo frames are a different defect
+
+Both configs produce a mix of good logo frames and black/torn ones (the logo
+flame has a ~45-batch period with ~20% duty at `--time-scale=30`, per the
+Diablo notes). Because it happens identically with the lowering off, it is
+**not** COPY_RUN — it belongs to the erase/present timing work being tracked
+elsewhere. §14's "renders as colour noise" and today's "the logo is missing on
+most frames" are not the same symptom, and a single-frame capture cannot tell
+them apart: sample ≥15 frames.
+
+### 15.5 What could not be settled, and why
+
+Bisecting to the commit that fixed it is **not runnable from the emulator side
+of the tree**: at `bbf4ca05~1` (`e781c01e`, where `$loop_emit_enabled` still
+defaulted to 1) Diablo draws nothing at all — 80100 batches, every capture a
+flat 2 KB PNG — because the DirectDraw present path for a window owned by a
+worker thread (`bd5fa7d9`) and the client-rect present fixes landed later. So
+the historical tree cannot show either the good frame or the bad one. The
+plausible fixers remain `6b801a9d` (retire a decoded block by every page it
+covers) and `9c257a88` (the hash block cache deleted; invalidation is now per
+guest offset), both of which change exactly the self-modifying-code
+invalidation that a byte copy into Storm's generated-code arena depends on —
+but that is inference, not measurement.
+
+### 15.6 Verdict on the predicate
+
+Nothing measured says the predicate is wrong in principle, and the one
+assumption it visibly does not check — disjoint source and destination — is
+provably not needed for the ascending byte-at-a-time form it lowers to. The
+remaining unchecked hole is narrower and still worth closing before the default
+is flipped back: **the byte register's parent register is compared against both
+cursors but not against a register-resident trip counter**, so a body of the
+shape `mov cl,[esi] / mov [edi],cl / inc esi / inc edi / dec ecx / jnz` would
+have its counter and its byte register alias, and `$th_copy_run`'s exit
+sequence writes `set_reg8(byte_reg)` before `set_reg(ctr_loc)` — the counter
+wins and the byte register is lost. Neither Storm loop has that shape, so it is
+a latent hazard, not the reported bug. The narrowest correct change is one more
+line in the pass-2 predicate:
+
+```
+;; the byte register must not live inside the trip counter either
+(if (i32.and (i32.eqz $mem_cnt)
+             (i32.eq (i32.and $ld_reg 3) $ctr_loc)) (then (return 0)))
+```
+
+Recommendation: re-measure the corpus with the lowering on rather than leaving
+the default off on the strength of §14, and delete the stale justification from
+the `$loop_emit_enabled` comment in `src/07b-loop-match.wat` when the default
+is next revisited.

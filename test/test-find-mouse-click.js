@@ -78,7 +78,11 @@ for (const l of out.split('\n').filter(l =>
   const pressDiff = fs.existsSync(beforePng) && fs.existsSync(heldPng)
     ? await diffButtonPixels(beforePng, heldPng)
     : 0;
-  const m = out.match(/dump-fr: flags=0x([0-9a-f]+) findWhat="A"/);
+  // dump-fr grew dlg=/fr=/size= fields ahead of flags=, which this pattern used
+  // to require immediately after the colon -- so it stopped matching and the
+  // check below failed on a run whose flags were correct all along. Match the
+  // two fields it actually cares about wherever they sit on the line.
+  const m = out.match(/dump-fr:.* flags=0x([0-9a-f]+) .*findWhat="A"/);
   const checks = [
     ['Find dialog appeared', out.includes('[FindTextA]')],
     ['mouse down/up was injected', out.includes('mousedown 350,101') && out.includes('mouseup 350,101')],

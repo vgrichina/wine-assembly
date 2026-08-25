@@ -1,6 +1,6 @@
 {
   "generated_from": "src/01-header.wat",
-  "count": 200,
+  "count": 202,
   "sigs": {
     "log": {
       "params": [
@@ -647,6 +647,13 @@
       ],
       "results": []
     },
+    "unmapped_trace": {
+      "params": [
+        "i32",
+        "i32"
+      ],
+      "results": []
+    },
     "ctrl_sb_trace": {
       "params": [
         "i32",
@@ -710,6 +717,14 @@
       ]
     },
     "reg_close_key": {
+      "params": [
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
+    "reg_flush_key": {
       "params": [
         "i32"
       ],

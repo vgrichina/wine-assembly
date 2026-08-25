@@ -35,8 +35,12 @@ const extraWat = String.raw`
       (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
     (global.set $esp (local.get $saved_esp)))
 
+  ;; DialogBoxParamA writes both the instance global and its shared-memory
+  ;; mirror; EndDialog reads the mirror, because the thread that calls it is
+  ;; not always the thread running the pump.
   (func (export "test_set_modal_dialog") (param $hwnd i32)
-    (global.set $dlg_pump_hwnd (local.get $hwnd)))
+    (global.set $dlg_pump_hwnd (local.get $hwnd))
+    (i32.store (global.get $SHARED_DLG_PUMP_HWND) (local.get $hwnd)))
 
   (func (export "test_yield_flag") (result i32)
     (global.get $yield_flag))
@@ -47,11 +51,18 @@ const extraWat = String.raw`
   (func (export "test_dlg_result") (result i32)
     (global.get $dlg_result))
 
+  ;; Reset the shared mirrors too, not just this instance's globals: EndDialog
+  ;; makes both of its decisions -- "is this the pump's dialog" and "has one
+  ;; already ended" -- off the mirrors, so a stale mirror from the previous
+  ;; case would make the next EndDialog a no-op.
   (func (export "test_reset_modal") (param $hwnd i32)
     (global.set $dlg_pump_hwnd (local.get $hwnd))
     (global.set $dlg_ended (i32.const 0))
     (global.set $dlg_result (i32.const 0))
-    (global.set $yield_flag (i32.const 0)))
+    (global.set $yield_flag (i32.const 0))
+    (i32.store (global.get $SHARED_DLG_PUMP_HWND) (local.get $hwnd))
+    (i32.store (global.get $SHARED_DLG_ENDED) (i32.const 0))
+    (i32.store (global.get $SHARED_DLG_RESULT) (i32.const 0)))
 
   ;; Hand the guest a callable EndDialog: a bare import thunk carrying the API
   ;; id, so an x86 DLGPROC can re-enter the handler the way a real one does.

@@ -462,6 +462,9 @@ async function main() {
   const baselineSlots = e.wnd_count_used();
   check('SysListView32 resolves to the native ListView control', e.test_class_name_to_ctrl_id(writeStr('SysListView32')) === 18);
   const lv = e.test_create_listview(0, 0, 220, 82, 1, 0x200);
+  const lvParent = e.wnd_get_parent(lv) >>> 0;
+  e.wnd_set_style_export(lvParent,
+    (e.wnd_get_style_export(lvParent) | 0x10000000) >>> 0);
   check('listview hwnd allocated', lv !== 0, 'hwnd=0x' + lv.toString(16));
   check('create added 2 slots (parent + listview)', e.wnd_count_used() === baselineSlots + 2);
   check('initial LVM_GETIMAGELIST is empty', e.send_message(lv, LVM_GETIMAGELIST, 1, 0) === 0);

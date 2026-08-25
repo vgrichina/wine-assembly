@@ -112,7 +112,9 @@ try {
     'IDirectSoundBuffer::QueryInterface should return the 3D auxiliary wrapper');
   assert(/\$handle_IDirectSound3DBuffer_SetPosition[\s\S]*?\$host_voice_3d_set[\s\S]*?\(i32\.const 24\)/.test(wat),
     'SetPosition should forward all coordinates and pop its five-argument COM frame');
-  assert(/\$DX_VTBL_REGISTRY_COUNT i32 \(i32\.const 55\)/.test(wat));
+  const registryCount = wat.match(/\$DX_VTBL_REGISTRY_COUNT i32 \(i32\.const (\d+)\)/);
+  assert(registryCount && Number(registryCount[1]) > 55,
+    'the registry must include the DirectSound3DBuffer vtable at slot 55');
   assert(/\$DX_VTBL_DS3DBUF \(i32\.load offset=220/.test(wat),
     'worker instances should restore the appended 3D vtable');
 

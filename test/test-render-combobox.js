@@ -31,6 +31,9 @@ runRenderTest('combobox', async (h, check) => {
   // Combobox at (40, 40), 200 wide, 120 tall (room for the dropdown).
   const cb = e.test_create_combobox(40, 40, 200, 120, CBS_DROPDOWNLIST);
   check('combobox hwnd allocated', cb !== 0, 'hwnd=0x' + cb.toString(16));
+  const parent = e.wnd_get_parent(cb) >>> 0;
+  e.wnd_set_style_export(parent,
+    (e.wnd_get_style_export(parent) | 0x10000000) >>> 0);
 
   const lb = e.combobox_get_lb_hwnd(cb);
   check('inner listbox exposed', lb !== 0, 'lb=0x' + lb.toString(16));

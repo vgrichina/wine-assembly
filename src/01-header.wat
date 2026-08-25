@@ -562,6 +562,12 @@
   (import "host" "erase_trace"
     (func $host_erase_trace (param i32 i32 i32 i32)))
 
+  ;; A guest address no mapping covers, with the EIP that reached for it.
+  ;; Called only when --fault-null armed $fault_unmapped, so the normal miss
+  ;; path is unchanged.
+  (import "host" "unmapped_trace"
+    (func $host_unmapped_trace (param i32 i32)))
+
   ;; Every standard scrollbar strip as it is painted: control-local rect,
   ;; orientation, and the page model it was handed. A strip that is flat grey
   ;; with no arrows is either a paint that never happened or one whose `long`
@@ -581,6 +587,8 @@
   ;; reg_set_value(hKey, nameWA, type, dataGA, cbData, isWide) → error code
   (import "host" "reg_close_key" (func $host_reg_close_key (param i32) (result i32)))
   ;; reg_close_key(hKey) → 0
+  (import "host" "reg_flush_key" (func $host_reg_flush_key (param i32) (result i32)))
+  ;; reg_flush_key(hKey) → 0, or 6 (ERROR_INVALID_HANDLE) for an unknown handle
   (import "host" "reg_enum_key" (func $host_reg_enum_key (param i32 i32 i32 i32 i32) (result i32)))
   ;; reg_enum_key(hKey, dwIndex, lpNameGA, cchName, isWide) → error code
   ;; NOTE the address space: the name is written through the host's writeStr,
@@ -891,6 +899,9 @@
   ;; More WSOCK32 ordinal names. The 0x11300 block ends flush against the
   ;; winmm block at 0x113DC, so later additions live in the free run above the
   ;; richedit tables; the DLL name itself is still matched from 0x11300.
+  ;; This one fills the 18-byte gap between the oleaut32 block (ends 0x1156E)
+  ;; and RICHEDIT_FORMAT_TABLE at 0x11580 — there is no room to grow it.
+  (data (i32.const 0x11570) "WSAAsyncSelect\00")
   (data (i32.const 0x11D80) "ntohl\00WsControl\00")
   ;; if_descr for the one adapter WsControl reports (src/09d-winsock.wat).
   (data (i32.const 0x11D90) "Virtual LAN Adapter\00")
@@ -911,6 +922,11 @@
   ;; Where those modules claim to live, and the suffix appended to the stem.
   (data (i32.const 0x11DF4) "C:\\WINDOWS\\SYSTEM\\\00")
   (data (i32.const 0x11E08) ".dll\00")
+  ;; Two more WSOCK32 ordinal names, in the gap that runs to 0x11E30. Jazz
+  ;; Jackrabbit 2 imports its whole WinSock set by ordinal and calls
+  ;; gethostname during startup, so an unmapped ordinal 57 traps before the
+  ;; game reaches its first frame.
+  (data (i32.const 0x11E10) "gethostname\00getpeername\00")
   ;; Exports we answer natively even when the real DLL is loaded — see
   ;; $native_override_export_api_id in src/08b-dll-loader.wat.
   (data (i32.const 0x11E30) "InitCommonControlsEx\00")
@@ -1172,7 +1188,8 @@
   ;; 0x00005000  256B    WINDOW_UNICODE_TABLE (one byte per WND_RECORDS slot)
   ;; 0x00005100  4B      SHARED_PROCESS_ID (shared by every thread instance)
   ;; 0x00005104  8B      SHARED_DLG_ENDED / SHARED_DLG_RESULT
-  ;; 0x0000510C  244B    Free
+  ;; 0x0000510C  4B      SHARED_DLG_PUMP_HWND (modal pump hwnd, all instances)
+  ;; 0x00005110  240B    Free
   ;; 0x00005200  4KB     WINDOW_EXTRA_TABLE (256 entries x 16 bytes)
   ;; 0x00006200  1KB     ATOM_LOCAL_TABLE  (128 entries × 8 bytes — AddAtom namespace)
   ;; 0x00006600  1KB     ATOM_GLOBAL_TABLE (128 entries × 8 bytes — GlobalAddAtom namespace)
@@ -1231,6 +1248,9 @@
   ;; 0x07E14000 32KB     DIB_PAGE_RUNS
   ;; 0x07E1C000 832KB    GDI_REGION_BANDS (256 x 208 RECT slots)
   ;; 0x079CA000 512B     WIN16_BUILTIN_NAMES (KERNEL/USER/GDI by-name exports)
+  ;; 0x079CA800 16KB     TV_TABLE (512 entries × 32 bytes)
+  ;; 0x079CE800  4KB     TV_IMAGE_TABLE (512 entries × {image, selected image})
+  ;; 0x079CF800  2KB     TV_OWNER_TABLE (owning hwnd per TV_TABLE item)
   ;; 0x079C8000  1KB     WND_Z_ORDER_TABLE (256 × 4-byte sibling z ranks)
   ;; 0x079C9C00  1KB     WND_HINSTANCE_TABLE (256 × 4-byte creating HINSTANCE)
   ;; 0x079CC080  80B     TIMER_SHARED (active count, next auto id, 16 owner tids)
@@ -1252,10 +1272,8 @@
   ;; 0x07EFA800 8KB      GDI_WINDOW_SURFACE_TABLE (256 x 32-byte records)
   ;; 0x07EFC800 8KB      GDI_DC_AUX_TABLE (256 x 32-byte extended DC state)
   ;; 0x07EFE800 6KB      GDI_COLOR_ADJUST_TABLE (256 x 24-byte structures)
-  ;; 0x07F00000  1KB     TV_TABLE (32 entries × 32 bytes)
   ;; 0x07F00400  3KB     PROP_TABLE (256 entries × 12 bytes)
   ;; 0x07F01000  256B    PAINT_FLAGS (1 byte per window slot)
-  ;; 0x07F01100  256B    TV_IMAGE_TABLE (32 entries × {image, selected image})
   ;; 0x07F01200  256B    TAB_NATIVE_STATE_TABLE (32 × {hwnd, mirror state ptr})
   ;; 0x07F01300  256B    ICON_TABLE (32 entries × {hInstance, resource id})
   ;; 0x07F01400  1KB     SYNC_TABLE (64 entries × 16 bytes)
@@ -1274,6 +1292,16 @@
   ;; 0x07F0CA40 1KB      CS_TABLE (256 CRITICAL_SECTIONs, WASM addresses)
   ;; 0x07F0CE40 16B      SHARED_COUNTERS (process-wide allocators; +0 class atom)
   ;; 0x07F0CE60 16B      GDI_TABLE_MARKS (high-water slot counts, 3 used)
+  ;; The three TV_* tables below were at 0x07F0C900/0x07F0C904/0x07F0CA00 on
+  ;; main. They move here on the merge into the threads branch, which grew
+  ;; LOCK_TABLE and CS_TABLE over exactly those addresses. Neither side
+  ;; conflicts textually, so git merges both cleanly and the build still
+  ;; passes -- the only symptom is a lock line and a TreeView's scroll state
+  ;; writing over each other at runtime. 0x07F0CE70..0x07F0D000 is what is
+  ;; left under GDI_REGION_TABLE, and the trio fills it exactly.
+  ;; 0x07F0CE80   4B     TV_SLOT_MARK (one past the highest TV_TABLE slot used)
+  ;; 0x07F0CE84   4B     TV_HANDLE_SEQ (item-handle sequence, shared by threads)
+  ;; 0x07F0CF00 256B     TV_VIEW_TABLE (16 x per-TreeView caret/scroll/imagelist)
   ;; 0x07F0D000 8KB      GDI_REGION_TABLE (256 WAT-owned HRGN records)
   ;; 0x07F0F000 4KB      GDI_DC_PATH_TABLE (256 x 16-byte WAT path records)
   ;; 0x07F10000 4KB      HANDLER_HIST_COUNTS (1024 i32 counters)
@@ -1315,7 +1343,8 @@
   ;; 0x07152000 256KB    Block cache indexes (8 slots × 4096 entries × 8 bytes)
   ;; 0x07192000  8MB     PE staging area (supports PEs up to 8MB)
   ;; 0x07992000  512B    DLL table (16 DLLs × 32 bytes)
-  ;; 0x07992200  512B    DLL resource table (16 DLLs × 8 bytes: rsrc_rva, rsrc_size)
+  ;; 0x07992200  256B    DLL resource table (16 DLLs × 8 bytes: rsrc_rva, rsrc_size)
+  ;; 0x07992300   64B    DLL path table (16 guest string pointers)
   ;; 0x07992400  ...     File mapping zone (MapViewOfFile allocations)
   ;; 0x08000000 320MB    VirtualAlloc backing pool for sparse high guest maps
   ;; 0x1C000000  63MB    Page-aligned CreateDIBSection pixel arena
@@ -1452,6 +1481,19 @@
   ;; blocks as the step budget allowed and the host's batch sizing would stop
   ;; meaning anything.
   (global $block_budget (mut i32) (i32.const 0))
+
+  ;; How much of its block budget the last run() call actually spent, and what
+  ;; stopped it. The host sizes a batch in blocks, but a batch is free to end
+  ;; long before that budget is gone -- a blocking API yields, a WM_TIMER sets
+  ;; $yield_flag, EIP goes to zero -- and from the outside a batch that ran 1000
+  ;; blocks and one that ran 12 look identical. That difference is the whole
+  ;; question behind "why is this region of the run so much slower per batch
+  ;; than that one": genuine work per block, or a batch that keeps bailing after
+  ;; a handful of blocks and paying the host's per-batch overhead each time.
+  ;; Halt reasons: 1 budget exhausted, 2 EIP zero, 3 $yield_flag,
+  ;; 4 blocking-wait $yield_reason, 5 a debug facility (watchpoint/breakpoint).
+  (global $last_run_blocks (mut i32) (i32.const 0))
+  (global $last_run_halt   (mut i32) (i32.const 0))
 
   ;; Where to pick a block up when its step quantum ran out part-way through.
   ;; $next returns without dispatching once $steps hits zero, leaving $ip on the
@@ -1754,6 +1796,29 @@
   ;; would have overlapped silently — test-wat-memory-map.js is what says so.
   (global $GDI_TABLE_MARKS i32 (i32.const 0x07F0CE60))
   (global $GDI_TABLE_MARKS_SIZE i32 (i32.const 0x00000010))
+  ;; Which TreeView each TV_TABLE item belongs to, parallel-indexed to it. The
+  ;; item records are full at 32 bytes, so the owner has to live beside them.
+  (global $TV_OWNER_TABLE i32 (i32.const 0x079CF800))
+  (global $TV_OWNER_TABLE_SIZE i32 (i32.const 0x00000800))
+  ;; High-water mark: one past the highest TV_TABLE slot ever allocated. Every
+  ;; scan bounds itself with this rather than with the full slot count, so
+  ;; growing the table costs nothing for the app that only ever shows a dozen
+  ;; items. It lives in memory and not in a global because a worker thread is a
+  ;; separate instance with its own globals but the same linear memory, and
+  ;; Winamp's AVS fills its tree from a worker while the main thread paints it.
+  (global $TV_SLOT_MARK i32 (i32.const 0x07F0CE80))
+  (global $TV_SLOT_MARK_SIZE i32 (i32.const 0x00000004))
+  ;; Item-handle sequence, for the same reason: a handle allocated on a worker
+  ;; thread has to be unique against the ones the main thread handed out. Two
+  ;; items with the same handle turn a sibling walk into a cycle, and the walk
+  ;; that appends a child runs until the process is killed.
+  (global $TV_HANDLE_SEQ i32 (i32.const 0x07F0CE84))
+  (global $TV_HANDLE_SEQ_SIZE i32 (i32.const 0x00000004))
+  ;; Per-TreeView view state, 16 records x 16 bytes:
+  ;;   +0 hwnd (0 = free)  +4 caret item  +8 first visible row  +12 image list
+  (global $TV_VIEW_TABLE i32 (i32.const 0x07F0CF00))
+  (global $TV_VIEW_TABLE_SIZE i32 (i32.const 0x00000100))
+  (global $TV_VIEW_COUNT i32 (i32.const 16))
   ;; Keep WAT-owned object/DC namespaces distinct and outside stock handles.
   (global $gdi_next_object_handle (mut i32) (i32.const 0x00410001))
   (global $gdi_next_dc_handle (mut i32) (i32.const 0x00310001))
@@ -2010,10 +2075,16 @@
   ;;   +4: Type (1=Event, 2=Mutex, 3=Semaphore)
   ;;   +8: State (0=Unsignaled, 1=Signaled)
   ;;   +12: ManualReset (1 for Manual, 0 for Auto)
-  (global $TV_TABLE i32 (i32.const 0x07F00000))
-  (global $TV_TABLE_SIZE i32 (i32.const 0x00000400))
-  (global $TV_IMAGE_TABLE i32 (i32.const 0x07F01100))
-  (global $TV_IMAGE_TABLE_SIZE i32 (i32.const 0x00000100))
+  ;; TreeView items, one 32-byte record each. 32 slots was enough while the
+  ;; only trees we ever saw were a Preferences page; Winamp's AVS editor fills
+  ;; its own tree on top of that one, and an app that gets NULL back from
+  ;; TVM_INSERTITEM does not stop asking -- AVS retries the insert forever, so
+  ;; a full table reads as a hang rather than as a truncated tree.
+  (global $TV_TABLE i32 (i32.const 0x079CA800))
+  (global $TV_TABLE_SIZE i32 (i32.const 0x00004000))
+  (global $TV_SLOT_COUNT i32 (i32.const 512))
+  (global $TV_IMAGE_TABLE i32 (i32.const 0x079CE800))
+  (global $TV_IMAGE_TABLE_SIZE i32 (i32.const 0x00001000))
   (global $TAB_NATIVE_STATE_TABLE i32 (i32.const 0x07F01200))
   (global $TAB_NATIVE_STATE_TABLE_SIZE i32 (i32.const 0x00000100))
   ;; ICON_TABLE: what an HICON actually stands for. An icon handle has to
@@ -2407,6 +2478,9 @@
   (global $DLL_TABLE i32 (i32.const 0x07992000))  ;; 32 bytes x 16 DLLs = 512 bytes
   ;; Parallel to DLL_TABLE: per-DLL resource dir (rsrc_rva, rsrc_size). 8 bytes x 16 = 128B.
   (global $DLL_RSRC_TABLE i32 (i32.const 0x07992200))
+  ;; Full path used to load each module, as a guest string pointer. Keeping it
+  ;; parallel avoids changing the long-established 32-byte DLL table ABI.
+  (global $DLL_PATH_TABLE i32 (i32.const 0x07992300))
   ;; Active resource-lookup context. base=0 means "use main EXE ($image_base / $rsrc_rva)".
   ;; When a Load*/FindResource* handler is called with a DLL hInstance, these are pushed
   ;; to that DLL's load_addr + rsrc_rva for the duration of the lookup, then cleared.
@@ -2420,6 +2494,17 @@
   (global $tls_next_index (mut i32) (i32.const 0))
   ;; Performance counter (monotonic, incremented per query)
   (global $perf_counter_lo (mut i32) (i32.const 0))
+  ;; EFLAGS bits outside the six we model lazily (CF/PF/ZF/SF/DF/OF). popfd
+  ;; stores them here and pushfd ORs them back, so a bit the interpreter has no
+  ;; opinion about still round-trips. Starts at the usual user-mode value:
+  ;; bit 9 IF set, everything else clear.
+  (global $eflags_extra (mut i32) (i32.const 0x200))
+
+  ;; Time-stamp counter, in emulated cycles. RDTSC derives it from the guest
+  ;; millisecond clock at $TSC_HZ_PER_MS, and this global holds the last value
+  ;; handed out so the counter never repeats or goes backwards -- code that
+  ;; times a region by subtracting two reads must never see a zero delta.
+  (global $tsc_last (mut i64) (i64.const 0))
   ;; FS segment base — points to fake TIB (allocated from heap during PE load)
   (global $fs_base (mut i32) (i32.const 0))
   ;; Win32-visible current thread id. Main thread is 1; worker tid N is N+1.
@@ -2451,6 +2536,7 @@
   (global $caret_h (mut i32) (i32.const 13))          ;; USER caret height
   (global $caret_visible (mut i32) (i32.const 0))     ;; ShowCaret-visible latch
   (global $caret_blink_time (mut i32) (i32.const 530)) ;; ms; Windows' default
+
   (global $win_ini_name_ptr i32 (i32.const 0x100))   ;; WASM ptr to "win.ini\0" string constant
   (global $main_hwnd    (mut i32) (i32.const 0))    ;; Main window handle
   (global $shell_hwnd   (mut i32) (i32.const 0))    ;; USER32 Set/GetShellWindow process state
@@ -2728,6 +2814,15 @@
   (global $SHARED_DLG_ENDED_SIZE i32 (i32.const 0x00000004))
   (global $SHARED_DLG_RESULT i32 (i32.const 0x00005108))
   (global $SHARED_DLG_RESULT_SIZE i32 (i32.const 0x00000004))
+  ;; ...and a mirror of $dlg_pump_hwnd itself, for the same reason. Every
+  ;; "is this hwnd the active modal dialog?" test has to answer the same way
+  ;; on every instance: a worker's own $dlg_pump_hwnd is 0, so EndDialog from
+  ;; an installer's extraction thread used to destroy the dialog tree without
+  ;; ever raising SHARED_DLG_ENDED, leaving main's CACA0004 pump spinning on
+  ;; a dialog that no longer existed (Winamp's NSIS installer, after the
+  ;; "Completed" page).
+  (global $SHARED_DLG_PUMP_HWND i32 (i32.const 0x0000510C))
+  (global $SHARED_DLG_PUMP_HWND_SIZE i32 (i32.const 0x00000004))
   (global $dlg_proc     (mut i32) (i32.const 0))    ;; Dialog proc address
   (global $dlg_ret_addr (mut i32) (i32.const 0))    ;; Return address for DialogBoxParamA
   (global $dlg_loop_thunk (mut i32) (i32.const 0))  ;; Thunk addr for dialog message loop
@@ -2874,6 +2969,16 @@
   (global $bp_addr (mut i32) (i32.const 0))
   (global $bp_skip_once (mut i32) (i32.const 0))
   (global $bp_first_caller (mut i32) (i32.const 0))
+
+  ;; --fault-null: report a guest access that no mapping covers instead of
+  ;; letting $g2w absorb it into NULL_SENTINEL. 0=off (the shipping behaviour,
+  ;; and the only one that costs nothing: the check lives in the miss path,
+  ;; after every translation attempt has already failed), 1=log and continue,
+  ;; 2=log and trap. A real Windows program that dereferences NULL takes an
+  ;; access violation; the sentinel makes that read zero and write nowhere,
+  ;; which keeps buggy guests alive at the cost of hiding where they went
+  ;; wrong. Turn this on when a symptom appears far from its cause.
+  (global $fault_unmapped (mut i32) (i32.const 0))
 
   ;; --trace-esp: when flag=1, the run loop calls $host_log_block(eip, esp)
   ;; at each block boundary whose EIP falls inside [lo, hi]. hi=0 means
@@ -3220,6 +3325,28 @@
   (global $fpu_raw6 (mut i64) (i64.const 0))
   (global $fpu_raw7 (mut i64) (i64.const 0))
 
+  ;; MMX registers. On real hardware these alias the x87 mantissas; we keep them
+  ;; separate because no guest reads one through the other without an EMMS in
+  ;; between, and an independent file costs nothing. i64 rather than v128: the
+  ;; MMX code we run is overwhelmingly whole-register moves, boolean ops and
+  ;; 64-bit shifts, which are one exact i64 instruction each. See src/06c-mmx.wat.
+  (global $mm0 (mut i64) (i64.const 0))
+  (global $mm1 (mut i64) (i64.const 0))
+  (global $mm2 (mut i64) (i64.const 0))
+  (global $mm3 (mut i64) (i64.const 0))
+  (global $mm4 (mut i64) (i64.const 0))
+  (global $mm5 (mut i64) (i64.const 0))
+  (global $mm6 (mut i64) (i64.const 0))
+  (global $mm7 (mut i64) (i64.const 0))
+  ;; CPUID feature advertisement. Zero = the 486DX we have always reported, so
+  ;; every guest takes its scalar fallback; 1 = set EDX bit 23 (MMX) and let the
+  ;; MMX paths run. Exported so a benchmark can A/B the same build.
+  (global $cpu_mmx_enable (mut i32) (i32.const 1))
+  ;; How many MMX instructions the guest actually retired. Without this a
+  ;; pixel-identical A/B is ambiguous: it could mean the MMX path is correct,
+  ;; or that the guest never took it.
+  (global $mmx_exec_count (mut i32) (i32.const 0))
+
   ;; Cosmetic line style phase is reset per LineTo/path and shared across the
   ;; segments of one WAT-rasterized polyline.
   (global $gdi_line_style_phase (mut i32) (i32.const 0))
@@ -3264,3 +3391,11 @@
   ;; click-driven "close on selection" path so keyboard nav can scroll
   ;; through items without dismissing the dropdown.
   (global $combo_kbd_nav_active (mut i32) (i32.const 0))
+
+  ;; Set by ChangeDisplaySettingsA(lpDevMode, CDS_FULLSCREEN) and cleared by
+  ;; ChangeDisplaySettingsA(NULL, ...), which is how a non-DirectDraw app says
+  ;; "I own the display now" and "I am done" respectively. The compositor reads
+  ;; it through get_display_fullscreen: a full-page, chrome-less takeover is
+  ;; something the guest has to ask for, never something inferred from the
+  ;; shape of a window.
+  (global $display_fullscreen (mut i32) (i32.const 0))

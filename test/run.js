@@ -91,6 +91,7 @@ const hasFlag = name => args.includes(`--${name}`);
 const NO_BUILD = hasFlag('no-build');      // --no-build: skip auto-build
 const NO_CLOSE = hasFlag('no-close');      // --no-close: don't inject WM_CLOSE
 const NO_RENDERER = hasFlag('no-renderer'); // --no-renderer: skip CLI canvas/renderer (guest-state diagnostics)
+const NO_MMX = hasFlag('no-mmx');          // --no-mmx: report a 486DX from CPUID so guests take scalar paths
 const DUMP_GDI = getArg('dump-gdi', null); // --dump-gdi=DIR: dump GDI bitmaps as PNGs
 const DUMP_DDRAW = getArg('dump-ddraw-surfaces', null); // --dump-ddraw-surfaces=DIR: dump DirectDraw surface DIBs as PNGs
 const DUMP_SDB = getArg('dump-sdb', null); // --dump-sdb=DIR: dump StretchDIBits source DIBs + per-call log
@@ -203,6 +204,11 @@ const FRAME_STATS = FRAME_STATS_ARG !== null || hasFlag('frame-stats');
 const FRAME_STATS_FROM = Math.max(0, parseInt(FRAME_STATS_ARG, 10) || 0);
 const AUTO_MOUSE = getArg('auto-mouse', null); // --auto-mouse=X0,Y0,X1,Y1[,PERIOD]: sweep the pointer every PERIOD batches
 const TRACE_CTRL = hasFlag('trace-ctrl'); // --trace-ctrl: log every WAT-native control paint + its screen rect
+// --trace-input: which routing branch in lib/renderer-input.js consumed each
+// mouse event. Reach for it on "the click does nothing": a swallowed click
+// makes no API call, so an API trace shows a healthy-looking message pump and
+// nothing else. This names the early return that ate it.
+const TRACE_INPUT = hasFlag('trace-input');
 const TRACE_ERASE = hasFlag('trace-erase'); // --trace-erase: log every window-background erase + the brush it fills with
 const TRACE_RGN = hasFlag('trace-rgn');   // --trace-rgn: log HRGN create/combine/select + branch counts
 const TRACE_DC = hasFlag('trace-dc');     // --trace-dc: log DC→canvas target resolution (hwnd, ox/oy, canvas size)
@@ -290,10 +296,10 @@ const TRACE_BATCH_TIMING = hasFlag('trace-batch-timing'); // --trace-batch-timin
 // the guest slice's wall time, printed at exit.
 //
 // This exists because --frame-stats cannot see decode cost. Its `interval
-// batches` series is the load-immune one, but a batch is a budget of x86
-// *steps*, and decoding a block advances no EIP -- so a batch that re-decodes a
-// thousand blocks and a batch that decodes none retire the same number of steps
-// and are indistinguishable in that series. The cost lands in host CPU, i.e. in
+// batches` series is the load-immune one, but a batch is a budget of *blocks*,
+// and decoding a block advances no EIP -- so a batch that re-decodes a thousand
+// blocks and a batch that decodes none retire the same number of blocks and are
+// indistinguishable in that series. The cost lands in host CPU, i.e. in
 // `interval ms`, which is the load-sensitive one.
 //
 // Decodes per batch is both: deterministic (identical across runs of one build)
@@ -301,6 +307,21 @@ const TRACE_BATCH_TIMING = hasFlag('trace-batch-timing'); // --trace-batch-timin
 // collision re-decodes in bursts; those bursts are the jank. Read the p99 and
 // the storm share, not the mean -- the mean is just total decodes over batches,
 // which the exit line already prints.
+// --batch-stats[=FROM_BATCH]: how many blocks each batch actually retired, and
+// why it stopped, printed at exit.
+//
+// `--batch-size=N` is a budget of N *blocks*, not steps, and a batch is free to
+// end long before it spends that budget: a blocking API yields, a WM_TIMER sets
+// $yield_flag, EIP goes to zero. From the outside a batch that ran 1000 blocks
+// and one that ran 12 look the same, so a region that is slow per batch is
+// ambiguous -- it is either genuine work per block, or a batch that keeps
+// bailing after a handful of blocks and paying the host's per-batch overhead
+// every time. Those two want opposite fixes, and this is the series that tells
+// them apart. Deterministic, so it is safe to diff between builds; the halt
+// histogram beside it names what is cutting the batches short.
+const BATCH_STATS_ARG = getArg('batch-stats', null);
+const BATCH_STATS = BATCH_STATS_ARG !== null || hasFlag('batch-stats');
+const BATCH_STATS_FROM = Math.max(0, parseInt(BATCH_STATS_ARG, 10) || 0);
 const DECODE_STATS_ARG = getArg('decode-stats', null);
 const DECODE_STATS = DECODE_STATS_ARG !== null || hasFlag('decode-stats');
 const DECODE_STATS_FROM = Math.max(0, parseInt(DECODE_STATS_ARG, 10) || 0);
@@ -312,6 +333,14 @@ const TRACE_CALLSTACK_RAW = args.find(a => a === '--trace-callstack' || a.starts
 const TRACE_CALLSTACK = !!TRACE_CALLSTACK_RAW;
 const TRACE_CALLSTACK_DEPTH = TRACE_CALLSTACK_RAW && TRACE_CALLSTACK_RAW.includes('=')
   ? Math.min(64, parseInt(TRACE_CALLSTACK_RAW.split('=')[1]) || 16) : 16;
+// --fault-null[=stop]: report every guest access no mapping covers (log, or
+// trap with =stop) instead of letting $g2w quietly absorb it into the NULL
+// sentinel. Off by default because the sentinel is what keeps a guest that
+// dereferences NULL running at all; arm it when a symptom shows up far from
+// whatever corrupted the pointer.
+const FAULT_NULL_RAW = args.find(a => a === '--fault-null' || a.startsWith('--fault-null='));
+const FAULT_NULL = !FAULT_NULL_RAW ? 0
+  : (FAULT_NULL_RAW.split('=')[1] === 'stop' ? 2 : 1);
 const BREAKPOINT = getArg('break', null); // --break=0xADDR[,0xADDR,...]: break at address(es)
 const BREAK_ONCE = hasFlag('break-once'); // --break-once: do NOT re-arm bp after first hit (so prev_eip stays the true caller)
 const TRACE_AT = getArg('trace-at', null); // --trace-at=0xADDR: log regs each time EIP hits addr (non-interactive)
@@ -352,6 +381,18 @@ const SAVE_VFS = getArg('save-vfs', null); // --save-vfs=DIR: extract VFS files 
 const SAVE_VFS_SUFFIX = getArg('save-vfs-suffix', null); // --save-vfs-suffix=.gid: restrict extraction
 const VFS_DRIVE = getArg('vfs-drive', null); // --vfs-drive=D: mirror the EXE + explicit --vfs-include files on read-only D:\
 const VFS_INCLUDE = getArgs('vfs-include'); // --vfs-include=GLOB: mount matching files relative to the EXE directory
+// --vfs-mount=HOSTPATH=GUESTPATH: mount one host file at an exact guest path.
+// --vfs-include can only place a file at its own path relative to the EXE, so
+// an asset that has to appear somewhere else has no other way in -- a Winamp
+// visualizer kept in binaries/plugins/candidates has to be seen at
+// c:\plugins\vis_avs.dll before Winamp will enumerate it at all.
+const VFS_MOUNT = getArgs('vfs-mount');
+// --dll-seed=PATH[,PATH]: preload one more DLL as if the app registry had
+// listed it in `dlls:`. LoadLibraryA resolves a guest path against modules
+// that are already loaded and never opens the VFS itself, so a plugin the app
+// discovers at runtime -- every Winamp visualizer past the one in the registry
+// -- returns a junk handle unless it was seeded here first.
+const DLL_SEED = getArgs('dll-seed');
 const STUCK_AFTER = parseInt(getArg('stuck-after', '10'));  // --stuck-after=N: stuck detection after N same-EIP batches
 const WINVER = getArg('winver', null); // --winver=nt4|win2k|win98 or hex like 0x05650004
 // --app=sol launches what the desktop icon launches: lib/apps.js is the one
@@ -1332,6 +1373,7 @@ async function main() {
     const canvas = createCanvas(screenW, screenH);
     renderer = new Win98Renderer(canvas);
     if (TRACE_COMPOSITE) renderer.traceComposite = true;
+    if (TRACE_INPUT) renderer.onInputTrace = (what) => console.log(`[input-route] ${what}`);
   }
   let videoRecorder = null;
   if (VIDEO_OUT) {
@@ -1712,6 +1754,10 @@ async function main() {
   // One entry per executed batch, for --decode-stats.
   const decodeStatsDecodes = [];
   const decodeStatsSliceUs = [];
+  // One entry per executed batch, for --batch-stats; halts is indexed by the
+  // reason code $run reports (see $last_run_halt in src/01-header.wat).
+  const batchStatsBlocks = [];
+  const batchStatsHalts = [0, 0, 0, 0, 0, 0];
   const recordFrame = (series) => {
     const at = process.hrtime.bigint();
     // Outside the measurement window, still move the anchor forward. Skipping
@@ -2836,6 +2882,21 @@ async function main() {
     }
   };
 
+  // How many MMX instructions the guest retired, summed over the main
+  // instance and every worker (each is a separate WASM instance with its own
+  // globals). Reported on the way out however the run ends -- a long run that
+  // gets killed at a timeout is exactly the one where you most want to know
+  // whether the guest ever reached its MMX path.
+  var reportMmx = () => {
+    if (!instance.exports.get_mmx_exec_count) return;
+    let mmx = instance.exports.get_mmx_exec_count() >>> 0;
+    for (const t of (threadManager && threadManager.threads ? threadManager.threads.values() : [])) {
+      if (t.instance && t.instance.exports.get_mmx_exec_count) {
+        mmx += t.instance.exports.get_mmx_exec_count() >>> 0;
+      }
+    }
+    console.log(`MMX: ${mmx} instructions retired (cpuid mmx bit ${NO_MMX ? 'off' : 'on'})`);
+  };
   // set_count writes the address AND zeroes that slot's count, so arming is not
   // idempotent: the DLL onLoaded hook re-armed every slot on every late
   // LoadLibrary and threw away whatever had been counted so far. Diablo loads a
@@ -2857,15 +2918,15 @@ async function main() {
       console.log(`[count] slot ${i} armed at ${hex(addr)}`);
     }
   };
-  if (countAddrs.length && instance.exports.get_count) {
-    for (const sig of ['SIGTERM', 'SIGINT']) {
-      process.on(sig, () => {
-        reportHitCounts(`Hit counts (on ${sig}):`);
-        process.exit(0);
-      });
-    }
+  for (const sig of ['SIGTERM', 'SIGINT']) {
+    process.on(sig, () => {
+      if (countAddrs.length && instance.exports.get_count) reportHitCounts(`Hit counts (on ${sig}):`);
+      reportMmx();
+      process.exit(0);
+    });
   }
   if (instance.exports.set_process_id) instance.exports.set_process_id(ctx.processId);
+  if (NO_MMX && instance.exports.set_cpu_mmx) instance.exports.set_cpu_mmx(0);
   if (VLAN_IP && instance.exports.set_vlan_local_ip) {
     const octets = VLAN_IP.split('.').map(Number);
     if (octets.length !== 4 || octets.some(o => !(o >= 0 && o <= 255))) {
@@ -3162,6 +3223,7 @@ async function main() {
     traceCallstackDepth: TRACE_CALLSTACK_DEPTH,
     traceEipRange: (traceEipOn && traceEipArmed) ? { lo: traceEipLo, hi: traceEipHi } : null,
     countAddrs: countAddrs,
+    faultUnmapped: FAULT_NULL,
     now: () => (tickState.batch * TICK_MS_PER_BATCH) | 0,
     hasMessage: () => !!(
       inputEvent ||
@@ -3270,7 +3332,7 @@ async function main() {
     }
     dlls = await resolveDllGraph({
       exeBytes,
-      seeds: (ASSET_ENTRY && ASSET_ENTRY.dlls) || [],
+      seeds: [...((ASSET_ENTRY && ASSET_ENTRY.dlls) || []), ...DLL_SEED],
       detectRequiredDlls,
       loadSpec: (spec) => {
         // Registry seeds arrive as repo-relative paths; the graph walk's own
@@ -3363,6 +3425,16 @@ async function main() {
       const size = fs.statSync(file.hostPath).size;
       addFile(file.guestPath, file.hostPath, size);
       addFontAlias(file.guestPath, file.hostPath, size);
+    }
+    for (const spec of VFS_MOUNT) {
+      const eq = spec.lastIndexOf('=');
+      if (eq <= 0) throw new Error(`--vfs-mount needs HOSTPATH=GUESTPATH, got: ${spec}`);
+      const hostPath = appAsset(spec.slice(0, eq).trim());
+      const guestPath = spec.slice(eq + 1).trim();
+      if (!guestPath) throw new Error(`--vfs-mount needs a guest path: ${spec}`);
+      const size = fs.statSync(hostPath).size;
+      addFile(guestPath, hostPath, size);
+      addFontAlias(guestPath, hostPath, size);
     }
     // Mount a matched registry app's data files at the same VFS paths the page
     // gives them. An entry is a repo-relative URL (-> c:\basename), or
@@ -3817,6 +3889,13 @@ async function main() {
   // zero cost in the hot path.
   if (TRACE_CALLSTACK && instance.exports.set_callstack_enabled) {
     instance.exports.set_callstack_enabled(1);
+  }
+  // Arm --fault-null. Same deal: the WAT check sits in the $g2w miss path, so
+  // an off-run never reaches it.
+  if (FAULT_NULL && instance.exports.set_fault_unmapped) {
+    instance.exports.set_fault_unmapped(FAULT_NULL);
+    console.log(`[fault] --fault-null armed (mode=${FAULT_NULL}: `
+      + `${FAULT_NULL === 2 ? 'log and trap' : 'log and continue'})`);
   }
   if (TRACE_WIN16_DDE && instance.exports.set_win16_dde_trace) {
     instance.exports.set_win16_dde_trace(1);
@@ -5468,13 +5547,27 @@ async function main() {
             const cr = we.get_client_rect_l
               ? `${we.get_client_rect_l(hwnd) | 0},${we.get_client_rect_t(hwnd) | 0},${we.get_client_rect_r(hwnd) | 0},${we.get_client_rect_b(hwnd) | 0}`
               : 'n/a';
-            children.push(`slot=${slot} hwnd=0x${hwnd.toString(16)} parent=0x${par.toString(16)} proc=0x${proc.toString(16)} cls=${cls} id=${id} style=0x${style.toString(16)} buttonFlags=0x${buttonFlags.toString(16)} xy=${xy & 0xffff},${xy >>> 16} wh=${wh & 0xffff}x${wh >>> 16} cr=${cr} dirty=${dirty}`);
+            // The update rect the selector actually reads. `dirty=1 upd=none`
+            // is a flag with no region (the selector drops it); a parent with
+            // `upd=none` never seeds its children at all.
+            const upd = we.update_rect_lt
+              ? (() => {
+                const lt = we.update_rect_lt(hwnd) | 0, rb = we.update_rect_rb(hwnd) | 0;
+                return (lt || rb) ? `${lt & 0xffff},${lt >> 16},${rb & 0xffff},${rb >> 16}` : 'none';
+              })()
+              : 'n/a';
+            children.push(`slot=${slot} hwnd=0x${hwnd.toString(16)} upd=${upd} parent=0x${par.toString(16)} proc=0x${proc.toString(16)} cls=${cls} id=${id} style=0x${style.toString(16)} buttonFlags=0x${buttonFlags.toString(16)} xy=${xy & 0xffff},${xy >>> 16} wh=${wh & 0xffff}x${wh >>> 16} cr=${cr} dirty=${dirty}`);
             slot++;
           }
         }
         const parentNc = we.nc_flags_test ? (we.nc_flags_test(parent) >>> 0) : 0;
         const parentDirty = we.paint_flag_test ? (we.paint_flag_test(parent) | 0) : -1;
-        logs.push(`[input] dump-children${ev.label ? ':' + ev.label : ''}: parent=0x${parent.toString(16)} nc=0x${parentNc.toString(16)} dirty=${parentDirty} ${children.length ? children.join(' | ') : '(none)'}`);
+        const parentUpdLt = we.update_rect_lt ? (we.update_rect_lt(parent) | 0) : 0;
+        const parentUpdRb = we.update_rect_rb ? (we.update_rect_rb(parent) | 0) : 0;
+        const parentUpd = (parentUpdLt || parentUpdRb)
+          ? `${parentUpdLt & 0xffff},${parentUpdLt >> 16},${parentUpdRb & 0xffff},${parentUpdRb >> 16}`
+          : 'none';
+        logs.push(`[input] dump-children${ev.label ? ':' + ev.label : ''}: parent=0x${parent.toString(16)} nc=0x${parentNc.toString(16)} dirty=${parentDirty} upd=${parentUpd} ${children.length ? children.join(' | ') : '(none)'}`);
       } else if (ev.action === 'menu-dump') {
         const we = instance.exports;
         const hwnd = we.menu_open_hwnd ? (we.menu_open_hwnd() >>> 0) : 0;
@@ -5654,8 +5747,9 @@ async function main() {
         const dv = new DataView(memory.buffer);
         const u8 = new Uint8Array(memory.buffer);
         const items = [];
-        const table = 0x07F00000;
-        for (let i = 0; i < 32; i++) {
+        const table = we.treeview_get_table_base ? (we.treeview_get_table_base() >>> 0) : 0x07F00000;
+        const slots = we.treeview_get_slot_limit ? (we.treeview_get_slot_limit() | 0) : 32;
+        for (let i = 0; i < slots; i++) {
           const p = table + i * 32;
           const handle = dv.getUint32(p, true);
           if (!handle) continue;
@@ -6233,6 +6327,9 @@ async function main() {
         const down = ev.action === 'di-keydown';
         renderer._asyncKeys[key] = down;
         if (down) renderer._asyncPressedKeys[key] = true;
+        // Event-buffered DirectInput devices must wake for test-injected state
+        // changes just as they do for renderer.handleKeyDown/handleKeyUp.
+        if (renderer._signalDirectInputDevice) renderer._signalDirectInputDevice(1);
         logs.push(`[input] ${ev.action} vk=${ev.code} at batch ${batch}`);
       } else if (ev.action === 'sleep-ms') {
         if (ev.ms > 0) await new Promise(resolve => setTimeout(resolve, ev.ms));
@@ -6758,6 +6855,12 @@ async function main() {
       }
     }
 
+    if (BATCH_STATS && batch >= BATCH_STATS_FROM && instance.exports.get_last_run_blocks) {
+      batchStatsBlocks.push(instance.exports.get_last_run_blocks() | 0);
+      const why = instance.exports.get_last_run_halt() | 0;
+      if (why >= 0 && why < batchStatsHalts.length) batchStatsHalts[why]++;
+    }
+
     if (DECODE_STATS && batch >= DECODE_STATS_FROM) {
       // Wrap-safe: get_cache_stores is a u32 counter read as unsigned.
       const decodesAfter = instance.exports.get_cache_stores
@@ -7127,6 +7230,25 @@ async function main() {
       if (TRACE_BATCH_TIMING) {
         console.log(`[batch-timing] batch=${batch} worker=${Date.now() - workerStartMs}ms slices=${slices}`);
       }
+      // Same story for a worker that called LoadLibraryA: the WAT handler has
+      // parked it on yield 5 and only the host can finish the load, which is
+      // asynchronous. Serve it here, then hand the loader's cursors back to
+      // main, because the next slice copies them the other way.
+      for (const thread of threadManager.threadsAwaitingLoadLibrary()) {
+        const e = thread.instance.exports;
+        if (TRACE_YIELD) {
+          console.log(`[yield] T${thread.tid} reason=5 (load_library) eip=${hex(e.get_eip())} esp=${hex(e.get_esp())}`);
+        }
+        await handleLoadLibraryYield({
+          exports: e,
+          memoryBuffer: memory.buffer,
+          resourceHost: ctx,
+          log: console.log,
+          trace: TRACE_YIELD ? console.log : null,
+          findDll: findRuntimeDllBytes,
+        });
+        threadManager.publishWorkerGlobals(e);
+      }
       // A worker parked in a blocking socket call is waiting on a frame that
       // only the event loop can deliver. runSlice cannot await, so the turn
       // has to be given here or the wait never ends.
@@ -7480,6 +7602,7 @@ if (VERBOSE) {
 
   console.log(`\nStats: ${apiCount} API calls, ${batchesRun} batches`
     + (MAX_SECONDS ? ` in ${MAX_SECONDS}s (${(batchesRun / MAX_SECONDS).toFixed(0)} batches/s)` : ''));
+  reportMmx();
 
   // --reg-export writes what the run left in the registry/INI store, which is
   // what a browser tab would have kept in localStorage. Feed it back with
@@ -7584,6 +7707,39 @@ if (VERBOSE) {
       + ' reading it as a frame rate');
     report('host flush    (surface upload)', frameStats.flush,
       `what the browser HUD counts as fps; in the CLI it is gated by the repaint loop (--repaint-every=${REPAINT_EVERY}), so treat it as the harness's cadence unless it agrees with the present count above`);
+  }
+
+  if (BATCH_STATS) {
+    const n = batchStatsBlocks.length;
+    if (n < 2) {
+      console.log(`\nBatch pacing: ${n} batches executed — too few to pace`);
+    } else {
+      const q = (arr, p) => {
+        const v = arr.slice().sort((a, b) => a - b);
+        return v[Math.min(v.length - 1, Math.floor(p * v.length))];
+      };
+      const total = batchStatsBlocks.reduce((a, b) => a + b, 0);
+      const full = batchStatsBlocks.filter(b => b >= BATCH_SIZE).length;
+      const tiny = batchStatsBlocks.filter(b => b < BATCH_SIZE / 100).length;
+      const names = ['(none)', 'budget spent', 'EIP zero', 'yield_flag',
+                     'blocking wait', 'debug facility'];
+      console.log(BATCH_STATS_FROM
+        ? `\nBatch pacing (from batch ${BATCH_STATS_FROM}):`
+        : '\nBatch pacing:');
+      console.log(`  blocks retired per batch (budget ${BATCH_SIZE}): total ${total} over ${n} batches,`
+        + ` mean ${(total / n).toFixed(1)}`);
+      console.log(`      p50 ${q(batchStatsBlocks, 0.5)}, p90 ${q(batchStatsBlocks, 0.9)},`
+        + ` p99 ${q(batchStatsBlocks, 0.99)}, max ${q(batchStatsBlocks, 1)}`);
+      console.log(`      batches that spent the whole budget: ${full} of ${n}`
+        + ` (${(100 * full / n).toFixed(1)}%);`
+        + ` batches that retired under 1% of it: ${tiny} (${(100 * tiny / n).toFixed(1)}%)`);
+      console.log('      why each batch stopped: '
+        + batchStatsHalts.map((c, i) => c ? `${names[i]} ${c}` : null)
+            .filter(Boolean).join(', '));
+      console.log('      A low p50 with "budget spent" rare means the batches are not doing the work'
+        + ' you sized them for — the host pays its per-batch cost either way, so the guest is'
+        + ' being charged overhead for blocks it never ran.');
+    }
   }
 
   if (DECODE_STATS) {

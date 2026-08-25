@@ -34,6 +34,8 @@ const extraWat = String.raw`
   // LVS_ICON | LVS_AUTOARRANGE | LVS_ALIGNLEFT, matching stock DefView.
   const lv = e.test_create_listview(0, 0, 150, 140, 0x0900, 0);
   const parent = e.wnd_get_parent(lv) >>> 0;
+  e.wnd_set_style_export(parent,
+    (e.wnd_get_style_export(parent) | 0x10000000) >>> 0);
   renderer.windows[parent] = {
     hwnd: parent, x: 0, y: 0, w: 150, h: 140, zOrder: 1,
     style: 0x10000000, visible: true, isChild: false,

@@ -40,13 +40,20 @@ const args = [
   // Preferences opens at 0,0 and the player at 26,29 in both hosts, so this
   // sequence is the one `node test/run.js --app=winamp --screen=756x480
   // --input=...:click:X:Y` reproduces exactly. Plug-ins > Visualization (54,188)
-  // > plugin row (170,60) > Start (184,323) > Stop (244,323) > Start again >
+  // > the wVis row (170,86 -- the list is in enumeration order, so AVS and
+  // MilkDrop sit above it, one 13px row each)
+  // > Start (184,323) > Stop (244,323) > Start again >
   // close Preferences (440,16) > play (66,129) > right-click the visualizer.
   // The last step is a hover, not a click: a click on "Rendering Options"
   // dismisses the whole popup, and menuStates is a final snapshot that only
   // sees a menu still on screen. Hovering it leaves both the popup and its
   // submenu up, which is what the subLabels assertion reads.
-  '--post-clicks=54,188;170,60;184,323;wait:2200;244,323;wait:2200;184,323;wait:2200;440,16;66,129;wait:4000;150,205,right;wait:1200;move:215,228',
+  //
+  // The popup drops *upward* from the right-click: opened at 150,205 it lands
+  // at 150,109, and "Rendering Options" is its third entry, so the hover point
+  // is 109 + 2 (top pad) + 2*20 (row height) + half a row = 161. Aiming at
+  // 205+ instead lands below the popup entirely and hover stays -1.
+  '--post-clicks=54,188;170,86;184,323;wait:2200;244,323;wait:2200;184,323;wait:2200;440,16;66,129;wait:4000;150,205,right;wait:1200;move:215,161',
   '--post-click-wait-ms=1200',
   '--screenshot', SHOT,
 ];
@@ -99,8 +106,13 @@ assert((wvisMenu.labels || []).map(displayMenuText).includes('Rendering Options'
   'wVis popup should expose Rendering Options');
 assert((wvisMenu.subLabels || []).length > 0,
   'Rendering Options should expose a usable submenu');
-assert(!(result.inputQueue || []).some(e => e.hwnd === wvis.hwnd),
-  'right-click should not leave an unconsumed wVis mouse event queued');
+// Button messages only. The plug-in's thread goes modal inside its own popup,
+// so the WM_MOUSEMOVE (0x200) that precedes the right-click legitimately sits
+// in its queue until the menu closes -- a real Windows plug-in leaves the same
+// one there. A queued *button* message would mean the click never reached the
+// menu that is on screen, which is what this is guarding.
+assert(!(result.inputQueue || []).some(e => e.hwnd === wvis.hwnd && (e.msg | 0) !== 0x200),
+  'right-click should not leave an unconsumed wVis mouse button event queued');
 
 const events = result.consoleEvents || [];
 const logText = events.map(e => e.text || '').join('\n');

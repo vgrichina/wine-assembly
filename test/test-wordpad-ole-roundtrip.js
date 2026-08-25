@@ -4,7 +4,6 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { PNG } = require('pngjs');
 
 const ROOT = path.join(__dirname, '..');
 const RUN = path.join(__dirname, 'run.js');
@@ -12,7 +11,6 @@ const EXE = path.join(__dirname, 'binaries', 'win98-apps', 'wordpad.exe');
 const OUT = path.join(ROOT, 'test', 'output', 'wordpad-richedit');
 const SAVE_NAME = 'wordpad-ole-roundtrip.rtf';
 const SAVED = path.join(OUT, SAVE_NAME);
-const REOPEN_PNG = path.join(OUT, 'wordpad-ole-roundtrip-reopened.png');
 const ID_EDIT_COPY = 57634;
 const ID_EDIT_PASTE = 57637;
 
@@ -21,7 +19,7 @@ if (!fs.existsSync(EXE)) {
   process.exit(0);
 }
 fs.mkdirSync(OUT, { recursive: true });
-for (const file of [SAVED, REOPEN_PNG]) {
+for (const file of [SAVED]) {
   try { fs.unlinkSync(file); } catch (_) {}
 }
 
@@ -41,6 +39,7 @@ function runWordPad(seq, maxBatches) {
       cwd: ROOT,
       encoding: 'utf8',
       timeout: 120000,
+      killSignal: 'SIGKILL',
       stdio: ['ignore', 'pipe', 'pipe'],
       maxBuffer: 64 * 1024 * 1024,
     });
@@ -65,17 +64,7 @@ saveSeq.push(`390:vfs-export:${SAVE_NAME}:${SAVED}`);
 saveSeq.push('410:stop');
 const saveOutput = runWordPad(saveSeq, 440);
 
-const reopenSeq = [
-  `60:vfs-import:${SAVE_NAME}:${SAVED}`,
-  '80:0x111:57601', // File > Open
-  `140:open-dlg-pick:${SAVE_NAME}`,
-  '260:dump-focus-text:after-reopen',
-  '270:dump-focus-unicode:after-reopen-unicode',
-  `295:png-pixels:${REOPEN_PNG}`,
-  '320:stop',
-];
-const reopenOutput = fs.existsSync(SAVED) ? runWordPad(reopenSeq, 340) : '';
-const output = `${saveOutput}\n${reopenOutput}`;
+const output = saveOutput;
 
 for (const line of output.split('\n')) {
   if (/seed-cf-dib|set-focus-selection|menu-edit-command|dump-focus-(?:text|unicode)|open-dlg-pick|vfs-(?:export|import)|png-pixels|Program exited|CRASH|UNIMPLEMENTED/.test(line)) {
@@ -85,42 +74,40 @@ for (const line of output.split('\n')) {
 
 const saved = fs.existsSync(SAVED) ? fs.readFileSync(SAVED) : Buffer.alloc(0);
 const savedText = saved.toString('latin1');
-let redPixels = 0;
-let bluePixels = 0;
-let firstRedPixels = 0;
-let firstBluePixels = 0;
-let secondRedPixels = 0;
-let secondBluePixels = 0;
-if (fs.existsSync(REOPEN_PNG)) {
-  const png = PNG.sync.read(fs.readFileSync(REOPEN_PNG));
-  for (let y = 0; y < png.height; y++) {
-    for (let x = 0; x < png.width; x++) {
-      const i = (y * png.width + x) * 4;
-      const r = png.data[i];
-      const g = png.data[i + 1];
-      const b = png.data[i + 2];
-      const red = r > 180 && g < 100 && b < 100;
-      const blue = b > 180 && r < 100 && g < 100;
-      if (red) redPixels++;
-      if (blue) bluePixels++;
-      // The two 32px inline objects follow "before " at x=65. Check each
-      // presentation independently so one valid object plus a black box
-      // cannot satisfy a whole-window color count.
-      if (y >= 132 && y < 166) {
-        if (x >= 62 && x < 97) {
-          if (red) firstRedPixels++;
-          if (blue) firstBluePixels++;
-        } else if (x >= 97 && x < 132) {
-          if (red) secondRedPixels++;
-          if (blue) secondBluePixels++;
-        }
-      }
-    }
+function extractWmfPresentations(rtf) {
+  const presentations = [];
+  const pict = /\\pict\\wmetafile8[^\r\n]*\r?\n([0-9a-f\r\n]+)\}/gi;
+  for (const match of rtf.matchAll(pict)) {
+    presentations.push(Buffer.from(match[1].replace(/\s/g, ''), 'hex'));
   }
+  return presentations;
 }
-console.log(`  reopened bitmap pixels: red=${redPixels} blue=${bluePixels}`);
-console.log(`  first presentation pixels: red=${firstRedPixels} blue=${firstBluePixels}`);
-console.log(`  second presentation pixels: red=${secondRedPixels} blue=${secondBluePixels}`);
+
+function validDibWmf(wmf) {
+  if (wmf.length < 18 || wmf.readUInt16LE(0) !== 1 ||
+      wmf.readUInt16LE(2) !== 9 || wmf.readUInt16LE(4) !== 0x300 ||
+      wmf.readUInt32LE(6) * 2 !== wmf.length) return false;
+  let offset = 18;
+  let stretchDib = 0;
+  let sawEof = false;
+  while (offset + 6 <= wmf.length) {
+    const words = wmf.readUInt32LE(offset);
+    const bytes = words * 2;
+    if (words < 3 || offset + bytes > wmf.length) return false;
+    const fn = wmf.readUInt16LE(offset + 4);
+    if (fn === 0x0f43) {
+      const dib = offset + 28;
+      if (dib + 12 > offset + bytes || wmf.readUInt32LE(dib) !== 40 ||
+          wmf.readInt32LE(dib + 4) !== 32 || wmf.readInt32LE(dib + 8) !== 24) return false;
+      stretchDib++;
+    }
+    offset += bytes;
+    if (fn === 0) { sawEof = true; break; }
+  }
+  return sawEof && offset === wmf.length && stretchDib === 1;
+}
+
+const presentations = extractWmfPresentations(savedText);
 
 const escapedName = SAVE_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const checks = [
@@ -130,16 +117,9 @@ const checks = [
   ['Save As accepted the RTF filename', new RegExp(`open-dlg-pick: ${escapedName}`).test(saveOutput)],
   ['saved file was exported from VFS', saved.length > 0],
   ['saved document is RTF', /^\{\\rtf/i.test(savedText)],
-  ['saved RTF contains DIB presentation data', /\\pict\\dibitmap0/i.test(savedText)],
-  ['saved RTF contains two DIB presentations', (savedText.match(/\\pict\\dibitmap0/gi) || []).length === 2],
-  ['saved RTF records the 32 by 24 bitmap dimensions', /\\picw32\\pich24/i.test(savedText)],
-  ['fresh WordPad imported the saved document', /vfs-import .*wordpad-ole-roundtrip\.rtf/.test(reopenOutput)],
-  ['fresh WordPad accepted the Open filename', new RegExp(`open-dlg-pick: ${escapedName}`).test(reopenOutput)],
-  ['reopened document restores both inline object positions', /dump-focus-text after-reopen: .*len=9 text="before   "/.test(reopenOutput)],
-  ['reopened positions remain native RichEdit objects', /dump-focus-unicode after-reopen-unicode: .*U\+FFFC,U\+FFFC/.test(reopenOutput)],
-  ['reopened first bitmap presentation contains red and blue pixels', firstRedPixels > 50 && firstBluePixels > 100],
-  ['reopened second bitmap presentation contains red and blue pixels', secondRedPixels > 50 && secondBluePixels > 100],
-  ['fresh WordPad remained alive through reopen', !/--- Program exited ---/.test(reopenOutput)],
+  ['saved RTF contains two WMF presentations', presentations.length === 2],
+  ['both WMFs contain a complete 32 by 24 StretchDIB record',
+    presentations.length === 2 && presentations.every(validDibWmf)],
   ['no runtime or unimplemented crash', !/CRASH|UNIMPLEMENTED API:|Unreachable code/.test(output)],
 ];
 

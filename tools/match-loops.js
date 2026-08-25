@@ -258,7 +258,66 @@ function match(body) {
   return { reject: 'unclassified' };
 }
 
-module.exports = { match, summarize, role, parseOperand };
+// ------------------------------------------------------- promotable cells --
+// A different question from match(): not "what is this loop for" but "does it
+// keep a variable in memory that could live in a register for the duration".
+// Three of the four hot sites in Heroes II are that shape -- a cursor in a
+// global, a counter in a stack slot -- and none of them match any pattern
+// above, because the predicate there has to decide the whole body and this one
+// only has to decide one address.
+//
+// A cell is a loop-invariant address the body touches every iteration. It is
+// promotable when nothing else in the body can alias it:
+//   clean  -- provable statically (no other memory op, or same base+index with
+//             a non-overlapping displacement)
+//   guard  -- other accesses are moving streams (or invariant at an unrelated
+//             base), so disjointness is a runtime range check, not a proof
+// Anything else declines. `kind` is rw (load and store), wo (store only, the
+// value is published for code after the loop) or ro (load only, hoistable).
+function promotable(body) {
+  const s = summarize(body);
+  if (s.calls.length) return { reject: 'call' };
+  const key = m => `${m.base || ''}|${m.index || ''}*${m.scale}|${m.disp}`;
+  const invariantAddr = m => m && !m.unknown && !m.tooMany
+    && (m.base === null || s.invariant(m.base)) && (m.index === null || s.invariant(m.index));
+
+  // every memory operand in the body, whatever role names it
+  const mems = [];
+  for (const r of s.roles) for (const o of r.ops) if (o.kind === 'mem') mems.push({ r, o });
+  if (mems.some(x => x.o.unknown || x.o.tooMany)) return { reject: 'undecidable-address' };
+
+  const cells = new Map();
+  for (const { r, o } of mems) {
+    if (!invariantAddr(o)) continue;
+    const k = key(o);
+    const c = cells.get(k) || { k, mem: o, loads: 0, stores: 0 };
+    if (r.kind === 'LOAD') c.loads++;
+    else if (r.kind === 'STORE') c.stores++;
+    else if (r.kind === 'MEMADDI') { c.loads++; c.stores++; }
+    else c.opaque = true;                       // OTHER naming it: can't reason
+    cells.set(k, c);
+  }
+  const out = [];
+  for (const c of cells.values()) {
+    if (c.opaque || (c.loads + c.stores) === 0) continue;
+    let safety = 'clean';
+    for (const { o } of mems) {
+      if (key(o) === c.k) continue;
+      if (invariantAddr(o) && o.base === c.mem.base && o.index === c.mem.index
+          && o.scale === c.mem.scale) {
+        const size = c.mem.size || 4, osz = o.size || 4;
+        if (o.disp + osz <= c.mem.disp || c.mem.disp + size <= o.disp) continue;  // disjoint
+      }
+      safety = 'guard';                          // stream, or unrelated base
+    }
+    out.push({ addr: c.mem.raw, safety, loads: c.loads, stores: c.stores,
+      kind: c.stores ? (c.loads ? 'rw' : 'wo') : 'ro' });
+  }
+  if (!out.length) return { reject: 'no-invariant-cell' };
+  return { cells: out };
+}
+
+module.exports = { match, summarize, role, parseOperand, promotable };
 
 // ------------------------------------------------------------------- main --
 if (require.main === module) {
@@ -269,6 +328,69 @@ if (require.main === module) {
   if (!files.length) { console.error('usage: match-loops.js <pe> [<pe>...] [--max-body=N] [--list[=PATTERN]] [--why] [--json]'); process.exit(1); }
   const MAXB = parseInt(opt('max-body', '24'), 10);
   const LIST = has('list') ? (opt('list', '') || '*') : null;
+
+  // --promote: how many self-loops keep a variable in memory that a lowering
+  // could hold in a register and write back once at exit. Reported alongside
+  // whether match() already covers the loop, since only the uncovered ones are
+  // new ground.
+  if (has('promote')) {
+    const PLIST = has('list');
+    const rowsP = [];
+    const whyP = new Map();
+    for (const f of files) {
+      let loops;
+      try { loops = findLoops(f, { maxBody: MAXB }); }
+      catch (e) { console.error(`${path.basename(f)}: ${e.message}`); continue; }
+      const r = { file: f, total: loops.length, loops: 0, clean: 0, guard: 0,
+        cells: 0, sunkStores: 0, newOnly: 0 };
+      for (const lp of loops) {
+        const p = promotable(lp.body);
+        if (p.reject) { whyP.set(p.reject, (whyP.get(p.reject) || 0) + 1); continue; }
+        const written = p.cells.filter(c => c.kind !== 'ro');
+        if (!written.length) { whyP.set('read-only-cell', (whyP.get('read-only-cell') || 0) + 1); continue; }
+        r.loops++;
+        r.cells += written.length;
+        r.sunkStores += written.reduce((a, c) => a + c.stores, 0);
+        if (written.every(c => c.safety === 'clean')) r.clean++; else r.guard++;
+        if (match(lp.body).reject) r.newOnly++;
+        if (PLIST) {
+          console.log(`${path.basename(f)} 0x${lp.va.toString(16)}  `
+            + written.map(c => `[${c.addr}] ${c.kind}/${c.safety}`).join('  '));
+          for (const b of lp.body) console.log('    ' + b);
+        }
+      }
+      rowsP.push(r);
+    }
+    if (has('json')) { console.log(JSON.stringify({ rows: rowsP, why: [...whyP].sort((a, b) => b[1] - a[1]) }, null, 1)); process.exit(0); }
+    const wp = Math.max(12, ...rowsP.map(r => path.basename(r.file).length));
+    console.log('app'.padEnd(wp) + '  loops  promo    pct  clean  guard  cells  sunk/it  no-match');
+    console.log('-'.repeat(wp + 58));
+    const tp = { total: 0, loops: 0, clean: 0, guard: 0, cells: 0, sunkStores: 0, newOnly: 0 };
+    for (const r of rowsP.sort((a, b) => b.loops - a.loops)) {
+      for (const k in tp) tp[k] += r[k];
+      console.log(path.basename(r.file).padEnd(wp) + String(r.total).padStart(7)
+        + String(r.loops).padStart(7)
+        + ` ${(100 * r.loops / Math.max(1, r.total)).toFixed(1)}%`.padStart(7)
+        + String(r.clean).padStart(7) + String(r.guard).padStart(7)
+        + String(r.cells).padStart(7) + String(r.sunkStores).padStart(9)
+        + String(r.newOnly).padStart(10));
+    }
+    if (rowsP.length > 1) {
+      console.log('-'.repeat(wp + 58));
+      console.log('TOTAL'.padEnd(wp) + String(tp.total).padStart(7) + String(tp.loops).padStart(7)
+        + ` ${(100 * tp.loops / Math.max(1, tp.total)).toFixed(1)}%`.padStart(7)
+        + String(tp.clean).padStart(7) + String(tp.guard).padStart(7)
+        + String(tp.cells).padStart(7) + String(tp.sunkStores).padStart(9)
+        + String(tp.newOnly).padStart(10));
+    }
+    if (has('why')) {
+      console.log('\ndeclines:');
+      for (const [k, v] of [...whyP].sort((a, b) => b[1] - a[1]).slice(0, 20)) {
+        console.log(`  ${String(v).padStart(6)}  ${k}`);
+      }
+    }
+    process.exit(0);
+  }
 
   const PATTERNS = ['COPY_RUN', 'FILL_RUN', 'LUT_RUN', 'SCAN_RUN'];
   const rows = [];

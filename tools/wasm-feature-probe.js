@@ -72,6 +72,25 @@ var RESULTS = (function () {
     return section(10, cat([u(0x02), u(f0.length), f0, u(tcF1.length), tcF1]));
   }
 
+  // --- typed function references ----------------------------------------
+  // Our handler table is (table $handlers 426 funcref). An untyped table
+  // makes every call_indirect carry a runtime signature check -- SpiderMonkey
+  // Ion emits a load of the callee's type word plus a compare, and that load
+  // sits at the END of the dependent chain that produces the branch target.
+  // Declaring the table with a concrete type ((ref null $t), reftype 0x63
+  // followed by the type index) lets the engine drop the check. This probe
+  // asks whether the engines we ship to accept such a table at all.
+  var TYPES_T = section(1, u(0x02,
+    0x60, 0x01, 0x7f, 0x00,        // type 0: (func (param i32))   -- handler_t
+    0x60, 0x00, 0x01, 0x7f));      // type 1: (func) -> i32
+  var tfFuncs = section(3, u(0x01, 0x01));                    // one func, type 1
+  var TBL_FUNCREF = section(4, u(0x01, 0x70, 0x00, 0x01));    // funcref, min 1
+  var TBL_TYPED   = section(4, u(0x01, 0x63, 0x00, 0x00, 0x01)); // (ref null 0)
+  var TBL_NONNULL = section(4, u(0x01, 0x64, 0x00, 0x00, 0x01)); // (ref 0), no init
+  // i32.const 0 (the arg); i32.const 0 (the table index); call_indirect 0 0
+  var tfBody = u(0x00, 0x41, 0x00, 0x41, 0x00, 0x11, 0x00, 0x00, 0x41, 0x07, 0x0b);
+  var TF_CODE = section(10, cat([u(0x01, tfBody.length), tfBody]));
+
   var cases = [
     ['multi-memory', 'control: single memory, plain memarg', false,
       cat([HEADER, TYPES, mmFuncs, ONE_MEM, codeOf(mmBodyPlain)])],
@@ -85,6 +104,14 @@ var RESULTS = (function () {
       cat([HEADER, TYPES, tcFuncs, EXPORT, tcCode(tcF0Call)])],
     ['tail calls', 'return_call', false,
       cat([HEADER, TYPES, tcFuncs, EXPORT, tcCode(tcF0Tail)])],
+    ['typed funcref table', 'control: funcref table + call_indirect', false,
+      cat([HEADER, TYPES_T, tfFuncs, TBL_FUNCREF, TF_CODE])],
+    ['typed funcref table', 'table declared (ref null $handler_t)', false,
+      cat([HEADER, TYPES_T, TBL_TYPED])],
+    ['typed funcref table', 'call_indirect through a typed table', false,
+      cat([HEADER, TYPES_T, tfFuncs, TBL_TYPED, TF_CODE])],
+    ['typed funcref table', 'NEGATIVE: non-nullable (ref $t) table with no init', true,
+      cat([HEADER, TYPES_T, TBL_NONNULL])],
   ];
 
   var out = [];

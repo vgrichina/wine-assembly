@@ -462,6 +462,7 @@
             (global.set $eax (global.get $dlg_result))
             (global.set $eip (global.get $dlg_ret_addr))
             (global.set $dlg_pump_hwnd (i32.const 0))
+            (i32.store (global.get $SHARED_DLG_PUMP_HWND) (i32.const 0))
             (global.set $dlg_ended (i32.const 0))
             (global.set $quit_flag (i32.const 0))
             (return)))

@@ -50,7 +50,13 @@ if (cmd) {
     // Measures 9s -- the slowest of the gameplay drives, and still nowhere near
     // the 900s that used to sit here. A cap this far above the real cost cannot
     // tell a hang from a slow box, which is the only thing a cap is for.
-    execSync(cmd, { encoding: 'utf-8', timeout: 60000, cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+    // maxBuffer, because the default is 1MB and this drive prints just over
+    // it: 3400 batches of unfiltered [API] lines came to 1054671 bytes, so the
+    // run was being killed at batch 3380 every time and reported as a hang.
+    // The cap is on the log, not on the emulator, so it must not be able to
+    // decide the test.
+    execSync(cmd, { encoding: 'utf-8', timeout: 60000, cwd: ROOT,
+      maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
   } catch (e) {
     const out = (e.stdout || '').toString() + (e.stderr || '').toString();
     console.error(out.split('\n').slice(-40).join('\n'));

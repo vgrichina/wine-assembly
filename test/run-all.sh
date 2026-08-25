@@ -67,7 +67,6 @@ UNIT=(
   test/test-wat-dib-rle.js
   test/test-icon-extract.js
   test/test-heroes2-desktop-save.js
-  test/test-winhelp-wat-parser.js
   test/test-wide-api.js
   test/test-static-dx-version.js
   test/test-midi-mci.js
@@ -77,6 +76,7 @@ UNIT=(
   test/test-browser-step-scheduler.js
   test/test-console-input.js
   test/test-browser-mm-timer.js
+  test/test-asset-parts.js
   test/test-runtime-log-toggle.js
   test/test-diablo-runtime-apis.js
   test/test-starcraft-dll-policy.js
@@ -91,7 +91,6 @@ UNIT=(
   test/test-directsound-loop-refresh.js
   test/test-directsound3d-web-audio.js
   test/test-core-no-app-fast-paths.js
-  test/test-wat-gdi-region.js
   test/test-wat-gdi-select-clip-path.js
   test/test-wat-gdi-path.js
   test/test-gdi-p0-p1.js
@@ -99,9 +98,7 @@ UNIT=(
   test/test-wat-gdi-raster.js
   test/test-gdi-fast-blit-paths.js
   test/test-wat-gdi-raster-handlers.js
-  test/test-wat-gdi-benchmark.js
   test/test-wat-gdi-bitmap.js
-  test/test-wat-gdi-bitmap-handlers.js
   test/test-wat-gdi-palette.js
   test/test-gdi-migration-status.js
   test/test-gdi-public-api-status.js
@@ -148,7 +145,6 @@ UNIT=(
   test/test-paint-wallpaper-host.js
   test/test-region-window-client-rect.js
   test/test-wat-statusbar-grip.js
-  test/test-wat-font-metrics-reference.js
   test/test-wat-decoder-runaway.js
   test/test-wat-winsock.js
   test/test-vlan-wire.js
@@ -163,7 +159,6 @@ UNIT=(
   test/test-wat-gdi-geometry-handlers.js
   test/test-dib-dirty-sync.js
   test/test-mem-utils-dib-g2w.js
-  test/test-web-pinball-assets.js
   test/test-process-boot-yields.js
   test/test-worker-imports.js
   test/test-debug-midi.js
@@ -173,6 +168,7 @@ UNIT=(
   test/test-web-touch-input.js
   test/test-perf-hud-input.js
   test/test-web-fullscreen-consent.js
+  test/test-web-page-fullscreen.js
   test/test-single-app-mode.js
   test/test-mobile-keyboard.js
   test/test-page-script-globals.js
@@ -194,6 +190,46 @@ UNIT=(
   test/test-renderer-dialog-caption-drag.js
   test/test-renderer-shell-dialog.js
   test/test-renderer-multi-app-modal.js
+  # Recovered 2026-08-24: these standalone tests were present but absent from
+  # every tier. All pass as standalone Node entries; the Retina browser test
+  # additionally needs an environment that permits binding a localhost server.
+  test/test-debug-2d-scaling.js
+  test/test-debug-dropdown-manifests.js
+  test/test-delete-menu.js
+  test/test-diablo-font-sheet.js
+  test/test-directdraw-backbuffer-desc.js
+  test/test-directdraw-palette-format.js
+  test/test-directsound-play-cursor.js
+  test/test-expand-environment-strings.js
+  test/test-find-first-last-error.js
+  test/test-font-render-history.js
+  test/test-get-number-format.js
+  test/test-getclassname-controls.js
+  test/test-getclassname-superclass.js
+  test/test-global-alloc-reuse.js
+  test/test-is-char-alpha.js
+  test/test-iswindow-validity.js
+  test/test-lcmapstring-wat.js
+  test/test-listview-icon-mode.js
+  test/test-lookup-icon-id.js
+  test/test-map-view-of-file-ex.js
+  test/test-openfile-create.js
+  test/test-paint-desktop.js
+  test/test-presentation-filter.js
+  test/test-register-hotkey.js
+  test/test-retina-scale2x-web.js
+  test/test-security-descriptor.js
+  test/test-sh-change-notify.js
+  test/test-shell-desktop-zorder.js
+  test/test-shell-execute-launch.js
+  test/test-shell-window.js
+  test/test-sib-load8-handler.js
+  test/test-thread-resource-sync.js
+  test/test-vfs-persistence.js
+  test/test-win16-winexec.js
+  test/test-win32-dde-progman.js
+  test/test-win98-scm-probe.js
+  test/test-x86-16bit-upper-half.js
   # Recovered 2026-08-18: written, never listed here, so never run. All green
   # on the sweep that found them; see QUARANTINE for the ones that were not.
   test/test-aoe-span-trace-handler.js
@@ -205,13 +241,13 @@ UNIT=(
   test/test-ddraw-surface-dirty-rect.js
   test/test-defer-window-pos-visibility.js
   test/test-delphi-seh-mutated-chain.js
-  test/test-desktop-surface-color.js
   test/test-button-focus-notify.js
   test/test-def-dlg-proc.js
   test/test-dialog-idok-handled.js
   test/test-isdialogmessage-enter.js
   test/test-dialog-custom-dispatch.js
   test/test-end-dialog-lifecycle.js
+  test/test-sendmessagetimeout.js
   test/test-directdraw-cooperative-window.js
   test/test-directdraw-create-ex.js
   test/test-directdraw-mode-change-primary.js
@@ -224,14 +260,12 @@ UNIT=(
   test/test-launch-prefs-resolution.js
   test/test-d3dim-line-primitives.js
   test/test-d3dim-viewport-background-texture.js
-  test/test-wm-setcursor-on-show.js
   test/test-dx-blank-primary-holdover.js
   test/test-dx-present-window-placement.js
   test/test-dx-vtable-worker-sync.js
   test/test-disabled-dialog-controls.js
   test/test-duplicate-handle.js
   test/test-ext-text-out-wide.js
-  test/test-findreplace-matchcase-flags.js
   test/test-gdi-exttextout-clipping.js
   test/test-gdi-transparent-blt.js
   test/test-gdi-scroll-window-rect.js
@@ -270,6 +304,7 @@ UNIT=(
   test/test-system-metrics.js
   test/test-toolbar-insert.js
   test/test-treeview-scroll.js
+  test/test-treeview-two-controls.js
   test/test-v86-reference-paint-workflows.js
   test/test-vfs-legacy-hfile.js
   test/test-virtual-map-cross-instance.js
@@ -284,6 +319,16 @@ UNIT=(
   test/test-combobox.js
   test/test-render-combobox.js
   test/test-win16-v86-audit.js
+  # Repaired and recovered from quarantine 2026-08-24.
+  test/test-winhelp-wat-parser.js
+  test/test-wat-gdi-region.js
+  test/test-wat-gdi-benchmark.js
+  test/test-wat-gdi-bitmap-handlers.js
+  test/test-wat-font-metrics-reference.js
+  test/test-web-pinball-assets.js
+  test/test-desktop-surface-color.js
+  test/test-findreplace-matchcase-flags.js
+  test/test-v86-reference-harness.js
 )
 
 E2E=(
@@ -462,6 +507,7 @@ E2E=(
   test/test-winamp-audio.js
   test/test-winamp-eq-presets.js
   test/test-winamp-installers.js
+  test/test-winamp-visualizers.js
   test/test-wordpad-advanced-rtf.js
   test/test-wordpad-dialog-lifecycle.js
   test/test-wordpad-format-accelerators.js
@@ -501,7 +547,11 @@ E2E=(
   test/test-find-mouse-click.js
   test/test-liquid-war-candidate.js
   test/test-vlan-tetrinet.js
+  test/test-vlan-match.js
   test/test-combobox-pinball.js
+  test/test-wm-setcursor-on-show.js
+  test/test-wordpad-ole-roundtrip.js
+  test/test-wordpad-ole-delete-roundtrip.js
 )
 
 SMOKE=(
@@ -515,17 +565,7 @@ SMOKE=(
 # Every entry carries what it actually reports -- fix the cause, then move the
 # line up into UNIT or E2E. Reasons measured 2026-08-18.
 #
-# Harness drift: the test calls a host/renderer entry point that no longer
-# exists. Cheap to fix; the product is probably fine.
 QUARANTINE=(
-  # b2a93f7 added winhelp-freecell-default/-topics to apps.json without
-  # capturing their reviewed references; capture.js needs the Win98 v86 state
-  # off the network, and a reference nobody looked at is worse than none.
-  test/test-v86-reference-harness.js    # 2 manifest apps have no reviewed capture
-  test/test-vlan-match.js               # server now listens, then no progress in 400s on 3.0s of CPU
-  # OLE presentation data -- the known static-handler/IDataObject gap.
-  test/test-wordpad-ole-roundtrip.js    # saved RTF carries no DIB presentation
-  test/test-wordpad-ole-delete-roundtrip.js
 )
 
 # A test file missing from every array above does not fail, it just never runs.
@@ -556,7 +596,6 @@ TEST_HEAP_MB="${TEST_HEAP_MB:-2048}"
 # A test that never exits used to stall the whole suite indefinitely -- the
 # runner polls for finished slots and has no notion of one taking too long, so
 # a single hung child holds its slot forever and the summary never prints.
-# (test-vlan-match.js is in QUARANTINE for exactly that: "no progress in 400s".)
 # Every child now gets a wall-clock cap and is reported as TIMEOUT, which
 # counts as a failure -- a suite that stalls is a suite nobody waits for.
 # The cap is deliberately far above what any test needs (the slowest gameplay

@@ -221,10 +221,15 @@ function serveStatic(req, res, urlPath) {
     } : null;
     // The build output and the WAT sources change on every rebuild, and a
     // cached copy of either produces a confusing "my fix did nothing".
+    // no-store, not no-cache: no-cache still allows a stored copy and asks the
+    // browser to revalidate, and this server sends no ETag or Last-Modified to
+    // revalidate against. Nothing served here is worth caching.
     res.writeHead(200, Object.assign({
       'Content-Type': type,
       'Content-Length': st.size,
-      'Cache-Control': 'no-cache',
+      'Cache-Control': 'no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
     }, isolationHeaders || {}));
     if (req.method === 'HEAD') { res.end(); return; }
     fs.createReadStream(full).pipe(res)

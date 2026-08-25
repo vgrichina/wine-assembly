@@ -40,6 +40,10 @@
 //
 // --cpu=N applies Chrome's CPU throttling while preserving real browser audio
 // timing, which is useful for scheduler-sensitive game/audio failures.
+//
+// --lan=solo|local|cancel answers the virtual-LAN lobby a `lan:` app puts up
+// before it boots (default solo). Without it the launch waits on a button
+// nobody is there to click and the probe times out.
 
 const fs = require('fs');
 const http = require('http');
@@ -68,11 +72,22 @@ const STEPS = (opt('steps', '') || '')
   .filter(Boolean);
 const READY_MS = Number(opt('ready', 6000));
 const CPU_RATE = Number(opt('cpu', 1));
+// A LAN-capable app (lib/apps.js `lan:`) shows the vlan lobby before it boots
+// and the launch blocks on a button nobody clicks in a headless run, so the
+// probe used to time out waiting for runningApps. Answer it the way a person
+// would: solo | local ("Both players here") | cancel.
+const LAN_ANSWER = opt('lan', 'solo');
 // Headless Chrome runs with --disable-gpu by default, which sends presentation
 // down the 2D canvas paths. A real phone browser has WebGL and takes the GPU
 // paths instead, so bugs that only exist there (a viewport crop the shaders
 // ignore) are invisible without --gpu, which swaps in SwiftShader.
 const GPU = argv.includes('--gpu');
+// iPhone Safari exposes NO element Fullscreen API -- not requestFullscreen,
+// not the webkit spelling, on anything that is not a <video>. Chrome always
+// has it, so the only way to drive the fallback the page uses there is to take
+// the API away before any page script runs. --touch alone does not do this:
+// an emulated phone in Chrome still reports full fullscreen support.
+const NO_FULLSCREEN_API = argv.includes('--no-fullscreen-api');
 // Base origin to drive. Empty = serve this working tree over a temp server.
 const URL_BASE = (opt('url', '') || '').replace(/\/+$/, '');
 // A phone is a different page, not a smaller one: single-app mode, no taskbar,
@@ -90,6 +105,17 @@ const VIEWPORT = (() => {
   };
 })();
 const FINAL_EVAL = opt('eval', '');
+// --trace=dx,gdi turns on the same trace categories test/run.js exposes as
+// --trace-dx / --trace-gdi, inside the page. host.js hands
+// window.__waTraceCategories to lib/host-imports.js as ctx.trace, so the
+// browser prints the identical [dx]/[gdi] lines. --console-out=FILE captures
+// every console line the page emits (a traced run is far too chatty for the
+// terminal).
+const TRACE = (opt('trace', '') || '').split(',').map(s => s.trim()).filter(Boolean);
+const CONSOLE_OUT = opt('console-out', '');
+// --trace-api=Name1,Name2 is the page's --trace-api=NAMES: host.js already
+// reads window.__waTraceApiNames, this just fills it before the app launches.
+const TRACE_API = (opt('trace-api', '') || '').split(',').map(s => s.trim()).filter(Boolean);
 const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
 function mimeType(file) {
@@ -125,10 +151,15 @@ function startStaticServer() {
 
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
+// The on-screen desktop canvas. NOT `querySelector('canvas')`: #screen-present
+// (the GPU presentation target) comes first in the DOM and is display:none, so
+// its bounding rect is all zeroes -- mapping through it silently collapsed
+// every guest pixel to page (0,0) and the clicks landed on BODY.
 // Guest canvas pixel -> page coordinate, through the live bounding rect.
 async function toPage(page, gx, gy) {
   return page.evaluate(([x, y]) => {
-    const c = document.querySelector('canvas');
+    const c = document.getElementById('screen') ||
+      [...document.querySelectorAll('canvas')].find(el => el.getBoundingClientRect().width > 0);
     const r = c.getBoundingClientRect();
     // Exclusive fullscreen and single-app mode present a crop of the desktop
     // canvas scaled to the display, so guest pixels are not canvas pixels.
@@ -149,7 +180,8 @@ async function toPage(page, gx, gy) {
 }
 
 const readCursor = page => page.evaluate(() => {
-  const c = document.querySelector('canvas');
+  const c = document.getElementById('screen') ||
+    [...document.querySelectorAll('canvas')].find(el => el.getBoundingClientRect().width > 0);
   const inline = c.style.cursor;
   const computed = getComputedStyle(c).cursor;
   // A custom cursor is a long data: URL; name it rather than printing 30KB.
@@ -183,12 +215,43 @@ async function main() {
       await cdp.send('Emulation.setCPUThrottlingRate', { rate: CPU_RATE });
     }
     await page.setViewport(VIEWPORT);
-    page.on('pageerror', e => problems.push(String(e)));
+    // Stack, not just the message: a bare "Cannot read properties of null"
+    // names neither the file nor the caller, which is most of what you need.
+    page.on('pageerror', e => problems.push((e && e.stack) || String(e)));
+    const consoleLines = [];
     page.on('console', m => {
       const t = m.text();
+      if (CONSOLE_OUT) consoleLines.push(t);
       if (/UNIMPLEMENTED API:|RuntimeError|LinkError|crashed|FATAL:/i.test(t)) problems.push(t);
     });
+    if (CONSOLE_OUT) {
+      const flush = () => fs.writeFileSync(CONSOLE_OUT, consoleLines.join('\n') + '\n');
+      setInterval(flush, 2000).unref();
+      process.on('exit', flush);
+    }
+    if (TRACE.length || TRACE_API.length) {
+      await page.evaluateOnNewDocument((cats, apis) => {
+        if (cats.length) window.__waTraceCategories = new Set(cats);
+        if (apis.length) window.__waTraceApiNames = new Set(apis);
+      }, TRACE, TRACE_API);
+    }
+    if (NO_FULLSCREEN_API) {
+      await page.evaluateOnNewDocument(() => {
+        for (const name of ['requestFullscreen', 'webkitRequestFullscreen',
+                            'mozRequestFullScreen', 'msRequestFullscreen']) {
+          delete Element.prototype[name];
+        }
+      });
+    }
     await page.goto(`${base}/index.html${QUERY}`, { waitUntil: 'load', timeout: 60000 });
+    // Start from an empty profile, then RELOAD. lib/storage.js seeds its
+    // default registry (RCT's install Path, Plus!98 MediaDirectory, ...) once
+    // at script load, so clearing localStorage after the page is up deletes
+    // seeds nothing puts back: RCT then reads an empty install path, writes
+    // its scenario index to the drive root and dies in its own GSK Error
+    // Trapper -- a failure no real visitor can reach.
+    await page.evaluate(() => { try { localStorage.clear(); } catch (_) {} });
+    await page.reload({ waitUntil: 'load', timeout: 60000 });
     await page.waitForFunction('typeof launchApp === "function"', { timeout: 60000 });
 
     console.log(`launching ${APP} ...`);
@@ -200,7 +263,6 @@ async function main() {
         o.value = app; o.textContent = app; sel.appendChild(o);
       }
       stopAllApps();
-      localStorage.clear();
       sel.value = app;
     }, APP);
     // Use a trusted browser gesture for launch. AudioContext.resume() is
@@ -232,6 +294,23 @@ async function main() {
       await wait(80);
       await page.mouse.click(launchPoint.x, launchPoint.y);
     }
+    // The lobby appears asynchronously (it is awaited inside launchApp), so
+    // poll for it rather than assuming it is up on the next tick.
+    for (let i = 0; i < 60; i++) {
+      const answered = await page.evaluate(answer => {
+        const overlay = document.querySelector('.vln-lobby');
+        if (!overlay) return null;
+        const buttons = [...overlay.querySelectorAll('button')];
+        const want = { solo: /play solo/i, local: /both players/i, cancel: /cancel/i }[answer];
+        const button = want && buttons.find(b => want.test(b.textContent || ''));
+        if (!button) return `no ${answer} button (saw: ${buttons.map(b => b.textContent).join(', ')})`;
+        button.click();
+        return `clicked "${button.textContent}"`;
+      }, LAN_ANSWER);
+      if (answered) { console.log(`lan lobby: ${answered}`); break; }
+      await wait(250);
+    }
+
     await page.waitForFunction(
       'typeof runningApps !== "undefined" && runningApps.length > 0 && typeof sharedRenderer !== "undefined" && sharedRenderer',
       { timeout: 90000 });

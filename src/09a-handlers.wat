@@ -939,6 +939,17 @@
         (global.set $eax (i32.load (i32.add (global.get $DLL_TABLE) (i32.mul (local.get $tmp) (i32.const 32)))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
         (return)))
+    ;; LoadLibrary of the running program is a handle request, not a load:
+    ;; Windows finds the module already mapped and returns its base with the
+    ;; reference count bumped. Winamp's NSIS installer takes this path -- its
+    ;; CDDB plug-in asks for the path GetModuleFileName just gave it -- and
+    ;; loading a second copy of the EXE image runs its entry point again from
+    ;; a worker thread, which is where the extraction used to die.
+    (if (call $dll_name_match (local.get $arg0) (global.get $exe_name_wa))
+      (then
+        (global.set $eax (global.get $image_base))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
     ;; Not already loaded — check if DLL file exists in VFS
     (if (call $host_has_dll_file (call $g2w (local.get $arg0)))
       (then
@@ -2072,6 +2083,34 @@
       (i32.const 0) (local.get $wide))
     (local.get $n))
 
+  ;; Copy a host-recorded loaded-module path from guest memory. The loader
+  ;; records the actual LoadLibrary spelling so self-extractors which validate
+  ;; their own directory (CTL3D32 is a common example) do not see the EXE path.
+  (func $loaded_module_file_name
+      (param $path_g i32) (param $buf_g i32) (param $size i32) (param $wide i32)
+      (result i32)
+    (local $n i32) (local $i i32) (local $step i32)
+    (if (i32.or (i32.eqz (local.get $path_g)) (i32.eqz (local.get $buf_g)))
+      (then (return (i32.const 0))))
+    (local.set $step (select (i32.const 2) (i32.const 1) (local.get $wide)))
+    (local.set $n (call $guest_strlen (local.get $path_g)))
+    ;; Match the existing EXE/static-module behavior by reserving a terminator.
+    (if (i32.and (i32.gt_u (local.get $size) (i32.const 0))
+                 (i32.ge_u (local.get $n) (local.get $size)))
+      (then (local.set $n (i32.sub (local.get $size) (i32.const 1)))))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+      (call $store_char
+        (i32.add (local.get $buf_g) (i32.mul (local.get $i) (local.get $step)))
+        (call $gl8 (i32.add (local.get $path_g) (local.get $i)))
+        (local.get $wide))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (call $store_char
+      (i32.add (local.get $buf_g) (i32.mul (local.get $n) (local.get $step)))
+      (i32.const 0) (local.get $wide))
+    (local.get $n))
+
   ;; One character to a guest address, ANSI or wide.
   (func $store_char (param $p_g i32) (param $ch i32) (param $wide i32)
     (if (local.get $wide)
@@ -2079,7 +2118,7 @@
       (else (call $gs8 (local.get $p_g) (local.get $ch)))))
 
   (func $handle_GetModuleFileNameA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $idx i32)
+    (local $idx i32) (local $path_g i32)
     (local.set $idx (call $static_sys_dll_from_handle (local.get $arg0)))
     (if (local.get $idx)
       (then
@@ -2087,6 +2126,23 @@
           (i32.sub (local.get $idx) (i32.const 1))
           (local.get $arg1) (local.get $arg2) (i32.const 0)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (local.set $idx (i32.const 0))
+    (block $not_loaded (loop $scan_loaded
+      (br_if $not_loaded (i32.ge_u (local.get $idx) (global.get $dll_count)))
+      (if (i32.eq (local.get $arg0)
+            (i32.load (i32.add (global.get $DLL_TABLE)
+              (i32.mul (local.get $idx) (i32.const 32)))))
+        (then
+          (local.set $path_g (i32.load (i32.add (global.get $DLL_PATH_TABLE)
+            (i32.shl (local.get $idx) (i32.const 2)))))
+          (if (local.get $path_g)
+            (then
+              (global.set $eax (call $loaded_module_file_name
+                (local.get $path_g) (local.get $arg1) (local.get $arg2) (i32.const 0)))
+              (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+              (return)))))
+      (local.set $idx (i32.add (local.get $idx) (i32.const 1)))
+      (br $scan_loaded)))
     (global.set $eax (call $module_file_name (local.get $arg1) (local.get $arg2) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
   )
@@ -3158,6 +3214,17 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
+  ;; GetWindowWord(hWnd, nIndex) → WORD. Negative indices and the aligned
+  ;; window-extra offsets used by Win32 applications share GetWindowLong's
+  ;; backing state; return its low word. Both APIs are stdcall(2), so the long
+  ;; handler also performs the correct stack cleanup.
+  (func $handle_GetWindowWord (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_GetWindowLongA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+  )
+
   ;; 102: SetWindowTextA
   (func $handle_SetWindowTextA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $wa i32) (local $len i32)
@@ -3611,6 +3678,10 @@
     ;; MFC also calls EndDialog on dialogs created through CreateDialogParamA.
     ;; Those modeless dialogs have no CACA0004 pump, so do not poison the
     ;; global modal-completion flags unless this hwnd is the active modal.
+    ;; Both tests read the shared mirrors, not this instance's own
+    ;; $dlg_pump_hwnd/$dlg_ended: the pump lives on main, and an NSIS installer
+    ;; calls EndDialog from its extraction thread, whose private copies are 0.
+    ;;
     ;; First EndDialog wins. Real USER only records the result and lets the
     ;; DialogBox loop destroy the window once the DLGPROC has returned, so the
     ;; WM_DESTROY the app then sees is delivered *after* the result has been
@@ -3620,9 +3691,9 @@
     ;; actually chose, and the caller would take the cancel path and exit.
     (if (i32.and
           (i32.and
-            (i32.ne (global.get $dlg_pump_hwnd) (i32.const 0))
-            (i32.eq (local.get $arg0) (global.get $dlg_pump_hwnd)))
-          (i32.eqz (global.get $dlg_ended)))
+            (i32.ne (i32.load (global.get $SHARED_DLG_PUMP_HWND)) (i32.const 0))
+            (i32.eq (local.get $arg0) (i32.load (global.get $SHARED_DLG_PUMP_HWND))))
+          (i32.eqz (i32.load (global.get $SHARED_DLG_ENDED))))
       (then
         (global.set $dlg_ended (i32.const 1))
         (global.set $dlg_result (local.get $arg1))
@@ -4111,6 +4182,7 @@
     ;; CreateDialogParamA can't hijack the pump's hwnd-less fallback)
     (global.set $dlg_hwnd (local.get $hwnd))
     (global.set $dlg_pump_hwnd (local.get $hwnd))
+    (i32.store (global.get $SHARED_DLG_PUMP_HWND) (local.get $hwnd))
     (global.set $dlg_ended (i32.const 0))
     (global.set $dlg_result (i32.const 0))
     (i32.store (global.get $SHARED_DLG_ENDED) (i32.const 0))
@@ -4214,6 +4286,16 @@
     (local.set $hwnd (global.get $next_hwnd))
     (call $handle_DialogBoxParamA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
     (call $wnd_unicode_set (local.get $hwnd) (i32.const 1))
+  )
+
+  ;; DialogBoxIndirectParamA uses the same modal creation/pump as
+  ;; DialogBoxParamA, but arg1 already points at a DLGTEMPLATE rather than an
+  ;; RT_DIALOG resource name. $dlg_load consumes and clears this one-shot.
+  (func $handle_DialogBoxIndirectParamA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $dlg_indirect_template_ptr (local.get $arg1))
+    (call $handle_DialogBoxParamA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
  139: OffsetRect — STUB: unimplemented
@@ -4624,10 +4706,62 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
   )
 
-  ;; 913: FindWindowExA(hwndParent, hwndChildAfter, lpszClass, lpszWindow) — return NULL
+  ;; One candidate against FindWindowEx's two filters. Either guest pointer
+  ;; may be 0, which means "any". A class is matched through the class table
+  ;; rather than by string, so the MAKEINTATOM form of a class key selects the
+  ;; same record its name does; a title is compared case-insensitively against
+  ;; the window's stored text, the way USER's own comparison does.
+  (func $find_window_matches (param $hwnd i32) (param $class_g i32) (param $title_g i32)
+                             (result i32)
+    (local $slot i32) (local $title_wa i32)
+    (if (local.get $class_g)
+      (then
+        (local.set $slot (call $class_find_slot
+          (select (local.get $class_g) (call $g2w (local.get $class_g))
+                  (i32.lt_u (local.get $class_g) (i32.const 0x10000)))))
+        (if (i32.lt_s (local.get $slot) (i32.const 0)) (then (return (i32.const 0))))
+        (if (i32.ne (local.get $slot) (call $wnd_get_class_slot (local.get $hwnd)))
+          (then (return (i32.const 0))))))
+    (if (local.get $title_g)
+      (then
+        (local.set $title_wa (call $title_table_get_ptr (local.get $hwnd)))
+        (if (i32.eqz (local.get $title_wa)) (then (return (i32.const 0))))
+        (if (i32.eqz (call $guest_ansi_eq_wasm_ci
+                       (local.get $title_g) (local.get $title_wa)))
+          (then (return (i32.const 0))))))
+    (i32.const 1))
+
+  ;; 913: FindWindowExA(hwndParent, hwndChildAfter, lpszClass, lpszWindow)
+  ;; Walks hwndParent's children in creation order, resuming after
+  ;; hwndChildAfter when one is given. Winamp's "Winamp Gen" frame locates the
+  ;; embedded plug-in window it has to size with exactly this call --
+  ;; FindWindowEx(parent, 0, 0, 0) from its WM_SIZE/WM_SHOWWINDOW arm -- so
+  ;; while this answered NULL every embedded plug-in kept the 100x100 box it
+  ;; was created with instead of being fitted to the frame's client area. AVS
+  ;; was the visible case: its visualisation drew as a small square over the
+  ;; window's titlebar.
+  ;;
+  ;; A NULL parent means "search top-level windows". That half stays
+  ;; unimplemented and answers NULL, matching $handle_FindWindowA: it is the
+  ;; form single-instance checks use, and nothing needs it yet.
   (func $handle_FindWindowExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $cur i32)
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))  ;; stdcall, 4 args
+    (if (i32.eqz (local.get $arg0)) (then (return)))
+    (local.set $cur (select
+      (call $wnd_find_next_sibling (local.get $arg1))
+      (call $wnd_find_first_child (local.get $arg0))
+      (i32.ne (local.get $arg1) (i32.const 0))))
+    (block $done (loop $scan
+      (br_if $done (i32.eqz (local.get $cur)))
+      (if (call $find_window_matches
+            (local.get $cur) (local.get $arg2) (local.get $arg3))
+        (then
+          (global.set $eax (local.get $cur))
+          (return)))
+      (local.set $cur (call $wnd_find_next_sibling (local.get $cur)))
+      (br $scan)))
   )
 
   ;; 190: BringWindowToTop(hWnd) — 1 arg stdcall
@@ -5153,6 +5287,12 @@
   ;; 223: RegCloseKey(hKey) — 1 arg stdcall
   (func $handle_RegCloseKey (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $host_reg_close_key (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; RegFlushKey(hKey) — 1 arg stdcall
+  (func $handle_RegFlushKey (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_reg_flush_key (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -5987,7 +6127,7 @@
 
   ;; 284: GetModuleFileNameW — write L"C:\<exe_name>\0" as wide string
   (func $handle_GetModuleFileNameW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $idx i32)
+    (local $idx i32) (local $path_g i32)
     (local.set $idx (call $static_sys_dll_from_handle (local.get $arg0)))
     (if (local.get $idx)
       (then
@@ -5995,6 +6135,23 @@
           (i32.sub (local.get $idx) (i32.const 1))
           (local.get $arg1) (local.get $arg2) (i32.const 1)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (local.set $idx (i32.const 0))
+    (block $not_loaded (loop $scan_loaded
+      (br_if $not_loaded (i32.ge_u (local.get $idx) (global.get $dll_count)))
+      (if (i32.eq (local.get $arg0)
+            (i32.load (i32.add (global.get $DLL_TABLE)
+              (i32.mul (local.get $idx) (i32.const 32)))))
+        (then
+          (local.set $path_g (i32.load (i32.add (global.get $DLL_PATH_TABLE)
+            (i32.shl (local.get $idx) (i32.const 2)))))
+          (if (local.get $path_g)
+            (then
+              (global.set $eax (call $loaded_module_file_name
+                (local.get $path_g) (local.get $arg1) (local.get $arg2) (i32.const 1)))
+              (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+              (return)))))
+      (local.set $idx (i32.add (local.get $idx) (i32.const 1)))
+      (br $scan_loaded)))
     (global.set $eax (call $module_file_name (local.get $arg1) (local.get $arg2) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
   )
@@ -6101,8 +6258,8 @@
       ;; the modal pump; destroying the HWND alone leaves the guest waiting
       ;; forever in the CACA0004 loop.
       (if (i32.and
-            (i32.ne (global.get $dlg_pump_hwnd) (i32.const 0))
-            (i32.eq (local.get $arg0) (global.get $dlg_pump_hwnd)))
+            (i32.ne (i32.load (global.get $SHARED_DLG_PUMP_HWND)) (i32.const 0))
+            (i32.eq (local.get $arg0) (i32.load (global.get $SHARED_DLG_PUMP_HWND))))
         (then
           (global.set $dlg_ended (i32.const 1))
           (global.set $dlg_result (i32.const 2)) ;; IDCANCEL
@@ -10700,7 +10857,18 @@ SetColorAdjustment — validate and copy complete per-DC state.
         ;; render. Our renderer paints WAT-native controls out of band, and
         ;; avoiding this chain keeps NSIS treeview paint from re-entering while
         ;; its dialog procedure is unwinding.
-        (if (i32.eq (local.get $arg2) (i32.const 0x000F))
+        ;;
+        ;; But "out of band" stops being true the moment the app owns the
+        ;; WNDPROC: $paint_drain_native_control_paints deliberately leaves a
+        ;; subclassed control's WM_PAINT for the pump, precisely so the app's
+        ;; proc runs. If that proc then chains here for the built-in look --
+        ;; which is what $ctrl_is_subclassed documents as the way to get it --
+        ;; swallowing the message means nobody paints at all. WinHelp's three
+        ;; command buttons are stock "button" children subclassed to one shared
+        ;; proc, and its whole button bar came out flat grey.
+        (if (i32.and
+              (i32.eq (local.get $arg2) (i32.const 0x000F))
+              (i32.eqz (call $ctrl_is_subclassed (local.get $arg1))))
           (then
             (global.set $eax (i32.const 0))
             (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
@@ -12269,6 +12437,24 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
       (br $lp)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; OemToCharBuffA(lpSrc, lpDst, cchDstLength) — the Win98 US codepage
+  ;; conversion is byte-identical for the installer's ASCII path buffer. The
+  ;; Buff variant copies exactly cchDstLength bytes and does not stop at NUL.
+  (func $handle_OemToCharBuffA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $src i32) (local $dst i32) (local $i i32)
+    (local.set $src (call $g2w (local.get $arg0)))
+    (local.set $dst (call $g2w (local.get $arg1)))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (local.get $arg2)))
+      (i32.store8
+        (i32.add (local.get $dst) (local.get $i))
+        (i32.load8_u (i32.add (local.get $src) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; 697: ??1type_info@@UAE@XZ — soft-stub — STUB: unimplemented

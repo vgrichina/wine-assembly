@@ -496,6 +496,94 @@ async function main() {
     addr16Eax, e.get_eax());
 
   // ================================================================
+  // EFLAGS round trip through pushfd/popfd
+  // ================================================================
+  //
+  // The interpreter models six flags lazily and used to synthesise EFLAGS from
+  // those alone, so every other bit read back as zero. That silently breaks the
+  // standard "do we have CPUID?" probe, which toggles bit 21 (ID), pushes the
+  // flags and compares: the toggle never survived, so programs concluded the
+  // CPU predates CPUID. Allegro does this, and it is why Liquid War never ran
+  // the cpuid its own binary contains.
+
+  // pushfd; pop eax; mov edx,eax; xor eax,0x200000; push eax; popfd;
+  // pushfd; pop eax; xor eax,edx  — nonzero iff the ID bit toggled.
+  runCode([0x9C, 0x58, 0x89, 0xC2, 0x35, ...le32(0x200000), 0x50, 0x9D,
+           0x9C, 0x58, 0x31, 0xD0]);
+  test('EFLAGS bit 21 (ID) survives a pushfd/popfd round trip',
+    e.get_eax() >>> 0, 0x200000);
+
+  // Same shape on an unmodelled bit that is not the ID bit: bit 18 (AC).
+  runCode([0x9C, 0x58, 0x89, 0xC2, 0x35, ...le32(0x40000), 0x50, 0x9D,
+           0x9C, 0x58, 0x31, 0xD0]);
+  test('EFLAGS bit 18 (AC) survives a pushfd/popfd round trip',
+    e.get_eax() >>> 0, 0x40000);
+
+  // Restoring flags must still restore the ones we do model: stc; pushfd;
+  // clc; popfd; setc al.
+  runCode([0xF9, 0x9C, 0xF8, 0x9D, 0x0F, 0x92, 0xC0]);
+  test('popfd restores CF from the pushed word', e.get_eax() & 0xFF, 1);
+
+  // ...and the arithmetic flags must not be frozen by the extra-bit store:
+  // popfd a word with ZF set, then add 1 to a non-zero register and check ZF
+  // reflects the add, not the popped word. mov eax,0x40; push eax; popfd;
+  // mov ecx,5; add ecx,1; setz al.
+  runCode([0xB8, ...le32(0x40), 0x50, 0x9D, 0xB9, ...le32(5), 0x83, 0xC1, 0x01,
+           0x0F, 0x94, 0xC0]);
+  test('a later ALU op still owns ZF after popfd', e.get_eax() & 0xFF, 0);
+
+  // PF is reported in the pushed word, and agrees with JP: 0x03 has two bits
+  // set, so parity is even. mov al,1; add al,2; pushfd; pop eax; and eax,4.
+  runCode([0xB0, 0x01, 0x04, 0x02, 0x9C, 0x58, 0x83, 0xE0, 0x04]);
+  test('pushfd reports PF (even parity)', e.get_eax() >>> 0, 4);
+
+  // 0x07 has three bits set — odd parity, PF clear.
+  runCode([0xB0, 0x01, 0x04, 0x06, 0x9C, 0x58, 0x83, 0xE0, 0x04]);
+  test('pushfd reports PF (odd parity)', e.get_eax() >>> 0, 0);
+
+  // ================================================================
+  // RDTSC and the CPUID feature word
+  // ================================================================
+  //
+  // RDTSC used to be decoded as mov eax,0 / mov edx,0. The value itself is not
+  // what matters -- the usual idiom is two reads subtracted, so a repeat is a
+  // divide-by-zero or an infinite calibration spin. These assert the counter
+  // moves, and that the feature word only claims instructions we execute.
+
+  // rdtsc; mov esi,eax; mov edi,edx; rdtsc — second read into eax/edx.
+  runCode([0x0F, 0x31, 0x89, 0xC6, 0x89, 0xD7, 0x0F, 0x31]);
+  const tsc1 = e.get_esi() >>> 0, tsc1hi = e.get_edi() >>> 0;
+  const tsc2 = e.get_eax() >>> 0, tsc2hi = e.get_edx() >>> 0;
+  test('rdtsc advances between two reads',
+    tsc2hi > tsc1hi || (tsc2hi === tsc1hi && tsc2 > tsc1), true);
+  test('rdtsc is non-zero', tsc1 !== 0 || tsc1hi !== 0, true);
+
+  // cpuid leaf 0 → "GenuineIntel" in EBX/EDX/ECX.
+  runCode([0x31, 0xC0, 0x0F, 0xA2]);
+  test('cpuid leaf 0 EBX = "Genu"', e.get_ebx() >>> 0, 0x756E6547);
+  test('cpuid leaf 0 EDX = "ineI"', e.get_edx() >>> 0, 0x49656E69);
+  test('cpuid leaf 0 ECX = "ntel"', e.get_ecx() >>> 0, 0x6C65746E);
+  test('cpuid leaf 0 reports leaf 1 as the max', e.get_eax() >>> 0, 1);
+
+  // cpuid leaf 1 → signature + features. Each asserted bit names something the
+  // interpreter implements; SSE stays clear so the MMX-extension opcodes we do
+  // not decode stay unreachable.
+  runCode([0xB8, ...le32(1), 0x0F, 0xA2]);
+  const feat = e.get_edx() >>> 0;
+  const family = (e.get_eax() >>> 8) & 0xF;
+  test('cpuid leaf 1 reports family 6 (CMOV is a family 6 addition)', family, 6);
+  test('cpuid advertises FPU', feat & 1, 1);
+  test('cpuid advertises TSC now that RDTSC is real', (feat >>> 4) & 1, 1);
+  test('cpuid advertises CX8 (CMPXCHG8B)', (feat >>> 8) & 1, 1);
+  test('cpuid advertises CMOV', (feat >>> 15) & 1, 1);
+  test('cpuid advertises MMX', (feat >>> 23) & 1, 1);
+  test('cpuid does not advertise SSE', (feat >>> 25) & 1, 0);
+
+  // Extended leaves must stay absent — that is what denies 3DNow.
+  runCode([0xB8, ...le32(0x80000000), 0x0F, 0xA2]);
+  test('cpuid reports no extended leaves', e.get_eax() >>> 0, 0);
+
+  // ================================================================
   // Sized ALU with a memory operand — flags come from the operand width
   // ================================================================
   // The register forms mask the result to 8/16 bits before publishing flags;

@@ -29,9 +29,21 @@
       color: #000;
       display: flex;
       flex-direction: column;
+      /* 100vh on iOS is the LARGE viewport -- the height the page would have
+         if Safari's toolbars were hidden, which they are not. So the bottom
+         ~60-90px of this page has always been behind the URL bar and the tab
+         bar: the last row of desktop icons, and anything anchored to the
+         bottom of the screen. Worse, the desktop grid was then given more
+         height than it could show, so it never overflowed and never scrolled
+         -- the icons were not below the fold, they were behind the browser.
+         dvh is the viewport you can actually see.
+         Kept off a running app on purpose: dvh follows the toolbars both
+         ways, and a guest must not get a display resize because someone
+         swiped. page-fullscreen does its own dvh sizing and pins it. */
       height: 100vh;
       overflow: hidden;
     }
+    body:not(.app-running) { height: 100dvh; }
     #shell {
       flex: 1;
       min-height: 0;
@@ -321,6 +333,25 @@
       z-index: 1;
       transform-origin: top left;
     }
+    /* Which build am I looking at? A phone gives you no way to ask, and a
+       stale page is indistinguishable from a broken one -- so the desktop
+       says, the way an evaluation copy of Windows did. Filled from
+       build-info.js, which the deploy tool writes; absent locally, where it
+       reads "dev". */
+    #build-stamp { display: none; }
+    body.no-debug:not(.app-running) #build-stamp {
+      display: block;
+      position: absolute;
+      right: 8px;
+      bottom: 8px;
+      z-index: 4;
+      color: rgba(255, 255, 255, 0.55);
+      font: 10px/1.3 "MS Sans Serif", Tahoma, sans-serif;
+      text-align: right;
+      text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.5);
+      pointer-events: none;
+      user-select: none;
+    }
     .desktop-icon {
       pointer-events: auto;
       width: 80px;
@@ -370,6 +401,29 @@
     }
     body.keyboard-open { overscroll-behavior: none; }
     body.single-app.app-running #desktop-icons { display: none; }
+    /* A phone desktop runs out of screen. 32 icons at 84px rows is eight rows,
+       about 700px, and the grid is sized to the guest screen -- so on a 664pt
+       phone the bottom row simply cannot be reached, and every app we add
+       makes it worse. Let the grid scroll itself.
+       It has to come out over the canvas to do it: the canvas sits on top and
+       preventDefaults touchstart to forward taps down to the icons, which
+       eats the scroll gesture. While no app is running there is nothing on
+       that canvas but the desktop background, so the grid can own the touches
+       outright -- and the moment one launches the grid is display:none again
+       and the guest gets them all back. */
+    body.single-app:not(.app-running) #desktop-icons {
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
+      pointer-events: auto;
+      z-index: 3;
+      scrollbar-width: thin;
+    }
+    body.single-app:not(.app-running) #desktop-icons::-webkit-scrollbar { width: 6px; }
+    body.single-app:not(.app-running) #desktop-icons::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.35);
+      border-radius: 3px;
+    }
     /* Between the click and the app's first window nothing moves: the PE, the
        data files and the DLL graph are all being fetched, and the only sign of
        it is status text in the debug toolbar, which the live site hides. This
@@ -419,7 +473,10 @@
     body.no-debug.exclusive-fullscreen #content,
     body.no-debug.exclusive-fullscreen #screen-wrap {
       width: 100vw;
+      /* Same trap as on body: 100vh puts the bottom of a full-screen game
+         behind Safari's tab bar. */
       height: 100vh;
+      height: 100dvh;
       margin: 0;
       padding: 0;
       border: 0;
@@ -480,6 +537,178 @@
       width: 100% !important;
       height: 100% !important;
       min-height: 0;
+    }
+    /* Page fullscreen: the fallback for a browser with no Fullscreen API.
+       iPhone Safari has none at all -- requestFullscreen and
+       webkitRequestFullscreen are both undefined on an element there (only a
+       <video> can go fullscreen), so the consent button had nothing to call
+       and did nothing at all. This mode gives up every pixel of *our* chrome
+       instead and sizes the app to the visible viewport.
+
+       100dvh, not 100vh: on iOS 100vh is the tall URL-bar-hidden viewport, so
+       a canvas sized to it runs off the bottom of the screen behind Safari's
+       toolbar. dvh follows the toolbars as they collapse and expand. Safari's
+       own bars cannot be retracted from script -- only real fullscreen or an
+       installed home-screen app removes those. */
+    body.page-fullscreen,
+    body.page-fullscreen #shell,
+    body.page-fullscreen #content,
+    body.page-fullscreen #screen-wrap {
+      width: 100vw;
+      height: 100vh;
+      height: 100dvh;
+      max-width: none;
+      max-height: none;
+      margin: 0;
+      padding: 0;
+      border: 0;
+      background: #000;
+    }
+    body.page-fullscreen { overflow: hidden; }
+    body.page-fullscreen #screen-wrap {
+      position: fixed;
+      inset: 0;
+      flex-direction: column;
+    }
+    body.page-fullscreen #titlebar,
+    body.page-fullscreen #toolbar,
+    body.page-fullscreen #log,
+    body.page-fullscreen #taskbar,
+    body.page-fullscreen #debug-peek,
+    body.page-fullscreen #desktop-icons,
+    body.page-fullscreen #browser-fullscreen-consent { display: none !important; }
+    body.page-fullscreen #screen-canvas-stack {
+      flex: 1 1 0;
+      width: 100%;
+      height: 0;
+      min-height: 0;
+    }
+    body.page-fullscreen #screen-canvas-stack canvas {
+      position: absolute !important;
+      inset: 0 !important;
+      width: 100% !important;
+      height: 100% !important;
+    }
+    body.page-fullscreen canvas {
+      position: relative !important;
+      inset: auto !important;
+      flex: 1 1 0;
+      min-height: 0;
+      width: 100% !important;
+      height: 0 !important;
+      max-width: none !important;
+      max-height: none !important;
+    }
+    /* The one control left. A phone has no Escape key and the app owns every
+       tap on the canvas, so without this there is no way back out. Sits inside
+       the safe area so the notch and the home indicator never cover it. */
+    #page-fullscreen-exit { display: none; }
+    body.page-fullscreen #page-fullscreen-exit {
+      display: block;
+      position: fixed;
+      top: calc(4px + env(safe-area-inset-top));
+      right: calc(4px + env(safe-area-inset-right));
+      z-index: 40;
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      color: #fff;
+      background: rgba(0, 0, 0, 0.45);
+      border: 1px solid rgba(255, 255, 255, 0.5);
+      border-radius: 15px;
+      font: 14px/1 sans-serif;
+      opacity: 0.5;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    body.page-fullscreen #page-fullscreen-exit:active { opacity: 1; }
+    /* Safari's own toolbars are the one thing script cannot take away. Say so
+       once, name the thing that does (Add to Home Screen runs the manifest's
+       standalone display with no browser chrome at all), and get out of the
+       way -- a hint that stays is just more chrome. */
+    #page-fullscreen-hint { display: none; }
+    body.page-fullscreen #page-fullscreen-hint {
+      display: block;
+      position: fixed;
+      left: 50%;
+      bottom: calc(10px + env(safe-area-inset-bottom));
+      transform: translateX(-50%);
+      z-index: 40;
+      max-width: 84vw;
+      padding: 6px 12px;
+      color: #fff;
+      background: rgba(0, 0, 0, 0.6);
+      border-radius: 12px;
+      font: 12px/1.35 sans-serif;
+      text-align: center;
+      pointer-events: none;
+      opacity: 1;
+      transition: opacity 600ms linear;
+    }
+    body.page-fullscreen #page-fullscreen-hint.faded { opacity: 0; }
+    /* Scroll-to-collapse: the only way to get Safari's own bars off an iPhone
+       short of installing the page. Safari retracts the URL bar on a
+       user-initiated downward scroll of a document that genuinely overflows,
+       and there is no script call that asks for it. Two things stop that
+       here: the page is exactly one viewport tall, and the canvas swallows
+       every touch (it preventDefaults to route them to the guest). So this
+       mode gives the document a spacer taller than the viewport, and a gutter
+       to start the gesture on that is NOT the canvas.
+
+       The gutter is not permanent. It is on screen only while a collapse is
+       still available; once the bars are down -- visible as innerHeight
+       jumping by their height -- it unmounts and the canvas is PINNED to the
+       taller size, so a stray swipe back up cannot resize the guest a second
+       time. The spacer stays: removing the overflow can snap the bars back. */
+    #scroll-collapse-spacer, #scroll-collapse-gutter { display: none; }
+    body.scroll-collapse { overflow: visible; }
+    body.scroll-collapse #scroll-collapse-spacer {
+      display: block;
+      width: 1px;
+      /* body is a flex column, so a plain height here would be shrunk away to
+         nothing by #shell's flex:1 and the document would not overflow at all
+         -- which is the one thing this element exists to do. */
+      flex: 0 0 auto;
+      height: calc(100dvh + 76px);
+      min-height: calc(100dvh + 76px);
+      pointer-events: none;
+    }
+    body.scroll-collapse:not(.bars-collapsed) #scroll-collapse-gutter {
+      display: flex;
+      position: fixed;
+      top: env(safe-area-inset-top);
+      left: 0;
+      /* Clear of the exit chip (30px at right:4px). A strip that covers the
+         only way out of full screen is worse than no strip. */
+      right: calc(40px + env(safe-area-inset-right));
+      height: 38px;
+      z-index: 39;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      color: #fff;
+      background: linear-gradient(rgba(0, 0, 0, 0.75), rgba(0, 0, 0, 0.25));
+      font: 12px/1 sans-serif;
+      text-shadow: 0 1px 2px #000;
+      /* pan-y is the whole point: this strip hands the gesture to the page
+         scroller instead of to the guest. */
+      touch-action: pan-y;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+    body.scroll-collapse:not(.bars-collapsed) #scroll-collapse-gutter .nudge {
+      animation: gutter-nudge 1.6s ease-in-out infinite;
+    }
+    @keyframes gutter-nudge {
+      0%, 100% { transform: translateY(2px); opacity: 0.55; }
+      50% { transform: translateY(-3px); opacity: 1; }
+    }
+    /* Pinned: hold the height the bars gave us, whatever dvh says now. */
+    body.page-fullscreen.bars-collapsed,
+    body.page-fullscreen.bars-collapsed #shell,
+    body.page-fullscreen.bars-collapsed #content,
+    body.page-fullscreen.bars-collapsed #screen-wrap {
+      height: var(--pinned-vh, 100dvh);
     }
     #screen-wrap:fullscreen {
       position: fixed;
@@ -715,6 +944,13 @@
           <option value="mirc59">mIRC 5.9 Installer</option>
         </optgroup>
         <optgroup label="Local Candidates">
+          <option value="jazz2_demo">Jazz Jackrabbit 2 Demo</option>
+          <option value="quake2_demo">Quake II Demo</option>
+          <option value="quake2_demo_installer">Quake II Demo Installer</option>
+          <option value="heroes3_demo">Heroes III Demo</option>
+          <option value="heroes3_demo_installer">Heroes III Demo Installer</option>
+          <option value="diablo2_demo_installer">Diablo II Demo Installer</option>
+          <option value="halflife_uplink_installer">Half-Life: Uplink Installer</option>
           <option value="diablo_demo">Diablo (pre-release demo)</option>
           <option value="diablo_shareware">Diablo Shareware (1997)</option>
           <option value="worms2_demo">Worms 2 Demo</option>
@@ -799,6 +1035,7 @@
     <div id="content">
       <div id="screen-wrap">
         <div id="desktop-icons"></div>
+        <div id="build-stamp" aria-hidden="true"></div>
         <div id="screen-canvas-stack">
           <canvas id="screen-present" aria-hidden="true"></canvas>
           <canvas id="screen"></canvas>
@@ -807,6 +1044,9 @@
           <span>App is using the full page</span>
           <button type="button" onclick="approveBrowserFullscreen(event)">Use browser fullscreen</button>
         </div>
+        <div id="page-fullscreen-hint" role="status">Add to Home Screen to hide Safari&rsquo;s bars too</div>
+        <button type="button" id="page-fullscreen-exit" title="Leave full screen"
+                aria-label="Leave full screen" onclick="exitPageFullscreen(event)">&#x2715;</button>
         <textarea id="mobile-keyboard-proxy" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-hidden="true"></textarea>
       </div>
       <div id="log">Wine-Assembly v0.2
@@ -832,6 +1072,12 @@ Resource-aware Win98 emulator
       <a class="item" href="?debug"><span class="ico">&#128295;</span>Debug Mode</a>
     </div>
   </div>
+  <!-- Both belong to scroll-to-collapse and are display:none until it is on.
+       The spacer has to be a child of <body>, not of #screen-wrap: in page
+       fullscreen the wrap is position:fixed and contributes no document
+       height at all, and document height is the entire point. -->
+  <div id="scroll-collapse-gutter" role="status"><span class="nudge">&#x25B2;</span>&nbsp;swipe up here for more screen</div>
+  <div id="scroll-collapse-spacer" aria-hidden="true"></div>
   <script>
     function closeStartMenu() {
       const m = document.getElementById('start-menu');
@@ -862,6 +1108,9 @@ Resource-aware Win98 emulator
     });
   </script>
 
+  <!-- Written by tools/deploy-berrry.js, absent in a local tree. A 404 here is
+       expected off the deployed site and costs nothing. -->
+  <script src="build-info.js"></script>
   <script src="lib/mem-utils.js?v=168"></script>
   <script src="lib/dib.js?v=168"></script>
   <script src="lib/gdi-surface.js?v=2"></script>
@@ -869,7 +1118,7 @@ Resource-aware Win98 emulator
   <script src="lib/resources-icon.js?v=170"></script>
   <script src="lib/renderer-input.js?v=191"></script>
   <script src="lib/presentation-filter.js?v=5"></script>
-  <script src="lib/renderer.js?v=186"></script>
+  <script src="lib/renderer.js?v=187"></script>
   <script src="lib/dll-registry.js?v=1"></script>
   <script src="lib/apps.js?v=2"></script>
   <script src="lib/browser-input.js?v=2"></script>
@@ -898,7 +1147,7 @@ Resource-aware Win98 emulator
   <script src="lib/vlan-lobby.js?v=1"></script>
   <script src="lib/guest-rpc.js?v=3"></script>
   <script src="lib/guest-thread-host.js?v=4"></script>
-  <script src="host.js?v=220"></script>
+  <script src="host.js?v=222"></script>
   <script src="lib/recorder.js?v=168"></script>
   <script src="lib/perf-hud.js?v=1"></script>
   <script>
@@ -912,7 +1161,10 @@ Resource-aware Win98 emulator
       const current = document.fullscreenElement || document.webkitFullscreenElement;
       if (!target || current === target) return;
       const request = target.requestFullscreen || target.webkitRequestFullscreen;
-      if (!request) return;
+      // iPhone Safari has no element Fullscreen API -- neither name exists, on
+      // any element that is not a <video>. The button used to return here and
+      // do nothing whatsoever. Fall back to giving the app the whole page.
+      if (!request) return enterPageFullscreen();
       const renderer = sharedRenderer || (wine && wine.renderer);
       if (renderer) renderer._requestedBrowserFullscreen = true;
       try {
@@ -923,6 +1175,120 @@ Resource-aware Win98 emulator
         if (renderer) renderer._requestedBrowserFullscreen = false;
       }
     }
+
+    // Everything the page can do about "full screen" when the browser will not
+    // give it a real fullscreen element: hide our own chrome and let the app
+    // have the visible viewport. The CSS does the layout (body.page-fullscreen,
+    // sized in dvh); this just turns it on and keeps the canvas in step.
+    function enterPageFullscreen() {
+      if (document.body.classList.contains('page-fullscreen')) return;
+      document.body.classList.add('page-fullscreen');
+      const renderer = sharedRenderer || (wine && wine.renderer);
+      if (renderer) renderer._requestedBrowserFullscreen = true;
+      // Safari keeps its toolbars until the page is scrolled, and a page this
+      // tall has nowhere to scroll -- but if the document was left scrolled
+      // down, the top of the app would start off-screen.
+      window.scrollTo(0, 0);
+      resizeCanvas();
+      showPageFullscreenHint();
+      scrollCollapseArm();
+    }
+
+    // A browser with no element Fullscreen API has nothing behind the consent
+    // button except this same function, so there the button is a dead step: it
+    // asks permission for the only thing on offer, and the reward for pressing
+    // it is a page that Safari still covers with two toolbars. The renderer
+    // calls this as a guest takes the display, so an iPhone goes straight to
+    // the page-fullscreen layout and the swipe strip -- which is the only
+    // thing on iOS that can actually remove those toolbars. Browsers that DO
+    // have the API keep the button: there the real fullscreen is better, and
+    // it needs a user gesture anyway.
+    function enterPageFullscreenIfNoApi() {
+      const target = document.getElementById('screen-wrap');
+      if (!target) return;
+      if (target.requestFullscreen || target.webkitRequestFullscreen) return;
+      enterPageFullscreen();
+    }
+    window.enterPageFullscreenIfNoApi = enterPageFullscreenIfNoApi;
+
+    // iOS Safari with its own chrome still over the page -- the only browser
+    // where scroll-to-collapse means anything, and only while the page is not
+    // installed (a home-screen app has no bars to collapse).
+    function browserChromeIsRemovableByScroll() {
+      const standalone = window.navigator.standalone === true ||
+        (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+      const iosSafari = /iP(hone|od|ad)/.test(navigator.userAgent) ||
+        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      return iosSafari && !standalone;
+    }
+
+    // Scroll-to-collapse. None of this handles a gesture: the scroll is the
+    // browser's own, and Safari retracts its bars only for a real one. All we
+    // do is make one possible -- a document taller than the viewport, and a
+    // strip to start it on that is not the canvas -- and then notice when it
+    // happened. "It happened" is innerHeight growing, which with the page
+    // sitting still is the bars and nothing else.
+    let pinnedViewportHeight = 0;
+    function scrollCollapseArm() {
+      if (!browserChromeIsRemovableByScroll()) return;
+      pinnedViewportHeight = window.innerHeight;
+      document.body.classList.add('scroll-collapse');
+    }
+    function scrollCollapseDisarm() {
+      document.body.classList.remove('scroll-collapse', 'bars-collapsed');
+      document.documentElement.style.removeProperty('--pinned-vh');
+      pinnedViewportHeight = 0;
+    }
+    function scrollCollapseSample() {
+      if (!document.body.classList.contains('scroll-collapse')) return;
+      const height = window.innerHeight;
+      // A collapse is worth 60-80px. Anything smaller is a rounding wobble,
+      // and anything that makes the viewport SHORTER is the on-screen
+      // keyboard -- neither is worth a guest display resize.
+      if (height <= pinnedViewportHeight + 24) return;
+      pinnedViewportHeight = height;
+      // Pin rather than track: dvh follows the bars both ways, so a stray
+      // swipe back up would resize the guest a second time. Take the taller
+      // size once and keep it; the gutter unmounts with the same class.
+      document.documentElement.style.setProperty('--pinned-vh', height + 'px');
+      document.body.classList.add('bars-collapsed');
+      resizeCanvas();
+    }
+
+    // Shown only where it is true and actionable: a browser that keeps its own
+    // toolbars over this mode, and a page that is not already installed (an
+    // installed one has no browser chrome to complain about).
+    let pageFullscreenHintShown = false;
+    function showPageFullscreenHint() {
+      const hint = document.getElementById('page-fullscreen-hint');
+      if (!hint || pageFullscreenHintShown) return;
+      const standalone = window.navigator.standalone === true ||
+        (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+      const iosSafari = /iP(hone|od|ad)/.test(navigator.userAgent) ||
+        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      if (standalone || !iosSafari) {
+        hint.style.display = 'none';
+        return;
+      }
+      pageFullscreenHintShown = true;
+      hint.classList.remove('faded');
+      setTimeout(() => hint.classList.add('faded'), 4000);
+    }
+
+    function exitPageFullscreen(event) {
+      if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      document.body.classList.remove('page-fullscreen');
+      const renderer = sharedRenderer || (wine && wine.renderer);
+      if (renderer) renderer._requestedBrowserFullscreen = false;
+      scrollCollapseDisarm();
+      resizeCanvas();
+    }
+    // lib/renderer.js drops the app out of exclusive fullscreen through this,
+    // so a game that closes its display takes the page back with it.
+    window.exitPageFullscreen = exitPageFullscreen;
 
     // What each app is made of, and which ones get a desktop icon: lib/apps.js.
     // The CLI reads the same table, so `run.js --app=sol` mounts exactly the
@@ -958,9 +1324,41 @@ Resource-aware Win98 emulator
       const sw = (vv && vv.width) || window.innerWidth || 0;
       const sh = (vv && vv.height) || window.innerHeight || 0;
       if (!sw || !sh) return false;
-      return Math.min(sw, sh) <= 500 && Math.max(sw, sh) <= 950;
+      // The threshold is the era's own desktop, not a modern phone/tablet
+      // breakpoint: Win98 shipped on 640x480, and 800x600 was a comfortable
+      // desktop. So the question is simply whether a 640x480 guest screen plus
+      // the taskbar fits at 1:1. If it does, this is a desktop however small
+      // the window is; if it does not, no amount of shell furniture will help
+      // and the app should own the screen.
+      const phoneSized = sw < 640 || sh < 520;
+      if (!phoneSized) return false;
+      // Size alone is not enough, because visualViewport is measured in CSS
+      // pixels: a desktop browser at 175% zoom, or with its window dragged
+      // narrow, reports a phone-sized page and used to be handed the phone
+      // layout -- one app at a time, no taskbar, no icons. That is a desktop,
+      // and it has a mouse. Either the physical screen is a phone's, or the
+      // pointer is a finger; a zoomed desktop window is neither, and a device
+      // simulator (which fakes the pointer but not screen.width) is the
+      // second.
+      // screen.width/height are CSS pixels too, so this is the same 1:1 test
+      // against the physical display rather than the current window.
+      const scr = window.screen || {};
+      const phoneScreen = !!scr.width && !!scr.height &&
+        (scr.width < 640 || scr.height < 520);
+      const coarsePointer = !!(window.matchMedia &&
+        (window.matchMedia('(pointer: coarse)').matches ||
+         window.matchMedia('(hover: none)').matches));
+      return phoneScreen || coarsePointer;
     }
     let SINGLE_APP_MODE = detectSingleAppMode();
+    // Printed unconditionally: "why is my desktop browser in phone mode" is
+    // otherwise a guess about numbers only the visitor's browser knows.
+    console.log('[shell] single-app=' + SINGLE_APP_MODE +
+      ' viewport=' + Math.round((window.visualViewport || window).width || window.innerWidth) +
+      'x' + Math.round((window.visualViewport || window).height || window.innerHeight) +
+      ' screen=' + (window.screen ? window.screen.width + 'x' + window.screen.height : '?') +
+      ' dpr=' + window.devicePixelRatio +
+      ' coarse=' + !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches));
     // Built once the DOM helpers below exist; screenCanvasSize() asks it for
     // the frozen height, so it has to be declared before either of them.
     let keyboardController = null;
@@ -995,6 +1393,13 @@ Resource-aware Win98 emulator
       const savedRuntimeLogging = localStorage.getItem(RUNTIME_LOG_KEY);
       if (savedRuntimeLogging !== null) initialRuntimeLogging = savedRuntimeLogging !== '0';
     } catch (_) {}
+    // ?no-log starts the session with the runtime log off, without touching the
+    // saved preference. The log panel is not free: `logToUI` console.logs every
+    // line as well as appending it, and the trailing scrollTop write forces a
+    // layout per line. Measured on Diablo's Choose Class it was 39.9% of all
+    // CPU -- four times what rendering the frame cost -- so any profile taken
+    // in ?debug is mostly measuring the panel unless this is set.
+    if (new URLSearchParams(location.search).has('no-log')) initialRuntimeLogging = false;
     window.WINE_RUNTIME_LOGGING = initialRuntimeLogging;
     const initialRuntimeLogToggle = document.getElementById('runtime-log-toggle');
     if (initialRuntimeLogToggle) initialRuntimeLogToggle.checked = initialRuntimeLogging;
@@ -1107,6 +1512,23 @@ Resource-aware Win98 emulator
       },
       onAppRunningChange: running => {
         document.body.classList.toggle('app-running', !!running);
+        // No guest is running, so no guest owns the display. Every one of
+        // these classes hides the desktop icons -- and on a phone the icons
+        // are the only launcher there is, so any of them left set strands the
+        // visitor on a blank teal page with no way to start anything.
+        //
+        // The renderer normally takes exclusive mode down itself, on the
+        // repaint after the last window goes. That is a transition, and a
+        // transition can be missed: an app that drops out of exclusive for a
+        // final dialog and then exits from it never makes the false->false
+        // edge, and page-fullscreen (which has no repaint of its own to hang
+        // off) stays on. Ownership is the thing that is actually knowable
+        // here, so assert it rather than relying on the edge.
+        if (!running) {
+          exitPageFullscreen();
+          document.body.classList.remove('exclusive-fullscreen');
+          if (sharedRenderer) sharedRenderer._exclusiveFullscreen = false;
+        }
         // The desktop reappears at its own size once the guest is gone, and
         // the canvas is no longer sized to a maximized window.
         resizeCanvas();
@@ -1328,7 +1750,8 @@ Resource-aware Win98 emulator
         ? DEFAULT_APPS.concat(LOCAL_CANDIDATE_APPS)
         : DEFAULT_APPS;
       const selectorApps = DEBUG_MODE
-        ? DEFAULT_APPS.concat(DEBUG_ONLY_APPS)
+        ? DEFAULT_APPS.concat(DEBUG_ONLY_APPS,
+            LOCAL_DESKTOP ? LOCAL_CANDIDATE_APPS : [])
         : desktopApps;
       const desktopAppSet = new Set(desktopApps.map(a => a[0]));
       const selectorAppSet = new Set(selectorApps.map(a => a[0]));
@@ -1377,6 +1800,16 @@ Resource-aware Win98 emulator
         el.addEventListener('click', () => {
           for (const e of grid.querySelectorAll('.desktop-icon.selected')) e.classList.remove('selected');
           el.classList.add('selected');
+          // Double-click to open is a desktop convention and a mouse one. A
+          // phone has no hover, no "select without opening" gesture worth the
+          // name, and double-tap is the browser's own zoom: on single-app the
+          // first tap opens. Without this, closing an app leaves a desktop
+          // where tapping an icon appears to do nothing at all.
+          if (SINGLE_APP_MODE) {
+            sel.value = value;
+            launchApp();
+            return;
+          }
           const now = Date.now();
           if (now - lastClick < 500) {
             sel.value = value;
@@ -1389,6 +1822,18 @@ Resource-aware Win98 emulator
         grid.appendChild(el);
       }
     }
+    // The desktop watermark. Two lines, the way Windows put its build number
+    // in the corner: what this is, and exactly which build of it.
+    function showBuildStamp() {
+      const el = document.getElementById('build-stamp');
+      if (!el) return;
+      el.textContent = 'Wine-Assembly';
+      const build = document.createElement('div');
+      build.textContent = 'build ' + (window.WINE_BUILD || 'dev');
+      el.appendChild(build);
+    }
+    showBuildStamp();
+
     if (!DEBUG_MODE) {
       document.body.classList.add('no-debug');
       if (document.readyState === 'loading') {
@@ -1630,6 +2075,13 @@ Resource-aware Win98 emulator
 
     window.addEventListener('resize', resizeCanvas);
     if (window.visualViewport) window.visualViewport.addEventListener('resize', resizeCanvas);
+    // Safari collapsing its bars is a viewport resize and nothing else -- no
+    // event says so, so the height is the only evidence there is.
+    window.addEventListener('resize', scrollCollapseSample);
+    window.addEventListener('scroll', scrollCollapseSample, { passive: true });
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', scrollCollapseSample);
+    }
     document.addEventListener('fullscreenchange', resizeCanvas);
     document.addEventListener('webkitfullscreenchange', resizeCanvas);
     new ResizeObserver(resizeCanvas).observe(document.getElementById('screen-wrap'));

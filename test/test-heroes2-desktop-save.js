@@ -20,9 +20,9 @@ async function run() {
   const desktopIds = DESKTOP_APPS.map(([id]) => id);
   const localDesktopIds = LOCAL_CANDIDATE_APPS.map(([id]) => id);
   const debugIds = DEBUG_ONLY_APPS.map(([id]) => id);
-  assert(!desktopIds.includes('heroes2_demo'), 'the local demo is not exposed on the public desktop');
-  assert(localDesktopIds.includes('heroes2_demo'), 'Heroes II is on the localhost desktop');
-  assert(debugIds.includes('heroes2_demo'), 'Heroes II remains reachable in the debug selector');
+  assert(desktopIds.includes('heroes2_demo'), 'Heroes II is on the public desktop');
+  assert(!localDesktopIds.includes('heroes2_demo'), 'Heroes II is not a localhost-only candidate');
+  assert(!debugIds.includes('heroes2_demo'), 'Heroes II is not listed twice in the debug selector');
 
   const app = APPS.heroes2_demo;
   assert.deepStrictEqual(app.persistFiles, ['c:\\*.gm?', 'c:\\*.gmc']);
@@ -55,7 +55,7 @@ async function run() {
   assert.deepStrictEqual(Array.from(second.files.get('c:\\autosave.gm1').data), [0x48, 0x32, 0x01]);
   assert.deepStrictEqual(Array.from(second.files.get('c:\\roland.gmc').data), [0x43, 0x41, 0x4d]);
 
-  console.log('PASS  Heroes II localhost desktop launch persists GM1-GM6 and GMC saves');
+  console.log('PASS  Heroes II desktop launch persists GM1-GM6 and GMC saves');
 }
 
 run().catch(error => {

@@ -1834,3 +1834,391 @@ defects the Show Credits section opened with, the black background and the solid
 bars, are closed by 7d241245 and 59f11790 respectively.
 
 No named rendering defect on Diablo Shareware's menu path is open.
+
+## RESOLVED (2026-08-24, `opus5-main`, commit cfff3789): the whole screen went flat grey the instant you picked a class
+
+Past the menu, Single Player → Choose Class rendered correctly and then, from
+the moment a class was double-clicked, **every subsequent frame was a uniform
+light grey** (`#efefef`) — Enter Name, and everything after it. It looked like
+the app had stopped drawing.
+
+It had not. It was drawing perfectly, through a destroyed palette.
+
+### What every trace said, and why none of it helped
+
+This defect is worth recording mostly for how well it hid:
+
+- `--trace-ctrl`: no control paints for the new dialog — true, and irrelevant;
+  Diablo does not paint through our control path at all.
+- `--dump-backcanvas`: **empty directory**. Diablo renders through DirectDraw
+  surfaces, not per-window back-canvases, so this probe cannot see it.
+- `--count` on Storm's failure blocks — `SBmpLoadImage`'s failure block
+  (`storm+0x15001e51`), `SFileReadFile`'s `ERROR_HANDLE_EOF` return
+  (`+0x1500ead4`), `SFileOpenFile`'s open-failed exit (`+0x15002019`): **all
+  zero**. No art load failed and no read came up short. (Three hits on
+  `SDlgBeginPaint`'s stub tail, which is the documented correct behaviour for
+  the `WS_EX_TRANSPARENT` dialogs.)
+- Every API returned success. Nothing was unimplemented, nothing trapped.
+
+`--trace-dx` is what turned it around, and only because it prints a colour
+histogram beside the surface contents:
+
+```
+[dx] Present slot=1 bpp=8 dib=0x3514e4 nzBytes=303410 pal=0x39c4ec
+     top=239x261913=#efefef 83x4371=#efefef 0x3790=#efefef 238x2232=#efefef
+```
+
+303410 non-zero bytes and many *distinct* indices — a real picture — but
+indices 239, 83 and 238 all resolve to the same `#efefef`. The pixels were
+never the problem. The palette was.
+
+### The measurement that named it
+
+`$handle_IDirectDraw_CreatePalette` `heap_alloc`s 1024 bytes and memcpys the
+caller's table into it; `dx_free` only zeroes the DX_OBJECTS type and never
+returns that block, so nothing of ours can free it. And `--trace-dx` showed the
+palette contents changing with **no `IDirectDrawPalette_SetEntries` anywhere
+near** — 45 `SetPal` calls in the run, the last one thousands of lines earlier.
+
+So watch the block. Its guest address is `g2w`'s inverse of the `pal=` value:
+`0x39c4ec - 0x12000 + 0x400000 = 0x78a4ec`.
+
+```sh
+node test/run.js --app=diablo_shareware --tick-ms-per-batch=20 \
+  --max-batches=41400 --no-close --trace-dx --watch=0x78a4ec --watch-log
+# *** WATCHPOINT hit at batch 41102: [0x0078a4ec] changed
+#   Old: 0x00000000  New: 0xefefefef  EIP: 0x006a8441  prev_eip: 0x006a843b
+```
+
+One write, at the exact batch of the class double-click, from inside storm.dll.
+`0xefefefef` is not a pointer or a flag — it is the background index **239**
+broadcast to a dword, the signature of a byte fill.
+
+### The arithmetic, which is exact
+
+| | |
+|---|---|
+| primary DIB, WASM | `0x3514e4` |
+| primary DIB, guest | `0x73f4e4` |
+| 640×480 bytes | `0x4b000` |
+| **end of surface** | **`0x78a4e4`** |
+| palette copy, guest | `0x78a4ec` — end + 8 |
+
+The palette is the very next heap block, eight bytes past the last scanline.
+And every Storm dialog is created **640×482** (`[CreateWindow] hwnd=0x1001c
+style=0x80000040 pos=0,0 size=640x482`) while the primary is 640×480 — the main
+window `0x10002` is the only 640×480 one. Two extra rows is 1280 bytes, which
+starting 8 bytes past the end covers the whole 1024-byte palette. Not
+approximately: exactly.
+
+### The fix, and why it is not a workaround
+
+A real primary surface is the front of a video-memory aperture that keeps going
+after the last visible scanline. An app that paints a couple of rows long
+scribbles on unused VRAM and nobody ever notices — which is presumably why this
+shipped. Ours was a heap block with the next allocation packed directly behind
+it, so the same two rows landed on live emulator state.
+
+`CreateSurface` now allocates 16 slack rows past the end of every surface DIB,
+primary and back buffer (~10KB on a 640×480 primary). `dib_size` stays the
+logical size, so pitch, vidmem accounting and every reader are unchanged.
+
+**Not Diablo-specific.** Any 8bpp app whose colours come out flat or wrong out
+of a DirectDraw surface should be retested on cfff3789.
+
+### Ruled out, with the measurement
+
+- **A `$heap_alloc` double-issue.** `--trace-api=HeapAlloc,HeapFree,HeapReAlloc`
+  over the whole run: no allocation ever returned a block at or near
+  `0x78a4ec`. The neighbour was issued correctly; the guest ran over it. (An
+  earlier board entry of mine offered this as evidence for the free-list work
+  in `src/10-helpers.wat` — that entry is withdrawn.)
+- **A failed art load / short MPQ read**, i.e. a relapse of 7d241245: the three
+  Storm counters above are zero.
+- **The palette not being copied.** `SetEntries` does `memcpy` into
+  `[entry+20]`, and `CreatePalette` allocates its own 1024 bytes rather than
+  keeping the caller's pointer. Both are correct.
+
+## Driving Diablo to gameplay headlessly, cheaply (2026-08-24)
+
+The 500-second runs this file used to open with were mostly self-inflicted.
+
+**`--tick-ms-per-batch=20`, not `--time-scale=30`.** The CLI's guest clock is
+`batch * TICK_MS_PER_BATCH`, default **200ms a batch** — so at the default each
+batch advances a fifth of a second of game time and the menu renders about four
+frames of its animated logo per batch. Dropping the tick to 20ms cut the cost of
+the menu region from 41s to 9s. `--time-scale` does not help here: it scales
+`guestNowMs` for the scheduler, not `get_ticks`, which is what the game reads.
+
+It also *fixes the intro*: at 200ms a batch the Blizzard North logo never
+advances — a permanently dark logo through 38,000 batches, which reads
+convincingly as a stalled decoder. At 20ms the intro plays and the title card
+appears.
+
+**Click to skip, and only late.** Escape on the main menu is "Exit Diablo" and
+will end your run (`PostQuitMessage`, `[Exit] code=0`). Clicks in a harmless
+corner at 38400/38800/39200/39500/39700/39900 take the menu from batch 40900 to
+40150 and the run from 50s to 26s. Clicking *earlier* than 38400 makes it
+slower, not faster.
+
+**Reaching each screen** (all with `--no-close --repaint-every=200`):
+
+| Screen | Batch | Cost |
+|---|---|---|
+| Main menu | ~40,150 | 26s |
+| Choose Class | ~40,900 | 53s |
+| Enter Name | ~41,600 | ~70s |
+
+Menu geometry: SINGLE PLAYER at (320,214). The class list advances on
+**BN_DOUBLECLICKED** — `dblclick:320:298` for Warrior. The name field needs a
+**click to focus** at (425,331) before any `keypress` reaches it; typing without
+that leaves the field empty and looks like a dead control. OK is at (350,444).
+
+`--wait-slices` (added in ee9ba711) matters here too: while the main thread is
+parked in a blocking wait, workers now get 64 slices a batch instead of 4, which
+took the Choose Class capture from not finishing inside 75s to 53s.
+
+## Gameplay reached, and what the frozen intro actually was (2026-08-24)
+
+**Diablo Shareware reaches Tristram and renders it correctly.** Verified end to
+end on cfff3789: main menu → SINGLE PLAYER → Warrior (double-click) → name field
+(click to focus, then type) → OK → loading screen with progress bar → gameplay.
+The gameplay frame is right: the cottage and its thatched roof, the player
+character beside the door, the stone wall and the river, bare trees, and the
+full control panel — CHAR/QUESTS/MAP/MENU on the left, INV/SPELLS on the right,
+both orbs, the belt with two potions. No flat grey, no scanline artefacts, no
+missing sprites. Two captures 1500 batches apart are byte-identical, which is
+correct for an idle character.
+
+**It plays, not just draws.** Clicking the ground at (520,250) and then at
+(150,260) walks the character and scrolls the world both ways: the cottage, the
+stone wall and the river all move together, with no tearing, no stale tiles and
+no black seams at the scroll edge, and the character sprite is correctly
+occluded when it walks behind a tree. So the depth sort and the scroll path are
+both right, not just the first painted frame.
+
+### The Blizzard North logo was never a decoder bug
+
+The intro logo appears to freeze: at `--tick-ms-per-batch=20` it is
+byte-identical from batch 15,000 to batch 37,500, and clicks at 15,500 do not
+break it. Every earlier note here treated that as a stalled Smacker decode.
+It is not. `--trace-sched` shows the main thread inside smackw32 the whole time,
+doing real work — and an API census over the region shows **10,068 timeGetTime
+calls against 62 surface Lock/Unlock pairs**. The player is pacing itself off
+the clock and the clock is running away from it.
+
+**The headless CPU is emulated far too slow relative to the guest clock.** The
+guest-visible speed is `BATCH_SIZE / TICK_MS_PER_BATCH` — but **`BATCH_SIZE` is
+a budget of blocks, not steps, and a block is not a fixed amount of work**, so
+that ratio is not a constant. Measured here with `--batch-stats` and
+`--handler-hist-thread=0`:
+
+| region | ops | blocks | ops/block | ops per guest-second at the 200ms default |
+|---|---|---|---|---|
+| Smacker intro (batches 1000-6000) | 34.1M | 4.95M | **6.9** | ~34,500 |
+| main menu (batches 38400+) | 335.3M | 1.19M | **282** | ~1.4M |
+
+A real Pentium retires ~100M instructions a second, so the intro is being run on
+a machine roughly 3,000x too slow *and the menu on one only 70x too slow* — the
+same emulator, the same build, 41x apart. Ops per second is flat at 7-9M in both
+regions, so nothing is actually slower in the menu; only the unit changed.
+
+**The coupling runs the wrong way.** Guest time advances once per batch, but
+work per batch collapses precisely when an app sits in a tight polling loop
+waiting for time to pass — short blocks, few ops, clock advancing at full speed.
+The more the app waits, the less CPU it is granted per guest-second. That is the
+feedback loop behind the frozen logo.
+
+Anything that paces itself against `timeGetTime`/`GetTickCount` — intro videos,
+animated menus, fades — therefore renders a fraction of a frame per guest second
+and looks stalled. **Raise `--batch-size`, not just the tick.** At
+`--batch-size=200000 --tick-ms-per-batch=20` the intro plays through and the
+main menu appears at batch ~1500 **with no skip-clicks at all**; the skip-click
+recipe below exists only to work around the slow-CPU symptom.
+
+This is not Diablo-specific. Any app whose behaviour depends on how fast the
+machine is — a video, a timed fade, a benchmark, a frame-rate governor — is
+being told it is running on a 5 kHz machine at our defaults.
+
+### Two working recipes
+
+Cheap-clock (what the art regression test uses), gameplay at batch ~45,000:
+
+```
+node test/run.js --app=diablo_shareware --tick-ms-per-batch=20 \
+  --max-batches=47000 --no-close --repaint-every=400 \
+  --input='38400:mousedown:20:460,38460:mouseup:20:460,...,39900:mousedown:20:460,39960:mouseup:20:460,\
+40200:mousemove:320:214,40250:mousedown:320:214,40370:mouseup:320:214,\
+41000:mousemove:320:298,41100:dblclick:320:298,\
+41300:mousedown:425:331,41360:mouseup:425:331,\
+41450:keydown:87,41460:keypress:87,41470:keyup:87,41500:keypress:97,41530:keypress:114,\
+41700:keydown:13,41760:keyup:13,45000:png:/tmp/tristram.png'
+```
+
+Realistic-clock, menu at batch ~260 with skip-clicks (~52M steps of guest work):
+
+```
+node test/run.js --app=diablo_shareware --batch-size=200000 --tick-ms-per-batch=50 ...
+```
+
+Wall-clock costs are **not** quoted here on purpose. This box regularly sits at
+load 10-40 with other agents sweeping, and the same run measured 45s and 75s
+twenty minutes apart. Quote batch counts and step counts, which are stable, and
+check `uptime` before believing any seconds figure.
+
+## RESOLVED (2026-08-24): OK on Choose Class could not be clicked
+
+Reported from the browser — pick a class, and the OK button never responds. It
+reproduces headlessly too, and it was two stacked defects in
+`lib/renderer-input.js`, neither of which is Diablo-specific.
+
+**Why nothing shows up in a trace.** A click that is swallowed by an early
+return in `handleMouseDown`/`handleMouseUp` never reaches the guest, so it
+makes no API call: `--trace-api` shows a perfectly healthy message pump and
+nothing else. `--trace-input` (added with this fix) prints the routing decision
+instead, and named the cause on the first run. Reach for it before
+disassembling anything.
+
+**Defect 1 — the UP never arrived.** `_dispatchMouseEvent` ended in a flat
+`return false`. Its one caller that reads the result records
+`_directMouseDown` — the target that owes a matching `WM_LBUTTONUP` — only
+`if (dispatchedDirect)`, so for guest-owned child controls that state was never
+set and the up-delivery branch was unreachable. Those controls received every
+DOWN and never a single UP. A Win32 button fires `BN_CLICKED` on the **up**, so
+a single click on one did nothing; double-clicking worked, because
+`WM_LBUTTONDBLCLK` is acted on directly. That is exactly the Choose Class
+symptom: single-clicking a class never completed, so the game never enabled OK.
+
+**Defect 2 — a click over a disabled child was dropped.** OK and Cancel are
+created `WS_DISABLED|BS_OWNERDRAW`; Storm subclasses them
+(`SetWindowLongA(hwnd, -4, 0x006aa3c0)`), draws them itself and hit-tests them
+against the `GetCursorPos` position it polls every frame. Real `WindowFromPoint`
+treats a disabled child as *transparent* and returns the window behind it, so
+USER delivers the click to the parent — which is how that idiom works at all.
+We returned instead, so the parent never saw it and OK was unclickable by any
+means. The gate now clears `deep` and falls through to the parent; a disabled
+*top-level* still swallows the event, since there is nothing behind it.
+
+The `_isMouseInputDisabled` gate itself stays — it was added for Dr. Black
+Jack, whose grey Split button used to depress and post `WM_COMMAND` before the
+first deal. Both apps are covered: the disabled control still gets nothing.
+
+After the fix, `down 350,444 -> child 0x1001c of 0x1001c dispatched=1` /
+`up 350,444 -> native child 0x1001c`, and clicking OK advances to Enter Name.
+
+## RESOLVED (2026-08-24): the game sat in the corner of a teal desktop
+
+Reported from the browser as "not scaling to whole screen", with a second
+symptom in the same screenshot: the DIABLO art drawn twice, stacked vertically,
+over an "Invalid name" complaint. Both came from one defect, and neither
+reproduced headlessly.
+
+Diablo takes the display the normal way — `SetCooperativeLevel(hwnd=0x10002,
+DDSCL_EXCLUSIVE|DDSCL_FULLSCREEN|DDSCL_ALLOWREBOOT = 0x13)` then
+`SetDisplayMode(640, 480, 8)`. Our handler stores the mode, installs the 8bpp
+palette, resizes the cooperative window to 640x480 at (0,0), posts
+WM_DISPLAYCHANGE/WM_MOVE/WM_SIZE, and makes `GetSystemMetrics(SM_CXSCREEN)`
+report the mode instead of the host canvas. All of that worked.
+
+What did not is who the compositor asks. `renderer._repaintOnce` tests
+`_isExclusiveFullscreenWindow(top)` — the *topmost* window — and from the main
+menu onward that is not the DirectDraw window. Storm stacks every menu on a
+screen-sized `SDlgDialog` popup **owned by** the game window; measured in the
+browser, hwnd 0x10006 (640x482, z=18, owner=0x10002) sits over hwnd 0x10002
+(640x480, z=17, the one carrying `_dxFrameLayer`). The popup failed the test, so
+the page dropped out of exclusive mode entirely: the desktop canvas stayed
+viewport-sized, the game stayed a 640x480 window at the origin, and the teal
+around it was the Win98 desktop showing through.
+
+The duplicated art is the same fault seen from the other side. The exclusive
+path composites the whole owned stack through one transform and gates each
+window's surface on the newest DirectDraw present (`presentSeq`); the normal
+path drew each dialog's back-canvas at its own offset with no such gating, so
+two menu dialogs each holding a copy of the art stacked visibly.
+
+`_isExclusiveFullscreenWindow` now also accepts a window whose *owner chain*
+reaches the exclusive hwnd (chained — Enter Name is a popup over Choose Class),
+and the transform is computed from the exclusive window rather than the topmost
+popup, since the 640x482 dialog over a 640x480 mode otherwise stretched every
+frame by 482/480. The stack walk below the decision already handled these
+popups; its entry condition simply never fired.
+
+Verified in a real browser (`tools/profile-web-frames.js --screenshot`): the
+main menu fills the page, transform source is the 640x480 exclusive window, and
+Choose Class comes up clean — art intact at the top, portrait and stat panel
+correct, no duplication.
+
+> The "Invalid name" half of that screenshot is *not* explained by this and did
+> not reproduce: headless, `click:425:331` to focus the field and then
+> `keypress` characters puts BOB in it and the screen is correct. The field
+> needs the focus click first, and Diablo rejects names with spaces.
+
+## OPEN (2026-08-25): the title screen was seen in the intro's blue palette
+
+Reported from the browser: the `ui_art\title.pcx` screen — demon face, DIABLO
+wordmark, copyright line — came up **blue** instead of dark red. The wordmark
+and both text lines were the right bone/beige, so it is not a channel swap of
+the whole frame.
+
+**Not the 8bpp blit fast path** (commit `3d83bc2d`). A/B'd directly: built with
+an early `(return (i32.const -1))` in the `src_bpp == 8` branch of
+`$gdi_raster_bitblt_fast32`, captured the same frame, and the colours are
+identical either way. The fast path resolves the palette base once per *blit*,
+so the only thing it could miss is a palette change occurring inside a single
+blit, which cannot happen.
+
+**Does not reproduce headlessly**, at either resolution:
+
+```sh
+node test/run.js --app=diablo_shareware --batch-size=200000 \
+  --tick-ms-per-batch=50 --max-batches=800 --no-close --repaint-every=20 \
+  --input='760:png:/tmp/title.png'
+# add --screen=1280x866 for the browser's canvas size
+```
+
+Batch ~760 is the title screen and it is correct at 640x480 and at 1280x866:
+red demon, yellow fire, white wordmark. Ground truth to diff against comes from
+the archive itself, no emulator in the loop:
+
+```sh
+node tools/mpq-extract.js test/binaries/candidates/diablo-shareware/installed/spawn.mpq \
+  --name='ui_art\title.pcx' --png=/tmp/title_truth.png
+```
+
+An 11% pixel difference against that file is expected and correct — it is the
+DIABLO wordmark and the two text lines, which diabloui draws on top afterwards.
+
+### What the palette measurements say
+
+- Only **2** `SetEntries` calls in the first 5100 batches of the intro, both
+  `start=1 count=254` on palette slot 2. `$handle_IDirectDrawPalette_SetEntries`
+  honours `start` correctly (`memcpy` to `pal_wa + arg2*4`).
+- A `--watch` on the live table found exactly two writers and both are Diablo's
+  own `SetEntries`; nothing else scribbles on it.
+- At batch 850 the table matches `title.pcx`'s own palette entry for entry,
+  in `PALETTEENTRY` (R,G,B,flags) order: `c0c0c0`, `c0dcc0`, `a6caf0`,
+  `b46400`, `c06c00`, `c88000`, `c88420`, `d09400`, `d4a400`. Entries 0-6 stay
+  at the Windows system colours (`0x80` reds, not the PCX's `0xbf`) because
+  Diablo starts at index 1 — that is correct, not a bug.
+- **The blue ramp is real and is the intro's.** During the Blizzard logo the
+  table is `(0,0,4)`, `(0,0,8)`, `(0,0,12)` … and the Blizzard Entertainment
+  logo genuinely is blue in this game. A capture of it at batch 240 matches.
+
+So the leading hypothesis is that the reported frame is **the title art shown
+while the intro's palette is still installed** — the picture from one scene and
+the colour table from the previous one. Everything about the report fits that:
+correct structure, uniformly blue, and the two text overlays unaffected because
+diabloui draws them through GDI with explicit colours.
+
+### The next measurement
+
+Reproduce it in the browser, which is the only place it has been seen, and
+capture the palette at that instant. Both hosts re-present on a palette change
+(`$handle_IDirectDrawPalette_SetEntries` calls `$dx_present` when the written
+table is `$dx_primary_pal_wa`), and on the browser's direct-attach path that
+becomes `host_gdi_surface_upload`, which marks the whole surface dirty — so on
+paper the refresh should happen. What is worth checking first is
+`_flushGdiSurfacePresentation` in `lib/host-imports.js`: it takes the dirty
+rect **before** it calls `_refreshGdiSurfacePalette`, and returns early when
+there is no dirty rect. Any path that changes the palette without producing one
+leaves the canvas holding the previous colours, which is exactly this symptom.

@@ -19,8 +19,10 @@
     (local.set $saved_budget (global.get $block_budget))
     (global.set $block_budget (local.get $max_blocks))
     (block $halt (loop $main
-      (br_if $halt (i32.le_s (global.get $block_budget) (i32.const 0)))
-      (br_if $halt (i32.eqz (global.get $eip)))
+      (if (i32.le_s (global.get $block_budget) (i32.const 0))
+        (then (global.set $last_run_halt (i32.const 1)) (br $halt)))
+      (if (i32.eqz (global.get $eip))
+        (then (global.set $last_run_halt (i32.const 2)) (br $halt)))
       ;; A block whose quantum expired part-way through. Give it a fresh one and
       ;; carry on from the op $next declined to run — looking $eip up again would
       ;; restart the block and re-run everything before that op. No block is
@@ -42,6 +44,7 @@
       (if (global.get $yield_flag)
         (then
           (global.set $yield_flag (i32.const 0))
+          (global.set $last_run_halt (i32.const 3))
           (br $halt)))
       ;; Everything below to the end of this block is a debug facility, and all
       ;; of them are off in a normal run. $dbg_any is the OR of the six arming
@@ -53,6 +56,7 @@
           (if (i32.ne (call $watch_load (global.get $watch_addr)) (global.get $watch_val))
             (then
               (global.set $watch_val (call $watch_load (global.get $watch_addr)))
+              (global.set $last_run_halt (i32.const 5))
               (br $halt)))))
       ;; EIP breakpoint. On halt we set $bp_skip_once so re-entry (same $eip)
       ;; dispatches the block once before the bp can fire again — without this,
@@ -67,7 +71,9 @@
             (then (global.set $bp_first_caller (global.get $dbg_prev_eip))))
           (if (global.get $bp_skip_once)
             (then (global.set $bp_skip_once (i32.const 0)))
-            (else (global.set $bp_skip_once (i32.const 1)) (br $halt)))))
+            (else (global.set $bp_skip_once (i32.const 1))
+                  (global.set $last_run_halt (i32.const 5))
+                  (br $halt)))))
       ;; EIP hit counters (passive): increment count for any slot whose addr==eip.
       ;; Early-out via $hit_count_n (0 when no --count= flags active).
       (if (global.get $hit_count_n)
@@ -108,7 +114,7 @@
               (unreachable)))))
 
       ;; Exit if a blocking API yielded. JS owns resuming these waits.
-      (br_if $halt (i32.or
+      (if (i32.or
         (i32.eq (global.get $yield_reason) (i32.const 1))
         (i32.or
           (i32.eq (global.get $yield_reason) (i32.const 5))
@@ -118,7 +124,8 @@
               (i32.eq (global.get $yield_reason) (i32.const 8))
               (i32.or
                 (i32.eq (global.get $yield_reason) (i32.const 9))
-                (i32.eq (global.get $yield_reason) (i32.const 10))))))))
+                (i32.eq (global.get $yield_reason) (i32.const 10)))))))
+        (then (global.set $last_run_halt (i32.const 4)) (br $halt)))
       ;; The 16-bit twin of the thunk-zone check below. A far call or return
       ;; into the thunk segment is caught at the transfer, but EIP can also be
       ;; *parked* there — a modal message box owns the task until it is
@@ -204,7 +211,17 @@
       (global.set $steps (i32.const 1000))
       (call $next)
       (br $main)))
+    ;; What this call actually got through. $block_budget can end up negative --
+    ;; a fold retires k blocks in one go and subtracts all k -- so this can read
+    ;; slightly above the budget it was given; that is honest, not a wrap.
+    (global.set $last_run_blocks
+      (i32.sub (local.get $max_blocks) (global.get $block_budget)))
     (global.set $block_budget (local.get $saved_budget)))
+
+  ;; Blocks the last run() call retired, and the halt reason behind it (see the
+  ;; $last_run_halt comment in 01-header.wat for the codes).
+  (func (export "get_last_run_blocks") (result i32) (global.get $last_run_blocks))
+  (func (export "get_last_run_halt")   (result i32) (global.get $last_run_halt))
 
   ;; Hook for test/test-shift-equivalence.js, which checks the unified
   ;; $do_shift against an independent model of the x86 semantics over every
@@ -253,6 +270,20 @@
   (func (export "get_staging_size") (result i32) (global.get $PE_STAGING_SIZE))
   (func (export "get_fs_base") (result i32) (global.get $fs_base))
   (func (export "set_fs_base") (param i32) (global.set $fs_base (local.get 0)))
+  ;; Turn the CPUID MMX advertisement off to force guests down their scalar
+  ;; fallbacks. The MMX handlers stay in the build either way, so this is an
+  ;; A/B of the code the guest chooses, which is the only comparison that means
+  ;; anything -- a Pentium-MMX-era app does not have a "use MMX" switch, it has
+  ;; a CPUID check.
+  (func (export "set_cpu_mmx") (param i32) (global.set $cpu_mmx_enable (local.get 0)))
+  (func (export "get_cpu_mmx") (result i32) (global.get $cpu_mmx_enable))
+  (func (export "get_mmx_exec_count") (result i32) (global.get $mmx_exec_count))
+  ;; Test seam for tools/mmx-check.js. $mmx_binop is pure -- two 64-bit inputs
+  ;; and a subop id in, one 64-bit result out -- so it can be checked against a
+  ;; reference model exhaustively without booting a guest, which is the only
+  ;; way to be sure about lane order in the shuffles and pack instructions.
+  (func (export "mmx_binop") (param $a i64) (param $b i64) (param $sub i32) (result i64)
+    (call $mmx_binop (local.get $a) (local.get $b) (local.get $sub)))
   (func (export "get_current_thread_id") (result i32) (global.get $current_thread_id))
   ;; Sections this thread took from a holder that never released one. Nonzero
   ;; means a real bug happened and was worked around, so runs report it.
@@ -546,6 +577,12 @@
     (if (result i32) (global.get $dx_exclusive_fullscreen)
       (then (call $dx_target_hwnd))
       (else (i32.const 0))))
+  ;; 1 while the guest holds a ChangeDisplaySettings(CDS_FULLSCREEN) mode.
+  ;; This is the explicit signal from an app that does not use DirectDraw:
+  ;; without it the compositor would have to guess a fullscreen takeover from
+  ;; window geometry, which a maximized ordinary app matches.
+  (func (export "get_display_fullscreen") (result i32)
+    (global.get $display_fullscreen))
   ;; The device window of a windowed Direct3D9 device, or 0. Tells the
   ;; compositor that the surface it is presenting is that window's client
   ;; area at (0,0) rather than a screen-coordinate DirectDraw primary.
@@ -2172,6 +2209,29 @@
     (local.set $slot (call $wnd_table_find (local.get $hwnd)))
     (if (i32.lt_s (local.get $slot) (i32.const 0)) (then (return (i32.const 0))))
     (i32.load8_u (i32.add (global.get $PAINT_FLAGS) (local.get $slot))))
+  ;; The WAT-owned update rect, packed l,t,r,b into two i32s (0 when the
+  ;; window has none). PAINT_FLAGS alone does not get a window painted: the
+  ;; selector also demands a non-empty update rect, and $paint_seed_child_paints
+  ;; propagates a parent's rect, not its flag. So "flag set, rect empty" and
+  ;; "parent rect empty so children were never seeded" are distinct stalls that
+  ;; look identical without this.
+  (func (export "update_rect_lt") (param $hwnd i32) (result i32)
+    (local $r i32)
+    (local.set $r (call $paint_scratch_take))
+    (if (i32.eqz (call $update_get_rect (local.get $hwnd) (local.get $r)))
+      (then (return (i32.const 0))))
+    (i32.or
+      (i32.and (i32.load (local.get $r)) (i32.const 0xFFFF))
+      (i32.shl (i32.load offset=4 (local.get $r)) (i32.const 16))))
+  (func (export "update_rect_rb") (param $hwnd i32) (result i32)
+    (local $r i32)
+    (local.set $r (call $paint_scratch_take))
+    (if (i32.eqz (call $update_get_rect (local.get $hwnd) (local.get $r)))
+      (then (return (i32.const 0))))
+    (i32.or
+      (i32.and (i32.load offset=8 (local.get $r)) (i32.const 0xFFFF))
+      (i32.shl (i32.load offset=12 (local.get $r)) (i32.const 16))))
+
   (func (export "post_message_q")
         (param $hwnd i32) (param $msg i32) (param $wP i32) (param $lP i32) (result i32)
     (call $post_queue_push (local.get $hwnd) (local.get $msg) (local.get $wP) (local.get $lP)))
@@ -2670,6 +2730,11 @@
   (func (export "set_bp") (param $addr i32) (global.set $bp_addr (local.get $addr)) (global.set $bp_first_caller (i32.const 0)) (call $dbg_recompute))
   (func (export "clear_bp") (global.set $bp_addr (i32.const 0)) (call $dbg_recompute))
   (func (export "get_bp_addr") (result i32) (global.get $bp_addr))
+  ;; --fault-null: 0=off, 1=log unmapped guest accesses, 2=log and trap.
+  ;; Per-instance like every mutable global, so a worker thread needs its own
+  ;; call to see the same setting.
+  (func (export "set_fault_unmapped") (param $mode i32)
+    (global.set $fault_unmapped (local.get $mode)))
   (func (export "get_bp_first_caller") (result i32) (global.get $bp_first_caller))
 
   ;; --trace-esp wiring (test harness uses this). Pass hi=0 to disable the
@@ -3229,6 +3294,13 @@
   ;; Get GUEST_BASE for direct WASM memory access
   (func (export "get_guest_base") (result i32) (global.get $GUEST_BASE))
   (func (export "get_dll_table") (result i32) (global.get $DLL_TABLE))
+  (func (export "set_dll_path") (param $idx i32) (param $path_g i32)
+    (if (i32.lt_u (local.get $idx) (i32.const 16))
+      (then
+        (i32.store
+          (i32.add (global.get $DLL_PATH_TABLE)
+            (i32.shl (local.get $idx) (i32.const 2)))
+          (local.get $path_g)))))
   (func (export "set_dll_count") (param $count i32) (global.set $dll_count (local.get $count)))
   (func (export "test_set_dll_count") (param $count i32) (global.set $dll_count (local.get $count)))
   (func (export "get_ansi_code_page") (result i32) (global.get $ansi_code_page))
@@ -4584,7 +4656,9 @@
   ;; SetWindowLongPtr stash.
   (func (export "test_create_find_dialog") (result i32)
     (local $dlg i32) (local $fr i32)
-    (local.set $fr (call $heap_alloc (i32.const 32)))
+    (local.set $fr (call $heap_alloc (i32.const 40)))
+    (memory.fill (call $g2w (local.get $fr)) (i32.const 0) (i32.const 40))
+    (i32.store (call $g2w (local.get $fr)) (i32.const 40))
     (local.set $dlg (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
     (call $create_findreplace_dialog (local.get $dlg) (i32.const 0) (local.get $fr) (i32.const 0))
@@ -4594,8 +4668,9 @@
   ;; A standalone owner is unnecessary for validating WM_COMMAND flag assembly.
   (func (export "test_create_replace_dialog") (result i32)
     (local $dlg i32) (local $fr i32)
-    (local.set $fr (call $heap_alloc (i32.const 32)))
-    (memory.fill (call $g2w (local.get $fr)) (i32.const 0) (i32.const 32))
+    (local.set $fr (call $heap_alloc (i32.const 40)))
+    (memory.fill (call $g2w (local.get $fr)) (i32.const 0) (i32.const 40))
+    (i32.store (call $g2w (local.get $fr)) (i32.const 40))
     (local.set $dlg (global.get $next_hwnd))
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
     (call $create_findreplace_dialog (local.get $dlg) (i32.const 0) (local.get $fr) (i32.const 1))
@@ -4612,7 +4687,6 @@
   (func (export "test_create_treeview")
     (param $x i32) (param $y i32) (param $w i32) (param $h i32) (param $style i32) (result i32)
     (local $parent i32) (local $tv i32)
-    (global.set $tv_first_visible_row (i32.const 0))
     (global.set $tv_drag_anchor_y (i32.const 0))
     (global.set $tv_drag_anchor_row (i32.const 0))
     (global.set $tv_debug_expand_notify_count (i32.const 0))
@@ -4627,10 +4701,22 @@
     (local.set $tv (call $ctrl_create_child (local.get $parent) (i32.const 8) (i32.const 100)
                      (local.get $x) (local.get $y) (local.get $w) (local.get $h)
                      (i32.or (i32.const 0x50000000) (local.get $style)) (i32.const 0)))
+    ;; The view state a bare export reads is the one belonging to the control
+    ;; the test just made, so point the active owner at it.
+    (global.set $tv_active_owner (local.get $tv))
+    (call $tv_view_set_row (i32.const 0))
     (local.get $tv))
 
+  ;; Where the item table lives and how far the walks go. Debug readers used to
+  ;; hardcode both; the table has since moved and grown, and a hardcoded base
+  ;; silently dumps an empty tree instead of failing.
+  (func (export "treeview_get_table_base") (result i32)
+    (global.get $TV_TABLE))
+  (func (export "treeview_get_slot_limit") (result i32)
+    (call $tv_slot_limit))
+
   (func (export "treeview_get_first_visible_row") (result i32)
-    (global.get $tv_first_visible_row))
+    (call $tv_view_row))
   (func (export "treeview_get_visible_count") (result i32)
     (call $tv_visible_count))
 

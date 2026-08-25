@@ -18,12 +18,18 @@ const shellSource = fs.readFileSync(path.join(root, 'lib', 'browser-shell.js'), 
 
 // --- The page: detection, chrome, and the reported screen size ---
 assert(html.includes('function detectSingleAppMode()'), 'page should decide single-app mode explicitly');
-assert(!html.includes("matchMedia('(pointer: coarse)')"),
-  'a narrow desktop window has the same problem a phone does: size decides, not touch');
+// Size is necessary but not sufficient. visualViewport is CSS pixels, so a
+// desktop browser at 175% zoom reports a phone-sized page; handing that the
+// phone layout takes away the taskbar and the icons on a machine with a mouse.
+assert(html.includes("matchMedia('(pointer: coarse)')"),
+  'a zoomed or narrowed desktop window is still a desktop: it has a fine pointer');
+assert(html.includes('const phoneScreen ='),
+  'a phone-sized physical screen also qualifies, for a browser that reports no pointer type');
 assert(html.includes('const vv = window.visualViewport'),
   'the page, not window.screen, is what a device simulator scales down');
-assert(html.includes('Math.min(sw, sh) <= 500 && Math.max(sw, sh) <= 950'),
-  'a tablet-sized viewport is a small desktop: only phone-sized ones qualify');
+assert(html.includes('const phoneSized = sw < 640 || sh < 520'),
+  'the threshold is whether a 640x480 guest screen and its taskbar fit at 1:1 — '
+  + '800x600 was a comfortable desktop in 1998 and is still a desktop here');
 assert(html.includes('function applySingleAppMode()') && html.includes('applySingleAppMode();\n      const canvas'),
   'resizing across the threshold should switch the mode, not require a reload');
 assert(html.includes("params.has('single-app')"), 'single-app mode should be forceable for testing');

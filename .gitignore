@@ -30,6 +30,8 @@ binaries
 *.mid
 *.MID
 messageboard.txt
+*.orig
+stdout.txt
 *.DAT
 *.bmp
 *.mp3
@@ -41,3 +43,5 @@ test/binaries/wep32-community/
 test/binaries/dlls/
 !test/binaries/dlls/SOURCES.md
 !test/binaries/SOURCES.md
+test/corpus/
+build-info.js

@@ -297,6 +297,9 @@
         (if (i32.eq (local.get $ordinal) (i32.const 112)) (then (return (call $lookup_api_id (i32.const 0x113CC))))) ;; WSASetLastError
         ;; Names beyond this point live in the 0x11D80 block — see 01-header.wat.
         (if (i32.eq (local.get $ordinal) (i32.const 14))   (then (return (call $lookup_api_id (i32.const 0x11D80))))) ;; ntohl
+        (if (i32.eq (local.get $ordinal) (i32.const 5))    (then (return (call $lookup_api_id (i32.const 0x11E1C))))) ;; getpeername
+        (if (i32.eq (local.get $ordinal) (i32.const 57))   (then (return (call $lookup_api_id (i32.const 0x11E10))))) ;; gethostname
+        (if (i32.eq (local.get $ordinal) (i32.const 101))  (then (return (call $lookup_api_id (i32.const 0x11570))))) ;; WSAAsyncSelect
         (if (i32.eq (local.get $ordinal) (i32.const 1001)) (then (return (call $lookup_api_id (i32.const 0x11D86))))) ;; WsControl
       ))
     ;; WINMM. Welcome98 imports PlaySound purely by ordinal; the name is

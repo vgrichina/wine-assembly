@@ -1634,6 +1634,21 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l)))
     (i32.const 0))
 
+  ;; Case-insensitive equality between a guest ANSI string and one that is
+  ;; already in WASM memory. Window titles come back from TITLE_TABLE as WASM
+  ;; pointers while the string a caller hands FindWindowEx is a guest pointer,
+  ;; so neither $guest_stricmp nor a plain memcmp can compare the two.
+  (func $guest_ansi_eq_wasm_ci (param $guest i32) (param $wa i32) (result i32)
+    (local $i i32) (local $a i32) (local $b i32)
+    (block $no (loop $l
+      (local.set $a (call $tolower (call $gl8 (i32.add (local.get $guest) (local.get $i)))))
+      (local.set $b (call $tolower (i32.load8_u (i32.add (local.get $wa) (local.get $i)))))
+      (br_if $no (i32.ne (local.get $a) (local.get $b)))
+      (if (i32.eqz (local.get $a)) (then (return (i32.const 1))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $l)))
+    (i32.const 0))
+
   ;; FlatSB entry points are optional comctl32 helpers. The loaded Win9x
   ;; comctl32 implementation expects native subclass state we do not model, so
   ;; callers should take their existing USER32 scrollbar fallback path.
@@ -1851,15 +1866,21 @@
   ;; this for WAT-internal paint triggers that don't go through Win32
   ;; InvalidateRect; using $paint_flag_set alone leaves the rgn empty and the
   ;; region pump silently drops the paint.
-  ;; The erase comes with it. Every caller here is a system-driven invalidation
-  ;; -- a window being created, shown, or uncovered -- and USER marks those
-  ;; update regions for erase, which is what makes BeginPaint answer
-  ;; ps.fErase = TRUE for a class with no background brush. Only an app's own
-  ;; InvalidateRect(hwnd, rc, FALSE) leaves the bit alone.
+  ;; The erase does NOT come with it. USER can mark a system-driven
+  ;; invalidation for erase because there every window owns its own surface;
+  ;; here children share the top-level back-canvas, so a queued erase that is
+  ;; handed out after the children have already painted floods the class brush
+  ;; straight over their pixels and nothing repaints them. WordPad's two
+  ;; toolbars and its status bar came out as bare COLOR_BTNFACE bands that way
+  ;; (test-wordpad-toolbar 21/23: no bitmap icons, no sunken edge on the
+  ;; checked button), and the native-control drain also defers any child whose
+  ;; ancestor has the bit set, which cost test-nested-child-paint its
+  ;; grandchild and test-parent-child-paint-order its child paint entirely.
+  ;; Erase stays with the invalidations that are paired with a paint:
+  ;; CreateWindowExA's initial seed and an app's own InvalidateRect(..., TRUE).
   (func $paint_flag_set_inv (param $hwnd i32)
     (if (i32.eqz (local.get $hwnd)) (then (return)))
     (call $paint_flag_set (local.get $hwnd))
-    (call $nc_flags_set (local.get $hwnd) (i32.const 2))
     (call $update_invalidate_full (local.get $hwnd))
     (call $host_invalidate (local.get $hwnd)))
 
@@ -4412,8 +4433,9 @@
           (local.get $hdc) (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
           (i32.const 1)))))
     (call $dc_clip_to_parent_client (local.get $hdc) (local.get $hwnd))
-    (call $dc_exclude_visible_children_for_erase
-      (local.get $hdc) (local.get $hwnd) (i32.const 0) (i32.const 0))
+    (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x02000000)) ;; WS_CLIPCHILDREN
+      (then (call $dc_exclude_visible_children_for_erase
+        (local.get $hdc) (local.get $hwnd) (i32.const 0) (i32.const 0))))
     (call $dc_exclude_siblings_for_clip (local.get $hdc) (local.get $hwnd)))
 
   (func $dc_apply_window_clip (param $hdc i32) (param $hwnd i32)

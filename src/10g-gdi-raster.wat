@@ -4318,7 +4318,8 @@
     (local $dp i32) (local $sp i32) (local $s i32) (local $d i32) (local $value i32)
     (local $color i32) (local $source_mode i32)
     (local $app_clip i32) (local $system_clip i32) (local $bound i32)
-    (local $src_bpp i32)
+    (local $src_bpp i32) (local $src_step i32)
+    (local $pal i32) (local $pal_dx i32)
     (local $r_mask i32) (local $g_mask i32) (local $b_mask i32)
     (local $r_shift i32) (local $g_shift i32) (local $b_shift i32)
     (local $r_max i32) (local $g_max i32) (local $b_max i32)
@@ -4360,8 +4361,28 @@
         (local.set $src_bpp (i32.load offset=16 (local.get $src)))
         (if (i32.or (i32.eqz (local.get $src))
               (i32.and (i32.ne (local.get $src_bpp) (i32.const 32))
-                       (i32.ne (local.get $src_bpp) (i32.const 16))))
+                (i32.and (i32.ne (local.get $src_bpp) (i32.const 16))
+                         (i32.ne (local.get $src_bpp) (i32.const 8)))))
           (then (return (i32.const -1))))
+        ;; An 8bpp source over a 32bpp surface is how every palettised
+        ;; DirectDraw app presents: $dx_blit_entry_rect_to_hdc hands the
+        ;; primary to SetDIBitsToDevice, which SRCCOPYs it here. Declining it
+        ;; sent all 307200 pixels of a 640x480 frame through the generic loop,
+        ;; where each one re-resolves the clip -- $wnd_client_w_for_clip ->
+        ;; $wnd_table_find -- and walks the palette source chain again. On
+        ;; Diablo's Choose Class that loop plus its clip lookups was ~75% of
+        ;; all CPU, and $dx_reseed_overlays repeats the whole blit once per
+        ;; overlay window per present. Resolve the table once and index it.
+        (if (i32.eq (local.get $src_bpp) (i32.const 8))
+          (then
+            (local.set $pal (call $gdi_raster_palette_base (local.get $src)))
+            (local.set $pal_dx (global.get $gdi_pal_dx))
+            ;; A short table leaves indexes at or past the count to
+            ;; $gdi_raster_palette_color's default-palette fallback, which this
+            ;; path does not reproduce. Let those blits stay generic.
+            (if (i32.or (i32.eqz (local.get $pal))
+                  (i32.ne (global.get $gdi_pal_count) (i32.const 256)))
+              (then (return (i32.const -1))))))
         (if (i32.eq (local.get $src_bpp) (i32.const 16))
           (then
             (local.set $r_mask (call $gdi_raster_channel_mask (local.get $src) (i32.const 0)))
@@ -4478,6 +4499,7 @@
       (then (return (i32.const 1))))
     (global.set $gdi_fast_bitblt_hits
       (i32.add (global.get $gdi_fast_bitblt_hits) (i32.const 1)))
+    (local.set $src_step (i32.shr_u (local.get $src_bpp) (i32.const 3)))
     (local.set $y (local.get $y0))
     (block $rows_done (loop $rows
       (br_if $rows_done (i32.ge_s (local.get $y) (local.get $y1)))
@@ -4488,8 +4510,11 @@
           (if (i32.eq (local.get $src_bpp) (i32.const 16))
             (then (local.set $sp (call $gdi_raster_row_ptr_16 (local.get $src)
               (i32.add (local.get $sx) (local.get $x0)) (i32.add (local.get $sy) (local.get $y)))))
-            (else (local.set $sp (call $gdi_raster_row_ptr_32 (local.get $src)
-              (i32.add (local.get $sx) (local.get $x0)) (i32.add (local.get $sy) (local.get $y))))))))
+            (else (if (i32.eq (local.get $src_bpp) (i32.const 8))
+              (then (local.set $sp (call $gdi_raster_row_ptr_8 (local.get $src)
+                (i32.add (local.get $sx) (local.get $x0)) (i32.add (local.get $sy) (local.get $y)))))
+              (else (local.set $sp (call $gdi_raster_row_ptr_32 (local.get $src)
+                (i32.add (local.get $sx) (local.get $x0)) (i32.add (local.get $sy) (local.get $y))))))))))
       (local.set $x (local.get $x0))
       (block $cols_done (loop $cols
         (br_if $cols_done (i32.ge_s (local.get $x) (local.get $x1)))
@@ -4522,7 +4547,22 @@
                           (local.get $b_shift)) (i32.const 255))
                         (i32.shr_u (local.get $b_max) (i32.const 1)))
                       (local.get $b_max))))))
-              (else (local.set $s (i32.and (i32.load (local.get $sp)) (i32.const 0xFFFFFF)))))))
+              (else (if (i32.eq (local.get $src_bpp) (i32.const 8))
+                (then
+                  (local.set $value (i32.load (i32.add (local.get $pal)
+                    (i32.shl (i32.load8_u (local.get $sp)) (i32.const 2)))))
+                  ;; A DirectDraw table is PALETTEENTRY (R,G,B,flags) and a
+                  ;; bitmap/BITMAPINFO table is RGBQUAD (B,G,R,0). The rest of
+                  ;; the rasterizer works in the RGBQUAD order, so only the
+                  ;; first needs swizzling -- same arithmetic as
+                  ;; $gdi_raster_palette_color's two branches.
+                  (local.set $s (select
+                    (i32.or (i32.and (i32.shr_u (local.get $value) (i32.const 16)) (i32.const 0xFF))
+                      (i32.or (i32.and (local.get $value) (i32.const 0xFF00))
+                        (i32.shl (i32.and (local.get $value) (i32.const 0xFF)) (i32.const 16))))
+                    (i32.and (local.get $value) (i32.const 0xFFFFFF))
+                    (local.get $pal_dx))))
+                (else (local.set $s (i32.and (i32.load (local.get $sp)) (i32.const 0xFFFFFF)))))))))
         (if (i32.or (i32.eq (local.get $rop3) (i32.const 0x55))
               (i32.or (i32.eq (local.get $rop3) (i32.const 0x66))
                 (i32.or (i32.eq (local.get $rop3) (i32.const 0x88))
@@ -4548,9 +4588,7 @@
         (i32.store (local.get $dp) (local.get $value))
         (local.set $dp (i32.add (local.get $dp) (i32.const 4)))
         (if (local.get $source_mode)
-          (then (local.set $sp (i32.add (local.get $sp)
-            (select (i32.const 2) (i32.const 4)
-              (i32.eq (local.get $src_bpp) (i32.const 16)))))))
+          (then (local.set $sp (i32.add (local.get $sp) (local.get $src_step)))))
         (local.set $x (i32.add (local.get $x) (i32.const 1)))
         (br $cols)))
       (local.set $y (i32.add (local.get $y) (i32.const 1)))
@@ -6626,8 +6664,9 @@
     (local.set $record (call $gdi_rgn_record (local.get $hrgn)))
     (if (i32.eqz (local.get $record)) (then (return (i32.const 0))))
     ;; Only tell JS to forget a region it was actually given.
-    (if (i32.and (i32.load offset=24 (local.get $record))
-                 (i32.ne (call $gdi_rgn_mirror_live (local.get $record)) (i32.const 0)))
+    (if (i32.and
+          (i32.ne (i32.load offset=24 (local.get $record)) (i32.const 0))
+          (i32.ne (call $gdi_rgn_mirror_live (local.get $record)) (i32.const 0)))
       (then (drop (call $host_gdi_set_region_bands
         (i32.load offset=24 (local.get $record)) (i32.const 0) (i32.const -1)))))
     (i32.store (local.get $record) (i32.const 0))
