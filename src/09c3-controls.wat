@@ -258,6 +258,18 @@
     (i32.load offset=44 (local.get $sw)))
   (func $lb_set_sel_ptr (param $sw i32) (param $v i32)
     (i32.store offset=44 (local.get $sw) (local.get $v)))
+  ;; +52 item_h: 0 until an owner-draw listbox has been measured; after that
+  ;; the height WM_MEASUREITEM asked for. Everything else keeps the Win98
+  ;; default, so $lb_row_height is what paint, hit-testing and scrolling all
+  ;; ask instead of the 16 they used to hardcode.
+  (func $lb_item_h (param $sw i32) (result i32)
+    (i32.load offset=52 (local.get $sw)))
+  (func $lb_set_item_h (param $sw i32) (param $v i32)
+    (i32.store offset=52 (local.get $sw) (local.get $v)))
+  (func $lb_row_height (param $sw i32) (result i32)
+    (if (i32.eqz (local.get $sw)) (then (return (i32.const 16))))
+    (select (call $lb_item_h (local.get $sw)) (i32.const 16)
+      (call $lb_item_h (local.get $sw))))
   (func $lb_sel_cap (param $sw i32) (result i32)
     (i32.load offset=48 (local.get $sw)))
   (func $lb_set_sel_cap (param $sw i32) (param $v i32)
@@ -10446,6 +10458,84 @@
       (br $lp)))
     (i32.const 1))
 
+  ;; An owner-draw listbox gets its row height from the owner, not from us:
+  ;; USER sends WM_MEASUREITEM and the owner fills in itemHeight. HyperTerminal
+  ;; asks for a 32px row so a full icon fits; against our fixed 16 it drew each
+  ;; icon 8px above the row it belonged to and the list came out empty-looking.
+  ;;
+  ;; MEASUREITEMSTRUCT: +0 CtlType, +4 CtlID, +8 itemID, +12 itemWidth,
+  ;; +16 itemHeight, +20 itemData. We ask once, for item 0, which is exactly
+  ;; right for LBS_OWNERDRAWFIXED; a VARIABLE listbox gets item 0's height for
+  ;; every row, which is still far closer than ignoring the owner entirely.
+  (func $lb_measure_item (param $hwnd i32) (param $sw i32) (result i32)
+    (local $mis i32) (local $misw i32) (local $h i32)
+    (local.set $mis (call $heap_alloc (i32.const 24)))
+    (local.set $misw (call $g2w (local.get $mis)))
+    (i32.store           (local.get $misw) (i32.const 2))   ;; ODT_LISTBOX
+    (i32.store offset=4  (local.get $misw) (call $lb_ctrl_id (local.get $sw)))
+    (i32.store offset=8  (local.get $misw) (i32.const 0))
+    (i32.store offset=12 (local.get $misw) (i32.const 0))
+    (i32.store offset=16 (local.get $misw) (i32.const 16))
+    (i32.store offset=20 (local.get $misw) (i32.const 0))
+    (drop (call $wnd_send_message
+            (call $wnd_get_parent (local.get $hwnd))
+            (i32.const 0x002C)
+            (call $lb_ctrl_id (local.get $sw))
+            (local.get $mis)))
+    (local.set $h (i32.load offset=16 (local.get $misw)))
+    (call $heap_free (local.get $mis))
+    ;; An owner that ignores the message leaves our 16 in place; one that
+    ;; answers with nonsense must not divide the row loop by zero.
+    (if (i32.or (i32.lt_s (local.get $h) (i32.const 1))
+                (i32.gt_s (local.get $h) (i32.const 255)))
+      (then (local.set $h (i32.const 16))))
+    (local.get $h))
+
+  ;; An LBS_OWNERDRAW* listbox draws none of its own rows: USER hands each
+  ;; visible item to the owner as WM_DRAWITEM and the owner paints it. Without
+  ;; this we fell through to $host_gdi_text_out on the item string, which for
+  ;; such a listbox is not a label at all -- HyperTerminal's icon picker stores
+  ;; "Hilgraeve is Great !!!" in every slot and paints the icon from itemData,
+  ;; so the dialog came up with the same joke string repeated down the list.
+  ;;
+  ;; Modelled on $btn_send_drawitem: DRAWITEMSTRUCT is 48 bytes on the heap,
+  ;; sent synchronously, then freed. The rect is in the listbox's own client
+  ;; coordinates, which is what the child DC (hwnd + 0x40000) is already based
+  ;; on, so no translation is needed.
+  (func $lb_send_drawitem
+      (param $hwnd i32) (param $sw i32) (param $idx i32)
+      (param $row_y i32) (param $w i32) (param $row_h i32) (param $selected i32)
+    (local $dis i32) (local $disw i32) (local $hdc i32) (local $data i32)
+    (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+    ;; itemData is whatever LB_SETITEMDATA stored; a listbox that was never
+    ;; given any keeps the field zero rather than reading off the null array.
+    (if (call $lb_data_ptr (local.get $sw))
+      (then
+        (local.set $data
+          (i32.load (i32.add (call $g2w (call $lb_data_ptr (local.get $sw)))
+                             (i32.mul (local.get $idx) (i32.const 4)))))))
+    (local.set $dis (call $heap_alloc (i32.const 48)))
+    (local.set $disw (call $g2w (local.get $dis)))
+    (i32.store           (local.get $disw) (i32.const 2))    ;; ODT_LISTBOX
+    (i32.store offset=4  (local.get $disw) (call $lb_ctrl_id (local.get $sw)))
+    (i32.store offset=8  (local.get $disw) (local.get $idx))
+    (i32.store offset=12 (local.get $disw) (i32.const 1))     ;; ODA_DRAWENTIRE
+    (i32.store offset=16 (local.get $disw)
+      (select (i32.const 0x0001) (i32.const 0) (local.get $selected)))
+    (i32.store offset=20 (local.get $disw) (local.get $hwnd))
+    (i32.store offset=24 (local.get $disw) (local.get $hdc))
+    (i32.store offset=28 (local.get $disw) (i32.const 2))
+    (i32.store offset=32 (local.get $disw) (local.get $row_y))
+    (i32.store offset=36 (local.get $disw) (local.get $w))
+    (i32.store offset=40 (local.get $disw) (i32.add (local.get $row_y) (local.get $row_h)))
+    (i32.store offset=44 (local.get $disw) (local.get $data))
+    (drop (call $wnd_send_message
+            (call $wnd_get_parent (local.get $hwnd))
+            (i32.const 0x002B)
+            (call $lb_ctrl_id (local.get $sw))
+            (local.get $dis)))
+    (call $heap_free (local.get $dis)))
+
   ;; ============================================================
   ;; ListBox WndProc  (control class 4)
   ;; ============================================================
@@ -10491,6 +10581,7 @@
     (local $brush i32)
     (local $find_handle i32) (local $fd_g i32) (local $fd_w i32) (local $attrs i32)
     (local $last i32) (local $tmp_g i32) (local $tmp_w i32)
+    (local $ownerdraw i32)
 
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
 
@@ -10525,8 +10616,9 @@
     (if (i32.eq (local.get $msg) (i32.const 0x0001))
       (then
         (local.set $cs_w (call $g2w (local.get $lParam)))
-        (local.set $state (call $heap_alloc (i32.const 52)))
+        (local.set $state (call $heap_alloc (i32.const 56)))
         (local.set $sw (call $g2w (local.get $state)))
+        (call $lb_set_item_h (local.get $sw) (i32.const 0))
         (call $lb_set_items_ptr (local.get $sw) (i32.const 0))
         (call $lb_set_items_used (local.get $sw) (i32.const 0))
         (call $lb_set_items_cap (local.get $sw) (i32.const 0))
@@ -10770,9 +10862,10 @@
         (return (local.get $sel))))
 
     ;; ---------- LB_GETITEMHEIGHT (0x01A1) ----------
-    ;; The renderer and mouse hit-testing use the Win98 default 16px row.
+    ;; The Win98 default 16px row, or whatever an owner-draw listbox's owner
+    ;; asked for in WM_MEASUREITEM.
     (if (i32.eq (local.get $msg) (i32.const 0x01A1))
-      (then (return (i32.const 16))))
+      (then (return (call $lb_row_height (local.get $sw)))))
 
     ;; ---------- LB_SETCURSEL (0x0186) ----------
     ;; wParam = index (-1 to clear). Clamp to count-1 if out of range.
@@ -10859,7 +10952,7 @@
             (if (i32.ge_s (local.get $row) (i32.sub (local.get $w) (i32.const 16)))
               (then
                 ;; visible rows based on strip-reduced client
-                (local.set $visible (i32.div_u (i32.sub (local.get $h) (i32.const 4)) (i32.const 16)))
+                (local.set $visible (i32.div_u (i32.sub (local.get $h) (i32.const 4)) (call $lb_row_height (local.get $sw))))
                 (local.set $top (call $lb_top_index (local.get $sw)))
                 (local.set $max (i32.sub (local.get $count) (local.get $visible)))
                 (if (i32.lt_s (local.get $max) (i32.const 0))
@@ -10903,7 +10996,7 @@
         (if (i32.eqz (local.get $count)) (then (return (i32.const 0))))
         ;; y from hi 16 bits of lParam
         (local.set $row (i32.shr_u (i32.and (local.get $lParam) (i32.const 0xFFFF0000)) (i32.const 16)))
-        (local.set $row (i32.div_s (local.get $row) (i32.const 16)))
+        (local.set $row (i32.div_s (local.get $row) (call $lb_row_height (local.get $sw))))
         (local.set $row (i32.add (local.get $row) (call $lb_top_index (local.get $sw))))
         (if (i32.lt_s (local.get $row) (i32.const 0))
           (then (local.set $row (i32.const 0))))
@@ -10990,7 +11083,7 @@
             (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
             (local.set $row_y (i32.shr_s (local.get $lParam) (i32.const 16)))
             (local.set $count (call $lb_count (local.get $sw)))
-            (local.set $visible (i32.div_u (i32.sub (local.get $h) (i32.const 4)) (i32.const 16)))
+            (local.set $visible (i32.div_u (i32.sub (local.get $h) (i32.const 4)) (call $lb_row_height (local.get $sw))))
             (local.set $max (i32.sub (local.get $count) (local.get $visible)))
             (if (i32.lt_s (local.get $max) (i32.const 0))
               (then (local.set $max (i32.const 0))))
@@ -11013,7 +11106,7 @@
         ;; Compute visible rows for PGUP/PGDN
         (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
         (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
-        (local.set $visible (i32.div_u (i32.sub (local.get $h) (i32.const 4)) (i32.const 16)))
+        (local.set $visible (i32.div_u (i32.sub (local.get $h) (i32.const 4)) (call $lb_row_height (local.get $sw))))
         (if (i32.lt_s (local.get $visible) (i32.const 1))
           (then (local.set $visible (i32.const 1))))
         (local.set $row (local.get $sel))
@@ -11353,7 +11446,16 @@
         (local.set $count (call $lb_count (local.get $sw)))
         (local.set $sel   (call $lb_cur_sel (local.get $sw)))
         (local.set $top   (call $lb_top_index (local.get $sw)))
-        (local.set $row_h (i32.const 16))
+        ;; LBS_OWNERDRAWFIXED (0x0010) / LBS_OWNERDRAWVARIABLE (0x0020).
+        (local.set $ownerdraw
+          (i32.ne (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0030))
+                  (i32.const 0)))
+        ;; Measure once, on the first paint: by now the owner's dlgproc is
+        ;; installed, which it need not be while the control is being created.
+        (if (i32.and (local.get $ownerdraw) (i32.eqz (call $lb_item_h (local.get $sw))))
+          (then (call $lb_set_item_h (local.get $sw)
+                  (call $lb_measure_item (local.get $hwnd) (local.get $sw)))))
+        (local.set $row_h (call $lb_row_height (local.get $sw)))
         (local.set $visible (i32.div_u (i32.sub (local.get $h) (i32.const 4)) (local.get $row_h)))
         ;; Walk to the first visible item.
         (local.set $items_w (call $g2w (call $lb_items_ptr (local.get $sw))))
@@ -11374,6 +11476,16 @@
           (br_if $rows_done (i32.ge_u (local.get $idx) (local.get $count)))
           (local.set $row_y (i32.add (i32.const 2) (i32.mul (local.get $row) (local.get $row_h))))
           (local.set $slen (call $strlen (local.get $p)))
+          (if (local.get $ownerdraw)
+            (then
+              (call $lb_send_drawitem (local.get $hwnd) (local.get $sw) (local.get $idx)
+                (local.get $row_y) (local.get $w) (local.get $row_h)
+                (i32.load8_u (i32.add (call $g2w (call $lb_sel_ptr (local.get $sw)))
+                                      (local.get $idx))))
+              ;; The owner owns the whole row; skip our own text/highlight pass.
+              (local.set $p (i32.add (local.get $p) (i32.add (local.get $slen) (i32.const 1))))
+              (local.set $row (i32.add (local.get $row) (i32.const 1)))
+              (br $rows)))
           (if (i32.load8_u
                 (i32.add (call $g2w (call $lb_sel_ptr (local.get $sw))) (local.get $idx)))
             (then
@@ -11404,7 +11516,7 @@
         ;; Visible WS_VSCROLL strip. $w here is already reduced; full width is via sz.
         (if (call $listbox_vscroll_visible (local.get $hwnd) (local.get $sw))
           (then
-            (local.set $visible (i32.div_u (i32.sub (local.get $h) (i32.const 4)) (i32.const 16)))
+            (local.set $visible (i32.div_u (i32.sub (local.get $h) (i32.const 4)) (call $lb_row_height (local.get $sw))))
             (local.set $max (i32.sub (local.get $count) (local.get $visible)))
             (if (i32.lt_s (local.get $max) (i32.const 0))
               (then (local.set $max (i32.const 0))))
