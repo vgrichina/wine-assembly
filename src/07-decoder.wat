@@ -47,6 +47,29 @@
   ;; Bounded so one descriptor cannot eat the decoder's 16KB emit headroom.
   (global $CASE_CHAIN_MAX i32 (i32.const 64))
 
+  ;; Handler 424, the run-length blit fold. Off switch for A/B; see
+  ;; $try_emit_rle_run for what it matches and $th_rle_run for what it runs.
+  (global $rle_run_enabled (mut i32) (i32.const 1))
+  ;; Under four cases it is a switch, not a run-length ladder.
+  (global $RLE_MIN_CASES i32 (i32.const 4))
+  ;; A descriptor is 8 words a case; keep the whole thing inside the emit
+  ;; headroom $decode_block reserves.
+  (global $RLE_MAX_CASES i32 (i32.const 32))
+  ;; $rle_body's out-params: what one case of the ladder does, in the same
+  ;; eight fields $th_rle_run replays.
+  (global $rb_kind    (mut i32) (i32.const 0))   ;; 0 = literal run, 1 = skip run
+  (global $rb_insn    (mut i32) (i32.const 0))   ;; dispatches the body cost
+  (global $rb_src_off (mut i32) (i32.const 0))
+  (global $rb_dst_off (mut i32) (i32.const 0))
+  (global $rb_bytes   (mut i32) (i32.const 0))   ;; literal: bytes; skip: multiplier
+  (global $rb_src_adv (mut i32) (i32.const 0))
+  (global $rb_dst_adv (mut i32) (i32.const 0))
+  (global $rb_cnt_dec (mut i32) (i32.const 0))
+  (global $rb_dst_reg (mut i32) (i32.const 0))   ;; learned from the first literal run
+  ;; $rle_pair's out-params: one `cmp T8,imm8 / jz case` of the ladder.
+  (global $rp_imm    (mut i32) (i32.const 0))
+  (global $rp_target (mut i32) (i32.const 0))
+
   ;; How many `cmp al,imm8 / jz target` pairs start at $pc, counting only
   ;; those that lie wholly inside $page. Both jz encodings are accepted --
   ;; Caesar's ladder mixes one rel8 in among fifteen rel32s, so refusing
@@ -111,6 +134,444 @@
       (call $te_raw (local.get $tgt))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $l2))))
+  ;; ---- the run-length blit fold (handler 424) --------------------------
+  ;; One `cmp T8,imm8 / jz case` of the ladder at $pc: its length, or 0. Both
+  ;; jz encodings, same grammar $case_chain_count counts.
+  (func $rle_pair (param $pc i32) (result i32)
+    (local $b i32)
+    (if (i32.ne (call $gl8 (local.get $pc)) (i32.const 0x3C))
+      (then (return (i32.const 0))))
+    (global.set $rp_imm (call $gl8 (i32.add (local.get $pc) (i32.const 1))))
+    (local.set $b (call $gl8 (i32.add (local.get $pc) (i32.const 2))))
+    (if (i32.eq (local.get $b) (i32.const 0x74))
+      (then
+        (global.set $rp_target (i32.add (i32.add (local.get $pc) (i32.const 4))
+          (call $sign_ext8 (call $gl8 (i32.add (local.get $pc) (i32.const 3))))))
+        (return (i32.const 4))))
+    (if (i32.and (i32.eq (local.get $b) (i32.const 0x0F))
+                 (i32.eq (call $gl8 (i32.add (local.get $pc) (i32.const 3)))
+                         (i32.const 0x84)))
+      (then
+        (global.set $rp_target (i32.add (i32.add (local.get $pc) (i32.const 8))
+          (call $gl32 (i32.add (local.get $pc) (i32.const 4)))))
+        (return (i32.const 8))))
+    (i32.const 0))
+
+  ;; ModRM with no SIB: bytes consumed from the ModRM byte on, and the
+  ;; displacement it encodes. Callers reject rm==4 (SIB) and mod==0/rm==5
+  ;; (disp32-absolute) first, so those forms never reach here.
+  (func $rle_ea_len (param $m i32) (result i32)
+    (local $mod i32)
+    (local.set $mod (i32.shr_u (local.get $m) (i32.const 6)))
+    (if (i32.eq (local.get $mod) (i32.const 1)) (then (return (i32.const 2))))
+    (if (i32.eq (local.get $mod) (i32.const 2)) (then (return (i32.const 5))))
+    (i32.const 1))
+  (func $rle_ea_disp (param $pc i32) (param $m i32) (result i32)
+    (local $mod i32)
+    (local.set $mod (i32.shr_u (local.get $m) (i32.const 6)))
+    (if (i32.eq (local.get $mod) (i32.const 1))
+      (then (return (call $sign_ext8
+        (call $gl8 (i32.add (local.get $pc) (i32.const 1)))))))
+    (if (i32.eq (local.get $mod) (i32.const 2))
+      (then (return (call $gl32 (i32.add (local.get $pc) (i32.const 1))))))
+    (i32.const 0))
+  ;; Is this ModRM `[base]`-addressed with register $reg on the register side?
+  (func $rle_mem_ok (param $m i32) (param $reg i32) (param $base i32) (result i32)
+    (local $mod i32) (local $rm i32)
+    (local.set $mod (i32.shr_u (local.get $m) (i32.const 6)))
+    (local.set $rm (i32.and (local.get $m) (i32.const 7)))
+    (if (i32.eq (local.get $mod) (i32.const 3)) (then (return (i32.const 0))))
+    (if (i32.eq (local.get $rm) (i32.const 4)) (then (return (i32.const 0))))
+    (if (i32.and (i32.eqz (local.get $mod)) (i32.eq (local.get $rm) (i32.const 5)))
+      (then (return (i32.const 0))))
+    (if (i32.ne (local.get $rm) (local.get $base)) (then (return (i32.const 0))))
+    (i32.eq (i32.and (i32.shr_u (local.get $m) (i32.const 3)) (i32.const 7))
+            (local.get $reg)))
+
+  ;; The transparent-run case: `xor T,T / mov T8,[S+d] / add D,T (x mul) /
+  ;; add S,imm / sub C,T / jmp head`. The three tail ops in any order.
+  (func $rle_skip_body (param $pc i32) (param $S i32) (param $C i32)
+                       (param $T i32) (param $D i32) (param $head i32) (result i32)
+    (local $b i32) (local $m i32) (local $insn i32) (local $mul i32)
+    (local $seen_s i32) (local $seen_c i32) (local $tgt i32)
+    (if (i32.ne (call $gl8 (local.get $pc)) (i32.const 0x33))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl8 (i32.add (local.get $pc) (i32.const 1)))
+                (i32.or (i32.const 0xC0)
+                  (i32.or (i32.shl (local.get $T) (i32.const 3)) (local.get $T))))
+      (then (return (i32.const 0))))
+    (local.set $pc (i32.add (local.get $pc) (i32.const 2)))
+    (local.set $insn (i32.const 1))
+    ;; the count byte
+    (if (i32.ne (call $gl8 (local.get $pc)) (i32.const 0x8A))
+      (then (return (i32.const 0))))
+    (local.set $m (call $gl8 (i32.add (local.get $pc) (i32.const 1))))
+    (if (i32.eqz (call $rle_mem_ok (local.get $m) (local.get $T) (local.get $S)))
+      (then (return (i32.const 0))))
+    (global.set $rb_src_off
+      (call $rle_ea_disp (i32.add (local.get $pc) (i32.const 1)) (local.get $m)))
+    (local.set $pc (i32.add (i32.add (local.get $pc) (i32.const 1))
+                            (call $rle_ea_len (local.get $m))))
+    (local.set $insn (i32.add (local.get $insn) (i32.const 1)))
+    (block $tail (loop $tl
+      (local.set $b (call $gl8 (local.get $pc)))
+      (local.set $m (call $gl8 (i32.add (local.get $pc) (i32.const 1))))
+      ;; add D,T -- twice for a 16bpp destination, so the multiplier is counted
+      (if (i32.and (i32.eq (local.get $b) (i32.const 0x03))
+            (i32.eq (local.get $m) (i32.or (i32.const 0xC0)
+              (i32.or (i32.shl (local.get $D) (i32.const 3)) (local.get $T)))))
+        (then
+          (local.set $mul (i32.add (local.get $mul) (i32.const 1)))
+          (local.set $pc (i32.add (local.get $pc) (i32.const 2)))
+          (local.set $insn (i32.add (local.get $insn) (i32.const 1)))
+          (br $tl)))
+      ;; sub C,T
+      (if (i32.and (i32.eq (local.get $b) (i32.const 0x2B))
+            (i32.eq (local.get $m) (i32.or (i32.const 0xC0)
+              (i32.or (i32.shl (local.get $C) (i32.const 3)) (local.get $T)))))
+        (then
+          (local.set $seen_c (i32.add (local.get $seen_c) (i32.const 1)))
+          (local.set $pc (i32.add (local.get $pc) (i32.const 2)))
+          (local.set $insn (i32.add (local.get $insn) (i32.const 1)))
+          (br $tl)))
+      ;; add S,imm8
+      (if (i32.and (i32.eq (local.get $b) (i32.const 0x83))
+            (i32.eq (local.get $m) (i32.or (i32.const 0xC0) (local.get $S))))
+        (then
+          (global.set $rb_src_adv (call $sign_ext8
+            (call $gl8 (i32.add (local.get $pc) (i32.const 2)))))
+          (local.set $seen_s (i32.add (local.get $seen_s) (i32.const 1)))
+          (local.set $pc (i32.add (local.get $pc) (i32.const 3)))
+          (local.set $insn (i32.add (local.get $insn) (i32.const 1)))
+          (br $tl)))
+      (br $tail)))
+    (if (i32.eqz (local.get $mul)) (then (return (i32.const 0))))
+    (if (i32.ne (local.get $seen_s) (i32.const 1)) (then (return (i32.const 0))))
+    (if (i32.ne (local.get $seen_c) (i32.const 1)) (then (return (i32.const 0))))
+    (if (i32.le_s (global.get $rb_src_adv) (i32.const 0)) (then (return (i32.const 0))))
+    ;; back to the head
+    (local.set $b (call $gl8 (local.get $pc)))
+    (if (i32.eq (local.get $b) (i32.const 0xE9))
+      (then (local.set $tgt (i32.add (i32.add (local.get $pc) (i32.const 5))
+              (call $gl32 (i32.add (local.get $pc) (i32.const 1))))))
+      (else
+        (if (i32.eq (local.get $b) (i32.const 0xEB))
+          (then (local.set $tgt (i32.add (i32.add (local.get $pc) (i32.const 2))
+                  (call $sign_ext8 (call $gl8 (i32.add (local.get $pc) (i32.const 1)))))))
+          (else (return (i32.const 0))))))
+    (if (i32.ne (local.get $tgt) (local.get $head)) (then (return (i32.const 0))))
+    (global.set $rb_kind (i32.const 1))
+    (global.set $rb_bytes (local.get $mul))
+    (global.set $rb_insn (i32.add (local.get $insn) (i32.const 1)))
+    (i32.const 1))
+
+  ;; The literal-run case: k unrolled `mov X,[S+d] / mov [D+d],X` pairs (a
+  ;; 16-bit pair may close an odd one out), then `add S,a / add D,b /
+  ;; sub C,c / jmp head`. Every displacement is checked against the one
+  ;; predicted from its predecessor, so an accepted run is one the
+  ;; instruction stream spelled out contiguously -- same rule as $sprite_scan.
+  ;; $Din is 0xFF on the pass that learns which register the destination is.
+  (func $rle_copy_body (param $pc i32) (param $S i32) (param $C i32)
+                       (param $T i32) (param $Din i32) (param $head i32) (result i32)
+    (local $b i32) (local $m i32) (local $m2 i32) (local $q i32) (local $D i32)
+    (local $disp i32) (local $disp2 i32) (local $step i32) (local $o16 i32)
+    (local $bytes i32) (local $insn i32) (local $pairs i32) (local $started i32)
+    (local $srcn i32) (local $dstn i32) (local $imm i32) (local $tgt i32)
+    (local $seen_s i32) (local $seen_d i32) (local $seen_c i32) (local $reg i32)
+    (local.set $D (local.get $Din))
+    (block $pdone (loop $pl
+      (local.set $o16 (i32.eq (call $gl8 (local.get $pc)) (i32.const 0x66)))
+      (br_if $pdone (i32.ne
+        (call $gl8 (i32.add (local.get $pc) (local.get $o16))) (i32.const 0x8B)))
+      (local.set $m (call $gl8
+        (i32.add (i32.add (local.get $pc) (local.get $o16)) (i32.const 1))))
+      (br_if $pdone (i32.eqz
+        (call $rle_mem_ok (local.get $m) (local.get $T) (local.get $S))))
+      (local.set $disp (call $rle_ea_disp
+        (i32.add (i32.add (local.get $pc) (local.get $o16)) (i32.const 1))
+        (local.get $m)))
+      (local.set $q (i32.add
+        (i32.add (i32.add (local.get $pc) (local.get $o16)) (i32.const 1))
+        (call $rle_ea_len (local.get $m))))
+      ;; the store of the same register, same operand size
+      (if (local.get $o16)
+        (then
+          (br_if $pdone (i32.ne (call $gl8 (local.get $q)) (i32.const 0x66)))
+          (local.set $q (i32.add (local.get $q) (i32.const 1)))))
+      (br_if $pdone (i32.ne (call $gl8 (local.get $q)) (i32.const 0x89)))
+      (local.set $m2 (call $gl8 (i32.add (local.get $q) (i32.const 1))))
+      ;; The destination register is whatever the first store names; every
+      ;; later store in every later case has to name the same one.
+      (if (i32.eq (local.get $D) (i32.const 0xFF))
+        (then
+          (local.set $D (i32.and (local.get $m2) (i32.const 7)))
+          (br_if $pdone (i32.or
+            (i32.eq (local.get $D) (local.get $S))
+            (i32.or (i32.eq (local.get $D) (local.get $C))
+                    (i32.eq (local.get $D) (local.get $T)))))))
+      (br_if $pdone (i32.eqz
+        (call $rle_mem_ok (local.get $m2) (local.get $T) (local.get $D))))
+      (local.set $disp2 (call $rle_ea_disp
+        (i32.add (local.get $q) (i32.const 1)) (local.get $m2)))
+      (local.set $step (if (result i32) (local.get $o16)
+        (then (i32.const 2)) (else (i32.const 4))))
+      (if (local.get $started)
+        (then
+          (br_if $pdone (i32.ne (local.get $disp) (local.get $srcn)))
+          (br_if $pdone (i32.ne (local.get $disp2) (local.get $dstn))))
+        (else
+          (global.set $rb_src_off (local.get $disp))
+          (global.set $rb_dst_off (local.get $disp2))
+          (local.set $started (i32.const 1))))
+      (local.set $srcn (i32.add (local.get $disp) (local.get $step)))
+      (local.set $dstn (i32.add (local.get $disp2) (local.get $step)))
+      (local.set $bytes (i32.add (local.get $bytes) (local.get $step)))
+      (local.set $pairs (i32.add (local.get $pairs) (i32.const 1)))
+      (local.set $insn (i32.add (local.get $insn) (i32.const 2)))
+      (local.set $pc (i32.add (i32.add (local.get $q) (i32.const 1))
+                              (call $rle_ea_len (local.get $m2))))
+      ;; a 16-bit pair is the odd pixel at the end of a run, never the middle
+      (br_if $pdone (local.get $o16))
+      (br $pl)))
+    (if (i32.eqz (local.get $pairs)) (then (return (i32.const 0))))
+    ;; the three advances, in any order, each exactly once
+    (block $adone (loop $al
+      (br_if $adone (i32.ne (call $gl8 (local.get $pc)) (i32.const 0x83)))
+      (local.set $m (call $gl8 (i32.add (local.get $pc) (i32.const 1))))
+      (br_if $adone (i32.ne (i32.shr_u (local.get $m) (i32.const 6)) (i32.const 3)))
+      (local.set $reg (i32.and (i32.shr_u (local.get $m) (i32.const 3)) (i32.const 7)))
+      (local.set $imm (call $sign_ext8
+        (call $gl8 (i32.add (local.get $pc) (i32.const 2)))))
+      (if (i32.and (i32.eqz (local.get $reg))
+                   (i32.eq (i32.and (local.get $m) (i32.const 7)) (local.get $S)))
+        (then (global.set $rb_src_adv (local.get $imm))
+              (local.set $seen_s (i32.add (local.get $seen_s) (i32.const 1))))
+        (else
+          (if (i32.and (i32.eqz (local.get $reg))
+                       (i32.eq (i32.and (local.get $m) (i32.const 7)) (local.get $D)))
+            (then (global.set $rb_dst_adv (local.get $imm))
+                  (local.set $seen_d (i32.add (local.get $seen_d) (i32.const 1))))
+            (else
+              (if (i32.and (i32.eq (local.get $reg) (i32.const 5))
+                           (i32.eq (i32.and (local.get $m) (i32.const 7)) (local.get $C)))
+                (then (global.set $rb_cnt_dec (local.get $imm))
+                      (local.set $seen_c (i32.add (local.get $seen_c) (i32.const 1))))
+                (else (br $adone)))))))
+      (local.set $pc (i32.add (local.get $pc) (i32.const 3)))
+      (local.set $insn (i32.add (local.get $insn) (i32.const 1)))
+      (br $al)))
+    (if (i32.ne (local.get $seen_s) (i32.const 1)) (then (return (i32.const 0))))
+    (if (i32.ne (local.get $seen_d) (i32.const 1)) (then (return (i32.const 0))))
+    (if (i32.ne (local.get $seen_c) (i32.const 1)) (then (return (i32.const 0))))
+    ;; A run that does not shorten the row is one this fold would spin on.
+    (if (i32.le_s (global.get $rb_cnt_dec) (i32.const 0)) (then (return (i32.const 0))))
+    (if (i32.le_s (global.get $rb_src_adv) (i32.const 0)) (then (return (i32.const 0))))
+    (local.set $b (call $gl8 (local.get $pc)))
+    (if (i32.eq (local.get $b) (i32.const 0xE9))
+      (then (local.set $tgt (i32.add (i32.add (local.get $pc) (i32.const 5))
+              (call $gl32 (i32.add (local.get $pc) (i32.const 1))))))
+      (else
+        (if (i32.eq (local.get $b) (i32.const 0xEB))
+          (then (local.set $tgt (i32.add (i32.add (local.get $pc) (i32.const 2))
+                  (call $sign_ext8 (call $gl8 (i32.add (local.get $pc) (i32.const 1)))))))
+          (else (return (i32.const 0))))))
+    (if (i32.ne (local.get $tgt) (local.get $head)) (then (return (i32.const 0))))
+    (global.set $rb_kind (i32.const 0))
+    (global.set $rb_bytes (local.get $bytes))
+    (global.set $rb_dst_reg (local.get $D))
+    (global.set $rb_insn (i32.add (local.get $insn) (i32.const 1)))
+    (i32.const 1))
+
+  ;; One case of the ladder, either kind. Clears the out-params first so a
+  ;; field a kind does not set can never carry over from the previous case.
+  (func $rle_body (param $pc i32) (param $S i32) (param $C i32) (param $T i32)
+                  (param $D i32) (param $head i32) (result i32)
+    (global.set $rb_kind (i32.const 0)) (global.set $rb_insn (i32.const 0))
+    (global.set $rb_src_off (i32.const 0)) (global.set $rb_dst_off (i32.const 0))
+    (global.set $rb_bytes (i32.const 0)) (global.set $rb_src_adv (i32.const 0))
+    (global.set $rb_dst_adv (i32.const 0)) (global.set $rb_cnt_dec (i32.const 0))
+    (if (i32.ne (local.get $D) (i32.const 0xFF))
+      (then
+        (if (call $rle_skip_body (local.get $pc) (local.get $S) (local.get $C)
+                                 (local.get $T) (local.get $D) (local.get $head))
+          (then (return (i32.const 1))))))
+    (call $rle_copy_body (local.get $pc) (local.get $S) (local.get $C)
+                         (local.get $T) (local.get $D) (local.get $head)))
+
+  ;; Fold the whole nest into handler 424. Called at a block start, because
+  ;; the head is one: `cmp C,imm / jle EXIT` is entered afresh once a token.
+  (func $try_emit_rle_run (param $start_eip i32) (result i32)
+    (local $pc i32) (local $b i32) (local $m i32) (local $S i32) (local $C i32)
+    (local $T i32) (local $D i32) (local $cmp_imm i32) (local $exit_eip i32)
+    (local $head i32) (local $lad i32) (local $dflt i32) (local $n i32)
+    (local $i i32) (local $len i32) (local $tgt i32)
+    (if (i32.eqz (global.get $rle_run_enabled)) (then (return (i32.const 0))))
+    (if (i32.or (global.get $code16) (global.get $d_addr16))
+      (then (return (i32.const 0))))
+    (if (global.get $d_seg) (then (return (i32.const 0))))
+    (local.set $head (global.get $d_pc))
+    (local.set $pc (local.get $head))
+    ;; cmp C, imm8
+    (if (i32.ne (call $gl8 (local.get $pc)) (i32.const 0x83))
+      (then (return (i32.const 0))))
+    (local.set $m (call $gl8 (i32.add (local.get $pc) (i32.const 1))))
+    (if (i32.ne (i32.shr_u (local.get $m) (i32.const 6)) (i32.const 3))
+      (then (return (i32.const 0))))
+    (if (i32.ne (i32.and (i32.shr_u (local.get $m) (i32.const 3)) (i32.const 7))
+                (i32.const 7))
+      (then (return (i32.const 0))))
+    (local.set $C (i32.and (local.get $m) (i32.const 7)))
+    (local.set $cmp_imm (call $sign_ext8
+      (call $gl8 (i32.add (local.get $pc) (i32.const 2)))))
+    (local.set $pc (i32.add (local.get $pc) (i32.const 3)))
+    ;; jle EXIT -- the row's only way out
+    (local.set $b (call $gl8 (local.get $pc)))
+    (if (i32.eq (local.get $b) (i32.const 0x7E))
+      (then
+        (local.set $exit_eip (i32.add (i32.add (local.get $pc) (i32.const 2))
+          (call $sign_ext8 (call $gl8 (i32.add (local.get $pc) (i32.const 1))))))
+        (local.set $pc (i32.add (local.get $pc) (i32.const 2))))
+      (else
+        (if (i32.and (i32.eq (local.get $b) (i32.const 0x0F))
+                     (i32.eq (call $gl8 (i32.add (local.get $pc) (i32.const 1)))
+                             (i32.const 0x8E)))
+          (then
+            (local.set $exit_eip (i32.add (i32.add (local.get $pc) (i32.const 6))
+              (call $gl32 (i32.add (local.get $pc) (i32.const 2)))))
+            (local.set $pc (i32.add (local.get $pc) (i32.const 6))))
+          (else (return (i32.const 0))))))
+    ;; mov T8, [S]
+    (if (i32.ne (call $gl8 (local.get $pc)) (i32.const 0x8A))
+      (then (return (i32.const 0))))
+    (local.set $m (call $gl8 (i32.add (local.get $pc) (i32.const 1))))
+    (if (i32.ne (i32.shr_u (local.get $m) (i32.const 6)) (i32.const 0))
+      (then (return (i32.const 0))))
+    (local.set $S (i32.and (local.get $m) (i32.const 7)))
+    (if (i32.or (i32.eq (local.get $S) (i32.const 4))
+                (i32.eq (local.get $S) (i32.const 5)))
+      (then (return (i32.const 0))))
+    (local.set $T (i32.and (i32.shr_u (local.get $m) (i32.const 3)) (i32.const 7)))
+    ;; a byte read into AH..BH is a different register than the copy bodies use
+    (if (i32.ge_u (local.get $T) (i32.const 4)) (then (return (i32.const 0))))
+    (if (i32.or (i32.eq (local.get $T) (local.get $S))
+                (i32.eq (local.get $T) (local.get $C)))
+      (then (return (i32.const 0))))
+    (if (i32.eq (local.get $S) (local.get $C)) (then (return (i32.const 0))))
+    (local.set $pc (i32.add (local.get $pc) (i32.const 2)))
+
+    ;; the ladder
+    (local.set $lad (local.get $pc))
+    (local.set $n (call $case_chain_count (local.get $lad)
+      (i32.and (local.get $start_eip) (i32.const 0xFFFFF000))))
+    (if (i32.lt_u (local.get $n) (global.get $RLE_MIN_CASES))
+      (then (return (i32.const 0))))
+    ;; Truncating would leave the tail of the ladder unconsumed and name the
+    ;; wrong default, so an over-long one declines rather than folds partly.
+    (if (i32.gt_u (local.get $n) (global.get $RLE_MAX_CASES))
+      (then (return (i32.const 0))))
+    (local.set $i (i32.const 0))
+    (block $ldone (loop $ll
+      (br_if $ldone (i32.ge_u (local.get $i) (local.get $n)))
+      (local.set $len (call $rle_pair (local.get $pc)))
+      (if (i32.eqz (local.get $len)) (then (return (i32.const 0))))
+      (local.set $pc (i32.add (local.get $pc) (local.get $len)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $ll)))
+    ;; the default arm: a jmp to it, or the body sitting right here
+    (local.set $b (call $gl8 (local.get $pc)))
+    (if (i32.eq (local.get $b) (i32.const 0xE9))
+      (then (local.set $dflt (i32.add (i32.add (local.get $pc) (i32.const 5))
+              (call $gl32 (i32.add (local.get $pc) (i32.const 1))))))
+      (else
+        (if (i32.eq (local.get $b) (i32.const 0xEB))
+          (then (local.set $dflt (i32.add (i32.add (local.get $pc) (i32.const 2))
+                  (call $sign_ext8 (call $gl8 (i32.add (local.get $pc) (i32.const 1)))))))
+          (else (local.set $dflt (local.get $pc))))))
+
+    ;; Pass one learns the destination register from the first literal run.
+    (local.set $D (i32.const 0xFF))
+    (local.set $pc (local.get $lad))
+    (local.set $i (i32.const 0))
+    (block $done1 (loop $l1
+      (if (i32.ge_u (local.get $i) (local.get $n))
+        (then
+          (if (call $rle_body (local.get $dflt) (local.get $S) (local.get $C)
+                              (local.get $T) (i32.const 0xFF) (local.get $head))
+            (then (local.set $D (global.get $rb_dst_reg))))
+          (br $done1)))
+      (local.set $len (call $rle_pair (local.get $pc)))
+      (if (call $rle_body (global.get $rp_target) (local.get $S) (local.get $C)
+                          (local.get $T) (i32.const 0xFF) (local.get $head))
+        (then (local.set $D (global.get $rb_dst_reg)) (br $done1)))
+      (local.set $pc (i32.add (local.get $pc) (local.get $len)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $l1)))
+    (if (i32.eq (local.get $D) (i32.const 0xFF)) (then (return (i32.const 0))))
+
+    ;; Pass two: every case must classify with that destination, or nothing
+    ;; folds -- a case this decoder cannot read is a case it cannot run.
+    (local.set $pc (local.get $lad))
+    (local.set $i (i32.const 0))
+    (block $done2 (loop $l2
+      (br_if $done2 (i32.ge_u (local.get $i) (local.get $n)))
+      (local.set $len (call $rle_pair (local.get $pc)))
+      (if (i32.eqz (call $rle_body (global.get $rp_target) (local.get $S)
+            (local.get $C) (local.get $T) (local.get $D) (local.get $head)))
+        (then
+          (return (i32.const 0))))
+      (local.set $pc (i32.add (local.get $pc) (local.get $len)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $l2)))
+    (if (i32.eqz (call $rle_body (local.get $dflt) (local.get $S) (local.get $C)
+                                 (local.get $T) (local.get $D) (local.get $head)))
+      (then (return (i32.const 0))))
+
+    ;; Emit: header, then one 8-word record a case, the default last.
+    (call $te (i32.const 429) (i32.or
+      (i32.or (local.get $S) (i32.shl (local.get $D) (i32.const 4)))
+      (i32.or (i32.shl (local.get $C) (i32.const 8))
+        (i32.or (i32.shl (local.get $T) (i32.const 12))
+                (i32.shl (local.get $n) (i32.const 16))))))
+    (call $te_raw (local.get $exit_eip))
+    (call $te_raw (local.get $cmp_imm))
+    ;; what the head costs a token: cmp, jle, mov T8,[S]
+    (call $te_raw (i32.const 3))
+    (call $te_raw (local.get $head))
+    (local.set $pc (local.get $lad))
+    (local.set $i (i32.const 0))
+    (block $done3 (loop $l3
+      (if (i32.ge_u (local.get $i) (local.get $n))
+        (then
+          (drop (call $rle_body (local.get $dflt) (local.get $S) (local.get $C)
+                                (local.get $T) (local.get $D) (local.get $head)))
+          ;; 0x1FF can never equal a byte, so the default record is only ever
+          ;; reached by the scan falling off the end.
+          (call $te_raw (i32.const 0x1FF))
+          (call $rle_emit_body)
+          (br $done3)))
+      (local.set $len (call $rle_pair (local.get $pc)))
+      (local.set $tgt (global.get $rp_target))
+      (local.set $b (global.get $rp_imm))
+      (drop (call $rle_body (local.get $tgt) (local.get $S) (local.get $C)
+                            (local.get $T) (local.get $D) (local.get $head)))
+      (call $te_raw (local.get $b))
+      (call $rle_emit_body)
+      (local.set $pc (i32.add (local.get $pc) (local.get $len)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $l3)))
+    (i32.const 1))
+
+  ;; The seven words after a case record's token byte.
+  (func $rle_emit_body
+    (call $te_raw (i32.or (global.get $rb_kind)
+                          (i32.shl (global.get $rb_insn) (i32.const 16))))
+    (call $te_raw (global.get $rb_src_off))
+    (call $te_raw (global.get $rb_dst_off))
+    (call $te_raw (global.get $rb_bytes))
+    (call $te_raw (global.get $rb_src_adv))
+    (call $te_raw (global.get $rb_dst_adv))
+    (call $te_raw (global.get $rb_cnt_dec)))
+
   ;; $sprite_scan's out-params: where the run ended, how many dwords it moved,
   ;; and which register the row step adds.
   (global $sr_end (mut i32) (i32.const 0))
@@ -1902,6 +2363,18 @@
               (local.set $done (i32.const 1))
               (br $decode)))))
 
+      ;; A run-length sprite blit is a loop NEST, so it is only ever entered
+      ;; at its head -- try it at a block start, before the ladder fold below
+      ;; gets to the ladder that sits inside it. Declining costs one scan and
+      ;; leaves that fold to do its (smaller) job.
+      (if (i32.and (i32.eqz (local.get $icount))
+                   (i32.eqz (global.get $code16)))
+        (then
+          (if (call $try_emit_rle_run (local.get $start_eip))
+            (then
+              (local.set $done (i32.const 1))
+              (br $decode)))))
+
       ;; A `switch` a compiler declined to build a jump table for comes out as
       ;; a run of `cmp al,imm8 / jz case`, and every jz ends a block, so
       ;; reaching case k costs k dispatches, k eip stores and k cache lookups.
@@ -2391,9 +2864,22 @@
       ;; ---- 0xC4: LES r16, m16:16 / 0xC5: LDS r16, m16:16 ----
       ;; The bread and butter of far-pointer code: load an offset into a
       ;; register and its selector into ES or DS in one instruction.
+      ;;
+      ;; A flat 32-bit task can reach one too — Watcom's va_arg walker emits
+      ;; `les eax, [edx-8]`, which is how Fallout's demo gets here — so this is
+      ;; not a $win16_only opcode. There the operand is m16:32 and every
+      ;; selector is flat, so op 430 takes the offset and drops the selector.
       (if (i32.or (i32.eq (local.get $op) (i32.const 0xC4)) (i32.eq (local.get $op) (i32.const 0xC5)))
         (then
-          (call $win16_only (local.get $op))
+          (if (i32.eqz (global.get $code16))
+            (then
+              (call $decode_modrm)
+              (local.set $a (call $emit_sib_or_abs))
+              (call $te (i32.const 430)
+                (i32.or (i32.shl (local.get $prefix_66) (i32.const 4))
+                        (global.get $mr_reg)))
+              (call $te_raw (local.get $a))
+              (br $decode)))
           (call $decode_modrm)
           (local.set $a (call $emit_sib_or_abs))
           ;; 0xC4 loads ES (sreg 0), 0xC5 loads DS (sreg 3).

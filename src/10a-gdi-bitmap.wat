@@ -833,10 +833,26 @@
       (then (return (i32.const 0))))
     (if (i32.gt_u (local.get $usage) (i32.const 1))
       (then (return (i32.const 0))))
+    ;; The colour table travels with the pixels, and only with them. Without
+    ;; CBM_INIT this call makes an *uninitialised* DDB compatible with hdc, and
+    ;; real GDI never looks at bmiColors on that path -- the bitmap gets the
+    ;; device's palette, which for a 1bpp request is plain {black, white}.
+    ;; Copying the caller's table anyway means adopting whatever bytes follow
+    ;; its BITMAPINFOHEADER, and a caller that passes only a header has not put
+    ;; anything there. Storm's SGdiTextOut does exactly that for its 320x320
+    ;; monochrome glyph atlas, so its two palette entries were uninitialised
+    ;; stack; white paper and black text then resolved against garbage and the
+    ;; sheet came back with the paper bit clear. Storm reads "not the paper
+    ;; value = ink", so every credit line printed as a solid bar.
+    ;; Leaving the pointer null makes the raster layer fall through to
+    ;; $gdi_raster_default_palette, which is our stand-in for that device
+    ;; palette.
     (call $gdi_bitmap_create_owned (global.get $GDI_BITMAP_PLAN) (local.get $pixels)
       (i32.and (i32.ne (local.get $init) (i32.const 0))
         (i32.ne (local.get $pixels) (i32.const 0)))
-      (i32.const 1) (i32.const 0) (local.get $usage)
+      (i32.and (i32.ne (local.get $init) (i32.const 0))
+        (i32.ne (local.get $pixels) (i32.const 0)))
+      (i32.const 0) (local.get $usage)
       (call $gdi_dc_selected_palette (local.get $hdc))))
 
   (func $gdi_bitmap_create_dib_section (param $hdc i32) (param $info i32)

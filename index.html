@@ -782,6 +782,7 @@
       <span class="debug-profile">
         <label title="Write emulator runtime messages to the browser console and debug log pane"><input id="runtime-log-toggle" type="checkbox" onchange="setRuntimeLogging(this.checked)">Runtime log</label>
         <label><input id="perf-hud-toggle" type="checkbox" onchange="setPerfHud(this.checked)">FPS graph</label>
+        <label title="Fold Caesar III's run-length sprite blit into one dispatch (handler 424). Decode-time, so it steers blocks decoded after the toggle — relaunch for a clean A/B."><input id="rle-run-toggle" type="checkbox" checked onchange="setRleRun(this.checked)">RLE fold</label>
         <label><input id="perf-stream-toggle" type="checkbox" onchange="setPerfStream(this.checked)">Stream</label>
         <label title="Experimental: opt into real guest threads. Needs cross-origin isolation; the worker backend is still phase 1."><input id="threads-toggle" type="checkbox" onchange="setThreads(this.checked)">Threads</label>
         <span id="threads-status" style="color:#606060"></span>
@@ -1148,6 +1149,24 @@ Resource-aware Win98 emulator
     }
     if (new URLSearchParams(location.search).has('perf')) {
       window.addEventListener('load', () => setPerfHud(true));
+    }
+    // Decode-time superop switches. The flag is read when an instance is
+    // created (host.js), so the honest A/B is toggle-then-relaunch; toggling
+    // mid-run only steers blocks decoded from here on, which is why the
+    // checkbox says so. ?no-rle-run starts it off, for a scripted comparison.
+    window.WineSuperops = window.WineSuperops || { rleRun: true };
+    function setRleRun(on) {
+      window.WineSuperops.rleRun = !!on;
+      const box = document.getElementById('rle-run-toggle');
+      if (box) box.checked = !!on;
+      appendDebugLog(`[superop] RLE fold ${on ? 'on' : 'off'} — takes effect on the next launch`);
+    }
+    if (new URLSearchParams(location.search).has('no-rle-run')) {
+      window.WineSuperops.rleRun = false;
+      window.addEventListener('load', () => {
+        const box = document.getElementById('rle-run-toggle');
+        if (box) box.checked = false;
+      });
     }
     // Streaming can be switched on mid-session from the toolbar. Requiring a
     // URL parameter meant deciding to measure before loading the page, which

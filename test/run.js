@@ -188,6 +188,7 @@ const LOOP_SUPEROPS = hasFlag('loop-superops');
 const NO_SIB_FUSION = hasFlag('no-sib-fusion');
 const NO_RECT_RUN = hasFlag('no-rect-run');
 const NO_CASE_CHAIN = hasFlag('no-case-chain');
+const NO_RLE_RUN = hasFlag('no-rle-run');
 // --loopmatch-stats: print the self-loop/match counts at exit.
 const LOOPMATCH_STATS = hasFlag('loopmatch-stats');
 const TRACE_GDI = hasFlag('trace-gdi');   // --trace-gdi: log GDI calls (CreateBitmap, BitBlt, etc.)
@@ -826,6 +827,10 @@ async function main() {
       } else if (kind === 'dump-fr') {
         // B:dump-fr — log current FINDREPLACE struct (Flags + lpstrFindWhat).
         scheduledInput.push({ batch, action: 'dump-fr' });
+      } else if (kind === 'dump-mem') {
+        // B:dump-mem:0xADDR[:LEN] — hexdump guest memory at that batch.
+        scheduledInput.push({ batch, action: 'dump-mem',
+          arg: parts[2], arg2: parts[3] });
       } else if (kind === 'slot-count') {
         // B:slot-count[:LABEL] — log live WND_RECORDS slot count.
         scheduledInput.push({ batch, action: 'slot-count', label: parts[2] || '' });
@@ -3745,6 +3750,9 @@ async function main() {
   if (NO_CASE_CHAIN && instance.exports.set_case_chain) {
     instance.exports.set_case_chain(0);
   }
+  if (NO_RLE_RUN && instance.exports.set_rle_run) {
+    instance.exports.set_rle_run(0);
+  }
   if (TRACE_FPU && instance.exports.set_fpu_trace) {
     instance.exports.set_fpu_trace(1);
   }
@@ -4276,6 +4284,19 @@ async function main() {
         } else {
           logs.push(`[input] find-click: no find dialog at batch ${batch}`);
         }
+      } else if (ev.action === 'dump-mem') {
+        // `--dump=` only fires at exit, and by then any scratch buffer has
+        // usually been freed and handed to something else -- a dump of it is
+        // then a picture of whatever moved in afterwards, which reads as
+        // corruption. This takes the same hexdump at a chosen batch instead,
+        // so a buffer can be inspected while its owner still holds it.
+        // Same format as --dump, so tools/dump2png.js parses either.
+        //   --input=41000:dump-mem:0xb9df84:12800
+        const at = parseInt(ev.arg, 16) >>> 0;
+        const len = parseInt(ev.arg2 || '256', 10) || 256;
+        logs.push(`[input] dump-mem at batch ${batch}`);
+        while (logs.length) console.log(logs.shift());
+        hexdump(at, len);
       } else if (ev.action === 'slot-count') {
         const we = instance.exports;
         const dlg = we.get_findreplace_dlg && we.get_findreplace_dlg();
@@ -6935,6 +6956,7 @@ async function main() {
           if (NO_SIB_FUSION && e.set_sib_fusion) e.set_sib_fusion(0);
           if (NO_RECT_RUN && e.set_rect_run) e.set_rect_run(0);
           if (NO_CASE_CHAIN && e.set_case_chain) e.set_case_chain(0);
+          if (NO_RLE_RUN && e.set_rle_run) e.set_rle_run(0);
         }
       }
     }

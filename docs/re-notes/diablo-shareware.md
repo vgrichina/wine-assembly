@@ -1304,6 +1304,11 @@ across the whole 640 width and never go away — and the flaming logo is absent 
 that frame, which is the separately-tracked logo blink and its ~20% duty cycle,
 not something credits did. Exiting by mouse click was not tested.
 
+> **Both leftovers are gone as of 59f11790** (re-measured 2026-08-24, same
+> recipe). The "scanlines" were the solid white text bars of §2 seen after the
+> fact, not a failed erase — see "State of Diablo Shareware" at the end of this
+> file. The logo was present on both re-captured exit frames.
+
 ### 4. No crash, no unimplemented API
 
 No trap, no `crash_unimplemented`, no new thread death. The only thread event in
@@ -1726,3 +1731,106 @@ is not Diablo's. Any guest that waits a real-world number of milliseconds on
 work a worker has to do will hit it, because the emulated clock and the
 emulated work rate are two hundred times apart. `--tick-ms-per-batch=N`
 (added the same day) is the other lever on that ratio.
+
+---
+
+## RESOLVED (2026-08-24, `opus5-main`, commit 59f11790): the credits bars were a colour table we should never have read
+
+The Show Credits section above ends with "whether the loss is in our
+rasterization or in the `GetDIBits` readback is not determined". It was
+neither. Our 1bpp raster path is correct; the atlas was built against a
+garbage palette.
+
+### The defect
+
+`SGdiTextOut` builds its glyph atlas with
+`CreateDIBitmap(hdc, &bmih, 0, NULL, &bmi, DIB_RGB_COLORS)` — **no `CBM_INIT`,
+no init data** — over a bare 320×320 `planes=1 bpp=1` header. Without
+`CBM_INIT` that call makes an *uninitialised* DDB compatible with the DC, and
+real GDI never reads `bmiColors` on that path: the bitmap gets the device
+palette, which for a monochrome request is plain `{black, white}`.
+
+`$gdi_bitmap_create_dibitmap` passed `copy_palette = 1` unconditionally, so we
+copied the two RGBQUADs that happened to follow Storm's header on its stack.
+White paper and black text then both resolved against garbage, and the sheet
+came back with the paper bit **clear**.
+
+Storm reads "not the paper value = ink". An inverted atlas is therefore not a
+blank atlas — it is a *fully inked* one, and every string composed from it is a
+filled rectangle. That is the bar.
+
+The fix is one line: `copy_palette` now uses the same `(init && pixels)`
+condition as `copy_pixels`, leaving the pointer null so the raster layer falls
+through to `$gdi_raster_default_palette`.
+
+**This is not Diablo-specific.** Any `CreateDIBitmap(fdwInit=0)` with a ≤8bpp
+header was getting a junk palette.
+
+### Two corrections to the Show Credits section above
+
+Both were measurement artifacts, and both are worth knowing because they are
+easy to repeat:
+
+1. **"the readback is ~80% zero, interlaced every other scanline, glyphs far
+   larger than their 20×20 cells."** That is what a **1bpp** 320-pixel sheet
+   looks like when it is rendered as 8bpp: the real stride is 40 bytes, so
+   reading 320 bytes per row consumes eight source rows per displayed row and
+   spreads each glyph eight times too wide, and the 12,800 real bytes occupy an
+   eighth of a 102,400-byte dump. It is a very convincing picture of a
+   rasterizer that gave up partway. `tools/dump2png.js --bpp=1 --flip` shows it
+   correctly.
+2. **A `--dump=` of the readback buffer shows noise.** `--dump` only fires at
+   exit, and Storm frees the atlas scratch buffer as soon as it has copied the
+   glyphs out; by exit the address holds something else entirely. Use
+   `--input=BATCH:dump-mem:0xADDR:LEN` (added with this commit) to take the
+   hexdump while the owner still holds the memory.
+
+### The fast loop, which is the reusable part
+
+Reaching the credits screen costs ~140 s: the menu is ~39,400 batches of real
+interpretation in, and boot is work-bound, so no clock flag shortens it. The
+atlas, though, is eight GDI calls, and `src/13-exports.wat` already exposes
+every one of them. `test/test-diablo-font-sheet.js` replays them against the
+render harness in about a second.
+
+It builds the atlas twice — once with a real `{black, white}` table, once with
+none — and asserts the two are **byte-identical**, because without `CBM_INIT`
+the table is not an input at all. That equivalence is the regression, and it
+fails loudly on the old code.
+
+    node test/test-diablo-font-sheet.js     # 21 passed, 0 failed
+
+Reach for that pattern before driving the app: the traced call sequence plus
+the `test_call_*` exports is almost always a second-scale reproduction of a
+minutes-scale symptom. Two gotchas when you do:
+
+- `test_gdi_get_dibits` is the raw internal and takes **WASM** pointers, while
+  `guest_alloc` returns guest addresses — the API handler is what normally does
+  the `g2w`. The `test_call_*` wrappers do not have this problem.
+- Check the synthetic reproduction against the real trace before believing it.
+  Mine initially "reproduced" a `GetDIBits` returning 0, which the real run
+  does not do — that was the pointer-domain mistake above, and fixing the
+  emulator to match it would have been fixing nothing.
+
+### State of Diablo Shareware after this and 7d241245
+
+Menu logo animates (15/15 frames), Choose Class draws its panels (9/9), Storm's
+worker survives, and Show Credits renders readable text over the tavern art.
+
+**The credits-exit scanlines are gone too, and were never a separate bug.**
+Re-measured 2026-08-24 on 59f11790 with the recipe in the Show Credits section
+(click (320,342) at 39500, Escape at 40800, capture at 41100 and 41300): both
+exit frames are the clean menu -- five gold ArtFont items, the flaming logo
+present, pure black where the credits had been, no residue at any width. The
+"regular thin white horizontal lines across the whole 640 width" that section
+records *were the credit lines*: each one was a solid white rectangle spanning
+the text's full run, and a row of those reads exactly like scanlines. With real
+glyphs there is nothing left to erase. Nothing about the erase path was ever
+wrong, so do not go looking for one.
+
+The credits frame itself (`/tmp/cred-exit/c1.png` in that run) now shows white
+credit text with its shadow pass over the Tristram tavern art -- both of the two
+defects the Show Credits section opened with, the black background and the solid
+bars, are closed by 7d241245 and 59f11790 respectively.
+
+No named rendering defect on Diablo Shareware's menu path is open.

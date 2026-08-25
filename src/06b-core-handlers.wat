@@ -1549,3 +1549,151 @@
             (global.set $eax (i32.wrap_i64 (local.get $quotient)))
             (global.set $edx (i32.wrap_i64 (i64.rem_s (local.get $dividend) (local.get $divisor))))))
             (return_call $next))
+
+  ;; 424: a whole run-length sprite blit ROW. Caesar III's decoder at 0x40f71c
+  ;; is a loop nest, not a self-loop, so neither the Design-A matcher in
+  ;; 07b-loop-match.wat nor $th_rect_run's straight-line scan can see it:
+  ;;
+  ;;   head:  cmp C, imm / jle EXIT          <- 934k entries in a 400-batch window
+  ;;          mov T8, [S]                    <- the token byte
+  ;;          cmp T8,imm / jz case   x N     <- folded on its own by 423
+  ;;   caseK: mov X,[S+d] / mov [D+d],X  (k times, branch-free)
+  ;;          add S,a / add D,b / sub C,c / jmp head
+  ;;   0xff:  n = [S+1]; D += 2n; S += 2; C -= n     (transparent run)
+  ;;
+  ;; 34.7% of all dispatches in a gameplay window, at ~21 dispatches and ~3.4
+  ;; painted pixels per token. This runs the whole row in one dispatch.
+  ;;
+  ;; Descriptor at $ip: [exit_eip][cmp_imm][head_cost][head_eip] then N+1
+  ;; 8-word case records, the last being the ladder's default. $op packs
+  ;; S | D<<4 | C<<8 | T<<12 | N<<16.
+  ;;
+  ;; Every field is *replayed*, never inferred: the decoder read each body's
+  ;; displacements and its three literal advances out of the instruction
+  ;; stream and checked them for contiguity, so copying $bytes and adding
+  ;; $src_adv is by construction what the unrolled instructions did.
+  (func $th_rle_run (param $op i32)
+    (local $tp i32) (local $desc i32) (local $n i32)
+    (local $S i32) (local $D i32) (local $C i32) (local $T i32)
+    (local $s i32) (local $d i32) (local $c i32) (local $x i32)
+    (local $exit_eip i32) (local $cmp_imm i32) (local $head i32)
+    (local $head_eip i32) (local $tok i32) (local $i i32) (local $hit i32)
+    (local $walked i32) (local $p i32) (local $kind i32) (local $insn i32)
+    (local $src i32) (local $dst i32) (local $nb i32) (local $cnt i32)
+    (local $cost i32) (local $iters i32)
+    (local.set $tp (global.get $ip))
+    (local.set $n (i32.and (i32.shr_u (local.get $op) (i32.const 16)) (i32.const 0xFF)))
+    (local.set $exit_eip (i32.load          (local.get $tp)))
+    (local.set $cmp_imm  (i32.load offset=4  (local.get $tp)))
+    (local.set $head     (i32.load offset=8  (local.get $tp)))
+    (local.set $head_eip (i32.load offset=12 (local.get $tp)))
+    (local.set $desc (i32.add (local.get $tp) (i32.const 16)))
+    (global.set $ip (i32.add (local.get $desc)
+      (i32.shl (i32.add (local.get $n) (i32.const 1)) (i32.const 5))))
+
+    (local.set $S (i32.and                  (local.get $op)                    (i32.const 0xF)))
+    (local.set $D (i32.and (i32.shr_u (local.get $op) (i32.const 4))  (i32.const 0xF)))
+    (local.set $C (i32.and (i32.shr_u (local.get $op) (i32.const 8))  (i32.const 0xF)))
+    (local.set $T (i32.and (i32.shr_u (local.get $op) (i32.const 12)) (i32.const 0xF)))
+    (local.set $s (call $get_reg (local.get $S)))
+    (local.set $d (call $get_reg (local.get $D)))
+    (local.set $c (call $get_reg (local.get $C)))
+    (local.set $x (call $get_reg (local.get $T)))
+
+    (block $done (loop $tokl
+      ;; the head: cmp C,imm / jle EXIT
+      (br_if $done (i32.le_s (local.get $c) (local.get $cmp_imm)))
+      ;; A row is bounded by the guest's own counter, but a descriptor whose
+      ;; skip run reads a zero count would spin here forever where the x86
+      ;; would too. Park at the head instead -- resuming there is exactly
+      ;; equivalent, and it hands the scheduler back a turn.
+      (local.set $iters (i32.add (local.get $iters) (i32.const 1)))
+      (if (i32.gt_u (local.get $iters) (i32.const 4096))
+        (then
+          (local.set $exit_eip (local.get $head_eip))
+          (br $done)))
+
+      (local.set $tok (call $gl8 (local.get $s)))
+      ;; the head's `mov T8,[S]` writes only the low byte
+      (local.set $x (i32.or (i32.and (local.get $x) (i32.const 0xFFFFFF00))
+                            (local.get $tok)))
+
+      ;; the ladder, walked linearly because that is what the x86 pays for
+      (local.set $hit (local.get $n))
+      (local.set $i (i32.const 0))
+      (block $found (loop $l
+        (br_if $found (i32.ge_u (local.get $i) (local.get $n)))
+        (if (i32.eq (i32.load
+              (i32.add (local.get $desc) (i32.shl (local.get $i) (i32.const 5))))
+              (local.get $tok))
+          (then (local.set $hit (local.get $i)) (br $found)))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $l)))
+      (local.set $walked (if (result i32) (i32.eq (local.get $hit) (local.get $n))
+        (then (local.get $n)) (else (i32.add (local.get $hit) (i32.const 1)))))
+
+      (local.set $p (i32.add (local.get $desc) (i32.shl (local.get $hit) (i32.const 5))))
+      (local.set $kind (i32.load offset=4 (local.get $p)))
+      (local.set $insn (i32.shr_u (local.get $kind) (i32.const 16)))
+
+      (if (i32.and (local.get $kind) (i32.const 0xFF))
+        (then
+          ;; transparent run: n = [S + cnt_off]; D += n*mul; S += adv; C -= n
+          (local.set $cnt (call $gl8
+            (i32.add (local.get $s) (i32.load offset=8 (local.get $p)))))
+          (local.set $x (local.get $cnt))
+          (local.set $d (i32.add (local.get $d)
+            (i32.mul (local.get $cnt) (i32.load offset=16 (local.get $p)))))
+          (local.set $s (i32.add (local.get $s) (i32.load offset=20 (local.get $p))))
+          (local.set $c (i32.sub (local.get $c) (local.get $cnt))))
+        (else
+          ;; literal run: the k unrolled load/store pairs, in order
+          (local.set $src (i32.add (local.get $s) (i32.load offset=8  (local.get $p))))
+          (local.set $dst (i32.add (local.get $d) (i32.load offset=12 (local.get $p))))
+          (local.set $nb  (i32.load offset=16 (local.get $p)))
+          (block $cdone (loop $cl
+            (br_if $cdone (i32.lt_u (local.get $nb) (i32.const 4)))
+            (local.set $x (call $gl32 (local.get $src)))
+            (call $gs32 (local.get $dst) (local.get $x))
+            (local.set $src (i32.add (local.get $src) (i32.const 4)))
+            (local.set $dst (i32.add (local.get $dst) (i32.const 4)))
+            (local.set $nb (i32.sub (local.get $nb) (i32.const 4)))
+            (br $cl)))
+          ;; an odd pixel at the end is a 16-bit pair, and it writes only AX
+          (if (local.get $nb)
+            (then
+              (local.set $x (i32.or (i32.and (local.get $x) (i32.const 0xFFFF0000))
+                                    (call $gl16 (local.get $src))))
+              (call $gs16 (local.get $dst) (local.get $x))))
+          (local.set $s (i32.add (local.get $s) (i32.load offset=20 (local.get $p))))
+          (local.set $d (i32.add (local.get $d) (i32.load offset=24 (local.get $p))))
+          (local.set $c (i32.sub (local.get $c) (i32.load offset=28 (local.get $p))))))
+
+      ;; Pacing, both meters, same contract as 420-423: what this dispatch
+      ;; swallowed is what the folded form must still be billed for, or a
+      ;; batch buys more guest work here than it does with the fold off and
+      ;; the two builds stop being comparable at a fixed batch number.
+      ;; Per token: head cmp+jle+mov (3), the ladder's cmp/jz pairs (2 each,
+      ;; which is what 423 bills), and the body's own dispatches.
+      (local.set $cost (i32.add (local.get $cost)
+        (i32.add (i32.add (local.get $head) (local.get $insn))
+                 (i32.shl (local.get $walked) (i32.const 1)))))
+      ;; three block ends a token: the head, the ladder block, the body.
+      (global.set $block_budget (i32.sub (global.get $block_budget) (i32.const 3)))
+      (br $tokl)))
+
+    ;; the final cmp that fell out of the loop is billed too; $next billed one.
+    (global.set $steps (i32.sub (global.get $steps)
+      (i32.add (local.get $cost) (i32.const 1))))
+
+    (call $set_reg (local.get $S) (local.get $s))
+    (call $set_reg (local.get $D) (local.get $d))
+    (call $set_reg (local.get $C) (local.get $c))
+    (call $set_reg (local.get $T) (local.get $x))
+    ;; Flags are the head's `cmp C,imm` -- the only ones that survive the loop,
+    ;; exactly as every body's `sub C,c` is overwritten by the next head.
+    (call $set_flags_sub (local.get $c) (local.get $cmp_imm)
+      (i32.sub (local.get $c) (local.get $cmp_imm)))
+    (global.set $flag_sign_shift (i32.const 31))
+    (global.set $eip (local.get $exit_eip))
+    (return_call $branch_end))

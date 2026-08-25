@@ -2557,6 +2557,13 @@
   (func (export "set_case_chain") (param $flag i32)
     (global.set $case_chain_enabled (local.get $flag)))
 
+  ;; The run-length blit fold (handler 424). Decode-time, so this only steers
+  ;; blocks decoded after it is called -- set it before the first decode for a
+  ;; clean A/B, and on every per-thread instance.
+  (func (export "set_rle_run") (param $flag i32)
+    (global.set $rle_run_enabled (local.get $flag)))
+  (func (export "get_rle_run") (result i32) (global.get $rle_run_enabled))
+
   ;; Page compilation (docs/page-compile-design.md). There is deliberately no
   ;; switch: this replaces the storage layer rather than accelerating it, so the
   ;; thing to compare against is the commit before it, not a flag.

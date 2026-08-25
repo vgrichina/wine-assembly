@@ -519,7 +519,34 @@
     "name": "CreateDIBitmap",
     "nargs": 6,
     "convention": "stdcall",
-    "hash": 1889378205
+    "hash": 1889378205,
+    "args": [
+      {
+        "name": "hdc",
+        "type": "HDC"
+      },
+      {
+        "name": "bmih",
+        "type": "LPBITMAPINFO"
+      },
+      {
+        "name": "fdwInit",
+        "type": "DWORD"
+      },
+      {
+        "name": "lpbInit",
+        "type": "LPVOID"
+      },
+      {
+        "name": "bmi",
+        "type": "LPBITMAPINFO"
+      },
+      {
+        "name": "usage",
+        "type": "UINT"
+      }
+    ],
+    "ret": "HANDLE"
   },
   {
     "id": 60,
@@ -1897,7 +1924,40 @@
     "name": "GetDIBits",
     "nargs": 7,
     "convention": "stdcall",
-    "hash": 3876833192
+    "hash": 3876833192,
+    "args": [
+      {
+        "name": "hdc",
+        "type": "HDC"
+      },
+      {
+        "name": "hbmp",
+        "type": "HANDLE"
+      },
+      {
+        "name": "uStartScan",
+        "type": "UINT"
+      },
+      {
+        "name": "cScanLines",
+        "type": "UINT"
+      },
+      {
+        "name": "lpvBits",
+        "type": "LPVOID",
+        "out": true
+      },
+      {
+        "name": "lpbmi",
+        "type": "LPBITMAPINFO",
+        "out": true
+      },
+      {
+        "name": "usage",
+        "type": "UINT"
+      }
+    ],
+    "ret": "INT"
   },
   {
     "id": 214,
