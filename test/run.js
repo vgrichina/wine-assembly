@@ -255,6 +255,14 @@ if (process.send) {
 }
 const TIME_SCALE = parseFloat(getArg('time-scale', '1')) || 1;  // --time-scale=10: guest clock runs 10x
 const REAL_TICKS = hasFlag('real-ticks'); // --real-ticks: GetTickCount from the wall clock, not the batch counter
+// --tick-ms-per-batch=N: how much guest time one batch is worth on the
+// batch-driven clock (default 200). Neither default clock suits a game whose
+// engine steps on a WM_TIMER: at 200ms/batch Chip's Challenge burns its whole
+// 100-second level clock in 500 batches and puts up "Ooops! Out of time!"
+// before any input lands, while --real-ticks gives a 16-bit app that runs
+// 5000 batches in a third of a second about three timer ticks in total, so
+// nothing ever moves. Turn it down to drive a timer-paced game headlessly.
+const TICK_MS_PER_BATCH = Math.max(0, parseFloat(getArg('tick-ms-per-batch', '200')) || 0);
 const CLOCK_ORIGIN = Date.now();
 // --trace-sched[=N]: one compact line whenever what the threads are doing
 // changes, plus a heartbeat every N batches (default 5000) so a stall shows up
@@ -2517,7 +2525,7 @@ async function main() {
   // the overall simulated pace realistic.
   const tickCallStepMs = Math.max(1, parseInt(process.env.TICK_CALL_STEP_MS || '1', 10) || 1);
   const tickState = { batch: 0, callsInBatch: 0 };
-  ctx.sharedAudio.audioClockMs = () => tickState.batch * 200;
+  ctx.sharedAudio.audioClockMs = () => (tickState.batch * TICK_MS_PER_BATCH) | 0;
   // --real-ticks hands the guest the wall clock instead. Two emulator
   // processes in one room CANNOT share a batch-driven clock: a batch is not a
   // unit of time and each process runs them at its own rate, so an idle Hearts
@@ -2527,7 +2535,7 @@ async function main() {
   // decided against a clock the other does not share.
   h.get_ticks = REAL_TICKS
     ? () => ((((Date.now() - CLOCK_ORIGIN) * TIME_SCALE) | 0) & 0x7FFFFFFF)
-    : () => (((tickState.batch * 200 + (tickState.callsInBatch++ * tickCallStepMs)) & 0x7FFFFFFF));
+    : () => ((((tickState.batch * TICK_MS_PER_BATCH) | 0) + (tickState.callsInBatch++ * tickCallStepMs)) & 0x7FFFFFFF);
 
   // --- Override input for test injection ---
   let lastInputEvent = null;
@@ -3007,7 +3015,7 @@ async function main() {
     traceCallstackDepth: TRACE_CALLSTACK_DEPTH,
     traceEipRange: (traceEipOn && traceEipArmed) ? { lo: traceEipLo, hi: traceEipHi } : null,
     countAddrs: countAddrs,
-    now: () => tickState.batch * 200,
+    now: () => (tickState.batch * TICK_MS_PER_BATCH) | 0,
     hasMessage: () => !!(
       inputEvent ||
       (crossThreadMsgs && crossThreadMsgs.length) ||
