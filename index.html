@@ -957,7 +957,9 @@
           <option value="quake2_demo_installer">Quake II Demo Installer</option>
           <option value="heroes3_demo">Heroes III Demo</option>
           <option value="heroes3_demo_installer">Heroes III Demo Installer</option>
+          <option value="diablo2_demo">Diablo II Demo</option>
           <option value="diablo2_demo_installer">Diablo II Demo Installer</option>
+          <option value="halflife_uplink">Half-Life: Uplink</option>
           <option value="halflife_uplink_installer">Half-Life: Uplink Installer</option>
           <option value="diablo_demo">Diablo (pre-release demo)</option>
           <option value="diablo_shareware">Diablo Shareware (1997)</option>
@@ -1132,7 +1134,7 @@ Resource-aware Win98 emulator
   <script src="lib/browser-input.js?v=2"></script>
   <script src="lib/mobile-keyboard.js?v=1"></script>
   <script src="lib/vfs-persistence.js?v=1"></script>
-  <script src="lib/browser-shell.js?v=5"></script>
+  <script src="lib/browser-shell.js?v=6"></script>
   <script src="lib/pe.js?v=1"></script>
   <script src="lib/process-boot.js?v=2"></script>
   <script src="lib/app-profiles.js?v=1"></script>
@@ -1172,7 +1174,10 @@ Resource-aware Win98 emulator
       // do nothing whatsoever. Fall back to giving the app the whole page.
       if (!request) return enterPageFullscreen();
       const renderer = sharedRenderer || (wine && wine.renderer);
-      if (renderer) renderer._requestedBrowserFullscreen = true;
+      if (renderer) {
+        renderer._requestedBrowserFullscreen = true;
+        renderer._fullscreenDeclined = false;
+      }
       try {
         const result = request.call(target);
         if (result && result.then) await result;
@@ -1190,7 +1195,11 @@ Resource-aware Win98 emulator
       if (document.body.classList.contains('page-fullscreen')) return;
       document.body.classList.add('page-fullscreen');
       const renderer = sharedRenderer || (wine && wine.renderer);
-      if (renderer) renderer._requestedBrowserFullscreen = true;
+      if (renderer) {
+        renderer._requestedBrowserFullscreen = true;
+        // Asking for it again is the way back in after the exit chip.
+        renderer._fullscreenDeclined = false;
+      }
       // Safari keeps its toolbars until the page is scrolled, and a page this
       // tall has nowhere to scroll -- but if the document was left scrolled
       // down, the top of the app would start off-screen.
@@ -1261,6 +1270,43 @@ Resource-aware Win98 emulator
       resizeCanvas();
     }
 
+    // ?scroll-debug paints the three numbers that decide a "swipe does
+    // nothing" report onto the screen, live.
+    //
+    // WHY ON THE PAGE: this failure is iOS-only. The headless test asserts the
+    // document comes out ~2x the viewport and it passes, so Chrome's layout is
+    // not where the answer is, and Chrome device emulation cannot show it --
+    // it has no retractable toolbars, so vh and dvh are the same number there.
+    // That leaves Safari Web Inspector over USB, which is a lot of setup to
+    // ask of someone whose report is "the swipe does nothing". These three
+    // numbers separate the three candidate causes outright:
+    //
+    //   h ~= v            the document is not tall -> the spacer never applied
+    //   h >> v, y stays 0 it cannot scroll         -> a clamp, not the spacer
+    //   h >> v, y climbs  it scrolls fine          -> the gesture never
+    //                                                 reached the scroller
+    if (new URLSearchParams(location.search).has('scroll-debug')) {
+      const box = document.createElement('div');
+      box.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:2147483647;' +
+        'background:#000;color:#0f0;font:11px/1.4 ui-monospace,monospace;' +
+        'padding:3px 4px;text-align:center;pointer-events:none;white-space:pre-wrap';
+      const paint = () => {
+        box.textContent =
+          'h' + document.documentElement.scrollHeight +
+          ' v' + window.innerHeight +
+          ' y' + Math.round(window.scrollY) +
+          ' max' + Math.max(0, document.documentElement.scrollHeight - window.innerHeight) +
+          '\n' + (document.body.className || '(no classes)');
+      };
+      // Sampled rather than driven off scroll events: a gesture that never
+      // reaches the scroller fires no scroll event at all, and "no event" and
+      // "event with y=0" have to look different from each other here.
+      setInterval(paint, 300);
+      window.addEventListener('scroll', paint, { passive: true });
+      if (document.body) document.body.appendChild(box);
+      else window.addEventListener('DOMContentLoaded', () => document.body.appendChild(box));
+    }
+
     // Shown only where it is true and actionable: a browser that keeps its own
     // toolbars over this mode, and a page that is not already installed (an
     // installed one has no browser chrome to complain about).
@@ -1288,7 +1334,21 @@ Resource-aware Win98 emulator
       }
       document.body.classList.remove('page-fullscreen');
       const renderer = sharedRenderer || (wine && wine.renderer);
-      if (renderer) renderer._requestedBrowserFullscreen = false;
+      if (renderer) {
+        renderer._requestedBrowserFullscreen = false;
+        // Hand the display back for real, not just our half of it. An app that
+        // is genuinely exclusive (a full-screen game) still satisfies the
+        // renderer's exclusive test on every later repaint, so unless the
+        // decline is latched here it keeps body.exclusive-fullscreen -- which
+        // hides the desktop icons -- while page-fullscreen is gone, and the
+        // chip strands the visitor on bare background with no launcher.
+        //
+        // Guarded on the current state rather than called unconditionally
+        // because _setExclusiveFullscreen(false) calls back into this function
+        // to put the page back; the guard is what stops that being a loop.
+        renderer._fullscreenDeclined = true;
+        if (renderer._exclusiveFullscreen) renderer._setExclusiveFullscreen(false);
+      }
       scrollCollapseDisarm();
       resizeCanvas();
     }
@@ -1533,7 +1593,13 @@ Resource-aware Win98 emulator
         if (!running) {
           exitPageFullscreen();
           document.body.classList.remove('exclusive-fullscreen');
-          if (sharedRenderer) sharedRenderer._exclusiveFullscreen = false;
+          if (sharedRenderer) {
+            sharedRenderer._exclusiveFullscreen = false;
+            // exitPageFullscreen just latched a decline. It belongs to the app
+            // that was on screen, not to the next one -- leaving it set would
+            // silently deny full screen to every app launched afterwards.
+            sharedRenderer._fullscreenDeclined = false;
+          }
         }
         // The desktop reappears at its own size once the guest is gone, and
         // the canvas is no longer sized to a maximized window.

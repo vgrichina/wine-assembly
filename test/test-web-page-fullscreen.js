@@ -229,6 +229,56 @@ async function main() {
     assert(backIn, 'an app still holding the display offers the way back into full screen');
     assert(!exited.scrollCollapse && !exited.gutterVisible,
       'the swipe strip and its spacer belong to full screen only');
+
+    // ---- the chip on an app that STAYS exclusive -------------------------
+    //
+    // Everything above is measured on winmine, which is not really an
+    // exclusive app: the repaint right after the chip recomputes exclusive as
+    // false all by itself, so both classes come off and the exit looks clean.
+    // A full-screen game does not do that. Its window still satisfies the
+    // exclusive test on every later repaint, and _setExclusiveFullscreen's
+    // "already in this state" early return then means the chip removes
+    // page-fullscreen and NOTHING puts exclusive-fullscreen back down --
+    // which hides #desktop-icons, the only launcher a phone has. Reported as
+    // "cannot launch new app after closing previous - stuck in green
+    // desktop".
+    //
+    // Pinned to the renderer's own decision rather than to a real game so the
+    // check costs no extra boot: force the exclusive verdict true and let the
+    // repaint loop keep asserting it, which is exactly what a game does.
+    await page.evaluate(() => {
+      const app = runningApps.find(item => item && item.name === 'winmine_wep');
+      const renderer = app.wine.renderer;
+      // The chip above latched a decline, and that latch is doing its job:
+      // nothing the guest does may put full screen back on its own. Asking
+      // again is the user's move, so make it here before the exclusive app
+      // arrives -- otherwise this stage would be testing the latch it just
+      // set rather than the exit path.
+      approveBrowserFullscreen();
+      renderer._isExclusiveFullscreenWindow = () => true;
+      renderer.repaint();
+    });
+    await page.waitForFunction(
+      () => document.body.classList.contains('page-fullscreen'), { timeout: 5000 });
+    await page.click('#page-fullscreen-exit');
+    // Several repaints' worth: the failure is not in the click, it is in what
+    // the frames after it put back.
+    await new Promise(resolve => setTimeout(resolve, 400));
+    await page.evaluate(() => {
+      const app = runningApps.find(item => item && item.name === 'winmine_wep');
+      for (let i = 0; i < 5; i++) app.wine.renderer.repaint();
+    });
+    const stuck = await page.evaluate(layout);
+    await page.screenshot({ path: path.join(OUT, 'exclusive-exited.png') });
+    assert(!stuck.pageFullscreen,
+      `the chip must stay pressed: ${stuck.classes}`);
+    assert(!stuck.classes.includes('exclusive-fullscreen'),
+      `leaving full screen must hand the display back, not keep the half that ` +
+      `hides the launcher: ${stuck.classes}`);
+    assert(await page.evaluate(() =>
+      getComputedStyle(document.getElementById('desktop-icons')).display !== 'none' ||
+      document.body.classList.contains('app-running')),
+      'the desktop icons must not be hidden by a full-screen mode nobody is in');
     // Deliberately NOT asserting that full screen is taller than the framed
     // page. In no-debug mode our own chrome is already gone, so on this
     // viewport both are the full 664 and the numbers are equal -- what the
