@@ -30,6 +30,12 @@ const SKIP_DIRS = new Set(['node_modules', '.git', '.claude', 'scratch', 'tools'
 // Directories that contain binary assets (base64-encoded)
 const BINARY_DIRS = ['binaries', 'icons', 'build'];
 
+// berrry rejects any single file over this with HTTP 400 and fails the whole
+// batch, so a file above it cannot ship no matter which list names it. This is
+// the server's limit, not a policy of ours: the deploy skips those files with a
+// loud line rather than aborting and leaving the site half-updated.
+const SERVER_MAX_FILE_SIZE = 2 * 1024 * 1024;
+
 // Skip individual large files (>500KB) that aren't essential
 const MAX_BINARY_SIZE = 500 * 1024;
 // But always include these even if large
@@ -166,6 +172,11 @@ function collectBinaries() {
       // warning about weight, not a decision to leave the app broken.
       console.log('  LARGE: ' + rel + ' (' + (stat.size / 1024).toFixed(0) + 'KB)');
     }
+    if (stat.size > SERVER_MAX_FILE_SIZE) {
+      console.log('  CANNOT SHIP (over server 2MB limit): ' + rel +
+        ' (' + (stat.size / 1024).toFixed(0) + 'KB)');
+      continue;
+    }
     seen.add(rel);
     files.push({ name: rel, content: fs.readFileSync(full).toString('base64'), encoding: 'base64' });
   }
@@ -184,6 +195,11 @@ function collectBinaries() {
           !LARGE_OK.has(path.basename(f.full).toLowerCase()) &&
           !LARGE_OK_PATHS.has(f.rel)) {
         console.log('  SKIP (too large): ' + f.rel + ' (' + (stat.size / 1024).toFixed(0) + 'KB)');
+        continue;
+      }
+      if (stat.size > SERVER_MAX_FILE_SIZE) {
+        console.log('  CANNOT SHIP (over server 2MB limit): ' + f.rel +
+          ' (' + (stat.size / 1024).toFixed(0) + 'KB)');
         continue;
       }
       files.push({ name: f.rel, content: fs.readFileSync(f.full).toString('base64'), encoding: 'base64' });
