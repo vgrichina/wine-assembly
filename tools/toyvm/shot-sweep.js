@@ -67,7 +67,7 @@ function shotName(exe, dir, used) {
 
 // --- child: one program, one run --------------------------------------------
 async function runOne(exe, png, o) {
-  const { runDos, writePng, writeConsolePng } = require('./run-dos');
+  const { runDos, writePng, writeConsolePng, conText } = require('./run-dos');
   const { vgaGeometry } = require('./dos');
   const r = await runDos({
     exe, variant: 'tailcall', budget: o.budget, cpu: o.cpu, log: () => {}, autoKey: o.autoKey,
@@ -82,6 +82,12 @@ async function runOne(exe, png, o) {
     dispatched: r.dispatched, pixels: r.pixels, cells: r.text.cells,
     written: r.text.written, stuckAt: r.stuckAt || null,
     blockedOnKey: !!r.machine.blockedOnKey, autoKey: !!o.autoKey,
+    // What the screen says, when it says anything. Worth recording alongside
+    // the picture because a program that puts up two lines is usually telling
+    // you exactly why it will not run -- "File Not Found", "Select an output
+    // device", "Runtime error 100" -- and that is a different work list from
+    // the one an opcode census produces.
+    screen: r.text.cells ? conText(r.machine.con).slice(0, 2000) : '',
   };
 }
 

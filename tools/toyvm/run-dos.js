@@ -596,6 +596,8 @@ async function main() {
   }
 }
 
-module.exports = { runDos, writePng, writeConsolePng, readFrame, nonBlack, frameHash };
+module.exports = {
+  runDos, writePng, writeConsolePng, readFrame, nonBlack, frameHash, conText,
+};
 
 if (require.main === module) main().catch(e => { console.error(e.stack || String(e)); process.exit(1); });
