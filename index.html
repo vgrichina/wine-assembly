@@ -481,6 +481,114 @@
       height: 100% !important;
       min-height: 0;
     }
+    /* Page fullscreen: the fallback for a browser with no Fullscreen API.
+       iPhone Safari has none at all -- requestFullscreen and
+       webkitRequestFullscreen are both undefined on an element there (only a
+       <video> can go fullscreen), so the consent button had nothing to call
+       and did nothing at all. This mode gives up every pixel of *our* chrome
+       instead and sizes the app to the visible viewport.
+
+       100dvh, not 100vh: on iOS 100vh is the tall URL-bar-hidden viewport, so
+       a canvas sized to it runs off the bottom of the screen behind Safari's
+       toolbar. dvh follows the toolbars as they collapse and expand. Safari's
+       own bars cannot be retracted from script -- only real fullscreen or an
+       installed home-screen app removes those. */
+    body.page-fullscreen,
+    body.page-fullscreen #shell,
+    body.page-fullscreen #content,
+    body.page-fullscreen #screen-wrap {
+      width: 100vw;
+      height: 100vh;
+      height: 100dvh;
+      max-width: none;
+      max-height: none;
+      margin: 0;
+      padding: 0;
+      border: 0;
+      background: #000;
+    }
+    body.page-fullscreen { overflow: hidden; }
+    body.page-fullscreen #screen-wrap {
+      position: fixed;
+      inset: 0;
+      flex-direction: column;
+    }
+    body.page-fullscreen #titlebar,
+    body.page-fullscreen #toolbar,
+    body.page-fullscreen #log,
+    body.page-fullscreen #taskbar,
+    body.page-fullscreen #debug-peek,
+    body.page-fullscreen #desktop-icons,
+    body.page-fullscreen #browser-fullscreen-consent { display: none !important; }
+    body.page-fullscreen #screen-canvas-stack {
+      flex: 1 1 0;
+      width: 100%;
+      height: 0;
+      min-height: 0;
+    }
+    body.page-fullscreen #screen-canvas-stack canvas {
+      position: absolute !important;
+      inset: 0 !important;
+      width: 100% !important;
+      height: 100% !important;
+    }
+    body.page-fullscreen canvas {
+      position: relative !important;
+      inset: auto !important;
+      flex: 1 1 0;
+      min-height: 0;
+      width: 100% !important;
+      height: 0 !important;
+      max-width: none !important;
+      max-height: none !important;
+    }
+    /* The one control left. A phone has no Escape key and the app owns every
+       tap on the canvas, so without this there is no way back out. Sits inside
+       the safe area so the notch and the home indicator never cover it. */
+    #page-fullscreen-exit { display: none; }
+    body.page-fullscreen #page-fullscreen-exit {
+      display: block;
+      position: fixed;
+      top: calc(4px + env(safe-area-inset-top));
+      right: calc(4px + env(safe-area-inset-right));
+      z-index: 40;
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      color: #fff;
+      background: rgba(0, 0, 0, 0.45);
+      border: 1px solid rgba(255, 255, 255, 0.5);
+      border-radius: 15px;
+      font: 14px/1 sans-serif;
+      opacity: 0.5;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    body.page-fullscreen #page-fullscreen-exit:active { opacity: 1; }
+    /* Safari's own toolbars are the one thing script cannot take away. Say so
+       once, name the thing that does (Add to Home Screen runs the manifest's
+       standalone display with no browser chrome at all), and get out of the
+       way -- a hint that stays is just more chrome. */
+    #page-fullscreen-hint { display: none; }
+    body.page-fullscreen #page-fullscreen-hint {
+      display: block;
+      position: fixed;
+      left: 50%;
+      bottom: calc(10px + env(safe-area-inset-bottom));
+      transform: translateX(-50%);
+      z-index: 40;
+      max-width: 84vw;
+      padding: 6px 12px;
+      color: #fff;
+      background: rgba(0, 0, 0, 0.6);
+      border-radius: 12px;
+      font: 12px/1.35 sans-serif;
+      text-align: center;
+      pointer-events: none;
+      opacity: 1;
+      transition: opacity 600ms linear;
+    }
+    body.page-fullscreen #page-fullscreen-hint.faded { opacity: 0; }
     #screen-wrap:fullscreen {
       position: fixed;
       inset: 0;
@@ -807,6 +915,8 @@
           <span>App is using the full page</span>
           <button type="button" onclick="approveBrowserFullscreen(event)">Use browser fullscreen</button>
         </div>
+        <button type="button" id="page-fullscreen-exit" title="Leave full screen"
+                aria-label="Leave full screen" onclick="exitPageFullscreen(event)">&#x2715;</button>
         <textarea id="mobile-keyboard-proxy" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-hidden="true"></textarea>
       </div>
       <div id="log">Wine-Assembly v0.2
@@ -910,7 +1020,10 @@ Resource-aware Win98 emulator
       const current = document.fullscreenElement || document.webkitFullscreenElement;
       if (!target || current === target) return;
       const request = target.requestFullscreen || target.webkitRequestFullscreen;
-      if (!request) return;
+      // iPhone Safari has no element Fullscreen API -- neither name exists, on
+      // any element that is not a <video>. The button used to return here and
+      // do nothing whatsoever. Fall back to giving the app the whole page.
+      if (!request) return enterPageFullscreen();
       const renderer = sharedRenderer || (wine && wine.renderer);
       if (renderer) renderer._requestedBrowserFullscreen = true;
       try {
@@ -921,6 +1034,36 @@ Resource-aware Win98 emulator
         if (renderer) renderer._requestedBrowserFullscreen = false;
       }
     }
+
+    // Everything the page can do about "full screen" when the browser will not
+    // give it a real fullscreen element: hide our own chrome and let the app
+    // have the visible viewport. The CSS does the layout (body.page-fullscreen,
+    // sized in dvh); this just turns it on and keeps the canvas in step.
+    function enterPageFullscreen() {
+      if (document.body.classList.contains('page-fullscreen')) return;
+      document.body.classList.add('page-fullscreen');
+      const renderer = sharedRenderer || (wine && wine.renderer);
+      if (renderer) renderer._requestedBrowserFullscreen = true;
+      // Safari keeps its toolbars until the page is scrolled, and a page this
+      // tall has nowhere to scroll -- but if the document was left scrolled
+      // down, the top of the app would start off-screen.
+      window.scrollTo(0, 0);
+      resizeCanvas();
+    }
+
+    function exitPageFullscreen(event) {
+      if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      document.body.classList.remove('page-fullscreen');
+      const renderer = sharedRenderer || (wine && wine.renderer);
+      if (renderer) renderer._requestedBrowserFullscreen = false;
+      resizeCanvas();
+    }
+    // lib/renderer.js drops the app out of exclusive fullscreen through this,
+    // so a game that closes its display takes the page back with it.
+    window.exitPageFullscreen = exitPageFullscreen;
 
     // What each app is made of, and which ones get a desktop icon: lib/apps.js.
     // The CLI reads the same table, so `run.js --app=sol` mounts exactly the
@@ -1025,6 +1168,13 @@ Resource-aware Win98 emulator
       const savedRuntimeLogging = localStorage.getItem(RUNTIME_LOG_KEY);
       if (savedRuntimeLogging !== null) initialRuntimeLogging = savedRuntimeLogging !== '0';
     } catch (_) {}
+    // ?no-log starts the session with the runtime log off, without touching the
+    // saved preference. The log panel is not free: `logToUI` console.logs every
+    // line as well as appending it, and the trailing scrollTop write forces a
+    // layout per line. Measured on Diablo's Choose Class it was 39.9% of all
+    // CPU -- four times what rendering the frame cost -- so any profile taken
+    // in ?debug is mostly measuring the panel unless this is set.
+    if (new URLSearchParams(location.search).has('no-log')) initialRuntimeLogging = false;
     window.WINE_RUNTIME_LOGGING = initialRuntimeLogging;
     const initialRuntimeLogToggle = document.getElementById('runtime-log-toggle');
     if (initialRuntimeLogToggle) initialRuntimeLogToggle.checked = initialRuntimeLogging;
