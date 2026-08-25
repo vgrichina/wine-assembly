@@ -90,6 +90,17 @@ const VIEWPORT = (() => {
   };
 })();
 const FINAL_EVAL = opt('eval', '');
+// --trace=dx,gdi turns on the same trace categories test/run.js exposes as
+// --trace-dx / --trace-gdi, inside the page. host.js hands
+// window.__waTraceCategories to lib/host-imports.js as ctx.trace, so the
+// browser prints the identical [dx]/[gdi] lines. --console-out=FILE captures
+// every console line the page emits (a traced run is far too chatty for the
+// terminal).
+const TRACE = (opt('trace', '') || '').split(',').map(s => s.trim()).filter(Boolean);
+const CONSOLE_OUT = opt('console-out', '');
+// --trace-api=Name1,Name2 is the page's --trace-api=NAMES: host.js already
+// reads window.__waTraceApiNames, this just fills it before the app launches.
+const TRACE_API = (opt('trace-api', '') || '').split(',').map(s => s.trim()).filter(Boolean);
 const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
 function mimeType(file) {
@@ -184,10 +195,23 @@ async function main() {
     }
     await page.setViewport(VIEWPORT);
     page.on('pageerror', e => problems.push(String(e)));
+    const consoleLines = [];
     page.on('console', m => {
       const t = m.text();
+      if (CONSOLE_OUT) consoleLines.push(t);
       if (/UNIMPLEMENTED API:|RuntimeError|LinkError|crashed|FATAL:/i.test(t)) problems.push(t);
     });
+    if (CONSOLE_OUT) {
+      const flush = () => fs.writeFileSync(CONSOLE_OUT, consoleLines.join('\n') + '\n');
+      setInterval(flush, 2000).unref();
+      process.on('exit', flush);
+    }
+    if (TRACE.length || TRACE_API.length) {
+      await page.evaluateOnNewDocument((cats, apis) => {
+        if (cats.length) window.__waTraceCategories = new Set(cats);
+        if (apis.length) window.__waTraceApiNames = new Set(apis);
+      }, TRACE, TRACE_API);
+    }
     await page.goto(`${base}/index.html${QUERY}`, { waitUntil: 'load', timeout: 60000 });
     await page.waitForFunction('typeof launchApp === "function"', { timeout: 60000 });
 
