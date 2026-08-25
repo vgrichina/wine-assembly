@@ -158,6 +158,7 @@ UNIT=(
   test/test-region-window-client-rect.js
   test/test-wat-statusbar-grip.js
   test/test-wat-decoder-runaway.js
+  test/test-page-chunk-sizing.js
   test/test-wat-winsock.js
   test/test-vlan-wire.js
   test/test-large-dll-staging.js
@@ -383,6 +384,7 @@ E2E=(
   test/test-web-app-close-frees-memory.js
   test/test-web-failed-launch-recovers.js
   test/test-web-double-tap-single-launch.js
+  test/test-web-touch-cursor.js
   test/test-web-single-app-quit.js
   test/test-win16-jigsawed.js
   test/test-win16-jigsawed-menus.js

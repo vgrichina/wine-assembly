@@ -1156,6 +1156,10 @@ Resource-aware Win98 emulator
   <script src="lib/apps.js?v=2"></script>
   <script src="lib/browser-input.js?v=3"></script>
   <script src="lib/mobile-keyboard.js?v=2"></script>
+  <!-- Touch devices have no pointer, so every cursor shape the guest sets is
+       invisible there and a busy app looks like a dead one. Draws the cursor
+       itself; inert under a mouse. -->
+  <script src="lib/touch-cursor.js?v=1"></script>
   <!-- Inert unless ?diag is on the URL. It watches the one invariant a phone
        desktop has -- a tap at the first icon's centre lands on that icon --
        and posts the failing state to /ios-report, because the machine this
