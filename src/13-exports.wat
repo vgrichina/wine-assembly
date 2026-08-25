@@ -6,14 +6,33 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
 
   (func $run (export "run") (param $max_blocks i32)
-    (local $thread i32) (local $blocks i32)
+    (local $thread i32)
     (local $hc_i i32) (local $hc_slot i32)
     (local $prev_eip i32) (local $prev_esp i32)
-    (local.set $blocks (local.get $max_blocks))
+    (local $saved_budget i32)
+    ;; A global rather than a local because $branch_end spends it too — see the
+    ;; comment on $block_budget in 01-header.wat. Saved and restored because
+    ;; run() is re-entrant: a COM class-factory callback is driven by calling
+    ;; run() again from inside the API thunk the outer run() is still executing
+    ;; (lib/storage.js _runComCallback). A plain global would hand the outer
+    ;; loop whatever the nested one left behind, and it would halt early.
+    (local.set $saved_budget (global.get $block_budget))
+    (global.set $block_budget (local.get $max_blocks))
     (block $halt (loop $main
-      (br_if $halt (i32.le_s (local.get $blocks) (i32.const 0)))
+      (br_if $halt (i32.le_s (global.get $block_budget) (i32.const 0)))
       (br_if $halt (i32.eqz (global.get $eip)))
-      (local.set $blocks (i32.sub (local.get $blocks) (i32.const 1)))
+      ;; A block whose quantum expired part-way through. Give it a fresh one and
+      ;; carry on from the op $next declined to run — looking $eip up again would
+      ;; restart the block and re-run everything before that op. No block is
+      ;; spent from the budget: this is the same block, still in progress.
+      (if (global.get $resume_ip)
+        (then
+          (global.set $ip (global.get $resume_ip))
+          (global.set $resume_ip (i32.const 0))
+          (global.set $steps (i32.const 1000))
+          (call $next)
+          (br $main)))
+      (global.set $block_budget (i32.sub (global.get $block_budget) (i32.const 1)))
       ;; Reset thread buffer if approaching cache region (leave 4KB margin)
       (if (i32.ge_u (global.get $thread_alloc) (i32.sub (global.get $THREAD_END) (i32.const 4096)))
         (then
@@ -169,16 +188,21 @@
         (then
           (if (call $fast_msvc_sbh_scan)
             (then (br $main)))))
-      (local.set $thread (call $cache_lookup (global.get $eip)))
+      ;; The page index is the only lookup there is now: it is exact, so a miss
+      ;; here really does mean nothing is compiled at this address. The hash
+      ;; cache that used to sit between these two rungs is gone --
+      ;; docs/page-compile-design.md section 4.
+      (local.set $thread (call $page_resolve (global.get $eip)))
       (if (i32.eqz (local.get $thread))
-        (then (local.set $thread (call $decode_block (global.get $eip)))))
+        (then (local.set $thread (call $decode_run (global.get $eip)))))
       (global.set $ip (local.get $thread))
       (if (global.get $handler_hist_enabled)
         (then (global.set $handler_hist_last (i32.const -1))))
       ;; Set steps high enough to always complete a block
       (global.set $steps (i32.const 1000))
       (call $next)
-      (br $main))))
+      (br $main)))
+    (global.set $block_budget (local.get $saved_budget)))
 
   ;; Hook for test/test-shift-equivalence.js, which checks the unified
   ;; $do_shift against an independent model of the x86 semantics over every
@@ -390,6 +414,42 @@
   ;; area at (0,0) rather than a screen-coordinate DirectDraw primary.
   (func (export "get_d3d9_windowed_hwnd") (result i32)
     (global.get $d3d9_windowed_hwnd))
+  ;; The window a DirectDraw/Direct3D frame should be presented into.
+  ;;
+  ;; Normally that is $main_hwnd, but $main_hwnd is a *per-instance* mutable
+  ;; global and a worker thread is a separate WASM instance sharing only the
+  ;; linear memory. Liquid War (Allegro) creates its window on T1, so the main
+  ;; instance -- the one the compositor asks -- reports $main_hwnd == 0 and
+  ;; every finished frame was dropped before it reached a window surface:
+  ;; --trace-dx showed 17 `Present` lines and zero `Upload` lines.
+  ;;
+  ;; WND_RECORDS *is* shared memory, so when this instance has no main window
+  ;; of its own, fall back to the topmost visible top-level window recorded
+  ;; there. $dx_coop_hwnd is no help here -- it is a per-instance global too.
+  (func (export "get_dx_present_hwnd") (result i32)
+    (local $i i32) (local $hwnd i32) (local $best i32) (local $best_z i32)
+    (local $z i32)
+    (if (global.get $main_hwnd)
+      (then (return (global.get $main_hwnd))))
+    (local.set $i (i32.const 0))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (local.set $hwnd (call $wnd_slot_hwnd (local.get $i)))
+      (if (i32.and
+            (i32.and (i32.ne (local.get $hwnd) (i32.const 0))
+                     (i32.eqz (call $wnd_get_parent (local.get $hwnd))))
+            (i32.ne (i32.and (call $wnd_get_style (local.get $hwnd))
+                             (i32.const 0x10000000))          ;; WS_VISIBLE
+                    (i32.const 0)))
+        (then
+          (local.set $z (call $wnd_z_get (local.get $hwnd)))
+          (if (i32.or (i32.eqz (local.get $best))
+                      (i32.gt_s (local.get $z) (local.get $best_z)))
+            (then (local.set $best (local.get $hwnd))
+                  (local.set $best_z (local.get $z))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $best))
   (func (export "get_flash_state") (param $hwnd i32) (result i32)
     (local $slot i32)
     (local.set $slot (call $wnd_table_find (local.get $hwnd)))
@@ -2212,9 +2272,16 @@
     (global.set $THREAD_BASE (i32.add (i32.const 0x05000000)
       (i32.mul (local.get $tid) (i32.const 0x400000))))
     (global.set $THREAD_END  (i32.add (global.get $THREAD_BASE) (i32.const 0x400000)))
-    (global.set $CACHE_INDEX (i32.add (i32.const 0x07152000)
-      (i32.mul (local.get $tid) (i32.const 0x8000))))
     (global.set $thread_alloc (global.get $THREAD_BASE))
+    ;; Page-compilation state is per-instance for the same reason THREAD_BASE
+    ;; is: a worker is a separate instance over the same memory, and chunk
+    ;; pointers name that thread's own arena partition.
+    (global.set $PAGE_DIR (i32.add (global.get $PAGE_DIR_BASE)
+      (i32.mul (local.get $tid) (global.get $PAGE_DIR_STRIDE))))
+    (global.set $PAGE_INDEX (i32.add (global.get $PAGE_INDEX_ARENA)
+      (i32.mul (local.get $tid) (global.get $PAGE_INDEX_STRIDE))))
+    (global.set $page_index_next (i32.const 0))
+    (call $page_dir_reset)
     (global.set $image_base (local.get $img_base))
     ;; Resource lookup state is instance-local. PE headers are not mapped into
     ;; guest memory, so a worker cannot reconstruct this RVA by rereading the
@@ -2487,6 +2554,23 @@
   (func (export "set_rect_run") (param $flag i32)
     (global.set $rect_run_enabled (local.get $flag)))
 
+  (func (export "set_case_chain") (param $flag i32)
+    (global.set $case_chain_enabled (local.get $flag)))
+
+  ;; Page compilation (docs/page-compile-design.md). There is deliberately no
+  ;; switch: this replaces the storage layer rather than accelerating it, so the
+  ;; thing to compare against is the commit before it, not a flag.
+  (func (export "get_page_compiles") (result i32) (global.get $page_compiles))
+  (func (export "get_page_hits")     (result i32) (global.get $page_hits))
+  (func (export "get_page_misses")   (result i32) (global.get $page_misses))
+  (func (export "get_page_fast")     (result i32) (global.get $page_fast))
+  (func (export "get_page_ft")       (result i32) (global.get $page_ft))
+  (func (export "get_page_ft_missed")(result i32) (global.get $page_ft_missed))
+  (func (export "get_page_retires")  (result i32) (global.get $page_retires))
+  (func (export "get_page_range_drops")(result i32) (global.get $page_range_drops))
+  (func (export "get_page_ft_chains")(result i32) (global.get $page_ft_chains))
+  (func (export "get_page_ft_blocks")(result i32) (global.get $page_ft_blocks))
+
   ;; Threaded-handler histogram. Profiling tools enable this only around a
   ;; measured window. Counts are stored in WAT-private memory and read by JS.
   (func (export "set_handler_hist_enabled") (param $flag i32)
@@ -2671,6 +2755,14 @@
     ;; Redirect EIP to callback
     (global.set $eip (local.get $cb))
     (i32.const 1))
+
+  ;; A host-side writer that fills guest memory directly (ReadFile into the
+  ;; guest's buffer, a mapped view, a decompressed resource) bypasses every
+  ;; store handler, so nothing retires the decoded blocks it just overwrote.
+  ;; Storm keeps its generated code and its file buffers in the same heap
+  ;; region, so that is a real collision, not a theoretical one.
+  (func (export "invalidate_code_range") (param $ga i32) (param $len i32)
+    (call $invalidate_code_range (local.get $ga) (local.get $len)))
 
   ;; Write guest memory (guest addr)
   (func (export "guest_write32") (param $ga i32) (param $val i32)

@@ -220,8 +220,28 @@
         (global.set $g2w_gl8_page (local.get $page))
         (global.set $g2w_gl8_delta (i32.sub (local.get $wa) (local.get $ga)))))
     (i32.load8_u (local.get $wa)))
-  (func $invalidate_code_write (param $ga i32)
+  ;; Cheap "could a write here be touching code?" test, for one guest address.
+  ;; Split out of $invalidate_code_write so the range form can skip it when the
+  ;; write spans pages and the per-page walk will ask the question anyway.
+  (func $code_write_is_code (param $ga i32) (result i32)
     (local $in_sparse_generated i32)
+    (local.set $in_sparse_generated
+      (i32.and
+        (i32.ne (global.get $generated_sparse_code_start) (i32.const 0))
+        (i32.and (i32.ge_u (local.get $ga) (global.get $generated_sparse_code_start))
+                 (i32.lt_u (local.get $ga) (global.get $generated_sparse_code_end)))))
+    (i32.or
+      (local.get $in_sparse_generated)
+      (call $code_page_test (local.get $ga))))
+
+  ;; A write of $len bytes starting at $ga. The length is not decoration: with
+  ;; per-offset invalidation (docs/page-compile-design.md section 5) the retire
+  ;; walk needs the real extent, because it retires the blocks that cover the
+  ;; bytes named and nothing else. Passing only the first and last byte of a
+  ;; REP MOVS -- which is what the page-granularity design got away with, since
+  ;; two endpoints named every page in between as long as there were at most
+  ;; two -- would now leave every block in the middle live over rewritten bytes.
+  (func $invalidate_code_write (param $ga i32) (param $len i32)
     ;; Invalidate decoded blocks only when writes can affect already-decoded
     ;; executable bytes. RCT mutates large image-data buffers during startup;
     ;; treating every image write as self-modifying code makes each byte/word
@@ -236,25 +256,29 @@
     ;; heap memory, which lies in neither span. Storm's runtime blitters are
     ;; exactly that case.
     (if (i32.eqz (global.get $exe_size_of_image)) (then (return)))
-    (local.set $in_sparse_generated
-      (i32.and
-        (i32.ne (global.get $generated_sparse_code_start) (i32.const 0))
-        (i32.and (i32.ge_u (local.get $ga) (global.get $generated_sparse_code_start))
-                 (i32.lt_u (local.get $ga) (global.get $generated_sparse_code_end)))))
-    (if (i32.or
-          (local.get $in_sparse_generated)
-          (call $code_page_test (local.get $ga)))
-      (then (call $invalidate_page (local.get $ga)))))
+    ;; The hot case is a 1/2/4-byte write inside one page: answer it with the
+    ;; bitmap and decline without a call. A write that spans pages goes straight
+    ;; to the range walk, which tests each page's directory slot itself -- a
+    ;; first-page test would be wrong there, since the code could be in the last
+    ;; page of the span.
+    (if (i32.le_u (i32.add (i32.and (local.get $ga) (i32.const 0xFFF)) (local.get $len))
+                  (i32.const 4096))
+      (then
+        (if (i32.eqz (call $code_write_is_code (local.get $ga))) (then (return)))))
+    ;; Multi-page spans need every page in between retired, not just the two
+    ;; ends -- main fixed that with its own $invalidate_code_range, and the
+    ;; page-compile one below already walks page by page, so that fix arrives
+    ;; here as a property of the range walk rather than a second function.
+    (call $invalidate_code_range (local.get $ga) (local.get $len)))
   (func $gs32 (param $ga i32) (param $v i32)
     (local $wa i32) (local $end_wa i32)
     (local.set $wa (call $g2w (local.get $ga)))
-    (call $invalidate_code_write (local.get $ga))
+    (call $invalidate_code_write (local.get $ga) (i32.const 4))
     (if (i32.le_u (i32.and (local.get $ga) (i32.const 0xFFF)) (i32.const 0xFFC))
       (then (i32.store (local.get $wa) (local.get $v)) (return)))
     (local.set $end_wa (call $g2w (i32.add (local.get $ga) (i32.const 3))))
     (if (i32.eq (local.get $end_wa) (i32.add (local.get $wa) (i32.const 3)))
       (then (i32.store (local.get $wa) (local.get $v)) (return)))
-    (call $invalidate_code_write (i32.add (local.get $ga) (i32.const 3)))
     (i32.store8 (local.get $wa) (local.get $v))
     (i32.store8
       (call $g2w (i32.add (local.get $ga) (i32.const 1)))
@@ -266,19 +290,18 @@
   (func $gs16 (param $ga i32) (param $v i32)
     (local $wa i32) (local $end_wa i32)
     (local.set $wa (call $g2w (local.get $ga)))
-    (call $invalidate_code_write (local.get $ga))
+    (call $invalidate_code_write (local.get $ga) (i32.const 2))
     (if (i32.ne (i32.and (local.get $ga) (i32.const 0xFFF)) (i32.const 0xFFF))
       (then (i32.store16 (local.get $wa) (local.get $v)) (return)))
     (local.set $end_wa (call $g2w (i32.add (local.get $ga) (i32.const 1))))
     (if (i32.eq (local.get $end_wa) (i32.add (local.get $wa) (i32.const 1)))
       (then (i32.store16 (local.get $wa) (local.get $v)) (return)))
-    (call $invalidate_code_write (i32.add (local.get $ga) (i32.const 1)))
     (i32.store8 (local.get $wa) (local.get $v))
     (i32.store8 (local.get $end_wa) (i32.shr_u (local.get $v) (i32.const 8))))
   (func $gs8 (param $ga i32) (param $v i32)
     (local $wa i32)
     (local.set $wa (call $g2w (local.get $ga)))
-    (call $invalidate_code_write (local.get $ga))
+    (call $invalidate_code_write (local.get $ga) (i32.const 1))
     (i32.store8 (local.get $wa) (local.get $v)))
 
   ;; ============================================================

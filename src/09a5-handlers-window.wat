@@ -1216,6 +1216,20 @@
                      (i32.lt_u (local.get $wndproc) (i32.const 0xFFFF0000)))
           (then
             (global.set $show_window_activated (i32.const 1))
+            ;; A window shown under the cursor gets a WM_SETCURSOR: on Win98
+            ;; the pointer is already inside it, and USER asks the window what
+            ;; shape to use as soon as it owns the pixels beneath the pointer.
+            ;; Apps treat that as "we are on screen now" and do real work in
+            ;; it. The DX SDK wormhole sample seeds its palette-cycling array
+            ;; with IDirectDrawPalette::GetEntries there and nowhere else, so
+            ;; without this its rotation shuffles an all-zero table forever
+            ;; and the tunnel is drawn once and never animates again.
+            ;; Posted rather than sent: it lands after the activation chain
+            ;; below finishes, which is the order Win98 produces.
+            (drop (call $post_queue_push (global.get $main_hwnd)
+              (i32.const 0x0020)                    ;; WM_SETCURSOR
+              (global.get $main_hwnd)               ;; wParam = hwnd under cursor
+              (i32.const 0x02000001)))              ;; HTCLIENT | WM_MOUSEMOVE<<16
             ;; Save ShowWindow's return address; pop ShowWindow frame (ret + 2 args = 12).
             (local.set $packed (call $gl32 (global.get $esp)))
             (global.set $esp (i32.add (global.get $esp) (i32.const 12)))

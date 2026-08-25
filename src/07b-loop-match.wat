@@ -821,7 +821,14 @@
         ;; One code-page test for the whole chunk. The chunk cannot leave the
         ;; destination page and nothing executes between its first and last
         ;; store, so invalidating up front is what invalidating per byte did.
-        (call $invalidate_code_write (local.get $dst_ga))
+        ;;
+        ;; The destination stride can be negative and larger than one byte, so
+        ;; the exact extent is not simply [dst_ga, dst_ga+chunk). Since the
+        ;; chunk is known to stay inside one page, name the page instead: that
+        ;; is what this call has always meant, and $invalidate_code_range turns
+        ;; a span this wide into the page drop the old $invalidate_page did.
+        (call $invalidate_code_write
+          (i32.and (local.get $dst_ga) (i32.const 0xFFFFF000)) (i32.const 4096))
 
         (local.set $n (local.get $chunk))
         (loop $inner
@@ -980,7 +987,10 @@
               (i32.eq (local.get $dst_wa) (global.get $NULL_SENTINEL)))
           (then (local.set $chunk (i32.const 1))))
 
-        (call $invalidate_code_write (local.get $dst_ga))
+        ;; Page-wide for the same reason as the COPY_RUN site above: the chunk
+        ;; stays in one page but its stride makes the exact extent awkward.
+        (call $invalidate_code_write
+          (i32.and (local.get $dst_ga) (i32.const 0xFFFFF000)) (i32.const 4096))
 
         (local.set $n (local.get $chunk))
         (loop $inner

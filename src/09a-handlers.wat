@@ -3530,6 +3530,7 @@
 
 ;; 114: EndDialog(hDlg, nResult) — end modal dialog, set result
   (func $handle_EndDialog (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $deferred i32)
     ;; MFC also calls EndDialog on dialogs created through CreateDialogParamA.
     ;; Those modeless dialogs have no CACA0004 pump, so do not poison the
     ;; global modal-completion flags unless this hwnd is the active modal.
@@ -3558,7 +3559,19 @@
         ;; A modeless/native dialog loop must finish its synchronous call stack
         ;; instead; yielding here strands Storm's SDlgDialogBoxParam before it
         ;; can observe SDlg_EndDialog and return the selected class.
-        (global.set $yield_flag (i32.const 1))))
+        (global.set $yield_flag (i32.const 1))
+        ;; This dialog belongs to our own modal pump, and CACA0004 tears it
+        ;; down the moment the DLGPROC returns. Leave the window standing
+        ;; until then, exactly as USER does: EndDialog only records the
+        ;; result. A DLGPROC routinely keeps using its own controls after
+        ;; calling EndDialog -- the DirectX SDK's bellhop reads the service
+        ;; provider combo's item data back with SendDlgItemMessage(CB_
+        ;; GETITEMDATA) in a `while (data != CB_ERR)` free loop right after
+        ;; EndDialog(hDlg, 1). Destroying the controls here makes every one
+        ;; of those calls answer 0 instead of CB_ERR, so the loop never ends
+        ;; and the run dies with the host log buffer eating all of the JS
+        ;; heap.
+        (local.set $deferred (i32.const 1))))
     ;; Remove the visible frame here, even for DialogBoxParamA. Renderer-side
     ;; WAT dialog routing can call EndDialog synchronously while the guest is
     ;; between modal-pump turns; waiting for the pump leaves the dialog stuck
@@ -3568,8 +3581,10 @@
     ;; Diablo's modeless class picker. The pump cleanup path below is guarded
     ;; for already-removed dialogs.
     (if (i32.and
-          (i32.ne (call $wnd_table_get (local.get $arg0)) (i32.const 0))
-          (i32.ne (local.get $arg0) (global.get $dlg_ending_hwnd)))
+          (i32.eqz (local.get $deferred))
+          (i32.and
+            (i32.ne (call $wnd_table_get (local.get $arg0)) (i32.const 0))
+            (i32.ne (local.get $arg0) (global.get $dlg_ending_hwnd))))
       (then
         (global.set $dlg_ending_hwnd (local.get $arg0))
         (call $wnd_destroy_recursive (local.get $arg0))
@@ -5505,25 +5520,25 @@
     ;; and nobody has been given it yet -- the first paint of a window's life --
     ;; and the class brush is the right answer there too.
     ;;
-    ;; Children keep the old unconditional fill. An erase is only ever queued
-    ;; for a window once, at creation, so for anything that repaints often this
-    ;; is the only background it gets; Hearts' own status bar draws its text
-    ;; straight over whatever is there and its lines piled up on each other the
-    ;; moment the fill stopped. The bug being fixed here is a top-level one --
-    ;; a game that paints its table and was registered with WHITE_BRUSH -- so
-    ;; that is where the behaviour changes.
+    ;; Children answer it the same way. They used to be filled on every single
+    ;; paint, on the grounds that an erase is queued only once, at creation --
+    ;; but $paint_flag_set_inv now marks every system-driven invalidation for
+    ;; erase as USER does, so a child that is created, shown or uncovered still
+    ;; gets its background, and one repainting an animation on its own
+    ;; InvalidateRect(rc, FALSE) no longer has last frame wiped out from under
+    ;; it. Diablo's menu is two stacked children: the frame repaints text every
+    ;; tick and the burning DIABLO logo above it is painted by the other one,
+    ;; and the unconditional fill blacked the logo out on 13 of every 15
+    ;; frames.
     ;; Same --trace-erase line as $host_erase_background: this is the other
     ;; place a window's background gets filled, and telling the two apart is
     ;; the whole point of the trace. Negative height marks the BeginPaint one.
     (call $host_erase_trace (local.get $arg0) (local.get $brush)
       (i32.and (local.get $cs) (i32.const 0xFFFF))
       (i32.sub (i32.const 0) (i32.shr_u (local.get $cs) (i32.const 16))))
-    (if (i32.and (local.get $brush)
-          (i32.or
-            (i32.ne (i32.and (call $wnd_get_style (local.get $arg0))
-                             (i32.const 0x40000000)) (i32.const 0))
-            (i32.ne (i32.and (call $nc_flags_test (local.get $arg0))
-                             (i32.const 10)) (i32.const 0))))
+    (if (i32.and (i32.ne (local.get $brush) (i32.const 0))
+          (i32.ne (i32.and (call $nc_flags_test (local.get $arg0))
+                           (i32.const 10)) (i32.const 0)))
       (then
         (call $nc_flags_clear (local.get $arg0) (i32.const 2))
         (local.set $desc (global.get $GDI_LINE_DESC))
@@ -5546,14 +5561,19 @@
     ;; returned ps.fErase is non-zero. Answering 0 unconditionally here left
     ;; Diablo a black screen with five invisible buttons on it.
     ;;
-    ;; The question is only ever "did anything fill this background", and the
-    ;; class brush is the whole of the answer: with one, the fill above (or the
-    ;; pump's own WM_ERASEBKGND, which is the same fill) has run and the app
-    ;; must not repeat it; with none, nothing has, whichever of the two paths
-    ;; the erase arrived by. Storm nulls the brush for the duration of exactly
-    ;; this call, so it reads TRUE on every paint -- which is what it needs, as
-    ;; its menu text is drawn with TRANSPARENT background and would otherwise
-    ;; pile up on the previous tick's.
+    ;; Two things have to be true before the answer is TRUE: an erase was owed
+    ;; at all, and nothing performed it. Win98 only sends WM_ERASEBKGND when
+    ;; the update region was invalidated with bErase, and only then can fErase
+    ;; come back TRUE; InvalidateRect(hwnd, NULL, FALSE) means "keep what is
+    ;; on screen" and reports FALSE.
+    ;;
+    ;; Both halves are load-bearing for Diablo. Dropping the brush test left
+    ;; the menu a black screen with five invisible buttons; dropping the
+    ;; erase-pending test made storm redraw the menu background on every one
+    ;; of the flame animation's own InvalidateRect(logo, NULL, FALSE) paints,
+    ;; 20 times a second, so the burning DIABLO logo and the pentagram
+    ;; cursors were wiped a moment after each frame was drawn and the menu
+    ;; flickered between lit and dark.
     (if (i32.eqz (local.get $brush))
       (then (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 1))))
     (if (local.get $erase_pending)

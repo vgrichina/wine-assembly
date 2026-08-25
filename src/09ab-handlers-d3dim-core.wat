@@ -1221,6 +1221,31 @@
       (then (return (i32.const 0xFFFFFFFF))))
     (call $d3dim_material_pack_color (call $g2w (local.get $mat))))
 
+  ;; The texture a material carries in D3DMATERIAL.hTexture (+72), resolved to a
+  ;; DX surface entry, or 0 when the material is a plain colour.
+  ;;
+  ;; A viewport background set from a D3DRM scene *image* arrives this way: the
+  ;; material's diffuse stays white and the picture hangs off hTexture, so a
+  ;; clear that only reads the diffuse paints the whole frame white. That is
+  ;; exactly what the Plus! 98 Organic Art screensavers (ROCKROLL, GEOMETRY)
+  ;; showed -- correct geometry over a blank white sky.
+  (func $d3dim_material_texture_entry (param $handle i32) (result i32)
+    (local $entry i32) (local $mat i32) (local $sz i32)
+    (if (i32.or (i32.eqz (local.get $handle))
+                (i32.ge_u (local.get $handle) (global.get $DX_MAX)))
+      (then (return (i32.const 0))))
+    (local.set $entry (i32.add (global.get $DX_OBJECTS)
+      (i32.mul (local.get $handle) (i32.const 32))))
+    (if (i32.ne (i32.load (local.get $entry)) (i32.const 25))
+      (then (return (i32.const 0))))
+    (local.set $mat (i32.load (i32.add (local.get $entry) (i32.const 8))))
+    (local.set $sz (i32.load (i32.add (local.get $entry) (i32.const 12))))
+    ;; hTexture sits at +72, so a material struct shorter than that has none.
+    (if (i32.or (i32.eqz (local.get $mat)) (i32.lt_u (local.get $sz) (i32.const 76)))
+      (then (return (i32.const 0))))
+    (call $d3dim_texture_entry_from_slot
+      (call $gl32 (i32.add (local.get $mat) (i32.const 72)))))
+
   (func $d3dim_current_material_color (param $state_guest i32) (result i32)
     (if (i32.eqz (local.get $state_guest)) (then (return (i32.const 0xFFFFFFFF))))
     ;; D3DLIGHTSTATE_MATERIAL = 1, stored at state+2304+1*4.
@@ -1867,6 +1892,14 @@
     (call $d3dim_material_color_from_handle
       (i32.load (i32.add (local.get $entry) (i32.const 28)))))
 
+  ;; The background material's texture, or 0 when the background is flat colour.
+  (func $d3dim_viewport_background_texture (param $this i32) (result i32)
+    (local $entry i32)
+    (local.set $entry (call $dx_from_this (local.get $this)))
+    (if (i32.eqz (local.get $entry)) (then (return (i32.const 0))))
+    (call $d3dim_material_texture_entry
+      (i32.load (i32.add (local.get $entry) (i32.const 28)))))
+
   ;; ── Viewport rect get/set ─────────────────────────────────────
   ;; SetViewport(lpD3DVIEWPORT) / SetViewport2(lpD3DVIEWPORT2). Persist the
   ;; rectangle and derive the transform viewport used by vertex_project.
@@ -2231,6 +2264,64 @@
       (local.set $row (i32.add (local.get $row) (i32.const 1)))
       (br $rlp))))
 
+  ;; Stretch a texture over a rect of an RT DIB (nearest neighbour). Used for a
+  ;; viewport background material that carries an image rather than a colour.
+  (func $viewport_fill_rect_texture
+    (param $rt_entry i32) (param $x i32) (param $y i32) (param $w i32) (param $h i32)
+    (param $tex_entry i32)
+    (local $sw i32) (local $sh i32) (local $bpp i32) (local $pitch i32) (local $dib_wa i32)
+    (local $row i32) (local $col i32) (local $row_wa i32) (local $color i32) (local $px16 i32)
+    (local $fw f32) (local $fh f32)
+    (if (i32.or (i32.eqz (local.get $tex_entry))
+                (i32.or (i32.le_s (local.get $w) (i32.const 0))
+                        (i32.le_s (local.get $h) (i32.const 0))))
+      (then (return)))
+    (local.set $sw (i32.and (i32.load (i32.add (local.get $rt_entry) (i32.const 12))) (i32.const 0xFFFF)))
+    (local.set $sh (i32.shr_u (i32.load (i32.add (local.get $rt_entry) (i32.const 12))) (i32.const 16)))
+    (local.set $bpp (i32.and (i32.load (i32.add (local.get $rt_entry) (i32.const 16))) (i32.const 0xFFFF)))
+    (local.set $pitch (i32.shr_u (i32.load (i32.add (local.get $rt_entry) (i32.const 16))) (i32.const 16)))
+    (local.set $dib_wa (i32.load (i32.add (local.get $rt_entry) (i32.const 20))))
+    (if (i32.eqz (local.get $dib_wa)) (then (return)))
+    (local.set $fw (f32.convert_i32_s (local.get $w)))
+    (local.set $fh (f32.convert_i32_s (local.get $h)))
+    ;; Clip against the surface; the u/v mapping stays tied to the unclipped
+    ;; rect so a partially offscreen viewport still shows the right part.
+    (local.set $row (i32.const 0))
+    (block $rdone (loop $rlp
+      (br_if $rdone (i32.ge_s (local.get $row) (local.get $h)))
+      (if (i32.or (i32.lt_s (i32.add (local.get $y) (local.get $row)) (i32.const 0))
+                  (i32.ge_s (i32.add (local.get $y) (local.get $row)) (local.get $sh)))
+        (then (local.set $row (i32.add (local.get $row) (i32.const 1))) (br $rlp)))
+      (local.set $row_wa (i32.add (local.get $dib_wa)
+        (i32.mul (i32.add (local.get $y) (local.get $row)) (local.get $pitch))))
+      (local.set $col (i32.const 0))
+      (block $cdone (loop $clp
+        (br_if $cdone (i32.ge_s (local.get $col) (local.get $w)))
+        (if (i32.or (i32.lt_s (i32.add (local.get $x) (local.get $col)) (i32.const 0))
+                    (i32.ge_s (i32.add (local.get $x) (local.get $col)) (local.get $sw)))
+          (then (local.set $col (i32.add (local.get $col) (i32.const 1))) (br $clp)))
+        (local.set $color (call $d3dim_texture_sample_rgb (local.get $tex_entry)
+          (f32.div (f32.add (f32.convert_i32_s (local.get $col)) (f32.const 0.5)) (local.get $fw))
+          (f32.div (f32.add (f32.convert_i32_s (local.get $row)) (f32.const 0.5)) (local.get $fh))))
+        (if (i32.eq (local.get $bpp) (i32.const 32)) (then
+          (i32.store
+            (i32.add (local.get $row_wa)
+              (i32.mul (i32.add (local.get $x) (local.get $col)) (i32.const 4)))
+            (local.get $color))))
+        (if (i32.eq (local.get $bpp) (i32.const 16)) (then
+          (local.set $px16 (i32.or (i32.or
+            (i32.shl (i32.and (i32.shr_u (local.get $color) (i32.const 19)) (i32.const 0x1F)) (i32.const 11))
+            (i32.shl (i32.and (i32.shr_u (local.get $color) (i32.const 10)) (i32.const 0x3F)) (i32.const  5)))
+            (i32.and (i32.shr_u (local.get $color) (i32.const 3)) (i32.const 0x1F))))
+          (i32.store16
+            (i32.add (local.get $row_wa)
+              (i32.mul (i32.add (local.get $x) (local.get $col)) (i32.const 2)))
+            (local.get $px16))))
+        (local.set $col (i32.add (local.get $col) (i32.const 1)))
+        (br $clp)))
+      (local.set $row (i32.add (local.get $row) (i32.const 1)))
+      (br $rlp))))
+
   ;; Source-alpha blend a rect into an RT DIB. The source color is 0xAARRGGBB.
   (func $viewport_fill_rect_alpha (param $rt_entry i32) (param $x i32) (param $y i32) (param $w i32) (param $h i32) (param $color i32) (param $alpha i32)
     (local $sw i32) (local $sh i32) (local $bpp i32) (local $pitch i32) (local $dib_wa i32)
@@ -2568,7 +2659,7 @@
     (param $dwFlags i32) (param $color i32) (param $zval f32)
     (local $rt i32) (local $dev_this i32) (local $vp_entry i32)
     (local $vx i32) (local $vy i32) (local $vw i32) (local $vh i32)
-    (local $zbuf i32) (local $rtw i32) (local $rth i32)
+    (local $zbuf i32) (local $rtw i32) (local $rth i32) (local $bgtex i32)
     (if (i32.eqz (local.get $vp_this)) (then (return)))
     (local.set $vp_entry (call $dx_from_this (local.get $vp_this)))
     (if (i32.eqz (local.get $vp_entry)) (then (return)))
@@ -2587,8 +2678,18 @@
       (local.set $vw (i32.and (i32.load (i32.add (local.get $rt) (i32.const 12))) (i32.const 0xFFFF)))
       (local.set $vh (i32.shr_u (i32.load (i32.add (local.get $rt) (i32.const 12))) (i32.const 16)))))
     (if (i32.and (local.get $dwFlags) (i32.const 1)) (then
-      (call $viewport_fill_rect (local.get $rt) (local.get $vx) (local.get $vy)
-        (local.get $vw) (local.get $vh) (local.get $color))))
+      ;; A background material carrying an image wins over its (usually white)
+      ;; diffuse. 8bpp targets stay on the colour path -- sampling RGB into a
+      ;; palettized surface would need an inverse-palette lookup we don't have.
+      (local.set $bgtex (call $d3dim_viewport_background_texture (local.get $vp_this)))
+      (if (i32.and (i32.ne (local.get $bgtex) (i32.const 0))
+                   (i32.ne (i32.and (i32.load (i32.add (local.get $rt) (i32.const 16)))
+                                    (i32.const 0xFFFF))
+                           (i32.const 8)))
+        (then (call $viewport_fill_rect_texture (local.get $rt) (local.get $vx) (local.get $vy)
+                (local.get $vw) (local.get $vh) (local.get $bgtex)))
+        (else (call $viewport_fill_rect (local.get $rt) (local.get $vx) (local.get $vy)
+                (local.get $vw) (local.get $vh) (local.get $color))))))
     (if (i32.and (local.get $dwFlags) (i32.const 2)) (then
       (local.set $zbuf (call $d3dim_ensure_zbuffer (local.get $dev_this)))
       (local.set $rtw (i32.and (i32.load (i32.add (local.get $rt) (i32.const 12))) (i32.const 0xFFFF)))

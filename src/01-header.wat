@@ -1343,8 +1343,54 @@
   (global $THUNK_END    i32 (i32.const 0x07152000))
   (global $THREAD_CACHE_BASE i32 (i32.const 0x05000000))
   (global $THREAD_CACHE_BASE_SIZE i32 (i32.const 0x02000000))
-  (global $CACHE_INDEX_BASE i32 (i32.const 0x07152000))
-  (global $CACHE_INDEX_BASE_SIZE i32 (i32.const 0x00040000))
+  ;; 0x07152000..0x07192000 (256KB) used to be CACHE_INDEX_BASE, the per-thread
+  ;; direct-mapped hash index of the block cache. Pages replaced it outright
+  ;; (docs/page-compile-design.md sections 4 and 4.1) and the region is free.
+  ;; Page compilation (docs/page-compile-design.md). Both regions live in the
+  ;; free span 0x04100000..0x05000000 that tools/wat-memory-map.js reports
+  ;; between HANDLER_PAIR_HIST_COUNTS and THREAD_CACHE_BASE.
+  ;;
+  ;; PAGE_INDEX_ARENA: per compiled 4KB guest code page, 4096 u16 entries, one
+  ;; per byte of the guest page. An entry is one of three things:
+  ;;
+  ;;   0x0000..0x3FFF   this byte STARTS a compiled block, at that offset
+  ;;                    within the page's threaded-code chunk
+  ;;   0x4000..0x7FFF   this byte is COVERED by the block starting at
+  ;;                    (entry & 0x3FFF) -- an interior byte, not an entry point
+  ;;   0xFFFF           no compiled code covers this byte
+  ;;
+  ;; The cover half is what makes section 5's per-offset invalidation O(1): a
+  ;; write to a code byte reads one entry and learns which block to retire,
+  ;; instead of sweeping 4096 hash slots to find out. It costs nothing extra in
+  ;; space because a chunk is capped at PAGE_CHUNK_BYTES (0x4000), so a real
+  ;; offset never needs bit 14 and the marker is free.
+  ;;
+  ;; 8KB each, 128 slots per thread, 1MB stride, 8 threads.
+  (global $PAGE_INDEX_ARENA i32 (i32.const 0x04100000))
+  (global $PAGE_INDEX_ARENA_SIZE i32 (i32.const 0x00800000))
+  (global $PAGE_INDEX_STRIDE i32 (i32.const 0x00100000))
+  (global $PAGE_INDEX_BYTES  i32 (i32.const 0x2000))
+  (global $PAGE_INDEX_SLOTS  i32 (i32.const 128))
+  (global $PAGE_INDEX_NONE   i32 (i32.const 0xFFFF))
+  ;; Bit 14 marks an interior byte. "Is this offset an entry point" is therefore
+  ;; the single test `entry < PAGE_INDEX_COVER`, which catches 0xFFFF too.
+  (global $PAGE_INDEX_COVER  i32 (i32.const 0x4000))
+  (global $PAGE_INDEX_OFFMASK i32 (i32.const 0x3FFF))
+  ;; PAGE_DIR: per-thread direct-mapped table keyed on the guest page number.
+  ;; 1024 entries x 16 bytes: +0 page base (0 = empty), +4 index ptr,
+  ;; +8 chunk base, +12 chunk length. 16KB per thread, 8 threads.
+  (global $PAGE_DIR_BASE i32 (i32.const 0x04900000))
+  (global $PAGE_DIR_BASE_SIZE i32 (i32.const 0x00020000))
+  (global $PAGE_DIR_STRIDE i32 (i32.const 0x4000))
+  (global $PAGE_DIR_ENTRIES i32 (i32.const 1024))
+  (global $PAGE_DIR_MASK i32 (i32.const 1023))
+  ;; One contiguous chunk per compiled page, carved from the same thread arena
+  ;; the hash cache's blocks come from, so the existing flush machinery already
+  ;; covers it. 16KB because index entries are u16 (so a chunk can never exceed
+  ;; 64KB) and because a page's *executed* code is what lands here, not its
+  ;; whole 4KB of x86: caesar3_demo averages 35 blocks per compiled page, on the
+  ;; order of 3.5KB. Overflow is not an error — the page is dropped and rebuilt.
+  (global $PAGE_CHUNK_BYTES i32 (i32.const 0x4000))
   (global $DLL_TABLE_SIZE i32 (i32.const 0x00000200))
   (global $DLL_RSRC_TABLE_SIZE i32 (i32.const 0x00000200))
   ;; Guest-space thunk bounds (set by PE loader: THUNK_BASE/END - GUEST_BASE + image_base)
@@ -1352,10 +1398,76 @@
   (global $thunk_guest_end  (mut i32) (i32.const 0))
   (global $THREAD_BASE  (mut i32) (i32.const 0x05000000))
   ;; THREAD_END = THREAD_BASE + 0x400000. Per-thread partition limit; overflow
-  ;; checks use this instead of CACHE_INDEX so main (tid=0) doesn't trample
-  ;; T1's thread cache region. Updated in $init_thread per tid.
+  ;; checks use this so main (tid=0) doesn't trample T1's thread cache region.
+  ;; Updated in $init_thread per tid.
   (global $THREAD_END   (mut i32) (i32.const 0x05400000))
-  (global $CACHE_INDEX  (mut i32) (i32.const 0x07152000))
+  ;; Per-thread page-compilation state. Worker threads are separate WASM
+  ;; instances over the same memory, so every one of these is per-instance and
+  ;; must be re-armed in $init_thread -- see the per-instance-globals rule that
+  ;; already governs THREAD_BASE/THREAD_END above.
+  (global $PAGE_DIR   (mut i32) (i32.const 0x04900000))
+  (global $PAGE_INDEX (mut i32) (i32.const 0x04100000))
+  ;; Bump allocator over this thread's 128 index slots, plus a free list so a
+  ;; self-modifying app that drops and re-pages the same page repeatedly does
+  ;; not exhaust the arena. A free slot stores the next free pointer in its
+  ;; first four bytes; 0 terminates.
+  (global $page_index_next (mut i32) (i32.const 0))
+  (global $page_index_free (mut i32) (i32.const 0))
+  ;; The page currently executing. Straight-line execution inside one page
+  ;; never touches PAGE_DIR; only a page-crossing transfer does.
+  (global $cur_page_base  (mut i32) (i32.const 0))
+  (global $cur_page_index (mut i32) (i32.const 0))
+  (global $cur_page_chunk (mut i32) (i32.const 0))
+  ;; Counters for the A/B in docs/page-compile-design.md section 8.
+  (global $page_compiles (mut i32) (i32.const 0))
+  (global $page_hits     (mut i32) (i32.const 0))
+  (global $page_misses   (mut i32) (i32.const 0))
+  ;; Block transfers $branch_end resolved without unwinding to $run. This is the
+  ;; deterministic form of the whole point of the design -- desk trips not taken
+  ;; -- and unlike a wall-clock number it means the same thing on a loaded box.
+  (global $page_fast     (mut i32) (i32.const 0))
+  ;; Conditional branches whose not-taken side became pure adjacency: the next
+  ;; block was compiled immediately after this one, so falling through costs no
+  ;; eip store, no lookup and no dispatch decision at all. $page_ft_chains counts
+  ;; how many decode runs were extended this way, $page_ft_blocks how many blocks
+  ;; those runs swallowed, and $page_ft counts the branches taken at runtime that
+  ;; paid nothing. See docs/page-compile-design.md section 2.1.
+  (global $page_ft_chains (mut i32) (i32.const 0))
+  (global $page_ft_blocks (mut i32) (i32.const 0))
+  (global $page_ft        (mut i32) (i32.const 0))
+  ;; The complement of $page_ft: branches that fell through to a block which
+  ;; exists in the same chunk but not adjacently, so the fall-through paid a
+  ;; full eip store, index lookup and dispatch. This is the headroom an
+  ;; address-ordered emit or a defragmentation pass would be competing for.
+  (global $page_ft_missed (mut i32) (i32.const 0))
+  ;; Section 5. $page_retires counts blocks retired one at a time by a write to
+  ;; a byte they cover; $page_range_drops counts the times a write was too wide
+  ;; to be worth walking and the whole page went instead. The ratio is the
+  ;; number the design is claiming: a self-modifying app should retire
+  ;; individual blocks and almost never drop a page.
+  (global $page_retires     (mut i32) (i32.const 0))
+  (global $page_range_drops (mut i32) (i32.const 0))
+  ;; Blocks that could not be published into a chunk at all -- the page
+  ;; directory or the index arena was exhausted, or the chunk was full. With no
+  ;; hash cache behind it, such a block is re-decoded on every entry, so this
+  ;; being non-trivial is the signal that PAGE_INDEX_SLOTS is too small.
+  (global $page_unpublished (mut i32) (i32.const 0))
+  ;; $run's per-call block allowance, hoisted out of a local so that
+  ;; $branch_end can spend it too. A fast-path block transfer never reaches the
+  ;; top of $run, so without this a single run() call would execute as many
+  ;; blocks as the step budget allowed and the host's batch sizing would stop
+  ;; meaning anything.
+  (global $block_budget (mut i32) (i32.const 0))
+
+  ;; Where to pick a block up when its step quantum ran out part-way through.
+  ;; $next returns without dispatching once $steps hits zero, leaving $ip on the
+  ;; op it declined to run; $run used to answer that by looking $eip up again,
+  ;; which restarts the block from its first op. That was invisible while every
+  ;; block got a fresh 1000 steps of its own — no block is that long — but
+  ;; $branch_end spends one quantum across a whole chain of blocks, so expiry
+  ;; lands mid-block routinely, and re-running a block's leading pushes moves ESP
+  ;; twice. Non-zero means "resume here"; $run consumes it and clears it.
+  (global $resume_ip (mut i32) (i32.const 0))
   (global $API_HASH_TABLE i32 (i32.const 0x07E00000))
   (global $API_HASH_TABLE_SIZE i32 (i32.const 0x00008000))
   ;; Window/class/parent tables (below GUEST_BASE, above the API hash table).
@@ -1955,8 +2067,6 @@
 
   (global $WNDPROC_CTRL_NATIVE i32 (i32.const 0xFFFF0002))  ;; WAT-native control wndproc
   (global $WNDPROC_CONSOLE_NATIVE i32 (i32.const 0xFFFF0003))  ;; WAT-native console window
-  (global $CACHE_SIZE    i32 (i32.const 4096))         ;; block cache entries
-  (global $CACHE_MASK    i32 (i32.const 0xFFF))        ;; CACHE_SIZE - 1
   (global $SIB_SENTINEL  i32 (i32.const 0xEADEAD))    ;; sentinel for SIB addressing mode
   (global $WNDPROC_WAT_NATIVE i32 (i32.const 0xFFFF0001))  ;; WAT-native window wndproc
   (global $WNDPROC_BUILTIN    i32 (i32.const 0xFFFE0001))  ;; built-in control default wndproc

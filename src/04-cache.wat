@@ -34,43 +34,16 @@
         (i32.and (local.get $pi) (i32.const 7)))
       (i32.const 1)))
 
-  ;; Slot for a guest address. This used to be (ga>>2)&MASK, which throws away
-  ;; the two low bits -- fine for a machine with 4-byte instructions, wrong for
-  ;; x86, where basic blocks start on any byte. Blocks 1-3 bytes apart shared a
-  ;; slot and evicted each other on every entry: in Liquid War the pair
-  ;; 0x466874/0x466877, 6.2M entries each, accounted for most of 14.4M block
-  ;; decodes in a 9000-batch run, and the arena those re-decodes burn (a
-  ;; re-decode allocates fresh space and never reclaims the old copy) drove
-  ;; 147 full cache wipes on top. Index on the whole address, folding the bits
-  ;; above the index width back in so a fixed 16KB stride does not alias
-  ;; either.
-  (func $cache_slot (param $ga i32) (result i32)
-    (i32.add (global.get $CACHE_INDEX)
-      (i32.mul
-        (i32.and
-          (i32.xor (local.get $ga) (i32.shr_u (local.get $ga) (i32.const 12)))
-          (global.get $CACHE_MASK))
-        (i32.const 8))))
-
-  (func $cache_lookup (param $ga i32) (result i32)
-    (local $idx i32)
-    (local.set $idx (call $cache_slot (local.get $ga)))
-    (if (result i32) (i32.eq (i32.load (local.get $idx)) (local.get $ga))
-      (then (i32.load offset=4 (local.get $idx)))
-      (else (i32.const 0))))
-  (func $cache_store (param $ga i32) (param $off i32)
-    (local $idx i32) (local $page i32) (local $page_end i32) (local $should_track i32)
-    (local.set $idx (call $cache_slot (local.get $ga)))
-    ;; Tells conflict/capacity misses (slot held a different block) apart from
-    ;; compulsory ones (slot empty -- code being decoded for the first time,
-    ;; e.g. a runtime-generated blitter). Both re-fill the arena, but only the
-    ;; first is fixable by making the cache bigger or its index smarter.
+  ;; Bookkeeping that used to live inside $cache_store, kept when the hash it
+  ;; belonged to was deleted (docs/page-compile-design.md section 4). None of it
+  ;; ever had anything to do with the hash: it records *that* a guest address
+  ;; was decoded, so that a later write to those bytes knows it is touching
+  ;; code. That question is asked by $invalidate_code_write and is independent
+  ;; of where the decoded code is stored, so this now runs once per decoded
+  ;; block from $decode_block instead.
+  (func $code_note_decode (param $ga i32)
+    (local $page i32) (local $page_end i32) (local $should_track i32)
     (global.set $cache_stores (i32.add (global.get $cache_stores) (i32.const 1)))
-    (if (i32.and (i32.ne (i32.load (local.get $idx)) (i32.const 0))
-                 (i32.ne (i32.load (local.get $idx)) (local.get $ga)))
-      (then (global.set $cache_evicts (i32.add (global.get $cache_evicts) (i32.const 1)))))
-    (i32.store (local.get $idx) (local.get $ga))
-    (i32.store offset=4 (local.get $idx) (local.get $off))
     (call $code_page_mark (local.get $ga))
     (local.set $should_track
       (i32.and
@@ -110,19 +83,19 @@
   ;; its time in the decoder. Nothing else in the emulator reports that, so
   ;; count it and export the count.
   (global $cache_clears (mut i32) (i32.const 0))
+  ;; Decoded blocks. Named for the export that has always reported it.
   (global $cache_stores (mut i32) (i32.const 0))
+  ;; Compiled pages evicted by another page landing in their directory slot.
   (global $cache_evicts (mut i32) (i32.const 0))
 
+  ;; Throw away every scrap of decoded code for this thread. Compiled chunks
+  ;; live in the arena $thread_arena_flush_if_safe rewinds, and every caller is
+  ;; either that flush or the corruption recovery in $next -- both mean no chunk
+  ;; pointer can be trusted. With the hash gone, resetting the directory *is*
+  ;; the whole job; there is no second index to sweep.
   (func $clear_cache
-    (local $i i32)
     (global.set $cache_clears (i32.add (global.get $cache_clears) (i32.const 1)))
-    (local.set $i (i32.const 0))
-    (block $d (loop $s
-      (br_if $d (i32.ge_u (local.get $i) (global.get $CACHE_SIZE)))
-      (i32.store (i32.add (global.get $CACHE_INDEX) (i32.mul (local.get $i) (i32.const 8))) (i32.const 0))
-      (i32.store offset=4 (i32.add (global.get $CACHE_INDEX) (i32.mul (local.get $i) (i32.const 8))) (i32.const 0))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $s))))
+    (call $page_dir_reset))
   (func $code_page_clear (param $ga i32)
     (local $pi i32) (local $ba i32)
     (local.set $pi (i32.shr_u (local.get $ga) (i32.const 12)))
@@ -143,32 +116,444 @@
   (global $cache_inval_hits (mut i32) (i32.const 0))
   (global $cache_inval_page (mut i32) (i32.const 0))
 
-  (func $invalidate_page (param $ga i32)
-    (local $page i32) (local $i i32) (local $idx i32) (local $hit i32)
-    (local.set $page (i32.and (local.get $ga) (i32.const 0xFFFFF000)))
+  ;; Retire the one compiled block that covers guest offset $off of the page
+  ;; whose directory slot is $slot. Returns the offset one past the retired
+  ;; block's last guest byte, so a range walk can skip the bytes it just dealt
+  ;; with; returns $off+1 when nothing covered it.
+  ;;
+  ;; Two things have to happen, and doing only the first is the trap this
+  ;; design walks into (docs/page-compile-design.md section 5.1). Clearing the
+  ;; index stops the block being *entered*. It does not stop it being *fallen
+  ;; into*: a run's whole point is that the not-taken side of a branch is the
+  ;; next word of the chunk, consulting nothing. So the chunk itself has to be
+  ;; broken, by overwriting the retired block's 8-byte header in place with
+  ;; $th_block_end and the block's own guest address.
+  ;;
+  ;; That handler already exists -- `eip = op; return_call $branch_end` -- and
+  ;; it is exactly 8 bytes with no trailing word, so it fits over any header.
+  ;; The design predicted a new opcode ($th_page_exit) would be needed here; it
+  ;; is not, and the handler table does not move.
+  (func $page_retire_at (param $slot i32) (param $off i32) (result i32)
+    (local $idx i32) (local $chunk i32) (local $v i32) (local $coff i32)
+    (local $lo i32) (local $hi i32)
+    (local.set $idx (i32.load offset=4 (local.get $slot)))
+    (local.set $v
+      (i32.load16_u (i32.add (local.get $idx) (i32.shl (local.get $off) (i32.const 1)))))
+    (if (i32.eq (local.get $v) (global.get $PAGE_INDEX_NONE))
+      (then (return (i32.add (local.get $off) (i32.const 1)))))
+    (local.set $coff (i32.and (local.get $v) (global.get $PAGE_INDEX_OFFMASK)))
+    ;; Walk out to the block's guest extent. Every byte of it carries the same
+    ;; chunk offset -- that is what $page_publish wrote -- so the extent is
+    ;; readable from the index without an instruction-length table and without
+    ;; storing a length anywhere.
+    (local.set $lo (local.get $off))
+    (block $ld (loop $ls
+      (br_if $ld (i32.eqz (local.get $lo)))
+      (local.set $v
+        (i32.load16_u
+          (i32.add (local.get $idx)
+            (i32.shl (i32.sub (local.get $lo) (i32.const 1)) (i32.const 1)))))
+      (br_if $ld (i32.eq (local.get $v) (global.get $PAGE_INDEX_NONE)))
+      (br_if $ld (i32.ne (i32.and (local.get $v) (global.get $PAGE_INDEX_OFFMASK))
+                         (local.get $coff)))
+      (local.set $lo (i32.sub (local.get $lo) (i32.const 1)))
+      (br $ls)))
+    (local.set $hi (i32.add (local.get $off) (i32.const 1)))
+    (block $hd (loop $hs
+      (br_if $hd (i32.ge_u (local.get $hi) (i32.const 4096)))
+      (local.set $v
+        (i32.load16_u (i32.add (local.get $idx) (i32.shl (local.get $hi) (i32.const 1)))))
+      (br_if $hd (i32.eq (local.get $v) (global.get $PAGE_INDEX_NONE)))
+      (br_if $hd (i32.ne (i32.and (local.get $v) (global.get $PAGE_INDEX_OFFMASK))
+                         (local.get $coff)))
+      (local.set $hi (i32.add (local.get $hi) (i32.const 1)))
+      (br $hs)))
+    ;; Break the chunk before clearing the index, so there is no window in
+    ;; which the block is unreachable by lookup but still fallen into.
+    (local.set $chunk (i32.load offset=8 (local.get $slot)))
+    (i32.store (i32.add (local.get $chunk) (local.get $coff)) (i32.const 45))
+    (i32.store offset=4 (i32.add (local.get $chunk) (local.get $coff))
+      (i32.or (i32.load (local.get $slot)) (local.get $lo)))
+    (block $cd (loop $cs
+      (br_if $cd (i32.ge_u (local.get $lo) (local.get $hi)))
+      (i32.store16 (i32.add (local.get $idx) (i32.shl (local.get $lo) (i32.const 1)))
+        (global.get $PAGE_INDEX_NONE))
+      (local.set $lo (i32.add (local.get $lo) (i32.const 1)))
+      (br $cs)))
+    (global.set $page_retires (i32.add (global.get $page_retires) (i32.const 1)))
+    (global.set $cache_inval_hits (i32.add (global.get $cache_inval_hits) (i32.const 1)))
+    (global.set $cache_inval_page (i32.load (local.get $slot)))
+    (local.get $hi))
+
+  ;; A guest write of $len bytes starting at $ga landed on a page that has held
+  ;; code. Retire exactly the blocks whose x86 those bytes are part of.
+  ;;
+  ;; This is docs/page-compile-design.md section 5, and it is the reason the
+  ;; hash cache could go. The old code retired *every block in the 4KB page* and
+  ;; had to sweep all 4096 hash slots to find them; a data variable sharing a
+  ;; page with hot code therefore turned each write to it into a re-decode of
+  ;; the code. The index is keyed by page offset, so a write to offset X names
+  ;; the one block covering X in a single load, and the rest of the page keeps
+  ;; running compiled.
+  ;;
+  ;; NOTE: the CODE_PAGE_BITMAP bit is deliberately never cleared. The page
+  ;; directory is per-thread while the bitmap is shared, so this retires only
+  ;; the writing thread's code. Clearing the shared bit would tell every other
+  ;; thread the page holds none, and their stale blocks would never be
+  ;; invalidated again -- Storm and Smacker rewrite generated blitters in place,
+  ;; so that is a real case.
+  (func $invalidate_code_range (param $ga i32) (param $len i32)
+    (local $end i32) (local $page i32) (local $slot i32)
+    (local $off i32) (local $stop i32)
     (global.set $cache_invals (i32.add (global.get $cache_invals) (i32.const 1)))
-    ;; NOTE: the page bit is deliberately NOT cleared here. $CACHE_INDEX is
-    ;; per-thread (0x07152000 + tid*0x8000) while CODE_PAGE_BITMAP lives in
-    ;; shared linear memory, so this sweep retires only the writing thread's
-    ;; blocks. Clearing the shared bit would tell every other thread that the
-    ;; page holds no code, and their stale blocks would never be invalidated
-    ;; again. Storm/Smacker rewrite their generated blitters in place, so that
-    ;; is a real case, not a theoretical one. The cost of keeping the bit set
-    ;; is one extra sweep per write to a page that has stopped holding code.
+    (local.set $end (i32.add (local.get $ga) (local.get $len)))
+    (local.set $page (i32.and (local.get $ga) (i32.const 0xFFFFF000)))
+    (block $pd (loop $ps
+      (br_if $pd (i32.ge_u (local.get $page) (local.get $end)))
+      (local.set $slot (call $page_dir_slot (local.get $page)))
+      (if (i32.eq (i32.load (local.get $slot)) (local.get $page))
+        (then
+          (local.set $off
+            (if (result i32) (i32.gt_u (local.get $ga) (local.get $page))
+              (then (i32.sub (local.get $ga) (local.get $page)))
+              (else (i32.const 0))))
+          (local.set $stop
+            (if (result i32)
+                (i32.lt_u (local.get $end) (i32.add (local.get $page) (i32.const 4096)))
+              (then (i32.sub (local.get $end) (local.get $page)))
+              (else (i32.const 4096))))
+          ;; A wide write is not worth walking: past a few hundred bytes the
+          ;; per-offset walk costs more than dropping the page and letting the
+          ;; next entry rebuild only what is still executed. This is the same
+          ;; bound the old whole-page behaviour had, kept for the pathological
+          ;; case only -- a REP MOVS over a code page, not an app patching one
+          ;; branch.
+          (if (i32.gt_u (i32.sub (local.get $stop) (local.get $off)) (i32.const 512))
+            (then
+              (global.set $page_range_drops
+                (i32.add (global.get $page_range_drops) (i32.const 1)))
+              (global.set $cache_inval_hits
+                (i32.add (global.get $cache_inval_hits) (i32.const 1)))
+              (global.set $cache_inval_page (local.get $page))
+              (call $page_dir_drop (local.get $page)))
+            (else
+              (block $od (loop $os
+                (br_if $od (i32.ge_u (local.get $off) (local.get $stop)))
+                (local.set $off (call $page_retire_at (local.get $slot) (local.get $off)))
+                (br $os)))))))
+      (local.set $page (i32.add (local.get $page) (i32.const 0x1000)))
+      (br $ps))))
+
+  ;; ============================================================
+  ;; PAGE COMPILATION -- see docs/page-compile-design.md
+  ;; ============================================================
+  ;; A compiled page owns one 8KB index (4096 u16 entries, guest page offset ->
+  ;; offset within the page's threaded-code chunk) and one contiguous chunk in
+  ;; this thread's arena. Nothing here is required for correctness: every path
+  ;; that cannot page an address falls back to the hash cache above, which is
+  ;; untouched. That is the property that makes each sizing constant a tuning
+  ;; knob rather than a correctness constraint.
+
+  (func $page_dir_slot (param $page_base i32) (result i32)
+    (i32.add (global.get $PAGE_DIR)
+      (i32.mul
+        (i32.and (i32.shr_u (local.get $page_base) (i32.const 12))
+                 (global.get $PAGE_DIR_MASK))
+        (i32.const 16))))
+
+  ;; Forget every compiled page for this thread. Used at thread init and
+  ;; whenever the arena the chunks live in is recycled underneath them.
+  (func $page_dir_reset
+    (local $i i32) (local $slot i32)
+    (global.set $cur_page_base (i32.const 0))
+    (global.set $cur_page_index (i32.const 0))
+    (global.set $cur_page_chunk (i32.const 0))
+    (global.set $page_index_next (i32.const 0))
+    (global.set $page_index_free (i32.const 0))
     (local.set $i (i32.const 0))
     (block $d (loop $s
-      (br_if $d (i32.ge_u (local.get $i) (global.get $CACHE_SIZE)))
-      (local.set $idx (i32.add (global.get $CACHE_INDEX) (i32.mul (local.get $i) (i32.const 8))))
-      (if (i32.eq (i32.and (i32.load (local.get $idx)) (i32.const 0xFFFFF000)) (local.get $page))
-        (then
-          (local.set $hit (i32.const 1))
-          (i32.store (local.get $idx) (i32.const 0)) (i32.store offset=4 (local.get $idx) (i32.const 0))))
+      (br_if $d (i32.ge_u (local.get $i) (global.get $PAGE_DIR_ENTRIES)))
+      (local.set $slot
+        (i32.add (global.get $PAGE_DIR) (i32.mul (local.get $i) (i32.const 16))))
+      (i32.store (local.get $slot) (i32.const 0))
+      (i32.store offset=4 (local.get $slot) (i32.const 0))
+      (i32.store offset=8 (local.get $slot) (i32.const 0))
+      (i32.store offset=12 (local.get $slot) (i32.const 0))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $s)))
-    (if (local.get $hit)
+      (br $s))))
+
+  ;; Hand out an 8KB index, preferring the free list. Returns 0 when this
+  ;; thread's index arena is exhausted, which simply means the page does not
+  ;; get compiled.
+  (func $page_index_alloc (result i32)
+    (local $p i32)
+    (if (global.get $page_index_free)
       (then
-        (global.set $cache_inval_hits (i32.add (global.get $cache_inval_hits) (i32.const 1)))
-        (global.set $cache_inval_page (local.get $page)))))
+        (local.set $p (global.get $page_index_free))
+        (global.set $page_index_free (i32.load (local.get $p)))
+        (return (local.get $p))))
+    (if (i32.ge_u (global.get $page_index_next) (global.get $PAGE_INDEX_SLOTS))
+      (then (return (i32.const 0))))
+    (local.set $p
+      (i32.add (global.get $PAGE_INDEX)
+        (i32.mul (global.get $page_index_next) (global.get $PAGE_INDEX_BYTES))))
+    (global.set $page_index_next (i32.add (global.get $page_index_next) (i32.const 1)))
+    (local.get $p))
+
+  ;; Every entry starts as PAGE_INDEX_NONE: an offset that was never written is
+  ;; either a mid-instruction byte or code pass 1 never reached, and both must
+  ;; miss rather than resolve to chunk offset 0.
+  (func $page_index_clear (param $p i32)
+    (local $i i32)
+    (local.set $i (i32.const 0))
+    (block $d (loop $s
+      (br_if $d (i32.ge_u (local.get $i) (global.get $PAGE_INDEX_BYTES)))
+      (i32.store (i32.add (local.get $p) (local.get $i)) (i32.const 0xFFFFFFFF))
+      (local.set $i (i32.add (local.get $i) (i32.const 4)))
+      (br $s))))
+
+  ;; Retire one page. This is what makes the fast path safe without a
+  ;; generation counter: a dropped page can no longer be named by the page
+  ;; registers, so a stale chunk pointer is unreachable rather than merely
+  ;; unlikely.
+  (func $page_dir_drop (param $page_base i32)
+    (local $slot i32) (local $idx i32)
+    (local.set $slot (call $page_dir_slot (local.get $page_base)))
+    (if (i32.ne (i32.load (local.get $slot)) (local.get $page_base)) (then (return)))
+    (local.set $idx (i32.load offset=4 (local.get $slot)))
+    (if (local.get $idx)
+      (then
+        (i32.store (local.get $idx) (global.get $page_index_free))
+        (global.set $page_index_free (local.get $idx))))
+    (i32.store (local.get $slot) (i32.const 0))
+    (i32.store offset=4 (local.get $slot) (i32.const 0))
+    (i32.store offset=8 (local.get $slot) (i32.const 0))
+    (i32.store offset=12 (local.get $slot) (i32.const 0))
+    (if (i32.eq (global.get $cur_page_base) (local.get $page_base))
+      (then
+        (global.set $cur_page_base (i32.const 0))
+        (global.set $cur_page_index (i32.const 0))
+        (global.set $cur_page_chunk (i32.const 0)))))
+
+  ;; Give $page_base an index and a chunk, and leave the page registers loaded
+  ;; on it. Returns 0 (and compiles nothing) if either resource is exhausted.
+  ;; The chunk is bumped off $thread_alloc rather than out of a private arena so
+  ;; that $thread_arena_flush_if_safe and $clear_cache — which already know when
+  ;; recycling decoded code is safe — keep covering it; $clear_cache calls
+  ;; $page_dir_reset for exactly that reason.
+  (func $page_create (param $page_base i32) (result i32)
+    (local $slot i32) (local $idx i32) (local $chunk i32)
+    (local.set $slot (call $page_dir_slot (local.get $page_base)))
+    ;; The directory is direct-mapped, so a live page can be sitting in the slot
+    ;; this one wants. Retire it properly instead of overwriting its index
+    ;; pointer, which would leak the 8KB and leave $cur_page_* naming it.
+    (if (i32.load (local.get $slot))
+      (then
+        (global.set $cache_evicts (i32.add (global.get $cache_evicts) (i32.const 1)))
+        (call $page_dir_drop (i32.load (local.get $slot)))))
+    (local.set $idx (call $page_index_alloc))
+    (if (i32.eqz (local.get $idx)) (then (return (i32.const 0))))
+    (if (i32.gt_u
+          (i32.add (global.get $thread_alloc) (global.get $PAGE_CHUNK_BYTES))
+          (i32.sub (global.get $THREAD_END) (i32.const 16384)))
+      (then
+        ;; No room for a chunk. Hand the index straight back rather than
+        ;; stranding it: the arena is about to be flushed anyway.
+        (i32.store (local.get $idx) (global.get $page_index_free))
+        (global.set $page_index_free (local.get $idx))
+        (return (i32.const 0))))
+    (local.set $chunk (global.get $thread_alloc))
+    (global.set $thread_alloc
+      (i32.add (global.get $thread_alloc) (global.get $PAGE_CHUNK_BYTES)))
+    (call $page_index_clear (local.get $idx))
+    (i32.store (local.get $slot) (local.get $page_base))
+    (i32.store offset=4 (local.get $slot) (local.get $idx))
+    (i32.store offset=8 (local.get $slot) (local.get $chunk))
+    (i32.store offset=12 (local.get $slot) (i32.const 0))
+    (global.set $page_compiles (i32.add (global.get $page_compiles) (i32.const 1)))
+    (global.set $cur_page_base (local.get $page_base))
+    (global.set $cur_page_index (local.get $idx))
+    (global.set $cur_page_chunk (local.get $chunk))
+    (i32.const 1))
+
+  ;; Copy a freshly decoded block out of the arena into its page's chunk and
+  ;; index it. Threaded code is position-independent — every operand a handler
+  ;; reads is a guest address, an immediate or a register number, never a
+  ;; pointer into the thread stream — so a block can be relocated with a plain
+  ;; byte copy. That is what lets the decoder stay exactly as it is: it emits
+  ;; where it always did, and this runs afterwards.
+  ;;
+  ;; Returns the chunk offset the block landed at, or -1 when nothing was
+  ;; published. $decode_run needs that number: the only way it may treat one
+  ;; block's not-taken branch as "just carry on down the stream" is if the next
+  ;; block really did land immediately after this one, and a return of -1 (or of
+  ;; an offset that is not where the previous block ended) is how a page swap, a
+  ;; full chunk or an arena flush announces itself.
+  (func $page_publish (param $start_eip i32) (param $tstart i32) (param $tend i32)
+                      (param $guest_end i32) (result i32)
+    (local $base i32) (local $slot i32) (local $used i32) (local $len i32)
+    (local $src i32) (local $dst i32) (local $o i32) (local $olast i32)
+    (local.set $len (i32.sub (local.get $tend) (local.get $tstart)))
+    (if (i32.le_s (local.get $len) (i32.const 0)) (then (return (i32.const -1))))
+    (local.set $base (i32.and (local.get $start_eip) (i32.const 0xFFFFF000)))
+    ;; The decoder caps every block at its starting page (see the page-boundary
+    ;; split in $decode_block), so a block's x86 is inside one page and its
+    ;; whole extent is indexable here. Only the last *instruction* can spill a
+    ;; few bytes over the edge; those bytes get no cover entry, exactly as they
+    ;; got no hash entry before, and a write to them does not retire the block.
+    ;; That hole is unchanged from the hash design, not introduced by this one.
+    (if (i32.ne (local.get $base) (global.get $cur_page_base))
+      (then
+        (if (i32.eqz (call $page_enter (local.get $base)))
+          (then
+            (if (i32.eqz (call $page_create (local.get $base)))
+              (then (return (i32.const -1))))))))
+    (local.set $slot (call $page_dir_slot (local.get $base)))
+    (local.set $used (i32.load offset=12 (local.get $slot)))
+    (if (i32.gt_u (i32.add (local.get $used) (local.get $len))
+                  (global.get $PAGE_CHUNK_BYTES))
+      (then
+        ;; The chunk is full. Retiring the page is the whole recovery: the next
+        ;; entry compiles it again from scratch, this time holding only the
+        ;; blocks still being executed.
+        (call $page_dir_drop (local.get $base))
+        (return (i32.const -1))))
+    (local.set $src (local.get $tstart))
+    (local.set $dst (i32.add (global.get $cur_page_chunk) (local.get $used)))
+    (block $cdone (loop $copy
+      (br_if $cdone (i32.ge_u (local.get $src) (local.get $tend)))
+      (i32.store (local.get $dst) (i32.load (local.get $src)))
+      (local.set $src (i32.add (local.get $src) (i32.const 4)))
+      (local.set $dst (i32.add (local.get $dst) (i32.const 4)))
+      (br $copy)))
+    ;; Index the entry point, then mark every interior byte of the block's x86
+    ;; as covered by it. The cover marks are what make section 5's invalidation
+    ;; a single load: a write anywhere in the block's guest bytes names the
+    ;; block. Interior bytes must be written even where the index already holds
+    ;; NONE, and the walk stops at the page edge because the last instruction
+    ;; may spill past it.
+    (i32.store16
+      (i32.add (global.get $cur_page_index)
+        (i32.shl (i32.and (local.get $start_eip) (i32.const 0xFFF)) (i32.const 1)))
+      (local.get $used))
+    (local.set $o (i32.add (i32.and (local.get $start_eip) (i32.const 0xFFF)) (i32.const 1)))
+    (local.set $olast (i32.sub (local.get $guest_end) (local.get $base)))
+    (if (i32.gt_u (local.get $olast) (i32.const 4096))
+      (then (local.set $olast (i32.const 4096))))
+    (block $md (loop $ms
+      (br_if $md (i32.ge_u (local.get $o) (local.get $olast)))
+      (i32.store16
+        (i32.add (global.get $cur_page_index) (i32.shl (local.get $o) (i32.const 1)))
+        (i32.or (local.get $used) (global.get $PAGE_INDEX_COVER)))
+      (local.set $o (i32.add (local.get $o) (i32.const 1)))
+      (br $ms)))
+    (i32.store offset=12 (local.get $slot) (i32.add (local.get $used) (local.get $len)))
+    (local.get $used))
+
+  ;; Load the page registers for $page_base if it is already compiled.
+  (func $page_enter (param $page_base i32) (result i32)
+    (local $slot i32)
+    (local.set $slot (call $page_dir_slot (local.get $page_base)))
+    (if (i32.ne (i32.load (local.get $slot)) (local.get $page_base))
+      (then (return (i32.const 0))))
+    (global.set $cur_page_base (local.get $page_base))
+    (global.set $cur_page_index (i32.load offset=4 (local.get $slot)))
+    (global.set $cur_page_chunk (i32.load offset=8 (local.get $slot)))
+    (i32.const 1))
+
+  ;; The hot path. Resolve a guest address to a threaded-code pointer without
+  ;; touching the hash, or 0 to mean "use the ordinary path". Straight-line
+  ;; execution inside one page costs one compare and one load; only a
+  ;; page-crossing transfer consults PAGE_DIR, and it caches the result.
+  (func $page_resolve (param $dest i32) (result i32)
+    (local $base i32) (local $off i32)
+    (local.set $base (i32.and (local.get $dest) (i32.const 0xFFFFF000)))
+    (if (i32.ne (local.get $base) (global.get $cur_page_base))
+      (then
+        (if (i32.eqz (call $page_enter (local.get $base)))
+          (then
+            (global.set $page_misses (i32.add (global.get $page_misses) (i32.const 1)))
+            (return (i32.const 0))))))
+    (local.set $off
+      (i32.load16_u
+        (i32.add (global.get $cur_page_index)
+          (i32.shl (i32.and (local.get $dest) (i32.const 0xFFF)) (i32.const 1)))))
+    ;; One test covers both misses: PAGE_INDEX_NONE (0xFFFF, nothing compiled
+    ;; here) and a cover mark (bit 14 set, this byte is inside a block but is
+    ;; not its entry point, so entering here would run from the middle of an
+    ;; instruction).
+    (if (i32.ge_u (local.get $off) (global.get $PAGE_INDEX_COVER))
+      (then
+        (global.set $page_misses (i32.add (global.get $page_misses) (i32.const 1)))
+        (return (i32.const 0))))
+    (global.set $page_hits (i32.add (global.get $page_hits) (i32.const 1)))
+    (i32.add (global.get $cur_page_chunk) (local.get $off)))
+
+  ;; "Is there already compiled code entered at this address?" -- the question
+  ;; $decode_run asks before extending a run into the next block. Unlike
+  ;; $page_resolve this moves no page registers and counts no hit or miss: it
+  ;; is a decode-time query about a page that may not be the executing one, and
+  ;; letting it swap $cur_page_* underneath a run in progress would repoint the
+  ;; chunk the run is being appended to.
+  (func $page_probe (param $ga i32) (result i32)
+    (local $slot i32) (local $idx i32)
+    (local.set $slot (call $page_dir_slot (i32.and (local.get $ga) (i32.const 0xFFFFF000))))
+    (if (i32.ne (i32.load (local.get $slot)) (i32.and (local.get $ga) (i32.const 0xFFFFF000)))
+      (then (return (i32.const 0))))
+    (local.set $idx (i32.load offset=4 (local.get $slot)))
+    (i32.lt_u
+      (i32.load16_u
+        (i32.add (local.get $idx)
+          (i32.shl (i32.and (local.get $ga) (i32.const 0xFFF)) (i32.const 1))))
+      (global.get $PAGE_INDEX_COVER)))
+
+  ;; Every block-terminating handler ends by tail-calling this instead of
+  ;; returning. Returning is what costs: it unwinds to the top of $run, which
+  ;; re-runs the whole guard preamble before it can look the destination up.
+  ;; When the destination is already compiled and none of those guards has
+  ;; anything to say, the guards are exactly the work being removed, so this
+  ;; hands the thread straight to $next.
+  ;;
+  ;; The five tests below are the guards that can actually fire; each is a
+  ;; global that is zero in a plain run, and any non-zero one falls back to the
+  ;; desk rather than trying to reproduce what the desk does:
+  ;;   $dbg_any      OR of the six debug arming flags (watchpoint, breakpoint,
+  ;;                 hit counters, trace-esp, trace-eip, handler histogram)
+  ;;   $code16       16-bit tasks get two extra checks and a separate dispatch
+  ;;   $yield_flag   a handler asked the host for control
+  ;;   $yield_reason a blocking API is parked; $run decides whether to halt
+  ;;   $sbh_eip_a/b  the decoder recognised an MSVC small-block-heap entry, and
+  ;;                 $run runs a scan ahead of those two addresses
+  ;; The thunk zone needs no test here: a thunk page is never compiled, so
+  ;; $page_resolve cannot name one.
+  (func $branch_end
+    (local $t i32)
+    (if (i32.or (global.get $dbg_any)
+        (i32.or (global.get $code16)
+        (i32.or (global.get $yield_flag) (global.get $yield_reason))))
+      (then (return)))
+    (if (i32.le_s (global.get $block_budget) (i32.const 0)) (then (return)))
+    ;; No test on $steps here. Running out is now a resume, not a restart:
+    ;; $next parks $ip in $resume_ip and $run picks the block up where it left
+    ;; off, without spending a second block from the budget for it.
+    (if (i32.or (i32.eq (global.get $eip) (global.get $sbh_eip_a))
+                (i32.eq (global.get $eip) (global.get $sbh_eip_b)))
+      (then (return)))
+    (local.set $t (call $page_resolve (global.get $eip)))
+    (if (i32.eqz (local.get $t)) (then (return)))
+    (global.set $block_budget (i32.sub (global.get $block_budget) (i32.const 1)))
+    (global.set $page_fast (i32.add (global.get $page_fast) (i32.const 1)))
+    ;; Kept even on the fast path: these two are what a crash log reads to say
+    ;; which block produced a bad transfer, and a stale answer there is worse
+    ;; than the two stores are expensive.
+    (global.set $dbg_prev2_eip (global.get $dbg_prev_eip))
+    (global.set $dbg_prev_eip (global.get $eip))
+    (global.set $ip (local.get $t))
+    ;; $steps is deliberately NOT refilled. It is the wasm-stack bound: each
+    ;; dispatch adds a frame that only unwinds when the chain ends, so letting
+    ;; one refill of 1000 span a whole fast chain keeps the depth exactly where
+    ;; it is today.
+    (return_call $next))
 
   ;; Recycling the decoded-code arena means resetting $thread_alloc to the base
   ;; and invalidating every cached block. That is only safe between blocks.
@@ -236,7 +621,12 @@
   (func $next
     (local $fn i32) (local $op i32)
     (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
-    (if (i32.le_s (global.get $steps) (i32.const 0)) (then (return)))
+    (if (i32.le_s (global.get $steps) (i32.const 0))
+      (then
+        ;; Hand $run the op we are declining to run, so it resumes the block
+        ;; instead of restarting it. See $resume_ip in 01-header.wat.
+        (global.set $resume_ip (global.get $ip))
+        (return)))
     (local.set $fn (i32.load (global.get $ip)))
     (local.set $op (i32.load offset=4 (global.get $ip)))
     (global.set $ip (i32.add (global.get $ip) (i32.const 8)))
@@ -244,7 +634,7 @@
     ;; whole cache and restart at $eip. The fresh decode will produce
     ;; valid threaded code. This recovers from rare corruption rather
     ;; than trapping with wasm "table index out of bounds".
-    (if (i32.ge_u (local.get $fn) (i32.const 428))
+    (if (i32.ge_u (local.get $fn) (i32.const 429))
       (then
         (call $host_log_i32 (i32.const 0xCAC4BAD0))
         (call $host_log_i32 (local.get $fn))
@@ -254,7 +644,18 @@
         (return)))
     (if (global.get $handler_hist_enabled)
       (then (call $handler_hist_record (local.get $fn))))
-    (call_indirect (type $handler_t) (local.get $op) (local.get $fn)))
+    ;; A tail call, so the chain runs at constant stack depth. Nothing follows
+    ;; the dispatch in this function, which is what makes it legal.
+    ;;
+    ;; This was measured at the fork point and rejected as worthless, for a
+    ;; reason that was true there and is not true here: a chain used to be one
+    ;; x86 basic block deep -- 151.5M dispatches over 30.0M blocks is 5.05 ops
+    ;; -- so there were never enough frames for their cost to matter, and
+    ;; $steps=1000 was a backstop nothing reached. Since $branch_end and
+    ;; $jcc_end stopped unwinding at block terminators, $steps is no longer a
+    ;; backstop: it *is* the chain length, and the same chain is now ~1000
+    ;; frames instead of ~5. See docs/interpreter-dispatch-perf.md.
+    (return_call_indirect (type $handler_t) (local.get $op) (local.get $fn)))
 
   ;; Read next thread i32 and advance $ip
   (func $read_thread_word (result i32)

@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 428 funcref)
+  (table $handlers 429 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -485,4 +485,5 @@
     $th_mmx_ri                ;; 425: mm, imm8    operand = sub<<12 | dst<<8 | imm8
     $th_rdtsc                 ;; 426: RDTSC -> EDX:EAX
     $th_rect_run              ;; 427: a whole unrolled rows x cols dword rect copy
+    $th_case_chain            ;; 428: a whole cmp al,imm8 / jz ladder (a switch)
   )

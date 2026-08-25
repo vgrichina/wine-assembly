@@ -97,6 +97,15 @@ const DUMP_DDRAW = getArg('dump-ddraw-surfaces', null); // --dump-ddraw-surfaces
 const DUMP_SDB = getArg('dump-sdb', null); // --dump-sdb=DIR: dump StretchDIBits source DIBs + per-call log
 const DUMP_VIRTUAL_MAPS = hasFlag('dump-virtual-maps'); // --dump-virtual-maps: print raw sparse guest-map records
 const MAX_BATCHES = parseInt(getArg('max-batches', '200'));
+// --max-seconds=N: stop the batch loop after N seconds of wall clock, whatever
+// --max-batches says. For benchmarking, this is the useful axis: an app's cost
+// per batch is not constant (Caesar runs ~0.1ms/batch through its boot and then
+// several times that once a city is simulating), so picking a batch count that
+// lands near a target duration is guesswork that has to be redone per app and
+// breaks the moment the app gets further in the same budget. Fix the duration
+// instead and read the batch count as the throughput: same wall clock on both
+// sides of an A/B, and the faster build is simply the one that got further.
+const MAX_SECONDS = parseFloat(getArg('max-seconds', '0')) || 0;
 // Composite the screen only every Nth batch. Nobody watches a headless run, so
 // intermediate frames exist only to be overwritten -- and they are not free:
 // skia-canvas 3.0.8 leaks roughly 320 bytes of unreclaimable native memory per
@@ -178,6 +187,7 @@ const LOOP_SUPEROPS = hasFlag('loop-superops');
 // dispatches has measured ZERO more than once, so the flag is not optional.
 const NO_SIB_FUSION = hasFlag('no-sib-fusion');
 const NO_RECT_RUN = hasFlag('no-rect-run');
+const NO_CASE_CHAIN = hasFlag('no-case-chain');
 // --loopmatch-stats: print the self-loop/match counts at exit.
 const LOOPMATCH_STATS = hasFlag('loopmatch-stats');
 const TRACE_GDI = hasFlag('trace-gdi');   // --trace-gdi: log GDI calls (CreateBitmap, BitBlt, etc.)
@@ -246,6 +256,14 @@ if (process.send) {
 }
 const TIME_SCALE = parseFloat(getArg('time-scale', '1')) || 1;  // --time-scale=10: guest clock runs 10x
 const REAL_TICKS = hasFlag('real-ticks'); // --real-ticks: GetTickCount from the wall clock, not the batch counter
+// --tick-ms-per-batch=N: how much guest time one batch is worth on the
+// batch-driven clock (default 200). Neither default clock suits a game whose
+// engine steps on a WM_TIMER: at 200ms/batch Chip's Challenge burns its whole
+// 100-second level clock in 500 batches and puts up "Ooops! Out of time!"
+// before any input lands, while --real-ticks gives a 16-bit app that runs
+// 5000 batches in a third of a second about three timer ticks in total, so
+// nothing ever moves. Turn it down to drive a timer-paced game headlessly.
+const TICK_MS_PER_BATCH = Math.max(0, parseFloat(getArg('tick-ms-per-batch', '200')) || 0);
 const CLOCK_ORIGIN = Date.now();
 // --trace-sched[=N]: one compact line whenever what the threads are doing
 // changes, plus a heartbeat every N batches (default 5000) so a stall shows up
@@ -268,6 +286,24 @@ const ASYNC_MM_TIMER_AFTER = Math.max(0,
   parseInt(getArg('async-mm-timer-after', '0'), 10) || 0);
 const TRACE_YIELD = hasFlag('trace-yield');   // --trace-yield: log yield_reason transitions per thread
 const TRACE_BATCH_TIMING = hasFlag('trace-batch-timing'); // --trace-batch-timing: log run/repaint wall time per batch
+// --decode-stats[=FROM_BATCH]: per-batch distribution of block decodes and of
+// the guest slice's wall time, printed at exit.
+//
+// This exists because --frame-stats cannot see decode cost. Its `interval
+// batches` series is the load-immune one, but a batch is a budget of x86
+// *steps*, and decoding a block advances no EIP -- so a batch that re-decodes a
+// thousand blocks and a batch that decodes none retire the same number of steps
+// and are indistinguishable in that series. The cost lands in host CPU, i.e. in
+// `interval ms`, which is the load-sensitive one.
+//
+// Decodes per batch is both: deterministic (identical across runs of one build)
+// and pointed straight at the mechanism. A block cache that evicts under
+// collision re-decodes in bursts; those bursts are the jank. Read the p99 and
+// the storm share, not the mean -- the mean is just total decodes over batches,
+// which the exit line already prints.
+const DECODE_STATS_ARG = getArg('decode-stats', null);
+const DECODE_STATS = DECODE_STATS_ARG !== null || hasFlag('decode-stats');
+const DECODE_STATS_FROM = Math.max(0, parseInt(DECODE_STATS_ARG, 10) || 0);
 const AUDIO_STATS_RAW = args.find(a => a === '--audio-stats' || a.startsWith('--audio-stats=')); // --audio-stats[=N]: heartbeat every N waveOutWrites
 const AUDIO_STATS = !!AUDIO_STATS_RAW;
 const AUDIO_STATS_STRIDE = (AUDIO_STATS_RAW && AUDIO_STATS_RAW.includes('=')) ? parseInt(AUDIO_STATS_RAW.split('=')[1]) || 50 : 50;
@@ -661,6 +697,10 @@ async function main() {
 
   const logs = [];
   let stopped = false;
+  // Batches actually executed. Not the same as MAX_BATCHES once --max-seconds
+  // or an early exit ends the loop, and it is the throughput number a
+  // fixed-duration benchmark is asking for.
+  let batchesRun = 0;
   let netWaits = 0;   // consecutive net_wait yields, reset by any progress
   let apiCount = 0;
   const apiCounts = TRACE_API_COUNTS ? new Map() : null;
@@ -1651,6 +1691,9 @@ async function main() {
     present: { iv: [], lastBatch: -1, lastAt: 0n },
     flush: { iv: [], lastBatch: -1, lastAt: 0n },
   };
+  // One entry per executed batch, for --decode-stats.
+  const decodeStatsDecodes = [];
+  const decodeStatsSliceUs = [];
   const recordFrame = (series) => {
     const at = process.hrtime.bigint();
     // Outside the measurement window, still move the anchor forward. Skipping
@@ -2503,7 +2546,7 @@ async function main() {
   // the overall simulated pace realistic.
   const tickCallStepMs = Math.max(1, parseInt(process.env.TICK_CALL_STEP_MS || '1', 10) || 1);
   const tickState = { batch: 0, callsInBatch: 0 };
-  ctx.sharedAudio.audioClockMs = () => tickState.batch * 200;
+  ctx.sharedAudio.audioClockMs = () => (tickState.batch * TICK_MS_PER_BATCH) | 0;
   // --real-ticks hands the guest the wall clock instead. Two emulator
   // processes in one room CANNOT share a batch-driven clock: a batch is not a
   // unit of time and each process runs them at its own rate, so an idle Hearts
@@ -2513,7 +2556,7 @@ async function main() {
   // decided against a clock the other does not share.
   h.get_ticks = REAL_TICKS
     ? () => ((((Date.now() - CLOCK_ORIGIN) * TIME_SCALE) | 0) & 0x7FFFFFFF)
-    : () => (((tickState.batch * 200 + (tickState.callsInBatch++ * tickCallStepMs)) & 0x7FFFFFFF));
+    : () => ((((tickState.batch * TICK_MS_PER_BATCH) | 0) + (tickState.callsInBatch++ * tickCallStepMs)) & 0x7FFFFFFF);
 
   // --- Override input for test injection ---
   let lastInputEvent = null;
@@ -3009,7 +3052,7 @@ async function main() {
     traceEipRange: (traceEipOn && traceEipArmed) ? { lo: traceEipLo, hi: traceEipHi } : null,
     countAddrs: countAddrs,
     faultUnmapped: FAULT_NULL,
-    now: () => tickState.batch * 200,
+    now: () => (tickState.batch * TICK_MS_PER_BATCH) | 0,
     hasMessage: () => !!(
       inputEvent ||
       (crossThreadMsgs && crossThreadMsgs.length) ||
@@ -3699,6 +3742,9 @@ async function main() {
   if (NO_RECT_RUN && instance.exports.set_rect_run) {
     instance.exports.set_rect_run(0);
   }
+  if (NO_CASE_CHAIN && instance.exports.set_case_chain) {
+    instance.exports.set_case_chain(0);
+  }
   if (TRACE_FPU && instance.exports.set_fpu_trace) {
     instance.exports.set_fpu_trace(1);
   }
@@ -4002,7 +4048,13 @@ async function main() {
       }
     }
   };
+  const deadlineMs = MAX_SECONDS ? Date.now() + MAX_SECONDS * 1000 : 0;
   for (let batch = 0; batch < MAX_BATCHES && !stopped; batch++) {
+    if (deadlineMs && Date.now() >= deadlineMs) {
+      console.log(`[max-seconds] stopping after ${MAX_SECONDS}s at batch ${batch}`);
+      break;
+    }
+    batchesRun = batch + 1;
     if (HANDLER_HIST_THREAD >= 0 && !handlerHistDone) {
       if (!handlerHistArmed && batch >= HANDLER_HIST_START) {
         handlerHistExports = findHandlerHistExports();
@@ -6575,6 +6627,9 @@ async function main() {
     }
 
     const batchStartMs = TRACE_BATCH_TIMING ? Date.now() : 0;
+    const decodesBefore = DECODE_STATS && instance.exports.get_cache_stores
+      ? instance.exports.get_cache_stores() >>> 0 : 0;
+    const sliceT0 = DECODE_STATS ? process.hrtime.bigint() : 0n;
     try {
       if (!mainExecutionSuspended()) instance.exports.run(BATCH_SIZE);
     } catch (e) {
@@ -6603,6 +6658,14 @@ async function main() {
       if (vtbl !== 0 && vtbl < 0x02200000) {
         console.log(`[CORRUPT-POST] batch=${batch} COM slot2 vtable=${hex(vtbl)} EIP=${hex(instance.exports.get_eip())}`);
       }
+    }
+
+    if (DECODE_STATS && batch >= DECODE_STATS_FROM) {
+      // Wrap-safe: get_cache_stores is a u32 counter read as unsigned.
+      const decodesAfter = instance.exports.get_cache_stores
+        ? instance.exports.get_cache_stores() >>> 0 : 0;
+      decodeStatsDecodes.push((decodesAfter - decodesBefore) >>> 0);
+      decodeStatsSliceUs.push(Number(process.hrtime.bigint() - sliceT0) / 1000);
     }
 
     const afterRunMs = TRACE_BATCH_TIMING ? Date.now() : 0;
@@ -6871,6 +6934,7 @@ async function main() {
           // the fused build on both sides.
           if (NO_SIB_FUSION && e.set_sib_fusion) e.set_sib_fusion(0);
           if (NO_RECT_RUN && e.set_rect_run) e.set_rect_run(0);
+          if (NO_CASE_CHAIN && e.set_case_chain) e.set_case_chain(0);
         }
       }
     }
@@ -7071,10 +7135,43 @@ if (VERBOSE) {
         console.log('cache: block decodes', instance.exports.get_cache_stores(),
           'of which evicted a live block', instance.exports.get_cache_evicts());
       }
+      if (instance.exports.get_page_fast) {
+        const hits = instance.exports.get_page_hits();
+        const misses = instance.exports.get_page_misses();
+        const total = hits + misses;
+        console.log('pages: compiled', instance.exports.get_page_compiles(),
+          '| index hits', hits, 'misses', misses,
+          total ? `(${(100 * hits / total).toFixed(1)}% hit)` : '',
+          '| desk trips skipped', instance.exports.get_page_fast());
+        if (instance.exports.get_page_ft) {
+          console.log('runs:  extended', instance.exports.get_page_ft_chains(),
+            '| blocks chained', instance.exports.get_page_ft_blocks(),
+            '| free fall-throughs', instance.exports.get_page_ft());
+          if (instance.exports.get_page_ft_missed) {
+            const free = instance.exports.get_page_ft();
+            const missed = instance.exports.get_page_ft_missed();
+            const fell = free + missed;
+            console.log('       fall-through branches', fell,
+              `| free ${free}`, `| paid ${missed}`,
+              fell ? `(${(100 * missed / fell).toFixed(1)}% of fall-throughs are the defrag headroom)` : '');
+          }
+        }
+      }
       if (instance.exports.get_cache_invals) {
         console.log('cache: page invalidations', instance.exports.get_cache_invals(),
           'that dropped a block', instance.exports.get_cache_inval_hits(),
           'last', hex(instance.exports.get_cache_inval_page()));
+        // Section 5's own scoreboard. A retire is one block taken out by a
+        // write to a byte it covers; a range drop is a write too wide to walk,
+        // where the whole page went instead. The ratio is the thesis: per-offset
+        // invalidation is only worth its complexity if retires dominate.
+        if (instance.exports.get_page_retires) {
+          const ret = instance.exports.get_page_retires();
+          const drop = instance.exports.get_page_range_drops();
+          console.log('       blocks retired one at a time', ret,
+            '| whole-page drops (write too wide to walk)', drop,
+            ret + drop ? `(${(100 * ret / (ret + drop)).toFixed(1)}% exact)` : '');
+        }
       }
     }
     if (instance.exports.gdi_dc_state_used) {
@@ -7186,7 +7283,8 @@ if (VERBOSE) {
       `${video.width}x${video.height} at ${video.fps}fps (${video.duration.toFixed(2)}s)`);
   }
 
-  console.log(`\nStats: ${apiCount} API calls, ${MAX_BATCHES} batches`);
+  console.log(`\nStats: ${apiCount} API calls, ${batchesRun} batches`
+    + (MAX_SECONDS ? ` in ${MAX_SECONDS}s (${(batchesRun / MAX_SECONDS).toFixed(0)} batches/s)` : ''));
   reportMmx();
 
   // --reg-export writes what the run left in the registry/INI store, which is
@@ -7283,6 +7381,45 @@ if (VERBOSE) {
       + ' reading it as a frame rate');
     report('host flush    (surface upload)', frameStats.flush,
       `what the browser HUD counts as fps; in the CLI it is gated by the repaint loop (--repaint-every=${REPAINT_EVERY}), so treat it as the harness's cadence unless it agrees with the present count above`);
+  }
+
+  if (DECODE_STATS) {
+    const n = decodeStatsDecodes.length;
+    if (n < 2) {
+      console.log(`\nDecode pacing: ${n} batches executed — too few to pace`);
+    } else {
+      const q = (arr, p) => {
+        const v = arr.slice().sort((a, b) => a - b);
+        return v[Math.min(v.length - 1, Math.floor(p * v.length))];
+      };
+      const total = decodeStatsDecodes.reduce((a, b) => a + b, 0);
+      const mean = total / n;
+      // A "storm" is a batch that decodes far more than the median batch. That
+      // is the shape re-decode jank actually has: a cache that evicts under
+      // collision does not decode a little more everywhere, it decodes nothing
+      // for a while and then a burst. The mean cannot see it; this can.
+      const med = q(decodeStatsDecodes, 0.5);
+      const stormFloor = Math.max(8, med * 4);
+      const storms = decodeStatsDecodes.filter(d => d >= stormFloor);
+      const stormWork = storms.reduce((a, b) => a + b, 0);
+      const zero = decodeStatsDecodes.filter(d => d === 0).length;
+      console.log(DECODE_STATS_FROM
+        ? `\nDecode pacing (from batch ${DECODE_STATS_FROM}):`
+        : '\nDecode pacing:');
+      console.log(`  block decodes per batch: total ${total} over ${n} batches, mean ${mean.toFixed(1)}`);
+      console.log(`      p50 ${med}, p90 ${q(decodeStatsDecodes, 0.9)}, p99 ${q(decodeStatsDecodes, 0.99)}, max ${q(decodeStatsDecodes, 1)}`
+        + `   decode-free batches ${zero} of ${n} (${(100 * zero / n).toFixed(1)}%)`);
+      console.log(`      storms (>=${stormFloor} decodes, i.e. 4x median): ${storms.length} batches`
+        + ` carrying ${stormWork} decodes (${total ? (100 * stormWork / total).toFixed(1) : '0.0'}% of all decode work)`);
+      console.log('      deterministic: identical across runs of one build, so this series IS safe to'
+        + ' diff between builds, unlike anything measured in wall clock');
+      console.log(`  guest slice ms per batch: p50 ${(q(decodeStatsSliceUs, 0.5) / 1000).toFixed(2)},`
+        + ` p90 ${(q(decodeStatsSliceUs, 0.9) / 1000).toFixed(2)},`
+        + ` p99 ${(q(decodeStatsSliceUs, 0.99) / 1000).toFixed(2)},`
+        + ` max ${(q(decodeStatsSliceUs, 1) / 1000).toFixed(2)}`);
+      console.log('      wall clock — load-sensitive. Read it only against the decode series above,'
+        + ' and only within one interleaved run.');
+    }
   }
 
   if (threadManager && threadManager.threads && threadManager.threads.size) {

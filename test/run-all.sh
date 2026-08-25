@@ -95,6 +95,7 @@ UNIT=(
   test/test-gdi-p0-p1.js
   test/test-wat-gdi-line.js
   test/test-wat-gdi-raster.js
+  test/test-gdi-fast-blit-paths.js
   test/test-wat-gdi-raster-handlers.js
   test/test-wat-gdi-benchmark.js
   test/test-wat-gdi-bitmap.js
@@ -212,6 +213,8 @@ UNIT=(
   test/test-directx-ordinals.js
   test/test-launch-prefs-resolution.js
   test/test-d3dim-line-primitives.js
+  test/test-d3dim-viewport-background-texture.js
+  test/test-wm-setcursor-on-show.js
   test/test-dx-blank-primary-holdover.js
   test/test-dx-present-window-placement.js
   test/test-dx-vtable-worker-sync.js
@@ -289,6 +292,7 @@ E2E=(
   test/test-tapi-line-init.js
   test/test-caesar3-fullscreen-metrics.js
   test/test-caesar3-gameplay.js
+  test/test-diablo-shareware-art.js
   test/test-heroes2-gameplay.js
   test/test-win16-jigsawed.js
   test/test-win16-jigsawed-menus.js
