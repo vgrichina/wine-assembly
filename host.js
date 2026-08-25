@@ -372,16 +372,7 @@ class WineAssembly {
         } else self._lastWindowStopAt = 0;
       },
       onExit: (code) => {
-        self.stop({ repaint: false });
-        if (self.renderer) {
-          if (self._multiApp) {
-            self._removeAppWindows();
-          } else {
-            self.renderer._exited = true;
-            self.renderer.windows = {};
-          }
-          self.renderer.repaint();
-        }
+        self.stop();
       },
     };
     if (!opts.detached) {
@@ -618,16 +609,7 @@ class WineAssembly {
       if (!self._inDllInit) {
         self.logToUI('[ExitProcess] code: ' + code);
         self.logToUI('--- Program exited ---');
-        self.stop({ repaint: false });
-        if (self.renderer) {
-          if (self._multiApp) {
-            self._removeAppWindows();
-          } else {
-            self.renderer._exited = true;
-            self.renderer.windows = {};
-          }
-          self.renderer.repaint();
-        }
+        self.stop();
       }
     };
     h.create_window = (hwnd, style, x, y, cx, cy, titlePtr, menuId) => {
@@ -938,6 +920,10 @@ class WineAssembly {
       // Opt-in from the debug toolbar. It does not switch schedulers yet —
       // ThreadManager reports which backend it really used.
       threadsRequested: !!(typeof window !== 'undefined' && window.WINE_THREADS),
+      // Worker threads take their hwnd slice out of this app's range, so that
+      // every window an app owns -- whichever thread put it up -- answers to
+      // the one range test that teardown and input routing both use.
+      hwndBase: () => self._hwndBase || 0x10001,
       hasMessage: () => !!(self.renderer && self.renderer.inputQueue && self.renderer.inputQueue.length),
       now: () => self.renderer && self.renderer._profileNow ? self.renderer._profileNow() : Date.now(),
       onThreadExit: (info) => self._onThreadExit(info),
@@ -1437,7 +1423,7 @@ class WineAssembly {
     if (hasTopLevel) { this._lastWindowStopAt = 0; return; }
     if (Date.now() < this._lastWindowStopAt) return;
     this._lastWindowStopAt = 0;
-    this.stop({ repaint: false });
+    this.stop();
   }
 
   _removeAppWindows() {
@@ -1464,18 +1450,32 @@ class WineAssembly {
     }
   }
 
+  // The one teardown. Every way an app can end -- ExitProcess, the run loop
+  // finding EIP zero, the last top-level window closing out its grace period,
+  // a WASM crash, the shell stopping it -- comes through here, and the order
+  // below is the whole of it.
+  //
+  // It used to be a shared middle with five different tails: three call sites
+  // repeated the window removal and then repainted, and two repainted not at
+  // all. The repaints were the damaging half, because they ran *after* the
+  // shell had already put the page back (onStopped -> onAppRunningChange
+  // clears the fullscreen classes), so anything still in renderer.windows at
+  // that point could hand the display straight back to a guest that no longer
+  // exists -- desktop icons hidden over a blank canvas. The two sites with no
+  // repaint had the opposite fault: a crash left the dead app's last frame on
+  // screen. Repainting last, once, fixes both.
   stop(options = {}) {
     this.running = false;
     this._cleanupAudio();
+    // A deferred last-window teardown has nothing left to finish, and leaving
+    // the deadline armed would run this a second time.
+    this._lastWindowStopAt = 0;
     if (this.renderer) {
       if (this._multiApp) {
         this._removeAppWindows();
       } else {
         this.renderer._exited = true;
         this.renderer.windows = {};
-      }
-      if (options.repaint !== false && this.renderer.repaint) {
-        this.renderer.repaint();
       }
     }
     // Notify whether or not `running` was still set. The listener is
@@ -1490,6 +1490,13 @@ class WineAssembly {
     // believes something is running. No way out but a reload.
     if (typeof this.onStopped === 'function') {
       try { this.onStopped(this); } catch (_) {}
+    }
+    // Last, so the frame on screen is the one the shell's clean-up decided on
+    // and not one composed from windows this stop was in the middle of
+    // dropping. `repaint: false` is for a caller stopping several apps that
+    // will repaint once at the end.
+    if (options.repaint !== false && this.renderer && this.renderer.repaint) {
+      this.renderer.repaint();
     }
   }
 
@@ -1609,6 +1616,14 @@ class WineAssembly {
           if (perf) perf.countSteps(activeStepsPerSlice);
           const perfMainStart = perf ? performance.now() : 0;
           self.instance.exports.run(activeStepsPerSlice);
+          // Browser waveOut completion is driven by AudioContext timeouts.
+          // CALLBACK_FUNCTION clients cannot enter guest code from that
+          // timeout: doing so would overwrite whichever x86 frame a slice is
+          // currently unwinding. host-audio therefore queues WOM_DONE until
+          // this cooperative slice boundary, exactly as the CLI harness does.
+          if (self.hostCtx && self.hostCtx.pumpAudioCompletions) {
+            self.hostCtx.pumpAudioCompletions();
+          }
           // timeSetEvent is asynchronous on Windows. Most emulated apps pump
           // often enough for the existing MM_TIMER message path; opted-in
           // clients such as Diablo also need a callback between slices while
@@ -1666,11 +1681,7 @@ class WineAssembly {
         }
         if (!self.instance.exports.get_eip() && !self.instance.exports.get_yield_reason()) {
           self.logToUI('--- Program exited ---');
-          self.stop({ repaint: false });
-          if (self.renderer && self._multiApp) {
-            self._removeAppWindows();
-            self.renderer.repaint();
-          }
+          self.stop();
           return;
         }
         // Handle yield reasons
@@ -1779,7 +1790,10 @@ class WineAssembly {
         const tag = unimpl ? ` [unimplemented: ${unimpl}]` : '';
         console.error('WASM crash:', e, 'EIP=' + eipHex, 'ESP=' + espHex, 'EBP=' + ebpHex, 'yield=' + yr, tag);
         self.logToUI('ERROR: ' + e.message + ' @ EIP=' + eipHex + ' ESP=' + espHex + ' EBP=' + ebpHex + ' yield=' + yr + tag);
-        self.stop({ repaint: false });
+        // Repaints, unlike before: a crash that left the option off held the
+        // dead app's last frame on screen, which reads as a hang rather than
+        // as the exit it is.
+        self.stop();
         return;
       } finally {
         // Every yield reason returns early from inside the try, so closing
