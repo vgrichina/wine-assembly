@@ -420,6 +420,10 @@ const EXTRA_ARGS = getArg('args', (APP_ENTRY && APP_ENTRY.args) || null); // --a
 const AUDIO_OUT = getArg('audio-out', null); // --audio-out=file.pcm: write raw PCM to file
 const AUDIO_EXIT_BYTES = parseInt(getArg('audio-exit-bytes', '0'), 10) || 0; // --audio-exit-bytes=N: stop once captured PCM reaches N bytes
 const THREAD_SLICES = parseInt(getArg('thread-slices', '4')); // --thread-slices=N: worker slices per main batch (default 4; raise for compute-heavy audio decode)
+// --wait-slices=N: worker slices per batch while the MAIN thread is parked in a
+// blocking wait a worker has to satisfy. Nothing else can run then, so this is
+// much larger than THREAD_SLICES; set it to THREAD_SLICES to turn the boost off.
+const WAIT_SLICES = parseInt(getArg('wait-slices', '64'));
 
 // Default is to compile from src/*.wat on every launch, so an edit is always
 // picked up. --no-build is honored (see main()): it loads WASM_PATH as-is, and
@@ -6893,7 +6897,24 @@ async function main() {
     }
     if (threadManager.hasActiveThreads()) {
       // Give worker threads extra runtime when main thread is idle (e.g., waiting for extraction)
-      const slices = installingFiles ? 1000 : THREAD_SLICES;
+      // The same reasoning covers any blocking wait, not just the installer's:
+      // while the main thread is parked on an object only a worker can signal,
+      // the interleaved main runs below do nothing but re-poll it, and four
+      // worker slices a batch is the emulator throttling the one thread with
+      // work to do. Storm's MPQ reader is the case that shows it -- Diablo's
+      // Single Player transition waits on three MPQ decompression jobs, and
+      // giving the worker the batch it is blocking on took the same capture of
+      // its Choose Class screen from >75s (it did not finish) to 53s. The wait
+      // still returns the instant the object is signalled, so nothing is lost
+      // when the work finishes early. 256 slices measured no better than 64.
+      const mainParked = !!(threadManager.isMainWaitingOnThreads
+        && threadManager.isMainWaitingOnThreads());
+      const slices = installingFiles ? 1000 : (mainParked ? WAIT_SLICES : THREAD_SLICES);
+      // Keep re-polling the parked wait after every slice. Polling every 8th
+      // instead was measured 30% SLOWER on Diablo's Single Player transition
+      // (69s vs 53s, byte-identical output): the object gets signalled inside
+      // the boosted run, and any slice the main thread spends not noticing is
+      // a slice the worker spends spinning on an empty queue.
       // The run=/paint= line above covers only the main instance. In a threaded
       // app the game itself lives on a worker, so without this the profile
       // reads as "nothing is running" while the box is pinned.
