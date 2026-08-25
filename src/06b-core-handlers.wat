@@ -505,6 +505,97 @@
   ;; (dst_index) is stepped arithmetically rather than written back per row,
   ;; and lands on idx0 + (nrows-1)*step -- the adds sit *between* rows, so
   ;; there are one fewer of them than there are rows.
+  ;; 423: a whole `cmp al,imm8 / jz target` ladder -- a switch, as a compiler
+  ;; that would not build a jump table emits it. Caesar III's RLE sprite
+  ;; decoder opens with sixteen of them at 0x40f725..0x40f7a3, and walking to
+  ;; case k costs k block ends: the ladder is 24.0% of all block entries in a
+  ;; gameplay window and H154->H311 is the single busiest handler pair in the
+  ;; program (7.69%). One dispatch does the whole ladder here.
+  ;;
+  ;; Descriptor at $ip: [default_eip] then N x [imm, target]. $op = N.
+  ;;
+  ;; The scan is still linear, which is deliberate. A 256-entry jump table
+  ;; would be O(1) but costs 1KB of chunk per site against a 16KB chunk cap,
+  ;; and the win here is not the comparisons -- sixteen native i32.eq are
+  ;; nothing -- it is the k dispatches, k eip stores and k index lookups the
+  ;; comparisons used to be wrapped in.
+  (func $th_case_chain (param $op i32)
+    (local $tp i32) (local $n i32) (local $i i32) (local $a i32)
+    (local $imm i32) (local $hit i32) (local $k i32) (local $r i32)
+    (local.set $n (local.get $op))
+    (local.set $tp (global.get $ip))
+    ;; default word + N (imm, target) pairs
+    (global.set $ip (i32.add (local.get $tp)
+      (i32.shl (i32.add (i32.const 1) (i32.shl (local.get $n) (i32.const 1)))
+               (i32.const 2))))
+
+    (local.set $a (call $get_reg8 (i32.const 0)))   ;; AL
+    (local.set $hit (i32.const -1))
+    (local.set $i (i32.const 0))
+    (block $found (loop $l
+      (br_if $found (i32.ge_u (local.get $i) (local.get $n)))
+      (local.set $imm (i32.load (i32.add (local.get $tp)
+        (i32.shl (i32.add (i32.const 1) (i32.shl (local.get $i) (i32.const 1)))
+                 (i32.const 2)))))
+      (if (i32.eq (local.get $a) (local.get $imm))
+        (then (local.set $hit (local.get $i)) (br $found)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $l)))
+
+    ;; How many compares really happened: through the match, or all of them.
+    (local.set $k (if (result i32) (i32.ge_s (local.get $hit) (i32.const 0))
+      (then (local.get $hit)) (else (i32.sub (local.get $n) (i32.const 1)))))
+
+    ;; Flags are those of the LAST cmp executed, and only that one is
+    ;; observable: every earlier cmp in the ladder is consumed by its own jz
+    ;; and then overwritten by the next cmp. Same publication as
+    ;; $th_alu_r8_i8's CMP arm, byte sign bit included.
+    (local.set $imm (i32.load (i32.add (local.get $tp)
+      (i32.shl (i32.add (i32.const 1) (i32.shl (local.get $k) (i32.const 1)))
+               (i32.const 2)))))
+    (local.set $r (i32.and (i32.sub (local.get $a) (local.get $imm))
+                           (i32.const 0xFF)))
+    (call $set_flags_sub (local.get $a) (local.get $imm) (local.get $r))
+    (global.set $flag_sign_shift (i32.const 7))
+
+    ;; Pacing contract, as 420/421/422: how deep the lowering goes must not
+    ;; change how much guest work a host batch buys, or a frame captured at a
+    ;; fixed batch number lands somewhere else. The ladder billed one step per
+    ;; cmp and one per jz. $next already billed one of them.
+    (global.set $steps (i32.sub (global.get $steps)
+      (i32.sub (i32.shl (i32.add (local.get $k) (i32.const 1)) (i32.const 1))
+               (i32.const 1))))
+
+    ;; $steps is not the only meter. Every jz in the unfolded ladder ended a
+    ;; block, and $branch_end spends one $block_budget per transfer, so a fold
+    ;; that pays only in steps buys the guest extra work per host batch --
+    ;; measured as +2.8% API calls over the same 3400 batches, which moves the
+    ;; captured frame and makes an A/B compare two different moments in the
+    ;; game. Charge the k transfers this dispatch replaced.
+    (global.set $block_budget
+      (i32.sub (global.get $block_budget) (local.get $k)))
+
+    ;; And the histogram has to keep counting the cmps and jzs it replaced, or
+    ;; op totals stop being comparable with a --no-case-chain build. Recording
+    ;; them alternately also reproduces the H154->H311 pair this fold exists
+    ;; to delete, which is what makes the before/after readable.
+    (if (global.get $handler_hist_enabled)
+      (then
+        (local.set $i (i32.const 0))
+        (block $hdone (loop $h
+          (br_if $hdone (i32.gt_u (local.get $i) (local.get $k)))
+          (call $handler_hist_record (i32.const 154))
+          (call $handler_hist_record (i32.const 311))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $h)))))
+
+    (global.set $eip (if (result i32) (i32.ge_s (local.get $hit) (i32.const 0))
+      (then (i32.load (i32.add (local.get $tp)
+        (i32.shl (i32.add (i32.const 2) (i32.shl (local.get $hit) (i32.const 1)))
+                 (i32.const 2)))))
+      (else (i32.load (local.get $tp)))))
+    (return_call $branch_end))
+
   (func $th_rect_run (param $op i32)
     (local $tp i32) (local $nrows i32) (local $cols i32) (local $pairs i32)
     (local $src_disp i32) (local $dst_disp i32) (local $rp i32)

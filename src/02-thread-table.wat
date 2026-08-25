@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 423 funcref)
+  (table $handlers 424 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -479,4 +479,5 @@
     $th_store32_sib           ;; 420: MOV dword [base+index*scale+disp], r32
     $th_copy32_ro_to_sib      ;; 421: MOV r32,[base+disp] + MOV [base+idx*s+disp],r32
     $th_rect_run              ;; 422: a whole unrolled rows x cols dword rect copy
+    $th_case_chain            ;; 423: a whole cmp al,imm8 / jz ladder (a switch)
   )

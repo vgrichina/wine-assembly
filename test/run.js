@@ -186,6 +186,7 @@ const LOOP_SUPEROPS = hasFlag('loop-superops');
 // dispatches has measured ZERO more than once, so the flag is not optional.
 const NO_SIB_FUSION = hasFlag('no-sib-fusion');
 const NO_RECT_RUN = hasFlag('no-rect-run');
+const NO_CASE_CHAIN = hasFlag('no-case-chain');
 // --loopmatch-stats: print the self-loop/match counts at exit.
 const LOOPMATCH_STATS = hasFlag('loopmatch-stats');
 const TRACE_GDI = hasFlag('trace-gdi');   // --trace-gdi: log GDI calls (CreateBitmap, BitBlt, etc.)
@@ -3639,6 +3640,9 @@ async function main() {
   if (NO_RECT_RUN && instance.exports.set_rect_run) {
     instance.exports.set_rect_run(0);
   }
+  if (NO_CASE_CHAIN && instance.exports.set_case_chain) {
+    instance.exports.set_case_chain(0);
+  }
   if (TRACE_FPU && instance.exports.set_fpu_trace) {
     instance.exports.set_fpu_trace(1);
   }
@@ -6819,6 +6823,7 @@ async function main() {
           // the fused build on both sides.
           if (NO_SIB_FUSION && e.set_sib_fusion) e.set_sib_fusion(0);
           if (NO_RECT_RUN && e.set_rect_run) e.set_rect_run(0);
+          if (NO_CASE_CHAIN && e.set_case_chain) e.set_case_chain(0);
         }
       }
     }

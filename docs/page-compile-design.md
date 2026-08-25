@@ -879,3 +879,62 @@ So CASE_CHAIN is not a speculative idiom hunt. It is the single largest
 unfolded shape left in the app that this branch was built for, it is the #1
 dispatch pair in the histogram, and the app's *other* drawing path already got
 this treatment and kept 5.20%.
+
+## 14. CASE_CHAIN built and measured: it works, and it is worth ~0 (2026-08-24)
+
+Handler 423 `$th_case_chain` folds a whole `cmp al,imm8 / jz case` ladder into
+one dispatch. Matcher in `src/07-decoder.wat` (`$case_chain_count` /
+`$emit_case_chain`), off switch `test/run.js --no-case-chain` →
+`set_case_chain(0)`, so the A/B is a flag on one binary rather than two builds.
+
+**It fires, exactly as §13 predicted.** Caesar gameplay drive, hot-block dump,
+batches 3000..3400 — the fifteen mid-ladder block entries vanish:
+
+```
+  off                     on
+  0x0040f72f 376259       (gone)
+  0x0040f733 337211       (gone)
+  0x0040f73b 301763       (gone)
+  ... 12 more ...
+  ---------------------
+  2,340,000 block entries removed, and ~7.3M dispatches with them
+```
+
+`0x0040f71c` and `0x0040f725` keep their 934,297 entries: those are the arrivals
+at the ladder, which the fold does not remove, only the walking.
+
+**And it buys nothing measurable.** Nine interleaved pairs, user CPU on a fixed
+3400-batch run: min 9.01s on vs 9.04s off, median 9.83s vs 10.18s, mean pairwise
+difference 0.21s (2.1%) in the fold's favour with the sign flipping in three of
+the nine pairs. Box at load 3.6–5.3 throughout. **≤2%, not distinguishable from
+zero**, for removing 11.9% of all dispatches and 24% of all block entries.
+
+This is the same wall §-`$next`-dispatch hit: fewer dispatches is not faster.
+The dispatch, the eip store and the cache lookup are all cheap and well
+predicted; the work the guest asked for is the cost.
+
+### 14.1 Two pacing meters, not one
+
+The first build of this was pixel-wrong — 3.08% of pixels, max channel delta 8 —
+while being deterministic run to run, and it ran 2.8% *more* API calls in the
+same 3400 batches. `$steps` was charged correctly. The meter I missed is
+`$block_budget`: `$branch_end` spends one per block transfer, and folding away
+k transfers hands the guest k extra blocks of work per host batch, so the frame
+captured at a fixed batch number is a later moment in the game.
+
+`(global.set $block_budget (i32.sub (global.get $block_budget) (local.get $k)))`
+in the handler restores it: identical API counts and a 0-pixel diff.
+
+**Any future super-op must charge both meters.** 420/421/422 charge only
+`$steps`; each of them therefore shifts pacing by however many block ends it
+swallows, and `$th_rect_run` swallows a whole block per sprite.
+
+### 14.2 Alternatives to the linear scan are not worth measuring
+
+The obvious follow-up is to replace the handler's linear scan with a 256-entry
+target table indexed by AL. The scan walks 3.53 cases on average, so it is ~3.5
+native `i32.eq` inside a dispatch that already removed seven dispatches and
+three and a half block transfers — and *that* removal measured at ≤2%. Whatever
+the compares cost is a fraction of a number already inside the noise floor of
+this box. Optimising the scan cannot be measured here, so it should not be
+built here.

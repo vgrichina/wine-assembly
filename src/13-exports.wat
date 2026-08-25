@@ -2463,6 +2463,9 @@
   (func (export "set_rect_run") (param $flag i32)
     (global.set $rect_run_enabled (local.get $flag)))
 
+  (func (export "set_case_chain") (param $flag i32)
+    (global.set $case_chain_enabled (local.get $flag)))
+
   ;; Page compilation (docs/page-compile-design.md). There is deliberately no
   ;; switch: this replaces the storage layer rather than accelerating it, so the
   ;; thing to compare against is the commit before it, not a flag.
