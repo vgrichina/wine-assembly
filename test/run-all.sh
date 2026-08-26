@@ -94,6 +94,7 @@ UNIT=(
   test/test-gpu-atomic-present.js
   test/test-opengl-swapbuffers.js
   test/test-renderer-dialog-button-queue.js
+  test/test-dialog-button-command-queue.js
   test/test-nc-flags-message-wake.js
   test/test-browser-step-scheduler.js
   test/test-console-input.js
