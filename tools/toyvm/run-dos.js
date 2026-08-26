@@ -245,6 +245,9 @@ async function runDos(o) {
 
   const machine = new Machine(new Uint8Array(0), {
     log: (s) => traceInt && log(`  ${s}`), autoKey, forceChained,
+    // A DOS program's data sits next to it, and that directory is the whole of
+    // the filesystem it gets.
+    fileRoot: path.dirname(path.resolve(exe)),
   });
   const vm = await makeVm(variant, {
     portIn: (p, w) => machine.portIn(p, w),
@@ -574,6 +577,20 @@ async function main() {
   if (r.text.written || r.text.cells) {
     console.log(`  console ${r.text.written} chars written, `
       + `${r.text.cells} of ${r.machine.con.cols * r.machine.con.rows} cells non-blank`);
+  }
+  // Which files the program went looking for, and which of them were not
+  // there. A demo that renders an empty screen from an empty buffer looks
+  // exactly like a decoder bug until this line names the file it wanted.
+  const m = r.machine;
+  if (m.filesOpened.length || m.filesMissed.length) {
+    const uniq = (a) => [...new Set(a)];
+    console.log(`  files: opened ${uniq(m.filesOpened).join(' ') || 'none'}`
+      + (m.filesMissed.length
+        ? `; NOT FOUND ${uniq(m.filesMissed).join(' ')}` : ''));
+  }
+  if (m.xmsBlocks.size || m.xmsMoved || m.emsHandles.size || m.emsMaps) {
+    console.log(`  xms ${m.xmsBlocks.size} block(s), ${(m.xmsMoved / 1024).toFixed(0)}KB moved; `
+      + `ems ${m.emsHandles.size} handle(s), ${m.emsMaps} page maps`);
   }
   if (flag('text')) {
     const t = conText(r.machine.con);

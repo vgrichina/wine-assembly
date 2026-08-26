@@ -26,11 +26,30 @@ const fs = require('fs');
 const isa = require('./isa');
 
 const VGA_BASE = 0xA0000;
-const STUB_SEG = 0xF000;      // vector v points at F000:v, one refused byte
+const STUB_SEG = 0xF000;      // vector v points at F000:(0x100+v), one refused byte
+const STUB_OFF = 0x100;       // ...leaving F000:0000-00FF for driver signatures
 const STUB_BYTE = 0xF1;       // ICEBP -- not decoded, so the trace stops on it
+
+// --- the two memory managers a 1994 demo expects to find --------------------
+// Four programs in this corpus print "HIMEM.SYS NEEDED !!!" or "Expanded
+// Memory Manager required !" and exit, which is a driver gap rather than a CPU
+// one: both managers are detected before they are used, and detecting them is
+// most of the work.
+const EMS_NAME = 'EMMXXXX0';  // at handler_segment:000A, the classic EMS probe
+const EMS_FRAME_SEG = 0xE000; // 64K page frame: four 16K physical pages
+const EMS_PAGE = 0x4000;
+const EMS_TOTAL_PAGES = 512;  // 8MB of expanded memory, the usual EMM386 answer
+const XMS_ENTRY_SEG = 0x00C0; // three bytes below the PSP: int 2Dh; retf
+const XMS_INT = 0x2D;
+const XMS_TOTAL_KB = 8192;
 const PSP_SEG = 0x0100;
 const LOAD_SEG = 0x0110;      // PSP is 0x100 bytes = 0x10 paragraphs
-const DEFAULT_ALLOC_TOP = 0x9000;
+// Top of conventional memory. 0x9000 left 572K free between the program and
+// the ceiling, which reads as a machine with a lot of TSRs loaded -- and
+// ASMINST.EXE prints "Insufficient memory! This demo needs 600k free to run"
+// and exits on exactly that. A bare DOS with nothing resident hands the program
+// everything up to the video ROM; 0x9F00 is that, less a paragraph or two.
+const DEFAULT_ALLOC_TOP = 0x9F00;
 
 // ---------------------------------------------------------------------------
 // MZ loader
@@ -355,6 +374,21 @@ function newConsole(mem) {
 // AH is the scancode, which the INT 16h forms return alongside the character;
 // a program reading only AL never looks at it, but the ones that read the whole
 // word do.
+// What an option label has to say for the menu reader to pick it. Every one of
+// these is on a screen in this corpus; the negations matter, because "No sound
+// card" and "Sound card" differ by two characters and select opposite things.
+const SILENT_LABEL =
+  /\b(no|without|none|neither|not?)\s*(sound|music|sfx|audio|card|soundcard)?\b|^\s*(none|silence|silent|quit|exit|no)\b|pc[- ]?speaker|internal speaker|beeper|no thanks/i;
+
+// Scancodes for the characters the menu reader can produce. A program reading
+// only AL never looks at AH, but the ones taking the whole INT 16h word do.
+const SCAN = {
+  1: 0x02, 2: 0x03, 3: 0x04, 4: 0x05, 5: 0x06, 6: 0x07, 7: 0x08, 8: 0x09, 9: 0x0A, 0: 0x0B,
+  q: 0x10, w: 0x11, e: 0x12, r: 0x13, t: 0x14, y: 0x15, u: 0x16, i: 0x17, o: 0x18, p: 0x19,
+  a: 0x1E, s: 0x1F, d: 0x20, f: 0x21, g: 0x22, h: 0x23, j: 0x24, k: 0x25, l: 0x26,
+  z: 0x2C, x: 0x2D, c: 0x2E, v: 0x2F, b: 0x30, n: 0x31, m: 0x32,
+};
+
 const AUTO_KEYS = [
   { ah: 0x19, al: 0x70 },   // p -- "No sound" in every GoldPlay setup here
   { ah: 0x31, al: 0x6E },   // n -- "MUSIC [Y/N]", "do you have a GUS"
@@ -404,9 +438,23 @@ class Machine {
     this.keys = opts.keys ? [...opts.keys] : [];   // queued as {ah, al}
     this.autoKey = !!opts.autoKey;
     this.autoKeyAt = 0;
+    this.autoKeyScreen = null;   // the screen the last menu answer was read off
+    this.autoKeyRead = 0;        // keys chosen by reading, not by rotating
     this.forceChained = !!opts.forceChained;
     this.mouse = { x: 160, y: 100, buttons: 0, dx: 0, dy: 0 };
+    // A freshly loaded .EXE owns every paragraph up to the ceiling, so the
+    // free pool starts empty and fills when the program shrinks its own block.
     this.allocTop = DEFAULT_ALLOC_TOP;
+    // XMS blocks and EMS handles, both backed by host buffers. Counters so a
+    // run can say whether a manager was merely detected or actually used.
+    // Open files, and a record of what was asked for -- "which file could it
+    // not find" is the first question when a demo renders an empty screen.
+    this.fileRoot = opts.fileRoot || null;
+    this.files = new Map(); this.fileNext = 5;   // 0-4 are the standard handles
+    this.filesOpened = []; this.filesMissed = [];
+    this.xmsBlocks = new Map(); this.xmsNext = 1; this.xmsMoved = 0;
+    this.emsHandles = new Map(); this.emsNext = 1; this.emsMaps = 0;
+    this.emsMapped = [null, null, null, null];
     this.unhandled = new Map();
     this.intCount = new Map();
     // Which clock, if any, a program is pacing itself off. A demo that never
@@ -427,10 +475,118 @@ class Machine {
   // The real guest memory arrives after construction, once the wasm instance
   // exists. The text page lives inside it, so the console has to be re-pointed
   // and the page re-blanked rather than left addressing the throwaway buffer.
+  // --- the file side of DOS ------------------------------------------------
+  // Every program here runs from the directory its data is in, so the whole of
+  // "the filesystem" is that one directory. Read-only on purpose: a sweep runs
+  // 199 programs unattended and none of them has any business writing to the
+  // corpus.
+  guestPath(r) {
+    const at = ((r.get('ds') << 4) + (r.get('dx') & 0xFFFF)) & 0xFFFFF;
+    let s = '';
+    for (let i = at; i < this.mem.length && this.mem[i] && s.length < 128; i++) {
+      s += String.fromCharCode(this.mem[i]);
+    }
+    return s;
+  }
+
+  // DOS is case-insensitive and the corpus is not: the name in the binary is
+  // usually upper case and the file on disk usually is not, or the other way
+  // round in the same directory. Drive letters and directories are dropped --
+  // a demo that says C:\SOUND\FILE.DAT means the file next to it.
+  hostPath(name) {
+    if (!this.fileRoot || !name) return null;
+    const base = name.replace(/^[A-Za-z]:/, '').split(/[\\/]/).filter(Boolean).pop();
+    if (!base) return null;
+    if (this.dirCache === undefined) {
+      try { this.dirCache = fs.readdirSync(this.fileRoot); } catch { this.dirCache = []; }
+    }
+    const hit = this.dirCache.find(f => f.toLowerCase() === base.toLowerCase());
+    return hit ? `${this.fileRoot}/${hit}` : null;
+  }
+
+  openFile(name) {
+    const p = this.hostPath(name);
+    if (!p) { this.filesMissed.push(name); return 0; }
+    let buf;
+    try { buf = fs.readFileSync(p); } catch { this.filesMissed.push(name); return 0; }
+    const h = this.fileNext++;
+    this.files.set(h, { buf, pos: 0, name });
+    this.filesOpened.push(name);
+    return h;
+  }
+
+  // What is on the text page, as lines. The autoKey menu reader works off this,
+  // and so does any caller that wants to know what a program said.
+  screenText() {
+    const c = this.con, rows = [];
+    for (let y = 0; y < c.rows; y++) {
+      let s = '';
+      for (let x = 0; x < c.cols; x++) {
+        const b = c.getCh(y * c.cols + x);
+        s += (b >= 0x20 && b < 0x7F) ? String.fromCharCode(b) : ' ';
+      }
+      rows.push(s.replace(/\s+$/, ''));
+    }
+    while (rows.length && rows[rows.length - 1] === '') rows.pop();
+    return rows;
+  }
+
+  // Read the menu instead of guessing at it.
+  //
+  // The rotation below gets past a prompt eventually, but "eventually" means
+  // several wrong keys first, and a menu that redraws on a bad key never
+  // settles. The screen is right there and it says what it wants: BLINKY.EXE
+  // prints "a. PC Speaker / p. No sound / Select an output device :", BUDENZA
+  // prints "1) No Music 2) DAC/Covox on LPT1 ...", CULT asks "Do YOU have a
+  // sound card Called Gravis Ultra Sound [GUS]". A headless run wants silence
+  // in every one of those, so the option whose label says so is the answer.
+  //
+  // Returns null when the screen is not a menu, which is the common case and
+  // leaves the rotation to it.
+  menuKey() {
+    const lines = this.screenText();
+    if (!lines.length) return null;
+    const key = (ch) => ({ ah: SCAN[ch.toLowerCase()] ?? 0, al: ch.charCodeAt(0) });
+
+    // "[1] a GUS or no Sound card at all" and "p. No sound" are the same shape:
+    // a single-character selector, then the label it selects.
+    const opts = [];
+    for (const line of lines) {
+      const re = /(?:^|\s{2,})[\[(]?([0-9A-Za-z])[\]).:)]\s*([^[(]{2,40})/g;
+      for (let m; (m = re.exec(line));) opts.push({ ch: m[1], label: m[2].trim() });
+    }
+    const silent = opts.find(o => SILENT_LABEL.test(o.label));
+    if (silent) return key(silent.ch);
+
+    const all = lines.join('\n');
+    // A yes/no question. Answer it the way that avoids hardware we do not
+    // have; every one of these in the corpus is asking about a sound card.
+    if (/\[\s*y\s*\/\s*n\s*\]|\(\s*y\s*\/\s*n\s*\)|\by\s*\/\s*n\b/i.test(all)) {
+      return key(/sound|music|gus|sb|adlib|card|midi/i.test(all) ? 'n' : 'y');
+    }
+    if (/press\s+(any\s+key|a\s+key|enter|return|\[?enter\]?)/i.test(all)) {
+      return { ah: 0x1C, al: 0x0D };
+    }
+    if (/press\s+(space|the\s+space\s*bar)/i.test(all)) return { ah: 0x39, al: 0x20 };
+    // A selector list with no silent option: take the first one offered rather
+    // than a key that is not on the menu at all.
+    if (opts.length >= 2) return key(opts[0].ch);
+    return null;
+  }
+
   // One synthetic keystroke, or null when autoKey is off. Rotates, so a menu
   // that refuses the first answer is offered the next one on its next poll.
   autoKeyNext() {
     if (!this.autoKey) return null;
+    // Read the menu first, but only once per screen: if the program is still
+    // showing the same thing after being sent the key it asked for, that key
+    // was not the answer and repeating it forever is how a run hangs politely.
+    const shown = this.screenText().join('\n');
+    if (shown !== this.autoKeyScreen) {
+      this.autoKeyScreen = shown;
+      const k = this.menuKey();
+      if (k) { this.autoKeyRead++; return k; }
+    }
     return AUTO_KEYS[this.autoKeyAt++ % AUTO_KEYS.length];
   }
 
@@ -443,12 +599,30 @@ class Machine {
   installIvt() {
     for (let v = 0; v < 256; v++) {
       const at = v * 4;
-      this.mem[at] = v;                     // offset = vector number
-      this.mem[at + 1] = 0;
+      // Offset is 0x100 + the vector, not the vector itself: the run loop
+      // recovers the vector as `ip & 0xFF` either way, and this leaves the
+      // first 256 bytes of the stub segment free for the driver signatures a
+      // program reads out of a handler's own segment. That is how an expanded
+      // memory manager is detected -- get the INT 67h vector, then compare
+      // ES:000A against "EMMXXXX0" -- and with the stubs at offset v those
+      // eight bytes sat on top of the stubs for INT 0Ah through INT 11h,
+      // INT 10h among them.
+      this.mem[at] = STUB_OFF + v;
+      this.mem[at + 1] = (STUB_OFF + v) >> 8;
       this.mem[at + 2] = STUB_SEG & 0xFF;
       this.mem[at + 3] = STUB_SEG >> 8;
-      this.mem[(STUB_SEG << 4) + v] = STUB_BYTE;
+      this.mem[(STUB_SEG << 4) + STUB_OFF + v] = STUB_BYTE;
     }
+    const base = STUB_SEG << 4;
+    for (let i = 0; i < EMS_NAME.length; i++) this.mem[base + 0x0A + i] = EMS_NAME.charCodeAt(i);
+
+    // The XMS control function is not reached through an interrupt: INT 2Fh
+    // hands back a far pointer and the program CALLs it. So it has to be three
+    // real instructions rather than a stub byte -- `int 2Dh` to get here, then
+    // `retf` to go back to the caller, since a far call pushed two words where
+    // the interrupt's IRET frame has three.
+    const xms = XMS_ENTRY_SEG << 4;
+    this.mem[xms] = 0xCD; this.mem[xms + 1] = XMS_INT; this.mem[xms + 2] = 0xCB;
   }
 
   setTicks(t) {
@@ -724,7 +898,10 @@ class Machine {
         return false;
       case 0x20: this.exited = true; this.exitCode = 0; return true;
       case 0x21: return this.int21(ah, al, r);
+      case 0x2D: return this.xms(ah, r);        // reached from the XMS stub
+      case 0x2F: return this.int2f(ah, al, r);
       case 0x33: return this.int33(r);
+      case 0x67: return this.ems(ah, al, r);
       default: {
         const n = this.unhandled.get(vec) || 0;
         this.unhandled.set(vec, n + 1);
@@ -785,6 +962,26 @@ class Machine {
       for (let i = 0; i < count * 3; i++) this.palette[(first * 3 + i) % 768] = this.mem[(src + i) & 0xFFFFF] & 0x3F;
       return true;
     }
+    if (ah === 0x10 && (al === 0x15 || al === 0x17)) {   // read DAC back
+      // A fade-out reads the palette, scales it and writes it back. Reading
+      // zeros meant the fade started from black and the picture vanished on
+      // the first step.
+      if (al === 0x15) {
+        const at = (r.get('bx') & 0xFF) * 3;
+        r.set('dx', (this.palette[at] & 0x3F) << 8);
+        r.set('cx', ((this.palette[at + 1] & 0x3F) << 8) | (this.palette[at + 2] & 0x3F));
+        return true;
+      }
+      const first = r.get('bx') & 0xFFFF, count = r.get('cx') & 0xFFFF;
+      const dst = ((r.get('es') << 4) + r.get('dx')) & 0xFFFFF;
+      for (let i = 0; i < count * 3; i++) {
+        this.mem[(dst + i) & 0xFFFFF] = this.palette[(first * 3 + i) % 768] & 0x3F;
+      }
+      return true;
+    }
+    if (ah === 0x10 && al === 0x03) return true;    // blink/intensity bit
+    if (ah === 0x01) return true;                   // cursor shape
+    if (ah === 0x05) return true;                   // active display page
     // The BIOS text calls. These used to all be accepted and dropped, which is
     // why a program that wrote its screen through the BIOS instead of DOS came
     // out just as blank as one that wrote nothing.
@@ -966,6 +1163,71 @@ class Machine {
         r.setResultCf(false);
         return true;
       }
+      // Get the PSP segment. BLIQ.EXE resizes its block, asks for its PSP and
+      // prints "[ERROR]: Can not init file manager..." on the garbage it got
+      // back -- a two-line call standing between it and the demo.
+      case 0x51: case 0x62: r.set('bx', PSP_SEG); r.setResultCf(false); return true;
+      case 0x19: r.set('ax', (r.get('ax') & 0xFF00) | 2); return true;   // drive C:
+      case 0x0E: r.set('ax', (r.get('ax') & 0xFF00) | 3); return true;   // 3 drives
+      case 0x47: {                              // get current directory -> root
+        const at = ((r.get('ds') << 4) + (r.get('si') & 0xFFFF)) & 0xFFFFF;
+        this.mem[at] = 0;
+        r.setResultCf(false);
+        return true;
+      }
+
+      // --- files ------------------------------------------------------------
+      // A demo keeps its music, its fonts and most of its pictures next to the
+      // executable, so with no file calls at all it starts, finds nothing and
+      // either prints "File Not Found" or renders an empty screen from an empty
+      // buffer. MAINPART.EXE is the second kind: it allocates EMS, maps four
+      // pages and reads its data into them, and every one of those reads was
+      // going nowhere.
+      case 0x3D: {                              // open
+        const f = this.openFile(this.guestPath(r), 'r');
+        if (!f) { r.setResultCf(true); r.set('ax', 2); return true; }   // not found
+        r.set('ax', f);
+        r.setResultCf(false);
+        return true;
+      }
+      case 0x3E: {                              // close
+        this.files.delete(r.get('bx') & 0xFFFF);
+        r.setResultCf(false);
+        return true;
+      }
+      case 0x3F: {                              // read
+        const f = this.files.get(r.get('bx') & 0xFFFF);
+        const n = r.get('cx') & 0xFFFF;
+        if (!f) { r.setResultCf(true); r.set('ax', 6); return true; }   // bad handle
+        const at = ((r.get('ds') << 4) + r.get('dx')) & 0xFFFFF;
+        const got = Math.max(0, Math.min(n, f.buf.length - f.pos));
+        // A read that would run off the end of the 1MB address space is a bug
+        // in the guest, not something to wrap around silently.
+        const room = Math.max(0, Math.min(got, this.mem.length - at));
+        this.mem.set(f.buf.subarray(f.pos, f.pos + room), at);
+        f.pos += got;
+        r.set('ax', got);
+        r.setResultCf(false);
+        return true;
+      }
+      case 0x42: {                              // lseek
+        const f = this.files.get(r.get('bx') & 0xFFFF);
+        if (!f) { r.setResultCf(true); r.set('ax', 6); return true; }
+        const off = (((r.get('cx') & 0xFFFF) << 16) | (r.get('dx') & 0xFFFF)) | 0;
+        const from = al === 1 ? f.pos : (al === 2 ? f.buf.length : 0);
+        f.pos = Math.max(0, Math.min(f.buf.length, from + off));
+        r.set('ax', f.pos & 0xFFFF);
+        r.set('dx', (f.pos >>> 16) & 0xFFFF);
+        r.setResultCf(false);
+        return true;
+      }
+      case 0x43: {                              // get/set file attributes
+        const p = this.hostPath(this.guestPath(r));
+        if (!p) { r.setResultCf(true); r.set('ax', 2); return true; }
+        r.set('cx', 0x20);                      // archive
+        r.setResultCf(false);
+        return true;
+      }
       case 0x44: {
         // IOCTL. Only AL=00, "get device information", is asked often enough to
         // matter: a demo uses it to find out whether stdout is a file or the
@@ -976,14 +1238,34 @@ class Machine {
       }
       case 0x48: {                              // allocate paragraphs
         const want = r.get('bx') & 0xFFFF;
-        if (this.allocTop + want > 0x9FFF) { r.setResultCf(true); r.set('ax', 8); r.set('bx', 0x9FFF - this.allocTop); return true; }
+        const have = DEFAULT_ALLOC_TOP - this.allocTop;
+        // BX comes back as the largest block available, which is how a program
+        // asks how much memory there is: BX=FFFF is guaranteed to fail and the
+        // answer is in the error return. That is the call ASMINST.EXE reads,
+        // and with the old 0x9000 ceiling it was being told 64K.
+        if (want > have) { r.setResultCf(true); r.set('ax', 8); r.set('bx', have); return true; }
         r.set('ax', this.allocTop);
         this.allocTop += want;
         r.setResultCf(false);
         return true;
       }
       case 0x49: r.setResultCf(false); return true;   // free
-      case 0x4A: r.setResultCf(false); return true;   // resize
+      case 0x4A: {                              // resize a block
+        // A .EXE is loaded owning everything up to the ceiling, so the free
+        // pool is empty until it gives some back -- which is what a C or Pascal
+        // runtime does first thing. Honouring the shrink is what makes the
+        // answer above mean anything.
+        const seg = r.get('es') & 0xFFFF, want = r.get('bx') & 0xFFFF;
+        if (seg === PSP_SEG) {
+          if (PSP_SEG + want > DEFAULT_ALLOC_TOP) {
+            r.setResultCf(true); r.set('ax', 8); r.set('bx', DEFAULT_ALLOC_TOP - PSP_SEG);
+            return true;
+          }
+          this.allocTop = PSP_SEG + want;
+        }
+        r.setResultCf(false);
+        return true;
+      }
       case 0x1A: this.dta = ((r.get('ds') << 4) + r.get('dx')) & 0xFFFFF; return true;
       case 0x2C: {                              // get time
         const t = this.ticks * 55;
@@ -993,6 +1275,193 @@ class Machine {
       }
       default: return false;
     }
+  }
+
+  // --- XMS (HIMEM.SYS) -----------------------------------------------------
+  // The multiplex interrupt is how the driver is found. AX=4300 asks "are you
+  // there" and the answer is AL=80h; AX=4310 hands back the far pointer the
+  // program will CALL for everything after that.
+  int2f(ah, al, r) {
+    if (ah === 0x43) {
+      if (al === 0x00) { r.set('ax', (r.get('ax') & 0xFF00) | 0x80); return true; }
+      if (al === 0x10) {
+        r.set('es', XMS_ENTRY_SEG);
+        r.set('bx', 0);
+        return true;
+      }
+      return false;
+    }
+    // "Am I running under Windows?" -- no, and saying so stops a demo looking
+    // for a DPMI host it will not find.
+    if (ah === 0x16 && al === 0x00) { r.set('ax', r.get('ax') & 0xFF00); return true; }
+    return false;
+  }
+
+  // Extended memory blocks live in host buffers, not in the guest's 1MB: a
+  // real-mode program cannot address them anyway, and everything it can do
+  // with one goes through the move call below. That is also why Lock (AH=0Ch)
+  // fails rather than inventing a 32-bit address -- a program that wanted one
+  // would then write through it into memory that does not exist.
+  xms(ah, r) {
+    const ok = (dx) => { r.set('ax', 1); if (dx !== undefined) r.set('dx', dx); };
+    const fail = (bl) => { r.set('ax', 0); r.set('bx', (r.get('bx') & 0xFF00) | bl); };
+    const free = () => XMS_TOTAL_KB - [...this.xmsBlocks.values()].reduce((a, b) => a + b.kb, 0);
+    switch (ah) {
+      case 0x00: r.set('ax', 0x0300); r.set('bx', 0); r.set('dx', 1); return true;
+      case 0x01: case 0x02: ok(); return true;                    // request/release HMA
+      case 0x03: case 0x04: case 0x05: case 0x06: ok(); return true;   // A20
+      case 0x07: ok(); return true;                               // A20 is enabled
+      case 0x08:                                                  // query free
+        r.set('ax', free()); r.set('dx', free()); r.set('bx', r.get('bx') & 0xFF00);
+        return true;
+      case 0x09: {                                                // allocate EMB
+        const kb = r.get('dx') & 0xFFFF;
+        if (kb > free()) { fail(0xA0); return true; }             // out of memory
+        const h = this.xmsNext++;
+        this.xmsBlocks.set(h, { kb, buf: new Uint8Array(kb * 1024) });
+        ok(h);
+        return true;
+      }
+      case 0x0A: {                                                // free EMB
+        const h = r.get('dx') & 0xFFFF;
+        if (!this.xmsBlocks.has(h)) { fail(0xA2); return true; }
+        this.xmsBlocks.delete(h);
+        ok();
+        return true;
+      }
+      case 0x0B: return this.xmsMove(r);
+      case 0x0C: fail(0xAD); return true;                         // lock -- see above
+      case 0x0D: fail(0xAA); return true;                         // unlock: not locked
+      case 0x0E: {                                                // get handle info
+        const b = this.xmsBlocks.get(r.get('dx') & 0xFFFF);
+        if (!b) { fail(0xA2); return true; }
+        r.set('ax', 1); r.set('bx', 0xFF00 | this.xmsBlocks.size); r.set('dx', b.kb);
+        return true;
+      }
+      default: fail(0x80); return true;                           // not implemented
+    }
+  }
+
+  // AH=0Bh: DS:SI points at {dword length, word srcHandle, dword srcOffset,
+  // word dstHandle, dword dstOffset}. Handle 0 means conventional memory and
+  // the matching offset is a far pointer rather than a block offset -- which is
+  // the whole reason this call exists.
+  xmsMove(r) {
+    const p = ((r.get('ds') << 4) + (r.get('si') & 0xFFFF)) & 0xFFFFF;
+    const m = this.mem;
+    const u16 = (o) => m[p + o] | (m[p + o + 1] << 8);
+    const u32 = (o) => (u16(o) | (u16(o + 2) << 16)) >>> 0;
+    const len = u32(0);
+    const side = (ho, oo) => {
+      const h = u16(ho);
+      if (h === 0) {
+        const far = u32(oo);
+        return { buf: m, at: ((((far >>> 16) & 0xFFFF) << 4) + (far & 0xFFFF)) & 0xFFFFF };
+      }
+      const b = this.xmsBlocks.get(h);
+      return b ? { buf: b.buf, at: u32(oo) } : null;
+    };
+    const src = side(4, 6), dst = side(10, 12);
+    // An odd length is an error on a real driver, and so is a handle nobody
+    // allocated. Both are worth reporting rather than papering over: a program
+    // that gets a success it did not earn goes wrong further away.
+    if (!src || !dst || (len & 1)) {
+      r.set('ax', 0);
+      r.set('bx', (r.get('bx') & 0xFF00) | (len & 1 ? 0xA7 : 0xA3));
+      return true;
+    }
+    if (src.at + len <= src.buf.length && dst.at + len <= dst.buf.length) {
+      dst.buf.set(src.buf.subarray(src.at, src.at + len), dst.at);
+      this.xmsMoved += len;
+    }
+    r.set('ax', 1);
+    return true;
+  }
+
+  // --- EMS (EMM386) --------------------------------------------------------
+  // Expanded memory is a 64K window at E000 through which four 16K pages of a
+  // much larger store are visible. Mapping a page copies it into the window and
+  // copies whatever was there back out first, which is exactly what the
+  // hardware does with an address line and costs a memcpy here.
+  ems(ah, al, r) {
+    const st = (code) => r.set('ax', (code << 8) | (r.get('ax') & 0xFF));
+    const free = () => EMS_TOTAL_PAGES - [...this.emsHandles.values()]
+      .reduce((a, b) => a + b.pages, 0);
+    switch (ah) {
+      case 0x40: st(0); return true;                              // manager status
+      case 0x41: r.set('bx', EMS_FRAME_SEG); st(0); return true;  // page frame
+      case 0x42:                                                  // page counts
+        r.set('bx', free()); r.set('dx', EMS_TOTAL_PAGES); st(0); return true;
+      case 0x43: {                                                // allocate
+        const pages = r.get('bx') & 0xFFFF;
+        if (pages > free()) { st(0x88); return true; }            // not enough pages
+        const h = this.emsNext++;
+        this.emsHandles.set(h, { pages, buf: new Uint8Array(pages * EMS_PAGE) });
+        r.set('dx', h); st(0);
+        return true;
+      }
+      case 0x44: return this.emsMap(al, r.get('bx') & 0xFFFF, r.get('dx') & 0xFFFF, r);
+      case 0x45: {                                                // deallocate
+        const h = r.get('dx') & 0xFFFF;
+        if (!this.emsHandles.has(h)) { st(0x83); return true; }    // no such handle
+        for (let i = 0; i < 4; i++) if (this.emsMapped[i]?.h === h) this.emsFlush(i);
+        this.emsHandles.delete(h);
+        st(0);
+        return true;
+      }
+      case 0x46: r.set('ax', 0x40); return true;                  // EMS 4.0
+      case 0x47: case 0x48: st(0); return true;                   // save/restore map
+      case 0x4B: r.set('bx', this.emsHandles.size); st(0); return true;
+      case 0x4C: {
+        const b = this.emsHandles.get(r.get('dx') & 0xFFFF);
+        if (!b) { st(0x83); return true; }
+        r.set('bx', b.pages); st(0);
+        return true;
+      }
+      case 0x51: {                                                // reallocate
+        const h = r.get('dx') & 0xFFFF, want = r.get('bx') & 0xFFFF;
+        const b = this.emsHandles.get(h);
+        if (!b) { st(0x83); return true; }
+        const buf = new Uint8Array(want * EMS_PAGE);
+        buf.set(b.buf.subarray(0, Math.min(b.buf.length, buf.length)));
+        this.emsHandles.set(h, { pages: want, buf });
+        r.set('bx', want); st(0);
+        return true;
+      }
+      default: st(0x84); return true;                             // unknown function
+    }
+  }
+
+  // Copy physical page `phys` out of the frame and back into whichever logical
+  // page is currently sitting there, so a remap does not lose writes.
+  emsFlush(phys) {
+    const cur = this.emsMapped[phys];
+    if (!cur) return;
+    const b = this.emsHandles.get(cur.h);
+    if (!b) return;
+    const at = (EMS_FRAME_SEG << 4) + phys * EMS_PAGE;
+    b.buf.set(this.mem.subarray(at, at + EMS_PAGE), cur.page * EMS_PAGE);
+  }
+
+  emsMap(phys, logical, handle, r) {
+    const st = (code) => r.set('ax', (code << 8) | (r.get('ax') & 0xFF));
+    const b = this.emsHandles.get(handle);
+    if (!b) { st(0x83); return true; }
+    if (phys > 3) { st(0x8B); return true; }                      // no such phys page
+    this.emsFlush(phys);
+    const at = (EMS_FRAME_SEG << 4) + phys * EMS_PAGE;
+    if (logical === 0xFFFF) {                                     // unmap
+      this.emsMapped[phys] = null;
+      this.mem.fill(0, at, at + EMS_PAGE);
+      st(0);
+      return true;
+    }
+    if (logical >= b.pages) { st(0x8A); return true; }            // logical out of range
+    this.mem.set(b.buf.subarray(logical * EMS_PAGE, (logical + 1) * EMS_PAGE), at);
+    this.emsMapped[phys] = { h: handle, page: logical };
+    this.emsMaps++;
+    st(0);
+    return true;
   }
 
   // Microsoft mouse driver. mars is driven entirely by this.
