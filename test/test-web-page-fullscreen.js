@@ -233,6 +233,8 @@ async function main() {
       const gutter = document.getElementById('scroll-collapse-gutter');
       return {
         lvh,
+        htmlOverflow: getComputedStyle(document.documentElement).overflowY,
+        bodyOverflow: getComputedStyle(document.body).overflowY,
         inner: window.innerHeight,
         collapsedClass: document.body.classList.contains('bars-collapsed'),
         gutterShown: !!(gutter && gutter.getClientRects().length),

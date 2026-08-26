@@ -724,9 +724,12 @@
       /* Clear of the exit chip (30px at right:4px). A strip that covers the
          only way out of full screen is worse than no strip. */
       right: calc(40px + env(safe-area-inset-right));
-      /* 44px is Apple's minimum touch target, and this one has to be hit on
-         the first try by someone who has not been told it is there. */
-      height: 44px;
+      /* 44px is Apple's minimum touch target, and this was 44. It has to be
+         hit on the first try by someone who has not been told it is there,
+         with a moving thumb, and 44 was reported as "quite thin" on the
+         device. It costs nothing to be generous: the strip unmounts the
+         moment the bars are down, so the app never lives underneath it. */
+      height: 96px;
       z-index: 39;
       align-items: center;
       justify-content: center;
