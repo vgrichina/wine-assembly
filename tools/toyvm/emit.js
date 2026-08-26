@@ -2161,7 +2161,7 @@ function helpers() {
 (func $lin (param $seg i32) (param $off i32) (result i32)
   (i32.and
     (i32.add (i32.shl (call $sget (local.get $seg)) (i32.const 4)) (local.get $off))
-    (i32.const 0xFFFFF)))
+    (global.get $linmask)))
 
 ;; The A000 window in unchained ("mode X") mode. See isa.js for why the planes
 ;; cannot live in the guest's own RAM.
@@ -2313,7 +2313,7 @@ function helpers() {
 (func $rd8 (param $seg i32) (param $off i32) (result i32)
   (local $l i32)
   (local.set $l (call $lin (local.get $seg) (local.get $off)))
-  (if (i32.eq (i32.or (i32.and (local.get $l) (i32.const 0xF0000)) (i32.const 1))
+  (if (i32.eq (i32.or (i32.and (local.get $l) (i32.const 0xFFF0000)) (i32.const 1))
               (i32.load (i32.const ${isa.VGA_CTL_KEY})))
     (then (return (call $vga_rd8 (local.get $l)))))
   (i32.load8_u (local.get $l)))
@@ -2321,7 +2321,7 @@ function helpers() {
 (func $wr8 (param $seg i32) (param $off i32) (param $v i32)
   (local $l i32)
   (local.set $l (call $lin (local.get $seg) (local.get $off)))
-  (if (i32.eq (i32.or (i32.and (local.get $l) (i32.const 0xF0000)) (i32.const 1))
+  (if (i32.eq (i32.or (i32.and (local.get $l) (i32.const 0xFFF0000)) (i32.const 1))
               (i32.load (i32.const ${isa.VGA_CTL_KEY})))
     (then (call $vga_wr8 (local.get $l) (local.get $v)) (return)))
   ;; A store into a paragraph that has already been COMPILED means the compiled
@@ -2981,7 +2981,14 @@ ${[...Array(8).keys()].map(i => `(global $st${i} (mut f64) (f64.const 0))`).join
 (global $cr0 (mut i32) (i32.const 0x0010))
 ;; The FLAGS shape, defaulting to the 8086's. set_cpu raises it.
 (global $f_res (mut i32) (i32.const ${isa.FLAGS_RESERVED}))
-(global $f_def (mut i32) (i32.const ${isa.FLAGS_DEFINED}))`;
+(global $f_def (mut i32) (i32.const ${isa.FLAGS_DEFINED}))
+;; How far the address bus goes. An 8086 has twenty lines and every address
+;; wraps at 1MB; a machine with A20 open and extended memory in it does not.
+;; Both are correct and a program can tell the difference, so this is a global
+;; the host raises the moment the guest takes an XMS handle, rather than a
+;; constant. Left alone it is exactly the old behaviour -- which is what the
+;; instruction gate checks, since its 8088 vectors include the wrap.
+(global $linmask (mut i32) (i32.const ${isa.LIN_MASK_REAL}))`;
 
 function preamble() {
   const globals = STATE
@@ -3001,6 +3008,10 @@ function preamble() {
 (import "host" "fmath" (func $fmath (param i32) (param f64) (param f64) (result f64)))
 ${globals}
 ${EXTRA_GLOBALS}
+;; How wide the address bus is. See $linmask -- the host opens it up when the
+;; guest takes an XMS handle and never narrows it again.
+(func (export "get_linmask") (result i32) (global.get $linmask))
+(func (export "set_linmask") (param $v i32) (global.set $linmask (local.get $v)))
 (func (export "set_cpu") (param $level i32)
   (if (i32.ge_u (local.get $level) (i32.const 386))
     (then

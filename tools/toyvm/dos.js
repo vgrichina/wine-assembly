@@ -555,6 +555,10 @@ class Machine {
     this.execStack = []; this.lastExitCode = 0; this.transfer = null;
     this.curPsp = PSP_SEG;             // whose PSP AH=51h/62h reports
     this.xmsBlocks = new Map(); this.xmsNext = 1; this.xmsMoved = 0;
+    // Whether the guest's addresses still wrap at 1MB. They do until it takes
+    // an extended-memory handle; see openBus.
+    this.linFlat = false;
+    this.vmExports = null;
     this.emsHandles = new Map(); this.emsNext = 1; this.emsMaps = 0;
     this.emsMapped = [null, null, null, null];
     this.unhandled = new Map();
@@ -836,8 +840,11 @@ class Machine {
     return `${s}\r\n`;
   }
 
-  setMemory(mem) {
+  // `ex` is the VM's export object, and the only thing the machine ever wants
+  // from it is `set_linmask` -- see openBus below.
+  setMemory(mem, ex) {
     this.mem = mem;
+    this.vmExports = ex || null;
     this.con.mem = mem;
     this.con.fillCells(0, this.con.cells, 0x20, 0x07);
   }
@@ -1896,11 +1903,42 @@ class Machine {
     return false;
   }
 
-  // Extended memory blocks live in host buffers, not in the guest's 1MB: a
-  // real-mode program cannot address them anyway, and everything it can do
-  // with one goes through the move call below. That is also why Lock (AH=0Ch)
-  // fails rather than inventing a 32-bit address -- a program that wanted one
-  // would then write through it into memory that does not exist.
+  // Extended memory blocks are cut from the guest's own linear memory, above
+  // the HMA at isa.XMS_BASE. They could have lived in a host buffer -- the move
+  // call is the only thing a real-mode program can do with one through the
+  // documented interface -- but ten demos in this corpus do not stop there.
+  // They LOCK the block, take the 32-bit linear address the lock returns, and
+  // then write through it with a 32-bit offset from real mode. That address has
+  // to name something the guest can actually reach, so the block has to be in
+  // the same memory everything else is in.
+  //
+  // Cutting from the low end of the extended region, first fit, coalescing by
+  // construction: the live blocks are walked in address order and the first gap
+  // that fits wins. A handful of allocations is all any of these programs make.
+  xmsAlloc(kb) {
+    const bytes = kb * 1024;
+    const live = [...this.xmsBlocks.values()].sort((a, b) => a.base - b.base);
+    let at = isa.XMS_BASE;
+    for (const b of live) {
+      if (b.base - at >= bytes) break;
+      at = b.base + b.kb * 1024;
+    }
+    return at + bytes <= isa.XMS_BASE + isa.XMS_SIZE ? at : -1;
+  }
+
+  // An 8086 has twenty address lines and every address wraps at 1MB. A machine
+  // with extended memory in it does not, and a program that has just been handed
+  // an address above 1MB is relying on that. The wrap is the default because it
+  // is what an 8086 does and what the instruction gate's recorded vectors
+  // expect; taking an XMS handle is the guest saying it is not on one.
+  openBus() {
+    if (this.linFlat) return;
+    this.linFlat = true;
+    if (this.vmExports && this.vmExports.set_linmask) {
+      this.vmExports.set_linmask(isa.LIN_MASK_FLAT);
+    }
+  }
+
   xms(ah, r) {
     const ok = (dx) => { r.set('ax', 1); if (dx !== undefined) r.set('dx', dx); };
     const fail = (bl) => { r.set('ax', 0); r.set('bx', (r.get('bx') & 0xFF00) | bl); };
@@ -1915,26 +1953,49 @@ class Machine {
         return true;
       case 0x09: {                                                // allocate EMB
         const kb = r.get('dx') & 0xFFFF;
-        if (kb > free()) { fail(0xA0); return true; }             // out of memory
+        const base = kb > free() ? -1 : this.xmsAlloc(kb);
+        if (base < 0) { fail(0xA0); return true; }                // out of memory
         const h = this.xmsNext++;
-        this.xmsBlocks.set(h, { kb, buf: new Uint8Array(kb * 1024) });
+        this.xmsBlocks.set(h, { kb, base, locks: 0 });
+        this.openBus();
         ok(h);
         return true;
       }
       case 0x0A: {                                                // free EMB
         const h = r.get('dx') & 0xFFFF;
-        if (!this.xmsBlocks.has(h)) { fail(0xA2); return true; }
+        const b = this.xmsBlocks.get(h);
+        if (!b) { fail(0xA2); return true; }
+        if (b.locks) { fail(0xAB); return true; }                 // block is locked
         this.xmsBlocks.delete(h);
         ok();
         return true;
       }
       case 0x0B: return this.xmsMove(r);
-      case 0x0C: fail(0xAD); return true;                         // lock -- see above
-      case 0x0D: fail(0xAA); return true;                         // unlock: not locked
+      case 0x0C: {                                                // lock EMB
+        const b = this.xmsBlocks.get(r.get('dx') & 0xFFFF);
+        if (!b) { fail(0xA2); return true; }
+        b.locks++;
+        this.openBus();
+        // DX:BX is a 32-bit LINEAR address, not a segment pair.
+        r.set('ax', 1);
+        r.set('dx', (b.base >>> 16) & 0xFFFF);
+        r.set('bx', b.base & 0xFFFF);
+        return true;
+      }
+      case 0x0D: {                                                // unlock EMB
+        const b = this.xmsBlocks.get(r.get('dx') & 0xFFFF);
+        if (!b) { fail(0xA2); return true; }
+        if (!b.locks) { fail(0xAA); return true; }                // not locked
+        b.locks--;
+        ok();
+        return true;
+      }
       case 0x0E: {                                                // get handle info
         const b = this.xmsBlocks.get(r.get('dx') & 0xFFFF);
         if (!b) { fail(0xA2); return true; }
-        r.set('ax', 1); r.set('bx', 0xFF00 | this.xmsBlocks.size); r.set('dx', b.kb);
+        r.set('ax', 1);
+        r.set('bx', ((b.locks & 0xFF) << 8) | (0xFF - this.xmsBlocks.size));
+        r.set('dx', b.kb);
         return true;
       }
       default: fail(0x80); return true;                           // not implemented
@@ -1951,26 +2012,29 @@ class Machine {
     const u16 = (o) => m[p + o] | (m[p + o + 1] << 8);
     const u32 = (o) => (u16(o) | (u16(o + 2) << 16)) >>> 0;
     const len = u32(0);
+    // Both sides are plain linear addresses now that extended memory is part of
+    // the same array: handle 0 means the offset is a far pointer to unpack,
+    // anything else means an offset within the block's own slice.
     const side = (ho, oo) => {
       const h = u16(ho);
       if (h === 0) {
         const far = u32(oo);
-        return { buf: m, at: ((((far >>> 16) & 0xFFFF) << 4) + (far & 0xFFFF)) & 0xFFFFF };
+        return ((((far >>> 16) & 0xFFFF) << 4) + (far & 0xFFFF)) & 0xFFFFF;
       }
       const b = this.xmsBlocks.get(h);
-      return b ? { buf: b.buf, at: u32(oo) } : null;
+      return b ? b.base + u32(oo) : null;
     };
     const src = side(4, 6), dst = side(10, 12);
     // An odd length is an error on a real driver, and so is a handle nobody
     // allocated. Both are worth reporting rather than papering over: a program
     // that gets a success it did not earn goes wrong further away.
-    if (!src || !dst || (len & 1)) {
+    if (src === null || dst === null || (len & 1)) {
       r.set('ax', 0);
       r.set('bx', (r.get('bx') & 0xFF00) | (len & 1 ? 0xA7 : 0xA3));
       return true;
     }
-    if (src.at + len <= src.buf.length && dst.at + len <= dst.buf.length) {
-      dst.buf.set(src.buf.subarray(src.at, src.at + len), dst.at);
+    if (src + len <= m.length && dst + len <= m.length) {
+      m.copyWithin(dst, src, src + len);
       this.xmsMoved += len;
     }
     r.set('ax', 1);
@@ -2010,6 +2074,43 @@ class Machine {
       }
       case 0x46: r.set('ax', 0x40); return true;                  // EMS 4.0
       case 0x47: case 0x48: st(0); return true;                   // save/restore map
+      // AH=4Eh, get/set page map. This is how a library that does not own the
+      // page frame borrows it: save what is mapped, use the window, put it
+      // back. MIDAS -- the sound system six demos in this corpus link against
+      // -- opens by calling AL=03 to size the save area, and an "invalid
+      // subfunction" there is reported as `MIDAS Error: Expanded Memory Manager
+      // failure` before the demo draws anything at all.
+      //
+      // The map is four physical pages; each is saved as {handle, logical} and
+      // restored by re-mapping, which is what makes the copy-on-map model
+      // behave like the address lines it stands in for.
+      case 0x4E: {
+        const es = r.get('es'), di = r.get('di'), ds = r.get('ds'), si = r.get('si');
+        const put = (seg, off) => {
+          const at = ((seg << 4) + (off & 0xFFFF)) & 0xFFFFF;
+          for (let i = 0; i < 4; i++) {
+            const m = this.emsMapped[i];
+            const h = m ? m.h : 0, lg = m ? m.page : 0xFFFF;
+            this.mem[at + i * 4] = h & 0xFF; this.mem[at + i * 4 + 1] = (h >> 8) & 0xFF;
+            this.mem[at + i * 4 + 2] = lg & 0xFF; this.mem[at + i * 4 + 3] = (lg >> 8) & 0xFF;
+          }
+        };
+        const take = (seg, off) => {
+          const at = ((seg << 4) + (off & 0xFFFF)) & 0xFFFFF;
+          for (let i = 0; i < 4; i++) {
+            const h = this.mem[at + i * 4] | (this.mem[at + i * 4 + 1] << 8);
+            const lg = this.mem[at + i * 4 + 2] | (this.mem[at + i * 4 + 3] << 8);
+            if (lg === 0xFFFF || !this.emsHandles.has(h)) { this.emsFlush(i); this.emsMapped[i] = null; }
+            else this.emsMap(i, lg, h, r);
+          }
+        };
+        if (al === 0x00) { put(es, di); st(0); return true; }
+        if (al === 0x01) { take(ds, si); st(0); return true; }
+        if (al === 0x02) { put(es, di); take(ds, si); st(0); return true; }
+        if (al === 0x03) { r.set('ax', 16); return true; }         // AL = bytes, AH = 0
+        st(0x8F);                                                  // invalid subfunction
+        return true;
+      }
       case 0x4B: r.set('bx', this.emsHandles.size); st(0); return true;
       case 0x4C: {
         const b = this.emsHandles.get(r.get('dx') & 0xFFFF);

@@ -275,7 +275,7 @@ async function runDos(o) {
   // a build that decodes 386 encodings but reports an 8086 FLAGS register fails
   // the CPU detection every one of those demos opens with.
   vm.exports.set_cpu(cpu);
-  machine.setMemory(vm.mem);
+  machine.setMemory(vm.mem, vm.exports);
   machine.installIvt();
   machine.setTicks(0);
   machine.syncVga();     // the VM's buffer, not the throwaway one from before
