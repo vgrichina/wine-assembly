@@ -73,7 +73,7 @@ async function runOne(exe, png, o) {
   // clears the screen on its way out, is otherwise photographed empty.
   const r = await runDos({
     exe, variant: 'tailcall', budget: o.budget, cpu: o.cpu, log: () => {},
-    autoKey: o.autoKey, bestPng: png,
+    autoKey: o.autoKey, bestPng: png, guestArgs: o.guestArgs || '',
   });
   const text = r.bestSurface.text;
   return {
@@ -82,7 +82,7 @@ async function runOne(exe, png, o) {
     planar: !!r.video.planar, bpp: r.video.bpp,
     dispatched: r.dispatched,
     pixels: text ? 0 : r.bestScore, cells: text ? r.bestScore : r.text.cells,
-    written: r.text.written, stuckAt: r.stuckAt || null,
+    written: r.text.written, stuckAt: r.stuckAt || null, args: o.guestArgs || '',
     blockedOnKey: !!r.machine.blockedOnKey, autoKey: !!o.autoKey,
     // What the screen says, when it says anything. Worth recording alongside
     // the picture because a program that puts up two lines is usually telling
@@ -99,11 +99,19 @@ async function runOne(exe, png, o) {
 // running, not at its prompt.
 const score = (row) => (row.failed ? -1 : (row.pixels > 0 ? 1e6 + row.pixels : row.cells));
 
+// The command-line switch a screen tells you to use, or null. Anchored on the
+// verb so that a stray slash in ANSI art is not mistaken for an option.
+function switchNamed(screen) {
+  const m = /\b(?:use|try|run|start)\b[^\n]{0,60}?\s([/-][A-Za-z][\w-]{1,15})/i.exec(screen || '');
+  return m ? m[1].toLowerCase() : null;
+}
+
 // --- parent -----------------------------------------------------------------
 function child(exe, png, o) {
   return new Promise((resolve) => {
     const args = [__filename, `--one=${exe}`, `--png=${png}`,
-      `--dispatches=${o.budget}`, `--cpu=${o.cpu}`, ...(o.autoKey ? ['--auto-key'] : [])];
+      `--dispatches=${o.budget}`, `--cpu=${o.cpu}`, ...(o.autoKey ? ['--auto-key'] : []),
+      ...(o.guestArgs ? [`--args=${o.guestArgs}`] : [])];
     const p = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', err = '';
     p.stdout.on('data', (d) => { out += d; });
@@ -127,8 +135,12 @@ async function main() {
     budget: count(arg('dispatches'), 30e6),
     cpu: Number(arg('cpu', 386)),
     timeout: Number(arg('timeout', 180)),
+    jobs: Number(arg('jobs', 1)),
     autoKey: process.argv.slice(2).includes('--auto-key'),
+    guestArgs: arg('args', ''),
+    maxSeconds: Number(arg('max-seconds', 0)),
   };
+  const deadline = o.maxSeconds ? Date.now() + o.maxSeconds * 1000 : 0;
 
   if (one) {
     process.stdout.write(JSON.stringify(await runOne(one, arg('png'), o)) + '\n');
@@ -139,7 +151,8 @@ async function main() {
   const out = arg('out');
   if (!dir || !out) {
     console.log('usage: node tools/toyvm/shot-sweep.js --dir=DIR --out=DIR '
-      + '[--json=OUT] [--resume] [--dispatches=N] [--timeout=SECS] [--auto-key]');
+      + '[--json=OUT] [--resume] [--dispatches=N] [--timeout=SECS] [--max-seconds=N] '
+      + '[--jobs=N] [--auto-key] [--args=TAIL]');
     process.exit(2);
   }
   fs.mkdirSync(out, { recursive: true });
@@ -164,14 +177,14 @@ async function main() {
     } catch { /* a truncated file just means no resume */ }
   }
 
-  const rows = [];
-  for (const exe of exes) {
-    if (done.has(exe)) {
-      rows.push(done.get(exe));
-      shotName(exe, dir, used);            // keep the name allocator in step
-      continue;
-    }
-    const png = path.join(out, `${shotName(exe, dir, used)}.png`);
+  // Tile names are allocated in corpus order, so they are worked out up front:
+  // with several programs in flight the order they FINISH in is not the order
+  // they started, and a name allocator driven by completion would rename half
+  // the sheet on every run.
+  const pngFor = new Map(exes.map(exe => [exe, path.join(out, `${shotName(exe, dir, used)}.png`)]));
+
+  async function capture(exe) {
+    const png = pngFor.get(exe);
     let row = await child(exe, png, o);
     // A blocking key read now stops the run rather than being answered with a
     // phantom NUL, which is what makes a "press any key" title screen sit still
@@ -179,18 +192,74 @@ async function main() {
     // so any run that ended waiting is tried a second time with autoKey and the
     // better of the two pictures is kept. A demo that treats any key as "quit"
     // comes back blank from the retry and keeps its first frame.
-    if (!o.autoKey && (row.blockedOnKey || score(row) <= 0)) {
+    //
+    // A text screen counts as "not started" too, and that is not a nicety: a
+    // program can be sitting on a menu without ever blocking, because it polls
+    // for the key rather than waiting for one. BTW.EXE scores 99 cells of sound
+    // menu, never blocks, and never gets the retry that answers it -- 46,912
+    // pixels of demo behind a screen that looked like a result.
+    if (!o.autoKey && (row.blockedOnKey || score(row) <= 0 || !row.pixels)) {
       const first = { ...row };
       const retry = await child(exe, png, { ...o, autoKey: true });
       if (score(retry) > score(first)) row = retry;
       else { row = first; await child(exe, png, o); }   // re-take the better frame
     }
+    // A program that refuses to start will sometimes say how to make it start.
+    // AMBIENT.EXE prints `MIDAS Error: NO GUS FOUND... USE "AMBIENT /NO_SND"
+    // FOR SILENT MODE` and means every word of it -- with the switch it renders
+    // its picture. Lower-cased on the way in, because the message shouts and
+    // MIDAS's option parser is case sensitive.
+    const sw = !row.pixels && switchNamed(row.screen);
+    if (sw) {
+      const first = { ...row };
+      const retry = await child(exe, png, { ...o, autoKey: true, guestArgs: sw });
+      if (score(retry) > score(first)) row = retry;
+      else { row = first; await child(exe, png, { ...o, autoKey: o.autoKey }); }
+    }
     if (row.png && !fs.existsSync(row.png)) { row.png = null; row.failed ||= 'no png'; }
-    rows.push(row);
-    if (json) fs.writeFileSync(json, JSON.stringify({ dir, out, rows }, null, 1));
-    process.stderr.write(`\r${rows.length}/${exes.length} ${row.name.padEnd(24)}`);
+    return row;
   }
+
+  // One child per program is already the isolation model; `--jobs` just runs
+  // several of them at once. Worth having: the retry above means a program can
+  // cost three sequential runs, and a corpus sweep that took three hours takes
+  // most of an afternoon to answer one question about a change.
+  const rows = new Array(exes.length);
+  let next = 0, finished = 0;
+  const worker = async () => {
+    for (;;) {
+      const i = next++;
+      if (i >= exes.length) return;
+      // The whole-sweep deadline. Every CHILD has been capped since this file
+      // existed, but the parent never was, and those are not the same bound:
+      // one program can cost up to five sequential child runs now (the base
+      // run, the auto-key retry, the re-take, and the named-switch pair), so
+      // 199 programs at a 180-second cap is thirty hours of worst case with
+      // nothing to stop it. Programs past the deadline are recorded as not run
+      // rather than silently dropped -- a short sweep must not read as a sweep
+      // where everything failed.
+      if (deadline && Date.now() > deadline) {
+        rows[i] = { name: path.basename(exes[i]), exe: exes[i], png: null, failed: 'deadline' };
+        finished++;
+        continue;
+      }
+      const exe = exes[i];
+      rows[i] = done.has(exe) ? done.get(exe) : await capture(exe);
+      finished++;
+      // Rows land out of order, so the file is only useful once the holes in
+      // front of the last completion are filled -- which is what --resume
+      // reads. Writing the dense prefix keeps it a valid sweep at every moment.
+      if (json) {
+        const upto = rows.findIndex(r => r === undefined);
+        const dense = upto === -1 ? rows : rows.slice(0, upto);
+        fs.writeFileSync(json, JSON.stringify({ dir, out, rows: dense }, null, 1));
+      }
+      process.stderr.write(`\r${finished}/${exes.length} ${rows[i].name.padEnd(24)}`);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, o.jobs) }, worker));
   process.stderr.write('\r' + ' '.repeat(44) + '\r');
+  if (json) fs.writeFileSync(json, JSON.stringify({ dir, out, rows }, null, 1));
 
   const shots = rows.filter(r => r.png);
   const blank = shots.filter(r => !r.pixels && !r.cells);

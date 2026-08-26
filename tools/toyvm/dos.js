@@ -143,6 +143,11 @@ function loadExe(mem, buf, { loadSeg = LOAD_SEG, pspSeg = PSP_SEG } = {}) {
     ss: (ss + loadSeg) & 0xFFFF, sp,
     ds: pspSeg, es: pspSeg,
     loadSeg, pspSeg, imageBytes, allocTop,
+    // The least memory this program owns: its image plus the paragraphs its
+    // header says it needs on top -- BSS and stack, which are not in the file.
+    // EXEC puts a child here, and getting it wrong by using the image size
+    // alone dropped CATWALK's player straight onto its parent's stack.
+    minTop: own + minAlloc,
   };
 }
 
@@ -171,6 +176,7 @@ function loadCom(mem, buf, { pspSeg = PSP_SEG } = {}) {
     ss: pspSeg, sp,
     ds: pspSeg, es: pspSeg,
     loadSeg: pspSeg, pspSeg, imageBytes: image.length, com: true,
+    minTop: pspSeg + 0x1000,             // a .COM owns its whole segment
   };
 }
 
@@ -197,7 +203,7 @@ function loadCom(mem, buf, { pspSeg = PSP_SEG } = {}) {
 // Modelling them is nearly free -- the ports are already trapped -- and it is
 // what lets the renderer read the real geometry instead of assuming 320x200.
 const SEQ_MEMORY_MODE = 4, SEQ_MAP_MASK = 2;
-const GC_READ_MAP = 4, GC_MODE = 5, GC_BIT_MASK = 8;
+const GC_READ_MAP = 4, GC_MODE = 5, GC_MISC = 6, GC_BIT_MASK = 8;
 const CRTC_HDE = 0x01;
 const CRTC_MAX_SCAN = 0x09, CRTC_START_HI = 0x0C, CRTC_START_LO = 0x0D;
 const CRTC_VDE = 0x12, CRTC_OVERFLOW = 0x07, CRTC_OFFSET = 0x13;
@@ -288,6 +294,10 @@ function resetVgaMode(v, mode) {
   v.gc.fill(0);
   v.gc[GC_BIT_MASK] = 0xFF;
   v.gc[GC_MODE] = mode === 0x13 ? 0x40 : 0x00;            // bit 6 = 256-colour
+  // Miscellaneous, bit 0: this is a graphics mode. The BIOS writes it as part
+  // of setting any graphics mode, and it is what tells the registers alone --
+  // with no INT 10h to ask -- that A000 is a picture. See vgaModeFromRegs.
+  v.gc[GC_MISC] = (ega || mode === 0x13) ? 0x01 : 0x00;
   v.attr.fill(0);
   v.attr.set(EGA_ATTR);
   v.attrFlip = 0;
@@ -308,6 +318,39 @@ function resetVgaMode(v, mode) {
   // becomes planar when the guest clears chain-4.
   v.bpp = ega ? 4 : (mode === 0x13 ? 8 : 0);
   v.planar = !!ega;
+}
+
+// What the graphics-controller registers say the mode is, independently of
+// whether anyone asked the BIOS for it.
+//
+// A large part of this corpus never calls INT 10h AH=00 at all: setting a mode
+// is a dozen OUTs to the sequencer, the CRTC and the graphics controller, and a
+// demo that has already written a mode-X tweak has no reason to ask the BIOS
+// for mode 13h first. `bpp` was only ever written by resetVgaMode, so every one
+// of those programs was still "in mode 3" while it drew, the capture path
+// photographed the text page, and the sweep filed a working demo as blank.
+//
+// Bit 0 of the Miscellaneous register is the graphics/text bit; bit 6 of Mode
+// is 256-colour. Between them they name every mode this machine can be in.
+function vgaModeFromRegs(v) {
+  const graphics = (v.gc[GC_MISC] & 0x01) !== 0;
+  return !graphics ? 0 : ((v.gc[GC_MODE] & 0x40) ? 8 : 4);
+}
+
+// Adopt what the registers say, keeping the last graphics geometry the way a
+// BIOS mode set does so a demo that restores text on its way out is still
+// photographable.
+function syncVgaMode(v, forceChained) {
+  const bpp = vgaModeFromRegs(v);
+  if (bpp === v.bpp) return false;
+  if (v.bpp !== 0) v.lastGraphics = vgaGeometry(v);
+  v.bpp = bpp;
+  // A 4-bit mode is planar by construction; a 256-colour one is planar only
+  // once chain-4 is cleared, which the sequencer write decides.
+  if (bpp === 4) v.planar = true;
+  else if (bpp === 8) v.planar = !forceChained && !(v.seq[SEQ_MEMORY_MODE] & 0x08);
+  else v.planar = false;
+  return true;
 }
 
 // Geometry, derived the way the CRTC actually derives it rather than assumed.
@@ -369,6 +412,14 @@ const CON_COLS = 80, CON_ROWS = 25;
 // place, and it is what the hardware does.
 const VRAM_TEXT = 0xB8000;
 
+// The name a created file is remembered under. Same rules hostPath applies to
+// a lookup -- base name, no drive, no directory, case-folded -- so a program
+// that creates C:\TEMP\X.DAT and opens x.dat finds it.
+function fileKey(name) {
+  const base = String(name || '').replace(/^[A-Za-z]:/, '').split(/[\\/]/).filter(Boolean).pop();
+  return base ? base.toLowerCase() : null;
+}
+
 function newConsole(mem) {
   const cells = CON_COLS * CON_ROWS;
   for (let i = 0; i < cells; i++) { mem[VRAM_TEXT + i * 2] = 0x20; mem[VRAM_TEXT + i * 2 + 1] = 0x07; }
@@ -419,7 +470,11 @@ function newConsole(mem) {
 // these is on a screen in this corpus; the negations matter, because "No sound
 // card" and "Sound card" differ by two characters and select opposite things.
 const SILENT_LABEL =
-  /\b(no|without|none|neither|not?)\s*(sound|music|sfx|audio|card|soundcard)?\b|^\s*(none|silence|silent|quit|exit|no)\b|pc[- ]?speaker|internal speaker|beeper|no thanks/i;
+  /\b(no|without|none|neither|not?)\s*(sound|music|sfx|audio|card|soundcard)?\b|^\s*(none|silence|silent|quit|exit|no)\b|pc[- ]?speaker|internal speaker|beeper|no thanks|just kidding|don'?t\s+(even\s+)?(own|have)|no\s*gus/i;
+
+// The BIOS video modes that are text. Only on one of these does a polled key
+// check get answered out of the menu reader.
+const TEXT_MODES = new Set([0, 1, 2, 3, 7]);
 
 // Scancodes for the characters the menu reader can produce. A program reading
 // only AL never looks at AH, but the ones taking the whole INT 16h word do.
@@ -482,22 +537,42 @@ class Machine {
     this.autoKeyScreen = null;   // the screen the last menu answer was read off
     this.autoKeyQueue = [];      // the rest of a multi-character typed answer
     this.autoKeyRead = 0;        // keys chosen by reading, not by rotating
+    // The keyboard as hardware: scancodes waiting to be delivered as IRQ1, and
+    // the one port 60h reads right now. See keyboardIrq.
+    this.kbQueue = [];
+    this.kbScan = 0;
+    this.kbFresh = false;   // set by IRQ1, cleared by the handler's port read
+    this.kbReads = 0;
     this.forceChained = !!opts.forceChained;
     this.mouse = { x: 160, y: 100, buttons: 0, dx: 0, dy: 0 };
     // A freshly loaded .EXE owns every paragraph up to the ceiling, so the
     // free pool starts empty and fills when the program shrinks its own block.
     this.allocTop = DEFAULT_ALLOC_TOP;
+    // The first paragraph past the running program's image -- where EXEC puts a
+    // child, and where a program that shrinks its block leaves free memory.
+    this.imageTop = DEFAULT_ALLOC_TOP;
     // XMS blocks and EMS handles, both backed by host buffers. Counters so a
     // run can say whether a manager was merely detected or actually used.
     // Open files, and a record of what was asked for -- "which file could it
     // not find" is the first question when a demo renders an empty screen.
     this.fileRoot = opts.fileRoot || null;
     this.files = new Map(); this.fileNext = 5;   // 0-4 are the standard handles
-    this.filesOpened = []; this.filesMissed = [];
+    this.filesOpened = []; this.filesMissed = []; this.filesCreated = [];
+    // Files the guest created, by base name. Writes never reach the host disk.
+    this.tempFiles = new Map();
+    // EXEC: the parent contexts to return to, and the code the last child
+    // exited with. `transfer` is how a service hands control somewhere else.
+    this.execStack = []; this.lastExitCode = 0; this.transfer = null;
+    this.curPsp = PSP_SEG;             // whose PSP AH=51h/62h reports
     this.xmsBlocks = new Map(); this.xmsNext = 1; this.xmsMoved = 0;
+    // Whether the guest's addresses still wrap at 1MB. They do until it takes
+    // an extended-memory handle; see openBus.
+    this.linFlat = false;
+    this.vmExports = null;
     this.emsHandles = new Map(); this.emsNext = 1; this.emsMaps = 0;
     this.emsMapped = [null, null, null, null];
     this.unhandled = new Map();
+    this.unhandledFn = new Map();      // "vec:ah" -> count, the real work list
     this.intCount = new Map();
     // Which clock, if any, a program is pacing itself off. A demo that never
     // touches any of these cannot be waiting for time and is compute-bound by
@@ -546,7 +621,7 @@ class Machine {
   // exactly that and all four print "[ERROR]: Can not init file manager..."
   // when the segment word is zero, because the scan runs off into memory that
   // never produces two NULs in a row.
-  installEnvironment(name) {
+  installEnvironment(name, tail = '') {
     const mem = this.mem;
     let at = ENV_SEG << 4;
     const put = (s) => { for (let i = 0; i < s.length; i++) mem[at++] = s.charCodeAt(i); mem[at++] = 0; };
@@ -560,6 +635,15 @@ class Machine {
     const psp = PSP_SEG << 4;
     mem[psp + 0x2C] = ENV_SEG & 0xFF;
     mem[psp + 0x2D] = (ENV_SEG >> 8) & 0xFF;
+    // The command tail, at PSP:80h: a length byte, the text, then a CR. It is
+    // a leading space in DOS because the separator between the name and the
+    // arguments is part of the tail. AMBIENT.EXE prints "MIDAS Error: NO GUS
+    // FOUND... USE 'AMBIENT /NO_SND' FOR SILENT MODE" and means it -- the
+    // switch is the only way past that screen.
+    const t = tail ? ` ${String(tail).trim()}` : '';
+    mem[psp + 0x80] = t.length & 0xFF;
+    for (let i = 0; i < t.length; i++) mem[psp + 0x81 + i] = t.charCodeAt(i) & 0xFF;
+    mem[psp + 0x81 + t.length] = 0x0D;
   }
 
   // --- the file side of DOS ------------------------------------------------
@@ -592,6 +676,18 @@ class Machine {
   }
 
   openFile(name) {
+    // A file the program itself created earlier in this run lives in memory and
+    // is found before the host directory: a demo that writes a config or a
+    // decompressed temp file and reads it straight back has to see its own
+    // bytes, and nothing here ever touches the real disk for writes.
+    const key = fileKey(name);
+    if (key && this.tempFiles.has(key)) {
+      const rec = this.tempFiles.get(key);
+      const h = this.fileNext++;
+      this.files.set(h, { buf: rec.data.subarray(0, rec.len), pos: 0, name, rec });
+      this.filesOpened.push(name);
+      return h;
+    }
     const p = this.hostPath(name);
     if (!p) { this.filesMissed.push(name); return 0; }
     let buf;
@@ -600,6 +696,50 @@ class Machine {
     this.files.set(h, { buf, pos: 0, name });
     this.filesOpened.push(name);
     return h;
+  }
+
+  // The whole content of a file as a Buffer, wherever it lives -- a file the
+  // guest created earlier in this run, or one next to the executable. EXEC
+  // needs it: the program it is asked to run is usually one this run produced.
+  readWholeFile(name) {
+    const key = fileKey(name);
+    if (key && this.tempFiles.has(key)) {
+      const rec = this.tempFiles.get(key);
+      return Buffer.from(rec.data.subarray(0, rec.len));
+    }
+    const p = this.hostPath(name);
+    if (!p) { this.filesMissed.push(name); return null; }
+    try { return fs.readFileSync(p); } catch { this.filesMissed.push(name); return null; }
+  }
+
+  // Create (or truncate) a file. It exists only in this process -- the corpus
+  // directory is read-only as far as the emulator is concerned -- but it is a
+  // real file to the guest: writeable, seekable, and re-openable by name.
+  createFile(name) {
+    const key = fileKey(name);
+    if (!key) return 0;
+    const rec = { data: new Uint8Array(4096), len: 0 };
+    this.tempFiles.set(key, rec);
+    const h = this.fileNext++;
+    this.files.set(h, { buf: rec.data.subarray(0, 0), pos: 0, name, rec });
+    this.filesCreated.push(name);
+    return h;
+  }
+
+  // Write into a created file, growing it. `pos` is honoured, so a program that
+  // seeks back to patch a header gets what it wrote there.
+  writeFile(f, src, n) {
+    const rec = f.rec;
+    const end = f.pos + n;
+    if (end > rec.data.length) {
+      const grown = new Uint8Array(Math.max(end, rec.data.length * 2));
+      grown.set(rec.data.subarray(0, rec.len));
+      rec.data = grown;
+    }
+    for (let i = 0; i < n; i++) rec.data[f.pos + i] = this.mem[(src + i) & 0xFFFFF];
+    f.pos = end;
+    if (end > rec.len) rec.len = end;
+    f.buf = rec.data.subarray(0, rec.len);
   }
 
   // What is on the text page, as lines. The autoKey menu reader works off this,
@@ -658,8 +798,18 @@ class Machine {
     // a single-character selector, then the label it selects.
     const opts = [];
     for (const line of lines) {
-      const re = /(?:^|\s{2,})[\[(]?([0-9A-Za-z])[\]).:)]\s*([^[(]{2,40})/g;
-      for (let m; (m = re.exec(line));) opts.push({ ch: m[1], label: m[2].trim() });
+      // A selector starts a line, follows a run of spaces, or follows a slash
+      // or comma -- CYCLE.EXE lays its whole menu out on one line as
+      // "(G)ravis / (O)thers / (N)one", and requiring two spaces missed every
+      // option after the first.
+      const re = /(?:^|\s{2,}|[/,]\s*)([[(]?)([0-9A-Za-z])[\]).:)](\s*)([^[(]{2,40})/g;
+      for (let m; (m = re.exec(line));) {
+        // "(N)one" puts the selector INSIDE the word, so the label as captured
+        // is "one" and reads as neither a yes nor a no. Put the letter back
+        // when nothing separates it from the rest.
+        const label = (m[1] === '(' && m[3] === '' ? m[2] + m[4] : m[4]).trim();
+        opts.push({ ch: m[2], label });
+      }
     }
     const silent = opts.find(o => SILENT_LABEL.test(o.label));
     if (silent) return key(silent.ch);
@@ -693,14 +843,41 @@ class Machine {
     if (shown !== this.autoKeyScreen) {
       this.autoKeyScreen = shown;
       const k = this.menuKey();
+      const say = (ks) => this.log(`autokey read "${ks.map(x =>
+        String.fromCharCode(x.al)).join('')}" off the screen`);
       if (Array.isArray(k)) {
         this.autoKeyRead++;
+        say(k);
         this.autoKeyQueue = k.slice(1);
         return k[0];
       }
-      if (k) { this.autoKeyRead++; return k; }
+      if (k) { this.autoKeyRead++; say([k]); return k; }
     }
-    return AUTO_KEYS[this.autoKeyAt++ % AUTO_KEYS.length];
+    const rot = AUTO_KEYS[this.autoKeyAt++ % AUTO_KEYS.length];
+    this.log(`autokey rotating: "${String.fromCharCode(rot.al)}"`);
+    return rot;
+  }
+
+  // A polled read (INT 16h AH=01h) asks "is anyone there", and answering it out
+  // of the rotation would be a disaster: a demo checks that once a frame to see
+  // whether to quit, and would be told yes on its first frame. So a poll
+  // manufactures a key only when the screen is TEXT and the menu reader
+  // recognises what is on it -- BTW.EXE and CYCLE.EXE both poll rather than
+  // block, and their sound menus were unanswerable until this. The key goes
+  // into the injected queue so the AH=00h read that follows gets the same one.
+  autoKeyPoll() {
+    if (!this.autoKey || this.keys.length) return;
+    if (!TEXT_MODES.has(this.videoMode)) return;
+    const shown = this.screenText().join('\n');
+    if (shown === this.autoKeyScreen) return;
+    this.autoKeyScreen = shown;
+    const k = this.menuKey();
+    if (!k) return;
+    const ks = Array.isArray(k) ? k : [k];
+    this.autoKeyRead++;
+    this.log(`autokey answered a polled menu with `
+      + `"${ks.map(x => String.fromCharCode(x.al)).join('')}"`);
+    this.keys.push(...ks);
   }
 
   // One typed line, terminated with CR LF, or null when nothing is waiting and
@@ -719,8 +896,11 @@ class Machine {
     return `${s}\r\n`;
   }
 
-  setMemory(mem) {
+  // `ex` is the VM's export object, and the only thing the machine ever wants
+  // from it is `set_linmask` -- see openBus below.
+  setMemory(mem, ex) {
     this.mem = mem;
+    this.vmExports = ex || null;
     this.con.mem = mem;
     this.con.fillCells(0, this.con.cells, 0x20, 0x07);
   }
@@ -836,6 +1016,37 @@ class Machine {
   // exactly like a broken decoder. INT 1Ch is the same deal one level up: the
   // BIOS timer handler chains to it, so a program that only hooks 1Ch expects
   // the same call.
+  // Is there a keystroke to deliver as an IRQ1, and if so, leave its scancode
+  // where port 60h will read it. Returns the vector to raise, or 0.
+  //
+  // Only for a program that installed its own INT 9 handler: anything using the
+  // BIOS is served by int16 above, and sending it a hardware interrupt as well
+  // would put the same key in twice. Make code first, then break code, so a
+  // handler tracking which keys are held does not think one is stuck down.
+  keyboardIrq() {
+    if (!this.autoKey || !this.hookedVector(0x09)) return 0;
+    if (!this.kbQueue.length && !this.kbFill()) return 0;
+    this.kbScan = this.kbQueue.shift();
+    this.kbFresh = true;
+    return 0x09;
+  }
+
+  // Put the menu reader's answer on the wire as scancodes. Text mode only, so
+  // a demo polling for "any key to quit" over its own graphics is never told
+  // one arrived. The screen-change guard inside autoKeyPoll is what stops this
+  // firing again on the same screen; the read counter is only there so a tight
+  // polling loop does not rebuild the 2000-cell screen string every time round.
+  kbFill() {
+    if (!this.autoKey || !TEXT_MODES.has(this.videoMode)) return false;
+    this.autoKeyPoll();
+    const k = this.keys.shift();
+    if (!k) return false;
+    const sc = (k.ah & 0xFF) || 0x1C;
+    this.kbQueue.push(sc, sc | 0x80);
+    this.log(`autokey putting scancode ${sc.toString(16)} on the keyboard port`);
+    return true;
+  }
+
   timerVector() {
     if (this.hookedVector(0x08)) return 0x08;
     if (this.hookedVector(0x1C)) return 0x1C;
@@ -870,7 +1081,15 @@ class Machine {
     if (port === 0x3CE) return this.vga.gcIndex;
     if (port === 0x3D4 || port === 0x3B4) return this.vga.crtcIndex;
     if (port === 0x3CC) return this.vga.misc;
-    if (port === 0x60) return 0;            // keyboard data: no key down
+    // Keyboard data. A program with an INT 9 handler finds here what the IRQ
+    // just delivered; one that polls the port with no handler at all -- BTW.EXE
+    // makes zero INT 16h calls and hooks nothing -- drives the queue itself.
+    if (port === 0x60) {
+      if (this.kbFresh) { this.kbFresh = false; return this.kbScan; }
+      if (!this.kbQueue.length && (this.kbReads++ & 0xFFF) === 0) this.kbFill();
+      if (this.kbQueue.length) this.kbScan = this.kbQueue.shift();
+      return this.kbScan;
+    }
     if (port >= 0x40 && port <= 0x42) {
       this.clock.pit++;
       const ch = port - 0x40;
@@ -925,6 +1144,15 @@ class Machine {
       case 0x3CE: v.gcIndex = value & 0x0F; return;
       case 0x3CF:
         v.gc[v.gcIndex] = value;
+        // Miscellaneous and Mode between them say whether A000 is a picture and
+        // how deep it is, so a mode set done entirely in registers is picked up
+        // here rather than only at INT 10h AH=00.
+        if (v.gcIndex === GC_MISC || v.gcIndex === GC_MODE) {
+          if (syncVgaMode(v, this.forceChained)) {
+            this.log(`vga registers say ${v.bpp ? `${v.bpp}bpp graphics` : 'text'}`);
+            this.vgaRechain(v.planar);
+          }
+        }
         // Every graphics register now feeds the write pipeline, so mirror the
         // whole file rather than picking out the two mode X happened to need.
         this.syncVga();
@@ -935,7 +1163,16 @@ class Machine {
         else { v.attr[v.attrIndex] = value; v.attrFlip = 0; }
         return;
       case 0x3D4: case 0x3B4: v.crtcIndex = value & 0x1F; return;
-      case 0x3D5: case 0x3B5: v.crtc[v.crtcIndex] = value; return;
+      case 0x3D5: case 0x3B5:
+        v.crtc[v.crtcIndex] = value;
+        // In text mode the start address IS the displayed page, so the console
+        // grid has to follow it (see setTextPage). In a graphics mode it is a
+        // scroll or a page flip within A000 and vgaGeometry already reports it.
+        if (v.bpp === 0 && (v.crtcIndex === CRTC_START_HI || v.crtcIndex === CRTC_START_LO)) {
+          const start = ((v.crtc[CRTC_START_HI] << 8) | v.crtc[CRTC_START_LO]) & 0xFFFF;
+          this.con.base = VRAM_TEXT + ((start * 2) & 0x7FFF);
+        }
+        return;
       case 0x3C2: v.misc = value; return;
       default: return;                       // everything else is dropped
     }
@@ -963,7 +1200,10 @@ class Machine {
     // 256-colour feature and the bit is not even meaningful there -- so only
     // mode 13h is allowed to change its mind here.
     if (v.bpp === 4) return;
-    const planar = !this.forceChained && this.videoMode === 0x13 && !(value & 0x08);
+    // Keyed on the depth the REGISTERS report, not on the mode the BIOS was
+    // asked for: a demo that set 256 colours with its own OUTs never told the
+    // BIOS anything, and testing videoMode left it chained forever.
+    const planar = !this.forceChained && v.bpp === 8 && !(value & 0x08);
     if (planar === v.planar) return;
     v.planar = planar;
     if (planar) v.unchainCount++;
@@ -990,6 +1230,23 @@ class Machine {
   }
 
   // --- the text console ----------------------------------------------------
+  // Which text page the console grid lives on. Mode 3 has eight 4KB pages in
+  // B800 and a demo animates by drawing into the one that is NOT being shown
+  // and then pointing the CRTC start address at it. The console was pinned to
+  // page 0, so such a program wrote a full screen and was photographed blank --
+  // ant1.exe reported `crtc says start=2000` (2000 words = 4000 bytes = page 1)
+  // with zero non-blank cells. Both routes to a page change land here: the BIOS
+  // call (INT 10h AH=05h) and a direct write to CRTC 0x0C/0x0D.
+  setTextPage(page) {
+    const at = (page & 0x07) * 0x1000;
+    this.con.base = VRAM_TEXT + at;
+    this.mem[0x462] = page & 0x07;
+    this.mem[0x44E] = at & 0xFF; this.mem[0x44F] = (at >> 8) & 0xFF;
+    const v = this.vga, start = at >> 1;
+    v.crtc[CRTC_START_HI] = (start >> 8) & 0xFF;
+    v.crtc[CRTC_START_LO] = start & 0xFF;
+  }
+
   // One character, through the cursor, with ANSI sequences interpreted rather
   // than printed. Everything that writes text -- DOS teletype, DOS string
   // print, the BIOS TTY call -- funnels here so there is one cursor and one
@@ -1120,6 +1377,20 @@ class Machine {
   // know -- an unknown one is counted and IRETed, which is what a bare machine
   // with no handler installed effectively does.
   service(vec, r) {
+    const ah = (r.get('ax') >> 8) & 0xFF;
+    const ok = this.serviceCall(vec, r);
+    // The function, not just the vector. `int 21h x9` says nothing about which
+    // DOS call is missing, and the whole point of counting these is to rank the
+    // gaps: it was this histogram that named AH=4Bh (EXEC) as what stands
+    // between four self-extracting demos and their payload.
+    if (!ok) {
+      const key = `${vec.toString(16).padStart(2, '0')}:${ah.toString(16).padStart(2, '0')}`;
+      this.unhandledFn.set(key, (this.unhandledFn.get(key) || 0) + 1);
+    }
+    return ok;
+  }
+
+  serviceCall(vec, r) {
     this.intCount.set(vec, (this.intCount.get(vec) || 0) + 1);
     const ah = (r.get('ax') >> 8) & 0xFF, al = r.get('ax') & 0xFF;
 
@@ -1170,6 +1441,7 @@ class Machine {
       // Setting a mode clears the display and re-chains the planes -- a demo
       // that unchains does it AFTER asking the BIOS for mode 13h.
       resetVgaMode(this.vga, this.videoMode);
+      this.setTextPage(0);                   // a mode set always shows page 0
       this.syncVga();
       if (this.videoMode === 0x13) this.mem.fill(0, VGA_BASE, VGA_BASE + 320 * 200);
       if (this.vga.bpp === 4) {
@@ -1248,7 +1520,10 @@ class Machine {
     }
     if (ah === 0x10 && al === 0x03) return true;    // blink/intensity bit
     if (ah === 0x01) return true;                   // cursor shape
-    if (ah === 0x05) return true;                   // active display page
+    if (ah === 0x05) {                              // active display page
+      this.setTextPage(al & 0x07);
+      return true;
+    }
     // The BIOS text calls. These used to all be accepted and dropped, which is
     // why a program that wrote its screen through the BIOS instead of DOS came
     // out just as blank as one that wrote nothing.
@@ -1346,6 +1621,7 @@ class Machine {
       return true;
     }
     if (ah === 0x01 || ah === 0x11) {
+      this.autoKeyPoll();
       const k = this.keys[0];
       // ZF set means "no key waiting". The caller reads it out of the flags the
       // IRET restores, so this has to land in the SAVED flags, not the live
@@ -1360,8 +1636,96 @@ class Machine {
 
   int21(ah, al, r) {
     switch (ah) {
-      case 0x4C: this.exited = true; this.exitCode = al; return true;
-      case 0x00: this.exited = true; this.exitCode = 0; return true;
+      case 0x4C: case 0x00: case 0x31: {
+        // Exit, and -- AH=31h -- exit keeping memory. That distinction matters
+        // as soon as EXEC exists: CATWALK.EXE runs a music player that goes
+        // resident and hooks the timer, then runs the demo itself. Forgetting
+        // the player's block loaded the demo straight on top of it.
+        const code = ah === 0x4C || ah === 0x31 ? al : 0;
+        const keep = ah === 0x31 ? this.curPsp + (r.get('dx') & 0xFFFF) : 0;
+        if (this.execStack.length) {
+          const parent = this.execStack.pop();
+          this.lastExitCode = code;
+          this.transfer = parent;
+          this.allocTop = Math.max(parent.allocTop, keep);
+          this.imageTop = Math.max(parent.imageTop, keep);
+          this.curPsp = parent.psp;
+          this.log(`child exited ${code}${keep ? `, resident to ${keep.toString(16)}` : ''};`
+            + ` parent resumes at ${parent.cs.toString(16)}:${parent.ip.toString(16)}`);
+          return true;
+        }
+        this.exited = true; this.exitCode = code;
+        return true;
+      }
+      case 0x4D:                                // get child return code
+        r.set('ax', (this.lastExitCode || 0) & 0xFF);
+        r.setResultCf(false);
+        return true;
+      case 0x4B: {
+        // EXEC. Four demos in this corpus are self-extractors: they unpack a
+        // player and its data out of their own tail (see createFile) and then
+        // ask DOS to run it. With this missing, CATWALK.EXE wrote its four
+        // files and exited 0 with a black screen -- a complete run of a program
+        // whose entire job is to start another one.
+        if (al !== 0x00 && al !== 0x01) { r.setResultCf(true); r.set('ax', 1); return true; }
+        const name = this.guestPath(r);
+        const img = this.readWholeFile(name);
+        if (!img) { r.setResultCf(true); r.set('ax', 2); return true; }   // not found
+
+        // The child goes directly above the parent's IMAGE, not above the
+        // parent's allocation: a loader stub declares max-alloc 0xFFFF, owns all
+        // of memory and is expected to shrink itself (AH=4Ah) before it EXECs.
+        // Placing the child above the parent's claim instead left CATWALK's
+        // player with 60KB and it failed its first AH=48h.
+        const pspSeg = this.imageTop;
+        if (pspSeg + 0x1000 > DEFAULT_ALLOC_TOP) { r.setResultCf(true); r.set('ax', 8); return true; }
+        const info = loadExe(this.mem, img, { loadSeg: pspSeg + 0x10, pspSeg });
+
+        // The command tail, out of the parameter block at ES:BX.
+        const pb = ((r.get('es') << 4) + (r.get('bx') & 0xFFFF)) & 0xFFFFF;
+        const tailOff = this.mem[pb + 2] | (this.mem[pb + 3] << 8);
+        const tailSeg = this.mem[pb + 4] | (this.mem[pb + 5] << 8);
+        const tail = ((tailSeg << 4) + tailOff) & 0xFFFFF;
+        const n = Math.min(this.mem[tail] || 0, 127);
+        this.mem[(pspSeg << 4) + 0x80] = n;
+        for (let i = 0; i <= n; i++) this.mem[(pspSeg << 4) + 0x81 + i] = this.mem[tail + 1 + i];
+        this.mem[(pspSeg << 4) + 0x16] = this.curPsp & 0xFF;     // parent PSP
+        this.mem[(pspSeg << 4) + 0x17] = (this.curPsp >> 8) & 0xFF;
+        this.mem[(pspSeg << 4) + 0x2C] = ENV_SEG & 0xFF;         // same environment
+        this.mem[(pspSeg << 4) + 0x2D] = (ENV_SEG >> 8) & 0xFF;
+        this.log(`exec ${name} (${img.length} bytes) at psp ${pspSeg.toString(16)},`
+          + ` entry ${info.cs.toString(16)}:${info.ip.toString(16)},`
+          + ` tail "${[...this.mem.subarray(tail + 1, tail + 1 + n)]
+            .map(c => String.fromCharCode(c)).join('')}"`);
+
+        if (al === 0x01) {                       // load, do not execute
+          this.mem[pb + 0x0E] = info.sp & 0xFF; this.mem[pb + 0x0F] = (info.sp >> 8) & 0xFF;
+          this.mem[pb + 0x10] = info.ss & 0xFF; this.mem[pb + 0x11] = (info.ss >> 8) & 0xFF;
+          this.mem[pb + 0x12] = info.ip & 0xFF; this.mem[pb + 0x13] = (info.ip >> 8) & 0xFF;
+          this.mem[pb + 0x14] = info.cs & 0xFF; this.mem[pb + 0x15] = (info.cs >> 8) & 0xFF;
+          r.setResultCf(false);
+          return true;
+        }
+
+        // Where the parent resumes. It resumes AFTER the INT 21h, which is the
+        // address the IRET frame already holds -- run-dos applies this transfer
+        // once it has finished that IRET, so the values it saves here are the
+        // ones the parent had on the way in.
+        this.execStack.push({
+          cs: r.ret.cs, ip: r.ret.ip, ss: r.get('ss'), sp: r.ret.sp,
+          ds: r.get('ds'), es: r.get('es'), ax: 0,
+          allocTop: this.allocTop, imageTop: this.imageTop, psp: this.curPsp,
+        });
+        this.curPsp = pspSeg;
+        this.allocTop = Math.min(DEFAULT_ALLOC_TOP, info.allocTop);
+        this.imageTop = info.minTop;
+        this.transfer = {
+          cs: info.cs, ip: info.ip, ss: info.ss, sp: info.sp,
+          ds: info.ds, es: info.es,
+        };
+        r.setResultCf(false);
+        return true;
+      }
       case 0x30: r.set('ax', 0x0006); r.set('bx', 0); r.set('cx', 0); return true;  // "DOS 6.0"
       case 0x25: {                              // set interrupt vector
         const v = al * 4;
@@ -1435,8 +1799,11 @@ class Machine {
         // written rather than failing a program over a log it opened.
         const h = r.get('bx') & 0xFFFF, n = r.get('cx') & 0xFFFF;
         const src = ((r.get('ds') << 4) + r.get('dx')) & 0xFFFFF;
+        const f = this.files.get(h);
         if (h === 1 || h === 2) {
           for (let i = 0; i < n; i++) this.conPutc(this.mem[(src + i) & 0xFFFFF]);
+        } else if (f && f.rec) {
+          this.writeFile(f, src, n);
         }
         r.set('ax', n);
         r.setResultCf(false);
@@ -1445,7 +1812,7 @@ class Machine {
       // Get the PSP segment. BLIQ.EXE resizes its block, asks for its PSP and
       // prints "[ERROR]: Can not init file manager..." on the garbage it got
       // back -- a two-line call standing between it and the demo.
-      case 0x51: case 0x62: r.set('bx', PSP_SEG); r.setResultCf(false); return true;
+      case 0x51: case 0x62: r.set('bx', this.curPsp); r.setResultCf(false); return true;
       case 0x19: r.set('ax', (r.get('ax') & 0xFF00) | 2); return true;   // drive C:
       case 0x0E: r.set('ax', (r.get('ax') & 0xFF00) | 3); return true;   // 3 drives
       case 0x47: {                              // get current directory -> root
@@ -1467,6 +1834,32 @@ class Machine {
         if (!f) { r.setResultCf(true); r.set('ax', 2); return true; }   // not found
         r.set('ax', f);
         r.setResultCf(false);
+        return true;
+      }
+      case 0x3C: {                              // create/truncate
+        // CATWALK.EXE creates a file, gets no handle back, and then writes to
+        // the failed return value as though it were one -- 0x3C02, which INT 21h
+        // AH=40h cheerfully accepted. It reads the result back, finds nothing it
+        // wrote and exits 0 without drawing a frame.
+        const h = this.createFile(this.guestPath(r));
+        if (!h) { r.setResultCf(true); r.set('ax', 3); return true; }   // path not found
+        r.set('ax', h);
+        r.setResultCf(false);
+        return true;
+      }
+      case 0x41: {                              // delete
+        const key = fileKey(this.guestPath(r));
+        if (key && this.tempFiles.delete(key)) { r.setResultCf(false); return true; }
+        // A file we never created is on the host side and stays there; the
+        // program is told it is gone, which is what it wants to hear.
+        r.setResultCf(false);
+        return true;
+      }
+      case 0x36: {                              // free disk space
+        r.set('ax', 8);                         // sectors per cluster
+        r.set('cx', 512);                       // bytes per sector
+        r.set('dx', 0xFFFF);                    // total clusters
+        r.set('bx', 0xF000);                    // free clusters -- ~126MB
         return true;
       }
       case 0x3E: {                              // close
@@ -1556,6 +1949,9 @@ class Machine {
             return true;
           }
           this.allocTop = PSP_SEG + want;
+          // Shrinking is also what makes room for a child: a loader stub that
+          // gives back everything above itself expects EXEC to load there.
+          this.imageTop = Math.min(this.imageTop, PSP_SEG + want);
         }
         r.setResultCf(false);
         return true;
@@ -1603,11 +1999,42 @@ class Machine {
     return false;
   }
 
-  // Extended memory blocks live in host buffers, not in the guest's 1MB: a
-  // real-mode program cannot address them anyway, and everything it can do
-  // with one goes through the move call below. That is also why Lock (AH=0Ch)
-  // fails rather than inventing a 32-bit address -- a program that wanted one
-  // would then write through it into memory that does not exist.
+  // Extended memory blocks are cut from the guest's own linear memory, above
+  // the HMA at isa.XMS_BASE. They could have lived in a host buffer -- the move
+  // call is the only thing a real-mode program can do with one through the
+  // documented interface -- but ten demos in this corpus do not stop there.
+  // They LOCK the block, take the 32-bit linear address the lock returns, and
+  // then write through it with a 32-bit offset from real mode. That address has
+  // to name something the guest can actually reach, so the block has to be in
+  // the same memory everything else is in.
+  //
+  // Cutting from the low end of the extended region, first fit, coalescing by
+  // construction: the live blocks are walked in address order and the first gap
+  // that fits wins. A handful of allocations is all any of these programs make.
+  xmsAlloc(kb) {
+    const bytes = kb * 1024;
+    const live = [...this.xmsBlocks.values()].sort((a, b) => a.base - b.base);
+    let at = isa.XMS_BASE;
+    for (const b of live) {
+      if (b.base - at >= bytes) break;
+      at = b.base + b.kb * 1024;
+    }
+    return at + bytes <= isa.XMS_BASE + isa.XMS_SIZE ? at : -1;
+  }
+
+  // An 8086 has twenty address lines and every address wraps at 1MB. A machine
+  // with extended memory in it does not, and a program that has just been handed
+  // an address above 1MB is relying on that. The wrap is the default because it
+  // is what an 8086 does and what the instruction gate's recorded vectors
+  // expect; taking an XMS handle is the guest saying it is not on one.
+  openBus() {
+    if (this.linFlat) return;
+    this.linFlat = true;
+    if (this.vmExports && this.vmExports.set_linmask) {
+      this.vmExports.set_linmask(isa.LIN_MASK_FLAT);
+    }
+  }
+
   xms(ah, r) {
     const ok = (dx) => { r.set('ax', 1); if (dx !== undefined) r.set('dx', dx); };
     const fail = (bl) => { r.set('ax', 0); r.set('bx', (r.get('bx') & 0xFF00) | bl); };
@@ -1622,26 +2049,49 @@ class Machine {
         return true;
       case 0x09: {                                                // allocate EMB
         const kb = r.get('dx') & 0xFFFF;
-        if (kb > free()) { fail(0xA0); return true; }             // out of memory
+        const base = kb > free() ? -1 : this.xmsAlloc(kb);
+        if (base < 0) { fail(0xA0); return true; }                // out of memory
         const h = this.xmsNext++;
-        this.xmsBlocks.set(h, { kb, buf: new Uint8Array(kb * 1024) });
+        this.xmsBlocks.set(h, { kb, base, locks: 0 });
+        this.openBus();
         ok(h);
         return true;
       }
       case 0x0A: {                                                // free EMB
         const h = r.get('dx') & 0xFFFF;
-        if (!this.xmsBlocks.has(h)) { fail(0xA2); return true; }
+        const b = this.xmsBlocks.get(h);
+        if (!b) { fail(0xA2); return true; }
+        if (b.locks) { fail(0xAB); return true; }                 // block is locked
         this.xmsBlocks.delete(h);
         ok();
         return true;
       }
       case 0x0B: return this.xmsMove(r);
-      case 0x0C: fail(0xAD); return true;                         // lock -- see above
-      case 0x0D: fail(0xAA); return true;                         // unlock: not locked
+      case 0x0C: {                                                // lock EMB
+        const b = this.xmsBlocks.get(r.get('dx') & 0xFFFF);
+        if (!b) { fail(0xA2); return true; }
+        b.locks++;
+        this.openBus();
+        // DX:BX is a 32-bit LINEAR address, not a segment pair.
+        r.set('ax', 1);
+        r.set('dx', (b.base >>> 16) & 0xFFFF);
+        r.set('bx', b.base & 0xFFFF);
+        return true;
+      }
+      case 0x0D: {                                                // unlock EMB
+        const b = this.xmsBlocks.get(r.get('dx') & 0xFFFF);
+        if (!b) { fail(0xA2); return true; }
+        if (!b.locks) { fail(0xAA); return true; }                // not locked
+        b.locks--;
+        ok();
+        return true;
+      }
       case 0x0E: {                                                // get handle info
         const b = this.xmsBlocks.get(r.get('dx') & 0xFFFF);
         if (!b) { fail(0xA2); return true; }
-        r.set('ax', 1); r.set('bx', 0xFF00 | this.xmsBlocks.size); r.set('dx', b.kb);
+        r.set('ax', 1);
+        r.set('bx', ((b.locks & 0xFF) << 8) | (0xFF - this.xmsBlocks.size));
+        r.set('dx', b.kb);
         return true;
       }
       default: fail(0x80); return true;                           // not implemented
@@ -1658,26 +2108,29 @@ class Machine {
     const u16 = (o) => m[p + o] | (m[p + o + 1] << 8);
     const u32 = (o) => (u16(o) | (u16(o + 2) << 16)) >>> 0;
     const len = u32(0);
+    // Both sides are plain linear addresses now that extended memory is part of
+    // the same array: handle 0 means the offset is a far pointer to unpack,
+    // anything else means an offset within the block's own slice.
     const side = (ho, oo) => {
       const h = u16(ho);
       if (h === 0) {
         const far = u32(oo);
-        return { buf: m, at: ((((far >>> 16) & 0xFFFF) << 4) + (far & 0xFFFF)) & 0xFFFFF };
+        return ((((far >>> 16) & 0xFFFF) << 4) + (far & 0xFFFF)) & 0xFFFFF;
       }
       const b = this.xmsBlocks.get(h);
-      return b ? { buf: b.buf, at: u32(oo) } : null;
+      return b ? b.base + u32(oo) : null;
     };
     const src = side(4, 6), dst = side(10, 12);
     // An odd length is an error on a real driver, and so is a handle nobody
     // allocated. Both are worth reporting rather than papering over: a program
     // that gets a success it did not earn goes wrong further away.
-    if (!src || !dst || (len & 1)) {
+    if (src === null || dst === null || (len & 1)) {
       r.set('ax', 0);
       r.set('bx', (r.get('bx') & 0xFF00) | (len & 1 ? 0xA7 : 0xA3));
       return true;
     }
-    if (src.at + len <= src.buf.length && dst.at + len <= dst.buf.length) {
-      dst.buf.set(src.buf.subarray(src.at, src.at + len), dst.at);
+    if (src + len <= m.length && dst + len <= m.length) {
+      m.copyWithin(dst, src, src + len);
       this.xmsMoved += len;
     }
     r.set('ax', 1);
@@ -1717,6 +2170,43 @@ class Machine {
       }
       case 0x46: r.set('ax', 0x40); return true;                  // EMS 4.0
       case 0x47: case 0x48: st(0); return true;                   // save/restore map
+      // AH=4Eh, get/set page map. This is how a library that does not own the
+      // page frame borrows it: save what is mapped, use the window, put it
+      // back. MIDAS -- the sound system six demos in this corpus link against
+      // -- opens by calling AL=03 to size the save area, and an "invalid
+      // subfunction" there is reported as `MIDAS Error: Expanded Memory Manager
+      // failure` before the demo draws anything at all.
+      //
+      // The map is four physical pages; each is saved as {handle, logical} and
+      // restored by re-mapping, which is what makes the copy-on-map model
+      // behave like the address lines it stands in for.
+      case 0x4E: {
+        const es = r.get('es'), di = r.get('di'), ds = r.get('ds'), si = r.get('si');
+        const put = (seg, off) => {
+          const at = ((seg << 4) + (off & 0xFFFF)) & 0xFFFFF;
+          for (let i = 0; i < 4; i++) {
+            const m = this.emsMapped[i];
+            const h = m ? m.h : 0, lg = m ? m.page : 0xFFFF;
+            this.mem[at + i * 4] = h & 0xFF; this.mem[at + i * 4 + 1] = (h >> 8) & 0xFF;
+            this.mem[at + i * 4 + 2] = lg & 0xFF; this.mem[at + i * 4 + 3] = (lg >> 8) & 0xFF;
+          }
+        };
+        const take = (seg, off) => {
+          const at = ((seg << 4) + (off & 0xFFFF)) & 0xFFFFF;
+          for (let i = 0; i < 4; i++) {
+            const h = this.mem[at + i * 4] | (this.mem[at + i * 4 + 1] << 8);
+            const lg = this.mem[at + i * 4 + 2] | (this.mem[at + i * 4 + 3] << 8);
+            if (lg === 0xFFFF || !this.emsHandles.has(h)) { this.emsFlush(i); this.emsMapped[i] = null; }
+            else this.emsMap(i, lg, h, r);
+          }
+        };
+        if (al === 0x00) { put(es, di); st(0); return true; }
+        if (al === 0x01) { take(ds, si); st(0); return true; }
+        if (al === 0x02) { put(es, di); take(ds, si); st(0); return true; }
+        if (al === 0x03) { r.set('ax', 16); return true; }         // AL = bytes, AH = 0
+        st(0x8F);                                                  // invalid subfunction
+        return true;
+      }
       case 0x4B: r.set('bx', this.emsHandles.size); st(0); return true;
       case 0x4C: {
         const b = this.emsHandles.get(r.get('dx') & 0xFFFF);

@@ -48,6 +48,13 @@ test('wildcard *.* on different drive letter finds nothing', () => {
   assert(!r.handle, 'should not find files on D:');
 });
 
+test('exact drive-root lookup returns the existing root directory', () => {
+  const vfs = makeVFS({ 'c:\\fall.exe': 10 });
+  const r = vfs.findFirstFile('C:\\');
+  assert(r.handle, 'a mounted drive root should be discoverable');
+  assert.strictEqual(r.entry.attrs, 0x10);
+});
+
 test('basename fallback finds file by name on wrong drive', () => {
   const vfs = makeVFS({ 'c:\\demoopen.ddv': 100 });
   const r = vfs.findFirstFile('D:\\abe\\demoopen.ddv');

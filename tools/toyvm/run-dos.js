@@ -238,9 +238,19 @@ function frameHash(mem, video) {
 async function runDos(o) {
   const {
     variant = 'tailcall', exe, budget = 200e6, slice = 2e6,
-    traceInt = false, traceFault = false, noCache = false, shots = null, shotEvery = 20,
+    traceInt = false, traceFault = false, traceEntry = 0, noCache = false,
+    shots = null, shotEvery = 20,
     mouse = [0, 0], cpu = 386, report = false, log = console.log, autoKey = false,
     tickScale = 1, sample = false, sampleAfter = 0, forceChained = false,
+    // How many handbacks at one address with nothing new on screen before the
+    // run is called hung. 0 turns the detector off, which is what to reach for
+    // when the question is whether a loop is stuck or merely long: a loop that
+    // re-decodes itself every iteration hands back at the same address for real
+    // reasons and looks identical to a spin from here.
+    stuckLimit = 200,
+    // The DOS command tail, verbatim. Several demos in this corpus name their
+    // own silent-mode switch on the screen they refuse to start from.
+    guestArgs = '',
     // One timer interrupt per this many dispatches. 100k is about 10ms of a
     // real 486, so it lands near the 18.2Hz the BIOS programs -- and a demo
     // that reprogrammed the PIT for music gets a slower clock than it asked
@@ -274,7 +284,7 @@ async function runDos(o) {
   // a build that decodes 386 encodings but reports an 8086 FLAGS register fails
   // the CPU detection every one of those demos opens with.
   vm.exports.set_cpu(cpu);
-  machine.setMemory(vm.mem);
+  machine.setMemory(vm.mem, vm.exports);
   machine.installIvt();
   machine.setTicks(0);
   machine.syncVga();     // the VM's buffer, not the throwaway one from before
@@ -284,7 +294,8 @@ async function runDos(o) {
   // say, so the loader leaves this undefined and the machine keeps its "owns
   // everything" default.
   if (info.allocTop !== undefined) machine.allocTop = info.allocTop;
-  machine.installEnvironment(path.basename(exe));
+  machine.imageTop = info.minTop;
+  machine.installEnvironment(path.basename(exe), guestArgs);
   vm.setAll({ cs: info.cs, ip: info.ip, ss: info.ss, sp: info.sp, ds: info.ds, es: info.es });
   // The stack must hold a return address: a .COM-style `ret` exit lands on the
   // PSP's INT 20h. An EXE that ends with INT 21h/4C never touches it.
@@ -302,6 +313,19 @@ async function runDos(o) {
   let compiles = 0, compiledWords = 0, arenaResets = 0;
   const jtab = new Int32Array(vm.mem.buffer, isa.JTAB_BASE, isa.JTAB_SIZE >> 2);
   const unimplemented = new Map();
+  const codeBits = new Uint8Array(vm.mem.buffer, isa.CODE_BITMAP, isa.CODE_BITMAP_SIZE);
+  codeBits.fill(0);
+
+  // Everything compiled is now suspect, because the guest wrote into code that
+  // had been compiled. Cheaper answers exist (invalidate just the paragraph),
+  // but this happens a handful of times in a run -- once when a packed program
+  // unpacks itself -- and being obviously right matters more than being quick.
+  function flushCompiled() {
+    regions.clear();
+    vm.set('rtop', 0);
+    jtab.fill(0);
+    codeBits.fill(0);
+  }
 
   function entryFor(cs, ip) {
     if (!noCache) {
@@ -327,6 +351,15 @@ async function runDos(o) {
     for (const at of prog.unimplemented) {
       const key = `${cs.toString(16)}:${at.toString(16)}`;
       unimplemented.set(key, (unimplemented.get(key) || 0) + 1);
+    }
+    // Mark what was decoded, so a store into it is noticed. Paragraph
+    // granularity, which is what $wr8 tests -- a store within 16 bytes of
+    // compiled code counts as touching it, and over-reporting only costs a
+    // recompile.
+    for (const [from, to] of prog.covered) {
+      for (let p = from >> 4; p <= (to - 1) >> 4; p++) {
+        codeBits[p >> 3] |= 1 << (p & 7);
+      }
     }
     // Publish every block head into the indirect-jump cache. Direct-mapped, so
     // a later block simply evicts an earlier one -- the key check in $jlook
@@ -361,8 +394,8 @@ async function runDos(o) {
   let guestNs = 0n;
   let dispatched = 0, handbacks = 0, ints = 0, irqs = 0, shotN = 0, stuck = 0, stuckAt = null;
   let smcBreaks = 0;
-  let lastIrq = 0;
-  let lastKey = '', lastWritten = 0;
+  let lastIrq = 0, lastKbIrq = 0;
+  let lastKey = '', lastWritten = 0, lastRegs = 0;
   const entryHist = new Map();
   const ipSamples = new Map();
   const ipSampleLog = [];          // flat [dispatched, ip, dispatched, ip, ...]
@@ -388,6 +421,10 @@ async function runDos(o) {
         set: (n, v) => vm.set(n, v),
         setResultCf: (on) => wr(4, on ? (rd(4) | 1) : (rd(4) & ~1)),
         setResultZf: (on) => wr(4, on ? (rd(4) | 0x40) : (rd(4) & ~0x40)),
+        // Where this INT returns to, and the SP it returns with. EXEC needs it:
+        // the caller's own CS:IP at service time is the stub, and the address
+        // the parent resumes at lives in the IRET frame.
+        ret: { cs: rd(2), ip: rd(0), sp: (sp + 6) & 0xFFFF },
       };
       // The registers as they ARRIVED. Logging them after the call showed the
       // answer where the question belongs: an INT 16h AH=00 that returned 'a'
@@ -410,6 +447,18 @@ async function runDos(o) {
       vm.set('cs', rd(2));
       vm.set('flags', rd(4));
       vm.set('sp', (sp + 6) & 0xFFFF);
+      // A service that transfers control -- EXEC into a child program, or a
+      // child's exit back into its parent -- says so here rather than editing
+      // the registers behind the IRET's back, which would just be overwritten
+      // by the three loads above.
+      if (machine.transfer) {
+        const t = machine.transfer;
+        machine.transfer = null;
+        for (const k of ['cs', 'ss', 'ds', 'es']) vm.set(k, t[k]);
+        vm.set('gip', t.ip);
+        vm.set('sp', t.sp);
+        if (t.ax !== undefined) vm.set('ax', t.ax);
+      }
       if (machine.exited || machine.blockedOnKey) break;
       continue;
     }
@@ -420,6 +469,13 @@ async function runDos(o) {
     if (report) {
       const k = `${cs.toString(16)}:${ip.toString(16)}`;
       entryHist.set(k, (entryHist.get(k) || 0) + 1);
+    }
+    // The entries IN ORDER, which the histogram cannot show. A program that
+    // ends up executing its own data got there by a path, and the path is
+    // usually three or four blocks long -- uman.com reaches 100:10a from its
+    // first instruction and the histogram says only that both were entered.
+    if (traceEntry && handbacks < traceEntry) {
+      log(`  entry ${cs.toString(16)}:${ip.toString(16)}`);
     }
     const entry = entryFor(cs, ip);
     const g0 = process.hrtime.bigint();
@@ -446,11 +502,20 @@ async function runDos(o) {
     // patched is the one it was about to fall into, so that is the cache entry
     // to drop -- a full flush would be correct too, and would re-decode the
     // whole program on every Turbo Pascal BIOS call.
+    // $smc = 2 is the other kind, and the broad one: some store landed in a
+    // paragraph that had already been compiled. That is a packed program
+    // unpacking itself, so everything compiled from before the unpack is stale
+    // and goes.
     if (vm.raw('smc')) {
+      const kind = vm.raw('smc');
       vm.set('smc', 0);
-      const ncs = vm.get('cs'), nip = vm.get('gip') & 0xFFFF;
-      for (const r of (regions.get(ncs) || [])) r.blocks.delete(nip);
-      jtab[isa.jhash(ncs, nip) * 2] = 0;
+      if (kind === 2) {
+        flushCompiled();
+      } else {
+        const ncs = vm.get('cs'), nip = vm.get('gip') & 0xFFFF;
+        for (const r of (regions.get(ncs) || [])) r.blocks.delete(nip);
+        jtab[isa.jhash(ncs, nip) * 2] = 0;
+      }
       smcBreaks++;
     }
 
@@ -533,9 +598,7 @@ async function runDos(o) {
     // the interrupted program zero instructions between interrupts. brainbug
     // spent 30M dispatches that way -- 3.6M interrupts, 8 dispatches apiece,
     // and the main loop never ran once.
-    const tvec = machine.timerVector();
-    if (tvec && dispatched - lastIrq >= irqEvery && (vm.get('flags') & 0x200)) {
-      lastIrq = dispatched;
+    const raise = (vec) => {
       const push = (v) => {
         const sp = (vm.get('sp') - 2) & 0xFFFF;
         vm.set('sp', sp);
@@ -546,10 +609,25 @@ async function runDos(o) {
       push(vm.get('cs'));
       push(vm.get('gip'));
       vm.set('flags', vm.get('flags') & ~0x300);       // IF and TF, as `int` does
-      const at = tvec << 2;
+      const at = vec << 2;
       vm.set('gip', vm.mem[at] | (vm.mem[at + 1] << 8));
       vm.set('cs', vm.mem[at + 2] | (vm.mem[at + 3] << 8));
       irqs++;
+    };
+    const tvec = machine.timerVector();
+    if (tvec && dispatched - lastIrq >= irqEvery && (vm.get('flags') & 0x200)) {
+      lastIrq = dispatched;
+      raise(tvec);
+    // IRQ1. A program with its own INT 9 handler reads the keyboard as
+    // hardware and never calls the BIOS, so answering INT 16h reaches it not at
+    // all -- BTW.EXE sits on a sound menu having made zero INT 16h calls in 11M
+    // dispatches. The machine decides whether there is anything to send and
+    // leaves the scancode where port 60h will find it; here we only deliver it,
+    // and only between traces where cs:gip is a real instruction boundary.
+    // Slower than the timer on purpose: this is a person typing.
+    } else if (dispatched - lastKbIrq >= irqEvery * 4 && (vm.get('flags') & 0x200)) {
+      const kvec = machine.keyboardIrq();
+      if (kvec) { lastKbIrq = dispatched; raise(kvec); }
     }
 
     // Keep the fullest frame. Sampled rather than continuous: scanning the
@@ -580,13 +658,26 @@ async function runDos(o) {
     // declares every one of them hung within 200 handbacks. brainbug.exe was
     // cut off after 0.6M of its 30M dispatches for exactly this reason, one
     // handback after the first interrupt it had ever been sent.
+    //
+    // The registers count too, and they are what stops the last false positive:
+    // a loop that writes into a paragraph some compiled region decoded hands
+    // control back on EVERY iteration, at the same address, with nothing on the
+    // console -- indistinguishable from a spin by address alone. IHANMUU.EXE
+    // was cut off after 0.5M of 30M dispatches inside a loop whose SI and BP
+    // were advancing the whole time, and runs to a full mode 13h screen without
+    // this. A real spin re-enters with the same registers it left with.
     const key = `${cs.toString(16)}:${vm.get('gip').toString(16)}`;
     const wrote = machine.con.written + irqs
       + (machine.videoMode === 3 ? conCells(machine.con) : 0);
-    stuck = (key === lastKey && wrote === lastWritten) ? stuck + 1 : 0;
+    let regs = 2166136261;
+    for (const n of ['ax', 'bx', 'cx', 'dx', 'si', 'di', 'bp', 'sp', 'ds', 'es']) {
+      regs = (Math.imul(regs, 16777619) ^ vm.get(n)) >>> 0;
+    }
+    stuck = (key === lastKey && wrote === lastWritten && regs === lastRegs) ? stuck + 1 : 0;
     lastKey = key;
     lastWritten = wrote;
-    if (stuck > 200) { stuckAt = key; break; }
+    lastRegs = regs;
+    if (stuckLimit && stuck > stuckLimit) { stuckAt = key; break; }
   }
 
   if (bestPng) keepBest();
@@ -597,6 +688,7 @@ async function runDos(o) {
     secs: Number(process.hrtime.bigint() - t0) / 1e9,
     guestSecs: Number(guestNs) / 1e9,
     dispatched, handbacks, ints, irqs, compiles, compiledWords, arenaResets,
+    smcBreaks,
     stuckAt, entryHist, unimplemented, ipSamples, ipSampleLog, regions,
     // A program that never put the adapter in a graphics mode has no frame to
     // count, and reading A000 anyway is how ACME-SUX.EXE and AKM_DOB.EXE came
@@ -657,6 +749,7 @@ async function main() {
     slice: count(arg('slice'), 2e6),
     traceInt: flag('trace-int'),
     traceFault: flag('trace-fault'),
+    traceEntry: flag('trace-entry') ? 40 : count(arg('trace-entry'), 0),
     noCache: flag('no-cache'),
     shots: arg('shots'),
     shotEvery: count(arg('shot-every'), 20),
@@ -668,6 +761,8 @@ async function main() {
     tickScale: Number(arg('tick-scale', 1)),
     irqEvery: count(arg('irq-every'), 100e3),
     dispatchesPerTick: count(arg('dispatches-per-tick'), 550e3),
+    stuckLimit: count(arg('stuck'), 200),
+    guestArgs: arg('args', ''),
   });
 
   // A text-mode program's picture is its console, not the graphics window --
@@ -679,11 +774,52 @@ async function main() {
     else writePng(png, r.vm.mem, r.machine.palette, r.surface.geom);
   }
 
+  // The text page as text. A screenshot of a menu is a picture of words, and
+  // the question being asked of it -- "what is this program waiting for" -- is
+  // answerable by grep only if the words come out as words.
+  if (flag('text')) {
+    const t = conText(r.machine.con);
+    console.log(`\ntext page (${r.machine.con.cols}x${r.machine.con.rows})`);
+    console.log(t ? t.split('\n').map(l => `  |${l}`).join('\n') : '  (blank)');
+    console.log('');
+  }
+
   if (r.stuckAt) console.log(`stuck at ${r.stuckAt} -- no progress in 200 handbacks`);
+
+  // What the guest is executing, read out of ITS memory rather than out of the
+  // file. dos-disasm.js loads the image statically, which answers a different
+  // question: half this corpus decrypts itself, relocates itself or runs code a
+  // child EXEC wrote, and for those the file says nothing about the address a
+  // run stopped at. `--disasm` with no argument takes the address the run ended
+  // on, which is the one being asked about nine times out of ten.
+  const dis = process.argv.slice(2).find(a => a === '--disasm' || a.startsWith('--disasm='));
+  if (dis) {
+    const { disasmAt } = require('../disasm');
+    const spec = dis.includes('=') ? dis.slice(9) : '';
+    const [addr, n] = spec.split(':').length > 2
+      ? [spec.split(':').slice(0, 2).join(':'), Number(spec.split(':')[2])]
+      : [spec, 24];
+    const [segS, offS] = (addr || `${r.vm.get('cs').toString(16)}:`
+      + `${r.vm.get('gip').toString(16)}`).split(':');
+    const seg = parseInt(segS, 16), off = parseInt(offS, 16);
+    const start = ((seg << 4) + off) & 0xFFFFF;
+    console.log(`\ndisassembly at ${seg.toString(16)}:${off.toString(16)} (live memory)`);
+    for (const line of disasmAt(r.vm.mem, start, start, n || 24, null, { bits: 16 })) {
+      const m = /^([0-9a-f]+)(\s+)(.*)$/.exec(line.trim());
+      if (!m) { console.log(line); continue; }
+      console.log(`  ${seg.toString(16)}:`
+        + `${(parseInt(m[1], 16) - (seg << 4)).toString(16).padStart(4, '0')}  ${m[3]}`);
+    }
+  }
   console.log(`\n${path.basename(exe)}  variant=${r.variant}  ${r.secs.toFixed(2)}s`);
   console.log(`  ${r.handbacks} handbacks, ${r.ints} interrupts`
     + `${r.irqs ? ` (+${r.irqs} timer IRQs delivered)` : ''}, ${r.compiles} traces `
-    + `(${(r.compiledWords * 4 / 1024).toFixed(0)}KB of arena, ${r.arenaResets} recycles)`);
+    + `(${(r.compiledWords * 4 / 1024).toFixed(0)}KB of arena, ${r.arenaResets} recycles)`
+    // A handful of these is a packed program unpacking itself and is expected.
+    // Thousands, against a compile count that keeps climbing, is recompile
+    // thrash: a program storing data into a paragraph a region happens to have
+    // decoded, one bitmap bit away from its code.
+    + (r.smcBreaks ? `\n  ${r.smcBreaks} self-modify breaks` : ''));
   const v = r.video;
   // What was rendered, then what the CRTC says when that is something else --
   // for a chained program those differ on purpose. See readFrame.
@@ -738,9 +874,10 @@ async function main() {
   // there. A demo that renders an empty screen from an empty buffer looks
   // exactly like a decoder bug until this line names the file it wanted.
   const m = r.machine;
-  if (m.filesOpened.length || m.filesMissed.length) {
+  if (m.filesOpened.length || m.filesMissed.length || m.filesCreated.length) {
     const uniq = (a) => [...new Set(a)];
     console.log(`  files: opened ${uniq(m.filesOpened).join(' ') || 'none'}`
+      + (m.filesCreated.length ? `; created ${uniq(m.filesCreated).join(' ')}` : '')
       + (m.filesMissed.length
         ? `; NOT FOUND ${uniq(m.filesMissed).join(' ')}` : ''));
   }
@@ -811,6 +948,11 @@ async function main() {
     if (ic.length) console.log(`  interrupts: ${ic.map(([v, n]) => `${v.toString(16)}h x${n}`).join(', ')}`);
     if (r.machine.unhandled.size) {
       console.log(`  UNHANDLED: ${[...r.machine.unhandled].map(([v, n]) => `int ${v.toString(16)}h x${n}`).join(', ')}`);
+    }
+    const uf = [...r.machine.unhandledFn].sort((a, b) => b[1] - a[1]).slice(0, 12);
+    if (uf.length) {
+      console.log(`  unhandled calls: ${uf.map(([k, n]) =>
+        `int ${k.split(':')[0]}h AH=${k.split(':')[1]} x${n}`).join(', ')}`);
     }
     const un = [...r.unimplemented].sort((a, b) => b[1] - a[1]).slice(0, 12);
     if (un.length) {

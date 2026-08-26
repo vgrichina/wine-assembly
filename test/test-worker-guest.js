@@ -79,14 +79,30 @@ async function launch(browser, port, app, { threaded }) {
       problems.push(t);
     }
   });
-  await page.evaluateOnNewDocument(v => {
-    localStorage.setItem('wine-assembly.threads', v);
-  }, threaded ? '1' : '0');
+  // Every page starts without a persisted preference. Exercise the actual UI
+  // switch instead of smuggling the mode in through localStorage: real threads
+  // must remain off until the checkbox is checked.
+  await page.evaluateOnNewDocument(() => {
+    localStorage.removeItem('wine-assembly.threads');
+  });
   await page.goto(`http://127.0.0.1:${port}/index.html?debug`, { waitUntil: 'load', timeout: 60000 });
   await page.waitForFunction('typeof launchApp === "function"', { timeout: 30000 });
 
   const isolated = await page.evaluate(() => crossOriginIsolated);
   assert(isolated, 'test server must make the page cross-origin isolated');
+
+  const controls = await page.evaluate(async on => {
+    const box = document.getElementById('threads-toggle');
+    const initial = { checked: box.checked, enabled: window.WINE_THREADS };
+    box.checked = on;
+    await setThreads(box.checked);
+    return {
+      initial,
+      checked: box.checked,
+      enabled: window.WINE_THREADS,
+      stored: localStorage.getItem('wine-assembly.threads'),
+    };
+  }, threaded);
 
   await page.evaluate(name => {
     const sel = document.getElementById('app-select');
@@ -119,7 +135,7 @@ async function launch(browser, port, app, { threaded }) {
   fs.mkdirSync(OUT, { recursive: true });
   await page.screenshot({ path: path.join(OUT, `${app}-${threaded ? 'worker' : 'single'}.png`) });
   await page.close();
-  return { state, problems };
+  return { state, problems, controls };
 }
 
 // Phase 2: the guest's OWN threads, each in its own Worker, all running at once.
@@ -149,18 +165,25 @@ async function guestThreadsProbe(browser, port) {
   await page.evaluate(() => { document.getElementById('app-select').value = 'winamp'; launchApp(); });
   await wait(10000);
 
-  // Same sequence as the CLI audio test: dismiss the survey, then click the real
-  // Play button at (66,129) in the main window.
-  await page.keyboard.press('Enter');
-  await wait(1500);
-  await page.keyboard.press('Escape');
-  await wait(1500);
-  const box = await page.evaluate(() => {
-    const c = document.querySelector('canvas');
-    const r = c.getBoundingClientRect();
-    return { x: r.x, y: r.y, w: r.width, h: r.height, cw: c.width, ch: c.height };
+  // The checked-in Winamp INI suppresses the first-run survey. Locate the real
+  // player window and translate its window-local Play button (40,100) into
+  // desktop coordinates. The old hard-coded desktop point (66,129) coupled the
+  // probe to one placement and could silently hit the skin instead of Play.
+  const clicked = await page.evaluate(() => {
+    const wine = (typeof runningApps !== 'undefined' && runningApps[0])
+      ? runningApps[0].wine : null;
+    const windows = wine && wine.renderer && wine.renderer.windows
+      ? Object.values(wine.renderer.windows) : [];
+    const main = windows.find(w => w && w.visible && (w.w | 0) === 275
+      && /Winamp/.test(w.title || ''));
+    if (!main || !wine.renderer) return false;
+    const x = main.x + 40;
+    const y = main.y + 100;
+    wine.renderer.handleMouseDown(x, y, 0);
+    wine.renderer.handleMouseUp(x, y, 0);
+    return true;
   });
-  await page.mouse.click(box.x + 66 * (box.w / box.cw), box.y + 129 * (box.h / box.ch));
+  if (!clicked) throw new Error('Winamp player window did not become visible');
 
   // Sampled while playback is live: by the end of the clip every thread has
   // exited and a snapshot taken then cannot tell "ran and finished" from "never
@@ -254,6 +277,12 @@ async function comLoadDllProbe(browser, port) {
       const worker = await launch(browser, port, app, { threaded: true });
       const single = await launch(browser, port, app, { threaded: false });
 
+      check(!worker.controls.initial.checked && !worker.controls.initial.enabled,
+        `${app}: threads are disabled before the checkbox is selected`);
+      check(worker.controls.checked && worker.controls.enabled && worker.controls.stored === '1',
+        `${app}: checking Threads enables and persists worker mode`);
+      check(!single.controls.checked && !single.controls.enabled && single.controls.stored === '0',
+        `${app}: leaving Threads unchecked selects cooperative mode`);
       check(worker.state.threaded, `${app}: guest runs in a worker`);
       check(!single.state.threaded, `${app}: control run is single-threaded`);
       check(worker.state.slices > 10, `${app}: worker executed slices`,

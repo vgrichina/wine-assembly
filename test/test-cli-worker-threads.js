@@ -66,7 +66,7 @@ const run = (label, extra) => {
 };
 
 const worker = run('worker', ['--threads']);
-const coop = run('cooperative', []);
+const coop = run('cooperative', ['--no-threads']);
 
 const spawnEvent = worker.events.find(e => e.type === 'spawn');
 const exitEvent = worker.events.find(e => e.type === 'exit');
@@ -80,7 +80,10 @@ const checks = [
   // the main thread never serves does not fail, it hangs — the timeout above is
   // what catches a lock held across a host import.
   ['--threads run completed', worker.result.status === 0 && !worker.result.signal && !worker.result.error],
-  ['cooperative run completed', coop.result.status === 0 && !coop.result.signal && !coop.result.error],
+  ['--no-threads cooperative run completed',
+    coop.result.status === 0 && !coop.result.signal && !coop.result.error],
+  ['the CLI explicitly selected the cooperative backend',
+    /\[threads\] guest threads will use the cooperative scheduler \(--no-threads\)/.test(coop.output)],
   ['the guest thread was instantiated in a real OS thread',
     /\[guest-worker 1\] instantiated: \d+ exports, \d+ brokered imports/.test(worker.output)],
   ['the scheduler reports the worker backend',

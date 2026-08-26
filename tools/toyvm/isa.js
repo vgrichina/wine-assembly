@@ -38,9 +38,27 @@ const FLAGS_ARITH = (1 << F.CF) | (1 << F.PF) | (1 << F.AF)
   | (1 << F.ZF) | (1 << F.SF) | (1 << F.OF);
 
 // Memory map of the toy VM's single linear memory.
-const GUEST_RAM = 0x00000;      // 1MB, the 8086's whole address space
-const GUEST_RAM_SIZE = 0x100000;
-const THREAD_BASE = 0x100000;   // decoded op stream lives here
+// The first 1MB is the 8086's whole address space. The rest is extended
+// memory, and it is here rather than in a host buffer because a program that
+// LOCKS an XMS block is handed a 32-bit linear address and then writes through
+// it -- from real mode, with a 32-bit offset and A20 on. There is nowhere else
+// for that address to point. $lin masks with the $linmask global, which stays
+// at 0xFFFFF (the 8086's twenty address lines, wrapping at 1MB) until the guest
+// takes an XMS handle; only then does the address space grow, so a program that
+// never asks for extended memory keeps exact 8086 wrap semantics and the
+// instruction gate is unaffected.
+//
+// Ten demos in the corpus stop at `Extended memory allocation failure. (weird
+// eh???)`, all of them on the lock call, all of them from the same intro
+// system. Failing the lock was the honest answer while there was no memory to
+// point at.
+const GUEST_RAM = 0x00000;
+const GUEST_RAM_SIZE = 0x1000000;          // 16MB: 1MB real mode + 15MB extended
+const XMS_BASE = 0x110000;                 // above the HMA, where EMBs are cut from
+const XMS_SIZE = GUEST_RAM_SIZE - XMS_BASE;
+const LIN_MASK_REAL = 0x000FFFFF;          // 8086: twenty address lines
+const LIN_MASK_FLAT = GUEST_RAM_SIZE - 1;  // A20 on, extended memory in play
+const THREAD_BASE = GUEST_RAM + GUEST_RAM_SIZE;   // decoded op stream lives here
 const THREAD_SIZE = 0x100000;
 // Shadow return stack. A `ret` reads its target off the guest stack, so no
 // arena address can be baked into it and every return would otherwise hand
@@ -103,7 +121,22 @@ const VGA_PLANE_SIZE = 0x10000;
 const VGA_KEY_OFF = 0;
 const VGA_KEY_ON = 0xA0001;
 
-const MEM_PAGES = ((VGA_PLANES + VGA_PLANE_SIZE * 4 + 0xFFFF) & ~0xFFFF) >> 16;
+// Which paragraphs of guest memory hold code that has been COMPILED. One bit
+// per 16 bytes covers the whole 1MB in 8KB. Every store checks its bit and, on
+// a hit, sets the $smc global -- the host then throws the compiled regions away
+// and decodes again from memory as it now is.
+//
+// This is not an optimisation, it is what makes a packed program run at all.
+// Most of this corpus ships compressed (LZEXE, PKLITE, DIET): the file is a
+// small depacker plus a blob, and the program that eventually runs was written
+// into memory by that depacker. Compiling a region ahead of the guest means the
+// bytes at 0100:0100 were decoded while they were still the depacker's, and
+// jumping back there ran the depacker's code for ever. uman.com spent 10M
+// dispatches doing exactly that, executing its own unpacked text screen.
+const CODE_BITMAP = (VGA_PLANES + VGA_PLANE_SIZE * 4 + 0xFFFF) & ~0xFFFF;
+const CODE_BITMAP_SIZE = GUEST_RAM_SIZE >> 7;      // one bit per 16 bytes
+
+const MEM_PAGES = ((CODE_BITMAP + CODE_BITMAP_SIZE + 0xFFFF) & ~0xFFFF) >> 16;
 
 // Effective-address kinds, in ModRM rm order for mod != 11. Kind 8 is the
 // mod=00,rm=110 special case: a bare disp16 with no base at all.
@@ -130,10 +163,12 @@ const EA_A32 = {
 module.exports = {
   REG16, REG8, SEG, F, FLAGS_RESERVED, FLAGS_DEFINED, FLAGS_ARITH,
   GUEST_RAM, GUEST_RAM_SIZE, THREAD_BASE, THREAD_SIZE, MEM_PAGES,
+  XMS_BASE, XMS_SIZE, LIN_MASK_REAL, LIN_MASK_FLAT,
   RSTACK_BASE, RSTACK_ENTRIES, RSTACK_SIZE,
   JTAB_BASE, JTAB_ENTRIES, JTAB_SIZE, JTAB_HASH_MUL, jhash,
   VGA_CTL, VGA_CTL_KEY, VGA_CTL_MASK, VGA_CTL_LATCH, VGA_CTL_GC,
   VGA_CTL_WRITES, VGA_CTL_READS,
   VGA_PLANES, VGA_PLANE_SIZE, VGA_KEY_OFF, VGA_KEY_ON,
+  CODE_BITMAP, CODE_BITMAP_SIZE,
   EA, EA_DEFAULT_SEG, EA_A32,
 };

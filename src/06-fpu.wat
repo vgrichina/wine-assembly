@@ -646,6 +646,8 @@
 
   (func $fpu_exec_reg (param $group i32) (param $reg i32) (param $rm i32)
     (local $v f64) (local $st0 f64)
+    (local $raw0 i64) (local $rawi i64)
+    (local $raw0_valid i32) (local $rawi_valid i32)
     (local.set $st0 (call $fpu_get (i32.const 0)))
     ;; Group 0 (D8): arith ST(0), ST(rm) — every reg value (0..7) is a valid op
     (if (i32.eq (local.get $group) (i32.const 0))
@@ -665,8 +667,23 @@
         (if (i32.eq (local.get $reg) (i32.const 1))
           (then
             (local.set $v (call $fpu_get (local.get $rm)))
+            ;; FXCH moves the exact 64-bit payload shadow along with the f64
+            ;; approximation. Optimized memcpy routines use two FILD m64s,
+            ;; FXCH, then two FISTP m64s; clearing these shadows here rounds
+            ;; arbitrary qwords to 53 bits and zeros the low byte of many
+            ;; eight-byte chunks.
+            (local.set $raw0_valid (call $fpu_raw_valid (i32.const 0)))
+            (local.set $rawi_valid (call $fpu_raw_valid (local.get $rm)))
+            (if (local.get $raw0_valid)
+              (then (local.set $raw0 (call $fpu_raw_get (i32.const 0)))))
+            (if (local.get $rawi_valid)
+              (then (local.set $rawi (call $fpu_raw_get (local.get $rm)))))
             (call $fpu_set (local.get $rm) (local.get $st0))
             (call $fpu_set (i32.const 0) (local.get $v))
+            (if (local.get $raw0_valid)
+              (then (call $fpu_raw_set (local.get $rm) (local.get $raw0))))
+            (if (local.get $rawi_valid)
+              (then (call $fpu_raw_set (i32.const 0) (local.get $rawi))))
             (return)))
         ;; reg=2: only D9 D0 (rm=0) is FNOP. D9 D1..D7 are reserved.
         (if (i32.eq (local.get $reg) (i32.const 2))

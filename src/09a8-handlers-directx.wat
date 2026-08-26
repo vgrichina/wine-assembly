@@ -1308,7 +1308,7 @@
     ;; 640x480 primary. $dib_size stays the logical size, so pitch, vidmem
     ;; accounting and everything that reads the surface are unchanged.
     (local.set $dib_size (i32.mul (local.get $pitch) (local.get $h)))
-    (local.set $dib_guest (call $heap_alloc
+    (local.set $dib_guest (call $dib_alloc
       (i32.add (local.get $dib_size)
         (i32.add (i32.mul (local.get $pitch) (i32.const 16)) (i32.const 64)))))
     ;; An exhausted heap returns 0, and g2w(0) is the base of the guest image --
@@ -1333,6 +1333,7 @@
     (local.set $obj (call $dx_create_com_obj (i32.const 2) (global.get $DX_VTBL_DDSURF2)))
     (if (i32.eqz (local.get $obj))
       (then
+        (call $dib_free_wasm (call $g2w (local.get $dib_guest)))
         (global.set $eax (i32.const 0x80004005))
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
@@ -1374,7 +1375,7 @@
           ;; Allocate separate DIB for back buffer, with the same slack rows as
           ;; the primary above -- an app that draws a couple of rows long does
           ;; it to whichever surface it is rendering into.
-          (local.set $dib_guest (call $heap_alloc
+          (local.set $dib_guest (call $dib_alloc
             (i32.add (local.get $dib_size)
               (i32.add (i32.mul (local.get $pitch) (i32.const 16)) (i32.const 64)))))
           ;; Same guard as the primary above: never zero from g2w(0).
@@ -2315,16 +2316,18 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_IDirectDrawSurface_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32) (local $surf_bytes i32)
+    (local $entry i32) (local $rc i32) (local $surf_bytes i32) (local $dib_wa i32)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $rc (i32.sub (i32.load (i32.add (local.get $entry) (i32.const 4))) (i32.const 1)))
     (i32.store (i32.add (local.get $entry) (i32.const 4)) (local.get $rc))
     (if (i32.le_s (local.get $rc) (i32.const 0))
       (then
         (local.set $surf_bytes (i32.load (i32.add (local.get $entry) (i32.const 24))))
+        (local.set $dib_wa (i32.load (i32.add (local.get $entry) (i32.const 20))))
         (global.set $dx_vidmem_used (i32.sub (global.get $dx_vidmem_used) (local.get $surf_bytes)))
         (if (i32.eq (local.get $entry) (global.get $dx_primary_wa))
           (then (global.set $dx_primary_wa (i32.const 0))))
+        (call $dib_free_wasm (local.get $dib_wa))
         (call $dx_free (local.get $entry))))
     (global.set $eax (select (local.get $rc) (i32.const 0) (i32.gt_s (local.get $rc) (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
@@ -2974,9 +2977,8 @@
     (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.load16_u (i32.add (local.get $entry) (i32.const 12))))
     (i32.store (i32.add (local.get $wa) (i32.const 16)) (i32.load16_u (i32.add (local.get $entry) (i32.const 18))))
     ;; lpSurface — guest address of DIB
-    (local.set $dib_guest (i32.add
-      (i32.sub (i32.load (i32.add (local.get $entry) (i32.const 20))) (global.get $GUEST_BASE))
-      (global.get $image_base)))
+    (local.set $dib_guest
+      (call $w2g (i32.load (i32.add (local.get $entry) (i32.const 20)))))
     (i32.store (i32.add (local.get $wa) (i32.const 36)) (local.get $dib_guest))
     (call $dx_fill_pixel_format (i32.add (local.get $wa) (i32.const 72))
       (i32.load16_u (i32.add (local.get $entry) (i32.const 16))))

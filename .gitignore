@@ -45,3 +45,7 @@ test/binaries/dlls/
 !test/binaries/SOURCES.md
 test/corpus/
 build-info.js
+
+# The DOS corpus report is generated into docs/dos-corpus and is
+# committed; the blanket *.png above would otherwise drop its screenshots.
+!docs/dos-corpus/shots/*.png

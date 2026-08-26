@@ -283,9 +283,20 @@ const CONDS = {
 
 // Shared tail: commit one successor. $arena is the arena address (0 = stop),
 // $guest is the guest IP to record either way.
+// A store that landed in a paragraph some compiled region decoded sets $smc=2,
+// and every arena address in flight is now suspect -- including the successor
+// this block is about to jump into. The flag cannot cut the block it fires in
+// (a handback mid-instruction resumes at the last block head, which would redo
+// the store), so the cut happens here instead, at the first block boundary
+// after it: $gip is already the guest address to resume at, so refusing the
+// arena successor is a correct and cheap handback. Without it a depacker that
+// falls straight through into the code it just wrote keeps running the bytes
+// that were there at decode time -- COROMER's second stage did exactly that and
+// ended up executing the interrupt vector table.
+const CONT = (arena) => `(select (i32.const 0) ${arena} (global.get $smc))`;
 const GO = (arena, guest) => `
   (global.set $gip ${guest})
-  (if ${arena}
+  (if ${CONT(arena)}
     (then (global.set $ip ${arena}))
     (else (global.set $left (global.get $steps)) (global.set $steps (i32.const -1))))`;
 
@@ -418,7 +429,7 @@ function genExtras() {
   const RET_BODY = `
   (global.set $gip (call $pop16))
   (local.set $t7 (call $rpop (global.get $gip)))
-  (if (local.get $t7)
+  (if ${CONT('(local.get $t7)')}
     (then (global.set $ip (local.get $t7)))
     (else (global.set $left (global.get $steps)) (global.set $steps (i32.const -1))))`;
   h('ret', 0, RET_BODY);
@@ -427,7 +438,7 @@ function genExtras() {
   (global.set $gip (call $pop16))
   (global.set $sp (i32.and (i32.add (global.get $sp) (local.get $t0)) (i32.const 0xFFFF)))
   (local.set $t7 (call $rpop (global.get $gip)))
-  (if (local.get $t7)
+  (if ${CONT('(local.get $t7)')}
     (then (global.set $ip (local.get $t7)))
     (else (global.set $left (global.get $steps)) (global.set $steps (i32.const -1))))
 `);
@@ -1420,7 +1431,7 @@ function genArithIO() {
   // entered through several hundred thousand times a frame.
   const GO_INDIRECT = `
   (local.set $t3 (call $jlook (global.get $gip)))
-  (if (local.get $t3)
+  (if ${CONT('(local.get $t3)')}
     (then (global.set $ip (local.get $t3)))
     (else (global.set $left (global.get $steps)) (global.set $steps (i32.const -1))))`;
   h('jmp_r16', 1, `
@@ -2150,7 +2161,7 @@ function helpers() {
 (func $lin (param $seg i32) (param $off i32) (result i32)
   (i32.and
     (i32.add (i32.shl (call $sget (local.get $seg)) (i32.const 4)) (local.get $off))
-    (i32.const 0xFFFFF)))
+    (global.get $linmask)))
 
 ;; The A000 window in unchained ("mode X") mode. See isa.js for why the planes
 ;; cannot live in the guest's own RAM.
@@ -2302,7 +2313,7 @@ function helpers() {
 (func $rd8 (param $seg i32) (param $off i32) (result i32)
   (local $l i32)
   (local.set $l (call $lin (local.get $seg) (local.get $off)))
-  (if (i32.eq (i32.or (i32.and (local.get $l) (i32.const 0xF0000)) (i32.const 1))
+  (if (i32.eq (i32.or (i32.and (local.get $l) (i32.const 0xFFF0000)) (i32.const 1))
               (i32.load (i32.const ${isa.VGA_CTL_KEY})))
     (then (return (call $vga_rd8 (local.get $l)))))
   (i32.load8_u (local.get $l)))
@@ -2310,9 +2321,18 @@ function helpers() {
 (func $wr8 (param $seg i32) (param $off i32) (param $v i32)
   (local $l i32)
   (local.set $l (call $lin (local.get $seg) (local.get $off)))
-  (if (i32.eq (i32.or (i32.and (local.get $l) (i32.const 0xF0000)) (i32.const 1))
+  (if (i32.eq (i32.or (i32.and (local.get $l) (i32.const 0xFFF0000)) (i32.const 1))
               (i32.load (i32.const ${isa.VGA_CTL_KEY})))
     (then (call $vga_wr8 (local.get $l) (local.get $v)) (return)))
+  ;; A store into a paragraph that has already been COMPILED means the compiled
+  ;; form is now a lie -- see isa.CODE_BITMAP. The flag is all this does: the
+  ;; host throws the regions away on the next handback, which is where a packed
+  ;; program goes anyway (it reaches its unpacked entry through a far jump).
+  (if (i32.and (i32.load8_u (i32.add (i32.const ${isa.CODE_BITMAP})
+                                     (i32.shr_u (local.get $l) (i32.const 7))))
+               (i32.shl (i32.const 1) (i32.and (i32.shr_u (local.get $l) (i32.const 4))
+                                               (i32.const 7))))
+    (then (global.set $smc (i32.const 2))))
   (i32.store8 (local.get $l) (local.get $v)))
 
 ;; Step an offset to the next byte. A 16-bit offset of 0xFFFF wraps to 0x0000
@@ -2961,7 +2981,14 @@ ${[...Array(8).keys()].map(i => `(global $st${i} (mut f64) (f64.const 0))`).join
 (global $cr0 (mut i32) (i32.const 0x0010))
 ;; The FLAGS shape, defaulting to the 8086's. set_cpu raises it.
 (global $f_res (mut i32) (i32.const ${isa.FLAGS_RESERVED}))
-(global $f_def (mut i32) (i32.const ${isa.FLAGS_DEFINED}))`;
+(global $f_def (mut i32) (i32.const ${isa.FLAGS_DEFINED}))
+;; How far the address bus goes. An 8086 has twenty lines and every address
+;; wraps at 1MB; a machine with A20 open and extended memory in it does not.
+;; Both are correct and a program can tell the difference, so this is a global
+;; the host raises the moment the guest takes an XMS handle, rather than a
+;; constant. Left alone it is exactly the old behaviour -- which is what the
+;; instruction gate checks, since its 8088 vectors include the wrap.
+(global $linmask (mut i32) (i32.const ${isa.LIN_MASK_REAL}))`;
 
 function preamble() {
   const globals = STATE
@@ -2981,6 +3008,10 @@ function preamble() {
 (import "host" "fmath" (func $fmath (param i32) (param f64) (param f64) (result f64)))
 ${globals}
 ${EXTRA_GLOBALS}
+;; How wide the address bus is. See $linmask -- the host opens it up when the
+;; guest takes an XMS handle and never narrows it again.
+(func (export "get_linmask") (result i32) (global.get $linmask))
+(func (export "set_linmask") (param $v i32) (global.set $linmask (local.get $v)))
 (func (export "set_cpu") (param $level i32)
   (if (i32.ge_u (local.get $level) (i32.const 386))
     (then

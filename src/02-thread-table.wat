@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 431 funcref)
+  (table $handlers 432 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -488,4 +488,5 @@
     $th_case_chain            ;; 428: a whole cmp al,imm8 / jz ladder (a switch)
     $th_rle_run               ;; 429: a whole run-length sprite blit row
     $th_load_far_ptr32        ;; 430: LES/LDS r32, m16:32 in a flat task
+    $th_lut_span              ;; 431: fixed unrolled LUT/blend span
   )

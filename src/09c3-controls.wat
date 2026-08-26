@@ -4879,20 +4879,44 @@
                 (drop (call $wnd_send_message
                   (local.get $hwnd) (i32.const 0x000F) (i32.const 0) (i32.const 0)))))
             ;; Send WM_COMMAND(MAKEWPARAM(ctrl_id, BN_CLICKED=0), button_hwnd)
-            ;; to parent. Native BUTTON controls notify parents synchronously;
-            ;; dialog procs often update caller-owned structs before the click
-            ;; returns. Skip groupbox (kind 7) — it's not interactive.
+            ;; to parent. Native BUTTON controls normally notify parents
+            ;; synchronously, and non-dialog parents plus IDOK/IDCANCEL keep
+            ;; that behavior. A custom command on a native dialog may enter a
+            ;; nested modal loop, though. Running that through $wnd_send_message
+            ;; traps the browser inside its recursive interpreter frame, so no
+            ;; later click can reach the child modal dialog; if its bounded run
+            ;; expires, the live x86 continuation is abandoned. Queue those
+            ;; custom dialog commands instead. DispatchMessage then enters the
+            ;; parent on the main interpreter context, including any native
+            ;; subclass chain, where a nested message pump can receive input.
+            ;; Skip groupbox (kind 7) — it's not interactive.
             (if (i32.ne (local.get $w) (i32.const 7))
               (then
                 (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
                 (local.set $cmd_id (i32.and (call $btn_ctrl_id (local.get $state_w)) (i32.const 0xFFFF)))
                 (global.set $dialog_last_proc_handled (i32.const 0))
-                (drop (call $wnd_send_message
-                  (local.get $parent)
-                  (i32.const 0x0111)  ;; WM_COMMAND
-                  ;; wParam: low 16 = ctrl_id (from ButtonState+12), high 16 = BN_CLICKED (0)
-                  (local.get $cmd_id)
-                  (local.get $hwnd))) ;; lParam = button hwnd
+                (if (i32.and
+                      ;; A framework may subclass DefDlgProc and replace the
+                      ;; visible WNDPROC marker. The retained DLGPROC record is
+                      ;; the stable test that this parent is a native dialog.
+                      (i32.ne (call $dialog_proc_get (local.get $parent))
+                              (i32.const 0))
+                      (i32.and
+                        (i32.ne (local.get $cmd_id) (i32.const 1))
+                        (i32.ne (local.get $cmd_id) (i32.const 2))))
+                  (then
+                    (drop (call $post_queue_push
+                      (local.get $parent)
+                      (i32.const 0x0111)  ;; WM_COMMAND
+                      (local.get $cmd_id)
+                      (local.get $hwnd))))
+                  (else
+                    (drop (call $wnd_send_message
+                      (local.get $parent)
+                      (i32.const 0x0111)  ;; WM_COMMAND
+                      ;; wParam: low 16 = ctrl_id (from ButtonState+12), high 16 = BN_CLICKED (0)
+                      (local.get $cmd_id)
+                      (local.get $hwnd))))) ;; lParam = button hwnd
                 ;; USER's default IDOK close applies only when the dialog proc
                 ;; did not handle the command itself. A handled command may
                 ;; intentionally post follow-up work while keeping the dialog.

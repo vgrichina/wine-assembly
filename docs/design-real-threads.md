@@ -751,7 +751,9 @@ Three things the split had to get right, each learned from a failure:
   **Done.** `node test/run.js --exe=… --threads` gives every guest thread a node
   `worker_thread` over the one shared `WebAssembly.Memory`. `--threads-serial`
   runs them one at a time (the CLI twin of `?threads-serial`), and
-  `--thread-batch-size=N` sets the steps per worker slice.
+  `--thread-batch-size=N` sets the steps per worker slice. Omitting the flag keeps
+  the cooperative scheduler; `--no-threads` selects that same mode explicitly
+  for A/B scripts, and cannot be combined with `--threads`.
 
   **What it covers, and what it deliberately does not.** The guest's *main*
   thread stays in-process: 237 sites in `run.js` call `instance.exports` directly,

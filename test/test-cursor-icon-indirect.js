@@ -42,7 +42,8 @@ function check(label, fn) {
             px.push([mem[i * 4 + 2], mem[i * 4 + 1], mem[i * 4 + 0], mem[i * 4 + 3]]);
           }
         }
-        pushes.push({ hcur: hcur >>> 0, width, height, hotX, hotY, pixels: px, hadBits: !!bgraWa });
+        pushes.push({ hcur: hcur >>> 0, width, height, hotX, hotY, pixels: px,
+          hadBits: !!bgraWa, bgraWa: bgraWa >>> 0 });
       },
       set_cursor: () => {},
     },
@@ -252,6 +253,59 @@ function check(label, fn) {
     assert.strictEqual(cur[topRow + 3], 0, 'the transparent corner became opaque');
     assert.strictEqual(cur[topRow + 4 + 3], 255, 'the white pixel lost its alpha');
     assert.strictEqual(cur[topRow + 4 + 0], 255, 'the white pixel is not white');
+  });
+
+  // Measured on Safari 26.4 with tools/ios-lab/cursor-decode.html: an <img>
+  // refuses a `data:image/x-icon` outright, and a .cur set on style.cursor is
+  // kept as a string but never drawn. lib/touch-cursor.js paints the guest's
+  // art onto the phone sprite through an <img>, so the wrapper that is
+  // perfectly good in Chrome is invisible on the device the sprite exists
+  // for. Where there is a canvas to encode with, the cursor goes out as PNG.
+  check('a browser gets the same cursor as a PNG, pixels intact', () => {
+    const drawn = [];
+    const fakeDocument = {
+      createElement: () => ({
+        width: 0, height: 0,
+        getContext: () => ({
+          createImageData: (w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }),
+          putImageData: image => drawn.push(image),
+        }),
+        toDataURL: () => 'data:image/png;base64,SENTINEL',
+      }),
+    };
+    const previous = global.document;
+    global.document = fakeDocument;
+    let css;
+    try {
+      const canvas = { style: {} };
+      const host = createHostImports({
+        getMemory: () => harness.memory.buffer,
+        renderer: { canvas },
+        resourceJson: { menus: {}, dialogs: {}, strings: {}, bitmaps: {} },
+        onExit: () => {},
+      });
+      // A cursor of its own: WAT hands the pixels over once per handle, so
+      // the scratch behind an earlier push has since been rasterized over.
+      pushes.length = 0;
+      const fresh = wat.test_call_CreateIconIndirect(
+        iconInfo({ xHot: 1, yHot: 2, mask: crossMask() })) >>> 0;
+      wat.test_call_SetCursor(fresh);
+      const push = pushes.find(entry => entry.hadBits && entry.hcur === fresh);
+      assert.ok(push, 'no cursor was ever pushed to take pixels from');
+      host.host.set_cursor_image(fresh, push.width, push.height, 1, 2, push.bgraWa);
+      css = canvas.style.cursor || '';
+    } finally {
+      if (previous === undefined) delete global.document; else global.document = previous;
+    }
+    assert.strictEqual(css, 'url(data:image/png;base64,SENTINEL) 1 2, default',
+      `a browser cursor came out as ${JSON.stringify(css.slice(0, 40))}`);
+    assert.ok(drawn.length, 'nothing was written into the PNG canvas');
+    // BGRA in, RGBA out -- the white pixel of the art must stay white rather
+    // than coming back as some channel-swapped near-black.
+    const data = drawn[drawn.length - 1].data;
+    assert.strictEqual(data[3], 0, 'the transparent corner became opaque');
+    assert.deepStrictEqual([data[4], data[5], data[6], data[7]], [255, 255, 255, 255],
+      'the white pixel did not survive the BGRA -> RGBA swap');
   });
 
   check('DestroyIcon frees the slot and the handle stops resolving', () => {

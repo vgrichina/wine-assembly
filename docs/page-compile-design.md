@@ -20,6 +20,7 @@ different cost and must clear the same bar before any of it is kept.
 | 4, 4.1 — the hash cache is deleted, pages are the only storage | **built.** `$cache_slot` / `$cache_lookup` / `$cache_store` and the 256KB-per-thread `CACHE_INDEX` are gone; `$run`'s lookup ladder is index → decode with nothing in between. |
 | 5 — invalidation per offset | **built**, at block granularity rather than instruction granularity — see the note in 5.1 below. |
 | 5.1 — break the chunk when retiring | **built, and it needed no new opcode.** See below. |
+| adaptive chunk allocation and reuse | **built 2026-08-25.** Compiled pages reserve 4/8/12/16KB according to emitted size, grow between classes, and recycle safely retired chunks. See section 16. |
 | 6 — v1 exclusions | unchanged |
 | 8, 8.1 — measurement | **run.** See section 10. |
 
@@ -166,7 +167,9 @@ One array per compiled page, indexed by the low 12 bits of the guest address:
 ```
 
 `u16` entries: 4096 * 2 = **8KB per compiled page**, and a page's chunk is capped
-at 64KB of threaded code, which is far more than a 4KB x86 page can generate.
+at 16KB of threaded code. The 14-bit chunk offset is also the reason for that
+cap; a page that fills it is retired and rebuilt from the hot paths actually
+executed next.
 
 ### 2.3 The fast path
 
@@ -398,7 +401,7 @@ semantics — no change in behaviour, no new cross-thread hazard.
 | shadow stack for `ret` | same; `ret` keeps working, just without the shortcut |
 | per-page generation counters | clearing `$cur_page_base` is sufficient (§5) |
 | cross-page discovery in pass 1 | a page seam costs one `$th_jmp` dispatch |
-| reclaiming orphaned chunks | today's arena never reclaims either |
+| reclaiming a chunk still named by an executing block | unsafe until that block returns; ordinary retired chunks are now recycled, while the full-page path defers recycling until `$next` returns |
 | pruning `$main`'s preamble | a real win, but independent of this change |
 | the `CASE_CHAIN` switch super-op | separate idea, stacks on top, measure this first |
 
@@ -986,3 +989,42 @@ short-reads `ui_art\logo.pcx`, so 12 of the 15 logo sprites are solid black at
 load time regardless of invalidation. I did not run main's build side by side to
 tell those apart — the merge was taken with Diablo's state explicitly sacrificed
 and handed to its owner. See `docs/re-notes/diablo-shareware.md`.
+
+## 16. Adaptive compiled-page chunks (2026-08-25)
+
+The original allocator reserved the full 16KB threaded-code capacity for every
+compiled guest page. Diablo II made the cost visible: its main thread repeatedly
+exhausted the 4MB code arena and reset the entire page directory, throwing away
+useful decoded code along with the sparse pages that caused the pressure.
+
+Instrumentation on the fixed-size allocator sampled 795 Diablo II pages through
+batch 1308. Their mean compiled payload was 2,411 bytes; 621 (78.1%) fit in 4KB,
+772 (97.1%) fit in 8KB, 791 (99.5%) fit in 12KB, and all fit in 16KB. Reserving
+16KB unconditionally was therefore mostly reserving empty tail space.
+
+The allocator now uses four capacity classes: 4, 8, 12 and 16KB. A page starts
+in the smallest class that holds its first decoded run and relocates to the next
+class only when later publication needs it. Relocation copies the existing
+threaded code and adjusts the decoder's pending entry pointer before execution.
+Each class has a free list, so collision, invalidation and directory-pressure
+retirements normally recycle the exact-size chunk instead of advancing the
+arena bump pointer. When all 128 parallel indexes are live, a clock walk evicts
+one non-current page rather than silently declining every new page.
+
+A 16KB page needs special handling: the decoded run that discovers the overflow
+may still be executing from that chunk. Its directory entry is removed at once,
+but the chunk is put on the free list only after `$next` returns. Nested
+synchronous dispatch conservatively abandons such a chunk until the next full
+reset because an outer frame may still hold its address.
+
+On the final Diablo II replay, through batch 1660, the allocator performed
+82,540 class grows and 125,615 chunk reuses and reached the world-loading/game
+execution path with 13 full cache clears. The earlier fixed-size trace had 128
+clears in batches 1500–1600 alone (137 cumulatively by batch 1600, 1,672 by
+batch 2300). The host was heavily and variably loaded, so these are deterministic
+cache-pressure counters, not a defensible wall-clock speedup claim.
+
+`test/test-page-chunk-sizing.js` covers class selection, growth with payload
+preservation, same-class reuse, safe deferred retirement, bounded allocation
+under collision churn, index clock eviction, and a real decoded fall-through
+chain whose entry pointer must follow a relocated chunk.

@@ -126,3 +126,49 @@ renderer pointer input at guest `(148,193)` hits the measured New Game button
 `/private/tmp/hlu-gameplay-click2/halflife_uplink-new-game-click.png`.
 This is not yet a first-person frame; do not treat the current browser smoke as
 full gameplay acceptance.
+
+## Difficulty selection and current gameplay boundary
+
+The difficulty dialog exposed a separate native-dialog delivery bug. A WAT
+BUTTON sent its custom `WM_COMMAND` synchronously to the parent. Uplink's New
+Game handler enters another modal dialog, so the bounded recursive interpreter
+eventually logged
+`[sync] ABANDONED wndproc msg=0x111 at 0x00459554 after 64 rounds`; clicking
+Easy after that resumed a discarded x86 continuation and crashed. Custom
+commands to a parent with a retained DLGPROC are now posted through the guest
+message queue. `IDOK`, `IDCANCEL`, and non-dialog parents remain synchronous.
+The focused regression also subclasses the dialog WNDPROC, matching Uplink's
+MFC dialog rather than relying on the visible `WNDPROC_DIALOG` marker.
+
+With that fix, normal renderer input reaches the live Easy control (ID 26) and
+creates the next 640x480 Half-Life window without abandoning a continuation or
+exiting the app. The post-click evidence is under
+`/private/tmp/hlu-gameplay-postfix/`; `halflife_uplink-easy-loaded.png` is the
+furthest frame, but it is a uniform light-grey client area, not gameplay.
+
+The grey frame is not an active presentation or an unresponsive browser:
+
+- `hl.dll` loads from `c:\valve\dlls\hl.dll`, `client.dll` loads from
+  `c:/valve/cl_dlls\client.dll`, and passive entry counters record one call
+  each to `GetEntityAPI` and `GiveFnptrsToDll`.
+- The main thread repeatedly returns to VA `0x459554`, the instruction after
+  MFC's `PeekMessageA` call, with a stable stack and no synchronous-abandonment
+  log. This is the live top-level modal pump, not a discarded recursive frame.
+- The only long-lived worker is the renderer queue waiting normally. The other
+  observed worker starts at runtime VA `0x15a7e42`, which maps to
+  `comctl32.dll` RVA `0x20e42`; its function returns zero at RVA `0x20e8c`, so
+  its later `EIP=0` exit is normal COMCTL32 worker completion, not a failed
+  Half-Life game thread.
+- DirectDraw is configured only for the hidden menu HWND `0x10002`: the trace
+  contains `SetCooperativeLevel(0x10002, DDSCL_EXCLUSIVE|DDSCL_FULLSCREEN)` and
+  640x480x16 `SetDisplayMode`, but no later cooperative-level or display-mode
+  call for the new visible HWND `0x1001d`. That new window's canonical surface
+  remains untouched (`uploaded=false`, version 1) and it has no DirectDraw
+  layer.
+
+Therefore the queued-dialog fix advances the real dropdown path through Easy,
+but first-person acceptance remains blocked after game-DLL initialization and
+before the engine re-enters video/presentation setup. Do not paper over this by
+transferring DirectDraw ownership in the host: the guest has not issued a
+second `SetCooperativeLevel`, and there is not yet generic evidence that such a
+host-side handoff matches Windows behavior.

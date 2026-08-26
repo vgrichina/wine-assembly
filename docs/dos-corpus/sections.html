@@ -1,0 +1,304 @@
+<!-- Hand-written findings. tools/toyvm/sweep-report.js splices this file in
+     verbatim at __PROSE__; everything else on the page is generated from the
+     sweep JSON. Figures reference shots/NAME.png, which the same run copies in,
+     so a picture cited here is the same capture as its tile in the gallery. -->
+
+<section>
+  <h2>They were asking for DOS, not for a CPU</h2>
+  <p class="sub">the blockers were all machine, none of them instructions</p>
+
+  <p>The work list this sweep produces is short, and not one item on it has ever
+  been an instruction the VM could not execute. Every program in both classes
+  below was decoding and running perfectly and stopping on something the
+  <em>machine</em> did not provide &mdash; a driver, a file, a paragraph of
+  memory, a keystroke. That distinction is invisible to an opcode census, which
+  is the whole reason for photographing screens instead of counting bytes.</p>
+
+  <h3>The ones that printed an error and exited</h3>
+
+  <div class="scroll"><table>
+    <thead><tr><th class="l">what was missing</th><th class="l">what it was stopping</th></tr></thead>
+    <tbody>
+      <tr><td class="l">XMS &mdash; the INT 2Fh probe, an entry stub, the handle calls</td>
+          <td class="l"><span class="m">HIMEM.SYS NEEDED !!!</span></td></tr>
+      <tr><td class="l">EMS &mdash; four 16K pages at E000, mapped by copying</td>
+          <td class="l"><span class="m">ERROR: Expanded Memory Manager required !</span></td></tr>
+      <tr><td class="l">file I/O &mdash; there was <strong>none</strong>: no open, read, seek or close</td>
+          <td class="l">a demo rendering an empty screen from an empty buffer</td></tr>
+      <tr><td class="l">conventional memory &mdash; a ceiling of 0x9000, and a shrink nobody honoured</td>
+          <td class="l"><span class="m">This demo needs 600k free to run</span></td></tr>
+      <tr><td class="l">get-PSP, DAC read-back, cursor and page calls</td>
+          <td class="l">a fade that read the palette back and got zeros</td></tr>
+    </tbody>
+  </table></div>
+
+  <p>Two of those are worth the detail. <strong>A driver is mostly its
+  detection.</strong> <span class="m">HIMEM.SYS NEEDED !!!</span> is not a
+  program failing to use extended memory, it is a program failing to
+  <em>find</em> it: INT 2Fh AX=4300 went unhandled, and an unhandled multiplex
+  call reads exactly like a machine with no driver loaded. The same for EMS,
+  where the classic probe reads the string <span class="m">EMMXXXX0</span> out
+  of the INT 67h handler's own segment &mdash; so the interrupt stubs had to
+  move from offset <span class="m">v</span> to <span class="m">0x100 + v</span>
+  to make room for it. At the old layout those eight signature bytes would have
+  landed on top of the stubs for INT 0Ah through INT 11h, INT 10h among them.</p>
+
+  <p>Extended memory blocks started life in host buffers, on the reasoning that
+  a real-mode program cannot address them anyway &mdash; everything it can do
+  with one goes through the XMS move call, so <em>Lock</em> failed rather than
+  inventing a 32-bit address nothing was behind. Ten programs disagreed, all of
+  them from the same intro system, all of them stopping on that one call with
+  <span class="m">Extended memory allocation failure. (weird eh???)</span>. They
+  lock the block, take the linear address, and write through it from real mode
+  with a 32-bit offset.</p>
+
+  <p>So there is somewhere for that address to point now. Guest RAM is 16MB
+  &mdash; the 8086's megabyte, then extended memory above the HMA &mdash; and
+  blocks are cut from it. The address bus is the interesting part: an 8086 has
+  twenty address lines and every address wraps at 1MB, a machine with extended
+  memory in it does not, and a program can tell which one it is on. Address
+  translation masks through a global that holds the 8086's twenty lines until
+  the guest <em>takes an XMS handle</em>, and only then widens. A program that
+  never asks for extended memory keeps exact 8086 wrap semantics, and the
+  instruction gate &mdash; whose vectors are recorded off real silicon, wrap
+  included &mdash; never notices the change.</p>
+
+  <h3>MAINPART.EXE is the whole shape of it</h3>
+
+  <p>It printed <em>ERROR: Expanded Memory Manager required !</em> and exited.
+  With EMS it stopped printing that, allocated a handle, mapped four pages
+  &mdash; and drew nothing at all, for 120 million dispatches. The interrupt
+  trace says why in one line: between the page maps sit
+  <span class="m">INT 21h AH=42</span> and <span class="m">AH=3F</span>, both
+  marked <span class="m">UNHANDLED</span>. It was reading its data into those
+  pages and every read was going nowhere, so it rendered an empty screen out of
+  an empty buffer &mdash; which looks like a broken decoder and is a missing
+  <span class="m">read()</span>.</p>
+
+  <div class="shots" style="grid-template-columns:repeat(auto-fill,minmax(260px,1fr))">
+    <figure><button class="open" type="button"><img src="shots/MAINPART.png" alt="MAINPART.EXE rendering: a pixel-art stone fireplace with a lit fire, a candelabra, a flag above the mantel and a night sky through an arched window"></button>
+      <figcaption><span class="fn">MAINPART.EXE</span><span class="fp"><b>58,040</b> px</span></figcaption></figure>
+    <figure><button class="open" type="button"><img src="shots/ENDPART.png" alt="ENDPART.EXE rendering: chrome lettering reading Black Tech, CODE AND 3D-OBJECTS BY MADMAX, and CREDITS"></button>
+      <figcaption><span class="fn">ENDPART.EXE</span><span class="fp">credits part</span></figcaption></figure>
+  </div>
+
+  <h3>The ones that were waiting for a key</h3>
+
+  <p>The harness answers a blocking key read with a synthetic keystroke, and
+  that keystroke was Enter, always. About ten programs open on a menu that
+  ignores Enter completely and wants one specific character, so they sat at the
+  prompt for the entire run. A rotation through likely keys gets past that
+  eventually, but eventually means several wrong keys first, and a menu that
+  redraws on a bad key never settles.</p>
+
+  <p>The screen is right there and it says what it wants. The synthetic key now
+  <strong>reads the menu</strong>: it scans the text page for
+  <span class="m">selector &middot; label</span> pairs and picks the option whose
+  label means silence, which is what a headless run wants in every one of these.
+  The blind rotation is only the fallback. It answers once per <em>distinct</em>
+  screen, because a program still showing the same menu did not accept that key,
+  and sending it again forever is how a run hangs politely.</p>
+
+  <pre class="dlg-screen" style="max-height:none;border:1px solid var(--rule);color:var(--ink)">BUDENZA.EXE   <b>1) No Music</b>  2) DAC/Covox on LPT1              -&gt; 1
+CULT.EXE      Do YOU have a GUS <b>[Y/N]</b>                         -&gt; n
+CYCLE.EXE     (G)ravis Ultra Sound / (O)thers / <b>(N)one</b> ???    -&gt; N
+BTW.EXE       [1] 210h &hellip; <b>[0] Just kidding! I don't even own a GUS!!!</b>  -&gt; 0</pre>
+
+  <p class="note"><span class="m">BLIQ.EXE</span> and
+  <span class="m">CONTAGIO.EXE</span> printed <em>Can not init file manager</em>
+  while making no file call at all, which is what gave that one away: what they
+  could not find was their own name. A DOS program's environment block ends with
+  a count word and then the full path it was started from, and there was no
+  environment block &mdash; so they now get one, and open themselves.</p>
+
+  <h3>Two of those menus are not read the same way twice</h3>
+
+  <p>The last two lines above are the ones that took the reader apart. A menu
+  laid out as <span class="m">(G)ravis / (O)thers / (N)one</span> puts the
+  selector <em>inside</em> the word, so the label reads as
+  <span class="m">one</span> &mdash; which means neither yes nor no &mdash; and
+  puts the whole menu on one line, where a scanner anchored on line starts and
+  double spaces sees only the first option. And a silent option does not have to
+  say "none": <span class="m">Just kidding! I don't even own a GUS!!!</span> is
+  the same answer in a different voice.</p>
+
+  <h3>Then there is how the key gets in</h3>
+
+  <p>Reading the menu correctly is no use if nothing delivers the answer, and
+  these programs read the keyboard three different ways.</p>
+
+  <p><strong>The polled read.</strong> <span class="m">INT 16h AH=01h</span>
+  asks "is anyone there", and it deliberately never manufactured a key: a demo
+  checks that once a frame to decide whether to quit, and would be told yes on
+  its first frame. It answers now, but only on a <em>text</em> screen the menu
+  reader recognises &mdash; over its own graphics a demo is still told the
+  keyboard is empty.</p>
+
+  <p><strong>The port.</strong> <span class="m">BTW.EXE</span> sat on its menu
+  having made zero INT 16h calls in eleven million dispatches, because it hooks
+  nothing and asks the BIOS nothing: it reads port 60h directly, and that port
+  returned a constant zero. It serves the same queue now, make code then break
+  code, and IRQ1 is delivered to a program that installed its own INT 9.</p>
+
+  <p><strong>The command line.</strong> Some programs name their own way past
+  the screen they are stuck on. <span class="m">AMBIENT.EXE</span> prints
+  <em>MIDAS Error: NO GUS FOUND... USE "AMBIENT /NO_SND" FOR SILENT MODE</em>
+  and means every word: the PSP command tail is populated now, the sweep reads
+  the switch off the screen and retries with it, and the demo renders.
+  Lower-cased on the way in &mdash; the message shouts, and MIDAS's option
+  parser is case sensitive.</p>
+
+  <h3>The detector that was calling working programs hung</h3>
+
+  <p>The single biggest cause was not a menu at all. A run is declared hung
+  after two hundred handbacks at one address with nothing new on the console
+  &mdash; and a loop that <em>stores into a paragraph some compiled region
+  decoded</em> hands control back on every iteration, at the same address, with
+  nothing to show for it. That is indistinguishable from a spin by address
+  alone. <span class="m">IHANMUU.EXE</span> was cut off after 0.5M of its 30M
+  dispatches inside a loop whose SI and BP were advancing the whole time; with
+  the registers folded into the progress test it runs to a full mode 13h
+  screen.</p>
+
+  <div class="shots" style="grid-template-columns:repeat(auto-fill,minmax(260px,1fr))">
+    <figure><button class="open" type="button"><img src="shots/IHANMUU.png" alt="IHANMUU.EXE rendering a full mode 13h graphics screen"></button>
+      <figcaption><span class="fn">IHANMUU.EXE</span><span class="fp">was &ldquo;hung&rdquo;</span></figcaption></figure>
+    <figure><button class="open" type="button"><img src="shots/BTW.png" alt="BTW.EXE rendering a mode 13h graphics screen"></button>
+      <figcaption><span class="fn">BTW.EXE</span><span class="fp">read port 60h</span></figcaption></figure>
+    <figure><button class="open" type="button"><img src="shots/FROGFUZZ.png" alt="FROGFUZZ.EXE rendering an EGA planar screen"></button>
+      <figcaption><span class="fn">FROGFUZZ.EXE</span><span class="fp">GUS-port menu</span></figcaption></figure>
+    <figure><button class="open" type="button"><img src="shots/AMBIENT.png" alt="AMBIENT.EXE rendering a mode 13h graphics screen"></button>
+      <figcaption><span class="fn">AMBIENT.EXE</span><span class="fp">/no_snd</span></figcaption></figure>
+  </div>
+
+  <p class="note">Between them these moved thirteen programs from a text screen
+  to a picture, five from a blank one, and two from no capture at all: 83
+  graphics tiles became 107.</p>
+</section>
+
+<section>
+  <h2>What is left is a different machine</h2>
+  <p class="sub">twelve programs, one blocker, and it is not an instruction either</p>
+
+  <p>Thirteen programs got <em>worse</em> looking in this round, and the change
+  is honest. They are the ones that printed <span class="m">Extended memory
+  allocation failure. (weird eh???)</span> and exited; with a lock that works
+  they no longer print anything, and stop a few instructions later at
+  <span class="m">LGDT</span> and <span class="m">MOV CR0, EAX</span>. All
+  thirteen are the same 32-bit DOS extender, and one more &mdash;
+  <span class="m">COCAHOLC.EXE</span> &mdash; reaches the same place through
+  <span class="m">INT 2Fh AX=1687</span>, the DPMI entry point. An error message
+  is a better picture than a black screen, but it was a message about the wrong
+  thing.</p>
+
+  <p>What they want is a descriptor table, a segment whose base comes out of it
+  instead of out of a shift by four, and a code segment whose default operand
+  size is 32 bits. That is not an instruction the decoder is missing. It is a
+  second addressing mode for the whole machine, and it is the largest single
+  item left in the corpus.</p>
+</section>
+
+<section>
+  <h2>Half the corpus was never running its own code</h2>
+  <p class="sub">what a compiled region gets wrong about a program that writes itself</p>
+
+  <p>The compiler here decodes a whole reachable subgraph at once, ahead of the
+  guest: from an entry point it follows every branch it can resolve and emits
+  the lot into the arena. That is what makes it fast, and it is exactly wrong
+  for the way this corpus ships. Nearly all of it is compressed &mdash; LZEXE,
+  PKLITE, DIET &mdash; so the file on disk is a few hundred bytes of depacker
+  and a blob, and <em>the program that eventually runs is one the depacker
+  wrote</em>. Decoding ahead of the guest means decoding those addresses while
+  they still hold the depacker's bytes.</p>
+
+  <p><span class="m">uman.com</span> is the clean case. It copies 324 bytes of
+  itself to the top of its segment, far-jumps there, unpacks a screen back over
+  the addresses it came from, and jumps home. The compiled form of "home" was
+  still the depacker, so it depacked again, and again: <strong>ten million
+  dispatches executing its own text screen as instructions</strong>. Nothing
+  about that looks like a packer bug from the outside. It looks like a demo that
+  drew nothing.</p>
+
+  <h3>One bit per sixteen bytes</h3>
+
+  <p>Every store in this VM already funnels through one helper, because
+  unchained VGA needs a decision point. So the fix rides along there: a bitmap
+  marks every paragraph a compile decoded, the store helper tests the bit, and a
+  hit sets a flag. The host then throws away every compiled region and decodes
+  again from memory as it now is &mdash; which costs nothing in the steady
+  state, because a packed program unpacks once.</p>
+
+  <h3>And then it kept running the bytes anyway</h3>
+
+  <p>Setting the flag was only half of it. Nothing acted on it until the next
+  handback, and <strong>a block that falls straight through into the code it
+  just wrote never hands back</strong>. A depacker that reaches its payload by
+  far jump was fine, because a far jump leaves the arena on its own; one that
+  simply runs off the end of its own last instruction into the freshly written
+  bytes carried on executing the trace compiled from what used to be there.</p>
+
+  <p>The flag cannot cut the block it fires in. Expiry can land mid-x86
+  instruction, and a resume goes to the last <em>block head</em>, so cutting
+  there would re-run the store. The cut belongs one step later, at the first
+  block boundary after it: the guest address to resume at has just been written
+  down, so refusing the compiled successor is both correct and free.</p>
+
+  <p class="note">Five programs &mdash; <span class="m">COROMER</span>,
+  <span class="m">rage</span>, <span class="m">ANARCHY</span>,
+  <span class="m">ASM95ZEA</span>, <span class="m">BBUUMI</span> &mdash; had been
+  ending up at <span class="m">0000:003b</span>, executing the interrupt vector
+  table as instructions, for exactly this reason. They ran a decryption stage,
+  fell through into it, and jumped through a pointer the stale trace had left in
+  the wrong register. All five now run their own code.</p>
+
+  <div class="shots" style="grid-template-columns:repeat(auto-fill,minmax(260px,1fr))">
+    <figure><button class="open" type="button"><img src="shots/ASM95ZEA.png" alt="ASM95ZEA.EXE rendering a mode 13h graphics screen"></button>
+      <figcaption><span class="fn">ASM95ZEA.EXE</span><span class="fp"><b>11,900</b> px</span></figcaption></figure>
+    <figure><button class="open" type="button"><img src="shots/1994-a-anarchy_-ANARCHY.png" alt="ANARCHY.EXE rendering its screen"></button>
+      <figcaption><span class="fn">ANARCHY.EXE</span><span class="fp"><b>558</b> cells</span></figcaption></figure>
+    <figure><button class="open" type="button"><img src="shots/uman.png" alt="uman.com rendering a full ANSI text screen"></button>
+      <figcaption><span class="fn">uman.com</span><span class="fp"><b>1,114</b> cells</span></figcaption></figure>
+    <figure><button class="open" type="button"><img src="shots/ANTRO.png" alt="ANTRO.COM rendering a mode 13h graphics screen"></button>
+      <figcaption><span class="fn">ANTRO.COM</span><span class="fp"><b>63,775</b> px</span></figcaption></figure>
+  </div>
+</section>
+
+<section>
+  <h2>The other thing a DOS program does is start another program</h2>
+  <p class="sub">EXEC, TSRs, and where a child actually goes</p>
+
+  <p><span class="m">CATWALK.EXE</span> ran to completion, exited zero, and drew
+  nothing &mdash; a program whose entire job is to start a different one. It
+  carries four files in its tail: an info file, a music module, a player and the
+  demo. <span class="m">INT 21h AH=3Ch</span>, create-file, was not implemented,
+  so each create returned a failure code that the program used as a handle, and
+  the write call accepted it and reported the bytes written. It unpacked its
+  whole payload into nowhere and asked DOS to run it.</p>
+
+  <p>Created files now live in memory &mdash; nothing here writes the host disk
+  &mdash; and are re-openable by name, seekable and growable.
+  <span class="m">AH=4Bh</span> loads and runs one, with its own PSP, its own
+  command tail and a stack of parent contexts to return through. Getting
+  <em>where</em> the child goes right took one correction worth keeping: a loader
+  stub declares it owns all of memory and is expected to shrink itself first, so
+  the child is placed above the parent's <em>minimum</em> allocation &mdash;
+  image plus the paragraphs its header asks for, which is where its BSS and
+  stack live. Using the image size alone dropped the player onto the parent's
+  stack, and the parent came back from the call into rubbish.</p>
+
+  <p class="note">CATWALK now unpacks itself, starts CapaS3M with
+  <span class="m">CATWALK.S3M</span> on its command line, gets told there is no
+  Gravis UltraSound, and runs the 58KB demo it extracted. That last dependency
+  is real hardware and stays unmet &mdash; but the run is now stopped by the
+  machine it wants, not by a call that was never written.</p>
+
+  <h3>Photographing the page that is on screen</h3>
+
+  <p>Text mode has eight pages in <span class="m">B800</span>, and a demo
+  animates by drawing into the one that is not being shown and then pointing the
+  CRTC's start address at it. The console model was pinned to page zero, so
+  <span class="m">ant1.exe</span> wrote a full screen and was photographed blank
+  &mdash; with the summary line saying, in plain sight,
+  <span class="m">crtc says start=2000</span>. Two thousand words is four
+  thousand bytes, which is page one.</p>
+</section>

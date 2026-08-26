@@ -1,0 +1,147 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>lab: cursor image formats</title>
+<!--
+  Lab page F. The other lab pages isolate the scroll and the toolbars; this
+  one isolates a format question, and it exists because the emulated cursor
+  (lib/touch-cursor.js) draws a guest-built pointer correctly in Chrome and
+  not on an iPhone.
+
+  Two links in that chain are WebKit-specific and untested anywhere else in
+  the repo:
+
+    1. lib/host-imports.js packages a cursor the guest built as a .cur --
+       `data:image/x-icon` -- because that is the format a CSS cursor accepts
+       everywhere. Whether WebKit will decode one into an <img> is a separate
+       question, and lib/touch-cursor.js needs exactly that to rasterize the
+       art onto its sprite.
+    2. Setting `style.cursor` to a data URL can be rejected at parse time, in
+       which case the property keeps its old value and the poll never sees an
+       image at all.
+
+  So try both formats through both paths and say which combination survives.
+  No emulator, no shell, nothing else on the page: whatever this reports is a
+  property of the browser.
+-->
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; padding: 1rem 1.1rem; font: 15px/1.5 -apple-system, system-ui, sans-serif; }
+  h1 { font-size: 1.05rem; margin: 0 0 .6rem; }
+  #out { white-space: pre-wrap; font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
+  .ok { color: #157f3b; } .bad { color: #b3261e; font-weight: 600; }
+  #swatch { margin-top: 1rem; width: 100%; height: 5rem; border: 1px solid currentColor;
+            display: flex; align-items: center; justify-content: center; }
+</style>
+<h1>cursor image formats</h1>
+<div id="out">running…</div>
+<div id="swatch">hover here (desktop) — the .cur is set on this box</div>
+<script>
+(() => {
+  'use strict';
+  const out = document.getElementById('out');
+  const lines = [];
+  const say = (text, ok) => {
+    lines.push(text);
+    const div = document.createElement('div');
+    div.textContent = text;
+    if (ok !== undefined) div.className = ok ? 'ok' : 'bad';
+    if (out.textContent === 'running…') out.textContent = '';
+    out.appendChild(div);
+  };
+
+  // An 8x8 opaque red square, in the exact wrapper lib/host-imports.js emits:
+  // ICONDIR + ICONDIRENTRY + BITMAPINFOHEADER at 32bpp with biHeight doubled
+  // and an all-zero AND mask after the colour rows.
+  function curDataUrl(w, h, hotX, hotY) {
+    const maskStride = ((w + 31) >> 5) * 4;
+    const xorSize = w * h * 4;
+    const andSize = maskStride * h;
+    const bytes = new Uint8Array(22 + 40 + xorSize + andSize);
+    const dv = new DataView(bytes.buffer);
+    dv.setUint16(2, 2, true);
+    dv.setUint16(4, 1, true);
+    bytes[6] = w; bytes[7] = h;
+    dv.setUint16(10, hotX, true);
+    dv.setUint16(12, hotY, true);
+    dv.setUint32(14, 40 + xorSize + andSize, true);
+    dv.setUint32(18, 22, true);
+    dv.setUint32(22, 40, true);
+    dv.setInt32(26, w, true);
+    dv.setInt32(30, h * 2, true);
+    dv.setUint16(34, 1, true);
+    dv.setUint16(36, 32, true);
+    dv.setUint32(42, xorSize + andSize, true);
+    for (let i = 0; i < w * h; i++) {
+      const p = 62 + i * 4;
+      bytes[p] = 0x00; bytes[p + 1] = 0x00; bytes[p + 2] = 0xff; bytes[p + 3] = 0xff;  // BGRA
+    }
+    let bin = '';
+    for (const b of bytes) bin += String.fromCharCode(b);
+    return 'data:image/x-icon;base64,' + btoa(bin);
+  }
+
+  function pngDataUrl(w, h) {
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const g = canvas.getContext('2d');
+    g.fillStyle = '#ff0000';
+    g.fillRect(0, 0, w, h);
+    return canvas.toDataURL('image/png');
+  }
+
+  // Does an <img> decode it? That is what touch-cursor.js does with the art.
+  function decode(url) {
+    return new Promise(resolve => {
+      const img = new Image();
+      const done = () => resolve(img.naturalWidth
+        ? `decoded ${img.naturalWidth}x${img.naturalHeight}` : 'DECODE FAILED');
+      img.onload = done;
+      img.onerror = () => resolve('DECODE FAILED (error)');
+      img.src = url;
+      setTimeout(() => resolve(img.naturalWidth
+        ? `decoded ${img.naturalWidth}x${img.naturalHeight}` : 'TIMED OUT'), 3000);
+    });
+  }
+
+  // ... and does the CSS property keep it? A value rejected at parse time
+  // leaves the old one in place, which reads exactly like "the guest never
+  // set a cursor".
+  function cssAccepts(url) {
+    const el = document.getElementById('swatch');
+    el.style.cursor = 'auto';
+    el.style.cursor = `url(${url}) 2 3, default`;
+    const kept = el.style.cursor || '';
+    return { kept: kept.indexOf('url(') === 0 || kept.indexOf('url(') > 0, len: kept.length };
+  }
+
+  (async () => {
+    const cur = curDataUrl(8, 8, 2, 3);
+    const png = pngDataUrl(8, 8);
+    say(`ua: ${navigator.userAgent}`);
+    say(`cur url ${cur.length} bytes, png url ${png.length} bytes`);
+
+    const curDecode = await decode(cur);
+    say(`x-icon <img>: ${curDecode}`, !curDecode.includes('FAIL') && !curDecode.includes('TIMED'));
+    const pngDecode = await decode(png);
+    say(`png    <img>: ${pngDecode}`, !pngDecode.includes('FAIL') && !pngDecode.includes('TIMED'));
+
+    const curCss = cssAccepts(cur);
+    say(`x-icon style.cursor kept: ${curCss.kept} (${curCss.len} chars)`, curCss.kept);
+    const pngCss = cssAccepts(png);
+    say(`png    style.cursor kept: ${pngCss.kept} (${pngCss.len} chars)`, pngCss.kept);
+
+    // Leave the .cur on the swatch so a desktop WebKit also shows whether it
+    // renders one, which the property test cannot see.
+    document.getElementById('swatch').style.cursor = `url(${cur}) 2 3, default`;
+
+    try {
+      await fetch('/ios-report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify([{ kind: 'lab', page: 'cursor', line: lines.join(' | ') }]),
+      });
+    } catch (_) { /* opened without the server: the page still shows its answer */ }
+  })();
+})();
+</script>
