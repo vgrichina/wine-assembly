@@ -531,6 +531,15 @@ async function main() {
       + (m.filesMissed.length
         ? `; NOT FOUND ${uniq(m.filesMissed).join(' ')}` : ''));
   }
+  // Whether the program went looking for a sound card and what it found. A
+  // demo that prints "no soundcard" having never written to 226h is asking a
+  // different chip than the one we answer, which is a completely different
+  // investigation from one that ran the handshake and rejected the answer.
+  if (m.sb.detects || m.sb.commands || m.adlibIndex !== undefined) {
+    console.log(`  sb ${m.sb.detects} reset(s), ${m.sb.commands} DSP command(s)`
+      + `, ${m.sb.irqs} irq(s), speaker ${m.sb.speaker ? 'on' : 'off'}`
+      + (m.adlibIndex !== undefined ? `; opl2 touched` : ''));
+  }
   if (m.xmsBlocks.size || m.xmsMoved || m.emsHandles.size || m.emsMaps) {
     console.log(`  xms ${m.xmsBlocks.size} block(s), ${(m.xmsMoved / 1024).toFixed(0)}KB moved; `
       + `ems ${m.emsHandles.size} handle(s), ${m.emsMaps} page maps`);

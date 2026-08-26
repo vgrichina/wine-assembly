@@ -168,6 +168,7 @@ class DosSession {
     this.stuckAt = null;
     this.lastIrq = 0;
     this.lastKbIrq = 0;
+    this.lastSbIrq = 0;
     this.lastKey = '';
     this.lastWritten = 0;
     this.lastRegs = 0;
@@ -379,8 +380,27 @@ class DosSession {
     // there again gives the interrupted program zero instructions between
     // interrupts. brainbug spent 30M dispatches that way -- 3.6M interrupts, 8
     // dispatches apiece, and the main loop never ran once.
+    // IRQ7, the Sound Blaster. Ahead of the timer because a driver waiting on
+    // it is usually spinning on a flag its own handler sets, with a timeout:
+    // BLAND.EXE's MIDAS module hooks IRQ 2, 5 and 7, starts a block, and
+    // unhooks all three and fails the card if none of them fires. This is a
+    // block finishing, not a fixed rate, so there is no interval to respect --
+    // the machine only says yes once per transfer.
+    //
+    // Paced, and for the same reason the timer is. An auto-init transfer
+    // re-arms the moment it completes, so an unpaced block-done interrupt
+    // fires on every single handback: ATTIC.EXE, once it found the card, spent
+    // 100M dispatches on 539397 of them at 69 dispatches apiece and never got
+    // back to its menu. A real card at 22kHz with a 4K block interrupts a few
+    // times a second, which is far rarer than the timer, not more often.
+    const svec = (vm.get('flags') & 0x200)
+      && this.dispatched - this.lastSbIrq >= this.irqEvery
+      ? machine.sbIrq() : 0;
     const tvec = machine.timerVector();
-    if (tvec && this.dispatched - this.lastIrq >= this.irqEvery && (vm.get('flags') & 0x200)) {
+    if (svec) {
+      this.lastSbIrq = this.dispatched;
+      this.raise(svec);
+    } else if (tvec && this.dispatched - this.lastIrq >= this.irqEvery && (vm.get('flags') & 0x200)) {
       this.lastIrq = this.dispatched;
       this.raise(tvec);
     // IRQ1. A program with its own INT 9 handler reads the keyboard as hardware

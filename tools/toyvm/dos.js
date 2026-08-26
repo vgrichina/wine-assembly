@@ -58,6 +58,16 @@ function romStrike() {
 }
 
 const EMS_NAME = 'EMMXXXX0';  // at handler_segment:000A, the classic EMS probe
+// Names that open as a character device rather than a file. See openFile.
+const DEVICES = new Set([EMS_NAME, 'NUL', 'CON', 'AUX', 'PRN', 'CLOCK$']);
+// How many operand bytes each DSP command takes after itself. See sbCommand.
+const SB_ARGS = {
+  0x10: 1, 0x14: 2, 0x15: 2, 0x16: 2, 0x17: 2, 0x24: 2, 0x40: 1, 0x41: 2,
+  0x42: 2, 0x48: 2, 0x74: 2, 0x75: 2, 0x76: 2, 0x77: 2, 0x80: 2, 0xE0: 1,
+  0xE4: 1,
+};
+const SB_IRQ_VEC = 0x0F;      // IRQ 7, which is what BLASTER= announces
+const EMPTY = new Uint8Array(0);
 const EMS_FRAME_SEG = 0xE000; // 64K page frame: four 16K physical pages
 const EMS_PAGE = 0x4000;
 const EMS_TOTAL_PAGES = 512;  // 8MB of expanded memory, the usual EMM386 answer
@@ -583,7 +593,11 @@ class Machine {
     // interrupt-driven clocks (INT 1Ah, 15h, 16h) are already in `intCount`.
     this.clock = { retrace: 0, pit: 0 };
     // The Sound Blaster, as far as a detection routine can tell. See portIn.
-    this.sb = { out: [], cmd: 0, arg: 0, speaker: 0, detects: 0, commands: 0 };
+    this.sb = {
+      out: [], cmd: 0, args: [], expect: 0, speaker: 0, block: 0,
+      pending: false, autoInit: false, paused: false,
+      detects: 0, commands: 0, irqs: 0,
+    };
     // The 8253, as three down-counters rather than a number that goes up.
     //
     // Channel 0 is the one that matters: it divides 1.193182 MHz by its latch,
@@ -684,6 +698,22 @@ class Machine {
   }
 
   openFile(name) {
+    // Character devices are opened by name, not found on disk. EMMXXXX0 is the
+    // one that matters here: the *other* way to detect expanded memory, older
+    // than the INT 67h signature check and the one CYTOPYGE and BABYTRO use.
+    // Opening it failed, so both concluded there was no EMS at all -- BABYTRO
+    // printed "You Do Not Have Enough Free Memory to Run This Intro" and quit
+    // 255 -- while INT 67h behind it was answering every call correctly. NUL
+    // and the console are here because a program that opens one and gets a
+    // "file not found" tends to treat it as a broken system rather than a
+    // missing file.
+    const dev = (name || '').replace(/^[A-Za-z]:/, '').split(/[\\/]/).filter(Boolean).pop();
+    if (dev && DEVICES.has(dev.toUpperCase())) {
+      const h = this.fileNext++;
+      this.files.set(h, { buf: EMPTY, pos: 0, name: dev, device: true });
+      this.filesOpened.push(dev);
+      return h;
+    }
     // A file the program itself created earlier in this run lives in memory and
     // is found before the host directory: a demo that writes a config or a
     // decompressed temp file and reads it straight back has to see its own
@@ -1083,20 +1113,70 @@ class Machine {
   // NUL-terminated, which a few detectors read to confirm a real card.
   sbCommand(v) {
     this.sb.commands++;
-    if (this.sb.expect) { this.sb.expect--; this.sb.arg = v; return; }
+    // A command's operand bytes go to the same port as the command, so the
+    // count has to be known before they arrive -- write one too few and the
+    // next operand is read as a command.
+    if (this.sb.expect) {
+      this.sb.expect--;
+      this.sb.args.push(v);
+      if (!this.sb.expect) this.sbRun(this.sb.cmd, this.sb.args);
+      return;
+    }
     this.sb.cmd = v;
+    this.sb.args = [];
+    const n = SB_ARGS[v] !== undefined ? SB_ARGS[v]
+      : (v >= 0xB0 && v <= 0xCF ? 3 : 0);        // SB16 transfer: mode + length
+    if (n) { this.sb.expect = n; return; }
+    this.sbRun(v, []);
+  }
+
+  sbRun(v, args) {
     if (v === 0xE1) { this.sb.out.push(2, 1); return; }
     if (v === 0xE3) {
       for (const c of 'COPYRIGHT (C) CREATIVE TECHNOLOGY LTD, 1992.') this.sb.out.push(c.charCodeAt(0));
       this.sb.out.push(0);
       return;
     }
-    // E0h is the "DSP identification" echo: the next byte written comes back
-    // complemented, and a detector that gets its own byte back concludes there
-    // is nothing there.
-    if (v === 0xE0) { this.sb.echo = true; return; }
-    if (this.sb.echo) { this.sb.echo = false; this.sb.out.push((~v) & 0xFF); return; }
+    // E0h is the "DSP identification" echo: the byte written after it comes
+    // back complemented, and a detector that gets its own byte back concludes
+    // there is nothing there.
+    if (v === 0xE0) { this.sb.out.push((~args[0]) & 0xFF); return; }
     if (v === 0xD1 || v === 0xD3) { this.sb.speaker = v === 0xD1 ? 1 : 0; return; }
+    if (v === 0x48) { this.sb.block = args[0] | (args[1] << 8); return; }
+    // A transfer. Nothing is played -- there is no DMA behind this and no
+    // audio out -- but the *end* of it is observable, and observing it is how
+    // a driver decides the card is real. MIDAS (BLAND.EXE's .MSE modules) hooks
+    // IRQ 2, 5 and 7, kicks off a block, and fails the whole card if none of
+    // them fires; so does the AdLib-plus-SB init in several others. Arming here
+    // and letting the run loop deliver it is the whole point.
+    //
+    // 80h is the same thing with silence, which is exactly what an init probe
+    // asks for. D0h/D4h pause and resume, and a paused transfer must not
+    // complete or an auto-init driver sees a block it never started.
+    if (v === 0x14 || v === 0x15 || v === 0x16 || v === 0x17 || v === 0x80
+        || v === 0x1C || v === 0x1D || v === 0x2C || v === 0x90 || v === 0x91
+        || (v >= 0xB0 && v <= 0xCF)) {
+      this.sb.autoInit = v === 0x1C || v === 0x1D || v === 0x2C || v === 0x90
+        || (v >= 0xB0 && v <= 0xCF && (args[0] & 4) !== 0);
+      this.sb.pending = true;
+      return;
+    }
+    if (v === 0xD0) { this.sb.paused = true; this.sb.pending = false; return; }
+    if (v === 0xD4) { this.sb.paused = false; this.sb.pending = true; return; }
+    // DAh stops an auto-init transfer for good.
+    if (v === 0xDA || v === 0xD9) { this.sb.autoInit = false; this.sb.pending = false; }
+  }
+
+  // The vector for the Sound Blaster's IRQ, if a block is finished and the
+  // program has a handler on it. IRQ 7 is what BLASTER announces; a driver that
+  // hooked several and is waiting to see which one fires learns the answer
+  // here. Auto-init keeps going, single-cycle does not.
+  sbIrq() {
+    if (!this.sb.pending || this.sb.paused) return 0;
+    if (!this.hookedVector(SB_IRQ_VEC)) return 0;
+    this.sb.pending = this.sb.autoInit;
+    this.sb.irqs++;
+    return SB_IRQ_VEC;
   }
 
   // The OPL2 status register. The presence test is: reset both timers, read
