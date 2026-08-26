@@ -143,6 +143,11 @@ function loadExe(mem, buf, { loadSeg = LOAD_SEG, pspSeg = PSP_SEG } = {}) {
     ss: (ss + loadSeg) & 0xFFFF, sp,
     ds: pspSeg, es: pspSeg,
     loadSeg, pspSeg, imageBytes, allocTop,
+    // The least memory this program owns: its image plus the paragraphs its
+    // header says it needs on top -- BSS and stack, which are not in the file.
+    // EXEC puts a child here, and getting it wrong by using the image size
+    // alone dropped CATWALK's player straight onto its parent's stack.
+    minTop: own + minAlloc,
   };
 }
 
@@ -171,6 +176,7 @@ function loadCom(mem, buf, { pspSeg = PSP_SEG } = {}) {
     ss: pspSeg, sp,
     ds: pspSeg, es: pspSeg,
     loadSeg: pspSeg, pspSeg, imageBytes: image.length, com: true,
+    minTop: pspSeg + 0x1000,             // a .COM owns its whole segment
   };
 }
 
@@ -406,6 +412,14 @@ const CON_COLS = 80, CON_ROWS = 25;
 // place, and it is what the hardware does.
 const VRAM_TEXT = 0xB8000;
 
+// The name a created file is remembered under. Same rules hostPath applies to
+// a lookup -- base name, no drive, no directory, case-folded -- so a program
+// that creates C:\TEMP\X.DAT and opens x.dat finds it.
+function fileKey(name) {
+  const base = String(name || '').replace(/^[A-Za-z]:/, '').split(/[\\/]/).filter(Boolean).pop();
+  return base ? base.toLowerCase() : null;
+}
+
 function newConsole(mem) {
   const cells = CON_COLS * CON_ROWS;
   for (let i = 0; i < cells; i++) { mem[VRAM_TEXT + i * 2] = 0x20; mem[VRAM_TEXT + i * 2 + 1] = 0x07; }
@@ -524,17 +538,27 @@ class Machine {
     // A freshly loaded .EXE owns every paragraph up to the ceiling, so the
     // free pool starts empty and fills when the program shrinks its own block.
     this.allocTop = DEFAULT_ALLOC_TOP;
+    // The first paragraph past the running program's image -- where EXEC puts a
+    // child, and where a program that shrinks its block leaves free memory.
+    this.imageTop = DEFAULT_ALLOC_TOP;
     // XMS blocks and EMS handles, both backed by host buffers. Counters so a
     // run can say whether a manager was merely detected or actually used.
     // Open files, and a record of what was asked for -- "which file could it
     // not find" is the first question when a demo renders an empty screen.
     this.fileRoot = opts.fileRoot || null;
     this.files = new Map(); this.fileNext = 5;   // 0-4 are the standard handles
-    this.filesOpened = []; this.filesMissed = [];
+    this.filesOpened = []; this.filesMissed = []; this.filesCreated = [];
+    // Files the guest created, by base name. Writes never reach the host disk.
+    this.tempFiles = new Map();
+    // EXEC: the parent contexts to return to, and the code the last child
+    // exited with. `transfer` is how a service hands control somewhere else.
+    this.execStack = []; this.lastExitCode = 0; this.transfer = null;
+    this.curPsp = PSP_SEG;             // whose PSP AH=51h/62h reports
     this.xmsBlocks = new Map(); this.xmsNext = 1; this.xmsMoved = 0;
     this.emsHandles = new Map(); this.emsNext = 1; this.emsMaps = 0;
     this.emsMapped = [null, null, null, null];
     this.unhandled = new Map();
+    this.unhandledFn = new Map();      // "vec:ah" -> count, the real work list
     this.intCount = new Map();
     // Which clock, if any, a program is pacing itself off. A demo that never
     // touches any of these cannot be waiting for time and is compute-bound by
@@ -629,6 +653,18 @@ class Machine {
   }
 
   openFile(name) {
+    // A file the program itself created earlier in this run lives in memory and
+    // is found before the host directory: a demo that writes a config or a
+    // decompressed temp file and reads it straight back has to see its own
+    // bytes, and nothing here ever touches the real disk for writes.
+    const key = fileKey(name);
+    if (key && this.tempFiles.has(key)) {
+      const rec = this.tempFiles.get(key);
+      const h = this.fileNext++;
+      this.files.set(h, { buf: rec.data.subarray(0, rec.len), pos: 0, name, rec });
+      this.filesOpened.push(name);
+      return h;
+    }
     const p = this.hostPath(name);
     if (!p) { this.filesMissed.push(name); return 0; }
     let buf;
@@ -637,6 +673,50 @@ class Machine {
     this.files.set(h, { buf, pos: 0, name });
     this.filesOpened.push(name);
     return h;
+  }
+
+  // The whole content of a file as a Buffer, wherever it lives -- a file the
+  // guest created earlier in this run, or one next to the executable. EXEC
+  // needs it: the program it is asked to run is usually one this run produced.
+  readWholeFile(name) {
+    const key = fileKey(name);
+    if (key && this.tempFiles.has(key)) {
+      const rec = this.tempFiles.get(key);
+      return Buffer.from(rec.data.subarray(0, rec.len));
+    }
+    const p = this.hostPath(name);
+    if (!p) { this.filesMissed.push(name); return null; }
+    try { return fs.readFileSync(p); } catch { this.filesMissed.push(name); return null; }
+  }
+
+  // Create (or truncate) a file. It exists only in this process -- the corpus
+  // directory is read-only as far as the emulator is concerned -- but it is a
+  // real file to the guest: writeable, seekable, and re-openable by name.
+  createFile(name) {
+    const key = fileKey(name);
+    if (!key) return 0;
+    const rec = { data: new Uint8Array(4096), len: 0 };
+    this.tempFiles.set(key, rec);
+    const h = this.fileNext++;
+    this.files.set(h, { buf: rec.data.subarray(0, 0), pos: 0, name, rec });
+    this.filesCreated.push(name);
+    return h;
+  }
+
+  // Write into a created file, growing it. `pos` is honoured, so a program that
+  // seeks back to patch a header gets what it wrote there.
+  writeFile(f, src, n) {
+    const rec = f.rec;
+    const end = f.pos + n;
+    if (end > rec.data.length) {
+      const grown = new Uint8Array(Math.max(end, rec.data.length * 2));
+      grown.set(rec.data.subarray(0, rec.len));
+      rec.data = grown;
+    }
+    for (let i = 0; i < n; i++) rec.data[f.pos + i] = this.mem[(src + i) & 0xFFFFF];
+    f.pos = end;
+    if (end > rec.len) rec.len = end;
+    f.buf = rec.data.subarray(0, rec.len);
   }
 
   // What is on the text page, as lines. The autoKey menu reader works off this,
@@ -1195,6 +1275,20 @@ class Machine {
   // know -- an unknown one is counted and IRETed, which is what a bare machine
   // with no handler installed effectively does.
   service(vec, r) {
+    const ah = (r.get('ax') >> 8) & 0xFF;
+    const ok = this.serviceCall(vec, r);
+    // The function, not just the vector. `int 21h x9` says nothing about which
+    // DOS call is missing, and the whole point of counting these is to rank the
+    // gaps: it was this histogram that named AH=4Bh (EXEC) as what stands
+    // between four self-extracting demos and their payload.
+    if (!ok) {
+      const key = `${vec.toString(16).padStart(2, '0')}:${ah.toString(16).padStart(2, '0')}`;
+      this.unhandledFn.set(key, (this.unhandledFn.get(key) || 0) + 1);
+    }
+    return ok;
+  }
+
+  serviceCall(vec, r) {
     this.intCount.set(vec, (this.intCount.get(vec) || 0) + 1);
     const ah = (r.get('ax') >> 8) & 0xFF, al = r.get('ax') & 0xFF;
 
@@ -1439,8 +1533,96 @@ class Machine {
 
   int21(ah, al, r) {
     switch (ah) {
-      case 0x4C: this.exited = true; this.exitCode = al; return true;
-      case 0x00: this.exited = true; this.exitCode = 0; return true;
+      case 0x4C: case 0x00: case 0x31: {
+        // Exit, and -- AH=31h -- exit keeping memory. That distinction matters
+        // as soon as EXEC exists: CATWALK.EXE runs a music player that goes
+        // resident and hooks the timer, then runs the demo itself. Forgetting
+        // the player's block loaded the demo straight on top of it.
+        const code = ah === 0x4C || ah === 0x31 ? al : 0;
+        const keep = ah === 0x31 ? this.curPsp + (r.get('dx') & 0xFFFF) : 0;
+        if (this.execStack.length) {
+          const parent = this.execStack.pop();
+          this.lastExitCode = code;
+          this.transfer = parent;
+          this.allocTop = Math.max(parent.allocTop, keep);
+          this.imageTop = Math.max(parent.imageTop, keep);
+          this.curPsp = parent.psp;
+          this.log(`child exited ${code}${keep ? `, resident to ${keep.toString(16)}` : ''};`
+            + ` parent resumes at ${parent.cs.toString(16)}:${parent.ip.toString(16)}`);
+          return true;
+        }
+        this.exited = true; this.exitCode = code;
+        return true;
+      }
+      case 0x4D:                                // get child return code
+        r.set('ax', (this.lastExitCode || 0) & 0xFF);
+        r.setResultCf(false);
+        return true;
+      case 0x4B: {
+        // EXEC. Four demos in this corpus are self-extractors: they unpack a
+        // player and its data out of their own tail (see createFile) and then
+        // ask DOS to run it. With this missing, CATWALK.EXE wrote its four
+        // files and exited 0 with a black screen -- a complete run of a program
+        // whose entire job is to start another one.
+        if (al !== 0x00 && al !== 0x01) { r.setResultCf(true); r.set('ax', 1); return true; }
+        const name = this.guestPath(r);
+        const img = this.readWholeFile(name);
+        if (!img) { r.setResultCf(true); r.set('ax', 2); return true; }   // not found
+
+        // The child goes directly above the parent's IMAGE, not above the
+        // parent's allocation: a loader stub declares max-alloc 0xFFFF, owns all
+        // of memory and is expected to shrink itself (AH=4Ah) before it EXECs.
+        // Placing the child above the parent's claim instead left CATWALK's
+        // player with 60KB and it failed its first AH=48h.
+        const pspSeg = this.imageTop;
+        if (pspSeg + 0x1000 > DEFAULT_ALLOC_TOP) { r.setResultCf(true); r.set('ax', 8); return true; }
+        const info = loadExe(this.mem, img, { loadSeg: pspSeg + 0x10, pspSeg });
+
+        // The command tail, out of the parameter block at ES:BX.
+        const pb = ((r.get('es') << 4) + (r.get('bx') & 0xFFFF)) & 0xFFFFF;
+        const tailOff = this.mem[pb + 2] | (this.mem[pb + 3] << 8);
+        const tailSeg = this.mem[pb + 4] | (this.mem[pb + 5] << 8);
+        const tail = ((tailSeg << 4) + tailOff) & 0xFFFFF;
+        const n = Math.min(this.mem[tail] || 0, 127);
+        this.mem[(pspSeg << 4) + 0x80] = n;
+        for (let i = 0; i <= n; i++) this.mem[(pspSeg << 4) + 0x81 + i] = this.mem[tail + 1 + i];
+        this.mem[(pspSeg << 4) + 0x16] = this.curPsp & 0xFF;     // parent PSP
+        this.mem[(pspSeg << 4) + 0x17] = (this.curPsp >> 8) & 0xFF;
+        this.mem[(pspSeg << 4) + 0x2C] = ENV_SEG & 0xFF;         // same environment
+        this.mem[(pspSeg << 4) + 0x2D] = (ENV_SEG >> 8) & 0xFF;
+        this.log(`exec ${name} (${img.length} bytes) at psp ${pspSeg.toString(16)},`
+          + ` entry ${info.cs.toString(16)}:${info.ip.toString(16)},`
+          + ` tail "${[...this.mem.subarray(tail + 1, tail + 1 + n)]
+            .map(c => String.fromCharCode(c)).join('')}"`);
+
+        if (al === 0x01) {                       // load, do not execute
+          this.mem[pb + 0x0E] = info.sp & 0xFF; this.mem[pb + 0x0F] = (info.sp >> 8) & 0xFF;
+          this.mem[pb + 0x10] = info.ss & 0xFF; this.mem[pb + 0x11] = (info.ss >> 8) & 0xFF;
+          this.mem[pb + 0x12] = info.ip & 0xFF; this.mem[pb + 0x13] = (info.ip >> 8) & 0xFF;
+          this.mem[pb + 0x14] = info.cs & 0xFF; this.mem[pb + 0x15] = (info.cs >> 8) & 0xFF;
+          r.setResultCf(false);
+          return true;
+        }
+
+        // Where the parent resumes. It resumes AFTER the INT 21h, which is the
+        // address the IRET frame already holds -- run-dos applies this transfer
+        // once it has finished that IRET, so the values it saves here are the
+        // ones the parent had on the way in.
+        this.execStack.push({
+          cs: r.ret.cs, ip: r.ret.ip, ss: r.get('ss'), sp: r.ret.sp,
+          ds: r.get('ds'), es: r.get('es'), ax: 0,
+          allocTop: this.allocTop, imageTop: this.imageTop, psp: this.curPsp,
+        });
+        this.curPsp = pspSeg;
+        this.allocTop = Math.min(DEFAULT_ALLOC_TOP, info.allocTop);
+        this.imageTop = info.minTop;
+        this.transfer = {
+          cs: info.cs, ip: info.ip, ss: info.ss, sp: info.sp,
+          ds: info.ds, es: info.es,
+        };
+        r.setResultCf(false);
+        return true;
+      }
       case 0x30: r.set('ax', 0x0006); r.set('bx', 0); r.set('cx', 0); return true;  // "DOS 6.0"
       case 0x25: {                              // set interrupt vector
         const v = al * 4;
@@ -1514,8 +1696,11 @@ class Machine {
         // written rather than failing a program over a log it opened.
         const h = r.get('bx') & 0xFFFF, n = r.get('cx') & 0xFFFF;
         const src = ((r.get('ds') << 4) + r.get('dx')) & 0xFFFFF;
+        const f = this.files.get(h);
         if (h === 1 || h === 2) {
           for (let i = 0; i < n; i++) this.conPutc(this.mem[(src + i) & 0xFFFFF]);
+        } else if (f && f.rec) {
+          this.writeFile(f, src, n);
         }
         r.set('ax', n);
         r.setResultCf(false);
@@ -1524,7 +1709,7 @@ class Machine {
       // Get the PSP segment. BLIQ.EXE resizes its block, asks for its PSP and
       // prints "[ERROR]: Can not init file manager..." on the garbage it got
       // back -- a two-line call standing between it and the demo.
-      case 0x51: case 0x62: r.set('bx', PSP_SEG); r.setResultCf(false); return true;
+      case 0x51: case 0x62: r.set('bx', this.curPsp); r.setResultCf(false); return true;
       case 0x19: r.set('ax', (r.get('ax') & 0xFF00) | 2); return true;   // drive C:
       case 0x0E: r.set('ax', (r.get('ax') & 0xFF00) | 3); return true;   // 3 drives
       case 0x47: {                              // get current directory -> root
@@ -1546,6 +1731,32 @@ class Machine {
         if (!f) { r.setResultCf(true); r.set('ax', 2); return true; }   // not found
         r.set('ax', f);
         r.setResultCf(false);
+        return true;
+      }
+      case 0x3C: {                              // create/truncate
+        // CATWALK.EXE creates a file, gets no handle back, and then writes to
+        // the failed return value as though it were one -- 0x3C02, which INT 21h
+        // AH=40h cheerfully accepted. It reads the result back, finds nothing it
+        // wrote and exits 0 without drawing a frame.
+        const h = this.createFile(this.guestPath(r));
+        if (!h) { r.setResultCf(true); r.set('ax', 3); return true; }   // path not found
+        r.set('ax', h);
+        r.setResultCf(false);
+        return true;
+      }
+      case 0x41: {                              // delete
+        const key = fileKey(this.guestPath(r));
+        if (key && this.tempFiles.delete(key)) { r.setResultCf(false); return true; }
+        // A file we never created is on the host side and stays there; the
+        // program is told it is gone, which is what it wants to hear.
+        r.setResultCf(false);
+        return true;
+      }
+      case 0x36: {                              // free disk space
+        r.set('ax', 8);                         // sectors per cluster
+        r.set('cx', 512);                       // bytes per sector
+        r.set('dx', 0xFFFF);                    // total clusters
+        r.set('bx', 0xF000);                    // free clusters -- ~126MB
         return true;
       }
       case 0x3E: {                              // close
@@ -1635,6 +1846,9 @@ class Machine {
             return true;
           }
           this.allocTop = PSP_SEG + want;
+          // Shrinking is also what makes room for a child: a loader stub that
+          // gives back everything above itself expects EXEC to load there.
+          this.imageTop = Math.min(this.imageTop, PSP_SEG + want);
         }
         r.setResultCf(false);
         return true;

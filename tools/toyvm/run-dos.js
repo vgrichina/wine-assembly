@@ -284,6 +284,7 @@ async function runDos(o) {
   // say, so the loader leaves this undefined and the machine keeps its "owns
   // everything" default.
   if (info.allocTop !== undefined) machine.allocTop = info.allocTop;
+  machine.imageTop = info.minTop;
   machine.installEnvironment(path.basename(exe));
   vm.setAll({ cs: info.cs, ip: info.ip, ss: info.ss, sp: info.sp, ds: info.ds, es: info.es });
   // The stack must hold a return address: a .COM-style `ret` exit lands on the
@@ -388,6 +389,10 @@ async function runDos(o) {
         set: (n, v) => vm.set(n, v),
         setResultCf: (on) => wr(4, on ? (rd(4) | 1) : (rd(4) & ~1)),
         setResultZf: (on) => wr(4, on ? (rd(4) | 0x40) : (rd(4) & ~0x40)),
+        // Where this INT returns to, and the SP it returns with. EXEC needs it:
+        // the caller's own CS:IP at service time is the stub, and the address
+        // the parent resumes at lives in the IRET frame.
+        ret: { cs: rd(2), ip: rd(0), sp: (sp + 6) & 0xFFFF },
       };
       // The registers as they ARRIVED. Logging them after the call showed the
       // answer where the question belongs: an INT 16h AH=00 that returned 'a'
@@ -410,6 +415,18 @@ async function runDos(o) {
       vm.set('cs', rd(2));
       vm.set('flags', rd(4));
       vm.set('sp', (sp + 6) & 0xFFFF);
+      // A service that transfers control -- EXEC into a child program, or a
+      // child's exit back into its parent -- says so here rather than editing
+      // the registers behind the IRET's back, which would just be overwritten
+      // by the three loads above.
+      if (machine.transfer) {
+        const t = machine.transfer;
+        machine.transfer = null;
+        for (const k of ['cs', 'ss', 'ds', 'es']) vm.set(k, t[k]);
+        vm.set('gip', t.ip);
+        vm.set('sp', t.sp);
+        if (t.ax !== undefined) vm.set('ax', t.ax);
+      }
       if (machine.exited || machine.blockedOnKey) break;
       continue;
     }
@@ -738,9 +755,10 @@ async function main() {
   // there. A demo that renders an empty screen from an empty buffer looks
   // exactly like a decoder bug until this line names the file it wanted.
   const m = r.machine;
-  if (m.filesOpened.length || m.filesMissed.length) {
+  if (m.filesOpened.length || m.filesMissed.length || m.filesCreated.length) {
     const uniq = (a) => [...new Set(a)];
     console.log(`  files: opened ${uniq(m.filesOpened).join(' ') || 'none'}`
+      + (m.filesCreated.length ? `; created ${uniq(m.filesCreated).join(' ')}` : '')
       + (m.filesMissed.length
         ? `; NOT FOUND ${uniq(m.filesMissed).join(' ')}` : ''));
   }
@@ -811,6 +829,11 @@ async function main() {
     if (ic.length) console.log(`  interrupts: ${ic.map(([v, n]) => `${v.toString(16)}h x${n}`).join(', ')}`);
     if (r.machine.unhandled.size) {
       console.log(`  UNHANDLED: ${[...r.machine.unhandled].map(([v, n]) => `int ${v.toString(16)}h x${n}`).join(', ')}`);
+    }
+    const uf = [...r.machine.unhandledFn].sort((a, b) => b[1] - a[1]).slice(0, 12);
+    if (uf.length) {
+      console.log(`  unhandled calls: ${uf.map(([k, n]) =>
+        `int ${k.split(':')[0]}h AH=${k.split(':')[1]} x${n}`).join(', ')}`);
     }
     const un = [...r.unimplemented].sort((a, b) => b[1] - a[1]).slice(0, 12);
     if (un.length) {
