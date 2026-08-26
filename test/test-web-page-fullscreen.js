@@ -213,6 +213,40 @@ async function main() {
     assert(heights && Number(heights[1]) >= Number(heights[2]) * 1.9,
       `the beacon must see the overflow the collapse needs: ${probe}`);
 
+    // The strip retracts WITH the bars -- once they are down it has nothing
+    // left to do and is sitting on top of the app. "Are the bars down" is
+    // innerHeight against 100lvh, the bars-retracted height, which is a
+    // constant and needs no calibration.
+    //
+    // Chrome has no retractable toolbars, so here lvh and innerHeight are the
+    // same number and the page reads as permanently collapsed. That is the
+    // correct answer for a browser with nothing to collapse -- what this
+    // pins down is that the two agree, so a real iPhone (lvh 710, innerHeight
+    // 628 with the bars up) keeps the strip until the swipe lands.
+    const strip = await page.evaluate(() => {
+      const probeEl = document.createElement('div');
+      probeEl.style.cssText = 'position:absolute;top:0;left:0;width:0;height:100lvh;visibility:hidden';
+      document.documentElement.appendChild(probeEl);
+      const lvh = Math.round(probeEl.getBoundingClientRect().height);
+      probeEl.remove();
+      window.dispatchEvent(new Event('resize'));
+      const gutter = document.getElementById('scroll-collapse-gutter');
+      return {
+        lvh,
+        inner: window.innerHeight,
+        collapsedClass: document.body.classList.contains('bars-collapsed'),
+        gutterShown: !!(gutter && gutter.getClientRects().length),
+      };
+    });
+    assert(strip.lvh > 10, `lvh must measure something: ${JSON.stringify(strip)}`);
+    const barsAreDown = strip.inner >= strip.lvh - 8;
+    assert.strictEqual(strip.collapsedClass, barsAreDown,
+      `bars-collapsed must follow innerHeight vs lvh: ${JSON.stringify(strip)}`);
+    console.log();
+    console.log('  strip ' + JSON.stringify(strip));
+    assert.strictEqual(strip.gutterShown, !barsAreDown,
+      `the strip is shown exactly while a collapse is still available: ${JSON.stringify(strip)}`);
+
     const scrolled = await page.evaluate(() => {
       window.scrollTo(0, 999);
       const rect = document.getElementById('screen').getBoundingClientRect();

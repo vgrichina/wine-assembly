@@ -698,8 +698,22 @@
          the bars come straight back on the rubber-band. Nothing here is ever
          seen -- #screen-wrap is position:fixed over the top of it -- so the
          spacer costs nothing but the room to make a real gesture. */
+      /* svh, NOT dvh. dvh is the DYNAMIC viewport: it tracks the bars as they
+         move, so a dvh-sized spacer grows while the collapse is happening and
+         the scroll target runs away from the finger mid-gesture. Measured on
+         an iPhone (iOS 17.6): scrollHeight went 1256 -> 1420 during one swipe
+         and the collapse crawled +26, +41, +56 and stalled -- the "it works
+         sometimes" report. svh is pinned to the bars-VISIBLE height and is a
+         constant, so the document stops moving and the same swipe goes
+         628 -> 710 in one step. tools/ios-lab/fixed.html A/Bs the two. */
+      /* dvh first so a browser without svh (Safari < 15.4) still overflows --
+         an unsupported unit drops the whole declaration, and with no earlier
+         height this element would collapse to nothing and take the feature
+         with it. */
       height: 200dvh;
       min-height: 200dvh;
+      height: 200svh;
+      min-height: 200svh;
       pointer-events: none;
     }
     body.scroll-collapse:not(.bars-collapsed) #scroll-collapse-gutter {
@@ -1278,6 +1292,27 @@ Resource-aware Win98 emulator
     // happened. "It happened" is innerHeight growing, which with the page
     // sitting still is the bars and nothing else.
     let pinnedViewportHeight = 0;
+
+    // The bars-retracted height, straight from the browser. 100lvh is the
+    // LARGE viewport -- what the page gets once the toolbars are gone -- and
+    // unlike innerHeight it is a constant, so "are the bars up?" becomes one
+    // comparison with no calibration step and no need to have collapsed once
+    // already to know what the target was.
+    let largeViewportProbe = null;
+    function largeViewportHeight() {
+      if (!largeViewportProbe) {
+        largeViewportProbe = document.createElement('div');
+        largeViewportProbe.style.cssText = 'position:absolute;top:0;left:0;width:0;' +
+          'height:100lvh;visibility:hidden;pointer-events:none';
+        document.documentElement.appendChild(largeViewportProbe);
+      }
+      const height = Math.round(largeViewportProbe.getBoundingClientRect().height);
+      // A browser without lvh measures 0. Report it as unknown rather than as
+      // "the viewport is zero tall", so callers fall back instead of deciding
+      // the bars are permanently down.
+      return height > 10 ? height : 0;
+    }
+
     function scrollCollapseArm() {
       if (!browserChromeIsRemovableByScroll()) return;
       pinnedViewportHeight = window.innerHeight;
@@ -1291,16 +1326,27 @@ Resource-aware Win98 emulator
     function scrollCollapseSample() {
       if (!document.body.classList.contains('scroll-collapse')) return;
       const height = window.innerHeight;
-      // A collapse is worth 60-80px. Anything smaller is a rounding wobble,
-      // and anything that makes the viewport SHORTER is the on-screen
-      // keyboard -- neither is worth a guest display resize.
-      if (height <= pinnedViewportHeight + 24) return;
+      const large = largeViewportHeight();
+      // Prefer the absolute test: the viewport has reached the height it only
+      // has with the bars gone. The relative one -- "it grew by more than a
+      // rounding wobble" -- is the fallback for a browser with no lvh, and it
+      // is weaker: it cannot tell a part-way collapse from a finished one, and
+      // it reads a page that loaded already-collapsed as never having done it.
+      // Either way a SHORTER viewport is the on-screen keyboard, not the bars,
+      // and is never a collapse.
+      const collapsed = large ? height >= large - 8 : height > pinnedViewportHeight + 24;
+      if (!collapsed) return;
+      // The class is the strip's own visibility, so it is set on every reading
+      // that says the bars are down -- including the first one, on a page that
+      // arrived already collapsed. The resize below is the expensive half and
+      // only runs when there is genuinely more room than last time.
+      document.body.classList.add('bars-collapsed');
+      if (height <= pinnedViewportHeight) return;
       pinnedViewportHeight = height;
       // Pin rather than track: dvh follows the bars both ways, so a stray
       // swipe back up would resize the guest a second time. Take the taller
       // size once and keep it; the gutter unmounts with the same class.
       document.documentElement.style.setProperty('--pinned-vh', height + 'px');
-      document.body.classList.add('bars-collapsed');
       resizeCanvas();
     }
 
