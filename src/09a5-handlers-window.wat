@@ -1385,16 +1385,40 @@
     ;; and healthy. $vsock_pump returns immediately when winsock is unused.
     (call $vsock_pump)
     (local.set $msg_ptr (local.get $arg0))
-    ;; If quit flag set, return 0 (WM_QUIT)
-    (if (global.get $quit_flag)
-    (then
-    ;; Fill MSG with WM_QUIT (0x0012)
-    (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))          ;; hwnd
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0012)) ;; message=WM_QUIT
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))      ;; wParam
-    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))     ;; lParam
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
+    ;; A main-window teardown sets flag 1 speculatively. If its replacement is
+    ;; already live by the next GetMessage, this was only window recreation and
+    ;; the marker is stale. If no main slot exists, the marker is the synthetic
+    ;; loop exit that lets a launcher unwind and create its game window outside
+    ;; the old message pump. Half-Life Uplink exercises both paths in sequence.
+    ;; Flag 2 remains the real queued quit produced by PostQuitMessage.
+    (if (i32.eq (global.get $quit_flag) (i32.const 1))
+      (then
+        (if (i32.and
+              (i32.ne (global.get $main_hwnd) (i32.const 0))
+              (i32.ne (call $wnd_table_get (global.get $main_hwnd)) (i32.const 0)))
+          (then (global.set $quit_flag (i32.const 0)))
+          (else
+            ;; No surviving/replacement main HWND: end this GetMessage loop.
+            ;; Consume the lifecycle marker so a later recreated pump does not
+            ;; inherit a synthetic quit.
+            (global.set $quit_flag (i32.const 0))
+            (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
+            (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0012))
+            (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
+            (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
+            (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+            (return)))))
+    (if (i32.eq (global.get $quit_flag) (i32.const 2))
+      (then
+        ;; Fill MSG with WM_QUIT (0x0012).
+        (call $gs32 (local.get $msg_ptr) (global.get $main_hwnd))
+        (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0012))
+        (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8)) (i32.const 0))
+        (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (i32.const 0))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
     ;; Main WM_CREATE is now sent synchronously during CreateWindowExA (not deferred)
     ;; Deliver child WM_CREATE between main WM_CREATE and main WM_SIZE
     (if (global.get $pending_child_create)
@@ -2065,17 +2089,37 @@
     ;; Look up wndproc from window table
     (local.set $wndproc (call $wnd_table_get (call $gl32 (local.get $arg0))))
     ;; Dialog windows normally route through USER's DefDlgProc wrapper. Posted
-    ;; application-defined messages can run arbitrary native modal work inside
-    ;; the DLGPROC, though, so they must enter the proc on the main interpreter
-    ;; context just like an ordinary x86 WndProc. The synchronous wrapper uses
-    ;; a bounded recursive run and cannot preserve a still-live nested modal
-    ;; stack when that bound expires. DefDlgProc has no default processing for
-    ;; messages >= WM_USER, making the direct BOOL result equivalent there.
+    ;; application-defined messages and non-standard WM_COMMAND ids can run
+    ;; arbitrary native modal work inside the DLGPROC, though, so they must
+    ;; enter the proc on the main interpreter context just like an ordinary
+    ;; x86 WndProc. The synchronous wrapper uses a bounded recursive run and
+    ;; cannot preserve a still-live nested modal stack when that bound expires.
+    ;; DefDlgProc has no default processing for messages >= WM_USER or custom
+    ;; command ids, making the direct BOOL result equivalent there. Keep IDOK
+    ;; and IDCANCEL on the wrapper path because an unhandled one has real modal
+    ;; default behavior. Half-Life Uplink's New Game (1016) and Easy (26)
+    ;; commands both enter nested native modal/engine work here.
     (if (i32.eq (local.get $wndproc) (global.get $WNDPROC_DIALOG))
       (then
-        (if (i32.ge_u
-              (call $gl32 (i32.add (local.get $arg0) (i32.const 4)))
-              (i32.const 0x0400))
+        (if (i32.or
+              (i32.ge_u
+                (call $gl32 (i32.add (local.get $arg0) (i32.const 4)))
+                (i32.const 0x0400))
+              (i32.and
+                (i32.eq
+                  (call $gl32 (i32.add (local.get $arg0) (i32.const 4)))
+                  (i32.const 0x0111))
+                (i32.and
+                  (i32.ne
+                    (i32.and
+                      (call $gl32 (i32.add (local.get $arg0) (i32.const 8)))
+                      (i32.const 0xFFFF))
+                    (i32.const 1))
+                  (i32.ne
+                    (i32.and
+                      (call $gl32 (i32.add (local.get $arg0) (i32.const 8)))
+                      (i32.const 0xFFFF))
+                    (i32.const 2)))))
           (then
             (local.set $wndproc
               (call $dialog_proc_get (call $gl32 (local.get $arg0)))))
@@ -2538,9 +2582,8 @@
     ;; 2, not 1: the app really posted a quit. The other writers of $quit_flag
     ;; synthesize one from a window teardown, and those are guesses — RCT
     ;; destroys and recreates its main window during video init, which leaves a
-    ;; synthesized quit behind that nothing cancels. GetMessageA treats any
-    ;; non-zero value as WM_QUIT as before; PeekMessageA, which apps poll every
-    ;; frame, only honours this explicit one.
+    ;; synthesized quit behind that nothing cancels. Both GetMessageA and
+    ;; PeekMessageA honour only this explicit value.
     (global.set $quit_flag (i32.const 2))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)

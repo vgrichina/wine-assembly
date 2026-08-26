@@ -11,7 +11,8 @@ const { bootRenderHarness } = require('./render-helper');
 
 const extraWat = String.raw`
   (func (export "test_dispatch_dialog_custom")
-    (param $hwnd i32) (param $proc i32) (param $msg i32) (result i32)
+    (param $hwnd i32) (param $proc i32) (param $msg i32) (param $wparam i32)
+    (result i32)
     (global.set $image_base (i32.const 0x00400000))
     (call $wnd_table_set (local.get $hwnd) (global.get $WNDPROC_DIALOG))
     (drop (call $dialog_proc_set (local.get $hwnd) (local.get $proc)))
@@ -20,7 +21,7 @@ const extraWat = String.raw`
     (call $gs32 (global.get $esp) (i32.const 0x00401234))
     (call $gs32 (i32.const 0x00510000) (local.get $hwnd))
     (call $gs32 (i32.const 0x00510004) (local.get $msg))
-    (call $gs32 (i32.const 0x00510008) (i32.const 0x11223344))
+    (call $gs32 (i32.const 0x00510008) (local.get $wparam))
     (call $gs32 (i32.const 0x0051000C) (i32.const 0x55667788))
     (call $handle_DispatchMessageA (i32.const 0x00510000)
       (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
@@ -54,7 +55,7 @@ const extraWat = String.raw`
   const hwnd = 0x10020;
   const proc = 0x006ED449;
 
-  assert.strictEqual(wat.test_dispatch_dialog_custom(hwnd, proc, 0x0BD1) >>> 0, proc,
+  assert.strictEqual(wat.test_dispatch_dialog_custom(hwnd, proc, 0x0BD1, 0x11223344) >>> 0, proc,
     'DispatchMessage enters the stored DLGPROC without a recursive run');
   assert.strictEqual(wat.get_esp() >>> 0, 0x004FFFF4,
     'the live DLGPROC frame replaces the completed DispatchMessage frame');
@@ -70,6 +71,15 @@ const extraWat = String.raw`
     'the native dialog frame carries lParam');
   assert.strictEqual(wat.test_dialog_marker_installed(hwnd), 1,
     'tail dispatch keeps USER32\'s dialog marker installed');
+
+  assert.strictEqual(wat.test_dispatch_dialog_custom(hwnd, proc, 0x0111, 1016) >>> 0, proc,
+    'DispatchMessage enters the DLGPROC directly for a custom WM_COMMAND');
+  assert.strictEqual(wat.get_esp() >>> 0, 0x004FFFF4,
+    'custom WM_COMMAND keeps the native DLGPROC frame live on the main context');
+  assert.strictEqual(wat.guest_read32(0x004FFFFC) >>> 0, 0x0111,
+    'the native frame identifies WM_COMMAND');
+  assert.strictEqual(wat.guest_read32(0x00500000) >>> 0, 1016,
+    'the native frame carries the custom command id');
 
   const stormHwnd = 0x10024;
   assert.strictEqual(wat.test_defdlg_custom_tail(stormHwnd, proc, 0x0BD2) >>> 0, proc,
