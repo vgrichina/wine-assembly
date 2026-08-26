@@ -462,8 +462,8 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
     }
 
     // --- Stack --------------------------------------------------------------
-    case 0x9C: words.push(H.pushf); break;
-    case 0x9D: words.push(H.popf); break;
+    case 0x9C: words.push(opsize === 32 ? H.pushf32 : H.pushf); break;
+    case 0x9D: words.push(opsize === 32 ? H.popf32 : H.popf); break;
     case 0x8F: { const m = modrm();
       if (m.isReg) words.push(H[`pop_r${opsize}`], m.rm & 7);
       else { writesMem = true; words.push(H[`pop_m${opsize}`], packEa(m), m.disp); }

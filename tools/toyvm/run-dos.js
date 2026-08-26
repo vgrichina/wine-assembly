@@ -86,7 +86,7 @@ function writePng(file, mem, palette, video) {
 // ---------------------------------------------------------------------------
 async function runDos(o) {
   const {
-    variant = 'tailcall', exe, budget = 200e6, slice = 2e6,
+    variant = 'tailcall', exe, budget = 200e6, slice = 2e6, seconds = 0,
     traceInt = false, traceFault = false, traceEntry = 0, noCache = false,
     shots = null, shotEvery = 20,
     mouse = [0, 0], cpu = 386, report = false, log = console.log, autoKey = false,
@@ -252,8 +252,27 @@ async function runDos(o) {
   });
   let sliceT0 = 0n;
 
+  // A dispatch budget is not a time budget, and the difference is the whole
+  // reason six programs in the corpus photographed as nothing. A run that
+  // compiles more than it executes retires dispatches slowly enough that 30M
+  // of them take longer than any outer timeout is willing to wait, and being
+  // SIGKILLed from outside loses the frame as well as the run -- the harness
+  // gets no row at all, which reads as "this program has no picture" rather
+  // than "this program is slow". Stopping here instead keeps the best frame,
+  // writes the PNG, and reports what it managed.
+  const stopAt = seconds ? process.hrtime.bigint() + BigInt(Math.round(seconds * 1e9)) : 0n;
+  let ranOutOfTime = false;
+  let steps = 0;
+
   while (session.dispatched < budget && !session.done) {
     session.step();
+    // Every 64th trip rather than every trip, and counted here rather than off
+    // session.handbacks: a slice that ends without handing back would leave
+    // that counter still and the deadline unread.
+    if (stopAt && (++steps & 63) === 0 && process.hrtime.bigint() >= stopAt) {
+      ranOutOfTime = true;
+      break;
+    }
 
     // Keep the fullest frame. Sampled rather than continuous: scanning the
     // surface is cheap next to a batch, but not next to a handback, and a
@@ -279,7 +298,8 @@ async function runDos(o) {
     guestSecs: Number(guestNs) / 1e9,
     dispatched, handbacks, ints, irqs, compiles, compiledWords, arenaResets,
     smcBreaks,
-    stuckAt, blockedOn32, entryHist, unimplemented, ipSamples, ipSampleLog, regions,
+    stuckAt, blockedOn32, ranOutOfTime,
+    entryHist, unimplemented, ipSamples, ipSampleLog, regions,
     // A program that never put the adapter in a graphics mode has no frame to
     // count, and reading A000 anyway is how ACME-SUX.EXE and AKM_DOB.EXE came
     // back with ~61,700 "pixels" each while sitting in text mode the whole run.
@@ -337,6 +357,7 @@ async function main() {
     variant: arg('variant', 'tailcall'),
     budget: count(arg('dispatches'), 200e6),
     slice: count(arg('slice'), 2e6),
+    seconds: Number(arg('seconds', 0)),
     traceInt: flag('trace-int'),
     traceFault: flag('trace-fault'),
     traceEntry: flag('trace-entry') ? 40 : count(arg('trace-entry'), 0),
@@ -375,6 +396,10 @@ async function main() {
   }
 
   if (r.stuckAt) console.log(`stuck at ${r.stuckAt} -- no progress in 200 handbacks`);
+  if (r.ranOutOfTime) {
+    console.log(`out of time after ${r.secs.toFixed(1)}s `
+      + `-- ${(r.dispatched / 1e6).toFixed(1)}M of ${(count(arg('dispatches'), 200e6) / 1e6)}M dispatches`);
+  }
   // Distinct from stuck: the guest is running fine, in a 32-bit code segment
   // this decoder does not read. See dos-loop.js for why that is a stop rather
   // than a best guess.

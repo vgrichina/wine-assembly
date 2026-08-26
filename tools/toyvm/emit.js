@@ -429,6 +429,22 @@ function genExtras() {
     (i32.and (call $pop16) ${DEFINED})
     ${RESERVED}))
 `);
+  // PUSHFD / POPFD. Four bytes, not two, and getting that wrong is not a
+  // wrong flags value -- it is a stack that is two bytes out from there on.
+  // The reason every demo runs these is the rung of the CPU ladder that tells
+  // a 386 from a 486: push EFLAGS, toggle AC (bit 18), pop it back, push again
+  // and see whether the bit stuck. Decoded as their 16-bit twins, CTSLASSE.EXE
+  // came out of that sequence with a misaligned stack, concluded it was on
+  // something older than a 386, and took the exit.
+  //
+  // The upper half is zero on the way out and ignored on the way in: this
+  // machine is a 386, so AC, VM and ID do not exist, and RF is never set.
+  h('pushf32', 0, `(call $push32 (i32.and (global.get $flags) (i32.const 0xFFFF)))`);
+  h('popf32', 0, `
+  (global.set $flags (i32.or
+    (i32.and (i32.and (call $pop32) (i32.const 0xFFFF)) ${DEFINED})
+    ${RESERVED}))
+`);
 
   // CALL near, relative. Operands: [arenaTarget][guestTarget][retIp][arenaRet].
   // The fourth operand is the whole reason returns stay inside wasm: it is the

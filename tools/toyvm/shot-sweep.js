@@ -88,6 +88,7 @@ async function runOne(exe, png, o) {
   // clears the screen on its way out, is otherwise photographed empty.
   const r = await runDos({
     exe, variant: 'tailcall', budget: o.budget, cpu: o.cpu, log: () => {},
+    seconds: o.seconds || 0,
     autoKey: o.autoKey, bestPng: png, guestArgs: o.guestArgs || '',
   });
   const text = r.bestSurface.text;
@@ -98,6 +99,10 @@ async function runOne(exe, png, o) {
     dispatched: r.dispatched,
     pixels: text ? 0 : r.bestScore, cells: text ? r.bestScore : r.text.cells,
     written: r.text.written, stuckAt: r.stuckAt || null, args: o.guestArgs || '',
+    // Not a failure. The picture is real and the program simply had more to do
+    // than the budget allowed, which is worth telling apart from a run that
+    // finished with nothing on screen.
+    ranOutOfTime: !!r.ranOutOfTime,
     blockedOnKey: !!r.machine.blockedOnKey, autoKey: !!o.autoKey,
     // What the screen says, when it says anything. Worth recording alongside
     // the picture because a program that puts up two lines is usually telling
@@ -124,8 +129,18 @@ function switchNamed(screen) {
 // --- parent -----------------------------------------------------------------
 function child(exe, png, o) {
   return new Promise((resolve) => {
+    // Two deadlines, and only the first one is meant to fire. The child gets a
+    // wall-clock budget it stops itself on, which keeps the best frame and
+    // writes the row; the SIGKILL below is what catches a child that cannot
+    // reach even that -- one wedged outside the guest loop. When the kill was
+    // the only deadline, TRIPLEX!.COM and DENTROCF.EXE came back as `no
+    // picture`, which is a much stronger claim than the truth, that 30M
+    // dispatches take them longer than we were prepared to wait.
+    const grace = 10;
     const args = [__filename, `--one=${exe}`, `--png=${png}`,
-      `--dispatches=${o.budget}`, `--cpu=${o.cpu}`, ...(o.autoKey ? ['--auto-key'] : []),
+      `--dispatches=${o.budget}`, `--cpu=${o.cpu}`,
+      `--seconds=${Math.max(5, o.timeout - grace)}`,
+      ...(o.autoKey ? ['--auto-key'] : []),
       ...(o.guestArgs ? [`--args=${o.guestArgs}`] : [])];
     const p = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', err = '';
@@ -204,6 +219,9 @@ async function main() {
     autoKey: process.argv.slice(2).includes('--auto-key'),
     guestArgs: arg('args', ''),
     maxSeconds: Number(arg('max-seconds', 0)),
+    // The graceful deadline the child stops itself on. The parent sets it from
+    // its own --timeout; a --one invocation by hand can set it directly.
+    seconds: Number(arg('seconds', 0)),
   };
   const deadline = o.maxSeconds ? Date.now() + o.maxSeconds * 1000 : 0;
 
