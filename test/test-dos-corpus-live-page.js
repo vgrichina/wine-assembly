@@ -70,8 +70,18 @@ async function main() {
     const live = await page.$$('figure[data-live]');
     assert.ok(live.length > 0, 'no tile offers a live run');
 
+    // A mode 13h tile by preference. Any live tile proves the emulator runs in
+    // the page, but the assertions below are about a picture with colours in
+    // it, and how quickly a demo gets to one differs enormously: BOB.COM --
+    // first in the grid, because it lights the most pixels -- floods 640x200
+    // with a single colour and only draws its menu much later, so a probe that
+    // always takes the first tile is waiting on that demo's pacing rather than
+    // on the emulator. A 256-colour 320x200 demo has a palette on screen
+    // almost immediately.
     await page.evaluate(() => {
-      document.querySelector('figure[data-live] button.open').click();
+      const all = [...document.querySelectorAll('figure[data-live]')];
+      const pick = all.find((f) => /mode 13h/.test(f.dataset.geom || '')) || all[0];
+      pick.querySelector('button.open').click();
     });
     // The button is ON the screenshot, so it has to be both present and over
     // the picture -- a control rendered outside the frame is the bug this
@@ -123,6 +133,11 @@ async function main() {
         self.__best = {
           lit, colours: colours.size, width: cv.width, height: cv.height,
           imgHidden: document.getElementById('lb-img').hidden,
+          // Not the same question, and the difference was a real bug: the
+          // dialog's own `dialog img { display: block }` outranks the UA
+          // stylesheet's [hidden] rule, so the screenshot stayed on screen
+          // under the live canvas while .hidden read true the whole time.
+          imgPainted: document.getElementById('lb-img').getClientRects().length > 0,
           playHidden: document.getElementById('lb-play').hidden,
           status: document.getElementById('lb-status').textContent,
         };
@@ -135,6 +150,8 @@ async function main() {
     });
 
     assert.ok(shot.imgHidden, 'the screenshot is still covering the live canvas');
+    assert.ok(!shot.imgPainted,
+      'the screenshot is hidden but still laid out -- both pictures are on screen');
     assert.ok(shot.playHidden, 'the Run button is still sitting over the running demo');
     // More than one colour: a canvas filled with a single flat colour is what a
     // palette that never arrived looks like, and it would pass a lit-pixel

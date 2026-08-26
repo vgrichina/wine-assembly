@@ -68,8 +68,17 @@ function tile(r, file, live) {
   const geom = k === 'text' ? '80x25 text'
     : `mode ${(r.mode || 0).toString(16)}h - ${r.width}x${r.height}`
       + `${r.planar ? ` planar ${r.bpp}bpp` : ''}`;
+  // What to call this release when asking pouet about it. The corpus keeps one
+  // directory per production, named `YYYY-x-slug` by the fetcher, and the slug
+  // is the release -- the EXE inside is often an abbreviation of it or just
+  // INTRO.EXE, which finds nothing. A search rather than a permalink because
+  // nothing here carries a pouet id, and a link that guessed one would point at
+  // the wrong production rather than at no production.
+  const prod = path.basename(path.dirname(r.exe || ''))
+    .replace(/^\d{4}-[a-z0-9]+-/, '').replace(/[_-]+/g, ' ').trim();
   return `<figure class="${k}" data-what="${esc(what.replace(/<\/?b>/g, ''))}"`
     + ` data-geom="${esc(geom)}"`
+    + (prod ? ` data-prod="${esc(prod)}"` : '')
     + (live && live.has(r.name) ? ` data-live="${esc(r.name)}"` : '')
     + (r.screen ? ` data-screen="${esc(r.screen)}"` : '')
     + (r.stuckAt ? ` data-stuck="${esc(r.stuckAt)}"` : '')
@@ -225,10 +234,15 @@ figcaption { display: flex; justify-content: space-between; gap: 8px; align-item
 .fp b { color: var(--ink); font-weight: 600; }
 dialog {
   border: 1px solid var(--rule); background: var(--panel); color: var(--ink);
-  padding: 0; max-width: min(96vw, 1100px); max-height: 94vh;
+  padding: 0; width: min(96vw, 1600px); max-width: 96vw; max-height: 94vh;
 }
 dialog::backdrop { background: rgba(2,2,6,.86); }
-dialog img, dialog canvas { display: block; max-width: 100%; max-height: 72vh; margin: 0 auto; background: #000; image-rendering: pixelated; }
+dialog img, dialog canvas { display: block; max-width: 100%; max-height: 80vh; margin: 0 auto; background: #000; image-rendering: pixelated; }
+/* The UA stylesheet gives [hidden] display:none at the lowest possible
+   specificity, and the rule above outranks it -- so the screenshot stayed on
+   screen underneath the live canvas the whole time a demo was running, and
+   img.hidden read true while the picture was still there. */
+dialog img[hidden], dialog canvas[hidden] { display: none; }
 /* The guest's own resolution is the backing store and CSS does the scaling, so
    a 320x200 demo stays a 320x200 demo instead of a blurred one. */
 dialog canvas { width: 100%; height: auto; outline: none; }
@@ -263,6 +277,11 @@ dialog canvas:focus-visible { outline: 2px solid var(--cyan); outline-offset: -2
 .run-note.live { color: var(--cyan); }
 .dlg-bar { display: flex; justify-content: space-between; gap: 14px; padding: 10px 14px; font-family: var(--mono); font-size: 12px; border-bottom: 1px solid var(--rule); }
 .dlg-bar .r { color: var(--faint); }
+/* Pushed to the right of the name and left of the meta: the name identifies the
+   file, this identifies the production. */
+.dlg-bar .pouet { margin-left: auto; color: var(--cyan); text-decoration: none; border-bottom: 1px solid transparent; }
+.dlg-bar .pouet:hover, .dlg-bar .pouet:focus-visible { border-bottom-color: var(--cyan); }
+.dlg-bar .pouet[hidden] { display: none; }
 .dlg-screen { margin: 0; padding: 12px 14px; border-top: 1px solid var(--rule); font-family: var(--mono); font-size: 11px; line-height: 1.3; color: var(--dim); white-space: pre; overflow: auto; max-height: 18vh; }
 footer { margin-top: 60px; padding-top: 22px; border-top: 1px solid var(--rule); color: var(--faint); font-family: var(--mono); font-size: 12px; }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
@@ -318,7 +337,9 @@ ${blankRows}
 </div>
 
 <dialog id="lb">
-  <div class="dlg-bar"><span id="lb-name"></span><span class="r" id="lb-meta"></span></div>
+  <div class="dlg-bar"><span id="lb-name"></span>
+    <a class="r pouet" id="lb-pouet" target="_blank" rel="noopener noreferrer" hidden>pouet &#8599;</a>
+    <span class="r" id="lb-meta"></span></div>
   <div class="dlg-stage">
     <img id="lb-img" alt="">
     <canvas id="lb-canvas" width="320" height="200" hidden tabindex="0"
@@ -339,6 +360,7 @@ ${blankRows}
   var name = document.getElementById('lb-name');
   var meta = document.getElementById('lb-meta');
   var screen = document.getElementById('lb-screen');
+  var pouet = document.getElementById('lb-pouet');
   document.addEventListener('click', function (e) {
     var btn = e.target.closest ? e.target.closest('button.open') : null;
     if (!btn) return;
@@ -350,6 +372,12 @@ ${blankRows}
     var bits = [fig.dataset.geom, fig.dataset.what];
     if (fig.dataset.stuck) bits.push('stuck at ' + fig.dataset.stuck);
     meta.textContent = bits.filter(Boolean).join('  -  ');
+    if (fig.dataset.prod) {
+      pouet.href = 'https://www.pouet.net/search.php?type=prod&what='
+        + encodeURIComponent(fig.dataset.prod);
+      pouet.title = 'look up "' + fig.dataset.prod + '" on pouet.net';
+      pouet.hidden = false;
+    } else { pouet.hidden = true; }
     if (fig.dataset.screen) { screen.textContent = fig.dataset.screen; screen.hidden = false; }
     else { screen.textContent = ''; screen.hidden = true; }
     showLive(fig.dataset.live || null);
