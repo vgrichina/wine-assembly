@@ -155,6 +155,24 @@ async function main() {
   ]);
   testBytes('FILD/FISTP m64 preserves raw qword bytes', bytesAt(scratchA, 8), fpuCopyBytes);
 
+  // Jazz's CPUID-selected memcpy overlaps two exact qword payloads on the x87
+  // stack and swaps them back into source order before storing. FXCH must move
+  // the raw-i64 shadows too; otherwise both stores round through f64's 53-bit
+  // significand and turn 0x0a0a0a0a0a0a0a0a into 0x0a0a0a0a0a0a0a00.
+  const fpuCopyA = new Array(8).fill(0x0A);
+  const fpuCopyB = [0x1B, 0x2C, 0x3D, 0x4E, 0x5F, 0x60, 0x71, 0x82];
+  setBytes(scratch, [...fpuCopyA, ...fpuCopyB]);
+  setBytes(scratchA, new Array(16).fill(0));
+  runCode([
+    0xDF, 0x2D, ...le32(scratch),      // fild qword ptr [scratch]
+    0xDF, 0x2D, ...le32(scratch + 8),  // fild qword ptr [scratch+8]
+    0xD9, 0xC9,                        // fxch st(1)
+    0xDF, 0x3D, ...le32(scratchA),     // fistp qword ptr [scratchA]
+    0xDF, 0x3D, ...le32(scratchA + 8), // fistp qword ptr [scratchA+8]
+  ]);
+  testBytes('FXCH preserves paired raw FILD/FISTP m64 payloads',
+    bytesAt(scratchA, 16), [...fpuCopyA, ...fpuCopyB]);
+
   // QuickBlackjack stores its $20,000 house limit as a real 80-bit extended
   // constant. FLD tword must decode the sign/exponent word, not treat the
   // first 8 bytes as an f64 payload.

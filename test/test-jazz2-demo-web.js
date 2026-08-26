@@ -470,7 +470,8 @@ async function runLogoDiagnostic() {
     '--max-batches=1230',
   ], {
     cwd: ROOT,
-    env: { ...process.env, WA_JAZZ_CLI_HOOK: '1', WA_JAZZ_LAYER_OUT: OUT },
+    env: { ...process.env, WA_JAZZ_CLI_HOOK: '1', WA_JAZZ_LAYER_OUT: OUT,
+      WA_JAZZ_CAPTURE_ORDINAL: '148' },
     encoding: 'utf8',
     timeout: 70000,
     killSignal: 'SIGKILL',
@@ -481,18 +482,24 @@ async function runLogoDiagnostic() {
   assert.strictEqual(child.status, 0,
     `Jazz logo CLI exited ${child.status}; see ${path.join(OUT, 'cli.log')}`);
   const resultFile = path.join(OUT, 'result.json');
-  assert(fs.existsSync(resultFile), 'Jazz logo did not expose a corrupt matched GDI frame');
-  const corrupt = JSON.parse(fs.readFileSync(resultFile, 'utf8'));
-  const rawPeriodic = corrupt.source.raw.zeroSpread >= 0.35 ||
-    corrupt.source.raw.meanSpread >= 35;
-  const sourcePeriodic = corrupt.source.rgba.blackSpread >= 0.35 ||
-    corrupt.source.rgba.lumaSpread >= 35;
-  const classification = rawPeriodic ? 'raw-indices' :
-    sourcePeriodic ? 'palette-conversion' : 'stretchblt-target';
+  assert(fs.existsSync(resultFile), 'Jazz logo did not reach matched GDI ordinal 148');
+  const matched = JSON.parse(fs.readFileSync(resultFile, 'utf8'));
+  assert.strictEqual(matched.ordinal, 148,
+    `Jazz exposed periodic corruption before ordinal 148 (ordinal ${matched.ordinal})`);
+  const rawPeriodic = matched.source.raw.zeroSpread >= 0.35 ||
+    matched.source.raw.meanSpread >= 35;
+  const sourcePeriodic = matched.source.rgba.blackSpread >= 0.35 ||
+    matched.source.rgba.lumaSpread >= 35;
+  const targetPeriodic = matched.target.rgba.blackSpread >= 0.35 ||
+    matched.target.rgba.lumaSpread >= 35;
+  assert(!rawPeriodic, 'Jazz ordinal 148 raw indices retain period-eight corruption');
+  assert(!sourcePeriodic, 'Jazz ordinal 148 palette expansion retains period-eight corruption');
+  assert(!targetPeriodic, 'Jazz ordinal 148 StretchBlt target retains period-eight corruption');
+  const classification = 'clean-after-fxch-raw64';
   fs.writeFileSync(path.join(OUT, 'classification.json'), JSON.stringify({
-    classification, corrupt,
+    classification, matched,
   }, null, 2));
-  console.log(`PASS Jazz logo period-eight corruption first appears in ${classification}`);
+  console.log('PASS Jazz logo ordinal 148 is clean through raw indices, palette, and StretchBlt');
   console.log(`Artifacts: ${OUT}`);
 }
 

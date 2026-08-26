@@ -31,11 +31,14 @@ scalar run reached only 131, so the screenshots are different animation
 ordinals. They show that the scalar capture happens to be clean; they do not
 by themselves prove that MMX caused the stripes.
 
-## SIMD checks
+## CPU-feature checks and exact fault
 
-Jazz genuinely selects an MMX decoder leaf after testing CPUID bit 23. The
-full run retired 418,443 MMX instructions, while `--no-mmx` retired zero.
-Current focused evidence does not identify a broken emulated instruction:
+Jazz genuinely changes its startup-selected code paths after testing CPUID bit
+23. A normal full run retires millions of MMX instructions, while `--no-mmx`
+retires zero. Those instructions are not themselves the source of the video
+stripe. Main-thread handler histograms and a dump of the hot generated range
+`0x010bcff4..0x010bd7e7` identify the dominant packed-instruction path as an
+audio resampler/mixer. The independent packed-operation checks are green:
 
 - `node tools/mmx-check.js --iters=2000` passes all 53 packed operations.
 - An injected real-decoder qword copy passes aligned, unaligned, DIB-backed,
@@ -43,11 +46,36 @@ Current focused evidence does not identify a broken emulated instruction:
 - An injected copy of the 32-pixel interpolation sequence at `0x0045c2ce`
   produces the x86-defined unpack, shift, mask and store result.
 
-These checks still matter after the matched capture below: they rule out a
-simple blanket error in one packed operation, qword alignment, page crossing,
-or the known interpolation leaf. They do not prove every instruction sequence
-in the selected decoder path. Disabling MMX globally or only for Jazz would
-hide the defect and discard the measured J2V speedup; it is not a proven fix.
+These checks rule out a blanket error in one packed operation, qword alignment,
+page crossing, or the known interpolation leaf. They also explain why a global
+or Jazz-only MMX disable would have hidden the relevant startup choice instead
+of fixing the emulator semantic.
+
+The J2V update routine at `0x0045d8c5` copies decoded spans through the
+function pointer at `0x004d2d74`. The CPU-feature setup at `0x00491394`
+installs optimized copy routine `0x0049b26c`. Its 32-byte loop copies arbitrary
+payload with this x87 sequence twice:
+
+```text
+FILD qword [source]
+FILD qword [source+8]
+FXCH st(1)
+FISTP qword [target]
+FISTP qword [target+8]
+```
+
+The emulator already retained an exact raw-i64 shadow for an unchanged
+`FILD m64`/`FISTP m64` pair. `FXCH`, however, swapped the approximate f64
+values with two calls to `fpu_set` and thereby cleared both raw shadows. Each
+arbitrary payload was then rounded through f64's 53-bit significand. In the
+captured constant video frame, `0x0a0a0a0a0a0a0a0a` consequently stored as
+`0x0a0a0a0a0a0a0a00`: exactly one zero byte for every eight decoded pixels.
+
+`src/06-fpu.wat` now moves the two raw shadows along with their values during
+`FXCH`. The focused CPU regression reproduces the paired copy with two
+different non-f64-exact qwords and verifies all 16 bytes after the swap and
+stores. This is a generic x87 payload-preservation correction; it does not
+change CPUID or special-case Jazz.
 
 ## Matched-layer diagnostic
 
@@ -102,18 +130,21 @@ CLI host. It remains hard-bounded and is not the default `run-all` behavior:
 JAZZ_STRIPE_DIAGNOSTIC=1 node test/test-jazz2-demo-web.js
 ```
 
-The first corrupt matched upload is video ordinal 148, rect
-`[6,26,326,244]`. Its 320x200, top-down, stride-320 raw DIB has index 0 in
-every phase-0 column (`zero=1`, black palette entry) and index 10 in every
+Before the x87 correction, the first corrupt matched upload was video ordinal
+148, rect `[6,26,326,244]`. Its 320x200, top-down, stride-320 raw DIB has index
+0 in every phase-0 column (`zero=1`, black palette entry) and index 10 in every
 phase-1 through phase-7 column (`zero=0`, RGB `[6,7,9]`). The palette-expanded
 source repeats the same pattern, and the 32-bpp target repeats it shifted to
 screen phase 6 by the client offset. Therefore the eight-column corruption is
 already present in canonical guest-written raw indices. Palette conversion,
 `StretchBlt`, and browser composition do not create it. The diagnostic writes
 `indices.png`, `source.png`, `target.png`, `result.json`,
-`classification.json`, and `cli.log` under `scratch/jazz2-demo-web/`.
+`classification.json`, and `cli.log` under `scratch/jazz2-demo-web/`. The
+opt-in command is now a regression gate: it fails if a periodic frame appears
+before ordinal 148 or if ordinal 148 remains periodic at any of the three
+layers.
 
-## Matched MMX/scalar result
+## Verification and scalar limitation
 
 `WA_JAZZ_CAPTURE_ORDINAL=148` makes the same prelaunch hook save a requested
 video presentation even when it is clean. The exact scalar comparison was:
@@ -127,17 +158,29 @@ node -r ./test/test-jazz2-demo-web.js test/run.js \
   --batch-size=1000 --max-batches=900
 ```
 
-At the same filtered video ordinal 148 and the same 320x218 presentation rect,
-the scalar raw-index phase mean spread is only 1.14 with zero spread 0. Its
-target black-fraction spread is 0.0024 and luma spread is 1.15; there is no
-period-eight stripe. The run retired zero MMX instructions. In contrast, the
-normal MMX-selected ordinal 148 has the exact raw phase-0/index-0 stripe above.
-This assigns the failure to the guest decoder/output produced by the
-MMX-selected path at a matched presentation ordinal, rather than to a later
-render layer.
+The scalar ordinal has no period-eight stripe, but it is not the same animation
+content merely because its filtered presentation count is also 148. With
+audio and decoder throughput changed, its image statistics and timing differ
+materially from the normal run. That A/B correlated the issue with the startup
+CPU-feature choice; it did not on its own prove an instruction semantic. The
+static copy-path disassembly, exact qword-loss arithmetic, and focused CPU
+regression above provide that proof.
 
-It does not yet identify a faulty emulator instruction or safe correction.
-The independent 53-operation suite, qword alignment/page tests, and injected
-`0x0045c2ce` sequence remain green. No runtime compatibility change was made;
-a global or app-specific CPUID/MMX disable would be a workaround without the
-required semantic localization.
+After the `FXCH` correction, a normal CPUID/MMX-enabled CLI run reached ordinal
+148 while retiring 7,112,640 MMX instructions. All eight raw phases are now
+index 10 with concentration 1, `zeroSpread=0`, and `meanSpread=0`. Source and
+target RGBA both have luma 6.9, black fraction 0, `blackSpread=0`, and
+`lumaSpread=0`. The exact post-fix artifacts are:
+
+- `/private/tmp/jazz-fxch-fixed/indices.png`
+- `/private/tmp/jazz-fxch-fixed/source.png`
+- `/private/tmp/jazz-fxch-fixed/target.png`
+- `/private/tmp/jazz-fxch-fixed/result.json`
+- `/private/tmp/jazz-fxch-fixed.log`
+
+The default production-path browser smoke still passes in about 4.2 seconds,
+and the opt-in ordinal-148 gate passes in about 22 seconds. The CPU regression
+reports `105 passed, 0 failed`; the normal build and WAT structural check also
+pass. These results remove the reported logo stripe without disabling MMX.
+They do not close the separate direct-level gameplay acceptance gap described
+above.
