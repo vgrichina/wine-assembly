@@ -619,14 +619,25 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
     // --- Far control transfer ------------------------------------------------
     // Every one of these leaves the trace: the target segment is not knowable
     // at compile time, so the handler writes the guest IP and hands back.
-    case 0xEA: { const o = imm16(), s = imm16(); words.push(H.jmp_far, o, s); endsBlock = true; break; }
-    case 0x9A: {
-      const o = imm16(), s = imm16();
-      words.push(H.call_far, o, s, (start + n) & 0xFFFF);
+    // A 66 prefix on any of these makes the OFFSET 32 bits -- and, for the two
+    // that read a stack frame, makes each slot on it a dword. The selector is
+    // 16 bits either way. This is the entry and exit of a DOS extender's
+    // 32-bit half, so decoding them as their 16-bit twins does not produce a
+    // slightly-wrong jump, it produces a null selector.
+    case 0xEA: {
+      const o = opsize === 32 ? imm32() : imm16(), s = imm16();
+      words.push(opsize === 32 ? H.jmp_far32 : H.jmp_far, o, s);
       endsBlock = true; break;
     }
-    case 0xCB: words.push(H.retf); endsBlock = true; break;
-    case 0xCA: words.push(H.retf_imm, imm16()); endsBlock = true; break;
+    case 0x9A: {
+      const o = opsize === 32 ? imm32() : imm16(), s = imm16();
+      words.push(opsize === 32 ? H.call_far32 : H.call_far, o, s, (start + n) & 0xFFFF);
+      endsBlock = true; break;
+    }
+    case 0xCB: words.push(opsize === 32 ? H.retf32 : H.retf); endsBlock = true; break;
+    case 0xCA:
+      words.push(opsize === 32 ? H.retf_imm32 : H.retf_imm, imm16());
+      endsBlock = true; break;
 
     // --- LES / LDS -----------------------------------------------------------
     case 0xC4: case 0xC5: {
@@ -818,7 +829,8 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
     // INTO only takes the vector when OF is set, so it does not end the block:
     // the fall-through is the common case and stays in the same trace.
     case 0xCE: words.push(H.into, (start + n) & 0xFFFF); break;
-    case 0xCF: words.push(H.iret); endsBlock = true; break;
+    case 0xCF:
+      words.push(opsize === 32 ? H.iret32 : H.iret); endsBlock = true; break;
     // WAIT. It synchronises with a coprocessor that is not a separate part
     // here, so there is nothing to wait for -- but the byte is everywhere,
     // usually as the 9B of a `9B DB E3` FINIT.

@@ -782,6 +782,16 @@ function genExtras() {
     ${RESERVED}))
   (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
 `);
+  // IRETD. The frame is three dwords, and the selector is the low half of the
+  // middle one -- the upper half is pushed and popped but means nothing.
+  h('iret32', 0, `
+  (global.set $gip (call $pop32))
+  (call $sset (i32.const 1) (i32.and (call $pop32) (i32.const 0xFFFF)))
+  (global.set $flags (i32.or
+    (i32.and (call $pop32) ${DEFINED})
+    ${RESERVED}))
+  (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
+`);
 }
 
 // --- String operations, with and without REP --------------------------------
@@ -1466,6 +1476,40 @@ function genArithIO() {
   (global.set $gip (call $pop16))
   (call $sset (i32.const 1) (call $pop16))
   (global.set $sp (i32.and (i32.add (global.get $sp) (local.get $t0)) (i32.const 0xFFFF)))
+  (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
+`);
+  // The operand-size-32 far transfers. These are how a DOS extender enters and
+  // leaves its 32-bit world, and until they existed the 66-prefixed forms were
+  // decoded as their 16-bit twins, which is silently catastrophic rather than
+  // merely wrong: `66 68 08 00 00 00 / 66 57 / 66 cb` pushes selector 8 and
+  // EDI as dwords and returns to 0008:00000228, but popping words off that
+  // frame yields 0000:0228 -- a null selector -- and COLORS.EXE went on to
+  // execute 200M dispatches of whatever it found there. The offset is a full
+  // 32 bits; the selector is still 16, occupying the low half of its dword.
+  h('retf32', 0, `
+  (global.set $gip (call $pop32))
+  (call $sset (i32.const 1) (i32.and (call $pop32) (i32.const 0xFFFF)))
+  (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
+`);
+  h('retf_imm32', 1, `
+  ${ops(1)}
+  (global.set $gip (call $pop32))
+  (call $sset (i32.const 1) (i32.and (call $pop32) (i32.const 0xFFFF)))
+  (global.set $sp (i32.and (i32.add (global.get $sp) (local.get $t0)) (i32.const 0xFFFF)))
+  (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
+`);
+  h('jmp_far32', 2, `
+  ${ops(2)}
+  (call $sset (i32.const 1) (local.get $t1))
+  (global.set $gip (local.get $t0))
+  (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
+`);
+  h('call_far32', 3, `
+  ${ops(3)}
+  (call $push32 (call $sget (i32.const 1)))
+  (call $push32 (local.get $t2))
+  (call $sset (i32.const 1) (local.get $t1))
+  (global.set $gip (local.get $t0))
   (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
 `);
   // The target is a runtime value, so it is looked up in the jump-target cache

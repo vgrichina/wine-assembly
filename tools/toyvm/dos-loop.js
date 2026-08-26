@@ -181,8 +181,21 @@ class DosSession {
 
   // Push an interrupt frame in front of the guest's next instruction, exactly
   // as the hardware would.
+  //
+  // In real mode only. Everything this does is real-mode-shaped: the frame goes
+  // to ss<<4 + sp, and the handler comes out of the IVT at linear vec*4. A
+  // protected-mode guest has neither -- its stack selector has whatever base
+  // its descriptor says, and its handlers are gate descriptors in an IDT that
+  // LIDT pointed somewhere else entirely. Delivering here anyway sends the
+  // guest to a segment made out of two bytes of IVT read as a selector, which
+  // is how COLORS.EXE ended up executing the zeros at 9BF0:0 for 200M
+  // dispatches: one timer IRQ landed after PMODE/W switched, and nothing after
+  // that was its own code. Skipping is a real cost -- a protected-mode demo
+  // paced off INT 8 gets no beat -- but it is a demo that stands still rather
+  // than one that runs somebody else's memory.
   raise(vec) {
     const vm = this.vm;
+    if (vm.exports.get_cr0() & 1) return;
     const push = (v) => {
       const sp = (vm.get('sp') - 2) & 0xFFFF;
       vm.set('sp', sp);

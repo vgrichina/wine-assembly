@@ -201,8 +201,14 @@ async function runDos(o) {
         // usually three or four blocks long -- uman.com reaches 100:10a from
         // its first instruction and the histogram says only that both were
         // entered.
+        // The base, not just the selector. In protected mode CS names a
+        // descriptor and the number itself says nothing about where the code
+        // is, so a trace of bare selectors cannot tell a legitimate jump from
+        // one through a descriptor that does not exist.
         if (traceEntry && handbacks < traceEntry) {
-          log(`  entry ${cs.toString(16)}:${ip.toString(16)}`);
+          const pe = vm.exports.get_cr0() & 1;
+          log(`  entry ${cs.toString(16)}:${ip.toString(16)}`
+            + (pe ? ` base=${vm.exports.get_csb().toString(16)} pm` : ''));
         }
       },
       beforeSlice: () => { sliceT0 = process.hrtime.bigint(); },
