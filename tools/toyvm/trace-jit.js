@@ -589,7 +589,10 @@ async function benchTiers(exe, hot, ops, { iters, reps, log = console.log }) {
     const ex = arm.vm ? arm.vm.exports : arm.exports;
     // $gip is excluded: it is where the trace *would* have branched, written by
     // every jcc body, and in a straight-line arm nothing consumes it.
-    const regs = STATE.filter(g => !['ip', 'steps', 'left', 'intno', 'gip'].includes(g))
+    // $halt joins them for the same reason: it says how the SLICE ended, which
+    // is harness state, and a straight-line arm ends its slice differently from
+    // one that branches.
+    const regs = STATE.filter(g => !['ip', 'steps', 'left', 'intno', 'gip', 'halt'].includes(g))
       .map(g => `${g}=${ex[`get_${g}`]() >>> 0}`).join(' ');
     fingerprints.push({ name: arm.name, regs, mem: memHash(arm.vm ? arm.vm.mem : arm.mem) });
   }

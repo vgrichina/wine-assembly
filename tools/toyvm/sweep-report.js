@@ -42,7 +42,19 @@ const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
 const drew = (r) => (r.pixels || 0) > 0 || (r.cells || 0) > 0;
 const kind = (r) => (!drew(r) ? 'blank' : ((r.pixels || 0) > 0 ? 'vga' : 'text'));
 
-function tile(r, file) {
+// The demos whose bytes ship with the page, so their tiles get a Run button.
+// Written by tools/toyvm/bundle-programs.js; absent is fine, and the page is
+// then exactly what it was before -- screenshots.
+function liveIndex(out) {
+  const f = path.join(out, 'live', 'programs-index.json');
+  try {
+    return new Set(JSON.parse(fs.readFileSync(f, 'utf8')));
+  } catch {
+    return new Set();
+  }
+}
+
+function tile(r, file, live) {
   const what = (r.pixels || 0) > 0 ? `<b>${r.pixels.toLocaleString()}</b> px`
     : ((r.cells || 0) > 0 ? `<b>${r.cells}</b> cells` : 'blank');
   const k = kind(r);
@@ -58,6 +70,7 @@ function tile(r, file) {
       + `${r.planar ? ` planar ${r.bpp}bpp` : ''}`;
   return `<figure class="${k}" data-what="${esc(what.replace(/<\/?b>/g, ''))}"`
     + ` data-geom="${esc(geom)}"`
+    + (live && live.has(r.name) ? ` data-live="${esc(r.name)}"` : '')
     + (r.screen ? ` data-screen="${esc(r.screen)}"` : '')
     + (r.stuckAt ? ` data-stuck="${esc(r.stuckAt)}"` : '')
     + `><button class="open" type="button" title="${esc(r.name)} - full size">`
@@ -112,6 +125,7 @@ function main() {
       `${n.blank} drew nothing, ${failed.length} never finished -- the work list`],
   ];
 
+  const live = liveIndex(out);
   const proseFile = path.join(out, 'sections.html');
   const prose = fs.existsSync(proseFile) ? fs.readFileSync(proseFile, 'utf8') : '';
 
@@ -205,7 +219,39 @@ dialog {
   padding: 0; max-width: min(96vw, 1100px); max-height: 94vh;
 }
 dialog::backdrop { background: rgba(2,2,6,.86); }
-dialog img { display: block; max-width: 100%; max-height: 72vh; margin: 0 auto; background: #000; image-rendering: pixelated; }
+dialog img, dialog canvas { display: block; max-width: 100%; max-height: 72vh; margin: 0 auto; background: #000; image-rendering: pixelated; }
+/* The guest's own resolution is the backing store and CSS does the scaling, so
+   a 320x200 demo stays a 320x200 demo instead of a blurred one. */
+dialog canvas { width: 100%; height: auto; outline: none; }
+dialog canvas:focus-visible { outline: 2px solid var(--cyan); outline-offset: -2px; }
+/* The Run control sits ON the screenshot, because what it replaces is the
+   screenshot: press it and the same frame becomes a live one in place. */
+.dlg-stage { background: #000; position: relative; line-height: 0; }
+#lb-play {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  display: flex; align-items: center; gap: 10px;
+  font: 600 13px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase;
+  color: var(--ink); background: rgba(8, 7, 13, .72); border: 1px solid var(--cyan);
+  padding: 14px 22px; cursor: pointer; backdrop-filter: blur(3px);
+  transition: background .12s, color .12s;
+}
+#lb-play:hover, #lb-play:focus-visible { background: var(--cyan); color: var(--ground); }
+#lb-play:hover .tri, #lb-play:focus-visible .tri { border-left-color: var(--ground); }
+#lb-play[disabled] { border-color: var(--rule); color: var(--faint); cursor: default; background: rgba(8,7,13,.8); }
+#lb-play[disabled]:hover { background: rgba(8,7,13,.8); color: var(--faint); }
+.tri {
+  width: 0; height: 0; border: 7px solid transparent;
+  border-left: 12px solid var(--cyan); margin-right: -2px;
+}
+#lb-play[disabled] .tri { border-left-color: var(--faint); }
+/* While it runs, the only chrome over the picture is one line at the bottom. */
+.run-note {
+  position: absolute; left: 0; right: 0; bottom: 0; margin: 0; padding: 7px 12px;
+  font: 11px/1.4 var(--mono); color: var(--dim);
+  background: linear-gradient(rgba(8,7,13,0), rgba(8,7,13,.88) 40%);
+  text-align: center; pointer-events: none;
+}
+.run-note.live { color: var(--cyan); }
 .dlg-bar { display: flex; justify-content: space-between; gap: 14px; padding: 10px 14px; font-family: var(--mono); font-size: 12px; border-bottom: 1px solid var(--rule); }
 .dlg-bar .r { color: var(--faint); }
 .dlg-screen { margin: 0; padding: 12px 14px; border-top: 1px solid var(--rule); font-family: var(--mono); font-size: 11px; line-height: 1.3; color: var(--dim); white-space: pre; overflow: auto; max-height: 18vh; }
@@ -236,7 +282,7 @@ ${prose}
   <h2>The whole corpus</h2>
   <p class="sub">graphics first, then text, then the blanks - click any tile for full size</p>
   <div class="shots">
-${rows.map((r) => tile(r, files.get(r))).join('\n')}
+${rows.map((r) => tile(r, files.get(r), live)).join('\n')}
   </div>
 </section>
 
@@ -260,7 +306,14 @@ ${blankRows}
 
 <dialog id="lb">
   <div class="dlg-bar"><span id="lb-name"></span><span class="r" id="lb-meta"></span></div>
-  <img id="lb-img" alt="">
+  <div class="dlg-stage">
+    <img id="lb-img" alt="">
+    <canvas id="lb-canvas" width="320" height="200" hidden tabindex="0"
+      aria-label="live emulator output"></canvas>
+    <button type="button" id="lb-play" hidden
+      title="run this demo here"><span class="tri"></span>Run it</button>
+    <p class="run-note" id="lb-status" hidden></p>
+  </div>
   <pre class="dlg-screen" id="lb-screen" hidden></pre>
 </dialog>
 
@@ -286,9 +339,120 @@ ${blankRows}
     meta.textContent = bits.filter(Boolean).join('  -  ');
     if (fig.dataset.screen) { screen.textContent = fig.dataset.screen; screen.hidden = false; }
     else { screen.textContent = ''; screen.hidden = true; }
+    showLive(fig.dataset.live || null);
     dlg.showModal();
   });
   dlg.addEventListener('click', function (e) { if (e.target === dlg) dlg.close(); });
+  dlg.addEventListener('close', function () { stopLive(); });
+
+  // --- the live half -------------------------------------------------------
+  // Some of these demos ship with the page as bytes, and those tiles get a Run
+  // button: the same emulator that took the screenshot, in this tab, driven a
+  // few milliseconds per animation frame so the page stays responsive.
+  //
+  // The VM is half a megabyte of script and most visitors are here to look at
+  // screenshots, so none of it loads until someone presses Run. From a file://
+  // URL that has to be a <script> tag -- fetch, modules and workers are all
+  // refused there -- which is also why the emulator runs on this thread.
+  var playBtn = document.getElementById('lb-play');
+  var statusEl = document.getElementById('lb-status');
+  var canvas = document.getElementById('lb-canvas');
+  var current = null, run = null, loading = null;
+
+  function showLive(name) {
+    stopLive();
+    current = name;
+    playBtn.hidden = !name;
+    playBtn.disabled = false;
+    say('', false);
+  }
+
+  function say(text, live) {
+    statusEl.textContent = text;
+    statusEl.hidden = !text;
+    statusEl.className = 'run-note' + (live ? ' live' : '');
+  }
+
+  // Back to the screenshot. The button comes back with it, because the two are
+  // one control: the picture is either the frame we took or the one running.
+  function stopLive() {
+    if (run) { run.stop(); run = null; self.liveRun = null; }
+    canvas.hidden = true;
+    img.hidden = false;
+    if (current) { playBtn.hidden = false; playBtn.disabled = false; }
+    say('', false);
+  }
+
+  // One <script> tag, resolved when it has run. Sequential rather than
+  // parallel: programs.js is data the bundle's loader never touches, but the
+  // order costs nothing next to the emulator's own startup.
+  function script(src) {
+    return new Promise(function (ok, fail) {
+      var el = document.createElement('script');
+      el.src = src;
+      el.onload = function () { ok(); };
+      el.onerror = function () { fail(new Error(src + ' did not load')); };
+      document.head.appendChild(el);
+    });
+  }
+
+  function loadVm() {
+    if (loading) return loading;
+    loading = script('live/toyvm-bundle.js')
+      .then(function () { return script('live/programs.js'); });
+    return loading;
+  }
+
+  playBtn.addEventListener('click', function () {
+    if (!current || run) return;
+    playBtn.disabled = true;
+    say('loading the emulator...');
+    loadVm().then(function () {
+      var program = self.ToyVMPrograms && self.ToyVMPrograms[current];
+      if (!program) throw new Error(current + ' was not packed with the page');
+      // base64 in, bytes out: the shim's fs reads from exactly this map.
+      var files = {};
+      Object.keys(program.files).forEach(function (n) {
+        var bin = atob(program.files[n]);
+        var b = new Uint8Array(bin.length);
+        for (var i = 0; i < bin.length; i++) b[i] = bin.charCodeAt(i);
+        files[n] = b;
+      });
+      var LiveRun = self.ToyVM.require('tools/toyvm/live.js').LiveRun;
+      run = new LiveRun({
+        canvas: canvas,
+        exe: program.exe,
+        files: files,
+        onStatus: function (s) {
+          if (s.state === 'running') say('running - click the screen, then type', true);
+          else if (s.state === 'exited') say('the program exited');
+          else if (s.state === 'waiting') say('waiting for a key - click the screen and press one');
+        },
+      });
+      // Reachable from the console, on purpose: liveRun.session.dispatched is
+      // the only way to tell a demo that is drawing nothing yet from one that
+      // is not running at all, and both look like a black rectangle.
+      self.liveRun = run;
+      // The screenshot steps aside and the button goes with it: from here the
+      // picture IS the program, and closing the lightbox is how you stop it.
+      img.hidden = true;
+      canvas.hidden = false;
+      playBtn.hidden = true;
+      return run.start().then(function () { canvas.focus(); });
+    }).catch(function (e) {
+      playBtn.disabled = false;
+      say(String((e && e.message) || e));
+    });
+  });
+
+  // Keys go to the guest only while the canvas has focus, so the dialog's own
+  // Escape-to-close keeps working everywhere else on the page.
+  canvas.addEventListener('keydown', function (e) {
+    if (!run) return;
+    e.preventDefault();
+    e.stopPropagation();
+    run.key(e);
+  });
 })();
 </script>
 </body>

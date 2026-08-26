@@ -1023,12 +1023,30 @@ class Machine {
   // BIOS is served by int16 above, and sending it a hardware interrupt as well
   // would put the same key in twice. Make code first, then break code, so a
   // handler tracking which keys are held does not think one is stuck down.
+  //
+  // A scancode already on the queue is delivered whatever `autoKey` says. That
+  // flag governs the menu READER -- the thing that photographs the screen and
+  // guesses an answer -- and gating delivery on it too meant that with a real
+  // person at the keyboard, in the page, a demo reading the hardware directly
+  // could never be sent anything at all.
   keyboardIrq() {
-    if (!this.autoKey || !this.hookedVector(0x09)) return 0;
+    if (!this.hookedVector(0x09)) return 0;
     if (!this.kbQueue.length && !this.kbFill()) return 0;
     this.kbScan = this.kbQueue.shift();
     this.kbFresh = true;
     return 0x09;
+  }
+
+  // A keystroke from outside: a person typing at the live page, or a test.
+  //
+  // Both wires get it, because which one a program listens on is not knowable
+  // from here. The BIOS queue serves anything calling INT 16h; the scancode
+  // pair serves a program that reads port 60h itself and would otherwise see
+  // nothing. Make code then break code, so a handler tracking which keys are
+  // held does not think one is stuck down.
+  pushKey(scan, ascii) {
+    this.keys.push({ ah: scan & 0xFF, al: ascii & 0xFF });
+    this.kbQueue.push(scan & 0x7F, (scan & 0x7F) | 0x80);
   }
 
   // Put the menu reader's answer on the wire as scancodes. Text mode only, so

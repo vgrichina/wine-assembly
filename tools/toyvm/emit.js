@@ -52,7 +52,7 @@ function ops(n) {
 h('end', 1, `
   ${ops(1)}
   (global.set $gip (local.get $t0))
-  (global.set $left (global.get $steps)) (global.set $steps (i32.const -1))
+  (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
 `);
 
 // The same, for a block that just patched its own code. A write through a CS
@@ -69,7 +69,7 @@ h('end_smc', 1, `
   ${ops(1)}
   (global.set $smc (i32.const 1))
   (global.set $gip (local.get $t0))
-  (global.set $left (global.get $steps)) (global.set $steps (i32.const -1))
+  (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
 `);
 
 // --- ALU + MOV families, generated -----------------------------------------
@@ -293,12 +293,24 @@ const CONDS = {
 // falls straight through into the code it just wrote keeps running the bytes
 // that were there at decode time -- COROMER's second stage did exactly that and
 // ended up executing the interrupt vector table.
-const CONT = (arena) => `(select (i32.const 0) ${arena} (global.get $smc))`;
+// The step budget is spent here too, for the same reason and with the same
+// argument. A slice that simply stopped where the counter ran out stopped in
+// the MIDDLE of a block -- and $gip is only written at block boundaries, so the
+// host resumed at the block head and the guest re-ran everything the block had
+// already done. Harmless for arithmetic, fatal for a depacker: CARRIE.EXE's
+// unpacking loop re-copied its prefix once per expired slice and jumped into
+// the wreckage, which looked exactly like a decoder bug and got worse the
+// smaller the slice (64000 lit pixels at a 2M slice, 15300 at 500k, none at
+// 200k). So the budget is checked where a boundary already exists: the counter
+// runs to zero, the block finishes, and the handback happens on its way out.
+// The overrun is bounded by one block.
+const CONT = (arena) => `(select (i32.const 0) ${arena}
+    (i32.or (global.get $smc) (i32.lt_s (global.get $steps) (i32.const 0))))`;
 const GO = (arena, guest) => `
   (global.set $gip ${guest})
   (if ${CONT(arena)}
     (then (global.set $ip ${arena}))
-    (else (global.set $left (global.get $steps)) (global.set $steps (i32.const -1))))`;
+    (else (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))))`;
 
 function genBranches() {
   for (const [cc, expr] of Object.entries(CONDS)) {
@@ -431,7 +443,7 @@ function genExtras() {
   (local.set $t7 (call $rpop (global.get $gip)))
   (if ${CONT('(local.get $t7)')}
     (then (global.set $ip (local.get $t7)))
-    (else (global.set $left (global.get $steps)) (global.set $steps (i32.const -1))))`;
+    (else (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))))`;
   h('ret', 0, RET_BODY);
   h('ret_imm', 1, `
   ${ops(1)}
@@ -440,7 +452,7 @@ function genExtras() {
   (local.set $t7 (call $rpop (global.get $gip)))
   (if ${CONT('(local.get $t7)')}
     (then (global.set $ip (local.get $t7)))
-    (else (global.set $left (global.get $steps)) (global.set $steps (i32.const -1))))
+    (else (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))))
 `);
 
   // LEA computes the effective address and never touches memory -- which is
@@ -749,7 +761,7 @@ function genExtras() {
   (local.set $t2 (i32.shl (local.get $t0) (i32.const 2)))
   (global.set $gip (call $rdphys16 (local.get $t2)))
   (call $sset (i32.const 1) (call $rdphys16 (i32.add (local.get $t2) (i32.const 2))))
-  (global.set $left (global.get $steps)) (global.set $steps (i32.const -1))
+  (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
 `);
   h('iret', 0, `
   (global.set $gip (call $pop16))
@@ -757,7 +769,7 @@ function genExtras() {
   (global.set $flags (i32.or
     (i32.and (call $pop16) ${DEFINED})
     ${RESERVED}))
-  (global.set $left (global.get $steps)) (global.set $steps (i32.const -1))
+  (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
 `);
 }
 
@@ -1403,7 +1415,7 @@ function genArithIO() {
   ${ops(2)}
   (call $sset (i32.const 1) (local.get $t1))
   (global.set $gip (local.get $t0))
-  (global.set $left (global.get $steps)) (global.set $steps (i32.const -1))
+  (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
 `);
   h('call_far', 3, `
   ${ops(3)}
@@ -1411,19 +1423,19 @@ function genArithIO() {
   (call $push16 (local.get $t2))
   (call $sset (i32.const 1) (local.get $t1))
   (global.set $gip (local.get $t0))
-  (global.set $left (global.get $steps)) (global.set $steps (i32.const -1))
+  (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
 `);
   h('retf', 0, `
   (global.set $gip (call $pop16))
   (call $sset (i32.const 1) (call $pop16))
-  (global.set $left (global.get $steps)) (global.set $steps (i32.const -1))
+  (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
 `);
   h('retf_imm', 1, `
   ${ops(1)}
   (global.set $gip (call $pop16))
   (call $sset (i32.const 1) (call $pop16))
   (global.set $sp (i32.and (i32.add (global.get $sp) (local.get $t0)) (i32.const 0xFFFF)))
-  (global.set $left (global.get $steps)) (global.set $steps (i32.const -1))
+  (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
 `);
   // The target is a runtime value, so it is looked up in the jump-target cache
   // rather than baked in. A miss hands back exactly as before; a hit keeps a
@@ -1433,7 +1445,7 @@ function genArithIO() {
   (local.set $t3 (call $jlook (global.get $gip)))
   (if ${CONT('(local.get $t3)')}
     (then (global.set $ip (local.get $t3)))
-    (else (global.set $left (global.get $steps)) (global.set $steps (i32.const -1))))`;
+    (else (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))))`;
   h('jmp_r16', 1, `
   ${ops(1)}
   (global.set $gip (call $rget16 (local.get $t0)))
@@ -2631,7 +2643,7 @@ function helpers() {
   (local.set $v (i32.shl (local.get $vec) (i32.const 2)))
   (global.set $gip (call $rdphys16 (local.get $v)))
   (call $sset (i32.const 1) (call $rdphys16 (i32.add (local.get $v) (i32.const 2))))
-  (global.set $left (global.get $steps)) (global.set $steps (i32.const -1)))
+  (global.set $left (global.get $steps)) (global.set $halt (i32.const 1)))
 
 ;; Divide error -- the only fault the arithmetic handlers raise.
 (func $fault0 (param $ip i32)
@@ -2955,7 +2967,12 @@ function fpuHelpers() {
 // there. Without it a run() that bails after 40 steps and one that burns its
 // whole slice are indistinguishable, and every dispatch count the harness
 // prints is the slice size instead of the work done.
-const STATE = [...isa.REG16, ...isa.SEG, 'gip', 'flags', 'ip', 'steps', 'intno', 'left', 'rtop', 'smc'];
+// $halt is what ends a run(), and it is set only where $gip is known good --
+// every handback path, and the block boundary the step budget is now spent at
+// (see CONT). It exists because $steps cannot do both jobs: the counter has to
+// keep running for accounting after the budget is gone, and a return keyed off
+// its sign would fire mid-block.
+const STATE = [...isa.REG16, ...isa.SEG, 'gip', 'flags', 'ip', 'steps', 'intno', 'left', 'rtop', 'smc', 'halt'];
 
 // Memory is IMPORTED and state is read through accessor functions rather than
 // inline-exported, because that is the shape lib/compile-wat.js actually
@@ -3045,7 +3062,7 @@ function emitTailcall() {
 (func $next
   (local $fn i32)
   (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
-  (if (i32.lt_s (global.get $steps) (i32.const 0)) (then (return)))
+  (if (global.get $halt) (then (return)))
   (local.set $fn (i32.load (global.get $ip)))
   (global.set $ip (i32.add (global.get $ip) (i32.const 4)))
   (return_call_indirect $h (type $void) (local.get $fn)))
@@ -3074,7 +3091,7 @@ function emitReplTailcall() {
   s += `(elem (i32.const 0) ${HANDLERS.map(x => `$${x.name}`).join(' ')})\n`;
   const dispatch = `
   (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
-  (if (i32.lt_s (global.get $steps) (i32.const 0)) (then (return)))
+  (if (global.get $halt) (then (return)))
   (local.set $fn (i32.load (global.get $ip)))
   (global.set $ip (i32.add (global.get $ip) (i32.const 4)))
   (return_call_indirect $h (type $void) (local.get $fn))`;
@@ -3100,7 +3117,7 @@ function emitCalls() {
   (local $fn i32)
   (loop $l
     (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
-    (if (i32.lt_s (global.get $steps) (i32.const 0)) (then (return)))
+    (if (global.get $halt) (then (return)))
     (local.set $fn (i32.load (global.get $ip)))
     (global.set $ip (i32.add (global.get $ip) (i32.const 4)))
     (call_indirect $h (type $void) (local.get $fn))
@@ -3117,7 +3134,7 @@ function emitSwitch() {
   // one branch site for all of them.
   const dispatch = `
     (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
-    (if (i32.lt_s (global.get $steps) (i32.const 0)) (then (return)))
+    (if (global.get $halt) (then (return)))
     (local.set $fn (i32.load (global.get $ip)))
     (global.set $ip (i32.add (global.get $ip) (i32.const 4)))
     (br_table ${HANDLERS.map((_, i) => `$a${i}`).join(' ')} $bad (local.get $fn))`;
@@ -3145,6 +3162,7 @@ function runExport() {
   (global.set $ip (local.get $entry))
   (global.set $steps (local.get $budget))
   (global.set $left (i32.const -1))
+  (global.set $halt (i32.const 0))
   (call $next))
 `;
 }

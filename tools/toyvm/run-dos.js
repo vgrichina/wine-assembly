@@ -29,116 +29,21 @@ const path = require('path');
 const isa = require('./isa');
 const { disasmAt } = require('../disasm');
 const { makeVm } = require('./vm');
-const { compileProgram } = require('./compile');
 const { setCpuLevel } = require('./decode');
-const { Machine, loadExe, vgaGeometry, VGA_BASE, STUB_SEG } = require('./dos');
+const { Machine, loadExe, vgaGeometry, VGA_BASE } = require('./dos');
+const { DosSession } = require('./dos-loop');
+const {
+  conCells, conText, screenSurface, nonBlack, frameHash, rgbaFrame, rgbaConsole,
+} = require('./framebuffer');
 
 // --- screenshot -------------------------------------------------------------
-// One frame of 8-bit pixels, read the way the VGA registers currently say to
-// read it. Everything downstream -- the PNG, the pixel count, the frame hash --
-// goes through this, so none of them can disagree about what the screen is.
-//
-// Chained mode 13h is the easy half: A000 is the picture, one byte per pixel.
-// Unchained mode X is not addressable that way at all -- pixel (x, y) is byte
-// `start + y*(stride/4) + (x>>2)` of plane `x & 3` -- and reading it linearly
-// is what made those demos screenshot as a quarter of a picture stretched over
-// the frame.
-const LINEAR = { width: 320, height: 200, stride: 320, start: 0, planar: false };
+// What is on the screen, how much of it there is, and what the console grid
+// says -- all of it in ./framebuffer.js, which the live page shares, so a
+// screenshot and the page's canvas cannot disagree about what the screen is.
+// Only the PNG encoding stays here, because only a Node driver writes files.
 
 const ld32 = (mem, at) =>
   (mem[at] | (mem[at + 1] << 8) | (mem[at + 2] << 16) | (mem[at + 3] << 24)) >>> 0;
-
-// Cells of the console grid that are not a blank on a black ground. A screen
-// full of spaces coloured by a background is still a screen, so a cell counts
-// when either its character or its attribute says something.
-// Which of the two surfaces is this program's picture.
-//
-// `vga.bpp` is 0 until a graphics mode is established and 0 again once the
-// guest goes back to text, which is the question worth asking -- the mode
-// number alone is not, since a demo can reprogram the CRTC underneath mode 13h
-// and still be in graphics. Two cases hang off the text answer: a program with
-// something on the text page is photographed there, and a program with a blank
-// text page that HAS been in graphics is photographed off its last frame, which
-// is still sitting in A000 after the mode-3 restore a well-behaved demo does on
-// its way out.
-function screenSurface(machine) {
-  if (machine.vga.bpp !== 0) return { text: false, geom: vgaGeometry(machine.vga) };
-  if (conCells(machine.con) > 0 || !machine.vga.lastGraphics) return { text: true, geom: null };
-  return { text: false, geom: machine.vga.lastGraphics };
-}
-
-function conCells(con) {
-  let n = 0;
-  for (let i = 0; i < con.cells; i++) {
-    const ch = con.getCh(i);
-    if ((ch !== 0x20 && ch !== 0) || (con.getAt(i) & 0xF0) !== 0) n++;
-  }
-  return n;
-}
-
-// The console grid as plain text, trailing blank rows and columns trimmed.
-function conText(con) {
-  const rows = [];
-  for (let y = 0; y < con.rows; y++) {
-    let s = '';
-    for (let x = 0; x < con.cols; x++) {
-      const b = con.getCh(y * con.cols + x);
-      s += (b >= 0x20 && b < 0x7F) ? String.fromCharCode(b) : (b === 0 || b === 0x20 ? ' ' : '·');
-    }
-    rows.push(s.replace(/\s+$/, ''));
-  }
-  while (rows.length && rows[rows.length - 1] === '') rows.pop();
-  return rows.join('\n');
-}
-
-function readFrame(mem, video = LINEAR) {
-  // A chained program is read exactly the way it always was, even when its
-  // CRTC says something other than 320x200. The register model is complete
-  // enough to describe the mode X tweaks and no further: BAZIRRE.COM programs a
-  // genuine 320x66 chunky mode by stretching each row over six scan lines, and
-  // reading its 66 rows back at a 320-byte stride produces overlapping text --
-  // so the chained side of that model is not yet worth trusting over the
-  // assumption it would replace. video-census.js still reports the derived
-  // numbers, which is where that gets picked up again.
-  const g = video && video.planar ? { ...LINEAR, ...video } : LINEAR;
-  const { width, height, stride, start, planar } = g;
-  const out = new Uint8Array(width * height);
-  if (!planar) {
-    const n = Math.min(width * height, 0x10000);
-    out.set(mem.subarray(VGA_BASE, VGA_BASE + n));
-    return { width, height, pixels: out };
-  }
-  if (g.bpp === 4) {
-    // EGA 16-colour: eight pixels per plane byte, one bit each, most
-    // significant bit leftmost. The colour is the four bits assembled across
-    // the planes, and that 0-15 value then indexes the attribute palette to
-    // reach the DAC entry the hardware would have displayed.
-    const rowBytes = stride >> 3;
-    const attr = g.attr || null;
-    for (let y = 0; y < height; y++) {
-      const row = start + y * rowBytes;
-      for (let x = 0; x < width; x++) {
-        const at = (row + (x >> 3)) & 0xFFFF;
-        const bit = 7 - (x & 7);
-        let c = 0;
-        for (let p = 0; p < 4; p++) {
-          c |= ((mem[isa.VGA_PLANES + (p << 16) + at] >> bit) & 1) << p;
-        }
-        out[y * width + x] = attr ? (attr[c] & 0x3F) : c;
-      }
-    }
-    return { width, height, pixels: out };
-  }
-  const rowBytes = stride >> 2;
-  for (let y = 0; y < height; y++) {
-    const row = start + y * rowBytes;
-    for (let x = 0; x < width; x++) {
-      out[y * width + x] =
-        mem[isa.VGA_PLANES + ((x & 3) << 16) + ((row + (x >> 2)) & 0xFFFF)];
-    }
-  }
-  return { width, height, pixels: out };
-}
 
 // --- text-mode rendering ----------------------------------------------------
 // The console grid, drawn with the real OEM font. `fonts/Terminal.fon` is the
@@ -159,79 +64,23 @@ function terminalFont() {
   return TERMINAL_FONT;
 }
 
-// One 8-bit CGA attribute: low nibble foreground, high nibble background, and
-// the top bit is blink -- which on a still frame is just a bright background.
-function attrRgb(a, fg) {
-  const i = fg ? (a & 0x0F) : ((a >> 4) & 0x07);
-  const c = CGA_TEXT[i];
-  return [c[0] * 255 / 63, c[1] * 255 / 63, c[2] * 255 / 63];
+// The two PNGs, off the same RGBA the page paints to its canvas. A screenshot
+// and a live run that disagreed about a colour would be a real bug and an
+// unfindable one, so there is one renderer and this only encodes it.
+function writeRgbaPng(file, { width, height, rgba }) {
+  const { PNG } = require(path.join(__dirname, '..', '..', 'node_modules', 'pngjs'));
+  const png = new PNG({ width, height });
+  png.data.set(rgba);
+  fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
+  fs.writeFileSync(file, PNG.sync.write(png));
 }
-const CGA_TEXT = [
-  [0, 0, 0], [0, 0, 42], [0, 42, 0], [0, 42, 42],
-  [42, 0, 0], [42, 0, 42], [42, 21, 0], [42, 42, 42],
-  [21, 21, 21], [21, 21, 63], [21, 63, 21], [21, 63, 63],
-  [63, 21, 21], [63, 21, 63], [63, 63, 21], [63, 63, 63],
-];
 
 function writeConsolePng(file, con) {
-  const { PNG } = require(path.join(__dirname, '..', '..', 'node_modules', 'pngjs'));
-  const f = terminalFont();
-  const cw = (f && (f.pixWidth || f.maxWidth)) || 8;
-  const ch = (f && f.height) || 12;
-  const png = new PNG({ width: con.cols * cw, height: con.rows * ch });
-  for (let y = 0; y < con.rows; y++) {
-    for (let x = 0; x < con.cols; x++) {
-      const at = y * con.cols + x;
-      const a = con.getAt(at);
-      const bg = attrRgb(a, false), fgc = attrRgb(a, true);
-      const g = f ? f.glyphs.get(con.getCh(at)) : null;
-      for (let py = 0; py < ch; py++) {
-        for (let px = 0; px < cw; px++) {
-          const on = g && px < g.width && g.bits[py * g.width + px];
-          const c = on ? fgc : bg;
-          const o = ((y * ch + py) * png.width + x * cw + px) * 4;
-          png.data[o] = c[0]; png.data[o + 1] = c[1]; png.data[o + 2] = c[2];
-          png.data[o + 3] = 255;
-        }
-      }
-    }
-  }
-  fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
-  fs.writeFileSync(file, PNG.sync.write(png));
+  writeRgbaPng(file, rgbaConsole(con, terminalFont()));
 }
 
-// Palette entries are 6-bit, the way the DAC stores them.
 function writePng(file, mem, palette, video) {
-  const { PNG } = require(path.join(__dirname, '..', '..', 'node_modules', 'pngjs'));
-  const { width, height, pixels } = readFrame(mem, video);
-  const png = new PNG({ width, height });
-  for (let i = 0; i < width * height; i++) {
-    const c = pixels[i];
-    const o = i * 4;
-    png.data[o] = Math.round(palette[c * 3] * 255 / 63);
-    png.data[o + 1] = Math.round(palette[c * 3 + 1] * 255 / 63);
-    png.data[o + 2] = Math.round(palette[c * 3 + 2] * 255 / 63);
-    png.data[o + 3] = 255;
-  }
-  fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
-  fs.writeFileSync(file, PNG.sync.write(png));
-}
-
-function nonBlack(mem, video) {
-  const { pixels } = readFrame(mem, video);
-  let n = 0;
-  for (let i = 0; i < pixels.length; i++) if (pixels[i]) n++;
-  return n;
-}
-
-// A cheap content signature over the frame buffer. Two variants that disagree
-// here executed different code, and no timing comparison between them means
-// anything -- so the bench checks it before it reports a ratio.
-function frameHash(mem, video) {
-  const { pixels } = readFrame(mem, video);
-  let h = 0x811c9dc5;
-  for (let i = 0; i < pixels.length; i++) h = Math.imul(h ^ pixels[i], 0x01000193);
-  return (h >>> 0).toString(16).padStart(8, '0');
+  writeRgbaPng(file, rgbaFrame(mem, palette, video));
 }
 
 // ---------------------------------------------------------------------------
@@ -303,78 +152,11 @@ async function runDos(o) {
   const spLin = ((info.ss << 4) + ((info.sp - 2) & 0xFFFF)) & 0xFFFFF;
   vm.mem[spLin] = 0; vm.mem[spLin + 1] = 0;
 
-  // --- trace cache ---------------------------------------------------------
-  // One compiled region per (cs, entry ip). compileProgram walks the whole
-  // reachable subgraph within that cs, so most entries hit an existing region's
-  // block map and cost nothing.
-  const regions = new Map();     // cs -> [prog]
-  let arenaNext = isa.THREAD_BASE;
-  const arenaEnd = isa.THREAD_BASE + isa.THREAD_SIZE - 4096;
-  let compiles = 0, compiledWords = 0, arenaResets = 0;
-  const jtab = new Int32Array(vm.mem.buffer, isa.JTAB_BASE, isa.JTAB_SIZE >> 2);
-  const unimplemented = new Map();
-  const codeBits = new Uint8Array(vm.mem.buffer, isa.CODE_BITMAP, isa.CODE_BITMAP_SIZE);
-  codeBits.fill(0);
-
-  // Everything compiled is now suspect, because the guest wrote into code that
-  // had been compiled. Cheaper answers exist (invalidate just the paragraph),
-  // but this happens a handful of times in a run -- once when a packed program
-  // unpacks itself -- and being obviously right matters more than being quick.
-  function flushCompiled() {
-    regions.clear();
-    vm.set('rtop', 0);
-    jtab.fill(0);
-    codeBits.fill(0);
-  }
-
-  function entryFor(cs, ip) {
-    if (!noCache) {
-      for (const r of (regions.get(cs) || [])) {
-        const a = r.blocks.get(ip & 0xFFFF);
-        if (a !== undefined) return a;
-      }
-    }
-    // Recycling the arena invalidates every arena address the guest-visible
-    // caches hold, so both are emptied here -- a stale entry would resume in
-    // whatever got compiled over the block it named.
-    if (arenaNext >= arenaEnd) {
-      regions.clear(); arenaNext = isa.THREAD_BASE; arenaResets++;
-      vm.set('rtop', 0); jtab.fill(0);
-    }
-    const prog = compileProgram((lin) => vm.mem[lin], cs, ip, {
-      arenaBase: arenaNext,
-      maxWords: (arenaEnd - arenaNext) >> 2,
-    });
-    new Int32Array(vm.mem.buffer, prog.arenaBase, prog.words.length).set(prog.words);
-    arenaNext += prog.words.length * 4;
-    compiles++; compiledWords += prog.words.length;
-    for (const at of prog.unimplemented) {
-      const key = `${cs.toString(16)}:${at.toString(16)}`;
-      unimplemented.set(key, (unimplemented.get(key) || 0) + 1);
-    }
-    // Mark what was decoded, so a store into it is noticed. Paragraph
-    // granularity, which is what $wr8 tests -- a store within 16 bytes of
-    // compiled code counts as touching it, and over-reporting only costs a
-    // recompile.
-    for (const [from, to] of prog.covered) {
-      for (let p = from >> 4; p <= (to - 1) >> 4; p++) {
-        codeBits[p >> 3] |= 1 << (p & 7);
-      }
-    }
-    // Publish every block head into the indirect-jump cache. Direct-mapped, so
-    // a later block simply evicts an earlier one -- the key check in $jlook
-    // turns that into a handback rather than a wrong jump.
-    for (const [bip, addr] of prog.blocks) {
-      const slot = isa.jhash(cs, bip) * 2;   // jtab is a view starting AT JTAB_BASE
-      jtab[slot] = ((cs & 0xFFFF) << 16) | (bip & 0xFFFF);
-      jtab[slot + 1] = addr;
-    }
-    if (!regions.has(cs)) regions.set(cs, []);
-    regions.get(cs).push(prog);
-    return prog.entryAddr;
-  }
-
   // --- the loop ------------------------------------------------------------
+  // The cycle itself -- compile, run a slice, service, tick, deliver an
+  // interrupt, decide whether the thing is stuck -- is ./dos-loop.js, shared
+  // with the live page. What stays here is what only a headless run wants:
+  // tracing, sampling, and keeping the best frame.
   let bestScore = -1, bestSurface = null, bestText = '';
   function keepBest() {
     const s = screenSurface(machine);
@@ -392,293 +174,95 @@ async function runDos(o) {
 
   const t0 = process.hrtime.bigint();
   let guestNs = 0n;
-  let dispatched = 0, handbacks = 0, ints = 0, irqs = 0, shotN = 0, stuck = 0, stuckAt = null;
-  let smcBreaks = 0;
-  let lastIrq = 0, lastKbIrq = 0;
-  let lastKey = '', lastWritten = 0, lastRegs = 0;
+  let shotN = 0;
   const entryHist = new Map();
   const ipSamples = new Map();
   const ipSampleLog = [];          // flat [dispatched, ip, dispatched, ip, ...]
 
-  while (dispatched < budget && !machine.exited && !machine.blockedOnKey) {
-    const cs = vm.get('cs'), ip = vm.get('gip');
-
-    // A guest IP inside the stub segment is a serviced interrupt: the vector
-    // sent us to a byte the decoder refuses, so control is here rather than in
-    // guest code.
-    if (cs === STUB_SEG) {
-      const vec = ip & 0xFF;
-      ints++;
-      // The IRET frame the INT handler pushed. Servicing may want to change the
-      // flags the guest gets back (CF for a DOS error, ZF for "no key"), so it
-      // is edited in place on the stack rather than in the live register.
-      const ss = vm.get('ss'), sp = vm.get('sp');
-      const lin = (of) => ((ss << 4) + ((sp + of) & 0xFFFF)) & 0xFFFFF;
-      const rd = (of) => vm.mem[lin(of)] | (vm.mem[lin(of + 1)] << 8);
-      const wr = (of, v) => { vm.mem[lin(of)] = v & 0xFF; vm.mem[lin(of + 1)] = (v >> 8) & 0xFF; };
-      const r = {
-        get: (n) => vm.get(n),
-        set: (n, v) => vm.set(n, v),
-        setResultCf: (on) => wr(4, on ? (rd(4) | 1) : (rd(4) & ~1)),
-        setResultZf: (on) => wr(4, on ? (rd(4) | 0x40) : (rd(4) & ~0x40)),
-        // Where this INT returns to, and the SP it returns with. EXEC needs it:
-        // the caller's own CS:IP at service time is the stub, and the address
-        // the parent resumes at lives in the IRET frame.
-        ret: { cs: rd(2), ip: rd(0), sp: (sp + 6) & 0xFFFF },
-      };
-      // The registers as they ARRIVED. Logging them after the call showed the
-      // answer where the question belongs: an INT 16h AH=00 that returned 'a'
-      // printed as `ax=1e61`, which reads exactly like a program calling a
-      // function 1Eh that does not exist. The call is what the log is for, so
-      // the return goes after an arrow instead.
-      const before = ['ax', 'bx', 'cx', 'dx'].map(n => vm.get(n));
-      const ok = machine.service(vec, r);
-      if (traceInt) {
-        const at = `${rd(2).toString(16)}:${rd(0).toString(16)}`;
-        const now = vm.get('ax');
+  const session = new DosSession(vm, machine, {
+    slice, noCache, mouse, irqEvery, dispatchesPerTick, tickScale, stuckLimit,
+    cells: conCells,
+    hooks: {
+      onInt: !traceInt ? undefined : ({ vec, before, ok, retCs, retIp, ax }) => {
         log(`int ${vec.toString(16).padStart(2, '0')}h ax=${before[0].toString(16)}`
           + ` bx=${before[1].toString(16)} cx=${before[2].toString(16)}`
           + ` dx=${before[3].toString(16)}`
-          + `  from ${at}${now === before[0] ? '' : ` -> ax=${now.toString(16)}`}`
+          + `  from ${retCs.toString(16)}:${retIp.toString(16)}`
+          + `${ax === before[0] ? '' : ` -> ax=${ax.toString(16)}`}`
           + `${ok ? '' : '   UNHANDLED'}`);
-      }
-      // IRET, performed here so the stub is one byte and never executes.
-      vm.set('gip', rd(0));
-      vm.set('cs', rd(2));
-      vm.set('flags', rd(4));
-      vm.set('sp', (sp + 6) & 0xFFFF);
-      // A service that transfers control -- EXEC into a child program, or a
-      // child's exit back into its parent -- says so here rather than editing
-      // the registers behind the IRET's back, which would just be overwritten
-      // by the three loads above.
-      if (machine.transfer) {
-        const t = machine.transfer;
-        machine.transfer = null;
-        for (const k of ['cs', 'ss', 'ds', 'es']) vm.set(k, t[k]);
-        vm.set('gip', t.ip);
-        vm.set('sp', t.sp);
-        if (t.ax !== undefined) vm.set('ax', t.ax);
-      }
-      if (machine.exited || machine.blockedOnKey) break;
-      continue;
-    }
+      },
+      onEntry: (!report && !traceEntry) ? undefined : (cs, ip, handbacks) => {
+        if (report) {
+          const k = `${cs.toString(16)}:${ip.toString(16)}`;
+          entryHist.set(k, (entryHist.get(k) || 0) + 1);
+        }
+        // The entries IN ORDER, which the histogram cannot show. A program that
+        // ends up executing its own data got there by a path, and the path is
+        // usually three or four blocks long -- uman.com reaches 100:10a from
+        // its first instruction and the histogram says only that both were
+        // entered.
+        if (traceEntry && handbacks < traceEntry) {
+          log(`  entry ${cs.toString(16)}:${ip.toString(16)}`);
+        }
+      },
+      beforeSlice: () => { sliceT0 = process.hrtime.bigint(); },
+      afterSlice: ({ left, dispatched, cs, ip }) => {
+        guestNs += process.hrtime.bigint() - sliceT0;
+        // A divide fault ends the trace inside the guest's own INT 0 handler,
+        // so it never reaches the stub segment and --trace-int cannot see it.
+        // The faulting address is on the guest stack, which is the only place
+        // it is recorded: Turbo Pascal turns this into "Runtime error 200" a
+        // long way from the DIV that caused it.
+        if (traceFault) {
+          const v0 = vm.mem[0] | (vm.mem[1] << 8), v2 = vm.mem[2] | (vm.mem[3] << 8);
+          if (vm.get('cs') === v2 && vm.get('gip') === v0) {
+            const ss = vm.get('ss'), sp = vm.get('sp');
+            const at = (of) => ((ss << 4) + ((sp + of) & 0xFFFF)) & 0xFFFFF;
+            const rd = (of) => vm.mem[at(of)] | (vm.mem[at(of + 1)] << 8);
+            log(`  divide fault at ${rd(2).toString(16)}:${rd(0).toString(16)}`
+              + ` (ax=${vm.get('ax').toString(16)} dx=${vm.get('dx').toString(16)}`
+              + ` from ${cs.toString(16)}:${ip.toString(16)} at ${dispatched} dispatches)`);
+          }
+        }
+        // A budget-expiry return leaves $ip pointing at the next arena word, so
+        // it is a genuine program-counter sample -- unlike $gip, which only
+        // moves when a trace ENDS and is therefore blind to exactly the hot
+        // loops that never end. With a small slice this is a sampling profiler
+        // over the arena. `sampleAfter` skips the program's first N dispatches:
+        // most of this corpus ships compressed, so a profile from dispatch zero
+        // finds the DEPACKER, not the demo -- which is how eight unrelated
+        // demos came back with byte-identical "hottest traces".
+        if (sample && left < 0 && dispatched >= sampleAfter) {
+          const at = vm.raw('ip');
+          ipSamples.set(at, (ipSamples.get(at) || 0) + 1);
+          // Each sample is also kept WITH the dispatch count it was taken at,
+          // so a caller can restrict the profile to the tail of the run after
+          // the fact. An absolute `sampleAfter` cannot do that job: pick 4M and
+          // every program that finishes in 3M reports no samples at all.
+          ipSampleLog.push(dispatched, at);
+        }
+      },
+    },
+  });
+  let sliceT0 = 0n;
 
-    // Where a slice re-enters is the whole cost model of this harness: each one
-    // is a JS round trip, and a hot loop whose back edge the compiler could not
-    // resolve turns into hundreds of thousands of them.
-    if (report) {
-      const k = `${cs.toString(16)}:${ip.toString(16)}`;
-      entryHist.set(k, (entryHist.get(k) || 0) + 1);
-    }
-    // The entries IN ORDER, which the histogram cannot show. A program that
-    // ends up executing its own data got there by a path, and the path is
-    // usually three or four blocks long -- uman.com reaches 100:10a from its
-    // first instruction and the histogram says only that both were entered.
-    if (traceEntry && handbacks < traceEntry) {
-      log(`  entry ${cs.toString(16)}:${ip.toString(16)}`);
-    }
-    const entry = entryFor(cs, ip);
-    const g0 = process.hrtime.bigint();
-    vm.exports.run(entry, slice);
-    guestNs += process.hrtime.bigint() - g0;
-    // $left is -1 when the slice ran to exhaustion and holds the unspent budget
-    // when a handler handed control back early. Billing the slice either way
-    // makes a demo that bounces off an unresolved jump every few instructions
-    // look like it burned the whole budget.
-    const left = vm.raw('left');
-    dispatched += left < 0 ? slice : slice - left;
-    handbacks++;
-
-    // A budget-expiry return leaves $ip pointing at the next arena word, so it
-    // is a genuine program-counter sample -- unlike $gip, which only moves when
-    // a trace ENDS and is therefore blind to exactly the hot loops that never
-    // end. With a small slice this is a sampling profiler over the arena.
-    // `sampleAfter` skips the program's first N dispatches. Most of this corpus
-    // ships compressed (LZEXE/PKLITE), so a profile from dispatch zero finds
-    // the DEPACKER, not the demo -- and the depacker is the same handful of
-    // instructions in every one of them, which is how eight unrelated demos
-    // came back with byte-identical "hottest traces".
-    // A block that patched its own code hands back with $smc set. The block it
-    // patched is the one it was about to fall into, so that is the cache entry
-    // to drop -- a full flush would be correct too, and would re-decode the
-    // whole program on every Turbo Pascal BIOS call.
-    // $smc = 2 is the other kind, and the broad one: some store landed in a
-    // paragraph that had already been compiled. That is a packed program
-    // unpacking itself, so everything compiled from before the unpack is stale
-    // and goes.
-    if (vm.raw('smc')) {
-      const kind = vm.raw('smc');
-      vm.set('smc', 0);
-      if (kind === 2) {
-        flushCompiled();
-      } else {
-        const ncs = vm.get('cs'), nip = vm.get('gip') & 0xFFFF;
-        for (const r of (regions.get(ncs) || [])) r.blocks.delete(nip);
-        jtab[isa.jhash(ncs, nip) * 2] = 0;
-      }
-      smcBreaks++;
-    }
-
-    // A divide fault ends the trace inside the guest's own INT 0 handler, so
-    // it never reaches the stub segment and --trace-int cannot see it. The
-    // faulting address is on the guest stack, which is the only place it is
-    // recorded: Turbo Pascal turns this into "Runtime error 200" a long way
-    // from the DIV that caused it.
-    if (traceFault && cs !== STUB_SEG) {
-      const v0 = vm.mem[0] | (vm.mem[1] << 8), v2 = vm.mem[2] | (vm.mem[3] << 8);
-      if (vm.get('cs') === v2 && vm.get('gip') === v0) {
-        const ss = vm.get('ss'), sp = vm.get('sp');
-        const at = (of) => ((ss << 4) + ((sp + of) & 0xFFFF)) & 0xFFFFF;
-        const rd = (of) => vm.mem[at(of)] | (vm.mem[at(of + 1)] << 8);
-        log(`  divide fault at ${rd(2).toString(16)}:${rd(0).toString(16)}`
-          + ` (ax=${vm.get('ax').toString(16)} dx=${vm.get('dx').toString(16)}`
-          + ` from ${cs.toString(16)}:${ip.toString(16)} at ${dispatched} dispatches)`);
-      }
-    }
-
-    if (sample && left < 0 && dispatched >= sampleAfter) {
-      const at = vm.raw('ip');
-      ipSamples.set(at, (ipSamples.get(at) || 0) + 1);
-      // Each sample is also kept WITH the dispatch count it was taken at, so a
-      // caller can restrict the profile to the tail of the run after the fact.
-      // An absolute `sampleAfter` cannot do that job: pick 4M and every program
-      // that finishes in 3M reports no samples at all, which is how 27 programs
-      // vanished from a corpus sweep that was only trying to skip their
-      // unpackers. A fraction of each program's OWN run costs one array.
-      ipSampleLog.push(dispatched, at);
-    }
-
-    // Time moves with work, not with the wall clock: a demo that spins on the
-    // BIOS tick has to see it advance, and a wall clock would make a headless
-    // run's speed change what the guest computes.
-    //
-    // But note WHAT it moves with: one tick per HANDBACK, and handbacks vary by
-    // five orders of magnitude across the corpus (31 dispatches for CORE-ADD,
-    // 1.4M for COPPER). So the guest clock runs at wildly different speeds
-    // relative to guest work depending on the program -- exactly the trap
-    // documented for the main emulator's `batch * TICK_MS_PER_BATCH`. tickScale
-    // is the A/B knob: run the same program at 0, 1 and 16 and compare frames.
-    // Identical across all three means the program never reads a clock and is
-    // purely compute-bound; a frame that advances at 16 means it was waiting.
-    // Guest time, billed in guest WORK rather than in handbacks.
-    //
-    // A handback is not a unit of anything: this corpus ranges from 31
-    // dispatches per handback to 1.4M, so a tick per handback runs the guest
-    // clock five orders of magnitude apart between two programs, and the same
-    // program's clock changes speed when its code shape does. Turbo Pascal's
-    // CRT unit is what makes that fatal rather than merely wrong -- it times a
-    // calibration loop against the BIOS tick word at 0040:006C and divides by
-    // what it counted, so a clock that ticks every few hundred instructions
-    // makes the count zero and the division by zero is runtime error 200.
-    // BIOLAN, BRIAN, CREATION and DIGILAB all died there.
-    //
-    // 550,000 dispatches to a 55ms tick is a 10-MIPS machine, which is a fast
-    // 486 -- the part these were written for, and comfortably below the ~200MHz
-    // where the same Pascal bug bites in the other direction.
-    machine.setClock(dispatched / dispatchesPerTick * tickScale);
-    machine.mouse.dx += mouse[0]; machine.mouse.dy += mouse[1];
-
-    // Deliver the timer interrupt, if the program asked to be called.
-    //
-    // Advancing the tick word is not the same service: a demo that hooks INT
-    // 08h waits on a counter ITS handler increments, and with nothing ever
-    // calling it the program spins on a value that can never change. This is
-    // the one place in the loop where the guest's cs:gip is a real instruction
-    // boundary -- mid-trace it is not -- so it is the only place an interrupt
-    // can be pushed in front of it.
-    //
-    // IF is the whole re-entrancy guard, and it is the same one the hardware
-    // uses: the injected frame clears it exactly as `int` does, and the ISR's
-    // own IRET puts it back. So an ISR cannot be interrupted by the next tick
-    // unless it re-enabled interrupts itself, which is a decision the program
-    // is entitled to make.
-    // The rate is in guest WORK, not in handbacks. Once per handback is not a
-    // rate at all: an ISR that ends in IRET ends its trace, so the very next
-    // handback is the one it just returned on, and injecting there again gives
-    // the interrupted program zero instructions between interrupts. brainbug
-    // spent 30M dispatches that way -- 3.6M interrupts, 8 dispatches apiece,
-    // and the main loop never ran once.
-    const raise = (vec) => {
-      const push = (v) => {
-        const sp = (vm.get('sp') - 2) & 0xFFFF;
-        vm.set('sp', sp);
-        const at = ((vm.get('ss') << 4) + sp) & 0xFFFFF;
-        vm.mem[at] = v & 0xFF; vm.mem[at + 1] = (v >> 8) & 0xFF;
-      };
-      push(vm.get('flags'));
-      push(vm.get('cs'));
-      push(vm.get('gip'));
-      vm.set('flags', vm.get('flags') & ~0x300);       // IF and TF, as `int` does
-      const at = vec << 2;
-      vm.set('gip', vm.mem[at] | (vm.mem[at + 1] << 8));
-      vm.set('cs', vm.mem[at + 2] | (vm.mem[at + 3] << 8));
-      irqs++;
-    };
-    const tvec = machine.timerVector();
-    if (tvec && dispatched - lastIrq >= irqEvery && (vm.get('flags') & 0x200)) {
-      lastIrq = dispatched;
-      raise(tvec);
-    // IRQ1. A program with its own INT 9 handler reads the keyboard as
-    // hardware and never calls the BIOS, so answering INT 16h reaches it not at
-    // all -- BTW.EXE sits on a sound menu having made zero INT 16h calls in 11M
-    // dispatches. The machine decides whether there is anything to send and
-    // leaves the scancode where port 60h will find it; here we only deliver it,
-    // and only between traces where cs:gip is a real instruction boundary.
-    // Slower than the timer on purpose: this is a person typing.
-    } else if (dispatched - lastKbIrq >= irqEvery * 4 && (vm.get('flags') & 0x200)) {
-      const kvec = machine.keyboardIrq();
-      if (kvec) { lastKbIrq = dispatched; raise(kvec); }
-    }
+  while (session.dispatched < budget && !session.done) {
+    session.step();
 
     // Keep the fullest frame. Sampled rather than continuous: scanning the
     // surface is cheap next to a batch, but not next to a handback, and a
     // program can hand back every hundred dispatches.
-    if (bestPng && handbacks % 32 === 0) keepBest();
+    if (bestPng && session.handbacks % 32 === 0) keepBest();
 
-    if (shots && handbacks % shotEvery === 0 && machine.videoMode === 0x13) {
+    if (shots && session.handbacks % shotEvery === 0 && machine.videoMode === 0x13) {
       writePng(path.join(shots, `f${String(shotN++).padStart(4, '0')}.png`),
         vm.mem, machine.palette, vgaGeometry(machine.vga));
     }
-
-    // "No progress" means the guest re-entered at the same address AND put
-    // nothing new on the console. The address alone is not enough: a program
-    // printing its screen one character at a time hands back at the same INT
-    // 21h thunk every time, so README!.COM was being cut off after 201 of its
-    // characters and reported as hung while it was working perfectly.
-    //
-    // "Put nothing new on the console" has to mean the text PAGE, not the
-    // teletype counter: a program storing straight into B800 never calls INT
-    // 21h at all, so counting calls would go back to declaring exactly those
-    // programs hung. The page is 4000 bytes and this runs once per handback,
-    // which is a few hundred times over a whole run.
-    //
-    // A delivered timer interrupt counts as progress on its own. An IRQ-driven
-    // demo re-enters its wait loop at one fixed address forever by design --
-    // that is what waiting on a counter LOOKS like -- so the address test
-    // declares every one of them hung within 200 handbacks. brainbug.exe was
-    // cut off after 0.6M of its 30M dispatches for exactly this reason, one
-    // handback after the first interrupt it had ever been sent.
-    //
-    // The registers count too, and they are what stops the last false positive:
-    // a loop that writes into a paragraph some compiled region decoded hands
-    // control back on EVERY iteration, at the same address, with nothing on the
-    // console -- indistinguishable from a spin by address alone. IHANMUU.EXE
-    // was cut off after 0.5M of 30M dispatches inside a loop whose SI and BP
-    // were advancing the whole time, and runs to a full mode 13h screen without
-    // this. A real spin re-enters with the same registers it left with.
-    const key = `${cs.toString(16)}:${vm.get('gip').toString(16)}`;
-    const wrote = machine.con.written + irqs
-      + (machine.videoMode === 3 ? conCells(machine.con) : 0);
-    let regs = 2166136261;
-    for (const n of ['ax', 'bx', 'cx', 'dx', 'si', 'di', 'bp', 'sp', 'ds', 'es']) {
-      regs = (Math.imul(regs, 16777619) ^ vm.get(n)) >>> 0;
-    }
-    stuck = (key === lastKey && wrote === lastWritten && regs === lastRegs) ? stuck + 1 : 0;
-    lastKey = key;
-    lastWritten = wrote;
-    lastRegs = regs;
-    if (stuckLimit && stuck > stuckLimit) { stuckAt = key; break; }
   }
+  const {
+    dispatched, handbacks, ints, irqs, smcBreaks, stuckAt,
+    compiles, compiledWords, arenaResets, unimplemented, regions, jtab,
+  } = session.stats();
 
   if (bestPng) keepBest();
   const surface = screenSurface(machine);
@@ -967,9 +551,12 @@ async function main() {
   }
 }
 
+// The frame readers moved to ./framebuffer.js and are re-exported here, since
+// several tools import them from this module by name.
 module.exports = {
-  runDos, writePng, writeConsolePng, readFrame, nonBlack, frameHash, conText,
+  runDos, writePng, writeConsolePng, nonBlack, frameHash, conText,
   screenSurface, conCells,
+  readFrame: require('./framebuffer').readFrame,
 };
 
 if (require.main === module) main().catch(e => { console.error(e.stack || String(e)); process.exit(1); });
