@@ -765,6 +765,15 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
         else { if (m.reg < 2) writesMem = true; words.push(H[`${nm}_m`], packEa(m), m.disp); }
         break;
       }
+      // LAR / LSL. The source is always a 16-bit selector however wide the
+      // destination is, so the memory form reads a word whatever `opsize` says.
+      if (op2 === 0x02 || op2 === 0x03) {
+        const nm = op2 === 0x02 ? 'lar' : 'lsl';
+        const m = modrm();
+        if (m.isReg) words.push(H[`${nm}_rr${opsize}`], (m.rm & 7) | ((m.reg & 7) << 4));
+        else words.push(H[`${nm}_rm${opsize}`], packEa(m), m.disp);
+        break;
+      }
       // Group 7: LGDT /2, LIDT /3, SMSW /4, LMSW /6. Reading the machine status
       // word is what nine corpus programs open with; the rest of the group is
       // the protected-mode switch, which fourteen of them perform.

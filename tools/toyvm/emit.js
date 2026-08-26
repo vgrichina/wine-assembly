@@ -777,18 +777,11 @@ function genExtras() {
   // points the vectors at a stub whose first byte the decoder refuses, so the
   // trace ends there and the host sees a guest IP inside its own stub region.
   // $intno is recorded for its convenience.
+  // $fault is the whole sequence, shared with the arithmetic faults, and it is
+  // what knows whether this machine currently has an IDT to go through.
   h('int_imm', 2, `
   ${ops(2)}
-  (call $push16 (global.get $flags))
-  (call $push16 (call $sget (i32.const 1)))
-  (call $push16 (local.get $t1))
-  (global.set $flags (i32.and (global.get $flags)
-    (i32.const ${(~((1 << F.IF) | (1 << F.TF))) & 0xFFFF})))
-  (global.set $intno (local.get $t0))
-  (local.set $t2 (i32.shl (local.get $t0) (i32.const 2)))
-  (global.set $gip (call $rdphys16 (local.get $t2)))
-  (call $sset (i32.const 1) (call $rdphys16 (i32.add (local.get $t2) (i32.const 2))))
-  (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
+  (call $fault (local.get $t0) (local.get $t1))
 `);
   h('iret', 0, `
   (global.set $gip (call $pop16))
@@ -1768,6 +1761,19 @@ function gen386() {
       (i32.eqz (i32.and (i32.shr_u (local.get $t0) (i32.const 4)) (i32.const 7)))))
 `);
 
+  // The segment limit out of the descriptor whose address is in $t7: twenty
+  // bits split across bytes 0-1 and the low nibble of byte 6, scaled by a page
+  // when the granularity bit above them is set. The low twelve bits read back
+  // as 1s in that case, which is why a 4GB segment reports 0xFFFFFFFF.
+  const GRAN = '(i32.and (i32.load8_u offset=6 (local.get $t7)) (i32.const 0x80))';
+  const LSL_LIMIT = `(i32.or
+    (i32.shl (i32.or (i32.load16_u (local.get $t7))
+                     (i32.shl (i32.and (i32.load8_u offset=6 (local.get $t7))
+                                       (i32.const 0x0F))
+                              (i32.const 16)))
+             (select (i32.const 12) (i32.const 0) ${GRAN}))
+    (select (i32.const 0xFFF) (i32.const 0) ${GRAN}))`;
+
   // Group 6. LLDT is the only one that changes anything: it names a GDT
   // descriptor whose base is where the LDT lives, and a selector with the
   // table-indicator bit set is resolved through that instead. LTR and the
@@ -1794,6 +1800,52 @@ function gen386() {
   ${store
     ? `(call $wr16 (local.get $t5) (local.get $t4) (global.get $${nm === 'str' ? 'tr' : 'ldt'}))`
     : body.replace(/%V%/g, '(call $rd16 (local.get $t5) (local.get $t4))')}
+`);
+  }
+
+  // LAR and LSL: read the access rights, and the limit, out of the descriptor a
+  // selector names. An extender runs these on the selectors DPMI just handed it
+  // to find out what it got -- COUNTDWN.EXE does `mov dx,cs / lar ax,dx` two
+  // instructions after its INT 31h -- and with them missing the decoder gives
+  // up in the middle of the extender's own setup.
+  //
+  // Both set ZF when the selector is usable and leave the destination alone
+  // when it is not, which is the same shape as BSF above and for the same
+  // reason: real code reads the destination back only after testing ZF.
+  for (const [nm, w, value] of [
+    ['lar', 16, '(i32.and (local.get $t7) (i32.const 0x0000FF00))'],
+    ['lar', 32, '(i32.and (local.get $t7) (i32.const 0x00FFFF00))'],
+    // The limit is 20 bits split across the descriptor, and the granularity bit
+    // scales it by a page -- with the low twelve bits reading back as 1s, which
+    // is what makes a 4GB segment come out as 0xFFFFFFFF rather than 0xFFFFF000.
+    ['lsl', 16, LSL_LIMIT],
+    ['lsl', 32, LSL_LIMIT],
+  ]) {
+    // $t7 holds the second descriptor dword for LAR, the whole descriptor
+    // address for LSL; $t3 holds the selector.
+    const load = nm === 'lar'
+      ? '(local.set $t7 (i32.load offset=4 (local.get $t7)))'
+      : '';
+    const body = (src, dst) => `
+  (local.set $t3 ${src})
+  (local.set $t7 (call $descaddr (local.get $t3)))
+  (global.set $flags (i32.or
+    (i32.and (global.get $flags) (i32.const ${(~(1 << F.ZF)) & 0xFFFF}))
+    (i32.shl (i32.ne (local.get $t7) (i32.const 0)) (i32.const ${F.ZF}))))
+  (if (local.get $t7) (then
+    (local.set $t7 (i32.sub (local.get $t7) (i32.const 1)))
+    ${load}
+    (call $rset${w} ${dst} ${value})))
+`;
+    h(`${nm}_rr${w}`, 1, `
+  ${ops(1)}
+  ${body('(call $rget16 (i32.and (local.get $t0) (i32.const 7)))',
+    '(i32.and (i32.shr_u (local.get $t0) (i32.const 4)) (i32.const 7))')}
+`);
+    h(`${nm}_rm${w}`, 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  ${body('(call $rd16 (local.get $t5) (local.get $t4))', '(local.get $t6)')}
 `);
   }
 
@@ -2424,6 +2476,25 @@ function helpers() {
                   (i32.shl (i32.load8_u offset=4 (local.get $d)) (i32.const 16)))
           (i32.shl (i32.load8_u offset=7 (local.get $d)) (i32.const 24))))
 
+;; Where one selector's descriptor lives, plus one so that zero can mean "there
+;; isn't one" -- a null selector, one past its table's limit, or real mode,
+;; where the number is a paragraph and names no descriptor at all. LAR and LSL
+;; report exactly that distinction in ZF, so they need the question answered
+;; rather than the base $segbase would hand back.
+(func $descaddr (param $v i32) (result i32)
+  (if (i32.eqz (i32.and (global.get $cr0) (i32.const 1)))
+    (then (return (i32.const 0))))
+  (if (i32.eqz (i32.and (local.get $v) (i32.const 0xFFF8))) (then (return (i32.const 0))))
+  (if (i32.gt_u (i32.and (local.get $v) (i32.const 0xFFF8))
+                (i32.and (global.get $gdtl) (i32.const 0xFFFF)))
+    (then (return (i32.const 0))))
+  (i32.add
+    (i32.and (i32.add (select (global.get $ldtb) (global.get $gdtb)
+                              (i32.and (local.get $v) (i32.const 4)))
+                      (i32.and (local.get $v) (i32.const 0xFFF8)))
+             (global.get $linmask))
+    (i32.const 1)))
+
 ;; LLDT's operand always names a GDT entry, whatever its own table bit says.
 (func $gdtbase (param $v i32) (result i32)
   (if (i32.eqz (i32.and (local.get $v) (i32.const 0xFFF8))) (then (return (i32.const 0))))
@@ -2922,17 +2993,74 @@ function helpers() {
 
 ;; A CPU-raised interrupt. Same sequence as INT -- and the same handing-back to
 ;; the host, since the vector points at whatever the guest installed.
+;; The gate descriptor for one vector, plus one so that zero can mean "none",
+;; or 0 when this interrupt does not go through an IDT at all: real mode, a
+;; vector past the table's limit, or a gate with its present bit clear.
+;;
+;; This is what makes a DOS extender's own INT 31h reach the extender. These
+;; programs check for a DPMI host with INT 2Fh AX=1687h, are told there is
+;; none, and then install one themselves -- an IDT full of gates, pointed at
+;; with LIDT. Servicing their INT 31h out of the real-mode vector table sends
+;; it to our stub, which reports it as unhandled and leaves the guest to carry
+;; on from an address nobody wrote: five programs in the corpus, COUNTDWN.EXE
+;; among them, ended up handing back from 0000:003B for exactly that reason.
+(func $idtgate (param $vec i32) (result i32) (local $d i32)
+  (if (i32.eqz (i32.and (global.get $cr0) (i32.const 1)))
+    (then (return (i32.const 0))))
+  (if (i32.gt_u (i32.add (i32.shl (local.get $vec) (i32.const 3)) (i32.const 7))
+                (i32.and (global.get $idtl) (i32.const 0xFFFF)))
+    (then (return (i32.const 0))))
+  (local.set $d (i32.and (i32.add (global.get $idtb)
+                                  (i32.shl (local.get $vec) (i32.const 3)))
+                         (global.get $linmask)))
+  (if (i32.eqz (i32.and (i32.load8_u offset=5 (local.get $d)) (i32.const 0x80)))
+    (then (return (i32.const 0))))
+  (i32.add (local.get $d) (i32.const 1)))
+
+;; Deliver an interrupt: the faults raised by the arithmetic handlers, and INT
+;; itself, which is the same sequence with the vector spelled out. Through the
+;; IDT when there is one, through the vector table at physical 0 when there is
+;; not.
 (func $fault (param $vec i32) (param $ip i32)
-  (local $v i32)
-  (call $push16 (global.get $flags))
-  (call $push16 (call $sget (i32.const 1)))
-  (call $push16 (local.get $ip))
-  (global.set $flags (i32.and (global.get $flags)
-    (i32.const ${(~((1 << isa.F.IF) | (1 << isa.F.TF))) & 0xFFFF})))
+  (local $v i32) (local $g i32)
   (global.set $intno (local.get $vec))
-  (local.set $v (i32.shl (local.get $vec) (i32.const 2)))
-  (global.set $gip (call $rdphys16 (local.get $v)))
-  (call $sset (i32.const 1) (call $rdphys16 (i32.add (local.get $v) (i32.const 2))))
+  (local.set $g (call $idtgate (local.get $vec)))
+  (if (local.get $g)
+    (then
+      (local.set $g (i32.sub (local.get $g) (i32.const 1)))
+      ;; Bit 3 of the type field separates the 386 gates from the 286 ones: a
+      ;; 386 gate takes a doubleword frame and a 32-bit offset split across the
+      ;; two ends of the descriptor.
+      (if (i32.and (i32.load8_u offset=5 (local.get $g)) (i32.const 8))
+        (then
+          (call $push32 (global.get $flags))
+          (call $push32 (call $sget (i32.const 1)))
+          (call $push32 (local.get $ip))
+          (local.set $v (i32.or (i32.load16_u (local.get $g))
+                                (i32.shl (i32.load16_u offset=6 (local.get $g))
+                                         (i32.const 16)))))
+        (else
+          (call $push16 (global.get $flags))
+          (call $push16 (call $sget (i32.const 1)))
+          (call $push16 (local.get $ip))
+          (local.set $v (i32.load16_u (local.get $g)))))
+      ;; An interrupt gate clears IF; a trap gate (bit 0 of the type) leaves it
+      ;; alone. Both clear TF.
+      (global.set $flags (i32.and (global.get $flags)
+        (select (i32.const ${(~(1 << isa.F.TF)) & 0xFFFF})
+                (i32.const ${(~((1 << isa.F.IF) | (1 << isa.F.TF))) & 0xFFFF})
+                (i32.and (i32.load8_u offset=5 (local.get $g)) (i32.const 1)))))
+      (call $sset (i32.const 1) (i32.load16_u offset=2 (local.get $g)))
+      (global.set $gip (local.get $v)))
+    (else
+      (call $push16 (global.get $flags))
+      (call $push16 (call $sget (i32.const 1)))
+      (call $push16 (local.get $ip))
+      (global.set $flags (i32.and (global.get $flags)
+        (i32.const ${(~((1 << isa.F.IF) | (1 << isa.F.TF))) & 0xFFFF})))
+      (local.set $v (i32.shl (local.get $vec) (i32.const 2)))
+      (global.set $gip (call $rdphys16 (local.get $v)))
+      (call $sset (i32.const 1) (call $rdphys16 (i32.add (local.get $v) (i32.const 2))))))
   (global.set $left (global.get $steps)) (global.set $halt (i32.const 1)))
 
 ;; Divide error -- the only fault the arithmetic handlers raise.

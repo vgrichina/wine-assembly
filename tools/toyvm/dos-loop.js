@@ -176,7 +176,7 @@ class DosSession {
   // Is there any point calling step() again?
   get done() {
     return this.machine.exited || this.machine.blockedOnKey || this.stuckAt !== null
-      || this.blockedOn32 !== undefined;
+      || this.blockedOn32 !== undefined || this.badSelector !== undefined;
   }
 
   // Push an interrupt frame in front of the guest's next instruction, exactly
@@ -299,6 +299,19 @@ class DosSession {
     if (vm.exports.get_d32()) {
       this.blockedOn32 = `${cs.toString(16)}:${ip.toString(16)}`;
       return 'blocked32';
+    }
+    // A CS that names no descriptor while PE is set. $segbase deliberately
+    // reads such a selector as a real-mode paragraph, which is right for a DATA
+    // segment in an extender running unreal -- but a real CPU cannot execute
+    // through one at all, it faults, and here the fallback quietly hands the
+    // decoder a plausible base pointing at whatever happens to be there.
+    // COUNTDWN.EXE spent 60M dispatches and 700MB of arena walking the zeros
+    // above 9BF00 that way, and the run looked slow rather than wrong. Stopping
+    // is the honest report: something earlier loaded a selector we got wrong.
+    if ((vm.exports.get_cr0() & 1) && (cs & 0xFFF8) !== 0
+        && (cs & 0xFFF8) > (vm.exports.get_gdtl() & 0xFFFF)) {
+      this.badSelector = `${cs.toString(16)}:${ip.toString(16)}`;
+      return 'badselector';
     }
     const entry = this.cache.entryFor(cs, ip, codeBase, mask);
     if (this.hooks.beforeSlice) this.hooks.beforeSlice();
@@ -436,6 +449,7 @@ class DosSession {
       dispatched: this.dispatched, handbacks: this.handbacks, ints: this.ints,
       irqs: this.irqs, smcBreaks: this.smcBreaks, stuckAt: this.stuckAt,
       blockedOn32: this.blockedOn32 === undefined ? null : this.blockedOn32,
+      badSelector: this.badSelector === undefined ? null : this.badSelector,
       compiles: this.cache.compiles, compiledWords: this.cache.compiledWords,
       arenaResets: this.cache.arenaResets, unimplemented: this.cache.unimplemented,
       regions: this.cache.regions, jtab: this.cache.jtab,

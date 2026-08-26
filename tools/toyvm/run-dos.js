@@ -285,7 +285,7 @@ async function runDos(o) {
     }
   }
   const {
-    dispatched, handbacks, ints, irqs, smcBreaks, stuckAt, blockedOn32,
+    dispatched, handbacks, ints, irqs, smcBreaks, stuckAt, blockedOn32, badSelector,
     compiles, compiledWords, arenaResets, unimplemented, regions, jtab,
   } = session.stats();
 
@@ -298,7 +298,7 @@ async function runDos(o) {
     guestSecs: Number(guestNs) / 1e9,
     dispatched, handbacks, ints, irqs, compiles, compiledWords, arenaResets,
     smcBreaks,
-    stuckAt, blockedOn32, ranOutOfTime,
+    stuckAt, blockedOn32, badSelector, ranOutOfTime,
     entryHist, unimplemented, ipSamples, ipSampleLog, regions,
     // A program that never put the adapter in a graphics mode has no frame to
     // count, and reading A000 anyway is how ACME-SUX.EXE and AKM_DOB.EXE came
@@ -404,6 +404,13 @@ async function main() {
   // this decoder does not read. See dos-loop.js for why that is a stop rather
   // than a best guess.
   if (r.blockedOn32) console.log(`blocked at ${r.blockedOn32} -- 32-bit protected-mode code`);
+  // Also distinct from stuck: CS names no descriptor, so a real CPU would have
+  // faulted here. $segbase falls back to a real-mode paragraph, which is right
+  // for an unreal-mode data segment and impossible for code -- so the run would
+  // otherwise walk whatever those bytes happen to be for the rest of its budget.
+  if (r.badSelector) {
+    console.log(`bad CS selector at ${r.badSelector} -- names no GDT descriptor`);
+  }
   // Only when the guest actually switched. Which descriptor table is live, and
   // what CS resolved through, is the first question about any of these -- and
   // "cs:ip=9bf0:1" alone cannot distinguish a selector from a paragraph.
