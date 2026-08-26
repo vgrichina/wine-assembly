@@ -653,6 +653,7 @@ async function runDos(o) {
     secs: Number(process.hrtime.bigint() - t0) / 1e9,
     guestSecs: Number(guestNs) / 1e9,
     dispatched, handbacks, ints, irqs, compiles, compiledWords, arenaResets,
+    smcBreaks,
     stuckAt, entryHist, unimplemented, ipSamples, ipSampleLog, regions,
     // A program that never put the adapter in a graphics mode has no frame to
     // count, and reading A000 anyway is how ACME-SUX.EXE and AKM_DOB.EXE came
@@ -766,7 +767,12 @@ async function main() {
   console.log(`\n${path.basename(exe)}  variant=${r.variant}  ${r.secs.toFixed(2)}s`);
   console.log(`  ${r.handbacks} handbacks, ${r.ints} interrupts`
     + `${r.irqs ? ` (+${r.irqs} timer IRQs delivered)` : ''}, ${r.compiles} traces `
-    + `(${(r.compiledWords * 4 / 1024).toFixed(0)}KB of arena, ${r.arenaResets} recycles)`);
+    + `(${(r.compiledWords * 4 / 1024).toFixed(0)}KB of arena, ${r.arenaResets} recycles)`
+    // A handful of these is a packed program unpacking itself and is expected.
+    // Thousands, against a compile count that keeps climbing, is recompile
+    // thrash: a program storing data into a paragraph a region happens to have
+    // decoded, one bitmap bit away from its code.
+    + (r.smcBreaks ? `\n  ${r.smcBreaks} self-modify breaks` : ''));
   const v = r.video;
   // What was rendered, then what the CRTC says when that is something else --
   // for a chained program those differ on purpose. See readFrame.
