@@ -11,16 +11,18 @@
   (func $th_cld (param $op i32) (global.set $df (i32.const 0)) (return_call $next))
   (func $th_std (param $op i32) (global.set $df (i32.const 1)) (return_call $next))
   (func $th_clc (param $op i32)
-    (global.set $flag_op (i32.const 3)) (global.set $flag_res (i32.const 0)) (return_call $next))
+    ;; CLC/STC/CMC modify CF only. Materialize the other lazy arithmetic flags
+    ;; before changing that bit, then restore the complete flag word in raw
+    ;; mode. Replacing the lazy operation here also replaced ZF/SF/OF/PF: in
+    ;; particular, DOSBox emits `cmp; stc; pushfd; jz` and relies on STC leaving
+    ;; the comparison's ZF intact.
+    (call $load_eflags (i32.and (call $build_eflags) (i32.const 0xFFFFFFFE)))
+    (return_call $next))
   (func $th_stc (param $op i32)
-    (global.set $flag_op (i32.const 1)) (global.set $flag_a (i32.const 0xFFFFFFFF))
-    (global.set $flag_b (i32.const 1)) (global.set $flag_res (i32.const 0)) (return_call $next))
+    (call $load_eflags (i32.or (call $build_eflags) (i32.const 1)))
+    (return_call $next))
   (func $th_cmc (param $op i32)
-    ;; Toggle CF by flipping the condition that produces it
-    (if (call $get_cf)
-      (then (global.set $flag_op (i32.const 3)) (global.set $flag_res (i32.const 0)))
-      (else (global.set $flag_op (i32.const 1)) (global.set $flag_a (i32.const 0xFFFFFFFF))
-            (global.set $flag_b (i32.const 1)) (global.set $flag_res (i32.const 0))))
+    (call $load_eflags (i32.xor (call $build_eflags) (i32.const 1)))
     (return_call $next))
   (func $th_leave (param $op i32)
     (global.set $esp (global.get $ebp))

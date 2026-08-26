@@ -313,6 +313,30 @@ async function main() {
   runCode([0xF9, 0x13, 0xD3], () => { e.set_edx(5); e.set_ebx(3); });
   test('ADC edx,ebx CF=1', e.get_edx(), 9);
 
+  // CLC/STC/CMC modify CF only. DOSBox's dynamic core uses this exact shape
+  // when it checks available CauseWay pages: cmp; stc; pushfd; jz. STC used to
+  // replace the entire lazy-flag state, turning the nonzero CMP into ZF=1.
+  runCode([
+    0xB8, ...le32(0),                    // mov eax,0 (failure result)
+    0xBA, ...le32(0xFFFFFFFF),           // mov edx,-1
+    0x81, 0xFA, ...le32(0),              // cmp edx,0 (ZF=0)
+    0xF9,                                // stc (must preserve ZF=0)
+    0x9C,                                // pushfd (must also preserve ZF)
+    0x74, 0x08,                          // jz failure
+    0x59,                                // pop ecx
+    0xB8, ...le32(1),                    // mov eax,1
+    0xEB, 0x06,                          // jmp done
+    0x59,                                // failure: pop ecx
+    0xB8, ...le32(0),                    // mov eax,0
+  ]);
+  test('CMP; STC; PUSHFD preserves clear ZF for JZ', e.get_eax(), 1);
+
+  runCode([0x39, 0xD2, 0xF8, 0x9C, 0x58], () => e.set_edx(7));
+  test('CLC preserves set ZF while clearing only CF', e.get_eax() & 0x41, 0x40);
+
+  runCode([0x39, 0xD2, 0xF5, 0x9C, 0x58], () => e.set_edx(7));
+  test('CMC preserves set ZF while toggling only CF', e.get_eax() & 0x41, 0x41);
+
   // ADC [mem], reg with CF=1
   setMem(scratchA, 0x10);
   runCode([0xF9, 0x11, 0x15, ...le32(scratchA)], () => e.set_edx(0x20));

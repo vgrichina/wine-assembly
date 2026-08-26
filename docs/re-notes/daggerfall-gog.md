@@ -34,26 +34,46 @@ node test/run.js \
 ```
 
 `node test/test-daggerfall-dosbox.js` automates the same long local acceptance.
-On the 2026-08-26 verification run, `FALL` remained the active DOS program and
-the Bethesda Softworks credit was visible by batch 2000 (about 180 seconds on a
-heavily loaded development Mac).
+On the 2026-08-26 dynamic-core verification run, `FALL` remained the active DOS
+program and the Bethesda Softworks credit was visible by batch 2000 (9,008
+credit pixels across 9 guest-frame colors).
 
-## Failure localization
+## Dynamic-core failure and fix
 
-With GOG's `core=auto`, DOSBox selects its dynamic x86 recompiler. CauseWay then
-exits immediately with:
+GOG's `core=auto` selects DOSBox's dynamic x86 recompiler. Before the flag fix,
+CauseWay exited immediately with:
 
 ```text
 CauseWay error 05 : Not enough memory for CauseWay.
 ```
 
-This is not a real memory shortage. DOS `MEM` reports 632 KB conventional and
+This was not a real memory shortage. DOS `MEM` reports 632 KB conventional and
 63,296 KB extended memory. A real-mode probe following CauseWay's calls sees XMS
 3.01, a 63,424 KB largest block, and successful allocate, lock, and free calls.
-Disabling EMS does not change the failure. The important boundary is the nested
-JIT: DOSBox's dynamic core emits x86 code at runtime, and Wine-Assembly must then
-interpret that generated code. `core=simple` stays in DOSBox's interpreter,
-keeps CauseWay alive, enters the 320x200 graphics mode, and renders the intro.
+Disabling EMS does not change the result.
+
+The Qbix DOSBox 0.74-2 heavy-debug build made the nested-JIT divergence
+reproducible without host Wine. `BP`, `LOGL`, and `MEMDUMPBIN` synchronized the
+simple and dynamic cores at CauseWay's protected-mode allocator entry. Both
+cores had identical registers and resident memory, and the page-count dword at
+`DS:0x0AA2` was `0xFFFFFFFF`.
+
+The generated x86 block read that value correctly into `EDX`, then executed:
+
+```asm
+cmp edx, 0
+stc
+pushfd
+jz allocation_failure
+```
+
+Wine-Assembly's old `STC` handler replaced the complete lazy-flag state with a
+synthetic carry-producing state. That incorrectly set ZF, so the later `JZ`
+took the failure path even though `EDX` was nonzero. `CLC` and `CMC` had the same
+architectural bug. They now materialize the existing EFLAGS, alter only CF, and
+restore all other flags. With that fix, the unmodified dynamic core enters
+CauseWay's allocator scan at `00C3:0EDC`; the repository acceptance therefore
+uses `core=dynamic` rather than the former `core=simple` workaround.
 
 Before the core switch could be tested reliably, commit `37d8cf43` moved
 DirectDraw surface pixels out of Wine-Assembly's decoded-page index arena. That

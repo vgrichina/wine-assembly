@@ -24633,5 +24633,26 @@
     "convention": "stdcall",
     "hash": 2472022117,
     "ret": "HCURSOR"
+  },
+  {
+    "id": 2949,
+    "name": "AllocConsole",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 736943151
+  },
+  {
+    "id": 2950,
+    "name": "SetConsoleTitleA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2593285293
+  },
+  {
+    "id": 2951,
+    "name": "WriteConsoleOutputA",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2113189311
   }
 ]

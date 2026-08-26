@@ -26,6 +26,9 @@ if (!fs.existsSync(dosbox) || !fs.existsSync(path.join(installed, 'FALL.EXE'))) 
   process.exit(0);
 }
 
+assert(/^core=dynamic$/m.test(fs.readFileSync(waConfig, 'utf8')),
+  'Daggerfall acceptance must exercise DOSBox dynamic core, not mask nested-JIT regressions');
+
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-daggerfall-dosbox-'));
 const intro = path.join(temp, 'daggerfall-intro.png');
 const args = [

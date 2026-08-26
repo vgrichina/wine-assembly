@@ -27,6 +27,15 @@
 
   ;; --- Console API handlers ---
 
+  ;; AllocConsole() → BOOL
+  ;; Attach a console to a GUI process. Wine-Assembly's console is process-local
+  ;; already, so attachment means ensuring its cell store and native window
+  ;; exist. Repeated calls are harmless and report success.
+  (func $handle_AllocConsole (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $console_ensure_window)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
+
   ;; SetConsoleScreenBufferSize(hConsole, dwSize) → BOOL
   ;; dwSize is COORD packed as i32: loword=X, hiword=Y
   (func $handle_SetConsoleScreenBufferSize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -80,6 +89,13 @@
 
   ;; SetConsoleTitleW(lpConsoleTitle) → BOOL
   (func $handle_SetConsoleTitleW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; SetConsoleTitleA(lpConsoleTitle) → BOOL
+  ;; The host console window is already materialized by AllocConsole. Caption
+  ;; repaint is cosmetic; accepting the ANSI spelling matches the wide path.
+  (func $handle_SetConsoleTitleA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
@@ -422,9 +438,9 @@
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
-  ;; WriteConsoleOutputW(hConsole, lpBuffer, dwBufferSize, dwBufferCoord, lpWriteRegion) → BOOL
-  ;; Writes CHAR_INFO array (4 bytes each: wchar + attributes) to a rectangular region
-  (func $handle_WriteConsoleOutputW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  ;; Shared WriteConsoleOutputA/W rectangle writer. CHAR_INFO is four bytes in
+  ;; both forms; only the character union member changes width.
+  (func $console_write_output (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32) (param $wide i32)
     (local $src i32) (local $bw i32) (local $bh i32) (local $bx i32) (local $by i32)
     (local $rgn i32) (local $left i32) (local $top i32) (local $right i32) (local $bottom i32)
     (local $row i32) (local $col i32) (local $soff i32) (local $doff i32)
@@ -458,7 +474,9 @@
                 (i32.lt_u (local.get $doff) (i32.mul (global.get $console_width) (global.get $console_height)))))
           (then
             (i32.store16 (i32.add (global.get $CONSOLE_TEXT) (i32.mul (local.get $doff) (i32.const 2)))
-              (i32.load16_u (local.get $soff)))
+              (select (i32.load16_u (local.get $soff))
+                      (i32.load8_u (local.get $soff))
+                      (local.get $wide)))
             (i32.store16 (i32.add (global.get $CONSOLE_ATTR) (i32.mul (local.get $doff) (i32.const 2)))
               (i32.load16_u (i32.add (local.get $soff) (i32.const 2))))))
         (local.set $col (i32.add (local.get $col) (i32.const 1)))
@@ -466,7 +484,18 @@
       (local.set $row (i32.add (local.get $row) (i32.const 1)))
       (br $rows)))
     (global.set $eax (i32.const 1))
-    (call $console_refresh)
+    (call $console_refresh))
+
+  ;; WriteConsoleOutputW(hConsole, lpBuffer, dwBufferSize, dwBufferCoord, lpWriteRegion) → BOOL
+  (func $handle_WriteConsoleOutputW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $console_write_output (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr) (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+
+  ;; WriteConsoleOutputA(hConsole, lpBuffer, dwBufferSize, dwBufferCoord, lpWriteRegion) → BOOL
+  (func $handle_WriteConsoleOutputA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $console_write_output (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr) (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
   ;; WriteConsoleOutputCharacterA(hConsole, lpCharacter, nLength, dwWriteCoord, lpNumberOfCharsWritten) → BOOL
