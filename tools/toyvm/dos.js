@@ -66,6 +66,9 @@ const XMS_INT = 0x2D;
 const XMS_TOTAL_KB = 8192;
 const PSP_SEG = 0x0100;
 const LOAD_SEG = 0x0110;      // PSP is 0x100 bytes = 0x10 paragraphs
+// The environment block, in the gap between the BIOS data area and the PSP.
+// 0x0060..0x00C0 is 1.5K, which is more than any of these programs reads.
+const ENV_SEG = 0x0060;
 // Top of conventional memory. 0x9000 left 572K free between the program and
 // the ceiling, which reads as a machine with a lot of TSRs loaded -- and
 // ASMINST.EXE prints "Insufficient memory! This demo needs 600k free to run"
@@ -93,6 +96,7 @@ function loadExe(mem, buf, { loadSeg = LOAD_SEG, pspSeg = PSP_SEG } = {}) {
   const u16 = (o) => buf.readUInt16LE(o);
   const lastPage = u16(0x02), pages = u16(0x04);
   const relocCount = u16(0x06), headerParas = u16(0x08);
+  const minAlloc = u16(0x0A), maxAlloc = u16(0x0C);
   const ss = u16(0x0E), sp = u16(0x10);
   const ip = u16(0x14), cs = u16(0x16);
   const relocOff = u16(0x18);
@@ -116,10 +120,21 @@ function loadExe(mem, buf, { loadSeg = LOAD_SEG, pspSeg = PSP_SEG } = {}) {
 
   // A minimal PSP. INT 20h at offset 0 and the "bytes in segment" word are the
   // two fields a small intro is actually likely to read.
+  // How much of memory this program owns. The header's max-alloc field is the
+  // paragraphs it wants ON TOP of its image, and DOS hands over that much and
+  // no more -- the usual 0xFFFF means "everything", but a loader stub that
+  // intends to allocate its own working set asks for a few kilobytes so the
+  // rest stays free. ANGEL.EXE is 1.5KB of exactly that, and taking the whole
+  // 636KB for it left its own 546KB request nothing to come from: "Not enough
+  // memory ! You'll need 538 Kb low memory free !".
+  const imageParas = (imageBytes + 15) >> 4;
+  const own = loadSeg + imageParas;
+  const allocTop = Math.max(Math.min(own + maxAlloc, DEFAULT_ALLOC_TOP), own + minAlloc);
+
   const psp = pspSeg << 4;
   mem[psp] = 0xCD; mem[psp + 1] = 0x20;
-  mem[psp + 2] = DEFAULT_ALLOC_TOP & 0xFF;
-  mem[psp + 3] = (DEFAULT_ALLOC_TOP >> 8) & 0xFF;
+  mem[psp + 2] = allocTop & 0xFF;
+  mem[psp + 3] = (allocTop >> 8) & 0xFF;
   mem[psp + 0x80] = 0;              // empty command tail
   mem[psp + 0x81] = 0x0D;
 
@@ -127,7 +142,7 @@ function loadExe(mem, buf, { loadSeg = LOAD_SEG, pspSeg = PSP_SEG } = {}) {
     cs: (cs + loadSeg) & 0xFFFF, ip,
     ss: (ss + loadSeg) & 0xFFFF, sp,
     ds: pspSeg, es: pspSeg,
-    loadSeg, pspSeg, imageBytes,
+    loadSeg, pspSeg, imageBytes, allocTop,
   };
 }
 
@@ -511,12 +526,42 @@ class Machine {
     // BIOS data area: video mode byte and the 55ms tick counter at 0040:006C,
     // which is where a demo reads time from when it does not hook INT 8.
     mem[0x449] = this.videoMode;
+    // The equipment word at 0040:0010 and the conventional-memory size in KB at
+    // 0040:0013. Programs read both directly as often as they ask INT 11h/12h
+    // for them, so the words are what both answers come from.
+    // 0x0021: 80x25 colour, one diskette, an 80287 present, no serial ports.
+    mem[0x410] = 0x21; mem[0x411] = 0x00;
+    const kb = DEFAULT_ALLOC_TOP >> 6;      // paragraphs to KB
+    mem[0x413] = kb & 0xFF; mem[0x414] = (kb >> 8) & 0xFF;
     this.setTicks(0);
   }
 
   // The real guest memory arrives after construction, once the wasm instance
   // exists. The text page lives inside it, so the console has to be re-pointed
   // and the page re-blanked rather than left addressing the throwaway buffer.
+  // The environment block and the pointer to it at PSP:0x2C. A program that
+  // wants to know where it was started from walks this: scan the variables for
+  // the terminating double NUL, step over the count word 0x0001, and what
+  // follows is its own full path. BLIQ, CONTAGIO, STHINTRO and CEN!FB all do
+  // exactly that and all four print "[ERROR]: Can not init file manager..."
+  // when the segment word is zero, because the scan runs off into memory that
+  // never produces two NULs in a row.
+  installEnvironment(name) {
+    const mem = this.mem;
+    let at = ENV_SEG << 4;
+    const put = (s) => { for (let i = 0; i < s.length; i++) mem[at++] = s.charCodeAt(i); mem[at++] = 0; };
+    put('COMSPEC=C:\\COMMAND.COM');
+    put('PATH=C:\\');
+    put('TEMP=C:\\');
+    mem[at++] = 0;                    // end of the variables
+    mem[at++] = 0x01; mem[at++] = 0x00;   // one string follows: the program path
+    put(`C:\\${String(name).toUpperCase()}`);
+    mem[at++] = 0;
+    const psp = PSP_SEG << 4;
+    mem[psp + 0x2C] = ENV_SEG & 0xFF;
+    mem[psp + 0x2D] = (ENV_SEG >> 8) & 0xFF;
+  }
+
   // --- the file side of DOS ------------------------------------------------
   // Every program here runs from the directory its data is in, so the whole of
   // "the filesystem" is that one directory. Read-only on purpose: a sweep runs
@@ -1094,6 +1139,16 @@ class Machine {
       // answer is "nothing left to do": the tick word is already advancing and
       // there is no PIC to acknowledge.
       case 0x08: case 0x1C: return true;
+      // The equipment word and the conventional-memory size, the two things a
+      // program asks the BIOS before it asks DOS for anything. ANGEL.EXE
+      // refuses to start with "Not enough memory ! You'll need 538 Kb" purely
+      // because INT 12h was answering nothing.
+      case 0x11:
+        r.set('ax', this.mem[0x410] | (this.mem[0x411] << 8));
+        return true;
+      case 0x12:
+        r.set('ax', this.mem[0x413] | (this.mem[0x414] << 8));
+        return true;
       case 0x20: this.exited = true; this.exitCode = 0; return true;
       case 0x21: return this.int21(ah, al, r);
       case 0x2D: return this.xms(ah, r);        // reached from the XMS stub
@@ -1502,6 +1557,18 @@ class Machine {
           }
           this.allocTop = PSP_SEG + want;
         }
+        r.setResultCf(false);
+        return true;
+      }
+      // Create a child PSP at DX:0. Undocumented, and the way a self-contained
+      // overlay loader makes a home for the code it is about to read out of its
+      // own .EXE -- CONTAGIO.EXE calls it between reading its overlay table and
+      // jumping into one.
+      case 0x55: {
+        const to = (r.get('dx') & 0xFFFF) << 4;
+        this.mem.copyWithin(to, PSP_SEG << 4, (PSP_SEG << 4) + 0x100);
+        this.mem[to + 0x16] = PSP_SEG & 0xFF;         // parent PSP
+        this.mem[to + 0x17] = (PSP_SEG >> 8) & 0xFF;
         r.setResultCf(false);
         return true;
       }

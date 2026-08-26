@@ -280,6 +280,11 @@ async function runDos(o) {
   machine.syncVga();     // the VM's buffer, not the throwaway one from before
 
   const info = loadExe(vm.mem, fs.readFileSync(exe));
+  // What the program was given is what is NOT free. A .COM has no header to
+  // say, so the loader leaves this undefined and the machine keeps its "owns
+  // everything" default.
+  if (info.allocTop !== undefined) machine.allocTop = info.allocTop;
+  machine.installEnvironment(path.basename(exe));
   vm.setAll({ cs: info.cs, ip: info.ip, ss: info.ss, sp: info.sp, ds: info.ds, es: info.es });
   // The stack must hold a return address: a .COM-style `ret` exit lands on the
   // PSP's INT 20h. An EXE that ends with INT 21h/4C never touches it.
