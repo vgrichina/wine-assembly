@@ -150,7 +150,7 @@ assert(/diablo_demo:\s*\{[\s\S]*?exe:\s*diabloCandidateRoot \+ 'DIABDEMO\.EXE'[\
   'Diablo debug launch should load the extracted game, Storm, and its MPQ package on C: and Z:');
 assert(pageHtml.includes('lib/vfs-persistence.js?v=1'),
   'web host should load bounded per-app VFS persistence');
-assert(pageHtml.includes('lib/browser-shell.js?v=4'),
+assert(pageHtml.includes('lib/browser-shell.js?v=6'),
   'web host should cache-bust save-file restoration in the launcher');
 assert(!deployJs.includes('test/binaries/candidates/diablo'),
   'public deploy should exclude the local Diablo demo payload');
@@ -299,23 +299,24 @@ assert(fs.existsSync(path.join(ROOT, 'binaries', 'whatsnew.txt')), 'Winamp versi
 assert(fs.statSync(path.join(ROOT, 'binaries', 'whatsnew.txt')).size > 0, 'Winamp version history text should not be empty');
 assert(!webApp.includes('wine.waitForMainHwnd(() =>'), 'Winamp web launch should not auto-drive playback through IPC');
 assert(!webApp.includes('?v=55'), 'index.html should not keep stale cache-buster v55');
-assert(webApp.includes('lib/renderer-input.js?v=191'), 'web host should cache-bust renderer input after WM_MOUSEMOVE coalescing');
-assert(webApp.includes('lib/renderer.js?v=187'), 'web host should cache-bust renderer after the current source update');
+assert(webApp.includes('lib/renderer-input.js?v=192'), 'web host should cache-bust renderer input after relative mouse capture');
+assert(webApp.includes('lib/browser-input.js?v=4'), 'web host should cache-bust the browser pointer-lock bridge');
+assert(webApp.includes('lib/renderer.js?v=188'), 'web host should cache-bust renderer after the current source update');
 assert(webApp.includes('lib/pe.js?v=1'), 'web host should load the shared PE section reader');
 assert(webApp.includes('lib/process-boot.js?v=2'), 'web host should cache-bust oversized PE section hydration');
 assert(webApp.includes('lib/host-window.js?v=2'), 'web host should cache-bust dynamic Win16 menu serialization');
 assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
 assert(webApp.includes('lib/storage.js?v=169'), 'web host should cache-bust storage after Media Player association changes');
 assert(webApp.includes('lib/gdi-surface.js?v=2'), 'web host should load the canonical GDI surface module');
-assert(webApp.indexOf('lib/gdi-surface.js?v=2') < webApp.indexOf('lib/host-imports.js?v=205'),
+assert(webApp.indexOf('lib/gdi-surface.js?v=2') < webApp.indexOf('lib/host-imports.js?v=206'),
   'web host should load the GDI surface module before host imports');
-assert(webApp.includes('lib/host-imports.js?v=205'), 'web host should cache-bust the current host imports');
-assert(webApp.includes('lib/thread-manager.js?v=180'), 'web host should cache-bust thread manager after the main merge');
+assert(webApp.includes('lib/host-imports.js?v=206'), 'web host should cache-bust the current host imports');
+assert(webApp.includes('lib/thread-manager.js?v=181'), 'web host should cache-bust thread manager after the main merge');
 assert(webApp.includes('lib/compile-wat.js?v=169'), 'web host should cache-bust the snapshot-capable WAT compiler');
 assert(webApp.includes('lib/guest-thread-host.js?v=4'), 'web host should cache-bust the owner-thread send protocol');
 assert(webApp.includes('lib/debug-thread-state.js?v=5'), 'web host should cache-bust whole-list cycle diagnostics');
-assert(webApp.includes('host.js?v=222'), 'web host should cache-bust host.js after the current source update');
-assert(hostJs.includes("static SOURCE_VERSION = '222'"), 'web host should cache-bust WASM artifacts and WAT source compilation');
+assert(webApp.includes('host.js?v=226'), 'web host should cache-bust host.js after the current source update');
+assert(hostJs.includes("static SOURCE_VERSION = '224'"), 'web host should cache-bust WASM artifacts and WAT source compilation');
 assert(hostJs.includes("const fetchOptions = debugFetch ? { cache: 'no-store' } : undefined;"),
   'debug sessions should select a no-store fetch policy');
 assert(hostJs.includes('fetch(`${artifact}?v=${WineAssembly.SOURCE_VERSION}`, fetchOptions)'),
@@ -371,7 +372,7 @@ assert(!/case 'winamp':\s*return 1;/.test(webApp), 'Winamp auto slice should not
 assert(webApp.includes('function unlockRunningAudio()'), 'web canvas input should explicitly unlock running app audio');
 assert(/unlockRunningAudio\(\);\s*const \{ x: cx, y: cy \} = eventPoint\(e\);/.test(webApp), 'mouse input should resume audio before guest dispatch');
 assert(/unlockRunningAudio\(\);\s*const \{ x: cx, y: cy \} = eventPointFromClient/.test(webApp), 'touch input should resume audio before guest dispatch');
-assert(/unlockRunningAudio\(\);\s*renderer\.handleKeyDown\(vk\);/.test(webApp), 'keyboard input should resume audio before guest dispatch');
+assert(/unlockRunningAudio\(\);\s*renderer\.handleKeyDown\(vk(?:,|\))/.test(webApp), 'keyboard input should resume audio before guest dispatch');
 assert(hostJs.includes('ecx=0x${hex32(ecx)}'), 'web runner should report runtime register heartbeat progress');
 for (const app of ['freecell', 'sol', 'cruel', 'golf']) {
   const re = new RegExp(`${app}:\\s*\\{[^}]*dlls:\\s*\\['binaries/entertainment-pack/cards\\.dll'\\]`, 's');

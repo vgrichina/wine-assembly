@@ -6,8 +6,27 @@
 // lib/process-boot.js is a classic script loaded ahead of this one.
 const ProcessBoot = (typeof window !== 'undefined' && window.processBoot) || null;
 
+// iOS decides whether a page may be heard at all, and WebAudio alone does not
+// get a say. A page that only ever makes sound through an AudioContext lands
+// in the ambient-style session the ringer switch mutes: the context is
+// running, samples are scheduled, currentTime advances, every level meter
+// reads healthy -- and the phone plays nothing, with no error anywhere. A
+// visitor with the switch flipped (or the volume rocker at its media zero,
+// which is the same thing) hears silence from an emulator that looks fine.
+//
+// Declaring the session 'playback' is the one thing that opts a page out of
+// it. Safari 16.4+; everywhere else the property is absent and this is a
+// no-op. Idempotent because it is called from every launch and every unlock.
+function claimAudioSession() {
+  try {
+    const session = (typeof navigator !== 'undefined') && navigator.audioSession;
+    if (session && session.type !== 'playback') session.type = 'playback';
+  } catch (_) { /* a browser that has the property but refuses the value */ }
+}
+if (typeof window !== 'undefined') window.claimAudioSession = claimAudioSession;
+
 class WineAssembly {
-  static SOURCE_VERSION = '222';
+  static SOURCE_VERSION = '224';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   static _nextProcessId = 1000;
 
@@ -119,6 +138,11 @@ class WineAssembly {
     this.moduleMap = [];
     this._wasmModule = null;
     this.stepsPerSlice = 100000;
+    // Most programs replace a destroyed startup window immediately. A few
+    // games tear down a warning/splash before doing substantial renderer
+    // initialization, so the browser launcher may opt them into a longer
+    // no-window interval without weakening normal last-window teardown.
+    this.windowlessGraceMs = 750;
     this.verbose = false;
     // Some WinMM clients intentionally wait for a timeSetEvent callback while
     // they are not pumping messages. This remains opt-in per app: the normal
@@ -258,6 +282,7 @@ class WineAssembly {
     const AC = (typeof AudioContext !== 'undefined') ? AudioContext :
                (typeof webkitAudioContext !== 'undefined') ? webkitAudioContext : null;
     if (!AC) return null;
+    claimAudioSession();
     if (this._audioCtx && this._audioCtx.state === 'closed') this._audioCtx = null;
     if (!this._audioCtx) {
       try { this._audioCtx = new AC({ sampleRate: 44100 }); }
@@ -366,20 +391,15 @@ class WineAssembly {
         // splash closed killed it in between. Give the guest a short grace
         // period to put another top-level window up; _checkLastWindowStop
         // finishes the teardown if it does not.
-        if (!stillHasTopLevel) self._lastWindowStopAt = Date.now() + 750;
-        else self._lastWindowStopAt = 0;
+        if (!stillHasTopLevel) {
+          const graceMs = Number.isFinite(self.windowlessGraceMs)
+            ? Math.max(0, self.windowlessGraceMs)
+            : 750;
+          self._lastWindowStopAt = Date.now() + graceMs;
+        } else self._lastWindowStopAt = 0;
       },
       onExit: (code) => {
-        self.stop({ repaint: false });
-        if (self.renderer) {
-          if (self._multiApp) {
-            self._removeAppWindows();
-          } else {
-            self.renderer._exited = true;
-            self.renderer.windows = {};
-          }
-          self.renderer.repaint();
-        }
+        self.stop();
       },
     };
     if (!opts.detached) {
@@ -427,8 +447,23 @@ class WineAssembly {
     // of times a second to show sixty. This counter ticks once per repaint
     // opportunity and caps presentation at one canvas upload per frame; using
     // rAF rather than a timer also means it stops while the tab is hidden.
+    //
+    // It has to stop when the app does. This loop closes over `self`, so as
+    // long as it is scheduled the browser holds the whole WineHost alive --
+    // and a WineHost owns a 512MB shared WebAssembly.Memory (8192 pages,
+    // initial == maximum, so committed at instantiate). Left
+    // running, every launch in a session leaked half a gigabyte that nothing
+    // could ever collect: measured 3 launch/close cycles = 1536MB still
+    // alive, with runningApps empty and the desktop looking perfectly
+    // healthy. A phone does not have three of those, so the second or third
+    // app a visitor opened failed with "Out of memory" -- which is what
+    // "sometimes it closes properly, sometimes it doesn't" actually was.
     if (typeof requestAnimationFrame === 'function') {
-      const tick = () => { self._dxFrameSeq = (self._dxFrameSeq || 0) + 1; requestAnimationFrame(tick); };
+      const tick = () => {
+        if (self._stopped) return;
+        self._dxFrameSeq = (self._dxFrameSeq || 0) + 1;
+        requestAnimationFrame(tick);
+      };
       requestAnimationFrame(tick);
     }
 
@@ -492,6 +527,26 @@ class WineAssembly {
               raw.push(ex.guest_read32((esp + 4 + i * 4) >>> 0) >>> 0);
             }
             suffix = `(${raw.map(v => `0x${v.toString(16).padStart(8, '0')}`).join(', ')})`;
+            // Browser acceptance tests occasionally need to distinguish two
+            // calls whose raw pointers are different but opaque. Keep the
+            // normal lightweight trace unchanged; the opt-in detail flag
+            // decodes only API-table arguments explicitly typed as LPCSTR.
+            if (typeof window !== 'undefined' && window.__waTraceApiDetails &&
+                ex.guest_read8 && Array.isArray(entry.args)) {
+              const details = [];
+              for (let i = 0; i < entry.args.length && i < raw.length; i++) {
+                if (entry.args[i] && entry.args[i].type === 'LPCSTR' && raw[i]) {
+                  let value = '';
+                  for (let j = 0; j < 256; j++) {
+                    const ch = ex.guest_read8((raw[i] + j) >>> 0) & 0xFF;
+                    if (!ch) break;
+                    value += String.fromCharCode(ch);
+                  }
+                  details.push(`${entry.args[i].name || `arg${i}`}=${JSON.stringify(value)}`);
+                }
+              }
+              if (details.length) suffix += ` ${details.join(' ')}`;
+            }
             if (apiName === 'CoCreateInstance' && raw[0]) {
               suffix += ` clsid.d1=0x${(ex.guest_read32(raw[0]) >>> 0).toString(16).padStart(8, '0')}`;
             }
@@ -616,16 +671,7 @@ class WineAssembly {
       if (!self._inDllInit) {
         self.logToUI('[ExitProcess] code: ' + code);
         self.logToUI('--- Program exited ---');
-        self.stop({ repaint: false });
-        if (self.renderer) {
-          if (self._multiApp) {
-            self._removeAppWindows();
-          } else {
-            self.renderer._exited = true;
-            self.renderer.windows = {};
-          }
-          self.renderer.repaint();
-        }
+        self.stop();
       }
     };
     h.create_window = (hwnd, style, x, y, cx, cy, titlePtr, menuId) => {
@@ -860,6 +906,11 @@ class WineAssembly {
     // Create shared memory externally
     this.memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
     imports.host.memory = this.memory;
+    // Kept so stop() can put it back to null. Every closure in getImports()
+    // captures this object, and several of them outlive the app (the audio
+    // unlock listener on window, the DX present hook), so `host.memory` is
+    // the reference that actually pins the 512MB -- see _releaseGuestMemory.
+    this._hostImports = imports.host;
 
     this.instance = await WebAssembly.instantiate(wasmModule, imports);
     if (this.instance.exports.set_process_id) {
@@ -954,6 +1005,10 @@ class WineAssembly {
       // mode a DLL's load address depends on load order, so the raw number is
       // different every run and matches nothing in a disassembly.
       describeAddr: (addr) => self.describeAddr(addr),
+      // Worker threads take their hwnd slice out of this app's range, so that
+      // every window an app owns -- whichever thread put it up -- answers to
+      // the one range test that teardown and input routing both use.
+      hwndBase: () => self._hwndBase || 0x10001,
       hasMessage: () => !!(self.renderer && self.renderer.inputQueue && self.renderer.inputQueue.length),
       now: () => self.renderer && self.renderer._profileNow ? self.renderer._profileNow() : Date.now(),
       resolveThreadSendExternalYield: async (link, r) => {
@@ -1681,7 +1736,7 @@ class WineAssembly {
     if (hasTopLevel) { this._lastWindowStopAt = 0; return; }
     if (Date.now() < this._lastWindowStopAt) return;
     this._lastWindowStopAt = 0;
-    this.stop({ repaint: false });
+    this.stop();
   }
 
   _removeAppWindows() {
@@ -1708,10 +1763,31 @@ class WineAssembly {
     }
   }
 
+  // The one teardown. Every way an app can end -- ExitProcess, the run loop
+  // finding EIP zero, the last top-level window closing out its grace period,
+  // a WASM crash, the shell stopping it -- comes through here, and the order
+  // below is the whole of it.
+  //
+  // It used to be a shared middle with five different tails: three call sites
+  // repeated the window removal and then repainted, and two repainted not at
+  // all. The repaints were the damaging half, because they ran *after* the
+  // shell had already put the page back (onStopped -> onAppRunningChange
+  // clears the fullscreen classes), so anything still in renderer.windows at
+  // that point could hand the display straight back to a guest that no longer
+  // exists -- desktop icons hidden over a blank canvas. The two sites with no
+  // repaint had the opposite fault: a crash left the dead app's last frame on
+  // screen. Repainting last, once, fixes both.
   stop(options = {}) {
-    const wasRunning = this.running;
     this.running = false;
+    // Read by every self-rescheduling loop this host owns. `running` cannot
+    // do that job: it goes false and true again over a host's life, and a
+    // loop that restarted itself on the second launch would be back to
+    // holding a dead host forever.
+    this._stopped = true;
     this._cleanupAudio();
+    // A deferred last-window teardown has nothing left to finish, and leaving
+    // the deadline armed would run this a second time.
+    this._lastWindowStopAt = 0;
     if (this.renderer) {
       if (this._multiApp) {
         this._removeAppWindows();
@@ -1719,12 +1795,113 @@ class WineAssembly {
         this.renderer._exited = true;
         this.renderer.windows = {};
       }
-      if (options.repaint !== false && this.renderer.repaint) {
-        this.renderer.repaint();
-      }
     }
-    if (wasRunning && typeof this.onStopped === 'function') {
+    // Notify whether or not `running` was still set. The listener is
+    // unregisterRunningApp, which is idempotent, and the guard was costing
+    // more than it saved: anything that cleared `running` on its own -- an
+    // exit taken inside the run loop, a trap, a second stop() -- swallowed
+    // the only notification the shell gets, and its runningApps entry then
+    // lived forever. On a phone that is fatal rather than untidy: the
+    // renderer has already dropped the guest's windows, so the page is bare
+    // teal, the desktop icons stay hidden behind body.app-running, and
+    // single-app mode silently refuses every later launch because it still
+    // believes something is running. No way out but a reload.
+    if (typeof this.onStopped === 'function') {
       try { this.onStopped(this); } catch (_) {}
+    }
+    // Last, so the frame on screen is the one the shell's clean-up decided on
+    // and not one composed from windows this stop was in the middle of
+    // dropping. `repaint: false` is for a caller stopping several apps that
+    // will repaint once at the end.
+    if (options.repaint !== false && this.renderer && this.renderer.repaint) {
+      this.renderer.repaint();
+    }
+    // Deferred by a turn, not because the release is slow, but because most
+    // stops come from *inside* a guest slice -- h.exit during a WASM call, a
+    // trap, the no-windows-left check -- and the step that called us still has
+    // `self.instance.exports.get_eip()` ahead of it on the way out. Dropping
+    // the references under it would turn a clean exit into a TypeError.
+    //
+    // Browser only. The CLI reads the guest's memory and exports *after* the
+    // run is over -- --png, --dump, the hit counts and the MMX tally at exit
+    // -- and it gets its memory back by exiting the process, so it has
+    // nothing to gain here and everything to lose.
+    if (typeof window !== 'undefined' && !this._releaseTimer) {
+      this._releaseTimer = setTimeout(() => {
+        this._releaseTimer = null;
+        if (this._stopped) this._releaseGuestMemory();
+      }, 0);
+    }
+  }
+
+  // Every launch commits a 512MB guest memory (`initial === maximum` and
+  // `shared`, so it is all resident the moment it is instantiated). Nothing
+  // reclaims that unless the WebAssembly.Memory itself becomes unreachable --
+  // and the renderer is a page-lifetime singleton that has been handed this
+  // host's instance and memory, so closing an app left the whole half gigabyte
+  // pinned. Measured in Chrome with forced GC between cycles: launch/close
+  // Notepad three times and the page holds 3 live guest memories / 1536MB,
+  // while every check the shell makes reads healthy (runningApps 0, no
+  // windows, icons visible). On a phone the second or third launch simply
+  // fails -- `REJECT Out of memory` -- which is the "can't launch new apps"
+  // state, and the only way out is a reload.
+  //
+  // So drop the references this host owns, and the renderer's four only if
+  // they still point at us: a later app has already overwritten them with its
+  // own and must not be unwired by a straggling stop().
+  _releaseGuestMemory() {
+    this._deleteOwnSurfacePresentations();
+    const renderer = this.renderer;
+    if (renderer) {
+      if (renderer.wasm === this.instance) renderer.wasm = null;
+      if (renderer.mainWasm === this.instance) renderer.mainWasm = null;
+      if (renderer.wasmMemory === this.memory) renderer.wasmMemory = null;
+      if (renderer.mainWasmMemory === this.memory) renderer.mainWasmMemory = null;
+      // Set by _setKeyboardInputOwner (lib/renderer-input.js) and never
+      // cleared: _restoreKeyboardInputOwner only ever replaces it, so with no
+      // windows left the last app to hold focus keeps its instance alive.
+      if (renderer._keyboardInputWasm === this.instance) renderer._keyboardInputWasm = null;
+      if (renderer._keyboardInputMemory === this.memory) renderer._keyboardInputMemory = null;
+    }
+    // The two paths a heap snapshot actually blamed after everything above
+    // was already cleared: window's "unlock" audio listener -> _readVfsFile's
+    // scope -> host imports -> .memory, and wineShell.stopAllApps -> a stale
+    // WineAssembly -> _presentDxIfDirty -> the same host imports object.
+    if (this._hostImports) this._hostImports.memory = null;
+    this._hostImports = null;
+    // Holds the same memory and instance plus one per worker thread.
+    this.threadManager = null;
+    this.instance = null;
+    this.memory = null;
+    this._wasmModule = null;
+    // `ctx` closes over `self`, and is handed to worker imports and the help
+    // system, both of which outlive the run loop.
+    this.hostCtx = null;
+    this._helpCtx = null;
+  }
+
+  // A guest that exits without deleting its GDI surfaces leaves entries in the
+  // shared presentation map, and each one holds a GdiSurface whose `storage`
+  // is a Uint8Array over the guest's SharedArrayBuffer -- so one undeleted
+  // surface pins the whole 512MB just as surely as the instance does. The map
+  // is shared with worker threads and, in multi-app mode, with other apps, so
+  // ownership is decided by the only thing that cannot be faked: which memory
+  // the surface's storage is a view of.
+  _deleteOwnSurfacePresentations() {
+    const gdi = this.hostCtx && this.hostCtx.sharedGdi;
+    const presentations = gdi && gdi.surfacePresentations;
+    const del = this._hostImports && this._hostImports.gdi_surface_delete;
+    if (!presentations || typeof del !== 'function' || !this.memory) return;
+    const buffer = this.memory.buffer;
+    const mine = [];
+    for (const [id, presentation] of presentations) {
+      const storage = presentation && presentation.surface && presentation.surface.storage;
+      if (storage && storage.buffer === buffer) mine.push(id);
+    }
+    // Deleting detaches window/overlay/desktop surfaces and drops the
+    // canvas's _waCanonicalPresentation, which is the other half of the leak.
+    for (const id of mine) {
+      try { del(id); } catch (_) {}
     }
   }
 
@@ -1976,6 +2153,7 @@ class WineAssembly {
     this.stepsPerSlice = stepsPerSlice;
     if (this.guestWorker) return this._runThreaded(stepsPerSlice);
     this.running = true;
+    this._stopped = false;
     const self = this;
     const step = async () => {
       if (!self.running) return;
@@ -1994,7 +2172,29 @@ class WineAssembly {
         const mainThreadWaiting = self.threadManager &&
           (self._isMainExecutionSuspended() || self.threadManager.checkMainYield());
         if (mainThreadWaiting) {
-          // Main still waiting — just run worker threads
+          // Main still waiting — just run worker threads.
+          //
+          // But the deferred last-window teardown still has to be able to
+          // finish here, and it used to be checked only on the other branch.
+          // A parked main thread is precisely the case it exists for: the app
+          // destroyed its last top-level window and then blocked instead of
+          // reaching ExitProcess -- waiting on a message that will never come,
+          // or on a handle nothing will signal. The grace deadline then passed
+          // with nobody looking at it, so `running` stayed true forever. On a
+          // desktop that is an invisible leak; on a phone it is the end of the
+          // session, because body.app-running hides the desktop icons and they
+          // are the only launcher there is: closing Notepad left a bare teal
+          // page that could not start anything. Whether an app happened to
+          // park before or after its final slice is a race, which is what made
+          // it intermittent.
+          self._checkLastWindowStop();
+          if (!self.running) {
+            if (self.renderer && self._multiApp) {
+              self._removeAppWindows();
+              self.renderer.repaint();
+            }
+            return;
+          }
         } else {
           if (self.renderer) {
             self.renderer.wasm = self.instance;
@@ -2008,6 +2208,14 @@ class WineAssembly {
           if (perf) perf.countSteps(activeStepsPerSlice);
           const perfMainStart = perf ? performance.now() : 0;
           self.instance.exports.run(activeStepsPerSlice);
+          // Browser waveOut completion is driven by AudioContext timeouts.
+          // CALLBACK_FUNCTION clients cannot enter guest code from that
+          // timeout: doing so would overwrite whichever x86 frame a slice is
+          // currently unwinding. host-audio therefore queues WOM_DONE until
+          // this cooperative slice boundary, exactly as the CLI harness does.
+          if (self.hostCtx && self.hostCtx.pumpAudioCompletions) {
+            self.hostCtx.pumpAudioCompletions();
+          }
           // timeSetEvent is asynchronous on Windows. Most emulated apps pump
           // often enough for the existing MM_TIMER message path; opted-in
           // clients such as Diablo also need a callback between slices while
@@ -2065,11 +2273,7 @@ class WineAssembly {
         }
         if (!self.instance.exports.get_eip() && !self.instance.exports.get_yield_reason()) {
           self.logToUI('--- Program exited ---');
-          self.stop({ repaint: false });
-          if (self.renderer && self._multiApp) {
-            self._removeAppWindows();
-            self.renderer.repaint();
-          }
+          self.stop();
           return;
         }
         // Handle yield reasons
@@ -2187,7 +2391,10 @@ class WineAssembly {
         const tag = unimpl ? ` [unimplemented: ${unimpl}]` : '';
         console.error('WASM crash:', e, 'EIP=' + eipHex, 'ESP=' + espHex, 'EBP=' + ebpHex, 'yield=' + yr, tag);
         self.logToUI('ERROR: ' + e.message + ' @ EIP=' + eipHex + ' ESP=' + espHex + ' EBP=' + ebpHex + ' yield=' + yr + tag);
-        self.stop({ repaint: false });
+        // Repaints, unlike before: a crash that left the option off held the
+        // dead app's last frame on screen, which reads as a hang rather than
+        // as the exit it is.
+        self.stop();
         return;
       } finally {
         // Every yield reason returns early from inside the try, so closing

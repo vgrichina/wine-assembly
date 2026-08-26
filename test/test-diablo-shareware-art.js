@@ -10,10 +10,14 @@
 //
 //   1. The main-menu logo animation. `ui_art\smlogo.pcx` is 15 frames of
 //      390x154 and every one of them is a lit flaming DIABLO wordmark inside
-//      spawn.mpq. Today about 12 of the 15 compile to solid black -- the
-//      transparency key is palette index 250 = pure green and black is a
-//      *different* index, so a black frame means the pixel indices arrived
-//      zeroed, not that the palette was lost. Fifteen captures at a 3-batch
+//      spawn.mpq. This test was written while about 12 of the 15 compiled to
+//      solid black; since 2026-08-25 all fifteen captures match the archive,
+//      and the assertion below is what keeps them that way. The failure it
+//      guards against is specific: the transparency key is palette index 250 =
+//      pure green and black is a *different* index, so a black frame means the
+//      pixel indices arrived zeroed, not that the palette was lost. See the
+//      "FIXED (re-measured 2026-08-25)" section of
+//      docs/re-notes/diablo-shareware.md. Fifteen captures at a 3-batch
 //      stride cover the whole 45-batch animation period at --time-scale=30, so
 //      a healthy run matches the archive on every sample.
 //
@@ -34,8 +38,9 @@
 //      at runtime 0x702478 is entirely NULL on this screen, so nothing is drawn
 //      at all and all nine segments score 0.00 against the archive's 1.00.
 //
-//   3. Storm's shared async worker (thread 1) surviving. It currently dies with
-//      EIP=0 shortly before the menu, and `storm+0x150316c0` is the queue that
+//   3. Storm's shared async worker (thread 1) surviving. It used to die with
+//      EIP=0 shortly before the menu -- it no longer does, and this assertion
+//      is what keeps it that way. `storm+0x150316c0` is the queue that
 //      serves both DirectSound fills *and* MPQ sector reads, so its death is
 //      why every async file read after the Single Player transition comes back
 //      empty. --trace-thread prints the [thread-event] JSON this parses.

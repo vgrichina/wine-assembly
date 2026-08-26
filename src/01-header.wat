@@ -152,6 +152,10 @@
   ;; get_screen_size() → (width | (height << 16))
   (import "host" "set_wallpaper" (func $host_set_wallpaper (param i32 i32) (result i32)))
   ;; set_wallpaper(path_wa, tiled) → BOOL; loads a VFS BMP into the desktop layer.
+  ;; Fixed-function frontends lower into a reusable WebGL/GLES-shaped backend.
+  ;; opcode, stdcall stack WA, auxiliary target HWND -> integer/API result.
+  (import "host" "gpu_gl_call"
+    (func $host_gpu_gl_call (param i32 i32 i32) (result i32)))
   (import "host" "note_richedit_charformat_size" (func $host_note_richedit_charformat_size (param i32 i32 i32)))
   ;; note_richedit_charformat_size(yHeightTwips, selectionLo, selectionHi)
   ;; GDI host imports
@@ -618,6 +622,8 @@
   ;; mci_command(host_id, command, flags, params_wa) → MCIERR_*
   (import "host" "mci_string" (func $host_mci_string (param i32 i32 i32) (result i32)))
   ;; mci_string(cmd_wa, retbuf_wa, retlen) → MCIERR_*
+  (import "host" "mci_get_device_id" (func $host_mci_get_device_id (param i32) (result i32)))
+  ;; mci_get_device_id(name_wa) → host device id for an mciSendStringA alias, or 0
   (import "host" "midi_num_devs" (func $host_midi_num_devs (result i32)))
   ;; midi_num_devs() → number of MIDI output devices
   (import "host" "midi_out_open" (func $host_midi_out_open (param i32 i32 i32 i32) (result i32)))
@@ -880,6 +886,12 @@
   (data (i32.const 0x35A) "Try Again\00")    ;; len 9  — MB_CANCELTRYCONTINUE
   (data (i32.const 0x364) "Continue\00")     ;; len 8  — MB_CANCELTRYCONTINUE
   (data (i32.const 0x36D) "uxtheme.dll\00")  ;; optional XP theming DLL
+  ;; Stable strings returned by glGetString. Extensions is intentionally empty
+  ;; until an optional extension has a complete implementation.
+  (data (i32.const 0x07F0BF60) "Wine-Assembly\00")
+  (data (i32.const 0x07F0BF70) "WebGL fixed function\00")
+  (data (i32.const 0x07F0BF88) "1.1 Wine-Assembly\00")
+  (data (i32.const 0x07F0BFA0) "\00")
   ;; WinSock 1.1 ordinal imports used by Win9x DLLs. The DLL loader maps
   ;; supported ordinals to these normal API-table names.
   (data (i32.const 0x11300) "WSOCK32.dll\00WSAStartup\00WSACleanup\00WSAGetLastError\00socket\00closesocket\00connect\00send\00recv\00gethostbyname\00htons\00inet_addr\00select\00setsockopt\00ioctlsocket\00accept\00bind\00listen\00shutdown\00ntohs\00inet_ntoa\00__WSAFDIsSet\00WSASetLastError\00")
@@ -1018,7 +1030,6 @@
     "\14GETPRIVATEPROFILEINT\7f\10"
     "\00")
   (data (i32.const 0x11EE0) "Hearts$\00MSHearts\00Hearts\00\00")
-
   ;; MessageBox system strings mirrored in the WAT-owned reserved page just
   ;; below guest memory. The legacy low-page copies above are kept for older
   ;; dialog helpers, but apps can disturb that scratch/null-page area during
@@ -1276,7 +1287,7 @@
   ;; 0x07F01000  256B    PAINT_FLAGS (1 byte per window slot)
   ;; 0x07F01200  256B    TAB_NATIVE_STATE_TABLE (32 × {hwnd, mirror state ptr})
   ;; 0x07F01300  256B    ICON_TABLE (32 entries × {hInstance, resource id})
-  ;; 0x07F01400  1KB     SYNC_TABLE (64 entries × 16 bytes)
+  ;; 0x07F01400  1KB     (free; former 64-entry SYNC_TABLE)
   ;; 0x07F01800  3KB     EDIT_LAYOUT_SCRATCH (384 entries × 8 bytes)
   ;; 0x07F02400 16B      VIRTUAL_MAP_STATE (count, backing bump pointer)
   ;; 0x07F02410 32KB     VIRTUAL_MAP_TABLE (2048 entries x 16 bytes)
@@ -1305,10 +1316,12 @@
   ;; 0x07F0D000 8KB      GDI_REGION_TABLE (256 WAT-owned HRGN records)
   ;; 0x07F0F000 4KB      GDI_DC_PATH_TABLE (256 x 16-byte WAT path records)
   ;; 0x07F10000 4KB      HANDLER_HIST_COUNTS (1024 i32 counters)
+  ;; 0x07F11000 4KB      DX_SURF_PAL (1024 per-surface palette pointers)
   ;; 0x07F12000 8KB      CODE_PAGE_BITMAP (1 bit per 4KB guest page < 0x10000000)
+  ;; 0x07F14000 8KB      SYNC_TABLE (512 entries × 16 bytes)
   ;; 0x07F20000  256B    HIT_COUNT_BASE (16 --count slots of {addr, count})
   ;; 0x07F30000 8KB      OP_INDEX (2048 decode-time op-start addresses)
-  ;; 0x07F11000 512KB    (free apart from the two above -- former
+  ;; 0x07F16000 492KB    (free apart from the tables listed above -- former
   ;;                      HANDLER_PAIR_HIST_COUNTS home, too
   ;;                      small once the handler table passed 361. This block is
   ;;                      packed wall-to-wall with the branch/hot-block tables
@@ -1407,12 +1420,15 @@
   (global $PAGE_DIR_STRIDE i32 (i32.const 0x4000))
   (global $PAGE_DIR_ENTRIES i32 (i32.const 1024))
   (global $PAGE_DIR_MASK i32 (i32.const 1023))
-  ;; One contiguous chunk per compiled page, carved from the same thread arena
-  ;; the hash cache's blocks come from, so the existing flush machinery already
-  ;; covers it. 16KB because index entries are u16 (so a chunk can never exceed
-  ;; 64KB) and because a page's *executed* code is what lands here, not its
-  ;; whole 4KB of x86: caesar3_demo averages 35 blocks per compiled page, on the
-  ;; order of 3.5KB. Overflow is not an error — the page is dropped and rebuilt.
+  ;; One contiguous chunk per compiled page, carved from the existing per-thread
+  ;; decoded-code arena so the established flush machinery already covers it.
+  ;; PAGE_CHUNK_BYTES is the 16KB maximum; pages begin in the smallest
+  ;; 4/8/12/16KB class that fits and grow on demand. The per-page byte index uses
+  ;; 14-bit offsets, so the maximum remains 16KB. Diablo II measured a 2.4KB mean
+  ;; payload with 97% at or below 8KB; reserving the maximum for every page made
+  ;; its gameplay working set recycle the entire 4MB arena several times per
+  ;; slice. Dropped chunks are recycled when no decoded stream can still name
+  ;; them.
   (global $PAGE_CHUNK_BYTES i32 (i32.const 0x4000))
   (global $DLL_TABLE_SIZE i32 (i32.const 0x00000200))
   (global $DLL_RSRC_TABLE_SIZE i32 (i32.const 0x00000200))
@@ -2100,9 +2116,9 @@
   (global $DI_MASK   i32 (i32.const 1))
   (global $DI_IMAGE  i32 (i32.const 2))
   (global $DI_NORMAL i32 (i32.const 3))
-  (global $SYNC_TABLE i32 (i32.const 0x07F01400))
-  (global $SYNC_TABLE_SIZE i32 (i32.const 0x00000400))
-  (global $MAX_SYNC_OBJECTS i32 (i32.const 64))
+  (global $SYNC_TABLE i32 (i32.const 0x07F14000))
+  (global $SYNC_TABLE_SIZE i32 (i32.const 0x00002000))
+  (global $MAX_SYNC_OBJECTS i32 (i32.const 512))
   ;; Sparse VirtualAlloc mapping table. Guest reserve addresses are high
   ;; virtual addresses; committed chunks are backed here so they do not collide
   ;; with the low HeapAlloc arena.

@@ -5,8 +5,11 @@ const path = require('path');
 const { ThreadManager } = require('../lib/thread-manager');
 
 const handlersWat = fs.readFileSync(path.join(__dirname, '..', 'src', '09a-handlers.wat'), 'utf8');
+const headerWat = fs.readFileSync(path.join(__dirname, '..', 'src', '01-header.wat'), 'utf8');
 assert(!handlersWat.includes('(call $host_log_i32 (global.get $eax))'),
   'synchronization handlers must not cross to the host solely to print return values');
+assert(headerWat.includes('(global $MAX_SYNC_OBJECTS i32 (i32.const 512))'),
+  'the WAT synchronization table must match the host manager capacity');
 
 function makeThreadManager(opts) {
   return makeThreadManagerWithMemory(new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true }), opts);
@@ -128,10 +131,11 @@ assert.strictEqual(currentProcessTm.waitSingle(0x000E23E8, 0xFFFFFFFF), 0xFFFF,
 
 const syncLifecycleTm = makeThreadManager();
 const syncHandles = [];
-for (let i = 0; i < 64; i++) {
+for (let i = 0; i < 512; i++) {
   syncHandles.push(syncLifecycleTm.createEvent(false, false));
 }
-assert(syncHandles.every(Boolean), 'all 64 synchronization slots should allocate');
+assert(syncHandles.every(Boolean),
+  'all 512 synchronization slots should allocate, leaving room beyond Diablo II\'s startup event pool');
 assert.strictEqual(syncLifecycleTm.createEvent(false, false), 0, 'the full synchronization table rejects another event');
 assert.strictEqual(syncLifecycleTm.closeSyncHandle(syncHandles[17]), true, 'CloseHandle should release an event slot');
 const staleEvent = syncHandles[17];
@@ -496,6 +500,33 @@ assert.strictEqual(
 );
 assert.strictEqual(reentrantRuns, 0, 'reentrant nested wait should not run the worker again');
 
+// A worker's hwnds have to come out of its own app's slice. They used to be
+// derived from the thread id alone (0x10001 + tid * 0x10000), which put every
+// worker window outside the range the shell prunes when that app stops -- so a
+// window a worker had put up survived its guest forever, and the repaint after
+// the stop handed the display back to a dead app. Whether it happened at all
+// depended on whether the app ever created a window off a worker thread, which
+// is exactly the "sometimes works, sometimes doesn't" shape. The second app's
+// range also collided with the first app's T1 outright.
+for (const appBase of [0x10001, 0x20001, 0x70001]) {
+  const scoped = makeThreadManager({ hwndBase: () => appBase });
+  const seen = new Set();
+  for (let tid = 1; tid <= scoped._maxWorkerThreads; tid++) {
+    const base = scoped.workerHwndBase(tid);
+    assert(base > appBase && base < appBase + 0x10000,
+      `worker ${tid} of the app at ${appBase.toString(16)} must stay inside its own slice, got ${base.toString(16)}`);
+    assert(!seen.has(base), `worker ${tid} must not share a base with another worker`);
+    seen.add(base);
+  }
+  // Main gets the whole bottom half, so a lifetime of dialogs and controls
+  // cannot walk into T1's numbers.
+  assert.strictEqual(scoped.workerHwndBase(1) - appBase, 0x8000,
+    'the main thread keeps the bottom half of the slice');
+}
+// Defaulting matters too: the CLI host constructs the manager with no base.
+assert.strictEqual(makeThreadManager().workerHwndBase(1), 0x10001 + 0x8000,
+  'with no app base the manager still lands inside the first app slice');
+
 console.log('PASS  ThreadManager reuses exited worker cache slots');
 console.log('PASS  ThreadManager schedules, suspends and resumes worker slices');
 console.log('PASS  ThreadManager supports wall-budgeted worker slices');
@@ -507,3 +538,4 @@ console.log('PASS  ThreadManager recycles closed event and semaphore handles');
 console.log('PASS  ThreadManager preserves and atomically consumes wait-all state');
 console.log('PASS  ThreadManager keeps main wait completion logs trace-only');
 console.log('PASS  ThreadManager keeps synchronization-object creation logs trace-only');
+console.log('PASS  ThreadManager keeps every worker hwnd inside its own app slice');

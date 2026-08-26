@@ -142,12 +142,53 @@ async function main() {
     // the page went full screen for it, and neither got taken down by an
     // event. This is the state, not a way of producing it -- the point is
     // that stopping the guest has to clear it however it came about.
+    // Driven through the renderer, not by setting the classes: on a browser
+    // with no Fullscreen API the display grab now takes the page with it
+    // (index.html's enterPageFullscreenIfNoApi), and setting the classes by
+    // hand skips exactly the code that has to be undone again on the way out.
     await page.evaluate(() => {
-      document.body.classList.add('exclusive-fullscreen', 'page-fullscreen');
       const app = runningApps.find(item => item && item.name === 'winmine_wep');
+      app.wine.renderer._setExclusiveFullscreen(true);
+    });
+    const owned = await page.evaluate(() => document.body.className);
+    assert(owned.includes('page-fullscreen'),
+      `an exclusive app on an API-less browser should own the page, got "${owned}"`);
+    // Stopped the pathological way, not the tidy way: something cleared
+    // `running` before stop() was reached -- an exit taken inside the run
+    // loop, a trap, a second stop() -- which used to swallow the shell's only
+    // notification. The entry then lived forever in runningApps, and on a
+    // phone that is terminal: the renderer has already dropped the guest's
+    // windows so the page is bare teal, the icons stay hidden behind
+    // body.app-running, and single-app mode refuses every later launch in
+    // silence because it still believes something is running.
+    // Plant the window a worker thread of this app would have put up. The
+    // whole app slice is the shell's unit of ownership, so a window from any
+    // of its threads has to go down with it -- when worker bases were derived
+    // from the thread id alone, this one landed outside the slice, outlived
+    // its guest, and the repaint after the stop handed the display straight
+    // back to the dead app.
+    const workerHwnd = await page.evaluate(() => {
+      const app = runningApps.find(item => item && item.name === 'winmine_wep');
+      const hwnd = app.wine.threadManager
+        ? app.wine.threadManager.workerHwndBase(1)
+        : app.wine._hwndBase + 0x8000;
+      app.wine.renderer.windows[hwnd] = {
+        hwnd, x: 0, y: 0, width: 320, height: 200,
+        visible: true, title: 'worker window', wasm: null,
+      };
+      return hwnd;
+    });
+
+    await page.evaluate(() => {
+      const app = runningApps.find(item => item && item.name === 'winmine_wep');
+      app.wine.running = false;
       app.wine.stop({ repaint: false });
       if (app.wine.renderer) app.wine.renderer.repaint();
     });
+    const workerWindowLeft = await page.evaluate(
+      hwnd => !!(sharedRenderer && sharedRenderer.windows[hwnd]), workerHwnd);
+    assert(!workerWindowLeft,
+      `a window from worker thread 1 (hwnd 0x${workerHwnd.toString(16)}) outlived its app`);
     await page.waitForFunction(() => runningApps.length === 0, { timeout: 30000 });
     const quit = await page.evaluate(desktopState);
     await page.screenshot({ path: path.join(OUT, 'after-quit.png') });

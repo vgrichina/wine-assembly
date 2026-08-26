@@ -193,7 +193,7 @@ function decodeOne(rd, cs, ip) {
     if (n > 8) return null;   // prefix soup, not something the corpus produces
   }
 
-  const op = at(n); n++;
+  const op = at(n); const modrmAt = n; n++;
   // A repeat prefix on anything but a string op does something the 8086 defines
   // only by accident. Refusing the encoding keeps the gate honest instead of
   // silently executing the unprefixed instruction and calling it a pass.
@@ -651,6 +651,35 @@ function decodeOne(rd, cs, ip) {
         else words.push(H[`${nm}_m${opsize}`], packEa(m), m.disp, cnt());
         break;
       }
+      // Bit test group. 0F BA carries the operation in the ModRM reg field and
+      // the bit index as an imm8; A3/AB/B3/BB take the index from a register.
+      // -1 in the index operand is the "from the reg field" sentinel.
+      if (op2 === 0xBA || op2 === 0xA3 || op2 === 0xAB || op2 === 0xB3 || op2 === 0xBB) {
+        const m = modrm();
+        let nm;
+        if (op2 === 0xBA) {
+          if (m.reg < 4) return null;   // /0../3 are not encodings on any part
+          nm = ['bt', 'bts', 'btr', 'btc'][m.reg - 4];
+        } else {
+          nm = { 0xA3: 'bt', 0xAB: 'bts', 0xB3: 'btr', 0xBB: 'btc' }[op2];
+        }
+        if (m.isReg) {
+          words.push(H[`${nm}_r${opsize}`], (m.rm & 7) | ((m.reg & 7) << 4),
+            op2 === 0xBA ? imm8() : -1);
+        } else {
+          words.push(H[`${nm}_m${opsize}`], packEa(m), m.disp,
+            op2 === 0xBA ? imm8() : -1);
+        }
+        break;
+      }
+      // BSF/BSR: scan for the lowest or highest set bit.
+      if (op2 === 0xBC || op2 === 0xBD) {
+        const nm = op2 === 0xBC ? 'bsf' : 'bsr';
+        const m = modrm();
+        if (m.isReg) words.push(H[`${nm}_rr${opsize}`], (m.rm & 7) | ((m.reg & 7) << 4));
+        else words.push(H[`${nm}_rm${opsize}`], packEa(m), m.disp);
+        break;
+      }
       if (op2 === 0xA0 || op2 === 0xA8) { words.push(H.push_seg, op2 === 0xA0 ? 4 : 5); break; }
       if (op2 === 0xA1 || op2 === 0xA9) { words.push(H.pop_seg, op2 === 0xA1 ? 4 : 5); break; }
       // IMUL r, r/m -- the two-operand form, destination times source.
@@ -817,7 +846,12 @@ function decodeOne(rd, cs, ip) {
       // PUSH SP pushes the already-decremented value on an 8088; the 32-bit
       // form is a 386 encoding and follows the 386's rule, so it does not need
       // the quirk.
-      else if (op === 0x54 && opsize === 16) words.push(H.push_sp);
+      // PUSH SP is the 8086's, and ONLY the 8086's, decremented-SP form. Two
+      // demos here (UNTITLED.EXE, BULLET.EXE) refuse to run on anything below a
+      // 386 and test for it with `push sp / pop bx / cmp bx, sp` -- so pushing
+      // the old value on a part that is claiming to be a 386 answers "8086" and
+      // gets the demo a "you will need at least a 386" screen instead of a run.
+      else if (op === 0x54 && opsize === 16 && cpuLevel < 186) words.push(H.push_sp);
       else if (op >= 0x50 && op <= 0x57) words.push(H[`push_r${opsize}`], op & 7);
       else if (op >= 0x58 && op <= 0x5F) words.push(H[`pop_r${opsize}`], op & 7);
       // PUSH/POP segment sit at 0x06 + 8*idx and 0x07 + 8*idx, in ES/CS/SS/DS
@@ -832,7 +866,34 @@ function decodeOne(rd, cs, ip) {
       else return null;
   }
 
+  // Self-patching code. A store through a CS override writes into the segment
+  // the instruction stream itself lives in, and nothing else does that by
+  // accident -- a program addressing data through CS uses a read. So the block
+  // stops at the store and hands back with $smc set: the host drops the block
+  // the store landed in, and the very next decode reads the patched byte.
+  //
+  // Turbo Pascal's Intr() is why this matters. It writes the interrupt number
+  // into the `int` opcode two instructions ahead, and without this the trace
+  // carries the byte that was there at decode time -- the $00 the packed image
+  // ships -- so every BIOS call a TP program makes executes INT 0 instead, and
+  // TP's INT 0 handler reports "Runtime error 200".
+  if (segOverride === 1 && !endsBlock && isSelfPatch(op, at(modrmAt))) {
+    words.push(H.end_smc, (start + n) & 0xFFFF);
+    endsBlock = true;
+  }
+
   return { words, nextIp: (start + n) & 0xFFFF, length: n, fixups, endsBlock };
+}
+
+// The MOV encodings that store to memory. Deliberately not every writing
+// opcode: this list is what patchers actually emit, and a wrong entry costs a
+// block break on code that never modifies itself.
+function isSelfPatch(op, modrm) {
+  if (op === 0xA2 || op === 0xA3) return true;          // mov [moffs], acc
+  if (op === 0x88 || op === 0x89 || op === 0xC6 || op === 0xC7) {
+    return (modrm >> 6) !== 3;                          // a register form writes no memory
+  }
+  return false;
 }
 
 module.exports = { decodeOne, H, setCpuLevel };

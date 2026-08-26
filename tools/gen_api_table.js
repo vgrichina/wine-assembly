@@ -1115,6 +1115,10 @@ const extra = [
   { name: 'Direct3DCreate9', nargs: 1 },
   // dinput.dll's GetProcAddress-only entry point (v5/v7 apps).
   { name: 'DirectInputCreateEx', nargs: 5 },
+  // Quake II's 1998 ref_gl resolves this non-standard legacy spelling with
+  // GetProcAddress and calls it from EndFrame. Keep it name-resolvable even
+  // though modern Win32 applications normally use GDI32!SwapBuffers.
+  { name: 'wglSwapBuffers', nargs: 1 },
   // IDirectInput7 = the v1 vtable + these two. Keep them adjacent: the
   // vtable is built from a contiguous api-id run.
   { name: 'CreateAcceleratorTableA', nargs: 2 },

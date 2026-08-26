@@ -168,4 +168,44 @@ assert.strictEqual(canvasShift({ ...PHONE, focus: { top: 100, bottom: 700 } }), 
   assert.strictEqual(changes.length, 2, 'only real transitions are reported');
 }
 
+{
+  // reset(): the shift has to be droppable without waiting for a viewport
+  // event. The element being translated is #screen-wrap, and the desktop icon
+  // grid lives inside it -- so a shift that outlives the app it was computed
+  // for carries the only launcher a phone has off the top of the screen, and
+  // the page reads as a bare teal dead end. update() cannot undo it at that
+  // moment: the keyboard is still on its way down and the viewport still
+  // reports it as up.
+  const style = {};
+  const classes = new Set();
+  const vp = { height: 508, offsetTop: 0, scale: 1, addEventListener() {} };
+  const rect = { top: 0, bottom: 844, height: 844 };
+  const changes = [];
+  const controller = createKeyboardController({
+    viewport: vp,
+    document: {
+      documentElement: { clientHeight: 844 },
+      body: { classList: { toggle: (n, on) => (on ? classes.add(n) : classes.delete(n)),
+                           remove: (n) => classes.delete(n) } },
+    },
+    element: () => ({ style, getBoundingClientRect: () => rect }),
+    focusRect: () => ({ top: 700, bottom: 713 }),
+    onChange: (info) => changes.push(info),
+  });
+
+  controller.update();
+  assert.strictEqual(controller.inset(), 336, 'keyboard is up');
+  assert.strictEqual(style.transform, 'translateY(-213px)', 'and the wrap is shifted');
+
+  // The viewport is left saying the keyboard is still up -- that is the whole
+  // point: reset() must not consult it.
+  controller.reset();
+  assert.strictEqual(controller.inset(), 0, 'reset drops the inset');
+  assert.strictEqual(controller.shift(), 0, 'reset drops the shift');
+  assert.strictEqual(controller.frozenHeight(), 0, 'reset releases the frozen size');
+  assert.strictEqual(style.transform, '', 'and the icon grid comes back on screen');
+  assert.ok(!classes.has('keyboard-open'), 'the page is told the keyboard is down');
+  assert.strictEqual(changes.length, 2, 'reset reports the transition it made');
+}
+
 console.log('PASS  on-screen keyboard lifts the guest instead of resizing it');

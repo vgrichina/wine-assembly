@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<!-- C: the emulator's actual shape, with no emulator in it.
+     A position:fixed panel covering the whole viewport (that is the app
+     canvas), which swallows every touch that lands on it by preventDefault
+     (that is how guest input is routed), a 2-viewport spacer underneath so
+     the document overflows, and a 44px gutter strip at the top with
+     touch-action:pan-y that is the only place a page scroll can start.
+
+     Two hypotheses live here and the readout separates them:
+       moves climb, maxY stays 0 -> the gesture is reaching the page and
+                                     something is refusing to scroll it
+       maxY climbs, range flat   -> it scrolls fine and Safari will not
+                                     collapse its bars over a fixed overlay -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>C fixed panel + gutter</title>
+<style>
+  html, body { margin: 0; }
+  body {
+    font: 16px/1.5 -apple-system, sans-serif;
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    overflow: visible;
+  }
+  #panel {
+    position: fixed;
+    inset: 0;
+    background: #101820;
+    color: #7fd;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 24px;
+    touch-action: none;
+  }
+  /* svh is the SMALL viewport -- the one with the toolbars showing -- so it
+     never changes while the bars move. dvh does change, and on a real phone
+     that makes the document grow ~164px out from under the finger mid-swipe
+     (measured: scrollHeight 1256 -> 1420 as the bars retracted), which is what
+     the glitchy half-collapses look like. `?spacer=dvh` restores the old
+     behaviour for an A/B. */
+  #spacer { flex: 0 0 auto; width: 1px; height: var(--spacer, 200svh); min-height: var(--spacer, 200svh); }
+  #gutter {
+    position: fixed;
+    top: env(safe-area-inset-top);
+    left: 0;
+    right: var(--gutter-right, 0px);
+    height: var(--gutter-h, 96px);
+    z-index: 39;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    color: #fff;
+    background: linear-gradient(rgba(0,0,0,0.8), rgba(0,0,0,0.25));
+    font: 12px/1 sans-serif;
+    touch-action: pan-y;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+    transition: opacity 140ms ease, transform 140ms ease;
+  }
+  /* Once the bars are gone the strip has nothing left to do, and it is sitting
+     on top of the app. Retract it with them, and bring it back the moment they
+     come back. */
+  body.bars-collapsed #gutter {
+    opacity: 0;
+    transform: translateY(-100%);
+    pointer-events: none;
+  }
+</style>
+</head>
+<body data-lab="C-fixed">
+<div id="panel">C &mdash; a fixed full-screen panel that eats touches, like the app canvas.<br><br><b>Swipe up on the black strip at the top.</b></div>
+<div id="spacer" aria-hidden="true"></div>
+<div id="gutter">&#x25B2; swipe up here for more screen</div>
+<script>
+  // Both knobs are query params so the same page can be A/B'd on the device
+  // without an edit and a reload of a different URL:
+  //   ?spacer=dvh|svh   (default svh)   ?gutter=44|96|...px tall (default 96)
+  //   ?right=40         (default 0 -- full width)
+  // The readout name carries them, so the log says which shape produced a line.
+  const q = new URLSearchParams(location.search);
+  const spacer = q.get('spacer') === 'dvh' ? '200dvh' : '200svh';
+  const gutterH = (q.get('gutter') || '96') + 'px';
+  const right = (q.get('right') || '0') + 'px';
+  const root = document.documentElement.style;
+  root.setProperty('--spacer', spacer);
+  root.setProperty('--gutter-h', gutterH);
+  root.setProperty('--gutter-right', right);
+  const autohide = q.get('autohide') !== '0';
+  document.body.dataset.lab = `C-${spacer.slice(3)}${parseInt(gutterH, 10)}${autohide ? 'a' : ''}`;
+
+  // "Is the strip needed right now?" is the same question as "are the bars
+  // showing?", and that is innerHeight against the LARGE viewport -- lvh is
+  // the bars-retracted height and is a constant, so this needs no learning
+  // phase and no first collapse to calibrate against.
+  const probe = document.createElement('div');
+  probe.style.cssText = 'position:absolute;top:0;left:0;width:0;height:100lvh;' +
+    'visibility:hidden;pointer-events:none';
+  document.documentElement.appendChild(probe);
+  const large = () => Math.round(probe.getBoundingClientRect().height);
+  // A browser without lvh reports 0 here. Hiding the strip on that reading
+  // would hide it permanently, so treat unsupported as "always show".
+  const supported = large() > 10;
+  const collapsed = () => supported && window.innerHeight >= large() - 8;
+  const sync = () => {
+    document.body.classList.toggle('bars-collapsed', autohide && collapsed());
+  };
+  for (const type of ['resize', 'scroll', 'orientationchange']) {
+    addEventListener(type, sync, { passive: true });
+  }
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', sync);
+  sync();
+  window.LabNote = () => `lvh${supported ? large() : '?'} strip=${
+    document.body.classList.contains('bars-collapsed') ? 'off' : 'on'}`;
+</script>
+<script>
+  // The panel behaves like the emulator canvas: every touch on it is claimed
+  // for the guest and never becomes a page scroll. That is deliberate here --
+  // it is the reason the gutter has to exist at all.
+  const panel = document.getElementById('panel');
+  for (const type of ['touchstart', 'touchmove']) {
+    panel.addEventListener(type, e => e.preventDefault(), { passive: false });
+  }
+</script>
+<script src="lab.js"></script>
+</body>
+</html>

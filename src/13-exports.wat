@@ -488,6 +488,11 @@
     (call $wnd_get_thread (local.get $hwnd)))
   (func (export "set_current_thread_id") (param i32) (global.set $current_thread_id (local.get 0)))
   (func (export "get_image_base") (result i32) (global.get $image_base))
+  ;; Read-only host bridge for guest pointers embedded in GPU command
+  ;; arguments. Unlike image-relative arithmetic, $g2w also resolves sparse
+  ;; VirtualAlloc and the high CreateDIBSection arena.
+  (func (export "guest_to_wasm") (param $guest i32) (result i32)
+    (call $g2w (local.get $guest)))
   (func (export "get_rsrc_rva") (result i32) (global.get $rsrc_rva))
   (func (export "get_thread_alloc") (result i32) (global.get $thread_alloc))
   (func (export "get_cache_clears") (result i32) (global.get $cache_clears))
@@ -3057,6 +3062,38 @@
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (global.get $mm_timer_ret_thunk))
     ;; Redirect EIP to callback
+    (global.set $eip (local.get $cb))
+    (i32.const 1))
+
+  ;; Deliver one completed waveOut buffer to a CALLBACK_FUNCTION client.
+  ;; The host queues WOM_DONE notifications until a slice boundary, then calls
+  ;; this export. Reuse the multimedia-timer continuation because it already
+  ;; saves/restores the interrupted x86 caller state and rejects nested async
+  ;; callbacks. waveOutProc(hwo, WOM_DONE, instance, waveHdr, 0) is stdcall.
+  (func (export "fire_wave_out_callback")
+      (param $handle i32) (param $wave_hdr i32) (result i32)
+    (local $cb i32) (local $instance i32)
+    (if (global.get $yield_reason) (then (return (i32.const 0))))
+    (if (global.get $mm_timer_in_cb) (then (return (i32.const 0))))
+    (if (i32.ne (i32.load (i32.const 0xD16C)) (i32.const 3))
+      (then (return (i32.const 0))))
+    (local.set $cb (i32.load (i32.const 0xD164)))
+    (if (i32.eqz (local.get $cb)) (then (return (i32.const 0))))
+    (local.set $instance (i32.load (i32.const 0xD168)))
+    (global.set $mm_timer_in_cb (i32.const 1))
+    (call $save_caller_regs)
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 0))                    ;; dwParam2
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $wave_hdr))            ;; dwParam1
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $instance))            ;; dwInstance
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 0x03BD))               ;; WOM_DONE
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $handle))              ;; hwo
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $mm_timer_ret_thunk))
     (global.set $eip (local.get $cb))
     (i32.const 1))
 

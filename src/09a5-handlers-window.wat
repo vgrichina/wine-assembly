@@ -1291,6 +1291,38 @@
                 (global.set $eax (i32.const 1))
                 (global.set $steps (i32.const 0))
                 (return)))))))
+    ;; USER activates a top-level window it shows, and the activated window
+    ;; receives the focus. Only the main window got that treatment above, so a
+    ;; secondary dialog was shown without ever being told it now owns the
+    ;; keyboard -- Diablo's Enter Name dialog is one, and every keystroke went
+    ;; to the game window behind it and was dropped.
+    ;;
+    ;; Guarded on an empty focus so this can never take the keyboard away from
+    ;; a window that already holds it, and scoped to registered dialog classes
+    ;; (cbWndExtra >= DLGWINDOWEXTRA), which is where the first-tab-stop rule
+    ;; in $handle_DefDlgProcA applies.
+    (if (i32.and
+          (i32.and
+            (i32.eqz (global.get $focus_hwnd))
+            ;; Activating show commands only: SW_SHOWNORMAL/MAXIMIZED/SHOW/
+            ;; RESTORE/SHOWDEFAULT. SW_SHOWNOACTIVATE and SW_SHOWNA must not.
+            (i32.or
+              (i32.or (i32.eq (local.get $arg1) (i32.const 1))
+                      (i32.eq (local.get $arg1) (i32.const 3)))
+              (i32.or (i32.eq (local.get $arg1) (i32.const 5))
+                (i32.or (i32.eq (local.get $arg1) (i32.const 9))
+                        (i32.eq (local.get $arg1) (i32.const 10))))))
+          (i32.and
+            (i32.eqz (call $wnd_get_parent (local.get $arg0)))
+            (call $wnd_class_is_dialog (local.get $arg0))))
+      (then
+        ;; The dialog itself keeps the focus when it has no tab stop to give
+        ;; it to, which is what DefDlgProc would have settled on anyway.
+        (if (i32.eqz (call $dlg_focus_first_tabstop (local.get $arg0)))
+          (then
+            (global.set $focus_hwnd (local.get $arg0))
+            (drop (call $post_queue_push (local.get $arg0) (i32.const 0x0007)
+              (i32.const 0) (i32.const 0)))))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
@@ -2443,9 +2475,47 @@
         (global.set $eax (local.get $result))
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
+    ;; WM_SETFOCUS: USER's DefDlgProc puts the caret on the dialog's first tab
+    ;; stop. A DLGPROC that returns FALSE from WM_INITDIALOG is *asking* for
+    ;; that -- Diablo's Enter Name dialog does exactly this and then never
+    ;; touches the focus itself, so without this rule its edit control never
+    ;; receives a keystroke and the game validates an empty name.
+    (if (i32.eq (local.get $arg1) (i32.const 0x0007))
+      (then
+        (if (call $dlg_focus_first_tabstop (local.get $arg0))
+          (then
+            (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+            (return)))))
     (call $handle_DefWindowProcA
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)
       (local.get $arg4) (local.get $name_ptr)))
+
+  ;; Move the focus to a dialog's first visible, enabled tab stop. Returns 1
+  ;; when the focus now sits on such a child, 0 when the dialog has none (the
+  ;; caller then keeps whatever default it had). WM_KILLFOCUS/WM_SETFOCUS are
+  ;; posted rather than sent: this runs inside a guest DefDlgProc call, and a
+  ;; nested synchronous send from here would re-enter the dialog's own wndproc
+  ;; on top of a live x86 frame.
+  (func $dlg_focus_first_tabstop (param $dlg i32) (result i32)
+    (local $first i32) (local $old i32)
+    (local.set $first (call $dialog_next_tabstop
+      (local.get $dlg) (i32.const 0) (i32.const 1)))
+    (if (i32.or
+          (i32.eqz (local.get $first))
+          (i32.eq (local.get $first) (local.get $dlg)))
+      (then (return (i32.const 0))))
+    (if (i32.eq (global.get $focus_hwnd) (local.get $first))
+      (then (return (i32.const 1))))
+    (local.set $old (global.get $focus_hwnd))
+    (global.set $focus_hwnd (local.get $first))
+    (if (local.get $old)
+      (then
+        (drop (call $post_queue_push (local.get $old) (i32.const 0x0008)
+          (local.get $first) (i32.const 0)))))
+    (drop (call $post_queue_push (local.get $first) (i32.const 0x0007)
+      (local.get $old) (i32.const 0)))
+    (i32.const 1))
 
   (func $handle_DefDlgProcW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; The implemented default messages are encoding-neutral; keep both entry

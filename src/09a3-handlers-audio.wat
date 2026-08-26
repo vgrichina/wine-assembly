@@ -315,6 +315,26 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
+  ;; waveOutGetID(hwo, puDeviceID) — this runtime exposes one waveOut device.
+  ;; The current handle lives in shared memory because a worker-owned Miles
+  ;; callback can query the handle opened by the main instance.
+  (func $handle_waveOutGetID (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $eax (i32.const 11)) ;; MMSYSERR_INVALPARAM
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (if (i32.or (i32.eqz (local.get $arg0))
+                (i32.ne (local.get $arg0) (i32.load (i32.const 0xD160))))
+      (then
+        (global.set $eax (i32.const 5)) ;; MMSYSERR_INVALHANDLE
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (call $gs32 (local.get $arg1) (i32.const 0)) ;; sole device ID
+    (global.set $eax (i32.const 0)) ;; MMSYSERR_NOERROR
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
   ;; 795: waveOutOpen(phwo, uDeviceID, lpFormat, dwCallback, dwInstance, fdwOpen)
   ;; WAVEFORMATEX: +0 wFormatTag(2), +2 nChannels(2), +4 nSamplesPerSec(4),
   ;;   +8 nAvgBytesPerSec(4), +12 nBlockAlign(2), +14 wBitsPerSample(2)
@@ -377,6 +397,9 @@
           (i32.const 0)))))
     (drop (call $host_wave_out_close (local.get $arg0)))
     (global.set $wave_out_handle (i32.const 0))
+    ;; Invalidate the cross-instance handle too.  waveOutGetID may execute in
+    ;; a native Miles worker whose own mutable global is not the opener's.
+    (i32.store (i32.const 0xD160) (i32.const 0))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
@@ -871,6 +894,16 @@
         (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
         (br $scan)))
     (i32.const 0))
+
+  ;; mciGetDeviceIDA(alias) returns the MCI device opened by a prior
+  ;; mciSendStringA "open ... alias ..." command. String-command aliases live
+  ;; in the host MCI backend, so resolve them at that same boundary.
+  (func $handle_mciGetDeviceIDA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax
+      (if (result i32) (local.get $arg0)
+        (then (call $host_mci_get_device_id (call $g2w (local.get $arg0))))
+        (else (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; 809: mciSendCommandA(mciId, uMsg, fdwCommand, dwParam)
   (func $handle_mciSendCommandA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

@@ -661,6 +661,160 @@
         "maxBatches": 3000,
         "batchSize": 25000
       }
+    },
+    {
+      "id": "gog-free-beneath-a-steel-sky",
+      "name": "Beneath a Steel Sky GOG installer",
+      "kind": "installer",
+      "version": "1.0 (GOG build 20270)",
+      "executables": [
+        "setup_beneath_a_steel_sky_1.0_(20270).exe"
+      ],
+      "sourcePage": "https://www.gog.com/en/game/beneath_a_steel_sky",
+      "license": "proprietary; listed by GOG at USD 0.00 on 2026-08-25, which does not establish redistribution permission",
+      "packages": [
+        {
+          "url": "https://archive.org/download/gog_collection/beneath.a.steel.sky.rar",
+          "sha1": "dee0ca140e5d8cea0738c7f0f9bba2b970ad8f44",
+          "type": "archive"
+        }
+      ],
+      "cli": {
+        "maxBatches": 100,
+        "batchSize": 10000
+      }
+    },
+    {
+      "id": "gog-free-flight-of-the-amazon-queen",
+      "name": "Flight of the Amazon Queen GOG installer",
+      "kind": "installer",
+      "version": "1.0 (GOG build 20270)",
+      "executables": [
+        "setup_flight_of_the_amazon_queen_1.0_(20270).exe"
+      ],
+      "sourcePage": "https://www.gog.com/en/game/flight_of_the_amazon_queen",
+      "license": "proprietary; listed by GOG at USD 0.00 on 2026-08-25, which does not establish redistribution permission",
+      "packages": [
+        {
+          "url": "https://archive.org/download/gog_collection/flight.of.the.amazon.queen.rar",
+          "sha1": "5381b63e357f91ef78050a5880c6020d2bc2d630",
+          "type": "archive"
+        }
+      ],
+      "cli": {
+        "maxBatches": 100,
+        "batchSize": 10000
+      }
+    },
+    {
+      "id": "gog-free-lure-of-the-temptress",
+      "name": "Lure of the Temptress GOG installer",
+      "kind": "installer",
+      "version": "1.0 (GOG build 20270)",
+      "executables": [
+        "setup_lure_of_the_temptress_1.0_(20270).exe"
+      ],
+      "sourcePage": "https://www.gog.com/en/game/lure_of_the_temptress",
+      "license": "proprietary; listed by GOG at USD 0.00 on 2026-08-25, which does not establish redistribution permission",
+      "packages": [
+        {
+          "url": "https://archive.org/download/gog_collection/lure.of.the.temptress.rar",
+          "sha1": "8a0ff33dbd94ebfbf8d4edd979c5fee7c3985b2f",
+          "type": "archive"
+        }
+      ],
+      "cli": {
+        "maxBatches": 100,
+        "batchSize": 10000
+      }
+    },
+    {
+      "id": "gog-free-shadow-warrior-classic",
+      "name": "Shadow Warrior Classic Complete GOG installer",
+      "kind": "installer",
+      "version": "2.0.0.7",
+      "executables": [
+        "setup_shadow_warrior_complete_2.0.0.7.exe"
+      ],
+      "sourcePage": "https://www.gog.com/en/game/shadow_warrior_complete",
+      "license": "proprietary; listed by GOG at USD 0.00 on 2026-08-25, which does not establish redistribution permission",
+      "packages": [
+        {
+          "url": "https://archive.org/download/gog_collection/shadow.warrior.rar",
+          "sha1": "92f1c925d235c3176ab4c21b6f1f0461b1b602c8",
+          "type": "archive"
+        }
+      ],
+      "cli": {
+        "maxBatches": 100,
+        "batchSize": 10000
+      }
+    },
+    {
+      "id": "gog-free-elder-scrolls-arena",
+      "name": "The Elder Scrolls: Arena GOG installer",
+      "kind": "installer",
+      "version": "1.07 (GOG build 28043)",
+      "executables": [
+        "setup_the_elder_scrolls_arena_1.07_(28043).exe"
+      ],
+      "sourcePage": "https://www.gog.com/en/game/the_elder_scrolls_arena",
+      "license": "proprietary; listed by GOG at USD 0.00 on 2026-08-25, which does not establish redistribution permission",
+      "packages": [
+        {
+          "url": "https://archive.org/download/gog_collection/the.elder.scrolls.1.arena.rar",
+          "sha1": "aa8f357433ea5c07a9ebda4c6dd062b53348f57b",
+          "type": "archive"
+        }
+      ],
+      "cli": {
+        "maxBatches": 100,
+        "batchSize": 10000
+      }
+    },
+    {
+      "id": "gog-free-elder-scrolls-daggerfall",
+      "name": "The Elder Scrolls II: Daggerfall GOG installer",
+      "kind": "installer",
+      "version": "1.07 (GOG build 28043)",
+      "executables": [
+        "setup_the_elder_scrolls_ii_daggerfall_1.07_(28043).exe"
+      ],
+      "sourcePage": "https://www.gog.com/en/game/the_elder_scrolls_chapter_ii_daggerfall",
+      "license": "proprietary; listed by GOG at USD 0.00 on 2026-08-25, which does not establish redistribution permission",
+      "packages": [
+        {
+          "url": "https://archive.org/download/gog_collection/the.elder.scrolls.2.daggerfall.rar",
+          "sha1": "05276866d94746987a56617b708fa6eb4653359b",
+          "type": "archive"
+        }
+      ],
+      "cli": {
+        "maxBatches": 100,
+        "batchSize": 10000
+      }
+    },
+    {
+      "id": "gog-free-ultima-iv",
+      "name": "Ultima IV: Quest of the Avatar GOG installer",
+      "kind": "installer",
+      "version": "1.0 CS (GOG build 28045)",
+      "executables": [
+        "setup_ultima_iv_-_quest_of_the_avatar_1.0_cs_(28045).exe"
+      ],
+      "sourcePage": "https://www.gog.com/en/game/ultima_iv_quest_of_the_avatar",
+      "license": "proprietary; listed by GOG at USD 0.00 on 2026-08-25, which does not establish redistribution permission",
+      "packages": [
+        {
+          "url": "https://archive.org/download/gog_collection/ultima.4.quest.of.the.avatar.rar",
+          "sha1": "a75b5a57226650c47fe8f8cdb0872c8289da1cf7",
+          "type": "archive"
+        }
+      ],
+      "cli": {
+        "maxBatches": 100,
+        "batchSize": 10000
+      }
     }
   ]
 }

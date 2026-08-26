@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<!-- A: the control. An ordinary long document with nothing clever in it.
+     If Safari will not retract its toolbars HERE, it will not retract them
+     anywhere, and every other page in this lab is beside the point -- the
+     answer would be the browser's settings or its version, not our layout.
+     Swipe up. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>A plain long page</title>
+<style>
+  body { margin: 0; font: 16px/1.6 -apple-system, sans-serif; padding: 12px 12px 90px; }
+  h1 { font-size: 18px; }
+  p { margin: 0 0 14px; }
+</style>
+</head>
+<body data-lab="A-plain">
+<h1>A &mdash; plain long page (control)</h1>
+<p><b>Swipe up.</b> If the bars do not go away on this page, they will not go
+away on any of them.</p>
+<div id="filler"></div>
+<script>
+  // Real text, not one tall div: a page of paragraphs is the case Safari's
+  // toolbar heuristic was written for, and the one it definitely handles.
+  const filler = document.getElementById('filler');
+  for (let i = 0; i < 60; i++) {
+    const p = document.createElement('p');
+    p.textContent = `Paragraph ${i + 1}. ` + 'Scroll me. '.repeat(8);
+    filler.appendChild(p);
+  }
+</script>
+<script src="lab.js"></script>
+</body>
+</html>

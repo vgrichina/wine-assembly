@@ -4912,7 +4912,26 @@
         (then
           (local.set $proc (call $wnd_table_get (local.get $child)))
           (if (call $win16_is_far_proc (local.get $proc))
-            (then (call $nc_flags_set (local.get $child) (i32.const 7))))
+            (then
+              (call $nc_flags_set (local.get $child) (i32.const 7))
+              ;; Give the child its background HERE, at the moment it becomes
+              ;; exposed, instead of leaving the erase seed (bit 1) for its
+              ;; first BeginPaint. USER erases when a window is shown, before
+              ;; the app draws into it; deferring it to the first paint
+              ;; inverts that order for anything the app draws outside its own
+              ;; paint cycle, and the class-brush fill then wipes it out.
+              ;; Rodent's Revenge is the visible case: VBRUN stamps the
+              ;; stopwatch into its 32x32 picture child and the deferred fill
+              ;; (COLOR_WINDOW+1, so white) landed on top -- 605 px of a 1024
+              ;; px square against the reviewed Win98 capture. Erasing first
+              ;; still leaves IdleWild's IWINFO pane on its native white
+              ;; class background (test-win16-wep1-gameplay); only the order
+              ;; changes.
+              (if (call $wnd_get_bg_brush (local.get $child))
+                (then
+                  (drop (call $host_erase_background (local.get $child)
+                    (call $wnd_get_bg_brush (local.get $child))))
+                  (call $nc_flags_clear (local.get $child) (i32.const 2))))))
           (call $win16_rearm_visible_child_erases (local.get $child))))
       (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
       (br $scan))))

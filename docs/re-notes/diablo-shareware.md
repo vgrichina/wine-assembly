@@ -35,6 +35,22 @@ timeout 300 node test/run.js --app=diablo_shareware --time-scale=30 \
   --input=40000:png:/tmp/f1.png,40100:png:/tmp/f2.png
 ```
 
+**Always pass `--quiet-api`** unless you are actually reading the API log. A
+Diablo run prints one `[API]` line per call — 96,787 of them by the menu alone,
+724,015 by Tristram — and writing them is *blocking* I/O on the same thread the
+guest runs on. Measured back to back, same 1000-batch command line:
+
+| | wall | user CPU |
+|---|---|---|
+| default | 3:53 | 25.1s |
+| `--quiet-api` | **1:17** | 25.1s |
+
+Identical CPU, three times the wall clock: every second of that difference is
+the process waiting on stdout. On a box under load this is the difference
+between a run finishing and a run being SIGKILLed at the timeout, and it is why
+several probe runs in this file were originally reported as "too slow to
+finish".
+
 Runs are **deterministic, threads included** — the same command line twice gives
 byte-identical output. Measured, with T1 alive, on a loaded box:
 
@@ -286,7 +302,48 @@ sites, or `tools/caller_census.js`, to find who called what.
 
 ## Open bugs
 
-### Logo blinks on the main menu
+### FIXED (re-measured 2026-08-25): logo blinks on the main menu
+
+**This no longer reproduces.** Everything below it — the whole "black tail from
+a large MPQ read" chain — is kept as history, because the addresses in it are
+correct and useful, but do not go hunting for the defect again without first
+re-measuring. Two independent checks:
+
+```
+node test/test-diablo-shareware-art.js
+#   logo frame IoU vs archive: 0.81 0.81 0.80 0.83 0.81 0.81 0.81 0.80 0.83 …
+#   logo frames matching the archive: 15/15  (distinct sprites seen: 2,5,8,11,14)
+#   PASS
+```
+
+That test scores each capture against the frames `tools/mpq-extract.js` decodes
+from `spawn.mpq` host-side, so 15/15 is a statement about the *pixel indices*,
+not about brightness: the black-tail bug would score ~0.25.
+
+Second check, on the fast recipe rather than the art test's `--time-scale=30`
+one, so it is not the same run wearing a different hat — ten consecutive menu
+frames, top colour of the logo rect:
+
+```
+node test/run.js --app=diablo_shareware --batch-size=200000 --tick-ms-per-batch=50 \
+  --max-batches=1040 --no-close --quiet-api --input=1000:png:/tmp/f00.png,1004:png:…
+for f in /tmp/f*.png; do node tools/png-stats.js $f --region=126,0,388,154 --top=1; done
+#   distinct colours: 128-132   #000000 65.1-67.5%   on all ten
+```
+
+A blanked frame is ~100% `#000000` and one distinct colour, so a single blink in
+that window would be unmissable. The old repro's duty cycle was ~20% art / 80%
+black over a 45-batch period; ten samples across 40 batches cannot miss that.
+
+Which change fixed it was not bisected. The likeliest candidate is the
+per-offset code-write invalidation described in `docs/page-compile-design.md`:
+the same run now reports `page invalidations 22117 that dropped a block 3081 …
+whole-page drops (write too wide to walk) 1 (100.0% exact)`, and the sparse
+arena at `0x4fc68000` is the last page named — i.e. Storm's runtime-generated
+blitters are now being retired on write, which is exactly the suspect the
+"Still open: why the blitter overruns" note below could not exclude.
+
+#### History: the symptom as it was
 
 The 385×156 logo block appears and disappears across frames while "SHAREWARE",
 the menu items, the pentagrams and the version string all stay put.
@@ -508,7 +565,13 @@ listfile).
 > truncated read is *not* ruled out: it is the mechanism, just one level further
 > down than the sector table can show.
 
-### Choose Class screen is corrupted
+### FIXED (re-measured 2026-08-25): Choose Class screen is corrupted
+
+**This no longer reproduces either.** `test/test-diablo-shareware-art.js` scores
+the nine panel-outline segments of `ui_art\selhero.pcx` against the archive and
+reports `choose class panel segments drawn: 9/9`, every segment at `1.00`. The
+sprite array being NULL was the symptom of the flat-grey palette bug fixed in
+`cfff3789`; kept below as history.
 
 Symptom as the user states it: "the layout is a mess and clicks and UI don't
 seem to match". What the capture shows is a mostly black screen with only gold
@@ -657,7 +720,41 @@ Runtime twins used above, for reading traces: `0x6a4d10`/`0x6a4e51`/`0x6a5019`
   the tree at the time of these runs makes this better or worse than `HEAD`;
   every number above includes it.
 
-### Storm audio pump thread dies
+### FIXED-BUT-INCOMPLETE (re-measured 2026-08-25): Storm audio pump thread dies
+
+**The death no longer reproduces, and the list head is no longer clobbered.**
+Three runs on the fast recipe — 1000 batches (menu), 3200 batches (menu, idle)
+and 3300 batches driven all the way into Tristram — all end with
+
+```
+T1 h=0xe1000 state=active eip=0x6af04f  …  waitH=0xe0001
+Hexdump 0x006d46c0:  00 00 00 00 | 00 00 00 00 | 00 10 0e 00 | 18 60 3e 08
+```
+
+`0x6af04f` is `storm+0x1500c04f`, the pump's own idle head — it reads the list
+head and picks a `Sleep` length from it (`0xfa` when empty, `5` when not), so T1
+is parked in its normal loop, not dead. The head at `0x6d46c0` reads **zero**,
+not `0x4fc69xxx` copier bytes, and `0x6d46c8`/`0x6d46cc` still hold the pump
+thread handle `0xe1000` and the `IDirectSound` object `0x083e6018`. The art test
+asserts the same thing from the `[thread-event]` side and passes.
+
+**What that does not say.** A head of zero means *no stream node was ever
+linked*, so the pump was idle the whole time and the `Lock` path below was never
+re-entered. In other words the wild store is gone, but this measurement does not
+prove the audio path works — it proves it is not crashing. Diablo is silent in
+these runs and finding out why is a separate, unstarted question; start it by
+counting `storm+0x1500ba65` (the return landing of the
+`IDirectSound::CreateSoundBuffer` vtable call).
+
+> **Trap, paid for once here:** `--count=storm+0x1500ba62` reads **0** and means
+> nothing, because `0x1500ba62` is the `call [eax+0xc]` itself and `--count`
+> only fires on basic-block entries. The same goes for `0x1500c9dc` and
+> `0x1500bfe2` in the table below: both are mid-block stores. Probe
+> `0x1500ba65`, `0x1500c9d4` and `0x1500bfdf` instead — a call-return landing
+> and two `jz` fall-throughs. A zero from a bad probe address looks exactly like
+> a zero from code that never runs.
+
+History follows.
 
 Thread 1 ends with EIP=0, last logged block entry `storm+0x1500bec4`, just
 before the `IDirectSoundBuffer::Lock` vtable call.
@@ -2153,6 +2250,82 @@ correct, no duplication.
 > `keypress` characters puts BOB in it and the screen is correct. The field
 > needs the focus click first, and Diablo rejects names with spaces.
 
+## OPEN (2026-08-25): clicking to skip the intro freezes the page for seconds
+
+Reported from the browser: scene changes in the menus are visibly slow, and
+skipping the intro video by clicking hangs the game for a few seconds.
+
+### The guest side is measured and is a burst, not general slowness
+
+`--batch-stats=FROM` windowed either side of the skip click, at the browser's
+own 100000-block slice (`--batch-size=100000 --tick-ms-per-batch=100`, click at
+batch 400):
+
+```
+window 400-700:  batches that spent the whole budget: 178 of 300 (59.3%)
+window 700-1000: batches that spent the whole budget:   0 of 300 ( 0.0%)
+```
+
+Every stalled slice is in the 300 batches after the click and none in the next
+300. `--handler-hist --handler-hist-start=400 --handler-hist-stop=700` prices
+that burst at **412,582,977 ops over 18,118,569 blocks = 22.8 ops/block**, so
+one full-budget slice is 2.28M ops and the burst as a whole is ~412M ops. The
+hot handlers are `$th_load32_ro_base_esp` (10.5%), `$th_inc_r` (7.9%),
+`$th_test_jcc` (7.5%), `$th_store32_ro_base_esp` (7.2%) and `$th_load8_ro`
+(5.6%) — byte-at-a-time decode loops, i.e. Storm tearing down the Smacker
+player and decompressing the menu art (`logo.pcx` 535KB, `smlogo.pcx` 333KB,
+`title.pcx`) out of `spawn.mpq`. The transition really does have seconds of
+work in it; the question is only whether the page stays alive during it.
+
+### A design weakness this exposes, worth knowing before you touch it
+
+`run(max_blocks)` (`src/13-exports.wat:8`) takes a budget in **blocks**, and a
+block is not a unit of work — 22.8 ops/block here against the 282 ops/block
+CLAUDE.md measures in this same game's menu. So the host cannot bound how long
+a slice will hold the thread. Note the asymmetry in `host.js`: the *worker*
+path (`runBudgeted`, ~line 1763) is given `maxWallMs` of 4-16ms and is checked
+between quanta, while the main thread's `run()` has no wall-clock cap at all
+and cannot be interrupted once entered.
+
+### But the obvious fix is NOT the fix — measured, and not shipped
+
+Adding `diablo_shareware` to `autoRunSliceFor` in `lib/browser-shell.js`, the
+way `jazz2_demo` and `halflife_uplink` already are, does not help:
+
+| slice | WinePerf cumulative `blockedMs` | `longTasks` |
+|---|---|---|
+| 100000 (default) | 12159 | 5 |
+| 20000 | 12224 | 7 |
+
+Unchanged. And it is not free — a paired interleaved CLI A/B over identical
+guest work gives mean user CPU 19.9s at 100000, 23.6s at 20000 (+18%), 24.7s at
+10000, 36.3s at 1000 — plus `host.js` derives the *worker* budget from the same
+number (`maxTotalSteps: threadBudget * 4`), so a 5x smaller slice also gives
+Storm's async worker a 5x smaller budget, which is the opposite of what a
+transition bottlenecked on MPQ reads wants. So whatever holds the main thread
+for ~12s is **not** the main guest slice. There is a comment saying so at that
+switch.
+
+### Health warning on any browser number taken here
+
+Two runs at the *same* setting came back 53ms and 12224ms of `blockedMs`. The
+difference tracked `guestFps`/`stepsPerSec` — how far the app happened to get —
+not the setting. This box has been at load 35-175 all day and headless Chrome
+cannot resolve this question on it. Note also that `tools/profile-web-frames.js`
+reports rAF frame intervals, which is *page* fps: it sat at a flat 60.0fps with
+"long tasks: none observed" in runs whose own `blockedMs` was 12 seconds.
+
+### The next measurement
+
+Attribute the long tasks, on a quiet box. `--cpu-profile` is the tool, but
+check the run actually launched before reading it — an attempt here came back
+99.2% `(idle)` with `slice size: null steps` and a 2272-character debug log,
+which is a page that never started the app, not an app that did nothing.
+Candidates not yet excluded: the DirectDraw present path (`putImageData` moved
+670M pixels in one 30s sample), the VFS read of a 535KB MPQ member, and the
+`windowCount === 0` branch in `host.js` that calls the **unbudgeted**
+`runSlice` instead of `runBudgeted`.
+
 ## OPEN (2026-08-25): the title screen was seen in the intro's blue palette
 
 Reported from the browser: the `ui_art\title.pcx` screen — demon face, DIABLO
@@ -2210,6 +2383,27 @@ the colour table from the previous one. Everything about the report fits that:
 correct structure, uniformly blue, and the two text overlays unaffected because
 diabloui draws them through GDI with explicit colours.
 
+### Excluded 2026-08-25: a palette *swap* that never re-presents
+
+`$handle_IDirectDrawSurface_SetPalette` (`src/09a8-handlers-directx.wat:2999`)
+does **not** re-present, while `SetEntries` does — so attaching a different
+palette object would leave the canvas holding the previous scene's colours,
+which is this symptom exactly. It is a real gap and it is reported on the
+message board, but **it is not Diablo's**: over a 1000-batch run,
+
+```sh
+node test/run.js --app=diablo_shareware --batch-size=200000 --tick-ms-per-batch=50 \
+  --max-batches=1000 --no-close --quiet-api --repaint-every=100 \
+  --trace-api=IDirectDrawSurface_SetPalette,IDirectDraw_CreatePalette,IDirectDrawPalette_SetEntries
+#   IDirectDraw_CreatePalette          x1
+#   IDirectDrawSurface_SetPalette      x1  (0x083e6008 = the primary, at boot)
+#   IDirectDrawPalette_SetEntries      x3  (all on 0x083e6010, start=1 count=254)
+```
+
+One palette object, created once and attached once. Diablo only ever rewrites
+entries in place, so it always takes the `SetEntries` path that *does*
+re-present. Cross this off.
+
 ### The next measurement
 
 Reproduce it in the browser, which is the only place it has been seen, and
@@ -2222,3 +2416,305 @@ paper the refresh should happen. What is worth checking first is
 rect **before** it calls `_refreshGdiSurfacePalette`, and returns early when
 there is no dirty rect. Any path that changes the palette without producing one
 leaves the canvas holding the previous colours, which is exactly this symptom.
+
+## SOLVED-TO-THE-EDGE (2026-08-25): "Invalid name" is a dialog-focus failure
+
+The multiplayer hero flow now reaches **Enter Name** headlessly, and the
+"Invalid name" complaint reproduces there: the field stays empty no matter what
+you type, so Diablo validates an empty string. Nothing about the name is wrong —
+**not one keystroke reaches the control**.
+
+### Reaching the screen (fast recipe, ~3 min under load)
+
+The `--time-scale=30 --max-batches=39400` recipes elsewhere in this file are the
+slow way in. This is the same journey in 2300 batches:
+
+```sh
+node test/run.js --app=diablo_shareware --batch-size=200000 \
+  --tick-ms-per-batch=50 --max-batches=2300 --no-close --repaint-every=20 \
+  --input='1000:mousemove:320:256,1040:mousedown:320:256,1080:mouseup:320:256,\
+1300:mousemove:420:298,1340:mousedown:420:298,1380:mouseup:420:298,\
+1600:mousemove:348:446,1640:mousedown:348:446,1680:mouseup:348:446,\
+2200:png:/tmp/name.png'
+```
+
+Batch ~900 is the main menu (items at y = 213/256/299/342/385, so Multi Player
+is `(320,256)`); the Choose Class panel is up by ~1300 (Warrior `(420,298)`,
+Rogue `(420,341)`, Sorcerer `(420,364)`); `OK` is `(348,446)`. Warrior's panel
+comes out right — portrait correct, Level 1 / 30 / 10 / 20 / 25 — so everything
+up to here works.
+
+### Where the keystroke dies
+
+`--trace-api=PeekMessageA --trace-api-dedup` at the Enter Name screen:
+
+```
+[check_input] msg=0x100 wParam=0x47 lParam=0x0 packed=0x470100
+[check_input_hwnd] keyboard → 0 (main_hwnd)
+  out: msg=&{hwnd=0x00010002 msg=0x00000100 wP=0x00000047 lP=0x00000000}
+[API] IsDialogMessageA        <- called with hDlg=0x00010023
+[API] TranslateMessage
+[API] DispatchMessageA
+[API] DefWindowProcA          <- dropped here
+```
+
+`inputEventHwnd` (`lib/host-window.js:20`) routes keyboard to
+`get_focus_hwnd()` and falls back to `main_hwnd` when it is zero. It is zero.
+So the key is addressed to the *game* window `0x10002`, `IsDialogMessageA`
+correctly declines a message that belongs to neither the dialog nor its
+children, and `DefWindowProc` eats it. **The routing is right; the focus is
+missing.** Real Win98 behaves the same way with a NULL focus window, so this is
+not a place where we merely differ — it would fail on the real thing too, which
+means focus is supposed to be set and is not.
+
+### There is a real control to focus, and it is not a Static
+
+`node tools/parse-rsrc.js diabloui.dll --out=ui.json` then
+
+```sh
+jq -r '.dialogs | to_entries[] | "\(.key) [" +
+  ([.value.controls[] | "\(.className):\(.id):st=\(.style)"] | join(" ")) + "]"' ui.json
+```
+
+Two of the 29 templates carry a custom class:
+
+```
+2147486722 [DIABLOEDIT:1065:st=1342242816 Static:1038 Button:1054 Button:1056]
+2147487066 [DIABLOEDIT:1116:st=1342242816 Static:1038 Button:1054 Button:1056]
+```
+
+`0x50010000` = `WS_CHILD|WS_VISIBLE|WS_TABSTOP`. `DIABLOEDIT` is registered by
+diabloui at startup (`RegisterClassA wndProc=0x006ea130`), and the control is
+really created — confirmed at runtime:
+
+```
+CreateWindowExA(class="DIABLOEDIT", style=WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+  x=265, y=315, w=320, h=33, parent=hwnd:0x00010023, menu=hmenu:0x00000429)
+```
+
+So the target exists, is visible, is a tab stop, and is the dialog's first
+control. Diablo draws the typed text itself (the pump shows `GetDlgItem` →
+`GetWindowRect` → `ScreenToClient` → `InvalidateRect` on `0x10023/0x429` every
+frame) and reads it back with `GetDlgItemTextA`.
+
+### Storm owns the dialog manager, and it decided not to set focus
+
+Storm implements dialogs itself — `storm.dll` imports `EndDialog`, `GetDlgItem`,
+`GetDlgItemTextA`, `SetFocus` and `IsDialogMessageA` from USER32 but **no
+`CreateDialog*`/`DialogBox*` at all**, which is why tracing those APIs returns
+nothing. `diabloui.dll` reaches it through `SDlgDialogBox` /
+`SDlgDialogBoxParam` / `SDlgCreateDialogParam`.
+
+Storm's builder is at `storm+0x7000` (loaded at `0x6a3000`, origBase
+`0x15000000`, so runtime = orig - 0x15000000 + 0x6a3000). The relevant tail:
+
+```
+15007199  test esi,esi                 ; per created control
+1500719d  mov eax,[esp+0x10]           ; hDlg
+150071a1  mov ecx,[esp+0x2c]           ; current default-focus candidate
+150071a5  cmp eax,ecx / jnz            ; only the FIRST candidate wins
+150071ab  test [ebx],0x8000000         ; WS_DISABLED -> skip
+150071b6  "Static"     -> skip
+150071cc  "SDlgStatic" -> skip
+150071de  mov [esp+0x2c],esi           ; else: this control is default focus
+...
+15007232  push 0x110 / call SendMessageA   ; WM_INITDIALOG
+1500723e  test eax,eax
+15007240  jnz 0x1500724a
+15007242  mov dword [esp+0x2c],0x0     ; <-- FALSE means "app set focus itself"
+...
+1500734e  GetPropA(hDlg,"SDlg_EndDialog") ; nonzero -> skip show+focus
+15007365  mov eax,[esp+0x2c]
+15007369  test eax,eax / jz            ; nothing to focus -> skip
+1500736e  call SetFocus                ; ret lands at 0x15007374 = 0x006aa374
+```
+
+`--trace-at=0x6aa23e` reads EAX at `0x1500723e`, i.e. exactly what
+`WM_INITDIALOG` returned, once per dialog:
+
+```
+[TRACE-AT #2] batch=792  EIP=0x006aa23e EAX=0x00000001  EDX=0x00010006
+[TRACE-AT #3] batch=1040 EIP=0x006aa23e EAX=0x00000000  EDX=0x0001000e
+[TRACE-AT #4] batch=1640 EIP=0x006aa23e EAX=0x00000000  EDX=0x00010023  <- Enter Name
+```
+
+Dialog `0x10006` returns TRUE and duly gets `SetFocus(0x00010007)` at
+`ret=0x006aa374`. The Enter Name dialog `0x10023` returns **FALSE**, Storm
+zeroes its candidate, `SetFocus` is skipped, `$focus_hwnd` stays 0, and every
+keystroke afterwards is delivered to the wrong window.
+
+`SetFocus` fires only 4 times in the whole run — `0x10002`, `0x10003`,
+`0x10007` (all `ret=0x006aa374`, i.e. Storm's dialog manager) and `0x10008`
+(`ret=0x006eaf65` = `diabloui+0x9f65`, a small helper that does
+`old=GetFocus(); SetFocus(new); invalidate(old); invalidate(new)`). None of
+them names `0x10023` or its `DIABLOEDIT`.
+
+### Proof that focus is the whole story
+
+Clicking inside the Enter Name box before typing moves focus and changes the
+routing, and only the routing:
+
+```sh
+  ...,1850:mousemove:430:300,1880:mousedown:430:300,1920:mouseup:430:300,
+  1980:keydown:71,1990:keypress:103,2000:keyup:71,...
+# [check_input_hwnd] keyboard → focus 0x10023
+# [check_input] msg=0x102 wParam=0x67   <- WM_CHAR really is delivered
+```
+
+The characters now arrive at the *dialog*, and the field is still empty —
+because the dialog is not the control. `DIABLOEDIT` (`0x429`) is what has to
+hold the focus. That is consistent with the whole diagnosis rather than a second
+bug: we moved focus one level too high.
+
+### Note on `keypress`
+
+`run.js`'s `keypress` is `WM_CHAR` and `keydown` is `WM_KEYDOWN`; our
+`$handle_TranslateMessage` is a no-op that returns 1 and never synthesizes a
+character, because the host posts both messages itself. So a text-entry probe
+must inject **both**, in the browser's order and with the browser's codes —
+`keydown:71` (VK 'G') then `keypress:103` (char 'g'), matching the real session's
+`msg=0x100 wParam=0x47` / `msg=0x102 wParam=0x67`.
+
+### CORRECTION (2026-08-25): `--trace-at` is blind to a nested synchronous call
+
+An earlier revision of this section claimed "the DLGPROC is never entered for
+WM_INITDIALOG", on the strength of `--trace-at=0x006efec0` firing exactly once
+in a whole run (and then for WM_DRAWITEM). **That claim was wrong, and the
+method was wrong.**
+
+`--trace-at` arms a WASM breakpoint and JS inspects EIP *after the exported
+`run()` returns*. `$wnd_send_message_inner` runs the guest procedure in a
+**nested** `$run`: the nested run hits the breakpoint and returns with EIP
+unchanged, the sender immediately loops and calls `$run` again, the CACA0005
+return thunk zeroes EIP, and the caller's EIP is restored before control ever
+gets back to JS. Every nested synchronous entry is therefore invisible to
+`--trace-at`.
+
+`--count` is a native in-interpreter counter and does not have this blind spot:
+
+```sh
+node test/run.js --app=diablo_shareware ... --count=0x006efec0
+# Hit counts:
+#   0x006efec0 = 25
+```
+
+**Twenty-five entries, not one.** The DLGPROC runs fine; WM_INITDIALOG reaches
+it; `$dialog_default_proc` is not broken.
+
+> Rule for this codebase: `--trace-at` answers "did the *pump* reach this
+> address". For anything invoked through `$wnd_send_message` — a wndproc, a
+> DLGPROC, a control procedure — use `--count`, or you will measure the
+> nesting rather than the code.
+
+### The actual cause: nothing ever gives the dialog the focus
+
+With the DLGPROC confirmed running, disassembling it settles the question.
+Diablo's name-dialog DLGPROC is `diabloui+0xeec0` (runtime `0x006efec0`); its
+message switch sends WM_INITDIALOG (`eax = msg - 0x110 = 0`, index byte
+`[0x2000f24c] = 0`) to `0x2000ef78`, and that handler ends:
+
+```
+2000f04b  33 c0      xor eax, eax
+2000f04d  5d         pop ebp
+...
+2000f054  c2 10 00   ret 0x10
+```
+
+**It returns FALSE unconditionally, and it never calls `SetFocus`.** Nor does
+Storm: the loop it runs after WM_INITDIALOG (`storm+0x72c0`) only ORs style
+bits into Buttons and Statics (that is the traced
+`SetWindowLongA(0x10026, -16, 0x5800400b)`), and its one `SetFocus` at
+`storm+0x736e` is gated on the candidate it just zeroed.
+
+So on real Win98 the focus does not come from the app at all — it comes from
+USER, in two steps we do not implement:
+
+1. **Showing/activating a top-level dialog gives it the focus.** Storm calls
+   `ShowWindow(hDlg, SW_SHOWNORMAL)` at `storm+0x735f`; real USER activates the
+   window and sends it WM_SETFOCUS. In our run the Enter Name dialog **never
+   receives WM_SETFOCUS at all** — over the whole run exactly one WM_SETFOCUS
+   reaches `DefDlgProcA`, and it is `DefDlgProcA(0x00010003, 0x7, 0x00010002, 0)`,
+   the one dialog Storm focuses explicitly.
+2. **`DefDlgProc`'s WM_SETFOCUS handler focuses the dialog's first tab stop.**
+   That is documented USER behaviour and is precisely what would put the caret
+   in `DIABLOEDIT` (`0x10024`, id 1065, `WS_TABSTOP`, the first control in the
+   template). Our `$handle_DefDlgProcA` offers WM_SETFOCUS to the DLGPROC and
+   then falls through to `$handle_DefWindowProcA`, which has no such rule.
+
+Both are general Win32 gaps, not Diablo quirks, and either one alone leaves
+`$focus_hwnd` at 0.
+
+### The fix (landed 2026-08-25, commit 3fe247f2)
+
+Two rules, both in `src/09a5-handlers-window.wat`:
+
+1. **`$handle_DefDlgProcA`** — when the DLGPROC declines `WM_SETFOCUS` (0x0007),
+   move the focus to the first visible, enabled `WS_TABSTOP` child via
+   `$dialog_next_tabstop(hwnd, 0, 1)`, before the `$handle_DefWindowProcA`
+   fallthrough. The new `$dlg_focus_first_tabstop` helper **posts**
+   WM_KILLFOCUS/WM_SETFOCUS rather than sending them: this code runs inside a
+   guest DefDlgProc call, and a nested synchronous send would re-enter the
+   dialog's own wndproc on top of a live x86 frame.
+2. **`$handle_ShowWindow`** — an activating show of a top-level *dialog-class*
+   window (`$wnd_class_is_dialog`, i.e. cbWndExtra ≥ DLGWINDOWEXTRA) takes the
+   focus **only when `$focus_hwnd` is zero**. That guard is what makes this
+   safe: it can supply a focus nobody holds, and can never take one away.
+   Previously only `main_hwnd` ran an activation chain here, which is exactly
+   why a secondary dialog was never told it owned the keyboard.
+
+Verified with the recipe above: `[check_input_hwnd] keyboard → focus 0x10024`
+(the DIABLOEDIT) instead of `keyboard → 0 (main_hwnd)`, the field renders the
+typed text, and OK advances past it. `test/test-dialog-setfocus-tabstop.js`
+covers the four cases (first tab stop wins, a non-tabstop child is skipped, a
+disabled tab stop is skipped, and a dialog with no tab stop is left alone).
+
+Do not "fix" this by giving keyboard input to `main_hwnd` when focus is zero:
+that is what already happens, and it is what real Windows does.
+
+## Single player runs end to end in ~3000 batches (2026-08-25)
+
+With the focus fix in, the whole new-hero chain is drivable headlessly and
+lands in Tristram with a full HUD:
+
+```sh
+node test/run.js --app=diablo_shareware --batch-size=200000 \
+  --tick-ms-per-batch=50 --max-batches=3000 --no-close --repaint-every=20 \
+  --input='1000:mousemove:320:213,1040:mousedown:320:213,1080:mouseup:320:213,\
+1300:mousemove:420:298,1340:mousedown:420:298,1380:mouseup:420:298,\
+1600:mousemove:348:446,1640:mousedown:348:446,1680:mouseup:348:446,\
+1900:keydown:71,1910:keypress:103,1950:keydown:65,1960:keypress:97,\
+2000:keydown:76,2010:keypress:108,\
+2200:mousemove:348:446,2240:mousedown:348:446,2280:mouseup:348:446,\
+2900:png:/tmp/sp6.png'
+```
+
+Menu item y coordinates are the same for both modes — Single Player is the
+first at `(320,213)`, Multi Player the second at `(320,256)`. Choose Class,
+Enter Name and OK are unchanged from the multiplayer recipe. Both the Choose
+Class and Enter Name screens render correctly on this path (no blue portrait
+panel — that was transient on the multiplayer route).
+
+## OPEN (2026-08-25): the multiplayer Select Connection screen is blank
+
+Clicking OK on Enter Name in *multiplayer* now advances — the name is accepted
+and no "Invalid name" box appears — to a new 640x482 top-level dialog `0x10028`
+carrying five connection rows (ids 1069–1073, `WS_TABSTOP`), a "Requirements:"
+pane, and OK/Cancel. OK is created `WS_DISABLED`, which is consistent with "no
+provider selected yet". The screen is entirely black.
+
+Measured, so the usual suspects are already excluded:
+
+- The app is alive: the pump keeps cycling
+  GetTickCount / GetCursorPos / GetPropA / PeekMessageA.
+- The surfaces are alive and uploading every frame — `--trace-gdi` shows
+  `gdi_surface_create` + `gdi_surface_attach(0x200001 → hwnd 0x10002)` +
+  `gdi_surface_upload` for the DirectDraw primary, and `0x610002` created
+  640x482 32bpp and attached to the new dialog `0x10028`.
+- Both are **empty**, not mis-composited: `--dx-surfaces` reports the primary
+  as `nonZero=0/1850`, and `--dump-backcanvas --png=` writes a 2061-byte
+  all-black back-canvas for the game window and a 2074-byte all-black one for
+  `0x10028`.
+
+So nothing is drawing, rather than something drawing to the wrong place. Note
+shareware multiplayer needs a network service provider regardless, so this is
+not on the path to gameplay — single player above is.

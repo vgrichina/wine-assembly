@@ -2034,10 +2034,23 @@
     (local $wa i32)
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
     (local.set $wa (call $g2w (local.get $arg1)))
+    ;; Win32 WSADATA is 400 bytes. Clear the character arrays, alignment
+    ;; padding, and provider pointer before publishing the fields supported by
+    ;; this virtual provider. MFC's AfxSocketInit reads iMaxSockets at +390;
+    ;; leaving it zero makes Half-Life Uplink report an insufficient-sockets
+    ;; warning even though the actual table below has 64 slots.
+    (memory.fill (local.get $wa) (i32.const 0) (i32.const 400))
     ;; wVersion is the negotiated request; wHighVersion is the provider
     ;; ceiling. WinSock 1.1 clients reject a success that reports 2.2 here.
     (i32.store16 (local.get $wa) (i32.and (local.get $arg0) (i32.const 0xFFFF)))
     (i32.store16 (i32.add (local.get $wa) (i32.const 2)) (i32.const 0x0202))
+    ;; This implementation has 64 stream-socket records and no UDP transport.
+    (i32.store16 (i32.add (local.get $wa) (i32.const 390))
+      (global.get $VSOCK_MAX))                                  ;; iMaxSockets
+    (i32.store16 (i32.add (local.get $wa) (i32.const 392)) (i32.const 0))
+                                                               ;; iMaxUdpDg
+    (i32.store (i32.add (local.get $wa) (i32.const 396)) (i32.const 0))
+                                                               ;; lpVendorInfo
     (global.set $wsa_started (i32.add (global.get $wsa_started) (i32.const 1)))
     (global.set $eax (i32.const 0)))
 

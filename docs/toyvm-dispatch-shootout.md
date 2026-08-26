@@ -130,7 +130,103 @@ answers a blocking console read with Enter so a headless run gets past a "press
 any key" title card; a demo that reads any key as "quit" then quits, which is
 its own answer about whether it can be benchmarked.
 
-### 4.1 Making the harness measure the VM and not itself
+### 4.1 Eight of these demos are not writing pixels at all
+
+Video needed no modelling for a long time, and the reason was a real property of
+mode 13h: A000:0000 is inside the guest's own megabyte, one byte is one pixel,
+so a demo's stores land in the same array the screenshot reads. That is true
+right up until a demo clears bit 3 of the sequencer's memory-mode register.
+
+Unchained — "mode X" — is the same four planes addressed differently. Chain-4
+spreads consecutive bytes across the planes for you (`off` is plane `off & 3` at
+plane offset `off >> 2`); with it off, one A000 offset names a byte in *every*
+plane at once and the sequencer's map mask picks which of them a write reaches.
+A demo gets a 256-colour mode with square-ish pixels, page flipping, a
+four-pixel-wide fill, and a latch copy that moves four pixels without the value
+passing through a register. What it does not get is a linear framebuffer, and
+reading one out of A000 anyway is what made those demos screenshot as a quarter
+of a picture stretched over the whole frame.
+
+`tools/toyvm/video-census.js` answers how much of the corpus this is, and it
+answers it from the registers the guest wrote rather than from the picture —
+`dos.js` now models the sequencer, graphics controller and CRTC register files,
+which costs nothing because those ports were already trapped:
+
+```bash
+node tools/toyvm/video-census.js --dir=/tmp/demos
+```
+
+**8 of 199 programs unchain**: ADDY_II, CARRIE, CORE-ADD, CORE-ADV, DASH,
+DRAGON, DREAM and brainbug. Four more retime the CRTC without unchaining. The
+register files also give the geometry for free instead of assuming 320x200. It
+falls out the way the hardware derives it — vertical display end over max scan
+line for the row count, horizontal display end at half the dot clock for the
+width, the offset register for the logical row stride — so brainbug's 320x400
+and mode 13h's own 320x200 come from one expression, and CORE-ADD turns out to
+be scrolling a 640-pixel-wide logical page behind a 320-pixel window. Five of
+the eight end a run with a nonzero start address, and ADDY_II's walks 0 →
+16128 → 32256 as the run goes on: they are page-flipping, which is most of why
+they wanted mode X in the first place.
+
+**The guard is the cost.** Plane information only exists at the moment of the
+write, so no amount of cleverness at render time can reconstruct it: the routing
+has to happen in `$wr8`, in a VM whose entire purpose is measuring what a
+dispatch costs. It is written as a key compare rather than a flag test so that
+"are we unchained" and "is this address video memory" are the same branch —
+`(lin & 0xF0000) | 1` against a control word that holds `0xA0001` while
+unchained and zero otherwise. One load of a constant address, an and/or/eq, and
+a not-taken branch, against a function that already calls `$lin`. The low bit is
+load-bearing: two callers reset the machine with a whole-buffer `mem.fill(0)`,
+and a guard that accepted 0 as a key would route the entire low 64K — the IVT,
+and every COM program — into the plane store. That bug passed every demo and
+failed 1,855 cases of the 8088 gate, which is what the gate is for.
+
+The guard is identical in all four shells, so it moves every arm of the
+shootout together and no ratio in §5 depends on it.
+
+### 4.2 Three more were writing to a different shape of plane
+
+Fixing mode X left three screenshots still wrong, and they were wrong the same
+way for a different reason: ZERO-BBS.EXE is mode `0Eh` and BAGGER.EXE and
+DSTNFO.EXE are mode `10h` — EGA 16-colour modes, which are planar too but at
+**four bits per pixel, not eight**. A byte in a plane is eight *pixels* there
+rather than one, and a pixel's colour is one bit taken from each of the four
+planes. Nothing has to be unchained to get there: chain-4 is a 256-colour
+feature and these modes are born planar, so a model that only watched the
+memory-mode register could not see them at all. They are in `dos.js` as
+`EGA_MODES` now, and each carries its own CRTC seed, so 640x200 and 640x350
+come out of the same derivation as everything else.
+
+Three things had to be real before the pictures were:
+
+* **The whole graphics-controller write pipeline.** Mode X needs almost none of
+  it — write mode 0 with an all-ones bit mask is a plain store. A 16-colour mode
+  drives set/reset, the bit mask and the ALU function on nearly every store,
+  because touching one pixel means a read-modify-write of a byte holding eight
+  of them, and the hardware performs it. `$vga_wr8` now does the full thing:
+  data rotate, the four write modes, set/reset gated by enable-set/reset,
+  AND/OR/XOR against the latch, then the bit-mask merge. `$vga_rd8` gained read
+  mode 1's colour compare. The control block grew from four words to the full
+  nine-register file.
+* **The attribute controller.** A 4-bit pixel does not index the DAC, it indexes
+  16 attribute-palette registers which *then* index the DAC — and the BIOS
+  default scatters them (`00 01 02 03 04 05 14 07 38…3F`), so an identity
+  assumption puts eight of the sixteen colours in the wrong place.
+* **`int 10h` AH=10h.** All three demos set their palette through the BIOS, not
+  through port 0x3C9, which is what EGA-era code does — on an EGA the palette
+  registers *were* the colours. Only the `AL=12h` DAC-block call was
+  implemented, so those writes were being counted as unhandled and dropped.
+  With `AL=00/02/07/10` in, all three set the attribute palette to identity and
+  fill 15-16 of their 16 colours; before that, DSTNFO's info file rendered as a
+  legible picture in entirely the wrong palette, which is a much more
+  convincing kind of wrong than a blank screen.
+
+`run-dos.js` prints the attribute palette and how many of the entries it names
+are non-black in the DAC under any 4-bit run, because "the colours look wrong"
+is two different bugs — a palette we got wrong, or one the program set by a
+route we were not listening on — and that line separates them.
+
+### 4.3 Making the harness measure the VM and not itself
 
 The first honest run of mars.exe reported 344,376 handbacks per 40M dispatches —
 103 dispatches per JS round trip. At that ratio the benchmark measures the
@@ -425,6 +521,91 @@ now stop at the next wall along instead. The FPU is right (48 hand-computed
 cases in `tools/toyvm/fpu-check.js`, green on all four shells) and it makes the
 VM more realistic; it did not make the corpus render.
 
+### 7.2 The 386 bit group
+
+`0f ba` appears in the census table above at two programs, and one of them —
+bit.exe — was the only site in the corpus that is unambiguously a real
+instruction rather than a linear decode walking into data. The whole group is
+now implemented: `0f ba /4../7` (BT/BTS/BTR/BTC with an imm8 index), the
+register-index forms `0f a3/ab/b3/bb`, and BSF/BSR at `0f bc/bd`, at both
+operand sizes.
+
+The part worth writing down is the addressing rule, because getting it wrong
+passes every ordinary bitmap test. A **register** destination masks the bit
+index to the operand width, so `bts ax,17` touches bit 1 of AX and nothing
+else. A **memory** destination does not mask: the index is a *signed bit
+displacement* from the effective address, so `bt [addr],ax` with `ax = -1`
+reads the top bit of the byte *before* `addr`, and with `ax = 20` reads a byte
+two past the end of the addressed word. Modelling that as a byte address plus a
+bit-in-byte is both exact and width-agnostic, which is why every memory form
+reads and writes through `$rd8`/`$wr8` whatever the operand size says.
+
+There is no ground truth to fetch for any of this — the SingleStepTests/8088
+corpus `gate.js` runs against was recorded off a part where `0f` is `POP CS` —
+so `tools/toyvm/bitops-check.js` is the substitute, in the same shape as
+`fpu-check.js`: 20 hand-computed cases stepped through the real decoder and the
+real handlers, including both signs of memory offset. Green on all four shells.
+
+**It did not unblock bit.exe.** The program is PKLITE-compressed, and after the
+bit group landed its only remaining give-up site is a run of `ff` padding at
+`110:ffff` that it reaches by a wild far jump out of the depacker stub — a
+different bug in a different layer, and the third case in this document of an
+ISA fill being correct and buying no pixels.
+
+### 7.3 159 of the 199 programs were never in graphics mode
+
+Everything above §7.2 is about programs that reach mode 13h. That was never
+most of the corpus. **159 of 199 never leave mode 3h**, and the capture path
+read A000 for all of them — which in text mode holds nothing — so they all came
+back as the same black rectangle, indistinguishable from a program that trapped
+on its first instruction. Forty rows of the sweep were being read; the other
+159 were being assumed. Two of them, ACME-SUX.EXE and AKM_DOB.EXE, went further
+and reported ~61,700 "pixels" each: nonzero palette indices against a DAC
+neither program ever loaded.
+
+The fix has three parts, and only the first is about rendering.
+
+**The text page is guest memory.** 80×25 cells of `{character, attribute}` at
+`B800:0000`. The first version of the console kept that grid in a private array
+fed by the DOS and BIOS teletype calls, which works on the programs that use
+them — and most of these do not, because painting a text screen through
+`INT 21h` is slow and the scene knew it. They store straight into B800. The
+grid stayed blank for exactly the programs that had drawn the most. It is now
+backed by the guest's own memory at `0xB8000`, so `INT 21h`, the BIOS and a
+direct store all land in the same bytes. The surface to photograph is chosen by
+`vga.bpp === 0` (never established a graphics mode) rather than by the mode
+number, because a demo can retime the CRTC underneath mode 13h.
+
+**A blocking key read with an empty queue is not AL=0.** `INT 21h AH=01/07/08`
+and `INT 16h AH=00/10` block. Returning AL=0 from them is not "no key" — it is
+the character NUL, delivered as though it had been typed, and every *press any
+key* prompt in the corpus was answering itself. a-note.exe took the phantom key,
+called `INT 10h AH=00` to restore mode 3 on the way out (which clears the
+screen) and exited in 5,434 dispatches: from outside, a program that never drew
+anything. A blocking read with nothing queued now sets `blockedOnKey` and stops
+the run, which is both closer to the hardware and the moment worth capturing.
+`run-dos.js` reports it; `shot-sweep.js` retries such a run with `--auto-key`
+and keeps whichever frame has more on it.
+
+**Then the corpus started explaining itself.** With the page visible, a class of
+program appeared that had been invisible: the ones that print two lines and
+stop. Seven print some version of *you need a VGA card*, and none of them was
+wrong about what it had been told — `INT 10h AH=1Ah` (get display combination
+code) and `AH=12h BL=10h` (EGA/VGA information) were both answered with AX=0,
+which is not a null answer but precisely the *function not supported* reply an
+8086-era CGA BIOS gives. Both carry their presence test somewhere unusual —
+AH=1Ah proves itself by returning 1Ah in AL, AH=12h by returning BL *changed*
+from the 10h it was called with — which is how a stubbed zero passes for a
+considered one. About ten more sit on a sound-device menu that ignores Enter and
+wants one specific character, so the harness's synthetic keystroke now rotates
+`p, n, 1, Enter, space, y, a` — leading with the keys that mean *no sound*,
+which is what a headless run wants in every one of these menus.
+
+Coverage over the corpus went from 32 programs putting something on screen to
+**~101**. Every one of those fixes came from reading what the demos printed, not
+from reading their code, and none of them is visible to an opcode census or a
+handler histogram: those programs were decoding and executing perfectly.
+
 ## 8. Still open
 
 * Run the matrix on SpiderMonkey and JavaScriptCore, not just node's V8, and on
@@ -441,5 +622,24 @@ VM more realistic; it did not make the corpus render.
   into one function, so §5's `switch` numbers should be treated as measured
   against the 426-handler build until the matrix is re-run. Nothing else in §5
   depends on the count.
+* **The chained side of the CRTC model.** §4.1 derives geometry from the
+  registers, and the unchained path renders from it, but a chained program is
+  still read as 320x200 linear no matter what its CRTC says. BAZIRRE.COM is why:
+  it programs a real 320x66 chunky mode by stretching each row over six scan
+  lines, and reading its 66 rows back at a 320-byte stride produces overlapping
+  text — so something else about mode 13h's addressing (the start address is in
+  dwords, and the offset register still sets the row stride) is not modelled yet.
+  `video-census.js` reports the derived numbers for all 199 programs, and four
+  of them retime the CRTC without unchaining, so this is where that picks up.
+* **What the text screens ask for that we do not have.** §7.3 made the B800
+  page real, and the programs that stop early now say why on it. Two of the five
+  classes were ours and are fixed (VGA detection, sound-device menus); three are
+  still open, and each is a DOS-side gap rather than a CPU one: **no XMS/EMS
+  driver** (4 programs print `HIMEM.SYS NEEDED !!!` or want an expanded-memory
+  manager), **missing companion assets** (5 print `File Not Found`,
+  `Library file corrupt.`, `Can not init file manager` — those are archives and
+  data files the corpus copy does not include, so they may not be fixable here),
+  and **one allocator ceiling** (`This demo needs 600k free to run`). None of
+  these is visible to an opcode census; they were all read off the screen.
 * **Lazy flags vs eager flags** — the question x86-16 was chosen for, and the
   one thing here that has no bearing on dispatch at all.

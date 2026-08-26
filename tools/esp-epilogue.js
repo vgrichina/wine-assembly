@@ -56,6 +56,7 @@ const PARTIAL = new Map([
   // Delegates to $handle_LoadLibraryA, which already consumed the return
   // address and the first argument; this pops only the two extra Ex arguments.
   ['LoadLibraryExA', 'delegates to LoadLibraryA, pops only the extra Ex args'],
+  ['LoadLibraryExW', 'delegates to LoadLibraryW, pops only the extra Ex args'],
   // Delegates to $handle_MapVirtualKeyA, which pops ret + 2 args; this pops the
   // third (the locale handle it ignores).
   ['MapVirtualKeyExA', 'delegates to MapVirtualKeyA, pops only the extra locale arg'],

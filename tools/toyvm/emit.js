@@ -55,6 +55,23 @@ h('end', 1, `
   (global.set $left (global.get $steps)) (global.set $steps (i32.const -1))
 `);
 
+// The same, for a block that just patched its own code. A write through a CS
+// override is a program editing the instruction stream it is standing in --
+// Turbo Pascal's Intr() writes the interrupt number into the `int` two
+// instructions ahead of the store, and every TP program in the corpus reaches
+// the BIOS through it. Decoding straight past the store bakes whatever byte
+// was there at DECODE time into the trace, so a program that patched in $10
+// executes the $00 the image shipped with, and Turbo Pascal's INT 0 handler
+// turns that into "Runtime error 200" a long way from anything to do with
+// arithmetic. Ending the block here is only half the fix: $smc tells the host
+// to drop the block the store landed in, which is the one holding the byte.
+h('end_smc', 1, `
+  ${ops(1)}
+  (global.set $smc (i32.const 1))
+  (global.set $gip (local.get $t0))
+  (global.set $left (global.get $steps)) (global.set $steps (i32.const -1))
+`);
+
 // --- ALU + MOV families, generated -----------------------------------------
 // x86 encodes six of the ALU ops at 8*code + form, and every one shares the
 // same operand plumbing -- only the arithmetic and the flag rule differ.
@@ -1044,6 +1061,99 @@ function genDoubleShifts() {
   }
 }
 
+// --- bit test / bit scan (386) ----------------------------------------------
+// BT/BTS/BTR/BTC and BSF/BSR. Two things here are worth stating rather than
+// inferring from the code:
+//
+// A register destination masks the bit index to the operand width, so BTS
+// AX,17 touches bit 1 and nothing outside AX. A MEMORY destination does not:
+// the index is a SIGNED bit displacement from the effective address, so
+// BT [BX],-1 reads the top bit of the byte BEFORE the one BX names. Modelling
+// that as a byte address plus a bit-in-byte is both exact and width-agnostic,
+// which is why every memory form below reads and writes through $rd8/$wr8
+// regardless of operand size.
+//
+// Only CF is architecturally defined by the bit tests (BSF/BSR define only ZF).
+// The rest are left as they were rather than zeroed -- a program that reads
+// them is reading undefined state on real silicon too, and leaving them alone
+// keeps the difference visible instead of inventing a value.
+const BIT_OPS = {
+  bt: null,
+  bts: (v, m) => `(i32.or ${v} ${m})`,
+  btr: (v, m) => `(i32.and ${v} (i32.xor ${m} (i32.const -1)))`,
+  btc: (v, m) => `(i32.xor ${v} ${m})`,
+};
+function genBitOps() {
+  const CF_ONLY = (cf) => `(global.set $flags (i32.or
+    (i32.and (global.get $flags) (i32.const 0xFFFE)) (i32.and ${cf} (i32.const 1))))`;
+
+  for (const w of [16, 32]) {
+    const mask = WM(w);
+    // The bit index: an immediate when the decoder passed one, otherwise the
+    // register named in the ModRM reg field. -1 is the "from a register"
+    // sentinel, the same shape the shifts use for their CL forms.
+    const IDX = (imm, reg) => `(select ${imm} ${reg} (i32.ne ${imm} (i32.const -1)))`;
+    const SEXT = (v) => (w === 16
+      ? `(i32.shr_s (i32.shl ${v} (i32.const 16)) (i32.const 16))` : v);
+
+    for (const [nm, apply] of Object.entries(BIT_OPS)) {
+      h(`${nm}_r${w}`, 2, `
+  ${ops(2)}
+  (local.set $t2 (i32.and (local.get $t0) (i32.const 7)))
+  (local.set $t3 (i32.and ${IDX('(local.get $t1)',
+        `(call $rget${w} (i32.and (i32.shr_u (local.get $t0) (i32.const 4)) (i32.const 7)))`)}
+    (i32.const ${w - 1})))
+  (local.set $t7 (call $rget${w} (local.get $t2)))
+  ${CF_ONLY('(i32.shr_u (local.get $t7) (local.get $t3))')}
+  ${apply ? `(call $rset${w} (local.get $t2) (i32.and
+    ${apply('(local.get $t7)', '(i32.shl (i32.const 1) (local.get $t3))')}
+    (i32.const ${mask})))` : ''}
+`);
+      h(`${nm}_m${w}`, 3, `
+  ${ops(3)}
+  ${EA_SETUP_PRE}
+  (local.set $t3 ${IDX('(local.get $t2)', SEXT(`(call $rget${w} (local.get $t6))`))})
+  (local.set $t7 (i32.and
+    (i32.add (local.get $t4) (i32.shr_s (local.get $t3) (i32.const 3)))
+    (i32.const 0xFFFF)))
+  (local.set $t3 (i32.and (local.get $t3) (i32.const 7)))
+  (local.set $t2 (call $rd8 (local.get $t5) (local.get $t7)))
+  ${CF_ONLY('(i32.shr_u (local.get $t2) (local.get $t3))')}
+  ${apply ? `(call $wr8 (local.get $t5) (local.get $t7) (i32.and
+    ${apply('(local.get $t2)', '(i32.shl (i32.const 1) (local.get $t3))')}
+    (i32.const 0xFF)))` : ''}
+`);
+    }
+
+    // BSF/BSR. A zero source sets ZF and leaves the destination alone -- not
+    // zeroes it, which is the tempting simplification and is wrong: the 386
+    // documents the destination as undefined there, and real code relies on it
+    // still holding the value it had.
+    for (const nm of ['bsf', 'bsr']) {
+      const scan = nm === 'bsf'
+        ? '(i32.ctz (local.get $t7))'
+        : `(i32.sub (i32.const 31) (i32.clz (local.get $t7)))`;
+      const body = (src, dst) => `
+  (local.set $t7 (i32.and ${src} (i32.const ${mask})))
+  (global.set $flags (i32.or
+    (i32.and (global.get $flags) (i32.const ${(~(1 << isa.F.ZF)) & 0xFFFF}))
+    (i32.shl (i32.eqz (local.get $t7)) (i32.const ${isa.F.ZF}))))
+  (if (local.get $t7) (then (call $rset${w} ${dst} ${scan})))
+`;
+      h(`${nm}_rr${w}`, 1, `
+  ${ops(1)}
+  ${body(`(call $rget${w} (i32.and (local.get $t0) (i32.const 7)))`,
+    '(i32.and (i32.shr_u (local.get $t0) (i32.const 4)) (i32.const 7))')}
+`);
+      h(`${nm}_rm${w}`, 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  ${body(`(call $rd${w} (local.get $t5) (local.get $t4))`, '(local.get $t6)')}
+`);
+    }
+  }
+}
+
 // --- MUL / IMUL, port I/O, XLAT, moffs --------------------------------------
 function genArithIO() {
   // MUL/IMUL/DIV/IDIV in both operand shapes. The only difference between them
@@ -1918,6 +2028,7 @@ genShifts();
 genSetmo();
 genShiftHandlers();
 genDoubleShifts();
+genBitOps();
 genArithIO();
 
 // The first six handlers were written by hand to prove the gate; genAlu()
@@ -2041,11 +2152,168 @@ function helpers() {
     (i32.add (i32.shl (call $sget (local.get $seg)) (i32.const 4)) (local.get $off))
     (i32.const 0xFFFFF)))
 
+;; The A000 window in unchained ("mode X") mode. See isa.js for why the planes
+;; cannot live in the guest's own RAM.
+;;
+;; The guard is what every guest byte access now pays: one load of a constant
+;; address, an and/or/eq, and a branch. It is written as a key compare rather
+;; than a flag test so that "are we unchained" and "is this address video
+;; memory" are the SAME branch instead of two -- and the spare low bit means a
+;; zeroed control block reads as chained, which is what a caller that resets the
+;; machine with mem.fill(0) leaves behind. See isa.js.
+;;
+;; The cost is identical in all four dispatch shells, so it moves every arm of
+;; the shootout together and does not change any ratio it reports.
+(func $vga_plane (param $p i32) (param $lin i32) (result i32)
+  (i32.add (i32.const ${isa.VGA_PLANES})
+    (i32.add (i32.shl (local.get $p) (i32.const 16))
+             (i32.and (local.get $lin) (i32.const 0xFFFF)))))
+
+;; One graphics-controller register, as the host last mirrored it.
+(func $gc (param $i i32) (result i32)
+  (i32.load (i32.add (i32.const ${isa.VGA_CTL_GC})
+                     (i32.shl (local.get $i) (i32.const 2)))))
+
+;; A read loads ALL four latches and returns the plane the read map selects.
+;; The latches are the point: mode X's fast blit is a read that fills them and a
+;; write in mode 1 that spills them into up to four planes at once, moving four
+;; pixels per pair of instructions without the value ever reaching a register.
+;;
+;; Read mode 1 (GC5 bit 3) returns a colour-compare instead: one bit per pixel
+;; saying whether every plane the "colour don't care" register cares about
+;; matches GC2. EGA code uses it to test eight pixels against a colour at once.
+(func $vga_rd8 (param $lin i32) (result i32)
+  (local $p i32) (local $lat i32) (local $res i32) (local $pb i32) (local $cmp i32)
+  (i32.store (i32.const ${isa.VGA_CTL_READS})
+    (i32.add (i32.load (i32.const ${isa.VGA_CTL_READS})) (i32.const 1)))
+  (i32.store (i32.const ${isa.VGA_CTL_LATCH})
+    (i32.or
+      (i32.or (i32.load8_u (call $vga_plane (i32.const 0) (local.get $lin)))
+              (i32.shl (i32.load8_u (call $vga_plane (i32.const 1) (local.get $lin)))
+                       (i32.const 8)))
+      (i32.or (i32.shl (i32.load8_u (call $vga_plane (i32.const 2) (local.get $lin)))
+                       (i32.const 16))
+              (i32.shl (i32.load8_u (call $vga_plane (i32.const 3) (local.get $lin)))
+                       (i32.const 24)))))
+  (local.set $lat (i32.load (i32.const ${isa.VGA_CTL_LATCH})))
+  (if (i32.and (call $gc (i32.const 5)) (i32.const 0x08))
+    (then
+      (local.set $res (i32.const 0xFF))
+      (block $cdone
+        (loop $cplane
+          (br_if $cdone (i32.eq (local.get $p) (i32.const 4)))
+          (if (i32.and (call $gc (i32.const 7)) (i32.shl (i32.const 1) (local.get $p)))
+            (then
+              (local.set $pb (i32.and (i32.shr_u (local.get $lat)
+                                                 (i32.shl (local.get $p) (i32.const 3)))
+                                      (i32.const 0xFF)))
+              (local.set $cmp (if (result i32)
+                (i32.and (call $gc (i32.const 2)) (i32.shl (i32.const 1) (local.get $p)))
+                (then (i32.const 0xFF)) (else (i32.const 0))))
+              (local.set $res (i32.and (local.get $res)
+                (i32.xor (i32.const 0xFF)
+                         (i32.xor (local.get $pb) (local.get $cmp)))))))
+          (local.set $p (i32.add (local.get $p) (i32.const 1)))
+          (br $cplane)))
+      (return (local.get $res))))
+  (i32.and
+    (i32.shr_u (local.get $lat)
+               (i32.shl (i32.and (call $gc (i32.const 4)) (i32.const 3)) (i32.const 3)))
+    (i32.const 0xFF)))
+
+;; The full graphics-controller write pipeline. Mode X needs almost none of it
+;; -- write mode 0 with an all-ones bit mask is a plain store -- but an EGA
+;; 16-colour mode drives set/reset, the bit mask and the ALU function on nearly
+;; every store, because there a byte is eight PIXELS in one plane rather than
+;; one pixel, and touching a single pixel means a read-modify-write the hardware
+;; performs on the guest's behalf.
+;;
+;; Per plane: pick a source byte (rotated CPU data, or set/reset expanded to
+;; 0x00/0xFF), combine it with that plane's latch through the ALU function, then
+;; merge under the bit mask -- masked-out bits come back from the latch
+;; untouched, which is why the guest reads before it writes.
+(func $vga_wr8 (param $lin i32) (param $v i32)
+  (local $p i32) (local $mask i32) (local $lat i32) (local $bit i32)
+  (local $wmode i32) (local $rot i32) (local $fn i32) (local $bm i32)
+  (local $src i32) (local $latb i32)
+  (i32.store (i32.const ${isa.VGA_CTL_WRITES})
+    (i32.add (i32.load (i32.const ${isa.VGA_CTL_WRITES})) (i32.const 1)))
+  (local.set $mask (i32.load (i32.const ${isa.VGA_CTL_MASK})))
+  (local.set $lat (i32.load (i32.const ${isa.VGA_CTL_LATCH})))
+  (local.set $wmode (i32.and (call $gc (i32.const 5)) (i32.const 3)))
+  (local.set $rot (i32.and (call $gc (i32.const 3)) (i32.const 7)))
+  (local.set $fn (i32.and (i32.shr_u (call $gc (i32.const 3)) (i32.const 3))
+                          (i32.const 3)))
+  ;; Rotate right by the data-rotate count. rot = 0 leaves the value alone: the
+  ;; shl by 8 falls entirely outside the byte the mask keeps.
+  (local.set $v (i32.and (local.get $v) (i32.const 0xFF)))
+  (local.set $v (i32.and
+    (i32.or (i32.shr_u (local.get $v) (local.get $rot))
+            (i32.shl (local.get $v) (i32.sub (i32.const 8) (local.get $rot))))
+    (i32.const 0xFF)))
+  (local.set $bm (i32.and (call $gc (i32.const 8)) (i32.const 0xFF)))
+  ;; Write mode 3 ANDs the rotated CPU byte into the bit mask instead of
+  ;; supplying data -- the data IS the mask, and the colour comes from set/reset.
+  (if (i32.eq (local.get $wmode) (i32.const 3))
+    (then (local.set $bm (i32.and (local.get $bm) (local.get $v)))))
+  (block $done
+    (loop $plane
+      (br_if $done (i32.eq (local.get $p) (i32.const 4)))
+      (local.set $bit (i32.shl (i32.const 1) (local.get $p)))
+      (if (i32.and (local.get $mask) (local.get $bit))
+        (then
+          (local.set $latb (i32.and (i32.shr_u (local.get $lat)
+                                               (i32.shl (local.get $p) (i32.const 3)))
+                                    (i32.const 0xFF)))
+          (if (i32.eq (local.get $wmode) (i32.const 1))
+            (then
+              ;; Mode 1 is the latch spill: no source, no ALU, no bit mask.
+              (i32.store8 (call $vga_plane (local.get $p) (local.get $lin))
+                          (local.get $latb)))
+            (else
+              (local.set $src
+                (if (result i32) (i32.eq (local.get $wmode) (i32.const 2))
+                  ;; Mode 2: bit p of the CPU byte becomes this plane's whole byte.
+                  (then (if (result i32) (i32.and (local.get $v) (local.get $bit))
+                          (then (i32.const 0xFF)) (else (i32.const 0))))
+                  (else (if (result i32)
+                          (i32.or (i32.eq (local.get $wmode) (i32.const 3))
+                                  (i32.ne (i32.and (call $gc (i32.const 1))
+                                                   (local.get $bit))
+                                          (i32.const 0)))
+                          ;; Set/reset: this plane's colour bit, expanded.
+                          (then (if (result i32)
+                                  (i32.and (call $gc (i32.const 0)) (local.get $bit))
+                                  (then (i32.const 0xFF)) (else (i32.const 0))))
+                          (else (local.get $v))))))
+              (if (i32.eq (local.get $fn) (i32.const 1))
+                (then (local.set $src (i32.and (local.get $src) (local.get $latb)))))
+              (if (i32.eq (local.get $fn) (i32.const 2))
+                (then (local.set $src (i32.or (local.get $src) (local.get $latb)))))
+              (if (i32.eq (local.get $fn) (i32.const 3))
+                (then (local.set $src (i32.xor (local.get $src) (local.get $latb)))))
+              (i32.store8 (call $vga_plane (local.get $p) (local.get $lin))
+                (i32.or (i32.and (local.get $src) (local.get $bm))
+                        (i32.and (local.get $latb)
+                                 (i32.xor (local.get $bm) (i32.const 0xFF)))))))))
+      (local.set $p (i32.add (local.get $p) (i32.const 1)))
+      (br $plane))))
+
 (func $rd8 (param $seg i32) (param $off i32) (result i32)
-  (i32.load8_u (call $lin (local.get $seg) (local.get $off))))
+  (local $l i32)
+  (local.set $l (call $lin (local.get $seg) (local.get $off)))
+  (if (i32.eq (i32.or (i32.and (local.get $l) (i32.const 0xF0000)) (i32.const 1))
+              (i32.load (i32.const ${isa.VGA_CTL_KEY})))
+    (then (return (call $vga_rd8 (local.get $l)))))
+  (i32.load8_u (local.get $l)))
 
 (func $wr8 (param $seg i32) (param $off i32) (param $v i32)
-  (i32.store8 (call $lin (local.get $seg) (local.get $off)) (local.get $v)))
+  (local $l i32)
+  (local.set $l (call $lin (local.get $seg) (local.get $off)))
+  (if (i32.eq (i32.or (i32.and (local.get $l) (i32.const 0xF0000)) (i32.const 1))
+              (i32.load (i32.const ${isa.VGA_CTL_KEY})))
+    (then (call $vga_wr8 (local.get $l) (local.get $v)) (return)))
+  (i32.store8 (local.get $l) (local.get $v)))
 
 ;; Step an offset to the next byte. A 16-bit offset of 0xFFFF wraps to 0x0000
 ;; within the SAME segment -- which is why every multi-byte access is done a
@@ -2667,7 +2935,7 @@ function fpuHelpers() {
 // there. Without it a run() that bails after 40 steps and one that burns its
 // whole slice are indistinguishable, and every dispatch count the harness
 // prints is the slice size instead of the work done.
-const STATE = [...isa.REG16, ...isa.SEG, 'gip', 'flags', 'ip', 'steps', 'intno', 'left', 'rtop'];
+const STATE = [...isa.REG16, ...isa.SEG, 'gip', 'flags', 'ip', 'steps', 'intno', 'left', 'rtop', 'smc'];
 
 // Memory is IMPORTED and state is read through accessor functions rather than
 // inline-exported, because that is the shape lib/compile-wat.js actually

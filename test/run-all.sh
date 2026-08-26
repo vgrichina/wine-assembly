@@ -47,6 +47,7 @@ UNIT=(
   test/test-create-directory-last-error.js
   test/test-unhandled-exception-filter.js
   test/test-cxx-throw-report.js
+  test/test-dynamic-module-filename.js
   test/test-bignum-mul.js
   test/test-mat4.js
   test/test-vfs.js
@@ -54,9 +55,12 @@ UNIT=(
   test/test-heap-free-block-validation.js
   test/test-vfs-host-files.js
   test/test-storage-registry.js
+  test/test-registry-snapshot-diff.js
+  test/test-vfs-export.js
   test/test-codepage-dbcs.js
   test/test-atom-table.js
   test/test-menu-insert.js
+  test/test-image-list-icons.js
   test/test-insert-menu-item-host-bar.js
   test/test-menu-popup-text.js
   test/test-dynamic-menu-bar.js
@@ -68,10 +72,24 @@ UNIT=(
   test/test-icon-extract.js
   test/test-heroes2-desktop-save.js
   test/test-wide-api.js
+  test/test-oem-to-char-buff.js
+  test/test-ver-find-file.js
   test/test-static-dx-version.js
   test/test-midi-mci.js
+  test/test-mci-get-device-id.js
   test/test-thread-manager.js
   test/test-mm-timer-callback.js
+  test/test-run-budget-completes-resume.js
+  test/test-cmp-memory-jb.js
+  test/test-browser-waveout-pump.js
+  test/test-dll-init-order.js
+  test/test-getmessage-teardown-quit.js
+  test/test-gpu-backend.js
+  test/test-keyboard-message-lparam.js
+  test/test-opengl-fixed-function.js
+  test/test-opengl-frame-state.js
+  test/test-opengl-swapbuffers.js
+  test/test-renderer-dialog-button-queue.js
   test/test-nc-flags-message-wake.js
   test/test-browser-step-scheduler.js
   test/test-console-input.js
@@ -85,11 +103,15 @@ UNIT=(
   test/test-debug-thread-state.js
   test/test-dev-server.js
   test/test-vlan-rtc.js
+  test/test-wsa-startup-data.js
   test/test-waveout-audio.js
   test/test-wavein-audio.js
   test/test-audio-mixer.js
   test/test-directsound-loop-refresh.js
   test/test-directsound3d-web-audio.js
+  test/test-directsound-ordinals.js
+  test/test-directsound-buffer-format.js
+  test/test-wave-out-get-id.js
   test/test-core-no-app-fast-paths.js
   test/test-wat-gdi-select-clip-path.js
   test/test-wat-gdi-path.js
@@ -146,6 +168,7 @@ UNIT=(
   test/test-region-window-client-rect.js
   test/test-wat-statusbar-grip.js
   test/test-wat-decoder-runaway.js
+  test/test-page-chunk-sizing.js
   test/test-wat-winsock.js
   test/test-vlan-wire.js
   test/test-large-dll-staging.js
@@ -155,6 +178,8 @@ UNIT=(
   test/test-wat-gdi-window-surface.js
   test/test-wat-gdi-directdraw-surface.js
   test/test-wat-gdi-screen-surface.js
+  test/test-vsnprintf.js
+  test/test-strncmp.js
   test/test-wat-gdi-shapes.js
   test/test-wat-gdi-geometry-handlers.js
   test/test-dib-dirty-sync.js
@@ -187,6 +212,7 @@ UNIT=(
   test/test-renderer-input-cursor.js
   test/test-renderer-mouse-drag-mask.js
   test/test-renderer-letterbox-input.js
+  test/test-relative-mouse-input.js
   test/test-renderer-dialog-caption-drag.js
   test/test-renderer-shell-dialog.js
   test/test-renderer-multi-app-modal.js
@@ -243,6 +269,7 @@ UNIT=(
   test/test-delphi-seh-mutated-chain.js
   test/test-button-focus-notify.js
   test/test-def-dlg-proc.js
+  test/test-dialog-setfocus-tabstop.js
   test/test-dialog-idok-handled.js
   test/test-isdialogmessage-enter.js
   test/test-dialog-custom-dispatch.js
@@ -347,7 +374,32 @@ E2E=(
   test/test-caesar3-fullscreen-metrics.js
   test/test-caesar3-gameplay.js
   test/test-diablo-shareware-art.js
+  test/test-diablo-shareware-gameplay.js
   test/test-heroes2-gameplay.js
+  test/test-heroes3-demo-launch.js
+  test/test-heroes3-demo-gameplay.js
+  test/test-heroes3-demo-installer.js
+  test/test-quake2-demo-installer.js
+  test/test-quake2-demo-web.js
+  test/test-quake2-gl-switch-web.js
+  test/test-quake2-gl-web.js
+  test/test-quake2-menu-keys-web.js
+  test/test-quake2-input-web.js
+  test/test-jazz2-demo-web.js
+  test/test-diablo2-demo-installer.js
+  test/test-diablo2-demo-installed.js
+  test/test-diablo2-demo-gameplay.js
+  test/test-half-life-uplink-installed.js
+  test/test-half-life-uplink-web.js
+  test/test-web-notepad-close-desktop.js
+  test/test-web-keyboard-shift-cleared.js
+  test/test-web-app-close-frees-memory.js
+  test/test-web-failed-launch-recovers.js
+  test/test-web-double-tap-single-launch.js
+  test/test-web-touch-cursor.js
+  test/test-web-audio-session.js
+  test/test-web-ios-lab.js
+  test/test-web-single-app-quit.js
   test/test-win16-jigsawed.js
   test/test-win16-jigsawed-menus.js
   test/test-win16-entertainment-manifests.js

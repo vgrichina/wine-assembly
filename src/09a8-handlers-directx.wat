@@ -60,7 +60,7 @@
   ;; guest code begins. Reserve the final 256 bytes of the auxiliary-wrapper
   ;; region rather than overlapping VSOCK_TABLE at 0x07FFE000.
   (global $DX_VTBL_REGISTRY i32 (i32.const 0x07FFDF00))
-  (global $DX_VTBL_REGISTRY_COUNT i32 (i32.const 61))
+  (global $DX_VTBL_REGISTRY_COUNT i32 (i32.const 62))
 
   ;; Vtable blocks — arrays of thunk guest-addrs, one per interface type.
   ;; Must be in guest-reachable memory (above image_base), so allocated from heap.
@@ -104,6 +104,7 @@
   (global $DX_VTBL_OLE_VIEWOBJECT2 (mut i32) (i32.const 0))
   (global $DX_VTBL_DDRAW2    (mut i32) (i32.const 0))
   (global $DX_VTBL_DDSURF2   (mut i32) (i32.const 0))
+  (global $DX_VTBL_DDSURF3   (mut i32) (i32.const 0))
   (global $DX_VTBL_DDCLIP    (mut i32) (i32.const 0))
   ;; Direct3D Immediate Mode vtables (Phase 0+ — populated by $init_dx_com_thunks)
   (global $DX_VTBL_D3D2      (mut i32) (i32.const 0))
@@ -219,7 +220,10 @@
     (global.set $DX_VTBL_D3DTEX9 (i32.load offset=232 (global.get $DX_VTBL_REGISTRY)))
     (global.set $DX_VTBL_D3DSURF9 (i32.load offset=236 (global.get $DX_VTBL_REGISTRY)))
     (global.set $DX_VTBL_DINPUT7 (i32.load offset=240 (global.get $DX_VTBL_REGISTRY)))
-    (global.set $DX_VTBL_DIDEV2 (i32.load offset=244 (global.get $DX_VTBL_REGISTRY))))
+    (global.set $DX_VTBL_DIDEV2 (i32.load offset=244 (global.get $DX_VTBL_REGISTRY)))
+    ;; Surface3 is appended to the registry so every established interface
+    ;; retains its existing cross-thread offset.
+    (global.set $DX_VTBL_DDSURF3 (i32.load offset=248 (global.get $DX_VTBL_REGISTRY))))
 
   (func $dx_sync_thread_vtables_if_needed
     (if (i32.eqz (global.get $DX_VTBL_DDRAW))
@@ -2232,11 +2236,16 @@
     ;; the app needs correct per-method arg counts (GetHandle takes 2 args, while
     ;; DDSurface's slot 3 AddAttachedSurface takes 1, so a same-vtable alias
     ;; leaves ESP 4 bytes low across the call). Other IIDs (IDirectDrawSurface,
-    ;; ...2/3/4 variants, IID_IUnknown) keep the DX3-compat same-vtable behavior.
+    ;; ...2/4 variants, IID_IUnknown) keep the DX3-compat same-vtable behavior.
     (local.set $iid0 (if (result i32) (local.get $arg1)
       (then (call $gl32 (local.get $arg1)))
       (else (i32.const 0))))
     (local.set $vtbl (i32.const 0))
+    ;; IID_IDirectDrawSurface3 {DA044E00-69B2-11D0-A1D5-00AA00B8DFBB}.
+    ;; Surface3 adds SetSurfaceDesc at slot 39, so returning the Surface2
+    ;; wrapper here makes old SDL call one pointer beyond the vtable.
+    (if (i32.eq (local.get $iid0) (i32.const 0xDA044E00)) (then
+      (local.set $vtbl (global.get $DX_VTBL_DDSURF3))))
     ;; IID_IDirect3DTexture  {2cdcd9e0-25a0-11cf-a31a-00aa00b93356}
     (if (i32.eq (local.get $iid0) (i32.const 0x2cdcd9e0)) (then
       (local.set $vtbl (global.get $DX_VTBL_D3DTEX))))
@@ -3081,6 +3090,32 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
+  ;; IDirectDrawSurface3 extension — slot 39. SDL 1.2 allocates its own
+  ;; framebuffer, then attaches it to the DirectDraw surface through this
+  ;; method. dwFlags (arg2) is reserved; DDSURFACEDESC.dwFlags selects fields.
+  (func $handle_IDirectDrawSurface3_SetSurfaceDesc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $entry i32) (local $desc i32) (local $flags i32) (local $pixels i32)
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (if (i32.and (local.get $entry) (local.get $arg1))
+      (then
+        (local.set $desc (call $g2w (local.get $arg1)))
+        (local.set $flags (i32.load offset=4 (local.get $desc)))
+        ;; DDSD_PITCH
+        (if (i32.and (local.get $flags) (i32.const 0x00000008))
+          (then (i32.store16 offset=18 (local.get $entry)
+            (i32.load offset=16 (local.get $desc)))))
+        ;; DDSD_LPSURFACE. A null pointer remains null rather than becoming
+        ;; g2w(0), which is the mapped base of the guest image.
+        (if (i32.and (local.get $flags) (i32.const 0x00000800))
+          (then
+            (local.set $pixels (i32.load offset=36 (local.get $desc)))
+            (i32.store offset=20 (local.get $entry)
+              (if (result i32) (local.get $pixels)
+                (then (call $g2w (local.get $pixels)))
+                (else (i32.const 0))))))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
   ;; ── Present helper: blit DIB to screen via SetDIBitsToDevice ─
   ;; Constructs a BITMAPINFOHEADER on the stack and calls the existing host import
 
@@ -3847,22 +3882,48 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; GetFormat — stub
+  ;; GetFormat(this, pwfxFormat, dwSizeAllocated, pdwSizeWritten)
+  ;;
+  ;; Primary buffers are created without lpwfxFormat and receive their format
+  ;; later through SetFormat.  Miles immediately asks the primary buffer for
+  ;; that format and derives its DMA interval from nAvgBytesPerSec; returning
+  ;; the old zero-filled stub made MSS32 divide by zero during startup.
   (func $handle_IDirectSoundBuffer_GetFormat (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $wa i32)
+    (local $entry i32) (local $wa i32) (local $channels i32)
+    (local $bits i32) (local $rate i32) (local $align i32)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (if (local.get $arg1) (then
-      (local.set $wa (call $g2w (local.get $arg1)))
-      (call $zero_memory (local.get $wa) (i32.const 18))
-      (i32.store16 (local.get $wa) (i32.const 1)) ;; WAVE_FORMAT_PCM
-      (i32.store16 (i32.add (local.get $wa) (i32.const 2))
-        (i32.load16_u (i32.add (local.get $entry) (i32.const 16)))) ;; channels
-      (i32.store (i32.add (local.get $wa) (i32.const 4))
-        (i32.load (i32.add (local.get $entry) (i32.const 24)))) ;; sampleRate
-      (i32.store16 (i32.add (local.get $wa) (i32.const 14))
-        (i32.load16_u (i32.add (local.get $entry) (i32.const 18)))) ;; bitsPerSample
-    ))
     (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 18))))
+    ;; A NULL format pointer is the documented size-query form.
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $eax
+          (select (i32.const 0x80070057) (i32.const 0)
+            (i32.ne (local.get $arg2) (i32.const 0))))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    ;; Never write a partial WAVEFORMATEX across the caller's allocation.
+    (if (i32.lt_u (local.get $arg2) (i32.const 18))
+      (then
+        (global.set $eax (i32.const 0x80070057)) ;; DSERR_INVALIDPARAM
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (local.set $channels
+      (i32.load16_u (i32.add (local.get $entry) (i32.const 16))))
+    (local.set $bits
+      (i32.load16_u (i32.add (local.get $entry) (i32.const 18))))
+    (local.set $rate (i32.load (i32.add (local.get $entry) (i32.const 24))))
+    (local.set $align
+      (i32.div_u (i32.mul (local.get $channels) (local.get $bits)) (i32.const 8)))
+    (local.set $wa (call $g2w (local.get $arg1)))
+    (call $zero_memory (local.get $wa) (i32.const 18))
+    (i32.store16 (local.get $wa) (i32.const 1)) ;; WAVE_FORMAT_PCM
+    (i32.store16 (i32.add (local.get $wa) (i32.const 2)) (local.get $channels))
+    (i32.store (i32.add (local.get $wa) (i32.const 4)) (local.get $rate))
+    (i32.store (i32.add (local.get $wa) (i32.const 8))
+      (i32.mul (local.get $rate) (local.get $align))) ;; nAvgBytesPerSec
+    (i32.store16 (i32.add (local.get $wa) (i32.const 12)) (local.get $align))
+    (i32.store16 (i32.add (local.get $wa) (i32.const 14)) (local.get $bits))
+    ;; cbSize remains zero for PCM.
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
@@ -3997,8 +4058,24 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; SetFormat — no-op (primary buffer format)
+  ;; SetFormat(this, pcfxFormat) — primary buffers are born without a format.
+  ;; Keep the canonical PCM fields in the DS buffer entry so GetFormat,
+  ;; SetFrequency and the eventual host voice all observe the same values.
   (func $handle_IDirectSoundBuffer_SetFormat (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $entry i32) (local $wa i32)
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $eax (i32.const 0x80070057)) ;; DSERR_INVALIDPARAM
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (local.set $wa (call $g2w (local.get $arg1)))
+    (i32.store16 (i32.add (local.get $entry) (i32.const 16))
+      (i32.load16_u (i32.add (local.get $wa) (i32.const 2)))) ;; nChannels
+    (i32.store16 (i32.add (local.get $entry) (i32.const 18))
+      (i32.load16_u (i32.add (local.get $wa) (i32.const 14)))) ;; wBitsPerSample
+    (i32.store (i32.add (local.get $entry) (i32.const 24))
+      (i32.load (i32.add (local.get $wa) (i32.const 4)))) ;; nSamplesPerSec
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 

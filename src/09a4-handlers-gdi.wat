@@ -1124,6 +1124,20 @@
 
   (func $handle_SwapBuffers (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $desc i32) (local $ok i32)
+    ;; OpenGL applications normally import SwapBuffers from GDI32.  Give the
+    ;; active accelerated context the first chance to present through opcode
+    ;; 55, shared with the legacy wglSwapBuffers spelling used by Quake II; a
+    ;; zero result retains the legacy GDI surface path.
+    (local.set $ok
+      (call $host_gpu_gl_call
+        (i32.const 55)
+        (call $g2w (global.get $esp))
+        (i32.const 0)))
+    (if (local.get $ok)
+      (then
+        (global.set $eax (local.get $ok))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
     (local.set $desc (global.get $GDI_BLIT_DST_DESC))
     (if (i32.and
           (i32.eq (call $gdi_dc_meta_get (local.get $arg0) (i32.const 16)

@@ -109,7 +109,13 @@ async function main() {
         delete Element.prototype[name];
       }
     });
-    await page.goto(`${base}/index.html?page-fs=${Date.now()}`,
+    // ?diag=1 too: lib/phone-diag.js's scroll probe is the only instrument
+    // that will exist on the real phone, where this mode's swipe strip is
+    // reported not to work and Chrome cannot reproduce it (device emulation
+    // has no retractable toolbars, so vh and dvh are the same number). If the
+    // probe misreads a page that is demonstrably armed, it will send the next
+    // investigation somewhere wrong.
+    await page.goto(`${base}/index.html?diag=1&page-fs=${Date.now()}`,
       { waitUntil: 'load', timeout: 60000 });
     await page.waitForFunction(
       () => typeof approveBrowserFullscreen === 'function' && document.getElementById('screen'),
@@ -186,8 +192,111 @@ async function main() {
       'the swipe strip has to exist, because the canvas eats every touch that lands on it');
     assert(after.scrollHeight > after.viewport.height,
       'nothing can collapse unless the document genuinely overflows');
-    assert(after.scrollHeight <= after.viewport.height + 120,
+    // A whole extra viewport of it, deliberately: Safari ignores a token
+    // scroll, and the 76px this started as reached its end in one flick with
+    // the bars straight back on the rubber-band. Capped at two viewports so a
+    // regression that makes the page endlessly long still fails.
+    assert(after.scrollHeight >= after.viewport.height * 1.9,
+      `a real gesture needs a real page: ${after.scrollHeight} vs ${after.viewport.height}`);
+    assert(after.scrollHeight <= after.viewport.height * 2.2,
       `the overflow is one spacer, not a long page: ${after.scrollHeight} vs ${after.viewport.height}`);
+    // What the beacon will say about all of that from the device. The strip
+    // being *present* is not the same as the strip being *touchable*: the
+    // canvas, the exit chip and the emulated cursor are all in the same
+    // corner, and a swipe that lands on any of them never reaches the page
+    // scroller. A hit test is the only form of that question with an answer.
+    const probe = await page.evaluate(() => window.PhoneDiag && window.PhoneDiag.snapshot().collapse);
+    assert(probe, 'the phone beacon must report the scroll-collapse state');
+    assert(/gutter=hit/.test(probe),
+      `a finger on the swipe strip must land on the strip; the beacon says ${probe}`);
+    const heights = probe.match(/h(\d+)\/v(\d+)/);
+    assert(heights && Number(heights[1]) >= Number(heights[2]) * 1.9,
+      `the beacon must see the overflow the collapse needs: ${probe}`);
+
+    // The strip retracts WITH the bars -- once they are down it has nothing
+    // left to do and is sitting on top of the app. "Are the bars down" is
+    // innerHeight against 100lvh, the bars-retracted height, which is a
+    // constant and needs no calibration.
+    //
+    // Chrome has no retractable toolbars, so here lvh and innerHeight are the
+    // same number and the page reads as permanently collapsed. That is the
+    // correct answer for a browser with nothing to collapse -- what this
+    // pins down is that the two agree, so a real iPhone (lvh 710, innerHeight
+    // 628 with the bars up) keeps the strip until the swipe lands.
+    const strip = await page.evaluate(() => {
+      const probeEl = document.createElement('div');
+      probeEl.style.cssText = 'position:absolute;top:0;left:0;width:0;height:100lvh;visibility:hidden';
+      document.documentElement.appendChild(probeEl);
+      const lvh = Math.round(probeEl.getBoundingClientRect().height);
+      probeEl.remove();
+      window.dispatchEvent(new Event('resize'));
+      const gutter = document.getElementById('scroll-collapse-gutter');
+      return {
+        lvh,
+        htmlOverflow: getComputedStyle(document.documentElement).overflowY,
+        bodyOverflow: getComputedStyle(document.body).overflowY,
+        inner: window.innerHeight,
+        collapsedClass: document.body.classList.contains('bars-collapsed'),
+        gutterShown: !!(gutter && gutter.getClientRects().length),
+      };
+    });
+    assert(strip.lvh > 10, `lvh must measure something: ${JSON.stringify(strip)}`);
+    const barsAreDown = strip.inner >= strip.lvh - 8;
+    assert.strictEqual(strip.collapsedClass, barsAreDown,
+      `bars-collapsed must follow innerHeight vs lvh: ${JSON.stringify(strip)}`);
+    console.log();
+    console.log('  strip ' + JSON.stringify(strip));
+
+    // The root scroller has to actually be unlocked, in every class
+    // combination that can coexist with scroll-collapse.
+    //
+    // WHY GENERATED FROM THE STYLESHEET rather than written out: this failed
+    // on the phone against a hand-written check that passed here. Three rules
+    // set `overflow: hidden` on body and one of them --
+    // body.no-debug.exclusive-fullscreen -- has two classes, so the
+    // single-class override lost the cascade. Chrome missed it because the
+    // test app was not in no-debug mode and that rule was never live. Reading
+    // the rules out of the page means the next one that appears is covered
+    // whether or not anyone remembers to come back here.
+    //
+    // Body's overflow is what propagates to the viewport when html is
+    // `visible`, so a body that computes `hidden` is a page that cannot
+    // scroll -- which is the whole feature.
+    const locked = await page.evaluate(() => {
+      const hiders = [];
+      for (const sheet of Array.from(document.styleSheets)) {
+        let rules;
+        try { rules = sheet.cssRules; } catch (_) { continue; }
+        for (const rule of Array.from(rules || [])) {
+          if (!rule.selectorText || !rule.style) continue;
+          if (rule.style.overflow !== 'hidden' && rule.style.overflowY !== 'hidden') continue;
+          for (const part of rule.selectorText.split(',')) {
+            const selector = part.trim();
+            // Only rules that target body itself; `body.x #child` hides the
+            // child, not the viewport.
+            if (!/^body(\.[\w-]+)*$/.test(selector)) continue;
+            hiders.push(selector.split('.').slice(1));
+          }
+        }
+      }
+      const original = document.body.className;
+      const bad = [];
+      for (const classes of hiders) {
+        document.body.className = classes.concat(['scroll-collapse']).join(' ');
+        const overflow = getComputedStyle(document.body).overflowY;
+        if (overflow === 'hidden') bad.push(classes.join('.') + ' -> ' + overflow);
+      }
+      document.body.className = original;
+      return { count: hiders.length, bad };
+    });
+    assert(locked.count >= 2,
+      `the stylesheet scan must find the body overflow rules: ${JSON.stringify(locked)}`);
+    assert.deepStrictEqual(locked.bad, [],
+      'scroll-collapse must out-specify every rule that locks body overflow');
+    console.log(`  scroller  ${locked.count} body-overflow rules, all overridden`);
+    assert.strictEqual(strip.gutterShown, !barsAreDown,
+      `the strip is shown exactly while a collapse is still available: ${JSON.stringify(strip)}`);
+
     const scrolled = await page.evaluate(() => {
       window.scrollTo(0, 999);
       const rect = document.getElementById('screen').getBoundingClientRect();
@@ -223,6 +332,56 @@ async function main() {
     assert(backIn, 'an app still holding the display offers the way back into full screen');
     assert(!exited.scrollCollapse && !exited.gutterVisible,
       'the swipe strip and its spacer belong to full screen only');
+
+    // ---- the chip on an app that STAYS exclusive -------------------------
+    //
+    // Everything above is measured on winmine, which is not really an
+    // exclusive app: the repaint right after the chip recomputes exclusive as
+    // false all by itself, so both classes come off and the exit looks clean.
+    // A full-screen game does not do that. Its window still satisfies the
+    // exclusive test on every later repaint, and _setExclusiveFullscreen's
+    // "already in this state" early return then means the chip removes
+    // page-fullscreen and NOTHING puts exclusive-fullscreen back down --
+    // which hides #desktop-icons, the only launcher a phone has. Reported as
+    // "cannot launch new app after closing previous - stuck in green
+    // desktop".
+    //
+    // Pinned to the renderer's own decision rather than to a real game so the
+    // check costs no extra boot: force the exclusive verdict true and let the
+    // repaint loop keep asserting it, which is exactly what a game does.
+    await page.evaluate(() => {
+      const app = runningApps.find(item => item && item.name === 'winmine_wep');
+      const renderer = app.wine.renderer;
+      // The chip above latched a decline, and that latch is doing its job:
+      // nothing the guest does may put full screen back on its own. Asking
+      // again is the user's move, so make it here before the exclusive app
+      // arrives -- otherwise this stage would be testing the latch it just
+      // set rather than the exit path.
+      approveBrowserFullscreen();
+      renderer._isExclusiveFullscreenWindow = () => true;
+      renderer.repaint();
+    });
+    await page.waitForFunction(
+      () => document.body.classList.contains('page-fullscreen'), { timeout: 5000 });
+    await page.click('#page-fullscreen-exit');
+    // Several repaints' worth: the failure is not in the click, it is in what
+    // the frames after it put back.
+    await new Promise(resolve => setTimeout(resolve, 400));
+    await page.evaluate(() => {
+      const app = runningApps.find(item => item && item.name === 'winmine_wep');
+      for (let i = 0; i < 5; i++) app.wine.renderer.repaint();
+    });
+    const stuck = await page.evaluate(layout);
+    await page.screenshot({ path: path.join(OUT, 'exclusive-exited.png') });
+    assert(!stuck.pageFullscreen,
+      `the chip must stay pressed: ${stuck.classes}`);
+    assert(!stuck.classes.includes('exclusive-fullscreen'),
+      `leaving full screen must hand the display back, not keep the half that ` +
+      `hides the launcher: ${stuck.classes}`);
+    assert(await page.evaluate(() =>
+      getComputedStyle(document.getElementById('desktop-icons')).display !== 'none' ||
+      document.body.classList.contains('app-running')),
+      'the desktop icons must not be hidden by a full-screen mode nobody is in');
     // Deliberately NOT asserting that full screen is taller than the framed
     // page. In no-debug mode our own chrome is already gone, so on this
     // viewport both are the full 664 and the numbers are equal -- what the

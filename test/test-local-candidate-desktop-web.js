@@ -34,6 +34,71 @@ const BASE_URL = String(process.env.CANDIDATE_BASE_URL || '').trim();
 
 const ALL_CANDIDATES = [
   {
+    id: 'diablo2_demo',
+    label: 'Diablo II Demo',
+    titlePattern: 'Diablo II',
+    launchTimeoutMs: 90000,
+    // Skip whichever intro/logo frame is active; the installed-game CLI gate
+    // separately validates the exact Shareware v1.04 menu regions.
+    preGameKeys: [
+      { vk: 27, holdMs: 100, waitMs: 1200 },
+      { vk: 27, holdMs: 100, waitMs: 1200 },
+      { vk: 27, holdMs: 100, waitMs: 1200 },
+      { vk: 27, holdMs: 100, waitMs: 2500 },
+    ],
+    postKeyClicks: [
+      {
+        guestX: 400, guestY: 210, holdMs: 120, waitMs: 5000,
+        snapshotAfter: 'character-select',
+        waitForGuestPixelBefore: {
+          x: 300, y: 207, rMin: 70, gMin: 70, bMin: 70,
+          timeoutMs: 60000, label: 'Single Player button',
+        },
+      },
+      {
+        guestX: 400, guestY: 275, holdMs: 40, waitMs: 1000,
+        doubleClick: true, snapshotAfter: 'barbarian-selected',
+      },
+      {
+        guestX: 405, guestY: 527, holdMs: 80, waitMs: 250,
+        snapshotAfter: 'name-focused',
+        waitForGuestPixelBefore: {
+          x: 320, y: 515, rMin: 150, gMin: 100, bMin: 60,
+          timeoutMs: 30000, label: 'character name field border',
+        },
+      },
+    ],
+    preGameText: 'TEST',
+    preGameTextSnapshotAfter: 'name-entered',
+    preGameTextWaitMs: 250,
+    keys: [
+      {
+        vk: 13, charCode: 13, label: 'confirm new Barbarian', holdMs: 80,
+        waitMs: 5000, snapshotAfter: 'character-confirmed',
+      },
+    ],
+    allowPolledKeys: true,
+    minColors: 100,
+    waitMs: 2000,
+  },
+  {
+    id: 'halflife_uplink',
+    label: 'Half-Life: Uplink',
+    titlePattern: 'Half-Life',
+    allowDialogMain: true,
+    launchTimeoutMs: 60000,
+    stepsPerSlice: 1000,
+    clicks: [
+      {
+        guestX: 148, guestY: 193, holdMs: 120, waitMs: 30000,
+        snapshotAfter: 'new-game-click',
+      },
+    ],
+    minColors: 24,
+    minDiff: 10000,
+    waitMs: 5000,
+  },
+  {
     id: 'peaks',
     label: 'Peaks',
     titlePattern: 'Peaks',
@@ -487,6 +552,7 @@ async function main() {
   async function snapshot(app) {
     return evalExpr(`(() => {
       const titleRe = new RegExp(${jsString(app.titlePattern)}, 'i');
+      const allowDialogMain = ${!!app.allowDialogMain};
       if (sharedRenderer && sharedRenderer.repaint) sharedRenderer.repaint();
       const canvas = document.getElementById('screen');
       const ctx = canvas.getContext('2d');
@@ -505,7 +571,7 @@ async function main() {
           isDialog: !!w.isDialog,
         }));
       const main = visible
-        .filter(w => !w.isDialog && titleRe.test(w.title || ''))
+        .filter(w => (!w.isDialog || allowDialogMain) && titleRe.test(w.title || ''))
         .sort((a, b) => b.zOrder - a.zOrder)[0] ||
         visible.filter(w => !w.isDialog).sort((a, b) => b.zOrder - a.zOrder)[0] ||
         visible.sort((a, b) => b.zOrder - a.zOrder)[0] || null;
@@ -566,6 +632,7 @@ async function main() {
       const before = window[${jsString(baselineName)}];
       if (!before || !before.pixels) throw new Error('missing candidate diff baseline');
       const titleRe = new RegExp(${jsString(app.titlePattern)}, 'i');
+      const allowDialogMain = ${!!app.allowDialogMain};
       if (sharedRenderer && sharedRenderer.repaint) sharedRenderer.repaint();
       const canvas = document.getElementById('screen');
       const ctx = canvas.getContext('2d');
@@ -583,7 +650,7 @@ async function main() {
           isDialog: !!w.isDialog,
         }));
       const main = visible
-        .filter(w => !w.isDialog && titleRe.test(w.title || ''))
+        .filter(w => (!w.isDialog || allowDialogMain) && titleRe.test(w.title || ''))
         .sort((a, b) => b.zOrder - a.zOrder)[0] ||
         visible.filter(w => !w.isDialog).sort((a, b) => b.zOrder - a.zOrder)[0] ||
         visible.sort((a, b) => b.zOrder - a.zOrder)[0] || null;
@@ -609,6 +676,7 @@ async function main() {
   async function captureDiffBaseline(app, baselineName = '__candidateBaseline') {
     return evalExpr(`(() => {
       const titleRe = new RegExp(${jsString(app.titlePattern)}, 'i');
+      const allowDialogMain = ${!!app.allowDialogMain};
       if (sharedRenderer && sharedRenderer.repaint) sharedRenderer.repaint();
       const canvas = document.getElementById('screen');
       const ctx = canvas.getContext('2d');
@@ -626,7 +694,7 @@ async function main() {
           isDialog: !!w.isDialog,
         }));
       const main = visible
-        .filter(w => !w.isDialog && titleRe.test(w.title || ''))
+        .filter(w => (!w.isDialog || allowDialogMain) && titleRe.test(w.title || ''))
         .sort((a, b) => b.zOrder - a.zOrder)[0] ||
         visible.filter(w => !w.isDialog).sort((a, b) => b.zOrder - a.zOrder)[0] ||
         visible.sort((a, b) => b.zOrder - a.zOrder)[0] || null;
@@ -661,19 +729,22 @@ async function main() {
   }
 
   async function waitForLaunch(app) {
+    const timeoutMs = app.launchTimeoutMs || 25000;
     try {
       await evalExpr(`new Promise((resolve, reject) => {
       const titleRe = new RegExp(${jsString(app.titlePattern)}, 'i');
+      const allowDialogMain = ${!!app.allowDialogMain};
       const started = performance.now();
       const tick = () => {
         const visible = Object.values((sharedRenderer && sharedRenderer.windows) || {})
           .filter(w => w && w.visible);
-        const hasExpected = visible.some(w => !w.isDialog && titleRe.test(w.title || ''));
+        const hasExpected = visible.some(w =>
+          (!w.isDialog || allowDialogMain) && titleRe.test(w.title || ''));
         const hasAnyMain = visible.some(w => !w.isDialog);
         const log = document.getElementById('log').textContent;
         if (runningApps.length === 1 && hasExpected) resolve(1);
         else if (/ERROR launching|RuntimeError|LinkError|UNIMPLEMENTED/i.test(log)) reject(new Error('launch log contains error'));
-        else if (performance.now() - started > 25000) {
+        else if (performance.now() - started > ${timeoutMs | 0}) {
           const app = runningApps[0];
           const e = app && app.wine && app.wine.instance && app.wine.instance.exports;
           let mainHwnd = 0;
@@ -689,7 +760,7 @@ async function main() {
         else setTimeout(tick, 100);
       };
       tick();
-    })`, 28000);
+    })`, Math.max(28000, timeoutMs + 3000));
     } catch (e) {
       const consoleText = consoleEventSummary(cdp.events).join('\n');
       if (consoleText) e.message += '\nconsole:\n' + consoleText.slice(-4000);
@@ -904,7 +975,7 @@ async function main() {
     })()`);
   }
 
-  async function rendererMouseDown(x, y) {
+  async function rendererMouseDown(x, y, forceDoubleClick = false) {
     return evalExpr(`(() => {
       if (!sharedRenderer) throw new Error('renderer unavailable');
       const formatEvent = (evt) => evt ? ({
@@ -927,7 +998,8 @@ async function main() {
       const mapped = sharedRenderer._mapExclusiveInputPoint
         ? sharedRenderer._mapExclusiveInputPoint(${x | 0}, ${y | 0})
         : { x: ${x | 0}, y: ${y | 0} };
-      sharedRenderer.handleMouseDown(${x | 0}, ${y | 0}, 0);
+      sharedRenderer.handleMouseDown(${x | 0}, ${y | 0}, 0,
+        ${forceDoubleClick ? '{ doubleClick: true }' : 'undefined'});
       return {
         kind: 'mousedown',
         x: ${x | 0},
@@ -978,8 +1050,8 @@ async function main() {
     })()`);
   }
 
-  async function rendererClick(x, y, holdMs = 0) {
-    const down = await rendererMouseDown(x, y);
+  async function rendererClick(x, y, holdMs = 0, forceDoubleClick = false) {
+    const down = await rendererMouseDown(x, y, forceDoubleClick);
     if (holdMs > 0) await wait(holdMs);
     const up = await rendererMouseUp(x, y);
     return {
@@ -991,6 +1063,22 @@ async function main() {
       transform: down.transform,
       down: down.events,
       up: up.events,
+    };
+  }
+
+  async function rendererDoubleClick(x, y, holdMs = 0) {
+    const first = await rendererClick(x, y, holdMs);
+    await wait(40);
+    const second = await rendererClick(x, y, holdMs, true);
+    return {
+      kind: 'doubleclick',
+      x: x | 0,
+      y: y | 0,
+      holdMs: holdMs | 0,
+      mapped: second.mapped,
+      transform: second.transform,
+      first,
+      second,
     };
   }
 
@@ -1008,6 +1096,25 @@ async function main() {
       return { x: ${x | 0}, y: ${y | 0}, transform: t ? Object.assign({}, t) : null };
     })()`);
     const action = await rendererClick(point.x, point.y, holdMs);
+    action.guest = { x: x | 0, y: y | 0 };
+    action.canvas = { x: point.x | 0, y: point.y | 0 };
+    return action;
+  }
+
+  async function rendererGuestDoubleClick(x, y, holdMs = 0) {
+    const point = await evalExpr(`(() => {
+      if (!sharedRenderer) throw new Error('renderer unavailable');
+      const t = sharedRenderer._exclusiveTransform;
+      if (t && t.srcW && t.srcH && t.dstW && t.dstH) {
+        return {
+          x: Math.round((t.dstX || 0) + ((${x | 0} - (t.srcX || 0)) * t.dstW / t.srcW)),
+          y: Math.round((t.dstY || 0) + ((${y | 0} - (t.srcY || 0)) * t.dstH / t.srcH)),
+          transform: Object.assign({}, t),
+        };
+      }
+      return { x: ${x | 0}, y: ${y | 0}, transform: t ? Object.assign({}, t) : null };
+    })()`);
+    const action = await rendererDoubleClick(point.x, point.y, holdMs);
     action.guest = { x: x | 0, y: y | 0 };
     action.canvas = { x: point.x | 0, y: point.y | 0 };
     return action;
@@ -1095,6 +1202,14 @@ async function main() {
       return launchApp();
     })()`, 45000);
     await waitForInstance(app);
+    if (app.stepsPerSlice) {
+      await evalExpr(`(() => {
+        const running = runningApps[0];
+        if (!running || !running.wine) throw new Error('running app unavailable');
+        running.wine.stepsPerSlice = ${app.stepsPerSlice | 0};
+        return running.wine.stepsPerSlice;
+      })()`);
+    }
     if (app.dismissDialogControl) {
       await waitForDialogControl(app.dismissDialogControl);
       await clickDialogControl(app.dismissDialogControl);
@@ -1153,6 +1268,20 @@ async function main() {
         await wait(key.waitMs || app.keyWaitMs || 150);
       }
     }
+    if (app.postKeyClicks) {
+      for (const click of app.postKeyClicks) {
+        if (click.waitForGuestPixelBefore) {
+          await waitForGuestPixel(click.waitForGuestPixelBefore);
+        }
+        actions.push(click.doubleClick
+          ? await rendererGuestDoubleClick(click.guestX || 0, click.guestY || 0,
+            click.holdMs || 0)
+          : await rendererGuestClick(click.guestX || 0, click.guestY || 0,
+            click.holdMs || 0));
+        await wait(click.waitMs || app.actionWaitMs || 350);
+        if (click.snapshotAfter) await saveCanvasSnapshot(app, click.snapshotAfter);
+      }
+    }
     if (app.preGameText) {
       await rendererType(app.preGameText);
       actions.push({ kind: 'type', text: app.preGameText });
@@ -1188,7 +1317,14 @@ async function main() {
           singleKeyBaseline = await captureDiffBaseline(app, `__candidateKeyBaseline${i}`);
         }
         actions.push(await rendererKeyTap(key.vk, key.holdMs || 80));
+        if (key.charCode != null) {
+          await rendererType(String.fromCharCode(key.charCode | 0));
+          actions.push({ kind: 'keypress', code: key.charCode | 0 });
+        }
         await wait(key.waitMs || app.keyWaitMs || 150);
+        if (key.waitForGuestPixelAfter) {
+          await waitForGuestPixel(key.waitForGuestPixelAfter);
+        }
         if (key.snapshotAfter) await saveCanvasSnapshot(app, key.snapshotAfter);
         if (singleKeyBaseline) {
           const singleKeyDiff = await diffSince(singleKeyBaseline, app);
@@ -1266,13 +1402,22 @@ async function main() {
           `${app.label}: click should land inside the rendered app surface: ${summary}`);
         assert((action.down || []).some(ev => ev.msg === 0x0201) && (action.up || []).some(ev => ev.msg === 0x0202),
           `${app.label}: click should enqueue WM_LBUTTONDOWN/UP: ${summary}`);
+      } else if (action.kind === 'doubleclick') {
+        assert(!action.mapped || !action.mapped.outside,
+          `${app.label}: double-click should land inside the rendered app surface: ${summary}`);
+        assert(action.second && (action.second.down || []).some(ev => ev.msg === 0x0203),
+          `${app.label}: double-click should enqueue WM_LBUTTONDBLCLK: ${summary}`);
       } else if (action.kind === 'keytap') {
-        assert(action.down && action.down.afterLen > action.down.beforeLen,
+        assert(action.down && (action.down.afterLen > action.down.beforeLen ||
+          (app.allowPolledKeys && action.down.asyncDown === true)),
           `${app.label}: keydown ${action.vk} should enqueue input: ${summary}`);
-        assert(action.up && action.up.afterLen > action.up.beforeLen,
+        assert(action.up && (action.up.afterLen > action.up.beforeLen ||
+          (app.allowPolledKeys && action.up.asyncDown === false)),
           `${app.label}: keyup ${action.vk} should enqueue input: ${summary}`);
-        assert(action.down.asyncDown === true && action.up.asyncDown === false,
-          `${app.label}: key ${action.vk} should update async key state: ${summary}`);
+        if (!app.allowPolledKeys) {
+          assert(action.down.asyncDown === true && action.up.asyncDown === false,
+            `${app.label}: key ${action.vk} should update async key state: ${summary}`);
+        }
       }
     }
     if (app.minDiff) {
@@ -1305,6 +1450,7 @@ async function main() {
     }
     reports.push(`${app.id}: colors=${after.metrics.colors} top=${after.metrics.topShare.toFixed(3)} diff=${diff.diff} windows=${JSON.stringify(after.windows.map(w => w.title))}`);
     console.log('PASS ', reports[reports.length - 1]);
+    if (diagnostics) console.log(`PERF ${app.id}: ${JSON.stringify(diagnostics)}`);
   }
 
   await evalExpr('stopAllApps(); 1');

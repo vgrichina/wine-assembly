@@ -131,6 +131,37 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
+  ;; _strnicmp(s1, s2, count) — cdecl, ASCII case-insensitive bounded compare.
+  (func $handle__strnicmp (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wa1 i32) (local $wa2 i32) (local $i i32)
+    (local $c1 i32) (local $c2 i32)
+    (global.set $eax (i32.const 0))
+    (if (i32.eqz (local.get $arg2))
+      (then
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+        (return)))
+    (local.set $wa1 (call $g2w (local.get $arg0)))
+    (local.set $wa2 (call $g2w (local.get $arg1)))
+    (block $done (loop $compare
+      (local.set $c1 (i32.load8_u (i32.add (local.get $wa1) (local.get $i))))
+      (local.set $c2 (i32.load8_u (i32.add (local.get $wa2) (local.get $i))))
+      (if (i32.and (i32.ge_u (local.get $c1) (i32.const 0x41))
+                   (i32.le_u (local.get $c1) (i32.const 0x5a)))
+        (then (local.set $c1 (i32.or (local.get $c1) (i32.const 0x20)))))
+      (if (i32.and (i32.ge_u (local.get $c2) (i32.const 0x41))
+                   (i32.le_u (local.get $c2) (i32.const 0x5a)))
+        (then (local.set $c2 (i32.or (local.get $c2) (i32.const 0x20)))))
+      (if (i32.ne (local.get $c1) (local.get $c2))
+        (then
+          (global.set $eax (i32.sub (local.get $c1) (local.get $c2)))
+          (br $done)))
+      (br_if $done (i32.eqz (local.get $c1)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br_if $compare (i32.lt_u (local.get $i) (local.get $arg2)))))
+    ;; cdecl: the caller removes all three arguments.
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
   ;; 724: strlen(str) — cdecl
   (func $handle_strlen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $wa i32) (local $len i32)
@@ -282,6 +313,32 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
+  ;; strncmp(s1, s2, count) — cdecl. Compare bytes as unsigned characters,
+  ;; stopping at the first difference, a shared NUL, or count bytes.
+  (func $handle_strncmp (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wa1 i32) (local $wa2 i32) (local $i i32)
+    (local $c1 i32) (local $c2 i32)
+    (global.set $eax (i32.const 0))
+    (if (i32.eqz (local.get $arg2))
+      (then
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+        (return)))
+    (local.set $wa1 (call $g2w (local.get $arg0)))
+    (local.set $wa2 (call $g2w (local.get $arg1)))
+    (block $done (loop $compare
+      (local.set $c1 (i32.load8_u (i32.add (local.get $wa1) (local.get $i))))
+      (local.set $c2 (i32.load8_u (i32.add (local.get $wa2) (local.get $i))))
+      (if (i32.ne (local.get $c1) (local.get $c2))
+        (then
+          (global.set $eax (i32.sub (local.get $c1) (local.get $c2)))
+          (br $done)))
+      (br_if $done (i32.eqz (local.get $c1)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br_if $compare (i32.lt_u (local.get $i) (local.get $arg2)))))
+    ;; cdecl: the caller removes all three arguments.
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
   ;; 727: strcpy(dest, src) — cdecl
   (func $handle_strcpy (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $dst i32) (local $src i32) (local $ch i32) (local $i i32)
@@ -422,6 +479,45 @@
     (global.set $eax (call $wsprintf_impl
       (local.get $arg0) (local.get $arg1) (i32.add (global.get $esp) (i32.const 12))))
     ;; cdecl: only pop return address
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  ;; CRTDLL _vsnprintf(buffer, count, format, argptr) — cdecl.
+  ;;
+  ;; The shared formatter writes an unbounded temporary result. Copy at most
+  ;; count bytes into the caller's buffer and preserve the Win9x CRT behavior:
+  ;; a truncated result is not NUL-terminated and returns -1.
+  (func $handle__vsnprintf (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $scratch i32) (local $written i32) (local $copy_len i32)
+    (if (i32.or (i32.eqz (local.get $arg0)) (i32.eqz (local.get $arg2)))
+      (then
+        (global.set $eax (i32.const -1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+        (return)))
+    ;; Installer-era CRT log messages are small; 64 KiB gives the existing
+    ;; unbounded formatter ample headroom before the bounded copy below.
+    (local.set $scratch (call $heap_alloc (i32.const 65536)))
+    (if (i32.eqz (local.get $scratch))
+      (then
+        (global.set $eax (i32.const -1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+        (return)))
+    (local.set $written
+      (call $wsprintf_impl (local.get $scratch) (local.get $arg2) (local.get $arg3)))
+    (local.set $copy_len
+      (select (local.get $arg1) (local.get $written)
+        (i32.gt_u (local.get $written) (local.get $arg1))))
+    (if (local.get $copy_len)
+      (then
+        (call $memcpy (call $g2w (local.get $arg0))
+          (call $g2w (local.get $scratch)) (local.get $copy_len))))
+    (if (i32.lt_u (local.get $written) (local.get $arg1))
+      (then
+        (call $gs8 (i32.add (local.get $arg0) (local.get $written)) (i32.const 0))
+        (global.set $eax (local.get $written)))
+      (else (global.set $eax (i32.const -1))))
+    (call $heap_free (local.get $scratch))
+    ;; cdecl: the caller removes all four arguments.
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 

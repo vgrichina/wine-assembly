@@ -65,7 +65,45 @@ function jhash(cs, ip) {
   return (Math.imul((((cs & 0xFFFF) << 16) | (ip & 0xFFFF)) | 0, JTAB_HASH_MUL) >>> 16)
     & (JTAB_ENTRIES - 1);
 }
-const MEM_PAGES = ((JTAB_BASE + JTAB_SIZE + 0xFFFF) & ~0xFFFF) >> 16;
+// VGA plane store, four 64K planes plus a small control block.
+//
+// In chained mode 13h a byte written to A000:off is one pixel and lands in the
+// guest's own RAM, which is why video needed no modelling at all. Unchained
+// ("mode X") breaks that: the sequencer's map mask decides WHICH of four planes
+// a write reaches, so the same A000 offset names four different bytes and the
+// 64K window cannot hold them. The planes therefore live outside the 1MB the
+// guest can address, and only the unchained path ever touches them.
+//
+// The control block is in linear memory rather than in globals so that the host
+// can update it with a plain store into the shared buffer, and so the trace JIT
+// -- which builds its own module around the same helpers -- inherits it without
+// a new import.
+const VGA_CTL = (JTAB_BASE + JTAB_SIZE + 0xFFFF) & ~0xFFFF;
+const VGA_CTL_KEY = VGA_CTL + 0;    // VGA_KEY_ON while planar, else 0
+const VGA_CTL_MASK = VGA_CTL + 4;   // sequencer map mask, low 4 bits
+const VGA_CTL_LATCH = VGA_CTL + 16; // the four plane latches, one byte each
+// Counters, so "the picture is empty" can be told apart from "the guest never
+// wrote to it". Bumped only on the planar path, so a chained run pays nothing.
+const VGA_CTL_WRITES = VGA_CTL + 20;
+const VGA_CTL_READS = VGA_CTL + 24;
+// The graphics controller's nine registers, one word each, mirrored here by the
+// host on every write to port 0x3CF. All of them: an EGA 16-colour mode drives
+// set/reset, the bit mask and the ALU function on nearly every store, so the
+// subset mode X happens to need is not enough.
+const VGA_CTL_GC = VGA_CTL + 32;
+const VGA_PLANES = VGA_CTL + 0x100;
+const VGA_PLANE_SIZE = 0x10000;
+// The guard compares the key against `(lin & 0xF0000) | 1`, and the low bit is
+// there so that ZERO reliably means chained. Two callers -- gate.js and
+// fpu-check.js -- reset the machine with a whole-buffer `mem.fill(0)`, and a
+// guard that treated 0 as a valid key would then route every access in the low
+// 64K, which is where those suites put their test memory, into the plane store.
+// Making the off state the same value an empty memory already holds means no
+// caller has to know the control block exists.
+const VGA_KEY_OFF = 0;
+const VGA_KEY_ON = 0xA0001;
+
+const MEM_PAGES = ((VGA_PLANES + VGA_PLANE_SIZE * 4 + 0xFFFF) & ~0xFFFF) >> 16;
 
 // Effective-address kinds, in ModRM rm order for mod != 11. Kind 8 is the
 // mod=00,rm=110 special case: a bare disp16 with no base at all.
@@ -94,5 +132,8 @@ module.exports = {
   GUEST_RAM, GUEST_RAM_SIZE, THREAD_BASE, THREAD_SIZE, MEM_PAGES,
   RSTACK_BASE, RSTACK_ENTRIES, RSTACK_SIZE,
   JTAB_BASE, JTAB_ENTRIES, JTAB_SIZE, JTAB_HASH_MUL, jhash,
+  VGA_CTL, VGA_CTL_KEY, VGA_CTL_MASK, VGA_CTL_LATCH, VGA_CTL_GC,
+  VGA_CTL_WRITES, VGA_CTL_READS,
+  VGA_PLANES, VGA_PLANE_SIZE, VGA_KEY_OFF, VGA_KEY_ON,
   EA, EA_DEFAULT_SEG, EA_A32,
 };
