@@ -116,6 +116,160 @@
   (global $cache_inval_hits (mut i32) (i32.const 0))
   (global $cache_inval_page (mut i32) (i32.const 0))
 
+  ;; Occupancy of page chunks when they leave the directory. PAGE_CHUNK_BYTES
+  ;; is deliberately a worst-case reservation, but without these counters an
+  ;; app that exhausts the arena cannot tell us whether it needs more memory or
+  ;; whether most of that memory is merely empty tail space. Samples include
+  ;; collision/invalidation drops and every live page discarded by a full
+  ;; cache clear. The four buckets are cumulative upper bounds.
+  (global $page_chunk_samples (mut i32) (i32.const 0))
+  (global $page_chunk_used_total (mut i64) (i64.const 0))
+  (global $page_chunk_used_max (mut i32) (i32.const 0))
+  (global $page_chunk_le_4k (mut i32) (i32.const 0))
+  (global $page_chunk_le_8k (mut i32) (i32.const 0))
+  (global $page_chunk_le_12k (mut i32) (i32.const 0))
+  (global $page_chunk_le_16k (mut i32) (i32.const 0))
+  ;; Four size-class free lists. A freed chunk stores the next pointer in its
+  ;; first word. They are per-instance globals just like $thread_alloc; worker
+  ;; instances share memory but never share a decoded-code arena.
+  (global $page_chunk_free_4k (mut i32) (i32.const 0))
+  (global $page_chunk_free_8k (mut i32) (i32.const 0))
+  (global $page_chunk_free_12k (mut i32) (i32.const 0))
+  (global $page_chunk_free_16k (mut i32) (i32.const 0))
+  (global $page_chunk_grows (mut i32) (i32.const 0))
+  (global $page_chunk_reuses (mut i32) (i32.const 0))
+  (global $page_index_evict_cursor (mut i32) (i32.const 0))
+  (global $page_chunk_deferred (mut i32) (i32.const 0))
+  (global $page_chunk_deferred_class (mut i32) (i32.const 0))
+
+  ;; PAGE_DIR offset 12 packs the used byte count in the low 16 bits and the
+  ;; 4/8/12/16KB capacity class in bits 16..17. Used offsets remain u16 so the
+  ;; page index's existing 14-bit chunk offsets stay unchanged.
+  (func $page_desc_used (param $desc i32) (result i32)
+    (i32.and (local.get $desc) (i32.const 0xFFFF)))
+
+  (func $page_desc_class (param $desc i32) (result i32)
+    (i32.and (i32.shr_u (local.get $desc) (i32.const 16)) (i32.const 3)))
+
+  (func $page_chunk_bytes (param $class i32) (result i32)
+    (i32.shl (i32.add (local.get $class) (i32.const 1)) (i32.const 12)))
+
+  ;; Smallest class that can hold $needed, or -1 beyond the indexable 16KB.
+  (func $page_chunk_class_for (param $needed i32) (result i32)
+    (if (i32.le_u (local.get $needed) (i32.const 4096)) (then (return (i32.const 0))))
+    (if (i32.le_u (local.get $needed) (i32.const 8192)) (then (return (i32.const 1))))
+    (if (i32.le_u (local.get $needed) (i32.const 12288)) (then (return (i32.const 2))))
+    (if (i32.le_u (local.get $needed) (global.get $PAGE_CHUNK_BYTES))
+      (then (return (i32.const 3))))
+    (i32.const -1))
+
+  (func $page_chunk_put (param $chunk i32) (param $class i32)
+    (if (i32.eq (local.get $class) (i32.const 0))
+      (then
+        (i32.store (local.get $chunk) (global.get $page_chunk_free_4k))
+        (global.set $page_chunk_free_4k (local.get $chunk))
+        (return)))
+    (if (i32.eq (local.get $class) (i32.const 1))
+      (then
+        (i32.store (local.get $chunk) (global.get $page_chunk_free_8k))
+        (global.set $page_chunk_free_8k (local.get $chunk))
+        (return)))
+    (if (i32.eq (local.get $class) (i32.const 2))
+      (then
+        (i32.store (local.get $chunk) (global.get $page_chunk_free_12k))
+        (global.set $page_chunk_free_12k (local.get $chunk))
+        (return)))
+    (i32.store (local.get $chunk) (global.get $page_chunk_free_16k))
+    (global.set $page_chunk_free_16k (local.get $chunk)))
+
+  (func $page_chunk_alloc (param $class i32) (result i32)
+    (local $p i32) (local $size i32)
+    (if (i32.eq (local.get $class) (i32.const 0))
+      (then
+        (local.set $p (global.get $page_chunk_free_4k))
+        (if (local.get $p)
+          (then (global.set $page_chunk_free_4k (i32.load (local.get $p)))))))
+    (if (i32.eq (local.get $class) (i32.const 1))
+      (then
+        (local.set $p (global.get $page_chunk_free_8k))
+        (if (local.get $p)
+          (then (global.set $page_chunk_free_8k (i32.load (local.get $p)))))))
+    (if (i32.eq (local.get $class) (i32.const 2))
+      (then
+        (local.set $p (global.get $page_chunk_free_12k))
+        (if (local.get $p)
+          (then (global.set $page_chunk_free_12k (i32.load (local.get $p)))))))
+    (if (i32.eq (local.get $class) (i32.const 3))
+      (then
+        (local.set $p (global.get $page_chunk_free_16k))
+        (if (local.get $p)
+          (then (global.set $page_chunk_free_16k (i32.load (local.get $p)))))))
+    (if (local.get $p)
+      (then
+        (global.set $page_chunk_reuses
+          (i32.add (global.get $page_chunk_reuses) (i32.const 1)))
+        (return (local.get $p))))
+    (local.set $size (call $page_chunk_bytes (local.get $class)))
+    (if (i32.gt_u
+          (i32.add (global.get $thread_alloc) (local.get $size))
+          (i32.sub (global.get $THREAD_END) (i32.const 16384)))
+      (then (return (i32.const 0))))
+    (local.set $p (global.get $thread_alloc))
+    (global.set $thread_alloc (i32.add (global.get $thread_alloc) (local.get $size)))
+    (local.get $p))
+
+  ;; Dropping a page can happen from a store inside the page's own decoded
+  ;; block. Reusing that chunk before the block terminates would overwrite the
+  ;; interpreter stream under $ip. Nested synchronous dispatch has the same
+  ;; issue for the suspended outer block. Those rare chunks remain abandoned
+  ;; until the next arena reset; every other drop is immediately reusable.
+  (func $page_chunk_put_if_safe (param $chunk i32) (param $class i32)
+    (local $end i32)
+    (if (i32.eqz (local.get $chunk)) (then (return)))
+    (if (global.get $sync_msg_depth) (then (return)))
+    (local.set $end
+      (i32.add (local.get $chunk) (call $page_chunk_bytes (local.get $class))))
+    (if (i32.and
+          (i32.ge_u (global.get $ip) (local.get $chunk))
+          (i32.lt_u (global.get $ip) (local.get $end)))
+      (then (return)))
+    (call $page_chunk_put (local.get $chunk) (local.get $class)))
+
+  ;; A page that fills while $decode_run is extending it can still contain the
+  ;; first block that decode_run is about to execute. Retire the directory entry
+  ;; now, but wait until that block returns to $run before putting its chunk on
+  ;; a reusable free list. Only one can be pending: the failed publication ends
+  ;; the run immediately. Nested synchronous execution abandons the chunk just
+  ;; as the old bump allocator did, because an outer frame may still name it.
+  (func $page_chunk_reclaim_deferred
+    (if (i32.eqz (global.get $page_chunk_deferred)) (then (return)))
+    (if (global.get $sync_msg_depth) (then (return)))
+    (call $page_chunk_put
+      (global.get $page_chunk_deferred) (global.get $page_chunk_deferred_class))
+    (global.set $page_chunk_deferred (i32.const 0))
+    (global.set $page_chunk_deferred_class (i32.const 0)))
+
+  (func $page_chunk_sample (param $used i32)
+    (global.set $page_chunk_samples
+      (i32.add (global.get $page_chunk_samples) (i32.const 1)))
+    (global.set $page_chunk_used_total
+      (i64.add (global.get $page_chunk_used_total)
+        (i64.extend_i32_u (local.get $used))))
+    (if (i32.gt_u (local.get $used) (global.get $page_chunk_used_max))
+      (then (global.set $page_chunk_used_max (local.get $used))))
+    (if (i32.le_u (local.get $used) (i32.const 4096))
+      (then (global.set $page_chunk_le_4k
+        (i32.add (global.get $page_chunk_le_4k) (i32.const 1)))))
+    (if (i32.le_u (local.get $used) (i32.const 8192))
+      (then (global.set $page_chunk_le_8k
+        (i32.add (global.get $page_chunk_le_8k) (i32.const 1)))))
+    (if (i32.le_u (local.get $used) (i32.const 12288))
+      (then (global.set $page_chunk_le_12k
+        (i32.add (global.get $page_chunk_le_12k) (i32.const 1)))))
+    (if (i32.le_u (local.get $used) (global.get $PAGE_CHUNK_BYTES))
+      (then (global.set $page_chunk_le_16k
+        (i32.add (global.get $page_chunk_le_16k) (i32.const 1))))))
+
   ;; Retire the one compiled block that covers guest offset $off of the page
   ;; whose directory slot is $slot. Returns the offset one past the retired
   ;; block's last guest byte, so a range walk can skip the bytes it just dealt
@@ -270,11 +424,21 @@
     (global.set $cur_page_chunk (i32.const 0))
     (global.set $page_index_next (i32.const 0))
     (global.set $page_index_free (i32.const 0))
+    (global.set $page_index_evict_cursor (i32.const 0))
+    (global.set $page_chunk_free_4k (i32.const 0))
+    (global.set $page_chunk_free_8k (i32.const 0))
+    (global.set $page_chunk_free_12k (i32.const 0))
+    (global.set $page_chunk_free_16k (i32.const 0))
+    (global.set $page_chunk_deferred (i32.const 0))
+    (global.set $page_chunk_deferred_class (i32.const 0))
     (local.set $i (i32.const 0))
     (block $d (loop $s
       (br_if $d (i32.ge_u (local.get $i) (global.get $PAGE_DIR_ENTRIES)))
       (local.set $slot
         (i32.add (global.get $PAGE_DIR) (i32.mul (local.get $i) (i32.const 16))))
+      (if (i32.load (local.get $slot))
+        (then (call $page_chunk_sample
+          (call $page_desc_used (i32.load offset=12 (local.get $slot))))))
       (i32.store (local.get $slot) (i32.const 0))
       (i32.store offset=4 (local.get $slot) (i32.const 0))
       (i32.store offset=8 (local.get $slot) (i32.const 0))
@@ -286,14 +450,45 @@
   ;; thread's index arena is exhausted, which simply means the page does not
   ;; get compiled.
   (func $page_index_alloc (result i32)
-    (local $p i32)
+    (local $p i32) (local $n i32) (local $slot i32) (local $page i32)
     (if (global.get $page_index_free)
       (then
         (local.set $p (global.get $page_index_free))
         (global.set $page_index_free (i32.load (local.get $p)))
         (return (local.get $p))))
     (if (i32.ge_u (global.get $page_index_next) (global.get $PAGE_INDEX_SLOTS))
-      (then (return (i32.const 0))))
+      (then
+        ;; The old behaviour simply declined every new page once all 128
+        ;; indexes were live. Frequent arena overflows accidentally hid that
+        ;; on Diablo II by clearing the directory; compact chunks remove those
+        ;; clears, so make index pressure explicit and bounded. Evict one
+        ;; non-current directory entry with a clock walk, then consume the
+        ;; index $page_dir_drop put on the free list.
+        (block $found (loop $scan
+          (br_if $found (i32.ge_u (local.get $n) (global.get $PAGE_DIR_ENTRIES)))
+          (local.set $slot
+            (i32.add (global.get $PAGE_DIR)
+              (i32.mul (global.get $page_index_evict_cursor) (i32.const 16))))
+          (global.set $page_index_evict_cursor
+            (i32.and
+              (i32.add (global.get $page_index_evict_cursor) (i32.const 1))
+              (global.get $PAGE_DIR_MASK)))
+          (local.set $page (i32.load (local.get $slot)))
+          (if (i32.and
+                (i32.ne (local.get $page) (i32.const 0))
+                (i32.ne (local.get $page) (global.get $cur_page_base)))
+            (then
+              (global.set $cache_evicts
+                (i32.add (global.get $cache_evicts) (i32.const 1)))
+              (call $page_dir_drop (local.get $page))
+              (br $found)))
+          (local.set $n (i32.add (local.get $n) (i32.const 1)))
+          (br $scan)))
+        (if (i32.eqz (global.get $page_index_free))
+          (then (return (i32.const 0))))
+        (local.set $p (global.get $page_index_free))
+        (global.set $page_index_free (i32.load (local.get $p)))
+        (return (local.get $p))))
     (local.set $p
       (i32.add (global.get $PAGE_INDEX)
         (i32.mul (global.get $page_index_next) (global.get $PAGE_INDEX_BYTES))))
@@ -316,11 +511,14 @@
   ;; generation counter: a dropped page can no longer be named by the page
   ;; registers, so a stale chunk pointer is unreachable rather than merely
   ;; unlikely.
-  (func $page_dir_drop (param $page_base i32)
-    (local $slot i32) (local $idx i32)
+  (func $page_dir_drop_mode (param $page_base i32) (param $defer i32)
+    (local $slot i32) (local $idx i32) (local $chunk i32) (local $desc i32)
     (local.set $slot (call $page_dir_slot (local.get $page_base)))
     (if (i32.ne (i32.load (local.get $slot)) (local.get $page_base)) (then (return)))
     (local.set $idx (i32.load offset=4 (local.get $slot)))
+    (local.set $chunk (i32.load offset=8 (local.get $slot)))
+    (local.set $desc (i32.load offset=12 (local.get $slot)))
+    (call $page_chunk_sample (call $page_desc_used (local.get $desc)))
     (if (local.get $idx)
       (then
         (i32.store (local.get $idx) (global.get $page_index_free))
@@ -333,7 +531,24 @@
       (then
         (global.set $cur_page_base (i32.const 0))
         (global.set $cur_page_index (i32.const 0))
-        (global.set $cur_page_chunk (i32.const 0)))))
+        (global.set $cur_page_chunk (i32.const 0))))
+    (if (local.get $defer)
+      (then
+        (if (i32.and
+              (i32.eqz (global.get $sync_msg_depth))
+              (i32.eqz (global.get $page_chunk_deferred)))
+          (then
+            (global.set $page_chunk_deferred (local.get $chunk))
+            (global.set $page_chunk_deferred_class (call $page_desc_class (local.get $desc))))))
+      (else
+        (call $page_chunk_put_if_safe
+          (local.get $chunk) (call $page_desc_class (local.get $desc))))))
+
+  (func $page_dir_drop (param $page_base i32)
+    (call $page_dir_drop_mode (local.get $page_base) (i32.const 0)))
+
+  (func $page_dir_drop_deferred (param $page_base i32)
+    (call $page_dir_drop_mode (local.get $page_base) (i32.const 1)))
 
   ;; Give $page_base an index and a chunk, and leave the page registers loaded
   ;; on it. Returns 0 (and compiles nothing) if either resource is exhausted.
@@ -341,8 +556,8 @@
   ;; that $thread_arena_flush_if_safe and $clear_cache — which already know when
   ;; recycling decoded code is safe — keep covering it; $clear_cache calls
   ;; $page_dir_reset for exactly that reason.
-  (func $page_create (param $page_base i32) (result i32)
-    (local $slot i32) (local $idx i32) (local $chunk i32)
+  (func $page_create (param $page_base i32) (param $needed i32) (result i32)
+    (local $slot i32) (local $idx i32) (local $chunk i32) (local $class i32)
     (local.set $slot (call $page_dir_slot (local.get $page_base)))
     ;; The directory is direct-mapped, so a live page can be sitting in the slot
     ;; this one wants. Retire it properly instead of overwriting its index
@@ -353,23 +568,27 @@
         (call $page_dir_drop (i32.load (local.get $slot)))))
     (local.set $idx (call $page_index_alloc))
     (if (i32.eqz (local.get $idx)) (then (return (i32.const 0))))
-    (if (i32.gt_u
-          (i32.add (global.get $thread_alloc) (global.get $PAGE_CHUNK_BYTES))
-          (i32.sub (global.get $THREAD_END) (i32.const 16384)))
+    (local.set $class (call $page_chunk_class_for (local.get $needed)))
+    (if (i32.lt_s (local.get $class) (i32.const 0))
       (then
-        ;; No room for a chunk. Hand the index straight back rather than
-        ;; stranding it: the arena is about to be flushed anyway.
         (i32.store (local.get $idx) (global.get $page_index_free))
         (global.set $page_index_free (local.get $idx))
         (return (i32.const 0))))
-    (local.set $chunk (global.get $thread_alloc))
-    (global.set $thread_alloc
-      (i32.add (global.get $thread_alloc) (global.get $PAGE_CHUNK_BYTES)))
+    (local.set $chunk (call $page_chunk_alloc (local.get $class)))
+    (if (i32.eqz (local.get $chunk))
+      (then
+        ;; Hand the index straight back and ask the next safe block boundary to
+        ;; recycle the arena. The just-decoded block still runs from scratch.
+        (i32.store (local.get $idx) (global.get $page_index_free))
+        (global.set $page_index_free (local.get $idx))
+        (global.set $thread_flush_pending (i32.const 1))
+        (return (i32.const 0))))
     (call $page_index_clear (local.get $idx))
     (i32.store (local.get $slot) (local.get $page_base))
     (i32.store offset=4 (local.get $slot) (local.get $idx))
     (i32.store offset=8 (local.get $slot) (local.get $chunk))
-    (i32.store offset=12 (local.get $slot) (i32.const 0))
+    (i32.store offset=12 (local.get $slot)
+      (i32.shl (local.get $class) (i32.const 16)))
     (global.set $page_compiles (i32.add (global.get $page_compiles) (i32.const 1)))
     (global.set $cur_page_base (local.get $page_base))
     (global.set $cur_page_index (local.get $idx))
@@ -392,6 +611,8 @@
   (func $page_publish (param $start_eip i32) (param $tstart i32) (param $tend i32)
                       (param $guest_end i32) (result i32)
     (local $base i32) (local $slot i32) (local $used i32) (local $len i32)
+    (local $desc i32) (local $class i32) (local $needed i32)
+    (local $old_chunk i32) (local $new_chunk i32) (local $new_class i32)
     (local $src i32) (local $dst i32) (local $o i32) (local $olast i32)
     (local.set $len (i32.sub (local.get $tend) (local.get $tstart)))
     (if (i32.le_s (local.get $len) (i32.const 0)) (then (return (i32.const -1))))
@@ -406,18 +627,46 @@
       (then
         (if (i32.eqz (call $page_enter (local.get $base)))
           (then
-            (if (i32.eqz (call $page_create (local.get $base)))
+            (if (i32.eqz (call $page_create (local.get $base) (local.get $len)))
               (then (return (i32.const -1))))))))
     (local.set $slot (call $page_dir_slot (local.get $base)))
-    (local.set $used (i32.load offset=12 (local.get $slot)))
-    (if (i32.gt_u (i32.add (local.get $used) (local.get $len))
-                  (global.get $PAGE_CHUNK_BYTES))
+    (local.set $desc (i32.load offset=12 (local.get $slot)))
+    (local.set $used (call $page_desc_used (local.get $desc)))
+    (local.set $class (call $page_desc_class (local.get $desc)))
+    (local.set $needed (i32.add (local.get $used) (local.get $len)))
+    (if (i32.gt_u (local.get $needed) (global.get $PAGE_CHUNK_BYTES))
       (then
-        ;; The chunk is full. Retiring the page is the whole recovery: the next
-        ;; entry compiles it again from scratch, this time holding only the
-        ;; blocks still being executed.
-        (call $page_dir_drop (local.get $base))
+        ;; Rebuild around the still-hot subset on the next entry, as the fixed
+        ;; allocator did. The old chunk cannot be reused until decode_run's
+        ;; already-saved first block has executed, so retirement is deferred to
+        ;; the next safe return to $run.
+        (call $page_dir_drop_deferred (local.get $base))
         (return (i32.const -1))))
+    (if (i32.gt_u (local.get $needed) (call $page_chunk_bytes (local.get $class)))
+      (then
+        ;; A synchronous nested guest dispatch can have an outer decoded block
+        ;; suspended in this same chunk. Let this block run from scratch and
+        ;; grow on a later top-level miss instead of moving that live stream.
+        (if (global.get $sync_msg_depth) (then (return (i32.const -1))))
+        (local.set $new_class (call $page_chunk_class_for (local.get $needed)))
+        (local.set $new_chunk (call $page_chunk_alloc (local.get $new_class)))
+        (if (i32.eqz (local.get $new_chunk))
+          (then
+            (global.set $thread_flush_pending (i32.const 1))
+            (return (i32.const -1))))
+        (local.set $old_chunk (global.get $cur_page_chunk))
+        (memory.copy (local.get $new_chunk) (local.get $old_chunk) (local.get $used))
+        (i32.store offset=8 (local.get $slot) (local.get $new_chunk))
+        (i32.store offset=12 (local.get $slot)
+          (i32.or (i32.shl (local.get $new_class) (i32.const 16)) (local.get $used)))
+        (global.set $cur_page_chunk (local.get $new_chunk))
+        ;; No decoded block is executing while a top-level miss is being
+        ;; published. $decode_run adjusts its local first-block pointer when it
+        ;; observes this relocation.
+        (call $page_chunk_put (local.get $old_chunk) (local.get $class))
+        (global.set $page_chunk_grows
+          (i32.add (global.get $page_chunk_grows) (i32.const 1)))
+        (local.set $class (local.get $new_class))))
     (local.set $src (local.get $tstart))
     (local.set $dst (i32.add (global.get $cur_page_chunk) (local.get $used)))
     (block $cdone (loop $copy
@@ -447,7 +696,10 @@
         (i32.or (local.get $used) (global.get $PAGE_INDEX_COVER)))
       (local.set $o (i32.add (local.get $o) (i32.const 1)))
       (br $ms)))
-    (i32.store offset=12 (local.get $slot) (i32.add (local.get $used) (local.get $len)))
+    (i32.store offset=12 (local.get $slot)
+      (i32.or
+        (i32.shl (local.get $class) (i32.const 16))
+        (i32.add (local.get $used) (local.get $len))))
     (local.get $used))
 
   ;; Load the page registers for $page_base if it is already compiled.
@@ -634,7 +886,7 @@
     ;; whole cache and restart at $eip. The fresh decode will produce
     ;; valid threaded code. This recovers from rare corruption rather
     ;; than trapping with wasm "table index out of bounds".
-    (if (i32.ge_u (local.get $fn) (i32.const 431))
+    (if (i32.ge_u (local.get $fn) (i32.const 432))
       (then
         (call $host_log_i32 (i32.const 0xCAC4BAD0))
         (call $host_log_i32 (local.get $fn))
