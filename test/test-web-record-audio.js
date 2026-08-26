@@ -24,6 +24,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const http = require('http');
+const os = require('os');
 const path = require('path');
 const puppeteer = require('puppeteer');
 
@@ -81,8 +82,15 @@ async function main() {
       '--autoplay-policy=no-user-gesture-required',
     ],
   });
+  // The recorder's onstop synthesizes an <a download> and clicks it. Left
+  // alone that writes a real MP4 into the user's ~/Downloads on every run,
+  // and Chrome will not shut down while it is still bookkeeping one -- the
+  // test then hangs in browser.close() long after it has printed PASS.
+  const downloadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rec-audio-dl-'));
   try {
     const page = await browser.newPage();
+    await page.createCDPSession().then(session => session.send(
+      'Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: downloadDir }));
     const logs = [];
     page.on('console', message => logs.push(message.text()));
     page.on('pageerror', error => logs.push(`PAGEERROR ${error.message}`));
@@ -227,6 +235,7 @@ async function main() {
   } finally {
     await browser.close();
     if (server) server.close();
+    try { fs.rmSync(downloadDir, { recursive: true, force: true }); } catch (_) {}
   }
 }
 
