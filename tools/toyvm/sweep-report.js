@@ -132,9 +132,18 @@ function main() {
   // The blanks, with whatever the run last knew about them. This is the table
   // that gets shorter; it is worth having it generated rather than retyped.
   const blanks = rows.filter((r) => kind(r) === 'blank');
+  // The two named stops come first, because they are the two that mean
+  // something specific. "32-bit protected-mode code" is the declared blocker of
+  // this whole harness -- the guest reached a code segment with the D bit set,
+  // which is a second decoder and a 32-bit EIP through the block cache, and the
+  // run refuses rather than decoding 32-bit code as 16-bit. "CS names no GDT
+  // descriptor" is the honest version of a derail: a real CPU would have
+  // faulted, so something earlier loaded a selector we got wrong.
   const state = (r) => (!r.png ? `never finished (${r.failed || 'no capture'})`
-    : r.stuckAt ? `stuck at ${r.stuckAt}`
-      : r.blockedOnKey ? 'waiting for a key' : 'ran out of budget');
+    : r.blockedOn32 ? `32-bit protected-mode code at ${r.blockedOn32}`
+      : r.badSelector ? `CS names no GDT descriptor at ${r.badSelector}`
+        : r.stuckAt ? `stuck at ${r.stuckAt}`
+          : r.blockedOnKey ? 'waiting for a key' : 'ran out of budget');
   const blankRows = [...blanks, ...failed]
     .map((r) => `<tr><td class="l">${esc(r.name)}</td>`
       + `<td class="l">${esc(state(r))}</td>`
@@ -288,7 +297,11 @@ ${rows.map((r) => tile(r, files.get(r), live)).join('\n')}
 
 <section>
   <h2>What is still blank</h2>
-  <p class="sub">${blanks.length + failed.length} programs, and where each one stopped</p>
+  <p class="sub">${blanks.length + failed.length} programs, and where each one stopped${
+  blanks.filter((r) => r.blockedOn32).length
+    ? ` &mdash; ${blanks.filter((r) => r.blockedOn32).length} of them reached 32-bit `
+      + 'protected-mode code, which this decoder does not read and does not guess at'
+    : ''}</p>
   <div class="scroll"><table>
     <thead><tr><th class="l">program</th><th class="l">last known state</th><th>dispatches</th></tr></thead>
     <tbody>
