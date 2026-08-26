@@ -242,6 +242,15 @@ async function runDos(o) {
     shots = null, shotEvery = 20,
     mouse = [0, 0], cpu = 386, report = false, log = console.log, autoKey = false,
     tickScale = 1, sample = false, sampleAfter = 0, forceChained = false,
+    // How many handbacks at one address with nothing new on screen before the
+    // run is called hung. 0 turns the detector off, which is what to reach for
+    // when the question is whether a loop is stuck or merely long: a loop that
+    // re-decodes itself every iteration hands back at the same address for real
+    // reasons and looks identical to a spin from here.
+    stuckLimit = 200,
+    // The DOS command tail, verbatim. Several demos in this corpus name their
+    // own silent-mode switch on the screen they refuse to start from.
+    guestArgs = '',
     // One timer interrupt per this many dispatches. 100k is about 10ms of a
     // real 486, so it lands near the 18.2Hz the BIOS programs -- and a demo
     // that reprogrammed the PIT for music gets a slower clock than it asked
@@ -286,7 +295,7 @@ async function runDos(o) {
   // everything" default.
   if (info.allocTop !== undefined) machine.allocTop = info.allocTop;
   machine.imageTop = info.minTop;
-  machine.installEnvironment(path.basename(exe));
+  machine.installEnvironment(path.basename(exe), guestArgs);
   vm.setAll({ cs: info.cs, ip: info.ip, ss: info.ss, sp: info.sp, ds: info.ds, es: info.es });
   // The stack must hold a return address: a .COM-style `ret` exit lands on the
   // PSP's INT 20h. An EXE that ends with INT 21h/4C never touches it.
@@ -385,8 +394,8 @@ async function runDos(o) {
   let guestNs = 0n;
   let dispatched = 0, handbacks = 0, ints = 0, irqs = 0, shotN = 0, stuck = 0, stuckAt = null;
   let smcBreaks = 0;
-  let lastIrq = 0;
-  let lastKey = '', lastWritten = 0;
+  let lastIrq = 0, lastKbIrq = 0;
+  let lastKey = '', lastWritten = 0, lastRegs = 0;
   const entryHist = new Map();
   const ipSamples = new Map();
   const ipSampleLog = [];          // flat [dispatched, ip, dispatched, ip, ...]
@@ -589,9 +598,7 @@ async function runDos(o) {
     // the interrupted program zero instructions between interrupts. brainbug
     // spent 30M dispatches that way -- 3.6M interrupts, 8 dispatches apiece,
     // and the main loop never ran once.
-    const tvec = machine.timerVector();
-    if (tvec && dispatched - lastIrq >= irqEvery && (vm.get('flags') & 0x200)) {
-      lastIrq = dispatched;
+    const raise = (vec) => {
       const push = (v) => {
         const sp = (vm.get('sp') - 2) & 0xFFFF;
         vm.set('sp', sp);
@@ -602,10 +609,25 @@ async function runDos(o) {
       push(vm.get('cs'));
       push(vm.get('gip'));
       vm.set('flags', vm.get('flags') & ~0x300);       // IF and TF, as `int` does
-      const at = tvec << 2;
+      const at = vec << 2;
       vm.set('gip', vm.mem[at] | (vm.mem[at + 1] << 8));
       vm.set('cs', vm.mem[at + 2] | (vm.mem[at + 3] << 8));
       irqs++;
+    };
+    const tvec = machine.timerVector();
+    if (tvec && dispatched - lastIrq >= irqEvery && (vm.get('flags') & 0x200)) {
+      lastIrq = dispatched;
+      raise(tvec);
+    // IRQ1. A program with its own INT 9 handler reads the keyboard as
+    // hardware and never calls the BIOS, so answering INT 16h reaches it not at
+    // all -- BTW.EXE sits on a sound menu having made zero INT 16h calls in 11M
+    // dispatches. The machine decides whether there is anything to send and
+    // leaves the scancode where port 60h will find it; here we only deliver it,
+    // and only between traces where cs:gip is a real instruction boundary.
+    // Slower than the timer on purpose: this is a person typing.
+    } else if (dispatched - lastKbIrq >= irqEvery * 4 && (vm.get('flags') & 0x200)) {
+      const kvec = machine.keyboardIrq();
+      if (kvec) { lastKbIrq = dispatched; raise(kvec); }
     }
 
     // Keep the fullest frame. Sampled rather than continuous: scanning the
@@ -636,13 +658,26 @@ async function runDos(o) {
     // declares every one of them hung within 200 handbacks. brainbug.exe was
     // cut off after 0.6M of its 30M dispatches for exactly this reason, one
     // handback after the first interrupt it had ever been sent.
+    //
+    // The registers count too, and they are what stops the last false positive:
+    // a loop that writes into a paragraph some compiled region decoded hands
+    // control back on EVERY iteration, at the same address, with nothing on the
+    // console -- indistinguishable from a spin by address alone. IHANMUU.EXE
+    // was cut off after 0.5M of 30M dispatches inside a loop whose SI and BP
+    // were advancing the whole time, and runs to a full mode 13h screen without
+    // this. A real spin re-enters with the same registers it left with.
     const key = `${cs.toString(16)}:${vm.get('gip').toString(16)}`;
     const wrote = machine.con.written + irqs
       + (machine.videoMode === 3 ? conCells(machine.con) : 0);
-    stuck = (key === lastKey && wrote === lastWritten) ? stuck + 1 : 0;
+    let regs = 2166136261;
+    for (const n of ['ax', 'bx', 'cx', 'dx', 'si', 'di', 'bp', 'sp', 'ds', 'es']) {
+      regs = (Math.imul(regs, 16777619) ^ vm.get(n)) >>> 0;
+    }
+    stuck = (key === lastKey && wrote === lastWritten && regs === lastRegs) ? stuck + 1 : 0;
     lastKey = key;
     lastWritten = wrote;
-    if (stuck > 200) { stuckAt = key; break; }
+    lastRegs = regs;
+    if (stuckLimit && stuck > stuckLimit) { stuckAt = key; break; }
   }
 
   if (bestPng) keepBest();
@@ -726,6 +761,8 @@ async function main() {
     tickScale: Number(arg('tick-scale', 1)),
     irqEvery: count(arg('irq-every'), 100e3),
     dispatchesPerTick: count(arg('dispatches-per-tick'), 550e3),
+    stuckLimit: count(arg('stuck'), 200),
+    guestArgs: arg('args', ''),
   });
 
   // A text-mode program's picture is its console, not the graphics window --
@@ -735,6 +772,16 @@ async function main() {
   if (png) {
     if (r.surface.text) writeConsolePng(png, r.machine.con);
     else writePng(png, r.vm.mem, r.machine.palette, r.surface.geom);
+  }
+
+  // The text page as text. A screenshot of a menu is a picture of words, and
+  // the question being asked of it -- "what is this program waiting for" -- is
+  // answerable by grep only if the words come out as words.
+  if (flag('text')) {
+    const t = conText(r.machine.con);
+    console.log(`\ntext page (${r.machine.con.cols}x${r.machine.con.rows})`);
+    console.log(t ? t.split('\n').map(l => `  |${l}`).join('\n') : '  (blank)');
+    console.log('');
   }
 
   if (r.stuckAt) console.log(`stuck at ${r.stuckAt} -- no progress in 200 handbacks`);

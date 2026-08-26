@@ -470,7 +470,11 @@ function newConsole(mem) {
 // these is on a screen in this corpus; the negations matter, because "No sound
 // card" and "Sound card" differ by two characters and select opposite things.
 const SILENT_LABEL =
-  /\b(no|without|none|neither|not?)\s*(sound|music|sfx|audio|card|soundcard)?\b|^\s*(none|silence|silent|quit|exit|no)\b|pc[- ]?speaker|internal speaker|beeper|no thanks/i;
+  /\b(no|without|none|neither|not?)\s*(sound|music|sfx|audio|card|soundcard)?\b|^\s*(none|silence|silent|quit|exit|no)\b|pc[- ]?speaker|internal speaker|beeper|no thanks|just kidding|don'?t\s+(even\s+)?(own|have)|no\s*gus/i;
+
+// The BIOS video modes that are text. Only on one of these does a polled key
+// check get answered out of the menu reader.
+const TEXT_MODES = new Set([0, 1, 2, 3, 7]);
 
 // Scancodes for the characters the menu reader can produce. A program reading
 // only AL never looks at AH, but the ones taking the whole INT 16h word do.
@@ -533,6 +537,12 @@ class Machine {
     this.autoKeyScreen = null;   // the screen the last menu answer was read off
     this.autoKeyQueue = [];      // the rest of a multi-character typed answer
     this.autoKeyRead = 0;        // keys chosen by reading, not by rotating
+    // The keyboard as hardware: scancodes waiting to be delivered as IRQ1, and
+    // the one port 60h reads right now. See keyboardIrq.
+    this.kbQueue = [];
+    this.kbScan = 0;
+    this.kbFresh = false;   // set by IRQ1, cleared by the handler's port read
+    this.kbReads = 0;
     this.forceChained = !!opts.forceChained;
     this.mouse = { x: 160, y: 100, buttons: 0, dx: 0, dy: 0 };
     // A freshly loaded .EXE owns every paragraph up to the ceiling, so the
@@ -611,7 +621,7 @@ class Machine {
   // exactly that and all four print "[ERROR]: Can not init file manager..."
   // when the segment word is zero, because the scan runs off into memory that
   // never produces two NULs in a row.
-  installEnvironment(name) {
+  installEnvironment(name, tail = '') {
     const mem = this.mem;
     let at = ENV_SEG << 4;
     const put = (s) => { for (let i = 0; i < s.length; i++) mem[at++] = s.charCodeAt(i); mem[at++] = 0; };
@@ -625,6 +635,15 @@ class Machine {
     const psp = PSP_SEG << 4;
     mem[psp + 0x2C] = ENV_SEG & 0xFF;
     mem[psp + 0x2D] = (ENV_SEG >> 8) & 0xFF;
+    // The command tail, at PSP:80h: a length byte, the text, then a CR. It is
+    // a leading space in DOS because the separator between the name and the
+    // arguments is part of the tail. AMBIENT.EXE prints "MIDAS Error: NO GUS
+    // FOUND... USE 'AMBIENT /NO_SND' FOR SILENT MODE" and means it -- the
+    // switch is the only way past that screen.
+    const t = tail ? ` ${String(tail).trim()}` : '';
+    mem[psp + 0x80] = t.length & 0xFF;
+    for (let i = 0; i < t.length; i++) mem[psp + 0x81 + i] = t.charCodeAt(i) & 0xFF;
+    mem[psp + 0x81 + t.length] = 0x0D;
   }
 
   // --- the file side of DOS ------------------------------------------------
@@ -779,8 +798,18 @@ class Machine {
     // a single-character selector, then the label it selects.
     const opts = [];
     for (const line of lines) {
-      const re = /(?:^|\s{2,})[\[(]?([0-9A-Za-z])[\]).:)]\s*([^[(]{2,40})/g;
-      for (let m; (m = re.exec(line));) opts.push({ ch: m[1], label: m[2].trim() });
+      // A selector starts a line, follows a run of spaces, or follows a slash
+      // or comma -- CYCLE.EXE lays its whole menu out on one line as
+      // "(G)ravis / (O)thers / (N)one", and requiring two spaces missed every
+      // option after the first.
+      const re = /(?:^|\s{2,}|[/,]\s*)([[(]?)([0-9A-Za-z])[\]).:)](\s*)([^[(]{2,40})/g;
+      for (let m; (m = re.exec(line));) {
+        // "(N)one" puts the selector INSIDE the word, so the label as captured
+        // is "one" and reads as neither a yes nor a no. Put the letter back
+        // when nothing separates it from the rest.
+        const label = (m[1] === '(' && m[3] === '' ? m[2] + m[4] : m[4]).trim();
+        opts.push({ ch: m[2], label });
+      }
     }
     const silent = opts.find(o => SILENT_LABEL.test(o.label));
     if (silent) return key(silent.ch);
@@ -814,14 +843,41 @@ class Machine {
     if (shown !== this.autoKeyScreen) {
       this.autoKeyScreen = shown;
       const k = this.menuKey();
+      const say = (ks) => this.log(`autokey read "${ks.map(x =>
+        String.fromCharCode(x.al)).join('')}" off the screen`);
       if (Array.isArray(k)) {
         this.autoKeyRead++;
+        say(k);
         this.autoKeyQueue = k.slice(1);
         return k[0];
       }
-      if (k) { this.autoKeyRead++; return k; }
+      if (k) { this.autoKeyRead++; say([k]); return k; }
     }
-    return AUTO_KEYS[this.autoKeyAt++ % AUTO_KEYS.length];
+    const rot = AUTO_KEYS[this.autoKeyAt++ % AUTO_KEYS.length];
+    this.log(`autokey rotating: "${String.fromCharCode(rot.al)}"`);
+    return rot;
+  }
+
+  // A polled read (INT 16h AH=01h) asks "is anyone there", and answering it out
+  // of the rotation would be a disaster: a demo checks that once a frame to see
+  // whether to quit, and would be told yes on its first frame. So a poll
+  // manufactures a key only when the screen is TEXT and the menu reader
+  // recognises what is on it -- BTW.EXE and CYCLE.EXE both poll rather than
+  // block, and their sound menus were unanswerable until this. The key goes
+  // into the injected queue so the AH=00h read that follows gets the same one.
+  autoKeyPoll() {
+    if (!this.autoKey || this.keys.length) return;
+    if (!TEXT_MODES.has(this.videoMode)) return;
+    const shown = this.screenText().join('\n');
+    if (shown === this.autoKeyScreen) return;
+    this.autoKeyScreen = shown;
+    const k = this.menuKey();
+    if (!k) return;
+    const ks = Array.isArray(k) ? k : [k];
+    this.autoKeyRead++;
+    this.log(`autokey answered a polled menu with `
+      + `"${ks.map(x => String.fromCharCode(x.al)).join('')}"`);
+    this.keys.push(...ks);
   }
 
   // One typed line, terminated with CR LF, or null when nothing is waiting and
@@ -960,6 +1016,37 @@ class Machine {
   // exactly like a broken decoder. INT 1Ch is the same deal one level up: the
   // BIOS timer handler chains to it, so a program that only hooks 1Ch expects
   // the same call.
+  // Is there a keystroke to deliver as an IRQ1, and if so, leave its scancode
+  // where port 60h will read it. Returns the vector to raise, or 0.
+  //
+  // Only for a program that installed its own INT 9 handler: anything using the
+  // BIOS is served by int16 above, and sending it a hardware interrupt as well
+  // would put the same key in twice. Make code first, then break code, so a
+  // handler tracking which keys are held does not think one is stuck down.
+  keyboardIrq() {
+    if (!this.autoKey || !this.hookedVector(0x09)) return 0;
+    if (!this.kbQueue.length && !this.kbFill()) return 0;
+    this.kbScan = this.kbQueue.shift();
+    this.kbFresh = true;
+    return 0x09;
+  }
+
+  // Put the menu reader's answer on the wire as scancodes. Text mode only, so
+  // a demo polling for "any key to quit" over its own graphics is never told
+  // one arrived. The screen-change guard inside autoKeyPoll is what stops this
+  // firing again on the same screen; the read counter is only there so a tight
+  // polling loop does not rebuild the 2000-cell screen string every time round.
+  kbFill() {
+    if (!this.autoKey || !TEXT_MODES.has(this.videoMode)) return false;
+    this.autoKeyPoll();
+    const k = this.keys.shift();
+    if (!k) return false;
+    const sc = (k.ah & 0xFF) || 0x1C;
+    this.kbQueue.push(sc, sc | 0x80);
+    this.log(`autokey putting scancode ${sc.toString(16)} on the keyboard port`);
+    return true;
+  }
+
   timerVector() {
     if (this.hookedVector(0x08)) return 0x08;
     if (this.hookedVector(0x1C)) return 0x1C;
@@ -994,7 +1081,15 @@ class Machine {
     if (port === 0x3CE) return this.vga.gcIndex;
     if (port === 0x3D4 || port === 0x3B4) return this.vga.crtcIndex;
     if (port === 0x3CC) return this.vga.misc;
-    if (port === 0x60) return 0;            // keyboard data: no key down
+    // Keyboard data. A program with an INT 9 handler finds here what the IRQ
+    // just delivered; one that polls the port with no handler at all -- BTW.EXE
+    // makes zero INT 16h calls and hooks nothing -- drives the queue itself.
+    if (port === 0x60) {
+      if (this.kbFresh) { this.kbFresh = false; return this.kbScan; }
+      if (!this.kbQueue.length && (this.kbReads++ & 0xFFF) === 0) this.kbFill();
+      if (this.kbQueue.length) this.kbScan = this.kbQueue.shift();
+      return this.kbScan;
+    }
     if (port >= 0x40 && port <= 0x42) {
       this.clock.pit++;
       const ch = port - 0x40;
@@ -1526,6 +1621,7 @@ class Machine {
       return true;
     }
     if (ah === 0x01 || ah === 0x11) {
+      this.autoKeyPoll();
       const k = this.keys[0];
       // ZF set means "no key waiting". The caller reads it out of the flags the
       // IRET restores, so this has to land in the SAVED flags, not the live

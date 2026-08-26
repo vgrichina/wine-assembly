@@ -73,7 +73,7 @@ async function runOne(exe, png, o) {
   // clears the screen on its way out, is otherwise photographed empty.
   const r = await runDos({
     exe, variant: 'tailcall', budget: o.budget, cpu: o.cpu, log: () => {},
-    autoKey: o.autoKey, bestPng: png,
+    autoKey: o.autoKey, bestPng: png, guestArgs: o.guestArgs || '',
   });
   const text = r.bestSurface.text;
   return {
@@ -82,7 +82,7 @@ async function runOne(exe, png, o) {
     planar: !!r.video.planar, bpp: r.video.bpp,
     dispatched: r.dispatched,
     pixels: text ? 0 : r.bestScore, cells: text ? r.bestScore : r.text.cells,
-    written: r.text.written, stuckAt: r.stuckAt || null,
+    written: r.text.written, stuckAt: r.stuckAt || null, args: o.guestArgs || '',
     blockedOnKey: !!r.machine.blockedOnKey, autoKey: !!o.autoKey,
     // What the screen says, when it says anything. Worth recording alongside
     // the picture because a program that puts up two lines is usually telling
@@ -99,11 +99,19 @@ async function runOne(exe, png, o) {
 // running, not at its prompt.
 const score = (row) => (row.failed ? -1 : (row.pixels > 0 ? 1e6 + row.pixels : row.cells));
 
+// The command-line switch a screen tells you to use, or null. Anchored on the
+// verb so that a stray slash in ANSI art is not mistaken for an option.
+function switchNamed(screen) {
+  const m = /\b(?:use|try|run|start)\b[^\n]{0,60}?\s([/-][A-Za-z][\w-]{1,15})/i.exec(screen || '');
+  return m ? m[1].toLowerCase() : null;
+}
+
 // --- parent -----------------------------------------------------------------
 function child(exe, png, o) {
   return new Promise((resolve) => {
     const args = [__filename, `--one=${exe}`, `--png=${png}`,
-      `--dispatches=${o.budget}`, `--cpu=${o.cpu}`, ...(o.autoKey ? ['--auto-key'] : [])];
+      `--dispatches=${o.budget}`, `--cpu=${o.cpu}`, ...(o.autoKey ? ['--auto-key'] : []),
+      ...(o.guestArgs ? [`--args=${o.guestArgs}`] : [])];
     const p = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', err = '';
     p.stdout.on('data', (d) => { out += d; });
@@ -129,6 +137,7 @@ async function main() {
     timeout: Number(arg('timeout', 180)),
     jobs: Number(arg('jobs', 1)),
     autoKey: process.argv.slice(2).includes('--auto-key'),
+    guestArgs: arg('args', ''),
   };
 
   if (one) {
@@ -185,6 +194,18 @@ async function main() {
       const retry = await child(exe, png, { ...o, autoKey: true });
       if (score(retry) > score(first)) row = retry;
       else { row = first; await child(exe, png, o); }   // re-take the better frame
+    }
+    // A program that refuses to start will sometimes say how to make it start.
+    // AMBIENT.EXE prints `MIDAS Error: NO GUS FOUND... USE "AMBIENT /NO_SND"
+    // FOR SILENT MODE` and means every word of it -- with the switch it renders
+    // its picture. Lower-cased on the way in, because the message shouts and
+    // MIDAS's option parser is case sensitive.
+    const sw = !row.pixels && switchNamed(row.screen);
+    if (sw) {
+      const first = { ...row };
+      const retry = await child(exe, png, { ...o, autoKey: true, guestArgs: sw });
+      if (score(retry) > score(first)) row = retry;
+      else { row = first; await child(exe, png, { ...o, autoKey: o.autoKey }); }
     }
     if (row.png && !fs.existsSync(row.png)) { row.png = null; row.failed ||= 'no png'; }
     return row;
