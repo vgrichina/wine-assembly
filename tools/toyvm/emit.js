@@ -283,9 +283,20 @@ const CONDS = {
 
 // Shared tail: commit one successor. $arena is the arena address (0 = stop),
 // $guest is the guest IP to record either way.
+// A store that landed in a paragraph some compiled region decoded sets $smc=2,
+// and every arena address in flight is now suspect -- including the successor
+// this block is about to jump into. The flag cannot cut the block it fires in
+// (a handback mid-instruction resumes at the last block head, which would redo
+// the store), so the cut happens here instead, at the first block boundary
+// after it: $gip is already the guest address to resume at, so refusing the
+// arena successor is a correct and cheap handback. Without it a depacker that
+// falls straight through into the code it just wrote keeps running the bytes
+// that were there at decode time -- COROMER's second stage did exactly that and
+// ended up executing the interrupt vector table.
+const CONT = (arena) => `(select (i32.const 0) ${arena} (global.get $smc))`;
 const GO = (arena, guest) => `
   (global.set $gip ${guest})
-  (if ${arena}
+  (if ${CONT(arena)}
     (then (global.set $ip ${arena}))
     (else (global.set $left (global.get $steps)) (global.set $steps (i32.const -1))))`;
 
@@ -418,7 +429,7 @@ function genExtras() {
   const RET_BODY = `
   (global.set $gip (call $pop16))
   (local.set $t7 (call $rpop (global.get $gip)))
-  (if (local.get $t7)
+  (if ${CONT('(local.get $t7)')}
     (then (global.set $ip (local.get $t7)))
     (else (global.set $left (global.get $steps)) (global.set $steps (i32.const -1))))`;
   h('ret', 0, RET_BODY);
@@ -427,7 +438,7 @@ function genExtras() {
   (global.set $gip (call $pop16))
   (global.set $sp (i32.and (i32.add (global.get $sp) (local.get $t0)) (i32.const 0xFFFF)))
   (local.set $t7 (call $rpop (global.get $gip)))
-  (if (local.get $t7)
+  (if ${CONT('(local.get $t7)')}
     (then (global.set $ip (local.get $t7)))
     (else (global.set $left (global.get $steps)) (global.set $steps (i32.const -1))))
 `);
@@ -1420,7 +1431,7 @@ function genArithIO() {
   // entered through several hundred thousand times a frame.
   const GO_INDIRECT = `
   (local.set $t3 (call $jlook (global.get $gip)))
-  (if (local.get $t3)
+  (if ${CONT('(local.get $t3)')}
     (then (global.set $ip (local.get $t3)))
     (else (global.set $left (global.get $steps)) (global.set $steps (i32.const -1))))`;
   h('jmp_r16', 1, `
