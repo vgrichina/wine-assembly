@@ -308,13 +308,13 @@ assert(webApp.includes('lib/host-window.js?v=2'), 'web host should cache-bust dy
 assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
 assert(webApp.includes('lib/storage.js?v=169'), 'web host should cache-bust storage after Media Player association changes');
 assert(webApp.includes('lib/gdi-surface.js?v=2'), 'web host should load the canonical GDI surface module');
-assert(webApp.indexOf('lib/gdi-surface.js?v=2') < webApp.indexOf('lib/host-imports.js?v=205'),
+assert(webApp.indexOf('lib/gdi-surface.js?v=2') < webApp.indexOf('lib/host-imports.js?v=206'),
   'web host should load the GDI surface module before host imports');
-assert(webApp.includes('lib/host-imports.js?v=205'), 'web host should cache-bust the current host imports');
-assert(webApp.includes('lib/thread-manager.js?v=174'), 'web host should cache-bust multi-object wait scheduling');
+assert(webApp.includes('lib/host-imports.js?v=206'), 'web host should cache-bust the current host imports');
+assert(webApp.includes('lib/thread-manager.js?v=175'), 'web host should cache-bust multi-object wait scheduling');
 assert(webApp.includes('lib/compile-wat.js?v=169'), 'web host should cache-bust the snapshot-capable WAT compiler');
 assert(webApp.includes('lib/debug-thread-state.js?v=5'), 'web host should cache-bust whole-list cycle diagnostics');
-assert(webApp.includes('host.js?v=223'), 'web host should cache-bust host.js after the current source update');
+assert(webApp.includes('host.js?v=225'), 'web host should cache-bust host.js after the current source update');
 assert(hostJs.includes("static SOURCE_VERSION = '223'"), 'web host should cache-bust WASM artifacts and WAT source compilation');
 assert(hostJs.includes("const fetchOptions = debugFetch ? { cache: 'no-store' } : undefined;"),
   'debug sessions should select a no-store fetch policy');
@@ -364,6 +364,10 @@ assert(webApp.includes('Starting run slice=${runSlice}'), 'web launcher should l
 assert(!/function selectedRunSlice\(appKey\)\s*\{\s*return 100000;\s*\}/.test(webApp), 'slice dropdown should not be ignored');
 assert(webApp.includes("document.getElementById('slice-size-select')"), 'slice picker should drive the run-loop slice size');
 assert(webApp.includes('function hasWasmTailCalls()'), 'auto slice should detect no-tail-call browser dispatch');
+// Written as a fall-through onto halflife_uplink's arm, with a comment in
+// between, so match the next return after the label rather than one glued to it.
+assert(/case 'jazz2_demo':[\s\S]{0,600}?return 1000;/.test(webApp),
+  'Jazz 2 auto slice should keep its long title-to-level transition cooperative');
 assert(webApp.includes('return compatDispatch ? 100 : 25000;'), 'auto slice should cap Spider/card games for no-tail-call browsers');
 assert(webApp.includes('return compatDispatch ? 500 : 100000;'), 'auto slice should cap default apps for no-tail-call browsers');
 assert(webApp.includes('return compatDispatch ? Math.min(selected, autoSlice) : selected;'), 'manual slice should be clamped in no-tail-call browsers');
@@ -371,7 +375,9 @@ assert(!/case 'winamp':\s*return 1;/.test(webApp), 'Winamp auto slice should not
 assert(webApp.includes('function unlockRunningAudio()'), 'web canvas input should explicitly unlock running app audio');
 assert(/unlockRunningAudio\(\);\s*const \{ x: cx, y: cy \} = eventPoint\(e\);/.test(webApp), 'mouse input should resume audio before guest dispatch');
 assert(/unlockRunningAudio\(\);\s*const \{ x: cx, y: cy \} = eventPointFromClient/.test(webApp), 'touch input should resume audio before guest dispatch');
-assert(/unlockRunningAudio\(\);\s*renderer\.handleKeyDown\(vk\);/.test(webApp), 'keyboard input should resume audio before guest dispatch');
+// handleKeyDown takes an options object now; the guarded property is that the
+// unlock still runs immediately before the dispatch, not the call's arity.
+assert(/unlockRunningAudio\(\);\s*renderer\.handleKeyDown\(vk[,)]/.test(webApp), 'keyboard input should resume audio before guest dispatch');
 assert(hostJs.includes('ecx=0x${hex32(ecx)}'), 'web runner should report runtime register heartbeat progress');
 for (const app of ['freecell', 'sol', 'cruel', 'golf']) {
   const re = new RegExp(`${app}:\\s*\\{[^}]*dlls:\\s*\\['binaries/entertainment-pack/cards\\.dll'\\]`, 's');
