@@ -246,6 +246,54 @@ async function main() {
       `bars-collapsed must follow innerHeight vs lvh: ${JSON.stringify(strip)}`);
     console.log();
     console.log('  strip ' + JSON.stringify(strip));
+
+    // The root scroller has to actually be unlocked, in every class
+    // combination that can coexist with scroll-collapse.
+    //
+    // WHY GENERATED FROM THE STYLESHEET rather than written out: this failed
+    // on the phone against a hand-written check that passed here. Three rules
+    // set `overflow: hidden` on body and one of them --
+    // body.no-debug.exclusive-fullscreen -- has two classes, so the
+    // single-class override lost the cascade. Chrome missed it because the
+    // test app was not in no-debug mode and that rule was never live. Reading
+    // the rules out of the page means the next one that appears is covered
+    // whether or not anyone remembers to come back here.
+    //
+    // Body's overflow is what propagates to the viewport when html is
+    // `visible`, so a body that computes `hidden` is a page that cannot
+    // scroll -- which is the whole feature.
+    const locked = await page.evaluate(() => {
+      const hiders = [];
+      for (const sheet of Array.from(document.styleSheets)) {
+        let rules;
+        try { rules = sheet.cssRules; } catch (_) { continue; }
+        for (const rule of Array.from(rules || [])) {
+          if (!rule.selectorText || !rule.style) continue;
+          if (rule.style.overflow !== 'hidden' && rule.style.overflowY !== 'hidden') continue;
+          for (const part of rule.selectorText.split(',')) {
+            const selector = part.trim();
+            // Only rules that target body itself; `body.x #child` hides the
+            // child, not the viewport.
+            if (!/^body(\.[\w-]+)*$/.test(selector)) continue;
+            hiders.push(selector.split('.').slice(1));
+          }
+        }
+      }
+      const original = document.body.className;
+      const bad = [];
+      for (const classes of hiders) {
+        document.body.className = classes.concat(['scroll-collapse']).join(' ');
+        const overflow = getComputedStyle(document.body).overflowY;
+        if (overflow === 'hidden') bad.push(classes.join('.') + ' -> ' + overflow);
+      }
+      document.body.className = original;
+      return { count: hiders.length, bad };
+    });
+    assert(locked.count >= 2,
+      `the stylesheet scan must find the body overflow rules: ${JSON.stringify(locked)}`);
+    assert.deepStrictEqual(locked.bad, [],
+      'scroll-collapse must out-specify every rule that locks body overflow');
+    console.log(`  scroller  ${locked.count} body-overflow rules, all overridden`);
     assert.strictEqual(strip.gutterShown, !barsAreDown,
       `the strip is shown exactly while a collapse is still available: ${JSON.stringify(strip)}`);
 

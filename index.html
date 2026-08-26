@@ -684,6 +684,18 @@
        taller size, so a stray swipe back up cannot resize the guest a second
        time. The spacer stays: removing the overflow can snap the bars back. */
     #scroll-collapse-spacer, #scroll-collapse-gutter { display: none; }
+    /* This has to out-specify EVERY rule that hides body overflow, and one of
+       them -- body.no-debug.exclusive-fullscreen -- carries two classes, so a
+       single-class selector here loses the cascade and the root scroller stays
+       locked. Measured on the phone: the strip was hit 173 times, the document
+       was a correct 1255 tall, and scrollY never left 0 because body computed
+       `overflow: hidden`. Chrome never showed it because the test app was not
+       in no-debug mode, so only two of the three rules were live.
+       Body's overflow is what propagates to the viewport when html is
+       `visible`, so this one declaration is the difference between a page that
+       can scroll and one that cannot. */
+    body.scroll-collapse.no-debug.exclusive-fullscreen,
+    body.scroll-collapse.page-fullscreen,
     body.scroll-collapse { overflow: visible; }
     body.scroll-collapse #scroll-collapse-spacer {
       display: block;
