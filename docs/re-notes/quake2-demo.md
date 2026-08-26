@@ -222,3 +222,77 @@ now use the emulator's exported canonical `$g2w` translator, which understands
 the direct image window, DIB arena, and sparse mappings. The focused regression
 maps that exact guest address to backing `0x10006050`, and the real Chrome
 gameplay run subsequently renders and moves without the fault.
+
+## Gameplay light flashes
+
+The initially reported harsh light flicker is present in the raw WebGL
+framebuffer, before the browser compositor sees it, but it is not random state
+or presentation corruption. A no-input Chrome probe intercepted 12 consecutive
+`SwapBuffers` calls (write sequences 45 through 56), read every 640x480 RGBA
+frame directly with `gl.readPixels`, and recorded the complete GL call stream,
+texture updates, and terminal raster state for each frame.
+
+The bright sequence visibly contains Quake's scripted opening explosions:
+fireball geometry and orange particles enter the scene as mean framebuffer
+luma rises from 13.46 to 32.25, then fade as it falls through 29.80, 27.21,
+24.48, 21.84, and 19.08. The peak is not an unexplained full-screen toggle. It
+coincides with three `glTexSubImage2D` writes to lightmap texture 1024, chiefly
+a 128x67 atlas strip; the preceding frames update 128x49 and 128x61 strips as
+the same visible blast grows. Captures are under
+`scratch/quake2-gl-flicker/flash/`.
+
+The GL state sequence remains structurally stable throughout. Every captured
+frame restores depth writes, `GL_LEQUAL`, normal alpha blending, and the same
+end-of-frame 2D state; there is no alternating depth, blend, cull, scissor,
+texture-enable, or presentation state. Write sequences are consecutive, so
+the compositor is neither repeating nor skipping between two surfaces.
+
+A later no-input control captures the explosion disappearing and the same
+view settling. Across its final six frames, mean luma stays between 13.99 and
+14.12 (under 0.9% spread); remaining changed pixels are the weapon idle
+animation and a few particles. Even frames with dozens of small updates to
+lightmap textures 1035-1037 remain in that brightness band, which rules out the
+subimage path itself randomly corrupting illumination. Those captures and the
+per-frame JSON traces are under `scratch/quake2-gl-flicker/settled/`.
+
+No renderer change is justified by this evidence: the conspicuous flashes are
+authentic scene content made harsher in wall time by the low guest frame rate.
+`test/test-opengl-frame-state.js` locks the generic invariants exercised here:
+lightmap subimages update only the selected texture, multiplicative blending
+and disabled depth writes do not leak past the lightmap pass, sparse bytes are
+copied unchanged, and one GPU present produces exactly one repaint and one FPS
+event.
+
+## Gameplay input
+
+Quake's keyboard path consumes the Set-1 scan code in Win32 message `lParam`,
+not merely the `wParam` virtual-key value. Browser keyboard events now carry
+their physical DOM `code` through the renderer so `WM_KEYDOWN`/`WM_KEYUP`
+include the scan, extended, previous-state, and transition fields. In the
+production GL acceptance, a trusted held `W` reached the host input queue as
+`WM_KEYDOWN lParam=0x00110001` and `WM_KEYUP lParam=0xc0110001`; the renderer's
+held-key state remained down after the message queue had drained, cleared after
+the release was consumed, and the forward step changed 6,660 of 307,200 pixels.
+
+The remaining mouse problem was at the browser boundary. An API trace of real
+gameplay shows Quake calling `SetCursorPos(159,119)`, `ClipCursor`, and
+`ShowCursor(FALSE)`, then polling `GetCursorPos` continuously. The virtual
+Win32 cursor honored those calls, but the physical DOM cursor stayed absolute:
+after Quake recentered its virtual point, the next DOM coordinate was measured
+against a centre the physical cursor had never visited. Mouse look therefore
+accelerated incorrectly and stopped at the browser edge.
+
+The browser now requests pointer lock from a trusted canvas mouse-down only
+when an exclusive guest presentation has an active `ClipCursor` region. While
+locked, `movementX/Y` is scaled into logical-canvas space and applied relative
+to the guest cursor that `SetCursorPos` controls, then passes through the normal
+mapped `WM_MOUSEMOVE` path. Releasing `ClipCursor` or running an ordinary
+desktop window retains absolute mouse behavior. The renderer regression covers
+the inverse transform at 2x scale, explicit guest recentering between samples,
+Win32 queue coordinates, and the inactive-clip negative control.
+
+`test/test-quake2-input-web.js` drives the exact dropdown
+`+set vid_ref gl +menu_main` path with trusted browser events. Its final run
+recorded the active `[0,0,639,480]` clip, acquired real pointer lock, routed six
+nonzero relative samples, visibly changed the camera, and saved the input queue,
+mouse deltas, and screenshots under `scratch/quake2-input-web/`.

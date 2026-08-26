@@ -87,6 +87,7 @@ UNIT=(
   test/test-gpu-backend.js
   test/test-keyboard-message-lparam.js
   test/test-opengl-fixed-function.js
+  test/test-opengl-frame-state.js
   test/test-opengl-swapbuffers.js
   test/test-renderer-dialog-button-queue.js
   test/test-nc-flags-message-wake.js
@@ -202,6 +203,7 @@ UNIT=(
   test/test-renderer-input-cursor.js
   test/test-renderer-mouse-drag-mask.js
   test/test-renderer-letterbox-input.js
+  test/test-relative-mouse-input.js
   test/test-renderer-dialog-caption-drag.js
   test/test-renderer-shell-dialog.js
   test/test-renderer-multi-app-modal.js
@@ -373,6 +375,7 @@ E2E=(
   test/test-quake2-gl-switch-web.js
   test/test-quake2-gl-web.js
   test/test-quake2-menu-keys-web.js
+  test/test-quake2-input-web.js
   test/test-jazz2-demo-web.js
   test/test-diablo2-demo-installer.js
   test/test-diablo2-demo-installed.js
