@@ -27,6 +27,10 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   const fixups = [];             // { wordIndex, ip }
   const pending = [entryIp & 0xFFFF];
   const unimplemented = new Set();
+  // Every byte this compile DECODED, as linear [from, to) ranges. The host
+  // marks them in isa.CODE_BITMAP so a later store into any of them is seen for
+  // what it is: a program rewriting code that has already been compiled.
+  const covered = [];
 
   while (pending.length) {
     const blockIp = pending.pop();
@@ -86,6 +90,10 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
       cur = d.nextIp;
       if (d.endsBlock) break;
     }
+    // The block's extent. `cur` can have wrapped past 0xFFFF on a segment that
+    // runs to the top, in which case the tail is simply not marked -- a missed
+    // mark costs a stale block, never a wrong one.
+    if (cur > blockIp) covered.push([((cs << 4) + blockIp) & 0xFFFFF, ((cs << 4) + cur) & 0xFFFFF]);
   }
 
   // Resolve. A target that never got compiled keeps its 0, which the branch
@@ -98,7 +106,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   }
 
   return {
-    words, blocks, fixups, unresolved,
+    words, blocks, fixups, unresolved, covered,
     unimplemented: [...unimplemented],
     entryAddr: blocks.get(entryIp & 0xFFFF),
     arenaBase,

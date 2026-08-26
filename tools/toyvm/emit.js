@@ -2313,6 +2313,15 @@ function helpers() {
   (if (i32.eq (i32.or (i32.and (local.get $l) (i32.const 0xF0000)) (i32.const 1))
               (i32.load (i32.const ${isa.VGA_CTL_KEY})))
     (then (call $vga_wr8 (local.get $l) (local.get $v)) (return)))
+  ;; A store into a paragraph that has already been COMPILED means the compiled
+  ;; form is now a lie -- see isa.CODE_BITMAP. The flag is all this does: the
+  ;; host throws the regions away on the next handback, which is where a packed
+  ;; program goes anyway (it reaches its unpacked entry through a far jump).
+  (if (i32.and (i32.load8_u (i32.add (i32.const ${isa.CODE_BITMAP})
+                                     (i32.shr_u (local.get $l) (i32.const 7))))
+               (i32.shl (i32.const 1) (i32.and (i32.shr_u (local.get $l) (i32.const 4))
+                                               (i32.const 7))))
+    (then (global.set $smc (i32.const 2))))
   (i32.store8 (local.get $l) (local.get $v)))
 
 ;; Step an offset to the next byte. A 16-bit offset of 0xFFFF wraps to 0x0000

@@ -103,7 +103,22 @@ const VGA_PLANE_SIZE = 0x10000;
 const VGA_KEY_OFF = 0;
 const VGA_KEY_ON = 0xA0001;
 
-const MEM_PAGES = ((VGA_PLANES + VGA_PLANE_SIZE * 4 + 0xFFFF) & ~0xFFFF) >> 16;
+// Which paragraphs of guest memory hold code that has been COMPILED. One bit
+// per 16 bytes covers the whole 1MB in 8KB. Every store checks its bit and, on
+// a hit, sets the $smc global -- the host then throws the compiled regions away
+// and decodes again from memory as it now is.
+//
+// This is not an optimisation, it is what makes a packed program run at all.
+// Most of this corpus ships compressed (LZEXE, PKLITE, DIET): the file is a
+// small depacker plus a blob, and the program that eventually runs was written
+// into memory by that depacker. Compiling a region ahead of the guest means the
+// bytes at 0100:0100 were decoded while they were still the depacker's, and
+// jumping back there ran the depacker's code for ever. uman.com spent 10M
+// dispatches doing exactly that, executing its own unpacked text screen.
+const CODE_BITMAP = (VGA_PLANES + VGA_PLANE_SIZE * 4 + 0xFFFF) & ~0xFFFF;
+const CODE_BITMAP_SIZE = GUEST_RAM_SIZE >> 7;      // one bit per 16 bytes
+
+const MEM_PAGES = ((CODE_BITMAP + CODE_BITMAP_SIZE + 0xFFFF) & ~0xFFFF) >> 16;
 
 // Effective-address kinds, in ModRM rm order for mod != 11. Kind 8 is the
 // mod=00,rm=110 special case: a bare disp16 with no base at all.
@@ -135,5 +150,6 @@ module.exports = {
   VGA_CTL, VGA_CTL_KEY, VGA_CTL_MASK, VGA_CTL_LATCH, VGA_CTL_GC,
   VGA_CTL_WRITES, VGA_CTL_READS,
   VGA_PLANES, VGA_PLANE_SIZE, VGA_KEY_OFF, VGA_KEY_ON,
+  CODE_BITMAP, CODE_BITMAP_SIZE,
   EA, EA_DEFAULT_SEG, EA_A32,
 };

@@ -238,7 +238,8 @@ function frameHash(mem, video) {
 async function runDos(o) {
   const {
     variant = 'tailcall', exe, budget = 200e6, slice = 2e6,
-    traceInt = false, traceFault = false, noCache = false, shots = null, shotEvery = 20,
+    traceInt = false, traceFault = false, traceEntry = 0, noCache = false,
+    shots = null, shotEvery = 20,
     mouse = [0, 0], cpu = 386, report = false, log = console.log, autoKey = false,
     tickScale = 1, sample = false, sampleAfter = 0, forceChained = false,
     // One timer interrupt per this many dispatches. 100k is about 10ms of a
@@ -303,6 +304,19 @@ async function runDos(o) {
   let compiles = 0, compiledWords = 0, arenaResets = 0;
   const jtab = new Int32Array(vm.mem.buffer, isa.JTAB_BASE, isa.JTAB_SIZE >> 2);
   const unimplemented = new Map();
+  const codeBits = new Uint8Array(vm.mem.buffer, isa.CODE_BITMAP, isa.CODE_BITMAP_SIZE);
+  codeBits.fill(0);
+
+  // Everything compiled is now suspect, because the guest wrote into code that
+  // had been compiled. Cheaper answers exist (invalidate just the paragraph),
+  // but this happens a handful of times in a run -- once when a packed program
+  // unpacks itself -- and being obviously right matters more than being quick.
+  function flushCompiled() {
+    regions.clear();
+    vm.set('rtop', 0);
+    jtab.fill(0);
+    codeBits.fill(0);
+  }
 
   function entryFor(cs, ip) {
     if (!noCache) {
@@ -328,6 +342,15 @@ async function runDos(o) {
     for (const at of prog.unimplemented) {
       const key = `${cs.toString(16)}:${at.toString(16)}`;
       unimplemented.set(key, (unimplemented.get(key) || 0) + 1);
+    }
+    // Mark what was decoded, so a store into it is noticed. Paragraph
+    // granularity, which is what $wr8 tests -- a store within 16 bytes of
+    // compiled code counts as touching it, and over-reporting only costs a
+    // recompile.
+    for (const [from, to] of prog.covered) {
+      for (let p = from >> 4; p <= (to - 1) >> 4; p++) {
+        codeBits[p >> 3] |= 1 << (p & 7);
+      }
     }
     // Publish every block head into the indirect-jump cache. Direct-mapped, so
     // a later block simply evicts an earlier one -- the key check in $jlook
@@ -438,6 +461,13 @@ async function runDos(o) {
       const k = `${cs.toString(16)}:${ip.toString(16)}`;
       entryHist.set(k, (entryHist.get(k) || 0) + 1);
     }
+    // The entries IN ORDER, which the histogram cannot show. A program that
+    // ends up executing its own data got there by a path, and the path is
+    // usually three or four blocks long -- uman.com reaches 100:10a from its
+    // first instruction and the histogram says only that both were entered.
+    if (traceEntry && handbacks < traceEntry) {
+      log(`  entry ${cs.toString(16)}:${ip.toString(16)}`);
+    }
     const entry = entryFor(cs, ip);
     const g0 = process.hrtime.bigint();
     vm.exports.run(entry, slice);
@@ -463,11 +493,20 @@ async function runDos(o) {
     // patched is the one it was about to fall into, so that is the cache entry
     // to drop -- a full flush would be correct too, and would re-decode the
     // whole program on every Turbo Pascal BIOS call.
+    // $smc = 2 is the other kind, and the broad one: some store landed in a
+    // paragraph that had already been compiled. That is a packed program
+    // unpacking itself, so everything compiled from before the unpack is stale
+    // and goes.
     if (vm.raw('smc')) {
+      const kind = vm.raw('smc');
       vm.set('smc', 0);
-      const ncs = vm.get('cs'), nip = vm.get('gip') & 0xFFFF;
-      for (const r of (regions.get(ncs) || [])) r.blocks.delete(nip);
-      jtab[isa.jhash(ncs, nip) * 2] = 0;
+      if (kind === 2) {
+        flushCompiled();
+      } else {
+        const ncs = vm.get('cs'), nip = vm.get('gip') & 0xFFFF;
+        for (const r of (regions.get(ncs) || [])) r.blocks.delete(nip);
+        jtab[isa.jhash(ncs, nip) * 2] = 0;
+      }
       smcBreaks++;
     }
 
@@ -674,6 +713,7 @@ async function main() {
     slice: count(arg('slice'), 2e6),
     traceInt: flag('trace-int'),
     traceFault: flag('trace-fault'),
+    traceEntry: flag('trace-entry') ? 40 : count(arg('trace-entry'), 0),
     noCache: flag('no-cache'),
     shots: arg('shots'),
     shotEvery: count(arg('shot-every'), 20),
@@ -697,6 +737,32 @@ async function main() {
   }
 
   if (r.stuckAt) console.log(`stuck at ${r.stuckAt} -- no progress in 200 handbacks`);
+
+  // What the guest is executing, read out of ITS memory rather than out of the
+  // file. dos-disasm.js loads the image statically, which answers a different
+  // question: half this corpus decrypts itself, relocates itself or runs code a
+  // child EXEC wrote, and for those the file says nothing about the address a
+  // run stopped at. `--disasm` with no argument takes the address the run ended
+  // on, which is the one being asked about nine times out of ten.
+  const dis = process.argv.slice(2).find(a => a === '--disasm' || a.startsWith('--disasm='));
+  if (dis) {
+    const { disasmAt } = require('../disasm');
+    const spec = dis.includes('=') ? dis.slice(9) : '';
+    const [addr, n] = spec.split(':').length > 2
+      ? [spec.split(':').slice(0, 2).join(':'), Number(spec.split(':')[2])]
+      : [spec, 24];
+    const [segS, offS] = (addr || `${r.vm.get('cs').toString(16)}:`
+      + `${r.vm.get('gip').toString(16)}`).split(':');
+    const seg = parseInt(segS, 16), off = parseInt(offS, 16);
+    const start = ((seg << 4) + off) & 0xFFFFF;
+    console.log(`\ndisassembly at ${seg.toString(16)}:${off.toString(16)} (live memory)`);
+    for (const line of disasmAt(r.vm.mem, start, start, n || 24, null, { bits: 16 })) {
+      const m = /^([0-9a-f]+)(\s+)(.*)$/.exec(line.trim());
+      if (!m) { console.log(line); continue; }
+      console.log(`  ${seg.toString(16)}:`
+        + `${(parseInt(m[1], 16) - (seg << 4)).toString(16).padStart(4, '0')}  ${m[3]}`);
+    }
+  }
   console.log(`\n${path.basename(exe)}  variant=${r.variant}  ${r.secs.toFixed(2)}s`);
   console.log(`  ${r.handbacks} handbacks, ${r.ints} interrupts`
     + `${r.irqs ? ` (+${r.irqs} timer IRQs delivered)` : ''}, ${r.compiles} traces `
