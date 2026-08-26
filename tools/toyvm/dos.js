@@ -558,6 +558,7 @@ class Machine {
     this.fileRoot = opts.fileRoot || null;
     this.files = new Map(); this.fileNext = 5;   // 0-4 are the standard handles
     this.filesOpened = []; this.filesMissed = []; this.filesCreated = [];
+    this.bytesRead = 0;
     // Files the guest created, by base name. Writes never reach the host disk.
     this.tempFiles = new Map();
     // EXEC: the parent contexts to return to, and the code the last child
@@ -1911,6 +1912,12 @@ class Machine {
         const room = Math.max(0, Math.min(got, this.mem.length - at));
         this.mem.set(f.buf.subarray(f.pos, f.pos + room), at);
         f.pos += got;
+        // Progress, for the stuck detector. A demo that unpacks a few hundred
+        // assets out of its own datafile hands back at one address in its
+        // extender for a long time with nothing on the console and the same
+        // registers each pass -- which is what a spin looks like from there,
+        // and is why AQUAPHOB.EXE was cut off 300 reads into its resource load.
+        this.bytesRead += got;
         r.set('ax', got);
         r.setResultCf(false);
         return true;

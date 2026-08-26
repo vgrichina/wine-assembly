@@ -30,7 +30,13 @@
 # give the node event loop a turn, so a TERM is queued and never delivered.
 set -u
 : "${SECS:=900}"
-: "${DISPATCHES:=30m}"
+# 300M, not 30M. A dispatch budget is a budget of GUEST WORK, and at 30M five
+# programs in this corpus had simply not got to their first frame yet -- they
+# were reported blank while working perfectly. BRIAN.EXE draws its picture at
+# 140M dispatches, DEFECT!.COM and CEN!FB.EXE fill the screen, DIZZY_FI.EXE
+# reaches a third of one. Nothing is spent on a program that finishes early;
+# the wall bound below is what actually caps the sweep.
+: "${DISPATCHES:=300m}"
 : "${EXTRA:=--auto-key}"
 CHILD=$((SECS / 6))
 exec timeout -s KILL "$SECS" node "$(dirname "$0")/shot-sweep.js" \

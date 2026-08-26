@@ -422,7 +422,7 @@ class DosSession {
   checkProgress(cs) {
     const { vm, machine } = this;
     const key = `${cs.toString(16)}:${vm.get('gip').toString(16)}`;
-    const wrote = machine.con.written + this.irqs
+    const wrote = machine.con.written + this.irqs + machine.bytesRead
       + (machine.videoMode === 3 && this.cells ? this.cells(machine.con) : 0);
     let regs = 2166136261;
     for (const n of ['ax', 'bx', 'cx', 'dx', 'si', 'di', 'bp', 'sp', 'ds', 'es']) {

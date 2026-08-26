@@ -274,10 +274,15 @@ async function runDos(o) {
 
   while (session.dispatched < budget && !session.done) {
     session.step();
-    // Every 64th trip rather than every trip, and counted here rather than off
-    // session.handbacks: a slice that ends without handing back would leave
-    // that counter still and the deadline unread.
-    if (stopAt && (++steps & 63) === 0 && process.hrtime.bigint() >= stopAt) {
+    // Every trip. Sampling this every 64th was a real overrun and not a small
+    // one: a step is a whole slice, and a program whose loops the compiler
+    // cannot resolve spends most of its wall clock in JS compiling them, so 64
+    // steps is minutes rather than milliseconds. daretro.exe ran 693s against a
+    // 60s deadline that way. One hrtime read per handback is about 2% on the
+    // handback-heaviest program in the corpus, which is what a bound that holds
+    // costs.
+    steps++;
+    if (stopAt && process.hrtime.bigint() >= stopAt) {
       ranOutOfTime = true;
       break;
     }
