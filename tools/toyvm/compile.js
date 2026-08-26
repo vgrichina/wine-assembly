@@ -21,6 +21,12 @@ const { decodeOne, H } = require('./decode');
 function compileProgram(readByte, cs, entryIp, opts = {}) {
   const arenaBase = opts.arenaBase === undefined ? isa.THREAD_BASE : opts.arenaBase;
   const maxWords = opts.maxWords || (isa.THREAD_SIZE >> 2) - 16;
+  // Where this code segment actually starts, and how far the address bus goes.
+  // In real mode the first is cs<<4 and callers leave it alone; in protected
+  // mode the selector says nothing about the address and the base comes from
+  // the descriptor CS was loaded through.
+  const codeBase = opts.codeBase === undefined ? (cs << 4) : opts.codeBase;
+  const mask = opts.mask === undefined ? 0xFFFFF : opts.mask;
 
   const blocks = new Map();      // guest IP -> arena address
   const words = [];
@@ -60,7 +66,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
         break;
       }
 
-      const d = decodeOne(readByte, cs, cur);
+      const d = decodeOne(readByte, cs, cur, codeBase, mask);
       if (!d) {
         // An opcode we do not implement ends the trace and hands the guest IP
         // back, so the host can report exactly where coverage ran out instead
@@ -93,7 +99,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     // The block's extent. `cur` can have wrapped past 0xFFFF on a segment that
     // runs to the top, in which case the tail is simply not marked -- a missed
     // mark costs a stale block, never a wrong one.
-    if (cur > blockIp) covered.push([((cs << 4) + blockIp) & 0xFFFFF, ((cs << 4) + cur) & 0xFFFFF]);
+    if (cur > blockIp) covered.push([(codeBase + blockIp) & mask, (codeBase + cur) & mask]);
   }
 
   // Resolve. A target that never got compiled keeps its 0, which the branch

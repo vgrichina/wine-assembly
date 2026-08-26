@@ -160,9 +160,16 @@ function setCpuLevel(n) { cpuLevel = n; }
 // Decode exactly one instruction at cs:ip. `rd` reads one physical byte.
 // Returns { words, nextIp } or null if the opcode is not implemented yet --
 // partial coverage is the honest state of this thing and callers report it.
-function decodeOne(rd, cs, ip) {
+// `base` is CS's LINEAR base. It defaults to cs<<4, which is what real mode
+// means by a segment, and callers that are in protected mode pass the base out
+// of the descriptor instead -- there the selector says nothing about where the
+// bytes are.
+// `mask` is how far the address bus goes, and matches the VM's $linmask: a
+// program that has opened A20 can hold code above 1MB, and wrapping its fetch
+// at 1MB would decode a different program.
+function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
   const start = ip;
-  const at = (n) => rd((((cs << 4) + ((start + n) & 0xFFFF)) & 0xFFFFF));
+  const at = (n) => rd(((base + ((start + n) & 0xFFFF)) & mask));
   let n = 0;
   let segOverride = null;
   let repPrefix = null;   // 'rep' (F3) or 'repne' (F2)
@@ -200,17 +207,18 @@ function decodeOne(rd, cs, ip) {
   const repeatable = (op >= 0xA4 && op <= 0xAF && op !== 0xA8 && op !== 0xA9)
     || (cpuLevel >= 186 && op >= 0x6C && op <= 0x6F);
   if (repPrefix && !repeatable) return null;
-  // 0x67 also redirects the implicit addressing of the string ops, XLAT and the
-  // moffs MOVs -- none of which go through modrm(). Refusing them is the honest
-  // option; running the 16-bit version would read SI where the program meant
-  // ESI and look like it worked.
+  // 0x67 also redirects the implicit addressing of the port-string ops and
+  // XLAT, neither of which goes through modrm() and neither of which has a
+  // 32-bit twin here yet. Refusing them is the honest option; running the
+  // 16-bit version would read SI where the program meant ESI and look like it
+  // worked.
   //
-  // The counted-loop terminators E0-E3 used to be refused here for the same
-  // reason and are now decoded, because they are the one group in this list
-  // whose 32-bit form needs no new addressing: the counter is ECX, which the
-  // CX globals are already the low half of. See the `32` handler variants.
-  if (asize === 32 && ((op >= 0xA4 && op <= 0xAF) || (op >= 0x6C && op <= 0x6F)
-    || op === 0xD7)) return null;
+  // The counted-loop terminators E0-E3 and the A4-AF string ops were refused
+  // here for the same reason and are now decoded: both have real ESI/EDI/ECX
+  // handlers. `rep stosd` through EDI is how every DOS extender in this corpus
+  // clears its descriptor tables, so refusing it stopped fourteen demos one
+  // instruction into protected mode.
+  if (asize === 32 && ((op >= 0x6C && op <= 0x6F) || op === 0xD7)) return null;
   const words = [];
   // Arena addresses are not known until every block is laid out, so branch
   // handlers get a 0 placeholder and a fixup naming the guest IP it stands for.
@@ -551,7 +559,10 @@ function decodeOne(rd, cs, ip) {
       const name = { 0xA4: 'movs', 0xA6: 'cmps', 0xAA: 'stos', 0xAC: 'lods', 0xAE: 'scas' }[op & ~1];
       if (name === 'movs' || name === 'stos') writesMem = true;
       const src = segOverride === null ? 3 : segOverride;   // DS by default
-      let hn = `${name}${sfx}`;
+      // The address-size prefix picks the ESI/EDI/ECX-indexed twin of the same
+      // handler. It is a separate axis from the data width: `rep stosd` with a
+      // 0x67 in front stores dwords through EDI and counts in ECX.
+      let hn = `${name}${sfx}${asize === 32 ? '32' : ''}`;
       if (repPrefix) {
         // REP and REPE are the same encoding; for MOVS/STOS/LODS there is only
         // the one repeat form, so F2 and F3 both land on it.
@@ -729,22 +740,49 @@ function decodeOne(rd, cs, ip) {
         else { writesMem = true; words.push(H[`xadd_rm${w}`], packEa(m), m.disp); }
         break;
       }
-      // Group 7. Only /4 SMSW is here: reading the machine status word says
-      // "real mode", which is true. The forms that WRITE system state -- LMSW,
-      // LGDT, LIDT -- are left unimplemented on purpose, so a program that
-      // really does switch mode is reported instead of run in the wrong one.
-      if (op2 === 0x01) {
+      // Group 6: SLDT /0, STR /1, LLDT /2, LTR /3, VERR /4, VERW /5. An
+      // extender sets up a task register and an LDT on its way into protected
+      // mode whether or not it ever task-switches, so these have to be
+      // accepted; only LLDT has an effect worth modelling, because a selector
+      // with the table-indicator bit set is resolved through the LDT it names.
+      // There is no task switching here, so TR is storage.
+      if (op2 === 0x00) {
         const m = modrm();
-        if (m.reg !== 4) return null;
-        if (m.isReg) words.push(H.smsw_r16, m.rm & 7);
-        else words.push(H.smsw_m16, packEa(m), m.disp);
+        if (m.reg > 5) return null;
+        const nm = ['sldt', 'str', 'lldt', 'ltr', 'verr', 'verw'][m.reg];
+        if (m.isReg) words.push(H[`${nm}_r`], m.rm & 7);
+        else { if (m.reg < 2) writesMem = true; words.push(H[`${nm}_m`], packEa(m), m.disp); }
         break;
       }
-      // MOV r32, CRn. The mirror image (0F 22) is a mode switch and is not here.
-      if (op2 === 0x20) {
+      // Group 7: LGDT /2, LIDT /3, SMSW /4, LMSW /6. Reading the machine status
+      // word is what nine corpus programs open with; the rest of the group is
+      // the protected-mode switch, which fourteen of them perform.
+      if (op2 === 0x01) {
+        const m = modrm();
+        if (m.reg === 4) {
+          if (m.isReg) words.push(H.smsw_r16, m.rm & 7);
+          else words.push(H.smsw_m16, packEa(m), m.disp);
+          break;
+        }
+        // LMSW takes the low four bits of CR0 only, and cannot clear PE --
+        // which is the 286 compatibility rule, and also why nothing here has
+        // to model leaving protected mode.
+        if (m.reg === 6) {
+          if (m.isReg) words.push(H.lmsw_r16, m.rm & 7);
+          else words.push(H.lmsw_m16, packEa(m), m.disp);
+          break;
+        }
+        if (m.reg !== 2 && m.reg !== 3) return null;
+        if (m.isReg) return null;   // no register form exists
+        words.push(H[`${m.reg === 2 ? 'lgdt' : 'lidt'}${opsize}`], packEa(m), m.disp);
+        break;
+      }
+      // MOV r32, CRn and MOV CRn, r32.
+      if (op2 === 0x20 || op2 === 0x22) {
         const m = modrm();
         if (!m.isReg) return null;
-        words.push(H.mov_r_cr, (m.rm & 7) | ((m.reg & 7) << 4));
+        words.push(op2 === 0x20 ? H.mov_r_cr : H.mov_cr_r,
+          (m.rm & 7) | ((m.reg & 7) << 4));
         break;
       }
       return null;

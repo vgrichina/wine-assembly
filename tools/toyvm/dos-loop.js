@@ -55,15 +55,22 @@ class CodeCache {
   }
 
   // Drop one block: the guest patched the instruction it was about to run.
-  invalidate(cs, ip) {
-    for (const r of (this.regions.get(cs) || [])) r.blocks.delete(ip & 0xFFFF);
+  invalidate(cs, ip, codeBase = (cs << 4)) {
+    for (const r of (this.regions.get(codeBase) || [])) r.blocks.delete(ip & 0xFFFF);
     this.jtab[isa.jhash(cs, ip & 0xFFFF) * 2] = 0;
   }
 
-  entryFor(cs, ip) {
+  // Regions are keyed by the code segment's LINEAR base, not by the selector.
+  // In real mode those carry the same information -- base is selector<<4 -- but
+  // in protected mode one selector value means whatever the descriptor says,
+  // and PMODE/W reuses the numbers it was just using as real-mode segments. Key
+  // on the selector there and a block compiled before the switch is handed back
+  // for an address that is now somewhere else entirely.
+  entryFor(cs, ip, codeBase = (cs << 4), mask = 0xFFFFF) {
     const vm = this.vm;
+    const key = codeBase;
     if (!this.noCache) {
-      for (const r of (this.regions.get(cs) || [])) {
+      for (const r of (this.regions.get(key) || [])) {
         const a = r.blocks.get(ip & 0xFFFF);
         if (a !== undefined) return a;
       }
@@ -81,6 +88,7 @@ class CodeCache {
     const prog = compileProgram((lin) => vm.mem[lin], cs, ip, {
       arenaBase: this.arenaNext,
       maxWords: (this.arenaEnd - this.arenaNext) >> 2,
+      codeBase, mask,
     });
     new Int32Array(vm.mem.buffer, prog.arenaBase, prog.words.length).set(prog.words);
     this.arenaNext += prog.words.length * 4;
@@ -107,8 +115,8 @@ class CodeCache {
       this.jtab[slot] = ((cs & 0xFFFF) << 16) | (bip & 0xFFFF);
       this.jtab[slot + 1] = addr;
     }
-    if (!this.regions.has(cs)) this.regions.set(cs, []);
-    this.regions.get(cs).push(prog);
+    if (!this.regions.has(key)) this.regions.set(key, []);
+    this.regions.get(key).push(prog);
     return prog.entryAddr;
   }
 }
@@ -167,7 +175,8 @@ class DosSession {
 
   // Is there any point calling step() again?
   get done() {
-    return this.machine.exited || this.machine.blockedOnKey || this.stuckAt !== null;
+    return this.machine.exited || this.machine.blockedOnKey || this.stuckAt !== null
+      || this.blockedOn32 !== undefined;
   }
 
   // Push an interrupt frame in front of the guest's next instruction, exactly
@@ -262,7 +271,23 @@ class DosSession {
     // resolve turns into hundreds of thousands of them.
     if (this.hooks.onEntry) this.hooks.onEntry(cs, ip, this.handbacks);
 
-    const entry = this.cache.entryFor(cs, ip);
+    // CS's linear base and the address bus width, read fresh each slice: both
+    // change under the guest's feet when it switches to protected mode or opens
+    // A20, and both decide which bytes get decoded.
+    const codeBase = vm.exports.get_csb();
+    const mask = vm.exports.get_linmask();
+    // A 32-bit code segment is where this stops. Everything above is address
+    // arithmetic, which protected mode changes and this now follows; a D bit
+    // set changes the default operand and address size of every instruction in
+    // the segment, which is a second decoder, a 32-bit EIP through the block
+    // cache and the jump table, and is not here yet. Refusing is the same
+    // choice LGDT used to make one instruction earlier: report it, rather than
+    // decode 32-bit code as 16-bit and run something plausible-looking.
+    if (vm.exports.get_d32()) {
+      this.blockedOn32 = `${cs.toString(16)}:${ip.toString(16)}`;
+      return 'blocked32';
+    }
+    const entry = this.cache.entryFor(cs, ip, codeBase, mask);
     if (this.hooks.beforeSlice) this.hooks.beforeSlice();
     vm.exports.run(entry, this.slice);
     // $left is -1 when the slice ran to exhaustion and holds the unspent budget
@@ -287,7 +312,7 @@ class DosSession {
       const kind = vm.raw('smc');
       vm.set('smc', 0);
       if (kind === 2) this.cache.flush();
-      else this.cache.invalidate(vm.get('cs'), vm.get('gip'));
+      else this.cache.invalidate(vm.get('cs'), vm.get('gip'), vm.exports.get_csb());
       this.smcBreaks++;
     }
 
@@ -397,6 +422,7 @@ class DosSession {
     return {
       dispatched: this.dispatched, handbacks: this.handbacks, ints: this.ints,
       irqs: this.irqs, smcBreaks: this.smcBreaks, stuckAt: this.stuckAt,
+      blockedOn32: this.blockedOn32 === undefined ? null : this.blockedOn32,
       compiles: this.cache.compiles, compiledWords: this.cache.compiledWords,
       arenaResets: this.cache.arenaResets, unimplemented: this.cache.unimplemented,
       regions: this.cache.regions, jtab: this.cache.jtab,

@@ -796,68 +796,88 @@ const CMP_FLAGS = (w, a, b) => w === 32
 
 function genStrings() {
   const DELTA = (sz) => `(select (i32.const ${-sz}) (i32.const ${sz}) ${bit(F.DF)})`;
-  // SI/DI move as 16-bit quantities in 16-bit address mode, and the upper half
-  // of ESI/EDI must survive -- $rset16 merges rather than replaces.
-  const bump = (reg, sz) =>
-    `(call $rset16 (i32.const ${{ si: 6, di: 7 }[reg]})
-       (i32.add (call $rget16 (i32.const ${{ si: 6, di: 7 }[reg]})) ${DELTA(sz)}))`;
 
-  // body(w) produces one iteration; `rep` wraps it in a CX loop.
-  const BODIES = {
-    movs: (w, sz) => `
-    (call $wr${w} (i32.const 0) (call $rget16 (i32.const 7))
-      (call $rd${w} (local.get $t0) (call $rget16 (i32.const 6))))
+  // Everything below is generated twice, once per ADDRESS size. That is the
+  // only axis a 0x67 prefix moves: which registers index the strings and how
+  // wide the counter is. The data width is separate and already varies.
+  //
+  // In 16-bit addressing SI/DI move as 16-bit quantities and the upper half of
+  // ESI/EDI has to survive, which is why the index goes through $rset16 --
+  // that merges rather than replaces. In 32-bit addressing the whole of ESI and
+  // EDI is the index and the whole of it moves.
+  const forAsize = (a) => {
+    const g = a === 32 ? '$rget32' : '$rget16';
+    const st = a === 32 ? '$rset32' : '$rset16';
+    const idx = (reg) => `(call ${g} (i32.const ${{ si: 6, di: 7 }[reg]}))`;
+    const bump = (reg, sz) =>
+      `(call ${st} (i32.const ${{ si: 6, di: 7 }[reg]})
+         (i32.add ${idx(reg)} ${DELTA(sz)}))`;
+
+    // body(w) produces one iteration; `rep` wraps it in a count loop.
+    const BODIES = {
+      movs: (w, sz) => `
+    (call $wr${w} (i32.const 0) ${idx('di')}
+      (call $rd${w} (local.get $t0) ${idx('si')}))
     ${bump('si', sz)} ${bump('di', sz)}`,
-    stos: (w, sz) => `
-    (call $wr${w} (i32.const 0) (call $rget16 (i32.const 7)) (call $rget${w} (i32.const 0)))
+      stos: (w, sz) => `
+    (call $wr${w} (i32.const 0) ${idx('di')} (call $rget${w} (i32.const 0)))
     ${bump('di', sz)}`,
-    lods: (w, sz) => `
-    (call $rset${w} (i32.const 0) (call $rd${w} (local.get $t0) (call $rget16 (i32.const 6))))
+      lods: (w, sz) => `
+    (call $rset${w} (i32.const 0) (call $rd${w} (local.get $t0) ${idx('si')}))
     ${bump('si', sz)}`,
-    scas: (w, sz) => `
+      scas: (w, sz) => `
     (local.set $t2 (call $rget${w} (i32.const 0)))
-    (local.set $t3 (call $rd${w} (i32.const 0) (call $rget16 (i32.const 7))))
+    (local.set $t3 (call $rd${w} (i32.const 0) ${idx('di')}))
     ${CMP_FLAGS(w, '(local.get $t2)', '(local.get $t3)')}
     ${bump('di', sz)}`,
-    cmps: (w, sz) => `
-    (local.set $t2 (call $rd${w} (local.get $t0) (call $rget16 (i32.const 6))))
-    (local.set $t3 (call $rd${w} (i32.const 0) (call $rget16 (i32.const 7))))
+      cmps: (w, sz) => `
+    (local.set $t2 (call $rd${w} (local.get $t0) ${idx('si')}))
+    (local.set $t3 (call $rd${w} (i32.const 0) ${idx('di')}))
     ${CMP_FLAGS(w, '(local.get $t2)', '(local.get $t3)')}
     ${bump('si', sz)} ${bump('di', sz)}`,
-  };
+    };
 
-  for (const [name, body] of Object.entries(BODIES)) {
-    for (const w of [8, 16, 32]) {
-      const sz = w >> 3;
-      const suffix = { 8: 'b', 16: 'w', 32: 'd' }[w];
-      // Plain form: operand is the source segment index (ignored by STOS/SCAS).
-      h(`${name}${suffix}`, 1, `
+    const asfx = a === 32 ? '32' : '';
+    const count = a === 32 ? '$ecx32' : '$cx16';
+    const dec = a === 32 ? '$ecxdec' : '$cxdec';
+
+    for (const [name, body] of Object.entries(BODIES)) {
+      for (const w of [8, 16, 32]) {
+        const sz = w >> 3;
+        const suffix = { 8: 'b', 16: 'w', 32: 'd' }[w];
+        // Plain form: operand is the source segment index (ignored by
+        // STOS/SCAS).
+        h(`${name}${suffix}${asfx}`, 1, `
   ${ops(1)}
   ${body(w, sz)}
 `);
 
-      // REP forms run the whole count inside one dispatch, which is exactly
-      // what the production interpreter's REP handlers do -- and is the reason
-      // a fold like this is worth anything: the loop never pays dispatch again.
-      // CX is the meter, so a super-op like this must also charge the host's
-      // step budget; here that is $steps, decremented per element.
-      const isCompare = name === 'scas' || name === 'cmps';
-      for (const rep of (isCompare ? ['rep', 'repne'] : ['rep'])) {
-        const zWant = rep === 'rep' ? 1 : 0;
-        h(`${rep}_${name}${suffix}`, 1, `
+        // REP forms run the whole count inside one dispatch, which is exactly
+        // what the production interpreter's REP handlers do -- and is the
+        // reason a fold like this is worth anything: the loop never pays
+        // dispatch again. The count register is the meter, so a super-op like
+        // this must also charge the host's step budget; here that is $steps,
+        // decremented per element.
+        const isCompare = name === 'scas' || name === 'cmps';
+        for (const rep of (isCompare ? ['rep', 'repne'] : ['rep'])) {
+          const zWant = rep === 'rep' ? 1 : 0;
+          h(`${rep}_${name}${suffix}${asfx}`, 1, `
   ${ops(1)}
   (block $done
     (loop $l
-      (br_if $done (i32.eqz (call $cx16)))
+      (br_if $done (i32.eqz (call ${count})))
       ${body(w, sz)}
-      (drop (call $cxdec))
+      (drop (call ${dec}))
       (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
       ${isCompare ? `(br_if $done (i32.ne ${bit(F.ZF)} (i32.const ${zWant})))` : ''}
       (br $l)))
 `);
+        }
       }
     }
-  }
+  };
+  forAsize(16);
+  forAsize(32);
 }
 
 // --- Shifts and rotates -----------------------------------------------------
@@ -1688,6 +1708,86 @@ function gen386() {
       (i32.eqz (i32.and (i32.shr_u (local.get $t0) (i32.const 4)) (i32.const 7)))))
 `);
 
+  // Group 6. LLDT is the only one that changes anything: it names a GDT
+  // descriptor whose base is where the LDT lives, and a selector with the
+  // table-indicator bit set is resolved through that instead. LTR and the
+  // VERR/VERW pair are accepted and inert -- there is no task switching here,
+  // and every descriptor this machine builds is readable and writable, so the
+  // access checks can only ever succeed.
+  for (const [nm, body] of [
+    ['sldt', '(call $rset16 %R% (global.get $ldt))'],
+    ['str', '(call $rset16 %R% (global.get $tr))'],
+    ['lldt', '(global.set $ldt %V%) (global.set $ldtb (call $gdtbase %V%))'],
+    ['ltr', '(global.set $tr %V%)'],
+    ['verr', `(global.set $flags (i32.or (global.get $flags) (i32.const ${1 << F.ZF})))`],
+    ['verw', `(global.set $flags (i32.or (global.get $flags) (i32.const ${1 << F.ZF})))`],
+  ]) {
+    const store = nm === 'sldt' || nm === 'str';
+    h(`${nm}_r`, 1, `
+  ${ops(1)}
+  ${body.replace(/%R%/g, '(local.get $t0)')
+    .replace(/%V%/g, '(call $rget16 (local.get $t0))')}
+`);
+    h(`${nm}_m`, 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  ${store
+    ? `(call $wr16 (local.get $t5) (local.get $t4) (global.get $${nm === 'str' ? 'tr' : 'ldt'}))`
+    : body.replace(/%V%/g, '(call $rd16 (local.get $t5) (local.get $t4))')}
+`);
+  }
+
+  // LMSW: the 286's half of the same switch, still emitted by extenders that
+  // want to boot on one. It writes the low four bits of CR0 and cannot clear
+  // PE -- once protected, a 286 stays protected, and no demo here tries.
+  h('lmsw_r16', 1, `
+  ${ops(1)}
+  (global.set $cr0 (i32.or (global.get $cr0)
+    (i32.and (call $rget16 (local.get $t0)) (i32.const 0xF))))
+`);
+  h('lmsw_m16', 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  (global.set $cr0 (i32.or (global.get $cr0)
+    (i32.and (call $rd16 (local.get $t5) (local.get $t4)) (i32.const 0xF))))
+`);
+
+  // MOV CRn, r32 -- the mode switch itself. Only CR0 is kept; a write to CR2 or
+  // CR3 is a paging setup this machine has nothing to page with, and is
+  // dropped rather than refused because the extenders that write them do so
+  // unconditionally on their way past.
+  //
+  // Setting PE does NOT reload any segment register, and that is not an
+  // omission: a real 386 keeps running on the descriptors already cached in
+  // the segment registers until something reloads them, which is exactly what
+  // the cached $__b bases here do. PMODE/W depends on it -- it builds 16-bit
+  // descriptors whose bases equal the real-mode segments it was just using, so
+  // the instructions between MOV CR0 and the far jump address the same bytes
+  // either side of the switch.
+  h('mov_cr_r', 1, `
+  ${ops(1)}
+  (if (i32.eqz (i32.and (i32.shr_u (local.get $t0) (i32.const 4)) (i32.const 7)))
+    (then (global.set $cr0 (call $rget32 (i32.and (local.get $t0) (i32.const 7))))))
+`);
+
+  // LGDT/LIDT. Six bytes: a 16-bit limit then a 32-bit base, of which a
+  // 16-bit-operand form keeps only the low 24 -- the 386 loads the fourth byte
+  // as zero there, and extenders rely on that to build a table pointer with a
+  // word-sized instruction.
+  for (const [nm, gb, gl] of [['lgdt', '$gdtb', '$gdtl'], ['lidt', '$idtb', '$idtl']]) {
+    for (const w of [16, 32]) {
+      h(`${nm}${w}`, 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  (global.set ${gl} (call $rd16 (local.get $t5) (local.get $t4)))
+  (global.set ${gb} (i32.and
+    (call $rd32 (local.get $t5) (i32.and (i32.add (local.get $t4) (i32.const 2))
+                                         (i32.const 0xFFFF)))
+    (i32.const ${w === 32 ? '0xFFFFFFFF' : '0xFFFFFF'})))
+`);
+    }
+  }
+
   // XADD (486): the destination gets dst+src and the source gets the OLD dst,
   // in that order. Reading both before writing either is the whole instruction
   // -- XADD AX,AX has to leave AX doubled, not squared.
@@ -2161,9 +2261,13 @@ function helpers() {
     isa.SEG.map(r => `(return (global.get $${r}))`));
   s += brTableFn('sbase', '(param $i i32)', '(result i32)',
     isa.SEG.map(r => `(return (global.get $${r}b))`));
+  // Loading CS also republishes the default operand size, since that lives in
+  // the descriptor CS came from and nothing else can change it.
   s += brTableFn('sset', '(param $i i32) (param $v i32)', '',
     isa.SEG.map(r => `(global.set $${r} (local.get $v))`
-      + ` (global.set $${r}b (call $segbase (local.get $v))) (return)`));
+      + ` (global.set $${r}b (call $segbase (local.get $v)))`
+      + (r === 'cs' ? ` (global.set $d32 (call $segd32 (local.get $v)))` : '')
+      + ` (return)`));
 
   // Effective address. Every form masks to 16 bits: the 8086 wraps an EA inside
   // its segment rather than carrying into the segment base.
@@ -2217,9 +2321,75 @@ function helpers() {
   // 20 address lines do.
   s += `
 ;; Selector to linear base. Real mode has no table to consult: the base IS the
-;; selector times sixteen, which is the whole of 8086 segmentation.
+;; selector times sixteen, which is the whole of 8086 segmentation. Protected
+;; mode reads it out of a descriptor instead, and the two have no arithmetic
+;; relationship -- which is why the base is cached per segment register rather
+;; than recomputed per access.
+;;
+;; Only the base is taken. Limits, and the protection the name refers to, are
+;; deliberately not modelled: every extender in this corpus builds flat or
+;; segment-sized descriptors and then runs its own code through them, so a
+;; limit check could only ever fire on a program that was already wrong. What
+;; a demo actually needs from protected mode is the address arithmetic.
 (func $segbase (param $v i32) (result i32)
-  (i32.shl (i32.and (local.get $v) (i32.const 0xFFFF)) (i32.const 4)))
+  (if (i32.eqz (i32.and (global.get $cr0) (i32.const 1)))
+    (then (return (i32.shl (i32.and (local.get $v) (i32.const 0xFFFF)) (i32.const 4)))))
+  ;; A null selector addresses nothing, and the low three bits are the
+  ;; requested privilege level and table indicator, not part of the index.
+  (if (i32.eqz (i32.and (local.get $v) (i32.const 0xFFF8))) (then (return (i32.const 0))))
+  ;; Past the table's own limit there is no descriptor, and reading one anyway
+  ;; is how a real-mode segment number that never went through a selector load
+  ;; -- 0x9bf0, say -- comes back with a plausible base and a random D bit.
+  ;; A real CPU faults; here the selector keeps its real-mode meaning, which is
+  ;; what it had a moment ago and is the reading that lets an extender running
+  ;; with PE still set but addressing conventional memory carry on.
+  (if (i32.gt_u (i32.and (local.get $v) (i32.const 0xFFF8))
+                (i32.and (global.get $gdtl) (i32.const 0xFFFF)))
+    (then (return (i32.shl (i32.and (local.get $v) (i32.const 0xFFFF)) (i32.const 4)))))
+  ;; Bit 2 is the table indicator: set means this selector indexes the LDT that
+  ;; LLDT named, clear means the GDT.
+  (call $descbase
+    (select (global.get $ldtb) (global.get $gdtb)
+            (i32.and (local.get $v) (i32.const 4)))
+    (local.get $v)))
+
+;; The base out of one descriptor, given the table it lives in. Split three
+;; ways across the eight bytes, which is the 286 layout with the 386's high
+;; byte bolted on the end.
+(func $descbase (param $table i32) (param $v i32) (result i32) (local $d i32)
+  (local.set $d (i32.and (i32.add (local.get $table)
+                                  (i32.and (local.get $v) (i32.const 0xFFF8)))
+                         (global.get $linmask)))
+  (i32.or (i32.or (i32.load16_u offset=2 (local.get $d))
+                  (i32.shl (i32.load8_u offset=4 (local.get $d)) (i32.const 16)))
+          (i32.shl (i32.load8_u offset=7 (local.get $d)) (i32.const 24))))
+
+;; LLDT's operand always names a GDT entry, whatever its own table bit says.
+(func $gdtbase (param $v i32) (result i32)
+  (if (i32.eqz (i32.and (local.get $v) (i32.const 0xFFF8))) (then (return (i32.const 0))))
+  (call $descbase (global.get $gdtb) (local.get $v)))
+
+;; The D/B bit of a descriptor: bit 6 of the granularity byte. On a code
+;; segment it selects the default operand and address size, which is the whole
+;; of what 32-bit protected mode means to a decoder.
+(func $segd32 (param $v i32) (result i32)
+  (if (i32.eqz (i32.and (global.get $cr0) (i32.const 1)))
+    (then (return (i32.const 0))))
+  (if (i32.eqz (i32.and (local.get $v) (i32.const 0xFFF8))) (then (return (i32.const 0))))
+  ;; No descriptor, no D bit -- see $segbase. Guessing one here is what made a
+  ;; real-mode segment look like a 32-bit code selector.
+  (if (i32.gt_u (i32.and (local.get $v) (i32.const 0xFFF8))
+                (i32.and (global.get $gdtl) (i32.const 0xFFFF)))
+    (then (return (i32.const 0))))
+  (i32.and (i32.shr_u
+             (i32.load8_u (i32.and (i32.add (i32.add
+                                              (select (global.get $ldtb) (global.get $gdtb)
+                                                      (i32.and (local.get $v) (i32.const 4)))
+                                              (i32.and (local.get $v) (i32.const 0xFFF8)))
+                                            (i32.const 6))
+                                   (global.get $linmask)))
+             (i32.const 6))
+           (i32.const 1)))
 
 (func $lin (param $seg i32) (param $off i32) (result i32)
   (i32.and (i32.add (call $sbase (local.get $seg)) (local.get $off))
@@ -3053,8 +3223,9 @@ ${[...Array(8).keys()].map(i => `(global $st${i} (mut f64) (f64.const 0))`).join
 (global $ftag (mut i32) (i32.const 0))
 (global $fsw (mut i32) (i32.const 0))
 (global $fcw (mut i32) (i32.const 0x037F))
-;; CR0 as this machine actually is: real mode (PE clear), ET set because the
-;; 386 encodings are available, no paging. Nothing writes it -- see smsw.
+;; CR0 as this machine starts: real mode (PE clear), ET set because the 386
+;; encodings are available, no paging. MOV CR0,r and LMSW write it, and setting
+;; PE is what puts $segbase on the descriptor path.
 (global $cr0 (mut i32) (i32.const 0x0010))
 ;; The FLAGS shape, defaulting to the 8086's. set_cpu raises it.
 (global $f_res (mut i32) (i32.const ${isa.FLAGS_RESERVED}))
@@ -3077,7 +3248,22 @@ ${[...Array(8).keys()].map(i => `(global $st${i} (mut f64) (f64.const 0))`).join
 ;; Derived state, so there is exactly one writer: $sset. Nothing else may
 ;; assign a segment global, including the host, whose set_es/set_cs/... exports
 ;; are routed through $sset for this reason.
-${isa.SEG.map(r => `(global $${r}b (mut i32) (i32.const 0))`).join('\n')}`;
+${isa.SEG.map(r => `(global $${r}b (mut i32) (i32.const 0))`).join('\n')}
+
+;; The descriptor tables, as LGDT/LIDT left them, and the D bit of whatever
+;; descriptor CS was last loaded from. $d32 is what makes a code segment
+;; 32-bit-by-default; it is read at DECODE time, so it is part of the block
+;; cache key rather than something a running block consults.
+(global $gdtb (mut i32) (i32.const 0))
+(global $gdtl (mut i32) (i32.const 0))
+(global $idtb (mut i32) (i32.const 0))
+(global $idtl (mut i32) (i32.const 0))
+(global $d32 (mut i32) (i32.const 0))
+;; LDT selector and the linear base it resolved to, plus the task register.
+;; Nothing switches tasks, so $tr is storage that STR can read back.
+(global $ldt (mut i32) (i32.const 0))
+(global $ldtb (mut i32) (i32.const 0))
+(global $tr (mut i32) (i32.const 0))`;
 
 function preamble() {
   const globals = STATE
@@ -3107,6 +3293,16 @@ ${globals}
 ${EXTRA_GLOBALS}
 ;; How wide the address bus is. See $linmask -- the host opens it up when the
 ;; guest takes an XMS handle and never narrows it again.
+;; The decoder needs CS's linear base, not its selector: in protected mode the
+;; two are unrelated, and fetching at selector<<4 reads a different part of
+;; memory entirely. $d32 goes with it because the default operand size is a
+;; property of the same descriptor and so is part of what a block was compiled
+;; against.
+${isa.SEG.map(r => `(func (export "get_${r}b") (result i32) (global.get $${r}b))`).join('\n')}
+(func (export "get_d32") (result i32) (global.get $d32))
+(func (export "get_cr0") (result i32) (global.get $cr0))
+(func (export "get_gdtb") (result i32) (global.get $gdtb))
+(func (export "get_gdtl") (result i32) (global.get $gdtl))
 (func (export "get_linmask") (result i32) (global.get $linmask))
 (func (export "set_linmask") (param $v i32) (global.set $linmask (local.get $v)))
 (func (export "set_cpu") (param $level i32)

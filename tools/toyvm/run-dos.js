@@ -260,7 +260,7 @@ async function runDos(o) {
     }
   }
   const {
-    dispatched, handbacks, ints, irqs, smcBreaks, stuckAt,
+    dispatched, handbacks, ints, irqs, smcBreaks, stuckAt, blockedOn32,
     compiles, compiledWords, arenaResets, unimplemented, regions, jtab,
   } = session.stats();
 
@@ -273,7 +273,7 @@ async function runDos(o) {
     guestSecs: Number(guestNs) / 1e9,
     dispatched, handbacks, ints, irqs, compiles, compiledWords, arenaResets,
     smcBreaks,
-    stuckAt, entryHist, unimplemented, ipSamples, ipSampleLog, regions,
+    stuckAt, blockedOn32, entryHist, unimplemented, ipSamples, ipSampleLog, regions,
     // A program that never put the adapter in a graphics mode has no frame to
     // count, and reading A000 anyway is how ACME-SUX.EXE and AKM_DOB.EXE came
     // back with ~61,700 "pixels" each while sitting in text mode the whole run.
@@ -369,6 +369,21 @@ async function main() {
   }
 
   if (r.stuckAt) console.log(`stuck at ${r.stuckAt} -- no progress in 200 handbacks`);
+  // Distinct from stuck: the guest is running fine, in a 32-bit code segment
+  // this decoder does not read. See dos-loop.js for why that is a stop rather
+  // than a best guess.
+  if (r.blockedOn32) console.log(`blocked at ${r.blockedOn32} -- 32-bit protected-mode code`);
+  // Only when the guest actually switched. Which descriptor table is live, and
+  // what CS resolved through, is the first question about any of these -- and
+  // "cs:ip=9bf0:1" alone cannot distinguish a selector from a paragraph.
+  const ex = r.vm.exports;
+  if (ex.get_cr0() & 1) {
+    const hx = (v) => v.toString(16);
+    console.log(`  protected mode: cr0=${hx(ex.get_cr0())} `
+      + `gdt=${hx(ex.get_gdtb())}+${hx(ex.get_gdtl())} `
+      + `cs=${hx(r.vm.get('cs'))} base=${hx(ex.get_csb())} `
+      + `${ex.get_d32() ? '32-bit' : '16-bit'} code`);
+  }
 
   // What the guest is executing, read out of ITS memory rather than out of the
   // file. dos-disasm.js loads the image statically, which answers a different
@@ -499,14 +514,20 @@ async function main() {
     if (!m) { console.log(`  bad --disasm=${spec}, want SEG:OFF[:COUNT]`); continue; }
     const seg = m[1] ? parseInt(m[1], 16) : r.vm.get('cs');
     const off = parseInt(m[2], 16), n = m[3] ? Number(m[3]) : 24;
-    const at = ((seg << 4) + off) & 0xFFFFF;
-    console.log(`\n  ${seg.toString(16)}:${off.toString(16).padStart(4, '0')}`);
+    // A bare offset means "in the segment the guest is executing", so it takes
+    // that segment's real base -- which in protected mode is whatever CS's
+    // descriptor says and is not the selector shifted left four. An explicit
+    // SEG: is the caller naming a real-mode paragraph and keeps the shift.
+    const base = m[1] ? (seg << 4) : r.vm.exports.get_csb();
+    const at = (base + off) & r.vm.exports.get_linmask();
+    console.log(`\n  ${seg.toString(16)}:${off.toString(16).padStart(4, '0')}`
+      + `${base !== (seg << 4) ? `  (base ${base.toString(16)})` : ''}`);
     for (const line of disasmAt(r.vm.mem, at, at, n, null, { bits: 16 })) {
       const g = /^([0-9a-f]+)(\s+)(.*)$/.exec(line.trim());
       if (!g) { console.log(`  ${line}`); continue; }
       const lin = parseInt(g[1], 16);
       console.log(`  ${seg.toString(16)}:`
-        + `${(lin - (seg << 4)).toString(16).padStart(4, '0')}  ${g[3]}`);
+        + `${(lin - base).toString(16).padStart(4, '0')}  ${g[3]}`);
     }
   }
   console.log(`  exited=${r.machine.exited}${r.machine.exited ? ` code=${r.machine.exitCode}` : ''}`
