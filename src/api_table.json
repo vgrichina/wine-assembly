@@ -24140,5 +24140,490 @@
       }
     ],
     "ret": "int"
+  },
+  {
+    "id": 2886,
+    "name": "glAlphaFunc",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3365056272
+  },
+  {
+    "id": 2887,
+    "name": "glBlendFunc",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1561403519
+  },
+  {
+    "id": 2888,
+    "name": "glClear",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2918900847
+  },
+  {
+    "id": 2889,
+    "name": "glClearColor",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 780254686
+  },
+  {
+    "id": 2890,
+    "name": "glCullFace",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3621115407
+  },
+  {
+    "id": 2891,
+    "name": "glDepthFunc",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 890203493
+  },
+  {
+    "id": 2892,
+    "name": "glDepthMask",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3732523795
+  },
+  {
+    "id": 2893,
+    "name": "glDepthRange",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1971796684
+  },
+  {
+    "id": 2894,
+    "name": "glDisable",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2062660374
+  },
+  {
+    "id": 2895,
+    "name": "glDrawBuffer",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 328081858
+  },
+  {
+    "id": 2896,
+    "name": "glEnable",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 514404445
+  },
+  {
+    "id": 2897,
+    "name": "glFinish",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 3188337321
+  },
+  {
+    "id": 2898,
+    "name": "glGetError",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 623394476
+  },
+  {
+    "id": 2899,
+    "name": "glGetFloatv",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4070354602
+  },
+  {
+    "id": 2900,
+    "name": "glGetString",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1381668835
+  },
+  {
+    "id": 2901,
+    "name": "glPointSize",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2304507425
+  },
+  {
+    "id": 2902,
+    "name": "glPolygonMode",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 773397939
+  },
+  {
+    "id": 2903,
+    "name": "glReadPixels",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 3268425923
+  },
+  {
+    "id": 2904,
+    "name": "glScissor",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1042338820
+  },
+  {
+    "id": 2905,
+    "name": "glShadeModel",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2836628796
+  },
+  {
+    "id": 2906,
+    "name": "glViewport",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2775992968
+  },
+  {
+    "id": 2907,
+    "name": "glBegin",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2299066755
+  },
+  {
+    "id": 2908,
+    "name": "glEnd",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 3039460251
+  },
+  {
+    "id": 2909,
+    "name": "glColor3f",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3691382608
+  },
+  {
+    "id": 2910,
+    "name": "glColor3fv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2206023890
+  },
+  {
+    "id": 2911,
+    "name": "glColor4f",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3456937227
+  },
+  {
+    "id": 2912,
+    "name": "glColor4fv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3673496519
+  },
+  {
+    "id": 2913,
+    "name": "glColor4ubv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2562572598
+  },
+  {
+    "id": 2914,
+    "name": "glTexCoord2f",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1633396432
+  },
+  {
+    "id": 2915,
+    "name": "glVertex2f",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4019013828
+  },
+  {
+    "id": 2916,
+    "name": "glVertex3f",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 294632673
+  },
+  {
+    "id": 2917,
+    "name": "glVertex3fv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1011212725
+  },
+  {
+    "id": 2918,
+    "name": "glFrustum",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 1628554860
+  },
+  {
+    "id": 2919,
+    "name": "glLoadIdentity",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 2378205532
+  },
+  {
+    "id": 2920,
+    "name": "glLoadMatrixf",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2639205591
+  },
+  {
+    "id": 2921,
+    "name": "glMatrixMode",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 868725108
+  },
+  {
+    "id": 2922,
+    "name": "glOrtho",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 2745772376
+  },
+  {
+    "id": 2923,
+    "name": "glPopMatrix",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 129060436
+  },
+  {
+    "id": 2924,
+    "name": "glPushMatrix",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 3357834355
+  },
+  {
+    "id": 2925,
+    "name": "glRotatef",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1560506433
+  },
+  {
+    "id": 2926,
+    "name": "glScalef",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1208042894
+  },
+  {
+    "id": 2927,
+    "name": "glTranslatef",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 4064525118
+  },
+  {
+    "id": 2928,
+    "name": "glBindTexture",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 225548556
+  },
+  {
+    "id": 2929,
+    "name": "glDeleteTextures",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3188765489
+  },
+  {
+    "id": 2930,
+    "name": "glTexEnvf",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2102864360
+  },
+  {
+    "id": 2931,
+    "name": "glTexImage2D",
+    "nargs": 9,
+    "convention": "stdcall",
+    "hash": 3958285462
+  },
+  {
+    "id": 2932,
+    "name": "glTexParameterf",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1005284364
+  },
+  {
+    "id": 2933,
+    "name": "glTexSubImage2D",
+    "nargs": 9,
+    "convention": "stdcall",
+    "hash": 990735106
+  },
+  {
+    "id": 2934,
+    "name": "wglCreateContext",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 610928396
+  },
+  {
+    "id": 2935,
+    "name": "wglDeleteContext",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3070692701
+  },
+  {
+    "id": 2936,
+    "name": "wglGetProcAddress",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 489345293
+  },
+  {
+    "id": 2937,
+    "name": "wglMakeCurrent",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3143863416
+  },
+  {
+    "id": 2938,
+    "name": "wglChoosePixelFormat",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 898267091
+  },
+  {
+    "id": 2939,
+    "name": "wglDescribePixelFormat",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2977337275
+  },
+  {
+    "id": 2940,
+    "name": "wglSetPixelFormat",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 650739558
+  },
+  {
+    "id": 2941,
+    "name": "GetSystemDirectoryW",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4229067774,
+    "args": [
+      {
+        "name": "lpBuffer",
+        "type": "LPWSTR",
+        "out": true
+      },
+      {
+        "name": "uSize",
+        "type": "UINT"
+      }
+    ],
+    "ret": "UINT"
+  },
+  {
+    "id": 2942,
+    "name": "LoadLibraryExW",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 483469058,
+    "args": [
+      {
+        "name": "lpLibFileName",
+        "type": "LPCWSTR"
+      },
+      {
+        "name": "hFile",
+        "type": "HANDLE"
+      },
+      {
+        "name": "dwFlags",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "HMODULE"
+  },
+  {
+    "id": 2943,
+    "name": "GetEnvironmentVariableW",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3117710245,
+    "args": [
+      {
+        "name": "lpName",
+        "type": "LPCWSTR"
+      },
+      {
+        "name": "lpBuffer",
+        "type": "LPWSTR",
+        "out": true
+      },
+      {
+        "name": "nSize",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
+  },
+  {
+    "id": 2944,
+    "name": "CharLowerW",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3877897135,
+    "args": [
+      {
+        "name": "lpsz",
+        "type": "LPWSTR"
+      }
+    ],
+    "ret": "LPWSTR"
+  },
+  {
+    "id": 2945,
+    "name": "wglSwapBuffers",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3411244025
+  },
+  {
+    "id": 2946,
+    "name": "FreeConsole",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 1526577888,
+    "ret": "BOOL"
+  },
+  {
+    "id": 2947,
+    "name": "IDirectDrawSurface3_SetSurfaceDesc",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 530862950
   }
 ]

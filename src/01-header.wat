@@ -152,6 +152,10 @@
   ;; get_screen_size() → (width | (height << 16))
   (import "host" "set_wallpaper" (func $host_set_wallpaper (param i32 i32) (result i32)))
   ;; set_wallpaper(path_wa, tiled) → BOOL; loads a VFS BMP into the desktop layer.
+  ;; Fixed-function frontends lower into a reusable WebGL/GLES-shaped backend.
+  ;; opcode, stdcall stack WA, auxiliary target HWND -> integer/API result.
+  (import "host" "gpu_gl_call"
+    (func $host_gpu_gl_call (param i32 i32 i32) (result i32)))
   (import "host" "note_richedit_charformat_size" (func $host_note_richedit_charformat_size (param i32 i32 i32)))
   ;; note_richedit_charformat_size(yHeightTwips, selectionLo, selectionHi)
   ;; GDI host imports
@@ -882,6 +886,12 @@
   (data (i32.const 0x35A) "Try Again\00")    ;; len 9  — MB_CANCELTRYCONTINUE
   (data (i32.const 0x364) "Continue\00")     ;; len 8  — MB_CANCELTRYCONTINUE
   (data (i32.const 0x36D) "uxtheme.dll\00")  ;; optional XP theming DLL
+  ;; Stable strings returned by glGetString. Extensions is intentionally empty
+  ;; until an optional extension has a complete implementation.
+  (data (i32.const 0x07F0BF60) "Wine-Assembly\00")
+  (data (i32.const 0x07F0BF70) "WebGL fixed function\00")
+  (data (i32.const 0x07F0BF88) "1.1 Wine-Assembly\00")
+  (data (i32.const 0x07F0BFA0) "\00")
   ;; WinSock 1.1 ordinal imports used by Win9x DLLs. The DLL loader maps
   ;; supported ordinals to these normal API-table names.
   (data (i32.const 0x11300) "WSOCK32.dll\00WSAStartup\00WSACleanup\00WSAGetLastError\00socket\00closesocket\00connect\00send\00recv\00gethostbyname\00htons\00inet_addr\00select\00setsockopt\00ioctlsocket\00accept\00bind\00listen\00shutdown\00ntohs\00inet_ntoa\00__WSAFDIsSet\00WSASetLastError\00")
@@ -1392,12 +1402,15 @@
   (global $PAGE_DIR_STRIDE i32 (i32.const 0x4000))
   (global $PAGE_DIR_ENTRIES i32 (i32.const 1024))
   (global $PAGE_DIR_MASK i32 (i32.const 1023))
-  ;; One contiguous chunk per compiled page, carved from the same thread arena
-  ;; the hash cache's blocks come from, so the existing flush machinery already
-  ;; covers it. 16KB because index entries are u16 (so a chunk can never exceed
-  ;; 64KB) and because a page's *executed* code is what lands here, not its
-  ;; whole 4KB of x86: caesar3_demo averages 35 blocks per compiled page, on the
-  ;; order of 3.5KB. Overflow is not an error — the page is dropped and rebuilt.
+  ;; One contiguous chunk per compiled page, carved from the existing per-thread
+  ;; decoded-code arena so the established flush machinery already covers it.
+  ;; PAGE_CHUNK_BYTES is the 16KB maximum; pages begin in the smallest
+  ;; 4/8/12/16KB class that fits and grow on demand. The per-page byte index uses
+  ;; 14-bit offsets, so the maximum remains 16KB. Diablo II measured a 2.4KB mean
+  ;; payload with 97% at or below 8KB; reserving the maximum for every page made
+  ;; its gameplay working set recycle the entire 4MB arena several times per
+  ;; slice. Dropped chunks are recycled when no decoded stream can still name
+  ;; them.
   (global $PAGE_CHUNK_BYTES i32 (i32.const 0x4000))
   (global $DLL_TABLE_SIZE i32 (i32.const 0x00000200))
   (global $DLL_RSRC_TABLE_SIZE i32 (i32.const 0x00000200))
