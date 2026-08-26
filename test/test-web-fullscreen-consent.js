@@ -23,6 +23,15 @@ assert(html.includes('function enterPageFullscreen()') && html.includes('functio
   'the page-fullscreen fallback should be enterable and exitable');
 assert(html.includes('window.exitPageFullscreen = exitPageFullscreen;'),
   'the renderer needs a way to release the page when the app leaves fullscreen');
+// Only a person declines. exitPageFullscreen has two callers: the leave-full-
+// screen chip, which passes its click event, and lib/renderer.js when the
+// guest drops exclusive mode, which passes nothing. Latching the decline on
+// the second one denies fullscreen forever to any app that releases the
+// display and takes it back.
+assert(html.includes('if (event) renderer._fullscreenDeclined = true;'),
+  'only a user-initiated exit should latch a fullscreen decline');
+assert(!/\n\s*renderer\._fullscreenDeclined = true;/.test(html),
+  'the decline latch must not be reachable without a user event');
 assert(html.includes('body.page-fullscreen #browser-fullscreen-consent { display: none !important; }'),
   'the consent bar is chrome and should go away in page fullscreen');
 assert(html.includes('id="page-fullscreen-exit"'),
@@ -66,13 +75,23 @@ try {
   // be taken down. Without this the app shrinks back into a page that is still
   // showing nothing but a canvas and an exit button.
   let released = 0;
-  global.window.exitPageFullscreen = () => { released++; };
+  const releaseArgs = [];
+  global.window.exitPageFullscreen = (...args) => { released++; releaseArgs.push(args); };
   renderer._requestedBrowserFullscreen = true;
   renderer._setExclusiveFullscreen(false);
   assert.deepStrictEqual(toggles, [['exclusive-fullscreen', true], ['exclusive-fullscreen', false]],
     'leaving guest fullscreen should leave dedicated-page mode');
   assert.strictEqual(released, 1, 'the page-fullscreen fallback should be released with it');
   assert.strictEqual(renderer._requestedBrowserFullscreen, false, 'the approval should not survive the exit');
+  // The guest letting go of the display is not the visitor declining it, and
+  // index.html tells the two apart by whether it was handed a click event. So
+  // the renderer must call it with none -- passing anything here would latch
+  // _fullscreenDeclined and permanently deny fullscreen to any app that drops
+  // exclusive mode and takes it back (RollerCoaster Tycoon does exactly that:
+  // exclusive title screen, DDSCL_NORMAL for one dialog, exclusive again for
+  // the game, which then presented unscaled in the corner of the canvas).
+  assert.deepStrictEqual(releaseArgs, [[]],
+    'the renderer-driven release must pass no event, so it does not read as a decline');
 } finally {
   if (previousDocument === undefined) delete global.document;
   else global.document = previousDocument;

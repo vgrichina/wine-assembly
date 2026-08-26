@@ -1443,7 +1443,22 @@ Resource-aware Win98 emulator
         // Guarded on the current state rather than called unconditionally
         // because _setExclusiveFullscreen(false) calls back into this function
         // to put the page back; the guard is what stops that being a loop.
-        renderer._fullscreenDeclined = true;
+        //
+        // Only a *person* declines. This function has two callers with very
+        // different meanings: the leave-full-screen chip, which passes the
+        // click event and does mean "I do not want this", and
+        // _setExclusiveFullscreen(false) from lib/renderer.js, which passes
+        // nothing and only means "the guest just let go of the display".
+        // Latching on the second one is permanent denial for any app that
+        // drops exclusive mode and takes it back -- RollerCoaster Tycoon goes
+        // DDSCL_EXCLUSIVE|DDSCL_FULLSCREEN for its title screen, drops to
+        // DDSCL_NORMAL for one dialog, then re-takes exclusive for the game
+        // itself. The re-take was denied, so the park presented as an
+        // unscaled 640x480 rectangle in the corner of the canvas for the rest
+        // of the session. Headless never saw it: there is no
+        // exitPageFullscreen outside the browser, so the CLI filled the screen
+        // and only browser visitors got the small picture.
+        if (event) renderer._fullscreenDeclined = true;
         if (renderer._exclusiveFullscreen) renderer._setExclusiveFullscreen(false);
       }
       scrollCollapseDisarm();
