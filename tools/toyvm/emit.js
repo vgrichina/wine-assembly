@@ -337,6 +337,12 @@ function genBranches() {
     (then ${GO('(local.get $t0)', '(local.get $t1)')})
     (else ${GO('(local.get $t2)', '(local.get $t3)')}))
 `);
+  h('loop32', 4, `
+  ${ops(4)}
+  (if (call $ecxdec)
+    (then ${GO('(local.get $t0)', '(local.get $t1)')})
+    (else ${GO('(local.get $t2)', '(local.get $t3)')}))
+`);
 }
 
 // INC/DEC are generated for both widths and both operand kinds inside
@@ -724,21 +730,26 @@ function genExtras() {
   (if ${bit(F.OF)} (then (call $fault (i32.const 4) (local.get $t0))))
 `);
 
-  // JCXZ, LOOPZ, LOOPNZ -- the remaining counted-loop terminators.
-  h('jcxz', 4, `
+  // JCXZ, LOOPZ, LOOPNZ -- the remaining counted-loop terminators. Each is
+  // generated twice: once counting CX, and once counting ECX for the form with
+  // a 0x67 address-size override in front of it. LOOP itself gets the same
+  // treatment beside its 16-bit definition above.
+  for (const [sfx, zero, dec] of [['', '$cx16', '$cxdec'], ['32', '$ecx32', '$ecxdec']]) {
+    h(`jcxz${sfx}`, 4, `
   ${ops(4)}
-  (if (i32.eqz (call $cx16))
+  (if (i32.eqz (call ${zero}))
     (then ${GO('(local.get $t0)', '(local.get $t1)')})
     (else ${GO('(local.get $t2)', '(local.get $t3)')}))
 `);
-  for (const [nm, want] of [['loopz', 1], ['loopnz', 0]]) {
-    h(nm, 4, `
+    for (const [nm, want] of [['loopz', 1], ['loopnz', 0]]) {
+      h(`${nm}${sfx}`, 4, `
   ${ops(4)}
-  (if (i32.and (i32.ne (call $cxdec) (i32.const 0))
+  (if (i32.and (i32.ne (call ${dec}) (i32.const 0))
                (i32.eq ${bit(F.ZF)} (i32.const ${want})))
     (then ${GO('(local.get $t0)', '(local.get $t1)')})
     (else ${GO('(local.get $t2)', '(local.get $t3)')}))
 `);
+    }
   }
 
   // INT does the architectural thing: push FLAGS/CS/IP, clear IF and TF, and
@@ -1703,6 +1714,38 @@ function gen386() {
     `(i32.add (local.get $t3) (local.get $t7))`)}
 `);
   }
+
+  // CMPXCHG (486). The accumulator is compared with the DESTINATION, and the
+  // flags left behind are that compare's -- so ZF says which way the exchange
+  // went and the instruction needs no second CMP after it. On a match the
+  // source register lands in the destination; on a miss the destination lands
+  // in the accumulator, which is what lets the retry loop around it converge.
+  // Either way exactly one place is written.
+  for (const w of [8, 16, 32]) {
+    const acc = `(call $rget${w} (i32.const 0))`;
+    h(`cmpxchg_rr${w}`, 1, `
+  ${ops(1)}
+  (local.set $t1 (i32.and (local.get $t0) (i32.const 7)))
+  (local.set $t2 (i32.and (i32.shr_u (local.get $t0) (i32.const 4)) (i32.const 7)))
+  (local.set $t3 (call $rget${w} (local.get $t1)))
+  (local.set $t4 ${acc})
+  ${CMP_FLAGS(w, '(local.get $t4)', '(local.get $t3)')}
+  (if (i32.eq (local.get $t4) (local.get $t3))
+    (then (call $rset${w} (local.get $t1) (call $rget${w} (local.get $t2))))
+    (else (call $rset${w} (i32.const 0) (local.get $t3))))
+`);
+    h(`cmpxchg_rm${w}`, 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  (local.set $t3 (call $rd${w} (local.get $t5) (local.get $t4)))
+  (local.set $t7 ${acc})
+  ${CMP_FLAGS(w, '(local.get $t7)', '(local.get $t3)')}
+  (if (i32.eq (local.get $t7) (local.get $t3))
+    (then (call $wr${w} (local.get $t5) (local.get $t4)
+            (call $rget${w} (local.get $t6))))
+    (else (call $rset${w} (i32.const 0) (local.get $t3))))
+`);
+  }
 }
 
 // --- x87 handlers -----------------------------------------------------------
@@ -2392,6 +2435,16 @@ function helpers() {
   (global.set $cx (i32.or (i32.and (global.get $cx) (i32.const 0xFFFF0000))
                           (i32.and (i32.sub (global.get $cx) (i32.const 1)) (i32.const 0xFFFF))))
   (call $cx16))
+
+;; The same two with an address-size override in front, where the counter is
+;; the whole of ECX rather than its low half. $cx already holds 32 bits, so
+;; these differ from the pair above only in not preserving a high half -- but
+;; that difference is the entire point of the prefix, and running the 16-bit
+;; version instead reads CX where the program meant ECX.
+(func $ecx32 (result i32) (global.get $cx))
+(func $ecxdec (result i32)
+  (global.set $cx (i32.sub (global.get $cx) (i32.const 1)))
+  (global.get $cx))
 
 ;; Absolute physical read, for the interrupt vector table at address 0. It is
 ;; not reachable through $rd16, which always goes via a segment register.

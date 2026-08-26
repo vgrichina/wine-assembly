@@ -200,12 +200,17 @@ function decodeOne(rd, cs, ip) {
   const repeatable = (op >= 0xA4 && op <= 0xAF && op !== 0xA8 && op !== 0xA9)
     || (cpuLevel >= 186 && op >= 0x6C && op <= 0x6F);
   if (repPrefix && !repeatable) return null;
-  // 0x67 also redirects the implicit addressing of the string ops, XLAT, the
-  // moffs MOVs and the counted-loop terminators -- none of which go through
-  // modrm(). Refusing them is the honest option; running the 16-bit version
-  // would read SI where the program meant ESI and look like it worked.
+  // 0x67 also redirects the implicit addressing of the string ops, XLAT and the
+  // moffs MOVs -- none of which go through modrm(). Refusing them is the honest
+  // option; running the 16-bit version would read SI where the program meant
+  // ESI and look like it worked.
+  //
+  // The counted-loop terminators E0-E3 used to be refused here for the same
+  // reason and are now decoded, because they are the one group in this list
+  // whose 32-bit form needs no new addressing: the counter is ECX, which the
+  // CX globals are already the low half of. See the `32` handler variants.
   if (asize === 32 && ((op >= 0xA4 && op <= 0xAF) || (op >= 0x6C && op <= 0x6F)
-    || op === 0xD7 || (op >= 0xE0 && op <= 0xE3))) return null;
+    || op === 0xD7)) return null;
   const words = [];
   // Arena addresses are not known until every block is laid out, so branch
   // handlers get a 0 placeholder and a fixup naming the guest IP it stands for.
@@ -391,7 +396,7 @@ function decodeOne(rd, cs, ip) {
       const d = imm8();
       const fall = (start + n) & 0xFFFF;
       const target = (fall + (d & 0x80 ? d - 0x100 : d)) & 0xFFFF;
-      words.push(H.loop, 0, target, 0, fall);
+      words.push(asize === 32 ? H.loop32 : H.loop, 0, target, 0, fall);
       fixups.push({ index: words.length - 4, ip: target },
         { index: words.length - 2, ip: fall });
       endsBlock = true;
@@ -523,7 +528,8 @@ function decodeOne(rd, cs, ip) {
       const d = imm8();
       const fall = (start + n) & 0xFFFF;
       const target = (fall + (d & 0x80 ? d - 0x100 : d)) & 0xFFFF;
-      words.push(op === 0xE3 ? H.jcxz : (op === 0xE1 ? H.loopz : H.loopnz),
+      const sfx = asize === 32 ? '32' : '';
+      words.push(H[(op === 0xE3 ? 'jcxz' : (op === 0xE1 ? 'loopz' : 'loopnz')) + sfx],
         0, target, 0, fall);
       fixups.push({ index: words.length - 4, ip: target },
         { index: words.length - 2, ip: fall });
@@ -703,6 +709,16 @@ function decodeOne(rd, cs, ip) {
       if (op2 === 0xB4 || op2 === 0xB5) {
         const m = modrm(); if (m.isReg) return null;
         words.push(H[op2 === 0xB4 ? 'lfs' : 'lgs'], packEa(m), m.disp);
+        break;
+      }
+      // CMPXCHG (486). Same shape as XADD below, and like it the memory form
+      // is a read-modify-write, so writesMem has to be set or a program that
+      // spins on one against its own code would not see the block invalidated.
+      if (op2 === 0xB0 || op2 === 0xB1) {
+        const w = (op2 & 1) ? opsize : 8;
+        const m = modrm();
+        if (m.isReg) words.push(H[`cmpxchg_rr${w}`], (m.rm & 7) | ((m.reg & 7) << 4));
+        else { writesMem = true; words.push(H[`cmpxchg_rm${w}`], packEa(m), m.disp); }
         break;
       }
       // XADD (486).
