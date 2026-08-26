@@ -846,7 +846,12 @@ function decodeOne(rd, cs, ip) {
       // PUSH SP pushes the already-decremented value on an 8088; the 32-bit
       // form is a 386 encoding and follows the 386's rule, so it does not need
       // the quirk.
-      else if (op === 0x54 && opsize === 16) words.push(H.push_sp);
+      // PUSH SP is the 8086's, and ONLY the 8086's, decremented-SP form. Two
+      // demos here (UNTITLED.EXE, BULLET.EXE) refuse to run on anything below a
+      // 386 and test for it with `push sp / pop bx / cmp bx, sp` -- so pushing
+      // the old value on a part that is claiming to be a 386 answers "8086" and
+      // gets the demo a "you will need at least a 386" screen instead of a run.
+      else if (op === 0x54 && opsize === 16 && cpuLevel < 186) words.push(H.push_sp);
       else if (op >= 0x50 && op <= 0x57) words.push(H[`push_r${opsize}`], op & 7);
       else if (op >= 0x58 && op <= 0x5F) words.push(H[`pop_r${opsize}`], op & 7);
       // PUSH/POP segment sit at 0x06 + 8*idx and 0x07 + 8*idx, in ES/CS/SS/DS

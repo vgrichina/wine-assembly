@@ -27,6 +27,7 @@
 const fs = require('fs');
 const path = require('path');
 const isa = require('./isa');
+const { disasmAt } = require('../disasm');
 const { makeVm } = require('./vm');
 const { compileProgram } = require('./compile');
 const { setCpuLevel } = require('./decode');
@@ -578,6 +579,12 @@ function arg(name, fallback) {
   return hit === undefined ? fallback : hit.slice(name.length + 3);
 }
 const flag = (n) => process.argv.slice(2).includes(`--${n}`);
+// Repeatable, and comma-separated within one flag, so several regions can be
+// asked for in one run without repeating the option four times.
+const argAll = (name) => process.argv.slice(2)
+  .filter(a => a.startsWith(`--${name}=`))
+  .flatMap(a => a.slice(name.length + 3).split(','))
+  .filter(Boolean);
 
 function count(s, d) {
   if (s === undefined) return d;
@@ -692,6 +699,42 @@ async function main() {
   if (flag('text')) {
     const t = conText(r.machine.con);
     console.log(t ? `\n${t}\n` : '  console grid is empty');
+  }
+  // Guest memory at the end of the run, as bytes and as instructions.
+  //
+  // Most of this corpus ships packed, so the code that matters is not in the
+  // file: dos-disasm.js reads the image on disk and finds zeros at every
+  // address a trace names. This is the other half of that pair -- it reads the
+  // memory the depacker actually wrote, which is the only place a wild jump's
+  // target can be looked at.
+  for (const spec of argAll('dump')) {
+    const m = /^(?:([0-9a-fA-F]+):)?([0-9a-fA-F]+)(?::(\d+))?$/.exec(spec);
+    if (!m) { console.log(`  bad --dump=${spec}, want SEG:OFF[:LEN]`); continue; }
+    const seg = m[1] ? parseInt(m[1], 16) : r.vm.get('cs');
+    const off = parseInt(m[2], 16), len = m[3] ? Number(m[3]) : 64;
+    const at = ((seg << 4) + off) & 0xFFFFF;
+    console.log(`\n  ${seg.toString(16)}:${off.toString(16).padStart(4, '0')}  ${len} bytes`);
+    for (let i = 0; i < len; i += 16) {
+      const row = [...r.vm.mem.subarray(at + i, at + i + Math.min(16, len - i))];
+      console.log(`  ${(off + i).toString(16).padStart(4, '0')}  `
+        + row.map(b => b.toString(16).padStart(2, '0')).join(' ').padEnd(48)
+        + row.map(b => (b >= 0x20 && b < 0x7F ? String.fromCharCode(b) : '.')).join(''));
+    }
+  }
+  for (const spec of argAll('disasm')) {
+    const m = /^(?:([0-9a-fA-F]+):)?([0-9a-fA-F]+)(?::(\d+))?$/.exec(spec);
+    if (!m) { console.log(`  bad --disasm=${spec}, want SEG:OFF[:COUNT]`); continue; }
+    const seg = m[1] ? parseInt(m[1], 16) : r.vm.get('cs');
+    const off = parseInt(m[2], 16), n = m[3] ? Number(m[3]) : 24;
+    const at = ((seg << 4) + off) & 0xFFFFF;
+    console.log(`\n  ${seg.toString(16)}:${off.toString(16).padStart(4, '0')}`);
+    for (const line of disasmAt(r.vm.mem, at, at, n, null, { bits: 16 })) {
+      const g = /^([0-9a-f]+)(\s+)(.*)$/.exec(line.trim());
+      if (!g) { console.log(`  ${line}`); continue; }
+      const lin = parseInt(g[1], 16);
+      console.log(`  ${seg.toString(16)}:`
+        + `${(lin - (seg << 4)).toString(16).padStart(4, '0')}  ${g[3]}`);
+    }
   }
   console.log(`  exited=${r.machine.exited}${r.machine.exited ? ` code=${r.machine.exitCode}` : ''}`
     + `${r.machine.blockedOnKey ? '  waiting for a key' : ''}`

@@ -45,6 +45,29 @@ const COMPLAINT = [
 // either. Kept separate so "waiting" never hides inside "art".
 const PROMPT_ONLY = /press\s+(any\s+)?(key|enter|space)|select\s+an?\s+|\[y\/n\]|choose|which\s+(sound|card)/i;
 
+// Where a complaint lives on the screen is what makes it a complaint.
+//
+// A refusal is the LAST thing a program prints -- it says it and it stops. A
+// demo's note file says "Sorry about using MOD-OBJ" in the middle of twenty
+// lines of credits and then keeps going. Scanning the whole screen for the
+// word cannot tell those apart, and it put a-note.exe's full-screen ANSI
+// credits in the error bucket on the strength of one apology.
+function complaint(screen) {
+  const lines = screen.split('\n').map(s => s.trim()).filter(Boolean);
+  const tail = lines.slice(-4).join('\n');
+  for (const [re, what] of COMPLAINT) if (re.test(tail)) return what;
+  // A short screen is all tail: two lines that complain are a refusal wherever
+  // the words sit.
+  if (lines.length <= 6) {
+    for (const [re, what] of COMPLAINT) if (re.test(screen)) return what;
+  }
+  return '';
+}
+
+// A screen this full is the program's output, not its furniture. 80x25 is 2000
+// cells; a refusal is under a hundred and a title screen is several hundred.
+const FULL_SCREEN = 400;
+
 function classify(r) {
   if (r.failed) return 'failed';
   const px = r.pixels || 0, cells = r.cells || 0;
@@ -53,11 +76,12 @@ function classify(r) {
   const screen = r.screen || '';
   if (!cells && !px) return r.blockedOnKey ? 'prompt' : 'blank';
   if (cells) {
-    const complains = COMPLAINT.some(([re]) => re.test(screen));
-    // Size is the tiebreak, and it is a good one: a complaint is two lines and
-    // a note screen is twenty. A big screen that also complains is a demo that
-    // printed its credits and then hit a wall -- still an error.
-    if (complains) return 'error';
+    if (complaint(screen)) return 'error';
+    // Waiting is not the finding when the program has already drawn its
+    // screen. manhatan.exe is a full-page ANSI advertisement that ends on
+    // "press a key" -- the key it is waiting for is the last thing about it
+    // worth reporting.
+    if (cells >= FULL_SCREEN) return 'art';
     if (r.blockedOnKey) return 'prompt';
     if (PROMPT_ONLY.test(screen) && cells < 200) return 'prompt';
     return cells >= 40 ? 'art' : 'blank';
@@ -65,10 +89,7 @@ function classify(r) {
   return r.blockedOnKey ? 'prompt' : 'blank';
 }
 
-function reason(r) {
-  for (const [re, what] of COMPLAINT) if (re.test(r.screen || '')) return what;
-  return '';
-}
+const reason = (r) => complaint(r.screen || '');
 
 const ORDER = ['demo', 'art', 'error', 'prompt', 'blank', 'failed'];
 
