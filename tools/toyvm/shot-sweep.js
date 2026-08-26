@@ -20,6 +20,21 @@
 // One child process per program, same as video-census.js and opcode-census.js:
 // a program that traps, wedges or runs the arena dry must cost one row rather
 // than the whole sweep.
+//
+// A whole-corpus sweep is also runnable as 199 independent commands, which is
+// what to reach for on a loaded box:
+//
+//   node tools/toyvm/shot-sweep.js --dir=/tmp/demos --out=/tmp/shots --list > /tmp/list
+//   xargs -P 6 -L 1 tools/toyvm/capture-one.sh < /tmp/list
+//   node tools/toyvm/shot-sweep.js --dir=/tmp/demos --out=/tmp/shots \
+//     --merge=/tmp/shots/rows --json=/tmp/shots.json
+//
+// Each line of --list is one program and the tile name it owns, so the workers
+// need no shared state and the shell -- not this file -- owns the parallelism
+// and the per-program timeout. --capture writes its row to --row and skips a
+// program whose row file is already there, so a sweep that lost a handful of
+// programs to a timeout is re-run by deleting those row files and running the
+// same xargs line again.
 
 const fs = require('fs');
 const path = require('path');
@@ -129,6 +144,56 @@ function child(exe, png, o) {
   });
 }
 
+// One program, all the way to a row: the run, the retries that decide whether
+// it had really started, and the re-take of whichever frame won.
+//
+// It lives at module scope rather than inside the sweep loop because it is the
+// unit of work either way -- the in-process sweep calls it per program, and so
+// does a --capture invocation driven from xargs. A copy of this logic in a
+// shell driver would be a second, quietly diverging sweep.
+async function capture(exe, png, o) {
+  let row = await child(exe, png, o);
+  // A blocking key read now stops the run rather than being answered with a
+  // phantom NUL, which is what makes a "press any key" title screen sit still
+  // long enough to photograph. Some programs want that key to START, though,
+  // so any run that ended waiting is tried a second time with autoKey and the
+  // better of the two pictures is kept. A demo that treats any key as "quit"
+  // comes back blank from the retry and keeps its first frame.
+  //
+  // A text screen counts as "not started" too, and that is not a nicety: a
+  // program can be sitting on a menu without ever blocking, because it polls
+  // for the key rather than waiting for one. BTW.EXE scores 99 cells of sound
+  // menu, never blocks, and never gets the retry that answers it -- 46,912
+  // pixels of demo behind a screen that looked like a result.
+  if (!o.autoKey && (row.blockedOnKey || score(row) <= 0 || !row.pixels)) {
+    const first = { ...row };
+    const retry = await child(exe, png, { ...o, autoKey: true });
+    if (score(retry) > score(first)) row = retry;
+    else { row = first; await child(exe, png, o); }   // re-take the better frame
+  }
+  // A program that refuses to start will sometimes say how to make it start.
+  // AMBIENT.EXE prints `MIDAS Error: NO GUS FOUND... USE "AMBIENT /NO_SND"
+  // FOR SILENT MODE` and means every word of it -- with the switch it renders
+  // its picture. Lower-cased on the way in, because the message shouts and
+  // MIDAS's option parser is case sensitive.
+  const sw = !row.pixels && switchNamed(row.screen);
+  if (sw) {
+    const first = { ...row };
+    const retry = await child(exe, png, { ...o, autoKey: true, guestArgs: sw });
+    if (score(retry) > score(first)) row = retry;
+    else { row = first; await child(exe, png, { ...o, autoKey: o.autoKey }); }
+  }
+  if (row.png && !fs.existsSync(row.png)) { row.png = null; row.failed ||= 'no png'; }
+  return row;
+}
+
+// The corpus in the order the tile names are allocated in. Both --list and the
+// in-process sweep go through this, so a name means the same file either way.
+function plan(dir, out) {
+  const used = new Set();
+  return findExes(dir).map(exe => ({ exe, png: path.join(out, `${shotName(exe, dir, used)}.png`) }));
+}
+
 async function main() {
   const one = arg('one');
   const o = {
@@ -147,15 +212,74 @@ async function main() {
     return;
   }
 
+  // One program, driven from outside. The row goes to a file rather than to
+  // stdout because the run it describes also writes progress there, and an
+  // xargs worker's stdout is interleaved with five others'.
+  const cap = arg('capture');
+  if (cap) {
+    const png = arg('png');
+    const rowFile = arg('row');
+    if (!png) { console.error('--capture needs --png'); process.exit(2); }
+    if (rowFile && fs.existsSync(rowFile) && !process.argv.includes('--force')) {
+      console.log(`already captured: ${path.basename(cap)}`);
+      return;
+    }
+    fs.mkdirSync(path.dirname(png), { recursive: true });
+    const row = await capture(cap, png, o);
+    const text = JSON.stringify(row);
+    if (rowFile) {
+      fs.mkdirSync(path.dirname(rowFile), { recursive: true });
+      fs.writeFileSync(rowFile, text);
+    }
+    console.log(`${row.failed ? 'FAILED' : 'ok'} ${row.name}`
+      + `${row.failed ? ` ${row.failed}` : ` ${row.pixels ? `${row.pixels} px` : `${row.cells} cells`}`}`);
+    if (!rowFile) process.stdout.write(`${text}\n`);
+    return;
+  }
+
   const dir = arg('dir');
   const out = arg('out');
   if (!dir || !out) {
     console.log('usage: node tools/toyvm/shot-sweep.js --dir=DIR --out=DIR '
       + '[--json=OUT] [--resume] [--dispatches=N] [--timeout=SECS] [--max-seconds=N] '
-      + '[--jobs=N] [--auto-key] [--args=TAIL]');
+      + '[--jobs=N] [--auto-key] [--args=TAIL]\n'
+      + '       ... --list                       one line per program: EXE PNG ROW\n'
+      + '       ... --capture=EXE --png=P --row=R  one program, for xargs\n'
+      + '       ... --merge=ROWDIR --json=OUT    assemble the rows into a sweep');
     process.exit(2);
   }
   fs.mkdirSync(out, { recursive: true });
+
+  // The work list, for a driver that owns its own parallelism and timeouts.
+  // Three fields, whitespace-separated, so `xargs -L 1 sh -c '...' _` gets them
+  // as $1 $2 $3 -- no path in this corpus has a space in it, and one that did
+  // would have to be quoted here rather than by every reader.
+  if (process.argv.includes('--list')) {
+    const rowDir = arg('rows', path.join(out, 'rows'));
+    for (const { exe, png } of plan(dir, out)) {
+      console.log(`${exe} ${png} ${path.join(rowDir, `${path.basename(png, '.png')}.json`)}`);
+    }
+    return;
+  }
+
+  // Rows written by those workers, back into one sweep. Corpus order, and a
+  // program whose row never arrived is recorded as such rather than dropped --
+  // a sweep that is quietly 12 programs short reads as a sweep where those 12
+  // do not exist.
+  const merge = arg('merge');
+  if (merge) {
+    const rows = plan(dir, out).map(({ exe, png }) => {
+      const f = path.join(merge, `${path.basename(png, '.png')}.json`);
+      if (!fs.existsSync(f)) {
+        return { name: path.basename(exe), exe, png: null, failed: 'not run' };
+      }
+      try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (e) {
+        return { name: path.basename(exe), exe, png: null, failed: `bad row: ${e.message}` };
+      }
+    });
+    report(rows, dir, out, arg('json'));
+    return;
+  }
 
   const exes = findExes(dir);
   const used = new Set();
@@ -183,43 +307,6 @@ async function main() {
   // the sheet on every run.
   const pngFor = new Map(exes.map(exe => [exe, path.join(out, `${shotName(exe, dir, used)}.png`)]));
 
-  async function capture(exe) {
-    const png = pngFor.get(exe);
-    let row = await child(exe, png, o);
-    // A blocking key read now stops the run rather than being answered with a
-    // phantom NUL, which is what makes a "press any key" title screen sit still
-    // long enough to photograph. Some programs want that key to START, though,
-    // so any run that ended waiting is tried a second time with autoKey and the
-    // better of the two pictures is kept. A demo that treats any key as "quit"
-    // comes back blank from the retry and keeps its first frame.
-    //
-    // A text screen counts as "not started" too, and that is not a nicety: a
-    // program can be sitting on a menu without ever blocking, because it polls
-    // for the key rather than waiting for one. BTW.EXE scores 99 cells of sound
-    // menu, never blocks, and never gets the retry that answers it -- 46,912
-    // pixels of demo behind a screen that looked like a result.
-    if (!o.autoKey && (row.blockedOnKey || score(row) <= 0 || !row.pixels)) {
-      const first = { ...row };
-      const retry = await child(exe, png, { ...o, autoKey: true });
-      if (score(retry) > score(first)) row = retry;
-      else { row = first; await child(exe, png, o); }   // re-take the better frame
-    }
-    // A program that refuses to start will sometimes say how to make it start.
-    // AMBIENT.EXE prints `MIDAS Error: NO GUS FOUND... USE "AMBIENT /NO_SND"
-    // FOR SILENT MODE` and means every word of it -- with the switch it renders
-    // its picture. Lower-cased on the way in, because the message shouts and
-    // MIDAS's option parser is case sensitive.
-    const sw = !row.pixels && switchNamed(row.screen);
-    if (sw) {
-      const first = { ...row };
-      const retry = await child(exe, png, { ...o, autoKey: true, guestArgs: sw });
-      if (score(retry) > score(first)) row = retry;
-      else { row = first; await child(exe, png, { ...o, autoKey: o.autoKey }); }
-    }
-    if (row.png && !fs.existsSync(row.png)) { row.png = null; row.failed ||= 'no png'; }
-    return row;
-  }
-
   // One child per program is already the isolation model; `--jobs` just runs
   // several of them at once. Worth having: the retry above means a program can
   // cost three sequential runs, and a corpus sweep that took three hours takes
@@ -244,7 +331,7 @@ async function main() {
         continue;
       }
       const exe = exes[i];
-      rows[i] = done.has(exe) ? done.get(exe) : await capture(exe);
+      rows[i] = done.has(exe) ? done.get(exe) : await capture(exe, pngFor.get(exe), o);
       finished++;
       // Rows land out of order, so the file is only useful once the holes in
       // front of the last completion are filled -- which is what --resume
@@ -259,8 +346,14 @@ async function main() {
   };
   await Promise.all(Array.from({ length: Math.max(1, o.jobs) }, worker));
   process.stderr.write('\r' + ' '.repeat(44) + '\r');
-  if (json) fs.writeFileSync(json, JSON.stringify({ dir, out, rows }, null, 1));
+  report(rows, dir, out, json);
+}
 
+// The table and the tallies. Shared, because a sweep assembled from separately
+// captured rows has to be readable as the same thing as one run in a single
+// process -- and has to be countable the same way, or the two drivers quietly
+// disagree about how many programs draw.
+function report(rows, dir, out, json) {
   const shots = rows.filter(r => r.png);
   const blank = shots.filter(r => !r.pixels && !r.cells);
   const console_ = shots.filter(r => r.surface === 'console');
