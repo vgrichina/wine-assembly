@@ -914,8 +914,11 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
       } else if (w !== 8 && !m.isReg && (m.reg === 3 || m.reg === 5)) {
         // Far indirect. Only the memory form exists -- a far pointer does not
         // fit in a register, and the encoding with mod=11 is undefined.
-        if (m.reg === 5) words.push(H.jmp_far_m, packEa(m), m.disp);
-        else words.push(H.call_far_m, packEa(m), m.disp, (start + n) & 0xFFFF);
+        // The operand size picks the pointer WIDTH: 16:16 at [ea]/[ea+2], or
+        // 16:32 with the selector at [ea+4].
+        const sfx = w === 32 ? '32' : '';
+        if (m.reg === 5) words.push(H[`jmp_far_m${sfx}`], packEa(m), m.disp);
+        else words.push(H[`call_far_m${sfx}`], packEa(m), m.disp, (start + n) & 0xFFFF);
         endsBlock = true;
       } else return null;
       break;

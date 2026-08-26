@@ -1591,6 +1591,37 @@ function genArithIO() {
   ${GO_INDIRECT}
 `);
 
+  // The operand-size-32 twins: `66 ff /5` and `66 ff /3` read a 48-bit far
+  // pointer -- a dword offset and then the selector at +4, not +2.
+  //
+  // A 16-bit read of one of those is not a wrong address, it is a wrong
+  // SELECTOR: the word at +2 is the high half of the offset, which for any
+  // 16-bit target is zero, so the jump goes through the null selector. That is
+  // how COUNTDWN.EXE's extender derailed -- its protected-mode INT 21h
+  // dispatcher passes an unhandled AH through with `66 2e ff 2e de 03`, and we
+  // read cs:[0x3de] as 0x0196:0x0000 instead of 0x0196 in its real segment.
+  h('jmp_far_m32', 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  (local.set $t7 (call $rd32 (local.get $t5) (local.get $t4)))
+  (call $sset (i32.const 1) (call $rd16 (local.get $t5)
+    (i32.and (i32.add (local.get $t4) (i32.const 4)) (i32.const 0xFFFF))))
+  (global.set $gip (local.get $t7))
+  ${GO_INDIRECT}
+`);
+  h('call_far_m32', 3, `
+  ${ops(3)}
+  ${EA_SETUP_PRE}
+  (local.set $t7 (call $rd32 (local.get $t5) (local.get $t4)))
+  (local.set $t3 (call $rd16 (local.get $t5)
+    (i32.and (i32.add (local.get $t4) (i32.const 4)) (i32.const 0xFFFF))))
+  (call $push32 (call $sget (i32.const 1)))
+  (call $push32 (local.get $t2))
+  (call $sset (i32.const 1) (local.get $t3))
+  (global.set $gip (local.get $t7))
+  ${GO_INDIRECT}
+`);
+
   // ENTER/LEAVE, the 186's stack-frame pair. Every C compiler of the era emits
   // them, so three of the demos stop at the first `c8 xx xx 00` in their
   // startup. The nesting level is almost always zero; the display-copy loop is

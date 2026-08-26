@@ -207,8 +207,16 @@ async function runDos(o) {
         // one through a descriptor that does not exist.
         if (traceEntry && handbacks < traceEntry) {
           const pe = vm.exports.get_cr0() & 1;
+          // The registers as well as the address. An extender's protected-mode
+          // INT 21h dispatcher is one long compare ladder on AH, and which rung
+          // it takes -- which is the whole question when the run derails inside
+          // it -- is invisible from the entry address alone.
+          const h4 = (v) => v.toString(16).padStart(4, '0');
           log(`  entry ${cs.toString(16)}:${ip.toString(16)}`
-            + (pe ? ` base=${vm.exports.get_csb().toString(16)} pm` : ''));
+            + (pe ? ` base=${vm.exports.get_csb().toString(16)} pm` : '')
+            + `  ax=${h4(vm.get('ax'))} bx=${h4(vm.get('bx'))}`
+            + ` cx=${h4(vm.get('cx'))} dx=${h4(vm.get('dx'))}`
+            + ` ss:sp=${h4(vm.get('ss'))}:${h4(vm.get('sp'))}`);
         }
       },
       beforeSlice: () => { sliceT0 = process.hrtime.bigint(); },

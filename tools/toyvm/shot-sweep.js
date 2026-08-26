@@ -99,6 +99,10 @@ async function runOne(exe, png, o) {
     dispatched: r.dispatched,
     pixels: text ? 0 : r.bestScore, cells: text ? r.bestScore : r.text.cells,
     written: r.text.written, stuckAt: r.stuckAt || null, args: o.guestArgs || '',
+    // The two honest stops. A blank tile means nothing on its own -- these say
+    // whether the run walked off a cliff or hit a wall we know the shape of,
+    // and that is the difference between a work item and a declared blocker.
+    blockedOn32: r.blockedOn32 || null, badSelector: r.badSelector || null,
     // Not a failure. The picture is real and the program simply had more to do
     // than the budget allowed, which is worth telling apart from a run that
     // finished with nothing on screen.
