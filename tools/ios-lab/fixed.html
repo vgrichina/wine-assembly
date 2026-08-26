@@ -37,13 +37,19 @@
     padding: 24px;
     touch-action: none;
   }
-  #spacer { flex: 0 0 auto; width: 1px; height: 200dvh; min-height: 200dvh; }
+  /* svh is the SMALL viewport -- the one with the toolbars showing -- so it
+     never changes while the bars move. dvh does change, and on a real phone
+     that makes the document grow ~164px out from under the finger mid-swipe
+     (measured: scrollHeight 1256 -> 1420 as the bars retracted), which is what
+     the glitchy half-collapses look like. `?spacer=dvh` restores the old
+     behaviour for an A/B. */
+  #spacer { flex: 0 0 auto; width: 1px; height: var(--spacer, 200svh); min-height: var(--spacer, 200svh); }
   #gutter {
     position: fixed;
     top: env(safe-area-inset-top);
     left: 0;
-    right: 40px;
-    height: 44px;
+    right: var(--gutter-right, 0px);
+    height: var(--gutter-h, 96px);
     z-index: 39;
     display: flex;
     align-items: center;
@@ -62,6 +68,22 @@
 <div id="panel">C &mdash; a fixed full-screen panel that eats touches, like the app canvas.<br><br><b>Swipe up on the black strip at the top.</b></div>
 <div id="spacer" aria-hidden="true"></div>
 <div id="gutter">&#x25B2; swipe up here for more screen</div>
+<script>
+  // Both knobs are query params so the same page can be A/B'd on the device
+  // without an edit and a reload of a different URL:
+  //   ?spacer=dvh|svh   (default svh)   ?gutter=44|96|...px tall (default 96)
+  //   ?right=40         (default 0 -- full width)
+  // The readout name carries them, so the log says which shape produced a line.
+  const q = new URLSearchParams(location.search);
+  const spacer = q.get('spacer') === 'dvh' ? '200dvh' : '200svh';
+  const gutterH = (q.get('gutter') || '96') + 'px';
+  const right = (q.get('right') || '0') + 'px';
+  const root = document.documentElement.style;
+  root.setProperty('--spacer', spacer);
+  root.setProperty('--gutter-h', gutterH);
+  root.setProperty('--gutter-right', right);
+  document.body.dataset.lab = `C-${spacer.slice(3)}${parseInt(gutterH, 10)}`;
+</script>
 <script>
   // The panel behaves like the emulator canvas: every touch on it is claimed
   // for the guest and never becomes a page scroll. That is deliberate here --
