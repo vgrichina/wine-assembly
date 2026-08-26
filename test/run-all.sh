@@ -88,6 +88,7 @@ UNIT=(
   test/test-keyboard-message-lparam.js
   test/test-opengl-fixed-function.js
   test/test-opengl-frame-state.js
+  test/test-gpu-atomic-present.js
   test/test-opengl-swapbuffers.js
   test/test-renderer-dialog-button-queue.js
   test/test-nc-flags-message-wake.js

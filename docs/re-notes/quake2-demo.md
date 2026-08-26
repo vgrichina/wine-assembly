@@ -255,8 +255,26 @@ lightmap textures 1035-1037 remain in that brightness band, which rules out the
 subimage path itself randomly corrupting illumination. Those captures and the
 per-frame JSON traces are under `scratch/quake2-gl-flicker/settled/`.
 
-No renderer change is justified by this evidence: the conspicuous flashes are
-authentic scene content made harsher in wall time by the low guest frame rate.
+That stationary evidence did not cover a separate movement-only presentation
+bug. A trusted mouse-look probe caused the compositor to repaint at time
+112493.1 after 645 `glEnd` draws of the next frame but before `gpuPresent`
+sequence 71 at time 113462.5. The resulting screenshot was a bright,
+incomplete base-texture pass with no weapon, HUD, or lightmap. The compositor's
+GPU layer directly referenced the WebGL canvas on which the guest was still
+drawing; pointer movement merely supplied the otherwise-unrelated repaint
+that exposed it.
+
+The generic WebGL/GLES backend now separates its live draw canvas from a
+compositor-visible 2D snapshot. Only `present`/`SwapBuffers` flushes and copies
+a completed GPU frame into that snapshot, so keyboard, mouse, window, and
+desktop repaints between cooperative guest slices retain the preceding whole
+frame. This ownership boundary is backend-generic and can also be used by a
+future accelerated Direct3D frontend. `test/test-gpu-atomic-present.js` proves
+that partial drawing cannot mutate the exposed surface and that explicit
+present publishes one complete, correctly resized, pixel-exact snapshot.
+
+The conspicuous no-input explosion flashes remain authentic scene content
+made harsher in wall time by the low guest frame rate.
 `test/test-opengl-frame-state.js` locks the generic invariants exercised here:
 lightmap subimages update only the selected texture, multiplicative blending
 and disabled depth writes do not leak past the lightmap pass, sparse bytes are
