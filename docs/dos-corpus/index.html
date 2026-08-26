@@ -93,14 +93,14 @@ footer { margin-top: 60px; padding-top: 22px; border-top: 1px solid var(--rule);
   <h1>199 DOS demos,<br>one screenshot <span class="b">each</span></h1>
   <p class="lede">Every program in the corpus is run headless in the toy VM and
   photographed off whichever surface it actually drew on -- the VGA planes or
-  the text console. <strong>153 of 199</strong> put something
-  on screen. The 38 that drew nothing are on the page too, marked,
+  the text console. <strong>151 of 199</strong> put something
+  on screen. The 45 that drew nothing are on the page too, marked,
   because a blank tile is the work list.</p>
   <div class="stats">
     <div class="stat"><p class="k">programs swept</p><p class="v">199</p><p class="d">every executable the fetch unpacked, one child process each</p></div>
-    <div class="stat"><p class="k">drew graphics</p><p class="v">83</p><p class="d">wrote pixels to a VGA mode</p></div>
-    <div class="stat"><p class="k">drew text</p><p class="v">70</p><p class="d">filled the console grid instead</p></div>
-    <div class="stat"><p class="k">nothing to show</p><p class="v">46</p><p class="d">38 drew nothing, 8 never finished -- the work list</p></div>
+    <div class="stat"><p class="k">drew graphics</p><p class="v">107</p><p class="d">wrote pixels to a VGA mode</p></div>
+    <div class="stat"><p class="k">drew text</p><p class="v">44</p><p class="d">filled the console grid instead</p></div>
+    <div class="stat"><p class="k">nothing to show</p><p class="v">48</p><p class="d">45 drew nothing, 3 never finished -- the work list</p></div>
   </div>
 </header>
 
@@ -149,11 +149,25 @@ footer { margin-top: 60px; padding-top: 22px; border-top: 1px solid var(--rule);
   to make room for it. At the old layout those eight signature bytes would have
   landed on top of the stubs for INT 0Ah through INT 11h, INT 10h among them.</p>
 
-  <p>Extended memory blocks live in host buffers rather than anywhere the guest
-  can reach, because a real-mode program cannot address them anyway &mdash;
-  everything it can do with one goes through the XMS move call. That is also why
-  <em>Lock</em> fails rather than inventing a 32-bit address: a program that got
-  one would write through it into memory that does not exist.</p>
+  <p>Extended memory blocks started life in host buffers, on the reasoning that
+  a real-mode program cannot address them anyway &mdash; everything it can do
+  with one goes through the XMS move call, so <em>Lock</em> failed rather than
+  inventing a 32-bit address nothing was behind. Ten programs disagreed, all of
+  them from the same intro system, all of them stopping on that one call with
+  <span class="m">Extended memory allocation failure. (weird eh???)</span>. They
+  lock the block, take the linear address, and write through it from real mode
+  with a 32-bit offset.</p>
+
+  <p>So there is somewhere for that address to point now. Guest RAM is 16MB
+  &mdash; the 8086's megabyte, then extended memory above the HMA &mdash; and
+  blocks are cut from it. The address bus is the interesting part: an 8086 has
+  twenty address lines and every address wraps at 1MB, a machine with extended
+  memory in it does not, and a program can tell which one it is on. Address
+  translation masks through a global that holds the 8086's twenty lines until
+  the guest <em>takes an XMS handle</em>, and only then widens. A program that
+  never asks for extended memory keeps exact 8086 wrap semantics, and the
+  instruction gate &mdash; whose vectors are recorded off real silicon, wrap
+  included &mdash; never notices the change.</p>
 
   <h3>MAINPART.EXE is the whole shape of it</h3>
 
@@ -191,19 +205,103 @@ footer { margin-top: 60px; padding-top: 22px; border-top: 1px solid var(--rule);
   screen, because a program still showing the same menu did not accept that key,
   and sending it again forever is how a run hangs politely.</p>
 
-  <pre class="dlg-screen" style="max-height:none;border:1px solid var(--rule);color:var(--ink)">BLINKY.EXE    <b>a. PC Speaker   p. No sound</b>          -&gt; p
-BUDENZA.EXE   <b>1) No Music</b>  2) DAC/Covox on LPT1   -&gt; 1
-CULT.EXE      Do YOU have a GUS <b>[Y/N]</b>              -&gt; n</pre>
+  <pre class="dlg-screen" style="max-height:none;border:1px solid var(--rule);color:var(--ink)">BUDENZA.EXE   <b>1) No Music</b>  2) DAC/Covox on LPT1              -&gt; 1
+CULT.EXE      Do YOU have a GUS <b>[Y/N]</b>                         -&gt; n
+CYCLE.EXE     (G)ravis Ultra Sound / (O)thers / <b>(N)one</b> ???    -&gt; N
+BTW.EXE       [1] 210h &hellip; <b>[0] Just kidding! I don't even own a GUS!!!</b>  -&gt; 0</pre>
 
   <p class="note"><span class="m">BLIQ.EXE</span> and
   <span class="m">CONTAGIO.EXE</span> printed <em>Can not init file manager</em>
   while making no file call at all, which is what gave that one away: what they
   could not find was their own name. A DOS program's environment block ends with
   a count word and then the full path it was started from, and there was no
-  environment block &mdash; so they now get one, and open themselves. The
-  GUS-port menus in <span class="m">IHANMUU</span> and <span class="m">BTW</span>
-  offer six hardware addresses and no silent option, so there is nothing on the
-  screen for the reader to pick.</p>
+  environment block &mdash; so they now get one, and open themselves.</p>
+
+  <h3>Two of those menus are not read the same way twice</h3>
+
+  <p>The last two lines above are the ones that took the reader apart. A menu
+  laid out as <span class="m">(G)ravis / (O)thers / (N)one</span> puts the
+  selector <em>inside</em> the word, so the label reads as
+  <span class="m">one</span> &mdash; which means neither yes nor no &mdash; and
+  puts the whole menu on one line, where a scanner anchored on line starts and
+  double spaces sees only the first option. And a silent option does not have to
+  say "none": <span class="m">Just kidding! I don't even own a GUS!!!</span> is
+  the same answer in a different voice.</p>
+
+  <h3>Then there is how the key gets in</h3>
+
+  <p>Reading the menu correctly is no use if nothing delivers the answer, and
+  these programs read the keyboard three different ways.</p>
+
+  <p><strong>The polled read.</strong> <span class="m">INT 16h AH=01h</span>
+  asks "is anyone there", and it deliberately never manufactured a key: a demo
+  checks that once a frame to decide whether to quit, and would be told yes on
+  its first frame. It answers now, but only on a <em>text</em> screen the menu
+  reader recognises &mdash; over its own graphics a demo is still told the
+  keyboard is empty.</p>
+
+  <p><strong>The port.</strong> <span class="m">BTW.EXE</span> sat on its menu
+  having made zero INT 16h calls in eleven million dispatches, because it hooks
+  nothing and asks the BIOS nothing: it reads port 60h directly, and that port
+  returned a constant zero. It serves the same queue now, make code then break
+  code, and IRQ1 is delivered to a program that installed its own INT 9.</p>
+
+  <p><strong>The command line.</strong> Some programs name their own way past
+  the screen they are stuck on. <span class="m">AMBIENT.EXE</span> prints
+  <em>MIDAS Error: NO GUS FOUND... USE "AMBIENT /NO_SND" FOR SILENT MODE</em>
+  and means every word: the PSP command tail is populated now, the sweep reads
+  the switch off the screen and retries with it, and the demo renders.
+  Lower-cased on the way in &mdash; the message shouts, and MIDAS's option
+  parser is case sensitive.</p>
+
+  <h3>The detector that was calling working programs hung</h3>
+
+  <p>The single biggest cause was not a menu at all. A run is declared hung
+  after two hundred handbacks at one address with nothing new on the console
+  &mdash; and a loop that <em>stores into a paragraph some compiled region
+  decoded</em> hands control back on every iteration, at the same address, with
+  nothing to show for it. That is indistinguishable from a spin by address
+  alone. <span class="m">IHANMUU.EXE</span> was cut off after 0.5M of its 30M
+  dispatches inside a loop whose SI and BP were advancing the whole time; with
+  the registers folded into the progress test it runs to a full mode 13h
+  screen.</p>
+
+  <div class="shots" style="grid-template-columns:repeat(auto-fill,minmax(260px,1fr))">
+    <figure><button class="open" type="button"><img src="shots/IHANMUU.png" alt="IHANMUU.EXE rendering a full mode 13h graphics screen"></button>
+      <figcaption><span class="fn">IHANMUU.EXE</span><span class="fp">was &ldquo;hung&rdquo;</span></figcaption></figure>
+    <figure><button class="open" type="button"><img src="shots/BTW.png" alt="BTW.EXE rendering a mode 13h graphics screen"></button>
+      <figcaption><span class="fn">BTW.EXE</span><span class="fp">read port 60h</span></figcaption></figure>
+    <figure><button class="open" type="button"><img src="shots/FROGFUZZ.png" alt="FROGFUZZ.EXE rendering an EGA planar screen"></button>
+      <figcaption><span class="fn">FROGFUZZ.EXE</span><span class="fp">GUS-port menu</span></figcaption></figure>
+    <figure><button class="open" type="button"><img src="shots/AMBIENT.png" alt="AMBIENT.EXE rendering a mode 13h graphics screen"></button>
+      <figcaption><span class="fn">AMBIENT.EXE</span><span class="fp">/no_snd</span></figcaption></figure>
+  </div>
+
+  <p class="note">Between them these moved thirteen programs from a text screen
+  to a picture, five from a blank one, and two from no capture at all: 83
+  graphics tiles became 107.</p>
+</section>
+
+<section>
+  <h2>What is left is a different machine</h2>
+  <p class="sub">twelve programs, one blocker, and it is not an instruction either</p>
+
+  <p>Thirteen programs got <em>worse</em> looking in this round, and the change
+  is honest. They are the ones that printed <span class="m">Extended memory
+  allocation failure. (weird eh???)</span> and exited; with a lock that works
+  they no longer print anything, and stop a few instructions later at
+  <span class="m">LGDT</span> and <span class="m">MOV CR0, EAX</span>. All
+  thirteen are the same 32-bit DOS extender, and one more &mdash;
+  <span class="m">COCAHOLC.EXE</span> &mdash; reaches the same place through
+  <span class="m">INT 2Fh AX=1687</span>, the DPMI entry point. An error message
+  is a better picture than a black screen, but it was a message about the wrong
+  thing.</p>
+
+  <p>What they want is a descriptor table, a segment whose base comes out of it
+  instead of out of a shift by four, and a code segment whose default operand
+  size is 32 bits. That is not an instruction the decoder is missing. It is a
+  second addressing mode for the whole machine, and it is the largest single
+  item left in the corpus.</p>
 </section>
 
 <section>
@@ -320,8 +418,11 @@ CULT.EXE      Do YOU have a GUS <b>[Y/N]</b>              -&gt; n</pre>
 <figure class="vga" data-what="128,000 px" data-geom="mode eh - 640x200 planar 4bpp" data-stuck="100:671"><button class="open" type="button" title="BOB.COM - full size"><img loading="lazy" src="shots/BOB.png" alt="BOB.COM: mode eh graphics frame"></button><figcaption><span class="fn" title="BOB.COM">BOB.COM</span><span class="fp"><b>128,000</b> px</span></figcaption></figure>
 <figure class="vga" data-what="99,211 px" data-geom="mode 12h - 640x480 planar 4bpp" data-stuck="110:5349"><button class="open" type="button" title="acme-sns.exe - full size"><img loading="lazy" src="shots/acme-sns.png" alt="acme-sns.exe: mode 12h graphics frame"></button><figcaption><span class="fn" title="acme-sns.exe">acme-sns.exe</span><span class="fp"><b>99,211</b> px</span></figcaption></figure>
 <figure class="vga" data-what="84,383 px" data-geom="mode 13h - 320x400 planar 8bpp"><button class="open" type="button" title="brainbug.exe - full size"><img loading="lazy" src="shots/brainbug.png" alt="brainbug.exe: mode 13h graphics frame"></button><figcaption><span class="fn" title="brainbug.exe">brainbug.exe</span><span class="fp"><b>84,383</b> px</span></figcaption></figure>
+<figure class="vga" data-what="81,912 px" data-geom="mode 13h - 320x480 planar 8bpp"><button class="open" type="button" title="diftro.exe - full size"><img loading="lazy" src="shots/diftro.png" alt="diftro.exe: mode 13h graphics frame"></button><figcaption><span class="fn" title="diftro.exe">diftro.exe</span><span class="fp"><b>81,912</b> px</span></figcaption></figure>
 <figure class="vga" data-what="64,000 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="MINTRO.EXE - full size"><img loading="lazy" src="shots/MINTRO.png" alt="MINTRO.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="MINTRO.EXE">MINTRO.EXE</span><span class="fp"><b>64,000</b> px</span></figcaption></figure>
+<figure class="vga" data-what="64,000 px" data-geom="mode 13h - 320x200 planar 8bpp" data-stuck="76e:3e66"><button class="open" type="button" title="CHANGE.EXE - full size"><img loading="lazy" src="shots/CHANGE.png" alt="CHANGE.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="CHANGE.EXE">CHANGE.EXE</span><span class="fp"><b>64,000</b> px</span></figcaption></figure>
 <figure class="vga" data-what="64,000 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="COMPOVRS.EXE - full size"><img loading="lazy" src="shots/COMPOVRS.png" alt="COMPOVRS.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="COMPOVRS.EXE">COMPOVRS.EXE</span><span class="fp"><b>64,000</b> px</span></figcaption></figure>
+<figure class="vga" data-what="64,000 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="IHANMUU.EXE - full size"><img loading="lazy" src="shots/IHANMUU.png" alt="IHANMUU.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="IHANMUU.EXE">IHANMUU.EXE</span><span class="fp"><b>64,000</b> px</span></figcaption></figure>
 <figure class="vga" data-what="64,000 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="POLLY.EXE - full size"><img loading="lazy" src="shots/POLLY.png" alt="POLLY.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="POLLY.EXE">POLLY.EXE</span><span class="fp"><b>64,000</b> px</span></figcaption></figure>
 <figure class="vga" data-what="64,000 px" data-geom="mode 13h - 320x200 planar 8bpp"><button class="open" type="button" title="CARRIE.EXE - full size"><img loading="lazy" src="shots/CARRIE.png" alt="CARRIE.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="CARRIE.EXE">CARRIE.EXE</span><span class="fp"><b>64,000</b> px</span></figcaption></figure>
 <figure class="vga" data-what="64,000 px" data-geom="mode 13h - 320x200 planar 8bpp"><button class="open" type="button" title="AKM-ZORL.EXE - full size"><img loading="lazy" src="shots/AKM-ZORL.png" alt="AKM-ZORL.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="AKM-ZORL.EXE">AKM-ZORL.EXE</span><span class="fp"><b>64,000</b> px</span></figcaption></figure>
@@ -331,49 +432,67 @@ CULT.EXE      Do YOU have a GUS <b>[Y/N]</b>              -&gt; n</pre>
 <figure class="vga" data-what="64,000 px" data-geom="mode 13h - 320x200" data-stuck="100:523"><button class="open" type="button" title="ZOKDTPLN.COM - full size"><img loading="lazy" src="shots/ZOKDTPLN.png" alt="ZOKDTPLN.COM: mode 13h graphics frame"></button><figcaption><span class="fn" title="ZOKDTPLN.COM">ZOKDTPLN.COM</span><span class="fp"><b>64,000</b> px</span></figcaption></figure>
 <figure class="vga" data-what="63,999 px" data-geom="mode 13h - 320x200 planar 8bpp"><button class="open" type="button" title="BUDENZA.EXE - full size"><img loading="lazy" src="shots/BUDENZA.png" alt="BUDENZA.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="BUDENZA.EXE">BUDENZA.EXE</span><span class="fp"><b>63,999</b> px</span></figcaption></figure>
 <figure class="vga" data-what="63,775 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="ANTRO.COM - full size"><img loading="lazy" src="shots/ANTRO.png" alt="ANTRO.COM: mode 13h graphics frame"></button><figcaption><span class="fn" title="ANTRO.COM">ANTRO.COM</span><span class="fp"><b>63,775</b> px</span></figcaption></figure>
-<figure class="vga" data-what="63,680 px" data-geom="mode 3h - 320x200"><button class="open" type="button" title="ACCIDENT.EXE - full size"><img loading="lazy" src="shots/ACCIDENT.png" alt="ACCIDENT.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="ACCIDENT.EXE">ACCIDENT.EXE</span><span class="fp"><b>63,680</b> px</span></figcaption></figure>
+<figure class="vga" data-what="63,680 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="ACCIDENT.EXE - full size"><img loading="lazy" src="shots/ACCIDENT.png" alt="ACCIDENT.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="ACCIDENT.EXE">ACCIDENT.EXE</span><span class="fp"><b>63,680</b> px</span></figcaption></figure>
+<figure class="vga" data-what="63,481 px" data-geom="mode dh - 320x200 planar 4bpp" data-stuck="100:8da"><button class="open" type="button" title="BARTI.COM - full size"><img loading="lazy" src="shots/BARTI.png" alt="BARTI.COM: mode dh graphics frame"></button><figcaption><span class="fn" title="BARTI.COM">BARTI.COM</span><span class="fp"><b>63,481</b> px</span></figcaption></figure>
+<figure class="vga" data-what="62,838 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="bobs.com - full size"><img loading="lazy" src="shots/bobs.png" alt="bobs.com: mode 13h graphics frame"></button><figcaption><span class="fn" title="bobs.com">bobs.com</span><span class="fp"><b>62,838</b> px</span></figcaption></figure>
 <figure class="vga" data-what="62,251 px" data-geom="mode 13h - 320x200" data-stuck="110:be99"><button class="open" type="button" title="ACME-VIC.EXE - full size"><img loading="lazy" src="shots/ACME-VIC.png" alt="ACME-VIC.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="ACME-VIC.EXE">ACME-VIC.EXE</span><span class="fp"><b>62,251</b> px</span></figcaption></figure>
+<figure class="vga" data-what="61,808 px" data-geom="mode 3h - 320x200"><button class="open" type="button" title="AKM_DOB.EXE - full size"><img loading="lazy" src="shots/AKM_DOB.png" alt="AKM_DOB.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="AKM_DOB.EXE">AKM_DOB.EXE</span><span class="fp"><b>61,808</b> px</span></figcaption></figure>
 <figure class="vga" data-what="61,695 px" data-geom="mode 3h - 320x200"><button class="open" type="button" title="ACME-SUX.EXE - full size"><img loading="lazy" src="shots/ACME-SUX.png" alt="ACME-SUX.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="ACME-SUX.EXE">ACME-SUX.EXE</span><span class="fp"><b>61,695</b> px</span></figcaption></figure>
 <figure class="vga" data-what="61,615 px" data-geom="mode 13h - 320x200 planar 8bpp"><button class="open" type="button" title="DASH.EXE - full size"><img loading="lazy" src="shots/DASH.png" alt="DASH.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="DASH.EXE">DASH.EXE</span><span class="fp"><b>61,615</b> px</span></figcaption></figure>
 <figure class="vga" data-what="61,373 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="CONTACT.EXE - full size"><img loading="lazy" src="shots/CONTACT.png" alt="CONTACT.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="CONTACT.EXE">CONTACT.EXE</span><span class="fp"><b>61,373</b> px</span></figcaption></figure>
 <figure class="vga" data-what="61,120 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="cchop.exe - full size"><img loading="lazy" src="shots/cchop.png" alt="cchop.exe: mode 13h graphics frame"></button><figcaption><span class="fn" title="cchop.exe">cchop.exe</span><span class="fp"><b>61,120</b> px</span></figcaption></figure>
 <figure class="vga" data-what="60,800 px" data-geom="mode 13h - 640x200 planar 4bpp"><button class="open" type="button" title="ADDY_II.EXE - full size"><img loading="lazy" src="shots/ADDY_II.png" alt="ADDY_II.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="ADDY_II.EXE">ADDY_II.EXE</span><span class="fp"><b>60,800</b> px</span></figcaption></figure>
-<figure class="vga" data-what="60,447 px" data-geom="mode 13h - 320x200" data-stuck="100:116"><button class="open" type="button" title="bobs.com - full size"><img loading="lazy" src="shots/bobs.png" alt="bobs.com: mode 13h graphics frame"></button><figcaption><span class="fn" title="bobs.com">bobs.com</span><span class="fp"><b>60,447</b> px</span></figcaption></figure>
+<figure class="vga" data-what="58,668 px" data-geom="mode dh - 320x200 planar 4bpp"><button class="open" type="button" title="FROGFUZZ.EXE - full size"><img loading="lazy" src="shots/FROGFUZZ.png" alt="FROGFUZZ.EXE: mode dh graphics frame"></button><figcaption><span class="fn" title="FROGFUZZ.EXE">FROGFUZZ.EXE</span><span class="fp"><b>58,668</b> px</span></figcaption></figure>
 <figure class="vga" data-what="58,040 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="RUNDEMO.EXE - full size"><img loading="lazy" src="shots/RUNDEMO.png" alt="RUNDEMO.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="RUNDEMO.EXE">RUNDEMO.EXE</span><span class="fp"><b>58,040</b> px</span></figcaption></figure>
 <figure class="vga" data-what="58,040 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="MAINPART.EXE - full size"><img loading="lazy" src="shots/MAINPART.png" alt="MAINPART.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="MAINPART.EXE">MAINPART.EXE</span><span class="fp"><b>58,040</b> px</span></figcaption></figure>
 <figure class="vga" data-what="56,743 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="DIGILAB.EXE - full size"><img loading="lazy" src="shots/DIGILAB.png" alt="DIGILAB.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="DIGILAB.EXE">DIGILAB.EXE</span><span class="fp"><b>56,743</b> px</span></figcaption></figure>
+<figure class="vga" data-what="56,244 px" data-geom="mode 13h - 320x400 planar 8bpp"><button class="open" type="button" title="DENTROCF.EXE - full size"><img loading="lazy" src="shots/DENTROCF.png" alt="DENTROCF.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="DENTROCF.EXE">DENTROCF.EXE</span><span class="fp"><b>56,244</b> px</span></figcaption></figure>
 <figure class="vga" data-what="56,082 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="BKSNOTE.EXE - full size"><img loading="lazy" src="shots/BKSNOTE.png" alt="BKSNOTE.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="BKSNOTE.EXE">BKSNOTE.EXE</span><span class="fp"><b>56,082</b> px</span></figcaption></figure>
+<figure class="vga" data-what="54,158 px" data-geom="mode 12h - 640x240 planar 4bpp"><button class="open" type="button" title="TRIPLEX!.COM - full size"><img loading="lazy" src="shots/TRIPLEX_.png" alt="TRIPLEX!.COM: mode 12h graphics frame"></button><figcaption><span class="fn" title="TRIPLEX!.COM">TRIPLEX!.COM</span><span class="fp"><b>54,158</b> px</span></figcaption></figure>
+<figure class="vga" data-what="54,158 px" data-geom="mode 12h - 640x240 planar 4bpp"><button class="open" type="button" title="TRIPLEX!.COM - full size"><img loading="lazy" src="shots/1994-c-contagio-TRIPLEX_.png" alt="TRIPLEX!.COM: mode 12h graphics frame"></button><figcaption><span class="fn" title="TRIPLEX!.COM">TRIPLEX!.COM</span><span class="fp"><b>54,158</b> px</span></figcaption></figure>
+<figure class="vga" data-what="54,158 px" data-geom="mode 12h - 640x240 planar 4bpp"><button class="open" type="button" title="TRIPLEX!.COM - full size"><img loading="lazy" src="shots/1994-c-cyboman2-TRIPLEX_.png" alt="TRIPLEX!.COM: mode 12h graphics frame"></button><figcaption><span class="fn" title="TRIPLEX!.COM">TRIPLEX!.COM</span><span class="fp"><b>54,158</b> px</span></figcaption></figure>
 <figure class="vga" data-what="51,520 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="RUN_IT.EXE - full size"><img loading="lazy" src="shots/RUN_IT.png" alt="RUN_IT.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="RUN_IT.EXE">RUN_IT.EXE</span><span class="fp"><b>51,520</b> px</span></figcaption></figure>
 <figure class="vga" data-what="51,072 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="RUNME2ND.EXE - full size"><img loading="lazy" src="shots/RUNME2ND.png" alt="RUNME2ND.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="RUNME2ND.EXE">RUNME2ND.EXE</span><span class="fp"><b>51,072</b> px</span></figcaption></figure>
+<figure class="vga" data-what="46,912 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="BTW.EXE - full size"><img loading="lazy" src="shots/BTW.png" alt="BTW.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="BTW.EXE">BTW.EXE</span><span class="fp"><b>46,912</b> px</span></figcaption></figure>
 <figure class="vga" data-what="46,018 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="chaos386.exe - full size"><img loading="lazy" src="shots/chaos386.png" alt="chaos386.exe: mode 13h graphics frame"></button><figcaption><span class="fn" title="chaos386.exe">chaos386.exe</span><span class="fp"><b>46,018</b> px</span></figcaption></figure>
-<figure class="vga" data-what="38,919 px" data-geom="mode 13h - 320x200" data-stuck="110:0"><button class="open" type="button" title="ACIDRAIN.EXE - full size"><img loading="lazy" src="shots/ACIDRAIN.png" alt="ACIDRAIN.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="ACIDRAIN.EXE">ACIDRAIN.EXE</span><span class="fp"><b>38,919</b> px</span></figcaption></figure>
+<figure class="vga" data-what="39,002 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="ACIDRAIN.EXE - full size"><img loading="lazy" src="shots/ACIDRAIN.png" alt="ACIDRAIN.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="ACIDRAIN.EXE">ACIDRAIN.EXE</span><span class="fp"><b>39,002</b> px</span></figcaption></figure>
 <figure class="vga" data-what="37,348 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="deadtro.exe - full size"><img loading="lazy" src="shots/deadtro.png" alt="deadtro.exe: mode 13h graphics frame"></button><figcaption><span class="fn" title="deadtro.exe">deadtro.exe</span><span class="fp"><b>37,348</b> px</span></figcaption></figure>
 <figure class="vga" data-what="33,742 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="ENDPART.EXE - full size"><img loading="lazy" src="shots/ENDPART.png" alt="ENDPART.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="ENDPART.EXE">ENDPART.EXE</span><span class="fp"><b>33,742</b> px</span></figcaption></figure>
+<figure class="vga" data-what="31,997 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="ASSAULT.EXE - full size"><img loading="lazy" src="shots/ASSAULT.png" alt="ASSAULT.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="ASSAULT.EXE">ASSAULT.EXE</span><span class="fp"><b>31,997</b> px</span></figcaption></figure>
+<figure class="vga" data-what="30,064 px" data-geom="mode 13h - 320x100 planar 8bpp"><button class="open" type="button" title="BANAANI.COM - full size"><img loading="lazy" src="shots/BANAANI.png" alt="BANAANI.COM: mode 13h graphics frame"></button><figcaption><span class="fn" title="BANAANI.COM">BANAANI.COM</span><span class="fp"><b>30,064</b> px</span></figcaption></figure>
 <figure class="vga" data-what="30,010 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="COPPER.EXE - full size"><img loading="lazy" src="shots/COPPER.png" alt="COPPER.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="COPPER.EXE">COPPER.EXE</span><span class="fp"><b>30,010</b> px</span></figcaption></figure>
-<figure class="vga" data-what="28,061 px" data-geom="mode 13h - 320x200 planar 8bpp" data-stuck="b92:4132"><button class="open" type="button" title="CHANGE.EXE - full size"><img loading="lazy" src="shots/CHANGE.png" alt="CHANGE.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="CHANGE.EXE">CHANGE.EXE</span><span class="fp"><b>28,061</b> px</span></figcaption></figure>
+<figure class="vga" data-what="28,500 px" data-geom="mode 13h - 320x200" data-stuck="100:58c"><button class="open" type="button" title="BLUE.COM - full size"><img loading="lazy" src="shots/BLUE.png" alt="BLUE.COM: mode 13h graphics frame"></button><figcaption><span class="fn" title="BLUE.COM">BLUE.COM</span><span class="fp"><b>28,500</b> px</span></figcaption></figure>
 <figure class="vga" data-what="28,032 px" data-geom="mode 13h - 320x200 planar 8bpp"><button class="open" type="button" title="CORE-ADD.EXE - full size"><img loading="lazy" src="shots/CORE-ADD.png" alt="CORE-ADD.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="CORE-ADD.EXE">CORE-ADD.EXE</span><span class="fp"><b>28,032</b> px</span></figcaption></figure>
 <figure class="vga" data-what="28,020 px" data-geom="mode 13h - 320x200 planar 8bpp"><button class="open" type="button" title="CORE-ADV.EXE - full size"><img loading="lazy" src="shots/CORE-ADV.png" alt="CORE-ADV.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="CORE-ADV.EXE">CORE-ADV.EXE</span><span class="fp"><b>28,020</b> px</span></figcaption></figure>
 <figure class="vga" data-what="27,279 px" data-geom="mode 13h - 320x200 planar 8bpp"><button class="open" type="button" title="FLY.EXE - full size"><img loading="lazy" src="shots/FLY.png" alt="FLY.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="FLY.EXE">FLY.EXE</span><span class="fp"><b>27,279</b> px</span></figcaption></figure>
 <figure class="vga" data-what="27,190 px" data-geom="mode 13h - 320x170 planar 8bpp"><button class="open" type="button" title="DADEMO2.EXE - full size"><img loading="lazy" src="shots/DADEMO2.png" alt="DADEMO2.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="DADEMO2.EXE">DADEMO2.EXE</span><span class="fp"><b>27,190</b> px</span></figcaption></figure>
 <figure class="vga" data-what="27,094 px" data-geom="mode 13h - 320x200 planar 8bpp" data-stuck="2422:6e7"><button class="open" type="button" title="XMAS.EXE - full size"><img loading="lazy" src="shots/XMAS.png" alt="XMAS.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="XMAS.EXE">XMAS.EXE</span><span class="fp"><b>27,094</b> px</span></figcaption></figure>
+<figure class="vga" data-what="26,587 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="EM.EXE - full size"><img loading="lazy" src="shots/EM.png" alt="EM.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="EM.EXE">EM.EXE</span><span class="fp"><b>26,587</b> px</span></figcaption></figure>
+<figure class="vga" data-what="25,359 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="AMBIENT.EXE - full size"><img loading="lazy" src="shots/AMBIENT.png" alt="AMBIENT.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="AMBIENT.EXE">AMBIENT.EXE</span><span class="fp"><b>25,359</b> px</span></figcaption></figure>
+<figure class="vga" data-what="23,502 px" data-geom="mode dh - 320x200 planar 4bpp"><button class="open" type="button" title="BYRON.EXE - full size"><img loading="lazy" src="shots/BYRON.png" alt="BYRON.EXE: mode dh graphics frame"></button><figcaption><span class="fn" title="BYRON.EXE">BYRON.EXE</span><span class="fp"><b>23,502</b> px</span></figcaption></figure>
 <figure class="vga" data-what="23,347 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="alpha.exe - full size"><img loading="lazy" src="shots/alpha.png" alt="alpha.exe: mode 13h graphics frame"></button><figcaption><span class="fn" title="alpha.exe">alpha.exe</span><span class="fp"><b>23,347</b> px</span></figcaption></figure>
 <figure class="vga" data-what="23,111 px" data-geom="mode 10h - 640x350 planar 4bpp" data-stuck="110:22c"><button class="open" type="button" title="BAGGER.EXE - full size"><img loading="lazy" src="shots/BAGGER.png" alt="BAGGER.EXE: mode 10h graphics frame"></button><figcaption><span class="fn" title="BAGGER.EXE">BAGGER.EXE</span><span class="fp"><b>23,111</b> px</span></figcaption></figure>
 <figure class="vga" data-what="22,276 px" data-geom="mode 13h - 320x200 planar 8bpp"><button class="open" type="button" title="cass.com - full size"><img loading="lazy" src="shots/cass.png" alt="cass.com: mode 13h graphics frame"></button><figcaption><span class="fn" title="cass.com">cass.com</span><span class="fp"><b>22,276</b> px</span></figcaption></figure>
 <figure class="vga" data-what="21,611 px" data-geom="mode dh - 320x200 planar 4bpp"><button class="open" type="button" title="MAMAN.EXE - full size"><img loading="lazy" src="shots/MAMAN.png" alt="MAMAN.EXE: mode dh graphics frame"></button><figcaption><span class="fn" title="MAMAN.EXE">MAMAN.EXE</span><span class="fp"><b>21,611</b> px</span></figcaption></figure>
-<figure class="vga" data-what="20,384 px" data-geom="mode 13h - 320x200" data-stuck="100:591a"><button class="open" type="button" title="BLUE.COM - full size"><img loading="lazy" src="shots/BLUE.png" alt="BLUE.COM: mode 13h graphics frame"></button><figcaption><span class="fn" title="BLUE.COM">BLUE.COM</span><span class="fp"><b>20,384</b> px</span></figcaption></figure>
+<figure class="vga" data-what="21,329 px" data-geom="mode 10h - 640x350 planar 4bpp"><button class="open" type="button" title="EOD.EXE - full size"><img loading="lazy" src="shots/EOD.png" alt="EOD.EXE: mode 10h graphics frame"></button><figcaption><span class="fn" title="EOD.EXE">EOD.EXE</span><span class="fp"><b>21,329</b> px</span></figcaption></figure>
 <figure class="vga" data-what="20,296 px" data-geom="mode 13h - 320x200 planar 8bpp"><button class="open" type="button" title="DHADREN.EXE - full size"><img loading="lazy" src="shots/DHADREN.png" alt="DHADREN.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="DHADREN.EXE">DHADREN.EXE</span><span class="fp"><b>20,296</b> px</span></figcaption></figure>
+<figure class="vga" data-what="19,559 px" data-geom="mode 13h - 320x200" data-stuck="fe:9a05"><button class="open" type="button" title="BULLET.EXE - full size"><img loading="lazy" src="shots/BULLET.png" alt="BULLET.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="BULLET.EXE">BULLET.EXE</span><span class="fp"><b>19,559</b> px</span></figcaption></figure>
 <figure class="vga" data-what="18,922 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="NT_DEM1.EXE - full size"><img loading="lazy" src="shots/NT_DEM1.png" alt="NT_DEM1.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="NT_DEM1.EXE">NT_DEM1.EXE</span><span class="fp"><b>18,922</b> px</span></figcaption></figure>
 <figure class="vga" data-what="18,887 px" data-geom="mode dh - 320x200 planar 4bpp"><button class="open" type="button" title="DRAIN.COM - full size"><img loading="lazy" src="shots/DRAIN.png" alt="DRAIN.COM: mode dh graphics frame"></button><figcaption><span class="fn" title="DRAIN.COM">DRAIN.COM</span><span class="fp"><b>18,887</b> px</span></figcaption></figure>
 <figure class="vga" data-what="17,883 px" data-geom="mode eh - 720x200 planar 4bpp"><button class="open" type="button" title="FLASH.COM - full size"><img loading="lazy" src="shots/FLASH.png" alt="FLASH.COM: mode eh graphics frame"></button><figcaption><span class="fn" title="FLASH.COM">FLASH.COM</span><span class="fp"><b>17,883</b> px</span></figcaption></figure>
+<figure class="vga" data-what="17,544 px" data-geom="mode 12h - 640x480 planar 4bpp"><button class="open" type="button" title="anarchy.exe - full size"><img loading="lazy" src="shots/anarchy.png" alt="anarchy.exe: mode 12h graphics frame"></button><figcaption><span class="fn" title="anarchy.exe">anarchy.exe</span><span class="fp"><b>17,544</b> px</span></figcaption></figure>
 <figure class="vga" data-what="17,297 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="CRAP.EXE - full size"><img loading="lazy" src="shots/CRAP.png" alt="CRAP.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="CRAP.EXE">CRAP.EXE</span><span class="fp"><b>17,297</b> px</span></figcaption></figure>
 <figure class="vga" data-what="17,232 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="delirium.exe - full size"><img loading="lazy" src="shots/delirium.png" alt="delirium.exe: mode 13h graphics frame"></button><figcaption><span class="fn" title="delirium.exe">delirium.exe</span><span class="fp"><b>17,232</b> px</span></figcaption></figure>
 <figure class="vga" data-what="16,958 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="MORBID.EXE - full size"><img loading="lazy" src="shots/MORBID.png" alt="MORBID.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="MORBID.EXE">MORBID.EXE</span><span class="fp"><b>16,958</b> px</span></figcaption></figure>
-<figure class="vga" data-what="13,952 px" data-geom="mode 13h - 320x480 planar 8bpp" data-stuck="110:689e"><button class="open" type="button" title="diftro.exe - full size"><img loading="lazy" src="shots/diftro.png" alt="diftro.exe: mode 13h graphics frame"></button><figcaption><span class="fn" title="diftro.exe">diftro.exe</span><span class="fp"><b>13,952</b> px</span></figcaption></figure>
+<figure class="vga" data-what="16,703 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="BIOLAN.EXE - full size"><img loading="lazy" src="shots/BIOLAN.png" alt="BIOLAN.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="BIOLAN.EXE">BIOLAN.EXE</span><span class="fp"><b>16,703</b> px</span></figcaption></figure>
+<figure class="vga" data-what="16,532 px" data-geom="mode 13h - 320x200 planar 8bpp"><button class="open" type="button" title="DARKTOWR.EXE - full size"><img loading="lazy" src="shots/DARKTOWR.png" alt="DARKTOWR.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="DARKTOWR.EXE">DARKTOWR.EXE</span><span class="fp"><b>16,532</b> px</span></figcaption></figure>
+<figure class="vga" data-what="14,080 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="CYCLE.EXE - full size"><img loading="lazy" src="shots/CYCLE.png" alt="CYCLE.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="CYCLE.EXE">CYCLE.EXE</span><span class="fp"><b>14,080</b> px</span></figcaption></figure>
 <figure class="vga" data-what="13,565 px" data-geom="mode 13h - 320x200 planar 8bpp" data-stuck="110:256f"><button class="open" type="button" title="PLANEART.EXE - full size"><img loading="lazy" src="shots/PLANEART.png" alt="PLANEART.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="PLANEART.EXE">PLANEART.EXE</span><span class="fp"><b>13,565</b> px</span></figcaption></figure>
 <figure class="vga" data-what="13,014 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="CRUSADER.COM - full size"><img loading="lazy" src="shots/CRUSADER.png" alt="CRUSADER.COM: mode 13h graphics frame"></button><figcaption><span class="fn" title="CRUSADER.COM">CRUSADER.COM</span><span class="fp"><b>13,014</b> px</span></figcaption></figure>
 <figure class="vga" data-what="12,852 px" data-geom="mode eh - 640x200 planar 4bpp"><button class="open" type="button" title="ZERO-BBS.EXE - full size"><img loading="lazy" src="shots/1994-c-copper-ZERO-BBS.png" alt="ZERO-BBS.EXE: mode eh graphics frame"></button><figcaption><span class="fn" title="ZERO-BBS.EXE">ZERO-BBS.EXE</span><span class="fp"><b>12,852</b> px</span></figcaption></figure>
 <figure class="vga" data-what="12,852 px" data-geom="mode eh - 640x200 planar 4bpp"><button class="open" type="button" title="ZERO-BBS.EXE - full size"><img loading="lazy" src="shots/1994-c-cwbagger-ZERO-BBS.png" alt="ZERO-BBS.EXE: mode eh graphics frame"></button><figcaption><span class="fn" title="ZERO-BBS.EXE">ZERO-BBS.EXE</span><span class="fp"><b>12,852</b> px</span></figcaption></figure>
 <figure class="vga" data-what="12,852 px" data-geom="mode eh - 640x200 planar 4bpp"><button class="open" type="button" title="zero-bbs.exe - full size"><img loading="lazy" src="shots/zero-bbs.png" alt="zero-bbs.exe: mode eh graphics frame"></button><figcaption><span class="fn" title="zero-bbs.exe">zero-bbs.exe</span><span class="fp"><b>12,852</b> px</span></figcaption></figure>
+<figure class="vga" data-what="12,554 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="COFFEE.EXE - full size"><img loading="lazy" src="shots/COFFEE.png" alt="COFFEE.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="COFFEE.EXE">COFFEE.EXE</span><span class="fp"><b>12,554</b> px</span></figcaption></figure>
 <figure class="vga" data-what="12,076 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="ALCHMSB.EXE - full size"><img loading="lazy" src="shots/ALCHMSB.png" alt="ALCHMSB.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="ALCHMSB.EXE">ALCHMSB.EXE</span><span class="fp"><b>12,076</b> px</span></figcaption></figure>
 <figure class="vga" data-what="12,076 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="ALCHYMIA.EXE - full size"><img loading="lazy" src="shots/ALCHYMIA.png" alt="ALCHYMIA.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="ALCHYMIA.EXE">ALCHYMIA.EXE</span><span class="fp"><b>12,076</b> px</span></figcaption></figure>
 <figure class="vga" data-what="11,900 px" data-geom="mode 13h - 320x200 planar 8bpp"><button class="open" type="button" title="ASM95ZEA.EXE - full size"><img loading="lazy" src="shots/ASM95ZEA.png" alt="ASM95ZEA.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="ASM95ZEA.EXE">ASM95ZEA.EXE</span><span class="fp"><b>11,900</b> px</span></figcaption></figure>
@@ -381,23 +500,26 @@ CULT.EXE      Do YOU have a GUS <b>[Y/N]</b>              -&gt; n</pre>
 <figure class="vga" data-what="10,634 px" data-geom="mode 13h - 320x200 planar 8bpp"><button class="open" type="button" title="DRAGON.EXE - full size"><img loading="lazy" src="shots/DRAGON.png" alt="DRAGON.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="DRAGON.EXE">DRAGON.EXE</span><span class="fp"><b>10,634</b> px</span></figcaption></figure>
 <figure class="vga" data-what="10,602 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="AIVOPESU.EXE - full size"><img loading="lazy" src="shots/AIVOPESU.png" alt="AIVOPESU.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="AIVOPESU.EXE">AIVOPESU.EXE</span><span class="fp"><b>10,602</b> px</span></figcaption></figure>
 <figure class="vga" data-what="10,058 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="DIESEL.EXE - full size"><img loading="lazy" src="shots/DIESEL.png" alt="DIESEL.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="DIESEL.EXE">DIESEL.EXE</span><span class="fp"><b>10,058</b> px</span></figcaption></figure>
+<figure class="vga" data-what="7,467 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="DOWNADD.COM - full size"><img loading="lazy" src="shots/DOWNADD.png" alt="DOWNADD.COM: mode 13h graphics frame"></button><figcaption><span class="fn" title="DOWNADD.COM">DOWNADD.COM</span><span class="fp"><b>7,467</b> px</span></figcaption></figure>
+<figure class="vga" data-what="7,467 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="DOWNADD.COM - full size"><img loading="lazy" src="shots/1995-c-cma_brw-DOWNADD.png" alt="DOWNADD.COM: mode 13h graphics frame"></button><figcaption><span class="fn" title="DOWNADD.COM">DOWNADD.COM</span><span class="fp"><b>7,467</b> px</span></figcaption></figure>
 <figure class="vga" data-what="7,433 px" data-geom="mode dh - 320x200 planar 4bpp" data-stuck="18b:4aa"><button class="open" type="button" title="DADEMO.EXE - full size"><img loading="lazy" src="shots/DADEMO.png" alt="DADEMO.EXE: mode dh graphics frame"></button><figcaption><span class="fn" title="DADEMO.EXE">DADEMO.EXE</span><span class="fp"><b>7,433</b> px</span></figcaption></figure>
+<figure class="vga" data-what="6,768 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="DELAY_PT.COM - full size"><img loading="lazy" src="shots/DELAY_PT.png" alt="DELAY_PT.COM: mode 13h graphics frame"></button><figcaption><span class="fn" title="DELAY_PT.COM">DELAY_PT.COM</span><span class="fp"><b>6,768</b> px</span></figcaption></figure>
 <figure class="vga" data-what="6,344 px" data-geom="mode 13h - 320x200 planar 8bpp"><button class="open" type="button" title="DREAM.EXE - full size"><img loading="lazy" src="shots/DREAM.png" alt="DREAM.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="DREAM.EXE">DREAM.EXE</span><span class="fp"><b>6,344</b> px</span></figcaption></figure>
 <figure class="vga" data-what="6,326 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="CRITICAL.EXE - full size"><img loading="lazy" src="shots/CRITICAL.png" alt="CRITICAL.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="CRITICAL.EXE">CRITICAL.EXE</span><span class="fp"><b>6,326</b> px</span></figcaption></figure>
 <figure class="vga" data-what="5,607 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="ASYLUM.EXE - full size"><img loading="lazy" src="shots/ASYLUM.png" alt="ASYLUM.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="ASYLUM.EXE">ASYLUM.EXE</span><span class="fp"><b>5,607</b> px</span></figcaption></figure>
 <figure class="vga" data-what="5,472 px" data-geom="mode 3h - 320x200"><button class="open" type="button" title="BOEM.EXE - full size"><img loading="lazy" src="shots/BOEM.png" alt="BOEM.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="BOEM.EXE">BOEM.EXE</span><span class="fp"><b>5,472</b> px</span></figcaption></figure>
+<figure class="vga" data-what="5,448 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="ANSWER.EXE - full size"><img loading="lazy" src="shots/ANSWER.png" alt="ANSWER.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="ANSWER.EXE">ANSWER.EXE</span><span class="fp"><b>5,448</b> px</span></figcaption></figure>
 <figure class="vga" data-what="3,782 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="UKKO.EXE - full size"><img loading="lazy" src="shots/UKKO.png" alt="UKKO.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="UKKO.EXE">UKKO.EXE</span><span class="fp"><b>3,782</b> px</span></figcaption></figure>
 <figure class="vga" data-what="3,116 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="SE95.EXE - full size"><img loading="lazy" src="shots/SE95.png" alt="SE95.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="SE95.EXE">SE95.EXE</span><span class="fp"><b>3,116</b> px</span></figcaption></figure>
 <figure class="vga" data-what="2,914 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="CONFYOOZ.EXE - full size"><img loading="lazy" src="shots/CONFYOOZ.png" alt="CONFYOOZ.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="CONFYOOZ.EXE">CONFYOOZ.EXE</span><span class="fp"><b>2,914</b> px</span></figcaption></figure>
 <figure class="vga" data-what="2,319 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="EXPRESS.EXE - full size"><img loading="lazy" src="shots/EXPRESS.png" alt="EXPRESS.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="EXPRESS.EXE">EXPRESS.EXE</span><span class="fp"><b>2,319</b> px</span></figcaption></figure>
 <figure class="vga" data-what="1,948 px" data-geom="mode 13h - 360x400 planar 8bpp"><button class="open" type="button" title="ANARCHY.EXE - full size"><img loading="lazy" src="shots/1994-a-anarchy_-ANARCHY.png" alt="ANARCHY.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="ANARCHY.EXE">ANARCHY.EXE</span><span class="fp"><b>1,948</b> px</span></figcaption></figure>
-<figure class="vga" data-what="1,300 px" data-geom="mode 13h - 320x200 planar 8bpp" data-stuck="110:2e1"><button class="open" type="button" title="DARKTOWR.EXE - full size"><img loading="lazy" src="shots/DARKTOWR.png" alt="DARKTOWR.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="DARKTOWR.EXE">DARKTOWR.EXE</span><span class="fp"><b>1,300</b> px</span></figcaption></figure>
 <figure class="vga" data-what="1,214 px" data-geom="mode 13h - 320x200" data-stuck="1694:b1"><button class="open" type="button" title="CRYSTAL2.EXE - full size"><img loading="lazy" src="shots/CRYSTAL2.png" alt="CRYSTAL2.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="CRYSTAL2.EXE">CRYSTAL2.EXE</span><span class="fp"><b>1,214</b> px</span></figcaption></figure>
-<figure class="vga" data-what="457 px" data-geom="mode 13h - 320x200" data-stuck="100:bcc"><button class="open" type="button" title="DELAY_PT.COM - full size"><img loading="lazy" src="shots/DELAY_PT.png" alt="DELAY_PT.COM: mode 13h graphics frame"></button><figcaption><span class="fn" title="DELAY_PT.COM">DELAY_PT.COM</span><span class="fp"><b>457</b> px</span></figcaption></figure>
+<figure class="vga" data-what="640 px" data-geom="mode 13h - 320x200 planar 8bpp" data-stuck="28ca:656"><button class="open" type="button" title="BMGLP.EXE - full size"><img loading="lazy" src="shots/BMGLP.png" alt="BMGLP.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="BMGLP.EXE">BMGLP.EXE</span><span class="fp"><b>640</b> px</span></figcaption></figure>
+<figure class="vga" data-what="468 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="QUARTZ.EXE - full size"><img loading="lazy" src="shots/QUARTZ.png" alt="QUARTZ.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="QUARTZ.EXE">QUARTZ.EXE</span><span class="fp"><b>468</b> px</span></figcaption></figure>
 <figure class="vga" data-what="240 px" data-geom="mode 13h - 320x200 planar 8bpp"><button class="open" type="button" title="HEMATIE.EXE - full size"><img loading="lazy" src="shots/HEMATIE.png" alt="HEMATIE.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="HEMATIE.EXE">HEMATIE.EXE</span><span class="fp"><b>240</b> px</span></figcaption></figure>
 <figure class="vga" data-what="218 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="04-11-95.COM - full size"><img loading="lazy" src="shots/04-11-95.png" alt="04-11-95.COM: mode 13h graphics frame"></button><figcaption><span class="fn" title="04-11-95.COM">04-11-95.COM</span><span class="fp"><b>218</b> px</span></figcaption></figure>
 <figure class="vga" data-what="211 px" data-geom="mode 13h - 320x200"><button class="open" type="button" title="02-08-95.COM - full size"><img loading="lazy" src="shots/02-08-95.png" alt="02-08-95.COM: mode 13h graphics frame"></button><figcaption><span class="fn" title="02-08-95.COM">02-08-95.COM</span><span class="fp"><b>211</b> px</span></figcaption></figure>
-<figure class="vga" data-what="204 px" data-geom="mode 10h - 640x350 planar 4bpp" data-stuck="100:1b1f"><button class="open" type="button" title="EOD.EXE - full size"><img loading="lazy" src="shots/EOD.png" alt="EOD.EXE: mode 10h graphics frame"></button><figcaption><span class="fn" title="EOD.EXE">EOD.EXE</span><span class="fp"><b>204</b> px</span></figcaption></figure>
 <figure class="vga" data-what="9 px" data-geom="mode dh - 320x200 planar 4bpp" data-stuck="100:2b2"><button class="open" type="button" title="cw2.com - full size"><img loading="lazy" src="shots/cw2.png" alt="cw2.com: mode dh graphics frame"></button><figcaption><span class="fn" title="cw2.com">cw2.com</span><span class="fp"><b>9</b> px</span></figcaption></figure>
 <figure class="text" data-what="2000 cells" data-geom="80x25 text" data-screen="                                    No (currently supported) soundcard found."><button class="open" type="button" title="ATTIC.EXE - full size"><img loading="lazy" src="shots/ATTIC.png" alt="ATTIC.EXE: DOS text screen, reading &quot;No (currently supported) soundcard found.&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="ATTIC.EXE">ATTIC.EXE</span><span class="fp"><b>2000</b> cells</span></figcaption></figure>
 <figure class="text" data-what="2000 cells" data-geom="80x25 text" data-screen="················································································
@@ -628,31 +750,6 @@ where the accepted options are:
 
 Any item in [] can be omitted. The alias for each option keyword
 is listed in () prior to its description."><button class="open" type="button" title="PLAY.EXE - full size"><img loading="lazy" src="shots/PLAY.png" alt="PLAY.EXE: DOS text screen, reading &quot;DeluxePaint Animation Player Utility&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="PLAY.EXE">PLAY.EXE</span><span class="fp"><b>682</b> cells</span></figcaption></figure>
-<figure class="text" data-what="558 cells" data-geom="80x25 text" data-screen="Assembler Version
-
-Select a SoundDevice :
-    1. Soundplayer / Covox speechthing in LPT1
-    2. Soundplayer / Covox speechthing in LPT2
-    3. Soundblaster
-    4. Internal Speaker
-    5. Soundplayers in LPT1 and LPT2  * STEREO *
-    6. Soundblaster PRO               * STEREO *
-    7. Stereo-Soundplayer in LPT1     * STEREO *
-    8. Stereo-Soundplayer in LPT2     * STEREO *
-Select:4
-Select Replay-Rate :
-    1.  4000 Hz (for real slow computers)
-    2.  8000 Hz (286)
-    3. 12000 Hz (286)
-    4. 16000 Hz (some 286)
-    5. 20000 Hz (some 286)
-    6. 24000 Hz (some 386)       Higher than 20000 works, but does
-    7. 28000 Hz (386)            not sound good on the internal speaker.
-    8. 32000 Hz (386)
-    9. 36000 Hz (Some 386)
-    C. 44100 Hz (Some 386)
-    H. 62799 Hz (Some 386/486)
-Select:4" data-stuck="d7b:4132"><button class="open" type="button" title="BYRON.EXE - full size"><img loading="lazy" src="shots/BYRON.png" alt="BYRON.EXE: DOS text screen, reading &quot;Assembler Version&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="BYRON.EXE">BYRON.EXE</span><span class="fp"><b>558</b> cells</span></figcaption></figure>
 <figure class="text" data-what="500 cells" data-geom="80x25 text" data-screen="
    ········   ··············           ·   ···  ·   ·  ·     · ···
   ··      ·····            ···        · ·  ··· · · · · ·   · ·  ·  ···
@@ -743,6 +840,16 @@ Choose sampling rate:
 3) 24000hz
 4) 32000hz
 failed to load MSE"><button class="open" type="button" title="BLAND.EXE - full size"><img loading="lazy" src="shots/BLAND.png" alt="BLAND.EXE: DOS text screen, reading &quot;Choose sound device:&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="BLAND.EXE">BLAND.EXE</span><span class="fp"><b>192</b> cells</span></figcaption></figure>
+<figure class="text" data-what="173 cells" data-geom="80x25 text" data-screen="·····  C·y·a·n·i·d·e ·······
+·      · by Oxygen ·       ·
+·                          ·
+·  Info: Read the docs     ·
+·   BBS: Digital Dreams    ·
+·        +61-9-ASK-JEDI    ·
+·        Absolute Zero     ·
+·        +61-9-246-1107    ·
+· Email: kimba@it.com.au   ·
+····························"><button class="open" type="button" title="CYANIDE.EXE - full size"><img loading="lazy" src="shots/CYANIDE.png" alt="CYANIDE.EXE: DOS text screen, reading &quot;·····  C·y·a·n·i·d·e ·······&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="CYANIDE.EXE">CYANIDE.EXE</span><span class="fp"><b>173</b> cells</span></figcaption></figure>
 <figure class="text" data-what="133 cells" data-geom="80x25 text" data-screen="What soundcard support do you want?
 0:None              :0Khz  surround sound
 1:SB 2.0            :22Khz mono  (NOT tested!!)
@@ -753,17 +860,8 @@ Ein W·nsch F·r Heil Zu Alle Hackers In Die Welt.
 Een Wens Voor Vrede Tot Alle Hackers Op De Wereld.
 
                   -=Divine=-" data-stuck="ffff:4b"><button class="open" type="button" title="DD.EXE - full size"><img loading="lazy" src="shots/DD.png" alt="DD.EXE: DOS text screen, reading &quot;A Message Of Peace To All Hackers Of The World.&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="DD.EXE">DD.EXE</span><span class="fp"><b>128</b> cells</span></figcaption></figure>
-<figure class="text" data-what="126 cells" data-geom="80x25 text" data-screen="·· BULLET ·· (C)opyright 1995 Realm
-
-Gravis UltraSound NOT Detected - that means no music!
-
-Pick a Port
-&lt;1&gt; 210h &lt;2&gt; 220h &lt;3&gt; 230h &lt;4&gt; 240h &lt;5&gt; 250h &lt;6&gt; 260h"><button class="open" type="button" title="BULLET.EXE - full size"><img loading="lazy" src="shots/BULLET.png" alt="BULLET.EXE: DOS text screen, reading &quot;·· BULLET ·· (C)opyright 1995 Realm&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="BULLET.EXE">BULLET.EXE</span><span class="fp"><b>126</b> cells</span></figcaption></figure>
 <figure class="text" data-what="125 cells" data-geom="80x25 text" data-screen="Oeps, no adlib compatible sound card found, or you have a Gravis Ultrasound.
 If you still want to see this intro, type: DFUSE N   to scip sounddetection."><button class="open" type="button" title="DFUSE.EXE - full size"><img loading="lazy" src="shots/DFUSE.png" alt="DFUSE.EXE: DOS text screen, reading &quot;Oeps, no adlib compatible sound card found, or you have a Gravis Ultrasound.&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="DFUSE.EXE">DFUSE.EXE</span><span class="fp"><b>125</b> cells</span></figcaption></figure>
-<figure class="text" data-what="113 cells" data-geom="80x25 text" data-screen="Sadly, you are out of luck... this code doesn't feel like running today.
-
-Whoops. Screwed up with that XMS driver. Better luck next time."><button class="open" type="button" title="ACT1.EXE - full size"><img loading="lazy" src="shots/ACT1.png" alt="ACT1.EXE: DOS text screen, reading &quot;Sadly, you are out of luck... this code doesn't feel like running today.&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="ACT1.EXE">ACT1.EXE</span><span class="fp"><b>113</b> cells</span></figcaption></figure>
 <figure class="text" data-what="110 cells" data-geom="80x25 text" data-screen="                                                        WARNING!
 
                                                      INTRO CONTAINS
@@ -788,101 +886,36 @@ Whoops. Screwed up with that XMS driver. Better luck next time."><button class="
 
 
 To Be Continued..."><button class="open" type="button" title="CHROME.EXE - full size"><img loading="lazy" src="shots/CHROME.png" alt="CHROME.EXE: DOS text screen, reading &quot;WARNING!&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="CHROME.EXE">CHROME.EXE</span><span class="fp"><b>110</b> cells</span></figcaption></figure>
-<figure class="text" data-what="109 cells" data-geom="80x25 text" data-screen="
-
-I have [1] a GUS or no Sound card at all or [2] a Soundblaster
-My GUS port is:
- [1] 210h
- [2] 220h
- [3] 230h
- [4] 240h
- [5] 250h
- [6] 260h
- [7] 270h" data-stuck="2b21:11f6"><button class="open" type="button" title="BMGLP.EXE - full size"><img loading="lazy" src="shots/BMGLP.png" alt="BMGLP.EXE: DOS text screen, reading &quot;I have [1] a GUS or no Sound card at all or [2] a Soundblaster&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="BMGLP.EXE">BMGLP.EXE</span><span class="fp"><b>109</b> cells</span></figcaption></figure>
 <figure class="text" data-what="106 cells" data-geom="80x25 text" data-screen=" CapaS3M TSR version 2.09         (C) 1993,1994 Heikki Ylinen (flap / Capacala)
 Can't find Gravis UltraSound!" data-stuck="3fb:180"><button class="open" type="button" title="CATWALK.EXE - full size"><img loading="lazy" src="shots/CATWALK.png" alt="CATWALK.EXE: DOS text screen, reading &quot;CapaS3M TSR version 2.09         (C) 1993,1994 Heikki Ylinen (flap / Capacala)&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="CATWALK.EXE">CATWALK.EXE</span><span class="fp"><b>106</b> cells</span></figcaption></figure>
-<figure class="text" data-what="105 cells" data-geom="80x25 text" data-screen="
-Sorry, but you don't have enough free memory left to run this.
-A total amount of 544KB of base memory and 2360KB of XMS is needed."><button class="open" type="button" title="UNTITLED.EXE - full size"><img loading="lazy" src="shots/UNTITLED.png" alt="UNTITLED.EXE: DOS text screen, reading &quot;Sorry, but you don't have enough free memory left to run this.&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="UNTITLED.EXE">UNTITLED.EXE</span><span class="fp"><b>105</b> cells</span></figcaption></figure>
 <figure class="text" data-what="103 cells" data-geom="80x25 text" data-screen="Hello,
 Do YOU have a sound card Called Gravis Ultra Sound [GUS] ·n
 Well that's your problem! Not mine!
 
 Press a key to continue"><button class="open" type="button" title="CULT.EXE - full size"><img loading="lazy" src="shots/CULT.png" alt="CULT.EXE: DOS text screen, reading &quot;Hello,&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="CULT.EXE">CULT.EXE</span><span class="fp"><b>103</b> cells</span></figcaption></figure>
-<figure class="text" data-what="99 cells" data-geom="80x25 text" data-screen="My GUS is naturally in port [1] 210h
-                            [2] 220h
-                            [3] 230h
-                            [4] 240h
-                            [5] 250h
-                            [6] 260h
-                            [0] Just kidding! I don't even own a GUS!!!"><button class="open" type="button" title="BTW.EXE - full size"><img loading="lazy" src="shots/BTW.png" alt="BTW.EXE: DOS text screen, reading &quot;My GUS is naturally in port [1] 210h&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="BTW.EXE">BTW.EXE</span><span class="fp"><b>99</b> cells</span></figcaption></figure>
-<figure class="text" data-what="93 cells" data-geom="80x25 text" data-screen="Select GUS-port
----------------
-1...210h
-2...220h
-3...230h
-4...240h
-5...250h
-6...260h
-7...270h
-8...280h"><button class="open" type="button" title="FROGFUZZ.EXE - full size"><img loading="lazy" src="shots/FROGFUZZ.png" alt="FROGFUZZ.EXE: DOS text screen, reading &quot;Select GUS-port&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="FROGFUZZ.EXE">FROGFUZZ.EXE</span><span class="fp"><b>93</b> cells</span></figcaption></figure>
 <figure class="text" data-what="89 cells" data-geom="80x25 text" data-screen="                    ·"><button class="open" type="button" title="BETA.EXE - full size"><img loading="lazy" src="shots/BETA.png" alt="BETA.EXE: DOS text screen, reading &quot;·&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="BETA.EXE">BETA.EXE</span><span class="fp"><b>89</b> cells</span></figcaption></figure>
 <figure class="text" data-what="86 cells" data-geom="80x25 text" data-screen="
 ALABTRO, 4Kb intro from Bush Party ][ in Porsgrunn / Norway
 An Assembler Laboratory promotion intro :)" data-stuck="100:11d"><button class="open" type="button" title="ALABTRO.COM - full size"><img loading="lazy" src="shots/ALABTRO.png" alt="ALABTRO.COM: DOS text screen, reading &quot;ALABTRO, 4Kb intro from Bush Party ][ in Porsgrunn / Norway&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="ALABTRO.COM">ALABTRO.COM</span><span class="fp"><b>86</b> cells</span></figcaption></figure>
-<figure class="text" data-what="80 cells" data-geom="80x25 text"><button class="open" type="button" title="anarchy.exe - full size"><img loading="lazy" src="shots/anarchy.png" alt="anarchy.exe: DOS text screen"></button><span class="mx">text</span><figcaption><span class="fn" title="anarchy.exe">anarchy.exe</span><span class="fp"><b>80</b> cells</span></figcaption></figure>
 <figure class="text" data-what="76 cells" data-geom="80x25 text" data-screen="
 Looking for Sound Blaster Card...Not Found,Silent ON...EMM:ALLOK: EMM MEMORY NOT
  FOUND"><button class="open" type="button" title="CYTOPYGE.EXE - full size"><img loading="lazy" src="shots/CYTOPYGE.png" alt="CYTOPYGE.EXE: DOS text screen, reading &quot;Looking for Sound Blaster Card...Not Found,Silent ON...EMM:ALLOK: EMM MEMORY NOT&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="CYTOPYGE.EXE">CYTOPYGE.EXE</span><span class="fp"><b>76</b> cells</span></figcaption></figure>
-<figure class="text" data-what="71 cells" data-geom="80x25 text" data-screen="
-
-Wybierz wyjscie:
-
- 1. Covox LPT 1
- 2. Sound Blaster 2.0
- 3. PC Speaker
- 4. Sound Blaster Pro"><button class="open" type="button" title="ANSWER.EXE - full size"><img loading="lazy" src="shots/ANSWER.png" alt="ANSWER.EXE: DOS text screen, reading &quot;Wybierz wyjscie:&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="ANSWER.EXE">ANSWER.EXE</span><span class="fp"><b>71</b> cells</span></figcaption></figure>
+<figure class="text" data-what="73 cells" data-geom="80x25 text" data-screen="ERROR !!!!!!!!!!!!!!!!!!
+MIDAS Error: Undefined error
+MIDAS Error: Undefined error"><button class="open" type="button" title="ASYLUM.EXE - full size"><img loading="lazy" src="shots/1995-a-asylum-ASYLUM.png" alt="ASYLUM.EXE: DOS text screen, reading &quot;ERROR !!!!!!!!!!!!!!!!!!&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="ASYLUM.EXE">ASYLUM.EXE</span><span class="fp"><b>73</b> cells</span></figcaption></figure>
 <figure class="text" data-what="68 cells" data-geom="80x25 text" data-screen="· This little intro attented PC 64kb intro-compo in JUHLA 2·! (Iisalmi/Finland)"><button class="open" type="button" title="64KBOFW.EXE - full size"><img loading="lazy" src="shots/64KBOFW.png" alt="64KBOFW.EXE: DOS text screen, reading &quot;· This little intro attented PC 64kb intro-compo in JUHLA 2·! (Iisalmi/Finland)&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="64KBOFW.EXE">64KBOFW.EXE</span><span class="fp"><b>68</b> cells</span></figcaption></figure>
 <figure class="text" data-what="66 cells" data-geom="80x25 text" data-screen="GUS not found!
 RAGE-dentro by D/\NTE requires GUS; buy one or miss this thing.."><button class="open" type="button" title="rage.exe - full size"><img loading="lazy" src="shots/rage.png" alt="rage.exe: DOS text screen, reading &quot;GUS not found!&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="rage.exe">rage.exe</span><span class="fp"><b>66</b> cells</span></figcaption></figure>
 <figure class="text" data-what="60 cells" data-geom="80x25 text" data-screen="Please run setup.exe on your computer ! The demo can't run without this !"><button class="open" type="button" title="ANGEL.EXE - full size"><img loading="lazy" src="shots/ANGEL.png" alt="ANGEL.EXE: DOS text screen, reading &quot;Please run setup.exe on your computer ! The demo can't run without this !&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="ANGEL.EXE">ANGEL.EXE</span><span class="fp"><b>60</b> cells</span></figcaption></figure>
-<figure class="text" data-what="52 cells" data-geom="80x25 text" data-screen="             (G)ravis Ultra Sound / (O)thers ( Sb,LPT,... ) / (N)one ???..."><button class="open" type="button" title="CYCLE.EXE - full size"><img loading="lazy" src="shots/CYCLE.png" alt="CYCLE.EXE: DOS text screen, reading &quot;(G)ravis Ultra Sound / (O)thers ( Sb,LPT,... ) / (N)one ???...&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="CYCLE.EXE">CYCLE.EXE</span><span class="fp"><b>52</b> cells</span></figcaption></figure>
 <figure class="text" data-what="51 cells" data-geom="80x25 text" data-screen="
 NOTE: The faster your CPU, the more transparent bobs you get." data-stuck="110:545"><button class="open" type="button" title="COROMER.EXE - full size"><img loading="lazy" src="shots/COROMER.png" alt="COROMER.EXE: DOS text screen, reading &quot;NOTE: The faster your CPU, the more transparent bobs you get.&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="COROMER.EXE">COROMER.EXE</span><span class="fp"><b>51</b> cells</span></figcaption></figure>
 <figure class="text" data-what="49 cells" data-geom="80x25 text" data-screen="Why ? Mind your own business (&amp; get yourself a new machine)."><button class="open" type="button" title="CREATION.EXE - full size"><img loading="lazy" src="shots/CREATION.png" alt="CREATION.EXE: DOS text screen, reading &quot;Why ? Mind your own business (&amp; get yourself a new machine).&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="CREATION.EXE">CREATION.EXE</span><span class="fp"><b>49</b> cells</span></figcaption></figure>
-<figure class="text" data-what="44 cells" data-geom="80x25 text" data-screen="Extended memory allocation failure. (weird eh???)"><button class="open" type="button" title="ACME-SYW.EXE - full size"><img loading="lazy" src="shots/ACME-SYW.png" alt="ACME-SYW.EXE: DOS text screen, reading &quot;Extended memory allocation failure. (weird eh???)&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="ACME-SYW.EXE">ACME-SYW.EXE</span><span class="fp"><b>44</b> cells</span></figcaption></figure>
-<figure class="text" data-what="44 cells" data-geom="80x25 text" data-screen="Extended memory allocation failure. (weird eh???)"><button class="open" type="button" title="BRW.EXE - full size"><img loading="lazy" src="shots/BRW.png" alt="BRW.EXE: DOS text screen, reading &quot;Extended memory allocation failure. (weird eh???)&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="BRW.EXE">BRW.EXE</span><span class="fp"><b>44</b> cells</span></figcaption></figure>
-<figure class="text" data-what="44 cells" data-geom="80x25 text" data-screen="Extended memory allocation failure. (weird eh???)"><button class="open" type="button" title="CMA_SHRT.EXE - full size"><img loading="lazy" src="shots/CMA_SHRT.png" alt="CMA_SHRT.EXE: DOS text screen, reading &quot;Extended memory allocation failure. (weird eh???)&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="CMA_SHRT.EXE">CMA_SHRT.EXE</span><span class="fp"><b>44</b> cells</span></figcaption></figure>
-<figure class="text" data-what="44 cells" data-geom="80x25 text" data-screen="Extended memory allocation failure. (weird eh???)"><button class="open" type="button" title="COLORS.EXE - full size"><img loading="lazy" src="shots/COLORS.png" alt="COLORS.EXE: DOS text screen, reading &quot;Extended memory allocation failure. (weird eh???)&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="COLORS.EXE">COLORS.EXE</span><span class="fp"><b>44</b> cells</span></figcaption></figure>
-<figure class="text" data-what="44 cells" data-geom="80x25 text" data-screen="Extended memory allocation failure. (weird eh???)"><button class="open" type="button" title="CYBOMAN2.EXE - full size"><img loading="lazy" src="shots/CYBOMAN2.png" alt="CYBOMAN2.EXE: DOS text screen, reading &quot;Extended memory allocation failure. (weird eh???)&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="CYBOMAN2.EXE">CYBOMAN2.EXE</span><span class="fp"><b>44</b> cells</span></figcaption></figure>
-<figure class="text" data-what="44 cells" data-geom="80x25 text" data-screen="Extended memory allocation failure. (weird eh???)"><button class="open" type="button" title="DADEMO3.EXE - full size"><img loading="lazy" src="shots/DADEMO3.png" alt="DADEMO3.EXE: DOS text screen, reading &quot;Extended memory allocation failure. (weird eh???)&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="DADEMO3.EXE">DADEMO3.EXE</span><span class="fp"><b>44</b> cells</span></figcaption></figure>
-<figure class="text" data-what="44 cells" data-geom="80x25 text" data-screen="Extended memory allocation failure. (weird eh???)"><button class="open" type="button" title="DINO.EXE - full size"><img loading="lazy" src="shots/DINO.png" alt="DINO.EXE: DOS text screen, reading &quot;Extended memory allocation failure. (weird eh???)&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="DINO.EXE">DINO.EXE</span><span class="fp"><b>44</b> cells</span></figcaption></figure>
-<figure class="text" data-what="44 cells" data-geom="80x25 text" data-screen="Extended memory allocation failure. (weird eh???)"><button class="open" type="button" title="DINO386.EXE - full size"><img loading="lazy" src="shots/DINO386.png" alt="DINO386.EXE: DOS text screen, reading &quot;Extended memory allocation failure. (weird eh???)&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="DINO386.EXE">DINO386.EXE</span><span class="fp"><b>44</b> cells</span></figcaption></figure>
-<figure class="text" data-what="44 cells" data-geom="80x25 text" data-screen="Extended memory allocation failure. (weird eh???)"><button class="open" type="button" title="DOPE.EXE - full size"><img loading="lazy" src="shots/DOPE.png" alt="DOPE.EXE: DOS text screen, reading &quot;Extended memory allocation failure. (weird eh???)&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="DOPE.EXE">DOPE.EXE</span><span class="fp"><b>44</b> cells</span></figcaption></figure>
-<figure class="text" data-what="44 cells" data-geom="80x25 text" data-screen="
-GUS Port:
-
-1) 210h
-2) 220h
-3) 230h
-4) 240h
-5) 250h
-6) 260h"><button class="open" type="button" title="IHANMUU.EXE - full size"><img loading="lazy" src="shots/IHANMUU.png" alt="IHANMUU.EXE: DOS text screen, reading &quot;GUS Port:&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="IHANMUU.EXE">IHANMUU.EXE</span><span class="fp"><b>44</b> cells</span></figcaption></figure>
-<figure class="text" data-what="44 cells" data-geom="80x25 text" data-screen="Extended memory allocation failure. (weird eh???)"><button class="open" type="button" title="RACE.EXE - full size"><img loading="lazy" src="shots/RACE.png" alt="RACE.EXE: DOS text screen, reading &quot;Extended memory allocation failure. (weird eh???)&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="RACE.EXE">RACE.EXE</span><span class="fp"><b>44</b> cells</span></figcaption></figure>
 <figure class="text" data-what="42 cells" data-geom="80x25 text" data-screen="a.    PC Speaker
 p.    No sound
 
 Select an output device : a"><button class="open" type="button" title="BLINKY.EXE - full size"><img loading="lazy" src="shots/BLINKY.png" alt="BLINKY.EXE: DOS text screen, reading &quot;a.    PC Speaker&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="BLINKY.EXE">BLINKY.EXE</span><span class="fp"><b>42</b> cells</span></figcaption></figure>
-<figure class="text" data-what="39 cells" data-geom="80x25 text" data-screen="MIDAS Error: Expanded Memory Manager failure"><button class="open" type="button" title="AMBIENT.EXE - full size"><img loading="lazy" src="shots/AMBIENT.png" alt="AMBIENT.EXE: DOS text screen, reading &quot;MIDAS Error: Expanded Memory Manager failure&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="AMBIENT.EXE">AMBIENT.EXE</span><span class="fp"><b>39</b> cells</span></figcaption></figure>
-<figure class="text" data-what="39 cells" data-geom="80x25 text" data-screen="MIDAS Error: Expanded Memory Manager failure"><button class="open" type="button" title="ASYLUM.EXE - full size"><img loading="lazy" src="shots/1995-a-asylum-ASYLUM.png" alt="ASYLUM.EXE: DOS text screen, reading &quot;MIDAS Error: Expanded Memory Manager failure&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="ASYLUM.EXE">ASYLUM.EXE</span><span class="fp"><b>39</b> cells</span></figcaption></figure>
-<figure class="text" data-what="39 cells" data-geom="80x25 text" data-screen="MIDAS Error: Expanded Memory Manager failure"><button class="open" type="button" title="BIOLAN.EXE - full size"><img loading="lazy" src="shots/BIOLAN.png" alt="BIOLAN.EXE: DOS text screen, reading &quot;MIDAS Error: Expanded Memory Manager failure&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="BIOLAN.EXE">BIOLAN.EXE</span><span class="fp"><b>39</b> cells</span></figcaption></figure>
-<figure class="text" data-what="39 cells" data-geom="80x25 text" data-screen="MIDAS Error: Expanded Memory Manager failure"><button class="open" type="button" title="CEN!FB.EXE - full size"><img loading="lazy" src="shots/CEN_FB.png" alt="CEN!FB.EXE: DOS text screen, reading &quot;MIDAS Error: Expanded Memory Manager failure&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="CEN!FB.EXE">CEN!FB.EXE</span><span class="fp"><b>39</b> cells</span></figcaption></figure>
-<figure class="text" data-what="39 cells" data-geom="80x25 text" data-screen="MIDAS Error: Expanded Memory Manager failure"><button class="open" type="button" title="COFFEE.EXE - full size"><img loading="lazy" src="shots/COFFEE.png" alt="COFFEE.EXE: DOS text screen, reading &quot;MIDAS Error: Expanded Memory Manager failure&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="COFFEE.EXE">COFFEE.EXE</span><span class="fp"><b>39</b> cells</span></figcaption></figure>
 <figure class="text" data-what="39 cells" data-geom="80x25 text" data-screen="No MeGaMix BLaSTeR SouND aWaVe 64 Bit DeTeCTeD"><button class="open" type="button" title="CORNETTO.EXE - full size"><img loading="lazy" src="shots/CORNETTO.png" alt="CORNETTO.EXE: DOS text screen, reading &quot;No MeGaMix BLaSTeR SouND aWaVe 64 Bit DeTeCTeD&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="CORNETTO.EXE">CORNETTO.EXE</span><span class="fp"><b>39</b> cells</span></figcaption></figure>
-<figure class="text" data-what="39 cells" data-geom="80x25 text" data-screen="MIDAS Error: Expanded Memory Manager failure"><button class="open" type="button" title="CYANIDE.EXE - full size"><img loading="lazy" src="shots/CYANIDE.png" alt="CYANIDE.EXE: DOS text screen, reading &quot;MIDAS Error: Expanded Memory Manager failure&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="CYANIDE.EXE">CYANIDE.EXE</span><span class="fp"><b>39</b> cells</span></figcaption></figure>
 <figure class="text" data-what="30 cells" data-geom="80x25 text" data-screen="Please run SETUP.EXE to configure."><button class="open" type="button" title="BYETRO.EXE - full size"><img loading="lazy" src="shots/BYETRO.png" alt="BYETRO.EXE: DOS text screen, reading &quot;Please run SETUP.EXE to configure.&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="BYETRO.EXE">BYETRO.EXE</span><span class="fp"><b>30</b> cells</span></figcaption></figure>
-<figure class="text" data-what="28 cells" data-geom="80x25 text" data-screen="
-Loading...patience is a virtue." data-stuck="110:2bc6"><button class="open" type="button" title="ASSAULT.EXE - full size"><img loading="lazy" src="shots/ASSAULT.png" alt="ASSAULT.EXE: DOS text screen, reading &quot;Loading...patience is a virtue.&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="ASSAULT.EXE">ASSAULT.EXE</span><span class="fp"><b>28</b> cells</span></figcaption></figure>
 <figure class="text" data-what="25 cells" data-geom="80x25 text" data-screen="Type CYANIDE to run this demo."><button class="open" type="button" title="001.EXE - full size"><img loading="lazy" src="shots/001.png" alt="001.EXE: DOS text screen, reading &quot;Type CYANIDE to run this demo.&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="001.EXE">001.EXE</span><span class="fp"><b>25</b> cells</span></figcaption></figure>
 <figure class="text" data-what="25 cells" data-geom="80x25 text" data-screen="Blue Steel demo by Acme in 1994" data-stuck="110:c2"><button class="open" type="button" title="B-STEEL.EXE - full size"><img loading="lazy" src="shots/B-STEEL.png" alt="B-STEEL.EXE: DOS text screen, reading &quot;Blue Steel demo by Acme in 1994&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="B-STEEL.EXE">B-STEEL.EXE</span><span class="fp"><b>25</b> cells</span></figcaption></figure>
 <figure class="text" data-what="22 cells" data-geom="80x25 text" data-screen="
@@ -901,41 +934,48 @@ Loading...patience is a virtue." data-stuck="110:2bc6"><button class="open" type
 <figure class="text" data-what="21 cells" data-geom="80x25 text" data-screen="Please run CYANIDE.EXE."><button class="open" type="button" title="002.EXE - full size"><img loading="lazy" src="shots/002.png" alt="002.EXE: DOS text screen, reading &quot;Please run CYANIDE.EXE.&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="002.EXE">002.EXE</span><span class="fp"><b>21</b> cells</span></figcaption></figure>
 <figure class="text" data-what="15 cells" data-geom="80x25 text"><button class="open" type="button" title="CLASH.EXE - full size"><img loading="lazy" src="shots/CLASH.png" alt="CLASH.EXE: DOS text screen"></button><span class="mx">text</span><figcaption><span class="fn" title="CLASH.EXE">CLASH.EXE</span><span class="fp"><b>15</b> cells</span></figcaption></figure>
 <figure class="text" data-what="11 cells" data-geom="80x25 text" data-screen="Decrunching"><button class="open" type="button" title="BURMA.EXE - full size"><img loading="lazy" src="shots/BURMA.png" alt="BURMA.EXE: DOS text screen, reading &quot;Decrunching&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="BURMA.EXE">BURMA.EXE</span><span class="fp"><b>11</b> cells</span></figcaption></figure>
-<figure class="text" data-what="7 cells" data-geom="80x25 text" data-screen="Wait..." data-stuck="110:1fc1"><button class="open" type="button" title="BBUUMI.EXE - full size"><img loading="lazy" src="shots/BBUUMI.png" alt="BBUUMI.EXE: DOS text screen, reading &quot;Wait...&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="BBUUMI.EXE">BBUUMI.EXE</span><span class="fp"><b>7</b> cells</span></figcaption></figure>
+<figure class="text" data-what="7 cells" data-geom="80x25 text" data-screen="Wait..."><button class="open" type="button" title="BBUUMI.EXE - full size"><img loading="lazy" src="shots/BBUUMI.png" alt="BBUUMI.EXE: DOS text screen, reading &quot;Wait...&quot;"></button><span class="mx">text</span><figcaption><span class="fn" title="BBUUMI.EXE">BBUUMI.EXE</span><span class="fp"><b>7</b> cells</span></figcaption></figure>
 <figure class="blank" data-what="blank" data-geom="mode 3h - 320x200"><button class="open" type="button" title="ACME-BIG.EXE - full size"><img loading="lazy" src="shots/ACME-BIG.png" alt="ACME-BIG.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="ACME-BIG.EXE">ACME-BIG.EXE</span><span class="fp">blank</span></figcaption></figure>
-<figure class="blank" data-what="blank" data-geom="mode 3h - 320x200" data-stuck="5b8e:23cb"><button class="open" type="button" title="AKM_DOB.EXE - full size"><img loading="lazy" src="shots/AKM_DOB.png" alt="AKM_DOB.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="AKM_DOB.EXE">AKM_DOB.EXE</span><span class="fp">blank</span></figcaption></figure>
+<figure class="blank" data-what="blank" data-geom="mode 3h - 320x200" data-stuck="110:d6e"><button class="open" type="button" title="ACME-SYW.EXE - full size"><img loading="lazy" src="shots/ACME-SYW.png" alt="ACME-SYW.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="ACME-SYW.EXE">ACME-SYW.EXE</span><span class="fp">blank</span></figcaption></figure>
+<figure class="blank" data-what="blank" data-geom="mode 3h - 320x200" data-stuck="110:9f2"><button class="open" type="button" title="ACT1.EXE - full size"><img loading="lazy" src="shots/ACT1.png" alt="ACT1.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="ACT1.EXE">ACT1.EXE</span><span class="fp">blank</span></figcaption></figure>
 <figure class="blank" data-what="blank" data-geom="mode 3h - 320x200"><button class="open" type="button" title="AMANAMAN.EXE - full size"><img loading="lazy" src="shots/AMANAMAN.png" alt="AMANAMAN.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="AMANAMAN.EXE">AMANAMAN.EXE</span><span class="fp">blank</span></figcaption></figure>
 <figure class="blank" data-what="blank" data-geom="mode 3h - 320x200"><button class="open" type="button" title="AMORP.COM - full size"><img loading="lazy" src="shots/AMORP.png" alt="AMORP.COM: mode 3h graphics frame"></button><figcaption><span class="fn" title="AMORP.COM">AMORP.COM</span><span class="fp">blank</span></figcaption></figure>
 <figure class="blank" data-what="blank" data-geom="mode 3h - 320x200"><button class="open" type="button" title="ANTARES.EXE - full size"><img loading="lazy" src="shots/ANTARES.png" alt="ANTARES.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="ANTARES.EXE">ANTARES.EXE</span><span class="fp">blank</span></figcaption></figure>
 <figure class="blank" data-what="blank" data-geom="mode 3h - 320x200" data-stuck="8:107"><button class="open" type="button" title="AQUAPHOB.EXE - full size"><img loading="lazy" src="shots/AQUAPHOB.png" alt="AQUAPHOB.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="AQUAPHOB.EXE">AQUAPHOB.EXE</span><span class="fp">blank</span></figcaption></figure>
 <figure class="blank" data-what="blank" data-geom="mode 13h - 320x200"><button class="open" type="button" title="AUTUMN.EXE - full size"><img loading="lazy" src="shots/AUTUMN.png" alt="AUTUMN.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="AUTUMN.EXE">AUTUMN.EXE</span><span class="fp">blank</span></figcaption></figure>
-<figure class="blank" data-what="blank" data-geom="mode 13h - 320x100 planar 8bpp" data-stuck="100:3ed3"><button class="open" type="button" title="BANAANI.COM - full size"><img loading="lazy" src="shots/BANAANI.png" alt="BANAANI.COM: mode 13h graphics frame"></button><figcaption><span class="fn" title="BANAANI.COM">BANAANI.COM</span><span class="fp">blank</span></figcaption></figure>
 <figure class="blank" data-what="blank" data-geom="mode 3h - 320x200"><button class="open" type="button" title="BLIQ.EXE - full size"><img loading="lazy" src="shots/BLIQ.png" alt="BLIQ.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="BLIQ.EXE">BLIQ.EXE</span><span class="fp">blank</span></figcaption></figure>
 <figure class="blank" data-what="blank" data-geom="mode 3h - 320x200"><button class="open" type="button" title="BLIQ.EXE - full size"><img loading="lazy" src="shots/1994-b-bliq-BLIQ.png" alt="BLIQ.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="BLIQ.EXE">BLIQ.EXE</span><span class="fp">blank</span></figcaption></figure>
 <figure class="blank" data-what="blank" data-geom="mode 3h - 320x200" data-stuck="235:34"><button class="open" type="button" title="BP-OZONE.EXE - full size"><img loading="lazy" src="shots/BP-OZONE.png" alt="BP-OZONE.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="BP-OZONE.EXE">BP-OZONE.EXE</span><span class="fp">blank</span></figcaption></figure>
 <figure class="blank" data-what="blank" data-geom="mode 13h - 320x200"><button class="open" type="button" title="BRIAN.EXE - full size"><img loading="lazy" src="shots/BRIAN.png" alt="BRIAN.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="BRIAN.EXE">BRIAN.EXE</span><span class="fp">blank</span></figcaption></figure>
+<figure class="blank" data-what="blank" data-geom="mode 3h - 320x200" data-stuck="110:d6e"><button class="open" type="button" title="BRW.EXE - full size"><img loading="lazy" src="shots/BRW.png" alt="BRW.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="BRW.EXE">BRW.EXE</span><span class="fp">blank</span></figcaption></figure>
 <figure class="blank" data-what="blank" data-geom="mode 3h - 320x200" data-stuck="1dcd:103"><button class="open" type="button" title="CAVEIRA.COM - full size"><img loading="lazy" src="shots/CAVEIRA.png" alt="CAVEIRA.COM: mode 3h graphics frame"></button><figcaption><span class="fn" title="CAVEIRA.COM">CAVEIRA.COM</span><span class="fp">blank</span></figcaption></figure>
+<figure class="blank" data-what="blank" data-geom="mode 13h - 320x200"><button class="open" type="button" title="CEN!FB.EXE - full size"><img loading="lazy" src="shots/CEN_FB.png" alt="CEN!FB.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="CEN!FB.EXE">CEN!FB.EXE</span><span class="fp">blank</span></figcaption></figure>
+<figure class="blank" data-what="blank" data-geom="mode 3h - 320x200" data-stuck="110:da6"><button class="open" type="button" title="CMA_SHRT.EXE - full size"><img loading="lazy" src="shots/CMA_SHRT.png" alt="CMA_SHRT.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="CMA_SHRT.EXE">CMA_SHRT.EXE</span><span class="fp">blank</span></figcaption></figure>
 <figure class="blank" data-what="blank" data-geom="mode 13h - 320x200"><button class="open" type="button" title="COCONTS1.EXE - full size"><img loading="lazy" src="shots/COCONTS1.png" alt="COCONTS1.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="COCONTS1.EXE">COCONTS1.EXE</span><span class="fp">blank</span></figcaption></figure>
+<figure class="blank" data-what="blank" data-geom="mode 3h - 320x200" data-stuck="110:d6e"><button class="open" type="button" title="COLORS.EXE - full size"><img loading="lazy" src="shots/COLORS.png" alt="COLORS.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="COLORS.EXE">COLORS.EXE</span><span class="fp">blank</span></figcaption></figure>
 <figure class="blank" data-what="blank" data-geom="mode 3h - 320x200" data-stuck="0:116c"><button class="open" type="button" title="COMPCODE.EXE - full size"><img loading="lazy" src="shots/COMPCODE.png" alt="COMPCODE.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="COMPCODE.EXE">COMPCODE.EXE</span><span class="fp">blank</span></figcaption></figure>
-<figure class="blank" data-what="blank" data-geom="mode 3h - 320x200" data-stuck="f5a:29f1"><button class="open" type="button" title="CONDENZ.EXE - full size"><img loading="lazy" src="shots/CONDENZ.png" alt="CONDENZ.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="CONDENZ.EXE">CONDENZ.EXE</span><span class="fp">blank</span></figcaption></figure>
+<figure class="blank" data-what="blank" data-geom="mode 3h - 320x200"><button class="open" type="button" title="CONDENZ.EXE - full size"><img loading="lazy" src="shots/CONDENZ.png" alt="CONDENZ.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="CONDENZ.EXE">CONDENZ.EXE</span><span class="fp">blank</span></figcaption></figure>
 <figure class="blank" data-what="blank" data-geom="mode 3h - 320x200" data-stuck="258:35"><button class="open" type="button" title="CONTAGIO.EXE - full size"><img loading="lazy" src="shots/CONTAGIO.png" alt="CONTAGIO.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="CONTAGIO.EXE">CONTAGIO.EXE</span><span class="fp">blank</span></figcaption></figure>
 <figure class="blank" data-what="blank" data-geom="mode 3h - 320x200" data-stuck="8:107"><button class="open" type="button" title="COUNTDWN.EXE - full size"><img loading="lazy" src="shots/COUNTDWN.png" alt="COUNTDWN.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="COUNTDWN.EXE">COUNTDWN.EXE</span><span class="fp">blank</span></figcaption></figure>
 <figure class="blank" data-what="blank" data-geom="mode 13h - 320x200" data-stuck="100:1b66"><button class="open" type="button" title="CRYSTAL.COM - full size"><img loading="lazy" src="shots/CRYSTAL.png" alt="CRYSTAL.COM: mode 13h graphics frame"></button><figcaption><span class="fn" title="CRYSTAL.COM">CRYSTAL.COM</span><span class="fp">blank</span></figcaption></figure>
 <figure class="blank" data-what="blank" data-geom="mode 3h - 320x200" data-stuck="110:b6"><button class="open" type="button" title="CTSLASSE.EXE - full size"><img loading="lazy" src="shots/CTSLASSE.png" alt="CTSLASSE.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="CTSLASSE.EXE">CTSLASSE.EXE</span><span class="fp">blank</span></figcaption></figure>
+<figure class="blank" data-what="blank" data-geom="mode 3h - 320x200" data-stuck="110:d6d"><button class="open" type="button" title="CYBOMAN2.EXE - full size"><img loading="lazy" src="shots/CYBOMAN2.png" alt="CYBOMAN2.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="CYBOMAN2.EXE">CYBOMAN2.EXE</span><span class="fp">blank</span></figcaption></figure>
+<figure class="blank" data-what="blank" data-geom="mode 3h - 320x200" data-stuck="4d1:da6"><button class="open" type="button" title="DADEMO3.EXE - full size"><img loading="lazy" src="shots/DADEMO3.png" alt="DADEMO3.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="DADEMO3.EXE">DADEMO3.EXE</span><span class="fp">blank</span></figcaption></figure>
 <figure class="blank" data-what="blank" data-geom="mode 3h - 320x200"><button class="open" type="button" title="DEFECT!.COM - full size"><img loading="lazy" src="shots/DEFECT_.png" alt="DEFECT!.COM: mode 3h graphics frame"></button><figcaption><span class="fn" title="DEFECT!.COM">DEFECT!.COM</span><span class="fp">blank</span></figcaption></figure>
 <figure class="blank" data-what="blank" data-geom="mode 4h - 320x200"><button class="open" type="button" title="DEMO5.EXE - full size"><img loading="lazy" src="shots/DEMO5.png" alt="DEMO5.EXE: mode 4h graphics frame"></button><figcaption><span class="fn" title="DEMO5.EXE">DEMO5.EXE</span><span class="fp">blank</span></figcaption></figure>
+<figure class="blank" data-what="blank" data-geom="mode 3h - 320x200" data-stuck="110:d6e"><button class="open" type="button" title="DINO.EXE - full size"><img loading="lazy" src="shots/DINO.png" alt="DINO.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="DINO.EXE">DINO.EXE</span><span class="fp">blank</span></figcaption></figure>
+<figure class="blank" data-what="blank" data-geom="mode 3h - 320x200" data-stuck="110:d6e"><button class="open" type="button" title="DINO386.EXE - full size"><img loading="lazy" src="shots/DINO386.png" alt="DINO386.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="DINO386.EXE">DINO386.EXE</span><span class="fp">blank</span></figcaption></figure>
 <figure class="blank" data-what="blank" data-geom="mode 3h - 320x200"><button class="open" type="button" title="DIZZY_FI.EXE - full size"><img loading="lazy" src="shots/DIZZY_FI.png" alt="DIZZY_FI.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="DIZZY_FI.EXE">DIZZY_FI.EXE</span><span class="fp">blank</span></figcaption></figure>
-<figure class="blank" data-what="blank" data-geom="mode 13h - 320x200" data-stuck="100:2d6"><button class="open" type="button" title="DOWNADD.COM - full size"><img loading="lazy" src="shots/DOWNADD.png" alt="DOWNADD.COM: mode 13h graphics frame"></button><figcaption><span class="fn" title="DOWNADD.COM">DOWNADD.COM</span><span class="fp">blank</span></figcaption></figure>
-<figure class="blank" data-what="blank" data-geom="mode 13h - 320x200" data-stuck="100:2d6"><button class="open" type="button" title="DOWNADD.COM - full size"><img loading="lazy" src="shots/1995-c-cma_brw-DOWNADD.png" alt="DOWNADD.COM: mode 13h graphics frame"></button><figcaption><span class="fn" title="DOWNADD.COM">DOWNADD.COM</span><span class="fp">blank</span></figcaption></figure>
+<figure class="blank" data-what="blank" data-geom="mode 3h - 320x200" data-stuck="110:d80"><button class="open" type="button" title="DOPE.EXE - full size"><img loading="lazy" src="shots/DOPE.png" alt="DOPE.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="DOPE.EXE">DOPE.EXE</span><span class="fp">blank</span></figcaption></figure>
 <figure class="blank" data-what="blank" data-geom="mode 3h - 320x200"><button class="open" type="button" title="DPS.COM - full size"><img loading="lazy" src="shots/DPS.png" alt="DPS.COM: mode 3h graphics frame"></button><figcaption><span class="fn" title="DPS.COM">DPS.COM</span><span class="fp">blank</span></figcaption></figure>
-<figure class="blank" data-what="blank" data-geom="mode 3h - 320x200" data-stuck="db3:2a48"><button class="open" type="button" title="EM.EXE - full size"><img loading="lazy" src="shots/EM.png" alt="EM.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="EM.EXE">EM.EXE</span><span class="fp">blank</span></figcaption></figure>
 <figure class="blank" data-what="blank" data-geom="mode 3h - 320x200" data-stuck="7285:35"><button class="open" type="button" title="INTRO.EXE - full size"><img loading="lazy" src="shots/INTRO.png" alt="INTRO.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="INTRO.EXE">INTRO.EXE</span><span class="fp">blank</span></figcaption></figure>
 <figure class="blank" data-what="blank" data-geom="mode 3h - 320x200" data-stuck="5ab:191"><button class="open" type="button" title="JULTRO.EXE - full size"><img loading="lazy" src="shots/JULTRO.png" alt="JULTRO.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="JULTRO.EXE">JULTRO.EXE</span><span class="fp">blank</span></figcaption></figure>
 <figure class="blank" data-what="blank" data-geom="mode 13h - 320x200"><button class="open" type="button" title="NM2.EXE - full size"><img loading="lazy" src="shots/NM2.png" alt="NM2.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="NM2.EXE">NM2.EXE</span><span class="fp">blank</span></figcaption></figure>
-<figure class="blank" data-what="blank" data-geom="mode 13h - 320x200" data-stuck="61db:20a0"><button class="open" type="button" title="QUARTZ.EXE - full size"><img loading="lazy" src="shots/QUARTZ.png" alt="QUARTZ.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="QUARTZ.EXE">QUARTZ.EXE</span><span class="fp">blank</span></figcaption></figure>
+<figure class="blank" data-what="blank" data-geom="mode 3h - 320x200" data-stuck="110:da6"><button class="open" type="button" title="RACE.EXE - full size"><img loading="lazy" src="shots/RACE.png" alt="RACE.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="RACE.EXE">RACE.EXE</span><span class="fp">blank</span></figcaption></figure>
 <figure class="blank" data-what="blank" data-geom="mode 13h - 320x200"><button class="open" type="button" title="SETUP.EXE - full size"><img loading="lazy" src="shots/SETUP.png" alt="SETUP.EXE: mode 13h graphics frame"></button><figcaption><span class="fn" title="SETUP.EXE">SETUP.EXE</span><span class="fp">blank</span></figcaption></figure>
 <figure class="blank" data-what="blank" data-geom="mode 3h - 320x200" data-stuck="100:568"><button class="open" type="button" title="STARPORT.COM - full size"><img loading="lazy" src="shots/STARPORT.png" alt="STARPORT.COM: mode 3h graphics frame"></button><figcaption><span class="fn" title="STARPORT.COM">STARPORT.COM</span><span class="fp">blank</span></figcaption></figure>
 <figure class="blank" data-what="blank" data-geom="mode 3h - 320x200" data-stuck="364:1a4"><button class="open" type="button" title="STHINTRO.EXE - full size"><img loading="lazy" src="shots/STHINTRO.png" alt="STHINTRO.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="STHINTRO.EXE">STHINTRO.EXE</span><span class="fp">blank</span></figcaption></figure>
+<figure class="blank" data-what="blank" data-geom="mode 3h - 320x200" data-stuck="745:3526"><button class="open" type="button" title="UNTITLED.EXE - full size"><img loading="lazy" src="shots/UNTITLED.png" alt="UNTITLED.EXE: mode 3h graphics frame"></button><figcaption><span class="fn" title="UNTITLED.EXE">UNTITLED.EXE</span><span class="fp">blank</span></figcaption></figure>
 <figure class="blank" data-what="blank" data-geom="mode 13h - 320x200" data-stuck="110:ffff"><button class="open" type="button" title="bit.exe - full size"><img loading="lazy" src="shots/bit.png" alt="bit.exe: mode 13h graphics frame"></button><figcaption><span class="fn" title="bit.exe">bit.exe</span><span class="fp">blank</span></figcaption></figure>
 <figure class="blank" data-what="blank" data-geom="mode 3h - 320x200" data-stuck="2e1d:202b"><button class="open" type="button" title="cd2.exe - full size"><img loading="lazy" src="shots/cd2.png" alt="cd2.exe: mode 3h graphics frame"></button><figcaption><span class="fn" title="cd2.exe">cd2.exe</span><span class="fp">blank</span></figcaption></figure>
 <figure class="blank" data-what="blank" data-geom="mode 3h - 320x200"><button class="open" type="button" title="daretro.exe - full size"><img loading="lazy" src="shots/daretro.png" alt="daretro.exe: mode 3h graphics frame"></button><figcaption><span class="fn" title="daretro.exe">daretro.exe</span><span class="fp">blank</span></figcaption></figure>
@@ -945,53 +985,55 @@ Loading...patience is a virtue." data-stuck="110:2bc6"><button class="open" type
 
 <section>
   <h2>What is still blank</h2>
-  <p class="sub">46 programs, and where each one stopped</p>
+  <p class="sub">48 programs, and where each one stopped</p>
   <div class="scroll"><table>
     <thead><tr><th class="l">program</th><th class="l">last known state</th><th>dispatches</th></tr></thead>
     <tbody>
 <tr><td class="l">ACME-BIG.EXE</td><td class="l">ran out of budget</td><td>394,797</td></tr>
-<tr><td class="l">AKM_DOB.EXE</td><td class="l">stuck at 5b8e:23cb</td><td>1,155,480</td></tr>
+<tr><td class="l">ACME-SYW.EXE</td><td class="l">stuck at 110:d6e</td><td>2,928,552</td></tr>
+<tr><td class="l">ACT1.EXE</td><td class="l">stuck at 110:9f2</td><td>326,912</td></tr>
 <tr><td class="l">AMANAMAN.EXE</td><td class="l">ran out of budget</td><td>30,048,297</td></tr>
 <tr><td class="l">AMORP.COM</td><td class="l">ran out of budget</td><td>30,000,000</td></tr>
 <tr><td class="l">ANTARES.EXE</td><td class="l">waiting for a key</td><td>147,569</td></tr>
 <tr><td class="l">AQUAPHOB.EXE</td><td class="l">stuck at 8:107</td><td>221,165</td></tr>
 <tr><td class="l">AUTUMN.EXE</td><td class="l">ran out of budget</td><td>31,781,179</td></tr>
-<tr><td class="l">BANAANI.COM</td><td class="l">stuck at 100:3ed3</td><td>75,470</td></tr>
 <tr><td class="l">BLIQ.EXE</td><td class="l">ran out of budget</td><td>24,615</td></tr>
 <tr><td class="l">BLIQ.EXE</td><td class="l">ran out of budget</td><td>24,615</td></tr>
 <tr><td class="l">BP-OZONE.EXE</td><td class="l">stuck at 235:34</td><td>1,278,470</td></tr>
 <tr><td class="l">BRIAN.EXE</td><td class="l">ran out of budget</td><td>30,001,518</td></tr>
+<tr><td class="l">BRW.EXE</td><td class="l">stuck at 110:d6e</td><td>1,289,129</td></tr>
 <tr><td class="l">CAVEIRA.COM</td><td class="l">stuck at 1dcd:103</td><td>669,168</td></tr>
+<tr><td class="l">CEN!FB.EXE</td><td class="l">ran out of budget</td><td>31,764,775</td></tr>
+<tr><td class="l">CMA_SHRT.EXE</td><td class="l">stuck at 110:da6</td><td>815,512</td></tr>
 <tr><td class="l">COCONTS1.EXE</td><td class="l">ran out of budget</td><td>30,449,879</td></tr>
+<tr><td class="l">COLORS.EXE</td><td class="l">stuck at 110:d6e</td><td>614,553</td></tr>
 <tr><td class="l">COMPCODE.EXE</td><td class="l">stuck at 0:116c</td><td>40,542</td></tr>
-<tr><td class="l">CONDENZ.EXE</td><td class="l">stuck at f5a:29f1</td><td>4,778,487</td></tr>
+<tr><td class="l">CONDENZ.EXE</td><td class="l">ran out of budget</td><td>30,000,239</td></tr>
 <tr><td class="l">CONTAGIO.EXE</td><td class="l">stuck at 258:35</td><td>197,121</td></tr>
 <tr><td class="l">COUNTDWN.EXE</td><td class="l">stuck at 8:107</td><td>221,165</td></tr>
 <tr><td class="l">CRYSTAL.COM</td><td class="l">stuck at 100:1b66</td><td>562,844</td></tr>
 <tr><td class="l">CTSLASSE.EXE</td><td class="l">stuck at 110:b6</td><td>204,234</td></tr>
+<tr><td class="l">CYBOMAN2.EXE</td><td class="l">stuck at 110:d6d</td><td>5,838,724</td></tr>
+<tr><td class="l">DADEMO3.EXE</td><td class="l">stuck at 4d1:da6</td><td>6,184,439</td></tr>
 <tr><td class="l">DEFECT!.COM</td><td class="l">ran out of budget</td><td>31,732,781</td></tr>
 <tr><td class="l">DEMO5.EXE</td><td class="l">ran out of budget</td><td>30,000,046</td></tr>
+<tr><td class="l">DINO.EXE</td><td class="l">stuck at 110:d6e</td><td>508,376</td></tr>
+<tr><td class="l">DINO386.EXE</td><td class="l">stuck at 110:d6e</td><td>517,009</td></tr>
 <tr><td class="l">DIZZY_FI.EXE</td><td class="l">waiting for a key</td><td>3,173,073</td></tr>
-<tr><td class="l">DOWNADD.COM</td><td class="l">stuck at 100:2d6</td><td>207,030</td></tr>
-<tr><td class="l">DOWNADD.COM</td><td class="l">stuck at 100:2d6</td><td>207,030</td></tr>
+<tr><td class="l">DOPE.EXE</td><td class="l">stuck at 110:d80</td><td>736,076</td></tr>
 <tr><td class="l">DPS.COM</td><td class="l">ran out of budget</td><td>30,002,017</td></tr>
-<tr><td class="l">EM.EXE</td><td class="l">stuck at db3:2a48</td><td>4,068,830</td></tr>
 <tr><td class="l">INTRO.EXE</td><td class="l">stuck at 7285:35</td><td>2,959,277</td></tr>
 <tr><td class="l">JULTRO.EXE</td><td class="l">stuck at 5ab:191</td><td>462,094</td></tr>
 <tr><td class="l">NM2.EXE</td><td class="l">ran out of budget</td><td>30,267,716</td></tr>
-<tr><td class="l">QUARTZ.EXE</td><td class="l">stuck at 61db:20a0</td><td>4,057,670</td></tr>
+<tr><td class="l">RACE.EXE</td><td class="l">stuck at 110:da6</td><td>350</td></tr>
 <tr><td class="l">SETUP.EXE</td><td class="l">ran out of budget</td><td>30,007,060</td></tr>
 <tr><td class="l">STARPORT.COM</td><td class="l">stuck at 100:568</td><td>9,988</td></tr>
 <tr><td class="l">STHINTRO.EXE</td><td class="l">stuck at 364:1a4</td><td>56,613</td></tr>
+<tr><td class="l">UNTITLED.EXE</td><td class="l">stuck at 745:3526</td><td>202,583</td></tr>
 <tr><td class="l">bit.exe</td><td class="l">stuck at 110:ffff</td><td>2,565,960</td></tr>
-<tr><td class="l">cd2.exe</td><td class="l">stuck at 2e1d:202b</td><td>5,734,696</td></tr>
+<tr><td class="l">cd2.exe</td><td class="l">stuck at 2e1d:202b</td><td>5,734,790</td></tr>
 <tr><td class="l">daretro.exe</td><td class="l">ran out of budget</td><td>30,030,081</td></tr>
 <tr><td class="l">do.exe</td><td class="l">ran out of budget</td><td>6,741</td></tr>
-<tr><td class="l">DENTROCF.EXE</td><td class="l">never finished (timeout)</td><td>&mdash;</td></tr>
-<tr><td class="l">TRIPLEX!.COM</td><td class="l">never finished (timeout)</td><td>&mdash;</td></tr>
-<tr><td class="l">BARTI.COM</td><td class="l">never finished (timeout)</td><td>&mdash;</td></tr>
-<tr><td class="l">TRIPLEX!.COM</td><td class="l">never finished (timeout)</td><td>&mdash;</td></tr>
-<tr><td class="l">TRIPLEX!.COM</td><td class="l">never finished (timeout)</td><td>&mdash;</td></tr>
 <tr><td class="l">READTHIS.COM</td><td class="l">never finished (timeout)</td><td>&mdash;</td></tr>
 <tr><td class="l">TRIPLEX!.COM</td><td class="l">never finished (timeout)</td><td>&mdash;</td></tr>
 <tr><td class="l">WHATSNEW.COM</td><td class="l">never finished (timeout)</td><td>&mdash;</td></tr>
@@ -1000,7 +1042,7 @@ Loading...patience is a virtue." data-stuck="110:2bc6"><button class="open" type
 </section>
 
 <footer>Generated by <span class="m">tools/toyvm/sweep-report.js</span> from
-<span class="m">shots6.json</span>. Corpus:
+<span class="m">shots8.json</span>. Corpus:
 <span class="m">/tmp/demos</span>, fetched by
 <span class="m">tools/toyvm/fetch-demos.js</span>.</footer>
 

@@ -189,7 +189,13 @@ async function main() {
     // so any run that ended waiting is tried a second time with autoKey and the
     // better of the two pictures is kept. A demo that treats any key as "quit"
     // comes back blank from the retry and keeps its first frame.
-    if (!o.autoKey && (row.blockedOnKey || score(row) <= 0)) {
+    //
+    // A text screen counts as "not started" too, and that is not a nicety: a
+    // program can be sitting on a menu without ever blocking, because it polls
+    // for the key rather than waiting for one. BTW.EXE scores 99 cells of sound
+    // menu, never blocks, and never gets the retry that answers it -- 46,912
+    // pixels of demo behind a screen that looked like a result.
+    if (!o.autoKey && (row.blockedOnKey || score(row) <= 0 || !row.pixels)) {
       const first = { ...row };
       const retry = await child(exe, png, { ...o, autoKey: true });
       if (score(retry) > score(first)) row = retry;

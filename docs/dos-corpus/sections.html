@@ -43,11 +43,25 @@
   to make room for it. At the old layout those eight signature bytes would have
   landed on top of the stubs for INT 0Ah through INT 11h, INT 10h among them.</p>
 
-  <p>Extended memory blocks live in host buffers rather than anywhere the guest
-  can reach, because a real-mode program cannot address them anyway &mdash;
-  everything it can do with one goes through the XMS move call. That is also why
-  <em>Lock</em> fails rather than inventing a 32-bit address: a program that got
-  one would write through it into memory that does not exist.</p>
+  <p>Extended memory blocks started life in host buffers, on the reasoning that
+  a real-mode program cannot address them anyway &mdash; everything it can do
+  with one goes through the XMS move call, so <em>Lock</em> failed rather than
+  inventing a 32-bit address nothing was behind. Ten programs disagreed, all of
+  them from the same intro system, all of them stopping on that one call with
+  <span class="m">Extended memory allocation failure. (weird eh???)</span>. They
+  lock the block, take the linear address, and write through it from real mode
+  with a 32-bit offset.</p>
+
+  <p>So there is somewhere for that address to point now. Guest RAM is 16MB
+  &mdash; the 8086's megabyte, then extended memory above the HMA &mdash; and
+  blocks are cut from it. The address bus is the interesting part: an 8086 has
+  twenty address lines and every address wraps at 1MB, a machine with extended
+  memory in it does not, and a program can tell which one it is on. Address
+  translation masks through a global that holds the 8086's twenty lines until
+  the guest <em>takes an XMS handle</em>, and only then widens. A program that
+  never asks for extended memory keeps exact 8086 wrap semantics, and the
+  instruction gate &mdash; whose vectors are recorded off real silicon, wrap
+  included &mdash; never notices the change.</p>
 
   <h3>MAINPART.EXE is the whole shape of it</h3>
 
@@ -85,19 +99,103 @@
   screen, because a program still showing the same menu did not accept that key,
   and sending it again forever is how a run hangs politely.</p>
 
-  <pre class="dlg-screen" style="max-height:none;border:1px solid var(--rule);color:var(--ink)">BLINKY.EXE    <b>a. PC Speaker   p. No sound</b>          -&gt; p
-BUDENZA.EXE   <b>1) No Music</b>  2) DAC/Covox on LPT1   -&gt; 1
-CULT.EXE      Do YOU have a GUS <b>[Y/N]</b>              -&gt; n</pre>
+  <pre class="dlg-screen" style="max-height:none;border:1px solid var(--rule);color:var(--ink)">BUDENZA.EXE   <b>1) No Music</b>  2) DAC/Covox on LPT1              -&gt; 1
+CULT.EXE      Do YOU have a GUS <b>[Y/N]</b>                         -&gt; n
+CYCLE.EXE     (G)ravis Ultra Sound / (O)thers / <b>(N)one</b> ???    -&gt; N
+BTW.EXE       [1] 210h &hellip; <b>[0] Just kidding! I don't even own a GUS!!!</b>  -&gt; 0</pre>
 
   <p class="note"><span class="m">BLIQ.EXE</span> and
   <span class="m">CONTAGIO.EXE</span> printed <em>Can not init file manager</em>
   while making no file call at all, which is what gave that one away: what they
   could not find was their own name. A DOS program's environment block ends with
   a count word and then the full path it was started from, and there was no
-  environment block &mdash; so they now get one, and open themselves. The
-  GUS-port menus in <span class="m">IHANMUU</span> and <span class="m">BTW</span>
-  offer six hardware addresses and no silent option, so there is nothing on the
-  screen for the reader to pick.</p>
+  environment block &mdash; so they now get one, and open themselves.</p>
+
+  <h3>Two of those menus are not read the same way twice</h3>
+
+  <p>The last two lines above are the ones that took the reader apart. A menu
+  laid out as <span class="m">(G)ravis / (O)thers / (N)one</span> puts the
+  selector <em>inside</em> the word, so the label reads as
+  <span class="m">one</span> &mdash; which means neither yes nor no &mdash; and
+  puts the whole menu on one line, where a scanner anchored on line starts and
+  double spaces sees only the first option. And a silent option does not have to
+  say "none": <span class="m">Just kidding! I don't even own a GUS!!!</span> is
+  the same answer in a different voice.</p>
+
+  <h3>Then there is how the key gets in</h3>
+
+  <p>Reading the menu correctly is no use if nothing delivers the answer, and
+  these programs read the keyboard three different ways.</p>
+
+  <p><strong>The polled read.</strong> <span class="m">INT 16h AH=01h</span>
+  asks "is anyone there", and it deliberately never manufactured a key: a demo
+  checks that once a frame to decide whether to quit, and would be told yes on
+  its first frame. It answers now, but only on a <em>text</em> screen the menu
+  reader recognises &mdash; over its own graphics a demo is still told the
+  keyboard is empty.</p>
+
+  <p><strong>The port.</strong> <span class="m">BTW.EXE</span> sat on its menu
+  having made zero INT 16h calls in eleven million dispatches, because it hooks
+  nothing and asks the BIOS nothing: it reads port 60h directly, and that port
+  returned a constant zero. It serves the same queue now, make code then break
+  code, and IRQ1 is delivered to a program that installed its own INT 9.</p>
+
+  <p><strong>The command line.</strong> Some programs name their own way past
+  the screen they are stuck on. <span class="m">AMBIENT.EXE</span> prints
+  <em>MIDAS Error: NO GUS FOUND... USE "AMBIENT /NO_SND" FOR SILENT MODE</em>
+  and means every word: the PSP command tail is populated now, the sweep reads
+  the switch off the screen and retries with it, and the demo renders.
+  Lower-cased on the way in &mdash; the message shouts, and MIDAS's option
+  parser is case sensitive.</p>
+
+  <h3>The detector that was calling working programs hung</h3>
+
+  <p>The single biggest cause was not a menu at all. A run is declared hung
+  after two hundred handbacks at one address with nothing new on the console
+  &mdash; and a loop that <em>stores into a paragraph some compiled region
+  decoded</em> hands control back on every iteration, at the same address, with
+  nothing to show for it. That is indistinguishable from a spin by address
+  alone. <span class="m">IHANMUU.EXE</span> was cut off after 0.5M of its 30M
+  dispatches inside a loop whose SI and BP were advancing the whole time; with
+  the registers folded into the progress test it runs to a full mode 13h
+  screen.</p>
+
+  <div class="shots" style="grid-template-columns:repeat(auto-fill,minmax(260px,1fr))">
+    <figure><button class="open" type="button"><img src="shots/IHANMUU.png" alt="IHANMUU.EXE rendering a full mode 13h graphics screen"></button>
+      <figcaption><span class="fn">IHANMUU.EXE</span><span class="fp">was &ldquo;hung&rdquo;</span></figcaption></figure>
+    <figure><button class="open" type="button"><img src="shots/BTW.png" alt="BTW.EXE rendering a mode 13h graphics screen"></button>
+      <figcaption><span class="fn">BTW.EXE</span><span class="fp">read port 60h</span></figcaption></figure>
+    <figure><button class="open" type="button"><img src="shots/FROGFUZZ.png" alt="FROGFUZZ.EXE rendering an EGA planar screen"></button>
+      <figcaption><span class="fn">FROGFUZZ.EXE</span><span class="fp">GUS-port menu</span></figcaption></figure>
+    <figure><button class="open" type="button"><img src="shots/AMBIENT.png" alt="AMBIENT.EXE rendering a mode 13h graphics screen"></button>
+      <figcaption><span class="fn">AMBIENT.EXE</span><span class="fp">/no_snd</span></figcaption></figure>
+  </div>
+
+  <p class="note">Between them these moved thirteen programs from a text screen
+  to a picture, five from a blank one, and two from no capture at all: 83
+  graphics tiles became 107.</p>
+</section>
+
+<section>
+  <h2>What is left is a different machine</h2>
+  <p class="sub">twelve programs, one blocker, and it is not an instruction either</p>
+
+  <p>Thirteen programs got <em>worse</em> looking in this round, and the change
+  is honest. They are the ones that printed <span class="m">Extended memory
+  allocation failure. (weird eh???)</span> and exited; with a lock that works
+  they no longer print anything, and stop a few instructions later at
+  <span class="m">LGDT</span> and <span class="m">MOV CR0, EAX</span>. All
+  thirteen are the same 32-bit DOS extender, and one more &mdash;
+  <span class="m">COCAHOLC.EXE</span> &mdash; reaches the same place through
+  <span class="m">INT 2Fh AX=1687</span>, the DPMI entry point. An error message
+  is a better picture than a black screen, but it was a message about the wrong
+  thing.</p>
+
+  <p>What they want is a descriptor table, a segment whose base comes out of it
+  instead of out of a shift by four, and a code segment whose default operand
+  size is 32 bits. That is not an instruction the decoder is missing. It is a
+  second addressing mode for the whole machine, and it is the largest single
+  item left in the corpus.</p>
 </section>
 
 <section>
