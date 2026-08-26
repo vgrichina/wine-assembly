@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<!-- The scroll-collapse lab.
+     Four one-file pages, no emulator in any of them, each isolating one
+     hypothesis about why the swipe strip in the app does not retract Safari's
+     toolbars. Open one, swipe, read the green line at the bottom -- the words
+     COLLAPSED or `bars: unchanged` are the whole result.
+
+     Served by tools/ios-selftest-server.js, which also prints every page's
+     readout as it changes and relays JS from tools/ios-eval.js into whichever
+     page is open. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>iOS scroll lab</title>
+<style>
+  body { margin: 0; font: 16px/1.5 -apple-system, sans-serif; padding: 16px 16px 90px; background: #f4f4f4; }
+  h1 { font-size: 19px; margin: 0 0 4px; }
+  p.lede { margin: 0 0 18px; color: #444; font-size: 14px; }
+  a.case {
+    display: block; margin: 0 0 12px; padding: 12px 14px; background: #fff;
+    border: 1px solid #ccc; border-radius: 10px; text-decoration: none; color: #000;
+  }
+  a.case b { display: block; font-size: 17px; margin-bottom: 3px; }
+  a.case span { font-size: 13px; color: #555; }
+  code { font: 12px ui-monospace, Menlo, monospace; background: #eee; padding: 1px 4px; border-radius: 3px; }
+</style>
+</head>
+<body data-lab="index">
+<h1>iOS scroll-collapse lab</h1>
+<p class="lede">Open each in turn, swipe up a few times, and watch the green
+line at the bottom. <code>COLLAPSED +n</code> means Safari's toolbars actually
+retracted &mdash; that is <code>innerHeight</code> growing, which is the only
+thing the bars are. Every reading is streamed back automatically.</p>
+
+<a class="case" href="plain.html"><b>A &mdash; plain long page</b>
+<span>The control. Ordinary paragraphs, nothing clever. If this one does not
+collapse, nothing else here matters.</span></a>
+
+<a class="case" href="spacer.html"><b>B &mdash; invisible spacer</b>
+<span>One screen of content plus an empty two-viewport spacer &mdash; exactly
+what the app adds. Does overflow with nothing in it count?</span></a>
+
+<a class="case" href="fixed.html"><b>C &mdash; fixed panel + swipe strip</b>
+<span>The app's actual shape: a full-screen fixed panel that eats touches, and
+a 44px strip at the top to start the scroll on.</span></a>
+
+<a class="case" href="scroller.html"><b>D &mdash; inner scroller</b>
+<span>Expected to fail. It is the check that the instrument can say no.</span></a>
+
+<script src="lab.js"></script>
+</body>
+</html>

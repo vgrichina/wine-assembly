@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<!-- C: the emulator's actual shape, with no emulator in it.
+     A position:fixed panel covering the whole viewport (that is the app
+     canvas), which swallows every touch that lands on it by preventDefault
+     (that is how guest input is routed), a 2-viewport spacer underneath so
+     the document overflows, and a 44px gutter strip at the top with
+     touch-action:pan-y that is the only place a page scroll can start.
+
+     Two hypotheses live here and the readout separates them:
+       moves climb, maxY stays 0 -> the gesture is reaching the page and
+                                     something is refusing to scroll it
+       maxY climbs, range flat   -> it scrolls fine and Safari will not
+                                     collapse its bars over a fixed overlay -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>C fixed panel + gutter</title>
+<style>
+  html, body { margin: 0; }
+  body {
+    font: 16px/1.5 -apple-system, sans-serif;
+    display: flex;
+    flex-direction: column;
+    height: 100dvh;
+    overflow: visible;
+  }
+  #panel {
+    position: fixed;
+    inset: 0;
+    background: #101820;
+    color: #7fd;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 24px;
+    touch-action: none;
+  }
+  #spacer { flex: 0 0 auto; width: 1px; height: 200dvh; min-height: 200dvh; }
+  #gutter {
+    position: fixed;
+    top: env(safe-area-inset-top);
+    left: 0;
+    right: 40px;
+    height: 44px;
+    z-index: 39;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    color: #fff;
+    background: linear-gradient(rgba(0,0,0,0.8), rgba(0,0,0,0.25));
+    font: 12px/1 sans-serif;
+    touch-action: pan-y;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+  }
+</style>
+</head>
+<body data-lab="C-fixed">
+<div id="panel">C &mdash; a fixed full-screen panel that eats touches, like the app canvas.<br><br><b>Swipe up on the black strip at the top.</b></div>
+<div id="spacer" aria-hidden="true"></div>
+<div id="gutter">&#x25B2; swipe up here for more screen</div>
+<script>
+  // The panel behaves like the emulator canvas: every touch on it is claimed
+  // for the guest and never becomes a page scroll. That is deliberate here --
+  // it is the reason the gutter has to exist at all.
+  const panel = document.getElementById('panel');
+  for (const type of ['touchstart', 'touchmove']) {
+    panel.addEventListener(type, e => e.preventDefault(), { passive: false });
+  }
+</script>
+<script src="lab.js"></script>
+</body>
+</html>

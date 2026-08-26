@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<!-- B: overflow with nothing to see. One viewport of content and an empty
+     spacer under it, which is exactly what the emulator's scroll-collapse
+     mode adds and nothing else.
+
+     The hypothesis this isolates: Safari retracts its bars for a scroll of a
+     document that overflows, whether or not the overflow contains anything.
+     If A collapses and B does not, an invisible spacer is not enough and the
+     fix is content, not height. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>B spacer only</title>
+<style>
+  html, body { margin: 0; }
+  body {
+    font: 16px/1.5 -apple-system, sans-serif;
+    display: flex;
+    flex-direction: column;
+    /* The same shape as the shell: a viewport-tall flex column... */
+    height: 100dvh;
+  }
+  #screen {
+    flex: 1;
+    min-height: 0;
+    background: #008080;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 16px;
+  }
+  /* ...plus an empty spacer that is the only reason the document overflows.
+     flex:0 0 auto or #screen's flex:1 would shrink it away to nothing. */
+  #spacer { flex: 0 0 auto; width: 1px; height: 200dvh; min-height: 200dvh; }
+</style>
+</head>
+<body data-lab="B-spacer">
+<div id="screen">B &mdash; one screen of content plus an invisible 2-viewport spacer.<br><br><b>Swipe up anywhere.</b></div>
+<div id="spacer" aria-hidden="true"></div>
+<script src="lab.js"></script>
+</body>
+</html>

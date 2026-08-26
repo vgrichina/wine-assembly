@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<!-- D: the known-negative control.
+     The same amount of content, but scrolling inside an overflow:auto div
+     instead of the page. Safari has never retracted its toolbars for an inner
+     scroller -- only the root one counts.
+
+     This page is here so a "nothing collapses on this phone" result can be
+     told apart from a broken instrument: D must read `bars: unchanged` even
+     when A collapses. If D ever says COLLAPSED, the readout is lying and
+     nothing else in this lab means anything. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>D inner scroller</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  body { font: 16px/1.6 -apple-system, sans-serif; }
+  #box {
+    position: absolute;
+    inset: 0;
+    bottom: 60px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 12px;
+    background: #fff8e7;
+  }
+</style>
+</head>
+<body data-lab="D-inner">
+<div id="box">
+  <h1>D &mdash; inner scroller (expected: no collapse)</h1>
+  <p><b>Swipe up.</b> This one is supposed to fail. It is the check that the
+  readout can say no.</p>
+  <div id="filler"></div>
+</div>
+<script>
+  const filler = document.getElementById('filler');
+  for (let i = 0; i < 60; i++) {
+    const p = document.createElement('p');
+    p.textContent = `Paragraph ${i + 1}. ` + 'Scroll me. '.repeat(8);
+    filler.appendChild(p);
+  }
+</script>
+<script src="lab.js"></script>
+</body>
+</html>

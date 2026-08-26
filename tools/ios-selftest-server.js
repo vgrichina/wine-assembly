@@ -73,6 +73,16 @@ function report(request, response) {
 }
 
 function print(stamp, item) {
+  if (item && item.kind === 'eval') {
+    const answered = answerEval(item);
+    console.log(`${stamp}  EVAL #${item.id} ${item.ok ? '->' : 'THREW'} ${item.value}` +
+      (answered ? '' : '  (nobody waiting)'));
+    return;
+  }
+  if (item && item.kind === 'lab') {
+    console.log(`${stamp}  LAB ${item.page.padEnd(9)} ${item.line}`);
+    return;
+  }
   if (item && item.kind === 'log') {
     console.log(`${stamp}  ${item.text}`);
     return;
@@ -98,6 +108,52 @@ function print(stamp, item) {
   console.log(`${stamp}  ${JSON.stringify(item)}`);
 }
 
+// ---- the eval channel ------------------------------------------------
+//
+// There is no debugger into the phone. Safari Web Inspector over USB is the
+// official answer and it is a lot of setup to ask of someone whose report is
+// "the swipe does nothing" -- and it cannot be driven from here at all. So
+// the page asks US for work instead: it polls GET /ios-cmd, evaluates
+// whatever comes back, and posts the result to /ios-report like any other
+// report. That makes `tools/ios-eval.js 'innerHeight'` a REPL into a real
+// iPhone, which is the only place this bug exists.
+//
+// Deliberately not authenticated and bound to the LAN: it is a debugging
+// server for a machine on the user's own network, started by hand, and it
+// serves the repo to that network already.
+const commands = [];
+const waiting = new Map();
+let nextCommandId = 1;
+
+function enqueueEval(request, response) {
+  let body = '';
+  request.on('data', chunk => { body += chunk; });
+  request.on('end', () => {
+    const id = nextCommandId++;
+    commands.push({ id, code: body });
+    console.log(`${new Date().toISOString().slice(11, 19)}  EVAL #${id} <- ${body}`);
+    // Hold the HTTP response open until the device answers, so the shell
+    // command that asked prints the value itself.
+    const timer = setTimeout(() => {
+      if (!waiting.has(id)) return;
+      waiting.delete(id);
+      response.writeHead(504, { 'Content-Type': 'text/plain' });
+      response.end('no answer from the device in 20s -- is the lab page open?\n');
+    }, 20000);
+    waiting.set(id, { response, timer });
+  });
+}
+
+function answerEval(item) {
+  const pending = item && waiting.get(item.id);
+  if (!pending) return false;
+  waiting.delete(item.id);
+  clearTimeout(pending.timer);
+  pending.response.writeHead(item.ok ? 200 : 500, { 'Content-Type': 'text/plain' });
+  pending.response.end(String(item.value) + '\n');
+  return true;
+}
+
 const server = http.createServer((request, response) => {
   if (request.method === 'OPTIONS') {
     response.writeHead(204, {
@@ -110,6 +166,20 @@ const server = http.createServer((request, response) => {
   }
   if (request.method === 'POST' && request.url.startsWith('/ios-report')) {
     report(request, response);
+    return;
+  }
+  if (request.method === 'POST' && request.url.startsWith('/ios-eval')) {
+    enqueueEval(request, response);
+    return;
+  }
+  if (request.method === 'GET' && request.url.startsWith('/ios-cmd')) {
+    const batch = commands.splice(0, commands.length);
+    response.writeHead(200, {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-store',
+      'Access-Control-Allow-Origin': '*',
+    });
+    response.end(JSON.stringify(batch));
     return;
   }
   serveFile(request, response);
