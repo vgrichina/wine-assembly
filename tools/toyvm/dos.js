@@ -197,7 +197,7 @@ function loadCom(mem, buf, { pspSeg = PSP_SEG } = {}) {
 // Modelling them is nearly free -- the ports are already trapped -- and it is
 // what lets the renderer read the real geometry instead of assuming 320x200.
 const SEQ_MEMORY_MODE = 4, SEQ_MAP_MASK = 2;
-const GC_READ_MAP = 4, GC_MODE = 5, GC_BIT_MASK = 8;
+const GC_READ_MAP = 4, GC_MODE = 5, GC_MISC = 6, GC_BIT_MASK = 8;
 const CRTC_HDE = 0x01;
 const CRTC_MAX_SCAN = 0x09, CRTC_START_HI = 0x0C, CRTC_START_LO = 0x0D;
 const CRTC_VDE = 0x12, CRTC_OVERFLOW = 0x07, CRTC_OFFSET = 0x13;
@@ -288,6 +288,10 @@ function resetVgaMode(v, mode) {
   v.gc.fill(0);
   v.gc[GC_BIT_MASK] = 0xFF;
   v.gc[GC_MODE] = mode === 0x13 ? 0x40 : 0x00;            // bit 6 = 256-colour
+  // Miscellaneous, bit 0: this is a graphics mode. The BIOS writes it as part
+  // of setting any graphics mode, and it is what tells the registers alone --
+  // with no INT 10h to ask -- that A000 is a picture. See vgaModeFromRegs.
+  v.gc[GC_MISC] = (ega || mode === 0x13) ? 0x01 : 0x00;
   v.attr.fill(0);
   v.attr.set(EGA_ATTR);
   v.attrFlip = 0;
@@ -308,6 +312,39 @@ function resetVgaMode(v, mode) {
   // becomes planar when the guest clears chain-4.
   v.bpp = ega ? 4 : (mode === 0x13 ? 8 : 0);
   v.planar = !!ega;
+}
+
+// What the graphics-controller registers say the mode is, independently of
+// whether anyone asked the BIOS for it.
+//
+// A large part of this corpus never calls INT 10h AH=00 at all: setting a mode
+// is a dozen OUTs to the sequencer, the CRTC and the graphics controller, and a
+// demo that has already written a mode-X tweak has no reason to ask the BIOS
+// for mode 13h first. `bpp` was only ever written by resetVgaMode, so every one
+// of those programs was still "in mode 3" while it drew, the capture path
+// photographed the text page, and the sweep filed a working demo as blank.
+//
+// Bit 0 of the Miscellaneous register is the graphics/text bit; bit 6 of Mode
+// is 256-colour. Between them they name every mode this machine can be in.
+function vgaModeFromRegs(v) {
+  const graphics = (v.gc[GC_MISC] & 0x01) !== 0;
+  return !graphics ? 0 : ((v.gc[GC_MODE] & 0x40) ? 8 : 4);
+}
+
+// Adopt what the registers say, keeping the last graphics geometry the way a
+// BIOS mode set does so a demo that restores text on its way out is still
+// photographable.
+function syncVgaMode(v, forceChained) {
+  const bpp = vgaModeFromRegs(v);
+  if (bpp === v.bpp) return false;
+  if (v.bpp !== 0) v.lastGraphics = vgaGeometry(v);
+  v.bpp = bpp;
+  // A 4-bit mode is planar by construction; a 256-colour one is planar only
+  // once chain-4 is cleared, which the sequencer write decides.
+  if (bpp === 4) v.planar = true;
+  else if (bpp === 8) v.planar = !forceChained && !(v.seq[SEQ_MEMORY_MODE] & 0x08);
+  else v.planar = false;
+  return true;
 }
 
 // Geometry, derived the way the CRTC actually derives it rather than assumed.
@@ -925,6 +962,15 @@ class Machine {
       case 0x3CE: v.gcIndex = value & 0x0F; return;
       case 0x3CF:
         v.gc[v.gcIndex] = value;
+        // Miscellaneous and Mode between them say whether A000 is a picture and
+        // how deep it is, so a mode set done entirely in registers is picked up
+        // here rather than only at INT 10h AH=00.
+        if (v.gcIndex === GC_MISC || v.gcIndex === GC_MODE) {
+          if (syncVgaMode(v, this.forceChained)) {
+            this.log(`vga registers say ${v.bpp ? `${v.bpp}bpp graphics` : 'text'}`);
+            this.vgaRechain(v.planar);
+          }
+        }
         // Every graphics register now feeds the write pipeline, so mirror the
         // whole file rather than picking out the two mode X happened to need.
         this.syncVga();
@@ -935,7 +981,16 @@ class Machine {
         else { v.attr[v.attrIndex] = value; v.attrFlip = 0; }
         return;
       case 0x3D4: case 0x3B4: v.crtcIndex = value & 0x1F; return;
-      case 0x3D5: case 0x3B5: v.crtc[v.crtcIndex] = value; return;
+      case 0x3D5: case 0x3B5:
+        v.crtc[v.crtcIndex] = value;
+        // In text mode the start address IS the displayed page, so the console
+        // grid has to follow it (see setTextPage). In a graphics mode it is a
+        // scroll or a page flip within A000 and vgaGeometry already reports it.
+        if (v.bpp === 0 && (v.crtcIndex === CRTC_START_HI || v.crtcIndex === CRTC_START_LO)) {
+          const start = ((v.crtc[CRTC_START_HI] << 8) | v.crtc[CRTC_START_LO]) & 0xFFFF;
+          this.con.base = VRAM_TEXT + ((start * 2) & 0x7FFF);
+        }
+        return;
       case 0x3C2: v.misc = value; return;
       default: return;                       // everything else is dropped
     }
@@ -963,7 +1018,10 @@ class Machine {
     // 256-colour feature and the bit is not even meaningful there -- so only
     // mode 13h is allowed to change its mind here.
     if (v.bpp === 4) return;
-    const planar = !this.forceChained && this.videoMode === 0x13 && !(value & 0x08);
+    // Keyed on the depth the REGISTERS report, not on the mode the BIOS was
+    // asked for: a demo that set 256 colours with its own OUTs never told the
+    // BIOS anything, and testing videoMode left it chained forever.
+    const planar = !this.forceChained && v.bpp === 8 && !(value & 0x08);
     if (planar === v.planar) return;
     v.planar = planar;
     if (planar) v.unchainCount++;
@@ -990,6 +1048,23 @@ class Machine {
   }
 
   // --- the text console ----------------------------------------------------
+  // Which text page the console grid lives on. Mode 3 has eight 4KB pages in
+  // B800 and a demo animates by drawing into the one that is NOT being shown
+  // and then pointing the CRTC start address at it. The console was pinned to
+  // page 0, so such a program wrote a full screen and was photographed blank --
+  // ant1.exe reported `crtc says start=2000` (2000 words = 4000 bytes = page 1)
+  // with zero non-blank cells. Both routes to a page change land here: the BIOS
+  // call (INT 10h AH=05h) and a direct write to CRTC 0x0C/0x0D.
+  setTextPage(page) {
+    const at = (page & 0x07) * 0x1000;
+    this.con.base = VRAM_TEXT + at;
+    this.mem[0x462] = page & 0x07;
+    this.mem[0x44E] = at & 0xFF; this.mem[0x44F] = (at >> 8) & 0xFF;
+    const v = this.vga, start = at >> 1;
+    v.crtc[CRTC_START_HI] = (start >> 8) & 0xFF;
+    v.crtc[CRTC_START_LO] = start & 0xFF;
+  }
+
   // One character, through the cursor, with ANSI sequences interpreted rather
   // than printed. Everything that writes text -- DOS teletype, DOS string
   // print, the BIOS TTY call -- funnels here so there is one cursor and one
@@ -1170,6 +1245,7 @@ class Machine {
       // Setting a mode clears the display and re-chains the planes -- a demo
       // that unchains does it AFTER asking the BIOS for mode 13h.
       resetVgaMode(this.vga, this.videoMode);
+      this.setTextPage(0);                   // a mode set always shows page 0
       this.syncVga();
       if (this.videoMode === 0x13) this.mem.fill(0, VGA_BASE, VGA_BASE + 320 * 200);
       if (this.vga.bpp === 4) {
@@ -1248,7 +1324,10 @@ class Machine {
     }
     if (ah === 0x10 && al === 0x03) return true;    // blink/intensity bit
     if (ah === 0x01) return true;                   // cursor shape
-    if (ah === 0x05) return true;                   // active display page
+    if (ah === 0x05) {                              // active display page
+      this.setTextPage(al & 0x07);
+      return true;
+    }
     // The BIOS text calls. These used to all be accepted and dropped, which is
     // why a program that wrote its screen through the BIOS instead of DOS came
     // out just as blank as one that wrote nothing.
