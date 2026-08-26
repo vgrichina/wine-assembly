@@ -491,6 +491,21 @@ class Machine {
     // only visible by changing tickScale and watching the frame move. The
     // interrupt-driven clocks (INT 1Ah, 15h, 16h) are already in `intCount`.
     this.clock = { retrace: 0, pit: 0 };
+    // The 8253, as three down-counters rather than a number that goes up.
+    //
+    // Channel 0 is the one that matters: it divides 1.193182 MHz by its latch,
+    // and a latch of 0 means 65536, which is where 18.2 Hz comes from. Programs
+    // read the counter for sub-tick resolution -- Turbo Pascal's CRT unit times
+    // its delay loop that way and divides by what it measured, so a counter
+    // that does not count produced runtime error 200 in four demos here.
+    // `phase` is the fractional BIOS tick the driver bills against guest work.
+    this.pit = {
+      latch: [0x10000, 0x10000, 0x10000],
+      pending: [0, 0, 0],       // bytes of a latch written so far
+      readHi: [false, false, false],
+      access: [3, 3, 3],        // 1 = lo only, 2 = hi only, 3 = lo then hi
+      phase: 0,
+    };
 
     this.installIvt();
     // BIOS data area: video mode byte and the 55ms tick counter at 0040:006C,
@@ -728,6 +743,25 @@ class Machine {
     }
   }
 
+  // Guest time as a fraction of a BIOS tick. The driver bills this against
+  // guest work, and everything time-shaped reads off it: the 55ms counter at
+  // 0040:006C is its integer part, and the PIT counter is its fraction --
+  // 65536 counts to the tick, which is where 18.2 Hz comes from in the first
+  // place, so the two cannot drift apart by construction.
+  setClock(t) {
+    this.pit.phase = t;
+    this.setTicks(Math.floor(t));
+  }
+
+  // Where channel `ch` has counted down to. Counts are 1..latch, never 0 --
+  // the hardware reloads on the way past, and a program that divides by what
+  // it read must not see a zero.
+  pitCount(ch) {
+    const latch = this.pit.latch[ch] || 0x10000;
+    const elapsed = Math.floor(this.pit.phase * 65536);
+    return latch - (((elapsed % latch) + latch) % latch);
+  }
+
   setTicks(t) {
     this.ticks = t >>> 0;
     const at = 0x46C;
@@ -792,13 +826,43 @@ class Machine {
     if (port === 0x3D4 || port === 0x3B4) return this.vga.crtcIndex;
     if (port === 0x3CC) return this.vga.misc;
     if (port === 0x60) return 0;            // keyboard data: no key down
-    if (port === 0x40 || port === 0x41 || port === 0x42) { this.clock.pit++; return (this.ticks * 13) & 0xFF; }
+    if (port >= 0x40 && port <= 0x42) {
+      this.clock.pit++;
+      const ch = port - 0x40;
+      const n = this.pitCount(ch);
+      const acc = this.pit.access[ch];
+      if (acc === 1) return n & 0xFF;
+      if (acc === 2) return (n >> 8) & 0xFF;
+      const hi = this.pit.readHi[ch];
+      this.pit.readHi[ch] = !hi;
+      return hi ? (n >> 8) & 0xFF : n & 0xFF;
+    }
     return w === 16 ? 0xFFFF : 0xFF;
   }
 
   portOut(port, value, w) {
     if (w === 16) { this.portOut(port, value & 0xFF, 8); this.portOut(port + 1, (value >> 8) & 0xFF, 8); return; }
     value &= 0xFF;
+    // The PIT. A demo reprogramming channel 0 is asking for a faster music
+    // interrupt, and one reprogramming channel 2 is driving the speaker; both
+    // change what a read of the counter means, so the latch has to be kept.
+    if (port === 0x43) {
+      const ch = (value >> 6) & 3;
+      if (ch !== 3) {                       // 3 is the read-back command
+        const acc = (value >> 4) & 3;
+        if (acc === 0) this.pit.readHi[ch] = false;   // latch-for-read, no state
+        else { this.pit.access[ch] = acc; this.pit.pending[ch] = 0; this.pit.readHi[ch] = false; }
+      }
+      return;
+    }
+    if (port >= 0x40 && port <= 0x42) {
+      const ch = port - 0x40, p = this.pit;
+      if (p.access[ch] === 1) p.latch[ch] = value || 0x100;
+      else if (p.access[ch] === 2) p.latch[ch] = (value << 8) || 0x10000;
+      else if (p.pending[ch] === 0) { p.latch[ch] = value; p.pending[ch] = 1; }
+      else { p.latch[ch] = ((value << 8) | (p.latch[ch] & 0xFF)) || 0x10000; p.pending[ch] = 0; }
+      return;
+    }
     if (port === 0x3C8) { this.dacWriteIndex = value; this.dacSubIndex = 0; return; }
     if (port === 0x3C7) { this.dacWriteIndex = value; this.dacSubIndex = 0; return; }
     if (port === 0x3C9) {

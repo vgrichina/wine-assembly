@@ -193,7 +193,7 @@ function decodeOne(rd, cs, ip) {
     if (n > 8) return null;   // prefix soup, not something the corpus produces
   }
 
-  const op = at(n); n++;
+  const op = at(n); const modrmAt = n; n++;
   // A repeat prefix on anything but a string op does something the 8086 defines
   // only by accident. Refusing the encoding keeps the gate honest instead of
   // silently executing the unprefixed instruction and calling it a pass.
@@ -866,7 +866,34 @@ function decodeOne(rd, cs, ip) {
       else return null;
   }
 
+  // Self-patching code. A store through a CS override writes into the segment
+  // the instruction stream itself lives in, and nothing else does that by
+  // accident -- a program addressing data through CS uses a read. So the block
+  // stops at the store and hands back with $smc set: the host drops the block
+  // the store landed in, and the very next decode reads the patched byte.
+  //
+  // Turbo Pascal's Intr() is why this matters. It writes the interrupt number
+  // into the `int` opcode two instructions ahead, and without this the trace
+  // carries the byte that was there at decode time -- the $00 the packed image
+  // ships -- so every BIOS call a TP program makes executes INT 0 instead, and
+  // TP's INT 0 handler reports "Runtime error 200".
+  if (segOverride === 1 && !endsBlock && isSelfPatch(op, at(modrmAt))) {
+    words.push(H.end_smc, (start + n) & 0xFFFF);
+    endsBlock = true;
+  }
+
   return { words, nextIp: (start + n) & 0xFFFF, length: n, fixups, endsBlock };
+}
+
+// The MOV encodings that store to memory. Deliberately not every writing
+// opcode: this list is what patchers actually emit, and a wrong entry costs a
+// block break on code that never modifies itself.
+function isSelfPatch(op, modrm) {
+  if (op === 0xA2 || op === 0xA3) return true;          // mov [moffs], acc
+  if (op === 0x88 || op === 0x89 || op === 0xC6 || op === 0xC7) {
+    return (modrm >> 6) !== 3;                          // a register form writes no memory
+  }
+  return false;
 }
 
 module.exports = { decodeOne, H, setCpuLevel };

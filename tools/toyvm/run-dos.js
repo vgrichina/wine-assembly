@@ -238,7 +238,7 @@ function frameHash(mem, video) {
 async function runDos(o) {
   const {
     variant = 'tailcall', exe, budget = 200e6, slice = 2e6,
-    traceInt = false, noCache = false, shots = null, shotEvery = 20,
+    traceInt = false, traceFault = false, noCache = false, shots = null, shotEvery = 20,
     mouse = [0, 0], cpu = 386, report = false, log = console.log, autoKey = false,
     tickScale = 1, sample = false, sampleAfter = 0, forceChained = false,
     // One timer interrupt per this many dispatches. 100k is about 10ms of a
@@ -247,7 +247,7 @@ async function runDos(o) {
     // for, which costs it tempo and nothing else. Raise it and an ISR-heavy
     // demo gets more of its own budget; lower it and its animation is smoother
     // per dispatch. It is a knob for the same reason tickScale is.
-    irqEvery = 100e3,
+    irqEvery = 100e3, dispatchesPerTick = 550e3,
     // Where to keep the best frame the run ever had, rather than the last one.
     //
     // The last frame is the wrong one surprisingly often. manhatan.exe draws a
@@ -355,6 +355,7 @@ async function runDos(o) {
   const t0 = process.hrtime.bigint();
   let guestNs = 0n;
   let dispatched = 0, handbacks = 0, ints = 0, irqs = 0, shotN = 0, stuck = 0, stuckAt = null;
+  let smcBreaks = 0;
   let lastIrq = 0;
   let lastKey = '', lastWritten = 0;
   const entryHist = new Map();
@@ -436,6 +437,35 @@ async function runDos(o) {
     // the DEPACKER, not the demo -- and the depacker is the same handful of
     // instructions in every one of them, which is how eight unrelated demos
     // came back with byte-identical "hottest traces".
+    // A block that patched its own code hands back with $smc set. The block it
+    // patched is the one it was about to fall into, so that is the cache entry
+    // to drop -- a full flush would be correct too, and would re-decode the
+    // whole program on every Turbo Pascal BIOS call.
+    if (vm.raw('smc')) {
+      vm.set('smc', 0);
+      const ncs = vm.get('cs'), nip = vm.get('gip') & 0xFFFF;
+      for (const r of (regions.get(ncs) || [])) r.blocks.delete(nip);
+      jtab[isa.jhash(ncs, nip) * 2] = 0;
+      smcBreaks++;
+    }
+
+    // A divide fault ends the trace inside the guest's own INT 0 handler, so
+    // it never reaches the stub segment and --trace-int cannot see it. The
+    // faulting address is on the guest stack, which is the only place it is
+    // recorded: Turbo Pascal turns this into "Runtime error 200" a long way
+    // from the DIV that caused it.
+    if (traceFault && cs !== STUB_SEG) {
+      const v0 = vm.mem[0] | (vm.mem[1] << 8), v2 = vm.mem[2] | (vm.mem[3] << 8);
+      if (vm.get('cs') === v2 && vm.get('gip') === v0) {
+        const ss = vm.get('ss'), sp = vm.get('sp');
+        const at = (of) => ((ss << 4) + ((sp + of) & 0xFFFF)) & 0xFFFFF;
+        const rd = (of) => vm.mem[at(of)] | (vm.mem[at(of + 1)] << 8);
+        log(`  divide fault at ${rd(2).toString(16)}:${rd(0).toString(16)}`
+          + ` (ax=${vm.get('ax').toString(16)} dx=${vm.get('dx').toString(16)}`
+          + ` from ${cs.toString(16)}:${ip.toString(16)} at ${dispatched} dispatches)`);
+      }
+    }
+
     if (sample && left < 0 && dispatched >= sampleAfter) {
       const at = vm.raw('ip');
       ipSamples.set(at, (ipSamples.get(at) || 0) + 1);
@@ -460,7 +490,22 @@ async function runDos(o) {
     // is the A/B knob: run the same program at 0, 1 and 16 and compare frames.
     // Identical across all three means the program never reads a clock and is
     // purely compute-bound; a frame that advances at 16 means it was waiting.
-    machine.setTicks(machine.ticks + tickScale);
+    // Guest time, billed in guest WORK rather than in handbacks.
+    //
+    // A handback is not a unit of anything: this corpus ranges from 31
+    // dispatches per handback to 1.4M, so a tick per handback runs the guest
+    // clock five orders of magnitude apart between two programs, and the same
+    // program's clock changes speed when its code shape does. Turbo Pascal's
+    // CRT unit is what makes that fatal rather than merely wrong -- it times a
+    // calibration loop against the BIOS tick word at 0040:006C and divides by
+    // what it counted, so a clock that ticks every few hundred instructions
+    // makes the count zero and the division by zero is runtime error 200.
+    // BIOLAN, BRIAN, CREATION and DIGILAB all died there.
+    //
+    // 550,000 dispatches to a 55ms tick is a 10-MIPS machine, which is a fast
+    // 486 -- the part these were written for, and comfortably below the ~200MHz
+    // where the same Pascal bug bites in the other direction.
+    machine.setClock(dispatched / dispatchesPerTick * tickScale);
     machine.mouse.dx += mouse[0]; machine.mouse.dy += mouse[1];
 
     // Deliver the timer interrupt, if the program asked to be called.
@@ -606,6 +651,7 @@ async function main() {
     budget: count(arg('dispatches'), 200e6),
     slice: count(arg('slice'), 2e6),
     traceInt: flag('trace-int'),
+    traceFault: flag('trace-fault'),
     noCache: flag('no-cache'),
     shots: arg('shots'),
     shotEvery: count(arg('shot-every'), 20),
@@ -616,6 +662,7 @@ async function main() {
     forceChained: flag('chain4'),
     tickScale: Number(arg('tick-scale', 1)),
     irqEvery: count(arg('irq-every'), 100e3),
+    dispatchesPerTick: count(arg('dispatches-per-tick'), 550e3),
   });
 
   // A text-mode program's picture is its console, not the graphics window --

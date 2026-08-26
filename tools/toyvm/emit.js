@@ -55,6 +55,23 @@ h('end', 1, `
   (global.set $left (global.get $steps)) (global.set $steps (i32.const -1))
 `);
 
+// The same, for a block that just patched its own code. A write through a CS
+// override is a program editing the instruction stream it is standing in --
+// Turbo Pascal's Intr() writes the interrupt number into the `int` two
+// instructions ahead of the store, and every TP program in the corpus reaches
+// the BIOS through it. Decoding straight past the store bakes whatever byte
+// was there at DECODE time into the trace, so a program that patched in $10
+// executes the $00 the image shipped with, and Turbo Pascal's INT 0 handler
+// turns that into "Runtime error 200" a long way from anything to do with
+// arithmetic. Ending the block here is only half the fix: $smc tells the host
+// to drop the block the store landed in, which is the one holding the byte.
+h('end_smc', 1, `
+  ${ops(1)}
+  (global.set $smc (i32.const 1))
+  (global.set $gip (local.get $t0))
+  (global.set $left (global.get $steps)) (global.set $steps (i32.const -1))
+`);
+
 // --- ALU + MOV families, generated -----------------------------------------
 // x86 encodes six of the ALU ops at 8*code + form, and every one shares the
 // same operand plumbing -- only the arithmetic and the flag rule differ.
@@ -2918,7 +2935,7 @@ function fpuHelpers() {
 // there. Without it a run() that bails after 40 steps and one that burns its
 // whole slice are indistinguishable, and every dispatch count the harness
 // prints is the slice size instead of the work done.
-const STATE = [...isa.REG16, ...isa.SEG, 'gip', 'flags', 'ip', 'steps', 'intno', 'left', 'rtop'];
+const STATE = [...isa.REG16, ...isa.SEG, 'gip', 'flags', 'ip', 'steps', 'intno', 'left', 'rtop', 'smc'];
 
 // Memory is IMPORTED and state is read through accessor functions rather than
 // inline-exported, because that is the shape lib/compile-wat.js actually
