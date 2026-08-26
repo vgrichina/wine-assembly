@@ -138,7 +138,9 @@ async function main() {
     jobs: Number(arg('jobs', 1)),
     autoKey: process.argv.slice(2).includes('--auto-key'),
     guestArgs: arg('args', ''),
+    maxSeconds: Number(arg('max-seconds', 0)),
   };
+  const deadline = o.maxSeconds ? Date.now() + o.maxSeconds * 1000 : 0;
 
   if (one) {
     process.stdout.write(JSON.stringify(await runOne(one, arg('png'), o)) + '\n');
@@ -149,7 +151,8 @@ async function main() {
   const out = arg('out');
   if (!dir || !out) {
     console.log('usage: node tools/toyvm/shot-sweep.js --dir=DIR --out=DIR '
-      + '[--json=OUT] [--resume] [--dispatches=N] [--timeout=SECS] [--jobs=N] [--auto-key]');
+      + '[--json=OUT] [--resume] [--dispatches=N] [--timeout=SECS] [--max-seconds=N] '
+      + '[--jobs=N] [--auto-key] [--args=TAIL]');
     process.exit(2);
   }
   fs.mkdirSync(out, { recursive: true });
@@ -227,6 +230,19 @@ async function main() {
     for (;;) {
       const i = next++;
       if (i >= exes.length) return;
+      // The whole-sweep deadline. Every CHILD has been capped since this file
+      // existed, but the parent never was, and those are not the same bound:
+      // one program can cost up to five sequential child runs now (the base
+      // run, the auto-key retry, the re-take, and the named-switch pair), so
+      // 199 programs at a 180-second cap is thirty hours of worst case with
+      // nothing to stop it. Programs past the deadline are recorded as not run
+      // rather than silently dropped -- a short sweep must not read as a sweep
+      // where everything failed.
+      if (deadline && Date.now() > deadline) {
+        rows[i] = { name: path.basename(exes[i]), exe: exes[i], png: null, failed: 'deadline' };
+        finished++;
+        continue;
+      }
       const exe = exes[i];
       rows[i] = done.has(exe) ? done.get(exe) : await capture(exe);
       finished++;
