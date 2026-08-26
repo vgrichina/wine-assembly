@@ -331,17 +331,19 @@ GetMessageA in `09a5-handlers-window.wat` delivers messages in a priority-based 
 - `tools/png-diff.js` — compare two PNGs: `node tools/png-diff.js a.png b.png [--tolerance=N] [--region=X,Y,W,H] [--out=diff.png]`. Prints changed-pixel count/share, worst channel delta and the changed bounding box; exits 1 when they differ, so it chains in a shell. Importable as `require('./png-diff').diffPng`. Use it for "did this refactor change what the screen shows" instead of copying another private `pixelDiff()` into a test.
 - `tools/record-probe.js` — record a real app through the browser recorder and read back what the encoder *actually* produced: `node tools/record-probe.js [--app=ID] [--seconds=N] [--target=screen|window] [--width=W] [--height=H] [--out=FILE]`. Prints resolution, real bitrate, **bits/pixel**, profile, the I/P/B census and mean keyframe spacing. Reach for this on any change to `lib/recorder.js`, because every quality knob there is a *request* that MediaRecorder may ignore.
 
-  **It drives headless Chrome, which is not the browser the recordings come from, and the difference is not small.** Measured 2026-08-25 on one app, headless Chrome (`--disable-gpu`, so its *software* encoder) against a real Safari capture:
+  **It drives headless Chrome, and what it finds holds for real Chrome but not for Safari.** Measured 2026-08-26 across all three:
 
-  | knob | headless Chrome | Safari (real) |
-  |---|---|---|
-  | `avc1.640028` High profile | honoured — `profile=High` | **ignored — Constrained Baseline** |
-  | `start(5000)` keyframe cadence | every 3.50s | every ~1.7s (own ~2s GOP) |
-  | `videoBitsPerSecond` | honoured | honoured (took 78% of the offer) |
-  | `audioBitsPerSecond` | honoured | honoured |
-  | B-frames | none | none |
+  | knob | headless Chrome | real Chrome | Safari |
+  |---|---|---|---|
+  | `avc1.640028` High profile | `profile=High` | `profile=High` | **ignored — Constrained Baseline** |
+  | `start(5000)` keyframe cadence | every 3.50s | every 3.37s | **every ~1.7s (own ~2s GOP)** |
+  | `videoBitsPerSecond` | honoured | honoured (spent 53% of the offer) | honoured (spent 78%) |
+  | `audioBitsPerSecond` | honoured | honoured | honoured |
+  | B-frames | none | none | none |
 
-  A hardware H.264 encoder (VideoToolbox) pins the weakest toolset and runs its own GOP no matter what is asked, so **bitrate is the only lever that reliably survives to a Safari recording** — treat a profile or keyframe win seen here as a Chrome-only result until a real capture confirms it. The honest ground truth for Safari is still: record by hand, then `ffprobe` the file in `~/Downloads`.
+  So the tool is trustworthy for Chrome — headless and headful agreed on profile and GOP — and **Safari is the outlier**: VideoToolbox pins the weakest toolset and runs its own GOP no matter what is asked, leaving bitrate as the only lever that reaches a Safari recording. There is no WebDriver path in this tool, so a Safari answer means recording by hand and running `ffprobe` on the file in `~/Downloads`.
+
+  Where the ceiling is differs by engine, and it decides whether raising `TARGET_BPP` helps at all: Safari spends most of what it is offered, so more budget reaches the picture; Chrome spent barely half of an 8.7 Mbps offer, meaning its own rate control is the limiter and a bigger cap changes nothing. Check the *spend*, not the request, before turning that knob.
 
   Three traps: a bitrate far under the request usually means a *static screen*, not a broken setting — check the capture actually moves (`ffmpeg` two frames + `png-diff.js`) before reading anything into it; headless fps is not a real number, so judge motion only from a headful run; and the audio bitrate is the cheapest tell for *which build of `recorder.js` a file came from* (browser default ~186 kbps vs our explicit 128 kbps), which beats guessing whether a cached script was in play. Needs `ffprobe` on PATH for the analysis half; without it the .mp4 is still written.
 - `tools/app-contact-sheet.js` — tile a pile of app screenshots into one labelled sheet: `node tools/app-contact-sheet.js --dir=DIR [--dir=DIR2] [--out=sheet.png] [--cols=N] [--cell=WxH] [--pick=largest|newest] [--ids=a,b] [--list] [--open]`. Recursively finds every PNG, resolves each name back to an app id in `lib/apps.js` (tolerating the `-a`/`-b`, `d_`, `sol2` decorations sweeps produce), picks one capture per app and letterboxes them into a grid with the id under each tile. `--pick=largest` is the default *because* a failed capture is a flat desktop-teal PNG of ~2KB while a real frame is 50-400KB, so file size ranks content. Reach for this after any registry-wide sweep: 156 apps in one image is the only practical way to eyeball "does everything in the dropdown still draw". Pure JS (pngjs + a built-in 5x7 font) — no ImageMagick.
