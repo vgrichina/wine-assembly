@@ -46,7 +46,10 @@
     return `v${h} range ${state.minH}..${state.maxH} ` +
       (grew >= 24 ? `COLLAPSED +${grew}` : 'bars: unchanged') +
       `\ndoc${document.documentElement.scrollHeight} y${Math.round(window.scrollY || 0)} ` +
-      `maxY${state.maxY} moves${state.moves} dpr${window.devicePixelRatio}`;
+      `maxY${state.maxY} moves${state.moves} dpr${window.devicePixelRatio}` +
+      // A page can add its own field -- whatever it is testing. It lands in
+      // the same line, so the server log says which shape produced a reading.
+      (typeof window.LabNote === 'function' ? ' ' + window.LabNote() : '');
   };
 
   let last = '';

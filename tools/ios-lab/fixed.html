@@ -61,6 +61,15 @@
     touch-action: pan-y;
     -webkit-tap-highlight-color: transparent;
     user-select: none;
+    transition: opacity 140ms ease, transform 140ms ease;
+  }
+  /* Once the bars are gone the strip has nothing left to do, and it is sitting
+     on top of the app. Retract it with them, and bring it back the moment they
+     come back. */
+  body.bars-collapsed #gutter {
+    opacity: 0;
+    transform: translateY(-100%);
+    pointer-events: none;
   }
 </style>
 </head>
@@ -82,7 +91,32 @@
   root.setProperty('--spacer', spacer);
   root.setProperty('--gutter-h', gutterH);
   root.setProperty('--gutter-right', right);
-  document.body.dataset.lab = `C-${spacer.slice(3)}${parseInt(gutterH, 10)}`;
+  const autohide = q.get('autohide') !== '0';
+  document.body.dataset.lab = `C-${spacer.slice(3)}${parseInt(gutterH, 10)}${autohide ? 'a' : ''}`;
+
+  // "Is the strip needed right now?" is the same question as "are the bars
+  // showing?", and that is innerHeight against the LARGE viewport -- lvh is
+  // the bars-retracted height and is a constant, so this needs no learning
+  // phase and no first collapse to calibrate against.
+  const probe = document.createElement('div');
+  probe.style.cssText = 'position:absolute;top:0;left:0;width:0;height:100lvh;' +
+    'visibility:hidden;pointer-events:none';
+  document.documentElement.appendChild(probe);
+  const large = () => Math.round(probe.getBoundingClientRect().height);
+  // A browser without lvh reports 0 here. Hiding the strip on that reading
+  // would hide it permanently, so treat unsupported as "always show".
+  const supported = large() > 10;
+  const collapsed = () => supported && window.innerHeight >= large() - 8;
+  const sync = () => {
+    document.body.classList.toggle('bars-collapsed', autohide && collapsed());
+  };
+  for (const type of ['resize', 'scroll', 'orientationchange']) {
+    addEventListener(type, sync, { passive: true });
+  }
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', sync);
+  sync();
+  window.LabNote = () => `lvh${supported ? large() : '?'} strip=${
+    document.body.classList.contains('bars-collapsed') ? 'off' : 'on'}`;
 </script>
 <script>
   // The panel behaves like the emulator canvas: every touch on it is claimed
