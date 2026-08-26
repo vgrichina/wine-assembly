@@ -40,6 +40,9 @@ done
 UNIT=(
   test/test-boot-cursor.js
   test/test-x86-ops.js
+  test/test-lut-run-generalized.js
+  test/test-lut-span.js
+  test/test-load32-esp-run.js
   test/test-shift-equivalence.js
   test/test-ne-loader.js
   test/test-win16-exec.js
@@ -389,6 +392,7 @@ E2E=(
   test/test-web-failed-launch-recovers.js
   test/test-web-double-tap-single-launch.js
   test/test-web-touch-cursor.js
+  test/test-web-record-audio.js
   test/test-web-audio-session.js
   test/test-web-ios-lab.js
   test/test-web-single-app-quit.js
@@ -478,6 +482,7 @@ E2E=(
   test/test-mspaint-large-scroll.js
   test/test-mspaint-scrollbar-thumb.js
   test/test-cursor-class.js
+  test/test-cursor-icon-indirect.js
   test/test-mspaint-thumbnail.js
   test/test-mplay32-dual-mode.js
   test/test-statusbar-surface.js
