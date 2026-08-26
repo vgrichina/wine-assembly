@@ -713,6 +713,170 @@
       (i32.sub (local.get $idx) (local.get $step)) (local.get $step) (local.get $idx))
     (return_call $next))
 
+  ;; 431: a fixed, straight-line LUT span selected through a Duff-style jump
+  ;; table. This is the nonterminal sibling of H418: bases are snapshots and
+  ;; remain architecturally unchanged, the descriptor supplies a compiled
+  ;; count, and execution continues with the row tail through $next.
+  ;;
+  ;; op nibbles: src1, dst-base, table-base (F=absolute), accumulator,
+  ;; mode (0=table[src], 1=table[(src1<<8)|src2]), src2, dst-index, aux.
+  ;; Six words: start displacement, count, original instruction cost,
+  ;; table displacement, final aux kind, final aux displacement.
+  (func $th_lut_span (param $op i32)
+    (local $src1_reg i32) (local $dst_reg i32) (local $tbl_reg i32)
+    (local $acc_reg i32) (local $mode i32) (local $src2_reg i32)
+    (local $didx_reg i32) (local $aux_reg i32)
+    (local $start i32) (local $count i32) (local $cost i32)
+    (local $tbl_disp i32) (local $aux_kind i32) (local $aux_disp i32)
+    (local $src1 i32) (local $src2 i32) (local $dst i32) (local $tbl i32)
+    (local $src1_ga i32) (local $src2_ga i32) (local $dst_ga i32)
+    (local $src1_wa i32) (local $src2_wa i32) (local $dst_wa i32)
+    (local $tbl_wa i32) (local $tbl_end_wa i32) (local $tbl_range i32)
+    (local $disp i32) (local $n i32) (local $a i32) (local $b i32)
+    (local $index i32) (local $out i32)
+
+    (local.set $src1_reg (i32.and (local.get $op) (i32.const 0xF)))
+    (local.set $dst_reg
+      (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
+    (local.set $tbl_reg
+      (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF)))
+    (local.set $acc_reg
+      (i32.and (i32.shr_u (local.get $op) (i32.const 12)) (i32.const 0xF)))
+    (local.set $mode
+      (i32.and (i32.shr_u (local.get $op) (i32.const 16)) (i32.const 0xF)))
+    (local.set $src2_reg
+      (i32.and (i32.shr_u (local.get $op) (i32.const 20)) (i32.const 0xF)))
+    (local.set $didx_reg
+      (i32.and (i32.shr_u (local.get $op) (i32.const 24)) (i32.const 0xF)))
+    (local.set $aux_reg
+      (i32.and (i32.shr_u (local.get $op) (i32.const 28)) (i32.const 0xF)))
+
+    (local.set $start (call $read_thread_word))
+    (local.set $count (call $read_thread_word))
+    (local.set $cost (call $read_thread_word))
+    (local.set $tbl_disp (call $read_thread_word))
+    (local.set $aux_kind (call $read_thread_word))
+    (local.set $aux_disp (call $read_thread_word))
+
+    (local.set $src1 (call $get_reg (local.get $src1_reg)))
+    (local.set $dst (call $get_reg (local.get $dst_reg)))
+    (if (i32.ne (local.get $didx_reg) (i32.const 0xF))
+      (then (local.set $dst
+        (i32.add (local.get $dst) (call $get_reg (local.get $didx_reg))))))
+    (if (i32.ne (local.get $tbl_reg) (i32.const 0xF))
+      (then (local.set $tbl (i32.add
+        (call $get_reg (local.get $tbl_reg)) (local.get $tbl_disp))))
+      (else (local.set $tbl (local.get $tbl_disp))))
+    (if (local.get $mode)
+      (then (local.set $src2 (call $get_reg (local.get $src2_reg)))))
+
+    (local.set $src1_ga (i32.add (local.get $src1) (local.get $start)))
+    (local.set $dst_ga (i32.add (local.get $dst) (local.get $start)))
+    (if (local.get $mode)
+      (then (local.set $src2_ga (i32.add (local.get $src2) (local.get $start)))))
+
+    ;; The span is descending. Translate source/destination streams once when
+    ;; their whole range stays in one guest page; otherwise the ordinary
+    ;; helpers preserve every mapping/null-page edge case byte by byte.
+    (if (i32.ge_u (i32.and (local.get $src1_ga) (i32.const 0xFFF))
+                   (i32.sub (local.get $count) (i32.const 1)))
+      (then
+        (local.set $src1_wa (call $g2w (local.get $src1_ga)))
+        (if (i32.eq (local.get $src1_wa) (global.get $NULL_SENTINEL))
+          (then (local.set $src1_wa (i32.const 0))))))
+    (if (i32.ge_u (i32.and (local.get $dst_ga) (i32.const 0xFFF))
+                   (i32.sub (local.get $count) (i32.const 1)))
+      (then
+        (local.set $dst_wa (call $g2w (local.get $dst_ga)))
+        (if (i32.eq (local.get $dst_wa) (global.get $NULL_SENTINEL))
+          (then (local.set $dst_wa (i32.const 0))))))
+    (if (local.get $mode)
+      (then
+        (if (i32.ge_u (i32.and (local.get $src2_ga) (i32.const 0xFFF))
+                       (i32.sub (local.get $count) (i32.const 1)))
+          (then
+            (local.set $src2_wa (call $g2w (local.get $src2_ga)))
+            (if (i32.eq (local.get $src2_wa) (global.get $NULL_SENTINEL))
+              (then (local.set $src2_wa (i32.const 0))))))))
+
+    ;; Only the normal direct guest window is known affine over the complete
+    ;; 256-byte or 64KB table. Sparse/DIB mappings may have individually valid
+    ;; endpoints with a hole between them, so they deliberately stay on gl8.
+    (local.set $tbl_range
+      (select (i32.const 0xFFFF) (i32.const 0xFF) (local.get $mode)))
+    (local.set $tbl_wa (call $g2w (local.get $tbl)))
+    (local.set $tbl_end_wa
+      (call $g2w (i32.add (local.get $tbl) (local.get $tbl_range))))
+    (if (i32.or
+          (i32.ne (local.get $tbl_wa)
+            (i32.add (i32.sub (local.get $tbl) (global.get $image_base))
+                     (global.get $GUEST_BASE)))
+          (i32.ne (local.get $tbl_end_wa)
+            (i32.add
+              (i32.sub (i32.add (local.get $tbl) (local.get $tbl_range))
+                       (global.get $image_base))
+              (global.get $GUEST_BASE))))
+      (then (local.set $tbl_wa (i32.const 0))))
+
+    (call $invalidate_code_write
+      (i32.sub (local.get $dst_ga) (i32.sub (local.get $count) (i32.const 1)))
+      (local.get $count))
+    (local.set $disp (local.get $start))
+    (local.set $n (local.get $count))
+    (loop $pixels
+      (if (local.get $src1_wa)
+        (then (local.set $a (i32.load8_u (local.get $src1_wa))))
+        (else (local.set $a
+          (call $gl8 (i32.add (local.get $src1) (local.get $disp))))))
+      (if (local.get $mode)
+        (then
+          (if (local.get $src2_wa)
+            (then (local.set $b (i32.load8_u (local.get $src2_wa))))
+            (else (local.set $b
+              (call $gl8 (i32.add (local.get $src2) (local.get $disp))))))
+          (local.set $index
+            (i32.or (i32.shl (local.get $a) (i32.const 8)) (local.get $b))))
+        (else (local.set $index (local.get $a))))
+      (if (local.get $tbl_wa)
+        (then (local.set $out
+          (i32.load8_u (i32.add (local.get $tbl_wa) (local.get $index)))))
+        (else (local.set $out
+          (call $gl8 (i32.add (local.get $tbl) (local.get $index))))))
+      (if (local.get $dst_wa)
+        (then (i32.store8 (local.get $dst_wa) (local.get $out)))
+        (else (call $gs8 (i32.add (local.get $dst) (local.get $disp))
+                         (local.get $out))))
+      (if (local.get $src1_wa)
+        (then (local.set $src1_wa (i32.sub (local.get $src1_wa) (i32.const 1)))))
+      (if (local.get $src2_wa)
+        (then (local.set $src2_wa (i32.sub (local.get $src2_wa) (i32.const 1)))))
+      (if (local.get $dst_wa)
+        (then (local.set $dst_wa (i32.sub (local.get $dst_wa) (i32.const 1)))))
+      (local.set $disp (i32.sub (local.get $disp) (i32.const 1)))
+      (local.set $n (i32.sub (local.get $n) (i32.const 1)))
+      (br_if $pixels (local.get $n)))
+
+    ;; Every accepted checkpoint's last flag writer is XOR of a register with
+    ;; itself. MOV/SHL/table/store register publication follows the exact final
+    ;; symbolic state proved by the scanner.
+    (if (local.get $mode)
+      (then
+        (call $set_reg (local.get $acc_reg)
+          (i32.or (i32.shl (local.get $a) (i32.const 8)) (local.get $out)))
+        (if (i32.eq (local.get $aux_kind) (i32.const 1))
+          (then (call $set_reg (local.get $aux_reg) (i32.const 0)))
+          (else (call $set_reg (local.get $aux_reg)
+            (call $gl8 (i32.add (local.get $src2) (local.get $aux_disp)))))))
+      (else (call $set_reg (local.get $acc_reg) (local.get $out))))
+    (call $set_flags_logic (i32.const 0))
+    (global.set $steps
+      (i32.sub (global.get $steps) (i32.sub (local.get $cost) (i32.const 1))))
+    (global.set $lut_span_runs
+      (i32.add (global.get $lut_span_runs) (i32.const 1)))
+    (global.set $lut_span_bytes
+      (i64.add (global.get $lut_span_bytes) (i64.extend_i32_u (local.get $count))))
+    (return_call $next))
+
   ;; 403: the post-increment byte fetch through a pointer *variable*:
   ;;
   ;;   mov ecx,[0x525d80]      ; the stream pointer lives in memory, not a reg

@@ -96,6 +96,7 @@ const NO_MMX = hasFlag('no-mmx');          // --no-mmx: report a 486DX from CPUI
 const DUMP_GDI = getArg('dump-gdi', null); // --dump-gdi=DIR: dump GDI bitmaps as PNGs
 const DUMP_DDRAW = getArg('dump-ddraw-surfaces', null); // --dump-ddraw-surfaces=DIR: dump DirectDraw surface DIBs as PNGs
 const DUMP_SDB = getArg('dump-sdb', null); // --dump-sdb=DIR: dump StretchDIBits source DIBs + per-call log
+const DUMP_CURSORS = getArg('dump-cursors', null); // --dump-cursors=DIR: PNG per cursor the guest builds (CreateIconIndirect)
 const DUMP_VIRTUAL_MAPS = hasFlag('dump-virtual-maps'); // --dump-virtual-maps: print raw sparse guest-map records
 const MAX_BATCHES = parseInt(getArg('max-batches', '200'));
 // --max-seconds=N: stop the batch loop after N seconds of wall clock, whatever
@@ -176,11 +177,17 @@ const TRACE_LOOPMATCH_EIP = (() => {
 // The decode-time trace has no channel but log_i32, which lib/host-imports.js
 // gates on DBG_INV. Asking for the flag is asking for the output.
 if (TRACE_LOOPMATCH) process.env.DBG_INV = '1';
-// The lowering is OFF in the module (it miscompiles Storm's MPQ decompression
-// copy -- see src/07b-loop-match.wat), so the A/B flag that needs plumbing is
-// now the one that turns it back ON. --no-loop-superops stays accepted and is
-// a no-op, so older command lines and scripts keep working.
+// LUT_RUN is independently enabled by default; COPY_RUN remains disabled.
+// The broad legacy switch controls both, while the family switches allow a
+// useful LUT A/B without opting into COPY's historical Storm divergence.
 const LOOP_SUPEROPS = hasFlag('loop-superops');
+const NO_LOOP_SUPEROPS = hasFlag('no-loop-superops');
+const LUT_SUPEROPS = hasFlag('lut-superops');
+const NO_LUT_SUPEROPS = hasFlag('no-lut-superops');
+const COPY_SUPEROPS = hasFlag('copy-superops');
+const NO_COPY_SUPEROPS = hasFlag('no-copy-superops');
+const ANY_LOOP_FLAG = LOOP_SUPEROPS || NO_LOOP_SUPEROPS || LUT_SUPEROPS
+  || NO_LUT_SUPEROPS || COPY_SUPEROPS || NO_COPY_SUPEROPS;
 // --no-sib-fusion: decode indexed SIB memory operands as the unfused
 // compute_ea_sib + consumer pair. On by default in the module; this is the
 // A/B partner, so a fusion's op-count delta and its wall-clock effect can be
@@ -361,10 +368,16 @@ const TRACE_AT_WATCH = hasFlag('trace-at-watch'); // --trace-at-watch: diff --tr
 const SHOW_CSTRING = getArg('show-cstring', null); // --show-cstring=0xADDR[,0xADDR...]: decode MFC CString at these addrs in trace-at and debug prompt
 const SKIP_SPEC = getArg('skip', null);          // --skip=0xADDR[,0xADDR,...]: auto-return (simulate ret) when EIP hits
 const COUNT_SPEC = getArg('count', null);        // --count=0xADDR[,0xADDR,...]: passive hit counter per block dispatch (up to 16 slots)
-// --handler-hist-thread=N --handler-hist-start=A --handler-hist-stop=B:
-// enable the existing WAT handler/block/pair histograms only for thread N and
-// only in [A,B), then print a compact snapshot. Profiling is off by default.
-const HANDLER_HIST_THREAD = parseInt(getArg('handler-hist-thread', '-1'), 10);
+// --handler-hist-thread=N[,N...] --handler-hist-start=A --handler-hist-stop=B:
+// enable the existing WAT handler/block/pair histograms only for the requested
+// thread(s) in [A,B), then print a compact snapshot. A list divides that window
+// evenly and profiles one instance at a time because the counters live in the
+// shared linear memory. Profiling is off by default.
+const HANDLER_HIST_THREAD_SPEC = getArg('handler-hist-thread', '-1');
+const HANDLER_HIST_THREADS = HANDLER_HIST_THREAD_SPEC.split(',')
+  .map(v => parseInt(v, 10))
+  .filter(v => Number.isInteger(v) && v >= 0);
+const HANDLER_HIST_THREAD = HANDLER_HIST_THREADS.length ? HANDLER_HIST_THREADS[0] : -1;
 const HANDLER_HIST_START = Math.max(0, parseInt(getArg('handler-hist-start', '0'), 10) || 0);
 const HANDLER_HIST_STOP = Math.max(HANDLER_HIST_START + 1,
   parseInt(getArg('handler-hist-stop', String(MAX_BATCHES)), 10) || MAX_BATCHES);
@@ -2802,6 +2815,38 @@ async function main() {
     return 0;
   };
 
+  // A cursor an app builds for itself never touches a window surface, so no
+  // capture in this harness can show it: it goes ICONINFO -> WAT compositor ->
+  // one host call and then straight into a CSS cursor. This writes that
+  // composite out, which is the only way to answer "is that the hand the game
+  // drew, and is it the right way up".
+  if (DUMP_CURSORS && PNG) {
+    fs.mkdirSync(DUMP_CURSORS, { recursive: true });
+    const inner = h.set_cursor_image;
+    let seq = 0;
+    h.set_cursor_image = (hcur, width, height, hotX, hotY, bgraWa) => {
+      if (bgraWa && width > 0 && height > 0) {
+        const src = new Uint8Array(ctx.getMemory(), bgraWa >>> 0, width * height * 4);
+        const png = new PNG({ width, height });
+        for (let i = 0; i < width * height; i++) {
+          png.data[i * 4 + 0] = src[i * 4 + 2];
+          png.data[i * 4 + 1] = src[i * 4 + 1];
+          png.data[i * 4 + 2] = src[i * 4 + 0];
+          png.data[i * 4 + 3] = src[i * 4 + 3];
+        }
+        const out = path.join(DUMP_CURSORS,
+          `cursor_${(hcur >>> 0).toString(16)}_${width}x${height}_hot${hotX}x${hotY}.png`);
+        fs.writeFileSync(out, PNG.sync.write(png));
+        seq++;
+        console.log(`[cursor] wrote ${out}`);
+      }
+      return inner ? inner(hcur, width, height, hotX, hotY, bgraWa) : undefined;
+    };
+    process.on('exit', () => {
+      if (!seq) console.log(`[cursor] no guest-built cursors were presented`);
+    });
+  }
+
   // --host-census wraps the FINAL import table, after run.js has overridden
   // host-imports' versions with its own logging ones. Wrapping earlier misses
   // exactly the noisy functions the flag exists to find.
@@ -3777,6 +3822,21 @@ async function main() {
   if (LOOP_SUPEROPS && instance.exports.set_loop_emit) {
     instance.exports.set_loop_emit(1);
   }
+  if (NO_LOOP_SUPEROPS && instance.exports.set_loop_emit) {
+    instance.exports.set_loop_emit(0);
+  }
+  if (LUT_SUPEROPS && instance.exports.set_loop_lut_emit) {
+    instance.exports.set_loop_lut_emit(1);
+  }
+  if (NO_LUT_SUPEROPS && instance.exports.set_loop_lut_emit) {
+    instance.exports.set_loop_lut_emit(0);
+  }
+  if (COPY_SUPEROPS && instance.exports.set_loop_copy_emit) {
+    instance.exports.set_loop_copy_emit(1);
+  }
+  if (NO_COPY_SUPEROPS && instance.exports.set_loop_copy_emit) {
+    instance.exports.set_loop_copy_emit(0);
+  }
   // Per-instance, not once: worker threads are separate WASM instances over
   // one shared memory, so a mut global set only on the main instance leaves
   // every worker decoding with the other setting and makes the A/B meaningless.
@@ -3978,18 +4038,44 @@ async function main() {
 
   let lastSchedSig = null;
   let lastSchedAt = 0;
-  const handlerNames = HANDLER_HIST_THREAD >= 0 ? buildHandlerNameList() : [];
+  const handlerNames = HANDLER_HIST_THREADS.length ? buildHandlerNameList() : [];
+  let handlerHistThreadIndex = 0;
+  let handlerHistThread = HANDLER_HIST_THREAD;
+  let handlerHistWindowStart = HANDLER_HIST_START;
+  let handlerHistWindowStop = HANDLER_HIST_STOP;
   let handlerHistExports = null;
   let handlerHistArmed = false;
   let handlerHistDone = false;
+  const selectHandlerHistWindow = () => {
+    if (handlerHistThreadIndex >= HANDLER_HIST_THREADS.length) {
+      handlerHistDone = true;
+      return;
+    }
+    const span = HANDLER_HIST_STOP - HANDLER_HIST_START;
+    handlerHistThread = HANDLER_HIST_THREADS[handlerHistThreadIndex];
+    handlerHistWindowStart = HANDLER_HIST_START +
+      Math.floor(span * handlerHistThreadIndex / HANDLER_HIST_THREADS.length);
+    handlerHistWindowStop = HANDLER_HIST_START +
+      Math.floor(span * (handlerHistThreadIndex + 1) / HANDLER_HIST_THREADS.length);
+  };
+  selectHandlerHistWindow();
   const findHandlerHistExports = () => {
-    if (HANDLER_HIST_THREAD === 0) return instance.exports;
+    if (handlerHistThread === 0) return instance.exports;
     for (const [, thread] of threadManager.threads) {
-      if ((thread.tid | 0) === HANDLER_HIST_THREAD && thread.instance) {
+      if ((thread.tid | 0) === handlerHistThread && thread.instance) {
         return thread.instance.exports;
       }
     }
     return null;
+  };
+  const armHandlerHistogram = (batch) => {
+    handlerHistExports = findHandlerHistExports();
+    if (!handlerHistExports || !handlerHistExports.reset_handler_hist ||
+        !handlerHistExports.set_handler_hist_enabled) return;
+    handlerHistExports.reset_handler_hist();
+    handlerHistExports.set_handler_hist_enabled(1);
+    handlerHistArmed = true;
+    console.log(`[handler-hist] armed T${handlerHistThread} at batch ${batch}`);
   };
   const printHandlerHistogram = (batch) => {
     const e = handlerHistExports;
@@ -4011,7 +4097,7 @@ async function main() {
       if (hits) handlers.push({ id, hits });
     }
     handlers.sort((a, b) => b.hits - a.hits);
-    console.log(`[handler-hist] T${HANDLER_HIST_THREAD} batches=${HANDLER_HIST_START}..${batch} total=${total}`);
+    console.log(`[handler-hist] T${handlerHistThread} batches=${handlerHistWindowStart}..${batch} total=${total}`);
     for (const row of handlers.slice(0, 24)) {
       const pct = total ? (row.hits * 100 / total).toFixed(2) : '0.00';
       console.log(`  H${row.id} ${handlerNames[row.id] || '$handler_' + row.id} ${row.hits} (${pct}%)`);
@@ -4057,9 +4143,11 @@ async function main() {
         console.log(`    ${hex(row.addr)} ${row.hits} (${pct}%)`);
       }
       if (HOT_BLOCK_DUMP) {
-        fs.writeFileSync(HOT_BLOCK_DUMP,
+        const dumpPath = HANDLER_HIST_THREADS.length > 1
+          ? `${HOT_BLOCK_DUMP}.T${handlerHistThread}` : HOT_BLOCK_DUMP;
+        fs.writeFileSync(dumpPath,
           blocks.map(row => `${hex(row.addr)} ${row.hits}`).join('\n') + '\n');
-        console.log(`  wrote ${blocks.length} distinct blocks to ${HOT_BLOCK_DUMP}`);
+        console.log(`  wrote ${blocks.length} distinct blocks to ${dumpPath}`);
       }
     }
     if (e.get_sib_consumer_hist_base && e.get_sib_consumer_hist_count) {
@@ -4102,22 +4190,23 @@ async function main() {
       break;
     }
     batchesRun = batch + 1;
-    if (HANDLER_HIST_THREAD >= 0 && !handlerHistDone) {
-      if (!handlerHistArmed && batch >= HANDLER_HIST_START) {
-        handlerHistExports = findHandlerHistExports();
-        if (handlerHistExports && handlerHistExports.reset_handler_hist &&
-            handlerHistExports.set_handler_hist_enabled) {
-          handlerHistExports.reset_handler_hist();
-          handlerHistExports.set_handler_hist_enabled(1);
-          handlerHistArmed = true;
-          console.log(`[handler-hist] armed T${HANDLER_HIST_THREAD} at batch ${batch}`);
-        }
+    if (HANDLER_HIST_THREADS.length && !handlerHistDone) {
+      if (!handlerHistArmed && batch >= handlerHistWindowStart) {
+        armHandlerHistogram(batch);
       }
-      if (handlerHistArmed && batch >= HANDLER_HIST_STOP) {
+      if (handlerHistArmed && batch >= handlerHistWindowStop) {
         handlerHistExports.set_handler_hist_enabled(0);
         printHandlerHistogram(batch);
         handlerHistArmed = false;
-        handlerHistDone = true;
+        handlerHistExports = null;
+        handlerHistThreadIndex++;
+        selectHandlerHistWindow();
+        // This batch has not run yet. Arm the next instance immediately so
+        // adjacent scheduled windows remain exactly [start,stop), without
+        // losing their boundary batch to the profiler hand-off.
+        if (!handlerHistDone && batch >= handlerHistWindowStart) {
+          armHandlerHistogram(batch);
+        }
       }
     }
     if (TRACE_SCHED) {
@@ -7087,13 +7176,18 @@ async function main() {
       // A worker is a separate WASM instance: its decoder globals start at the
       // module defaults, so the loop-idiom flags have to be re-applied per
       // thread or they only ever affect main.
-      if (TRACE_LOOPMATCH || LOOP_SUPEROPS) {
+      if (TRACE_LOOPMATCH || ANY_LOOP_FLAG) {
         for (const [, t] of threadManager.threads) {
           const e = t.instance && t.instance.exports;
           if (!e || t._loopFlagsArmed) continue;
           t._loopFlagsArmed = true;
           if (TRACE_LOOPMATCH && e.set_loop_trace) e.set_loop_trace(1, TRACE_LOOPMATCH_EIP);
           if (LOOP_SUPEROPS && e.set_loop_emit) e.set_loop_emit(1);
+          if (NO_LOOP_SUPEROPS && e.set_loop_emit) e.set_loop_emit(0);
+          if (LUT_SUPEROPS && e.set_loop_lut_emit) e.set_loop_lut_emit(1);
+          if (NO_LUT_SUPEROPS && e.set_loop_lut_emit) e.set_loop_lut_emit(0);
+          if (COPY_SUPEROPS && e.set_loop_copy_emit) e.set_loop_copy_emit(1);
+          if (NO_COPY_SUPEROPS && e.set_loop_copy_emit) e.set_loop_copy_emit(0);
           // Decoder flags are plain mut globals, so a worker -- a separate
           // instance over the same memory -- keeps the default until told
           // otherwise. Without these two an A/B on a threaded app measures
@@ -7340,6 +7434,21 @@ if (VERBOSE) {
               fell ? `(${(100 * missed / fell).toFixed(1)}% of fall-throughs are the defrag headroom)` : '');
           }
         }
+        if (instance.exports.get_page_chunk_samples) {
+          const samples = instance.exports.get_page_chunk_samples();
+          const total = instance.exports.get_page_chunk_used_total();
+          const totalNumber = typeof total === 'bigint' ? Number(total) : total;
+          console.log('chunks: samples', samples,
+            '| used mean', samples ? Math.round(totalNumber / samples) : 0,
+            'max', instance.exports.get_page_chunk_used_max(),
+            '| <=4K', instance.exports.get_page_chunk_le_4k(),
+            '<=8K', instance.exports.get_page_chunk_le_8k(),
+            '<=12K', instance.exports.get_page_chunk_le_12k(),
+            '<=16K', instance.exports.get_page_chunk_le_16k(),
+            '| grows', instance.exports.get_page_chunk_grows(),
+            'reuses', instance.exports.get_page_chunk_reuses(),
+            'unpublished', instance.exports.get_page_unpublished());
+        }
       }
       if (instance.exports.get_cache_invals) {
         console.log('cache: page invalidations', instance.exports.get_cache_invals(),
@@ -7377,6 +7486,16 @@ if (VERBOSE) {
       if (!e || !e.get_loop_selfloop_blocks) return;
       console.log(`loopmatch: ${label} self-loop blocks decoded`,
         e.get_loop_selfloop_blocks(), 'matched', e.get_loop_matched_blocks());
+      if (e.get_loop_lut_runs) {
+        console.log(`loopmatch: ${label} bounded LUT matches`,
+          e.get_loop_lut_bounded_matches(), 'runs', e.get_loop_lut_runs(),
+          'bytes', String(e.get_loop_lut_bytes()));
+      }
+      if (e.get_lut_span_runs) {
+        console.log(`loopmatch: ${label} fixed LUT spans`,
+          e.get_lut_span_matches(), 'runs', e.get_lut_span_runs(),
+          'bytes', String(e.get_lut_span_bytes()));
+      }
     };
     report('M ', instance.exports);
     if (threadManager) {

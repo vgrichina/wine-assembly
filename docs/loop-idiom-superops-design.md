@@ -1218,3 +1218,152 @@ Recommendation: re-measure the corpus with the lowering on rather than leaving
 the default off on the strength of §14, and delete the stale justification from
 the `$loop_emit_enabled` comment in `src/07b-loop-match.wat` when the default
 is next revisited.
+
+## 16. Universal LUT_RUN descriptor and Diablo II bounded loops
+
+The Heroes counted-loop form and Diablo II's cursor-bounded forms now lower to
+one H418 executor. They deliberately do **not** share one permissive recognizer:
+the old matcher still proves the counted `DEC/JNZ` shape, while
+`$loop_try_lut_bounded` proves the exact `CMP cursor,bound / JB` shape seen in
+`d2gfx.dll` and `d2cmp.dll`. A third, deliberately separate recognizer proves
+d2gfx's two-moving-source blend loop. All emit the same versioned descriptor;
+version zero is the original 22 words:
+
+```
+  0..2   source register, stride, displacement
+  3..5   destination register, stride, displacement
+  6..9   table register, accumulator register, index shift, optional add register
+  10..12 termination kind, register, step
+  13..18 up to two final register mirrors (address, register, adjustment)
+  19..21 fall-through EIP, back-edge EIP, x86 cost per trip
+```
+
+Header bit zero selects version one and appends six words:
+
+```
+  22..24 second source register, stride, displacement
+  25     auxiliary low-byte register
+  26     table displacement (also permits an absolute table when table register = -1)
+  27     terminating stream (0 = source one, 1 = source two)
+```
+
+The version-one index is `(source1_byte << shift) + source2_byte`. This covers
+the clipped d2gfx blend at original `0x100033ca` without turning the existing
+invariant-row input into mutable state or creating another executor handler.
+Recognition stays exact: two full-register zeroes, two byte loads, `SHL 8`,
+three cursor increments, an unscaled accumulator-plus-auxiliary SIB lookup, one
+byte store, and `CMP source2,bound / JB`. Scratch/cursor/bound aliasing, a
+different operation order, a scaled index, a non-`JB` terminator, or any extra
+work declines the lowering.
+
+Termination kind 0 is count-to-zero; kind 1 is unsigned source-cursor-below-
+bound. The executor handles the optional `(source_byte << 8) + invariant_row`
+index used by D2CMP, keeps source and destination accesses inside translated
+4KB chunks, resumes at the step budget, publishes the original final registers
+and flags, and takes the direct 256-byte table path when translation proves it
+safe. The bounded recognizer is intentionally narrow: forward stride one,
+exact `JB`, one compare, strict operation order, invariant table/bound/row
+registers, and no accumulator/cursor alias. A near-identical `JBE` loop is a
+negative regression.
+
+The two families now have independent gates. LUT emission is on by default and
+uses `--lut-superops` / `--no-lut-superops`; COPY emission remains off and uses
+`--copy-superops` / `--no-copy-superops`. The legacy `--loop-superops` pair
+controls both. `test/run.js` applies each choice to every WASM instance rather
+than only main. `test/test-lut-run-generalized.js` pins the d2gfx one-source
+page-crossing form, the two-moving-source absolute blend-table form with all
+three streams crossing pages, the d2cmp invariant-row form, the Heroes counted
+form through the same handler, budget resumptions, final scratch/flag state,
+and the `JBE` rejection.
+
+### 16.1 Gameplay measurement
+
+On the installed Diablo II demo's stable gameplay window, batches 1500..1660,
+the main instance retired 257,258,415 handlers with LUT_RUN versus 262,313,891
+before it: 5,055,476 fewer, or 1.93%. H418 processed 1,381,859 pixels in
+112,874 resumptions from 133 bounded matches. The former hottest self-loop,
+runtime `0x0086e24e` (`d2gfx.dll` original `0x1000324e`), and D2CMP's
+`0x00655762` disappeared from the hot-block list. The captured Rogue Encampment
+frame still passes the gameplay terrain/orb/color assertions.
+
+This also locates the next ceiling. The dominant remaining d2gfx path at
+original `0x10001141..0x100012e2` is a 15-row Duff-style renderer: a jump table
+enters one of 32 fully unrolled `load source byte -> table lookup -> store`
+suffixes. It is semantically LUT_RUN, but it is straight-line code inside an
+outer row loop rather than a self-loop block. The second renderer at
+`0x1000134d..0x100016c3` is the same layout with a two-byte 64K blend table.
+Recognizing self-loops more broadly cannot touch either. The next local
+interpreter optimization should be a conservative unrolled-LUT fold (or a
+fixed-count extension of this descriptor), not a looser bounded-loop matcher.
+
+## 17. Fixed unrolled LUT spans
+
+The d2gfx Duff renderers now lower through H431, the nonterminal fixed-span
+sibling of H418. This is intentionally a decoder-time subsequence matcher, like
+`RECT_RUN`, rather than another `$loop_match_block` recognizer: the indirect
+jump has already selected a suffix length, the pixel instructions are straight
+line, and the outer row update must remain in the same ordinary basic block.
+The matcher runs at every instruction boundary, advances `$d_pc` past only the
+proved span, and lets decoding continue into the untouched tail.
+
+Two conservative grammars share the executor:
+
+- One-source translation accepts four or more exact, contiguous descending
+  `xor scratch,scratch / load scratch8,[source+d] / load
+  scratch8,[scratch+table] / store [destination+d],scratch8` units. The special
+  final d2gfx pixel uses a different byte register and stays outside the fold.
+- Two-source blending symbolically tracks the scheduled scratch values through
+  XOR, two byte loads, `SHL 8`, a 64KB table load and a two-register destination
+  store. Loads and clears may cross the preceding store exactly as MSVC
+  scheduled them. A span ends only at a store checkpoint whose last flag writer
+  is a proved zeroing XOR, so no register-liveness assumption is needed.
+
+Both reject prefixes, segmented/address-size forms, displacement gaps, changing
+bases/tables, scaled blend indices, scratch/address aliasing, page-crossing code
+and fewer than four output pixels. There are no module names or guest addresses
+in the predicate. The six-word descriptor records the starting displacement,
+compiled pixel count, original instruction cost, table displacement and exact
+final auxiliary-register state. H431 snapshots every address register, walks
+the span downward, publishes the scratch registers and XOR lazy flags, charges
+the removed x86 instruction count, and `return_call $next`s into the row tail.
+The existing LUT-only gate controls H418 and H431 together.
+
+`test/test-lut-span.js` pins both grammars, the scheduled-load case, unchanged
+base registers, exact final scratch/flag state, a source/destination page seam,
+the shared A/B gate and a displacement-gap near miss.
+
+### 17.1 Diablo II measurement
+
+In the same deterministic gameplay histogram window used for §16.1, H431
+reduced main handlers from 257,258,415 (H418 only) to 179,778,066, a further
+77,480,349 or 30.12%. The pre-LUT baseline was 262,313,891, making the combined
+reduction 31.46%. The outer d2gfx row/jump-table blocks remain hot while the
+pixel suffix landings leave the top-block list, which is the expected signature
+of a nonterminal subsequence fold. The captured gameplay frame retained its
+terrain/orb/color scores. Variable host load made wall time unsuitable for a
+speed claim; these are retired-handler counts for identical batches 1500..1660.
+
+## 18. Moving-source LUT and ESP load-run follow-up
+
+The remaining clipped blend loop at d2gfx original `0x100033ca` now lowers to
+H418 descriptor version one. In a fresh batches-1500..1660 capture, runtime
+`0x0086e3ca` entered 26,522 times instead of the prior capture's 251,520
+per-pixel entries: the remaining entries are expected budget resumptions of the
+terminal super-op. Aggregate H418 activity was 1,205,355 pixels in 96,689 runs.
+The fresh frame had a different terrain workload, so that block comparison is
+activation evidence rather than an isolated app-speed percentage.
+
+The same capture also validates a decoder-only extension to H408. Canonical
+`mov reg,[esp+disp]` uses a mandatory `24h` SIB byte even though it has no
+index; the old raw look-ahead rejected all rm=4 encodings. `$base_mov_at` now
+accepts precisely that SIB spelling, handles its shifted disp8/disp32 offsets,
+and keeps real indexed SIB operands out. H408's executor already accepted
+base=ESP and snapshots the base before all loads, so a write to ESP remains
+legal only as the final element. `test/test-load32-esp-run.js` pins all three
+displacement widths, the final-base-write case, handler counts, and an indexed
+SIB near miss.
+
+H408 executed 2,869,328 load groups in that gameplay window, while the former
+`H343 -> H343` top pair disappeared. The resulting frame still scored terrain
+102,464, life 3,612, mana 2,910 and 189 quantized colors. Machine load exceeded
+80 during the replay, so no wall-time/FPS claim is made.

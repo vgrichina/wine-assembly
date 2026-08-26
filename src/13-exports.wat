@@ -19,21 +19,29 @@
     (local.set $saved_budget (global.get $block_budget))
     (global.set $block_budget (local.get $max_blocks))
     (block $halt (loop $main
-      (if (i32.le_s (global.get $block_budget) (i32.const 0))
-        (then (global.set $last_run_halt (i32.const 1)) (br $halt)))
       (if (i32.eqz (global.get $eip))
         (then (global.set $last_run_halt (i32.const 2)) (br $halt)))
       ;; A block whose quantum expired part-way through. Give it a fresh one and
       ;; carry on from the op $next declined to run — looking $eip up again would
-      ;; restart the block and re-run everything before that op. No block is
-      ;; spent from the budget: this is the same block, still in progress.
+      ;; restart the block and re-run everything before that op. Finish it even
+      ;; when the block budget has just expired: resume_ip is a pointer into the
+      ;; decoded stream, not architectural x86 state, and must never escape this
+      ;; run() call. The host may inject a cooperative timer/wave callback between
+      ;; calls by replacing EIP/ESP; a leftover resume_ip would take precedence
+      ;; over that callback EIP and continue the interrupted block on its callback
+      ;; stack. No block is spent from the budget: this is the same block, still
+      ;; in progress, and its terminator will return here before another starts.
       (if (global.get $resume_ip)
         (then
           (global.set $ip (global.get $resume_ip))
           (global.set $resume_ip (i32.const 0))
           (global.set $steps (i32.const 1000))
           (call $next)
+          (if (global.get $page_chunk_deferred)
+            (then (call $page_chunk_reclaim_deferred)))
           (br $main)))
+      (if (i32.le_s (global.get $block_budget) (i32.const 0))
+        (then (global.set $last_run_halt (i32.const 1)) (br $halt)))
       (global.set $block_budget (i32.sub (global.get $block_budget) (i32.const 1)))
       ;; Reset thread buffer if approaching cache region (leave 4KB margin)
       (if (i32.ge_u (global.get $thread_alloc) (i32.sub (global.get $THREAD_END) (i32.const 4096)))
@@ -208,6 +216,8 @@
       ;; Set steps high enough to always complete a block
       (global.set $steps (i32.const 1000))
       (call $next)
+      (if (global.get $page_chunk_deferred)
+        (then (call $page_chunk_reclaim_deferred)))
       (br $main)))
     ;; What this call actually got through. $block_budget can end up negative --
     ;; a fold retires k blocks in one go and subtracts all k -- so this can read
@@ -2565,10 +2575,27 @@
     (global.get $loop_selfloop_blocks))
   (func (export "get_loop_matched_blocks") (result i32)
     (global.get $loop_matched_blocks))
-  ;; --no-loop-superops: keep matching (and counting) but stop lowering, so a
-  ;; run with and a run without differ in exactly one thing.
+  (func (export "get_loop_lut_bounded_matches") (result i32)
+    (global.get $loop_lut_bounded_matches))
+  (func (export "get_loop_lut_runs") (result i32)
+    (global.get $loop_lut_runs))
+  (func (export "get_loop_lut_bytes") (result i64)
+    (global.get $loop_lut_bytes))
+  (func (export "get_lut_span_matches") (result i32)
+    (global.get $lut_span_matches))
+  (func (export "get_lut_span_runs") (result i32)
+    (global.get $lut_span_runs))
+  (func (export "get_lut_span_bytes") (result i64)
+    (global.get $lut_span_bytes))
+  ;; Compatibility switch: control both families together. Prefer the family
+  ;; switches for an A/B because COPY_RUN remains disabled by default.
   (func (export "set_loop_emit") (param $flag i32)
-    (global.set $loop_emit_enabled (local.get $flag)))
+    (global.set $loop_lut_emit_enabled (local.get $flag))
+    (global.set $loop_copy_emit_enabled (local.get $flag)))
+  (func (export "set_loop_lut_emit") (param $flag i32)
+    (global.set $loop_lut_emit_enabled (local.get $flag)))
+  (func (export "set_loop_copy_emit") (param $flag i32)
+    (global.set $loop_copy_emit_enabled (local.get $flag)))
 
   ;; --no-sib-fusion: emit the unfused compute_ea_sib + consumer pair, so a
   ;; fused build and an unfused one differ in exactly one thing and need no
@@ -2596,6 +2623,16 @@
   ;; switch: this replaces the storage layer rather than accelerating it, so the
   ;; thing to compare against is the commit before it, not a flag.
   (func (export "get_page_compiles") (result i32) (global.get $page_compiles))
+  (func (export "get_page_chunk_samples") (result i32) (global.get $page_chunk_samples))
+  (func (export "get_page_chunk_used_total") (result i64) (global.get $page_chunk_used_total))
+  (func (export "get_page_chunk_used_max") (result i32) (global.get $page_chunk_used_max))
+  (func (export "get_page_chunk_le_4k") (result i32) (global.get $page_chunk_le_4k))
+  (func (export "get_page_chunk_le_8k") (result i32) (global.get $page_chunk_le_8k))
+  (func (export "get_page_chunk_le_12k") (result i32) (global.get $page_chunk_le_12k))
+  (func (export "get_page_chunk_le_16k") (result i32) (global.get $page_chunk_le_16k))
+  (func (export "get_page_chunk_grows") (result i32) (global.get $page_chunk_grows))
+  (func (export "get_page_chunk_reuses") (result i32) (global.get $page_chunk_reuses))
+  (func (export "get_page_unpublished") (result i32) (global.get $page_unpublished))
   (func (export "get_page_hits")     (result i32) (global.get $page_hits))
   (func (export "get_page_misses")   (result i32) (global.get $page_misses))
   (func (export "get_page_fast")     (result i32) (global.get $page_fast))

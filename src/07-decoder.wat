@@ -70,6 +70,21 @@
   (global $rp_imm    (mut i32) (i32.const 0))
   (global $rp_target (mut i32) (i32.const 0))
 
+  ;; Decoder-time, nonterminal LUT spans. Unlike H418 these are not loops:
+  ;; an indirect jump has already selected one suffix of a fully unrolled
+  ;; renderer, and execution continues into the ordinary row tail afterwards.
+  ;; Keep separate counters so a real profile can distinguish the two shapes
+  ;; even though both belong to the LUT_RUN family semantically.
+  (global $lut_span_matches (mut i32) (i32.const 0))
+  (global $lut_span_runs    (mut i32) (i32.const 0))
+  (global $lut_span_bytes   (mut i64) (i64.const 0))
+  ;; Raw-instruction scanners return several fields through these globals.
+  (global $ls_base       (mut i32) (i32.const 0))
+  (global $ls_index      (mut i32) (i32.const 0))
+  (global $ls_table      (mut i32) (i32.const 0))
+  (global $ls_disp       (mut i32) (i32.const 0))
+  (global $ls_len        (mut i32) (i32.const 0))
+
   ;; How many `cmp al,imm8 / jz target` pairs start at $pc, counting only
   ;; those that lie wholly inside $page. Both jz encodings are accepted --
   ;; Caesar's ladder mixes one rel8 in among fifteen rel32s, so refusing
@@ -571,6 +586,435 @@
     (call $te_raw (global.get $rb_src_adv))
     (call $te_raw (global.get $rb_dst_adv))
     (call $te_raw (global.get $rb_cnt_dec)))
+
+  ;; ---- fully unrolled LUT/blend spans (handler 431) ------------------
+  ;; These helpers inspect exact, unprefixed 32-bit encodings. Returning zero
+  ;; is always a conservative decline; accepted memory operands have no
+  ;; segment/address-size ambiguity and remain wholly in this compiled page.
+
+  ;; `xor r,r`, for a register with an addressable low byte. Return r+1 so
+  ;; EAX is distinguishable from a miss.
+  (func $lut_xor_at (param $p i32) (result i32)
+    (local $op i32) (local $m i32) (local $r i32)
+    (local.set $op (call $gl8 (local.get $p)))
+    (if (i32.and (i32.ne (local.get $op) (i32.const 0x31))
+                 (i32.ne (local.get $op) (i32.const 0x33)))
+      (then (return (i32.const 0))))
+    (local.set $m (call $gl8 (i32.add (local.get $p) (i32.const 1))))
+    (if (i32.ne (i32.shr_u (local.get $m) (i32.const 6)) (i32.const 3))
+      (then (return (i32.const 0))))
+    (local.set $r (i32.and (local.get $m) (i32.const 7)))
+    (if (i32.or (i32.ge_u (local.get $r) (i32.const 4))
+                (i32.ne (i32.and (i32.shr_u (local.get $m) (i32.const 3))
+                                 (i32.const 7))
+                        (local.get $r)))
+      (then (return (i32.const 0))))
+    (i32.add (local.get $r) (i32.const 1)))
+
+  ;; `mov r8,[base+disp]`, no SIB and no absolute form.
+  (func $lut_base_load8_at (param $p i32) (param $reg i32) (result i32)
+    (local $m i32) (local $mod i32) (local $base i32)
+    (if (i32.ne (call $gl8 (local.get $p)) (i32.const 0x8A))
+      (then (return (i32.const 0))))
+    (local.set $m (call $gl8 (i32.add (local.get $p) (i32.const 1))))
+    (if (i32.ne (i32.and (i32.shr_u (local.get $m) (i32.const 3))
+                         (i32.const 7))
+                (local.get $reg))
+      (then (return (i32.const 0))))
+    (local.set $mod (i32.shr_u (local.get $m) (i32.const 6)))
+    (local.set $base (i32.and (local.get $m) (i32.const 7)))
+    (if (i32.or (i32.eq (local.get $mod) (i32.const 3))
+          (i32.or (i32.eq (local.get $base) (i32.const 4))
+                  (i32.and (i32.eqz (local.get $mod))
+                           (i32.eq (local.get $base) (i32.const 5)))))
+      (then (return (i32.const 0))))
+    (global.set $ls_base (local.get $base))
+    (global.set $ls_len (i32.add (i32.const 1) (call $rle_ea_len (local.get $m))))
+    (global.set $ls_disp
+      (call $rle_ea_disp (i32.add (local.get $p) (i32.const 1)) (local.get $m)))
+    (i32.const 1))
+
+  ;; One-source table lookup: `mov acc8,[acc+table]`, scale 1, no displacement.
+  (func $lut_table1_at (param $p i32) (param $acc i32) (result i32)
+    (local $m i32) (local $sib i32) (local $base i32) (local $idx i32)
+    (if (i32.ne (call $gl8 (local.get $p)) (i32.const 0x8A))
+      (then (return (i32.const 0))))
+    (local.set $m (call $gl8 (i32.add (local.get $p) (i32.const 1))))
+    (if (i32.or (i32.ne (local.get $m)
+          (i32.or (i32.const 0x04) (i32.shl (local.get $acc) (i32.const 3))))
+        (i32.ne (i32.shr_u (local.get $m) (i32.const 6)) (i32.const 0)))
+      (then (return (i32.const 0))))
+    (local.set $sib (call $gl8 (i32.add (local.get $p) (i32.const 2))))
+    (if (i32.ne (i32.shr_u (local.get $sib) (i32.const 6)) (i32.const 0))
+      (then (return (i32.const 0))))
+    (local.set $base (i32.and (local.get $sib) (i32.const 7)))
+    (local.set $idx (i32.and (i32.shr_u (local.get $sib) (i32.const 3)) (i32.const 7)))
+    (if (i32.eq (local.get $base) (local.get $acc))
+      (then (global.set $ls_table (local.get $idx)))
+      (else
+        (if (i32.eq (local.get $idx) (local.get $acc))
+          (then (global.set $ls_table (local.get $base)))
+          (else (return (i32.const 0))))))
+    (if (i32.or (i32.eq (global.get $ls_table) (i32.const 4))
+                (i32.eq (global.get $ls_table) (local.get $acc)))
+      (then (return (i32.const 0))))
+    (global.set $ls_len (i32.const 3))
+    (i32.const 1))
+
+  ;; One-source result store: `mov [base+disp],acc8`, no SIB.
+  (func $lut_store1_at (param $p i32) (param $acc i32) (result i32)
+    (local $m i32) (local $mod i32) (local $base i32)
+    (if (i32.ne (call $gl8 (local.get $p)) (i32.const 0x88))
+      (then (return (i32.const 0))))
+    (local.set $m (call $gl8 (i32.add (local.get $p) (i32.const 1))))
+    (if (i32.ne (i32.and (i32.shr_u (local.get $m) (i32.const 3))
+                         (i32.const 7))
+                (local.get $acc))
+      (then (return (i32.const 0))))
+    (local.set $mod (i32.shr_u (local.get $m) (i32.const 6)))
+    (local.set $base (i32.and (local.get $m) (i32.const 7)))
+    (if (i32.or (i32.eq (local.get $mod) (i32.const 3))
+          (i32.or (i32.eq (local.get $base) (i32.const 4))
+                  (i32.and (i32.eqz (local.get $mod))
+                           (i32.eq (local.get $base) (i32.const 5)))))
+      (then (return (i32.const 0))))
+    (global.set $ls_base (local.get $base))
+    (global.set $ls_len (i32.add (i32.const 1) (call $rle_ea_len (local.get $m))))
+    (global.set $ls_disp
+      (call $rle_ea_disp (i32.add (local.get $p) (i32.const 1)) (local.get $m)))
+    (i32.const 1))
+
+  ;; Blend table lookup: `mov acc8,[acc+aux+disp]`, scale 1.
+  (func $lut_blend_table_at (param $p i32) (param $acc i32) (param $aux i32)
+                            (result i32)
+    (local $m i32) (local $mod i32) (local $sib i32)
+    (local $base i32) (local $idx i32)
+    (if (i32.ne (call $gl8 (local.get $p)) (i32.const 0x8A))
+      (then (return (i32.const 0))))
+    (local.set $m (call $gl8 (i32.add (local.get $p) (i32.const 1))))
+    (if (i32.or
+          (i32.ne (i32.and (i32.shr_u (local.get $m) (i32.const 3))
+                           (i32.const 7)) (local.get $acc))
+          (i32.ne (i32.and (local.get $m) (i32.const 7)) (i32.const 4)))
+      (then (return (i32.const 0))))
+    (local.set $mod (i32.shr_u (local.get $m) (i32.const 6)))
+    (if (i32.or (i32.eqz (local.get $mod))
+                (i32.eq (local.get $mod) (i32.const 3)))
+      (then (return (i32.const 0))))
+    (local.set $sib (call $gl8 (i32.add (local.get $p) (i32.const 2))))
+    (if (i32.ne (i32.shr_u (local.get $sib) (i32.const 6)) (i32.const 0))
+      (then (return (i32.const 0))))
+    (local.set $base (i32.and (local.get $sib) (i32.const 7)))
+    (local.set $idx (i32.and (i32.shr_u (local.get $sib) (i32.const 3)) (i32.const 7)))
+    (if (i32.eqz (i32.or
+          (i32.and (i32.eq (local.get $base) (local.get $acc))
+                   (i32.eq (local.get $idx) (local.get $aux)))
+          (i32.and (i32.eq (local.get $base) (local.get $aux))
+                   (i32.eq (local.get $idx) (local.get $acc)))))
+      (then (return (i32.const 0))))
+    (global.set $ls_len
+      (select (i32.const 4) (i32.const 7) (i32.eq (local.get $mod) (i32.const 1))))
+    (global.set $ls_disp
+      (select
+        (call $sign_ext8 (call $gl8 (i32.add (local.get $p) (i32.const 3))))
+        (call $gl32 (i32.add (local.get $p) (i32.const 3)))
+        (i32.eq (local.get $mod) (i32.const 1))))
+    (i32.const 1))
+
+  ;; Blend destination store: `mov [base+index+disp],acc8`, scale 1.
+  (func $lut_blend_store_at (param $p i32) (param $acc i32) (result i32)
+    (local $m i32) (local $mod i32) (local $sib i32)
+    (if (i32.ne (call $gl8 (local.get $p)) (i32.const 0x88))
+      (then (return (i32.const 0))))
+    (local.set $m (call $gl8 (i32.add (local.get $p) (i32.const 1))))
+    (if (i32.or
+          (i32.ne (i32.and (i32.shr_u (local.get $m) (i32.const 3))
+                           (i32.const 7)) (local.get $acc))
+          (i32.ne (i32.and (local.get $m) (i32.const 7)) (i32.const 4)))
+      (then (return (i32.const 0))))
+    (local.set $mod (i32.shr_u (local.get $m) (i32.const 6)))
+    (if (i32.eq (local.get $mod) (i32.const 3))
+      (then (return (i32.const 0))))
+    (local.set $sib (call $gl8 (i32.add (local.get $p) (i32.const 2))))
+    (if (i32.ne (i32.shr_u (local.get $sib) (i32.const 6)) (i32.const 0))
+      (then (return (i32.const 0))))
+    (global.set $ls_base (i32.and (local.get $sib) (i32.const 7)))
+    (global.set $ls_index
+      (i32.and (i32.shr_u (local.get $sib) (i32.const 3)) (i32.const 7)))
+    (if (i32.or (i32.eq (global.get $ls_index) (i32.const 4))
+                (i32.and (i32.eqz (local.get $mod))
+                         (i32.eq (global.get $ls_base) (i32.const 5))))
+      (then (return (i32.const 0))))
+    (global.set $ls_len
+      (select (i32.const 3)
+        (select (i32.const 4) (i32.const 7)
+                (i32.eq (local.get $mod) (i32.const 1)))
+        (i32.eqz (local.get $mod))))
+    (global.set $ls_disp
+      (select (i32.const 0)
+        (select
+          (call $sign_ext8 (call $gl8 (i32.add (local.get $p) (i32.const 3))))
+          (call $gl32 (i32.add (local.get $p) (i32.const 3)))
+          (i32.eq (local.get $mod) (i32.const 1)))
+        (i32.eqz (local.get $mod))))
+    (i32.const 1))
+
+  (func $lut_shl8_at (param $p i32) (param $reg i32) (result i32)
+    (i32.and
+      (i32.eq (call $gl8 (local.get $p)) (i32.const 0xC1))
+      (i32.and
+        (i32.eq (call $gl8 (i32.add (local.get $p) (i32.const 1)))
+                (i32.or (i32.const 0xE0) (local.get $reg)))
+        (i32.eq (call $gl8 (i32.add (local.get $p) (i32.const 2)))
+                (i32.const 8)))))
+
+  ;; dst[d..] = table[src[d..]], with all displacements descending by one.
+  (func $try_emit_lut_span1 (result i32)
+    (local $p i32) (local $end i32) (local $limit i32) (local $x i32)
+    (local $acc i32) (local $src i32) (local $dst i32) (local $tbl i32)
+    (local $disp i32) (local $start i32) (local $n i32) (local $first i32)
+    (local.set $p (global.get $d_pc))
+    (local.set $limit (i32.add (i32.and (local.get $p) (i32.const 0xFFFFF000))
+                              (i32.const 0x1000)))
+    (local.set $src (i32.const -1))
+    (local.set $dst (i32.const -1))
+    (local.set $tbl (i32.const -1))
+    (local.set $first (i32.const 1))
+    (block $stop (loop $scan
+      ;; Longest exact unit is eleven bytes. Never make a compiled page own
+      ;; guest bytes from its neighbour.
+      (br_if $stop (i32.gt_u (local.get $p) (i32.sub (local.get $limit) (i32.const 11))))
+      (local.set $x (call $lut_xor_at (local.get $p)))
+      (br_if $stop (i32.eqz (local.get $x)))
+      (local.set $x (i32.sub (local.get $x) (i32.const 1)))
+      (if (local.get $first)
+        (then (local.set $acc (local.get $x)))
+        (else (br_if $stop (i32.ne (local.get $x) (local.get $acc)))))
+      (local.set $p (i32.add (local.get $p) (i32.const 2)))
+      (br_if $stop (i32.eqz (call $lut_base_load8_at (local.get $p) (local.get $acc))))
+      (local.set $disp (global.get $ls_disp))
+      (if (local.get $first)
+        (then
+          (local.set $src (global.get $ls_base))
+          (local.set $start (local.get $disp)))
+        (else
+          (br_if $stop (i32.ne (global.get $ls_base) (local.get $src)))
+          (br_if $stop (i32.ne (local.get $disp)
+            (i32.sub (local.get $start) (local.get $n))))))
+      (local.set $p (i32.add (local.get $p) (global.get $ls_len)))
+      (br_if $stop (i32.eqz (call $lut_table1_at (local.get $p) (local.get $acc))))
+      (if (local.get $first)
+        (then (local.set $tbl (global.get $ls_table)))
+        (else (br_if $stop (i32.ne (global.get $ls_table) (local.get $tbl)))))
+      (local.set $p (i32.add (local.get $p) (global.get $ls_len)))
+      (br_if $stop (i32.eqz (call $lut_store1_at (local.get $p) (local.get $acc))))
+      (br_if $stop (i32.ne (global.get $ls_disp) (local.get $disp)))
+      (if (local.get $first)
+        (then
+          (local.set $dst (global.get $ls_base))
+          ;; The handler snapshots every address role before publishing acc.
+          (br_if $stop (i32.or
+            (i32.eq (local.get $acc) (local.get $src))
+            (i32.or (i32.eq (local.get $acc) (local.get $dst))
+                    (i32.eq (local.get $acc) (local.get $tbl)))))
+          (local.set $first (i32.const 0)))
+        (else (br_if $stop (i32.ne (global.get $ls_base) (local.get $dst)))))
+      (local.set $p (i32.add (local.get $p) (global.get $ls_len)))
+      (local.set $end (local.get $p))
+      (local.set $n (i32.add (local.get $n) (i32.const 1)))
+      (br_if $stop (i32.ge_u (local.get $n) (i32.const 64)))
+      (br $scan)))
+    (if (i32.lt_u (local.get $n) (i32.const 4)) (then (return (i32.const 0))))
+    (call $te (i32.const 431)
+      (i32.or (local.get $src)
+        (i32.or (i32.shl (local.get $dst) (i32.const 4))
+          (i32.or (i32.shl (local.get $tbl) (i32.const 8))
+            (i32.or (i32.shl (local.get $acc) (i32.const 12))
+              (i32.or (i32.shl (i32.const 0xF) (i32.const 20))
+                (i32.or (i32.shl (i32.const 0xF) (i32.const 24))
+                        (i32.shl (i32.const 0xF) (i32.const 28)))))))))
+    (call $te_raw (local.get $start))
+    (call $te_raw (local.get $n))
+    (call $te_raw (i32.shl (local.get $n) (i32.const 2)))
+    (call $te_raw (i32.const 0))
+    (call $te_raw (i32.const 0))
+    (call $te_raw (i32.const 0))
+    (global.set $d_pc (local.get $end))
+    (global.set $lut_span_matches
+      (i32.add (global.get $lut_span_matches) (i32.const 1)))
+    (i32.const 1))
+
+  ;; Symbolically validate a scheduled two-source blend. Loads for the next
+  ;; pixel may move across the preceding store, so this is a tiny data-flow
+  ;; recognizer rather than a byte signature. A checkpoint is accepted only
+  ;; after a store whose last flag-setting instruction was XOR; the handler can
+  ;; then publish exact scratch registers and lazy flags without a liveness
+  ;; assumption about the following row tail.
+  (func $try_emit_lut_span2 (result i32)
+    (local $p i32) (local $limit i32) (local $x i32)
+    (local $acc i32) (local $aux i32) (local $acc_state i32) (local $aux_state i32)
+    (local $acc_disp i32) (local $aux_disp i32) (local $last_zero i32)
+    (local $src1 i32) (local $src2 i32) (local $dst i32) (local $didx i32)
+    (local $table_disp i32) (local $start i32) (local $n i32) (local $cost i32)
+    (local $cp_end i32) (local $cp_n i32) (local $cp_cost i32)
+    (local $cp_aux_kind i32) (local $cp_aux_disp i32)
+    (local.set $p (global.get $d_pc))
+    (local.set $limit (i32.add (i32.and (local.get $p) (i32.const 0xFFFFF000))
+                              (i32.const 0x1000)))
+    ;; A self-contained scheduled group starts by clearing both byte/index
+    ;; registers. Later entry points reach another such group naturally.
+    (local.set $x (call $lut_xor_at (local.get $p)))
+    (if (i32.eqz (local.get $x)) (then (return (i32.const 0))))
+    (local.set $acc (i32.sub (local.get $x) (i32.const 1)))
+    (local.set $x (call $lut_xor_at (i32.add (local.get $p) (i32.const 2))))
+    (if (i32.eqz (local.get $x)) (then (return (i32.const 0))))
+    (local.set $aux (i32.sub (local.get $x) (i32.const 1)))
+    (if (i32.eq (local.get $acc) (local.get $aux)) (then (return (i32.const 0))))
+    (local.set $p (i32.add (local.get $p) (i32.const 4)))
+    (local.set $acc_state (i32.const 1)) ;; zero
+    (local.set $aux_state (i32.const 1))
+    (local.set $last_zero (i32.const 1))
+    (local.set $cost (i32.const 2))
+    (local.set $src1 (i32.const -1))
+    (local.set $src2 (i32.const -1))
+    (local.set $dst (i32.const -1))
+    (local.set $didx (i32.const -1))
+    (block $stop (loop $scan
+      (br_if $stop (i32.gt_u (local.get $p) (i32.sub (local.get $limit) (i32.const 7))))
+
+      ;; Either scratch register may be cleared between scheduled loads.
+      (local.set $x (call $lut_xor_at (local.get $p)))
+      (if (i32.ne (local.get $x) (i32.const 0))
+        (then
+          (local.set $x (i32.sub (local.get $x) (i32.const 1)))
+          (if (i32.eq (local.get $x) (local.get $acc))
+            (then (local.set $acc_state (i32.const 1)))
+            (else
+              (if (i32.eq (local.get $x) (local.get $aux))
+                (then (local.set $aux_state (i32.const 1)))
+                (else (br $stop)))))
+          (local.set $last_zero (i32.const 1))
+          (local.set $cost (i32.add (local.get $cost) (i32.const 1)))
+          (local.set $p (i32.add (local.get $p) (i32.const 2)))
+          (br $scan)))
+
+      (if (i32.and (i32.eq (local.get $acc_state) (i32.const 1))
+                    (call $lut_base_load8_at (local.get $p) (local.get $acc)))
+        (then
+          (if (i32.lt_s (local.get $src1) (i32.const 0))
+            (then (local.set $src1 (global.get $ls_base)))
+            (else (br_if $stop (i32.ne (local.get $src1) (global.get $ls_base)))))
+          (local.set $acc_disp (global.get $ls_disp))
+          (local.set $acc_state (i32.const 2)) ;; source byte
+          (local.set $cost (i32.add (local.get $cost) (i32.const 1)))
+          (local.set $p (i32.add (local.get $p) (global.get $ls_len)))
+          (br $scan)))
+
+      (if (i32.and (i32.eq (local.get $aux_state) (i32.const 1))
+                    (call $lut_base_load8_at (local.get $p) (local.get $aux)))
+        (then
+          (if (i32.lt_s (local.get $src2) (i32.const 0))
+            (then (local.set $src2 (global.get $ls_base)))
+            (else (br_if $stop (i32.ne (local.get $src2) (global.get $ls_base)))))
+          (local.set $aux_disp (global.get $ls_disp))
+          (local.set $aux_state (i32.const 2))
+          (local.set $cost (i32.add (local.get $cost) (i32.const 1)))
+          (local.set $p (i32.add (local.get $p) (global.get $ls_len)))
+          (br $scan)))
+
+      (if (i32.and (i32.eq (local.get $acc_state) (i32.const 2))
+                    (call $lut_shl8_at (local.get $p) (local.get $acc)))
+        (then
+          (local.set $acc_state (i32.const 3)) ;; source byte << 8
+          (local.set $last_zero (i32.const 0))
+          (local.set $cost (i32.add (local.get $cost) (i32.const 1)))
+          (local.set $p (i32.add (local.get $p) (i32.const 3)))
+          (br $scan)))
+
+      (if (i32.and
+            (i32.and (i32.eq (local.get $acc_state) (i32.const 3))
+                     (i32.eq (local.get $aux_state) (i32.const 2)))
+            (call $lut_blend_table_at (local.get $p) (local.get $acc) (local.get $aux)))
+        (then
+          (br_if $stop (i32.ne (local.get $acc_disp) (local.get $aux_disp)))
+          (if (i32.eqz (local.get $n))
+            (then (local.set $table_disp (global.get $ls_disp)))
+            (else (br_if $stop (i32.ne (local.get $table_disp) (global.get $ls_disp)))))
+          (local.set $acc_state (i32.const 4)) ;; table result in low byte
+          (local.set $cost (i32.add (local.get $cost) (i32.const 1)))
+          (local.set $p (i32.add (local.get $p) (global.get $ls_len)))
+          (br $scan)))
+
+      (if (i32.and (i32.eq (local.get $acc_state) (i32.const 4))
+                    (call $lut_blend_store_at (local.get $p) (local.get $acc)))
+        (then
+          (br_if $stop (i32.ne (global.get $ls_disp) (local.get $acc_disp)))
+          (if (i32.eqz (local.get $n))
+            (then
+              (local.set $start (local.get $acc_disp))
+              (local.set $dst (global.get $ls_base))
+              (local.set $didx (global.get $ls_index))
+              ;; Scratch writes must not change an address role the handler
+              ;; snapshots once. Source/destination roles may alias each other.
+              (br_if $stop (i32.or
+                (i32.or (i32.eq (local.get $acc) (local.get $src1))
+                        (i32.eq (local.get $acc) (local.get $src2)))
+                (i32.or
+                  (i32.or (i32.eq (local.get $acc) (local.get $dst))
+                          (i32.eq (local.get $acc) (local.get $didx)))
+                    (i32.or
+                      (i32.or (i32.eq (local.get $aux) (local.get $src1))
+                              (i32.eq (local.get $aux) (local.get $src2)))
+                      (i32.or (i32.eq (local.get $aux) (local.get $dst))
+                              (i32.eq (local.get $aux) (local.get $didx))))))))
+            (else
+              (br_if $stop (i32.ne (global.get $ls_base) (local.get $dst)))
+              (br_if $stop (i32.ne (global.get $ls_index) (local.get $didx)))
+              (br_if $stop (i32.ne (local.get $acc_disp)
+                (i32.sub (local.get $start) (local.get $n))))))
+          (local.set $p (i32.add (local.get $p) (global.get $ls_len)))
+          (local.set $cost (i32.add (local.get $cost) (i32.const 1)))
+          (local.set $n (i32.add (local.get $n) (i32.const 1)))
+          (if (i32.and (i32.ge_u (local.get $n) (i32.const 4))
+                       (local.get $last_zero))
+            (then
+              (local.set $cp_end (local.get $p))
+              (local.set $cp_n (local.get $n))
+              (local.set $cp_cost (local.get $cost))
+              (local.set $cp_aux_kind (local.get $aux_state))
+              (local.set $cp_aux_disp (local.get $aux_disp))))
+          (br_if $stop (i32.ge_u (local.get $n) (i32.const 64)))
+          (br $scan)))
+      (br $stop)))
+
+    (if (i32.lt_u (local.get $cp_n) (i32.const 4))
+      (then (return (i32.const 0))))
+    (call $te (i32.const 431)
+      (i32.or (local.get $src1)
+        (i32.or (i32.shl (local.get $dst) (i32.const 4))
+          (i32.or (i32.shl (i32.const 0xF) (i32.const 8))
+            (i32.or (i32.shl (local.get $acc) (i32.const 12))
+              (i32.or (i32.shl (i32.const 1) (i32.const 16))
+                (i32.or (i32.shl (local.get $src2) (i32.const 20))
+                  (i32.or (i32.shl (local.get $didx) (i32.const 24))
+                          (i32.shl (local.get $aux) (i32.const 28))))))))))
+    (call $te_raw (local.get $start))
+    (call $te_raw (local.get $cp_n))
+    (call $te_raw (local.get $cp_cost))
+    (call $te_raw (local.get $table_disp))
+    (call $te_raw (local.get $cp_aux_kind))
+    (call $te_raw (local.get $cp_aux_disp))
+    (global.set $d_pc (local.get $cp_end))
+    (global.set $lut_span_matches
+      (i32.add (global.get $lut_span_matches) (i32.const 1)))
+    (i32.const 1))
+
+  (func $try_emit_lut_span (result i32)
+    (if (i32.or (i32.eqz (global.get $loop_lut_emit_enabled))
+                (global.get $code16))
+      (then (return (i32.const 0))))
+    (if (call $try_emit_lut_span1) (then (return (i32.const 1))))
+    (call $try_emit_lut_span2))
 
   ;; $sprite_scan's out-params: where the run ended, how many dwords it moved,
   ;; and which register the row step adds.
@@ -1130,12 +1574,15 @@
     (i32.const 1))
 
   ;; One unprefixed `mov r32,[base+disp]` at $p over the given base register,
-  ;; in its three flat encodings: mod=00 (no displacement, rm != 4/5), mod=01
-  ;; (disp8) and mod=10 (disp32). Returns (length<<4)|reg, or 0 for anything
-  ;; else — a prefix byte in front declines by construction, which is what
-  ;; keeps operand-size, address-size and segment forms out of the run.
+  ;; in its three flat encodings: mod=00 (no displacement), mod=01 (disp8) and
+  ;; mod=10 (disp32). ESP's mandatory SIB is admitted only in its canonical
+  ;; 0x24 form (scale 1, no index, base ESP), so `[esp+index]` cannot be
+  ;; mistaken for the base-only shape handler 408 executes. Returns
+  ;; (length<<4)|reg, or 0 for anything else — a prefix byte in front declines
+  ;; by construction, which keeps operand-size, address-size and segment forms
+  ;; out of the run.
   (func $base_mov_at (param $p i32) (param $base i32) (result i32)
-    (local $modrm i32) (local $mod i32)
+    (local $modrm i32) (local $mod i32) (local $sib i32)
     (if (i32.ne (call $gl8 (local.get $p)) (i32.const 0x8B))
       (then (return (i32.const 0))))
     (local.set $modrm (call $gl8 (i32.add (local.get $p) (i32.const 1))))
@@ -1143,23 +1590,41 @@
       (then (return (i32.const 0))))
     (local.set $mod (i32.shr_u (local.get $modrm) (i32.const 6)))
     (if (i32.eq (local.get $mod) (i32.const 3)) (then (return (i32.const 0))))
-    ;; rm=4 is a SIB byte and rm=5 with mod=00 is an absolute address; neither
-    ;; is the [base+disp] shape this run encodes.
-    (if (i32.eq (local.get $base) (i32.const 4)) (then (return (i32.const 0))))
+    ;; ESP is encoded through a SIB even without an index. Accept precisely
+    ;; that no-index spelling; every other SIB remains outside this matcher.
+    (if (i32.eq (local.get $base) (i32.const 4))
+      (then
+        (local.set $sib (call $gl8 (i32.add (local.get $p) (i32.const 2))))
+        (if (i32.ne (local.get $sib) (i32.const 0x24))
+          (then (return (i32.const 0))))))
     (if (i32.and (i32.eqz (local.get $mod)) (i32.eq (local.get $base) (i32.const 5)))
       (then (return (i32.const 0))))
     (i32.or
       (i32.shl
         (if (result i32) (i32.eqz (local.get $mod))
-          (then (i32.const 2))
+          (then (select (i32.const 3) (i32.const 2)
+                        (i32.eq (local.get $base) (i32.const 4))))
           (else (if (result i32) (i32.eq (local.get $mod) (i32.const 1))
-                  (then (i32.const 3)) (else (i32.const 6)))))
+                  (then (select (i32.const 4) (i32.const 3)
+                                (i32.eq (local.get $base) (i32.const 4))))
+                  (else (select (i32.const 7) (i32.const 6)
+                                (i32.eq (local.get $base) (i32.const 4)))))))
         (i32.const 4))
       (i32.and (i32.shr_u (local.get $modrm) (i32.const 3)) (i32.const 7))))
 
   ;; The displacement of the instruction $base_mov_at just matched, sign
-  ;; extended for the disp8 form and zero for the no-displacement form.
+  ;; extended for the disp8 form and zero for the no-displacement form. ESP's
+  ;; displacement begins one byte later because of its mandatory SIB.
   (func $base_mov_disp (param $p i32) (param $len i32) (result i32)
+    (if (i32.eq (i32.and (call $gl8 (i32.add (local.get $p) (i32.const 1)))
+                         (i32.const 7))
+                (i32.const 4))
+      (then
+        (if (i32.eq (local.get $len) (i32.const 3)) (then (return (i32.const 0))))
+        (if (i32.eq (local.get $len) (i32.const 4))
+          (then (return (call $sign_ext8
+            (call $gl8 (i32.add (local.get $p) (i32.const 3)))))))
+        (return (call $gl32 (i32.add (local.get $p) (i32.const 3))))))
     (if (i32.eq (local.get $len) (i32.const 2)) (then (return (i32.const 0))))
     (if (i32.eq (local.get $len) (i32.const 3))
       (then (return (call $sign_ext8 (call $gl8 (i32.add (local.get $p) (i32.const 2)))))))
@@ -1179,7 +1644,6 @@
     (local $m i32) (local $len i32) (local $op i32)
     (if (i32.or (global.get $code16) (global.get $d_addr16)) (then (return (i32.const 0))))
     (local.set $base (global.get $mr_base))
-    (if (i32.eq (local.get $base) (i32.const 4)) (then (return (i32.const 0))))
     ;; the first element already clobbers the base: nothing after it can join
     (if (i32.eq (local.get $dst) (local.get $base)) (then (return (i32.const 0))))
     ;; how many follow
@@ -2423,6 +2887,11 @@
         (then
           (call $te (i32.const 45) (global.get $d_pc))
           (br $exit)))
+
+      ;; A Duff-style jump table lands on one suffix of a fully unrolled
+      ;; renderer. Recognize a contiguous LUT/blend span at any instruction
+      ;; boundary and continue decoding its ordinary row tail afterwards.
+      (if (call $try_emit_lut_span) (then (br $decode)))
 
       ;; Reset prefixes
       (local.set $prefix_rep (i32.const 0))
@@ -4368,7 +4837,7 @@
   (func $decode_run (param $start_eip i32) (result i32)
     (local $t0 i32) (local $page i32) (local $n i32)
     (local $alloc i32) (local $jfn i32) (local $fall i32) (local $prev_end i32)
-    (local $tb i32) (local $optr i32)
+    (local $tb i32) (local $optr i32) (local $old_chunk i32)
     (local.set $t0 (call $decode_block (local.get $start_eip)))
     (local.set $page (i32.and (local.get $start_eip) (i32.const 0xFFFFF000)))
     (block $stop (loop $ext
@@ -4424,7 +4893,20 @@
       (br_if $stop (global.get $thread_flush_pending))
       (br_if $stop (i32.ge_u (global.get $thread_alloc)
                              (i32.sub (global.get $THREAD_END) (i32.const 32768))))
+      (local.set $old_chunk (global.get $cur_page_chunk))
       (local.set $tb (call $decode_block (local.get $fall)))
+      ;; Growing a size-class chunk relocates every already-published block.
+      ;; $t0 is the one pointer decode_run keeps across those publications, so
+      ;; carry its offset to the new base before returning it to $run.
+      (if (i32.and
+            (i32.ne (local.get $old_chunk) (i32.const 0))
+            (i32.and
+              (i32.ne (global.get $cur_page_chunk) (i32.const 0))
+              (i32.ne (local.get $old_chunk) (global.get $cur_page_chunk))))
+        (then
+          (local.set $t0
+            (i32.add (global.get $cur_page_chunk)
+              (i32.sub (local.get $t0) (local.get $old_chunk))))))
       ;; The proof. There is only one copy of a run now -- the chunk -- and the
       ;; offsets $page_publish reports are its witness: anything that went wrong
       ;; (a page swap, a full chunk, a declined publish) shows up as an offset
