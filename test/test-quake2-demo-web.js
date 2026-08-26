@@ -22,6 +22,8 @@ const EXE = path.join(ROOT,
   'test/binaries/candidates/quake-2-demo-installer/installed-extracted/Install/Data/quake2.exe');
 const OUT = path.join(ROOT, 'scratch', 'quake2-demo-web');
 const SCREENSHOT = path.join(OUT, 'phone-viewport.png');
+const GAMEPLAY_BEFORE = path.join(OUT, 'gameplay-before.png');
+const GAMEPLAY_AFTER = path.join(OUT, 'gameplay-after.png');
 
 if (!fs.existsSync(CHROME)) {
   console.log('SKIP Chrome not found for Quake II browser test');
@@ -85,6 +87,36 @@ function pixelMetrics(png, x0, y0, x1, y1) {
   return { colors: colors.size, black, total };
 }
 
+function changedPixels(before, after) {
+  assert.deepStrictEqual([before.width, before.height], [after.width, after.height]);
+  let changed = 0;
+  let largeChange = 0;
+  for (let i = 0; i < before.data.length; i += 4) {
+    const delta = Math.abs(before.data[i] - after.data[i]) +
+      Math.abs(before.data[i + 1] - after.data[i + 1]) +
+      Math.abs(before.data[i + 2] - after.data[i + 2]);
+    if (delta > 12) changed++;
+    if (delta > 60) largeChange++;
+  }
+  return { changed, largeChange, total: before.width * before.height };
+}
+
+async function saveGameLayer(page, output) {
+  const frame = await page.evaluate(() => {
+    const win = Object.values(sharedRenderer.windows || {}).find(item =>
+      item && item.visible && /Quake 2/i.test(item.title || '') &&
+      item._dxFrameLayer && item._dxFrameLayer.canvas);
+    if (!win) throw new Error('Quake DirectDraw layer disappeared');
+    const canvas = win._dxFrameLayer.canvas;
+    const data = canvas.getContext('2d').getImageData(
+      0, 0, canvas.width, canvas.height).data;
+    return { width: canvas.width, height: canvas.height, data: Array.from(data) };
+  });
+  const png = new PNG({ width: frame.width, height: frame.height });
+  png.data.set(frame.data);
+  fs.writeFileSync(output, PNG.sync.write(png));
+}
+
 async function main() {
   fs.mkdirSync(OUT, { recursive: true });
   const server = await startStaticServer();
@@ -129,9 +161,17 @@ async function main() {
     { timeout: 30000 });
 
     await page.select('#app-select', 'quake2_demo');
-    const args = await page.evaluate(() => apps.quake2_demo.args);
-    assert(/\+set\s+vid_ref\s+soft/i.test(args), `software renderer missing from args: ${args}`);
-    assert(/\+map\s+demo1/i.test(args), `browser launch must explicitly enter demo1: ${args}`);
+    const menuArgs = await page.evaluate(() => apps.quake2_demo.args);
+    assert(/\+set\s+vid_ref\s+gl/i.test(menuArgs), `OpenGL renderer missing from dropdown args: ${menuArgs}`);
+    assert(/\+menu_main/i.test(menuArgs), `dropdown should start Quake's normal menu: ${menuArgs}`);
+    const args = await page.evaluate(() => {
+      // Keep the user's dropdown on its normal OpenGL menu. This separate
+      // DirectDraw regression explicitly selects software + demo1 so its
+      // acceptance frame remains deterministic software gameplay.
+      apps.quake2_demo.args = '+set vid_ref soft +map demo1';
+      return apps.quake2_demo.args;
+    });
+    assert(/\+map\s+demo1/i.test(args), `test must explicitly enter demo1: ${args}`);
     await page.click('button[onclick="launchApp()"]');
 
     await page.waitForFunction(() => {
@@ -150,6 +190,16 @@ async function main() {
       }
       return colors.size >= 48 && black < canvas.width * canvas.height * 0.75;
     }, { timeout: 120000, polling: 200 });
+
+    // A coloured frame can still be a menu, loading plaque, or frozen first
+    // frame. The forced demo1 map has a moving viewpoint: preserve two raw
+    // 320x240 game-layer frames and require broad world motion between them.
+    await saveGameLayer(page, GAMEPLAY_BEFORE);
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    await saveGameLayer(page, GAMEPLAY_AFTER);
+    const gameplayMotion = changedPixels(
+      PNG.sync.read(fs.readFileSync(GAMEPLAY_BEFORE)),
+      PNG.sync.read(fs.readFileSync(GAMEPLAY_AFTER)));
 
     const result = await page.evaluate(() => {
       const app = runningApps.find(item => item && item.name === 'quake2_demo');
@@ -194,6 +244,9 @@ async function main() {
     assert.deepStrictEqual([result.frame.width, result.frame.height], [320, 240]);
     assert(result.frame.colors >= 48 && result.frame.black < result.frame.total * 0.75,
       `Quake DirectDraw layer is black: ${JSON.stringify(result.frame)}`);
+    assert(gameplayMotion.changed > gameplayMotion.total * 0.08 &&
+      gameplayMotion.largeChange > gameplayMotion.total * 0.02,
+    `Quake demo world did not move: ${JSON.stringify(gameplayMotion)}`);
     assert(result.layout.pageFullscreen, `phone launch missed page fullscreen: ${JSON.stringify(result.layout)}`);
     assert(result.layout.canvas.top <= 1 && result.layout.canvas.height >= result.layout.innerHeight - 1,
       `game canvas is shifted below the visible viewport: ${JSON.stringify(result.layout)}`);
@@ -202,8 +255,9 @@ async function main() {
     assert.strictEqual(problems.length, 0, `browser runtime failures:\n${problems.join('\n')}`);
 
     console.log(`PASS Quake II dropdown renders ${result.frame.colors} DirectDraw colors`);
+    console.log(`PASS Quake II demo world moves across ${gameplayMotion.changed}/${gameplayMotion.total} pixels`);
     console.log(`PASS phone viewport centre renders ${centre.colors} colors (${centre.black}/${centre.total} black)`);
-    console.log(`Screenshot: ${SCREENSHOT}`);
+    console.log(`Screenshots: ${GAMEPLAY_BEFORE}, ${GAMEPLAY_AFTER}, ${SCREENSHOT}`);
   } finally {
     await browser.close();
     await new Promise(resolve => server.close(resolve));

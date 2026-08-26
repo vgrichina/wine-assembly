@@ -370,6 +370,11 @@
   (func (export "get_sync_msg_depth") (result i32) (global.get $sync_msg_depth))
   (func (export "set_current_thread_id") (param i32) (global.set $current_thread_id (local.get 0)))
   (func (export "get_image_base") (result i32) (global.get $image_base))
+  ;; Read-only host bridge for guest pointers embedded in GPU command
+  ;; arguments. Unlike image-relative arithmetic, $g2w also resolves sparse
+  ;; VirtualAlloc and the high CreateDIBSection arena.
+  (func (export "guest_to_wasm") (param $guest i32) (result i32)
+    (call $g2w (local.get $guest)))
   (func (export "get_rsrc_rva") (result i32) (global.get $rsrc_rva))
   (func (export "get_thread_alloc") (result i32) (global.get $thread_alloc))
   (func (export "get_cache_clears") (result i32) (global.get $cache_clears))

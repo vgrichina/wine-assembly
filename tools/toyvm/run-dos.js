@@ -240,6 +240,22 @@ async function runDos(o) {
     traceInt = false, noCache = false, shots = null, shotEvery = 20,
     mouse = [0, 0], cpu = 386, report = false, log = console.log, autoKey = false,
     tickScale = 1, sample = false, sampleAfter = 0, forceChained = false,
+    // One timer interrupt per this many dispatches. 100k is about 10ms of a
+    // real 486, so it lands near the 18.2Hz the BIOS programs -- and a demo
+    // that reprogrammed the PIT for music gets a slower clock than it asked
+    // for, which costs it tempo and nothing else. Raise it and an ISR-heavy
+    // demo gets more of its own budget; lower it and its animation is smoother
+    // per dispatch. It is a knob for the same reason tickScale is.
+    irqEvery = 100e3,
+    // Where to keep the best frame the run ever had, rather than the last one.
+    //
+    // The last frame is the wrong one surprisingly often. manhatan.exe draws a
+    // full-screen ANSI advertisement, pans it, and quits on a keypress -- and
+    // since the answerer supplies that keypress, the photograph at the end of
+    // the run is the two-line sign-off it exits on. Same story for a demo that
+    // clears the screen on its way out. Fullness is the tiebreak: non-black
+    // pixels in a graphics mode, non-blank cells in text.
+    bestPng = null,
   } = o;
   setCpuLevel(cpu);
 
@@ -320,9 +336,25 @@ async function runDos(o) {
   }
 
   // --- the loop ------------------------------------------------------------
+  let bestScore = -1, bestSurface = null, bestText = '';
+  function keepBest() {
+    const s = screenSurface(machine);
+    const score = s.text ? conCells(machine.con) : nonBlack(vm.mem, s.geom);
+    if (score <= bestScore) return;
+    bestScore = score;
+    bestSurface = s;
+    // The words that go with the picture. Taken here rather than at the end
+    // for the same reason the picture is: they have to describe the same
+    // moment, or a caption ends up under a screen it was never on.
+    bestText = s.text ? conText(machine.con) : '';
+    if (s.text) writeConsolePng(bestPng, machine.con);
+    else writePng(bestPng, vm.mem, machine.palette, s.geom);
+  }
+
   const t0 = process.hrtime.bigint();
   let guestNs = 0n;
-  let dispatched = 0, handbacks = 0, ints = 0, shotN = 0, stuck = 0, stuckAt = null;
+  let dispatched = 0, handbacks = 0, ints = 0, irqs = 0, shotN = 0, stuck = 0, stuckAt = null;
+  let lastIrq = 0;
   let lastKey = '', lastWritten = 0;
   const entryHist = new Map();
   const ipSamples = new Map();
@@ -350,12 +382,21 @@ async function runDos(o) {
         setResultCf: (on) => wr(4, on ? (rd(4) | 1) : (rd(4) & ~1)),
         setResultZf: (on) => wr(4, on ? (rd(4) | 0x40) : (rd(4) & ~0x40)),
       };
+      // The registers as they ARRIVED. Logging them after the call showed the
+      // answer where the question belongs: an INT 16h AH=00 that returned 'a'
+      // printed as `ax=1e61`, which reads exactly like a program calling a
+      // function 1Eh that does not exist. The call is what the log is for, so
+      // the return goes after an arrow instead.
+      const before = ['ax', 'bx', 'cx', 'dx'].map(n => vm.get(n));
       const ok = machine.service(vec, r);
       if (traceInt) {
-        log(`int ${vec.toString(16).padStart(2, '0')}h ax=${vm.get('ax').toString(16)}`
-          + ` bx=${vm.get('bx').toString(16)} cx=${vm.get('cx').toString(16)}`
-          + ` dx=${vm.get('dx').toString(16)}`
-          + `  from ${rd(2).toString(16)}:${rd(0).toString(16)}${ok ? '' : '   UNHANDLED'}`);
+        const at = `${rd(2).toString(16)}:${rd(0).toString(16)}`;
+        const now = vm.get('ax');
+        log(`int ${vec.toString(16).padStart(2, '0')}h ax=${before[0].toString(16)}`
+          + ` bx=${before[1].toString(16)} cx=${before[2].toString(16)}`
+          + ` dx=${before[3].toString(16)}`
+          + `  from ${at}${now === before[0] ? '' : ` -> ax=${now.toString(16)}`}`
+          + `${ok ? '' : '   UNHANDLED'}`);
       }
       // IRET, performed here so the stub is one byte and never executes.
       vm.set('gip', rd(0));
@@ -421,6 +462,50 @@ async function runDos(o) {
     machine.setTicks(machine.ticks + tickScale);
     machine.mouse.dx += mouse[0]; machine.mouse.dy += mouse[1];
 
+    // Deliver the timer interrupt, if the program asked to be called.
+    //
+    // Advancing the tick word is not the same service: a demo that hooks INT
+    // 08h waits on a counter ITS handler increments, and with nothing ever
+    // calling it the program spins on a value that can never change. This is
+    // the one place in the loop where the guest's cs:gip is a real instruction
+    // boundary -- mid-trace it is not -- so it is the only place an interrupt
+    // can be pushed in front of it.
+    //
+    // IF is the whole re-entrancy guard, and it is the same one the hardware
+    // uses: the injected frame clears it exactly as `int` does, and the ISR's
+    // own IRET puts it back. So an ISR cannot be interrupted by the next tick
+    // unless it re-enabled interrupts itself, which is a decision the program
+    // is entitled to make.
+    // The rate is in guest WORK, not in handbacks. Once per handback is not a
+    // rate at all: an ISR that ends in IRET ends its trace, so the very next
+    // handback is the one it just returned on, and injecting there again gives
+    // the interrupted program zero instructions between interrupts. brainbug
+    // spent 30M dispatches that way -- 3.6M interrupts, 8 dispatches apiece,
+    // and the main loop never ran once.
+    const tvec = machine.timerVector();
+    if (tvec && dispatched - lastIrq >= irqEvery && (vm.get('flags') & 0x200)) {
+      lastIrq = dispatched;
+      const push = (v) => {
+        const sp = (vm.get('sp') - 2) & 0xFFFF;
+        vm.set('sp', sp);
+        const at = ((vm.get('ss') << 4) + sp) & 0xFFFFF;
+        vm.mem[at] = v & 0xFF; vm.mem[at + 1] = (v >> 8) & 0xFF;
+      };
+      push(vm.get('flags'));
+      push(vm.get('cs'));
+      push(vm.get('gip'));
+      vm.set('flags', vm.get('flags') & ~0x300);       // IF and TF, as `int` does
+      const at = tvec << 2;
+      vm.set('gip', vm.mem[at] | (vm.mem[at + 1] << 8));
+      vm.set('cs', vm.mem[at + 2] | (vm.mem[at + 3] << 8));
+      irqs++;
+    }
+
+    // Keep the fullest frame. Sampled rather than continuous: scanning the
+    // surface is cheap next to a batch, but not next to a handback, and a
+    // program can hand back every hundred dispatches.
+    if (bestPng && handbacks % 32 === 0) keepBest();
+
     if (shots && handbacks % shotEvery === 0 && machine.videoMode === 0x13) {
       writePng(path.join(shots, `f${String(shotN++).padStart(4, '0')}.png`),
         vm.mem, machine.palette, vgaGeometry(machine.vga));
@@ -437,20 +522,30 @@ async function runDos(o) {
     // 21h at all, so counting calls would go back to declaring exactly those
     // programs hung. The page is 4000 bytes and this runs once per handback,
     // which is a few hundred times over a whole run.
+    //
+    // A delivered timer interrupt counts as progress on its own. An IRQ-driven
+    // demo re-enters its wait loop at one fixed address forever by design --
+    // that is what waiting on a counter LOOKS like -- so the address test
+    // declares every one of them hung within 200 handbacks. brainbug.exe was
+    // cut off after 0.6M of its 30M dispatches for exactly this reason, one
+    // handback after the first interrupt it had ever been sent.
     const key = `${cs.toString(16)}:${vm.get('gip').toString(16)}`;
-    const wrote = machine.con.written + (machine.videoMode === 3 ? conCells(machine.con) : 0);
+    const wrote = machine.con.written + irqs
+      + (machine.videoMode === 3 ? conCells(machine.con) : 0);
     stuck = (key === lastKey && wrote === lastWritten) ? stuck + 1 : 0;
     lastKey = key;
     lastWritten = wrote;
     if (stuck > 200) { stuckAt = key; break; }
   }
 
+  if (bestPng) keepBest();
   const surface = screenSurface(machine);
   return {
+    bestScore, bestSurface, bestText,
     variant, exe, vm, machine, jtab,
     secs: Number(process.hrtime.bigint() - t0) / 1e9,
     guestSecs: Number(guestNs) / 1e9,
-    dispatched, handbacks, ints, compiles, compiledWords, arenaResets,
+    dispatched, handbacks, ints, irqs, compiles, compiledWords, arenaResets,
     stuckAt, entryHist, unimplemented, ipSamples, ipSampleLog, regions,
     // A program that never put the adapter in a graphics mode has no frame to
     // count, and reading A000 anyway is how ACME-SUX.EXE and AKM_DOB.EXE came
@@ -513,6 +608,7 @@ async function main() {
     autoKey: flag('auto-key'),
     forceChained: flag('chain4'),
     tickScale: Number(arg('tick-scale', 1)),
+    irqEvery: count(arg('irq-every'), 100e3),
   });
 
   // A text-mode program's picture is its console, not the graphics window --
@@ -526,7 +622,8 @@ async function main() {
 
   if (r.stuckAt) console.log(`stuck at ${r.stuckAt} -- no progress in 200 handbacks`);
   console.log(`\n${path.basename(exe)}  variant=${r.variant}  ${r.secs.toFixed(2)}s`);
-  console.log(`  ${r.handbacks} handbacks, ${r.ints} interrupts, ${r.compiles} traces `
+  console.log(`  ${r.handbacks} handbacks, ${r.ints} interrupts`
+    + `${r.irqs ? ` (+${r.irqs} timer IRQs delivered)` : ''}, ${r.compiles} traces `
     + `(${(r.compiledWords * 4 / 1024).toFixed(0)}KB of arena, ${r.arenaResets} recycles)`);
   const v = r.video;
   // What was rendered, then what the CRTC says when that is something else --

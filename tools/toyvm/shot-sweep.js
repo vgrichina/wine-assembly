@@ -67,18 +67,21 @@ function shotName(exe, dir, used) {
 
 // --- child: one program, one run --------------------------------------------
 async function runOne(exe, png, o) {
-  const { runDos, writePng, writeConsolePng, conText } = require('./run-dos');
+  const { runDos } = require('./run-dos');
+  // runDos writes the picture itself, and writes the FULLEST one rather than
+  // the last: a demo that quits on the keypress the answerer supplied, or that
+  // clears the screen on its way out, is otherwise photographed empty.
   const r = await runDos({
-    exe, variant: 'tailcall', budget: o.budget, cpu: o.cpu, log: () => {}, autoKey: o.autoKey,
+    exe, variant: 'tailcall', budget: o.budget, cpu: o.cpu, log: () => {},
+    autoKey: o.autoKey, bestPng: png,
   });
-  const text = r.surface.text;
-  if (text) writeConsolePng(png, r.machine.con);
-  else writePng(png, r.vm.mem, r.machine.palette, r.surface.geom);
+  const text = r.bestSurface.text;
   return {
     name: path.basename(exe), exe, png, surface: text ? 'console' : 'vga',
     mode: r.video.mode, width: r.video.width, height: r.video.height,
     planar: !!r.video.planar, bpp: r.video.bpp,
-    dispatched: r.dispatched, pixels: r.pixels, cells: r.text.cells,
+    dispatched: r.dispatched,
+    pixels: text ? 0 : r.bestScore, cells: text ? r.bestScore : r.text.cells,
     written: r.text.written, stuckAt: r.stuckAt || null,
     blockedOnKey: !!r.machine.blockedOnKey, autoKey: !!o.autoKey,
     // What the screen says, when it says anything. Worth recording alongside
@@ -86,7 +89,7 @@ async function runOne(exe, png, o) {
     // you exactly why it will not run -- "File Not Found", "Select an output
     // device", "Runtime error 100" -- and that is a different work list from
     // the one an opcode census produces.
-    screen: r.text.cells ? conText(r.machine.con).slice(0, 2000) : '',
+    screen: (r.bestText || '').slice(0, 2000),
   };
 }
 

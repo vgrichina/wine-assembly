@@ -85,7 +85,11 @@ function loadExe(mem, buf, { loadSeg = LOAD_SEG, pspSeg = PSP_SEG } = {}) {
   // segment register equal, which is why it needs no fixups at all. The corpus
   // has both, and several .COM files are named .EXE and vice versa, so the
   // first two bytes are the only trustworthy test.
-  if (buf[0] !== 0x4D || buf[1] !== 0x5A) return loadCom(mem, buf, { pspSeg });
+  // "ZM" is the other signature DOS accepts, and it is not a curiosity: one
+  // program in this corpus (CAVEIRA.COM) is a real EXE carrying it, and read as
+  // a .COM it entered at its own MZ header and ran off into the weeds.
+  const mz = (buf[0] === 0x4D && buf[1] === 0x5A) || (buf[0] === 0x5A && buf[1] === 0x4D);
+  if (!mz) return loadCom(mem, buf, { pspSeg });
   const u16 = (o) => buf.readUInt16LE(o);
   const lastPage = u16(0x02), pages = u16(0x04);
   const relocCount = u16(0x06), headerParas = u16(0x08);
@@ -461,6 +465,7 @@ class Machine {
     this.autoKey = !!opts.autoKey;
     this.autoKeyAt = 0;
     this.autoKeyScreen = null;   // the screen the last menu answer was read off
+    this.autoKeyQueue = [];      // the rest of a multi-character typed answer
     this.autoKeyRead = 0;        // keys chosen by reading, not by rotating
     this.forceChained = !!opts.forceChained;
     this.mouse = { x: 160, y: 100, buttons: 0, dx: 0, dy: 0 };
@@ -570,6 +575,25 @@ class Machine {
     if (!lines.length) return null;
     const key = (ch) => ({ ah: SCAN[ch.toLowerCase()] ?? 0, al: ch.charCodeAt(0) });
 
+    // The last line first, because it is the question actually being asked.
+    // Everything above it is scrollback: cchop.exe leaves its "a. PC Speaker /
+    // p. No sound" menu on screen while it asks "Enter mix speed:", and a
+    // reader that scans the whole screen answers the question it already
+    // answered a moment ago.
+    //
+    // A line ending in a colon wants a NUMBER typed, and one keystroke is the
+    // wrong shape of answer entirely -- every single character cchop was
+    // offered ended in "Runtime error 006", Turbo Pascal for "not a number".
+    // The prompt usually names the value it wants in the sentence above it
+    // ("10000 is recommended for most computers"), so use that when it is
+    // there.
+    const all = lines.join('\n');
+    const tail = lines[lines.length - 1] || '';
+    if (/\b(enter|input|type)\b[^:]{0,40}:\s*$/i.test(tail) && !/press/i.test(tail)) {
+      const rec = /(\d{2,6})\s*(?:is\s+)?(?:recommended|default|suggested)/i.exec(all);
+      return [...(rec ? rec[1] : '1')].map(ch => key(ch)).concat([{ ah: 0x1C, al: 0x0D }]);
+    }
+
     // "[1] a GUS or no Sound card at all" and "p. No sound" are the same shape:
     // a single-character selector, then the label it selects.
     const opts = [];
@@ -580,7 +604,6 @@ class Machine {
     const silent = opts.find(o => SILENT_LABEL.test(o.label));
     if (silent) return key(silent.ch);
 
-    const all = lines.join('\n');
     // A yes/no question. Answer it the way that avoids hardware we do not
     // have; every one of these in the corpus is asking about a sound card.
     if (/\[\s*y\s*\/\s*n\s*\]|\(\s*y\s*\/\s*n\s*\)|\by\s*\/\s*n\b/i.test(all)) {
@@ -603,13 +626,37 @@ class Machine {
     // Read the menu first, but only once per screen: if the program is still
     // showing the same thing after being sent the key it asked for, that key
     // was not the answer and repeating it forever is how a run hangs politely.
+    // A typed answer is more than one keystroke, so it queues; the program
+    // reads it one INT 16h at a time exactly as it would from a real typist.
+    if (this.autoKeyQueue.length) return this.autoKeyQueue.shift();
     const shown = this.screenText().join('\n');
     if (shown !== this.autoKeyScreen) {
       this.autoKeyScreen = shown;
       const k = this.menuKey();
+      if (Array.isArray(k)) {
+        this.autoKeyRead++;
+        this.autoKeyQueue = k.slice(1);
+        return k[0];
+      }
       if (k) { this.autoKeyRead++; return k; }
     }
     return AUTO_KEYS[this.autoKeyAt++ % AUTO_KEYS.length];
+  }
+
+  // One typed line, terminated with CR LF, or null when nothing is waiting and
+  // nothing is answering. Characters come from the injected queue first and the
+  // menu reader second, exactly as a single-key read does -- so a screen that
+  // asks a question in the shape the reader understands gets its answer typed
+  // in full, and one that does not gets the rotation, one character per line.
+  typedLine(max) {
+    let s = '';
+    for (let i = 0; i < Math.max(0, Math.min(max, 255) - 2); i++) {
+      const k = this.keys.shift() || this.autoKeyNext();
+      if (!k) return s ? `${s}\r\n` : null;
+      if (k.al === 0x0D) break;
+      if (k.al >= 0x20 && k.al < 0x7F) s += String.fromCharCode(k.al);
+    }
+    return `${s}\r\n`;
   }
 
   setMemory(mem) {
@@ -688,6 +735,32 @@ class Machine {
     this.mem[at + 1] = (this.ticks >> 8) & 0xFF;
     this.mem[at + 2] = (this.ticks >> 16) & 0xFF;
     this.mem[at + 3] = (this.ticks >> 24) & 0xFF;
+  }
+
+  // Has the guest taken a vector over, or is it still ours?
+  //
+  // Every vector starts out pointing into the stub segment, so "not the stub
+  // segment" is exactly "the program installed its own handler". No bookkeeping
+  // in the INT 21h AH=25 path is needed, and a program that writes the IVT
+  // directly -- which several here do, since it is two stores -- is caught too.
+  hookedVector(v) {
+    const at = v << 2;
+    return (this.mem[at + 2] | (this.mem[at + 3] << 8)) !== STUB_SEG;
+  }
+
+  // Which vector a timer tick should be delivered through, or 0 for none.
+  //
+  // A demo that hooks INT 08h is not asking for the BIOS tick word -- it is
+  // asking to be CALLED. brainbug.exe installs a handler, clears the screen and
+  // then waits for a counter its own ISR increments; with no interrupt ever
+  // delivered it sat on a black mode X frame for 20M dispatches and read
+  // exactly like a broken decoder. INT 1Ch is the same deal one level up: the
+  // BIOS timer handler chains to it, so a program that only hooks 1Ch expects
+  // the same call.
+  timerVector() {
+    if (this.hookedVector(0x08)) return 0x08;
+    if (this.hookedVector(0x1C)) return 0x1C;
+    return 0;
   }
 
   // --- ports ---------------------------------------------------------------
@@ -952,6 +1025,11 @@ class Machine {
           return true;
         }
         return false;
+      // The BIOS timer handler, and the user hook it chains to. An ISR that
+      // ends by jumping to the vector it saved arrives here, and the honest
+      // answer is "nothing left to do": the tick word is already advancing and
+      // there is no PIC to acknowledge.
+      case 0x08: case 0x1C: return true;
       case 0x20: this.exited = true; this.exitCode = 0; return true;
       case 0x21: return this.int21(ah, al, r);
       case 0x2D: return this.xms(ah, r);        // reached from the XMS stub
@@ -1211,6 +1289,18 @@ class Machine {
         r.set('ax', (r.get('ax') & 0xFF00) | (k ? k.al & 0xFF : 0));
         return true;
       }
+      case 0x0A: {                              // buffered input, DS:DX
+        const at = ((r.get('ds') << 4) + r.get('dx')) & 0xFFFFF;
+        const max = this.mem[at];
+        const line = this.typedLine(max);
+        if (line === null) { this.blockedOnKey = true; return true; }
+        const body = line.replace(/\r\n$/, '');
+        this.mem[at + 1] = body.length;
+        for (let i = 0; i < body.length; i++) this.mem[at + 2 + i] = body.charCodeAt(i);
+        this.mem[at + 2 + body.length] = 0x0D;   // the CR stays in the buffer
+        this.conPuts(`${body}\r\n`);
+        return true;
+      }
       case 0x0B: {                              // check standard input status
         r.set('ax', (r.get('ax') & 0xFF00) | (this.keys.length ? 0xFF : 0x00));
         return true;
@@ -1268,6 +1358,21 @@ class Machine {
       case 0x3F: {                              // read
         const f = this.files.get(r.get('bx') & 0xFFFF);
         const n = r.get('cx') & 0xFFFF;
+        // Handle 0 is the keyboard, and a whole line of it. This is how Turbo
+        // Pascal's readln reads -- not INT 16h -- so cchop.exe asked "Enter mix
+        // speed:", got a failed read on a handle it had never opened, and
+        // exited with runtime error 006 before drawing anything. A read that
+        // returns no bytes is an empty line, and an empty line is not a number.
+        if ((r.get('bx') & 0xFFFF) === 0) {
+          const line = this.typedLine(n);
+          if (line === null) { this.blockedOnKey = true; r.set('ax', 0); return true; }
+          const at0 = ((r.get('ds') << 4) + r.get('dx')) & 0xFFFFF;
+          for (let i = 0; i < line.length; i++) this.mem[at0 + i] = line.charCodeAt(i);
+          this.conPuts(line.replace(/\r\n$/, '\r\n'));
+          r.set('ax', line.length);
+          r.setResultCf(false);
+          return true;
+        }
         if (!f) { r.setResultCf(true); r.set('ax', 6); return true; }   // bad handle
         const at = ((r.get('ds') << 4) + r.get('dx')) & 0xFFFFF;
         const got = Math.max(0, Math.min(n, f.buf.length - f.pos));
