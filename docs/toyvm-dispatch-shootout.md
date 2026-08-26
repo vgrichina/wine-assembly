@@ -552,6 +552,60 @@ bit group landed its only remaining give-up site is a run of `ff` padding at
 different bug in a different layer, and the third case in this document of an
 ISA fill being correct and buying no pixels.
 
+### 7.3 159 of the 199 programs were never in graphics mode
+
+Everything above §7.2 is about programs that reach mode 13h. That was never
+most of the corpus. **159 of 199 never leave mode 3h**, and the capture path
+read A000 for all of them — which in text mode holds nothing — so they all came
+back as the same black rectangle, indistinguishable from a program that trapped
+on its first instruction. Forty rows of the sweep were being read; the other
+159 were being assumed. Two of them, ACME-SUX.EXE and AKM_DOB.EXE, went further
+and reported ~61,700 "pixels" each: nonzero palette indices against a DAC
+neither program ever loaded.
+
+The fix has three parts, and only the first is about rendering.
+
+**The text page is guest memory.** 80×25 cells of `{character, attribute}` at
+`B800:0000`. The first version of the console kept that grid in a private array
+fed by the DOS and BIOS teletype calls, which works on the programs that use
+them — and most of these do not, because painting a text screen through
+`INT 21h` is slow and the scene knew it. They store straight into B800. The
+grid stayed blank for exactly the programs that had drawn the most. It is now
+backed by the guest's own memory at `0xB8000`, so `INT 21h`, the BIOS and a
+direct store all land in the same bytes. The surface to photograph is chosen by
+`vga.bpp === 0` (never established a graphics mode) rather than by the mode
+number, because a demo can retime the CRTC underneath mode 13h.
+
+**A blocking key read with an empty queue is not AL=0.** `INT 21h AH=01/07/08`
+and `INT 16h AH=00/10` block. Returning AL=0 from them is not "no key" — it is
+the character NUL, delivered as though it had been typed, and every *press any
+key* prompt in the corpus was answering itself. a-note.exe took the phantom key,
+called `INT 10h AH=00` to restore mode 3 on the way out (which clears the
+screen) and exited in 5,434 dispatches: from outside, a program that never drew
+anything. A blocking read with nothing queued now sets `blockedOnKey` and stops
+the run, which is both closer to the hardware and the moment worth capturing.
+`run-dos.js` reports it; `shot-sweep.js` retries such a run with `--auto-key`
+and keeps whichever frame has more on it.
+
+**Then the corpus started explaining itself.** With the page visible, a class of
+program appeared that had been invisible: the ones that print two lines and
+stop. Seven print some version of *you need a VGA card*, and none of them was
+wrong about what it had been told — `INT 10h AH=1Ah` (get display combination
+code) and `AH=12h BL=10h` (EGA/VGA information) were both answered with AX=0,
+which is not a null answer but precisely the *function not supported* reply an
+8086-era CGA BIOS gives. Both carry their presence test somewhere unusual —
+AH=1Ah proves itself by returning 1Ah in AL, AH=12h by returning BL *changed*
+from the 10h it was called with — which is how a stubbed zero passes for a
+considered one. About ten more sit on a sound-device menu that ignores Enter and
+wants one specific character, so the harness's synthetic keystroke now rotates
+`p, n, 1, Enter, space, y, a` — leading with the keys that mean *no sound*,
+which is what a headless run wants in every one of these menus.
+
+Coverage over the corpus went from 32 programs putting something on screen to
+**~101**. Every one of those fixes came from reading what the demos printed, not
+from reading their code, and none of them is visible to an opcode census or a
+handler histogram: those programs were decoding and executing perfectly.
+
 ## 8. Still open
 
 * Run the matrix on SpiderMonkey and JavaScriptCore, not just node's V8, and on
@@ -577,10 +631,15 @@ ISA fill being correct and buying no pixels.
   dwords, and the offset register still sets the row stride) is not modelled yet.
   `video-census.js` reports the derived numbers for all 199 programs, and four
   of them retime the CRTC without unchaining, so this is where that picks up.
-* **Text mode is still read as if it were graphics.** ACME-SUX.EXE and
-  AKM_DOB.EXE never leave mode 3h, and the census reports ~61,700 "pixels" for
-  each: it is reading A000 as an 8bpp frame when the picture is a character
-  buffer at B800 that nothing renders. The count is meaningless rather than
-  wrong-looking, which is the worse failure of the two.
+* **What the text screens ask for that we do not have.** §7.3 made the B800
+  page real, and the programs that stop early now say why on it. Two of the five
+  classes were ours and are fixed (VGA detection, sound-device menus); three are
+  still open, and each is a DOS-side gap rather than a CPU one: **no XMS/EMS
+  driver** (4 programs print `HIMEM.SYS NEEDED !!!` or want an expanded-memory
+  manager), **missing companion assets** (5 print `File Not Found`,
+  `Library file corrupt.`, `Can not init file manager` — those are archives and
+  data files the corpus copy does not include, so they may not be fixable here),
+  and **one allocator ceiling** (`This demo needs 600k free to run`). None of
+  these is visible to an opcode census; they were all read off the screen.
 * **Lazy flags vs eager flags** — the question x86-16 was chosen for, and the
   one thing here that has no bearing on dispatch at all.
