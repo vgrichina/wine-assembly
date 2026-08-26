@@ -3327,7 +3327,10 @@
     (local $prev i32)
     (local.set $prev (global.get $current_cursor))
     (global.set $current_cursor (local.get $hcur))
-    (call $host_set_cursor (local.get $hcur))
+    ;; A cursor the guest built from bitmaps carries its own pixels; anything
+    ;; else is an IDC_* or a PE resource the host resolves from the handle.
+    (if (i32.eqz (call $cursor_push (local.get $hcur)))
+      (then (call $host_set_cursor (local.get $hcur))))
     (local.get $prev))
 
   ;; 106: SetCursor(hCursor) — 1 arg stdcall, returns previous HCURSOR.
@@ -3518,6 +3521,224 @@
       (local.get $x) (local.get $y) (local.get $di_flags)))
     (call $pop_rsrc_ctx)
     (local.get $ok))
+
+  ;; ---- CURSOR_TABLE: an HICON/HCURSOR the guest BUILT from bitmaps ----
+  ;; ICON_TABLE remembers {module, resource}; CreateIconIndirect has neither.
+  ;; It hands over an ICONINFO — a hotspot and one or two bitmaps — and games
+  ;; that draw their own pointer (Heroes of Might and Magic II builds one per
+  ;; interface mode) then SetCursor it. Keeping the ICONINFO is what lets the
+  ;; AND/XOR planes be composited later; the constant handle this used to
+  ;; return dropped the bitmaps on the floor and every cursor in the app
+  ;; became the host's default arrow.
+
+  ;; The live record behind a handle, or 0 for a handle we did not intern.
+  (func $cursor_record (param $handle i32) (result i32)
+    (local $slot i32) (local $p i32)
+    (if (i32.ne (i32.and (local.get $handle) (i32.const 0xFFFF0000))
+                (global.get $CURSOR_HANDLE_TAG))
+      (then (return (i32.const 0))))
+    (local.set $slot (i32.and (local.get $handle) (i32.const 0xFFFF)))
+    (if (i32.or (i32.eqz (local.get $slot))
+                (i32.gt_u (local.get $slot) (global.get $MAX_CURSORS)))
+      (then (return (i32.const 0))))
+    (local.set $p (i32.add (global.get $CURSOR_TABLE)
+      (i32.mul (i32.sub (local.get $slot) (i32.const 1))
+               (global.get $CURSOR_TABLE_STRIDE))))
+    ;; A slot with no bitmaps is free, not an empty cursor.
+    (if (i32.and (i32.eqz (i32.load offset=12 (local.get $p)))
+                 (i32.eqz (i32.load offset=16 (local.get $p))))
+      (then (return (i32.const 0))))
+    (local.get $p))
+
+  (func $cursor_intern (param $is_icon i32) (param $xhot i32) (param $yhot i32)
+        (param $mask i32) (param $color i32) (result i32)
+    (local $i i32) (local $p i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_CURSORS)))
+      (local.set $p (i32.add (global.get $CURSOR_TABLE)
+        (i32.mul (local.get $i) (global.get $CURSOR_TABLE_STRIDE))))
+      (if (i32.and (i32.eqz (i32.load offset=12 (local.get $p)))
+                   (i32.eqz (i32.load offset=16 (local.get $p))))
+        (then
+          (i32.store (local.get $p) (local.get $is_icon))
+          (i32.store offset=4 (local.get $p) (local.get $xhot))
+          (i32.store offset=8 (local.get $p) (local.get $yhot))
+          (i32.store offset=12 (local.get $p) (local.get $mask))
+          (i32.store offset=16 (local.get $p) (local.get $color))
+          (i32.store offset=20 (local.get $p) (i32.const 0))
+          (return (i32.or (global.get $CURSOR_HANDLE_TAG)
+            (i32.add (local.get $i) (i32.const 1))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  (func $cursor_width (param $rec i32) (result i32)
+    (call $gdi_bitmap_record_width
+      (call $gdi_object_record (i32.load offset=12 (local.get $rec)))))
+
+  ;; A monochrome cursor's mask bitmap holds both planes stacked: the AND rows
+  ;; on top and the XOR rows below, so the picture is half as tall as it is.
+  ;; With a colour plane the mask is the AND rows alone.
+  (func $cursor_height (param $rec i32) (result i32)
+    (if (i32.load offset=16 (local.get $rec))
+      (then (return (call $gdi_bitmap_record_height
+        (call $gdi_object_record (i32.load offset=16 (local.get $rec)))))))
+    (i32.shr_u (call $gdi_bitmap_record_height
+      (call $gdi_object_record (i32.load offset=12 (local.get $rec))))
+      (i32.const 1)))
+
+  ;; Which raster row holds picture row $row of a cursor plane.
+  ;;
+  ;; CreateBitmap's scanlines run top-down — that is what MSDN documents for a
+  ;; DDB and what every app building a cursor mask writes — but a plain DDB is
+  ;; planned here with no top-down flag, so the raster layer reads it back
+  ;; bottom-up and hands out the picture mirrored. Undo that here rather than
+  ;; in the raster layer, where it would move every existing blit. A real DIB
+  ;; carries its own orientation and is already right.
+  (func $cursor_plane_row (param $hbm i32) (param $desc i32) (param $row i32)
+        (result i32)
+    (local $rec i32)
+    (if (i32.load offset=20 (local.get $desc)) (then (return (local.get $row))))
+    (local.set $rec (call $gdi_object_record (local.get $hbm)))
+    (if (i32.eqz (local.get $rec)) (then (return (local.get $row))))
+    (if (i32.and (i32.load offset=20 (local.get $rec)) (i32.const 1))
+      (then (return (local.get $row))))
+    (i32.sub (i32.sub (i32.load offset=8 (local.get $desc)) (i32.const 1))
+             (local.get $row)))
+
+  ;; Composite the ICONINFO planes into width*height premultiplied BGRA rows,
+  ;; top-down, at $dst. Win32's four AND/XOR combinations are: opaque black,
+  ;; opaque white, transparent, and invert-the-screen. Nothing on a web page
+  ;; can XOR the desktop, so an invert pixel is drawn black — that is what the
+  ;; outline strokes of a monochrome pointer are made of, and dropping them
+  ;; would leave a shape with no edge.
+  (func $cursor_rasterize (param $rec i32) (param $dst i32) (result i32)
+    (local $w i32) (local $h i32) (local $x i32) (local $y i32)
+    (local $mask i32) (local $color i32) (local $and i32) (local $xor i32)
+    (local $rgb i32) (local $p i32) (local $alpha i32)
+    (local.set $w (call $cursor_width (local.get $rec)))
+    (local.set $h (call $cursor_height (local.get $rec)))
+    (if (i32.or (i32.le_s (local.get $w) (i32.const 0))
+                (i32.le_s (local.get $h) (i32.const 0)))
+      (then (return (i32.const 0))))
+    (local.set $mask (global.get $CURSOR_MASK_DESC))
+    (if (i32.eqz (call $gdi_raster_desc_from_bitmap
+          (i32.load offset=12 (local.get $rec)) (local.get $mask)))
+      (then (return (i32.const 0))))
+    (if (i32.load offset=16 (local.get $rec))
+      (then
+        (local.set $color (global.get $CURSOR_COLOR_DESC))
+        (if (i32.eqz (call $gdi_raster_desc_from_bitmap
+              (i32.load offset=16 (local.get $rec)) (local.get $color)))
+          (then (return (i32.const 0))))))
+    (local.set $y (i32.const 0))
+    (block $rows_done (loop $rows
+      (br_if $rows_done (i32.ge_s (local.get $y) (local.get $h)))
+      (local.set $x (i32.const 0))
+      (block $cols_done (loop $cols
+        (br_if $cols_done (i32.ge_s (local.get $x) (local.get $w)))
+        ;; A mask read that fails reads as "transparent" rather than as a
+        ;; black pixel: a truncated mask must not paint a block of ink.
+        (local.set $and (call $gdi_raster_read_index
+          (local.get $mask) (local.get $x)
+          (call $cursor_plane_row (i32.load offset=12 (local.get $rec))
+            (local.get $mask) (local.get $y))))
+        (if (i32.lt_s (local.get $and) (i32.const 0))
+          (then (local.set $and (i32.const 1))))
+        (local.set $alpha (i32.const 255))
+        (local.set $rgb (i32.const 0))
+        (if (local.get $color)
+          (then
+            (if (local.get $and)
+              (then (local.set $alpha (i32.const 0)))
+              (else
+                (local.set $rgb (call $gdi_raster_read
+                  (local.get $color) (local.get $x)
+                  (call $cursor_plane_row (i32.load offset=16 (local.get $rec))
+                    (local.get $color) (local.get $y))))
+                (if (i32.lt_s (local.get $rgb) (i32.const 0))
+                  (then (local.set $rgb (i32.const 0)))))))
+          (else
+            (local.set $xor (call $gdi_raster_read_index (local.get $mask)
+              (local.get $x)
+              (call $cursor_plane_row (i32.load offset=12 (local.get $rec))
+                (local.get $mask) (i32.add (local.get $y) (local.get $h)))))
+            (if (i32.lt_s (local.get $xor) (i32.const 0))
+              (then (local.set $xor (i32.const 0))))
+            (if (local.get $and)
+              (then
+                ;; AND=1: leave the screen alone (XOR=0) or invert it (XOR=1).
+                (if (i32.eqz (local.get $xor))
+                  (then (local.set $alpha (i32.const 0)))))
+              (else
+                (if (local.get $xor)
+                  (then (local.set $rgb (i32.const 0xFFFFFF))))))))
+        (local.set $p (i32.add (local.get $dst)
+          (i32.shl (i32.add (i32.mul (local.get $y) (local.get $w))
+                            (local.get $x)) (i32.const 2))))
+        (if (local.get $alpha)
+          (then
+            (i32.store8 (local.get $p) (local.get $rgb))                       ;; B
+            (i32.store8 offset=1 (local.get $p)
+              (i32.shr_u (local.get $rgb) (i32.const 8)))                      ;; G
+            (i32.store8 offset=2 (local.get $p)
+              (i32.shr_u (local.get $rgb) (i32.const 16)))                     ;; R
+            (i32.store8 offset=3 (local.get $p) (i32.const 255)))
+          (else (i32.store (local.get $p) (i32.const 0))))
+        (local.set $x (i32.add (local.get $x) (i32.const 1)))
+        (br $cols)))
+      (local.set $y (i32.add (local.get $y) (i32.const 1)))
+      (br $rows)))
+    (i32.const 1))
+
+  ;; Present an interned cursor. Returns 0 for any handle we did not intern,
+  ;; leaving the IDC_*/resource path in host_set_cursor untouched.
+  (func $cursor_push (param $handle i32) (result i32)
+    (local $rec i32) (local $w i32) (local $h i32) (local $ga i32) (local $wa i32)
+    (local.set $rec (call $cursor_record (local.get $handle)))
+    (if (i32.eqz (local.get $rec)) (then (return (i32.const 0))))
+    (local.set $w (call $cursor_width (local.get $rec)))
+    (local.set $h (call $cursor_height (local.get $rec)))
+    (if (i32.or (i32.le_s (local.get $w) (i32.const 0))
+                (i32.le_s (local.get $h) (i32.const 0)))
+      (then (return (i32.const 0))))
+    ;; Already composited once: the host keeps the picture under this handle.
+    (if (i32.load offset=20 (local.get $rec))
+      (then
+        (call $host_set_cursor_image (local.get $handle)
+          (local.get $w) (local.get $h)
+          (i32.load offset=4 (local.get $rec)) (i32.load offset=8 (local.get $rec))
+          (i32.const 0))
+        (return (i32.const 1))))
+    (local.set $ga (call $dib_alloc
+      (i32.shl (i32.mul (local.get $w) (local.get $h)) (i32.const 2))))
+    (if (i32.eqz (local.get $ga)) (then (return (i32.const 0))))
+    (local.set $wa (call $g2w (local.get $ga)))
+    (if (i32.eqz (call $cursor_rasterize (local.get $rec) (local.get $wa)))
+      (then
+        (call $dib_free_wasm (local.get $wa))
+        (return (i32.const 0))))
+    (call $host_set_cursor_image (local.get $handle)
+      (local.get $w) (local.get $h)
+      (i32.load offset=4 (local.get $rec)) (i32.load offset=8 (local.get $rec))
+      (local.get $wa))
+    (call $dib_free_wasm (local.get $wa))
+    (i32.store offset=20 (local.get $rec) (i32.const 1))
+    (i32.const 1))
+
+  ;; Release a built icon/cursor. The bitmaps are ours — CreateIconIndirect
+  ;; copies what the caller passed, exactly as Win32 does, so the app is free
+  ;; to delete its originals the moment it returns.
+  (func $cursor_destroy (param $handle i32) (result i32)
+    (local $rec i32)
+    (local.set $rec (call $cursor_record (local.get $handle)))
+    (if (i32.eqz (local.get $rec)) (then (return (i32.const 0))))
+    (if (i32.load offset=12 (local.get $rec))
+      (then (drop (call $gdi_object_delete_full (i32.load offset=12 (local.get $rec))))))
+    (if (i32.load offset=16 (local.get $rec))
+      (then (drop (call $gdi_object_delete_full (i32.load offset=16 (local.get $rec))))))
+    (memory.fill (local.get $rec) (i32.const 0) (global.get $CURSOR_TABLE_STRIDE))
+    (i32.const 1))
 
   ;; 109: LoadIconA(hInstance, lpIconName)
   (func $handle_LoadIconA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -7582,8 +7803,10 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 36)))
   )
 
-  ;; 388: DestroyIcon(hIcon) — 1 arg stdcall, return TRUE
+  ;; 388: DestroyIcon(hIcon) — 1 arg stdcall, return TRUE. A resource icon has
+  ;; nothing behind it to free; one built from bitmaps owns its copies.
   (func $handle_DestroyIcon (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (drop (call $cursor_destroy (local.get $arg0)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
@@ -11723,10 +11946,12 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
 
   ;; 677: DestroyCursor — STUB: unimplemented
   ;; DestroyCursor(hCursor). LoadCursor hands back an encoded handle with no
-  ;; allocation behind it, so there is nothing to release — same situation as
-  ;; DestroyIcon. A NULL handle is still an error, which is the one part of
-  ;; the contract a caller can actually observe.
+  ;; allocation behind it, so there is nothing to release; a cursor built by
+  ;; CreateCursor/CreateIconIndirect owns its bitmaps and releases them here.
+  ;; A NULL handle is still an error, which is the one part of the contract a
+  ;; caller can actually observe.
   (func $handle_DestroyCursor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (drop (call $cursor_destroy (local.get $arg0)))
     (global.set $eax (i32.ne (local.get $arg0) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
@@ -12882,30 +13107,127 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
-  ;; 945: CreateIconIndirect(piconinfo) — 1 arg stdcall, return fake icon handle
+  ;; 945: CreateIconIndirect(piconinfo) — 1 arg stdcall, returns an HICON that
+  ;; keeps the ICONINFO. Win32 copies the caller's bitmaps into the icon, so
+  ;; the clones are what CURSOR_TABLE owns and DestroyIcon releases.
   (func $handle_CreateIconIndirect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x00CC0001))  ;; fake icon handle
+    (local $info i32) (local $mask i32) (local $color i32)
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    (if (i32.eqz (local.get $arg0))
+      (then (global.set $eax (i32.const 0)) (return)))
+    (local.set $info (call $g2w (local.get $arg0)))
+    (local.set $mask (call $gdi_bitmap_clone_owned (i32.load offset=12 (local.get $info))))
+    (if (i32.eqz (local.get $mask))
+      (then (global.set $eax (i32.const 0)) (return)))
+    (if (i32.load offset=16 (local.get $info))
+      (then
+        (local.set $color (call $gdi_bitmap_clone_owned (i32.load offset=16 (local.get $info))))
+        (if (i32.eqz (local.get $color))
+          (then
+            (drop (call $gdi_object_delete_full (local.get $mask)))
+            (global.set $eax (i32.const 0))
+            (return)))))
+    (global.set $eax (call $cursor_intern
+      (i32.ne (i32.load (local.get $info)) (i32.const 0))
+      (i32.load offset=4 (local.get $info))
+      (i32.load offset=8 (local.get $info))
+      (local.get $mask) (local.get $color)))
+    (if (i32.eqz (global.get $eax))
+      (then
+        (drop (call $gdi_object_delete_full (local.get $mask)))
+        (if (local.get $color)
+          (then (drop (call $gdi_object_delete_full (local.get $color)))))))
   )
 
+  ;; Stack two 1-bpp planes into the single mask bitmap CURSOR_TABLE stores.
+  ;; Storage rows run bottom-up for a DDB, so the XOR plane — the lower half
+  ;; of the picture's mask in Win32's top-down description — comes first in
+  ;; memory, and the AND plane follows. Both planes share a stride, since both
+  ;; are `width` bits wide.
+  (func $cursor_stack_planes (param $width i32) (param $height i32)
+        (param $and_bits i32) (param $xor_bits i32) (result i32)
+    (local $stride i32) (local $plane i32) (local $ga i32) (local $wa i32)
+    (local $handle i32)
+    (if (i32.or (i32.le_s (local.get $width) (i32.const 0))
+          (i32.or (i32.le_s (local.get $height) (i32.const 0))
+            (i32.or (i32.eqz (local.get $and_bits)) (i32.eqz (local.get $xor_bits)))))
+      (then (return (i32.const 0))))
+    (local.set $stride (i32.shl
+      (i32.shr_u (i32.add (local.get $width) (i32.const 15)) (i32.const 4))
+      (i32.const 1)))
+    (local.set $plane (i32.mul (local.get $stride) (local.get $height)))
+    (local.set $ga (call $dib_alloc (i32.shl (local.get $plane) (i32.const 1))))
+    (if (i32.eqz (local.get $ga)) (then (return (i32.const 0))))
+    (local.set $wa (call $g2w (local.get $ga)))
+    (memory.copy (local.get $wa) (call $g2w (local.get $xor_bits)) (local.get $plane))
+    (memory.copy (i32.add (local.get $wa) (local.get $plane))
+      (call $g2w (local.get $and_bits)) (local.get $plane))
+    (local.set $handle (call $gdi_bitmap_create_bitmap
+      (local.get $width) (i32.shl (local.get $height) (i32.const 1))
+      (i32.const 1) (i32.const 1) (local.get $wa)))
+    (call $dib_free_wasm (local.get $wa))
+    (local.get $handle))
+
   ;; CreateIcon(hInst, nWidth, nHeight, cPlanes, cBitsPixel, lpbANDbits, lpbXORbits)
-  ;; — 7 args stdcall. Same opaque-handle model the rest of the icon APIs use:
-  ;; GetIconInfo reports no bitmaps and DrawIconEx is a no-op, so keeping the
-  ;; AND/XOR masks would give nothing anything to read them. Returning a handle
-  ;; from the same space keeps DestroyIcon and CopyImage consistent.
+  ;; — 7 args stdcall. The AND plane is always monochrome; the XOR plane is a
+  ;; colour bitmap unless cPlanes and cBitsPixel are both 1, in which case the
+  ;; two planes stack into one mask exactly as CreateCursor's do.
   (func $handle_CreateIcon (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x00CC0001))
+    (local $and_bits i32) (local $xor_bits i32) (local $mask i32) (local $color i32)
+    (local.set $and_bits (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (local.set $xor_bits (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 32)))  ;; ret + 7 args
+    (if (i32.and (i32.le_u (local.get $arg3) (i32.const 1))
+                 (i32.le_u (local.get $arg4) (i32.const 1)))
+      (then
+        (local.set $mask (call $cursor_stack_planes
+          (local.get $arg1) (local.get $arg2)
+          (local.get $and_bits) (local.get $xor_bits))))
+      (else
+        (local.set $mask (call $gdi_bitmap_create_bitmap
+          (local.get $arg1) (local.get $arg2) (i32.const 1) (i32.const 1)
+          (select (call $g2w (local.get $and_bits)) (i32.const 0)
+            (i32.ne (local.get $and_bits) (i32.const 0)))))
+        (if (local.get $mask)
+          (then
+            (local.set $color (call $gdi_bitmap_create_bitmap
+              (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
+              (select (call $g2w (local.get $xor_bits)) (i32.const 0)
+                (i32.ne (local.get $xor_bits) (i32.const 0)))))
+            (if (i32.eqz (local.get $color))
+              (then
+                (drop (call $gdi_object_delete_full (local.get $mask)))
+                (local.set $mask (i32.const 0))))))))
+    (if (i32.eqz (local.get $mask))
+      (then (global.set $eax (i32.const 0)) (return)))
+    ;; An icon's hotspot is its centre, which is what GetIconInfo reports.
+    (global.set $eax (call $cursor_intern (i32.const 1)
+      (i32.shr_u (local.get $arg1) (i32.const 1))
+      (i32.shr_u (local.get $arg2) (i32.const 1))
+      (local.get $mask) (local.get $color)))
+    (if (i32.eqz (global.get $eax))
+      (then
+        (drop (call $gdi_object_delete_full (local.get $mask)))
+        (if (local.get $color)
+          (then (drop (call $gdi_object_delete_full (local.get $color)))))))
   )
 
   ;; CreateCursor(hInst, xHotspot, yHotspot, width, height, ANDbits, XORbits)
-  ;; — 7 args stdcall.  Cursor pixels are renderer-side state in this runtime;
-  ;; keep a distinct non-zero opaque handle so callers can select and destroy
-  ;; the cursor, while host_set_cursor safely presents the default pointer for
-  ;; handles that do not encode an IDC_* or PE resource cursor.
+  ;; — 7 args stdcall. Both planes are monochrome, so the cursor is stored the
+  ;; same way CreateIconIndirect stores a monochrome one.
   (func $handle_CreateCursor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x00690001))
+    (local $mask i32)
+    (local.set $mask (call $cursor_stack_planes
+      (local.get $arg3) (local.get $arg4)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
+      (call $gl32 (i32.add (global.get $esp) (i32.const 28)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 32)))  ;; ret + 7 args
+    (if (i32.eqz (local.get $mask))
+      (then (global.set $eax (i32.const 0)) (return)))
+    (global.set $eax (call $cursor_intern (i32.const 0)
+      (local.get $arg1) (local.get $arg2) (local.get $mask) (i32.const 0)))
+    (if (i32.eqz (global.get $eax))
+      (then (drop (call $gdi_object_delete_full (local.get $mask)))))
   )
 
   ;; GetQueueStatus(flags). The high word reports requested categories that
@@ -12969,8 +13291,26 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
   ;; 943: GetIconInfo(hIcon, piconinfo) — 2 args stdcall
   ;; ICONINFO: fIcon(4), xHotspot(4), yHotspot(4), hbmMask(4), hbmColor(4)
   (func $handle_GetIconInfo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ptr i32)
+    (local $ptr i32) (local $rec i32)
     (local.set $ptr (call $g2w (local.get $arg1)))
+    ;; A built icon or cursor knows its own ICONINFO. Win32 hands back copies
+    ;; of the bitmaps and makes the caller delete them, so cloning here is the
+    ;; contract, not caution: returning ours would let the app free them.
+    (local.set $rec (call $cursor_record (local.get $arg0)))
+    (if (local.get $rec)
+      (then
+        (i32.store (local.get $ptr) (i32.load (local.get $rec)))
+        (i32.store offset=4 (local.get $ptr) (i32.load offset=4 (local.get $rec)))
+        (i32.store offset=8 (local.get $ptr) (i32.load offset=8 (local.get $rec)))
+        (i32.store offset=12 (local.get $ptr)
+          (call $gdi_bitmap_clone_owned (i32.load offset=12 (local.get $rec))))
+        (i32.store offset=16 (local.get $ptr)
+          (if (result i32) (i32.load offset=16 (local.get $rec))
+            (then (call $gdi_bitmap_clone_owned (i32.load offset=16 (local.get $rec))))
+            (else (i32.const 0))))
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
     (i32.store (local.get $ptr) (i32.const 1))           ;; fIcon = TRUE (it's an icon)
     (i32.store offset=4 (local.get $ptr) (i32.const 0))  ;; xHotspot
     (i32.store offset=8 (local.get $ptr) (i32.const 0))  ;; yHotspot

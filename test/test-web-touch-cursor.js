@@ -119,6 +119,55 @@ async function main() {
     });
     assert.strictEqual(shaped, 'text', 'the cursor must follow canvas.style.cursor');
 
+    // A cursor the guest BUILT. Heroes of Might & Magic II draws its own
+    // pointer and hands it to CreateIconIndirect, which host-window.js turns
+    // into `url(data:image/x-icon;...) hx hy` -- and no keyword in the pixel
+    // art is a hand. If the sprite falls back to its own arrow here, the phone
+    // shows a cursor the game never drew.
+    const custom = await page.evaluate(async () => {
+      const art = document.createElement('canvas');
+      art.width = 8; art.height = 8;
+      const g = art.getContext('2d');
+      g.fillStyle = '#ff0000';
+      g.fillRect(0, 0, 8, 8);
+      const url = art.toDataURL('image/png');
+      const canvas = document.getElementById('screen');
+      const zoom = canvas.getBoundingClientRect().width / canvas.width;
+      canvas.style.cursor = `url(${url}) 3 5, default`;
+      await new Promise(resolve => setTimeout(resolve, 500));
+      const el = document.getElementById('touch-cursor');
+      const ctx = el.getContext('2d');
+      const mid = ctx.getImageData(Math.floor(el.width / 2), Math.floor(el.height / 2), 1, 1).data;
+      return {
+        zoom,
+        red: [mid[0], mid[1], mid[2], mid[3]],
+        hotX: TouchCursor._hotX,
+        hotY: TouchCursor._hotY,
+        width: el.getBoundingClientRect().width,
+      };
+    });
+    assert(custom.red[3] > 200 && custom.red[0] > 200 && custom.red[1] < 60 && custom.red[2] < 60,
+      `the sprite drew ${JSON.stringify(custom.red)} where the guest's own art should be`);
+    assert(Math.abs(custom.hotX - 3 * custom.zoom) < 0.51
+        && Math.abs(custom.hotY - 5 * custom.zoom) < 0.51,
+      `the guest's hotspot (3,5) became ${custom.hotX},${custom.hotY} at zoom ${custom.zoom}`);
+    // 8 art pixels plus the one-pixel shadow pad, at the app's zoom.
+    assert(Math.abs(custom.width - 9 * custom.zoom) / (9 * custom.zoom) < 0.05,
+      `a 8x8 cursor came out ${custom.width}px wide at zoom ${custom.zoom}`);
+
+    // ... and it goes back to the pixel art when the guest drops the image.
+    const reverted = await page.evaluate(async () => {
+      document.getElementById('screen').style.cursor = 'wait';
+      await new Promise(resolve => setTimeout(resolve, 400));
+      const el = document.getElementById('touch-cursor');
+      const d = el.getContext('2d').getImageData(0, 0, el.width, el.height).data;
+      let red = 0;
+      for (let i = 0; i < d.length; i += 4) if (d[i] > 200 && d[i + 1] < 60) red++;
+      return { shape: TouchCursor._shape, red };
+    });
+    assert.strictEqual(reverted.shape, 'wait', 'the keyword cursor must take over again');
+    assert.strictEqual(reverted.red, 0, 'the guest bitmap is still on the sprite');
+
     // The sprite belongs to the picture, not to the page: the shell blows the
     // screen canvas up to fill the phone, and a cursor drawn at a fixed size
     // is a sticker on top of that -- a 2x arrow over a 320x240 game scaled
