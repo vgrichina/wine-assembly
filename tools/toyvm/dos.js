@@ -35,6 +35,28 @@ const STUB_BYTE = 0xF1;       // ICEBP -- not decoded, so the trace stops on it
 // Memory Manager required !" and exit, which is a driver gap rather than a CPU
 // one: both managers are detected before they are used, and detecting them is
 // most of the work.
+// The three ROM character generators, as [segment, rows, rows of padding on
+// top]. They sit in the ROM area above the EGA/VGA page frame, where the real
+// ones do, and nothing else in the 1MB uses those addresses. An 8-row table
+// takes the body of a 12-row glyph rather than padding it.
+const ROM_FONTS = [
+  [0xF400, 16, 2],   // 8x16, BH=6/7
+  [0xF500, 14, 1],   // 8x14, BH=2/5
+  [0xF600, 8, -2],   // 8x8,  BH=0/1/3/4
+];
+let ROM_STRIKE;
+function romStrike() {
+  if (ROM_STRIKE !== undefined) return ROM_STRIKE;
+  try {
+    const { readStrikes, pickStrike } = require('../fnt-read');
+    const file = require('path').join(__dirname, '..', '..', 'fonts', 'Terminal.fon');
+    ROM_STRIKE = pickStrike(readStrikes(file), 12) || null;
+  } catch {
+    ROM_STRIKE = null;    // no font bundled: the tables stay blank, not wrong
+  }
+  return ROM_STRIKE;
+}
+
 const EMS_NAME = 'EMMXXXX0';  // at handler_segment:000A, the classic EMS probe
 const EMS_FRAME_SEG = 0xE000; // 64K page frame: four 16K physical pages
 const EMS_PAGE = 0x4000;
@@ -616,6 +638,8 @@ class Machine {
     const base = STUB_SEG << 4;
     for (let i = 0; i < EMS_NAME.length; i++) this.mem[base + 0x0A + i] = EMS_NAME.charCodeAt(i);
 
+    this.installRomFonts();
+
     // The XMS control function is not reached through an interrupt: INT 2Fh
     // hands back a far pointer and the program CALLs it. So it has to be three
     // real instructions rather than a stub byte -- `int 2Dh` to get here, then
@@ -623,6 +647,38 @@ class Machine {
     // the interrupt's IRET frame has three.
     const xms = XMS_ENTRY_SEG << 4;
     this.mem[xms] = 0xCD; this.mem[xms + 1] = XMS_INT; this.mem[xms + 2] = 0xCB;
+  }
+
+  // The character generator, where the ROM would have it.
+  //
+  // INT 10h AH=11 AL=30 hands back a pointer to the BIOS font, and a demo that
+  // draws its own text in a graphics mode asks for it rather than shipping a
+  // font: it is the single commonest unhandled call in this corpus. Returning
+  // nothing is not neutral -- ANARCHY.EXE takes the garbage pointer, draws 400
+  // scanlines of nothing and sits there.
+  //
+  // The glyphs come from the bundled Terminal.fon, which is the VGA face at 12
+  // rows. The 14- and 16-row tables pad it vertically rather than stretching
+  // it, so the shapes stay the shapes; the 8-row one takes the body rows. Each
+  // is reported at the height it really is, which is what CX is for.
+  installRomFonts() {
+    const strike = romStrike();
+    for (const [seg, height, top] of ROM_FONTS) {
+      const at = seg << 4;
+      for (let c = 0; c < 256; c++) {
+        const g = strike && strike.glyphs.get(c);
+        for (let row = 0; row < height; row++) {
+          let byte = 0;
+          const src = row - top;
+          if (g && src >= 0 && src < g.height) {
+            for (let x = 0; x < 8 && x < g.width; x++) {
+              if (g.bits[src * g.width + x]) byte |= 0x80 >> x;
+            }
+          }
+          this.mem[at + c * height + row] = byte;
+        }
+      }
+    }
   }
 
   setTicks(t) {
@@ -978,6 +1034,20 @@ class Machine {
         this.mem[(dst + i) & 0xFFFFF] = this.palette[(first * 3 + i) % 768] & 0x3F;
       }
       return true;
+    }
+    if (ah === 0x11) {                              // character generator
+      if (al === 0x30) {
+        // BH picks which table. 0/1 are the two INT-vector fonts and 3/4 the
+        // 8x8 ROM halves; 2 and 5 are 8x14; 6 and 7 are 8x16.
+        const bh = (r.get('bx') >> 8) & 0xFF;
+        const [seg, height] = ROM_FONTS[bh === 6 || bh === 7 ? 0 : (bh === 2 || bh === 5 ? 1 : 2)];
+        r.set('es', seg);
+        r.set('bp', 0);
+        r.set('cx', height);                        // bytes per character
+        r.set('dx', (r.get('dx') & 0xFF00) | (this.con.rows - 1));
+        return true;
+      }
+      return true;                                  // load/select a font: fine
     }
     if (ah === 0x10 && al === 0x03) return true;    // blink/intensity bit
     if (ah === 0x01) return true;                   // cursor shape

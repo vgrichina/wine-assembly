@@ -6484,6 +6484,17 @@
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
+  ;; LoadLibraryExW(lpFileName, hFile, dwFlags). The flags select how Windows
+  ;; exposes the mapped image, but do not change our module/resource lookup.
+  ;; Preserve LoadLibraryW's result (and possible DLL-load yield), then consume
+  ;; the two additional Ex arguments.
+  (func $handle_LoadLibraryExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_LoadLibraryW
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
   ;; 301: GetStartupInfoW — zero-fill the struct
   (func $handle_GetStartupInfoW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $zero_memory (call $g2w (local.get $arg0)) (i32.const 68))
@@ -7059,9 +7070,21 @@ nW — STUB: unimplemented
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
   )
 
-  ;; 336: SetStdHandle(nStdHandle, hHandle) — no-op, return 1 — STUB: unimplemented
+  ;; 336: SetStdHandle(nStdHandle, hHandle) — accept process-local console
+  ;; redirection. The virtual console routes its streams independently, so no
+  ;; host handle table mutation is needed; SDL/MSVCRT uses this to detach the
+  ;; inherited standard handles when DOSBox starts with -noconsole.
   (func $handle_SetStdHandle (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; FreeConsole() — GUI processes may detach from their inherited console.
+  ;; The virtual console has no external process attachment to tear down, but
+  ;; reporting success gives callers the same observable lifecycle result.
+  (func $handle_FreeConsole (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
   ;; 337: FlushFileBuffers — return 1 — STUB: unimplemented
@@ -9044,6 +9067,14 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
+  ;; GetEnvironmentVariableW(lpName, lpBuffer, nSize) — the environment core
+  ;; stores one ANSI block and widens values on output, keeping A/W mutations
+  ;; coherent through the existing $env_get helper.
+  (func $handle_GetEnvironmentVariableW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $env_get (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
   ;; ExpandEnvironmentStringsA(lpSrc, lpDst, nSize) -> required chars,
   ;; including the terminating NUL. Unknown variables remain verbatim.
   (func $handle_ExpandEnvironmentStringsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -9962,9 +9993,12 @@ HookEx — no next hook in chain, return 0
   )
 
   ;; VirtualQuery(lpAddress, lpBuffer, dwLength) → SIZE_T
-  ;; Pretend the entire 4GB address space is one committed RW region rooted at
+  ;; Describe low user-space probes as committed RW regions rooted at
   ;; image_base. Apps that probe a ptr (e.g. CRT exception filter, MFC heap walker)
   ;; just want a non-zero return + plausible State/Protect, not real bookkeeping.
+  ;; GetSystemInfo publishes 0x7FFEFFFF as the maximum application address, so
+  ;; queries at 0x80000000 or above must fail. Without that boundary, address-
+  ;; space walkers wrap back to zero and scan our synthetic regions forever.
   ;; MEMORY_BASIC_INFORMATION layout (28 bytes):
   ;;   +0  BaseAddress     PVOID
   ;;   +4  AllocationBase  PVOID
@@ -9981,6 +10015,11 @@ HookEx — no next hook in chain, return 0
             (return)))
     (if (i32.lt_u (local.get $arg2) (i32.const 28))
       (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+            (return)))
+    (if (i32.ge_u (local.get $arg0) (i32.const 0x80000000))
+      (then (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
+            (global.set $eax (i32.const 0))
             (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
             (return)))
     (local.set $buf (call $g2w (local.get $arg1)))
@@ -10152,6 +10191,31 @@ HookEx — no next hook in chain, return 0
     (i32.store (i32.add (local.get $dst) (i32.const 12)) (i32.const 0x45545359))  ;; YSTE
     (i32.store16 (i32.add (local.get $dst) (i32.const 16)) (i32.const 0x004d))    ;; M\0
     (global.set $eax (i32.const 17))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; GetSystemDirectoryW(lpBuffer, uSize) — UTF-16 counterpart.  On a short
+  ;; buffer Win32 returns the required size including the terminator and does
+  ;; not publish a partial path; on success it excludes the terminator.
+  (func $handle_GetSystemDirectoryW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dst i32)
+    (if (i32.and (i32.ne (local.get $arg0) (i32.const 0))
+                 (i32.ge_u (local.get $arg1) (i32.const 18)))
+      (then
+        (local.set $dst (call $g2w (local.get $arg0)))
+        ;; UTF-16LE "C:\\WINDOWS\\SYSTEM\0".
+        (i32.store (local.get $dst) (i32.const 0x003a0043))
+        (i32.store offset=4 (local.get $dst) (i32.const 0x0057005c))
+        (i32.store offset=8 (local.get $dst) (i32.const 0x004e0049))
+        (i32.store offset=12 (local.get $dst) (i32.const 0x004f0044))
+        (i32.store offset=16 (local.get $dst) (i32.const 0x00530057))
+        (i32.store offset=20 (local.get $dst) (i32.const 0x0053005c))
+        (i32.store offset=24 (local.get $dst) (i32.const 0x00530059))
+        (i32.store offset=28 (local.get $dst) (i32.const 0x00450054))
+        (i32.store offset=32 (local.get $dst) (i32.const 0x0000004d))
+        (global.set $eax (i32.const 17)))
+      (else
+        (global.set $eax (i32.const 18))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
@@ -12134,6 +12198,34 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
                 (i32.le_u (local.get $c) (i32.const 0x5a)))
             (then (i32.store8 (local.get $p) (i32.add (local.get $c) (i32.const 0x20)))))
           (local.set $p (i32.add (local.get $p) (i32.const 1)))
+          (br $lp)))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; CharLowerW(lpsz) — Unicode counterpart of CharLowerA. Win32 also accepts
+  ;; a single WCHAR encoded directly in the low word; otherwise lowercase the
+  ;; NUL-terminated UTF-16 string in place. Preserve non-ASCII code units.
+  (func $handle_CharLowerW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $p i32) (local $c i32)
+    (global.set $eax (local.get $arg0))
+    (if (i32.eqz (i32.and (local.get $arg0) (i32.const 0xffff0000)))
+      (then
+        (local.set $c (i32.and (local.get $arg0) (i32.const 0xffff)))
+        (if (i32.and
+              (i32.ge_u (local.get $c) (i32.const 0x41))
+              (i32.le_u (local.get $c) (i32.const 0x5a)))
+          (then (global.set $eax (i32.add (local.get $c) (i32.const 0x20))))))
+      (else
+        (local.set $p (local.get $arg0))
+        (block $done (loop $lp
+          (local.set $c (call $gl_char (local.get $p) (i32.const 1)))
+          (br_if $done (i32.eqz (local.get $c)))
+          (if (i32.and
+                (i32.ge_u (local.get $c) (i32.const 0x41))
+                (i32.le_u (local.get $c) (i32.const 0x5a)))
+            (then (call $store_char (local.get $p)
+              (i32.add (local.get $c) (i32.const 0x20)) (i32.const 1))))
+          (local.set $p (i32.add (local.get $p) (i32.const 2)))
           (br $lp)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )

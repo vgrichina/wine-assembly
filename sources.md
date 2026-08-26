@@ -726,6 +726,57 @@ solid-grey frames (versus nine before the change), and every attachment in the
 sample was the DirectDraw primary. The final unobstructed gameplay capture is
 `/private/tmp/starcraft-no-flash-gameplay.png`.
 
+## GOG zero-price classic-game installers
+
+Verified 2026-08-25 against GOG's official product pages. The following seven
+games in the Internet Archive
+[`gog_collection`](https://archive.org/details/gog_collection) item were listed
+by GOG at **USD 0.00** and tagged as free games when they were added to the
+local candidate corpus:
+
+- [Beneath a Steel Sky](https://www.gog.com/en/game/beneath_a_steel_sky):
+  `beneath.a.steel.sky.rar`, 91,327,768 bytes, SHA-1
+  `dee0ca140e5d8cea0738c7f0f9bba2b970ad8f44`; extracts
+  `setup_beneath_a_steel_sky_1.0_(20270).exe`.
+- [Flight of the Amazon Queen](https://www.gog.com/en/game/flight_of_the_amazon_queen):
+  `flight.of.the.amazon.queen.rar`, 140,413,462 bytes, SHA-1
+  `5381b63e357f91ef78050a5880c6020d2bc2d630`; extracts
+  `setup_flight_of_the_amazon_queen_1.0_(20270).exe`.
+- [Lure of the Temptress](https://www.gog.com/en/game/lure_of_the_temptress):
+  `lure.of.the.temptress.rar`, 26,465,516 bytes, SHA-1
+  `8a0ff33dbd94ebfbf8d4edd979c5fee7c3985b2f`; extracts
+  `setup_lure_of_the_temptress_1.0_(20270).exe`.
+- [Shadow Warrior Classic Complete](https://www.gog.com/en/game/shadow_warrior_complete):
+  `shadow.warrior.rar`, 241,578,512 bytes, SHA-1
+  `92f1c925d235c3176ab4c21b6f1f0461b1b602c8`; extracts
+  `setup_shadow_warrior_complete_2.0.0.7.exe`.
+- [The Elder Scrolls: Arena](https://www.gog.com/en/game/the_elder_scrolls_arena):
+  `the.elder.scrolls.1.arena.rar`, 81,068,818 bytes, SHA-1
+  `aa8f357433ea5c07a9ebda4c6dd062b53348f57b`; extracts
+  `setup_the_elder_scrolls_arena_1.07_(28043).exe`.
+- [The Elder Scrolls II: Daggerfall](https://www.gog.com/en/game/the_elder_scrolls_chapter_ii_daggerfall):
+  `the.elder.scrolls.2.daggerfall.rar`, 184,129,634 bytes, SHA-1
+  `05276866d94746987a56617b708fa6eb4653359b`; extracts
+  `setup_the_elder_scrolls_ii_daggerfall_1.07_(28043).exe`.
+- [Ultima IV: Quest of the Avatar](https://www.gog.com/en/game/ultima_iv_quest_of_the_avatar):
+  `ultima.4.quest.of.the.avatar.rar`, 12,548,654 bytes, SHA-1
+  `a75b5a57226650c47fe8f8cdb0872c8289da1cf7`; extracts
+  `setup_ultima_iv_-_quest_of_the_avatar_1.0_cs_(28045).exe`.
+
+All seven RAR hashes match the values recorded by the Archive item, and each
+RAR contains one PE32/i386 GOG offline installer. The exact URLs, hashes,
+installer versions, and filenames are pinned in
+`test/candidate-corpus/manifest.json`; `tools/fetch-candidate-corpus.js`
+downloads, verifies, and extracts them beneath the gitignored
+`test/binaries/candidates/gog-free-*` fixture directories.
+
+"Free on GOG" describes the store price and acquisition path, not a public
+domain or open-source license. These remain proprietary packages unless their
+individual rights holders say otherwise, and a zero price does not by itself
+grant permission to redistribute the GOG installers. They therefore remain
+local research fixtures and must not enter a public deployment merely because
+GOG offered them without charge or Archive.org hosts copies.
+
 ## Further shareware/demo/freeware game candidates
 
 Research on 2026-08-22 narrowed the next browser targets to distributions that
