@@ -41,6 +41,13 @@
   ;; create_window(hwnd, style, x, y, cx, cy, title_ptr, menu_id) → hwnd
   (import "host" "show_window" (func $host_show_window (param i32 i32) (result i32)))
   (import "host" "set_cursor" (func $host_set_cursor (param i32)))
+  ;; set_cursor_image(hcur, width, height, hot_x, hot_y, bgra_wa) — present a
+  ;; cursor the guest BUILT rather than loaded: CreateIconIndirect hands over
+  ;; bitmaps, and WAT composites their AND/XOR planes into premultiplied BGRA
+  ;; here. bgra_wa = 0 means "you already have the pixels for this handle",
+  ;; so a game that re-selects one of its cursors every frame costs one call.
+  (import "host" "set_cursor_image"
+    (func $host_set_cursor_image (param i32 i32 i32 i32 i32 i32)))
   ;; show_window(hwnd, cmd) → packed client size (w | h<<16) after resize
   (import "host" "sys_command" (func $host_sys_command (param i32 i32)))
   ;; sys_command(hwnd, sc_code) — JS updates renderer geometry for
@@ -1287,7 +1294,8 @@
   ;; 0x07F01000  256B    PAINT_FLAGS (1 byte per window slot)
   ;; 0x07F01200  256B    TAB_NATIVE_STATE_TABLE (32 × {hwnd, mirror state ptr})
   ;; 0x07F01300  256B    ICON_TABLE (32 entries × {hInstance, resource id})
-  ;; 0x07F01400  1KB     (free; former 64-entry SYNC_TABLE)
+  ;; 0x07F01400  768B    CURSOR_TABLE (32 × ICONINFO + pushed flag)
+  ;; 0x07F01700  160B    CURSOR_MASK_DESC + CURSOR_COLOR_DESC (two 80B surfaces)
   ;; 0x07F01800  3KB     EDIT_LAYOUT_SCRATCH (384 entries × 8 bytes)
   ;; 0x07F02400 16B      VIRTUAL_MAP_STATE (count, backing bump pointer)
   ;; 0x07F02410 32KB     VIRTUAL_MAP_TABLE (2048 entries x 16 bytes)
@@ -2112,6 +2120,23 @@
   (global $ICON_TABLE_SIZE i32 (i32.const 0x00000100))
   (global $MAX_ICONS i32 (i32.const 32))
   (global $ICON_HANDLE_TAG i32 (i32.const 0x00650000))
+  ;; CURSOR_TABLE: an icon or cursor BUILT from bitmaps, which ICON_TABLE
+  ;; cannot describe — there is no {module, resource} to remember, only the
+  ;; ICONINFO the app handed to CreateIconIndirect. Each 24-byte entry is that
+  ;; struct plus a flag recording whether the host already holds the composited
+  ;; pixels for this handle. Handles are $CURSOR_HANDLE_TAG | (slot + 1), so
+  ;; slot 0 still produces the non-zero handle callers test for.
+  (global $CURSOR_TABLE i32 (i32.const 0x07F01400))
+  (global $CURSOR_TABLE_SIZE i32 (i32.const 0x00000300))
+  (global $CURSOR_TABLE_STRIDE i32 (i32.const 24))
+  (global $MAX_CURSORS i32 (i32.const 32))
+  (global $CURSOR_HANDLE_TAG i32 (i32.const 0x00CC0000))
+  ;; Two private surface descriptors: compositing a cursor reads the mask and
+  ;; the colour plane at once, and must not borrow the blit scratch.
+  (global $CURSOR_MASK_DESC i32 (i32.const 0x07F01700))
+  (global $CURSOR_MASK_DESC_SIZE i32 (i32.const 0x00000050))
+  (global $CURSOR_COLOR_DESC i32 (i32.const 0x07F01750))
+  (global $CURSOR_COLOR_DESC_SIZE i32 (i32.const 0x00000050))
   ;; DrawIconEx diFlags: which plane of the icon to write.
   (global $DI_MASK   i32 (i32.const 1))
   (global $DI_IMAGE  i32 (i32.const 2))
