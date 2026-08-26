@@ -1,6 +1,6 @@
 {
   "generated_from": "src/01-header.wat",
-  "count": 204,
+  "count": 205,
   "sigs": {
     "log": {
       "params": [
@@ -152,6 +152,17 @@
     },
     "set_cursor": {
       "params": [
+        "i32"
+      ],
+      "results": []
+    },
+    "set_cursor_image": {
+      "params": [
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
         "i32"
       ],
       "results": []

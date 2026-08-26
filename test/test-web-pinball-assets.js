@@ -304,19 +304,20 @@ assert(webApp.includes('lib/browser-input.js?v=4'), 'web host should cache-bust 
 assert(webApp.includes('lib/renderer.js?v=188'), 'web host should cache-bust renderer after the current source update');
 assert(webApp.includes('lib/pe.js?v=1'), 'web host should load the shared PE section reader');
 assert(webApp.includes('lib/process-boot.js?v=2'), 'web host should cache-bust oversized PE section hydration');
-assert(webApp.includes('lib/host-window.js?v=2'), 'web host should cache-bust dynamic Win16 menu serialization');
+assert(webApp.includes('lib/host-window.js?v=3'), 'web host should cache-bust custom cursor image delivery');
 assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
 assert(webApp.includes('lib/storage.js?v=169'), 'web host should cache-bust storage after Media Player association changes');
 assert(webApp.includes('lib/gdi-surface.js?v=2'), 'web host should load the canonical GDI surface module');
-assert(webApp.indexOf('lib/gdi-surface.js?v=2') < webApp.indexOf('lib/host-imports.js?v=206'),
+assert(webApp.indexOf('lib/gdi-surface.js?v=2') < webApp.indexOf('lib/host-imports.js?v=207'),
   'web host should load the GDI surface module before host imports');
-assert(webApp.includes('lib/host-imports.js?v=206'), 'web host should cache-bust the current host imports');
+assert(webApp.includes('lib/host-imports.js?v=207'), 'web host should cache-bust the current host imports');
+assert(webApp.includes('lib/touch-cursor.js?v=2'), 'web host should cache-bust custom touch cursor rendering');
 assert(webApp.includes('lib/thread-manager.js?v=181'), 'web host should cache-bust thread manager after the main merge');
 assert(webApp.includes('lib/compile-wat.js?v=169'), 'web host should cache-bust the snapshot-capable WAT compiler');
 assert(webApp.includes('lib/guest-thread-host.js?v=4'), 'web host should cache-bust the owner-thread send protocol');
 assert(webApp.includes('lib/debug-thread-state.js?v=5'), 'web host should cache-bust whole-list cycle diagnostics');
-assert(webApp.includes('host.js?v=226'), 'web host should cache-bust host.js after the current source update');
-assert(hostJs.includes("static SOURCE_VERSION = '224'"), 'web host should cache-bust WASM artifacts and WAT source compilation');
+assert(webApp.includes('host.js?v=227'), 'web host should cache-bust host.js after the current source update');
+assert(hostJs.includes("static SOURCE_VERSION = '225'"), 'web host should cache-bust WASM artifacts and WAT source compilation');
 assert(hostJs.includes("const fetchOptions = debugFetch ? { cache: 'no-store' } : undefined;"),
   'debug sessions should select a no-store fetch policy');
 assert(hostJs.includes('fetch(`${artifact}?v=${WineAssembly.SOURCE_VERSION}`, fetchOptions)'),
