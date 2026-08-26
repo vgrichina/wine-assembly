@@ -24625,5 +24625,13 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 530862950
+  },
+  {
+    "id": 2948,
+    "name": "GetCursor",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 2472022117,
+    "ret": "HCURSOR"
   }
 ]

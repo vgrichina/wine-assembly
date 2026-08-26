@@ -2387,6 +2387,24 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
+  ;; Retire or promote the process-wide main window before its table record is
+  ;; removed. Kept separate so lifecycle tests can exercise this decision
+  ;; without invoking the host-facing recursive destruction path.
+  (func $destroy_main_window_lifecycle (param $hwnd i32)
+    (if (i32.eq (local.get $hwnd) (global.get $main_hwnd))
+      (then
+        (if (i32.and
+              (i32.ne (call $wnd_table_get (i32.add (global.get $main_hwnd) (i32.const 1))) (i32.const 0))
+              (i32.ne (call $wnd_get_parent (i32.add (global.get $main_hwnd) (i32.const 1)))
+                      (global.get $main_hwnd)))
+          (then (global.set $main_hwnd (i32.add (global.get $main_hwnd) (i32.const 1))))
+          (else
+            (if (call $wnd_is_effectively_visible (local.get $hwnd))
+              (then (global.set $quit_flag (i32.const 1))))
+            ;; The slot is removed next. Leave no stale main handle behind so
+            ;; a replacement top-level created during an SDL video-mode reset
+            ;; becomes the new input/paint target.
+            (global.set $main_hwnd (i32.const 0)))))))
 
   ;; 83: DestroyWindow
   (func $handle_DestroyWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -2423,16 +2441,7 @@
     ;; splash before creating the visible table window.  Do not leave a stale
     ;; WM_QUIT behind in that case; a later GetMessage path (Options > Music)
     ;; would consume it and terminate an otherwise healthy app.
-    (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
-    (then
-      (if (i32.and
-            (i32.ne (call $wnd_table_get (i32.add (global.get $main_hwnd) (i32.const 1))) (i32.const 0))
-            (i32.ne (call $wnd_get_parent (i32.add (global.get $main_hwnd) (i32.const 1)))
-                    (global.get $main_hwnd)))
-        (then (global.set $main_hwnd (i32.add (global.get $main_hwnd) (i32.const 1))))
-        (else
-          (if (call $wnd_is_effectively_visible (local.get $arg0))
-            (then (global.set $quit_flag (i32.const 1))))))))
+    (call $destroy_main_window_lifecycle (local.get $arg0))
     ;; Give the parent back the area this window covered, before the record
     ;; that says who the parent is goes away.
     (call $wnd_uncover_parent (local.get $arg0))
@@ -3325,6 +3334,13 @@
   (func $handle_SetCursor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $set_cursor_internal (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; GetCursor() — return the cursor most recently installed by SetCursor.
+  ;; SDL queries this while bringing its DirectDraw window to the foreground.
+  (func $handle_GetCursor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (global.get $current_cursor))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
   ;; 107: SetFocus(hwnd) — 1 arg stdcall, return previous focus hwnd
