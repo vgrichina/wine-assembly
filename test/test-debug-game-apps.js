@@ -29,6 +29,15 @@ assert(APPS.jazz2_demo, 'Jazz Jackrabbit 2 has an app manifest');
 assert.strictEqual(APPS.jazz2_demo.requiredFiles, true);
 assert(APPS.jazz2_demo.files.some(file => file.endsWith('/share1.j2l')),
   'Jazz Jackrabbit 2 mounts its playable shareware level');
+assert.strictEqual(APPS.jazz2_demo.args, 'Share1.j2l -nonetwork',
+  'Jazz Jackrabbit 2 skips the long intro and loads the playable shareware level');
+assert.strictEqual(APPS.quake2_demo.args, '+set vid_ref gl +menu_main',
+  'Quake II starts its normal OpenGL-rendered menu from the dropdown');
+assert(APPS.quake2_demo.dlls.some(file => file.endsWith('/ref_gl.dll')),
+  'Quake II preloads its authentic OpenGL renderer for runtime selection');
+assert(APPS.quake2_demo.files.some(file =>
+  typeof file === 'string' && file.endsWith('/ref_gl.dll')),
+  'Quake II mounts ref_gl.dll at C:\\ref_gl.dll for LoadLibrary');
 assert.strictEqual(APPS.halflife_uplink.requiredFiles, true);
 assert.strictEqual(APPS.halflife_uplink.windowlessGraceMs, 60000,
   'Half-Life Uplink survives the renderer-init gap after its socket warning');

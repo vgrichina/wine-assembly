@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { APPS } = require('../lib/apps');
 
 const root = path.resolve(__dirname, '..');
 const installed = path.join(root,
@@ -25,6 +26,18 @@ assert.strictEqual(digest(exe),
 assert.strictEqual(fs.statSync(pak).size, 79150544);
 assert.strictEqual(digest(pak),
   'c9eac1391845d6fabd93d7a1cc48281275410d35e01b74bd7f02325c65c99a42');
+
+for (const [suffix, vfsPath] of [
+  ['/valve/dlls/hl.dll', 'c:\\valve\\dlls\\hl.dll'],
+  ['/valve/cl_dlls/client.dll', 'c:\\valve\\cl_dlls\\client.dll'],
+]) {
+  assert(APPS.halflife_uplink.files.some(file =>
+    file.url.endsWith(suffix) && file.vfsPath === vfsPath),
+  `Half-Life Uplink mounts ${suffix} at its installed discovery path`);
+}
+const browserShell = fs.readFileSync(path.join(root, 'lib/browser-shell.js'), 'utf8');
+assert(/case 'jazz2_demo':\s*[\s\S]*?case 'halflife_uplink':\s*return 1000;/.test(browserShell),
+  'Half-Life Uplink keeps DLL discovery and map loading cooperative in the browser');
 
 const dlls = [
   'hw.dll', 'sw.dll', 'hl_res.dll', 'a3dapi.dll',
