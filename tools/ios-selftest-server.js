@@ -90,6 +90,7 @@ function print(stamp, item) {
       `${kb} wrap "${item.wrapTransform}"  [${item.classes}]`;
     console.log(head);
     if (item.audio) console.log(`${' '.repeat(stamp.length)}  AUDIO ${item.audio}`);
+    if (item.collapse) console.log(`${' '.repeat(stamp.length)}  SCROLL ${item.collapse}`);
     if (item.why) console.log(`${' '.repeat(stamp.length)}  WHY ${item.why}`);
     if (item.verdict === 'DEAD-END') console.log(`${' '.repeat(stamp.length)}  ${JSON.stringify(item)}`);
     return;

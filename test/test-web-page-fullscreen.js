@@ -109,7 +109,13 @@ async function main() {
         delete Element.prototype[name];
       }
     });
-    await page.goto(`${base}/index.html?page-fs=${Date.now()}`,
+    // ?diag=1 too: lib/phone-diag.js's scroll probe is the only instrument
+    // that will exist on the real phone, where this mode's swipe strip is
+    // reported not to work and Chrome cannot reproduce it (device emulation
+    // has no retractable toolbars, so vh and dvh are the same number). If the
+    // probe misreads a page that is demonstrably armed, it will send the next
+    // investigation somewhere wrong.
+    await page.goto(`${base}/index.html?diag=1&page-fs=${Date.now()}`,
       { waitUntil: 'load', timeout: 60000 });
     await page.waitForFunction(
       () => typeof approveBrowserFullscreen === 'function' && document.getElementById('screen'),
@@ -194,6 +200,19 @@ async function main() {
       `a real gesture needs a real page: ${after.scrollHeight} vs ${after.viewport.height}`);
     assert(after.scrollHeight <= after.viewport.height * 2.2,
       `the overflow is one spacer, not a long page: ${after.scrollHeight} vs ${after.viewport.height}`);
+    // What the beacon will say about all of that from the device. The strip
+    // being *present* is not the same as the strip being *touchable*: the
+    // canvas, the exit chip and the emulated cursor are all in the same
+    // corner, and a swipe that lands on any of them never reaches the page
+    // scroller. A hit test is the only form of that question with an answer.
+    const probe = await page.evaluate(() => window.PhoneDiag && window.PhoneDiag.snapshot().collapse);
+    assert(probe, 'the phone beacon must report the scroll-collapse state');
+    assert(/gutter=hit/.test(probe),
+      `a finger on the swipe strip must land on the strip; the beacon says ${probe}`);
+    const heights = probe.match(/h(\d+)\/v(\d+)/);
+    assert(heights && Number(heights[1]) >= Number(heights[2]) * 1.9,
+      `the beacon must see the overflow the collapse needs: ${probe}`);
+
     const scrolled = await page.evaluate(() => {
       window.scrollTo(0, 999);
       const rect = document.getElementById('screen').getBoundingClientRect();
