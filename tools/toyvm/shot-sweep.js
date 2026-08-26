@@ -127,6 +127,7 @@ async function main() {
     budget: count(arg('dispatches'), 30e6),
     cpu: Number(arg('cpu', 386)),
     timeout: Number(arg('timeout', 180)),
+    jobs: Number(arg('jobs', 1)),
     autoKey: process.argv.slice(2).includes('--auto-key'),
   };
 
@@ -139,7 +140,7 @@ async function main() {
   const out = arg('out');
   if (!dir || !out) {
     console.log('usage: node tools/toyvm/shot-sweep.js --dir=DIR --out=DIR '
-      + '[--json=OUT] [--resume] [--dispatches=N] [--timeout=SECS] [--auto-key]');
+      + '[--json=OUT] [--resume] [--dispatches=N] [--timeout=SECS] [--jobs=N] [--auto-key]');
     process.exit(2);
   }
   fs.mkdirSync(out, { recursive: true });
@@ -164,14 +165,14 @@ async function main() {
     } catch { /* a truncated file just means no resume */ }
   }
 
-  const rows = [];
-  for (const exe of exes) {
-    if (done.has(exe)) {
-      rows.push(done.get(exe));
-      shotName(exe, dir, used);            // keep the name allocator in step
-      continue;
-    }
-    const png = path.join(out, `${shotName(exe, dir, used)}.png`);
+  // Tile names are allocated in corpus order, so they are worked out up front:
+  // with several programs in flight the order they FINISH in is not the order
+  // they started, and a name allocator driven by completion would rename half
+  // the sheet on every run.
+  const pngFor = new Map(exes.map(exe => [exe, path.join(out, `${shotName(exe, dir, used)}.png`)]));
+
+  async function capture(exe) {
+    const png = pngFor.get(exe);
     let row = await child(exe, png, o);
     // A blocking key read now stops the run rather than being answered with a
     // phantom NUL, which is what makes a "press any key" title screen sit still
@@ -186,11 +187,36 @@ async function main() {
       else { row = first; await child(exe, png, o); }   // re-take the better frame
     }
     if (row.png && !fs.existsSync(row.png)) { row.png = null; row.failed ||= 'no png'; }
-    rows.push(row);
-    if (json) fs.writeFileSync(json, JSON.stringify({ dir, out, rows }, null, 1));
-    process.stderr.write(`\r${rows.length}/${exes.length} ${row.name.padEnd(24)}`);
+    return row;
   }
+
+  // One child per program is already the isolation model; `--jobs` just runs
+  // several of them at once. Worth having: the retry above means a program can
+  // cost three sequential runs, and a corpus sweep that took three hours takes
+  // most of an afternoon to answer one question about a change.
+  const rows = new Array(exes.length);
+  let next = 0, finished = 0;
+  const worker = async () => {
+    for (;;) {
+      const i = next++;
+      if (i >= exes.length) return;
+      const exe = exes[i];
+      rows[i] = done.has(exe) ? done.get(exe) : await capture(exe);
+      finished++;
+      // Rows land out of order, so the file is only useful once the holes in
+      // front of the last completion are filled -- which is what --resume
+      // reads. Writing the dense prefix keeps it a valid sweep at every moment.
+      if (json) {
+        const upto = rows.findIndex(r => r === undefined);
+        const dense = upto === -1 ? rows : rows.slice(0, upto);
+        fs.writeFileSync(json, JSON.stringify({ dir, out, rows: dense }, null, 1));
+      }
+      process.stderr.write(`\r${finished}/${exes.length} ${rows[i].name.padEnd(24)}`);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, o.jobs) }, worker));
   process.stderr.write('\r' + ' '.repeat(44) + '\r');
+  if (json) fs.writeFileSync(json, JSON.stringify({ dir, out, rows }, null, 1));
 
   const shots = rows.filter(r => r.png);
   const blank = shots.filter(r => !r.pixels && !r.cells);

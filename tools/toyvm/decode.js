@@ -213,6 +213,11 @@ function decodeOne(rd, cs, ip) {
   // handlers read as "hand control back".
   const fixups = [];
   let endsBlock = false;
+  // Whether this instruction stores to memory. Deliberately an OVER-estimate:
+  // the region compiler uses it to decide not to decode past a loop, and the
+  // cost of a false positive is one handback where a false negative is code
+  // decoded before it has been written. See the note at the end of the file.
+  let writesMem = false;
 
   // The 386 ModRM: rm=100 means a SIB byte follows, rm=101 with mod=00 is a
   // bare disp32, and mod=10's displacement is four bytes rather than two.
@@ -286,12 +291,13 @@ function decodeOne(rd, cs, ip) {
       words.push(H[`${name}_rr${w}`],
         dstIsRm ? (m.rm & 7) | ((m.reg & 7) << 4) : (m.reg & 7) | ((m.rm & 7) << 4));
     } else {
+      if (dstIsRm) writesMem = true;
       words.push(H[`${name}_${dstIsRm ? 'mr' : 'rm'}${w}`], packEa(m), m.disp);
     }
   }
   function emitRmI(name, w, m, imm) {
     if (m.isReg) words.push(H[`${name}_ri${w}`], m.rm & 7, imm);
-    else words.push(H[`${name}_mi${w}`], packEa(m), m.disp, imm);
+    else { writesMem = true; words.push(H[`${name}_mi${w}`], packEa(m), m.disp, imm); }
   }
 
   // --- ALU group: 8*code + form, forms 0..5 ---------------------------------
@@ -422,7 +428,7 @@ function decodeOne(rd, cs, ip) {
     case 0x86: case 0x87: {
       const m = modrm(); const w = op === 0x87 ? opsize : 8;
       if (m.isReg) words.push(H[`xchg_rr${w}`], (m.rm & 7) | ((m.reg & 7) << 4));
-      else words.push(H[`xchg_mr${w}`], packEa(m), m.disp);
+      else { writesMem = true; words.push(H[`xchg_mr${w}`], packEa(m), m.disp); }
       break;
     }
     // 8C/8E name a segment register in the ModRM reg field. An 8088 decodes
@@ -435,7 +441,10 @@ function decodeOne(rd, cs, ip) {
       if (sr > 5) return null;
       const [rf, mf] = op === 0x8C ? ['mov_r_sr', 'mov_m_sr'] : ['mov_sr_r', 'mov_sr_m'];
       if (m.isReg) words.push(H[rf], (m.rm & 7) | (sr << 4));
-      else words.push(H[mf], (packEa(m) & ~0x700) | (sr << 8), m.disp);
+      else {
+        if (op === 0x8C) writesMem = true;
+        words.push(H[mf], (packEa(m) & ~0x700) | (sr << 8), m.disp);
+      }
       break;
     }
 
@@ -444,7 +453,7 @@ function decodeOne(rd, cs, ip) {
     case 0x9D: words.push(H.popf); break;
     case 0x8F: { const m = modrm();
       if (m.isReg) words.push(H[`pop_r${opsize}`], m.rm & 7);
-      else words.push(H[`pop_m${opsize}`], packEa(m), m.disp);
+      else { writesMem = true; words.push(H[`pop_m${opsize}`], packEa(m), m.disp); }
       break; }
     // PUSH imm is 80186 and later. The 8088 corpus records whatever the real
     // part does with these bytes, which is not a push, so they stay unknown at
@@ -534,6 +543,7 @@ function decodeOne(rd, cs, ip) {
       const w = (op & 1) ? opsize : 8;
       const sfx = { 8: 'b', 16: 'w', 32: 'd' }[w];
       const name = { 0xA4: 'movs', 0xA6: 'cmps', 0xAA: 'stos', 0xAC: 'lods', 0xAE: 'scas' }[op & ~1];
+      if (name === 'movs' || name === 'stos') writesMem = true;
       const src = segOverride === null ? 3 : segOverride;   // DS by default
       let hn = `${name}${sfx}`;
       if (repPrefix) {
@@ -574,7 +584,7 @@ function decodeOne(rd, cs, ip) {
       const count = (op === 0xC0 || op === 0xC1) ? imm8()
         : (op < 0xD2 ? 1 : -1);
       if (m.isReg) words.push(H[`sh${m.reg}_r${w}`], m.rm & 7, count);
-      else words.push(H[`sh${m.reg}_m${w}`], packEa(m), m.disp, count);
+      else { writesMem = true; words.push(H[`sh${m.reg}_m${w}`], packEa(m), m.disp, count); }
       break;
     }
 
@@ -700,7 +710,7 @@ function decodeOne(rd, cs, ip) {
         const w = (op2 & 1) ? opsize : 8;
         const m = modrm();
         if (m.isReg) words.push(H[`xadd_rr${w}`], (m.rm & 7) | ((m.reg & 7) << 4));
-        else words.push(H[`xadd_rm${w}`], packEa(m), m.disp);
+        else { writesMem = true; words.push(H[`xadd_rm${w}`], packEa(m), m.disp); }
         break;
       }
       // Group 7. Only /4 SMSW is here: reading the machine status word says
@@ -782,7 +792,7 @@ function decodeOne(rd, cs, ip) {
       } else if (m.reg === 2 || m.reg === 3) {
         const nm = m.reg === 2 ? 'not' : 'neg';
         if (m.isReg) words.push(H[`${nm}_r${w}`], m.rm & 7);
-        else words.push(H[`${nm}_m${w}`], packEa(m), m.disp);
+        else { writesMem = true; words.push(H[`${nm}_m${w}`], packEa(m), m.disp); }
       } else {
         const nm = ['mul', 'imul', 'div', 'idiv'][m.reg - 4];
         // DIV and IDIV can fault, and a fault pushes the address of the
@@ -807,7 +817,7 @@ function decodeOne(rd, cs, ip) {
       if (m.reg === 0 || m.reg === 1) {
         const nm = m.reg === 0 ? 'inc' : 'dec';
         if (m.isReg) words.push(H[`${nm}_r${w}`], m.rm & 7);
-        else words.push(H[`${nm}_m${w}`], packEa(m), m.disp);
+        else { writesMem = true; words.push(H[`${nm}_m${w}`], packEa(m), m.disp); }
       } else if (m.reg === 6 && w !== 8) {
         if (m.isReg && m.rm === 4 && w === 16) words.push(H.push_sp);   // same 8086 quirk
         else if (m.isReg) words.push(H[`push_r${w}`], m.rm & 7);
@@ -882,7 +892,7 @@ function decodeOne(rd, cs, ip) {
     endsBlock = true;
   }
 
-  return { words, nextIp: (start + n) & 0xFFFF, length: n, fixups, endsBlock };
+  return { words, nextIp: (start + n) & 0xFFFF, length: n, fixups, endsBlock, writesMem };
 }
 
 // The MOV encodings that store to memory. Deliberately not every writing

@@ -34,6 +34,17 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     blocks.set(blockIp, arenaBase + words.length * 4);
 
     let cur = blockIp;
+    // Whether anything in this block stored to memory. A block that writes and
+    // then branches BACKWARD is a copy, a fill or -- the case this exists for
+    // -- a decryptor, and what follows it is very often the bytes it just
+    // wrote. COROMER.EXE's entry is eleven instructions that XOR 861 bytes of
+    // itself into existence and fall through into the result; compiling the
+    // whole reachable subgraph from the entry decoded that result while it was
+    // still ciphertext, and the demo jumped to 0000:003B inside the interrupt
+    // vector table. So the forward exits of such a block are left unresolved:
+    // the loop hands control back when it ends, and the code after it is
+    // decoded from memory as it is by then.
+    let wrote = false;
     for (;;) {
       if (words.length > maxWords) { words.push(H.end, cur); break; }
 
@@ -57,9 +68,19 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
 
       const base = words.length;
       words.push(...d.words);
+      if (d.writesMem) wrote = true;
+      // A backward edge out of a block that wrote memory makes every FORWARD
+      // edge suspect -- that is the loop-then-fall-through shape of a
+      // decryptor. The backward edge itself is still resolved, so the loop
+      // stays in the arena and costs nothing per iteration.
+      // "Backward" is measured from the branch itself, not from the block head:
+      // a decryptor's loop body usually starts mid-block, after the setup that
+      // computed its source pointer, so a test against the block head calls its
+      // own back edge a forward one and compiles the ciphertext anyway.
+      const loops = wrote && (d.fixups || []).some(f => f.ip <= cur);
       for (const f of (d.fixups || [])) {
         fixups.push({ wordIndex: base + f.index, ip: f.ip });
-        pending.push(f.ip);
+        if (!loops || f.ip <= cur) pending.push(f.ip);
       }
 
       cur = d.nextIp;
