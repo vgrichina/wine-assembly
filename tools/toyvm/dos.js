@@ -196,12 +196,20 @@ function newVgaState() {
     attrIndex: 0, attrFlip: 0, attr: new Uint8Array(32),
     misc: 0x63,
     planar: false,
-    bpp: 8,
+    bpp: 0,
+    // Set from the registers each time a graphics mode is left, so a frame
+    // survives the mode-3 restore a well-behaved demo does before exiting.
+    lastGraphics: null,
     // Counters, so a sweep can tell a program that merely indexed the
     // sequencer from one that actually drove an unchained mode.
     unchainCount: 0, maskWrites: 0, masksSeen: 0,
   };
-  resetVgaMode(v, 0x13);
+  // Power-on state is mode 3, the same mode `Machine.videoMode` starts in --
+  // *not* mode 13h. Seeding 13h here left `bpp` at 8 before the guest had set
+  // any mode at all, and `bpp === 0` is what the capture path asks to decide
+  // whether there is a frame to read: every program that never calls
+  // INT 10h AH=00 was photographed off A000 and came back black.
+  resetVgaMode(v, 3);
   return v;
 }
 
@@ -209,6 +217,11 @@ function newVgaState() {
 // starts from. Only the fields the renderer reads are worth setting exactly.
 function resetVgaMode(v, mode) {
   const ega = EGA_MODES.get(mode);
+  // A demo that restores mode 3 on its way out still has its last frame sitting
+  // in A000, and the registers that describe it are about to be overwritten by
+  // this call. Keep a copy: it is the only thing left to photograph for a
+  // program that finished rather than one that was stopped mid-frame.
+  if (v.bpp !== 0) v.lastGraphics = vgaGeometry(v);
   v.seq.fill(0);
   v.seq[SEQ_MAP_MASK] = 0x0F;
   v.seq[SEQ_MEMORY_MODE] = mode === 0x13 ? 0x0E : 0x06;   // chain-4 on for 13h

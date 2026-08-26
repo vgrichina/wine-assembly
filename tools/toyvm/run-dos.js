@@ -50,6 +50,22 @@ const ld32 = (mem, at) =>
 // Cells of the console grid that are not a blank on a black ground. A screen
 // full of spaces coloured by a background is still a screen, so a cell counts
 // when either its character or its attribute says something.
+// Which of the two surfaces is this program's picture.
+//
+// `vga.bpp` is 0 until a graphics mode is established and 0 again once the
+// guest goes back to text, which is the question worth asking -- the mode
+// number alone is not, since a demo can reprogram the CRTC underneath mode 13h
+// and still be in graphics. Two cases hang off the text answer: a program with
+// something on the text page is photographed there, and a program with a blank
+// text page that HAS been in graphics is photographed off its last frame, which
+// is still sitting in A000 after the mode-3 restore a well-behaved demo does on
+// its way out.
+function screenSurface(machine) {
+  if (machine.vga.bpp !== 0) return { text: false, geom: vgaGeometry(machine.vga) };
+  if (conCells(machine.con) > 0 || !machine.vga.lastGraphics) return { text: true, geom: null };
+  return { text: false, geom: machine.vga.lastGraphics };
+}
+
 function conCells(con) {
   let n = 0;
   for (let i = 0; i < con.cells; i++) {
@@ -426,6 +442,7 @@ async function runDos(o) {
     if (stuck > 200) { stuckAt = key; break; }
   }
 
+  const surface = screenSurface(machine);
   return {
     variant, exe, vm, machine, jtab,
     secs: Number(process.hrtime.bigint() - t0) / 1e9,
@@ -435,10 +452,10 @@ async function runDos(o) {
     // A program that never put the adapter in a graphics mode has no frame to
     // count, and reading A000 anyway is how ACME-SUX.EXE and AKM_DOB.EXE came
     // back with ~61,700 "pixels" each while sitting in text mode the whole run.
-    // vga.bpp is 0 until resetVgaMode establishes a graphics mode, so it is the
-    // question being asked, where the mode number alone is not: a demo can
-    // reprogram the CRTC underneath mode 13h and still be in graphics.
-    pixels: machine.vga.bpp === 0 ? 0 : nonBlack(vm.mem, vgaGeometry(machine.vga)),
+    // See screenSurface() for which of the two surfaces this program's picture
+    // is on.
+    surface,
+    pixels: surface.text ? 0 : nonBlack(vm.mem, surface.geom),
     frame: frameHash(vm.mem, vgaGeometry(machine.vga)),
     video: {
       mode: machine.videoMode,
@@ -500,11 +517,8 @@ async function main() {
   // used to screenshot as identical black rectangles.
   const png = arg('png');
   if (png) {
-    if (r.machine.vga.bpp === 0) {
-      writeConsolePng(png, r.machine.con);
-    } else {
-      writePng(png, r.vm.mem, r.machine.palette, vgaGeometry(r.machine.vga));
-    }
+    if (r.surface.text) writeConsolePng(png, r.machine.con);
+    else writePng(png, r.vm.mem, r.machine.palette, r.surface.geom);
   }
 
   if (r.stuckAt) console.log(`stuck at ${r.stuckAt} -- no progress in 200 handbacks`);
@@ -604,6 +618,7 @@ async function main() {
 
 module.exports = {
   runDos, writePng, writeConsolePng, readFrame, nonBlack, frameHash, conText,
+  screenSurface, conCells,
 };
 
 if (require.main === module) main().catch(e => { console.error(e.stack || String(e)); process.exit(1); });

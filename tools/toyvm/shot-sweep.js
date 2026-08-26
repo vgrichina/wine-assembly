@@ -68,13 +68,12 @@ function shotName(exe, dir, used) {
 // --- child: one program, one run --------------------------------------------
 async function runOne(exe, png, o) {
   const { runDos, writePng, writeConsolePng, conText } = require('./run-dos');
-  const { vgaGeometry } = require('./dos');
   const r = await runDos({
     exe, variant: 'tailcall', budget: o.budget, cpu: o.cpu, log: () => {}, autoKey: o.autoKey,
   });
-  const text = r.machine.vga.bpp === 0;   // never entered a graphics mode
+  const text = r.surface.text;
   if (text) writeConsolePng(png, r.machine.con);
-  else writePng(png, r.vm.mem, r.machine.palette, vgaGeometry(r.machine.vga));
+  else writePng(png, r.vm.mem, r.machine.palette, r.surface.geom);
   return {
     name: path.basename(exe), exe, png, surface: text ? 'console' : 'vga',
     mode: r.video.mode, width: r.video.width, height: r.video.height,
