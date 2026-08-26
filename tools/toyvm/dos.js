@@ -582,6 +582,8 @@ class Machine {
     // only visible by changing tickScale and watching the frame move. The
     // interrupt-driven clocks (INT 1Ah, 15h, 16h) are already in `intCount`.
     this.clock = { retrace: 0, pit: 0 };
+    // The Sound Blaster, as far as a detection routine can tell. See portIn.
+    this.sb = { out: [], cmd: 0, arg: 0, speaker: 0, detects: 0, commands: 0 };
     // The 8253, as three down-counters rather than a number that goes up.
     //
     // Channel 0 is the one that matters: it divides 1.193182 MHz by its latch,
@@ -629,6 +631,11 @@ class Machine {
     put('COMSPEC=C:\\COMMAND.COM');
     put('PATH=C:\\');
     put('TEMP=C:\\');
+    // What a card announces itself with. Half the sound libraries of the era
+    // read this instead of probing -- base 220h, IRQ 7, 8-bit DMA channel 1,
+    // type 3 (Sound Blaster Pro) -- and the ones that do probe find the DSP
+    // where this says it is. See portIn for what is actually behind it.
+    put('BLASTER=A220 I7 D1 T3');
     mem[at++] = 0;                    // end of the variables
     mem[at++] = 0x01; mem[at++] = 0x00;   // one string follows: the program path
     put(`C:\\${String(name).toUpperCase()}`);
@@ -1066,6 +1073,48 @@ class Machine {
     return true;
   }
 
+  // --- the sound card, as far as a detection routine can tell ---------------
+  //
+  // A DSP command, and the two that have to answer. E1h is the version, and
+  // which version is not a detail: a program that wants a Sound Blaster Pro
+  // rejects 1.05, and one written for the original card can refuse to believe a
+  // 4.xx. 2.01 is the highest DSP that is still a plain mono SB, which is the
+  // widest thing to claim on a corpus this old. E3h is the copyright string,
+  // NUL-terminated, which a few detectors read to confirm a real card.
+  sbCommand(v) {
+    this.sb.commands++;
+    if (this.sb.expect) { this.sb.expect--; this.sb.arg = v; return; }
+    this.sb.cmd = v;
+    if (v === 0xE1) { this.sb.out.push(2, 1); return; }
+    if (v === 0xE3) {
+      for (const c of 'COPYRIGHT (C) CREATIVE TECHNOLOGY LTD, 1992.') this.sb.out.push(c.charCodeAt(0));
+      this.sb.out.push(0);
+      return;
+    }
+    // E0h is the "DSP identification" echo: the next byte written comes back
+    // complemented, and a detector that gets its own byte back concludes there
+    // is nothing there.
+    if (v === 0xE0) { this.sb.echo = true; return; }
+    if (this.sb.echo) { this.sb.echo = false; this.sb.out.push((~v) & 0xFF); return; }
+    if (v === 0xD1 || v === 0xD3) { this.sb.speaker = v === 0xD1 ? 1 : 0; return; }
+  }
+
+  // The OPL2 status register. The presence test is: reset both timers, read
+  // status (expect 0), start timer 1, wait, read status (expect bits 7 and 6
+  // set), reset again, read (expect 0). An absent card floats at 0xFF, which
+  // is why leaving this unanswered is what "no adlib compatible sound card"
+  // means. The timer is not modelled -- it reads as expired the moment it is
+  // started, which is what the test is waiting for anyway.
+  adlibStatus() {
+    return this.adlibTimer ? 0xC0 : 0x00;
+  }
+
+  adlibWrite(v) {
+    // Register 4 is the timer control: bit 7 resets the flags, bits 0/1 start
+    // timers 1 and 2.
+    if (this.adlibIndex === 4) this.adlibTimer = (v & 0x80) ? 0 : (v & 3 ? 1 : 0);
+  }
+
   timerVector() {
     if (this.hookedVector(0x08)) return 0x08;
     if (this.hookedVector(0x1C)) return 0x1C;
@@ -1109,6 +1158,25 @@ class Machine {
       if (this.kbQueue.length) this.kbScan = this.kbQueue.shift();
       return this.kbScan;
     }
+    // --- Sound Blaster, base 0x220 -----------------------------------------
+    // Detection only, and deliberately so. About a dozen programs in this
+    // corpus print a refusal instead of a demo -- "No (currently supported)
+    // soundcard found", "Oeps, no adlib compatible sound card found" -- and
+    // every one of them arrives at that line the same way: reset the DSP,
+    // expect 0xAA back, ask its version. Nothing here plays a sample; the
+    // point is to get past the check to the picture behind it.
+    //
+    // 0x22A is the read port, 0x22E its status (bit 7 = a byte is waiting),
+    // 0x22C the write port (bit 7 = busy, always clear here).
+    if (port === 0x22A) return this.sb.out.length ? this.sb.out.shift() : 0;
+    if (port === 0x22E) return this.sb.out.length ? 0xFF : 0x7F;
+    if (port === 0x22C) return 0x7F;
+    // The FM chip's status register. `IN AL,388h` twice and reading back 0
+    // after resetting timers 1 and 2 is the whole OPL2 presence test, and a
+    // card that is not there reads 0xFF. Bits 7/6 mirror the timer flags.
+    if (port === 0x388 || port === 0x389 || port === 0x228 || port === 0x229) {
+      return this.adlibStatus();
+    }
     if (port >= 0x40 && port <= 0x42) {
       this.clock.pit++;
       const ch = port - 0x40;
@@ -1126,6 +1194,26 @@ class Machine {
   portOut(port, value, w) {
     if (w === 16) { this.portOut(port, value & 0xFF, 8); this.portOut(port + 1, (value >> 8) & 0xFF, 8); return; }
     value &= 0xFF;
+    // --- Sound Blaster, base 0x220 -----------------------------------------
+    // Reset: 1 then 0, and the card answers 0xAA on the read port. Everything
+    // else is accepted and dropped, except the two commands a detection
+    // routine reads an answer back from.
+    if (port === 0x226) {
+      if (value & 1) this.sb.resetting = true;
+      else if (this.sb.resetting) {
+        this.sb.resetting = false;
+        this.sb.out.length = 0;
+        this.sb.out.push(0xAA);
+        this.sb.detects++;
+      }
+      return;
+    }
+    if (port === 0x22C) { this.sbCommand(value); return; }
+    // The FM chip: 0x388 selects a register, 0x389 writes it. There is no
+    // synthesis behind this -- only the timer bits the presence test reads.
+    if (port === 0x388 || port === 0x228) { this.adlibIndex = value; return; }
+    if (port === 0x389 || port === 0x229) { this.adlibWrite(value); return; }
+    if (port === 0x224 || port === 0x225) { return; }   // mixer index/data
     // The PIT. A demo reprogramming channel 0 is asking for a faster music
     // interrupt, and one reprogramming channel 2 is driving the speaker; both
     // change what a read of the counter means, so the latch has to be kept.
