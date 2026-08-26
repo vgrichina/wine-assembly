@@ -41,10 +41,17 @@ function serveFile(request, response) {
   try { pathname = decodeURIComponent(new URL(request.url, 'http://127.0.0.1').pathname); }
   catch (_) { response.writeHead(400); response.end(); return; }
   if (pathname === '/') pathname = '/index.html';
-  const file = path.normalize(path.join(ROOT, pathname));
+  let file = path.normalize(path.join(ROOT, pathname));
   if (file !== ROOT && !file.startsWith(ROOT + path.sep)) {
     response.writeHead(403); response.end(); return;
   }
+  // A directory URL is the one someone types. Without this, /tools/ios-lab/
+  // reads a directory as a file, fails with EISDIR and serves a blank 500 --
+  // which on a phone is indistinguishable from a page that loaded and drew
+  // nothing, and is exactly how the lab was first reported broken.
+  try {
+    if (fs.statSync(file).isDirectory()) file = path.join(file, 'index.html');
+  } catch (_) { /* let readFile report it */ }
   fs.readFile(file, (error, data) => {
     if (error) { response.writeHead(error.code === 'ENOENT' ? 404 : 500); response.end(); return; }
     response.writeHead(200, {
