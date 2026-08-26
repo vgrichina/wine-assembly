@@ -1928,6 +1928,20 @@ function gen386() {
                                          (i32.const 0xFFFF)))
     (i32.const ${w === 32 ? '0xFFFFFFFF' : '0xFFFFFF'})))
 `);
+      // The store side. Not a curiosity: SGDT is how a real-mode program asks
+      // "is anything already in protected mode here" before it installs its own
+      // extender, and STARPORT.COM stops at the first `0f 01 07` in its startup.
+      // A 16-bit SGDT writes only the low 24 bits of the base and leaves the
+      // fourth byte as the 386 does -- ones, not zeroes.
+      h(`s${nm.slice(1)}${w}`, 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  (call $wr16 (local.get $t5) (local.get $t4) (global.get ${gl}))
+  (call $wr32 (local.get $t5)
+    (i32.and (i32.add (local.get $t4) (i32.const 2)) (i32.const 0xFFFF))
+    (i32.or (i32.and (global.get ${gb}) (i32.const ${w === 32 ? '0xFFFFFFFF' : '0xFFFFFF'}))
+            (i32.const ${w === 32 ? '0' : '0xFF000000'})))
+`);
     }
   }
 

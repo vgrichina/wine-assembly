@@ -792,9 +792,11 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
           else words.push(H.lmsw_m16, packEa(m), m.disp);
           break;
         }
-        if (m.reg !== 2 && m.reg !== 3) return null;
+        // /0 and /1 are the store side, /2 and /3 the load side.
+        if (m.reg > 3) return null;
         if (m.isReg) return null;   // no register form exists
-        words.push(H[`${m.reg === 2 ? 'lgdt' : 'lidt'}${opsize}`], packEa(m), m.disp);
+        const G7 = ['sgdt', 'sidt', 'lgdt', 'lidt'][m.reg];
+        words.push(H[`${G7}${opsize}`], packEa(m), m.disp);
         break;
       }
       // MOV r32, CRn and MOV CRn, r32.
