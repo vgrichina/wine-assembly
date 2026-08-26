@@ -2159,8 +2159,11 @@ function helpers() {
     }));
   s += brTableFn('sget', '(param $i i32)', '(result i32)',
     isa.SEG.map(r => `(return (global.get $${r}))`));
+  s += brTableFn('sbase', '(param $i i32)', '(result i32)',
+    isa.SEG.map(r => `(return (global.get $${r}b))`));
   s += brTableFn('sset', '(param $i i32) (param $v i32)', '',
-    isa.SEG.map(r => `(global.set $${r} (local.get $v)) (return)`));
+    isa.SEG.map(r => `(global.set $${r} (local.get $v))`
+      + ` (global.set $${r}b (call $segbase (local.get $v))) (return)`));
 
   // Effective address. Every form masks to 16 bits: the 8086 wraps an EA inside
   // its segment rather than carrying into the segment base.
@@ -2213,10 +2216,14 @@ function helpers() {
   // Linear address: (segment << 4) + offset, wrapped at 1MB the way the 8086's
   // 20 address lines do.
   s += `
+;; Selector to linear base. Real mode has no table to consult: the base IS the
+;; selector times sixteen, which is the whole of 8086 segmentation.
+(func $segbase (param $v i32) (result i32)
+  (i32.shl (i32.and (local.get $v) (i32.const 0xFFFF)) (i32.const 4)))
+
 (func $lin (param $seg i32) (param $off i32) (result i32)
-  (i32.and
-    (i32.add (i32.shl (call $sget (local.get $seg)) (i32.const 4)) (local.get $off))
-    (global.get $linmask)))
+  (i32.and (i32.add (call $sbase (local.get $seg)) (local.get $off))
+           (global.get $linmask)))
 
 ;; The A000 window in unchained ("mode X") mode. See isa.js for why the planes
 ;; cannot live in the guest's own RAM.
@@ -3058,14 +3065,34 @@ ${[...Array(8).keys()].map(i => `(global $st${i} (mut f64) (f64.const 0))`).join
 ;; the host raises the moment the guest takes an XMS handle, rather than a
 ;; constant. Left alone it is exactly the old behaviour -- which is what the
 ;; instruction gate checks, since its 8088 vectors include the wrap.
-(global $linmask (mut i32) (i32.const ${isa.LIN_MASK_REAL}))`;
+(global $linmask (mut i32) (i32.const ${isa.LIN_MASK_REAL}))
+
+;; Where each segment register's window starts, in linear bytes. In real mode
+;; this is just the selector shifted left four, and keeping it beside the
+;; selector rather than recomputing it buys nothing on its own -- $lin used to
+;; do the shift inline. It is here because a segment base is the one part of
+;; addressing that protected mode changes: there the number comes out of a
+;; descriptor and has no arithmetic relationship to the selector at all.
+;;
+;; Derived state, so there is exactly one writer: $sset. Nothing else may
+;; assign a segment global, including the host, whose set_es/set_cs/... exports
+;; are routed through $sset for this reason.
+${isa.SEG.map(r => `(global $${r}b (mut i32) (i32.const 0))`).join('\n')}`;
 
 function preamble() {
   const globals = STATE
     .map(g => `(global $${g} (mut i32) (i32.const 0))`).join('\n');
-  const accessors = STATE.map(g => `
+  // A segment register's setter goes through $sset like every in-guest write
+  // does, so the shadow base cannot drift when the host pokes CS or ES -- which
+  // it does on every interrupt dispatch and on the way into a program.
+  const accessors = STATE.map(g => {
+    const seg = isa.SEG.indexOf(g);
+    return `
 (func (export "get_${g}") (result i32) (global.get $${g}))
-(func (export "set_${g}") (param $v i32) (global.set $${g} (local.get $v)))`).join('');
+(func (export "set_${g}") (param $v i32) ${seg < 0
+      ? `(global.set $${g} (local.get $v))`
+      : `(call $sset (i32.const ${seg}) (local.get $v))`})`;
+  }).join('');
   return `(module
 (import "host" "memory" (memory ${isa.MEM_PAGES} ${isa.MEM_PAGES}))
 (import "host" "port_in" (func $port_in (param i32) (param i32) (result i32)))
