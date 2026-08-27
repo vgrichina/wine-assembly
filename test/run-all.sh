@@ -107,6 +107,7 @@ UNIT=(
   test/test-browser-step-scheduler.js
   test/test-browser-worker-run-slice.js
   test/test-guest-rpc-nested-wait.js
+  test/test-worker-api-batching.js
   test/test-console-input.js
   test/test-browser-mm-timer.js
   test/test-asset-parts.js

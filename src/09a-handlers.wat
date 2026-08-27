@@ -7482,24 +7482,14 @@
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
   ;; GetKeyboardState(LPBYTE lpKeyState[256]) → BOOL — 1 arg stdcall.
-  ;; SDL polls this every frame to build its keyboard snapshot. Fill the 256-byte
-  ;; buffer from $host_get_key_down_state so currently-held keys show up there
-  ;; without consuming GetAsyncKeyState's one-shot low press bit.
+  ;; SDL polls this every frame to build its keyboard snapshot. Snapshot the
+  ;; complete table in one host call: in a guest Worker, calling the scalar
+  ;; get_key_down_state import 256 times parked and woke the Worker 256 times.
+  ;; The host still uses the non-consuming physical/down-state view, preserving
+  ;; GetAsyncKeyState's separate one-shot low press bit.
   (func $handle_GetKeyboardState (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $i i32) (local $w i32) (local $s i32)
-    (local.set $w (call $g2w (local.get $arg0)))
-    (local.set $i (i32.const 0))
-    (block $done (loop $loop
-      (br_if $done (i32.ge_u (local.get $i) (i32.const 256)))
-      (local.set $s (call $host_get_key_down_state (local.get $i)))
-      ;; GetAsyncKeyState returns 0x8000 in high bit if down. Translate to
-      ;; GetKeyboardState's high-bit-set byte (0x80) when down, else 0.
-      (i32.store8 (i32.add (local.get $w) (local.get $i))
-        (select (i32.const 0x80) (i32.const 0)
-          (i32.and (local.get $s) (i32.const 0x8000))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $loop)))
-    (global.set $eax (i32.const 1))
+    (global.set $eax
+      (call $host_get_keyboard_state (call $g2w (local.get $arg0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 

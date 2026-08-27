@@ -670,6 +670,7 @@
 
   (import "host" "get_async_key_state" (func $host_get_async_key_state (param i32) (result i32)))
   (import "host" "get_key_down_state" (func $host_get_key_down_state (param i32) (result i32)))
+  (import "host" "get_keyboard_state" (func $host_get_keyboard_state (param i32) (result i32)))
   (import "host" "set_key_down_state" (func $host_set_key_down_state (param i32) (param i32)))
   (import "host" "win16_stage_module" (func $host_win16_stage_module (param i32) (param i32) (result i32)))
   (import "host" "di_set_event_notification" (func $host_di_set_event_notification (param i32 i32) (result i32)))

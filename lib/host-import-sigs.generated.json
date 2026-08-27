@@ -1,6 +1,6 @@
 {
   "generated_from": "src/01-header.wat",
-  "count": 207,
+  "count": 208,
   "sigs": {
     "log": {
       "params": [
@@ -1041,6 +1041,14 @@
       ]
     },
     "get_key_down_state": {
+      "params": [
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
+    "get_keyboard_state": {
       "params": [
         "i32"
       ],
