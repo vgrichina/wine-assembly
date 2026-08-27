@@ -683,6 +683,57 @@ buy it. The rest of the census tail is faults rather than gaps: the `int 00h`,
 STHINTRO.EXE are divide-error, breakpoint and single-step vectors, which means
 those programs are *crashing*, and each needs its own diagnosis.
 
+### 7.5 A demo that looked stuck was running a thousand times too slowly
+
+DOPE.EXE photographed as a text screen with 152 cells on it and nothing else.
+It had answered its own sound menu (the reader picks `0> NoSound` off the
+screen), left text mode, established unchained mode 13h and written 265216
+bytes into the planes — and still captured as a console, because inside the
+sweep's 300M-dispatch budget it never got far enough to finish a frame.
+
+The number that explains it was not in any report. `--smc-census` — added for
+this — keys every self-modify break by the block that stored and the paragraph
+range it dirtied, and one line carried nearly the whole count:
+
+```
+   134414  873:b18 patched its own next block
+```
+
+`873:b15` is `2e 88 27`, `cs: mov [bx],ah`, inside a six-instruction loop with
+`dx=0x100` and `cx=0x40`: a 64-entry fade ramp being built into a corner of the
+program's own code segment. The decoder treats **any** store through a CS
+override as a program editing its instruction stream and ends the block there,
+so the loop handed back and recompiled on every single iteration — 138537
+traces, 18MB of arena, and **4% of the wall clock actually in wasm**. Read as a
+per-batch cost this looks like a slow emulator. It is a trace compiler running
+flat out on a table.
+
+The rule itself has to stay: it is why Turbo Pascal's `Intr()` works, writing
+the interrupt number into the `int` two instructions ahead. But the signal that
+separates the two cases was already being computed and then discarded. `$wr8`
+tests every store against the paragraphs that have been compiled and sets
+`$smc=2` when one lands in them; `end_smc` overwrote that with `1`. Preserving
+it makes `$smc=1` mean precisely *a CS store that touched nothing compiled*,
+and after 48 of those at one site the host withdraws the rule for that store
+and recompiles the block without the cut. A genuine self-patch never reaches
+that path — it writes into the block it is standing in, and that block is
+compiled by definition.
+
+| DOPE.EXE, 18M dispatches | before | after |
+|---|---|---|
+| wall | 9.77s | **0.39s** |
+| self-modify breaks | 138414 | 836 |
+| traces | 138537 | 889 |
+| arena | 18395KB | 165KB |
+| share of wall in wasm | 4% | **87%** |
+
+At the sweep budget it draws 3543 pixels where it drew none. The general point
+is the one worth keeping: **a static guess about what code does is a
+performance decision as well as a correctness one, and the corpus is the only
+thing that can tell you which sites it is wrong about.** The report now prints
+how many sites a run retired, so that blast radius is visible — DHADREN retires
+14 and its frame is unchanged at 20272 pixels.
+
 ## 8. Still open
 
 * Run the matrix on SpiderMonkey and JavaScriptCore, not just node's V8, and on
