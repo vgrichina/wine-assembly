@@ -2148,6 +2148,7 @@
 
   (func $handle_IDirectDraw_SetDisplayMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $vtbl i32) (local $target_hwnd i32) (local $changed i32)
+    (local $rect i32) (local $moved i32)
     ;; Windows announces a mode switch only when the mode actually switches:
     ;; asking for the mode that is already current is a no-op and no
     ;; WM_DISPLAYCHANGE goes out. Posting one unconditionally is a live-lock
@@ -2182,6 +2183,34 @@
     ;; code passed 1 (SWP_NOSIZE) which actively dropped the size update.
     (local.set $target_hwnd (call $dx_target_hwnd))
     (if (local.get $target_hwnd) (then
+      ;; Whether this *window* is about to change shape is a different question
+      ;; from whether the display mode is changing, and the app has to be told
+      ;; about both. RollerCoaster Tycoon creates its window at
+      ;; SM_CXSCREEN x SM_CYSCREEN, then takes exclusive mode twice: once on a
+      ;; first window, and again on the real game window after tearing the
+      ;; first one down. The second SetDisplayMode asks for the 640x480x8 that
+      ;; is already current, so $changed is 0 -- but the new window is still
+      ;; canvas-sized, and the move below silently shrinks it to the mode. With
+      ;; no WM_SIZE, RCT kept laying out and edge-testing against the window it
+      ;; asked for: on a 1280x872 canvas the map scrolled left and up (limit 0,
+      ;; reachable) and not right or down (limit screen-1 = 1279/871, and the
+      ;; guest never sees a coordinate past 639/479). At a 640x480 canvas the
+      ;; window is born the right size, nothing moves, and the bug disappears --
+      ;; which is why every headless test passed.
+      (local.set $rect (call $paint_scratch_take))
+      (call $host_get_window_rect (local.get $target_hwnd) (local.get $rect))
+      (local.set $moved
+        (i32.or
+          (i32.or
+            (i32.ne (i32.load          (local.get $rect)) (i32.const 0))
+            (i32.ne (i32.load offset=4 (local.get $rect)) (i32.const 0)))
+          (i32.or
+            (i32.ne (i32.sub (i32.load offset=8  (local.get $rect))
+                             (i32.load           (local.get $rect)))
+                    (local.get $arg1))
+            (i32.ne (i32.sub (i32.load offset=12 (local.get $rect))
+                             (i32.load offset=4  (local.get $rect)))
+                    (local.get $arg2)))))
       (call $host_move_window (local.get $target_hwnd)
         (i32.const 0) (i32.const 0)
         (local.get $arg1) (local.get $arg2) (i32.const 0))
@@ -2193,11 +2222,17 @@
       ;; routes WM_MOVE and WM_SIZE to one SetRect(0, 0, SM_CXSCREEN,
       ;; SM_CYSCREEN) — so without them it keeps dividing by the pre-switch
       ;; desktop size and every click lands short of where it was aimed.
+      ;;
+      ;; WM_DISPLAYCHANGE stays gated on the mode alone. It is the message RCT
+      ;; turns into a "reinit display" flag, and re-announcing an unchanged
+      ;; mode is the live-lock described above. WM_MOVE/WM_SIZE describe the
+      ;; window, so they go out whenever the window really did move or resize.
       (if (local.get $changed) (then
         (drop (call $post_queue_push (local.get $target_hwnd) (i32.const 0x007E)
           (local.get $arg3)
           (i32.or (i32.and (local.get $arg1) (i32.const 0xFFFF))
-                  (i32.shl (local.get $arg2) (i32.const 16)))))
+                  (i32.shl (local.get $arg2) (i32.const 16)))))))
+      (if (i32.or (local.get $changed) (local.get $moved)) (then
         (drop (call $post_queue_push (local.get $target_hwnd) (i32.const 0x0003)
           (i32.const 0) (i32.const 0)))
         (drop (call $post_queue_push (local.get $target_hwnd) (i32.const 0x0005)
