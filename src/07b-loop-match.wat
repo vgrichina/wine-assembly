@@ -42,6 +42,9 @@
   (global $loop_lut16_matches (mut i32) (i32.const 0))
   (global $loop_lut16_runs (mut i32) (i32.const 0))
   (global $loop_lut16_bytes (mut i64) (i64.const 0))
+  (global $loop_copy32_matches (mut i32) (i32.const 0))
+  (global $loop_copy32_runs (mut i32) (i32.const 0))
+  (global $loop_copy32_bytes (mut i64) (i64.const 0))
   ;; LUT_RUN and COPY_RUN have independent gates. The role-proved LUT lowering
   ;; is on by default; COPY remains off while its historical Storm divergence
   ;; is investigated. set_loop_emit still controls both for compatibility.
@@ -1299,6 +1302,138 @@
     (i32.const 1))
 
   ;; ------------------------------------------------------------------
+  ;; Bounded dword COPY_RUN
+  ;; ------------------------------------------------------------------
+  ;; Abe's dominant row copier at 0x00496c31 is the six-op self-loop:
+  ;;
+  ;;   mov scratch,[src] / add src,4 / mov [dst],scratch / add dst,4
+  ;;   cmp dst,bound / jb ^
+  ;;
+  ;; The bytes moved are the same as a forward byte stream whenever the source
+  ;; and destination spans do not overlap. Reuse scalar H419 mode 0 with a
+  ;; private, bound-derived byte count (ctr_kind=2), src/dst byte strides, and
+  ;; a four-byte rounding quantum. H419 retains complete-dword budget
+  ;; boundaries and takes an ordinary dword fallback for overlap. The final
+  ;; scratch load and original CMP/JB remain ordinary threaded ops, so their
+  ;; architectural register and flag results need no reimplementation here.
+  ;;
+  ;; This recognizer is exact in role order but register/displacement generic.
+  ;; All four registers must differ: otherwise one of the cursor bumps or the
+  ;; load would change a later address/bound in the same original iteration.
+  (func $loop_try_copy32_bounded
+    (param $start_eip i32) (param $tstart i32) (result i32)
+    (local $p i32) (local $fn i32) (local $op i32)
+    (local $src i32) (local $dst i32) (local $scratch i32) (local $bound i32)
+    (local $src_disp i32) (local $dst_disp i32)
+    (local $fall i32) (local $back i32) (local $mask i32)
+
+    (if (i32.ne (global.get $op_index_n) (i32.const 6))
+      (then (return (i32.const 0))))
+
+    ;; mov scratch,[src+disp]
+    (local.set $p (call $loop_op_at (i32.const 0)))
+    (local.set $fn (i32.load (local.get $p)))
+    (if (i32.or (i32.lt_u (local.get $fn) (i32.const 339))
+                (i32.gt_u (local.get $fn) (i32.const 346)))
+      (then (return (i32.const 0))))
+    (local.set $src (i32.sub (local.get $fn) (i32.const 339)))
+    (local.set $scratch (i32.load offset=4 (local.get $p)))
+    (local.set $src_disp (i32.load offset=8 (local.get $p)))
+
+    ;; add src,4
+    (local.set $p (call $loop_op_at (i32.const 1)))
+    (if (i32.or
+          (i32.ne (i32.load (local.get $p)) (i32.const 3))
+          (i32.or
+            (i32.ne (i32.load offset=4 (local.get $p)) (local.get $src))
+            (i32.ne (i32.load offset=8 (local.get $p)) (i32.const 4))))
+      (then (return (i32.const 0))))
+
+    ;; mov [dst+disp],scratch
+    (local.set $p (call $loop_op_at (i32.const 2)))
+    (local.set $fn (i32.load (local.get $p)))
+    (if (i32.or (i32.lt_u (local.get $fn) (i32.const 347))
+                (i32.gt_u (local.get $fn) (i32.const 354)))
+      (then (return (i32.const 0))))
+    (local.set $dst (i32.sub (local.get $fn) (i32.const 347)))
+    (if (i32.ne (i32.load offset=4 (local.get $p)) (local.get $scratch))
+      (then (return (i32.const 0))))
+    (local.set $dst_disp (i32.load offset=8 (local.get $p)))
+
+    ;; add dst,4
+    (local.set $p (call $loop_op_at (i32.const 3)))
+    (if (i32.or
+          (i32.ne (i32.load (local.get $p)) (i32.const 3))
+          (i32.or
+            (i32.ne (i32.load offset=4 (local.get $p)) (local.get $dst))
+            (i32.ne (i32.load offset=8 (local.get $p)) (i32.const 4))))
+      (then (return (i32.const 0))))
+
+    ;; cmp dst,bound / jb back
+    (local.set $p (call $loop_op_at (i32.const 4)))
+    (if (i32.ne (i32.load (local.get $p)) (i32.const 19))
+      (then (return (i32.const 0))))
+    (local.set $op (i32.load offset=4 (local.get $p)))
+    (if (i32.ne (i32.shr_u (local.get $op) (i32.const 4)) (local.get $dst))
+      (then (return (i32.const 0))))
+    (local.set $bound (i32.and (local.get $op) (i32.const 0xF)))
+    (local.set $p (call $loop_op_at (i32.const 5)))
+    (if (i32.ne (i32.load (local.get $p)) (i32.const 309))
+      (then (return (i32.const 0))))
+    (local.set $fall (i32.load offset=8 (local.get $p)))
+    (local.set $back (i32.load offset=12 (local.get $p)))
+
+    (local.set $mask
+      (i32.or (i32.shl (i32.const 1) (local.get $src))
+        (i32.or (i32.shl (i32.const 1) (local.get $dst))
+          (i32.or (i32.shl (i32.const 1) (local.get $scratch))
+                  (i32.shl (i32.const 1) (local.get $bound))))))
+    ;; Four distinct registers set exactly four bits.
+    (if (i32.ne (i32.popcnt (local.get $mask)) (i32.const 4))
+      (then (return (i32.const 0))))
+
+    (global.set $loop_matched_blocks
+      (i32.add (global.get $loop_matched_blocks) (i32.const 1)))
+    (global.set $loop_copy32_matches
+      (i32.add (global.get $loop_copy32_matches) (i32.const 1)))
+    (if (global.get $loop_trace)
+      (then
+        (call $host_log_i32 (i32.const 0x100B0003))
+        (call $host_log_i32 (local.get $start_eip))))
+    (if (i32.eqz (global.get $loop_copy_emit_enabled))
+      (then (return (i32.const 0))))
+
+    (global.set $thread_alloc (local.get $tstart))
+    (global.set $op_index_n (i32.const 0))
+    (call $te (global.get $LOOP_SUPEROP_COPY) (i32.const 0))
+    (call $te_raw (local.get $src))
+    (call $te_raw (i32.const 1))
+    (call $te_raw (local.get $src_disp))
+    (call $te_raw (local.get $dst))
+    (call $te_raw (i32.const 1))
+    (call $te_raw (local.get $dst_disp))
+    (call $te_raw (i32.const -1))            ;; no byte scratch publication
+    (call $te_raw (i32.const 2))             ;; private bound-derived counter
+    (call $te_raw (local.get $bound))
+    (call $te_raw (i32.const 4))             ;; byte-count rounding quantum
+    (call $te_raw (i32.const -1))
+    (call $te_raw (local.get $fall))
+    (call $te_raw (local.get $back))
+    (call $te_raw (i32.const 6))             ;; original ops per dword
+
+    ;; Reconstruct the final full-width scratch value from the last destination
+    ;; dword, then retain the exact terminator. Reading the destination (rather
+    ;; than the possibly overwritten source) also preserves overlap semantics.
+    (call $te (i32.add (i32.const 339) (local.get $dst)) (local.get $scratch))
+    (call $te_raw (i32.sub (local.get $dst_disp) (i32.const 4)))
+    (call $te (i32.const 19)
+      (i32.or (i32.shl (local.get $dst) (i32.const 4)) (local.get $bound)))
+    (call $te (i32.const 309) (i32.load offset=4 (local.get $p)))
+    (call $te_raw (local.get $fall))
+    (call $te_raw (local.get $back))
+    (i32.const 1))
+
+  ;; ------------------------------------------------------------------
   ;; COPY_RUN
   ;; ------------------------------------------------------------------
   ;;   dst[i] = src[i] for a counted run -- the byte-at-a-time memcpy every
@@ -1320,8 +1455,15 @@
   ;; Parameter block:
   ;;   0 src_reg  1 src_stride  2 src_disp
   ;;   3 dst_reg  4 dst_stride  5 dst_disp
-  ;;   6 byte_reg 7 ctr_kind (0 reg, 1 mem)  8 ctr_loc  9 ctr_disp
+  ;;   6 byte_reg 7 ctr_kind (0 reg, 1 mem, 2 cursor bound)
+  ;;   8 ctr_loc  9 ctr_disp
   ;;  10 ctr_step 11 fall_eip  12 back_eip  13 steps_per_iter
+  ;;
+  ;; Every form executes against a private local remaining count. Kinds 0/1
+  ;; mirror that count into the architectural counter the guest loop updates.
+  ;; Kind 2 instead derives byte count by rounding (bound-dst) up to a quantum,
+  ;; where ctr_loc is the bound register and ctr_disp is that byte quantum; it has
+  ;; no architectural counter to publish and continues into suffix ops.
   (global $LOOP_SUPEROP_COPY i32 (i32.const 419))
 
   (func $loop_try_copy (param $start_eip i32) (param $tstart i32) (result i32)
@@ -1685,6 +1827,9 @@
     (local $lo i32) (local $hi i32)
     (local $src_ga i32) (local $dst_ga i32) (local $src_wa i32) (local $dst_wa i32)
     (local $chunk i32) (local $trips i32) (local $allowed i32) (local $n i32)
+    (local $bound i32) (local $round_quantum i32) (local $private_bytes i32)
+    (local $private_limit i32) (local $private_groups i32)
+    (local $src_end i32) (local $dst_end i32) (local $copy32_overlap i32)
 
     (if (i32.lt_s (local.get $op) (i32.const 0))
       (then (return_call $th_mmx_mask_copy32 (local.get $op))))
@@ -1713,12 +1858,67 @@
 
     (local.set $src (call $get_reg (local.get $src_reg)))
     (local.set $dst (call $get_reg (local.get $dst_reg)))
-    (if (local.get $ctr_kind)
+    (if (i32.eq (local.get $ctr_kind) (i32.const 2))
       (then
+        (local.set $round_quantum (local.get $ctr_disp))
+        (local.set $bound (call $get_reg (local.get $ctr_loc)))
+        ;; The original is do-while. At/above the bound it still performs one
+        ;; element; below it, round the unsigned distance up to a whole element.
+        ;; A near-4GB distance would overflow the round-up, so keep the safe
+        ;; one-element progress form for that nonsensical mapping.
+        (if (i32.and
+              (i32.lt_u (local.get $dst) (local.get $bound))
+              (i32.le_u (i32.sub (local.get $bound) (local.get $dst))
+                        (i32.sub (i32.const -1)
+                          (i32.sub (local.get $round_quantum) (i32.const 1)))))
+          (then
+            (local.set $ctr
+              (i32.mul
+                (i32.div_u
+                  (i32.add (i32.sub (local.get $bound) (local.get $dst))
+                    (i32.sub (local.get $round_quantum) (i32.const 1)))
+                  (local.get $round_quantum))
+                (local.get $round_quantum))))
+          (else (local.set $ctr (local.get $round_quantum))))
+
+        ;; Budget only at complete guest-element boundaries. The suffix owns
+        ;; the final scratch/CMP/Jcc, so reserve its three threaded ops in the
+        ;; accounting performed at exit below.
+        (local.set $allowed
+          (i32.div_u
+            (i32.add
+              (select (global.get $steps) (i32.const 0)
+                (i32.gt_s (global.get $steps) (i32.const 0)))
+              (i32.sub (local.get $cost) (i32.const 1)))
+            (local.get $cost)))
+        (if (i32.eqz (local.get $allowed))
+          (then (local.set $allowed (i32.const 1))))
+        (local.set $private_limit
+          (i32.mul (local.get $allowed) (local.get $round_quantum)))
+        (if (i32.gt_u (local.get $private_limit) (local.get $ctr))
+          (then (local.set $private_limit (local.get $ctr))))
+
+        ;; Byte-forward copy and dword-forward copy disagree for sub-dword
+        ;; overlap. Use the shared byte kernel only for proved-disjoint spans;
+        ;; the overlapping arm below executes one original-width load/store.
+        (local.set $src_ga (i32.add (local.get $src) (local.get $src_disp)))
+        (local.set $dst_ga (i32.add (local.get $dst) (local.get $dst_disp)))
+        (local.set $src_end (i32.add (local.get $src_ga) (local.get $ctr)))
+        (local.set $dst_end (i32.add (local.get $dst_ga) (local.get $ctr)))
+        (local.set $copy32_overlap
+          (i32.or
+            (i32.or (i32.lt_u (local.get $src_end) (local.get $src_ga))
+                    (i32.lt_u (local.get $dst_end) (local.get $dst_ga)))
+            (i32.and (i32.lt_u (local.get $src_ga) (local.get $dst_end))
+                     (i32.lt_u (local.get $dst_ga) (local.get $src_end)))))
+        (global.set $loop_copy32_runs
+          (i32.add (global.get $loop_copy32_runs) (i32.const 1))))
+      (else (if (i32.eq (local.get $ctr_kind) (i32.const 1))
+        (then
         (local.set $ctr_addr
           (i32.add (call $get_reg (local.get $ctr_loc)) (local.get $ctr_disp)))
         (local.set $ctr (call $gl32 (local.get $ctr_addr))))
-      (else (local.set $ctr (call $get_reg (local.get $ctr_loc)))))
+        (else (local.set $ctr (call $get_reg (local.get $ctr_loc)))))))
 
     ;; A memory counter has to be written back per iteration in general: the
     ;; destination range is allowed to cover the counter's own address, and a
@@ -1726,8 +1926,10 @@
     ;; a pathological shape, and it is cheap to rule out here, where the run
     ;; length is known: at most $ctr bytes starting at the destination cursor.
     ;; When the counter sits outside that span, write it once at exit.
-    (local.set $store_ctr (local.get $ctr_kind))
-    (if (i32.and (i32.ne (local.get $ctr_kind) (i32.const 0))
+    (local.set $store_ctr
+      (select (i32.const 1) (i32.const 0)
+        (i32.eq (local.get $ctr_kind) (i32.const 1))))
+    (if (i32.and (i32.eq (local.get $ctr_kind) (i32.const 1))
                  (i32.and (i32.eq (local.get $ctr_step) (i32.const -1))
                           (i32.gt_s (local.get $ctr) (i32.const 0))))
       (then
@@ -1771,14 +1973,20 @@
         ;; Iterations the step budget still pays for. The original exits after
         ;; the first iteration that drives $steps to zero or below, so this is
         ;; a ceiling, and a budget already spent still buys one iteration.
-        (local.set $allowed
-          (i32.div_u
-            (i32.add
-              (select (global.get $steps) (i32.const 0)
-                      (i32.gt_s (global.get $steps) (i32.const 0)))
-              (i32.sub (local.get $cost) (i32.const 1)))
-            (local.get $cost)))
-        (if (i32.eqz (local.get $allowed)) (then (local.set $allowed (i32.const 1))))
+        (if (i32.eq (local.get $ctr_kind) (i32.const 2))
+          (then
+            (local.set $allowed
+              (i32.sub (local.get $private_limit) (local.get $private_bytes))))
+          (else
+            (local.set $allowed
+              (i32.div_u
+                (i32.add
+                  (select (global.get $steps) (i32.const 0)
+                          (i32.gt_s (global.get $steps) (i32.const 0)))
+                  (i32.sub (local.get $cost) (i32.const 1)))
+                (local.get $cost)))
+            (if (i32.eqz (local.get $allowed))
+              (then (local.set $allowed (i32.const 1))))))
 
         (local.set $chunk
           (select (local.get $trips) (local.get $allowed)
@@ -1814,17 +2022,31 @@
         ;; chunk is known to stay inside one page, name the page instead: that
         ;; is what this call has always meant, and $invalidate_code_range turns
         ;; a span this wide into the page drop the old $invalidate_page did.
-        (call $invalidate_code_write
-          (i32.and (local.get $dst_ga) (i32.const 0xFFFFF000)) (i32.const 4096))
+        (if (i32.and
+              (i32.eq (local.get $ctr_kind) (i32.const 2))
+              (i32.or (local.get $copy32_overlap)
+                (i32.or
+                  (i32.eq (local.get $src_wa) (global.get $NULL_SENTINEL))
+                  (i32.eq (local.get $dst_wa) (global.get $NULL_SENTINEL)))))
+          (then
+            ;; Preserve the original load-before-store width on overlap and
+            ;; on the unmapped four-byte sentinel. This arm completes exactly
+            ;; one guest iteration even when either dword crosses a page.
+            (local.set $chunk (local.get $round_quantum))
+            (local.set $b (call $gl32 (local.get $src_ga)))
+            (call $gs32 (local.get $dst_ga) (local.get $b)))
+          (else
+            (call $invalidate_code_write
+              (i32.and (local.get $dst_ga) (i32.const 0xFFFFF000)) (i32.const 4096))
 
-        (local.set $n (local.get $chunk))
-        (loop $inner
-          (local.set $b (i32.load8_u (local.get $src_wa)))
-          (i32.store8 (local.get $dst_wa) (local.get $b))
-          (local.set $src_wa (i32.add (local.get $src_wa) (local.get $src_stride)))
-          (local.set $dst_wa (i32.add (local.get $dst_wa) (local.get $dst_stride)))
-          (local.set $n (i32.sub (local.get $n) (i32.const 1)))
-          (br_if $inner (local.get $n)))
+            (local.set $n (local.get $chunk))
+            (loop $inner
+              (local.set $b (i32.load8_u (local.get $src_wa)))
+              (i32.store8 (local.get $dst_wa) (local.get $b))
+              (local.set $src_wa (i32.add (local.get $src_wa) (local.get $src_stride)))
+              (local.set $dst_wa (i32.add (local.get $dst_wa) (local.get $dst_stride)))
+              (local.set $n (i32.sub (local.get $n) (i32.const 1)))
+              (br_if $inner (local.get $n)))))
 
         (local.set $src
           (i32.add (local.get $src) (i32.mul (local.get $chunk) (local.get $src_stride))))
@@ -1836,19 +2058,58 @@
         (local.set $old (i32.sub (local.get $ctr) (local.get $ctr_step)))
         (if (local.get $store_ctr)
           (then (call $gs32 (local.get $ctr_addr) (local.get $ctr))))
-        (global.set $steps
-          (i32.sub (global.get $steps) (i32.mul (local.get $chunk) (local.get $cost))))
+        (if (i32.eq (local.get $ctr_kind) (i32.const 2))
+          (then
+            (local.set $private_bytes
+              (i32.add (local.get $private_bytes) (local.get $chunk))))
+          (else
+            (global.set $steps
+              (i32.sub (global.get $steps)
+                (i32.mul (local.get $chunk) (local.get $cost))))))
         (br_if $exit (i32.eqz (local.get $ctr)))
-        (br_if $exit (i32.le_s (global.get $steps) (i32.const 0)))
+        (if (i32.eq (local.get $ctr_kind) (i32.const 2))
+          (then
+            (br_if $exit
+              (i32.ge_u (local.get $private_bytes) (local.get $private_limit))))
+          (else
+            (br_if $exit (i32.le_s (global.get $steps) (i32.const 0)))))
         (br $outer)))
 
     (call $set_reg (local.get $src_reg) (local.get $src))
     (call $set_reg (local.get $dst_reg) (local.get $dst))
-    (call $set_reg8 (local.get $byte_reg) (local.get $b))
+    (if (i32.ge_s (local.get $byte_reg) (i32.const 0))
+      (then (call $set_reg8 (local.get $byte_reg) (local.get $b))))
     (if (i32.eqz (local.get $ctr_kind))
       (then (call $set_reg (local.get $ctr_loc) (local.get $ctr)))
-      (else (if (i32.eqz (local.get $store_ctr))
+      (else (if (i32.and
+                  (i32.eq (local.get $ctr_kind) (i32.const 1))
+                  (i32.eqz (local.get $store_ctr)))
         (then (call $gs32 (local.get $ctr_addr) (local.get $ctr))))))
+    (if (i32.eq (local.get $ctr_kind) (i32.const 2))
+      (then
+        (global.set $loop_copy32_bytes
+          (i64.add (global.get $loop_copy32_bytes)
+            (i64.extend_i32_u (local.get $private_bytes))))
+        (local.set $private_groups
+          (i32.div_u (local.get $private_bytes) (local.get $round_quantum)))
+        ;; $next already charged H419 and will charge the retained scratch
+        ;; load, CMP and Jcc. Charge the remaining original ops for N complete
+        ;; six-op guest iterations, then account for the N-1 folded backedges.
+        (if (i32.gt_u
+              (i32.mul (local.get $private_groups) (local.get $cost))
+              (i32.const 4))
+          (then
+            (global.set $steps
+              (i32.sub (global.get $steps)
+                (i32.sub
+                  (i32.mul (local.get $private_groups) (local.get $cost))
+                  (i32.const 4))))))
+        (if (i32.gt_u (local.get $private_groups) (i32.const 1))
+          (then
+            (global.set $block_budget
+              (i32.sub (global.get $block_budget)
+                (i32.sub (local.get $private_groups) (i32.const 1))))))
+        (return_call $next)))
     (if (i32.eq (local.get $ctr_step) (i32.const -1))
       (then (call $set_flags_dec (local.get $old) (local.get $ctr)))
       (else (call $set_flags_inc (local.get $old) (local.get $ctr))))
@@ -1874,6 +2135,8 @@
     (if (call $loop_try_lut (local.get $start_eip) (local.get $tstart)) (then (return)))
     (if (call $loop_try_lut_bounded (local.get $start_eip) (local.get $tstart)) (then (return)))
     (if (call $loop_try_lut_blend_bounded (local.get $start_eip) (local.get $tstart))
+      (then (return)))
+    (if (call $loop_try_copy32_bounded (local.get $start_eip) (local.get $tstart))
       (then (return)))
     (drop (call $loop_try_copy (local.get $start_eip) (local.get $tstart))))
 

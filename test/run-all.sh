@@ -42,6 +42,7 @@ UNIT=(
   test/test-x86-ops.js
   test/test-lut-run-generalized.js
   test/test-mmx-mask-copy-run.js
+  test/test-copy32-bounded-run.js
   test/test-lut-span.js
   test/test-load32-esp-run.js
   test/test-shift-equivalence.js
