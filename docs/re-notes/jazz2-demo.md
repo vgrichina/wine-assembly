@@ -181,6 +181,35 @@ target RGBA both have luma 6.9, black fraction 0, `blackSpread=0`, and
 The default production-path browser smoke still passes in about 4.2 seconds,
 and the opt-in ordinal-148 gate passes in about 22 seconds. The CPU regression
 reports `105 passed, 0 failed`; the normal build and WAT structural check also
-pass. These results remove the reported logo stripe without disabling MMX.
-They do not close the separate direct-level gameplay acceptance gap described
-above.
+pass. These results remove the reported logo stripe without disabling MMX. The
+following correction closes the separate direct-level gameplay acceptance gap.
+
+## Threaded Darn Ratz loading fix
+
+The Worker route later appeared to stop on the fullscreen `Darn Ratz` loading
+screen. A Worker-local EIP ring placed the last guest call at `0x0049c46a`, the
+import site for a normal `TextOutA(hdc=0x0031005c, x=22, y=3, count=27)` call.
+The Worker was monopolized inside the synchronous bitmap-font renderer.
+
+The corrupt font originated in `SPI_GETNONCLIENTMETRICS`. Jazz initializes
+`NONCLIENTMETRICSA.cbSize` to `0x154` but passes `uiParam=0`, as Win9x software
+commonly did. `$spi_core` previously used `uiParam` as the only size, clearing
+zero bytes and replacing `cbSize` with zero. Slash-filled stack data survived
+in LOGFONT, including `lfWidth=0x2f2f2f2f` and an unterminated face. That width
+wrapped through the font scaler and caused hundreds of millions of horizontal
+glyph iterations for a 648x37 destination.
+
+`$spi_core` now falls back to the incoming structure's `cbSize`, rejects
+layouts smaller than the complete 340-byte ANSI or 500-byte Unicode Win98
+structure, clears exactly the recognized layout, and preserves the declared
+size. `$spi_write_logfont` also terminates its face explicitly. The focused
+`test/test-system-parameters-info-nonclient.js` regression covers slash-filled
+A/W buffers, tail canaries, undersized declarations, and explicit `uiParam`.
+
+The final real-browser acceptance kept Threads enabled and used the registered
+`Share1.j2l -nonetwork` route with Escape delivery. `Darn Ratz` was static from
+seconds 58 through 66, changed into gameplay at second 68, and continued
+producing distinct frames through second 90 while the app remained live.
+Artifacts are `/private/tmp/jazz-loading-fixed/page-072.png` and
+`/private/tmp/jazz-loading-fixed/final.png`. Disabling Threads is no longer
+required.

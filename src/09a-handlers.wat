@@ -8084,7 +8084,17 @@ HookEx — no next hook in chain, return 0
                 (i32.add (i32.add (local.get $buf) (i32.const 28)) (local.get $i))
                 (local.get $ch))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $copy))))
+      (br $copy)))
+    ;; Do not depend on the caller or enclosing structure initialization for
+    ;; the LOGFONT face terminator. Some Win9x callers reuse stack storage.
+    (if (local.get $wide)
+      (then (i32.store16
+        (i32.add (i32.add (local.get $buf) (i32.const 28))
+          (i32.shl (local.get $i) (i32.const 1)))
+        (i32.const 0)))
+      (else (i32.store8
+        (i32.add (i32.add (local.get $buf) (i32.const 28)) (local.get $i))
+        (i32.const 0)))))
 
   ;; SystemParametersInfo{A,W}(uiAction, uiParam, pvParam, fWinIni) — one body,
   ;; $wide selects the string encoding. The W entry point used to be a 6-line
@@ -8092,7 +8102,7 @@ HookEx — no next hook in chain, return 0
   ;; caller got a success code and an untouched buffer.
   (func $spi_core (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $wide i32) (result i32)
     (local $buf i32) (local $i i32) (local $screen i32)
-    (local $lf i32) (local $narrow i32) (local $p i32)
+    (local $lf i32) (local $narrow i32) (local $p i32) (local $size i32)
     ;; LOGFONTA is 60 bytes, LOGFONTW 92 — every offset past lfCaptionFont moves.
     (local.set $lf (if (result i32) (local.get $wide) (then (i32.const 92)) (else (i32.const 60))))
     ;; SPI_SETDESKWALLPAPER = 0x14. The host loads the named VFS bitmap and
@@ -8126,21 +8136,29 @@ HookEx — no next hook in chain, return 0
             (i32.store offset=12 (local.get $buf) (i32.shr_u (local.get $screen) (i32.const 16)))))
         (return (i32.const 1))))
     ;; SPI_GETNONCLIENTMETRICS = 0x29: fill NONCLIENTMETRICS struct
-    ;; arg0=0x29, arg1=cbSize, arg2=pvParam (struct ptr)
+    ;; Win9x applications commonly pass uiParam=0 and declare the versioned
+    ;; layout through NONCLIENTMETRICS.cbSize. Newer callers also pass the size
+    ;; in uiParam, so accept either source while requiring the complete A/W
+    ;; layout before writing its five LOGFONT records.
     (if (i32.eq (local.get $arg0) (i32.const 0x29))
       (then
         (if (local.get $arg2)
           (then
             (local.set $buf (call $g2w (local.get $arg2)))
-            ;; Zero the entire buffer first (caller's cbSize at [buf+0])
-            (local.set $i (i32.const 0))
-            (block $z (loop $zl
-              (br_if $z (i32.ge_u (local.get $i) (local.get $arg1)))
-              (i32.store8 (i32.add (local.get $buf) (local.get $i)) (i32.const 0))
-              (local.set $i (i32.add (local.get $i) (i32.const 1)))
-              (br $zl)))
+            (local.set $size (local.get $arg1))
+            (if (i32.eqz (local.get $size))
+              (then (local.set $size (i32.load (local.get $buf)))))
+            (if (i32.lt_u (local.get $size)
+                  (i32.add (i32.const 40) (i32.mul (local.get $lf) (i32.const 5))))
+              (then (return (i32.const 0))))
+            ;; Initialize the complete Win98 layout. A larger declaration may
+            ;; include fields added by newer Windows versions; leave that tail
+            ;; alone rather than treating an unbounded caller value as a fill
+            ;; length.
+            (memory.fill (local.get $buf) (i32.const 0)
+              (i32.add (i32.const 40) (i32.mul (local.get $lf) (i32.const 5))))
             ;; cbSize, iBorderWidth, iScrollWidth, iScrollHeight, iCaptionWidth, iCaptionHeight
-            (i32.store        (local.get $buf)                       (local.get $arg1))  ;; cbSize
+            (i32.store        (local.get $buf)                       (local.get $size))  ;; cbSize
             (i32.store offset=4  (local.get $buf) (i32.const 1))    ;; iBorderWidth
             (i32.store offset=8  (local.get $buf) (i32.const 16))   ;; iScrollWidth
             (i32.store offset=12 (local.get $buf) (i32.const 16))   ;; iScrollHeight

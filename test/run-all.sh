@@ -334,6 +334,7 @@ UNIT=(
   test/test-sparse-generated-code-cache.js
   test/test-surface.js
   test/test-system-metrics.js
+  test/test-system-parameters-info-nonclient.js
   test/test-toolbar-insert.js
   test/test-treeview-scroll.js
   test/test-treeview-two-controls.js
