@@ -7362,6 +7362,16 @@
   ;; g2w address while the synchronous host loader consumes the name.
   (func $handle_LoadLibraryW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $ansi_gp i32)
+    ;; Keep the optional theming-module contract identical to LoadLibraryA.
+    ;; Decide optional-module availability before conversion and delegation so
+    ;; mutable guest-side staging cannot alter the ANSI lookup contract. Use a
+    ;; Boolean null check: i32.and is bitwise, and UTF-16 pointers are aligned.
+    (if (i32.and (i32.ne (local.get $arg0) (i32.const 0))
+          (call $wide_ascii_eq (call $g2w (local.get $arg0)) (i32.const 0x36D)))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
     (local.set $ansi_gp
       (i32.add
         (i32.sub (global.get $TEXT_SCRATCH) (global.get $GUEST_BASE))
@@ -11328,6 +11338,24 @@ HookEx — no next hook in chain, return 0
     (i32.store (i32.add (local.get $buf) (i32.const 24))   (i32.const 0x20000))   ;; Type = MEM_PRIVATE
     (global.set $eax (i32.const 28))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; VirtualQueryEx(hProcess, lpAddress, lpBuffer, dwLength) -> SIZE_T
+  ;; Wine-Assembly hosts one guest process, so the current-process pseudo
+  ;; handle is the only cross-process query target it can describe. Delegate
+  ;; that case to VirtualQuery and reject invented external process handles.
+  (func $handle_VirtualQueryEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.ne (local.get $arg0) (i32.const -1))
+      (then
+        (global.set $last_error (i32.const 6)) ;; ERROR_INVALID_HANDLE
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (call $handle_VirtualQuery
+      (local.get $arg1) (local.get $arg2) (local.get $arg3)
+      (i32.const 0) (i32.const 0) (local.get $name_ptr))
+    ;; VirtualQuery popped its return address and three arguments; account for
+    ;; VirtualQueryEx's leading process handle as the fourth argument.
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
 
   ;; GetDeviceGammaRamp(hdc, lpRamp) — retrieve WAT-owned display LUT state.
   (func $handle_GetDeviceGammaRamp (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

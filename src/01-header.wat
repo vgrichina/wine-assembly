@@ -1301,6 +1301,7 @@
   ;; 0x07F02410 32KB     VIRTUAL_MAP_TABLE (2048 entries x 16 bytes)
   ;; 0x07F0A420 4B       GDI_BITMAP_FONT_IO (filesystem read count)
   ;; 0x07F0A440 80B      GDI_BITMAP_FONT_DESC (surface scratch)
+  ;; 0x07F0A500 256B     EXTRA_CMDLINE_BUFFER (JS-provided arguments)
   ;; 0x07F0A600 192B     GDI_BITMAP_FONT_LRU (last-use stamp per strike slot)
   ;; 0x07F0A800 3KB      GDI_BITMAP_FONT_TABLE (48 strikes x 64 bytes)
   ;; 0x07F0B400 2KB      TT_SUBST_TABLE (font substitution, see 10c-truetype.wat)
