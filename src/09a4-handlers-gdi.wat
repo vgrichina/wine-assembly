@@ -879,7 +879,9 @@
         ;; Child controls share the top-level canonical surface. Their queued
         ;; paint must run after the parent finishes, otherwise the parent's
         ;; background/client pass overwrites already-rendered controls.
-        (drop (call $paint_flush_visible_native_children (local.get $arg0)))))
+        (drop (call $paint_flush_visible_native_children (local.get $arg0)))
+        (if (local.get $hdc)
+          (then (call $host_paint_end (local.get $arg0))))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )

@@ -6427,6 +6427,8 @@
     ;; Fill PAINTSTRUCT: hdc(+0), fErase(+4), rcPaint(+8: left,top,right,bottom)
     (call $zero_memory (call $g2w (local.get $arg1)) (i32.const 64))
     (local.set $hdc (call $host_alloc_window_dc (local.get $arg0) (i32.const 0)))
+    (if (local.get $hdc)
+      (then (call $host_paint_begin (local.get $arg0))))
     (call $gs32 (local.get $arg1) (local.get $hdc)) ;; hdc
     (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0)) ;; fErase
     ;; WAT owns the update rect. rcPaint is the pending update bbox; if no

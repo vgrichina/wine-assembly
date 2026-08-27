@@ -14565,6 +14565,11 @@
       (then
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
         (local.set $state_w (call $g2w (local.get $state)))
+        ;; Native EDIT painting has the same publication boundary as
+        ;; BeginPaint/EndPaint. In Worker mode a slice may end after the white
+        ;; fill and before TextOut; keep those pixels private until this whole
+        ;; control paint is complete.
+        (call $host_paint_begin (local.get $hwnd))
         ;; Paint commits a text object by asking its EDIT to render into the
         ;; picture memory DC via SendMessage(WM_PAINT, hdc, 0). Honor that
         ;; Win9x control convention; ordinary paints still use the window DC.
@@ -14778,6 +14783,7 @@
                     (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00300000))
                     (i32.const 0)))
               (then (call $defwndproc_do_ncpaint (local.get $hwnd))))
+            (call $host_paint_end (local.get $hwnd))
             (return (i32.const 0))))
         (if (local.get $buf)
           (then
@@ -14957,6 +14963,7 @@
                 (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00300000))
                 (i32.const 0)))
           (then (call $defwndproc_do_ncpaint (local.get $hwnd))))
+        (call $host_paint_end (local.get $hwnd))
         (return (i32.const 0))))
 
     ;; ---------- EM_SETLIMITTEXT / EM_LIMITTEXT (0x00C5) ----------

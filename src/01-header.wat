@@ -67,6 +67,11 @@
   (import "host" "invalidate_frame" (func $host_invalidate_frame (param i32)))
   ;; invalidate_frame(hwnd) — the caller changed something the non-client area
   ;; draws (caption flash state, a frame becoming visible). Posts WM_NCPAINT.
+  ;; Worker compositor publication brackets. They do not change USER/GDI
+  ;; state; they only keep a BeginPaint/EndPaint transaction opaque across
+  ;; browser Worker slice boundaries.
+  (import "host" "paint_begin" (func $host_paint_begin (param i32)))
+  (import "host" "paint_end" (func $host_paint_end (param i32)))
   (import "host" "move_window" (func $host_move_window (param i32 i32 i32 i32 i32 i32)))
   (import "host" "set_window_zorder" (func $host_set_window_zorder (param i32 i32)))
   (import "host" "sync_window_client" (func $host_sync_window_client (param i32 i32 i32 i32 i32)))

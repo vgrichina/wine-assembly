@@ -1205,7 +1205,7 @@ class WineAssembly {
       return;
     }
     try {
-      const res = await fetch('lib/host-import-sigs.generated.json');
+      const res = await fetch('lib/host-import-sigs.generated.json?v=2');
       if (!res.ok) throw new Error(`sigs HTTP ${res.status}`);
       const sigs = (await res.json()).sigs;
       const self = this;
