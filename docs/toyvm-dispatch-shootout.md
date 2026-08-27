@@ -767,6 +767,44 @@ sites where your fix for it is wrong.** The report prints how many sites a run
 retired, so that blast radius stays visible; DHADREN retires none now and its
 frame is unchanged.
 
+### 7.6 "Zero pixels" is not "broken", and counting it that way wastes a session
+
+The sweep photographs 199 programs and reports how many drew VGA pixels. It is
+tempting to read the rest as a defect list. It is not one: of the 55 rows that
+draw no pixels, **roughly half are the program working correctly**, and the
+split matters because the two halves take completely different work.
+
+| what it is | how it looks | examples |
+|---|---|---|
+| a text production | full screen of ANSI/ASCII art | ASMINST, ANTARES, AZ, ALABTRO, AMORP, ant1, a-note, uman, manhatan, DIGITAL, NFO, STARPORT, README!, DD, BLINKY, NEWSBOX3, CYANIDE |
+| a stub launcher | one line naming the real program | `001.EXE` "Type CYANIDE to run this demo.", `002.EXE` "Please run CYANIDE.EXE." |
+| a hardware refusal | names the card it wants | rage + AMANAMAN + CULT + CATWALK (Gravis), COLORS (VESA 2.0), CORNETTO |
+| not a demo at all | a utility that wants arguments | PKLITE (a file compressor), PLAY.EXE (the DeluxePaint player, wants an `.anm`), SHELLVT (a TSR) |
+
+A `.NFO` viewer whose whole job is to show text cannot be "fixed" into
+graphics, and a demo that refuses because it wants a Gravis is telling the
+truth. **Read the `screen` field before treating a row as a failure** — it is
+in every sweep JSON, and it answers the question in one line.
+
+Two measurements that close off whole hypotheses for the genuinely-blank rest:
+
+* **Timing is not the cause.** All 55 went through `clock-probe.js`: 54 come
+  back compute-bound with a byte-identical frame at 0x, 1x and 16x tick rate,
+  and **none** are time-starved. So tick pacing, `--tick-scale` and the headless
+  clock are all ruled out for this set. (The one clock-sensitive row is
+  MINTRO.EXE at 54910 px, which is §7.5's regression seen from the other side.)
+* **The blank ones do not share a mechanism.** The unhandled-call census over
+  the remaining eleven names `int 2fh AH=16` (DPMI) in three and `int 10h
+  AH=4f` (VESA) in two; everything else is one program each, and several are
+  not emulator gaps at all. BLAND.EXE prints "failed to load MSE" and looks
+  like a file-I/O bug — it is not: it asks for `0xbea1` bytes of a file that is
+  exactly `0x28be` long, and `0x28be` is what it gets, because the size field it
+  read at offset 0x83 genuinely holds `0xbea1` on disk. BLIQ.EXE is a TSR that
+  creates a child PSP with AH=55h and terminates into it, which is a real DOS
+  path we do not model (`execStack` is only non-empty after an actual AH=4Bh
+  EXEC) — one file, and getting it wrong would break every program that exits
+  correctly today.
+
 ## 8. Still open
 
 * **A protected-mode INT 9 is invisible to the keyboard.** `keyboardIrq` will
