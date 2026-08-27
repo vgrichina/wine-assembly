@@ -13,6 +13,13 @@ const extraWat = String.raw`
       (local.get $address) (local.get $buf) (i32.const 28)
       (i32.const 0) (i32.const 0) (i32.const 0))
     (global.get $eax))
+  (func (export "test_virtual_query_ex") (param $process i32) (param $address i32) (param $buf i32) (result i32)
+    (global.set $image_base (i32.const 0x00400000))
+    (global.set $esp (i32.const 0x00300000))
+    (call $handle_VirtualQueryEx
+      (local.get $process) (local.get $address) (local.get $buf) (i32.const 28)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
 `;
 
 (async () => {
@@ -40,7 +47,18 @@ const extraWat = String.raw`
   assert.strictEqual(wat.test_virtual_query(0xffffffff, buffer), 0,
     'top-of-address-space query fails instead of wrapping');
 
-  console.log('PASS VirtualQuery stops at the 32-bit user-address boundary');
+  assert.strictEqual(wat.test_virtual_query_ex(-1, 0x00401234, buffer), 28,
+    'VirtualQueryEx accepts the current-process pseudo handle');
+  assert.strictEqual(read32(buffer), 0x00401000,
+    'VirtualQueryEx delegates the address description to VirtualQuery');
+  assert.strictEqual(wat.get_esp(), 0x00300014,
+    'four-argument VirtualQueryEx pops return address plus arguments');
+  assert.strictEqual(wat.test_virtual_query_ex(0, 0x00401234, buffer), 0,
+    'VirtualQueryEx rejects an invalid external process handle');
+  assert.strictEqual(wat.get_esp(), 0x00300014,
+    'failing VirtualQueryEx retains its stdcall stack contract');
+
+  console.log('PASS VirtualQuery/Ex self-process and user-address boundaries');
 })().catch(error => {
   console.error(error.stack || error.message);
   process.exit(1);

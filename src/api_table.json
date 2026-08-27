@@ -25238,5 +25238,12 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 4199296131
+  },
+  {
+    "id": 3032,
+    "name": "VirtualQueryEx",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 811379309
   }
 ]

@@ -78,8 +78,15 @@ async function main() {
 
   const exe = writeAscii('demo.exe');
   e.set_exe_name(wa(exe), 'demo.exe'.length);
+  const extraArgs = '--probe=' + 'a'.repeat(128);
+  const extra = writeAscii(extraArgs);
+  e.set_extra_cmdline(wa(extra), extraArgs.length);
+  check('extra command-line staging preserves low static strings',
+    Buffer.from(u8.slice(0x36d, 0x379)).toString('ascii') === 'uxtheme.dll\0',
+    Buffer.from(u8.slice(0x36d, 0x379)).toString('hex'));
   const cmd = e.test_call_GetCommandLineW();
-  check('GetCommandLineW returns full UTF-16 fake path', readWide(cmd) === 'C:\\demo.exe', readWide(cmd));
+  check('GetCommandLineW returns full UTF-16 fake path and arguments',
+    readWide(cmd) === `C:\\demo.exe ${extraArgs}`, readWide(cmd));
 
   const expDir = e.guest_alloc(32);
   const dllNameA = writeAscii('KERNEL32.dll');

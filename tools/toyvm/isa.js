@@ -73,14 +73,20 @@ const RSTACK_SIZE = RSTACK_ENTRIES * 12;
 // Indirect-jump target cache. mars.exe dispatches into an unrolled span writer
 // through a computed jump, and without this every one of those is a JS round
 // trip -- 85k of them at a single address in a 40M-dispatch run. Direct-mapped,
-// {key = cs<<16|ip, arenaAddr}, arenaAddr 0 meaning empty. A collision or a
-// stale entry costs a handback, never a wrong jump, because the key is checked.
+// {ip, cs, arenaAddr, pad}, arenaAddr 0 meaning empty. A collision or a stale
+// entry costs a handback, never a wrong jump, because the key is checked.
+//
+// The key is the FULL offset and the selector beside it, not the two packed
+// into one word. Packing was exact while every offset was 16 bits; in a flat
+// 32-bit code segment two blocks 64KB apart pack to the same key, and an exact
+// match on it would resume the wrong one.
 const JTAB_BASE = RSTACK_BASE + RSTACK_SIZE;
 const JTAB_ENTRIES = 16384;
-const JTAB_SIZE = JTAB_ENTRIES * 8;
+const JTAB_STRIDE = 16;
+const JTAB_SIZE = JTAB_ENTRIES * JTAB_STRIDE;
 const JTAB_HASH_MUL = -1640531527;   // 2654435761 as a signed i32
 function jhash(cs, ip) {
-  return (Math.imul((((cs & 0xFFFF) << 16) | (ip & 0xFFFF)) | 0, JTAB_HASH_MUL) >>> 16)
+  return (Math.imul((ip ^ ((cs & 0xFFFF) << 16)) | 0, JTAB_HASH_MUL) >>> 16)
     & (JTAB_ENTRIES - 1);
 }
 // VGA plane store, four 64K planes plus a small control block.
@@ -165,7 +171,7 @@ module.exports = {
   GUEST_RAM, GUEST_RAM_SIZE, THREAD_BASE, THREAD_SIZE, MEM_PAGES,
   XMS_BASE, XMS_SIZE, LIN_MASK_REAL, LIN_MASK_FLAT,
   RSTACK_BASE, RSTACK_ENTRIES, RSTACK_SIZE,
-  JTAB_BASE, JTAB_ENTRIES, JTAB_SIZE, JTAB_HASH_MUL, jhash,
+  JTAB_BASE, JTAB_ENTRIES, JTAB_SIZE, JTAB_STRIDE, JTAB_HASH_MUL, jhash,
   VGA_CTL, VGA_CTL_KEY, VGA_CTL_MASK, VGA_CTL_LATCH, VGA_CTL_GC,
   VGA_CTL_WRITES, VGA_CTL_READS,
   VGA_PLANES, VGA_PLANE_SIZE, VGA_KEY_OFF, VGA_KEY_ON,

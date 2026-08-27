@@ -96,10 +96,11 @@ class CodeCache {
       // any slot still naming one of this program's blocks has to go -- the key
       // check in $jlook cannot tell a stale address from a live one.
       for (const [bip] of prog.blocks) {
-        const slot = isa.jhash(prog.cs, bip) * 2;
-        if (this.jtab[slot] === (((prog.cs & 0xFFFF) << 16) | (bip & 0xFFFF))) {
+        const slot = isa.jhash(prog.cs, bip) * 4;
+        if (this.jtab[slot] === bip && this.jtab[slot + 1] === (prog.cs & 0xFFFF)) {
           this.jtab[slot] = 0;
           this.jtab[slot + 1] = 0;
+          this.jtab[slot + 2] = 0;
         }
       }
       for (const p of prog.paras) {
@@ -124,11 +125,11 @@ class CodeCache {
   // writes, which makes them the natural scratch: a single-step block is thrown
   // away the moment it has run, so caching it would only pollute the region
   // list with one-instruction traces that a later full-speed entry could find.
-  stepOne(cs, ip, codeBase, mask) {
+  stepOne(cs, ip, codeBase, mask, d32 = false) {
     const prog = compileProgram((lin) => this.vm.mem[lin], cs, ip, {
       arenaBase: this.arenaEnd,
       maxWords: 1000,
-      codeBase, mask, oneInsn: true,
+      codeBase, mask, d32, oneInsn: true,
     });
     new Int32Array(this.vm.mem.buffer, prog.arenaBase, prog.words.length).set(prog.words);
     this.compiles++;
@@ -137,8 +138,8 @@ class CodeCache {
 
   // Drop one block: the guest patched the instruction it was about to run.
   invalidate(cs, ip, codeBase = (cs << 4)) {
-    for (const r of (this.regions.get(codeBase) || [])) r.blocks.delete(ip & 0xFFFF);
-    this.jtab[isa.jhash(cs, ip & 0xFFFF) * 2] = 0;
+    for (const r of (this.regions.get(codeBase) || [])) r.blocks.delete(ip >>> 0);
+    this.jtab[isa.jhash(cs, ip >>> 0) * 4 + 2] = 0;
   }
 
   // Regions are keyed by the code segment's LINEAR base, not by the selector.
@@ -147,12 +148,16 @@ class CodeCache {
   // and PMODE/W reuses the numbers it was just using as real-mode segments. Key
   // on the selector there and a block compiled before the switch is handed back
   // for an address that is now somewhere else entirely.
-  entryFor(cs, ip, codeBase = (cs << 4), mask = 0xFFFFF) {
+  entryFor(cs, ip, codeBase = (cs << 4), mask = 0xFFFFF, d32 = false) {
     const vm = this.vm;
-    const key = codeBase;
+    // The D bit belongs in the key, not just in the compile: one linear base
+    // can be reached through both a 16-bit and a 32-bit descriptor -- a flat
+    // extender's code segment and the real-mode segment 0 underneath it are
+    // the same bytes at the same address and decode to different programs.
+    const key = d32 ? `${codeBase}d` : codeBase;
     if (!this.noCache) {
       for (const r of (this.regions.get(key) || [])) {
-        const a = r.blocks.get(ip & 0xFFFF);
+        const a = r.blocks.get(ip >>> 0);
         if (a !== undefined) return a;
       }
     }
@@ -188,7 +193,7 @@ class CodeCache {
     const prog = compileProgram((lin) => vm.mem[lin], cs, ip, {
       arenaBase: this.arenaNext,
       maxWords: (this.arenaEnd - this.arenaNext) >> 2,
-      codeBase, mask,
+      codeBase, mask, d32,
     });
     new Int32Array(vm.mem.buffer, prog.arenaBase, prog.words.length).set(prog.words);
     this.arenaNext += prog.words.length * 4;
@@ -222,9 +227,10 @@ class CodeCache {
     // a later block simply evicts an earlier one -- the key check in $jlook
     // turns that into a handback rather than a wrong jump.
     for (const [bip, addr] of prog.blocks) {
-      const slot = isa.jhash(cs, bip) * 2;   // jtab is a view starting AT JTAB_BASE
-      this.jtab[slot] = ((cs & 0xFFFF) << 16) | (bip & 0xFFFF);
-      this.jtab[slot + 1] = addr;
+      const slot = isa.jhash(cs, bip) * 4;   // jtab is a view starting AT JTAB_BASE
+      this.jtab[slot] = bip;
+      this.jtab[slot + 1] = cs & 0xFFFF;
+      this.jtab[slot + 2] = addr;
     }
     if (!this.regions.has(key)) this.regions.set(key, []);
     this.regions.get(key).push(prog);
@@ -403,17 +409,12 @@ class DosSession {
     // A20, and both decide which bytes get decoded.
     const codeBase = vm.exports.get_csb();
     const mask = vm.exports.get_linmask();
-    // A 32-bit code segment is where this stops. Everything above is address
-    // arithmetic, which protected mode changes and this now follows; a D bit
-    // set changes the default operand and address size of every instruction in
-    // the segment, which is a second decoder, a 32-bit EIP through the block
-    // cache and the jump table, and is not here yet. Refusing is the same
-    // choice LGDT used to make one instruction earlier: report it, rather than
-    // decode 32-bit code as 16-bit and run something plausible-looking.
-    if (vm.exports.get_d32()) {
-      this.blockedOn32 = `${cs.toString(16)}:${ip.toString(16)}`;
-      return 'blocked32';
-    }
+    // A 32-bit code segment. The D bit changes the default operand and address
+    // size of every instruction in the segment and widens EIP past 0xFFFF, so
+    // it is part of the decode and part of the cache key -- two different
+    // programs can live at one linear base, one reached through a 16-bit
+    // descriptor and one through a 32-bit one.
+    const d32 = vm.exports.get_d32() !== 0;
     // A CS that names no descriptor while PE is set. $segbase deliberately
     // reads such a selector as a real-mode paragraph, which is right for a DATA
     // segment in an extender running unreal -- but a real CPU cannot execute
@@ -461,8 +462,8 @@ class DosSession {
     // about full-speed execution changes when TF comes back down.
     const stepping = (vm.get('flags') & (1 << isa.F.TF)) !== 0;
     const entry = stepping
-      ? this.cache.stepOne(cs, ip, codeBase, mask)
-      : this.cache.entryFor(cs, ip, codeBase, mask);
+      ? this.cache.stepOne(cs, ip, codeBase, mask, d32)
+      : this.cache.entryFor(cs, ip, codeBase, mask, d32);
     if (this.hooks.beforeSlice) this.hooks.beforeSlice();
     vm.exports.run(entry, this.slice);
     // $left is -1 when the slice ran to exhaustion and holds the unspent budget

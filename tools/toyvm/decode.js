@@ -167,20 +167,28 @@ function setCpuLevel(n) { cpuLevel = n; }
 // `mask` is how far the address bus goes, and matches the VM's $linmask: a
 // program that has opened A20 can hold code above 1MB, and wrapping its fetch
 // at 1MB would decode a different program.
-function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
+// `d32` is the D bit of the descriptor CS was loaded through. It changes three
+// things at once and they have to move together: the default operand size, the
+// default address size, and the width of EIP itself -- in a 32-bit segment an
+// offset does not wrap at 0xFFFF, so every "next instruction" and every branch
+// target computed here is a full 32-bit number.
+function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false) {
   const start = ip;
-  const at = (n) => rd(((base + ((start + n) & 0xFFFF)) & mask));
+  // How an instruction pointer wraps in this segment.
+  const wip = d32 ? (v) => v >>> 0 : (v) => v & 0xFFFF;
+  const at = (n) => rd(((base + wip(start + n)) & mask));
   let n = 0;
   let segOverride = null;
   let repPrefix = null;   // 'rep' (F3) or 'repne' (F2)
   // In a 16-bit code segment the default operand size is 16 and 0x66 flips it
   // to 32. Real-mode 386 demos use that constantly -- fixed-point maths in
-  // 32-bit registers while addressing stays 16-bit.
-  let opsize = 16;
+  // 32-bit registers while addressing stays 16-bit. In a 32-bit segment the
+  // prefix means the opposite: the default is 32 and 0x66 asks for 16.
+  let opsize = d32 ? 32 : 16;
   // 0x67 flips addressing the same way. It is rarer than 0x66 but not rare: a
   // demo that has been through unreal mode addresses video and extended memory
   // through 32-bit registers while its code stays 16-bit.
-  let asize = 16;
+  let asize = d32 ? 32 : 16;
 
   // Prefixes. A segment override and a repeat prefix can both be present, and
   // on this part the LAST one of each kind wins.
@@ -190,8 +198,8 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
     // are conditional-jump aliases, so consuming them as prefixes there would
     // swallow real instructions.
     if (SEG_PREFIX[b] !== undefined && (b < 0x64 || cpuLevel >= 386)) segOverride = SEG_PREFIX[b];
-    else if (b === 0x66 && cpuLevel >= 386) opsize = 32;
-    else if (b === 0x67 && cpuLevel >= 386) asize = 32;
+    else if (b === 0x66 && cpuLevel >= 386) opsize = d32 ? 16 : 32;
+    else if (b === 0x67 && cpuLevel >= 386) asize = d32 ? 16 : 32;
     else if (b === 0xF3) repPrefix = 'rep';
     else if (b === 0xF2) repPrefix = 'repne';
     else if (b === 0xF0) { /* LOCK: no effect with one core */ }
@@ -206,19 +214,30 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
   // silently executing the unprefixed instruction and calling it a pass.
   const repeatable = (op >= 0xA4 && op <= 0xAF && op !== 0xA8 && op !== 0xA9)
     || (cpuLevel >= 186 && op >= 0x6C && op <= 0x6F);
-  if (repPrefix && !repeatable) return null;
-  // 0x67 also redirects the implicit addressing of the port-string ops and
-  // XLAT, neither of which goes through modrm() and neither of which has a
-  // 32-bit twin here yet. Refusing them is the honest option; running the
-  // 16-bit version would read SI where the program meant ESI and look like it
-  // worked.
+  // On an 8088 a repeat prefix in front of anything else does something the
+  // part defines only by accident, and refusing the encoding keeps the gate
+  // honest instead of silently executing the unprefixed instruction and
+  // calling it a pass. From the 386 on the prefix is simply ignored there, and
+  // real code relies on that: BRW.EXE clears the DAC with `mov ecx,240h /
+  // rep out dx,al`, which writes one zero on silicon and is followed by the
+  // `rep outsb` that uploads the actual palette. Refusing it stopped the demo
+  // at its first palette write.
+  if (repPrefix && !repeatable) {
+    if (cpuLevel < 386) return null;
+    repPrefix = null;
+  }
+  // 0x67 also redirects the implicit addressing of XLAT, which does not go
+  // through modrm() and has no 32-bit twin here yet. Refusing it is the honest
+  // option; running the 16-bit version would read BX where the program meant
+  // EBX and look like it worked. The port-string ops used to be refused here
+  // for the same reason and now have real ESI/EDI handlers.
   //
   // The counted-loop terminators E0-E3 and the A4-AF string ops were refused
   // here for the same reason and are now decoded: both have real ESI/EDI/ECX
   // handlers. `rep stosd` through EDI is how every DOS extender in this corpus
   // clears its descriptor tables, so refusing it stopped fourteen demos one
   // instruction into protected mode.
-  if (asize === 32 && ((op >= 0x6C && op <= 0x6F) || op === 0xD7)) return null;
+  if (asize === 32 && op === 0xD7) return null;
   const words = [];
   // Arena addresses are not known until every block is laid out, so branch
   // handlers get a 0 placeholder and a fixup naming the guest IP it stands for.
@@ -300,6 +319,13 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
   // The immediate that follows the operand size: two bytes normally, four
   // behind a 0x66 prefix. Every "imm16" in the 8086 manual is really this.
   const immW = () => (opsize === 32 ? imm32() : imm16());
+  // A near branch's displacement, sign-extended and at the operand size: two
+  // bytes normally, four in a 32-bit segment. Getting this wrong is not a
+  // near miss -- a rel32 read as a rel16 consumes half the displacement and
+  // then decodes the other half as the next instruction.
+  const relW = () => (opsize === 32 ? imm32() : (() => {
+    const d = imm16(); return d & 0x8000 ? d - 0x10000 : d;
+  })());
   const sx8toW = (v) => (opsize === 32 ? ((v & 0x80 ? v - 0x100 : v) | 0) : sx8to16(v));
 
   // The ALU group and MOV share these five operand shapes exactly, so emitting
@@ -375,9 +401,9 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
       if (op < 0x70 && cpuLevel >= 186) {
         // On a 186 and later these are the string I/O instructions.
         if (op >= 0x6C && op <= 0x6F) {
-          const w = (op & 1) ? 16 : 8;
-          const sfx = w === 8 ? 'b' : 'w';
-          const nm = (op < 0x6E ? 'ins' : 'outs') + sfx;
+          const w = (op & 1) ? opsize : 8;
+          const sfx = { 8: 'b', 16: 'w', 32: 'd' }[w];
+          const nm = (op < 0x6E ? 'ins' : 'outs') + sfx + (asize === 32 ? '32' : '');
           const hn = repPrefix ? `rep_${nm}` : nm;
           words.push(H[hn], segOverride === null ? 3 : segOverride);
           break;
@@ -398,14 +424,14 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
           // mod=11 is not an encoding of BOUND at all -- the second operand is
           // a two-element array in memory. Refusing is right there.
           if (m.isReg) return null;
-          words.push(H[`bound${opsize}`], packEa(m), m.disp, (start + n) & 0xFFFF);
+          words.push(H[`bound${opsize}`], packEa(m), m.disp, wip(start + n));
           break;
         }
         return null;   // 63 ARPL, 64/65 FS/GS overrides
       }
       const d = imm8();
-      const fall = (start + n) & 0xFFFF;
-      const target = (fall + (d & 0x80 ? d - 0x100 : d)) & 0xFFFF;
+      const fall = wip(start + n);
+      const target = wip(fall + (d & 0x80 ? d - 0x100 : d));
       words.push(H[`j${CC_NAMES[op & 15]}`], 0, target, 0, fall);
       fixups.push({ index: words.length - 4, ip: target },
         { index: words.length - 2, ip: fall });
@@ -415,8 +441,8 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
 
     case 0xE2: {   // LOOP rel8
       const d = imm8();
-      const fall = (start + n) & 0xFFFF;
-      const target = (fall + (d & 0x80 ? d - 0x100 : d)) & 0xFFFF;
+      const fall = wip(start + n);
+      const target = wip(fall + (d & 0x80 ? d - 0x100 : d));
       words.push(asize === 32 ? H.loop32 : H.loop, 0, target, 0, fall);
       fixups.push({ index: words.length - 4, ip: target },
         { index: words.length - 2, ip: fall });
@@ -426,16 +452,16 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
 
     case 0xEB: {   // JMP rel8
       const d = imm8();
-      const target = (((start + n) & 0xFFFF) + (d & 0x80 ? d - 0x100 : d)) & 0xFFFF;
+      const target = wip(wip(start + n) + (d & 0x80 ? d - 0x100 : d));
       words.push(H.jmp, 0, target);
       fixups.push({ index: words.length - 2, ip: target });
       endsBlock = true;
       break;
     }
 
-    case 0xE9: {   // JMP rel16
-      const d = imm16();
-      const target = (((start + n) & 0xFFFF) + (d & 0x8000 ? d - 0x10000 : d)) & 0xFFFF;
+    case 0xE9: {   // JMP rel16, or rel32 at a 32-bit operand size
+      const d = relW();
+      const target = wip(wip(start + n) + d);
       words.push(H.jmp, 0, target);
       fixups.push({ index: words.length - 2, ip: target });
       endsBlock = true;
@@ -480,7 +506,7 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
     // hand the block back when the flags it just popped have TF set. Nothing
     // else in the ISA can raise the trap flag, so this one operand is the whole
     // entry point to single-stepping.
-    case 0x9D: words.push(opsize === 32 ? H.popf32 : H.popf, (start + n) & 0xFFFF); break;
+    case 0x9D: words.push(opsize === 32 ? H.popf32 : H.popf, wip(start + n)); break;
     case 0x8F: { const m = modrm();
       if (m.isReg) words.push(H[`pop_r${opsize}`], m.rm & 7);
       else { writesMem = true; words.push(H[`pop_m${opsize}`], packEa(m), m.disp); }
@@ -491,8 +517,8 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
     case 0x68: case 0x6A: {
       if (cpuLevel < 186) {                 // 8088: JS rel8 / JP rel8
         const d = imm8();
-        const fall = (start + n) & 0xFFFF;
-        const target = (fall + (d & 0x80 ? d - 0x100 : d)) & 0xFFFF;
+        const fall = wip(start + n);
+        const target = wip(fall + (d & 0x80 ? d - 0x100 : d));
         words.push(H[`j${CC_NAMES[op & 15]}`], 0, target, 0, fall);
         fixups.push({ index: words.length - 4, ip: target },
           { index: words.length - 2, ip: fall });
@@ -505,13 +531,13 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
 
     // --- CALL / RET ---------------------------------------------------------
     case 0xE8: {
-      const d = imm16();
-      const ret = (start + n) & 0xFFFF;
-      const target = (ret + (d & 0x8000 ? d - 0x10000 : d)) & 0xFFFF;
+      const d = relW();
+      const ret = wip(start + n);
+      const target = wip(ret + d);
       // [arenaTarget][guestTarget][retIp][arenaRet]. The return point is a
       // fixup like the target is, so the compiler compiles it and the shadow
       // stack gets a real address to resume at.
-      words.push(H.call_rel, 0, target, ret, 0);
+      words.push(opsize === 32 ? H.call_rel32 : H.call_rel, 0, target, ret, 0);
       fixups.push({ index: words.length - 4, ip: target },
         { index: words.length - 1, ip: ret });
       endsBlock = true;
@@ -519,14 +545,16 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
     }
     case 0xC8:
       if (cpuLevel < 186) return null;
-      words.push(H.enter, imm16(), imm8());
+      words.push(opsize === 32 ? H.enter32 : H.enter, imm16(), imm8());
       break;
     case 0xC9:
       if (cpuLevel < 186) return null;
-      words.push(H.leave);
+      words.push(opsize === 32 ? H.leave32 : H.leave);
       break;
-    case 0xC3: words.push(H.ret); endsBlock = true; break;
-    case 0xC2: words.push(H.ret_imm, imm16()); endsBlock = true; break;
+    case 0xC3: words.push(opsize === 32 ? H.ret32 : H.ret); endsBlock = true; break;
+    case 0xC2:
+      words.push(opsize === 32 ? H.ret_imm32 : H.ret_imm, imm16());
+      endsBlock = true; break;
 
     // --- Sign extend, flag ops ----------------------------------------------
     case 0x98: words.push(opsize === 32 ? H.cwde : H.cbw); break;
@@ -540,7 +568,7 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
     // AFTER the HLT and let the host decide what happens next. A program that
     // HLTs in a wait loop then spins through the host instead of inside the
     // trace, which is slow and correct rather than fast and hung.
-    case 0xF4: words.push(H.end, (start + n) & 0xFFFF); endsBlock = true; break;
+    case 0xF4: words.push(H.end, wip(start + n)); endsBlock = true; break;
     case 0xF8: words.push(H.clc); break;
     case 0xF9: words.push(H.stc); break;
     case 0xFA: words.push(H.cli); break;
@@ -551,8 +579,8 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
     // --- Remaining counted-loop terminators ---------------------------------
     case 0xE0: case 0xE1: case 0xE3: {
       const d = imm8();
-      const fall = (start + n) & 0xFFFF;
-      const target = (fall + (d & 0x80 ? d - 0x100 : d)) & 0xFFFF;
+      const fall = wip(start + n);
+      const target = wip(fall + (d & 0x80 ? d - 0x100 : d));
       const sfx = asize === 32 ? '32' : '';
       words.push(H[(op === 0xE3 ? 'jcxz' : (op === 0xE1 ? 'loopz' : 'loopnz')) + sfx],
         0, target, 0, fall);
@@ -659,15 +687,15 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
     // `cs: add [0x70d], di` / `jmp far 0000:1161` pair jumped to 0000:1161
     // instead of 0110:1161 and spent the whole run in the interrupt vectors.
     case 0xEA: {
-      const at = (start + n) & 0xFFFF;
+      const at = wip(start + n);
       const o = opsize === 32 ? imm32() : imm16(), s = imm16();
       words.push(opsize === 32 ? H.jmp_far32 : H.jmp_far, o, s, at);
       endsBlock = true; break;
     }
     case 0x9A: {
-      const at = (start + n) & 0xFFFF;
+      const at = wip(start + n);
       const o = opsize === 32 ? imm32() : imm16(), s = imm16();
-      words.push(opsize === 32 ? H.call_far32 : H.call_far, o, s, (start + n) & 0xFFFF, at);
+      words.push(opsize === 32 ? H.call_far32 : H.call_far, o, s, wip(start + n), at);
       endsBlock = true; break;
     }
     case 0xCB: words.push(opsize === 32 ? H.retf32 : H.retf); endsBlock = true; break;
@@ -687,10 +715,10 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
     case 0x0F: {
       if (cpuLevel < 386) return null;   // 0F is POP CS on an 8088
       const op2 = at(n); n++;
-      if (op2 >= 0x80 && op2 <= 0x8F) {          // Jcc rel16
-        const d = imm16();
-        const fall = (start + n) & 0xFFFF;
-        const target = (fall + (d & 0x8000 ? d - 0x10000 : d)) & 0xFFFF;
+      if (op2 >= 0x80 && op2 <= 0x8F) {          // Jcc rel16 / rel32
+        const d = relW();
+        const fall = wip(start + n);
+        const target = wip(fall + d);
         words.push(H[`j${CC_NAMES[op2 & 15]}`], 0, target, 0, fall);
         fixups.push({ index: words.length - 4, ip: target },
           { index: words.length - 2, ip: fall });
@@ -870,12 +898,12 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
     }
 
     // --- INT ----------------------------------------------------------------
-    case 0xCD: { const v = imm8(); words.push(H.int_imm, v, (start + n) & 0xFFFF); endsBlock = true; break; }
+    case 0xCD: { const v = imm8(); words.push(H.int_imm, v, wip(start + n)); endsBlock = true; break; }
     // INT3 is the one-byte breakpoint form of INT 3.
-    case 0xCC: words.push(H.int_imm, 3, (start + n) & 0xFFFF); endsBlock = true; break;
+    case 0xCC: words.push(H.int_imm, 3, wip(start + n)); endsBlock = true; break;
     // INTO only takes the vector when OF is set, so it does not end the block:
     // the fall-through is the common case and stays in the same trace.
-    case 0xCE: words.push(H.into, (start + n) & 0xFFFF); break;
+    case 0xCE: words.push(H.into, wip(start + n)); break;
     case 0xCF:
       words.push(opsize === 32 ? H.iret32 : H.iret); endsBlock = true; break;
     // WAIT. It synchronises with a coprocessor that is not a separate part
@@ -888,7 +916,7 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
     case 0x2F: words.push(H.das); break;
     case 0x37: words.push(H.aaa); break;
     case 0x3F: words.push(H.aas); break;
-    case 0xD4: words.push(H.aam, imm8(), (start + n) & 0xFFFF); break;
+    case 0xD4: words.push(H.aam, imm8(), wip(start + n)); break;
     case 0xD5: words.push(H.aad, imm8()); break;
     // SALC: undocumented, no operands, sets AL from CF.
     case 0xD6: words.push(H.salc); break;
@@ -918,7 +946,7 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
         // the rest of the block can run.
         // The 8086 pushes the address of the NEXT instruction on a divide
         // error -- it does not restart the divide the way a 286 does.
-        if (faults) words.push((start + n) & 0xFFFF);
+        if (faults) words.push(wip(start + n));
       }
       break;
     }
@@ -939,9 +967,9 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
         // Indirect near CALL (/2) and JMP (/4). The target is a runtime value,
         // so both end the trace and hand the guest IP back.
         const nm = m.reg === 2 ? 'call' : 'jmp';
-        const ret = (start + n) & 0xFFFF;
-        if (m.isReg) words.push(H[`${nm}_r16`], m.rm & 7);
-        else words.push(H[`${nm}_m16`], packEa(m), m.disp);
+        const ret = wip(start + n);
+        if (m.isReg) words.push(H[`${nm}_r${w}`], m.rm & 7);
+        else words.push(H[`${nm}_m${w}`], packEa(m), m.disp);
         if (nm === 'call') {
           // [retIp][arenaRet], the same pair CALL rel16 carries, so the shadow
           // return stack works for an indirect call too.
@@ -956,7 +984,7 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
         // 16:32 with the selector at [ea+4].
         const sfx = w === 32 ? '32' : '';
         if (m.reg === 5) words.push(H[`jmp_far_m${sfx}`], packEa(m), m.disp);
-        else words.push(H[`call_far_m${sfx}`], packEa(m), m.disp, (start + n) & 0xFFFF);
+        else words.push(H[`call_far_m${sfx}`], packEa(m), m.disp, wip(start + n));
         endsBlock = true;
       } else return null;
       break;
@@ -1004,11 +1032,11 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
   // ships -- so every BIOS call a TP program makes executes INT 0 instead, and
   // TP's INT 0 handler reports "Runtime error 200".
   if (segOverride === 1 && !endsBlock && isSelfPatch(op, at(modrmAt))) {
-    words.push(H.end_smc, (start + n) & 0xFFFF);
+    words.push(H.end_smc, wip(start + n));
     endsBlock = true;
   }
 
-  return { words, nextIp: (start + n) & 0xFFFF, length: n, fixups, endsBlock, writesMem, bulkWrite };
+  return { words, nextIp: wip(start + n), length: n, fixups, endsBlock, writesMem, bulkWrite };
 }
 
 // The MOV encodings that store to memory. Deliberately not every writing

@@ -27,11 +27,16 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   // the descriptor CS was loaded through.
   const codeBase = opts.codeBase === undefined ? (cs << 4) : opts.codeBase;
   const mask = opts.mask === undefined ? 0xFFFFF : opts.mask;
+  // The D bit of the descriptor CS was loaded through: the default operand and
+  // address size of every instruction in the segment, and a 32-bit EIP that no
+  // longer wraps at 0xFFFF.
+  const d32 = !!opts.d32;
+  const entry = d32 ? (entryIp >>> 0) : (entryIp & 0xFFFF);
 
   const blocks = new Map();      // guest IP -> arena address
   const words = [];
   const fixups = [];             // { wordIndex, ip }
-  const pending = [entryIp & 0xFFFF];
+  const pending = [entry];
   const unimplemented = new Set();
   // Every byte this compile DECODED, as linear [from, to) ranges. The host
   // marks them in isa.CODE_BITMAP so a later store into any of them is seen for
@@ -67,7 +72,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
         break;
       }
 
-      const d = decodeOne(readByte, cs, cur, codeBase, mask);
+      const d = decodeOne(readByte, cs, cur, codeBase, mask, d32);
       if (!d) {
         // An opcode we do not implement ends the trace and hands the guest IP
         // back, so the host can report exactly where coverage ran out instead
@@ -128,7 +133,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   return {
     words, blocks, fixups, unresolved, covered,
     unimplemented: [...unimplemented],
-    entryAddr: blocks.get(entryIp & 0xFFFF),
+    entryAddr: blocks.get(entry),
     arenaBase,
     byteLength: words.length * 4,
   };

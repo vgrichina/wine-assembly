@@ -484,7 +484,33 @@ function genExtras() {
   h('ret_imm', 1, `
   ${ops(1)}
   (global.set $gip (call $pop16))
-  (global.set $sp (i32.and (i32.add (global.get $sp) (local.get $t0)) (i32.const 0xFFFF)))
+  (global.set $sp (i32.and (i32.add (global.get $sp) (local.get $t0)) (global.get $spm)))
+  (local.set $t7 (call $rpop (global.get $gip)))
+  (if ${CONT('(local.get $t7)')}
+    (then (global.set $ip (local.get $t7)))
+    (else (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))))
+`);
+  // The same three, in a 32-bit code segment. The only difference is the width
+  // of the return address on the stack -- but it is the difference between
+  // resuming at 0x00031a4c and resuming at 0x1a4c, so they are separate
+  // handlers rather than a runtime test inside the hot ones.
+  h('call_rel32', 4, `
+  ${ops(4)}
+  (call $push32 (local.get $t2))
+  (call $rpush (local.get $t2) (local.get $t3))
+  ${GO('(local.get $t0)', '(local.get $t1)')}
+`);
+  h('ret32', 0, `
+  (global.set $gip (call $pop32))
+  (local.set $t7 (call $rpop (global.get $gip)))
+  (if ${CONT('(local.get $t7)')}
+    (then (global.set $ip (local.get $t7)))
+    (else (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))))
+`);
+  h('ret_imm32', 1, `
+  ${ops(1)}
+  (global.set $gip (call $pop32))
+  (global.set $sp (i32.and (i32.add (global.get $sp) (local.get $t0)) (global.get $spm)))
   (local.set $t7 (call $rpop (global.get $gip)))
   (if ${CONT('(local.get $t7)')}
     (then (global.set $ip (local.get $t7)))
@@ -1535,7 +1561,7 @@ function genArithIO() {
   ${ops(1)}
   (global.set $gip (call $pop16))
   (call $sset (i32.const 1) (call $pop16))
-  (global.set $sp (i32.and (i32.add (global.get $sp) (local.get $t0)) (i32.const 0xFFFF)))
+  (global.set $sp (i32.and (i32.add (global.get $sp) (local.get $t0)) (global.get $spm)))
   (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
 `);
   // The operand-size-32 far transfers. These are how a DOS extender enters and
@@ -1555,7 +1581,7 @@ function genArithIO() {
   ${ops(1)}
   (global.set $gip (call $pop32))
   (call $sset (i32.const 1) (i32.and (call $pop32) (i32.const 0xFFFF)))
-  (global.set $sp (i32.and (i32.add (global.get $sp) (local.get $t0)) (i32.const 0xFFFF)))
+  (global.set $sp (i32.and (i32.add (global.get $sp) (local.get $t0)) (global.get $spm)))
   (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
 `);
   h('jmp_far32', 3, `
@@ -1612,6 +1638,37 @@ function genArithIO() {
   ${EA_SETUP_PRE}
   (local.set $t7 (call $rd16 (local.get $t5) (local.get $t4)))
   (call $push16 (local.get $t2))
+  (call $rpush (local.get $t2) (local.get $t3))
+  (global.set $gip (local.get $t7))
+  ${GO_INDIRECT}
+`);
+  // FF /4 and FF /2 with a 32-bit operand size. A jump table in a flat segment
+  // holds dwords, and reading it as words is how a 32-bit indirect jump lands
+  // in the first 64KB of the program every time.
+  h('jmp_r32', 1, `
+  ${ops(1)}
+  (global.set $gip (call $rget32 (local.get $t0)))
+  ${GO_INDIRECT}
+`);
+  h('jmp_m32', 2, `
+  ${ops(2)}
+  ${EA_SETUP_PRE}
+  (global.set $gip (call $rd32 (local.get $t5) (local.get $t4)))
+  ${GO_INDIRECT}
+`);
+  h('call_r32', 3, `
+  ${ops(3)}
+  (local.set $t7 (call $rget32 (local.get $t0)))
+  (call $push32 (local.get $t1))
+  (call $rpush (local.get $t1) (local.get $t2))
+  (global.set $gip (local.get $t7))
+  ${GO_INDIRECT}
+`);
+  h('call_m32', 4, `
+  ${ops(4)}
+  ${EA_SETUP_PRE}
+  (local.set $t7 (call $rd32 (local.get $t5) (local.get $t4)))
+  (call $push32 (local.get $t2))
   (call $rpush (local.get $t2) (local.get $t3))
   (global.set $gip (local.get $t7))
   ${GO_INDIRECT}
@@ -1701,6 +1758,27 @@ function genArithIO() {
   (global.set $sp (call $rget16 (i32.const 5)))
   (call $rset16 (i32.const 5) (call $pop16))
 `);
+  // LEAVE with a 32-bit operand size: ESP := EBP, then pop EBP as a dword.
+  // Every Watcom-compiled function in a protected-mode demo ends with this.
+  h('leave32', 0, `
+  (global.set $sp (call $rget32 (i32.const 5)))
+  (call $rset32 (i32.const 5) (call $pop32))
+`);
+  h('enter32', 2, `
+  ${ops(2)}
+  (call $push32 (call $rget32 (i32.const 5)))
+  (local.set $t7 (global.get $sp))
+  (local.set $t1 (i32.and (local.get $t1) (i32.const 31)))
+  (block $done (loop $l
+    (br_if $done (i32.le_u (local.get $t1) (i32.const 1)))
+    (call $rset32 (i32.const 5) (i32.sub (call $rget32 (i32.const 5)) (i32.const 4)))
+    (call $push32 (call $rd32 (i32.const 2) (call $rget32 (i32.const 5))))
+    (local.set $t1 (i32.sub (local.get $t1) (i32.const 1)))
+    (br $l)))
+  (if (local.get $t1) (then (call $push32 (local.get $t7))))
+  (call $rset32 (i32.const 5) (local.get $t7))
+  (global.set $sp (i32.and (i32.sub (local.get $t7) (local.get $t0)) (global.get $spm)))
+`);
 
   // PUSHA/POPA and their 32-bit twins. PUSHA stores the SP the instruction
   // started with, and POPA discards that slot rather than restoring it --
@@ -1744,39 +1822,58 @@ genExtras();
 // setting the mode.
 function gen186StringIO() {
   const DELTA = (sz) => `(select (i32.const ${-sz}) (i32.const ${sz}) ${bit(F.DF)})`;
-  // SI/DI move as 16-bit quantities in 16-bit address mode, and the upper half
-  // of ESI/EDI must survive -- $rset16 merges rather than replaces.
-  const bump = (reg, sz) =>
-    `(call $rset16 (i32.const ${{ si: 6, di: 7 }[reg]})
-       (i32.add (call $rget16 (i32.const ${{ si: 6, di: 7 }[reg]})) ${DELTA(sz)}))`;
 
-  for (const w of [8, 16]) {
-    const sz = w >> 3, sfx = w === 8 ? 'b' : 'w';
-    const BODY = {
-      [`outs${sfx}`]: `
-    (call $port_out (call $rget16 (i32.const 2)) (call $rd${w} (local.get $t0) (call $rget16 (i32.const 6))) (i32.const ${w}))
+  // Generated on both axes, exactly like the other string ops: address size
+  // decides which register indexes the string and how wide the counter is,
+  // data size decides how much moves per port access. The 32-bit address form
+  // is not exotic -- a Watcom-compiled demo runs in a flat segment where ESI
+  // is the only pointer there is, and `rep outsb` through it is still how the
+  // palette gets uploaded. Refusing it stopped BRW.EXE dead at the first
+  // palette write, one instruction into its own code.
+  const forAsize = (a) => {
+    const g = a === 32 ? '$rget32' : '$rget16';
+    const st = a === 32 ? '$rset32' : '$rset16';
+    const idx = (reg) => `(call ${g} (i32.const ${{ si: 6, di: 7 }[reg]}))`;
+    // In 16-bit addressing the upper half of ESI/EDI must survive, which is
+    // what $rset16 does -- it merges rather than replaces.
+    const bump = (reg, sz) =>
+      `(call ${st} (i32.const ${{ si: 6, di: 7 }[reg]}) (i32.add ${idx(reg)} ${DELTA(sz)}))`;
+    const asfx = a === 32 ? '32' : '';
+    const count = a === 32 ? '$ecx32' : '$cx16';
+    const dec = a === 32 ? '$ecxdec' : '$cxdec';
+
+    for (const w of [8, 16, 32]) {
+      const sz = w >> 3, sfx = { 8: 'b', 16: 'w', 32: 'd' }[w];
+      const BODY = {
+        [`outs${sfx}${asfx}`]: `
+    (call $port_out (call $rget16 (i32.const 2))
+      (call $rd${w} (local.get $t0) ${idx('si')}) (i32.const ${w}))
     ${bump('si', sz)}`,
-      [`ins${sfx}`]: `
-    (call $wr${w} (i32.const 0) (call $rget16 (i32.const 7)) (call $port_in (call $rget16 (i32.const 2)) (i32.const ${w})))
+        [`ins${sfx}${asfx}`]: `
+    (call $wr${w} (i32.const 0) ${idx('di')}
+      (call $port_in (call $rget16 (i32.const 2)) (i32.const ${w})))
     ${bump('di', sz)}`,
-    };
-    for (const [name, body] of Object.entries(BODY)) {
-      h(name, 1, `
+      };
+      for (const [name, body] of Object.entries(BODY)) {
+        h(name, 1, `
   ${ops(1)}
   ${body}
 `);
-      h(`rep_${name}`, 1, `
+        h(`rep_${name}`, 1, `
   ${ops(1)}
   (block $done
     (loop $l
-      (br_if $done (i32.eqz (call $cx16)))
+      (br_if $done (i32.eqz (call ${count})))
       ${body}
-      (drop (call $cxdec))
+      (drop (call ${dec}))
       (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
       (br $l)))
 `);
+      }
     }
-  }
+  };
+  forAsize(16);
+  forAsize(32);
 }
 
 // --- 80386 additions --------------------------------------------------------
@@ -2475,10 +2572,21 @@ function helpers() {
     isa.SEG.map(r => `(return (global.get $${r}b))`));
   // Loading CS also republishes the default operand size, since that lives in
   // the descriptor CS came from and nothing else can change it.
+  //
+  // SS republishes the stack width for the same reason. The B bit of the stack
+  // descriptor is what decides whether a push moves SP or ESP, and it is not
+  // the same bit as CS's D: an extender's 32-bit code can run on a 16-bit
+  // stack and does, briefly, on either side of a mode switch. Masking the
+  // stack pointer to 16 bits regardless -- which is what this did while
+  // nothing was ever 32-bit -- throws away the high half of every ESP a flat
+  // stack uses, and the first `ret` after it lands somewhere in the first 64KB
+  // of the program.
   s += brTableFn('sset', '(param $i i32) (param $v i32)', '',
     isa.SEG.map(r => `(global.set $${r} (local.get $v))`
       + ` (global.set $${r}b (call $segbase (local.get $v)))`
       + (r === 'cs' ? ` (global.set $d32 (call $segd32 (local.get $v)))` : '')
+      + (r === 'ss' ? ` (global.set $spm (select (i32.const -1) (i32.const 0xFFFF)`
+        + ` (call $segd32 (local.get $v))))` : '')
       + ` (return)`));
 
   // Effective address. Every form masks to 16 bits: the 8086 wraps an EA inside
@@ -2874,29 +2982,29 @@ function helpers() {
                                    (i32.const 0xFFFFF)))
              (i32.const 8))))
 
-;; Stack. SS is segment index 2. SP wraps at 16 bits like every other offset,
-;; which matters for a .COM that starts with SP=0xFFFE and pushes.
+;; Stack. SS is segment index 2. SP wraps at whatever width the stack segment
+;; is -- 16 bits for a .COM that starts with SP=0xFFFE and pushes, 32 for a
+;; flat protected-mode stack, and $spm is the one place that difference lives.
 (func $push16 (param $v i32)
-  (global.set $sp (i32.and (i32.sub (global.get $sp) (i32.const 2)) (i32.const 0xFFFF)))
+  (global.set $sp (i32.and (i32.sub (global.get $sp) (i32.const 2)) (global.get $spm)))
   (call $wr16 (i32.const 2) (global.get $sp) (local.get $v)))
 
 (func $pop16 (result i32)
   (local $v i32)
   (local.set $v (call $rd16 (i32.const 2) (global.get $sp)))
-  (global.set $sp (i32.and (i32.add (global.get $sp) (i32.const 2)) (i32.const 0xFFFF)))
+  (global.set $sp (i32.and (i32.add (global.get $sp) (i32.const 2)) (global.get $spm)))
   (local.get $v))
 
-;; A 32-bit push on a 16-bit stack still moves SP by four. SP itself stays a
-;; 16-bit quantity here: a real-mode demo runs on a 16-bit stack segment, and
-;; nothing in the corpus or in the demos exercises a 32-bit ESP.
+;; A 32-bit push on a 16-bit stack still moves SP by four, and wraps at 16 bits
+;; while it does -- which is the case a real-mode demo doing 32-bit maths hits.
 (func $push32 (param $v i32)
-  (global.set $sp (i32.and (i32.sub (global.get $sp) (i32.const 4)) (i32.const 0xFFFF)))
+  (global.set $sp (i32.and (i32.sub (global.get $sp) (i32.const 4)) (global.get $spm)))
   (call $wr32 (i32.const 2) (global.get $sp) (local.get $v)))
 
 (func $pop32 (result i32)
   (local $v i32)
   (local.set $v (call $rd32 (i32.const 2) (global.get $sp)))
-  (global.set $sp (i32.and (i32.add (global.get $sp) (i32.const 4)) (i32.const 0xFFFF)))
+  (global.set $sp (i32.and (i32.add (global.get $sp) (i32.const 4)) (global.get $spm)))
   (local.get $v))
 
 ;; Eager flags. $s is the UNMASKED sum, so the carry out is still in it.
@@ -3209,19 +3317,21 @@ function helpers() {
   (global.set $rtop (i32.const 0))
   (i32.const 0))
 
-;; Indirect-jump target lookup. The key carries CS so a trace compiled for one
-;; segment can never be entered from another.
+;; Indirect-jump target lookup. The key is the offset and the selector, checked
+;; separately, so a trace compiled for one segment can never be entered from
+;; another and two offsets 64KB apart in a flat segment cannot be confused.
 (func $jlook (param $ip i32) (result i32)
   (local $k i32) (local $a i32)
-  (local.set $k (i32.or (i32.shl (call $sget (i32.const 1)) (i32.const 16))
-                        (i32.and (local.get $ip) (i32.const 0xFFFF))))
+  (local.set $k (i32.xor (local.get $ip)
+                         (i32.shl (call $sget (i32.const 1)) (i32.const 16))))
   (local.set $a (i32.add (i32.const ${isa.JTAB_BASE}) (i32.mul
     (i32.and (i32.shr_u (i32.mul (local.get $k) (i32.const ${isa.JTAB_HASH_MUL}))
                         (i32.const 16))
              (i32.const ${isa.JTAB_ENTRIES - 1}))
-    (i32.const 8))))
-  (if (i32.eq (i32.load offset=0 (local.get $a)) (local.get $k))
-    (then (return (i32.load offset=4 (local.get $a)))))
+    (i32.const ${isa.JTAB_STRIDE}))))
+  (if (i32.and (i32.eq (i32.load offset=0 (local.get $a)) (local.get $ip))
+               (i32.eq (i32.load offset=4 (local.get $a)) (call $sget (i32.const 1))))
+    (then (return (i32.load offset=8 (local.get $a)))))
   (i32.const 0))
 ${SHIFT_FNS.join('')}${fpuHelpers()}`;
   return s;
@@ -3566,6 +3676,11 @@ ${isa.SEG.map(r => `(global $${r}b (mut i32) (i32.const 0))`).join('\n')}
 (global $idtb (mut i32) (i32.const 0))
 (global $idtl (mut i32) (i32.const 0))
 (global $d32 (mut i32) (i32.const 0))
+;; How wide the stack pointer is: 0xFFFF while SS is a 16-bit segment, all ones
+;; once it names a descriptor with B set. Every push and pop masks with it, so
+;; a 16-bit stack keeps the exact wrap a .COM starting at SP=0xFFFE depends on
+;; and a flat one keeps the whole of ESP.
+(global $spm (mut i32) (i32.const 0xFFFF))
 ;; LDT selector and the linear base it resolved to, plus the task register.
 ;; Nothing switches tasks, so $tr is storage that STR can read back.
 (global $ldt (mut i32) (i32.const 0))

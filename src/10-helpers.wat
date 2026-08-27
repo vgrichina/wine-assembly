@@ -1270,8 +1270,10 @@
 
   ;; Optional extra args appended after the exe name. JS sets these via
   ;; (export "set_extra_cmdline") before the first GetCommandLineA call.
-  ;; Buffer lives in low scratch memory at 0x300 (256 bytes), separate from
-  ;; the exe_name buffer at $exe_name_wa.
+  ;; Keep this mutable staging area out of the low static-string block. The old
+  ;; 0x300 buffer overwrote names and labels through 0x3C7 when a long installer
+  ;; command line was supplied, including the optional uxtheme.dll name.
+  (global $EXTRA_CMDLINE_BUFFER i32 (i32.const 0x07F0A500))
   (global $extra_cmdline_len (mut i32) (i32.const 0))
   (func (export "set_extra_cmdline") (param $waddr i32) (param $len i32)
     (local $i i32)
@@ -1280,7 +1282,7 @@
     (global.set $extra_cmdline_len (local.get $len))
     (block $done (loop $copy
       (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
-      (i32.store8 (i32.add (i32.const 0x300) (local.get $i))
+      (i32.store8 (i32.add (global.get $EXTRA_CMDLINE_BUFFER) (local.get $i))
         (i32.load8_u (i32.add (local.get $waddr) (local.get $i))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $copy))))
@@ -1312,7 +1314,7 @@
         (block $done2 (loop $copy2
           (br_if $done2 (i32.ge_u (local.get $i) (local.get $extra)))
           (i32.store8 (i32.add (local.get $dst) (i32.add (local.get $len) (local.get $i)))
-            (i32.load8_u (i32.add (i32.const 0x300) (local.get $i))))
+            (i32.load8_u (i32.add (global.get $EXTRA_CMDLINE_BUFFER) (local.get $i))))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
           (br $copy2)))
         (local.set $len (i32.add (local.get $len) (local.get $extra)))))
@@ -1345,7 +1347,7 @@
           (br_if $done2 (i32.ge_u (local.get $i) (local.get $extra)))
           (call $gs16
             (i32.add (local.get $ptr) (i32.shl (i32.add (local.get $len) (local.get $i)) (i32.const 1)))
-            (i32.load8_u (i32.add (i32.const 0x300) (local.get $i))))
+            (i32.load8_u (i32.add (global.get $EXTRA_CMDLINE_BUFFER) (local.get $i))))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
           (br $copy2)))
         (local.set $len (i32.add (local.get $len) (local.get $extra)))))
