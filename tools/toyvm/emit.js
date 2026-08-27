@@ -368,6 +368,21 @@ function genExtras() {
   ${ops(1)}
   (call $sset (local.get $t0) (call $pop16))
 `);
+  // The 32-bit forms. A segment register is 16 bits either way; the operand
+  // size decides how far the STACK moves, and that is the whole difference.
+  // Every DOS extender here reflects interrupts with `66 1f` (pop ds) after
+  // restoring a 32-bit frame, so emitting the 16-bit handler for it left the
+  // stack two bytes low on every reflected call. CONTAGIO.EXE's extender drifted
+  // its way into a `ret` that read the wrong word and jumped into its own error
+  // strings, where it sat spinning at 868:13d inside "Unrecognized Data In LE!".
+  h('push_seg32', 1, `
+  ${ops(1)}
+  (call $push32 (call $sget (local.get $t0)))
+`);
+  h('pop_seg32', 1, `
+  ${ops(1)}
+  (call $sset (local.get $t0) (i32.and (call $pop32) (i32.const 0xFFFF)))
+`);
   h('push_m16', 2, `
   ${ops(2)}
   ${EA_SETUP_PRE}

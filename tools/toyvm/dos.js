@@ -964,7 +964,14 @@ class Machine {
       // B800 as " [1] - None", one space in, which is neither the start of the
       // line nor a run of two spaces, so nothing on that menu was an option at
       // all and the reader fell through to the rotation.
-      const re = /(?:^\s*|\s{2,}|[/,]\s*)([[(]?)([0-9A-Za-z])[\]).:)](\s*)([^[(]{2,40})/g;
+      //
+      // The separator after the selector is whatever the author felt like:
+      // CYBOMAN2.EXE writes "        0> NoSound" and COLORS.EXE "0 - Silence",
+      // and with only ]).: accepted neither menu had a single option on it, so
+      // both fell through to the rotation and sat on the prompt forever. A bare
+      // "-" cannot fire on running text, because the selector still has to be
+      // one character preceded by a line start, two spaces, or a slash/comma.
+      const re = /(?:^\s*|\s{2,}|[/,]\s*)([[(]?)([0-9A-Za-z])[\]).:>-](\s*)([^[(]{2,40})/g;
       for (let m; (m = re.exec(line));) {
         // "(N)one" puts the selector INSIDE the word, so the label as captured
         // is "one" and reads as neither a yes nor a no. Put the letter back

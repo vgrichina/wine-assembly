@@ -780,8 +780,14 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false) {
         else words.push(H[`${nm}_rm${opsize}`], packEa(m), m.disp);
         break;
       }
-      if (op2 === 0xA0 || op2 === 0xA8) { words.push(H.push_seg, op2 === 0xA0 ? 4 : 5); break; }
-      if (op2 === 0xA1 || op2 === 0xA9) { words.push(H.pop_seg, op2 === 0xA1 ? 4 : 5); break; }
+      if (op2 === 0xA0 || op2 === 0xA8) {
+        words.push(opsize === 32 ? H.push_seg32 : H.push_seg, op2 === 0xA0 ? 4 : 5);
+        break;
+      }
+      if (op2 === 0xA1 || op2 === 0xA9) {
+        words.push(opsize === 32 ? H.pop_seg32 : H.pop_seg, op2 === 0xA1 ? 4 : 5);
+        break;
+      }
       // IMUL r, r/m -- the two-operand form, destination times source.
       if (op2 === 0xAF) {
         const m = modrm();
@@ -1022,8 +1028,11 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false) {
       // PUSH/POP segment sit at 0x06 + 8*idx and 0x07 + 8*idx, in ES/CS/SS/DS
       // order -- the same order isa.SEG uses. POP CS (0x0F) is deliberately
       // absent: it exists on the 8086 but nothing sane emits it.
-      else if ((op & 0xE7) === 0x06) words.push(H.push_seg, (op >> 3) & 3);
-      else if ((op & 0xE7) === 0x07 && op !== 0x0F) words.push(H.pop_seg, (op >> 3) & 3);
+      else if ((op & 0xE7) === 0x06) {
+        words.push(opsize === 32 ? H.push_seg32 : H.push_seg, (op >> 3) & 3);
+      } else if ((op & 0xE7) === 0x07 && op !== 0x0F) {
+        words.push(opsize === 32 ? H.pop_seg32 : H.pop_seg, (op >> 3) & 3);
+      }
       // XCHG AX, r16. 0x90 is XCHG AX,AX, which is NOP -- emitted as NOP so the
       // op stream says what the code means.
       else if (op === 0x90) words.push(H.nop);
