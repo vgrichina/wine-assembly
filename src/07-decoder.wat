@@ -2729,6 +2729,7 @@
     (local $imm i32)
     (local $disp i32)
     (local $a i32)
+    (local $insn_start i32)  ;; d_pc before prefixes/opcode for interior matchers
     (local $mmxsub i32)        ;; MMX subop id, or -1 when this 0F op is not MMX
     (local $mmxpc i32)         ;; d_pc before an MMX ModRM, to rewind on a reject
 
@@ -2808,16 +2809,6 @@
         ;; never the bug, the transfer into them is.
         (call $host_log_i32 (global.get $dbg_prev2_eip))
         (unreachable)))
-
-    ;; Jazz's masked 32-byte MMX row copy spans two x86 basic blocks, so the
-    ;; ordinary one-block loop matcher cannot see the full semantic unit. Its
-    ;; exact raw-byte recognizer emits one existing H419 variant before either
-    ;; half is decoded; a near miss leaves d_pc/thread_alloc untouched.
-    (if (call $try_emit_mmx_mask_copy32 (local.get $start_eip))
-      (then
-        (return
-          (call $publish_block (local.get $start_eip) (local.get $tstart)
-            (global.get $d_pc)))))
 
     (block $exit (loop $decode
       (br_if $exit (local.get $done))
@@ -2903,6 +2894,7 @@
       ;; boundary and continue decoding its ordinary row tail afterwards.
       (if (call $try_emit_lut_span) (then (br $decode)))
 
+      (local.set $insn_start (global.get $d_pc))
       ;; Reset prefixes
       (local.set $prefix_rep (i32.const 0))
       (local.set $prefix_66 (i32.const 0))
@@ -2964,6 +2956,29 @@
               (call $host_log_i32 (local.get $op))
               (call $host_log_i32 (global.get $d_pc))
               (unreachable)))))
+
+      ;; Jazz enters each masked 32-byte MMX row copy through setup code in the
+      ;; same x86 basic block (`mov ebx,[ebp+disp]` immediately precedes the
+      ;; loop head). Checking only start_eip made the focused head-entry test
+      ;; pass while authentic execution decoded the ordinary MMX body first.
+      ;; The signature starts with unprefixed `add ebx,ebx` (03 DB), so ask the
+      ;; exact raw matcher only for that opcode. A hit terminates this enclosing
+      ;; block because H419 owns both successors; a near miss consumes/emits
+      ;; nothing and falls through to ordinary ADD decoding.
+      (if (i32.and
+            (i32.eq (local.get $op) (i32.const 0x03))
+            (i32.and
+              (i32.eqz (local.get $prefix_rep))
+              (i32.and
+                (i32.eqz (local.get $prefix_66))
+                (i32.and
+                  (i32.eqz (local.get $prefix_67))
+                  (i32.eqz (local.get $prefix_seg))))))
+        (then
+          (if (call $try_emit_mmx_mask_copy32 (local.get $insn_start))
+            (then
+              (local.set $done (i32.const 1))
+              (br $decode)))))
 
       ;; ---- NOP (0x90) ----
       (if (i32.eq (local.get $op) (i32.const 0x90)) (then (call $te (i32.const 0) (i32.const 0)) (br $decode)))

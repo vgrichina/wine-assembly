@@ -49,6 +49,14 @@ const LOOP = Uint8Array.from([
   0xc3,
 ]);
 
+// Authentic Jazz entry at 0x46888f: setup and loop head share one straight-
+// line x86 block. The production bug was invisible while the regression only
+// entered at LOOP[0], because the recognizer used to run only at start_eip.
+const PREFIXED_LOOP = Uint8Array.from([
+  0x8b, 0x5d, 0x10,                  // mov ebx,[ebp+0x10]
+  ...LOOP,
+]);
+
 function i64le(a, off) {
   let v = 0n;
   for (let i = 7; i >= 0; i--) v = (v << 8n) | BigInt(a[off + i]);
@@ -77,10 +85,11 @@ function i64le(a, off) {
     return ga;
   }
 
-  function runAt(code, { src, dst, pitch, count, mask, bulk = 1 }) {
+  function runAt(code, { src, dst, pitch, count, mask, bulk = 1, ebp }) {
     e.test_mmx_mask_set_bulk(bulk);
     e.set_eax(pitch); e.set_ebx(mask); e.set_esi(src); e.set_edi(dst); e.set_edx(count);
     e.set_esp(stack);
+    if (ebp !== undefined) e.set_ebp(ebp);
     dv.setUint32(imageWa(stack), 0, true);
     e.set_eip(code);
     e.run(100000);
@@ -153,6 +162,45 @@ function i64le(a, off) {
   assert.strictEqual(bulk.edi, (bulkDst + count * pitch) >>> 0, 'destination advances by pitch');
   assert.strictEqual(bulk.edx, 0, 'counter reaches zero');
   assert.strictEqual(bulk.zf, 1, 'final DEC sets zero');
+
+  // Decode the production-shaped entry twice at fresh addresses: once as
+  // ordinary x86, then with H419 enabled. Both execute the predecessor MOV;
+  // only the second must recognize the loop when d_pc reaches its head inside
+  // the already-started translated block.
+  const prefixedBaselineCode = install(PREFIXED_LOOP);
+  const prefixedFusedCode = install(PREFIXED_LOOP);
+  const prefixedEbp = (stack + 0x100) >>> 0;
+  dv.setUint32(imageWa(prefixedEbp + 0x10), mask, true);
+  const prefixedBaselineDst = (arena + 0x4000) >>> 0;
+  const prefixedFusedDst = (arena + 0x4200) >>> 0;
+  bytes.fill(0xcc, wa(prefixedBaselineDst), wa(prefixedBaselineDst) + count * pitch);
+  bytes.fill(0xcc, wa(prefixedFusedDst), wa(prefixedFusedDst) + count * pitch);
+  e.test_mmx_mask_set_enabled(0);
+  seedMmx();
+  const prefixedBaseline = runAt(prefixedBaselineCode, {
+    src, dst: prefixedBaselineDst, pitch, count, mask, bulk: 0, ebp: prefixedEbp,
+  });
+  e.test_mmx_mask_set_enabled(1);
+  const matchesBeforePrefixed = e.test_mmx_mask_matches();
+  const runsBeforePrefixed = e.test_mmx_mask_runs();
+  seedMmx();
+  const prefixedFused = runAt(prefixedFusedCode, {
+    src, dst: prefixedFusedDst, pitch, count, mask, bulk: 0, ebp: prefixedEbp,
+  });
+  assert.strictEqual(e.test_mmx_mask_matches(), matchesBeforePrefixed + 1,
+    'authentic predecessor entry recognizes H419 at an interior instruction boundary');
+  assert.strictEqual(e.test_mmx_mask_runs(), runsBeforePrefixed + 1,
+    'interior-boundary H419 executes once');
+  assert.deepStrictEqual(comparable(prefixedFused), comparable(prefixedBaseline),
+    'interior-boundary fusion preserves the production-shaped entry state');
+  for (let row = 0; row < count; row++) {
+    assert.deepStrictEqual(
+      Array.from(bytes.subarray(wa(prefixedFusedDst + row * pitch),
+        wa(prefixedFusedDst + row * pitch) + 32)),
+      Array.from(bytes.subarray(wa(prefixedBaselineDst + row * pitch),
+        wa(prefixedBaselineDst + row * pitch) + 32)),
+      `interior-boundary row ${row} agrees with ordinary decoding`);
+  }
 
   // All four MOVQ loads precede all four stores, so an overlapping row has
   // memmove semantics and still publishes the original source in MMX state.
@@ -233,7 +281,7 @@ function i64le(a, off) {
     console.log(`  memory.copy fusion vs ordinary MMX: ${(med.baseline / med.bulk).toFixed(2)}x`);
   }
 
-  console.log('PASS Jazz masked MMX row COPY_RUN: baseline/vector/bulk state, overlap, page split, gate, near miss');
+  console.log('PASS Jazz masked MMX row COPY_RUN: exact/interior entry, baseline/vector/bulk state, overlap, page split, gate, near miss');
 })().catch(error => {
   console.error(error.stack || error);
   process.exit(1);
