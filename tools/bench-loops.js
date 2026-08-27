@@ -149,6 +149,110 @@ const SHAPES = {
     },
   },
 
+  lut16_h3: {
+    describe: 'dst16[i] = lut16[src8[i]] (Heroes III 0x44b7ef exact loop shape)',
+    real: 'Heroes III 16bpp sprite expansion; nine static LUT_RUN candidates',
+    emit(a) {
+      const n = Math.floor(a.bufBytes / 3);
+      const src = a.buf, dst = src + n, lut = a.lut;
+      const body = [
+        0x31, 0xC9,                   // xor ecx, ecx
+        0x8A, 0x0A,                   // mov cl, [edx]
+        0x83, 0xC0, 0x02,             // add eax, 2
+        0x42,                         // inc edx
+        0x4D,                         // dec ebp
+        0x66, 0x8B, 0x4C, 0x4F, 0x50, // mov cx, [edi+ecx*2+0x50]
+        0x66, 0x89, 0x48, 0xFE,       // mov [eax-2], cx
+      ];
+      return {
+        iters: n,
+        bytesTouched: n * 3,
+        code: body.concat([0x75], rel8(-(body.length + 2))),
+        setup(e, mem, g2w) {
+          const dv = new DataView(mem.buffer);
+          for (let i = 0; i < 256; i++) {
+            dv.setUint16(g2w(lut + 0x50) + i * 2,
+              (((i * 17) & 0xF800) | ((i * 29) & 0x07E0) | ((i * 7) & 0x001F)) ^ 0x39E7,
+              true);
+          }
+          for (let i = 0; i < n; i++) mem[g2w(src) + i] = (i * 43 + 11) & 0xFF;
+          dv.setUint16(g2w(dst), 0, true);
+          dv.setUint16(g2w(dst) + (n - 1) * 2, 0, true);
+          e.set_edx(src); e.set_eax(dst); e.set_edi(lut); e.set_ebp(n); e.set_ecx(0);
+        },
+        verify(e, mem, g2w) {
+          const dv = new DataView(mem.buffer);
+          for (const i of [0, 1, n >> 1, n - 1]) {
+            const index = (i * 43 + 11) & 0xFF;
+            const want = ((((index * 17) & 0xF800) | ((index * 29) & 0x07E0) |
+              ((index * 7) & 0x001F)) ^ 0x39E7) & 0xFFFF;
+            const got = dv.getUint16(g2w(dst) + i * 2, true);
+            if (got !== want) return `dst16[${i}]=0x${got.toString(16)} want 0x${want.toString(16)}`;
+          }
+          if (e.get_ebp() !== 0) return `ebp=${e.get_ebp()}, expected 0`;
+          if (e.get_edx() !== src + n || e.get_eax() !== dst + n * 2) {
+            return 'source/destination cursors did not finish';
+          }
+          return null;
+        },
+      };
+    },
+  },
+
+  lut16_h3_stack: {
+    describe: 'stack-loaded table + dst16[i] = lut16[src8[i]] (Heroes III 0x4714bc)',
+    real: 'Largest measured Heroes III adventure-map RGB565 loop; table pointer reloads from [esp+0x40]',
+    emit(a) {
+      const n = Math.floor(a.bufBytes / 3);
+      const src = a.buf, dst = src + n, lut = a.lut;
+      const body = [
+        0x8B, 0x4C, 0x24, 0x40,       // mov ecx, [esp+0x40]
+        0x31, 0xC0,                   // xor eax, eax
+        0x8A, 0x02,                   // mov al, [edx]
+        0x83, 0xC5, 0x02,             // add ebp, 2
+        0x42,                         // inc edx
+        0x4E,                         // dec esi
+        0x66, 0x8B, 0x44, 0x41, 0x1C, // mov ax, [ecx+eax*2+0x1c]
+        0x66, 0x89, 0x45, 0xFE,       // mov [ebp-2], ax
+      ];
+      return {
+        iters: n,
+        bytesTouched: n * 3,
+        code: body.concat([0x75], rel8(-(body.length + 2))),
+        setup(e, mem, g2w) {
+          const dv = new DataView(mem.buffer);
+          for (let i = 0; i < 256; i++) {
+            dv.setUint16(g2w(lut + 0x1C) + i * 2,
+              (((i * 17) & 0xF800) | ((i * 29) & 0x07E0) | ((i * 7) & 0x001F)) ^ 0x39E7,
+              true);
+          }
+          for (let i = 0; i < n; i++) mem[g2w(src) + i] = (i * 43 + 11) & 0xFF;
+          dv.setUint16(g2w(dst), 0, true);
+          dv.setUint16(g2w(dst) + (n - 1) * 2, 0, true);
+          dv.setUint32(g2w(a.stackTop) + 0x40, lut, true);
+          e.set_edx(src); e.set_ebp(dst); e.set_esi(n);
+          e.set_ecx(0xCCCCCCCC); e.set_eax(0xAAAAAAAA);
+        },
+        verify(e, mem, g2w) {
+          const dv = new DataView(mem.buffer);
+          for (const i of [0, 1, n >> 1, n - 1]) {
+            const index = (i * 43 + 11) & 0xFF;
+            const want = ((((index * 17) & 0xF800) | ((index * 29) & 0x07E0) |
+              ((index * 7) & 0x001F)) ^ 0x39E7) & 0xFFFF;
+            const got = dv.getUint16(g2w(dst) + i * 2, true);
+            if (got !== want) return `dst16[${i}]=0x${got.toString(16)} want 0x${want.toString(16)}`;
+          }
+          if (e.get_esi() !== 0) return `esi=${e.get_esi()}, expected 0`;
+          if (e.get_edx() !== src + n || e.get_ebp() !== dst + n * 2) {
+            return 'source/destination cursors did not finish';
+          }
+          if ((e.get_ecx() >>> 0) !== (lut >>> 0)) return 'stack-loaded table register not published';
+          return null;
+        },
+      };
+    },
+  },
+
   store_stream: {
     describe: 'mov [edi+edx*1+disp], eax x4 (93% of all Caesar III SIB effective addresses)',
     real: 'Caesar III; the bind-once-store-many candidate',
@@ -316,6 +420,8 @@ const SHAPES = {
 };
 
 const TOGGLES = {
+  lut_superops: 'set_loop_lut_emit',
+  lut16_stack: 'set_loop_lut16_stack_emit',
   case_chain: 'set_case_chain',
   rle_run: 'set_rle_run',
   rect_run: 'set_rect_run',
@@ -349,7 +455,9 @@ async function newInstance() {
   h.memory = memory;
   h.exit = () => {};
   h.log = () => {};
-  h.log_i32 = () => {};
+  h.log_i32 = process.env.BENCH_TRACE_LOOP
+    ? v => console.log(`[i32] 0x${(v >>> 0).toString(16)}`)
+    : () => {};
   h.crash_unimplemented = () => {};
   h.wait_multiple = () => 0;
   h.shell_execute = () => 33;
@@ -420,6 +528,7 @@ function oneRep({ e, mem, g2w }, shape, a, repIndex) {
   const bytes = built.code.concat([0xC3]);           // ret to the 0 sentinel
   mem.set(bytes, g2w(codeAddr));
   built.setup(e, mem, g2w);
+  if (process.env.BENCH_TRACE_LOOP && e.set_loop_trace) e.set_loop_trace(1, codeAddr);
   const t0 = process.hrtime.bigint();
   const ok = runToCompletion(e, codeAddr, a.stackTop);
   const t1 = process.hrtime.bigint();
@@ -437,6 +546,12 @@ function oneRep({ e, mem, g2w }, shape, a, repIndex) {
 
 function countOps(inst, shape, a, repIndex) {
   const { e, mem } = inst;
+  const lutRuns0 = e.get_loop_lut_runs ? e.get_loop_lut_runs() : 0;
+  const lutBytes0 = e.get_loop_lut_bytes ? e.get_loop_lut_bytes() : 0n;
+  const lut16Runs0 = e.get_loop_lut16_runs ? e.get_loop_lut16_runs() : 0;
+  const lut16Bytes0 = e.get_loop_lut16_bytes ? e.get_loop_lut16_bytes() : 0n;
+  const lut16Matches0 = e.get_loop_lut16_matches ? e.get_loop_lut16_matches() : 0;
+  const matched0 = e.get_loop_matched_blocks ? e.get_loop_matched_blocks() : 0;
   e.set_handler_hist_enabled(1);
   e.reset_handler_hist();
   oneRep(inst, shape, a, repIndex);
@@ -477,7 +592,16 @@ function countOps(inst, shape, a, repIndex) {
   // block-entry price at 25ns instead of 11.5ns.
   const blockCollisions = e.get_hot_block_hist_collisions();
   blockEntries += blockCollisions;
-  return { total, blockEntries, blockCollisions, top: perHandler.slice(0, TOP_N), all: perHandler };
+  return {
+    total, blockEntries, blockCollisions,
+    top: perHandler.slice(0, TOP_N), all: perHandler,
+    lutRuns: e.get_loop_lut_runs ? e.get_loop_lut_runs() - lutRuns0 : 0,
+    lutBytes: e.get_loop_lut_bytes ? e.get_loop_lut_bytes() - lutBytes0 : 0n,
+    lut16Runs: e.get_loop_lut16_runs ? e.get_loop_lut16_runs() - lut16Runs0 : 0,
+    lut16Bytes: e.get_loop_lut16_bytes ? e.get_loop_lut16_bytes() - lut16Bytes0 : 0n,
+    lut16Matches: e.get_loop_lut16_matches ? e.get_loop_lut16_matches() - lut16Matches0 : 0,
+    matched: e.get_loop_matched_blocks ? e.get_loop_matched_blocks() - matched0 : 0,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -527,7 +651,10 @@ async function main() {
     const inst = await newInstance();
     const a = layout(inst.imageBase, bufBytes);
 
-    const arms = toggle ? [1, 0] : [null];
+
+    const arms = toggle
+      ? String(arg('arms', '1,0')).split(',').map(Number)
+      : [null];
     const armNs = new Map(arms.map(v => [v, []]));
     const armOps = new Map();
 
@@ -545,7 +672,10 @@ async function main() {
     // the order rotated, flipped one of them from -7.3% to +17.5%. Interleaving
     // removes drift between variants but not between positions.
     for (let r = 0; r < reps; r++) {
-      const order = r % 2 === 0 ? arms : arms.slice().reverse();
+      // Rotate every arm through every slot. Reversing is sufficient for two
+      // arms, but leaves the middle arm permanently in slot 2 for three arms.
+      const shift = r % arms.length;
+      const order = arms.slice(shift).concat(arms.slice(0, shift));
       for (const v of order) {
         if (v !== null) inst.e[TOGGLES[toggle]](v);
         const { ns, built } = oneRep(inst, shape, a, repIndex++);
@@ -564,10 +694,11 @@ async function main() {
         const ops = armOps.get(v);
         // Minima, not means: contention is one-sided, it only ever adds time.
         const min = ns[0];
+        const median = ns[Math.floor(ns.length / 2)];
         return {
           arm: v === null ? 'base' : `${toggle}=${v}`,
           minMs: min / 1e6,
-          medianMs: ns[Math.floor(ns.length / 2)] / 1e6,
+          medianMs: median / 1e6,
           nsPerIter: min / built.iters,
           opsTotal: ops.total,
           opsPerIter: ops.total / built.iters,
@@ -582,11 +713,26 @@ async function main() {
           // opsTotal is NOT the dispatch count — it is the unfolded-equivalent
           // count plus the fold's own dispatch. Read blocksPerIter instead.
           foldsLive: ops.all.filter(([i]) => i >= 420 && i <= 424).map(([i]) => `H${i}`),
+          lutRuns: ops.lutRuns,
+          lutBytes: Number(ops.lutBytes),
+          lut16Matches: ops.lut16Matches,
+          lut16Runs: ops.lut16Runs,
+          lut16Bytes: Number(ops.lut16Bytes),
+          matched: ops.matched,
           topHandlers: ops.top,
           guestMBps: built.bytesTouched ? (built.bytesTouched / (min / 1e9)) / (1024 * 1024) : null,
         };
       }),
     };
+    if (arms.length > 1) {
+      const baseline = armNs.get(arms[arms.length - 1]);
+      row.paired = arms.slice(0, -1).map(v => {
+        const ratios = armNs.get(v).map((ns, i) =>
+          (baseline[i] - ns) / baseline[i] * 100).sort((x, y) => x - y);
+        return { arm: `${toggle}=${v}`, vs: `${toggle}=${arms[arms.length - 1]}`,
+          medianPct: ratios[Math.floor(ratios.length / 2)] };
+      });
+    }
     if (arms.length === 2) {
       const [on, off] = row.arms;
       row.delta = {
@@ -621,6 +767,11 @@ async function main() {
         `${arm.opsPerIter.toFixed(2)} ops/iter  ${arm.bytesPerIter} B/iter  ` +
         `${arm.blocksPerIter.toFixed(2)} blocks/iter${mb}`);
       console.log(`    ${' '.repeat(16)} top handlers: ${arm.topHandlers.map(([i, c]) => `H${i}:${fmt(c)}`).join('  ')}`);
+      console.log(`    ${' '.repeat(16)} LUT matches/runs/bytes: ${fmt(arm.matched)}/${fmt(arm.lutRuns)}/${fmt(arm.lutBytes)}`);
+      if (arm.lut16Matches || arm.lut16Runs) {
+        console.log(`    ${' '.repeat(16)} RGB565 matches/runs/pixels: ` +
+          `${fmt(arm.lut16Matches)}/${fmt(arm.lut16Runs)}/${fmt(arm.lut16Bytes)}`);
+      }
       if (arm.blockCollisions) {
         console.log(`    ${' '.repeat(16)} (${fmt(arm.blockCollisions)} of those entries came from the collision counter, ` +
           `not the bucket)`);
@@ -635,6 +786,11 @@ async function main() {
       const sign = v => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
       console.log(`    => fold is worth ${sign(r.delta.timePct)} time, ` +
         `${sign(r.delta.opsPct)} ops, ${sign(r.delta.blocksPct)} block entries`);
+    }
+    if (r.paired) {
+      for (const p of r.paired) {
+        console.log(`    => paired median ${p.arm} vs ${p.vs}: ${p.medianPct >= 0 ? '+' : ''}${p.medianPct.toFixed(1)}%`);
+      }
     }
     console.log('');
   }
