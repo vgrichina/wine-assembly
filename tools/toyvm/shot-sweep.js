@@ -90,6 +90,7 @@ async function runOne(exe, png, o) {
     exe, variant: 'tailcall', budget: o.budget, cpu: o.cpu, log: () => {},
     seconds: o.seconds || 0,
     autoKey: o.autoKey, bestPng: png, guestArgs: o.guestArgs || '',
+    ...(o.sound ? { sound: o.sound } : {}),
   });
   const text = r.bestSurface.text;
   return {
@@ -103,6 +104,8 @@ async function runOne(exe, png, o) {
     // whether the run walked off a cliff or hit a wall we know the shape of,
     // and that is the difference between a work item and a declared blocker.
     blockedOn32: r.blockedOn32 || null, badSelector: r.badSelector || null,
+    // Which machine this frame came off, when it was not the default one.
+    sound: o.sound || null,
     // Not a failure. The picture is real and the program simply had more to do
     // than the budget allowed, which is worth telling apart from a run that
     // finished with nothing on screen.
@@ -145,6 +148,7 @@ function child(exe, png, o) {
       `--dispatches=${o.budget}`, `--cpu=${o.cpu}`,
       `--seconds=${Math.max(5, o.timeout - grace)}`,
       ...(o.autoKey ? ['--auto-key'] : []),
+      ...(o.sound ? [`--sound=${o.sound}`] : []),
       ...(o.guestArgs ? [`--args=${o.guestArgs}`] : [])];
     const p = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', err = '';
@@ -202,6 +206,23 @@ async function capture(exe, png, o) {
     if (score(retry) > score(first)) row = retry;
     else { row = first; await child(exe, png, { ...o, autoKey: o.autoKey }); }
   }
+  // A card that is present is not always better than no card. Most of this
+  // corpus prints a refusal without one and runs with one -- but a driver that
+  // finds a DSP next programs a DMA transfer, and there is no DMA controller
+  // behind ours, so a few init forever instead. Measured: ATTIC.EXE draws
+  // nothing without a card and 56556 pixels with one; CEN!FB.EXE is the exact
+  // opposite, 64000 pixels without and a permanent "Initializing ." with.
+  //
+  // Neither is predictable from the outside, and the sweep already knows how
+  // to decide this kind of question -- it does it for the start key and for a
+  // silent-mode switch. So a program that still has no picture gets the
+  // machine without a sound card, and keeps whichever frame is fuller.
+  if (!row.pixels && !o.sound) {
+    const first = { ...row };
+    const retry = await child(exe, png, { ...o, autoKey: true, sound: 'none' });
+    if (score(retry) > score(first)) { row = retry; row.sound = 'none'; }
+    else { row = first; await child(exe, png, o); }
+  }
   if (row.png && !fs.existsSync(row.png)) { row.png = null; row.failed ||= 'no png'; }
   return row;
 }
@@ -221,6 +242,9 @@ async function main() {
     timeout: Number(arg('timeout', 180)),
     jobs: Number(arg('jobs', 1)),
     autoKey: process.argv.slice(2).includes('--auto-key'),
+    // Unset on the way in, which is what lets capture() tell "nobody has
+    // chosen" from "run this one without a card". Only the retry sets it.
+    sound: arg('sound', ''),
     guestArgs: arg('args', ''),
     maxSeconds: Number(arg('max-seconds', 0)),
     // The graceful deadline the child stops itself on. The parent sets it from

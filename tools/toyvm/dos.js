@@ -554,6 +554,8 @@ class Machine {
     this.kbFresh = false;   // set by IRQ1, cleared by the handler's port read
     this.kbReads = 0;
     this.forceChained = !!opts.forceChained;
+    // 'full' | 'quiet' | 'none' -- see the sound option in run-dos.js.
+    this.sound = opts.sound || 'full';
     this.mouse = { x: 160, y: 100, buttons: 0, dx: 0, dy: 0 };
     // A freshly loaded .EXE owns every paragraph up to the ceiling, so the
     // free pool starts empty and fills when the program shrinks its own block.
@@ -645,11 +647,21 @@ class Machine {
     put('COMSPEC=C:\\COMMAND.COM');
     put('PATH=C:\\');
     put('TEMP=C:\\');
-    // What a card announces itself with. Half the sound libraries of the era
-    // read this instead of probing -- base 220h, IRQ 7, 8-bit DMA channel 1,
-    // type 3 (Sound Blaster Pro) -- and the ones that do probe find the DSP
-    // where this says it is. See portIn for what is actually behind it.
-    put('BLASTER=A220 I7 D1 T3');
+    // No BLASTER=, deliberately, even though there is a card on the ports.
+    //
+    // It reads like the obvious companion to answering the DSP probe -- half
+    // the sound libraries of the era take the base, IRQ and DMA channel from
+    // this line instead of hunting for them. That is exactly the problem. A
+    // library that probes finds a DSP that answers questions and stops there;
+    // a library that reads BLASTER skips the probe entirely and goes straight
+    // to programming a DMA transfer on the channel it was promised, and there
+    // is no DMA controller behind this. Measured: with the variable set,
+    // CEN!FB.EXE and BTHERE.EXE hang on "Initializing ." forever, having drawn
+    // 64000 and 28203 pixels without it; removing it puts both back and costs
+    // ATTIC.EXE and DFUSE.EXE nothing, because both of them probe.
+    //
+    // The rule this encodes: answer questions the card can be asked, do not
+    // volunteer a configuration nothing is standing behind.
     mem[at++] = 0;                    // end of the variables
     mem[at++] = 0x01; mem[at++] = 0x00;   // one string follows: the program path
     put(`C:\\${String(name).toUpperCase()}`);
@@ -1172,6 +1184,7 @@ class Machine {
   // hooked several and is waiting to see which one fires learns the answer
   // here. Auto-init keeps going, single-cycle does not.
   sbIrq() {
+    if (this.sound !== 'full') return 0;
     if (!this.sb.pending || this.sb.paused) return 0;
     if (!this.hookedVector(SB_IRQ_VEC)) return 0;
     this.sb.pending = this.sb.autoInit;
@@ -1248,14 +1261,16 @@ class Machine {
     //
     // 0x22A is the read port, 0x22E its status (bit 7 = a byte is waiting),
     // 0x22C the write port (bit 7 = busy, always clear here).
-    if (port === 0x22A) return this.sb.out.length ? this.sb.out.shift() : 0;
-    if (port === 0x22E) return this.sb.out.length ? 0xFF : 0x7F;
-    if (port === 0x22C) return 0x7F;
+    if (this.sound !== 'none') {
+      if (port === 0x22A) return this.sb.out.length ? this.sb.out.shift() : 0;
+      if (port === 0x22E) return this.sb.out.length ? 0xFF : 0x7F;
+      if (port === 0x22C) return 0x7F;
+    }
     // The FM chip's status register. `IN AL,388h` twice and reading back 0
     // after resetting timers 1 and 2 is the whole OPL2 presence test, and a
     // card that is not there reads 0xFF. Bits 7/6 mirror the timer flags.
     if (port === 0x388 || port === 0x389 || port === 0x228 || port === 0x229) {
-      return this.adlibStatus();
+      return this.sound === 'none' ? 0xFF : this.adlibStatus();
     }
     if (port >= 0x40 && port <= 0x42) {
       this.clock.pit++;
@@ -1279,6 +1294,7 @@ class Machine {
     // else is accepted and dropped, except the two commands a detection
     // routine reads an answer back from.
     if (port === 0x226) {
+      if (this.sound === 'none') return;
       if (value & 1) this.sb.resetting = true;
       else if (this.sb.resetting) {
         this.sb.resetting = false;

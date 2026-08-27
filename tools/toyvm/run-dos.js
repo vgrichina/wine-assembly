@@ -116,11 +116,23 @@ async function runDos(o) {
     // clears the screen on its way out. Fullness is the tiebreak: non-black
     // pixels in a graphics mode, non-blank cells in text.
     bestPng = null,
+    // How much sound card there is. 'full' answers the detection handshake and
+    // finishes the transfers a driver starts; 'quiet' answers the handshake but
+    // never raises the block-done interrupt; 'none' leaves the ports floating,
+    // which is what an empty ISA slot reads as.
+    //
+    // Three settings because they are three separate answers a demo can be
+    // given, and which one a demo does best on is not predictable from the
+    // outside: ATTIC.EXE needs 'full' (it will not run without music at all),
+    // while BIOLAN.EXE and CEN!FB.EXE drew full screens on 'none' and hang
+    // forever on "Initializing ." with a card present. Being able to A/B that
+    // in one command is the difference between knowing and guessing.
+    sound = 'full',
   } = o;
   setCpuLevel(cpu);
 
   const machine = new Machine(new Uint8Array(0), {
-    log: (s) => traceInt && log(`  ${s}`), autoKey, forceChained,
+    log: (s) => traceInt && log(`  ${s}`), autoKey, forceChained, sound,
     // A DOS program's data sits next to it, and that directory is the whole of
     // the filesystem it gets.
     fileRoot: path.dirname(path.resolve(exe)),
@@ -375,6 +387,7 @@ async function main() {
     traceFault: flag('trace-fault'),
     traceEntry: flag('trace-entry') ? 40 : count(arg('trace-entry'), 0),
     noCache: flag('no-cache'),
+    sound: arg('sound', 'full'),
     shots: arg('shots'),
     shotEvery: count(arg('shot-every'), 20),
     mouse: (arg('mouse', '0:0')).split(':').map(Number),
