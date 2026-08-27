@@ -20,10 +20,23 @@
 const isa = require('./isa');
 
 // How many times a CS-override store has to hit nothing compiled before the
-// decoder stops cutting the block at it. Low enough that a hot loop pays the
-// handbacks only briefly, high enough that a decryptor working through a page
-// it has not reached yet is never mistaken for a table write.
-const PATCH_MISSES = 48;
+// decoder stops cutting the block at it.
+//
+// This is a COST threshold, not a correctness one, and the difference is the
+// whole point. It is tempting to read a run of misses as proof that the store
+// writes data rather than code -- that was the first version of this, at 48 --
+// but the miss count cannot carry that meaning. A Turbo Pascal OVERLAY is code
+// copied into a buffer at run time, so the copy stores into a code segment
+// nothing has compiled YET and misses every single time, exactly like a table
+// write does. MINTRO.EXE loads GoldPlay.ovl, and at 48 it lost its whole frame
+// and exited with Turbo Pascal's error 200.
+//
+// So the only defensible reading is the narrow one: retire the cut once it has
+// demonstrably become the dominant cost of the run, the way a JIT tiers up.
+// The two populations are four orders of magnitude apart -- MINTRO's site fires
+// 48 times in a 255-break run, DOPE.EXE's fires 134414 -- so this sits well
+// above anything a program that merely loads an overlay will reach.
+const PATCH_MISSES = 20000;
 const { compileProgram } = require('./compile');
 const { STUB_SEG, STUB_BYTE } = require('./dos');
 
@@ -671,19 +684,20 @@ class DosSession {
   //
   // Getting here at all means the store did NOT land in a paragraph anything
   // had compiled: $wr8 tests that itself and would have set $smc=2, which is a
-  // different branch. So a real self-patch never arrives here -- Turbo Pascal's
-  // Intr() writes into the very block that is running, and that block is
-  // compiled by definition. A program keeping a table in its code segment
-  // arrives here every iteration. After PATCH_MISSES of them the rule is
-  // retired for that store and the block recompiles without the cut, which is
-  // the difference between a loop that hands back every iteration and one that
-  // runs.
+  // different branch. That is NOT the same as "the store writes data" -- code
+  // that has not been compiled yet is still code, which is what a Turbo Pascal
+  // overlay is. See PATCH_MISSES: this counter measures cost, and the count
+  // says nothing about which kind of store it is counting.
   //
-  // Retiring it is safe even if the guess turns out wrong later: the broad
-  // $smc=2 mechanism still watches every store against the paragraphs that have
-  // actually been compiled, so a write that does reach code is still caught.
-  // What is given up is the tighter cut, and only where the tighter cut has
-  // been observed doing nothing.
+  // Note also that this method destroys its own evidence. It invalidates as it
+  // counts, so the next store at the same site is guaranteed to miss too. Do
+  // not be tempted to read a long run of misses as increasing confidence; it
+  // is the mechanism talking to itself.
+  //
+  // The safety net underneath is the broad one: $smc=2 still watches every
+  // store against the paragraphs that HAVE been compiled, so a write that
+  // reaches live code is still caught after a retirement. What is given up is
+  // only the tighter cut for code compiled after the write.
   benignPatch(cs, ip, csb) {
     this.cache.invalidate(cs, ip, csb);
     const n = (this.cache.patchMisses.get(ip) || 0) + 1;

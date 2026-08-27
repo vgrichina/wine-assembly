@@ -714,10 +714,29 @@ separates the two cases was already being computed and then discarded. `$wr8`
 tests every store against the paragraphs that have been compiled and sets
 `$smc=2` when one lands in them; `end_smc` overwrote that with `1`. Preserving
 it makes `$smc=1` mean precisely *a CS store that touched nothing compiled*,
-and after 48 of those at one site the host withdraws the rule for that store
-and recompiles the block without the cut. A genuine self-patch never reaches
-that path — it writes into the block it is standing in, and that block is
-compiled by definition.
+and after enough of those at one site the host withdraws the rule for that
+store and recompiles the block without the cut.
+
+**The first threshold was 48, and that was wrong — the corpus said so.**
+MINTRO.EXE went from a full 64000-pixel frame to nothing but its answered sound
+menu and a Turbo Pascal exit code 200. The argument for 48 was that a genuine
+self-patch can never reach the `$smc=1` path, because it writes into the block
+it is standing in and that block is compiled by definition. MINTRO is the
+counterexample: it opens `GoldPlay.ovl`, and a Turbo Pascal **overlay** is code
+copied into a buffer at run time. The copy is a store into a code segment that
+nothing has compiled *yet*, so it reports `$smc=1` every single time, and the
+counter cannot tell it from a data table. Worse, the counter is blind by
+construction — `benignPatch` invalidates as it counts, and there is no signal
+left in the miss count that separates "this address will never be executed"
+from "this address is about to be".
+
+So the threshold is not a correctness criterion and cannot be made into one at
+this granularity. What it can be is a **cost** criterion, which is the same
+shape as any JIT tier-up: retire the cut only once it has demonstrably become
+the dominant cost of the run. The two cases sit four orders of magnitude apart
+— MINTRO's site fires 48 times in a 255-break run, DOPE's fires 134414 — so
+**20000** separates them with room to spare, and never comes near a program
+that merely loads an overlay.
 
 | DOPE.EXE, 18M dispatches | before | after |
 |---|---|---|
@@ -727,12 +746,26 @@ compiled by definition.
 | arena | 18395KB | 165KB |
 | share of wall in wasm | 4% | **87%** |
 
-At the sweep budget it draws 3543 pixels where it drew none. The general point
-is the one worth keeping: **a static guess about what code does is a
-performance decision as well as a correctness one, and the corpus is the only
-thing that can tell you which sites it is wrong about.** The report now prints
-how many sites a run retired, so that blast radius is visible — DHADREN retires
-14 and its frame is unchanged at 20272 pixels.
+(Those figures are the 48 threshold. At 20000 the storm is paid once instead of
+never, and DOPE still ends up ahead — 16295 pixels at the sweep budget against
+3543 at 48, because retiring later leaves it more of its budget in graphics.)
+
+Across the corpus the change moved five programs and cost none:
+
+| | before | after |
+|---|---|---|
+| DOPE.EXE | 0 px | **16295** |
+| ASYLUM.EXE | 0 px | **5635** |
+| BP-OZONE.EXE | 26033 | **64000** |
+| ANARCHY.EXE | 24889 | **223964** |
+| MINTRO.EXE | 64000 | 64000 (was **0** at threshold 48) |
+
+The general point is the one worth keeping: **a static guess about what code
+does is a performance decision as well as a correctness one, and the corpus is
+the only thing that can tell you which sites it is wrong about — including the
+sites where your fix for it is wrong.** The report prints how many sites a run
+retired, so that blast radius stays visible; DHADREN retires none now and its
+frame is unchanged.
 
 ## 8. Still open
 
