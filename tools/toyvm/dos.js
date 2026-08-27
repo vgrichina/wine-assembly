@@ -617,7 +617,10 @@ class Machine {
     this.forceChained = !!opts.forceChained;
     // 'full' | 'quiet' | 'none' -- see the sound option in run-dos.js.
     this.sound = opts.sound || 'full';
-    this.mouse = { x: 160, y: 100, buttons: 0, dx: 0, dy: 0 };
+    // `pressed`/`released` are the per-button transition counts INT 33h AX=05h
+    // and 06h hand out and clear; they are separate from `buttons`, which is
+    // the level right now.
+    this.mouse = { x: 160, y: 100, buttons: 0, dx: 0, dy: 0, pressed: [0, 0, 0], released: [0, 0, 0] };
     // A freshly loaded .EXE owns every paragraph up to the ceiling, so the
     // free pool starts empty and fills when the program shrinks its own block.
     this.allocTop = DEFAULT_ALLOC_TOP;
@@ -1807,6 +1810,7 @@ class Machine {
       case 0x12:
         r.set('ax', this.mem[0x413] | (this.mem[0x414] << 8));
         return true;
+      case 0x15: return this.int15(ah, al, r);
       case 0x20: this.exited = true; this.exitCode = 0; return true;
       case 0x21: return this.int21(ah, al, r);
       case 0x2D: return this.xms(ah, r);        // reached from the XMS stub
@@ -2051,6 +2055,44 @@ class Machine {
     return false;
   }
 
+  // The BIOS system services. Only the timing half matters here: AH=86h is a
+  // delay of CX:DX microseconds and three programs spend a thousand calls in
+  // it, so declining it left them measuring an elapsed time that never moved.
+  //
+  // The wait is performed by MOVING THE CLOCK, not by burning guest work. Guest
+  // time is billed against dispatches (see setClock), and a program asking the
+  // BIOS to wait is explicitly asking not to spend any -- so advancing the tick
+  // phase by the microseconds requested is both what the caller observes and
+  // the only version that costs nothing.
+  int15(ah, al, r) {
+    const US_PER_TICK = 1000000 / 18.2065;
+    switch (ah) {
+      case 0x86: {
+        const us = ((r.get('cx') & 0xFFFF) * 65536) + (r.get('dx') & 0xFFFF);
+        this.setClock(this.pit.phase + us / US_PER_TICK);
+        r.setResultCf(false);
+        return true;
+      }
+      // Set (AL=00h) or cancel (AL=01h) the event wait: a flag byte at ES:BX
+      // gets bit 7 set once CX:DX microseconds have gone by. Nothing here runs
+      // between the call and the caller's next instruction, so the wait is
+      // already over -- set the byte and move the clock, same as AH=86h.
+      case 0x83: {
+        if ((al & 0xFF) === 0x01) { r.setResultCf(false); return true; }
+        const us = ((r.get('cx') & 0xFFFF) * 65536) + (r.get('dx') & 0xFFFF);
+        this.setClock(this.pit.phase + us / US_PER_TICK);
+        const at = this.lin(r, 'es', r.get('bx'));
+        this.mem[at] |= 0x80;
+        r.setResultCf(false);
+        return true;
+      }
+      // Extended memory past the first megabyte, in KB. The XMS handler owns
+      // that pool, so answer with what it will actually hand out.
+      case 0x88: r.set('ax', this.xmsFreeKb()); r.setResultCf(false); return true;
+      default: return false;
+    }
+  }
+
   int16(ah, r) {
     if (ah === 0x00 || ah === 0x10) {
       const k = this.keys.shift()
@@ -2077,7 +2119,25 @@ class Machine {
     return false;
   }
 
+  // Every DOS call, with one piece of bookkeeping wrapped around it: the error
+  // code AH=59h will be asked for later. Every failing path in here already
+  // sets CF and puts its code in AX, so recording it is a matter of watching
+  // the CF write rather than editing a dozen call sites -- and it stays correct
+  // when a new one is added.
   int21(ah, al, r) {
+    if (ah !== 0x59) {
+      const setCf = r.setResultCf;
+      r.setResultCf = (on) => {
+        if (on) this.lastError = r.get('ax') & 0xFFFF;
+        else if (ah !== 0x33 && ah !== 0x58) this.lastError = 0;
+        return setCf.call(r, on);
+      };
+      try { return this.int21Call(ah, al, r); } finally { r.setResultCf = setCf; }
+    }
+    return this.int21Call(ah, al, r);
+  }
+
+  int21Call(ah, al, r) {
     switch (ah) {
       case 0x4C: case 0x00: case 0x31: {
         // Exit, and -- AH=31h -- exit keeping memory. That distinction matters
@@ -2256,6 +2316,97 @@ class Machine {
       // prints "[ERROR]: Can not init file manager..." on the garbage it got
       // back -- a two-line call standing between it and the demo.
       case 0x51: case 0x62: r.set('bx', this.curPsp); r.setResultCf(false); return true;
+      // Set the current PSP. The pair to AH=51h, and real: a TSR that switches
+      // the PSP to do file I/O on the foreground program's behalf and switches
+      // it back is doing exactly this, and answering nothing left ANGEL.EXE and
+      // ASSAULT.EXE with a PSP that was never theirs.
+      case 0x50: this.curPsp = r.get('bx') & 0xFFFF; r.setResultCf(false); return true;
+      // Create a new PSP at the segment in DX, by copying the current one. The
+      // fields that must not be copied verbatim are the two at the top: the
+      // segment's own size in paragraphs (offset 2) belongs to the new block.
+      case 0x26: {
+        const dst = (r.get('dx') & 0xFFFF) << 4, src = this.curPsp << 4;
+        this.mem.copyWithin(dst, src, src + 256);
+        r.setResultCf(false);
+        return true;
+      }
+      // Parse a filename at DS:SI into the FCB at ES:DI. AL's bits say whether
+      // to skip leading separators (bit 0) and whether to leave an absent name,
+      // extension or drive alone (bits 1-3) rather than blanking them. Returns
+      // AL=0 for a plain name, 1 if it contained a wildcard, 0xFF for a bad
+      // drive, and DS:SI advanced past what was consumed.
+      case 0x29: {
+        const opt = al & 0xFF;
+        let at = this.lin(r, 'ds', r.get('si'));
+        const start = at;
+        const fcb = this.lin(r, 'es', r.get('di'));
+        const ch = () => this.mem[at];
+        if (opt & 1) while (ch() === 0x20 || ch() === 0x09) at++;
+        let drive = 0;
+        if (this.mem[at + 1] === 0x3A) {                 // "C:"
+          const d = String.fromCharCode(this.mem[at]).toUpperCase();
+          if (d < 'A' || d > 'Z') { r.set('ax', (r.get('ax') & 0xFF00) | 0xFF); return true; }
+          drive = d.charCodeAt(0) - 64;
+          at += 2;
+        }
+        if (drive || !(opt & 2)) this.mem[fcb] = drive;
+        // The name is 8 characters and the extension 3, both space-padded and
+        // both stopping at a separator. "*" fills the rest of its field with
+        // "?", which is what makes AL=1 mean "this one is a wildcard".
+        const SEP = new Set([0x20, 0x09, 0x2E, 0x3B, 0x2C, 0x3D, 0x2B,
+          0x2F, 0x22, 0x5B, 0x5D, 0x3C, 0x3E, 0x7C, 0x3A, 0x00, 0x0D]);
+        let wild = false;
+        const field = (off, len, blankBit) => {
+          let n = 0, star = false;
+          const buf = new Uint8Array(len).fill(0x20);
+          while (n < len && !SEP.has(ch())) {
+            const c = this.mem[at++];
+            if (c === 0x2A) { star = true; break; }
+            if (c === 0x3F) wild = true;
+            buf[n++] = c >= 0x61 && c <= 0x7A ? c - 32 : c;
+          }
+          if (star) { buf.fill(0x3F, n); wild = true; while (!SEP.has(ch())) at++; }
+          if (n === 0 && !star && (opt & blankBit)) return;
+          this.mem.set(buf, off);
+        };
+        field(fcb + 1, 8, 4);
+        if (ch() === 0x2E) { at++; field(fcb + 9, 3, 8); }
+        else if (!(opt & 8)) this.mem.fill(0x20, fcb + 9, fcb + 12);
+        r.set('si', (r.get('si') + (at - start)) & 0xFFFF);
+        r.set('ax', (r.get('ax') & 0xFF00) | (wild ? 1 : 0));
+        return true;
+      }
+      // Ctrl-Break checking (AL=00h read, 01h write) and, on the same call,
+      // AL=05h/06h the boot drive and the real DOS version. Break checking is
+      // off and stays off: there is no console to type Ctrl-C at.
+      case 0x33:
+        if ((al & 0xFF) === 0x00) { r.set('dx', (r.get('dx') & 0xFF00) | (this.breakFlag ? 1 : 0)); }
+        else if ((al & 0xFF) === 0x01) { this.breakFlag = (r.get('dx') & 0xFF) !== 0; }
+        else if ((al & 0xFF) === 0x05) { r.set('dx', (r.get('dx') & 0xFF00) | 3); }  // C:
+        else if ((al & 0xFF) === 0x06) { r.set('bx', 0x0600); r.set('dx', 0); }      // 6.00
+        else return false;
+        r.setResultCf(false);
+        return true;
+      // The extended error of the last failed call. It is remembered rather
+      // than invented: every path here that sets CF records why, so a program
+      // asking "which error" gets the one it just had instead of a constant.
+      case 0x59:
+        r.set('ax', this.lastError || 0);
+        r.set('bx', ((this.lastError ? 0x0B : 0) << 8) | 0x01);   // class, action: retry
+        r.set('cx', (r.get('cx') & 0x00FF) | 0x0100);             // locus: unknown
+        return true;
+      // Memory allocation strategy (AL=00h get, 01h set) and the UMB link state
+      // (AL=02h/03h). There are no upper memory blocks here, so the link is
+      // always off; the strategy is remembered because a program that sets
+      // "last fit" and reads it back expects its own answer.
+      case 0x58:
+        if ((al & 0xFF) === 0x00) r.set('ax', this.allocStrategy || 0);
+        else if ((al & 0xFF) === 0x01) this.allocStrategy = r.get('bx') & 0xFFFF;
+        else if ((al & 0xFF) === 0x02) r.set('ax', (r.get('ax') & 0xFF00) | 0);
+        else if ((al & 0xFF) === 0x03) { /* no UMBs to link */ }
+        else return false;
+        r.setResultCf(false);
+        return true;
       case 0x19: r.set('ax', (r.get('ax') & 0xFF00) | 2); return true;   // drive C:
       case 0x0E: r.set('ax', (r.get('ax') & 0xFF00) | 3); return true;   // 3 drives
       case 0x47: {                              // get current directory -> root
@@ -2484,10 +2635,16 @@ class Machine {
     }
   }
 
+  // Extended memory still unhanded-out, in KB. A method rather than a closure
+  // because INT 15h AH=88h answers the same question from outside.
+  xmsFreeKb() {
+    return XMS_TOTAL_KB - [...this.xmsBlocks.values()].reduce((a, b) => a + b.kb, 0);
+  }
+
   xms(ah, r) {
     const ok = (dx) => { r.set('ax', 1); if (dx !== undefined) r.set('dx', dx); };
     const fail = (bl) => { r.set('ax', 0); r.set('bx', (r.get('bx') & 0xFF00) | bl); };
-    const free = () => XMS_TOTAL_KB - [...this.xmsBlocks.values()].reduce((a, b) => a + b.kb, 0);
+    const free = () => this.xmsFreeKb();
     switch (ah) {
       case 0x00: r.set('ax', 0x0300); r.set('bx', 0); r.set('dx', 1); return true;
       case 0x01: case 0x02: ok(); return true;                    // request/release HMA
@@ -2727,6 +2884,48 @@ class Machine {
         this.mouse.dx = 0; this.mouse.dy = 0;
         return true;
       case 0x07: case 0x08: case 0x0F: case 0x10: return true;       // ranges, mickeys
+      // Button press/release info: how many transitions since the last ask, and
+      // where the last one was. BL selects the button. The counters are real --
+      // a program that polls these instead of AX=03h is asking for the clicks
+      // it has not seen yet, and answering a constant 0 is the same as saying
+      // the mouse is dead.
+      case 0x05: case 0x06: {
+        const b = r.get('bx') & 0xFFFF;
+        const side = fn === 0x05 ? this.mouse.pressed : this.mouse.released;
+        r.set('ax', this.mouse.buttons);
+        r.set('bx', side[b] || 0);
+        r.set('cx', this.mouse.x); r.set('dx', this.mouse.y);
+        if (side[b]) side[b] = 0;
+        return true;
+      }
+      // The driver-state block. AX=15h reports how big a buffer the caller must
+      // hand back to 16h/17h; there is no hardware state here worth preserving,
+      // so the honest size is the one field we do have -- position and buttons
+      // -- and 16h/17h move exactly that. Reporting nothing at all is what left
+      // CTSLASSE.EXE and COUNTDWN.EXE with an unhandled call.
+      case 0x15: r.set('bx', 8); return true;
+      case 0x16: case 0x17: {
+        const at = this.lin(r, 'es', r.get('dx'));
+        const w = (o, v) => { this.mem[at + o] = v & 0xFF; this.mem[at + o + 1] = (v >> 8) & 0xFF; };
+        if (fn === 0x16) { w(0, this.mouse.x); w(2, this.mouse.y); w(4, this.mouse.buttons); w(6, 0); }
+        else {
+          const rd = (o) => this.mem[at + o] | (this.mem[at + o + 1] << 8);
+          this.mouse.x = rd(0); this.mouse.y = rd(2); this.mouse.buttons = rd(4);
+        }
+        return true;
+      }
+      // Cursor shape (09h graphics, 0Ah text), event handlers (0Ch, 14h), light
+      // pen (0Dh/0Eh), speed and sensitivity (0Bh's siblings 13h, 1Ah, 1Bh),
+      // and the software reset 21h. None of them has hardware behind it here:
+      // there is no drawn cursor and no interrupt to call a handler from, so
+      // "accepted, nothing to do" is what this driver actually does.
+      case 0x09: case 0x0A: case 0x0C: case 0x0D: case 0x0E:
+      case 0x13: case 0x14: case 0x1A: case 0x1B:
+        return true;
+      case 0x21: r.set('ax', 0xFFFF); r.set('bx', 2); return true;
+      // Driver version, type and IRQ. 8.00 is late enough that nothing in this
+      // corpus asks for a function newer than what is above.
+      case 0x24: r.set('bx', 0x0800); r.set('cx', 0x0400); return true;
       default: return false;
     }
   }
