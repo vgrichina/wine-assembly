@@ -701,7 +701,7 @@ class DosSession {
     return {
       dispatched: this.dispatched, handbacks: this.handbacks, ints: this.ints,
       irqs: this.irqs, smcBreaks: this.smcBreaks, stuckAt: this.stuckAt,
-      smcSites: this.smcSites,
+      smcSites: this.smcSites, retiredPatches: this.cache.benign.size,
       traps: this.traps, icebps: this.icebps,
       blockedOn32: this.blockedOn32 === undefined ? null : this.blockedOn32,
       badSelector: this.badSelector === undefined ? null : this.badSelector,

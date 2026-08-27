@@ -319,7 +319,7 @@ async function runDos(o) {
   }
   const {
     dispatched, handbacks, ints, irqs, smcBreaks, traps, icebps, stuckAt, blockedOn32, badSelector,
-    compiles, compiledWords, arenaResets, unimplemented, regions, jtab, smcSites,
+    compiles, compiledWords, arenaResets, unimplemented, regions, jtab, smcSites, retiredPatches,
   } = session.stats();
 
   if (bestPng) keepBest();
@@ -330,7 +330,7 @@ async function runDos(o) {
     secs: Number(process.hrtime.bigint() - t0) / 1e9,
     guestSecs: Number(guestNs) / 1e9,
     dispatched, handbacks, ints, irqs, compiles, compiledWords, arenaResets,
-    smcBreaks, traps, icebps, smcSites,
+    smcBreaks, traps, icebps, smcSites, retiredPatches,
     stuckAt, blockedOn32, badSelector, ranOutOfTime,
     entryHist, unimplemented, ipSamples, ipSampleLog, regions,
     // A program that never put the adapter in a graphics mode has no frame to
@@ -473,6 +473,10 @@ async function main() {
     // thrash: a program storing data into a paragraph a region happens to have
     // decoded, one bitmap bit away from its code.
     + (r.smcBreaks ? `\n  ${r.smcBreaks} self-modify breaks` : '')
+    // Store sites where "a CS override means self-patching code" was watched
+    // being wrong and withdrawn. Nonzero means this run took the benignPatch
+    // path at all; zero means the decoder behaved exactly as it always did.
+    + (r.retiredPatches ? ` (${r.retiredPatches} CS-store site(s) retired)` : '')
     // --smc-census turns that one number into the sites behind it. A storm is
     // almost always one line with nearly the whole count against it.
     + (r.smcSites && r.smcSites.size
