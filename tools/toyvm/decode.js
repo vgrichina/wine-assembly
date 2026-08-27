@@ -172,7 +172,7 @@ function setCpuLevel(n) { cpuLevel = n; }
 // default address size, and the width of EIP itself -- in a 32-bit segment an
 // offset does not wrap at 0xFFFF, so every "next instruction" and every branch
 // target computed here is a full 32-bit number.
-function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false) {
+function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false, benign = null) {
   const start = ip;
   // How an instruction pointer wraps in this segment.
   const wip = d32 ? (v) => v >>> 0 : (v) => v & 0xFFFF;
@@ -1051,7 +1051,19 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false) {
   // carries the byte that was there at decode time -- the $00 the packed image
   // ships -- so every BIOS call a TP program makes executes INT 0 instead, and
   // TP's INT 0 handler reports "Runtime error 200".
-  if (segOverride === 1 && !endsBlock && isSelfPatch(op, at(modrmAt))) {
+  //
+  // "A store through CS is a patch" is a guess, and on a tight loop it is an
+  // expensive one: the block ends at the store, so every iteration costs a
+  // handback and a recompile. DOPE.EXE builds a 64-entry fade table with
+  // `cs: mov [bx],ah` (dx=0x100, cx=0x40) into a corner of its own code
+  // segment, and paid that 134414 times inside eighteen million dispatches --
+  // 96% of the wall clock in the trace compiler, for a table that never went
+  // near an instruction. `benign` is the host's answer after watching the same
+  // store hit nothing compiled over and over; a genuine self-patch like
+  // Turbo Pascal's never appears in it, because its write lands in the block
+  // it is standing in every single time.
+  if (segOverride === 1 && !endsBlock && isSelfPatch(op, at(modrmAt))
+      && !(benign && benign.has(wip(start + n)))) {
     words.push(H.end_smc, wip(start + n));
     endsBlock = true;
   }

@@ -31,6 +31,11 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   // address size of every instruction in the segment, and a 32-bit EIP that no
   // longer wraps at 0xFFFF.
   const d32 = !!opts.d32;
+  // Guest IPs (the address AFTER the store) where a CS-override store has been
+  // watched hitting nothing compiled, over and over. See benignPatch in
+  // dos-loop.js: the decoder's rule for self-patching code is a static guess,
+  // and this is the host telling it the guess was wrong here.
+  const benign = opts.benign || null;
   const entry = d32 ? (entryIp >>> 0) : (entryIp & 0xFFFF);
 
   const blocks = new Map();      // guest IP -> arena address
@@ -72,7 +77,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
         break;
       }
 
-      const d = decodeOne(readByte, cs, cur, codeBase, mask, d32);
+      const d = decodeOne(readByte, cs, cur, codeBase, mask, d32, benign);
       if (!d) {
         // An opcode we do not implement ends the trace and hands the guest IP
         // back, so the host can report exactly where coverage ran out instead

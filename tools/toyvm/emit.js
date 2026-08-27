@@ -65,9 +65,16 @@ h('end', 1, `
 // turns that into "Runtime error 200" a long way from anything to do with
 // arithmetic. Ending the block here is only half the fix: $smc tells the host
 // to drop the block the store landed in, which is the one holding the byte.
+// Only claim the store patched code if the store itself did not already say
+// so. $wr8 sets $smc=2 when the address it wrote lands in a paragraph some
+// region decoded, which is the authoritative answer; overwriting it with 1
+// threw away the one bit that separates a real self-patch from a program
+// keeping a table in its code segment. The block still ends either way -- the
+// cut is what makes Turbo Pascal's Intr() work -- but the host can now tell
+// which kind it was and retire the rule where it is doing nothing.
 h('end_smc', 1, `
   ${ops(1)}
-  (global.set $smc (i32.const 1))
+  (if (i32.eqz (global.get $smc)) (then (global.set $smc (i32.const 1))))
   (global.set $gip (local.get $t0))
   (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
 `);

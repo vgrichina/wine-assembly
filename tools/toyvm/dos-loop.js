@@ -18,6 +18,12 @@
 // caller wants to watch, it watches through `hooks`.
 
 const isa = require('./isa');
+
+// How many times a CS-override store has to hit nothing compiled before the
+// decoder stops cutting the block at it. Low enough that a hot loop pays the
+// handbacks only briefly, high enough that a decryptor working through a page
+// it has not reached yet is never mistaken for a table write.
+const PATCH_MISSES = 48;
 const { compileProgram } = require('./compile');
 const { STUB_SEG, STUB_BYTE } = require('./dos');
 
@@ -34,6 +40,11 @@ class CodeCache {
     // the cache survives, so a program that behaves differently under it has a
     // stale-code bug and not a slow one.
     this.smcFlush = smcFlush;
+    // Store sites the decoder should stop treating as self-patching, and how
+    // many times each has been seen hitting nothing compiled. Learned about the
+    // program rather than cached from it, so a flush does not clear them.
+    this.benign = new Set();
+    this.patchMisses = new Map();
     this.vm = vm;
     this.noCache = noCache;
     this.regions = new Map();          // cs -> [prog]
@@ -137,9 +148,15 @@ class CodeCache {
   }
 
   // Drop one block: the guest patched the instruction it was about to run.
+  //
+  // Returns whether there was anything there to drop. The caller uses that to
+  // tell a real self-patch from a store that merely went through CS: see
+  // benignPatch in DosSession.
   invalidate(cs, ip, codeBase = (cs << 4)) {
-    for (const r of (this.regions.get(codeBase) || [])) r.blocks.delete(ip >>> 0);
+    let hit = false;
+    for (const r of (this.regions.get(codeBase) || [])) hit = r.blocks.delete(ip >>> 0) || hit;
     this.jtab[isa.jhash(cs, ip >>> 0) * 4 + 2] = 0;
+    return hit;
   }
 
   // Regions are keyed by the code segment's LINEAR base, not by the selector.
@@ -193,7 +210,7 @@ class CodeCache {
     const prog = compileProgram((lin) => vm.mem[lin], cs, ip, {
       arenaBase: this.arenaNext,
       maxWords: (this.arenaEnd - this.arenaNext) >> 2,
-      codeBase, mask, d32,
+      codeBase, mask, d32, benign: this.benign,
     });
     new Int32Array(vm.mem.buffer, prog.arenaBase, prog.words.length).set(prog.words);
     this.arenaNext += prog.words.length * 4;
@@ -510,7 +527,7 @@ class DosSession {
       vm.set('smc', 0);
       const lo = vm.exports.get_smclo() >>> 0, hi = vm.exports.get_smchi() >>> 0;
       if (kind === 2) this.cache.invalidateRange(lo, hi);
-      else this.cache.invalidate(vm.get('cs'), vm.get('gip'), vm.exports.get_csb());
+      else this.benignPatch(vm.get('cs'), vm.get('gip'), vm.exports.get_csb());
       this.smcBreaks++;
       if (this.smcSites) {
         const hex = (n) => n.toString(16);
@@ -646,6 +663,38 @@ class DosSession {
   runUntil(budget) {
     while (this.dispatched < budget && !this.done) this.step();
     return this;
+  }
+
+  // A block ended at a store through CS because the decoder took that for a
+  // program editing its own instruction stream. Drop the block it landed in --
+  // and notice whether there was one.
+  //
+  // Getting here at all means the store did NOT land in a paragraph anything
+  // had compiled: $wr8 tests that itself and would have set $smc=2, which is a
+  // different branch. So a real self-patch never arrives here -- Turbo Pascal's
+  // Intr() writes into the very block that is running, and that block is
+  // compiled by definition. A program keeping a table in its code segment
+  // arrives here every iteration. After PATCH_MISSES of them the rule is
+  // retired for that store and the block recompiles without the cut, which is
+  // the difference between a loop that hands back every iteration and one that
+  // runs.
+  //
+  // Retiring it is safe even if the guess turns out wrong later: the broad
+  // $smc=2 mechanism still watches every store against the paragraphs that have
+  // actually been compiled, so a write that does reach code is still caught.
+  // What is given up is the tighter cut, and only where the tighter cut has
+  // been observed doing nothing.
+  benignPatch(cs, ip, csb) {
+    this.cache.invalidate(cs, ip, csb);
+    const n = (this.cache.patchMisses.get(ip) || 0) + 1;
+    this.cache.patchMisses.set(ip, n);
+    if (n === PATCH_MISSES) {
+      this.cache.benign.add(ip);
+      // The compiled copy still carries the cut, so drop it: the block the
+      // store sits in has to be re-decoded for the suppression to take effect.
+      this.cache.invalidate(cs, ip, csb);
+      this.cache.flush();
+    }
   }
 
   stats() {
