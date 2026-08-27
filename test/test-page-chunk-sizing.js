@@ -67,6 +67,26 @@ const extraWat = String.raw`
 
   (func (export "test_page_thread_used") (result i32)
     (i32.sub (global.get $thread_alloc) (global.get $THREAD_BASE)))
+  (func (export "test_page_index_entry") (param $page i32) (param $off i32) (result i32)
+    (local $slot i32)
+    (local.set $slot (call $page_dir_slot (local.get $page)))
+    (if (i32.ne (i32.load (local.get $slot)) (local.get $page))
+      (then (return (i32.const -1))))
+    (i32.load16_u
+      (i32.add (i32.load offset=4 (local.get $slot))
+        (i32.shl (local.get $off) (i32.const 1)))))
+  (func (export "test_heap_cursor_before_page_index")
+    (local $guest i32)
+    (local.set $guest
+      (call $w2g (i32.sub (global.get $PAGE_INDEX_ARENA) (i32.const 0x1000))))
+    (i32.atomic.store (global.get $HEAP_SHARED) (local.get $guest))
+    (i32.store offset=4 (global.get $HEAP_SHARED) (local.get $guest))
+    (global.set $heap_base (local.get $guest))
+    (global.set $heap_ptr (i32.const 0))
+    (global.set $heap_end (i32.const 0))
+    (global.set $free_list (i32.const 0)))
+  (func (export "test_zero_guest_allocation") (param $guest i32) (param $len i32)
+    (memory.fill (call $g2w (local.get $guest)) (i32.const 0) (local.get $len)))
   (func (export "test_page_deferred") (result i32) (global.get $page_chunk_deferred))
   (func (export "test_page_reclaim_deferred") (call $page_chunk_reclaim_deferred))
 `;
@@ -157,6 +177,23 @@ const extraWat = String.raw`
   }
   assert.strictEqual(e.get_page_unpublished(), unpublishedBefore,
     'index pressure should evict a cold page instead of declining publication');
+
+  // The low guest heap is affine-mapped into WASM memory. Its ceiling must be
+  // the first decoded-cache structure, not the later threaded-code arena:
+  // otherwise a large app can receive ordinary heap bytes backed by
+  // PAGE_INDEX_ARENA and zero a live page entry. AoE2's campaign loader reaches
+  // this boundary only in the larger Threads working set.
+  e.test_page_storage_reset();
+  const protectedPage = 0x00515000;
+  assert.strictEqual(e.test_page_publish_sized(protectedPage + 0x40, 64, 0x91), 0);
+  assert.strictEqual(e.test_page_publish_sized(protectedPage + 0x5b, 64, 0x92), 64);
+  assert.strictEqual(e.test_page_index_entry(protectedPage, 0x5b), 64);
+  e.test_heap_cursor_before_page_index();
+  const heapBlock = e.guest_alloc(0x2000) >>> 0;
+  assert.ok(heapBlock, 'allocation at the low-heap ceiling should spill to sparse memory');
+  e.test_zero_guest_allocation(heapBlock, 0x2000);
+  assert.strictEqual(e.test_page_index_entry(protectedPage, 0x5b), 64,
+    'guest heap writes must not overlap the decoded-page index arena');
 
   // Exercise relocation through the real decoder, not only through direct
   // page_publish calls. One address-ordered run emits enough threaded code to
