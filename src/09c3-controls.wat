@@ -13429,6 +13429,308 @@
     (call $edit_notify (local.get $hwnd) (i32.const 0x0400)) ;; EN_UPDATE
     (call $edit_notify (local.get $hwnd) (i32.const 0x0300))) ;; EN_CHANGE
 
+  ;; Invoke an EDITSTREAM callback synchronously.  The callback is the Win32
+  ;; `DWORD CALLBACK(cookie, buffer, capacity, bytes_read)` shape and therefore
+  ;; pops its four arguments.  EM_STREAMIN is itself reached from inside a
+  ;; guest SendMessage call, so preserve the interrupted x86 context around the
+  ;; bounded nested interpreter run just as $wnd_send_message_inner does.
+  (func $edit_stream_call
+    (param $callback i32) (param $cookie i32) (param $buffer i32)
+    (param $capacity i32) (param $bytes_read i32) (result i32)
+    (local $old_eip i32) (local $old_esp i32) (local $old_eax i32)
+    (local $old_ecx i32) (local $old_edx i32) (local $old_ebx i32)
+    (local $old_esi i32) (local $old_edi i32) (local $old_ebp i32)
+    (local $old_handler_set_eip i32) (local $old_steps i32)
+    (local $old_yield_reason i32) (local $old_yield_flag i32)
+    (local $result i32) (local $rounds i32)
+    (if (i32.eqz (local.get $callback)) (then (return (i32.const 1))))
+    (local.set $old_eip (global.get $eip))
+    (local.set $old_esp (global.get $esp))
+    (local.set $old_eax (global.get $eax))
+    (local.set $old_ecx (global.get $ecx))
+    (local.set $old_edx (global.get $edx))
+    (local.set $old_ebx (global.get $ebx))
+    (local.set $old_esi (global.get $esi))
+    (local.set $old_edi (global.get $edi))
+    (local.set $old_ebp (global.get $ebp))
+    (local.set $old_handler_set_eip (global.get $handler_set_eip))
+    (local.set $old_steps (global.get $steps))
+    (local.set $old_yield_reason (global.get $yield_reason))
+    (local.set $old_yield_flag (global.get $yield_flag))
+    ;; Push right-to-left: pcb, cb, buffer, cookie, return thunk.
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $bytes_read))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $capacity))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $buffer))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $cookie))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $sync_msg_ret_thunk))
+    (global.set $eip (local.get $callback))
+    (global.set $steps (i32.const 0))
+    (global.set $yield_reason (i32.const 0))
+    (global.set $yield_flag (i32.const 0))
+    (global.set $sync_msg_depth (i32.add (global.get $sync_msg_depth) (i32.const 1)))
+    (block $done (loop $run_callback
+      (call $run (i32.const 1000000))
+      (br_if $done (i32.eqz (global.get $eip)))
+      (local.set $rounds (i32.add (local.get $rounds) (i32.const 1)))
+      (br_if $done (i32.ge_u (local.get $rounds) (i32.const 64)))
+      (br $run_callback)))
+    (global.set $sync_msg_depth (i32.sub (global.get $sync_msg_depth) (i32.const 1)))
+    (local.set $result
+      (select (global.get $eax) (i32.const 1) (i32.eqz (global.get $eip))))
+    (global.set $eip (local.get $old_eip))
+    (global.set $esp (local.get $old_esp))
+    (global.set $eax (local.get $old_eax))
+    (global.set $ecx (local.get $old_ecx))
+    (global.set $edx (local.get $old_edx))
+    (global.set $ebx (local.get $old_ebx))
+    (global.set $esi (local.get $old_esi))
+    (global.set $edi (local.get $old_edi))
+    (global.set $ebp (local.get $old_ebp))
+    (global.set $handler_set_eip (local.get $old_handler_set_eip))
+    (global.set $steps (local.get $old_steps))
+    (global.set $yield_reason (local.get $old_yield_reason))
+    (global.set $yield_flag (local.get $old_yield_flag))
+    (local.get $result))
+
+  (func $edit_hex_nibble (param $ch i32) (result i32)
+    (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x30))
+                 (i32.le_u (local.get $ch) (i32.const 0x39)))
+      (then (return (i32.sub (local.get $ch) (i32.const 0x30)))))
+    (local.set $ch (call $tolower (local.get $ch)))
+    (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x61))
+                 (i32.le_u (local.get $ch) (i32.const 0x66)))
+      (then (return (i32.add (i32.sub (local.get $ch) (i32.const 0x61)) (i32.const 10)))))
+    (i32.const 0))
+
+  ;; Project the streamed bytes into the plain-text EditState used by the WAT
+  ;; control.  RichEdit normally owns the RTF parser; this bounded projection
+  ;; keeps visible text, paragraph/tab breaks and ANSI hex escapes while
+  ;; discarding formatting and destination groups (font/color tables, pictures,
+  ;; metadata).  The output cannot be larger than the input.
+  (func $edit_stream_project
+    (param $state_w i32) (param $raw_g i32) (param $raw_len i32)
+    (param $is_rtf i32) (result i32)
+    (local $src i32) (local $dst i32) (local $i i32) (local $out i32)
+    (local $ch i32) (local $depth i32) (local $skip_depth i32)
+    (local $group_start i32) (local $hash i32) (local $word_start i32)
+    (local $hi i32) (local $lo i32)
+    (call $edit_ensure_cap (local.get $state_w) (local.get $raw_len))
+    (local.set $src (call $g2w (local.get $raw_g)))
+    (local.set $dst (call $g2w (i32.load (local.get $state_w))))
+    (if (i32.eqz (local.get $is_rtf))
+      (then
+        (if (local.get $raw_len)
+          (then (call $memcpy (local.get $dst) (local.get $src) (local.get $raw_len))))
+        (local.set $out (local.get $raw_len)))
+      (else
+        (local.set $i (i32.const 0))
+        (local.set $out (i32.const 0))
+        (block $done (loop $scan
+          (br_if $done (i32.ge_u (local.get $i) (local.get $raw_len)))
+          (local.set $ch (i32.load8_u (i32.add (local.get $src) (local.get $i))))
+          (if (i32.eq (local.get $ch) (i32.const 0x7B)) ;; {
+            (then
+              (local.set $depth (i32.add (local.get $depth) (i32.const 1)))
+              (local.set $group_start (i32.const 1))
+              (local.set $i (i32.add (local.get $i) (i32.const 1)))
+              (br $scan)))
+          (if (i32.eq (local.get $ch) (i32.const 0x7D)) ;; }
+            (then
+              (if (i32.eq (local.get $skip_depth) (local.get $depth))
+                (then (local.set $skip_depth (i32.const 0))))
+              (if (local.get $depth)
+                (then (local.set $depth (i32.sub (local.get $depth) (i32.const 1)))))
+              (local.set $group_start (i32.const 0))
+              (local.set $i (i32.add (local.get $i) (i32.const 1)))
+              (br $scan)))
+          (if (i32.eq (local.get $ch) (i32.const 0x5C)) ;; backslash
+            (then
+              (local.set $i (i32.add (local.get $i) (i32.const 1)))
+              (br_if $done (i32.ge_u (local.get $i) (local.get $raw_len)))
+              (local.set $ch (i32.load8_u (i32.add (local.get $src) (local.get $i))))
+              ;; ANSI hex escape: \'hh.
+              (if (i32.eq (local.get $ch) (i32.const 0x27))
+                (then
+                  (if (i32.lt_u (i32.add (local.get $i) (i32.const 2)) (local.get $raw_len))
+                    (then
+                      (local.set $hi (call $edit_hex_nibble
+                        (i32.load8_u (i32.add (local.get $src) (i32.add (local.get $i) (i32.const 1))))))
+                      (local.set $lo (call $edit_hex_nibble
+                        (i32.load8_u (i32.add (local.get $src) (i32.add (local.get $i) (i32.const 2))))))
+                      (if (i32.eqz (local.get $skip_depth))
+                        (then
+                          (i32.store8 (i32.add (local.get $dst) (local.get $out))
+                            (i32.or (i32.shl (local.get $hi) (i32.const 4)) (local.get $lo)))
+                          (local.set $out (i32.add (local.get $out) (i32.const 1)))))
+                      (local.set $i (i32.add (local.get $i) (i32.const 3)))
+                      (local.set $group_start (i32.const 0))
+                      (br $scan)))))
+              ;; Escaped literal or control symbol.
+              (if (i32.or
+                    (i32.or (i32.eq (local.get $ch) (i32.const 0x5C))
+                            (i32.eq (local.get $ch) (i32.const 0x7B)))
+                    (i32.eq (local.get $ch) (i32.const 0x7D)))
+                (then
+                  (if (i32.eqz (local.get $skip_depth))
+                    (then
+                      (i32.store8 (i32.add (local.get $dst) (local.get $out)) (local.get $ch))
+                      (local.set $out (i32.add (local.get $out) (i32.const 1)))))
+                  (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                  (local.set $group_start (i32.const 0))
+                  (br $scan)))
+              (if (i32.eq (local.get $ch) (i32.const 0x2A)) ;; \* destination marker
+                (then
+                  (if (local.get $group_start) (then (local.set $skip_depth (local.get $depth))))
+                  (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                  (br $scan)))
+              (if (i32.or (i32.eq (local.get $ch) (i32.const 0x7E))
+                          (i32.eq (local.get $ch) (i32.const 0x5F)))
+                (then
+                  (if (i32.eqz (local.get $skip_depth))
+                    (then
+                      (i32.store8 (i32.add (local.get $dst) (local.get $out))
+                        (select (i32.const 0x2D) (i32.const 0x20)
+                          (i32.eq (local.get $ch) (i32.const 0x5F))))
+                      (local.set $out (i32.add (local.get $out) (i32.const 1)))))
+                  (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                  (local.set $group_start (i32.const 0))
+                  (br $scan)))
+              ;; Control word hash (lowercase FNV-1a), then discard its
+              ;; optional signed numeric parameter and one delimiter space.
+              (local.set $hash (i32.const 0x811C9DC5))
+              (local.set $word_start (local.get $i))
+              (block $word_done (loop $word
+                (br_if $word_done (i32.ge_u (local.get $i) (local.get $raw_len)))
+                (local.set $ch (call $tolower
+                  (i32.load8_u (i32.add (local.get $src) (local.get $i)))))
+                (br_if $word_done
+                  (i32.or (i32.lt_u (local.get $ch) (i32.const 0x61))
+                          (i32.gt_u (local.get $ch) (i32.const 0x7A))))
+                (local.set $hash
+                  (i32.mul (i32.xor (local.get $hash) (local.get $ch)) (i32.const 0x01000193)))
+                (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                (br $word)))
+              (if (i32.lt_u (local.get $word_start) (local.get $i))
+                (then
+                  (if (i32.and (i32.lt_u (local.get $i) (local.get $raw_len))
+                               (i32.eq (i32.load8_u (i32.add (local.get $src) (local.get $i))) (i32.const 0x2D)))
+                    (then (local.set $i (i32.add (local.get $i) (i32.const 1)))))
+                  (block $number_done (loop $number
+                    (br_if $number_done (i32.ge_u (local.get $i) (local.get $raw_len)))
+                    (local.set $ch (i32.load8_u (i32.add (local.get $src) (local.get $i))))
+                    (br_if $number_done
+                      (i32.or (i32.lt_u (local.get $ch) (i32.const 0x30))
+                              (i32.gt_u (local.get $ch) (i32.const 0x39))))
+                    (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                    (br $number)))
+                  (if (i32.and (i32.lt_u (local.get $i) (local.get $raw_len))
+                               (i32.eq (i32.load8_u (i32.add (local.get $src) (local.get $i))) (i32.const 0x20)))
+                    (then (local.set $i (i32.add (local.get $i) (i32.const 1)))))))
+              ;; Destination groups whose payload is not document text.
+              (if (i32.and (local.get $group_start)
+                    (i32.or
+                      (i32.or (i32.eq (local.get $hash) (i32.const 0xB3049312)) ;; fonttbl
+                              (i32.eq (local.get $hash) (i32.const 0xB5E90F1A))) ;; colortbl
+                      (i32.or
+                        (i32.or (i32.eq (local.get $hash) (i32.const 0x752FF961)) ;; stylesheet
+                                (i32.eq (local.get $hash) (i32.const 0x0FB40705))) ;; info
+                        (i32.or
+                          (i32.or (i32.eq (local.get $hash) (i32.const 0x09420595)) ;; pict
+                                  (i32.eq (local.get $hash) (i32.const 0xB8C60CBA))) ;; object
+                          (i32.eq (local.get $hash) (i32.const 0x6EEC35C2)))))) ;; generator
+                (then (local.set $skip_depth (local.get $depth))))
+              (if (i32.eqz (local.get $skip_depth))
+                (then
+                  (if (i32.or (i32.eq (local.get $hash) (i32.const 0x63560E68)) ;; par
+                              (i32.eq (local.get $hash) (i32.const 0x17DB1627))) ;; line
+                    (then
+                      (i32.store8 (i32.add (local.get $dst) (local.get $out)) (i32.const 0x0A))
+                      (local.set $out (i32.add (local.get $out) (i32.const 1)))))
+                  (if (i32.eq (local.get $hash) (i32.const 0x98F72E4C)) ;; tab
+                    (then
+                      (i32.store8 (i32.add (local.get $dst) (local.get $out)) (i32.const 0x09))
+                      (local.set $out (i32.add (local.get $out) (i32.const 1)))))
+                  (if (i32.or (i32.eq (local.get $hash) (i32.const 0xCCB67FB5)) ;; ldblquote
+                              (i32.eq (local.get $hash) (i32.const 0xB352B75F))) ;; rdblquote
+                    (then
+                      (i32.store8 (i32.add (local.get $dst) (local.get $out)) (i32.const 0x22))
+                      (local.set $out (i32.add (local.get $out) (i32.const 1)))))))
+              (local.set $group_start (i32.const 0))
+              (br $scan)))
+          ;; Source newlines merely format the RTF itself.
+          (if (i32.or (i32.eq (local.get $ch) (i32.const 0x0D))
+                      (i32.eq (local.get $ch) (i32.const 0x0A)))
+            (then
+              (local.set $i (i32.add (local.get $i) (i32.const 1)))
+              (br $scan)))
+          (if (i32.eqz (local.get $skip_depth))
+            (then
+              (i32.store8 (i32.add (local.get $dst) (local.get $out)) (local.get $ch))
+              (local.set $out (i32.add (local.get $out) (i32.const 1)))))
+          (local.set $group_start (i32.const 0))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $scan)))))
+    (i32.store8 (i32.add (local.get $dst) (local.get $out)) (i32.const 0))
+    (i32.store offset=4 (local.get $state_w) (local.get $out))
+    (i32.store offset=12 (local.get $state_w) (local.get $out))
+    (i32.store offset=16 (local.get $state_w) (local.get $out))
+    (local.get $out))
+
+  ;; Read a documented EDITSTREAM through its callback.  The 64K ceiling is
+  ;; the same bound the old host-side fallback used and exceeds the Win9x
+  ;; RichEdit default text limit; it also keeps a malicious callback bounded.
+  (func $edit_stream_read
+    (param $state_w i32) (param $stream_g i32) (param $flags i32) (result i32)
+    (local $stream_w i32) (local $cookie i32) (local $callback i32)
+    (local $raw i32) (local $pcb i32) (local $len i32) (local $capacity i32)
+    (local $got i32) (local $error i32)
+    (local.set $stream_w (call $g2w (local.get $stream_g)))
+    (local.set $cookie (i32.load (local.get $stream_w)))
+    (local.set $callback (i32.load offset=8 (local.get $stream_w)))
+    ;; Compatibility with the older installer shim, whose cookie is directly
+    ;; the source string and whose callback slot is zero.
+    (if (i32.eqz (local.get $callback))
+      (then
+        (if (i32.eqz (local.get $cookie)) (then (return (i32.const 0))))
+        (local.set $len (call $strlen (call $g2w (local.get $cookie))))
+        (return (call $edit_stream_project
+          (local.get $state_w) (local.get $cookie) (local.get $len)
+          (i32.ne (i32.and (local.get $flags) (i32.const 2)) (i32.const 0))))))
+    (local.set $raw (call $heap_alloc (i32.const 65540)))
+    (if (i32.eqz (local.get $raw))
+      (then
+        (i32.store offset=4 (local.get $stream_w) (i32.const 8))
+        (return (i32.const 0))))
+    (local.set $pcb (i32.add (local.get $raw) (i32.const 65536)))
+    (block $done (loop $read
+      (br_if $done (i32.ge_u (local.get $len) (i32.const 65535)))
+      (local.set $capacity
+        (select (i32.const 4096) (i32.sub (i32.const 65535) (local.get $len))
+          (i32.gt_u (i32.sub (i32.const 65535) (local.get $len)) (i32.const 4096))))
+      (call $gs32 (local.get $pcb) (i32.const 0))
+      (local.set $error (call $edit_stream_call
+        (local.get $callback) (local.get $cookie)
+        (i32.add (local.get $raw) (local.get $len))
+        (local.get $capacity) (local.get $pcb)))
+      (local.set $got (call $gl32 (local.get $pcb)))
+      (if (i32.gt_u (local.get $got) (local.get $capacity))
+        (then (local.set $got (local.get $capacity))))
+      (local.set $len (i32.add (local.get $len) (local.get $got)))
+      (br_if $done (i32.or (i32.ne (local.get $error) (i32.const 0))
+                           (i32.eqz (local.get $got))))
+      (br $read)))
+    (i32.store offset=4 (local.get $stream_w) (local.get $error))
+    (local.set $len (call $edit_stream_project
+      (local.get $state_w) (local.get $raw) (local.get $len)
+      (i32.ne (i32.and (local.get $flags) (i32.const 2)) (i32.const 0))))
+    (call $heap_free (local.get $raw))
+    (local.get $len))
+
   (func $edit_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $state i32) (local $state_w i32) (local $cs_w i32)
     (local $name_ptr i32) (local $text_len i32) (local $hdc i32)
@@ -13647,32 +13949,18 @@
         (return (i32.const 0))))
 
     ;; ---------- EM_STREAMIN (0x0449) ----------
-    ;; RichEdit license controls in NSIS pass an EDITSTREAM whose dwCookie
-    ;; points at the source text buffer. For our edit-like RichEdit shim,
-    ;; copying that text into EditState is enough to render the license body.
+    ;; RichEdit accepts either the documented callback-backed EDITSTREAM or the
+    ;; older direct-cookie compatibility shape used by a few installers.
     (if (i32.eq (local.get $msg) (i32.const 0x0449))
       (then
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
         (if (i32.eqz (local.get $lParam)) (then (return (i32.const 0))))
         (local.set $state_w (call $g2w (local.get $state)))
-        (local.set $name_ptr (i32.load (call $g2w (local.get $lParam))))
         (i32.store offset=4  (local.get $state_w) (i32.const 0))
         (i32.store offset=12 (local.get $state_w) (i32.const 0))
         (i32.store offset=16 (local.get $state_w) (i32.const 0))
-        (if (local.get $name_ptr)
-          (then
-            (local.set $text_len (call $strlen (call $g2w (local.get $name_ptr))))
-            (call $edit_ensure_cap (local.get $state_w) (local.get $text_len))
-            (if (local.get $text_len)
-              (then (call $memcpy (call $g2w (i32.load (local.get $state_w)))
-                                  (call $g2w (local.get $name_ptr))
-                                  (local.get $text_len))))
-            (i32.store offset=4  (local.get $state_w) (local.get $text_len))
-            (i32.store offset=12 (local.get $state_w) (local.get $text_len))
-            (i32.store offset=16 (local.get $state_w) (local.get $text_len))
-            (if (i32.load (local.get $state_w))
-              (then (i32.store8 (i32.add (call $g2w (i32.load (local.get $state_w))) (local.get $text_len))
-                                (i32.const 0))))))
+        (local.set $text_len (call $edit_stream_read
+          (local.get $state_w) (local.get $lParam) (local.get $wParam)))
         (call $invalidate_hwnd (local.get $hwnd))
         (if (call $wnd_is_effectively_visible (local.get $hwnd))
           (then
