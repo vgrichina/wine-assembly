@@ -641,6 +641,10 @@ async function main() {
     }
   }
   console.log(`  exited=${r.machine.exited}${r.machine.exited ? ` code=${r.machine.exitCode}` : ''}`
+    // A CPU fault that DOS itself would have aborted on. Worth its own words:
+    // the run ended because the guest divided by zero (or similar), which is a
+    // different finding from a program that simply ran to its end.
+    + `${r.machine.abortMessage ? `  ${r.machine.abortMessage}` : ''}`
     + `${r.machine.blockedOnKey ? '  waiting for a key' : ''}`
     + `  cs:ip=${r.vm.get('cs').toString(16)}:${r.vm.get('gip').toString(16)}`);
   console.log(`  ${(r.dispatched / 1e6).toFixed(1)}M dispatches, `

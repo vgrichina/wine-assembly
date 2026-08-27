@@ -58,6 +58,16 @@ function romStrike() {
 }
 
 const EMS_NAME = 'EMMXXXX0';  // at handler_segment:000A, the classic EMS probe
+
+// What DOS prints before aborting a program that took a CPU fault with the
+// vector still pointing at its own default handler. The wording is the real
+// one, so a run that ends this way reads like the machine it is emulating.
+const FAULT_NAMES = {
+  0x00: 'Divide overflow',
+  0x04: 'Overflow',            // INTO with OF set
+  0x06: 'Invalid opcode',
+  0x0D: 'General protection fault',
+};
 // Names that open as a character device rather than a file. See openFile.
 const DEVICES = new Set([EMS_NAME, 'NUL', 'CON', 'AUX', 'PRN', 'CLOCK$']);
 // How many operand bytes each DSP command takes after itself. See sbCommand.
@@ -661,6 +671,9 @@ class Machine {
     this.emsHandles = new Map(); this.emsNext = 1; this.emsMaps = 0;
     this.emsMapped = [null, null, null, null];
     this.unhandled = new Map();
+    // CPU faults that reached DOS's own default handler and aborted the run.
+    this.faults = new Map();
+    this.abortMessage = null;
     this.unhandledFn = new Map();      // "vec:ah" -> count, the real work list
     this.intCount = new Map();
     // Which clock, if any, a program is pacing itself off. A demo that never
@@ -1868,6 +1881,24 @@ class Machine {
         return true;
       case 0x12:
         r.set('ax', this.mem[0x413] | (this.mem[0x414] << 8));
+        return true;
+      // A CPU fault nobody hooked. DOS points these vectors at a routine that
+      // prints a message and ABORTS the program -- it does not return to the
+      // faulting instruction, because there is nothing sensible to return to.
+      // Declining instead left the guest re-executing the same `div` forever:
+      // JULTRO.EXE divides by zero at 5ab:1ff and then spun out the whole
+      // 300M-dispatch budget at 22 dispatches per handback, photographing as a
+      // blank text screen with no hint of why.
+      //
+      // Terminating is the real behaviour and it is also the honest one: the
+      // divisor being zero is a bug worth seeing, and a run that ends with
+      // "Divide overflow" says so, where a hang says only that something is
+      // wrong somewhere.
+      case 0x00: case 0x04: case 0x06: case 0x0D:
+        this.faults.set(vec, (this.faults.get(vec) || 0) + 1);
+        this.exited = true;
+        this.exitCode = 0xFF;
+        this.abortMessage = FAULT_NAMES[vec];
         return true;
       case 0x15: return this.int15(ah, al, r);
       case 0x20: this.exited = true; this.exitCode = 0; return true;
