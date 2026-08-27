@@ -632,14 +632,25 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
     // 16 bits either way. This is the entry and exit of a DOS extender's
     // 32-bit half, so decoding them as their 16-bit twins does not produce a
     // slightly-wrong jump, it produces a null selector.
+    // The immediates are recorded, and so is the address they were read from:
+    // the handler re-reads them at run time. Baking them is what a compiler may
+    // do and a CPU may not, and the difference is the standard way a DOS
+    // depacker leaves: it patches the segment word of its own final `jmp far`
+    // and then falls into it a few bytes later. Both halves are in one block --
+    // there is no branch between the store and the jump for the $smc cut to
+    // land on -- so the baked selector is the pre-patch one. COMPCODE.EXE's
+    // `cs: add [0x70d], di` / `jmp far 0000:1161` pair jumped to 0000:1161
+    // instead of 0110:1161 and spent the whole run in the interrupt vectors.
     case 0xEA: {
+      const at = (start + n) & 0xFFFF;
       const o = opsize === 32 ? imm32() : imm16(), s = imm16();
-      words.push(opsize === 32 ? H.jmp_far32 : H.jmp_far, o, s);
+      words.push(opsize === 32 ? H.jmp_far32 : H.jmp_far, o, s, at);
       endsBlock = true; break;
     }
     case 0x9A: {
+      const at = (start + n) & 0xFFFF;
       const o = opsize === 32 ? imm32() : imm16(), s = imm16();
-      words.push(opsize === 32 ? H.call_far32 : H.call_far, o, s, (start + n) & 0xFFFF);
+      words.push(opsize === 32 ? H.call_far32 : H.call_far, o, s, (start + n) & 0xFFFF, at);
       endsBlock = true; break;
     }
     case 0xCB: words.push(opsize === 32 ? H.retf32 : H.retf); endsBlock = true; break;

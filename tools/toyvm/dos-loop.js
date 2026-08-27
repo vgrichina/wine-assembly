@@ -451,7 +451,7 @@ class DosSession {
       if (kvec) { this.lastKbIrq = this.dispatched; this.raise(kvec); }
     }
 
-    this.checkProgress(cs);
+    this.checkProgress(cs, ip);
     return 'ran';
   }
 
@@ -474,9 +474,15 @@ class DosSession {
   // indistinguishable from a spin by address alone. IHANMUU.EXE was cut off
   // after 0.5M of 30M dispatches inside a loop whose SI and BP were advancing
   // the whole time, and runs to a full mode 13h screen without this.
-  checkProgress(cs) {
+  // cs and ip are the pair the slice STARTED at, and both have to be passed in:
+  // by the time this runs the slice has finished and an interrupt may have been
+  // pushed in front of the guest, so vm.get('gip') is the stub's offset while cs
+  // is still the guest's. That mix printed CAVEIRA.COM as "stuck at 1dcd:103" --
+  // the guest's segment spliced onto STUB_OFF+3, a pair the program never had,
+  // and a report naming an address that never existed is worse than no report.
+  checkProgress(cs, ip) {
     const { vm, machine } = this;
-    const key = `${cs.toString(16)}:${vm.get('gip').toString(16)}`;
+    const key = `${cs.toString(16)}:${ip.toString(16)}`;
     const wrote = machine.con.written + this.irqs + machine.bytesRead
       + (machine.videoMode === 3 && this.cells ? this.cells(machine.con) : 0);
     let regs = 2166136261;

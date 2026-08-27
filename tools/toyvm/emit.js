@@ -1490,14 +1490,22 @@ function genArithIO() {
 
   // Far transfers and indirect jumps. All of them land on an address that is
   // data, so all of them leave the trace.
-  h('jmp_far', 2, `
-  ${ops(2)}
+  // The last operand is the guest address the immediates were decoded from, and
+  // they are read again from there rather than used as decoded. See the 0xEA
+  // comment in decode.js: a depacker patches the selector of its own exit jump
+  // in the same block that executes it, so the decoded value is the stale one.
+  h('jmp_far', 3, `
+  ${ops(3)}
+  (local.set $t0 (call $rd16 (i32.const 1) (local.get $t2)))
+  (local.set $t1 (call $rd16 (i32.const 1) (i32.add (local.get $t2) (i32.const 2))))
   (call $sset (i32.const 1) (local.get $t1))
   (global.set $gip (local.get $t0))
   (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
 `);
-  h('call_far', 3, `
-  ${ops(3)}
+  h('call_far', 4, `
+  ${ops(4)}
+  (local.set $t0 (call $rd16 (i32.const 1) (local.get $t3)))
+  (local.set $t1 (call $rd16 (i32.const 1) (i32.add (local.get $t3) (i32.const 2))))
   (call $push16 (call $sget (i32.const 1)))
   (call $push16 (local.get $t2))
   (call $sset (i32.const 1) (local.get $t1))
@@ -1536,14 +1544,18 @@ function genArithIO() {
   (global.set $sp (i32.and (i32.add (global.get $sp) (local.get $t0)) (i32.const 0xFFFF)))
   (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
 `);
-  h('jmp_far32', 2, `
-  ${ops(2)}
+  h('jmp_far32', 3, `
+  ${ops(3)}
+  (local.set $t0 (call $rd32 (i32.const 1) (local.get $t2)))
+  (local.set $t1 (call $rd16 (i32.const 1) (i32.add (local.get $t2) (i32.const 4))))
   (call $sset (i32.const 1) (local.get $t1))
   (global.set $gip (local.get $t0))
   (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
 `);
-  h('call_far32', 3, `
-  ${ops(3)}
+  h('call_far32', 4, `
+  ${ops(4)}
+  (local.set $t0 (call $rd32 (i32.const 1) (local.get $t3)))
+  (local.set $t1 (call $rd16 (i32.const 1) (i32.add (local.get $t3) (i32.const 4))))
   (call $push32 (call $sget (i32.const 1)))
   (call $push32 (local.get $t2))
   (call $sset (i32.const 1) (local.get $t1))
