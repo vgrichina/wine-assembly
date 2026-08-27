@@ -32,6 +32,20 @@
   ;; primary surface carries another.
   (global $DX_SURF_PAL i32 (i32.const 0x07F11000))
   (global $DX_SURF_PAL_SIZE i32 (i32.const 0x00001000))
+  ;; CPU-write epochs and reversible-copy provenance for DirectDraw surfaces.
+  ;; 1024 entries x 32 bytes in the free 0x07F16000..0x07F1DFFF range:
+  ;;   +0  CPU-write epoch (advanced by Unlock)
+  ;;   +4  source slot + 1 of the last small <- large plain Blt, or 0
+  ;;   +8  source CPU epoch at that save
+  ;;   +12/+16 source x/y in the large surface
+  ;;   +20/+24 destination x/y in the save surface
+  ;;   +28 width (u16) | height (u16)
+  ;; This recognizes the classic software-cursor save/draw/restore idiom. If
+  ;; the large surface was CPU-redrawn after the save, replaying those pixels
+  ;; would stamp stale terrain over the new frame (AoE I/II). Exact inverse
+  ;; rectangle matching keeps ordinary small-surface blits untouched.
+  (global $DX_SURF_STATE i32 (i32.const 0x07F16000))
+  (global $DX_SURF_STATE_SIZE i32 (i32.const 0x00008000))
   ;; COM wrapper stubs: DX_MAX × 8 bytes in high memory (safe from guest address collision)
   (global $COM_WRAPPERS i32 (i32.const 0x07FF8000))
   (global $COM_WRAPPERS_SIZE i32 (i32.const 0x00002000))
@@ -434,6 +448,95 @@
   (func $dx_slot_of (param $entry_wa i32) (result i32)
     (i32.div_u (i32.sub (local.get $entry_wa) (global.get $DX_OBJECTS)) (i32.const 32)))
 
+  (func $dx_surf_state_ptr (param $entry_wa i32) (result i32)
+    (i32.add (global.get $DX_SURF_STATE)
+      (i32.shl (call $dx_slot_of (local.get $entry_wa)) (i32.const 5))))
+
+  (func $dx_surf_state_reset (param $entry_wa i32)
+    (if (local.get $entry_wa)
+      (then
+        (call $zero_memory (call $dx_surf_state_ptr (local.get $entry_wa)) (i32.const 32)))))
+
+  ;; A successful Unlock publishes whatever the caller wrote through Lock's
+  ;; lpSurface. Advance only this CPU epoch: sprite Blts after a background
+  ;; save are precisely the writes that the later restore is meant to undo.
+  (func $dx_surf_note_cpu_write (param $entry_wa i32)
+    (local $state i32)
+    (if (i32.eqz (local.get $entry_wa)) (then (return)))
+    (local.set $state (call $dx_surf_state_ptr (local.get $entry_wa)))
+    (i32.store (local.get $state)
+      (i32.add (i32.load (local.get $state)) (i32.const 1)))
+    (i32.store offset=4 (local.get $state) (i32.const 0)))
+
+  (func $dx_surf_clear_copy (param $entry_wa i32)
+    (if (local.get $entry_wa)
+      (then (i32.store offset=4 (call $dx_surf_state_ptr (local.get $entry_wa)) (i32.const 0)))))
+
+  ;; Record only an unscaled plain copy into a physically smaller surface.
+  ;; That is the bounded background-save shape; full-frame presents and tile
+  ;; composition do not become restore candidates.
+  (func $dx_surf_note_copy
+    (param $dst_entry i32) (param $src_entry i32)
+    (param $dx i32) (param $dy i32) (param $sx i32) (param $sy i32)
+    (param $w i32) (param $h i32) (param $flags i32)
+    (local $state i32) (local $dst_area i32) (local $src_area i32)
+    (call $dx_surf_clear_copy (local.get $dst_entry))
+    (if (i32.or (i32.eqz (local.get $w)) (i32.eqz (local.get $h))) (then (return)))
+    ;; Only DDBLT_WAIT (0x01000000), or no flags, is compatible with a raw
+    ;; save. Color keys, ROPs and effects are normal drawing operations.
+    (if (i32.ne (i32.and (local.get $flags) (i32.const 0xFEFFFFFF)) (i32.const 0))
+      (then (return)))
+    (if (i32.ne
+          (i32.load16_u offset=16 (local.get $dst_entry))
+          (i32.load16_u offset=16 (local.get $src_entry)))
+      (then (return)))
+    (local.set $dst_area
+      (i32.mul (i32.load16_u offset=12 (local.get $dst_entry))
+               (i32.load16_u offset=14 (local.get $dst_entry))))
+    (local.set $src_area
+      (i32.mul (i32.load16_u offset=12 (local.get $src_entry))
+               (i32.load16_u offset=14 (local.get $src_entry))))
+    (if (i32.ge_u (local.get $dst_area) (local.get $src_area)) (then (return)))
+    (local.set $state (call $dx_surf_state_ptr (local.get $dst_entry)))
+    (i32.store offset=4 (local.get $state)
+      (i32.add (call $dx_slot_of (local.get $src_entry)) (i32.const 1)))
+    (i32.store offset=8 (local.get $state)
+      (i32.load (call $dx_surf_state_ptr (local.get $src_entry))))
+    (i32.store offset=12 (local.get $state) (local.get $sx))
+    (i32.store offset=16 (local.get $state) (local.get $sy))
+    (i32.store offset=20 (local.get $state) (local.get $dx))
+    (i32.store offset=24 (local.get $state) (local.get $dy))
+    (i32.store offset=28 (local.get $state)
+      (i32.or (i32.and (local.get $w) (i32.const 0xFFFF))
+              (i32.shl (local.get $h) (i32.const 16)))))
+
+  ;; True when src is the exact inverse of its last background save, but the
+  ;; original large surface has since been rewritten through Lock/Unlock.
+  (func $dx_surf_stale_restore
+    (param $dst_entry i32) (param $src_entry i32)
+    (param $dx i32) (param $dy i32) (param $sx i32) (param $sy i32)
+    (param $w i32) (param $h i32) (param $flags i32) (result i32)
+    (local $state i32) (local $dst_state i32)
+    (if (i32.ne (i32.and (local.get $flags) (i32.const 0xFEFFFFFF)) (i32.const 0))
+      (then (return (i32.const 0))))
+    (local.set $state (call $dx_surf_state_ptr (local.get $src_entry)))
+    (local.set $dst_state (call $dx_surf_state_ptr (local.get $dst_entry)))
+    (if (i32.ne (i32.load offset=4 (local.get $state))
+                (i32.add (call $dx_slot_of (local.get $dst_entry)) (i32.const 1)))
+      (then (return (i32.const 0))))
+    (if (i32.eq (i32.load offset=8 (local.get $state))
+                (i32.load (local.get $dst_state)))
+      (then (return (i32.const 0))))
+    (if (i32.or
+          (i32.or (i32.ne (i32.load offset=12 (local.get $state)) (local.get $dx))
+                  (i32.ne (i32.load offset=16 (local.get $state)) (local.get $dy)))
+          (i32.or (i32.ne (i32.load offset=20 (local.get $state)) (local.get $sx))
+                  (i32.ne (i32.load offset=24 (local.get $state)) (local.get $sy))))
+      (then (return (i32.const 0))))
+    (i32.eq (i32.load offset=28 (local.get $state))
+      (i32.or (i32.and (local.get $w) (i32.const 0xFFFF))
+              (i32.shl (local.get $h) (i32.const 16)))))
+
   ;; Record the palette data WASM address for one surface entry.
   (func $dx_surf_pal_set (param $entry_wa i32) (param $pal_wa i32)
     (local $slot i32)
@@ -517,6 +620,7 @@
     ;; Allocate DX_OBJECTS entry
     (local.set $entry_wa (call $dx_alloc (local.get $type)))
     (if (i32.eqz (local.get $entry_wa)) (then (return (i32.const 0))))
+    (call $dx_surf_state_reset (local.get $entry_wa))
     ;; Compute slot index
     (local.set $slot (i32.div_u
       (i32.sub (local.get $entry_wa) (global.get $DX_OBJECTS))
@@ -2422,6 +2526,7 @@
     ;; If DDBLT_COLORFILL (0x400), fill with color from DDBLTFX
     (if (i32.and (local.get $drblt_flags) (i32.const 0x400))
       (then
+        (call $dx_surf_clear_copy (local.get $dst_entry))
         (local.set $row (call $gl32 (i32.add
           (call $gl32 (i32.add (global.get $esp) (i32.const 24))) ;; lpDDBltFx arg6
           (i32.const 80)))) ;; DDBLTFX.dwFillColor at offset 80 (after dwSize..dwAlphaSrcConst)
@@ -2483,6 +2588,18 @@
         (local.set $sx (i32.const 0)) (local.set $sy (i32.const 0))
         (local.set $sw (i32.load16_u (i32.add (local.get $src_entry) (i32.const 12))))
         (local.set $sh (i32.load16_u (i32.add (local.get $src_entry) (i32.const 14))))))
+    ;; A small surface copied from this destination is commonly a saved
+    ;; software-cursor background. Once Lock/Unlock has redrawn the large
+    ;; surface, replaying that exact inverse copy would stamp obsolete pixels
+    ;; into the new frame. Treat the stale restore as a successful no-op.
+    (if (call $dx_surf_stale_restore
+          (local.get $dst_entry) (local.get $src_entry)
+          (local.get $dx) (local.get $dy) (local.get $sx) (local.get $sy)
+          (local.get $dw) (local.get $dh) (local.get $drblt_flags))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+        (return)))
     ;; If dst rect == src rect, fast row-copy; otherwise nearest-neighbor stretch.
     (if (i32.and (i32.eq (local.get $dw) (local.get $sw))
                  (i32.eq (local.get $dh) (local.get $sh)))
@@ -2541,6 +2658,10 @@
             ;; If dest is primary, present
             (if (i32.and (i32.load (i32.add (local.get $dst_entry) (i32.const 28))) (i32.const 1))
               (then (call $dx_present (local.get $dst_entry))))
+            (call $dx_surf_note_copy
+              (local.get $dst_entry) (local.get $src_entry)
+              (local.get $dx) (local.get $dy) (local.get $sx) (local.get $sy)
+              (local.get $dw) (local.get $dh) (local.get $drblt_flags))
             (global.set $eax (i32.const 0))
             (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
             (return)))
@@ -2611,6 +2732,10 @@
                 (br $str_col)))
               (local.set $row (i32.add (local.get $row) (i32.const 1)))
               (br $str_row)))))))
+    (call $dx_surf_note_copy
+      (local.get $dst_entry) (local.get $src_entry)
+      (local.get $dx) (local.get $dy) (local.get $sx) (local.get $sy)
+      (local.get $dw) (local.get $dh) (local.get $drblt_flags))
     ;; If dest is primary, present
     (if (i32.and (i32.load (i32.add (local.get $dst_entry) (i32.const 28))) (i32.const 1))
       (then (call $dx_present (local.get $dst_entry))))
@@ -3097,6 +3222,7 @@
       (i32.load (i32.add (local.get $entry) (i32.const 28)))
       (i32.load (i32.add (local.get $entry) (i32.const 20)))
       (i32.const 0))
+    (call $dx_surf_note_cpu_write (local.get $entry))
     ;; If primary, present on unlock
     (if (i32.and (i32.load (i32.add (local.get $entry) (i32.const 28))) (i32.const 1))
       (then (call $dx_present (local.get $entry))))

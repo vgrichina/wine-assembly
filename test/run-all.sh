@@ -286,6 +286,7 @@ UNIT=(
   test/test-sendmessagetimeout.js
   test/test-directdraw-cooperative-window.js
   test/test-directdraw-native-child-overlay.js
+  test/test-directdraw-stale-background-restore.js
   test/test-directdraw-create-ex.js
   test/test-directdraw-mode-change-primary.js
   test/test-directdraw-present-force.js
