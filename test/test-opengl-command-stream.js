@@ -1,0 +1,183 @@
+#!/usr/bin/env node
+'use strict';
+
+const assert = require('assert');
+const Stream = require('../lib/gl-command-stream');
+const RPC = require('../lib/guest-rpc');
+const { OpenGLHostBridge } = require('../lib/gl-compat');
+
+const memory = new ArrayBuffer(64 * 1024);
+const dv = new DataView(memory);
+const stack = 0x100;
+const submissions = [];
+const executed = [];
+
+const submit = batch => {
+  submissions.push({ bytes: batch.bytes, commands: batch.commands });
+  return Stream.replay(batch, (opcode, aux, capture) => {
+    const stackView = new DataView(capture.buffer);
+    executed.push({
+      opcode, aux, capture,
+      arg0: stackView.getUint32(capture.stackOffset + 4, true),
+    });
+    return opcode === 12 ? 0x504 : 0;
+  });
+};
+
+const encoder = new Stream.Encoder({
+  getMemory: () => memory,
+  guestToWasm: pointer => pointer,
+  submit,
+  capacity: 256,
+  shared: false,
+});
+
+// Value arguments are snapshots too: changing the guest stack while commands
+// wait for the frame barrier must not change an earlier command.
+dv.setUint32(stack + 4, 0x0BE2, true);
+encoder.call(10, stack, 0); // glEnable
+dv.setUint32(stack + 4, 0x0B71, true);
+assert.strictEqual(submissions.length, 0, 'ordinary GL calls stay local until a barrier');
+assert.strictEqual(encoder.call(12, stack, 0), 0x504, 'query returns the last replay result');
+assert.deepStrictEqual(executed.map(x => x.opcode), [10, 12], 'barrier preserves command order');
+assert.strictEqual(executed[0].arg0, 0x0BE2, 'queued stack arguments are copied immediately');
+
+// Small client pointers are copied into the stream because engines commonly
+// reuse a scratch vertex between calls.
+const vertex = 0x500;
+dv.setUint32(stack + 4, vertex, true);
+[1.25, -2.5, 3.75].forEach((value, i) => dv.setFloat32(vertex + i * 4, value, true));
+encoder.call(31, stack, 0); // glVertex3fv
+[9, 9, 9].forEach((value, i) => dv.setFloat32(vertex + i * 4, value, true));
+encoder.call(11, stack, 0); // glFinish
+const vertexCommand = executed.find(x => x.opcode === 31);
+assert(vertexCommand.capture.pointerOffset, 'small pointer payload is stored in the batch');
+const vertexCopy = new DataView(vertexCommand.capture.buffer,
+  vertexCommand.capture.pointerOffset, vertexCommand.capture.pointerLength);
+assert.deepStrictEqual([0, 1, 2].map(i => vertexCopy.getFloat32(i * 4, true)),
+  [1.25, -2.5, 3.75], 'queued pointer input survives guest scratch reuse');
+
+// Capacity pressure submits an execution batch but cannot publish a frame.
+let presents = 0;
+const overflowOpcodes = [];
+const overflow = new Stream.Encoder({
+  getMemory: () => memory,
+  guestToWasm: pointer => pointer,
+  capacity: 256,
+  shared: false,
+  submit: batch => Stream.replay(batch, opcode => {
+    overflowOpcodes.push(opcode);
+    if (opcode === 55) presents++;
+    return opcode === 55 ? 1 : 0;
+  }),
+});
+for (let i = 0; i < 12; i++) overflow.call(22, stack, 0); // glEnd
+assert(overflow.submissions > 0, 'full command buffer submits before overflow');
+assert.strictEqual(presents, 0, 'overflow submission does not implicitly present');
+assert.strictEqual(overflow.call(55, stack, 0), 1, 'explicit presentation is a barrier');
+assert.strictEqual(presents, 1, 'only gpuPresent publishes a frame');
+assert.strictEqual(overflowOpcodes.at(-1), 55);
+
+// Texture pixels are deliberately absent from the command buffer. The upload
+// is isolated and replayed synchronously while the guest is parked, so replay
+// can borrow the original shared guest allocation without a staging copy.
+const texture = 0x1000;
+const textureBytes = 64 * 64 * 4;
+new Uint8Array(memory, texture, textureBytes).fill(0xA7);
+for (let i = 0; i < 9; i++) dv.setUint32(stack + 4 + i * 4, 0, true);
+dv.setUint32(stack + 4 + 3 * 4, 64, true);      // width
+dv.setUint32(stack + 4 + 4 * 4, 64, true);      // height
+dv.setUint32(stack + 4 + 6 * 4, 0x1908, true);  // GL_RGBA
+dv.setUint32(stack + 4 + 7 * 4, 0x1401, true);  // GL_UNSIGNED_BYTE
+dv.setUint32(stack + 4 + 8 * 4, texture, true);
+let borrowed = null;
+const textureEncoder = new Stream.Encoder({
+  getMemory: () => memory,
+  guestToWasm: pointer => pointer,
+  shared: false,
+  submit: batch => Stream.replay(batch, (_opcode, _aux, capture) => {
+    borrowed = capture;
+    const direct = new Uint8Array(memory, texture, capture.pointerLength);
+    assert.strictEqual(direct[0], 0xA7, 'replay reads the live guest allocation');
+    return 0;
+  }),
+});
+textureEncoder.call(45, stack, 0);
+assert(borrowed && borrowed.pointerBorrowed, 'large texture is marked as borrowed guest memory');
+assert.strictEqual(borrowed.pointerOffset, 0, 'texture bytes are not copied into the command buffer');
+assert.strictEqual(borrowed.pointerLength, textureBytes);
+assert(borrowed.stackBytes + Stream.HEADER_BYTES < 128,
+  'large upload batch contains only command metadata and arguments');
+let replayPixels = null;
+const bridge = new OpenGLHostBridge({
+  getMemory: () => memory,
+  exports: { guest_to_wasm: pointer => pointer },
+});
+bridge.current = 1;
+bridge.contexts.set(1, {
+  frontend: {
+    gl: {},
+    texImage(_level, _internal, _width, _height, _border, _format, _type, pixels) {
+      replayPixels = pixels;
+    },
+  },
+});
+const bridgeEncoder = new Stream.Encoder({
+  getMemory: () => memory,
+  guestToWasm: pointer => pointer,
+  shared: false,
+  submit: batch => bridge.replay(batch),
+});
+bridgeEncoder.call(45, stack, 0);
+assert.strictEqual(replayPixels.buffer, memory,
+  'GL frontend receives a view of guest memory, not a copied texture payload');
+assert.strictEqual(replayPixels.byteOffset, texture);
+
+// A buffered stream can outlive another guest thread's wglMakeCurrent call.
+// Replay therefore resolves the current context by originating Worker slot.
+const ownerCalls = [];
+const ownerBridge = new OpenGLHostBridge({ getMemory: () => memory, exports: {} });
+ownerBridge.contexts.set(11, { frontend: { gl: {}, setEnabled: value => ownerCalls.push(['a', value]) } });
+ownerBridge.contexts.set(22, { frontend: { gl: {}, setEnabled: value => ownerCalls.push(['b', value]) } });
+ownerBridge.currentByOwner.set(1, 11);
+ownerBridge.currentByOwner.set(2, 22);
+dv.setUint32(stack + 4, 0x0BE2, true);
+const ownerBatches = [];
+const ownerEncoder = new Stream.Encoder({
+  getMemory: () => memory,
+  guestToWasm: pointer => pointer,
+  shared: false,
+  submit: batch => { ownerBatches.push({ ...batch }); return 0; },
+});
+ownerEncoder.call(10, stack, 0);
+ownerEncoder.flush();
+ownerBridge.replay(ownerBatches[0], 2);
+ownerBridge.replay(ownerBatches[0], 1);
+assert.deepStrictEqual(ownerCalls, [['b', 0x0BE2], ['a', 0x0BE2]],
+  'batch replay retains per-thread WGL current-context ownership');
+
+// Pin the Worker-side protocol endpoint independently of WebGL: one pending
+// RPC status is acknowledged only after the whole batch has replayed.
+const rpcMemory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
+const rpcView = RPC.views(rpcMemory, 0).i32;
+const brokerOps = [];
+const broker = RPC.createMainBroker(rpcMemory, {
+  gpu_gl_batch: batch => Stream.replay(batch, opcode => { brokerOps.push(opcode); return 77; }),
+}, {});
+let brokerBatch = null;
+const brokerEncoder = new Stream.Encoder({
+  getMemory: () => memory,
+  guestToWasm: pointer => pointer,
+  shared: false,
+  submit: batch => { brokerBatch = batch; return 0; },
+});
+brokerEncoder.call(10, stack, 0);
+brokerEncoder.call(12, stack, 0);
+Atomics.store(rpcView, RPC.SLOT.STATUS, RPC.STATUS_REQ);
+assert.strictEqual(broker.serveGlBatch({ slot: 0, batch: brokerBatch }), true);
+assert.deepStrictEqual(brokerOps, [10, 12], 'main broker replays one ordered GL batch');
+assert.strictEqual(Atomics.load(rpcView, RPC.SLOT.RESULT), 77);
+assert.strictEqual(Atomics.load(rpcView, RPC.SLOT.STATUS), RPC.STATUS_RESP,
+  'worker is acknowledged only after replay completes');
+
+console.log('PASS buffered OpenGL ordering, overflow, barriers, and zero-copy textures');

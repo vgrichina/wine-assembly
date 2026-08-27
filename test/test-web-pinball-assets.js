@@ -308,15 +308,16 @@ assert(webApp.includes('lib/host-window.js?v=3'), 'web host should cache-bust cu
 assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
 assert(webApp.includes('lib/storage.js?v=169'), 'web host should cache-bust storage after Media Player association changes');
 assert(webApp.includes('lib/gdi-surface.js?v=2'), 'web host should load the canonical GDI surface module');
-assert(webApp.indexOf('lib/gdi-surface.js?v=2') < webApp.indexOf('lib/host-imports.js?v=208'),
+assert(webApp.indexOf('lib/gdi-surface.js?v=2') < webApp.indexOf('lib/host-imports.js?v=209'),
   'web host should load the GDI surface module before host imports');
-assert(webApp.includes('lib/host-imports.js?v=208'), 'web host should cache-bust the current host imports');
+assert(webApp.includes('lib/host-imports.js?v=209'), 'web host should cache-bust the current host imports');
 assert(webApp.includes('lib/touch-cursor.js?v=2'), 'web host should cache-bust custom touch cursor rendering');
 assert(webApp.includes('lib/thread-manager.js?v=181'), 'web host should cache-bust thread manager after the main merge');
 assert(webApp.includes('lib/compile-wat.js?v=169'), 'web host should cache-bust the snapshot-capable WAT compiler');
-assert(webApp.includes('lib/guest-thread-host.js?v=4'), 'web host should cache-bust the owner-thread send protocol');
+assert(webApp.includes('lib/guest-rpc.js?v=5'), 'web host should cache-bust the buffered GL worker protocol');
+assert(webApp.includes('lib/guest-thread-host.js?v=5'), 'web host should cache-bust the owner-thread send protocol');
 assert(webApp.includes('lib/debug-thread-state.js?v=5'), 'web host should cache-bust whole-list cycle diagnostics');
-assert(webApp.includes('host.js?v=228'), 'web host should cache-bust host.js after the current source update');
+assert(webApp.includes('host.js?v=232'), 'web host should cache-bust host.js after the current source update');
 assert(hostJs.includes("static SOURCE_VERSION = '226'"), 'web host should cache-bust WASM artifacts and WAT source compilation');
 assert(hostJs.includes("const fetchOptions = debugFetch ? { cache: 'no-store' } : undefined;"),
   'debug sessions should select a no-store fetch policy');

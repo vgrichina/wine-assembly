@@ -314,3 +314,79 @@ Win32 queue coordinates, and the inactive-clip negative control.
 recorded the active `[0,0,639,480]` clip, acquired real pointer lock, routed six
 nonzero relative samples, visibly changed the camera, and saved the input queue,
 mouse deltas, and screenshots under `scratch/quake2-input-web/`.
+
+## Threads/OpenGL throughput
+
+The severe slowdown with the browser Threads switch is not a guest lock or a
+bad interaction between Quake threads. An isolated-Chrome `+set vid_ref gl
++map demo1` probe on 2026-08-27 found zero `CreateThread` workers: the switch
+only moved Quake's one main thread into guest Worker slot 0. The regression is
+the synchronous host-import boundary. Every OpenGL entry reaches
+`gpu_gl_call`, and in Worker mode each call posts to the browser main thread
+and parks in `Atomics.wait` until the WebGL frontend returns.
+
+The settled six-second measurements used the same current worktree, fresh
+profiles, 640x480 scene, 10,000 configured block slice, hidden runtime log, and
+headless Chrome SwiftShader:
+
+| mode | completed presents | scheduler guest rate | GL calls | sync RPC delta | async RPC delta |
+|---|---:|---:|---:|---:|---:|
+| cooperative | 36 | 3.85M blocks/s | 786,684 | 0 | 0 |
+| guest Worker | 6 | 0.259M blocks/s | 110,493 | 110,358 | 221,136 |
+
+Scene motion makes exact calls per frame vary, but both runs were in the same
+range: about 18,000--22,000 GL entries per present. One representative Worker
+frame contained about 6,400 `glTexCoord2f`, 6,400 `glVertex3fv`, 2,750
+`glColor4f`, and 1,286 `glBegin`/`glEnd` pairs. The sync-RPC delta is one-for-one
+with those GL calls. The two async messages per call are dispatch `log` and
+`log_api_exit`; their browser handlers are no-ops with runtime logging hidden,
+but the generic Worker broker still posts them. This is why changing the Worker
+block slice cannot solve the problem. The current adaptive probe fell from the
+10,000 configured ceiling to 1,000 blocks, but the per-GL-call rendezvous
+remained.
+
+There is a separate non-Threads cost in this software-GPU measurement.
+Cooperative `glGetError` took 3.23 seconds across 36 frames, about 90 ms per
+frame, because it synchronizes the queued SwiftShader work. That explains why
+the cooperative baseline is not fast on this host; it does not explain the
+roughly 6x Worker frame loss or 15x scheduler-throughput loss. Real hardware
+must be measured independently before quoting those absolute frame rates.
+
+The useful fix boundary is a Worker-side GL command stream, not a larger guest
+slice: capture value arguments and copy pointer-backed data while it is valid,
+then replay a frame-sized batch on the browser thread. Flush before operations
+whose return or output is guest-visible (`glGetError`, `glGetFloatv`,
+`glReadPixels`, WGL lifecycle calls), and at `glFinish`/`SwapBuffers`. Suppress
+the no-op dispatch-log messages in the same fast path. This removes the
+cross-thread rendezvous per vertex/state call. It does not reduce the roughly
+1,300 WebGL draw submissions per frame; combining compatible `glBegin`/`glEnd`
+batches is a second optimization after the RPC boundary is fixed.
+
+That command stream is now the only normal transport in both modes.
+`gpu_gl_call` records arguments into a 2 MiB local buffer; capacity pressure
+submits a batch without presenting, while queries/readback, WGL lifecycle,
+`glFinish`, and `SwapBuffers` synchronously replay the ordered stream. Worker
+dispatch logging for GL stays local unless verbose/API tracing is enabled.
+Replay carries the originating Worker slot so concurrent guest GL threads keep
+their own WGL current-context binding across delayed batches.
+Small client arrays (vertices, colours, matrices, texture-name lists) are copied
+at call time because the guest may reuse them before the batch flushes.
+
+Texture images use a different lifetime rule to avoid copying the large payload.
+The encoder first drains older commands, then submits one texture command whose
+metadata names the original shared guest allocation. The guest remains parked
+until browser-thread replay has passed that direct typed-array view to WebGL,
+so the allocation cannot be changed or freed while borrowed. A real Chrome
+SwiftShader run accepted this SharedArrayBuffer-backed upload path, including
+live `glTexSubImage2D` updates; no compatibility copy was needed.
+
+A matched post-change six-second run completed 20 Worker presents versus 26
+cooperative presents. The prior matched result was 6 versus 36, so the relative
+Worker throughput rose from 17% to 77% of cooperative. The Worker executed
+389,533 GL commands in that window without a per-command host round trip and
+reported no browser errors. Remaining time is now dominated by the explicit
+per-frame `glGetError` barrier under SwiftShader: 4.14 seconds for 21 Worker
+calls and 2.95 seconds for 26 cooperative calls. That is a separate GL error
+semantics/software-GPU issue, not command transport; removing it would require
+maintaining a trustworthy frontend error shadow rather than silently returning
+`GL_NO_ERROR`.

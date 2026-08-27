@@ -11,8 +11,9 @@ const { WebGLBackend } = require('../lib/gpu-backend');
 
 const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
 assert(html.includes('lib/gpu-backend.js?v=2') &&
-  html.includes('lib/gl-compat.js?v=2'),
-  'the browser entrypoint cache-busts both halves of atomic GPU presentation');
+  html.includes('lib/gl-command-stream.js?v=1') &&
+  html.includes('lib/gl-compat.js?v=3'),
+  'the browser entrypoint cache-busts the GPU backend, command stream, and GL frontend');
 
 const copies = [];
 const presentationContext = {
