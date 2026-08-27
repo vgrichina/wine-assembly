@@ -133,6 +133,15 @@ class WineAssembly {
     // synchronously call that instance, so the Worker publishes it after each
     // slice and mouse-down routing updates it immediately between slices.
     this._workerFocusHwnd = 0;
+    // Keyboard arrival cuts the in-flight Worker slice through INPUT_WAKE.
+    // Keep the following few slices short as well so dequeue, dispatch, paint,
+    // and presentation cannot disappear inside a fresh 100k-block slice.
+    this._workerInputBurstSlices = 0;
+    // Real-Worker block cost changes drastically between a loader, a menu and
+    // gameplay. Learn a presentation-sized budget from completed slices rather
+    // than forcing every phase through one app-wide block count.
+    this._workerAdaptiveSteps = 0;
+    this._workerAdaptiveCeiling = 0;
     // [{ name, base }], every image this process has loaded. A guest thread that
     // traps reports a raw EIP, and a raw EIP in a DLL is unreadable — the load
     // address depends on what loaded before it, so the same crash prints a
@@ -1205,7 +1214,7 @@ class WineAssembly {
         module: wasmModule,
         sigs,
         hostImports: this._mainImports.host,
-        workerUrl: 'lib/guest-worker.js?v=5',
+        workerUrl: 'lib/guest-worker.js?v=6',
         log: msg => { console.log(msg); self.logToUI(msg); },
         tickMs: () => self._guestTickMs(self.hostCtx && self.hostCtx.sharedAudio),
       });
@@ -1976,15 +1985,21 @@ class WineAssembly {
   }
 
   // Worker-mode run loop. The guest executes inside the Worker, so this loop
-  // does nothing but hand out slices and composite — which is the whole claim
-  // of the design: the UI thread is no longer in the guest's critical path, so
-  // there is no wall-clock budget, no quantum, and no input-wake heuristic here.
+  // does nothing but hand out slices and composite. The guest no longer blocks
+  // the UI thread, but its completed-slice reply is still the presentation
+  // boundary, so long slices are paced and keyboard input can request one early.
   _runThreaded(stepsPerSlice) {
     this.running = true;
     const self = this;
     if (self.renderer && self.guestWorker && self.guestWorker.broker &&
         !self._rendererInputPendingPublisher) {
       self._rendererInputPendingPublisher = (depth, wake) => {
+        if (wake) {
+          self._workerInputBurstSlices = Math.max(
+            self._workerInputBurstSlices | 0,
+            Math.min(12, Math.max(0, depth | 0) + 4)
+          );
+        }
         self.guestWorker.broker.publish({
           inputPending: depth | 0,
           inputWake: !!wake,
@@ -2013,7 +2028,15 @@ class WineAssembly {
             inputPending: q,
           });
         }
-        const steps = Math.max(1000, (self.stepsPerSlice | 0) || stepsPerSlice);
+        const configuredSteps = Math.max(1000, (self.stepsPerSlice | 0) || stepsPerSlice);
+        if (self._workerAdaptiveCeiling !== configuredSteps) {
+          self._workerAdaptiveCeiling = configuredSteps;
+          self._workerAdaptiveSteps = configuredSteps;
+        }
+        const inputBurstSlice = (self._workerInputBurstSlices | 0) > 0;
+        const adaptiveSteps = Math.max(1000,
+          Math.min(configuredSteps, self._workerAdaptiveSteps | 0 || configuredSteps));
+        const steps = inputBurstSlice ? Math.min(adaptiveSteps, 1000) : adaptiveSteps;
         // The guest's main thread and every thread it created run AT THE SAME
         // TIME — that is the whole of phase 2. Awaiting them together rather
         // than in sequence is what makes it true: each slice() is a message to a
@@ -2045,6 +2068,18 @@ class WineAssembly {
             self.renderer.endWorkerGuestSlice();
           }
         }
+        if (inputBurstSlice && self._workerInputBurstSlices > 0) {
+          self._workerInputBurstSlices--;
+        }
+        // Only a slice that actually spent its block budget is a useful speed
+        // sample. Waits and INPUT_WAKE return early and must not distort the
+        // next normal budget.
+        const ranBlocks = r.blocks | 0;
+        const ranMs = Number(r.ms) || 0;
+        if (!inputBurstSlice && ranBlocks >= steps * 0.75 && ranMs > 0) {
+          const measured = Math.round((ranBlocks * 12 / ranMs) / 1000) * 1000;
+          self._workerAdaptiveSteps = Math.max(1000, Math.min(configuredSteps, measured));
+        }
         self._workerFocusHwnd = r.focusHwnd | 0;
         if (self.threadManager) self.threadManager.publishWorkerThunkState(r);
         if (!self.running) return;
@@ -2060,7 +2095,7 @@ class WineAssembly {
         // thing worth knowing when a threaded app goes quiet.
         self.workerThreadsRun = threadsRun | 0;
         if (perf) {
-          perf.countSteps(stepsPerSlice);
+          perf.countSteps(ranBlocks > 0 ? ranBlocks : steps);
           // Off-thread time is reported as thread time, not main time: it did
           // not block this thread, and calling it 'guest' here would make the
           // HUD's phase shares mean something different than in the other mode.

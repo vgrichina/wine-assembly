@@ -27,7 +27,7 @@ assert(host.includes('this.renderer._guestWorkerWasms.add(this.instance);'),
   'Worker-backed renderer ownership token should be marked');
 assert(input.includes('if (this._keyboardOwnerRunsInGuestWorker())'),
   'Worker-backed keyboard events should bypass direct calls into the idle instance');
-assert(host.includes("workerUrl: 'lib/guest-worker.js?v=5'"),
+assert(host.includes("workerUrl: 'lib/guest-worker.js?v=6'"),
   'guest Worker cache key should change with its slice result protocol');
 
 class RendererProbe {

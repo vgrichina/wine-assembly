@@ -1,0 +1,50 @@
+# Ten programs that exercise every distinct path the VM has, for comparing the
+# four dispatch shells and the three JIT tiers against each other.
+#
+#   node tools/toyvm/bench-dos.js $(grep -v '^#' tools/toyvm/bench-set-core10.txt) \
+#     --variants=tailcall,repl_tailcall,calls,switch --reps=5
+#
+# Paths are where tools/toyvm/fetch-demos.js --out=/tmp/demos puts them, so a
+# fresh box rebuilds the whole set from the repo alone.
+#
+# WHY THESE TEN. Not "the ones that run well" -- picked so that a shell or tier
+# that breaks one code path cannot pass. The comment on each line is the path it
+# is here to cover, and dropping a line drops that coverage:
+#
+#   DHADREN     unchained mode X, 1280-byte stride -- the long-standing guard
+#   BTW         text mode 3h: the console and the direct-to-B800 path
+#   ACCIDENT    1055 calls to INT 15h AH=86h, the BIOS microsecond wait
+#   B-STEEL     307200 pixels, the largest surface in the corpus
+#   RUNDEMO     plain chained mode 13h, well-behaved, 58040 px
+#   CMA_SHRT    32-bit protected mode
+#   CONTAGIO    32-bit protected mode, a DIFFERENT extender -- this is the one
+#               that reflects interrupts with `66 1f` (a 32-bit POP DS)
+#   CYCLE       the auto-key menu reader, one-line "(G)ravis / (O)thers / (N)one"
+#   DEMO5       CGA mode 4, 2bpp, interleaved scan lines -- the ONLY non-VGA
+#               capture path in the set
+#   BRW         mode X 320x400 + Sound Blaster + 32-bit protected mode
+#
+# THE FRAME HASH IS A FIXED-BUDGET INVARIANT, NOT A PROGRAM ONE. These programs
+# animate. DHADREN at 30M dispatches is 20272 px / frame a6d83786 and at 40M is
+# 20271 px / frame 410263b0 -- both correct, different moments. bench-dos.js
+# holds the budget equal across its arms, which is what makes its cross-arm hash
+# check meaningful; anything that hardcodes an expected hash must pin
+# --dispatches too or it will fail a correct build.
+#
+# AND DO NOT TIME THIS ON A LOADED BOX. Every number in
+# docs/toyvm-dispatch-shootout.md was taken quiet; this machine routinely sits
+# at load 19-38 with other agents on it, and there a timing run measures the
+# machine. bench-dos.js alternates its arms rep by rep and reports the minimum
+# for exactly that reason, but that discipline narrows the noise, it does not
+# remove it.
+
+/tmp/demos/1993-a-adrenali/DHADREN.EXE
+/tmp/demos/1993-b-btw/BTW.EXE
+/tmp/demos/1994-a-accident/ACCIDENT.EXE
+/tmp/demos/1994-a-acme_bsd/B-STEEL.EXE
+/tmp/demos/1994-b-bltdemo/RUNDEMO.EXE
+/tmp/demos/1994-c-cma_shrt/CMA_SHRT.EXE
+/tmp/demos/1994-c-contagio/CONTAGIO.EXE
+/tmp/demos/1994-c-cyclewar/CYCLE.EXE
+/tmp/demos/1995-a-akm-dem5/DEMO5.EXE
+/tmp/demos/1995-c-cma_brw/BRW.EXE
