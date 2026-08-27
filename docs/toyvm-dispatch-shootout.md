@@ -736,6 +736,20 @@ how many sites a run retired, so that blast radius is visible — DHADREN retire
 
 ## 8. Still open
 
+* **A protected-mode INT 9 is invisible to the keyboard.** `keyboardIrq` will
+  not raise IRQ1 unless `hookedVector(0x09)` says someone is listening, and that
+  reads the **real-mode** IVT. A 32-bit program whose extender installs the
+  handler in the protected-mode IDT instead therefore never receives a keystroke
+  from any of the three wires. DINO.EXE and DINO386.EXE are the two in this
+  corpus: both open on an arrow-driven setup grid ("Use ARROW keys to move
+  around, ENTER selects highlighted option") whose cursor sits on Gravis
+  Ultrasound with Silence three rows below it, and the code they park in is
+  `cmp al,0x48` — the up-arrow scancode — decrementing a menu-row counter. So
+  the program is asking; nothing can answer. Ruled out by measurement, not
+  guessed: seeding the scancode queue reaches a port-60h poller and did not move
+  the cursor, and mirroring the keys into the BIOS ring at 0040:001E did not
+  either (DINO is flat 32-bit and writes over that region itself). Two programs,
+  so it is recorded rather than built.
 * Run the matrix on SpiderMonkey and JavaScriptCore, not just node's V8, and on
   `wasm3`/`iwasm` as a non-JIT control. Every number here is one engine.
 * A `typed` handler table (`(ref null $handler_t)`) — the same change
