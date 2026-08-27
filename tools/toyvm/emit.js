@@ -746,6 +746,35 @@ function genExtras() {
   (if ${bit(F.OF)} (then (call $fault (i32.const 4) (local.get $t0))))
 `);
 
+  // BOUND, the other conditional fault. It reads a two-element signed array at
+  // the effective address and takes INT 5 when the register is outside it,
+  // which is why it shares INTO's shape: no block end, and the fall-through
+  // leaves $ip where the next op expects it.
+  //
+  // Its real job here is not array checking. Polymorphic decryptors use BOUND
+  // and ICEBP as filler between the instructions that matter -- both are one or
+  // two bytes, both are almost always harmless on real hardware, and a
+  // disassembler walking the stream linearly trips over them. STHINTRO.EXE's
+  // decryptor emits `F1 62 48 A4`, and refusing either byte stops the run on
+  // code the guest was entitled to execute.
+  for (const w of [16, 32]) {
+    // Both bounds and the index are signed, and at 16 bits they arrive
+    // zero-extended, so each one is widened before it is compared.
+    const sx = (e) => (w === 32 ? e
+      : `(i32.shr_s (i32.shl ${e} (i32.const 16)) (i32.const 16))`);
+    h(`bound${w}`, 3, `
+  ${ops(3)}
+  ${EA_SETUP_PRE}
+  (local.set $t7 ${sx(`(call $rget${w} (local.get $t6))`)})
+  (local.set $t3 ${sx(`(call $rd${w} (local.get $t5) (local.get $t4))`)})
+  (if (i32.or
+        (i32.lt_s (local.get $t7) (local.get $t3))
+        (i32.gt_s (local.get $t7)
+          ${sx(`(call $rd${w} (local.get $t5) (i32.add (local.get $t4) (i32.const ${w >> 3})))`)}))
+    (then (call $fault (i32.const 5) (local.get $t2))))
+`);
+  }
+
   // JCXZ, LOOPZ, LOOPNZ -- the remaining counted-loop terminators. Each is
   // generated twice: once counting CX, and once counting ECX for the form with
   // a 0x67 address-size override in front of it. LOOP itself gets the same

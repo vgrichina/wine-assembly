@@ -19,7 +19,7 @@
 
 const isa = require('./isa');
 const { compileProgram } = require('./compile');
-const { STUB_SEG } = require('./dos');
+const { STUB_SEG, STUB_BYTE } = require('./dos');
 
 // ---------------------------------------------------------------------------
 // The compiled-code arena.
@@ -178,6 +178,7 @@ class DosSession {
     this.ints = 0;
     this.irqs = 0;
     this.smcBreaks = 0;
+    this.icebps = 0;         // guest ICEBP (F1) bytes stepped over
     this.stuck = 0;
     this.stuckAt = null;
     this.lastIrq = 0;
@@ -327,6 +328,26 @@ class DosSession {
         && (cs & 0xFFF8) > (vm.exports.get_gdtl() & 0xFFFF)) {
       this.badSelector = `${cs.toString(16)}:${ip.toString(16)}`;
       return 'badselector';
+    }
+    // F1 is ICEBP, and it is also the byte every IVT stub is made of -- chosen
+    // precisely because the decoder refuses it, which is what puts control back
+    // here when a vector is taken. The catch is that the decoder refuses it
+    // EVERYWHERE, and a guest is allowed to have one in its own code: on real
+    // hardware ICEBP raises INT 1, and with no debugger loaded that vector is
+    // an IRET, so the instruction is a slow no-op and execution carries on at
+    // the next byte. Here it was a wall. STHINTRO.EXE's polymorphic decryptor
+    // jumps into a run of bytes containing one and re-entered the same address
+    // forever, which the report called "stuck at 364:1a4" -- a perfectly
+    // ordinary instruction the guest was entitled to execute.
+    //
+    // So: step over it and take vector 1 the way the hardware would. In
+    // protected mode `raise` declines (see its comment) and stepping over is
+    // all that happens, which is still the right answer for an unhooked INT 1.
+    if (cs !== STUB_SEG && vm.mem[(codeBase + ip) & mask] === STUB_BYTE) {
+      vm.set('gip', (ip + 1) & 0xFFFF);
+      this.icebps++;
+      this.raise(1);
+      return 'int';
     }
     const entry = this.cache.entryFor(cs, ip, codeBase, mask);
     if (this.hooks.beforeSlice) this.hooks.beforeSlice();

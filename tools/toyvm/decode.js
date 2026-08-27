@@ -388,7 +388,15 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
           else words.push(H[`imul3_rm${opsize}`], packEa(m), m.disp, imm);
           break;
         }
-        return null;   // 62 BOUND
+        if (op === 0x62) {
+          const m = modrm();
+          // mod=11 is not an encoding of BOUND at all -- the second operand is
+          // a two-element array in memory. Refusing is right there.
+          if (m.isReg) return null;
+          words.push(H[`bound${opsize}`], packEa(m), m.disp, (start + n) & 0xFFFF);
+          break;
+        }
+        return null;   // 63 ARPL, 64/65 FS/GS overrides
       }
       const d = imm8();
       const fall = (start + n) & 0xFFFF;
