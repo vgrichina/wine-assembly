@@ -686,7 +686,7 @@ class Machine {
   // 199 programs unattended and none of them has any business writing to the
   // corpus.
   guestPath(r) {
-    const at = ((r.get('ds') << 4) + (r.get('dx') & 0xFFFF)) & 0xFFFFF;
+    const at = this.lin(r, 'ds', r.get('dx'));
     let s = '';
     for (let i = at; i < this.mem.length && this.mem[i] && s.length < 128; i++) {
       s += String.fromCharCode(this.mem[i]);
@@ -953,6 +953,35 @@ class Machine {
     this.vmExports = ex || null;
     this.con.mem = mem;
     this.con.fillCells(0, this.con.cells, 0x20, 0x07);
+  }
+
+  // The linear address a DOS call's SEG:OFF argument names.
+  //
+  // In real mode that is seg<<4 and always was. In protected mode the segment
+  // register holds a SELECTOR, its base lives in a descriptor, and seg<<4 is
+  // an unrelated address that happens to be in range -- so every buffer a
+  // service reads or writes lands somewhere the guest never asked for. It is a
+  // quiet failure: the call returns success, the guest gets its byte count,
+  // and the bytes are somewhere else.
+  //
+  // This is what the DOS-extender demos were dying of. CONTAGIO.EXE reads 0xC4
+  // bytes of its own overlay to DS:0 while in 16-bit protected mode, jumps to
+  // the code it just loaded, and lands in the extender's error strings --
+  // "Cannot Address Above 1MB" -- because the read went to 0x2580 instead of
+  // the selector's base. AQUAPHOB.EXE and STHINTRO.EXE share the loader and
+  // die the same way.
+  //
+  // The VM already caches each segment register's base, so the answer is a
+  // lookup rather than a descriptor walk. Only the real-mode result is masked
+  // to 1MB: a protected-mode base is allowed above it, and folding it back
+  // would recreate the bug one megabyte along.
+  lin(r, reg, off) {
+    const ex = this.vmExports;
+    if (ex && (ex.get_cr0() & 1)) {
+      const at = ((ex[`get_${reg}b`]() >>> 0) + (off & 0xFFFF)) >>> 0;
+      return at < this.mem.length ? at : 0;
+    }
+    return (((r.get(reg) & 0xFFFF) << 4) + (off & 0xFFFF)) & 0xFFFFF;
   }
 
   installIvt() {
@@ -1669,7 +1698,7 @@ class Machine {
       return true;
     }
     if (ah === 0x10 && al === 0x02) {       // set all 16 + overscan, from ES:DX
-      const src = ((r.get('es') << 4) + r.get('dx')) & 0xFFFFF;
+      const src = this.lin(r, 'es', r.get('dx'));
       for (let i = 0; i < 17; i++) this.vga.attr[i] = this.mem[(src + i) & 0xFFFFF] & 0x3F;
       return true;
     }
@@ -1686,7 +1715,7 @@ class Machine {
     }
     if (ah === 0x10 && al === 0x12) {       // set block of DAC registers
       const first = r.get('bx') & 0xFFFF, count = r.get('cx') & 0xFFFF;
-      const src = ((r.get('es') << 4) + r.get('dx')) & 0xFFFFF;
+      const src = this.lin(r, 'es', r.get('dx'));
       for (let i = 0; i < count * 3; i++) this.palette[(first * 3 + i) % 768] = this.mem[(src + i) & 0xFFFFF] & 0x3F;
       return true;
     }
@@ -1701,7 +1730,7 @@ class Machine {
         return true;
       }
       const first = r.get('bx') & 0xFFFF, count = r.get('cx') & 0xFFFF;
-      const dst = ((r.get('es') << 4) + r.get('dx')) & 0xFFFFF;
+      const dst = this.lin(r, 'es', r.get('dx'));
       for (let i = 0; i < count * 3; i++) {
         this.mem[(dst + i) & 0xFFFFF] = this.palette[(first * 3 + i) % 768] & 0x3F;
       }
@@ -1885,7 +1914,7 @@ class Machine {
         const info = loadExe(this.mem, img, { loadSeg: pspSeg + 0x10, pspSeg });
 
         // The command tail, out of the parameter block at ES:BX.
-        const pb = ((r.get('es') << 4) + (r.get('bx') & 0xFFFF)) & 0xFFFFF;
+        const pb = this.lin(r, 'es', r.get('bx'));
         const tailOff = this.mem[pb + 2] | (this.mem[pb + 3] << 8);
         const tailSeg = this.mem[pb + 4] | (this.mem[pb + 5] << 8);
         const tail = ((tailSeg << 4) + tailOff) & 0xFFFFF;
@@ -1944,7 +1973,7 @@ class Machine {
         return true;
       }
       case 0x09: {                              // print $-terminated string
-        let p = ((r.get('ds') << 4) + r.get('dx')) & 0xFFFFF, s = '';
+        let p = this.lin(r, 'ds', r.get('dx')), s = '';
         while (this.mem[p] !== 0x24 && s.length < 4096) s += String.fromCharCode(this.mem[p++]);
         this.log(`dos print: ${s}`);
         this.conPuts(s);
@@ -1976,7 +2005,7 @@ class Machine {
         return true;
       }
       case 0x0A: {                              // buffered input, DS:DX
-        const at = ((r.get('ds') << 4) + r.get('dx')) & 0xFFFFF;
+        const at = this.lin(r, 'ds', r.get('dx'));
         const max = this.mem[at];
         const line = this.typedLine(max);
         if (line === null) { this.blockedOnKey = true; return true; }
@@ -2001,7 +2030,7 @@ class Machine {
         // console; anything else has no file behind it, so report the bytes as
         // written rather than failing a program over a log it opened.
         const h = r.get('bx') & 0xFFFF, n = r.get('cx') & 0xFFFF;
-        const src = ((r.get('ds') << 4) + r.get('dx')) & 0xFFFFF;
+        const src = this.lin(r, 'ds', r.get('dx'));
         const f = this.files.get(h);
         if (h === 1 || h === 2) {
           for (let i = 0; i < n; i++) this.conPutc(this.mem[(src + i) & 0xFFFFF]);
@@ -2019,7 +2048,7 @@ class Machine {
       case 0x19: r.set('ax', (r.get('ax') & 0xFF00) | 2); return true;   // drive C:
       case 0x0E: r.set('ax', (r.get('ax') & 0xFF00) | 3); return true;   // 3 drives
       case 0x47: {                              // get current directory -> root
-        const at = ((r.get('ds') << 4) + (r.get('si') & 0xFFFF)) & 0xFFFFF;
+        const at = this.lin(r, 'ds', r.get('si'));
         this.mem[at] = 0;
         r.setResultCf(false);
         return true;
@@ -2081,7 +2110,7 @@ class Machine {
         if ((r.get('bx') & 0xFFFF) === 0) {
           const line = this.typedLine(n);
           if (line === null) { this.blockedOnKey = true; r.set('ax', 0); return true; }
-          const at0 = ((r.get('ds') << 4) + r.get('dx')) & 0xFFFFF;
+          const at0 = this.lin(r, 'ds', r.get('dx'));
           for (let i = 0; i < line.length; i++) this.mem[at0 + i] = line.charCodeAt(i);
           this.conPuts(line.replace(/\r\n$/, '\r\n'));
           r.set('ax', line.length);
@@ -2089,7 +2118,7 @@ class Machine {
           return true;
         }
         if (!f) { r.setResultCf(true); r.set('ax', 6); return true; }   // bad handle
-        const at = ((r.get('ds') << 4) + r.get('dx')) & 0xFFFFF;
+        const at = this.lin(r, 'ds', r.get('dx'));
         const got = Math.max(0, Math.min(n, f.buf.length - f.pos));
         // A read that would run off the end of the 1MB address space is a bug
         // in the guest, not something to wrap around silently.
@@ -2177,7 +2206,7 @@ class Machine {
         r.setResultCf(false);
         return true;
       }
-      case 0x1A: this.dta = ((r.get('ds') << 4) + r.get('dx')) & 0xFFFFF; return true;
+      case 0x1A: this.dta = this.lin(r, 'ds', r.get('dx')); return true;
       case 0x2C: {                              // get time
         const t = this.ticks * 55;
         r.set('cx', (Math.floor(t / 3600000) << 8) | (Math.floor(t / 60000) % 60));
@@ -2312,7 +2341,7 @@ class Machine {
   // the matching offset is a far pointer rather than a block offset -- which is
   // the whole reason this call exists.
   xmsMove(r) {
-    const p = ((r.get('ds') << 4) + (r.get('si') & 0xFFFF)) & 0xFFFFF;
+    const p = this.lin(r, 'ds', r.get('si'));
     const m = this.mem;
     const u16 = (o) => m[p + o] | (m[p + o + 1] << 8);
     const u32 = (o) => (u16(o) | (u16(o + 2) << 16)) >>> 0;
