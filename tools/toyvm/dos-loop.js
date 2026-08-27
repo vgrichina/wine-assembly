@@ -261,6 +261,13 @@ class DosSession {
       // conCells(machine.con), passed in rather than imported: the console
       // scoring lives with the drivers that photograph a console.
       cells = null,
+      // Record WHERE self-modifying code fires, not just how often. The total
+      // on its own cannot tell a program that unpacks itself once from one
+      // whose inner loop patches an immediate every few instructions, and those
+      // want opposite responses -- DOPE.EXE takes 138414 breaks in two million
+      // dispatches and spends essentially all of its time recompiling, which
+      // reads as "the emulator is slow" and is nothing of the kind.
+      smcCensus = false,
       hooks = {},
     } = opts;
 
@@ -281,7 +288,12 @@ class DosSession {
     this.ints = 0;
     this.irqs = 0;
     this.smcBreaks = 0;
-    this.icebps = 0;         // guest ICEBP (F1) bytes stepped over
+    // key `cs:ip -> lo-hi` (the resume point of the block that stored, and the
+    // paragraph range it dirtied) -> how many times. Null unless asked for,
+    // because it costs a string build on every break and the storms are exactly
+    // the runs where that would be millions of them.
+    this.smcSites = smcCensus ? new Map() : null;
+    this.icebps = 0;        // guest ICEBP (F1) bytes stepped over
     this.traps = 0;          // INT 1s delivered because the guest set TF
     this.stuck = 0;
     this.stuckAt = null;
@@ -496,12 +508,17 @@ class DosSession {
     if (vm.raw('smc')) {
       const kind = vm.raw('smc');
       vm.set('smc', 0);
-      if (kind === 2) {
-        this.cache.invalidateRange(vm.exports.get_smclo() >>> 0,
-                                   vm.exports.get_smchi() >>> 0);
-      }
+      const lo = vm.exports.get_smclo() >>> 0, hi = vm.exports.get_smchi() >>> 0;
+      if (kind === 2) this.cache.invalidateRange(lo, hi);
       else this.cache.invalidate(vm.get('cs'), vm.get('gip'), vm.exports.get_csb());
       this.smcBreaks++;
+      if (this.smcSites) {
+        const hex = (n) => n.toString(16);
+        const key = kind === 2
+          ? `${hex(vm.get('cs'))}:${hex(vm.get('gip'))} wrote ${hex(lo)}-${hex(hi)}`
+          : `${hex(vm.get('cs'))}:${hex(vm.get('gip'))} patched its own next block`;
+        this.smcSites.set(key, (this.smcSites.get(key) || 0) + 1);
+      }
     }
 
     // Time moves with work, not with the wall clock: a demo that spins on the
@@ -635,6 +652,7 @@ class DosSession {
     return {
       dispatched: this.dispatched, handbacks: this.handbacks, ints: this.ints,
       irqs: this.irqs, smcBreaks: this.smcBreaks, stuckAt: this.stuckAt,
+      smcSites: this.smcSites,
       traps: this.traps, icebps: this.icebps,
       blockedOn32: this.blockedOn32 === undefined ? null : this.blockedOn32,
       badSelector: this.badSelector === undefined ? null : this.badSelector,

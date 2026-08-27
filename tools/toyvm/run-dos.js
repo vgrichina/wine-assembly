@@ -88,6 +88,7 @@ async function runDos(o) {
   const {
     variant = 'tailcall', exe, budget = 200e6, slice = 2e6, seconds = 0,
     traceInt = false, traceFault = false, traceEntry = 0, noCache = false, smcFlush = false,
+    smcCensus = false,
     shots = null, shotEvery = 20,
     mouse = [0, 0], cpu = 386, report = false, log = console.log, autoKey = false,
     tickScale = 1, sample = false, sampleAfter = 0, forceChained = false,
@@ -199,7 +200,7 @@ async function runDos(o) {
   const ipSampleLog = [];          // flat [dispatched, ip, dispatched, ip, ...]
 
   const session = new DosSession(vm, machine, {
-    slice, noCache, smcFlush, mouse, irqEvery, dispatchesPerTick, tickScale, stuckLimit,
+    slice, noCache, smcFlush, smcCensus, mouse, irqEvery, dispatchesPerTick, tickScale, stuckLimit,
     cells: conCells,
     hooks: {
       onInt: !traceInt ? undefined : ({ vec, before, ok, retCs, retIp, ax }) => {
@@ -318,7 +319,7 @@ async function runDos(o) {
   }
   const {
     dispatched, handbacks, ints, irqs, smcBreaks, traps, icebps, stuckAt, blockedOn32, badSelector,
-    compiles, compiledWords, arenaResets, unimplemented, regions, jtab,
+    compiles, compiledWords, arenaResets, unimplemented, regions, jtab, smcSites,
   } = session.stats();
 
   if (bestPng) keepBest();
@@ -329,7 +330,7 @@ async function runDos(o) {
     secs: Number(process.hrtime.bigint() - t0) / 1e9,
     guestSecs: Number(guestNs) / 1e9,
     dispatched, handbacks, ints, irqs, compiles, compiledWords, arenaResets,
-    smcBreaks, traps, icebps,
+    smcBreaks, traps, icebps, smcSites,
     stuckAt, blockedOn32, badSelector, ranOutOfTime,
     entryHist, unimplemented, ipSamples, ipSampleLog, regions,
     // A program that never put the adapter in a graphics mode has no frame to
@@ -395,6 +396,7 @@ async function main() {
     traceEntry: flag('trace-entry') ? 40 : count(arg('trace-entry'), 0),
     noCache: flag('no-cache'),
     smcFlush: flag('smc-flush'),
+    smcCensus: flag('smc-census'),
     sound: arg('sound', 'full'),
     keys: parseKeys(arg('keys', '')),
     autoKeys: parseKeys(arg('auto-keys', '')),
@@ -471,6 +473,12 @@ async function main() {
     // thrash: a program storing data into a paragraph a region happens to have
     // decoded, one bitmap bit away from its code.
     + (r.smcBreaks ? `\n  ${r.smcBreaks} self-modify breaks` : '')
+    // --smc-census turns that one number into the sites behind it. A storm is
+    // almost always one line with nearly the whole count against it.
+    + (r.smcSites && r.smcSites.size
+      ? '\n' + [...r.smcSites].sort((a, b) => b[1] - a[1]).slice(0, 12)
+          .map(([k, n]) => `    ${String(n).padStart(8)}  ${k}`).join('\n')
+      : '')
     // Both say the guest is being debugged by its own protector: TF set with a
     // hooked INT 1 is a trace decryptor, and an F1 in the instruction stream is
     // the same trick without the flag. Zero of each means neither is happening,
