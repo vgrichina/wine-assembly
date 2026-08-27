@@ -797,6 +797,11 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false) {
         words.push(H[op2 === 0xB4 ? 'lfs' : 'lgs'], packEa(m), m.disp);
         break;
       }
+      // INVD and WBINVD (486). There are no caches here to invalidate or write
+      // back, so both are exactly a no-op -- but they are not a no-op to the
+      // decoder, and refusing them stopped COLORS.EXE inside its own setup.
+      // CLTS clears the task-switched bit of a CR0 that nothing here reads.
+      if (op2 === 0x08 || op2 === 0x09 || op2 === 0x06) { words.push(H.nop); break; }
       // CMPXCHG (486). Same shape as XADD below, and like it the memory form
       // is a read-modify-write, so writesMem has to be set or a program that
       // spins on one against its own code would not see the block invalidated.

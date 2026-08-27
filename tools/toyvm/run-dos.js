@@ -584,6 +584,17 @@ async function main() {
     const b = r.vm.mem;
     return (b[at + 2] | (b[at + 3] << 8) | (b[at + 4] << 16) | (b[at + 7] << 24)) >>> 0;
   };
+  // How wide the code in that segment is, out of the same descriptor. A
+  // 32-bit segment disassembled as 16-bit is not close to right: the operand
+  // and address sizes are both wrong, so every instruction after the first
+  // multi-byte one is read at the wrong offset and the listing is fiction.
+  const segBits = (seg) => {
+    const ex = r.vm.exports;
+    if (!(ex.get_cr0() & 1)) return 16;
+    if (seg === (r.vm.get('cs') & 0xFFFF)) return ex.get_d32() ? 32 : 16;
+    if ((seg & ~7) + 7 > (ex.get_gdtl() >>> 0)) return 16;
+    return (r.vm.mem[(ex.get_gdtb() >>> 0) + (seg & ~7) + 6] & 0x40) ? 32 : 16;
+  };
   for (const spec of argAll('dump')) {
     const m = /^(?:([0-9a-fA-F]+):)?([0-9a-fA-F]+)(?::(\d+))?$/.exec(spec);
     if (!m) { console.log(`  bad --dump=${spec}, want SEG:OFF[:LEN]`); continue; }
@@ -609,7 +620,7 @@ async function main() {
     const at = (base + off) & r.vm.exports.get_linmask();
     console.log(`\n  ${seg.toString(16)}:${off.toString(16).padStart(4, '0')}`
       + `${base !== ((seg << 4) & 0xFFFFF) ? `  (base ${base.toString(16)})` : ''}`);
-    for (const line of disasmAt(r.vm.mem, at, at, n, null, { bits: 16 })) {
+    for (const line of disasmAt(r.vm.mem, at, at, n, null, { bits: segBits(seg) })) {
       const g = /^([0-9a-f]+)(\s+)(.*)$/.exec(line.trim());
       if (!g) { console.log(`  ${line}`); continue; }
       const lin = parseInt(g[1], 16);
