@@ -85,6 +85,8 @@ UNIT=(
   test/test-run-budget-completes-resume.js
   test/test-cmp-memory-jb.js
   test/test-browser-waveout-pump.js
+  test/test-browser-worker-dx-present.js
+  test/test-browser-worker-input-focus.js
   test/test-dll-init-order.js
   test/test-getmessage-teardown-quit.js
   test/test-gpu-backend.js

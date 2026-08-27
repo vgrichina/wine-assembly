@@ -20,6 +20,7 @@
 //   click:X,Y     move, then press and release the left button
 //   down:X,Y      / up:X,Y   — the halves of a drag
 //   key:Name      keyboard press (puppeteer key name, e.g. Enter, KeyA)
+//   type:TEXT     type literal text through browser key events
 //   wait:MS       idle, letting the guest run
 //   eval:EXPR     evaluate EXPR in the page and print its result
 //   shot:PATH     screenshot to PATH
@@ -40,6 +41,10 @@
 //
 // --cpu=N applies Chrome's CPU throttling while preserving real browser audio
 // timing, which is useful for scheduler-sensitive game/audio failures.
+//
+// --threads opts into the isolated guest-Worker backend before page scripts
+// run. Point --url at `tools/dev-server.js --isolate` (or another COOP/COEP
+// origin); otherwise the page correctly falls back to cooperative execution.
 //
 // --lan=solo|local|cancel answers the virtual-LAN lobby a `lan:` app puts up
 // before it boots (default solo). Without it the launch waits on a button
@@ -72,6 +77,8 @@ const STEPS = (opt('steps', '') || '')
   .filter(Boolean);
 const READY_MS = Number(opt('ready', 6000));
 const CPU_RATE = Number(opt('cpu', 1));
+const THREADS = argv.includes('--threads');
+const PRESENTATION_SCALE = opt('scale', '');
 // A LAN-capable app (lib/apps.js `lan:`) shows the vlan lobby before it boots
 // and the launch blocks on a button nobody clicks in a headless run, so the
 // probe used to time out waiting for runningApps. Answer it the way a person
@@ -243,6 +250,12 @@ async function main() {
         }
       });
     }
+    if (THREADS || PRESENTATION_SCALE) {
+      await page.evaluateOnNewDocument((threads, scale) => {
+        if (threads) localStorage.setItem('wine-assembly.threads', '1');
+        if (scale) localStorage.setItem('wine-assembly:2d-scale', scale);
+      }, THREADS, PRESENTATION_SCALE);
+    }
     await page.goto(`${base}/index.html${QUERY}`, { waitUntil: 'load', timeout: 60000 });
     // Start from an empty profile, then RELOAD. lib/storage.js seeds its
     // default registry (RCT's install Path, Plus!98 MediaDirectory, ...) once
@@ -324,8 +337,8 @@ async function main() {
       if (kind === 'wait') {
         await wait(Number(rest) || 0);
       } else if (kind === 'eval') {
-        const v = await page.evaluate(expr => {
-          try { return JSON.stringify(eval(expr)); } catch (e) { return 'ERROR: ' + e.message; }
+        const v = await page.evaluate(async expr => {
+          try { return JSON.stringify(await eval(expr)); } catch (e) { return 'ERROR: ' + e.message; }
         }, rest);
         console.log(`eval ${rest} => ${v}`);
         continue;
@@ -335,6 +348,8 @@ async function main() {
         continue;
       } else if (kind === 'key') {
         await page.keyboard.press(rest);
+      } else if (kind === 'type') {
+        await page.keyboard.type(rest);
       } else if (kind === 'move' || kind === 'click' || kind === 'dbl'
                  || kind === 'down' || kind === 'up') {
         const [gx, gy] = rest.split(',').map(Number);
@@ -362,8 +377,8 @@ async function main() {
     }
 
     if (FINAL_EVAL) {
-      const v = await page.evaluate(expr => {
-        try { return JSON.stringify(eval(expr)); } catch (e) { return 'ERROR: ' + e.message; }
+      const v = await page.evaluate(async expr => {
+        try { return JSON.stringify(await eval(expr)); } catch (e) { return 'ERROR: ' + e.message; }
       }, FINAL_EVAL);
       console.log(`eval => ${v}`);
     }

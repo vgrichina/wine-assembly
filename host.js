@@ -129,6 +129,10 @@ class WineAssembly {
     this.renderer = null;
     this.resourceJson = null;
     this.threadManager = null;
+    // Slot 0's focus global lives in the guest Worker. Browser input cannot
+    // synchronously call that instance, so the Worker publishes it after each
+    // slice and mouse-down routing updates it immediately between slices.
+    this._workerFocusHwnd = 0;
     // [{ name, base }], every image this process has loaded. A guest thread that
     // traps reports a raw EIP, and a raw EIP in a DLL is unreadable — the load
     // address depends on what loaded before it, so the same crash prints a
@@ -738,6 +742,9 @@ class WineAssembly {
       }
       self._lastInputEvent = evt;
       self.renderer._activeInputEvent = evt;
+      if (self.guestWorker && evt.type === 'mouse' && evt.msg === 0x0201 && evt.hwnd) {
+        self._workerFocusHwnd = evt.hwnd | 0;
+      }
       if (evt.msg !== 0x200) {
         self.logToUI('[input] hwnd=0x' + (evt.hwnd >>> 0).toString(16) + ' msg=0x' + evt.msg.toString(16) + ' wParam=0x' + evt.wParam.toString(16));
       }
@@ -750,7 +757,13 @@ class WineAssembly {
       const evt = self._lastInputEvent;
       if (!evt) return 0;
       // The routing rule itself is shared with the CLI (lib/host-window.js).
-      return inputEventHwnd(evt, self.instance && self.instance.exports);
+      // In browser Worker mode the local instance is deliberately idle and
+      // its per-instance focus global remains zero. Use the focus published by
+      // slot 0 so queued WM_KEYDOWN/WM_CHAR/WM_KEYUP reach native EDIT children.
+      const routingExports = self.guestWorker
+        ? { get_focus_hwnd: () => self._workerFocusHwnd | 0 }
+        : (self.instance && self.instance.exports);
+      return inputEventHwnd(evt, routingExports);
     };
 
     // Wire thread/event imports to ThreadManager
@@ -1192,12 +1205,17 @@ class WineAssembly {
         module: wasmModule,
         sigs,
         hostImports: this._mainImports.host,
-        workerUrl: 'lib/guest-worker.js?v=4',
+        workerUrl: 'lib/guest-worker.js?v=5',
         log: msg => { console.log(msg); self.logToUI(msg); },
         tickMs: () => self._guestTickMs(self.hostCtx && self.hostCtx.sharedAudio),
       });
       await worker.start();
       this.guestWorker = worker;
+      // Renderer windows still retain the browser-side WebAssembly.Instance
+      // as their ownership token. Mark that token so keyboard handling queues
+      // messages for slot 0 instead of calling exports on the idle instance.
+      if (!this.renderer._guestWorkerWasms) this.renderer._guestWorkerWasms = new WeakSet();
+      this.renderer._guestWorkerWasms.add(this.instance);
       this.logToUI('[threads] guest main thread is running in a Worker (experimental)');
     } catch (err) {
       this.guestWorker = null;
@@ -2001,6 +2019,7 @@ class WineAssembly {
         } else {
           [r, threadsRun] = await Promise.all([self.guestWorker.slice(steps, sync), runThreads()]);
         }
+        self._workerFocusHwnd = r.focusHwnd | 0;
         if (self.threadManager) self.threadManager.publishWorkerThunkState(r);
         if (!self.running) return;
         if (self.threadManager && self.threadManager.netWaitPending) {
@@ -2031,6 +2050,14 @@ class WineAssembly {
           return;
         }
         const presentStart = perf ? performance.now() : 0;
+        // Worker-hosted DirectDraw calls mark the same browser-side dirty flag
+        // as cooperative execution. Flush that frame at the slice boundary
+        // before compositing it; otherwise the Worker loop keeps repainting
+        // the last uploaded layer forever even while the guest updates the
+        // shared primary surface (AoE II's New Player screen is the visible
+        // case). Both cooperative scheduler paths do this at their matching
+        // boundaries below.
+        if (self._presentDxIfDirty) self._presentDxIfDirty();
         if (self.renderer && self.renderer.flushRepaint) self.renderer.flushRepaint(true);
         if (perf) perf.mark('present', performance.now() - presentStart);
 
