@@ -7455,6 +7455,17 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
+  ;; ToAscii(uVirtKey, uScanCode, lpKeyState, lpChar, uFlags) → int.
+  ;; The non-Ex entry point uses the same current keyboard layout and output
+  ;; contract. Delegate to the tested translator, then correct its six-argument
+  ;; stdcall pop to this API's five-argument frame.
+  (func $handle_ToAscii
+    (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_ToAsciiEx
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4))))
+
   ;; ToUnicode(uVirtKey, uScanCode, lpKeyState, pwszBuff, cchBuff, wFlags).
   ;; The supported US-layout subset is identical to ToAsciiEx's and that
   ;; implementation already writes a UTF-16 code unit. The sixth argument has

@@ -44,6 +44,7 @@ UNIT=(
   test/test-mmx-mask-copy-run.js
   test/test-copy32-bounded-run.js
   test/test-packed-avg-run.js
+  test/test-mw3-rgb565-alpha-run.js
   test/test-lut-span.js
   test/test-load32-esp-run.js
   test/test-shift-equivalence.js
@@ -94,6 +95,7 @@ UNIT=(
   test/test-getmessage-teardown-quit.js
   test/test-gpu-backend.js
   test/test-keyboard-message-lparam.js
+  test/test-to-ascii.js
   test/test-opengl-fixed-function.js
   test/test-opengl-frame-state.js
   test/test-opengl-command-stream.js
@@ -147,6 +149,7 @@ UNIT=(
   test/test-wat-gdi-multiline-ellipsis.js
   test/test-wat-gdi-draw-text-ex.js
   test/test-wat-gdi-default-bitmap-font.js
+  test/test-wat-gdi-calcrect-memory-dc.js
   test/test-wat-gdi-font-enum.js
   test/test-font-enum-sizes.js
   test/test-wat-gdi-fixed-stock-font.js
@@ -300,6 +303,7 @@ UNIT=(
   test/test-directinput8-create.js
   test/test-directx-ordinals.js
   test/test-launch-prefs-resolution.js
+  test/test-d3dim-indexed-texture.js
   test/test-d3dim-line-primitives.js
   test/test-d3dim-viewport-background-texture.js
   test/test-dx-blank-primary-holdover.js

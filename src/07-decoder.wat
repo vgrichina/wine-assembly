@@ -576,6 +576,41 @@
       (br $l3)))
     (i32.const 1))
 
+  ;; MechWarrior 3's menu compositor is one branchy RGB565 alpha row. Its
+  ;; three alpha arms split the back-edge across four basic blocks, so the
+  ;; self-loop matcher cannot see the loop as a unit. Keep this exact and
+  ;; opt-in under COPY_RUN's existing rollback gate.
+  ;;
+  ;; The executor takes the trip count from [EBP-0x18] on every entry. That
+  ;; bound is the game's clipped row width; no screen-size guess is involved.
+  (func $try_emit_rgb565_alpha_run (param $start_eip i32) (result i32)
+    (if (i32.or
+          (i32.eqz (global.get $loop_copy_emit_enabled))
+          (i32.or (global.get $code16)
+            (i32.ne (local.get $start_eip) (i32.const 0x00528064))))
+      (then (return (i32.const 0))))
+    ;; Exact head and exact induction/back-edge tail. Checking both ends keeps
+    ;; a partially patched binary on the ordinary decoder path.
+    (if (i32.or
+          (i32.ne (call $gl32 (local.get $start_eip)) (i32.const 0x8A0C4D8B))
+          (i32.or
+            (i32.ne (call $gl32 (i32.add (local.get $start_eip) (i32.const 4)))
+              (i32.const 0x03F98009))
+            (i32.or
+              (i32.ne (call $gl32 (i32.add (local.get $start_eip) (i32.const 0x93)))
+                (i32.const 0x8B0C758B))
+              (i32.ne (call $gl32 (i32.add (local.get $start_eip) (i32.const 0xA7)))
+                (i32.const 0xFF53850F)))))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl16 (i32.add (local.get $start_eip) (i32.const 0xAB)))
+                (i32.const 0xFFFF))
+      (then (return (i32.const 0))))
+    (global.set $loop_rgb565_alpha_matches
+      (i32.add (global.get $loop_rgb565_alpha_matches) (i32.const 1)))
+    (call $te (i32.const 436) (i32.const 0))
+    (global.set $d_pc (i32.const 0x00528111))
+    (i32.const 1))
+
   ;; The seven words after a case record's token byte.
   (func $rle_emit_body
     (call $te_raw (i32.or (global.get $rb_kind)
@@ -2919,6 +2954,10 @@
       (if (i32.and (i32.eqz (local.get $icount))
                    (i32.eqz (global.get $code16)))
         (then
+          (if (call $try_emit_rgb565_alpha_run (local.get $start_eip))
+            (then
+              (local.set $done (i32.const 1))
+              (br $decode)))
           (if (call $try_emit_rle_run (local.get $start_eip))
             (then
               (local.set $done (i32.const 1))

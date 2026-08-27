@@ -48,6 +48,9 @@
   (global $loop_avg_matches (mut i32) (i32.const 0))
   (global $loop_avg_runs (mut i32) (i32.const 0))
   (global $loop_avg_pixels (mut i64) (i64.const 0))
+  (global $loop_rgb565_alpha_matches (mut i32) (i32.const 0))
+  (global $loop_rgb565_alpha_runs (mut i32) (i32.const 0))
+  (global $loop_rgb565_alpha_pixels (mut i64) (i64.const 0))
   ;; LUT_RUN and COPY_RUN have independent gates. The role-proved LUT lowering
   ;; is on by default; COPY remains off while its historical Storm divergence
   ;; is investigated. set_loop_emit still controls both for compatibility.
@@ -2769,6 +2772,137 @@
     (global.set $block_budget
       (i32.sub (global.get $block_budget) (local.get $n)))
     (return_call $next))
+
+  ;; ------------------------------------------------------------------
+  ;; 436: MW3 bound-derived RGB565 alpha row
+  ;; ------------------------------------------------------------------
+  ;; Replay the exact three-arm loop at mech3demo!0x528064. The row bound,
+  ;; alpha cursor and destination cursor remain in the guest's own frame slots;
+  ;; publishing them after every pixel preserves the ordinary loop's visible
+  ;; state even when the 4096-pixel safety quantum hands control back early.
+  (func $th_rgb565_alpha_run (param $op i32)
+    (local $bp i32) (local $eax i32) (local $ecx i32) (local $edx i32)
+    (local $ebx i32) (local $esi i32) (local $edi i32)
+    (local $alpha i32) (local $count i32) (local $old_count i32)
+    (local $iters i32) (local $cost i32) (local $cont i32)
+
+    (local.set $bp (global.get $ebp))
+    (local.set $eax (global.get $eax))
+    (local.set $ecx (global.get $ecx))
+    (local.set $edx (global.get $edx))
+    (local.set $ebx (global.get $ebx))
+    (local.set $esi (global.get $esi))
+    (local.set $edi (global.get $edi))
+    (local.set $count (call $gl32 (i32.add (local.get $bp) (i32.const -24))))
+
+    (block $done (loop $pixels
+      ;; A normal entry is dominated by TEST count / JLE exit. Keep a corrupt
+      ;; or direct zero entry bounded instead of manufacturing 2^32 pixels.
+      (br_if $done (i32.le_s (local.get $count) (i32.const 0)))
+      (br_if $done (i32.ge_u (local.get $iters) (i32.const 4096)))
+
+      ;; mov ecx,[ebp+0xc] / mov cl,[ecx]
+      (local.set $ecx (call $gl32 (i32.add (local.get $bp) (i32.const 12))))
+      (local.set $alpha (call $gl8 (local.get $ecx)))
+      (local.set $ecx
+        (i32.or (i32.and (local.get $ecx) (i32.const 0xFFFFFF00))
+                (local.get $alpha)))
+      (local.set $cost (i32.add (local.get $cost) (i32.const 13)))
+
+      (if (i32.gt_u (local.get $alpha) (i32.const 3))
+        (then
+          (local.set $cost (i32.add (local.get $cost) (i32.const 5)))
+          (if (i32.ge_u (local.get $alpha) (i32.const 0xFC))
+            (then
+              ;; Opaque arm: copy the source RGB565 word verbatim.
+              (local.set $ecx
+                (i32.or (i32.and (local.get $ecx) (i32.const 0xFFFF0000))
+                  (call $gl16 (i32.add (local.get $eax) (local.get $edi)))))
+              (call $gs16 (local.get $eax) (local.get $ecx)))
+            (else
+              ;; Interpolate each RGB565 lane with the exact signed shifts and
+              ;; low-byte fixups emitted by MSVC 5. No host colour conversion.
+              (local.set $cost (i32.add (local.get $cost) (i32.const 35)))
+              (local.set $esi (i32.extend16_s (call $gl16 (local.get $eax))))
+              (local.set $edx
+                (i32.extend16_s (call $gl16
+                  (i32.add (local.get $eax) (local.get $edi)))))
+              (local.set $edi (local.get $ecx))
+              (local.set $ecx (local.get $edx))
+              (local.set $eax (local.get $esi))
+              (local.set $ecx (i32.and (local.get $ecx) (i32.const 0xF800)))
+              (local.set $eax (i32.and (local.get $eax) (i32.const 0xF800)))
+              (local.set $ebx (local.get $esi))
+              (local.set $ecx (i32.sub (local.get $ecx) (local.get $eax)))
+              (local.set $eax (local.get $edx))
+              (local.set $eax (i32.and (local.get $eax) (i32.const 0x07E0)))
+              (local.set $ebx (i32.and (local.get $ebx) (i32.const 0x07E0)))
+              (local.set $edi (i32.and (local.get $edi) (i32.const 0xFF)))
+              (local.set $eax (i32.sub (local.get $eax) (local.get $ebx)))
+              (local.set $eax (i32.mul (local.get $eax) (local.get $edi)))
+              (local.set $ecx (i32.mul (local.get $ecx) (local.get $edi)))
+              (local.set $eax (i32.shr_s (local.get $eax) (i32.const 8)))
+              (local.set $ecx (i32.shr_s (local.get $ecx) (i32.const 8)))
+              (local.set $eax (i32.and (local.get $eax) (i32.const 0xFFFFFFE0)))
+              (local.set $ecx (i32.and (local.get $ecx) (i32.const 0xFFFFF800)))
+              (if (i32.lt_s (local.get $eax) (i32.const 0))
+                (then (local.set $eax (i32.or (local.get $eax) (i32.const 0x20))))
+                (else (local.set $eax
+                  (i32.and (local.get $eax) (i32.const 0xFFFFFFDF)))))
+              (local.set $esi (i32.add (local.get $esi) (local.get $ecx)))
+              (local.set $edx (i32.and (local.get $edx) (i32.const 0x1F)))
+              (local.set $ecx (i32.and (local.get $esi) (i32.const 0x1F)))
+              (local.set $ebx (call $gl32
+                (i32.add (local.get $bp) (i32.const -12))))
+              (local.set $edx (i32.sub (local.get $edx) (local.get $ecx)))
+              (local.set $edx (i32.mul (local.get $edx) (local.get $edi)))
+              (local.set $edi (call $gl32
+                (i32.add (local.get $bp) (i32.const -28))))
+              (local.set $edx (i32.shr_s (local.get $edx) (i32.const 8)))
+              (local.set $edx (i32.add (local.get $edx) (local.get $eax)))
+              (local.set $eax (call $gl32
+                (i32.add (local.get $bp) (i32.const -32))))
+              (local.set $esi (i32.add (local.get $esi) (local.get $edx)))
+              (local.set $edx (call $gl32
+                (i32.add (local.get $bp) (i32.const -20))))
+              (call $gs16 (local.get $eax) (local.get $esi))))))
+
+      ;; Common induction tail. These stores are deliberately per pixel: the
+      ;; guest frame is the loop's architectural bound/cursor state.
+      (local.set $esi (call $gl32 (i32.add (local.get $bp) (i32.const 12))))
+      (local.set $count (call $gl32 (i32.add (local.get $bp) (i32.const -24))))
+      (local.set $eax (i32.add (local.get $eax) (i32.const 2)))
+      (local.set $esi (i32.add (local.get $esi) (i32.const 1)))
+      (local.set $old_count (local.get $count))
+      (local.set $count (i32.sub (local.get $count) (i32.const 1)))
+      (call $gs32 (i32.add (local.get $bp) (i32.const -32)) (local.get $eax))
+      (call $gs32 (i32.add (local.get $bp) (i32.const 12)) (local.get $esi))
+      (call $gs32 (i32.add (local.get $bp) (i32.const -24)) (local.get $count))
+      (local.set $iters (i32.add (local.get $iters) (i32.const 1)))
+      (br_if $pixels (local.get $count))))
+
+    (global.set $eax (local.get $eax))
+    (global.set $ecx (local.get $count))
+    (global.set $edx (local.get $edx))
+    (global.set $ebx (local.get $ebx))
+    (global.set $esi (local.get $esi))
+    (global.set $edi (local.get $edi))
+    (if (local.get $iters)
+      (then (call $set_flags_dec (local.get $old_count) (local.get $count))))
+    (global.set $steps
+      (i32.sub (global.get $steps)
+        (i32.sub (local.get $cost) (i32.const 1))))
+    (global.set $block_budget
+      (i32.sub (global.get $block_budget) (local.get $iters)))
+    (global.set $loop_rgb565_alpha_runs
+      (i32.add (global.get $loop_rgb565_alpha_runs) (i32.const 1)))
+    (global.set $loop_rgb565_alpha_pixels
+      (i64.add (global.get $loop_rgb565_alpha_pixels)
+        (i64.extend_i32_u (local.get $iters))))
+    (local.set $cont (i32.ne (local.get $count) (i32.const 0)))
+    (global.set $eip
+      (select (i32.const 0x00528064) (i32.const 0x00528111) (local.get $cont)))
+    (return_call $branch_end))
 
   ;; Called from $decode_block just before $cache_store.
   (func $loop_match_block (param $start_eip i32) (param $tstart i32)

@@ -68,6 +68,14 @@ assert(mw3.some(item => item.vfsPath.toLowerCase() === 'c:\\zbd\\reader.zbd'),
   'MechWarrior 3 must mount its bootstrap database at c:\\zbd\\reader.zbd');
 assert(mw3.some(item => item.vfsPath.toLowerCase() === 'c:\\zbd\\c4\\gamez.zbd'),
   'MechWarrior 3 must preserve nested database paths');
+assert((APPS.mw3.dlls || []).some(url =>
+  path.basename(url).toLowerCase() === 'msvcp50.dll'),
+  'MechWarrior 3 must preload its app-local MSVCP50 runtime for std::_Lockit');
+assert((APPS.mw3.dlls || []).some(url =>
+  path.basename(url).toLowerCase() === 'mech3msg.dll'),
+  'MechWarrior 3 must preload its app-local menu-caption resource DLL');
+assert.strictEqual(APPS.mw3.copySuperops, true,
+  'MechWarrior 3 must explicitly opt into its bound-derived RGB565 row');
 assert.strictEqual(APPS.mw3.requiredFiles, true,
   'MechWarrior 3 database files must be launch-critical');
 

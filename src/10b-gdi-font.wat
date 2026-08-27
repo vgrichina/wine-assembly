@@ -2861,6 +2861,7 @@
   (func $gdi_bitmap_draw_text (param $hdc i32) (param $text i32) (param $count i32)
         (param $rect i32) (param $format i32) (param $wide i32) (result i32)
     (local $strike i32) (local $desc i32) (local $height i32)
+    (local $dc i32)
     (local $scalable i32) (local $draw_result i32)
     (local $logical_height i32) (local $total_height i32)
     (local $left_device i32) (local $top_device i32) (local $right_device i32)
@@ -2909,7 +2910,30 @@
     (local.set $step (i32.const 2))
     (local.set $desc (global.get $GDI_BITMAP_FONT_DESC))
     (if (i32.eqz (call $gdi_surface_descriptor (local.get $hdc) (local.get $desc)))
-      (then (return (i32.const 0))))
+      (then
+        ;; DT_CALCRECT is a measurement operation and does not require a
+        ;; bitmap selected into a memory DC. MechWarrior 3 deliberately uses
+        ;; that ordering while it builds each font atlas: create/select font,
+        ;; measure its label, then allocate and select the correctly-sized
+        ;; DIB. Requiring a drawable surface here left every result RECT zero
+        ;; and therefore manufactured an empty caption atlas.
+        (if (i32.eqz (i32.and (local.get $format) (i32.const 0x400)))
+          (then (return (i32.const 0))))
+        (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
+        (if (i32.eqz (local.get $dc)) (then (return (i32.const 0))))
+        ;; The CALCRECT path consumes only the logical/device mapping fields.
+        ;; Mirror the descriptor mapping populated by gdi_surface_descriptor;
+        ;; its pixel pointer, dimensions and format intentionally stay zero.
+        (memory.fill (local.get $desc) (i32.const 0)
+          (global.get $GDI_BITMAP_FONT_DESC_SIZE))
+        (i32.store offset=32 (local.get $desc) (i32.load offset=40 (local.get $dc)))
+        (i32.store offset=36 (local.get $desc) (i32.load offset=44 (local.get $dc)))
+        (i32.store offset=40 (local.get $desc) (i32.load offset=48 (local.get $dc)))
+        (i32.store offset=44 (local.get $desc) (i32.load offset=52 (local.get $dc)))
+        (i32.store offset=48 (local.get $desc) (i32.load offset=56 (local.get $dc)))
+        (i32.store offset=52 (local.get $desc) (i32.load offset=60 (local.get $dc)))
+        (i32.store offset=56 (local.get $desc) (i32.load offset=64 (local.get $dc)))
+        (i32.store offset=60 (local.get $desc) (i32.load offset=68 (local.get $dc)))))
     (if (local.get $strike)
       (then (local.set $height (call $gdi_bitmap_font_height
         (local.get $hdc) (local.get $strike))))

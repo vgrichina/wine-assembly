@@ -3237,17 +3237,14 @@
           (local.get $state_guest) (local.get $vbase_wa) (local.get $ibase_wa)
           (local.get $dwVertexCount) (local.get $vtxType) (local.get $idx2) (local.get $t2)))
       (then (return)))
-    (call $d3dim_draw_tri_culled (local.get $this) (local.get $rt) (i32.const 0) (i32.const 1)
-      (call $d3dim_coord_i (f32.load (local.get $t0)))
-      (call $d3dim_coord_i (f32.load (i32.add (local.get $t0) (i32.const 4))))
-      (f32.load (i32.add (local.get $t0) (i32.const 8)))
-      (call $d3dim_coord_i (f32.load (local.get $t1)))
-      (call $d3dim_coord_i (f32.load (i32.add (local.get $t1) (i32.const 4))))
-      (f32.load (i32.add (local.get $t1) (i32.const 8)))
-      (call $d3dim_coord_i (f32.load (local.get $t2)))
-      (call $d3dim_coord_i (f32.load (i32.add (local.get $t2) (i32.const 4))))
-      (f32.load (i32.add (local.get $t2) (i32.const 8)))
-      (i32.load (i32.add (local.get $t0) (i32.const 16)))))
+    ;; Indexed and unindexed triangles share the same terminal decision.  The
+    ;; prepared TL vertices still need ordinary culling, but when stage 0 has a
+    ;; live DirectDraw texture the rasterizer must consume their tu/tv fields.
+    ;; Calling $d3dim_draw_tri_culled directly here discarded the binding and
+    ;; flattened MW3's entire world to vertex diffuse colours.
+    (call $d3dim_draw_tl_triangle_dp
+      (local.get $this) (local.get $rt) (i32.const 0)
+      (local.get $t0) (local.get $t1) (local.get $t2)))
 
   ;; ── Line and point primitives ─────────────────────────────────
   ;; D3DPT_LINELIST(2) and D3DPT_LINESTRIP(3) were never rasterized:
