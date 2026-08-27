@@ -1338,6 +1338,16 @@
       (local.get $ret) (global.get $esp) (local.get $arg1)
       (i32.const 0) (i32.const 0xFF)))
 
+  ;; EnumFontsW(hdc, lpszFace, proc, lParam) → INT. The callback receives
+  ;; LOGFONTW/TEXTMETRICW records, matching the existing wide family walk.
+  (func $handle_EnumFontsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ret i32)
+    (local.set $ret (call $gl32 (global.get $esp)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    (call $gdi_font_enum_start (local.get $arg2) (local.get $arg3)
+      (local.get $ret) (global.get $esp) (local.get $arg1)
+      (i32.const 1) (i32.const 0xFF)))
+
   (func $handle_SetMetaFileBitsEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $data i32)
     (if (local.get $arg1) (then (local.set $data (call $g2w (local.get $arg1)))))
@@ -3244,3 +3254,208 @@
           (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
         (local.get $arg3)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
+  ;; Minimal GDI+ flat API used by optional installer skin DLLs.  GDI+ objects
+  ;; are opaque to callers; keep just a kind and deterministic dimensions so
+  ;; image bookkeeping succeeds while drawing remains a successful no-op.
+  ;; This deliberately does not claim to decode PNG/JPEG data.
+  (func $gdip_new_object (param $kind i32) (param $width i32) (param $height i32) (result i32)
+    (local $obj i32)
+    (local.set $obj (call $heap_alloc (i32.const 16)))
+    (if (local.get $obj)
+      (then
+        (call $gs32 (local.get $obj) (i32.const 0x50494447)) ;; "GDIP"
+        (call $gs32 (i32.add (local.get $obj) (i32.const 4)) (local.get $width))
+        (call $gs32 (i32.add (local.get $obj) (i32.const 8)) (local.get $height))
+        (call $gs32 (i32.add (local.get $obj) (i32.const 12)) (local.get $kind))))
+    (local.get $obj))
+
+  (func $gdip_create_out (param $out i32) (param $kind i32)
+                         (param $width i32) (param $height i32) (result i32)
+    (local $obj i32)
+    (if (i32.eqz (local.get $out)) (then (return (i32.const 2)))) ;; InvalidParameter
+    (local.set $obj (call $gdip_new_object
+      (local.get $kind) (local.get $width) (local.get $height)))
+    (if (i32.eqz (local.get $obj)) (then (return (i32.const 3)))) ;; OutOfMemory
+    (call $gs32 (local.get $out) (local.get $obj))
+    (i32.const 0))
+
+  ;; Read only the headers needed for GdipGetImageWidth/Height.  PNG stores
+  ;; dimensions in the fixed IHDR; JPEG stores them in a Start Of Frame
+  ;; segment, which is normally within the first few KiB.  Return width in the
+  ;; low word and height in the high word, or zero when the file is unknown.
+  (func $gdip_image_size (param $filename i32) (result i32)
+    (local $handle i32) (local $buf i32) (local $data i32) (local $n i32)
+    (local $i i32) (local $marker i32) (local $width i32) (local $height i32)
+    (local $packed i32)
+    (if (i32.eqz (local.get $filename)) (then (return (i32.const 0))))
+    (local.set $handle (call $host_fs_create_file (call $g2w (local.get $filename))
+      (i32.const 0x80000000) (i32.const 3) (i32.const 0x80) (i32.const 1)))
+    (if (i32.eq (local.get $handle) (i32.const -1)) (then (return (i32.const 0))))
+    (local.set $buf (call $heap_alloc (i32.const 4104)))
+    (if (i32.eqz (local.get $buf))
+      (then (drop (call $host_fs_close_handle (local.get $handle)))
+            (return (i32.const 0))))
+    (call $gs32 (i32.add (local.get $buf) (i32.const 4096)) (i32.const 0))
+    (drop (call $host_fs_read_file (local.get $handle) (local.get $buf)
+      (i32.const 4096) (i32.add (local.get $buf) (i32.const 4096))))
+    (drop (call $host_fs_close_handle (local.get $handle)))
+    (local.set $n (call $gl32 (i32.add (local.get $buf) (i32.const 4096))))
+    (local.set $data (call $g2w (local.get $buf)))
+    ;; PNG signature and IHDR dimensions (network byte order).
+    (if (i32.and (i32.ge_u (local.get $n) (i32.const 24))
+          (i32.and (i32.eq (i32.load (local.get $data)) (i32.const 0x474E5089))
+                   (i32.eq (i32.load offset=12 (local.get $data)) (i32.const 0x52444849))))
+      (then
+        (local.set $width (i32.or
+          (i32.shl (i32.load8_u offset=16 (local.get $data)) (i32.const 24))
+          (i32.or (i32.shl (i32.load8_u offset=17 (local.get $data)) (i32.const 16))
+            (i32.or (i32.shl (i32.load8_u offset=18 (local.get $data)) (i32.const 8))
+                    (i32.load8_u offset=19 (local.get $data))))))
+        (local.set $height (i32.or
+          (i32.shl (i32.load8_u offset=20 (local.get $data)) (i32.const 24))
+          (i32.or (i32.shl (i32.load8_u offset=21 (local.get $data)) (i32.const 16))
+            (i32.or (i32.shl (i32.load8_u offset=22 (local.get $data)) (i32.const 8))
+                    (i32.load8_u offset=23 (local.get $data))))))
+        (local.set $packed (i32.or (i32.and (local.get $width) (i32.const 0xFFFF))
+          (i32.shl (i32.and (local.get $height) (i32.const 0xFFFF)) (i32.const 16))))))
+    ;; JPEG SOF0/1/2/3, SOF5/6/7, SOF9/10/11, or SOF13/14/15.
+    (if (i32.and (i32.eqz (local.get $packed)) (i32.ge_u (local.get $n) (i32.const 11)))
+      (then
+        (local.set $i (i32.const 2))
+        (block $jpeg_done (loop $jpeg
+          (br_if $jpeg_done (i32.gt_u (local.get $i) (i32.sub (local.get $n) (i32.const 9))))
+          (if (i32.eq (i32.load8_u (i32.add (local.get $data) (local.get $i))) (i32.const 0xFF))
+            (then
+              (local.set $marker (i32.load8_u
+                (i32.add (local.get $data) (i32.add (local.get $i) (i32.const 1)))))
+              (if (i32.or
+                    (i32.or (i32.and (i32.ge_u (local.get $marker) (i32.const 0xC0))
+                                      (i32.le_u (local.get $marker) (i32.const 0xC3)))
+                            (i32.and (i32.ge_u (local.get $marker) (i32.const 0xC5))
+                                      (i32.le_u (local.get $marker) (i32.const 0xC7))))
+                    (i32.or (i32.and (i32.ge_u (local.get $marker) (i32.const 0xC9))
+                                      (i32.le_u (local.get $marker) (i32.const 0xCB)))
+                            (i32.and (i32.ge_u (local.get $marker) (i32.const 0xCD))
+                                      (i32.le_u (local.get $marker) (i32.const 0xCF)))))
+                (then
+                  (local.set $height (i32.or
+                    (i32.shl (i32.load8_u (i32.add (local.get $data)
+                      (i32.add (local.get $i) (i32.const 5)))) (i32.const 8))
+                    (i32.load8_u (i32.add (local.get $data)
+                      (i32.add (local.get $i) (i32.const 6))))))
+                  (local.set $width (i32.or
+                    (i32.shl (i32.load8_u (i32.add (local.get $data)
+                      (i32.add (local.get $i) (i32.const 7)))) (i32.const 8))
+                    (i32.load8_u (i32.add (local.get $data)
+                      (i32.add (local.get $i) (i32.const 8))))))
+                  (local.set $packed (i32.or (local.get $width)
+                    (i32.shl (local.get $height) (i32.const 16))))
+                  (br $jpeg_done)))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $jpeg)))))
+    (call $heap_free (local.get $buf))
+    (local.get $packed))
+
+  (func $handle_GdiplusStartup (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg0)
+      (then (call $gs32 (local.get $arg0) (i32.const 1)) (global.set $eax (i32.const 0)))
+      (else (global.set $eax (i32.const 2))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_GdiplusShutdown (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_GdipLoadImageFromFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $size i32) (local $width i32) (local $height i32)
+    (local.set $size (call $gdip_image_size (local.get $arg0)))
+    (local.set $width (i32.and (local.get $size) (i32.const 0xFFFF)))
+    (local.set $height (i32.shr_u (local.get $size) (i32.const 16)))
+    (if (i32.eqz (local.get $width)) (then (local.set $width (i32.const 1))))
+    (if (i32.eqz (local.get $height)) (then (local.set $height (i32.const 1))))
+    (global.set $eax (call $gdip_create_out (local.get $arg1) (i32.const 1)
+      (local.get $width) (local.get $height)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_GdipGetImageWidth (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.and (i32.ne (local.get $arg0) (i32.const 0))
+                 (i32.ne (local.get $arg1) (i32.const 0)))
+      (then (call $gs32 (local.get $arg1) (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
+            (global.set $eax (i32.const 0)))
+      (else (global.set $eax (i32.const 2))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_GdipGetImageHeight (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.and (i32.ne (local.get $arg0) (i32.const 0))
+                 (i32.ne (local.get $arg1) (i32.const 0)))
+      (then (call $gs32 (local.get $arg1) (call $gl32 (i32.add (local.get $arg0) (i32.const 8))))
+            (global.set $eax (i32.const 0)))
+      (else (global.set $eax (i32.const 2))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_GdipDisposeImage (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg0) (then (call $heap_free (local.get $arg0))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_GdipCreateFromHDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdip_create_out (local.get $arg1) (i32.const 2)
+      (i32.const 0) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_GdipCreateFromHWND (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_GdipCreateFromHDC
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+
+  (func $handle_GdipGetImageGraphicsContext (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdip_create_out (local.get $arg1) (i32.const 2)
+      (i32.const 0) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_GdipDeleteGraphics (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg0) (then (call $heap_free (local.get $arg0))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_GdipCreateBitmapFromGraphics (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdip_create_out (local.get $arg3) (i32.const 1)
+      (local.get $arg0) (local.get $arg1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
+  (func $handle_GdipCreateBitmapFromHBITMAP (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdip_create_out (local.get $arg2) (i32.const 1)
+      (i32.const 1) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_GdipCreateImageAttributes (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $gdip_create_out (local.get $arg0) (i32.const 3)
+      (i32.const 0) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_GdipDisposeImageAttributes (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg0) (then (call $heap_free (local.get $arg0))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; Drawing/state calls return Gdiplus::Ok and consume their documented
+  ;; stdcall frames. Their inputs are intentionally opaque in this bridge.
+  (func $handle_GdipDrawImageRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
+  (func $handle_GdipSetSmoothingMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+  (func $handle_GdipSetInterpolationMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+  (func $handle_GdipGraphicsClear (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+  (func $handle_GdipDrawImageRectRectI (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 60))))
+  (func $handle_GdipSetImageAttributesColorMatrix (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28))))

@@ -307,12 +307,32 @@
 
   ;; IDirect3DDevice9_GetSwapChain — 3 args (incl. this)
   (func $handle_IDirect3DDevice9_GetSwapChain (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+    (local $entry i32) (local $slot i32) (local $obj i32)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    (if (i32.or (local.get $arg1) (i32.eqz (local.get $arg2)))
+      (then
+        (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (i32.const 0))))
+        (global.set $eax (i32.const 0x8876086C)) ;; D3DERR_INVALIDCALL
+        (return)))
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (if (i32.eqz (local.get $entry))
+      (then
+        (call $gs32 (local.get $arg2) (i32.const 0))
+        (global.set $eax (i32.const 0x8876086C))
+        (return)))
+    ;; A swap chain is a second COM interface over the device's same backing
+    ;; slot: it therefore shares the device render target and reference count.
+    (local.set $slot (call $dx_slot_of (local.get $entry)))
+    (local.set $obj (call $dx_get_wrapper_for_vtbl
+      (local.get $slot) (global.get $DX_VTBL_D3DSWAP9)))
+    (i32.store offset=4 (local.get $entry)
+      (i32.add (i32.load offset=4 (local.get $entry)) (i32.const 1)))
+    (call $gs32 (local.get $arg2) (local.get $obj))
+    (global.set $eax (i32.const 0)))
 
   ;; IDirect3DDevice9_GetNumberOfSwapChains — 1 args (incl. this)
   (func $handle_IDirect3DDevice9_GetNumberOfSwapChains (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; IDirect3DDevice9_Reset — 2 args (incl. this)
@@ -747,12 +767,16 @@
 
   ;; IDirect3DDevice9_CreateVertexShader — 3 args (incl. this)
   (func $handle_IDirect3DDevice9_CreateVertexShader (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (i32.const 0))))
+    (global.set $eax (i32.const 0x8876086C)) ;; D3DERR_INVALIDCALL
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DDevice9_SetVertexShader — 2 args (incl. this)
   (func $handle_IDirect3DDevice9_SetVertexShader (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; NULL selects the fixed-function vertex pipeline used by SDL's textured
+    ;; quad renderer. Programmable shader objects are not exposed yet.
+    (global.set $eax
+      (select (i32.const 0x8876086C) (i32.const 0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3DDevice9_GetVertexShader — 2 args (incl. this)
@@ -822,12 +846,15 @@
 
   ;; IDirect3DDevice9_CreatePixelShader — 3 args (incl. this)
   (func $handle_IDirect3DDevice9_CreatePixelShader (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (i32.const 0))))
+    (global.set $eax (i32.const 0x8876086C)) ;; D3DERR_INVALIDCALL
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DDevice9_SetPixelShader — 2 args (incl. this)
   (func $handle_IDirect3DDevice9_SetPixelShader (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; NULL selects fixed-function texture/color stages.
+    (global.set $eax
+      (select (i32.const 0x8876086C) (i32.const 0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3DDevice9_GetPixelShader — 2 args (incl. this)
@@ -1124,3 +1151,123 @@
   (func $handle_Direct3DCreate9 (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $dx_create_com_obj (i32.const 34) (global.get $DX_VTBL_D3D9)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; ── IDirect3DSwapChain9 — thin view over IDirect3DDevice9 ─────────
+  (func $handle_IDirect3DSwapChain9_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $entry i32)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    (if (i32.eqz (local.get $arg2))
+      (then (global.set $eax (i32.const 0x80004003)) (return)))
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (i32.store offset=4 (local.get $entry)
+      (i32.add (i32.load offset=4 (local.get $entry)) (i32.const 1)))
+    (call $gs32 (local.get $arg2) (local.get $arg0))
+    (global.set $eax (i32.const 0)))
+
+  (func $handle_IDirect3DSwapChain9_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $entry i32) (local $rc i32)
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (local.set $rc (i32.add (i32.load offset=4 (local.get $entry)) (i32.const 1)))
+    (i32.store offset=4 (local.get $entry) (local.get $rc))
+    (global.set $eax (local.get $rc))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_IDirect3DSwapChain9_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $entry i32) (local $rc i32)
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (local.set $rc (i32.sub (i32.load offset=4 (local.get $entry)) (i32.const 1)))
+    (if (i32.le_s (local.get $rc) (i32.const 0))
+      (then (call $dx_free (local.get $entry)) (global.set $eax (i32.const 0)))
+      (else
+        (i32.store offset=4 (local.get $entry) (local.get $rc))
+        (global.set $eax (local.get $rc))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_IDirect3DSwapChain9_Present (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $rt i32)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+    (local.set $rt (call $d3ddev_rt_entry (local.get $arg0)))
+    (if (local.get $rt) (then (call $dx_present (local.get $rt))))
+    (global.set $eax (i32.const 0)))
+
+  (func $handle_IDirect3DSwapChain9_GetFrontBufferData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x8876086C))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IDirect3DSwapChain9_GetBackBuffer (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $rt i32) (local $slot i32)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    (if (i32.or (local.get $arg1) (i32.eqz (local.get $arg3)))
+      (then
+        (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))
+        (global.set $eax (i32.const 0x8876086C))
+        (return)))
+    (local.set $rt (call $d3ddev_rt_entry (local.get $arg0)))
+    (if (i32.eqz (local.get $rt))
+      (then
+        (call $gs32 (local.get $arg3) (i32.const 0))
+        (global.set $eax (i32.const 0x8876086C))
+        (return)))
+    (local.set $slot (call $dx_slot_of (local.get $rt)))
+    (i32.store offset=4 (local.get $rt)
+      (i32.add (i32.load offset=4 (local.get $rt)) (i32.const 1)))
+    (call $gs32 (local.get $arg3)
+      (call $dx_get_wrapper_for_vtbl (local.get $slot) (global.get $DX_VTBL_D3DSURF9)))
+    (global.set $eax (i32.const 0)))
+
+  (func $handle_IDirect3DSwapChain9_GetRasterStatus (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1)
+      (then
+        (call $gs32 (local.get $arg1) (i32.const 0))
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0))
+        (global.set $eax (i32.const 0)))
+      (else (global.set $eax (i32.const 0x8876086C))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IDirect3DSwapChain9_GetDisplayMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $rt i32) (local $w i32) (local $h i32)
+    (local.set $rt (call $d3ddev_rt_entry (local.get $arg0)))
+    (if (i32.or (i32.eqz (local.get $arg1)) (i32.eqz (local.get $rt)))
+      (then (global.set $eax (i32.const 0x8876086C)))
+      (else
+        (local.set $w (i32.load16_u offset=12 (local.get $rt)))
+        (local.set $h (i32.load16_u offset=14 (local.get $rt)))
+        (call $gs32 (local.get $arg1) (local.get $w))
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (local.get $h))
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 8)) (i32.const 60))
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 12)) (i32.const 22))
+        (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IDirect3DSwapChain9_GetDevice (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $entry i32) (local $slot i32)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    (if (i32.eqz (local.get $arg1))
+      (then (global.set $eax (i32.const 0x8876086C)) (return)))
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (local.set $slot (call $dx_slot_of (local.get $entry)))
+    (i32.store offset=4 (local.get $entry)
+      (i32.add (i32.load offset=4 (local.get $entry)) (i32.const 1)))
+    (call $gs32 (local.get $arg1)
+      (call $dx_get_wrapper_for_vtbl (local.get $slot) (global.get $DX_VTBL_D3DDEV9)))
+    (global.set $eax (i32.const 0)))
+
+  (func $handle_IDirect3DSwapChain9_GetPresentParameters (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $rt i32) (local $w i32) (local $h i32) (local $windowed i32)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    (local.set $rt (call $d3ddev_rt_entry (local.get $arg0)))
+    (if (i32.or (i32.eqz (local.get $arg1)) (i32.eqz (local.get $rt)))
+      (then (global.set $eax (i32.const 0x8876086C)) (return)))
+    (local.set $w (i32.load16_u offset=12 (local.get $rt)))
+    (local.set $h (i32.load16_u offset=14 (local.get $rt)))
+    (local.set $windowed (i32.ne (global.get $d3d9_windowed_hwnd) (i32.const 0)))
+    (call $zero_memory (call $g2w (local.get $arg1)) (i32.const 56))
+    (call $gs32 (local.get $arg1) (local.get $w))
+    (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (local.get $h))
+    (call $gs32 (i32.add (local.get $arg1) (i32.const 8)) (i32.const 22))
+    (call $gs32 (i32.add (local.get $arg1) (i32.const 12)) (i32.const 1))
+    (call $gs32 (i32.add (local.get $arg1) (i32.const 24)) (i32.const 1))
+    (call $gs32 (i32.add (local.get $arg1) (i32.const 28))
+      (global.get $d3d9_windowed_hwnd))
+    (call $gs32 (i32.add (local.get $arg1) (i32.const 32)) (local.get $windowed))
+    (global.set $eax (i32.const 0)))

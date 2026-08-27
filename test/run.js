@@ -6,7 +6,7 @@ const { loadDlls, callDllMain, detectRequiredDlls, shouldReportNtForDlls, loadWi
 const { inputEventHwnd } = require('../lib/host-window');
 const { compileWat } = require('../lib/compile-wat');
 const { resolveDllGraph, mountLoadedDllFiles, stageAndLoadPe, setExeName, setExtraCmdline,
-  handleLoadLibraryYield, handleComDllYield } = require('../lib/process-boot');
+  setEnvironmentVariable, handleLoadLibraryYield, handleComDllYield } = require('../lib/process-boot');
 const {
   applyExeCompatibilityPatches: applyProfilePatches,
   applyLaunchPreferences: applyProfileLaunchPrefs,
@@ -409,6 +409,15 @@ const VFS_MOUNT = getArgs('vfs-mount');
 const DLL_SEED = getArgs('dll-seed');
 const STUCK_AFTER = parseInt(getArg('stuck-after', '10'));  // --stuck-after=N: stuck detection after N same-EIP batches
 const WINVER = getArg('winver', null); // --winver=nt4|win2k|win98 or hex like 0x05650004
+// --env=NAME=VALUE (repeatable): set a compatibility variable in this guest
+// process only. The value may itself contain '='; an empty value is retained.
+const PROCESS_ENVIRONMENT = args.filter(value => value.startsWith('--env='))
+  .map(value => value.slice('--env='.length))
+  .map(spec => {
+    const equals = spec.indexOf('=');
+    if (equals <= 0) throw new Error(`invalid --env value ${JSON.stringify(spec)}; expected NAME=VALUE`);
+    return [spec.slice(0, equals), spec.slice(equals + 1)];
+  });
 // --app=sol launches what the desktop icon launches: lib/apps.js is the one
 // registry both hosts read, so the exe, the DLLs beside it, the data files it
 // needs in the VFS and its command line all come from the same entry the
@@ -2259,15 +2268,16 @@ async function main() {
     // the caller's registers with the wndproc still mid-flight. The guest call
     // is dropped on the floor, so anything the tail of that handler would have
     // done simply never happens -- and nothing else in the run says so. Three
-    // words follow: EIP, yield_reason, and the message id.
+    // words follow: EIP, yield_reason, message id, HWND, wParam, lParam.
     if ((val >>> 0) === 0xCADE5000) { pendingSyncBail = { words: [] }; return; }
     if (pendingSyncBail) {
       pendingSyncBail.words.push(val >>> 0);
-      if (pendingSyncBail.words.length < 3) return;
-      const [eip, yr, msg] = pendingSyncBail.words;
+      if (pendingSyncBail.words.length < 6) return;
+      const [eip, yr, msg, hwnd, wParam, lParam] = pendingSyncBail.words;
       pendingSyncBail = null;
       flushDedup();
-      logs.push(`[sync] ABANDONED wndproc msg=0x${msg.toString(16)} at ${hex(eip)} ` +
+      logs.push(`[sync] ABANDONED wndproc hwnd=${hex(hwnd)} msg=${hex(msg)} ` +
+        `wParam=${hex(wParam)} lParam=${hex(lParam)} at ${hex(eip)} ` +
         `after 64 rounds (yield_reason=${yr})`);
       return;
     }
@@ -3337,6 +3347,16 @@ async function main() {
 
   // Set EXE name from path
   setExeName(instance.exports, memory.buffer, path.basename(EXE_PATH));
+
+  // Queue environment overrides before loading DLLs: a CRT's DllMain snapshots
+  // GetEnvironmentStrings while it initializes. The WAT export keeps this
+  // lazy, so queueing here does not allocate or perturb the early guest heap.
+  for (const [name, value] of PROCESS_ENVIRONMENT) {
+    if (!setEnvironmentVariable(instance.exports, memory.buffer, name, value)) {
+      throw new Error(`failed to set guest process environment variable ${name}`);
+    }
+    console.log(`Guest environment: ${name}=${JSON.stringify(value)}`);
+  }
 
   // Pass extra command-line arguments via the staging buffer (--args="...")
   if (EXTRA_ARGS) {

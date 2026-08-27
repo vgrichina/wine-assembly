@@ -1261,6 +1261,109 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
+  ;; EnumDisplaySettingsW has the same enumeration policy as the ANSI API,
+  ;; but the 32-WCHAR device name moves DEVMODEW's display fields 32 bytes.
+  (func $handle_EnumDisplaySettingsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $buf i32) (local $screen i32)
+    (if (i32.and
+          (i32.ne (local.get $arg1) (i32.const -1))
+          (i32.ne (local.get $arg1) (i32.const 0)))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (if (i32.eqz (local.get $arg2))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (local.set $buf (call $g2w (local.get $arg2)))
+    (if (i32.lt_u (i32.load16_u offset=68 (local.get $buf)) (i32.const 220))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (memory.fill (local.get $buf) (i32.const 0) (i32.const 220))
+    (local.set $screen (call $host_get_screen_size))
+    (i32.store16 offset=68 (local.get $buf) (i32.const 220))
+    (i32.store offset=72 (local.get $buf) (i32.const 0x5C0000)) ;; dmFields
+    (i32.store offset=136 (local.get $buf) (i32.const 32))      ;; dmBitsPerPel
+    (i32.store offset=140 (local.get $buf)
+      (i32.and (local.get $screen) (i32.const 0xFFFF)))        ;; dmPelsWidth
+    (i32.store offset=144 (local.get $buf)
+      (i32.shr_u (local.get $screen) (i32.const 16)))          ;; dmPelsHeight
+    (i32.store offset=152 (local.get $buf) (i32.const 60))      ;; dmDisplayFrequency
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; EnumDisplayDevicesW(lpDevice, iDevNum, lpDisplayDevice, dwFlags).
+  ;; Expose the fixed host surface as one primary desktop adapter and one
+  ;; active monitor. DISPLAY_DEVICEW is 0x348 bytes on 32-bit Windows:
+  ;; cb, DeviceName[32], DeviceString[128], StateFlags, DeviceID[128],
+  ;; DeviceKey[128]. SDL2 uses both enumeration levels during video startup.
+  (func $handle_EnumDisplayDevicesW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dst i32)
+    (if (i32.or
+          (i32.ne (local.get $arg1) (i32.const 0))
+          (i32.eqz (local.get $arg2)))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (local.set $dst (call $g2w (local.get $arg2)))
+    (if (i32.lt_u (i32.load (local.get $dst)) (i32.const 0x348))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (memory.fill (local.get $dst) (i32.const 0) (i32.const 0x348))
+    (i32.store (local.get $dst) (i32.const 0x348))
+    (if (i32.eqz (local.get $arg0))
+      (then
+        ;; DeviceName = L"\\\\.\\DISPLAY1"
+        (i32.store offset=4  (local.get $dst) (i32.const 0x005c005c))
+        (i32.store offset=8  (local.get $dst) (i32.const 0x005c002e))
+        (i32.store offset=12 (local.get $dst) (i32.const 0x00490044))
+        (i32.store offset=16 (local.get $dst) (i32.const 0x00500053))
+        (i32.store offset=20 (local.get $dst) (i32.const 0x0041004c))
+        (i32.store offset=24 (local.get $dst) (i32.const 0x00310059))
+        ;; DeviceString = L"Wine-Assembly Display"
+        (i32.store offset=68  (local.get $dst) (i32.const 0x00690057))
+        (i32.store offset=72  (local.get $dst) (i32.const 0x0065006e))
+        (i32.store offset=76  (local.get $dst) (i32.const 0x0041002d))
+        (i32.store offset=80  (local.get $dst) (i32.const 0x00730073))
+        (i32.store offset=84  (local.get $dst) (i32.const 0x006d0065))
+        (i32.store offset=88  (local.get $dst) (i32.const 0x006c0062))
+        (i32.store offset=92  (local.get $dst) (i32.const 0x00200079))
+        (i32.store offset=96  (local.get $dst) (i32.const 0x00690044))
+        (i32.store offset=100 (local.get $dst) (i32.const 0x00700073))
+        (i32.store offset=104 (local.get $dst) (i32.const 0x0061006c))
+        (i32.store offset=108 (local.get $dst) (i32.const 0x00000079))
+        ;; DISPLAY_DEVICE_ATTACHED_TO_DESKTOP | PRIMARY_DEVICE.
+        (i32.store offset=324 (local.get $dst) (i32.const 0x5)))
+      (else
+        ;; DeviceName = L"\\\\.\\DISPLAY1\\Monitor0"
+        (i32.store offset=4  (local.get $dst) (i32.const 0x005c005c))
+        (i32.store offset=8  (local.get $dst) (i32.const 0x005c002e))
+        (i32.store offset=12 (local.get $dst) (i32.const 0x00490044))
+        (i32.store offset=16 (local.get $dst) (i32.const 0x00500053))
+        (i32.store offset=20 (local.get $dst) (i32.const 0x0041004c))
+        (i32.store offset=24 (local.get $dst) (i32.const 0x00310059))
+        (i32.store offset=28 (local.get $dst) (i32.const 0x004d005c))
+        (i32.store offset=32 (local.get $dst) (i32.const 0x006e006f))
+        (i32.store offset=36 (local.get $dst) (i32.const 0x00740069))
+        (i32.store offset=40 (local.get $dst) (i32.const 0x0072006f))
+        (i32.store offset=44 (local.get $dst) (i32.const 0x00000030))
+        ;; DeviceString = L"Default Monitor"
+        (i32.store offset=68 (local.get $dst) (i32.const 0x00650044))
+        (i32.store offset=72 (local.get $dst) (i32.const 0x00610066))
+        (i32.store offset=76 (local.get $dst) (i32.const 0x006c0075))
+        (i32.store offset=80 (local.get $dst) (i32.const 0x00200074))
+        (i32.store offset=84 (local.get $dst) (i32.const 0x006f004d))
+        (i32.store offset=88 (local.get $dst) (i32.const 0x0069006e))
+        (i32.store offset=92 (local.get $dst) (i32.const 0x006f0074))
+        (i32.store offset=96 (local.get $dst) (i32.const 0x00000072))
+        ;; DISPLAY_DEVICE_ACTIVE (same bit value as ATTACHED_TO_DESKTOP).
+        (i32.store offset=324 (local.get $dst) (i32.const 0x1))))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
   ;; 757: waveOutGetNumDevs() — return 1 (one audio device available)
   (func $handle_waveOutGetNumDevs (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 1))  ;; 1 device
@@ -1370,6 +1473,32 @@
   (func $handle_midiOutShortMsg (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $host_midi_out_short_msg (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
+  )
+
+  ;; midiOutLongMsg(hmo, lpMidiHdr, cbMidiHdr) — submit a system-exclusive
+  ;; message. The browser synth consumes channel messages through ShortMsg but
+  ;; has no SysEx transport, so complete a correctly prepared MIDIHDR
+  ;; immediately. Clients such as ScummVM use this for GM/MT-32 reset packets
+  ;; and then continue ordinary note traffic through midiOutShortMsg.
+  (func $handle_midiOutLongMsg (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $hdr i32) (local $flags i32)
+    (if (i32.or (i32.eqz (local.get $arg0)) (i32.eqz (local.get $arg1)))
+      (then
+        (global.set $eax (i32.const 11)) ;; MMSYSERR_INVALPARAM
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $hdr (call $g2w (local.get $arg1)))
+    (local.set $flags (i32.load offset=16 (local.get $hdr)))
+    (if (i32.eqz (i32.and (local.get $flags) (i32.const 2))) ;; MHDR_PREPARED
+      (then
+        (global.set $eax (i32.const 64)) ;; MIDIERR_UNPREPARED
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    ;; Immediate completion: retain PREPARED/other flags, clear INQUEUE, set DONE.
+    (i32.store offset=16 (local.get $hdr)
+      (i32.or (i32.and (local.get $flags) (i32.const 0xffffffef)) (i32.const 1)))
+    (global.set $eax (i32.const 0)) ;; MMSYSERR_NOERROR
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; midiOutReset(hmo) — 1 arg
@@ -1793,6 +1922,51 @@
   (func $handle_waveInGetNumDevs (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
+
+  ;; waveInGetDevCaps{A,W}(uDeviceID, lpCaps, cbCaps). The capture backend
+  ;; exposes one stereo PCM device, matching waveInGetNumDevs/waveInOpen.
+  ;; WAVEINCAPS differs only in the width of szPname[32]: its dwFormats and
+  ;; wChannels fields begin at 40/44 (A) and 72/76 (W), respectively.
+  (func $wave_in_dev_caps (param $device i32) (param $caps_g i32) (param $cb i32) (param $wide i32) (result i32)
+    (local $wa i32) (local $stride i32) (local $tail i32) (local $size i32)
+    (if (local.get $device)
+      (then (return (i32.const 2)))) ;; MMSYSERR_BADDEVICEID
+    (local.set $size (select (i32.const 80) (i32.const 48) (local.get $wide)))
+    (if (i32.or (i32.eqz (local.get $caps_g))
+                (i32.lt_u (local.get $cb) (local.get $size)))
+      (then (return (i32.const 11)))) ;; MMSYSERR_INVALPARAM
+    (local.set $wa (call $g2w (local.get $caps_g)))
+    (call $zero_memory (local.get $wa) (local.get $size))
+    (i32.store16 (local.get $wa) (i32.const 1))      ;; wMid
+    (i32.store16 offset=2 (local.get $wa) (i32.const 1)) ;; wPid
+    (i32.store offset=4 (local.get $wa) (i32.const 0x0400))
+    (local.set $stride (select (i32.const 2) (i32.const 1) (local.get $wide)))
+    ;; szPname = "Microphone"
+    (call $store_char (i32.add (local.get $caps_g) (i32.const 8)) (i32.const 0x4D) (local.get $wide))
+    (call $store_char (i32.add (local.get $caps_g) (i32.add (i32.const 8) (local.get $stride))) (i32.const 0x69) (local.get $wide))
+    (call $store_char (i32.add (local.get $caps_g) (i32.add (i32.const 8) (i32.mul (local.get $stride) (i32.const 2)))) (i32.const 0x63) (local.get $wide))
+    (call $store_char (i32.add (local.get $caps_g) (i32.add (i32.const 8) (i32.mul (local.get $stride) (i32.const 3)))) (i32.const 0x72) (local.get $wide))
+    (call $store_char (i32.add (local.get $caps_g) (i32.add (i32.const 8) (i32.mul (local.get $stride) (i32.const 4)))) (i32.const 0x6F) (local.get $wide))
+    (call $store_char (i32.add (local.get $caps_g) (i32.add (i32.const 8) (i32.mul (local.get $stride) (i32.const 5)))) (i32.const 0x70) (local.get $wide))
+    (call $store_char (i32.add (local.get $caps_g) (i32.add (i32.const 8) (i32.mul (local.get $stride) (i32.const 6)))) (i32.const 0x68) (local.get $wide))
+    (call $store_char (i32.add (local.get $caps_g) (i32.add (i32.const 8) (i32.mul (local.get $stride) (i32.const 7)))) (i32.const 0x6F) (local.get $wide))
+    (call $store_char (i32.add (local.get $caps_g) (i32.add (i32.const 8) (i32.mul (local.get $stride) (i32.const 8)))) (i32.const 0x6E) (local.get $wide))
+    (call $store_char (i32.add (local.get $caps_g) (i32.add (i32.const 8) (i32.mul (local.get $stride) (i32.const 9)))) (i32.const 0x65) (local.get $wide))
+    (local.set $tail (i32.add (local.get $wa)
+      (select (i32.const 72) (i32.const 40) (local.get $wide))))
+    (i32.store (local.get $tail) (i32.const 0x00000FFF)) ;; common PCM formats
+    (i32.store16 offset=4 (local.get $tail) (i32.const 2)) ;; stereo
+    (i32.const 0))
+
+  (func $handle_waveInGetDevCapsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $wave_in_dev_caps
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_waveInGetDevCapsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $wave_in_dev_caps
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; 1246: timeSetEvent(uDelay, uResolution, lpTimeProc, dwUser, fuEvent)
   ;; Returns timer ID (non-zero) on success, 0 on error

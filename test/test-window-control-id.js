@@ -97,6 +97,22 @@ const extraWat = String.raw`
       (i32.const 0) (i32.const 0) (i32.const 0))
     (global.set $esp (local.get $saved_esp))
     (global.get $eax))
+
+  (func (export "test_create_button_with_id")
+    (param $id i32) (result i32)
+    (local $parent i32)
+    (local.set $parent (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (call $wnd_table_set (local.get $parent) (global.get $WNDPROC_BUILTIN))
+    (drop (call $wnd_set_style (local.get $parent) (i32.const 0x90000000)))
+    (call $ctrl_create_child
+      (local.get $parent) (i32.const 1) (local.get $id)
+      (i32.const 0) (i32.const 0) (i32.const 75) (i32.const 23)
+      (i32.const 0x50010000) (i32.const 0)))
+
+  (func (export "test_button_state_id")
+    (param $hwnd i32) (result i32)
+    (i32.load offset=12 (call $g2w (call $wnd_get_state_ptr (local.get $hwnd)))))
 `;
 
 (async () => {
@@ -136,6 +152,14 @@ const extraWat = String.raw`
     'the old child ID no longer resolves');
   assert.strictEqual(e.test_call_GetDlgItem_id(parent, 0xEA21) >>> 0, child,
     'the replacement child ID resolves to the saved view');
+
+  const button = e.test_create_button_with_id(0) >>> 0;
+  assert.strictEqual(e.test_button_state_id(button), 0,
+    'BUTTON starts with the hMenu-derived creation ID in native state');
+  assert.strictEqual(e.test_call_SetWindowLongA_id(button, 0x1234), 0,
+    'SetWindowLongA(GWL_ID) returns BUTTON\'s previous zero ID');
+  assert.strictEqual(e.test_button_state_id(button), 0x1234,
+    'SetWindowLongA(GWL_ID) synchronizes BUTTON notification state');
 
   assert.strictEqual(e.test_call_SetWindowLongA_id(0x7FFFFFFF, 1), 0,
     'an invalid window is not assigned a control ID');

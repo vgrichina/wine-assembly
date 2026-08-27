@@ -27,6 +27,22 @@ const extraWat = String.raw`
     (global.get $eax))
   (func (export "test_stored_filter") (result i32)
     (global.get $unhandled_exception_filter))
+  (func (export "test_add_vectored_filter") (param $first i32) (param $filter i32) (result i64)
+    (global.set $image_base (i32.const 0))
+    (global.set $esp (i32.const 0x00300000))
+    (call $handle_AddVectoredExceptionHandler (local.get $first) (local.get $filter)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (i64.or
+      (i64.extend_i32_u (global.get $eax))
+      (i64.shl (i64.extend_i32_u (global.get $esp)) (i64.const 32))))
+  (func (export "test_remove_vectored_filter") (param $handle i32) (result i64)
+    (global.set $image_base (i32.const 0))
+    (global.set $esp (i32.const 0x00300000))
+    (call $handle_RemoveVectoredExceptionHandler (local.get $handle) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (i64.or
+      (i64.extend_i32_u (global.get $eax))
+      (i64.shl (i64.extend_i32_u (global.get $esp)) (i64.const 32))))
   (func (export "test_unhandled_filter") (param $pointers i32) (result i64)
     (global.set $image_base (i32.const 0))
     (global.set $esp (i32.const 0x00300000))
@@ -53,6 +69,21 @@ const extraWat = String.raw`
   assert.strictEqual(wat.test_set_unhandled_filter(0) >>> 0, 0x00405678,
     'clearing the filter reports the one being removed');
   assert.strictEqual(wat.test_stored_filter() >>> 0, 0);
+
+  // --- the bounded vectored registration round-trips its opaque handle ---
+  const vector = 0x00408765;
+  const added = wat.test_add_vectored_filter(1, vector);
+  assert.strictEqual(Number(added & 0xffffffffn), vector,
+    'registration returns a non-null opaque handle');
+  assert.strictEqual(Number(added >> 32n), 0x0030000c,
+    'two-argument stdcall pops return plus arguments');
+  const removed = wat.test_remove_vectored_filter(vector);
+  assert.strictEqual(Number(removed & 0xffffffffn), 1,
+    'the returned handle removes its registration');
+  assert.strictEqual(Number(removed >> 32n), 0x00300008,
+    'one-argument removal pops return plus argument');
+  assert.strictEqual(Number(wat.test_remove_vectored_filter(vector) & 0xffffffffn), 0,
+    'a stale handle no longer removes anything');
 
   // --- the filter itself ---
   const EXECUTE_HANDLER = 1;

@@ -5173,7 +5173,7 @@
   ;; ones widen on the way out and narrow on the way in.
 
   (func $env_ensure
-    (local $i i32) (local $ch i32) (local $prev i32)
+    (local $i i32) (local $j i32) (local $ch i32) (local $prev i32)
     (if (global.get $env_block) (then (return)))
     (global.set $env_block (call $heap_alloc (global.get $env_cap)))
     (local.set $prev (i32.const 1))
@@ -5183,7 +5183,18 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br_if $done (i32.and (i32.eqz (local.get $ch)) (i32.eqz (local.get $prev))))
       (local.set $prev (local.get $ch))
-      (br $copy))))
+      (br $copy)))
+    ;; The base copy ended just past its second NUL. Replace that final NUL
+    ;; with the queued entries and their own block terminator.
+    (if (global.get $launch_env_len)
+      (then
+        (local.set $i (i32.sub (local.get $i) (i32.const 1)))
+        (block $launch_done (loop $launch_copy
+          (br_if $launch_done (i32.gt_u (local.get $j) (global.get $launch_env_len)))
+          (call $gs8 (i32.add (global.get $env_block) (i32.add (local.get $i) (local.get $j)))
+            (i32.load8_u (i32.add (i32.const 0x5110) (local.get $j))))
+          (local.set $j (i32.add (local.get $j) (i32.const 1)))
+          (br $launch_copy))))))
 
   ;; Total bytes in the block, including both terminating NULs.
   (func $env_size (result i32)

@@ -212,6 +212,20 @@ const interfaces = [
     { name: 'GetDC',           nargs: 2 },
     { name: 'ReleaseDC',       nargs: 2 },
   ]},
+
+  // ── IDirect3DSwapChain9 ────────────────────────────────────────────
+  { prefix: 'IDirect3DSwapChain9', methods: [
+    { name: 'QueryInterface',       nargs: 3 },
+    { name: 'AddRef',               nargs: 1, ret: 'ADDREF' },
+    { name: 'Release',              nargs: 1, ret: 'RELEASE' },
+    { name: 'Present',              nargs: 6 },
+    { name: 'GetFrontBufferData',   nargs: 2 },
+    { name: 'GetBackBuffer',        nargs: 4 },
+    { name: 'GetRasterStatus',      nargs: 2 },
+    { name: 'GetDisplayMode',       nargs: 2 },
+    { name: 'GetDevice',            nargs: 2 },
+    { name: 'GetPresentParameters', nargs: 2 },
+  ]},
 ];
 
 // prefix → WAT global holding the built vtable. Consumed by gen_dispatch.js,

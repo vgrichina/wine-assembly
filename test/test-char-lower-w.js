@@ -13,6 +13,14 @@ const extraWat = String.raw`
       (local.get $value) (i32.const 0) (i32.const 0)
       (i32.const 0) (i32.const 0) (i32.const 0))
     (global.get $eax))
+
+  (func (export "test_char_lower_buff_w") (param $value i32) (param $count i32) (result i32)
+    (global.set $image_base (i32.const 0))
+    (global.set $esp (i32.const 0x00300000))
+    (call $handle_CharLowerBuffW
+      (local.get $value) (local.get $count) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
 `;
 
 (async () => {
@@ -38,7 +46,23 @@ const extraWat = String.raw`
   assert.strictEqual(wat.get_esp(), 0x00300008,
     'one-argument stdcall pops return address plus argument');
 
-  console.log('PASS CharLowerW pointer and single-character forms');
+  // The buffer form is count-delimited, not NUL-delimited.
+  wat.guest_write8(buffer, 'A'.charCodeAt(0));
+  wat.guest_write8(buffer + 1, 0);
+  wat.guest_write8(buffer + 2, 0);
+  wat.guest_write8(buffer + 3, 0);
+  wat.guest_write8(buffer + 4, 'Z'.charCodeAt(0));
+  wat.guest_write8(buffer + 5, 0);
+  assert.strictEqual(wat.test_char_lower_buff_w(buffer, 3), 3,
+    'CharLowerBuffW returns the number of processed WCHARs');
+  assert.deepStrictEqual([
+    wat.guest_read8(buffer), wat.guest_read8(buffer + 2), wat.guest_read8(buffer + 4),
+  ], ['a'.charCodeAt(0), 0, 'z'.charCodeAt(0)],
+  'CharLowerBuffW folds through an embedded NUL for the full count');
+  assert.strictEqual(wat.get_esp(), 0x0030000c,
+    'two-argument stdcall pops return address plus both arguments');
+
+  console.log('PASS CharLowerW pointer/single-char and CharLowerBuffW counted forms');
 })().catch(error => {
   console.error(error.stack || error.message);
   process.exit(1);

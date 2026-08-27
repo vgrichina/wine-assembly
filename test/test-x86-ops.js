@@ -104,6 +104,9 @@ async function main() {
   const scratch = imageBase + 0x8000;
   const scratchA = imageBase + 0x8100;
   const scratchB = imageBase + 0x8104;
+  const sseA = imageBase + 0x9000;
+  const sseB = imageBase + 0x9020;
+  const sseOut = imageBase + 0x9040;
 
   // ================================================================
   // Basic execution
@@ -624,6 +627,94 @@ async function main() {
   // Extended leaves must stay absent — that is what denies 3DNow.
   runCode([0xB8, ...le32(0x80000000), 0x0F, 0xA2]);
   test('cpuid reports no extended leaves', e.get_eax() >>> 0, 0);
+
+  // ================================================================
+  // SSE base: MOVUPS/MOVAPS and XORPS
+  // ================================================================
+  // CPUID intentionally stays conservative above: SDL2 itself is compiled
+  // with these baseline operations even when it does not select an SSE path.
+  const sseBytesA = [
+    0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+    0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+  ];
+  const sseBytesB = [
+    0xff, 0xee, 0xdd, 0xcc, 0xbb, 0xaa, 0x99, 0x88,
+    0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11, 0x00,
+  ];
+  setBytes(sseA, sseBytesA);
+  setBytes(sseB, sseBytesB);
+  runCode([
+    0x0f, 0x10, 0x05, ...le32(sseA),       // movups xmm0,[sseA]
+    0x0f, 0x10, 0x0d, ...le32(sseB),       // movups xmm1,[sseB]
+    0x0f, 0x57, 0xc1,                      // xorps xmm0,xmm1
+    0x0f, 0x11, 0x05, ...le32(sseOut),     // movups [sseOut],xmm0
+  ]);
+  testBytes('MOVUPS + register XORPS preserves all 128 bits',
+    bytesAt(sseOut, 16), sseBytesA.map((v, i) => v ^ sseBytesB[i]));
+
+  setBytes(sseOut, new Array(16).fill(0xff));
+  runCode([
+    0x0f, 0x28, 0x05, ...le32(sseA),       // movaps xmm0,[sseA]
+    0x0f, 0x57, 0x05, ...le32(sseA),       // xorps xmm0,[sseA]
+    0x0f, 0x29, 0x05, ...le32(sseOut),     // movaps [sseOut],xmm0
+  ]);
+  testBytes('MOVAPS + memory XORPS clears all four lanes',
+    bytesAt(sseOut, 16), new Array(16).fill(0));
+
+  setBytes(sseOut, new Array(16).fill(0x7a));
+  runCode([
+    0x0f, 0x10, 0x05, ...le32(sseA),       // movups xmm0,[sseA]
+    0xf3, 0x0f, 0x10, 0x05, ...le32(sseB), // movss xmm0,dword [sseB]
+    0xf3, 0x0f, 0x11, 0x05, ...le32(sseOut), // movss dword [sseOut],xmm0
+    0x0f, 0x11, 0x05, ...le32(sseOut + 16), // movups [sseOut+16],xmm0
+  ]);
+  testBytes('MOVSS absolute load/store changes only the low lane',
+    bytesAt(sseOut, 4), sseBytesB.slice(0, 4));
+  testBytes('MOVSS preserves the destination upper 96 bits',
+    bytesAt(sseOut + 20, 12), sseBytesA.slice(4));
+
+  runCode([
+    0x0f, 0x10, 0x05, ...le32(sseA),       // movups xmm0,[sseA]
+    0x0f, 0x10, 0x0d, ...le32(sseB),       // movups xmm1,[sseB]
+    0x0f, 0x14, 0xc1,                      // unpcklps xmm0,xmm1
+    0x0f, 0x11, 0x05, ...le32(sseOut),     // movups [sseOut],xmm0
+  ]);
+  testBytes('UNPCKLPS interleaves the low two 32-bit lanes',
+    bytesAt(sseOut, 16), [
+      ...sseBytesA.slice(0, 4), ...sseBytesB.slice(0, 4),
+      ...sseBytesA.slice(4, 8), ...sseBytesB.slice(4, 8),
+    ]);
+
+  runCode([
+    0x0f, 0x10, 0x05, ...le32(sseA),       // movups xmm0,[sseA]
+    0x0f, 0x16, 0x05, ...le32(sseB),       // movhps xmm0,qword [sseB]
+    0x0f, 0x17, 0x05, ...le32(sseOut),     // movhps qword [sseOut],xmm0
+    0x0f, 0x11, 0x05, ...le32(sseOut + 16), // movups [sseOut+16],xmm0
+  ]);
+  testBytes('MOVHPS memory load replaces and store selects the high 64 bits',
+    bytesAt(sseOut, 8), sseBytesB.slice(0, 8));
+  testBytes('MOVHPS preserves the destination low 64 bits',
+    bytesAt(sseOut + 16, 16), [...sseBytesA.slice(0, 8), ...sseBytesB.slice(0, 8)]);
+
+  runCode([
+    0x0f, 0x10, 0x05, ...le32(sseA),       // movups xmm0,[sseA]
+    0x0f, 0x10, 0x0d, ...le32(sseB),       // movups xmm1,[sseB]
+    0x0f, 0x16, 0xc1,                      // movlhps xmm0,xmm1
+    0x0f, 0x11, 0x05, ...le32(sseOut),     // movups [sseOut],xmm0
+  ]);
+  testBytes('MOVLHPS copies the source low 64 bits into the destination high half',
+    bytesAt(sseOut, 16), [...sseBytesA.slice(0, 8), ...sseBytesB.slice(0, 8)]);
+
+  dv.setFloat32(g2w(sseA), 19.875, true);
+  dv.setFloat32(g2w(sseA + 4), -7.75, true);
+  runCode([
+    0x0f, 0x2c, 0x05, ...le32(sseA),       // cvttps2pi mm0,qword [sseA]
+    0x0f, 0x7f, 0x05, ...le32(sseOut),     // movq [sseOut],mm0
+    0xf3, 0x0f, 0x2c, 0x05, ...le32(sseA + 4), // cvttss2si eax,dword [sseA+4]
+  ]);
+  test('CVTTPS2PI truncates the low packed float', memAt(sseOut), 19);
+  test('CVTTPS2PI truncates the high packed float', memAt(sseOut + 4), -7);
+  test('CVTTSS2SI truncates a scalar float toward zero', e.get_eax(), -7);
 
   // ================================================================
   // Sized ALU with a memory operand — flags come from the operand width

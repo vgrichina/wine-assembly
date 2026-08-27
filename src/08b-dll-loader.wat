@@ -399,7 +399,13 @@
     (block $id (loop $dl
       (local.set $ilt_rva (i32.load (local.get $desc_ptr)))
       (local.set $iat_rva (i32.load (i32.add (local.get $desc_ptr) (i32.const 16))))
-      (br_if $id (i32.eqz (local.get $ilt_rva)))
+      ;; OriginalFirstThunk is optional. As in the main PE loader, a stripped
+      ;; image keeps its lookup entries in FirstThunk until we overwrite them.
+      ;; FirstThunk is required for a live descriptor, so use it to recognize
+      ;; the terminator and as the lookup-table fallback.
+      (br_if $id (i32.eqz (local.get $iat_rva)))
+      (if (i32.eqz (local.get $ilt_rva))
+        (then (local.set $ilt_rva (local.get $iat_rva))))
       ;; Get imported DLL name
       (local.set $dll_name_rva (i32.load (i32.add (local.get $desc_ptr) (i32.const 12))))
       (local.set $dll_name_ptr (i32.add (local.get $load_addr) (local.get $dll_name_rva)))

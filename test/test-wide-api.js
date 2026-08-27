@@ -86,6 +86,11 @@ async function main() {
   const queryA = writeAscii('C:\\Windows\\System\\kernel32.dll');
   const queryW = writeWide('kernel32.dll');
   const loadAddr = expDir - 0x1000;
+  e.test_set_dll_count(0);
+  check('GetModuleHandleA recognizes statically dispatched KERNEL32',
+    (e.test_call_GetModuleHandleA(queryA) >>> 0) === (e.get_image_base() >>> 0));
+  check('GetModuleHandleW recognizes statically dispatched KERNEL32',
+    (e.test_call_GetModuleHandleW(queryW) >>> 0) === (e.get_image_base() >>> 0));
   e.guest_write32(expDir + 12, dllNameA - loadAddr);
   dv.setUint32(e.get_dll_table(), loadAddr >>> 0, true);
   dv.setUint32(e.get_dll_table() + 8, 0x1000, true);

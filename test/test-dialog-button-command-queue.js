@@ -35,6 +35,34 @@ const extraWat = String.raw`
 
   (func (export "test_subclass_parent") (param $hwnd i32) (param $proc i32)
     (call $wnd_table_set (call $wnd_get_parent (local.get $hwnd)) (local.get $proc)))
+
+  (func (export "test_make_owned_guest_parent")
+    (param $hwnd i32) (param $proc i32)
+    (local $parent i32) (local $owner i32)
+    (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+    (local.set $owner (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (call $wnd_table_set (local.get $owner) (global.get $WNDPROC_BUILTIN))
+    (call $wnd_set_owner (local.get $parent) (local.get $owner))
+    (drop (call $dialog_proc_set (local.get $parent) (i32.const 0)))
+    (call $wnd_table_set (local.get $parent) (local.get $proc)))
+
+  (func (export "test_make_unowned_guest_parent")
+    (param $hwnd i32) (param $proc i32)
+    (local $parent i32)
+    (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+    (drop (call $dialog_proc_set (local.get $parent) (i32.const 0)))
+    (call $wnd_table_set (local.get $parent) (local.get $proc)))
+
+  (func (export "test_set_button_id")
+    (param $hwnd i32) (param $id i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_SetWindowLongA
+      (local.get $hwnd) (i32.const -12) (local.get $id)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
 `;
 
 function u32(value) {
@@ -97,7 +125,40 @@ function u32(value) {
   assert.strictEqual(e.get_post_queue_count(), 0,
     'IDOK is not converted into a posted command');
 
-  console.log('PASS  custom dialog BUTTON commands stay on the main message pump');
+  const owned = e.test_create_dialog_button(proc, 0) >>> 0;
+  const ownedParent = e.wnd_get_parent(owned) >>> 0;
+  assert.strictEqual(e.test_set_button_id(owned, 0x1009), 0,
+    'VCL-style GWL_ID assignment returns the creation-time zero ID');
+  e.test_make_owned_guest_parent(owned, proc);
+  e.test_button_click(owned);
+  assert.strictEqual(e.get_post_queue_count(), 1,
+    'an owned guest form queues its custom BUTTON command');
+  assert.deepStrictEqual([
+    view.getUint32(0x400, true),
+    view.getUint32(0x404, true),
+    view.getUint32(0x408, true),
+    view.getUint32(0x40c, true),
+  ], [owned, 0xBD11, 0x1009, owned],
+  'owned guest form receives reflected CN_COMMAND on the main message pump');
+
+  e.set_post_queue_count(0);
+  const nested = e.test_create_dialog_button(proc, 0) >>> 0;
+  const nestedId = nested & 0xffff;
+  assert.strictEqual(e.test_set_button_id(nested, nestedId), 0,
+    'VCL-style child uses its HWND as its runtime control ID');
+  e.test_make_unowned_guest_parent(nested, proc);
+  e.test_button_click(nested);
+  assert.strictEqual(e.get_post_queue_count(), 1,
+    'self-ID button under an unowned guest panel queues its reflection');
+  assert.deepStrictEqual([
+    view.getUint32(0x400, true),
+    view.getUint32(0x404, true),
+    view.getUint32(0x408, true),
+    view.getUint32(0x40c, true),
+  ], [nested, 0xBD11, nestedId, nested],
+  'nested VCL panel receives reflected CN_COMMAND on the main message pump');
+
+  console.log('PASS  custom modal-form BUTTON commands stay on the main message pump');
 })().catch(error => {
   console.error(error && error.stack || error);
   process.exit(1);

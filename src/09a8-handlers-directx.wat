@@ -60,7 +60,7 @@
   ;; guest code begins. Reserve the final 256 bytes of the auxiliary-wrapper
   ;; region rather than overlapping VSOCK_TABLE at 0x07FFE000.
   (global $DX_VTBL_REGISTRY i32 (i32.const 0x07FFDF00))
-  (global $DX_VTBL_REGISTRY_COUNT i32 (i32.const 62))
+  (global $DX_VTBL_REGISTRY_COUNT i32 (i32.const 63))
 
   ;; Vtable blocks — arrays of thunk guest-addrs, one per interface type.
   ;; Must be in guest-reachable memory (above image_base), so allocated from heap.
@@ -137,6 +137,7 @@
   (global $DX_VTBL_D3DDEV9   (mut i32) (i32.const 0))
   (global $DX_VTBL_D3DTEX9   (mut i32) (i32.const 0))
   (global $DX_VTBL_D3DSURF9  (mut i32) (i32.const 0))
+  (global $DX_VTBL_D3DSWAP9  (mut i32) (i32.const 0))
 
   (func $dx_vtable_registry_reset
     (i32.store (global.get $DX_VTBL_REGISTRY) (i32.const 0)))
@@ -223,7 +224,8 @@
     (global.set $DX_VTBL_DIDEV2 (i32.load offset=244 (global.get $DX_VTBL_REGISTRY)))
     ;; Surface3 is appended to the registry so every established interface
     ;; retains its existing cross-thread offset.
-    (global.set $DX_VTBL_DDSURF3 (i32.load offset=248 (global.get $DX_VTBL_REGISTRY))))
+    (global.set $DX_VTBL_DDSURF3 (i32.load offset=248 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_D3DSWAP9 (i32.load offset=252 (global.get $DX_VTBL_REGISTRY))))
 
   (func $dx_sync_thread_vtables_if_needed
     (if (i32.eqz (global.get $DX_VTBL_DDRAW))

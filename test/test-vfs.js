@@ -171,6 +171,15 @@ test('setCurrentDirectory normalizes trailing backslash', () => {
   assert.strictEqual(vfs.getCurrentDirectory(), 'c:\\');
 });
 
+test('GetFullPathName rejects an empty filename instead of fabricating the drive', () => {
+  const memory = new ArrayBuffer(0x1000);
+  const bytes = new Uint8Array(memory);
+  bytes.fill(0x5a, 0x200, 0x220);
+  const imports = createFilesystemImports({ getMemory: () => memory });
+  assert.strictEqual(imports.fs_get_full_path_name(0x100, 16, 0x200, 0, 1), 0);
+  assert.strictEqual(bytes[0x200], 0x5a, 'failure must not replace the output with C:');
+});
+
 test('SearchPath finds an installed DLL in the Win98 system directory', () => {
   const memory = new ArrayBuffer(0x1000);
   const bytes = new Uint8Array(memory);

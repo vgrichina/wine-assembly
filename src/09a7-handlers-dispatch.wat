@@ -2629,6 +2629,30 @@
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
+  ;; GetUserNameW(lpBuffer, pcbBuffer) — UTF-16 counterpart.  Unlike
+  ;; GetComputerName, this API reports the terminating NUL in *pcbBuffer on
+  ;; both success and insufficient-buffer failure.
+  (func $handle_GetUserNameW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wbuf i32) (local $wlen i32)
+    (local.set $wlen (call $g2w (local.get $arg1)))
+    (if (i32.or (i32.eqz (local.get $arg0))
+                (i32.lt_u (i32.load (local.get $wlen)) (i32.const 5)))
+      (then
+        (i32.store (local.get $wlen) (i32.const 5))
+        (global.set $last_error (i32.const 122)) ;; ERROR_INSUFFICIENT_BUFFER
+        (global.set $eax (i32.const 0)))
+      (else
+        (local.set $wbuf (call $g2w (local.get $arg0)))
+        (i32.store16 offset=0 (local.get $wbuf) (i32.const 117)) ;; 'u'
+        (i32.store16 offset=2 (local.get $wbuf) (i32.const 115)) ;; 's'
+        (i32.store16 offset=4 (local.get $wbuf) (i32.const 101)) ;; 'e'
+        (i32.store16 offset=6 (local.get $wbuf) (i32.const 114)) ;; 'r'
+        (i32.store16 offset=8 (local.get $wbuf) (i32.const 0))
+        (i32.store (local.get $wlen) (i32.const 5))
+        (global.set $last_error (i32.const 0))
+        (global.set $eax (i32.const 1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
   ;; GetComputerNameA(lpBuffer, pcbBuffer) — write "PC\0" then update *pcbBuffer = 2
   (func $handle_GetComputerNameA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $wbuf i32) (local $wlen i32)
@@ -2639,6 +2663,29 @@
     (i32.store8 offset=2 (local.get $wbuf) (i32.const 0))
     (i32.store (local.get $wlen) (i32.const 2))
     (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  ;; GetComputerNameW(lpBuffer, pcbBuffer) — the Unicode machine name uses
+  ;; the same deterministic identity as GetComputerNameA.  pcbBuffer is an
+  ;; in/out WCHAR count: failure reports the required count including NUL,
+  ;; while success reports the two characters excluding it.
+  (func $handle_GetComputerNameW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wbuf i32) (local $wlen i32)
+    (local.set $wlen (call $g2w (local.get $arg1)))
+    (if (i32.or (i32.eqz (local.get $arg0))
+                (i32.lt_u (i32.load (local.get $wlen)) (i32.const 3)))
+      (then
+        (i32.store (local.get $wlen) (i32.const 3))
+        (global.set $last_error (i32.const 111)) ;; ERROR_BUFFER_OVERFLOW
+        (global.set $eax (i32.const 0)))
+      (else
+        (local.set $wbuf (call $g2w (local.get $arg0)))
+        (i32.store16 offset=0 (local.get $wbuf) (i32.const 80)) ;; 'P'
+        (i32.store16 offset=2 (local.get $wbuf) (i32.const 67)) ;; 'C'
+        (i32.store16 offset=4 (local.get $wbuf) (i32.const 0))
+        (i32.store (local.get $wlen) (i32.const 2))
+        (global.set $last_error (i32.const 0))
+        (global.set $eax (i32.const 1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; DirectPlayCreate(lpGUIDSP, lplpDP, pUnk) — the pre-COM entry point into

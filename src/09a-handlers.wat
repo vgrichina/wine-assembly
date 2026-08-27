@@ -528,11 +528,19 @@
               (i32.load (i32.add (global.get $DLL_TABLE)
                 (i32.mul (local.get $idx) (i32.const 32))))))
           (else
-            (local.set $idx (call $guest_name_is_static_system_dll (local.get $arg0)))
-            (if (local.get $idx)
-              (then (local.set $result (i32.add (global.get $STATIC_SYS_DLL_HANDLE_BASE)
-                      (i32.sub (local.get $idx) (i32.const 1)))))
-              (else (local.set $result (i32.const 0))))))))
+            ;; KERNEL32 is implemented by native dispatch rather than a
+            ;; mapped PE image.  LoadLibraryA already represents such system
+            ;; modules with the image base; GetModuleHandle must agree or
+            ;; MSVC's encoded-pointer startup waits up to 60 seconds for a
+            ;; KERNEL32 module that can never appear in the DLL table.
+            (if (call $dll_name_match (local.get $arg0) (i32.const 0x11DB0))
+              (then (local.set $result (global.get $image_base)))
+              (else
+                (local.set $idx (call $guest_name_is_static_system_dll (local.get $arg0)))
+                (if (local.get $idx)
+                  (then (local.set $result (i32.add (global.get $STATIC_SYS_DLL_HANDLE_BASE)
+                          (i32.sub (local.get $idx) (i32.const 1)))))
+                  (else (local.set $result (i32.const 0))))))))))
     (global.set $eax (local.get $result))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
@@ -830,6 +838,140 @@
     (global.set $eip (local.get $arg3))
     (global.set $steps (i32.const 0)))
 
+  ;; Release the ANSI copy of a named PE resource after its callback has
+  ;; returned. Integer MAKEINTRESOURCE names never allocate this buffer.
+  (func $enum_rsrc_release_name
+    (if (global.get $enum_rsrc_namebuf)
+      (then
+        (call $heap_free (global.get $enum_rsrc_namebuf))
+        (global.set $enum_rsrc_namebuf (i32.const 0)))))
+
+  ;; Complete EnumResourceNamesA after exhausting the directory or after its
+  ;; callback asks us to stop. The saved API return address is the one word
+  ;; left on the stack after ENUMRESNAMEPROC's RET 16.
+  (func $enum_rsrc_finish (param $success i32)
+    (call $enum_rsrc_release_name)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+    (global.set $eip (global.get $enum_rsrc_ret))
+    (global.set $enum_rsrc_depth (i32.const 0))
+    (global.set $eax (local.get $success)))
+
+  ;; Invoke ENUMRESNAMEPROCA for the current type-directory entry. PE named
+  ;; entries are length-prefixed UTF-16; Win32's A API instead supplies a
+  ;; temporary NUL-terminated ANSI name. Integer IDs pass through unchanged.
+  (func $enum_rsrc_dispatch
+    (local $entry i32) (local $eid i32) (local $name i32)
+    (local $name_wa i32) (local $len i32) (local $i i32) (local $ch i32)
+    (call $enum_rsrc_release_name)
+    (if (i32.ge_u (global.get $enum_rsrc_index) (global.get $enum_rsrc_count))
+      (then (call $enum_rsrc_finish (i32.const 1)) (return)))
+    (call $push_rsrc_ctx (global.get $enum_rsrc_module))
+    (local.set $entry (i32.add (global.get $enum_rsrc_dir)
+      (i32.add (i32.const 16)
+        (i32.mul (global.get $enum_rsrc_index) (i32.const 8)))))
+    (local.set $eid (call $gl32 (i32.add (call $r_base) (local.get $entry))))
+    (if (i32.and (local.get $eid) (i32.const 0x80000000))
+      (then
+        (local.set $name_wa (call $g2w (i32.add (call $r_base)
+          (i32.add (call $r_rva)
+            (i32.and (local.get $eid) (i32.const 0x7fffffff))))))
+        (local.set $len (i32.load16_u (local.get $name_wa)))
+        (global.set $enum_rsrc_namebuf
+          (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
+        (block $copied (loop $copy
+          (br_if $copied (i32.ge_u (local.get $i) (local.get $len)))
+          (local.set $ch (i32.load16_u (i32.add (local.get $name_wa)
+            (i32.add (i32.const 2) (i32.mul (local.get $i) (i32.const 2))))))
+          ;; The embedded resources ScummVM enumerates use ASCII names. Keep
+          ;; the A conversion bounded and deterministic for other PE names.
+          (if (i32.gt_u (local.get $ch) (i32.const 0xff))
+            (then (local.set $ch (i32.const 0x3f))))
+          (call $gs8 (i32.add (global.get $enum_rsrc_namebuf) (local.get $i))
+            (local.get $ch))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $copy)))
+        (call $gs8 (i32.add (global.get $enum_rsrc_namebuf) (local.get $len))
+          (i32.const 0))
+        (local.set $name (global.get $enum_rsrc_namebuf)))
+      (else
+        (local.set $name (i32.and (local.get $eid) (i32.const 0xffff)))))
+    (call $pop_rsrc_ctx)
+    ;; ENUMRESNAMEPROCA(hModule, lpType, lpName, lParam), stdcall.
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $enum_rsrc_lparam))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $name))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $enum_rsrc_type))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $enum_rsrc_module))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $enum_rsrc_thunk))
+    (global.set $eip (global.get $enum_rsrc_cb))
+    (global.set $steps (i32.const 0)))
+
+  ;; CACA0030: ENUMRESNAMEPROC returned. FALSE requests early termination;
+  ;; TRUE advances to the next name in the same type directory.
+  (func $enum_rsrc_continue
+    (if (i32.eqz (global.get $eax))
+      (then (call $enum_rsrc_finish (i32.const 0)) (return)))
+    (global.set $enum_rsrc_index
+      (i32.add (global.get $enum_rsrc_index) (i32.const 1)))
+    (call $enum_rsrc_dispatch))
+
+  ;; EnumResourceNamesA(hModule, lpType, lpEnumFunc, lParam). Suspend the API
+  ;; frame while each guest callback runs, preserving Win32's integer-vs-name
+  ;; representation and callback-controlled early stop.
+  (func $handle_EnumResourceNamesA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ret i32) (local $subdir i32) (local $dir_wa i32) (local $count i32)
+    (local.set $ret (call $gl32 (global.get $esp)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    ;; A callback cannot safely replace the process-global state of an outer
+    ;; enumeration. Refuse that unusual re-entrant case without disturbing it.
+    (if (i32.or (i32.eqz (local.get $arg2)) (global.get $enum_rsrc_depth))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
+        (global.set $eip (local.get $ret))
+        (return)))
+    (call $push_rsrc_ctx (local.get $arg0))
+    (local.set $subdir
+      (call $rsrc_find_entry (call $r_rva) (local.get $arg1)))
+    (if (i32.eqz (i32.and (local.get $subdir) (i32.const 0x80000000)))
+      (then
+        (call $pop_rsrc_ctx)
+        (global.set $eax (i32.const 0))
+        (global.set $last_error (i32.const 1813)) ;; ERROR_RESOURCE_TYPE_NOT_FOUND
+        (global.set $eip (local.get $ret))
+        (return)))
+    (global.set $enum_rsrc_dir (i32.add (call $r_rva)
+      (i32.and (local.get $subdir) (i32.const 0x7fffffff))))
+    (local.set $dir_wa (call $g2w
+      (i32.add (call $r_base) (global.get $enum_rsrc_dir))))
+    (local.set $count (i32.add
+      (i32.load16_u (i32.add (local.get $dir_wa) (i32.const 12)))
+      (i32.load16_u (i32.add (local.get $dir_wa) (i32.const 14)))))
+    (call $pop_rsrc_ctx)
+    (if (i32.eqz (local.get $count))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $last_error (i32.const 1813))
+        (global.set $eip (local.get $ret))
+        (return)))
+    (global.set $enum_rsrc_module (local.get $arg0))
+    (global.set $enum_rsrc_type (local.get $arg1))
+    (global.set $enum_rsrc_cb (local.get $arg2))
+    (global.set $enum_rsrc_lparam (local.get $arg3))
+    (global.set $enum_rsrc_ret (local.get $ret))
+    (global.set $enum_rsrc_index (i32.const 0))
+    (global.set $enum_rsrc_count (local.get $count))
+    (global.set $enum_rsrc_depth (i32.const 1))
+    (global.set $last_error (i32.const 0))
+    ;; Retain the API caller below every callback frame until enumeration ends.
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $ret))
+    (call $enum_rsrc_dispatch))
+
   ;; 9: GetProfileStringA(appName, keyName, default, retBuf, nSize) → chars copied
   (func $handle_GetProfileStringA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; GetProfileStringA(appName, keyName, default, retBuf, nSize) — 5 args stdcall
@@ -1080,6 +1222,108 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
+  ;; InitializeAcl(pAcl, nAclLength, dwAclRevision). ACL is an 8-byte header
+  ;; followed by variable-sized ACE records.
+  (func $handle_InitializeAcl (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.and (i32.ne (local.get $arg0) (i32.const 0))
+                 (i32.ge_u (local.get $arg1) (i32.const 8)))
+      (then
+        (memory.fill (call $g2w (local.get $arg0)) (i32.const 0) (local.get $arg1))
+        (call $gs8 (local.get $arg0) (local.get $arg2))
+        (call $gs16 (i32.add (local.get $arg0) (i32.const 2)) (local.get $arg1))
+        (global.set $last_error (i32.const 0))
+        (global.set $eax (i32.const 1)))
+      (else
+        (global.set $last_error (i32.const 87))
+        (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; AddAccessAllowedAce(pAcl, revision, mask, pSid).
+  (func $handle_AddAccessAllowedAce (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $count i32) (local $i i32) (local $used i32)
+    (local $sid_size i32) (local $ace_size i32)
+    (global.set $eax (i32.const 0))
+    (if (i32.and (i32.ne (local.get $arg0) (i32.const 0))
+                 (i32.ne (local.get $arg3) (i32.const 0)))
+      (then
+        (local.set $count (call $gl16 (i32.add (local.get $arg0) (i32.const 4))))
+        (local.set $used (i32.const 8))
+        (block $walk_done (loop $walk
+          (br_if $walk_done (i32.ge_u (local.get $i) (local.get $count)))
+          (local.set $used (i32.add (local.get $used)
+            (call $gl16 (i32.add (local.get $arg0)
+              (i32.add (local.get $used) (i32.const 2))))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $walk)))
+        (local.set $sid_size (i32.add (i32.const 8)
+          (i32.shl (call $gl8 (i32.add (local.get $arg3) (i32.const 1))) (i32.const 2))))
+        (local.set $ace_size (i32.add (i32.const 8) (local.get $sid_size)))
+        (if (i32.le_u (i32.add (local.get $used) (local.get $ace_size))
+                      (call $gl16 (i32.add (local.get $arg0) (i32.const 2))))
+          (then
+            (call $gs8 (i32.add (local.get $arg0) (local.get $used)) (i32.const 0)) ;; ACCESS_ALLOWED_ACE_TYPE
+            (call $gs8 (i32.add (local.get $arg0) (i32.add (local.get $used) (i32.const 1))) (i32.const 0))
+            (call $gs16 (i32.add (local.get $arg0) (i32.add (local.get $used) (i32.const 2))) (local.get $ace_size))
+            (call $gs32 (i32.add (local.get $arg0) (i32.add (local.get $used) (i32.const 4))) (local.get $arg2))
+            (call $memcpy
+              (call $g2w (i32.add (local.get $arg0) (i32.add (local.get $used) (i32.const 8))))
+              (call $g2w (local.get $arg3)) (local.get $sid_size))
+            (call $gs16 (i32.add (local.get $arg0) (i32.const 4))
+              (i32.add (local.get $count) (i32.const 1)))
+            (global.set $last_error (i32.const 0))
+            (global.set $eax (i32.const 1)))
+          (else (global.set $last_error (i32.const 1344)))))) ;; ERROR_ALLOTTED_SPACE_EXCEEDED
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  ;; GetAce(pAcl, index, ppAce).
+  (func $handle_GetAce (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $i i32) (local $used i32)
+    (global.set $eax (i32.const 0))
+    (if (i32.and
+          (i32.and (i32.ne (local.get $arg0) (i32.const 0)) (i32.ne (local.get $arg2) (i32.const 0)))
+          (i32.lt_u (local.get $arg1) (call $gl16 (i32.add (local.get $arg0) (i32.const 4)))))
+      (then
+        (local.set $used (i32.const 8))
+        (block $found (loop $walk
+          (br_if $found (i32.ge_u (local.get $i) (local.get $arg1)))
+          (local.set $used (i32.add (local.get $used)
+            (call $gl16 (i32.add (local.get $arg0)
+              (i32.add (local.get $used) (i32.const 2))))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $walk)))
+        (call $gs32 (local.get $arg2) (i32.add (local.get $arg0) (local.get $used)))
+        (global.set $last_error (i32.const 0))
+        (global.set $eax (i32.const 1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; Attach an absolute ACL pointer to SECURITY_DESCRIPTOR.Dacl.
+  (func $handle_SetSecurityDescriptorDacl (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg0)
+      (then
+        (call $gs32 (i32.add (local.get $arg0) (i32.const 12))
+          (select (local.get $arg2) (i32.const 0) (local.get $arg1)))
+        (call $gs16 (i32.add (local.get $arg0) (i32.const 2))
+          (i32.or
+            (i32.and (call $gl16 (i32.add (local.get $arg0) (i32.const 2))) (i32.const 0xFFF3))
+            (i32.or
+              (select (i32.const 4) (i32.const 0) (local.get $arg1))
+              (select (i32.const 8) (i32.const 0) (local.get $arg3)))))
+        (global.set $eax (i32.const 1)))
+      (else (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  ;; The VFS has no cross-process ACL enforcement, but accepting a valid
+  ;; descriptor preserves installer control flow and the metadata contract.
+  (func $handle_SetFileSecurityW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.and (i32.ne (local.get $arg0) (i32.const 0))
+                             (i32.ne (local.get $arg2) (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
   (func $handle_AllocateAndInitializeSid (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $sid i32) (local $out i32)
     (local.set $out (call $gl32 (i32.add (global.get $esp) (i32.const 44))))
@@ -1169,6 +1413,17 @@
                 (local.set $size (i32.sub (local.get $size) (i32.const 1)))
                 (br $compare)))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; GetLengthSid(pSid) — fixed SID header plus one DWORD per subauthority.
+  (func $handle_GetLengthSid (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax
+      (select
+        (i32.add (i32.const 8)
+          (i32.shl (call $gl8 (i32.add (local.get $arg0) (i32.const 1))) (i32.const 2)))
+        (i32.const 0)
+        (i32.ne (local.get $arg0) (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; The emulator deliberately presents Windows 98. InstallShield uses a
@@ -1521,6 +1776,115 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
+  ;; OpenThreadToken(ThreadHandle, DesiredAccess, OpenAsSelf, TokenHandle).
+  ;; The emulated process never impersonates, so its threads have no token of
+  ;; their own. NT callers use ERROR_NO_TOKEN to fall back to the process token.
+  (func $handle_OpenThreadToken (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))
+    (global.set $last_error (i32.const 1008)) ;; ERROR_NO_TOKEN
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  ;; OpenProcessToken(ProcessHandle, DesiredAccess, TokenHandle). Hand back a
+  ;; process-local pseudo handle representing the emulator's elevated user.
+  (func $handle_OpenProcessToken (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (local.get $arg2))
+      (then
+        (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
+        (global.set $eax (i32.const 0)))
+      (else
+        (call $gs32 (local.get $arg2) (i32.const 0x70000030))
+        (global.set $last_error (i32.const 0))
+        (global.set $eax (i32.const 1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; GetTokenInformation(TokenHandle, TokenInformationClass, TokenInformation,
+  ;; TokenInformationLength, ReturnLength). TokenGroups (class 2) is enough
+  ;; for setup/admin probes. Report one enabled S-1-5-32-544 (BUILTIN\Admins)
+  ;; group, which matches the process model used to run installers directly.
+  (func $handle_GetTokenInformation (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg4) (then (call $gs32 (local.get $arg4) (i32.const 28))))
+    (if (i32.or (i32.eqz (local.get $arg2))
+                (i32.lt_u (local.get $arg3) (i32.const 28)))
+      (then
+        (global.set $last_error (i32.const 122)) ;; ERROR_INSUFFICIENT_BUFFER
+        (global.set $eax (i32.const 0)))
+      (else
+        (call $gs32 (local.get $arg2) (i32.const 1)) ;; TOKEN_GROUPS.GroupCount
+        (call $gs32 (i32.add (local.get $arg2) (i32.const 4))
+          (i32.add (local.get $arg2) (i32.const 12))) ;; SID_AND_ATTRIBUTES.Sid
+        (call $gs32 (i32.add (local.get $arg2) (i32.const 8)) (i32.const 4)) ;; SE_GROUP_ENABLED
+        (call $gs8 (i32.add (local.get $arg2) (i32.const 12)) (i32.const 1)) ;; SID revision
+        (call $gs8 (i32.add (local.get $arg2) (i32.const 13)) (i32.const 2)) ;; subauthorities
+        ;; SID_IDENTIFIER_AUTHORITY SECURITY_NT_AUTHORITY = {0,0,0,0,0,5}.
+        (call $gs32 (i32.add (local.get $arg2) (i32.const 14)) (i32.const 0))
+        (call $gs16 (i32.add (local.get $arg2) (i32.const 18)) (i32.const 0x0500))
+        (call $gs32 (i32.add (local.get $arg2) (i32.const 20)) (i32.const 32))
+        (call $gs32 (i32.add (local.get $arg2) (i32.const 24)) (i32.const 544))
+        (global.set $last_error (i32.const 0))
+        (global.set $eax (i32.const 1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+  )
+
+  ;; LookupAccountSidW(System, Sid, Name, cchName, Domain, cchDomain, Use).
+  ;; The process token exposes S-1-5-32-544, so resolve it to the matching
+  ;; well-known alias. Buffer capacities include room for NUL on input; the
+  ;; successful output lengths exclude NUL, as on Windows.
+  (func $handle_LookupAccountSidW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $domain_len_ptr i32) (local $use_ptr i32)
+    (local $name_cap i32) (local $domain_cap i32)
+    (local.set $domain_len_ptr (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (local.set $use_ptr (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
+    (if (i32.or (i32.eqz (local.get $arg3)) (i32.eqz (local.get $domain_len_ptr)))
+      (then
+        (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
+        (return)))
+    (local.set $name_cap (call $gl32 (local.get $arg3)))
+    (local.set $domain_cap (call $gl32 (local.get $domain_len_ptr)))
+    (if (i32.or
+          (i32.or (i32.eqz (local.get $arg2)) (i32.lt_u (local.get $name_cap) (i32.const 15)))
+          (i32.or (i32.eqz (local.get $arg4)) (i32.lt_u (local.get $domain_cap) (i32.const 8))))
+      (then
+        (call $gs32 (local.get $arg3) (i32.const 15))
+        (call $gs32 (local.get $domain_len_ptr) (i32.const 8))
+        (global.set $last_error (i32.const 122)) ;; ERROR_INSUFFICIENT_BUFFER
+        (global.set $eax (i32.const 0)))
+      (else
+        ;; L"Administrators\0".
+        (call $gs32 (local.get $arg2) (i32.const 0x00640041))
+        (call $gs32 (i32.add (local.get $arg2) (i32.const 4)) (i32.const 0x0069006d))
+        (call $gs32 (i32.add (local.get $arg2) (i32.const 8)) (i32.const 0x0069006e))
+        (call $gs32 (i32.add (local.get $arg2) (i32.const 12)) (i32.const 0x00740073))
+        (call $gs32 (i32.add (local.get $arg2) (i32.const 16)) (i32.const 0x00610072))
+        (call $gs32 (i32.add (local.get $arg2) (i32.const 20)) (i32.const 0x006f0074))
+        (call $gs32 (i32.add (local.get $arg2) (i32.const 24)) (i32.const 0x00730072))
+        (call $gs16 (i32.add (local.get $arg2) (i32.const 28)) (i32.const 0))
+        ;; L"BUILTIN\0".
+        (call $gs32 (local.get $arg4) (i32.const 0x00550042))
+        (call $gs32 (i32.add (local.get $arg4) (i32.const 4)) (i32.const 0x004c0049))
+        (call $gs32 (i32.add (local.get $arg4) (i32.const 8)) (i32.const 0x00490054))
+        (call $gs32 (i32.add (local.get $arg4) (i32.const 12)) (i32.const 0x0000004e))
+        (call $gs32 (local.get $arg3) (i32.const 14))
+        (call $gs32 (local.get $domain_len_ptr) (i32.const 7))
+        (if (local.get $use_ptr) (then (call $gs32 (local.get $use_ptr) (i32.const 4)))) ;; SidTypeAlias
+        (global.set $last_error (i32.const 0))
+        (global.set $eax (i32.const 1))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
+  )
+
+  ;; MsiQueryProductStateW(szProduct) — the emulated MSI database starts
+  ;; empty, so a valid product code is neither advertised nor installed.
+  (func $handle_MsiQueryProductStateW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax
+      (select (i32.const -1) (i32.const -2)
+        (i32.ne (local.get $arg0) (i32.const 0)))) ;; UNKNOWN / INVALIDARG
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
   ;; 27: CreateEventA(lpAttr, bManualReset, bInitialState, lpName) — 4 args stdcall
   (func $handle_CreateEventA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $name_wa i32) (local $existing i32)
@@ -1765,6 +2129,13 @@
 
   ;; 791: GetUserDefaultLangID() → LANGID (0x0409 = English US)
   (func $handle_GetUserDefaultLangID (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x0409))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+  )
+
+  ;; GetUserDefaultUILanguage() → LANGID. The UI and formatting locale are
+  ;; the same en-US environment exposed by the existing default-locale APIs.
+  (func $handle_GetUserDefaultUILanguage (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0x0409))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
@@ -2561,16 +2932,24 @@
           (then
             (global.set $focus_hwnd (global.get $main_hwnd))
             (local.set $ret_addr (call $gl32 (global.get $esp)))
-            ;; DestroyWindow stdcall(1): [ret, hwnd] = 8 bytes.
-            ;; WndProc stdcall(4): [ret, hwnd, msg, wParam, lParam] = 20 bytes.
-            (global.set $esp (i32.sub (global.get $esp) (i32.const 12)))
-            (call $gs32 (global.get $esp) (local.get $ret_addr))
+            ;; DestroyWindow stdcall(1): [ret, hwnd] = 8 bytes. The focus
+            ;; wndproc must return through CACA002A before the API caller:
+            ;; otherwise its LRESULT (commonly zero) becomes DestroyWindow's
+            ;; BOOL. Use the same saved-return frame as SetFocus, but retain
+            ;; TRUE as this API's result.
+            (global.set $esp (i32.sub (global.get $esp) (i32.const 40)))
+            (call $gs32 (global.get $esp) (global.get $setfocus_ret_thunk))
             (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (global.get $main_hwnd))
             (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (i32.const 0x0007))  ;; WM_SETFOCUS
             (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (i32.const 0))      ;; wParam = 0
             (call $gs32 (i32.add (global.get $esp) (i32.const 16)) (i32.const 0))      ;; lParam = 0
+            (call $gs32 (i32.add (global.get $esp) (i32.const 20)) (local.get $ret_addr))
+            (call $gs32 (i32.add (global.get $esp) (i32.const 24)) (i32.const 1))
+            (call $gs32 (i32.add (global.get $esp) (i32.const 28)) (global.get $ebx))
+            (call $gs32 (i32.add (global.get $esp) (i32.const 32)) (global.get $esi))
+            (call $gs32 (i32.add (global.get $esp) (i32.const 36)) (global.get $edi))
+            (call $gs32 (i32.add (global.get $esp) (i32.const 40)) (global.get $ebp))
             (global.set $eip (local.get $wndproc))
-            (global.set $eax (i32.const 1))
             (global.set $steps (i32.const 0))
             (return)))))))
     (global.set $eax (i32.const 1))
@@ -3114,6 +3493,19 @@
       (then
         (global.set $eax
           (call $ctrl_table_set_id (local.get $arg0) (local.get $arg2)))
+        ;; GWL_ID is also the hMenu-derived notification ID stored in each
+        ;; native control's private state. Keep BUTTON's copy synchronized so
+        ;; a subclass that chains through CallWindowProc sends BN_CLICKED with
+        ;; the replacement ID. VCL creates TNewButton with hMenu=0 and assigns
+        ;; its ID immediately afterward; leaving ButtonState at zero makes its
+        ;; otherwise-correct mouse release notify the form as command 0.
+        (if (i32.and
+              (i32.eq (call $ctrl_table_get_class (local.get $arg0)) (i32.const 1))
+              (i32.ne (call $wnd_get_state_ptr (local.get $arg0)) (i32.const 0)))
+          (then
+            (i32.store offset=12
+              (call $g2w (call $wnd_get_state_ptr (local.get $arg0)))
+              (local.get $arg2))))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
     (if (i32.eq (local.get $arg1) (i32.const -16))  ;; GWL_STYLE
       (then
@@ -4683,16 +5075,52 @@
 
   (func $handle_SetWindowPos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; SetWindowPos(hwnd, hWndInsertAfter, X, Y, cx, cy, uFlags)
-    (local $cy i32) (local $uFlags i32) (local $dlg_rec i32)
+    (local $x i32) (local $y i32) (local $cx i32) (local $cy i32)
+    (local $uFlags i32) (local $dlg_rec i32) (local $screen i32)
     (local $old_wh i32) (local $new_wh i32)
+    (local.set $x (local.get $arg2))
+    (local.set $y (local.get $arg3))
+    (local.set $cx (local.get $arg4))
     (local.set $cy (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
     (local.set $uFlags (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
+    ;; An AdjustWindowRectEx-expanded CW_USEDEFAULT remains "leave this part
+    ;; alone" during SDL's first SetWindowPos, even though it is no longer the
+    ;; exact 0x80000000 bit pattern understood by the host fallback.
+    (if (i32.or
+          (call $is_cw_usedefault_value (local.get $x))
+          (call $is_cw_usedefault_value (local.get $y)))
+      (then (local.set $uFlags (i32.or (local.get $uFlags) (i32.const 2))))) ;; SWP_NOMOVE
+    (if (i32.or
+          (call $is_cw_usedefault_value (local.get $cx))
+          (call $is_cw_usedefault_value (local.get $cy)))
+      (then (local.set $uFlags (i32.or (local.get $uFlags) (i32.const 1))))) ;; SWP_NOSIZE
+    ;; Once SDL supplies a real size, its adjusted 0xc0000000 coordinates mean
+    ;; center that top-level window in the current display mode.
+    (if (i32.eqz (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0x40000000)))
+      (then
+        (local.set $screen (call $host_get_screen_size))
+        (if (call $is_adjusted_center_coord (local.get $x))
+          (then (local.set $x
+            (if (result i32)
+              (i32.gt_u (i32.and (local.get $screen) (i32.const 0xffff)) (local.get $cx))
+              (then (i32.div_u
+                (i32.sub (i32.and (local.get $screen) (i32.const 0xffff)) (local.get $cx))
+                (i32.const 2)))
+              (else (i32.const 0))))))
+        (if (call $is_adjusted_center_coord (local.get $y))
+          (then (local.set $y
+            (if (result i32)
+              (i32.gt_u (i32.shr_u (local.get $screen) (i32.const 16)) (local.get $cy))
+              (then (i32.div_u
+                (i32.sub (i32.shr_u (local.get $screen) (i32.const 16)) (local.get $cy))
+                (i32.const 2)))
+              (else (i32.const 0))))))))
     (local.set $old_wh (call $ctrl_get_wh_packed (local.get $arg0)))
     (if (i32.eqz (local.get $old_wh))
       (then (local.set $old_wh (call $host_get_window_client_size (local.get $arg0)))))
     ;; Pass uFlags to host so it can respect SWP_NOSIZE/SWP_NOMOVE independently
-    (call $host_move_window (local.get $arg0) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $cy) (local.get $uFlags))
-    (call $ctrl_geom_sync (local.get $arg0) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $cy) (local.get $uFlags))
+    (call $host_move_window (local.get $arg0) (local.get $x) (local.get $y) (local.get $cx) (local.get $cy) (local.get $uFlags))
+    (call $ctrl_geom_sync (local.get $arg0) (local.get $x) (local.get $y) (local.get $cx) (local.get $cy) (local.get $uFlags))
     (local.set $new_wh (call $ctrl_get_wh_packed (local.get $arg0)))
     (if (i32.eqz (local.get $new_wh))
       (then (local.set $new_wh (call $host_get_window_client_size (local.get $arg0)))))
@@ -4750,8 +5178,8 @@
               (i32.ne (i32.load offset=4 (local.get $dlg_rec)) (i32.const 0)))
           (then (drop (call $host_erase_background (local.get $arg0) (i32.const 16)))))))
     ;; Last, so the window sees the geometry we have already committed.
-    (call $windowpos_notify (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (local.get $arg3) (local.get $arg4) (local.get $cy) (local.get $uFlags))
+    (call $windowpos_notify (local.get $arg0) (local.get $arg1) (local.get $x)
+      (local.get $y) (local.get $cx) (local.get $cy) (local.get $uFlags))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
   )
@@ -5076,6 +5504,156 @@
     (i32.store8 (i32.add (local.get $wa) (i32.const 10)) (i32.const 0))         ;; null term
     (global.set $eax (i32.const 1))  ;; TRUE
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  ;; CSIDL_FLAG_CREATE asks the shell path API to create the returned folder.
+  ;; The host VFS accepts the UTF-16 path we just wrote and creates its parent
+  ;; entry as well; an already-present path is still a successful lookup.
+  (func $sh_folder_maybe_create (param $nFolder i32) (param $dst i32)
+    (if (i32.and (local.get $nFolder) (i32.const 0x8000))
+      (then (drop (call $host_fs_create_directory
+        (local.get $dst) (i32.const 1))))))
+
+  ;; SHGetFolderPathW(hwndOwner, nFolder, hToken, dwFlags, pszPath) -> HRESULT.
+  ;; The Win2k shfolder forwarder resolves this dynamically before trying its
+  ;; legacy shell32 ordinal. Return the canonical paths for the system and
+  ;; Program Files CSIDLs used by setup engines; pszPath is always MAX_PATH.
+  (func $handle_SHGetFolderPathW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dst i32) (local $folder i32)
+    (drop (local.get $arg0)) (drop (local.get $arg2))
+    (drop (local.get $arg3)) (drop (local.get $name_ptr))
+    ;; Mask CSIDL_FLAG_* from the high bits before selecting the folder.
+    (local.set $folder (i32.and (local.get $arg1) (i32.const 0x00ff)))
+    (if (i32.eqz (local.get $arg4))
+      (then
+        (global.set $eax (i32.const 0x80004003)) ;; E_POINTER
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    (local.set $dst (call $g2w (local.get $arg4)))
+
+    ;; CSIDL_PROGRAMS(0x02): the Win2k shfolder used by Unicode Inno Setup
+    ;; reads the all-users Common Programs value on this compatibility path.
+    (if (i32.eq (local.get $folder) (i32.const 0x02))
+      (then
+        ;; UTF-16LE "C:\\WINDOWS\\Start Menu\\Programs\0".
+        (i32.store (local.get $dst) (i32.const 0x003a0043))
+        (i32.store offset=4 (local.get $dst) (i32.const 0x0057005c))
+        (i32.store offset=8 (local.get $dst) (i32.const 0x004e0049))
+        (i32.store offset=12 (local.get $dst) (i32.const 0x004f0044))
+        (i32.store offset=16 (local.get $dst) (i32.const 0x00530057))
+        (i32.store offset=20 (local.get $dst) (i32.const 0x0053005c))
+        (i32.store offset=24 (local.get $dst) (i32.const 0x00610074))
+        (i32.store offset=28 (local.get $dst) (i32.const 0x00740072))
+        (i32.store offset=32 (local.get $dst) (i32.const 0x004d0020))
+        (i32.store offset=36 (local.get $dst) (i32.const 0x006e0065))
+        (i32.store offset=40 (local.get $dst) (i32.const 0x005c0075))
+        (i32.store offset=44 (local.get $dst) (i32.const 0x00720050))
+        (i32.store offset=48 (local.get $dst) (i32.const 0x0067006f))
+        (i32.store offset=52 (local.get $dst) (i32.const 0x00610072))
+        (i32.store offset=56 (local.get $dst) (i32.const 0x0073006d))
+        (i32.store16 offset=60 (local.get $dst) (i32.const 0))
+        (call $sh_folder_maybe_create (local.get $arg1) (local.get $dst))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+
+    ;; CSIDL_COMMON_APPDATA(0x17).
+    (if (i32.eq (local.get $folder) (i32.const 0x17))
+      (then
+        ;; UTF-16LE "C:\\WINDOWS\\All Users\\Application Data\0".
+        (i32.store (local.get $dst) (i32.const 0x003a0043))
+        (i32.store offset=4 (local.get $dst) (i32.const 0x0057005c))
+        (i32.store offset=8 (local.get $dst) (i32.const 0x004e0049))
+        (i32.store offset=12 (local.get $dst) (i32.const 0x004f0044))
+        (i32.store offset=16 (local.get $dst) (i32.const 0x00530057))
+        (i32.store offset=20 (local.get $dst) (i32.const 0x0041005c))
+        (i32.store offset=24 (local.get $dst) (i32.const 0x006c006c))
+        (i32.store offset=28 (local.get $dst) (i32.const 0x00550020))
+        (i32.store offset=32 (local.get $dst) (i32.const 0x00650073))
+        (i32.store offset=36 (local.get $dst) (i32.const 0x00730072))
+        (i32.store offset=40 (local.get $dst) (i32.const 0x0041005c))
+        (i32.store offset=44 (local.get $dst) (i32.const 0x00700070))
+        (i32.store offset=48 (local.get $dst) (i32.const 0x0069006c))
+        (i32.store offset=52 (local.get $dst) (i32.const 0x00610063))
+        (i32.store offset=56 (local.get $dst) (i32.const 0x00690074))
+        (i32.store offset=60 (local.get $dst) (i32.const 0x006e006f))
+        (i32.store offset=64 (local.get $dst) (i32.const 0x00440020))
+        (i32.store offset=68 (local.get $dst) (i32.const 0x00740061))
+        (i32.store offset=72 (local.get $dst) (i32.const 0x00000061))
+        (call $sh_folder_maybe_create (local.get $arg1) (local.get $dst))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+
+    ;; CSIDL_PROGRAM_FILES(0x26)/PROGRAM_FILESX86(0x2A):
+    ;; UTF-16LE "C:\\Program Files\0".
+    (if (i32.or (i32.eq (local.get $folder) (i32.const 0x26))
+                (i32.eq (local.get $folder) (i32.const 0x2a)))
+      (then
+        (i32.store (local.get $dst) (i32.const 0x003a0043))
+        (i32.store offset=4 (local.get $dst) (i32.const 0x0050005c))
+        (i32.store offset=8 (local.get $dst) (i32.const 0x006f0072))
+        (i32.store offset=12 (local.get $dst) (i32.const 0x00720067))
+        (i32.store offset=16 (local.get $dst) (i32.const 0x006d0061))
+        (i32.store offset=20 (local.get $dst) (i32.const 0x00460020))
+        (i32.store offset=24 (local.get $dst) (i32.const 0x006c0069))
+        (i32.store offset=28 (local.get $dst) (i32.const 0x00730065))
+        (i32.store16 offset=32 (local.get $dst) (i32.const 0))
+        (call $sh_folder_maybe_create (local.get $arg1) (local.get $dst))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+
+    ;; CSIDL_PROGRAM_FILES_COMMON(0x2B)/COMMONX86(0x2C):
+    ;; UTF-16LE "C:\\Program Files\\Common Files\0".
+    (if (i32.or (i32.eq (local.get $folder) (i32.const 0x2b))
+                (i32.eq (local.get $folder) (i32.const 0x2c)))
+      (then
+        (i32.store (local.get $dst) (i32.const 0x003a0043))
+        (i32.store offset=4 (local.get $dst) (i32.const 0x0050005c))
+        (i32.store offset=8 (local.get $dst) (i32.const 0x006f0072))
+        (i32.store offset=12 (local.get $dst) (i32.const 0x00720067))
+        (i32.store offset=16 (local.get $dst) (i32.const 0x006d0061))
+        (i32.store offset=20 (local.get $dst) (i32.const 0x00460020))
+        (i32.store offset=24 (local.get $dst) (i32.const 0x006c0069))
+        (i32.store offset=28 (local.get $dst) (i32.const 0x00730065))
+        (i32.store offset=32 (local.get $dst) (i32.const 0x0043005c))
+        (i32.store offset=36 (local.get $dst) (i32.const 0x006d006f))
+        (i32.store offset=40 (local.get $dst) (i32.const 0x006f006d))
+        (i32.store offset=44 (local.get $dst) (i32.const 0x0020006e))
+        (i32.store offset=48 (local.get $dst) (i32.const 0x00690046))
+        (i32.store offset=52 (local.get $dst) (i32.const 0x0065006c))
+        (i32.store offset=56 (local.get $dst) (i32.const 0x00000073))
+        (call $sh_folder_maybe_create (local.get $arg1) (local.get $dst))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+
+    ;; CSIDL_WINDOWS(0x24) and CSIDL_SYSTEM(0x25)/SYSTEMX86(0x29).
+    (if (i32.or (i32.eq (local.get $folder) (i32.const 0x24))
+          (i32.or (i32.eq (local.get $folder) (i32.const 0x25))
+                  (i32.eq (local.get $folder) (i32.const 0x29))))
+      (then
+        (i32.store (local.get $dst) (i32.const 0x003a0043))
+        (i32.store offset=4 (local.get $dst) (i32.const 0x0057005c))
+        (i32.store offset=8 (local.get $dst) (i32.const 0x004e0049))
+        (i32.store offset=12 (local.get $dst) (i32.const 0x004f0044))
+        (i32.store offset=16 (local.get $dst) (i32.const 0x00530057))
+        (if (i32.eq (local.get $folder) (i32.const 0x24))
+          (then (i32.store16 offset=20 (local.get $dst) (i32.const 0)))
+          (else
+            (i32.store offset=20 (local.get $dst) (i32.const 0x0053005c))
+            (i32.store offset=24 (local.get $dst) (i32.const 0x00530059))
+            (i32.store offset=28 (local.get $dst) (i32.const 0x00450054))
+            (i32.store offset=32 (local.get $dst) (i32.const 0x0000004d))))
+        (call $sh_folder_maybe_create (local.get $arg1) (local.get $dst))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+
+    (i32.store16 (local.get $dst) (i32.const 0))
+    (global.set $eax (i32.const 0x80070002)) ;; HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
   ;; 196: DragAcceptFiles(hwnd, fAccept) — no-op (no drag-drop support)
@@ -6760,6 +7338,13 @@
     (call $handle_PostMessageA (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
+  ;; SendNotifyMessageW has no string payload of its own. Preserve the A
+  ;; implementation's same-thread synchronous and cross-thread queued paths.
+  (func $handle_SendNotifyMessageW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_SendNotifyMessageA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+
   ;; 298: SetErrorMode — return 0, 1 arg stdcall
   (func $handle_SetErrorMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0))
@@ -6858,6 +7443,21 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
+  ;; ToUnicode(uVirtKey, uScanCode, lpKeyState, pwszBuff, cchBuff, wFlags).
+  ;; The supported US-layout subset is identical to ToAsciiEx's and that
+  ;; implementation already writes a UTF-16 code unit. The sixth argument has
+  ;; different meaning (flags rather than HKL), but neither path consumes it.
+  (func $handle_ToUnicode
+    (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.or (i32.eqz (local.get $arg3)) (i32.le_s (local.get $arg4) (i32.const 0)))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+        (return)))
+    (call $handle_ToAsciiEx
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+
   ;; GetKeyboardState(LPBYTE lpKeyState[256]) → BOOL — 1 arg stdcall.
   ;; SDL polls this every frame to build its keyboard snapshot. Fill the 256-byte
   ;; buffer from $host_get_key_down_state so currently-held keys show up there
@@ -6885,6 +7485,57 @@
   (func $handle_GetParent (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $wnd_get_parent_api (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; GetAncestor(hWnd, gaFlags). Unlike GetParent, GA_PARENT never substitutes
+  ;; a top-level popup's owner. GA_ROOTOWNER first reaches the child root, then
+  ;; follows each owner and that owner's child root.
+  (func $handle_GetAncestor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $walk i32) (local $next i32) (local $guard i32)
+    (global.set $eax (i32.const 0))
+    (if (i32.lt_s (call $wnd_table_find (local.get $arg0)) (i32.const 0))
+      (then
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    ;; GA_PARENT = 1.
+    (if (i32.eq (local.get $arg1) (i32.const 1))
+      (then
+        (global.set $eax (call $wnd_get_parent (local.get $arg0)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (if (i32.or
+          (i32.eq (local.get $arg1) (i32.const 2))  ;; GA_ROOT
+          (i32.eq (local.get $arg1) (i32.const 3))) ;; GA_ROOTOWNER
+      (then
+        (local.set $walk (local.get $arg0))
+        (block $parents_done (loop $parents
+          (local.set $next (call $wnd_get_parent (local.get $walk)))
+          (br_if $parents_done (i32.eqz (local.get $next)))
+          (local.set $walk (local.get $next))
+          (local.set $guard (i32.add (local.get $guard) (i32.const 1)))
+          (br_if $parents_done (i32.ge_u (local.get $guard) (global.get $MAX_WINDOWS)))
+          (br $parents)))
+        ;; GA_ROOTOWNER = 3. An owner's root may itself be a child in a
+        ;; malformed table, so apply the same bounded parent walk each time.
+        (if (i32.eq (local.get $arg1) (i32.const 3))
+          (then
+            (block $owners_done (loop $owners
+              (local.set $next (call $wnd_get_owner (local.get $walk)))
+              (br_if $owners_done (i32.eqz (local.get $next)))
+              (local.set $walk (local.get $next))
+              (block $owner_parents_done (loop $owner_parents
+                (local.set $next (call $wnd_get_parent (local.get $walk)))
+                (br_if $owner_parents_done (i32.eqz (local.get $next)))
+                (local.set $walk (local.get $next))
+                (local.set $guard (i32.add (local.get $guard) (i32.const 1)))
+                (br_if $owner_parents_done
+                  (i32.ge_u (local.get $guard) (global.get $MAX_WINDOWS)))
+                (br $owner_parents)))
+              (local.set $guard (i32.add (local.get $guard) (i32.const 1)))
+              (br_if $owners_done (i32.ge_u (local.get $guard) (global.get $MAX_WINDOWS)))
+              (br $owners)))))
+        (global.set $eax (local.get $walk))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 304: GetWindow(hWnd, uCmd) — 2 args stdcall.
@@ -7242,9 +7893,9 @@ nW — STUB: unimplemented
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 330: InitializeCriticalSection(lpCriticalSection)
-  ;; CRITICAL_SECTION: +0=DebugInfo, +4=LockCount, +8=RecursionCount, +0C=OwningThread, +10=LockSemaphore, +14=SpinCount
-  (func $handle_InitializeCriticalSection (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  ;; CRITICAL_SECTION: +0=DebugInfo, +4=LockCount, +8=RecursionCount,
+  ;; +0C=OwningThread, +10=LockSemaphore, +14=SpinCount.
+  (func $critical_section_init (param $arg0 i32) (param $spin i32)
     (local $cs i32)
     (local.set $cs (call $g2w (local.get $arg0)))
     ;; Zero the struct then set LockCount = -1 (unlocked)
@@ -7253,11 +7904,24 @@ nW — STUB: unimplemented
     (i32.store offset=8 (local.get $cs) (i32.const 0))   ;; RecursionCount
     (i32.store offset=12 (local.get $cs) (i32.const 0))  ;; OwningThread
     (i32.store offset=16 (local.get $cs) (i32.const 0))  ;; LockSemaphore
-    (i32.store offset=20 (local.get $cs) (i32.const 0))  ;; SpinCount
+    (i32.store offset=20 (local.get $cs) (local.get $spin)) ;; SpinCount
     ;; The only place a section is legitimately born, so the only place worth
     ;; recording it. See $cs_release_owned.
-    (call $cs_register (local.get $cs))
+    (call $cs_register (local.get $cs)))
+
+  ;; 330: InitializeCriticalSection(lpCriticalSection)
+  (func $handle_InitializeCriticalSection (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $critical_section_init (local.get $arg0) (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  ;; InitializeCriticalSectionAndSpinCount(lpCriticalSection, dwSpinCount).
+  ;; Uniprocessor Windows may ignore the requested spin count, but retaining it
+  ;; is observable through the public structure and costs nothing here.
+  (func $handle_InitializeCriticalSectionAndSpinCount (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $critical_section_init (local.get $arg0) (local.get $arg1))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; ---- the section registry -------------------------------------------------
@@ -7492,6 +8156,32 @@ nW — STUB: unimplemented
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
+  ;; TryEnterCriticalSection(lpCriticalSection) -> BOOL. Use the same owner
+  ;; word and recursive counters as EnterCriticalSection, but contention is an
+  ;; immediate FALSE and never parks the calling guest thread.
+  (func $handle_TryEnterCriticalSection (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $cs i32) (local $me i32) (local $prev i32)
+    (local.set $cs (call $g2w (local.get $arg0)))
+    (local.set $me (global.get $current_thread_id))
+    (if (call $cs_owner_aligned (local.get $cs))
+      (then
+        (local.set $prev (i32.atomic.rmw.cmpxchg offset=12
+          (local.get $cs) (i32.const 0) (local.get $me))))
+      (else
+        (local.set $prev (i32.load offset=12 (local.get $cs)))
+        (if (i32.eqz (local.get $prev))
+          (then (i32.store offset=12 (local.get $cs) (local.get $me))))))
+    (if (i32.or (i32.eqz (local.get $prev))
+                (i32.eq (local.get $prev) (local.get $me)))
+      (then
+        (i32.store offset=4 (local.get $cs)
+          (i32.add (i32.load offset=4 (local.get $cs)) (i32.const 1)))
+        (i32.store offset=8 (local.get $cs)
+          (i32.add (i32.load offset=8 (local.get $cs)) (i32.const 1)))
+        (global.set $eax (i32.const 1)))
+      (else (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
   ;; Is this section's OwningThread word 4-byte aligned, i.e. can it be the
   ;; target of an atomic? Its address is guest-derived and GUEST_BASE is aligned,
   ;; so this follows the guest's own alignment.
@@ -7682,6 +8372,27 @@ nW — STUB: unimplemented
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
+  ;; AddVectoredExceptionHandler(First, Handler) -> opaque handle. ScummVM
+  ;; installs this as a defensive crash reporter during startup. Keep the
+  ;; registration coherent with RemoveVectoredExceptionHandler; the existing
+  ;; SEH/top-level-filter machinery remains authoritative for delivered faults.
+  (func $handle_AddVectoredExceptionHandler (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (drop (local.get $arg0))
+    (global.set $vectored_exception_handler (local.get $arg1))
+    (global.set $eax (local.get $arg1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  ;; RemoveVectoredExceptionHandler(Handle) -> ULONG.
+  (func $handle_RemoveVectoredExceptionHandler (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.and
+          (i32.ne (local.get $arg0) (i32.const 0))
+          (i32.eq (local.get $arg0) (global.get $vectored_exception_handler)))
+      (then
+        (global.set $vectored_exception_handler (i32.const 0))
+        (global.set $eax (i32.const 1)))
+      (else (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
   ;; 937: SetPriorityClass(hProcess, dwPriorityClass) — no-op, return TRUE
   (func $handle_SetPriorityClass (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 1))
@@ -7746,9 +8457,10 @@ nW — STUB: unimplemented
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 346: IsDebuggerPresent — return 0 — STUB: unimplemented
+  ;; 346: IsDebuggerPresent — no guest debugger is attached.
   (func $handle_IsDebuggerPresent (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
   ;; 347: lstrcpynW — copy up to n wide chars
@@ -9382,6 +10094,14 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
+  ;; ShellExecuteExW has the same fixed-width SHELLEXECUTEINFO layout. The
+  ;; string fields differ only in what they point at, and this emulation does
+  ;; not dereference them, so preserve the A handler's success contract.
+  (func $handle_ShellExecuteExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_ShellExecuteExA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+
   ;; DragQueryFileW — same as A, return 0 files, 4 args
   (func $handle_DragQueryFileW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $handle_DragQueryFileA
@@ -9448,6 +10168,47 @@ HookEx — no next hook in chain, return 0
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
+
+  ;; ExtractIconExW has the same output-handle/result contract. The bounded
+  ;; implementation does not inspect the filename in either encoding.
+  (func $handle_ExtractIconExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_ExtractIconExA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+
+  ;; The GOG ScummVM executable links WinSparkle's updater API directly. The
+  ;; emulator has no updater/network service, so expose one coherent disabled
+  ;; state: mutators and lifecycle/manual-check calls are no-ops, while every
+  ;; getter reports off/never. WinSparkle is cdecl on 32-bit Windows, therefore
+  ;; these handlers consume only the thunk return address and leave arguments
+  ;; in the caller's preallocated outgoing area.
+  (func $handle_win_sparkle_check_update_with_ui (param i32 i32 i32 i32 i32 i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
+  (func $handle_win_sparkle_get_last_check_time (param i32 i32 i32 i32 i32 i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
+  (func $handle_win_sparkle_get_update_check_interval (param i32 i32 i32 i32 i32 i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
+  (func $handle_win_sparkle_set_update_check_interval (param i32 i32 i32 i32 i32 i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
+  (func $handle_win_sparkle_get_automatic_check_for_updates (param i32 i32 i32 i32 i32 i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
+  (func $handle_win_sparkle_set_automatic_check_for_updates (param i32 i32 i32 i32 i32 i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
+  (func $handle_win_sparkle_set_appcast_url (param i32 i32 i32 i32 i32 i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
+  (func $handle_win_sparkle_cleanup (param i32 i32 i32 i32 i32 i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
+  (func $handle_win_sparkle_init (param i32 i32 i32 i32 i32 i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
 
   ;; Shell_NotifyIconA(dwMessage, lpData) — tray icon, return TRUE, 2 args
   (func $handle_Shell_NotifyIconA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -9786,6 +10547,24 @@ HookEx — no next hook in chain, return 0
         (i32.store8 (i32.add (local.get $buf) (i32.const 8)) (i32.const 0))
         (global.set $eax (i32.const 8))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
+  )
+
+  ;; GetLogicalDriveStringsW(nBufferLength, lpBuffer) — UTF-16 multistring
+  ;; counterpart exposing the same fixed C: and CD-ROM D: roots.
+  (func $handle_GetLogicalDriveStringsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $buf i32)
+    (if (i32.lt_u (local.get $arg0) (i32.const 9))
+      (then (global.set $eax (i32.const 9)))
+      (else
+        (local.set $buf (call $g2w (local.get $arg1)))
+        ;; UTF-16LE "C:\\0D:\\0\0".
+        (i32.store (local.get $buf) (i32.const 0x003a0043))
+        (i32.store offset=4 (local.get $buf) (i32.const 0x0000005c))
+        (i32.store offset=8 (local.get $buf) (i32.const 0x003a0044))
+        (i32.store offset=12 (local.get $buf) (i32.const 0x0000005c))
+        (i32.store16 offset=16 (local.get $buf) (i32.const 0))
+        (global.set $eax (i32.const 8))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; GetKeyboardType(nTypeFlag) → int. Enhanced 101/102-key (type 4, 12 func keys).
@@ -10374,6 +11153,14 @@ HookEx — no next hook in chain, return 0
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
+  ;; OpenMutexW has the same process-local named-object semantics. The current
+  ;; mutex model has no pre-existing cross-process objects, so report not found
+  ;; and let a Unicode caller take the ordinary CreateMutexW path.
+  (func $handle_OpenMutexW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_OpenMutexA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+
   ;; CreateMutexA(lpAttr, bInitialOwner, lpName) — single-threaded, always succeeds with fresh handle
   (func $handle_CreateMutexA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
@@ -10443,10 +11230,11 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 529: FindResourceW — same as FindResourceA (resource IDs are integer MAKEINTRESOURCE values)
+  ;; 529: FindResourceW — integer IDs share the A walk; named resources are
+  ;; UTF-16 and must temporarily select the wide-name comparator.
   (func $handle_FindResourceW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $push_rsrc_ctx (local.get $arg0))
-    (global.set $eax (call $find_resource (local.get $arg2) (local.get $arg1)))
+    (global.set $eax (call $find_resource_w (local.get $arg2) (local.get $arg1)))
     (call $pop_rsrc_ctx)
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
@@ -10737,6 +11525,27 @@ HookEx — no next hook in chain, return 0
     (i32.store16 (i32.add (local.get $dst) (i32.const 8)) (i32.const 0x5357))     ;; WS
     (i32.store8 (i32.add (local.get $dst) (i32.const 10)) (i32.const 0))          ;; NUL
     (global.set $eax (i32.const 10))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; GetWindowsDirectoryW(lpBuffer, uSize) — UTF-16 counterpart with the
+  ;; Win32 required-size contract used by Unicode setup runtimes.
+  (func $handle_GetWindowsDirectoryW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dst i32)
+    (if (i32.and (i32.ne (local.get $arg0) (i32.const 0))
+                 (i32.ge_u (local.get $arg1) (i32.const 11)))
+      (then
+        (local.set $dst (call $g2w (local.get $arg0)))
+        ;; UTF-16LE "C:\WINDOWS\0".
+        (i32.store (local.get $dst) (i32.const 0x003a0043))
+        (i32.store offset=4 (local.get $dst) (i32.const 0x0057005c))
+        (i32.store offset=8 (local.get $dst) (i32.const 0x004e0049))
+        (i32.store offset=12 (local.get $dst) (i32.const 0x004f0044))
+        (i32.store offset=16 (local.get $dst) (i32.const 0x00530057))
+        (i32.store16 offset=20 (local.get $dst) (i32.const 0))
+        (global.set $eax (i32.const 10)))
+      (else
+        (global.set $eax (i32.const 11))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
@@ -12434,6 +13243,12 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
+  ;; GetClipboardSequenceNumber() — the host clipboard is not bridged, so its
+  ;; generation remains stable for the lifetime of this isolated process.
+  (func $handle_GetClipboardSequenceNumber (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
+
   ;; 690: SetWindowContextHelpId(hwnd, dwContextHelpId). No imported getter
   ;; currently observes the value, but frameworks use the BOOL result while
   ;; initializing a real HWND (VB6 passes -1 to disable context help).
@@ -12672,6 +13487,15 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
+  ;; ImmIsIME(hKL) → BOOL. The emulated machine exposes only the plain
+  ;; en-US keyboard layout, so no enumerated HKL is an IME. This still needs a
+  ;; real callable export: VCL loads IMM32 dynamically, caches the pointer,
+  ;; and calls it for every result from GetKeyboardLayoutList.
+  (func $handle_ImmIsIME (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
   ;; ImmReleaseContext(hWnd, hIMC) → BOOL
   (func $handle_ImmReleaseContext (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 1))
@@ -12758,6 +13582,30 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
           (i32.store8
             (i32.add (local.get $p) (local.get $i))
             (i32.add (local.get $c) (i32.const 0x20)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp)))
+    (global.set $eax (local.get $arg1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; CharLowerBuffW(lpsz, cchLength) — lowercase exactly cchLength UTF-16
+  ;; code units in place. As with the ANSI form, an embedded NUL does not end
+  ;; the counted buffer and the return value is the requested character count.
+  (func $handle_CharLowerBuffW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $i i32) (local $c i32) (local $at i32)
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $i) (local.get $arg1)))
+      (local.set $at (i32.add (local.get $arg0) (i32.shl (local.get $i) (i32.const 1))))
+      (local.set $c (call $gl16 (local.get $at)))
+      (if (i32.and
+            (i32.ge_u (local.get $c) (i32.const 0x41))
+            (i32.le_u (local.get $c) (i32.const 0x5a)))
+        (then (call $gs16 (local.get $at) (i32.add (local.get $c) (i32.const 0x20)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp)))
     (global.set $eax (local.get $arg1))
@@ -13678,6 +14526,19 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
+  ;; The VERSION resource itself is encoding-neutral. The filename is only a
+  ;; selector for synthetic DirectX modules; ordinary PE callers, including
+  ;; Unicode Inno Setup, read the current image's same binary blob.
+  (func $handle_GetFileVersionInfoSizeW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_GetFileVersionInfoSizeA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+
+  (func $handle_GetFileVersionInfoW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_GetFileVersionInfoA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+
   ;; VerQueryValueA(pBlock, lpSubBlock, lplpBuffer, puLen) → BOOL
   ;; Only handles "\" (root query) — returns pointer to VS_FIXEDFILEINFO.
   (global $version_query_scratch (mut i32) (i32.const 0))
@@ -13747,6 +14608,14 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
       (then (call $gs32 (local.get $arg3) (i32.const 0))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
+  ;; The root query is L"\\" in the W API. Its first two bytes are exactly
+  ;; the A handler's "\\\0" test, and it returns the encoding-neutral
+  ;; VS_FIXEDFILEINFO structure used by setup version checks.
+  (func $handle_VerQueryValueW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_VerQueryValueA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
   ;; GetWindowTextLengthA(hwnd) → length in chars (no NUL).
   (func $handle_GetWindowTextLengthA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

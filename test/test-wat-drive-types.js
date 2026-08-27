@@ -50,6 +50,15 @@ async function main() {
   assert.deepStrictEqual(Array.from(bytes.subarray(wasmPtr, wasmPtr + 9)),
     [0x43, 0x3a, 0x5c, 0, 0x44, 0x3a, 0x5c, 0, 0],
     'drive strings are double-NUL-terminated');
+  assert.strictEqual(exports.test_call_GetLogicalDriveStringsW(0, 0), 9,
+    'wide drive-string size query is measured in UTF-16 code units');
+  bytes.fill(0xcc, wasmPtr, wasmPtr + 32);
+  assert.strictEqual(exports.test_call_GetLogicalDriveStringsW(9, guestPtr), 8);
+  assert.deepStrictEqual(Array.from(bytes.subarray(wasmPtr, wasmPtr + 18)), [
+    0x43, 0, 0x3a, 0, 0x5c, 0, 0, 0,
+    0x44, 0, 0x3a, 0, 0x5c, 0, 0, 0,
+    0, 0,
+  ], 'wide drive strings are double-NUL-terminated');
   assert.strictEqual(exports.test_call_GetDriveTypeA(0), 3, 'NULL means current fixed drive');
   writeAnsi('C:\\');
   assert.strictEqual(exports.test_call_GetDriveTypeA(guestPtr), 3, 'C: is DRIVE_FIXED');

@@ -85,6 +85,20 @@ function makePeWithFirstThunkLookup() {
     'thunk metadata should retain the IMAGE_IMPORT_BY_NAME RVA');
   assert.strictEqual(view.getUint32(0x07112004, true), api.id,
     'FirstThunk fallback should resolve the normal API ID');
+
+  const dllBase = 0x500000;
+  const dllThunkIndex = wat.get_num_thunks() >>> 0;
+  assert.strictEqual(wat.load_dll(pe.length, dllBase) >>> 0, dllBase + 0x1000,
+    'the same stripped image should load through the dynamic DLL path');
+  assert.strictEqual(wat.get_num_thunks() >>> 0, dllThunkIndex + 1,
+    'the dynamic DLL loader should resolve a zero-OFT descriptor');
+  const dllIatWa = 0x12000 + (dllBase - 0x400000) + 0x1140;
+  assert.strictEqual(view.getUint32(dllIatWa, true),
+    (wat.get_thunk_base() + dllThunkIndex * 8) >>> 0,
+    'DLL FirstThunk lookup entry must be replaced with a host API thunk');
+  assert.strictEqual(view.getUint32(0x07112000 + dllThunkIndex * 8 + 4, true), api.id,
+    'DLL FirstThunk fallback should resolve the normal API ID');
+
   assert.deepStrictEqual(
     [...new Uint8Array(memory.buffer, 0x12000 + 0x2000, 0x1000)],
     new Array(0x1000).fill(0),

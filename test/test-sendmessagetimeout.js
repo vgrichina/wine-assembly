@@ -16,6 +16,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const apiTable = require('../src/api_table.json');
 const { bootRenderHarness } = require('./render-helper');
 
 const ROOT = path.join(__dirname, '..');
@@ -45,6 +46,20 @@ const extraWat = String.raw`
       (i32.const 1) (i32.const 0)) ;; SMTO_BLOCK, no name pointer
     (global.set $esp (local.get $saved_esp))
     (global.get $eax))
+
+  (func (export "test_send_message_timeout_w")
+    (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32)
+    (param $timeout i32) (param $result_ptr i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 32)))
+    (call $gs32 (i32.add (global.get $esp) (i32.const 24)) (local.get $timeout))
+    (call $gs32 (i32.add (global.get $esp) (i32.const 28)) (local.get $result_ptr))
+    (call $handle_SendMessageTimeoutW
+      (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)
+      (i32.const 1) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
 `;
 
 function u32(value) {
@@ -52,6 +67,8 @@ function u32(value) {
 }
 
 (async () => {
+  assert.strictEqual(apiTable.find(entry => entry.name === 'SendMessageTimeoutW').nargs, 7,
+    'SendMessageTimeoutW is available to dynamic import callers');
   const { exports: e, memory } = await bootRenderHarness({ extraWat });
   const fixture = fs.readFileSync(path.join(ROOT, 'test', 'binaries', 'calc.exe'));
   new Uint8Array(memory.buffer).set(fixture, e.get_staging());
@@ -111,7 +128,15 @@ function u32(value) {
   assert.strictEqual(view.getUint32(toWasm(seen), true), 3,
     'a NULL lpdwResult still delivers the message');
 
-  console.log('PASS  SendMessageTimeoutA delivers its LRESULT through lpdwResult');
+  view.setUint32(toWasm(result), 0xdeadbeef, true);
+  assert.strictEqual(e.test_send_message_timeout_w(dialog, 0x400, 0, 201, 1000, result), 1,
+    'SendMessageTimeoutW reports success for a window that exists');
+  assert.strictEqual(view.getUint32(toWasm(result), true) | 0, direct,
+    'SendMessageTimeoutW writes the delivered LRESULT');
+  assert.strictEqual(view.getUint32(toWasm(seen), true), 4,
+    'SendMessageTimeoutW runs the target window procedure');
+
+  console.log('PASS  SendMessageTimeoutA/W deliver their LRESULT through lpdwResult');
 })().catch(error => {
   console.error(error && error.stack || error);
   process.exit(1);

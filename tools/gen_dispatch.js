@@ -207,6 +207,10 @@ comInterfaces.push({ prefix: 'IDirectInputDevice2', global: 'DX_VTBL_DIDEV2', ex
 // every established cross-thread vtable registry offset remains stable.
 comInterfaces.push({ prefix: 'IDirectDrawSurface3', global: 'DX_VTBL_DDSURF3', extends: 'IDirectDrawSurface2' });
 
+// D3D9 swap chains were added after every established interface. Keep this at
+// the absolute tail so worker-thread registry offsets remain append-only.
+comInterfaces.push({ prefix: 'IDirect3DSwapChain9', global: 'DX_VTBL_D3DSWAP9' });
+
 // Build a map of prefix → { startId, count } from the api_table
 const byName = new Map(apiTable.map(a => [a.name, a]));
 const ifaceInfo = new Map();

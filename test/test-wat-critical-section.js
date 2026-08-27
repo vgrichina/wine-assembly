@@ -86,6 +86,10 @@ function check(ok, label, detail) {
 
   t1.exports.test_cs_init(CS_GUEST);
   check(isFree(state()), 'InitializeCriticalSection leaves the section free', show(state()));
+  check((t1.exports.test_cs_init_spin(CS_GUEST, 4000) | 0) === 1 &&
+      isFree(state()) && dv.getUint32(CS_WASM + 20, true) === 4000,
+    'InitializeCriticalSectionAndSpinCount initializes, preserves spin count, and returns TRUE',
+    `${show(state())} spin=${dv.getUint32(CS_WASM + 20, true)}`);
 
   {
     const parked = t1.exports.test_cs_enter(CS_GUEST) | 0;
@@ -108,6 +112,21 @@ function check(ok, label, detail) {
     t1.exports.test_cs_leave(CS_GUEST);
     check(isFree(state()), 'the last of N Leaves frees it, with the counters back at init',
       show(state()));
+  }
+
+  {
+    check((t1.exports.test_cs_try_enter(CS_GUEST) | 0) === 1,
+      'TryEnter takes a free section without parking', show(state()));
+    check((t1.exports.test_cs_try_enter(CS_GUEST) | 0) === 1 && state().recursion === 2,
+      'TryEnter recursively enters for the owner', show(state()));
+    const before = state();
+    check((t2.exports.test_cs_try_enter(CS_GUEST) | 0) === 0,
+      'TryEnter fails immediately for a different owner', show(state()));
+    check(JSON.stringify(state()) === JSON.stringify(before),
+      'failed TryEnter does not mutate the owner counters', show(state()));
+    t1.exports.test_cs_leave(CS_GUEST);
+    t1.exports.test_cs_leave(CS_GUEST);
+    check(isFree(state()), 'TryEnter acquisitions balance through Leave', show(state()));
   }
 
   {

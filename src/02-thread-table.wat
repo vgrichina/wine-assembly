@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 432 funcref)
+  (table $handlers 435 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -489,4 +489,8 @@
     $th_rle_run               ;; 429: a whole run-length sprite blit row
     $th_load_far_ptr32        ;; 430: LES/LDS r32, m16:32 in a flat task
     $th_lut_span              ;; 431: fixed unrolled LUT/blend span
+    ;; -- SSE base (src/06c-mmx.wat) --
+    $th_sse_rr                ;; 432: xmm,xmm (op=sub<<8|dst<<4|src)
+    $th_sse_rm                ;; 433: xmm,m128 (address word follows)
+    $th_sse_mr                ;; 434: m128,xmm (address word follows)
   )

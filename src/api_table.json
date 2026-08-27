@@ -24654,5 +24654,589 @@
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2113189311
+  },
+  {
+    "id": 2952,
+    "name": "ImmIsIME",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2573143135
+  },
+  {
+    "id": 2953,
+    "name": "SendNotifyMessageW",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2947532914
+  },
+  {
+    "id": 2954,
+    "name": "EnumFontsW",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 416364951
+  },
+  {
+    "id": 2955,
+    "name": "GetFileVersionInfoSizeW",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1181125675
+  },
+  {
+    "id": 2956,
+    "name": "GetFileVersionInfoW",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1289222800
+  },
+  {
+    "id": 2957,
+    "name": "VerQueryValueW",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3563872040
+  },
+  {
+    "id": 2958,
+    "name": "OpenThreadToken",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 579051690
+  },
+  {
+    "id": 2959,
+    "name": "OpenProcessToken",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1583009987
+  },
+  {
+    "id": 2960,
+    "name": "GetTokenInformation",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 56578362
+  },
+  {
+    "id": 2961,
+    "name": "GetWindowsDirectoryW",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3915847728
+  },
+  {
+    "id": 2962,
+    "name": "GetLogicalDriveStringsW",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4229925045
+  },
+  {
+    "id": 2963,
+    "name": "MsiQueryProductStateW",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 347615897
+  },
+  {
+    "id": 2964,
+    "name": "ShellExecuteExW",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2995377010
+  },
+  {
+    "id": 2965,
+    "name": "SendMessageTimeoutW",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 2903234826
+  },
+  {
+    "id": 2966,
+    "name": "GetAncestor",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3000465662
+  },
+  {
+    "id": 2967,
+    "name": "CharLowerBuffW",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3045391040
+  },
+  {
+    "id": 2968,
+    "name": "OpenMutexW",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3926387461
+  },
+  {
+    "id": 2969,
+    "name": "InitializeCriticalSectionAndSpinCount",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3291079317
+  },
+  {
+    "id": 2970,
+    "name": "LookupAccountSidW",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 1124593591
+  },
+  {
+    "id": 2971,
+    "name": "GetLengthSid",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2653042497
+  },
+  {
+    "id": 2972,
+    "name": "InitializeAcl",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 499092529
+  },
+  {
+    "id": 2973,
+    "name": "AddAccessAllowedAce",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 674108033
+  },
+  {
+    "id": 2974,
+    "name": "GetAce",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3902293346
+  },
+  {
+    "id": 2975,
+    "name": "SetSecurityDescriptorDacl",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 950830448
+  },
+  {
+    "id": 2976,
+    "name": "SetFileSecurityW",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 951088204
+  },
+  {
+    "id": 2977,
+    "name": "GdiplusStartup",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 661010066
+  },
+  {
+    "id": 2978,
+    "name": "GdiplusShutdown",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2697951059
+  },
+  {
+    "id": 2979,
+    "name": "GdipLoadImageFromFile",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 589544714
+  },
+  {
+    "id": 2980,
+    "name": "GdipDrawImageRect",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 4172418520
+  },
+  {
+    "id": 2981,
+    "name": "GdipGetImageWidth",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1003685314
+  },
+  {
+    "id": 2982,
+    "name": "GdipGetImageHeight",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 558791005
+  },
+  {
+    "id": 2983,
+    "name": "GdipDisposeImage",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1488477141
+  },
+  {
+    "id": 2984,
+    "name": "GdipCreateFromHDC",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3131748308
+  },
+  {
+    "id": 2985,
+    "name": "GdipDeleteGraphics",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1388927561
+  },
+  {
+    "id": 2986,
+    "name": "GdipGetImageGraphicsContext",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 941575306
+  },
+  {
+    "id": 2987,
+    "name": "GdipSetSmoothingMode",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3444888414
+  },
+  {
+    "id": 2988,
+    "name": "GdipSetInterpolationMode",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2287587762
+  },
+  {
+    "id": 2989,
+    "name": "GdipCreateBitmapFromGraphics",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 27742769
+  },
+  {
+    "id": 2990,
+    "name": "GdipCreateFromHWND",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2229750400
+  },
+  {
+    "id": 2991,
+    "name": "GdipGraphicsClear",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2647998475
+  },
+  {
+    "id": 2992,
+    "name": "GdipCreateBitmapFromHBITMAP",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 930425815
+  },
+  {
+    "id": 2993,
+    "name": "GdipDrawImageRectRectI",
+    "nargs": 14,
+    "convention": "stdcall",
+    "hash": 2877706925
+  },
+  {
+    "id": 2994,
+    "name": "GdipCreateImageAttributes",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3839340245
+  },
+  {
+    "id": 2995,
+    "name": "GdipSetImageAttributesColorMatrix",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 3316684707
+  },
+  {
+    "id": 2996,
+    "name": "GdipDisposeImageAttributes",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2302450884
+  },
+  {
+    "id": 2997,
+    "name": "SHGetFolderPathW",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3731428210,
+    "args": [
+      {
+        "name": "hwndOwner",
+        "type": "HWND"
+      },
+      {
+        "name": "nFolder",
+        "type": "DWORD"
+      },
+      {
+        "name": "hToken",
+        "type": "HANDLE"
+      },
+      {
+        "name": "dwFlags",
+        "type": "DWORD"
+      },
+      {
+        "name": "pszPath",
+        "type": "LPWSTR",
+        "out": true
+      }
+    ],
+    "ret": "HRESULT"
+  },
+  {
+    "id": 2998,
+    "name": "GetComputerNameW",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 846106086
+  },
+  {
+    "id": 2999,
+    "name": "GetUserNameW",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 581411704
+  },
+  {
+    "id": 3000,
+    "name": "AddVectoredExceptionHandler",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2947310861
+  },
+  {
+    "id": 3001,
+    "name": "RemoveVectoredExceptionHandler",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2131264840
+  },
+  {
+    "id": 3002,
+    "name": "TryEnterCriticalSection",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1809220520
+  },
+  {
+    "id": 3003,
+    "name": "ExtractIconExW",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1850424675
+  },
+  {
+    "id": 3004,
+    "name": "EnumDisplayDevicesW",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 332565898
+  },
+  {
+    "id": 3005,
+    "name": "EnumDisplaySettingsW",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3547709604
+  },
+  {
+    "id": 3006,
+    "name": "ToUnicode",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 491075031
+  },
+  {
+    "id": 3007,
+    "name": "win_sparkle_check_update_with_ui",
+    "nargs": 0,
+    "convention": "cdecl",
+    "hash": 4184503125
+  },
+  {
+    "id": 3008,
+    "name": "win_sparkle_get_last_check_time",
+    "nargs": 0,
+    "convention": "cdecl",
+    "hash": 3809391413
+  },
+  {
+    "id": 3009,
+    "name": "win_sparkle_get_update_check_interval",
+    "nargs": 0,
+    "convention": "cdecl",
+    "hash": 3861148826
+  },
+  {
+    "id": 3010,
+    "name": "win_sparkle_set_update_check_interval",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 1831925334
+  },
+  {
+    "id": 3011,
+    "name": "win_sparkle_get_automatic_check_for_updates",
+    "nargs": 0,
+    "convention": "cdecl",
+    "hash": 3689053025
+  },
+  {
+    "id": 3012,
+    "name": "win_sparkle_set_automatic_check_for_updates",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 1988740229
+  },
+  {
+    "id": 3013,
+    "name": "win_sparkle_set_appcast_url",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 2358941706
+  },
+  {
+    "id": 3014,
+    "name": "win_sparkle_cleanup",
+    "nargs": 0,
+    "convention": "cdecl",
+    "hash": 1267209415
+  },
+  {
+    "id": 3015,
+    "name": "win_sparkle_init",
+    "nargs": 0,
+    "convention": "cdecl",
+    "hash": 930953727
+  },
+  {
+    "id": 3016,
+    "name": "waveInGetDevCapsA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3821822260
+  },
+  {
+    "id": 3017,
+    "name": "waveInGetDevCapsW",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3519825118
+  },
+  {
+    "id": 3018,
+    "name": "GetClipboardSequenceNumber",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 2919354003
+  },
+  {
+    "id": 3019,
+    "name": "IDirect3DSwapChain9_QueryInterface",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3656731705
+  },
+  {
+    "id": 3020,
+    "name": "IDirect3DSwapChain9_AddRef",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1858424074
+  },
+  {
+    "id": 3021,
+    "name": "IDirect3DSwapChain9_Release",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2547755239
+  },
+  {
+    "id": 3022,
+    "name": "IDirect3DSwapChain9_Present",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 723438449
+  },
+  {
+    "id": 3023,
+    "name": "IDirect3DSwapChain9_GetFrontBufferData",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3839172699
+  },
+  {
+    "id": 3024,
+    "name": "IDirect3DSwapChain9_GetBackBuffer",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1857693007
+  },
+  {
+    "id": 3025,
+    "name": "IDirect3DSwapChain9_GetRasterStatus",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1674447125
+  },
+  {
+    "id": 3026,
+    "name": "IDirect3DSwapChain9_GetDisplayMode",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3938831523
+  },
+  {
+    "id": 3027,
+    "name": "IDirect3DSwapChain9_GetDevice",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 29371868
+  },
+  {
+    "id": 3028,
+    "name": "IDirect3DSwapChain9_GetPresentParameters",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2095730233
+  },
+  {
+    "id": 3029,
+    "name": "EnumResourceNamesA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2778302607
+  },
+  {
+    "id": 3030,
+    "name": "GetUserDefaultUILanguage",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 1662617721
+  },
+  {
+    "id": 3031,
+    "name": "midiOutLongMsg",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 4199296131
   }
 ]

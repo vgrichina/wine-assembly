@@ -12,6 +12,13 @@ const extraWat = String.raw`
     (call $handle_GetSystemDirectoryW (local.get $buf) (local.get $size)
       (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
     (global.get $eax))
+
+  (func (export "test_get_windows_directory_w") (param $buf i32) (param $size i32) (result i32)
+    (global.set $image_base (i32.const 0))
+    (global.set $esp (i32.const 0x00300000))
+    (call $handle_GetWindowsDirectoryW (local.get $buf) (local.get $size)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
 `;
 
 (async () => {
@@ -42,7 +49,20 @@ const extraWat = String.raw`
   assert.strictEqual(wat.test_get_system_directory_w(0, 0), 18,
     'size query through a null buffer reports the required size');
 
-  console.log('PASS GetSystemDirectoryW UTF-16 output and size contract');
+  const windows = 'C:\\WINDOWS';
+  for (let i = 0; i < 40; i++) wat.guest_write8(buffer + i, 0xcc);
+  assert.strictEqual(wat.test_get_windows_directory_w(buffer, 11), windows.length,
+    'Windows directory success excludes the UTF-16 terminator');
+  for (let i = 0; i < windows.length; i++) {
+    assert.strictEqual(read16(buffer + i * 2), windows.charCodeAt(i),
+      `Windows directory UTF-16 code unit ${i}`);
+  }
+  assert.strictEqual(read16(buffer + windows.length * 2), 0,
+    'Windows directory output is NUL terminated');
+  assert.strictEqual(wat.test_get_windows_directory_w(0, 0), 11,
+    'Windows directory size query includes its terminator');
+
+  console.log('PASS system and Windows directory UTF-16 size contracts');
 })().catch(error => {
   console.error(error.stack || error.message);
   process.exit(1);

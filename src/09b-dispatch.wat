@@ -398,9 +398,9 @@
         (global.set $steps (i32.const 0))
         (return)))
 
-    ;; SetFocus's synchronous WM_SETFOCUS callback returned. The callback's
-    ;; stdcall epilogue leaves ESP at the saved API return frame built by
-    ;; $handle_SetFocus.
+    ;; A synchronous WM_SETFOCUS callback returned. The callback's stdcall
+    ;; epilogue leaves ESP at the saved API return frame built by SetFocus or
+    ;; DestroyWindow's focused-descendant transfer path.
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA002A))
       (then
         (global.set $eip (call $gl32 (global.get $esp)))
@@ -759,6 +759,13 @@
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA002B))
       (then
         (call $enum_child_continue)
+        (return)))
+
+    ;; EnumResourceNamesA continuation — callback returned, visit the next
+    ;; name in the selected PE resource-type directory.
+    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0030))
+      (then
+        (call $enum_rsrc_continue)
         (return)))
 
     ;; D3D EnumZBufferFormats continuation — callback returned, finish enumeration

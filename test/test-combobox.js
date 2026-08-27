@@ -317,6 +317,7 @@ async function main() {
   // CBS_DROPDOWN (variant=2): editable field via inner edit child
   // ===================================================================
   const WM_SETTEXT = 0x000C, WM_GETTEXTLENGTH = 0x000E, WM_PAINT = 0x000F;
+  const WM_CHAR = 0x0102;
   const CB_LIMITTEXT = 0x0141, CB_GETEDITSEL = 0x0140, CB_SETEDITSEL = 0x0142;
   const EM_GETLIMITTEXT = 0x00D5;
 
@@ -368,8 +369,12 @@ async function main() {
   e.send_message(cb2, WM_PAINT, 0, 0);
   const emptyEditPixels = snapshotWindow(cb2 - 1);
 
-  // WM_SETTEXT routed to edit
+  // Programmatic combo text changes synchronize the inner edit without
+  // masquerading as user CBN_EDITUPDATE/CBN_EDITCHANGE notifications.
+  e.set_post_queue_count(0);
   e.send_message(cb2, WM_SETTEXT, 0, writeStr('hello'));
+  check('programmatic combo text suppresses user-edit notifications',
+    e.post_queue_depth() === 0, `depth=${e.post_queue_depth()}`);
   const dest = e.guest_alloc(64);
   const n = e.send_message(cb2, WM_GETTEXT, 64, dest);
   check('WM_SETTEXT/GETTEXT routes through edit',
@@ -381,6 +386,22 @@ async function main() {
   check('CBS_DROPDOWN paint uses the inner edit text',
     changedBytes(emptyEditPixels, editPixels) > 0,
     `changedBytes=${changedBytes(emptyEditPixels, editPixels)} bytes=${editPixels?.length || 0}`);
+
+  // A real WM_CHAR changes the inner edit as user input. Relay both combo
+  // notifications asynchronously so an x86 parent callback owns the pump.
+  e.send_message(ed, WM_CHAR, '!'.charCodeAt(0), 0);
+  check('editable combo posts both user-edit notifications',
+    e.post_queue_depth() === 2 &&
+      e.post_queue_peek(0, 0) === cb2 - 1 &&
+      e.post_queue_peek(0, 1) === WM_COMMAND &&
+      e.post_queue_peek(0, 2) === ((6 << 16) | 100) &&
+      e.post_queue_peek(0, 3) === cb2 &&
+      e.post_queue_peek(1, 0) === cb2 - 1 &&
+      e.post_queue_peek(1, 1) === WM_COMMAND &&
+      e.post_queue_peek(1, 2) === ((5 << 16) | 100) &&
+      e.post_queue_peek(1, 3) === cb2,
+    `depth=${e.post_queue_depth()}`);
+  e.set_post_queue_count(0);
 
   // CB_LIMITTEXT → EM_SETLIMITTEXT round-trip via EM_GETLIMITTEXT
   e.send_message(cb2, CB_LIMITTEXT, 32, 0);

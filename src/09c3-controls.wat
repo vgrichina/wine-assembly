@@ -293,7 +293,7 @@
       (i32.div_u (i32.sub (local.get $h) (i32.const 4)) (i32.const 16)))
     (i32.gt_s (call $lb_count (local.get $sw)) (local.get $visible)))
 
-  ;; ---- ComboBoxState accessors (40 bytes) ----
+  ;; ---- ComboBoxState accessors (44 bytes) ----
   ;;
   ;; A combobox is three windows: itself, an inner listbox, and (for
   ;; CBS_DROPDOWN) an inner edit, plus a popup shell that hosts the listbox
@@ -341,6 +341,10 @@
     (i32.load offset=36 (local.get $sw)))
   (func $cb_set_variant (param $sw i32) (param $v i32)
     (i32.store offset=36 (local.get $sw) (local.get $v)))
+  (func $cb_suppress_edit_notify (param $sw i32) (result i32)
+    (i32.load offset=40 (local.get $sw)))
+  (func $cb_set_suppress_edit_notify (param $sw i32) (param $v i32)
+    (i32.store offset=40 (local.get $sw) (local.get $v)))
   ;; CB_SETEXTENDEDUI has no field of its own: it rides the unused top bit of
   ;; the stored style word, which is why a plain read of +8 is not the window
   ;; style an app would recognise. Both halves of that trick live here.
@@ -4836,8 +4840,8 @@
         (return (i32.const 0))))
 
     ;; ---------- WM_LBUTTONUP (0x0202) ----------
-    ;; Clear pressed flag, derive button kind from style&0xF (BS_*), toggle
-    ;; check state for checkbox/radio kinds, then post WM_COMMAND with
+    ;; Clear pressed flag, derive button kind from style&0xF (BS_*), update
+    ;; check state for automatic checkbox/radio kinds, then post WM_COMMAND with
     ;; BN_CLICKED to the parent so a future $wndproc_dialog (or an existing
     ;; x86 dialog proc) can react.
     (if (i32.eq (local.get $msg) (i32.const 0x0202))
@@ -4850,18 +4854,18 @@
             (local.set $flags (i32.and (local.get $flags) (i32.const 0xFFFFFFFE)))
             (if (i32.eq (global.get $capture_hwnd) (local.get $hwnd))
               (then (global.set $capture_hwnd (i32.const 0))))
-            ;; Toggle checked for BS_CHECKBOX(2)/BS_AUTOCHECKBOX(3)/
-            ;; BS_3STATE(5)/BS_AUTO3STATE(6). BS_AUTORADIOBUTTON(9) clears
-            ;; sibling autoradios then forces this one ON (radio mutex).
-            ;; Push buttons (0,1), plain BS_RADIOBUTTON(4) and groupbox (7)
-            ;; do not auto-toggle — the parent dialog code is expected to
-            ;; manage their state in response to BN_CLICKED.
+            ;; USER changes state automatically only for BS_AUTOCHECKBOX(3),
+            ;; BS_AUTO3STATE(6), and BS_AUTORADIOBUTTON(9). Plain
+            ;; BS_CHECKBOX(2)/BS_3STATE(5) controls deliberately keep their
+            ;; old state: frameworks such as VCL subclass those styles and
+            ;; update them while handling the reflected BN_CLICKED. Changing
+            ;; state here makes that handler observe the wrong old value.
+            ;; Push buttons (0,1), plain BS_RADIOBUTTON(4), and groupbox (7)
+            ;; likewise do not auto-toggle.
             (local.set $w (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0F)))
             (if (i32.or
-                  (i32.or (i32.eq (local.get $w) (i32.const 2))
-                          (i32.eq (local.get $w) (i32.const 3)))
-                  (i32.or (i32.eq (local.get $w) (i32.const 5))
-                          (i32.eq (local.get $w) (i32.const 6))))
+                  (i32.eq (local.get $w) (i32.const 3))
+                  (i32.eq (local.get $w) (i32.const 6)))
               (then (local.set $flags (i32.xor (local.get $flags) (i32.const 0x02)))))
             (if (i32.eq (local.get $w) (i32.const 9))
               (then
@@ -4880,25 +4884,31 @@
                   (local.get $hwnd) (i32.const 0x000F) (i32.const 0) (i32.const 0)))))
             ;; Send WM_COMMAND(MAKEWPARAM(ctrl_id, BN_CLICKED=0), button_hwnd)
             ;; to parent. Native BUTTON controls normally notify parents
-            ;; synchronously, and non-dialog parents plus IDOK/IDCANCEL keep
-            ;; that behavior. A custom command on a native dialog may enter a
-            ;; nested modal loop, though. Running that through $wnd_send_message
+            ;; synchronously, and ordinary non-owned parents plus
+            ;; IDOK/IDCANCEL keep that behavior. A custom command on a native
+            ;; dialog or an owned guest form may enter a nested modal loop,
+            ;; though. Running that through $wnd_send_message
             ;; traps the browser inside its recursive interpreter frame, so no
             ;; later click can reach the child modal dialog; if its bounded run
             ;; expires, the live x86 continuation is abandoned. Queue those
-            ;; custom dialog commands instead. DispatchMessage then enters the
-            ;; parent on the main interpreter context, including any native
-            ;; subclass chain, where a nested message pump can receive input.
+            ;; custom modal-form commands instead. A retained DLGPROC receives
+            ;; WM_COMMAND on the main interpreter context. VCL's owned forms
+            ;; normally reflect that parent notification back to the control as
+            ;; CN_COMMAND; its HWND association is private framework state, so
+            ;; deliver the reflected message directly to the guest subclass.
             ;; Skip groupbox (kind 7) — it's not interactive.
             (if (i32.ne (local.get $w) (i32.const 7))
               (then
                 (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
-                (local.set $cmd_id (i32.and (call $btn_ctrl_id (local.get $state_w)) (i32.const 0xFFFF)))
+                ;; GWL_ID can change after WM_CREATE (VCL creates TNewButton
+                ;; with hMenu=0, then assigns the HWND as its ID). CONTROL_TABLE
+                ;; is the canonical current value; ButtonState's creation-time
+                ;; copy may legitimately be stale.
+                (local.set $cmd_id
+                  (i32.and (call $ctrl_table_get_id (local.get $hwnd))
+                           (i32.const 0xFFFF)))
                 (global.set $dialog_last_proc_handled (i32.const 0))
                 (if (i32.and
-                      ;; A framework may subclass DefDlgProc and replace the
-                      ;; visible WNDPROC marker. The retained DLGPROC record is
-                      ;; the stable test that this parent is a native dialog.
                       (i32.ne (call $dialog_proc_get (local.get $parent))
                               (i32.const 0))
                       (i32.and
@@ -4911,12 +4921,38 @@
                       (local.get $cmd_id)
                       (local.get $hwnd))))
                   (else
-                    (drop (call $wnd_send_message
-                      (local.get $parent)
-                      (i32.const 0x0111)  ;; WM_COMMAND
-                      ;; wParam: low 16 = ctrl_id (from ButtonState+12), high 16 = BN_CLICKED (0)
-                      (local.get $cmd_id)
-                      (local.get $hwnd))))) ;; lParam = button hwnd
+                    (if (i32.and
+                          (i32.and
+                            (i32.ne (local.get $cmd_id) (i32.const 1))
+                            (i32.ne (local.get $cmd_id) (i32.const 2)))
+                          (i32.and
+                            (i32.or
+                              (i32.ne (call $wnd_get_owner (local.get $parent))
+                                      (i32.const 0))
+                              ;; VCL assigns each native child its HWND as
+                              ;; GWL_ID, then reflects WM_COMMAND back as
+                              ;; CN_COMMAND. Panels nested inside the main
+                              ;; form need the same queued reflection even
+                              ;; though the immediate panel has no owner.
+                              (i32.eq (local.get $cmd_id)
+                                (i32.and (local.get $hwnd) (i32.const 0xFFFF))))
+                            (i32.and
+                              (i32.ne (call $wnd_table_get (local.get $parent))
+                                      (i32.const 0))
+                              (i32.lt_u (call $wnd_table_get (local.get $parent))
+                                        (i32.const 0xFFFE0000)))))
+                      (then
+                        ;; CN_BASE(0xBC00) + WM_COMMAND(0x0111).
+                        (drop (call $post_queue_push
+                          (local.get $hwnd) (i32.const 0xBD11)
+                          (local.get $cmd_id) (local.get $hwnd))))
+                      (else
+                        (drop (call $wnd_send_message
+                          (local.get $parent)
+                          (i32.const 0x0111)  ;; WM_COMMAND
+                          ;; wParam: low 16 = current ctrl_id, high 16 = BN_CLICKED (0)
+                          (local.get $cmd_id)
+                          (local.get $hwnd))))))) ;; lParam = button hwnd
                 ;; USER's default IDOK close applies only when the dialog proc
                 ;; did not handle the command itself. A handled command may
                 ;; intentionally post follow-up work while keeping the dialog.
@@ -11570,7 +11606,7 @@
   ;;   2=CBS_DROPDOWN     listbox toggled by click/F4/Alt+Down; field is editable
   ;;   3=CBS_DROPDOWNLIST listbox toggled, field shows selection (read-only)
   ;;
-  ;; ComboBoxState (40 bytes, allocated in WM_CREATE)
+  ;; ComboBoxState (44 bytes, allocated in WM_CREATE)
   ;;   +0   text_buf_ptr   guest ptr to selected/typed item text
   ;;   +4   text_len
   ;;   +8   style          full window style
@@ -11581,6 +11617,7 @@
   ;;   +28  edit_hwnd      CBS_DROPDOWN inner edit child; 0 for SIMPLE/DROPDOWNLIST
   ;;   +32  is_dropped     0/1 — CB_GETDROPPEDSTATE
   ;;   +36  variant        1=SIMPLE 2=DROPDOWN 3=DROPDOWNLIST
+  ;;   +40  suppress_edit_notify — combo-originated edit WM_SETTEXT nesting
   ;;
   ;; FIELD_H = 21 px; arrow box = 16 px wide on right edge.
 
@@ -11883,9 +11920,12 @@
         (if (i32.and
               (i32.eq (call $cb_variant (local.get $sw)) (i32.const 2))
               (i32.ne (call $cb_edit_hwnd (local.get $sw)) (i32.const 0)))
-          (then (drop (call $wnd_send_message
-            (call $cb_edit_hwnd (local.get $sw))
-            (i32.const 0x000C) (i32.const 0) (i32.const 0)))))
+          (then
+            (call $cb_set_suppress_edit_notify (local.get $sw) (i32.const 1))
+            (drop (call $wnd_send_message
+              (call $cb_edit_hwnd (local.get $sw))
+              (i32.const 0x000C) (i32.const 0) (i32.const 0)))
+            (call $cb_set_suppress_edit_notify (local.get $sw) (i32.const 0))))
         (return)))
     ;; Get LB_GETTEXTLEN, alloc buf, LB_GETTEXT into it, store.
     (local.set $slen (call $wnd_send_message (local.get $lb) (i32.const 0x018A) (local.get $sel) (i32.const 0)))
@@ -11897,9 +11937,12 @@
     (if (i32.and
           (i32.eq (call $cb_variant (local.get $sw)) (i32.const 2))
           (i32.ne (call $cb_edit_hwnd (local.get $sw)) (i32.const 0)))
-      (then (drop (call $wnd_send_message
-        (call $cb_edit_hwnd (local.get $sw))
-        (i32.const 0x000C) (i32.const 0) (local.get $buf_g))))))
+      (then
+        (call $cb_set_suppress_edit_notify (local.get $sw) (i32.const 1))
+        (drop (call $wnd_send_message
+          (call $cb_edit_hwnd (local.get $sw))
+          (i32.const 0x000C) (i32.const 0) (local.get $buf_g)))
+        (call $cb_set_suppress_edit_notify (local.get $sw) (i32.const 0)))))
 
   (func $combobox_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $state i32) (local $state_w i32) (local $cs_w i32)
@@ -11940,7 +11983,7 @@
               (call $cb_popup_hwnd (call $g2w (local.get $state))))
             (local.set $prev_edit
               (call $cb_edit_hwnd (call $g2w (local.get $state))))))
-        (local.set $state (call $heap_alloc (i32.const 40)))
+        (local.set $state (call $heap_alloc (i32.const 44)))
         (local.set $state_w (call $g2w (local.get $state)))
         (call $cb_set_text_ptr (local.get $state_w) (i32.const 0))
         (call $cb_set_text_len (local.get $state_w) (i32.const 0))
@@ -11953,6 +11996,7 @@
         (call $cb_set_edit_hwnd (local.get $state_w) (local.get $prev_edit))
         (call $cb_set_is_dropped (local.get $state_w) (i32.const 0))
         (call $cb_set_variant (local.get $state_w) (local.get $variant))
+        (call $cb_set_suppress_edit_notify (local.get $state_w) (i32.const 0))
         (if (local.get $name_ptr)
           (then
             (local.set $text_len (call $strlen (call $g2w (local.get $name_ptr))))
@@ -12106,14 +12150,19 @@
                 (local.set $name_ptr (call $heap_alloc (i32.const 3)))
                 (i32.store16 (call $g2w (local.get $name_ptr)) (i32.const 0x3031))
                 (i32.store8 offset=2 (call $g2w (local.get $name_ptr)) (i32.const 0))
+                (call $cb_set_suppress_edit_notify (local.get $state_w) (i32.const 1))
                 (local.set $idx (call $wnd_send_message
                   (call $cb_edit_hwnd (local.get $state_w))
                   (i32.const 0x000C) (local.get $wParam) (local.get $name_ptr)))
+                (call $cb_set_suppress_edit_notify (local.get $state_w) (i32.const 0))
                 (call $heap_free (local.get $name_ptr))
                 (return (local.get $idx))))
-            (return (call $wnd_send_message
-                      (call $cb_edit_hwnd (local.get $state_w))
-                      (i32.const 0x000C) (local.get $wParam) (local.get $lParam)))))
+            (call $cb_set_suppress_edit_notify (local.get $state_w) (i32.const 1))
+            (local.set $idx (call $wnd_send_message
+              (call $cb_edit_hwnd (local.get $state_w))
+              (i32.const 0x000C) (local.get $wParam) (local.get $lParam)))
+            (call $cb_set_suppress_edit_notify (local.get $state_w) (i32.const 0))
+            (return (local.get $idx))))
         (call $heap_free (call $cb_text_ptr (local.get $state_w)))
         (call $cb_set_text_ptr (local.get $state_w) (i32.const 0))
         (call $cb_set_text_len (local.get $state_w) (i32.const 0))
@@ -12509,24 +12558,31 @@
                                 (call $cb_edit_hwnd (local.get $state_w)))
                         (i32.eq (global.get $focus_hwnd) (local.get $lb)))))
                   (then (local.set $cmd (i32.const 4))))))    ;; CBN_KILLFOCUS
+            ;; CBN_EDITUPDATE/CBN_EDITCHANGE describe user edits. A combo's
+            ;; own WM_SETTEXT/selection synchronization changes the inner EDIT
+            ;; too, but must not recursively notify its parent as user input.
+            (if (i32.and
+                  (call $cb_suppress_edit_notify (local.get $state_w))
+                  (i32.or (i32.eq (local.get $cmd) (i32.const 5))
+                          (i32.eq (local.get $cmd) (i32.const 6))))
+              (then (return (i32.const 0))))
             (if (local.get $cmd)
               (then
                 (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
                 (local.set $ctrl_id (i32.and (call $cb_ctrl_id (local.get $state_w)) (i32.const 0xFFFF)))
                 (if (local.get $parent)
                   (then
-                    ;; The focus pair is POSTED, like CBN_SELCHANGE below: it is
-                    ;; relayed from inside the edit child's own WM_KILLFOCUS
-                    ;; dispatch, and its handler runs guest code that expects to
-                    ;; own the pump (WordPad's applies a CHARFORMAT to the view).
-                    (if (i32.or (i32.eq (local.get $cmd) (i32.const 3))
-                                (i32.eq (local.get $cmd) (i32.const 4)))
-                      (then (drop (call $post_queue_push (local.get $parent) (i32.const 0x0111)
-                              (i32.or (local.get $ctrl_id) (i32.shl (local.get $cmd) (i32.const 16)))
-                              (local.get $hwnd))))
-                      (else (drop (call $wnd_send_message (local.get $parent) (i32.const 0x0111)
-                              (i32.or (local.get $ctrl_id) (i32.shl (local.get $cmd) (i32.const 16)))
-                              (local.get $hwnd)))))))))
+                    ;; Every relayed edit notification is posted. They originate
+                    ;; inside the edit child's own message dispatch, and their
+                    ;; parent handlers may run guest callbacks that must own the
+                    ;; main pump. Inno's skinned setup, for example, changes a
+                    ;; combo during InitializeWizard; synchronously invoking its
+                    ;; CBN_EDITCHANGE handler recursively enters Pascal Script.
+                    (drop (call $post_queue_push
+                      (local.get $parent) (i32.const 0x0111)
+                      (i32.or (local.get $ctrl_id)
+                              (i32.shl (local.get $cmd) (i32.const 16)))
+                      (local.get $hwnd)))))))
             (return (i32.const 0))))
         (if (i32.eq (local.get $lParam) (local.get $lb))
           (then
@@ -13524,12 +13580,22 @@
         (i32.store offset=16 (local.get $state_w) (i32.const 0))
         (if (local.get $lParam)
           (then
-            (local.set $text_len (call $strlen (call $g2w (local.get $lParam))))
+            (local.set $text_len
+              (if (result i32) (call $wnd_unicode_get (local.get $hwnd))
+                (then (call $strlen_w (call $g2w (local.get $lParam))))
+                (else (call $strlen (call $g2w (local.get $lParam))))))
             (call $edit_ensure_cap (local.get $state_w) (local.get $text_len))
             (if (local.get $text_len)
-              (then (call $memcpy (call $g2w (i32.load (local.get $state_w)))
+              (then
+                (if (call $wnd_unicode_get (local.get $hwnd))
+                  (then
+                    (drop (call $wide_to_ansi
+                      (local.get $lParam) (i32.load (local.get $state_w))
+                      (i32.add (local.get $text_len) (i32.const 1)))))
+                  (else
+                    (call $memcpy (call $g2w (i32.load (local.get $state_w)))
                                   (call $g2w (local.get $lParam))
-                                  (local.get $text_len))))
+                                  (local.get $text_len))))))
             (i32.store offset=4  (local.get $state_w) (local.get $text_len))
             (i32.store offset=12 (local.get $state_w) (local.get $text_len))
             (i32.store offset=16 (local.get $state_w) (local.get $text_len))
@@ -13553,11 +13619,24 @@
         (if (i32.ge_u (local.get $text_len) (local.get $wParam))
           (then (local.set $text_len (i32.sub (local.get $wParam) (i32.const 1)))))
         (if (i32.load (local.get $state_w))
-          (then (if (local.get $text_len)
+          (then
+            (if (call $wnd_unicode_get (local.get $hwnd))
+              (then
+                (drop (call $ansi_to_wide
+                  (i32.load (local.get $state_w)) (local.get $lParam)
+                  (i32.add (local.get $text_len) (i32.const 1)))))
+              (else
+                (if (local.get $text_len)
                   (then (call $memcpy (call $g2w (local.get $lParam))
                                       (call $g2w (i32.load (local.get $state_w)))
-                                      (local.get $text_len))))))
-        (i32.store8 (i32.add (call $g2w (local.get $lParam)) (local.get $text_len)) (i32.const 0))
+                                      (local.get $text_len))))))))
+        (if (call $wnd_unicode_get (local.get $hwnd))
+          (then
+            (call $gs16
+              (i32.add (local.get $lParam) (i32.shl (local.get $text_len) (i32.const 1)))
+              (i32.const 0)))
+          (else
+            (i32.store8 (i32.add (call $g2w (local.get $lParam)) (local.get $text_len)) (i32.const 0))))
         (return (local.get $text_len))))
 
     ;; ---------- WM_GETTEXTLENGTH (0x000E) ----------
@@ -15128,6 +15207,9 @@
           (call $host_log_i32 (global.get $eip))
           (call $host_log_i32 (global.get $yield_reason))
           (call $host_log_i32 (local.get $msg))
+          (call $host_log_i32 (local.get $hwnd))
+          (call $host_log_i32 (local.get $wParam))
+          (call $host_log_i32 (local.get $lParam))
           (br $sync_done)))
       (br $sync_run)))
     (global.set $sync_msg_depth (i32.sub (global.get $sync_msg_depth) (i32.const 1)))

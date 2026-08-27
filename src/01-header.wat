@@ -1186,7 +1186,7 @@
   ;; ENV_DEFAULTS — the process environment a freshly booted Win98 hands an
   ;; app, as one "NAME=VALUE\0"... run ending in a second NUL. Copied into the
   ;; guest heap on first use; see $env_ensure.
-  (data (i32.const 0x3390) "COMSPEC=C:\\COMMAND.COM\00TEMP=C:\\WINDOWS\\TEMP\00TMP=C:\\WINDOWS\\TEMP\00windir=C:\\WINDOWS\00PATH=C:\\WINDOWS;C:\\WINDOWS\\COMMAND\00\00")
+  (data (i32.const 0x3390) "COMSPEC=C:\\COMMAND.COM\00TEMP=C:\\WINDOWS\\TEMP\00TMP=C:\\WINDOWS\\TEMP\00windir=C:\\WINDOWS\00SystemDrive=C:\00APPDATA=C:\\WINDOWS\\Application Data\00USERPROFILE=C:\\WINDOWS\00PATH=C:\\WINDOWS;C:\\WINDOWS\\COMMAND\00\00")
 
   ;; ============================================================
   ;; MEMORY MAP
@@ -1207,7 +1207,7 @@
   ;; 0x00005100  4B      SHARED_PROCESS_ID (shared by every thread instance)
   ;; 0x00005104  8B      SHARED_DLG_ENDED / SHARED_DLG_RESULT
   ;; 0x0000510C  4B      SHARED_DLG_PUMP_HWND (modal pump hwnd, all instances)
-  ;; 0x00005110  240B    Free
+  ;; 0x00005110  240B    LAUNCH_ENV_OVERRIDES (host-supplied NAME=VALUE entries)
   ;; 0x00005200  4KB     WINDOW_EXTRA_TABLE (256 entries x 16 bytes)
   ;; 0x00006200  1KB     ATOM_LOCAL_TABLE  (128 entries × 8 bytes — AddAtom namespace)
   ;; 0x00006600  1KB     ATOM_GLOBAL_TABLE (128 entries × 8 bytes — GlobalAddAtom namespace)
@@ -2415,6 +2415,10 @@
   ;; SetEnvironmentVariable edits it in place.
   (global $env_block (mut i32) (i32.const 0))
   (global $env_cap   (mut i32) (i32.const 4096))
+  ;; Bytes in LAUNCH_ENV_OVERRIDES excluding its final block NUL. Launchers
+  ;; fill this before guest entry; $env_ensure merges it without forcing the
+  ;; environment heap allocation to happen early.
+  (global $launch_env_len (mut i32) (i32.const 0))
   (global $exe_name_wa (mut i32) (i32.const 0x120))   ;; WASM addr of exe name string
   (global $exe_name_len (mut i32) (i32.const 7))      ;; length of exe name
   ;; MSVCRT static data pointers (allocated on first use from heap)
@@ -2439,7 +2443,7 @@
   (global $child_create_nccreate_ret_thunk (mut i32) (i32.const 0)) ;; Child WM_NCCREATE returned → WM_CREATE (CACA002E)
   (global $dialog_cbt_ret_thunk (mut i32) (i32.const 0)) ;; Dialog CBT hook → WM_INITDIALOG/return (CACA0028)
   (global $createwnd_nccreate_ret_thunk (mut i32) (i32.const 0)) ;; WM_NCCREATE returned → dispatch WM_CREATE (CACA0029)
-  (global $setfocus_ret_thunk (mut i32) (i32.const 0)) ;; SetFocus WM_SETFOCUS return (CACA002A)
+  (global $setfocus_ret_thunk (mut i32) (i32.const 0)) ;; focus-callback return (CACA002A)
   (global $child_cbt_saved_hwnd (mut i32) (i32.const 0))
   (global $child_cbt_saved_ret  (mut i32) (i32.const 0))
   (global $dialog_cbt_saved_hwnd (mut i32) (i32.const 0))
@@ -2804,6 +2808,10 @@
   ;; it back on the way out, so it has to be a real stored slot rather than a
   ;; constant.
   (global $unhandled_exception_filter (mut i32) (i32.const 0))
+  ;; One process-global vectored exception registration. The handler address
+  ;; doubles as the opaque removal handle in this bounded single-registration
+  ;; model; ordinary SEH and top-level filters retain their existing paths.
+  (global $vectored_exception_handler (mut i32) (i32.const 0))
   (global $shutdown_level (mut i32) (i32.const 0x280))
   (global $shutdown_flags (mut i32) (i32.const 0))
   (global $loadlib_name_ptr (mut i32) (i32.const 0)) ;; guest addr of DLL name for yield=5
@@ -2943,6 +2951,21 @@
   (global $enum_child_lparam (mut i32) (i32.const 0))
   (global $enum_child_ret    (mut i32) (i32.const 0))
   (global $enum_child_depth  (mut i32) (i32.const 0))
+
+  ;; EnumResourceNamesA iteration state (CACA0030). Resource names may be
+  ;; integer IDs or UTF-16 strings in the PE directory; the latter are copied
+  ;; to a temporary ANSI guest buffer for each ENUMRESNAMEPROC callback.
+  (global $enum_rsrc_thunk   (mut i32) (i32.const 0))
+  (global $enum_rsrc_module  (mut i32) (i32.const 0))
+  (global $enum_rsrc_type    (mut i32) (i32.const 0))
+  (global $enum_rsrc_cb      (mut i32) (i32.const 0))
+  (global $enum_rsrc_lparam  (mut i32) (i32.const 0))
+  (global $enum_rsrc_ret     (mut i32) (i32.const 0))
+  (global $enum_rsrc_dir     (mut i32) (i32.const 0))
+  (global $enum_rsrc_index   (mut i32) (i32.const 0))
+  (global $enum_rsrc_count   (mut i32) (i32.const 0))
+  (global $enum_rsrc_namebuf (mut i32) (i32.const 0))
+  (global $enum_rsrc_depth   (mut i32) (i32.const 0))
 
   ;; Open / Save dialog: current directory (guest ptr to NUL-terminated
   ;; string). Owns its own heap allocation; replaced via $opendlg_set_dir
@@ -3379,6 +3402,20 @@
   (global $mm5 (mut i64) (i64.const 0))
   (global $mm6 (mut i64) (i64.const 0))
   (global $mm7 (mut i64) (i64.const 0))
+  ;; Per-instance XMM state is naturally per guest thread: both cooperative
+  ;; and Worker-backed threads execute in distinct WASM instances. Only the
+  ;; small SSE base used by SDL2 is decoded today, so CPUID continues to keep
+  ;; its SSE feature bit clear until the wider instruction family exists.
+  ;; Store each v128 as two i64s: WebAssembly's constant-expression subset
+  ;; does not permit a SIMD initializer on every engine we support.
+  (global $xmm0l (mut i64) (i64.const 0)) (global $xmm0h (mut i64) (i64.const 0))
+  (global $xmm1l (mut i64) (i64.const 0)) (global $xmm1h (mut i64) (i64.const 0))
+  (global $xmm2l (mut i64) (i64.const 0)) (global $xmm2h (mut i64) (i64.const 0))
+  (global $xmm3l (mut i64) (i64.const 0)) (global $xmm3h (mut i64) (i64.const 0))
+  (global $xmm4l (mut i64) (i64.const 0)) (global $xmm4h (mut i64) (i64.const 0))
+  (global $xmm5l (mut i64) (i64.const 0)) (global $xmm5h (mut i64) (i64.const 0))
+  (global $xmm6l (mut i64) (i64.const 0)) (global $xmm6h (mut i64) (i64.const 0))
+  (global $xmm7l (mut i64) (i64.const 0)) (global $xmm7h (mut i64) (i64.const 0))
   ;; CPUID feature advertisement. Zero = the 486DX we have always reported, so
   ;; every guest takes its scalar fallback; 1 = set EDX bit 23 (MMX) and let the
   ;; MMX paths run. Exported so a benchmark can A/B the same build.

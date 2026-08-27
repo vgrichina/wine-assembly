@@ -2,6 +2,25 @@
   ;; WINDOW CREATION & MESSAGE DISPATCH HANDLERS
   ;; ============================================================
 
+  ;; AdjustWindowRectEx may add a few non-client pixels to a RECT whose fields
+  ;; started as CW_USEDEFAULT. SDL2 does exactly that before CreateWindowExW,
+  ;; producing values such as 0x7ffffffc and 0x80000008. USER still treats
+  ;; that narrow family as the default-position/default-size request.
+  (func $is_cw_usedefault_value (param $v i32) (result i32)
+    (i32.and
+      (i32.ge_u (local.get $v) (i32.const 0x7fff0000))
+      (i32.le_u (local.get $v) (i32.const 0x80010000))))
+
+  ;; SDL keeps a window centered while changing its size. If its initial
+  ;; logical bounds still carried CW_USEDEFAULT, that arithmetic produces a
+  ;; coordinate narrowly around 0xc0000000 (for example 0xbffffec0 at 640px).
+  ;; Treat only that sentinel-sized range as a centering request; ordinary
+  ;; negative off-screen positions remain valid.
+  (func $is_adjusted_center_coord (param $v i32) (result i32)
+    (i32.and
+      (i32.ge_u (local.get $v) (i32.const 0xbfff0000))
+      (i32.le_u (local.get $v) (i32.const 0xc0010000))))
+
   ;; 67: CreateWindowExA
   (func $handle_CreateWindowExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tmp i32) (local $v i32) (local $i i32) (local $menu_id i32) (local $parent_hwnd i32) (local $hwnd i32)
@@ -30,17 +49,17 @@
     ;; coordinates and ignores the caller's y outright. Honouring y here left
     ;; sol.exe and notepad — which both pass x=CW_USEDEFAULT, y=0 — glued to
     ;; the top of the screen instead of the cascade slot.
-    (if (i32.eq (local.get $win_x) (i32.const 0x80000000))
+    (if (call $is_cw_usedefault_value (local.get $win_x))
       (then
         (local.set $win_x (i32.const 20))
         (local.set $win_y (i32.const 20))))
-    (if (i32.eq (local.get $win_y) (i32.const 0x80000000))
+    (if (call $is_cw_usedefault_value (local.get $win_y))
       (then (local.set $win_y (i32.const 20))))
-    (if (i32.eq (local.get $win_cx) (i32.const 0x80000000))
+    (if (call $is_cw_usedefault_value (local.get $win_cx))
       (then
         (local.set $win_cx (i32.const 400))
         (local.set $win_cy (i32.const 300))))
-    (if (i32.eq (local.get $win_cy) (i32.const 0x80000000))
+    (if (call $is_cw_usedefault_value (local.get $win_cy))
       (then (local.set $win_cy (i32.const 300))))
     ;; Keep the legacy concrete defaults above for startup WM_SIZE bookkeeping,
     ;; but resolve the renderer geometry according to the window kind. Only a
@@ -48,7 +67,7 @@
     ;; control resolves default sentinels to zero; calc.exe relies on this for
     ;; its WS_VISIBLE EDIT "CalcMsgPumpWnd" helper, which must not become a
     ;; visible 400x300 surface behind the real Calculator dialog.
-    (if (i32.eq (local.get $host_win_x) (i32.const 0x80000000))
+    (if (call $is_cw_usedefault_value (local.get $host_win_x))
       (then
         (local.set $host_win_x
           (select (i32.const 20) (i32.const 0)
@@ -57,11 +76,11 @@
         (local.set $host_win_y
           (select (i32.const 20) (i32.const 0)
             (i32.and (local.get $arg3) (i32.const 0x00C40000))))))
-    (if (i32.eq (local.get $host_win_y) (i32.const 0x80000000))
+    (if (call $is_cw_usedefault_value (local.get $host_win_y))
       (then (local.set $host_win_y
         (select (i32.const 20) (i32.const 0)
           (i32.and (local.get $arg3) (i32.const 0x00C40000))))))
-    (if (i32.eq (local.get $host_win_cx) (i32.const 0x80000000))
+    (if (call $is_cw_usedefault_value (local.get $host_win_cx))
       (then
         (local.set $host_win_cx
           (select (i32.const 400) (i32.const 0)
@@ -69,7 +88,7 @@
         (local.set $host_win_cy
           (select (i32.const 300) (i32.const 0)
             (i32.and (local.get $arg3) (i32.const 0x00C40000))))))
-    (if (i32.eq (local.get $host_win_cy) (i32.const 0x80000000))
+    (if (call $is_cw_usedefault_value (local.get $host_win_cy))
       (then (local.set $host_win_cy
         (select (i32.const 300) (i32.const 0)
           (i32.and (local.get $arg3) (i32.const 0x00C40000))))))
@@ -2893,6 +2912,13 @@
       (then (call $gs32 (local.get $result_ptr) (local.get $lres))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 32))))
+
+  ;; The timeout send does not marshal text itself. Preserve the same window
+  ;; delivery, timeout and lpdwResult contract for Unicode callers.
+  (func $handle_SendMessageTimeoutW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_SendMessageTimeoutA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
   ;; 82: SendDlgItemMessageA — STUB: unimplemented
   ;; 82: SendDlgItemMessageA(hDlg, nIDDlgItem, Msg, wParam, lParam)

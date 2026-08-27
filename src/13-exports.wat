@@ -355,6 +355,14 @@
       (local.get $cs) (i32.const 0) (i32.const 0) (i32.const 0)
       (i32.const 0) (i32.const 0))
     (global.set $esp (local.get $saved_esp)))
+  (func (export "test_cs_init_spin") (param $cs i32) (param $spin i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_InitializeCriticalSectionAndSpinCount
+      (local.get $cs) (local.get $spin) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
   (func (export "test_cs_enter") (param $cs i32) (result i32)
     (local $saved_esp i32) (local $bits i32)
     (local.set $saved_esp (global.get $esp))
@@ -422,6 +430,14 @@
     (local $saved_esp i32)
     (local.set $saved_esp (global.get $esp))
     (call $handle_GetLogicalDriveStringsA
+      (local.get $length) (local.get $buffer) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetLogicalDriveStringsW") (param $length i32) (param $buffer i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetLogicalDriveStringsW
       (local.get $length) (local.get $buffer) (i32.const 0) (i32.const 0)
       (i32.const 0) (i32.const 0))
     (global.set $esp (local.get $saved_esp))
@@ -2196,6 +2212,11 @@
       (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
       (br $scan)))
   )
+  (func (export "test_cs_try_enter") (param $cs i32) (result i32)
+    (global.set $esp (i32.const 0x00700000))
+    (call $handle_TryEnterCriticalSection (local.get $cs) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
   ;; Host-side child exposure happens while an app is still recalculating its
   ;; control-bar layout. Put the resulting repaint into USER's update-region
   ;; queue so pending non-client work drains before parent/child WM_PAINT.
@@ -2421,6 +2442,8 @@
         (then (global.set $child_create_nccreate_ret_thunk (local.get $guest))))
       (if (i32.eq (local.get $marker) (i32.const 0xCACA002A))
         (then (global.set $setfocus_ret_thunk (local.get $guest))))
+      (if (i32.eq (local.get $marker) (i32.const 0xCACA0030))
+        (then (global.set $enum_rsrc_thunk (local.get $guest))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan))))
 
@@ -3179,6 +3202,58 @@
     (call $heap_alloc (local.get $size)))
   (func (export "guest_free") (param $g i32)
     (call $heap_free (local.get $g)))
+
+  ;; Host launchers call this before guest entry. Queue entries in fixed low
+  ;; memory so launch compatibility settings do not eagerly allocate the
+  ;; environment heap and perturb an executable's startup layout.
+  (func (export "set_process_environment_a")
+      (param $name_g i32) (param $value_g i32) (result i32)
+    (local $name_len i32) (local $value_len i32) (local $i i32) (local $p i32)
+    (if (i32.or (i32.eqz (local.get $name_g)) (i32.eqz (local.get $value_g)))
+      (then (return (i32.const 0))))
+    ;; These pointers are WASM offsets supplied by the host, just like the PE
+    ;; staging-buffer arguments to set_exe_name/set_extra_cmdline. Do not run
+    ;; them through guest virtual-address translation.
+    (block $name_len_done (loop $name_len_loop
+      (br_if $name_len_done
+        (i32.eqz (i32.load8_u (i32.add (local.get $name_g) (local.get $name_len)))))
+      (local.set $name_len (i32.add (local.get $name_len) (i32.const 1)))
+      (br $name_len_loop)))
+    (block $value_len_done (loop $value_len_loop
+      (br_if $value_len_done
+        (i32.eqz (i32.load8_u (i32.add (local.get $value_g) (local.get $value_len)))))
+      (local.set $value_len (i32.add (local.get $value_len) (i32.const 1)))
+      (br $value_len_loop)))
+    ;; Entry bytes are NAME, '=', VALUE, NUL; retain one more byte for the
+    ;; environment block's second NUL.
+    (if (i32.gt_u
+          (i32.add (global.get $launch_env_len)
+            (i32.add (local.get $name_len) (i32.add (local.get $value_len) (i32.const 3))))
+          (i32.const 240))
+      (then (return (i32.const 0))))
+    (local.set $p (i32.add (i32.const 0x5110) (global.get $launch_env_len)))
+    (block $name_done (loop $copy_name
+      (br_if $name_done (i32.ge_u (local.get $i) (local.get $name_len)))
+      (i32.store8 (i32.add (local.get $p) (local.get $i))
+        (i32.load8_u (i32.add (local.get $name_g) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy_name)))
+    (i32.store8 (i32.add (local.get $p) (local.get $name_len)) (i32.const 0x3d))
+    (local.set $p (i32.add (local.get $p) (i32.add (local.get $name_len) (i32.const 1))))
+    (local.set $i (i32.const 0))
+    (block $value_done (loop $copy_value
+      (br_if $value_done (i32.ge_u (local.get $i) (local.get $value_len)))
+      (i32.store8 (i32.add (local.get $p) (local.get $i))
+        (i32.load8_u (i32.add (local.get $value_g) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy_value)))
+    (local.set $p (i32.add (local.get $p) (local.get $value_len)))
+    (i32.store8 (local.get $p) (i32.const 0))
+    (global.set $launch_env_len
+      (i32.add (global.get $launch_env_len)
+        (i32.add (local.get $name_len) (i32.add (local.get $value_len) (i32.const 2)))))
+    (i32.store8 (i32.add (i32.const 0x5110) (global.get $launch_env_len)) (i32.const 0))
+    (i32.const 1))
 
   ;; sscanf — exercised by test/test-sscanf.js. Varargs are a guest array of
   ;; pointers here rather than a live stack frame, which is exactly what

@@ -16,7 +16,7 @@ const extraWat = String.raw`
 `;
 
 (async () => {
-  const { exports: wat } = await bootRenderHarness({ extraWat, fonts: 'none' });
+  const { exports: wat, hostCtx } = await bootRenderHarness({ extraWat, fonts: 'none' });
   const name = 0x2600;
   const buffer = 0x2700;
   const writeWide = (address, value) => {
@@ -44,6 +44,24 @@ const extraWat = String.raw`
     'three-argument stdcall pops return address plus arguments');
   assert.strictEqual(wat.test_get_environment_variable_w(name, 0, 0), 11,
     'size query returns required characters including NUL');
+
+  writeWide(name, 'SystemDrive');
+  assert.strictEqual(wat.test_get_environment_variable_w(name, buffer, 3), 2,
+    'standard SystemDrive variable returns characters excluding NUL');
+  assert.strictEqual(readWide(buffer), 'C:', 'SystemDrive names the emulated system volume');
+
+  writeWide(name, 'APPDATA');
+  assert.strictEqual(wat.test_get_environment_variable_w(name, buffer, 128), 27,
+    'APPDATA returns characters excluding NUL');
+  assert.strictEqual(readWide(buffer), 'C:\\WINDOWS\\Application Data',
+    'APPDATA names the canonical per-user data directory');
+  assert.strictEqual(hostCtx.vfs.getFileAttributes(readWide(buffer)), 0x10,
+    'the default APPDATA directory exists in the VFS');
+
+  writeWide(name, 'USERPROFILE');
+  assert.strictEqual(wat.test_get_environment_variable_w(name, buffer, 128), 10,
+    'USERPROFILE is part of the default environment');
+  assert.strictEqual(readWide(buffer), 'C:\\WINDOWS');
 
   writeWide(name, 'DOES_NOT_EXIST');
   assert.strictEqual(wat.test_get_environment_variable_w(name, buffer, 32), 0,
