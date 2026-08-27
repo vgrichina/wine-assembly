@@ -51,5 +51,6 @@ finish one, add what you learned.
 | Heroes of Might and Magic II (demo) | [heroes2-demo.md](heroes2-demo.md) |
 | Liquid War 5.6.2 | [liquid-war.md](liquid-war.md) |
 | The Elder Scrolls: Arena (GOG) | [elder-scrolls-arena-gog.md](elder-scrolls-arena-gog.md) |
+| Ultima IV: Quest of the Avatar (GOG) | [ultima4-gog.md](ultima4-gog.md) |
 | Quake II (demo) | [quake2-demo.md](quake2-demo.md) |
 | Rodent's Revenge (Win16) | [wep16-rodent.md](wep16-rodent.md) |
