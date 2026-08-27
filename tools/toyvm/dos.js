@@ -920,7 +920,12 @@ class Machine {
       // or comma -- CYCLE.EXE lays its whole menu out on one line as
       // "(G)ravis / (O)thers / (N)one", and requiring two spaces missed every
       // option after the first.
-      const re = /(?:^|\s{2,}|[/,]\s*)([[(]?)([0-9A-Za-z])[\]).:)](\s*)([^[(]{2,40})/g;
+      //
+      // The line start absorbs its indent: do.exe writes its sound menu to
+      // B800 as " [1] - None", one space in, which is neither the start of the
+      // line nor a run of two spaces, so nothing on that menu was an option at
+      // all and the reader fell through to the rotation.
+      const re = /(?:^\s*|\s{2,}|[/,]\s*)([[(]?)([0-9A-Za-z])[\]).:)](\s*)([^[(]{2,40})/g;
       for (let m; (m = re.exec(line));) {
         // "(N)one" puts the selector INSIDE the word, so the label as captured
         // is "one" and reads as neither a yes nor a no. Put the letter back
