@@ -226,18 +226,14 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false) {
     if (cpuLevel < 386) return null;
     repPrefix = null;
   }
-  // 0x67 also redirects the implicit addressing of XLAT, which does not go
-  // through modrm() and has no 32-bit twin here yet. Refusing it is the honest
-  // option; running the 16-bit version would read BX where the program meant
-  // EBX and look like it worked. The port-string ops used to be refused here
-  // for the same reason and now have real ESI/EDI handlers.
-  //
-  // The counted-loop terminators E0-E3 and the A4-AF string ops were refused
-  // here for the same reason and are now decoded: both have real ESI/EDI/ECX
-  // handlers. `rep stosd` through EDI is how every DOS extender in this corpus
-  // clears its descriptor tables, so refusing it stopped fourteen demos one
-  // instruction into protected mode.
-  if (asize === 32 && op === 0xD7) return null;
+  // Every instruction whose addressing is implicit rather than modrm-driven
+  // used to be refused under a 0x67 prefix, because running the 16-bit version
+  // reads BX/SI/DI/CX where the program meant the 32-bit register and looks
+  // like it worked. They all have real 32-bit twins now: the port-string ops,
+  // the counted-loop terminators E0-E3, the A4-AF string ops, and XLAT.
+  // `rep stosd` through EDI is how every DOS extender in this corpus clears its
+  // descriptor tables, so refusing it stopped fourteen demos one instruction
+  // into protected mode.
   const words = [];
   // Arena addresses are not known until every block is laid out, so branch
   // handlers get a 0 placeholder and a fixup naming the guest IP it stands for.
@@ -639,7 +635,9 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false) {
       break;
     }
 
-    case 0xD7: words.push(H.xlat, segOverride === null ? 3 : segOverride); break;
+    case 0xD7:
+      words.push(asize === 32 ? H.xlat32 : H.xlat, segOverride === null ? 3 : segOverride);
+      break;
 
     // --- Shifts and rotates --------------------------------------------------
     // D0/D1 shift by one, D2/D3 by CL. -1 is the operand sentinel for "read CL

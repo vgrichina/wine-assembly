@@ -56,8 +56,17 @@ async function makeVm(variant, opts = {}) {
   const ex = instance.exports;
   const mem = new Uint8Array(memory.buffer);
 
-  const get = (r) => ex[`get_${r}`]() & 0xFFFF;
-  const set = (r, v) => ex[`set_${r}`](v & 0xFFFF);
+  // Two of these are not 16-bit quantities and never were: the instruction
+  // pointer in a 32-bit code segment, and the stack pointer on a 32-bit stack.
+  // Masking them is not a view, it is a truncation -- the host loop reads
+  // `gip` to decide what to compile next, so ACME-SYW.EXE's return to
+  // 0x11c43 became a compile of 0x1c43, which is a text banner in its data,
+  // and the demo "hung" 202 handbacks into a picture of its own logo. In real
+  // mode both stay inside 16 bits on their own (see $spm and `wip`), so the
+  // unmasked read is the same number there.
+  const WIDE = new Set(['gip', 'sp']);
+  const get = (r) => (WIDE.has(r) ? ex[`get_${r}`]() >>> 0 : ex[`get_${r}`]() & 0xFFFF);
+  const set = (r, v) => ex[`set_${r}`](WIDE.has(r) ? v : (v & 0xFFFF));
   // The masked view is what every 16-bit caller wants, but $steps/$left are
   // counters and the register file is 32 bits wide -- both need the whole word.
   const raw = (r) => ex[`get_${r}`]();

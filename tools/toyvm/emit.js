@@ -1515,6 +1515,17 @@ function genArithIO() {
                (i32.const 0xFFFF))))
 `);
 
+  // XLAT with a 32-bit address size: the table is at EBX and the offset does
+  // not wrap at 64KB. A palette-remap loop in a flat segment is exactly this
+  // instruction, and refusing it stopped ACME-SYW.EXE the moment it started
+  // drawing.
+  h('xlat32', 1, `
+  ${ops(1)}
+  (call $rset8 (i32.const 0)
+    (call $rd8 (local.get $t0)
+      (i32.add (call $rget32 (i32.const 3)) (call $rget8 (i32.const 0)))))
+`);
+
   // MOV to/from a direct address (A0-A3). Common enough in tight code that it
   // gets its own handlers rather than going through the ModRM path.
   for (const w of [8, 16, 32]) {
