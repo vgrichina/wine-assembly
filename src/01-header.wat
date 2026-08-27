@@ -2096,10 +2096,10 @@
   (global $RICHEDIT_PARA_TABLE_SIZE i32 (i32.const 0x00000400))
   ;; Synchronization object table (SharedArrayBuffer backed)
   ;; Each entry (16 bytes):
-  ;;   +0: Lock (Atomics lock)
-  ;;   +4: Type (1=Event, 2=Mutex, 3=Semaphore)
-  ;;   +8: State (0=Unsignaled, 1=Signaled)
-  ;;   +12: ManualReset (1 for Manual, 0 for Auto)
+  ;;   +0: Current issued handle (worker-side exact slot lookup)
+  ;;   +4: Type (1=Event, 2=Semaphore)
+  ;;   +8: Event state / semaphore count
+  ;;   +12: Event ManualReset / semaphore maximum count
   ;; TreeView items, one 32-byte record each. 32 slots was enough while the
   ;; only trees we ever saw were a Preferences page; Winamp's AVS editor fills
   ;; its own tree on top of that one, and an app that gets NULL back from

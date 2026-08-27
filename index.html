@@ -1195,7 +1195,7 @@ Resource-aware Win98 emulator
        breaks on is the one machine with no debugger. -->
   <script src="lib/phone-diag.js?v=1"></script>
   <script src="lib/vfs-persistence.js?v=1"></script>
-  <script src="lib/browser-shell.js?v=7"></script>
+  <script src="lib/browser-shell.js?v=8"></script>
   <script src="lib/pe.js?v=1"></script>
   <script src="lib/process-boot.js?v=2"></script>
   <script src="lib/app-profiles.js?v=1"></script>
@@ -1215,13 +1215,13 @@ Resource-aware Win98 emulator
   <script src="lib/debug-thread-state.js?v=5"></script>
   <script src="lib/host-imports.js?v=209"></script>
   <script src="lib/compile-wat.js?v=169"></script>
-  <script src="lib/thread-manager.js?v=181"></script>
+  <script src="lib/thread-manager.js?v=182"></script>
   <script src="lib/vlan-wire.js?v=1"></script>
   <script src="lib/vlan-rtc.js?v=1"></script>
   <script src="lib/vlan-lobby.js?v=1"></script>
-  <script src="lib/guest-rpc.js?v=5"></script>
-  <script src="lib/guest-thread-host.js?v=5"></script>
-  <script src="host.js?v=232"></script>
+  <script src="lib/guest-rpc.js?v=6"></script>
+  <script src="lib/guest-thread-host.js?v=6"></script>
+  <script src="host.js?v=233"></script>
   <script src="lib/recorder.js?v=172"></script>
   <script src="lib/perf-hud.js?v=1"></script>
   <script>
@@ -1886,13 +1886,6 @@ Resource-aware Win98 emulator
         return;
       }
       if (!workers) {
-        const compatibility = runningApps.find(r => r && r.wine &&
-          r.wine.cooperativeCompatibilityReason);
-        if (compatibility) {
-          el.textContent = 'isolated · cooperative compatibility';
-          el.title = compatibility.wine.cooperativeCompatibilityReason;
-          return;
-        }
         el.textContent = 'isolated · worker did not start';
         el.title = 'Isolation is active, but the running app fell back to cooperative mode. '
           + 'See the debug log for the worker startup failure.';

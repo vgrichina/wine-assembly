@@ -2718,3 +2718,36 @@ Measured, so the usual suspects are already excluded:
 So nothing is drawing, rather than something drawing to the wrong place. Note
 shareware multiplayer needs a network service provider regardless, so this is
 not on the path to gameplay — single player above is.
+
+## Threads menu-art stall: nested waits must not yield (2026-08-27)
+
+The browser Worker backend reached `UiMainMenuDialog` and entered the menu-art
+helper (`diabloui+0x97e0`), but never returned from its first `SBmpLoadImage`.
+Storm had queued the MPQ read, its worker thread consumed the queue, and the
+completion event was visibly signaled in `SYNC_TABLE`; the main guest Worker
+nevertheless remained at `WaitForMultipleObjects(TRUE, INFINITE)`. Native
+dialog-template controls therefore existed, explaining the gray buttons, but
+the code that loads and installs the bitmap never resumed.
+
+The wait occurs inside the recursive `$wnd_send_message` interpreter call for
+`WM_INITDIALOG`. Returning `0xFFFF` there is not an ordinary scheduler yield:
+it unwinds the recursive JavaScript→Wasm call and loses the live x86 callback
+frame. Cooperative mode already avoids that through
+`waitMultipleCooperative`, which pumps Storm inline. The Worker path excluded
+it on the assumption that another Worker could run independently; that was
+only half the requirement. The signaling thread could run, but the waiting
+WndProc still needed to remain on its own call stack.
+
+The Worker-native equivalent is in `lib/guest-rpc.js`: when
+`get_sync_msg_depth() > 0`, event/semaphore waits resolve the exact issued
+handle from the shared sync table and block locally with `Atomics.wait`.
+`SetEvent` and `ReleaseSemaphore` already update and notify the same shared
+state from the browser broker, so the waiting Worker resumes without yielding
+the interpreter frame or blocking the browser thread. The wait also brackets a
+`nestedWaitBegin`/`nestedWaitEnd` notification: Storm's worker can finish its
+idle slice just before the main thread queues a read, so the browser must keep
+issuing secondary-worker slices while the main Worker is locally parked.
+Ordinary waits, and handles not represented by a shared event/semaphore, retain
+the existing RPC and scheduler path. `test/test-guest-rpc-nested-wait.js`
+covers wake-up, auto-reset consumption, wait-all, semaphore wait-any, timeout,
+fallback, the sync-depth gate, and continued secondary-worker pumping.

@@ -145,6 +145,11 @@ assert.strictEqual(
   17,
   'the next event should reuse the released table slot with a new identity'
 );
+assert.strictEqual(
+  Atomics.load(syncLifecycleTm.syncView, 17 * 4) >>> 0,
+  replacementEvent >>> 0,
+  'the shared synchronization slot mirrors the exact current event handle'
+);
 assert.notStrictEqual(replacementEvent, staleEvent,
   'a recycled synchronization slot must advance its handle generation');
 assert.strictEqual(syncLifecycleTm.closeSyncHandle(staleEvent), false,
@@ -168,6 +173,8 @@ assert.strictEqual(syncLifecycleTm.closeSyncHandle(syncHandles[18]), true, 'sema
 const reusedSemaphore = syncLifecycleTm.createSemaphore(2, 4);
 assert.strictEqual(syncLifecycleTm._getSyncIdx(reusedSemaphore), 18,
   'semaphores should share and reuse synchronization slots with a new identity');
+assert.strictEqual(Atomics.load(syncLifecycleTm.syncView, 18 * 4) >>> 0, reusedSemaphore >>> 0,
+  'the shared synchronization slot mirrors the exact current semaphore handle');
 assert.notStrictEqual(reusedSemaphore, syncHandles[18],
   'a recycled semaphore slot must also advance its handle generation');
 assert.strictEqual(syncLifecycleTm.closeSyncHandle(reusedSemaphore), true, 'CloseHandle should release a semaphore slot');
