@@ -471,7 +471,11 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
 
     // --- Stack --------------------------------------------------------------
     case 0x9C: words.push(opsize === 32 ? H.pushf32 : H.pushf); break;
-    case 0x9D: words.push(opsize === 32 ? H.popf32 : H.popf); break;
+    // POPF carries the address of the instruction after it, so the handler can
+    // hand the block back when the flags it just popped have TF set. Nothing
+    // else in the ISA can raise the trap flag, so this one operand is the whole
+    // entry point to single-stepping.
+    case 0x9D: words.push(opsize === 32 ? H.popf32 : H.popf, (start + n) & 0xFFFF); break;
     case 0x8F: { const m = modrm();
       if (m.isReg) words.push(H[`pop_r${opsize}`], m.rm & 7);
       else { writesMem = true; words.push(H[`pop_m${opsize}`], packEa(m), m.disp); }

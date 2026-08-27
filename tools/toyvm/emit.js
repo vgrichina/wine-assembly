@@ -424,10 +424,20 @@ function genExtras() {
   // POPF must both OR in the bits that always read 1 and MASK OFF the ones that
   // always read 0 (3 and 5). Only doing the first half leaves whatever the
   // pushed value had in those bits and fails three quarters of the corpus.
-  h('popf', 0, `
+  // The operand is the address of the next instruction, and it is here for one
+  // bit: TF. A POPF that raises the trap flag has to give the block back, or
+  // the rest of the block runs at full speed and the guest never sees the INT 1
+  // it just armed -- which is the whole of a DOS trace decryptor. Setting TF is
+  // the only way in (nothing else writes it) and it happens a handful of times
+  // in a run, so the cost is one compare on a POPF that leaves TF clear.
+  h('popf', 1, `
+  ${ops(1)}
   (global.set $flags (i32.or
     (i32.and (call $pop16) ${DEFINED})
     ${RESERVED}))
+  (if (i32.and (global.get $flags) (i32.const ${1 << isa.F.TF}))
+    (then (global.set $gip (local.get $t0))
+          (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))))
 `);
   // PUSHFD / POPFD. Four bytes, not two, and getting that wrong is not a
   // wrong flags value -- it is a stack that is two bytes out from there on.
@@ -440,10 +450,14 @@ function genExtras() {
   // The upper half is zero on the way out and ignored on the way in: this
   // machine is a 386, so AC, VM and ID do not exist, and RF is never set.
   h('pushf32', 0, `(call $push32 (i32.and (global.get $flags) (i32.const 0xFFFF)))`);
-  h('popf32', 0, `
+  h('popf32', 1, `
+  ${ops(1)}
   (global.set $flags (i32.or
     (i32.and (i32.and (call $pop32) (i32.const 0xFFFF)) ${DEFINED})
     ${RESERVED}))
+  (if (i32.and (global.get $flags) (i32.const ${1 << isa.F.TF}))
+    (then (global.set $gip (local.get $t0))
+          (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))))
 `);
 
   // CALL near, relative. Operands: [arenaTarget][guestTarget][retIp][arenaRet].

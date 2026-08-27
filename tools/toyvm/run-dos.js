@@ -317,7 +317,7 @@ async function runDos(o) {
     }
   }
   const {
-    dispatched, handbacks, ints, irqs, smcBreaks, stuckAt, blockedOn32, badSelector,
+    dispatched, handbacks, ints, irqs, smcBreaks, traps, icebps, stuckAt, blockedOn32, badSelector,
     compiles, compiledWords, arenaResets, unimplemented, regions, jtab,
   } = session.stats();
 
@@ -329,7 +329,7 @@ async function runDos(o) {
     secs: Number(process.hrtime.bigint() - t0) / 1e9,
     guestSecs: Number(guestNs) / 1e9,
     dispatched, handbacks, ints, irqs, compiles, compiledWords, arenaResets,
-    smcBreaks,
+    smcBreaks, traps, icebps,
     stuckAt, blockedOn32, badSelector, ranOutOfTime,
     entryHist, unimplemented, ipSamples, ipSampleLog, regions,
     // A program that never put the adapter in a graphics mode has no frame to
@@ -462,13 +462,21 @@ async function main() {
 
   console.log(`\n${path.basename(exe)}  variant=${r.variant}  ${r.secs.toFixed(2)}s`);
   console.log(`  ${r.handbacks} handbacks, ${r.ints} interrupts`
-    + `${r.irqs ? ` (+${r.irqs} timer IRQs delivered)` : ''}, ${r.compiles} traces `
+    // Every vector the host raises, not just the timer: single-step traps and
+    // stepped-over ICEBPs go through the same path and are broken out below.
+    + `${r.irqs ? ` (+${r.irqs} vectors raised by the host)` : ''}, ${r.compiles} traces `
     + `(${(r.compiledWords * 4 / 1024).toFixed(0)}KB of arena, ${r.arenaResets} recycles)`
     // A handful of these is a packed program unpacking itself and is expected.
     // Thousands, against a compile count that keeps climbing, is recompile
     // thrash: a program storing data into a paragraph a region happens to have
     // decoded, one bitmap bit away from its code.
-    + (r.smcBreaks ? `\n  ${r.smcBreaks} self-modify breaks` : ''));
+    + (r.smcBreaks ? `\n  ${r.smcBreaks} self-modify breaks` : '')
+    // Both say the guest is being debugged by its own protector: TF set with a
+    // hooked INT 1 is a trace decryptor, and an F1 in the instruction stream is
+    // the same trick without the flag. Zero of each means neither is happening,
+    // which is worth knowing before blaming a decryptor for a wrong jump.
+    + (r.traps ? `\n  ${r.traps} single-step traps (guest set TF)` : '')
+    + (r.icebps ? `\n  ${r.icebps} guest ICEBP (F1) instructions` : ''));
   const v = r.video;
   // What was rendered, then what the CRTC says when that is something else --
   // for a chained program those differ on purpose. See readFrame.

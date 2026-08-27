@@ -118,6 +118,23 @@ class CodeCache {
     }
   }
 
+  // One instruction, compiled nowhere the cache can find it again.
+  //
+  // The arena's last 4096 bytes are reserved headroom that nothing else ever
+  // writes, which makes them the natural scratch: a single-step block is thrown
+  // away the moment it has run, so caching it would only pollute the region
+  // list with one-instruction traces that a later full-speed entry could find.
+  stepOne(cs, ip, codeBase, mask) {
+    const prog = compileProgram((lin) => this.vm.mem[lin], cs, ip, {
+      arenaBase: this.arenaEnd,
+      maxWords: 1000,
+      codeBase, mask, oneInsn: true,
+    });
+    new Int32Array(this.vm.mem.buffer, prog.arenaBase, prog.words.length).set(prog.words);
+    this.compiles++;
+    return prog.entryAddr;
+  }
+
   // Drop one block: the guest patched the instruction it was about to run.
   invalidate(cs, ip, codeBase = (cs << 4)) {
     for (const r of (this.regions.get(codeBase) || [])) r.blocks.delete(ip & 0xFFFF);
@@ -259,6 +276,7 @@ class DosSession {
     this.irqs = 0;
     this.smcBreaks = 0;
     this.icebps = 0;         // guest ICEBP (F1) bytes stepped over
+    this.traps = 0;          // INT 1s delivered because the guest set TF
     this.stuck = 0;
     this.stuckAt = null;
     this.lastIrq = 0;
@@ -429,7 +447,22 @@ class DosSession {
       this.raise(1);
       return 'int';
     }
-    const entry = this.cache.entryFor(cs, ip, codeBase, mask);
+    // The trap flag. With TF set the CPU owes an INT 1 after every instruction,
+    // and nothing here used to deliver it -- which is invisible until a program
+    // relies on it, and DOS-era protectors rely on it constantly: hook INT 1,
+    // set TF, and let the handler decrypt the next few bytes just before they
+    // execute. JULTRO.EXE hooks INT 1, INT 3 and INT 21h, and without the trap
+    // its own INT 21h handler was still ciphertext when DOS called it, so the
+    // program jumped into the middle of a line-offset table and the report
+    // called it "stuck at 5ab:8c" -- an address in the middle of its own data.
+    //
+    // Single-stepping costs one compile and one handback per instruction, which
+    // is what the guest asked for; the compiled block is not cached, so nothing
+    // about full-speed execution changes when TF comes back down.
+    const stepping = (vm.get('flags') & (1 << isa.F.TF)) !== 0;
+    const entry = stepping
+      ? this.cache.stepOne(cs, ip, codeBase, mask)
+      : this.cache.entryFor(cs, ip, codeBase, mask);
     if (this.hooks.beforeSlice) this.hooks.beforeSlice();
     vm.exports.run(entry, this.slice);
     // $left is -1 when the slice ran to exhaustion and holds the unspent budget
@@ -450,6 +483,15 @@ class DosSession {
     // paragraph that had already been compiled. That is a packed program
     // unpacking itself, so everything compiled from before the unpack is stale
     // and goes.
+    // ...and the debug exception it owes, delivered the way the hardware does:
+    // AFTER the instruction, and only if that instruction left TF standing. An
+    // `int n` clears TF as part of taking its own vector, and the single-step
+    // trap is suppressed for exactly that reason -- otherwise every INT under a
+    // debugger would trap twice.
+    if (stepping && (vm.get('flags') & (1 << isa.F.TF))) {
+      this.traps++;
+      this.raise(1);
+    }
     if (vm.raw('smc')) {
       const kind = vm.raw('smc');
       vm.set('smc', 0);
@@ -592,6 +634,7 @@ class DosSession {
     return {
       dispatched: this.dispatched, handbacks: this.handbacks, ints: this.ints,
       irqs: this.irqs, smcBreaks: this.smcBreaks, stuckAt: this.stuckAt,
+      traps: this.traps, icebps: this.icebps,
       blockedOn32: this.blockedOn32 === undefined ? null : this.blockedOn32,
       badSelector: this.badSelector === undefined ? null : this.badSelector,
       compiles: this.cache.compiles, compiledWords: this.cache.compiledWords,

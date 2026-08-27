@@ -90,11 +90,16 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
       const loops = wrote && (d.fixups || []).some(f => f.ip <= cur);
       for (const f of (d.fixups || [])) {
         fixups.push({ wordIndex: base + f.index, ip: f.ip });
-        if (!loops || f.ip <= cur) pending.push(f.ip);
+        if (!opts.oneInsn && (!loops || f.ip <= cur)) pending.push(f.ip);
       }
 
       cur = d.nextIp;
       if (d.endsBlock) break;
+      // opts.oneInsn is the trap flag's compiler: with TF set the CPU owes the
+      // guest an INT 1 after EVERY instruction, so the block has to be exactly
+      // one long. A branch already ended it above and wrote $gip itself; this
+      // is the straight-line case, where `end` carries the next address out.
+      if (opts.oneInsn) { words.push(H.end, cur); break; }
     }
     // The block's extent. `cur` can have wrapped past 0xFFFF on a segment that
     // runs to the top, in which case the tail is simply not marked -- a missed
