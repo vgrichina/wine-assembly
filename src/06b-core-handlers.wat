@@ -715,6 +715,146 @@
       (i32.sub (local.get $idx) (local.get $step)) (local.get $step) (local.get $idx))
     (return_call $next))
 
+  ;; Read one byte from a span whose complete affine mapping was proved once.
+  ;; NULL_SENTINEL retains the ordinary guest-mapping fallback for page/sparse
+  ;; edges; offset is always bounded by the caller's proved span.
+  (func $lut_span8_load (param $ga i32) (param $wa i32) (param $offset i32)
+                        (result i32)
+    (if (result i32) (i32.eq (local.get $wa) (global.get $NULL_SENTINEL))
+      (then (call $gl8 (i32.add (local.get $ga) (local.get $offset))))
+      (else (i32.load8_u (i32.add (local.get $wa) (local.get $offset))))))
+
+  ;; H431 mode 2: Jazz 2's compiler-unrolled fixed-offset lighting kernel.
+  ;; It reads pixels 2,3,0,1,6,7, publishes the first packed dword, then reads
+  ;; 4,5 and publishes the second. Keeping that order (instead of eagerly
+  ;; gathering all eight bytes) preserves even pathological table/destination
+  ;; or frame/destination aliasing exactly like the guest instruction stream.
+  (func $th_lut_span8_rows (param $op i32)
+    (local $pix_reg i32) (local $eax_reg i32) (local $frame_reg i32)
+    (local $edx_reg i32) (local $esi_reg i32)
+    (local $selector_disp i32) (local $rows_disp i32) (local $cost i32)
+    (local $table_abs i32) (local $eax_disp i32) (local $ebx_disp i32)
+    (local $ecx_disp i32)
+    (local $pix i32) (local $frame i32) (local $selector i32)
+    (local $rows i32) (local $table i32) (local $row0_ga i32)
+    (local $row1_ga i32) (local $pix_wa i32) (local $row0_wa i32)
+    (local $row1_wa i32)
+    (local $p0 i32) (local $p1 i32) (local $p2 i32) (local $p3 i32)
+    (local $p4 i32) (local $p5 i32) (local $p6 i32) (local $p7 i32)
+    (local $w0 i32) (local $w1 i32)
+
+    (local.set $pix_reg (i32.and (local.get $op) (i32.const 0xF)))
+    (local.set $eax_reg
+      (i32.and (i32.shr_u (local.get $op) (i32.const 12)) (i32.const 0xF)))
+    (local.set $frame_reg
+      (i32.and (i32.shr_u (local.get $op) (i32.const 20)) (i32.const 0xF)))
+    (local.set $edx_reg
+      (i32.and (i32.shr_u (local.get $op) (i32.const 24)) (i32.const 0xF)))
+    (local.set $esi_reg
+      (i32.and (i32.shr_u (local.get $op) (i32.const 28)) (i32.const 0xF)))
+    (local.set $selector_disp (call $read_thread_word))
+    (local.set $rows_disp (call $read_thread_word))
+    (local.set $cost (call $read_thread_word))
+    (local.set $table_abs (call $read_thread_word))
+    (local.set $eax_disp (call $read_thread_word))
+    (local.set $ebx_disp (call $read_thread_word))
+    (local.set $ecx_disp (call $read_thread_word))
+
+    (local.set $pix (call $get_reg (local.get $pix_reg)))
+    (local.set $frame (call $get_reg (local.get $frame_reg)))
+    (local.set $selector
+      (i32.and (call $gl32 (i32.add (local.get $frame) (local.get $selector_disp)))
+               (i32.const 1)))
+    (local.set $rows
+      (call $gl32
+        (i32.add
+          (i32.add (local.get $frame) (local.get $rows_disp))
+          (i32.shl (local.get $selector) (i32.const 2)))))
+    (local.set $table
+      (i32.add (local.get $table_abs)
+        (i32.and (call $get_reg (i32.const 1)) (i32.const 0xFF00))))
+    (local.set $row0_ga
+      (i32.add (local.get $table)
+        (i32.shl (i32.and (local.get $rows) (i32.const 0xFF)) (i32.const 8))))
+    (local.set $row1_ga
+      (i32.add (local.get $table) (i32.and (local.get $rows) (i32.const 0xFF00))))
+    (local.set $pix_wa (call $g2w_affine_span (local.get $pix) (i32.const 8)))
+    (local.set $row0_wa
+      (call $g2w_affine_span (local.get $row0_ga) (i32.const 256)))
+    (local.set $row1_wa
+      (call $g2w_affine_span (local.get $row1_ga) (i32.const 256)))
+
+    (local.set $p2 (call $lut_span8_load (local.get $pix) (local.get $pix_wa)
+                         (i32.const 2)))
+    (local.set $p2 (call $lut_span8_load (local.get $row0_ga) (local.get $row0_wa)
+                         (local.get $p2)))
+    (local.set $p3 (call $lut_span8_load (local.get $pix) (local.get $pix_wa)
+                         (i32.const 3)))
+    (local.set $p3 (call $lut_span8_load (local.get $row1_ga) (local.get $row1_wa)
+                         (local.get $p3)))
+    (local.set $p0 (call $lut_span8_load (local.get $pix) (local.get $pix_wa)
+                         (i32.const 0)))
+    (local.set $p0 (call $lut_span8_load (local.get $row0_ga) (local.get $row0_wa)
+                         (local.get $p0)))
+    (local.set $p1 (call $lut_span8_load (local.get $pix) (local.get $pix_wa)
+                         (i32.const 1)))
+    (local.set $p1 (call $lut_span8_load (local.get $row1_ga) (local.get $row1_wa)
+                         (local.get $p1)))
+    (local.set $p6 (call $lut_span8_load (local.get $pix) (local.get $pix_wa)
+                         (i32.const 6)))
+    (local.set $p6 (call $lut_span8_load (local.get $row0_ga) (local.get $row0_wa)
+                         (local.get $p6)))
+    (local.set $p7 (call $lut_span8_load (local.get $pix) (local.get $pix_wa)
+                         (i32.const 7)))
+    (local.set $p7 (call $lut_span8_load (local.get $row1_ga) (local.get $row1_wa)
+                         (local.get $p7)))
+    (local.set $w0
+      (i32.or (local.get $p0)
+        (i32.or (i32.shl (local.get $p1) (i32.const 8))
+          (i32.or (i32.shl (local.get $p2) (i32.const 16))
+                  (i32.shl (local.get $p3) (i32.const 24))))))
+    (call $invalidate_code_write (local.get $pix) (i32.const 8))
+    (if (i32.eq (local.get $pix_wa) (global.get $NULL_SENTINEL))
+      (then (call $gs32 (local.get $pix) (local.get $w0)))
+      (else (i32.store (local.get $pix_wa) (local.get $w0))))
+
+    (local.set $p4 (call $lut_span8_load (local.get $pix) (local.get $pix_wa)
+                         (i32.const 4)))
+    (local.set $p4 (call $lut_span8_load (local.get $row0_ga) (local.get $row0_wa)
+                         (local.get $p4)))
+    (local.set $p5 (call $lut_span8_load (local.get $pix) (local.get $pix_wa)
+                         (i32.const 5)))
+    (local.set $p5 (call $lut_span8_load (local.get $row1_ga) (local.get $row1_wa)
+                         (local.get $p5)))
+    (local.set $w1
+      (i32.or (local.get $p4)
+        (i32.or (i32.shl (local.get $p5) (i32.const 8))
+          (i32.or (i32.shl (local.get $p6) (i32.const 16))
+                  (i32.shl (local.get $p7) (i32.const 24))))))
+    (if (i32.eq (local.get $pix_wa) (global.get $NULL_SENTINEL))
+      (then (call $gs32 (i32.add (local.get $pix) (i32.const 4)) (local.get $w1)))
+      (else (i32.store offset=4 (local.get $pix_wa) (local.get $w1))))
+
+    ;; Exact architectural state at 0x474e6e. EDI/EBP are unchanged; the three
+    ;; frame loads occur after both stores in the guest and therefore stay last
+    ;; here too when a deliberately aliased probe exercises that ordering.
+    (call $set_reg (local.get $eax_reg)
+      (call $gl32 (i32.add (local.get $frame) (local.get $eax_disp))))
+    (call $set_reg (i32.const 3)
+      (call $gl32 (i32.add (local.get $frame) (local.get $ebx_disp))))
+    (call $set_reg (i32.const 1)
+      (call $gl32 (i32.add (local.get $frame) (local.get $ecx_disp))))
+    (call $set_reg (local.get $edx_reg) (local.get $w1))
+    (call $set_reg (local.get $esi_reg) (local.get $table))
+    (call $set_flags_logic (local.get $w1))
+    (global.set $steps
+      (i32.sub (global.get $steps) (i32.sub (local.get $cost) (i32.const 1))))
+    (global.set $lut_span_runs
+      (i32.add (global.get $lut_span_runs) (i32.const 1)))
+    (global.set $lut_span_bytes
+      (i64.add (global.get $lut_span_bytes) (i64.const 8)))
+    (return_call $next))
+
   ;; 431: a fixed, straight-line LUT span selected through a Duff-style jump
   ;; table. This is the nonterminal sibling of H418: bases are snapshots and
   ;; remain architecturally unchanged, the descriptor supplies a compiled
@@ -752,6 +892,9 @@
       (i32.and (i32.shr_u (local.get $op) (i32.const 24)) (i32.const 0xF)))
     (local.set $aux_reg
       (i32.and (i32.shr_u (local.get $op) (i32.const 28)) (i32.const 0xF)))
+
+    (if (i32.eq (local.get $mode) (i32.const 2))
+      (then (return_call $th_lut_span8_rows (local.get $op))))
 
     (local.set $start (call $read_thread_word))
     (local.set $count (call $read_thread_word))

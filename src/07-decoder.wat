@@ -768,6 +768,89 @@
         (i32.eq (call $gl8 (i32.add (local.get $p) (i32.const 2)))
                 (i32.const 8)))))
 
+  ;; Jazz 2's hottest lighting pass has already been unrolled by its compiler:
+  ;; eight in-place pixels become eight reads from two selected 256-byte rows
+  ;; of a 64K lookup table, then two packed dword stores. It is a fixed span,
+  ;; not the surrounding row loop, so keep it in nonterminal H431. The exact
+  ;; byte proof is intentionally local: mode 2 can later accept another
+  ;; structurally equivalent producer without weakening the ordinary H431
+  ;; one/two-stream predicates.
+  (func $try_emit_lut_span8_rows (result i32)
+    (local $p i32)
+    (local.set $p (global.get $d_pc))
+    ;; The compiled block may not own instruction bytes from the next page.
+    (if (i32.gt_u (i32.and (local.get $p) (i32.const 0xFFF)) (i32.const 0xF96))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (local.get $p)) (i32.const 0xD233C033))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 4)))
+                (i32.const 0xFF00E181)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 8)))
+                (i32.const 0x758B0000)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 12)))
+                (i32.const 0x01E683F8)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 16)))
+                (i32.const 0x8B02478A)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 20)))
+                (i32.const 0xFF44B59C)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 24)))
+                (i32.const 0xB18DFFFF)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 28)))
+                (i32.const 0x0057BAE0)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 32)))
+                (i32.const 0x5F8AE38A)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 36)))
+                (i32.const 0x06148A03)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 40)))
+                (i32.const 0x348A078A)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 44)))
+                (i32.const 0x015F8A1E)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 48)))
+                (i32.const 0x148ACA8B)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 52)))
+                (i32.const 0x10E1C106)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 56)))
+                (i32.const 0x8A06478A)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 60)))
+                (i32.const 0x5F8A1E34)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 64)))
+                (i32.const 0x8ACA0B07)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 68)))
+                (i32.const 0x0F890614)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 72)))
+                (i32.const 0x8B1E348A)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 76)))
+                (i32.const 0x04478ACA)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 80)))
+                (i32.const 0x8A10E1C1)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 84)))
+                (i32.const 0x148A055F)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 88)))
+                (i32.const 0xD0458B06)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 92)))
+                (i32.const 0x8B1E348A)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 96)))
+                (i32.const 0xD10BDC5D)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 100)))
+                (i32.const 0x89E84D8B)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl16 (i32.add (local.get $p) (i32.const 104)))
+                (i32.const 0x0457)) (then (return (i32.const 0))))
+
+    ;; op nibbles: pixel/dst EDI, absolute table, EAX result, mode 2,
+    ;; frame EBP, packed result EDX, table-base result ESI.
+    (call $te (i32.const 431) (i32.const 0x62520F77))
+    (call $te_raw (i32.const -8))          ;; selector at [ebp-8]
+    (call $te_raw (i32.const -188))        ;; row offsets at [ebp+4*s-0xbc]
+    (call $te_raw (i32.const 35))          ;; original x86 instruction cost
+    (call $te_raw (i32.const 0x57BAE0))    ;; absolute lookup-table base
+    (call $te_raw (i32.const -48))         ;; final EAX from [ebp-0x30]
+    (call $te_raw (i32.const -36))         ;; final EBX from [ebp-0x24]
+    (call $te_raw (i32.const -24))         ;; final ECX from [ebp-0x18]
+    (global.set $d_pc (i32.add (local.get $p) (i32.const 106)))
+    (global.set $lut_span_matches
+      (i32.add (global.get $lut_span_matches) (i32.const 1)))
+    (i32.const 1))
+
   ;; dst[d..] = table[src[d..]], with all displacements descending by one.
   (func $try_emit_lut_span1 (result i32)
     (local $p i32) (local $end i32) (local $limit i32) (local $x i32)
@@ -1013,6 +1096,7 @@
     (if (i32.or (i32.eqz (global.get $loop_lut_emit_enabled))
                 (global.get $code16))
       (then (return (i32.const 0))))
+    (if (call $try_emit_lut_span8_rows) (then (return (i32.const 1))))
     (if (call $try_emit_lut_span1) (then (return (i32.const 1))))
     (call $try_emit_lut_span2))
 

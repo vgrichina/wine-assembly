@@ -15,6 +15,8 @@ const EXTRA_WAT = `
     (call $g2w (local.get $ga)))
   (func (export "test_lut_cf") (result i32) (call $get_cf))
   (func (export "test_lut_zf") (result i32) (call $get_zf))
+  (func (export "test_lut_sf") (result i32) (call $get_sf))
+  (func (export "test_lut_of") (result i32) (call $get_of))
 `;
 
 function alignPageEnd(p, room) {
@@ -202,6 +204,166 @@ function alignPageEnd(p, room) {
   assert.strictEqual(e.test_lut_zf(), 1, 'Jazz final DEC sets zero');
   assert.strictEqual(e.get_loop_lut_runs(), jazzRuns + 1,
     'Jazz absolute-table loop uses one H418 run');
+
+  // Jazz's dominant lighting kernel at 0x474e04 is a straight-line span that
+  // its compiler already unrolled eight pixels wide. H431 mode 2 recognizes
+  // the whole semantic unit: two selected rows of a 64K table, eight in-place
+  // lookups, two packed dword stores, and the exact scratch-register/flag tail.
+  const jazzPacked8 = Uint8Array.from([
+    0x33, 0xc0,                         // xor eax,eax
+    0x33, 0xd2,                         // xor edx,edx
+    0x81, 0xe1, 0x00, 0xff, 0x00, 0x00, // and ecx,0xff00
+    0x8b, 0x75, 0xf8,                   // mov esi,[ebp-8]
+    0x83, 0xe6, 0x01,                   // and esi,1
+    0x8a, 0x47, 0x02,                   // mov al,[edi+2]
+    0x8b, 0x9c, 0xb5, 0x44, 0xff, 0xff, 0xff, // mov ebx,[ebp+esi*4-0xbc]
+    0x8d, 0xb1, 0xe0, 0xba, 0x57, 0x00, // lea esi,[ecx+0x57bae0]
+    0x8a, 0xe3,                         // mov ah,bl
+    0x8a, 0x5f, 0x03,                   // mov bl,[edi+3]
+    0x8a, 0x14, 0x06,                   // mov dl,[esi+eax]
+    0x8a, 0x07,                         // mov al,[edi]
+    0x8a, 0x34, 0x1e,                   // mov dh,[esi+ebx]
+    0x8a, 0x5f, 0x01,                   // mov bl,[edi+1]
+    0x8b, 0xca,                         // mov ecx,edx
+    0x8a, 0x14, 0x06,                   // mov dl,[esi+eax]
+    0xc1, 0xe1, 0x10,                   // shl ecx,16
+    0x8a, 0x47, 0x06,                   // mov al,[edi+6]
+    0x8a, 0x34, 0x1e,                   // mov dh,[esi+ebx]
+    0x8a, 0x5f, 0x07,                   // mov bl,[edi+7]
+    0x0b, 0xca,                         // or ecx,edx
+    0x8a, 0x14, 0x06,                   // mov dl,[esi+eax]
+    0x89, 0x0f,                         // mov [edi],ecx
+    0x8a, 0x34, 0x1e,                   // mov dh,[esi+ebx]
+    0x8b, 0xca,                         // mov ecx,edx
+    0x8a, 0x47, 0x04,                   // mov al,[edi+4]
+    0xc1, 0xe1, 0x10,                   // shl ecx,16
+    0x8a, 0x5f, 0x05,                   // mov bl,[edi+5]
+    0x8a, 0x14, 0x06,                   // mov dl,[esi+eax]
+    0x8b, 0x45, 0xd0,                   // mov eax,[ebp-0x30]
+    0x8a, 0x34, 0x1e,                   // mov dh,[esi+ebx]
+    0x8b, 0x5d, 0xdc,                   // mov ebx,[ebp-0x24]
+    0x0b, 0xd1,                         // or edx,ecx
+    0x8b, 0x4d, 0xe8,                   // mov ecx,[ebp-0x18]
+    0x89, 0x57, 0x04,                   // mov [edi+4],edx
+    0xc3,
+  ]);
+  const packedFrame = (rowArena + 0xe000) >>> 0;
+  const packedDst = alignPageEnd(rowArena + 0xa000, 5) >>> 0;
+  const packedInput = [0, 1, 17, 63, 127, 128, 201, 255];
+  const packedPhase = 0x1200;
+  const packedRows = 0x00000503; // even pixels row 3, odd pixels row 5
+  const packedTable = 0x57bae0;
+  const packedRow0 = packedTable + packedPhase + ((packedRows & 0xff) << 8);
+  const packedRow1 = packedTable + packedPhase + (packedRows & 0xff00);
+  const packedLut0 = Array.from({ length: 256 }, (_, i) => (i * 17 + 3) & 0xff);
+  const packedLut1 = Array.from({ length: 256 }, (_, i) => (255 - i * 11) & 0xff);
+  put(packedRow0, packedLut0);
+  put(packedRow1, packedLut1);
+  const packedExpected = packedInput.map((v, i) => (i & 1 ? packedLut1 : packedLut0)[v]);
+  const packedFinal = { eax: 0x10203040, ebx: 0x50607080, ecx: 0x90a0b0c0 };
+  dv.setUint32(wa(packedFrame - 8), 1, true);
+  dv.setUint32(wa(packedFrame - 0xbc + 4), packedRows, true);
+  dv.setUint32(wa(packedFrame - 0x30), packedFinal.eax, true);
+  dv.setUint32(wa(packedFrame - 0x24), packedFinal.ebx, true);
+  dv.setUint32(wa(packedFrame - 0x18), packedFinal.ecx, true);
+  const packedSetup = () => {
+    e.set_eax(0xaaaaaaaa); e.set_ebx(0xbbbbbbbb); e.set_ecx(0xdead125a);
+    e.set_edx(0xdddddddd); e.set_esi(0xeeeeeeee); e.set_edi(packedDst);
+    e.set_ebp(packedFrame);
+  };
+  const packedState = () => ({
+    eax: e.get_eax() >>> 0, ebx: e.get_ebx() >>> 0, ecx: e.get_ecx() >>> 0,
+    edx: e.get_edx() >>> 0, esi: e.get_esi() >>> 0, edi: e.get_edi() >>> 0,
+    ebp: e.get_ebp() >>> 0, cf: e.test_lut_cf(), zf: e.test_lut_zf(),
+    sf: e.test_lut_sf(), of: e.test_lut_of(),
+  });
+
+  put(packedDst, packedInput);
+  e.set_loop_lut_emit(0);
+  runAt(jazzPacked8, packedSetup);
+  const packedBaselineState = packedState();
+  const packedBaselineBytes = get(packedDst, 8);
+  assert.deepStrictEqual(packedBaselineBytes, packedExpected,
+    'ordinary Jazz packed-eight kernel output');
+
+  put(packedDst, packedInput);
+  e.set_loop_lut_emit(1);
+  const packedMatches = e.get_lut_span_matches();
+  const packedRuns = e.get_lut_span_runs();
+  const packedBytes = e.get_lut_span_bytes();
+  runAt(jazzPacked8, packedSetup);
+  assert.deepStrictEqual(get(packedDst, 8), packedBaselineBytes,
+    'H431 packed-eight output agrees across a destination page boundary');
+  assert.deepStrictEqual(packedState(), packedBaselineState,
+    'H431 packed-eight preserves all observable GPR and lazy-flag state');
+  assert.strictEqual(e.get_lut_span_matches(), packedMatches + 1,
+    'packed-eight recognizer matches the authentic Jazz instruction span');
+  assert.strictEqual(e.get_lut_span_runs(), packedRuns + 1,
+    'packed-eight executes through H431 mode 2');
+  assert.strictEqual(Number(e.get_lut_span_bytes() - packedBytes), 8,
+    'packed-eight H431 charges all transformed pixels');
+
+  // Equivalent XOR encoding is a conservative near miss: mode 2 is exact and
+  // ordinary decoding must retain the same result without incrementing H431.
+  const packedNear = Uint8Array.from(jazzPacked8);
+  packedNear[0] = 0x31;
+  put(packedDst, packedInput);
+  const packedNearMatches = e.get_lut_span_matches();
+  const packedNearRuns = e.get_lut_span_runs();
+  runAt(packedNear, packedSetup);
+  assert.deepStrictEqual(get(packedDst, 8), packedBaselineBytes,
+    'packed-eight near miss falls back to equivalent ordinary x86');
+  assert.deepStrictEqual(packedState(), packedBaselineState,
+    'packed-eight near miss preserves ordinary architectural state');
+  assert.strictEqual(e.get_lut_span_matches(), packedNearMatches,
+    'packed-eight near miss is not recognized');
+  assert.strictEqual(e.get_lut_span_runs(), packedNearRuns,
+    'packed-eight near miss never executes H431');
+
+  if (process.env.LUT_PACKED_BENCH) {
+    const iterations = Number(process.env.LUT_PACKED_BENCH_ITERS || 10000);
+    const reps = Number(process.env.LUT_PACKED_BENCH_REPS || 9);
+    const benchDst0 = (rowArena + 0x1000) >>> 0;
+    const benchDst1 = (rowArena + 0x1100) >>> 0;
+    put(benchDst0, packedInput); put(benchDst1, packedInput);
+
+    function setupBench(code, dest) {
+      e.set_esp(stack); dv.setUint32(imageWa(stack), 0, true);
+      e.set_eax(0xaaaaaaaa); e.set_ebx(0xbbbbbbbb); e.set_ecx(0xdead125a);
+      e.set_edx(0xdddddddd); e.set_esi(0xeeeeeeee); e.set_edi(dest);
+      e.set_ebp(packedFrame); e.set_eip(code); e.run(100000);
+    }
+    e.set_loop_lut_emit(0);
+    const packedBaselineCode = install(jazzPacked8);
+    setupBench(packedBaselineCode, benchDst0); // decode/cache ordinary handlers
+    e.set_loop_lut_emit(1);
+    const packedFusedCode = install(jazzPacked8);
+    setupBench(packedFusedCode, benchDst1); // decode/cache H431 mode 2
+
+    function timeArm(code, dest, loops = iterations) {
+      const t0 = process.hrtime.bigint();
+      for (let i = 0; i < loops; i++) setupBench(code, dest);
+      return Number(process.hrtime.bigint() - t0) / 1e6;
+    }
+    timeArm(packedBaselineCode, benchDst0, 100);
+    timeArm(packedFusedCode, benchDst1, 100);
+    const samples = { ordinary: [], h431: [] };
+    for (let rep = 0; rep < reps; rep++) {
+      const order = rep & 1 ? ['h431', 'ordinary'] : ['ordinary', 'h431'];
+      for (const name of order) {
+        const code = name === 'h431' ? packedFusedCode : packedBaselineCode;
+        const dest = name === 'h431' ? benchDst1 : benchDst0;
+        samples[name].push(timeArm(code, dest));
+      }
+    }
+    const median = values => [...values].sort((a, b) => a - b)[values.length >> 1];
+    const ordinaryMs = median(samples.ordinary);
+    const h431Ms = median(samples.h431);
+    console.log(`BENCH Jazz packed-eight LUT: ${iterations} calls, ${reps} alternating reps`);
+    console.log(`  ordinary median ${ordinaryMs.toFixed(2)} ms`);
+    console.log(`  H431     median ${h431Ms.toFixed(2)} ms`);
+    console.log(`  speedup ${(ordinaryMs / h431Ms).toFixed(2)}x`);
+  }
 
   // Heroes III's exact RGB565 form has an 8-bit source and a 16-bit table and
   // destination. Exercise both destination directions across page boundaries;
@@ -421,7 +583,7 @@ function alignPageEnd(p, room) {
   assert.strictEqual(e.get_loop_lut_bounded_matches(), nearMatches, 'JBE near miss rejected');
   assert.strictEqual(e.get_loop_lut_runs(), nearRuns, 'near miss never enters H418');
 
-  console.log('PASS universal LUT_RUN: Heroes byte/RGB565 + Jazz counted, Diablo one/two-source bounded and row-table semantics, page splits, gate, and near miss');
+  console.log('PASS universal LUT_RUN: Heroes byte/RGB565 + Jazz counted/packed-eight, Diablo one/two-source bounded and row-table semantics, page splits, gate, and near miss');
 })().catch(error => {
   console.error(error.stack || error);
   process.exit(1);
