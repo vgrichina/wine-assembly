@@ -11,6 +11,7 @@ const path = require('path');
 const { Worker } = require('worker_threads');
 const RPC = require('../lib/guest-rpc');
 const { GuestThreadHost } = require('../lib/guest-thread-host');
+const { ThreadManager } = require('../lib/thread-manager');
 
 const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
 const sync = new Int32Array(
@@ -57,6 +58,12 @@ function beginWorkerWait(handles, waitAll, timeout) {
 }
 
 async function main() {
+  assert.strictEqual(ThreadManager.prototype.pumpThreadsOnce.call({
+    workerBackend: {},
+    _runningThreadHandle: 0,
+    runSlice: () => { throw new Error('cooperative scheduler must not run'); },
+  }), 0, 'cs_pump is an explicit no-op for the real Worker backend');
+
   const event = 0x0E000042;
   const eventBase = publish(0, event, 1, 0, 0); // auto-reset, unsignaled
   const eventWait = await beginWorkerWait([event], false, 1000);

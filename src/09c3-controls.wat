@@ -4795,6 +4795,16 @@
           (i32.eq (local.get $msg) (i32.const 0x0201))
           (i32.eq (local.get $msg) (i32.const 0x0203)))
       (then
+        ;; USER gives a BUTTON the focus before delivering its button-down.
+        ;; The renderer normally performs that transition while routing the
+        ;; browser event, but in real-Threads mode its local WASM instance is
+        ;; only an ownership token: changing that instance's focus global does
+        ;; not change the live guest Worker. Do it at the control boundary too,
+        ;; where both backends execute and where BS_NOTIFY's BN_SETFOCUS must be
+        ;; generated. Diablo selects/populates Warrior from that notification;
+        ;; BN_CLICKED merely confirms the already-selected class.
+        (if (i32.ne (global.get $focus_hwnd) (local.get $hwnd))
+          (then (call $set_focus (local.get $hwnd))))
         (if (local.get $state)
           (then
             (local.set $state_w (call $g2w (local.get $state)))

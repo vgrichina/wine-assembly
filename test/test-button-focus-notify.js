@@ -101,6 +101,17 @@ function u32(value) {
   assert.deepStrictEqual(readCaptured(), [0x0111, (7 << 16) | id, notifyButton],
     'BS_NOTIFY button sends BN_KILLFOCUS through WM_COMMAND');
 
+  // Real-Threads browser input reaches the live Worker as a queued mouse
+  // message; renderer-side focus calls run on an idle ownership instance.
+  // BUTTON must therefore perform USER's focus transfer from its own live
+  // wndproc before it handles the press.
+  clearCaptured();
+  e.test_button_message(notifyButton, 0x0201);
+  assert.strictEqual(e.get_focus_hwnd() >>> 0, notifyButton,
+    'button-down transfers focus on the instance dispatching the message');
+  assert.deepStrictEqual(readCaptured(), [0x0111, (6 << 16) | id, notifyButton],
+    'button-down emits BS_NOTIFY BN_SETFOCUS before the click notification');
+
   clearCaptured();
   e.test_button_message(notifyButton, 0x0203);
   assert.deepStrictEqual(readCaptured(), [0x0111, (5 << 16) | id, notifyButton],
