@@ -252,6 +252,24 @@ CLI cadence/work measurements, not browser FPS: the host load average was
 artificially gated by `--repaint-every=50`. No FPS number is supportable from
 that sample.
 
+### RGB565 LUT renderer loops
+
+Adventure-map profiling identified a counted `src8 -> LUT16 -> dst16` family.
+Six direct-table sites processed 2,509,014 pixels in a 4,250-batch replay. The
+largest variant starts at `0x004714bc` and prefixes the same nine-op pixel body
+with `mov ecx,[esp+0x40]`; with H418 disabled it entered about 3.25 million
+times in gameplay batches 4100..4250.
+
+H418 descriptor bits 1/2 now cover the 16-bit output and optional stack-loaded
+table pointer. The stack value and its 512-byte table mapping are resolved once
+per page/budget chunk; a destination that can alias the stack page is limited
+to one pixel per reload. On the exact `0x004714bc` shape, a 16 MiB same-process
+alternating benchmark measured 38.7 ms median enabled versus 1,317.9 ms with
+all LUT super-ops disabled (+97.0% paired median). An unrelated RECT_RUN toggle
+was +3.6% in the same session. The real replay processed 8,229,384 RGB565
+pixels in 533,773 H418 chunks; `0x004714bc` fell to 448,144 chunk entries.
+These are primitive-local and deterministic-work results, not browser FPS.
+
 The earlier isolated blank middle frame did not recur spontaneously. Deliberate
 left-edge panning can produce a mostly starfield/shroud map view with intact
 chrome, but that transition was input-driven and stable after the cursor moved

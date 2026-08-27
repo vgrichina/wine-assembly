@@ -7738,6 +7738,11 @@ if (VERBOSE) {
           e.get_loop_lut_bounded_matches(), 'runs', e.get_loop_lut_runs(),
           'bytes', String(e.get_loop_lut_bytes()));
       }
+      if (e.get_loop_lut16_runs) {
+        console.log(`loopmatch: ${label} RGB565 LUT matches`,
+          e.get_loop_lut16_matches(), 'runs', e.get_loop_lut16_runs(),
+          'pixels', String(e.get_loop_lut16_bytes()));
+      }
       if (e.get_lut_span_runs) {
         console.log(`loopmatch: ${label} fixed LUT spans`,
           e.get_lut_span_matches(), 'runs', e.get_lut_span_runs(),
