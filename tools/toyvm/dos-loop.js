@@ -78,7 +78,21 @@ class CodeCache {
     // Recycling the arena invalidates every arena address the guest-visible
     // caches hold, so both are emptied here -- a stale entry would resume in
     // whatever got compiled over the block it named.
-    if (this.arenaNext >= this.arenaEnd) {
+    //
+    // The test is HEADROOM, not exhaustion, and the difference is a hang.
+    // compileProgram truncates silently at maxWords: it emits `end, cur` and
+    // stops. With a few hundred words left that cut lands on the entry block
+    // itself, so the compiled program is "hand back at the address you were
+    // asked to compile" -- and it gets cached under that address, so every
+    // future entry there does the same thing. The guest makes no progress, no
+    // decoder refuses anything, and the run reports `stuck at` an instruction
+    // that is perfectly fine. CRYSTAL.COM reached 1020KB of a 1024KB arena
+    // with 381 self-modify breaks and sat there for 1208 handbacks.
+    //
+    // A quarter of the arena is far more than any one program's reachable
+    // subgraph has ever needed here, so recycling early costs a re-decode that
+    // was coming anyway and buys the guarantee that a compile is worth caching.
+    if (this.arenaEnd - this.arenaNext < isa.THREAD_SIZE >> 2) {
       this.regions.clear();
       this.arenaNext = isa.THREAD_BASE;
       this.arenaResets++;
