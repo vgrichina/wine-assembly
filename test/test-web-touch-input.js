@@ -51,4 +51,83 @@ assert(html.includes('body:not(.no-debug) #screen-wrap'),
 assert(html.includes('body:not(.no-debug) #log'),
   'narrow debug mode should size the log independently below the emulator');
 
+// Pointer-locked mouseup may report clientX/clientY at zero. Exercise the
+// actual DOM bridge and ensure it releases at the guest's virtual cursor,
+// rather than feeding an outside-letterbox point that drops WM_LBUTTONUP.
+const originalWindow = global.window;
+const originalDocument = global.document;
+const originalSetInterval = global.setInterval;
+const originalClearInterval = global.clearInterval;
+const listeners = new Map();
+const documentListeners = new Map();
+const canvasListeners = new Map();
+const canvas = {
+  width: 640, height: 480, style: {},
+  getBoundingClientRect: () => ({ left: 0, top: 0, width: 640, height: 480 }),
+  focus() {}, setAttribute() {}, requestPointerLock() {},
+  addEventListener(type, fn) { canvasListeners.set(type, fn); },
+};
+global.window = {
+  addEventListener(type, fn) {
+    const entries = listeners.get(type) || [];
+    entries.push(fn);
+    listeners.set(type, entries);
+  },
+  removeEventListener(type, fn) {
+    listeners.set(type, (listeners.get(type) || []).filter(entry => entry !== fn));
+  },
+};
+global.document = {
+  pointerLockElement: canvas,
+  activeElement: canvas,
+  getElementById: () => null,
+  querySelectorAll: () => [],
+  elementFromPoint: () => null,
+  visibilityState: 'visible',
+  addEventListener(type, fn) { documentListeners.set(type, fn); },
+};
+global.setInterval = () => 1;
+global.clearInterval = () => {};
+try {
+  delete require.cache[require.resolve('../lib/browser-input')];
+  const browserInput = require('../lib/browser-input');
+  const releases = [];
+  const renderer = {
+    windows: {}, _mouseX: 400, _mouseY: 250,
+    wantsRelativeMouse: () => true,
+    _unmapExclusiveInputPoint: () => ({ x: 320, y: 200 }),
+    handleMouseDown() {},
+    handleMouseUp: (x, y, button) => releases.push({ x, y, button }),
+    handleMouseMove() {}, handleMenuHover() {},
+  };
+  browserInput.wireCanvasInput(canvas, renderer, { runningApps: [], debugMode: true });
+  const event = {
+    clientX: 320, clientY: 240, button: 0, ctrlKey: false, shiftKey: false,
+    preventDefault() {}, stopPropagation() {},
+  };
+  canvas.onmousedown(event);
+  const mouseups = listeners.get('mouseup') || [];
+  assert(mouseups.length, 'mousedown should install window mouseup capture');
+  mouseups.at(-1)({ ...event, clientX: 0, clientY: 0 });
+  assert.deepStrictEqual(releases, [{ x: 320, y: 200, button: 0 }],
+    'pointer-lock release should use the current guest cursor, not unusable DOM coordinates');
+
+  canvas.onmousedown(event);
+  const mousemoves = listeners.get('mousemove') || [];
+  mousemoves.at(-1)({ ...event, buttons: 0, clientX: 0, clientY: 0 });
+  assert.deepStrictEqual(releases.at(-1), { x: 320, y: 200, button: 0 },
+    'a pointer-lock move with no physical buttons should recover a missing mouseup');
+
+  canvas.onmousedown(event);
+  global.document.pointerLockElement = null;
+  documentListeners.get('pointerlockchange')();
+  assert.deepStrictEqual(releases.at(-1), { x: 320, y: 200, button: 0 },
+    'losing pointer lock should release any guest button still held');
+} finally {
+  global.window = originalWindow;
+  global.document = originalDocument;
+  global.setInterval = originalSetInterval;
+  global.clearInterval = originalClearInterval;
+}
+
 console.log('PASS  web canvas supports mobile touch input');

@@ -427,3 +427,33 @@ excluded found `uniformMatrix4fv`, `vertexAttribPointer`, attribute enable, and
 `drawArrays` reduced from the former prominent samples to collectively below
 0.1% of all trace samples. This exclusion was profiling-only; runtime error
 semantics remain unchanged.
+
+## Pointer-lock button release
+
+A cooperative browser regression after the GL optimization exposed a separate
+input bug: firing once could leave Quake firing indefinitely. The trusted DOM
+`mouseup` was present, and the renderer's host mouse-button mask changed from
+one to zero, but pointer lock reported unusable `clientX/clientY` coordinates
+at `(0,0)`. That point was outside the exclusive presentation viewport, so
+`handleMouseUp` returned before it queued `WM_LBUTTONUP`; Quake retained its
+own button-down state.
+
+The browser input bridge now derives pointer-locked button-up coordinates from
+the guest's current virtual cursor through the inverse exclusive-presentation
+transform. Ordinary unlocked releases still use DOM client coordinates. The
+bridge also retires a held guest button when a later pointer-lock move reports
+no physical buttons, pointer lock is lost, the window loses focus, the page is
+hidden, or another press arrives without an observed release. Those recovery
+paths cover browser/OS transitions that can omit `mouseup` entirely. The real
+cooperative `test/test-quake2-input-web.js` acceptance now performs twelve
+clicks after pointer lock is active and proves every trusted down/up pair
+reaches the Win32 queue as `WM_LBUTTONDOWN` followed by `WM_LBUTTONUP`, with the
+renderer mask released after every cycle.
+
+The dropdown also mounts a first-launch `baseq2/config.cfg` with WASD movement,
+permanent mouse look, mouse-one fire, mouse-two/Space jump, Ctrl/C crouch, mouse
+wheel weapon selection, always-run, and a crosshair. The original `default.cfg`
+still supplies every binding not explicitly modernized. Browser persistence is
+enabled for this config: an existing saved config is restored after the bundled
+default is mounted, and later in-game customization is saved, so the defaults
+do not overwrite user choices on subsequent launches.

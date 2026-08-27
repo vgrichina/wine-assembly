@@ -33,6 +33,18 @@ assert.strictEqual(APPS.jazz2_demo.args, 'Share1.j2l -nonetwork',
   'Jazz Jackrabbit 2 skips the long intro and loads the playable shareware level');
 assert.strictEqual(APPS.quake2_demo.args, '+set vid_ref gl +menu_main',
   'Quake II starts its normal OpenGL-rendered menu from the dropdown');
+assert(APPS.quake2_demo.files.some(file => file.url === 'lib/quake2-modern-controls.ini' &&
+  file.vfsPath === 'c:\\baseq2\\config.cfg'),
+  'Quake II mounts modern WASD/mouse controls as its first-launch config');
+assert.deepStrictEqual(APPS.quake2_demo.persistFiles, ['c:\\baseq2\\config.cfg'],
+  'Quake II restores and persists later user control changes over the defaults');
+const quake2Controls = fs.readFileSync(path.join(root, 'lib/quake2-modern-controls.ini'), 'utf8');
+for (const binding of [
+  'bind w "+forward"', 'bind s "+back"', 'bind a "+moveleft"',
+  'bind d "+moveright"', 'bind MOUSE1 "+attack"', 'set freelook "1"',
+]) {
+  assert(quake2Controls.includes(binding), `Quake II modern controls include ${binding}`);
+}
 assert(APPS.quake2_demo.dlls.some(file => file.endsWith('/ref_gl.dll')),
   'Quake II preloads its authentic OpenGL renderer for runtime selection');
 assert(APPS.quake2_demo.files.some(file =>

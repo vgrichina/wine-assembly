@@ -161,7 +161,7 @@ async function waitForGameplay(page) {
       { timeout: 30000 });
     await page.evaluate(() => {
       window.__q2Input = { dom: [], taken: [], relative: [] };
-      for (const type of ['keydown', 'keyup', 'mousedown']) {
+      for (const type of ['keydown', 'keyup', 'mousedown', 'mouseup']) {
         window.addEventListener(type, event => {
           window.__q2Input.dom.push({ type, trusted: event.isTrusted,
             keyCode: event.keyCode | 0, button: event.button | 0 });
@@ -173,6 +173,8 @@ async function waitForGameplay(page) {
     assert.match(args, /\+set\s+vid_ref\s+gl/i, `production renderer is not GL: ${args}`);
     assert.match(args, /\+menu_main/i, `production launch does not use the main menu: ${args}`);
     await page.evaluate(() => {
+      window.WINE_THREADS = false;
+      localStorage.setItem('wine-assembly.threads', '0');
       const select = document.getElementById('slice-size-select');
       const option = document.createElement('option');
       option.value = '10000'; option.textContent = '10k'; select.appendChild(option);
@@ -185,7 +187,7 @@ async function waitForGameplay(page) {
       const take = sharedRenderer.takeInput;
       sharedRenderer.takeInput = function() {
         const event = take.apply(this, arguments);
-        if (event && event.type === 'key') {
+        if (event && (event.type === 'key' || event.type === 'mouse')) {
           window.__q2Input.taken.push({ msg: event.msg >>> 0,
             wParam: event.wParam >>> 0, lParam: event.lParam >>> 0 });
         }
@@ -206,6 +208,16 @@ async function waitForGameplay(page) {
     await heldKey(page, 'Enter', 750);
     await waitForGameplay(page);
     await new Promise(resolve => setTimeout(resolve, 800));
+    const controlConfig = await page.evaluate(() => {
+      const app = runningApps.find(value => value && value.name === 'quake2_demo');
+      const entry = app && app.wine && app.wine._helpCtx && app.wine._helpCtx.vfs &&
+        app.wine._helpCtx.vfs.files.get('c:\\baseq2\\config.cfg');
+      return entry && entry.data ? new TextDecoder().decode(entry.data) : '';
+    });
+    assert(/bind\s+"?w"?\s+"\+forward"/i.test(controlConfig) &&
+      /bind\s+"?a"?\s+"\+moveleft"/i.test(controlConfig) &&
+      /set\s+freelook\s+"?1"?/i.test(controlConfig),
+    `modern first-launch controls were not mounted: ${controlConfig.slice(0, 500)}`);
 
     const beforeKey = await readFrame(page);
     saveFrame(beforeKey, path.join(OUT, 'before-key.png'));
@@ -250,6 +262,19 @@ async function waitForGameplay(page) {
     await page.mouse.move(box.x + box.width * 0.75, box.y + box.height * 0.55,
       { steps: 6 });
     await new Promise(resolve => setTimeout(resolve, 1200));
+    const shotTakenStart = await page.evaluate(() => window.__q2Input.taken.length);
+    const shotStates = [];
+    for (let i = 0; i < 12; i++) {
+      await page.mouse.down({ button: 'left' });
+      await new Promise(resolve => setTimeout(resolve, 30 + (i % 3) * 35));
+      const held = await page.evaluate(() => ({ mask: sharedRenderer._mouseButtonsMask | 0 }));
+      await page.mouse.up({ button: 'left' });
+      await new Promise(resolve => setTimeout(resolve, 80));
+      const released = await page.evaluate(() => ({ mask: sharedRenderer._mouseButtonsMask | 0 }));
+      shotStates.push({ held, released });
+    }
+    const heldMouseState = shotStates[0].held;
+    const releasedMouseState = shotStates.at(-1).released;
     const afterMouse = await readFrame(page);
     saveFrame(afterMouse, path.join(OUT, 'after-mouse.png'));
     const mouseMotion = changedPixels(beforeMouse, afterMouse);
@@ -259,7 +284,9 @@ async function waitForGameplay(page) {
       return value;
     });
     fs.writeFileSync(path.join(OUT, 'metrics.json'), JSON.stringify({
-      args, heldState, mouseState, keyMotion, mouseMotion, input,
+      args, controlConfig, heldState, mouseState, heldMouseState, releasedMouseState,
+      shotStates, shotTakenStart,
+      keyMotion, mouseMotion, input,
     }, null, 2));
 
     assert(heldState.down, `held W was not visible to GetKeyState/GetAsyncKeyState: ${JSON.stringify(heldState)}`);
@@ -279,6 +306,17 @@ async function waitForGameplay(page) {
       `held W changed only ${keyMotion} gameplay pixels`);
     assert(input.pointerLocked && input.relative.some(event => Math.abs(event.dx) + Math.abs(event.dy) > 0),
       `trusted mouse motion missed pointer-lock relative routing: ${JSON.stringify(input.relative)}`);
+    assert(shotStates.every(state => state.held.mask & 1),
+      `pointer-locked mouse down missed a left-button mask: ${JSON.stringify(shotStates)}`);
+    assert(shotStates.every(state => !(state.released.mask & 1)),
+      `pointer-locked mouse up left a fire button held: ${JSON.stringify(shotStates)}`);
+    assert(input.dom.some(event => event.type === 'mouseup' && event.button === 0 && event.trusted),
+      'pointer-locked release must come from a trusted browser mouseup');
+    const shotEvents = input.taken.slice(shotTakenStart);
+    assert(shotEvents.filter(event => event.msg === 0x0201).length >= shotStates.length,
+      `pointer-locked fire did not deliver WM_LBUTTONDOWN: ${JSON.stringify(shotEvents)}`);
+    assert(shotEvents.filter(event => event.msg === 0x0202).length >= shotStates.length,
+      `pointer-locked release did not deliver WM_LBUTTONUP: ${JSON.stringify(shotEvents)}`);
     assert(mouseMotion > beforeMouse.width * beforeMouse.height * 0.01,
       `relative mouse look changed only ${mouseMotion} gameplay pixels`);
     assert.strictEqual(errors.length, 0, errors.join('\n'));

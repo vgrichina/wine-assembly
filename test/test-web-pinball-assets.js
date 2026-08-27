@@ -300,7 +300,7 @@ assert(fs.statSync(path.join(ROOT, 'binaries', 'whatsnew.txt')).size > 0, 'Winam
 assert(!webApp.includes('wine.waitForMainHwnd(() =>'), 'Winamp web launch should not auto-drive playback through IPC');
 assert(!webApp.includes('?v=55'), 'index.html should not keep stale cache-buster v55');
 assert(webApp.includes('lib/renderer-input.js?v=192'), 'web host should cache-bust renderer input after relative mouse capture');
-assert(webApp.includes('lib/browser-input.js?v=4'), 'web host should cache-bust the browser pointer-lock bridge');
+assert(webApp.includes('lib/browser-input.js?v=5'), 'web host should cache-bust the browser pointer-lock bridge');
 assert(webApp.includes('lib/renderer.js?v=189'), 'web host should cache-bust renderer after the current source update');
 assert(webApp.includes('lib/pe.js?v=1'), 'web host should load the shared PE section reader');
 assert(webApp.includes('lib/process-boot.js?v=2'), 'web host should cache-bust oversized PE section hydration');
