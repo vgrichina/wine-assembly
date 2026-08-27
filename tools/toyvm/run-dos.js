@@ -30,7 +30,7 @@ const isa = require('./isa');
 const { disasmAt } = require('../disasm');
 const { makeVm } = require('./vm');
 const { setCpuLevel } = require('./decode');
-const { Machine, loadExe, vgaGeometry, VGA_BASE } = require('./dos');
+const { Machine, loadExe, vgaGeometry, parseKeys, VGA_BASE } = require('./dos');
 const { DosSession } = require('./dos-loop');
 const {
   conCells, conText, screenSurface, nonBlack, frameHash, rgbaFrame, rgbaConsole,
@@ -128,11 +128,18 @@ async function runDos(o) {
     // forever on "Initializing ." with a card present. Being able to A/B that
     // in one command is the difference between knowing and guessing.
     sound = 'full',
+    // Keys typed once, in order, and keys that replace the auto-key rotation.
+    // The rotation exists to get past sound menus and has no ESC in it, which
+    // is the key half the text-mode viewers in this corpus are waiting for --
+    // ANTARES.EXE sits on `mov ah,8; int 21h; cmp al,1Bh` and was offered
+    // 466,766 characters that were not ESC before its budget ran out.
+    keys = [], autoKeys = [],
   } = o;
   setCpuLevel(cpu);
 
   const machine = new Machine(new Uint8Array(0), {
     log: (s) => traceInt && log(`  ${s}`), autoKey, forceChained, sound,
+    keys, autoKeys,
     // A DOS program's data sits next to it, and that directory is the whole of
     // the filesystem it gets.
     fileRoot: path.dirname(path.resolve(exe)),
@@ -388,12 +395,15 @@ async function main() {
     traceEntry: flag('trace-entry') ? 40 : count(arg('trace-entry'), 0),
     noCache: flag('no-cache'),
     sound: arg('sound', 'full'),
+    keys: parseKeys(arg('keys', '')),
+    autoKeys: parseKeys(arg('auto-keys', '')),
     shots: arg('shots'),
     shotEvery: count(arg('shot-every'), 20),
     mouse: (arg('mouse', '0:0')).split(':').map(Number),
     cpu: Number(arg('cpu', 386)),
     report,
-    autoKey: flag('auto-key'),
+    // Naming a rotation is asking for one, so --auto-keys implies --auto-key.
+    autoKey: flag('auto-key') || !!arg('auto-keys', ''),
     forceChained: flag('chain4'),
     tickScale: Number(arg('tick-scale', 1)),
     irqEvery: count(arg('irq-every'), 100e3),
@@ -449,31 +459,6 @@ async function main() {
       + `${ex.get_d32() ? '32-bit' : '16-bit'} code`);
   }
 
-  // What the guest is executing, read out of ITS memory rather than out of the
-  // file. dos-disasm.js loads the image statically, which answers a different
-  // question: half this corpus decrypts itself, relocates itself or runs code a
-  // child EXEC wrote, and for those the file says nothing about the address a
-  // run stopped at. `--disasm` with no argument takes the address the run ended
-  // on, which is the one being asked about nine times out of ten.
-  const dis = process.argv.slice(2).find(a => a === '--disasm' || a.startsWith('--disasm='));
-  if (dis) {
-    const { disasmAt } = require('../disasm');
-    const spec = dis.includes('=') ? dis.slice(9) : '';
-    const [addr, n] = spec.split(':').length > 2
-      ? [spec.split(':').slice(0, 2).join(':'), Number(spec.split(':')[2])]
-      : [spec, 24];
-    const [segS, offS] = (addr || `${r.vm.get('cs').toString(16)}:`
-      + `${r.vm.get('gip').toString(16)}`).split(':');
-    const seg = parseInt(segS, 16), off = parseInt(offS, 16);
-    const start = ((seg << 4) + off) & 0xFFFFF;
-    console.log(`\ndisassembly at ${seg.toString(16)}:${off.toString(16)} (live memory)`);
-    for (const line of disasmAt(r.vm.mem, start, start, n || 24, null, { bits: 16 })) {
-      const m = /^([0-9a-f]+)(\s+)(.*)$/.exec(line.trim());
-      if (!m) { console.log(line); continue; }
-      console.log(`  ${seg.toString(16)}:`
-        + `${(parseInt(m[1], 16) - (seg << 4)).toString(16).padStart(4, '0')}  ${m[3]}`);
-    }
-  }
   console.log(`\n${path.basename(exe)}  variant=${r.variant}  ${r.secs.toFixed(2)}s`);
   console.log(`  ${r.handbacks} handbacks, ${r.ints} interrupts`
     + `${r.irqs ? ` (+${r.irqs} timer IRQs delivered)` : ''}, ${r.compiles} traces `
@@ -568,13 +553,34 @@ async function main() {
   // address a trace names. This is the other half of that pair -- it reads the
   // memory the depacker actually wrote, which is the only place a wild jump's
   // target can be looked at.
+  // A SEG: in one of these specs is whatever the guest would make of it, which
+  // stops being `seg << 4` the moment the guest is in protected mode: there a
+  // selector indexes the GDT and the base is written in the descriptor. Reading
+  // it as a paragraph is not an approximation, it lands somewhere unrelated --
+  // CONTAGIO.EXE stops at 868:13d, whose paragraph reading is all zeros and
+  // whose descriptor base puts it in the middle of the extender's error
+  // strings. The first reading says "the depacker never wrote here" and the
+  // second says "the far jump went to the wrong place"; only one is true.
+  const segBase = (seg) => {
+    const ex = r.vm.exports;
+    if (!(ex.get_cr0() & 1)) return (seg << 4) & 0xFFFFF;
+    if (seg === (r.vm.get('cs') & 0xFFFF)) return ex.get_csb() >>> 0;
+    const at = (ex.get_gdtb() >>> 0) + (seg & ~7);
+    // Past the limit there is no descriptor to read, and a selector the guest
+    // never loaded is usually the caller naming a real-mode paragraph anyway.
+    if ((seg & ~7) + 7 > (ex.get_gdtl() >>> 0)) return (seg << 4) & 0xFFFFF;
+    const b = r.vm.mem;
+    return (b[at + 2] | (b[at + 3] << 8) | (b[at + 4] << 16) | (b[at + 7] << 24)) >>> 0;
+  };
   for (const spec of argAll('dump')) {
     const m = /^(?:([0-9a-fA-F]+):)?([0-9a-fA-F]+)(?::(\d+))?$/.exec(spec);
     if (!m) { console.log(`  bad --dump=${spec}, want SEG:OFF[:LEN]`); continue; }
     const seg = m[1] ? parseInt(m[1], 16) : r.vm.get('cs');
     const off = parseInt(m[2], 16), len = m[3] ? Number(m[3]) : 64;
-    const at = ((seg << 4) + off) & 0xFFFFF;
-    console.log(`\n  ${seg.toString(16)}:${off.toString(16).padStart(4, '0')}  ${len} bytes`);
+    const base = segBase(seg);
+    const at = (base + off) & r.vm.exports.get_linmask();
+    console.log(`\n  ${seg.toString(16)}:${off.toString(16).padStart(4, '0')}`
+      + `${base !== ((seg << 4) & 0xFFFFF) ? ` (base ${base.toString(16)})` : ''}  ${len} bytes`);
     for (let i = 0; i < len; i += 16) {
       const row = [...r.vm.mem.subarray(at + i, at + i + Math.min(16, len - i))];
       console.log(`  ${(off + i).toString(16).padStart(4, '0')}  `
@@ -587,14 +593,10 @@ async function main() {
     if (!m) { console.log(`  bad --disasm=${spec}, want SEG:OFF[:COUNT]`); continue; }
     const seg = m[1] ? parseInt(m[1], 16) : r.vm.get('cs');
     const off = parseInt(m[2], 16), n = m[3] ? Number(m[3]) : 24;
-    // A bare offset means "in the segment the guest is executing", so it takes
-    // that segment's real base -- which in protected mode is whatever CS's
-    // descriptor says and is not the selector shifted left four. An explicit
-    // SEG: is the caller naming a real-mode paragraph and keeps the shift.
-    const base = m[1] ? (seg << 4) : r.vm.exports.get_csb();
+    const base = segBase(seg);
     const at = (base + off) & r.vm.exports.get_linmask();
     console.log(`\n  ${seg.toString(16)}:${off.toString(16).padStart(4, '0')}`
-      + `${base !== (seg << 4) ? `  (base ${base.toString(16)})` : ''}`);
+      + `${base !== ((seg << 4) & 0xFFFFF) ? `  (base ${base.toString(16)})` : ''}`);
     for (const line of disasmAt(r.vm.mem, at, at, n, null, { bits: 16 })) {
       const g = /^([0-9a-f]+)(\s+)(.*)$/.exec(line.trim());
       if (!g) { console.log(`  ${line}`); continue; }
@@ -637,9 +639,15 @@ async function main() {
       console.log(`  decoder gave up at ${r.unimplemented.size} site(s); top:`);
       for (const [k, n] of un) {
         const [cs, ip] = k.split(':').map(x => parseInt(x, 16));
-        const lin = ((cs << 4) + ip) & 0xFFFFF;
+        // Through the descriptor, not the paragraph -- see segBase. This reads
+        // the GDT as it stands at exit, so a selector the guest has since
+        // rewritten gives the current base rather than the one in force when
+        // the decoder balked; every zero row this used to print was that bug.
+        const base = segBase(cs);
+        const lin = (base + ip) & r.vm.exports.get_linmask();
         const bytes = [...r.vm.mem.subarray(lin, lin + 8)].map(b => b.toString(16).padStart(2, '0')).join(' ');
-        console.log(`    ${k}  x${n}  bytes=${bytes}`);
+        console.log(`    ${k}  x${n}  bytes=${bytes}`
+          + (base !== ((cs << 4) & 0xFFFFF) ? `  (base ${base.toString(16)})` : ''));
       }
     }
   }
