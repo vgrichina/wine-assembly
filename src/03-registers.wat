@@ -160,6 +160,102 @@
     (i32.store (global.get $NULL_SENTINEL) (i32.const 0))
     (global.get $NULL_SENTINEL)
   )
+
+  ;; Translate a complete guest span only when one affine mapping contains it.
+  ;; Unlike translating two endpoints, this proves that every byte between them
+  ;; uses the same guest->WASM delta. Return NULL_SENTINEL when the span crosses
+  ;; a mapping boundary or is unmapped, so callers can retain their elementwise
+  ;; fallback. The unsigned `len <= size-off` form also rejects wrapped ends.
+  (func $g2w_affine_span (param $ga i32) (param $len i32) (result i32)
+    (local $wa i32) (local $off i32) (local $i i32) (local $count i32)
+    (local $rec i32) (local $base i32) (local $size i32) (local $backing i32)
+
+    (local.set $wa
+      (i32.add (i32.sub (local.get $ga) (global.get $image_base))
+        (global.get $GUEST_BASE)))
+    (if (i32.and
+          (i32.lt_u (local.get $wa) (i32.const 0x8000000))
+          (i32.le_u (local.get $len)
+            (i32.sub (i32.const 0x8000000) (local.get $wa))))
+      (then (return (local.get $wa))))
+
+    (local.set $off
+      (i32.sub (local.get $ga) (global.get $DIB_GUEST_BASE)))
+    (if (i32.and
+          (i32.lt_u (local.get $off) (global.get $DIB_GUEST_CAPACITY))
+          (i32.le_u (local.get $len)
+            (i32.sub (global.get $DIB_GUEST_CAPACITY) (local.get $off))))
+      (then
+        (return (i32.add (global.get $DIB_BACKING_BASE) (local.get $off)))))
+
+    ;; Check the four per-instance sparse records before scanning the shared
+    ;; append-only table. A cached size is published atomically by g2w's scan.
+    (local.set $off (i32.sub (local.get $ga) (global.get $g2w_sparse_base)))
+    (if (i32.and
+          (i32.lt_u (local.get $off) (global.get $g2w_sparse_size))
+          (i32.le_u (local.get $len)
+            (i32.sub (global.get $g2w_sparse_size) (local.get $off))))
+      (then
+        (return (i32.add (global.get $g2w_sparse_backing) (local.get $off)))))
+    (local.set $off (i32.sub (local.get $ga) (global.get $g2w_sparse_base1)))
+    (if (i32.and
+          (i32.lt_u (local.get $off) (global.get $g2w_sparse_size1))
+          (i32.le_u (local.get $len)
+            (i32.sub (global.get $g2w_sparse_size1) (local.get $off))))
+      (then
+        (return (i32.add (global.get $g2w_sparse_backing1) (local.get $off)))))
+    (local.set $off (i32.sub (local.get $ga) (global.get $g2w_sparse_base2)))
+    (if (i32.and
+          (i32.lt_u (local.get $off) (global.get $g2w_sparse_size2))
+          (i32.le_u (local.get $len)
+            (i32.sub (global.get $g2w_sparse_size2) (local.get $off))))
+      (then
+        (return (i32.add (global.get $g2w_sparse_backing2) (local.get $off)))))
+    (local.set $off (i32.sub (local.get $ga) (global.get $g2w_sparse_base3)))
+    (if (i32.and
+          (i32.lt_u (local.get $off) (global.get $g2w_sparse_size3))
+          (i32.le_u (local.get $len)
+            (i32.sub (global.get $g2w_sparse_size3) (local.get $off))))
+      (then
+        (return (i32.add (global.get $g2w_sparse_backing3) (local.get $off)))))
+
+    (local.set $count (i32.atomic.load (global.get $VIRTUAL_MAP_STATE)))
+    (local.set $i (i32.const 0))
+    (block $mapped_done (loop $mapped_scan
+      (br_if $mapped_done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $rec
+        (i32.add (global.get $VIRTUAL_MAP_TABLE)
+          (i32.shl (local.get $i) (i32.const 4))))
+      (local.set $base (i32.load (local.get $rec)))
+      (local.set $size
+        (i32.atomic.load (i32.add (local.get $rec) (i32.const 4))))
+      (local.set $off (i32.sub (local.get $ga) (local.get $base)))
+      (if (i32.and
+            (i32.lt_u (local.get $off) (local.get $size))
+            (i32.le_u (local.get $len)
+              (i32.sub (local.get $size) (local.get $off))))
+        (then
+          (local.set $backing
+            (i32.load (i32.add (local.get $rec) (i32.const 8))))
+          ;; Populate the ordinary g2w cache too: a later scalar access to the
+          ;; same record should benefit from this scan rather than repeat it.
+          (global.set $g2w_sparse_base3 (global.get $g2w_sparse_base2))
+          (global.set $g2w_sparse_size3 (global.get $g2w_sparse_size2))
+          (global.set $g2w_sparse_backing3 (global.get $g2w_sparse_backing2))
+          (global.set $g2w_sparse_base2 (global.get $g2w_sparse_base1))
+          (global.set $g2w_sparse_size2 (global.get $g2w_sparse_size1))
+          (global.set $g2w_sparse_backing2 (global.get $g2w_sparse_backing1))
+          (global.set $g2w_sparse_base1 (global.get $g2w_sparse_base))
+          (global.set $g2w_sparse_size1 (global.get $g2w_sparse_size))
+          (global.set $g2w_sparse_backing1 (global.get $g2w_sparse_backing))
+          (global.set $g2w_sparse_base (local.get $base))
+          (global.set $g2w_sparse_size (local.get $size))
+          (global.set $g2w_sparse_backing (local.get $backing))
+          (return (i32.add (local.get $backing) (local.get $off)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $mapped_scan)))
+    (global.get $NULL_SENTINEL)
+  )
   (func $w2g (param $wa i32) (result i32)
     (if (result i32)
       (i32.lt_u
