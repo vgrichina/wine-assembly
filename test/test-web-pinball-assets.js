@@ -366,10 +366,12 @@ assert(webApp.includes('Starting run slice=${runSlice}'), 'web launcher should l
 assert(!/function selectedRunSlice\(appKey\)\s*\{\s*return 100000;\s*\}/.test(webApp), 'slice dropdown should not be ignored');
 assert(webApp.includes("document.getElementById('slice-size-select')"), 'slice picker should drive the run-loop slice size');
 assert(webApp.includes('function hasWasmTailCalls()'), 'auto slice should detect no-tail-call browser dispatch');
-// Written as a fall-through onto halflife_uplink's arm, with a comment in
-// between, so match the next return after the label rather than one glued to it.
-assert(/case 'jazz2_demo':[\s\S]{0,600}?return 1000;/.test(webApp),
-  'Jazz 2 auto slice should keep its long title-to-level transition cooperative');
+assert(/case 'jazz2_demo':[\s\S]{0,700}?return workerMode \? 100000 : 1000;/.test(webApp),
+  'Jazz 2 should use 100k only after its guest Worker is confirmed');
+assert(webApp.includes('selectedRunSlice(sel, !!wine.guestWorker)'),
+  'browser launch should choose the auto slice from the backend that actually started');
+assert(webApp.includes('selectedRunSlice(app.name, !!app.wine.guestWorker)'),
+  'live auto-slice updates should preserve the Worker/cooperative distinction');
 assert(webApp.includes('return compatDispatch ? 100 : 25000;'), 'auto slice should cap Spider/card games for no-tail-call browsers');
 assert(webApp.includes('return compatDispatch ? 500 : 100000;'), 'auto slice should cap default apps for no-tail-call browsers');
 assert(webApp.includes('return compatDispatch ? Math.min(selected, autoSlice) : selected;'), 'manual slice should be clamped in no-tail-call browsers');

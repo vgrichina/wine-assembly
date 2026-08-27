@@ -99,6 +99,7 @@ UNIT=(
   test/test-dialog-button-command-queue.js
   test/test-nc-flags-message-wake.js
   test/test-browser-step-scheduler.js
+  test/test-browser-worker-run-slice.js
   test/test-console-input.js
   test/test-browser-mm-timer.js
   test/test-asset-parts.js
