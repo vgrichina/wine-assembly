@@ -329,6 +329,7 @@ UNIT=(
   test/test-renderer-input-resize.js
   test/test-renderer-palette-route.js
   test/test-renderer-transparent-desktop.js
+  test/test-renderer-worker-repaint-boundary.js
   test/test-richedit-version-compat.js
   test/test-rtf-stylesheet.js
   test/test-shell-desktop-fallback.js
