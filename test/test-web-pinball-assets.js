@@ -150,8 +150,8 @@ assert(/diablo_demo:\s*\{[\s\S]*?exe:\s*diabloCandidateRoot \+ 'DIABDEMO\.EXE'[\
   'Diablo debug launch should load the extracted game, Storm, and its MPQ package on C: and Z:');
 assert(pageHtml.includes('lib/vfs-persistence.js?v=1'),
   'web host should load bounded per-app VFS persistence');
-assert(pageHtml.includes('lib/browser-shell.js?v=6'),
-  'web host should cache-bust save-file restoration in the launcher');
+assert(pageHtml.includes('lib/browser-shell.js?v=7'),
+  'web host should cache-bust launcher compatibility policy changes');
 assert(!deployJs.includes('test/binaries/candidates/diablo'),
   'public deploy should exclude the local Diablo demo payload');
 assert(webApp.includes('playDebugMidi()'), 'debug toolbar should expose direct MIDI playback');
