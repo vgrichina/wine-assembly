@@ -681,15 +681,30 @@ class Machine {
     // BIOS data area: video mode byte and the 55ms tick counter at 0040:006C,
     // which is where a demo reads time from when it does not hook INT 8.
     mem[0x449] = this.videoMode;
-    // The equipment word at 0040:0010 and the conventional-memory size in KB at
-    // 0040:0013. Programs read both directly as often as they ask INT 11h/12h
-    // for them, so the words are what both answers come from.
-    // 0x0021: 80x25 colour, one diskette, an 80287 present, no serial ports.
-    mem[0x410] = 0x21; mem[0x411] = 0x00;
-    const kb = DEFAULT_ALLOC_TOP >> 6;      // paragraphs to KB
-    mem[0x413] = kb & 0xFF; mem[0x414] = (kb >> 8) & 0xFF;
+    this.setSystemBda();
     this.setVideoBda();
     this.setTicks(0);
+  }
+
+  // The equipment word at 0040:0010 and the conventional-memory size in KB at
+  // 0040:0013. Programs read both directly as often as they ask INT 11h/12h
+  // for them, so the words are what both answers come from.
+  //
+  // 0x0023: 80x25 colour, one diskette, a coprocessor present, no serial ports.
+  // Bit 1 is the coprocessor bit and it used to be clear, which was a lie: the
+  // x87 here is real (tools/toyvm/fpu-check.js passes 48/48). CTSLASSE.EXE asks
+  // INT 11h for it, printed "you need a coprocessor to run this intro" and
+  // exited before drawing a pixel.
+  //
+  // This lives in its own method because reset() runs BEFORE setMemory() binds
+  // the VM's memory, so everything it wrote landed in an array nothing reads
+  // again. The BDA came out all zeros at 0040:0010, and INT 11h and INT 12h
+  // had been answering 0 the whole time -- only setVideoBda survived, because
+  // the guest's own INT 10h set-mode calls it again later.
+  setSystemBda() {
+    this.mem[0x410] = 0x23; this.mem[0x411] = 0x00;
+    const kb = DEFAULT_ALLOC_TOP >> 6;      // paragraphs to KB
+    this.mem[0x413] = kb & 0xFF; this.mem[0x414] = (kb >> 8) & 0xFF;
   }
 
   // The video half of the BIOS data area, which a demo reads instead of asking
@@ -1079,6 +1094,13 @@ class Machine {
     this.vmExports = ex || null;
     this.con.mem = mem;
     this.con.fillCells(0, this.con.cells, 0x20, 0x07);
+    // reset() ran against the placeholder array, so re-apply everything it put
+    // in the BIOS data area now that there is somewhere real to put it.
+    this.installIvt();
+    this.mem[0x449] = this.videoMode;
+    this.setSystemBda();
+    this.setVideoBda();
+    this.setTicks(this.ticks);
   }
 
   // The linear address a DOS call's SEG:OFF argument names.

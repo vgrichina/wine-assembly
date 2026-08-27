@@ -818,6 +818,14 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false) {
         else { writesMem = true; words.push(H[`xadd_rm${w}`], packEa(m), m.disp); }
         break;
       }
+      // BSWAP (486). The register is in the low three bits of the opcode, not
+      // in a modrm byte. Only the 32-bit form is architecturally defined --
+      // 66-prefixed BSWAP is undefined on real silicon and nothing emits it.
+      if (op2 >= 0xC8 && op2 <= 0xCF) {
+        if (opsize !== 32) return null;
+        words.push(H.bswap32, op2 & 7);
+        break;
+      }
       // Group 6: SLDT /0, STR /1, LLDT /2, LTR /3, VERR /4, VERW /5. An
       // extender sets up a task register and an LDT on its way into protected
       // mode whether or not it ever task-switches, so these have to be

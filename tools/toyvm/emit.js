@@ -1526,6 +1526,20 @@ function genArithIO() {
       (i32.add (call $rget32 (i32.const 3)) (call $rget8 (i32.const 0)))))
 `);
 
+  // BSWAP (486): reverse the four bytes of a 32-bit register. CTSLASSE.EXE
+  // uses it inside its 32-bit code, so the decoder refusing it stopped the
+  // demo at the first instruction of a routine, not at a rare corner.
+  h('bswap32', 1, `
+  ${ops(1)}
+  (local.set $t1 (call $rget32 (local.get $t0)))
+  (call $rset32 (local.get $t0) (i32.or (i32.or
+    (i32.shl (i32.and (local.get $t1) (i32.const 0xFF)) (i32.const 24))
+    (i32.shl (i32.and (local.get $t1) (i32.const 0xFF00)) (i32.const 8)))
+    (i32.or
+      (i32.and (i32.shr_u (local.get $t1) (i32.const 8)) (i32.const 0xFF00))
+      (i32.shr_u (local.get $t1) (i32.const 24)))))
+`);
+
   // MOV to/from a direct address (A0-A3). Common enough in tight code that it
   // gets its own handlers rather than going through the ModRM path.
   for (const w of [8, 16, 32]) {
