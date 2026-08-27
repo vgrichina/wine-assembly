@@ -2010,14 +2010,23 @@ class WineAssembly {
         // allocations are invisible to everyone else unless they are published.
         const sync = self.threadManager ? self.threadManager.workerSyncState() : null;
         let r, threadsRun;
-        if (typeof window !== 'undefined' && window.WINE_THREADS_SERIAL) {
-          // Diagnostic only: the same slices, one at a time. A bug that appears
-          // in parallel and not here is a race in shared emulator state, which is
-          // a different investigation from a bug in the worker plumbing.
-          r = await self.guestWorker.slice(steps, sync);
-          threadsRun = await runThreads();
-        } else {
-          [r, threadsRun] = await Promise.all([self.guestWorker.slice(steps, sync), runThreads()]);
+        if (self.renderer && self.renderer.beginWorkerGuestSlice) {
+          self.renderer.beginWorkerGuestSlice();
+        }
+        try {
+          if (typeof window !== 'undefined' && window.WINE_THREADS_SERIAL) {
+            // Diagnostic only: the same slices, one at a time. A bug that appears
+            // in parallel and not here is a race in shared emulator state, which is
+            // a different investigation from a bug in the worker plumbing.
+            r = await self.guestWorker.slice(steps, sync);
+            threadsRun = await runThreads();
+          } else {
+            [r, threadsRun] = await Promise.all([self.guestWorker.slice(steps, sync), runThreads()]);
+          }
+        } finally {
+          if (self.renderer && self.renderer.endWorkerGuestSlice) {
+            self.renderer.endWorkerGuestSlice();
+          }
         }
         self._workerFocusHwnd = r.focusHwnd | 0;
         if (self.threadManager) self.threadManager.publishWorkerThunkState(r);
