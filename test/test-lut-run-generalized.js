@@ -170,6 +170,39 @@ function alignPageEnd(p, room) {
   assert.strictEqual(e.get_edx() >>> 0, 0, 'Heroes counter');
   assert.strictEqual(e.get_loop_lut_runs(), heroRuns + 1, 'Heroes uses universal H418');
 
+  // Jazz Jackrabbit 2's hot in-place palette remap at 0x463b49 uses a simple
+  // base+absolute table read rather than the SIB form above. The accumulator
+  // itself is the index: mov dl,[edx+table]. It must lower to the same H418
+  // executor instead of retiring seven handlers once per pixel.
+  const jazzPixels = (rowArena + 0x600) >>> 0;
+  const jazzInput = Array.from({ length: 97 }, (_, i) => (i * 29 + 5) & 0xff);
+  put(jazzPixels, jazzInput);
+  const jazz = Uint8Array.from([
+    0x33, 0xd2,                         // xor edx,edx
+    0x8a, 0x10,                         // mov dl,[eax]
+    0x40,                               // inc eax
+    0x49,                               // dec ecx
+    0x8a, 0x92, ...le32(table),         // mov dl,[edx+absolute table]
+    0x88, 0x50, 0xff,                   // mov [eax-1],dl
+    0x75, 0xef,                         // jnz loop
+    0xc3,
+  ]);
+  const jazzRuns = e.get_loop_lut_runs();
+  runAt(jazz, () => {
+    e.set_eax(jazzPixels); e.set_ecx(jazzInput.length); e.set_edx(0xfeedface);
+  });
+  assert.deepStrictEqual(get(jazzPixels, jazzInput.length), jazzInput.map(v => lut[v]),
+    'Jazz absolute-table remap output');
+  assert.strictEqual(e.get_eax() >>> 0, (jazzPixels + jazzInput.length) >>> 0,
+    'Jazz in-place cursor');
+  assert.strictEqual(e.get_ecx() >>> 0, 0, 'Jazz counter');
+  assert.strictEqual(e.get_edx() >>> 0, lut[jazzInput.at(-1)],
+    'Jazz accumulator publishes final table byte');
+  assert.strictEqual(e.test_lut_cf(), 0, 'Jazz final DEC preserves cleared carry');
+  assert.strictEqual(e.test_lut_zf(), 1, 'Jazz final DEC sets zero');
+  assert.strictEqual(e.get_loop_lut_runs(), jazzRuns + 1,
+    'Jazz absolute-table loop uses one H418 run');
+
   // d2gfx two-moving-source blend form. The table is absolute in the guest
   // instruction, source2 is also the bounded cursor, and all three streams
   // cross pages so every translated pointer has to be split safely.
@@ -261,7 +294,7 @@ function alignPageEnd(p, room) {
   assert.strictEqual(e.get_loop_lut_bounded_matches(), nearMatches, 'JBE near miss rejected');
   assert.strictEqual(e.get_loop_lut_runs(), nearRuns, 'near miss never enters H418');
 
-  console.log('PASS universal LUT_RUN: Heroes counted + Diablo one/two-source bounded and row-table semantics, page splits, gate, and near miss');
+  console.log('PASS universal LUT_RUN: Heroes/Jazz counted + Diablo one/two-source bounded and row-table semantics, page splits, gate, and near miss');
 })().catch(error => {
   console.error(error.stack || error);
   process.exit(1);

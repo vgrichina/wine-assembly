@@ -44,6 +44,61 @@
   ;; is investigated. set_loop_emit still controls both for compatibility.
   (global $loop_lut_emit_enabled (mut i32) (i32.const 1))
   (global $loop_copy_emit_enabled (mut i32) (i32.const 0))
+  ;; Jazz 2 has three copies of one exact two-block masked MMX row loop. Keep
+  ;; its gate and the two semantically identical store strategies separate
+  ;; from the older scalar COPY_RUN gate: the benchmark can switch the latter
+  ;; at runtime after one decoded H419 stream has been cached.
+  (global $mmx_mask_copy_enabled (mut i32) (i32.const 1))
+  ;; In larger same-process alternating runs, two v128 stores beat the bulk arm
+  ;; by 22-32% for this exact 32-byte row: memory.copy rereads bytes already
+  ;; loaded to preserve MMX state. Keep the measured winner as the default.
+  (global $mmx_mask_copy_use_bulk (mut i32) (i32.const 0))
+  (global $mmx_mask_copy_matches (mut i32) (i32.const 0))
+  (global $mmx_mask_copy_runs (mut i32) (i32.const 0))
+  (global $mmx_mask_copy_rows (mut i64) (i64.const 0))
+  (global $mmx_mask_copy_bytes (mut i64) (i64.const 0))
+
+  ;; Recognize the exact Jazz row-mask loop at 0x468892/0x468a04/0x468b7e.
+  ;; This is deliberately a raw-byte proof rather than an extension of the
+  ;; self-loop matcher: JAE splits the idiom into a mask head and a copy/tail
+  ;; block, while Design A only sees one self-loop block at a time. A near miss
+  ;; falls through to the ordinary decoder without consuming a byte.
+  (func $try_emit_mmx_mask_copy32 (param $start_eip i32) (result i32)
+    (if (i32.or (i32.eqz (global.get $mmx_mask_copy_enabled))
+                (global.get $code16))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (local.get $start_eip)) (i32.const 0x1E73DB03))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $start_eip) (i32.const 4)))
+                (i32.const 0x0F066F0F)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $start_eip) (i32.const 8)))
+                (i32.const 0x0F084E6F)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $start_eip) (i32.const 12)))
+                (i32.const 0x0F10566F)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $start_eip) (i32.const 16)))
+                (i32.const 0x0F185E6F)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $start_eip) (i32.const 20)))
+                (i32.const 0x7F0F077F)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $start_eip) (i32.const 24)))
+                (i32.const 0x7F0F084F)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $start_eip) (i32.const 28)))
+                (i32.const 0x7F0F1057)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $start_eip) (i32.const 32)))
+                (i32.const 0xF803185F)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $start_eip) (i32.const 36)))
+                (i32.const 0x4A20C683)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl16 (i32.add (local.get $start_eip) (i32.const 40)))
+                (i32.const 0xD675)) (then (return (i32.const 0))))
+
+    (global.set $mmx_mask_copy_matches
+      (i32.add (global.get $mmx_mask_copy_matches) (i32.const 1)))
+    ;; Reuse H419's otherwise-zero operand namespace. The high bit selects the
+    ;; fixed masked-MMX descriptor; the normal scalar COPY_RUN remains op=0.
+    (call $te (global.get $LOOP_SUPEROP_COPY) (i32.const 0x80000000))
+    (call $te_raw (i32.add (local.get $start_eip) (i32.const 42)))
+    (call $te_raw (local.get $start_eip))
+    (global.set $d_pc (i32.add (local.get $start_eip) (i32.const 42)))
+    (i32.const 1))
 
   ;; Is this handler index a conditional branch? 44 is the generic form
   ;; (operand = cc); 307..322 are the per-condition specializations. All read
@@ -171,12 +226,14 @@
   ;;  16 m1_addr    17 m1_reg     18 m1_adj
   ;;  19 fall_eip   20 back_eip   21 steps_per_iter
   ;;
-  ;; Header operand bit 0 selects the optional two-moving-source extension:
+  ;; Header operand value 1 selects the optional two-moving-source extension:
   ;;  22 src2_reg   23 src2_stride 24 src2_disp
   ;;  25 aux_reg    26 table_disp  27 term_stream (0=src1, 1=src2)
   ;; In that form the lookup index is `(src1_byte << index_shift) + src2_byte`.
   ;; tbl_reg may be -1 for an absolute table rooted at table_disp. Version zero
-  ;; remains the original 22-word descriptor byte-for-byte.
+  ;; remains the original 22-word descriptor byte-for-byte. Operand value 2 is
+  ;; the counted one-source absolute-table form: word 6 holds the table's guest
+  ;; address instead of a register index, and the descriptor stays 22 words.
   (global $LOOP_SUPEROP_LUT i32 (i32.const 418))
   (global $LOOP_LUT_PARAMS i32 (i32.const 22))
 
@@ -187,12 +244,13 @@
     (local $ctr_reg i32) (local $ctr_step i32) (local $ctr_idx i32) (local $ctr_cnt i32)
     (local $acc_reg i32) (local $zero_cnt i32)
     (local $ld_reg i32) (local $ld_base i32) (local $ld_disp i32) (local $ld_idx i32) (local $ld_cnt i32)
+    (local $ald_reg i32) (local $ald_base i32) (local $ald_disp i32) (local $ald_idx i32)
     (local $tbl_reg i32) (local $lut_cnt i32) (local $lut_idx i32)
     (local $st_reg i32) (local $st_base i32) (local $st_disp i32) (local $st_idx i32) (local $st_cnt i32)
     (local $m0_addr i32) (local $m0_reg i32) (local $m0_idx i32)
     (local $m1_addr i32) (local $m1_reg i32) (local $m1_idx i32)
     (local $mir_cnt i32) (local $written i32) (local $info i32) (local $b i32) (local $x i32)
-    (local $fall i32)
+    (local $fall i32) (local $abs_table i32) (local $abs_lut i32)
 
     (local.set $n (global.get $op_index_n))
     ;; The shape needs at least zero/iv/load/lut/store/ctr/jcc.
@@ -253,11 +311,20 @@
 
         (if (i32.eq (local.get $role) (global.get $LR_LOAD8))
           (then
+            (if (i32.eqz (local.get $ld_cnt))
+              (then
+                (local.set $ld_base (i32.and (local.get $op) (i32.const 0xF)))
+                (local.set $ld_reg (i32.shr_u (local.get $op) (i32.const 4)))
+                (local.set $ld_disp (i32.load offset=8 (local.get $p)))
+                (local.set $ld_idx (local.get $i)))
+              (else
+                (if (i32.ne (local.get $ld_cnt) (i32.const 1))
+                  (then (return (i32.const 0))))
+                (local.set $ald_base (i32.and (local.get $op) (i32.const 0xF)))
+                (local.set $ald_reg (i32.shr_u (local.get $op) (i32.const 4)))
+                (local.set $ald_disp (i32.load offset=8 (local.get $p)))
+                (local.set $ald_idx (local.get $i))))
             (local.set $ld_cnt (i32.add (local.get $ld_cnt) (i32.const 1)))
-            (local.set $ld_base (i32.and (local.get $op) (i32.const 0xF)))
-            (local.set $ld_reg (i32.shr_u (local.get $op) (i32.const 4)))
-            (local.set $ld_disp (i32.load offset=8 (local.get $p)))
-            (local.set $ld_idx (local.get $i))
             ;; A byte load writes only the low 8 bits, but the accumulator is
             ;; required to have been zeroed in-block, so the whole register is
             ;; defined here.
@@ -321,8 +388,39 @@
     (if (i32.ne (local.get $iv_cnt) (i32.const 1)) (then (return (i32.const 0))))
     (if (i32.ne (local.get $ctr_cnt) (i32.const 1)) (then (return (i32.const 0))))
     (if (i32.ne (local.get $zero_cnt) (i32.const 1)) (then (return (i32.const 0))))
-    (if (i32.ne (local.get $ld_cnt) (i32.const 1)) (then (return (i32.const 0))))
-    (if (i32.ne (local.get $lut_cnt) (i32.const 1)) (then (return (i32.const 0))))
+    ;; Most loops decode the table read as fused SIB LOAD8S. Jazz's hottest
+    ;; palette loop uses `mov dl,[edx+absolute]`, whose simple-base decoder form
+    ;; is a second LOAD8. Prove that exact dataflow and feed it to the same H418
+    ;; executor with an absolute table descriptor.
+    (if (i32.and (i32.eq (local.get $ld_cnt) (i32.const 2))
+                  (i32.eqz (local.get $lut_cnt)))
+      (then
+        (if (i32.and (i32.eq (local.get $ld_base) (local.get $iv_reg))
+                      (i32.eq (local.get $ald_base) (local.get $acc_reg)))
+          (then
+            (if (i32.ne (local.get $ald_reg) (local.get $acc_reg))
+              (then (return (i32.const 0))))
+            (local.set $lut_idx (local.get $ald_idx))
+            (local.set $abs_table (local.get $ald_disp)))
+          (else
+            (if (i32.and (i32.eq (local.get $ald_base) (local.get $iv_reg))
+                          (i32.eq (local.get $ld_base) (local.get $acc_reg)))
+              (then
+                (if (i32.ne (local.get $ld_reg) (local.get $acc_reg))
+                  (then (return (i32.const 0))))
+                (local.set $lut_idx (local.get $ld_idx))
+                (local.set $abs_table (local.get $ld_disp))
+                (local.set $ld_reg (local.get $ald_reg))
+                (local.set $ld_base (local.get $ald_base))
+                (local.set $ld_disp (local.get $ald_disp))
+                (local.set $ld_idx (local.get $ald_idx)))
+              (else (return (i32.const 0))))))
+        (local.set $abs_lut (i32.const 1)))
+      (else
+        (if (i32.ne (local.get $ld_cnt) (i32.const 1))
+          (then (return (i32.const 0))))
+        (if (i32.ne (local.get $lut_cnt) (i32.const 1))
+          (then (return (i32.const 0))))))
     (if (i32.ne (local.get $st_cnt) (i32.const 1)) (then (return (i32.const 0))))
 
     ;; The counter must be the register the exit test reads, and must not be
@@ -377,35 +475,37 @@
     (if (i32.or (i32.eq (local.get $acc_reg) (local.get $iv_reg))
                 (i32.eq (local.get $acc_reg) (local.get $ctr_reg)))
       (then (return (i32.const 0))))
-    ;; The fused SIB load's destination is its own operand's low 3 bits.
-    (local.set $p (call $loop_op_at (local.get $ld_idx)))
-    (local.set $i (i32.const 0))
-    (block $find_lut_done
-      (loop $find_lut
-        (br_if $find_lut_done (i32.ge_u (local.get $i) (local.get $n)))
-        (local.set $x (call $loop_op_at (local.get $i)))
-        (if (i32.eq (call $loop_role (i32.load (local.get $x)) (i32.load offset=4 (local.get $x)))
-                    (global.get $LR_LOAD8S))
-          (then
-            (if (i32.ne (i32.and (i32.load offset=4 (local.get $x)) (i32.const 7))
-                        (local.get $acc_reg))
-              (then (return (i32.const 0))))
-            (local.set $info (i32.load offset=8 (local.get $x)))
-            (local.set $b (i32.and (local.get $info) (i32.const 0xF)))
-            (local.set $x (i32.and (i32.shr_u (local.get $info) (i32.const 4)) (i32.const 0xF)))
-            (if (i32.eq (local.get $b) (local.get $acc_reg))
-              (then (local.set $tbl_reg (local.get $x)))
-              (else
-                (if (i32.ne (local.get $x) (local.get $acc_reg)) (then (return (i32.const 0))))
-                (local.set $tbl_reg (local.get $b))))
-            (br $find_lut_done)))
-        (local.set $i (i32.add (local.get $i) (i32.const 1)))
-        (br $find_lut)))
-    (if (i32.lt_s (local.get $tbl_reg) (i32.const 0)) (then (return (i32.const 0))))
-    ;; The table base has to be loop-invariant, or it is not a table.
-    (if (i32.and (local.get $written)
-          (i32.shl (i32.const 1) (local.get $tbl_reg)))
-      (then (return (i32.const 0))))
+    (if (i32.eqz (local.get $abs_lut))
+      (then
+        ;; The fused SIB load's destination is its own operand's low 3 bits.
+        (local.set $p (call $loop_op_at (local.get $ld_idx)))
+        (local.set $i (i32.const 0))
+        (block $find_lut_done
+          (loop $find_lut
+            (br_if $find_lut_done (i32.ge_u (local.get $i) (local.get $n)))
+            (local.set $x (call $loop_op_at (local.get $i)))
+            (if (i32.eq (call $loop_role (i32.load (local.get $x)) (i32.load offset=4 (local.get $x)))
+                        (global.get $LR_LOAD8S))
+              (then
+                (if (i32.ne (i32.and (i32.load offset=4 (local.get $x)) (i32.const 7))
+                            (local.get $acc_reg))
+                  (then (return (i32.const 0))))
+                (local.set $info (i32.load offset=8 (local.get $x)))
+                (local.set $b (i32.and (local.get $info) (i32.const 0xF)))
+                (local.set $x (i32.and (i32.shr_u (local.get $info) (i32.const 4)) (i32.const 0xF)))
+                (if (i32.eq (local.get $b) (local.get $acc_reg))
+                  (then (local.set $tbl_reg (local.get $x)))
+                  (else
+                    (if (i32.ne (local.get $x) (local.get $acc_reg)) (then (return (i32.const 0))))
+                    (local.set $tbl_reg (local.get $b))))
+                (br $find_lut_done)))
+            (local.set $i (i32.add (local.get $i) (i32.const 1)))
+            (br $find_lut)))
+        (if (i32.lt_s (local.get $tbl_reg) (i32.const 0)) (then (return (i32.const 0))))
+        ;; The table base has to be loop-invariant, or it is not a table.
+        (if (i32.and (local.get $written)
+              (i32.shl (i32.const 1) (local.get $tbl_reg)))
+          (then (return (i32.const 0))))))
 
     ;; The source byte must be read before it is used as an index, and the
     ;; result stored after. Anything else is a different loop.
@@ -455,14 +555,16 @@
     ;; the range being reclaimed. The op index is reset with it.
     (global.set $thread_alloc (local.get $tstart))
     (global.set $op_index_n (i32.const 0))
-    (call $te (global.get $LOOP_SUPEROP_LUT) (i32.const 0))
+    (call $te (global.get $LOOP_SUPEROP_LUT)
+      (select (i32.const 2) (i32.const 0) (local.get $abs_lut)))
     (call $te_raw (local.get $iv_reg))
     (call $te_raw (local.get $iv_stride))
     (call $te_raw (local.get $ld_disp))
     (call $te_raw (local.get $iv_reg))
     (call $te_raw (local.get $iv_stride))
     (call $te_raw (local.get $st_disp))
-    (call $te_raw (local.get $tbl_reg))
+    (call $te_raw (select (local.get $abs_table) (local.get $tbl_reg)
+      (local.get $abs_lut)))
     (call $te_raw (local.get $acc_reg))
     (call $te_raw (i32.const 0))
     (call $te_raw (i32.const -1))
@@ -1229,6 +1331,139 @@
                          (i32.and (local.get $ga) (i32.const 0xFFF))))))
     (i32.add (i32.and (local.get $ga) (i32.const 0xFFF)) (i32.const 1)))
 
+  ;; Fixed descriptor selected by H419 operand bit 31:
+  ;;
+  ;;   add ebx,ebx / jae tail
+  ;;   movq mm0..3,[esi+0/8/16/24]
+  ;;   movq [edi+0/8/16/24],mm0..3
+  ;; tail: add edi,eax / add esi,32 / dec edx / jnz back
+  ;;
+  ;; Both fast store strategies preload the complete source row into two v128
+  ;; values. That is required for overlap-safe x86 semantics and because the
+  ;; routine returns without EMMS: the final mm0..mm3 values are architecturally
+  ;; observable. The bulk arm then deliberately rereads those bytes through
+  ;; memory.copy; the benchmark decides whether its optimized memmove beats two
+  ;; v128 stores despite that extra read.
+  (func $th_mmx_mask_copy32 (param $op i32)
+    (local $tp i32) (local $fall i32) (local $back i32)
+    (local $mask i32) (local $pitch i32) (local $src i32) (local $dst i32)
+    (local $count i32) (local $old_src i32) (local $old_count i32)
+    (local $src_wa i32) (local $dst_wa i32)
+    (local $v0 v128) (local $v1 v128)
+    (local $q0 i64) (local $q1 i64) (local $q2 i64) (local $q3 i64)
+    (local $charge i32) (local $cost i32) (local $copied i32)
+    (local $iterations i32) (local $copy_count i32)
+
+    (local.set $tp (global.get $ip))
+    (global.set $ip (i32.add (local.get $tp) (i32.const 8)))
+    (local.set $fall (i32.load (local.get $tp)))
+    (local.set $back (i32.load offset=4 (local.get $tp)))
+    (local.set $mask (global.get $ebx))
+    (local.set $pitch (global.get $eax))
+    (local.set $src (global.get $esi))
+    (local.set $dst (global.get $edi))
+    (local.set $count (global.get $edx))
+    (global.set $mmx_mask_copy_runs
+      (i32.add (global.get $mmx_mask_copy_runs) (i32.const 1)))
+
+    (block $done
+      (loop $rows
+        (local.set $old_src (local.get $src))
+        (local.set $old_count (local.get $count))
+        ;; ADD EBX,EBX; JAE selects the copy from the bit shifted into CF.
+        (local.set $copied (i32.lt_s (local.get $mask) (i32.const 0)))
+        (local.set $mask (i32.shl (local.get $mask) (i32.const 1)))
+        (local.set $cost (select (i32.const 22) (i32.const 6) (local.get $copied)))
+
+        (if (local.get $copied)
+          (then
+            (local.set $copy_count (i32.add (local.get $copy_count) (i32.const 1)))
+            ;; A page-local translation is affine for the whole row. Sparse
+            ;; commits and DIB backing are page-granular; anything crossing a
+            ;; page or resolving to NULL uses the exact four MMX helpers below.
+            (if (i32.and
+                  (i32.le_u (i32.and (local.get $src) (i32.const 0xFFF)) (i32.const 0xFE0))
+                  (i32.le_u (i32.and (local.get $dst) (i32.const 0xFFF)) (i32.const 0xFE0)))
+              (then
+                (local.set $src_wa (call $g2w (local.get $src)))
+                (local.set $dst_wa (call $g2w (local.get $dst))))
+              (else
+                (local.set $src_wa (global.get $NULL_SENTINEL))
+                (local.set $dst_wa (global.get $NULL_SENTINEL))))
+            (if (i32.and
+                  (i32.ne (local.get $src_wa) (global.get $NULL_SENTINEL))
+                  (i32.ne (local.get $dst_wa) (global.get $NULL_SENTINEL)))
+              (then
+                ;; Preload before either store: this is also the MMX result.
+                (local.set $v0 (v128.load (local.get $src_wa)))
+                (local.set $v1 (v128.load offset=16 (local.get $src_wa)))
+                (local.set $q0 (i64x2.extract_lane 0 (local.get $v0)))
+                (local.set $q1 (i64x2.extract_lane 1 (local.get $v0)))
+                (local.set $q2 (i64x2.extract_lane 0 (local.get $v1)))
+                (local.set $q3 (i64x2.extract_lane 1 (local.get $v1)))
+                (call $invalidate_code_write (local.get $dst) (i32.const 32))
+                (if (global.get $mmx_mask_copy_use_bulk)
+                  (then
+                    (memory.copy (local.get $dst_wa) (local.get $src_wa) (i32.const 32)))
+                  (else
+                    (v128.store (local.get $dst_wa) (local.get $v0))
+                    (v128.store offset=16 (local.get $dst_wa) (local.get $v1)))))
+              (else
+                ;; Load all four values before storing any, matching the eight
+                ;; original MOVQs even for overlapping or split mappings.
+                (local.set $q0 (call $mmx_load64 (local.get $src)))
+                (local.set $q1 (call $mmx_load64
+                  (i32.add (local.get $src) (i32.const 8))))
+                (local.set $q2 (call $mmx_load64
+                  (i32.add (local.get $src) (i32.const 16))))
+                (local.set $q3 (call $mmx_load64
+                  (i32.add (local.get $src) (i32.const 24))))
+                (call $mmx_store64 (local.get $dst) (local.get $q0))
+                (call $mmx_store64 (i32.add (local.get $dst) (i32.const 8)) (local.get $q1))
+                (call $mmx_store64 (i32.add (local.get $dst) (i32.const 16)) (local.get $q2))
+                (call $mmx_store64 (i32.add (local.get $dst) (i32.const 24)) (local.get $q3))))))
+
+        ;; The tail executes for selected and transparent rows alike.
+        (local.set $dst (i32.add (local.get $dst) (local.get $pitch)))
+        (local.set $src (i32.add (local.get $src) (i32.const 32)))
+        (local.set $count (i32.sub (local.get $count) (i32.const 1)))
+        (local.set $iterations (i32.add (local.get $iterations) (i32.const 1)))
+        (local.set $charge (i32.add (local.get $charge) (local.get $cost)))
+        (br_if $done (i32.eqz (local.get $count)))
+        ;; $next already charged one dispatch before entering H419. Stop after
+        ;; the same iteration that would spend the remaining threaded budget.
+        (br_if $done
+          (i32.ge_u (i32.sub (local.get $charge) (i32.const 1))
+                    (global.get $steps)))
+        (br $rows)))
+
+    (global.set $ebx (local.get $mask))
+    (global.set $esi (local.get $src))
+    (global.set $edi (local.get $dst))
+    (global.set $edx (local.get $count))
+    ;; DEC preserves the carry produced by the preceding ADD ESI,32.
+    (call $set_flags_add (local.get $old_src) (i32.const 32) (local.get $src))
+    (call $set_flags_dec (local.get $old_count) (local.get $count))
+    (if (local.get $copy_count)
+      (then
+        (call $mmx_set (i32.const 0) (local.get $q0))
+        (call $mmx_set (i32.const 1) (local.get $q1))
+        (call $mmx_set (i32.const 2) (local.get $q2))
+        (call $mmx_set (i32.const 3) (local.get $q3))))
+    (global.set $mmx_exec_count
+      (i32.add (global.get $mmx_exec_count)
+        (i32.mul (local.get $copy_count) (i32.const 8))))
+    (global.set $mmx_mask_copy_rows
+      (i64.add (global.get $mmx_mask_copy_rows) (i64.extend_i32_u (local.get $iterations))))
+    (global.set $mmx_mask_copy_bytes
+      (i64.add (global.get $mmx_mask_copy_bytes)
+        (i64.extend_i32_u
+          (i32.mul (local.get $copy_count) (i32.const 32)))))
+    (global.set $steps
+      (i32.sub (global.get $steps) (i32.sub (local.get $charge) (i32.const 1))))
+    (global.set $eip
+      (select (local.get $back) (local.get $fall) (i32.ne (local.get $count) (i32.const 0)))))
+
   ;; ------------------------------------------------------------------
   ;; 419: the COPY_RUN super-op.
   ;; ------------------------------------------------------------------
@@ -1251,6 +1486,9 @@
     (local $lo i32) (local $hi i32)
     (local $src_ga i32) (local $dst_ga i32) (local $src_wa i32) (local $dst_wa i32)
     (local $chunk i32) (local $trips i32) (local $allowed i32) (local $n i32)
+
+    (if (i32.lt_s (local.get $op) (i32.const 0))
+      (then (return_call $th_mmx_mask_copy32 (local.get $op))))
 
     ;; Fourteen $read_thread_word calls would be fourteen calls and fourteen
     ;; global round trips on every entry, and this loop's measured average trip
@@ -1445,9 +1683,10 @@
   ;; after each access; match time folds any original pre-access increment into
   ;; the displacement. term_kind selects count-to-zero or unsigned source-bound
   ;; termination. The optional shift/add pair covers 64K row lookup tables;
-  ;; descriptor version 1 adds a second moving byte source for blend tables.
+  ;; descriptor version 1 adds a second moving byte source for blend tables;
+  ;; version 2 keeps the one-source layout and makes word 6 an absolute table.
   (func $th_lut_run (param $op i32)
-    (local $version i32)
+    (local $version i32) (local $blend i32)
     (local $src_reg i32) (local $src_stride i32) (local $src_disp i32)
     (local $dst_reg i32) (local $dst_stride i32) (local $dst_disp i32)
     (local $tbl_reg i32) (local $acc_reg i32) (local $index_shift i32)
@@ -1470,10 +1709,11 @@
     ;; Read the fixed descriptor off one base. These runs are often short, so
     ;; avoiding 22/28 helper calls matters to the cost this optimization is
     ;; meant to remove.
-    (local.set $version (i32.and (local.get $op) (i32.const 1)))
+    (local.set $version (i32.and (local.get $op) (i32.const 3)))
+    (local.set $blend (i32.eq (local.get $version) (i32.const 1)))
     (local.set $tp (global.get $ip))
     (global.set $ip (i32.add (local.get $tp)
-      (select (i32.const 112) (i32.const 88) (local.get $version))))
+      (select (i32.const 112) (i32.const 88) (local.get $blend))))
     (local.set $src_reg     (i32.load           (local.get $tp)))
     (local.set $src_stride  (i32.load offset=4  (local.get $tp)))
     (local.set $src_disp    (i32.load offset=8  (local.get $tp)))
@@ -1496,7 +1736,7 @@
     (local.set $fall        (i32.load offset=76 (local.get $tp)))
     (local.set $back        (i32.load offset=80 (local.get $tp)))
     (local.set $cost        (i32.load offset=84 (local.get $tp)))
-    (if (local.get $version)
+    (if (local.get $blend)
       (then
         (local.set $src2_reg    (i32.load offset=88  (local.get $tp)))
         (local.set $src2_stride (i32.load offset=92  (local.get $tp)))
@@ -1508,19 +1748,22 @@
     (local.set $src (call $get_reg (local.get $src_reg)))
     (local.set $dst (call $get_reg (local.get $dst_reg)))
     (local.set $term (call $get_reg (local.get $term_reg)))
-    (if (local.get $version)
+    (if (local.get $blend)
       (then (local.set $src2 (call $get_reg (local.get $src2_reg)))))
     (local.set $tbl
-      (if (result i32) (i32.ge_s (local.get $tbl_reg) (i32.const 0))
-        (then (i32.add (call $get_reg (local.get $tbl_reg)) (local.get $table_disp)))
-        (else (local.get $table_disp))))
+      (if (result i32) (i32.eq (local.get $version) (i32.const 2))
+        (then (local.get $tbl_reg))
+        (else
+          (if (result i32) (i32.ge_s (local.get $tbl_reg) (i32.const 0))
+            (then (i32.add (call $get_reg (local.get $tbl_reg)) (local.get $table_disp)))
+            (else (local.get $table_disp))))))
     (if (i32.ge_s (local.get $add_reg) (i32.const 0))
       (then (local.set $add (call $get_reg (local.get $add_reg)))))
 
     ;; A plain 256-byte table can be translated once if it stays in one guest
     ;; page. Transformed indices use gl8 because their range can span 64KB.
     (local.set $tbl_wa (i32.const 0))
-    (if (i32.and (i32.eqz (local.get $version))
+    (if (i32.and (i32.eqz (local.get $blend))
           (i32.and (i32.eqz (local.get $index_shift))
                  (i32.lt_s (local.get $add_reg) (i32.const 0))))
       (then
@@ -1536,7 +1779,7 @@
       (loop $outer
         (local.set $src_ga (i32.add (local.get $src) (local.get $src_disp)))
         (local.set $dst_ga (i32.add (local.get $dst) (local.get $dst_disp)))
-        (if (local.get $version)
+        (if (local.get $blend)
           (then (local.set $src2_ga
             (i32.add (local.get $src2) (local.get $src2_disp)))))
 
@@ -1555,7 +1798,7 @@
             ;; entry whose precondition is false.
             (local.set $cursor
               (select (local.get $src2) (local.get $src)
-                (i32.and (local.get $version) (local.get $term_stream))))
+                (i32.and (local.get $blend) (local.get $term_stream))))
             (local.set $trips
               (select (i32.sub (local.get $term) (local.get $cursor))
                       (i32.const 1)
@@ -1580,7 +1823,7 @@
         (local.set $chunk
           (select (local.get $n) (local.get $chunk)
                   (i32.lt_u (local.get $n) (local.get $chunk))))
-        (if (local.get $version)
+        (if (local.get $blend)
           (then
             (local.set $n
               (call $copy_page_room (local.get $src2_ga) (local.get $src2_stride)))
@@ -1590,13 +1833,13 @@
 
         (local.set $src_wa (call $g2w (local.get $src_ga)))
         (local.set $dst_wa (call $g2w (local.get $dst_ga)))
-        (if (local.get $version)
+        (if (local.get $blend)
           (then (local.set $src2_wa (call $g2w (local.get $src2_ga)))))
         (if (i32.or
               (i32.eq (local.get $src_wa) (global.get $NULL_SENTINEL))
               (i32.or
                 (i32.eq (local.get $dst_wa) (global.get $NULL_SENTINEL))
-                (i32.and (local.get $version)
+                (i32.and (local.get $blend)
                   (i32.eq (local.get $src2_wa) (global.get $NULL_SENTINEL)))))
           (then (local.set $chunk (i32.const 1))))
         (call $invalidate_code_write
@@ -1607,13 +1850,13 @@
           (if (i32.eq (local.get $src_wa) (global.get $NULL_SENTINEL))
             (then (local.set $src_b (call $gl8 (local.get $src_ga))))
             (else (local.set $src_b (i32.load8_u (local.get $src_wa)))))
-          (if (local.get $version)
+          (if (local.get $blend)
             (then
               (if (i32.eq (local.get $src2_wa) (global.get $NULL_SENTINEL))
                 (then (local.set $aux (call $gl8 (local.get $src2_ga))))
                 (else (local.set $aux (i32.load8_u (local.get $src2_wa)))))))
           (local.set $index (i32.shl (local.get $src_b) (local.get $index_shift)))
-          (if (local.get $version)
+          (if (local.get $blend)
             (then (local.set $index (i32.add (local.get $index) (local.get $aux))))
             (else (if (i32.ge_s (local.get $add_reg) (i32.const 0))
               (then (local.set $index (i32.add (local.get $index) (local.get $add)))))))
@@ -1631,7 +1874,7 @@
             (then (local.set $src_wa (i32.add (local.get $src_wa) (local.get $src_stride)))))
           (if (i32.ne (local.get $dst_wa) (global.get $NULL_SENTINEL))
             (then (local.set $dst_wa (i32.add (local.get $dst_wa) (local.get $dst_stride)))))
-          (if (local.get $version)
+          (if (local.get $blend)
             (then
               (local.set $src2_ga
                 (i32.add (local.get $src2_ga) (local.get $src2_stride)))
@@ -1643,7 +1886,7 @@
 
         (local.set $src
           (i32.add (local.get $src) (i32.mul (local.get $chunk) (local.get $src_stride))))
-        (if (local.get $version)
+        (if (local.get $blend)
           (then (local.set $src2
             (i32.add (local.get $src2)
               (i32.mul (local.get $chunk) (local.get $src2_stride))))))
@@ -1662,7 +1905,7 @@
           (i32.sub (global.get $steps) (i32.mul (local.get $chunk) (local.get $cost))))
         (local.set $cursor
           (select (local.get $src2) (local.get $src)
-            (i32.and (local.get $version) (local.get $term_stream))))
+            (i32.and (local.get $blend) (local.get $term_stream))))
         (local.set $cont
           (select (i32.ne (local.get $term) (i32.const 0))
                   (i32.lt_u (local.get $cursor) (local.get $term))
@@ -1675,8 +1918,8 @@
       (select
         (i32.or (i32.shl (local.get $src_b) (local.get $index_shift)) (local.get $b))
         (local.get $b)
-        (local.get $version)))
-    (if (local.get $version)
+        (local.get $blend)))
+    (if (local.get $blend)
       (then
         (call $set_reg (local.get $aux_reg) (local.get $aux))
         (call $set_reg (local.get $src2_reg) (local.get $src2))))

@@ -2809,6 +2809,16 @@
         (call $host_log_i32 (global.get $dbg_prev2_eip))
         (unreachable)))
 
+    ;; Jazz's masked 32-byte MMX row copy spans two x86 basic blocks, so the
+    ;; ordinary one-block loop matcher cannot see the full semantic unit. Its
+    ;; exact raw-byte recognizer emits one existing H419 variant before either
+    ;; half is decoded; a near miss leaves d_pc/thread_alloc untouched.
+    (if (call $try_emit_mmx_mask_copy32 (local.get $start_eip))
+      (then
+        (return
+          (call $publish_block (local.get $start_eip) (local.get $tstart)
+            (global.get $d_pc)))))
+
     (block $exit (loop $decode
       (br_if $exit (local.get $done))
 
