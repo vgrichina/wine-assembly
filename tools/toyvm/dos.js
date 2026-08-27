@@ -716,9 +716,16 @@ class Machine {
   // again. The BDA came out all zeros at 0040:0010, and INT 11h and INT 12h
   // had been answering 0 the whole time -- only setVideoBda survived, because
   // the guest's own INT 10h set-mode calls it again later.
+  // 0040:0013 is how much conventional memory is INSTALLED, not how much DOS
+  // has left to give -- that second question is what INT 21h AH=48h answers,
+  // and the two are different numbers. Deriving it from DEFAULT_ALLOC_TOP
+  // conflated them and reported 636KB, because the allocation ceiling sits a
+  // few paragraphs below the video ROM on purpose. A machine with its 640K
+  // fitted says 640 whatever is resident, and daretro.exe checks exactly that:
+  // "You must have 640k low memory to run this program!!!"
   setSystemBda() {
     this.mem[0x410] = 0x23; this.mem[0x411] = 0x00;
-    const kb = DEFAULT_ALLOC_TOP >> 6;      // paragraphs to KB
+    const kb = 0xA000 >> 6;                 // paragraphs below the video ROM, in KB
     this.mem[0x413] = kb & 0xFF; this.mem[0x414] = (kb >> 8) & 0xFF;
   }
 
