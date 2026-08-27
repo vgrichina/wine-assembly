@@ -283,3 +283,21 @@ existing shared WASM memory, per-thread instances, atomic wait table and
 partitioned decode caches provide useful groundwork; the missing broker and
 race audit are the implementation cost documented in
 `docs/design-real-threads.md`.
+
+## Isolated-Worker bounded MPQ waits
+
+The isolated browser backend originally omitted the bounded-wait poll floor
+already used by the cooperative main scheduler. Its guest clock can advance
+past Storm's 255ms MPQ completion wait after only one or two concurrent Worker
+slices. `resolveMainWorkerWait()` then returned `WAIT_TIMEOUT` while the Storm
+decompression worker was still runnable; Storm accepted the resulting short
+read, and D2CMP later reported `Codec.cpp` line 1563, `top >= 0`, while decoding
+the incomplete data.
+
+`ThreadManager.resolveWait()` now requires both elapsed guest time and up to
+the same bounded number of scheduler polls while an isolated main thread still
+has runnable guest workers. A signal remains immediate, and a permanently
+unsignalled finite wait still times out after the poll ceiling. The focused
+regression advances the guest clock by 1000ms during a 255ms wait, proves it
+does not complete after the second Worker slice, then signals the event and
+proves normal completion.

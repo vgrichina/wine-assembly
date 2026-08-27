@@ -489,6 +489,49 @@ assert.strictEqual(
 );
 assert.strictEqual(finiteRuns, 0, 'finite waits should not synchronously pump workers');
 
+// The browser's isolated-Worker main thread uses resolveMainWorkerWait rather
+// than checkMainYield. Keep a short guest-clock timeout from winning after only
+// one worker slice while another runnable guest thread can still signal it.
+// Storm uses this exact 255ms shape for MPQ decompression completion; returning
+// WAIT_TIMEOUT here lets it consume a partial buffer and D2CMP fails later.
+let workerWaitNow = 1000;
+const workerWaitTm = makeThreadManager({ now: () => workerWaitNow });
+const workerWaitEvent = workerWaitTm.createEvent(0, 0);
+workerWaitTm.threads.set(0xe1013, makeRunnableThread(1, () => {}));
+const workerWait = {
+  waitHandle: workerWaitEvent,
+  waitHandlesPtr: 0,
+  waitAll: false,
+  waitTimeout: 255,
+  waitStackBytes: 12,
+};
+assert.strictEqual(workerWaitTm.resolveMainWorkerWait(workerWait), null,
+  'isolated main wait parks while its worker is still runnable');
+workerWaitNow += 1000;
+assert.strictEqual(workerWaitTm.resolveMainWorkerWait(workerWait), null,
+  'guest-clock expiry alone must not truncate runnable Worker work');
+workerWaitTm.setEvent(workerWaitEvent);
+assert.deepStrictEqual(workerWaitTm.resolveMainWorkerWait(workerWait), {
+  result: 0,
+  waitStackBytes: 12,
+}, 'isolated main wait completes as soon as its worker signals');
+
+let cappedWaitNow = 1000;
+const cappedWaitTm = makeThreadManager({ now: () => cappedWaitNow });
+const cappedWaitEvent = cappedWaitTm.createEvent(0, 0);
+cappedWaitTm.threads.set(0xe1014, makeRunnableThread(1, () => {}));
+const cappedWait = { ...workerWait, waitHandle: cappedWaitEvent };
+assert.strictEqual(cappedWaitTm.resolveMainWorkerWait(cappedWait), null);
+cappedWaitNow += 1000;
+for (let poll = 1; poll < 255; poll++) {
+  assert.strictEqual(cappedWaitTm.resolveMainWorkerWait(cappedWait), null,
+    `isolated bounded wait must remain parked through poll ${poll}`);
+}
+assert.deepStrictEqual(cappedWaitTm.resolveMainWorkerWait(cappedWait), {
+  result: 0x102,
+  waitStackBytes: 12,
+}, 'an unsignalled isolated bounded wait still times out at its poll ceiling');
+
 const reentrantWaitTm = makeThreadManager();
 let reentrantRuns = 0;
 reentrantWaitTm.threads.set(0xe1012, makeRunnableThread(1, () => { reentrantRuns++; }));
