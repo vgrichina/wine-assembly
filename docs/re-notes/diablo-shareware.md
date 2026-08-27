@@ -2751,3 +2751,30 @@ Ordinary waits, and handles not represented by a shared event/semaphore, retain
 the existing RPC and scheduler path. `test/test-guest-rpc-nested-wait.js`
 covers wake-up, auto-reset consumption, wait-all, semaphore wait-any, timeout,
 fallback, the sync-depth gate, and continued secondary-worker pumping.
+
+## Threads post-character data error: refresh spawn metadata (2026-08-27)
+
+After the nested-wait and class-focus fixes, real Threads reached Enter Name but
+raised Diablo's `Data File Error` instead of entering Tristram. Host tracing
+showed exact-length reads from `spawn.mpq`, including all four reads for MPQ
+block 50. The main guest Worker was correctly parked in
+`WaitForMultipleObjects(TRUE, INFINITE)` on two unsignaled events; neither a
+timeout nor premature wait-all completion caused the dialog. `?threads-serial`
+failed identically, which isolated the defect to per-instance state rather than
+a parallel race. A cooperative control reached Tristram and, importantly, also
+loaded `standard.snp` twice, ruling out provider enumeration and DLL placement.
+
+The Worker backend's `_workerPeMeta()` read the real guest-main instance once,
+when Storm created T1 during menu startup, then cached the result for the whole
+process. Diablo creates T2 only after character creation and after its runtime
+DLL/thunk/TLS state has advanced. That later Worker therefore inherited T1's
+old `dll_count`, thunk cursor and TLS-index snapshot. The cooperative backend
+does not have this split: it reads the live main instance for every spawn.
+
+Refreshing the guest-main export set for every Worker spawn restores that same
+contract. Exact isolated-Chrome acceptance with global Threads enabled now
+creates T1 and T2, loads `battle.snp`/`standard.snp`, completes the encrypted
+block-50 work, and reaches the rendered Tristram HUD with no Data File dialog.
+`test/test-worker-metadata-refresh.js` changes the mocked guest-main metadata
+between two spawns and asserts that the second Worker receives the new DLL,
+thunk and TLS values, so the first-thread snapshot cannot regress silently.

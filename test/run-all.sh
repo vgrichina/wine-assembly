@@ -85,6 +85,7 @@ UNIT=(
   test/test-midi-mci.js
   test/test-mci-get-device-id.js
   test/test-thread-manager.js
+  test/test-worker-metadata-refresh.js
   test/test-mm-timer-callback.js
   test/test-run-budget-completes-resume.js
   test/test-cmp-memory-jb.js
