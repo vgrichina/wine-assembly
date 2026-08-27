@@ -29,7 +29,14 @@
 # SIGKILL, not the default SIGTERM: a guest inside one long wasm slice does not
 # give the node event loop a turn, so a TERM is queued and never delivered.
 set -u
-: "${SECS:=900}"
+# 1200, not 900, because the retry chain grew a pair and the child cap is a
+# FRACTION of this. Leaving it at 900 while the divisor went from sixths to
+# eighths quietly cut every child's wall budget from 150s to 112s, and the
+# programs that notice are the ones with the most to draw: CONDENZ.EXE is still
+# filling its screen at 277M dispatches and photographed as 0 pixels, having
+# managed 57965 with the longer bound. A retry that costs the run its slowest
+# programs is not a better sweep.
+: "${SECS:=1200}"
 # 300M, not 30M. A dispatch budget is a budget of GUEST WORK, and at 30M five
 # programs in this corpus had simply not got to their first frame yet -- they
 # were reported blank while working perfectly. BRIAN.EXE draws its picture at

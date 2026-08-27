@@ -104,8 +104,15 @@ async function runOne(exe, png, o) {
     // whether the run walked off a cliff or hit a wall we know the shape of,
     // and that is the difference between a work item and a declared blocker.
     blockedOn32: r.blockedOn32 || null, badSelector: r.badSelector || null,
-    // Which machine this frame came off, when it was not the default one.
+    // Which machine this frame came off, when it was not the default one, and
+    // whether the program went looking for a card at all. The second is what
+    // makes the no-card retry affordable: without it every text-mode demo in
+    // the corpus qualifies (a console program has no pixels by definition) and
+    // the sweep pays two extra runs apiece for a machine change none of them
+    // can observe.
     sound: o.sound || null,
+    soundProbed: !!(r.machine.sb.detects || r.machine.sb.commands
+      || r.machine.adlibIndex !== undefined),
     // Not a failure. The picture is real and the program simply had more to do
     // than the budget allowed, which is worth telling apart from a run that
     // finished with nothing on screen.
@@ -217,7 +224,7 @@ async function capture(exe, png, o) {
   // to decide this kind of question -- it does it for the start key and for a
   // silent-mode switch. So a program that still has no picture gets the
   // machine without a sound card, and keeps whichever frame is fuller.
-  if (!row.pixels && !o.sound) {
+  if (!row.pixels && !o.sound && row.soundProbed) {
     const first = { ...row };
     const retry = await child(exe, png, { ...o, autoKey: true, sound: 'none' });
     if (score(retry) > score(first)) { row = retry; row.sound = 'none'; }
