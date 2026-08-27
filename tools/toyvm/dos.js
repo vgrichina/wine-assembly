@@ -505,6 +505,39 @@ const AUTO_KEYS = [
   { ah: 0x1E, al: 0x61 },   // a
 ];
 
+// Named keys the rotation cannot reach. Every one of these is a key a program
+// in this corpus waits for and no printable character substitutes for: ESC is
+// the quit key of half the text-mode viewers here, and the cursor keys drive
+// the ones with a menu.
+const NAMED_KEYS = {
+  esc: { ah: 0x01, al: 0x1B }, enter: { ah: 0x1C, al: 0x0D },
+  space: { ah: 0x39, al: 0x20 }, tab: { ah: 0x0F, al: 0x09 },
+  bksp: { ah: 0x0E, al: 0x08 },
+  up: { ah: 0x48, al: 0 }, down: { ah: 0x50, al: 0 },
+  left: { ah: 0x4B, al: 0 }, right: { ah: 0x4D, al: 0 },
+  f1: { ah: 0x3B, al: 0 }, f2: { ah: 0x3C, al: 0 }, f3: { ah: 0x3D, al: 0 },
+  f4: { ah: 0x3E, al: 0 }, f5: { ah: 0x3F, al: 0 }, f6: { ah: 0x40, al: 0 },
+  f7: { ah: 0x41, al: 0 }, f8: { ah: 0x42, al: 0 }, f9: { ah: 0x43, al: 0 },
+  f10: { ah: 0x44, al: 0 },
+};
+
+// A comma-separated key list: each item is either a name from NAMED_KEYS or a
+// run of literal characters. `--keys=n,esc` is n then ESC; `--keys=abc` is
+// three keystrokes. Anything unrecognised is taken literally rather than
+// dropped, so a typo shows up as the wrong key and not as silence.
+function parseKeys(spec) {
+  const out = [];
+  for (const item of String(spec || '').split(',')) {
+    if (!item) continue;
+    const named = NAMED_KEYS[item.toLowerCase()];
+    if (named) { out.push({ ...named }); continue; }
+    for (const ch of item) {
+      out.push({ ah: SCAN[ch.toLowerCase()] || 0, al: ch.charCodeAt(0) & 0xFF });
+    }
+  }
+  return out;
+}
+
 // The 16 CGA text colours as 6-bit DAC triples, in attribute-byte order.
 const CGA_DAC = [
   [0, 0, 0], [0, 0, 42], [0, 42, 0], [0, 42, 42],
@@ -543,6 +576,10 @@ class Machine {
     this.blockedOnKey = false;
     this.keys = opts.keys ? [...opts.keys] : [];   // queued as {ah, al}
     this.autoKey = !!opts.autoKey;
+    // The rotation, which a caller can replace wholesale. The default list is
+    // tuned for sound menus; a program waiting on one specific key needs its
+    // own, and there is no character in the default list that means ESC.
+    this.autoKeys = opts.autoKeys && opts.autoKeys.length ? opts.autoKeys : AUTO_KEYS;
     this.autoKeyAt = 0;
     this.autoKeyScreen = null;   // the screen the last menu answer was read off
     this.autoKeyQueue = [];      // the rest of a multi-character typed answer
@@ -903,7 +940,7 @@ class Machine {
       }
       if (k) { this.autoKeyRead++; say([k]); return k; }
     }
-    const rot = AUTO_KEYS[this.autoKeyAt++ % AUTO_KEYS.length];
+    const rot = this.autoKeys[this.autoKeyAt++ % this.autoKeys.length];
     this.log(`autokey rotating: "${String.fromCharCode(rot.al)}"`);
     return rot;
   }
@@ -2522,7 +2559,7 @@ class Machine {
 }
 
 module.exports = {
-  Machine, loadExe, vgaGeometry,
+  Machine, loadExe, vgaGeometry, parseKeys,
   VGA_BASE, STUB_SEG, STUB_BYTE, LOAD_SEG, PSP_SEG,
 };
 
