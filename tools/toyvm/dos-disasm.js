@@ -77,8 +77,15 @@ function main() {
     if (!m) { console.log(line); continue; }
     const lin = parseInt(m[1], 16);
     if (lin >= limit) break;
+    // A branch target is printed linear too, and next to a seg:off address
+    // column that is a trap: `jmp 0x1b4f` on the line labelled 100:0120 is the
+    // instruction at 100:0b4f, and reading it as an offset sends you to the
+    // wrong disassembly twice before you notice the constant 0x1000 gap.
+    const text = m[3].replace(/((?:^|\s)(?:j\w+|call|loop\w*)\s+(?:short\s+|near\s+)?)0x([0-9a-f]+)$/,
+      (_, head, hex) => `${head}${seg.toString(16)}:`
+        + `${(parseInt(hex, 16) - (seg << 4)).toString(16).padStart(4, '0')}`);
     console.log(`${seg.toString(16)}:${(lin - (seg << 4)).toString(16).padStart(4, '0')}`
-      + `  ${m[3]}`);
+      + `  ${text}`);
   }
 }
 

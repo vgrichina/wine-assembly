@@ -231,6 +231,11 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
   // cost of a false positive is one handback where a false negative is code
   // decoded before it has been written. See the note at the end of the file.
   let writesMem = false;
+  // Whether this instruction wrote a RANGE rather than one operand: a REP'd
+  // MOVS or STOS. The distinction matters to the region compiler, which treats
+  // a write plus a backward branch as a decryptor and stops trusting the code
+  // ahead of it -- a bulk store does the same job with no branch at all.
+  let bulkWrite = false;
 
   // The 386 ModRM: rm=100 means a SIB byte follows, rm=101 with mod=00 is a
   // bare disp32, and mod=10's displacement is four bytes rather than two.
@@ -569,7 +574,15 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
       const w = (op & 1) ? opsize : 8;
       const sfx = { 8: 'b', 16: 'w', 32: 'd' }[w];
       const name = { 0xA4: 'movs', 0xA6: 'cmps', 0xAA: 'stos', 0xAC: 'lods', 0xAE: 'scas' }[op & ~1];
-      if (name === 'movs' || name === 'stos') writesMem = true;
+      if (name === 'movs' || name === 'stos') {
+        writesMem = true;
+        // A REP'd store is a whole memory range written by one instruction --
+        // the same act as a decrypt loop, with no loop for the compiler to
+        // notice. AMORP.COM's entry is `rep movsw` of 0x249 words followed by a
+        // forward `jmp` into the result, and compiling through that jmp decoded
+        // 369KB of arena out of a 1174-byte .COM.
+        if (repPrefix) bulkWrite = true;
+      }
       const src = segOverride === null ? 3 : segOverride;   // DS by default
       // The address-size prefix picks the ESI/EDI/ECX-indexed twin of the same
       // handler. It is a separate axis from the data width: `rep stosd` with a
@@ -995,7 +1008,7 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF) {
     endsBlock = true;
   }
 
-  return { words, nextIp: (start + n) & 0xFFFF, length: n, fixups, endsBlock, writesMem };
+  return { words, nextIp: (start + n) & 0xFFFF, length: n, fixups, endsBlock, writesMem, bulkWrite };
 }
 
 // The MOV encodings that store to memory. Deliberately not every writing

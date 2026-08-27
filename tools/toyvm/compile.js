@@ -55,6 +55,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     // the loop hands control back when it ends, and the code after it is
     // decoded from memory as it is by then.
     let wrote = false;
+    let bulkWrote = false;
     for (;;) {
       if (words.length > maxWords) { words.push(H.end, cur); break; }
 
@@ -87,7 +88,15 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
       // a decryptor's loop body usually starts mid-block, after the setup that
       // computed its source pointer, so a test against the block head calls its
       // own back edge a forward one and compiles the ciphertext anyway.
-      const loops = wrote && (d.fixups || []).some(f => f.ip <= cur);
+      // A REP'd store has already written its whole range by the time the next
+      // instruction runs, so it needs no branch to be a decryptor: AMORP.COM
+      // moves 0x249 words over itself with one `rep movsw` and jumps FORWARD
+      // into the result. Following that jump decoded 369KB of arena out of a
+      // 1174-byte .COM -- the whole segment past the file, as `add [bx+si],al`
+      // over a field of zeros -- and the program spun there forever.
+      if (d.bulkWrite) bulkWrote = true;
+      const loops = bulkWrote
+        || (wrote && (d.fixups || []).some(f => f.ip <= cur));
       for (const f of (d.fixups || [])) {
         fixups.push({ wordIndex: base + f.index, ip: f.ip });
         if (!opts.oneInsn && (!loops || f.ip <= cur)) pending.push(f.ip);
