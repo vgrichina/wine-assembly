@@ -273,6 +273,11 @@ function newVgaState() {
     misc: 0x63,
     planar: false,
     bpp: 0,
+    // A CGA graphics mode (4, 5, 6). The VGA registers do not describe one --
+    // there is no graphics controller on a CGA and nothing in seq/gc/crtc says
+    // "two bits per pixel at B800" -- so this is carried beside them and the
+    // register-derived mode below leaves it alone.
+    cga: 0,
     // Set from the registers each time a graphics mode is left, so a frame
     // survives the mode-3 restore a well-behaved demo does before exiting.
     lastGraphics: null,
@@ -326,7 +331,12 @@ function resetVgaMode(v, mode) {
   }
   // An EGA graphics mode is planar from the moment it is set; mode 13h only
   // becomes planar when the guest clears chain-4.
-  v.bpp = ega ? 4 : (mode === 0x13 ? 8 : 0);
+  // CGA graphics. Modes 4 and 5 are 320x200 with two bits per pixel; mode 6 is
+  // 640x200 with one. The buffer is at B800 and the scan lines INTERLEAVE --
+  // even rows from offset 0, odd rows from 0x2000 -- which is why a CGA screen
+  // read linearly comes out as two half-height copies combed together.
+  v.cga = (mode === 4 || mode === 5 || mode === 6) ? mode : 0;
+  v.bpp = ega ? 4 : (mode === 0x13 ? 8 : (v.cga ? (mode === 6 ? 1 : 2) : 0));
   v.planar = !!ega;
 }
 
@@ -351,6 +361,10 @@ function vgaModeFromRegs(v) {
 // BIOS mode set does so a demo that restores text on its way out is still
 // photographable.
 function syncVgaMode(v, forceChained) {
+  // Nothing in the VGA register file describes a CGA mode, so asking it what
+  // mode we are in would answer "text" and take the picture away from a program
+  // the BIOS just put into mode 4. Only another BIOS mode set leaves CGA.
+  if (v.cga) return false;
   const bpp = vgaModeFromRegs(v);
   if (bpp === v.bpp) return false;
   if (v.bpp !== 0) v.lastGraphics = vgaGeometry(v);
@@ -368,6 +382,16 @@ function syncVgaMode(v, forceChained) {
 // with every row doubled, and the classic 320x240 tweak sets 480 with the
 // doubling left in place.
 function vgaGeometry(v) {
+  // CGA is not derived from these registers at all: the geometry is fixed by
+  // the mode number, the buffer is at B800 rather than A000, and consecutive
+  // scan lines are 0x2000 apart rather than one row apart.
+  if (v.cga) {
+    return {
+      width: v.cga === 6 ? 640 : 320, height: 200,
+      stride: 80, start: 0, planar: false, bpp: v.bpp, cga: v.cga,
+      attr: Array.from(v.attr.subarray(0, 16)),
+    };
+  }
   const vde = v.crtc[CRTC_VDE]
     | ((v.crtc[CRTC_OVERFLOW] & 0x02) << 7)
     | ((v.crtc[CRTC_OVERFLOW] & 0x40) << 3);
@@ -981,6 +1005,35 @@ class Machine {
     return rot;
   }
 
+  // The same question in a GRAPHICS mode, where the menu reader cannot help --
+  // DEMO5.EXE draws its "SELECT OUTPUT DEVICE" list one BIOS pixel at a time in
+  // CGA mode 4, so there is no text page to read it off. It then polls INT 16h
+  // forever: 455,159 times in a 100M-dispatch run, which is the whole of what
+  // it does after the menu is up.
+  //
+  // Answering the rotation on every polled read would be the disaster the note
+  // below describes, so the gate is that the SCREEN HAS STOPPED CHANGING. A
+  // demo polling once a frame to see whether to quit is redrawing between
+  // polls; a program parked on a menu is not drawing at all. Sample the buffer
+  // every few thousand polls, and only offer a key once two consecutive samples
+  // agree -- which costs 256 byte reads per 4096 polls and cannot fire on
+  // anything that is still animating.
+  autoKeyPollGraphics() {
+    if ((this.gfxPolls = (this.gfxPolls || 0) + 1) % 4096) return;
+    const m = this.mem;
+    const base = this.vga.cga ? VRAM_TEXT : VGA_BASE;
+    let h = 0x811c9dc5;
+    for (let i = 0; i < 256; i++) h = Math.imul(h ^ m[base + i * 61], 0x01000193);
+    h >>>= 0;
+    const same = h === this.gfxScreenHash;
+    this.gfxScreenHash = h;
+    if (!same) return;
+    const k = this.autoKeys[this.autoKeyAt++ % this.autoKeys.length];
+    this.log(`autokey answering a polled read on a still graphics screen `
+      + `with "${String.fromCharCode(k.al)}"`);
+    this.keys.push(k);
+  }
+
   // A polled read (INT 16h AH=01h) asks "is anyone there", and answering it out
   // of the rotation would be a disaster: a demo checks that once a frame to see
   // whether to quit, and would be told yes on its first frame. So a poll
@@ -990,7 +1043,7 @@ class Machine {
   // into the injected queue so the AH=00h read that follows gets the same one.
   autoKeyPoll() {
     if (!this.autoKey || this.keys.length) return;
-    if (!TEXT_MODES.has(this.videoMode)) return;
+    if (!TEXT_MODES.has(this.videoMode)) { this.autoKeyPollGraphics(); return; }
     const shown = this.screenText().join('\n');
     if (shown === this.autoKeyScreen) return;
     this.autoKeyScreen = shown;
@@ -1739,6 +1792,31 @@ class Machine {
     }
   }
 
+  // Where one pixel lives, for the BIOS pixel calls. Null when the current mode
+  // has no addressable pixel of its own -- a text mode, or a planar EGA mode,
+  // whose pixel is spread across four planes and is not one shift of one byte.
+  // Declining is the honest answer there: a wrong address would draw somewhere.
+  pixelAddr(x, y) {
+    const v = this.vga;
+    if (v.cga) {
+      const bpp = v.cga === 6 ? 1 : 2;
+      const width = v.cga === 6 ? 640 : 320;
+      if (x >= width || y >= 200) return null;
+      const perByte = 8 / bpp;
+      const row = VRAM_TEXT + ((y & 1) ? 0x2000 : 0) + (y >> 1) * 80;
+      return {
+        lin: row + Math.floor(x / perByte),
+        shift: (perByte - 1 - (x % perByte)) * bpp,
+        mask: (1 << bpp) - 1,
+      };
+    }
+    if (v.bpp === 8 && !v.planar) {
+      if (x >= 320 || y >= 200) return null;
+      return { lin: VGA_BASE + y * 320 + x, shift: 0, mask: 0xFF };
+    }
+    return null;
+  }
+
   int10(ah, al, r) {
     if (ah === 0x00) {
       this.videoMode = al & 0x7F;
@@ -1754,7 +1832,37 @@ class Machine {
         this.clearPlanes();
         this.palette.set(EGA_DAC);         // the EGA-compatible first 64 entries
       }
+      // A CGA graphics mode clears its own buffer and reaches its four colours
+      // through the same DAC everything else here does, so it needs the
+      // EGA-compatible entries loaded for CGA_PALETTE to name anything.
+      if (this.vga.cga) {
+        this.mem.fill(0, VRAM_TEXT, VRAM_TEXT + 0x4000);
+        this.palette.set(EGA_DAC);
+      }
       this.log(`int10 set mode ${this.videoMode.toString(16)}h`);
+      return true;
+    }
+    // Write and read one pixel. Slow enough that almost nothing uses it for a
+    // whole screen -- and then DEMO5.EXE does, 5588 times per 60M dispatches
+    // and nothing else, so with this missing it ran its entire budget and
+    // photographed as a black CGA screen.
+    //
+    // AL is the colour (bit 7 XORs rather than replaces), CX the column, DX the
+    // row, BH the page (ignored -- one page here).
+    if (ah === 0x0C || ah === 0x0D) {
+      const x = r.get('cx') & 0xFFFF, y = r.get('dx') & 0xFFFF;
+      const at = this.pixelAddr(x, y);
+      if (!at) { if (ah === 0x0D) r.set('ax', r.get('ax') & 0xFF00); return true; }
+      const { lin, shift, mask } = at;
+      if (ah === 0x0D) {
+        r.set('ax', (r.get('ax') & 0xFF00) | ((this.mem[lin] >> shift) & mask));
+        return true;
+      }
+      const c = al & mask;
+      const was = this.mem[lin];
+      this.mem[lin] = (al & 0x80)
+        ? (was ^ (c << shift))
+        : ((was & ~(mask << shift)) | (c << shift));
       return true;
     }
     if (ah === 0x0F) {                      // get current mode

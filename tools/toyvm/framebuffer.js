@@ -77,6 +77,42 @@ function screenSurface(machine) {
   return { text: false, geom: machine.vga.lastGraphics };
 }
 
+// CGA graphics. The buffer is at B800, two bits per pixel in modes 4 and 5 and
+// one in mode 6, most significant bits leftmost -- and the scan lines are
+// INTERLEAVED: even rows start at 0, odd rows at 0x2000. Reading it as a flat
+// 80-byte-stride bitmap is what turns one picture into two half-height copies
+// combed into each other.
+//
+// The four colours are not a palette in memory anywhere; they are wired to the
+// mode. Mode 4 gets the cyan/magenta/white set (the palette-1 default the BIOS
+// selects), mode 5 the CGA "high-intensity" one, and mode 6 is black and white.
+// They come out as EGA colour numbers so the DAC lookup downstream is the same
+// one every other mode goes through.
+const VRAM_CGA = 0xB8000;
+const CGA_PALETTE = {
+  4: [0, 11, 13, 15],       // black, light cyan, light magenta, white
+  5: [0, 10, 12, 15],       // black, light green, light red, white
+  6: [0, 15],
+};
+
+function readCga(mem, g) {
+  const { width, height } = g;
+  const bpp = g.bpp === 1 ? 1 : 2;
+  const colours = CGA_PALETTE[g.cga] || CGA_PALETTE[4];
+  const out = new Uint8Array(width * height);
+  const perByte = 8 / bpp, mask = (1 << bpp) - 1;
+  for (let y = 0; y < height; y++) {
+    // The interleave, and the whole reason this function exists.
+    const row = VRAM_CGA + ((y & 1) ? 0x2000 : 0) + (y >> 1) * g.stride;
+    for (let x = 0; x < width; x++) {
+      const b = mem[row + Math.floor(x / perByte)];
+      const shift = (perByte - 1 - (x % perByte)) * bpp;
+      out[y * width + x] = colours[(b >> shift) & mask];
+    }
+  }
+  return { width, height, pixels: out };
+}
+
 function readFrame(mem, video = LINEAR) {
   // A chained program is read exactly the way it always was, even when its CRTC
   // says something other than 320x200. The register model is complete enough to
@@ -85,6 +121,7 @@ function readFrame(mem, video = LINEAR) {
   // its 66 rows back at a 320-byte stride produces overlapping text -- so the
   // chained side of that model is not yet worth trusting over the assumption it
   // would replace.
+  if (video && video.cga) return readCga(mem, video);
   const g = video && video.planar ? { ...LINEAR, ...video } : LINEAR;
   const { width, height, stride, start, planar } = g;
   const out = new Uint8Array(width * height);

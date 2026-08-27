@@ -26,7 +26,7 @@ function claimAudioSession() {
 if (typeof window !== 'undefined') window.claimAudioSession = claimAudioSession;
 
 class WineAssembly {
-  static SOURCE_VERSION = '226';
+  static SOURCE_VERSION = '227';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   static _nextProcessId = 1000;
 
@@ -1807,6 +1807,10 @@ class WineAssembly {
     // the deadline armed would run this a second time.
     this._lastWindowStopAt = 0;
     if (this.renderer) {
+      if (this._rendererInputPendingPublisher && this.renderer._inputPendingPublishers) {
+        this.renderer._inputPendingPublishers.delete(this._rendererInputPendingPublisher);
+        this._rendererInputPendingPublisher = null;
+      }
       if (this._multiApp) {
         this._removeAppWindows();
       } else {
@@ -1978,6 +1982,19 @@ class WineAssembly {
   _runThreaded(stepsPerSlice) {
     this.running = true;
     const self = this;
+    if (self.renderer && self.guestWorker && self.guestWorker.broker &&
+        !self._rendererInputPendingPublisher) {
+      self._rendererInputPendingPublisher = (depth, wake) => {
+        self.guestWorker.broker.publish({
+          inputPending: depth | 0,
+          inputWake: !!wake,
+        });
+      };
+      if (!self.renderer._inputPendingPublishers) {
+        self.renderer._inputPendingPublishers = new Set();
+      }
+      self.renderer._inputPendingPublishers.add(self._rendererInputPendingPublisher);
+    }
     let unsupportedYield = 0;
     const step = async () => {
       if (!self.running) return;

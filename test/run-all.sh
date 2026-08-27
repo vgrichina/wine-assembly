@@ -333,6 +333,7 @@ UNIT=(
   test/test-renderer-palette-route.js
   test/test-renderer-transparent-desktop.js
   test/test-renderer-worker-repaint-boundary.js
+  test/test-worker-input-slice-wake.js
   test/test-richedit-stream-callback.js
   test/test-richedit-version-compat.js
   test/test-rtf-stylesheet.js

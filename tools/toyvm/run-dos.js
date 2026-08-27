@@ -480,9 +480,12 @@ async function main() {
   const v = r.video;
   // What was rendered, then what the CRTC says when that is something else --
   // for a chained program those differ on purpose. See readFrame.
-  const rw = v.planar ? v.width : 320, rh = v.planar ? v.height : 200;
+  // CGA is neither: its picture is at B800, its geometry comes from the mode
+  // number, and calling it "320x200 linear" names the wrong buffer.
+  const rw = v.planar || v.cga ? v.width : 320, rh = v.planar || v.cga ? v.height : 200;
   console.log(`  video mode ${v.mode.toString(16)}h `
-    + `${v.planar ? `${v.bpp === 4 ? 'EGA planar' : 'unchained'} ${rw}x${rh}` : `${rw}x${rh} linear`}`
+    + `${v.cga ? `CGA ${v.bpp}bpp ${rw}x${rh}`
+      : v.planar ? `${v.bpp === 4 ? 'EGA planar' : 'unchained'} ${rw}x${rh}` : `${rw}x${rh} linear`}`
     + `${v.planar && v.start ? ` start=${v.start}` : ''}`
     + `${v.planar && v.stride !== v.width ? ` stride=${v.stride}` : ''}`
     + `${!v.planar && (v.width !== 320 || v.height !== 200 || v.start)

@@ -40,6 +40,23 @@
           (if (global.get $page_chunk_deferred)
             (then (call $page_chunk_reclaim_deferred)))
           (br $main)))
+      ;; Browser input can arrive while slot 0 is part-way through a long real-
+      ;; Worker slice. Repaint publication is intentionally held until a slice
+      ;; boundary so WM_PAINT erase/text sequences cannot flicker, but waiting
+      ;; for the remaining 100k-block budget makes typed edit text visibly lag.
+      ;; The host pulses this process-shared word when it queues input. Consume
+      ;; it once on the guest main thread and return at the next complete x86
+      ;; block; the following slice processes the input normally. Guest-created
+      ;; threads must not consume slot 0's wake.
+      (if (i32.eq (global.get $current_thread_id) (i32.const 1))
+        (then
+          (if (i32.ne
+                (i32.atomic.rmw.xchg offset=36
+                  (global.get $THREAD_RPC) (i32.const 0))
+                (i32.const 0))
+            (then
+              (global.set $last_run_halt (i32.const 3))
+              (br $halt)))))
       (if (i32.le_s (global.get $block_budget) (i32.const 0))
         (then (global.set $last_run_halt (i32.const 1)) (br $halt)))
       (global.set $block_budget (i32.sub (global.get $block_budget) (i32.const 1)))
