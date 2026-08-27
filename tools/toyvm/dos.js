@@ -664,7 +664,38 @@ class Machine {
     mem[0x410] = 0x21; mem[0x411] = 0x00;
     const kb = DEFAULT_ALLOC_TOP >> 6;      // paragraphs to KB
     mem[0x413] = kb & 0xFF; mem[0x414] = (kb >> 8) & 0xFF;
+    this.setVideoBda();
     this.setTicks(0);
+  }
+
+  // The video half of the BIOS data area, which a demo reads instead of asking
+  // INT 10h because it is three instructions and no interrupt.
+  //
+  // 0040:0063 is the one that mattered. It holds the CRTC's base I/O port, and
+  // the canonical retrace wait is
+  //
+  //     mov dx, [0:463h] / add dx, 6 / in al, dx / test al, 8 / jnz $-3
+  //
+  // -- base plus six is 3DAh, the input status register, and bit 3 is vertical
+  // retrace. With the word left at zero that reads port 6 instead, which is
+  // not a port anything answers, so the test never clears and the wait never
+  // ends. NM2.EXE, COCONTS1.EXE and SETUP.EXE each spun there for every
+  // dispatch they were given -- 800M in SETUP's case, at 100% of wall inside
+  // the guest, which reads exactly like a demo with a lot of work to do.
+  setVideoBda() {
+    const m = this.mem;
+    const cols = CON_COLS, rows = CON_ROWS;
+    m[0x44A] = cols & 0xFF; m[0x44B] = (cols >> 8) & 0xFF;
+    const pageBytes = cols * rows * 2;
+    m[0x44C] = pageBytes & 0xFF; m[0x44D] = (pageBytes >> 8) & 0xFF;
+    m[0x44E] = 0; m[0x44F] = 0;              // page 0 starts at offset 0
+    m[0x462] = 0;                            // active display page
+    // 3D4h for a colour adapter, 3B4h for mono. Only mode 7 is mono here.
+    const crtc = this.videoMode === 7 ? 0x3B4 : 0x3D4;
+    m[0x463] = crtc & 0xFF; m[0x464] = (crtc >> 8) & 0xFF;
+    m[0x484] = (rows - 1) & 0xFF;            // rows on screen, less one
+    const cell = this.videoMode === 3 || this.videoMode === 7 ? 16 : 8;
+    m[0x485] = cell; m[0x486] = 0;           // character cell height
   }
 
   // The real guest memory arrives after construction, once the wasm instance
@@ -1707,6 +1738,7 @@ class Machine {
     if (ah === 0x00) {
       this.videoMode = al & 0x7F;
       this.mem[0x449] = this.videoMode;
+      this.setVideoBda();      // the CRTC port follows the mode: mono vs colour
       // Setting a mode clears the display and re-chains the planes -- a demo
       // that unchains does it AFTER asking the BIOS for mode 13h.
       resetVgaMode(this.vga, this.videoMode);
