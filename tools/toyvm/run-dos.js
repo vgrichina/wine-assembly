@@ -87,7 +87,7 @@ function writePng(file, mem, palette, video) {
 async function runDos(o) {
   const {
     variant = 'tailcall', exe, budget = 200e6, slice = 2e6, seconds = 0,
-    traceInt = false, traceFault = false, traceEntry = 0, noCache = false,
+    traceInt = false, traceFault = false, traceEntry = 0, noCache = false, smcFlush = false,
     shots = null, shotEvery = 20,
     mouse = [0, 0], cpu = 386, report = false, log = console.log, autoKey = false,
     tickScale = 1, sample = false, sampleAfter = 0, forceChained = false,
@@ -199,7 +199,7 @@ async function runDos(o) {
   const ipSampleLog = [];          // flat [dispatched, ip, dispatched, ip, ...]
 
   const session = new DosSession(vm, machine, {
-    slice, noCache, mouse, irqEvery, dispatchesPerTick, tickScale, stuckLimit,
+    slice, noCache, smcFlush, mouse, irqEvery, dispatchesPerTick, tickScale, stuckLimit,
     cells: conCells,
     hooks: {
       onInt: !traceInt ? undefined : ({ vec, before, ok, retCs, retIp, ax }) => {
@@ -394,6 +394,7 @@ async function main() {
     traceFault: flag('trace-fault'),
     traceEntry: flag('trace-entry') ? 40 : count(arg('trace-entry'), 0),
     noCache: flag('no-cache'),
+    smcFlush: flag('smc-flush'),
     sound: arg('sound', 'full'),
     keys: parseKeys(arg('keys', '')),
     autoKeys: parseKeys(arg('auto-keys', '')),

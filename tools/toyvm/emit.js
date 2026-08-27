@@ -2781,7 +2781,18 @@ function helpers() {
                                      (i32.shr_u (local.get $l) (i32.const 7))))
                (i32.shl (i32.const 1) (i32.and (i32.shr_u (local.get $l) (i32.const 4))
                                                (i32.const 7))))
-    (then (global.set $smc (i32.const 2))))
+    (then
+      ;; Widen the range this slice has dirtied. The host clears $smc on every
+      ;; handback, so "already 2" means "this slice, not an older one".
+      (if (i32.eq (global.get $smc) (i32.const 2))
+        (then
+          (if (i32.lt_u (local.get $l) (global.get $smclo))
+            (then (global.set $smclo (local.get $l))))
+          (if (i32.gt_u (local.get $l) (global.get $smchi))
+            (then (global.set $smchi (local.get $l)))))
+        (else (global.set $smclo (local.get $l))
+              (global.set $smchi (local.get $l))))
+      (global.set $smc (i32.const 2))))
   (i32.store8 (local.get $l) (local.get $v)))
 
 ;; Step an offset to the next byte. A 16-bit offset of 0xFFFF wraps to 0x0000
@@ -3476,7 +3487,15 @@ function fpuHelpers() {
 // (see CONT). It exists because $steps cannot do both jobs: the counter has to
 // keep running for accounting after the budget is gone, and a return keyed off
 // its sign would fire mid-block.
-const STATE = [...isa.REG16, ...isa.SEG, 'gip', 'flags', 'ip', 'steps', 'intno', 'left', 'rtop', 'smc', 'halt'];
+// smclo/smchi bound the linear addresses a slice's self-modifying stores
+// landed on, so the host can throw away the compiled regions that actually
+// covered them instead of everything it has. A RANGE rather than one address
+// because a slice can store into compiled code many times before it hands back
+// -- a `rep movsb` over a compiled paragraph does it once per byte -- and
+// remembering only the last one would leave the earlier writes running stale
+// code, which is the exact bug the flag exists to prevent. Over-approximating
+// the gap between two distant stores only costs a recompile.
+const STATE = [...isa.REG16, ...isa.SEG, 'gip', 'flags', 'ip', 'steps', 'intno', 'left', 'rtop', 'smc', 'smclo', 'smchi', 'halt'];
 
 // Memory is IMPORTED and state is read through accessor functions rather than
 // inline-exported, because that is the shape lib/compile-wat.js actually

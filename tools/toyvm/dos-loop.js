@@ -28,7 +28,12 @@ const { STUB_SEG, STUB_BYTE } = require('./dos');
 // reachable subgraph within that cs, so most entries hit an existing region's
 // block map and cost nothing.
 class CodeCache {
-  constructor(vm, { noCache = false } = {}) {
+  constructor(vm, { noCache = false, smcFlush = false } = {}) {
+    // --smc-flush restores the whole-cache flush this used to do on every
+    // self-modifying store. Its A/B partner: the two differ only in how much of
+    // the cache survives, so a program that behaves differently under it has a
+    // stale-code bug and not a slow one.
+    this.smcFlush = smcFlush;
     this.vm = vm;
     this.noCache = noCache;
     this.regions = new Map();          // cs -> [prog]
@@ -41,17 +46,76 @@ class CodeCache {
     this.jtab = new Int32Array(vm.mem.buffer, isa.JTAB_BASE, isa.JTAB_SIZE >> 2);
     this.codeBits = new Uint8Array(vm.mem.buffer, isa.CODE_BITMAP, isa.CODE_BITMAP_SIZE);
     this.codeBits.fill(0);
+    // paragraph -> the compiled programs that decoded a byte in it. This is the
+    // reverse of codeBits: the bitmap answers "did anyone compile here", which
+    // is what the guest's store path can afford to ask, and this answers "who",
+    // which is what turns a self-modifying store into a few dropped regions
+    // instead of an empty cache.
+    this.byPara = new Map();
   }
 
   // Everything compiled is now suspect, because the guest wrote into code that
-  // had been compiled. Cheaper answers exist (invalidate just the paragraph),
-  // but this happens a handful of times in a run -- once when a packed program
-  // unpacks itself -- and being obviously right matters more than being quick.
+  // had been compiled somewhere. The fallback, for a dirtied range too wide to
+  // be worth walking.
   flush() {
     this.regions.clear();
+    this.byPara.clear();
     this.vm.set('rtop', 0);
     this.jtab.fill(0);
     this.codeBits.fill(0);
+  }
+
+  // The same answer, restricted to the linear bytes the slice actually wrote.
+  //
+  // The flush above used to be the only answer, on the argument that a program
+  // unpacks itself once. That is true of a packed program and false of an
+  // encrypted one: COMPCODE.EXE decrypts as it runs and took 1526 self-modify
+  // breaks in its first 200k dispatches, so every hot loop in the program was
+  // being thrown away and re-decoded 1526 times, and it drew nothing inside a
+  // 300M-dispatch budget it should not have needed. Dropping only the regions
+  // that covered the written paragraphs leaves the rest of the cache standing.
+  //
+  // Wide ranges still flush: past a few hundred paragraphs the walk costs more
+  // than the recompile it saves, and a store that wide is a program moving its
+  // whole image anyway.
+  invalidateRange(lo, hi) {
+    const from = lo >>> 4, to = hi >>> 4;
+    if (this.smcFlush || to - from > 512) { this.flush(); return; }
+    const doomed = new Set();
+    for (let p = from; p <= to; p++) {
+      for (const prog of (this.byPara.get(p) || [])) doomed.add(prog);
+    }
+    if (!doomed.size) return;
+    for (const prog of doomed) {
+      const list = this.regions.get(prog.key);
+      if (list) {
+        const at = list.indexOf(prog);
+        if (at >= 0) list.splice(at, 1);
+      }
+      // The indirect-jump cache is direct-mapped and holds arena addresses, so
+      // any slot still naming one of this program's blocks has to go -- the key
+      // check in $jlook cannot tell a stale address from a live one.
+      for (const [bip] of prog.blocks) {
+        const slot = isa.jhash(prog.cs, bip) * 2;
+        if (this.jtab[slot] === (((prog.cs & 0xFFFF) << 16) | (bip & 0xFFFF))) {
+          this.jtab[slot] = 0;
+          this.jtab[slot + 1] = 0;
+        }
+      }
+      for (const p of prog.paras) {
+        const list2 = this.byPara.get(p);
+        if (!list2) continue;
+        const at2 = list2.indexOf(prog);
+        if (at2 >= 0) list2.splice(at2, 1);
+        // Nobody has compiled code here any more, so the guest may write to it
+        // freely. Leaving the bit set would cost a spurious break on every
+        // future store into what is now ordinary data.
+        if (!list2.length) {
+          this.byPara.delete(p);
+          this.codeBits[p >> 3] &= ~(1 << (p & 7));
+        }
+      }
+    }
   }
 
   // Drop one block: the guest patched the instruction it was about to run.
@@ -94,10 +158,15 @@ class CodeCache {
     // was coming anyway and buys the guarantee that a compile is worth caching.
     if (this.arenaEnd - this.arenaNext < isa.THREAD_SIZE >> 2) {
       this.regions.clear();
+      this.byPara.clear();
       this.arenaNext = isa.THREAD_BASE;
       this.arenaResets++;
       vm.set('rtop', 0);
       this.jtab.fill(0);
+      // Every program that owned a code bit is gone with the arena, so the bits
+      // have to go with them or a store into what is now plain data breaks the
+      // slice forever with nothing left to invalidate.
+      this.codeBits.fill(0);
     }
     const prog = compileProgram((lin) => vm.mem[lin], cs, ip, {
       arenaBase: this.arenaNext,
@@ -116,9 +185,20 @@ class CodeCache {
     // granularity, which is what $wr8 tests -- a store within 16 bytes of
     // compiled code counts as touching it, and over-reporting only costs a
     // recompile.
+    prog.key = key;
+    prog.cs = cs;
+    // A Set, because covered ranges can overlap each other within one program.
+    // A paragraph listed twice would be removed once and leave a byPara entry
+    // pointing at a dropped program, and its code bit would never come down.
+    prog.paras = new Set();
     for (const [from, to] of prog.covered) {
       for (let p = from >> 4; p <= (to - 1) >> 4; p++) {
         this.codeBits[p >> 3] |= 1 << (p & 7);
+        if (prog.paras.has(p)) continue;
+        prog.paras.add(p);
+        let list = this.byPara.get(p);
+        if (!list) this.byPara.set(p, list = []);
+        list.push(prog);
       }
     }
     // Publish every block head into the indirect-jump cache. Direct-mapped, so
@@ -145,7 +225,7 @@ class CodeCache {
 class DosSession {
   constructor(vm, machine, opts = {}) {
     const {
-      slice = 2e6, noCache = false, mouse = [0, 0],
+      slice = 2e6, noCache = false, smcFlush = false, mouse = [0, 0],
       // One timer interrupt per this many dispatches. 100k is about 10ms of a
       // real 486, so it lands near the 18.2Hz the BIOS programs -- and a demo
       // that reprogrammed the PIT for music gets a slower clock than it asked
@@ -171,7 +251,7 @@ class DosSession {
     this.stuckLimit = stuckLimit;
     this.cells = cells;
     this.hooks = hooks;
-    this.cache = new CodeCache(vm, { noCache });
+    this.cache = new CodeCache(vm, { noCache, smcFlush });
 
     this.dispatched = 0;
     this.handbacks = 0;
@@ -373,7 +453,10 @@ class DosSession {
     if (vm.raw('smc')) {
       const kind = vm.raw('smc');
       vm.set('smc', 0);
-      if (kind === 2) this.cache.flush();
+      if (kind === 2) {
+        this.cache.invalidateRange(vm.exports.get_smclo() >>> 0,
+                                   vm.exports.get_smchi() >>> 0);
+      }
       else this.cache.invalidate(vm.get('cs'), vm.get('gip'), vm.exports.get_csb());
       this.smcBreaks++;
     }
