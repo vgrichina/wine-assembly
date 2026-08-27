@@ -606,6 +606,83 @@ Coverage over the corpus went from 32 programs putting something on screen to
 from reading their code, and none of them is visible to an opcode census or a
 handler histogram: those programs were decoding and executing perfectly.
 
+### 7.4 The 32-bit round, and four bugs that were not ISA gaps
+
+§7's census called the protected-mode group behind `0f` "deliberately refused",
+and that refusal was the single largest blocker left: sixteen of the twenty-seven
+programs still photographing black were DOS-extended, and every one of them builds
+a flat 32-bit code selector and far-jumps into it one instruction after entering
+protected mode. Supporting that meant the D bit (the descriptor's default operand
+*and* address size, and whether EIP is allowed past 0xFFFF), the stack's B bit as
+a separate `$spm` mask, a jump-target cache keyed on the full 32-bit IP rather
+than `cs<<16|ip`, and 32-bit twins for everything whose addressing is implicit
+rather than modrm-driven — the port-string ops, the counted-loop terminators, the
+A4–AF string ops, and XLAT.
+
+That was the expected half. The unexpected half is that **four of the six things
+actually standing between these programs and a picture were not missing
+instructions at all**, and none of them is visible to an opcode census, a handler
+histogram, or a decoder give-up list — the same blind spot §7.3 describes, one
+layer down.
+
+**`vm.js` masked every register read to 16 bits.** Including `gip`. In real mode
+that is invisible, because the instruction pointer stays inside 16 bits on its
+own; in a 32-bit code segment it is a truncation, and the host loop reads `gip`
+to decide what to compile next. ACME-SYW.EXE's return to `0x11c43` became a
+compile of `0x1c43`, which is a text banner sitting in its data, and the demo
+"hung" 202 handbacks into a picture of its own logo — a symptom that reads
+exactly like a decoder bug in the routine it was returning *from*. It was found
+by noticing that `0x11c43 & 0xFFFF` is the address it was stuck at.
+
+**The BIOS data area was never in guest memory.** `reset()` fills in the
+equipment word and the conventional-memory size, and it runs *before*
+`setMemory()` binds the VM's linear memory, so every byte it wrote landed in an
+array nothing reads again. Dumping `0040:0010` after a run came back all zeros:
+INT 11h and INT 12h had been answering 0 for their entire existence. Only
+`setVideoBda` survived, and only because the guest's own INT 10h set-mode calls
+it again later — which is why nothing had ever noticed. On top of that the
+equipment word's coprocessor bit was clear while the x87 is real and passes
+48/48, so CTSLASSE.EXE asked INT 11h, printed *"you need a coprocessor to run
+this intro. do not try it with an emulator."* and exited having drawn nothing.
+
+**A 32-bit `POP DS` moves four stack bytes.** The segment register is 16 bits
+either way; the operand size decides how far the *stack* moves. Segment push and
+pop had one handler each, always 16-bit, emitted whatever the operand size said —
+and every DOS extender in this corpus reflects interrupts with `66 1f`.
+CONTAGIO.EXE's extender therefore left the stack two bytes low on each reflected
+call, drifted into a `ret` that read the wrong word, and spent the rest of the
+run spinning inside its own error string *"Unrecognized Data In LE!"*. The
+give-up sites the report printed were all ASCII, which reads as a wild jump and
+is one — but the cause was two bytes of stack, thousands of instructions earlier.
+
+**Two menus had no options on them.** The auto-key menu reader recognises a
+selector followed by `]`, `)`, `.` or `:`. CYBOMAN2.EXE writes `        0>
+NoSound` and COLORS.EXE `0 - Silence`, so neither menu contained a single
+recognised option and both fell through to the blind key rotation, which never
+picks the silent one. This is §7.3's lesson recurring: the program was executing
+perfectly and sitting on a prompt.
+
+Measured, on the same commands either side of each fix:
+
+| program | before | after |
+|---|---|---|
+| CONTAGIO.EXE | 0 px, spinning in an error string | 22510 px |
+| CMA_SHRT.EXE | 0 px | 20330 px |
+| CYBOMAN2.EXE | 0 px, parked on a Gravis prompt | 61944 px |
+| ACME-SYW.EXE | 2.9M dispatches, its own logo | mode 13h unchained, 2.97M planar writes |
+| CTSLASSE.EXE | text refusal, exit 0 | 201M dispatches in mode 13h |
+
+`tools/toyvm/int-census.js` then re-ranked what is left, and it is worth
+recording what it ruled *out*: **VESA is three programs.** INT 10h AH=4Fh blocks
+COLORS, SETUP and CHROME (COUNTDWN joins them by probing AH=6Fh/70h/BFh for
+Video7, Paradise and Tseng chipsets). `framebuffer.js` is indexed-palette end to
+end — `readFrame` hands back one byte of DAC index per pixel — so hi-colour and a
+linear framebuffer mean reworking that whole pipeline. Three programs does not
+buy it. The rest of the census tail is faults rather than gaps: the `int 00h`,
+`01h`, `03h` and `05h` entries against DPS.COM, BKSNOTE.EXE, CAVEIRA.COM and
+STHINTRO.EXE are divide-error, breakpoint and single-step vectors, which means
+those programs are *crashing*, and each needs its own diagnosis.
+
 ## 8. Still open
 
 * Run the matrix on SpiderMonkey and JavaScriptCore, not just node's V8, and on
