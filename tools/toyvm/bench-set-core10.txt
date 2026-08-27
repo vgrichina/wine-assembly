@@ -12,7 +12,10 @@
 # is here to cover, and dropping a line drops that coverage:
 #
 #   DHADREN     unchained mode X, 1280-byte stride -- the long-standing guard
-#   BTW         text mode 3h: the console and the direct-to-B800 path
+#   DTM2        text mode 3h, all 2000 cells written: the console and the
+#               direct-to-B800 path. BTW.EXE was here first and was wrong for
+#               it -- the sweep photographs BTW in mode 13h with 64000 pixels,
+#               so the set had no console-surface program at all.
 #   ACCIDENT    1055 calls to INT 15h AH=86h, the BIOS microsecond wait
 #   B-STEEL     307200 pixels, the largest surface in the corpus
 #   RUNDEMO     plain chained mode 13h, well-behaved, 58040 px
@@ -39,7 +42,7 @@
 # remove it.
 
 /tmp/demos/1993-a-adrenali/DHADREN.EXE
-/tmp/demos/1993-b-btw/BTW.EXE
+/tmp/demos/1995-b-bc_dtm2/DTM2.EXE
 /tmp/demos/1994-a-accident/ACCIDENT.EXE
 /tmp/demos/1994-a-acme_bsd/B-STEEL.EXE
 /tmp/demos/1994-b-bltdemo/RUNDEMO.EXE
