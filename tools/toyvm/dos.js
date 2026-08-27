@@ -611,7 +611,19 @@ class Machine {
     // The keyboard as hardware: scancodes waiting to be delivered as IRQ1, and
     // the one port 60h reads right now. See keyboardIrq.
     this.kbQueue = [];
+    // --keys go on BOTH wires, for the reason pushKey gives: which one a
+    // program listens on is not knowable from here. They used to go only into
+    // the INT 16h queue above, and kbFill -- the only bridge to the hardware
+    // one -- is gated on autoKey, so a program that reads port 60h itself was
+    // unreachable by --keys entirely. DINO.EXE polls the port and compares
+    // against 0x48 and 0x50 to drive a cursor around its setup grid; every
+    // arrow key aimed at it was being dropped, and the grid sat on "Gravis
+    // Ultrasound" no matter what was sent.
     this.kbScan = 0;
+    for (const k of this.keys) {
+      const sc = (k.ah & 0x7F) || 0x1C;
+      this.kbQueue.push(sc, sc | 0x80);   // make code, then break code
+    }
     this.kbFresh = false;   // set by IRQ1, cleared by the handler's port read
     this.kbReads = 0;
     this.forceChained = !!opts.forceChained;
@@ -1079,6 +1091,7 @@ class Machine {
     this.log(`autokey answered a polled menu with `
       + `"${ks.map(x => String.fromCharCode(x.al)).join('')}"`);
     this.keys.push(...ks);
+    this.syncKbBda();
   }
 
   // One typed line, terminated with CR LF, or null when nothing is waiting and
@@ -1110,6 +1123,7 @@ class Machine {
     this.mem[0x449] = this.videoMode;
     this.setSystemBda();
     this.setVideoBda();
+    this.syncKbBda();
     this.setTicks(this.ticks);
   }
 
@@ -1284,6 +1298,43 @@ class Machine {
   pushKey(scan, ascii) {
     this.keys.push({ ah: scan & 0xFF, al: ascii & 0xFF });
     this.kbQueue.push(scan & 0x7F, (scan & 0x7F) | 0x80);
+    this.syncKbBda();
+  }
+
+  // The BIOS keyboard buffer, at 0040:001E, as a mirror of the INT 16h queue.
+  //
+  // A third wire, and one nothing here was driving. INT 16h is a service and
+  // port 60h is hardware, but the ring between them is plain memory in the BIOS
+  // data area, and a program is free to read it directly instead of asking --
+  // plenty do, because it is faster than an interrupt and tells you what is
+  // waiting without consuming it. With head and tail both left at zero the
+  // buffer reads as permanently empty, so such a program waits forever on a key
+  // that has already been typed.
+  //
+  // Mirroring rather than sharing storage: `keys` stays the one queue, and this
+  // rewrites the ring to match after anything touches it. Head is pinned at the
+  // start of the buffer, which a real BIOS does not do -- it is a circular
+  // buffer and the pair wanders -- but head < tail with the entries in between
+  // is a state the hardware reaches too, and nothing can tell the difference
+  // from inside without watching it over time.
+  //
+  // 0040:0080 and 0082 are the buffer's own bounds. A program that resizes the
+  // buffer writes them; one that walks it reads them, and finding zeros there
+  // is how a walk ends up reading the interrupt vector table.
+  syncKbBda() {
+    const mem = this.mem;
+    if (!mem || mem.length < 0x500) return;
+    const put16 = (at, v) => { mem[at] = v & 0xFF; mem[at + 1] = (v >> 8) & 0xFF; };
+    put16(0x480, 0x1E);
+    put16(0x482, 0x3E);
+    const n = Math.min(this.keys.length, 15);   // 16 slots, one always kept free
+    for (let i = 0; i < n; i++) {
+      const k = this.keys[i];
+      mem[0x41E + i * 2] = k.al & 0xFF;
+      mem[0x41F + i * 2] = k.ah & 0xFF;
+    }
+    put16(0x41A, 0x1E);
+    put16(0x41C, 0x1E + n * 2);
   }
 
   // Put the menu reader's answer on the wire as scancodes. Text mode only, so
@@ -1296,6 +1347,7 @@ class Machine {
     this.autoKeyPoll();
     const k = this.keys.shift();
     if (!k) return false;
+    this.syncKbBda();
     const sc = (k.ah & 0xFF) || 0x1C;
     this.kbQueue.push(sc, sc | 0x80);
     this.log(`autokey putting scancode ${sc.toString(16)} on the keyboard port`);
@@ -2102,6 +2154,7 @@ class Machine {
         // quit, which is itself the answer to whether it can be benchmarked.
         || (this.autoKeyNext());
       if (!k) { this.blockedOnKey = true; r.set('ax', 0); return true; }
+      this.syncKbBda();
       r.set('ax', ((k.ah & 0xFF) << 8) | (k.al & 0xFF));
       return true;
     }
