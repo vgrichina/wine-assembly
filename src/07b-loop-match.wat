@@ -45,6 +45,9 @@
   (global $loop_copy32_matches (mut i32) (i32.const 0))
   (global $loop_copy32_runs (mut i32) (i32.const 0))
   (global $loop_copy32_bytes (mut i64) (i64.const 0))
+  (global $loop_avg_matches (mut i32) (i32.const 0))
+  (global $loop_avg_runs (mut i32) (i32.const 0))
+  (global $loop_avg_pixels (mut i64) (i64.const 0))
   ;; LUT_RUN and COPY_RUN have independent gates. The role-proved LUT lowering
   ;; is on by default; COPY remains off while its historical Storm divergence
   ;; is investigated. set_loop_emit still controls both for compatibility.
@@ -1301,6 +1304,501 @@
     (call $te_raw (i32.const 1))
     (i32.const 1))
 
+  ;; Emit the common H435 stream descriptor. Keeping this mechanical packing
+  ;; in one place lets recognizers focus on proving their guest instruction
+  ;; order rather than duplicating a 21-word ABI.
+  (func $loop_emit_avg
+    (param $mode i32) (param $mask i32) (param $round_mask i32)
+    (param $a_base i32) (param $a_index i32) (param $a_scale i32)
+    (param $a_disp i32) (param $a_step i32)
+    (param $b_base i32) (param $b_index i32) (param $b_scale i32)
+    (param $b_disp i32) (param $b_step i32)
+    (param $d_base i32) (param $d_index i32) (param $d_scale i32)
+    (param $d_disp i32) (param $d_step i32)
+    (param $ind i32) (param $ind_step i32) (param $term i32) (param $cost i32)
+    (call $te (global.get $LOOP_SUPEROP_AVG) (local.get $mode))
+    (call $te_raw (local.get $mask))
+    (call $te_raw (local.get $round_mask))
+    (call $te_raw (local.get $a_base))
+    (call $te_raw (local.get $a_index))
+    (call $te_raw (local.get $a_scale))
+    (call $te_raw (local.get $a_disp))
+    (call $te_raw (local.get $a_step))
+    (call $te_raw (local.get $b_base))
+    (call $te_raw (local.get $b_index))
+    (call $te_raw (local.get $b_scale))
+    (call $te_raw (local.get $b_disp))
+    (call $te_raw (local.get $b_step))
+    (call $te_raw (local.get $d_base))
+    (call $te_raw (local.get $d_index))
+    (call $te_raw (local.get $d_scale))
+    (call $te_raw (local.get $d_disp))
+    (call $te_raw (local.get $d_step))
+    (call $te_raw (local.get $ind))
+    (call $te_raw (local.get $ind_step))
+    (call $te_raw (local.get $term))
+    (call $te_raw (local.get $cost)))
+
+  ;; The carry-wide form seen twice in Abe, generalized over all register
+  ;; roles, SIB layouts, displacements and masks:
+  ;;
+  ;;   mov A,[baseA+index*scale+dispA]
+  ;;   mov B,[baseB+index*scale+dispB]
+  ;;   and A,mask / and B,mask / add A,B / rcr A,1
+  ;;   mov [baseD+index*scale+dispD],A / dec index / jge ^
+  (func $loop_try_avg_wide_indexed
+    (param $start_eip i32) (param $tstart i32) (result i32)
+    (local $p i32) (local $fn i32) (local $branch_op i32)
+    (local $a i32) (local $b i32) (local $ind i32)
+    (local $a_info i32) (local $b_info i32) (local $d_info i32)
+    (local $a_base i32) (local $b_base i32) (local $d_base i32)
+    (local $scale i32) (local $mask i32)
+    (local $a_disp i32) (local $b_disp i32) (local $d_disp i32)
+    (local $fall i32) (local $back i32) (local $regs i32)
+
+    (if (i32.ne (global.get $op_index_n) (i32.const 9))
+      (then (return (i32.const 0))))
+
+    (local.set $p (call $loop_op_at (i32.const 0)))
+    (if (i32.ne (i32.load (local.get $p)) (i32.const 389))
+      (then (return (i32.const 0))))
+    (local.set $a (i32.load offset=4 (local.get $p)))
+    (local.set $a_info (i32.load offset=8 (local.get $p)))
+    (local.set $a_disp (i32.load offset=12 (local.get $p)))
+
+    (local.set $p (call $loop_op_at (i32.const 1)))
+    (if (i32.ne (i32.load (local.get $p)) (i32.const 389))
+      (then (return (i32.const 0))))
+    (local.set $b (i32.load offset=4 (local.get $p)))
+    (local.set $b_info (i32.load offset=8 (local.get $p)))
+    (local.set $b_disp (i32.load offset=12 (local.get $p)))
+
+    ;; Equal immediate masks on the two loaded values.
+    (local.set $p (call $loop_op_at (i32.const 2)))
+    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 7))
+                (i32.ne (i32.load offset=4 (local.get $p)) (local.get $a)))
+      (then (return (i32.const 0))))
+    (local.set $mask (i32.load offset=8 (local.get $p)))
+    (local.set $p (call $loop_op_at (i32.const 3)))
+    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 7))
+          (i32.or (i32.ne (i32.load offset=4 (local.get $p)) (local.get $b))
+                  (i32.ne (i32.load offset=8 (local.get $p)) (local.get $mask))))
+      (then (return (i32.const 0))))
+
+    (local.set $p (call $loop_op_at (i32.const 4)))
+    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 12))
+                (i32.ne (i32.load offset=4 (local.get $p))
+                  (i32.or (i32.shl (local.get $a) (i32.const 4)) (local.get $b))))
+      (then (return (i32.const 0))))
+    (local.set $p (call $loop_op_at (i32.const 5)))
+    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 53))
+                (i32.ne (i32.load offset=4 (local.get $p))
+                  (i32.or (local.get $a) (i32.const 0x10300))))
+      (then (return (i32.const 0))))
+
+    (local.set $p (call $loop_op_at (i32.const 6)))
+    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 420))
+                (i32.ne (i32.load offset=4 (local.get $p)) (local.get $a)))
+      (then (return (i32.const 0))))
+    (local.set $d_info (i32.load offset=8 (local.get $p)))
+    (local.set $d_disp (i32.load offset=12 (local.get $p)))
+
+    (local.set $p (call $loop_op_at (i32.const 7)))
+    (if (i32.ne (i32.load (local.get $p)) (i32.const 65))
+      (then (return (i32.const 0))))
+    (local.set $ind (i32.load offset=4 (local.get $p)))
+    (local.set $p (call $loop_op_at (i32.const 8)))
+    (if (i32.ne (i32.load (local.get $p)) (i32.const 320))
+      (then (return (i32.const 0))))
+    (local.set $branch_op (i32.load offset=4 (local.get $p)))
+    (local.set $fall (i32.load offset=8 (local.get $p)))
+    (local.set $back (i32.load offset=12 (local.get $p)))
+
+    (local.set $a_base (i32.and (local.get $a_info) (i32.const 0xF)))
+    (local.set $b_base (i32.and (local.get $b_info) (i32.const 0xF)))
+    (local.set $d_base (i32.and (local.get $d_info) (i32.const 0xF)))
+    (local.set $scale (i32.and (i32.shr_u (local.get $a_info) (i32.const 8)) (i32.const 3)))
+    ;; All streams use the induction register with one scale. Reject absent or
+    ;; non-register bases and every alias that would make a load overwrite an
+    ;; address component used later in the same original iteration.
+    (if (i32.or
+          (i32.or (i32.ge_u (local.get $a_base) (i32.const 8))
+                  (i32.ge_u (local.get $b_base) (i32.const 8)))
+          (i32.ge_u (local.get $d_base) (i32.const 8)))
+      (then (return (i32.const 0))))
+    (if (i32.or
+          (i32.ne (i32.and (i32.shr_u (local.get $a_info) (i32.const 4)) (i32.const 0xF))
+                  (local.get $ind))
+          (i32.or
+            (i32.ne (i32.and (i32.shr_u (local.get $b_info) (i32.const 4)) (i32.const 0xF))
+                    (local.get $ind))
+            (i32.ne (i32.and (i32.shr_u (local.get $d_info) (i32.const 4)) (i32.const 0xF))
+                    (local.get $ind))))
+      (then (return (i32.const 0))))
+    (if (i32.or
+          (i32.ne (i32.and (i32.shr_u (local.get $b_info) (i32.const 8)) (i32.const 3))
+                  (local.get $scale))
+          (i32.ne (i32.and (i32.shr_u (local.get $d_info) (i32.const 8)) (i32.const 3))
+                  (local.get $scale)))
+      (then (return (i32.const 0))))
+    (local.set $regs
+      (i32.or (i32.shl (i32.const 1) (local.get $a))
+        (i32.or (i32.shl (i32.const 1) (local.get $b))
+          (i32.or (i32.shl (i32.const 1) (local.get $ind))
+            (i32.or (i32.shl (i32.const 1) (local.get $a_base))
+              (i32.or (i32.shl (i32.const 1) (local.get $b_base))
+                      (i32.shl (i32.const 1) (local.get $d_base))))))))
+    (if (i32.ne (i32.popcnt (local.get $regs)) (i32.const 6))
+      (then (return (i32.const 0))))
+
+    (global.set $loop_matched_blocks
+      (i32.add (global.get $loop_matched_blocks) (i32.const 1)))
+    (global.set $loop_avg_matches
+      (i32.add (global.get $loop_avg_matches) (i32.const 1)))
+    (if (global.get $loop_trace)
+      (then
+        (call $host_log_i32 (i32.const 0x100B0004))
+        (call $host_log_i32 (local.get $start_eip))))
+    (if (i32.eqz (global.get $loop_copy_emit_enabled))
+      (then (return (i32.const 0))))
+
+    (global.set $thread_alloc (local.get $tstart))
+    (global.set $op_index_n (i32.const 0))
+    (call $loop_emit_avg
+      (i32.const 0) (local.get $mask) (i32.const 0)
+      (local.get $a_base) (local.get $ind) (local.get $scale) (local.get $a_disp) (i32.const 0)
+      (local.get $b_base) (local.get $ind) (local.get $scale) (local.get $b_disp) (i32.const 0)
+      (local.get $d_base) (local.get $ind) (local.get $scale) (local.get $d_disp) (i32.const 0)
+      (local.get $ind) (i32.const -1) (i32.const 1) (i32.const 9))
+
+    ;; Ordinary complete final iteration.
+    (call $te (i32.const 389) (local.get $a))
+    (call $te_raw (local.get $a_info)) (call $te_raw (local.get $a_disp))
+    (call $te (i32.const 389) (local.get $b))
+    (call $te_raw (local.get $b_info)) (call $te_raw (local.get $b_disp))
+    (call $te (i32.const 7) (local.get $a)) (call $te_raw (local.get $mask))
+    (call $te (i32.const 7) (local.get $b)) (call $te_raw (local.get $mask))
+    (call $te (i32.const 12) (i32.or (i32.shl (local.get $a) (i32.const 4)) (local.get $b)))
+    (call $te (i32.const 53) (i32.or (local.get $a) (i32.const 0x10300)))
+    (call $te (i32.const 420) (local.get $a))
+    (call $te_raw (local.get $d_info)) (call $te_raw (local.get $d_disp))
+    (call $te (i32.const 65) (local.get $ind))
+    (call $te (i32.const 320) (local.get $branch_op))
+    (call $te_raw (local.get $fall)) (call $te_raw (local.get $back))
+    (i32.const 1))
+
+  ;; Advancing-cursor floor average used by Winamp AVS and VirtualDub-shaped
+  ;; renderers: shift both lanes, apply one common mask, then add.
+  (func $loop_try_avg_shift_cursor
+    (param $start_eip i32) (param $tstart i32) (result i32)
+    (local $p i32) (local $fn i32) (local $branch_op i32)
+    (local $a i32) (local $b i32) (local $ind i32)
+    (local $a_base i32) (local $b_base i32) (local $d_base i32)
+    (local $a_disp i32) (local $b_disp i32) (local $d_disp i32)
+    (local $mask i32) (local $fall i32) (local $back i32) (local $regs i32)
+
+    (if (i32.ne (global.get $op_index_n) (i32.const 13))
+      (then (return (i32.const 0))))
+    (local.set $p (call $loop_op_at (i32.const 0)))
+    (local.set $fn (i32.load (local.get $p)))
+    (if (i32.or (i32.lt_u (local.get $fn) (i32.const 339))
+                (i32.gt_u (local.get $fn) (i32.const 346)))
+      (then (return (i32.const 0))))
+    (local.set $a_base (i32.sub (local.get $fn) (i32.const 339)))
+    (local.set $a (i32.load offset=4 (local.get $p)))
+    (local.set $a_disp (i32.load offset=8 (local.get $p)))
+    (local.set $p (call $loop_op_at (i32.const 1)))
+    (local.set $fn (i32.load (local.get $p)))
+    (if (i32.or (i32.lt_u (local.get $fn) (i32.const 339))
+                (i32.gt_u (local.get $fn) (i32.const 346)))
+      (then (return (i32.const 0))))
+    (local.set $b_base (i32.sub (local.get $fn) (i32.const 339)))
+    (local.set $b (i32.load offset=4 (local.get $p)))
+    (local.set $b_disp (i32.load offset=8 (local.get $p)))
+
+    (local.set $p (call $loop_op_at (i32.const 2)))
+    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 53))
+                (i32.ne (i32.load offset=4 (local.get $p))
+                  (i32.or (local.get $a) (i32.const 0x10500))))
+      (then (return (i32.const 0))))
+    (local.set $p (call $loop_op_at (i32.const 3)))
+    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 53))
+                (i32.ne (i32.load offset=4 (local.get $p))
+                  (i32.or (local.get $b) (i32.const 0x10500))))
+      (then (return (i32.const 0))))
+    (local.set $p (call $loop_op_at (i32.const 4)))
+    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 7))
+                (i32.ne (i32.load offset=4 (local.get $p)) (local.get $a)))
+      (then (return (i32.const 0))))
+    (local.set $mask (i32.load offset=8 (local.get $p)))
+    (local.set $p (call $loop_op_at (i32.const 5)))
+    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 7))
+          (i32.or (i32.ne (i32.load offset=4 (local.get $p)) (local.get $b))
+                  (i32.ne (i32.load offset=8 (local.get $p)) (local.get $mask))))
+      (then (return (i32.const 0))))
+    (local.set $p (call $loop_op_at (i32.const 6)))
+    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 12))
+                (i32.ne (i32.load offset=4 (local.get $p))
+                  (i32.or (i32.shl (local.get $a) (i32.const 4)) (local.get $b))))
+      (then (return (i32.const 0))))
+
+    (local.set $p (call $loop_op_at (i32.const 7)))
+    (local.set $fn (i32.load (local.get $p)))
+    (if (i32.or
+          (i32.or (i32.lt_u (local.get $fn) (i32.const 347))
+                  (i32.gt_u (local.get $fn) (i32.const 354)))
+          (i32.ne (i32.load offset=4 (local.get $p)) (local.get $a)))
+      (then (return (i32.const 0))))
+    (local.set $d_base (i32.sub (local.get $fn) (i32.const 347)))
+    (local.set $d_disp (i32.load offset=8 (local.get $p)))
+
+    ;; Three cursor bumps by four bytes in stream order.
+    (local.set $p (call $loop_op_at (i32.const 8)))
+    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 3))
+          (i32.or (i32.ne (i32.load offset=4 (local.get $p)) (local.get $a_base))
+                  (i32.ne (i32.load offset=8 (local.get $p)) (i32.const 4))))
+      (then (return (i32.const 0))))
+    (local.set $p (call $loop_op_at (i32.const 9)))
+    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 3))
+          (i32.or (i32.ne (i32.load offset=4 (local.get $p)) (local.get $b_base))
+                  (i32.ne (i32.load offset=8 (local.get $p)) (i32.const 4))))
+      (then (return (i32.const 0))))
+    (local.set $p (call $loop_op_at (i32.const 10)))
+    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 3))
+          (i32.or (i32.ne (i32.load offset=4 (local.get $p)) (local.get $d_base))
+                  (i32.ne (i32.load offset=8 (local.get $p)) (i32.const 4))))
+      (then (return (i32.const 0))))
+    (local.set $p (call $loop_op_at (i32.const 11)))
+    (if (i32.ne (i32.load (local.get $p)) (i32.const 65))
+      (then (return (i32.const 0))))
+    (local.set $ind (i32.load offset=4 (local.get $p)))
+    (local.set $p (call $loop_op_at (i32.const 12)))
+    (if (i32.ne (i32.load (local.get $p)) (i32.const 312))
+      (then (return (i32.const 0))))
+    (local.set $branch_op (i32.load offset=4 (local.get $p)))
+    (local.set $fall (i32.load offset=8 (local.get $p)))
+    (local.set $back (i32.load offset=12 (local.get $p)))
+
+    (local.set $regs
+      (i32.or (i32.shl (i32.const 1) (local.get $a))
+        (i32.or (i32.shl (i32.const 1) (local.get $b))
+          (i32.or (i32.shl (i32.const 1) (local.get $ind))
+            (i32.or (i32.shl (i32.const 1) (local.get $a_base))
+              (i32.or (i32.shl (i32.const 1) (local.get $b_base))
+                      (i32.shl (i32.const 1) (local.get $d_base))))))))
+    (if (i32.ne (i32.popcnt (local.get $regs)) (i32.const 6))
+      (then (return (i32.const 0))))
+
+    (global.set $loop_matched_blocks
+      (i32.add (global.get $loop_matched_blocks) (i32.const 1)))
+    (global.set $loop_avg_matches
+      (i32.add (global.get $loop_avg_matches) (i32.const 1)))
+    (if (i32.eqz (global.get $loop_copy_emit_enabled))
+      (then (return (i32.const 0))))
+    (global.set $thread_alloc (local.get $tstart))
+    (global.set $op_index_n (i32.const 0))
+    (call $loop_emit_avg
+      (i32.const 1) (local.get $mask) (i32.const 0)
+      (local.get $a_base) (i32.const -1) (i32.const 0) (local.get $a_disp) (i32.const 4)
+      (local.get $b_base) (i32.const -1) (i32.const 0) (local.get $b_disp) (i32.const 4)
+      (local.get $d_base) (i32.const -1) (i32.const 0) (local.get $d_disp) (i32.const 4)
+      (local.get $ind) (i32.const -1) (i32.const 0) (i32.const 13))
+
+    (call $te (i32.add (i32.const 339) (local.get $a_base)) (local.get $a))
+    (call $te_raw (local.get $a_disp))
+    (call $te (i32.add (i32.const 339) (local.get $b_base)) (local.get $b))
+    (call $te_raw (local.get $b_disp))
+    (call $te (i32.const 53) (i32.or (local.get $a) (i32.const 0x10500)))
+    (call $te (i32.const 53) (i32.or (local.get $b) (i32.const 0x10500)))
+    (call $te (i32.const 7) (local.get $a)) (call $te_raw (local.get $mask))
+    (call $te (i32.const 7) (local.get $b)) (call $te_raw (local.get $mask))
+    (call $te (i32.const 12) (i32.or (i32.shl (local.get $a) (i32.const 4)) (local.get $b)))
+    (call $te (i32.add (i32.const 347) (local.get $d_base)) (local.get $a))
+    (call $te_raw (local.get $d_disp))
+    (call $te (i32.const 3) (local.get $a_base)) (call $te_raw (i32.const 4))
+    (call $te (i32.const 3) (local.get $b_base)) (call $te_raw (i32.const 4))
+    (call $te (i32.const 3) (local.get $d_base)) (call $te_raw (i32.const 4))
+    (call $te (i32.const 65) (local.get $ind))
+    (call $te (i32.const 312) (local.get $branch_op))
+    (call $te_raw (local.get $fall)) (call $te_raw (local.get $back))
+    (i32.const 1))
+
+  ;; Rounded packed average used by SDL/Smacker-shaped renderers. Preserve the
+  ;; correction term in a third data register before shifting the two sources:
+  ;;
+  ;;   mov A,[baseA] / mov B,[baseB] / mov R,A / and R,B / and R,round_mask
+  ;;   shr A,1 / shr B,1 / and A,mask / and B,mask
+  ;;   add A,B / add A,R / mov [baseD],A
+  ;;   add baseA,4 / add baseB,4 / add baseD,4 / dec count / jnz ^
+  (func $loop_try_avg_round_cursor
+    (param $start_eip i32) (param $tstart i32) (result i32)
+    (local $p i32) (local $fn i32) (local $branch_op i32)
+    (local $a i32) (local $b i32) (local $round i32) (local $ind i32)
+    (local $a_base i32) (local $b_base i32) (local $d_base i32)
+    (local $a_disp i32) (local $b_disp i32) (local $d_disp i32)
+    (local $mask i32) (local $round_mask i32)
+    (local $fall i32) (local $back i32) (local $regs i32)
+
+    (if (i32.ne (global.get $op_index_n) (i32.const 17))
+      (then (return (i32.const 0))))
+    (local.set $p (call $loop_op_at (i32.const 0)))
+    (local.set $fn (i32.load (local.get $p)))
+    (if (i32.or (i32.lt_u (local.get $fn) (i32.const 339))
+                (i32.gt_u (local.get $fn) (i32.const 346)))
+      (then (return (i32.const 0))))
+    (local.set $a_base (i32.sub (local.get $fn) (i32.const 339)))
+    (local.set $a (i32.load offset=4 (local.get $p)))
+    (local.set $a_disp (i32.load offset=8 (local.get $p)))
+    (local.set $p (call $loop_op_at (i32.const 1)))
+    (local.set $fn (i32.load (local.get $p)))
+    (if (i32.or (i32.lt_u (local.get $fn) (i32.const 339))
+                (i32.gt_u (local.get $fn) (i32.const 346)))
+      (then (return (i32.const 0))))
+    (local.set $b_base (i32.sub (local.get $fn) (i32.const 339)))
+    (local.set $b (i32.load offset=4 (local.get $p)))
+    (local.set $b_disp (i32.load offset=8 (local.get $p)))
+
+    (local.set $p (call $loop_op_at (i32.const 2)))
+    (if (i32.ne (i32.load (local.get $p)) (i32.const 11))
+      (then (return (i32.const 0))))
+    (local.set $round (i32.shr_u (i32.load offset=4 (local.get $p)) (i32.const 4)))
+    (if (i32.ne (i32.load offset=4 (local.get $p))
+          (i32.or (i32.shl (local.get $round) (i32.const 4)) (local.get $a)))
+      (then (return (i32.const 0))))
+    (local.set $p (call $loop_op_at (i32.const 3)))
+    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 16))
+                (i32.ne (i32.load offset=4 (local.get $p))
+                  (i32.or (i32.shl (local.get $round) (i32.const 4)) (local.get $b))))
+      (then (return (i32.const 0))))
+    (local.set $p (call $loop_op_at (i32.const 4)))
+    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 7))
+                (i32.ne (i32.load offset=4 (local.get $p)) (local.get $round)))
+      (then (return (i32.const 0))))
+    (local.set $round_mask (i32.load offset=8 (local.get $p)))
+
+    (local.set $p (call $loop_op_at (i32.const 5)))
+    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 53))
+                (i32.ne (i32.load offset=4 (local.get $p))
+                  (i32.or (local.get $a) (i32.const 0x10500))))
+      (then (return (i32.const 0))))
+    (local.set $p (call $loop_op_at (i32.const 6)))
+    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 53))
+                (i32.ne (i32.load offset=4 (local.get $p))
+                  (i32.or (local.get $b) (i32.const 0x10500))))
+      (then (return (i32.const 0))))
+    (local.set $p (call $loop_op_at (i32.const 7)))
+    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 7))
+                (i32.ne (i32.load offset=4 (local.get $p)) (local.get $a)))
+      (then (return (i32.const 0))))
+    (local.set $mask (i32.load offset=8 (local.get $p)))
+    (local.set $p (call $loop_op_at (i32.const 8)))
+    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 7))
+          (i32.or (i32.ne (i32.load offset=4 (local.get $p)) (local.get $b))
+                  (i32.ne (i32.load offset=8 (local.get $p)) (local.get $mask))))
+      (then (return (i32.const 0))))
+    (local.set $p (call $loop_op_at (i32.const 9)))
+    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 12))
+                (i32.ne (i32.load offset=4 (local.get $p))
+                  (i32.or (i32.shl (local.get $a) (i32.const 4)) (local.get $b))))
+      (then (return (i32.const 0))))
+    (local.set $p (call $loop_op_at (i32.const 10)))
+    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 12))
+                (i32.ne (i32.load offset=4 (local.get $p))
+                  (i32.or (i32.shl (local.get $a) (i32.const 4)) (local.get $round))))
+      (then (return (i32.const 0))))
+
+    (local.set $p (call $loop_op_at (i32.const 11)))
+    (local.set $fn (i32.load (local.get $p)))
+    (if (i32.or
+          (i32.or (i32.lt_u (local.get $fn) (i32.const 347))
+                  (i32.gt_u (local.get $fn) (i32.const 354)))
+          (i32.ne (i32.load offset=4 (local.get $p)) (local.get $a)))
+      (then (return (i32.const 0))))
+    (local.set $d_base (i32.sub (local.get $fn) (i32.const 347)))
+    (local.set $d_disp (i32.load offset=8 (local.get $p)))
+
+    (local.set $p (call $loop_op_at (i32.const 12)))
+    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 3))
+          (i32.or (i32.ne (i32.load offset=4 (local.get $p)) (local.get $a_base))
+                  (i32.ne (i32.load offset=8 (local.get $p)) (i32.const 4))))
+      (then (return (i32.const 0))))
+    (local.set $p (call $loop_op_at (i32.const 13)))
+    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 3))
+          (i32.or (i32.ne (i32.load offset=4 (local.get $p)) (local.get $b_base))
+                  (i32.ne (i32.load offset=8 (local.get $p)) (i32.const 4))))
+      (then (return (i32.const 0))))
+    (local.set $p (call $loop_op_at (i32.const 14)))
+    (if (i32.or (i32.ne (i32.load (local.get $p)) (i32.const 3))
+          (i32.or (i32.ne (i32.load offset=4 (local.get $p)) (local.get $d_base))
+                  (i32.ne (i32.load offset=8 (local.get $p)) (i32.const 4))))
+      (then (return (i32.const 0))))
+    (local.set $p (call $loop_op_at (i32.const 15)))
+    (if (i32.ne (i32.load (local.get $p)) (i32.const 65))
+      (then (return (i32.const 0))))
+    (local.set $ind (i32.load offset=4 (local.get $p)))
+    (local.set $p (call $loop_op_at (i32.const 16)))
+    (if (i32.ne (i32.load (local.get $p)) (i32.const 312))
+      (then (return (i32.const 0))))
+    (local.set $branch_op (i32.load offset=4 (local.get $p)))
+    (local.set $fall (i32.load offset=8 (local.get $p)))
+    (local.set $back (i32.load offset=12 (local.get $p)))
+
+    ;; Seven distinct roles ensure neither data load nor cursor update changes
+    ;; an address component or the private countdown used later in the body.
+    (local.set $regs
+      (i32.or (i32.shl (i32.const 1) (local.get $a))
+        (i32.or (i32.shl (i32.const 1) (local.get $b))
+          (i32.or (i32.shl (i32.const 1) (local.get $round))
+            (i32.or (i32.shl (i32.const 1) (local.get $ind))
+              (i32.or (i32.shl (i32.const 1) (local.get $a_base))
+                (i32.or (i32.shl (i32.const 1) (local.get $b_base))
+                        (i32.shl (i32.const 1) (local.get $d_base)))))))))
+    (if (i32.ne (i32.popcnt (local.get $regs)) (i32.const 7))
+      (then (return (i32.const 0))))
+
+    (global.set $loop_matched_blocks
+      (i32.add (global.get $loop_matched_blocks) (i32.const 1)))
+    (global.set $loop_avg_matches
+      (i32.add (global.get $loop_avg_matches) (i32.const 1)))
+    (if (i32.eqz (global.get $loop_copy_emit_enabled))
+      (then (return (i32.const 0))))
+    (global.set $thread_alloc (local.get $tstart))
+    (global.set $op_index_n (i32.const 0))
+    (call $loop_emit_avg
+      (i32.const 2) (local.get $mask) (local.get $round_mask)
+      (local.get $a_base) (i32.const -1) (i32.const 0) (local.get $a_disp) (i32.const 4)
+      (local.get $b_base) (i32.const -1) (i32.const 0) (local.get $b_disp) (i32.const 4)
+      (local.get $d_base) (i32.const -1) (i32.const 0) (local.get $d_disp) (i32.const 4)
+      (local.get $ind) (i32.const -1) (i32.const 0) (i32.const 17))
+
+    ;; Retain the complete final iteration as ordinary threaded handlers.
+    (call $te (i32.add (i32.const 339) (local.get $a_base)) (local.get $a))
+    (call $te_raw (local.get $a_disp))
+    (call $te (i32.add (i32.const 339) (local.get $b_base)) (local.get $b))
+    (call $te_raw (local.get $b_disp))
+    (call $te (i32.const 11)
+      (i32.or (i32.shl (local.get $round) (i32.const 4)) (local.get $a)))
+    (call $te (i32.const 16)
+      (i32.or (i32.shl (local.get $round) (i32.const 4)) (local.get $b)))
+    (call $te (i32.const 7) (local.get $round)) (call $te_raw (local.get $round_mask))
+    (call $te (i32.const 53) (i32.or (local.get $a) (i32.const 0x10500)))
+    (call $te (i32.const 53) (i32.or (local.get $b) (i32.const 0x10500)))
+    (call $te (i32.const 7) (local.get $a)) (call $te_raw (local.get $mask))
+    (call $te (i32.const 7) (local.get $b)) (call $te_raw (local.get $mask))
+    (call $te (i32.const 12)
+      (i32.or (i32.shl (local.get $a) (i32.const 4)) (local.get $b)))
+    (call $te (i32.const 12)
+      (i32.or (i32.shl (local.get $a) (i32.const 4)) (local.get $round)))
+    (call $te (i32.add (i32.const 347) (local.get $d_base)) (local.get $a))
+    (call $te_raw (local.get $d_disp))
+    (call $te (i32.const 3) (local.get $a_base)) (call $te_raw (i32.const 4))
+    (call $te (i32.const 3) (local.get $b_base)) (call $te_raw (i32.const 4))
+    (call $te (i32.const 3) (local.get $d_base)) (call $te_raw (i32.const 4))
+    (call $te (i32.const 65) (local.get $ind))
+    (call $te (i32.const 312) (local.get $branch_op))
+    (call $te_raw (local.get $fall)) (call $te_raw (local.get $back))
+    (i32.const 1))
+
   ;; ------------------------------------------------------------------
   ;; Bounded dword COPY_RUN
   ;; ------------------------------------------------------------------
@@ -2116,6 +2614,162 @@
     (global.set $eip
       (select (local.get $back) (local.get $fall) (i32.ne (local.get $ctr) (i32.const 0)))))
 
+  ;; ------------------------------------------------------------------
+  ;; 435: PACKED_AVG_RUN
+  ;; ------------------------------------------------------------------
+  ;; Collapse every iteration before the final one, then continue into an
+  ;; ordinary copy of the complete final guest iteration. That suffix owns all
+  ;; architectural scratch registers and flags; this handler only publishes
+  ;; stream cursors and the induction register at a guest-iteration boundary.
+  ;;
+  ;; op selects the arithmetic:
+  ;;   0 WIDE_ADD_SHIFT:     u32((u64(a&mask) + u64(b&mask)) >> 1)
+  ;;   1 SHIFT_MASK_ADD:     ((a>>1)&mask) + ((b>>1)&mask)
+  ;;   2 SHIFT_MASK_ADD_LSB: mode 1 + (a&b&round_mask)
+  ;;
+  ;; Descriptor words:
+  ;;   0 mask  1 round_mask
+  ;;   2..6   src A: base_reg,index_reg(-1 none),scale,disp,base_step
+  ;;   7..11  src B: base_reg,index_reg(-1 none),scale,disp,base_step
+  ;;   12..16 dst:   base_reg,index_reg(-1 none),scale,disp,base_step
+  ;;   17 induction_reg  18 induction_step
+  ;;   19 termination (0 count-down/JNZ leaves 1, 1 signed-index/JGE leaves 0)
+  ;;   20 original handlers per iteration
+  (global $LOOP_SUPEROP_AVG i32 (i32.const 435))
+
+  (func $packed_avg_addr
+    (param $base i32) (param $index_reg i32) (param $ind_reg i32)
+    (param $ind i32) (param $scale i32) (param $disp i32) (result i32)
+    (local $index i32)
+    (if (i32.ge_s (local.get $index_reg) (i32.const 0))
+      (then
+        (local.set $index
+          (select (local.get $ind) (call $get_reg (local.get $index_reg))
+            (i32.eq (local.get $index_reg) (local.get $ind_reg))))))
+    (i32.add (i32.add (local.get $base)
+      (i32.shl (local.get $index) (local.get $scale))) (local.get $disp)))
+
+  (func $th_packed_avg_run (param $mode i32)
+    (local $mask i32) (local $round_mask i32)
+    (local $a_base_reg i32) (local $a_index i32) (local $a_scale i32)
+    (local $a_disp i32) (local $a_step i32) (local $a_base i32)
+    (local $b_base_reg i32) (local $b_index i32) (local $b_scale i32)
+    (local $b_disp i32) (local $b_step i32) (local $b_base i32)
+    (local $d_base_reg i32) (local $d_index i32) (local $d_scale i32)
+    (local $d_disp i32) (local $d_step i32) (local $d_base i32)
+    (local $ind_reg i32) (local $ind_step i32) (local $term i32)
+    (local $cost i32) (local $ind i32) (local $remaining i32)
+    (local $allowed i32) (local $n i32) (local $done i32)
+    (local $a i32) (local $b i32) (local $v i32) (local $sum i64)
+
+    (local.set $mask (call $read_thread_word))
+    (local.set $round_mask (call $read_thread_word))
+    (local.set $a_base_reg (call $read_thread_word))
+    (local.set $a_index (call $read_thread_word))
+    (local.set $a_scale (call $read_thread_word))
+    (local.set $a_disp (call $read_thread_word))
+    (local.set $a_step (call $read_thread_word))
+    (local.set $b_base_reg (call $read_thread_word))
+    (local.set $b_index (call $read_thread_word))
+    (local.set $b_scale (call $read_thread_word))
+    (local.set $b_disp (call $read_thread_word))
+    (local.set $b_step (call $read_thread_word))
+    (local.set $d_base_reg (call $read_thread_word))
+    (local.set $d_index (call $read_thread_word))
+    (local.set $d_scale (call $read_thread_word))
+    (local.set $d_disp (call $read_thread_word))
+    (local.set $d_step (call $read_thread_word))
+    (local.set $ind_reg (call $read_thread_word))
+    (local.set $ind_step (call $read_thread_word))
+    (local.set $term (call $read_thread_word))
+    (local.set $cost (call $read_thread_word))
+
+    (local.set $a_base (call $get_reg (local.get $a_base_reg)))
+    (local.set $b_base (call $get_reg (local.get $b_base_reg)))
+    (local.set $d_base (call $get_reg (local.get $d_base_reg)))
+    (local.set $ind (call $get_reg (local.get $ind_reg)))
+    ;; The suffix executes one original iteration. Fold only the iterations
+    ;; before it, so a zero/negative do-while entry naturally stays ordinary.
+    (if (local.get $term)
+      (then
+        (if (i32.gt_s (local.get $ind) (i32.const 0))
+          (then (local.set $remaining (local.get $ind)))))
+      (else
+        (if (i32.gt_u (local.get $ind) (i32.const 1))
+          (then (local.set $remaining (i32.sub (local.get $ind) (i32.const 1)))))))
+
+    (local.set $allowed
+      (i32.div_u
+        (i32.add
+          (select (global.get $steps) (i32.const 0)
+            (i32.gt_s (global.get $steps) (i32.const 0)))
+          (i32.sub (local.get $cost) (i32.const 1)))
+        (local.get $cost)))
+    (local.set $n
+      (select (local.get $remaining) (local.get $allowed)
+        (i32.lt_u (local.get $remaining) (local.get $allowed))))
+    (local.set $done (local.get $n))
+
+    (block $finished
+      (loop $pixels
+        (br_if $finished (i32.eqz (local.get $done)))
+        ;; Preserve the guest's load-A, load-B, store order for overlap.
+        (local.set $a (call $gl32 (call $packed_avg_addr
+          (local.get $a_base) (local.get $a_index) (local.get $ind_reg)
+          (local.get $ind) (local.get $a_scale) (local.get $a_disp))))
+        (local.set $b (call $gl32 (call $packed_avg_addr
+          (local.get $b_base) (local.get $b_index) (local.get $ind_reg)
+          (local.get $ind) (local.get $b_scale) (local.get $b_disp))))
+        (if (i32.eqz (local.get $mode))
+          (then
+            (local.set $sum
+              (i64.add
+                (i64.extend_i32_u (i32.and (local.get $a) (local.get $mask)))
+                (i64.extend_i32_u (i32.and (local.get $b) (local.get $mask)))))
+            (local.set $v
+              (i32.wrap_i64 (i64.shr_u (local.get $sum) (i64.const 1)))))
+          (else
+            (local.set $v
+              (i32.add
+                (i32.and (i32.shr_u (local.get $a) (i32.const 1)) (local.get $mask))
+                (i32.and (i32.shr_u (local.get $b) (i32.const 1)) (local.get $mask))))
+            (if (i32.eq (local.get $mode) (i32.const 2))
+              (then (local.set $v (i32.add (local.get $v)
+                (i32.and (i32.and (local.get $a) (local.get $b))
+                  (local.get $round_mask))))))))
+        (call $gs32 (call $packed_avg_addr
+          (local.get $d_base) (local.get $d_index) (local.get $ind_reg)
+          (local.get $ind) (local.get $d_scale) (local.get $d_disp)) (local.get $v))
+
+        (local.set $a_base (i32.add (local.get $a_base) (local.get $a_step)))
+        (local.set $b_base (i32.add (local.get $b_base) (local.get $b_step)))
+        (local.set $d_base (i32.add (local.get $d_base) (local.get $d_step)))
+        (local.set $ind (i32.add (local.get $ind) (local.get $ind_step)))
+        (local.set $done (i32.sub (local.get $done) (i32.const 1)))
+        (br $pixels)))
+
+    (if (local.get $n)
+      (then
+        (if (local.get $a_step)
+          (then (call $set_reg (local.get $a_base_reg) (local.get $a_base))))
+        (if (local.get $b_step)
+          (then (call $set_reg (local.get $b_base_reg) (local.get $b_base))))
+        (if (local.get $d_step)
+          (then (call $set_reg (local.get $d_base_reg) (local.get $d_base))))
+        (call $set_reg (local.get $ind_reg) (local.get $ind))))
+    (global.set $loop_avg_runs
+      (i32.add (global.get $loop_avg_runs) (i32.const 1)))
+    (global.set $loop_avg_pixels
+      (i64.add (global.get $loop_avg_pixels) (i64.extend_i32_u (local.get $n))))
+    ;; H435 and the ordinary suffix are charged automatically. Replace H435's
+    ;; extra charge with the cost of the N folded guest iterations.
+    (global.set $steps
+      (i32.sub (global.get $steps)
+        (i32.sub (i32.mul (local.get $n) (local.get $cost)) (i32.const 1))))
+    (global.set $block_budget
+      (i32.sub (global.get $block_budget) (local.get $n)))
+    (return_call $next))
+
   ;; Called from $decode_block just before $cache_store.
   (func $loop_match_block (param $start_eip i32) (param $tstart i32)
     (if (global.get $op_index_poison) (then (return)))
@@ -2135,6 +2789,12 @@
     (if (call $loop_try_lut (local.get $start_eip) (local.get $tstart)) (then (return)))
     (if (call $loop_try_lut_bounded (local.get $start_eip) (local.get $tstart)) (then (return)))
     (if (call $loop_try_lut_blend_bounded (local.get $start_eip) (local.get $tstart))
+      (then (return)))
+    (if (call $loop_try_avg_wide_indexed (local.get $start_eip) (local.get $tstart))
+      (then (return)))
+    (if (call $loop_try_avg_shift_cursor (local.get $start_eip) (local.get $tstart))
+      (then (return)))
+    (if (call $loop_try_avg_round_cursor (local.get $start_eip) (local.get $tstart))
       (then (return)))
     (if (call $loop_try_copy32_bounded (local.get $start_eip) (local.get $tstart))
       (then (return)))
