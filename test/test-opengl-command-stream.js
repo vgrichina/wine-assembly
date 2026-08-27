@@ -57,6 +57,43 @@ const vertexCopy = new DataView(vertexCommand.capture.buffer,
 assert.deepStrictEqual([0, 1, 2].map(i => vertexCopy.getFloat32(i * 4, true)),
   [1.25, -2.5, 3.75], 'queued pointer input survives guest scratch reuse');
 
+// glBegin/glEnd traffic is compiled locally into one interleaved geometry
+// record. Boundary-sensitive fans are expanded so adjacent records can later
+// be concatenated safely by the fixed-function frontend.
+const packedCalls = [];
+const packedEncoder = new Stream.Encoder({
+  getMemory: () => memory,
+  guestToWasm: pointer => pointer,
+  capacity: 2048,
+  shared: false,
+  submit: batch => Stream.replay(batch, (opcode, mode, capture) => {
+    packedCalls.push({ opcode, mode, capture });
+    return 0;
+  }),
+});
+const setFloatArgs = values => values.forEach((value, i) => dv.setFloat32(stack + 4 + i * 4, value, true));
+dv.setUint32(stack + 4, 0x0006, true); // GL_TRIANGLE_FAN
+packedEncoder.call(21, stack, 0);
+setFloatArgs([0.25, 0.5, 0.75, 1]);
+packedEncoder.call(25, stack, 0);
+setFloatArgs([0.125, 0.875]);
+packedEncoder.call(28, stack, 0);
+for (const vertexValues of [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]]) {
+  setFloatArgs(vertexValues);
+  packedEncoder.call(30, stack, 0);
+}
+packedEncoder.call(22, stack, 0);
+packedEncoder.call(11, stack, 0);
+assert.deepStrictEqual(packedCalls.map(call => call.opcode), [Stream.PACKED_DRAW_OPCODE, 11],
+  'immediate calls collapse into one internal draw command');
+assert.strictEqual(packedCalls[0].mode, 0x0004, 'triangle fan is normalized to independent triangles');
+assert.strictEqual(packedCalls[0].capture.pointerLength, 6 * 9 * 4,
+  'four fan vertices compile to two interleaved triangles');
+const packedVertices = new Float32Array(packedCalls[0].capture.buffer,
+  packedCalls[0].capture.pointerOffset, packedCalls[0].capture.pointerLength / 4);
+assert.deepStrictEqual(Array.from(packedVertices.slice(3, 9)), [0.25, 0.5, 0.75, 1, 0.125, 0.875],
+  'packed vertices contain resolved color and texture-coordinate state');
+
 // Capacity pressure submits an execution batch but cannot publish a frame.
 let presents = 0;
 const overflowOpcodes = [];
@@ -91,18 +128,32 @@ dv.setUint32(stack + 4 + 6 * 4, 0x1908, true);  // GL_RGBA
 dv.setUint32(stack + 4 + 7 * 4, 0x1401, true);  // GL_UNSIGNED_BYTE
 dv.setUint32(stack + 4 + 8 * 4, texture, true);
 let borrowed = null;
+const textureOpcodes = [];
 const textureEncoder = new Stream.Encoder({
   getMemory: () => memory,
   guestToWasm: pointer => pointer,
   shared: false,
-  submit: batch => Stream.replay(batch, (_opcode, _aux, capture) => {
+  submit: batch => Stream.replay(batch, (opcode, _aux, capture) => {
+    textureOpcodes.push(opcode);
+    if (opcode !== 45) return 0;
     borrowed = capture;
     const direct = new Uint8Array(memory, texture, capture.pointerLength);
     assert.strictEqual(direct[0], 0xA7, 'replay reads the live guest allocation');
     return 0;
   }),
 });
+dv.setUint32(stack + 4, 0x0BE2, true);
+textureEncoder.call(10, stack, 0); // queued before the synchronous upload
+for (let i = 0; i < 9; i++) dv.setUint32(stack + 4 + i * 4, 0, true);
+dv.setUint32(stack + 4 + 3 * 4, 64, true);
+dv.setUint32(stack + 4 + 4 * 4, 64, true);
+dv.setUint32(stack + 4 + 6 * 4, 0x1908, true);
+dv.setUint32(stack + 4 + 7 * 4, 0x1401, true);
+dv.setUint32(stack + 4 + 8 * 4, texture, true);
 textureEncoder.call(45, stack, 0);
+assert.strictEqual(textureEncoder.submissions, 1,
+  'borrowed texture upload appends to pending work and submits once');
+assert.deepStrictEqual(textureOpcodes, [10, 45], 'single texture submission preserves command order');
 assert(borrowed && borrowed.pointerBorrowed, 'large texture is marked as borrowed guest memory');
 assert.strictEqual(borrowed.pointerOffset, 0, 'texture bytes are not copied into the command buffer');
 assert.strictEqual(borrowed.pointerLength, textureBytes);

@@ -15,12 +15,13 @@ class FakeBackend {
     };
     this.draws = []; this.uniforms = new Map(); this.uploads = [];
     this.parameters = [];
+    this.uniformCalls = 0;
   }
   createProgram() { return { attributes: { aPosition: 0, aColor: 1, aTexCoord: 2 }, uniforms: {} }; }
   createBuffer() { return {}; }
   updateBuffer(_buffer, _target, data) { this.vertices = Array.from(data); }
   useProgram() {}
-  setUniform(_program, name, _kind, value) { this.uniforms.set(name, value); }
+  setUniform(_program, name, _kind, value) { this.uniformCalls++; this.uniforms.set(name, value); }
   bindTexture() {}
   draw(command) { this.draws.push(command); }
   createTexture() { return {}; }
@@ -67,6 +68,22 @@ assert(gl.defaultTexture,
   'desktop GL texture zero has a mutable WebGL backing object');
 assert.strictEqual(backend.parameters.at(-1).texture, gl.defaultTexture,
   'texture-zero parameters target the owned default texture');
+
+const mergedBackend = new FakeBackend();
+const merged = new FixedFunctionGL(mergedBackend);
+const triangle = new Float32Array(3 * 9);
+merged.enqueuePacked(GL.TRIANGLES, triangle);
+merged.enqueuePacked(GL.TRIANGLES, triangle);
+assert.strictEqual(mergedBackend.draws.length, 0, 'compatible packed draws remain deferred');
+merged.flushPendingDraw();
+assert.strictEqual(mergedBackend.draws.length, 1, 'adjacent compatible draws merge into one WebGL draw');
+assert.strictEqual(mergedBackend.draws[0].count, 6, 'merged draw contains both triangles');
+assert.strictEqual(mergedBackend.vertices.length, 6 * 9, 'merged interleaved upload is contiguous');
+const initialUniformCalls = mergedBackend.uniformCalls;
+merged.enqueuePacked(GL.TRIANGLES, triangle);
+merged.flushPendingDraw();
+assert.strictEqual(mergedBackend.uniformCalls, initialUniformCalls,
+  'unchanged fixed-function uniforms are not reissued on later draws');
 
 // Gameplay geometry lives in Quake's high sparse VirtualAlloc arena. Verify
 // pointer-valued GL calls use the emulator's canonical translator instead of

@@ -16,14 +16,18 @@ const gl = {
   createProgram: () => ({ id: next++ }), attachShader() {}, linkProgram() {},
   getProgramParameter: () => true, getProgramInfoLog: () => '', deleteProgram() {},
   getAttribLocation: (_p, n) => n === 'a' ? 0 : 1,
-  getUniformLocation: (_p, n) => ({ n }), useProgram() {},
+  getUniformLocation: (_p, n) => ({ n }), useProgram: (...a) => calls.push(['useProgram', ...a]),
   createBuffer: () => ({ id: next++ }), bindBuffer: (...a) => calls.push(['bindBuffer', ...a]),
   bufferData: (...a) => calls.push(['bufferData', ...a]), deleteBuffer() {},
   createTexture: () => ({ id: next++ }), activeTexture() {}, bindTexture() {},
   pixelStorei() {}, texImage2D: (...a) => calls.push(['texImage2D', ...a]),
   texSubImage2D() {}, texParameteri() {}, deleteTexture() {},
-  enableVertexAttribArray() {}, vertexAttribPointer() {}, drawArrays: (...a) => calls.push(['drawArrays', ...a]),
-  drawElements() {}, uniformMatrix4fv() {}, uniform1i() {}, uniform1f() {}, uniform4fv() {},
+  enableVertexAttribArray: (...a) => calls.push(['enableVertexAttribArray', ...a]),
+  disableVertexAttribArray: (...a) => calls.push(['disableVertexAttribArray', ...a]),
+  vertexAttribPointer: (...a) => calls.push(['vertexAttribPointer', ...a]),
+  drawArrays: (...a) => calls.push(['drawArrays', ...a]),
+  drawElements() {}, uniformMatrix4fv: (...a) => calls.push(['uniformMatrix4fv', ...a]),
+  uniform1i: (...a) => calls.push(['uniform1i', ...a]), uniform1f() {}, uniform4fv() {},
   enable() {}, disable() {}, viewport() {}, scissor() {}, depthFunc() {}, depthMask() {},
   depthRange() {}, blendFunc() {}, cullFace() {}, frontFace() {}, lineWidth() {},
   clearColor() {}, clear() {}, readPixels() {}, finish() {}, flush() {}, getParameter: () => 4096,
@@ -40,4 +44,28 @@ gpu.uploadTexture2D(texture, {
   type: 0x1401, pixels: new Uint8Array([1, 2, 3, 4]),
 });
 assert(calls.some(call => call[0] === 'texImage2D'), 'backend owns texture upload');
+const program = gpu.createProgram('vertex', 'fragment', ['a'], ['u']);
+gpu.setUniform(program, 'u', '1i', 7);
+gpu.setUniform(program, 'u', '1i', 7);
+const command = {
+  program, vertexBuffer: buffer, mode: 4, count: 3, stride: 12,
+  attributes: [{ name: 'a', size: 3, offset: 0 }],
+};
+gpu.draw(command);
+gpu.draw(command);
+assert.strictEqual(calls.filter(call => call[0] === 'useProgram').length, 1,
+  'backend caches the active WebGL program');
+assert.strictEqual(calls.filter(call => call[0] === 'uniform1i').length, 1,
+  'backend skips unchanged uniform values');
+assert.strictEqual(calls.filter(call => call[0] === 'enableVertexAttribArray').length, 1,
+  'backend enables a stable attribute layout once');
+assert.strictEqual(calls.filter(call => call[0] === 'vertexAttribPointer').length, 1,
+  'backend reuses unchanged vertex attribute pointers');
+gpu.setUniform(program, 'u', '1i', 8);
+assert.strictEqual(calls.filter(call => call[0] === 'uniform1i').length, 2,
+  'changed uniform values still reach WebGL');
+const secondBuffer = gpu.createBuffer();
+gpu.draw({ ...command, vertexBuffer: secondBuffer });
+assert.strictEqual(calls.filter(call => call[0] === 'vertexAttribPointer').length, 2,
+  'changing the source buffer invalidates the cached attribute pointer');
 console.log('PASS generic WebGL/GLES backend resource contract');

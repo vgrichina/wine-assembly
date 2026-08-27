@@ -373,8 +373,9 @@ Small client arrays (vertices, colours, matrices, texture-name lists) are copied
 at call time because the guest may reuse them before the batch flushes.
 
 Texture images use a different lifetime rule to avoid copying the large payload.
-The encoder first drains older commands, then submits one texture command whose
-metadata names the original shared guest allocation. The guest remains parked
+The encoder appends texture metadata naming the original shared guest allocation
+to older buffered commands and synchronously submits the combined batch. The
+guest remains parked
 until browser-thread replay has passed that direct typed-array view to WebGL,
 so the allocation cannot be changed or freed while borrowed. A real Chrome
 SwiftShader run accepted this SharedArrayBuffer-backed upload path, including
@@ -390,3 +391,39 @@ calls and 2.95 seconds for 26 cooperative calls. That is a separate GL error
 semantics/software-GPU issue, not command transport; removing it would require
 maintaining a trustworthy frontend error shadow rather than silently returning
 `GL_NO_ERROR`.
+
+The next CPU pass compiles each valid immediate-mode `glBegin`/`glEnd` block in
+the encoder. Per-vertex color and texture-coordinate calls update local state;
+the resulting positions, colors, and coordinates are emitted as one interleaved
+packed draw record. Fans, strips, quads, and line strips/loops are expanded to
+independent triangles or lines so adjacent records with unchanged render state
+can be concatenated safely. Replay flushes that merged geometry before any
+ordinary state command, query, texture operation, context transition, or
+presentation. This both removes thousands of small replay operations and
+reduces WebGL buffer uploads/draw calls for runs of compatible surfaces.
+
+The WebGL backend now caches the active program, buffer/texture bindings,
+uniform values, capability/raster state, enabled attributes, and complete
+attribute-pointer layout. The fixed-function frontend independently marks only
+changed matrix/scalar shader uniforms dirty. Repeated draws therefore retain
+their established program, matrices, scalar uniforms, and three interleaved
+attribute pointers rather than reissuing them. Borrowed texture uploads also no
+longer pre-flush older commands: the normal case is one ordered synchronous
+submission instead of two, while buffer overflow still submits as required.
+
+An isolated SwiftShader verification of this pass rendered the live `demo1`
+scene without browser/runtime errors in both cooperative and real Worker modes.
+The representative pre-change sample had about 19,353 transport commands and
+1,293 WebGL draws per frame. The post-change cooperative sample had about 1,557
+commands, 1,297 packed immediate blocks, 58 actual WebGL draws, 31 dirty-uniform
+submissions, and 7.8 batches per frame. Worker mode had about 1,540 commands,
+1,292 packed blocks, 55 WebGL draws, 30 dirty-uniform submissions, and 5.2
+batches per frame. Thus packing removed about 92% of replay commands and
+compatible merging removed about 96% of WebGL draw submissions; uniform
+submission fell by over 99% from the former ten calls per tiny draw. Batch rate
+now follows texture uploads plus the three normal per-frame barriers, without a
+second pre-upload batch. A cooperative CPU trace with `glGetError` temporarily
+excluded found `uniformMatrix4fv`, `vertexAttribPointer`, attribute enable, and
+`drawArrays` reduced from the former prominent samples to collectively below
+0.1% of all trace samples. This exclusion was profiling-only; runtime error
+semantics remain unchanged.

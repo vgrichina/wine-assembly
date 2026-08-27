@@ -10,9 +10,9 @@ const path = require('path');
 const { WebGLBackend } = require('../lib/gpu-backend');
 
 const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
-assert(html.includes('lib/gpu-backend.js?v=2') &&
-  html.includes('lib/gl-command-stream.js?v=1') &&
-  html.includes('lib/gl-compat.js?v=3'),
+assert(html.includes('lib/gpu-backend.js?v=3') &&
+  html.includes('lib/gl-command-stream.js?v=2') &&
+  html.includes('lib/gl-compat.js?v=4'),
   'the browser entrypoint cache-busts the GPU backend, command stream, and GL frontend');
 
 const copies = [];
