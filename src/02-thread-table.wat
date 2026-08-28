@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 437 funcref)
+  (table $handlers 439 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -495,4 +495,6 @@
     $th_sse_mr                ;; 434: m128,xmm (address word follows)
     $th_packed_avg_run        ;; 435: packed two-source average loop
     $th_rgb565_alpha_run      ;; 436: MW3 bound-derived RGB565 alpha row
+    $th_aoe_grid_fill         ;; 437: AoE byte-grid row fill loop
+    $th_aoe_span_prefix       ;; 438: parameterized AoE I/II span prefix
   )

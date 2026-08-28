@@ -278,6 +278,8 @@ UNIT=(
   # on the sweep that found them; see QUARANTINE for the ones that were not.
   test/test-aoe-span-trace-handler.js
   test/test-aoe-stack-packet-handler.js
+  test/test-aoe-grid-fill-run.js
+  test/test-aoe2-span-prefix.js
   test/test-clipboard-rtf-api.js
   test/test-coinitialize-ex.js
   test/test-commondialog-props.js

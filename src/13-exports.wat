@@ -2918,6 +2918,22 @@
     (global.set $loop_lut16_stack_emit_enabled (local.get $flag)))
   (func (export "set_loop_copy_emit") (param $flag i32)
     (global.set $loop_copy_emit_enabled (local.get $flag)))
+  (func (export "set_loop_aoe_fill_emit") (param $flag i32)
+    (global.set $loop_aoe_fill_emit_enabled (local.get $flag))
+    (call $clear_cache))
+  (func (export "get_loop_aoe_fill_matches") (result i32)
+    (global.get $loop_aoe_fill_matches))
+  (func (export "get_loop_aoe_fill_runs") (result i32)
+    (global.get $loop_aoe_fill_runs))
+  (func (export "get_loop_aoe_fill_bytes") (result i64)
+    (global.get $loop_aoe_fill_bytes))
+  (func (export "set_loop_aoe_span_emit") (param $flag i32)
+    (global.set $loop_aoe_span_emit_enabled (local.get $flag))
+    (call $clear_cache))
+  (func (export "get_loop_aoe_span_matches") (result i32)
+    (global.get $loop_aoe_span_matches))
+  (func (export "get_loop_aoe_span_runs") (result i32)
+    (global.get $loop_aoe_span_runs))
 
   ;; --no-sib-fusion: emit the unfused compute_ea_sib + consumer pair, so a
   ;; fused build and an unfused one differ in exactly one thing and need no

@@ -73,6 +73,41 @@ Disposition:
 - Revert direct stack load/store handlers. Skipping `gs32/gl32` wrappers did not help this profile; guest time increased versus the 355-handler run.
 - Keep the `PUSH ESP` correctness fix: x86 pushes the original ESP value, not the decremented value.
 
+## Generic AoE I/II narrow handlers (2026-08-27)
+
+Two exact instruction-shape matchers now lower the hottest narrow routines
+without testing a literal executable address. The span executor is shared by
+both games; its mode describes only the compiler's register allocation and
+relative continuation offsets:
+
+```text
+AoE I bytes  --\
+               matcher -> { mode, start EIP } -> shared sort/clip/row-lookup policy
+AoE II bytes --/                                -> mode-specific register writeback
+
+AoE I:  x0=EAX x1=EBP min=ECX max=EDX row4=EDI rowHead=EBX
+AoE II: x0=EBX x1=EBP min=EAX max=ECX row =EDI rowHead=EAX
+```
+
+The byte-grid handler recognizes the common six-instruction row-fill loop and
+uses one affine translation, one code-range invalidation, and `memory.fill`.
+Aliasing or non-affine mappings take an instruction-equivalent slow arm.
+
+Repeated direct measurements after warmup:
+
+```text
+region                         ordinary decoder       narrow handler       speedup
+AoE II span prefix, 200k       100.0-101.3 ms          23.1 ms             4.34-4.38x
+grid fill, 300k bytes           22.5-22.8 ms             0.1 ms             ~205x
+```
+
+The fixed 1,600-batch full-game route was neutral within run noise once caches
+were warm (8.98s baseline versus 9.19s both, user CPU), so it does not support
+a whole-game percentage claim. It did prove the regions are live: 352,912 span
+executions and 535 grid fills/41,472 bytes. Focused tests compare ordinary and
+lowered register, stack, observable-flag, memory, and continuation state; pass
+`--bench` to repeat the direct measurements.
+
 ## Current Stack-Packet Prototype
 
 There are disabled-by-default executable packets for exact AoE hot addresses.

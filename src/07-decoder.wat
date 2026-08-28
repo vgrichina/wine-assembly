@@ -2954,6 +2954,10 @@
       (if (i32.and (i32.eqz (local.get $icount))
                    (i32.eqz (global.get $code16)))
         (then
+          (if (call $try_emit_aoe_span_prefix (local.get $start_eip))
+            (then
+              (local.set $done (i32.const 1))
+              (br $decode)))
           (if (call $try_emit_rgb565_alpha_run (local.get $start_eip))
             (then
               (local.set $done (i32.const 1))

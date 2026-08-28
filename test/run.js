@@ -186,6 +186,8 @@ const LUT_SUPEROPS = hasFlag('lut-superops');
 const NO_LUT_SUPEROPS = hasFlag('no-lut-superops');
 const COPY_SUPEROPS = hasFlag('copy-superops');
 const NO_COPY_SUPEROPS = hasFlag('no-copy-superops');
+const NO_AOE_FILL = hasFlag('no-aoe-fill');
+const NO_AOE_SPAN = hasFlag('no-aoe-span');
 const ANY_LOOP_FLAG = LOOP_SUPEROPS || NO_LOOP_SUPEROPS || LUT_SUPEROPS
   || NO_LUT_SUPEROPS || COPY_SUPEROPS || NO_COPY_SUPEROPS;
 // --no-sib-fusion: decode indexed SIB memory operands as the unfused
@@ -4006,6 +4008,12 @@ async function main() {
   if (NO_COPY_SUPEROPS && instance.exports.set_loop_copy_emit) {
     instance.exports.set_loop_copy_emit(0);
   }
+  if (NO_AOE_FILL && instance.exports.set_loop_aoe_fill_emit) {
+    instance.exports.set_loop_aoe_fill_emit(0);
+  }
+  if (NO_AOE_SPAN && instance.exports.set_loop_aoe_span_emit) {
+    instance.exports.set_loop_aoe_span_emit(0);
+  }
   // Per-instance, not once: worker threads are separate WASM instances over
   // one shared memory, so a mut global set only on the main instance leaves
   // every worker decoding with the other setting and makes the A/B meaningless.
@@ -7357,6 +7365,8 @@ async function main() {
           if (NO_LUT_SUPEROPS && e.set_loop_lut_emit) e.set_loop_lut_emit(0);
           if (COPY_SUPEROPS && e.set_loop_copy_emit) e.set_loop_copy_emit(1);
           if (NO_COPY_SUPEROPS && e.set_loop_copy_emit) e.set_loop_copy_emit(0);
+          if (NO_AOE_FILL && e.set_loop_aoe_fill_emit) e.set_loop_aoe_fill_emit(0);
+          if (NO_AOE_SPAN && e.set_loop_aoe_span_emit) e.set_loop_aoe_span_emit(0);
           // Decoder flags are plain mut globals, so a worker -- a separate
           // instance over the same memory -- keeps the default until told
           // otherwise. Without these two an A/B on a threaded app measures
@@ -7767,6 +7777,15 @@ if (VERBOSE) {
         console.log(`loopmatch: ${label} fixed LUT spans`,
           e.get_lut_span_matches(), 'runs', e.get_lut_span_runs(),
           'bytes', String(e.get_lut_span_bytes()));
+      }
+      if (e.get_loop_aoe_fill_runs) {
+        console.log(`loopmatch: ${label} AoE grid fills`,
+          e.get_loop_aoe_fill_matches(), 'runs', e.get_loop_aoe_fill_runs(),
+          'bytes', String(e.get_loop_aoe_fill_bytes()));
+      }
+      if (e.get_loop_aoe_span_runs) {
+        console.log(`loopmatch: ${label} AoE span prefixes`,
+          e.get_loop_aoe_span_matches(), 'runs', e.get_loop_aoe_span_runs());
       }
     };
     report('M ', instance.exports);
