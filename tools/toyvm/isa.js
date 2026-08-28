@@ -127,10 +127,28 @@ const VGA_PLANE_SIZE = 0x10000;
 const VGA_KEY_OFF = 0;
 const VGA_KEY_ON = 0xA0001;
 
-// Which paragraphs of guest memory hold code that has been COMPILED. One bit
-// per 16 bytes covers the whole 1MB in 8KB. Every store checks its bit and, on
-// a hit, sets the $smc global -- the host then throws the compiled regions away
-// and decodes again from memory as it now is.
+// Which BYTES of guest memory hold code that has been COMPILED. One bit each,
+// 128KB for the whole 1MB. Every store checks its bit and, on a hit, sets the
+// $smc global -- the host then throws the compiled regions away and decodes
+// again from memory as it now is.
+//
+// One bit per 16 bytes was the first shape and it cost a lot more than the
+// 120KB it saved, because a 16-byte answer is not "did you write code", it is
+// "did you write within 16 bytes of code" -- and a real-mode program keeps its
+// variables in its code segment. B-STEEL.EXE reads and writes six of them at
+// cs:0xf3..0x102, a few bytes from the instructions that use them
+// (`cmp word [0xf3], 0xff` at 110:8c, `mov [0xf3], ax` at 110:a7). Every one of
+// those ordinary data stores landed in a paragraph holding real code and threw
+// the compiled region away: 302,563 breaks, 418,360 recompiles, 477MB of arena
+// and 11 dispatches per handback, which is 70k dispatches a second against the
+// 80M this machine otherwise runs at. The demo does finish -- it is 307200
+// pixels when it gets the wall clock for it -- so what this looked like from
+// the sweep was a program that intermittently photographed blank.
+//
+// The precision was always there: compile.js already records the exact byte
+// ranges it decoded, and the host was rounding them out to paragraphs on the
+// way into the bitmap. The guest-side check costs the same two instructions
+// either way.
 //
 // This is not an optimisation, it is what makes a packed program run at all.
 // Most of this corpus ships compressed (LZEXE, PKLITE, DIET): the file is a
@@ -140,7 +158,7 @@ const VGA_KEY_ON = 0xA0001;
 // jumping back there ran the depacker's code for ever. uman.com spent 10M
 // dispatches doing exactly that, executing its own unpacked text screen.
 const CODE_BITMAP = (VGA_PLANES + VGA_PLANE_SIZE * 4 + 0xFFFF) & ~0xFFFF;
-const CODE_BITMAP_SIZE = GUEST_RAM_SIZE >> 7;      // one bit per 16 bytes
+const CODE_BITMAP_SIZE = GUEST_RAM_SIZE >> 3;      // one bit per byte
 
 const MEM_PAGES = ((CODE_BITMAP + CODE_BITMAP_SIZE + 0xFFFF) & ~0xFFFF) >> 16;
 

@@ -149,11 +149,17 @@ class CodeCache {
         const at2 = list2.indexOf(prog);
         if (at2 >= 0) list2.splice(at2, 1);
         // Nobody has compiled code here any more, so the guest may write to it
-        // freely. Leaving the bit set would cost a spurious break on every
+        // freely. Leaving the bits set would cost a spurious break on every
         // future store into what is now ordinary data.
+        //
+        // Clearing is per paragraph even though setting is per byte, and that
+        // is the conservative direction: while any region still covers the
+        // paragraph, this leaves the departing region's bytes marked, which
+        // costs a recompile at worst. Clearing only the departing region's own
+        // bytes would be wrong -- two regions can decode the same instruction.
         if (!list2.length) {
           this.byPara.delete(p);
-          this.codeBits[p >> 3] &= ~(1 << (p & 7));
+          this.codeBits.fill(0, (p << 4) >> 3, ((p + 1) << 4) >> 3);
         }
       }
     }
@@ -249,10 +255,14 @@ class CodeCache {
       const key = `${cs.toString(16)}:${at.toString(16)}`;
       this.unimplemented.set(key, (this.unimplemented.get(key) || 0) + 1);
     }
-    // Mark what was decoded, so a store into it is noticed. Paragraph
-    // granularity, which is what $wr8 tests -- a store within 16 bytes of
-    // compiled code counts as touching it, and over-reporting only costs a
-    // recompile.
+    // Mark what was decoded, so a store into it is noticed. Two granularities
+    // on purpose: the BITMAP is byte-exact, because that is the question $wr8
+    // has to answer and rounding it up to a paragraph is what made B-STEEL.EXE
+    // pay 302k recompiles for its code-segment variables (see isa.CODE_BITMAP).
+    // byPara stays coarse, because it answers a different question -- "which
+    // regions might this store have hit" -- and it is consulted only after the
+    // bitmap has already said a real code byte was written. Over-reporting
+    // there costs one extra region drop, not a storm.
     prog.key = key;
     prog.cs = cs;
     // A Set, because covered ranges can overlap each other within one program.
@@ -260,8 +270,8 @@ class CodeCache {
     // pointing at a dropped program, and its code bit would never come down.
     prog.paras = new Set();
     for (const [from, to] of prog.covered) {
+      for (let b = from; b < to; b++) this.codeBits[b >> 3] |= 1 << (b & 7);
       for (let p = from >> 4; p <= (to - 1) >> 4; p++) {
-        this.codeBits[p >> 3] |= 1 << (p & 7);
         if (prog.paras.has(p)) continue;
         prog.paras.add(p);
         let list = this.byPara.get(p);

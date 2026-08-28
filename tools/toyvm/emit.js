@@ -2977,14 +2977,13 @@ function helpers() {
   (if (i32.eq (i32.or (i32.and (local.get $l) (i32.const 0xFFF0000)) (i32.const 1))
               (i32.load (i32.const ${isa.VGA_CTL_KEY})))
     (then (call $vga_wr8 (local.get $l) (local.get $v)) (return)))
-  ;; A store into a paragraph that has already been COMPILED means the compiled
-  ;; form is now a lie -- see isa.CODE_BITMAP. The flag is all this does: the
-  ;; host throws the regions away on the next handback, which is where a packed
+  ;; A store into a byte that has already been COMPILED means the compiled form
+  ;; is now a lie -- see isa.CODE_BITMAP. The flag is all this does: the host
+  ;; throws the regions away on the next handback, which is where a packed
   ;; program goes anyway (it reaches its unpacked entry through a far jump).
   (if (i32.and (i32.load8_u (i32.add (i32.const ${isa.CODE_BITMAP})
-                                     (i32.shr_u (local.get $l) (i32.const 7))))
-               (i32.shl (i32.const 1) (i32.and (i32.shr_u (local.get $l) (i32.const 4))
-                                               (i32.const 7))))
+                                     (i32.shr_u (local.get $l) (i32.const 3))))
+               (i32.shl (i32.const 1) (i32.and (local.get $l) (i32.const 7))))
     (then
       ;; Widen the range this slice has dirtied. The host clears $smc on every
       ;; handback, so "already 2" means "this slice, not an older one".
