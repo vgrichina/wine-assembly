@@ -243,6 +243,129 @@
     (if (local.get $by_position) (then (return (local.get $uItem))))
     (call $dynamic_menu_index_of_id (local.get $sw) (local.get $uItem)))
 
+  ;; Resolve a dynamic-menu item to its 16-byte record. Resource/host-backed
+  ;; menu representations are not mutable through this compact table and
+  ;; return NULL so their public handlers can fail honestly.
+  (func $dynamic_menu_item_w
+        (param $hmenu i32) (param $item i32) (param $by_position i32) (result i32)
+    (local $sw i32) (local $idx i32)
+    (local.set $sw (call $dynamic_menu_state_w (local.get $hmenu)))
+    (if (i32.eqz (local.get $sw)) (then (return (i32.const 0))))
+    (local.set $idx
+      (call $dynamic_menu_resolve_pos
+        (local.get $hmenu) (local.get $item) (local.get $by_position)))
+    (if (i32.or
+          (i32.lt_s (local.get $idx) (i32.const 0))
+          (i32.ge_u (local.get $idx) (i32.load offset=4 (local.get $sw))))
+      (then (return (i32.const 0))))
+    (i32.add (local.get $sw)
+      (i32.add (i32.const 16) (i32.mul (local.get $idx) (i32.const 16)))))
+
+  ;; Apply the supported Win98 MENUITEMINFOA fields to a dynamic MNUD item.
+  ;; CHECKMARKS and BITMAP need storage the compact record does not have, so a
+  ;; caller asking for either gets FALSE instead of a silent success.
+  (func $dynamic_menu_item_info_set
+        (param $hmenu i32) (param $item i32) (param $by_position i32)
+        (param $mii i32) (result i32)
+    (local $rec i32) (local $mask i32) (local $flags i32) (local $submenu i32)
+    (if (i32.eqz (local.get $mii)) (then (return (i32.const 0))))
+    (if (i32.lt_u (call $gl32 (local.get $mii)) (i32.const 44))
+      (then (return (i32.const 0))))
+    (local.set $mask (call $gl32 (i32.add (local.get $mii) (i32.const 4))))
+    (if (i32.ne (i32.and (local.get $mask) (i32.const -376)) (i32.const 0))
+      (then (return (i32.const 0)))) ;; supported mask is 0x177
+    (local.set $rec
+      (call $dynamic_menu_item_w
+        (local.get $hmenu) (local.get $item) (local.get $by_position)))
+    (if (i32.eqz (local.get $rec)) (then (return (i32.const 0))))
+    (local.set $flags (i32.load (local.get $rec)))
+    (if (i32.ne (i32.and (local.get $mask) (i32.const 0x110)) (i32.const 0))
+      (then
+        (local.set $flags
+          (i32.or
+            (i32.and (local.get $flags) (i32.const -2309)) ;; ~0x904
+            (i32.and (call $gl32 (i32.add (local.get $mii) (i32.const 8)))
+                     (i32.const 0x904))))))
+    (if (i32.ne (i32.and (local.get $mask) (i32.const 1)) (i32.const 0))
+      (then
+        (local.set $flags
+          (i32.or
+            (i32.and (local.get $flags) (i32.const -4236)) ;; ~0x108B
+            (i32.and (call $gl32 (i32.add (local.get $mii) (i32.const 12)))
+                     (i32.const 0x108B))))))
+    (if (i32.ne (i32.and (local.get $mask) (i32.const 2)) (i32.const 0))
+      (then (i32.store offset=4 (local.get $rec)
+        (call $gl32 (i32.add (local.get $mii) (i32.const 16))))))
+    (if (i32.ne (i32.and (local.get $mask) (i32.const 4)) (i32.const 0))
+      (then
+        (local.set $submenu (call $gl32 (i32.add (local.get $mii) (i32.const 20))))
+        (i32.store offset=12 (local.get $rec) (local.get $submenu))
+        (local.set $flags
+          (if (result i32) (local.get $submenu)
+            (then (i32.or (local.get $flags) (i32.const 0x10)))
+            (else (i32.and (local.get $flags) (i32.const -17)))))))
+    (if (i32.ne (i32.and (local.get $mask) (i32.const 0x20)) (i32.const 0))
+      (then (i32.store offset=8 (local.get $rec)
+        (call $gl32 (i32.add (local.get $mii) (i32.const 32))))))
+    (if (i32.and
+          (i32.ne (i32.and (local.get $mask) (i32.const 0x50)) (i32.const 0))
+          (i32.eqz (i32.and (local.get $flags) (i32.const 0x904))))
+      (then (i32.store offset=8 (local.get $rec)
+        (call $gl32 (i32.add (local.get $mii) (i32.const 36))))))
+    (i32.store (local.get $rec) (local.get $flags))
+    (i32.const 1))
+
+  ;; Fill supported MENUITEMINFOA fields from a dynamic MNUD item. String
+  ;; copies honor cch and always report the full source length through cch.
+  (func $dynamic_menu_item_info_get
+        (param $hmenu i32) (param $item i32) (param $by_position i32)
+        (param $mii i32) (result i32)
+    (local $rec i32) (local $mask i32) (local $flags i32)
+    (local $text i32) (local $dst i32) (local $cch i32) (local $len i32)
+    (if (i32.eqz (local.get $mii)) (then (return (i32.const 0))))
+    (if (i32.lt_u (call $gl32 (local.get $mii)) (i32.const 44))
+      (then (return (i32.const 0))))
+    (local.set $mask (call $gl32 (i32.add (local.get $mii) (i32.const 4))))
+    (if (i32.ne (i32.and (local.get $mask) (i32.const -376)) (i32.const 0))
+      (then (return (i32.const 0))))
+    (local.set $rec
+      (call $dynamic_menu_item_w
+        (local.get $hmenu) (local.get $item) (local.get $by_position)))
+    (if (i32.eqz (local.get $rec)) (then (return (i32.const 0))))
+    (local.set $flags (i32.load (local.get $rec)))
+    (if (i32.ne (i32.and (local.get $mask) (i32.const 0x110)) (i32.const 0))
+      (then (call $gs32 (i32.add (local.get $mii) (i32.const 8))
+        (i32.and (local.get $flags) (i32.const 0x904)))))
+    (if (i32.ne (i32.and (local.get $mask) (i32.const 1)) (i32.const 0))
+      (then (call $gs32 (i32.add (local.get $mii) (i32.const 12))
+        (i32.and (local.get $flags) (i32.const 0x108B)))))
+    (if (i32.ne (i32.and (local.get $mask) (i32.const 2)) (i32.const 0))
+      (then (call $gs32 (i32.add (local.get $mii) (i32.const 16))
+        (i32.load offset=4 (local.get $rec)))))
+    (if (i32.ne (i32.and (local.get $mask) (i32.const 4)) (i32.const 0))
+      (then (call $gs32 (i32.add (local.get $mii) (i32.const 20))
+        (i32.load offset=12 (local.get $rec)))))
+    (if (i32.ne (i32.and (local.get $mask) (i32.const 0x20)) (i32.const 0))
+      (then (call $gs32 (i32.add (local.get $mii) (i32.const 32))
+        (i32.load offset=8 (local.get $rec)))))
+    (if (i32.ne (i32.and (local.get $mask) (i32.const 0x50)) (i32.const 0))
+      (then
+        (local.set $text (i32.load offset=8 (local.get $rec)))
+        (if (i32.and
+              (i32.ne (local.get $text) (i32.const 0))
+              (i32.eqz (i32.and (local.get $flags) (i32.const 0x904))))
+          (then (local.set $len (call $lstr_len (local.get $text) (i32.const 0)))))
+        (local.set $dst (call $gl32 (i32.add (local.get $mii) (i32.const 36))))
+        (local.set $cch (call $gl32 (i32.add (local.get $mii) (i32.const 40))))
+        (if (i32.and
+              (i32.ne (local.get $dst) (i32.const 0))
+              (i32.and (i32.ne (local.get $cch) (i32.const 0))
+                       (i32.ne (local.get $text) (i32.const 0))))
+          (then (call $lstr_cpyn
+            (local.get $dst) (local.get $text) (local.get $cch) (i32.const 0))))
+        (call $gs32 (i32.add (local.get $mii) (i32.const 40)) (local.get $len))))
+    (i32.const 1))
+
   ;; Fold a MENUITEMINFO at guest address $mii into the (flags, id, itemData)
   ;; triple the dynamic menu stores. The MFT_*/MFS_* constants deliberately
   ;; share values with the MF_* ones AppendMenu uses, so the type and state
@@ -3363,17 +3486,19 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; 2 args
   )
 
-  ;; SetMenuItemInfoA(hMenu, uItem, fByPos, lpmii) — no-op; menu subsystem
-  ;; is a stub. flip2d calls this during window setup but doesn't depend on it.
+  ;; SetMenuItemInfoA(hMenu, uItem, fByPos, lpmii). Dynamic popup menus retain
+  ;; the supported type/state/id/submenu/data/string fields.
   (func $handle_SetMenuItemInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (global.set $eax (call $dynamic_menu_item_info_set
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) ;; 4 args
   )
 
-  ;; GetMenuItemInfoA(hMenu, uItem, fByPos, lpmii) — no-op; zero the struct
-  ;; past its dwSize (caller-provided at +0) so callers don't see garbage.
+  ;; GetMenuItemInfoA(hMenu, uItem, fByPos, lpmii). Unsupported menu handle or
+  ;; mask combinations return FALSE instead of claiming untouched output.
   (func $handle_GetMenuItemInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (global.set $eax (call $dynamic_menu_item_info_get
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) ;; 4 args
   )
 

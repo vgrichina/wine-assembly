@@ -31,6 +31,16 @@ node tools/check-handler-count.js
 # a surplus ')' that closes a function early and orphans its cleanup line, so
 # this gate is the thing that catches it — keep it in the build, not on demand.
 node tools/check-handler-esp.js
+# WAT has no boolean type and i32.and is bitwise, so combining an address,
+# count, class id or non-bit-0 mask with a predicate can make a true condition
+# false based on unrelated low bits. Keep the reviewed Win32-layer sites and
+# the general pointer-shaped pattern normalized to explicit 0/1 values.
+node tools/check-wat-logical-and.js
+# A handler that returns success while leaving callbacks/output pointers
+# untouched fails much later under an unrelated API name. Pin the legacy
+# inventory so it can only change deliberately, and forbid dangerous D3D9
+# resource/output methods from returning D3D_OK without implementation.
+node tools/check-silent-stubs.js
 # Adding a host import to 01-header.wat without regenerating the signature table
 # does not break the build or the normal page — it breaks WORKER mode only, and
 # it breaks it QUIETLY: the worker's broker builds its import object from this

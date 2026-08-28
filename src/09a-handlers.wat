@@ -714,7 +714,8 @@
     (local $buf i32) (local $cch i32) (local $long i32)
     ;; Read cchDateStr from stack (6th arg at esp+24)
     (local.set $cch (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
-    (local.set $long (i32.and (local.get $arg1) (i32.const 2))) ;; DATE_LONGDATE
+    (local.set $long (i32.ne
+      (i32.and (local.get $arg1) (i32.const 2)) (i32.const 0))) ;; DATE_LONGDATE
     ;; EnumDateFormats callers pass the format explicitly. The stable long
     ;; pattern starts with 'd'; the stable short pattern starts with 'M'.
     (if (local.get $arg3)
@@ -3639,7 +3640,7 @@
     ;; Child controls treat SetWindowText as WM_SETTEXT on their own wndproc.
     ;; Top-level dialogs/windows still update the caption title table below.
     (if (i32.and
-          (call $ctrl_table_get_class (local.get $arg0))
+          (i32.ne (call $ctrl_table_get_class (local.get $arg0)) (i32.const 0))
           (i32.or
             (i32.lt_u (call $ctrl_table_get_class (local.get $arg0)) (i32.const 10))
             (i32.gt_u (call $ctrl_table_get_class (local.get $arg0)) (i32.const 16))))
@@ -7217,7 +7218,7 @@
     ;; Child controls treat SetWindowText as WM_SETTEXT on their own wndproc.
     ;; WAT-native controls store byte strings, so pass the converted buffer.
     (if (i32.and
-          (call $ctrl_table_get_class (local.get $arg0))
+          (i32.ne (call $ctrl_table_get_class (local.get $arg0)) (i32.const 0))
           (i32.or
             (i32.lt_u (call $ctrl_table_get_class (local.get $arg0)) (i32.const 10))
             (i32.gt_u (call $ctrl_table_get_class (local.get $arg0)) (i32.const 16))))
@@ -10505,10 +10506,51 @@ HookEx — no next hook in chain, return 0
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; 478: EnumSystemLocalesA(lpLocaleEnumProc, dwFlags) → BOOL — no-op
+  ;; Invoke one ANSI string enumeration callback and free its temporary buffer
+  ;; after the callback returns through CACA0011. The SYS1 typed context keeps
+  ;; this distinct from the older saved-return-only users of that thunk.
+  (func $system_string_enum_a (param $callback i32) (param $value i32)
+        (param $ret_addr i32)
+    (local $text i32) (local $wa i32) (local $len i32)
+    (if (i32.eqz (local.get $callback))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $eip (local.get $ret_addr))
+        (return)))
+    (local.set $len (call $strlen_a (local.get $value)))
+    (local.set $text (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
+    (if (i32.eqz (local.get $text))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $eip (local.get $ret_addr))
+        (return)))
+    (local.set $wa (call $g2w (local.get $text)))
+    (memory.copy (local.get $wa) (local.get $value) (i32.add (local.get $len) (i32.const 1)))
+    ;; Context after the callback's RET 4: marker, allocation, API return.
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $ret_addr))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $text))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 0x31535953)) ;; "SYS1"
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $text))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $font_enum_ret_thunk))
+    (global.set $eip (local.get $callback))
+    (global.set $steps (i32.const 0)))
+
+  ;; 478: EnumSystemLocalesA(lpLocaleEnumProc, dwFlags) → BOOL. This
+  ;; compatibility layer exposes one stable US-English system locale.
   (func $handle_EnumSystemLocalesA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+    (local $ret i32) (local $value i32)
+    (local.set $ret (call $gl32 (global.get $esp)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    (local.set $value (i32.const 0x2DA))
+    (i32.store (local.get $value) (i32.const 0x30303030))
+    (i32.store offset=4 (local.get $value) (i32.const 0x39303430))
+    (i32.store8 offset=8 (local.get $value) (i32.const 0))
+    (call $system_string_enum_a (local.get $arg0) (local.get $value) (local.get $ret)))
 
   ;; 479: GetLocaleInfoW(Locale, LCType, lpLCData, cchData) → chars written.
   ;; Same values as the A spelling, written as UTF-16 — see $locale_info.
@@ -13157,36 +13199,38 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
-  ;; EnumWindows(lpEnumFunc, lParam) — enumerate all top-level windows, calling
-  ;; lpEnumFunc(hwnd, lParam) for each. Returns BOOL. stdcall, 2 args.
-  ;;
-  ;; Limitation: we don't currently chain x86 callbacks across multiple top-level
-  ;; windows. In a typical single-app emulator session there's only the calling
-  ;; app's own window in WND_RECORDS, and callers (e.g. screensaver "duplicate
-  ;; instance" probes) interpret an empty enumeration as "no other instances" —
-  ;; which is exactly the answer we want. So we report success without invoking
-  ;; the callback. If a future use case needs real iteration, set up a CACA
-  ;; continuation thunk that re-enters this handler to drive the next index.
+  ;; EnumWindows(lpEnumFunc, lParam) — enumerate top-level windows through the
+  ;; same CACA002B suspended walk used by EnumChildWindows. A parent sentinel of
+  ;; zero selects top-level records instead of descendant records.
   (func $handle_EnumWindows (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (local $ret i32)
+    (local.set $ret (call $gl32 (global.get $esp)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    (call $enum_window_walk_begin
+      (i32.const 0) (local.get $arg0) (local.get $arg1) (local.get $ret))
   )
 
-  ;; EnumThreadWindows(dwThreadId, lpfn, lParam) — the emulator exposes one
-  ;; application thread/window set. Match EnumWindows' current empty-success
-  ;; enumeration until chained guest callbacks are available. WinHelp uses
-  ;; this as a best-effort sweep for secondary windows while rebuilding GID.
+  ;; EnumThreadWindows(dwThreadId, lpfn, lParam). WND_RECORDS does not yet keep
+  ;; thread ownership, so enumerate the process's top-level records rather than
+  ;; returning success without ever invoking the callback.
   (func $handle_EnumThreadWindows (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (local $ret i32)
+    (local.set $ret (call $gl32 (global.get $esp)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    (call $enum_window_walk_begin
+      (i32.const 0) (local.get $arg1) (local.get $arg2) (local.get $ret))
   )
 
-  ;; EnumSystemCodePagesA(lpCodePageEnumProc, dwFlags) — report successful
-  ;; enumeration. The emulator exposes its fixed ANSI/OEM code-page model via
-  ;; GetACP/GetOEMCP; Win98 FTSRCH only requires this startup probe to succeed.
+  ;; EnumSystemCodePagesA(lpCodePageEnumProc, dwFlags). Report the process ANSI
+  ;; code page through the real callback contract instead of a silent success.
   (func $handle_EnumSystemCodePagesA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (local $ret i32) (local $value i32)
+    (local.set $ret (call $gl32 (global.get $esp)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    (local.set $value (i32.const 0x2DA))
+    (i32.store (local.get $value) (i32.const 0x32353132)) ;; "1252"
+    (i32.store8 offset=4 (local.get $value) (i32.const 0))
+    (call $system_string_enum_a (local.get $arg0) (local.get $value) (local.get $ret))
   )
 
   ;; PostThreadMessageA/W(threadId, msg, wParam, lParam) — post to the target's
@@ -13404,7 +13448,9 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (global.set $enum_child_depth (i32.const 0))
     (global.set $eax (i32.const 1)))
 
-  ;; Invoke the callback for the next descendant at or after $enum_child_slot.
+  ;; Invoke the callback for the next matching record at or after
+  ;; $enum_child_slot. parent=0 selects top-level records; otherwise it selects
+  ;; every descendant of that parent.
   (func $enum_child_dispatch
     (local $slot i32) (local $hwnd i32)
     (local.set $slot (global.get $enum_child_slot))
@@ -13415,7 +13461,10 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
       (br_if $found
         (i32.and
           (i32.ne (local.get $hwnd) (i32.const 0))
-          (call $enum_child_is_descendant (local.get $hwnd) (global.get $enum_child_parent))))
+          (if (result i32) (global.get $enum_child_parent)
+            (then (call $enum_child_is_descendant
+              (local.get $hwnd) (global.get $enum_child_parent)))
+            (else (i32.eqz (call $wnd_get_parent (local.get $hwnd)))))))
       (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
       (br $scan)))
     (global.set $enum_child_slot (local.get $slot))
@@ -13436,27 +13485,32 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (global.set $enum_child_slot (i32.add (global.get $enum_child_slot) (i32.const 1)))
     (call $enum_child_dispatch))
 
-  (func $handle_EnumChildWindows (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ret i32)
-    (local.set $ret (call $gl32 (global.get $esp)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16))) ;; ret addr + 3 args
-    ;; No callback, or a callback re-entering the walk we are already running:
-    ;; report success without touching the outer iteration state.
-    (if (i32.or (i32.eqz (local.get $arg1)) (global.get $enum_child_depth))
+  ;; Start either the EnumWindows/EnumThreadWindows top-level walk or the
+  ;; EnumChildWindows descendant walk after its public handler has removed the
+  ;; original stdcall frame.
+  (func $enum_window_walk_begin (param $parent i32) (param $callback i32)
+        (param $lparam i32) (param $ret i32)
+    (if (i32.or (i32.eqz (local.get $callback)) (global.get $enum_child_depth))
       (then
         (global.set $eax (i32.const 1))
         (global.set $eip (local.get $ret))
         (return)))
     (global.set $enum_child_depth (i32.const 1))
-    (global.set $enum_child_parent (local.get $arg0))
-    (global.set $enum_child_cb (local.get $arg1))
-    (global.set $enum_child_lparam (local.get $arg2))
+    (global.set $enum_child_parent (local.get $parent))
+    (global.set $enum_child_cb (local.get $callback))
+    (global.set $enum_child_lparam (local.get $lparam))
     (global.set $enum_child_ret (local.get $ret))
     (global.set $enum_child_slot (i32.const 0))
-    ;; Keep the API return address below the callback's stdcall frame.
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (local.get $ret))
-    (call $enum_child_dispatch)
+    (call $enum_child_dispatch))
+
+  (func $handle_EnumChildWindows (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ret i32)
+    (local.set $ret (call $gl32 (global.get $esp)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))) ;; ret addr + 3 args
+    (call $enum_window_walk_begin
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $ret))
   )
 
   ;; 694: InvalidateRgn(hwnd, hrgn, bErase). hrgn=NULL → full client rect.

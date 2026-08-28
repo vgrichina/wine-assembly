@@ -1245,3 +1245,15 @@ Two things worth keeping from this:
   *regions*; it was silently incomplete about every other structure holding an
   arena address. `jtab` was handled in the same function and `rtop` was not,
   which is the whole bug.
+
+**Corpus verdict.** Full 199-program sweep, merged and classified against the
+previous one: **182 of 199 showing something they meant to** (150 graphics, 32
+text art), up from 179. Three programs moved, all forward — ACME-BIG and ASYLUM
+from the terminate-vector work in §8.1, ASSAULT from this. Nothing moved
+backwards. One row (B-STEEL.EXE) first came back blank and was a sweep flake,
+not a regression: the box was at load 25–37 with several agents sweeping, and
+re-taking that single row put it back at its usual 307200 pixels. That is worth
+saying out loud, because a bucket that moved backwards is exactly what a
+regression looks like — **re-take the row before you believe it**, since
+`capture-one.sh` writes one row per program precisely so a single re-take is
+cheap.

@@ -1007,7 +1007,9 @@
     (local.set $size (local.get $arg3))
     (if (i32.gt_u (local.get $size) (i32.const 4096))
       (then (local.set $size (i32.const 4096))))
-    (if (i32.and (local.get $arg2) (local.get $size))
+    (if (i32.and
+          (i32.ne (local.get $arg2) (i32.const 0))
+          (i32.ne (local.get $size) (i32.const 0)))
       (then (call $zero_memory (call $g2w (local.get $arg2)) (local.get $size))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))

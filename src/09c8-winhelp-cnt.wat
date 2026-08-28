@@ -206,7 +206,7 @@
                 (then
                   (call $help_set_error (global.get $HELP_ERROR_CNT) (local.get $line_start))
                   (return (i32.const -1))))
-              (if (i32.and (local.get $count)
+              (if (i32.and (i32.ne (local.get $count) (i32.const 0))
                     (i32.gt_u (local.get $depth) (i32.add (local.get $previous_depth) (i32.const 1))))
                 (then
                   (call $help_set_error (global.get $HELP_ERROR_CNT) (local.get $line_start))

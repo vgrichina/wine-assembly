@@ -4153,8 +4153,10 @@
             (br_if $cols_done (i32.ge_u (local.get $gx) (local.get $gw)))
             (local.set $dx (i32.add (local.get $ox) (local.get $gx)))
             (if (i32.and (i32.lt_u (local.get $dx) (local.get $width))
-                  (call $tt_entry_pixel (local.get $entry) (local.get $gx)
-                    (local.get $gy)))
+                  (i32.ne
+                    (call $tt_entry_pixel (local.get $entry) (local.get $gx)
+                      (local.get $gy))
+                    (i32.const 0)))
               (then
                 (local.set $slot (i32.add (local.get $cell)
                   (i32.add (i32.mul (i32.shr_u (local.get $dx) (i32.const 3))

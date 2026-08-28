@@ -49,6 +49,20 @@ function check(label, fn) {
         (local.get $hwnd) (local.get $hmenu) (i32.const 0)
         (i32.const 0) (i32.const 0) (i32.const 0))
       (global.get $eax))
+    (func (export "test_call_SetMenuItemInfoA")
+        (param $hmenu i32) (param $item i32) (param $bypos i32) (param $mii i32)
+        (result i32)
+      (call $handle_SetMenuItemInfoA
+        (local.get $hmenu) (local.get $item) (local.get $bypos) (local.get $mii)
+        (i32.const 0) (i32.const 0))
+      (global.get $eax))
+    (func (export "test_call_GetMenuItemInfoA")
+        (param $hmenu i32) (param $item i32) (param $bypos i32) (param $mii i32)
+        (result i32)
+      (call $handle_GetMenuItemInfoA
+        (local.get $hmenu) (local.get $item) (local.get $bypos) (local.get $mii)
+        (i32.const 0) (i32.const 0))
+      (global.get $eax))
   ` });
   const wat = harness.exports;
 
@@ -206,6 +220,37 @@ function check(label, fn) {
     wat.test_call_InsertMenuItemA(h, 0, 1,
       menuItemInfo({ mask: MIIM_ID | MIIM_DATA, id: 4, itemData: 0xDEADBEEF }));
     assert.strictEqual(wat.test_menu_item_field(h, 0, 2) >>> 0, 0xDEADBEEF);
+    wat.test_call_DestroyMenu(h);
+  });
+
+  check('Set/GetMenuItemInfoA round-trips dynamic item state and bounded text', () => {
+    const h = popup();
+    wat.test_call_AppendMenuA(h, MF_STRING, 10, strA('Old'));
+    const replacement = strA('Replacement');
+    assert.strictEqual(wat.test_call_SetMenuItemInfoA(h, 10, 0,
+      menuItemInfo({ mask: MIIM_ID | MIIM_STATE | MIIM_STRING,
+        id: 11, state: MFS_CHECKED, typeData: replacement })), 1);
+    const dst = alloc(5);
+    const out = menuItemInfo({ mask: MIIM_ID | MIIM_STATE | MIIM_STRING,
+      typeData: dst });
+    wat.guest_write32(out + 40, 5);
+    assert.strictEqual(wat.test_call_GetMenuItemInfoA(h, 0, 1, out), 1);
+    assert.strictEqual(wat.guest_read32(out + 16), 11);
+    assert.strictEqual(wat.guest_read32(out + 12) & MFS_CHECKED, MFS_CHECKED);
+    assert.strictEqual(wat.guest_read32(out + 40), 'Replacement'.length,
+      'cch reports the full label length');
+    const got = Array.from({ length: 5 }, (_, i) => wat.guest_read8(dst + i));
+    assert.deepStrictEqual(got, [82, 101, 112, 108, 0], 'copy is bounded and terminated');
+    wat.test_call_DestroyMenu(h);
+  });
+
+  check('menu item info rejects unsupported output instead of silent success', () => {
+    const h = popup();
+    wat.test_call_AppendMenuA(h, MF_STRING, 1, strA('Item'));
+    const bitmapInfo = menuItemInfo({ mask: 0x80 }); // MIIM_BITMAP
+    assert.strictEqual(wat.test_call_GetMenuItemInfoA(h, 0, 1, bitmapInfo), 0);
+    assert.strictEqual(wat.test_call_SetMenuItemInfoA(0x00030065, 0, 1,
+      menuItemInfo({ mask: MIIM_ID, id: 2 })), 0);
     wat.test_call_DestroyMenu(h);
   });
 

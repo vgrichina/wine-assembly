@@ -1167,7 +1167,8 @@
         ;; drive-list control asks for it with *.* and rejects the control's
         ;; initialization if DOS hands it an archive file instead.
         (if (i32.and (i32.eq (local.get $ah) (i32.const 0x4E))
-                     (i32.and (global.get $ecx) (i32.const 0x08)))
+                     (i32.ne (i32.and (global.get $ecx) (i32.const 0x08))
+                             (i32.const 0)))
           (then
             (memory.fill (call $g2w (local.get $h)) (i32.const 0) (i32.const 43))
             (call $gs8 (i32.add (local.get $h) (i32.const 21)) (i32.const 0x08))
@@ -3207,7 +3208,9 @@
     (local.set $child (call $win16_h32 (call $win16_arg16 (i32.const 0))))
     (local.set $parent (call $win16_h32 (call $win16_arg16 (i32.const 1))))
     (global.set $eax (i32.const 0))
-    (if (i32.and (local.get $parent) (local.get $child))
+    (if (i32.and
+          (i32.ne (local.get $parent) (i32.const 0))
+          (i32.ne (local.get $child) (i32.const 0)))
       (then
         (local.set $child (call $wnd_get_parent (local.get $child)))
         (block $done (loop $ancestors
@@ -4262,7 +4265,7 @@
     (local.set $entry (i32.add (global.get $seg_base_cs)
                                (i32.and (local.get $proc) (i32.const 0xFFFF))))
     (if (i32.and
-          (local.get $data_sel)
+          (i32.ne (local.get $data_sel) (i32.const 0))
           (i32.eq (i32.and (call $gl32 (local.get $entry)) (i32.const 0x00FFFFFF))
                   (i32.const 0x0090581E)))
       (then (local.set $entry (i32.add (local.get $entry) (i32.const 3)))))
@@ -4521,7 +4524,7 @@
     ;; WM_SETTEXT carries a string for every built-in control class. A guest
     ;; subclass commonly forwards it to the saved native procedure, so handle
     ;; it here as well as in the class-specific LB_/CB_ cases below.
-    (if (i32.and (local.get $class)
+    (if (i32.and (i32.ne (local.get $class) (i32.const 0))
                  (i32.eq (local.get $message) (i32.const 0x000C)))
       (then (local.set $convert (i32.const 1))))
     (if (i32.eq (local.get $class) (i32.const 4))

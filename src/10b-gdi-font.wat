@@ -616,7 +616,7 @@
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $GDI_BITMAP_FONT_COUNT)))
       (local.set $record (call $gdi_bitmap_font_record (local.get $i)))
-      (if (i32.and (i32.load (local.get $record))
+      (if (i32.and (i32.ne (i32.load (local.get $record)) (i32.const 0))
             (i32.eq (i32.load offset=4 (local.get $record)) (local.get $hash)))
         (then
           (call $gdi_bitmap_font_unbind_record (local.get $record))

@@ -625,7 +625,7 @@
                   (i32.gt_u (local.get $payload_len)
                     (i32.sub (local.get $memory_bytes) (local.get $payload)))))
       (then (return (call $help_layout_fail (i32.const 2) (local.get $i)))))
-    (if (i32.and (local.get $runs)
+    (if (i32.and (i32.ne (local.get $runs) (i32.const 0))
           (i32.or (i32.gt_u (local.get $runs) (local.get $memory_bytes))
                   (i32.gt_u (local.get $run_capacity)
                     (i32.div_u (i32.sub (local.get $memory_bytes) (local.get $runs))

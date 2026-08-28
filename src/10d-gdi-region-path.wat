@@ -3671,7 +3671,7 @@
     (local $entry i32) (local $record i32) (local $size i32) (local $clip i32)
     ;; Surface bounds are always part of the effective clipping region.
     (local.set $size (call $gdi_dc_target_size (local.get $hdc)))
-    (if (i32.and (local.get $size) (i32.eqz (i32.and
+    (if (i32.and (i32.ne (local.get $size) (i32.const 0)) (i32.eqz (i32.and
           (i32.and (i32.ge_s (local.get $x) (i32.const 0))
             (i32.lt_s (local.get $x) (i32.and (local.get $size) (i32.const 0xFFFF))))
           (i32.and (i32.ge_s (local.get $y) (i32.const 0))

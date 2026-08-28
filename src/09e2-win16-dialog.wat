@@ -435,7 +435,7 @@
         ;; focus back to the main frame before recursively removing a focused
         ;; control; otherwise renderer keys keep targeting a dead child HWND.
         (local.set $prev_focus (global.get $focus_hwnd))
-        (if (i32.and (local.get $prev_focus)
+        (if (i32.and (i32.ne (local.get $prev_focus) (i32.const 0))
               (i32.or (i32.eq (local.get $prev_focus) (local.get $dlg))
                       (call $enum_child_is_descendant
                         (local.get $prev_focus) (local.get $dlg))))
@@ -841,8 +841,9 @@
     (local.set $id (call $win16_arg16 (i32.const 2)))
     (local.set $attrs (call $win16_arg16 (i32.const 0)))
     (local.set $list (call $ctrl_find_by_id (local.get $dlg) (local.get $id)))
-    (if (i32.and (local.get $list)
-                 (i32.and (local.get $attrs) (i32.const 0x10)))
+    (if (i32.and
+          (i32.ne (local.get $list) (i32.const 0))
+          (i32.ne (i32.and (local.get $attrs) (i32.const 0x10)) (i32.const 0)))
       (then
         (local.set $file_list
           (call $ctrl_find_by_id (local.get $dlg) (i32.sub (local.get $id) (i32.const 1))))
@@ -893,7 +894,7 @@
               (local.set $target (local.get $list))
               (if (i32.and
                     (i32.eqz (i32.and (local.get $found_attrs) (i32.const 0x10)))
-                    (local.get $file_list))
+                    (i32.ne (local.get $file_list) (i32.const 0)))
                 (then (local.set $target (local.get $file_list))))
               ;; DDL_DIRECTORY list calls receive only directories unless the
               ;; verified companion above receives the ordinary-file entries.
@@ -903,7 +904,7 @@
                               (i32.const 0))
                       (i32.ne (i32.and (local.get $attrs) (i32.const 0x10))
                               (i32.const 0)))
-                    (i32.and (local.get $file_list)
+                    (i32.and (i32.ne (local.get $file_list) (i32.const 0))
                              (i32.eqz (i32.and (local.get $found_attrs)
                                                (i32.const 0x10)))))
                 (then

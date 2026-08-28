@@ -103,7 +103,7 @@
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (i32.const 4)))
       (local.set $slot (call $win16_dde_async_slot (local.get $i)))
-      (if (i32.and (i32.load (local.get $slot))
+      (if (i32.and (i32.ne (i32.load (local.get $slot)) (i32.const 0))
                    (i32.eq (i32.load offset=8 (local.get $slot)) (local.get $conv)))
         (then
           (if (i32.or (i32.eq (local.get $best) (i32.const -1))
@@ -152,7 +152,7 @@
       (local.set $slot (call $win16_dde_advise_slot (local.get $i)))
       ;; Asking twice for the same item is not an error and must not make two
       ;; loops, or the app's one update would go out twice.
-      (if (i32.and (i32.load (local.get $slot))
+      (if (i32.and (i32.ne (i32.load (local.get $slot)) (i32.const 0))
                    (i32.and (i32.eq (i32.load offset=4 (local.get $slot)) (local.get $conv))
                             (i32.eq (i32.load offset=8 (local.get $slot)) (local.get $item))))
         (then
@@ -183,7 +183,7 @@
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (i32.const 8)))
       (local.set $slot (call $win16_dde_advise_slot (local.get $i)))
-      (if (i32.and (i32.load (local.get $slot))
+      (if (i32.and (i32.ne (i32.load (local.get $slot)) (i32.const 0))
                    (i32.eq (i32.load offset=4 (local.get $slot)) (local.get $conv)))
         (then (i32.store (local.get $slot) (i32.const 0))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
@@ -1409,7 +1409,8 @@
         ;; asked again. Windows keeps asking until the caller's timeout, and so
         ;; does this -- at an interval, because the far side needs its own
         ;; message loop to get anywhere before it can answer differently.
-        (if (i32.and (i32.load offset=28 (local.get $pend))
+        (if (i32.and
+              (i32.ne (i32.load offset=28 (local.get $pend)) (i32.const 0))
                      (i32.ge_u (i32.sub (call $host_real_time_ms)
                                         (i32.load offset=48 (local.get $pend)))
                                (global.get $DDE_BUSY_RETRY_MS)))

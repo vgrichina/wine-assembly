@@ -273,7 +273,9 @@
           (then
             (i32.store offset=48 (local.get $sw) (local.get $bmp))
             (i32.store offset=28 (local.get $sw) (local.get $arg3))))))
-    (if (i32.and (local.get $buttons) (local.get $button_count))
+    (if (i32.and
+          (i32.ne (local.get $buttons) (i32.const 0))
+          (i32.ne (local.get $button_count) (i32.const 0)))
       (then
         (drop (call $toolbar_ensure_capacity (local.get $sw) (local.get $button_count)))
         (local.set $state (i32.const 0))

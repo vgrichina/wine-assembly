@@ -1221,7 +1221,9 @@
     (if (i32.eq (local.get $arg0) (local.get $arg1))
       (then (global.set $eax (i32.const 1)))
       (else
-        (if (i32.and (local.get $arg0) (local.get $arg1))
+        (if (i32.and
+              (i32.ne (local.get $arg0) (i32.const 0))
+              (i32.ne (local.get $arg1) (i32.const 0)))
           (then
             (local.set $wa0 (call $g2w (local.get $arg0)))
             (local.set $wa1 (call $g2w (local.get $arg1)))

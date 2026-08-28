@@ -3294,7 +3294,8 @@
                 (then
                   (call $help_set_error (global.get $HELP_ERROR_PHRASE_TABLE) (local.get $data_off))
                   (br $done)))))
-          (if (i32.and (i32.eqz (local.get $decoded_size)) (local.get $source_len))
+          (if (i32.and (i32.eqz (local.get $decoded_size))
+                (i32.ne (local.get $source_len) (i32.const 0)))
             (then
               (call $help_set_error (global.get $HELP_ERROR_PHRASE_TABLE) (local.get $data_off))
               (br $done)))))

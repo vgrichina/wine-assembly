@@ -2700,7 +2700,9 @@
                 (local.get $ppem) (global.get $tth_upem)))
               (local.set $dy (call $tt_fu_to_26_6 (local.get $arg2)
                 (local.get $ppem) (global.get $tth_upem)))
-              (if (i32.and (i32.and (local.get $flags) (i32.const 0x0800))
+              (if (i32.and
+                    (i32.ne (i32.and (local.get $flags) (i32.const 0x0800))
+                            (i32.const 0))
                     (i32.eqz (i32.and (local.get $flags) (i32.const 0x1000))))
                 (then
                   (local.set $x (local.get $dx))

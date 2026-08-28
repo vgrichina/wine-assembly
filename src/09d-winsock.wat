@@ -1050,7 +1050,9 @@
     ;; an accepted session goes silent instead of failing.
     (local.set $arec (call $vsock_async_rec (local.get $idx)))
     (local.set $carec (call $vsock_async_rec (local.get $child)))
-    (if (i32.and (local.get $arec) (local.get $carec))
+    (if (i32.and
+          (i32.ne (local.get $arec) (i32.const 0))
+          (i32.ne (local.get $carec) (i32.const 0)))
       (then
         (local.set $arec (call $g2w (local.get $arec)))
         (local.set $carec (call $g2w (local.get $carec)))

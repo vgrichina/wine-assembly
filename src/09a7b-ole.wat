@@ -675,7 +675,7 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
         (return)))
     (local.set $old (call $ole_bindctx_param_find (local.get $arg0) (local.get $arg1)))
-    (if (i32.and (local.get $old)
+    (if (i32.and (i32.ne (local.get $old) (i32.const 0))
           (i32.eqz (call $ole_bindctx_ref_releasable
             (call $gl32 (i32.add (local.get $old) (i32.const 4))))))
       (then
@@ -704,7 +704,7 @@
             (local.set $old_iface (call $gl32 (i32.add (local.get $old) (i32.const 4))))
             (call $heap_free (call $gl32 (local.get $old)))
             (call $heap_free (local.get $old))))
-        (if (i32.and (local.get $old_iface)
+        (if (i32.and (i32.ne (local.get $old_iface) (i32.const 0))
               (i32.eqz (call $ole_interface_is_local (local.get $old_iface))))
           (then
             (local.set $ret (call $gl32 (global.get $esp)))
@@ -1251,7 +1251,9 @@
     (if (local.get $arg4) (then (call $gs32 (local.get $arg4) (i32.const 0))))
     (if (local.get $out) (then (call $gs32 (local.get $out) (i32.const 0))))
     (global.set $eax
-      (if (result i32) (i32.and (local.get $arg4) (local.get $out))
+      (if (result i32) (i32.and
+            (i32.ne (local.get $arg4) (i32.const 0))
+            (i32.ne (local.get $out) (i32.const 0)))
         (then (i32.const 0x800401E4)) ;; MK_E_SYNTAX
         (else (i32.const 0x80004003))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
@@ -5920,7 +5922,9 @@
         (if (i32.eqz (call $ole_medium_guest_releases_valid (local.get $medium)))
           (then (local.set $hr (i32.const 0x80004002))))
         (local.set $retired_count (i32.add (local.get $retired_count) (i32.const 1)))))
-    (if (i32.and (local.get $retired_count) (i32.eqz (local.get $retired_out)))
+    (if (i32.and
+          (i32.ne (local.get $retired_count) (i32.const 0))
+          (i32.eqz (local.get $retired_out)))
       (then (local.set $hr (i32.const 0x80004002))))
     (if (local.get $hr)
       (then (drop (call $ole_obj_release (local.get $staged))) (return (local.get $hr))))
@@ -6255,7 +6259,7 @@
         (local.set $medium_iface (call $ole_medium_data_interface (local.get $medium)))
         (call $ole_release_medium (local.get $medium))))
     (if (i32.and
-          (local.get $iface)
+          (i32.ne (local.get $iface) (i32.const 0))
           (i32.ne (local.get $iface) (local.get $medium_iface)))
       (then (drop (call $ole_release_local_interface (local.get $iface)))))
     (local.set $iface (call $gl32 (i32.add (local.get $state) (i32.const 4))))
