@@ -915,6 +915,31 @@ programs behind a single missing subsystem and the rest are one apiece.
   against a selector of 0x110. This is the largest single lever left in the
   corpus and it is one subsystem, not four bugs.
 
+  **daretro's message is misleading and the obvious fix is not the fix.** The
+  reading it invites is that we refuse CS during the window between `mov cr0`
+  and the mandatory far jump, where a real CPU keeps running on the descriptor
+  cached at the last real-mode load. That window is real, and relaxing the
+  guard for it is faithful — and it changes nothing here, because the far jump
+  already works: instrumenting the PE transition puts it at **`cs=8:2567`**, a
+  32-bit code segment through a well-formed descriptor. The program gets into
+  protected mode and comes back out to `110:3dd` with PE still set, which is
+  the actual defect.
+
+  What it runs in there says why that is not a small fix. At `8:2567`:
+
+  ```
+  cs: lidt [0x1c6]              mov ax,0x10 / mov ds,ax / es / fs / ss
+  mov ax,0x18 / mov gs,ax       mov esp,[0x2255]
+  mov ax,0x20 / ltr ax          pushfd / or ah,0x30 / and ah,0xbf / popfd
+  in al,0x21 / or al,3 / out 0x21,al
+  ```
+
+  That is a protected-mode kernel bringing itself up — its own IDT, a task
+  register, IOPL and NT, and the interrupt controller remasked. So daretro is
+  not in the DPMI group at all; it hosts its own extender. Recorded because the
+  relaxed-guard fix is the first thing anyone will try, it takes an afternoon,
+  and it moves nothing.
+
 * **Programs that run to completion and draw nothing.** ACME-BIG.EXE (an
   overlay loader: seek, read a 28-byte MZ header, `AH=48h BX=FFFF` to size the
   free pool, five times, then exit 0) and BLIQ.EXE, which needs child-PSP
