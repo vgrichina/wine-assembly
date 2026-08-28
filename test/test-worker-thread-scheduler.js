@@ -208,6 +208,35 @@ function makeManager(backend, extraOpts) {
       JSON.stringify(done));
   }
 
+  {
+    // Browser input is a wake source for MsgWaitForMultipleObjects, not for
+    // ordinary WaitForMultipleObjects. Diablo waits for two Storm MPQ jobs
+    // here; returning nCount because a paint is queued lets it consume the
+    // half-filled buffers and report a Data File Error.
+    const tm = makeManager(makeBackend([]), { hasMessage: () => true });
+    const first = tm.createEvent(false, false);
+    const second = tm.createEvent(false, false);
+    const handles = 0x100;
+    const words = new Int32Array(tm.memory.buffer);
+    words[handles >>> 2] = first;
+    words[(handles >>> 2) + 1] = second;
+    const wait = {
+      waitHandle: 2,
+      waitHandlesPtr: handles,
+      waitAll: true,
+      waitTimeout: 0xFFFFFFFF,
+      waitStackBytes: 20,
+    };
+    check(tm.resolveMainWorkerWait(wait) === null,
+      'queued input does not satisfy ordinary worker-mode WaitForMultipleObjects');
+    tm.setEvent(first);
+    tm.setEvent(second);
+    const done = tm.resolveMainWorkerWait(wait);
+    check(done && done.result === 0 && done.waitStackBytes === 20,
+      'the same wait completes only after all requested objects are signaled',
+      JSON.stringify(done));
+  }
+
   // --- exit -----------------------------------------------------------------
   {
     const backend = makeBackend([[{ yield: 2 }]]);

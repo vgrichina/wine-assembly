@@ -2778,3 +2778,34 @@ block-50 work, and reaches the rendered Tristram HUD with no Data File dialog.
 `test/test-worker-metadata-refresh.js` changes the mocked guest-main metadata
 between two spawns and asserts that the second Worker receives the new DLL,
 thunk and TLS values, so the first-thread snapshot cannot regress silently.
+
+### CORRECTION: ordinary wait-all was being woken by UI messages
+
+The metadata refresh above is valid parity work, but its one successful browser
+run was timing-dependent and did not fix the Data File Error. Repeated isolated
+Worker runs still failed, including a verified `?threads-serial` run. Capturing
+the exact scheduler decision exposed the deterministic fault:
+
+```
+WaitForMultipleObjects(2, handles, TRUE, INFINITE)
+  handles still unsignaled
+  queued UI message present
+  resolveWait result = 2
+```
+
+`2` (`WAIT_OBJECT_0 + nCount`) is the message result of
+`MsgWaitForMultipleObjects`; it is not a valid success result for ordinary
+`WaitForMultipleObjects`. `ThreadManager.resolveWait()` applied that
+message-aware rule to every main-thread multi-object wait merely because it had
+a handles pointer. Storm therefore resumed while both MPQ completion events
+were unsignaled, consumed incomplete async-read output, and Diablo raised its
+CD/data-file dialog. Host `ReadFile` calls being exact length did not contradict
+this: the guest was released before the two jobs finished processing those
+bytes.
+
+Removing the message shortcut for the ordinary 20-byte wait frame is the whole
+fix. A live no-source A/B that forced `hasMessage=false` reached Tristram, and
+the production change then repeated that result in a fresh isolated Chrome run:
+real Worker backend, T1+T2 active, rendered HUD, and no Data File Error.
+`test/test-worker-thread-scheduler.js` holds two unsignaled events with queued
+browser input and asserts the wait remains parked until both events are set.
