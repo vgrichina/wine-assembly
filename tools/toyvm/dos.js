@@ -652,6 +652,9 @@ class Machine {
     // The first paragraph past the running program's image -- where EXEC puts a
     // child, and where a program that shrinks its block leaves free memory.
     this.imageTop = DEFAULT_ALLOC_TOP;
+    // What AH=48h handed out, and what AH=49h gave back below the frontier.
+    this.memBlocks = new Map();     // seg -> paragraphs
+    this.memFree = [];              // [{seg, size}], sorted and coalesced
     // XMS blocks and EMS handles, both backed by host buffers. Counters so a
     // run can say whether a manager was merely detected or actually used.
     // Open files, and a record of what was asked for -- "which file could it
@@ -2248,6 +2251,77 @@ class Machine {
     return this.int21Call(ah, al, r);
   }
 
+  // --- the memory pool -----------------------------------------------------
+  // `allocTop` is the frontier: everything above it up to the ceiling has never
+  // been handed out. That alone was the whole allocator, which made AH=49h a
+  // no-op and turned the pool into a one-way ratchet. BLIQ.EXE is where that
+  // stops working -- its Pascal runtime allocates and frees twenty-odd blocks
+  // while starting MIDAS, and with nothing coming back it hits the ceiling and
+  // prints "MIDAS Error: Out of conventional memory" on a machine that has
+  // 400KB free. So blocks below the frontier that have been given back live in
+  // `memFree`, sorted and coalesced, and a request looks there first.
+  memLargest() {
+    let best = DEFAULT_ALLOC_TOP - this.allocTop;
+    for (const b of this.memFree) if (b.size > best) best = b.size;
+    return Math.max(0, best);
+  }
+
+  memAlloc(want) {
+    for (let i = 0; i < this.memFree.length; i++) {
+      const b = this.memFree[i];
+      if (b.size < want) continue;
+      const seg = b.seg;
+      if (b.size === want) this.memFree.splice(i, 1);
+      else { b.seg += want; b.size -= want; }
+      this.memBlocks.set(seg, want);
+      return seg;
+    }
+    if (DEFAULT_ALLOC_TOP - this.allocTop < want) return null;
+    const seg = this.allocTop;
+    this.allocTop += want;
+    this.memBlocks.set(seg, want);
+    return seg;
+  }
+
+  memRelease(seg, size) {
+    if (!size) return;
+    // Give it straight back to the frontier when it is the top block, so a
+    // program that allocates and frees in LIFO order never grows the list.
+    if (seg + size === this.allocTop) { this.allocTop = seg; this.memTrim(); return; }
+    this.memFree.push({ seg, size });
+    this.memFree.sort((a, b) => a.seg - b.seg);
+    for (let i = 0; i < this.memFree.length - 1; ) {
+      const a = this.memFree[i], b = this.memFree[i + 1];
+      if (a.seg + a.size === b.seg) { a.size += b.size; this.memFree.splice(i + 1, 1); }
+      else i++;
+    }
+    this.memTrim();
+  }
+
+  // Anything free that touches the frontier is not a block, it is frontier.
+  // This also cleans up after EXEC and the terminate path, which move the
+  // frontier outright rather than through alloc and free.
+  memTrim() {
+    for (let done = false; !done; ) {
+      done = true;
+      for (let i = 0; i < this.memFree.length; i++) {
+        const b = this.memFree[i];
+        if (b.seg >= this.allocTop) { this.memFree.splice(i, 1); done = false; break; }
+        if (b.seg + b.size >= this.allocTop) { this.allocTop = b.seg; this.memFree.splice(i, 1); done = false; break; }
+      }
+    }
+  }
+
+  // The INT 22h address the current PSP carries at +0Ah, or null when nothing
+  // has put one there. Kept apart from the exit path because it is a fact about
+  // guest memory, not about exiting, and the sweep's --debug reads it too.
+  pspTerminateVector() {
+    const at = (this.curPsp << 4) + 0x0A;
+    const ip = this.mem[at] | (this.mem[at + 1] << 8);
+    const cs = this.mem[at + 2] | (this.mem[at + 3] << 8);
+    return (cs || ip) ? { cs, ip } : null;
+  }
+
   int21Call(ah, al, r) {
     switch (ah) {
       case 0x4C: case 0x00: case 0x31: {
@@ -2263,9 +2337,55 @@ class Machine {
           this.transfer = parent;
           this.allocTop = Math.max(parent.allocTop, keep);
           this.imageTop = Math.max(parent.imageTop, keep);
+          this.memTrim();
           this.curPsp = parent.psp;
           this.log(`child exited ${code}${keep ? `, resident to ${keep.toString(16)}` : ''};`
             + ` parent resumes at ${parent.cs.toString(16)}:${parent.ip.toString(16)}`);
+          return true;
+        }
+        // No EXEC frame to pop, but that is not the same as "the run is over".
+        // DOS does not end a program by ending it -- it far-jumps through the
+        // terminate vector stored at PSP+0Ah, the INT 22h address, and only the
+        // fact that COMMAND.COM puts its own address there makes an ordinary
+        // exit look like the end of the world.
+        //
+        // ACME-BIG.EXE is a loader that does this by hand: it pokes 0110:044A
+        // (its own overlay manager) into its PSP at +0Ah, calls AH=55h to make
+        // a child PSP -- which copies that vector along with everything else --
+        // and reads the next part of itself into it. When that part calls
+        // AH=4Ch it means "I am done, resume the loader", and we were reading
+        // it as "the machine stops". BLIQ.EXE is built the same way.
+        //
+        // The guard is exact rather than heuristic: we build a PSP with a zero
+        // here and never write it ourselves, so a non-zero vector is a value
+        // some guest deliberately stored. Every program that exits correctly
+        // today has a zero there and still ends.
+        const term = this.pspTerminateVector();
+        if (term) {
+          const parent = (this.mem[(this.curPsp << 4) + 0x16])
+            | (this.mem[(this.curPsp << 4) + 0x17] << 8);
+          this.lastExitCode = code;
+          this.log(`exit ${code} through the terminate vector at`
+            + ` ${term.cs.toString(16)}:${term.ip.toString(16)}`);
+          if (parent && parent !== this.curPsp) this.curPsp = parent;
+          // AH=31h keeps DX paragraphs and hands the rest of the block back,
+          // and that half is not optional: BLIQ.EXE gives its subfile the whole
+          // remaining pool (0x9cc3 paragraphs), the subfile hooks INT 10h and
+          // goes resident on 0x40 of them, and the loader immediately asks for
+          // 0x37 more for the next one. Without the release that ask fails and
+          // BLIQ prints "[ERROR]: Executing internal subfile...".
+          if (keep) {
+            this.allocTop = keep; this.imageTop = Math.max(this.imageTop, keep);
+            for (const s of [...this.memBlocks.keys()]) if (s >= keep) this.memBlocks.delete(s);
+            this.memTrim();
+          }
+          // SS:SP and the data segments stay as they are. DOS leaves them
+          // undefined across INT 22h, and a loader that installed the vector
+          // sets up whatever it needs on the other side of the jump.
+          this.transfer = {
+            cs: term.cs, ip: term.ip, ss: r.get('ss'), sp: r.ret.sp,
+            ds: r.get('ds'), es: r.get('es'),
+          };
           return true;
         }
         this.exited = true; this.exitCode = code;
@@ -2332,6 +2452,7 @@ class Machine {
         });
         this.curPsp = pspSeg;
         this.allocTop = Math.min(DEFAULT_ALLOC_TOP, info.allocTop);
+        this.memTrim();
         this.imageTop = info.minTop;
         this.transfer = {
           cs: info.cs, ip: info.ip, ss: info.ss, sp: info.sp,
@@ -2636,30 +2757,72 @@ class Machine {
       }
       case 0x48: {                              // allocate paragraphs
         const want = r.get('bx') & 0xFFFF;
-        const have = DEFAULT_ALLOC_TOP - this.allocTop;
+        const seg = this.memAlloc(want);
         // BX comes back as the largest block available, which is how a program
         // asks how much memory there is: BX=FFFF is guaranteed to fail and the
         // answer is in the error return. That is the call ASMINST.EXE reads,
         // and with the old 0x9000 ceiling it was being told 64K.
-        if (want > have) { r.setResultCf(true); r.set('ax', 8); r.set('bx', have); return true; }
-        r.set('ax', this.allocTop);
-        this.allocTop += want;
+        if (seg === null) {
+          r.setResultCf(true); r.set('ax', 8); r.set('bx', this.memLargest());
+          return true;
+        }
+        r.set('ax', seg);
         r.setResultCf(false);
         return true;
       }
-      case 0x49: r.setResultCf(false); return true;   // free
+      case 0x49: {                              // free
+        const seg = r.get('es') & 0xFFFF;
+        const size = this.memBlocks.get(seg);
+        // A block we never handed out is not an error worth failing on -- a
+        // program freeing its own PSP block on the way out is normal, and the
+        // pool has no record of that one.
+        if (size !== undefined) { this.memBlocks.delete(seg); this.memRelease(seg, size); }
+        r.setResultCf(false);
+        return true;
+      }
       case 0x4A: {                              // resize a block
         // A .EXE is loaded owning everything up to the ceiling, so the free
         // pool is empty until it gives some back -- which is what a C or Pascal
         // runtime does first thing. Honouring the shrink is what makes the
         // answer above mean anything.
         const seg = r.get('es') & 0xFFFF, want = r.get('bx') & 0xFFFF;
+        const held = this.memBlocks.get(seg);
+        if (held !== undefined) {
+          // Shrinking always works and the tail goes back to the pool. Growing
+          // works only into free space that starts where this block ends, which
+          // is what a real MCB walk would find.
+          if (want <= held) {
+            this.memBlocks.set(seg, want);
+            this.memRelease(seg + want, held - want);
+            r.setResultCf(false);
+            return true;
+          }
+          const at = seg + held, need = want - held;
+          const gap = this.memFree.find(b => b.seg === at);
+          if (gap && gap.size >= need) {
+            if (gap.size === need) this.memFree.splice(this.memFree.indexOf(gap), 1);
+            else { gap.seg += need; gap.size -= need; }
+            this.memBlocks.set(seg, want);
+            r.setResultCf(false);
+            return true;
+          }
+          if (at === this.allocTop && DEFAULT_ALLOC_TOP - this.allocTop >= need) {
+            this.allocTop += need;
+            this.memBlocks.set(seg, want);
+            r.setResultCf(false);
+            return true;
+          }
+          r.setResultCf(true); r.set('ax', 8);
+          r.set('bx', held + (gap ? gap.size : at === this.allocTop ? DEFAULT_ALLOC_TOP - at : 0));
+          return true;
+        }
         if (seg === PSP_SEG) {
           if (PSP_SEG + want > DEFAULT_ALLOC_TOP) {
             r.setResultCf(true); r.set('ax', 8); r.set('bx', DEFAULT_ALLOC_TOP - PSP_SEG);
             return true;
           }
           this.allocTop = PSP_SEG + want;
+          this.memTrim();
           // Shrinking is also what makes room for a child: a loader stub that
           // gives back everything above itself expects EXEC to load there.
           this.imageTop = Math.min(this.imageTop, PSP_SEG + want);
@@ -2672,10 +2835,14 @@ class Machine {
       // own .EXE -- CONTAGIO.EXE calls it between reading its overlay table and
       // jumping into one.
       case 0x55: {
-        const to = (r.get('dx') & 0xFFFF) << 4;
-        this.mem.copyWithin(to, PSP_SEG << 4, (PSP_SEG << 4) + 0x100);
-        this.mem[to + 0x16] = PSP_SEG & 0xFF;         // parent PSP
-        this.mem[to + 0x17] = (PSP_SEG >> 8) & 0xFF;
+        const seg = r.get('dx') & 0xFFFF, to = seg << 4, from = this.curPsp << 4;
+        this.mem.copyWithin(to, from, from + 0x100);
+        this.mem[to + 0x16] = this.curPsp & 0xFF;     // parent PSP
+        this.mem[to + 0x17] = (this.curPsp >> 8) & 0xFF;
+        // This is the call EXEC makes internally, so unlike AH=26h it also
+        // makes the new PSP the current one. That is what puts the child's
+        // terminate vector in reach of the AH=4Ch above.
+        this.curPsp = seg;
         r.setResultCf(false);
         return true;
       }

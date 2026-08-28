@@ -1021,3 +1021,69 @@ busy, and it comes back on a quiet one.
   these is visible to an opcode census; they were all read off the screen.
 * **Lazy flags vs eager flags** — the question x86-16 was chosen for, and the
   one thing here that has no bearing on dispatch at all.
+
+### 8.1 DOS does not end a program by ending it
+
+ACME-BIG.EXE and BLIQ.EXE both stopped within a tenth of a second of starting,
+and the trace made it look like they had simply decided to quit: an ordinary
+`AH=4Ch`, exit code 0, no error message, no complaint. It was our exit.
+
+Real DOS terminates a program by far-jumping through the address at **PSP+0Ah**,
+the INT 22h terminate vector. Nothing about `AH=4Ch` says "stop the machine" —
+it says "go to whoever put their address there", and it looks like the end of
+the world only because COMMAND.COM normally owns that slot. An overlay loader
+that wants control back writes its own address in instead, and both of these do.
+Dumping the child PSP ACME-BIG builds is what settled it:
+
+```
+204:0000  cd 20 00 9f 00 00 00 00 00 00 4a 04 10 01 00 00
+                                        ^^^^^^^^^^^ 0110:044A
+```
+
+0x110 is ACME-BIG's own segment. It had told us exactly where to resume and we
+were not reading the field. Three things had to change together:
+
+* **`AH=4Ch` follows the vector** when PSP+0Ah is non-zero. That guard is exact
+  rather than heuristic — we build every PSP with a zero there and never write
+  it ourselves, so a non-zero value is something a guest deliberately stored.
+  Every program that exits correctly today still exits.
+* **`AH=55h` sets the current PSP.** It is the call EXEC makes internally, which
+  is the whole difference between it and `AH=26h`, and without it the child's
+  terminate vector is out of reach at exit.
+* **`AH=31h`'s "keep DX paragraphs" applies on that path too**, because the
+  release is the point of the call: BLIQ hands its subfile the entire remaining
+  pool (0x9cc3 paragraphs), the subfile hooks INT 10h and goes resident on 0x40
+  of them, and the loader asks for 0x37 more for the next one straight away.
+
+**And then the pool had to be real.** `allocTop` was a frontier and `AH=49h` was
+`return true` — a one-way ratchet, which is invisible for a program that
+allocates once and fine for the many that never free, but BLIQ's Pascal runtime
+takes and returns twenty-odd blocks while starting MIDAS and hit the ceiling on
+a machine with 400KB free. `AH=48h/49h/4Ah` now keep a sorted, coalesced free
+list below the frontier, with the frontier absorbing anything that touches it so
+LIFO allocation never grows the list at all.
+
+The result, all measured against a `75808fbd` worktree on the same box:
+
+| program | before | after |
+|---|---|---|
+| ACME-BIG.EXE | 0 px, ends in 0.4M dispatches | **64000 px**, its logo, in protected mode |
+| BULLET.EXE | 1894 px, mode 13h linear | **16274 px**, mode 13h unchained |
+| BLIQ.EXE | 0.04M dispatches, 40 chars | **31.2M dispatches**, mode 13h unchained, 203k planar writes, SB and EMS up |
+
+A 24-program regression sample was byte-identical on 23 and BULLET was the 24th,
+and CONTAGIO.EXE — the `AH=55h` caller this VM already had a comment about —
+came back with the same frame hash.
+
+**BLIQ is not finished, but it now says what it wants.** It ends on `MIDAS
+Error: Out of conventional memory` followed by `Runtime error 200`, and those
+are one fault, not two: the Borland runtime error is reported at offset 0x67,
+the same offset as the Pascal heap routine every `AH=48h` in the trace comes
+from, so it is a divide by zero inside the allocator reacting to the shortage —
+not the famous TP7 delay-calibration bug it looks like. The shortage itself is
+real arithmetic: three resident subfiles plus the image hold 412KB, the loader
+then asks for 312KB and takes the 221KB that is left, and the next 896-byte ask
+has nowhere to go. Nothing in the trace frees those subfile blocks, so either
+the loader has an EMS path we are not qualifying for or one of them should not
+be resident at that size. That is the next question, and it is a DOS-services
+question rather than a CPU one.
