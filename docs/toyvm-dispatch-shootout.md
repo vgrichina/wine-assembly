@@ -1030,6 +1030,37 @@ busy, and it comes back on a quiet one.
 * **Lazy flags vs eager flags** — the question x86-16 was chosen for, and the
   one thing here that has no bearing on dispatch at all.
 
+### 8.0.-1 Three programs share one shape, and it is not three bugs
+
+JULTRO, ASSAULT and INTRO are filed separately above as a divide by zero, a bad
+opcode and a protected-mode failure. All three are the same thing: **execution
+reached an address that holds no instruction**, and every symptom each one
+reports is downstream of that.
+
+* JULTRO's `5ab:1ff` is an odd offset in a region of two-byte units — §8.0.
+* ASSAULT gives up on `fe 90`, which is not an encoding at all.
+* INTRO stops at `2:1a43` with `cs=2`. Selector 2 is index 0, the null
+  descriptor, and `$segbase` returns base 0 for it — so the address is linear
+  0x1a43, inside the interrupt vector table. A real CPU faults on loading a null
+  CS, so the program did not mean to do this either.
+
+INTRO is worth reading past the give-up because its pmode kernel is legible.
+`--disasm=8:fb4` and `--disasm=8:fe2` show an interrupt reflector: `movzx ebx,
+bl` then `mov dx,[0+ebx*4]` / `mov cx,[2+ebx*4]`, which is `IVT[vector]` fetched
+offset-then-segment, with a second copy that reads an 8-byte-entry table at
+`cs:[0x4c]` instead. So this demo carries **its own DOS extender**, it services
+interrupts by going back out to real mode, and it built a GDT with a 0x26F limit
+and ran real code through selector 8 before it lost its way. It is not blocked
+on DPMI — it asked (`int 2Fh AX=1687`, twice, unhandled) and then did without.
+
+That makes "16-bit protected mode" the wrong name for what these need. The
+question to answer first is the one they share: **what transfers control to an
+address nothing was loaded at**, on three programs, in three different modes.
+Fixing `$segbase` to give selector 2 its real-mode meaning (the treatment
+out-of-GDT-limit selectors already get two lines below the null check) would
+only move INTRO's garbage from linear 0x1a43 to linear 0x1a63; it is not the
+fix, and the give-up address is not the bug in any of the three.
+
 ### 8.0.0 The Gravis group is not an environment variable
 
 AMANAMAN.EXE stops on `Hey ! Where's your ULTRASND environment ?` and rage.exe
