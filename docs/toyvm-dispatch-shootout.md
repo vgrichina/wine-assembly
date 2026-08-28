@@ -811,6 +811,92 @@ Two measurements that close off whole hypotheses for the genuinely-blank rest:
   EXEC) — one file, and getting it wrong would break every program that exits
   correctly today.
 
+### 7.7 We were answering "8086" to the one question that asks
+
+COROMER.EXE printed a line about how fast your CPU is and then wedged: 200
+handbacks at `110:545`, blank screen, and the decoder refusing `0F 14`. That
+last detail is what made it look like a missing instruction, and it was a
+consequence rather than the cause. The bytes above it are:
+
+```
+mov cl, 32
+mov ax, 1
+shr ax, cl      ; 8086: shifts 32 times -> 0.   186+: count masked to 5 bits -> 1
+cmp ax, 0
+jnz <186+ path>
+```
+
+This is the standard part probe, and our shift helper looped the full count, so
+we answered "8086". The program then did what you do to an 8086: `push cs`
+followed by the `0F` that is POP CS **only on that part**. On anything later
+`0F` starts a two-byte opcode, our decoder refused `0F 14`, and the run stopped
+there. Nothing was wrong with the decoder — a 386 never reaches that byte.
+
+Two things worth keeping from it:
+
+* **The give-up address was three instructions downstream of the bug.** A
+  decoder that refuses an opcode reports the opcode, which reads as an ISA gap
+  and sends you to look up `0F 14`. The actual defect was a shift, and the only
+  thing connecting them was that the program deliberately branches on the
+  difference. When a run stops on a refused byte, check whether the program
+  *meant* to get there.
+
+* **We cannot be both parts, and the repository runs both.** Masking the count
+  unconditionally cost `gate.js` 15427 of 70000 cases on D2/D3 — its vectors
+  were recorded on a physical 8088, where the unmasked shift is correct. So the
+  masking is a global (`$shmask`) that `set_cpu` raises at 186, exactly like
+  `$linmask` for the address bus and `$f_res`/`$f_def` for the FLAGS shape.
+  gate.js never calls `set_cpu` and keeps its 70000/70000; the DOS machine, which
+  answers CPUID and decodes `0F` opcodes, stops claiming to be an 8086 and draws
+  63680 of 64000 pixels. `--cpu=86` reproduces the old blank run, which is what
+  proves the bit is what moved it.
+
+### 7.8 A self-patch cut was paying for a recompile it did not need
+
+`$smc=1` means the decoder ended a block at a store through a CS override.
+`$smc=2` means `$wr8` saw the store land in a paragraph some compiled region
+decoded. The handler for the first case dropped the block the store was about
+to fall into — and that was left over from before the two cases were told apart,
+when a break could not say which kind it was.
+
+It can now, and the flag is a proof rather than an absence of one: `$smc` is 1
+only when `$wr8` *declined* to make it 2, at every width, since `$wr16` and
+`$wr32` are built out of `$wr8`. So the store touched no compiled code, and the
+block being dropped recompiles into identical words.
+
+The cost of that was not marginal. COMPCODE.EXE keeps a dword variable in its
+code segment (`cs: mov [0x656], eax`), so every store cut the block and bought a
+full re-decode:
+
+| | traces | arena |
+|---|---|---|
+| COMPCODE.EXE | 366712 → **164** | 170614KB → 76KB |
+| BP-OZONE.EXE | 488373 → **248** | 72024KB → 186KB |
+| DHADREN.EXE | 128997 → **850** | 42880KB → 1100KB |
+| CARRIE.EXE | 3538 → **1187** | 1191KB → 165KB |
+
+Frame hash, pixel count, dispatch count and break count are identical on every
+one — the runs do the same thing, they just stop paying for it. CRYSTAL.COM is
+the control: its breaks are the `$smc=2` kind and its 77005 traces are
+unchanged, which is what shows the change reaches only the path it argues about.
+
+### 7.9 Two traps in reading a sweep
+
+Both cost real time this session and neither is visible in the output.
+
+* **Join on the path, never the basename.** The corpus has two ASYLUM.EXE, two
+  SETUP.EXE, two BLIQ.EXE and several TRIPLEX!.COM. A basename join pairs each
+  with the other and manufactures movement: it credited §7.5 with moving ASYLUM
+  from 0 pixels to 5635 when both files were flat.
+
+* **`capture-one.sh` skips a program whose row file already exists.** That is
+  what makes a killed sweep resumable, and it also means pointing a "fresh"
+  sweep at a directory that already has rows in it captures **nothing** and
+  silently reports the old run. A sweep of 199 programs that finishes in three
+  minutes did not run. Check the row-file timestamps before reading a diff —
+  15 programs appeared to have lost their entire picture, and the rows were 16
+  hours old.
+
 ## 8. Still open
 
 * **A protected-mode INT 9 is invisible to the keyboard.** `keyboardIrq` will
