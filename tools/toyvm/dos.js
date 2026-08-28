@@ -62,6 +62,9 @@ const EMS_NAME = 'EMMXXXX0';  // at handler_segment:000A, the classic EMS probe
 // What DOS prints before aborting a program that took a CPU fault with the
 // vector still pointing at its own default handler. The wording is the real
 // one, so a run that ends this way reads like the machine it is emulating.
+// The names DOS prints for the CPU faults it owns a default handler for. Used
+// to report where one happened, not to act on it -- see the fault case in
+// serviceCall for why acting on it made things worse.
 const FAULT_NAMES = {
   0x00: 'Divide overflow',
   0x04: 'Overflow',            // INTO with OF set
@@ -671,9 +674,9 @@ class Machine {
     this.emsHandles = new Map(); this.emsNext = 1; this.emsMaps = 0;
     this.emsMapped = [null, null, null, null];
     this.unhandled = new Map();
-    // CPU faults that reached DOS's own default handler and aborted the run.
+    // "Divide overflow at 5ab:1ff" -> count. CPU faults the guest took with the
+    // vector still pointing at us. Reported, not acted on.
     this.faults = new Map();
-    this.abortMessage = null;
     this.unhandledFn = new Map();      // "vec:ah" -> count, the real work list
     this.intCount = new Map();
     // Which clock, if any, a program is pacing itself off. A demo that never
@@ -1882,24 +1885,41 @@ class Machine {
       case 0x12:
         r.set('ax', this.mem[0x413] | (this.mem[0x414] << 8));
         return true;
-      // A CPU fault nobody hooked. DOS points these vectors at a routine that
-      // prints a message and ABORTS the program -- it does not return to the
-      // faulting instruction, because there is nothing sensible to return to.
-      // Declining instead left the guest re-executing the same `div` forever:
-      // JULTRO.EXE divides by zero at 5ab:1ff and then spun out the whole
-      // 300M-dispatch budget at 22 dispatches per handback, photographing as a
-      // blank text screen with no hint of why.
+      // A CPU fault nobody hooked. On a real machine DOS points these vectors
+      // at a routine that prints a message and ABORTS the program, and doing
+      // exactly that here was a net loss, measured on the corpus:
       //
-      // Terminating is the real behaviour and it is also the honest one: the
-      // divisor being zero is a bug worth seeing, and a run that ends with
-      // "Divide overflow" says so, where a hang says only that something is
-      // wrong somewhere.
-      case 0x00: case 0x04: case 0x06: case 0x0D:
-        this.faults.set(vec, (this.faults.get(vec) || 0) + 1);
-        this.exited = true;
-        this.exitCode = 0xFF;
-        this.abortMessage = FAULT_NAMES[vec];
-        return true;
+      //   JULTRO.EXE   hang -> "Divide overflow" at 5ab:1ff   (still 0 px)
+      //   cw2.com      30659 px -> 0 px
+      //
+      // Because the divisor being zero is usually OUR bug, not the program's.
+      // cw2.com runs on real hardware without faulting at all; something
+      // upstream in this emulator hands it a zero it should never have seen.
+      // Applying correct DOS semantics to an incorrect CPU state turns a demo
+      // that was rendering into a dead one, and trading a working picture for a
+      // better diagnostic on a program that draws nothing either way is a bad
+      // trade.
+      //
+      // Aborting after a REPEAT count was tried too, and catches nothing here:
+      // JULTRO faults exactly once and then spins somewhere else entirely, so
+      // no threshold ever fires. That left the abort as machinery with no
+      // beneficiary, so all that remains is the part that earned its place --
+      // naming the fault and where it happened. The behaviour is unchanged from
+      // before any of this (skip the instruction, carry on); what is new is
+      // that the run says so afterwards.
+      //
+      // This is how JULTRO's divide was found at all: its screen is blank, its
+      // stuck address is 5ab:8c, and nothing connected the two until the fault
+      // at 5ab:1ff had a line of its own.
+      case 0x00: case 0x04: case 0x06: case 0x0D: {
+        // From the IRET frame, not from CS:IP -- by the time this runs the
+        // guest is standing in the F000 stub, and reporting that address names
+        // the emulator instead of the instruction that faulted.
+        const at = `${FAULT_NAMES[vec]} at `
+          + `${r.ret.cs.toString(16)}:${r.ret.ip.toString(16)}`;
+        this.faults.set(at, (this.faults.get(at) || 0) + 1);
+        return false;
+      }
       case 0x15: return this.int15(ah, al, r);
       case 0x20: this.exited = true; this.exitCode = 0; return true;
       case 0x21: return this.int21(ah, al, r);
