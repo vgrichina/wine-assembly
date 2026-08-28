@@ -899,6 +899,54 @@ Both cost real time this session and neither is visible in the output.
 
 ## 8. Still open
 
+### 8.0 The blank list, by mechanism rather than by name
+
+What is left after §7.7 and §7.8, each entry checked individually rather than
+inherited from an older list. The grouping is the point: one of these is four
+programs behind a single missing subsystem and the rest are one apiece.
+
+* **16-bit protected mode, four programs.** INTRO.EXE, CTSLASSE.EXE,
+  AQUAPHOB.EXE and daretro.exe. The first three probe DPMI (`int 2Fh AX=1687`)
+  and get no host; INTRO then switches to protected mode on its own and lands
+  with `CS=2`, which is selector index 0 — the null descriptor — so it executes
+  at linear 0 and the decoder refuses the interrupt vector table. daretro.exe
+  fails one step earlier and more legibly: `bad CS selector at 110:3dd — names
+  no GDT descriptor`, with `cr0=11` and a GDT limit of 0x37, seven descriptors,
+  against a selector of 0x110. This is the largest single lever left in the
+  corpus and it is one subsystem, not four bugs.
+
+* **Programs that run to completion and draw nothing.** ACME-BIG.EXE (an
+  overlay loader: seek, read a 28-byte MZ header, `AH=48h BX=FFFF` to size the
+  free pool, five times, then exit 0) and BLIQ.EXE, which needs child-PSP
+  termination through `AH=55h`. Both exit 0 in hundredths of a second. SETUP.EXE
+  from the ANGEL directory is the same shape but far slower — 808M dispatches
+  inside one `repe cmpsb` pattern search before exiting 0 with an empty screen —
+  and it matters twice over, because ANGEL.EXE's only output is "Please run
+  setup.exe on your computer!". Note the sweep runs each program in its own VFS,
+  so ANGEL could not see SETUP's output even if SETUP wrote one.
+
+* **AUTUMN.EXE unpacks correctly and stops.** It creates `###.tmp`, writes
+  0x9837 bytes, reopens it and reads it back in 231 chunks — every read returns
+  the byte count asked for — moves 128KB through XMS, sets mode 13h, runs its
+  own timer ISR at a healthy 21000 dispatches per handback, and never draws.
+  File I/O and XMS are both ruled out by measurement; the defect is downstream
+  of both.
+
+* **JULTRO.EXE divides by zero at `5ab:1ff`** and then spins at `5ab:8c`. The
+  divisor is almost certainly ours rather than the program's — see the fault
+  case in `serviceCall` for why acting on it made two other programs worse.
+
+* **ASSAULT.EXE and ASYLUM.EXE** are one program each with no shared mechanism.
+  ASSAULT's decoder give-up is on `fe 90`, which is not a valid encoding at all
+  (`FE /2`), so it has jumped into data and the give-up address is a symptom.
+
+Two rows on the blank list are **not** work items, recorded so they stop being
+re-investigated: COMPCODE.EXE draws 63508 pixels and only ever photographed
+blank because it needed a bigger budget (§7.9's rung), and DIZZY_FI.EXE draws
+26896 pixels in a direct run at either build — its zero is a wall-timeout under
+box load, which is what the sweep does to a slow program when the machine is
+busy, and it comes back on a quiet one.
+
 * **A protected-mode INT 9 is invisible to the keyboard.** `keyboardIrq` will
   not raise IRQ1 unless `hookedVector(0x09)` says someone is listening, and that
   reads the **real-mode** IVT. A 32-bit program whose extender installs the
