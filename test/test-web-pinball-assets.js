@@ -317,7 +317,7 @@ assert(webApp.includes('lib/compile-wat.js?v=169'), 'web host should cache-bust 
 assert(webApp.includes('lib/guest-rpc.js?v=7'), 'web host should cache-bust trace-disabled API batching');
 assert(webApp.includes('lib/guest-thread-host.js?v=6'), 'web host should cache-bust nested Worker wait pumping');
 assert(webApp.includes('lib/debug-thread-state.js?v=7'), 'web host should cache-bust live Worker status diagnostics');
-assert(webApp.includes('host.js?v=239'), 'web host should cache-bust host.js after the current source update');
+assert(webApp.includes('host.js?v=240'), 'web host should cache-bust host.js after the current source update');
 assert(hostJs.includes("static SOURCE_VERSION = '230'"), 'web host should cache-bust WASM artifacts and WAT source compilation');
 assert(hostJs.includes("const fetchOptions = debugFetch ? { cache: 'no-store' } : undefined;"),
   'debug sessions should select a no-store fetch policy');

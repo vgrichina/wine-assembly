@@ -2472,18 +2472,33 @@ class WineAssembly {
           }
         }
       } catch (e) {
-        let eip = 0, esp = 0, ebp = 0, yr = 0;
+        let eip = 0, prevEip = 0, prev2Eip = 0, esp = 0, ebp = 0, yr = 0;
+        let eax = 0, ebx = 0, ecx = 0, edx = 0, esi = 0, edi = 0;
         try { eip = self.instance.exports.get_eip(); } catch {}
+        try { prevEip = self.instance.exports.get_dbg_prev_eip(); } catch {}
+        try { prev2Eip = self.instance.exports.get_dbg_prev2_eip(); } catch {}
         try { esp = self.instance.exports.get_esp(); } catch {}
         try { ebp = self.instance.exports.get_ebp(); } catch {}
+        try { eax = self.instance.exports.get_eax(); } catch {}
+        try { ebx = self.instance.exports.get_ebx(); } catch {}
+        try { ecx = self.instance.exports.get_ecx(); } catch {}
+        try { edx = self.instance.exports.get_edx(); } catch {}
+        try { esi = self.instance.exports.get_esi(); } catch {}
+        try { edi = self.instance.exports.get_edi(); } catch {}
         try { yr = self.instance.exports.get_yield_reason(); } catch {}
-        const eipHex = '0x' + (eip >>> 0).toString(16).padStart(8, '0');
-        const espHex = '0x' + (esp >>> 0).toString(16).padStart(8, '0');
-        const ebpHex = '0x' + (ebp >>> 0).toString(16).padStart(8, '0');
+        const hex = value => '0x' + (value >>> 0).toString(16).padStart(8, '0');
+        const stack = [];
+        for (let offset = 0; offset < 16; offset += 4) {
+          try { stack.push(hex(self.instance.exports.guest_read32((esp + offset) >>> 0))); }
+          catch { stack.push('?'); }
+        }
         const unimpl = self.hostCtx && self.hostCtx.lastUnimplemented;
         const tag = unimpl ? ` [unimplemented: ${unimpl}]` : '';
-        console.error('WASM crash:', e, 'EIP=' + eipHex, 'ESP=' + espHex, 'EBP=' + ebpHex, 'yield=' + yr, tag);
-        self.logToUI('ERROR: ' + e.message + ' @ EIP=' + eipHex + ' ESP=' + espHex + ' EBP=' + ebpHex + ' yield=' + yr + tag);
+        const state = `EIP=${hex(eip)} prev_eip=${hex(prevEip)} prev2_eip=${hex(prev2Eip)} ` +
+          `ESP=${hex(esp)} EBP=${hex(ebp)} EAX=${hex(eax)} EBX=${hex(ebx)} ECX=${hex(ecx)} ` +
+          `EDX=${hex(edx)} ESI=${hex(esi)} EDI=${hex(edi)} stack=[${stack.join(',')}] yield=${yr}`;
+        console.error('WASM crash:', e, state, tag);
+        self.logToUI('ERROR: ' + e.message + ' @ ' + state + tag);
         // Repaints, unlike before: a crash that left the option off held the
         // dead app's last frame on screen, which reads as a hang rather than
         // as the exit it is.
