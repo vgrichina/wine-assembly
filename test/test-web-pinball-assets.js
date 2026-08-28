@@ -312,7 +312,7 @@ assert(webApp.indexOf('lib/gdi-surface.js?v=2') < webApp.indexOf('lib/host-impor
   'web host should load the GDI surface module before host imports');
 assert(webApp.includes('lib/host-imports.js?v=210'), 'web host should cache-bust the current host imports');
 assert(webApp.includes('lib/touch-cursor.js?v=2'), 'web host should cache-bust custom touch cursor rendering');
-assert(webApp.includes('lib/thread-manager.js?v=182'), 'web host should cache-bust shared synchronization handles');
+assert(webApp.includes('lib/thread-manager.js?v=183'), 'web host should cache-bust sparse cooperative thread stacks');
 assert(webApp.includes('lib/compile-wat.js?v=169'), 'web host should cache-bust the snapshot-capable WAT compiler');
 assert(webApp.includes('lib/guest-rpc.js?v=7'), 'web host should cache-bust trace-disabled API batching');
 assert(webApp.includes('lib/guest-thread-host.js?v=6'), 'web host should cache-bust nested Worker wait pumping');
