@@ -1068,6 +1068,7 @@ The result, all measured against a `75808fbd` worktree on the same box:
 | program | before | after |
 |---|---|---|
 | ACME-BIG.EXE | 0 px, ends in 0.4M dispatches | **64000 px**, its logo, in protected mode |
+| ASYLUM.EXE (1995-a) | 0 px, `exited=true code=1` at 1cd:86 | **64000 px**, a full-screen plasma |
 | BULLET.EXE | 1894 px, mode 13h linear | **16274 px**, mode 13h unchained |
 | BLIQ.EXE | 0.04M dispatches, 40 chars | **31.2M dispatches**, mode 13h unchained, 203k planar writes, SB and EMS up |
 
