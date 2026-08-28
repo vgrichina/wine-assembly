@@ -915,9 +915,13 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false, be
     }
 
     // --- INT ----------------------------------------------------------------
-    case 0xCD: { const v = imm8(); words.push(H.int_imm, v, wip(start + n)); endsBlock = true; break; }
+    // The third operand is this instruction's own ip, not the next one: a #GP
+    // raised in its place (a DPL-0 gate reached from virtual-8086 mode) is a
+    // fault, and the monitor that catches it reads the `cd xx` back to see
+    // which INT the guest meant.
+    case 0xCD: { const v = imm8(); words.push(H.int_imm, v, wip(start + n), wip(start)); endsBlock = true; break; }
     // INT3 is the one-byte breakpoint form of INT 3.
-    case 0xCC: words.push(H.int_imm, 3, wip(start + n)); endsBlock = true; break;
+    case 0xCC: words.push(H.int_imm, 3, wip(start + n), wip(start)); endsBlock = true; break;
     // INTO only takes the vector when OF is set, so it does not end the block:
     // the fall-through is the common case and stays in the same trace.
     case 0xCE: words.push(H.into, wip(start + n)); break;

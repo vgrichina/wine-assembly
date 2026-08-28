@@ -87,7 +87,8 @@ function writePng(file, mem, palette, video) {
 async function runDos(o) {
   const {
     variant = 'tailcall', exe, budget = 200e6, slice = 2e6, seconds = 0,
-    traceInt = false, traceFault = false, traceEntry = 0, noCache = false, smcFlush = false,
+    traceInt = false, traceFault = false, traceEntry = 0, traceV86 = false,
+    noCache = false, smcFlush = false,
     smcCensus = false,
     shots = null, shotEvery = 20,
     mouse = [0, 0], cpu = 386, report = false, log = console.log, autoKey = false,
@@ -194,6 +195,7 @@ async function runDos(o) {
 
   const t0 = process.hrtime.bigint();
   let guestNs = 0n;
+  let v86Was = 0;
   let shotN = 0;
   const entryHist = new Map();
   const ipSamples = new Map();
@@ -211,7 +213,29 @@ async function runDos(o) {
           + `${ax === before[0] ? '' : ` -> ax=${ax.toString(16)}`}`
           + `${ok ? '' : '   UNHANDLED'}`);
       },
-      onEntry: (!report && !traceEntry) ? undefined : (cs, ip, handbacks) => {
+      onEntry: (!report && !traceEntry && !traceV86) ? undefined : (cs, ip, handbacks) => {
+        // Every crossing of the virtual-8086 boundary, in both directions, with
+        // the vector that caused the one going in and the ring-0 stack pointer
+        // it landed on. A V86 guest and its monitor are two programs sharing a
+        // machine, and neither --trace-entry nor --trace-int can show the seam:
+        // entries are just addresses, and a trap that goes through the guest's
+        // own IDT never reaches the host at all, so the interrupt census counts
+        // none of them. The stack pointer is on the line because the failure
+        // this was written for is a leak -- daretro.exe lost 0x100 bytes of
+        // ring-0 stack per round trip and only fell over 1825 traps later, by
+        // which point nothing about the crash names the cause.
+        if (traceV86) {
+          const now = vm.exports.get_vm86() ? 1 : 0;
+          if (now !== v86Was) {
+            const hx = (v) => v.toString(16);
+            log(now
+              ? `  v86 enter ${hx(cs)}:${hx(ip)}`
+                + ` flags=${hx(vm.get('flags'))} iopl=${(vm.get('flags') >> 12) & 3}`
+              : `  v86 trap vec=${hx(vm.get('intno'))} -> ${hx(cs)}:${hx(ip)}`
+                + ` ss:esp=${hx(vm.get('ss'))}:${hx(vm.get('sp'))}`);
+            v86Was = now;
+          }
+        }
         if (report) {
           const k = `${cs.toString(16)}:${ip.toString(16)}`;
           entryHist.set(k, (entryHist.get(k) || 0) + 1);
@@ -393,6 +417,7 @@ async function main() {
     seconds: Number(arg('seconds', 0)),
     traceInt: flag('trace-int'),
     traceFault: flag('trace-fault'),
+    traceV86: flag('trace-v86'),
     traceEntry: flag('trace-entry') ? 40 : count(arg('trace-entry'), 0),
     noCache: flag('no-cache'),
     smcFlush: flag('smc-flush'),

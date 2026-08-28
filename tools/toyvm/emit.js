@@ -874,9 +874,9 @@ function genExtras() {
   // $intno is recorded for its convenience.
   // $fault is the whole sequence, shared with the arithmetic faults, and it is
   // what knows whether this machine currently has an IDT to go through.
-  h('int_imm', 2, `
-  ${ops(2)}
-  (call $fault (local.get $t0) (local.get $t1))
+  h('int_imm', 3, `
+  ${ops(3)}
+  (call $faultsw (local.get $t0) (local.get $t1) (local.get $t2))
 `);
   h('iret', 0, `
   (global.set $gip (call $pop16))
@@ -904,12 +904,15 @@ function genExtras() {
   (local.set $t0 (call $pop32))
   (local.set $t1 (call $pop32))
   (local.set $t2 (call $pop32))
-  (if (i32.and (i32.and (global.get $cr0) (i32.const 1)) (i32.eqz (global.get $vm86)))
-    (then (global.set $vm86 (i32.and (i32.shr_u (local.get $t2) (i32.const 17))
-                                     (i32.const 1)))))
-  (call $sset (i32.const 1) (i32.and (local.get $t1) (i32.const 0xFFFF)))
-  (global.set $gip (local.get $t0))
-  (global.set $flags (i32.or (i32.and (local.get $t2) ${DEFINED}) ${RESERVED}))
+  (if (i32.and (i32.and (global.get $cr0) (i32.const 1))
+               (i32.and (i32.eqz (global.get $vm86))
+                        (i32.and (i32.shr_u (local.get $t2) (i32.const 17))
+                                 (i32.const 1))))
+    (then (call $v86_from_monitor (local.get $t0) (local.get $t1) (local.get $t2)))
+    (else
+      (call $sset (i32.const 1) (i32.and (local.get $t1) (i32.const 0xFFFF)))
+      (global.set $gip (local.get $t0))
+      (global.set $flags (i32.or (i32.and (local.get $t2) ${DEFINED}) ${RESERVED}))))
   (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
 `);
 }
@@ -3332,7 +3335,8 @@ function helpers() {
   ;; reflecting monitor would have done anyway.
   (if (i32.and (local.get $g) (global.get $vm86))
     (then
-      (call $v86_to_monitor (i32.sub (local.get $g) (i32.const 1)) (local.get $ip))
+      (call $v86_to_monitor (i32.sub (local.get $g) (i32.const 1)) (local.get $ip)
+                            (local.get $vec))
       (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
       (return)))
   (if (local.get $g)
@@ -3373,6 +3377,44 @@ function helpers() {
       (call $sset (i32.const 1) (call $rdphys16 (i32.add (local.get $v) (i32.const 2))))))
   (global.set $left (global.get $steps)) (global.set $halt (i32.const 1)))
 
+;; Going the other way: an IRETD whose frame has VM set, which is how a monitor
+;; hands control back to its guest.
+;;
+;; The frame is the same nine dwords $v86_to_monitor built, and ALL NINE come
+;; off -- EIP, CS, EFLAGS, then ESP, SS, ES, DS, FS, GS. Popping only the first
+;; three is the trap this was written for and it does not look like a bug from
+;; anywhere near where it bites: the guest carries on, the monitor carries on,
+;; and the only symptom is that the ring-0 stack does not unwind. daretro.exe
+;; lost 0x100 bytes per round trip and ran 1825 of them -- roughly 460KB of
+;; stack -- before the monitor's own frame walked off the end and it started
+;; printing a register dump.
+;;
+;; Every pop has to happen while SS is still the monitor's, so the segment
+;; registers are read into locals first and published afterwards. And $vm86 goes
+;; up before any of them are published, because $sset resolves each one through
+;; $segbase and every one of these is a paragraph.
+(func \$v86_from_monitor (param \$ip i32) (param \$cs i32) (param \$fl i32)
+  (local \$sp i32) (local \$ss i32) (local \$es i32)
+  (local \$ds i32) (local \$fs i32) (local \$gs i32)
+  (local.set \$sp (call \$pop32))
+  (local.set \$ss (call \$pop32))
+  (local.set \$es (call \$pop32))
+  (local.set \$ds (call \$pop32))
+  (local.set \$fs (call \$pop32))
+  (local.set \$gs (call \$pop32))
+  (global.set \$vm86 (i32.const 1))
+  (call \$sset (i32.const 1) (i32.and (local.get \$cs) (i32.const 0xFFFF)))
+  (call \$sset (i32.const 2) (i32.and (local.get \$ss) (i32.const 0xFFFF)))
+  (call \$sset (i32.const 0) (i32.and (local.get \$es) (i32.const 0xFFFF)))
+  (call \$sset (i32.const 3) (i32.and (local.get \$ds) (i32.const 0xFFFF)))
+  (call \$sset (i32.const 4) (i32.and (local.get \$fs) (i32.const 0xFFFF)))
+  (call \$sset (i32.const 5) (i32.and (local.get \$gs) (i32.const 0xFFFF)))
+  ;; \$sset on SS has just republished \$spm, and in V86 that is 16 bits: the
+  ;; stack pointer the monitor saved is an ESP image but the guest is an 8086.
+  (global.set \$sp (i32.and (local.get \$sp) (global.get \$spm)))
+  (global.set \$gip (i32.and (local.get \$ip) (i32.const 0xFFFF)))
+  (global.set \$flags (i32.or (i32.and (local.get \$fl) ${DEFINED}) ${RESERVED})))
+
 ;; Leaving virtual-8086 mode, which only ever happens through a gate.
 ;;
 ;; The frame is six dwords deeper than an ordinary one -- GS, FS, DS, ES, SS,
@@ -3388,7 +3430,7 @@ function helpers() {
 ;; is how the monitor knows this trap came from a V86 guest rather than from
 ;; protected-mode code, and it is also what an IRETD back into the guest reads
 ;; to restore the mode.
-(func $v86_to_monitor (param $g i32) (param $ip i32)
+(func $v86_to_monitor (param $g i32) (param $ip i32) (param $vec i32)
   (local $ss i32) (local $sp i32) (local $t i32)
   (local.set $ss (call $sget (i32.const 2)))
   (local.set $sp (global.get $sp))
@@ -3410,6 +3452,15 @@ function helpers() {
   (call $push32 (i32.or (global.get $flags) (i32.const 0x20000)))
   (call $push32 (call $sget (i32.const 1)))
   (call $push32 (local.get $ip))
+  ;; #DF, #TS, #NP, #SS, #GP, #PF and #AC carry an error code, pushed last so
+  ;; it sits under the handler's ESP. Everything else leaves the frame at nine
+  ;; dwords, and a handler that pops one anyway would take the guest's EIP.
+  (if (i32.or (i32.eq (local.get $vec) (i32.const 8))
+              (i32.or (i32.and (i32.ge_u (local.get $vec) (i32.const 10))
+                               (i32.le_u (local.get $vec) (i32.const 14)))
+                      (i32.eq (local.get $vec) (i32.const 17))))
+    (then (call $push32 (global.get $errc))))
+  (global.set $errc (i32.const 0))
   ;; The guest's data selectors are paragraphs and cannot be revalidated at
   ;; CPL0, so the hardware zeroes them rather than leave them loadable.
   (call $sset (i32.const 0) (i32.const 0))
@@ -3426,6 +3477,42 @@ function helpers() {
   (global.set $gip (i32.or (i32.load16_u (local.get $g))
                            (i32.shl (i32.load16_u offset=6 (local.get $g))
                                     (i32.const 16)))))
+
+;; A software interrupt is not a fault, and the difference only shows up in
+;; virtual-8086 mode. The guest runs at CPL 3, and for the software-generated
+;; vectors -- INT n, INT3, INTO -- the 386 checks the gate's DPL against CPL
+;; and raises #GP(vec*8+2) when the gate is more privileged. Every gate in
+;; daretro's IDT is DPL 0 (type byte 0x8E), which is exactly how its monitor
+;; funnels the guest's int 10h -- and every other INT the guest issues --
+;; into the one #GP handler at 8:22fa that reads the opcode back and reflects
+;; it. Taking vector 0x10's own gate instead lands in the catch-all
+;; "unexpected interrupt" register printer at 8:23f9, which is what the guest
+;; did on 1825 consecutive round trips without ever advancing an instruction.
+;;
+;; A fault reports the address OF the instruction, not the one after it,
+;; because the handler has to be able to decode it -- hence the third operand.
+(func $faultsw (param $vec i32) (param $next i32) (param $ip i32)
+  (local $g i32)
+  (if (global.get $vm86)
+    (then
+      (local.set $g (call $idtgate (local.get $vec)))
+      ;; No gate is a #GP as well, not a fall-back to the vector table at
+      ;; physical 0: daretro's IDT stops at vector 0x30, and the int 0xfd its
+      ;; V86 thunk signs off with is how it asks the monitor to take the CPU
+      ;; back. Serviced out of the IVT instead, that INT reached our own DOS
+      ;; stub, came back reported as unhandled, and the demo took its abort
+      ;; path to int 21h/4Ch.
+      (if (i32.eqz (i32.and (local.get $g)
+                            (i32.eq (i32.and (i32.shr_u (i32.load8_u offset=4 (local.get $g))
+                                                        (i32.const 5))
+                                             (i32.const 3))
+                                    (i32.const 3))))
+        (then
+          (global.set $errc (i32.or (i32.shl (local.get $vec) (i32.const 3))
+                                    (i32.const 2)))
+          (call $fault (i32.const 13) (local.get $ip))
+          (return)))))
+  (call $fault (local.get $vec) (local.get $next)))
 
 ;; Divide error -- the only fault the arithmetic handlers raise.
 (func $fault0 (param $ip i32)
@@ -3805,6 +3892,11 @@ ${[...Array(8).keys()].map(i => `(global $st${i} (mut f64) (f64.const 0))`).join
 ;; that is a protected-mode CS of 0x110 naming no descriptor, which is what the
 ;; run reported and is not what the program did.
 (global \$vm86 (mut i32) (i32.const 0))
+;; The error code the next V86 trap frame carries, set by \$faultsw and read by
+;; \$v86_to_monitor. Only the vectors that have one push it, and of those only
+;; #GP is ever reached from here, but the handler pops a fixed frame either way
+;; so getting the presence right matters more than the value.
+(global \$errc (mut i32) (i32.const 0))
 ;; How much of a shift count the hardware looks at, and this is a real part
 ;; difference rather than a detail. The 8086 shifts the full count, so
 ;; \`shr ax,32\` clears the register; every part from the 186 on masks the count

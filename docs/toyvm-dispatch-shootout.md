@@ -1257,3 +1257,79 @@ saying out loud, because a bucket that moved backwards is exactly what a
 regression looks like — **re-take the row before you believe it**, since
 `capture-one.sh` writes one row per program precisely so a single re-take is
 cheap.
+
+### 8.3 A demo that ran its own virtual-8086 monitor
+
+`daretro.exe` reported `bad CS selector at 110:3dd` and stopped on its first
+instruction after entering protected mode. The selector was not bad. At `8:22c6`
+the program does `pushfd / or eax,0x20000 / push eax` and `iretd`s — the one and
+only way onto a 386's **virtual-8086 mode**, where the CPU is in protected mode
+(PE set) but segmentation is real-mode again. Read without that bit, `CS = 0x110`
+is a protected-mode selector naming no descriptor, which is exactly the message
+we printed.
+
+V86 needed four things, and `VM` could not live in `$flags` for the first of
+them: every 16-bit `POPF`/`IRET` masks with `$f_def`, so the bit would evaporate
+on the guest's first `popf`. It gets its own global, `$vm86`.
+
+1. `$segbase`/`$segd32` treat a selector as a paragraph again when `$vm86`.
+2. `iret32` with bit 17 set in the popped EFLAGS enters V86 — and pops **all
+   nine** dwords of the frame (EIP, CS, EFLAGS, ESP, SS, ES, DS, FS, GS), not
+   just the first three.
+3. `$fault` taken while in V86 is the only way *off* the mode: it builds those
+   nine dwords on the ring-0 stack named by the TSS (`ESP0` at TSS+4, `SS0` at
+   TSS+8), zeroes the guest's data selectors, and clears `$vm86`.
+4. The bad-selector guard and the host's `raise()` both had to learn that a
+   V86 `CS` is not a selector.
+
+That got the guest running and produced 1825 identical round trips: enter at
+`110:3dd`, trap `vec=0x10`, enter at `110:3dd` again, with the ring-0 stack
+falling 0x100 every time until the monitor's frame walked off and it started
+printing a hex register dump. The guest never advanced one instruction.
+
+**The bug was reading `INT n` as an interrupt.** The V86 thunk at `110:3dd` is a
+BIOS-call gateway — load `ax..bp` from a parameter block, `int 0x10`, store them
+back, `int 0xfd` to sign off — and its `int 0x10` was going straight to
+`IDT[0x10]`. Dumping the IDT says why that is wrong:
+
+```
+1608  97 23 08 00 00 8e 00 00   a0 23 08 00 00 8e 00 00
+...
+1668  ef 23 08 00 00 8e 00 00   fa 22 08 00 00 8e 00 00   <- vector 0x0d = 8:22fa
+1678  f4 23 08 00 00 8e 00 00   f9 23 08 00 00 8e 00 00   <- 0x0f onward = 8:23f9
+```
+
+Type byte `0x8E` on every gate: present, 386 interrupt gate, **DPL 0**. The guest
+runs at CPL 3, and for the *software-generated* vectors the 386 checks the gate's
+DPL against CPL and raises `#GP(vec*8+2)` when the gate is more privileged.
+Vector `0x0D` is the only entry with its own handler; everything from `0x0F` up
+is one catch-all "unexpected interrupt" register printer. That is the monitor's
+whole design — funnel every INT the guest issues into `8:22fa`, read the `cd xx`
+back, reflect it — and we were walking into the printer instead.
+
+So `int_imm` gained a third operand, the instruction's **own** ip (a fault
+reports the address *of* the instruction, not the one after, because the handler
+has to decode it), and routes through a new `$faultsw` that applies the DPL check
+in V86. Two details are load-bearing:
+
+* **No gate is a `#GP` too, not a fall-back to the vector table at physical 0.**
+  daretro's IDT stops at vector 0x30 and it signs off from V86 with `int 0xfd`.
+  Serviced out of the IVT, that INT reached our own DOS stub, came back reported
+  as `UNHANDLED`, and the demo took its abort path to `int 21h`/`4Ch` — exiting
+  cleanly with a black screen, which reads as a demo that simply drew nothing.
+* **`#GP` pushes an error code**, so the V86 frame is ten dwords for it, not
+  nine. A handler that pops one anyway would have taken the guest's EIP for it.
+
+`daretro.exe`: 0 non-black pixels → **33184**, mode 13h unchained, 257536 planar
+writes. It draws a purple "RENAISSANCE" logo over a scroller field.
+
+The general lesson is the one from §7.7 restated at a different level: *the
+question the hardware is being asked matters more than the answer*. We were
+answering "which interrupt is this" correctly and completely, for a machine that
+was asking "is this INT allowed to take its own gate".
+
+**Corpus verdict.** Full 199-program sweep against the previous one: **183 of
+199** (151 graphics, 32 text art), up from 182. One program moved, forward.
+B-STEEL.EXE came back blank again and was again a load flake — the box was at
+load 8–9 with six sweep jobs — and a single-row re-take put it back at 307200
+pixels. Second time for that same row; §8.2's rule holds.
