@@ -114,8 +114,10 @@
         ;; dialog is observably idle.
         (local.set $arg0 (call $gl32 (i32.add (global.get $esp) (i32.const 4))))
         (if (i32.and
-              (local.get $arg0)
-              (i32.load offset=4 (call $dlg_record_for_hwnd (local.get $arg0))))
+              (i32.ne (local.get $arg0) (i32.const 0))
+              (i32.ne
+                (i32.load offset=4 (call $dlg_record_for_hwnd (local.get $arg0)))
+                (i32.const 0)))
           (then
             (drop (call $paint_drain_native_control_paints))
             (drop (call $paint_flush_shown_native_children (local.get $arg0)))))
@@ -796,6 +798,15 @@
         (if (i32.eq (call $gl32 (global.get $esp)) (i32.const 0x43454C4F))
           (then
             (call $ole_guest_callback_continue)
+            (return)))
+        ;; One-string system enumerations use a typed frame so their temporary
+        ;; guest buffer is released before the original API caller resumes.
+        (if (i32.eq (call $gl32 (global.get $esp)) (i32.const 0x31535953))
+          (then
+            (call $heap_free (call $gl32 (i32.add (global.get $esp) (i32.const 4))))
+            (global.set $eip (call $gl32 (i32.add (global.get $esp) (i32.const 8))))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+            (global.set $eax (i32.const 1))
             (return)))
         (global.set $eip (call $gl32 (global.get $esp)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 4)))

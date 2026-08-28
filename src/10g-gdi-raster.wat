@@ -2506,7 +2506,7 @@
       (if (local.get $count)
         (then (local.set $prev (i32.add (global.get $GDI_REGION_WORK)
           (i32.shl (i32.sub (local.get $count) (i32.const 1)) (i32.const 4))))))
-      (if (i32.and (local.get $count)
+      (if (i32.and (i32.ne (local.get $count) (i32.const 0))
             (i32.and (i32.eq (i32.load (local.get $prev)) (local.get $first))
               (i32.eq (i32.load offset=8 (local.get $prev)) (local.get $last))))
         (then (i32.store offset=12 (local.get $prev) (i32.add (local.get $y) (i32.const 1))))

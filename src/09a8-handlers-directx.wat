@@ -3261,7 +3261,9 @@
   (func $handle_IDirectDrawSurface3_SetSurfaceDesc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $desc i32) (local $flags i32) (local $pixels i32)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (if (i32.and (local.get $entry) (local.get $arg1))
+    (if (i32.and
+          (i32.ne (local.get $entry) (i32.const 0))
+          (i32.ne (local.get $arg1) (i32.const 0)))
       (then
         (local.set $desc (call $g2w (local.get $arg1)))
         (local.set $flags (i32.load offset=4 (local.get $desc)))
@@ -3648,7 +3650,9 @@
     (local.set $pal_wa (i32.load (i32.add (local.get $entry) (i32.const 20))))
     (if (local.get $arg4)
       (then (local.set $src_wa (call $g2w (local.get $arg4)))))
-    (if (i32.and (local.get $pal_wa) (local.get $src_wa)) (then
+    (if (i32.and
+          (i32.ne (local.get $pal_wa) (i32.const 0))
+          (i32.ne (local.get $src_wa) (i32.const 0))) (then
       (local.set $skip_copy (i32.const 0))
       ;; Some palette-cycling samples feed an all-black full table before their
       ;; animation buffer is populated; keep the nonblack CreatePalette state.

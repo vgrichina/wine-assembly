@@ -17,7 +17,7 @@
   ;; ── IDirect3D9 — 17 methods ─────────────
   ;; IDirect3D9_QueryInterface — 3 args (incl. this)
   (func $handle_IDirect3D9_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3D9_AddRef — 1 args (incl. this)
@@ -111,7 +111,7 @@
 
   ;; IDirect3D9_GetAdapterIdentifier — 4 args (incl. this)
   (func $handle_IDirect3D9_GetAdapterIdentifier (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; IDirect3D9_GetAdapterModeCount — 3 args (incl. this)
@@ -163,7 +163,7 @@
 
   ;; IDirect3D9_GetDeviceCaps — 4 args (incl. this)
   (func $handle_IDirect3D9_GetDeviceCaps (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; IDirect3D9_GetAdapterMonitor — 2 args (incl. this)
@@ -228,7 +228,7 @@
   ;; ── IDirect3DDevice9 — 119 methods ─────────────
   ;; IDirect3DDevice9_QueryInterface — 3 args (incl. this)
   (func $handle_IDirect3DDevice9_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DDevice9_AddRef — 1 args (incl. this)
@@ -272,12 +272,12 @@
 
   ;; IDirect3DDevice9_GetDeviceCaps — 2 args (incl. this)
   (func $handle_IDirect3DDevice9_GetDeviceCaps (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3DDevice9_GetDisplayMode — 3 args (incl. this)
   (func $handle_IDirect3DDevice9_GetDisplayMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DDevice9_GetCreationParameters — 2 args (incl. this)
@@ -392,12 +392,12 @@
 
   ;; IDirect3DDevice9_GetGammaRamp — 3 args (incl. this)
   (func $handle_IDirect3DDevice9_GetGammaRamp (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DDevice9_CreateTexture — 8 args (incl. this)
   (func $handle_IDirect3DDevice9_CreateTexture (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 36))))
 
   ;; IDirect3DDevice9_CreateVolumeTexture — 9 args (incl. this)
@@ -427,7 +427,7 @@
 
   ;; IDirect3DDevice9_CreateDepthStencilSurface — 8 args (incl. this)
   (func $handle_IDirect3DDevice9_CreateDepthStencilSurface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 36))))
 
   ;; IDirect3DDevice9_UpdateSurface — 5 args (incl. this)
@@ -472,7 +472,7 @@
 
   ;; IDirect3DDevice9_GetRenderTarget — 3 args (incl. this)
   (func $handle_IDirect3DDevice9_GetRenderTarget (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DDevice9_SetDepthStencilSurface — 2 args (incl. this)
@@ -482,7 +482,7 @@
 
   ;; IDirect3DDevice9_GetDepthStencilSurface — 2 args (incl. this)
   (func $handle_IDirect3DDevice9_GetDepthStencilSurface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3DDevice9_BeginScene — 1 args (incl. this)
@@ -537,7 +537,7 @@
 
   ;; IDirect3DDevice9_GetTransform — 3 args (incl. this)
   (func $handle_IDirect3DDevice9_GetTransform (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DDevice9_MultiplyTransform — 3 args (incl. this)
@@ -552,7 +552,7 @@
 
   ;; IDirect3DDevice9_GetViewport — 2 args (incl. this)
   (func $handle_IDirect3DDevice9_GetViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3DDevice9_SetMaterial — 2 args (incl. this)
@@ -562,7 +562,7 @@
 
   ;; IDirect3DDevice9_GetMaterial — 2 args (incl. this)
   (func $handle_IDirect3DDevice9_GetMaterial (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3DDevice9_SetLight — 3 args (incl. this)
@@ -572,7 +572,7 @@
 
   ;; IDirect3DDevice9_GetLight — 3 args (incl. this)
   (func $handle_IDirect3DDevice9_GetLight (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DDevice9_LightEnable — 3 args (incl. this)
@@ -582,7 +582,7 @@
 
   ;; IDirect3DDevice9_GetLightEnable — 3 args (incl. this)
   (func $handle_IDirect3DDevice9_GetLightEnable (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DDevice9_SetClipPlane — 3 args (incl. this)
@@ -592,7 +592,7 @@
 
   ;; IDirect3DDevice9_GetClipPlane — 3 args (incl. this)
   (func $handle_IDirect3DDevice9_GetClipPlane (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DDevice9_SetRenderState — 3 args (incl. this)
@@ -602,7 +602,7 @@
 
   ;; IDirect3DDevice9_GetRenderState — 3 args (incl. this)
   (func $handle_IDirect3DDevice9_GetRenderState (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DDevice9_CreateStateBlock — 3 args (incl. this)
@@ -627,12 +627,12 @@
 
   ;; IDirect3DDevice9_GetClipStatus — 2 args (incl. this)
   (func $handle_IDirect3DDevice9_GetClipStatus (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3DDevice9_GetTexture — 3 args (incl. this)
   (func $handle_IDirect3DDevice9_GetTexture (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DDevice9_SetTexture — 3 args (incl. this)
@@ -642,7 +642,7 @@
 
   ;; IDirect3DDevice9_GetTextureStageState — 4 args (incl. this)
   (func $handle_IDirect3DDevice9_GetTextureStageState (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; IDirect3DDevice9_SetTextureStageState — 4 args (incl. this)
@@ -652,7 +652,7 @@
 
   ;; IDirect3DDevice9_GetSamplerState — 4 args (incl. this)
   (func $handle_IDirect3DDevice9_GetSamplerState (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; IDirect3DDevice9_SetSamplerState — 4 args (incl. this)
@@ -672,7 +672,7 @@
 
   ;; IDirect3DDevice9_GetPaletteEntries — 3 args (incl. this)
   (func $handle_IDirect3DDevice9_GetPaletteEntries (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DDevice9_SetCurrentTexturePalette — 2 args (incl. this)
@@ -682,7 +682,7 @@
 
   ;; IDirect3DDevice9_GetCurrentTexturePalette — 2 args (incl. this)
   (func $handle_IDirect3DDevice9_GetCurrentTexturePalette (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3DDevice9_SetScissorRect — 2 args (incl. this)
@@ -692,7 +692,7 @@
 
   ;; IDirect3DDevice9_GetScissorRect — 2 args (incl. this)
   (func $handle_IDirect3DDevice9_GetScissorRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3DDevice9_SetSoftwareVertexProcessing — 2 args (incl. this)
@@ -762,7 +762,7 @@
 
   ;; IDirect3DDevice9_GetFVF — 2 args (incl. this)
   (func $handle_IDirect3DDevice9_GetFVF (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3DDevice9_CreateVertexShader — 3 args (incl. this)
@@ -916,7 +916,7 @@
   ;; ── IDirect3DTexture9 — 22 methods ─────────────
   ;; IDirect3DTexture9_QueryInterface — 3 args (incl. this)
   (func $handle_IDirect3DTexture9_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DTexture9_AddRef — 1 args (incl. this)
@@ -1010,17 +1010,17 @@
 
   ;; IDirect3DTexture9_GetLevelDesc — 3 args (incl. this)
   (func $handle_IDirect3DTexture9_GetLevelDesc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DTexture9_GetSurfaceLevel — 3 args (incl. this)
   (func $handle_IDirect3DTexture9_GetSurfaceLevel (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DTexture9_LockRect — 5 args (incl. this)
   (func $handle_IDirect3DTexture9_LockRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
   ;; IDirect3DTexture9_UnlockRect — 2 args (incl. this)
@@ -1037,7 +1037,7 @@
   ;; ── IDirect3DSurface9 — 17 methods ─────────────
   ;; IDirect3DSurface9_QueryInterface — 3 args (incl. this)
   (func $handle_IDirect3DSurface9_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DSurface9_AddRef — 1 args (incl. this)
@@ -1106,12 +1106,12 @@
 
   ;; IDirect3DSurface9_GetDesc — 2 args (incl. this)
   (func $handle_IDirect3DSurface9_GetDesc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3DSurface9_LockRect — 4 args (incl. this)
   (func $handle_IDirect3DSurface9_LockRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (call $crash_unimplemented (local.get $name_ptr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; IDirect3DSurface9_UnlockRect — 1 args (incl. this)

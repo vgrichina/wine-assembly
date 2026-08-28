@@ -6188,7 +6188,9 @@
               (else
                 ;; Minimal generic Win9x size grip for SBARS_SIZEGRIP bars.
                 (if (i32.and
-                      (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x100))
+                      (i32.ne
+                        (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x100))
+                        (i32.const 0))
                       (i32.and (i32.ge_s (local.get $w) (i32.const 16))
                                (i32.ge_s (local.get $h) (i32.const 12))))
                   (then
