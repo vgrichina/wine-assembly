@@ -1060,6 +1060,10 @@ function s_shift(kind, w, one, rotate, ofExpr, mask, msb) {
   (local $cf i32) (local $t i32) (local $orig i32) (local $f i32)
   (local.set $orig (local.get $v))
   (local.set $cf (i32.and (global.get $flags) (i32.const 1)))
+  ;; How much of the count this part looks at. See \$shmask -- an 8086 shifts
+  ;; the whole of it, a 186 and later masks it to five bits, and programs probe
+  ;; the difference deliberately.
+  (local.set $n (i32.and (local.get $n) (global.get $shmask)))
   (if (i32.eqz (local.get $n)) (then (return (local.get $v))))
   (block $done (loop $l
     (br_if $done (i32.eqz (local.get $n)))
@@ -3691,6 +3695,28 @@ ${[...Array(8).keys()].map(i => `(global $st${i} (mut f64) (f64.const 0))`).join
 ;; encodings are available, no paging. MOV CR0,r and LMSW write it, and setting
 ;; PE is what puts $segbase on the descriptor path.
 (global $cr0 (mut i32) (i32.const 0x0010))
+;; How much of a shift count the hardware looks at, and this is a real part
+;; difference rather than a detail. The 8086 shifts the full count, so
+;; \`shr ax,32\` clears the register; every part from the 186 on masks the count
+;; to five bits, so the same instruction does nothing at all.
+;;
+;; Programs ask this question ON PURPOSE -- it is the standard 8086-vs-186
+;; probe, and COROMER.EXE opens with it:
+;;
+;;   mov cl,32 / mov ax,1 / shr ax,cl / cmp ax,0 / jnz <186+ path>
+;;
+;; Answering \"8086\" sent it into an 8086-only follow-up (\`push cs\` and the 0Fh
+;; that is POP CS only on that part), where the decoder refused 0F 14 and the
+;; run wedged: 200 handbacks at 110:545 and a blank screen.
+;;
+;; It is a global rather than a constant for the same reason \$linmask is. Both
+;; answers are correct, for different machines, and this repository runs both:
+;; gate.js checks against vectors recorded on a physical 8088 and needs the
+;; unmasked shift (masking cost it 15427 of 70000 cases), while the DOS machine
+;; answers CPUID and decodes 0F opcodes and has no business claiming to be an
+;; 8086. So the default is the 8086's and set_cpu raises it, which leaves every
+;; existing caller exactly where it was.
+(global \$shmask (mut i32) (i32.const 0xFF))
 ;; The FLAGS shape, defaulting to the 8086's. set_cpu raises it.
 (global $f_res (mut i32) (i32.const ${isa.FLAGS_RESERVED}))
 (global $f_def (mut i32) (i32.const ${isa.FLAGS_DEFINED}))
@@ -3781,7 +3807,11 @@ ${isa.SEG.map(r => `(func (export "get_${r}b") (result i32) (global.get $${r}b))
       (global.set $f_def (i32.const ${isa.FLAGS_DEFINED | 0x7000})))
     (else
       (global.set $f_res (i32.const ${isa.FLAGS_RESERVED}))
-      (global.set $f_def (i32.const ${isa.FLAGS_DEFINED})))))
+      (global.set $f_def (i32.const ${isa.FLAGS_DEFINED}))))
+  ;; Shift-count masking arrived with the 186, one generation before the FLAGS
+  ;; change above, so it gets its own threshold rather than sharing that one.
+  (global.set $shmask (select (i32.const 31) (i32.const 0xFF)
+    (i32.ge_u (local.get $level) (i32.const 186)))))
 (type $void (func))
 ${accessors}
 `;
