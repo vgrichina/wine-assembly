@@ -2254,7 +2254,11 @@ class WineAssembly {
         ? window.WinePerf : null;
       if (perf) perf.stepBegin();
       try {
-        const activeStepsPerSlice = Math.max(1000, (self.stepsPerSlice | 0) || stepsPerSlice);
+        // Cooperative apps run on the browser's main thread. Respect the
+        // smaller compatibility policies selected by browser-shell so a hot
+        // guest loop cannot hold input and repaint hostage for a full 1k
+        // slice. The guest-Worker path keeps its separate 1k floor above.
+        const activeStepsPerSlice = Math.max(1, (self.stepsPerSlice | 0) || stepsPerSlice);
         self._beginGuestTickBatch();
         // Check if main thread is waiting
         if (self.threadManager) await self.threadManager.resolveMainThreadSend();
