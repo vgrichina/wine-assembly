@@ -33,56 +33,69 @@ const selectedPng = path.join(OUT, 'aoe_unit_selected.png');
 const menu1Png = path.join(OUT, 'aoe_menu_open.png');
 const cancelPng = path.join(OUT, 'aoe_menu_cancelled.png');
 const menu2Png = path.join(OUT, 'aoe_menu_reopened.png');
-for (const p of [beforePng, selectedPng, menu1Png, cancelPng, menu2Png]) {
+const optionsPng = path.join(OUT, 'aoe_game_settings.png');
+for (const p of [beforePng, selectedPng, menu1Png, cancelPng, menu2Png, optionsPng]) {
   try { fs.unlinkSync(p); } catch (_) {}
 }
 
 const startup = [
-  '1500:click:320:200',
-  '2600:click:320:190',
-  '3300:keypress:65',
-  '3301:keypress:79',
-  '3302:keypress:69',
-  '3800:click:240:305',
-  '5200:click:190:455',
-  '12000:click:320:190',
-  '30000:keypress:65',
-  '30001:keypress:79',
-  '30002:keypress:69',
-  '50000:click:240:305',
-  '82000:click:190:455',
-  '230000:click:560:465',
+  '150:click:320:200',
+  '260:click:320:190',
+  '330:keypress:65',
+  '331:keypress:79',
+  '332:keypress:69',
+  '380:click:240:305',
+  '520:click:190:455',
+  '1200:click:320:190',
+  '3000:keypress:65',
+  '3001:keypress:79',
+  '3002:keypress:69',
+  // AoE subclasses the native EDIT and accepts its new-player dialog on
+  // VK_RETURN. The owner-drawn OK button also depends on game-side hover state,
+  // which a coordinate-only headless click does not establish reliably.
+  '5000:keydown:13',
+  '5002:keyup:13',
+  '8200:click:190:455',
+  '23000:click:560:465',
 ];
 
 const inputSpec = [
   ...startup,
-  `255000:png:${beforePng}`,
-  '257000:click:105:150',
-  `259000:png:${selectedPng}`,
-  '262000:click:608:8',
-  `272000:png:${menu1Png}`,
-  '282000:click:320:382',
-  `297000:png:${cancelPng}`,
-  '307000:click:608:8',
-  `327000:png:${menu2Png}`,
-  '327001:stop',
+  `25500:png:${beforePng}`,
+  '25700:click:105:150',
+  `25900:png:${selectedPng}`,
+  '26200:click:608:8',
+  `27200:png:${menu1Png}`,
+  '28200:click:320:382',
+  `29700:png:${cancelPng}`,
+  '30700:click:608:8',
+  `32700:png:${menu2Png}`,
+  '32720:click:320:283',
+  `34720:png:${optionsPng}`,
+  '34721:stop',
 ].join(',');
 
 const args = [
   RUN,
   `--exe=${EXE}`,
   '--no-build',
-  '--max-batches=328000',
-  // 328k batches is by far the longest run in the suite, and at the default of
-  // one composite per batch it was compositing the screen 328,000 times. That
+  '--max-batches=34722',
+  // Use the same work/time ratio as the original 1000-block/200ms route, but
+  // 10x larger batches. Menu transitions run through AoE's slow polling loop,
+  // so retain the original work/time gaps between gameplay screenshots.
+  '--batch-size=10000',
+  '--tick-ms-per-batch=2000',
+  // At the default of one composite per batch this test used to composite the
+  // screen 328,000 times. That
   // is invisible work -- nothing watches a headless frame -- and it is not
   // free: skia-canvas 3.0.8 leaks ~320 bytes of unreclaimable native memory
   // per draw call, so the run grew to 6.3GB and the process died partway with
   // a bare status=1 and no crash marker, which is why the later snapshots
-  // never appeared. Compositing every 100th batch instead: 0.89GB and 3x
-  // faster. Snapshots call repaint() themselves, so the captured pixels are
+  // never appeared. Composite once per 100k guest blocks (every tenth of the
+  // larger batches above), equivalent to the old every-100th setting: 0.89GB
+  // and 3x faster. Snapshots call repaint() themselves, so captured pixels are
   // byte-identical.
-  '--repaint-every=100',
+  '--repaint-every=10',
   '--quiet-api',
   '--quiet-blocks',
   `--input=${inputSpec}`,
@@ -148,6 +161,23 @@ function tanRatio(img, rect) {
   return total ? tan / total : 0;
 }
 
+function lightTanRatio(img, rect) {
+  const r = clampRect(img, rect);
+  let light = 0;
+  let total = 0;
+  for (let y = r.y0; y < r.y1; y++) {
+    for (let x = r.x0; x < r.x1; x++) {
+      const i = (y * img.w + x) * 4;
+      const red = img.data[i];
+      const green = img.data[i + 1];
+      const blue = img.data[i + 2];
+      if (red >= 145 && green >= 100 && blue >= 60 && red > green && green > blue) light++;
+      total++;
+    }
+  }
+  return total ? light / total : 0;
+}
+
 function darkRatio(img, rect) {
   const r = clampRect(img, rect);
   let dark = 0;
@@ -187,6 +217,7 @@ function diffRect(a, b, rect) {
     ['first menu snapshot written', menu1Png],
     ['cancelled gameplay snapshot written', cancelPng],
     ['reopened menu snapshot written', menu2Png],
+    ['game settings snapshot written', optionsPng],
   ];
   for (const [name, file] of pngs) {
     checks.push({ name, pass: fs.existsSync(file) && fs.statSync(file).size > 1000 });
@@ -197,16 +228,18 @@ function diffRect(a, b, rect) {
   let menu1 = null;
   let cancelled = null;
   let menu2 = null;
+  let options = null;
   if (checks.every(c => c.pass)) {
     before = await readPixels(beforePng);
     selected = await readPixels(selectedPng);
     menu1 = await readPixels(menu1Png);
     cancelled = await readPixels(cancelPng);
     menu2 = await readPixels(menu2Png);
+    options = await readPixels(optionsPng);
   }
 
   const menuRect = { x0: 200, y0: 95, x1: 600, y1: 505 };
-  if (before && selected && menu1 && cancelled && menu2) {
+  if (before && selected && menu1 && cancelled && menu2 && options) {
     const selectionRect = { x0: 0, y0: 380, x1: 115, y1: 475 };
     const beforeDark = darkRatio(before, selectionRect);
     const selectedDark = darkRatio(selected, selectionRect);
@@ -227,13 +260,24 @@ function diffRect(a, b, rect) {
     checks.push({ name: 'Menu click visibly opens the pause dialog', pass: menu1Tan >= beforeTan + 0.25 && openDiff > 40000 });
     checks.push({ name: 'Cancel visibly removes the pause dialog', pass: cancelledTan <= menu1Tan - 0.20 && closeDiff > 40000 });
     checks.push({ name: 'Menu can be reopened after Cancel', pass: menu2Tan >= cancelledTan + 0.25 && reopenDiff > 40000 });
+    const optionsRect = { x0: 95, y0: 80, x1: 545, y1: 400 };
+    const menuLight = lightTanRatio(menu2, optionsRect);
+    const optionsLight = lightTanRatio(options, optionsRect);
+    const optionsDiff = diffRect(menu2, options, optionsRect);
+    console.log(`  game settings light-tan ratio menu=${menuLight.toFixed(3)} options=${optionsLight.toFixed(3)} diff=${optionsDiff}px`);
+    checks.push({ name: 'Game Settings visibly opens from the pause menu',
+      pass: optionsLight >= menuLight + 0.35 && optionsDiff > 50000 });
   } else {
     checks.push({ name: 'PNG analysis completed', pass: false });
   }
 
-  checks.push({ name: 'Unit input click was injected', pass: /\[input\] click 105,150 at batch 257000/.test(out) });
-  checks.push({ name: 'Menu input click was injected', pass: /\[input\] click 608,8 at batch 262000/.test(out) });
-  checks.push({ name: 'Cancel input click was injected', pass: /\[input\] click 320,382 at batch 282000/.test(out) });
+  checks.push({ name: 'Name dialog was accepted with Enter', pass:
+    /\[input\] keydown vk=13 at batch 5000/.test(out) });
+  checks.push({ name: 'Unit input click was injected', pass: /\[input\] click 105,150 at batch 25700/.test(out) });
+  checks.push({ name: 'Menu input click was injected', pass: /\[input\] click 608,8 at batch 26200/.test(out) });
+  checks.push({ name: 'Cancel input click was injected', pass: /\[input\] click 320,382 at batch 28200/.test(out) });
+  checks.push({ name: 'Game Settings input click was injected', pass:
+    /\[input\] click 320,283 at batch 32720/.test(out) });
   checks.push({ name: 'no crash marker', pass: exitCode === 0 && !/STUCK|CRASH|RuntimeError|LinkError|UNIMPLEMENTED API:/.test(out) });
 
   console.log('');
@@ -244,7 +288,7 @@ function diffRect(a, b, rect) {
   }
   console.log('');
   console.log(`${checks.length - failed}/${checks.length} checks passed`);
-  console.log(`Snapshots: ${beforePng} ${selectedPng} ${menu1Png} ${cancelPng} ${menu2Png}`);
+  console.log(`Snapshots: ${beforePng} ${selectedPng} ${menu1Png} ${cancelPng} ${menu2Png} ${optionsPng}`);
   process.exit(failed ? 1 : 0);
 })().catch(err => {
   console.error(err && err.stack || err);

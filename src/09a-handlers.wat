@@ -13731,9 +13731,19 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 700: IsProcessorFeaturePresent — return TRUE (1 arg stdcall) — STUB: unimplemented
+  ;; 700: IsProcessorFeaturePresent(dwProcessorFeature) → BOOL
   (func $handle_IsProcessorFeaturePresent (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr))
+    ;; Keep this aligned with the CPUID personality in 05-alu.wat. The guest
+    ;; implements CMPXCHG8B, MMX, and RDTSC, but deliberately does not advertise
+    ;; SSE. In particular PF_FLOATING_POINT_PRECISION_ERRATA (0) must be FALSE:
+    ;; the VC runtime queries it during process attach, before a DLL can register
+    ;; its native classes.
+    (global.set $eax
+      (i32.or
+        (i32.or (i32.eq (local.get $arg0) (i32.const 2))  ;; PF_COMPARE_EXCHANGE_DOUBLE
+                (i32.eq (local.get $arg0) (i32.const 3))) ;; PF_MMX_INSTRUCTIONS_AVAILABLE
+        (i32.eq (local.get $arg0) (i32.const 8))))        ;; PF_RDTSC_INSTRUCTION_AVAILABLE
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; 701: CoRegisterMessageFilter(lpMsgFilter, lplpMsgFilter) — 2 args stdcall
