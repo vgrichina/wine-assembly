@@ -21,6 +21,15 @@ const wasm = {
 const renderer = {
   _nextZ: 100,
   repaintScheduled: false,
+  inputQueue: [
+    { type: 'mouse', hwnd: 110, msg: 0x0202 },
+    { type: 'paint', hwnd: 120, msg: 0x000F },
+    { type: 'mouse', hwnd: 200, msg: 0x0200 },
+    { type: 'key', hwnd: 0, msg: 0x0100 },
+  ],
+  _directMouseDown: { targetHwnd: 110 },
+  _dialogBtnDrag: { parent: 100, target: 120 },
+  _lastDeepChild: { topHwnd: 200, childHwnd: 210 },
   _computeClientRect() {},
   _clampToolbarWidth() { return false; },
   scheduleRepaint() {
@@ -89,5 +98,23 @@ renderer.windows[300].visible = false;
 host.move_window(300, 0, 0, 0, 0, 0x43);
 assert(renderer.windows[300].zOrder > activatedZ,
   'SWP_SHOWWINDOW raises a normal window when it becomes visible');
+
+const inputQueueIdentity = renderer.inputQueue;
+host.destroy_window(100);
+assert.strictEqual(renderer.inputQueue, inputQueueIdentity,
+  'DestroyWindow compacts the browser input queue in place');
+assert.deepStrictEqual(renderer.inputQueue.map(event => [event.hwnd, event.msg]), [
+  [200, 0x0200],
+  [0, 0x0100],
+], 'DestroyWindow purges queued input for the window and its children only');
+assert.strictEqual(renderer._directMouseDown, null,
+  'DestroyWindow clears a deferred mouse release aimed at a destroyed child');
+assert.strictEqual(renderer._dialogBtnDrag, null,
+  'DestroyWindow clears dialog-button capture aimed at the destroyed tree');
+assert.deepStrictEqual(renderer._lastDeepChild, { topHwnd: 200, childHwnd: 210 },
+  'DestroyWindow preserves transient input state for an unrelated window');
+assert(!renderer.windows[100] && !renderer.windows[110] && !renderer.windows[120],
+  'DestroyWindow removes the renderer window tree');
+assert(renderer.windows[200], 'DestroyWindow preserves unrelated renderer windows');
 
 console.log('PASS  host renderer window relations cover GetWindow fallback helpers');
