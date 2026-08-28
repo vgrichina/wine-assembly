@@ -7872,36 +7872,67 @@ nW — STUB: unimplemented
 
   ;; 326: TlsAlloc — return next TLS index
   (func $handle_TlsAlloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $index i32)
+    (local.set $index (call $tls_reserve))
+    (if (i32.eq (local.get $index) (i32.const -1))
+      (then
+        (global.set $eax (i32.const -1)) ;; TLS_OUT_OF_INDEXES
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+        (return)))
     (if (i32.eqz (global.get $tls_slots))
       (then
         (global.set $tls_slots (call $heap_alloc (i32.const 256)))
         (call $zero_memory (call $g2w (global.get $tls_slots)) (i32.const 256))))
-    (global.set $eax (global.get $tls_next_index))
-    (global.set $tls_next_index (i32.add (global.get $tls_next_index) (i32.const 1)))
+    (global.set $eax (local.get $index))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
   )
 
   ;; 327: TlsGetValue(index)
   (func $handle_TlsGetValue (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.ge_u (local.get $arg0) (i32.const 64))
+      (then
+        (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
     (if (i32.eqz (global.get $tls_slots))
-      (then (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+      (then
+        (global.set $last_error (i32.const 0))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
     (global.set $eax (call $gl32 (i32.add (global.get $tls_slots) (i32.shl (local.get $arg0) (i32.const 2)))))
+    (global.set $last_error (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)
   )
 
   ;; 328: TlsSetValue(index, value)
   (func $handle_TlsSetValue (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.ge_u (local.get $arg0) (i32.const 64))
+      (then
+        (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
     (if (i32.eqz (global.get $tls_slots))
       (then
         (global.set $tls_slots (call $heap_alloc (i32.const 256)))
         (call $zero_memory (call $g2w (global.get $tls_slots)) (i32.const 256))))
     (call $gs32 (i32.add (global.get $tls_slots) (i32.shl (local.get $arg0) (i32.const 2))) (local.get $arg1))
+    (global.set $last_error (i32.const 0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))) (return)
   )
 
   ;; 329: TlsFree(index) — return TRUE
   (func $handle_TlsFree (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.ge_u (local.get $arg0) (i32.const 64))
+      (then
+        (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (global.set $last_error (i32.const 0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
@@ -11510,14 +11541,20 @@ HookEx — no next hook in chain, return 0
   ;; 545: GetSystemDirectoryA(lpBuffer, uSize) — 2 args stdcall
   (func $handle_GetSystemDirectoryA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $dst i32)
-    (local.set $dst (call $g2w (local.get $arg0)))
-    ;; Write "C:\WINDOWS\SYSTEM" (18 chars including null)
-    (i32.store (local.get $dst) (i32.const 0x575c3a43))          ;; C:\W
-    (i32.store (i32.add (local.get $dst) (i32.const 4)) (i32.const 0x4f444e49))   ;; INDO
-    (i32.store (i32.add (local.get $dst) (i32.const 8)) (i32.const 0x535c5357))   ;; WS\S
-    (i32.store (i32.add (local.get $dst) (i32.const 12)) (i32.const 0x45545359))  ;; YSTE
-    (i32.store16 (i32.add (local.get $dst) (i32.const 16)) (i32.const 0x004d))    ;; M\0
-    (global.set $eax (i32.const 17))
+    (if (i32.and (i32.ne (local.get $arg0) (i32.const 0))
+                 (i32.ge_u (local.get $arg1) (i32.const 18)))
+      (then
+        (local.set $dst (call $g2w (local.get $arg0)))
+        ;; Write "C:\WINDOWS\SYSTEM" (18 chars including null)
+        (i32.store (local.get $dst) (i32.const 0x575c3a43))          ;; C:\W
+        (i32.store (i32.add (local.get $dst) (i32.const 4)) (i32.const 0x4f444e49))   ;; INDO
+        (i32.store (i32.add (local.get $dst) (i32.const 8)) (i32.const 0x535c5357))   ;; WS\S
+        (i32.store (i32.add (local.get $dst) (i32.const 12)) (i32.const 0x45545359))  ;; YSTE
+        (i32.store16 (i32.add (local.get $dst) (i32.const 16)) (i32.const 0x004d))    ;; M\0
+        (global.set $eax (i32.const 17)))
+      (else
+        ;; Required size includes the terminator when the buffer is short.
+        (global.set $eax (i32.const 18))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
@@ -11549,13 +11586,18 @@ HookEx — no next hook in chain, return 0
   ;; 813: GetWindowsDirectoryA(lpBuffer, uSize) → length
   (func $handle_GetWindowsDirectoryA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $dst i32)
-    (local.set $dst (call $g2w (local.get $arg0)))
-    ;; Write "C:\WINDOWS" (10 chars + null)
-    (i32.store (local.get $dst) (i32.const 0x575c3a43))          ;; C:\W
-    (i32.store (i32.add (local.get $dst) (i32.const 4)) (i32.const 0x4f444e49))   ;; INDO
-    (i32.store16 (i32.add (local.get $dst) (i32.const 8)) (i32.const 0x5357))     ;; WS
-    (i32.store8 (i32.add (local.get $dst) (i32.const 10)) (i32.const 0))          ;; NUL
-    (global.set $eax (i32.const 10))
+    (if (i32.and (i32.ne (local.get $arg0) (i32.const 0))
+                 (i32.ge_u (local.get $arg1) (i32.const 11)))
+      (then
+        (local.set $dst (call $g2w (local.get $arg0)))
+        ;; Write "C:\WINDOWS" (10 chars + null)
+        (i32.store (local.get $dst) (i32.const 0x575c3a43))          ;; C:\W
+        (i32.store (i32.add (local.get $dst) (i32.const 4)) (i32.const 0x4f444e49))   ;; INDO
+        (i32.store16 (i32.add (local.get $dst) (i32.const 8)) (i32.const 0x5357))     ;; WS
+        (i32.store8 (i32.add (local.get $dst) (i32.const 10)) (i32.const 0))          ;; NUL
+        (global.set $eax (i32.const 10)))
+      (else
+        (global.set $eax (i32.const 11))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 

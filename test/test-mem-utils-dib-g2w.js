@@ -11,10 +11,9 @@
 
 const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
-const { g2w, g2wSpan, readStrA } = require('../lib/mem-utils');
-
-const DIB_GUEST_BASE = 0x50000000;
-const DIB_GUEST_CAPACITY = 0x04000000;
+const {
+  g2w, g2wSpan, readStrA, DIB_GUEST_BASE, DIB_GUEST_CAPACITY,
+} = require('../lib/mem-utils');
 
 (async () => {
   const { exports: e, memory } = await bootRenderHarness();
@@ -61,10 +60,15 @@ const DIB_GUEST_CAPACITY = 0x04000000;
   const tailGA = (DIB_GUEST_BASE + DIB_GUEST_CAPACITY - 0x40) >>> 0;
   assert.strictEqual(g2wSpan(tailGA, 0x1000, imageBase, memory), 0x40,
     'a span should stop at the end of the DIB arena');
+  const afterDibGA = (DIB_GUEST_BASE + DIB_GUEST_CAPACITY) >>> 0;
+  assert.strictEqual(g2w(afterDibGA, imageBase, memory), 0xf0,
+    'the first guest byte backed by THREAD_RPC must resolve as unmapped');
+  assert.strictEqual(g2wSpan(afterDibGA, 0x1000, imageBase, memory), 4,
+    'the first guest byte backed by THREAD_RPC must use only the null sentinel span');
 
   // Ordinary image-relative addresses must be untouched by the new branch.
   assert.strictEqual(g2w(imageBase, imageBase, memory), 0x12000,
     'the direct guest window should still translate as before');
 
-  console.log('7/7 checks passed');
+  console.log('9/9 checks passed');
 })().catch((err) => { console.error(err); process.exit(1); });

@@ -5,6 +5,20 @@ const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
 
 const extraWat = String.raw`
+  (func (export "test_get_computer_name_a") (param $buf i32) (param $size i32) (result i32)
+    (global.set $image_base (i32.const 0))
+    (global.set $esp (i32.const 0x00300000))
+    (call $handle_GetComputerNameA (local.get $buf) (local.get $size)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
+
+  (func (export "test_get_user_name_a") (param $buf i32) (param $size i32) (result i32)
+    (global.set $image_base (i32.const 0))
+    (global.set $esp (i32.const 0x00300000))
+    (call $handle_GetUserNameA (local.get $buf) (local.get $size)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
+
   (func (export "test_get_computer_name_w") (param $buf i32) (param $size i32) (result i32)
     (global.set $image_base (i32.const 0))
     (global.set $esp (i32.const 0x00300000))
@@ -65,7 +79,49 @@ const extraWat = String.raw`
   assert.strictEqual(read32(size), 5,
     'user-name failure reports the required count including NUL');
 
-  console.log('PASS Unicode machine/user identity and size contracts');
+  write32(size, 3);
+  assert.strictEqual(e.test_get_computer_name_a(buffer, size), 1,
+    'three-byte ANSI computer-name buffer succeeds');
+  assert.deepStrictEqual(Array.from({ length: 3 }, (_, i) => e.guest_read8(buffer + i)),
+    [0x50, 0x43, 0], 'ANSI computer name is PC with a terminator');
+  assert.strictEqual(read32(size), 2,
+    'ANSI computer-name success excludes the terminator from the size');
+
+  for (let i = 0; i < 5; i++) e.guest_write8(buffer + i, 0xcc);
+  write32(size, 2);
+  assert.strictEqual(e.test_get_computer_name_a(buffer, size), 0,
+    'short ANSI computer-name buffer fails');
+  assert.strictEqual(read32(size), 3,
+    'ANSI computer-name failure reports required bytes including NUL');
+  for (let i = 0; i < 5; i++) {
+    assert.strictEqual(e.guest_read8(buffer + i), 0xcc,
+      'short ANSI computer-name buffer is not overwritten');
+  }
+
+  write32(size, 5);
+  assert.strictEqual(e.test_get_user_name_a(buffer, size), 1,
+    'five-byte ANSI user-name buffer succeeds');
+  assert.deepStrictEqual(Array.from({ length: 5 }, (_, i) => e.guest_read8(buffer + i)),
+    [0x75, 0x73, 0x65, 0x72, 0], 'ANSI user name is terminated');
+  assert.strictEqual(read32(size), 5,
+    'ANSI user-name success size includes the terminator');
+
+  for (let i = 0; i < 6; i++) e.guest_write8(buffer + i, 0xcc);
+  write32(size, 4);
+  assert.strictEqual(e.test_get_user_name_a(buffer, size), 0,
+    'short ANSI user-name buffer fails');
+  assert.strictEqual(read32(size), 5,
+    'ANSI user-name failure reports required bytes including NUL');
+  for (let i = 0; i < 6; i++) {
+    assert.strictEqual(e.guest_read8(buffer + i), 0xcc,
+      'short ANSI user-name buffer is not overwritten');
+  }
+  assert.strictEqual(e.test_get_user_name_a(buffer, 0), 0,
+    'NULL ANSI user-name size pointer fails without a write');
+  assert.strictEqual(e.test_get_computer_name_a(buffer, 0), 0,
+    'NULL ANSI computer-name size pointer fails without a write');
+
+  console.log('PASS ANSI/Unicode machine and user identity size contracts');
 })().catch(error => {
   console.error(error.stack || error.message);
   process.exit(1);

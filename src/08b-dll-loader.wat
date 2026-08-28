@@ -25,6 +25,12 @@
     (local $src i32) (local $dst i32)
     (local $rsrc_rva_d i32) (local $rsrc_size_d i32) (local $rsrc_ptr i32)
 
+    ;; Every DLL has entries in three fixed parallel tables. Refuse the load
+    ;; before mapping a section when no row remains; the former unchecked 17th
+    ;; load wrote its DLL metadata over DLL_RSRC_TABLE.
+    (if (i32.ge_u (global.get $dll_count) (global.get $DLL_TABLE_CAPACITY))
+      (then (return (i32.const 0))))
+
     ;; Validate MZ
     (if (i32.ne (i32.load16_u (global.get $PE_STAGING)) (i32.const 0x5A4D))
       (then (return (i32.const 0))))
@@ -616,3 +622,4 @@
 
   (func (export "get_exe_size_of_image") (result i32) (global.get $exe_size_of_image))
   (func (export "get_dll_count") (result i32) (global.get $dll_count))
+  (func (export "get_dll_capacity") (result i32) (global.get $DLL_TABLE_CAPACITY))

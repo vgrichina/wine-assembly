@@ -17,6 +17,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const RPC = require('../lib/guest-rpc.js');
+const MEM_UTILS = require('../lib/mem-utils.js');
 
 const SRC = path.join(__dirname, '..', 'src', '01-header.wat');
 const source = fs.readFileSync(SRC, 'utf8');
@@ -58,6 +59,12 @@ check(rpcBase >= dibEnd, 'no RPC block lands in the DIB pixel arena (the origina
 check(dibGuestCap === dibSize,
   'DIB guest capacity equals its backing size, so no DIB address maps past its backing',
   `cap=0x${dibGuestCap.toString(16)} backing=0x${dibSize.toString(16)}`);
+check(MEM_UTILS.DIB_GUEST_CAPACITY === dibGuestCap,
+  'mem-utils DIB guest capacity matches WAT',
+  `js=0x${MEM_UTILS.DIB_GUEST_CAPACITY.toString(16)} wat=0x${dibGuestCap.toString(16)}`);
+check(MEM_UTILS.DIB_BACKING_BASE === dibBase,
+  'mem-utils DIB backing base matches WAT',
+  `js=0x${MEM_UTILS.DIB_BACKING_BASE.toString(16)} wat=0x${dibBase.toString(16)}`);
 
 // Blocks must not share a cache line, or two threads' handshakes ping-pong one
 // line between cores on every host call.

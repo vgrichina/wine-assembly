@@ -526,6 +526,22 @@
       (i32.const 0) (i32.const 0) (i32.const 0))
     (global.set $esp (local.get $saved_esp))
     (global.get $eax))
+
+  (func (export "test_call_TlsGetValue") (param $index i32) (result i32)
+    (global.set $esp (i32.const 0x00300000))
+    (call $handle_TlsGetValue (local.get $index)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_TlsSetValue") (param $index i32) (param $value i32) (result i32)
+    (global.set $esp (i32.const 0x00300000))
+    (call $handle_TlsSetValue (local.get $index) (local.get $value)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_call_TlsFree") (param $index i32) (result i32)
+    (global.set $esp (i32.const 0x00300000))
+    (call $handle_TlsFree (local.get $index)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
   (func (export "get_sync_msg_depth") (result i32) (global.get $sync_msg_depth))
   (func (export "get_window_thread") (param $hwnd i32) (result i32)
     (call $wnd_get_thread (local.get $hwnd)))
@@ -609,8 +625,40 @@
   (func (export "get_virtual_alloc_top") (result i32) (global.get $virtual_alloc_top))
   (func (export "set_virtual_alloc_top") (param i32) (global.set $virtual_alloc_top (local.get 0)))
   (func (export "get_heap_base") (result i32) (global.get $heap_base))
-  (func (export "get_tls_next_index") (result i32) (global.get $tls_next_index))
-  (func (export "set_tls_next_index") (param i32) (global.set $tls_next_index (local.get 0)))
+  ;; Reserve one of the 64 dword slots in each thread's TLS vector. The cursor
+  ;; is process-wide shared memory, so concurrent WASM instances cannot hand
+  ;; out the same index. Once full it stays full and returns TLS_OUT_OF_INDEXES.
+  (func $tls_reserve (result i32)
+    (local $cur i32)
+    (block $full
+      (loop $retry
+        (local.set $cur (i32.atomic.load (global.get $TLS_NEXT_INDEX_SHARED)))
+        (br_if $full (i32.ge_u (local.get $cur) (i32.const 64)))
+        (if (i32.eq (local.get $cur)
+              (i32.atomic.rmw.cmpxchg (global.get $TLS_NEXT_INDEX_SHARED)
+                (local.get $cur) (i32.add (local.get $cur) (i32.const 1))))
+          (then (return (local.get $cur))))
+        (br $retry)))
+    (i32.const -1))
+
+  ;; Spawn metadata may lag a concurrent TlsAlloc. Adopt it monotonically so
+  ;; a worker can never move the shared cursor backwards.
+  (func $tls_publish_minimum (param $minimum i32)
+    (local $cur i32)
+    (block $done
+      (loop $retry
+        (local.set $cur (i32.atomic.load (global.get $TLS_NEXT_INDEX_SHARED)))
+        (br_if $done (i32.ge_u (local.get $cur) (local.get $minimum)))
+        (br_if $done (i32.eq (local.get $cur)
+          (i32.atomic.rmw.cmpxchg (global.get $TLS_NEXT_INDEX_SHARED)
+            (local.get $cur) (local.get $minimum))))
+        (br $retry))))
+
+  (func (export "get_tls_next_index") (result i32)
+    (i32.atomic.load (global.get $TLS_NEXT_INDEX_SHARED)))
+  (func (export "set_tls_next_index") (param i32)
+    (call $tls_publish_minimum (local.get 0)))
+  (func (export "test_reserve_tls_index") (result i32) (call $tls_reserve))
   (func (export "get_tls_slots") (result i32) (global.get $tls_slots))
   (func (export "set_tls_slots") (param i32) (global.set $tls_slots (local.get 0)))
   ;; Post queue exports for IPC injection

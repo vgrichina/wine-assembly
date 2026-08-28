@@ -110,6 +110,22 @@ class CodeCache {
       for (const prog of (this.byPara.get(p) || [])) doomed.add(prog);
     }
     if (!doomed.size) return;
+    // The shadow return stack holds ARENA addresses, and $rpop validates them
+    // against the guest ip and cs only -- it has no way to know the region they
+    // point into has just been dropped. The arena is never overwritten in
+    // place, so those bytes are still executable and still hold the pre-patch
+    // compilation: a `ret` resumes there and re-runs code the guest has since
+    // rewritten. ASSAULT.EXE is what this costs. Turbo Pascal's floating-point
+    // emulator patches each `int 3Bh` call site into `fwait`+ESC as it is first
+    // executed, and one `ret` came back through a stale frame into the copy
+    // that still had the INT in it. The handler is idempotent-hostile: reaching
+    // it a second time it reads the ALREADY-patched bytes, concludes there is
+    // nothing to do, and IRETs to the unrewound return address -- two bytes
+    // into `fild word [0xe8]`. The demo then ran 0.9M dispatches of nothing at
+    // 10ab:ab09 and drew a black screen, which reads exactly like a decoder
+    // gap and is not one. flush() has always cleared this; the narrow path
+    // that replaced it for most stores did not.
+    this.vm.set('rtop', 0);
     for (const prog of doomed) {
       const list = this.regions.get(prog.key);
       if (list) {

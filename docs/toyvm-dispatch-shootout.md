@@ -1032,6 +1032,15 @@ busy, and it comes back on a quiet one.
 
 ### 8.0.-1 Three programs share one shape, and it is not three bugs
 
+> **Answered for one of the three, and the shared shape did not survive it.**
+> ASSAULT's wild jump was a stale arena address in the shadow return stack —
+> §8.2. JULTRO and INTRO are unchanged by that fix, so "execution reached an
+> address that holds no instruction" turned out to be a *symptom* the three
+> share and not a cause. Read the grouping below as what it was worth: it named
+> the right question ("what transfers control there?") and the wrong unit of
+> work. One root cause did not move more than one program.
+
+
 JULTRO, ASSAULT and INTRO are filed separately above as a divide by zero, a bad
 opcode and a protected-mode failure. All three are the same thing: **execution
 reached an address that holds no instruction**, and every symptom each one
@@ -1173,3 +1182,66 @@ has nowhere to go. Nothing in the trace frees those subfile blocks, so either
 the loader has an EMS path we are not qualifying for or one of them should not
 be resident at that size. That is the next question, and it is a DOS-services
 question rather than a CPU one.
+
+### 8.2 A cached return address outlived the code it pointed into
+
+ASSAULT.EXE printed `Loading...patience is a virtue.`, set mode 13h, and then
+spent its entire budget at `10ab:ab09` on `fe 90 00 00 00 00 00 00` — mostly
+zeros, so the decoder gave up and the run photographed a black screen. Read off
+the give-up address alone that is a missing instruction. It is not one.
+
+**The tell is a flag, not a disassembly.** `--no-cache` reproduced it exactly;
+`--smc-flush` made the demo draw a full 64000-pixel frame. Those two differ only
+in *how much of the compiled cache survives a self-modifying store*, which is
+the whole point of keeping them as an A/B pair: a program that behaves
+differently under `--smc-flush` has a stale-code bug and not a slow one. That
+one line of evidence was worth more than every disassembly taken before it.
+
+**What the program was doing.** ASSAULT is Borland-compiled and links the
+floating-point emulator. Its startup installs one handler on each of INT
+34h–3Dh (`--report`'s interrupt census shows `2534`…`253d` all pointing at
+`12a3:2bd3`), and every floating-point site in the image is assembled as a
+two-byte `int 3xh` placeholder. The handler patches each site the first time it
+is reached: it reads the vector number back out of the return address, adds
+`0xa3ce` to the `CD 3x` word — which turns `int 34h`…`int 3Bh` into `fwait` plus
+the matching ESC byte, `CD 3B` → `9B DF` — rewinds the return address by two,
+and IRETs so the *real* instruction executes. This is not an exotic path; it is
+how every Borland program with `emu.lib` in it starts up, and it is why the
+corpus reports thousands of self-modify breaks.
+
+**The bug.** `$rpush`/`$rpop` are a shadow return stack: a `call` remembers the
+arena address its `ret` should resume at, and `$rpop` hands it straight back.
+The only thing checked on the way out is the guest ip and cs — nothing tells it
+whether the region that arena address points into is still live. `flush()` has
+always emptied it (`rtop = 0`). `invalidateRange()`, the narrow path that
+replaced the flush for most stores so COMPCODE would stop re-decoding itself
+1526 times (§7.8), did not. The arena is never overwritten in place, so a
+dropped region's bytes stay executable and stay exactly as they were compiled.
+
+So: a call site is patched, its region is correctly dropped, and a `ret`
+elsewhere comes back through a frame pushed before the drop and resumes in the
+**pre-patch** compilation — which still contains the `int 3Bh` that memory no
+longer has.
+
+**And the second interrupt is worse than the first.** The handler is hostile to
+being re-entered on a site it has already fixed. Second time round it reads the
+*patched* bytes at the return address, computes `0xDF - 0x34 = 0xAB`, fails the
+`cmp al,8` that gates the rewind, and IRETs to the un-rewound address — two
+bytes into `fild word [0xe8]`. Control lands mid-instruction, walks off into
+zeros, and stops at `10ab:ab09`. Every visible symptom is three steps downstream
+of a stale 12-byte stack frame.
+
+The fix is one line in `invalidateRange`: clear `rtop` whenever anything is
+dropped. It costs the next few `ret`s the slow path and nothing else —
+correctness never depended on the shadow stack being right, only speed.
+
+Two things worth keeping from this:
+
+* **`--smc-flush` is a diagnosis, not a workaround.** It exists as the A/B
+  partner for exactly this class, and it answered in one run what the
+  disassembly could not answer in a dozen.
+* **A cache that hands back a raw address needs one invalidation path, not
+  two.** The narrow path was added for throughput and was correct about
+  *regions*; it was silently incomplete about every other structure holding an
+  arena address. `jtab` was handled in the same function and `rtop` was not,
+  which is the whole bug.

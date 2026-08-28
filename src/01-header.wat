@@ -1272,12 +1272,8 @@
   ;; 0x07E14000 32KB     DIB_PAGE_RUNS
   ;; 0x07E1C000 832KB    GDI_REGION_BANDS (256 x 208 RECT slots)
   ;; 0x079CA000 512B     WIN16_BUILTIN_NAMES (KERNEL/USER/GDI by-name exports)
-  ;; 0x079CA800 16KB     TV_TABLE (512 entries × 32 bytes)
-  ;; 0x079CE800  4KB     TV_IMAGE_TABLE (512 entries × {image, selected image})
-  ;; 0x079CF800  2KB     TV_OWNER_TABLE (owning hwnd per TV_TABLE item)
   ;; 0x079C8000  1KB     WND_Z_ORDER_TABLE (256 × 4-byte sibling z ranks)
   ;; 0x079C9C00  1KB     WND_HINSTANCE_TABLE (256 × 4-byte creating HINSTANCE)
-  ;; 0x079CC080  80B     TIMER_SHARED (active count, next auto id, 16 owner tids)
   ;; 0x079CC400  1KB     WND_THREAD_TABLE (256 × 4-byte owning thread id)
   ;; 0x079CC800 8320B    THREAD_MSG_QUEUES (8 tids × 64-entry MSG ring)
   ;; 0x079D0000 32KB     GDI_NEAREST_CACHE (4096 × {colour tag, palette index})
@@ -1307,7 +1303,6 @@
   ;; 0x07F02410 32KB     VIRTUAL_MAP_TABLE (2048 entries x 16 bytes)
   ;; 0x07F0A420 4B       GDI_BITMAP_FONT_IO (filesystem read count)
   ;; 0x07F0A440 80B      GDI_BITMAP_FONT_DESC (surface scratch)
-  ;; 0x07F0A500 256B     EXTRA_CMDLINE_BUFFER (JS-provided arguments)
   ;; 0x07F0A600 192B     GDI_BITMAP_FONT_LRU (last-use stamp per strike slot)
   ;; 0x07F0A800 3KB      GDI_BITMAP_FONT_TABLE (48 strikes x 64 bytes)
   ;; 0x07F0B400 2KB      TT_SUBST_TABLE (font substitution, see 10c-truetype.wat)
@@ -1324,7 +1319,7 @@
   ;; conflicts textually, so git merges both cleanly and the build still
   ;; passes -- the only symptom is a lock line and a TreeView's scroll state
   ;; writing over each other at runtime. 0x07F0CE70..0x07F0D000 is what is
-  ;; left under GDI_REGION_TABLE, and the trio fills it exactly.
+  ;; left under GDI_REGION_TABLE.
   ;; 0x07F0CE80   4B     TV_SLOT_MARK (one past the highest TV_TABLE slot used)
   ;; 0x07F0CE84   4B     TV_HANDLE_SEQ (item-handle sequence, shared by threads)
   ;; 0x07F0CF00 256B     TV_VIEW_TABLE (16 x per-TreeView caret/scroll/imagelist)
@@ -1335,6 +1330,13 @@
   ;; 0x07F12000 8KB      CODE_PAGE_BITMAP (1 bit per 4KB guest page < 0x10000000)
   ;; 0x07F14000 8KB      SYNC_TABLE (512 entries × 16 bytes)
   ;; 0x07F20000  256B    HIT_COUNT_BASE (16 --count slots of {addr, count})
+  ;; 0x07F20100   80B    TIMER_SHARED (active count, next auto id, 16 owner tids)
+  ;; 0x07F20200  256B    EXTRA_CMDLINE_BUFFER (JS-provided arguments)
+  ;; 0x07F20300   64B    TLS_NEXT_INDEX_SHARED (process TLS index cursor/cache line)
+  ;; 0x07F21000    4KB   SCROLL_AUX_TABLE (256 entries × 16 bytes)
+  ;; 0x07F22000   16KB   TV_TABLE (512 entries × 32 bytes)
+  ;; 0x07F26000    4KB   TV_IMAGE_TABLE (512 entries × {image, selected image})
+  ;; 0x07F27000    2KB   TV_OWNER_TABLE (owning hwnd per TV_TABLE item)
   ;; 0x07F30000 8KB      OP_INDEX (2048 decode-time op-start addresses)
   ;; 0x07F16000 492KB    (free apart from the tables listed above -- former
   ;;                      HANDLER_PAIR_HIST_COUNTS home, too
@@ -1349,7 +1351,7 @@
   ;; 0x07F93000 32KB     BRANCH_ALU_M32_RO_JCC_HIST (16 cc x 512 op/reg/base counters)
   ;; 0x07F9B000 256KB    HOT_BLOCK_HIST (32768 entries x {eip,count})
   ;; 0x07FDB000 64KB     SIB_CONSUMER_HIST (8192 entries x {key,count})
-  ;; 0x07FEB000  4KB     SCROLL_AUX_TABLE (256 entries × 16 bytes, ends 0x07FEC000)
+  ;; 0x07FEB000  4KB     D3DIM auxiliary strings/caches/state
   ;; --- DX tables moved to high memory to avoid guest address collision ---
   ;; 0x07FEC000 16KB     D3DIM_MATRICES (256 entries × 64 bytes, ends 0x07FF0000)
   ;; 0x07FF0000 32KB     DX_OBJECTS     (1024 entries × 32 bytes, ends 0x07FF8000)
@@ -1663,7 +1665,7 @@
   (global $THREAD_MSG_QUEUE_MAX i32 (i32.const 64))
   ;; Timer metadata that must be process-wide rather than per-instance.
   ;; +0 active count, +4 next auto id, +0x10 owner tid for each of 16 slots.
-  (global $TIMER_SHARED i32 (i32.const 0x079CC080))
+  (global $TIMER_SHARED i32 (i32.const 0x07F20100))
   (global $TIMER_SHARED_SIZE i32 (i32.const 0x00000050))
   (global $WND_OWN_DC_TABLE_SIZE i32 (i32.const 0x00000400))
   ;; Module instance supplied to CreateWindowEx, one dword per window slot.
@@ -1829,7 +1831,7 @@
   (global $GDI_TABLE_MARKS_SIZE i32 (i32.const 0x00000010))
   ;; Which TreeView each TV_TABLE item belongs to, parallel-indexed to it. The
   ;; item records are full at 32 bytes, so the owner has to live beside them.
-  (global $TV_OWNER_TABLE i32 (i32.const 0x079CF800))
+  (global $TV_OWNER_TABLE i32 (i32.const 0x07F27000))
   (global $TV_OWNER_TABLE_SIZE i32 (i32.const 0x00000800))
   ;; High-water mark: one past the highest TV_TABLE slot ever allocated. Every
   ;; scan bounds itself with this rather than with the full slot count, so
@@ -2062,7 +2064,7 @@
   ;;   +4   h_track   SB_HORZ nTrackPos
   ;;   +8   v_page    SB_VERT nPage
   ;;   +12  v_track   SB_VERT nTrackPos
-  (global $SCROLL_AUX_TABLE i32 (i32.const 0x07FEB000))
+  (global $SCROLL_AUX_TABLE i32 (i32.const 0x07F21000))
   (global $SCROLL_AUX_TABLE_SIZE i32 (i32.const 0x00001000))
   ;; VSOCK_TABLE — virtual LAN socket records (docs/virtual-lan-party.md).
   ;; 64 entries × 128 bytes, occupying the last 8KB below the sparse
@@ -2111,10 +2113,10 @@
   ;; its own tree on top of that one, and an app that gets NULL back from
   ;; TVM_INSERTITEM does not stop asking -- AVS retries the insert forever, so
   ;; a full table reads as a hang rather than as a truncated tree.
-  (global $TV_TABLE i32 (i32.const 0x079CA800))
+  (global $TV_TABLE i32 (i32.const 0x07F22000))
   (global $TV_TABLE_SIZE i32 (i32.const 0x00004000))
   (global $TV_SLOT_COUNT i32 (i32.const 512))
-  (global $TV_IMAGE_TABLE i32 (i32.const 0x079CE800))
+  (global $TV_IMAGE_TABLE i32 (i32.const 0x07F26000))
   (global $TV_IMAGE_TABLE_SIZE i32 (i32.const 0x00001000))
   (global $TAB_NATIVE_STATE_TABLE i32 (i32.const 0x07F01200))
   (global $TAB_NATIVE_STATE_TABLE_SIZE i32 (i32.const 0x00000100))
@@ -2527,6 +2529,7 @@
   (global $qsort_thunk     (mut i32) (i32.const 0))
   ;; DLL loader state
   (global $dll_count (mut i32) (i32.const 0))
+  (global $DLL_TABLE_CAPACITY i32 (i32.const 16))
   (global $DLL_TABLE i32 (i32.const 0x07992000))  ;; 32 bytes x 16 DLLs = 512 bytes
   ;; Parallel to DLL_TABLE: per-DLL resource dir (rsrc_rva, rsrc_size). 8 bytes x 16 = 128B.
   (global $DLL_RSRC_TABLE i32 (i32.const 0x07992200))
@@ -2543,7 +2546,10 @@
   (global $rand_seed (mut i32) (i32.const 12345))
   ;; TLS: simple fixed-size TLS (64 slots), allocated in heap on first use
   (global $tls_slots (mut i32) (i32.const 0))  ;; guest ptr to 64 x i32 = 256 bytes
-  (global $tls_next_index (mut i32) (i32.const 0))
+  ;; TLS indexes belong to the process, not one guest-thread WASM instance.
+  ;; Give the atomic cursor its own cache line in shared memory.
+  (global $TLS_NEXT_INDEX_SHARED i32 (i32.const 0x07F20300))
+  (global $TLS_NEXT_INDEX_SHARED_SIZE i32 (i32.const 0x00000040))
   ;; Performance counter (monotonic, incremented per query)
   (global $perf_counter_lo (mut i32) (i32.const 0))
   ;; EFLAGS bits outside the six we model lazily (CF/PF/ZF/SF/DF/OF). popfd

@@ -9,6 +9,13 @@ mkdir -p build
 # src/*.wat glob — a part that lands in src/ but not in WAT_FILES is silently
 # absent from the build while still appearing in build/combined.wat.
 node tools/check-wat-manifest.js
+# Fixed WAT tables share one flat linear-memory address space. A collision is
+# valid WAT and compiles cleanly, then silently cross-corrupts unrelated state
+# at runtime, so the sized-region/data-segment map is a shipping gate.
+node test/test-wat-memory-map.js
+# JS host-side guest-pointer translation must use the same DIB/RPC boundary as
+# WAT. A stale extra megabyte maps guest DIB addresses onto worker RPC slots.
+node test/test-wat-rpc-region.js
 # api_ids are array positions baked into the compiled hash table, the generated
 # br_table, and 09b-dispatch.wat's fast paths. A mid-array insert renumbers them
 # all; these two gates catch that before it becomes a runtime mystery.

@@ -6,6 +6,20 @@ const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
 
 const extraWat = String.raw`
+  (func (export "test_get_system_directory_a") (param $buf i32) (param $size i32) (result i32)
+    (global.set $image_base (i32.const 0))
+    (global.set $esp (i32.const 0x00300000))
+    (call $handle_GetSystemDirectoryA (local.get $buf) (local.get $size)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
+
+  (func (export "test_get_windows_directory_a") (param $buf i32) (param $size i32) (result i32)
+    (global.set $image_base (i32.const 0))
+    (global.set $esp (i32.const 0x00300000))
+    (call $handle_GetWindowsDirectoryA (local.get $buf) (local.get $size)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
+
   (func (export "test_get_system_directory_w") (param $buf i32) (param $size i32) (result i32)
     (global.set $image_base (i32.const 0))
     (global.set $esp (i32.const 0x00300000))
@@ -62,7 +76,42 @@ const extraWat = String.raw`
   assert.strictEqual(wat.test_get_windows_directory_w(0, 0), 11,
     'Windows directory size query includes its terminator');
 
-  console.log('PASS system and Windows directory UTF-16 size contracts');
+  for (let i = 0; i < 24; i++) wat.guest_write8(buffer + i, 0xcc);
+  assert.strictEqual(wat.test_get_system_directory_a(buffer, 18), expected.length,
+    'ANSI system directory success excludes its terminator');
+  assert.strictEqual(String.fromCharCode(...Array.from({ length: 17 },
+    (_, i) => wat.guest_read8(buffer + i))), expected,
+  'ANSI system directory writes the expected path');
+  assert.strictEqual(wat.guest_read8(buffer + 17), 0,
+    'ANSI system directory is NUL terminated');
+
+  for (let i = 0; i < 24; i++) wat.guest_write8(buffer + i, 0xcc);
+  assert.strictEqual(wat.test_get_system_directory_a(buffer, 17), 18,
+    'short ANSI system-directory buffer reports the required size');
+  for (let i = 0; i < 24; i++) {
+    assert.strictEqual(wat.guest_read8(buffer + i), 0xcc,
+      'short ANSI system-directory buffer is not overwritten');
+  }
+  assert.strictEqual(wat.test_get_system_directory_a(0, 0), 18,
+    'ANSI system-directory size query does not write through NULL');
+
+  for (let i = 0; i < 16; i++) wat.guest_write8(buffer + i, 0xcc);
+  assert.strictEqual(wat.test_get_windows_directory_a(buffer, 11), windows.length,
+    'ANSI Windows directory success excludes its terminator');
+  assert.strictEqual(String.fromCharCode(...Array.from({ length: 10 },
+    (_, i) => wat.guest_read8(buffer + i))), windows,
+  'ANSI Windows directory writes the expected path');
+  assert.strictEqual(wat.guest_read8(buffer + 10), 0,
+    'ANSI Windows directory is NUL terminated');
+  for (let i = 0; i < 16; i++) wat.guest_write8(buffer + i, 0xcc);
+  assert.strictEqual(wat.test_get_windows_directory_a(buffer, 10), 11,
+    'short ANSI Windows-directory buffer reports the required size');
+  for (let i = 0; i < 16; i++) {
+    assert.strictEqual(wat.guest_read8(buffer + i), 0xcc,
+      'short ANSI Windows-directory buffer is not overwritten');
+  }
+
+  console.log('PASS system and Windows directory ANSI/UTF-16 size contracts');
 })().catch(error => {
   console.error(error.stack || error.message);
   process.exit(1);

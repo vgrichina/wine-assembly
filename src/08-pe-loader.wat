@@ -158,30 +158,29 @@
         (local.set $tls_index_addr (call $gl32 (i32.add (local.get $tls_dir) (i32.const 8))))
         (local.set $tls_raw_size (i32.sub (local.get $tls_end) (local.get $tls_start)))
         (local.set $tls_zero_size (call $gl32 (i32.add (local.get $tls_dir) (i32.const 16))))
-        (if (i32.and
-              (i32.lt_u (global.get $tls_next_index) (i32.const 64))
-              (i32.ne
-                (i32.or (local.get $tls_raw_size) (local.get $tls_zero_size))
-                (i32.const 0)))
+        (if (i32.ne
+              (i32.or (local.get $tls_raw_size) (local.get $tls_zero_size))
+              (i32.const 0))
           (then
-            (local.set $tls_index (global.get $tls_next_index))
-            (global.set $tls_next_index (i32.add (global.get $tls_next_index) (i32.const 1)))
-            (if (local.get $tls_index_addr)
-              (then (call $gs32 (local.get $tls_index_addr) (local.get $tls_index))))
-            (local.set $tls_data
-              (call $heap_alloc (i32.add (local.get $tls_raw_size) (local.get $tls_zero_size))))
-            (if (local.get $tls_data)
+            (local.set $tls_index (call $tls_reserve))
+            (if (i32.ne (local.get $tls_index) (i32.const -1))
               (then
-                (call $memcpy
-                  (call $g2w (local.get $tls_data))
-                  (call $g2w (local.get $tls_start))
-                  (local.get $tls_raw_size))
-                (call $zero_memory
-                  (i32.add (call $g2w (local.get $tls_data)) (local.get $tls_raw_size))
-                  (local.get $tls_zero_size))
-                (call $gs32
-                  (i32.add (global.get $tls_slots) (i32.shl (local.get $tls_index) (i32.const 2)))
-                  (local.get $tls_data))))))))
+                (if (local.get $tls_index_addr)
+                  (then (call $gs32 (local.get $tls_index_addr) (local.get $tls_index))))
+                (local.set $tls_data
+                  (call $heap_alloc (i32.add (local.get $tls_raw_size) (local.get $tls_zero_size))))
+                (if (local.get $tls_data)
+                  (then
+                    (call $memcpy
+                      (call $g2w (local.get $tls_data))
+                      (call $g2w (local.get $tls_start))
+                      (local.get $tls_raw_size))
+                    (call $zero_memory
+                      (i32.add (call $g2w (local.get $tls_data)) (local.get $tls_raw_size))
+                      (local.get $tls_zero_size))
+                    (call $gs32
+                      (i32.add (global.get $tls_slots) (i32.shl (local.get $tls_index) (i32.const 2)))
+                      (local.get $tls_data))))))))))
     (global.get $entry_point))
 
   ;; ============================================================
