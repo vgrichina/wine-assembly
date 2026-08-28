@@ -230,6 +230,29 @@ async function capture(exe, png, o) {
     if (score(retry) > score(first)) { row = retry; row.sound = 'none'; }
     else { row = first; await child(exe, png, o); }
   }
+  // Last: the program that is working and simply has further to go than we
+  // waited. The signature is exact and it is not the same as "blank" -- the run
+  // is in a GRAPHICS mode, drew nothing, was not stuck, did not exit, and spent
+  // the whole dispatch budget. Everything about that says the budget was the
+  // limit, and nothing about it says the program is broken.
+  //
+  // COMPCODE.EXE is the corpus's one example and it is not a near miss: it
+  // needs 953M dispatches and draws its plasma at about 82% of the way through,
+  // so at the sweep's 300M it photographs as an empty mode 13h. Raising the
+  // budget for everyone is the wrong fix -- 117 of 199 programs reach the
+  // ceiling and nearly all of them are already drawing, so it would multiply
+  // the sweep's wall time to change one row.
+  //
+  // The wall timeout still bounds this, which is what keeps it affordable: the
+  // extra budget is only reachable by a program fast enough to spend it, and a
+  // slow one stops where it always did.
+  if (!row.pixels && row.surface === 'vga' && !row.stuckAt && !row.ranOutOfTime
+      && row.dispatched >= o.budget) {
+    const first = { ...row };
+    const retry = await child(exe, png, { ...o, autoKey: true, budget: o.budget * 4 });
+    if (score(retry) > score(first)) row = retry;
+    else { row = first; await child(exe, png, o); }   // re-take the better frame
+  }
   if (row.png && !fs.existsSync(row.png)) { row.png = null; row.failed ||= 'no png'; }
   return row;
 }
