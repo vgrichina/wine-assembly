@@ -12095,6 +12095,14 @@ SetColorAdjustment — validate and copy complete per-DC state.
             (return)))
         (if (i32.eq (local.get $arg0) (global.get $WNDPROC_CTRL_NATIVE))
           (then
+            ;; A subclass may chain the native WM_PAINT and then render its
+            ;; owner-drawn face through GetDC instead of BeginPaint. The
+            ;; native paint is still the background half of that paint cycle;
+            ;; do not leave the creation erase queued for the pump to deliver
+            ;; afterward over the child's pixels on our shared top-level
+            ;; surface. Half-Life's bitmap buttons follow exactly this path.
+            (if (i32.eq (local.get $arg2) (i32.const 0x000F))
+              (then (call $nc_flags_clear (local.get $arg1) (i32.const 2))))
             (global.set $eax (call $control_wndproc_dispatch
               (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4))))
           (else

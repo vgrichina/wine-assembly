@@ -6212,8 +6212,8 @@
         (param $start_scan i32) (param $line_count i32)
         (param $bits i32) (param $bmi i32) (param $color_use i32) (result i32)
     (local $dst i32) (local $src i32) (local $mdx i32) (local $mdy i32)
-    (local $band_y i32)
-    (local $lines i32) (local $ok i32)
+    (local $band_y i32) (local $source_y i32)
+    (local $lines i32) (local $full_source i32) (local $ok i32)
     (if (i32.or (i32.gt_u (local.get $color_use) (i32.const 1))
           (i32.or (i32.le_s (local.get $w) (i32.const 0))
             (i32.or (i32.le_s (local.get $h) (i32.const 0))
@@ -6228,6 +6228,15 @@
       (then (return (i32.const 0))))
     (if (i32.ge_u (local.get $start_scan) (i32.load offset=8 (local.get $src)))
       (then (return (i32.const 0))))
+    ;; A complete DIB remains a complete source image: xSrc/ySrc select a
+    ;; rectangle within it. Half-Life supplies its 4914-row button atlas this
+    ;; way and selects each 26-row label with a non-zero ySrc. Narrowing that
+    ;; descriptor to the destination height makes every such source coordinate
+    ;; out of bounds. Partial-band callers (notably Winmine) still supply only
+    ;; cLines bytes and therefore keep the compact descriptor below.
+    (local.set $full_source (i32.and
+      (i32.eqz (local.get $start_scan))
+      (i32.ge_u (local.get $line_count) (i32.load offset=8 (local.get $src)))))
     (local.set $mdx (call $gdi_line_map_x (local.get $dst) (local.get $dx)))
     (local.set $mdy (call $gdi_line_map_y (local.get $dst) (local.get $dy)))
     (local.set $lines (local.get $line_count))
@@ -6237,23 +6246,39 @@
         (i32.sub (i32.load offset=8 (local.get $src)) (local.get $start_scan)))))
     (if (i32.gt_u (local.get $lines) (local.get $h))
       (then (local.set $lines (local.get $h))))
+    (local.set $source_y (local.get $sy))
+    ;; For a complete bottom-up DIB, SetDIBitsToDevice measures ySrc upward
+    ;; from the lower-left while raster descriptors use canonical top-left
+    ;; coordinates. Convert the selected rectangle without changing partial
+    ;; scanline-band semantics. Top-down DIBs already use an upper-left origin.
+    (if (i32.and
+          (local.get $full_source)
+          (i32.eqz (i32.load offset=20 (local.get $src))))
+      (then
+        (local.set $source_y (i32.sub
+          (i32.sub (i32.load offset=8 (local.get $src)) (local.get $sy))
+          (local.get $lines)))))
     ;; lpvBits contains only cLines rows. Place that band within the declared
     ;; output height instead of always pinning it to yDest. StartScan=0 is the
     ;; bottom band for both DIB orientations; increasing StartScan walks the
     ;; band upward toward yDest.
-    (local.set $band_y (i32.add (local.get $mdy)
-      (i32.sub (i32.sub (local.get $h) (local.get $start_scan))
-        (local.get $lines))))
+    (local.set $band_y
+      (if (result i32) (local.get $full_source)
+        (then (local.get $mdy))
+        (else (i32.add (local.get $mdy)
+          (i32.sub (i32.sub (local.get $h) (local.get $start_scan))
+            (local.get $lines))))))
     (if (i32.lt_s (local.get $band_y) (local.get $mdy))
       (then (local.set $band_y (local.get $mdy))))
     ;; lpvBits points at the first byte of the scanline slice supplied by this
     ;; call, not necessarily at the first byte of the full biHeight bitmap.
     ;; Winmine uses one 16-line pointer into a 256-line sprite sheet per call.
-    (i32.store offset=8 (local.get $src) (local.get $lines))
+    (if (i32.eqz (local.get $full_source))
+      (then (i32.store offset=8 (local.get $src) (local.get $lines))))
     (local.set $ok (call $gdi_raster_bitblt
       (local.get $hdc) (i32.const 0) (local.get $dst) (local.get $mdx) (local.get $band_y)
       (local.get $w) (local.get $lines) (local.get $src)
-      (local.get $sx) (local.get $sy)
+      (local.get $sx) (local.get $source_y)
       (i32.const 0) (i32.const 0x00CC0020)))
     (if (i32.eqz (local.get $ok)) (then (return (i32.const 0))))
     (call $gdi_geometry_present (local.get $hdc) (local.get $dst)

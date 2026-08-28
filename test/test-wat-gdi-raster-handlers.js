@@ -574,6 +574,35 @@ const { bootRenderHarness } = require('./render-helper');
     }
   });
 
+  check('SetDIBitsToDevice crops within a complete DIB using ySrc', () => {
+    const bmiGa = wat.guest_alloc(40) >>> 0;
+    const bitsGa = wat.guest_alloc(32) >>> 0;
+    const imageBase = wat.get_image_base() >>> 0;
+    const bitsWa = 0x12000 + (bitsGa - imageBase);
+    wat.guest_write32(bmiGa, 40);
+    wat.guest_write32(bmiGa + 4, 2);
+    wat.guest_write16(bmiGa + 12, 1);
+    wat.guest_write16(bmiGa + 14, 32);
+    wat.guest_write32(bmiGa + 16, 0);
+
+    for (const height of [4, -4]) {
+      bytes.fill(0, bitsWa, bitsWa + 32);
+      wat.guest_write32(bmiGa + 8, height);
+      // SetDIBitsToDevice's ySrc origin follows DIB orientation: lower-left
+      // for bottom-up, upper-left for top-down. In both cases ySrc=2 selects
+      // the third scanline in the supplied storage.
+      const storedRow = 2;
+      bytes.set([0, 255, 0, 0, 0, 255, 0, 0], bitsWa + storedRow * 8);
+      const target = makeDib(2, 1);
+      assert.strictEqual(wat.test_call_SetDIBitsToDevice(
+        target.hdc, 0, 0, 2, 1, 0, 2, 0, 4,
+        bitsGa, bmiGa, 0), 1);
+      assert.deepStrictEqual([
+        packed(target, 0, 0), packed(target, 1, 0),
+      ], [0x00FF00, 0x00FF00]);
+    }
+  });
+
   check('ExtFloodFill owns surface and border modes in WAT', () => {
     const surface = makeDib(6, 6);
     const red = wat.test_call_CreateSolidBrush(0x000000FF) >>> 0;

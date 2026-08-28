@@ -4,7 +4,9 @@
 const assert = require('assert');
 const crypto = require('crypto');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
+const { PNG } = require('pngjs');
 const { spawnSync } = require('child_process');
 const { APPS } = require('../lib/apps');
 
@@ -43,6 +45,8 @@ const dlls = [
   'hw.dll', 'sw.dll', 'hl_res.dll', 'a3dapi.dll',
   'valve/dlls/hl.dll', 'valve/cl_dlls/client.dll',
 ].map(file => path.join(installed, file)).join(',');
+const screenshot = path.join(os.tmpdir(),
+  `wine-assembly-half-life-uplink-menu-${process.pid}.png`);
 const run = spawnSync(process.execPath, [
   'test/run.js',
   `--exe=${exe}`,
@@ -53,6 +57,7 @@ const run = spawnSync(process.execPath, [
   '--max-seconds=12',
   '--batch-size=1000',
   '--repaint-every=1000',
+  `--png=${screenshot}`,
   '--quiet-api',
   '--quiet-blocks',
   '--input=1:wait-dlg-control:1:10000,2:dlg-click:1',
@@ -78,4 +83,24 @@ for (const marker of [
 assert(!/UNIMPLEMENTED API|\*\*\* CRASH|RuntimeError:/i.test(output),
   `installed game entered a failed compatibility path\n${output.slice(-5000)}`);
 
-console.log('PASS Half-Life Uplink installed payload reaches its DirectDraw main menu');
+const menu = PNG.sync.read(fs.readFileSync(screenshot));
+assert.strictEqual(menu.width, 640);
+assert.strictEqual(menu.height, 480);
+const yellowPixels = y0 => {
+  let count = 0;
+  for (let y = y0; y < y0 + 26; y++) {
+    for (let x = 60; x < 226; x++) {
+      const i = (y * menu.width + x) * 4;
+      if (menu.data[i] > 150 && menu.data[i + 1] > 100 && menu.data[i + 2] < 100) {
+        count++;
+      }
+    }
+  }
+  return count;
+};
+for (const y of [180, 212, 244, 276, 308, 340, 372]) {
+  assert(yellowPixels(y) > 100,
+    `Half-Life Uplink menu label at y=${y} was not rendered`);
+}
+
+console.log('PASS Half-Life Uplink installed payload renders all seven main-menu labels');
