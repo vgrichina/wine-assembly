@@ -459,7 +459,8 @@ async function main() {
     console.log(`  protected mode: cr0=${hx(ex.get_cr0())} `
       + `gdt=${hx(ex.get_gdtb())}+${hx(ex.get_gdtl())} `
       + `cs=${hx(r.vm.get('cs'))} base=${hx(ex.get_csb())} `
-      + `${ex.get_d32() ? '32-bit' : '16-bit'} code`);
+      + `${ex.get_d32() ? '32-bit' : '16-bit'} code`
+      + `${ex.get_vm86() ? ' -- virtual-8086' : ''}`);
   }
 
   console.log(`\n${path.basename(exe)}  variant=${r.variant}  ${r.secs.toFixed(2)}s`);
@@ -587,7 +588,8 @@ async function main() {
   // second says "the far jump went to the wrong place"; only one is true.
   const segBase = (seg) => {
     const ex = r.vm.exports;
-    if (!(ex.get_cr0() & 1)) return (seg << 4) & 0xFFFFF;
+    // V86 is real-mode segmentation with PE set, so it takes the same answer.
+    if (!(ex.get_cr0() & 1) || ex.get_vm86()) return (seg << 4) & 0xFFFFF;
     if (seg === (r.vm.get('cs') & 0xFFFF)) return ex.get_csb() >>> 0;
     const at = (ex.get_gdtb() >>> 0) + (seg & ~7);
     // Past the limit there is no descriptor to read, and a selector the guest
@@ -602,7 +604,7 @@ async function main() {
   // multi-byte one is read at the wrong offset and the listing is fiction.
   const segBits = (seg) => {
     const ex = r.vm.exports;
-    if (!(ex.get_cr0() & 1)) return 16;
+    if (!(ex.get_cr0() & 1) || ex.get_vm86()) return 16;
     if (seg === (r.vm.get('cs') & 0xFFFF)) return ex.get_d32() ? 32 : 16;
     if ((seg & ~7) + 7 > (ex.get_gdtl() >>> 0)) return 16;
     return (r.vm.mem[(ex.get_gdtb() >>> 0) + (seg & ~7) + 6] & 0x40) ? 32 : 16;

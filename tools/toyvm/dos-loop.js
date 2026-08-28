@@ -371,9 +371,17 @@ class DosSession {
   // that was its own code. Skipping is a real cost -- a protected-mode demo
   // paced off INT 8 gets no beat -- but it is a demo that stands still rather
   // than one that runs somebody else's memory.
+  // Virtual-8086 is the exception to the skip above, and the frame below is
+  // already the right one for it: `(ss << 4) + sp` IS how a V86 guest addresses
+  // its stack, and the vector table at physical 0 is the one it reads. What
+  // this does NOT do is go through the IDT to the monitor first, which is what
+  // the hardware would do -- so a monitor that virtualises the timer for its
+  // guest is bypassed and the guest's own handler runs directly. That is the
+  // outcome a reflecting monitor would have produced anyway, and the
+  // alternative is the demo getting no beat at all.
   raise(vec) {
     const vm = this.vm;
-    if (vm.exports.get_cr0() & 1) return;
+    if ((vm.exports.get_cr0() & 1) && !vm.exports.get_vm86()) return;
     const push = (v) => {
       const sp = (vm.get('sp') - 2) & 0xFFFF;
       vm.set('sp', sp);
@@ -481,7 +489,11 @@ class DosSession {
     // COUNTDWN.EXE spent 60M dispatches and 700MB of arena walking the zeros
     // above 9BF00 that way, and the run looked slow rather than wrong. Stopping
     // is the honest report: something earlier loaded a selector we got wrong.
-    if ((vm.exports.get_cr0() & 1) && (cs & 0xFFF8) !== 0
+    // ...unless this is virtual-8086 mode, where a CS naming no descriptor is
+    // not a mistake, it is the definition: PE is set and segmentation is back
+    // to paragraphs. $segbase already reads it that way; the guard has to agree
+    // or every V86 guest stops on its first instruction.
+    if ((vm.exports.get_cr0() & 1) && !vm.exports.get_vm86() && (cs & 0xFFF8) !== 0
         && (cs & 0xFFF8) > (vm.exports.get_gdtl() & 0xFFFF)) {
       this.badSelector = `${cs.toString(16)}:${ip.toString(16)}`;
       return 'badselector';

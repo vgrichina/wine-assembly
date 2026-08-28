@@ -86,12 +86,32 @@ specific geometry-present/textures-absent result.
 
 Indexed triangles now enter the shared cull-and-maybe-texture helper used by
 unindexed triangles. This is a fixed-function software-rasterizer correction;
-it does not add shaders or change DirectDraw presentation. The focused
-`test/test-d3dim-indexed-texture.js` builds an 8x8 render target, binds a
-four-colour RGB565 texture, submits an indexed TL triangle through the real
-Device3 handler, and verifies texture colours reach the target. Before the fix
-the same test produces only white diffuse pixels; after it, three non-diffuse
-texture colours are present.
+it does not add shaders or change DirectDraw presentation.
+
+That first regression was incomplete: it bound the DirectDraw surface through
+the newer `IDirect3DDevice3::SetTexture` entry point. MW3's gameplay path uses
+the legacy Direct3D sequence instead:
+
+1. `IDirect3DTexture2::GetHandle` returns the surface's texture handle.
+2. `IDirect3DDevice3::SetRenderState(D3DRENDERSTATE_TEXTUREHANDLE, handle)`
+   makes that handle the active stage-0 texture.
+3. `DrawIndexedPrimitive` submits the terrain.
+
+Device2 and Device7 already routed `SetRenderState` through the common helper
+that performs step 2. Device3 had a private copy which saved the render-state
+dword but did not update the stage-0 binding. Its indexed draw therefore still
+fell back to flat diffuse polygons in real MW3 even while the original
+`SetTexture`-based test passed. Device3 now uses the same helper.
+
+The textured rasterizer also used to discard the diffuse colour after lighting
+and copy the sampled texel directly. It now Gouraud-interpolates diffuse RGB and
+applies fixed-function stage-0 modulation, so lighting affects textured terrain
+instead of being visible only on the flat fallback. The focused
+`test/test-d3dim-indexed-texture.js` now exercises the authentic Texture2
+handle → Device3 render state → indexed draw chain and verifies a half-intensity
+diffuse colour modulates a four-colour RGB565 texture. The old Device3 handler
+produces only white/empty target pixels; a raw-texture-only implementation also
+fails the expected modulated-colour assertion.
 
 ## Operation-map false stall report (2026-08-28)
 

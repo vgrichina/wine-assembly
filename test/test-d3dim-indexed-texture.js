@@ -2,10 +2,10 @@
 'use strict';
 
 // Device3 DrawIndexedPrimitive must take the same bound-texture path as
-// DrawPrimitive.  MW3 submits its world as indexed TL vertices; the old
-// indexed helper transformed/cull-tested them and then unconditionally called
-// the flat diffuse-colour rasterizer.  That produced recognizable terrain
-// geometry with every texture removed.
+// DrawPrimitive. MW3 obtains a legacy Texture2 handle, binds it through
+// D3DRENDERSTATE_TEXTUREHANDLE, then submits its world as indexed vertices.
+// Both halves of that authentic chain are covered here: bypassing either one
+// produces recognizable terrain geometry with every texture removed.
 
 const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
@@ -34,8 +34,19 @@ const extraWat = String.raw`
   (func (export "test_diptex_dib") (param $surface i32) (result i32)
     (i32.load offset=20 (call $dx_from_this (local.get $surface))))
 
-  (func (export "test_diptex_bind") (param $device i32) (param $texture i32)
-    (call $d3dim_set_texture (local.get $device) (i32.const 0) (local.get $texture)))
+  (func (export "test_diptex_get_handle") (param $texture i32) (param $out i32) (result i32)
+    (global.set $esp (i32.const 0x30000))
+    (call $handle_IDirect3DTexture2_GetHandle
+      (local.get $texture) (i32.const 0) (local.get $out)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
+
+  (func (export "test_diptex_bind_handle") (param $device i32) (param $handle i32) (result i32)
+    (global.set $esp (i32.const 0x30000))
+    (call $handle_IDirect3DDevice3_SetRenderState
+      (local.get $device) (i32.const 1) (local.get $handle)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
 
   (func (export "test_diptex_draw")
       (param $device i32) (param $vertices i32) (param $indices i32)
@@ -106,7 +117,9 @@ function writeFloat(wat, addr, value) {
     writeFloat(wat, p + 4, y);
     writeFloat(wat, p + 8, 0.5);
     writeFloat(wat, p + 12, 1.0);
-    wat.guest_write32(p + 16, 0xffffffff); // diffuse would be white
+    // Half-intensity diffuse verifies the fixed-function MODULATE path used
+    // for MW3's lighting, not merely that raw texture texels are copied.
+    wat.guest_write32(p + 16, 0xff808080);
     wat.guest_write32(p + 20, 0);
     writeFloat(wat, p + 24, u);
     writeFloat(wat, p + 28, v);
@@ -117,7 +130,11 @@ function writeFloat(wat, addr, value) {
   wat.guest_write32(indices, 0x00010000); // u16 indices 0,1
   wat.guest_write32(indices + 4, 0x00000002); // u16 index 2
 
-  wat.test_diptex_bind(device, texture);
+  const handleOut = out + 8;
+  assert.strictEqual(wat.test_diptex_get_handle(texture, handleOut) >>> 0, 0);
+  const textureHandle = wat.guest_read32(handleOut) >>> 0;
+  assert(textureHandle, 'Texture2::GetHandle returned a null handle');
+  assert.strictEqual(wat.test_diptex_bind_handle(device, textureHandle) >>> 0, 0);
   wat.test_diptex_draw(device, vertices, indices);
 
   const rtDib = wat.test_diptex_dib(rt) >>> 0;
@@ -126,11 +143,11 @@ function writeFloat(wat, addr, value) {
     for (let x = 0; x < 8; x++) pixels.push(mem.getUint16(rtDib + y * 16 + x * 2, true));
   }
   const textured = new Set(pixels.filter(p => p && p !== 0xffff));
-  assert(textured.has(0xf800) || textured.has(0x07e0)
-      || textured.has(0x001f) || textured.has(0xffe0),
+  assert(textured.has(0x7800) || textured.has(0x03e0)
+      || textured.has(0x000f) || textured.has(0x7be0),
     `indexed triangle ignored the bound texture (pixels: ${[...new Set(pixels)].map(p => p.toString(16))})`);
 
-  console.log(`PASS D3DIM indexed triangles sample their bound texture (${textured.size} non-diffuse colours)`);
+  console.log(`PASS D3DIM Texture2 handle binds indexed triangles with diffuse lighting (${textured.size} modulated colours)`);
 })().catch(error => {
   console.error(error.stack || error.message);
   process.exit(1);

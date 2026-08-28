@@ -471,7 +471,11 @@ function genExtras() {
   //
   // The upper half is zero on the way out and ignored on the way in: this
   // machine is a 386, so AC, VM and ID do not exist, and RF is never set.
-  h('pushf32', 0, `(call $push32 (i32.and (global.get $flags) (i32.const 0xFFFF)))`);
+  // VM lives outside $flags (see the global), so PUSHFD has to put it back or
+  // a guest that saves and restores EFLAGS around anything loses the mode --
+  // and a V86 monitor reading the frame cannot tell where the trap came from.
+  h('pushf32', 0, `(call $push32 (i32.or (i32.and (global.get $flags) (i32.const 0xFFFF))
+                                         (i32.shl (global.get $vm86) (i32.const 17))))`);
   h('popf32', 1, `
   ${ops(1)}
   (global.set $flags (i32.or
@@ -884,12 +888,28 @@ function genExtras() {
 `);
   // IRETD. The frame is three dwords, and the selector is the low half of the
   // middle one -- the upper half is pushed and popped but means nothing.
+  // The whole frame comes off into locals before anything is published, and
+  // the reason is ordering rather than tidiness: $sset recomputes the segment
+  // base through $segbase, and $segbase's answer depends on $vm86 -- which is
+  // in the third dword, the one popped last. Load CS first and a V86 return is
+  // resolved as a protected-mode selector that names no descriptor, which is
+  // exactly the failure this is here to fix.
+  //
+  // $vm86 is only ever set here, never cleared: on the hardware, leaving V86
+  // is a trap into the monitor, not an IRETD, and an IRETD executed BY the V86
+  // guest is an ordinary 8086 IRET whose frame carries no VM bit at all. So the
+  // set is guarded on being in protected mode and not already in V86 -- without
+  // that guard the guest's own IRETs would drop it back out on the first one.
   h('iret32', 0, `
-  (global.set $gip (call $pop32))
-  (call $sset (i32.const 1) (i32.and (call $pop32) (i32.const 0xFFFF)))
-  (global.set $flags (i32.or
-    (i32.and (call $pop32) ${DEFINED})
-    ${RESERVED}))
+  (local.set $t0 (call $pop32))
+  (local.set $t1 (call $pop32))
+  (local.set $t2 (call $pop32))
+  (if (i32.and (i32.and (global.get $cr0) (i32.const 1)) (i32.eqz (global.get $vm86)))
+    (then (global.set $vm86 (i32.and (i32.shr_u (local.get $t2) (i32.const 17))
+                                     (i32.const 1)))))
+  (call $sset (i32.const 1) (i32.and (local.get $t1) (i32.const 0xFFFF)))
+  (global.set $gip (local.get $t0))
+  (global.set $flags (i32.or (i32.and (local.get $t2) ${DEFINED}) ${RESERVED}))
   (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
 `);
 }
@@ -2703,7 +2723,12 @@ function helpers() {
 ;; limit check could only ever fire on a program that was already wrong. What
 ;; a demo actually needs from protected mode is the address arithmetic.
 (func $segbase (param $v i32) (result i32)
-  (if (i32.eqz (i32.and (global.get $cr0) (i32.const 1)))
+  ;; Real mode, or virtual-8086 mode, which IS real-mode segmentation running
+  ;; with PE set. The V86 test comes first and is unconditional: a V86 selector
+  ;; that happens to fall inside the GDT limit must still be read as a
+  ;; paragraph, or a guest running at segment 0x30 addresses a descriptor.
+  (if (i32.or (i32.eqz (i32.and (global.get $cr0) (i32.const 1)))
+              (global.get $vm86))
     (then (return (i32.shl (i32.and (local.get $v) (i32.const 0xFFFF)) (i32.const 4)))))
   ;; A null selector addresses nothing, and the low three bits are the
   ;; requested privilege level and table indicator, not part of the index.
@@ -2763,7 +2788,10 @@ function helpers() {
 ;; segment it selects the default operand and address size, which is the whole
 ;; of what 32-bit protected mode means to a decoder.
 (func $segd32 (param $v i32) (result i32)
-  (if (i32.eqz (i32.and (global.get $cr0) (i32.const 1)))
+  ;; V86 code is 16-bit by definition -- there is no descriptor to carry a D
+  ;; bit. Same ordering argument as $segbase.
+  (if (i32.or (i32.eqz (i32.and (global.get $cr0) (i32.const 1)))
+              (global.get $vm86))
     (then (return (i32.const 0))))
   (if (i32.eqz (i32.and (local.get $v) (i32.const 0xFFF8))) (then (return (i32.const 0))))
   ;; No descriptor, no D bit -- see $segbase. Guessing one here is what made a
@@ -3295,6 +3323,18 @@ function helpers() {
   (local $v i32) (local $g i32)
   (global.set $intno (local.get $vec))
   (local.set $g (call $idtgate (local.get $vec)))
+  ;; A trap taken while the CPU is in virtual-8086 mode is not the same
+  ;; sequence at all, and it is the ONLY way off that mode -- there is no
+  ;; instruction that clears VM. Handled whole, before the size branch below,
+  ;; because a V86 trap always uses a 32-bit gate and always builds the bigger
+  ;; frame. With no IDT the fall-through case below still applies and reflects
+  ;; the vector straight to the guest's own real-mode handler, which is what a
+  ;; reflecting monitor would have done anyway.
+  (if (i32.and (local.get $g) (global.get $vm86))
+    (then
+      (call $v86_to_monitor (i32.sub (local.get $g) (i32.const 1)) (local.get $ip))
+      (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
+      (return)))
   (if (local.get $g)
     (then
       (local.set $g (i32.sub (local.get $g) (i32.const 1)))
@@ -3332,6 +3372,60 @@ function helpers() {
       (global.set $gip (call $rdphys16 (local.get $v)))
       (call $sset (i32.const 1) (call $rdphys16 (i32.add (local.get $v) (i32.const 2))))))
   (global.set $left (global.get $steps)) (global.set $halt (i32.const 1)))
+
+;; Leaving virtual-8086 mode, which only ever happens through a gate.
+;;
+;; The frame is six dwords deeper than an ordinary one -- GS, FS, DS, ES, SS,
+;; ESP under the usual EFLAGS/CS/EIP -- and it is built on a DIFFERENT stack:
+;; the ring-0 one out of the TSS that LTR named, because the V86 guest's own SS
+;; is a paragraph and means nothing at CPL0. Every V86 monitor unwinds exactly
+;; this shape, so getting the order or the stack wrong does not produce a
+;; slightly wrong monitor, it produces one reading its own locals as a register
+;; image.
+;;
+;; The EFLAGS pushed still has VM set even though the mode is already off by
+;; then. That is deliberate and is the hardware's contract: the bit in the frame
+;; is how the monitor knows this trap came from a V86 guest rather than from
+;; protected-mode code, and it is also what an IRETD back into the guest reads
+;; to restore the mode.
+(func $v86_to_monitor (param $g i32) (param $ip i32)
+  (local $ss i32) (local $sp i32) (local $t i32)
+  (local.set $ss (call $sget (i32.const 2)))
+  (local.set $sp (global.get $sp))
+  ;; ESP0 at +4 and SS0 at +8 of the 32-bit TSS. $tr holds the selector LTR was
+  ;; given; the base comes out of its GDT descriptor like any other.
+  (local.set $t (i32.and (call $descbase (global.get $gdtb) (global.get $tr))
+                         (global.get $linmask)))
+  ;; Off the mode BEFORE the new SS is loaded, or $segbase reads the ring-0
+  ;; stack selector as a paragraph and the monitor's stack lands at 0x100.
+  (global.set $vm86 (i32.const 0))
+  (call $sset (i32.const 2) (i32.load16_u offset=8 (local.get $t)))
+  (global.set $sp (i32.load offset=4 (local.get $t)))
+  (call $push32 (call $sget (i32.const 5)))
+  (call $push32 (call $sget (i32.const 4)))
+  (call $push32 (call $sget (i32.const 3)))
+  (call $push32 (call $sget (i32.const 0)))
+  (call $push32 (local.get $ss))
+  (call $push32 (local.get $sp))
+  (call $push32 (i32.or (global.get $flags) (i32.const 0x20000)))
+  (call $push32 (call $sget (i32.const 1)))
+  (call $push32 (local.get $ip))
+  ;; The guest's data selectors are paragraphs and cannot be revalidated at
+  ;; CPL0, so the hardware zeroes them rather than leave them loadable.
+  (call $sset (i32.const 0) (i32.const 0))
+  (call $sset (i32.const 3) (i32.const 0))
+  (call $sset (i32.const 4) (i32.const 0))
+  (call $sset (i32.const 5) (i32.const 0))
+  ;; Same gate semantics as the ordinary path: a trap gate leaves IF alone, an
+  ;; interrupt gate clears it, both clear TF.
+  (global.set $flags (i32.and (global.get $flags)
+    (select (i32.const ${(~(1 << isa.F.TF)) & 0xFFFF})
+            (i32.const ${(~((1 << isa.F.IF) | (1 << isa.F.TF))) & 0xFFFF})
+            (i32.and (i32.load8_u offset=5 (local.get $g)) (i32.const 1)))))
+  (call $sset (i32.const 1) (i32.load16_u offset=2 (local.get $g)))
+  (global.set $gip (i32.or (i32.load16_u (local.get $g))
+                           (i32.shl (i32.load16_u offset=6 (local.get $g))
+                                    (i32.const 16)))))
 
 ;; Divide error -- the only fault the arithmetic handlers raise.
 (func $fault0 (param $ip i32)
@@ -3695,6 +3789,22 @@ ${[...Array(8).keys()].map(i => `(global $st${i} (mut f64) (f64.const 0))`).join
 ;; encodings are available, no paging. MOV CR0,r and LMSW write it, and setting
 ;; PE is what puts $segbase on the descriptor path.
 (global $cr0 (mut i32) (i32.const 0x0010))
+;; EFLAGS.VM, kept out of \$flags on purpose.
+;;
+;; Virtual-8086 mode is protected mode -- PE stays set -- with segmentation put
+;; back the way real mode had it: a selector is a paragraph again, the D bit is
+;; gone, and code is 16-bit. So it cannot be modelled by clearing PE, and it
+;; cannot live in \$flags either, because every 16-bit POPF and IRET masks the
+;; word with \$f_def and would take bit 17 down with it. A separate global is
+;; the only place a bit survives both.
+;;
+;; It is entered exactly one way here, the way the hardware allows: an IRETD
+;; from protected mode with bit 17 set in the frame's EFLAGS. daretro.exe does
+;; precisely that -- \`pushfd / or eax,0x20000 / push eax\` at 8:22c6, building a
+;; frame that drops it back into its own DOS image at 110:3dd. Read without VM
+;; that is a protected-mode CS of 0x110 naming no descriptor, which is what the
+;; run reported and is not what the program did.
+(global \$vm86 (mut i32) (i32.const 0))
 ;; How much of a shift count the hardware looks at, and this is a real part
 ;; difference rather than a detail. The 8086 shifts the full count, so
 ;; \`shr ax,32\` clears the register; every part from the 186 on masks the count
@@ -3796,6 +3906,7 @@ ${EXTRA_GLOBALS}
 ${isa.SEG.map(r => `(func (export "get_${r}b") (result i32) (global.get $${r}b))`).join('\n')}
 (func (export "get_d32") (result i32) (global.get $d32))
 (func (export "get_cr0") (result i32) (global.get $cr0))
+(func (export "get_vm86") (result i32) (global.get $vm86))
 (func (export "get_gdtb") (result i32) (global.get $gdtb))
 (func (export "get_gdtl") (result i32) (global.get $gdtl))
 (func (export "get_linmask") (result i32) (global.get $linmask))
