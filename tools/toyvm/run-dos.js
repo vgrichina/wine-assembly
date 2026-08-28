@@ -541,6 +541,34 @@ async function main() {
   if (r.text.written || r.text.cells) {
     console.log(`  console ${r.text.written} chars written, `
       + `${r.text.cells} of ${r.machine.con.cols * r.machine.con.rows} cells non-blank`);
+    // ...and, on request, what it actually says. A cell count cannot tell a
+    // demo's scroller apart from "Error 200" or "Insert disk 2", and that is
+    // the distinction the whole zero-pixel triage turns on. The grid is the
+    // screen (see newConsole), so this reads the same bytes the PNG renderer
+    // does rather than replaying the write stream -- a program that cleared
+    // and repainted shows what is on the screen now, not everything it ever
+    // typed.
+    if (flag('text')) {
+      const con = r.machine.con;
+      const lines = [];
+      for (let y = 0; y < con.rows; y++) {
+        let s = '';
+        for (let x = 0; x < con.cols; x++) {
+          const ch = con.getCh(y * con.cols + x);
+          // CP437 box-drawing and shading are most of what these screens are
+          // made of, and passing them through raw turns the dump into mojibake
+          // in a UTF-8 terminal. Anything outside printable ASCII becomes one
+          // placeholder, which keeps the columns aligned -- the layout is half
+          // of what a text screen is saying.
+          s += (ch >= 0x20 && ch < 0x7F) ? String.fromCharCode(ch) : (ch ? '·' : ' ');
+        }
+        lines.push(s.replace(/\s+$/, ''));
+      }
+      // Leading and trailing blank rows are frame, not content.
+      while (lines.length && !lines[0]) lines.shift();
+      while (lines.length && !lines[lines.length - 1]) lines.pop();
+      for (const l of lines) console.log(`  | ${l}`);
+    }
   }
   // Which files the program went looking for, and which of them were not
   // there. A demo that renders an empty screen from an empty buffer looks
