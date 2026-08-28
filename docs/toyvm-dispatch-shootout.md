@@ -1030,6 +1030,52 @@ busy, and it comes back on a quiet one.
 * **Lazy flags vs eager flags** — the question x86-16 was chosen for, and the
   one thing here that has no bearing on dispatch at all.
 
+### 8.0.0 The Gravis group is not an environment variable
+
+AMANAMAN.EXE stops on `Hey ! Where's your ULTRASND environment ?` and rage.exe
+on `GUS not found!`, which invites setting `ULTRASND=220,1,1,11,11` in the guest
+environment and calling it fixed. **This VM has already run that experiment on
+the other card and written the answer down**, in the comment above the env block
+in `dos.js`: `BLASTER=` was tried, and a library that reads the variable skips
+the probe entirely and goes straight to programming a DMA transfer on the
+channel it was promised. Measured, CEN!FB.EXE and BTHERE.EXE hung on
+`Initializing .` forever with it set and drew 64000 and 28203 pixels without it.
+
+The rule that encodes — *answer questions the card can be asked, do not
+volunteer a configuration nothing is standing behind* — applies with more force
+here, not less: there is a Sound Blaster DSP behind the SB probe and there is no
+GUS behind anything. So this group needs a GUS whose DRAM sizing loop answers,
+or it stays where it is. It is not a one-line win and should not be attempted as
+one.
+
+### 8.0.1 SETUP.EXE wants VESA, and that is not the expensive half
+
+`node tools/toyvm/demo-status.js /tmp/shots-final.json` sorts the 199 into 147
+demos, 32 text-art screens and 20 work items, and three of those twenty looked
+like one mechanism: ANGEL.EXE says `Please run setup.exe on your computer !`,
+BYETRO.EXE says `Please run SETUP.EXE to configure.`, and SETUP.EXE itself is
+blank. Its `--report` names the gap in one line — `unhandled calls: int 10h
+AH=4f x1` — and it spins in a table search at `773:3df` immediately after.
+
+**Answering it was built, measured and reverted.** A VBE 1.2 info block with an
+empty mode list (the honest description of a machine whose framebuffer does
+320x200 linear and unchained planar and has no bank-switched window) made SETUP
+ask the next question instead: `4F01` for **mode 101h**, 640x480x256. So the
+real requirement is a banked VBE framebuffer, not an info block. Across the 52
+zero-pixel programs only three others touch AH=4Fh at all (SHELLVT.EXE,
+ACT1.EXE, AMORP.COM) and none of them changed, and the 24-program regression
+sample was identical — so the change was regression-free and had no beneficiary,
+which is the same test the daretro guard in §8.0 failed. Reverted on that basis.
+Leaving the call unhandled also keeps it in `unhandled calls:`, where it reads
+as a work item rather than as a silently wrong answer.
+
+**And the chain is blocked twice over, which is what makes it a poor target.**
+ANGEL.EXE opens DRIVERS.VGA and its own ANGEL.EXE successfully — no file is
+missing — so what SETUP has to leave behind is a patched byte in one of them.
+The VFS is read-only on purpose (a sweep runs 199 programs unattended and none
+of them has any business writing to the corpus), so even a SETUP that reached
+its menu could not persist an answer. Two subsystems for three programs.
+
 ### 8.1 DOS does not end a program by ending it
 
 ACME-BIG.EXE and BLIQ.EXE both stopped within a tenth of a second of starting,
