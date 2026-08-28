@@ -750,15 +750,21 @@ that merely loads an overlay.
 never, and DOPE still ends up ahead — 16295 pixels at the sweep budget against
 3543 at 48, because retiring later leaves it more of its budget in graphics.)
 
-Across the corpus the change moved five programs and cost none:
+Across the corpus the change moved four programs and cost none:
 
 | | before | after |
 |---|---|---|
 | DOPE.EXE | 0 px | **16295** |
-| ASYLUM.EXE | 0 px | **5635** |
 | BP-OZONE.EXE | 26033 | **64000** |
 | ANARCHY.EXE | 24889 | **223964** |
 | MINTRO.EXE | 64000 | 64000 (was **0** at threshold 48) |
+
+(An earlier version of this table had a fifth row, `ASYLUM.EXE 0 -> 5635`. It
+was an artifact of joining the before and after sweeps on **basename**: the
+corpus holds two different files called ASYLUM.EXE, one that draws 5635 pixels
+and one that draws none, and the join paired each with the other. Keyed on
+path, both are unchanged. Join sweep rows on `.exe`, never on `.name` —
+SETUP.EXE, BLIQ.EXE and TRIPLEX!.COM are duplicated too.)
 
 The general point is the one worth keeping: **a static guess about what code
 does is a performance decision as well as a correctness one, and the corpus is
