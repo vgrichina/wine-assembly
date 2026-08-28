@@ -89,7 +89,8 @@ assert(!debugIds.has('heroes2_demo'), 'Heroes II is not listed twice');
 assert(APPS.heroes2_demo, 'heroes2_demo has an app manifest');
 
 const starcraft = APPS.starcraft_shareware;
-assert.strictEqual(starcraft.args, 'ophelia terran1 nosound');
+assert.strictEqual(starcraft.args, 'ophelia terran1',
+  'StarCraft starts the first Terran mission without disabling DirectSound');
 assert(starcraft.requiredFiles);
 assert(starcraft.files.some(file =>
   file.url.endsWith('/stardatsw.mpq') &&
