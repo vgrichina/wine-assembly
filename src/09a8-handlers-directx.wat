@@ -6379,15 +6379,10 @@
 
   ;; SetRenderState(this, dwRenderStateType, dwRenderState) — 3 args
   (func $handle_IDirect3DDevice3_SetRenderState (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $state i32)
-    (local.set $state (call $d3ddev_state (local.get $arg0)))
-    (if (i32.and (i32.ne (local.get $state) (i32.const 0))
-                 (i32.lt_u (local.get $arg1) (i32.const 512)))
-      (then (call $gs32
-              (i32.add (local.get $state)
-                (i32.add (i32.const 256) (i32.mul (local.get $arg1) (i32.const 4))))
-              (local.get $arg2))))
-    (global.set $eax (i32.const 0))
+    ;; Keep Device3 on the shared legacy fixed-pipeline path. In particular,
+    ;; D3DRENDERSTATE_TEXTUREHANDLE (1) is also the stage-0 texture binding;
+    ;; merely saving the render-state dword leaves indexed draws untextured.
+    (call $d3dim_set_render_state (local.get $arg0) (local.get $arg1) (local.get $arg2))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; GetLightState(this, dwLightStateType, lpdwLightState) — 3 args
