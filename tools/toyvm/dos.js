@@ -654,6 +654,11 @@ class Machine {
     this.imageTop = DEFAULT_ALLOC_TOP;
     // What AH=48h handed out, and what AH=49h gave back below the frontier.
     this.memBlocks = new Map();     // seg -> paragraphs
+    // Which PSP owned each block when it was handed out. Real DOS keeps this in
+    // the MCB and reads it back on terminate: AH=4Ch frees every block owned by
+    // the PSP that is exiting, which is the only reason a loader can run five
+    // subfiles in a row without the machine filling up.
+    this.memOwner = new Map();      // seg -> psp
     this.memFree = [];              // [{seg, size}], sorted and coalesced
     // XMS blocks and EMS handles, both backed by host buffers. Counters so a
     // run can say whether a manager was merely detected or actually used.
@@ -2274,12 +2279,14 @@ class Machine {
       if (b.size === want) this.memFree.splice(i, 1);
       else { b.seg += want; b.size -= want; }
       this.memBlocks.set(seg, want);
+      this.memOwner.set(seg, this.curPsp);
       return seg;
     }
     if (DEFAULT_ALLOC_TOP - this.allocTop < want) return null;
     const seg = this.allocTop;
     this.allocTop += want;
     this.memBlocks.set(seg, want);
+    this.memOwner.set(seg, this.curPsp);
     return seg;
   }
 
@@ -2362,6 +2369,7 @@ class Machine {
         // today has a zero there and still ends.
         const term = this.pspTerminateVector();
         if (term) {
+          const leaving = this.curPsp;
           const parent = (this.mem[(this.curPsp << 4) + 0x16])
             | (this.mem[(this.curPsp << 4) + 0x17] << 8);
           this.lastExitCode = code;
@@ -2376,8 +2384,32 @@ class Machine {
           // BLIQ prints "[ERROR]: Executing internal subfile...".
           if (keep) {
             this.allocTop = keep; this.imageTop = Math.max(this.imageTop, keep);
-            for (const s of [...this.memBlocks.keys()]) if (s >= keep) this.memBlocks.delete(s);
+            for (const [s, n] of [...this.memBlocks]) {
+              if (s >= keep) { this.memBlocks.delete(s); this.memOwner.delete(s); }
+              // The block the resident program is standing in straddles `keep`,
+              // and only its tail went back. Left at its original size it reads
+              // as 629KB held at 0x23d with the frontier down at 0x27d --
+              // invisible while nothing consults memBlocks to allocate, and a
+              // 629KB false release the moment something frees it by owner.
+              else if (s + n > keep) this.memBlocks.set(s, keep - s);
+            }
             this.memTrim();
+          } else {
+            // AH=4Ch, and DOS reads the owner field out of every MCB and frees
+            // the ones belonging to the PSP that is exiting. Without that,
+            // BLIQ.EXE's loader runs five subfiles through this vector and
+            // never gets a byte back from any of them: by the time it wants
+            // 0x38 paragraphs for MIDAS the machine is full to 0x9F00 and it
+            // prints "MIDAS Error: Out of conventional memory" on a 636KB
+            // machine. `keep` above is the AH=31h half of the same idea and
+            // stays as it is -- a resident program's blocks are exactly the
+            // ones that must survive.
+            for (const [s, o] of [...this.memOwner]) {
+              if (o !== leaving) continue;
+              const size = this.memBlocks.get(s);
+              this.memBlocks.delete(s); this.memOwner.delete(s);
+              if (size !== undefined) this.memRelease(s, size);
+            }
           }
           // SS:SP and the data segments stay as they are. DOS leaves them
           // undefined across INT 22h, and a loader that installed the vector
@@ -2764,6 +2796,16 @@ class Machine {
         // and with the old 0x9000 ceiling it was being told 64K.
         if (seg === null) {
           r.setResultCf(true); r.set('ax', 8); r.set('bx', this.memLargest());
+          // A refused allocation is worth the whole map, not just the verdict.
+          // "Out of conventional memory" is a claim about who is holding it,
+          // and BX alone cannot say whether the pool is exhausted or merely
+          // fragmented -- BLIQ.EXE's failure looks identical either way.
+          this.log(`alloc ${want.toString(16)} refused; top=${this.allocTop.toString(16)}`
+            + ` held=[${[...this.memBlocks].map(([s, n]) =>
+              `${s.toString(16)}+${n.toString(16)}@${(this.memOwner.get(s) || 0).toString(16)}`)
+              .join(' ')}]`
+            + ` free=[${this.memFree.map(b =>
+              `${b.seg.toString(16)}+${b.size.toString(16)}`).join(' ')}]`);
           return true;
         }
         r.set('ax', seg);
@@ -2776,7 +2818,15 @@ class Machine {
         // A block we never handed out is not an error worth failing on -- a
         // program freeing its own PSP block on the way out is normal, and the
         // pool has no record of that one.
-        if (size !== undefined) { this.memBlocks.delete(seg); this.memRelease(seg, size); }
+        if (size !== undefined) {
+          this.memBlocks.delete(seg); this.memOwner.delete(seg);
+          this.memRelease(seg, size);
+        } else {
+          // Not an error, but worth saying: a free we drop is memory the guest
+          // believes it gave back, and the shortage it causes surfaces at some
+          // unrelated allocation much later.
+          this.log(`free ${seg.toString(16)} -- no such block`);
+        }
         r.setResultCf(false);
         return true;
       }

@@ -1333,3 +1333,62 @@ was asking "is this INT allowed to take its own gate".
 B-STEEL.EXE came back blank again and was again a load flake — the box was at
 load 8–9 with six sweep jobs — and a single-row re-take put it back at 307200
 pixels. Second time for that same row; §8.2's rule holds.
+
+### 8.4 Who is holding the memory, and BLIQ's error 200 is upstream of running out
+
+§8.1 left BLIQ.EXE saying `MIDAS Error: Out of conventional memory` and read the
+`Runtime error 200` beside it as a divide by zero inside the allocator reacting
+to the shortage. Two of the three claims in that reading do not survive.
+
+The first thing wrong was our own bookkeeping. `AH=48h` refusing a request said
+only "no", so the natural question — is the pool exhausted or merely fragmented,
+and who has it — had no answer in any trace. A refused allocation now logs the
+whole map, each block tagged with the PSP that owned it when it was handed out:
+
+```
+alloc 4c79 refused; top=66f8 held=[1cd+39@100 206+37@100 23d+40@100 27d+37@100
+  2b4+12a5@100 163c+38@100 1674+2d89@100 43fd+39@100 4436+2289@100 66bf+39@100] free=[]
+```
+
+The owner column is new, and needed one piece of real DOS behaviour to mean
+anything: **`AH=4Ch` frees every block owned by the PSP that is exiting.** That
+is what lets a loader run five subfiles in a row without the machine filling up,
+and we did not model it at all — only the `AH=31h` half, which keeps `DX`
+paragraphs and releases the rest.
+
+The first run with the column in it printed `23d+9cc3@100`: 629KB held at
+segment `0x23d`, on a machine whose allocation frontier was down at `0x27d`. The
+entry was stale. `AH=31h` moves the frontier to `keep` and drops every block at
+or above it, but the block the resident program is *standing in* straddles
+`keep` and was left recorded at its original size. Invisible while nothing
+consults `memBlocks` to allocate — and a 629KB false release the moment
+something frees by owner, which is exactly what the new path does. It is now
+shrunk to `23d+40`, which is the 0x40 paragraphs §8.1 says that subfile keeps.
+
+With an honest map, BLIQ's arithmetic is legible and the causality is the
+reverse of what §8.1 assumed:
+
+* The two `exit 200 through the terminate vector` lines land **before** the
+  first genuine shortage (`alloc 4c79 refused`). Every `AH=48h BX=FFFF` failure
+  before that is the Pascal heap asking how much is free, which is a probe, not
+  a shortage. So error 200 is upstream of running out of memory, not downstream.
+* It is **not** a stale-code bug. `--smc-flush` reproduces both faults at
+  byte-identical dispatch counts, 25691943 and 28423493.
+* `--trace-fault` calls them divide faults, and that label is doing more work
+  than it can carry. The site is a register-record DOS-call wrapper that patches
+  its own `int nn` operand (`cs: mov [0x66], al`), and at the fault the operand
+  byte is `f3` — `int 0xF3`, the loader's own subfile callback, installed at
+  `2c4:1f5` and read back by every subfile at its offset `0x0a`. The detector
+  fires on "the guest is executing its INT 0 vector", which `int 0` and a real
+  `div` reach identically, and a third path apparently reaches too.
+
+What is left is a question about BLIQ's loader protocol rather than about memory:
+three subfile data blocks (186KB, 139KB, 230KB) accumulate because two of the
+three subfiles die before the loader is done with them. Free-by-owner does not
+release them and should not — the loader allocated them under its own PSP, which
+is what a real MCB would record too.
+
+**Corpus:** 199-program sweep, bucket-for-bucket identical to the previous one.
+183 of 199, nothing moved in either direction. B-STEEL.EXE flaked to blank for
+the third time and came back at 307200 pixels on a single-row re-take, which by
+now is less a warning than a property of that row on a loaded box.
