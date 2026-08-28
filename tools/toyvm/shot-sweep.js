@@ -246,10 +246,26 @@ async function capture(exe, png, o) {
   // The wall timeout still bounds this, which is what keeps it affordable: the
   // extra budget is only reachable by a program fast enough to spend it, and a
   // slow one stops where it always did.
-  if (!row.pixels && row.surface === 'vga' && !row.stuckAt && !row.ranOutOfTime
-      && row.dispatched >= o.budget) {
+  //
+  // `surface` is the wrong thing to ask, and AUTUMN.EXE is what it costs. That
+  // field comes from the best-frame tracker, which keeps the surface with the
+  // higher score -- and when a program starts in text mode and then draws
+  // nothing, both surfaces score zero, so the text one it opened on wins the
+  // tie and the row reads `console` on a machine sitting in mode 13h. The rung
+  // then declines to fire on precisely the rows it exists for. `bpp` is the
+  // final video state and says what the question means: is this machine in a
+  // graphics mode. AUTUMN draws 44800 pixels at 4x the budget and fills all
+  // 64000 at 10x, and photographed as a blank text screen for want of this.
+  if (!row.pixels && (row.surface === 'vga' || row.bpp > 0)
+      && !row.stuckAt && !row.ranOutOfTime && row.dispatched >= o.budget) {
     const first = { ...row };
-    const retry = await child(exe, png, { ...o, autoKey: true, budget: o.budget * 4 });
+    // 10x rather than 4x, and the extra is not padding. AUTUMN.EXE waits on a
+    // counter its timer ISR advances, so how far it gets is set by how many
+    // IRQ0s fit in the budget: at 4x it has faded 44800 pixels up from black
+    // and the tile still looks like an empty screen, and at 10x it is the
+    // green cloud field it means to be. A row that qualifies here has already
+    // proved it can spend a budget, and only a couple in the corpus do.
+    const retry = await child(exe, png, { ...o, autoKey: true, budget: o.budget * 10 });
     if (score(retry) > score(first)) row = retry;
     else { row = first; await child(exe, png, o); }   // re-take the better frame
   }
