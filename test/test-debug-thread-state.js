@@ -9,6 +9,7 @@ const {
   createDebugThreadState,
   createDeadlockWatchdog,
   collectSnapshot,
+  collectSnapshotAsync,
   formatSnapshot,
 } = require('../lib/debug-thread-state');
 
@@ -63,6 +64,7 @@ assert.strictEqual(snapshot.apps[0].workers[0].slot, 1,
 assert.strictEqual(snapshot.apps[0].workers[0].tid, 2,
   'critical-section ownership should use the worker WAT guest thread id');
 const text = formatSnapshot(snapshot);
+assert(text.includes('Status: 2 blocked guest threads (critical section, wait)'));
 assert(text.includes('yield=9 (critical section)'));
 assert(text.includes('owner=T2'));
 assert(text.includes('OWNS BLOCKED SECTION'));
@@ -178,7 +180,7 @@ assert(index.includes('id="thread-state-btn" onclick="openThreadState()"'),
   'debug toolbar should expose the live thread-state popup');
 assert(index.includes('threadStateViewer.beginLaunch(select && select.value)'),
   'launch should snapshot storage before app startup can mutate it');
-assert(index.includes('lib/debug-thread-state.js?v=5'),
+assert(index.includes('lib/debug-thread-state.js?v=7'),
   'page should load the popup implementation with a cache key');
 assert(index.includes('body.no-debug.exclusive-fullscreen #toolbar'),
   'only non-debug full-page mode should hide the toolbar');
@@ -187,4 +189,56 @@ assert(index.includes('body:not(.no-debug).exclusive-fullscreen #screen-wrap'),
 assert(!/body\.exclusive-fullscreen #toolbar,/.test(index),
   'an app fullscreen request must not hide the debug toolbar before browser fullscreen');
 
-console.log('PASS  debug thread-state popup exposes deadlock ownership and bounds requested fullscreen');
+(async () => {
+  const remoteMain = {
+    get_current_thread_id: 1, get_eip: 0x00443C08, get_dbg_prev_eip: 0x00443C02,
+    get_esp: 0x07501000, get_edx: 0x1234, get_yield_reason: 0, get_wait_handle: 0,
+  };
+  const remoteWorker = {
+    get_current_thread_id: 2, get_eip: 0x004465ED, get_dbg_prev_eip: 0x004465E8,
+    get_esp: 0x0082DFDC, get_edx: 0x5678, get_yield_reason: 1, get_wait_handle: 0xE000001,
+  };
+  const workerWine = {
+    ...wine,
+    guestWorker: { readExports: async names => Object.fromEntries(names.map(name => [name, remoteMain[name]])) },
+    threadManager: { threads: new Map([[0xE1001, {
+      tid: 1, state: 'active', suspendCount: 0, waitPolls: 3,
+      link: { readExports: async names => Object.fromEntries(names.map(name => [name, remoteWorker[name]])) },
+    }]]) },
+  };
+  const workerSnapshot = await collectSnapshotAsync([
+    { wine: workerWine, name: 'liquid_war', appIndex: 2 },
+  ]);
+  assert.strictEqual(workerSnapshot.apps[0].main.tid, 1,
+    'real-Worker main identity should replace the idle page instance identity');
+  assert.strictEqual(workerSnapshot.apps[0].main.eip, 0x00443C08,
+    'real-Worker main EIP should replace the idle page instance zero');
+  assert.strictEqual(workerSnapshot.apps[0].workers[0].tid, 2);
+  assert.strictEqual(workerSnapshot.apps[0].workers[0].eip, 0x004465ED);
+  assert.strictEqual(workerSnapshot.apps[0].workers[0].yieldName, 'wait');
+  const workerText = formatSnapshot(workerSnapshot);
+  assert(workerText.includes('Status: 1 blocked guest thread (wait)'));
+  assert(workerText.includes('S1/T2'));
+
+  const mw3Idle = {
+    capturedAt: '2026-08-28T10:14:17.064Z',
+    apps: [{
+      name: 'mw3', loading: false,
+      main: {
+        kind: 'main', tid: 1, state: 'active', schedulerState: 'runnable',
+        eip: 0x00559D62, esp: 0x074FFEFC, yieldReason: 0,
+        yieldName: 'running', waitHandle: 0,
+      },
+      workers: [],
+    }],
+  };
+  const mw3Text = formatSnapshot(mw3Idle);
+  assert(mw3Text.includes('Status: no blocked guest threads'),
+    'a runnable MW3 message pump must not be presented as a critical-section stall');
+  assert(mw3Text.includes('Legend: yield 9 = blocked EnterCriticalSection'));
+
+  console.log('PASS  debug thread-state popup exposes real Worker registers, deadlock ownership, and bounds requested fullscreen');
+})().catch(error => {
+  console.error(error.stack || error);
+  process.exitCode = 1;
+});

@@ -92,3 +92,19 @@ four-colour RGB565 texture, submits an indexed TL triangle through the real
 Device3 handler, and verifies texture colours reach the target. Before the fix
 the same test produces only white diffuse pixels; after it, three non-diffuse
 texture colours are present.
+
+## Operation-map false stall report (2026-08-28)
+
+The debug popup formerly printed `Yield 9 = blocked EnterCriticalSection` as an
+unconditional heading. On MW3's operation map that looked like a diagnosis even
+though the row below it said `yield=0 (running)`. Live real-Worker sampling
+confirmed no lock problem: main T1 had `csWaits=0`, `csWaitAddr=0`, and advanced
+its slice counter while idling in the normal `PeekMessageA` pump at
+`0x00559d62`; transition T2 advanced through distinct EIPs and exited cleanly.
+The same isolated Threads route progressed from the map to the textured Instant
+Action configuration screen.
+
+The map is also an interactive campaign screen: its circular `Start` marker is
+near the lower-left, and the separate debug popup can cover it. The popup now
+prints an actual aggregate status such as `Status: no blocked guest threads` and
+keeps yield 9 only as an explicitly labelled legend.
