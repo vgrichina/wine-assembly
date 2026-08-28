@@ -149,6 +149,33 @@ const CASES = [
     // of this case is the upper half.
     want: (vm) => vm.exports.get_ax() === 0 && vm.get('sp') === 0xFFF0,
   },
+
+  // --- the shift-count rung, which does not go through FLAGS at all ---------
+  // Everything above asks the question with PUSHF/POPF. This rung asks it with
+  // arithmetic, and we failed it while passing all of those: an 8086 shifts the
+  // whole count, so `shr ax,32` clears AX, while every part from the 186 on
+  // masks the count to five bits and the same instruction does nothing.
+  //
+  // COROMER.EXE opens with exactly this and branches on the answer. We shifted
+  // 32 times, so it concluded 8086 and ran the 8086-only follow-up two bytes
+  // later -- `push cs` and the 0Fh that is POP CS only on that part. The
+  // decoder refuses 0F 14, and the run wedged at 110:545 with a blank screen,
+  // which reads as a missing instruction and is not one.
+  {
+    name: '186 rung: a shift count is masked to five bits',
+    cpu: 386,
+    code: [0xB1, 0x20, 0xB8, 0x01, 0x00, 0xD3, 0xE8],   // mov cl,32; mov ax,1; shr ax,cl
+    want: (vm) => vm.get('ax') === 1,
+  },
+  {
+    // The same code on the part gate.js's vectors came off. Both answers are
+    // correct and the machine has to be able to give either, which is why the
+    // masking is a global set_cpu raises rather than a constant.
+    name: '8086: a shift count is not masked',
+    cpu: 86,
+    code: [0xB1, 0x20, 0xB8, 0x01, 0x00, 0xD3, 0xE8],
+    want: (vm) => vm.get('ax') === 0,
+  },
 ];
 
 async function main() {
