@@ -649,3 +649,37 @@ Installation check at `RegOpenKeyExA(HKLM, 0x03fffb00, ...)` (API #927) fails (r
 - `LockResource`: HRSRC is just a data-entry offset; caller loses track of which module owns it. Fine as long as `FindResource` → `LoadResource` → `LockResource` chains stay within the main EXE, which is the only path exercised today.
 - `GetFileVersionInfoSizeA`/`A`: always read from main EXE (`lpFilename` ignored). Matches current semantics.
 - The line 110 note about `0x468130` calling RegQueryValueExA — wrong, it's RegEnumKeyA.
+
+## 2026-08-27 — profile OK click: application `WM_NCHITTEST` ordering
+
+The profile form's visible OK center is guest `(221,236)`. Browser input maps
+that point correctly, sends both button transitions to focused HWND `0x10001`,
+and MCM's `PtInRect` accepts it inside the button rectangle
+`(169,225)-(274,247)`. DirectInput also reports the expected left-button
+edges, so this was not a canvas/guest-coordinate offset.
+
+MCM uses an unusual owner-drawn control convention: its main wndproc handles
+`WM_NCHITTEST` (`0x0084`) to change the OK control from idle state 0 to hover
+state 1. Its subsequent `WM_LBUTTONDOWN` handler ignores the button unless
+that state transition already happened. The renderer's `hittest_sync` called
+only the WAT `DefWindowProc` helper and then queued `WM_SETCURSOR` and the mouse
+message; MCM's application wndproc therefore never saw the prerequisite
+`WM_NCHITTEST`.
+
+`lib/renderer-input.js` now queues application `WM_NCHITTEST`, using packed
+screen coordinates, before `WM_SETCURSOR`/`WM_MOUSEMOVE` and before a direct
+button-down. With the fix, the same browser path changes OK from state 0 to 1
+before down; the down/up sequence closes and detaches the name-entry owner
+(`a6b05c+0x30`: `0xa93df4 -> 0`). Focused renderer tests cover the exact
+message order, screen coordinates, deepest-child target, and direct-down
+path. The separately documented DirectDraw backing/cursor work controls how
+quickly stale profile pixels disappear; it is not the click hit-test.
+
+The main menu exposed a second ordering bug. Browser motion accumulated in
+separate X/Y words while button edges used their own FIFO; `GetDeviceData`
+served the button FIFO first. A quick diagonal move and click could therefore
+deliver `DIMOFS_BUTTON0` while MCM still had the cursor's previous Y position,
+making the visible Single Player button inert. `DI_MOUSE_INPUT_STATE` now uses
+one eight-record FIFO for packed X, Y, and button events, while retaining the
+independent X/Y accumulators used by `GetDeviceState`. The no-pause browser
+acceptance path now advances from Single Player Event to the event-type menu.

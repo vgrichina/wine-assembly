@@ -19,6 +19,13 @@ const canvas = {
 };
 
 const r = new Win98Renderer(canvas);
+const directInputMemory = new WebAssembly.Memory({ initial: 2048, maximum: 2048, shared: true });
+r.wasmMemory = directInputMemory;
+const hitTestWasm = {
+  exports: {
+  },
+};
+r.wasm = hitTestWasm;
 r.windows[100] = {
   hwnd: 100,
   visible: true,
@@ -30,9 +37,15 @@ r.windows[100] = {
   hasCaption: false,
   style: 0,
   zOrder: 1,
+  wasm: hitTestWasm,
 };
 
 r.handleMouseDown(40, 60, 1);
+assert.deepStrictEqual(r.inputQueue.slice(0, 2).map(event =>
+  [event.hwnd, event.msg, event.wParam, event.lParam]), [
+  [100, 0x0084, 0, (60 << 16) | 40],
+  [100, 0x0201, 1, (50 << 16) | 30],
+], 'WM_NCHITTEST with screen coordinates should precede button-down in the same input queue');
 assert.strictEqual(r.peekAsyncKeyState(0x01), 0x8000, 'peekAsyncKeyState should report held left mouse without consuming press bit');
 assert.strictEqual(r.getAsyncKeyState(0x01), 0x8001, 'first GetAsyncKeyState after mousedown should include low press bit');
 assert.strictEqual(r.getAsyncKeyState(0x01), 0x8000, 'second GetAsyncKeyState while held should only include high held bit');
@@ -44,6 +57,36 @@ assert.strictEqual(move.wParam & 0x0001, 0x0001, 'drag move should include MK_LB
 
 r.handleMouseUp(80, 90, 1);
 assert.strictEqual(r.getAsyncKeyState(0x01), 0, 'GetAsyncKeyState after consumed mouseup should report not held');
+const directInputWords = new Int32Array(directInputMemory.buffer);
+const directInputBase = 0x07F0CEB0 >>> 2;
+assert.deepStrictEqual([
+  Atomics.load(directInputWords, directInputBase + 2),
+  Atomics.load(directInputWords, directInputBase + 3),
+  Atomics.load(directInputWords, directInputBase + 4),
+  Atomics.load(directInputWords, directInputBase + 5),
+], [0, 2, 1, 2], 'renderer should retain mouse down and up as separate DirectInput edges');
+
+const orderedRenderer = new Win98Renderer(canvas);
+const orderedMemory = new WebAssembly.Memory({ initial: 2048, maximum: 2048, shared: true });
+orderedRenderer.wasmMemory = orderedMemory;
+orderedRenderer.windows[101] = {
+  hwnd: 101, visible: true, isChild: false,
+  x: 0, y: 0, w: 200, h: 160, hasCaption: false, style: 0, zOrder: 1,
+};
+orderedRenderer.handleMouseMove(10, 10);
+orderedRenderer.handleMouseMove(30, 40);
+orderedRenderer.handleMouseDown(30, 40, 0);
+orderedRenderer.handleMouseUp(30, 40, 0);
+const orderedWords = new Int32Array(orderedMemory.buffer);
+assert.deepStrictEqual([
+  Atomics.load(orderedWords, directInputBase + 2),
+  Atomics.load(orderedWords, directInputBase + 3),
+  Atomics.load(orderedWords, directInputBase + 4),
+  Atomics.load(orderedWords, directInputBase + 5),
+  Atomics.load(orderedWords, directInputBase + 6),
+  Atomics.load(orderedWords, directInputBase + 7),
+], [0, 4, (5 << 28) | 20, (6 << 28) | 30, 1, 2],
+'renderer should queue pointer motion before the click that follows it');
 r.inputQueue.length = 0;
 r.handleMouseMove(90, 100);
 
@@ -98,8 +141,11 @@ delayedRenderer.windows[110] = {
 };
 delayedRenderer.handleMouseDown(40, 60, 1);
 delayedRenderer.handleMouseUp(40, 60, 1);
+const delayedHitTest = delayedRenderer.checkInput();
+assert.strictEqual(delayedHitTest.msg, 0x0084,
+  'queued delayed click should deliver WM_NCHITTEST before WM_LBUTTONDOWN');
 const delayedDown = delayedRenderer.checkInput();
-assert.strictEqual(delayedDown.msg, 0x0201, 'queued delayed click should deliver WM_LBUTTONDOWN first');
+assert.strictEqual(delayedDown.msg, 0x0201, 'queued delayed click should deliver WM_LBUTTONDOWN after its hit-test');
 assert.strictEqual(delayedRenderer.getAsyncKeyState(0x01), 0x8001, 'queued WM_LBUTTONDOWN should expose held button snapshot even if mouseup is already queued');
 delayedRenderer.setMousePosition(150, 120);
 assert.strictEqual(delayedRenderer.getMousePosition(), (120 << 16) | 150, 'SetCursorPos should supersede any active queued mouse snapshot');
@@ -190,7 +236,8 @@ disabledStyle = 0;
 disabledRenderer.handleMouseDown(40, 60, 0);
 disabledRenderer.handleMouseUp(40, 60, 0);
 assert.deepStrictEqual(disabledRenderer.inputQueue.filter(e => e.hwnd === 141).map(e => e.msg),
-  [0x0201, 0x0202], 'the same button must receive a normal click after EnableWindow');
+  [0x0084, 0x0201, 0x0202],
+  'the same button must receive an ordered hit-test and click after EnableWindow');
 
 const captionRenderer = new Win98Renderer(canvas);
 const captionWasm = {

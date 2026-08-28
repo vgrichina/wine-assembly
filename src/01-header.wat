@@ -1322,6 +1322,7 @@
   ;; left under GDI_REGION_TABLE.
   ;; 0x07F0CE80   4B     TV_SLOT_MARK (one past the highest TV_TABLE slot used)
   ;; 0x07F0CE84   4B     TV_HANDLE_SEQ (item-handle sequence, shared by threads)
+  ;; 0x07F0CEB0  48B     DI_MOUSE_INPUT_STATE (dx/dy + 8-entry ordered event FIFO)
   ;; 0x07F0CF00 256B     TV_VIEW_TABLE (16 x per-TreeView caret/scroll/imagelist)
   ;; 0x07F0D000 8KB      GDI_REGION_TABLE (256 WAT-owned HRGN records)
   ;; 0x07F0F000 4KB      GDI_DC_PATH_TABLE (256 x 16-byte WAT path records)

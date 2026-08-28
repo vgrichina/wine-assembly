@@ -28,6 +28,7 @@ function renderer(cursor, hit) {
   r._applyCursorClip = (x, y) => ({ x, y });
   r._setMousePoint = () => {};
   r._signalDirectInputDevice = () => {};
+  r._compareTopLevelZ = (a, b) => (a.zOrder || 0) - (b.zOrder || 0);
   r._handleNativeScrollbarMove = () => false;
   r._computeClientRect = () => {};
   r._mouseMsgOriginScreen = () => ({ x: 23, y: 61 });
@@ -97,7 +98,11 @@ child.handleMouseMove(150, 200);
 check('child hover targets deepest hwnd', dispatched[0] && dispatched[0].hwnd, 65539);
 check('child hover uses child-local coordinates', dispatched[0] && dispatched[0].lParam,
   (110 << 16) | 70);
-check('child hover sends WM_SETCURSOR to child', posted[0] && posted[0][0], 65539);
+check('child hover first sends WM_NCHITTEST to child', posted[0] && posted[0][1], 0x0084);
+check('WM_NCHITTEST keeps screen coordinates', posted[0] && posted[0][3],
+  (200 << 16) | 150);
+check('child hover sends WM_SETCURSOR to child', posted[1] && posted[1][0], 65539);
+check('WM_SETCURSOR follows WM_NCHITTEST', posted[1] && posted[1][1], 0x0020);
 
 // A deep child is located by its WINDOW rect, which includes any non-client
 // scrollbar strips, so the hit code posted for it must be the child's own —
@@ -137,7 +142,8 @@ function childHover(childHit) {
   r._mouseMsgOriginScreen = () => ({ x: 23, y: 61 });
   r._dispatchMouseEvent = () => {};
   r.handleMouseMove(150, 200);
-  return seen[0] && (seen[0][3] & 0xFFFF);
+  const setCursor = seen.find(message => message[1] === 0x0020);
+  return setCursor && (setCursor[3] & 0xFFFF);
 }
 
 check("child's HTVSCROLL reaches WM_SETCURSOR", childHover(7), 7);

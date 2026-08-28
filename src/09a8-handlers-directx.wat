@@ -46,6 +46,13 @@
   ;; rectangle matching keeps ordinary small-surface blits untouched.
   (global $DX_SURF_STATE i32 (i32.const 0x07F16000))
   (global $DX_SURF_STATE_SIZE i32 (i32.const 0x00008000))
+  ;; Per-destination cache for the 32x32 keyed software cursor used by MCM.
+  ;; +0 is 0 (inactive), 1 (legacy null-source frame marker seen), or a DIB-
+  ;; arena record holding two physical-page identities, x/y pairs, and their
+  ;; 32x32x16 backgrounds. Flip swaps DIB pointers between COM surface entries,
+  ;; so keying those two saves by physical page is essential. +4 is reserved.
+  (global $DX_CURSOR_SAVE i32 (i32.const 0x07F1E000))
+  (global $DX_CURSOR_SAVE_SIZE i32 (i32.const 0x00002000))
   ;; COM wrapper stubs: DX_MAX × 8 bytes in high memory (safe from guest address collision)
   (global $COM_WRAPPERS i32 (i32.const 0x07FF8000))
   (global $COM_WRAPPERS_SIZE i32 (i32.const 0x00002000))
@@ -283,6 +290,49 @@
       (else (global.get $main_hwnd))))
 
   ;; DirectInput mouse tracking (for relative dx/dy)
+  ;; Physical browser motion is accumulated in process-shared memory. It must
+  ;; not be inferred from get_mouse_position: SetCursorPos legitimately moves
+  ;; that virtual cursor and would otherwise become a phantom DirectInput
+  ;; event. Atomic exchange lets a Worker consume exactly the deltas that were
+  ;; present at its poll while later browser movement remains queued.
+  (global $DI_MOUSE_INPUT_STATE i32 (i32.const 0x07F0CEB0))
+  (global $DI_MOUSE_INPUT_STATE_SIZE i32 (i32.const 0x00000030))
+  (func $di_mouse_delta_peek_x (result i32)
+    (i32.atomic.load offset=0 (global.get $DI_MOUSE_INPUT_STATE)))
+  (func $di_mouse_delta_peek_y (result i32)
+    (i32.atomic.load offset=4 (global.get $DI_MOUSE_INPUT_STATE)))
+  (func $di_mouse_delta_take_x (result i32)
+    (i32.atomic.rmw.xchg offset=0 (global.get $DI_MOUSE_INPUT_STATE) (i32.const 0)))
+  (func $di_mouse_delta_take_y (result i32)
+    (i32.atomic.rmw.xchg offset=4 (global.get $DI_MOUSE_INPUT_STATE) (i32.const 0)))
+  (func $di_mouse_event_count (result i32)
+    (i32.sub
+      (i32.atomic.load offset=12 (global.get $DI_MOUSE_INPUT_STATE))
+      (i32.atomic.load offset=8 (global.get $DI_MOUSE_INPUT_STATE))))
+  (func $di_mouse_event_peek (param $index i32) (result i32)
+    (local $head i32)
+    (local.set $head (i32.atomic.load offset=8 (global.get $DI_MOUSE_INPUT_STATE)))
+    (if (i32.ge_u (local.get $index) (call $di_mouse_event_count))
+      (then (return (i32.const 0))))
+    (i32.atomic.load
+      (i32.add (global.get $DI_MOUSE_INPUT_STATE)
+        (i32.add (i32.const 16)
+          (i32.shl (i32.and (i32.add (local.get $head) (local.get $index)) (i32.const 7))
+                   (i32.const 2))))))
+  (func $di_mouse_event_take (result i32)
+    (local $head i32) (local $event i32)
+    (local.set $head (i32.atomic.load offset=8 (global.get $DI_MOUSE_INPUT_STATE)))
+    (if (i32.eq (local.get $head)
+                (i32.atomic.load offset=12 (global.get $DI_MOUSE_INPUT_STATE)))
+      (then (return (i32.const 0))))
+    (local.set $event
+      (i32.atomic.load
+        (i32.add (global.get $DI_MOUSE_INPUT_STATE)
+          (i32.add (i32.const 16)
+            (i32.shl (i32.and (local.get $head) (i32.const 7)) (i32.const 2))))))
+    (drop (i32.atomic.rmw.add offset=8 (global.get $DI_MOUSE_INPUT_STATE) (i32.const 1)))
+    (local.get $event))
+
   (global $di_mouse_last_x (mut i32) (i32.const 0))
   (global $di_mouse_last_y (mut i32) (i32.const 0))
   (global $di_mouse_initialized (mut i32) (i32.const 0))
@@ -452,9 +502,118 @@
     (i32.add (global.get $DX_SURF_STATE)
       (i32.shl (call $dx_slot_of (local.get $entry_wa)) (i32.const 5))))
 
+  (func $dx_cursor_state_ptr (param $entry_wa i32) (result i32)
+    (i32.add (global.get $DX_CURSOR_SAVE)
+      (i32.shl (call $dx_slot_of (local.get $entry_wa)) (i32.const 3))))
+
+  (func $dx_cursor_reset (param $entry_wa i32)
+    (local $state i32) (local $saved i32)
+    (if (i32.eqz (local.get $entry_wa)) (then (return)))
+    (local.set $state (call $dx_cursor_state_ptr (local.get $entry_wa)))
+    (local.set $saved (i32.load (local.get $state)))
+    (if (i32.gt_u (local.get $saved) (i32.const 1))
+      (then (call $dib_free_wasm (local.get $saved))))
+    (i64.store (local.get $state) (i64.const 0)))
+
+  ;; The exact full-surface null-source WAIT marker used by MCM begins a new
+  ;; overlay frame. The first marker arms cursor tracking; later markers put
+  ;; back the 32x32 background saved immediately before the prior cursor draw.
+  (func $dx_cursor_restore_or_arm (param $entry_wa i32)
+    (local $state i32) (local $record i32) (local $saved i32) (local $dib i32)
+    (local $pitch i32) (local $xy i32) (local $x i32) (local $y i32) (local $row i32)
+    (local.set $state (call $dx_cursor_state_ptr (local.get $entry_wa)))
+    (local.set $record (i32.load (local.get $state)))
+    (if (i32.eqz (local.get $record))
+      (then (i32.store (local.get $state) (i32.const 1)) (return)))
+    (if (i32.eq (local.get $record) (i32.const 1)) (then (return)))
+    (local.set $dib (i32.load offset=20 (local.get $entry_wa)))
+    (local.set $pitch (i32.load16_u offset=18 (local.get $entry_wa)))
+    (if (i32.eq (i32.load (local.get $record)) (local.get $dib))
+      (then
+        (local.set $xy (i32.load offset=4 (local.get $record)))
+        (local.set $saved (i32.add (local.get $record) (i32.const 64))))
+      (else
+        (if (i32.eq (i32.load offset=8 (local.get $record)) (local.get $dib))
+          (then
+            (local.set $xy (i32.load offset=12 (local.get $record)))
+            (local.set $saved (i32.add (local.get $record) (i32.const 2112))))
+          (else (return)))))
+    (local.set $x (i32.and (local.get $xy) (i32.const 0xFFFF)))
+    (local.set $y (i32.shr_u (local.get $xy) (i32.const 16)))
+    (block $done (loop $rows
+      (br_if $done (i32.ge_u (local.get $row) (i32.const 32)))
+      (call $memcpy
+        (i32.add (local.get $dib)
+          (i32.add (i32.mul (i32.add (local.get $y) (local.get $row)) (local.get $pitch))
+                   (i32.shl (local.get $x) (i32.const 1))))
+        (i32.add (local.get $saved) (i32.shl (local.get $row) (i32.const 6)))
+        (i32.const 64))
+      (local.set $row (i32.add (local.get $row) (i32.const 1)))
+      (br $rows))))
+
+  ;; Save the pixels beneath the next keyed 32x32 cursor. This remains dormant
+  ;; unless the destination first used MCM's legacy frame marker, so ordinary
+  ;; 32x32 keyed sprites in other games are unchanged.
+  (func $dx_cursor_save_background (param $entry_wa i32) (param $x i32) (param $y i32)
+    (local $state i32) (local $record i32) (local $saved i32) (local $guest i32)
+    (local $dib i32) (local $pitch i32) (local $xy_ptr i32) (local $row i32)
+    (local.set $state (call $dx_cursor_state_ptr (local.get $entry_wa)))
+    (local.set $record (i32.load (local.get $state)))
+    (if (i32.eqz (local.get $record)) (then (return)))
+    (if (i32.or
+          (i32.gt_u (i32.add (local.get $x) (i32.const 32))
+                    (i32.load16_u offset=12 (local.get $entry_wa)))
+          (i32.gt_u (i32.add (local.get $y) (i32.const 32))
+                    (i32.load16_u offset=14 (local.get $entry_wa))))
+      (then (return)))
+    (if (i32.eq (local.get $record) (i32.const 1))
+      (then
+        (local.set $guest (call $dib_alloc (i32.const 4160)))
+        (if (i32.eqz (local.get $guest)) (then (return)))
+        (local.set $record (call $g2w (local.get $guest)))
+        (i32.store (local.get $state) (local.get $record))))
+    (local.set $dib (i32.load offset=20 (local.get $entry_wa)))
+    (local.set $pitch (i32.load16_u offset=18 (local.get $entry_wa)))
+    (if (i32.eq (i32.load (local.get $record)) (local.get $dib))
+      (then
+        (local.set $xy_ptr (i32.add (local.get $record) (i32.const 4)))
+        (local.set $saved (i32.add (local.get $record) (i32.const 64))))
+      (else
+        (if (i32.eq (i32.load offset=8 (local.get $record)) (local.get $dib))
+          (then
+            (local.set $xy_ptr (i32.add (local.get $record) (i32.const 12)))
+            (local.set $saved (i32.add (local.get $record) (i32.const 2112))))
+          (else
+            (if (i32.eqz (i32.load (local.get $record)))
+              (then
+                (i32.store (local.get $record) (local.get $dib))
+                (local.set $xy_ptr (i32.add (local.get $record) (i32.const 4)))
+                (local.set $saved (i32.add (local.get $record) (i32.const 64))))
+              (else
+                (if (i32.eqz (i32.load offset=8 (local.get $record)))
+                  (then
+                    (i32.store offset=8 (local.get $record) (local.get $dib))
+                    (local.set $xy_ptr (i32.add (local.get $record) (i32.const 12)))
+                    (local.set $saved (i32.add (local.get $record) (i32.const 2112))))
+                  (else (return)))))))))
+    (block $done (loop $rows
+      (br_if $done (i32.ge_u (local.get $row) (i32.const 32)))
+      (call $memcpy
+        (i32.add (local.get $saved) (i32.shl (local.get $row) (i32.const 6)))
+        (i32.add (local.get $dib)
+          (i32.add (i32.mul (i32.add (local.get $y) (local.get $row)) (local.get $pitch))
+                   (i32.shl (local.get $x) (i32.const 1))))
+        (i32.const 64))
+      (local.set $row (i32.add (local.get $row) (i32.const 1)))
+      (br $rows)))
+    (i32.store (local.get $xy_ptr)
+      (i32.or (i32.and (local.get $x) (i32.const 0xFFFF))
+              (i32.shl (local.get $y) (i32.const 16)))))
+
   (func $dx_surf_state_reset (param $entry_wa i32)
     (if (local.get $entry_wa)
       (then
+        (call $dx_cursor_reset (local.get $entry_wa))
         (call $zero_memory (call $dx_surf_state_ptr (local.get $entry_wa)) (i32.const 32)))))
 
   ;; A successful Unlock publishes whatever the caller wrote through Lock's
@@ -2468,6 +2627,7 @@
         (global.set $dx_vidmem_used (i32.sub (global.get $dx_vidmem_used) (local.get $surf_bytes)))
         (if (i32.eq (local.get $entry) (global.get $dx_primary_wa))
           (then (global.set $dx_primary_wa (i32.const 0))))
+        (call $dx_cursor_reset (local.get $entry))
         (call $dib_free_wasm (local.get $dib_wa))
         (call $dx_free (local.get $entry))))
     (global.set $eax (select (local.get $rc) (i32.const 0) (i32.gt_s (local.get $rc) (i32.const 0))))
@@ -2567,6 +2727,73 @@
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 28))) ;; 6 args + ret
         (return)))
+    ;; Motocross Madness uses this exact null-source WAIT marker at the start of
+    ;; each overlay frame. Restore the background saved beneath its prior keyed
+    ;; cursor, leaving the static title art and all other null-source calls alone.
+    (if (i32.and
+          (i32.and (i32.eqz (local.get $arg2))
+                   (i32.and (i32.ne (local.get $arg1) (i32.const 0))
+                            (i32.ne (local.get $arg3) (i32.const 0))))
+          (i32.and
+            (i32.eq (i32.and (local.get $drblt_flags) (i32.const 0xFEFFFFFF))
+                    (i32.const 0))
+            (i32.and
+              (i32.and (i32.eqz (local.get $dx)) (i32.eqz (local.get $dy)))
+              (i32.and
+                (i32.and (i32.eq (local.get $dw) (local.get $dst_w))
+                         (i32.eq (local.get $dh) (local.get $dst_h)))
+                (i32.and
+                  (i32.and (i32.eqz (call $gl32 (local.get $arg3)))
+                           (i32.eqz (call $gl32 (i32.add (local.get $arg3) (i32.const 4)))))
+                  (i32.and
+                    (i32.eq (call $gl32 (i32.add (local.get $arg3) (i32.const 8)))
+                            (local.get $dst_w))
+                    (i32.eq (call $gl32 (i32.add (local.get $arg3) (i32.const 12)))
+                            (local.get $dst_h))))))))
+      (then
+        (call $dx_cursor_restore_or_arm (local.get $dst_entry))
+        (if (i32.and (i32.load (i32.add (local.get $dst_entry) (i32.const 28))) (i32.const 1))
+          (then (call $dx_present (local.get $dst_entry))))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+        (return)))
+    ;; MCM's profile form normally copies a temporary black backing surface
+    ;; over the title before drawing the editable name, instructions, and OK
+    ;; button. In this legacy path the temporary wrapper can arrive as NULL;
+    ;; treating every partial null-source Blt as a clear damaged unrelated
+    ;; content, so key the fallback to MCM's exact 640x480 panel signature.
+    (if (i32.and
+          (i32.and
+            (i32.eqz (local.get $arg2))
+            (i32.and (i32.eqz (local.get $arg3))
+                     (i32.eq (i32.and (local.get $drblt_flags) (i32.const 0xFEFFFFFF))
+                             (i32.const 0x8000))))
+          (i32.and
+            (i32.and (i32.eq (local.get $dst_w) (i32.const 640))
+                     (i32.eq (local.get $dst_h) (i32.const 480)))
+            (i32.and
+              (i32.and (i32.eq (local.get $dx) (i32.const 35))
+                       (i32.eq (local.get $dy) (i32.const 44)))
+              (i32.and (i32.eq (local.get $dw) (i32.const 271))
+                       (i32.eq (local.get $dh) (i32.const 213))))))
+      (then
+        (call $dx_surf_clear_copy (local.get $dst_entry))
+        (local.set $row (i32.const 0))
+        (block $profile_clear_done (loop $profile_clear_rows
+          (br_if $profile_clear_done (i32.ge_u (local.get $row) (local.get $dh)))
+          (call $zero_memory
+            (i32.add (local.get $dst_dib)
+              (i32.add
+                (i32.mul (i32.add (local.get $dy) (local.get $row)) (local.get $dst_pitch))
+                (i32.mul (local.get $dx) (local.get $bps))))
+            (i32.mul (local.get $dw) (local.get $bps)))
+          (local.set $row (i32.add (local.get $row) (i32.const 1)))
+          (br $profile_clear_rows)))
+        (if (i32.and (i32.load (i32.add (local.get $dst_entry) (i32.const 28))) (i32.const 1))
+          (then (call $dx_present (local.get $dst_entry))))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+        (return)))
     ;; Source surface blit
     (if (i32.eqz (local.get $arg2))
       (then
@@ -2600,6 +2827,18 @@
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
         (return)))
+    (if (i32.and
+          (i32.and
+            (i32.ne (i32.and (local.get $drblt_flags) (i32.const 0x8000)) (i32.const 0))
+            (i32.and (i32.eq (local.get $bpp) (i32.const 16))
+                     (i32.eq (i32.load16_u offset=16 (local.get $src_entry)) (i32.const 16))))
+          (i32.and
+            (i32.and (i32.eq (local.get $dw) (i32.const 32))
+                     (i32.eq (local.get $dh) (i32.const 32)))
+            (i32.and (i32.eq (local.get $sw) (i32.const 32))
+                     (i32.eq (local.get $sh) (i32.const 32)))))
+      (then (call $dx_cursor_save_background
+        (local.get $dst_entry) (local.get $dx) (local.get $dy))))
     ;; If dst rect == src rect, fast row-copy; otherwise nearest-neighbor stretch.
     (if (i32.and (i32.eq (local.get $dw) (local.get $sw))
                  (i32.eq (local.get $dh) (local.get $sh)))
@@ -4852,7 +5091,7 @@
   ;; For mouse: fill DIMOUSESTATE (dx, dy, dz, rgbButtons[4]) = 16 bytes
   (func $handle_IDirectInputDevice_GetDeviceState (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $dev_type i32) (local $wa i32) (local $i i32) (local $vk i32)
-    (local $pos i32) (local $mx i32) (local $my i32) (local $dx i32) (local $dy i32) (local $buttons i32)
+    (local $dx i32) (local $dy i32) (local $buttons i32)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $dev_type (i32.load (i32.add (local.get $entry) (i32.const 8))))
     (local.set $wa (call $g2w (local.get $arg2)))
@@ -4871,18 +5110,8 @@
     (if (i32.eq (local.get $dev_type) (i32.const 2))
       (then
         ;; Mouse — DIMOUSESTATE: lX(4), lY(4), lZ(4), rgbButtons[4](4)
-        (local.set $pos (call $host_get_mouse_position))
-        (local.set $mx (i32.and (local.get $pos) (i32.const 0xFFFF)))
-        (local.set $my (i32.and (i32.shr_u (local.get $pos) (i32.const 16)) (i32.const 0xFFFF)))
-        (if (i32.eqz (global.get $di_mouse_initialized))
-          (then
-            (global.set $di_mouse_initialized (i32.const 1))
-            (global.set $di_mouse_last_x (local.get $mx))
-            (global.set $di_mouse_last_y (local.get $my))))
-        (local.set $dx (i32.sub (local.get $mx) (global.get $di_mouse_last_x)))
-        (local.set $dy (i32.sub (local.get $my) (global.get $di_mouse_last_y)))
-        (global.set $di_mouse_last_x (local.get $mx))
-        (global.set $di_mouse_last_y (local.get $my))
+        (local.set $dx (call $di_mouse_delta_take_x))
+        (local.set $dy (call $di_mouse_delta_take_y))
         (local.set $buttons (call $host_get_mouse_buttons))
         (if (i32.ge_u (local.get $arg1) (i32.const 4))
           (then (i32.store (local.get $wa) (local.get $dx))))
@@ -4900,15 +5129,50 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
+  (func $di_mouse_data_write (param $base i32) (param $cb i32) (param $index i32)
+                             (param $ofs i32) (param $data i32)
+    (local $rec i32)
+    (local.set $rec (i32.add (local.get $base)
+      (i32.mul (local.get $index) (local.get $cb))))
+    ;; DIDEVICEOBJECTDATA (DX5): dwOfs, dwData, dwTimeStamp, dwSequence.
+    (call $gs32 (local.get $rec) (local.get $ofs))
+    (call $gs32 (i32.add (local.get $rec) (i32.const 4)) (local.get $data))
+    (call $gs32 (i32.add (local.get $rec) (i32.const 8)) (call $host_get_ticks))
+    (call $gs32 (i32.add (local.get $rec) (i32.const 12))
+      (global.get $di_mouse_data_sequence)))
+
+  (func $di_mouse_button_commit_state (param $event i32)
+    (if (i32.eq (local.get $event) (i32.const 1))
+      (then
+        (global.set $di_mouse_data_last_buttons
+          (i32.or (global.get $di_mouse_data_last_buttons) (i32.const 1)))
+        (return)))
+    (if (i32.eq (local.get $event) (i32.const 2))
+      (then
+        (global.set $di_mouse_data_last_buttons
+          (i32.and (global.get $di_mouse_data_last_buttons) (i32.const -2)))
+        (return)))
+    (if (i32.eq (local.get $event) (i32.const 3))
+      (then
+        (global.set $di_mouse_data_last_buttons
+          (i32.or (global.get $di_mouse_data_last_buttons) (i32.const 2)))
+        (return)))
+    (if (i32.eq (local.get $event) (i32.const 4))
+      (then
+        (global.set $di_mouse_data_last_buttons
+          (i32.and (global.get $di_mouse_data_last_buttons) (i32.const -3))))))
+
   ;; GetDeviceData(this, cbObjectData, rgdod, pdwInOut, dwFlags)
   ;; Buffered mouse and keyboard. MCM peeks with rgdod=NULL/DIGDD_PEEK, then
-  ;; reads one DIDEVICEOBJECTDATA record. Report button transitions for mouse
-  ;; devices and key edges for keyboards. Do not synthesize movement records
-  ;; from SetCursorPos/ClipCursor side effects.
+  ;; reads one DIDEVICEOBJECTDATA record. Physical motion and button edges
+  ;; share one FIFO, preserving the position-before-click ordering. The dx/dy
+  ;; accumulators above independently serve GetDeviceState callers.
   (func $handle_IDirectInputDevice_GetDeviceData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $dev_type i32) (local $pos i32)
-    (local $mx i32) (local $my i32) (local $buttons i32) (local $diff i32)
-    (local $ofs i32) (local $data i32) (local $requested i32) (local $has_event i32)
+    (local $entry i32) (local $dev_type i32)
+    (local $buttons i32) (local $diff i32) (local $ofs i32)
+    (local $data i32) (local $requested i32) (local $available i32)
+    (local $delivered i32) (local $commit i32)
+    (local $queued i32) (local $button_index i32) (local $event i32) (local $event_type i32)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $dev_type (i32.load (i32.add (local.get $entry) (i32.const 8))))
     (if (i32.eq (local.get $dev_type) (i32.const 1))
@@ -4939,50 +5203,120 @@
         (return)))
     (if (i32.eq (local.get $dev_type) (i32.const 2))
       (then
-        (local.set $pos (call $host_get_mouse_position))
-        (local.set $mx (i32.and (local.get $pos) (i32.const 0xFFFF)))
-        (local.set $my (i32.and (i32.shr_u (local.get $pos) (i32.const 16)) (i32.const 0xFFFF)))
         (local.set $buttons (call $host_get_mouse_buttons))
         (if (i32.eqz (global.get $di_mouse_data_initialized))
           (then
             (global.set $di_mouse_data_initialized (i32.const 1))
-            (global.set $di_mouse_data_last_x (local.get $mx))
-            (global.set $di_mouse_data_last_y (local.get $my))
             (global.set $di_mouse_data_last_buttons (local.get $buttons))))
+        (local.set $queued (call $di_mouse_event_count))
         (local.set $diff (i32.xor (local.get $buttons) (global.get $di_mouse_data_last_buttons)))
-        (if (i32.and (local.get $diff) (i32.const 1))
-          (then
-            (local.set $has_event (i32.const 1))
-            (local.set $ofs (i32.const 12)) ;; DIMOFS_BUTTON0
-            (local.set $data (select (i32.const 0x80) (i32.const 0)
-              (i32.ne (i32.and (local.get $buttons) (i32.const 1)) (i32.const 0))))))
-        (if (local.get $has_event)
+        (local.set $available
+          (i32.add
+            (local.get $queued)
+            (if (result i32) (i32.eqz (local.get $queued))
+              (then
+                (i32.add (i32.ne (i32.and (local.get $diff) (i32.const 1)) (i32.const 0))
+                         (i32.ne (i32.and (local.get $diff) (i32.const 2)) (i32.const 0))))
+              (else (i32.const 0)))))
+        (local.set $requested
+          (if (result i32) (local.get $arg3)
+            (then (call $gl32 (local.get $arg3)))
+            (else (i32.const 0))))
+        (if (i32.eqz (local.get $arg2))
           (then
             (if (local.get $arg3)
-              (then
-                (local.set $requested (call $gl32 (local.get $arg3)))
-                (call $gs32 (local.get $arg3) (select (i32.const 1) (i32.const 0)
-                  (i32.gt_u (local.get $requested) (i32.const 0))))))
-            (if (i32.and
-                  (i32.ne (local.get $arg2) (i32.const 0))
-                  (i32.gt_u (local.get $requested) (i32.const 0)))
-              (then
-                ;; DIDEVICEOBJECTDATA (DX5): dwOfs, dwData, dwTimeStamp, dwSequence.
-                (call $gs32 (local.get $arg2) (local.get $ofs))
-                (call $gs32 (i32.add (local.get $arg2) (i32.const 4)) (local.get $data))
-                (call $gs32 (i32.add (local.get $arg2) (i32.const 8)) (i32.const 0))
-                (call $gs32 (i32.add (local.get $arg2) (i32.const 12))
-                  (global.get $di_mouse_data_sequence))
-                (if (i32.eqz (i32.and (local.get $arg4) (i32.const 1)))
-                  (then
-                    (global.set $di_mouse_data_sequence
-                      (i32.add (global.get $di_mouse_data_sequence) (i32.const 1)))
-                    (global.set $di_mouse_data_last_x (local.get $mx))
-                    (global.set $di_mouse_data_last_y (local.get $my))
-                    (global.set $di_mouse_data_last_buttons (local.get $buttons)))))))
+              (then (call $gs32 (local.get $arg3)
+                (select (local.get $available) (local.get $requested)
+                  (i32.lt_u (local.get $available) (local.get $requested))))))
             (global.set $eax (i32.const 0))
             (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-            (return))))
+            (return)))
+        (local.set $commit (i32.eqz (i32.and (local.get $arg4) (i32.const 1))))
+        (local.set $delivered (i32.const 0))
+
+        ;; Each packed FIFO word is either button code 1..4 or a signed 28-bit
+        ;; motion delta with type 5 (X) / 6 (Y) in its high nibble.
+        (local.set $button_index (i32.const 0))
+        (block $buttons_done (loop $buttons_loop
+          (br_if $buttons_done (i32.ge_u (local.get $button_index) (local.get $queued)))
+          (br_if $buttons_done (i32.ge_u (local.get $delivered) (local.get $requested)))
+          (local.set $event
+            (if (result i32) (local.get $commit)
+              (then (call $di_mouse_event_take))
+              (else (call $di_mouse_event_peek (local.get $button_index)))))
+          (br_if $buttons_done (i32.eqz (local.get $event)))
+          (local.set $event_type
+            (if (result i32) (i32.le_u (local.get $event) (i32.const 4))
+              (then (local.get $event))
+              (else (i32.shr_u (local.get $event) (i32.const 28)))))
+          (local.set $ofs
+            (if (result i32) (i32.eq (local.get $event_type) (i32.const 5))
+              (then (i32.const 0))
+              (else
+                (if (result i32) (i32.eq (local.get $event_type) (i32.const 6))
+                  (then (i32.const 4))
+                  (else
+                    (select (i32.const 12) (i32.const 13)
+                      (i32.le_u (local.get $event_type) (i32.const 2))))))))
+          (local.set $data
+            (if (result i32) (i32.ge_u (local.get $event_type) (i32.const 5))
+              (then
+                (i32.shr_s (i32.shl (local.get $event) (i32.const 4)) (i32.const 4)))
+              (else
+                (select (i32.const 0x80) (i32.const 0)
+                  (i32.ne (i32.and (local.get $event_type) (i32.const 1)) (i32.const 0))))))
+          (call $di_mouse_data_write (local.get $arg2) (local.get $arg1)
+            (local.get $delivered) (local.get $ofs) (local.get $data))
+          (if (local.get $commit)
+            (then
+              (if (i32.le_u (local.get $event_type) (i32.const 4))
+                (then (call $di_mouse_button_commit_state (local.get $event_type))))
+              (global.set $di_mouse_data_sequence
+                (i32.add (global.get $di_mouse_data_sequence) (i32.const 1)))))
+          (local.set $delivered (i32.add (local.get $delivered) (i32.const 1)))
+          (local.set $button_index (i32.add (local.get $button_index) (i32.const 1)))
+          (br $buttons_loop)))
+
+        ;; Hosts without the shared browser queue still get live-state edges.
+        (if (i32.and
+              (i32.and (i32.eqz (local.get $queued))
+                       (i32.lt_u (local.get $delivered) (local.get $requested)))
+                     (i32.ne (i32.and (local.get $diff) (i32.const 1)) (i32.const 0)))
+          (then
+            (local.set $data (select (i32.const 0x80) (i32.const 0)
+              (i32.ne (i32.and (local.get $buttons) (i32.const 1)) (i32.const 0))))
+            (call $di_mouse_data_write (local.get $arg2) (local.get $arg1)
+              (local.get $delivered) (i32.const 12) (local.get $data))
+            (local.set $delivered (i32.add (local.get $delivered) (i32.const 1)))
+            (if (local.get $commit)
+              (then
+                (global.set $di_mouse_data_sequence
+                  (i32.add (global.get $di_mouse_data_sequence) (i32.const 1)))
+                (global.set $di_mouse_data_last_buttons
+                  (i32.or (i32.and (global.get $di_mouse_data_last_buttons) (i32.const -2))
+                          (i32.and (local.get $buttons) (i32.const 1))))))))
+        (if (i32.and
+              (i32.and (i32.eqz (local.get $queued))
+                       (i32.lt_u (local.get $delivered) (local.get $requested)))
+                     (i32.ne (i32.and (local.get $diff) (i32.const 2)) (i32.const 0)))
+          (then
+            (local.set $data (select (i32.const 0x80) (i32.const 0)
+              (i32.ne (i32.and (local.get $buttons) (i32.const 2)) (i32.const 0))))
+            (call $di_mouse_data_write (local.get $arg2) (local.get $arg1)
+              (local.get $delivered) (i32.const 13) (local.get $data))
+            (local.set $delivered (i32.add (local.get $delivered) (i32.const 1)))
+            (if (local.get $commit)
+              (then
+                (global.set $di_mouse_data_sequence
+                  (i32.add (global.get $di_mouse_data_sequence) (i32.const 1)))
+                (global.set $di_mouse_data_last_buttons
+                  (i32.or (i32.and (global.get $di_mouse_data_last_buttons) (i32.const -3))
+                          (i32.and (local.get $buttons) (i32.const 2))))))))
+        (if (local.get $arg3)
+          (then (call $gs32 (local.get $arg3) (local.get $delivered))))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
     (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (i32.const 0))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
