@@ -91,6 +91,7 @@ async function runOne(exe, png, o) {
     seconds: o.seconds || 0,
     autoKey: o.autoKey, bestPng: png, guestArgs: o.guestArgs || '',
     ...(o.sound ? { sound: o.sound } : {}),
+    ...(o.env ? { env: String(o.env).split(';').filter(Boolean) } : {}),
   });
   const text = r.bestSurface.text;
   return {
@@ -156,6 +157,7 @@ function child(exe, png, o) {
       `--seconds=${Math.max(5, o.timeout - grace)}`,
       ...(o.autoKey ? ['--auto-key'] : []),
       ...(o.sound ? [`--sound=${o.sound}`] : []),
+      ...(o.env ? [`--env=${o.env}`] : []),
       ...(o.guestArgs ? [`--args=${o.guestArgs}`] : [])];
     const p = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', err = '';
@@ -230,6 +232,28 @@ async function capture(exe, png, o) {
     if (score(retry) > score(first)) { row = retry; row.sound = 'none'; }
     else { row = first; await child(exe, png, o); }
   }
+  // A Gravis card, announced the only way a Gravis card ever was: the ULTRASND
+  // variable. This is a retry rather than a line in the default environment
+  // because the corpus priced both sides of it. AMANAMAN.EXE prints "Hey !
+  // Where's your ULTRASND environment ?" and quits without it and draws all
+  // 64000 pixels with it; CATWALK.EXE gets from nothing to "Gravis UltraSound
+  // reported at address 240h using IRQ 11". But AUTUMN.EXE and CLASH.EXE both
+  // LOSE their pictures to it -- MikMod reads the variable instead of probing,
+  // goes looking for a GF1 that is not there, and quits at 1.1M dispatches
+  // where it otherwise runs 3G and fills the screen. Set globally it is 184
+  // -> 183; offered only to a program that has no picture and asked for it, it
+  // is 184 -> 185, and the two that are better off without it never see it.
+  //
+  // rage.exe and CULT.EXE are unmoved either way. They probe the GF1 ports
+  // rather than reading the variable, so "GUS not found!" is the true answer
+  // and no environment string can make it false.
+  if (!row.pixels && !o.env && /ultrasnd|gravis|\bgus\b/i.test(row.screen || '')) {
+    const first = { ...row };
+    const retry = await child(exe, png,
+      { ...o, autoKey: true, env: 'ULTRASND=240,1,1,11,7' });
+    if (score(retry) > score(first)) { row = retry; row.env = 'gus'; }
+    else { row = first; await child(exe, png, o); }
+  }
   // Last: the program that is working and simply has further to go than we
   // waited. The signature is exact and it is not the same as "blank" -- the run
   // is in a GRAPHICS mode, drew nothing, was not stuck, did not exit, and spent
@@ -291,6 +315,8 @@ async function main() {
     // Unset on the way in, which is what lets capture() tell "nobody has
     // chosen" from "run this one without a card". Only the retry sets it.
     sound: arg('sound', ''),
+    // Same shape as `sound`: unset unless a retry chose it. See the GUS rung.
+    env: arg('env', ''),
     guestArgs: arg('args', ''),
     maxSeconds: Number(arg('max-seconds', 0)),
     // The graceful deadline the child stops itself on. The parent sets it from

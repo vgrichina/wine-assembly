@@ -136,12 +136,17 @@ async function runDos(o) {
     // ANTARES.EXE sits on `mov ah,8; int 21h; cmp al,1Bh` and was offered
     // 466,766 characters that were not ESC before its budget ran out.
     keys = [], autoKeys = [],
+    // Extra environment variables, `NAME=VALUE` each. Nothing is set here by
+    // default on purpose: see installEnvironment in dos.js for why announcing
+    // hardware nothing is standing behind is worse than staying quiet. This is
+    // the lever for finding out what a given announcement costs.
+    env = [],
   } = o;
   setCpuLevel(cpu);
 
   const machine = new Machine(new Uint8Array(0), {
     log: (s) => traceInt && log(`  ${s}`), autoKey, forceChained, sound,
-    keys, autoKeys,
+    keys, autoKeys, env,
     // A DOS program's data sits next to it, and that directory is the whole of
     // the filesystem it gets.
     fileRoot: path.dirname(path.resolve(exe)),
@@ -423,6 +428,9 @@ async function main() {
     smcFlush: flag('smc-flush'),
     smcCensus: flag('smc-census'),
     sound: arg('sound', 'full'),
+    // `--env=ULTRASND=240,1,1,11,7` -- semicolons separate variables, because
+    // commas are inside the values these variables carry.
+    env: arg('env', '').split(';').filter(Boolean),
     keys: parseKeys(arg('keys', '')),
     autoKeys: parseKeys(arg('auto-keys', '')),
     shots: arg('shots'),

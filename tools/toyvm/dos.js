@@ -640,6 +640,13 @@ class Machine {
     this.kbFresh = false;   // set by IRQ1, cleared by the handler's port read
     this.kbReads = 0;
     this.forceChained = !!opts.forceChained;
+    // Extra `NAME=VALUE` lines for the environment block, ahead of the defaults
+    // installEnvironment writes. This exists so a question like "what does
+    // AMANAMAN.EXE do once ULTRASND= is set" can be answered by measurement
+    // rather than by editing the default block and re-sweeping the corpus --
+    // which is how the BLASTER= decision documented in installEnvironment was
+    // reached, the hard way.
+    this.extraEnv = Array.isArray(opts.env) ? opts.env.filter(Boolean) : [];
     // 'full' | 'quiet' | 'none' -- see the sound option in run-dos.js.
     this.sound = opts.sound || 'full';
     // `pressed`/`released` are the per-button transition counts INT 33h AX=05h
@@ -800,6 +807,24 @@ class Machine {
     put('COMSPEC=C:\\COMMAND.COM');
     put('PATH=C:\\');
     put('TEMP=C:\\');
+    for (const v of this.extraEnv) put(String(v));
+    // No ULTRASND= either, and for the same reason as BLASTER below -- measured
+    // rather than assumed, because the first two programs looked at said to set
+    // it. AMANAMAN.EXE goes from "Hey ! Where's your ULTRASND environment ?"
+    // and an immediate exit to a full 64000-pixel unchained screen with it, and
+    // CATWALK.EXE gets as far as "Gravis UltraSound reported at address 240h
+    // using IRQ 11". Then the corpus sweep priced the other side: AUTUMN.EXE
+    // and CLASH.EXE both lose their pictures, because MikMod reads the variable
+    // instead of probing, goes looking for a GF1 that is not there, and quits
+    // with "MikMod error: Couldn't detect gus, please check env. string" at 1.1M
+    // dispatches -- where without it AUTUMN runs 3G and fills its screen.
+    // 184 -> 183. It is the BLASTER lesson exactly.
+    //
+    // So the announcement is per-program, not global: shot-sweep.js re-runs a
+    // program whose refusal names the GUS with `--env=ULTRASND=...` and keeps
+    // the better frame, the same way it decides the start key, the silent-mode
+    // switch and whether a sound card helps at all.
+    //
     // No BLASTER=, deliberately, even though there is a card on the ports.
     //
     // It reads like the obvious companion to answering the DSP probe -- half
