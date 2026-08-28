@@ -119,6 +119,44 @@ function extractArchive(archive, destination) {
   throw new Error(`archive extraction failed (${primary}; ${secondary})${detail ? `:\n${detail}` : ''}`);
 }
 
+function runPostExtract(candidate, destination) {
+  for (const [index, step] of (candidate.postExtract || []).entries()) {
+    if (step.type === 'unshield') {
+      assertSafeRelative(step.cab, `${candidate.id}.postExtract[${index}].cab`);
+      assertSafeRelative(step.into, `${candidate.id}.postExtract[${index}].into`);
+      if (!step.group || typeof step.group !== 'string') {
+        throw new Error(`${candidate.id}.postExtract[${index}].group is required`);
+      }
+      const cab = path.join(destination, step.cab);
+      const into = path.join(destination, step.into);
+      fs.mkdirSync(into, { recursive: true });
+      const result = spawnSync('unshield', ['-d', into, '-g', step.group, 'x', cab], {
+        encoding: 'utf8',
+        maxBuffer: 16 * 1024 * 1024,
+      });
+      if (result.status !== 0) {
+        const unavailable = result.error && result.error.code === 'ENOENT';
+        const detail = `${result.stdout || ''}\n${result.stderr || ''}`.trim().split('\n').slice(-8).join('\n');
+        throw new Error(`InstallShield extraction failed (${unavailable ? 'unshield unavailable' : `exit ${result.status}`})${detail ? `:\n${detail}` : ''}`);
+      }
+    } else if (step.type === 'copyTree') {
+      assertSafeRelative(step.from, `${candidate.id}.postExtract[${index}].from`);
+      assertSafeRelative(step.into, `${candidate.id}.postExtract[${index}].into`);
+      const from = path.join(destination, step.from);
+      const into = path.join(destination, step.into);
+      fs.mkdirSync(into, { recursive: true });
+      for (const entry of fs.readdirSync(from)) {
+        fs.cpSync(path.join(from, entry), path.join(into, entry), {
+          recursive: true,
+          force: true,
+        });
+      }
+    } else {
+      throw new Error(`unsupported postExtract type: ${step.type}`);
+    }
+  }
+}
+
 async function fetchCandidate(candidate) {
   const fixture = fixtureId(candidate);
   assertSafeRelative(fixture, `${candidate.id}.fixture`);
@@ -167,12 +205,14 @@ async function fetchCandidate(candidate) {
       }
       provenance.push({ url: pkg.url, sha1: actual, type: pkg.type, into, destination: pkg.destination || null });
     }
+    runPostExtract(candidate, destination);
     fs.writeFileSync(provenanceFile, `${JSON.stringify({
       id: candidate.id,
       name: candidate.name,
       version: candidate.version,
       sourcePage: candidate.sourcePage,
       packages: provenance,
+      postExtract: candidate.postExtract || [],
     }, null, 2)}\n`);
     console.log(`READY  ${candidate.id}: ${path.relative(ROOT, destination)}`);
     return { fetched: 1 };

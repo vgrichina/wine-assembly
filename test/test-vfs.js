@@ -84,6 +84,17 @@ test('wildcard *.ddv finds only .ddv files', () => {
   assert(names.includes('c.ddv'));
 });
 
+test('parent traversal clamps at drive root for sibling asset wildcards', () => {
+  const vfs = makeVFS({ 'c:\\maps\\entry.dx': 10, 'c:\\maps\\training.dx': 20 });
+  vfs.dirs.add('c:\\maps');
+  const r = vfs.findFirstFile('..\\Maps\\*.dx');
+  assert(r.handle, 'C:\\..\\Maps must resolve to C:\\Maps');
+  const names = [r.entry.name];
+  let next;
+  while ((next = vfs.findNextFile(r.handle))) names.push(next.name);
+  assert.deepStrictEqual(names, ['entry.dx', 'training.dx']);
+});
+
 test('relative missing subdir wildcard falls back to current directory', () => {
   const vfs = makeVFS({ 'c:\\armies_1.cpn': 1, 'c:\\readme.txt': 2, 'c:\\reigno_1.cpn': 3 });
   const r = vfs.findFirstFile('campaign\\*.cpn');

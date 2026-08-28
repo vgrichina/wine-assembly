@@ -25252,5 +25252,12 @@
     "nargs": 5,
     "convention": "stdcall",
     "hash": 4011831671
+  },
+  {
+    "id": 3034,
+    "name": "GetProcessWorkingSetSize",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2219731500
   }
 ]

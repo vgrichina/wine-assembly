@@ -1835,6 +1835,18 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args
   )
 
+  ;; GetProcessWorkingSetSize(hProcess, *min, *max) — report the fixed guest
+  ;; address-space budget. The values are advisory; callers such as Unreal 1
+  ;; only use them for startup diagnostics before requesting their own limits.
+  (func $handle_GetProcessWorkingSetSize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1)
+      (then (i32.store (call $g2w (local.get $arg1)) (i32.const 0x00100000))))
+    (if (local.get $arg2)
+      (then (i32.store (call $g2w (local.get $arg2)) (i32.const 0x10000000))))
+    (global.set $eax (i32.const 1))  ;; TRUE
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args
+  )
+
   ;; 853: waveInOpen(lphWaveIn, device, format, callback, instance, flags)
   (func $handle_waveInOpen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $fmt_wa i32) (local $rate i32) (local $ch i32) (local $bits i32)

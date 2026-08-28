@@ -957,13 +957,21 @@ programs behind a single missing subsystem and the rest are one apiece.
   File I/O and XMS are both ruled out by measurement; the defect is downstream
   of both.
 
-* **JULTRO.EXE divides by zero at `5ab:1ff`** and then spins at `5ab:8c`. The
-  divisor is almost certainly ours rather than the program's — see the fault
-  case in `serviceCall` for why acting on it made two other programs worse.
+* **JULTRO.EXE divides by zero at `5ab:1ff`** and then spins at `5ab:8c`.
+  Neither address is an instruction. `--disasm=5ab:80` and `--disasm=5ab:1e0`
+  both land in tables: `5ab:80` is thirteen ascending words (`0d39 0d48 0d4f
+  0d56 0d5d 0d63 …`, steps of 6-7), and `5ab:1e0` is a byte ramp `f8 f9 fa fb
+  fc fd fe` that the disassembler reads as MMX because every other byte is 0F.
+  The fault offset settles it on its own: `1ff` is odd and the region is made of
+  two-byte units on even boundaries, so execution entered mid-unit. So this is
+  the same shape as ASSAULT below — a wild jump, with the divide and the spin
+  both downstream of it — and **not** a bad divisor of ours, which is what an
+  earlier note here guessed. Whatever computes that far pointer is the bug, and
+  it is upstream of everything the fault reports.
 
-* **ASSAULT.EXE and ASYLUM.EXE** are one program each with no shared mechanism.
-  ASSAULT's decoder give-up is on `fe 90`, which is not a valid encoding at all
-  (`FE /2`), so it has jumped into data and the give-up address is a symptom.
+* **ASSAULT.EXE** is one program with no shared mechanism. Its decoder give-up
+  is on `fe 90`, which is not a valid encoding at all (`FE /2`), so it too has
+  jumped into data and the give-up address is a symptom.
 
 Two rows on the blank list are **not** work items, recorded so they stop being
 re-investigated: COMPCODE.EXE draws 63508 pixels and only ever photographed

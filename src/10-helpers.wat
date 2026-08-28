@@ -1592,7 +1592,10 @@
       (br $scan)))
     (i32.const 0))
 
-  ;; DLL name compare: compare guest ANSI string at $name_ptr with WASM string at $cmp_ptr (case-insensitive)
+  ;; DLL name compare: compare guest ANSI string at $name_ptr with WASM string
+  ;; at $cmp_ptr (case-insensitive). Treat the conventional ".dll" suffix as
+  ;; optional: UE1 asks LoadLibraryA for absolute extensionless paths such as
+  ;; "C:\\Core", while the mapped PE export directory names itself Core.dll.
   (func $dll_name_match (param $name_ptr i32) (param $cmp_ptr i32) (result i32)
     (local $a i32) (local $b i32) (local $i i32) (local $scan i32) (local $start i32)
     ;; LoadLibrary often receives a path ("C:\Plugins\foo.dll"), while PE
@@ -1611,6 +1614,16 @@
       (local.set $a (call $tolower (call $gl8
         (i32.add (local.get $name_ptr) (i32.add (local.get $start) (local.get $i))))))
       (local.set $b (call $tolower (i32.load8_u (i32.add (local.get $cmp_ptr) (local.get $i)))))
+      (if (i32.and (i32.eqz (local.get $a)) (i32.eq (local.get $b) (i32.const 0x2e)))
+        (then
+          (if (i32.and
+                (i32.and
+                  (i32.eq (call $tolower (i32.load8_u (i32.add (local.get $cmp_ptr) (i32.add (local.get $i) (i32.const 1))))) (i32.const 0x64))
+                  (i32.eq (call $tolower (i32.load8_u (i32.add (local.get $cmp_ptr) (i32.add (local.get $i) (i32.const 2))))) (i32.const 0x6c)))
+                (i32.and
+                  (i32.eq (call $tolower (i32.load8_u (i32.add (local.get $cmp_ptr) (i32.add (local.get $i) (i32.const 3))))) (i32.const 0x6c))
+                  (i32.eqz (i32.load8_u (i32.add (local.get $cmp_ptr) (i32.add (local.get $i) (i32.const 4)))))))
+            (then (return (i32.const 1))))))
       (br_if $no (i32.ne (local.get $a) (local.get $b)))
       (if (i32.eqz (local.get $a)) (then (return (i32.const 1)))) ;; both null = match
       (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l)))

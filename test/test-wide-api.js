@@ -104,6 +104,9 @@ async function main() {
   e.test_set_dll_count(1);
   check('GetModuleHandleA finds DLL table entry by basename',
     (e.test_call_GetModuleHandleA(queryA) >>> 0) === (loadAddr >>> 0));
+  const extensionlessQueryA = writeAscii('C:\\KERNEL32');
+  check('GetModuleHandleA finds a mapped DLL from an extensionless path',
+    (e.test_call_GetModuleHandleA(extensionlessQueryA) >>> 0) === (loadAddr >>> 0));
   const ole32A = writeAscii('oLe32.DlL');
   const notOle32A = writeAscii('OLE32X');
   // A module we dispatch statically has no image, so it answers with a

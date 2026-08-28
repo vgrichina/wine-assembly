@@ -305,6 +305,34 @@ Downloaded to profile DirectDraw and Direct3D surfaces. Each SFX/installer extra
 
 MW3 extracted via `unshield x data1.cab`. Other SFX archives extracted with `7z`.
 
+### 2000 top-selling games demo audit
+
+Audited 2026-08-27 after comparing the ten games in the requested reference
+image with Archive.org packages and, where available, each package's bundled
+license. “Available at no charge” is not treated as permission to redistribute:
+only an authentic playable demo whose license permits complete unmodified
+noncommercial copies qualifies for corpus distribution.
+
+| Game | Result | Evidence |
+|------|--------|----------|
+| The Sims | Excluded | Archive item `sim1999demo` is a January 1999 prototype, not a public demo, and supplies no redistribution grant. |
+| Who Wants to Be a Millionaire | Excluded | `millionaire-2` is a Flash-projector package with no bundled redistribution license; `who-wants-to-be-a-millionaire-freeserve-demo-1` is a 304 MB cover-disc image, not a separately licensed redistributable package. |
+| RollerCoaster Tycoon | Existing local fixture, **not distribution-cleared** | `rct/English/license.txt` says it is not intended for duplication or mass distribution and prohibits distributing the CD-ROM without prior written consent. This audit does not change the existing fixture. |
+| Diablo II | Already covered and distributable | `candidates/diablo-2-demo-installer/installed-extracted/license.txt` identifies the build as Shareware and grants the right to install or distribute additional copies on an unlimited number of computers, subject to the rest of the agreement. |
+| Icewind Dale | Local-only candidate; excluded from redistribution | `icewind_dale_eng_demo/README.TXT` in Archive item `icewind_dale_eng_demo` says the software may not be copied or distributed electronically or otherwise. The ignored fixture and dedicated smoke test are for private local compatibility work only. |
+| Sim Theme Park | Excluded | `redump-id-91256` is a noninteractive rolling-demo disc; `themeparkworldminigame` is a promotional Flash projector. Neither is a playable Win32 game demo with a redistribution grant. |
+| Age of Empires II | Already covered and distributable | `aoe2/aoe2_ex/EULA.RTF` permits true and complete copies, with the EULA and notices intact, for noncommercial distribution. |
+| Grand Prix 3 | Excluded | The official 118 MB demo is preserved as `GP3_DEMO.ZIP`, but its bundled Hasbro license grants personal/private use and says the product may not be copied or transferred without prior written consent. |
+| Command & Conquer: Red Alert 2 | Excluded | No official demo/shareware release was found. The later XWIS multiplayer package is not a demo, and XWIS explicitly states that EA did not release Red Alert 2 as freeware. |
+| Deus Ex | Local-only candidate; excluded from redistribution | `System/license.int` inside Archive item `DeusExDemo` limits use to private/domestic use and prohibits further copies. It permits only a one-time transfer of the entire product when the sender retains no copy. The ignored fixture and dedicated smoke test are for private local compatibility work only. |
+
+Consequently this audit adds no new *distributed* binary fixture: the two
+qualifying releases (Diablo II Shareware and the Age of Empires II trial) were
+already in the corpus. Icewind Dale and Deus Ex now have pinned recipes and
+tests beneath the ignored local candidate pool, but their files must not be
+committed, deployed, or rehosted. The remaining packages stay external
+research references unless a rights holder supplies broader terms.
+
 ## Candidate corpus (`candidates/`)
 
 The optional CLI-only candidate pool is described by

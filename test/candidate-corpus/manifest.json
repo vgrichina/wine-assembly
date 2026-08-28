@@ -815,6 +815,66 @@
         "maxBatches": 100,
         "batchSize": 10000
       }
+    },
+    {
+      "id": "deus-ex-demo",
+      "name": "Deus Ex demo",
+      "kind": "game",
+      "version": "1.002f demo",
+      "executables": [
+        "System/DeusEx.exe"
+      ],
+      "sourcePage": "https://archive.org/details/DeusExDemo",
+      "license": "proprietary commercial demo; private/domestic use only and no redistribution grant; local ignored testing only",
+      "localOnly": true,
+      "packages": [
+        {
+          "url": "https://archive.org/download/DeusExDemo/DeusExDemo.exe",
+          "sha1": "750fbda4f77977e5d03d931cd68c273e9968e914",
+          "type": "archive"
+        }
+      ],
+      "cli": {
+        "maxBatches": 575,
+        "batchSize": 200000,
+        "args": "-windowed"
+      }
+    },
+    {
+      "id": "icewind-dale-demo",
+      "name": "Icewind Dale demo",
+      "kind": "game",
+      "version": "English demo",
+      "executables": [
+        "installed-extracted/Recommended_compressed/IDDemo.exe"
+      ],
+      "sourcePage": "https://archive.org/details/icewind_dale_eng_demo",
+      "license": "proprietary commercial demo; bundled README prohibits copying or electronic distribution; local ignored testing only",
+      "localOnly": true,
+      "packages": [
+        {
+          "url": "https://archive.org/download/icewind_dale_eng_demo/icewind_dale_eng_demo.zip",
+          "sha1": "cc6345ae7decb43341bde25bb1302f422a42666c",
+          "type": "archive"
+        }
+      ],
+      "postExtract": [
+        {
+          "type": "unshield",
+          "cab": "icewind_dale_eng_demo/data1.cab",
+          "into": "installed-extracted",
+          "group": "Recommended compressed"
+        },
+        {
+          "type": "copyTree",
+          "from": "icewind_dale_eng_demo/CD2/Data",
+          "into": "installed-extracted/Recommended_compressed/Data"
+        }
+      ],
+      "cli": {
+        "maxBatches": 650,
+        "batchSize": 50000
+      }
     }
   ]
 }
