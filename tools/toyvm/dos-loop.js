@@ -699,7 +699,25 @@ class DosSession {
   // reaches live code is still caught after a retirement. What is given up is
   // only the tighter cut for code compiled after the write.
   benignPatch(cs, ip, csb) {
-    this.cache.invalidate(cs, ip, csb);
+    // No invalidate here, and the reason is the flag itself. $smc is 1 only
+    // when $wr8 declined to make it 2, and $wr8 makes it 2 for any store
+    // landing in a paragraph some compiled region decoded -- every width, since
+    // $wr16 and $wr32 are built out of $wr8. So `1` is a proof, not a guess:
+    // this store touched no compiled code. Dropping the block we are about to
+    // fall into therefore cannot be dropping a block the store changed; it
+    // recompiles it into the identical words, because the only input to the
+    // decode that ever varies is `benign` membership, which changes on the
+    // retirement path below and is invalidated there.
+    //
+    // That dead recompile was the whole storm. COMPCODE.EXE keeps a dword
+    // variable in its code segment (`cs: mov [0x656], eax` at 110:12), which
+    // cuts the block at every store and paid a full re-decode for each one:
+    // 366344 breaks, 366712 traces and 170MB of arena before it retired 18
+    // sites, and it never reached the picture it draws.
+    //
+    // The invalidate predates the 1/2 split, when a break could not say which
+    // kind it was and dropping the block was the only safe answer. It can say
+    // now.
     const n = (this.cache.patchMisses.get(ip) || 0) + 1;
     this.cache.patchMisses.set(ip, n);
     if (n === PATCH_MISSES) {
