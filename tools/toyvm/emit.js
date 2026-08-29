@@ -4026,6 +4026,12 @@ ${isa.SEG.map(r => `(func (export "get_${r}b") (result i32) (global.get $${r}b))
 ;; taken between instructions, not part-way through one.
 (func (export "raise_irq") (param $vec i32)
   (call $fault (local.get $vec) (global.get $gip)))
+;; Whether a vector has a present IDT gate, for the host's "has the guest
+;; hooked this interrupt" test. In real mode the answer is the vector table at
+;; physical 0 and the host reads that itself; in protected mode the table is
+;; wherever LIDT put it and only this side knows how to walk it.
+(func (export "idtgate") (param $vec i32) (result i32)
+  (call $idtgate (local.get $vec)))
 (func (export "get_gdtb") (result i32) (global.get $gdtb))
 (func (export "get_gdtl") (result i32) (global.get $gdtl))
 (func (export "get_linmask") (result i32) (global.get $linmask))

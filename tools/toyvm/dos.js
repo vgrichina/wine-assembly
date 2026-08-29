@@ -586,6 +586,16 @@ function newConsole(mem) {
 const SILENT_LABEL =
   /\b(no|without|none|neither|not?)\s*(sound|music|sfx|audio|card|soundcard)?\b|^\s*(none|silence|silent|quit|exit|no)\b|pc[- ]?speaker|internal speaker|beeper|no thanks|just kidding|don'?t\s+(even\s+)?(own|have)|no\s*gus/i;
 
+// An option that leaves rather than chooses. It has to be told apart from
+// SILENT_LABEL, which matches "Quit back to DOS" on its first word alone.
+const QUIT_LABEL = /\b(quit|exit|abort|back\s+to\s+dos)\b/i;
+
+// An option that starts the thing, for an arrow-key grid whose command column
+// is separate from its settings. DINO.EXE heads that column "and I AM READY TO"
+// and offers "Rock'n'roll" against "Quit back to DOS".
+const GO_LABEL =
+  /\b(rock|play|start|run|go|begin|continue|proceed|ok|accept|done|ready|launch|demo)\b/i;
+
 // The BIOS video modes that are text. Only on one of these does a polled key
 // check get answered out of the menu reader.
 const TEXT_MODES = new Set([0, 1, 2, 3, 7]);
@@ -1146,6 +1156,16 @@ class Machine {
     const silent = opts.find(o => SILENT_LABEL.test(o.label));
     if (silent) return key(silent.ch);
 
+    // A menu with no selector characters at all, driven by the arrow keys. It
+    // says so itself -- DINO.EXE's setup grid ends with "Use ARROW keys to move
+    // around, ENTER selects highlighted option." -- and that sentence is the
+    // whole trigger, because counting rows off a marker is only safe on a
+    // screen that has told us the marker moves.
+    if (/\b(arrow|cursor)\s+keys?\b/i.test(all) && /\benter\b/i.test(all)) {
+      const ks = this.arrowMenuKeys(lines);
+      if (ks) return ks;
+    }
+
     // A yes/no question. Answer it the way that avoids hardware we do not
     // have; every one of these in the corpus is asking about a sound card.
     if (/\[\s*y\s*\/\s*n\s*\]|\(\s*y\s*\/\s*n\s*\)|\by\s*\/\s*n\b/i.test(all)) {
@@ -1158,6 +1178,95 @@ class Machine {
     // A selector list with no silent option: take the first one offered rather
     // than a key that is not on the menu at all.
     if (opts.length >= 2) return key(opts[0].ch);
+    return null;
+  }
+
+  // The keystrokes that walk an arrow-key menu from its highlight marker down
+  // to the silent option and press Enter, or null when the screen does not look
+  // like one. Called only from menuKey, and only for a screen that says it is
+  // driven by the arrow keys.
+  //
+  // The marker is a character sitting immediately in front of a label with no
+  // space between them -- DINO.EXE writes ">Gravis Ultrasound" and moves the
+  // `>` down the column. There can be several markers on one line, one per
+  // column of a grid; the leftmost is the one whose column holds the device
+  // names, which is the only column with anything to choose in it.
+  arrowMenuKeys(lines) {
+    // A marker is one of these characters flush against its label, with
+    // whitespace or the line start in front: DINO.EXE writes
+    // ">Gravis Ultrasound" and walks the `>` down the column. "Flush" is what
+    // separates it from the "> 2" in the IRQ column, which marks nothing.
+    //
+    // ASCII only, and that is not a shortcut: screenText turns every byte
+    // outside 0x20..0x7E into a space, so a CP437 arrow or a bullet never
+    // reaches this function as itself. Widening the set here would be a lie.
+    const MARK = '>*';
+    // Every marker on the screen, not just the first one. A grid has one per
+    // column and they move independently, so the moment the device column's
+    // marker leaves the top row a first-match scan finds the PORT column's
+    // instead -- and there is nothing to choose in that column, so the walk
+    // stops one row short of where it was going and never starts again. Try
+    // each marker and keep the one whose own column holds a silent option.
+    const marks = [];
+    for (let i = 0; i < lines.length; i++) {
+      const s = lines[i] || '';
+      for (let j = 0; j < s.length; j++) {
+        if (!MARK.includes(s[j])) continue;
+        if (j && !/\s/.test(s[j - 1])) continue;
+        if (s[j + 1] && !/\s/.test(s[j + 1])) marks.push([i, j]);
+      }
+    }
+    // The labels in one marker's column, top to bottom, with the marker's own
+    // index among them -- or null when this marker is not on a list at all.
+    // Two spaces end a label, because that is where the next grid column
+    // starts.
+    const column = ([row, col]) => {
+      const at = (i) => {
+        const s = (lines[i] || '').slice(col + 1);
+        if (!s || /^\s/.test(s)) return null;
+        const label = s.split(/\s{2,}/)[0].trim();
+        return label.length >= 2 ? label : null;
+      };
+      if (!at(row)) return null;
+      const rows = [row];
+      for (let i = row - 1; i >= 0 && at(i); i--) rows.unshift(i);
+      for (let i = row + 1; i < lines.length && at(i); i++) rows.push(i);
+      return rows.length >= 2 ? { labels: rows.map(at), now: rows.indexOf(row) } : null;
+    };
+    const walk = (c, want) => {
+      const move = want - c.now;
+      const step = move >= 0 ? { ah: 0x50, al: 0 } : { ah: 0x48, al: 0 };
+      const ks = [];
+      for (let i = 0; i < Math.abs(move); i++) ks.push({ ...step });
+      ks.push({ ah: 0x1C, al: 0x0D });
+      return ks;
+    };
+    const cols = marks.map(column).filter(Boolean);
+    // First the choice: a column with a silent option the marker is not on yet.
+    //
+    // "Quit back to DOS" matches SILENT_LABEL on the strength of its first
+    // word, and it sits one row under "Rock'n'roll" in DINO's command column.
+    // Choosing silence and choosing the exit are opposite outcomes, so an exit
+    // is never a target here.
+    for (const c of cols) {
+      const want = c.labels.findIndex(l => SILENT_LABEL.test(l) && !QUIT_LABEL.test(l));
+      if (want >= 0 && want !== c.now) return walk(c, want);
+    }
+    // Then the command that starts the thing. DINO heads this column "and I AM
+    // READY TO" and offers "Rock'n'roll" over "Quit back to DOS".
+    for (const c of cols) {
+      const want = c.labels.findIndex(l => GO_LABEL.test(l) && !QUIT_LABEL.test(l));
+      if (want >= 0) return walk(c, want);
+    }
+    // Neither: this column is settled and there is nothing to start here yet.
+    // Enter is what advances a grid to its next field -- DINO's port and IRQ
+    // columns have nothing worth choosing in them, and its command column does
+    // not draw a marker at all until the focus reaches it. So confirm and move
+    // on, unless some marker is sitting on a way out, in which case pressing
+    // Enter is how the demo ends instead of starts.
+    if (cols.length && !cols.some(c => QUIT_LABEL.test(c.labels[c.now]))) {
+      return [{ ah: 0x1C, al: 0x0D }];
+    }
     return null;
   }
 
@@ -1427,6 +1536,19 @@ class Machine {
   // in the INT 21h AH=25 path is needed, and a program that writes the IVT
   // directly -- which several here do, since it is two stores -- is caught too.
   hookedVector(v) {
+    // A protected-mode program's handler is an IDT gate, and the real-mode
+    // vector table it left behind at physical 0 still points at our stub. Read
+    // it that way and every interrupt rung in the run loop -- keyboard, timer,
+    // retrace, Sound Blaster -- concludes a pmode demo has hooked nothing and
+    // sends it nothing. DINO.EXE masks IRQ1 and polls port 0x60, and moved its
+    // menu marker one row per 775M dispatches on the polled path alone.
+    //
+    // Only the VM can answer this: the table is wherever LIDT put it, its base
+    // is a linear address, and a gate counts only when its present bit is set.
+    const ex = this.vmExports;
+    if (ex && ex.idtgate && ex.get_cr0 && (ex.get_cr0() & 1) && ex.idtgate(v)) {
+      return true;
+    }
     const at = v << 2;
     return (this.mem[at + 2] | (this.mem[at + 3] << 8)) !== STUB_SEG;
   }
