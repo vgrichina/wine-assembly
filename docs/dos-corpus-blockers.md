@@ -576,8 +576,43 @@ handbacks instead of 455712. So `0x1e49` is genuinely executed code, the
 invalidation is required, and there is no `benign`-style retirement to be had
 here. The cost is structural instead: `compileProgram` walks a whole reachable
 subgraph, so a region is large, and one rewritten byte throws all of it away.
-Making this cheap means invalidating at block rather than region granularity,
-which is a design change and not a patch.
+Making this cheap means invalidating at block rather than region granularity.
+
+**That design change was built and measured, and it is not worth shipping.**
+Recording it so it is not built twice. The shape that works:
+
+- `compileProgram` records a `spans` map (guest ip → decoded extent, arena
+  address, word count) beside `blocks`.
+- `invalidateRange` overwrites the head of each *overlapping block* with
+  `end, blockIp` — two words, in place — instead of dropping the region. Every
+  arrival at that arena address then hands back at the guest address, whether it
+  came through the block map, the jump table, or a branch another block already
+  resolved. This is sound only because a branch into the middle of a compiled
+  block compiles the tail again as a block of its own, so every reachable arena
+  address is a head.
+- Regions then stop being dropped, so `entryFor`'s walk over the region list
+  becomes O(regions) on the hottest path in the host. It has to be replaced by a
+  `key → Map(ip → arena address)` index.
+- Regions still accumulate — each recompiled block is a new region, and each
+  joins the `byPara` lists every store walks — so a live-region cap per code
+  base is needed, with a flush when it is hit. 64 measured best; 16 and 1024 are
+  both worse.
+
+Measured at fixed work (`--dispatches=`, user CPU, so box load cannot flatter
+it), frames byte-identical throughout:
+
+| program | before | after |
+|---|---|---|
+| AQUAPHOB.EXE (5M) | 4.64s, 62951 traces, 14.9MB | **3.52s**, 25223 traces, 3.9MB |
+| BLIQ.EXE (300M) | 20.55s, 314029 traces, 69MB | **19.44s**, 196645 traces, 46MB |
+| ASSAULT.EXE (100M) | 7.19s | **9.45s** |
+| COMPCODE, DOPE, COROMER (100M) | — | within noise |
+
+So it is a third off the compiler's work on the two programs it was designed
+for, a third *on* to ASSAULT, and nothing anywhere else. And it does not reach
+what AQUAPHOB needs: the demo is handback-bound, not compile-bound — 213440
+handbacks for 5M dispatches, 23 dispatches each — so a budget it can finish in
+is two orders of magnitude away, not 24%.
 
 **BLAND.EXE** answers both its menus and then prints `failed to load MSE`. The
 MSE file is read fully (0x28be, the exact file size, correct EOF), loads, hooks

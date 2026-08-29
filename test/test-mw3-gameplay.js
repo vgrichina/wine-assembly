@@ -51,6 +51,7 @@ const route = [
   // deployment click. Retry the same idempotent control once the map is fully
   // live; in cooperative mode this lands harmlessly after cockpit entry.
   '900:mousedown:576:432', '930:mouseup:576:432',
+  '1040:mousedown:576:432', '1070:mouseup:576:432',
 ];
 
 function analyze(filename, mode) {
@@ -116,11 +117,11 @@ for (let index = 0; index < modes.length; index++) {
   const mode = modes[index];
   const png = path.join(OUT, `${mode}.png`);
   if (fs.existsSync(png)) fs.unlinkSync(png);
-  const input = [...route, `1080:png:${png}`].join(',');
+  const input = [...route, `1280:png:${png}`].join(',');
   const args = [
     path.join(__dirname, 'run.js'), '--app=mw3', `--${mode}`,
     '--quiet-api', '--quiet-blocks', '--batch-size=200000',
-    '--max-batches=1100', '--no-close', '--dx-slot=5',
+    '--max-batches=1300', '--no-close', '--dx-slot=5',
     ...(index ? ['--no-build'] : []),
     `--input=${input}`,
   ];

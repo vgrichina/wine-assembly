@@ -301,11 +301,13 @@ than wrapping to green, a centre linear sample averages all four texels, and a
 high-RHW triangle pixel stays red where affine interpolation selects green. It
 retains the ARGB4444, framebuffer-blend, alpha, and attached reversed-Z checks.
 
-The accepted 640x480 CLI gameplay captures now measure 2,388 exact colours and
-159 terrain colours in both modes, with zero cyan/magenta corruption. Their
-sky, terrain, cockpit, and HUD are visually coherent. Worker timing occasionally leaves the operation-map button
-inactive at the first scripted click, so the acceptance route retries the same
-idempotent deployment control before capture.
+The accepted 640x480 CLI gameplay captures now comfortably clear the texture
+detail gates with zero cyan/magenta corruption; the isolated exact-commit
+Worker capture measured 2,331 exact colours, 425 quantized colours, and 139
+terrain bins. Their sky, terrain, cockpit, and HUD are visually coherent.
+Worker timing can leave the operation-map button inactive at an early scripted
+click, so the acceptance route retries the same idempotent deployment control
+and captures after the last retry.
 
 A steady batches-840..1080 CPU-profile window fell from 12.27 seconds sampled
 before these corrections to 8.40 seconds after them (31.6%). The current
