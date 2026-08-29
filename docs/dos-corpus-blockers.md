@@ -27,8 +27,13 @@ runs. Nothing to fix.
 Called Gravis Ultra Sound? Well that's your problem! Not mine!` Both probe the
 GF1 ports directly rather than reading `ULTRASND=`, so the per-program GUS
 environment rung in `shot-sweep.js` cannot reach them and no environment string
-makes the answer false. Emulating a GF1 is the only fix, and it is a large one
-for two demos that are working correctly as written.
+makes the answer false. Measured on rage.exe: it sweeps all sixteen candidate
+bases from 0x210 to 0x360 in steps of 0x10, writing the register-select/data
+pair at `base+3`/`base+5` eleven times each — a GF1 DRAM peek-and-poke
+autodetect, which only DRAM read-back semantics can satisfy. Emulating a GF1 is
+the only fix, and it is a large one for two demos that are working correctly as
+written: rage.exe says so itself (`requires GUS; buy one or miss this thing..`)
+and exits 0.
 
 ## Real work items
 
