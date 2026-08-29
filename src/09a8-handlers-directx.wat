@@ -69,7 +69,7 @@
   ;; by (slot, vtbl) via linear scan.
   (global $COM_WRAPPERS_AUX  i32 (i32.const 0x07FFA000))
   (global $COM_WRAPPERS_AUX_SIZE i32 (i32.const 0x00003F00))
-  (global $COM_WRAPPERS_AUX_MAX i32 (i32.const 2016))
+  (global $COM_WRAPPERS_AUX_MAX i32 (i32.const 2015))
   ;; The aux-wrapper cursor lives at $COM_AUX_NEXT_SHARED, not in a global: a
   ;; mutable global is per-instance, and every guest thread is its own instance
   ;; over this one memory, so two threads would hand out the same aux slot. Same
@@ -85,10 +85,10 @@
   ;; are per-WASM-instance, while threads use separate instances over one
   ;; shared memory. The main instance records the addresses produced by
   ;; $init_dx_com_thunks here; a worker restores its local globals before its
-  ;; guest code begins. Reserve the final 256 bytes of the auxiliary-wrapper
-  ;; region rather than overlapping VSOCK_TABLE at 0x07FFE000.
-  (global $DX_VTBL_REGISTRY i32 (i32.const 0x07FFDF00))
-  (global $DX_VTBL_REGISTRY_COUNT i32 (i32.const 63))
+  ;; guest code begins. Reserve the tail of the auxiliary-wrapper region
+  ;; rather than overlapping VSOCK_TABLE at 0x07FFE000.
+  (global $DX_VTBL_REGISTRY i32 (i32.const 0x07FFDEFC))
+  (global $DX_VTBL_REGISTRY_COUNT i32 (i32.const 64))
 
   ;; Vtable blocks — arrays of thunk guest-addrs, one per interface type.
   ;; Must be in guest-reachable memory (above image_base), so allocated from heap.
@@ -99,6 +99,7 @@
   (global $DX_VTBL_DSOUND     (mut i32) (i32.const 0))
   (global $DX_VTBL_DSBUF      (mut i32) (i32.const 0))
   (global $DX_VTBL_DS3DBUF    (mut i32) (i32.const 0))
+  (global $DX_VTBL_DS3DLISTENER (mut i32) (i32.const 0))
   (global $DX_VTBL_DINPUT     (mut i32) (i32.const 0))
   (global $DX_VTBL_DIDEV      (mut i32) (i32.const 0))
   (global $DX_VTBL_DPLAY3     (mut i32) (i32.const 0))
@@ -253,7 +254,8 @@
     ;; Surface3 is appended to the registry so every established interface
     ;; retains its existing cross-thread offset.
     (global.set $DX_VTBL_DDSURF3 (i32.load offset=248 (global.get $DX_VTBL_REGISTRY)))
-    (global.set $DX_VTBL_D3DSWAP9 (i32.load offset=252 (global.get $DX_VTBL_REGISTRY))))
+    (global.set $DX_VTBL_D3DSWAP9 (i32.load offset=252 (global.get $DX_VTBL_REGISTRY)))
+    (global.set $DX_VTBL_DS3DLISTENER (i32.load offset=256 (global.get $DX_VTBL_REGISTRY))))
 
   (func $dx_sync_thread_vtables_if_needed
     (if (i32.eqz (global.get $DX_VTBL_DDRAW))
@@ -4325,6 +4327,19 @@
         (i32.eq (call $gl32 (i32.add (local.get $iid) (i32.const 8))) (i32.const 0x200021A5))
         (i32.eq (call $gl32 (i32.add (local.get $iid) (i32.const 12))) (i32.const 0x60E50BAF)))))
 
+  ;; IID_IDirectSound3DListener = {279AFA84-4981-11CE-A521-0020AF0BE560}.
+  ;; Primary buffers expose this interface; it is distinct from the per-voice
+  ;; IDirectSound3DBuffer interface despite sharing the rest of the GUID.
+  (func $dsbuf_iid_is_3d_listener (param $iid i32) (result i32)
+    (if (i32.eqz (local.get $iid)) (then (return (i32.const 0))))
+    (i32.and
+      (i32.and
+        (i32.eq (call $gl32 (local.get $iid)) (i32.const 0x279AFA84))
+        (i32.eq (call $gl32 (i32.add (local.get $iid) (i32.const 4))) (i32.const 0x11CE4981)))
+      (i32.and
+        (i32.eq (call $gl32 (i32.add (local.get $iid) (i32.const 8))) (i32.const 0x200021A5))
+        (i32.eq (call $gl32 (i32.add (local.get $iid) (i32.const 12))) (i32.const 0x60E50BAF)))))
+
   (func $handle_IDirectSoundBuffer_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $wrapper i32) (local $handle i32)
     (if (i32.eqz (local.get $arg2))
@@ -4341,8 +4356,12 @@
             (call $host_voice_3d_set
               (local.get $handle) (i32.const 15)
               (i32.const 0) (i32.const 0) (i32.const 0)))
-          (else (local.set $wrapper (call $dx_get_wrapper_for_vtbl
-            (call $dx_slot_of (local.get $entry)) (global.get $DX_VTBL_DSBUF)))))
+          (else
+            (if (call $dsbuf_iid_is_3d_listener (local.get $arg1))
+              (then (local.set $wrapper (call $dx_get_wrapper_for_vtbl
+                (call $dx_slot_of (local.get $entry)) (global.get $DX_VTBL_DS3DLISTENER))))
+              (else (local.set $wrapper (call $dx_get_wrapper_for_vtbl
+                (call $dx_slot_of (local.get $entry)) (global.get $DX_VTBL_DSBUF)))))))
         (call $gs32 (local.get $arg2) (local.get $wrapper))
         (i32.store (i32.add (local.get $entry) (i32.const 4))
           (i32.add (i32.load (i32.add (local.get $entry) (i32.const 4))) (i32.const 1)))
@@ -4894,6 +4913,167 @@
       (local.get $arg1) (local.get $arg2) (local.get $arg3))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+
+  ;; ════════════════════════════════════════════════════════════
+  ;; IDirectSound3DListener methods
+  ;; ════════════════════════════════════════════════════════════
+
+  (func $handle_IDirectSound3DListener_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_IDirectSoundBuffer_QueryInterface
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+
+  (func $handle_IDirectSound3DListener_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_IDirectSoundBuffer_AddRef
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+
+  (func $handle_IDirectSound3DListener_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_IDirectSoundBuffer_Release
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+
+  ;; Voice handle zero addresses the process-wide listener state in the audio
+  ;; bridge. It remains shared by every primary-buffer interface wrapper.
+  (func $ds3d_listener_get_vector (param $out i32) (param $property i32)
+    (if (local.get $out) (then
+      (call $gs32 (local.get $out)
+        (call $host_voice_3d_get (i32.const 0) (local.get $property)))
+      (call $gs32 (i32.add (local.get $out) (i32.const 4))
+        (call $host_voice_3d_get (i32.const 0) (i32.add (local.get $property) (i32.const 1))))
+      (call $gs32 (i32.add (local.get $out) (i32.const 8))
+        (call $host_voice_3d_get (i32.const 0) (i32.add (local.get $property) (i32.const 2)))))))
+
+  (func $handle_IDirectSound3DListener_GetAllParameters (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (local.get $arg1))
+      (then (global.set $eax (i32.const 0x80004003)))
+      (else
+        (call $gs32 (local.get $arg1) (i32.const 64))
+        (call $ds3d_listener_get_vector (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0))
+        (call $ds3d_listener_get_vector (i32.add (local.get $arg1) (i32.const 16)) (i32.const 3))
+        (call $ds3d_listener_get_vector (i32.add (local.get $arg1) (i32.const 28)) (i32.const 6))
+        (call $ds3d_listener_get_vector (i32.add (local.get $arg1) (i32.const 40)) (i32.const 9))
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 52)) (call $host_voice_3d_get (i32.const 0) (i32.const 12)))
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 56)) (call $host_voice_3d_get (i32.const 0) (i32.const 13)))
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 60)) (call $host_voice_3d_get (i32.const 0) (i32.const 14)))
+        (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IDirectSound3DListener_GetDistanceFactor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1)
+      (then
+        (call $gs32 (local.get $arg1) (call $host_voice_3d_get (i32.const 0) (i32.const 12)))
+        (global.set $eax (i32.const 0)))
+      (else (global.set $eax (i32.const 0x80004003))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IDirectSound3DListener_GetDopplerFactor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1)
+      (then
+        (call $gs32 (local.get $arg1) (call $host_voice_3d_get (i32.const 0) (i32.const 14)))
+        (global.set $eax (i32.const 0)))
+      (else (global.set $eax (i32.const 0x80004003))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IDirectSound3DListener_GetOrientation (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.and (i32.ne (local.get $arg1) (i32.const 0)) (i32.ne (local.get $arg2) (i32.const 0)))
+      (then
+        (call $ds3d_listener_get_vector (local.get $arg1) (i32.const 6))
+        (call $ds3d_listener_get_vector (local.get $arg2) (i32.const 9))
+        (global.set $eax (i32.const 0)))
+      (else (global.set $eax (i32.const 0x80004003))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_IDirectSound3DListener_GetPosition (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1)
+      (then (call $ds3d_listener_get_vector (local.get $arg1) (i32.const 0)) (global.set $eax (i32.const 0)))
+      (else (global.set $eax (i32.const 0x80004003))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IDirectSound3DListener_GetRolloffFactor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1)
+      (then
+        (call $gs32 (local.get $arg1) (call $host_voice_3d_get (i32.const 0) (i32.const 13)))
+        (global.set $eax (i32.const 0)))
+      (else (global.set $eax (i32.const 0x80004003))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IDirectSound3DListener_GetVelocity (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1)
+      (then (call $ds3d_listener_get_vector (local.get $arg1) (i32.const 3)) (global.set $eax (i32.const 0)))
+      (else (global.set $eax (i32.const 0x80004003))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_IDirectSound3DListener_SetAllParameters (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (local.get $arg1))
+      (then (global.set $eax (i32.const 0x80004003)))
+      (else
+        (call $host_voice_3d_set (i32.const 0) (i32.const 0)
+          (call $gl32 (i32.add (local.get $arg1) (i32.const 4)))
+          (call $gl32 (i32.add (local.get $arg1) (i32.const 8)))
+          (call $gl32 (i32.add (local.get $arg1) (i32.const 12))))
+        (call $host_voice_3d_set (i32.const 0) (i32.const 3)
+          (call $gl32 (i32.add (local.get $arg1) (i32.const 16)))
+          (call $gl32 (i32.add (local.get $arg1) (i32.const 20)))
+          (call $gl32 (i32.add (local.get $arg1) (i32.const 24))))
+        (call $host_voice_3d_set (i32.const 0) (i32.const 6)
+          (call $gl32 (i32.add (local.get $arg1) (i32.const 28)))
+          (call $gl32 (i32.add (local.get $arg1) (i32.const 32)))
+          (call $gl32 (i32.add (local.get $arg1) (i32.const 36))))
+        (call $host_voice_3d_set (i32.const 0) (i32.const 9)
+          (call $gl32 (i32.add (local.get $arg1) (i32.const 40)))
+          (call $gl32 (i32.add (local.get $arg1) (i32.const 44)))
+          (call $gl32 (i32.add (local.get $arg1) (i32.const 48))))
+        (call $host_voice_3d_set (i32.const 0) (i32.const 12)
+          (call $gl32 (i32.add (local.get $arg1) (i32.const 52))) (local.get $arg2) (i32.const 0))
+        (call $host_voice_3d_set (i32.const 0) (i32.const 13)
+          (call $gl32 (i32.add (local.get $arg1) (i32.const 56))) (local.get $arg2) (i32.const 0))
+        (call $host_voice_3d_set (i32.const 0) (i32.const 14)
+          (call $gl32 (i32.add (local.get $arg1) (i32.const 60))) (local.get $arg2) (i32.const 0))
+        (global.set $eax (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_IDirectSound3DListener_SetDistanceFactor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $host_voice_3d_set (i32.const 0) (i32.const 12) (local.get $arg1) (local.get $arg2) (i32.const 0))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_IDirectSound3DListener_SetDopplerFactor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $host_voice_3d_set (i32.const 0) (i32.const 14) (local.get $arg1) (local.get $arg2) (i32.const 0))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_IDirectSound3DListener_SetOrientation (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $host_voice_3d_set (i32.const 0) (i32.const 6)
+      (local.get $arg1) (local.get $arg2) (local.get $arg3))
+    (call $host_voice_3d_set (i32.const 0) (i32.const 9)
+      (local.get $arg4)
+      (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
+      (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 36))))
+
+  (func $handle_IDirectSound3DListener_SetPosition (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $host_voice_3d_set (i32.const 0) (i32.const 0)
+      (local.get $arg1) (local.get $arg2) (local.get $arg3))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+
+  (func $handle_IDirectSound3DListener_SetRolloffFactor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $host_voice_3d_set (i32.const 0) (i32.const 13) (local.get $arg1) (local.get $arg2) (i32.const 0))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_IDirectSound3DListener_SetVelocity (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $host_voice_3d_set (i32.const 0) (i32.const 3)
+      (local.get $arg1) (local.get $arg2) (local.get $arg3))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+
+  (func $handle_IDirectSound3DListener_CommitDeferredSettings (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $host_voice_3d_set (i32.const 0) (i32.const 15) (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; ════════════════════════════════════════════════════════════
   ;; IDirectInput methods

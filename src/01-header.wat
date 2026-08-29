@@ -1365,8 +1365,8 @@
   ;; 0x07FEB000  4KB     D3DIM auxiliary strings/caches/state
   ;; --- Remaining DX tables in high memory, outside guest address space ---
   ;; 0x07FEC000 16KB     D3DIM_MATRICES (256 entries × 64 bytes, ends 0x07FF0000)
-  ;; 0x07FFA000 15.75KB  COM_WRAPPERS_AUX (2016 entries × 8 bytes, ends 0x07FFDF00)
-  ;; 0x07FFDF00  256B    DX_VTBL_REGISTRY (220 bytes used, ends before VSOCK_TABLE)
+  ;; 0x07FFA000 15.74KB  COM_WRAPPERS_AUX (2015 entries × 8 bytes, ends 0x07FFDEF8)
+  ;; 0x07FFDEFC  260B    DX_VTBL_REGISTRY (64 pointers + count, ends at VSOCK_TABLE)
   ;; 0x07FFE000  8KB     VSOCK_TABLE    (64 sockets × 128 bytes, ends 0x08000000)
   ;; 0x00012000  60MB    Guest address space (PE sections + DLLs + large data)
   ;;   For an NE task image_base is 0, so guest 0x00100000 + 8MB is the Win16

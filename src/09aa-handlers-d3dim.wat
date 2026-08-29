@@ -550,7 +550,11 @@
       (return)))
     (local.set $ret_addr (call $gl32 (global.get $esp)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-    (call $d3d_enum_tex_invoke (local.get $arg1) (local.get $arg2) (local.get $ret_addr)))
+    ;; Direct3D 2 retains the legacy callback contract: lpD3DTextureFormat is
+    ;; a DDSURFACEDESC whose DDPIXELFORMAT begins at +72.  The pixel-format-only
+    ;; callback was introduced by Device3/7.  MCM copies from +72 and therefore
+    ;; recorded heap garbage when Device2 was incorrectly given 32 bytes.
+    (call $d3d_enum_tex_desc_invoke (local.get $arg1) (local.get $arg2) (local.get $ret_addr)))
 
   ;; IDirect3DDevice2_BeginScene — 1 args (incl. this)
   (func $handle_IDirect3DDevice2_BeginScene (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

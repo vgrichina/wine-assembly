@@ -25266,5 +25266,131 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 2555116227
+  },
+  {
+    "id": 3036,
+    "name": "IDirectSound3DListener_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 638590803
+  },
+  {
+    "id": 3037,
+    "name": "IDirectSound3DListener_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2956495392
+  },
+  {
+    "id": 3038,
+    "name": "IDirectSound3DListener_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1751514857
+  },
+  {
+    "id": 3039,
+    "name": "IDirectSound3DListener_GetAllParameters",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1508103451
+  },
+  {
+    "id": 3040,
+    "name": "IDirectSound3DListener_GetDistanceFactor",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1727639588
+  },
+  {
+    "id": 3041,
+    "name": "IDirectSound3DListener_GetDopplerFactor",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1453458423
+  },
+  {
+    "id": 3042,
+    "name": "IDirectSound3DListener_GetOrientation",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 751046682
+  },
+  {
+    "id": 3043,
+    "name": "IDirectSound3DListener_GetPosition",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 654700307
+  },
+  {
+    "id": 3044,
+    "name": "IDirectSound3DListener_GetRolloffFactor",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 27710395
+  },
+  {
+    "id": 3045,
+    "name": "IDirectSound3DListener_GetVelocity",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3460900995
+  },
+  {
+    "id": 3046,
+    "name": "IDirectSound3DListener_SetAllParameters",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 541378191
+  },
+  {
+    "id": 3047,
+    "name": "IDirectSound3DListener_SetDistanceFactor",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 387082632
+  },
+  {
+    "id": 3048,
+    "name": "IDirectSound3DListener_SetDopplerFactor",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 349110771
+  },
+  {
+    "id": 3049,
+    "name": "IDirectSound3DListener_SetOrientation",
+    "nargs": 8,
+    "convention": "stdcall",
+    "hash": 937411734
+  },
+  {
+    "id": 3050,
+    "name": "IDirectSound3DListener_SetPosition",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2905300575
+  },
+  {
+    "id": 3051,
+    "name": "IDirectSound3DListener_SetRolloffFactor",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2182788839
+  },
+  {
+    "id": 3052,
+    "name": "IDirectSound3DListener_SetVelocity",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3108893719
+  },
+  {
+    "id": 3053,
+    "name": "IDirectSound3DListener_CommitDeferredSettings",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2843059987
   }
 ]

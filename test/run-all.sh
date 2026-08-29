@@ -126,6 +126,7 @@ UNIT=(
   test/test-audio-mixer.js
   test/test-directsound-loop-refresh.js
   test/test-directsound3d-web-audio.js
+  test/test-directsound3d-listener.js
   test/test-directsound-ordinals.js
   test/test-directsound-buffer-format.js
   test/test-wave-out-get-id.js
@@ -308,6 +309,7 @@ UNIT=(
   test/test-directx-ordinals.js
   test/test-launch-prefs-resolution.js
   test/test-d3dim-indexed-texture.js
+  test/test-d3ddevice2-texture-format-desc.js
   test/test-d3dim-line-primitives.js
   test/test-d3dim-viewport-background-texture.js
   test/test-dx-blank-primary-holdover.js

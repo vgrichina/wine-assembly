@@ -5,6 +5,32 @@
 **Entry point:** (TBD)
 **Run:** `node test/run.js --exe=test/binaries/shareware/mcm/mcm_ex/MCM.EXE --max-batches=500 --trace-api`
 
+## Status (2026-08-29) — post-Start Direct3D/DirectSound crashes fixed
+
+Two independent ABI mismatches caused the Loading screen to terminate before
+the quarry could be constructed. `IDirect3DDevice2::EnumTextureFormats` used
+the Device3/7 callback contract and passed a bare 32-byte `DDPIXELFORMAT`.
+MCM's Device2 callback copies the legacy `DDSURFACEDESC.ddpfPixelFormat` at
+offset `+72`; it therefore recorded heap bytes, rejected every texture format,
+and later called through a null overlay-surface pointer at `0x004249ac`.
+Device2 now receives the complete descriptor it requires.
+
+After that fix, MCM requested `IID_IDirectSound3DListener` from its primary
+sound buffer. The emulator returned the ordinary `IDirectSoundBuffer` wrapper,
+so listener vtable slot 11 (`SetDistanceFactor`) dispatched as buffer slot 11
+(`Lock`). `Lock` popped 36 bytes instead of the listener call's 16 and destroyed
+the return frame. Primary buffers now expose a distinct 18-slot listener
+wrapper. Listener position, orientation, distance, rolloff and Doppler state
+round-trip through the existing audio bridge and update Web Audio's listener
+and live PannerNodes.
+
+The deterministic CLI route now survives both former failures and remains in
+MCM's main loop while populating the quarry: a 300-second bounded run created
+205 live DirectDraw surfaces, including populated 128x128 and 256x256 terrain
+textures, with no null call or stack loss. Its composited screen was still the
+Loading artwork at the shorter 120-second capture, so this is not yet claimed
+as a gameplay screenshot.
+
 ## Status (2026-08-28) — software cursor owns browser capture
 
 ### CLI selector root cause — preserve the two filesystem roots

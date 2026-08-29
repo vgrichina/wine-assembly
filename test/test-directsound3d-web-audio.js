@@ -42,6 +42,11 @@ class FakeAudioContext {
     this.destination = new FakeNode();
     this.state = 'running';
     this.panners = [];
+    this.listener = {
+      positionX: new FakeParam(), positionY: new FakeParam(), positionZ: new FakeParam(),
+      forwardX: new FakeParam(), forwardY: new FakeParam(), forwardZ: new FakeParam(-1),
+      upX: new FakeParam(), upY: new FakeParam(1), upZ: new FakeParam(),
+    };
   }
   createGain() { const node = new FakeNode(); node.gain = new FakeParam(1); return node; }
   createStereoPanner() { const node = new FakeNode(); node.pan = new FakeParam(0); return node; }
@@ -98,6 +103,21 @@ try {
     'DS3DMODE_DISABLE should bypass HRTF and restore the ordinary stereo path');
   host.voice_3d_set(voice, 14, 0, 0, 0);
   assert.deepStrictEqual(state.gain.connections, [state.spatialPanner]);
+
+  host.voice_3d_set(0, 0, floatBits(2), floatBits(3), floatBits(4));
+  host.voice_3d_set(0, 6, floatBits(0), floatBits(0), floatBits(1));
+  host.voice_3d_set(0, 9, floatBits(0), floatBits(1), floatBits(0));
+  host.voice_3d_set(0, 12, floatBits(0.5), 0, 0);
+  host.voice_3d_set(0, 13, floatBits(1.75), 0, 0);
+  assert.strictEqual(ctx._voices._ac.listener.positionX.value, 1,
+    'DirectSound listener positions should use the configured distance factor');
+  assert.strictEqual(ctx._voices._ac.listener.positionZ.value, -2,
+    'listener Z should mirror from DirectSound to Web Audio coordinates');
+  assert.strictEqual(state.spatialPanner.positionX.value, 2,
+    'distance factor should also rescale existing source positions');
+  assert.strictEqual(state.spatialPanner.rolloffFactor, 1.75);
+  assert.strictEqual(bitsFloat(host.voice_3d_get(0, 12)), 0.5,
+    'listener state should round-trip through the existing 3D voice bridge');
 
   const root = path.join(__dirname, '..');
   const apis = JSON.parse(fs.readFileSync(path.join(root, 'src', 'api_table.json'), 'utf8'));

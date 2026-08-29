@@ -211,6 +211,10 @@ comInterfaces.push({ prefix: 'IDirectDrawSurface3', global: 'DX_VTBL_DDSURF3', e
 // the absolute tail so worker-thread registry offsets remain append-only.
 comInterfaces.push({ prefix: 'IDirect3DSwapChain9', global: 'DX_VTBL_D3DSWAP9' });
 
+// Listener is an auxiliary view of a primary DirectSound buffer. Append it
+// after every established interface so registry offsets remain stable.
+comInterfaces.push({ prefix: 'IDirectSound3DListener', global: 'DX_VTBL_DS3DLISTENER' });
+
 // Build a map of prefix → { startId, count } from the api_table
 const byName = new Map(apiTable.map(a => [a.name, a]));
 const ifaceInfo = new Map();
