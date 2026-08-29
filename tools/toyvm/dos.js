@@ -230,6 +230,11 @@ const GC_READ_MAP = 4, GC_MODE = 5, GC_MISC = 6, GC_BIT_MASK = 8;
 const CRTC_HDE = 0x01;
 const CRTC_MAX_SCAN = 0x09, CRTC_START_HI = 0x0C, CRTC_START_LO = 0x0D;
 const CRTC_VDE = 0x12, CRTC_OVERFLOW = 0x07, CRTC_OFFSET = 0x13;
+// Vertical Retrace End. Bit 5 is "disable vertical interrupt" -- active low, so
+// a program that clears it is asking the CRTC to interrupt it once per frame on
+// IRQ2. Bit 7 write-protects CRTC 0-7, which is why the value is usually 0x90
+// rather than 0x10 and cannot be tested for equality.
+const CRTC_VRETRACE_END = 0x11;
 
 // The EGA 16-colour graphics modes. These are planar the way mode X is planar,
 // but they are FOUR-bit: a byte in a plane is eight pixels rather than one, and
@@ -328,6 +333,12 @@ function newVgaState() {
     seqIndex: 0, seq: new Uint8Array(8),
     gcIndex: 0, gc: new Uint8Array(16),
     crtcIndex: 0, crtc: new Uint8Array(32),
+    // Whether the program has ASKED for the vertical-retrace interrupt. Kept as
+    // its own flag rather than read back out of crtc[0x11], because the register
+    // file resets to zeros and bit 5 is active low -- so reading it would report
+    // every freshly reset card as having retrace interrupts switched on, and we
+    // would fire IRQ2 at a program that never requested it.
+    vretrace: false,
     // Attribute controller: one index/data port sharing a flip-flop that a read
     // of the status register resets. Its low 16 registers are the palette a
     // 4-bit pixel is looked up in.
@@ -379,6 +390,10 @@ function resetVgaMode(v, mode) {
   v.attr.set(EGA_ATTR);
   v.attrFlip = 0;
   v.crtc.fill(0);
+  // A mode set is the BIOS reprogramming the CRTC from its own tables, and
+  // those leave the vertical interrupt disabled. A program that wants it asks
+  // again afterwards, so this must not survive the mode set that precedes it.
+  v.vretrace = false;
   v.crtc[CRTC_OVERFLOW] = 0x1F;        // VDE bit 8; bit 6 (bit 9) left clear
   if (ega) {
     v.crtc[CRTC_HDE] = ega.hde;
@@ -1557,6 +1572,24 @@ class Machine {
     if (this.adlibIndex === 4) this.adlibTimer = (v & 0x80) ? 0 : (v & 3 ? 1 : 0);
   }
 
+  // The CRTC's vertical-retrace interrupt: IRQ2, vector 0x0A. Polling 0x3DA for
+  // the retrace bit is the common way to wait for a frame and needs nothing from
+  // us, but a program can instead ask to be interrupted -- and one that does
+  // gets no other signal that the frame ended. ANGEL's SETUP.EXE hooks 0x0A,
+  // clears bit 5 of CRTC 0x11, waits twice and reads a flag only its own handler
+  // sets; with the interrupt never delivered it read the flag as zero, took a
+  // null function pointer and halted through the Turbo Pascal runtime, which is
+  // why the demo still says "Please run setup.exe".
+  //
+  // Both gates matter. `vretrace` is the program asking, and an unhooked vector
+  // means nobody is listening -- delivering IRQ2 into whatever the vector table
+  // happens to hold is how a working program gets pushed somewhere arbitrary.
+  retraceIrq() {
+    if (!this.vga.vretrace) return 0;
+    if (!this.hookedVector(0x0A)) return 0;
+    return 0x0A;
+  }
+
   timerVector() {
     if (this.hookedVector(0x08)) return 0x08;
     if (this.hookedVector(0x1C)) return 0x1C;
@@ -1717,6 +1750,7 @@ class Machine {
       case 0x3D4: case 0x3B4: v.crtcIndex = value & 0x1F; return;
       case 0x3D5: case 0x3B5:
         v.crtc[v.crtcIndex] = value;
+        if (v.crtcIndex === CRTC_VRETRACE_END) v.vretrace = (value & 0x20) === 0;
         // In text mode the start address IS the displayed page, so the console
         // grid has to follow it (see setTextPage). In a graphics mode it is a
         // scroll or a page flip within A000 and vgaGeometry already reports it.

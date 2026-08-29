@@ -356,6 +356,7 @@ class DosSession {
     this.lastIrq = 0;
     this.lastKbIrq = 0;
     this.lastSbIrq = 0;
+    this.lastRetraceIrq = 0;
     this.lastKey = '';
     this.lastWritten = 0;
     this.lastRegs = 0;
@@ -642,12 +643,22 @@ class DosSession {
       && this.dispatched - this.lastSbIrq >= this.irqEvery
       ? machine.sbIrq() : 0;
     const tvec = machine.timerVector();
+    // A frame, not a tick: the vertical retrace comes round about 70 times a
+    // second against the timer's 18.2, so it is the fastest thing here. Asked
+    // for the vector up front like the Sound Blaster's, so that a rung which
+    // declines to fire cannot swallow the keyboard's turn below it.
+    const rvec = (vm.get('flags') & 0x200)
+      && this.dispatched - this.lastRetraceIrq >= this.irqEvery / 4
+      ? machine.retraceIrq() : 0;
     if (svec) {
       this.lastSbIrq = this.dispatched;
       this.raise(svec);
     } else if (tvec && this.dispatched - this.lastIrq >= this.irqEvery && (vm.get('flags') & 0x200)) {
       this.lastIrq = this.dispatched;
       this.raise(tvec);
+    } else if (rvec) {
+      this.lastRetraceIrq = this.dispatched;
+      this.raise(rvec);
     // IRQ1. A program with its own INT 9 handler reads the keyboard as hardware
     // and never calls the BIOS, so answering INT 16h reaches it not at all --
     // BTW.EXE sits on a sound menu having made zero INT 16h calls in 11M
