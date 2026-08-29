@@ -141,12 +141,14 @@ async function runDos(o) {
     // hardware nothing is standing behind is worse than staying quiet. This is
     // the lever for finding out what a given announcement costs.
     env = [],
+    // Files an earlier run created, carried in. See the --pre option below.
+    tempFiles = null,
   } = o;
   setCpuLevel(cpu);
 
   const machine = new Machine(new Uint8Array(0), {
     log: (s) => traceInt && log(`  ${s}`), autoKey, forceChained, sound,
-    keys, autoKeys, env,
+    keys, autoKeys, env, tempFiles,
     // A DOS program's data sits next to it, and that directory is the whole of
     // the filesystem it gets.
     fileRoot: path.dirname(path.resolve(exe)),
@@ -387,6 +389,32 @@ async function runDos(o) {
   };
 }
 
+// Run a prerequisite program first, then the real one, and let the second see
+// the files the first wrote.
+//
+// Some demos ship a configurator and will not start without it. BYETRO.EXE
+// prints "Please run SETUP.EXE to configure." and stops; its SETUP.EXE is a
+// two-item menu whose "Save and Exit" writes SOUND.CFG. On a real machine you
+// run it once and the file stays. Here every program is photographed cold and
+// the corpus directory is deliberately read-only -- createFile keeps what a
+// guest writes in memory and nothing ever reaches the host disk, which is the
+// right call for a corpus and exactly what breaks this pair.
+//
+// So the two runs share one tempFiles map. Two separate machines, one file
+// system between them, and the corpus directory still never written to. The
+// prerequisite gets a small budget and the answerer, because a configurator
+// that needs more than a few million dispatches is not one.
+async function runDosWithPre(o) {
+  const pre = path.resolve(path.dirname(path.resolve(o.exe)), o.pre);
+  if (!fs.existsSync(pre)) throw new Error(`--pre: no such program: ${o.pre}`);
+  const first = await runDos({
+    ...o, exe: pre, bestPng: null, shots: null, png: null,
+    budget: Math.min(o.budget || 200e6, 20e6), seconds: 0,
+    autoKey: true, keys: o.preKeys || [],
+  });
+  return runDos({ ...o, pre: undefined, tempFiles: first.machine.tempFiles });
+}
+
 // ---------------------------------------------------------------------------
 function arg(name, fallback) {
   const hit = process.argv.slice(2).find(a => a.startsWith(`--${name}=`));
@@ -414,8 +442,12 @@ async function main() {
     process.exit(2);
   }
   const report = flag('report');
-  const r = await runDos({
+  const pre = arg('pre', '');
+  const r = await (pre ? runDosWithPre : runDos)({
     exe,
+    // `--pre=SETUP.EXE`, resolved next to the executable, with `--pre-keys=`
+    // for a configurator that needs more than the auto-key rotation.
+    pre, preKeys: parseKeys(arg('pre-keys', '')),
     variant: arg('variant', 'tailcall'),
     budget: count(arg('dispatches'), 200e6),
     slice: count(arg('slice'), 2e6),
@@ -732,7 +764,7 @@ async function main() {
 // The frame readers moved to ./framebuffer.js and are re-exported here, since
 // several tools import them from this module by name.
 module.exports = {
-  runDos, writePng, writeConsolePng, nonBlack, frameHash, conText,
+  runDos, runDosWithPre, writePng, writeConsolePng, nonBlack, frameHash, conText,
   screenSurface, conCells,
   readFrame: require('./framebuffer').readFrame,
 };

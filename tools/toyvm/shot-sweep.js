@@ -82,14 +82,15 @@ function shotName(exe, dir, used) {
 
 // --- child: one program, one run --------------------------------------------
 async function runOne(exe, png, o) {
-  const { runDos } = require('./run-dos');
+  const { runDos, runDosWithPre } = require('./run-dos');
   // runDos writes the picture itself, and writes the FULLEST one rather than
   // the last: a demo that quits on the keypress the answerer supplied, or that
   // clears the screen on its way out, is otherwise photographed empty.
-  const r = await runDos({
+  const r = await (o.pre ? runDosWithPre : runDos)({
     exe, variant: 'tailcall', budget: o.budget, cpu: o.cpu, log: () => {},
     seconds: o.seconds || 0,
     autoKey: o.autoKey, bestPng: png, guestArgs: o.guestArgs || '',
+    ...(o.pre ? { pre: o.pre, preKeys: [] } : {}),
     ...(o.sound ? { sound: o.sound } : {}),
     ...(o.env ? { env: String(o.env).split(';').filter(Boolean) } : {}),
   });
@@ -141,6 +142,20 @@ function switchNamed(screen) {
   return m ? m[1].toLowerCase() : null;
 }
 
+// The program a screen tells you to run FIRST, or null. A demo that ships a
+// configurator says so in as many words -- BYETRO.EXE prints "Please run
+// SETUP.EXE to configure." and ANGEL.EXE "Please run setup.exe on your
+// computer ! The demo can't run without this !".
+//
+// Anchored on `run` and a DOS 8.3 name, and it declines to name the program
+// itself: a demo that says "run FOO.EXE" while being FOO.EXE is telling the
+// user to start it differently, not to start it twice.
+function preNamed(screen, self) {
+  const m = /\brun\s+([A-Za-z0-9_$!#%&@^~()'-]{1,8}\.(?:exe|com))\b/i.exec(screen || '');
+  if (!m) return null;
+  return m[1].toLowerCase() === String(self).toLowerCase() ? null : m[1];
+}
+
 // --- parent -----------------------------------------------------------------
 function child(exe, png, o) {
   return new Promise((resolve) => {
@@ -158,6 +173,7 @@ function child(exe, png, o) {
       ...(o.autoKey ? ['--auto-key'] : []),
       ...(o.sound ? [`--sound=${o.sound}`] : []),
       ...(o.env ? [`--env=${o.env}`] : []),
+      ...(o.pre ? [`--pre=${o.pre}`] : []),
       ...(o.guestArgs ? [`--args=${o.guestArgs}`] : [])];
     const p = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', err = '';
@@ -247,6 +263,20 @@ async function capture(exe, png, o) {
   // rage.exe and CULT.EXE are unmoved either way. They probe the GF1 ports
   // rather than reading the variable, so "GUS not found!" is the true answer
   // and no environment string can make it false.
+  // A demo that ships a configurator and says so. BYETRO.EXE prints "Please
+  // run SETUP.EXE to configure." and stops; its SETUP.EXE is a two-item menu
+  // whose "Save and Exit" writes SOUND.CFG, and with that file present BYETRO
+  // loads its gfx and draws 40689 pixels. On a real machine you run the setup
+  // once and the file stays -- here every program is photographed cold, so the
+  // pair has to be run as a pair. See runDosWithPre: two machines, one
+  // tempFiles map between them, and the corpus directory still never written.
+  const pre = !row.pixels && !o.pre && preNamed(row.screen, path.basename(exe));
+  if (pre) {
+    const first = { ...row };
+    const retry = await child(exe, png, { ...o, autoKey: true, pre });
+    if (score(retry) > score(first)) { row = retry; row.pre = pre; }
+    else { row = first; await child(exe, png, o); }
+  }
   if (!row.pixels && !o.env && /ultrasnd|gravis|\bgus\b/i.test(row.screen || '')) {
     const first = { ...row };
     const retry = await child(exe, png,
@@ -317,6 +347,7 @@ async function main() {
     sound: arg('sound', ''),
     // Same shape as `sound`: unset unless a retry chose it. See the GUS rung.
     env: arg('env', ''),
+    pre: arg('pre', ''),
     guestArgs: arg('args', ''),
     maxSeconds: Number(arg('max-seconds', 0)),
     // The graceful deadline the child stops itself on. The parent sets it from

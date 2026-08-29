@@ -676,7 +676,12 @@ class Machine {
     this.filesOpened = []; this.filesMissed = []; this.filesCreated = [];
     this.bytesRead = 0;
     // Files the guest created, by base name. Writes never reach the host disk.
-    this.tempFiles = new Map();
+    //
+    // A caller may hand in a map from an earlier run, which is what carries a
+    // configuration file across the two programs of a --pre pair: the corpus
+    // directory stays read-only, and the second program still finds what the
+    // first one wrote. See the --pre option in run-dos.js.
+    this.tempFiles = opts.tempFiles instanceof Map ? opts.tempFiles : new Map();
     // EXEC: the parent contexts to return to, and the code the last child
     // exited with. `transfer` is how a service hands control somewhere else.
     this.execStack = []; this.lastExitCode = 0; this.transfer = null;
