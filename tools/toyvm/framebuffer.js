@@ -177,10 +177,24 @@ function nonBlack(mem, video) {
 // and the moment a big enough budget let the run reach the end, a white fill
 // outscored it 64000 to 1114 and the tile became a blank white square.
 //
-// Lit pixels that are all one index are a fill, not a picture. Discount one
-// hard enough that any real frame outranks it, while it still beats a screen
-// with nothing on it at all -- a program whose only output is a flash should
-// photograph the flash rather than nothing.
+// Lit pixels that are all one index are a fill, not a picture. So rank in
+// bands rather than on one continuous number, because the two comparisons a
+// best-frame tracker makes are not the same question:
+//
+//   2e6  a real picture -- two or more indices lit
+//   1e6  a single-index fill
+//     0  the text console, scored in non-blank cells
+//
+// Bands, and not a discount, because a discount answers the second comparison
+// wrongly while fixing the first. Scaling a fill down far enough to lose to a
+// picture also drops it below the text page: HEMATIE.EXE's 243-pixel frame
+// scored 0 against 49 console cells and the sweep photographed its text, and
+// ACME-VIC.EXE reported 62,251 lit pixels as "60". A fill outranking the text
+// page is also what the sweep's own row scorer already says -- any graphics
+// beats any text -- so the two agree here instead of disagreeing silently.
+//
+// `count` is the honest pixel total in every band. Callers that report a
+// number to a human want that one; only the ordering wants `score`.
 function frameScore(mem, video) {
   const { pixels } = readFrame(mem, video);
   const seen = new Uint8Array(256);
@@ -191,7 +205,7 @@ function frameScore(mem, video) {
     n++;
     if (!seen[c]) { seen[c] = 1; distinct++; }
   }
-  return distinct <= 1 ? (n >> 10) : n;
+  return { count: n, distinct, score: (distinct >= 2 ? 2e6 + n : 1e6 + n) };
 }
 
 // A cheap content signature over the frame buffer. Two variants that disagree

@@ -100,7 +100,10 @@ async function runOne(exe, png, o) {
     mode: r.video.mode, width: r.video.width, height: r.video.height,
     planar: !!r.video.planar, bpp: r.video.bpp,
     dispatched: r.dispatched,
-    pixels: text ? 0 : r.bestScore, cells: text ? r.bestScore : r.text.cells,
+    // `bestContent`, not `bestScore`: the score is a banded rank whose value
+    // says which KIND of frame won, and printing it as a pixel count reads as a
+    // near-empty screen for a full one.
+    pixels: text ? 0 : r.bestContent, cells: text ? r.bestContent : r.text.cells,
     written: r.text.written, stuckAt: r.stuckAt || null, args: o.guestArgs || '',
     // The two honest stops. A blank tile means nothing on its own -- these say
     // whether the run walked off a cliff or hit a wall we know the shape of,

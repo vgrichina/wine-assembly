@@ -185,12 +185,20 @@ async function runDos(o) {
   // interrupt, decide whether the thing is stuck -- is ./dos-loop.js, shared
   // with the live page. What stays here is what only a headless run wants:
   // tracing, sampling, and keeping the best frame.
-  let bestScore = -1, bestSurface = null, bestText = '';
+  // `bestScore` orders the frames and `bestContent` is what that frame actually
+  // held -- pixels for a graphics frame, non-blank cells for a text one. They
+  // are two numbers because the ordering is banded (see frameScore) and a band
+  // number is not a quantity: reporting the rank as the pixel count is what
+  // turned ACME-VIC.EXE's full screen into "60 px" and moved it to `blank`.
+  let bestScore = -1, bestContent = 0, bestSurface = null, bestText = '';
   function keepBest() {
     const s = screenSurface(machine);
-    const score = s.text ? conCells(machine.con) : frameScore(vm.mem, s.geom);
+    const cells = s.text ? conCells(machine.con) : 0;
+    const f = s.text ? null : frameScore(vm.mem, s.geom);
+    const score = s.text ? cells : f.score;
     if (score <= bestScore) return;
     bestScore = score;
+    bestContent = s.text ? cells : f.count;
     bestSurface = s;
     // The words that go with the picture. Taken here rather than at the end
     // for the same reason the picture is: they have to describe the same
@@ -364,7 +372,7 @@ async function runDos(o) {
   if (bestPng) keepBest();
   const surface = screenSurface(machine);
   return {
-    bestScore, bestSurface, bestText,
+    bestScore, bestContent, bestSurface, bestText,
     variant, exe, vm, machine, jtab,
     secs: Number(process.hrtime.bigint() - t0) / 1e9,
     guestSecs: Number(guestNs) / 1e9,
