@@ -2891,16 +2891,27 @@ class Machine {
           r.set('bx', held + (gap ? gap.size : at === this.allocTop ? DEFAULT_ALLOC_TOP - at : 0));
           return true;
         }
-        if (seg === PSP_SEG) {
-          if (PSP_SEG + want > DEFAULT_ALLOC_TOP) {
-            r.setResultCf(true); r.set('ax', 8); r.set('bx', DEFAULT_ALLOC_TOP - PSP_SEG);
+        // The running program giving back the tail of its own image. `curPsp`
+        // rather than the PSP_SEG constant, because after an EXEC the program
+        // doing the shrinking is the CHILD and its PSP is somewhere else
+        // entirely. CATWALK.EXE is three programs deep by the time it matters:
+        // it writes CATWALK.PLY and CATWALK.TMP out of itself, EXECs each at
+        // psp 3eb, and the last one asks for `AH=4Ah ES=3eb BX=1f40` to hand
+        // back everything above its 124KB. Matched against the constant that
+        // request fell through and did nothing, so allocTop stayed at the 9f00
+        // ceiling, the AH=48h for 0xfa0 paragraphs that came next was refused
+        // out of an empty pool, and the demo printed "Not enough memory!" while
+        // 636KB sat unclaimed.
+        if (seg === this.curPsp) {
+          if (seg + want > DEFAULT_ALLOC_TOP) {
+            r.setResultCf(true); r.set('ax', 8); r.set('bx', DEFAULT_ALLOC_TOP - seg);
             return true;
           }
-          this.allocTop = PSP_SEG + want;
+          this.allocTop = seg + want;
           this.memTrim();
           // Shrinking is also what makes room for a child: a loader stub that
           // gives back everything above itself expects EXEC to load there.
-          this.imageTop = Math.min(this.imageTop, PSP_SEG + want);
+          this.imageTop = Math.min(this.imageTop, seg + want);
         }
         r.setResultCf(false);
         return true;
