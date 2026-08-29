@@ -335,10 +335,17 @@ write invalidates the region covering its paragraph. That is 70251 traces and
 16MB of arena for 5.5M dispatches, and it is why 30 seconds of wall clock buys
 1.8 seconds of guest time. The demo polls `int 21h AH=2C` (get time) 79564
 times waiting for that guest time to pass, so the cost lands exactly where it
-hurts. Whether `0x1e49` is genuinely code or a data byte inside a paragraph
-some block decoded across is the question a fix turns on, and it has not been
-answered — if it is the latter this is false sharing, in the same family as the
-`benign` retirement in `dos-loop.js`, and the demo is not DPMI-blocked at all.
+hurts.
+
+**It is not false sharing, and that is measured.** Suppressing the invalidation
+for exactly that one-byte store does not merely make the demo faster — it
+changes what the demo does, leaving it spinning at `860:2686` after 506
+handbacks instead of 455712. So `0x1e49` is genuinely executed code, the
+invalidation is required, and there is no `benign`-style retirement to be had
+here. The cost is structural instead: `compileProgram` walks a whole reachable
+subgraph, so a region is large, and one rewritten byte throws all of it away.
+Making this cheap means invalidating at block rather than region granularity,
+which is a design change and not a patch.
 
 **BLAND.EXE** answers both its menus and then prints `failed to load MSE`. The
 MSE file is read fully (0x28be, the exact file size, correct EOF), loads, hooks
