@@ -683,3 +683,19 @@ making the visible Single Player button inert. `DI_MOUSE_INPUT_STATE` now uses
 one eight-record FIFO for packed X, Y, and button events, while retaining the
 independent X/Y accumulators used by `GetDeviceState`. The no-pause browser
 acceptance path now advances from Single Player Event to the event-type menu.
+
+## 2026-08-28 — profile OK reliability: motion bursts cannot discard clicks
+
+The first ordered DirectInput queue fixed a short synthetic move-and-click,
+but it held only eight records. Each ordinary diagonal browser move contributes
+separate X and Y records, so four unconsumed DOM moves filled the ring. A real
+pointer sweep toward OK could therefore leave only old motion in the queue;
+the following press and release were silently rejected. MCM replayed those old
+deltas as a visible cursor jump and never received the click.
+
+The process-shared mouse state now has a 64-record ring with four slots
+reserved for the final X/Y catch-up plus press/release. Motion beyond the ring
+budget accumulates in ordered overflow words. DirectInput drains overflow after
+older ring entries, or the renderer materializes it immediately before a
+button edge, preserving both the final pointer position and the click. A
+100-move regression verifies the complete delta and both button transitions.

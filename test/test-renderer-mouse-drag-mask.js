@@ -58,7 +58,7 @@ assert.strictEqual(move.wParam & 0x0001, 0x0001, 'drag move should include MK_LB
 r.handleMouseUp(80, 90, 1);
 assert.strictEqual(r.getAsyncKeyState(0x01), 0, 'GetAsyncKeyState after consumed mouseup should report not held');
 const directInputWords = new Int32Array(directInputMemory.buffer);
-const directInputBase = 0x07F0CEB0 >>> 2;
+const directInputBase = 0x07F20400 >>> 2;
 assert.deepStrictEqual([
   Atomics.load(directInputWords, directInputBase + 2),
   Atomics.load(directInputWords, directInputBase + 3),
@@ -87,6 +87,34 @@ assert.deepStrictEqual([
   Atomics.load(orderedWords, directInputBase + 7),
 ], [0, 4, (5 << 28) | 20, (6 << 28) | 30, 1, 2],
 'renderer should queue pointer motion before the click that follows it');
+
+// Safari can deliver a long run of coalesced DOM moves before a slow guest
+// gets another DirectInput poll. Motion may collapse, but it must retain the
+// full delta and leave room for both edges of the click at the final point.
+const burstRenderer = new Win98Renderer(canvas);
+const burstMemory = new WebAssembly.Memory({ initial: 2048, maximum: 2048, shared: true });
+burstRenderer.wasmMemory = burstMemory;
+burstRenderer.windows[102] = {
+  hwnd: 102, visible: true, isChild: false,
+  x: 0, y: 0, w: 640, h: 480, hasCaption: false, style: 0, zOrder: 1,
+};
+for (let i = 0; i < 100; i++) burstRenderer.handleMouseMove(100 + i, 100 + i);
+burstRenderer.handleMouseDown(199, 199, 0);
+burstRenderer.handleMouseUp(199, 199, 0);
+const burstWords = new Int32Array(burstMemory.buffer);
+const burstHead = Atomics.load(burstWords, directInputBase + 2) >>> 0;
+const burstTail = Atomics.load(burstWords, directInputBase + 3) >>> 0;
+const burstEvents = Array.from({ length: burstTail - burstHead }, (_, i) =>
+  Atomics.load(burstWords, directInputBase + 4 + ((burstHead + i) & 63)) >>> 0);
+const signedMotion = event => (event << 4) >> 4;
+assert.deepStrictEqual(burstEvents.slice(-4).map(event => event >>> 28), [5, 6, 0, 0],
+  'overflowed X/Y motion should flush immediately before the reserved click edges');
+assert.deepStrictEqual(burstEvents.slice(-2), [1, 2],
+  'a saturated motion queue must retain both click edges');
+assert.deepStrictEqual([
+  burstEvents.filter(event => (event >>> 28) === 5).reduce((sum, event) => sum + signedMotion(event), 0),
+  burstEvents.filter(event => (event >>> 28) === 6).reduce((sum, event) => sum + signedMotion(event), 0),
+], [99, 99], 'overflow coalescing should preserve the final pointer position');
 r.inputQueue.length = 0;
 r.handleMouseMove(90, 100);
 

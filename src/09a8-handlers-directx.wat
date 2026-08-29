@@ -295,8 +295,8 @@
   ;; that virtual cursor and would otherwise become a phantom DirectInput
   ;; event. Atomic exchange lets a Worker consume exactly the deltas that were
   ;; present at its poll while later browser movement remains queued.
-  (global $DI_MOUSE_INPUT_STATE i32 (i32.const 0x07F0CEB0))
-  (global $DI_MOUSE_INPUT_STATE_SIZE i32 (i32.const 0x00000030))
+  (global $DI_MOUSE_INPUT_STATE i32 (i32.const 0x07F20400))
+  (global $DI_MOUSE_INPUT_STATE_SIZE i32 (i32.const 0x00000118))
   (func $di_mouse_delta_peek_x (result i32)
     (i32.atomic.load offset=0 (global.get $DI_MOUSE_INPUT_STATE)))
   (func $di_mouse_delta_peek_y (result i32)
@@ -306,32 +306,65 @@
   (func $di_mouse_delta_take_y (result i32)
     (i32.atomic.rmw.xchg offset=4 (global.get $DI_MOUSE_INPUT_STATE) (i32.const 0)))
   (func $di_mouse_event_count (result i32)
-    (i32.sub
-      (i32.atomic.load offset=12 (global.get $DI_MOUSE_INPUT_STATE))
-      (i32.atomic.load offset=8 (global.get $DI_MOUSE_INPUT_STATE))))
+    (i32.add
+      (i32.sub
+        (i32.atomic.load offset=12 (global.get $DI_MOUSE_INPUT_STATE))
+        (i32.atomic.load offset=8 (global.get $DI_MOUSE_INPUT_STATE)))
+      (i32.add
+        (i32.ne (i32.atomic.load offset=272 (global.get $DI_MOUSE_INPUT_STATE)) (i32.const 0))
+        (i32.ne (i32.atomic.load offset=276 (global.get $DI_MOUSE_INPUT_STATE)) (i32.const 0)))))
   (func $di_mouse_event_peek (param $index i32) (result i32)
-    (local $head i32)
+    (local $head i32) (local $queued i32) (local $delta i32)
     (local.set $head (i32.atomic.load offset=8 (global.get $DI_MOUSE_INPUT_STATE)))
-    (if (i32.ge_u (local.get $index) (call $di_mouse_event_count))
-      (then (return (i32.const 0))))
-    (i32.atomic.load
-      (i32.add (global.get $DI_MOUSE_INPUT_STATE)
-        (i32.add (i32.const 16)
-          (i32.shl (i32.and (i32.add (local.get $head) (local.get $index)) (i32.const 7))
-                   (i32.const 2))))))
+    (local.set $queued
+      (i32.sub (i32.atomic.load offset=12 (global.get $DI_MOUSE_INPUT_STATE))
+               (local.get $head)))
+    (if (i32.lt_u (local.get $index) (local.get $queued))
+      (then
+        (return
+          (i32.atomic.load
+            (i32.add (global.get $DI_MOUSE_INPUT_STATE)
+              (i32.add (i32.const 16)
+                (i32.shl
+                  (i32.and (i32.add (local.get $head) (local.get $index)) (i32.const 63))
+                  (i32.const 2))))))))
+    (local.set $index (i32.sub (local.get $index) (local.get $queued)))
+    (local.set $delta (i32.atomic.load offset=272 (global.get $DI_MOUSE_INPUT_STATE)))
+    (if (local.get $delta)
+      (then
+        (if (i32.eqz (local.get $index))
+          (then (return (i32.or (i32.const 0x50000000)
+            (i32.and (local.get $delta) (i32.const 0x0FFFFFFF))))))
+        (local.set $index (i32.sub (local.get $index) (i32.const 1)))))
+    (local.set $delta (i32.atomic.load offset=276 (global.get $DI_MOUSE_INPUT_STATE)))
+    (if (i32.and (local.get $delta) (i32.eqz (local.get $index)))
+      (then (return (i32.or (i32.const 0x60000000)
+        (i32.and (local.get $delta) (i32.const 0x0FFFFFFF))))))
+    (i32.const 0))
   (func $di_mouse_event_take (result i32)
-    (local $head i32) (local $event i32)
+    (local $head i32) (local $event i32) (local $delta i32)
     (local.set $head (i32.atomic.load offset=8 (global.get $DI_MOUSE_INPUT_STATE)))
-    (if (i32.eq (local.get $head)
+    (if (i32.ne (local.get $head)
                 (i32.atomic.load offset=12 (global.get $DI_MOUSE_INPUT_STATE)))
-      (then (return (i32.const 0))))
-    (local.set $event
-      (i32.atomic.load
-        (i32.add (global.get $DI_MOUSE_INPUT_STATE)
-          (i32.add (i32.const 16)
-            (i32.shl (i32.and (local.get $head) (i32.const 7)) (i32.const 2))))))
-    (drop (i32.atomic.rmw.add offset=8 (global.get $DI_MOUSE_INPUT_STATE) (i32.const 1)))
-    (local.get $event))
+      (then
+        (local.set $event
+          (i32.atomic.load
+            (i32.add (global.get $DI_MOUSE_INPUT_STATE)
+              (i32.add (i32.const 16)
+                (i32.shl (i32.and (local.get $head) (i32.const 63)) (i32.const 2))))))
+        (drop (i32.atomic.rmw.add offset=8 (global.get $DI_MOUSE_INPUT_STATE) (i32.const 1)))
+        (return (local.get $event))))
+    (local.set $delta
+      (i32.atomic.rmw.xchg offset=272 (global.get $DI_MOUSE_INPUT_STATE) (i32.const 0)))
+    (if (local.get $delta)
+      (then (return (i32.or (i32.const 0x50000000)
+        (i32.and (local.get $delta) (i32.const 0x0FFFFFFF))))))
+    (local.set $delta
+      (i32.atomic.rmw.xchg offset=276 (global.get $DI_MOUSE_INPUT_STATE) (i32.const 0)))
+    (if (local.get $delta)
+      (then (return (i32.or (i32.const 0x60000000)
+        (i32.and (local.get $delta) (i32.const 0x0FFFFFFF))))))
+    (i32.const 0))
 
   (global $di_mouse_last_x (mut i32) (i32.const 0))
   (global $di_mouse_last_y (mut i32) (i32.const 0))

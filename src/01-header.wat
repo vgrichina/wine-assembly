@@ -1322,7 +1322,6 @@
   ;; left under GDI_REGION_TABLE.
   ;; 0x07F0CE80   4B     TV_SLOT_MARK (one past the highest TV_TABLE slot used)
   ;; 0x07F0CE84   4B     TV_HANDLE_SEQ (item-handle sequence, shared by threads)
-  ;; 0x07F0CEB0  48B     DI_MOUSE_INPUT_STATE (dx/dy + 8-entry ordered event FIFO)
   ;; 0x07F0CEE0   4B     LOOP_PROCESS_STATE (copy-superop opt-in shared by threads)
   ;; 0x07F0CF00 256B     TV_VIEW_TABLE (16 x per-TreeView caret/scroll/imagelist)
   ;; 0x07F0D000 8KB      GDI_REGION_TABLE (256 WAT-owned HRGN records)
@@ -1335,6 +1334,7 @@
   ;; 0x07F20100   80B    TIMER_SHARED (active count, next auto id, 16 owner tids)
   ;; 0x07F20200  256B    EXTRA_CMDLINE_BUFFER (JS-provided arguments)
   ;; 0x07F20300   64B    TLS_NEXT_INDEX_SHARED (process TLS index cursor/cache line)
+  ;; 0x07F20400  280B    DI_MOUSE_INPUT_STATE (dx/dy + 64 events + overflow X/Y)
   ;; 0x07F21000    4KB   SCROLL_AUX_TABLE (256 entries × 16 bytes)
   ;; 0x07F22000   16KB   TV_TABLE (512 entries × 32 bytes)
   ;; 0x07F26000    4KB   TV_IMAGE_TABLE (512 entries × {image, selected image})

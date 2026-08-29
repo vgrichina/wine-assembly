@@ -22,13 +22,16 @@ const extraWat = `
   (func (export "test_di_mouse_seed_delta") (param $dx i32) (param $dy i32)
     (i32.atomic.store offset=0 (global.get $DI_MOUSE_INPUT_STATE) (local.get $dx))
     (i32.atomic.store offset=4 (global.get $DI_MOUSE_INPUT_STATE) (local.get $dy)))
+  (func (export "test_di_mouse_seed_overflow") (param $dx i32) (param $dy i32)
+    (i32.atomic.store offset=272 (global.get $DI_MOUSE_INPUT_STATE) (local.get $dx))
+    (i32.atomic.store offset=276 (global.get $DI_MOUSE_INPUT_STATE) (local.get $dy)))
   (func (export "test_di_mouse_queue_event") (param $event i32)
     (local $tail i32)
     (local.set $tail (i32.atomic.load offset=12 (global.get $DI_MOUSE_INPUT_STATE)))
     (i32.atomic.store
       (i32.add (global.get $DI_MOUSE_INPUT_STATE)
         (i32.add (i32.const 16)
-          (i32.shl (i32.and (local.get $tail) (i32.const 7)) (i32.const 2))))
+          (i32.shl (i32.and (local.get $tail) (i32.const 63)) (i32.const 2))))
       (local.get $event))
     (i32.atomic.store offset=12 (global.get $DI_MOUSE_INPUT_STATE)
       (i32.add (local.get $tail) (i32.const 1))))
@@ -119,6 +122,20 @@ const extraWat = `
   wat.guest_write32(count, 1);
   wat.test_di_mouse_get_data(mouse, data, count, 0);
   assert.deepStrictEqual([wat.guest_read32(data), wat.guest_read32(data + 4) | 0], [12, 0]);
+
+  // Motion coalesced after a saturated browser ring remains visible after
+  // ordinary queued records drain, in X-before-Y order.
+  wat.test_di_mouse_seed_overflow(37, -21);
+  wat.guest_write32(count, 4);
+  wat.test_di_mouse_get_data(mouse, 0, count, 1);
+  assert.strictEqual(wat.guest_read32(count), 2,
+    'count-only peek includes coalesced overflow axes');
+  wat.guest_write32(count, 2);
+  wat.test_di_mouse_get_data(mouse, data, count, 0);
+  assert.deepStrictEqual([
+    wat.guest_read32(data), wat.guest_read32(data + 4) | 0,
+    wat.guest_read32(data + 16), wat.guest_read32(data + 20) | 0,
+  ], [0, 37, 4, -21], 'DirectInput drains coalesced overflow after the ring');
 
   wat.test_di_mouse_seed_delta(11, -9);
   assert.strictEqual(wat.test_di_mouse_get_state(mouse, data) >>> 0, 0);
