@@ -56,21 +56,72 @@ pattern table at `87f:135a` (`Paradise`, `Video Seven`, `Ati`, `Chips`,
 it is not blocked on VESA: the one `int 10h AX=4F00` at `773:043d` is followed
 by `cmp ax,0x4f / jnz`, so the no-VESA path is correct.
 
-What it does next is the open question. `773:0501` hooks INT 0Ah, sets CRTC
-register 0x11 to 0x90 (vertical-retrace interrupt enabled), waits twice and
-reads a flag its own handler at `773:055b` would have set — a vertical-retrace
-IRQ probe. We never raise IRQ2 for retrace, so the flag stays 0. Then
-`773:056e` sets mode 13h and `773:0589`-`773:05e5` sizes VRAM by writing a
-`bx+0x1001` pattern into bank `bx` through a bank-switch call at `773:068a` and
-checking whether bank 0 still reads zero. With no chipset there is no bank
-switching, bank 0 aliases immediately, and it correctly concludes plain VGA.
-And then main returns: no INT 16h, no INT 33h, no file ever opened, exit code 0.
+**It does not "run to completion" — it dies on a null pointer, and exits 0 on
+the way out.** `773:0501` hooks INT 0Ah, sets CRTC register 0x11 to 0x90
+(vertical-retrace interrupt enabled), waits twice and reads a flag its own
+handler at `773:055b` would have set — a vertical-retrace IRQ probe we never
+satisfy, since we do not raise IRQ2 for retrace. `773:056e` then sets mode 13h
+and `773:0573` starts the VRAM sizing routine, which never finishes: no
+`int 10h ax=0003` is ever traced, and that routine's every path ends at
+`773:0604` `pop ds / pop es / mov ax,3 / int 10h / retf`.
 
-So SETUP decides not to write DRIVERS.VGA. Whether that is the retrace probe,
-the unknown chipset, or something between has not been established. Note that
-any fix which puts a vendor signature at C000 claims chipset registers we do not
-emulate — the same mistake as a default `BLASTER=`/`ULTRASND=` — so it must be
-measured over a full sweep before it is kept.
+Where it goes instead, from `--trace-entry` (mind that those lines are
+*handbacks*, not consecutive blocks — many blocks run between two of them):
+
+```
+entry 773:573  ax=0013 ...      ; back from the mode-13h int
+entry 773:0    ax=0000 ...      ; <-- offset zero
+entry 110:15a  ...              ; unwound into the Turbo Pascal runtime
+... 110:1fa/205/210/21b          ; restore INT 00/04/05/06
+... int 21h ax=4c00              ; Halt(0)
+```
+
+`773:0000` is a segment header (`10 01 59 c9 cb …`, the `10 01` being the load
+segment) followed by a CPU-type probe. Executing it happens to `retf`, which is
+why this unwinds quietly instead of crashing.
+
+It arrives there through an indirect dispatch. `773:0583` calls the installer at
+`773:0b44`, and `773:05a7` calls the trampoline at `773:0b5a`:
+
+```
+773:0b44  mov ax,[0x1e02]   ; chipset index      773:0b5a  mov dx,0xb63
+          shl ax,1                                         push dx      ; return
+          mov si,0x20b0     ; routine table                mov dx,[0x1e0c]
+          add si,ax                                        push dx
+          mov ax,[si]                                      ret          ; jump
+          mov [0x1e0c],ax   ; install
+```
+
+Both measured with DS=`0x87f`: `[87f:1e02]` is **0**, and the table's slot 0 at
+`87f:20b0` is **`00 00`** (slot 6 is the only other null; 1-5 and 7+ are real
+offsets `0b64`, `0b66`, `0b68`, `0b6a`, `0cf4`, `0bc5` …). So the installed
+bank-switch routine is the null pointer, the `ret` jumps to offset 0, and the
+sizing loop takes the program out through offset zero on its first iteration.
+
+The chipset index at `[87f:1e02]` comes from `[87f:256e]`, and nothing has set
+it. That is the one thing left to find: which store should have written it, and
+what our C000-F000 scan gives it instead. Note the scan landing on the table's
+own `UnKnow` entry (DL=0x2d) is *not* the same value — 0x2d would index a live
+slot well past the nulls.
+
+Two things ruled out along the way. `SETUP /NOBANKS`, which the NFO offers for
+exactly this ("we don't recognise correctly your video chip"), changes nothing —
+and the command tail does reach the guest, `100:0080` reading
+`09 20 2f 4e 4f 42 41 4e 4b 53 0d`, so that is SETUP ignoring the switch on this
+path rather than our harness dropping it. `/REPORT` likewise writes no
+`DEBUGNFO.DAT`. And `int 10h AH=1A` is answered correctly (AL=0x1A, BL=0x08,
+VGA colour); the 0x08 visible at `87f:1e07` is that answer landing.
+
+Note that any fix which puts a vendor signature at C000 claims chipset registers
+we do not emulate — the same mistake as a default `BLASTER=`/`ULTRASND=` — so it
+must be measured over a full sweep before it is kept. **Reading `[87f:256e]`'s
+writer is the cheaper route and does not claim any hardware.**
+
+One trap this cost an hour: **segment 773 is a Turbo Pascal overlay, and
+`--disasm` fires at exit.** Disassembling `773:0573` mid-run and at exit happens
+to agree here, but the code at other 773 offsets does not, and a confident
+reading of the wrong overlay is indistinguishable from a reading of the right
+one.
 
 The `--pre=SETUP.EXE` rung in `shot-sweep.js` already runs SETUP before ANGEL
 and carries its `tempFiles` across, so a SETUP that writes the stamp lands both
