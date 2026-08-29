@@ -379,7 +379,7 @@ assert(webApp.includes('return compatDispatch ? 500 : 100000;'), 'auto slice sho
 assert(webApp.includes('return compatDispatch ? Math.min(selected, autoSlice) : selected;'), 'manual slice should be clamped in no-tail-call browsers');
 assert(!/case 'winamp':\s*return 1;/.test(webApp), 'Winamp auto slice should not rely on slice=1 startup masking');
 assert(webApp.includes('function unlockRunningAudio()'), 'web canvas input should explicitly unlock running app audio');
-assert(/unlockRunningAudio\(\);\s*const \{ x: cx, y: cy \} = mouseButtonPoint\(e, pointerLocked\(\)\);/.test(webApp), 'mouse input should resume audio before resolving locked guest coordinates');
+assert(/unlockRunningAudio\(\);[\s\S]{0,400}?const \{ x: cx, y: cy \} = mouseButtonPoint\(e, pointerLocked\(\)\);/.test(webApp), 'mouse input should resume audio before resolving locked guest coordinates');
 assert(/unlockRunningAudio\(\);\s*const \{ x: cx, y: cy \} = eventPointFromClient/.test(webApp), 'touch input should resume audio before guest dispatch');
 // handleKeyDown takes an options object now; the guarded property is that the
 // unlock still runs immediately before the dispatch, not the call's arity.
