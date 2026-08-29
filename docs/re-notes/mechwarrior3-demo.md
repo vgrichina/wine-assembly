@@ -310,8 +310,8 @@ click, so the acceptance route no longer guesses fixed transition batches. It
 waits for the operation map's measured near-black-pixel range before clicking,
 then waits for the cockpit's distinct >100k-dark-pixel range before capture.
 
-A steady batches-840..1080 CPU-profile window fell from 12.27 seconds sampled
-before these corrections to 8.40 seconds after them (31.6%). The current
+The then-labelled batches-840..1080 CPU-profile window fell from 12.27 seconds
+sampled before these corrections to 8.40 seconds after them (31.6%). The current
 profile spends 69.3% in WebAssembly; the largest renderer function is the
 textured span at 567 ms (6.8% total), followed by texture decode (290 ms),
 colour interpolation (288 ms), FVF packing (201 ms), texel fetch (197 ms), and
@@ -347,16 +347,203 @@ MW3 capture also clarifies that the yellow cursor ring's centre stopping about
 nine pixels below the top is game behavior: MW3 keeps the complete roughly
 18-pixel sprite visible. It is not evidence that raw DirectInput motion stopped.
 
-The representative steady-gameplay profile above answers the remaining FPS
-question more usefully than another wall-clock run on the currently saturated
-development host. WebAssembly accounts for 69.3% of the sampled 8.40-second
-window, and its hottest named functions are the x86 decoder/dispatcher,
-register accessors, and branch machinery. The six largest named software-D3D
-functions total about 1.69 seconds (20.1% of the whole window); presentation is
-about 0.93 seconds (11.1%), and API-name logging is 0.58 seconds (6.9%). These
-categories are not a complete partition, but they establish the ranking: x86
-emulation is the dominant cost, while the native-Wasm D3D3 rasterizer is a
-material secondary cost rather than the principal bottleneck. Keep Runtime log
-off for play and measurement. The existing SIMD header copy addresses the hot
-contiguous FVF operation; the format-aware sampler remains gather-bound, so
-more SIMD is not an evidence-backed next optimization.
+The mixed deploy/early-game profile above remains useful for locating renderer
+cost, but the measurements below supersede its description as representative
+steady gameplay: the deterministic cockpit predicate did not match until batch
+891. WebAssembly accounts for 69.3% of that sampled 8.40-second window. The six
+largest named software-D3D functions total about 1.69 seconds (20.1% of the
+whole window); presentation is about 0.93 seconds (11.1%), and API-name logging
+is 0.58 seconds (6.9%). These categories are not a complete partition and the
+sample crosses deployment, so they are ceilings and ordering evidence, not a
+steady-state FPS attribution. Keep Runtime log off for play and measurement.
+The existing SIMD header copy addresses the hot contiguous FVF operation; the
+format-aware sampler remains gather-bound, so more SIMD is not an
+evidence-backed next optimization.
+
+## Measured x86 loops and render-Worker feasibility (2026-08-29)
+
+### Measurement boundary and authentic CRT execution
+
+The first hot-block pass armed at batch 840 because the cockpit had appeared in
+an earlier fixed-timing run. The state-driven route used here did not satisfy
+the cockpit's measured dark-pixel predicate until batch 891. Consequently the
+840..1080 result is a deploy/load plus early-game sample, not a steady-gameplay
+sample. Wall-clock time was also unusable while the development host was
+saturated, so the results below use deterministic guest batches, basic-block
+entries, API-call deltas, and DirectDraw `Flip` counts only.
+
+Wine-Assembly is executing the shipped x86 `MSVCRT.DLL`, not a WAT replacement.
+It is loaded at `0x01808000` from original base `0x78000000`; exported `free` is
+`0x7800138a` and `malloc` is `0x78001498`. In the mixed 840..1080 window, exactly
+48,000,000 x86 basic-block entries were recorded. Six MSVCRT blocks accounted
+for 47,997,521 (99.995%):
+
+| Runtime EIP | Original EIP | Entries | Share | Static role |
+|---|---:|---:|---:|---|
+| `0x018093fb` | `0x780013fb` | 14,282,161 | 29.75% | compare freed pointer with small-block descriptor start |
+| `0x0180943d` | `0x7800143d` | 14,282,161 | 29.75% | advance the circular descriptor list |
+| `0x01809400` | `0x78001400` | 14,282,159 | 29.75% | compare freed pointer with descriptor end |
+| `0x018092af` | `0x780012af` | 4,120,831 | 8.59% | scan zero bytes in a small-block page's run map |
+| `0x018091d2` | `0x780011d2` | 515,105 | 1.07% | test a small-block page-range descriptor |
+| `0x0180920c` | `0x7800120c` | 515,104 | 1.07% | advance descriptor and corresponding 4 KiB page |
+
+This is a distribution of emulated x86 block entries, not a distribution of
+wall time. Native-Wasm D3DIM raster functions run synchronously inside an API
+handler and do not appear as x86 blocks, so “99.995% of x86 blocks” must not be
+read as “99.995% of total CPU.”
+
+The `free` ownership walk is not a corrupt circular list. Live memory showed the
+relocated sentinel at `0x01845178`, its next descriptor at `0x041d863c`, and a
+second descriptor at `0x0440b804`; successive frees of `0x4f591770` and
+`0x4f591760` reached an owner and returned. A shadow call stack resolved the
+path as MSVCRT helper `0x780013f2` -> `free` -> EXE `0x00483110` (a small
+`if (*p) free(*p)` destructor) -> EXE `0x004b98b0`, reached from the game's
+`0x00559dxx` update loop. The high count is many temporary-object frees, not one
+infinite list traversal.
+
+The later byte-run scan is more concerning. A histogram armed only after the
+first accepted cockpit frame stopped at `0x780012af` when the diagnostic
+same-EIP watchdog observed eleven full batches there. It had recorded 2,369,615
+entries at that byte scan (69.67% of recorded blocks), plus 515,105 and 515,104
+at the two page-range blocks. Moving the arm point to batch 930 reproduced the
+same condition: 2,236,409 entries at `0x780012af` (62.12%), with the range pair
+at 14.31% each. Static code increments a byte pointer until it finds a nonzero
+run length; the inner loop has no local end test because the CRT page metadata
+is expected to contain a terminating nonzero byte. More than two million zero
+bytes is not ordinary allocation churn. The instrumented watchdog makes the
+episode end visibly, while an uninstrumented run eventually progresses and
+presents frames; it does not make the scan legitimate.
+
+Before adding an accelerator, trace the page descriptor's construction and the
+arguments at `0x7800121e`, then compare its bounds/run-map sentinel with the
+same DLL under native Wine or Windows. The possibilities are an earlier x86
+semantic error, a damaged CRT small-block-heap descriptor, or an initialization
+contract we have not reproduced. A wide WAT/SIMD “find nonzero” fold would make
+the symptom faster while concealing which invariant failed.
+
+A wholesale WAT-native `malloc/free` interposition is not a safe shortcut.
+MSVCRT, MSVCP50, MFC42, and the EXE exchange allocator-owned pointers, while
+direct calls inside each authentic DLL bypass the EXE import table. Replacing
+only imported `malloc/free` would create two incompatible heaps. Replacing the
+complete allocation family would also need `calloc`, `realloc`, C++ new/delete,
+small-block ownership, locking, and every internal direct-call edge. Once the
+metadata is proven correct, an exact decode-time fold of the verified CRT loops
+is the lower-risk optimization: it continues to read and update MSVCRT's own
+heap structures and resumes at the authentic x86 successor with identical
+registers and flags. The existing `$fast_msvc_sbh_scan` is precedent, not a
+solution to these addresses: it recognizes one exact descriptor/page-range
+shape at decode time; it does not replace CRT allocation generally or cover the
+`free` ownership walk and zero-byte run scan measured here.
+
+### Command mix after the first accepted cockpit frame
+
+Three otherwise identical no-threads runs ended at batches 830, 892, and 950.
+The cockpit predicate matched at batch 891. Subtracting the batch-892 census
+from batch 950 isolates 58 batches in which the guest executed 20
+`IDirectDrawSurface::Flip` calls. Counts are deterministic; no wall-clock FPS is
+inferred.
+
+| API | At 830 | At 892 | At 950 | Post-cockpit delta | Per `Flip` | Worker treatment |
+|---|---:|---:|---:|---:|---:|---|
+| `Device3::DrawPrimitive` | 20 | 1,037 | 16,041 | 15,004 | 750.20 | queue; own packed vertex payload |
+| `Device3::SetTexture` | 20 | 1,037 | 16,041 | 15,004 | 750.20 | queue/coalesce surface id + generation |
+| `SetTextureStageState` | 0 | 40 | 833 | 793 | 39.65 | queue/coalesce |
+| `SetRenderState` | 131 | 194 | 782 | 588 | 29.40 | queue/coalesce |
+| `BeginScene` / `EndScene` | 20 / 20 | 30 / 30 | 147 / 146 | 117 / 116 | 5.85 / 5.80 | ordered markers; no fence by themselves |
+| Surface `Lock` / `Unlock` | 563 / 562 | 691 / 691 | 762 / 762 | 71 / 71 | 3.55 pairs | fence only conflicting surface users |
+| Surface `Blt` | 489 | 492 | 517 | 25 | 1.25 | queue with read/write dependencies |
+| Surface `Flip` | 494 | 503 | 523 | 20 | 1.00 | frame/presentation fence |
+| `Texture2::Load` / `Release` | 24 / 24 | 141 / 141 | 168 / 168 | 27 / 27 | 1.35 / 1.35 | ordered copy; deferred destruction |
+
+The state/draw rows contain 31,622 queueable calls, about 1,581 per `Flip`.
+Calling `postMessage` or performing an RPC for each one would be worse than the
+current direct WAT calls. A frame-sized shared command ring is plausible: it
+amortizes wakeup overhead and has about 750 draws over which the game can build
+the remainder of a frame while another core rasterizes earlier draws. The
+unknown variable is vertex payload volume; `DrawPrimitive` supplies a borrowed
+guest pointer today, so a prototype must measure packed bytes as well as calls.
+
+### What Threads mode already does
+
+In browser Threads mode, slot 0 (the guest main thread) already runs in a Web
+Worker. D3DIM is WAT called synchronously by that instance, so software
+rasterization is already off the browser UI thread. The browser thread serves
+imports and composites completed surfaces. A dedicated render Worker would not
+fix UI-thread blocking; its purpose would be to overlap the main guest's x86
+simulation/command generation with native-Wasm raster work.
+
+The existing renderer cannot simply be called concurrently from a second
+instance. Render targets, depth buffers, textures, DX object records, and most
+device state are in shared WebAssembly memory, which is promising. However,
+lighting caches and several D3DIM control/debug values are mutable
+per-instance globals, scratch vertices live inside the device state block, and
+draw handlers currently consume guest pointers then free temporary packed FVF
+buffers before returning. WebAssembly instances are not re-entrant across
+Workers. The render side therefore needs an explicit command ABI rather than a
+second caller entering the guest instance.
+
+### Feasible command-stream design
+
+Use one SharedArrayBuffer-backed single-producer/single-consumer ring per D3D
+device. The guest Worker is the producer; a dedicated render Worker owns a
+renderer-only instance over the same shared memory. Each packet has a sequence,
+opcode, payload length, referenced surface slot plus generation, and read/write
+surface sets. Publish the packet length/sequence with an atomic release store;
+the consumer advances a completed sequence and wakes any targeted fence.
+
+For MW3's measured path:
+
+1. `SetTexture`, render state, texture-stage state, and scene markers are tiny
+   ordered packets. The encoder may coalesce states that are overwritten before
+   a draw, but the replay contract should first be proved without coalescing.
+2. `DrawPrimitive` packs the selected FVF once directly into command-owned
+   canonical vertices. The current Device3 path allocates a temporary packed
+   buffer, draws from it synchronously, then frees it; enqueueing the borrowed
+   pointer would be a use-after-free. Direct packing into ring payload avoids a
+   second copy and gives the consumer immutable input.
+3. Textures, render targets, and attached depth buffers remain in shared
+   DirectDraw surface memory. A draw references stable slot/generation/CPU-epoch
+   values rather than copying whole textures.
+4. Track `lastReadSequence` and `lastWriteSequence` per surface. `Lock` waits
+   only when CPU access conflicts with queued reads/writes of that surface;
+   `Unlock` publishes a new CPU epoch used by later commands. `Blt` and
+   `Texture::Load` carry source-read and destination-write dependencies.
+5. `Flip` queues presentation after all writes to its front/back pair and waits
+   for that sequence before returning/publishing. This is one mandatory fence
+   per measured frame. `GetDC`, read locks, status/readback calls, and any API
+   returning rendered pixels are also barriers.
+6. A COM `Release` that reaches zero tombstones the slot/generation immediately
+   but defers reuse and backing-memory reclamation until its last referenced
+   sequence completes. This usually needs no producer stall.
+
+The 71 measured lock pairs are an upper bound of 3.55 possible surface fences
+per frame, not 3.55 guaranteed global stalls: locks of surfaces absent from the
+queued dependency set proceed immediately. Instrument the surface ids before
+predicting overlap. Conversely, `Flip` limits cross-frame queue depth, so the
+expected gain comes from overlap within a frame, not from rendering arbitrarily
+far ahead.
+
+This is technically feasible but medium/high complexity. It does not reduce
+total raster CPU and can regress on a two-core/mobile host. The earlier mixed
+profile's 20.1% named-D3D share gives only a rough perfect-offload Amdahl ceiling
+of `1 / (1 - 0.201) = 1.25x`; it is not a prediction because that sample crosses
+deployment and excludes the newly exposed CRT pathology. Fix or explain the
+allocator scan, then take a wall profile over verified moving frames before
+committing to the Worker.
+
+Implementation should be staged behind an opt-in:
+
+1. Define packets and replay them synchronously on the current guest Worker.
+   At every `Flip`, compare render-target/depth/texture state and the captured
+   primary image with the direct-call path in both scheduler modes.
+2. Add generation/lifetime and per-surface dependency tests for
+   Draw -> Lock, Unlock -> Draw, Blt/Load ordering, attached depth, and Release
+   before replay. No API may report successful completion while guest-visible
+   output is still observably stale; this is the truthful-semantics boundary
+   from `fable-review.md`.
+3. Move the already-proven replay consumer to a dedicated Worker and batch one
+   wakeup per filled chunk/frame, using the existing OpenGL command stream as a
+   transport precedent rather than sharing its GL-specific command format.
+4. Re-run the command/byte/barrier census and matched moving-frame wall profile.
+   Keep the Worker only if overlap exceeds queue copies, atomics, and lost-core
+   cost without changing the gameplay image.
