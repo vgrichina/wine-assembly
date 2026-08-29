@@ -38,7 +38,7 @@ const isa = require('./isa');
 // above anything a program that merely loads an overlay will reach.
 const PATCH_MISSES = 20000;
 const { compileProgram } = require('./compile');
-const { STUB_SEG, STUB_BYTE } = require('./dos');
+const { STUB_SEG, STUB_OFF, STUB_BYTE } = require('./dos');
 
 // ---------------------------------------------------------------------------
 // The compiled-code arena.
@@ -540,7 +540,21 @@ class DosSession {
     // Single-stepping costs one compile and one handback per instruction, which
     // is what the guest asked for; the compiled block is not cached, so nothing
     // about full-speed execution changes when TF comes back down.
-    const stepping = (vm.get('flags') & (1 << isa.F.TF)) !== 0;
+    //
+    // ...but only when someone is listening. TF with the INT 1 vector still on
+    // the untouched BIOS stub owes a trap that pushes a frame and IRETs back
+    // with nothing changed, so single-stepping it buys the guest exactly the
+    // six stack bytes below SP and costs a compile and a handback per
+    // instruction. BLINKY.EXE sets TF and never hooks INT 1: 180 seconds bought
+    // it 7,067,597 traps, 44 dispatches per handback and 7% of the wall clock
+    // in wasm, against 26M dispatches per second when it is not stepping. A
+    // protector hooks INT 1 before it raises TF -- that is the whole point of
+    // the technique -- so the vector is the honest test of whether the trap is
+    // observable, and it is re-read every slice so a late hook still takes.
+    const int1 = vm.mem[4] | (vm.mem[5] << 8);
+    const int1seg = vm.mem[6] | (vm.mem[7] << 8);
+    const int1Hooked = !(int1seg === STUB_SEG && int1 === STUB_OFF + 1);
+    const stepping = int1Hooked && (vm.get('flags') & (1 << isa.F.TF)) !== 0;
     const entry = stepping
       ? this.cache.stepOne(cs, ip, codeBase, mask, d32)
       : this.cache.entryFor(cs, ip, codeBase, mask, d32);

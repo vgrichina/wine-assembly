@@ -3302,7 +3302,7 @@ class Machine {
 
 module.exports = {
   Machine, loadExe, vgaGeometry, parseKeys,
-  VGA_BASE, STUB_SEG, STUB_BYTE, LOAD_SEG, PSP_SEG,
+  VGA_BASE, STUB_SEG, STUB_OFF, STUB_BYTE, LOAD_SEG, PSP_SEG,
 };
 
 if (require.main === module) {
