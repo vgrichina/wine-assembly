@@ -309,15 +309,64 @@ answered "no DPMI host". JULTRO.EXE, its neighbour, stopped separately at
 `5ab:6e`; since the SMC-coverage fix (14d5c1a2) it gets past that and stops at
 `5ab:8c` instead, with `Divide overflow at 5ab:1ff` and INT 00h unhandled.
 
-All four of its "decoder gave up" sites are **data**: `5ab:56`, `6e`, `8c` and
-`a7` are ascending 16-bit offset tables (`0c9e 0ca5 0cad 0cb5 …`,
-`0d63 0d6a 0d71 …`), and so is `5ab:01e0`-`0212` (`0ff3 0ff9 0ffa 0ffb …`)
-where the divide is. The top two slice entries, `5ab:263` and `5ab:1c0` at 9432
-hits each, are in that same region. So the decoder refusals and the divide are
-one symptom, not three causes: the program is executing its own jump tables,
-having got there with a bad index — most likely because the 62 self-modify
-breaks are not producing the plaintext it expects. That is where a next look
-should start, not at the divide.
+**The cause, measured 2026-08-29.** An earlier note here read the four "decoder
+gave up" sites as the program executing its own jump tables "having got there
+with a bad index -- most likely because the 62 self-modify breaks are not
+producing the plaintext it expects". The jump-table half is right and the cause
+is not: `--no-cache` reproduces the stall exactly (20552 fresh traces, same
+`5ab:8c`), so no stale compiled block is involved, and the 62 breaks are fine.
+
+JULTRO.EXE is two wrappers around the demo. Its MZ header says so in clear text
+at offset 0x22: `Protect! v.5.0/MarkEXE v.2.0`. Layer 1 is that protector,
+encrypted on disk -- disassembling the file at `5ab:0000` gets nothing, and even
+at runtime it is obfuscated with jump-over-a-junk-byte (`eb 01 / ea`), so a
+linear disassembly desyncs within two instructions. Layer 2 is LZEXE: it copies
+itself up to `0afb` and unpacks the real demo over segment `0x110` upward. The
+demo's own entry is `3bc:000c`, and it is a menu -- `int 21h AH=09` prints a
+string, `AH=08` waits for a key, and `'0'`-`'9'` indexes a table. So JULTRO
+belongs to the goal's "stuck in a user prompt" class once it gets that far.
+
+It does not get that far, and `--watch` (added for this) says why:
+
+```
+$ node tools/toyvm/run-dos.js JULTRO.EXE --seconds=3 --watch=0:0:1024
+   1  5ab:82  wrote c-d       1  5ab:ca  wrote 4-5
+   1  5ab:92  wrote e-f       1  5ab:de  wrote 6-f
+   1  5ab:10c wrote 4-7       1  5ab:186 wrote 4-87
+```
+
+Six writes into the interrupt vector table, all from layer 1, **and not one of
+them a restore** -- every count is 1. The protector hooks INT 01h, INT 03h and
+INT 21h (an anti-debugging set: single-step, breakpoint, DOS) and leaves them
+hooked. The IVT at exit confirms the targets:
+
+```
+vec 01 -> 05ab:0240     vec 03 -> 05ab:0263     vec 21 -> 05ab:0191
+```
+
+every other vector still pointing at our `f000:01xx` stubs. Then layer 2 unpacks
+straight over them -- `afb:65 wrote 5c40-5c41` is `5ab:0190-0191`, the INT 21h
+handler itself. By the time the demo executes its first DOS call, the `int 21h`
+at `3bc:0017`, the vector is inside what is now the demo's 12.4 fixed-point
+lookup table (`0fbd 0fb0 0fc2 0fc4 ...` -- ascending, saturating at `0x0fff`).
+It executes table bytes, wanders, and parks at `5ab:8c`.
+
+That also settles the other three symptoms filed here separately: `5ab:56`,
+`6e`, `8c`, `a7` and the divide are all *downstream* of the dangling vector, and
+none of them is a decoder bug.
+
+**What is still open is why real DOS survives this.** The protector never
+restores the vector and the unpack demonstrably lands on the handler, so on real
+hardware the hook must either be restored by code we do not reach, or point
+somewhere the unpack does not touch. The one clearly anomalous event we produce
+is the `Divide overflow at 5ab:1ff`, raised in layer 1's final block -- the one
+that hands off to layer 2 at `100:100`. On real DOS an unhandled INT 00h prints
+"Divide overflow" and *terminates*; JULTRO plainly does not die there, so our
+divide is overflowing where a real 386 would not, and whatever the rest of that
+block was going to do -- plausibly including the vector restore -- never ran.
+That is the next thing to measure, and the obstacle is that layer 1's
+obfuscation defeats the disassembler, so the divide's operands have to be
+recovered some other way.
 
 ### BLIQ's neighbours in the blank bucket
 
