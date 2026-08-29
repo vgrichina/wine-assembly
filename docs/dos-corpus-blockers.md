@@ -108,11 +108,27 @@ The whole chain, each link measured:
 773:0b5a   push/push/ret through [0x1e0c]       -> jumps to offset 0
 ```
 
-So the one remaining question is inside `3c9:1734`, called from `3c9:37f0`
-(`e8 41 df`), which is supposed to write `[87f:2448]` and leaves it zero. Note
-the scan landing on the table's own `UnKnow` entry (DL=0x2d) is *not* this
-value — 0x2d would index a live slot well past the nulls — so whatever the
-C000-F000 sweep concludes is not what reaches `[0x2448]`.
+`3c9:37f0` (`e8 41 df`) calls only one vendor probe — `3c9:1734`, a
+Paradise/WD unlock test that saves port 0x3BF, writes 3 then 0xAC to it and
+reads sequencer index 6 through 0x3C4, setting flag `[87f:00d9]` and always
+returning AL=0. The id itself is written by a large classification function
+around `3c9:32b0`-`3c9:36a0`, which assigns `[0x2448]` values 1-4, 7, 9-0x13,
+0x4f-0x58 and the negatives 0xffa8 and 0xfff4. Negative ids are legal: `773:07d9`
+negates `[0x1e02]` *in place* before indexing, so `773:0b44` afterwards sees the
+positive value.
+
+**Zero is a value that function writes on purpose**, at `3c9:3460`:
+`cmp byte [0xc4],0 / jz +0x1a / mov word [0x2448],0` — so the store happens when
+flag `[87f:00c4]` is nonzero. That is the thread to pull: which probe sets
+`[87f:00c4]`, and what it reads off our VGA that a real one answers differently.
+Note also that a real plain-VGA machine reaching index 0 would jump through the
+same null, so SETUP is not expected to see 0 — it is expected to classify
+*something*, which makes this a question about what our ports return rather than
+about SETUP's error handling.
+
+The C000-F000 sweep landing on the table's own `UnKnow` entry (DL=0x2d) is a
+separate thing and not this value — 0x2d would index a live slot well past the
+nulls.
 
 To find these: `--dump=0100:0000:98304` covers the entire loaded image in one
 go, and grepping the hexdump for the operand bytes (`6e 25` for `[0x256e]`)
