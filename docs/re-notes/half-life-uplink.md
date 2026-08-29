@@ -334,3 +334,32 @@ same corridor through the GPU layer after another 90-second settle. That leg
 issued 569 `gpuPresent` calls, loaded 1,863 textures, remained active with no
 GL error or trap, and produced 34,101 sampled colours:
 `/private/tmp/hlu-final-both-renderers/halflife_uplink-opengl-gameplay-after-switch-gpu.png`.
+
+## First-run keyboard bindings and movement GL calls
+
+Browser input focus was not the reason keyboard movement failed. A focused
+gameplay probe saw physical W become `0x8000`, consumed the queued key message,
+and entered GoldSrc's relocated `Key_Event`; the engine's key-down byte also
+became one. The key's binding pointer was null, however. Uplink's shipped
+`valve.rc` comments out `exec default.cfg`, always executes `autoexec.cfg`, and
+the extracted payload contains no autoexec file. The browser install now also
+seeds `valve/default.cfg` at `c:\valve\autoexec.cfg`, preserving the original
+file while using GoldSrc's native first-run startup path. The resulting live
+bindings are `w +forward` and mouse button 1 `+attack`.
+
+Actually executing `+forward` exposed two previously dormant OpenGL 1.1
+imports. `hw.dll` resolved `glPolygonOffset` into its slot at original address
+`0x10689dc8` and `glColor3ubv` into `0x10689ad4`; both were null. They are now
+append-only command-stream opcodes 57 and 58. Polygon offset reaches WebGL with
+both float arguments and supports `GL_POLYGON_OFFSET_FILL`; the three-byte
+colour vector is normalized into packed immediate-mode RGBA state without a
+Worker round trip.
+
+A fresh browser acceptance reached the rendered corridor, held W for 500 ms,
+released it, and remained active with no trap. `Key_Event` advanced from 256
+to 258, the key-down state transitioned zero -> one, and `Host_Frame` continued
+from 839 to 848. Visual comparison confirms forward camera displacement: the
+right-wall panels and overhead opening move toward and past the camera. The
+before/held captures differ at 305,732 of 459,360 pixels (66.56%):
+`/private/tmp/hlu-keyboard-color3ubv/halflife_uplink-movement-before.png` and
+`/private/tmp/hlu-keyboard-color3ubv/halflife_uplink-movement-w-held.png`.

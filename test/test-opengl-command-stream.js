@@ -42,6 +42,20 @@ assert.strictEqual(encoder.call(12, stack, 0), 0x504, 'query returns the last re
 assert.deepStrictEqual(executed.map(x => x.opcode), [10, 12], 'barrier preserves command order');
 assert.strictEqual(executed[0].arg0, 0x0BE2, 'queued stack arguments are copied immediately');
 
+// Newly appended GL entry points retain the established opcode ABI and copy
+// their complete argument stack through the Worker stream.
+dv.setFloat32(stack + 4, -1.25, true);
+dv.setFloat32(stack + 8, 2.5, true);
+encoder.call(57, stack, 0); // glPolygonOffset
+encoder.call(11, stack, 0); // glFinish
+const polygonOffsetCommand = executed.find(x => x.opcode === 57);
+assert(polygonOffsetCommand, 'polygon offset is transported as appended opcode 57');
+const polygonOffsetStack = new DataView(polygonOffsetCommand.capture.buffer);
+assert.strictEqual(polygonOffsetCommand.capture.stackBytes, 12,
+  'polygon offset captures return address plus two float arguments');
+assert.strictEqual(polygonOffsetStack.getFloat32(polygonOffsetCommand.capture.stackOffset + 4, true), -1.25);
+assert.strictEqual(polygonOffsetStack.getFloat32(polygonOffsetCommand.capture.stackOffset + 8, true), 2.5);
+
 // Small client pointers are copied into the stream because engines commonly
 // reuse a scratch vertex between calls.
 const vertex = 0x500;
@@ -81,6 +95,10 @@ packedEncoder.call(25, stack, 0);
 // forcing a Worker round trip.
 [0xFF, 0, 0xFF, 0].forEach((value, i) => dv.setUint32(stack + 4 + i * 4, value, true));
 packedEncoder.call(56, stack, 0);
+const color3ubv = 0x600;
+new Uint8Array(memory, color3ubv, 3).set([0x20, 0x80, 0xFE]);
+dv.setUint32(stack + 4, color3ubv, true);
+packedEncoder.call(58, stack, 0);
 setFloatArgs([0.125, 0.875]);
 packedEncoder.call(28, stack, 0);
 for (const vertexValues of [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]]) {
@@ -96,8 +114,9 @@ assert.strictEqual(packedCalls[0].capture.pointerLength, 6 * 9 * 4,
   'four fan vertices compile to two interleaved triangles');
 const packedVertices = new Float32Array(packedCalls[0].capture.buffer,
   packedCalls[0].capture.pointerOffset, packedCalls[0].capture.pointerLength / 4);
-assert.deepStrictEqual(Array.from(packedVertices.slice(3, 9)), [1, 0, 1, 0, 0.125, 0.875],
-  'packed vertices contain scalar-byte color and texture-coordinate state');
+assert.deepStrictEqual(Array.from(packedVertices.slice(3, 9)),
+  Array.from(new Float32Array([0x20 / 255, 0x80 / 255, 0xFE / 255, 1, 0.125, 0.875])),
+  'packed vertices contain vector-byte color and texture-coordinate state');
 
 // Capacity pressure submits an execution batch but cannot publish a frame.
 let presents = 0;

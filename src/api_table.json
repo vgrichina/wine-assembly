@@ -25406,5 +25406,19 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 718116093
+  },
+  {
+    "id": 3056,
+    "name": "glPolygonOffset",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1001024067
+  },
+  {
+    "id": 3057,
+    "name": "glColor3ubv",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 479410229
   }
 ]

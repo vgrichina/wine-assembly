@@ -54,8 +54,11 @@ const gpuApis = new Map([
   // same backend-neutral present operation used by GDI32!SwapBuffers.
   ['wglSwapBuffers', 1],
   // Appended after the stable GL/WGL opcode range. GoldSrc uses the scalar
-  // unsigned-byte colour entry point for world geometry.
+  // unsigned-byte colour entry point for world geometry and polygon offset
+  // for coplanar decals.
   ['glColor4ub', 4],
+  ['glPolygonOffset', 2],
+  ['glColor3ubv', 1],
 ]);
 const gpuApiOrder = [...gpuApis.keys()];
 

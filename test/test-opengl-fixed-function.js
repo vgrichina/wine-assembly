@@ -16,6 +16,8 @@ class FakeBackend {
     this.draws = []; this.uniforms = new Map(); this.uploads = [];
     this.parameters = [];
     this.depthRanges = [];
+    this.polygonOffsets = [];
+    this.capabilities = [];
     this.uniformCalls = 0;
   }
   createProgram() { return { attributes: { aPosition: 0, aColor: 1, aTexCoord: 2 }, uniforms: {} }; }
@@ -34,8 +36,9 @@ class FakeBackend {
   updateTexture2D(_texture, image) { this.uploads.push(image); }
   deleteTexture() {}
   destroy() {}
-  setCapability() {}
+  setCapability(capability, enabled) { this.capabilities.push([capability, enabled]); }
   setDepthRange(nearValue, farValue) { this.depthRanges.push([nearValue, farValue]); }
+  setPolygonOffset(factor, units) { this.polygonOffsets.push([factor, units]); }
 }
 
 const backend = new FakeBackend();
@@ -139,6 +142,25 @@ bridge.call(CALL_INDEX.glColor4ub, stack, 0);
 assert.deepStrictEqual(bridge.contexts.get(1).frontend.color,
   [0x11 / 255, 0x80 / 255, 0xFE / 255, 0x40 / 255],
   'GoldSrc scalar unsigned-byte colour calls lower to normalized RGBA');
+bridgeView.setFloat32(stack + 4, -1, true);
+bridgeView.setFloat32(stack + 8, -2, true);
+bridge.contexts.get(1).frontend.backend = backend;
+bridge.call(CALL_INDEX.glPolygonOffset, stack, 0);
+assert.deepStrictEqual(backend.polygonOffsets, [[-1, -2]],
+  'GoldSrc polygon offset reaches the WebGL backend with both float arguments');
+const guestColor3 = 0x4e306060, color3Backing = 0x220;
+new Uint8Array(bridgeMemory, color3Backing, 3).set([0x20, 0x80, 0xFE]);
+bridgeView.setUint32(stack + 4, guestColor3, true);
+const bridgeTranslator = bridge.options.exports.guest_to_wasm;
+bridge.options.exports.guest_to_wasm = pointer => pointer === guestColor3
+  ? color3Backing : bridgeTranslator(pointer);
+bridge.call(CALL_INDEX.glColor3ubv, stack, 0);
+assert.deepStrictEqual(bridge.contexts.get(1).frontend.color,
+  [0x20 / 255, 0x80 / 255, 0xFE / 255, 1],
+  'GoldSrc vector unsigned-byte colour calls lower to normalized RGB with opaque alpha');
+gl.setEnabled(GL.POLYGON_OFFSET_FILL, true);
+assert.deepStrictEqual(backend.capabilities.at(-1), [GL.POLYGON_OFFSET_FILL, true],
+  'polygon-offset fill follows desktop GL enable state');
 bridge.call(CALL_INDEX.gpuPresent, stack, 0);
 assert.strictEqual(guestPresents, 1,
   'generic GPU presentation contributes exactly one guest FPS sample');

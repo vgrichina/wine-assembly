@@ -32,11 +32,16 @@ assert.strictEqual(digest(pak),
 for (const [suffix, vfsPath] of [
   ['/valve/dlls/hl.dll', 'c:\\valve\\dlls\\hl.dll'],
   ['/valve/cl_dlls/client.dll', 'c:\\valve\\cl_dlls\\client.dll'],
+  ['/valve/default.cfg', 'c:\\valve\\autoexec.cfg'],
 ]) {
   assert(APPS.halflife_uplink.files.some(file =>
     file.url.endsWith(suffix) && file.vfsPath === vfsPath),
   `Half-Life Uplink mounts ${suffix} at its installed discovery path`);
 }
+assert(APPS.halflife_uplink.files.some(file =>
+  file.url.endsWith('/valve/default.cfg') &&
+  file.vfsPath === 'c:\\valve\\default.cfg'),
+  'Half-Life Uplink retains default.cfg alongside its first-run autoexec seed');
 const browserShell = fs.readFileSync(path.join(root, 'lib/browser-shell.js'), 'utf8');
 assert(/case 'jazz2_demo':\s*[\s\S]*?case 'halflife_uplink':\s*return 10000;/.test(browserShell),
   'Half-Life Uplink gives OpenGL enough work per cooperative slice for gameplay');
