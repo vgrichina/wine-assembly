@@ -99,18 +99,26 @@ modal or a generic menu-frame change can no longer satisfy the test.
 
 `test/test-icewind-dale-menu-web.js` applies the same label-band gate to a
 fresh, no-cache Chrome page and also requires the browser VFS to contain the
-2,942,485-byte `Dialog.tlk` plus `Data/GUIfont.bif`. This distinguishes the
-complete 919-file browser manifest from an already-open pre-fix tab: the old
-page can retain its in-memory app registry after the files on port 8080 change,
-and Stop/Launch does not reload that JavaScript. Reload the page before judging
-a newly changed local manifest.
+2,942,485-byte `Dialog.tlk` plus `Data/GUIfont.bif`. It keeps sampling the
+actual 640x480 DirectDraw layer for another 30 seconds after the first complete
+menu, so a transient first-good frame cannot satisfy the browser regression.
+The repeated blank-label reports were not explained by a stale tab: a later
+fresh-page report disproved that earlier diagnosis. Repeated exact Chrome runs
+kept 738 label glyph pixels throughout the sustained sampling window; no
+runtime change is claimed without a reproducible failing transition.
 
 It then names the character `CODEX`, accepts the party, waits through the real
-first-area resource load, reaches the in-game HUD with that portrait, and
-issues a native Quick Save. Acceptance requires
+first-area resource load, and requires the native `PROLOGUE` chapter screen.
+The chapter narration body is currently blank, but `REPLAY` and `DONE` render.
+Pressing Escape hides this panel without completing it and exposes the tavern
+under Infinity's `Paused for chapter text` lock—the exact state previously
+misclassified as playable because the acceptance treated red status glyphs as
+success. The corrected route activates `DONE`, captures the unpaused tavern,
+clicks a distant floor point, and requires the created character's pixels to
+move before it issues a native Quick Save. Acceptance then requires
 `mpsave/000000001-quick-save/icewind.gam` and verifies that its party bytes
 contain `codex`; the old `NO DISC IN DRIVE D:` screen and a loading image can
-no longer count as gameplay.
+no longer count as gameplay, and neither can a static paused HUD.
 
 The app opts only authored state into browser persistence (`Characters`,
 `Save`, and `MPSave`). A fresh-Chrome regression writes the native 2,500-byte

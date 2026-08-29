@@ -2282,6 +2282,17 @@
         (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
+  ;; BOOL IsCharAlphaNumericA(CHAR ch). C1_ALPHA and C1_DIGIT are the two
+  ;; accepted classes; punctuation, spaces and control bytes remain false.
+  (func $handle_IsCharAlphaNumericA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax
+      (i32.ne
+        (i32.and
+          (call $ctype1_ascii_flags (i32.and (local.get $arg0) (i32.const 0xff)))
+          (i32.const 0x104))
+        (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
   ;; GetStringType{A,W} core: one CT_CTYPE1 word per source character. The
   ;; output is an array of WORDs either way; only the source stride differs.
   (func $get_string_type_core (param $src_guest i32) (param $count_in i32)

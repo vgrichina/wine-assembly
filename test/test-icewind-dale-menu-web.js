@@ -3,10 +3,10 @@
 'use strict';
 
 // Browser-path regression for the local Icewind Dale demo. The CLI acceptance
-// already checks these labels, but a stale/partial browser manifest can still
-// render the menu MOS and six empty stone buttons. Require the real DirectDraw
-// layer to contain the light GUI-font glyphs and verify the two resources that
-// supply them are mounted in the browser VFS.
+// already checks these labels, but the browser can still render the menu MOS
+// and six empty stone buttons. Require the real DirectDraw layer to contain
+// the light GUI-font glyphs, keep them for a sustained interval, and verify
+// the two resources that supply them are mounted in the browser VFS.
 
 const assert = require('assert');
 const fs = require('fs');
@@ -23,6 +23,7 @@ const EXE = path.join(ROOT, 'test/binaries/candidates/icewind-dale-demo',
   'installed-extracted/Recommended_compressed/IDDemo.exe');
 const OUT = path.join(ROOT,
   'build/local-candidate-smoke/icewind-dale-demo/browser-menu.png');
+const STABILITY_MS = Number(process.env.IWD_MENU_STABILITY_MS || 30000);
 
 if (!fs.existsSync(CHROME) || !fs.existsSync(EXE)) {
   console.log('SKIP  Chrome or the local Icewind Dale demo payload is absent');
@@ -150,13 +151,22 @@ async function menuFrame(page) {
     assert(frame.guiFont > 0, 'browser VFS is missing Data/GUIfont.bif');
     assert(frame.labels > 500,
       `browser menu button labels are missing (${frame.labels} light glyph pixels)`);
+
+    const firstLabels = frame.labels;
+    const stableUntil = Date.now() + STABILITY_MS;
+    while (Date.now() < stableUntil) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      frame = await menuFrame(page);
+      assert(frame && frame.labels > 500,
+        `browser menu labels disappeared after first rendering (${frame && frame.labels} light glyph pixels)`);
+    }
     assert.strictEqual(problems.length, 0, `browser runtime failures:\n${problems.join('\n')}`);
 
     fs.mkdirSync(path.dirname(OUT), { recursive: true });
     const png = new PNG({ width: 640, height: 480 });
     png.data.set(frame.pixels);
     fs.writeFileSync(OUT, PNG.sync.write(png));
-    console.log(`PASS  Icewind Dale browser menu renders ${frame.labels} label glyph pixels (${frame.files} VFS paths)`);
+    console.log(`PASS  Icewind Dale browser menu remains painted for ${STABILITY_MS}ms (${firstLabels} -> ${frame.labels} label glyph pixels, ${frame.files} VFS paths)`);
     console.log(`Screenshot: ${OUT}`);
   } finally {
     await browser.close();

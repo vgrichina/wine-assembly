@@ -25,6 +25,9 @@ const PARTY = path.join(OUT, 'party-formation.png');
 const CHARACTER = path.join(OUT, 'character-generation.png');
 const SOUND = path.join(OUT, 'sound-selection.png');
 const PARTY_READY = path.join(OUT, 'party-with-created-character.png');
+const CHAPTER = path.join(OUT, 'prologue-chapter.png');
+const GAMEPLAY_START = path.join(OUT, 'easthaven-before-move.png');
+const GAMEPLAY_MOVED = path.join(OUT, 'easthaven-after-move.png');
 const GAMEPLAY = path.join(OUT, 'easthaven-gameplay.png');
 const SAVE_EXPORT = path.join(OUT, 'saved-vfs');
 
@@ -46,7 +49,8 @@ assert.strictEqual(sha256(KEY),
 assert(fs.existsSync(DISC_MARKER), 'the CD2 data merge is missing; refetch the candidate fixture');
 
 fs.mkdirSync(OUT, { recursive: true });
-for (const filename of [BEFORE, PARTY, CHARACTER, SOUND, PARTY_READY, GAMEPLAY]) {
+for (const filename of [BEFORE, PARTY, CHARACTER, SOUND, PARTY_READY, GAMEPLAY,
+  CHAPTER, GAMEPLAY_START, GAMEPLAY_MOVED]) {
   if (fs.existsSync(filename)) fs.unlinkSync(filename);
 }
 fs.rmSync(SAVE_EXPORT, { recursive: true, force: true });
@@ -103,18 +107,25 @@ const input = [
   `3860:png:${PARTY_READY}`,
   '4000:click:552:431',
   '4010:set-batch-size:2000000',
-  // Require the native loading frame to appear and then disappear. These waits
-  // shift every later action, so host load cannot move Quick Save into startup.
-  '4020:wait-canvas-dark-pixels:60000:307200:800',
-  '4021:wait-canvas-dark-pixels:0:30000:1600',
-  '4025:keydown:27', '4027:keyup:27',
-  '4040:keydown:81', '4041:keypress:81', '4042:keyup:81',
-  '4045:wait-vfs-file:1600:c:\\mpsave\\000000001-quick-save\\icewind.gam',
-  `4060:png:${GAMEPLAY}`,
-  '4070:stop',
+  // The default multiplayer save is created only after the first-area load.
+  // It is a stable gate for the Prologue screen independent of host load.
+  '4020:wait-vfs-file:1600:c:\\mpsave\\default\\icewind.gam',
+  '4021:set-batch-size:200000',
+  `4100:png:${CHAPTER}`,
+  // Escape hides the Prologue panel but leaves Infinity's chapter-text pause
+  // active. Activate its native DONE button so the game actually unpauses.
+  '4110:click:400:435',
+  `4400:png:${GAMEPLAY_START}`,
+  '4410:click:500:300',
+  `4700:png:${GAMEPLAY_MOVED}`,
+  '4710:keydown:81', '4711:keypress:81', '4712:keyup:81',
+  '4715:wait-vfs-file:1600:c:\\mpsave\\000000001-quick-save\\icewind.gam',
+  `4800:png:${GAMEPLAY}`,
+  '4810:stop',
 ].join(',');
 const result = spawnSync(process.execPath, [
   path.join(__dirname, 'run.js'),
+  ...(process.env.IWD_NO_BUILD === '1' ? ['--no-build'] : []),
   '--app=icewind_dale_demo',
   '--max-batches=5700',
   '--batch-size=200000',
@@ -136,6 +147,9 @@ const result = spawnSync(process.execPath, [
 const output = `${result.stdout || ''}\n${result.stderr || ''}`;
 if (result.status !== 0) console.error(output.split('\n').slice(-80).join('\n'));
 assert.strictEqual(result.status, 0, `Icewind Dale demo run failed (${result.signal || result.status})`);
+if (!output.includes('title="JigSawedME"')) {
+  console.error(output.split('\n').slice(-80).join('\n'));
+}
 assert(output.includes('title="JigSawedME"'), 'the real game window was not created');
 if (/UNIMPLEMENTED API|UNHANDLED EXCEPTION|Critical Error|Assertion failed/.test(output)) {
   console.error(output.split('\n').filter(line => /UNIMPLEMENTED API|UNHANDLED EXCEPTION|Critical Error|Assertion failed|MessageBox/.test(line)).slice(-40).join('\n'));
@@ -144,7 +158,8 @@ assert(!/UNIMPLEMENTED API|UNHANDLED EXCEPTION|Critical Error|Assertion failed/.
   'the demo reported a runtime failure');
 assert(!/NO DISC IN DRIVE|Media Removed From Drive/i.test(output),
   'the demo fell back to its missing-CD path');
-assert(fs.existsSync(GAMEPLAY),
+assert(fs.existsSync(CHAPTER) && fs.existsSync(GAMEPLAY_START) &&
+  fs.existsSync(GAMEPLAY_MOVED) && fs.existsSync(GAMEPLAY),
   'the first-area loading/save gates did not complete before the local acceptance timeout');
 
 const before = PNG.sync.read(fs.readFileSync(BEFORE));
@@ -152,12 +167,18 @@ const party = PNG.sync.read(fs.readFileSync(PARTY));
 const character = PNG.sync.read(fs.readFileSync(CHARACTER));
 const sound = PNG.sync.read(fs.readFileSync(SOUND));
 const partyReady = PNG.sync.read(fs.readFileSync(PARTY_READY));
+const chapter = PNG.sync.read(fs.readFileSync(CHAPTER));
+const gameplayStart = PNG.sync.read(fs.readFileSync(GAMEPLAY_START));
+const gameplayMoved = PNG.sync.read(fs.readFileSync(GAMEPLAY_MOVED));
 const gameplay = PNG.sync.read(fs.readFileSync(GAMEPLAY));
 assert.strictEqual(`${before.width}x${before.height}`, '640x480');
 assert.strictEqual(`${party.width}x${party.height}`, '640x480');
 assert.strictEqual(`${character.width}x${character.height}`, '640x480');
 assert.strictEqual(`${sound.width}x${sound.height}`, '640x480');
 assert.strictEqual(`${partyReady.width}x${partyReady.height}`, '640x480');
+assert.strictEqual(`${chapter.width}x${chapter.height}`, '640x480');
+assert.strictEqual(`${gameplayStart.width}x${gameplayStart.height}`, '640x480');
+assert.strictEqual(`${gameplayMoved.width}x${gameplayMoved.height}`, '640x480');
 assert.strictEqual(`${gameplay.width}x${gameplay.height}`, '640x480');
 
 let partyChanged = 0;
@@ -224,13 +245,19 @@ for (let i = 0; i < sound.data.length; i += 4) {
 assert(soundSetLabels > 3500 && soundInstructions > 1000 && soundChanged / pixels > 0.18,
   `Appearance Done did not reach populated sound selection (${soundSetLabels} label pixels, ${soundInstructions} instructions, ${(soundChanged / pixels * 100).toFixed(1)}% frame change)`);
 
-let gameplaySaveStatus = 0;
-for (let y = 392; y < 435; y++) {
-  for (let x = 70; x < 420; x++) {
-    const i = (y * gameplay.width + x) * 4;
-    const r = gameplay.data[i], g = gameplay.data[i + 1], b = gameplay.data[i + 2];
-    if ((g > 80 && g > r + 25 && g > b + 20) ||
-        (r > 90 && r > g + 30 && r > b + 30)) gameplaySaveStatus++;
+const chapterTitle = lightGlyphPixels(chapter, 235, 20, 405, 58);
+const chapterButtons = lightGlyphPixels(chapter, 170, 410, 470, 462);
+assert(chapterTitle > 250 && chapterButtons > 200,
+  `the Prologue completion screen did not render (${chapterTitle} title, ${chapterButtons} button glyph pixels)`);
+
+let movementPixels = 0;
+for (let y = 180; y < 290; y++) {
+  for (let x = 420; x < 510; x++) {
+    const i = (y * gameplayStart.width + x) * 4;
+    const delta = Math.abs(gameplayStart.data[i] - gameplayMoved.data[i])
+      + Math.abs(gameplayStart.data[i + 1] - gameplayMoved.data[i + 1])
+      + Math.abs(gameplayStart.data[i + 2] - gameplayMoved.data[i + 2]);
+    if (delta > 36) movementPixels++;
   }
 }
 const portraitColors = new Set();
@@ -247,8 +274,8 @@ for (let i = 0; i < gameplay.data.length; i += 4) {
     + Math.abs(gameplay.data[i + 2] - partyReady.data[i + 2]);
   if (delta > 36) gameplayChanged++;
 }
-assert(gameplaySaveStatus > 700 && portraitColors.size > 35 && gameplayChanged / pixels > 0.55,
-  `first-area gameplay/save UI did not render (${gameplaySaveStatus} status glyph pixels, ${portraitColors.size} portrait colors, ${(gameplayChanged / pixels * 100).toFixed(1)}% frame change)`);
+assert(movementPixels > 1000 && portraitColors.size > 35 && gameplayChanged / pixels > 0.55,
+  `first-area gameplay did not unpause/respond to movement (${movementPixels} changed character pixels, ${portraitColors.size} portrait colors, ${(gameplayChanged / pixels * 100).toFixed(1)}% frame change)`);
 
 const quickSave = path.join(SAVE_EXPORT,
   'mpsave/000000001-quick-save/icewind.gam');
