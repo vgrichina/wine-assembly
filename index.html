@@ -81,6 +81,146 @@
       cursor: pointer;
     }
     #toolbar button:active { border-style: inset; }
+    .app-picker {
+      position: relative;
+      flex: 0 1 270px;
+      min-width: 190px;
+    }
+    #toolbar .app-picker-trigger {
+      width: 100%;
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      text-align: left;
+    }
+    .app-picker-trigger-label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .app-picker.enhanced #app-select {
+      position: fixed;
+      left: -10000px;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      border: 0;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .app-picker-popup {
+      position: absolute;
+      top: calc(100% + 2px);
+      left: 0;
+      z-index: 1000;
+      display: flex;
+      align-items: flex-start;
+      color: #000;
+      filter: drop-shadow(2px 2px 0 rgba(0, 0, 0, .35));
+    }
+    .app-picker-popup[hidden],
+    .app-picker-search-results[hidden],
+    .app-picker-browse[hidden] { display: none; }
+    .app-picker-panel {
+      width: 280px;
+      max-height: min(430px, calc(100dvh - 90px));
+      overflow-y: auto;
+      background: #c0c0c0;
+      border: 2px outset #dfdfdf;
+      padding: 3px;
+    }
+    .app-picker-child { margin-left: -2px; }
+    .app-picker-search-wrap {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      padding: 2px 2px 5px;
+      background: #c0c0c0;
+    }
+    #toolbar .app-picker-search {
+      width: 100%;
+      padding: 5px 6px;
+      border: 2px inset #dfdfdf;
+      border-radius: 0;
+      background: #fff;
+      color: #000;
+      font: inherit;
+      outline: 0;
+    }
+    #toolbar .app-picker-search:focus { outline: 1px dotted #000; outline-offset: -4px; }
+    .app-picker-heading {
+      padding: 5px 7px 3px;
+      color: #606060;
+      font-size: 10px;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+    #toolbar .app-picker-item {
+      width: 100%;
+      min-height: 25px;
+      padding: 4px 7px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      border: 0;
+      background: transparent;
+      text-align: left;
+      white-space: nowrap;
+    }
+    #toolbar .app-picker-item:hover,
+    #toolbar .app-picker-item:focus,
+    #toolbar .app-picker-item.active {
+      color: #fff;
+      background: #000080;
+      outline: 1px dotted #fff;
+      outline-offset: -3px;
+    }
+    .app-picker-item-label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .app-picker-item-detail {
+      flex: none;
+      color: #606060;
+      font-size: 10px;
+    }
+    .app-picker-item:hover .app-picker-item-detail,
+    .app-picker-item:focus .app-picker-item-detail,
+    .app-picker-item.active .app-picker-item-detail { color: #fff; }
+    .app-picker-item.selected .app-picker-item-label::before { content: "\2713\00a0"; }
+    .app-picker-separator {
+      height: 2px;
+      margin: 4px 3px;
+      border-top: 1px solid #808080;
+      border-bottom: 1px solid #fff;
+    }
+    .app-picker-empty {
+      padding: 12px 7px;
+      color: #606060;
+      text-align: center;
+    }
+    #toolbar .app-picker-back { display: none; }
+    @media (max-width: 680px) {
+      .app-picker { flex-basis: min(270px, calc(100vw - 130px)); }
+      .app-picker-popup {
+        width: min(290px, calc(100vw - 20px));
+        max-width: calc(100vw - 20px);
+      }
+      .app-picker-panel { width: 100%; }
+      .app-picker-child {
+        position: absolute;
+        inset: 0;
+        z-index: 2;
+        margin-left: 0;
+      }
+      #toolbar .app-picker-back { display: flex; }
+    }
     #toolbar .debug-midi,
     #toolbar .debug-slice,
     #toolbar .debug-record,
@@ -823,7 +963,14 @@
   <div id="shell">
     <div id="titlebar">Wine-Assembly — Windows 98 Emulator</div>
     <div id="toolbar">
-      <label>Program:</label>
+      <label for="app-picker-button">Program:</label>
+      <div id="app-picker" class="app-picker">
+        <button type="button" id="app-picker-button" class="app-picker-trigger"
+                aria-haspopup="menu" aria-expanded="false" hidden>
+          <span class="app-picker-trigger-label">Notepad</span>
+          <span aria-hidden="true">&#x25BE;</span>
+        </button>
+        <div class="app-picker-popup" hidden></div>
       <select id="app-select">
         <option value="notepad">Notepad</option>
         <option value="calc">Calculator</option>
@@ -1027,6 +1174,7 @@
           <option value="blobby_volley">Blobby Volley</option>
         </optgroup>
       </select>
+      </div>
       <button onclick="launchApp()">Launch</button>
       <button onclick="stopAllApps()">Stop All</button>
       <span class="debug-slice">
@@ -1184,6 +1332,7 @@ Resource-aware Win98 emulator
   <script src="lib/renderer.js?v=189"></script>
   <script src="lib/dll-registry.js?v=1"></script>
   <script src="lib/apps.js?v=9"></script>
+  <script src="lib/debug-app-picker.js?v=1"></script>
   <script src="lib/browser-input.js?v=7"></script>
   <script src="lib/mobile-keyboard.js?v=2"></script>
   <!-- Touch devices have no pointer, so every cursor shape the guest sets is
