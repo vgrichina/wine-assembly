@@ -72,7 +72,7 @@ assert(shellSource.includes('wine.asyncMultimediaTimer = !!app.asyncMultimediaTi
   'the browser launcher passes the per-app timer policy to WineAssembly');
 assert(hostSource.includes('self._pumpMultimediaTimer();'),
   'the browser run loop pumps the opted-in timer after each main slice');
-assert(indexSource.includes('lib/apps.js?v=9'),
+assert(indexSource.includes('lib/apps.js?v=10'),
   'the browser cache-busts Diablo app metadata');
 assert(/lib\/browser-shell\.js\?v=\d+/.test(indexSource),
   'the browser cache-busts per-app timer policy wiring');

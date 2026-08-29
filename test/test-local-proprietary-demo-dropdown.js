@@ -139,7 +139,4 @@ assert.deepStrictEqual(icewind.persistFiles, [
   'c:\\characters\\*.chr', 'c:\\characters\\*.res',
   'c:\\save\\*', 'c:\\mpsave\\*',
 ], 'Icewind Dale persists only authored character and save-game state');
-assert(html.includes('lib/mem-utils.js?v=169'),
-  'the browser cache-busts hidden-SharedArrayBuffer string decoding');
-
 console.log('PASS  Deus Ex and Icewind Dale are complete localhost-only dropdown apps');

@@ -307,6 +307,7 @@ assert(webApp.includes('lib/process-boot.js?v=2'), 'web host should cache-bust o
 assert(webApp.includes('lib/host-window.js?v=5'), 'web host should cache-bust destroyed-window input cleanup');
 assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
 assert(webApp.includes('lib/storage.js?v=169'), 'web host should cache-bust storage after Media Player association changes');
+assert(webApp.includes('lib/filesystem.js?v=170'), 'web host should cache-bust non-C drive root registration');
 assert(webApp.includes('lib/gdi-surface.js?v=2'), 'web host should load the canonical GDI surface module');
 assert(webApp.indexOf('lib/gdi-surface.js?v=2') < webApp.indexOf('lib/host-imports.js?v=210'),
   'web host should load the GDI surface module before host imports');
@@ -318,7 +319,7 @@ assert(webApp.includes('lib/guest-rpc.js?v=7'), 'web host should cache-bust trac
 assert(webApp.includes('lib/guest-thread-host.js?v=6'), 'web host should cache-bust nested Worker wait pumping');
 assert(webApp.includes('lib/dll-loader.js?v=170'), 'web host should cache-bust sparse DllMain stack translation');
 assert(webApp.includes('lib/debug-thread-state.js?v=7'), 'web host should cache-bust live Worker status diagnostics');
-assert(webApp.includes('host.js?v=245'), 'web host should cache-bust host.js after the current source update');
+assert(webApp.includes('host.js?v=246'), 'web host should cache-bust host.js after non-C drive manifest mounting');
 assert(hostJs.includes("static SOURCE_VERSION = '237'"), 'web host should cache-bust WASM artifacts and WAT source compilation');
 assert(hostJs.includes("const fetchOptions = debugFetch ? { cache: 'no-store' } : undefined;"),
   'debug sessions should select a no-store fetch policy');

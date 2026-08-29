@@ -56,7 +56,7 @@ assert(hostSource.includes('const configuredSteps = Math.max(1000, (self.stepsPe
   'the guest-Worker backend should retain its 1k messaging floor');
 assert(indexSource.includes('lib/browser-shell.js?v=13'),
   'the page cache-busts the Uplink slice policy');
-assert(indexSource.includes('host.js?v=245'),
+assert(indexSource.includes('host.js?v=246'),
   'the page cache-busts cooperative slice enforcement');
 
 console.log('PASS browser run-slice policy distinguishes Jazz Worker and cooperative backends');
