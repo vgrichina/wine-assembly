@@ -716,7 +716,20 @@ and it says so: "Use ARROW keys to move around, ENTER selects highlighted
 option." The menu reader in `Machine.menuKey` only recognises menus with a
 single-character selector per option, so it finds nothing to pick — "Silence"
 is right there in the list and matches `SILENT_LABEL`, but it has no letter or
-digit in front of it. Answering this needs the reader to count rows from the
-marker to the silent label and queue that many Down keys plus Enter. Both rows
-otherwise run: they reach protected mode (`cr0=11`, 32-bit code at base 20a0)
-and sit on the menu for the whole 300M-dispatch budget.
+digit in front of it. Both rows otherwise run: they reach protected mode
+(`cr0=11`, 32-bit code at base 20a0) and sit on the menu for the whole
+300M-dispatch budget.
+
+**Teaching the reader to count rows is not on its own enough, and it is worth
+knowing why before starting.** DINO masks IRQ1 (`out 0x21, 0x02`) and polls port
+0x60 directly — visible in `--trace-io=20,21,a0,a1,60,64` as one `out 021 <- 2`
+followed by an unbroken run of `in 060`. That path is real and keys *do* reach
+it: `--auto-key --keys=down,down,down,enter` moves the marker. It moves **one
+row in 775M dispatches**, though, for four keys. `Machine.kbFill` is only
+consulted from the port-0x60 read on `(kbReads++ & 0xFFF) === 0`, and
+`keyboardIrq` cannot help because `hookedVector` reads the real-mode IVT and a
+protected-mode program's IRQ1 handler is an IDT gate — so every interrupt rung
+in the run loop, keyboard and timer and retrace and Sound Blaster alike, sees a
+program in protected mode as one that has hooked nothing. Whatever else is
+throttling the polled path, that is the general gap underneath it, and it is
+shared with COCAHOLC and AQUAPHOB.
