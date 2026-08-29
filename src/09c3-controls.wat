@@ -290,8 +290,33 @@
     (if (i32.le_s (local.get $h) (i32.const 4))
       (then (return (i32.const 1))))
     (local.set $visible
-      (i32.div_u (i32.sub (local.get $h) (i32.const 4)) (i32.const 16)))
+      (i32.div_u (i32.sub (local.get $h) (i32.const 4)) (call $lb_row_height (local.get $sw))))
     (i32.gt_s (call $lb_count (local.get $sw)) (local.get $visible)))
+
+  (func $listbox_visible_rows (param $hwnd i32) (param $sw i32) (result i32)
+    (local $h i32) (local $visible i32)
+    (local.set $h (call $ctrl_get_h (local.get $hwnd)))
+    (if (i32.le_s (local.get $h) (i32.const 4)) (then (return (i32.const 1))))
+    (local.set $visible
+      (i32.div_u (i32.sub (local.get $h) (i32.const 4)) (call $lb_row_height (local.get $sw))))
+    (select (local.get $visible) (i32.const 1)
+      (i32.gt_s (local.get $visible) (i32.const 0))))
+
+  ;; Clamp a requested first row so the list never scrolls past its last full
+  ;; page. Returns the resulting top index.
+  (func $listbox_scroll_to (param $hwnd i32) (param $sw i32) (param $requested i32) (result i32)
+    (local $top i32) (local $max i32)
+    (local.set $max (i32.sub (call $lb_count (local.get $sw))
+      (call $listbox_visible_rows (local.get $hwnd) (local.get $sw))))
+    (if (i32.lt_s (local.get $max) (i32.const 0)) (then (local.set $max (i32.const 0))))
+    (local.set $top (local.get $requested))
+    (if (i32.lt_s (local.get $top) (i32.const 0)) (then (local.set $top (i32.const 0))))
+    (if (i32.gt_s (local.get $top) (local.get $max)) (then (local.set $top (local.get $max))))
+    (if (i32.ne (local.get $top) (call $lb_top_index (local.get $sw)))
+      (then
+        (call $lb_set_top_index (local.get $sw) (local.get $top))
+        (call $invalidate_hwnd (local.get $hwnd))))
+    (local.get $top))
 
   ;; ---- ComboBoxState accessors (44 bytes) ----
   ;;
@@ -10653,7 +10678,7 @@
     (local $brush i32)
     (local $find_handle i32) (local $fd_g i32) (local $fd_w i32) (local $attrs i32)
     (local $last i32) (local $tmp_g i32) (local $tmp_w i32)
-    (local $ownerdraw i32)
+    (local $ownerdraw i32) (local $code i32) (local $delta i32)
 
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
 
@@ -10948,6 +10973,19 @@
         (if (i32.ge_s (local.get $idx) (local.get $count))
           (then (local.set $idx (i32.const -1))))
         (call $lb_set_cur_sel (local.get $sw) (local.get $idx))
+        ;; Programmatic selection follows USER: make the selected row visible.
+        (if (i32.ge_s (local.get $idx) (i32.const 0))
+          (then
+            (local.set $top (call $lb_top_index (local.get $sw)))
+            (local.set $visible (call $listbox_visible_rows (local.get $hwnd) (local.get $sw)))
+            (if (i32.lt_s (local.get $idx) (local.get $top))
+              (then (drop (call $listbox_scroll_to
+                (local.get $hwnd) (local.get $sw) (local.get $idx))))
+              (else
+                (if (i32.ge_s (local.get $idx) (i32.add (local.get $top) (local.get $visible)))
+                  (then (drop (call $listbox_scroll_to
+                    (local.get $hwnd) (local.get $sw)
+                    (i32.sub (i32.add (local.get $idx) (i32.const 1)) (local.get $visible))))))))))
         (local.set $i (i32.const 0))
         (block $setcur_clear_done (loop $setcur_clear
           (br_if $setcur_clear_done (i32.ge_u (local.get $i) (local.get $count)))
@@ -11005,7 +11043,7 @@
 
     ;; ---------- WM_LBUTTONDOWN (0x0201) / WM_LBUTTONDBLCLK (0x0203) ----------
     ;; lParam = MAKELPARAM(x, y) within the listbox client. Compute row =
-    ;; top_index + y/16, clamp to count-1, set cur_sel, post WM_COMMAND
+    ;; top_index + y/item-height. Blank client rows do not select an item.
     ;; with notification = LBN_SELCHANGE (single click) or LBN_DBLCLK (dbl).
     (if (i32.or (i32.eq (local.get $msg) (i32.const 0x0201))
                 (i32.eq (local.get $msg) (i32.const 0x0203)))
@@ -11066,14 +11104,13 @@
                 (call $invalidate_hwnd (local.get $hwnd))
                 (return (i32.const 0))))))
         (if (i32.eqz (local.get $count)) (then (return (i32.const 0))))
-        ;; y from hi 16 bits of lParam
-        (local.set $row (i32.shr_u (i32.and (local.get $lParam) (i32.const 0xFFFF0000)) (i32.const 16)))
-        (local.set $row (i32.div_s (local.get $row) (call $lb_row_height (local.get $sw))))
+        ;; Signed y from the high word; ignore points outside populated rows.
+        (local.set $row_y (i32.shr_s (local.get $lParam) (i32.const 16)))
+        (if (i32.lt_s (local.get $row_y) (i32.const 0)) (then (return (i32.const 0))))
+        (local.set $row (i32.div_s (local.get $row_y) (call $lb_row_height (local.get $sw))))
         (local.set $row (i32.add (local.get $row) (call $lb_top_index (local.get $sw))))
-        (if (i32.lt_s (local.get $row) (i32.const 0))
-          (then (local.set $row (i32.const 0))))
         (if (i32.ge_s (local.get $row) (local.get $count))
-          (then (local.set $row (i32.sub (local.get $count) (i32.const 1)))))
+          (then (return (i32.const 0))))
         (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00000800))
           (then
             ;; LBS_EXTENDEDSEL: Ctrl toggles a row; Shift selects the range
@@ -11475,14 +11512,47 @@
       (then (return (call $lb_top_index (local.get $sw)))))
     (if (i32.eq (local.get $msg) (i32.const 0x0197))
       (then
-        (local.set $idx (local.get $wParam))
-        (local.set $count (call $lb_count (local.get $sw)))
-        (if (i32.lt_s (local.get $idx) (i32.const 0)) (then (local.set $idx (i32.const 0))))
-        (if (i32.ge_s (local.get $idx) (local.get $count))
-          (then (local.set $idx (i32.sub (local.get $count) (i32.const 1)))))
-        (if (i32.lt_s (local.get $idx) (i32.const 0)) (then (local.set $idx (i32.const 0))))
-        (call $lb_set_top_index (local.get $sw) (local.get $idx))
-        (call $invalidate_hwnd (local.get $hwnd))
+        (drop (call $listbox_scroll_to
+          (local.get $hwnd) (local.get $sw) (local.get $wParam)))
+        (return (i32.const 0))))
+
+    ;; ---------- WM_MOUSEWHEEL (0x020A) ----------
+    ;; Three rows per 120-unit wheel notch, matching the sibling controls.
+    (if (i32.eq (local.get $msg) (i32.const 0x020A))
+      (then
+        (local.set $delta
+          (i32.div_s
+            (i32.sub (i32.const 0) (i32.shr_s (local.get $wParam) (i32.const 16)))
+            (i32.const 40)))
+        (drop (call $listbox_scroll_to
+          (local.get $hwnd) (local.get $sw)
+          (i32.add (call $lb_top_index (local.get $sw)) (local.get $delta))))
+        (return (i32.const 0))))
+
+    ;; ---------- WM_VSCROLL (0x0115) ----------
+    (if (i32.eq (local.get $msg) (i32.const 0x0115))
+      (then
+        (local.set $code (i32.and (local.get $wParam) (i32.const 0xFFFF)))
+        (local.set $top (call $lb_top_index (local.get $sw)))
+        (local.set $visible (call $listbox_visible_rows (local.get $hwnd) (local.get $sw)))
+        (local.set $idx (local.get $top))
+        (if (i32.eq (local.get $code) (i32.const 0)) ;; SB_LINEUP
+          (then (local.set $idx (i32.sub (local.get $top) (i32.const 1)))))
+        (if (i32.eq (local.get $code) (i32.const 1)) ;; SB_LINEDOWN
+          (then (local.set $idx (i32.add (local.get $top) (i32.const 1)))))
+        (if (i32.eq (local.get $code) (i32.const 2)) ;; SB_PAGEUP
+          (then (local.set $idx (i32.sub (local.get $top) (local.get $visible)))))
+        (if (i32.eq (local.get $code) (i32.const 3)) ;; SB_PAGEDOWN
+          (then (local.set $idx (i32.add (local.get $top) (local.get $visible)))))
+        (if (i32.or (i32.eq (local.get $code) (i32.const 4)) ;; SB_THUMBPOSITION
+                    (i32.eq (local.get $code) (i32.const 5))) ;; SB_THUMBTRACK
+          (then (local.set $idx (i32.shr_u (local.get $wParam) (i32.const 16)))))
+        (if (i32.eq (local.get $code) (i32.const 6)) ;; SB_TOP
+          (then (local.set $idx (i32.const 0))))
+        (if (i32.eq (local.get $code) (i32.const 7)) ;; SB_BOTTOM
+          (then (local.set $idx (call $lb_count (local.get $sw)))))
+        (drop (call $listbox_scroll_to
+          (local.get $hwnd) (local.get $sw) (local.get $idx)))
         (return (i32.const 0))))
 
     ;; ---------- WM_PAINT (0x000F) ----------

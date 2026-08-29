@@ -153,11 +153,29 @@ async function main() {
   e.send_message(lb, 0x0201, 0, clickL); // WM_LBUTTONDOWN
   check('click at y=20 selects row 1', e.send_message(lb, 0x0188, 0, 0) === 1);
 
-  // Click at y=200 (way past visible) → clamps to count-1=3
+  // Click at y=200 (way past populated rows) leaves selection unchanged.
   const clickL2 = (5 & 0xFFFF) | ((200 & 0xFFFF) << 16);
   e.send_message(lb, 0x0201, 0, clickL2);
-  check('click way past last row clamps to count-1',
-    e.send_message(lb, 0x0188, 0, 0) === items.length - 1);
+  check('click past the last row does not select or notify',
+    e.send_message(lb, 0x0188, 0, 0) === 1);
+
+  // Grow beyond the six-row viewport and exercise every public scroll path.
+  for (let i = items.length; i < 12; i++) {
+    e.send_message(lb, 0x0180, 0, writeStr(`row-${i}`));
+  }
+  e.send_message(lb, 0x0186, 10, 0);
+  check('LB_SETCURSEL scrolls the selected row into view',
+    e.send_message(lb, 0x018E, 0, 0) === 5);
+  e.send_message(lb, 0x020A, 120 << 16, 0); // WM_MOUSEWHEEL, one notch up
+  check('WM_MOUSEWHEEL scrolls three rows', e.send_message(lb, 0x018E, 0, 0) === 2);
+  e.send_message(lb, 0x0115, 7, 0); // WM_VSCROLL / SB_BOTTOM
+  check('WM_VSCROLL SB_BOTTOM clamps to the last full page',
+    e.send_message(lb, 0x018E, 0, 0) === 6);
+  e.send_message(lb, 0x0115, 5 | (4 << 16), 0); // SB_THUMBTRACK position 4
+  check('WM_VSCROLL SB_THUMBTRACK follows the requested row',
+    e.send_message(lb, 0x018E, 0, 0) === 4);
+  e.send_message(lb, 0x0115, 6, 0); // SB_TOP
+  check('WM_VSCROLL SB_TOP returns to row zero', e.send_message(lb, 0x018E, 0, 0) === 0);
 
   // LB_RESETCONTENT
   e.send_message(lb, 0x0184, 0, 0);
