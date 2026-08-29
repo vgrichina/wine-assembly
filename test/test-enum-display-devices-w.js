@@ -15,9 +15,19 @@ const extraWat = String.raw`
       (i64.extend_i32_u (global.get $eax))
       (i64.shl (i64.extend_i32_u (global.get $esp)) (i64.const 32))))
 
-  (func (export "test_enum_display_settings_w") (param $index i32) (param $buf i32) (result i64)
+  (func (export "test_enum_display_settings_a") (param $index i32) (param $buf i32) (param $size i32) (result i64)
     (global.set $esp (i32.const 0x00300000))
-    (i32.store16 offset=68 (call $g2w (local.get $buf)) (i32.const 220))
+    (i32.store16 offset=36 (call $g2w (local.get $buf)) (local.get $size))
+    (call $handle_EnumDisplaySettingsA
+      (i32.const 0) (local.get $index) (local.get $buf)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i64.or
+      (i64.extend_i32_u (global.get $eax))
+      (i64.shl (i64.extend_i32_u (global.get $esp)) (i64.const 32))))
+
+  (func (export "test_enum_display_settings_w") (param $index i32) (param $buf i32) (param $size i32) (result i64)
+    (global.set $esp (i32.const 0x00300000))
+    (i32.store16 offset=68 (call $g2w (local.get $buf)) (local.get $size))
     (call $handle_EnumDisplaySettingsW
       (i32.const 0) (local.get $index) (local.get $buf)
       (i32.const 0) (i32.const 0) (i32.const 0))
@@ -39,6 +49,7 @@ function utf16z(view, offset, maxChars) {
 (async () => {
   const { exports: e, memory } = await bootRenderHarness({ extraWat, fonts: 'none' });
   const view = new DataView(memory.buffer);
+  const bytes = new Uint8Array(memory.buffer);
   const buf = e.guest_alloc(0x348) >>> 0;
   const wasmBuf = (buf - (e.get_image_base() >>> 0) + (e.get_guest_base() >>> 0)) >>> 0;
 
@@ -61,19 +72,44 @@ function utf16z(view, offset, maxChars) {
   result = e.test_enum_display_devices_w(0, 1, buf);
   assert.strictEqual(Number(result & 0xffffffffn), 0, 'adapter enumeration ends after zero');
 
-  result = e.test_enum_display_settings_w(-1, buf);
+  bytes.fill(0xa5, wasmBuf, wasmBuf + 0x348);
+  result = e.test_enum_display_settings_w(-1, buf, 156);
   assert.strictEqual(Number(result & 0xffffffffn), 1, 'current Unicode display mode exists');
   assert.strictEqual(Number(result >> 32n), 0x00300010,
     'three-argument stdcall pops return plus arguments');
-  assert.strictEqual(view.getUint16(wasmBuf + 68, true), 220, 'DEVMODEW size is retained');
+  assert.strictEqual(view.getUint16(wasmBuf + 68, true), 156, 'legal old DEVMODEW size is retained');
   assert.strictEqual(view.getUint32(wasmBuf + 72, true), 0x5c0000, 'display fields are present');
   assert.strictEqual(view.getUint32(wasmBuf + 136, true), 32, 'mode is 32 bpp');
   assert.strictEqual(view.getUint32(wasmBuf + 140, true), 640, 'mode width follows host surface');
   assert.strictEqual(view.getUint32(wasmBuf + 144, true), 480, 'mode height follows host surface');
   assert.strictEqual(view.getUint32(wasmBuf + 152, true), 60, 'mode is 60 Hz');
-  result = e.test_enum_display_settings_w(1, buf);
+  assert.strictEqual(bytes[wasmBuf + 156], 0xa5, 'DEVMODEW write stops at caller size');
+
+  bytes.fill(0xa5, wasmBuf, wasmBuf + 0x348);
+  result = e.test_enum_display_settings_w(-1, buf, 155);
+  assert.strictEqual(Number(result & 0xffffffffn), 0, 'undersized DEVMODEW is rejected');
+  assert.strictEqual(bytes[wasmBuf + 69], 0, 'caller-written dmSize is retained on rejection');
+  assert.strictEqual(bytes[wasmBuf + 72], 0xa5, 'rejected DEVMODEW payload is untouched');
+
+  bytes.fill(0xa5, wasmBuf, wasmBuf + 0x348);
+  result = e.test_enum_display_settings_a(-1, buf, 124);
+  assert.strictEqual(Number(result & 0xffffffffn), 1, 'current ANSI display mode accepts Win95 DEVMODEA');
+  assert.strictEqual(view.getUint16(wasmBuf + 36, true), 124, 'legal old DEVMODEA size is retained');
+  assert.strictEqual(view.getUint32(wasmBuf + 40, true), 0x5c0000, 'ANSI display fields are present');
+  assert.strictEqual(view.getUint32(wasmBuf + 104, true), 32, 'ANSI mode is 32 bpp');
+  assert.strictEqual(view.getUint32(wasmBuf + 108, true), 640, 'ANSI width follows host surface');
+  assert.strictEqual(view.getUint32(wasmBuf + 112, true), 480, 'ANSI height follows host surface');
+  assert.strictEqual(view.getUint32(wasmBuf + 120, true), 60, 'ANSI mode is 60 Hz');
+  assert.strictEqual(bytes[wasmBuf + 124], 0xa5, 'DEVMODEA write stops at caller size');
+
+  bytes.fill(0xa5, wasmBuf, wasmBuf + 0x348);
+  result = e.test_enum_display_settings_a(-1, buf, 123);
+  assert.strictEqual(Number(result & 0xffffffffn), 0, 'undersized DEVMODEA is rejected');
+  assert.strictEqual(bytes[wasmBuf + 124], 0xa5, 'rejected DEVMODEA payload is untouched');
+
+  result = e.test_enum_display_settings_w(1, buf, 220);
   assert.strictEqual(Number(result & 0xffffffffn), 0, 'unsupported mode index ends enumeration');
-  console.log('PASS Unicode display enumeration exposes one primary adapter, monitor, and mode');
+  console.log('PASS display enumeration exposes one primary adapter, monitor, and size-safe A/W modes');
 })().catch(error => {
   console.error(error.stack || error.message);
   process.exit(1);

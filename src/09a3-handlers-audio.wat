@@ -1241,7 +1241,7 @@
   ;; Report current desktop mode for ENUM_CURRENT_SETTINGS (-1) and mode 0; FALSE otherwise.
   ;; dmFields bits: PELSWIDTH=0x80000, PELSHEIGHT=0x100000, BITSPERPEL=0x40000, DISPLAYFREQUENCY=0x400000.
   (func $handle_EnumDisplaySettingsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $buf i32) (local $screen i32)
+    (local $buf i32) (local $screen i32) (local $size i32)
     (if (i32.and
           (i32.ne (local.get $arg1) (i32.const -1))
           (i32.ne (local.get $arg1) (i32.const 0)))
@@ -1251,7 +1251,17 @@
       (then (global.set $eax (i32.const 0))
             (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
     (local.set $buf (call $g2w (local.get $arg2)))
+    (local.set $size (i32.load16_u offset=36 (local.get $buf)))
+    ;; Windows accepts the 124-byte Win95 DEVMODEA as well as today's
+    ;; 156-byte layout. All display fields we return fit in that old prefix.
+    (if (i32.lt_u (local.get $size) (i32.const 124))
+      (then (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (memory.fill (local.get $buf) (i32.const 0)
+      (select (local.get $size) (i32.const 156)
+        (i32.lt_u (local.get $size) (i32.const 156))))
     (local.set $screen (call $host_get_screen_size))
+    (i32.store16 offset=36 (local.get $buf) (local.get $size))
     (i32.store offset=40 (local.get $buf) (i32.const 0x5C0000))  ;; dmFields
     (i32.store offset=104 (local.get $buf) (i32.const 32))       ;; dmBitsPerPel
     (i32.store offset=108 (local.get $buf) (i32.and (local.get $screen) (i32.const 0xFFFF)))  ;; dmPelsWidth
@@ -1264,7 +1274,7 @@
   ;; EnumDisplaySettingsW has the same enumeration policy as the ANSI API,
   ;; but the 32-WCHAR device name moves DEVMODEW's display fields 32 bytes.
   (func $handle_EnumDisplaySettingsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $buf i32) (local $screen i32)
+    (local $buf i32) (local $screen i32) (local $size i32)
     (if (i32.and
           (i32.ne (local.get $arg1) (i32.const -1))
           (i32.ne (local.get $arg1) (i32.const 0)))
@@ -1274,12 +1284,17 @@
       (then (global.set $eax (i32.const 0))
             (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
     (local.set $buf (call $g2w (local.get $arg2)))
-    (if (i32.lt_u (i32.load16_u offset=68 (local.get $buf)) (i32.const 220))
+    (local.set $size (i32.load16_u offset=68 (local.get $buf)))
+    ;; The Win95 DEVMODEW prefix is 156 bytes; later versions grew to 188
+    ;; and 220 bytes. The current-mode fields exist in every one of them.
+    (if (i32.lt_u (local.get $size) (i32.const 156))
       (then (global.set $eax (i32.const 0))
             (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
-    (memory.fill (local.get $buf) (i32.const 0) (i32.const 220))
+    (memory.fill (local.get $buf) (i32.const 0)
+      (select (local.get $size) (i32.const 220)
+        (i32.lt_u (local.get $size) (i32.const 220))))
     (local.set $screen (call $host_get_screen_size))
-    (i32.store16 offset=68 (local.get $buf) (i32.const 220))
+    (i32.store16 offset=68 (local.get $buf) (local.get $size))
     (i32.store offset=72 (local.get $buf) (i32.const 0x5C0000)) ;; dmFields
     (i32.store offset=136 (local.get $buf) (i32.const 32))      ;; dmBitsPerPel
     (i32.store offset=140 (local.get $buf)

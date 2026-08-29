@@ -79,13 +79,13 @@ async function main() {
   const rtfNameA = writeAscii('Rich Text Format');
   const rtfNameW = writeWide('Rich Text Format');
   const htmlNameA = writeAscii('HTML Format');
-  const fmtA = e.clipboard_register_format_a(rtfNameA) >>> 0;
   const fmtW = e.clipboard_register_format_w(rtfNameW) >>> 0;
+  const fmtA = e.clipboard_register_format_a(rtfNameA) >>> 0;
   const fmtAgain = e.clipboard_get_rtf_format_id() >>> 0;
   const htmlFmt = e.clipboard_register_format_a(htmlNameA) >>> 0;
 
-  check('RegisterClipboardFormatA returns registered RTF id', fmtA >= 0xc000, `0x${fmtA.toString(16)}`);
-  check('RegisterClipboardFormatW returns the same RTF id', fmtW === fmtA, `A=0x${fmtA.toString(16)} W=0x${fmtW.toString(16)}`);
+  check('RegisterClipboardFormatW returns registered RTF id', fmtW >= 0xc000, `0x${fmtW.toString(16)}`);
+  check('RegisterClipboardFormatA reuses a W-first RTF id', fmtA === fmtW, `A=0x${fmtA.toString(16)} W=0x${fmtW.toString(16)}`);
   check('RTF id remains stable after repeated lookup', fmtAgain === fmtA, `again=0x${fmtAgain.toString(16)}`);
   check('other registered formats receive a distinct id', htmlFmt !== fmtA && htmlFmt >= 0xc000, `html=0x${htmlFmt.toString(16)}`);
   check('empty clipboard has no advertised formats', e.clipboard_count_formats() === 0);

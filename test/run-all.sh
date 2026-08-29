@@ -395,6 +395,7 @@ UNIT=(
   test/test-button-auto-check.js
   test/test-char-lower-w.js
   test/test-compare-file-time.js
+  test/test-command-line-a-stability.js
   test/test-created-dialog-main-promotion.js
   test/test-cw-usedefault-adjusted.js
   test/test-d3d9-fixed-function-shaders.js

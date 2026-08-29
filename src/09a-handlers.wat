@@ -547,7 +547,9 @@
 
   ;; 2: GetCommandLineA
   (func $handle_GetCommandLineA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $store_fake_cmdline) (global.set $eax (global.get $fake_cmdline_addr))
+    (if (i32.eqz (global.get $fake_cmdline_addr))
+      (then (call $store_fake_cmdline)))
+    (global.set $eax (global.get $fake_cmdline_addr))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))) (return)
   )
 

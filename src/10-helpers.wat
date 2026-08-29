@@ -3508,13 +3508,11 @@
 
   (func $clipboard_register_format_w (param $name_g i32) (result i32)
     (local $ansi i32) (local $id i32)
-    (if (call $guest_str_is_rich_text_format_w (local.get $name_g))
-      (then (return (call $clipboard_get_rtf_format_id))))
     ;; Intern through the same ANSI table: a W registration and an A
     ;; registration of the same name must produce the same id.
     (local.set $ansi (call $clipfmt_wide_to_ansi (local.get $name_g)))
     (if (i32.eqz (local.get $ansi)) (then (return (i32.const 0))))
-    (local.set $id (call $clipfmt_intern (local.get $ansi)))
+    (local.set $id (call $clipboard_register_format_a (local.get $ansi)))
     (call $heap_free (local.get $ansi))
     (local.get $id))
 
