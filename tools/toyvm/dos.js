@@ -798,7 +798,7 @@ class Machine {
     mem[0x449] = this.videoMode;
     this.setSystemBda();
     this.setVideoBda();
-    this.setTicks(0);
+    this.setTicks(0, { force: true });
   }
 
   // The equipment word at 0040:0010 and the conventional-memory size in KB at
@@ -1249,7 +1249,7 @@ class Machine {
     this.setSystemBda();
     this.setVideoBda();
     this.syncKbBda();
-    this.setTicks(this.ticks);
+    this.setTicks(this.ticks, { force: true });
   }
 
   // The linear address a DOS call's SEG:OFF argument names.
@@ -1363,13 +1363,38 @@ class Machine {
     return latch - (((elapsed % latch) + latch) % latch);
   }
 
-  setTicks(t) {
-    this.ticks = t >>> 0;
+  // Advance the BIOS tick count at 0040:006C.
+  //
+  // The counter in memory is ADVANCED, not recomputed from `this.ticks`, and
+  // a slice that spans no whole tick does not touch it at all. That is what a
+  // real BIOS ISR does -- it increments the dword and returns -- and the
+  // difference is load-bearing, because 0040:006C is ordinary RAM that guests
+  // write: setting it is the documented way to reset the day timer, and a
+  // protector will park a byte there to read back a moment later. Rewriting it
+  // from an absolute counter silently ate every such write, and because
+  // setClock() runs once per slice it ate them thousands of times a second.
+  //
+  // JULTRO.EXE is the case that found it. Its Protect! stub plants the vector
+  // number of its own cleanup handler at 0000:046C, then reads it back to build
+  // an `int <n>` it executes; with the write eaten it read the absolute count,
+  // still 0, executed `int 00h`, and skipped the routine that restores the
+  // INT 21h vector -- so the demo's first DOS call ran off into its own data.
+  //
+  // `force` rewrites the absolute value instead: the resets that re-lay the
+  // BIOS data area are stating the count, not advancing it.
+  setTicks(t, { force = false } = {}) {
+    const next = t >>> 0;
+    const delta = next - this.ticks;
+    this.ticks = next;
+    if (!force && delta <= 0) return;
     const at = 0x46C;
-    this.mem[at] = this.ticks & 0xFF;
-    this.mem[at + 1] = (this.ticks >> 8) & 0xFF;
-    this.mem[at + 2] = (this.ticks >> 16) & 0xFF;
-    this.mem[at + 3] = (this.ticks >> 24) & 0xFF;
+    const cur = force ? next
+      : (((this.mem[at] | (this.mem[at + 1] << 8) | (this.mem[at + 2] << 16)
+        | (this.mem[at + 3] << 24)) >>> 0) + delta) >>> 0;
+    this.mem[at] = cur & 0xFF;
+    this.mem[at + 1] = (cur >> 8) & 0xFF;
+    this.mem[at + 2] = (cur >> 16) & 0xFF;
+    this.mem[at + 3] = (cur >> 24) & 0xFF;
   }
 
   // Has the guest taken a vector over, or is it still ours?

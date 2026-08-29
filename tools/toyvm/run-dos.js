@@ -163,7 +163,7 @@ async function runDos(o) {
   vm.exports.set_cpu(cpu);
   machine.setMemory(vm.mem, vm.exports);
   machine.installIvt();
-  machine.setTicks(0);
+  machine.setTicks(0, { force: true });
   machine.syncVga();     // the VM's buffer, not the throwaway one from before
 
   const info = loadExe(vm.mem, fs.readFileSync(exe));

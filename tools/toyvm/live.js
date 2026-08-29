@@ -112,7 +112,7 @@ class LiveRun {
     vm.exports.set_cpu(this.cpu);
     machine.setMemory(vm.mem, vm.exports);
     machine.installIvt();
-    machine.setTicks(0);
+    machine.setTicks(0, { force: true });
     machine.syncVga();
 
     const raw = this.files[this.exe] || this.files[this.exe.toLowerCase()];
