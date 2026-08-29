@@ -409,7 +409,14 @@ async function runDosWithPre(o) {
   if (!fs.existsSync(pre)) throw new Error(`--pre: no such program: ${o.pre}`);
   const first = await runDos({
     ...o, exe: pre, bestPng: null, shots: null, png: null,
-    budget: Math.min(o.budget || 200e6, 20e6), seconds: 0,
+    // The full budget, not a token slice of it. A configurator is not a quick
+    // hello: ANGEL's SETUP.EXE sweeps C000-F000 for a video BIOS signature and
+    // needs ~810M dispatches to give up and exit(0). Capped at 20M it was still
+    // mid-scan when we moved on, so it wrote nothing and ANGEL still refused to
+    // start. Wall clock is what bounds a pre that never exits, so that it can
+    // cost at most a third of the run rather than the whole child slot.
+    budget: o.budget || 200e6,
+    seconds: o.seconds ? Math.max(15, Math.floor(o.seconds / 3)) : 0,
     autoKey: true, keys: o.preKeys || [],
   });
   return runDos({ ...o, pre: undefined, tempFiles: first.machine.tempFiles });
