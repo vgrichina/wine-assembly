@@ -17,6 +17,7 @@ const controlsWat = fs.readFileSync(path.join(ROOT, 'src/09c3-controls.wat'), 'u
 const hostImports = fs.readFileSync(path.join(ROOT, 'lib/host-imports.js'), 'utf8');
 const browserHost = fs.readFileSync(path.join(ROOT, 'host.js'), 'utf8');
 const guestRpc = fs.readFileSync(path.join(ROOT, 'lib/guest-rpc.js'), 'utf8');
+const helpersWat = fs.readFileSync(path.join(ROOT, 'src/10-helpers.wat'), 'utf8');
 assert(beginPaintWat.includes('(call $host_paint_begin (local.get $arg0))'),
   'BeginPaint must open the browser publication transaction');
 assert(endPaintWat.includes('(call $host_paint_end (local.get $arg0))'),
@@ -31,6 +32,9 @@ assert(browserHost.includes("fetch('lib/host-import-sigs.generated.json?v=3')"),
   'Worker launch must cache-bust the signature table containing paint brackets');
 assert(guestRpc.includes("'paint_begin',") && guestRpc.includes("'paint_end',"),
   'value-only paint brackets must not add two blocking RPCs per control paint');
+const uncoverBody = helpersWat.match(/\(func \$wnd_uncover_parent[\s\S]*?\n  \)/);
+assert(uncoverBody && uncoverBody[0].includes('(call $update_invalidate_rect (local.get $parent)'),
+  'hiding a child invalidates only its exposed parent rectangle');
 
 const callbacks = [];
 const oldRaf = global.requestAnimationFrame;
@@ -47,11 +51,57 @@ try {
   let repaints = 0;
   renderer.repaint = () => { repaints++; };
 
+  // Cooperative execution blocks the browser only until its block budget is
+  // exhausted. A BeginPaint/EndPaint pair can cross that boundary just as it
+  // can cross Worker slices, so it must keep the queued rAF private too.
+  renderer.beginWorkerGdiPaint(0x10001);
+  renderer.scheduleRepaint();
+  assert.strictEqual(callbacks.length, 0,
+    'cooperative BeginPaint must hold a frame that spans slices');
+  renderer.flushRepaint(true);
+  assert.strictEqual(repaints, 0,
+    'cooperative slice boundary must not publish inside BeginPaint');
+  renderer.endWorkerGdiPaint(0x10001);
+  assert.strictEqual(callbacks.length, 1,
+    'cooperative EndPaint should queue the completed transaction');
+  callbacks.shift()();
+  assert.strictEqual(repaints, 1,
+    'completed cooperative paint should composite exactly once');
+  repaints = 0;
+
+  // A saved parent snapshot already repairs the pixels exposed by hiding a
+  // child. WAT queues the clipped repaint; JS must not widen it to the entire
+  // top-level tree and erase unrelated menu controls.
+  const parent = { hwnd: 0x10010, visible: true, isChild: false, zOrder: 1 };
+  const child = { hwnd: 0x10011, visible: true, isChild: true,
+    parentHwnd: parent.hwnd, zOrder: 2 };
+  renderer.windows[parent.hwnd] = parent;
+  renderer.windows[child.hwnd] = child;
+  let fullTreeInvalidations = 0;
+  renderer.restoreParentUnderChild = () => true;
+  renderer.invalidateVisibleTree = () => { fullTreeInvalidations++; };
+  renderer.showWindow(child.hwnd, 0);
+  assert.strictEqual(fullTreeInvalidations, 0,
+    'snapshot-backed child hide must preserve unrelated parent pixels');
+  callbacks.length = 0;
+  renderer._repaintScheduled = false;
+  renderer._repaintRaf = null;
+
   renderer.beginWorkerGuestSlice();
   renderer.scheduleRepaint();
   assert.strictEqual(callbacks.length, 0,
     'mid-slice GDI erase must not queue a browser frame');
   assert.strictEqual(renderer._workerRepaintDeferred, true);
+
+  // ShowWindow, SetWindowPos, and several input paths request an immediate
+  // repaint instead of going through scheduleRepaint. Half-Life repeatedly
+  // toggles its launcher children while painting the menu, so a direct call
+  // must obey the same complete-slice publication boundary.
+  Win98Renderer.prototype.repaint.call(renderer);
+  assert.strictEqual(repaints, 0,
+    'direct repaint during a Worker slice must not expose partial menu pixels');
+  assert.strictEqual(renderer._repaintScheduled, true,
+    'blocked direct repaint remains scheduled for the safe slice boundary');
 
   renderer.beginWorkerGdiPaint(0x10002);
   renderer.endWorkerGuestSlice();

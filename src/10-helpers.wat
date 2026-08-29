@@ -1858,14 +1858,36 @@
   ;; this the license text and the options checkboxes stayed on screen
   ;; underneath the Installing Files page.
   (func $wnd_uncover_parent (param $hwnd i32)
-    (local $parent i32)
+    (local $parent i32) (local $xy i32) (local $wh i32)
+    (local $x i32) (local $y i32) (local $w i32) (local $h i32)
     (if (i32.eqz (local.get $hwnd)) (then (return)))
     (if (i32.eqz (call $wnd_is_effectively_visible (local.get $hwnd))) (then (return)))
     (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
     (if (i32.eqz (local.get $parent)) (then (return)))
     (if (i32.eq (call $wnd_table_find (local.get $parent)) (i32.const -1)) (then (return)))
     (call $nc_flags_set (local.get $parent) (i32.const 2))
-    (call $invalidate_hwnd (local.get $parent)))
+    ;; Only the rectangle formerly owned by the child is newly exposed. A
+    ;; full-parent invalidation erases unrelated siblings and is especially
+    ;; destructive for animated page swaps: Half-Life alternates two 640x100
+    ;; logo children and would blank/rebuild the entire menu every frame.
+    (local.set $xy (call $ctrl_get_xy_packed (local.get $hwnd)))
+    (local.set $wh (call $ctrl_get_wh_packed (local.get $hwnd)))
+    (local.set $x (i32.extend16_s (local.get $xy)))
+    (local.set $y (i32.shr_s (local.get $xy) (i32.const 16)))
+    (local.set $w (i32.and (local.get $wh) (i32.const 0xFFFF)))
+    (local.set $h (i32.shr_u (local.get $wh) (i32.const 16)))
+    (if (i32.and (i32.gt_s (local.get $w) (i32.const 0))
+                 (i32.gt_s (local.get $h) (i32.const 0)))
+      (then
+        (call $update_invalidate_rect (local.get $parent)
+          (local.get $x) (local.get $y)
+          (i32.add (local.get $x) (local.get $w))
+          (i32.add (local.get $y) (local.get $h)))
+        (if (i32.eq (local.get $parent) (global.get $main_hwnd))
+          (then (global.set $paint_pending (i32.const 1)))
+          (else (call $paint_flag_set (local.get $parent))))
+        (call $host_invalidate (local.get $parent)))
+      (else (call $invalidate_hwnd (local.get $parent)))))
 
   ;; Paint flags table — 1 byte per WND slot at $PAINT_FLAGS. This mirrors
   ;; how real Win32 tracks paint state: a per-window pending bit, not a

@@ -308,6 +308,26 @@ real-browser capture shows the black textured menu with all labels and no
 grey slab:
 `/private/tmp/hlu-menu-isolated-fixed/halflife_uplink-before.png`.
 
+### Threads-mode menu publication
+
+The launcher animates its logo by alternately hiding two 640x100 child
+windows. Hiding either child used to restore its saved parent pixels and then
+invalidate the complete 640x480 top-level window twice: once in WAT and again
+in the browser renderer. In Worker mode those operations are separated by
+broker hand-backs, so the compositor frequently published the parent after
+the full erase but before all menu controls had repainted. The visible result
+was a blinking grey/black menu body even though the guest eventually drew the
+right pixels.
+
+Child uncover now invalidates only the rectangle formerly occupied by that
+child. When a saved parent snapshot already repaired the exposed pixels, the
+browser does not widen the invalidation back to the complete window. Direct
+repaint requests also obey the Worker slice publication boundary, and a
+BeginPaint/EndPaint transaction remains private even when a cooperative slice
+ends between the pair. Twelve 250ms real-Worker captures keep the menu body and
+badge stable while the logo animates: the changed-pixel box shrank from
+`640x324` before the fix to the intended `616x88` band at y=74..161.
+
 ### In-process renderer switching
 
 One scheduler quantum is not suitable for both GoldSrc backends. OpenGL needs
