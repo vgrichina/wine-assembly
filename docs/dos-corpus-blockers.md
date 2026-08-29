@@ -98,11 +98,27 @@ offsets `0b64`, `0b66`, `0b68`, `0b6a`, `0cf4`, `0bc5` …). So the installed
 bank-switch routine is the null pointer, the `ret` jumps to offset 0, and the
 sizing loop takes the program out through offset zero on its first iteration.
 
-The chipset index at `[87f:1e02]` comes from `[87f:256e]`, and nothing has set
-it. That is the one thing left to find: which store should have written it, and
-what our C000-F000 scan gives it instead. Note the scan landing on the table's
-own `UnKnow` entry (DL=0x2d) is *not* the same value — 0x2d would index a live
-slot well past the nulls.
+The whole chain, each link measured:
+
+```
+3c9:1734   the chipset detection routine        -> leaves [87f:2448] = 0000
+3c9:37f3   mov ax,[0x2448] / mov [0x256e],ax    -> [87f:256e] = 0000
+773:057a   mov ax,[0x256e] / mov [0x1e02],ax    -> [87f:1e02] = 0000
+773:0b44   [0x1e0c] = word[0x20b0 + 2*0]        -> slot 0 is 00 00
+773:0b5a   push/push/ret through [0x1e0c]       -> jumps to offset 0
+```
+
+So the one remaining question is inside `3c9:1734`, called from `3c9:37f0`
+(`e8 41 df`), which is supposed to write `[87f:2448]` and leaves it zero. Note
+the scan landing on the table's own `UnKnow` entry (DL=0x2d) is *not* this
+value — 0x2d would index a live slot well past the nulls — so whatever the
+C000-F000 sweep concludes is not what reaches `[0x2448]`.
+
+To find these: `--dump=0100:0000:98304` covers the entire loaded image in one
+go, and grepping the hexdump for the operand bytes (`6e 25` for `[0x256e]`)
+finds both the reader and the writer. Two hits, one of them the trampoline. The
+dump's offsets are linear from `0100:0000`, so `linear = 0x1000 + offset` and
+any segment's offset is `linear - (seg << 4)`.
 
 Two things ruled out along the way. `SETUP /NOBANKS`, which the NFO offers for
 exactly this ("we don't recognise correctly your video chip"), changes nothing —
