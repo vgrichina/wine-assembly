@@ -4486,8 +4486,10 @@
       (then (call $gdi_refresh_window_dc_system_clips)))
     (local.set $dlg_rec (call $dlg_record_for_hwnd (local.get $arg0)))
     (if (i32.and
-          (i32.ne (local.get $dlg_rec) (i32.const 0))
-          (i32.ne (i32.load offset=4 (local.get $dlg_rec)) (i32.const 0)))
+          (i32.and
+            (i32.ne (local.get $dlg_rec) (i32.const 0))
+            (i32.ne (i32.load offset=4 (local.get $dlg_rec)) (i32.const 0)))
+          (i32.lt_s (call $wnd_get_class_slot (local.get $arg0)) (i32.const 0)))
       (then (drop (call $host_erase_background (local.get $arg0) (i32.const 16)))))
     ;; If the main window is moved/resized before its first ShowWindow, refresh
     ;; the pending WM_SIZE that was seeded during CreateWindowExA. EmPipe does
@@ -5180,8 +5182,10 @@
       (then
         (local.set $dlg_rec (call $dlg_record_for_hwnd (local.get $arg0)))
         (if (i32.and
-              (i32.ne (local.get $dlg_rec) (i32.const 0))
-              (i32.ne (i32.load offset=4 (local.get $dlg_rec)) (i32.const 0)))
+              (i32.and
+                (i32.ne (local.get $dlg_rec) (i32.const 0))
+                (i32.ne (i32.load offset=4 (local.get $dlg_rec)) (i32.const 0)))
+              (i32.lt_s (call $wnd_get_class_slot (local.get $arg0)) (i32.const 0)))
           (then (drop (call $host_erase_background (local.get $arg0) (i32.const 16)))))))
     ;; Last, so the window sees the geometry we have already committed.
     (call $windowpos_notify (local.get $arg0) (local.get $arg1) (local.get $x)

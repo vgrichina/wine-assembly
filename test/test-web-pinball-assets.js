@@ -150,7 +150,7 @@ assert(/diablo_demo:\s*\{[\s\S]*?exe:\s*diabloCandidateRoot \+ 'DIABDEMO\.EXE'[\
   'Diablo debug launch should load the extracted game, Storm, and its MPQ package on C: and Z:');
 assert(pageHtml.includes('lib/vfs-persistence.js?v=1'),
   'web host should load bounded per-app VFS persistence');
-assert(pageHtml.includes('lib/browser-shell.js?v=13'),
+assert(pageHtml.includes('lib/browser-shell.js?v=15'),
   'web host should cache-bust the current launcher');
 assert(!deployJs.includes('test/binaries/candidates/diablo'),
   'public deploy should exclude the local Diablo demo payload');
@@ -306,12 +306,12 @@ assert(webApp.includes('lib/pe.js?v=1'), 'web host should load the shared PE sec
 assert(webApp.includes('lib/process-boot.js?v=2'), 'web host should cache-bust oversized PE section hydration');
 assert(webApp.includes('lib/host-window.js?v=5'), 'web host should cache-bust destroyed-window input cleanup');
 assert(!hostJs.includes('?v=55'), 'host.js should not fetch stale WAT/API sources with v55');
-assert(webApp.includes('lib/storage.js?v=169'), 'web host should cache-bust storage after Media Player association changes');
+assert(webApp.includes('lib/storage.js?v=170'), 'web host should cache-bust storage after renderer-aware registry delivery');
 assert(webApp.includes('lib/filesystem.js?v=170'), 'web host should cache-bust non-C drive root registration');
 assert(webApp.includes('lib/gdi-surface.js?v=2'), 'web host should load the canonical GDI surface module');
-assert(webApp.indexOf('lib/gdi-surface.js?v=2') < webApp.indexOf('lib/host-imports.js?v=210'),
+assert(webApp.indexOf('lib/gdi-surface.js?v=2') < webApp.indexOf('lib/host-imports.js?v=211'),
   'web host should load the GDI surface module before host imports');
-assert(webApp.includes('lib/host-imports.js?v=210'), 'web host should cache-bust the current host imports');
+assert(webApp.includes('lib/host-imports.js?v=211'), 'web host should cache-bust the current host imports');
 assert(webApp.includes('lib/touch-cursor.js?v=2'), 'web host should cache-bust custom touch cursor rendering');
 assert(webApp.includes('lib/thread-manager.js?v=183'), 'web host should cache-bust sparse cooperative thread stacks');
 assert(webApp.includes('lib/compile-wat.js?v=169'), 'web host should cache-bust the snapshot-capable WAT compiler');
@@ -319,8 +319,8 @@ assert(webApp.includes('lib/guest-rpc.js?v=7'), 'web host should cache-bust trac
 assert(webApp.includes('lib/guest-thread-host.js?v=6'), 'web host should cache-bust nested Worker wait pumping');
 assert(webApp.includes('lib/dll-loader.js?v=170'), 'web host should cache-bust sparse DllMain stack translation');
 assert(webApp.includes('lib/debug-thread-state.js?v=7'), 'web host should cache-bust live Worker status diagnostics');
-assert(webApp.includes('host.js?v=246'), 'web host should cache-bust host.js after non-C drive manifest mounting');
-assert(hostJs.includes("static SOURCE_VERSION = '237'"), 'web host should cache-bust WASM artifacts and WAT source compilation');
+assert(webApp.includes('host.js?v=248'), 'web host should cache-bust host.js after OpenGL API delivery');
+assert(hostJs.includes("static SOURCE_VERSION = '239'"), 'web host should cache-bust WASM artifacts and WAT source compilation');
 assert(hostJs.includes("const fetchOptions = debugFetch ? { cache: 'no-store' } : undefined;"),
   'debug sessions should select a no-store fetch policy');
 assert(hostJs.includes('fetch(`${artifact}?v=${WineAssembly.SOURCE_VERSION}`, fetchOptions)'),

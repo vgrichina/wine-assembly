@@ -173,6 +173,49 @@ transferring DirectDraw ownership in the host: the guest has not issued a
 second `SetCooperativeLevel`, and there is not yet generic evidence that such a
 host-side handoff matches Windows behavior.
 
+### Engine frame activation
+
+The grey window was one step downstream of an ordinary USER activation gap,
+not a DirectDraw ownership handoff. Uplink selects `sw.dll` at runtime. The
+post-Easy launcher bridge adds the exact `skill 1\nmap hldemo1\n` text to
+`sw.dll`'s `Cbuf_AddText` once, but `Host_Frame` remains at zero. Its caller is
+reached continuously and reports engine state 1, then returns because all
+three run guards are zero. The primary guard at `0x484808` is written by three
+MFC `WM_ACTIVATEAPP` handlers; none of those handlers executed during the menu
+startup in the failing run.
+
+The window chronology identifies why. An unseen utility HWND consumes the
+first handle, then the real parent/owner-zero UI is created as dialog HWND
+`0x10002` and shown. `ShowWindow` already knows how to deliver the synchronous
+`WM_ACTIVATEAPP -> WM_ACTIVATE -> WM_SETFOCUS -> WM_SIZE` chain through a
+retained DLGPROC, but the preceding hidden-helper promotion accepted only a
+direct guest WNDPROC. It rejected USER's `WNDPROC_DIALOG` marker, left
+`main_hwnd` on the invisible utility HWND, and made the correct dialog branch
+unreachable.
+
+The generic fix resolves `WNDPROC_DIALOG` to its retained application DLGPROC
+for that promotion decision. It still requires a shown, unowned top-level,
+an invisible old main HWND, and an unconsumed first-activation gate. Owned
+popups, child dialogs, built-in procedures, and subsequent same-application
+window changes keep their previous behavior. The focused regression builds
+exactly this hidden-utility/retained-dialog shape and proves the real dialog is
+promoted and synchronously receives all four startup messages in order. The
+existing SkiFree startup sequence, custom dialog dispatch, queued custom-button
+command, and installed Uplink menu gates remain green.
+
+A normal post-fix Chrome run clicks New Game and creates the live
+Easy/Medium/Difficult dialog and all four buttons. The disposable diagnostic's
+old control-ID walk
+does not recognize those dynamically retitled controls after main-window
+promotion, so that run was not used to claim a new Easy-to-first-person pass.
+The earlier guest-only counterfactual (`0x484808 = 1` immediately after Easy)
+does prove the next stacked compatibility boundary: the engine immediately
+enters deep `sw.dll` code and stops at unimplemented `CompareFileTime`
+(`sw.dll` runtime EIP `0x0104b407`). `CompareFileTime` is a separate generic
+KERNEL32 API task; first-person rendering remains unproven until it and any
+later engine dependencies are implemented and the real dropdown path is
+rerun.
+
 ## Browser DLL thread-attach stack translation
 
 Safari 26.4 can advance through New Game and click Easy with a 1,000-block host
@@ -213,3 +256,81 @@ slices with no `ERROR` or trap. It stops the acceptance only at the
 already documented two-colour/grey first-person boundary (`colors=2` against
 the test's `minColors=24`), so the stack-translation fix does not reintroduce
 the pre-difficulty stall.
+
+## OpenGL renderer and gameplay throughput
+
+The software renderer can reach the first-person corridor, but its full-frame
+CPU rasterization is a poor browser path: Safari measured about 1.2 fps with
+broken streamed audio. Uplink's renderer registry uses `EngineType=2` for
+OpenGL and resolves `EngineGLDriver=Default` through `gldrv\\drvmap.txt` to the
+system `opengl32.dll`, the same generic WGL bridge already used by Quake II.
+These values now ship as the app's startup registry instead of selecting the
+bundled 3Dfx mini-driver or software renderer.
+
+The first OpenGL run entered `hw.dll` and then appeared to exit at EIP zero.
+The return address `0x006522d7` was still on the guest stack. Disassembly of
+`hw.dll` RVA `0x8c2d1` showed an indirect call through `0x1068a274`; renderer
+initialization fills that slot with `GetProcAddress("glColor4ub")`. The bridge
+implemented `glColor4ubv` but not the scalar form, so the resolved pointer was
+zero and GoldSrc called it. `glColor4ub` is appended as command-stream opcode
+56 to preserve the existing GL/WGL opcode ABI, normalizes its four byte
+components, and folds into immediate-mode vertex colour state without a host
+round trip.
+
+GoldSrc's z-trick also calls `glDepthRange(1, 0)`. Desktop OpenGL permits that,
+whereas WebGL reports `INVALID_OPERATION` when near is greater than far. The
+frontend now sends WebGL the legal sorted range and negates clip-space Z in the
+projection matrix; this is algebraically equivalent to the desktop mapping.
+
+Finally, the browser's app-specific 1,000-block slice underfed both rendering
+and audio. The cooperative OpenGL path now uses 10,000 blocks, matching the
+responsive Quake II scale. A fresh SwiftShader browser acceptance loaded
+`hw.dll`, clicked New Game -> Easy, remained active for a 90-second gameplay
+settle, issued 940 `gpuPresent` calls, and captured a textured corridor plus
+HUD with 4,905 sampled colours and no trap or GL bridge error:
+`/private/tmp/hlu-opengl-depth-fixed/halflife_uplink-easy-loaded-gpu.png`.
+
+### Owner-drawn dialog background
+
+Uplink's menu resources name the registered `HalfLifeLauncher` dialog class.
+The resource loader previously skipped that `OrdOrString` field, so the HWND
+lost its class slot, cursor, brush, and `CS_OWNDC` state. Two later synchronous
+resize helpers then treated it as a stock `#32770` dialog and erased the full
+640x480 client with `COLOR_BTNFACE` after GoldSrc had painted its textured
+background. The built-in erase trace identified the overwrite exactly as
+`hwnd=0x10002 brush=0x10 client=640x480`.
+
+Named DLGTEMPLATE classes now inherit the same registered-class state as
+CreateWindowEx windows. MoveWindow and SetWindowPos retain the legacy
+BTNFACE initialization for classless dialogs, but do not overwrite a custom
+class's owner-drawn client. The focused test covers both halves. A rebuilt
+real-browser capture shows the black textured menu with all labels and no
+grey slab:
+`/private/tmp/hlu-menu-isolated-fixed/halflife_uplink-before.png`.
+
+### In-process renderer switching
+
+One scheduler quantum is not suitable for both GoldSrc backends. OpenGL needs
+10,000 blocks per cooperative turn to feed geometry and streamed audio, while
+Software's CPU rasterizer needs the earlier 1,000-block quantum to preserve
+browser input and paint responsiveness. GoldSrc also retains its WGL context
+while Software is active, so context existence is not an honest mode signal.
+
+Storage now publishes successful registry writes to the owning process. The
+Half-Life browser policy watches its exact `HKCU\\Software\\Valve\\HLDemo\\Settings`
+`EngineType` value: `2` selects the 10,000-block OpenGL quantum and the other
+renderer values select 1,000. Actual GPU and DirectDraw presentations provide
+a second runtime signal. This applies while the guest is running; the emulator
+process is not restarted. A fresh browser probe observed `HLU_SOFTWARE_SLICE
+1000` immediately after Apply and `HLU_OPENGL_SLICE 10000` after selecting
+OpenGL again.
+
+The Software leg of the same-process acceptance reached a textured Lambda
+Complex corridor and HUD after a 90-second settle:
+`/private/tmp/hlu-final-both-renderers/halflife_uplink-software-gameplay.png`.
+The test then opened the live pause menu, selected OpenGL, observed the quantum
+return to 10,000, confirmed replacement of the active game, and captured the
+same corridor through the GPU layer after another 90-second settle. That leg
+issued 569 `gpuPresent` calls, loaded 1,863 textures, remained active with no
+GL error or trap, and produced 34,101 sampled colours:
+`/private/tmp/hlu-final-both-renderers/halflife_uplink-opengl-gameplay-after-switch-gpu.png`.

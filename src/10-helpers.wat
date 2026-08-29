@@ -4844,7 +4844,7 @@
     (local $data_entry i32) (local $rva i32) (local $wa i32) (local $p i32)
     (local $style i32) (local $ex_style i32) (local $ctrl_count i32)
     (local $dlg_x i32) (local $dlg_y i32) (local $dlg_cx i32) (local $dlg_cy i32)
-    (local $title_ptr i32) (local $menu_key i32)
+    (local $title_ptr i32) (local $menu_key i32) (local $dialog_class_ptr i32)
     (local $dlg_slot i32) (local $dlg_rec i32) (local $dlg_key i32)
     (local $i i32) (local $ctrl_hwnd i32) (local $ctrl_slot i32) (local $ctrl_rec i32)
     (local $cx i32) (local $cy i32) (local $cw i32) (local $ch i32)
@@ -4904,8 +4904,27 @@
     (call $dlg_read_menu_or_class (local.get $p))
     (local.set $menu_key (global.get $dlg_text_ptr))
     (local.set $p (global.get $dlg_text_wa))
-    ;; Class (OrdOrString) — ignored for dialogs, but must skip
-    (local.set $p (call $dlg_skip_ord_or_sz (local.get $p)))
+    ;; Class (OrdOrString). A named custom dialog class inherits the same
+    ;; registered-class state as a window created through CreateWindowExA.
+    ;; GoldSrc's HalfLifeLauncher class supplies application-owned dialog
+    ;; state. Skipping it made resize helpers treat the owner-drawn menu as a
+    ;; default dialog and overwrite its painted background with COLOR_BTNFACE.
+    (call $dlg_read_menu_or_class (local.get $p))
+    (local.set $dialog_class_ptr (global.get $dlg_text_ptr))
+    (local.set $p (global.get $dlg_text_wa))
+    ;; Ordinal class atoms fit below the guest heap. Only named classes can
+    ;; participate in the registered-class lookup helpers.
+    (if (i32.ge_u (local.get $dialog_class_ptr) (i32.const 0x10000))
+      (then
+        (call $wnd_set_class_bg_brush_from_name
+          (local.get $dlg_hwnd) (local.get $dialog_class_ptr))
+        (call $wnd_set_class_cursor_from_name
+          (local.get $dlg_hwnd) (local.get $dialog_class_ptr))
+        (call $wnd_set_class_slot_from_name
+          (local.get $dlg_hwnd) (local.get $dialog_class_ptr))
+        (call $wnd_set_own_dc_from_name
+          (local.get $dlg_hwnd) (local.get $dialog_class_ptr))
+        (call $heap_free (local.get $dialog_class_ptr))))
     ;; Title (UTF-16 sz)
     (call $dlg_read_text (local.get $p))
     (local.set $title_ptr (global.get $dlg_text_ptr))

@@ -25392,5 +25392,12 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 2843059987
+  },
+  {
+    "id": 3054,
+    "name": "glColor4ub",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 3441316804
   }
 ]

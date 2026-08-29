@@ -53,6 +53,9 @@ const gpuApis = new Map([
   // Legacy ref_gl.dll dynamically asks for this spelling. Opcode 55 is the
   // same backend-neutral present operation used by GDI32!SwapBuffers.
   ['wglSwapBuffers', 1],
+  // Appended after the stable GL/WGL opcode range. GoldSrc uses the scalar
+  // unsigned-byte colour entry point for world geometry.
+  ['glColor4ub', 4],
 ]);
 const gpuApiOrder = [...gpuApis.keys()];
 

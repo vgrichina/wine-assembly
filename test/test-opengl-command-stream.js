@@ -76,6 +76,11 @@ dv.setUint32(stack + 4, 0x0006, true); // GL_TRIANGLE_FAN
 packedEncoder.call(21, stack, 0);
 setFloatArgs([0.25, 0.5, 0.75, 1]);
 packedEncoder.call(25, stack, 0);
+// GoldSrc resolves this scalar extension dynamically rather than using the
+// vector glColor4ubv form. It must update packed immediate-mode state without
+// forcing a Worker round trip.
+[0xFF, 0, 0xFF, 0].forEach((value, i) => dv.setUint32(stack + 4 + i * 4, value, true));
+packedEncoder.call(56, stack, 0);
 setFloatArgs([0.125, 0.875]);
 packedEncoder.call(28, stack, 0);
 for (const vertexValues of [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]]) {
@@ -91,8 +96,8 @@ assert.strictEqual(packedCalls[0].capture.pointerLength, 6 * 9 * 4,
   'four fan vertices compile to two interleaved triangles');
 const packedVertices = new Float32Array(packedCalls[0].capture.buffer,
   packedCalls[0].capture.pointerOffset, packedCalls[0].capture.pointerLength / 4);
-assert.deepStrictEqual(Array.from(packedVertices.slice(3, 9)), [0.25, 0.5, 0.75, 1, 0.125, 0.875],
-  'packed vertices contain resolved color and texture-coordinate state');
+assert.deepStrictEqual(Array.from(packedVertices.slice(3, 9)), [1, 0, 1, 0, 0.125, 0.875],
+  'packed vertices contain scalar-byte color and texture-coordinate state');
 
 // Capacity pressure submits an execution batch but cannot publish a frame.
 let presents = 0;

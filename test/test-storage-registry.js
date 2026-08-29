@@ -8,11 +8,13 @@ const IMAGE_BASE = 0x400000;
 const memory = new ArrayBuffer(0x20000);
 const mem = new Uint8Array(memory);
 const dv = new DataView(memory);
+const registryChanges = [];
 const ctx = {
   getMemory: () => memory,
   exports: {
     get_image_base: () => IMAGE_BASE,
   },
+  onRegistryValueChanged: change => registryChanges.push(change),
 };
 const storage = createStorageImports(ctx);
 
@@ -80,6 +82,12 @@ const hKey = readGuestU32(phkGA);
 assert(hKey, 'reg_create_key should write a handle');
 
 assert.strictEqual(storage.reg_set_value(hKey, g2w(valueNameGA, IMAGE_BASE), 1, valueGA, 4, 0), 0);
+assert.deepStrictEqual(registryChanges.shift(), {
+  path: 'HKCU\\Software\\WineAssemblyTest',
+  name: 'PlayerName',
+  type: 1,
+  data: 'Ada',
+}, 'successful registry writes publish their canonical value to runtime policy');
 writeGuestU32(cbGA, 0);
 assert.strictEqual(storage.reg_query_value(hKey, g2w(valueNameGA, IMAGE_BASE), 0, 0, cbGA, 0), 0);
 assert.strictEqual(readGuestU32(cbGA), 4);

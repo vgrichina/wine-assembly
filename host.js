@@ -26,7 +26,7 @@ function claimAudioSession() {
 if (typeof window !== 'undefined') window.claimAudioSession = claimAudioSession;
 
 class WineAssembly {
-  static SOURCE_VERSION = '237';
+  static SOURCE_VERSION = '239';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   static _nextProcessId = 1000;
 
@@ -151,6 +151,12 @@ class WineAssembly {
     this.moduleMap = [];
     this._wasmModule = null;
     this.stepsPerSlice = 100000;
+    // Browser-shell may tune cooperative scheduling when a game replaces its
+    // renderer in-process. The GL bridge reports context lifetime without
+    // making the generic host depend on an app name.
+    this.onOpenGLContextCountChange = null;
+    this.onGuestFrame = null;
+    this.onRegistryValueChanged = null;
     // Most programs replace a destroyed startup window immediately. A few
     // games tear down a warning/splash before doing substantial renderer
     // initialization, so the browser launcher may opt them into a longer
@@ -356,6 +362,19 @@ class WineAssembly {
       sharedAudio,
       sharedMixer,
       audioClockMs: () => self._guestAudioClockMs(sharedAudio),
+      onOpenGLContextCountChange: count => {
+        if (typeof self.onOpenGLContextCountChange === 'function') {
+          self.onOpenGLContextCountChange(count | 0);
+        }
+      },
+      onGuestFrame: frame => {
+        if (typeof self.onGuestFrame === 'function') self.onGuestFrame(frame);
+      },
+      onRegistryValueChanged: change => {
+        if (typeof self.onRegistryValueChanged === 'function') {
+          self.onRegistryValueChanged(change);
+        }
+      },
       onAudioCaptureError: (message) => {
         self._lastAudioCaptureError = String(message || 'microphone unavailable');
         if (typeof document !== 'undefined') {
@@ -451,6 +470,9 @@ class WineAssembly {
         self._dxDirty = true;   // a released write is a finished write
       } else if (kind === 5 || kind === 6) {
         self._dxDirty = true;
+        if (typeof self.onGuestFrame === 'function') {
+          self.onGuestFrame({ kind: 'directdraw' });
+        }
       }
       return rawDxTrace ? rawDxTrace(kind, slot, a1, a2, a3) : undefined;
     };
@@ -1214,7 +1236,7 @@ class WineAssembly {
         module: wasmModule,
         sigs,
         hostImports: this._mainImports.host,
-        workerUrl: 'lib/guest-worker.js?v=9',
+        workerUrl: 'lib/guest-worker.js?v=10',
         forwardGlLogs: !!this.verbose || !!(window.__waTraceApiNames && window.__waTraceApiNames.size),
         log: msg => { console.log(msg); self.logToUI(msg); },
         tickMs: () => self._guestTickMs(self.hostCtx && self.hostCtx.sharedAudio),

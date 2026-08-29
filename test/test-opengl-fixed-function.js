@@ -15,6 +15,7 @@ class FakeBackend {
     };
     this.draws = []; this.uniforms = new Map(); this.uploads = [];
     this.parameters = [];
+    this.depthRanges = [];
     this.uniformCalls = 0;
   }
   createProgram() { return { attributes: { aPosition: 0, aColor: 1, aTexCoord: 2 }, uniforms: {} }; }
@@ -34,6 +35,7 @@ class FakeBackend {
   deleteTexture() {}
   destroy() {}
   setCapability() {}
+  setDepthRange(nearValue, farValue) { this.depthRanges.push([nearValue, farValue]); }
 }
 
 const backend = new FakeBackend();
@@ -85,6 +87,23 @@ merged.flushPendingDraw();
 assert.strictEqual(mergedBackend.uniformCalls, initialUniformCalls,
   'unchanged fixed-function uniforms are not reissued on later draws');
 
+const depthBackend = new FakeBackend();
+const depthFrontend = new FixedFunctionGL(depthBackend);
+depthFrontend.setDepthRange(1, 0);
+assert.deepStrictEqual(depthBackend.depthRanges, [[0, 1]],
+  'desktop reversed depth range is submitted to WebGL in legal order');
+depthFrontend.begin(GL.TRIANGLES);
+depthFrontend.vertex(0, 0, 0); depthFrontend.vertex(1, 0, 0); depthFrontend.vertex(0, 1, 0);
+depthFrontend.end();
+assert.strictEqual(depthBackend.uniforms.get('uProjection')[10], -1,
+  'reversed depth range negates clip-space Z to preserve desktop GL mapping');
+depthFrontend.setDepthRange(0, 1);
+depthFrontend.begin(GL.TRIANGLES);
+depthFrontend.vertex(0, 0, 0); depthFrontend.vertex(1, 0, 0); depthFrontend.vertex(0, 1, 0);
+depthFrontend.end();
+assert.strictEqual(depthBackend.uniforms.get('uProjection')[10], 1,
+  'restoring forward depth range restores the original projection');
+
 // Gameplay geometry lives in Quake's high sparse VirtualAlloc arena. Verify
 // pointer-valued GL calls use the emulator's canonical translator instead of
 // assuming every guest address is image-relative linear memory.
@@ -111,10 +130,44 @@ bridge.contexts.set(1, { frontend: {
 bridge.call(CALL_INDEX.glVertex3fv, stack, 0);
 assert.deepStrictEqual(seenVertices, [[1.25, -2.5, 3.75]],
   'glVertex3fv resolves sparse guest pointers through guest_to_wasm');
+bridgeView.setUint32(stack + 4, 0x11, true);
+bridgeView.setUint32(stack + 8, 0x80, true);
+bridgeView.setUint32(stack + 12, 0xFE, true);
+bridgeView.setUint32(stack + 16, 0x40, true);
+bridge.contexts.get(1).frontend.color = [1, 1, 1, 1];
+bridge.call(CALL_INDEX.glColor4ub, stack, 0);
+assert.deepStrictEqual(bridge.contexts.get(1).frontend.color,
+  [0x11 / 255, 0x80 / 255, 0xFE / 255, 0x40 / 255],
+  'GoldSrc scalar unsigned-byte colour calls lower to normalized RGBA');
 bridge.call(CALL_INDEX.gpuPresent, stack, 0);
 assert.strictEqual(guestPresents, 1,
   'generic GPU presentation contributes exactly one guest FPS sample');
 assert.strictEqual(bridge.contexts.get(1).layer.writeSeq, 1,
   'generic GPU presentation advances its compositor sequence');
+
+const contextCounts = [];
+const lifecycleBridge = new OpenGLHostBridge({
+  getMemory: () => bridgeMemory,
+  exports: {},
+  onContextCountChange: count => contextCounts.push(count),
+});
+const lifecycleWin = {};
+const lifecycleLayer = {};
+lifecycleWin._gpuFrameLayer = lifecycleLayer;
+lifecycleWin._dxFrameLayer = lifecycleLayer;
+lifecycleBridge.current = 7;
+lifecycleBridge.contexts.set(7, {
+  frontend: { destroy() {} }, win: lifecycleWin, layer: lifecycleLayer,
+});
+assert.strictEqual(lifecycleBridge.makeCurrent(7), 1);
+assert.strictEqual(lifecycleBridge.makeCurrent(0), 1);
+assert.deepStrictEqual(contextCounts, [1, 0],
+  'releasing a current context reports the software-renderer transition');
+assert.strictEqual(lifecycleBridge.deleteContext(7), 1,
+  'live OpenGL context can be deleted during renderer replacement');
+assert.deepStrictEqual(contextCounts, [1, 0, 0],
+  'deleting the last context reports the software-renderer transition');
+assert.strictEqual(lifecycleWin._gpuFrameLayer, null,
+  'renderer replacement detaches the old GPU presentation layer');
 
 console.log('PASS OpenGL fixed-function lowering (quad, matrix, texture)');

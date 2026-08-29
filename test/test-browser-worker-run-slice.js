@@ -30,9 +30,9 @@ assert.strictEqual(shell.selectedRunSlice('jazz2_demo', false), 1000,
   'an explicit cooperative backend stays at 1k');
 assert.strictEqual(shell.selectedRunSlice('jazz2_demo', true), 100000,
   'a confirmed Jazz guest Worker uses 100k');
-assert.strictEqual(shell.selectedRunSlice('halflife_uplink', false), 1000,
-  'cooperative Uplink gives its renderer transition enough work to finish');
-assert.strictEqual(shell.selectedRunSlice('halflife_uplink', true), 1000,
+assert.strictEqual(shell.selectedRunSlice('halflife_uplink', false), 10000,
+  'cooperative Uplink gives OpenGL enough work per slice for gameplay');
+assert.strictEqual(shell.selectedRunSlice('halflife_uplink', true), 10000,
   'the Worker override is app-scoped');
 
 selected = '10000';
@@ -54,9 +54,9 @@ assert(hostSource.includes('const activeStepsPerSlice = Math.max(1, (self.stepsP
   'the cooperative host must honor browser-shell slices below 1k');
 assert(hostSource.includes('const configuredSteps = Math.max(1000, (self.stepsPerSlice | 0) || stepsPerSlice);'),
   'the guest-Worker backend should retain its 1k messaging floor');
-assert(indexSource.includes('lib/browser-shell.js?v=13'),
+assert(indexSource.includes('lib/browser-shell.js?v=15'),
   'the page cache-busts the Uplink slice policy');
-assert(indexSource.includes('host.js?v=246'),
+assert(indexSource.includes('host.js?v=248'),
   'the page cache-busts cooperative slice enforcement');
 
 console.log('PASS browser run-slice policy distinguishes Jazz Worker and cooperative backends');
