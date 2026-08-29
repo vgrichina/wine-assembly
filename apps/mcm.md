@@ -5,6 +5,31 @@
 **Entry point:** (TBD)
 **Run:** `node test/run.js --exe=test/binaries/shareware/mcm/mcm_ex/MCM.EXE --max-batches=500 --trace-api`
 
+## Status (2026-08-28) — software cursor owns browser capture
+
+A browser API trace at the profile-name screen shows the input contract MCM
+expects: `ShowCursor(TRUE)` once followed by `ShowCursor(FALSE)` twice (display
+count `-1`), two DirectInput devices acquired with cooperative flags `0x6`
+(`DISCL_FOREGROUND | DISCL_NONEXCLUSIVE`), `ClipCursor`, then continuous
+`GetCursorPos` polling. The browser Pointer Lock request already succeeded and
+produced no transition `movementX/Y` in Chrome; the apparent click-time jump
+was the visible absolute browser arrow competing with MCM's own relative
+software cursor.
+
+The renderer now exposes the signed `ShowCursor` count. While it is negative,
+the canvas hides the host cursor with an `!important` class (so asynchronous
+`SetCursor` cannot reveal it), and an exclusive presentation accepts that
+software-cursor signal as a generic relative-capture heuristic. `ClipCursor`
+remains the fallback. This is deliberately capability-based rather than an
+MCM/app-name exception; DirectInput exclusivity cannot be required because
+MCM explicitly requests nonexclusive mode.
+
+The same trace found the post-capture click mismatch: relative motion moved
+MCM's cursor from `(220,235)` to `(445,45)`, while Pointer Lock left DOM
+`clientX/Y` frozen and the next `mousedown` was still dispatched at
+`(220,235)`. Locked button-down now uses the guest virtual cursor, matching the
+existing button-up path and the position MCM actually draws/tests.
+
 ## Status (2026-06-14) — first-run dialog accepted; splash smoke promoted
 
 MCM is no longer marked known-bad in the all-EXE smoke list. The harness now accepts the first-run video-memory-test dialog and waits long enough for the post-dialog render loop:

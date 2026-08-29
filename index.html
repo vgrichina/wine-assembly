@@ -139,6 +139,7 @@
       -webkit-user-select: none;
       user-select: none;
     }
+    canvas.guest-cursor-hidden { cursor: none !important; }
     #mobile-keyboard-proxy {
       position: fixed;
       left: 0;
@@ -1183,7 +1184,7 @@ Resource-aware Win98 emulator
   <script src="lib/renderer.js?v=189"></script>
   <script src="lib/dll-registry.js?v=1"></script>
   <script src="lib/apps.js?v=5"></script>
-  <script src="lib/browser-input.js?v=5"></script>
+  <script src="lib/browser-input.js?v=6"></script>
   <script src="lib/mobile-keyboard.js?v=2"></script>
   <!-- Touch devices have no pointer, so every cursor shape the guest sets is
        invisible there and a busy app looks like a dead one. Draws the cursor

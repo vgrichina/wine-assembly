@@ -300,7 +300,7 @@ assert(fs.statSync(path.join(ROOT, 'binaries', 'whatsnew.txt')).size > 0, 'Winam
 assert(!webApp.includes('wine.waitForMainHwnd(() =>'), 'Winamp web launch should not auto-drive playback through IPC');
 assert(!webApp.includes('?v=55'), 'index.html should not keep stale cache-buster v55');
 assert(webApp.includes('lib/renderer-input.js?v=195'), 'web host should cache-bust renderer input after overflow-safe DirectInput mouse edges');
-assert(webApp.includes('lib/browser-input.js?v=5'), 'web host should cache-bust the browser pointer-lock bridge');
+assert(webApp.includes('lib/browser-input.js?v=6'), 'web host should cache-bust the hidden-cursor pointer-lock bridge');
 assert(webApp.includes('lib/renderer.js?v=189'), 'web host should cache-bust renderer after the current source update');
 assert(webApp.includes('lib/pe.js?v=1'), 'web host should load the shared PE section reader');
 assert(webApp.includes('lib/process-boot.js?v=2'), 'web host should cache-bust oversized PE section hydration');
@@ -319,7 +319,7 @@ assert(webApp.includes('lib/guest-thread-host.js?v=6'), 'web host should cache-b
 assert(webApp.includes('lib/dll-loader.js?v=170'), 'web host should cache-bust sparse DllMain stack translation');
 assert(webApp.includes('lib/debug-thread-state.js?v=7'), 'web host should cache-bust live Worker status diagnostics');
 assert(webApp.includes('host.js?v=244'), 'web host should cache-bust host.js after the current source update');
-assert(hostJs.includes("static SOURCE_VERSION = '235'"), 'web host should cache-bust WASM artifacts and WAT source compilation');
+assert(hostJs.includes("static SOURCE_VERSION = '236'"), 'web host should cache-bust WASM artifacts and WAT source compilation');
 assert(hostJs.includes("const fetchOptions = debugFetch ? { cache: 'no-store' } : undefined;"),
   'debug sessions should select a no-store fetch policy');
 assert(hostJs.includes('fetch(`${artifact}?v=${WineAssembly.SOURCE_VERSION}`, fetchOptions)'),
@@ -379,7 +379,7 @@ assert(webApp.includes('return compatDispatch ? 500 : 100000;'), 'auto slice sho
 assert(webApp.includes('return compatDispatch ? Math.min(selected, autoSlice) : selected;'), 'manual slice should be clamped in no-tail-call browsers');
 assert(!/case 'winamp':\s*return 1;/.test(webApp), 'Winamp auto slice should not rely on slice=1 startup masking');
 assert(webApp.includes('function unlockRunningAudio()'), 'web canvas input should explicitly unlock running app audio');
-assert(/unlockRunningAudio\(\);\s*const \{ x: cx, y: cy \} = eventPoint\(e\);/.test(webApp), 'mouse input should resume audio before guest dispatch');
+assert(/unlockRunningAudio\(\);\s*const \{ x: cx, y: cy \} = mouseButtonPoint\(e, pointerLocked\(\)\);/.test(webApp), 'mouse input should resume audio before resolving locked guest coordinates');
 assert(/unlockRunningAudio\(\);\s*const \{ x: cx, y: cy \} = eventPointFromClient/.test(webApp), 'touch input should resume audio before guest dispatch');
 // handleKeyDown takes an options object now; the guarded property is that the
 // unlock still runs immediately before the dispatch, not the call's arity.

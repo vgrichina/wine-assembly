@@ -2423,6 +2423,11 @@
     (call $defwndproc_do_ncpaint (local.get $hwnd)))
   ;; Cursor state readback — for tests / JS to verify SetCursor plumbing.
   (func (export "get_cursor") (result i32) (global.get $current_cursor))
+  ;; ShowCursor's signed display count is also browser presentation state.
+  ;; A negative count means the guest deliberately hid the system cursor and
+  ;; is normally drawing/tracking its own (often through DirectInput).
+  (func (export "get_cursor_display_count") (result i32)
+    (global.get $cursor_count))
   ;; Synchronous NCHITTEST helper — JS calls before generating mouse
   ;; events so classification lives in WAT. Returns HT* code.
   (func (export "hittest_sync")
