@@ -681,3 +681,42 @@ ATTIC, brainbug, COMPCODE, IHANMUU, DHADREN and BLIQ render byte-identical
 frames — ATTIC on 25 DSP commands instead of 412 — BLACK gets *further* (it
 reaches unchained 320x400 and its own sound init), and BTW differs only in the
 way any timing change moves an animation.
+
+### The `art` bucket hides three more work items
+
+`demo-status.js` calls any text screen with 40 or more non-blank cells `art`,
+and counts it as "showing something they meant to". For a BBS ANSI file
+(`a-note.exe`, `STARPORT.COM`, `NFO.EXE`, `ANTARES.EXE`, `README!.COM`) that is
+exactly right. For three of the thirty it is not — the text on screen is a menu
+or a warning, and the demo behind it never ran. Each was read with `--trace-int`
+in a few minutes, and none of them is a text demo:
+
+**CHROME.EXE — VESA.** It prints its "INTRO CONTAINS REALTIME RAYTRACING / CODE
+IS FULLY PENTIUM OPTIMIZED" warning, asks for `int 10h AX=4F01` (VBE mode info)
+for **mode 0x112, 640x480 24bpp**, gets no answer, and terminates through
+`int 21h AH=4Ch` — 0.4M dispatches, start to finish. The CPU level is not the
+issue: `--cpu=486/586/686` all end at the same instruction. We answer no VBE
+call at all, so `AX` comes back unchanged rather than `0x004F`, and the demo
+takes its own no-VESA path. **How many other rows want VBE has not been
+measured, and that number is what decides whether this is worth building.**
+
+**COCAHOLC.EXE — a protected-mode extender that gives up.** It answers its own
+sound menu (autoKey reads "0", and the choice makes no difference: 1, 2 and 3
+all end at the same instruction after the same 16.2M dispatches), probes DPMI
+(`int 2Fh AX=1687`, unhandled), finds no VCPI, takes the XMS route instead —
+allocates a 2561KB EMB, locks it, and gets a good linear address back — then
+runs a long way in protected mode (`base=129d0`, 32-bit) before unwinding to
+real mode, setting mode 13h and terminating with `int 20h`. It opens none of
+its own files (`COCAHOLC.INF`, `SB.DRV`, `SBP.DRV`) on the way. So the XMS half
+is fine and the extender is where it dies; where exactly is not yet established.
+
+**DINO.EXE and DINO386.EXE — an arrow-key menu.** Their setup screen is a
+three-column grid (device / port / IRQ) with the current row marked by a `>`,
+and it says so: "Use ARROW keys to move around, ENTER selects highlighted
+option." The menu reader in `Machine.menuKey` only recognises menus with a
+single-character selector per option, so it finds nothing to pick — "Silence"
+is right there in the list and matches `SILENT_LABEL`, but it has no letter or
+digit in front of it. Answering this needs the reader to count rows from the
+marker to the silent label and queue that many Down keys plus Enter. Both rows
+otherwise run: they reach protected mode (`cr0=11`, 32-bit code at base 20a0)
+and sit on the menu for the whole 300M-dispatch budget.
