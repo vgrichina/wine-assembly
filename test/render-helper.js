@@ -51,7 +51,7 @@ function mountBundledFonts(ctx, { scalable = true } = {}) {
 
 async function bootRenderHarness({
   extraHostOverrides = {}, extraWat = '', width = 640, height = 480,
-  fonts = 'all',
+  fonts = 'all', memory: suppliedMemory = null,
 } = {}) {
   const SRC = path.join(__dirname, '..', 'src');
   const wasmBytes = await compileWat(async f => {
@@ -59,7 +59,8 @@ async function bootRenderHarness({
     if (!extraWat || f !== '13-exports.wat') return source;
     return source.replace(/\n\)\s*$/, `\n${extraWat}\n)\n`);
   });
-  const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
+  const memory = suppliedMemory ||
+    new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   const canvas = createCanvas(width, height);
   const renderer = new Win98Renderer(canvas);
   const ctx = {

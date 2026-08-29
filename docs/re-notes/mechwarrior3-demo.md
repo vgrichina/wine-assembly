@@ -61,6 +61,13 @@ existing copy-superop gate; default behavior for every other app is unchanged.
 `test/test-mw3-rgb565-alpha-run.js` compares ordinary and fused execution over
 all alpha arms, bounds, flags, registers, and a one-byte near miss.
 
+Threads mode creates one WebAssembly instance per guest thread over shared
+memory. The gate was originally a mutable WebAssembly global, so only the main
+instance observed `copySuperops: true`; a worker decoding the compositor kept
+the default-off path. `LOOP_PROCESS_STATE` now stores that process opt-in in an
+atomic shared-memory word. The same regression instantiates two decoders over
+one shared memory and proves opt-in and rollback are visible in both directions.
+
 ## Gameplay input
 
 Pilot entry calls the five-argument USER32 `ToAscii`. The handler delegates to

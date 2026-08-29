@@ -585,7 +585,7 @@
   ;; bound is the game's clipped row width; no screen-size guess is involved.
   (func $try_emit_rgb565_alpha_run (param $start_eip i32) (result i32)
     (if (i32.or
-          (i32.eqz (global.get $loop_copy_emit_enabled))
+          (i32.eqz (call $loop_copy_emit_get))
           (i32.or (global.get $code16)
             (i32.ne (local.get $start_eip) (i32.const 0x00528064))))
       (then (return (i32.const 0))))

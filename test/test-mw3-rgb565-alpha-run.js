@@ -21,6 +21,8 @@ const EXTRA_WAT = `
   (func (export "test_mw3_zf") (result i32) (call $get_zf))
   (func (export "test_mw3_sf") (result i32) (call $get_sf))
   (func (export "test_mw3_of") (result i32) (call $get_of))
+  (func (export "test_copy_emit_enabled") (result i32)
+    (call $loop_copy_emit_get))
 `;
 
 const LOOP_EIP = 0x00528064;
@@ -116,6 +118,22 @@ async function makeRuntime({ enabled, nearMiss = false }) {
 }
 
 (async () => {
+  const sharedMemory = new WebAssembly.Memory({
+    initial: 8192, maximum: 8192, shared: true,
+  });
+  const sharedMain = await bootRenderHarness({
+    extraWat: EXTRA_WAT, fonts: 'none', memory: sharedMemory,
+  });
+  const sharedThread = await bootRenderHarness({
+    extraWat: EXTRA_WAT, fonts: 'none', memory: sharedMemory,
+  });
+  sharedMain.exports.set_loop_copy_emit(1);
+  assert.strictEqual(sharedThread.exports.test_copy_emit_enabled(), 1,
+    'guest-worker decoder sees the main instance copy-superop opt-in');
+  sharedThread.exports.set_loop_copy_emit(0);
+  assert.strictEqual(sharedMain.exports.test_copy_emit_enabled(), 0,
+    'copy-superop rollback from a guest worker is process-wide');
+
   const ordinary = await makeRuntime({ enabled: false });
   const fused = await makeRuntime({ enabled: true });
   for (const [count, salt] of [[8, 0], [37, 3]]) {
