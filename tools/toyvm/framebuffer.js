@@ -183,7 +183,15 @@ function nonBlack(mem, video) {
 //
 //   2e6  a real picture -- two or more indices lit
 //   1e6  a single-index fill
-//     0  the text console, scored in non-blank cells
+//     0  the text console, scored in non-blank cells, and an unlit screen
+//
+// An unlit graphics screen sits at the bottom with the text page and not at the
+// top of a band, because "the adapter is in mode 13h" is not something worth
+// photographing on its own. Banding it above text cost AMBIENT.EXE its whole
+// result: its best frame became a blank mode 13h screen, which carries no text,
+// so the sweep read an empty `screen` string and never saw the program's own
+// "MIDAS Error: NO GUS FOUND... USE \"AMBIENT /NO_SND\" FOR SILENT MODE" -- the
+// message the retry rung exists to read a switch out of.
 //
 // Bands, and not a discount, because a discount answers the second comparison
 // wrongly while fixing the first. Scaling a fill down far enough to lose to a
@@ -205,7 +213,7 @@ function frameScore(mem, video) {
     n++;
     if (!seen[c]) { seen[c] = 1; distinct++; }
   }
-  return { count: n, distinct, score: (distinct >= 2 ? 2e6 + n : 1e6 + n) };
+  return { count: n, distinct, score: n === 0 ? 0 : (distinct >= 2 ? 2e6 + n : 1e6 + n) };
 }
 
 // A cheap content signature over the frame buffer. Two variants that disagree
