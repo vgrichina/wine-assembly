@@ -9703,15 +9703,49 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 432: RegSetValueW — 5 args stdcall, return ERROR_SUCCESS (registry writes are no-op)
+  ;; RegSetValue{A,W}(hKey, lpSubKey, dwType, lpData, cbData) writes the
+  ;; unnamed/default value, creating the optional subkey when necessary.
+  (func $reg_set_value (param $hkey i32) (param $subkey_g i32)
+                       (param $type i32) (param $data_g i32)
+                       (param $cb i32) (param $wide i32) (result i32)
+    (local $sub_wa i32) (local $target i32) (local $out_g i32) (local $res i32)
+    (local.set $sub_wa
+      (if (result i32) (local.get $subkey_g)
+        (then (call $g2w (local.get $subkey_g)))
+        (else (i32.const 0))))
+    ;; Even an empty subkey is opened into a normal host handle: predefined
+    ;; root constants are not writable handles in the storage backend.
+    (local.set $target (call $host_reg_open_key
+      (local.get $hkey) (local.get $sub_wa) (local.get $wide)))
+    (if (i32.eqz (local.get $target))
+      (then
+        (local.set $out_g (call $heap_alloc (i32.const 4)))
+        (if (i32.eqz (local.get $out_g)) (then (return (i32.const 8)))) ;; ERROR_NOT_ENOUGH_MEMORY
+        (local.set $res (call $host_reg_create_key
+          (local.get $hkey) (local.get $sub_wa) (local.get $out_g) (local.get $wide)))
+        (if (i32.eqz (local.get $res))
+          (then (local.set $target (call $gl32 (local.get $out_g)))))
+        (call $heap_free (local.get $out_g))
+        (if (local.get $res) (then (return (local.get $res))))))
+    (local.set $res (call $host_reg_set_value
+      (local.get $target) (i32.const 0) (local.get $type)
+      (local.get $data_g) (local.get $cb) (local.get $wide)))
+    (drop (call $host_reg_close_key (local.get $target)))
+    (local.get $res))
+
+  ;; 432: RegSetValueW — 5 args stdcall.
   (func $handle_RegSetValueW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_RegSetValueA
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+    (global.set $eax (call $reg_set_value
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
-  ;; RegSetValueA — 5 args stdcall, return ERROR_SUCCESS (registry writes are no-op)
+  ;; RegSetValueA — 5 args stdcall.
   (func $handle_RegSetValueA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $reg_set_value
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 

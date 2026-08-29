@@ -263,6 +263,7 @@ UNIT=(
   test/test-paint-desktop.js
   test/test-presentation-filter.js
   test/test-register-hotkey.js
+  test/test-reg-set-value-wat.js
   test/test-retina-scale2x-web.js
   test/test-security-descriptor.js
   test/test-sh-change-notify.js
@@ -440,6 +441,7 @@ UNIT=(
   test/test-user-default-ui-language.js
   test/test-virtual-query-user-boundary.js
   test/test-wave-in-dev-caps.js
+  test/test-wide-text-extent.js
   test/test-winsparkle-stubs.js
   test/test-worker-sparse-thread-stack.js
 )
