@@ -7,6 +7,32 @@
 
 ## Status (2026-08-28) — software cursor owns browser capture
 
+### CLI selector root cause — preserve the two filesystem roots
+
+The black Stunt Quarry preview and inert Next button were not an input or D3D
+failure. A CLI register trace of MCM's list merge at `0x00449842` showed one
+candidate before duplicate removal and zero afterward: the manifest mounted
+every asset as `C:\\<basename>`, so VFS basename fallback made
+`Quarry01.scn` appear in both MCM's installed-scene search and its
+`C:\\teraform\\quarries` media search. MCM subtracts the duplicate and has no
+selected event for Next to advance.
+
+MCM files now carry explicit paths. The two `.SCN` descriptors live only under
+`C:\\Program Files\\Microsoft Games\\Motocross Madness Trial\\TERAFORM`, while
+the CD media preserves its `C:\\AUDIO`, `C:\\SBIKE`, `C:\\TERAFORM` and `C:\\UI`
+hierarchy. With that split, the CLI renders the `T-rific` quarry thumbnail and
+Next reaches Select Rider/Bike. The hierarchy also exposes the rider and bike
+art that was previously inaccessible through directory-qualified opens.
+
+The deterministic CLI route now accepts Start and renders the full Loading
+screen. It reads `quarry01.trn`, the rider/bike CMP/TEX sets, and the audio
+payload successfully. Gameplay is not reached yet: after roughly 146 million
+post-Start blocks, the guest reaches a null indirect call from `0x004249ac`.
+The stack return is `0x004249af`; the call is the loading-overlay object's
+surface-vtable slot `+0x44`, reached through `[object+0x30]+0x18`. That surface
+pointer is null. This is a separate late DirectDraw/D3DRM ownership or creation
+problem, not an input or filesystem-selector failure.
+
 A browser API trace at the profile-name screen shows the input contract MCM
 expects: `ShowCursor(TRUE)` once followed by `ShowCursor(FALSE)` twice (display
 count `-1`), two DirectInput devices acquired with cooperative flags `0x6`
