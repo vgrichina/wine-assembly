@@ -8,15 +8,76 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
 const { APPS } = require(path.join(ROOT, 'lib', 'apps.js'));
+const {
+  buildCatalog,
+  categorizeCatalog,
+  searchCatalog,
+} = require(path.join(ROOT, 'lib', 'debug-app-picker.js'));
 const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
 const select = html.match(/<select id="app-select">([\s\S]*?)<\/select>/);
 assert(select, 'index.html has no #app-select');
+assert(html.includes('id="app-picker"') && html.includes('class="app-picker-popup"'),
+  'debug toolbar must expose the searchable app-picker shell');
+assert(html.includes('lib/debug-app-picker.js?v=1'),
+  'debug app picker must be loaded with an explicit browser cache token');
 const dropdownIds = [...select[1].matchAll(/<option value="([^"]+)"/g)]
   .map(match => match[1]);
 
 assert.strictEqual(new Set(dropdownIds).size, dropdownIds.length,
   'debug dropdown app IDs must be unique');
 for (const id of dropdownIds) assert(APPS[id], `debug dropdown app ${id} is not registered`);
+
+function option(value, label) {
+  return { tagName: 'OPTION', value, textContent: label };
+}
+
+function group(label, options) {
+  return { tagName: 'OPTGROUP', label, children: options };
+}
+
+const pickerCatalog = buildCatalog({
+  children: [
+    option('notepad', 'Notepad'),
+    group('Entertainment Pack', [option('sol', 'Solitaire')]),
+    group('16-bit (Win16 / NE)', [option('sol16', 'Solitaire (16-bit)')]),
+    group('Other', [option('winamp', 'Winamp'), option('pinball', 'Space Cadet Pinball')]),
+    group('Local Candidates', [
+      option('quake2_demo', 'Quake II Demo'),
+      option('quake2_demo_installer', 'Quake II Demo Installer'),
+    ]),
+    group('Installers', [option('winamp291_inst', 'Winamp 2.91 Installer')]),
+    group('Future Collection', [option('future', 'Future App')]),
+  ],
+});
+assert.deepStrictEqual(pickerCatalog.entries.map(entry => entry.value),
+  [
+    'notepad', 'sol', 'sol16', 'winamp', 'pinball',
+    'quake2_demo', 'quake2_demo_installer', 'winamp291_inst', 'future',
+  ],
+  'picker catalog must preserve the native selector order and top-level options');
+const pickerCategories = categorizeCatalog(pickerCatalog);
+assert(pickerCategories.some(category => category.label === 'Apps & Utilities' && category.count === 2),
+  'top-level options and utility entries must appear in Apps & Utilities');
+assert(pickerCategories.some(category => category.label === 'Classic Games' && category.count === 2),
+  'classic game groups and game entries from Other must share a cascade');
+assert(pickerCategories.some(category => category.label === '16-bit Games' && category.count === 1),
+  '16-bit games must have their own shorter cascade');
+assert(pickerCategories.some(category => category.label === 'PC Games & Demos' && category.count === 1),
+  'local game candidates must appear outside the classic-game collection');
+assert(pickerCategories.some(category => category.label === 'Installers' && category.count === 2),
+  'installers from both source groups must share one category');
+assert(pickerCategories.some(category =>
+  category.label === 'More Programs' && category.groups.includes('Future Collection')),
+  'new optgroups must remain reachable without updating the picker taxonomy');
+assert.deepStrictEqual(
+  pickerCategories.flatMap(category => category.sections.flatMap(section => section.entries))
+    .map(entry => entry.value).sort(),
+  pickerCatalog.entries.map(entry => entry.value).sort(),
+  'every option must appear in exactly one category');
+assert.deepStrictEqual(searchCatalog(pickerCatalog, 'sol 16').map(entry => entry.value), ['sol16'],
+  'search must match across an app label and its group');
+assert.deepStrictEqual(searchCatalog(pickerCatalog, 'note').map(entry => entry.value), ['notepad'],
+  'search must match label prefixes');
 
 function urls(id) {
   return (APPS[id].files || []).map(item => typeof item === 'string' ? item : item.url);
