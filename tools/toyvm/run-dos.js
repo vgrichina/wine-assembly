@@ -89,7 +89,7 @@ async function runDos(o) {
     variant = 'tailcall', exe, budget = 200e6, slice = 2e6, seconds = 0,
     traceInt = false, traceFault = false, traceEntry = 0, traceV86 = false,
     noCache = false, smcFlush = false,
-    smcCensus = false,
+    smcCensus = false, watch = [],
     shots = null, shotEvery = 20,
     mouse = [0, 0], cpu = 386, report = false, log = console.log, autoKey = false,
     tickScale = 1, sample = false, sampleAfter = 0, forceChained = false,
@@ -226,7 +226,9 @@ async function runDos(o) {
   const ipSampleLog = [];          // flat [dispatched, ip, dispatched, ip, ...]
 
   const session = new DosSession(vm, machine, {
-    slice, noCache, smcFlush, smcCensus, mouse, irqEvery, dispatchesPerTick, tickScale, stuckLimit,
+    slice, noCache, smcFlush, mouse, irqEvery, dispatchesPerTick, tickScale, stuckLimit,
+    // A watch reports through the census, so asking for one turns it on.
+    smcCensus: smcCensus || watch.length > 0, watch,
     cells: conCells,
     hooks: {
       onInt: !traceInt ? undefined : ({ vec, before, ok, retCs, retIp, ax }) => {
@@ -460,6 +462,16 @@ const argAll = (name) => process.argv.slice(2)
   .flatMap(a => a.slice(name.length + 3).split(','))
   .filter(Boolean);
 
+// `SEG:OFF` or `SEG:OFF:LEN` -> the [lo, hi] linear byte range it names. Both
+// halves of the address are hex, because every address a run prints is; the
+// length is decimal and defaults to one byte, matching --dump.
+function parseWatch(spec) {
+  const m = /^([0-9a-f]{1,4}):([0-9a-f]{1,4})(?::(\d+))?$/i.exec(spec.trim());
+  if (!m) throw new Error(`not a watch address (want SEG:OFF[:LEN]): ${spec}`);
+  const lo = (parseInt(m[1], 16) << 4) + parseInt(m[2], 16);
+  return [lo, lo + (m[3] === undefined ? 1 : Number(m[3])) - 1];
+}
+
 function count(s, d) {
   if (s === undefined) return d;
   const m = /^(\d+(?:\.\d+)?)([kmb]?)$/i.exec(String(s).trim());
@@ -491,6 +503,13 @@ async function main() {
     noCache: flag('no-cache'),
     smcFlush: flag('smc-flush'),
     smcCensus: flag('smc-census'),
+    // `--watch=0:84`, `--watch=0:84:4`, `--watch=5ab:191:2,0:84` -- report every
+    // guest store into these bytes, with the CS:IP that made it, through the
+    // same census line a self-modifying store gets. SEG:OFF, length in bytes
+    // (default 1). The answer to "who overwrote this", which is otherwise
+    // unaskable: --smc-census only sees stores that land on compiled code, and
+    // --dump only ever shows the state at exit.
+    watch: argAll('watch').map(parseWatch),
     sound: arg('sound', 'full'),
     // `--env=ULTRASND=240,1,1,11,7` -- semicolons separate variables, because
     // commas are inside the values these variables carry.
@@ -577,8 +596,11 @@ async function main() {
     + (r.retiredPatches ? ` (${r.retiredPatches} CS-store site(s) retired)` : '')
     // --smc-census turns that one number into the sites behind it. A storm is
     // almost always one line with nearly the whole count against it.
+    // A watch is a question about one address, so its hits are never allowed to
+    // fall off the end of the top-12: an unlisted watch reads as "nothing wrote
+    // there", which is the opposite of what a truncated list means.
     + (r.smcSites && r.smcSites.size
-      ? '\n' + [...r.smcSites].sort((a, b) => b[1] - a[1]).slice(0, 12)
+      ? '\n' + [...r.smcSites].sort((a, b) => b[1] - a[1]).slice(0, argAll('watch').length ? Infinity : 12)
           .map(([k, n]) => `    ${String(n).padStart(8)}  ${k}`).join('\n')
       : '')
     // Both say the guest is being debugged by its own protector: TF set with a

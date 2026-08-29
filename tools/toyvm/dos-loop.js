@@ -47,7 +47,16 @@ const { STUB_SEG, STUB_OFF, STUB_BYTE } = require('./dos');
 // reachable subgraph within that cs, so most entries hit an existing region's
 // block map and cost nothing.
 class CodeCache {
-  constructor(vm, { noCache = false, smcFlush = false } = {}) {
+  constructor(vm, { noCache = false, smcFlush = false, watch = [] } = {}) {
+    // Watchpoints, as [lo, hi] linear byte ranges. They ride the CODE_BITMAP
+    // rather than adding a range test to $wr8, because $wr8 is on the hot path
+    // of every single store the guest makes and a watch that is off must cost
+    // nothing at all. Marking a byte there makes the existing store path report
+    // the write as a self-modify break, which --smc-census already reports as
+    // "CS:IP wrote LO-HI" -- exactly the question a watch is asked. The only
+    // side effect is that writing a watched byte drops any region compiled over
+    // it, which is a cache miss and not a behaviour change.
+    this.watch = watch;
     // --smc-flush restores the whole-cache flush this used to do on every
     // self-modifying store. Its A/B partner: the two differ only in how much of
     // the cache survives, so a program that behaves differently under it has a
@@ -70,6 +79,7 @@ class CodeCache {
     this.jtab = new Int32Array(vm.mem.buffer, isa.JTAB_BASE, isa.JTAB_SIZE >> 2);
     this.codeBits = new Uint8Array(vm.mem.buffer, isa.CODE_BITMAP, isa.CODE_BITMAP_SIZE);
     this.codeBits.fill(0);
+    this.armWatch();
     // paragraph -> the compiled programs that decoded a byte in it. This is the
     // reverse of codeBits: the bitmap answers "did anyone compile here", which
     // is what the guest's store path can afford to ask, and this answers "who",
@@ -87,6 +97,16 @@ class CodeCache {
     this.vm.set('rtop', 0);
     this.jtab.fill(0);
     this.codeBits.fill(0);
+    this.armWatch();
+  }
+
+  // Re-mark the watched bytes. Every path that clears the bitmap has to call
+  // this, or a watch goes quiet the first time the guest unpacks itself --
+  // which is precisely the moment worth watching.
+  armWatch() {
+    for (const [lo, hi] of this.watch) {
+      for (let l = lo; l <= hi; l++) this.codeBits[l >>> 3] |= 1 << (l & 7);
+    }
   }
 
   // The same answer, restricted to the linear bytes the slice actually wrote.
@@ -160,6 +180,7 @@ class CodeCache {
         if (!list2.length) {
           this.byPara.delete(p);
           this.codeBits.fill(0, (p << 4) >> 3, ((p + 1) << 4) >> 3);
+          this.armWatch();
         }
       }
     }
@@ -241,6 +262,7 @@ class CodeCache {
       // have to go with them or a store into what is now plain data breaks the
       // slice forever with nothing left to invalidate.
       this.codeBits.fill(0);
+      this.armWatch();
     }
     const prog = compileProgram((lin) => vm.mem[lin], cs, ip, {
       arenaBase: this.arenaNext,
@@ -324,6 +346,8 @@ class DosSession {
       // dispatches and spends essentially all of its time recompiling, which
       // reads as "the emulator is slow" and is nothing of the kind.
       smcCensus = false,
+      // Linear [lo, hi] byte ranges to report every store to. See CodeCache.
+      watch = [],
       hooks = {},
     } = opts;
 
@@ -337,7 +361,7 @@ class DosSession {
     this.stuckLimit = stuckLimit;
     this.cells = cells;
     this.hooks = hooks;
-    this.cache = new CodeCache(vm, { noCache, smcFlush });
+    this.cache = new CodeCache(vm, { noCache, smcFlush, watch });
 
     this.dispatched = 0;
     this.handbacks = 0;
