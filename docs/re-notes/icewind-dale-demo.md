@@ -97,6 +97,14 @@ clicks Create Game, requires the large transition to Party Formation, opens a
 party slot, and drives character creation through the Sound panel. An error
 modal or a generic menu-frame change can no longer satisfy the test.
 
+`test/test-icewind-dale-menu-web.js` applies the same label-band gate to a
+fresh, no-cache Chrome page and also requires the browser VFS to contain the
+2,942,485-byte `Dialog.tlk` plus `Data/GUIfont.bif`. This distinguishes the
+complete 919-file browser manifest from an already-open pre-fix tab: the old
+page can retain its in-memory app registry after the files on port 8080 change,
+and Stop/Launch does not reload that JavaScript. Reload the page before judging
+a newly changed local manifest.
+
 It then names the character `CODEX`, accepts the party, waits through the real
 first-area resource load, reaches the in-game HUD with that portrait, and
 issues a native Quick Save. Acceptance requires
