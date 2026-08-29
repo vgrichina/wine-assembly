@@ -266,13 +266,38 @@ is `dispatched / 550e3` BIOS ticks (`--dispatches-per-tick`), i.e. ~10M
 dispatches per guest second; that knob is the A/B if the RTE turns out to be a
 cause rather than a consequence of the MIDAS failure.
 
-### JULTRO.EXE, INTRO.EXE (`1995-c-cda_tp5i`)
+### INTRO.EXE (`1995-c-cda_tp5i`) — two blockers cleared, a third open
 
-32-bit protected-mode code the decoder will not read. JULTRO takes zero
-interrupts and stops at `5ab:6e` with `eb fa dc 33 c0 8e d8 89`; the decoder
-also gives up at `5ab:56` on `f5 81 c6 c9 00 b9 63 01`. INT 1/3/21h hooking and
-the single-step path (`dos-loop.js`) were added for this program and did move it
-along, but it is still short of its own decryptor.
+Was "32-bit protected-mode code the decoder will not read". That reading was
+wrong twice over: the code is 16-bit protected mode, and the decoder reads it
+fine. Two real bugs were underneath it.
+
+**Cleared: the far-pointer selector address.** `call far [0x28da4]` under a
+0x67 prefix had its selector read from `0x8da8`, because the four `FF /3` and
+`FF /5` memory forms masked the selector's effective address to 16 bits by
+hand. The word that happened to sit there was `0x0002` — a valid descriptor
+with base 0 — so protected mode carried on for another handback and died at
+`2:1a43`, far enough from the transfer to look like anything but a bad far
+pointer. `$off_add` (which wraps the low 16 bits and keeps the high half) is
+what every other address computation here uses; these four now use it too.
+INTRO keeps `cs=0x238 base=0x1100` and reaches its audio menu.
+
+**Cleared: no interrupts in protected mode.** With the menu answered
+(`--keys=1`) it set mode 13h, loaded 246 DAC entries and spun forever at
+`238:3f08` on `fs: cmp eax,[0x4]` — a tick counter only its own IDT gate
+increments. The host's `raise()` built the interrupt frame itself, could only
+build the real-mode shape, and so refused to deliver to a protected-mode guest
+at all. `$fault` already knew all three cases (386/286 gate through the IDT,
+the V86 hand-off, the real-mode vector table); `raise()` now calls it through a
+`raise_irq` export. The gate at `240:518` runs, 451 vectors land, the spin ends.
+
+**Open: it reaches mode 13h and draws nothing.** It passes through 13h and
+returns to text without putting a pixel down, so the best frame is still the
+console menu. It is a music player ("LousyPlayer v0.9"), so a thin visual is
+plausible, but that is a guess and not a measurement. `int 2Fh AH=16` is still
+answered "no DPMI host". JULTRO.EXE, its neighbour, stops separately at
+`5ab:6e` on `eb fa dc 33 c0 8e d8 89` and has not been re-examined since these
+two fixes.
 
 ### BLIQ's neighbours in the blank bucket
 

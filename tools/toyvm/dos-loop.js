@@ -368,44 +368,29 @@ class DosSession {
   }
 
   // Push an interrupt frame in front of the guest's next instruction, exactly
-  // as the hardware would.
+  // as the hardware would -- which means letting the CPU decide what "exactly"
+  // is, rather than deciding here.
   //
-  // In real mode only. Everything this does is real-mode-shaped: the frame goes
-  // to ss<<4 + sp, and the handler comes out of the IVT at linear vec*4. A
-  // protected-mode guest has neither -- its stack selector has whatever base
-  // its descriptor says, and its handlers are gate descriptors in an IDT that
-  // LIDT pointed somewhere else entirely. Delivering here anyway sends the
-  // guest to a segment made out of two bytes of IVT read as a selector, which
-  // is how COLORS.EXE ended up executing the zeros at 9BF0:0 for 200M
-  // dispatches: one timer IRQ landed after PMODE/W switched, and nothing after
-  // that was its own code. Skipping is a real cost -- a protected-mode demo
-  // paced off INT 8 gets no beat -- but it is a demo that stands still rather
-  // than one that runs somebody else's memory.
-  // Virtual-8086 is the exception to the skip above, and the frame below is
-  // already the right one for it: `(ss << 4) + sp` IS how a V86 guest addresses
-  // its stack, and the vector table at physical 0 is the one it reads. What
-  // this does NOT do is go through the IDT to the monitor first, which is what
-  // the hardware would do -- so a monitor that virtualises the timer for its
-  // guest is bypassed and the guest's own handler runs directly. That is the
-  // outcome a reflecting monitor would have produced anyway, and the
-  // alternative is the demo getting no beat at all.
+  // This used to build the frame itself, and could only build one shape of it:
+  // three words at ss<<4 + sp, with the handler read out of the IVT at linear
+  // vec*4. That is real mode and nothing else, so it refused to deliver at all
+  // to a protected-mode guest -- whose stack selector has whatever base its
+  // descriptor says, and whose handlers are gate descriptors in an IDT that
+  // LIDT pointed somewhere else entirely. Delivering the real-mode frame anyway
+  // sends the guest to a segment made out of two bytes of IVT read as a
+  // selector, which is how COLORS.EXE ended up executing the zeros at 9BF0:0
+  // for 200M dispatches.
+  //
+  // The refusal was right about the frame and wrong about the machine: a
+  // protected-mode demo paced off INT 8 got no beat and stood still. INTRO.EXE
+  // reaches mode 13h, loads 246 palette entries, and then spins forever on a
+  // tick counter that only its own IDT gate increments. $fault -- which the
+  // guest's own INT instruction and every arithmetic fault already go through
+  // -- knows all three cases: a 386 or 286 gate through the IDT, the V86
+  // hand-off to the monitor, and the real-mode vector table when there is no
+  // IDT. So ask for the vector and let it pick.
   raise(vec) {
-    const vm = this.vm;
-    if ((vm.exports.get_cr0() & 1) && !vm.exports.get_vm86()) return;
-    const push = (v) => {
-      const sp = (vm.get('sp') - 2) & 0xFFFF;
-      vm.set('sp', sp);
-      const at = ((vm.get('ss') << 4) + sp) & 0xFFFFF;
-      vm.mem[at] = v & 0xFF;
-      vm.mem[at + 1] = (v >> 8) & 0xFF;
-    };
-    push(vm.get('flags'));
-    push(vm.get('cs'));
-    push(vm.get('gip'));
-    vm.set('flags', vm.get('flags') & ~0x300);       // IF and TF, as `int` does
-    const at = vec << 2;
-    vm.set('gip', vm.mem[at] | (vm.mem[at + 1] << 8));
-    vm.set('cs', vm.mem[at + 2] | (vm.mem[at + 3] << 8));
+    this.vm.exports.raise_irq(vec);
     this.irqs++;
   }
 

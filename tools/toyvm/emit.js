@@ -4009,6 +4009,23 @@ ${isa.SEG.map(r => `(func (export "get_${r}b") (result i32) (global.get $${r}b))
 (func (export "get_d32") (result i32) (global.get $d32))
 (func (export "get_cr0") (result i32) (global.get $cr0))
 (func (export "get_vm86") (result i32) (global.get $vm86))
+;; A hardware IRQ, delivered the same way the CPU delivers everything else.
+;;
+;; The host used to build this frame itself, and could only build the real-mode
+;; one -- push three words at (ss << 4) + sp and read the vector from physical
+;; 0 -- so it refused to deliver at all once the guest was in protected mode.
+;; That was the right refusal for the frame it could build and the wrong answer
+;; for the machine: a protected-mode demo paced off INT 8 got no beat and stood
+;; still. INTRO.EXE sets mode 13h, loads its 246 palette entries, then spins on
+;; a tick counter its own IDT gate increments, and waited forever.
+;;
+;; $fault already knows all three cases -- a 386 or 286 gate through the IDT,
+;; the V86 hand-off to the monitor, and the real-mode vector table when there
+;; is no IDT -- so the host asks for a vector and the CPU decides how to take
+;; it. The return address is the current EIP because an external interrupt is
+;; taken between instructions, not part-way through one.
+(func (export "raise_irq") (param $vec i32)
+  (call $fault (local.get $vec) (global.get $gip)))
 (func (export "get_gdtb") (result i32) (global.get $gdtb))
 (func (export "get_gdtl") (result i32) (global.get $gdtl))
 (func (export "get_linmask") (result i32) (global.get $linmask))
