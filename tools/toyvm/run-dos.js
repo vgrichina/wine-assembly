@@ -91,6 +91,7 @@ async function runDos(o) {
     noCache = false, smcFlush = false,
     smcCensus = false, watch = [],
     stopText = null,
+    traceIo = null,
     shots = null, shotEvery = 20,
     mouse = [0, 0], cpu = 386, report = false, log = console.log, autoKey = false,
     tickScale = 1, sample = false, sampleAfter = 0, forceChained = false,
@@ -151,6 +152,8 @@ async function runDos(o) {
     log: (s) => traceInt && log(`  ${s}`), autoKey, forceChained, sound,
     keys, autoKeys, env, tempFiles,
     stopText,
+    ioTrace: traceIo === null ? null : (line) => log(`  [io] ${line}`),
+    ioPorts: traceIo && traceIo.length ? new Set(traceIo) : null,
     // A DOS program's data sits next to it, and that directory is the whole of
     // the filesystem it gets.
     fileRoot: path.dirname(path.resolve(exe)),
@@ -543,6 +546,14 @@ async function main() {
     // prints this, so --dump and --disasm photograph the failure instead of
     // whatever reused its memory afterwards. See Machine.conWatch.
     stopText: arg('stop-on-text') || null,
+    // --trace-io[=220,22c,0a] -- every port read and write, or only these
+    // ports. Bare, it is everything, which on a demo polling 0x3DA is a lot;
+    // the list is how a sound-card or chipset conversation gets read on its
+    // own. Ports are hex, with or without an 0x.
+    traceIo: flag('trace-io') ? []
+      : (arg('trace-io') === undefined ? null
+        : String(arg('trace-io')).split(',').filter(Boolean)
+          .map((x) => parseInt(x.replace(/^0x/i, ''), 16))),
     guestArgs: arg('args', ''),
   });
 

@@ -80,6 +80,9 @@ const SB_ARGS = {
   0xE4: 1,
 };
 const SB_IRQ_VEC = 0x0F;      // IRQ 7, which is what BLASTER= announces
+// A transfer of at most this many samples is a probe, not audio: even at the
+// slowest rate a real card retires it in well under a millisecond. See sbRun.
+const SB_SHORT_BLOCK = 64;
 const EMPTY = new Uint8Array(0);
 const EMS_FRAME_SEG = 0xE000; // 64K page frame: four 16K physical pages
 const EMS_PAGE = 0x4000;
@@ -682,6 +685,10 @@ class Machine {
     // the run here instead, which is both closer to a real blocking read and
     // the moment worth photographing.
     this.blockedOnKey = false;
+    // --trace-io. Null unless the flag is on, and the check is one property
+    // read on a path every port access takes.
+    this.ioTrace = opts.ioTrace || null;
+    this.ioPorts = opts.ioPorts || null;
     // --stop-on-text. See conWatch.
     this.stopText = opts.stopText || null;
     this.conTail = '';
@@ -767,6 +774,7 @@ class Machine {
     // an extended-memory handle; see openBus.
     this.linFlat = false;
     this.vmExports = null;
+    this.sliceCut = -1;         // see endSlice
     this.emsHandles = new Map(); this.emsNext = 1; this.emsMaps = 0;
     this.emsMapped = [null, null, null, null];
     this.unhandled = new Map();
@@ -787,6 +795,9 @@ class Machine {
       out: [], cmd: 0, args: [], expect: 0, speaker: 0, block: 0,
       pending: false, autoInit: false, paused: false, forced: false,
       detects: 0, commands: 0, irqs: 0,
+      // The two numbers that say how long a block takes: samples in it, and
+      // samples per second. See sbBlockSeconds.
+      rate: 8000, len: 0,
     };
     // The 8253, as three down-counters rather than a number that goes up.
     //
@@ -1556,6 +1567,20 @@ class Machine {
     if (v === 0xE0) { this.sb.out.push((~args[0]) & 0xFF); return; }
     if (v === 0xD1 || v === 0xD3) { this.sb.speaker = v === 0xD1 ? 1 : 0; return; }
     if (v === 0x48) { this.sb.block = args[0] | (args[1] << 8); return; }
+    // 40h sets the sample rate as a time constant, 41h (SB16) as the rate
+    // itself, high byte first. Nothing here plays audio, but the rate decides
+    // how long a block lasts and therefore how often its completion interrupt
+    // may fire -- see sbBlockSeconds.
+    if (v === 0x40) {
+      const tc = args[0] & 0xFF;
+      if (tc < 256) this.sb.rate = Math.round(1e6 / (256 - tc));
+      return;
+    }
+    if (v === 0x41 || v === 0x42) {
+      const r = (args[0] << 8) | args[1];
+      if (r >= 1000) this.sb.rate = r;
+      return;
+    }
     // A transfer. Nothing is played -- there is no DMA behind this and no
     // audio out -- but the *end* of it is observable, and observing it is how
     // a driver decides the card is real. MIDAS (BLAND.EXE's .MSE modules) hooks
@@ -1572,6 +1597,21 @@ class Machine {
       this.sb.autoInit = v === 0x1C || v === 0x1D || v === 0x2C || v === 0x90
         || (v >= 0xB0 && v <= 0xCF && (args[0] & 4) !== 0);
       this.sb.pending = true;
+      // How long the block is, in samples. The 8-bit single-cycle commands
+      // carry it themselves; the auto-init ones use whatever 48h last set; the
+      // SB16 forms put it after the mode byte.
+      const len = (v >= 0xB0 && v <= 0xCF) ? (args[1] | (args[2] << 8))
+        : (args.length >= 2 ? (args[0] | (args[1] << 8)) : this.sb.block);
+      // A *tiny* block completes on a real card in microseconds -- far sooner
+      // than any driver's timeout spin -- so waiting for the periodic IRQ
+      // cadence is not "slow", it is wrong. MIDAS (BLAND.EXE) finds its DMA
+      // channel by programming the 8237 for a single byte, kicking off a
+      // one-sample transfer and giving the IRQ a short `loopz` to arrive; at
+      // cadence it never did for any channel, and the driver reported
+      // "failed to load MSE" for a card it had already identified twice.
+      // Anything long enough to actually be audio keeps the cadence.
+      this.sb.len = len + 1;                // the count is one less, as in DMA
+      if (len <= SB_SHORT_BLOCK) { this.sb.forced = true; this.endSlice(); }
       return;
     }
     // F2h forces an 8-bit IRQ (F3h the 16-bit one) with no transfer behind it.
@@ -1586,7 +1626,7 @@ class Machine {
     // Unlike a transfer's completion this one is immediate by definition -- the
     // driver's wait is a `loopz` and not a long one -- so it is delivered on the
     // next opportunity rather than on the periodic IRQ cadence.
-    if (v === 0xF2 || v === 0xF3) { this.sb.forced = true; return; }
+    if (v === 0xF2 || v === 0xF3) { this.sb.forced = true; this.endSlice(); return; }
     if (v === 0xD0) { this.sb.paused = true; this.sb.pending = false; return; }
     if (v === 0xD4) { this.sb.paused = false; this.sb.pending = true; return; }
     // DAh stops an auto-init transfer for good.
@@ -1610,9 +1650,55 @@ class Machine {
     return SB_IRQ_VEC;
   }
 
+  // How long the block now in flight lasts, in guest seconds. A block-done
+  // interrupt that comes round faster than this is not early, it is *wrong*:
+  // the driver mixes a whole buffer inside its handler, so an interrupt every
+  // fixed number of dispatches asks it to produce half a second of audio in ten
+  // milliseconds of guest time and the program it interrupted never runs again.
+  // BLAND.EXE sat in MIDAS's mixer for 300M dispatches that way, with its own
+  // code never reached and the screen still in text mode.
+  sbBlockSeconds() {
+    if (!this.sb.len || !this.sb.rate) return 0;
+    return this.sb.len / this.sb.rate;
+  }
+
   // Whether an IRQ is owed right now rather than at the next cadence tick.
   sbForced() {
     return this.sb.forced;
+  }
+
+  // Cut the current slice short so an interrupt armed by a port write reaches
+  // the guest at the next instruction boundary instead of at the next slice
+  // boundary -- which is up to two million dispatches away, and that is not a
+  // latency any real card has.
+  //
+  // It is the difference between BLAND.EXE finding its DMA channel and not:
+  // MIDAS starts a one-byte transfer and then spins `loopz` on a flag its own
+  // IRQ handler sets, about 1.1M dispatches of it, which fits inside one slice
+  // with room to spare. The IRQ was arriving one handback later every time --
+  // right after the timeout's DSP reset, visible in --trace-io as the `in 22e`
+  // that follows `out 226` -- so all three candidate channels timed out and the
+  // driver reported "failed to load MSE" for a card it had already identified.
+  //
+  // $steps is the region's remaining budget and the emitted exit test is
+  // `steps < 0`, so -1 ends it at the next check. The unspent count has to be
+  // saved first: the exit writes $steps into $left, and a -1 there is the loop's
+  // own signal for "ran to exhaustion", which would bill the whole slice.
+  endSlice() {
+    const ex = this.vmExports;
+    if (!ex || !ex.set_steps || !ex.get_steps) return;
+    const left = ex.get_steps();
+    if (left < 0) return;                 // already ending
+    this.sliceCut = left;
+    ex.set_steps(-1);
+  }
+
+  // The unspent budget from the last endSlice, once. The run loop asks after
+  // every slice so it can bill honestly.
+  takeSliceCut() {
+    const v = this.sliceCut;
+    this.sliceCut = -1;
+    return v;
   }
 
   // The OPL2 status register. The presence test is: reset both timers, read
@@ -1656,7 +1742,27 @@ class Machine {
   }
 
   // --- ports ---------------------------------------------------------------
+  //
+  // --trace-io wraps both directions. Nothing else here can see port traffic:
+  // --trace-int watches INT dispatch, --trace-entry watches handbacks, and an
+  // `out dx,al` is neither. Every hardware question left in this corpus -- which
+  // DMA registers a sound driver programs and reads back, which chipset
+  // registers an SVGA probe writes before it decides what card it is on -- is a
+  // conversation in port I/O, so it gets a flag rather than a console.log.
+  //
+  // `ioPorts` is null for "all", or a Set of port numbers. The reads are the
+  // half worth filtering: a demo waiting for retrace reads 0x3DA hundreds of
+  // thousands of times and buries everything else.
   portIn(port, w) {
+    const v = this.portIn_(port, w);
+    if (this.ioTrace && (!this.ioPorts || this.ioPorts.has(port))) {
+      this.ioTrace(`in  ${port.toString(16).padStart(3, '0')}`
+        + `${w === 16 ? 'w' : ' '} -> ${v.toString(16)}`);
+    }
+    return v;
+  }
+
+  portIn_(port, w) {
     if (port === 0x3DA) {
       // Bit 3 is vertical retrace, bit 0 "display disabled". A demo that waits
       // for retrace to start needs to see the bit both clear and set or it
@@ -1728,7 +1834,17 @@ class Machine {
   }
 
   portOut(port, value, w) {
-    if (w === 16) { this.portOut(port, value & 0xFF, 8); this.portOut(port + 1, (value >> 8) & 0xFF, 8); return; }
+    if (this.ioTrace && (!this.ioPorts || this.ioPorts.has(port))) {
+      this.ioTrace(`out ${port.toString(16).padStart(3, '0')}`
+        + `${w === 16 ? 'w' : ' '} <- ${(value & (w === 16 ? 0xFFFF : 0xFF)).toString(16)}`);
+    }
+    return this.portOut_(port, value, w);
+  }
+
+  portOut_(port, value, w) {
+    // portOut_, not portOut: the word has already been traced, and tracing the
+    // two halves as well would treble every 16-bit line for no new fact.
+    if (w === 16) { this.portOut_(port, value & 0xFF, 8); this.portOut_(port + 1, (value >> 8) & 0xFF, 8); return; }
     value &= 0xFF;
     // --- Sound Blaster, base 0x220 -----------------------------------------
     // Reset: 1 then 0, and the card answers 0xAA on the read port. Everything

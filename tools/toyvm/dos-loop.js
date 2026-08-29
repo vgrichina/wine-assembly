@@ -424,6 +424,22 @@ class DosSession {
     this.irqs++;
   }
 
+  // How many dispatches a Sound Blaster block is worth. The card decides this,
+  // not us: a 4096-sample block at 8000Hz lasts half a guest second, and the
+  // clock above says half a guest second is 18.2 * 550,000 / 2 dispatches. Fall
+  // back to the generic interval before any transfer has named a length.
+  //
+  // The floor matters as much as the number. A driver that programs a very
+  // short block still has to be let out of its own handler, and this rung sits
+  // ahead of the timer's, so a block worth fewer dispatches than the generic
+  // interval must not be allowed to take every one of them.
+  sbInterval() {
+    const secs = this.machine.sbBlockSeconds ? this.machine.sbBlockSeconds() : 0;
+    if (!secs) return this.irqEvery;
+    const perSecond = this.dispatchesPerTick * 18.2 / (this.tickScale || 1);
+    return Math.max(this.irqEvery, secs * perSecond);
+  }
+
   // The guest is inside the stub segment: a vector sent it to a byte the
   // decoder refuses, so control is here rather than in guest code.
   serviceInterrupt() {
@@ -579,7 +595,11 @@ class DosSession {
     // when a handler handed control back early. Billing the slice either way
     // makes a demo that bounces off an unresolved jump every few instructions
     // look like it burned the whole budget.
-    const left = vm.raw('left');
+    // A slice the machine cut short (Machine.endSlice, to get an armed IRQ to
+    // the guest promptly) reports $left as -1 like an exhausted one, so ask for
+    // the count it saved on the way out rather than billing the whole budget.
+    const cut = this.machine.takeSliceCut ? this.machine.takeSliceCut() : -1;
+    const left = cut >= 0 ? cut : vm.raw('left');
     this.dispatched += left < 0 ? this.slice : this.slice - left;
     this.handbacks++;
     if (this.hooks.afterSlice) this.hooks.afterSlice({ left, dispatched: this.dispatched, cs, ip });
@@ -669,7 +689,7 @@ class DosSession {
     // back to its menu. A real card at 22kHz with a 4K block interrupts a few
     // times a second, which is far rarer than the timer, not more often.
     const svec = (vm.get('flags') & 0x200)
-      && (machine.sbForced() || this.dispatched - this.lastSbIrq >= this.irqEvery)
+      && (machine.sbForced() || this.dispatched - this.lastSbIrq >= this.sbInterval())
       ? machine.sbIrq() : 0;
     const tvec = machine.timerVector();
     // A frame, not a tick: the vertical retrace comes round about 70 times a
