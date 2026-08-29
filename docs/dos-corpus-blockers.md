@@ -181,6 +181,16 @@ path rather than our harness dropping it. `/REPORT` likewise writes no
 `DEBUGNFO.DAT`. And `int 10h AH=1A` is answered correctly (AL=0x1A, BL=0x08,
 VGA colour); the 0x08 visible at `87f:1e07` is that answer landing.
 
+**A generic ROM header is not enough, measured.** Writing the option-ROM header
+every adapter has had since 1984 at C000:0000 — `55 AA`, a size byte, a `retf`
+init entry and an "IBM COMPATIBLE VGA BIOS" identification at C000:001E — leaves
+`[87f:2448]` at 0 and `[87f:1e02]` at 0, and SETUP ends at the same instruction
+after the same 803.9M dispatches. The vendor-stamp probe wants `77 .. 99 66`
+four bytes into whatever `C000:37` points at, and an honest header does not
+carry that. So the header on its own has no beneficiary and is not shipped; a
+fix here has to come from the classifier's own default-id path, or from SETUP
+never reaching the trampoline with id 0 in the first place.
+
 Note that any fix which puts a vendor signature at C000 claims chipset registers
 we do not emulate — the same mistake as a default `BLASTER=`/`ULTRASND=` — so it
 must be measured over a full sweep before it is kept. **Reading `[87f:256e]`'s
@@ -741,15 +751,31 @@ LIDT put somewhere the host cannot guess. Exporting it and consulting it from
 `hookedVector` took DINO from one handback per 1.1M dispatches to one per
 ~177k, and it applies to every rung: keyboard, timer, retrace, Sound Blaster.
 
-DINO also now **answers its own menu**: `arrowMenuKeys` reads a marker column
-off the text page and counts rows to a silent option, on the strength of the
-screen having said the marker moves ("Use ARROW keys to move around"). It
-selects Silence and opens `dino.s3m`, where it used to sit on "Gravis
-Ultrasound" for the whole budget. It still does not reach its graphics — the
-grid's remaining fields are committed by a cursor whose column is shown in
-colour, which `screenText` cannot see, and blind Enter and Right walks were
-both tried and neither moved the demo past the setup. So DINO is a row that got
-further, not a row that finished.
+**DINO renders** (`94fe23b0`): 64000 of 64000 pixels of mode 13h at the sweep's
+own budget, with `dino.s3m` and `dino.dat` open. Two steps got it there.
+
+First, `arrowMenuKeys` reads a marker column off the text page and counts rows
+to a silent option, on the strength of the screen having said the marker moves
+("Use ARROW keys to move around"). That selects Silence and gets no further:
+the grid's other three fields are committed by a cursor **whose position is a
+colour**, and `screenText` throws attributes away, so to a text reader every
+column looks equally selected. Blind walks were tried and measured, and both
+fail for reasons worth keeping: nine Enters move nothing, and three Rights from
+the fourth row of a four-row column land in the IRQ column and set the IRQ,
+because Right keeps its row and the command column is two rows tall.
+
+So `screenHighlight` reads the attribute plane and takes the **rarest**
+attribute on the page — DINO writes its text in 0x07, its title bar in 0x4f,
+its headings in 0x0f, and exactly one label in 0x3f. With the cursor visible the
+walk becomes one key at a time with the screen as the feedback, and the poll
+gate now counts the cursor as part of "what is on the screen", so a key that
+moves only a colour is still seen to have landed. It is self-limiting in the
+right way: a key that changes nothing ends the walk.
+
+One trap, which cost a wrapping loop: aim at the **nearest** matching row, not
+the first. A column includes its own heading, and DINO's command column is
+headed "and I AM READY TO", which matches the go-label pattern on "READY" as
+surely as "Rock'n'roll" does.
 
 **How many rows want VESA: three.** Every program in the corpus was run for 4
 seconds with `--trace-int` and its `int 10h AX=4Fxx` calls counted, and only
