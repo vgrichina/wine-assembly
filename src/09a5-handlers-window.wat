@@ -565,8 +565,12 @@
     (call $gs32 (i32.add (global.get $image_base) (i32.const 0x118)) (call $gl32 (i32.add (global.get $esp) (i32.const 24)))) ;; y
     (call $gs32 (i32.add (global.get $image_base) (i32.const 0x11c)) (local.get $arg4))                                       ;; x
     (call $gs32 (i32.add (global.get $image_base) (i32.const 0x120)) (local.get $arg3))                                       ;; style
-    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x124)) (local.get $arg2))                                       ;; lpszName
-    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x128)) (local.get $arg1))                                       ;; lpszClass
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x124))
+      (select (global.get $createwnd_wide_name) (local.get $arg2)
+        (i32.ne (global.get $createwnd_wide_name) (i32.const 0))))                                                           ;; lpszName
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x128))
+      (select (global.get $createwnd_wide_class) (local.get $arg1)
+        (i32.ne (global.get $createwnd_wide_class) (i32.const 0))))                                                          ;; lpszClass
     (call $gs32 (i32.add (global.get $image_base) (i32.const 0x12c)) (local.get $arg0))                                       ;; dwExStyle
     ;; Built-in system classes (e.g. calc.exe's hidden top-level EDIT pump
     ;; window) have WAT-native wndprocs, not guest x86 callbacks. Win98 USER
@@ -655,8 +659,12 @@
     (call $gs32 (i32.add (global.get $image_base) (i32.const 0x118)) (call $gl32 (i32.add (global.get $esp) (i32.const 24)))) ;; y
     (call $gs32 (i32.add (global.get $image_base) (i32.const 0x11c)) (local.get $arg4))                                       ;; x
     (call $gs32 (i32.add (global.get $image_base) (i32.const 0x120)) (local.get $arg3))                                       ;; style
-    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x124)) (local.get $arg2))                                       ;; lpszName
-    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x128)) (local.get $arg1))                                       ;; lpszClass
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x124))
+      (select (global.get $createwnd_wide_name) (local.get $arg2)
+        (i32.ne (global.get $createwnd_wide_name) (i32.const 0))))                                                           ;; lpszName
+    (call $gs32 (i32.add (global.get $image_base) (i32.const 0x128))
+      (select (global.get $createwnd_wide_class) (local.get $arg1)
+        (i32.ne (global.get $createwnd_wide_class) (i32.const 0))))                                                          ;; lpszClass
     (call $gs32 (i32.add (global.get $image_base) (i32.const 0x12c)) (local.get $arg0))                                       ;; dwExStyle
     ;; Built-in WAT-native child controls are not app-dispatched windows.
     ;; Initialize them synchronously with the real CREATESTRUCT and suppress

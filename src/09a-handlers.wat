@@ -7026,6 +7026,10 @@
   ;; WM_CREATE, menu, owner/parent, control-class, and show/paint machinery as
   ;; ANSI callers. Class table keys are byte-string hashes, so RegisterClassW
   ;; and CreateWindowExA-style lookup share the same slots after conversion.
+  ;; While the A core runs, these preserve the caller-owned UTF-16 pointers for
+  ;; CREATESTRUCTW. They are per-WASM-instance and cleared before returning.
+  (global $createwnd_wide_name (mut i32) (i32.const 0))
+  (global $createwnd_wide_class (mut i32) (i32.const 0))
   (func $handle_CreateWindowExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $class_a i32) (local $title_a i32) (local $hwnd i32)
     (local.set $hwnd (global.get $next_hwnd))
@@ -7043,6 +7047,8 @@
         (if (local.get $title_a)
           (then
             (drop (call $wide_to_ansi (local.get $arg2) (local.get $title_a) (i32.const 512)))))))
+    (global.set $createwnd_wide_name (local.get $arg2))
+    (global.set $createwnd_wide_class (local.get $arg1))
     (call $handle_CreateWindowExA
       (local.get $arg0)
       (local.get $class_a)
@@ -7050,6 +7056,16 @@
       (local.get $arg3)
       (local.get $arg4)
       (local.get $name_ptr))
+    (global.set $createwnd_wide_name (i32.const 0))
+    (global.set $createwnd_wide_class (i32.const 0))
+    ;; Free in reverse allocation order so the first-fit free list can reuse
+    ;; both differently-sized blocks on the next call without fragmentation.
+    (if (i32.and (i32.ne (local.get $title_a) (i32.const 0))
+                 (i32.ne (local.get $title_a) (local.get $arg2)))
+      (then (call $heap_free (local.get $title_a))))
+    (if (i32.and (i32.ne (local.get $class_a) (i32.const 0))
+                 (i32.ne (local.get $class_a) (local.get $arg1)))
+      (then (call $heap_free (local.get $class_a))))
     (call $wnd_unicode_set (local.get $hwnd) (i32.const 1))
     (return)
   )
