@@ -596,6 +596,10 @@ const QUIT_LABEL = /\b(quit|exit|abort|back\s+to\s+dos)\b/i;
 const GO_LABEL =
   /\b(rock|play|start|run|go|begin|continue|proceed|ok|accept|done|ready|launch|demo)\b/i;
 
+// How many cells an attribute may cover and still be a cursor rather than a
+// colour the page is written in. One highlighted label, generously.
+const CURSOR_CELLS = 40;
+
 // A screen that has told us the marker moves under the arrow keys. This is the
 // whole licence for counting rows off a `>`.
 const ARROW_HINT = (s) => /\b(arrow|cursor)\s+keys?\b/i.test(s) && /\benter\b/i.test(s);
@@ -1092,6 +1096,54 @@ class Machine {
     return rows;
   }
 
+  // Where the highlight is, as {row, from, to}, or null.
+  //
+  // A grid menu shows which cell has the cursor by painting it a different
+  // colour, and colour is the only place that information exists -- screenText
+  // throws the attribute away, so to a text reader every column of DINO.EXE's
+  // setup looks equally selected. The rule here is deliberately narrow: the
+  // page's commonest attribute is its ordinary text, a highlight is a run of
+  // cells in some other attribute, and if the page has more than a few such
+  // runs it is coloured art rather than a menu with a cursor on it.
+  screenHighlight() {
+    const c = this.con;
+    const seen = new Map();
+    for (let i = 0; i < c.cells; i++) {
+      const ch = c.getCh(i);
+      if (ch === 0 || ch === 0x20) continue;
+      const a = c.getAt(i);
+      seen.set(a, (seen.get(a) || 0) + 1);
+    }
+    if (seen.size < 2) return null;
+    // The RAREST attribute, not simply a non-default one. DINO's page has four:
+    // 0x07 for its text, 0x4f for the title bar, 0x0f for the headings and the
+    // sentence at the bottom, and 0x3f on exactly one label -- the one the
+    // cursor is on. Anything the page uses widely is decoration.
+    let plain = 0, most = -1, cursor = 0, least = Infinity;
+    for (const [a, n] of seen) if (n > most) { most = n; plain = a; }
+    for (const [a, n] of seen) {
+      if (a !== plain && n < least) { least = n; cursor = a; }
+    }
+    if (least > CURSOR_CELLS) return null;
+    let row = -1, from = -1, to = -1;
+    for (let i = 0; i < c.cells && row < 0; i++) {
+      const ch = c.getCh(i);
+      if (ch === 0 || ch === 0x20 || c.getAt(i) !== cursor) continue;
+      row = (i / c.cols) | 0;
+      from = i % c.cols;
+    }
+    if (row < 0) return null;
+    // To the end of the highlighted label, gaps included: "Sound Blaster PRO"
+    // is highlighted as a whole and the spaces in it carry the attribute of
+    // whatever was on the page before, so a run that stops at the first space
+    // reports a third of the label.
+    for (let x = from; x < c.cols; x++) {
+      if (c.getAt(row * c.cols + x) === cursor) to = x;
+      else if (x - to > 1) break;
+    }
+    return { row, from, to };
+  }
+
   // Read the menu instead of guessing at it.
   //
   // The rotation below gets past a prompt eventually, but "eventually" means
@@ -1166,6 +1218,13 @@ class Machine {
     // whole trigger, because counting rows off a marker is only safe on a
     // screen that has told us the marker moves.
     if (ARROW_HINT(all)) {
+      const hl = this.screenHighlight();
+      if (hl) {
+        this.log(`autokey highlight at ${hl.row},${hl.from}: `
+          + `"${(lines[hl.row] || '').slice(hl.from, hl.to + 1).trim()}"`);
+        const k = this.gridStep(lines, hl);
+        if (k) return [k];
+      }
       const ks = this.arrowMenuKeys(lines);
       if (ks) return ks;
     }
@@ -1195,6 +1254,62 @@ class Machine {
   // `>` down the column. There can be several markers on one line, one per
   // column of a grid; the leftmost is the one whose column holds the device
   // names, which is the only column with anything to choose in it.
+  // ONE key towards what this grid should be told, given where its cursor is.
+  //
+  // One, and not the whole walk, because the cursor is the feedback: it is in
+  // the attribute plane, the poll gate watches it, and so every key is answered
+  // only after the last one has been seen to land. A blind walk cannot do that,
+  // and DINO.EXE is the demonstration -- committing its device column moves the
+  // cursor and changes no character on the page, and a Right off a four-row
+  // column into a two-row one goes nowhere at all. Both were measured as three
+  // Rights that set the IRQ instead of starting the demo.
+  gridStep(lines, hl) {
+    // The columns of the grid: an x where text starts on two or more rows.
+    const starts = new Map();
+    for (let y = 0; y < lines.length; y++) {
+      for (const m of (lines[y] || '').matchAll(/(?<= |^)\S(?:\S| (?! ))*/g)) {
+        if (!starts.has(m.index)) starts.set(m.index, []);
+        starts.get(m.index).push({ row: y, label: m[0].trim() });
+      }
+    }
+    const cols = [...starts.entries()]
+      .filter(([, rows]) => rows.length >= 2)
+      .map(([col, rows]) => ({ col, rows }))
+      .sort((a, b) => a.col - b.col);
+    if (cols.length < 2) return null;
+    const near = (col) => cols.reduce((a, b) =>
+      (Math.abs(b.col - col) < Math.abs(a.col - col) ? b : a));
+    const at = near(hl.from);
+    if (Math.abs(at.col - hl.from) > 2) return null;
+    const here = at.rows.find(r => r.row === hl.row);
+    // The NEAREST match to the cursor, not the first. A column includes its own
+    // heading -- DINO's command column is headed "and I AM READY TO", which
+    // matches GO_LABEL on "READY" as surely as "Rock'n'roll" does -- and a walk
+    // aimed at the heading walks off the top of the list and wraps.
+    const pick = (rows, re) => rows
+      .filter(r => re.test(r.label) && !QUIT_LABEL.test(r.label))
+      .sort((a, b) => Math.abs(a.row - hl.row) - Math.abs(b.row - hl.row))[0];
+    const up = { ah: 0x48, al: 0 };
+    const down = { ah: 0x50, al: 0 };
+    const enter = { ah: 0x1C, al: 0x0D };
+    const toRow = (row) => (row < hl.row ? { ...up } : { ...down });
+
+    // On the thing that starts the demo: press it.
+    if (here && GO_LABEL.test(here.label) && !QUIT_LABEL.test(here.label)) return enter;
+    // In a column that offers silence: get onto it, then commit it.
+    const quiet = pick(at.rows, SILENT_LABEL);
+    if (quiet) return quiet.row === hl.row ? enter : toRow(quiet.row);
+    // Otherwise head for the command, on its row first so that the sideways
+    // move has somewhere to land.
+    for (const c of cols) {
+      const go = pick(c.rows, GO_LABEL);
+      if (!go || c === at) continue;
+      if (go.row !== hl.row) return toRow(go.row);
+      return { ah: c.col > at.col ? 0x4D : 0x4B, al: 0 };
+    }
+    return null;
+  }
+
   arrowMenuKeys(lines) {
     // A marker is one of these characters flush against its label, with
     // whitespace or the line start in front: DINO.EXE writes
@@ -1342,15 +1457,23 @@ class Machine {
   autoKeyPoll() {
     if (!this.autoKey || this.keys.length) return;
     if (!TEXT_MODES.has(this.videoMode)) { this.autoKeyPollGraphics(); return; }
-    const shown = this.screenText().join('\n');
+    // The highlight is part of "what is on the screen". A grid menu answers a
+    // key by moving its cursor, which is a colour and not a character, so a
+    // gate that compares text alone sees the demo ignore every key after the
+    // first and stops -- and the walk that needs several keys never finishes.
+    const hl = this.screenHighlight();
+    const shown = `${this.screenText().join('\n')}\n@${hl ? `${hl.row},${hl.from}` : ''}`;
     if (shown === this.autoKeyScreen) return;
     this.autoKeyScreen = shown;
     const k = this.menuKey();
     if (!k) return;
     const ks = Array.isArray(k) ? k : [k];
     this.autoKeyRead++;
+    // Scan codes as well as characters: an arrow key has no character at all,
+    // so a log of the characters alone prints an answer of three keys as "".
     this.log(`autokey answered a polled menu with `
-      + `"${ks.map(x => String.fromCharCode(x.al)).join('')}"`);
+      + ks.map(x => (x.al >= 0x20 && x.al < 0x7F
+        ? `"${String.fromCharCode(x.al)}"` : `scan ${x.ah.toString(16)}`)).join(' '));
     this.keys.push(...ks);
     this.syncKbBda();
   }
