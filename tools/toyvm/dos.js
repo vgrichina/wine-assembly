@@ -725,11 +725,12 @@ class Machine {
     this.imageTop = DEFAULT_ALLOC_TOP;
     // What AH=48h handed out, and what AH=49h gave back below the frontier.
     this.memBlocks = new Map();     // seg -> paragraphs
-    // Which PSP owned each block when it was handed out. Real DOS keeps this in
-    // the MCB and reads it back on terminate: AH=4Ch frees every block owned by
-    // the PSP that is exiting, which is the only reason a loader can run five
-    // subfiles in a row without the machine filling up.
-    this.memOwner = new Map();      // seg -> psp
+    // Who owns each block is NOT kept here. Real DOS keeps it in the MCB, one
+    // paragraph below the block, and reads it back on terminate: AH=4Ch frees
+    // every block owned by the PSP that is exiting, which is the only reason a
+    // loader can run subfiles in a row without the machine filling up. It has
+    // to stay there and not in a map on this side, because programs write to
+    // it -- see memAlloc.
     this.memFree = [];              // [{seg, size}], sorted and coalesced
     // XMS blocks and EMS handles, both backed by host buffers. Counters so a
     // run can say whether a manager was merely detected or actually used.
@@ -2429,31 +2430,79 @@ class Machine {
   // prints "MIDAS Error: Out of conventional memory" on a machine that has
   // 400KB free. So blocks below the frontier that have been given back live in
   // `memFree`, sorted and coalesced, and a request looks there first.
+  //
+  // Every block costs one paragraph more than it hands out, because the block
+  // is preceded by its arena header -- the MCB. That header is not bookkeeping
+  // we could keep on this side: it is guest memory, at a place programs know,
+  // and they write to it. A loader hands a subfile its own PSP with AH=55h and
+  // then re-stamps the owner word of the block the subfile lives in, so that
+  // the subfile's own AH=4Ch gives the image back. BLIQ.EXE does exactly that
+  // (`--watch=1673:0:16` catches `1684:4b wrote 16731-16732`, the owner word of
+  // the block at 1674), six times, and with the owner kept only on this side
+  // none of the six images ever came back: the machine filled to 0x9F00 and
+  // MIDAS could not get the 0x38 paragraphs it wanted.
+  //
+  // Without the header paragraph the guest's write also lands on whatever block
+  // happens to end there -- 1673 was the last paragraph of a live block -- so
+  // modelling this stops a corruption as well as a leak.
+  //
+  // What is NOT modelled: the chain. Free regions carry no header, and there is
+  // no AH=52h list-of-lists to start from, so a program cannot walk from one
+  // MCB to the next. Nothing in the corpus does; if something starts, that is
+  // the next piece, not a reason to fake a chain now.
   memLargest() {
     let best = DEFAULT_ALLOC_TOP - this.allocTop;
     for (const b of this.memFree) if (b.size > best) best = b.size;
-    return Math.max(0, best);
+    return Math.max(0, best - 1);
+  }
+
+  // Lay down the arena header for the block whose data starts at `seg`.
+  mcbWrite(seg, owner, size) {
+    const at = (seg - 1) << 4;
+    this.mem[at] = 0x4D;                        // 'M' -- a block, not the last
+    this.mem[at + 1] = owner & 0xFF;
+    this.mem[at + 2] = (owner >> 8) & 0xFF;
+    this.mem[at + 3] = size & 0xFF;
+    this.mem[at + 4] = (size >> 8) & 0xFF;
+    for (let i = 5; i < 16; i++) this.mem[at + i] = 0;
+  }
+
+  // Who owns the block whose data starts at `seg`, as the guest sees it. This
+  // is the authority, not the map: the map records who asked, and a program is
+  // free to hand a block on to someone else by writing here.
+  mcbOwner(seg) {
+    const at = (seg - 1) << 4;
+    return this.mem[at + 1] | (this.mem[at + 2] << 8);
   }
 
   memAlloc(want) {
+    const need = want + 1;                      // ...plus the arena header
     for (let i = 0; i < this.memFree.length; i++) {
       const b = this.memFree[i];
-      if (b.size < want) continue;
-      const seg = b.seg;
-      if (b.size === want) this.memFree.splice(i, 1);
-      else { b.seg += want; b.size -= want; }
+      if (b.size < need) continue;
+      const seg = b.seg + 1;
+      if (b.size === need) this.memFree.splice(i, 1);
+      else { b.seg += need; b.size -= need; }
       this.memBlocks.set(seg, want);
-      this.memOwner.set(seg, this.curPsp);
+      this.mcbWrite(seg, this.curPsp, want);
       return seg;
     }
-    if (DEFAULT_ALLOC_TOP - this.allocTop < want) return null;
-    const seg = this.allocTop;
-    this.allocTop += want;
+    if (DEFAULT_ALLOC_TOP - this.allocTop < need) return null;
+    const seg = this.allocTop + 1;
+    this.allocTop += need;
     this.memBlocks.set(seg, want);
-    this.memOwner.set(seg, this.curPsp);
+    this.mcbWrite(seg, this.curPsp, want);
     return seg;
   }
 
+  // Give back an allocated block: its header goes with it.
+  memReleaseBlock(seg, size) {
+    this.memRelease(seg - 1, size + 1);
+  }
+
+  // Give back a raw region -- header paragraph included, since whatever gets
+  // allocated out of it next will lay down its own. The tail a resize splits
+  // off is a region, not a block, which is why this stayed the primitive.
   memRelease(seg, size) {
     if (!size) return;
     // Give it straight back to the frontier when it is the top block, so a
@@ -2549,13 +2598,16 @@ class Machine {
           if (keep) {
             this.allocTop = keep; this.imageTop = Math.max(this.imageTop, keep);
             for (const [s, n] of [...this.memBlocks]) {
-              if (s >= keep) { this.memBlocks.delete(s); this.memOwner.delete(s); }
+              if (s >= keep) { this.memBlocks.delete(s); }
               // The block the resident program is standing in straddles `keep`,
               // and only its tail went back. Left at its original size it reads
               // as 629KB held at 0x23d with the frontier down at 0x27d --
               // invisible while nothing consults memBlocks to allocate, and a
               // 629KB false release the moment something frees it by owner.
-              else if (s + n > keep) this.memBlocks.set(s, keep - s);
+              else if (s + n > keep) {
+                this.memBlocks.set(s, keep - s);
+                this.mcbWrite(s, this.mcbOwner(s), keep - s);
+              }
             }
             this.memTrim();
           } else {
@@ -2568,11 +2620,16 @@ class Machine {
             // machine. `keep` above is the AH=31h half of the same idea and
             // stays as it is -- a resident program's blocks are exactly the
             // ones that must survive.
-            for (const [s, o] of [...this.memOwner]) {
-              if (o !== leaving) continue;
+            //
+            // The owner comes out of the guest's MCB, which is the only copy.
+            // The two agree until a program re-stamps a block onto someone
+            // else, which is the whole point of the field and is how BLIQ's
+            // loader arranges for a subfile to give its own image back.
+            for (const s of [...this.memBlocks.keys()]) {
+              if (this.mcbOwner(s) !== leaving) continue;
               const size = this.memBlocks.get(s);
-              this.memBlocks.delete(s); this.memOwner.delete(s);
-              if (size !== undefined) this.memRelease(s, size);
+              this.memBlocks.delete(s);
+              if (size !== undefined) this.memReleaseBlock(s, size);
             }
           }
           // SS:SP and the data segments stay as they are. DOS leaves them
@@ -3009,7 +3066,7 @@ class Machine {
           // fragmented -- BLIQ.EXE's failure looks identical either way.
           this.log(`alloc ${want.toString(16)} refused; top=${this.allocTop.toString(16)}`
             + ` held=[${[...this.memBlocks].map(([s, n]) =>
-              `${s.toString(16)}+${n.toString(16)}@${(this.memOwner.get(s) || 0).toString(16)}`)
+              `${s.toString(16)}+${n.toString(16)}@${this.mcbOwner(s).toString(16)}`)
               .join(' ')}]`
             + ` free=[${this.memFree.map(b =>
               `${b.seg.toString(16)}+${b.size.toString(16)}`).join(' ')}]`);
@@ -3026,8 +3083,8 @@ class Machine {
         // program freeing its own PSP block on the way out is normal, and the
         // pool has no record of that one.
         if (size !== undefined) {
-          this.memBlocks.delete(seg); this.memOwner.delete(seg);
-          this.memRelease(seg, size);
+          this.memBlocks.delete(seg);
+          this.memReleaseBlock(seg, size);
         } else {
           // Not an error, but worth saying: a free we drop is memory the guest
           // believes it gave back, and the shortage it causes surfaces at some
@@ -3050,6 +3107,7 @@ class Machine {
           // is what a real MCB walk would find.
           if (want <= held) {
             this.memBlocks.set(seg, want);
+            this.mcbWrite(seg, this.mcbOwner(seg), want);
             this.memRelease(seg + want, held - want);
             r.setResultCf(false);
             return true;
@@ -3060,12 +3118,14 @@ class Machine {
             if (gap.size === need) this.memFree.splice(this.memFree.indexOf(gap), 1);
             else { gap.seg += need; gap.size -= need; }
             this.memBlocks.set(seg, want);
+            this.mcbWrite(seg, this.mcbOwner(seg), want);
             r.setResultCf(false);
             return true;
           }
           if (at === this.allocTop && DEFAULT_ALLOC_TOP - this.allocTop >= need) {
             this.allocTop += need;
             this.memBlocks.set(seg, want);
+            this.mcbWrite(seg, this.mcbOwner(seg), want);
             r.setResultCf(false);
             return true;
           }

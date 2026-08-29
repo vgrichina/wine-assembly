@@ -264,17 +264,62 @@ The four big blocks are 76KB, 186KB, 138KB and 229KB — ~629KB, the whole pool.
 The program asked for 0x4c79 paragraphs (312KB), was refused, read the largest
 free block out of BX and took all 229KB of it, and then MIDAS wanted 896 bytes
 more. `xms 0 block(s)`: it never touched extended memory, so the 8MB we offer
-is not the lever. A self-extracting loader EXECs the real demo (child PSP
-0x1674) and the child's blocks are released correctly on exit, so this is not a
-leak in EXEC either. Open question is whether real DOS reaches the same wall —
-it has *less* conventional memory than we offer, not more, so the arithmetic
-does not obviously work out, and the order in which MIDAS initialises relative
-to the big grabs is worth checking before touching the allocator.
+is not the lever.
 
-`Runtime error 200` is Borland's CRT delay-calibration divide fault. The clock
-is `dispatched / 550e3` BIOS ticks (`--dispatches-per-tick`), i.e. ~10M
-dispatches per guest second; that knob is the A/B if the RTE turns out to be a
-cause rather than a consequence of the MIDAS failure.
+**The memory half is fixed.** The open question above — "whether real DOS reaches
+the same wall", given it has *less* conventional memory than we offer — had the
+answer that it does not, and for a reason that is not about how much memory
+there is at all.
+
+Every one of those blocks is `@100`, the loader's own PSP, and none of them ever
+comes back. The loader's idiom is: allocate a header block and an image block,
+`AH=55h` a PSP inside the image, run the subfile, and let the subfile's own
+`AH=4Ch` give the image back. That last step works on real DOS because the
+subfile **re-stamps the owner word of its image's MCB** onto itself first, and
+DOS reads ownership out of the MCB. `--watch` catches it happening:
+
+```
+$ node tools/toyvm/run-dos.js BLIQ.EXE --seconds=8 --auto-key --watch=1673:0:16
+   1  1684:4b wrote 16731-16732
+```
+
+`1673:0001` is the owner word of the block at `1674`. We kept ownership in a
+`memOwner` map on the host side, so the write went nowhere we would ever read,
+the six images stayed billed to PSP `100`, and the pool filled to `0x9F00`.
+
+Worse, we had no header paragraph at all — blocks were handed out back to back —
+so `1673` was the last paragraph of a *live block*, and the guest's owner write
+was landing in another allocation's data. Modelling the arena header therefore
+stops a corruption as well as a leak. Blocks now cost one paragraph more than
+they hand out, the header carries `'M'`/owner/size at `seg-1`, and the owner is
+read back out of guest memory on terminate. `memOwner` is gone: the MCB is the
+only copy, which is the point. Not modelled: the *chain* — free regions carry no
+header and there is no `AH=52h` to start a walk from, so nothing can walk it.
+
+With that, the MIDAS error and the `[ERROR]: Executing internal subfile...` are
+both gone and the program no longer exits.
+
+**Still open: `Runtime error 200`.** It is *not* Borland's CRT delay-calibration
+divide fault, which is the obvious reading and the wrong one. Error 200 in Turbo
+Pascal is "division by zero" generally, and the calibration bug is only one way
+to get there. Measured:
+
+| knob | values tried | errors |
+|---|---|---|
+| `--dispatches-per-tick` | 60k, 150k, 550k, 2M | 4 every time |
+| `--sound` | `none`, `sb` | 4 every time |
+
+A calibration overflow scales with the clock rate by construction, so a result
+that is bit-identical across a 33× spread rules it out. It also predates both
+fixes here — the v9 capture, before either, shows the same two lines.
+
+Two traps to avoid re-walking. `--slice=2000` makes the errors disappear, which
+looks like a granularity result; it is not, the run dies early at `fe5:7b` and
+never reaches the erroring code. And the address it reports, `041E:0067`, is a
+`push [bp+0xc]` — a call site, so the divide is in the callee, and `--dump`
+cannot show that callee because it dumps at exit and the memory has been reused
+by then. Finding it needs a run stopped at the error, which `run-dos.js` cannot
+do yet: there is no `--break`.
 
 ### INTRO.EXE (`1995-c-cda_tp5i`) — two blockers cleared, a third open
 
