@@ -733,7 +733,13 @@ class DosSession {
   checkProgress(cs, ip) {
     const { vm, machine } = this;
     const key = `${cs.toString(16)}:${ip.toString(16)}`;
+    // Anything the guest has put anywhere an observer could see it. The video
+    // terms are not decoration: outside mode 3 the console count never moves,
+    // so without them a program drawing a picture is judged entirely on ten
+    // registers -- and a palette fade or a planar fill can run for thousands of
+    // iterations with every one of them identical.
     const wrote = machine.con.written + this.irqs + machine.bytesRead
+      + machine.dacWrites + machine.vga.maskWrites
       + (machine.videoMode === 3 && this.cells ? this.cells(machine.con) : 0);
     let regs = 2166136261;
     for (const n of ['ax', 'bx', 'cx', 'dx', 'si', 'di', 'bp', 'sp', 'ds', 'es']) {

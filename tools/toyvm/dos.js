@@ -659,6 +659,13 @@ class Machine {
     this.videoMode = 3;
     this.palette = new Uint8Array(768);
     this.dacWriteIndex = 0;
+    // Every DAC entry the guest has written, by port or by BIOS. The progress
+    // detector needs it: a palette loop drives the screen without touching a
+    // single register it watches, so a program clearing 255 DAC entries in a
+    // tight loop -- the same block, the same registers, memory the detector
+    // does not hash -- reads as wedged. BLIQ.EXE was stopped at 168b:263 for
+    // exactly that, one loop short of the mode-X fade it draws next.
+    this.dacWrites = 0;
     this.dacSubIndex = 0;
     this.retraceToggle = 0;
     this.vga = newVgaState();
@@ -1767,6 +1774,7 @@ class Machine {
     if (port === 0x3C8) { this.dacWriteIndex = value; this.dacSubIndex = 0; return; }
     if (port === 0x3C7) { this.dacWriteIndex = value; this.dacSubIndex = 0; return; }
     if (port === 0x3C9) {
+      this.dacWrites++;
       this.palette[this.dacWriteIndex * 3 + this.dacSubIndex] = value & 0x3F;
       if (++this.dacSubIndex === 3) { this.dacSubIndex = 0; this.dacWriteIndex = (this.dacWriteIndex + 1) & 0xFF; }
       return;
@@ -2228,6 +2236,7 @@ class Machine {
       return true;
     }
     if (ah === 0x10 && al === 0x10) {       // set one DAC register
+      this.dacWrites++;
       const at = (r.get('bx') & 0xFF) * 3, cx = r.get('cx'), dx = r.get('dx');
       this.palette[at] = (dx >> 8) & 0x3F;
       this.palette[at + 1] = (cx >> 8) & 0x3F;
@@ -2237,6 +2246,7 @@ class Machine {
     if (ah === 0x10 && al === 0x12) {       // set block of DAC registers
       const first = r.get('bx') & 0xFFFF, count = r.get('cx') & 0xFFFF;
       const src = this.lin(r, 'es', r.get('dx'));
+      this.dacWrites += count;
       for (let i = 0; i < count * 3; i++) this.palette[(first * 3 + i) % 768] = this.mem[(src + i) & 0xFFFFF] & 0x3F;
       return true;
     }
