@@ -100,8 +100,49 @@ reach full frames — so this is specific to BLINKY.
 
 The last thing traced before the stop is `int 21h AH=35 AL=08` from `110:3d70`,
 the music player fetching the old timer vector; the matching `AH=25` never
-happens. So the next step is finding what transferred to `110:135d`, not
-decoding the bytes there.
+happens.
+
+`--trace-entry=2000` (which prints the *first* N handbacks, not every Nth —
+BLINKY only has 936, so that is all of them) gives the whole transfer:
+
+```
+entry 110:40af  x107 ...      ; a table-driven byte-range copier
+entry 110:4099  ax=f018 bx=e3c0 cx=103d  ss:sp=0b86:8166
+entry 998:04df  ax=0000 bx=e3c0 cx=103d  ss:sp=0b86:8158
+entry 110:3640  ax=0032 bx=e3c0 cx=9046  ss:sp=0b86:815e
+entry 5f6:02fd  ax=0032                  ss:sp=0b86:815a
+entry 888:04df  ax=0004                  ss:sp=0b86:8154
+entry 110:1346  ax=0000 bx=f706 cx=1346  ss:sp=0b86:0b4a
+entry 110:135d  ax=ffff ...              (x202, stuck)
+```
+
+`998:04df` is Turbo Pascal's stack-overflow check — `add ax,0x200 / jb / sub
+ax,sp / jnb / neg ax / cmp ax,[0x284] / jb / retf`, the guard TP emits at every
+procedure entry. It runs correctly and `retf`s. **The address it returns to,
+`110:3640`, is zeros for the entire run** (checked at 10M, 100M, 250M and
+304.6M), so the return address on the stack was already wrong when that far
+call was made. Everything after is a runaway: `888:04df` is that same stack
+check called with an unrelocated segment (`0x998 - 0x888 = 0x110`, exactly the
+load segment), and the wild execution is what eventually zeroes linear
+`0x5970`–`0x70C0` and writes a plausible-looking `call far 0x5f6:0x2fd` into
+`110:3640`.
+
+Two traps that cost time here, both worth remembering:
+
+* **`--disasm` and `--dump` fire at exit.** Disassembling `110:3640` at the end
+  shows a tidy `call far 0x5f6:0x2fd / or al,al / jnz` and segment `5f6` shows
+  zeros; both are pictures of the wreckage, and both are the exact opposite of
+  the truth at the moment of the fault. Bisect with `--dispatches=N` and dump
+  there instead — `5f6` holds live PC-speaker code until 304.6M and is zeroed
+  by 304.9M.
+* **`int 3` at `110:40e0` is not a clue.** It sits immediately before a `ret`,
+  DOS's default INT 3 vector is an IRET, and our unhandled-vector path does the
+  same thing, so it is a slow no-op on both.
+
+It is not the code cache: `--no-cache` and `--smc-flush` both reproduce the
+identical stop at `110:135d` after the identical 305.0M dispatches, so the 127
+self-modify breaks are not being mishandled. The next step is the stack — find
+what pushed `110:3640`, starting from the far call that entered `998:04df`.
 
 ### BLIQ.EXE (2 rows — `1994-b-bliq` and `1994-b-black` are the same program)
 
