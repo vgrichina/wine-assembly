@@ -66,6 +66,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     // decoded from memory as it is by then.
     let wrote = false;
     let bulkWrote = false;
+    let refusedAt = -1;
     for (;;) {
       if (words.length > maxWords) { words.push(H.end, cur); break; }
 
@@ -84,6 +85,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
         // of executing something plausible-looking.
         unimplemented.add(cur);
         words.push(H.end, cur);
+        refusedAt = cur;
         break;
       }
 
@@ -123,7 +125,21 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     // The block's extent. `cur` can have wrapped past 0xFFFF on a segment that
     // runs to the top, in which case the tail is simply not marked -- a missed
     // mark costs a stale block, never a wrong one.
-    if (cur > blockIp) covered.push([(codeBase + blockIp) & mask, (codeBase + cur) & mask]);
+    //
+    // The refused byte is part of that extent. `cur` does not advance past an
+    // instruction we would not decode, so a block whose FIRST instruction was
+    // refused covers [blockIp, blockIp) -- nothing -- and marks no code bits at
+    // all. The block is still cached and still published into the jump table,
+    // so when a decryptor later writes the real opcode there, nothing notices
+    // and the stale "hand back" block is re-entered forever. That is JULTRO.EXE:
+    // it arrives at 5ab:6e while the byte is still ciphertext, we cache a refusal
+    // for it, the decryptor writes the real `eb fa`, and the demo hands back at
+    // that one address until the stuck detector gives up -- 6,189 dispatches into
+    // a program that runs half a million with the block cache switched off.
+    const extent = refusedAt >= 0 ? cur + 1 : cur;
+    if (extent > blockIp) {
+      covered.push([(codeBase + blockIp) & mask, (codeBase + extent) & mask]);
+    }
   }
 
   // Resolve. A target that never got compiled keeps its 0, which the branch
