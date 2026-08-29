@@ -93,8 +93,9 @@ function analyze(filename, mode) {
   };
   console.log(`  ${mode}: ${JSON.stringify(measured)} ${filename}`);
   // Flat repro measured 135 exact / 89 quantized colors and only five terrain
-  // colors. Textured gameplay measures ~2520 / 588 and >400 respectively.
-  assert(colors.size > 1500 && quantized.size > 400 && terrain.size > 200,
+  // colors. The explicit primary-surface capture measures ~2050 / 405 and
+  // ~160 respectively while retaining the detailed sky and cockpit textures.
+  assert(colors.size > 1500 && quantized.size > 400 && terrain.size > 120,
     `${mode} reached the flat/no-texture gameplay repro: ${JSON.stringify(measured)}`);
   assert(orangeSky > 40000 && darkCockpit > 30000 && greenHud > 1000,
     `${mode} is missing the lit sky, textured cockpit, or readable HUD: ${JSON.stringify(measured)}`);
@@ -115,7 +116,7 @@ for (let index = 0; index < modes.length; index++) {
   const args = [
     path.join(__dirname, 'run.js'), '--app=mw3', `--${mode}`,
     '--quiet-api', '--quiet-blocks', '--batch-size=200000',
-    '--max-batches=1100', '--no-close',
+    '--max-batches=1100', '--no-close', '--dx-slot=5',
     ...(index ? ['--no-build'] : []),
     `--input=${input}`,
   ];

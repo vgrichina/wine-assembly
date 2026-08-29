@@ -2276,23 +2276,59 @@
     (local.set $rt_slot (i32.load (i32.add (local.get $entry) (i32.const 8))))
     (i32.add (global.get $DX_OBJECTS) (i32.mul (local.get $rt_slot) (i32.const 32))))
 
-  ;; Allocate (or reuse) a guest-heap z-buffer sized to RT (f32 per pixel).
-  ;; Stored at state +D3DIM_OFF_ZBUF_SLOT (we store guest ptr, NOT a DX slot —
-  ;; rename meaning: now ZBUF_PTR). Returns guest ptr (or 0 if no RT).
+  ;; Find the DirectDraw Z surface attached to the render target, or allocate a
+  ;; private guest-heap f32 plane as a fallback.  The depth handle stored at
+  ;; state +D3DIM_OFF_ZBUF_SLOT is therefore either a DX_OBJECTS entry address
+  ;; or a guest pointer.  Prefer a newly attached real surface even if an early
+  ;; draw caused the fallback plane to be allocated first: DirectDraw clears
+  ;; and locks the attached surface, so a private plane would immediately
+  ;; diverge from application-visible depth state.
   (func $d3dim_ensure_zbuffer (param $this_guest i32) (result i32)
     (local $state i32) (local $rt i32) (local $w i32) (local $h i32)
     (local $bytes i32) (local $zbuf i32) (local $sw i32)
+    (local $rt_slot i32) (local $i i32) (local $candidate i32)
     (local.set $state (call $d3ddev_state (local.get $this_guest)))
     (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
     (local.set $sw (call $g2w (local.get $state)))
     (local.set $zbuf (i32.load (i32.add (local.get $sw) (global.get $D3DIM_OFF_ZBUF_SLOT))))
-    (if (local.get $zbuf) (then (return (local.get $zbuf))))
     (local.set $rt (call $d3ddev_rt_entry (local.get $this_guest)))
     (if (i32.eqz (local.get $rt)) (then (return (i32.const 0))))
     (local.set $w (i32.and (i32.load (i32.add (local.get $rt) (i32.const 12))) (i32.const 0xFFFF)))
     (local.set $h (i32.shr_u (i32.load (i32.add (local.get $rt) (i32.const 12))) (i32.const 16)))
     (if (i32.or (i32.eqz (local.get $w)) (i32.eqz (local.get $h)))
       (then (return (i32.const 0))))
+    (local.set $rt_slot (call $dx_slot_of (local.get $rt)))
+    (local.set $i (i32.const 1))
+    (block $attached_done (loop $attached_scan
+      (br_if $attached_done (i32.ge_u (local.get $i) (global.get $DX_MAX)))
+      (local.set $candidate
+        (i32.add (global.get $DX_OBJECTS)
+          (i32.mul (local.get $i) (global.get $DX_ENTRY_SIZE))))
+      (if (i32.and
+            (i32.eq (i32.load (local.get $candidate)) (i32.const 2))
+            (i32.and
+              (i32.eq (i32.load offset=4 (call $dx_surf_meta_ptr (local.get $candidate)))
+                (i32.add (local.get $rt_slot) (i32.const 1)))
+              (i32.and
+                (i32.and
+                  (i32.ne
+                    (i32.and (i32.load (call $dx_surf_meta_ptr (local.get $candidate)))
+                      (i32.const 0x00020000))
+                    (i32.const 0))
+                  (i32.eq (i32.load offset=12 (local.get $candidate))
+                    (i32.load offset=12 (local.get $rt))))
+                (i32.and
+                  (i32.or
+                    (i32.eq (i32.load16_u offset=16 (local.get $candidate)) (i32.const 16))
+                    (i32.eq (i32.load16_u offset=16 (local.get $candidate)) (i32.const 32)))
+                  (i32.ne (i32.load offset=20 (local.get $candidate)) (i32.const 0))))))
+        (then
+          (i32.store (i32.add (local.get $sw) (global.get $D3DIM_OFF_ZBUF_SLOT))
+            (local.get $candidate))
+          (return (local.get $candidate))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $attached_scan)))
+    (if (local.get $zbuf) (then (return (local.get $zbuf))))
     (local.set $bytes (i32.mul (i32.mul (local.get $w) (local.get $h)) (i32.const 4)))
     (local.set $zbuf (call $heap_alloc (local.get $bytes)))
     (i32.store (i32.add (local.get $sw) (global.get $D3DIM_OFF_ZBUF_SLOT)) (local.get $zbuf))
@@ -2516,10 +2552,12 @@
   (func $viewport_fill_rect_z
     (param $rt_entry i32) (param $zbuf_guest i32)
     (param $x i32) (param $y i32) (param $w i32) (param $h i32)
-    (param $zval f32) (param $color i32)
+    (param $zval f32) (param $color i32) (param $zfunc i32) (param $zwrite i32)
     (local $sw i32) (local $sh i32) (local $bpp i32) (local $pitch i32) (local $dib_wa i32)
     (local $zbuf_wa i32) (local $row i32) (local $col i32) (local $row_wa i32)
-    (local $px16 i32) (local $zptr i32)
+    (local $px16 i32) (local $zptr i32) (local $zentry i32) (local $zdib i32)
+    (local $zpitch i32) (local $zbpp i32) (local $zraw i32) (local $pass i32)
+    (local $ztest f32)
     (if (i32.eqz (local.get $zbuf_guest)) (then
       (call $viewport_fill_rect
         (local.get $rt_entry) (local.get $x) (local.get $y)
@@ -2530,8 +2568,20 @@
     (local.set $bpp (i32.and (i32.load (i32.add (local.get $rt_entry) (i32.const 16))) (i32.const 0xFFFF)))
     (local.set $pitch (i32.shr_u (i32.load (i32.add (local.get $rt_entry) (i32.const 16))) (i32.const 16)))
     (local.set $dib_wa (i32.load (i32.add (local.get $rt_entry) (i32.const 20))))
-    (local.set $zbuf_wa (call $g2w (local.get $zbuf_guest)))
-    (if (i32.or (i32.eqz (local.get $dib_wa)) (i32.eqz (local.get $zbuf_wa))) (then (return)))
+    (if (i32.and
+          (i32.ge_u (local.get $zbuf_guest) (global.get $DX_OBJECTS))
+          (i32.lt_u (local.get $zbuf_guest)
+            (i32.add (global.get $DX_OBJECTS) (global.get $DX_OBJECTS_SIZE))))
+      (then
+        (local.set $zentry (local.get $zbuf_guest))
+        (local.set $zdib (i32.load offset=20 (local.get $zentry)))
+        (local.set $zpitch (i32.load16_u offset=18 (local.get $zentry)))
+        (local.set $zbpp (i32.load16_u offset=16 (local.get $zentry))))
+      (else (local.set $zbuf_wa (call $g2w (local.get $zbuf_guest)))))
+    (if (i32.or
+          (i32.eqz (local.get $dib_wa))
+          (i32.and (i32.eqz (local.get $zbuf_wa)) (i32.eqz (local.get $zdib))))
+      (then (return)))
     (if (i32.lt_s (local.get $x) (i32.const 0)) (then
       (local.set $w (i32.add (local.get $w) (local.get $x)))
       (local.set $x (i32.const 0))))
@@ -2556,14 +2606,59 @@
       (local.set $col (i32.const 0))
       (block $cdone (loop $clp
         (br_if $cdone (i32.ge_s (local.get $col) (local.get $w)))
-        (local.set $zptr (i32.add (local.get $zbuf_wa)
-          (i32.mul
-            (i32.add
-              (i32.mul (i32.add (local.get $y) (local.get $row)) (local.get $sw))
-              (i32.add (local.get $x) (local.get $col)))
-            (i32.const 4))))
-        (if (f32.lt (local.get $zval) (f32.load (local.get $zptr))) (then
-          (f32.store (local.get $zptr) (local.get $zval))
+        (local.set $pass (i32.const 0))
+        (if (local.get $zentry)
+          (then
+            (local.set $zptr (i32.add (local.get $zdib)
+              (i32.add
+                (i32.mul (i32.add (local.get $y) (local.get $row)) (local.get $zpitch))
+                (i32.mul (i32.add (local.get $x) (local.get $col))
+                  (i32.shr_u (local.get $zbpp) (i32.const 3))))))
+            (local.set $ztest (local.get $zval))
+            ;; A clipped/degenerate triangle can carry NaN depth. Reject it:
+            ;; mapping NaN to either endpoint can pass reversed or ALWAYS
+            ;; depth modes and poison every pixel in an attached Z surface.
+            (if (f32.eq (local.get $ztest) (local.get $ztest))
+              (then
+                (if (f32.lt (local.get $ztest) (f32.const 0.0)) (then (local.set $ztest (f32.const 0.0))))
+                (if (f32.gt (local.get $ztest) (f32.const 1.0)) (then (local.set $ztest (f32.const 1.0))))
+                (if (i32.eq (local.get $zbpp) (i32.const 16))
+                  (then
+                    (local.set $zraw (i32.trunc_sat_f32_u
+                      (f32.mul (local.get $ztest) (f32.const 65535.0))))
+                    (if (call $d3dim_depth_compare_u
+                          (local.get $zraw) (i32.load16_u (local.get $zptr)) (local.get $zfunc))
+                      (then
+                        (if (local.get $zwrite)
+                          (then (i32.store16 (local.get $zptr) (local.get $zraw))))
+                        (local.set $pass (i32.const 1)))))
+                  (else
+                    (if (i32.eq (local.get $zbpp) (i32.const 32))
+                      (then
+                        (local.set $zraw (i32.trunc_sat_f32_u
+                          (f32.mul (local.get $ztest) (f32.const 4294967040.0))))
+                        (if (call $d3dim_depth_compare_u
+                              (local.get $zraw) (i32.load (local.get $zptr)) (local.get $zfunc))
+                          (then
+                            (if (local.get $zwrite)
+                              (then (i32.store (local.get $zptr) (local.get $zraw))))
+                            (local.set $pass (i32.const 1)))))))))))
+          (else
+            (local.set $zptr (i32.add (local.get $zbuf_wa)
+              (i32.mul
+                (i32.add
+                  (i32.mul (i32.add (local.get $y) (local.get $row)) (local.get $sw))
+                  (i32.add (local.get $x) (local.get $col)))
+                (i32.const 4))))
+            (if (f32.eq (local.get $zval) (local.get $zval))
+              (then
+                (if (call $d3dim_depth_compare_f32
+                      (local.get $zval) (f32.load (local.get $zptr)) (local.get $zfunc))
+                  (then
+                    (if (local.get $zwrite)
+                      (then (f32.store (local.get $zptr) (local.get $zval))))
+                    (local.set $pass (i32.const 1))))))))
+        (if (local.get $pass) (then
           (if (i32.eq (local.get $bpp) (i32.const 32)) (then
             (i32.store
               (i32.add (local.get $row_wa)
@@ -2843,18 +2938,61 @@
           (i32.and (local.get $dst) (i32.const 255))
           (local.get $alpha) (local.get $src_blend) (local.get $dst_blend)))))
 
+  ;; D3DCMPFUNC: 1 NEVER, 2 LESS, 3 EQUAL, 4 LESSEQUAL, 5 GREATER,
+  ;; 6 NOTEQUAL, 7 GREATEREQUAL, 8 ALWAYS.  Use unsigned comparisons for
+  ;; packed 16/32-bit depth because both formats map [0,1] monotonically.
+  (func $d3dim_depth_compare_u
+    (param $incoming i32) (param $stored i32) (param $func i32) (result i32)
+    ;; Hot legacy paths overwhelmingly use ALWAYS for overlays and
+    ;; GREATEREQUAL for reversed depth. Keep those ahead of the uncommon
+    ;; comparisons so the scalar per-pixel loop does not walk seven branches.
+    (if (i32.eq (local.get $func) (i32.const 8)) (then (return (i32.const 1))))
+    (if (i32.eq (local.get $func) (i32.const 7))
+      (then (return (i32.ge_u (local.get $incoming) (local.get $stored)))))
+    (if (i32.eq (local.get $func) (i32.const 4))
+      (then (return (i32.le_u (local.get $incoming) (local.get $stored)))))
+    (if (i32.eq (local.get $func) (i32.const 1)) (then (return (i32.const 0))))
+    (if (i32.eq (local.get $func) (i32.const 2))
+      (then (return (i32.lt_u (local.get $incoming) (local.get $stored)))))
+    (if (i32.eq (local.get $func) (i32.const 3))
+      (then (return (i32.eq (local.get $incoming) (local.get $stored)))))
+    (if (i32.eq (local.get $func) (i32.const 5))
+      (then (return (i32.gt_u (local.get $incoming) (local.get $stored)))))
+    (if (i32.eq (local.get $func) (i32.const 6))
+      (then (return (i32.ne (local.get $incoming) (local.get $stored)))))
+    (i32.const 0))
+
+  (func $d3dim_depth_compare_f32
+    (param $incoming f32) (param $stored f32) (param $func i32) (result i32)
+    (if (i32.eq (local.get $func) (i32.const 8)) (then (return (i32.const 1))))
+    (if (i32.eq (local.get $func) (i32.const 7))
+      (then (return (f32.ge (local.get $incoming) (local.get $stored)))))
+    (if (i32.eq (local.get $func) (i32.const 4))
+      (then (return (f32.le (local.get $incoming) (local.get $stored)))))
+    (if (i32.eq (local.get $func) (i32.const 1)) (then (return (i32.const 0))))
+    (if (i32.eq (local.get $func) (i32.const 2))
+      (then (return (f32.lt (local.get $incoming) (local.get $stored)))))
+    (if (i32.eq (local.get $func) (i32.const 3))
+      (then (return (f32.eq (local.get $incoming) (local.get $stored)))))
+    (if (i32.eq (local.get $func) (i32.const 5))
+      (then (return (f32.gt (local.get $incoming) (local.get $stored)))))
+    (if (i32.eq (local.get $func) (i32.const 6))
+      (then (return (f32.ne (local.get $incoming) (local.get $stored)))))
+    (i32.const 0))
+
   (func $viewport_draw_textured_span
     (param $rt_entry i32) (param $tex_entry i32)
     (param $blend i32) (param $src_blend i32) (param $dst_blend i32)
     (param $y i32)
-    (param $x0 i32) (param $u0 f32) (param $v0 f32) (param $c0 i32)
-    (param $x1 i32) (param $u1 f32) (param $v1 f32) (param $c1 i32)
-    (param $zbuf_guest i32) (param $zval f32)
+    (param $x0 i32) (param $u0 f32) (param $v0 f32) (param $c0 i32) (param $z0 f32)
+    (param $x1 i32) (param $u1 f32) (param $v1 f32) (param $c1 i32) (param $z1 f32)
+    (param $zbuf_guest i32) (param $zfunc i32) (param $zwrite i32)
     (local $sw i32) (local $sh i32) (local $bpp i32) (local $pitch i32) (local $dib_wa i32)
     (local $tx i32) (local $xs i32) (local $xe i32) (local $x i32)
-    (local $tu f32) (local $tv f32) (local $den f32) (local $invden f32) (local $t f32)
+    (local $tu f32) (local $tv f32) (local $tz f32) (local $den f32) (local $invden f32) (local $t f32)
     (local $color i32) (local $diffuse i32) (local $dst i32) (local $px16 i32) (local $row_wa i32) (local $ptr i32)
-    (local $zbuf_wa i32) (local $zptr i32) (local $draw i32)
+    (local $zbuf_wa i32) (local $zentry i32) (local $zdib i32) (local $zpitch i32) (local $zbpp i32)
+    (local $zptr i32) (local $zraw i32) (local $draw i32) (local $ztest f32)
     (local $tw i32) (local $th i32) (local $tbpp i32) (local $tpitch i32)
     (local $tdib i32) (local $tfmt i32) (local $tpal i32)
     (local.set $sw (i32.and (i32.load (i32.add (local.get $rt_entry) (i32.const 12))) (i32.const 0xFFFF)))
@@ -2865,14 +3003,17 @@
       (local.set $tx (local.get $x0))
       (local.set $tu (local.get $u0))
       (local.set $tv (local.get $v0))
+      (local.set $tz (local.get $z0))
       (local.set $diffuse (local.get $c0))
       (local.set $x0 (local.get $x1))
       (local.set $u0 (local.get $u1))
       (local.set $v0 (local.get $v1))
+      (local.set $z0 (local.get $z1))
       (local.set $c0 (local.get $c1))
       (local.set $x1 (local.get $tx))
       (local.set $u1 (local.get $tu))
       (local.set $v1 (local.get $tv))
+      (local.set $z1 (local.get $tz))
       (local.set $c1 (local.get $diffuse))))
     (if (i32.or (i32.lt_s (local.get $x1) (i32.const 0)) (i32.ge_s (local.get $x0) (local.get $sw)))
       (then (return)))
@@ -2899,7 +3040,17 @@
     (local.set $den (f32.convert_i32_s (i32.sub (local.get $x1) (local.get $x0))))
     (if (f32.eq (local.get $den) (f32.const 0.0)) (then (local.set $den (f32.const 1.0))))
     (local.set $invden (f32.div (f32.const 1.0) (local.get $den)))
-    (if (local.get $zbuf_guest) (then (local.set $zbuf_wa (call $g2w (local.get $zbuf_guest)))))
+    (if (local.get $zbuf_guest) (then
+      (if (i32.and
+            (i32.ge_u (local.get $zbuf_guest) (global.get $DX_OBJECTS))
+            (i32.lt_u (local.get $zbuf_guest)
+              (i32.add (global.get $DX_OBJECTS) (global.get $DX_OBJECTS_SIZE))))
+        (then
+          (local.set $zentry (local.get $zbuf_guest))
+          (local.set $zdib (i32.load offset=20 (local.get $zentry)))
+          (local.set $zpitch (i32.load16_u offset=18 (local.get $zentry)))
+          (local.set $zbpp (i32.load16_u offset=16 (local.get $zentry))))
+        (else (local.set $zbuf_wa (call $g2w (local.get $zbuf_guest)))))))
     (local.set $row_wa (i32.add (local.get $dib_wa) (i32.mul (local.get $y) (local.get $pitch))))
     (local.set $x (local.get $xs))
     (block $done (loop $lp
@@ -2909,14 +3060,53 @@
         (local.get $invden)))
       (local.set $tu (f32.add (local.get $u0) (f32.mul (f32.sub (local.get $u1) (local.get $u0)) (local.get $t))))
       (local.set $tv (f32.add (local.get $v0) (f32.mul (f32.sub (local.get $v1) (local.get $v0)) (local.get $t))))
+      (local.set $tz (f32.add (local.get $z0) (f32.mul (f32.sub (local.get $z1) (local.get $z0)) (local.get $t))))
       (local.set $diffuse (call $d3dim_color_lerp (local.get $c0) (local.get $c1) (local.get $t)))
       (local.set $draw (i32.const 1))
-      (if (local.get $zbuf_wa) (then
-        (local.set $zptr (i32.add (local.get $zbuf_wa)
-          (i32.mul (i32.add (i32.mul (local.get $y) (local.get $sw)) (local.get $x)) (i32.const 4))))
-        (if (f32.lt (local.get $zval) (f32.load (local.get $zptr)))
-          (then (f32.store (local.get $zptr) (local.get $zval)))
-          (else (local.set $draw (i32.const 0))))))
+      (if (local.get $zentry)
+        (then
+          (local.set $zptr (i32.add (local.get $zdib)
+            (i32.add (i32.mul (local.get $y) (local.get $zpitch))
+              (i32.mul (local.get $x) (i32.shr_u (local.get $zbpp) (i32.const 3))))))
+          (local.set $ztest (local.get $tz))
+          ;; Reject non-finite depth rather than mapping it to an endpoint:
+          ;; MW3 uses reversed GREATEREQUAL and ALWAYS states, so an endpoint
+          ;; substitution can pass and then corrupt the attached Z surface.
+          (if (f32.ne (local.get $ztest) (local.get $ztest))
+            (then (local.set $draw (i32.const 0)))
+            (else
+              (if (f32.lt (local.get $ztest) (f32.const 0.0)) (then (local.set $ztest (f32.const 0.0))))
+              (if (f32.gt (local.get $ztest) (f32.const 1.0)) (then (local.set $ztest (f32.const 1.0))))
+              (if (i32.eq (local.get $zbpp) (i32.const 16))
+                (then
+                  (local.set $zraw (i32.trunc_sat_f32_u (f32.mul (local.get $ztest) (f32.const 65535.0))))
+                  (if (call $d3dim_depth_compare_u
+                        (local.get $zraw) (i32.load16_u (local.get $zptr)) (local.get $zfunc))
+                    (then (if (local.get $zwrite)
+                      (then (i32.store16 (local.get $zptr) (local.get $zraw)))))
+                    (else (local.set $draw (i32.const 0)))))
+                (else
+                  (if (i32.eq (local.get $zbpp) (i32.const 32))
+                    (then
+                      (local.set $zraw (i32.trunc_sat_f32_u
+                        (f32.mul (local.get $ztest) (f32.const 4294967040.0))))
+                      (if (call $d3dim_depth_compare_u
+                            (local.get $zraw) (i32.load (local.get $zptr)) (local.get $zfunc))
+                        (then (if (local.get $zwrite)
+                          (then (i32.store (local.get $zptr) (local.get $zraw)))))
+                        (else (local.set $draw (i32.const 0)))))))))))
+        (else
+          (if (local.get $zbuf_wa) (then
+            (local.set $zptr (i32.add (local.get $zbuf_wa)
+              (i32.mul (i32.add (i32.mul (local.get $y) (local.get $sw)) (local.get $x)) (i32.const 4))))
+            (if (f32.ne (local.get $tz) (local.get $tz))
+              (then (local.set $draw (i32.const 0)))
+              (else
+                (if (call $d3dim_depth_compare_f32
+                      (local.get $tz) (f32.load (local.get $zptr)) (local.get $zfunc))
+                  (then (if (local.get $zwrite)
+                    (then (f32.store (local.get $zptr) (local.get $tz)))))
+                  (else (local.set $draw (i32.const 0))))))))))
       (if (local.get $draw) (then
         (local.set $color (call $d3dim_modulate_rgb
           (call $d3dim_texture_sample_prepared
@@ -2951,10 +3141,52 @@
       (local.set $x (i32.add (local.get $x) (i32.const 1)))
       (br $lp))))
 
-  ;; Fill the z-buffer (whole RT-sized f32 plane) with `zval`.
+  ;; Fill either a private f32 depth plane or an attached 16/32-bit DirectDraw
+  ;; Z surface with `zval`.
   (func $zbuffer_fill (param $zbuf_guest i32) (param $w i32) (param $h i32) (param $zval f32)
     (local $i i32) (local $n i32) (local $wa i32)
+    (local $entry i32) (local $dib i32) (local $pitch i32) (local $bpp i32)
+    (local $x i32) (local $y i32) (local $raw i32) (local $z f32)
     (if (i32.eqz (local.get $zbuf_guest)) (then (return)))
+    (if (i32.and
+          (i32.ge_u (local.get $zbuf_guest) (global.get $DX_OBJECTS))
+          (i32.lt_u (local.get $zbuf_guest)
+            (i32.add (global.get $DX_OBJECTS) (global.get $DX_OBJECTS_SIZE))))
+      (then
+        (local.set $entry (local.get $zbuf_guest))
+        (local.set $dib (i32.load offset=20 (local.get $entry)))
+        (local.set $pitch (i32.load16_u offset=18 (local.get $entry)))
+        (local.set $bpp (i32.load16_u offset=16 (local.get $entry)))
+        (local.set $z (local.get $zval))
+        (if (f32.ne (local.get $z) (local.get $z)) (then (local.set $z (f32.const 1.0))))
+        (if (f32.lt (local.get $z) (f32.const 0.0)) (then (local.set $z (f32.const 0.0))))
+        (if (f32.gt (local.get $z) (f32.const 1.0)) (then (local.set $z (f32.const 1.0))))
+        (if (i32.eq (local.get $bpp) (i32.const 16))
+          (then (local.set $raw (i32.trunc_sat_f32_u (f32.mul (local.get $z) (f32.const 65535.0)))))
+          (else (local.set $raw (i32.trunc_sat_f32_u
+            (f32.mul (local.get $z) (f32.const 4294967040.0))))))
+        (local.set $y (i32.const 0))
+        (block $zdone (loop $zrows
+          (br_if $zdone (i32.ge_u (local.get $y) (local.get $h)))
+          (local.set $x (i32.const 0))
+          (block $xdone (loop $zcols
+            (br_if $xdone (i32.ge_u (local.get $x) (local.get $w)))
+            (if (i32.eq (local.get $bpp) (i32.const 16))
+              (then (i32.store16
+                (i32.add (local.get $dib)
+                  (i32.add (i32.mul (local.get $y) (local.get $pitch))
+                           (i32.shl (local.get $x) (i32.const 1))))
+                (local.get $raw)))
+              (else (i32.store
+                (i32.add (local.get $dib)
+                  (i32.add (i32.mul (local.get $y) (local.get $pitch))
+                           (i32.shl (local.get $x) (i32.const 2))))
+                (local.get $raw))))
+            (local.set $x (i32.add (local.get $x) (i32.const 1)))
+            (br $zcols)))
+          (local.set $y (i32.add (local.get $y) (i32.const 1)))
+          (br $zrows)))
+        (return)))
     (local.set $wa (call $g2w (local.get $zbuf_guest)))
     (local.set $n (i32.mul (local.get $w) (local.get $h)))
     (local.set $i (i32.const 0))
@@ -3077,6 +3309,7 @@
     (param $x2 i32) (param $y2 i32) (param $z2 f32)
     (param $color i32)
     (local $state i32) (local $zbuf i32) (local $zval f32) (local $alpha i32) (local $blend i32)
+    (local $zfunc i32) (local $zwrite i32)
     ;; Direct DrawPrimitive callers rely on culling when they do not use a
     ;; z-buffer: otherwise later back faces overwrite the visible faces.  Keep
     ;; the old no-cull workaround scoped to execute-buffer/D3DRM triangles,
@@ -3091,8 +3324,17 @@
       (local.set $state (call $d3ddev_state (local.get $this)))
       (if (local.get $state) (then
         (if (call $gl32 (i32.add (local.get $state) (i32.const 284))) (then
-          (local.set $zbuf
-            (i32.load (i32.add (call $g2w (local.get $state)) (global.get $D3DIM_OFF_ZBUF_SLOT))))))))))
+          (local.set $zbuf (call $d3dim_ensure_zbuffer (local.get $this)))
+          (local.set $zfunc (call $gl32 (i32.add (local.get $state) (i32.const 348))))
+          (local.set $zwrite (call $gl32 (i32.add (local.get $state) (i32.const 312))))))))))
+    (if (i32.eqz (local.get $zfunc)) (then (local.set $zfunc (i32.const 4))))
+    ;; ALWAYS with writes disabled is exactly the no-depth path. This is MW3's
+    ;; common blended-overlay state and avoiding an attached-Z load/compare on
+    ;; every covered pixel is both semantically exact and materially cheaper.
+    (if (i32.and
+          (i32.eq (local.get $zfunc) (i32.const 8))
+          (i32.eqz (local.get $zwrite)))
+      (then (local.set $zbuf (i32.const 0))))
     (local.set $alpha (i32.shr_u (local.get $color) (i32.const 24)))
     (if (i32.lt_u (local.get $alpha) (i32.const 255)) (then
       (if (i32.eqz (local.get $state)) (then
@@ -3111,7 +3353,7 @@
       (local.get $x2) (local.get $y2)
       (local.get $color)
       (local.get $blend)
-      (local.get $zbuf) (local.get $zval)))
+      (local.get $zbuf) (local.get $zval) (local.get $zfunc) (local.get $zwrite)))
 
   ;; ============================================================
   ;; PHASE 2 — Flat-shaded triangle rasterizer (TLVERTEX fast path)
@@ -3127,7 +3369,7 @@
     (param $x2 i32) (param $y2 i32)
     (param $color i32)
     (param $blend i32)
-    (param $zbuf_guest i32) (param $zval f32)
+    (param $zbuf_guest i32) (param $zval f32) (param $zfunc i32) (param $zwrite i32)
     (local $tx i32) (local $ty i32)
     (local $y i32) (local $xa i32) (local $xb i32) (local $xl i32) (local $xr i32)
     (local $dy_tot i32) (local $dy_upper i32) (local $dy_lower i32)
@@ -3159,7 +3401,8 @@
         (then (call $viewport_fill_rect_z (local.get $rt_entry) (local.get $zbuf_guest)
           (local.get $xl) (local.get $y0)
           (i32.add (i32.sub (local.get $xr) (local.get $xl)) (i32.const 1))
-          (i32.const 1) (local.get $zval) (local.get $color)))
+          (i32.const 1) (local.get $zval) (local.get $color)
+          (local.get $zfunc) (local.get $zwrite)))
         (else
           (if (local.get $blend)
             (then (call $viewport_fill_rect_alpha (local.get $rt_entry)
@@ -3204,7 +3447,8 @@
         (then (call $viewport_fill_rect_z (local.get $rt_entry) (local.get $zbuf_guest)
           (local.get $xl) (local.get $y)
           (i32.add (i32.sub (local.get $xr) (local.get $xl)) (i32.const 1))
-          (i32.const 1) (local.get $zval) (local.get $color)))
+          (i32.const 1) (local.get $zval) (local.get $color)
+          (local.get $zfunc) (local.get $zwrite)))
         (else
           (if (local.get $blend)
             (then (call $viewport_fill_rect_alpha (local.get $rt_entry)
@@ -3222,37 +3466,37 @@
   (func $rasterize_triangle_textured
     (param $rt_entry i32) (param $tex_entry i32)
     (param $blend i32) (param $src_blend i32) (param $dst_blend i32)
-    (param $x0 i32) (param $y0 i32) (param $u0 f32) (param $v0 f32) (param $c0 i32)
-    (param $x1 i32) (param $y1 i32) (param $u1 f32) (param $v1 f32) (param $c1 i32)
-    (param $x2 i32) (param $y2 i32) (param $u2 f32) (param $v2 f32) (param $c2 i32)
-    (param $zbuf_guest i32) (param $zval f32)
-    (local $tx i32) (local $ty i32) (local $tc i32) (local $tu f32) (local $tv f32)
+    (param $x0 i32) (param $y0 i32) (param $u0 f32) (param $v0 f32) (param $c0 i32) (param $z0 f32)
+    (param $x1 i32) (param $y1 i32) (param $u1 f32) (param $v1 f32) (param $c1 i32) (param $z1 f32)
+    (param $x2 i32) (param $y2 i32) (param $u2 f32) (param $v2 f32) (param $c2 i32) (param $z2 f32)
+    (param $zbuf_guest i32) (param $zfunc i32) (param $zwrite i32)
+    (local $tx i32) (local $ty i32) (local $tc i32) (local $tu f32) (local $tv f32) (local $tz f32)
     (local $y i32) (local $xa i32) (local $xb i32)
-    (local $ua f32) (local $va f32) (local $ub f32) (local $vb f32)
+    (local $ua f32) (local $va f32) (local $za f32) (local $ub f32) (local $vb f32) (local $zb f32)
     (local $ca i32) (local $cb i32)
     (local $dy_tot i32) (local $dy_upper i32) (local $dy_lower i32) (local $t f32)
     ;; Sort by y, carrying UVs with the screen-space vertices.
     (if (i32.gt_s (local.get $y0) (local.get $y1)) (then
       (local.set $tx (local.get $x0)) (local.set $ty (local.get $y0))
-      (local.set $tu (local.get $u0)) (local.set $tv (local.get $v0)) (local.set $tc (local.get $c0))
+      (local.set $tu (local.get $u0)) (local.set $tv (local.get $v0)) (local.set $tz (local.get $z0)) (local.set $tc (local.get $c0))
       (local.set $x0 (local.get $x1)) (local.set $y0 (local.get $y1))
-      (local.set $u0 (local.get $u1)) (local.set $v0 (local.get $v1)) (local.set $c0 (local.get $c1))
+      (local.set $u0 (local.get $u1)) (local.set $v0 (local.get $v1)) (local.set $z0 (local.get $z1)) (local.set $c0 (local.get $c1))
       (local.set $x1 (local.get $tx)) (local.set $y1 (local.get $ty))
-      (local.set $u1 (local.get $tu)) (local.set $v1 (local.get $tv)) (local.set $c1 (local.get $tc))))
+      (local.set $u1 (local.get $tu)) (local.set $v1 (local.get $tv)) (local.set $z1 (local.get $tz)) (local.set $c1 (local.get $tc))))
     (if (i32.gt_s (local.get $y1) (local.get $y2)) (then
       (local.set $tx (local.get $x1)) (local.set $ty (local.get $y1))
-      (local.set $tu (local.get $u1)) (local.set $tv (local.get $v1)) (local.set $tc (local.get $c1))
+      (local.set $tu (local.get $u1)) (local.set $tv (local.get $v1)) (local.set $tz (local.get $z1)) (local.set $tc (local.get $c1))
       (local.set $x1 (local.get $x2)) (local.set $y1 (local.get $y2))
-      (local.set $u1 (local.get $u2)) (local.set $v1 (local.get $v2)) (local.set $c1 (local.get $c2))
+      (local.set $u1 (local.get $u2)) (local.set $v1 (local.get $v2)) (local.set $z1 (local.get $z2)) (local.set $c1 (local.get $c2))
       (local.set $x2 (local.get $tx)) (local.set $y2 (local.get $ty))
-      (local.set $u2 (local.get $tu)) (local.set $v2 (local.get $tv)) (local.set $c2 (local.get $tc))))
+      (local.set $u2 (local.get $tu)) (local.set $v2 (local.get $tv)) (local.set $z2 (local.get $tz)) (local.set $c2 (local.get $tc))))
     (if (i32.gt_s (local.get $y0) (local.get $y1)) (then
       (local.set $tx (local.get $x0)) (local.set $ty (local.get $y0))
-      (local.set $tu (local.get $u0)) (local.set $tv (local.get $v0)) (local.set $tc (local.get $c0))
+      (local.set $tu (local.get $u0)) (local.set $tv (local.get $v0)) (local.set $tz (local.get $z0)) (local.set $tc (local.get $c0))
       (local.set $x0 (local.get $x1)) (local.set $y0 (local.get $y1))
-      (local.set $u0 (local.get $u1)) (local.set $v0 (local.get $v1)) (local.set $c0 (local.get $c1))
+      (local.set $u0 (local.get $u1)) (local.set $v0 (local.get $v1)) (local.set $z0 (local.get $z1)) (local.set $c0 (local.get $c1))
       (local.set $x1 (local.get $tx)) (local.set $y1 (local.get $ty))
-      (local.set $u1 (local.get $tu)) (local.set $v1 (local.get $tv)) (local.set $c1 (local.get $tc))))
+      (local.set $u1 (local.get $tu)) (local.set $v1 (local.get $tv)) (local.set $z1 (local.get $tz)) (local.set $c1 (local.get $tc))))
     (local.set $dy_tot   (i32.sub (local.get $y2) (local.get $y0)))
     (local.set $dy_upper (i32.sub (local.get $y1) (local.get $y0)))
     (local.set $dy_lower (i32.sub (local.get $y2) (local.get $y1)))
@@ -3260,15 +3504,15 @@
       (call $viewport_draw_textured_span
         (local.get $rt_entry) (local.get $tex_entry)
         (local.get $blend) (local.get $src_blend) (local.get $dst_blend) (local.get $y0)
-        (local.get $x0) (local.get $u0) (local.get $v0) (local.get $c0)
-        (local.get $x1) (local.get $u1) (local.get $v1) (local.get $c1)
-        (local.get $zbuf_guest) (local.get $zval))
+        (local.get $x0) (local.get $u0) (local.get $v0) (local.get $c0) (local.get $z0)
+        (local.get $x1) (local.get $u1) (local.get $v1) (local.get $c1) (local.get $z1)
+        (local.get $zbuf_guest) (local.get $zfunc) (local.get $zwrite))
       (call $viewport_draw_textured_span
         (local.get $rt_entry) (local.get $tex_entry)
         (local.get $blend) (local.get $src_blend) (local.get $dst_blend) (local.get $y0)
-        (local.get $x1) (local.get $u1) (local.get $v1) (local.get $c1)
-        (local.get $x2) (local.get $u2) (local.get $v2) (local.get $c2)
-        (local.get $zbuf_guest) (local.get $zval))
+        (local.get $x1) (local.get $u1) (local.get $v1) (local.get $c1) (local.get $z1)
+        (local.get $x2) (local.get $u2) (local.get $v2) (local.get $c2) (local.get $z2)
+        (local.get $zbuf_guest) (local.get $zfunc) (local.get $zwrite))
       (return)))
     (local.set $y (local.get $y0))
     (block $done (loop $lp
@@ -3281,6 +3525,7 @@
         (f32.mul (f32.convert_i32_s (i32.sub (local.get $x2) (local.get $x0))) (local.get $t)))))
       (local.set $ub (f32.add (local.get $u0) (f32.mul (f32.sub (local.get $u2) (local.get $u0)) (local.get $t))))
       (local.set $vb (f32.add (local.get $v0) (f32.mul (f32.sub (local.get $v2) (local.get $v0)) (local.get $t))))
+      (local.set $zb (f32.add (local.get $z0) (f32.mul (f32.sub (local.get $z2) (local.get $z0)) (local.get $t))))
       (local.set $cb (call $d3dim_color_lerp (local.get $c0) (local.get $c2) (local.get $t)))
       (if (i32.lt_s (local.get $y) (local.get $y1))
         (then
@@ -3294,11 +3539,13 @@
                 (f32.mul (f32.convert_i32_s (i32.sub (local.get $x1) (local.get $x0))) (local.get $t)))))
               (local.set $ua (f32.add (local.get $u0) (f32.mul (f32.sub (local.get $u1) (local.get $u0)) (local.get $t))))
               (local.set $va (f32.add (local.get $v0) (f32.mul (f32.sub (local.get $v1) (local.get $v0)) (local.get $t))))
+              (local.set $za (f32.add (local.get $z0) (f32.mul (f32.sub (local.get $z1) (local.get $z0)) (local.get $t))))
               (local.set $ca (call $d3dim_color_lerp (local.get $c0) (local.get $c1) (local.get $t))))
             (else
               (local.set $xa (local.get $x0))
               (local.set $ua (local.get $u0))
               (local.set $va (local.get $v0))
+              (local.set $za (local.get $z0))
               (local.set $ca (local.get $c0)))))
         (else
           (if (i32.gt_s (local.get $dy_lower) (i32.const 0))
@@ -3311,18 +3558,20 @@
                 (f32.mul (f32.convert_i32_s (i32.sub (local.get $x2) (local.get $x1))) (local.get $t)))))
               (local.set $ua (f32.add (local.get $u1) (f32.mul (f32.sub (local.get $u2) (local.get $u1)) (local.get $t))))
               (local.set $va (f32.add (local.get $v1) (f32.mul (f32.sub (local.get $v2) (local.get $v1)) (local.get $t))))
+              (local.set $za (f32.add (local.get $z1) (f32.mul (f32.sub (local.get $z2) (local.get $z1)) (local.get $t))))
               (local.set $ca (call $d3dim_color_lerp (local.get $c1) (local.get $c2) (local.get $t))))
             (else
               (local.set $xa (local.get $x1))
               (local.set $ua (local.get $u1))
               (local.set $va (local.get $v1))
+              (local.set $za (local.get $z1))
               (local.set $ca (local.get $c1))))))
       (call $viewport_draw_textured_span
         (local.get $rt_entry) (local.get $tex_entry)
         (local.get $blend) (local.get $src_blend) (local.get $dst_blend) (local.get $y)
-        (local.get $xa) (local.get $ua) (local.get $va) (local.get $ca)
-        (local.get $xb) (local.get $ub) (local.get $vb) (local.get $cb)
-        (local.get $zbuf_guest) (local.get $zval))
+        (local.get $xa) (local.get $ua) (local.get $va) (local.get $ca) (local.get $za)
+        (local.get $xb) (local.get $ub) (local.get $vb) (local.get $cb) (local.get $zb)
+        (local.get $zbuf_guest) (local.get $zfunc) (local.get $zwrite))
       (local.set $y (i32.add (local.get $y) (i32.const 1)))
       (br $lp))))
 
@@ -3456,7 +3705,7 @@
         (local.set $v0 (i32.add (local.get $v_wa) (i32.mul (i32.mul (local.get $i) (i32.const 3)) (i32.const 32))))
         (local.set $v1 (i32.add (local.get $v0) (i32.const 32)))
         (local.set $v2 (i32.add (local.get $v0) (i32.const 64)))
-        (call $d3dim_draw_tl_triangle_dp (local.get $this) (local.get $rt) (i32.const 0)
+        (call $d3dim_draw_tl_triangle_dp (local.get $this) (local.get $rt) (i32.const 1)
           (local.get $v0) (local.get $v1) (local.get $v2))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $tlp)))
@@ -3475,10 +3724,10 @@
         ;; sees a consistent front/back sign.
         (if (i32.and (local.get $i) (i32.const 1))
           (then
-            (call $d3dim_draw_tl_triangle_dp (local.get $this) (local.get $rt) (i32.const 0)
+            (call $d3dim_draw_tl_triangle_dp (local.get $this) (local.get $rt) (i32.const 1)
               (local.get $v1) (local.get $v0) (local.get $v2)))
           (else
-            (call $d3dim_draw_tl_triangle_dp (local.get $this) (local.get $rt) (i32.const 0)
+            (call $d3dim_draw_tl_triangle_dp (local.get $this) (local.get $rt) (i32.const 1)
               (local.get $v0) (local.get $v1) (local.get $v2))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $slp)))
@@ -3501,7 +3750,7 @@
         (br_if $fdone (i32.ge_u (local.get $i) (local.get $n)))
         (local.set $v1 (i32.add (local.get $v_wa) (i32.mul (i32.add (local.get $i) (i32.const 1)) (i32.const 32))))
         (local.set $v2 (i32.add (local.get $v1) (i32.const 32)))
-        (call $d3dim_draw_tl_triangle_dp (local.get $this) (local.get $rt) (i32.const 0)
+        (call $d3dim_draw_tl_triangle_dp (local.get $this) (local.get $rt) (i32.const 1)
           (local.get $v0) (local.get $v1) (local.get $v2))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $flp))))) )
@@ -3574,7 +3823,7 @@
     ;; Calling $d3dim_draw_tri_culled directly here discarded the binding and
     ;; flattened MW3's entire world to vertex diffuse colours.
     (call $d3dim_draw_tl_triangle_dp
-      (local.get $this) (local.get $rt) (i32.const 0)
+      (local.get $this) (local.get $rt) (i32.const 1)
       (local.get $t0) (local.get $t1) (local.get $t2)))
 
   ;; ── Line and point primitives ─────────────────────────────────
@@ -3932,7 +4181,7 @@
   (func $d3dim_draw_tl_triangle_textured
     (param $this i32) (param $rt i32) (param $tex i32) (param $use_z i32)
     (param $v0 i32) (param $v1 i32) (param $v2 i32)
-    (local $state i32) (local $zbuf i32) (local $zval f32)
+    (local $state i32) (local $zbuf i32) (local $zfunc i32) (local $zwrite i32)
     (local $blend i32) (local $src_blend i32) (local $dst_blend i32)
     (if (i32.eqz (local.get $tex)) (then
       (call $d3dim_draw_tl_triangle
@@ -3949,16 +4198,14 @@
     (if (local.get $use_z) (then
       (if (local.get $state) (then
         (if (call $gl32 (i32.add (local.get $state) (i32.const 284))) (then
-          (local.set $zbuf
-            (i32.load (i32.add (call $g2w (local.get $state)) (global.get $D3DIM_OFF_ZBUF_SLOT))))))))))
-    (local.set $zval
-      (f32.div
-        (f32.add
-          (f32.add
-            (f32.load (i32.add (local.get $v0) (i32.const 8)))
-            (f32.load (i32.add (local.get $v1) (i32.const 8))))
-          (f32.load (i32.add (local.get $v2) (i32.const 8))))
-        (f32.const 3.0)))
+          (local.set $zbuf (call $d3dim_ensure_zbuffer (local.get $this)))
+          (local.set $zfunc (call $gl32 (i32.add (local.get $state) (i32.const 348))))
+          (local.set $zwrite (call $gl32 (i32.add (local.get $state) (i32.const 312))))))))))
+    (if (i32.eqz (local.get $zfunc)) (then (local.set $zfunc (i32.const 4))))
+    (if (i32.and
+          (i32.eq (local.get $zfunc) (i32.const 8))
+          (i32.eqz (local.get $zwrite)))
+      (then (local.set $zbuf (i32.const 0))))
     (call $rasterize_triangle_textured
       (local.get $rt) (local.get $tex)
       (local.get $blend) (local.get $src_blend) (local.get $dst_blend)
@@ -3967,17 +4214,20 @@
       (f32.load (i32.add (local.get $v0) (i32.const 24)))
       (f32.load (i32.add (local.get $v0) (i32.const 28)))
       (i32.load (i32.add (local.get $v0) (i32.const 16)))
+      (f32.load (i32.add (local.get $v0) (i32.const 8)))
       (call $d3dim_coord_i (f32.load (local.get $v1)))
       (call $d3dim_coord_i (f32.load (i32.add (local.get $v1) (i32.const 4))))
       (f32.load (i32.add (local.get $v1) (i32.const 24)))
       (f32.load (i32.add (local.get $v1) (i32.const 28)))
       (i32.load (i32.add (local.get $v1) (i32.const 16)))
+      (f32.load (i32.add (local.get $v1) (i32.const 8)))
       (call $d3dim_coord_i (f32.load (local.get $v2)))
       (call $d3dim_coord_i (f32.load (i32.add (local.get $v2) (i32.const 4))))
       (f32.load (i32.add (local.get $v2) (i32.const 24)))
       (f32.load (i32.add (local.get $v2) (i32.const 28)))
       (i32.load (i32.add (local.get $v2) (i32.const 16)))
-      (local.get $zbuf) (local.get $zval)))
+      (f32.load (i32.add (local.get $v2) (i32.const 8)))
+      (local.get $zbuf) (local.get $zfunc) (local.get $zwrite)))
 
   (func $d3dim_draw_tl_triangle_maybe_textured
     (param $this i32) (param $rt i32) (param $use_z i32)

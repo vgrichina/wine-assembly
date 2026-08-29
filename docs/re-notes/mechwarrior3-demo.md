@@ -147,7 +147,7 @@ binary.
 
 The catastrophic flat-frame repro measured only 135 exact colours, 89
 four-bit-per-channel colours, and five colours in the terrain sample. The final
-format-correct frame measures 2,099, 409, and 237 respectively, with separate minimums
+explicit-primary capture measures 2,053, 405, and 159 respectively, with separate minimums
 for the orange lit sky, dark textured cockpit, and readable green HUD. This
 makes the test reject a reachable-but-untextured game instead of treating any
 gameplay-shaped frame as success.
@@ -170,6 +170,9 @@ The resulting CLI evidence is written to
 `build/mw3-gameplay/threads.png`. Both modes must produce the same measured
 textured/lit frame and the same PNG digest. The gate separately rejects cyan,
 magenta, and electric-blue texels characteristic of a pixel-format regression.
+It explicitly captures DirectDraw slot 5, the primary/front surface; an
+arbitrary snapshot of slot 6 can catch the back buffer midway through a frame
+and is not valid evidence of a presentation defect.
 
 ## 16-bit texture format corruption and raster cost (2026-08-28)
 
@@ -209,3 +212,64 @@ work should narrow caps alongside implementing the corresponding render states.
 For later Direct3D resource models where render targets are not CPU-lockable,
 the correct extension is host-GPU resource/shader translation rather than
 pretending those surfaces support the D3D3 memory contract.
+
+## Attached depth and multi-texture FVF stride (2026-08-29)
+
+The later cockpit repro had two independent correctness defects. First, every
+triangle path was effectively submission ordered. MW3 creates a 16-bit
+`DDSCAPS_ZBUFFER`, attaches it to the render target with
+`AddAttachedSurface`, clears it to zero with `DDBLT_DEPTHFILL`, and selects
+`D3DCMP_GREATEREQUAL`. DirectDraw discarded both creation caps and the
+attachment relationship, while D3DIM used a private plane the application
+could neither clear nor lock. Per-surface metadata now retains
+`{creation caps,parent slot+1}`; D3DIM locates the real attached depth surface,
+compares and writes its native 16/32-bit values, and honors `ZENABLE`,
+`ZWRITEENABLE`, and all eight `ZFUNC` values. A full-surface zero Blt uses
+WebAssembly bulk fill instead of 307,200 scalar stores.
+
+Second, the remaining screen-sized diagonal sheet was not a matrix or Z
+precision error. Live `IDirect3DDevice3::DrawPrimitive` calls used
+`FVF=0x3c4`: `XYZRHW | DIFFUSE | SPECULAR | TEX3`. That descriptor has a
+48-byte source stride. The Device3 handler recognized `XYZRHW` but passed the
+source to the canonical 32-byte `D3DTLVERTEX` reader without repacking it.
+Vertex 0 happened to be valid; subsequent vertices began in texture-coordinate
+data and produced infinities and enormous coordinates. Device3 now shares the
+FVF packer already used by Device7, preserving the first texture set while
+advancing across all three sets. The focused indexed-texture regression uses
+the exact `0x3c4` layout and would fail under the former 32-byte stepping.
+
+The same regression attaches a real 16-bit Z surface and draws overlapping red
+and green triangles. It proves a lower reversed-Z triangle is rejected, a
+higher one passes, and the application-visible depth pixels are updated. The
+deterministic primary capture now has coherent road, hills, cockpit, sky, and
+HUD geometry in both cooperative and real-Worker modes; both PNGs have SHA-256
+`f15852d55ab5e1e9cdb55aec37734707df3df735cfc8ed2276ac9edbf9bf7e25`.
+
+The dark foreground is consistent with the submitted fixed-function state,
+not evidence of a missing shader. MW3 selects stage-0
+`MODULATE(TEXTURE,DIFFUSE)`, then uses `ZERO/SRCCOLOR` framebuffer passes for
+light maps. Preserving those operations is required; replacing them with raw
+texture copies makes the scene brighter but semantically wrong.
+
+## Corrected renderer profile and SIMD assessment (2026-08-29)
+
+On the same no-threads 1,000-batch route, the pre-fix CPU profile sampled
+82.35 seconds: 64.10 seconds in WebAssembly, with textured triangle/span work
+at 15.13 seconds (18.4% of total). Those numbers mostly measured pathological
+overdraw from malformed 48-byte vertices, not the cost of the intended scene.
+After FVF repacking and the depth-clear fast path, the profile sampled 33.65
+seconds: 26.15 seconds in WebAssembly, while
+`viewport_draw_textured_span` fell to 0.23 seconds (0.7%). The dominant costs
+are now the x86 engine's `$next`, register accessors, and branch machinery;
+canvas `drawImage`/`putImageData` are the largest host-side costs.
+
+SIMD is therefore not the next useful MW3 renderer optimization. Texture
+addresses differ per pixel and WebAssembly SIMD has no gather operation, so a
+four-pixel sampler would still require scalar loads before any vector math.
+Potential later SIMD candidates are four-wide depth comparisons, post-gather
+modulation/blending, and RGB565 packing. They should be attempted only against
+a representative profile; state-specialized scalar paths, incremental
+interpolation, and bulk clears remain better first choices. This follows the
+`fable-review.md` boundary: fixed-function logic and resource truth stay in
+WAT, while JS remains a presentation/raster host rather than a second D3D
+implementation.

@@ -1341,6 +1341,7 @@
   ;; 0x07F22000   16KB   TV_TABLE (512 entries × 32 bytes)
   ;; 0x07F26000    4KB   TV_IMAGE_TABLE (512 entries × {image, selected image})
   ;; 0x07F27000    2KB   TV_OWNER_TABLE (owning hwnd per TV_TABLE item)
+  ;; 0x07F28000   32KB   DX_SURF_META (4096 × {creation caps,parent slot+1})
   ;; 0x07F30000 8KB      OP_INDEX (2048 decode-time op-start addresses)
   ;; 0x07F32000 16KB     DX_SURF_PAL (4096 per-surface palette pointers)
   ;; 0x07F36000 128KB    DX_SURF_STATE (4096 entries × 32 bytes)

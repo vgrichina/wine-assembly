@@ -39,6 +39,12 @@
   ;;   4=ARGB4444, 5=ARGB8888, 6=XRGB8888.
   (global $DX_SURF_FMT i32 (i32.const 0x07F88000))
   (global $DX_SURF_FMT_SIZE i32 (i32.const 0x00004000))
+  ;; Creation caps and attachment parent for every surface.  AddAttachedSurface
+  ;; is used for flipping chains and mipmaps as well as depth buffers, so D3DIM
+  ;; must retain DDSCAPS_ZBUFFER instead of treating every attached 16-bit
+  ;; surface as depth.  4096 entries x {caps,parent_slot+1}.
+  (global $DX_SURF_META i32 (i32.const 0x07F28000))
+  (global $DX_SURF_META_SIZE i32 (i32.const 0x00008000))
   ;; CPU-write epochs and reversible-copy provenance for DirectDraw surfaces.
   ;; 4096 entries x 32 bytes in 0x07F36000..0x07F55FFF:
   ;;   +0  CPU-write epoch (advanced by Unlock)
@@ -547,6 +553,10 @@
   (func $dx_surf_fmt_ptr (param $entry_wa i32) (result i32)
     (i32.add (global.get $DX_SURF_FMT)
       (i32.shl (call $dx_slot_of (local.get $entry_wa)) (i32.const 2))))
+
+  (func $dx_surf_meta_ptr (param $entry_wa i32) (result i32)
+    (i32.add (global.get $DX_SURF_META)
+      (i32.shl (call $dx_slot_of (local.get $entry_wa)) (i32.const 3))))
 
   (func $dx_surf_fmt_default (param $bpp i32) (result i32)
     (if (i32.eq (local.get $bpp) (i32.const 16)) (then (return (i32.const 1))))
@@ -1709,6 +1719,8 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))
     (local.set $entry (call $dx_from_this (local.get $obj)))
+    (call $zero_memory (call $dx_surf_meta_ptr (local.get $entry)) (i32.const 8))
+    (i32.store (call $dx_surf_meta_ptr (local.get $entry)) (local.get $caps))
     ;; Fill entry
     (i32.store16 (i32.add (local.get $entry) (i32.const 12)) (local.get $w))
     (i32.store16 (i32.add (local.get $entry) (i32.const 14)) (local.get $h))
@@ -1740,6 +1752,8 @@
         (local.set $back_obj (call $dx_create_com_obj (i32.const 2) (global.get $DX_VTBL_DDSURF2)))
         (if (local.get $back_obj) (then
           (local.set $back_entry (call $dx_from_this (local.get $back_obj)))
+          (call $zero_memory (call $dx_surf_meta_ptr (local.get $back_entry)) (i32.const 8))
+          (i32.store (call $dx_surf_meta_ptr (local.get $back_entry)) (i32.const 0x1c))
           (i32.store16 (i32.add (local.get $back_entry) (i32.const 12)) (local.get $w))
           (i32.store16 (i32.add (local.get $back_entry) (i32.const 14)) (local.get $h))
           (i32.store16 (i32.add (local.get $back_entry) (i32.const 16)) (local.get $bpp))
@@ -2750,8 +2764,22 @@
     (global.set $eax (select (local.get $rc) (i32.const 0) (i32.gt_s (local.get $rc) (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
-  ;; AddAttachedSurface — no-op
+  ;; AddAttachedSurface — retain the parent relationship on the child in the
+  ;; per-surface metadata. D3DIM also checks the child's creation-time
+  ;; DDSCAPS_ZBUFFER bit, because flipping chains and mipmaps use this method
+  ;; too and are ordinary colour surfaces.
   (func $handle_IDirectDrawSurface_AddAttachedSurface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $parent i32) (local $child i32)
+    (local.set $parent (call $dx_from_this (local.get $arg0)))
+    (local.set $child (call $dx_from_this (local.get $arg1)))
+    (if (i32.and
+          (i32.eq (i32.load (local.get $parent)) (i32.const 2))
+          (i32.eq (i32.load (local.get $child)) (i32.const 2)))
+      (then
+        (i32.store offset=4 (call $dx_surf_meta_ptr (local.get $child))
+          (i32.add (call $dx_slot_of (local.get $parent)) (i32.const 1)))
+        (i32.store offset=4 (local.get $child)
+          (i32.add (i32.load offset=4 (local.get $child)) (i32.const 1)))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
@@ -2800,8 +2828,11 @@
       (else
         (local.set $dx (i32.const 0)) (local.set $dy (i32.const 0))
         (local.set $dw (local.get $dst_w)) (local.set $dh (local.get $dst_h))))
-    ;; If DDBLT_COLORFILL (0x400), fill with color from DDBLTFX
-    (if (i32.and (local.get $drblt_flags) (i32.const 0x400))
+    ;; DDBLT_COLORFILL and DDBLT_DEPTHFILL both take their native packed value
+    ;; from DDBLTFX's union at +80. Depth surfaces must be cleared here too:
+    ;; MW3 uses a reversed GREATEREQUAL Z buffer and resets it to zero with
+    ;; DDBLT_DEPTHFILL before each frame.
+    (if (i32.and (local.get $drblt_flags) (i32.const 0x02000400))
       (then
         (call $dx_surf_clear_copy (local.get $dst_entry))
         (local.set $row (call $gl32 (i32.add
@@ -2809,9 +2840,24 @@
           (i32.const 80)))) ;; DDBLTFX.dwFillColor at offset 80 (after dwSize..dwAlphaSrcConst)
         (call $host_dx_trace (i32.const 13) (call $dx_slot_of (local.get $dst_entry))
           (local.get $row) (local.get $dx) (local.get $dy))
+        ;; A full-surface zero clear is the overwhelmingly common depth-buffer
+        ;; path (including MW3's reversed-Z clear).  Let bulk memory.fill handle
+        ;; it instead of running one interpreted store and branch per pixel.
+        (if (i32.and
+              (i32.ne (local.get $dst_dib) (i32.const 0))
+              (i32.and
+                (i32.and (i32.eqz (local.get $row)) (i32.eqz (local.get $dx)))
+                (i32.and
+                  (i32.and (i32.eqz (local.get $dy))
+                           (i32.eq (local.get $dw) (local.get $dst_w)))
+                  (i32.eq (local.get $dh) (local.get $dst_h)))))
+          (then
+            (call $zero_memory (local.get $dst_dib)
+              (i32.mul (local.get $dst_pitch) (local.get $dst_h)))
+            (local.set $sy (local.get $dh))))
         ;; Fill destination rect
         (block $fill_done
-          (local.set $sy (i32.const 0))
+          ;; sy is already dh after the bulk-clear fast path above.
           (loop $fill_row
             (br_if $fill_done (i32.ge_u (local.get $sy) (local.get $dh)))
             (local.set $sx (i32.const 0))
@@ -6322,7 +6368,12 @@
       (f32.store (i32.add (local.get $wa) (i32.add (i32.mul (local.get $i) (i32.const 64)) (i32.const 40))) (f32.const 1.0))
       (f32.store (i32.add (local.get $wa) (i32.add (i32.mul (local.get $i) (i32.const 64)) (i32.const 60))) (f32.const 1.0))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $lp))))
+      (br $lp)))
+    ;; Fixed-function depth defaults: writes enabled and LEQUAL comparison.
+    ;; Keeping real defaults in the state block also lets an explicit
+    ;; ZWRITEENABLE=FALSE remain distinguishable from an uninitialized slot.
+    (i32.store offset=312 (local.get $wa) (i32.const 1))
+    (i32.store offset=348 (local.get $wa) (i32.const 4)))
 
   ;; IDirect3D3::CreateDevice(this, refclsid, lpDDSurface, lplpD3DDevice, pUnkOuter) — 5 args
   ;; refclsid is the device-type GUID (HAL / RGB / etc). We ignore it and always
@@ -7167,32 +7218,38 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DDevice3::DrawPrimitive(primType, vertexTypeDesc, lpvVerts, dwVtxCount, dwFlags)
-  ;; Device3 uses an FVF-style vertex descriptor. XYZRHW-bearing FVF data has the
-  ;; same 32-byte layout as our TLVERTEX path when color/specular/tex1 are present.
+  ;; Device3 uses an FVF-style vertex descriptor. Pack it into the renderer's
+  ;; canonical legacy layout: extra texture-coordinate sets make the source
+  ;; stride larger than D3DTLVERTEX even though stage 0 consumes only set 0.
   (func $handle_IDirect3DDevice3_DrawPrimitive (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dwVertexCount i32) (local $vtxType i32)
+    (local $dwVertexCount i32) (local $vtxType i32) (local $packed i32)
     (local.set $dwVertexCount (call $gl32 (i32.add (global.get $esp) (i32.const 20))))
-    (local.set $vtxType (local.get $arg2))
-    (if (i32.and (local.get $arg2) (i32.const 0x0004)) (then (local.set $vtxType (i32.const 3))))
+    (local.set $vtxType (call $d3dim_fvf_vtxtype (local.get $arg2)))
     (call $host_dx_trace (i32.const 15) (local.get $arg1) (local.get $arg2)
       (local.get $dwVertexCount) (local.get $arg3))
-    (call $d3dim_draw_primitive (local.get $arg0) (local.get $arg1) (local.get $vtxType)
-      (local.get $arg3) (local.get $dwVertexCount))
+    (local.set $packed
+      (call $d3dim_pack_fvf_vertices (local.get $arg2) (local.get $arg3) (local.get $dwVertexCount)))
+    (if (local.get $packed) (then
+      (call $d3dim_draw_primitive (local.get $arg0) (local.get $arg1) (local.get $vtxType)
+        (local.get $packed) (local.get $dwVertexCount))
+      (call $heap_free (local.get $packed))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
 
   (func $handle_IDirect3DDevice3_DrawIndexedPrimitive (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dwVertexCount i32) (local $lpwIndices i32) (local $dwIndexCount i32) (local $vtxType i32)
+    (local $dwVertexCount i32) (local $lpwIndices i32) (local $dwIndexCount i32) (local $vtxType i32) (local $packed i32)
     (local.set $dwVertexCount (call $gl32 (i32.add (global.get $esp) (i32.const 20))))
     (local.set $lpwIndices    (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
     (local.set $dwIndexCount  (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
-    (local.set $vtxType (local.get $arg2))
-    (if (i32.and (local.get $arg2) (i32.const 0x0002)) (then (local.set $vtxType (i32.const 1))))
-    (if (i32.and (local.get $arg2) (i32.const 0x0004)) (then (local.set $vtxType (i32.const 3))))
-    (call $d3dim_draw_indexed_primitive
-      (local.get $arg0) (local.get $arg1) (local.get $vtxType)
-      (local.get $arg3) (local.get $dwVertexCount)
-      (local.get $lpwIndices) (local.get $dwIndexCount))
+    (local.set $vtxType (call $d3dim_fvf_vtxtype (local.get $arg2)))
+    (local.set $packed
+      (call $d3dim_pack_fvf_vertices (local.get $arg2) (local.get $arg3) (local.get $dwVertexCount)))
+    (if (local.get $packed) (then
+      (call $d3dim_draw_indexed_primitive
+        (local.get $arg0) (local.get $arg1) (local.get $vtxType)
+        (local.get $packed) (local.get $dwVertexCount)
+        (local.get $lpwIndices) (local.get $dwIndexCount))
+      (call $heap_free (local.get $packed))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 36))))
 

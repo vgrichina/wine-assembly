@@ -54,6 +54,13 @@ const extraWat = String.raw`
   (func (export "test_diptex_set_rs") (param $device i32) (param $state i32) (param $value i32)
     (call $d3dim_set_render_state (local.get $device) (local.get $state) (local.get $value)))
 
+  (func (export "test_diptex_attach") (param $parent i32) (param $child i32) (result i32)
+    (global.set $esp (i32.const 0x30000))
+    (call $handle_IDirectDrawSurface_AddAttachedSurface
+      (local.get $parent) (local.get $child)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
+
   (func (export "test_diptex_draw")
       (param $device i32) (param $vertices i32) (param $indices i32)
     ;; Direct handler calls still read the tail arguments from the guest stack.
@@ -62,9 +69,15 @@ const extraWat = String.raw`
     (call $gs32 (i32.const 0x30018) (local.get $indices))
     (call $gs32 (i32.const 0x3001c) (i32.const 3))
     (call $handle_IDirect3DDevice3_DrawIndexedPrimitive
-      (local.get $device) (i32.const 4) (i32.const 0x1c4)
+      (local.get $device) (i32.const 4) (i32.const 0x3c4)
       (local.get $vertices) (i32.const 3) (i32.const 0)))
 `;
+
+// MW3 submits D3DFVF_XYZRHW|DIFFUSE|SPECULAR|TEX3.  TEX3 makes each source
+// vertex 48 bytes even though this fixed-function renderer consumes only the
+// first texture-coordinate set.  Treating it as a 32-byte D3DTLVERTEX shifts
+// vertex 1/2 onto texture data and produces infinities and screen-sized sheets.
+const VERTEX_STRIDE = 48;
 
 function makeSurface(wat, desc, out, width, height, format = {}) {
   const {
@@ -74,6 +87,7 @@ function makeSurface(wat, desc, out, width, height, format = {}) {
     gMask = 0x07e0,
     bMask = 0x001f,
     aMask = 0,
+    caps = 0x40,
   } = format;
   for (let i = 0; i < 128; i += 4) wat.guest_write32(desc + i, 0);
   wat.guest_write32(desc, 108);
@@ -87,7 +101,7 @@ function makeSurface(wat, desc, out, width, height, format = {}) {
   wat.guest_write32(desc + 92, gMask);
   wat.guest_write32(desc + 96, bMask);
   wat.guest_write32(desc + 100, aMask);
-  wat.guest_write32(desc + 104, 0x40); // DDSCAPS_OFFSCREENPLAIN
+  wat.guest_write32(desc + 104, caps);
   assert.strictEqual(wat.test_diptex_create_surface(desc, out) >>> 0, 0);
   return wat.guest_read32(out) >>> 0;
 }
@@ -127,7 +141,7 @@ function writeFloat(wat, addr, value) {
 
   // Three TL vertices covering the upper-left half of the 8x8 target.
   const vertex = (i, x, y, u, v) => {
-    const p = vertices + i * 32;
+    const p = vertices + i * VERTEX_STRIDE;
     writeFloat(wat, p + 0, x);
     writeFloat(wat, p + 4, y);
     writeFloat(wat, p + 8, 0.5);
@@ -138,6 +152,12 @@ function writeFloat(wat, addr, value) {
     wat.guest_write32(p + 20, 0);
     writeFloat(wat, p + 24, u);
     writeFloat(wat, p + 28, v);
+    // Additional TEX1/TEX2 coordinates are valid source data but are not part
+    // of the canonical 32-byte TL vertex passed to the stage-0 rasterizer.
+    writeFloat(wat, p + 32, 0.25);
+    writeFloat(wat, p + 36, 0.50);
+    writeFloat(wat, p + 40, 0.75);
+    writeFloat(wat, p + 44, 1.00);
   };
   vertex(0, 0, 0, 0.05, 0.05);
   vertex(1, 7, 0, 0.95, 0.05);
@@ -168,7 +188,7 @@ function writeFloat(wat, addr, value) {
   for (let y = 0; y < 8; y++) {
     for (let x = 0; x < 8; x++) mem.setUint16(rtDib + y * 16 + x * 2, 0x8410, true);
   }
-  for (let i = 0; i < 3; i++) wat.guest_write32(vertices + i * 32 + 16, 0xffffffff);
+  for (let i = 0; i < 3; i++) wat.guest_write32(vertices + i * VERTEX_STRIDE + 16, 0xffffffff);
   wat.test_diptex_set_rs(device, 27, 1); // ALPHABLENDENABLE
   wat.test_diptex_set_rs(device, 19, 1); // SRCBLEND=ZERO
   wat.test_diptex_set_rs(device, 20, 3); // DESTBLEND=SRCCOLOR
@@ -180,7 +200,7 @@ function writeFloat(wat, addr, value) {
   for (let y = 0; y < 8; y++) {
     for (let x = 0; x < 8; x++) mem.setUint16(rtDib + y * 16 + x * 2, 0x001f, true);
   }
-  for (let i = 0; i < 3; i++) wat.guest_write32(vertices + i * 32 + 16, 0x80ffffff);
+  for (let i = 0; i < 3; i++) wat.guest_write32(vertices + i * VERTEX_STRIDE + 16, 0x80ffffff);
   wat.test_diptex_set_rs(device, 19, 5); // SRCBLEND=SRCALPHA
   wat.test_diptex_set_rs(device, 20, 6); // DESTBLEND=INVSRCALPHA
   wat.test_diptex_draw(device, vertices, indices);
@@ -208,7 +228,7 @@ function writeFloat(wat, addr, value) {
   for (let y = 0; y < 8; y++) {
     for (let x = 0; x < 8; x++) mem.setUint16(rtDib + y * 16 + x * 2, 0x001f, true);
   }
-  for (let i = 0; i < 3; i++) wat.guest_write32(vertices + i * 32 + 16, 0xffffffff);
+  for (let i = 0; i < 3; i++) wat.guest_write32(vertices + i * VERTEX_STRIDE + 16, 0xffffffff);
   wat.test_diptex_draw(device, vertices, indices);
   assert.strictEqual(mem.getUint16(rtDib, true), 0x63b1,
     'ARGB4444 grey texel was not decoded using its declared channel masks');
@@ -223,7 +243,55 @@ function writeFloat(wat, addr, value) {
   assert.strictEqual(mem.getUint16(rtDib, true), 0x001f,
     'transparent ARGB4444 texel did not preserve the destination');
 
-  console.log(`PASS D3DIM Texture2 indexed triangles use declared pixel formats, diffuse lighting, and framebuffer blend state (${textured.size} texture colours)`);
+  // MW3 attaches a real 16-bit DirectDraw Z surface, clears it to zero, and
+  // renders with reversed GREATEREQUAL depth.  A private renderer-only plane
+  // or submission-order drawing makes the lower-Z green pass overwrite red.
+  const zSurface = makeSurface(wat, desc, out + 16, 8, 8, {
+    flags: 0x400, // DDPF_ZBUFFER
+    bpp: 16,
+    rMask: 0,
+    gMask: 0,
+    bMask: 0,
+    caps: 0x00020000, // DDSCAPS_ZBUFFER
+  });
+  assert.strictEqual(wat.test_diptex_attach(rt, zSurface) >>> 0, 0);
+  const zDib = wat.test_diptex_dib(zSurface) >>> 0;
+  for (let y = 0; y < 8; y++) {
+    for (let x = 0; x < 8; x++) {
+      mem.setUint16(rtDib + y * 16 + x * 2, 0, true);
+      mem.setUint16(zDib + y * 16 + x * 2, 0, true);
+    }
+  }
+  assert.strictEqual(wat.test_diptex_bind_handle(device, textureHandle) >>> 0, 0);
+  wat.test_diptex_set_rs(device, 7, 1);  // ZENABLE
+  wat.test_diptex_set_rs(device, 14, 1); // ZWRITEENABLE
+  wat.test_diptex_set_rs(device, 23, 7); // ZFUNC=GREATEREQUAL
+  wat.test_diptex_set_rs(device, 27, 0); // ALPHABLENDENABLE
+  for (let i = 0; i < 3; i++) {
+    const p = vertices + i * VERTEX_STRIDE;
+    writeFloat(wat, p + 8, 0.75);
+    wat.guest_write32(p + 16, 0xffffffff);
+    writeFloat(wat, p + 24, 0.05);
+    writeFloat(wat, p + 28, 0.05);
+  }
+  for (let i = 0; i < 4; i++) mem.setUint16(texDib + i * 2, 0xf800, true);
+  wat.test_diptex_draw(device, vertices, indices);
+  assert(mem.getUint16(zDib + 2 * 16 + 2 * 2, true) > 0,
+    'draw did not update the attached DirectDraw Z surface');
+  assert.strictEqual(mem.getUint16(rtDib + 2 * 16 + 2 * 2, true), 0xf800);
+
+  for (let i = 0; i < 4; i++) mem.setUint16(texDib + i * 2, 0x07e0, true);
+  for (let i = 0; i < 3; i++) writeFloat(wat, vertices + i * VERTEX_STRIDE + 8, 0.25);
+  wat.test_diptex_draw(device, vertices, indices);
+  assert.strictEqual(mem.getUint16(rtDib + 2 * 16 + 2 * 2, true), 0xf800,
+    'lower reversed-Z triangle incorrectly overwrote the visible surface');
+
+  for (let i = 0; i < 3; i++) writeFloat(wat, vertices + i * VERTEX_STRIDE + 8, 0.90);
+  wat.test_diptex_draw(device, vertices, indices);
+  assert.strictEqual(mem.getUint16(rtDib + 2 * 16 + 2 * 2, true), 0x07e0,
+    'higher reversed-Z triangle did not pass GREATEREQUAL');
+
+  console.log(`PASS D3DIM Texture2 indexed triangles use FVF stride, declared formats, blending, and attached reversed-Z (${textured.size} texture colours)`);
 })().catch(error => {
   console.error(error.stack || error.message);
   process.exit(1);
