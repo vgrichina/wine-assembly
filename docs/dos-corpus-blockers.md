@@ -361,11 +361,23 @@ never reaches the erroring code. And the reported address is the *return* addres
 of the `int`, so disassembling at it lands on the instruction after the fault,
 not the fault.
 
-**Still open: BLIQ now reaches a poll loop.** With the message gone it runs on to
-`168b:0263`, `cmp word [0x5a], 0xff` / `jnz` around a `call 168b:324f`, and stops
-there with a black screen and no DAC entries written — a wait for a flag some
-handler is meant to set. The nearby strings (`VGA - MODE13h/MODEX`) put it in the
-video-mode selection path.
+**BLIQ draws its logo — a second bug was hiding behind the first.** With the
+message gone the run stopped at `168b:0263` instead, and that one was ours too.
+The loop there is `inc word [0x5a]` / four pushes / `push cs` + near `call
+168b:324f` (`out 3c8` then three `out 3c9`) / `cmp word [0x5a], 0xff` / `jnz` —
+a 255-iteration DAC clear. It terminates on its own. What stopped it was the
+progress detector, which hashes ten registers plus the console, IRQs and file
+bytes: outside mode 3 the console term never moves, the loop counter lives in
+memory nothing hashes, and the callee returns with `ax` and `dx` at the same
+values every iteration. So 200 handbacks inside a loop that was driving the
+palette read as wedged. Folding a DAC-write counter and the sequencer mask
+writes into that signature (8ae811ff) fixes it.
+
+It then needs **~1000M dispatches** to get there — at 300M it is still in mode X
+at 4877 of 128000 pixels, and at 500M the screen is full but two colours wide.
+At 1000M: `320x200`, 63999 non-black pixels, 40 indexes, the BLIQ logo over a red
+plasma. The sweep's `DISPATCHES=300m` therefore photographs an early frame of it,
+which is a picture and not an error, but not the one the demo is about.
 
 ### INTRO.EXE (`1995-c-cda_tp5i`) — two blockers cleared, a third open
 
