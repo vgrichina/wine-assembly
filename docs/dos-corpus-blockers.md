@@ -59,8 +59,13 @@ by `cmp ax,0x4f / jnz`, so the no-VESA path is correct.
 **It does not "run to completion" — it dies on a null pointer, and exits 0 on
 the way out.** `773:0501` hooks INT 0Ah, sets CRTC register 0x11 to 0x90
 (vertical-retrace interrupt enabled), waits twice and reads a flag its own
-handler at `773:055b` would have set — a vertical-retrace IRQ probe we never
-satisfy, since we do not raise IRQ2 for retrace. `773:056e` then sets mode 13h
+handler at `773:055b` would have set — a vertical-retrace IRQ probe. **That one
+is now satisfied** (be98db44): clearing bit 5 of CRTC 0x11 with vector 0x0A
+hooked raises IRQ2, the handler runs and sets `[87f:18b0]`, so `773:0533`'s
+`cmp word [0x18b0],0` falls through to `773:053a` and the detection result
+`[87f:00e8]` is 1 where it used to be 0. It was not what stops SETUP, and the
+dispatch count either side of the fix is identical — the chipset chain below is.
+`773:056e` then sets mode 13h
 and `773:0573` starts the VRAM sizing routine, which never finishes: no
 `int 10h ax=0003` is ever traced, and that routine's every path ends at
 `773:0604` `pop ds / pop es / mov ax,3 / int 10h / retf`.
