@@ -355,18 +355,40 @@ That also settles the other three symptoms filed here separately: `5ab:56`,
 `6e`, `8c`, `a7` and the divide are all *downstream* of the dangling vector, and
 none of them is a decoder bug.
 
-**What is still open is why real DOS survives this.** The protector never
-restores the vector and the unpack demonstrably lands on the handler, so on real
-hardware the hook must either be restored by code we do not reach, or point
-somewhere the unpack does not touch. The one clearly anomalous event we produce
-is the `Divide overflow at 5ab:1ff`, raised in layer 1's final block -- the one
-that hands off to layer 2 at `100:100`. On real DOS an unhandled INT 00h prints
-"Divide overflow" and *terminates*; JULTRO plainly does not die there, so our
-divide is overflowing where a real 386 would not, and whatever the rest of that
-block was going to do -- plausibly including the vector restore -- never ran.
-That is the next thing to measure, and the obstacle is that layer 1's
-obfuscation defeats the disassembler, so the divide's operands have to be
-recovered some other way.
+**The "Divide overflow at 5ab:1ff" is not a divide, and not a bug.** It is worth
+writing down because it looks like the most alarming thing in the run and is a
+dead end. Hand-decoding the obfuscated stream -- the disassembler cannot, every
+few bytes is a `jmp` over a junk byte -- gives this chain:
+
+```
+01d7  eb 17   jmp 01f0        01f0  eb e8   jmp 01da
+01da  33 c0   xor ax,ax       01dc  eb 15   jmp 01f3
+01f3  8e c0   mov es,ax       ; ES = 0
+01f5  2e 3b 96 cb 01  cs: cmp dx,[bp+0x1cb]     ; a checksum against a constant
+01fa  eb e3   jmp 01df        01df  75 29   jnz 020a   ; mismatch -> int 1
+01e1  26 a0 6c 04     es: mov al,[0x046c]       ; BIOS tick low byte, 0040:006C
+01e5  2e 88 86 e6 00  cs: mov [bp+0xe6],al      ; ...into the operand at 01fe
+01ea  eb 01   jmp 01ed        01ed  eb 0e   jmp 01fd
+01fd  cd ??   int <that byte>                   ; return address 01ff
+```
+
+So layer 1 writes the BIOS tick counter's low byte into an `int` operand and
+executes it. `--watch=5ab:1fe:1` confirms the store (`5ab:1ea wrote 5cae`), and
+`--tick-scale=100` proves the reading: the run then reports
+`int 1fh ax=1f ... from 5ab:1ff` instead of `int 00h`. Our tick is simply still
+0 that early (one tick costs 550k dispatches), so the byte is 0, so it is INT 0,
+so the report calls it "Divide overflow". **The stall is identical at every tick
+scale**, so this landmine decides nothing -- do not spend time on it.
+
+**What is still open is why real DOS survives the dangling vector.** The
+protector never restores it and the unpack demonstrably lands on the handler, so
+on real hardware the hook must either be restored by code we do not reach, or
+point somewhere the unpack does not touch. Two things are already ruled out: the
+trap-flag path (`stepping` is never armed -- TF is not set at any slice boundary
+in the whole run, so the INT 1 trace-decryptor that dos-loop.js documents for
+this program never fires here), and stale compiled code (`--no-cache` is
+identical). The next measurement is what layer 1's INT 21h handler at `5ab:0191`
+was supposed to still be at the moment the demo calls it.
 
 ### BLIQ's neighbours in the blank bucket
 
