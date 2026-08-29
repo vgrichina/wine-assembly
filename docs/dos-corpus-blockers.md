@@ -300,9 +300,19 @@ the V86 hand-off, the real-mode vector table); `raise()` now calls it through a
 returns to text without putting a pixel down, so the best frame is still the
 console menu. It is a music player ("LousyPlayer v0.9"), so a thin visual is
 plausible, but that is a guess and not a measurement. `int 2Fh AH=16` is still
-answered "no DPMI host". JULTRO.EXE, its neighbour, stops separately at
-`5ab:6e` on `eb fa dc 33 c0 8e d8 89` and has not been re-examined since these
-two fixes.
+answered "no DPMI host". JULTRO.EXE, its neighbour, stopped separately at
+`5ab:6e`; since the SMC-coverage fix (14d5c1a2) it gets past that and stops at
+`5ab:8c` instead, with `Divide overflow at 5ab:1ff` and INT 00h unhandled.
+
+All four of its "decoder gave up" sites are **data**: `5ab:56`, `6e`, `8c` and
+`a7` are ascending 16-bit offset tables (`0c9e 0ca5 0cad 0cb5 …`,
+`0d63 0d6a 0d71 …`), and so is `5ab:01e0`-`0212` (`0ff3 0ff9 0ffa 0ffb …`)
+where the divide is. The top two slice entries, `5ab:263` and `5ab:1c0` at 9432
+hits each, are in that same region. So the decoder refusals and the divide are
+one symptom, not three causes: the program is executing its own jump tables,
+having got there with a bad index — most likely because the 62 self-modify
+breaks are not producing the plaintext it expects. That is where a next look
+should start, not at the divide.
 
 ### BLIQ's neighbours in the blank bucket
 
@@ -310,9 +320,45 @@ two fixes.
 extender's banner. We implement no DPMI (INT 31h) and answer INT 2Fh AX=1687
 with "not present". A DPMI host is a large piece of work for one demo.
 
+But the missing host is not what you watch it do. It switches to protected mode
+on its own (`cr0=11 gdt=c660+86f cs=8 base=1100`, 16-bit code) and then runs,
+crawling: **7-10% of wall time in wasm**, the other 90% in the host compiler.
+`--smc-census` names one site for it —
+
+```
+23318  8:9c3 wrote 1e49-1e49        (of 23322 breaks in 5.5M dispatches)
+    1  110:473 wrote 13ca-13e9 ...  (the other three, once each)
+```
+
+— a **single byte**, written once per `int 21h` out of protected mode, and each
+write invalidates the region covering its paragraph. That is 70251 traces and
+16MB of arena for 5.5M dispatches, and it is why 30 seconds of wall clock buys
+1.8 seconds of guest time. The demo polls `int 21h AH=2C` (get time) 79564
+times waiting for that guest time to pass, so the cost lands exactly where it
+hurts. Whether `0x1e49` is genuinely code or a data byte inside a paragraph
+some block decoded across is the question a fix turns on, and it has not been
+answered — if it is the latter this is false sharing, in the same family as the
+`benign` retirement in `dos-loop.js`, and the demo is not DPMI-blocked at all.
+
 **BLAND.EXE** answers both its menus and then prints `failed to load MSE`. The
 MSE file is read fully (0x28be, the exact file size, correct EOF), loads, hooks
 IRQ vectors 0x0A/0x0D/0x0F/0x72 and unhooks them, and issues exactly one DSP
 command. All six device choices and all three `--sound` settings behave
-identically. The failure is inside MIDAS's own loader at `231:119`, which
-returns nonzero to `110:12d`.
+identically.
+
+**That one DSP command was the tell, and it named two real bugs** (9a7c7939).
+It is `F2h`, "force an 8-bit IRQ" — how a driver learns which IRQ the card is
+on, since nothing about the card says. We ignored it, so nothing ever armed.
+And the whole probe ran with **IF clear**, because the flags global started at
+zero and DOS hands a program interrupts enabled; Turbo Pascal's startup issues
+an STI, which is why every TP-built demo in the corpus hid this. MIDAS issues
+none.
+
+With both fixed the probe passes and the driver goes on to set a sample rate
+(`40 a6`, 11111Hz) and complete three single-cycle transfers (`14 00 00`):
+0 IRQs and 1 DSP command become 4 and 12, and the run goes from 0.2M
+dispatches to 3.5M. It still ends at `failed to load MSE`, now from further in
+— it installs its real IRQ7 handler at `12ed:2b52` and takes it back down at
+`12ed:2b33`. What is left is DMA/IRQ *timing*: our completion IRQ arrives on
+the loop's periodic cadence rather than at the rate the time constant implies,
+and it is not established that this is what MIDAS is measuring.
