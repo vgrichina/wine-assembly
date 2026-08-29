@@ -733,3 +733,44 @@ in the run loop, keyboard and timer and retrace and Sound Blaster alike, sees a
 program in protected mode as one that has hooked nothing. Whatever else is
 throttling the polled path, that is the general gap underneath it, and it is
 shared with COCAHOLC and AQUAPHOB.
+
+**That gap is now closed** (`04aefe57`). The VM already knew how to read an IDT
+— `$idtgate` walks it for `$fault`, checking `cr0`, the limit and the present
+bit — and only the VM can, because the table's base is a linear address that
+LIDT put somewhere the host cannot guess. Exporting it and consulting it from
+`hookedVector` took DINO from one handback per 1.1M dispatches to one per
+~177k, and it applies to every rung: keyboard, timer, retrace, Sound Blaster.
+
+DINO also now **answers its own menu**: `arrowMenuKeys` reads a marker column
+off the text page and counts rows to a silent option, on the strength of the
+screen having said the marker moves ("Use ARROW keys to move around"). It
+selects Silence and opens `dino.s3m`, where it used to sit on "Gravis
+Ultrasound" for the whole budget. It still does not reach its graphics — the
+grid's remaining fields are committed by a cursor whose column is shown in
+colour, which `screenText` cannot see, and blind Enter and Right walks were
+both tried and neither moved the demo past the setup. So DINO is a row that got
+further, not a row that finished.
+
+**How many rows want VESA: three.** Every program in the corpus was run for 4
+seconds with `--trace-int` and its `int 10h AX=4Fxx` calls counted, and only
+COLORS.EXE, SETUP.EXE and CHROME.EXE make one. VBE is a three-row lever, and
+two of those three rows have another blocker in front of it — so it stays below
+the extender and the video-BIOS ROM on the list.
+
+### A row can say `error` because of how the sweep chose its picture
+
+BLAND.EXE spent a version in the `error` bucket *after* its actual bug was
+fixed, and the reason was the frame chooser. It is a textmode intro: its
+starfield is a few dozen lit cells, and the sound-card menu it prints on the way
+in is 192. Both choosers — `keepBest` inside a run, `score` between runs —
+ranked text screens by cell count alone, so the fullest screen was the question,
+and the run that won the row was the no-sound-card retry whose caption read
+"failed to load MSE". A demo that works, photographed at its menu, described by
+a refusal.
+
+Both now band a screen the program is *asking* or *refusing* on below one it is
+not (`ecd35d57`), sharing `demo-status.js`'s own definition of both rather than
+keeping a second copy of the words. The band sits under `frameScore`'s, so "any
+graphics frame beats any text frame" is unchanged. **The lesson generalises: a
+row in `error` or `prompt` whose program is known to run is a claim about the
+chooser, not about the program.**
