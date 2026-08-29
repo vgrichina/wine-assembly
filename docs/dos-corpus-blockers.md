@@ -89,11 +89,19 @@ clock in wasm. Fixed in `810b87a9`; it now runs at 26M dispatches/s, loads
 music player installing itself).
 
 Where it stops now: `stuck at 110:135d`, and the decoder gives up there on
-`c5 c0 bc be 0c d8 96 02` (`c5 c0` is `lds` with mod=11, invalid). The bytes on
-disk at that address are different (`14 b2 3b d9`), so the region was written at
-runtime — 127 self-modify breaks — and control reached it after the last INT 21h
-rather than through anything traced. There is also one unhandled `int 3` in the
-run. Next step is finding what transferred to `110:135d`, not decoding the bytes.
+`c5 c0 bc be 0c d8 96 02` (`c5 c0` is `lds` with mod=11, invalid). There is also
+one unhandled `int 3` in the run.
+
+The bytes on disk at that address are different (`14 b2 3b d9`), which is *not*
+a clue: BLINKY.EXE is PKLITE-compressed, so nothing at 110:xxxx on disk is the
+code that runs, and the 127 self-modify breaks are the depacker. PKLITE itself
+is fine — B-STEEL, AMANAMAN, DIZZY_FI and AKM-ZORL are all PKLITE-packed and all
+reach full frames — so this is specific to BLINKY.
+
+The last thing traced before the stop is `int 21h AH=35 AL=08` from `110:3d70`,
+the music player fetching the old timer vector; the matching `AH=25` never
+happens. So the next step is finding what transferred to `110:135d`, not
+decoding the bytes there.
 
 ### BLIQ.EXE (2 rows — `1994-b-bliq` and `1994-b-black` are the same program)
 
