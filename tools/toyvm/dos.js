@@ -2517,8 +2517,50 @@ class Machine {
         // files and exited 0 with a black screen -- a complete run of a program
         // whose entire job is to start another one.
         if (al !== 0x00 && al !== 0x01) { r.setResultCf(true); r.set('ax', 1); return true; }
-        const name = this.guestPath(r);
-        const img = this.readWholeFile(name);
+
+        // The command tail comes out of the parameter block at ES:BX. Read
+        // before the image, because for a shell invocation it is what names the
+        // program actually being run.
+        const pb = this.lin(r, 'es', r.get('bx'));
+        const tailOff = this.mem[pb + 2] | (this.mem[pb + 3] << 8);
+        const tailSeg = this.mem[pb + 4] | (this.mem[pb + 5] << 8);
+        const tail = ((tailSeg << 4) + tailOff) & 0xFFFFF;
+        let tailStr = [...this.mem.subarray(tail + 1,
+          tail + 1 + Math.min(this.mem[tail] || 0, 127))]
+          .map((c) => String.fromCharCode(c)).join('');
+
+        let name = this.guestPath(r);
+        let img = this.readWholeFile(name);
+
+        // `COMMAND.COM /C prog args`, which is the only thing anything here
+        // ever asks a shell to do. We have no COMMAND.COM and there is no point
+        // shipping one: a program that wants an interactive shell, a batch file
+        // or an internal command still gets "file not found", which is honest.
+        //
+        // CYANIDE.EXE is the corpus's case and it needs the tail, not just the
+        // redirect: it runs `/c 001.exe` and then `/c 002.exe go away you
+        // hacker . . .`, and 002.EXE is checking for that argument. Without it
+        // the part refuses with "Please run CYANIDE.EXE." -- which is exactly
+        // what the sweep captured, from a program doing precisely what it was
+        // built to do.
+        if (!img && /(^|[\\/])COMMAND\.COM$/i.test(name)) {
+          const m = /^\s*\/[Cc]\s+(\S+)\s*([\s\S]*)$/.exec(tailStr);
+          if (m) {
+            for (const cand of [m[1], `${m[1]}.EXE`, `${m[1]}.COM`]) {
+              const got = this.readWholeFile(cand);
+              if (got) {
+                name = cand; img = got; tailStr = m[2] ? ` ${m[2]}` : '';
+                // The shell we do not have, and the extensions we guessed past,
+                // are not files this program failed to find. Leaving them in
+                // the missed list reports a successful launch as a missing
+                // COMMAND.COM, which is the opposite of what happened.
+                this.filesMissed = this.filesMissed.filter(
+                  (f) => !/(^|[\\/])COMMAND\.COM$/i.test(f) && f !== cand);
+                break;
+              }
+            }
+          }
+        }
         if (!img) { r.setResultCf(true); r.set('ax', 2); return true; }   // not found
 
         // The child goes directly above the parent's IMAGE, not above the
@@ -2530,22 +2572,23 @@ class Machine {
         if (pspSeg + 0x1000 > DEFAULT_ALLOC_TOP) { r.setResultCf(true); r.set('ax', 8); return true; }
         const info = loadExe(this.mem, img, { loadSeg: pspSeg + 0x10, pspSeg });
 
-        // The command tail, out of the parameter block at ES:BX.
-        const pb = this.lin(r, 'es', r.get('bx'));
-        const tailOff = this.mem[pb + 2] | (this.mem[pb + 3] << 8);
-        const tailSeg = this.mem[pb + 4] | (this.mem[pb + 5] << 8);
-        const tail = ((tailSeg << 4) + tailOff) & 0xFFFFF;
-        const n = Math.min(this.mem[tail] || 0, 127);
+        // The tail into the child's PSP, from the string rather than straight
+        // out of the parameter block: a shell redirect above rewrote it, and the
+        // child must see the arguments meant for IT and not the `/c prog` the
+        // shell was handed.
+        const n = Math.min(tailStr.length, 127);
         this.mem[(pspSeg << 4) + 0x80] = n;
-        for (let i = 0; i <= n; i++) this.mem[(pspSeg << 4) + 0x81 + i] = this.mem[tail + 1 + i];
+        for (let i = 0; i < n; i++) {
+          this.mem[(pspSeg << 4) + 0x81 + i] = tailStr.charCodeAt(i) & 0xFF;
+        }
+        this.mem[(pspSeg << 4) + 0x81 + n] = 0x0D;   // the tail's terminating CR
         this.mem[(pspSeg << 4) + 0x16] = this.curPsp & 0xFF;     // parent PSP
         this.mem[(pspSeg << 4) + 0x17] = (this.curPsp >> 8) & 0xFF;
         this.mem[(pspSeg << 4) + 0x2C] = ENV_SEG & 0xFF;         // same environment
         this.mem[(pspSeg << 4) + 0x2D] = (ENV_SEG >> 8) & 0xFF;
         this.log(`exec ${name} (${img.length} bytes) at psp ${pspSeg.toString(16)},`
           + ` entry ${info.cs.toString(16)}:${info.ip.toString(16)},`
-          + ` tail "${[...this.mem.subarray(tail + 1, tail + 1 + n)]
-            .map(c => String.fromCharCode(c)).join('')}"`);
+          + ` tail "${tailStr}"`);
 
         if (al === 0x01) {                       // load, do not execute
           this.mem[pb + 0x0E] = info.sp & 0xFF; this.mem[pb + 0x0F] = (info.sp >> 8) & 0xFF;
