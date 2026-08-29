@@ -33,7 +33,7 @@ const { setCpuLevel } = require('./decode');
 const { Machine, loadExe, vgaGeometry, parseKeys, VGA_BASE } = require('./dos');
 const { DosSession } = require('./dos-loop');
 const {
-  conCells, conText, screenSurface, nonBlack, frameHash, rgbaFrame, rgbaConsole,
+  conCells, conText, screenSurface, nonBlack, frameScore, frameHash, rgbaFrame, rgbaConsole,
 } = require('./framebuffer');
 
 // --- screenshot -------------------------------------------------------------
@@ -188,7 +188,7 @@ async function runDos(o) {
   let bestScore = -1, bestSurface = null, bestText = '';
   function keepBest() {
     const s = screenSurface(machine);
-    const score = s.text ? conCells(machine.con) : nonBlack(vm.mem, s.geom);
+    const score = s.text ? conCells(machine.con) : frameScore(vm.mem, s.geom);
     if (score <= bestScore) return;
     bestScore = score;
     bestSurface = s;

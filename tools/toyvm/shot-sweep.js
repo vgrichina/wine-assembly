@@ -310,8 +310,17 @@ async function capture(exe, png, o) {
   // final video state and says what the question means: is this machine in a
   // graphics mode. AUTUMN draws 44800 pixels at 4x the budget and fills all
   // 64000 at 10x, and photographed as a blank text screen for want of this.
-  if (!row.pixels && (row.surface === 'vga' || row.bpp > 0)
-      && !row.stuckAt && !row.ranOutOfTime && row.dispatched >= o.budget) {
+  // ...and `bpp` is not enough either, for the case one step further out: a
+  // program still in *text* mode when the budget runs out, whose graphics are
+  // just past it. BLINKY.EXE spends 300M dispatches on its credits screen and
+  // sets mode 13h at ~305M, so every field this rung could ask says "text
+  // program" at the moment it is asked. Spending the whole budget having drawn
+  // nothing is the signal, and the mode at that instant is not evidence about
+  // what comes next. It costs what it sounds like it costs -- 10 of 199 rows
+  // in this corpus qualify, several of them genuine text art (NFO.EXE,
+  // DTM2.EXE) that will spend the bigger budget and change nothing -- but the
+  // better frame is kept either way, so the only price is sweep time.
+  if (!row.pixels && !row.stuckAt && !row.ranOutOfTime && row.dispatched >= o.budget) {
     const first = { ...row };
     // 10x rather than 4x, and the extra is not padding. AUTUMN.EXE waits on a
     // counter its timer ISR advances, so how far it gets is set by how many

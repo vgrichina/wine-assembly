@@ -169,6 +169,31 @@ function nonBlack(mem, video) {
   return n;
 }
 
+// How much of a frame is worth photographing, which is not what nonBlack
+// measures. A demo that flashes the screen for one frame fills every pixel with
+// a single index and scores a perfect 64000 there, so a best-frame tracker that
+// maximises coverage keeps the flash and throws the picture away. BLINKY.EXE is
+// the corpus's example: its vector intro lights ~1100 pixels in four colours,
+// and the moment a big enough budget let the run reach the end, a white fill
+// outscored it 64000 to 1114 and the tile became a blank white square.
+//
+// Lit pixels that are all one index are a fill, not a picture. Discount one
+// hard enough that any real frame outranks it, while it still beats a screen
+// with nothing on it at all -- a program whose only output is a flash should
+// photograph the flash rather than nothing.
+function frameScore(mem, video) {
+  const { pixels } = readFrame(mem, video);
+  const seen = new Uint8Array(256);
+  let n = 0, distinct = 0;
+  for (let i = 0; i < pixels.length; i++) {
+    const c = pixels[i] & 0xFF;
+    if (!c) continue;
+    n++;
+    if (!seen[c]) { seen[c] = 1; distinct++; }
+  }
+  return distinct <= 1 ? (n >> 10) : n;
+}
+
 // A cheap content signature over the frame buffer. Two variants that disagree
 // here executed different code, and no timing comparison between them means
 // anything -- so the bench checks it before it reports a ratio.
@@ -227,5 +252,5 @@ function rgbaConsole(con, font, into) {
 
 module.exports = {
   LINEAR, CGA_TEXT, attrRgb, conCells, conText, screenSurface,
-  readFrame, nonBlack, frameHash, rgbaFrame, rgbaConsole,
+  readFrame, nonBlack, frameScore, frameHash, rgbaFrame, rgbaConsole,
 };
