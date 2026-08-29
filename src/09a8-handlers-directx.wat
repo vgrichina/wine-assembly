@@ -8,7 +8,7 @@
   ;; +0  type: 0=free,1=DDraw,2=DDSurface,3=DDPalette,4=DSound,5=DSBuffer,6=DInput,7=DIDev,26=DPlay3,27=DPlayLobby2,28=DAView,29=DAStatics,30=IMalloc,31=DABehavior/node
   ;; +4  refcount
   ;; +8  misc0 (DDraw: hwnd, DSBuffer: wave_handle, DIDev: device_type 1=kbd 2=mouse)
-  ;; +12 width (u16) | height (u16)
+  ;; +12 width (u16) | height (u16); DIDev: DIPROP_BUFFERSIZE
   ;; +16 bpp (u16) | pitch (u16)
   ;; +20 dib_ptr (WASM addr of pixel data, 0 if none)
   ;; +24 color_key_low
@@ -5249,12 +5249,21 @@
     ;; COM this + callback + ref + flags, plus the return address.
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
-  ;; GetProperty / SetProperty — no-op
+  ;; GetProperty / SetProperty. DirectInput encodes predefined properties as
+  ;; small REFGUID values; DIPROP_BUFFERSIZE is (REFGUID)1 and its value is the
+  ;; DIPROPDWORD.dwData at +16. Keep the configured queue capacity in misc1.
   (func $handle_IDirectInputDevice_GetProperty (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_IDirectInputDevice_SetProperty (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $entry i32)
+    (if (i32.and (i32.eq (local.get $arg1) (i32.const 1))
+                 (i32.ne (local.get $arg2) (i32.const 0)))
+      (then
+        (local.set $entry (call $dx_from_this (local.get $arg0)))
+        (i32.store offset=12 (local.get $entry)
+          (call $gl32 (i32.add (local.get $arg2) (i32.const 16))))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
@@ -5491,11 +5500,12 @@
   (func $handle_IDirectInputDevice_GetDeviceData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $dev_type i32)
     (local $buttons i32) (local $diff i32) (local $ofs i32)
-    (local $data i32) (local $requested i32) (local $available i32)
+    (local $data i32) (local $requested i32) (local $available i32) (local $capacity i32)
     (local $delivered i32) (local $commit i32)
     (local $queued i32) (local $button_index i32) (local $event i32) (local $event_type i32)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $dev_type (i32.load (i32.add (local.get $entry) (i32.const 8))))
+    (local.set $capacity (i32.load offset=12 (local.get $entry)))
     (if (i32.eq (local.get $dev_type) (i32.const 1))
       (then
         ;; Keyboard. Allegro-based games read keys only through this buffer,
@@ -5504,6 +5514,9 @@
           (if (result i32) (local.get $arg3)
             (then (call $gl32 (local.get $arg3)))
             (else (i32.const 0))))
+        (if (i32.and (i32.ne (local.get $capacity) (i32.const 0))
+                     (i32.gt_u (local.get $requested) (local.get $capacity)))
+          (then (local.set $requested (local.get $capacity))))
         (if (i32.eqz (local.get $arg2))
           (then
             ;; rgdod == NULL asks only how many records are pending. A count
@@ -5543,6 +5556,13 @@
           (if (result i32) (local.get $arg3)
             (then (call $gl32 (local.get $arg3)))
             (else (i32.const 0))))
+        ;; A count-only DIGDD_PEEK is still bounded by the capacity selected
+        ;; through DIPROP_BUFFERSIZE. MCM trusts that count when sizing the
+        ;; following read; exposing the entire browser FIFO overwrites its
+        ;; fixed 16-record stack buffer with DIDEVICEOBJECTDATA entries.
+        (if (i32.and (i32.ne (local.get $capacity) (i32.const 0))
+                     (i32.gt_u (local.get $requested) (local.get $capacity)))
+          (then (local.set $requested (local.get $capacity))))
         (if (i32.eqz (local.get $arg2))
           (then
             (if (local.get $arg3)

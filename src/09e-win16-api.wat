@@ -3666,6 +3666,9 @@
       (call $g2w (local.get $text)) (local.get $type))
     (global.set $modal_dlg_hwnd (local.get $dlg))
     (global.set $modal_result (i32.const 0))
+    (i32.atomic.store (global.get $SHARED_MODAL_DLG_HWND) (local.get $dlg))
+    (i32.atomic.store (global.get $SHARED_MODAL_RESULT) (i32.const 0))
+    (i32.atomic.store (global.get $SHARED_MODAL_DONE) (i32.const 0))
     (call $win16_modal_park))
 
   (func $win16_modal_park

@@ -54,6 +54,14 @@ const extraWat = `
       (local.get $obj) (i32.const 16) (local.get $buffer)
       (i32.const 0) (i32.const 0) (i32.const 0))
     (global.get $eax))
+  (func (export "test_di_set_buffer_size")
+        (param $obj i32) (param $property i32)
+    (global.set $esp (i32.const 0x074ff000))
+    (call $handle_IDirectInputDevice_SetProperty
+      (local.get $obj) (i32.const 1) (local.get $property)
+      (i32.const 0) (i32.const 0) (i32.const 0)))
+  (func (export "test_di_buffer_size") (param $obj i32) (result i32)
+    (i32.load offset=12 (call $dx_from_this (local.get $obj))))
 `;
 
 (async () => {
@@ -141,6 +149,33 @@ const extraWat = `
   assert.strictEqual(wat.test_di_mouse_get_state(mouse, data) >>> 0, 0);
   assert.deepStrictEqual([wat.guest_read32(data) | 0, wat.guest_read32(data + 4) | 0], [11, -9],
     'GetDeviceState consumes its physical relative-motion accumulator');
+
+  // MCM allocates exactly DIPROP_BUFFERSIZE records on its stack. Mouse
+  // events accumulated while its startup MessageBox was open used to make a
+  // count-only peek report the whole browser FIFO; the following read then
+  // overwrote MCM's saved return address with a DIDEVICEOBJECTDATA.dwOfs.
+  const property = 0x00410300;
+  wat.guest_write32(property, 20);      // DIPROPDWORD.dwSize
+  wat.guest_write32(property + 4, 16);  // DIPROPHEADER.dwHeaderSize
+  wat.guest_write32(property + 16, 2);  // dwData = buffer capacity
+  wat.test_di_set_buffer_size(mouse, property);
+  assert.strictEqual(wat.test_di_buffer_size(mouse), 2,
+    'DIPROP_BUFFERSIZE is retained on the DirectInput device');
+  wat.test_di_mouse_queue_event((5 << 28) | 1);
+  wat.test_di_mouse_queue_event((6 << 28) | 2);
+  wat.test_di_mouse_queue_event((5 << 28) | 3);
+  wat.test_di_mouse_queue_event((6 << 28) | 4);
+  wat.guest_write32(count, 0xffffffff);
+  wat.test_di_mouse_get_data(mouse, 0, count, 1);
+  assert.strictEqual(wat.guest_read32(count), 2,
+    'count-only peek is capped to the configured DirectInput buffer size');
+  wat.guest_write32(data + 32, 0xfeedface);
+  wat.guest_write32(count, 0xffffffff);
+  wat.test_di_mouse_get_data(mouse, data, count, 0);
+  assert.strictEqual(wat.guest_read32(count), 2,
+    'buffered read cannot deliver more records than DIPROP_BUFFERSIZE');
+  assert.strictEqual(wat.guest_read32(data + 32) >>> 0, 0xfeedface,
+    'buffered read leaves memory after the configured record array intact');
 
   console.log('PASS  DirectInput preserves EnumObjects, mouse edges, and physical movement');
 })().catch(error => {

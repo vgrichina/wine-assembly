@@ -173,7 +173,16 @@ async function runDos(o) {
   if (info.allocTop !== undefined) machine.allocTop = info.allocTop;
   machine.imageTop = info.minTop;
   machine.installEnvironment(path.basename(exe), guestArgs);
-  vm.setAll({ cs: info.cs, ip: info.ip, ss: info.ss, sp: info.sp, ds: info.ds, es: info.es });
+  // IF set, because that is what DOS hands a program. The flags global starts at
+  // zero, which is interrupts DISABLED -- so until a program executed an STI of
+  // its own it got no timer tick, no keystroke and no sound IRQ, and a program
+  // that never executes one got none at all. Turbo Pascal's startup does, which
+  // is why this hid for so long. BLAND.EXE's MIDAS driver does not: it unmasks
+  // IRQ 2/5/7 at the PICs, asks the DSP to force an IRQ and spins on a flag its
+  // handlers set, all with IF still clear, then reports "failed to load MSE"
+  // for a card it had already reset and identified.
+  vm.setAll({ cs: info.cs, ip: info.ip, ss: info.ss, sp: info.sp, ds: info.ds, es: info.es,
+    flags: isa.FLAGS_RESERVED | (1 << isa.F.IF) });
   // The stack must hold a return address: a .COM-style `ret` exit lands on the
   // PSP's INT 20h. An EXE that ends with INT 21h/4C never touches it.
   vm.set('sp', (info.sp - 2) & 0xFFFF);

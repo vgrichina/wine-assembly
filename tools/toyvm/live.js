@@ -130,7 +130,11 @@ class LiveRun {
     if (info.allocTop !== undefined) machine.allocTop = info.allocTop;
     machine.imageTop = info.minTop;
     machine.installEnvironment(this.exe, this.args);
-    vm.setAll({ cs: info.cs, ip: info.ip, ss: info.ss, sp: info.sp, ds: info.ds, es: info.es });
+    // IF set, as DOS hands it over -- see the same line in run-dos.js. The page
+    // and the headless runner have to agree about this or a program that needs
+    // a hardware interrupt behaves differently in the two.
+    vm.setAll({ cs: info.cs, ip: info.ip, ss: info.ss, sp: info.sp, ds: info.ds, es: info.es,
+      flags: isa.FLAGS_RESERVED | (1 << isa.F.IF) });
     // The stack must hold a return address: a .COM-style `ret` exit lands on
     // the PSP's INT 20h. An EXE that ends with INT 21h/4C never touches it.
     vm.set('sp', (info.sp - 2) & 0xFFFF);

@@ -15804,6 +15804,9 @@
   (func $modal_begin (param $dlg i32) (param $esp_adjust i32)
     (global.set $modal_dlg_hwnd  (local.get $dlg))
     (global.set $modal_result    (i32.const 0))
+    (i32.atomic.store (global.get $SHARED_MODAL_DLG_HWND) (local.get $dlg))
+    (i32.atomic.store (global.get $SHARED_MODAL_RESULT) (i32.const 0))
+    (i32.atomic.store (global.get $SHARED_MODAL_DONE) (i32.const 0))
     (global.set $modal_ret_addr  (call $gl32 (global.get $esp)))
     (global.set $modal_saved_esp (global.get $esp))
     (global.set $modal_esp_adjust (local.get $esp_adjust))
@@ -15828,6 +15831,14 @@
   ;; the splice stays with each caller and only this part is shared.
   (func $modal_pump_step (param $pump_eip i32) (result i32)
     (local $flags i32) (local $hwnd i32) (local $proc i32)
+    ;; A renderer-side shadow instance may have delivered the button command.
+    ;; Finish in the instance that owns the parked API call: its private
+    ;; common-dialog kind/struct and saved register frame are authoritative.
+    (if (i32.atomic.load (global.get $SHARED_MODAL_DONE))
+      (then
+        (i32.atomic.store (global.get $SHARED_MODAL_DONE) (i32.const 0))
+        (call $modal_finish_local
+          (i32.atomic.load (global.get $SHARED_MODAL_RESULT)))))
     (if (i32.eqz (global.get $modal_dlg_hwnd)) (then (return (i32.const 0))))
     ;; Drain nc_flags for the dialog hwnd only: child controls have no
     ;; non-client chrome and would leave spurious fragments.
@@ -15864,17 +15875,38 @@
     (global.set $yield_flag (i32.const 1))
     (i32.const 1))
 
-  (func $modal_done (param $result i32)
-    (local $owner i32)
+  (func $modal_finish_local (param $result i32)
+    (local $owner i32) (local $hwnd i32)
+    (local.set $hwnd (global.get $modal_dlg_hwnd))
+    (if (i32.eqz (local.get $hwnd)) (then (return)))
     (global.set $modal_result (local.get $result))
     (call $cd_modal_writeback (local.get $result))
-    (local.set $owner (call $wnd_get_owner (global.get $modal_dlg_hwnd)))
-    (call $wnd_destroy_tree (global.get $modal_dlg_hwnd))
-    (call $host_destroy_window (global.get $modal_dlg_hwnd))
+    (local.set $owner (call $wnd_get_owner (local.get $hwnd)))
+    (call $wnd_destroy_tree (local.get $hwnd))
+    (call $host_destroy_window (local.get $hwnd))
     (global.set $modal_dlg_hwnd (i32.const 0))
+    (i32.atomic.store (global.get $SHARED_MODAL_RESULT) (local.get $result))
+    (i32.atomic.store (global.get $SHARED_MODAL_DLG_HWND) (i32.const 0))
+    (i32.atomic.store (global.get $SHARED_MODAL_DONE) (i32.const 0))
     ;; The dialog held the focus; give it back to the owner, or the app never
     ;; hears WM_SETFOCUS again. See $focus_restore_after_modal.
     (call $focus_restore_after_modal (local.get $owner)))
+
+  (func $modal_done (param $result i32)
+    (local $shared_hwnd i32)
+    (local.set $shared_hwnd (i32.atomic.load (global.get $SHARED_MODAL_DLG_HWND)))
+    (i32.atomic.store (global.get $SHARED_MODAL_RESULT) (local.get $result))
+    ;; The instance that opened the modal can tear it down immediately. A
+    ;; main-thread renderer shadow only signals completion; the guest Worker
+    ;; performs writeback and restores its own saved x86 frame on its next
+    ;; modal-pump turn.
+    (if (i32.and
+          (i32.ne (global.get $modal_dlg_hwnd) (i32.const 0))
+          (i32.eq (global.get $modal_dlg_hwnd) (local.get $shared_hwnd)))
+      (then (call $modal_finish_local (local.get $result)))
+      (else
+        (if (local.get $shared_hwnd)
+          (then (i32.atomic.store (global.get $SHARED_MODAL_DONE) (i32.const 1)))))))
 
   ;; Allocate a new control hwnd, register it as WNDPROC_CTRL_NATIVE,
   ;; populate CONTROL_TABLE with class+id, set parent, then deliver

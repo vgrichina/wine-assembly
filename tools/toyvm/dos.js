@@ -773,7 +773,7 @@ class Machine {
     // The Sound Blaster, as far as a detection routine can tell. See portIn.
     this.sb = {
       out: [], cmd: 0, args: [], expect: 0, speaker: 0, block: 0,
-      pending: false, autoInit: false, paused: false,
+      pending: false, autoInit: false, paused: false, forced: false,
       detects: 0, commands: 0, irqs: 0,
     };
     // The 8253, as three down-counters rather than a number that goes up.
@@ -1537,6 +1537,19 @@ class Machine {
       this.sb.pending = true;
       return;
     }
+    // F2h forces an 8-bit IRQ (F3h the 16-bit one) with no transfer behind it.
+    // It is how a driver finds out WHICH IRQ the card is wired to, since nothing
+    // about the card says: hook every candidate, send this, and see which one
+    // fires. BLAND.EXE's MIDAS driver hooks vectors 0x0A/0x0D/0x0F/0x72,
+    // unmasks IRQ 2/5/7 at both PICs, sends F2 and spins on a flag its handlers
+    // clear; with the command ignored nothing ever fired, it put the masks and
+    // vectors back and reported "failed to load MSE" for a card it had already
+    // reset twice and identified.
+    //
+    // Unlike a transfer's completion this one is immediate by definition -- the
+    // driver's wait is a `loopz` and not a long one -- so it is delivered on the
+    // next opportunity rather than on the periodic IRQ cadence.
+    if (v === 0xF2 || v === 0xF3) { this.sb.forced = true; return; }
     if (v === 0xD0) { this.sb.paused = true; this.sb.pending = false; return; }
     if (v === 0xD4) { this.sb.paused = false; this.sb.pending = true; return; }
     // DAh stops an auto-init transfer for good.
@@ -1549,11 +1562,20 @@ class Machine {
   // here. Auto-init keeps going, single-cycle does not.
   sbIrq() {
     if (this.sound !== 'full') return 0;
-    if (!this.sb.pending || this.sb.paused) return 0;
+    if (!this.sb.forced && (!this.sb.pending || this.sb.paused)) return 0;
     if (!this.hookedVector(SB_IRQ_VEC)) return 0;
-    this.sb.pending = this.sb.autoInit;
+    // A forced IRQ answers for itself and leaves any transfer alone: a driver
+    // that probes in the middle of playback must not have its block completed
+    // out from under it.
+    if (this.sb.forced) this.sb.forced = false;
+    else this.sb.pending = this.sb.autoInit;
     this.sb.irqs++;
     return SB_IRQ_VEC;
+  }
+
+  // Whether an IRQ is owed right now rather than at the next cadence tick.
+  sbForced() {
+    return this.sb.forced;
   }
 
   // The OPL2 status register. The presence test is: reset both timers, read

@@ -640,7 +640,7 @@ class DosSession {
     // back to its menu. A real card at 22kHz with a 4K block interrupts a few
     // times a second, which is far rarer than the timer, not more often.
     const svec = (vm.get('flags') & 0x200)
-      && this.dispatched - this.lastSbIrq >= this.irqEvery
+      && (machine.sbForced() || this.dispatched - this.lastSbIrq >= this.irqEvery)
       ? machine.sbIrq() : 0;
     const tvec = machine.timerVector();
     // A frame, not a tick: the vertical retrace comes round about 70 times a

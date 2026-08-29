@@ -5,6 +5,33 @@
 **Entry point:** (TBD)
 **Run:** `node test/run.js --exe=test/binaries/shareware/mcm/mcm_ex/MCM.EXE --max-batches=500 --trace-api`
 
+## Status (2026-08-29) — first-start video-memory prompt resumes in Worker mode
+
+MCM's first launch intentionally displays a WAT-built MessageBox before its
+video-memory benchmark. In browser Worker mode the guest Worker owned the
+parked `MessageBoxA` call, while the main-thread renderer shadow instance
+hit-tested and dispatched the OK button. The dialog was visible and the button
+painted as pressed, but its completion lived only in the shadow instance's
+private WebAssembly globals, so the owning Worker remained parked forever.
+
+Common-modal hwnd, result, and completion state now live in shared linear
+memory. The renderer shadow only signals the result; the owning guest instance
+performs dialog writeback, teardown, focus restoration, and x86 stack resume on
+its next modal-pump turn. A two-instance shared-memory regression covers OK and
+renderer-side cancellation. Exact fresh browser launches now dismiss the
+prompt in both Worker and cooperative modes: `modal_dialog_hwnd` changes from
+`0x10002` to zero and MCM's `0x10001` main window remains alive.
+
+The first successful resume exposed a second startup failure. MCM sets its
+mouse device's `DIPROP_BUFFERSIZE` to 16, peeks the pending record count, then
+reads that many records into a 16-entry stack array. `SetProperty` had been a
+no-op and `GetDeviceData` reported every mouse event accumulated while the
+prompt was open; the read overwrote MCM's saved return address with a later
+record's `dwOfs=4`, matching the observed `EIP=0x00000004`. DirectInput now
+retains `DIPROP_BUFFERSIZE` and bounds count-only peeks and reads to it. The
+focused regression queues more records than the configured capacity and pins
+the canary immediately after the destination array.
+
 ## Status (2026-08-29) — post-Start Direct3D/DirectSound crashes fixed
 
 Two independent ABI mismatches caused the Loading screen to terminate before

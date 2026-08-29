@@ -1239,7 +1239,8 @@
   ;; 0x00010770  32B     WINDOW_REGION_BITS (256 × 1 bit — SetWindowRgn state, ends 0x10790)
   ;; 0x00010790  32B     NATIVE_STATUS_BITS (one bit per WND_RECORDS slot)
   ;; 0x000107B0  32B     NATIVE_TAB_BITS (one bit per WND_RECORDS slot)
-  ;; 0x000107D0  48B     Free
+  ;; 0x000107D0  12B     SHARED_MODAL_DLG_HWND / RESULT / DONE
+  ;; 0x000107DC  36B     Free
   ;; 0x00010800  256B    IRQ_SAVE_STACK (interrupt reg save area, 36 bytes/frame, ~7 deep)
   ;; 0x00010900  256B    CALLSTACK_RING (64 slots × 4 bytes — shadow ret_addr stack for --trace-callstack)
   ;; 0x00010A00  256B    MCI_DEVICE_TABLE (16 × 16 bytes — host-backed MCI devices)
@@ -2894,6 +2895,17 @@
   ;; "Completed" page).
   (global $SHARED_DLG_PUMP_HWND i32 (i32.const 0x0000510C))
   (global $SHARED_DLG_PUMP_HWND_SIZE i32 (i32.const 0x00000004))
+  ;; WAT-built MessageBox/common-dialog state has the same cross-instance
+  ;; requirement as DialogBoxParam above. Browser Worker mode renders and
+  ;; hit-tests through a main-thread shadow instance, while the API call is
+  ;; parked in the guest Worker instance. Completion therefore has to cross
+  ;; through linear memory rather than a private WebAssembly global.
+  (global $SHARED_MODAL_DLG_HWND i32 (i32.const 0x000107D0))
+  (global $SHARED_MODAL_DLG_HWND_SIZE i32 (i32.const 0x00000004))
+  (global $SHARED_MODAL_RESULT i32 (i32.const 0x000107D4))
+  (global $SHARED_MODAL_RESULT_SIZE i32 (i32.const 0x00000004))
+  (global $SHARED_MODAL_DONE i32 (i32.const 0x000107D8))
+  (global $SHARED_MODAL_DONE_SIZE i32 (i32.const 0x00000004))
   (global $dlg_proc     (mut i32) (i32.const 0))    ;; Dialog proc address
   (global $dlg_ret_addr (mut i32) (i32.const 0))    ;; Return address for DialogBoxParamA
   (global $dlg_loop_thunk (mut i32) (i32.const 0))  ;; Thunk addr for dialog message loop
