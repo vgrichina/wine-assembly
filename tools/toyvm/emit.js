@@ -1757,7 +1757,7 @@ function genArithIO() {
   ${EA_SETUP_PRE}
   (local.set $t7 (call $rd16 (local.get $t5) (local.get $t4)))
   (call $sset (i32.const 1) (call $rd16 (local.get $t5)
-    (i32.and (i32.add (local.get $t4) (i32.const 2)) (i32.const 0xFFFF))))
+    (call $off_add (local.get $t4) (i32.const 2))))
   (global.set $gip (local.get $t7))
   ${GO_INDIRECT}
 `);
@@ -1769,7 +1769,7 @@ function genArithIO() {
   ${EA_SETUP_PRE}
   (local.set $t7 (call $rd16 (local.get $t5) (local.get $t4)))
   (local.set $t3 (call $rd16 (local.get $t5)
-    (i32.and (i32.add (local.get $t4) (i32.const 2)) (i32.const 0xFFFF))))
+    (call $off_add (local.get $t4) (i32.const 2))))
   (call $push16 (call $sget (i32.const 1)))
   (call $push16 (local.get $t2))
   (call $sset (i32.const 1) (local.get $t3))
@@ -1786,12 +1786,23 @@ function genArithIO() {
   // how COUNTDWN.EXE's extender derailed -- its protected-mode INT 21h
   // dispatcher passes an unhandled AH through with `66 2e ff 2e de 03`, and we
   // read cs:[0x3de] as 0x0196:0x0000 instead of 0x0196 in its real segment.
+  //
+  // The selector's own address goes through $off_add and not a bare
+  // `& 0xFFFF`, which is a second, independent way to read the wrong selector.
+  // A 0x67 prefix makes the effective address 32-bit, and masking the +4 to 16
+  // bits then folds it back into the first 64K: INTRO.EXE calls far through
+  // [0x28da4], we truncated 0x28da8 to 0x8da8, and the word that happened to
+  // sit there was 0x0002. Selector 2 has base 0, so protected mode carried on
+  // running for another handback or two before dying at 2:1a43 -- far enough
+  // from the transfer to look like anything but a bad far pointer. $off_add
+  // wraps the low 16 bits and keeps the high half, which is what the address
+  // arithmetic does everywhere else.
   h('jmp_far_m32', 2, `
   ${ops(2)}
   ${EA_SETUP_PRE}
   (local.set $t7 (call $rd32 (local.get $t5) (local.get $t4)))
   (call $sset (i32.const 1) (call $rd16 (local.get $t5)
-    (i32.and (i32.add (local.get $t4) (i32.const 4)) (i32.const 0xFFFF))))
+    (call $off_add (local.get $t4) (i32.const 4))))
   (global.set $gip (local.get $t7))
   ${GO_INDIRECT}
 `);
@@ -1800,7 +1811,7 @@ function genArithIO() {
   ${EA_SETUP_PRE}
   (local.set $t7 (call $rd32 (local.get $t5) (local.get $t4)))
   (local.set $t3 (call $rd16 (local.get $t5)
-    (i32.and (i32.add (local.get $t4) (i32.const 4)) (i32.const 0xFFFF))))
+    (call $off_add (local.get $t4) (i32.const 4))))
   (call $push32 (call $sget (i32.const 1)))
   (call $push32 (local.get $t2))
   (call $sset (i32.const 1) (local.get $t3))
