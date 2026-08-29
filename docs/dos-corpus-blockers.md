@@ -316,6 +316,9 @@ producing the plaintext it expects". The jump-table half is right and the cause
 is not: `--no-cache` reproduces the stall exactly (20552 fresh traces, same
 `5ab:8c`), so no stale compiled block is involved, and the 62 breaks are fine.
 
+*(Fixed in 81e0f54e -- the chain below is the diagnosis that got there, kept
+because every step of it is a reusable measurement. Skip to "JULTRO now runs".)*
+
 JULTRO.EXE is two wrappers around the demo. Its MZ header says so in clear text
 at offset 0x22: `Protect! v.5.0/MarkEXE v.2.0`. Layer 1 is that protector,
 encrypted on disk -- disassembling the file at `5ab:0000` gets nothing, and even
@@ -355,9 +358,12 @@ That also settles the other three symptoms filed here separately: `5ab:56`,
 `6e`, `8c`, `a7` and the divide are all *downstream* of the dangling vector, and
 none of them is a decoder bug.
 
-**The "Divide overflow at 5ab:1ff" is not a divide, and not a bug.** It is worth
-writing down because it looks like the most alarming thing in the run and is a
-dead end. Hand-decoding the obfuscated stream -- the disassembler cannot, every
+**The "Divide overflow at 5ab:1ff" is not a divide. It is the whole bug.** It
+looks like the most alarming thing in the run, and an earlier revision of this
+note dismissed it as a dead end ("this landmine decides nothing -- do not spend
+time on it"). That was wrong, and it was wrong because the reading below stopped
+one question short: it established *what* the byte was and never asked *who put
+it there*. Hand-decoding the obfuscated stream -- the disassembler cannot, every
 few bytes is a `jmp` over a junk byte -- gives this chain:
 
 ```
@@ -372,23 +378,70 @@ few bytes is a `jmp` over a junk byte -- gives this chain:
 01fd  cd ??   int <that byte>                   ; return address 01ff
 ```
 
-So layer 1 writes the BIOS tick counter's low byte into an `int` operand and
-executes it. `--watch=5ab:1fe:1` confirms the store (`5ab:1ea wrote 5cae`), and
-`--tick-scale=100` proves the reading: the run then reports
-`int 1fh ax=1f ... from 5ab:1ff` instead of `int 00h`. Our tick is simply still
-0 that early (one tick costs 550k dispatches), so the byte is 0, so it is INT 0,
-so the report calls it "Divide overflow". **The stall is identical at every tick
-scale**, so this landmine decides nothing -- do not spend time on it.
+So layer 1 reads a byte from `0000:046C` into an `int` operand and executes it.
+`--watch=5ab:1fe:1` confirms the store (`5ab:1ea wrote 5cae`).
 
-**What is still open is why real DOS survives the dangling vector.** The
-protector never restores it and the unpack demonstrably lands on the handler, so
-on real hardware the hook must either be restored by code we do not reach, or
-point somewhere the unpack does not touch. Two things are already ruled out: the
+`0000:046C` is the BIOS tick counter, so this reads like an anti-emulator dice
+roll -- dispatch through whatever vector the clock happens to name. It is not.
+`--watch=0:46c:2` names the writer:
+
+```
+   1  5ab:186 wrote 46c-46c
+```
+
+`5ab:186` is the same block that installs the three hooks. **The protector plants
+the byte itself**, and reads it back a decrypt-loop later to build the `int`. The
+counter is being used as a mailbox, and the obfuscation only works because
+`0040:006C` is ordinary writable RAM.
+
+What it plants is `1`, and INT 01h is hooked to `5ab:0240` -- which, read past
+the `020a` mismatch branch, is the cleanup routine:
+
+```
+0240  33 c0 8e c0     xor ax,ax / mov es,ax        ; ES = 0
+0244  bf 04 00        mov di,4                     ; vector 01h
+0247  0e 1f           push cs / pop ds
+0249  8b f5           mov si,bp
+024b  81 c6 d7 01     add si,0x1d7                 ; -> 5ab:02ef, saved originals
+024f  a5 a5           movsw movsw                  ; restore INT 01h
+0251  83 c7 04        add di,4                     ; vector 03h
+0254  a5 a5           movsw movsw                  ; restore INT 03h
+0258  bf 84 00        mov di,0x84                  ; vector 21h
+025b  a5 a5           movsw movsw                  ; restore INT 21h
+025e  2e 8b 86 d5 01  cs: mov ax,[bp+0x1d5]
+0263  e6 21           out 0x21,al                  ; restore the PIC mask
+0265  cf              iret
+```
+
+That answers the question this section used to end on. Nothing restores the
+vector along a path we miss and the handler does not relocate: the restore is
+`int 1`, dispatched through the protector's own hook, with the vector number
+smuggled through the BIOS data area. The saved words at `5ab:02ef` are its
+source, which is why they looked like chain targets.
+
+We never ran it because `setTicks()` rewrote all four bytes of `0040:006C` from
+an absolute counter on every slice, so the planted `1` was gone before the read
+-- replaced by a count that was still 0. `int 00h`, no restore, and the stall
+five stages downstream. Fixed in 81e0f54e by advancing that counter by the
+elapsed delta the way a real BIOS ISR does, instead of recomputing it; a slice
+spanning no whole tick now leaves it alone. The lesson is the general one: a
+BIOS data area field is memory the guest may write, and a host that keeps its
+own copy authoritative will eat those writes silently.
+
+Two things were ruled out along the way and are worth not re-testing: the
 trap-flag path (`stepping` is never armed -- TF is not set at any slice boundary
 in the whole run, so the INT 1 trace-decryptor that dos-loop.js documents for
-this program never fires here), and stale compiled code (`--no-cache` is
-identical). The next measurement is what layer 1's INT 21h handler at `5ab:0191`
-was supposed to still be at the moment the demo calls it.
+this program never fires here), and stale compiled code (`--no-cache` identical).
+
+**JULTRO now runs.** Under the sweep's own flags it clears the protector, unpacks,
+and puts up a `[ gusplay by cascada ]` GUS I/O port menu, which the auto-key
+menu reader answers; behind it is mode 13h unchained, **59825 non-black pixels of
+64000**, 246 DAC entries, `jultro.mod` open and playing. The picture is a
+Christmas card -- "hyvvee jouluu", a postmark and a tree.
+
+```
+$ node tools/toyvm/run-dos.js JULTRO.EXE --seconds=15 --auto-key --png=OUT --no-close
+```
 
 ### BLIQ's neighbours in the blank bucket
 
