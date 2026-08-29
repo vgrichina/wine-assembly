@@ -636,3 +636,48 @@ dispatches to 3.5M. It still ends at `failed to load MSE`, now from further in
 `12ed:2b33`. What is left is DMA/IRQ *timing*: our completion IRQ arrives on
 the loop's periodic cadence rather than at the rate the time constant implies,
 and it is not established that this is what MIDAS is measuring.
+
+**It was, twice over, and BLAND now runs** (fbb458e8). `--trace-io` — added in
+the same commit, and the flag to reach for on any "the driver does not find the
+card" — printed the whole 8237 conversation: MIDAS walks DMA channels 0, 1 and
+3, programming mask/mode/address/count/page for each, and never reads a single
+port back. So the probe is not measuring the DMA controller at all. The code at
+`12ee:2669` says what it is measuring:
+
+```
+12ee:26b2  mov al, 0x14 ; out dx, al   ; single-cycle transfer, one byte
+12ee:26c5  xor cx, cx                  ; 65536 rounds of
+12ee:26c7  cs: cmp byte [0x243c], 0x1  ;   "has my IRQ handler run yet"
+12ee:2707  loop 0x55a7
+12ee:2709  call 0x56b0                 ; no -> reset the DSP, try the next channel
+12ee:271c  cmp al, 0x4 ; jnz ...       ; ran out of channels -> [0x37e] = FFh
+```
+
+Two bugs, both about *when* the interrupt arrives:
+
+1. **An interrupt armed by a port write waited for the next slice.** Interrupts
+   are only injected between slices, where the guest `cs:ip` is a real
+   instruction boundary — and that spin is ~1.1M dispatches, which fits inside
+   one 2M-dispatch slice with room to spare. The IRQ landed one handback *after*
+   the timeout every time, visible in `--trace-io` as the `in 22e` that follows
+   the `out 226` reset rather than preceding it. `Machine.endSlice` now ends the
+   current slice when a port write arms an interrupt.
+2. **Block-done interrupts were paced at a fixed dispatch interval.** A driver
+   that mixes a whole buffer inside its handler then gets asked for half a
+   second of audio every ten milliseconds of guest time: BLAND found the card
+   and spent 300M dispatches inside MIDAS's mixer, its own code never reached
+   and the screen still in text mode. The card decides this rate, not us, so
+   `40h`/`41h` now set the sample rate, the transfer commands record the length,
+   and `sbInterval()` converts the block's duration into dispatches against the
+   same clock the timer uses.
+
+**BLAND is a textmode intro** (its own .NFO: "It uses the 80x25 and 80x50 text
+modes for all effects"), so mode 3h is the finish line, not a symptom. It now
+loads `sb1x.mse`, `warmchip.gdm` and `bland.dat`, turns the speaker on and runs
+its starfield and credits.
+
+The pacing change is a general one and was A/B'd over eight demos at fixed work:
+ATTIC, brainbug, COMPCODE, IHANMUU, DHADREN and BLIQ render byte-identical
+frames — ATTIC on 25 DSP commands instead of 412 — BLACK gets *further* (it
+reaches unchained 320x400 and its own sound init), and BTW differs only in the
+way any timing change moves an animation.
