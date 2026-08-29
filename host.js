@@ -1425,14 +1425,9 @@ class WineAssembly {
         const addFile = (rawPath) => {
           let vfsPath = String(rawPath).toLowerCase().replace(/\//g, '\\');
           if (!/^[a-z]:/.test(vfsPath)) vfsPath = 'c:\\' + vfsPath.replace(/^\\+/, '');
-          // Also register every parent directory so GetFileAttributes(dir) returns FILE_ATTRIBUTE_DIRECTORY.
-          let p = vfsPath;
-          while (true) {
-            const idx = p.lastIndexOf('\\');
-            if (idx <= 2) break;
-            p = p.slice(0, idx);
-            vfs.dirs.add(p);
-          }
+          // Also register the drive root and every parent directory so CD
+          // scans can chdir to D:\ and GetFileAttributes(dir) sees directories.
+          vfs.ensureParentDirs(vfsPath);
           vfs.files.set(vfsPath, { data, attrs: 0x20, decodedImage });
         };
         if (explicitPaths && explicitPaths.length) {

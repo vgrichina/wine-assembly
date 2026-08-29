@@ -2540,12 +2540,13 @@
     (local.set $ptr (i32.add (local.get $dib_wa) (i32.mul (local.get $ty) (local.get $pitch))))
     (if (i32.eq (local.get $bpp) (i32.const 16)) (then
       (local.set $px (i32.load16_u (i32.add (local.get $ptr) (i32.mul (local.get $tx) (i32.const 2)))))
-      (return
+      (local.set $c (i32.or (i32.const 0xff000000)
         (i32.or
           (i32.or
             (i32.shl (i32.shl (i32.and (i32.shr_u (local.get $px) (i32.const 11)) (i32.const 0x1f)) (i32.const 3)) (i32.const 16))
             (i32.shl (i32.shl (i32.and (i32.shr_u (local.get $px) (i32.const 5)) (i32.const 0x3f)) (i32.const 2)) (i32.const 8)))
-          (i32.shl (i32.and (local.get $px) (i32.const 0x1f)) (i32.const 3))))))
+          (i32.shl (i32.and (local.get $px) (i32.const 0x1f)) (i32.const 3)))))
+      (return (local.get $c))))
     (if (i32.eq (local.get $bpp) (i32.const 32)) (then
       (return (i32.and
         (i32.load (i32.add (local.get $ptr) (i32.mul (local.get $tx) (i32.const 4))))
@@ -2569,27 +2570,35 @@
   ;; by an L/TL vertex). Keep the interpolation in packed 0xAARRGGBB form so
   ;; the scan converter only carries one additional value per edge.
   (func $d3dim_color_lerp (param $a i32) (param $b i32) (param $t f32) (result i32)
-    (local $ar i32) (local $ag i32) (local $ab i32)
-    (local $br i32) (local $bg i32) (local $bb i32)
-    (local $r i32) (local $g i32) (local $bl i32)
+    (local $aa i32) (local $ar i32) (local $ag i32) (local $ab i32)
+    (local $ba i32) (local $br i32) (local $bg i32) (local $bb i32)
+    (local $alpha i32) (local $r i32) (local $g i32) (local $bl i32)
+    (local.set $aa (i32.shr_u (local.get $a) (i32.const 24)))
     (local.set $ar (i32.and (i32.shr_u (local.get $a) (i32.const 16)) (i32.const 0xff)))
     (local.set $ag (i32.and (i32.shr_u (local.get $a) (i32.const 8)) (i32.const 0xff)))
     (local.set $ab (i32.and (local.get $a) (i32.const 0xff)))
+    (local.set $ba (i32.shr_u (local.get $b) (i32.const 24)))
     (local.set $br (i32.and (i32.shr_u (local.get $b) (i32.const 16)) (i32.const 0xff)))
     (local.set $bg (i32.and (i32.shr_u (local.get $b) (i32.const 8)) (i32.const 0xff)))
     (local.set $bb (i32.and (local.get $b) (i32.const 0xff)))
+    (local.set $alpha (i32.trunc_sat_f32_u (f32.add (f32.convert_i32_u (local.get $aa))
+      (f32.mul (f32.convert_i32_s (i32.sub (local.get $ba) (local.get $aa))) (local.get $t)))))
     (local.set $r (i32.trunc_sat_f32_u (f32.add (f32.convert_i32_u (local.get $ar))
       (f32.mul (f32.convert_i32_s (i32.sub (local.get $br) (local.get $ar))) (local.get $t)))))
     (local.set $g (i32.trunc_sat_f32_u (f32.add (f32.convert_i32_u (local.get $ag))
       (f32.mul (f32.convert_i32_s (i32.sub (local.get $bg) (local.get $ag))) (local.get $t)))))
     (local.set $bl (i32.trunc_sat_f32_u (f32.add (f32.convert_i32_u (local.get $ab))
       (f32.mul (f32.convert_i32_s (i32.sub (local.get $bb) (local.get $ab))) (local.get $t)))))
-    (i32.or (i32.const 0xff000000)
+    (i32.or (i32.shl (local.get $alpha) (i32.const 24))
       (i32.or (i32.shl (local.get $r) (i32.const 16))
         (i32.or (i32.shl (local.get $g) (i32.const 8)) (local.get $bl)))))
 
   (func $d3dim_modulate_rgb (param $tex i32) (param $diffuse i32) (result i32)
-    (local $r i32) (local $g i32) (local $b i32)
+    (local $alpha i32) (local $r i32) (local $g i32) (local $b i32)
+    (local.set $alpha (i32.div_u
+      (i32.mul (i32.shr_u (local.get $tex) (i32.const 24))
+               (i32.shr_u (local.get $diffuse) (i32.const 24)))
+      (i32.const 255)))
     (local.set $r (i32.div_u
       (i32.mul (i32.and (i32.shr_u (local.get $tex) (i32.const 16)) (i32.const 0xff))
                (i32.and (i32.shr_u (local.get $diffuse) (i32.const 16)) (i32.const 0xff)))
@@ -2602,11 +2611,69 @@
       (i32.mul (i32.and (local.get $tex) (i32.const 0xff))
                (i32.and (local.get $diffuse) (i32.const 0xff)))
       (i32.const 255)))
-    (i32.or (i32.shl (local.get $r) (i32.const 16))
-      (i32.or (i32.shl (local.get $g) (i32.const 8)) (local.get $b))))
+    (i32.or (i32.shl (local.get $alpha) (i32.const 24))
+      (i32.or (i32.shl (local.get $r) (i32.const 16))
+        (i32.or (i32.shl (local.get $g) (i32.const 8)) (local.get $b)))))
+
+  ;; One fixed-function framebuffer blend channel. D3DBLEND values used by
+  ;; MW3 are ZERO/ONE/SRCCOLOR and SRCALPHA/INVSRCALPHA; the remaining legacy
+  ;; color factors are cheap to cover here and keep the helper generally sane.
+  (func $d3dim_blend_channel
+    (param $src i32) (param $dst i32) (param $alpha i32)
+    (param $src_blend i32) (param $dst_blend i32) (result i32)
+    (local $sf i32) (local $df i32) (local $out i32)
+    (local.set $sf (i32.const 255))
+    (if (i32.eq (local.get $src_blend) (i32.const 1)) (then (local.set $sf (i32.const 0))))
+    (if (i32.eq (local.get $src_blend) (i32.const 3)) (then (local.set $sf (local.get $src))))
+    (if (i32.eq (local.get $src_blend) (i32.const 4)) (then (local.set $sf (i32.sub (i32.const 255) (local.get $src)))))
+    (if (i32.eq (local.get $src_blend) (i32.const 5)) (then (local.set $sf (local.get $alpha))))
+    (if (i32.eq (local.get $src_blend) (i32.const 6)) (then (local.set $sf (i32.sub (i32.const 255) (local.get $alpha)))))
+    (if (i32.eq (local.get $src_blend) (i32.const 8)) (then (local.set $sf (i32.const 0))))
+    (if (i32.eq (local.get $src_blend) (i32.const 9)) (then (local.set $sf (local.get $dst))))
+    (if (i32.eq (local.get $src_blend) (i32.const 10)) (then (local.set $sf (i32.sub (i32.const 255) (local.get $dst)))))
+    (if (i32.eq (local.get $src_blend) (i32.const 11)) (then (local.set $sf (i32.const 0))))
+    (local.set $df (i32.const 255))
+    (if (i32.eq (local.get $dst_blend) (i32.const 1)) (then (local.set $df (i32.const 0))))
+    (if (i32.eq (local.get $dst_blend) (i32.const 3)) (then (local.set $df (local.get $src))))
+    (if (i32.eq (local.get $dst_blend) (i32.const 4)) (then (local.set $df (i32.sub (i32.const 255) (local.get $src)))))
+    (if (i32.eq (local.get $dst_blend) (i32.const 5)) (then (local.set $df (local.get $alpha))))
+    (if (i32.eq (local.get $dst_blend) (i32.const 6)) (then (local.set $df (i32.sub (i32.const 255) (local.get $alpha)))))
+    (if (i32.eq (local.get $dst_blend) (i32.const 8)) (then (local.set $df (i32.const 0))))
+    (if (i32.eq (local.get $dst_blend) (i32.const 9)) (then (local.set $df (local.get $dst))))
+    (if (i32.eq (local.get $dst_blend) (i32.const 10)) (then (local.set $df (i32.sub (i32.const 255) (local.get $dst)))))
+    (if (i32.eq (local.get $dst_blend) (i32.const 11)) (then (local.set $df (i32.const 0))))
+    (local.set $out (i32.div_u
+      (i32.add (i32.add (i32.mul (local.get $src) (local.get $sf))
+                         (i32.mul (local.get $dst) (local.get $df)))
+               (i32.const 127))
+      (i32.const 255)))
+    (if (i32.gt_u (local.get $out) (i32.const 255))
+      (then (return (i32.const 255))))
+    (local.get $out))
+
+  (func $d3dim_blend_rgb
+    (param $src i32) (param $dst i32) (param $src_blend i32) (param $dst_blend i32)
+    (result i32)
+    (local $alpha i32)
+    (local.set $alpha (i32.shr_u (local.get $src) (i32.const 24)))
+    (i32.or
+      (i32.shl (call $d3dim_blend_channel
+        (i32.and (i32.shr_u (local.get $src) (i32.const 16)) (i32.const 255))
+        (i32.and (i32.shr_u (local.get $dst) (i32.const 16)) (i32.const 255))
+        (local.get $alpha) (local.get $src_blend) (local.get $dst_blend)) (i32.const 16))
+      (i32.or
+        (i32.shl (call $d3dim_blend_channel
+          (i32.and (i32.shr_u (local.get $src) (i32.const 8)) (i32.const 255))
+          (i32.and (i32.shr_u (local.get $dst) (i32.const 8)) (i32.const 255))
+          (local.get $alpha) (local.get $src_blend) (local.get $dst_blend)) (i32.const 8))
+        (call $d3dim_blend_channel
+          (i32.and (local.get $src) (i32.const 255))
+          (i32.and (local.get $dst) (i32.const 255))
+          (local.get $alpha) (local.get $src_blend) (local.get $dst_blend)))))
 
   (func $viewport_draw_textured_span
     (param $rt_entry i32) (param $tex_entry i32)
+    (param $blend i32) (param $src_blend i32) (param $dst_blend i32)
     (param $y i32)
     (param $x0 i32) (param $u0 f32) (param $v0 f32) (param $c0 i32)
     (param $x1 i32) (param $u1 f32) (param $v1 f32) (param $c1 i32)
@@ -2614,7 +2681,7 @@
     (local $sw i32) (local $sh i32) (local $bpp i32) (local $pitch i32) (local $dib_wa i32)
     (local $tx i32) (local $xs i32) (local $xe i32) (local $x i32)
     (local $tu f32) (local $tv f32) (local $den f32) (local $t f32)
-    (local $color i32) (local $diffuse i32) (local $px16 i32) (local $row_wa i32) (local $ptr i32)
+    (local $color i32) (local $diffuse i32) (local $dst i32) (local $px16 i32) (local $row_wa i32) (local $ptr i32)
     (local $zbuf_wa i32) (local $zptr i32) (local $draw i32)
     (local.set $sw (i32.and (i32.load (i32.add (local.get $rt_entry) (i32.const 12))) (i32.const 0xFFFF)))
     (local.set $sh (i32.shr_u (i32.load (i32.add (local.get $rt_entry) (i32.const 12))) (i32.const 16)))
@@ -2668,6 +2735,20 @@
         (local.set $color (call $d3dim_modulate_rgb
           (call $d3dim_texture_sample_rgb (local.get $tex_entry) (local.get $tu) (local.get $tv))
           (local.get $diffuse)))
+        (if (local.get $blend) (then
+          (local.set $ptr (i32.add (local.get $row_wa)
+            (i32.mul (local.get $x) (i32.div_u (local.get $bpp) (i32.const 8)))))
+          (if (i32.eq (local.get $bpp) (i32.const 32))
+            (then (local.set $dst (i32.load (local.get $ptr))))
+            (else
+              (local.set $px16 (i32.load16_u (local.get $ptr)))
+              (local.set $dst (i32.or
+                (i32.or
+                  (i32.shl (i32.shl (i32.and (i32.shr_u (local.get $px16) (i32.const 11)) (i32.const 31)) (i32.const 3)) (i32.const 16))
+                  (i32.shl (i32.shl (i32.and (i32.shr_u (local.get $px16) (i32.const 5)) (i32.const 63)) (i32.const 2)) (i32.const 8)))
+                (i32.shl (i32.and (local.get $px16) (i32.const 31)) (i32.const 3))))))
+          (local.set $color (call $d3dim_blend_rgb
+            (local.get $color) (local.get $dst) (local.get $src_blend) (local.get $dst_blend)))))
         (if (i32.eq (local.get $bpp) (i32.const 32)) (then
           (i32.store (i32.add (local.get $row_wa) (i32.mul (local.get $x) (i32.const 4))) (local.get $color))))
         (if (i32.eq (local.get $bpp) (i32.const 16)) (then
@@ -2951,6 +3032,7 @@
 
   (func $rasterize_triangle_textured
     (param $rt_entry i32) (param $tex_entry i32)
+    (param $blend i32) (param $src_blend i32) (param $dst_blend i32)
     (param $x0 i32) (param $y0 i32) (param $u0 f32) (param $v0 f32) (param $c0 i32)
     (param $x1 i32) (param $y1 i32) (param $u1 f32) (param $v1 f32) (param $c1 i32)
     (param $x2 i32) (param $y2 i32) (param $u2 f32) (param $v2 f32) (param $c2 i32)
@@ -2987,12 +3069,14 @@
     (local.set $dy_lower (i32.sub (local.get $y2) (local.get $y1)))
     (if (i32.le_s (local.get $dy_tot) (i32.const 0)) (then
       (call $viewport_draw_textured_span
-        (local.get $rt_entry) (local.get $tex_entry) (local.get $y0)
+        (local.get $rt_entry) (local.get $tex_entry)
+        (local.get $blend) (local.get $src_blend) (local.get $dst_blend) (local.get $y0)
         (local.get $x0) (local.get $u0) (local.get $v0) (local.get $c0)
         (local.get $x1) (local.get $u1) (local.get $v1) (local.get $c1)
         (local.get $zbuf_guest) (local.get $zval))
       (call $viewport_draw_textured_span
-        (local.get $rt_entry) (local.get $tex_entry) (local.get $y0)
+        (local.get $rt_entry) (local.get $tex_entry)
+        (local.get $blend) (local.get $src_blend) (local.get $dst_blend) (local.get $y0)
         (local.get $x1) (local.get $u1) (local.get $v1) (local.get $c1)
         (local.get $x2) (local.get $u2) (local.get $v2) (local.get $c2)
         (local.get $zbuf_guest) (local.get $zval))
@@ -3045,7 +3129,8 @@
               (local.set $va (local.get $v1))
               (local.set $ca (local.get $c1))))))
       (call $viewport_draw_textured_span
-        (local.get $rt_entry) (local.get $tex_entry) (local.get $y)
+        (local.get $rt_entry) (local.get $tex_entry)
+        (local.get $blend) (local.get $src_blend) (local.get $dst_blend) (local.get $y)
         (local.get $xa) (local.get $ua) (local.get $va) (local.get $ca)
         (local.get $xb) (local.get $ub) (local.get $vb) (local.get $cb)
         (local.get $zbuf_guest) (local.get $zval))
@@ -3659,13 +3744,20 @@
     (param $this i32) (param $rt i32) (param $tex i32) (param $use_z i32)
     (param $v0 i32) (param $v1 i32) (param $v2 i32)
     (local $state i32) (local $zbuf i32) (local $zval f32)
+    (local $blend i32) (local $src_blend i32) (local $dst_blend i32)
     (if (i32.eqz (local.get $tex)) (then
       (call $d3dim_draw_tl_triangle
         (local.get $this) (local.get $rt) (local.get $use_z)
         (local.get $v0) (local.get $v1) (local.get $v2))
       (return)))
+    (local.set $state (call $d3ddev_state (local.get $this)))
+    (if (local.get $state) (then
+      (local.set $blend (call $gl32 (i32.add (local.get $state) (i32.const 364))))
+      (local.set $src_blend (call $gl32 (i32.add (local.get $state) (i32.const 332))))
+      (local.set $dst_blend (call $gl32 (i32.add (local.get $state) (i32.const 336))))))
+    (if (i32.eqz (local.get $src_blend)) (then (local.set $src_blend (i32.const 2))))
+    (if (i32.eqz (local.get $dst_blend)) (then (local.set $dst_blend (i32.const 1))))
     (if (local.get $use_z) (then
-      (local.set $state (call $d3ddev_state (local.get $this)))
       (if (local.get $state) (then
         (if (call $gl32 (i32.add (local.get $state) (i32.const 284))) (then
           (local.set $zbuf
@@ -3680,6 +3772,7 @@
         (f32.const 3.0)))
     (call $rasterize_triangle_textured
       (local.get $rt) (local.get $tex)
+      (local.get $blend) (local.get $src_blend) (local.get $dst_blend)
       (call $d3dim_coord_i (f32.load (local.get $v0)))
       (call $d3dim_coord_i (f32.load (i32.add (local.get $v0) (i32.const 4))))
       (f32.load (i32.add (local.get $v0) (i32.const 24)))

@@ -48,6 +48,9 @@ const extraWat = String.raw`
       (i32.const 0) (i32.const 0) (i32.const 0))
     (global.get $eax))
 
+  (func (export "test_diptex_set_rs") (param $device i32) (param $state i32) (param $value i32)
+    (call $d3dim_set_render_state (local.get $device) (local.get $state) (local.get $value)))
+
   (func (export "test_diptex_draw")
       (param $device i32) (param $vertices i32) (param $indices i32)
     ;; Direct handler calls still read the tail arguments from the guest stack.
@@ -147,7 +150,32 @@ function writeFloat(wat, addr, value) {
       || textured.has(0x000f) || textured.has(0x7be0),
     `indexed triangle ignored the bound texture (pixels: ${[...new Set(pixels)].map(p => p.toString(16))})`);
 
-  console.log(`PASS D3DIM Texture2 handle binds indexed triangles with diffuse lighting (${textured.size} modulated colours)`);
+  // MW3 uses ZERO/SRCCOLOR for fixed-function light-map passes. Ignoring the
+  // blend state paints the source texture opaquely; the requested operation
+  // instead keeps the destination and modulates it by the sampled texture.
+  for (let y = 0; y < 8; y++) {
+    for (let x = 0; x < 8; x++) mem.setUint16(rtDib + y * 16 + x * 2, 0x8410, true);
+  }
+  for (let i = 0; i < 3; i++) wat.guest_write32(vertices + i * 32 + 16, 0xffffffff);
+  wat.test_diptex_set_rs(device, 27, 1); // ALPHABLENDENABLE
+  wat.test_diptex_set_rs(device, 19, 1); // SRCBLEND=ZERO
+  wat.test_diptex_set_rs(device, 20, 3); // DESTBLEND=SRCCOLOR
+  wat.test_diptex_draw(device, vertices, indices);
+  assert.strictEqual(mem.getUint16(rtDib, true), 0x7800,
+    'ZERO/SRCCOLOR did not modulate the existing render-target pixel');
+
+  // The same path must retain TL vertex alpha for MW3's fade/effect passes.
+  for (let y = 0; y < 8; y++) {
+    for (let x = 0; x < 8; x++) mem.setUint16(rtDib + y * 16 + x * 2, 0x001f, true);
+  }
+  for (let i = 0; i < 3; i++) wat.guest_write32(vertices + i * 32 + 16, 0x80ffffff);
+  wat.test_diptex_set_rs(device, 19, 5); // SRCBLEND=SRCALPHA
+  wat.test_diptex_set_rs(device, 20, 6); // DESTBLEND=INVSRCALPHA
+  wat.test_diptex_draw(device, vertices, indices);
+  assert.strictEqual(mem.getUint16(rtDib, true), 0x780f,
+    'SRCALPHA/INVSRCALPHA discarded interpolated vertex alpha');
+
+  console.log(`PASS D3DIM Texture2 indexed triangles use diffuse lighting and framebuffer blend state (${textured.size} texture colours)`);
 })().catch(error => {
   console.error(error.stack || error.message);
   process.exit(1);

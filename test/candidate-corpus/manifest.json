@@ -834,6 +834,52 @@
           "type": "archive"
         }
       ],
+      "postExtract": [
+        {
+          "type": "replaceText",
+          "file": "System/DeusEx.ini",
+          "replacements": [
+            {
+              "from": "FirstRun=0",
+              "to": "FirstRun=1002"
+            },
+            {
+              "from": "GameRenderDevice=GlideDrv.GlideRenderDevice",
+              "to": "GameRenderDevice=SoftDrv.SoftwareRenderDevice"
+            },
+            {
+              "from": "RenderDevice=GlideDrv.GlideRenderDevice",
+              "to": "RenderDevice=SoftDrv.SoftwareRenderDevice"
+            },
+            {
+              "from": "StartupFullscreen=True",
+              "to": "StartupFullscreen=False"
+            }
+          ]
+        },
+        {
+          "type": "replaceText",
+          "file": "System/Default.ini",
+          "replacements": [
+            {
+              "from": "FirstRun=0",
+              "to": "FirstRun=1002"
+            },
+            {
+              "from": "GameRenderDevice=GlideDrv.GlideRenderDevice",
+              "to": "GameRenderDevice=SoftDrv.SoftwareRenderDevice"
+            },
+            {
+              "from": "RenderDevice=GlideDrv.GlideRenderDevice",
+              "to": "RenderDevice=SoftDrv.SoftwareRenderDevice"
+            },
+            {
+              "from": "StartupFullscreen=True",
+              "to": "StartupFullscreen=False"
+            }
+          ]
+        }
+      ],
       "cli": {
         "maxBatches": 575,
         "batchSize": 200000,
@@ -869,6 +915,31 @@
           "type": "copyTree",
           "from": "icewind_dale_eng_demo/CD2/Data",
           "into": "installed-extracted/Recommended_compressed/Data"
+        },
+        {
+          "type": "prepareInfinityFullInstall",
+          "key": "installed-extracted/Recommended_compressed/CHITIN.KEY",
+          "data": "installed-extracted/Recommended_compressed/Data",
+          "into": "installed-extracted/Recommended_compressed/Full/Data",
+          "outputKey": "installed-extracted/Recommended_compressed/CHITIN-full.KEY"
+        },
+        {
+          "type": "replaceText",
+          "file": "installed-extracted/Recommended_compressed/icewind.ini",
+          "replacements": [
+            {
+              "from": "HD0:=.\\",
+              "to": "HD0:=C:\\"
+            },
+            {
+              "from": "CD1:=.\\",
+              "to": "CD1:=D:\\"
+            },
+            {
+              "from": "CD2:=.\\",
+              "to": "CD2:=D:\\"
+            }
+          ]
         }
       ],
       "cli": {

@@ -5765,8 +5765,59 @@
     (global.set $eax (i32.const 0)) (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   (func $handle_IDirectPlayLobby2_CreateCompoundAddress (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg4) (then (call $gs32 (local.get $arg4) (i32.const 0))))
-    (global.set $eax (i32.const 0))
+    (local $i i32) (local $element i32) (local $data_size i32)
+    (local $required i32) (local $out i32)
+    ;; A compound address is a packed sequence of { GUID type, DWORD size,
+    ;; BYTE data[size] } records built from 24-byte
+    ;; DPCOMPOUNDADDRESSELEMENT inputs.  Callers use the standard two-call
+    ;; pattern: a null/undersized output buffer must publish the required byte
+    ;; count and return DPERR_BUFFERTOOSMALL.  Infinity Engine relies on that
+    ;; result before allocating the buffer used by InitializeConnection.
+    (block $size_done (loop $size_loop
+      (br_if $size_done (i32.ge_u (local.get $i) (local.get $arg2)))
+      (local.set $element
+        (i32.add (local.get $arg1) (i32.mul (local.get $i) (i32.const 24))))
+      (local.set $data_size
+        (call $gl32 (i32.add (local.get $element) (i32.const 16))))
+      (local.set $required
+        (i32.add (local.get $required)
+          (i32.add (i32.const 20) (local.get $data_size))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $size_loop)))
+    (if (i32.or
+          (i32.eqz (local.get $arg3))
+          (i32.lt_u (call $gl32 (local.get $arg4)) (local.get $required)))
+      (then
+        (call $gs32 (local.get $arg4) (local.get $required))
+        (global.set $eax (i32.const 0x8877001E))) ;; DPERR_BUFFERTOOSMALL
+      (else
+        (local.set $i (i32.const 0))
+        (local.set $out (local.get $arg3))
+        (block $copy_done (loop $copy_loop
+          (br_if $copy_done (i32.ge_u (local.get $i) (local.get $arg2)))
+          (local.set $element
+            (i32.add (local.get $arg1) (i32.mul (local.get $i) (i32.const 24))))
+          (local.set $data_size
+            (call $gl32 (i32.add (local.get $element) (i32.const 16))))
+          (memory.copy
+            (call $g2w (local.get $out))
+            (call $g2w (local.get $element))
+            (i32.const 16))
+          (call $gs32 (i32.add (local.get $out) (i32.const 16)) (local.get $data_size))
+          (if (i32.and
+                (i32.ne (local.get $data_size) (i32.const 0))
+                (i32.ne (call $gl32 (i32.add (local.get $element) (i32.const 20))) (i32.const 0)))
+            (then
+              (memory.copy
+                (call $g2w (i32.add (local.get $out) (i32.const 20)))
+                (call $g2w (call $gl32 (i32.add (local.get $element) (i32.const 20))))
+                (local.get $data_size))))
+          (local.set $out
+            (i32.add (local.get $out) (i32.add (i32.const 20) (local.get $data_size))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $copy_loop)))
+        (call $gs32 (local.get $arg4) (local.get $required))
+        (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
   ;; Direct3DRMCreate(lplpD3DRM) → HRESULT — 1 arg stdcall

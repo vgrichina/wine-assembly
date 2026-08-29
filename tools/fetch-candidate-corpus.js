@@ -6,6 +6,7 @@ const http = require('http');
 const https = require('https');
 const os = require('os');
 const path = require('path');
+const zlib = require('zlib');
 const { spawnSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
@@ -14,6 +15,7 @@ const manifest = JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf8'));
 const ASSET_ROOT = path.resolve(ROOT, manifest.assetRoot);
 const argv = process.argv.slice(2);
 const force = argv.includes('--force');
+const prepare = argv.includes('--prepare');
 const idArg = argv.find(arg => arg.startsWith('--id='));
 const selectedIds = idArg
   ? new Set(idArg.slice('--id='.length).split(',').map(value => value.trim()).filter(Boolean))
@@ -21,7 +23,7 @@ const selectedIds = idArg
 
 function usage(message) {
   if (message) console.error(message);
-  console.error('usage: node tools/fetch-candidate-corpus.js [--id=a,b] [--force]');
+  console.error('usage: node tools/fetch-candidate-corpus.js [--id=a,b] [--force|--prepare]');
   process.exit(2);
 }
 
@@ -151,6 +153,119 @@ function runPostExtract(candidate, destination) {
           force: true,
         });
       }
+    } else if (step.type === 'replaceText') {
+      assertSafeRelative(step.file, `${candidate.id}.postExtract[${index}].file`);
+      if (!Array.isArray(step.replacements) || !step.replacements.length) {
+        throw new Error(`${candidate.id}.postExtract[${index}].replacements is required`);
+      }
+      const file = path.join(destination, step.file);
+      let text = fs.readFileSync(file, 'utf8');
+      for (const [replacementIndex, replacement] of step.replacements.entries()) {
+        const label = `${candidate.id}.postExtract[${index}].replacements[${replacementIndex}]`;
+        if (!replacement || typeof replacement.from !== 'string' ||
+            typeof replacement.to !== 'string' || !replacement.from) {
+          throw new Error(`${label} needs non-empty from and string to values`);
+        }
+        if (!text.includes(replacement.from)) {
+          // Let a previously prepared local tree remain idempotent while still
+          // rejecting silently changed upstream installer contents.
+          if (text.includes(replacement.to)) continue;
+          throw new Error(`${label} did not match ${step.file}`);
+        }
+        text = text.split(replacement.from).join(replacement.to);
+      }
+      fs.writeFileSync(file, text);
+    } else if (step.type === 'prepareInfinityFullInstall') {
+      for (const field of ['key', 'data', 'into', 'outputKey']) {
+        assertSafeRelative(step[field], `${candidate.id}.postExtract[${index}].${field}`);
+      }
+      const dataDir = path.join(destination, step.data);
+      const intoDir = path.join(destination, step.into);
+      fs.mkdirSync(intoDir, { recursive: true });
+      const installedBifs = new Set();
+      const dataEntries = fs.readdirSync(dataDir);
+      const dataNames = new Set(dataEntries.map(name => name.toLowerCase()));
+      for (const entry of dataEntries) {
+        if (!/\.cbf$/i.test(entry)) continue;
+        const source = fs.readFileSync(path.join(dataDir, entry));
+        if (source.subarray(0, 8).toString('ascii') !== 'BIF V1.0' || source.length < 24) {
+          throw new Error(`${step.data}/${entry} is not an Infinity compressed BIF`);
+        }
+        const nameLength = source.readUInt32LE(8);
+        const sizeOffset = 12 + nameLength;
+        if (nameLength < 2 || sizeOffset + 8 > source.length) {
+          throw new Error(`${step.data}/${entry} has an invalid compressed BIF header`);
+        }
+        const embeddedName = source.subarray(12, sizeOffset - 1).toString('ascii');
+        if (path.basename(embeddedName) !== embeddedName || !/\.bif$/i.test(embeddedName)) {
+          throw new Error(`${step.data}/${entry} has an unsafe embedded BIF name`);
+        }
+        const expectedSize = source.readUInt32LE(sizeOffset);
+        const compressedSize = source.readUInt32LE(sizeOffset + 4);
+        const compressedOffset = sizeOffset + 8;
+        if (compressedOffset + compressedSize !== source.length) {
+          throw new Error(`${step.data}/${entry} has an invalid compressed payload size`);
+        }
+        const output = zlib.inflateSync(source.subarray(compressedOffset));
+        if (output.length !== expectedSize || output.subarray(0, 8).toString('ascii') !== 'BIFFV1  ') {
+          throw new Error(`${step.data}/${entry} did not inflate to the expected BIFF payload`);
+        }
+        fs.writeFileSync(path.join(intoDir, embeddedName), output);
+        installedBifs.add(embeddedName.toLowerCase());
+      }
+
+      const key = fs.readFileSync(path.join(destination, step.key));
+      if (key.subarray(0, 8).toString('ascii') !== 'KEY V1  ' || key.length < 24) {
+        throw new Error(`${step.key} is not an Infinity KEY V1 file`);
+      }
+      const bifCount = key.readUInt32LE(8);
+      const resourceCount = key.readUInt32LE(12);
+      const bifOffset = key.readUInt32LE(16);
+      const resourceOffset = key.readUInt32LE(20);
+      const availableBifs = new Set(dataEntries
+        .filter(name => /\.bif$/i.test(name))
+        .map(name => name.toLowerCase()));
+      for (const name of installedBifs) availableBifs.add(name);
+      const bifAvailable = new Array(bifCount).fill(false);
+      let patched = 0;
+      for (let bif = 0; bif < bifCount; bif++) {
+        const entryOffset = bifOffset + bif * 12;
+        if (entryOffset + 12 > key.length) throw new Error(`${step.key} has a truncated BIF table`);
+        const nameOffset = key.readUInt32LE(entryOffset + 4);
+        const nameLength = key.readUInt16LE(entryOffset + 8);
+        if (nameOffset + nameLength > key.length) throw new Error(`${step.key} has a truncated BIF name`);
+        const name = key.subarray(nameOffset, nameOffset + nameLength)
+          .toString('ascii').replace(/\0+$/, '').replace(/\\/g, '/');
+        const base = path.basename(name).toLowerCase();
+        const location = key.readUInt16LE(entryOffset + 10);
+        if (location === 9 && dataNames.has(base)) installedBifs.add(base);
+        if (location === 9 && installedBifs.has(base)) {
+          key.writeUInt16LE(1, entryOffset + 10);
+          patched++;
+        }
+        bifAvailable[bif] = availableBifs.has(base);
+      }
+      if (patched !== installedBifs.size) {
+        throw new Error(`${step.key} patched ${patched}/${installedBifs.size} CD2 BIF locations`);
+      }
+      if (resourceOffset + resourceCount * 14 > key.length) {
+        throw new Error(`${step.key} has a truncated resource table`);
+      }
+      const resources = [];
+      for (let resource = 0; resource < resourceCount; resource++) {
+        const entryOffset = resourceOffset + resource * 14;
+        const locator = key.readUInt32LE(entryOffset + 10);
+        const bif = locator >>> 20;
+        if (bif < bifAvailable.length && bifAvailable[bif]) {
+          resources.push(key.subarray(entryOffset, entryOffset + 14));
+        }
+      }
+      const output = Buffer.concat([
+        key.subarray(0, resourceOffset),
+        ...resources,
+      ]);
+      output.writeUInt32LE(resources.length, 12);
+      fs.writeFileSync(path.join(destination, step.outputKey), output);
     } else {
       throw new Error(`unsupported postExtract type: ${step.type}`);
     }
@@ -170,6 +285,14 @@ async function fetchCandidate(candidate) {
     return { manual: 1 };
   }
   const provenanceFile = path.join(destination, '.candidate-source.json');
+  if (prepare) {
+    if (!fs.existsSync(destination)) {
+      throw new Error(`cannot prepare missing candidate fixture: ${path.relative(ROOT, destination)}`);
+    }
+    runPostExtract(candidate, destination);
+    console.log(`PREP   ${candidate.id}: ${path.relative(ROOT, destination)}`);
+    return { kept: 1 };
+  }
   if (fs.existsSync(provenanceFile) && !force) {
     console.log(`KEEP   ${candidate.id}: ${path.relative(ROOT, destination)}`);
     return { kept: 1 };

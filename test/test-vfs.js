@@ -55,6 +55,17 @@ test('exact drive-root lookup returns the existing root directory', () => {
   assert.strictEqual(r.entry.attrs, 0x10);
 });
 
+test('manifest parent registration makes a non-C drive enumerable', () => {
+  const vfs = makeVFS({ 'd:\\cd2\\data\\iwdcd.2': 1 });
+  vfs.ensureParentDirs('D:\\CD2\\Data\\IWDCD.2');
+  assert.strictEqual(vfs.setCurrentDirectory('D:\\'), true,
+    'the mounted drive root must be a real directory');
+  const root = vfs.findFirstFile('D:\\*.*');
+  assert(root.handle, 'the mounted drive root must be enumerable');
+  assert.strictEqual(root.entry.name, 'cd2');
+  assert.strictEqual(root.entry.attrs, 0x10);
+});
+
 test('basename fallback finds file by name on wrong drive', () => {
   const vfs = makeVFS({ 'c:\\demoopen.ddv': 100 });
   const r = vfs.findFirstFile('D:\\abe\\demoopen.ddv');
@@ -165,21 +176,63 @@ test('read-only drive permits reads and rejects every write path', () => {
     'making the drive writable restores normal creation');
 });
 
+test('chunked writes grow capacity geometrically but expose exact file size', () => {
+  const vfs = makeVFS({});
+  const handle = vfs.createFile('C:\\cache\\data\\area.bif', 0x40000000, 2);
+  assert(vfs.dirs.has('c:\\cache') && vfs.dirs.has('c:\\cache\\data'),
+    'creating a nested cache file registers every parent directory');
+  for (let chunk = 0; chunk < 4096; chunk++) {
+    const data = new Uint8Array(257).fill(chunk & 0xff);
+    assert.deepStrictEqual(vfs.writeFile(handle, data, data.length),
+      { ok: true, bytesWritten: 257 });
+  }
+  const entry = vfs.files.get('c:\\cache\\data\\area.bif');
+  assert.strictEqual(entry.data.length, 4096 * 257,
+    'logical length must not expose spare capacity');
+  assert(entry._capacityData.length >= entry.data.length);
+  assert(entry._capacityData.length < entry.data.length * 2,
+    'doubling keeps spare capacity bounded');
+  assert.strictEqual(vfs.getFileSize(handle), entry.data.length);
+  assert.strictEqual(entry.data[256], 0);
+  assert.strictEqual(entry.data[257], 1);
+
+  vfs.setFilePointer(handle, 100, 0);
+  assert(vfs.setEndOfFile(handle));
+  assert.strictEqual(entry.data.length, 100);
+  vfs.setFilePointer(handle, 200, 0);
+  assert(vfs.setEndOfFile(handle));
+  assert.strictEqual(entry.data.length, 200);
+  assert(entry.data.subarray(100).every(byte => byte === 0),
+    'extending a truncated file zero-fills the restored range');
+});
+
 // --- path resolution ---
 
 test('relative path resolves against CWD', () => {
   const vfs = new VirtualFS();
   assert.strictEqual(vfs._resolvePath('foo.txt'), 'c:\\foo.txt');
-  vfs.setCurrentDirectory('C:\\game');
+  vfs.dirs.add('c:\\game');
+  assert.strictEqual(vfs.setCurrentDirectory('C:\\game'), true);
   assert.strictEqual(vfs._resolvePath('data.dat'), 'c:\\game\\data.dat');
 });
 
 test('setCurrentDirectory normalizes trailing backslash', () => {
   const vfs = new VirtualFS();
-  vfs.setCurrentDirectory('C:\\game\\');
+  vfs.dirs.add('c:\\game');
+  assert.strictEqual(vfs.setCurrentDirectory('C:\\game\\'), true);
   assert.strictEqual(vfs.getCurrentDirectory(), 'c:\\game\\');
-  vfs.setCurrentDirectory('C:\\');
+  assert.strictEqual(vfs.setCurrentDirectory('C:\\'), true);
   assert.strictEqual(vfs.getCurrentDirectory(), 'c:\\');
+});
+
+test('setCurrentDirectory rejects files and missing alias paths without changing CWD', () => {
+  const vfs = makeVFS({ 'c:\\dialog.tlk': 16 });
+  assert.strictEqual(vfs.setCurrentDirectory('C:\\dialog.tlk'), false,
+    'an existing file is not a directory');
+  assert.strictEqual(vfs.setCurrentDirectory('hd0:\\dialog.tlk'), false,
+    'a failed application alias probe must not become the process directory');
+  assert.strictEqual(vfs.getCurrentDirectory(), 'C:\\');
+  assert.strictEqual(vfs.getFullPathName('.\\dialog.tlk'), 'C:\\dialog.tlk');
 });
 
 test('GetFullPathName rejects an empty filename instead of fabricating the drive', () => {

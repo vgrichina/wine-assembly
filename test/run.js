@@ -886,7 +886,10 @@ async function main() {
   //   B:dump-scrollbar:AXIS[:LABEL] — log a live scrollbar's screen strip rect and pos/page/range
   //   B:wait-dlg-control:CTRL_ID[:LIMIT] — delay following events until a visible dialog has CTRL_ID
   //   B:wait-focus-length:MIN_LENGTH[:LIMIT] — delay until focused text reaches MIN_LENGTH
+  //   B:wait-canvas-dark-pixels:MIN:MAX[:LIMIT] — delay until the repainted screen's near-black pixel count is in range
+  //   B:wait-vfs-file:LIMIT:PATH — delay until PATH exists in the guest VFS
   //   B:sleep-ms:MS — wait real wall-clock time before continuing scheduled actions
+  //   B:set-batch-size:BLOCKS — change the main guest block budget for later batches
   //   B:wait-go[:LIMIT] — hold later events until the parent sends {t:'go'} over IPC (LIMIT in batches; default none)
   //   B:call-func:ADDR[:A0:A1:A2:A3] — call a guest function through the WASM helper
   //   B:read-dword:ADDR[:LABEL] — log a guest dword value
@@ -1298,6 +1301,25 @@ async function main() {
         // B:pixel:X:Y[:LABEL] — repaint and log one canvas pixel.
         scheduledInput.push({ batch, action: 'pixel',
           x: parseInt(parts[2]), y: parseInt(parts[3]), label: parts[4] || '' });
+      } else if (kind === 'wait-canvas-dark-pixels') {
+        // Visual loading gates are host-load independent: later actions move
+        // with this event until the repainted frame actually reaches the range.
+        scheduledInput.push({
+          batch,
+          action: 'wait-canvas-dark-pixels',
+          min: Math.max(0, parseInt(parts[2]) || 0),
+          max: Math.max(0, parseInt(parts[3]) || 0),
+          limit: parseInt(parts[4]) || 2000,
+          startBatch: batch,
+        });
+      } else if (kind === 'wait-vfs-file') {
+        scheduledInput.push({
+          batch,
+          action: 'wait-vfs-file',
+          limit: parseInt(parts[2]) || 2000,
+          filename: parts.slice(3).join(':'),
+          startBatch: batch,
+        });
       } else if (kind === 'png-raw') {
         // B:png-raw:PATH — write the already-composited canvas without forcing repaint.
         scheduledInput.push({ batch, action: 'png-raw', path: parts.slice(2).join(':') });
@@ -1309,6 +1331,8 @@ async function main() {
         scheduledInput.push({ batch, action: 'stop' });
       } else if (kind === 'sleep-ms') {
         scheduledInput.push({ batch, action: 'sleep-ms', ms: parseInt(parts[2]) || 0 });
+      } else if (kind === 'set-batch-size') {
+        scheduledInput.push({ batch, action: 'set-batch-size', size: parseInt(parts[2]) || 1 });
       } else if (kind === 'canvas-resize') {
         // B:canvas-resize:WIDTH:HEIGHT — emulate browser backing-canvas resize.
         scheduledInput.push({ batch, action: 'canvas-resize', w: parseInt(parts[2]), h: parseInt(parts[3]) });
@@ -3483,13 +3507,7 @@ async function main() {
     const addFile = (rawPath, hostPath, size) => {
       let vfsPath = String(rawPath).toLowerCase().replace(/\//g, '\\');
       if (!/^[a-z]:/.test(vfsPath)) vfsPath = 'c:\\' + vfsPath.replace(/^\\+/, '');
-      let p = vfsPath;
-      while (true) {
-        const idx = p.lastIndexOf('\\');
-        if (idx <= 2) break;
-        p = p.slice(0, idx);
-        ctx.vfs.dirs.add(p);
-      }
+      ctx.vfs.ensureParentDirs(vfsPath);
       return ctx.vfs.setLazyFile(vfsPath, {
         attrs: 0x20,
         size,
@@ -6569,6 +6587,9 @@ async function main() {
       } else if (ev.action === 'sleep-ms') {
         if (ev.ms > 0) await new Promise(resolve => setTimeout(resolve, ev.ms));
         logs.push(`[input] sleep-ms ${ev.ms} at batch ${batch}`);
+      } else if (ev.action === 'set-batch-size') {
+        BATCH_SIZE = Math.max(1, ev.size | 0);
+        logs.push(`[input] set-batch-size ${BATCH_SIZE} at batch ${batch}`);
       } else if (ev.action === 'wave-in-feed') {
         const samples = new Float32Array(ev.frames);
         for (let i = 0; i < samples.length; i++) {
@@ -6666,6 +6687,32 @@ async function main() {
           }
           if (renderer.handleMouseUp) renderer.handleMouseUp(x1, y1, 1);
           logs.push(`[input] scroll-drag ${ev.axis} hwnd=0x${bar.hwnd.toString(16)} ${p.x},${p.y} -> ${x1},${y1} at batch ${batch}`);
+        }
+      } else if (ev.action === 'wait-vfs-file') {
+        const key = ctx.vfs._resolvePath(ev.filename);
+        const entry = ctx.vfs.files.get(key);
+        if (entry) {
+          logs.push(`[input] wait-vfs-file matched ${key} (${entry.data.length} bytes) at batch ${batch}`);
+        } else if (batch - (ev.startBatch || batch) < (ev.limit || 2000)) {
+          deferScheduledWait(ev, batch);
+        } else {
+          logs.push(`[input] wait-vfs-file TIMEOUT ${key} at batch ${batch}`);
+        }
+      } else if (ev.action === 'wait-canvas-dark-pixels' && renderer && renderer.canvas) {
+        if (typeof renderer.repaint === 'function') renderer.repaint();
+        const w = renderer.canvas.width | 0;
+        const h = renderer.canvas.height | 0;
+        const rgba = renderer.canvas.getContext('2d').getImageData(0, 0, w, h).data;
+        let dark = 0;
+        for (let i = 0; i < rgba.length; i += 4) {
+          if (rgba[i] <= 16 && rgba[i + 1] <= 16 && rgba[i + 2] <= 16) dark++;
+        }
+        if (dark >= ev.min && dark <= ev.max) {
+          logs.push(`[input] wait-canvas-dark-pixels matched ${dark} in ${ev.min}..${ev.max} at batch ${batch}`);
+        } else if (batch - (ev.startBatch || batch) < (ev.limit || 2000)) {
+          deferScheduledWait(ev, batch);
+        } else {
+          logs.push(`[input] wait-canvas-dark-pixels TIMEOUT ${dark} not in ${ev.min}..${ev.max} at batch ${batch}`);
         }
       } else if (ev.action === 'png' && renderer && renderer.canvas) {
         try {

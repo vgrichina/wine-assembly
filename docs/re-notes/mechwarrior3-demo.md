@@ -135,3 +135,40 @@ The map is also an interactive campaign screen: its circular `Start` marker is
 near the lower-left, and the separate debug popup can cover it. The popup now
 prints an actual aggregate status such as `Status: no blocked guest threads` and
 keeps yield 9 only as an explicitly labelled legend.
+
+## Deterministic gameplay capture and fixed-function blending (2026-08-28)
+
+`test/test-mw3-gameplay.js` drives the complete Instant Action route with
+relative mouse input, creates a pilot, crosses the operation map, deploys, and
+captures a 640x480 cockpit frame. It runs both the ordinary scheduler and the
+real guest-worker Threads path. The local demo executable is pinned by SHA-256,
+and a missing demo is reported as a skip rather than silently testing another
+binary.
+
+The catastrophic flat-frame repro measured only 135 exact colours, 89
+four-bit-per-channel colours, and five colours in the terrain sample. A restored
+frame measures about 2,522, 587, and 426 respectively, with separate minimums
+for the orange lit sky, dark textured cockpit, and readable green HUD. This
+makes the test reject a reachable-but-untextured game instead of treating any
+gameplay-shaped frame as success.
+
+The trace also showed textured draws using the legacy framebuffer blend state:
+`ZERO/SRCCOLOR` for modulation and `SRCALPHA/INVSRCALPHA` for fades. The
+software textured span now preserves interpolated vertex alpha, reads the
+destination pixel, and applies those fixed-function blend factors before
+writing RGB565. `test/test-d3dim-indexed-texture.js` pins the destination
+modulation case independently of the proprietary demo.
+
+Run the acceptance directly with:
+
+```sh
+node test/test-mw3-gameplay.js
+```
+
+The resulting CLI evidence is written to
+`build/mw3-gameplay/no-threads.png` and
+`build/mw3-gameplay/threads.png`. Both modes must produce the same measured
+textured/lit frame. Some saturated cyan/blue pixels remain in opaque legacy
+effect textures; descriptor colour-key and per-pixel depth experiments were
+byte-identical and were not retained. That residual raster fidelity issue is
+distinct from the former missing-scenery-texture failure guarded here.
