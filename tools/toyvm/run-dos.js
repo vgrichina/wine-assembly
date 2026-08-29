@@ -32,6 +32,7 @@ const { makeVm } = require('./vm');
 const { setCpuLevel } = require('./decode');
 const { Machine, loadExe, vgaGeometry, parseKeys, VGA_BASE } = require('./dos');
 const { DosSession } = require('./dos-loop');
+const { asking } = require('./demo-status');
 const {
   conCells, conText, screenSurface, nonBlack, frameScore, frameHash, rgbaFrame, rgbaConsole,
 } = require('./framebuffer');
@@ -208,8 +209,17 @@ async function runDos(o) {
   function keepBest() {
     const s = screenSurface(machine);
     const cells = s.text ? conCells(machine.con) : 0;
+    const text = s.text ? conText(machine.con) : '';
     const f = s.text ? null : frameScore(vm.mem, s.geom);
-    const score = s.text ? cells : f.score;
+    // Text frames are banded the way the sweep bands its rows: a screen the
+    // program is refusing on loses to one it is not, whatever the cell counts
+    // say. BLAND.EXE is why. It is a textmode intro, so its starfield competes
+    // with its own setup menu for the same slot, and the menu -- six sound
+    // cards and four sampling rates -- is four times as many lit cells as the
+    // stars are. The demo ran; the photograph was of the question it asked on
+    // the way in. The band is small enough to stay under frameScore's, so any
+    // graphics frame still outranks any text one.
+    const score = s.text ? cells + (asking(text) ? 0 : 4000) : f.score;
     if (score <= bestScore) return;
     bestScore = score;
     bestContent = s.text ? cells : f.count;

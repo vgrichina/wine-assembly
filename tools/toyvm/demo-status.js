@@ -159,4 +159,9 @@ function main() {
 }
 
 if (require.main === module) main();
-module.exports = { classify, read, ORDER };
+// A screen that is asking rather than showing. Exported for the frame chooser
+// in run-dos.js, which has to rank a program's setup menu below the thing the
+// program does after it.
+const asking = (screen) => PROMPT_ONLY.test(screen || '') || !!complaint(screen || '');
+
+module.exports = { classify, complaint, asking, read, ORDER };

@@ -39,6 +39,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
+const { complaint } = require('./demo-status');
 
 function arg(name, fallback) {
   const hit = process.argv.slice(2).find(a => a.startsWith(`--${name}=`));
@@ -136,7 +137,18 @@ async function runOne(exe, png, o) {
 // the same program. A drawn graphics frame always beats a text screen: a demo
 // that prints "press a key" and then goes to mode 13h should be photographed
 // running, not at its prompt.
-const score = (row) => (row.failed ? -1 : (row.pixels > 0 ? 1e6 + row.pixels : row.cells));
+//
+// Between two TEXT screens, a refusal loses to anything else however much of
+// the screen it covers, and that band is not a nicety. BLAND.EXE is a textmode
+// intro: its starfield is a few dozen lit cells, and the sound menu it prints
+// on the way in is 192. Counting cells alone, the no-sound-card retry's menu
+// plus "failed to load MSE" outscored the running demo -- so the sweep chose
+// the frame in which the program had told it that it would not run.
+const score = (row) => {
+  if (row.failed) return -1;
+  if (row.pixels > 0) return 1e6 + row.pixels;
+  return (complaint(row.screen || '') ? 0 : 1e4) + row.cells;
+};
 
 // The command-line switch a screen tells you to use, or null. Anchored on the
 // verb so that a stray slash in ANSI art is not mistaken for an option.
