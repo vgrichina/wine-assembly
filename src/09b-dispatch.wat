@@ -90,23 +90,48 @@
           (then
             (global.set $createwnd_implicit_show (i32.const 0))
             (global.set $show_window_activated (i32.const 1))
-            ;; Push WndProc args: hwnd, WM_ACTIVATEAPP(0x001C), TRUE, 0
-            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-            (call $gs32 (global.get $esp) (i32.const 0))                ;; lParam
-            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-            (call $gs32 (global.get $esp) (i32.const 1))                ;; wParam = TRUE
-            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-            (call $gs32 (global.get $esp) (i32.const 0x001C))           ;; WM_ACTIVATEAPP
-            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-            (call $gs32 (global.get $esp) (global.get $main_hwnd))      ;; hwnd
-            ;; Push CACA0022 as WndProc return — chains to ACTIVATE→SETFOCUS→SIZE→0001.
-            (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-            (call $gs32 (global.get $esp) (global.get $createwnd_activate_thunk))
-            (global.set $eip (call $wnd_table_get (global.get $main_hwnd)))
-            (if (i32.eqz (global.get $eip))
-              (then (global.set $eip (global.get $wndproc_addr))))
-            (global.set $steps (i32.const 0))
-            (return)))
+            (local.set $arg0 (call $wnd_table_get (global.get $main_hwnd)))
+            ;; A CreateDialogParamA top-level can retain USER's dialog marker
+            ;; when no framework CBT hook subclasses it.  Run the same safe
+            ;; synchronous DLGPROC path used by ShowWindow, then fall through
+            ;; to the common saved-return restoration below.
+            (if (i32.eq (local.get $arg0) (global.get $WNDPROC_DIALOG))
+              (then
+                (drop (call $dialog_default_proc
+                  (global.get $main_hwnd) (i32.const 0x001C) (i32.const 1) (i32.const 0)))
+                (drop (call $dialog_default_proc
+                  (global.get $main_hwnd) (i32.const 0x0006) (i32.const 1)
+                  (global.get $main_hwnd)))
+                (drop (call $dialog_default_proc
+                  (global.get $main_hwnd) (i32.const 0x0007) (i32.const 0) (i32.const 0)))
+                (local.set $arg1 (global.get $pending_wm_size))
+                (if (local.get $arg1)
+                  (then
+                    (drop (call $dialog_default_proc
+                      (global.get $main_hwnd) (i32.const 0x0005) (i32.const 0)
+                      (local.get $arg1)))))
+                (global.set $pending_wm_size (i32.const 0))
+                (global.set $msg_phase (i32.const 5))
+                (global.set $paint_pending (i32.const 1))
+                (call $host_invalidate (global.get $main_hwnd)))
+              (else
+                ;; Push WndProc args: hwnd, WM_ACTIVATEAPP(0x001C), TRUE, 0
+                (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+                (call $gs32 (global.get $esp) (i32.const 0))                ;; lParam
+                (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+                (call $gs32 (global.get $esp) (i32.const 1))                ;; wParam = TRUE
+                (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+                (call $gs32 (global.get $esp) (i32.const 0x001C))           ;; WM_ACTIVATEAPP
+                (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+                (call $gs32 (global.get $esp) (global.get $main_hwnd))      ;; hwnd
+                ;; Push CACA0022 as WndProc return — chains to ACTIVATE→SETFOCUS→SIZE→0001.
+                (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+                (call $gs32 (global.get $esp) (global.get $createwnd_activate_thunk))
+                (global.set $eip (local.get $arg0))
+                (if (i32.eqz (global.get $eip))
+                  (then (global.set $eip (global.get $wndproc_addr))))
+                (global.set $steps (i32.const 0))
+                (return)))))
         ;; Pop saved_ret and saved_hwnd from stack (supports nested CreateWindowExA).
         ;; Before returning, flush WAT-native children now exposed by WM_CREATE /
         ;; WM_INITDIALOG. NSIS creates/shows wizard pages from dialog init; Win98

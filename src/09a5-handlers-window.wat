@@ -815,6 +815,28 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 52))) (return)
   )
 
+  ;; A retained application DLGPROC is a real top-level UI candidate even
+  ;; though its WND_RECORD exposes USER's WNDPROC_DIALOG marker.  Resource
+  ;; dialogs can become visible inside CreateDialogParamA without making a
+  ;; later ShowWindow call, so promote them here while the previous main HWND
+  ;; is still only an invisible framework helper.  CACA0001 delivers the
+  ;; ordinary implicit-show activation sequence after WM_INITDIALOG returns.
+  (func $created_dialog_promote_app_main (param $hwnd i32) (param $dlgproc i32)
+    (if (i32.and
+          (i32.and
+            (i32.and
+              (i32.ne (local.get $dlgproc) (i32.const 0))
+              (i32.eqz (global.get $show_window_activated)))
+            (i32.and
+              (i32.eqz (call $wnd_get_parent (local.get $hwnd)))
+              (i32.eqz (call $wnd_get_owner (local.get $hwnd)))))
+          (i32.or
+            (i32.eqz (global.get $main_hwnd))
+            (i32.eqz (call $wnd_is_effectively_visible (global.get $main_hwnd)))))
+      (then
+        (global.set $main_hwnd (local.get $hwnd))
+        (global.set $createwnd_implicit_show (i32.const 1)))))
+
   ;; 68: CreateDialogParamA
   (func $handle_CreateDialogParamA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $ret_addr i32) (local $hwnd i32) (local $dlg_wndproc i32)
@@ -868,6 +890,7 @@
       (else
         (call $wnd_set_parent (local.get $hwnd) (i32.const 0))
         (call $wnd_set_owner (local.get $hwnd) (local.get $arg2))))
+    (call $created_dialog_promote_app_main (local.get $hwnd) (local.get $arg3))
     ;; Some apps create a hidden top-level system-class helper before their
     ;; real UI (calc.exe creates a zero-size EDIT "CalcMsgPumpWnd"). Win98 is
     ;; fine with that because messages are hwnd-targeted. Our emulator has a
@@ -1082,7 +1105,8 @@
 
   ;; 71: ShowWindow
   (func $handle_ShowWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $packed i32) (local $wndproc i32) (local $client_size i32)
+    (local $packed i32) (local $wndproc i32) (local $app_wndproc i32)
+    (local $client_size i32)
     (local $was_visible i32)
     (local.set $was_visible (i32.ne
       (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0x10000000))
@@ -1151,10 +1175,22 @@
           (i32.eqz (call $wnd_get_owner (local.get $arg0))))
       (then
         (local.set $wndproc (call $wnd_table_get (local.get $arg0)))
+        ;; A dialog record exposes USER's WNDPROC_DIALOG marker in the window
+        ;; table, but its retained DLGPROC is still the application's real
+        ;; callback. Treat that callback like an ordinary guest wndproc when
+        ;; deciding whether a shown top-level can replace an invisible helper
+        ;; as main_hwnd. The activation block below already has the matching
+        ;; dialog_default_proc path for delivering the synchronous startup
+        ;; sequence safely.
+        (local.set $app_wndproc
+          (if (result i32)
+              (i32.eq (local.get $wndproc) (global.get $WNDPROC_DIALOG))
+            (then (call $dialog_proc_get (local.get $arg0)))
+            (else (local.get $wndproc))))
         (if (i32.and
-              (i32.and (i32.ne (local.get $wndproc) (i32.const 0))
-                       (i32.ne (local.get $wndproc) (global.get $WNDPROC_BUILTIN)))
-              (i32.lt_u (local.get $wndproc) (i32.const 0xFFFF0000)))
+              (i32.and (i32.ne (local.get $app_wndproc) (i32.const 0))
+                       (i32.ne (local.get $app_wndproc) (global.get $WNDPROC_BUILTIN)))
+              (i32.lt_u (local.get $app_wndproc) (i32.const 0xFFFF0000)))
           (then
             (global.set $main_hwnd (local.get $arg0))
             (if (local.get $client_size)

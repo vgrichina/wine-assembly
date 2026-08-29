@@ -92,6 +92,7 @@ try {
   delete require.cache[require.resolve('../lib/browser-input')];
   const browserInput = require('../lib/browser-input');
   const releases = [];
+  const relativeMoves = [];
   const renderer = {
     windows: {}, _mouseX: 400, _mouseY: 250,
     wantsRelativeMouse: () => true,
@@ -99,6 +100,7 @@ try {
     handleMouseDown() {},
     handleMouseUp: (x, y, button) => releases.push({ x, y, button }),
     handleMouseMove() {}, handleMenuHover() {},
+    handleRelativeMouseMove: (x, y) => relativeMoves.push({ x, y }),
   };
   browserInput.wireCanvasInput(canvas, renderer, { runningApps: [], debugMode: true });
   const event = {
@@ -123,6 +125,22 @@ try {
   documentListeners.get('pointerlockchange')();
   assert.deepStrictEqual(releases.at(-1), { x: 320, y: 200, button: 0 },
     'losing pointer lock should release any guest button still held');
+
+  // Acquiring pointer lock can itself emit a synthetic movement event on
+  // Safari and some Chromium versions. It must not move the guest software
+  // cursor between the acquisition DOWN and its matching UP.
+  canvas.onmousedown(event);
+  global.document.pointerLockElement = canvas;
+  documentListeners.get('pointerlockchange')();
+  (listeners.get('mousemove') || []).at(-1)({
+    ...event, buttons: 1, movementX: 13, movementY: -7,
+  });
+  assert.deepStrictEqual(relativeMoves, [],
+    'pointer-lock acquisition movement should not displace a held click');
+  (listeners.get('mouseup') || []).at(-1)({ ...event, clientX: 0, clientY: 0 });
+  canvas.onmousemove({ ...event, movementX: 4, movementY: -2 });
+  assert.deepStrictEqual(relativeMoves, [{ x: 4, y: -2 }],
+    'relative movement should resume immediately after the acquisition click');
 } finally {
   global.window = originalWindow;
   global.document = originalDocument;

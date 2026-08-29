@@ -30,6 +30,15 @@ MCM's cursor from `(220,235)` to `(445,45)`, while Pointer Lock left DOM
 `(220,235)`. Locked button-down now uses the guest virtual cursor, matching the
 existing button-up path and the position MCM actually draws/tests.
 
+A later user trace showed a smaller jump during the click that acquires
+Pointer Lock. Browsers may emit a synthetic locked `movementX/Y` while capture
+is changing; forwarding it moves MCM's software-cursor hotspot after DOWN but
+before UP. Relative deltas are now suppressed only for that acquisition click
+and resume as soon as its button is released. A browser-DOM regression covers
+both halves of that boundary. The same end-to-end trace reaches Event Options,
+finds `teraform\\quarries\\Quarry01.scn`, and stays running, so the three input
+cycles in the runtime log are not themselves an application exit path.
+
 ## Status (2026-06-14) — first-run dialog accepted; splash smoke promoted
 
 MCM is no longer marked known-bad in the all-EXE smoke list. The harness now accepts the first-run video-memory-test dialog and waits long enough for the post-dialog render loop:

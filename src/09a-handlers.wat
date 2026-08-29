@@ -649,8 +649,13 @@
     ;; it from, and two threads reading the same local count would be handed the
     ;; same thunk address for two different functions.
     (global.set $num_thunks (call $thunk_reserve))
+    ;; The dispatch record is consumed as a WASM-backing offset relative to
+    ;; GUEST_BASE, not as a guest virtual address.  Those representations are
+    ;; identical for the direct low heap, but diverge after HeapAlloc spills
+    ;; into a sparse high mapping.  Translate here so dynamic imports such as
+    ;; Half-Life's DirectSoundCreate keep a valid name pointer at dispatch.
     (i32.store (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
-    (i32.sub (local.get $v) (global.get $image_base)))
+    (i32.sub (call $g2w (local.get $v)) (global.get $GUEST_BASE)))
     ;; Store api_id
     (i32.store (i32.add (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8))) (i32.const 4))
     (local.get $i))
@@ -9427,6 +9432,34 @@ HookEx — no next hook in chain, return 0
     (i32.store (local.get $d) (i32.load (local.get $s)))
     (i32.store (i32.add (local.get $d) (i32.const 4)) (i32.load (i32.add (local.get $s) (i32.const 4))))
     (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; CompareFileTime(const FILETIME *a, const FILETIME *b) -> -1, 0, or 1.
+  ;; FILETIME is an unsigned 64-bit tick count represented as two DWORDs, so
+  ;; compare the high halves first and use the low halves only as a tiebreaker.
+  (func $handle_CompareFileTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $a i32) (local $b i32)
+    (local $a_hi i32) (local $b_hi i32)
+    (local $a_lo i32) (local $b_lo i32)
+    (local.set $a (call $g2w (local.get $arg0)))
+    (local.set $b (call $g2w (local.get $arg1)))
+    (local.set $a_lo (i32.load (local.get $a)))
+    (local.set $b_lo (i32.load (local.get $b)))
+    (local.set $a_hi (i32.load offset=4 (local.get $a)))
+    (local.set $b_hi (i32.load offset=4 (local.get $b)))
+    (if (i32.lt_u (local.get $a_hi) (local.get $b_hi))
+      (then (global.set $eax (i32.const -1)))
+      (else
+        (if (i32.gt_u (local.get $a_hi) (local.get $b_hi))
+          (then (global.set $eax (i32.const 1)))
+          (else
+            (if (i32.lt_u (local.get $a_lo) (local.get $b_lo))
+              (then (global.set $eax (i32.const -1)))
+              (else
+                (if (i32.gt_u (local.get $a_lo) (local.get $b_lo))
+                  (then (global.set $eax (i32.const 1)))
+                  (else (global.set $eax (i32.const 0))))))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 

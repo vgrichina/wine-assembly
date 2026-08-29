@@ -274,6 +274,55 @@ function egaDacTable() {
 }
 const EGA_DAC = egaDacTable();
 
+// The 256-entry DAC a real VGA BIOS loads when it sets mode 13h. We had none:
+// `palette` was 768 zero bytes that only ever got written by a program setting
+// its own colours, so a demo that draws in the default palette -- which is most
+// of the ones that only want a handful of colours -- filled the screen with
+// non-zero indices that every one of them mapped to black. That is
+// indistinguishable from a demo that rendered nothing, and it is why BLINKY.EXE
+// read as "reaches mode 13h and draws nothing" for a whole session.
+//
+// The layout is IBM's: 0-15 the CGA sixteen, 16-31 a greyscale ramp, then 216
+// colours as three brightness blocks x three saturations x a 24-step hue wheel,
+// and 248-255 left black.
+function vgaDacTable() {
+  const t = new Uint8Array(768);
+  const cga = [
+    [0, 0, 0], [0, 0, 0x2A], [0, 0x2A, 0], [0, 0x2A, 0x2A],
+    [0x2A, 0, 0], [0x2A, 0, 0x2A], [0x2A, 0x15, 0], [0x2A, 0x2A, 0x2A],
+    [0x15, 0x15, 0x15], [0x15, 0x15, 0x3F], [0x15, 0x3F, 0x15], [0x15, 0x3F, 0x3F],
+    [0x3F, 0x15, 0x15], [0x3F, 0x15, 0x3F], [0x3F, 0x3F, 0x15], [0x3F, 0x3F, 0x3F],
+  ];
+  cga.forEach((c, i) => t.set(c, i * 3));
+  const grey = [0x00, 0x05, 0x08, 0x0B, 0x0E, 0x11, 0x14, 0x18,
+                0x1C, 0x20, 0x24, 0x28, 0x2D, 0x32, 0x38, 0x3F];
+  grey.forEach((g, i) => t.set([g, g, g], (16 + i) * 3));
+
+  // A 24-step wheel: six segments of four, each ramping one channel through
+  // 0x00, 0x10, 0x1F, 0x2F while the others sit at 0x00 or 0x3F.
+  const ramp = [0x00, 0x10, 0x1F, 0x2F], F = 0x3F;
+  const hues = [];
+  for (let k = 0; k < 4; k++) hues.push([F, 0, ramp[k]]);
+  const fall = [F, 0x2F, 0x1F, 0x10];
+  for (let k = 0; k < 4; k++) hues.push([fall[k], 0, F]);
+  for (let k = 0; k < 4; k++) hues.push([0, ramp[k], F]);
+  for (let k = 0; k < 4; k++) hues.push([0, F, fall[k]]);
+  for (let k = 0; k < 4; k++) hues.push([ramp[k], F, 0]);
+  for (let k = 0; k < 4; k++) hues.push([F, fall[k], 0]);
+
+  let at = 32 * 3;
+  for (const hi of [0x3F, 0x1C, 0x10]) {            // bright, medium, dark
+    for (const satLo of [0, 0x1F, 0x2D]) {          // full, half, low saturation
+      const lo = Math.round(satLo * hi / 0x3F);
+      for (const h of hues) {
+        for (const c of h) t[at++] = lo + Math.round(c * (hi - lo) / 0x3F);
+      }
+    }
+  }
+  return t;
+}
+const VGA_DAC = vgaDacTable();
+
 function newVgaState() {
   const v = {
     seqIndex: 0, seq: new Uint8Array(8),
@@ -2013,6 +2062,10 @@ class Machine {
         this.clearPlanes();
         this.palette.set(EGA_DAC);         // the EGA-compatible first 64 entries
       }
+      // ...and the full 256 for a 256-colour mode. A program that sets its own
+      // colours overwrites these immediately; one that does not is entitled to
+      // the BIOS default rather than to 256 blacks.
+      if (this.vga.bpp === 8) this.palette.set(VGA_DAC);
       // A CGA graphics mode clears its own buffer and reaches its four colours
       // through the same DAC everything else here does, so it needs the
       // EGA-compatible entries loaded for CGA_PALETTE to name anything.

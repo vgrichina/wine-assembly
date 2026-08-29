@@ -615,6 +615,28 @@ async function main() {
       + ` setreset=${g.gc[0].toString(16)}/${g.gc[1].toString(16)}`
       + `, ${g.maskWrites} mask writes`);
   }
+  if (v.bpp === 8) {
+    // The same question the attribute line asks, one level up, and the one the
+    // pixel count cannot answer on its own: "N non-black pixels" counts
+    // non-zero *indices*, and an index is only a colour after the DAC. A demo
+    // caught mid-fade-in, or one whose palette writes we dropped, draws a full
+    // picture that saves as a uniformly black PNG -- indistinguishable from a
+    // demo that drew nothing at all. BLINKY.EXE is the corpus's example: 1114
+    // non-zero pixels that change every frame, every one through a black entry.
+    const p = r.machine.palette;
+    let dacSet = 0;
+    for (let i = 0; i < 256; i++) if (p[i * 3] || p[i * 3 + 1] || p[i * 3 + 2]) dacSet++;
+    const used = new Set();
+    let dark = 0;
+    for (let i = 0; i < rw * rh; i++) {
+      const c = r.vm.mem[VGA_BASE + i];
+      if (!c) continue;
+      used.add(c);
+      if (!(p[c * 3] || p[c * 3 + 1] || p[c * 3 + 2])) dark++;
+    }
+    console.log(`  dac ${dacSet}/256 entries set; frame uses ${used.size}`
+      + ` index(es), ${dark} pixel(s) through a black entry`);
+  }
   // Two numbers, not one, and the cell count is the one that matters: a demo
   // that stores straight into B800 writes zero characters through DOS and still
   // fills the screen. a-note.exe is the whole corpus's example -- 0 chars, 632
