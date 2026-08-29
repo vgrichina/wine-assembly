@@ -76,105 +76,49 @@ The `--pre=SETUP.EXE` rung in `shot-sweep.js` already runs SETUP before ANGEL
 and carries its `tempFiles` across, so a SETUP that writes the stamp lands both
 rows with no further harness work.
 
-### BLINKY.EXE
+### BLINKY.EXE — fixed
 
-Turbo Pascal, sound-device menu (`a` PC Speaker / `h` Sound Blaster / `p` No
-sound); all three choices behave identically, so the menu is not the issue.
+Two bugs stacked, and each hid the next.
 
-It used to look like a hang. It was not: BLINKY sets TF and never hooks INT 1,
-and delivering an unobservable debug exception per instruction cost a compile
-and a handback each — 180 seconds bought it 7,067,597 traps and 7% of the wall
-clock in wasm. Fixed in `810b87a9`; it now runs at 26M dispatches/s, loads
-`music.dat` and gets to `int 21h AH=35 AL=08` (get the timer vector, i.e. the
-music player installing itself).
+**1. An unobservable single-step trap per instruction.** BLINKY sets TF and
+never hooks INT 1, so every instruction owed a debug exception that pushed a
+frame and IRETed back with nothing changed — a compile and a handback each. 180
+seconds bought it 7,067,597 traps and 7% of the wall clock in wasm. Fixed in
+`810b87a9` by testing the INT 1 vector before honouring TF: a protector hooks
+INT 1 *before* it raises TF, so the vector is the honest test of whether the
+trap is observable. It now runs at 26M dispatches/s.
 
-Where it stops now: `stuck at 110:135d`, and the decoder gives up there on
-`c5 c0 bc be 0c d8 96 02` (`c5 c0` is `lds` with mod=11, invalid). There is also
-one unhandled `int 3` in the run.
+**2. Mode 13h loaded no palette.** `Machine.palette` was 768 zero bytes that
+only a program setting its own colours ever wrote, so BLINKY — which draws in
+the default DAC the BIOS is supposed to leave behind — filled the screen with
+non-zero indices that all mapped to black. Fixed in `03a39be7`.
 
-The bytes on disk at that address are different (`14 b2 3b d9`), which is *not*
-a clue: BLINKY.EXE is PKLITE-compressed, so nothing at 110:xxxx on disk is the
-code that runs, and the 127 self-modify breaks are the depacker. PKLITE itself
-is fine — B-STEEL, AMANAMAN, DIZZY_FI and AKM-ZORL are all PKLITE-packed and all
-reach full frames — so this is specific to BLINKY.
+It now renders its wireframe vector intro (`Our First Intro!!`) and **runs to
+completion, exiting 0** at ~660M dispatches.
 
-The last thing traced before the stop is `int 21h AH=35 AL=08` from `110:3d70`,
-the music player fetching the old timer vector; the matching `AH=25` never
-happens.
+Three things this cost a session to learn, all worth keeping:
 
-`--trace-entry=2000` (which prints the *first* N handbacks, not every Nth —
-BLINKY only has 936, so that is all of them) gives the whole transfer:
-
-```
-entry 110:40af  x107 ...      ; a table-driven byte-range copier
-entry 110:4099  ax=f018 bx=e3c0 cx=103d  ss:sp=0b86:8166
-entry 998:04df  ax=0000 bx=e3c0 cx=103d  ss:sp=0b86:8158
-entry 110:3640  ax=0032 bx=e3c0 cx=9046  ss:sp=0b86:815e
-entry 5f6:02fd  ax=0032                  ss:sp=0b86:815a
-entry 888:04df  ax=0004                  ss:sp=0b86:8154
-entry 110:1346  ax=0000 bx=f706 cx=1346  ss:sp=0b86:0b4a
-entry 110:135d  ax=ffff ...              (x202, stuck)
-```
-
-`998:04df` is Turbo Pascal's stack-overflow check — `add ax,0x200 / jb / sub
-ax,sp / jnb / neg ax / cmp ax,[0x284] / jb / retf`, the guard TP emits at every
-procedure entry. It runs correctly and `retf`s. **The address it returns to,
-`110:3640`, is zeros for the entire run** (checked at 10M, 100M, 250M and
-304.6M). Everything after is a runaway: `888:04df` is that same stack check
-called with an unrelocated segment (`0x998 - 0x888 = 0x110`, exactly the load
-segment), and the wild execution ends parked at `110:135d`.
-
-**The copier at `110:40af` is not the bug, and neither is DS.** It is an
-overlay swapper, and two hypotheses died on that:
-
-* *"It runs with the wrong data segment."* A DS census over all 936 entries is
-  455 `ds=0b05` against 449 `ds=0110`, and `0b05` is DGROUP, so `0110` looked
-  like a dropped segment restore. It is not: with `DS=0110` the destination
-  `si=0x486d` (set at `110:4092`) is linear `0x596D`, and `0x5970` is exactly
-  `5f6:0000` — the copier is addressing segment `5f6` through the load segment
-  on purpose. Writing over that code is the *point*.
-* *"The source is garbage."* The source range (`bx=0xe3c0 cx=0x103d` on the
-  last entry) holds a recognisable
-  variant of the code being replaced — live `5f6:2c0` is
-  `4b 75 fd 26 3a 05 e1 f5 c3 … b8 dd 34 ba 12 00 3b d3 73 1a`, source
-  `110:e3ca` is `4b 75 fd 54 e1 f5 c3 … b8 dd 34 ba 12 00 3b d3 73 1a`. Same
-  routine, different build. That is a second copy of the sound module, i.e. the
-  swap is loading the variant the chosen device wants.
-
-So the swap is intended and its inputs are plausible; what is not yet
-established is whether it *completes*. The observed end state — `5f6` zeroed
-from `0x5970` for 5968 bytes — is consistent with a copy whose source had
-already scrolled off into zeros, which points at whatever picks the range
-rather than at the byte loop itself.
-
-One thing that read as a lead and is not: the word table at `110:3b00` is
-`e4 00 d8 00 cb 00 c0 00 b5 00 ab 00 …` — 228, 216, 203, 192, 181, 171, 161,
-152, 144, 136, 128, 121, 114, each ~1.059× the next. That is a chromatic
-PC-speaker divisor table, i.e. music data, not a copy-range table.
-
-And the thing worth knowing before spending another session here: **at 290M
-dispatches, before any corruption, BLINKY is healthy and still in text mode** —
-`cs:ip=5f6:2c0` (inside the speaker player), 368 of 2000 cells non-blank, 0 of
-64000 pixels drawn. It sits on its own menu playing music and never switches to
-a graphics mode, with `--auto-key` and with each device chosen explicitly. So
-the 304M wreck is downstream of whatever keeps it on that menu, and the menu is
-the thing to explain first.
-
-Two traps that cost time here, both worth remembering:
-
+* **A black PNG is two different bugs.** "N non-black pixels" counts non-zero
+  *indices*; an index is only a colour after the DAC. The exit line now reports
+  `dac N/256 entries set; frame uses N index(es), N pixel(s) through a black
+  entry` for 8bpp, which separates them at a glance. The 4bpp `attr palette`
+  line always answered this one level down; there was no 13h equivalent.
+* **`--auto-key` can be worse than one key.** With `--auto-key` BLINKY wrecked
+  itself at ~305M dispatches and parked at `110:135d`; with `--keys=a` it runs
+  clean to exit. The extra keys are consumed somewhere they should not be —
+  BLINKY takes exactly one `int 16h ah=0`, at `110:2b92`.
 * **`--disasm` and `--dump` fire at exit.** Disassembling `110:3640` at the end
-  shows a tidy `call far 0x5f6:0x2fd / or al,al / jnz` and segment `5f6` shows
-  zeros; both are pictures of the wreckage, and both are the exact opposite of
-  the truth at the moment of the fault. Bisect with `--dispatches=N` and dump
-  there instead — `5f6` holds live PC-speaker code until 304.6M and is zeroed
-  by 304.9M.
-* **`int 3` at `110:40e0` is not a clue.** It sits immediately before a `ret`,
-  DOS's default INT 3 vector is an IRET, and our unhandled-vector path does the
-  same thing, so it is a slow no-op on both.
+  showed a tidy `call far 0x5f6:0x2fd / or al,al / jnz` and segment `5f6` full
+  of zeros; both were pictures of the wreckage and the exact opposite of the
+  truth at the fault. Bisect with `--dispatches=N` and dump there instead.
 
-It is not the code cache: `--no-cache` and `--smc-flush` both reproduce the
-identical stop at `110:135d` after the identical 305.0M dispatches, so the 127
-self-modify breaks are not being mishandled.
+Two leads that looked strong and were wrong, recorded so they are not re-run:
+the copier at `110:40af` running with `DS=0110` instead of DGROUP `0b05` is
+*correct* — `DS:0x486d` is linear `0x596D` and `0x5970` is `5f6:0000`, so it is
+addressing that segment through the load segment on purpose and overwriting the
+code there is the point. And the word table at `110:3b00` (`e4 00 d8 00 cb 00
+c0 00 …` — 228, 216, 203, 192, each ~1.059x the next) is a chromatic
+PC-speaker divisor table, not a copy-range table.
 
 ### BLIQ.EXE (2 rows — `1994-b-bliq` and `1994-b-black` are the same program)
 

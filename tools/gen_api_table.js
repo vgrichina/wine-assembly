@@ -1207,6 +1207,8 @@ const extra = [
   { name: 'DestroyAcceleratorTable', nargs: 1 },
   { name: 'IDirectInput7_FindDevice', nargs: 5 },
   { name: 'IDirectInput7_CreateDeviceEx', nargs: 5 },
+  // KERNEL32 — GoldSrc compares filesystem timestamps while loading a map.
+  { name: 'CompareFileTime', nargs: 2 },
 ];
 for (const api of extra) {
   if (!seen.has(api.name)) {

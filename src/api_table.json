@@ -25259,5 +25259,12 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 2219731500
+  },
+  {
+    "id": 3035,
+    "name": "CompareFileTime",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2555116227
   }
 ]
