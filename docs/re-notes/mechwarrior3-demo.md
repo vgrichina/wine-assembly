@@ -146,8 +146,8 @@ and a missing demo is reported as a skip rather than silently testing another
 binary.
 
 The catastrophic flat-frame repro measured only 135 exact colours, 89
-four-bit-per-channel colours, and five colours in the terrain sample. A restored
-frame measures about 2,522, 587, and 426 respectively, with separate minimums
+four-bit-per-channel colours, and five colours in the terrain sample. The final
+format-correct frame measures 2,099, 409, and 237 respectively, with separate minimums
 for the orange lit sky, dark textured cockpit, and readable green HUD. This
 makes the test reject a reachable-but-untextured game instead of treating any
 gameplay-shaped frame as success.
@@ -168,7 +168,44 @@ node test/test-mw3-gameplay.js
 The resulting CLI evidence is written to
 `build/mw3-gameplay/no-threads.png` and
 `build/mw3-gameplay/threads.png`. Both modes must produce the same measured
-textured/lit frame. Some saturated cyan/blue pixels remain in opaque legacy
-effect textures; descriptor colour-key and per-pixel depth experiments were
-byte-identical and were not retained. That residual raster fidelity issue is
-distinct from the former missing-scenery-texture failure guarded here.
+textured/lit frame and the same PNG digest. The gate separately rejects cyan,
+magenta, and electric-blue texels characteristic of a pixel-format regression.
+
+## 16-bit texture format corruption and raster cost (2026-08-28)
+
+The remaining cyan/green/purple scenery was not missing texture data. A live
+surface census found common 16-bit words such as `0xF678`, `0xF334`, `0x0877`,
+and `0x2877`. They are coherent grey texels in ARGB4444, but the sampler treated
+every 16-bit DirectDraw surface as RGB565. The same defect affected
+`Texture::Load`: equal bit counts triggered a raw copy even when source and
+destination channel masks differed. `Lock`, `GetPixelFormat`, and
+`GetSurfaceDesc` then compounded the error by reporting RGB565 regardless of
+the format requested at creation.
+
+DirectDraw now retains a normalized format kind per surface and reports the
+original RGB/alpha masks. Sampling and `Texture::Load` support RGB565,
+XRGB1555, ARGB1555, ARGB4444, XRGB8888, and ARGB8888, including alpha in the
+fixed-function blend path. The focused indexed-texture regression proves an
+opaque ARGB4444 `0xF678` texel renders grey and transparent `0x0877` preserves
+the destination. In both scheduler modes the gameplay capture now contains
+zero cyan and zero magenta artifact pixels.
+
+The software rasterizer remains the valid acceleration path for D3D3: it runs
+native WebAssembly against lockable DirectDraw surfaces and avoids emulating an
+x86 pixel loop. The hot span used to reload immutable texture metadata for
+every pixel and execute seven integer divisions plus a floating division per
+pixel. Metadata is now hoisted per span, division by 255 uses an exact bounded
+identity, the interpolation reciprocal is computed once, and MW3's two observed
+blend pairs have direct paths. The complete no-threads menu-to-gameplay CLI run
+dropped from 92.3 seconds to 60.3 seconds while retaining the accepted frame;
+threads mode completes in 75.9 seconds and produces the identical PNG.
+
+This is not a claim that all advertised legacy Direct3D capabilities are
+implemented. `fill_primcaps` still reports broad comparison, filtering,
+addressing, shading, and blend masks while the rasterizer implements a smaller
+fixed-function subset, and several Device methods remain compatibility stubs.
+That contradicts the truthful-semantics guidance in `fable-review.md`; future
+work should narrow caps alongside implementing the corresponding render states.
+For later Direct3D resource models where render targets are not CPU-lockable,
+the correct extension is host-GPU resource/shader translation rather than
+pretending those surfaces support the D3D3 memory contract.

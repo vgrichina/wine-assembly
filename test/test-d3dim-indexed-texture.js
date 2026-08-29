@@ -34,6 +34,9 @@ const extraWat = String.raw`
   (func (export "test_diptex_dib") (param $surface i32) (result i32)
     (i32.load offset=20 (call $dx_from_this (local.get $surface))))
 
+  (func (export "test_diptex_format") (param $surface i32) (result i32)
+    (call $dx_surf_fmt_get (call $dx_from_this (local.get $surface))))
+
   (func (export "test_diptex_get_handle") (param $texture i32) (param $out i32) (result i32)
     (global.set $esp (i32.const 0x30000))
     (call $handle_IDirect3DTexture2_GetHandle
@@ -63,18 +66,27 @@ const extraWat = String.raw`
       (local.get $vertices) (i32.const 3) (i32.const 0)))
 `;
 
-function makeSurface(wat, desc, out, width, height) {
+function makeSurface(wat, desc, out, width, height, format = {}) {
+  const {
+    flags = 0x40,
+    bpp = 16,
+    rMask = 0xf800,
+    gMask = 0x07e0,
+    bMask = 0x001f,
+    aMask = 0,
+  } = format;
   for (let i = 0; i < 128; i += 4) wat.guest_write32(desc + i, 0);
   wat.guest_write32(desc, 108);
   wat.guest_write32(desc + 4, 0x1007); // CAPS|HEIGHT|WIDTH|PIXELFORMAT
   wat.guest_write32(desc + 8, height);
   wat.guest_write32(desc + 12, width);
   wat.guest_write32(desc + 72, 32);
-  wat.guest_write32(desc + 76, 0x40);  // DDPF_RGB
-  wat.guest_write32(desc + 84, 16);
-  wat.guest_write32(desc + 88, 0xf800);
-  wat.guest_write32(desc + 92, 0x07e0);
-  wat.guest_write32(desc + 96, 0x001f);
+  wat.guest_write32(desc + 76, flags);
+  wat.guest_write32(desc + 84, bpp);
+  wat.guest_write32(desc + 88, rMask);
+  wat.guest_write32(desc + 92, gMask);
+  wat.guest_write32(desc + 96, bMask);
+  wat.guest_write32(desc + 100, aMask);
   wat.guest_write32(desc + 104, 0x40); // DDSCAPS_OFFSCREENPLAIN
   assert.strictEqual(wat.test_diptex_create_surface(desc, out) >>> 0, 0);
   return wat.guest_read32(out) >>> 0;
@@ -146,8 +158,8 @@ function writeFloat(wat, addr, value) {
     for (let x = 0; x < 8; x++) pixels.push(mem.getUint16(rtDib + y * 16 + x * 2, true));
   }
   const textured = new Set(pixels.filter(p => p && p !== 0xffff));
-  assert(textured.has(0x7800) || textured.has(0x03e0)
-      || textured.has(0x000f) || textured.has(0x7be0),
+  assert(textured.has(0x8000) || textured.has(0x0400)
+      || textured.has(0x0010) || textured.has(0x8400),
     `indexed triangle ignored the bound texture (pixels: ${[...new Set(pixels)].map(p => p.toString(16))})`);
 
   // MW3 uses ZERO/SRCCOLOR for fixed-function light-map passes. Ignoring the
@@ -161,7 +173,7 @@ function writeFloat(wat, addr, value) {
   wat.test_diptex_set_rs(device, 19, 1); // SRCBLEND=ZERO
   wat.test_diptex_set_rs(device, 20, 3); // DESTBLEND=SRCCOLOR
   wat.test_diptex_draw(device, vertices, indices);
-  assert.strictEqual(mem.getUint16(rtDib, true), 0x7800,
+  assert.strictEqual(mem.getUint16(rtDib, true), 0x8000,
     'ZERO/SRCCOLOR did not modulate the existing render-target pixel');
 
   // The same path must retain TL vertex alpha for MW3's fade/effect passes.
@@ -172,10 +184,46 @@ function writeFloat(wat, addr, value) {
   wat.test_diptex_set_rs(device, 19, 5); // SRCBLEND=SRCALPHA
   wat.test_diptex_set_rs(device, 20, 6); // DESTBLEND=INVSRCALPHA
   wat.test_diptex_draw(device, vertices, indices);
-  assert.strictEqual(mem.getUint16(rtDib, true), 0x780f,
+  assert.strictEqual(mem.getUint16(rtDib, true), 0x800f,
     'SRCALPHA/INVSRCALPHA discarded interpolated vertex alpha');
 
-  console.log(`PASS D3DIM Texture2 indexed triangles use diffuse lighting and framebuffer blend state (${textured.size} texture colours)`);
+  // Same-bit-depth formats are not interchangeable. MW3 creates ARGB4444
+  // light/detail textures whose common grey texels (for example 0xF678) look
+  // like neon green/purple noise when incorrectly decoded as RGB565.
+  const alphaTexture = makeSurface(wat, desc, out + 12, 2, 2, {
+    flags: 0x41, // DDPF_RGB | DDPF_ALPHAPIXELS
+    rMask: 0x0f00,
+    gMask: 0x00f0,
+    bMask: 0x000f,
+    aMask: 0xf000,
+  });
+  assert.strictEqual(wat.test_diptex_format(alphaTexture), 4,
+    'CreateSurface discarded the ARGB4444 channel masks');
+  const alphaDib = wat.test_diptex_dib(alphaTexture) >>> 0;
+  for (let y = 0; y < 2; y++) {
+    for (let x = 0; x < 2; x++) mem.setUint16(alphaDib + y * 4 + x * 2, 0xf678, true);
+  }
+  assert.strictEqual(wat.test_diptex_get_handle(alphaTexture, handleOut) >>> 0, 0);
+  assert.strictEqual(wat.test_diptex_bind_handle(device, wat.guest_read32(handleOut) >>> 0) >>> 0, 0);
+  for (let y = 0; y < 8; y++) {
+    for (let x = 0; x < 8; x++) mem.setUint16(rtDib + y * 16 + x * 2, 0x001f, true);
+  }
+  for (let i = 0; i < 3; i++) wat.guest_write32(vertices + i * 32 + 16, 0xffffffff);
+  wat.test_diptex_draw(device, vertices, indices);
+  assert.strictEqual(mem.getUint16(rtDib, true), 0x63b1,
+    'ARGB4444 grey texel was not decoded using its declared channel masks');
+
+  for (let y = 0; y < 2; y++) {
+    for (let x = 0; x < 2; x++) mem.setUint16(alphaDib + y * 4 + x * 2, 0x0877, true);
+  }
+  for (let y = 0; y < 8; y++) {
+    for (let x = 0; x < 8; x++) mem.setUint16(rtDib + y * 16 + x * 2, 0x001f, true);
+  }
+  wat.test_diptex_draw(device, vertices, indices);
+  assert.strictEqual(mem.getUint16(rtDib, true), 0x001f,
+    'transparent ARGB4444 texel did not preserve the destination');
+
+  console.log(`PASS D3DIM Texture2 indexed triangles use declared pixel formats, diffuse lighting, and framebuffer blend state (${textured.size} texture colours)`);
 })().catch(error => {
   console.error(error.stack || error.message);
   process.exit(1);

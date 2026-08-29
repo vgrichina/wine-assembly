@@ -32,6 +32,13 @@
   ;; primary surface carries another.
   (global $DX_SURF_PAL i32 (i32.const 0x07F32000))
   (global $DX_SURF_PAL_SIZE i32 (i32.const 0x00004000))
+  ;; DirectDraw surfaces with the same bit count can have incompatible channel
+  ;; layouts. In particular MW3 uses ARGB4444 light/detail textures alongside
+  ;; RGB565 render targets. Keep one normalized format kind per surface:
+  ;;   0=infer from bpp, 1=RGB565, 2=XRGB1555, 3=ARGB1555,
+  ;;   4=ARGB4444, 5=ARGB8888, 6=XRGB8888.
+  (global $DX_SURF_FMT i32 (i32.const 0x07F88000))
+  (global $DX_SURF_FMT_SIZE i32 (i32.const 0x00004000))
   ;; CPU-write epochs and reversible-copy provenance for DirectDraw surfaces.
   ;; 4096 entries x 32 bytes in 0x07F36000..0x07F55FFF:
   ;;   +0  CPU-write epoch (advanced by Unlock)
@@ -535,6 +542,64 @@
     (i32.add (global.get $DX_SURF_STATE)
       (i32.shl (call $dx_slot_of (local.get $entry_wa)) (i32.const 5))))
 
+  (func $dx_surf_fmt_ptr (param $entry_wa i32) (result i32)
+    (i32.add (global.get $DX_SURF_FMT)
+      (i32.shl (call $dx_slot_of (local.get $entry_wa)) (i32.const 2))))
+
+  (func $dx_surf_fmt_default (param $bpp i32) (result i32)
+    (if (i32.eq (local.get $bpp) (i32.const 16)) (then (return (i32.const 1))))
+    (if (i32.eq (local.get $bpp) (i32.const 32)) (then (return (i32.const 6))))
+    (i32.const 0))
+
+  (func $dx_surf_fmt_get (param $entry_wa i32) (result i32)
+    (local $fmt i32)
+    (if (i32.eqz (local.get $entry_wa)) (then (return (i32.const 0))))
+    (local.set $fmt (i32.load (call $dx_surf_fmt_ptr (local.get $entry_wa))))
+    (if (local.get $fmt) (then (return (local.get $fmt))))
+    (call $dx_surf_fmt_default (i32.load16_u offset=16 (local.get $entry_wa))))
+
+  (func $dx_surf_fmt_set (param $entry_wa i32) (param $fmt i32)
+    (if (local.get $entry_wa)
+      (then (i32.store (call $dx_surf_fmt_ptr (local.get $entry_wa)) (local.get $fmt)))))
+
+  ;; Normalize a DDPIXELFORMAT already mapped into WASM memory. Unknown masks
+  ;; deliberately fall back to the native display layout rather than being
+  ;; guessed from their texel contents.
+  (func $dx_surf_fmt_from_ddpf (param $pf_wa i32) (param $bpp i32) (result i32)
+    (local $r i32) (local $g i32) (local $b i32) (local $a i32)
+    (if (i32.eqz (local.get $pf_wa))
+      (then (return (call $dx_surf_fmt_default (local.get $bpp)))))
+    (local.set $r (i32.load offset=16 (local.get $pf_wa)))
+    (local.set $g (i32.load offset=20 (local.get $pf_wa)))
+    (local.set $b (i32.load offset=24 (local.get $pf_wa)))
+    (local.set $a (i32.load offset=28 (local.get $pf_wa)))
+    (if (i32.eq (local.get $bpp) (i32.const 16)) (then
+      (if (i32.and
+            (i32.eq (local.get $r) (i32.const 0xF800))
+            (i32.and (i32.eq (local.get $g) (i32.const 0x07E0))
+                     (i32.eq (local.get $b) (i32.const 0x001F))))
+        (then (return (i32.const 1))))
+      (if (i32.and
+            (i32.eq (local.get $r) (i32.const 0x7C00))
+            (i32.and (i32.eq (local.get $g) (i32.const 0x03E0))
+                     (i32.eq (local.get $b) (i32.const 0x001F))))
+        (then
+          (if (i32.eq (local.get $a) (i32.const 0x8000))
+            (then (return (i32.const 3))))
+          (return (i32.const 2))))
+      (if (i32.and
+            (i32.eq (local.get $r) (i32.const 0x0F00))
+            (i32.and
+              (i32.eq (local.get $g) (i32.const 0x00F0))
+              (i32.and (i32.eq (local.get $b) (i32.const 0x000F))
+                       (i32.eq (local.get $a) (i32.const 0xF000)))))
+        (then (return (i32.const 4))))))
+    (if (i32.eq (local.get $bpp) (i32.const 32)) (then
+      (if (i32.eq (local.get $a) (i32.const 0xFF000000))
+        (then (return (i32.const 5))))
+      (return (i32.const 6))))
+    (call $dx_surf_fmt_default (local.get $bpp)))
+
   (func $dx_cursor_state_ptr (param $entry_wa i32) (result i32)
     (i32.add (global.get $DX_CURSOR_SAVE)
       (i32.shl (call $dx_slot_of (local.get $entry_wa)) (i32.const 3))))
@@ -647,7 +712,8 @@
     (if (local.get $entry_wa)
       (then
         (call $dx_cursor_reset (local.get $entry_wa))
-        (call $zero_memory (call $dx_surf_state_ptr (local.get $entry_wa)) (i32.const 32)))))
+        (call $zero_memory (call $dx_surf_state_ptr (local.get $entry_wa)) (i32.const 32))
+        (call $dx_surf_fmt_set (local.get $entry_wa) (i32.const 0)))))
 
   ;; A successful Unlock publishes whatever the caller wrote through Lock's
   ;; lpSurface. Advance only this CPU epoch: sprite Blts after a background
@@ -1535,7 +1601,7 @@
   ;; CreateSurface(this, lpDDSD, lplpDDSurface, pUnkOuter)
   (func $handle_IDirectDraw_CreateSurface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $ddsd_wa i32) (local $caps i32) (local $w i32) (local $h i32) (local $bpp i32)
-    (local $pitch i32) (local $dib_size i32) (local $dib_guest i32)
+    (local $pitch i32) (local $dib_size i32) (local $dib_guest i32) (local $fmt i32)
     (local $obj i32) (local $entry i32) (local $flags i32)
     (local $back_obj i32) (local $back_entry i32) (local $vidmem_bytes i32)
     (local.set $ddsd_wa (call $g2w (local.get $arg1)))
@@ -1583,6 +1649,11 @@
         ;; populated with zeros, so dwRGBBitCount=0. Use display bpp.
         (if (i32.eqz (local.get $bpp)) (then (local.set $bpp (global.get $dx_display_bpp))))
         (local.set $flags (i32.const 4)))) ;; flag=offscreen
+    (local.set $fmt (call $dx_surf_fmt_default (local.get $bpp)))
+    (if (i32.and (i32.load offset=4 (local.get $ddsd_wa)) (i32.const 0x1000))
+      (then (local.set $fmt
+        (call $dx_surf_fmt_from_ddpf
+          (i32.add (local.get $ddsd_wa) (i32.const 72)) (local.get $bpp)))))
     ;; Compute pitch (bytes per row, DWORD-aligned)
     (local.set $pitch (i32.and
       (i32.add (i32.mul (local.get $w) (i32.div_u (local.get $bpp) (i32.const 8))) (i32.const 3))
@@ -1644,6 +1715,7 @@
     (i32.store (i32.add (local.get $entry) (i32.const 20)) (call $g2w (local.get $dib_guest)))
     (i32.store (i32.add (local.get $entry) (i32.const 24)) (local.get $vidmem_bytes))
     (i32.store (i32.add (local.get $entry) (i32.const 28)) (local.get $flags))
+    (call $dx_surf_fmt_set (local.get $entry) (local.get $fmt))
     ;; *lplpDDSurface = obj
     (call $gs32 (local.get $arg2) (local.get $obj))
     ;; Primary surface → resize the cooperative window so its back-canvas
@@ -1687,6 +1759,7 @@
           (i32.store (i32.add (local.get $back_entry) (i32.const 20)) (call $g2w (local.get $dib_guest)))
           (i32.store (i32.add (local.get $back_entry) (i32.const 24)) (local.get $dib_size))
           (i32.store (i32.add (local.get $back_entry) (i32.const 28)) (i32.const 2)) ;; flag=backbuf
+          (call $dx_surf_fmt_set (local.get $back_entry) (local.get $fmt))
           ;; Store back buffer guest ptr in primary's misc0 field for GetAttachedSurface
           (i32.store (i32.add (local.get $entry) (i32.const 8)) (local.get $back_obj))))))
     (global.set $eax (i32.const 0))
@@ -3347,6 +3420,32 @@
         (i32.store (i32.add (local.get $pf_wa) (i32.const 20)) (i32.const 0x0000FF00))
         (i32.store (i32.add (local.get $pf_wa) (i32.const 24)) (i32.const 0x000000FF)))))
 
+  (func $dx_fill_surface_pixel_format (param $pf_wa i32) (param $entry i32)
+    (local $bpp i32) (local $fmt i32)
+    (local.set $bpp (i32.load16_u offset=16 (local.get $entry)))
+    (local.set $fmt (call $dx_surf_fmt_get (local.get $entry)))
+    (call $dx_fill_pixel_format (local.get $pf_wa) (local.get $bpp))
+    (if (i32.eq (local.get $fmt) (i32.const 2)) (then
+      (i32.store offset=16 (local.get $pf_wa) (i32.const 0x7C00))
+      (i32.store offset=20 (local.get $pf_wa) (i32.const 0x03E0))
+      (i32.store offset=24 (local.get $pf_wa) (i32.const 0x001F))
+      (i32.store offset=28 (local.get $pf_wa) (i32.const 0))))
+    (if (i32.eq (local.get $fmt) (i32.const 3)) (then
+      (i32.store offset=4 (local.get $pf_wa) (i32.const 0x41))
+      (i32.store offset=16 (local.get $pf_wa) (i32.const 0x7C00))
+      (i32.store offset=20 (local.get $pf_wa) (i32.const 0x03E0))
+      (i32.store offset=24 (local.get $pf_wa) (i32.const 0x001F))
+      (i32.store offset=28 (local.get $pf_wa) (i32.const 0x8000))))
+    (if (i32.eq (local.get $fmt) (i32.const 4)) (then
+      (i32.store offset=4 (local.get $pf_wa) (i32.const 0x41))
+      (i32.store offset=16 (local.get $pf_wa) (i32.const 0x0F00))
+      (i32.store offset=20 (local.get $pf_wa) (i32.const 0x00F0))
+      (i32.store offset=24 (local.get $pf_wa) (i32.const 0x000F))
+      (i32.store offset=28 (local.get $pf_wa) (i32.const 0xF000))))
+    (if (i32.eq (local.get $fmt) (i32.const 5)) (then
+      (i32.store offset=4 (local.get $pf_wa) (i32.const 0x41))
+      (i32.store offset=28 (local.get $pf_wa) (i32.const 0xFF000000)))))
+
   ;; GetPixelFormat(this, lpDDPixelFormat)
   (func $handle_IDirectDrawSurface_GetPixelFormat (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $bpp i32)
@@ -3355,7 +3454,9 @@
     (if (local.get $entry)
       (then (local.set $bpp (i32.and (i32.load (i32.add (local.get $entry) (i32.const 16))) (i32.const 0xFFFF)))))
     (if (i32.eqz (local.get $bpp)) (then (local.set $bpp (i32.const 16))))
-    (call $dx_fill_pixel_format (call $g2w (local.get $arg1)) (local.get $bpp))
+    (if (local.get $entry)
+      (then (call $dx_fill_surface_pixel_format (call $g2w (local.get $arg1)) (local.get $entry)))
+      (else (call $dx_fill_pixel_format (call $g2w (local.get $arg1)) (local.get $bpp))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
@@ -3370,8 +3471,7 @@
     (i32.store (i32.add (local.get $wa) (i32.const 8)) (i32.load16_u (i32.add (local.get $entry) (i32.const 14))))
     (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.load16_u (i32.add (local.get $entry) (i32.const 12))))
     (i32.store (i32.add (local.get $wa) (i32.const 16)) (i32.load16_u (i32.add (local.get $entry) (i32.const 18))))
-    (call $dx_fill_pixel_format (i32.add (local.get $wa) (i32.const 72))
-      (i32.load16_u (i32.add (local.get $entry) (i32.const 16))))
+    (call $dx_fill_surface_pixel_format (i32.add (local.get $wa) (i32.const 72)) (local.get $entry))
     ;; Caps — DDSCAPS_PRIMARYSURFACE for primary; else DDSCAPS_VIDEOMEMORY|DDSCAPS_OFFSCREENPLAIN.
     ;; Apps gate z-buffer / render-target acceptance on DDSCAPS_VIDEOMEMORY when a hardware
     ;; device is selected — returning SYSTEMMEMORY would cause CreateZBuffer to reject.
@@ -3423,8 +3523,7 @@
     (local.set $dib_guest
       (call $w2g (i32.load (i32.add (local.get $entry) (i32.const 20)))))
     (i32.store (i32.add (local.get $wa) (i32.const 36)) (local.get $dib_guest))
-    (call $dx_fill_pixel_format (i32.add (local.get $wa) (i32.const 72))
-      (i32.load16_u (i32.add (local.get $entry) (i32.const 16))))
+    (call $dx_fill_surface_pixel_format (i32.add (local.get $wa) (i32.const 72)) (local.get $entry))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))) ;; 5 args
 

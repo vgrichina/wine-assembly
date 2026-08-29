@@ -59,6 +59,9 @@ function analyze(filename, mode) {
   let orangeSky = 0;
   let darkCockpit = 0;
   let greenHud = 0;
+  let neonCyan = 0;
+  let neonMagenta = 0;
+  let electricBlue = 0;
   for (let y = 0; y < png.height; y++) {
     for (let x = 0; x < png.width; x++) {
       const i = (y * png.width + x) * 4;
@@ -72,6 +75,9 @@ function analyze(filename, mode) {
           && r > g * 1.15 && g > b * 1.1) orangeSky++;
       if (y > 350 && r + g + b < 180) darkCockpit++;
       if (g > 120 && g > r * 1.7 && g > b * 1.25) greenHud++;
+      if (g > 160 && b > 160 && r < 80) neonCyan++;
+      if (r > 160 && b > 160 && g < 80) neonMagenta++;
+      if (b > 160 && r < 80 && g < 140) electricBlue++;
     }
   }
   const measured = {
@@ -81,6 +87,9 @@ function analyze(filename, mode) {
     orangeSky,
     darkCockpit,
     greenHud,
+    neonCyan,
+    neonMagenta,
+    electricBlue,
   };
   console.log(`  ${mode}: ${JSON.stringify(measured)} ${filename}`);
   // Flat repro measured 135 exact / 89 quantized colors and only five terrain
@@ -89,6 +98,8 @@ function analyze(filename, mode) {
     `${mode} reached the flat/no-texture gameplay repro: ${JSON.stringify(measured)}`);
   assert(orangeSky > 40000 && darkCockpit > 30000 && greenHud > 1000,
     `${mode} is missing the lit sky, textured cockpit, or readable HUD: ${JSON.stringify(measured)}`);
+  assert(neonCyan < 100 && neonMagenta < 100 && electricBlue < 500,
+    `${mode} contains misdecoded neon texture data: ${JSON.stringify(measured)}`);
 }
 
 const requested = process.argv[2] || 'both';
