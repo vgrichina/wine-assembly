@@ -335,6 +335,21 @@ function disasmAt(buf, offset, va, count, importNames, opts) {
       else if (op === 0xE9) { const d = relImm(osz); insn = `jmp ${target(curVA + (pos - startPos) + d)}`; }
       else if (op === 0xEA) { const off = readImm(osz); const sel = rd16(); insn = `jmp far ${_hex(sel)}:${_hex(off)}`; }
       else if (op === 0xEB) { const d = _sx8(rd8()); insn = `jmp short ${target(curVA + (pos - startPos) + d)}`; }
+      // Port I/O and the interrupt-flag pair. A PE never contains these, which
+      // is why they were missing, but they are the whole vocabulary of a DOS
+      // program talking to hardware -- `out dx, ax` printed as `db 0xef` reads
+      // as data-in-code and hides a CRTC write in the middle of a routine.
+      else if (op === 0xE4) insn = `in al, ${_hex8(rd8())}`;
+      else if (op === 0xE5) insn = `in ${osz === 16 ? 'ax' : 'eax'}, ${_hex8(rd8())}`;
+      else if (op === 0xE6) insn = `out ${_hex8(rd8())}, al`;
+      else if (op === 0xE7) insn = `out ${_hex8(rd8())}, ${osz === 16 ? 'ax' : 'eax'}`;
+      else if (op === 0xEC) insn = 'in al, dx';
+      else if (op === 0xED) insn = `in ${osz === 16 ? 'ax' : 'eax'}, dx`;
+      else if (op === 0xEE) insn = 'out dx, al';
+      else if (op === 0xEF) insn = `out dx, ${osz === 16 ? 'ax' : 'eax'}`;
+      else if (op === 0xF4) insn = 'hlt';
+      else if (op === 0xFA) insn = 'cli';
+      else if (op === 0xFB) insn = 'sti';
       else if (op === 0xF5) insn = 'cmc';
       else if (op === 0xF6) {
         const m = modrm(8);
