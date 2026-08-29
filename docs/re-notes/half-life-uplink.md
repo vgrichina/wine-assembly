@@ -172,3 +172,44 @@ before the engine re-enters video/presentation setup. Do not paper over this by
 transferring DirectDraw ownership in the host: the guest has not issued a
 second `SetCooperativeLevel`, and there is not yet generic evidence that such a
 host-side handoff matches Windows behavior.
+
+## Browser DLL thread-attach stack translation
+
+Safari 26.4 can advance through New Game and click Easy with a 1,000-block host
+slice, but repeatedly traps while entering tiny MFC epilogue blocks. A failure
+at `0x00464e4e` (`mov eax,edi; pop edi; pop esi; ret 4`) left EAX unchanged from
+before the block and ESP still named the valid words `0x00459610, 0x074febc0,
+0x00463aaa, 0x0043fd74`. An earlier run failed on the same shape at the `ret 4`
+at `0x00456cc0`. The intact state rules out a corrupt MFC object or guest
+return stack, but does not identify where the browser exception originates.
+
+Neither disabling cross-basic-block tail calls nor preserving retired decoded
+page chunks fixed the failure. A local Chrome drive with the second diagnostic
+build reproduced the exact `0x00464e4e` report and finally supplied the browser
+exception stack: `DataView.setUint32` at `dll-loader.js:callDllMain`, called by
+`ThreadManager.spawnPending` while delivering `DLL_THREAD_ATTACH`. The sampled
+EIP is the suspended main thread's current address; the exception happens in
+host-side initialization of a newly created cooperative thread, before that
+thread's start routine runs. That also explains the earlier worker diagnostics
+which reported `Length out of range of buffer` during `initGuestThread`.
+
+`callDllMain` translated its temporary stack pushes with the legacy contiguous
+formula `guest - imageBase + GUEST_BASE`. New thread stacks are allocated in a
+sparse high guest range and already have a real mapping in the virtual map, so
+that formula produces an offset beyond the `DataView`. ThreadManager's normal
+stack initialization was previously corrected to use `guest_to_wasm`, but the
+loader-notification path retained the obsolete formula.
+
+DllMain stack pushes and the saved SEH word now use the interpreter's exported
+`guest_to_wasm` mapper when it is available, retaining the old formula only for
+loader mocks and older embedders. The focused regression delivers
+`DLL_THREAD_ATTACH` on a synthetic stack at guest `0x07500000`, whose real WASM
+backing is `0x00050000`; this address would be far outside linear memory under
+the old arithmetic. No decoded-cache policy is changed.
+
+The post-fix Chrome browser drive reached the live Easy control, created the
+next Half-Life window, and remained in the MFC pump through 269,000 reported
+slices with no `ERROR` or trap. It stops the acceptance only at the
+already documented two-colour/grey first-person boundary (`colors=2` against
+the test's `minColors=24`), so the stack-translation fix does not reintroduce
+the pre-difficulty stall.

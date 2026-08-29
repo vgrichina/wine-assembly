@@ -4,12 +4,17 @@
 const assert = require('assert');
 const { callDllMain } = require('../lib/dll-loader');
 
-function captureDllMainArgs(options) {
+function captureDllMainArgs(options, { sparseStack = false } = {}) {
   const memory = new WebAssembly.Memory({ initial: 128 });
   const dv = new DataView(memory.buffer);
   const imageBase = 0x00400000;
-  const savedEsp = 0x00420000;
-  const g2w = guest => guest - imageBase + 0x12000;
+  const savedEsp = sparseStack ? 0x07500000 : 0x00420000;
+  const contiguousG2w = guest => guest - imageBase + 0x12000;
+  const sparseBase = 0x074ff000;
+  const sparseWa = 0x00050000;
+  const g2w = guest => sparseStack
+    ? sparseWa + guest - sparseBase
+    : contiguousG2w(guest);
   let captured;
   const e = {
     memory,
@@ -26,6 +31,7 @@ function captureDllMainArgs(options) {
       e.eip = 0;
     },
   };
+  if (sparseStack) e.guest_to_wasm = g2w;
 
   callDllMain(e, 0x0069d000, 0x006c0aa0, null, options);
   return captured;
@@ -43,5 +49,8 @@ assert.deepStrictEqual(captureDllMainArgs(1234),
 assert.deepStrictEqual(captureDllMainArgs({ reason: 2 }),
   [0, 0x0069d000, 2, 0],
   'new worker threads must deliver DLL_THREAD_ATTACH before their start routine');
+assert.deepStrictEqual(captureDllMainArgs({ reason: 2 }, { sparseStack: true }),
+  [0, 0x0069d000, 2, 0],
+  'DLL_THREAD_ATTACH must push onto a sparse worker stack through guest_to_wasm');
 
 console.log('PASS  DllMain receives the Windows static/dynamic load context');

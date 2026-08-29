@@ -38,8 +38,8 @@ for (const [suffix, vfsPath] of [
   `Half-Life Uplink mounts ${suffix} at its installed discovery path`);
 }
 const browserShell = fs.readFileSync(path.join(root, 'lib/browser-shell.js'), 'utf8');
-assert(/case 'jazz2_demo':\s*[\s\S]*?case 'halflife_uplink':\s*return workerMode \? 1000 : 250;/.test(browserShell),
-  'Half-Life Uplink keeps main-thread work interruptible without penalizing Workers');
+assert(/case 'jazz2_demo':\s*[\s\S]*?case 'halflife_uplink':\s*return 1000;/.test(browserShell),
+  'Half-Life Uplink gives both backends enough work to finish its renderer transition');
 
 const dlls = [
   'hw.dll', 'sw.dll', 'hl_res.dll', 'a3dapi.dll',
