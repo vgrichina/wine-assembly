@@ -45,16 +45,15 @@ const route = [
   '565:mousedown:150:135', '585:mouseup:150:135',
   '620:relmousemove:215:0', '623:relmousemove:0:145',
   '635:mousedown:423:320', '655:mouseup:423:320',
+  // Synchronize on the rendered operation map, rather than assuming its
+  // transition completed in the same batch under cooperative and Worker
+  // scheduling. The map has ~10k near-black pixels; loading frames are black
+  // and the later cockpit has >100k.
+  '700:wait-canvas-dark-pixels:5000:30000:900',
   '770:relmousemove:115:0', '773:relmousemove:0:88',
   '790:mousedown:576:432', '820:mouseup:576:432',
-  // Worker scheduling can finish the operation-map transition after the first
-  // deployment click. Retry the same idempotent control once the map is fully
-  // live; in cooperative mode this lands harmlessly after cockpit entry.
-  '900:mousedown:576:432', '930:mouseup:576:432',
-  '1040:mousedown:576:432', '1070:mouseup:576:432',
-  '1150:mousedown:576:432', '1180:mouseup:576:432',
-  '1260:mousedown:576:432', '1290:mouseup:576:432',
-  '1320:keydown:13', '1330:keyup:13',
+  // Capture only after the dark cockpit/terrain frame is actually present.
+  '830:wait-canvas-dark-pixels:85000:140000:900',
 ];
 
 function analyze(filename, mode) {
@@ -120,11 +119,11 @@ for (let index = 0; index < modes.length; index++) {
   const mode = modes[index];
   const png = path.join(OUT, `${mode}.png`);
   if (fs.existsSync(png)) fs.unlinkSync(png);
-  const input = [...route, `1450:png:${png}`].join(',');
+  const input = [...route, `950:png:${png}`].join(',');
   const args = [
     path.join(__dirname, 'run.js'), '--app=mw3', `--${mode}`,
     '--quiet-api', '--quiet-blocks', '--batch-size=200000',
-    '--max-batches=1470', '--no-close', '--dx-slot=5',
+    '--max-batches=1600', '--no-close', '--dx-slot=5',
     ...(index ? ['--no-build'] : []),
     `--input=${input}`,
   ];
@@ -140,6 +139,11 @@ for (let index = 0; index < modes.length; index++) {
     `${mode} MW3 route failed (${result.signal || result.status})`);
   assert(!/ERROR:|UNHANDLED EXCEPTION|UNIMPLEMENTED API/.test(output),
     `${mode} MW3 route reported a runtime failure`);
+  const visualWaits = output.match(/\[input\] wait-canvas-dark-pixels matched/g) || [];
+  assert.strictEqual(visualWaits.length, 2,
+    `${mode} did not visibly synchronize on both operation-map and cockpit states`);
+  assert(!/wait-canvas-dark-pixels TIMEOUT/.test(output),
+    `${mode} timed out waiting for a required rendered screen state`);
   if (mode === 'threads') {
     assert(/guest-worker 1|spawned worker T1|guest thread tid=1/.test(output),
       'threads route never instantiated the guest worker');

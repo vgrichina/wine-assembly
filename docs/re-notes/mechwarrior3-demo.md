@@ -306,8 +306,9 @@ detail gates with zero cyan/magenta corruption; representative late Worker
 captures measured 2,310–2,331 exact colours and 139–141 terrain bins. Their
 sky, terrain, cockpit, and HUD are visually coherent.
 Worker timing can leave the operation-map button inactive at an early scripted
-click, so the acceptance route retries the same idempotent deployment control
-and captures after the last retry.
+click, so the acceptance route no longer guesses fixed transition batches. It
+waits for the operation map's measured near-black-pixel range before clicking,
+then waits for the cockpit's distinct >100k-dark-pixel range before capture.
 
 A steady batches-840..1080 CPU-profile window fell from 12.27 seconds sampled
 before these corrections to 8.40 seconds after them (31.6%). The current
