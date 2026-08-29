@@ -326,3 +326,37 @@ It does not solve the dominant sampler because WebAssembly still has no gather;
 four-way filtering requires four scalar, format-aware texel fetches. Further
 SIMD work belongs behind a new profile rather than changing fixed-function
 results for a speculative vector fast path.
+
+## Relative mouse clip edge and current cost split (2026-08-29)
+
+MW3 hides the Win32 cursor and consumes relative DirectInput motion for its
+software cursor. Pointer-lock events were first applied to the emulator's
+virtual Win32 cursor and clipped to `ClipCursor`; the DirectInput delta was then
+derived from that already-clipped position. Once the virtual cursor touched an
+edge, motion farther toward the edge became zero even though a physical mouse
+still reported movement. This is incorrect for any game which applies its own
+sensitivity or keeps an independently bounded software cursor.
+
+Relative input now converts the raw browser delta through the active native
+presentation scale, retains fractional native movement between events, and
+feeds that unbounded value to DirectInput. Ordinary `WM_MOUSEMOVE` and the
+emulator's visible cursor remain clipped as Win32 requires. The focused
+`test/test-relative-mouse-clip-edge.js` covers both the logical 2x transform and
+the separate physical presentation viewport used by sharp/FSR scaling. A CLI
+MW3 capture also clarifies that the yellow cursor ring's centre stopping about
+nine pixels below the top is game behavior: MW3 keeps the complete roughly
+18-pixel sprite visible. It is not evidence that raw DirectInput motion stopped.
+
+The representative steady-gameplay profile above answers the remaining FPS
+question more usefully than another wall-clock run on the currently saturated
+development host. WebAssembly accounts for 69.3% of the sampled 8.40-second
+window, and its hottest named functions are the x86 decoder/dispatcher,
+register accessors, and branch machinery. The six largest named software-D3D
+functions total about 1.69 seconds (20.1% of the whole window); presentation is
+about 0.93 seconds (11.1%), and API-name logging is 0.58 seconds (6.9%). These
+categories are not a complete partition, but they establish the ranking: x86
+emulation is the dominant cost, while the native-Wasm D3D3 rasterizer is a
+material secondary cost rather than the principal bottleneck. Keep Runtime log
+off for play and measurement. The existing SIMD header copy addresses the hot
+contiguous FVF operation; the format-aware sampler remains gather-bound, so
+more SIMD is not an evidence-backed next optimization.

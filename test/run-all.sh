@@ -233,6 +233,7 @@ UNIT=(
   test/test-renderer-mouse-drag-mask.js
   test/test-renderer-letterbox-input.js
   test/test-relative-mouse-input.js
+  test/test-relative-mouse-clip-edge.js
   test/test-renderer-dialog-caption-drag.js
   test/test-renderer-shell-dialog.js
   test/test-renderer-multi-app-modal.js
