@@ -5,7 +5,7 @@
 const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
 
-const DX_OBJECTS = 0x07FF0000;
+const DX_OBJECTS = 0x07F60000;
 const DX_ENTRY_SIZE = 32;
 
 (async () => {

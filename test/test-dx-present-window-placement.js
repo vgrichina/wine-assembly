@@ -41,7 +41,7 @@ const DEST_Y = CLIENT.y - WIN.y;   // 5
 const memory = new ArrayBuffer(128 * 1024 * 1024);
 const bytes = new Uint8Array(memory);
 const dv = new DataView(memory);
-const DX_OBJECTS = 0x07FF0000;
+const DX_OBJECTS = 0x07F60000;
 
 // A greyscale palette, so an 8bpp pixel reads back as its own colour index.
 const palWa = 0x30000;

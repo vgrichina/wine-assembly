@@ -243,7 +243,7 @@ emulator rather than the emulated program.
   class table             CLASS_RECORDS           → writer lock + publish-last ✅
   timer table             TIMER_TABLE             → locked, owner-addressed ✅
   post queues             THREAD_MSG_QUEUES        → locked MPSC ring per thread ✅
-  DX objects / COM        0x07FF0000              → lock, coarse
+  DX objects / COM        0x07F60000              → lock, coarse
   socket table            09d-winsock.wat         → lock, coarse
   DLL table               0x04462000              → immutable after load
   decoded-code cache      per-tid partition       → already safe

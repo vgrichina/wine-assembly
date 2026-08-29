@@ -1327,9 +1327,10 @@
   ;; 0x07F0D000 8KB      GDI_REGION_TABLE (256 WAT-owned HRGN records)
   ;; 0x07F0F000 4KB      GDI_DC_PATH_TABLE (256 x 16-byte WAT path records)
   ;; 0x07F10000 4KB      HANDLER_HIST_COUNTS (1024 i32 counters)
-  ;; 0x07F11000 4KB      DX_SURF_PAL (1024 per-surface palette pointers)
+  ;; 0x07F11000 4KB      free (former DX_SURF_PAL)
   ;; 0x07F12000 8KB      CODE_PAGE_BITMAP (1 bit per 4KB guest page < 0x10000000)
   ;; 0x07F14000 8KB      SYNC_TABLE (512 entries × 16 bytes)
+  ;; 0x07F16000 40KB     free (former DX_SURF_STATE / DX_CURSOR_SAVE)
   ;; 0x07F20000  256B    HIT_COUNT_BASE (16 --count slots of {addr, count})
   ;; 0x07F20100   80B    TIMER_SHARED (active count, next auto id, 16 owner tids)
   ;; 0x07F20200  256B    EXTRA_CMDLINE_BUFFER (JS-provided arguments)
@@ -1340,7 +1341,14 @@
   ;; 0x07F26000    4KB   TV_IMAGE_TABLE (512 entries × {image, selected image})
   ;; 0x07F27000    2KB   TV_OWNER_TABLE (owning hwnd per TV_TABLE item)
   ;; 0x07F30000 8KB      OP_INDEX (2048 decode-time op-start addresses)
-  ;; 0x07F16000 492KB    (free apart from the tables listed above -- former
+  ;; 0x07F32000 16KB     DX_SURF_PAL (4096 per-surface palette pointers)
+  ;; 0x07F36000 128KB    DX_SURF_STATE (4096 entries × 32 bytes)
+  ;; 0x07F56000 32KB     DX_CURSOR_SAVE (4096 cursor-cache pointers/markers)
+  ;; 0x07F5E000 8KB      free/alignment
+  ;; 0x07F60000 128KB    DX_OBJECTS (4096 entries × 32 bytes)
+  ;; 0x07F80000 32KB     COM_WRAPPERS (4096 entries × 8 bytes)
+  ;; 0x07F88000 36KB     free
+  ;; 0x07F16000 492KB    (packed apart from the gaps listed above -- former
   ;;                      HANDLER_PAIR_HIST_COUNTS home, too
   ;;                      small once the handler table passed 361. This block is
   ;;                      packed wall-to-wall with the branch/hot-block tables
@@ -1354,10 +1362,8 @@
   ;; 0x07F9B000 256KB    HOT_BLOCK_HIST (32768 entries x {eip,count})
   ;; 0x07FDB000 64KB     SIB_CONSUMER_HIST (8192 entries x {key,count})
   ;; 0x07FEB000  4KB     D3DIM auxiliary strings/caches/state
-  ;; --- DX tables moved to high memory to avoid guest address collision ---
+  ;; --- Remaining DX tables in high memory, outside guest address space ---
   ;; 0x07FEC000 16KB     D3DIM_MATRICES (256 entries × 64 bytes, ends 0x07FF0000)
-  ;; 0x07FF0000 32KB     DX_OBJECTS     (1024 entries × 32 bytes, ends 0x07FF8000)
-  ;; 0x07FF8000  8KB     COM_WRAPPERS   (1024 entries × 8 bytes, ends 0x07FFA000)
   ;; 0x07FFA000 15.75KB  COM_WRAPPERS_AUX (2016 entries × 8 bytes, ends 0x07FFDF00)
   ;; 0x07FFDF00  256B    DX_VTBL_REGISTRY (220 bytes used, ends before VSOCK_TABLE)
   ;; 0x07FFE000  8KB     VSOCK_TABLE    (64 sockets × 128 bytes, ends 0x08000000)

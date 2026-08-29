@@ -40,7 +40,7 @@
       (return)))
     (local.set $ret_addr (call $gl32 (global.get $esp)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-    (call $d3d_enum_devices_invoke (local.get $arg1) (local.get $arg2) (local.get $ret_addr)))
+    (call $d3d_enum_devices_invoke (local.get $arg1) (local.get $arg2) (local.get $ret_addr) (i32.const 2)))
 
   ;; IDirect3D2_CreateLight — 3 args (incl. this)
   (func $handle_IDirect3D2_CreateLight (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

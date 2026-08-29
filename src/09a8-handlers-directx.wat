@@ -4,7 +4,7 @@
   ;; ============================================================
 
   ;; ── DX_OBJECTS table ─────────────────────────────────────────
-  ;; 256 entries × 32 bytes at 0x07FF0000 (high memory, safe from guest writes)
+  ;; 4096 entries × 32 bytes at 0x07F60000 (high memory, safe from guest writes)
   ;; +0  type: 0=free,1=DDraw,2=DDSurface,3=DDPalette,4=DSound,5=DSBuffer,6=DInput,7=DIDev,26=DPlay3,27=DPlayLobby2,28=DAView,29=DAStatics,30=IMalloc,31=DABehavior/node
   ;; +4  refcount
   ;; +8  misc0 (DDraw: hwnd, DSBuffer: wave_handle, DIDev: device_type 1=kbd 2=mouse)
@@ -13,9 +13,9 @@
   ;; +20 dib_ptr (WASM addr of pixel data, 0 if none)
   ;; +24 color_key_low
   ;; +28 flags (surface type: 1=primary,2=backbuf,4=offscreen; 0x100=has_colorkey)
-  (global $DX_OBJECTS i32 (i32.const 0x07FF0000))
-  (global $DX_OBJECTS_SIZE i32 (i32.const 0x00008000))
-  (global $DX_MAX i32 (i32.const 1024))
+  (global $DX_OBJECTS i32 (i32.const 0x07F60000))
+  (global $DX_OBJECTS_SIZE i32 (i32.const 0x00020000))
+  (global $DX_MAX i32 (i32.const 4096))
   ;; D3DIM matrix handle table (Immediate Mode): 256 slots × 64 bytes.
   ;; Handle value = slot_idx + 1 (0 is invalid). Allocation state is kept in
   ;; a separate byte table because SetMatrix may legitimately store an all-zero
@@ -30,10 +30,10 @@
   ;; itself is full (32 bytes, every field taken), and a single global is wrong
   ;; for textures: an 8bpp D3D texture carries its own palette while the
   ;; primary surface carries another.
-  (global $DX_SURF_PAL i32 (i32.const 0x07F11000))
-  (global $DX_SURF_PAL_SIZE i32 (i32.const 0x00001000))
+  (global $DX_SURF_PAL i32 (i32.const 0x07F32000))
+  (global $DX_SURF_PAL_SIZE i32 (i32.const 0x00004000))
   ;; CPU-write epochs and reversible-copy provenance for DirectDraw surfaces.
-  ;; 1024 entries x 32 bytes in the free 0x07F16000..0x07F1DFFF range:
+  ;; 4096 entries x 32 bytes in 0x07F36000..0x07F55FFF:
   ;;   +0  CPU-write epoch (advanced by Unlock)
   ;;   +4  source slot + 1 of the last small <- large plain Blt, or 0
   ;;   +8  source CPU epoch at that save
@@ -44,18 +44,18 @@
   ;; the large surface was CPU-redrawn after the save, replaying those pixels
   ;; would stamp stale terrain over the new frame (AoE I/II). Exact inverse
   ;; rectangle matching keeps ordinary small-surface blits untouched.
-  (global $DX_SURF_STATE i32 (i32.const 0x07F16000))
-  (global $DX_SURF_STATE_SIZE i32 (i32.const 0x00008000))
+  (global $DX_SURF_STATE i32 (i32.const 0x07F36000))
+  (global $DX_SURF_STATE_SIZE i32 (i32.const 0x00020000))
   ;; Per-destination cache for the 32x32 keyed software cursor used by MCM.
   ;; +0 is 0 (inactive), 1 (legacy null-source frame marker seen), or a DIB-
   ;; arena record holding two physical-page identities, x/y pairs, and their
   ;; 32x32x16 backgrounds. Flip swaps DIB pointers between COM surface entries,
   ;; so keying those two saves by physical page is essential. +4 is reserved.
-  (global $DX_CURSOR_SAVE i32 (i32.const 0x07F1E000))
-  (global $DX_CURSOR_SAVE_SIZE i32 (i32.const 0x00002000))
+  (global $DX_CURSOR_SAVE i32 (i32.const 0x07F56000))
+  (global $DX_CURSOR_SAVE_SIZE i32 (i32.const 0x00008000))
   ;; COM wrapper stubs: DX_MAX × 8 bytes in high memory (safe from guest address collision)
-  (global $COM_WRAPPERS i32 (i32.const 0x07FF8000))
-  (global $COM_WRAPPERS_SIZE i32 (i32.const 0x00002000))
+  (global $COM_WRAPPERS i32 (i32.const 0x07F80000))
+  (global $COM_WRAPPERS_SIZE i32 (i32.const 0x00008000))
   ;; Auxiliary wrappers for QueryInterface results that need a different vtable
   ;; than the primary wrapper. Each entry is [vtbl, slot], same shape as the
   ;; primary wrappers so $dx_from_this works for aux guest ptrs too. Dedup'd
@@ -1856,14 +1856,18 @@
     ;; Dispatch next mode (or finish if past end)
     (call $enum_modes_dispatch))
 
-  ;; ── IDirect3D{1,2,3}::EnumDevices — enumerates Ramp/HAL/MMX/TnLHal ──
+  ;; ── IDirect3D{1,2,3}::EnumDevices ──
+  ;; Win9x exposes Ramp/RGB/HAL to v1/v2 and RGB/HAL to v3.  The descriptor
+  ;; pair matters as much as the GUID: software devices have no HW caps, while
+  ;; HAL has a non-RGB HEL descriptor.  Some games (including MW3) deliberately
+  ;; count only RGB HEL descriptors and assume one such entry per adapter.
   ;; Caller has captured the saved return addr and already popped stdcall args.
   ;; Dispatches callback N times via CACA000B continuation thunk.
-  (func $d3d_enum_devices_invoke (param $cb i32) (param $ctx i32) (param $ret_addr i32)
+  (func $d3d_enum_devices_invoke (param $cb i32) (param $ctx i32) (param $ret_addr i32) (param $version i32)
     ;; Push saved caller ret once (stays on stack across all iterations).
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (local.get $ret_addr))
-    (global.set $d3d_enum_dev_mode (i32.const 0))
+    (global.set $d3d_enum_dev_mode (local.get $version))
     (global.set $d3d_enum_dev_cb  (local.get $cb))
     (global.set $d3d_enum_dev_ctx (local.get $ctx))
     (global.set $d3d_enum_dev_ret (local.get $ret_addr))
@@ -1873,22 +1877,30 @@
   ;; Fills per-device GUID/desc/name and invokes the guest callback.
   ;; If idx past end, pops saved ret + sets EAX=DD_OK and returns to caller.
   (func $d3d_enum_devices_dispatch
-    (local $idx i32) (local $guid i32) (local $desc i32) (local $name i32)
+    (local $idx i32) (local $kind i32) (local $count i32)
+    (local $guid i32) (local $desc i32) (local $name i32)
     (local $hw i32) (local $hel i32) (local $wa i32) (local $is_hal i32)
     (local.set $idx (global.get $d3d_enum_dev_idx))
-    ;; 4 devices: 0=Ramp, 1=RGB, 2=HAL, 3=MMX. (Framework-preferred order.)
-    (if (i32.ge_u (local.get $idx) (i32.const 4))
+    ;; Device kinds: 0=Ramp, 1=RGB, 2=HAL.  D3D3 starts at RGB.
+    (local.set $count
+      (select (i32.const 3) (i32.const 2)
+        (i32.le_u (global.get $d3d_enum_dev_mode) (i32.const 2))))
+    (if (i32.ge_u (local.get $idx) (local.get $count))
       (then
         (global.set $esp (i32.add (global.get $esp) (i32.const 4))) ;; pop saved ret
         (global.set $eip (global.get $d3d_enum_dev_ret))
         (global.set $eax (i32.const 0))
         (return)))
+    (local.set $kind
+      (i32.add (local.get $idx)
+        (select (i32.const 0) (i32.const 1)
+          (i32.le_u (global.get $d3d_enum_dev_mode) (i32.const 2)))))
     (local.set $guid (call $heap_alloc (i32.const 16)))
     (local.set $wa (call $g2w (local.get $guid)))
     (local.set $desc (call $heap_alloc (i32.const 32)))
     (local.set $name (call $heap_alloc (i32.const 16)))
     (local.set $is_hal (i32.const 0))
-    (if (i32.eq (local.get $idx) (i32.const 0))
+    (if (i32.eq (local.get $kind) (i32.const 0))
       (then
         ;; IID_IDirect3DRampDevice {F2086B20-259F-11CF-A31A-00AA00B93356}
         (i32.store (local.get $wa)                      (i32.const 0xF2086B20))
@@ -1903,7 +1915,7 @@
         ;; "ramp\0"
         (i32.store (call $g2w (local.get $name)) (i32.const 0x706D6172))
         (i32.store8 (i32.add (call $g2w (local.get $name)) (i32.const 4)) (i32.const 0))))
-    (if (i32.eq (local.get $idx) (i32.const 1))
+    (if (i32.eq (local.get $kind) (i32.const 1))
       (then
         ;; IID_IDirect3DRGBDevice {A4665C60-2673-11CF-A31A-00AA00B93356}
         (i32.store (local.get $wa)                      (i32.const 0xA4665C60))
@@ -1917,7 +1929,7 @@
         (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 12)))  (i32.const 0x0000006E))
         ;; "rgb\0"
         (i32.store (call $g2w (local.get $name)) (i32.const 0x00626772))))
-    (if (i32.eq (local.get $idx) (i32.const 2))
+    (if (i32.eq (local.get $kind) (i32.const 2))
       (then
         ;; IID_IDirect3DHALDevice {84E63DE0-46AA-11CF-816F-0000C020156E}
         (i32.store (local.get $wa)                      (i32.const 0x84E63DE0))
@@ -1932,25 +1944,22 @@
         ;; "hal\0"
         (i32.store (call $g2w (local.get $name)) (i32.const 0x0000006C61681))
         (local.set $is_hal (i32.const 1))))
-    (if (i32.eq (local.get $idx) (i32.const 3))
-      (then
-        ;; IID_IDirect3DMMXDevice {881949A1-D6F3-11D0-89AB-00A0C9054129}
-        (i32.store (local.get $wa)                      (i32.const 0x881949A1))
-        (i32.store (i32.add (local.get $wa) (i32.const 4))  (i32.const 0x11D0D6F3))
-        (i32.store (i32.add (local.get $wa) (i32.const 8))  (i32.const 0xA000AB89))
-        (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 0x294105C9))
-        ;; "MMX Emulation\0"
-        (i32.store (call $g2w (local.get $desc))                           (i32.const 0x20584D4D))
-        (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 4)))   (i32.const 0x6C756D45))
-        (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 8)))   (i32.const 0x6F697461))
-        (i32.store (call $g2w (i32.add (local.get $desc) (i32.const 12)))  (i32.const 0x0000006E))
-        ;; "mmx\0"
-        (i32.store (call $g2w (local.get $name)) (i32.const 0x00786D6D))))
     ;; HW + HEL descs
     (local.set $hw  (call $heap_alloc (i32.const 252)))
     (call $fill_d3d_device_desc (local.get $hw)  (local.get $is_hal))
     (local.set $hel (call $heap_alloc (i32.const 252)))
     (call $fill_d3d_device_desc (local.get $hel) (i32.const 0))
+    ;; RGB/Ramp are software devices, so their HW descriptor is invalid.
+    ;; HAL's HEL descriptor is valid fallback data but has no color model.
+    (if (i32.eqz (local.get $is_hal))
+      (then
+        (call $gs32 (i32.add (local.get $hw) (i32.const 4)) (i32.const 0))
+        (call $gs32 (i32.add (local.get $hw) (i32.const 8)) (i32.const 0)))
+      (else
+        (call $gs32 (i32.add (local.get $hel) (i32.const 8)) (i32.const 0))))
+    ;; Ramp is monochrome; RGB is the sole RGB HEL device in the v3 list.
+    (if (i32.eq (local.get $kind) (i32.const 0))
+      (then (call $gs32 (i32.add (local.get $hel) (i32.const 8)) (i32.const 1))))
     ;; Push callback args right-to-left: ctx, helDesc, hwDesc, name, desc, guid
     (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (global.get $esp) (global.get $d3d_enum_dev_ctx))
@@ -5804,7 +5813,7 @@
       (return)))
     (local.set $ret_addr (call $gl32 (global.get $esp)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-    (call $d3d_enum_devices_invoke (local.get $arg1) (local.get $arg2) (local.get $ret_addr)))
+    (call $d3d_enum_devices_invoke (local.get $arg1) (local.get $arg2) (local.get $ret_addr) (i32.const 1)))
 
   ;; IDirect3D::CreateLight — mirrors the IDirect3D3 pattern (DX type 24, vtbl D3DLIGHT)
   (func $handle_IDirect3D_CreateLight (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -5878,7 +5887,7 @@
       (return)))
     (local.set $ret_addr (call $gl32 (global.get $esp)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
-    (call $d3d_enum_devices_invoke (local.get $arg1) (local.get $arg2) (local.get $ret_addr)))
+    (call $d3d_enum_devices_invoke (local.get $arg1) (local.get $arg2) (local.get $ret_addr) (i32.const 3)))
 
   ;; IDirect3D3::CreateLight(this, lplpDirect3DLight, pUnkOuter) — 3 args
   (func $handle_IDirect3D3_CreateLight (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

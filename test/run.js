@@ -826,6 +826,7 @@ async function main() {
   //   B:mousedown:X:Y       — handleMouseDown at canvas (X,Y)
   //   B:mouseup:X:Y         — handleMouseUp at canvas (X,Y)
   //   B:mousemove:X:Y       — handleMouseMove at canvas (X,Y)
+  //   B:relmousemove:DX:DY  — feed a pointer-lock relative delta
   //   B:wheel:X:Y:DELTA     — handleWheel at canvas (X,Y)
   //   B:dump-find           — log current find dialog edit state
   //   B:dump-main-edit      — log main edit text
@@ -1331,6 +1332,9 @@ async function main() {
         // derived from the window's live rect, the same way close-click does.
         scheduledInput.push({ batch, action: 'caption-click',
           target: parts[2] || '', part: parts[3] || 'close' });
+      } else if (kind === 'relmousemove') {
+        scheduledInput.push({ batch, action: kind,
+          x: parseInt(parts[2]), y: parseInt(parts[3]) });
       } else if (kind === 'click') {
         scheduledInput.push({ batch, action: 'click', x: parseInt(parts[2]), y: parseInt(parts[3]) });
       } else if (kind === 'mousedown') {
@@ -1441,7 +1445,7 @@ async function main() {
   ];
 
   // DX_OBJECTS lives in high WASM memory on this branch.
-  // Matches src/09a8-handlers-directx.wat ($DX_OBJECTS = 0x07FF0000).
+  // Matches src/09a8-handlers-directx.wat ($DX_OBJECTS = 0x07F60000).
   const DX_TYPE_NAMES = { 1:'DDraw', 2:'DDSurface', 3:'DDPalette', 4:'DSound', 5:'DSBuffer',
     6:'DInput', 7:'DIDev', 8:'D3D', 9:'D3D3', 20:'D3DDev3', 23:'D3DVp3', 24:'D3DLight', 25:'D3DMat3',
     26:'DPlay3', 27:'DPlayLobby2' };
@@ -1452,8 +1456,8 @@ async function main() {
       wa = g2w(thisGuest);
       slot = dv.getUint32(wa + 4, true);
     } catch (_) { return null; }
-    if (slot >= 256) return null;
-    const entry = 0x07FF0000 + slot * 32;
+    if (slot >= 4096) return null;
+    const entry = 0x07F60000 + slot * 32;
     const type = dv.getUint32(entry, true);
     if (!type) return null;
     const rc = dv.getUint32(entry + 4, true);
@@ -6945,6 +6949,9 @@ async function main() {
         if (renderer.handleMenuHover) renderer.handleMenuHover(ev.x, ev.y);
         renderer.handleMouseMove(ev.x, ev.y);
         logs.push(`[input] mousemove ${ev.x},${ev.y} at batch ${batch}`);
+      } else if (ev.action === 'relmousemove' && renderer && renderer.handleRelativeMouseMove) {
+        renderer.handleRelativeMouseMove(ev.x, ev.y);
+        logs.push(`[input] relmousemove ${ev.x},${ev.y} at batch ${batch}`);
       } else if (ev.action === 'wheel' && renderer && renderer.handleWheel) {
         renderer.handleWheel(ev.x, ev.y, ev.delta);
         logs.push(`[input] wheel ${ev.x},${ev.y} delta=${ev.delta} at batch ${batch}`);
@@ -8216,9 +8223,9 @@ if (VERBOSE) {
   const getDxSurfaceManifest = () => {
     const mem = new Uint8Array(memory.buffer);
     const dv = new DataView(memory.buffer);
-    const DX_BASE = 0x07FF0000;
-    const DX_SLOTS = 1024; // matches $DX_MAX in src/09a8-handlers-directx.wat
-    const DX_SURF_PAL = 0x07F11000; // matches $DX_SURF_PAL: per-surface palette data addr
+    const DX_BASE = 0x07F60000;
+    const DX_SLOTS = 4096; // matches $DX_MAX in src/09a8-handlers-directx.wat
+    const DX_SURF_PAL = 0x07F32000; // matches $DX_SURF_PAL: per-surface palette data addr
     let paletteWa = 0;
     for (let slot = 0; slot < DX_SLOTS; slot++) {
       const entry = DX_BASE + slot * 32;
@@ -8492,8 +8499,8 @@ if (VERBOSE) {
     fs.mkdirSync(DUMP_DDRAW, { recursive: true });
     const mem = new Uint8Array(memory.buffer);
     const dv = new DataView(memory.buffer);
-    const DX_BASE = 0x07FF0000;
-    const DX_SLOTS = 1024; // matches $DX_MAX in src/09a8-handlers-directx.wat
+    const DX_BASE = 0x07F60000;
+    const DX_SLOTS = 4096; // matches $DX_MAX in src/09a8-handlers-directx.wat
     const manifest = [];
     // Read the primary palette WASM addr by scanning palette-type entries in
     // the live DX table. Palette slots have type=3 and store their palette

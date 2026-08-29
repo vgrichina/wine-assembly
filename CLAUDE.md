@@ -234,7 +234,7 @@ Key regions:
 - `0x04252000` — Block cache index (64KB, CACHE_INDEX)
 - `0x04262000` — PE staging buffer (2MB, PE_STAGING)
 - `0x04462000` — DLL table (512B)
-- `0x07FF0000` — DX_OBJECTS / COM_WRAPPERS (high memory, outside g2w bounds)
+- `0x07F60000` — DX_OBJECTS / COM_WRAPPERS (high memory, outside g2w bounds)
 
 See [docs/memory-map.md](docs/memory-map.md) for the full annotated layout, comparison with Windows 98 kernel/user memory model, and analysis of what's emulator-private vs guest-accessible.
 
