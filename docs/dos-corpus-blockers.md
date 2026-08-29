@@ -120,12 +120,45 @@ entry 110:135d  ax=ffff ...              (x202, stuck)
 ax,sp / jnb / neg ax / cmp ax,[0x284] / jb / retf`, the guard TP emits at every
 procedure entry. It runs correctly and `retf`s. **The address it returns to,
 `110:3640`, is zeros for the entire run** (checked at 10M, 100M, 250M and
-304.6M), so the return address on the stack was already wrong when that far
-call was made. Everything after is a runaway: `888:04df` is that same stack
-check called with an unrelocated segment (`0x998 - 0x888 = 0x110`, exactly the
-load segment), and the wild execution is what eventually zeroes linear
-`0x5970`–`0x70C0` and writes a plausible-looking `call far 0x5f6:0x2fd` into
-`110:3640`.
+304.6M). Everything after is a runaway: `888:04df` is that same stack check
+called with an unrelocated segment (`0x998 - 0x888 = 0x110`, exactly the load
+segment), and the wild execution ends parked at `110:135d`.
+
+**The copier at `110:40af` is not the bug, and neither is DS.** It is an
+overlay swapper, and two hypotheses died on that:
+
+* *"It runs with the wrong data segment."* A DS census over all 936 entries is
+  455 `ds=0b05` against 449 `ds=0110`, and `0b05` is DGROUP, so `0110` looked
+  like a dropped segment restore. It is not: with `DS=0110` the destination
+  `si=0x486d` (set at `110:4092`) is linear `0x596D`, and `0x5970` is exactly
+  `5f6:0000` — the copier is addressing segment `5f6` through the load segment
+  on purpose. Writing over that code is the *point*.
+* *"The source is garbage."* The source range (`bx=0xe3c0 cx=0x103d` on the
+  last entry) holds a recognisable
+  variant of the code being replaced — live `5f6:2c0` is
+  `4b 75 fd 26 3a 05 e1 f5 c3 … b8 dd 34 ba 12 00 3b d3 73 1a`, source
+  `110:e3ca` is `4b 75 fd 54 e1 f5 c3 … b8 dd 34 ba 12 00 3b d3 73 1a`. Same
+  routine, different build. That is a second copy of the sound module, i.e. the
+  swap is loading the variant the chosen device wants.
+
+So the swap is intended and its inputs are plausible; what is not yet
+established is whether it *completes*. The observed end state — `5f6` zeroed
+from `0x5970` for 5968 bytes — is consistent with a copy whose source had
+already scrolled off into zeros, which points at whatever picks the range
+rather than at the byte loop itself.
+
+One thing that read as a lead and is not: the word table at `110:3b00` is
+`e4 00 d8 00 cb 00 c0 00 b5 00 ab 00 …` — 228, 216, 203, 192, 181, 171, 161,
+152, 144, 136, 128, 121, 114, each ~1.059× the next. That is a chromatic
+PC-speaker divisor table, i.e. music data, not a copy-range table.
+
+And the thing worth knowing before spending another session here: **at 290M
+dispatches, before any corruption, BLINKY is healthy and still in text mode** —
+`cs:ip=5f6:2c0` (inside the speaker player), 368 of 2000 cells non-blank, 0 of
+64000 pixels drawn. It sits on its own menu playing music and never switches to
+a graphics mode, with `--auto-key` and with each device chosen explicitly. So
+the 304M wreck is downstream of whatever keeps it on that menu, and the menu is
+the thing to explain first.
 
 Two traps that cost time here, both worth remembering:
 
@@ -141,8 +174,7 @@ Two traps that cost time here, both worth remembering:
 
 It is not the code cache: `--no-cache` and `--smc-flush` both reproduce the
 identical stop at `110:135d` after the identical 305.0M dispatches, so the 127
-self-modify breaks are not being mishandled. The next step is the stack — find
-what pushed `110:3640`, starting from the far call that entered `998:04df`.
+self-modify breaks are not being mishandled.
 
 ### BLIQ.EXE (2 rows — `1994-b-bliq` and `1994-b-black` are the same program)
 

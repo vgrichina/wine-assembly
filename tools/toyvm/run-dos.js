@@ -267,6 +267,14 @@ async function runDos(o) {
             + (pe ? ` base=${vm.exports.get_csb().toString(16)} pm` : '')
             + `  ax=${h4(vm.get('ax'))} bx=${h4(vm.get('bx'))}`
             + ` cx=${h4(vm.get('cx'))} dx=${h4(vm.get('dx'))}`
+            // DS and ES too. A near memory reference is DS-relative and the
+            // instruction carries only the offset, so an entry line without DS
+            // cannot say WHERE a store landed, and a 16-bit program that swaps
+            // data segments -- an overlay swapper, a far-pointer walk, a copy
+            // between two of its own segments -- reads as a wild write without
+            // them. BLINKY.EXE's copier writes DS:0x486d over a region that
+            // holds live code; only DS says whether that is intentional.
+            + ` ds=${h4(vm.get('ds'))} es=${h4(vm.get('es'))}`
             + ` ss:sp=${h4(vm.get('ss'))}:${h4(vm.get('sp'))}`);
         }
       },
