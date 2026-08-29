@@ -54,6 +54,13 @@ const extraWat = String.raw`
   (func (export "test_diptex_set_rs") (param $device i32) (param $state i32) (param $value i32)
     (call $d3dim_set_render_state (local.get $device) (local.get $state) (local.get $value)))
 
+  (func (export "test_diptex_set_tss") (param $device i32) (param $type i32) (param $value i32)
+    (call $d3dim_set_tss (local.get $device) (i32.const 0) (local.get $type) (local.get $value)))
+
+  (func (export "test_diptex_get_tss") (param $device i32) (param $type i32) (param $out i32) (result i32)
+    (call $d3dim_get_tss (local.get $device) (i32.const 0) (local.get $type) (local.get $out))
+    (global.get $eax))
+
   (func (export "test_diptex_attach") (param $parent i32) (param $child i32) (result i32)
     (global.set $esp (i32.const 0x30000))
     (call $handle_IDirectDrawSurface_AddAttachedSurface
@@ -73,10 +80,11 @@ const extraWat = String.raw`
       (local.get $vertices) (i32.const 3) (i32.const 0)))
 `;
 
-// MW3 submits D3DFVF_XYZRHW|DIFFUSE|SPECULAR|TEX3.  TEX3 makes each source
-// vertex 48 bytes even though this fixed-function renderer consumes only the
-// first texture-coordinate set.  Treating it as a 32-byte D3DTLVERTEX shifts
-// vertex 1/2 onto texture data and produces infinities and screen-sized sheets.
+// MW3 submits D3DFVF_XYZRHW|DIFFUSE|SPECULAR|TEX3. TEX3 makes each source
+// vertex 48 bytes, and TEXCOORDINDEX changes which of its three UV sets feeds
+// stage 0 for base/detail/light-map passes. Treating it as a 32-byte
+// D3DTLVERTEX shifts vertex 1/2 onto texture data and produces screen sheets;
+// always copying UV0 makes later passes visibly swim across the base texture.
 const VERTEX_STRIDE = 48;
 
 function makeSurface(wat, desc, out, width, height, format = {}) {
@@ -152,8 +160,8 @@ function writeFloat(wat, addr, value) {
     wat.guest_write32(p + 20, 0);
     writeFloat(wat, p + 24, u);
     writeFloat(wat, p + 28, v);
-    // Additional TEX1/TEX2 coordinates are valid source data but are not part
-    // of the canonical 32-byte TL vertex passed to the stage-0 rasterizer.
+    // Additional TEX1/TEX2 coordinates are selected into the canonical stage-0
+    // pair according to D3DTSS_TEXCOORDINDEX.
     writeFloat(wat, p + 32, 0.25);
     writeFloat(wat, p + 36, 0.50);
     writeFloat(wat, p + 40, 0.75);
@@ -181,6 +189,84 @@ function writeFloat(wat, addr, value) {
   assert(textured.has(0x8000) || textured.has(0x0400)
       || textured.has(0x0010) || textured.has(0x8400),
     `indexed triangle ignored the bound texture (pixels: ${[...new Set(pixels)].map(p => p.toString(16))})`);
+
+  const clearRt = value => {
+    for (let y = 0; y < 8; y++) {
+      for (let x = 0; x < 8; x++) mem.setUint16(rtDib + y * 16 + x * 2, value, true);
+    }
+  };
+
+  // MW3 changes TEXCOORDINDEX between its base/detail/light-map passes. The
+  // chosen set must survive FVF repacking, and SELECTARG1 must not darken it
+  // with the vertex diffuse colour.
+  wat.test_diptex_set_tss(device, 1, 2);  // COLOROP=SELECTARG1 (texture)
+  wat.test_diptex_set_tss(device, 4, 2);  // ALPHAOP=SELECTARG1
+  wat.test_diptex_set_tss(device, 11, 1); // TEXCOORDINDEX=1 => constant .25,.50
+  wat.test_diptex_set_tss(device, 13, 1); // ADDRESSU=WRAP
+  wat.test_diptex_set_tss(device, 14, 1); // ADDRESSV=WRAP
+  wat.test_diptex_set_tss(device, 16, 1); // MAGFILTER=POINT
+  wat.test_diptex_set_tss(device, 17, 1); // MINFILTER=POINT
+  assert.strictEqual(wat.test_diptex_get_tss(device, 11, out + 20) >>> 0, 0);
+  assert.strictEqual(wat.guest_read32(out + 20), 1, 'extended TEXCOORDINDEX state did not round-trip');
+  clearRt(0);
+  wat.test_diptex_draw(device, vertices, indices);
+  assert.strictEqual(mem.getUint16(rtDib, true), 0x001f,
+    'TEXCOORDINDEX=1 did not select the second FVF coordinate set');
+
+  // Coordinate 1.0 wraps to the first row but clamps to the final row. This
+  // catches the old unconditional-wrap sampler independently of UV selection.
+  wat.test_diptex_set_tss(device, 11, 2); // constant .75,1.0
+  wat.test_diptex_set_tss(device, 13, 3); // ADDRESSU=CLAMP
+  wat.test_diptex_set_tss(device, 14, 3); // ADDRESSV=CLAMP
+  clearRt(0);
+  wat.test_diptex_draw(device, vertices, indices);
+  assert.strictEqual(mem.getUint16(rtDib, true), 0xffe0,
+    'D3DTADDRESS_CLAMP sampled the wrapped edge texel');
+
+  // Linear filtering at the exact centre averages all four texels. Keep the
+  // assertion tolerant of the final channel rounding but reject point output.
+  for (let i = 0; i < 3; i++) {
+    writeFloat(wat, vertices + i * VERTEX_STRIDE + 32, 0.5);
+    writeFloat(wat, vertices + i * VERTEX_STRIDE + 36, 0.5);
+  }
+  wat.test_diptex_set_tss(device, 11, 1);
+  wat.test_diptex_set_tss(device, 16, 2); // MAGFILTER=LINEAR
+  wat.test_diptex_set_tss(device, 17, 2); // MINFILTER=LINEAR
+  clearRt(0);
+  wat.test_diptex_draw(device, vertices, indices);
+  const filtered = mem.getUint16(rtDib, true);
+  assert(filtered === 0x7be7 || filtered === 0x8408,
+    `linear centre sample was not the four-texel average (0x${filtered.toString(16)})`);
+
+  // Perspective correction carries u*rhw and rhw through the scan converter.
+  // At (4,1), affine u selects green while the proper quotient remains red.
+  wat.test_diptex_set_tss(device, 11, 0);
+  wat.test_diptex_set_tss(device, 16, 1);
+  wat.test_diptex_set_tss(device, 17, 1);
+  const perspective = [
+    [0, 0, 1.0, 0.0, 0.0],
+    [7, 0, 0.1, 1.0, 0.0],
+    [0, 7, 0.1, 0.0, 0.0],
+  ];
+  perspective.forEach(([x, y, q, u, v], i) => {
+    const p = vertices + i * VERTEX_STRIDE;
+    writeFloat(wat, p + 0, x); writeFloat(wat, p + 4, y);
+    writeFloat(wat, p + 12, q); writeFloat(wat, p + 24, u); writeFloat(wat, p + 28, v);
+  });
+  clearRt(0);
+  wat.test_diptex_draw(device, vertices, indices);
+  assert.strictEqual(mem.getUint16(rtDib + 1 * 16 + 4 * 2, true), 0xf800,
+    'TL texture coordinates were interpolated affinely instead of by RHW');
+
+  // Restore the baseline state and vertices used by the blend/format/Z tests.
+  wat.test_diptex_set_tss(device, 1, 4);  // COLOROP=MODULATE
+  wat.test_diptex_set_tss(device, 4, 4);  // ALPHAOP=MODULATE
+  wat.test_diptex_set_tss(device, 13, 1);
+  wat.test_diptex_set_tss(device, 14, 1);
+  for (let i = 0; i < 3; i++) writeFloat(wat, vertices + i * VERTEX_STRIDE + 12, 1.0);
+  vertex(0, 0, 0, 0.05, 0.05);
+  vertex(1, 7, 0, 0.95, 0.05);
+  vertex(2, 0, 7, 0.05, 0.95);
 
   // MW3 uses ZERO/SRCCOLOR for fixed-function light-map passes. Ignoring the
   // blend state paints the source texture opaquely; the requested operation
@@ -291,7 +377,7 @@ function writeFloat(wat, addr, value) {
   assert.strictEqual(mem.getUint16(rtDib + 2 * 16 + 2 * 2, true), 0x07e0,
     'higher reversed-Z triangle did not pass GREATEREQUAL');
 
-  console.log(`PASS D3DIM Texture2 indexed triangles use FVF stride, declared formats, blending, and attached reversed-Z (${textured.size} texture colours)`);
+  console.log(`PASS D3DIM Texture2 indexed triangles use FVF UV sets, perspective/filter/address states, declared formats, blending, and attached reversed-Z (${textured.size} texture colours)`);
 })().catch(error => {
   console.error(error.stack || error.message);
   process.exit(1);

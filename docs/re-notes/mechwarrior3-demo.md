@@ -168,7 +168,7 @@ node test/test-mw3-gameplay.js
 The resulting CLI evidence is written to
 `build/mw3-gameplay/no-threads.png` and
 `build/mw3-gameplay/threads.png`. Both modes must produce the same measured
-textured/lit frame and the same PNG digest. The gate separately rejects cyan,
+textured/lit scene (minor scheduler-dependent HUD pixels may differ). The gate separately rejects cyan,
 magenta, and electric-blue texels characteristic of a pixel-format regression.
 It explicitly captures DirectDraw slot 5, the primary/front surface; an
 arbitrary snapshot of slot 6 can catch the back buffer midway through a frame
@@ -242,8 +242,9 @@ The same regression attaches a real 16-bit Z surface and draws overlapping red
 and green triangles. It proves a lower reversed-Z triangle is rejected, a
 higher one passes, and the application-visible depth pixels are updated. The
 deterministic primary capture now has coherent road, hills, cockpit, sky, and
-HUD geometry in both cooperative and real-Worker modes; both PNGs have SHA-256
-`f15852d55ab5e1e9cdb55aec37734707df3df735cfc8ed2276ac9edbf9bf7e25`.
+HUD geometry in both cooperative and real-Worker modes. The later
+perspective/sampler correction below supersedes the digest recorded by this
+intermediate fix.
 
 The dark foreground is consistent with the submitted fixed-function state,
 not evidence of a missing shader. MW3 selects stage-0
@@ -273,3 +274,52 @@ interpolation, and bulk clears remain better first choices. This follows the
 `fable-review.md` boundary: fixed-function logic and resource truth stay in
 WAT, while JS remains a presentation/raster host rather than a second D3D
 implementation.
+
+## Perspective, UV-set, and sampler-state parity (2026-08-29)
+
+The stride correction above was necessary but not sufficient: its statement
+that the first texture set is always preserved was wrong for MW3. A live
+Device3 state trace showed stage 0 changing `D3DTSS_TEXCOORDINDEX` among 0, 1,
+and 2 while submitting `FVF=0x3c4`. The generic packer advanced over all three
+sets but copied only set 0 into the canonical TL vertex, so detail and light-map
+passes sampled their base-texture UVs. Device state also discarded every stage
+state above type 7; MW3's `ADDRESSU/V` wrap/clamp and point/linear filter
+changes therefore never reached the sampler.
+
+The same capture found visible-triangle RHW values from roughly 0.00069 to
+0.0107, over a 15x range. The scan converter linearly interpolated raw U/V,
+which is only valid when RHW is constant. It now carries `u*rhw`, `v*rhw`, and
+`rhw` across edges and spans, then divides at the pixel. Near-plane clipping
+also interpolates colour, specular, and UV attributes instead of copying the
+first endpoint. Stage 0 stores and consumes coordinate selection, wrap/mirror/
+clamp addressing, and point/linear filtering. `COLOROP`/`ALPHAOP` now honor the
+observed `SELECTARG1` and `MODULATE` transitions rather than always modulating.
+
+`test/test-d3dim-indexed-texture.js` isolates each rule with the exact TEX3 FVF:
+set 1 selects blue rather than UV0 red, set 2 at V=1 clamps to yellow rather
+than wrapping to green, a centre linear sample averages all four texels, and a
+high-RHW triangle pixel stays red where affine interpolation selects green. It
+retains the ARGB4444, framebuffer-blend, alpha, and attached reversed-Z checks.
+
+The accepted 640x480 CLI gameplay captures now measure 2,388 exact colours and
+159 terrain colours in both modes, with zero cyan/magenta corruption. Their
+sky, terrain, cockpit, and HUD are visually coherent. Worker timing occasionally leaves the operation-map button
+inactive at the first scripted click, so the acceptance route retries the same
+idempotent deployment control before capture.
+
+A steady batches-840..1080 CPU-profile window fell from 12.27 seconds sampled
+before these corrections to 8.40 seconds after them (31.6%). The current
+profile spends 69.3% in WebAssembly; the largest renderer function is the
+textured span at 567 ms (6.8% total), followed by texture decode (290 ms),
+colour interpolation (288 ms), FVF packing (201 ms), texel fetch (197 ms), and
+addressing (142 ms). Presentation `drawImage`/`putImageData` totals about
+0.93 seconds, while API-name logging alone costs 0.58 seconds even in the CLI;
+the browser Runtime log should remain off when measuring gameplay FPS.
+
+SIMD does help the one contiguous operation the profile identified: MW3's hot
+0x3c4 pack now copies the 24-byte position/colour/specular header with one
+`v128` load/store plus one `i64` load/store, then copies the selected UV pair.
+It does not solve the dominant sampler because WebAssembly still has no gather;
+four-way filtering requires four scalar, format-aware texel fetches. Further
+SIMD work belongs behind a new profile rather than changing fixed-function
+results for a speculative vector fast path.

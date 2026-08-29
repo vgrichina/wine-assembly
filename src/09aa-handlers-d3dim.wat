@@ -852,7 +852,9 @@
     (local $dwVertexCount i32) (local $vtxType i32) (local $packed i32)
     (local.set $dwVertexCount (call $gl32 (i32.add (global.get $esp) (i32.const 20))))
     (local.set $vtxType (call $d3dim_fvf_vtxtype (local.get $arg2)))
-    (local.set $packed (call $d3dim_pack_fvf_vertices (local.get $arg2) (local.get $arg3) (local.get $dwVertexCount)))
+    (local.set $packed (call $d3dim_pack_fvf_vertices
+      (local.get $arg2) (local.get $arg3) (local.get $dwVertexCount)
+      (call $d3dim_texcoord_index (local.get $arg0))))
     (if (local.get $packed) (then
       (call $d3dim_draw_primitive (local.get $arg0) (local.get $arg1) (local.get $vtxType)
         (local.get $packed) (local.get $dwVertexCount))
@@ -867,7 +869,9 @@
     (local.set $lpwIndices    (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
     (local.set $dwIndexCount  (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
     (local.set $vtxType (call $d3dim_fvf_vtxtype (local.get $arg2)))
-    (local.set $packed (call $d3dim_pack_fvf_vertices (local.get $arg2) (local.get $arg3) (local.get $dwVertexCount)))
+    (local.set $packed (call $d3dim_pack_fvf_vertices
+      (local.get $arg2) (local.get $arg3) (local.get $dwVertexCount)
+      (call $d3dim_texcoord_index (local.get $arg0))))
     (if (local.get $packed) (then
       (call $d3dim_draw_indexed_primitive
         (local.get $arg0) (local.get $arg1) (local.get $vtxType)

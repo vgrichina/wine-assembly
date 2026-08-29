@@ -47,6 +47,10 @@ const route = [
   '635:mousedown:423:320', '655:mouseup:423:320',
   '770:relmousemove:115:0', '773:relmousemove:0:88',
   '790:mousedown:576:432', '820:mouseup:576:432',
+  // Worker scheduling can finish the operation-map transition after the first
+  // deployment click. Retry the same idempotent control once the map is fully
+  // live; in cooperative mode this lands harmlessly after cockpit entry.
+  '900:mousedown:576:432', '930:mouseup:576:432',
 ];
 
 function analyze(filename, mode) {

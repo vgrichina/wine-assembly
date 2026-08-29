@@ -7219,8 +7219,8 @@
 
   ;; IDirect3DDevice3::DrawPrimitive(primType, vertexTypeDesc, lpvVerts, dwVtxCount, dwFlags)
   ;; Device3 uses an FVF-style vertex descriptor. Pack it into the renderer's
-  ;; canonical legacy layout: extra texture-coordinate sets make the source
-  ;; stride larger than D3DTLVERTEX even though stage 0 consumes only set 0.
+  ;; canonical legacy layout. TEXCOORDINDEX selects which FVF coordinate set
+  ;; feeds fixed-function stage 0.
   (func $handle_IDirect3DDevice3_DrawPrimitive (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $dwVertexCount i32) (local $vtxType i32) (local $packed i32)
     (local.set $dwVertexCount (call $gl32 (i32.add (global.get $esp) (i32.const 20))))
@@ -7228,7 +7228,9 @@
     (call $host_dx_trace (i32.const 15) (local.get $arg1) (local.get $arg2)
       (local.get $dwVertexCount) (local.get $arg3))
     (local.set $packed
-      (call $d3dim_pack_fvf_vertices (local.get $arg2) (local.get $arg3) (local.get $dwVertexCount)))
+      (call $d3dim_pack_fvf_vertices
+        (local.get $arg2) (local.get $arg3) (local.get $dwVertexCount)
+        (call $d3dim_texcoord_index (local.get $arg0))))
     (if (local.get $packed) (then
       (call $d3dim_draw_primitive (local.get $arg0) (local.get $arg1) (local.get $vtxType)
         (local.get $packed) (local.get $dwVertexCount))
@@ -7243,7 +7245,9 @@
     (local.set $dwIndexCount  (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
     (local.set $vtxType (call $d3dim_fvf_vtxtype (local.get $arg2)))
     (local.set $packed
-      (call $d3dim_pack_fvf_vertices (local.get $arg2) (local.get $arg3) (local.get $dwVertexCount)))
+      (call $d3dim_pack_fvf_vertices
+        (local.get $arg2) (local.get $arg3) (local.get $dwVertexCount)
+        (call $d3dim_texcoord_index (local.get $arg0))))
     (if (local.get $packed) (then
       (call $d3dim_draw_indexed_primitive
         (local.get $arg0) (local.get $arg1) (local.get $vtxType)
