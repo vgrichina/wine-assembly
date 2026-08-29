@@ -596,6 +596,10 @@ const QUIT_LABEL = /\b(quit|exit|abort|back\s+to\s+dos)\b/i;
 const GO_LABEL =
   /\b(rock|play|start|run|go|begin|continue|proceed|ok|accept|done|ready|launch|demo)\b/i;
 
+// A screen that has told us the marker moves under the arrow keys. This is the
+// whole licence for counting rows off a `>`.
+const ARROW_HINT = (s) => /\b(arrow|cursor)\s+keys?\b/i.test(s) && /\benter\b/i.test(s);
+
 // The BIOS video modes that are text. Only on one of these does a polled key
 // check get answered out of the menu reader.
 const TEXT_MODES = new Set([0, 1, 2, 3, 7]);
@@ -1161,7 +1165,7 @@ class Machine {
     // around, ENTER selects highlighted option." -- and that sentence is the
     // whole trigger, because counting rows off a marker is only safe on a
     // screen that has told us the marker moves.
-    if (/\b(arrow|cursor)\s+keys?\b/i.test(all) && /\benter\b/i.test(all)) {
+    if (ARROW_HINT(all)) {
       const ks = this.arrowMenuKeys(lines);
       if (ks) return ks;
     }
