@@ -1063,11 +1063,20 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false, be
   // segment, and paid that 134414 times inside eighteen million dispatches --
   // 96% of the wall clock in the trace compiler, for a table that never went
   // near an instruction. `benign` is the host's answer after watching the same
-  // store hit nothing compiled over and over; a genuine self-patch like
-  // Turbo Pascal's never appears in it, because its write lands in the block
-  // it is standing in every single time.
+  // store hit nothing compiled over and over.
+  //
+  // It is keyed by the LINEAR address of the store, not by its offset. Keying
+  // by offset made every module that happens to store at the same offset share
+  // one verdict, and Turbo Pascal put four of them in one run: its Intr patches
+  // `cs:[0x66]` -- the operand byte of the INT it is about to execute -- from
+  // offset 0x46 of the SYSTEM segment, at whatever base that copy was loaded.
+  // BLIQ.EXE runs its subfiles as separate programs, so four TP runtimes all
+  // patched at offset 0x46; one of them retired the offset and the others kept
+  // executing the operand byte a previous call had left behind. The byte a
+  // packed TP image ships with is $00, so `Intr($F3, r)` ran INT 0 and TP's own
+  // divide-error handler printed "Runtime error 200".
   if (segOverride === 1 && !endsBlock && isSelfPatch(op, at(modrmAt))
-      && !(benign && benign.has(wip(start + n)))) {
+      && !(benign && benign.has(((base + wip(start + n)) & mask) >>> 0))) {
     words.push(H.end_smc, wip(start + n));
     endsBlock = true;
   }

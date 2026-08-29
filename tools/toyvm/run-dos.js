@@ -316,6 +316,15 @@ async function runDos(o) {
             log(`  divide fault at ${rd(2).toString(16)}:${rd(0).toString(16)}`
               + ` (ax=${vm.get('ax').toString(16)} dx=${vm.get('dx').toString(16)}`
               + ` from ${cs.toString(16)}:${ip.toString(16)} at ${dispatched} dispatches)`);
+            // The twelve words above SP. An INT pushes flags/cs/ip, so whatever
+            // called the routine that faulted is still on the stack right
+            // behind them along with its arguments -- and that caller is the
+            // question every one of these prompts. Reading it out here beats a
+            // --dump, which fires at exit with the frame long gone.
+            const w = [];
+            for (let i = 0; i < 12; i++) w.push(rd(i * 2).toString(16).padStart(4, '0'));
+            log(`    stack ${ss.toString(16)}:${sp.toString(16)}  ${w.join(' ')}`
+              + `  int0=${v2.toString(16)}:${v0.toString(16)}`);
           }
         }
         // A budget-expiry return leaves $ip pointing at the next arena word, so

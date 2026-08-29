@@ -37,6 +37,10 @@ const isa = require('./isa');
 // 48 times in a 255-break run, DOPE.EXE's fires 134414 -- so this sits well
 // above anything a program that merely loads an overlay will reach.
 const PATCH_MISSES = 20000;
+// How far ahead of the program counter a store still counts as patching the
+// instruction stream. One block: the point is to cover the code the guest is
+// about to run without exempting a data table that merely lives downwind.
+const PATCH_AHEAD = 256;
 const { compileProgram } = require('./compile');
 const { STUB_SEG, STUB_OFF, STUB_BYTE } = require('./dos');
 
@@ -603,7 +607,7 @@ class DosSession {
       vm.set('smc', 0);
       const lo = vm.exports.get_smclo() >>> 0, hi = vm.exports.get_smchi() >>> 0;
       if (kind === 2) this.cache.invalidateRange(lo, hi);
-      else this.benignPatch(vm.get('cs'), vm.get('gip'), vm.exports.get_csb());
+      else this.benignPatch(vm.get('cs'), vm.get('gip'), vm.exports.get_csb(), lo, hi);
       this.smcBreaks++;
       if (this.smcSites) {
         const hex = (n) => n.toString(16);
@@ -771,7 +775,18 @@ class DosSession {
   // store against the paragraphs that HAVE been compiled, so a write that
   // reaches live code is still caught after a retirement. What is given up is
   // only the tighter cut for code compiled after the write.
-  benignPatch(cs, ip, csb) {
+  benignPatch(cs, ip, csb, lo, hi) {
+    // A store into the bytes just AHEAD of the program counter is an
+    // instruction-stream patch whatever the compiled-code bitmap says, so it
+    // is never a candidate for retirement. $smc=1 only proves the target was
+    // not compiled AT THIS MOMENT, and for a patch that runs the moment the
+    // block is entered that is a race, not a verdict: Turbo Pascal's Intr
+    // writes the operand byte of an INT 0x1F bytes further on and then falls
+    // straight into it. Retiring that site leaves the INT carrying whatever
+    // byte the previous call left, which is how BLIQ.EXE's subfiles ended up
+    // executing INT 0 and printing "Runtime error 200".
+    const pc = ((csb + ip) & 0xFFFFF) >>> 0;
+    if (hi >= pc && lo < pc + PATCH_AHEAD) return;
     // No invalidate here, and the reason is the flag itself. $smc is 1 only
     // when $wr8 declined to make it 2, and $wr8 makes it 2 for any store
     // landing in a paragraph some compiled region decoded -- every width, since
@@ -791,10 +806,15 @@ class DosSession {
     // The invalidate predates the 1/2 split, when a break could not say which
     // kind it was and dropping the block was the only safe answer. It can say
     // now.
-    const n = (this.cache.patchMisses.get(ip) || 0) + 1;
-    this.cache.patchMisses.set(ip, n);
+    // Keyed by the linear address of the store, not by its offset: see the
+    // benign note in decode.js for the Turbo Pascal case where four copies of
+    // one runtime, loaded at four bases, shared a single verdict at offset
+    // 0x46 and three of them then executed a stale INT operand byte.
+    const site = ((csb + ip) & 0xFFFFF) >>> 0;
+    const n = (this.cache.patchMisses.get(site) || 0) + 1;
+    this.cache.patchMisses.set(site, n);
     if (n === PATCH_MISSES) {
-      this.cache.benign.add(ip);
+      this.cache.benign.add(site);
       // The compiled copy still carries the cut, so drop it: the block the
       // store sits in has to be re-decoded for the suppression to take effect.
       this.cache.invalidate(cs, ip, csb);
