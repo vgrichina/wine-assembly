@@ -71,8 +71,28 @@ function conText(con) {
 // text page that HAS been in graphics is photographed off its last frame, which
 // is still sitting in A000 after the mode-3 restore a well-behaved demo does on
 // its way out.
+// The graphics answer has one exception, and it is the mirror of the text one
+// below: an adapter sitting in a graphics mode with NOTHING drawn on it is not
+// a picture, and if the console has something on it then the console is what
+// this program has to show. Both BLIQ.EXE builds end this way -- they print
+// "MIDAS Error: Out of conventional memory" and "Runtime error 200", never
+// leave mode 13h, and never put a pixel down. Preferring the empty frame threw
+// the message away and reported them as blank, which reads as "we have no idea
+// what happened" for a program that said exactly what happened.
 function screenSurface(machine) {
-  if (machine.vga.bpp !== 0) return { text: false, geom: vgaGeometry(machine.vga) };
+  if (machine.vga.bpp !== 0) {
+    const geom = vgaGeometry(machine.vga);
+    // Ordered so the walk is usually skipped. The console check is 2000 cells
+    // against 64000 pixels, and a program that went to graphics without leaving
+    // anything on the text page -- most of them -- never needs the second one.
+    // When it does, anyLit stops at the first lit pixel instead of counting
+    // them all, though it still pays readFrame's conversion either way. This
+    // runs on every keepBest sample, which is every 32 handbacks.
+    if (conCells(machine.con) === 0 || anyLit(machine.mem, geom)) {
+      return { text: false, geom };
+    }
+    return { text: true, geom: null };
+  }
   if (conCells(machine.con) > 0 || !machine.vga.lastGraphics) return { text: true, geom: null };
   return { text: false, geom: machine.vga.lastGraphics };
 }
@@ -160,6 +180,14 @@ function readFrame(mem, video = LINEAR) {
     }
   }
   return { width, height, pixels: out };
+}
+
+// Is anything at all lit? nonBlack's question without the counting, so it can
+// stop at the first hit instead of walking the whole frame every time.
+function anyLit(mem, video) {
+  const { pixels } = readFrame(mem, video);
+  for (let i = 0; i < pixels.length; i++) if (pixels[i]) return true;
+  return false;
 }
 
 function nonBlack(mem, video) {
