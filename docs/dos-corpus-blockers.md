@@ -299,10 +299,11 @@ header and there is no `AH=52h` to start a walk from, so nothing can walk it.
 With that, the MIDAS error and the `[ERROR]: Executing internal subfile...` are
 both gone and the program no longer exits.
 
-**Still open: `Runtime error 200`.** It is *not* Borland's CRT delay-calibration
-divide fault, which is the obvious reading and the wrong one. Error 200 in Turbo
-Pascal is "division by zero" generally, and the calibration bug is only one way
-to get there. Measured:
+**`Runtime error 200` — fixed in a5443f91.** It is *not* Borland's CRT
+delay-calibration divide fault, which is the obvious reading and the wrong one.
+Error 200 in Turbo Pascal is "division by zero" generally, and the calibration
+bug is only one way to get there. That reading was ruled out by measurement
+before the real cause was found:
 
 | knob | values tried | errors |
 |---|---|---|
@@ -310,16 +311,61 @@ to get there. Measured:
 | `--sound` | `none`, `sb` | 4 every time |
 
 A calibration overflow scales with the clock rate by construction, so a result
-that is bit-identical across a 33× spread rules it out. It also predates both
-fixes here — the v9 capture, before either, shows the same two lines.
+bit-identical across a 33x spread rules it out.
+
+**It was ours.** Turbo Pascal's `Intr(IntNo, Regs)` executes the interrupt by
+patching its own instruction stream: at offset `0x46` of the SYSTEM segment it
+does `cs: mov [0x66], al` with the interrupt number, then falls through to the
+`int nn` at `0x65` and pops the original word back afterwards. That store lands
+`0x1f` bytes ahead — *past* the block boundary the store itself creates — so at
+the instant it runs the target has usually not been compiled yet and `$smc`
+comes back 1, "hit no compiled code". After `PATCH_MISSES` of those the site was
+retired into `cache.benign` and the `int` stopped being re-decoded, so it ran
+with whatever operand byte the last call left behind. A packed TP image ships
+that byte as `$00`, so `Intr($F3, r)` executed `INT 0` and Turbo Pascal's own
+divide-error handler printed the message.
+
+Two bugs, both needed:
+
+- the retirement counter and the `benign` set were keyed by the store's
+  **offset**, so all four TP runtimes BLIQ loads (it runs its subfiles as
+  separate programs) shared one verdict from whichever hit the counter first.
+  Now keyed by linear address.
+- a store landing within one block **ahead of the program counter** is an
+  instruction patch whatever the compiled-code bitmap says at that instant, and
+  is now never a retirement candidate (`PATCH_AHEAD`). `$smc=1` proves the
+  target was not compiled *at that moment*, which for a patch that runs on the
+  way into the block it patches is a race, not a verdict.
+
+`COMPCODE.EXE` and `DOPE.EXE` — the storms retirement exists for — still retire
+the same 1 and 3 sites and produce byte-identical frames.
+
+**How it was found, and the tools that came out of it.** `--stop-on-text=STR`
+(22b47015) ends a run on the last character of a message, so `--dump` and
+`--disasm` photograph the failure instead of whatever reused its memory by exit.
+`--trace-fault` now also prints the twelve words above SP and the `INT 0` vector:
+an `INT` pushes flags/cs/ip, so the caller and its arguments are still on the
+stack right behind the fault frame, and that is what named `Intr($F3)` here.
+Read those two prints together —
+
+    divide fault at 1aa9:67 (ax=1d dx=0 from 1aa9:36 at 19891934 dispatches)
+      stack 20cb:3e56  0067 1aa9 7293 00cd 1ef2 3e6e 0171 1a90 19f8 1ef2 fff3 0000  int0=1b15:10c
+
+— `00cd` is the word `Intr` saved from `cs:[0x65]` on the way in: `cd 00`, the
+INT it was about to execute, with an operand byte of zero. `fff3` is the `IntNo`
+argument it was *asked* for. The two disagreeing is the whole bug in one line.
 
 Two traps to avoid re-walking. `--slice=2000` makes the errors disappear, which
 looks like a granularity result; it is not, the run dies early at `fe5:7b` and
-never reaches the erroring code. And the address it reports, `041E:0067`, is a
-`push [bp+0xc]` — a call site, so the divide is in the callee, and `--dump`
-cannot show that callee because it dumps at exit and the memory has been reused
-by then. Finding it needs a run stopped at the error, which `run-dos.js` cannot
-do yet: there is no `--break`.
+never reaches the erroring code. And the reported address is the *return* address
+of the `int`, so disassembling at it lands on the instruction after the fault,
+not the fault.
+
+**Still open: BLIQ now reaches a poll loop.** With the message gone it runs on to
+`168b:0263`, `cmp word [0x5a], 0xff` / `jnz` around a `call 168b:324f`, and stops
+there with a black screen and no DAC entries written — a wait for a flag some
+handler is meant to set. The nearby strings (`VGA - MODE13h/MODEX`) put it in the
+video-mode selection path.
 
 ### INTRO.EXE (`1995-c-cda_tp5i`) — two blockers cleared, a third open
 
