@@ -16,6 +16,13 @@ node test/test-wat-memory-map.js
 # JS host-side guest-pointer translation must use the same DIB/RPC boundary as
 # WAT. A stale extra megabyte maps guest DIB addresses onto worker RPC slots.
 node test/test-wat-rpc-region.js
+# Constants copied across the WAT/JS boundary form an ABI even though both
+# languages compile independently. Check the guest base, fixed-table bases and
+# strides, Win16 module ids, process-handle tag, and GPU opcode word counts.
+node tools/check-wat-js-constants.js
+# A test that is not named in a run-all tier never executes. Keep suite
+# membership complete as a cheap build gate, before spending time compiling.
+bash tools/check-test-manifest.sh
 # api_ids are array positions baked into the compiled hash table, the generated
 # br_table, and 09b-dispatch.wat's fast paths. A mid-array insert renumbers them
 # all; these two gates catch that before it becomes a runtime mystery.

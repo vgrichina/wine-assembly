@@ -12,7 +12,7 @@ Compiles the parts listed in `WAT_FILES` (`lib/compile-wat.js`) with the project
 
 **`WAT_FILES` is the build.** A new `src/*.wat` that isn't listed there lands in `combined.wat` and is silently absent from the shipped wasm; `tools/check-wat-manifest.js` (run first in the build) now fails on that. File numbering still controls order — `WAT_FILES` must stay in the same sorted order as the filenames.
 
-Build gates, in order: manifest ↔ glob equality, `api_table.json` (id == index, append-only), generated dispatch table freshness, API hash table, ordinal data-string offsets, handler-table count, handler ESP epilogues.
+Build gates, in order: manifest ↔ glob equality, fixed-memory-map overlaps, WAT↔JS RPC/DIB and shared-constant consistency, complete test-tier membership, `api_table.json` (id == index, append-only), generated dispatch table freshness, API hash table, ordinal data-string offsets, handler-table count, handler ESP cleanup, logical-`i32.and` operands, silent-success stubs, Worker import signatures, generated stdcall epilogues, WAT compilation, and compiled data-segment overlaps.
 
 **Important:** When adding new handler opcodes to `02-thread-table.wat`, increase `(table $handlers N funcref)` to match the total entry count (0-based index + 1).
 

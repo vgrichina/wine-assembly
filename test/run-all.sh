@@ -102,7 +102,6 @@ UNIT=(
   test/test-opengl-command-stream.js
   test/test-gpu-atomic-present.js
   test/test-opengl-swapbuffers.js
-  test/test-renderer-dialog-button-queue.js
   test/test-dialog-button-command-queue.js
   test/test-dialog-custom-class.js
   test/test-nc-flags-message-wake.js
@@ -302,6 +301,7 @@ UNIT=(
   test/test-directdraw-cooperative-window.js
   test/test-directdraw-native-child-overlay.js
   test/test-directdraw-stale-background-restore.js
+  test/test-directdraw-cursor-background-restore.js
   test/test-directdraw-create-ex.js
   test/test-directdraw-mode-change-primary.js
   test/test-directdraw-present-force.js
@@ -388,6 +388,59 @@ UNIT=(
   test/test-desktop-surface-color.js
   test/test-findreplace-matchcase-flags.js
   test/test-v86-reference-harness.js
+  # Recovered 2026-08-29 by the build-level manifest gate. These are fast,
+  # self-contained Node/WASM checks; local-payload and browser-driver tests are
+  # listed in E2E below.
+  test/test-browser-cooperative-crash-registers.js
+  test/test-button-auto-check.js
+  test/test-char-lower-w.js
+  test/test-compare-file-time.js
+  test/test-created-dialog-main-promotion.js
+  test/test-cw-usedefault-adjusted.js
+  test/test-d3d9-fixed-function-shaders.js
+  test/test-d3d9-shader-unsupported.js
+  test/test-d3d9-swap-chain.js
+  test/test-destroy-main-window-recreation.js
+  test/test-directdraw-surface3-desc.js
+  test/test-directplay-lobby-address.js
+  test/test-edit-unicode-text.js
+  test/test-enum-display-devices-w.js
+  test/test-enum-resource-names-a.js
+  test/test-extract-icon-ex-w.js
+  test/test-free-console.js
+  test/test-gdiplus-flat-api.js
+  test/test-get-ancestor.js
+  test/test-get-clipboard-sequence-number.js
+  test/test-get-computer-name-w.js
+  test/test-get-cursor.js
+  test/test-get-environment-variable-w.js
+  test/test-get-system-directory-w.js
+  test/test-getprocaddress-sparse-name.js
+  test/test-hidden-relative-mouse.js
+  test/test-imm-is-ime.js
+  test/test-is-debugger-present.js
+  test/test-load-library-ex-w.js
+  test/test-local-proprietary-demo-dropdown.js
+  test/test-mcm-manifest-paths.js
+  test/test-midi-out-long-msg.js
+  test/test-msi-query-product-state.js
+  test/test-open-mutex-w.js
+  test/test-process-environment-launch.js
+  test/test-set-std-handle.js
+  test/test-sh-get-folder-path-w.js
+  test/test-shell-execute-ex-w.js
+  test/test-showwindow-dialog-promotion.js
+  test/test-system-enum-dispatch.js
+  test/test-thread-manager-sparse-stack.js
+  test/test-to-unicode.js
+  test/test-token-security.js
+  test/test-toyvm-browser-bundle.js
+  test/test-toyvm-live.js
+  test/test-user-default-ui-language.js
+  test/test-virtual-query-user-boundary.js
+  test/test-wave-in-dev-caps.js
+  test/test-winsparkle-stubs.js
+  test/test-worker-sparse-thread-stack.js
 )
 
 E2E=(
@@ -638,6 +691,21 @@ E2E=(
   test/test-wm-setcursor-on-show.js
   test/test-wordpad-ole-roundtrip.js
   test/test-wordpad-ole-delete-roundtrip.js
+  # Recovered 2026-08-29: browser drivers and local candidate/corpus runs.
+  # Proprietary fixtures keep their own explicit SKIP path when absent.
+  test/test-arena-dosbox.js
+  test/test-beneath-scummvm.js
+  test/test-daggerfall-dosbox.js
+  test/test-deus-ex-demo.js
+  test/test-dos-corpus-live-page.js
+  test/test-fotaq-scummvm.js
+  test/test-icewind-dale-demo.js
+  test/test-icewind-dale-menu-web.js
+  test/test-icewind-dale-persistence-web.js
+  test/test-lure-scummvm.js
+  test/test-mw3-gameplay.js
+  test/test-shadow-warrior-dosbox.js
+  test/test-ultima4-dosbox.js
 )
 
 SMOKE=(
