@@ -90,6 +90,7 @@ async function runDos(o) {
     traceInt = false, traceFault = false, traceEntry = 0, traceV86 = false,
     noCache = false, smcFlush = false,
     smcCensus = false, watch = [],
+    stopText = null,
     shots = null, shotEvery = 20,
     mouse = [0, 0], cpu = 386, report = false, log = console.log, autoKey = false,
     tickScale = 1, sample = false, sampleAfter = 0, forceChained = false,
@@ -149,6 +150,7 @@ async function runDos(o) {
   const machine = new Machine(new Uint8Array(0), {
     log: (s) => traceInt && log(`  ${s}`), autoKey, forceChained, sound,
     keys, autoKeys, env, tempFiles,
+    stopText,
     // A DOS program's data sits next to it, and that directory is the whole of
     // the filesystem it gets.
     fileRoot: path.dirname(path.resolve(exe)),
@@ -528,6 +530,10 @@ async function main() {
     irqEvery: count(arg('irq-every'), 100e3),
     dispatchesPerTick: count(arg('dispatches-per-tick'), 550e3),
     stuckLimit: count(arg('stuck'), 200),
+    // --stop-on-text='Runtime error 200' -- end the run the instant the guest
+    // prints this, so --dump and --disasm photograph the failure instead of
+    // whatever reused its memory afterwards. See Machine.conWatch.
+    stopText: arg('stop-on-text') || null,
     guestArgs: arg('args', ''),
   });
 
@@ -791,6 +797,7 @@ async function main() {
   }
   console.log(`  exited=${r.machine.exited}${r.machine.exited ? ` code=${r.machine.exitCode}` : ''}`
     + `${r.machine.blockedOnKey ? '  waiting for a key' : ''}`
+    + `${r.machine.stopHit ? '  stopped on text' : ''}`
     + `  cs:ip=${r.vm.get('cs').toString(16)}:${r.vm.get('gip').toString(16)}`);
   console.log(`  ${(r.dispatched / 1e6).toFixed(1)}M dispatches, `
     + `${(r.dispatched / r.guestSecs / 1e6).toFixed(1)}M/s in wasm `

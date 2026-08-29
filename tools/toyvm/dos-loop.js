@@ -388,7 +388,8 @@ class DosSession {
 
   // Is there any point calling step() again?
   get done() {
-    return this.machine.exited || this.machine.blockedOnKey || this.stuckAt !== null
+    return this.machine.exited || this.machine.blockedOnKey || this.machine.stopHit
+      || this.stuckAt !== null
       || this.blockedOn32 !== undefined || this.badSelector !== undefined;
   }
 

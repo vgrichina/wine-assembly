@@ -675,6 +675,10 @@ class Machine {
     // the run here instead, which is both closer to a real blocking read and
     // the moment worth photographing.
     this.blockedOnKey = false;
+    // --stop-on-text. See conWatch.
+    this.stopText = opts.stopText || null;
+    this.conTail = '';
+    this.stopHit = false;
     this.keys = opts.keys ? [...opts.keys] : [];   // queued as {ah, al}
     this.autoKey = !!opts.autoKey;
     // The rotation, which a caller can replace wholesale. The default list is
@@ -1889,6 +1893,7 @@ class Machine {
     const c = this.con;
     c.written++;
     c.raw.push(b);
+    if (this.stopText) this.conWatch(b);
     if (c.esc !== null) { this.conEsc(b); return; }
     switch (b) {
       case 0x1B: c.esc = ''; return;
@@ -1977,6 +1982,24 @@ class Machine {
   }
 
   conPuts(s) { for (let i = 0; i < s.length; i++) this.conPutc(s.charCodeAt(i) & 0xFF); }
+
+  // Watch the console for a string and stop the run the moment it is complete.
+  //
+  // Almost every remaining failure in this corpus announces itself in text --
+  // "failed to load MSE", "Runtime error 200", "MIDAS Error: ..." -- and the
+  // question that follows is always "what did memory look like when that was
+  // printed". Neither existing answer works: --dump and --disasm run at exit,
+  // by which time the buffer that held the failing code has been freed and
+  // handed out again, and --dispatches=N is a bisection by hand against a
+  // number that moves whenever anything upstream changes.
+  //
+  // Matching is on a rolling tail rather than the whole console, so it costs
+  // one string of the pattern's length and works on a screen that has already
+  // scrolled. It is off unless `stopText` is set.
+  conWatch(b) {
+    this.conTail = (this.conTail + String.fromCharCode(b)).slice(-this.stopText.length);
+    if (this.conTail === this.stopText) this.stopHit = true;
+  }
 
   // A mode set on real hardware leaves the planes cleared. Doing it here rather
   // than in vgaRechain keeps the two apart: rechaining CARRIES a picture across
