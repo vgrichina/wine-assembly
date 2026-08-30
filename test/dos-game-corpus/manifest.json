@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "assetRoot": "test/binaries/dos-games",
+  "games": [
+    {
+      "id": "gta1-demo",
+      "name": "Grand Theft Auto",
+      "release": "Liberty City 24-bit high-resolution DOS demo",
+      "year": 1997,
+      "platform": "DOS/4GW",
+      "executable": "GTA24/GTADOS/DEMO24.EXE",
+      "sourcePage": "https://archive.org/details/gta-1997",
+      "license": "commercial demo; no redistribution grant was found, so retain only as an ignored local fixture",
+      "localOnly": true,
+      "package": {
+        "url": "https://archive.org/download/gta-1997/Files/Demo%20-%20Liberty%20City%20-%2024%20Bit%20-%20High%20Res%20Version/gta24.zip",
+        "file": "gta24.zip",
+        "size": 9531378,
+        "sha1": "ccb4b27c25ba48e4adc707e01050d4996299bdae",
+        "sha256": "76f1e1da5c898f755597b86357c4d77b7447cb483673a23d10d34f40cfe03ec9"
+      },
+      "requirements": [
+        "DOS/4GW protected mode",
+        "VESA VBE 2.0",
+        "full extracted companion-file tree"
+      ]
+    }
+  ]
+}

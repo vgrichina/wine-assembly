@@ -138,6 +138,12 @@
   (global $DX_VTBL_OLE_VIEWOBJECT (mut i32) (i32.const 0))
   (global $DX_VTBL_OLE_VIEWOBJECT2 (mut i32) (i32.const 0))
   (global $DX_VTBL_DDRAW2    (mut i32) (i32.const 0))
+  ;; IDirectDraw4/7 are lazy extensions of the generated IDirectDraw2 table.
+  ;; Keeping them out of the fixed cross-thread vtable registry avoids moving
+  ;; that registry's tightly packed shared-memory boundary; each WASM instance
+  ;; constructs the same ABI-correct tail on first use.
+  (global $DX_VTBL_DDRAW4    (mut i32) (i32.const 0))
+  (global $DX_VTBL_DDRAW7    (mut i32) (i32.const 0))
   (global $DX_VTBL_DDSURF2   (mut i32) (i32.const 0))
   (global $DX_VTBL_DDSURF3   (mut i32) (i32.const 0))
   (global $DX_VTBL_DDCLIP    (mut i32) (i32.const 0))
@@ -1310,6 +1316,23 @@
     (global.set $eax (i32.const 0)) ;; DD_OK
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))) ;; stdcall 3 args
 
+  ;; The generated registry has historically exposed one 24-slot
+  ;; IDirectDraw2 superset for IID_IDirectDraw2/4/7. IDirectDraw4 adds four
+  ;; methods, however, and IDirectDraw7 adds two more. A caller reaching slot
+  ;; 27 on the short table enters the next generated COM vtable. Build the
+  ;; compatible tails lazily so older v1/v2 pointers keep their exact ABI.
+  (func $dx_get_ddraw4_vtbl (result i32)
+    (if (i32.eqz (global.get $DX_VTBL_DDRAW4)) (then
+      (global.set $DX_VTBL_DDRAW4 (call $extend_com_vtable
+        (global.get $DX_VTBL_DDRAW2) (i32.const 24) (i32.const 3084) (i32.const 28)))))
+    (global.get $DX_VTBL_DDRAW4))
+
+  (func $dx_get_ddraw7_vtbl (result i32)
+    (if (i32.eqz (global.get $DX_VTBL_DDRAW7)) (then
+      (global.set $DX_VTBL_DDRAW7 (call $extend_com_vtable
+        (call $dx_get_ddraw4_vtbl) (i32.const 28) (i32.const 3088) (i32.const 30)))))
+    (global.get $DX_VTBL_DDRAW7))
+
   ;; DirectDrawCreateEx(lpGUID, lplpDD, riid, pUnkOuter) → HRESULT
   ;; DirectX 7 callers request IDirectDraw7 directly rather than creating the
   ;; v1 interface and calling QueryInterface. The emulator's extended DDraw
@@ -1333,16 +1356,18 @@
           (i32.eq (local.get $iid_dword) (i32.const 0x6C14DB80)))
       (then (local.set $vtbl (global.get $DX_VTBL_DDRAW)))
       (else
-        (if (i32.or
-              (i32.eq (local.get $iid_dword) (i32.const 0xB3A6F3E0))
-              (i32.or
-                (i32.eq (local.get $iid_dword) (i32.const 0x9C59509A))
-                (i32.eq (local.get $iid_dword) (i32.const 0x15E65EC0))))
+        (if (i32.eq (local.get $iid_dword) (i32.const 0xB3A6F3E0))
           (then (local.set $vtbl (global.get $DX_VTBL_DDRAW2)))
           (else
-            (global.set $eax (i32.const 0x80004002)) ;; E_NOINTERFACE
-            (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-            (return)))))
+            (if (i32.eq (local.get $iid_dword) (i32.const 0x9C59509A))
+              (then (local.set $vtbl (call $dx_get_ddraw4_vtbl)))
+              (else
+                (if (i32.eq (local.get $iid_dword) (i32.const 0x15E65EC0))
+                  (then (local.set $vtbl (call $dx_get_ddraw7_vtbl)))
+                  (else
+                    (global.set $eax (i32.const 0x80004002)) ;; E_NOINTERFACE
+                    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+                    (return)))))))))
     (local.set $obj_guest (call $dx_create_com_obj (i32.const 1) (local.get $vtbl)))
     (if (i32.eqz (local.get $obj_guest))
       (then
@@ -1496,21 +1521,43 @@
         (global.set $eax (i32.const 0))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
         (return)))
-    ;; IDirectDraw2/4/7 — return a distinct wrapper with DDRAW2 vtable.
+    ;; IDirectDraw2/4/7 — return a distinct wrapper with the requested ABI.
     ;; Must NOT mutate the primary wrapper: apps like foxbear QI for
     ;; IDirectDraw2 but continue using the original pointer with v1-signature
     ;; calls (SetDisplayMode with 3 args, not 5). Upgrading in-place then
     ;; made SetDisplayMode pop 28 bytes (v2) when only 20 were pushed (v1),
     ;; corrupting ESP and jumping to 0.
-    (if (i32.or (i32.eq (local.get $iid_dword) (i32.const 0xB3A6F3E0))
-        (i32.or (i32.eq (local.get $iid_dword) (i32.const 0x9C59509A))
-                (i32.eq (local.get $iid_dword) (i32.const 0x15E65EC0))))
+    (if (i32.eq (local.get $iid_dword) (i32.const 0xB3A6F3E0))
       (then
         (local.set $obj (call $dx_from_this (local.get $arg0)))
         (call $gs32 (local.get $arg2)
           (call $dx_get_wrapper_for_vtbl
             (call $dx_slot_of (local.get $obj))
             (global.get $DX_VTBL_DDRAW2)))
+        (i32.store (i32.add (local.get $obj) (i32.const 4))
+          (i32.add (i32.load (i32.add (local.get $obj) (i32.const 4))) (i32.const 1)))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (if (i32.eq (local.get $iid_dword) (i32.const 0x9C59509A))
+      (then
+        (local.set $obj (call $dx_from_this (local.get $arg0)))
+        (call $gs32 (local.get $arg2)
+          (call $dx_get_wrapper_for_vtbl
+            (call $dx_slot_of (local.get $obj))
+            (call $dx_get_ddraw4_vtbl)))
+        (i32.store (i32.add (local.get $obj) (i32.const 4))
+          (i32.add (i32.load (i32.add (local.get $obj) (i32.const 4))) (i32.const 1)))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (if (i32.eq (local.get $iid_dword) (i32.const 0x15E65EC0))
+      (then
+        (local.set $obj (call $dx_from_this (local.get $arg0)))
+        (call $gs32 (local.get $arg2)
+          (call $dx_get_wrapper_for_vtbl
+            (call $dx_slot_of (local.get $obj))
+            (call $dx_get_ddraw7_vtbl)))
         (i32.store (i32.add (local.get $obj) (i32.const 4))
           (i32.add (i32.load (i32.add (local.get $obj) (i32.const 4))) (i32.const 1)))
         (global.set $eax (i32.const 0))
@@ -2678,6 +2725,73 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
+  ;; IDirectDraw4 tail (slots 24..27).
+  (func $handle_IDirectDraw4_GetSurfaceFromDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (i32.const 0))))
+    (global.set $eax (i32.const 0x80004001)) ;; E_NOTIMPL
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_IDirectDraw4_RestoreAllSurfaces (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Surfaces in this software implementation never become lost, but still
+    ;; validate the interface instead of accepting an arbitrary pointer.
+    (global.set $eax
+      (select (i32.const 0) (i32.const 0x88760096)
+        (i32.ne (call $dx_from_this (local.get $arg0)) (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_IDirectDraw4_TestCooperativeLevel (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Windowed mode is a valid implicit cooperative level. As above, reject a
+    ;; stale/non-DirectDraw wrapper rather than turning this into a silent stub.
+    (global.set $eax
+      (select (i32.const 0) (i32.const 0x88760096)
+        (i32.ne (call $dx_from_this (local.get $arg0)) (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; GetDeviceIdentifier(this, LPDDDEVICEIDENTIFIER, flags). The DX6
+  ;; structure is 560 bytes: two MAX_PATH ANSI strings, driver version,
+  ;; four PCI ids, and a GUID. GTA2 calls this immediately after QI'ing
+  ;; IID_IDirectDraw4 and only requires a stable software-device identity.
+  (func $handle_IDirectDraw4_GetDeviceIdentifier (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $wa i32)
+    (if (i32.eqz (local.get $arg1)) (then
+      (global.set $eax (i32.const 0x80070057)) ;; E_INVALIDARG
+      (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+      (return)))
+    (local.set $wa (call $g2w (local.get $arg1)))
+    (call $zero_memory (local.get $wa) (i32.const 560))
+    ;; szDriver = "wine-assembly"
+    (i32.store offset=0 (local.get $wa) (i32.const 0x656e6977))
+    (i32.store offset=4 (local.get $wa) (i32.const 0x7373612d))
+    (i32.store offset=8 (local.get $wa) (i32.const 0x6c626d65))
+    (i32.store offset=12 (local.get $wa) (i32.const 0x00000079))
+    ;; szDescription = "Wine Assembly DirectDraw"
+    (i32.store offset=260 (local.get $wa) (i32.const 0x656e6957))
+    (i32.store offset=264 (local.get $wa) (i32.const 0x73734120))
+    (i32.store offset=268 (local.get $wa) (i32.const 0x6c626d65))
+    (i32.store offset=272 (local.get $wa) (i32.const 0x69442079))
+    (i32.store offset=276 (local.get $wa) (i32.const 0x74636572))
+    (i32.store offset=280 (local.get $wa) (i32.const 0x77617244))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; IDirectDraw7 tail (slots 28..29). Mode testing is advisory; the display
+  ;; mode path remains authoritative.
+  (func $handle_IDirectDraw7_StartModeTest (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Mode testing is advisory in DirectDraw 7. Accept a non-empty list on a
+    ;; live object; invalid input fails before EvaluateMode can observe it.
+    (global.set $eax
+      (select (i32.const 0) (i32.const 0x80070057)
+        (i32.and
+          (i32.ne (call $dx_from_this (local.get $arg0)) (i32.const 0))
+          (i32.and (i32.ne (local.get $arg1) (i32.const 0))
+                   (i32.ne (local.get $arg2) (i32.const 0))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
+  (func $handle_IDirectDraw7_EvaluateMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (i32.const 0))))
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
   ;; ════════════════════════════════════════════════════════════
   ;; IDirectDrawSurface methods
   ;; ════════════════════════════════════════════════════════════
@@ -2704,6 +2818,11 @@
     ;; IID_IDirect3DTexture2 {93281502-8cf8-11d0-89ab-00a0c9054129}
     (if (i32.eq (local.get $iid0) (i32.const 0x93281502)) (then
       (local.set $vtbl (global.get $DX_VTBL_D3DTEX2))))
+    ;; IID_IDirectDrawGammaControl {69C11C3E-B46B-11D1-AD7A-00C04FC29B4E}.
+    ;; Returning the surface vtable corrupts ESP because its slots 3/4 have
+    ;; different signatures from GetGammaRamp/SetGammaRamp.
+    (if (i32.eq (local.get $iid0) (i32.const 0x69C11C3E)) (then
+      (local.set $vtbl (call $init_com_vtable (i32.const 3079) (i32.const 5)))))
     ;; D3DRM asks its render-target surface for a D3D device interface. Return
     ;; a real device wrapper bound to this surface; aliasing the DDSurface
     ;; vtable corrupts ESP when D3DRM later calls device-only callback methods.

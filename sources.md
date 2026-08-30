@@ -33,6 +33,42 @@ and the payloads must remain out of the repository and deployed site.
   or electronic distribution, so the corpus records only a checksum-pinned,
   local-only fetch recipe.
 
+## Grand Theft Auto demos and Rockstar Classics
+
+Verified 2026-08-30. The preserved official **Grand Theft Auto** DOS demo is
+the Liberty City, 24-bit high-resolution release. The exact 9,531,378-byte
+[`gta24.zip`](https://archive.org/download/gta-1997/Files/Demo%20-%20Liberty%20City%20-%2024%20Bit%20-%20High%20Res%20Version/gta24.zip)
+has SHA-256
+`76f1e1da5c898f755597b86357c4d77b7447cb483673a23d10d34f40cfe03ec9`.
+It expands to a `GTA24` tree whose launch executable is the 2,001,991-byte
+`GTADOS/DEMO24.EXE` (SHA-256
+`2f1cedfb95254b2f1a8913f1aeac7a915966cb42c70c9c96b14b8861fbf78c9f`).
+The executable embeds DOS/4GW and requires VESA; its 117 companion files must
+remain beside it. The manifest and fetch recipe therefore keep the complete
+tree as an ignored local fixture.
+
+The preserved **Grand Theft Auto 2** Wild Demo is the original 12,972,175-byte
+[`gta2demo.exe`](https://archive.org/download/gta2-1999/Files/Demo/gta2demo.exe)
+(SHA-256
+`f8fc0a9653932f008a03e56ea892fb31dbeb98d228cc4df61b910bcb35d08d21`).
+This is a PackageForTheWeb self-extractor around an InstallShield 5 setup, not
+an already-installed game. Wine Assembly's acceptance starts from that file,
+lets its own LZ32 path emit Disk1, runs the emitted `Setup.exe`, then runs the
+emitted `_INS5576._MP` wizard. The stages are separate processes only because
+the emulator does not yet execute Win32 child processes. The final test checks
+the wizard's completion message and its 73-file payload before the matching
+installed executable is launched into the Wild Demo map.
+
+Rockstar later offered three complete games at no charge through its Rockstar
+Classics series: **Grand Theft Auto**, **Grand Theft Auto 2**, and **Wild Metal
+Country**. That historical offer did not include the GTA London expansions,
+and it is no longer available. More importantly for this repository, the
+Rockstar download notice explicitly said the games were *not freeware* and
+could not be mirrored or duplicated without written consent. “Free download”
+therefore does not authorize bundling those full versions here; both demo
+fixtures remain local-only as well because their included terms contain no
+clear public-redistribution grant.
+
 ## Win16 Entertainment Pack recovery
 
 The byte-level recovery ledger for Rodent's Revenge, Fuji Golf, and Tic Tac

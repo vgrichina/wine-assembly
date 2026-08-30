@@ -340,6 +340,30 @@
       }
     },
     {
+      "id": "gta2-demo",
+      "name": "Grand Theft Auto 2 demo",
+      "kind": "installer",
+      "version": "1999 Wild Demo",
+      "executables": [
+        "gta2demo.exe"
+      ],
+      "sourcePage": "https://archive.org/details/gta2-1999",
+      "license": "commercial demo; the package grants use but not public redistribution, so keep it as an ignored local fixture",
+      "localOnly": true,
+      "packages": [
+        {
+          "url": "https://archive.org/download/gta2-1999/Files/Demo/gta2demo.exe",
+          "sha1": "0566061b695ce975f78ef56da22fd527034ff918",
+          "type": "file",
+          "destination": "gta2demo.exe"
+        }
+      ],
+      "cli": {
+        "maxBatches": 1300,
+        "batchSize": 100000
+      }
+    },
+    {
       "id": "half-life-uplink-installer",
       "name": "Half-Life: Uplink",
       "kind": "installer",

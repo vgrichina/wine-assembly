@@ -456,7 +456,10 @@ const extra = [
   { name: 'SetStdHandle', nargs: 2 },
   { name: 'FlushFileBuffers', nargs: 1 },
   { name: 'WriteFile', nargs: 5 },
-  { name: 'WinExec', nargs: 2 },
+  { name: 'WinExec', nargs: 2, args: [
+    { name: 'lpCmdLine', type: 'LPCSTR' },
+    { name: 'uCmdShow', type: 'UINT' },
+  ], ret: 'UINT' },
   { name: 'GetACP', nargs: 0 },
   { name: 'GetOEMCP', nargs: 0 },
   { name: 'GetCPInfo', nargs: 2 },
@@ -1110,6 +1113,26 @@ const extra = [
   { name: 'LZOpenFileA', nargs: 3 },
   { name: 'LZRead', nargs: 3 },
   { name: 'LZSeek', nargs: 3 },
+  { name: 'LZCopy', nargs: 2 },
+  // DirectMusic availability probe used by the GTA2 demo and its installer.
+  // They only create, query, and release the root IDirectMusic interface.
+  { name: 'IDirectMusic_QueryInterface', nargs: 3 },
+  { name: 'IDirectMusic_AddRef', nargs: 1 },
+  { name: 'IDirectMusic_Release', nargs: 1 },
+  { name: 'IDirectDrawGammaControl_QueryInterface', nargs: 3 },
+  { name: 'IDirectDrawGammaControl_AddRef', nargs: 1 },
+  { name: 'IDirectDrawGammaControl_Release', nargs: 1 },
+  { name: 'IDirectDrawGammaControl_GetGammaRamp', nargs: 3 },
+  { name: 'IDirectDrawGammaControl_SetGammaRamp', nargs: 3 },
+  // IDirectDraw4/7 append these slots after IDirectDraw2. Keep the two
+  // interface blocks contiguous: the lazy compatibility vtables in 09a8
+  // extend the existing IDirectDraw2 table with these exact API ranges.
+  { name: 'IDirectDraw4_GetSurfaceFromDC', nargs: 3 },
+  { name: 'IDirectDraw4_RestoreAllSurfaces', nargs: 1 },
+  { name: 'IDirectDraw4_TestCooperativeLevel', nargs: 1 },
+  { name: 'IDirectDraw4_GetDeviceIdentifier', nargs: 3 },
+  { name: 'IDirectDraw7_StartModeTest', nargs: 4 },
+  { name: 'IDirectDraw7_EvaluateMode', nargs: 3 },
   { name: 'LZClose', nargs: 1 },
   // WINMM — RIFF file seek used by RCT after the 16-bit POP decoder fix.
   { name: 'mmioSeek', nargs: 3 },

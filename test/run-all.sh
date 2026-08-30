@@ -122,6 +122,8 @@ UNIT=(
   test/test-starcraft-dll-policy.js
   test/test-debug-game-apps.js
   test/test-dllmain-load-context.js
+  test/test-lzcopy.js
+  test/test-dos-game-corpus.js
   test/test-debug-thread-state.js
   test/test-dev-server.js
   test/test-vlan-rtc.js
@@ -316,6 +318,7 @@ UNIT=(
   test/test-directdraw-stale-background-restore.js
   test/test-directdraw-cursor-background-restore.js
   test/test-directdraw-create-ex.js
+  test/test-directdraw-device-identifier.js
   test/test-directdraw-mode-change-primary.js
   test/test-directdraw-present-force.js
   test/test-directdraw-retained-primary.js
@@ -507,6 +510,8 @@ E2E=(
   test/test-diablo2-demo-installer.js
   test/test-diablo2-demo-installed.js
   test/test-diablo2-demo-gameplay.js
+  test/test-gta2-demo-installer.js
+  test/test-gta2-demo-gameplay.js
   test/test-half-life-uplink-installed.js
   test/test-half-life-uplink-web.js
   test/test-web-notepad-close-desktop.js

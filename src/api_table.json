@@ -12874,7 +12874,18 @@
     "name": "WinExec",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 1100429264
+    "hash": 1100429264,
+    "args": [
+      {
+        "name": "lpCmdLine",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "uCmdShow",
+        "type": "UINT"
+      }
+    ],
+    "ret": "UINT"
   },
   {
     "id": 1519,
@@ -25706,5 +25717,110 @@
       }
     ],
     "ret": "BOOL"
+  },
+  {
+    "id": 3075,
+    "name": "LZCopy",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 37918250
+  },
+  {
+    "id": 3076,
+    "name": "IDirectMusic_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 825623950
+  },
+  {
+    "id": 3077,
+    "name": "IDirectMusic_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1460223485
+  },
+  {
+    "id": 3078,
+    "name": "IDirectMusic_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 968630362
+  },
+  {
+    "id": 3079,
+    "name": "IDirectDrawGammaControl_QueryInterface",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 524156681
+  },
+  {
+    "id": 3080,
+    "name": "IDirectDrawGammaControl_AddRef",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1697827258
+  },
+  {
+    "id": 3081,
+    "name": "IDirectDrawGammaControl_Release",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 4203858967
+  },
+  {
+    "id": 3082,
+    "name": "IDirectDrawGammaControl_GetGammaRamp",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1032309027
+  },
+  {
+    "id": 3083,
+    "name": "IDirectDrawGammaControl_SetGammaRamp",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1960581095
+  },
+  {
+    "id": 3084,
+    "name": "IDirectDraw4_GetSurfaceFromDC",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1146035020
+  },
+  {
+    "id": 3085,
+    "name": "IDirectDraw4_RestoreAllSurfaces",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 565577355
+  },
+  {
+    "id": 3086,
+    "name": "IDirectDraw4_TestCooperativeLevel",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 4215130789
+  },
+  {
+    "id": 3087,
+    "name": "IDirectDraw4_GetDeviceIdentifier",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 499857255
+  },
+  {
+    "id": 3088,
+    "name": "IDirectDraw7_StartModeTest",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2948929544
+  },
+  {
+    "id": 3089,
+    "name": "IDirectDraw7_EvaluateMode",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 873642925
   }
 ]

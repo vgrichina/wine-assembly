@@ -1884,14 +1884,24 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; LZ32's file APIs also accept ordinary, uncompressed files. Font Viewer
-  ;; uses that path for font-resource files, so map the handle operations onto
-  ;; the VFS. SZDD decompression can be added separately if a caller needs it.
+  ;; and old InstallShield launchers use that path, so map the handle
+  ;; operations onto the VFS. SZDD decompression can be added separately if a
+  ;; caller needs it.
   (func $handle_LZOpenFileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $handle i32) (local $of_wa i32)
+    (local $handle i32) (local $of_wa i32) (local $access i32) (local $creation i32)
+    ;; OF_READ=0, OF_WRITE=1, OF_READWRITE=2, OF_CREATE=0x1000.
+    (local.set $access (i32.const 0x80000000))
+    (if (i32.eq (i32.and (local.get $arg2) (i32.const 3)) (i32.const 1))
+      (then (local.set $access (i32.const 0x40000000))))
+    (if (i32.eq (i32.and (local.get $arg2) (i32.const 3)) (i32.const 2))
+      (then (local.set $access (i32.const 0xC0000000))))
+    (local.set $creation
+      (select (i32.const 2) (i32.const 3)
+        (i32.ne (i32.and (local.get $arg2) (i32.const 0x1000)) (i32.const 0))))
     (local.set $handle (call $host_fs_create_file
       (call $g2w (local.get $arg0))
-      (i32.const 0x80000000)  ;; GENERIC_READ
-      (i32.const 3)           ;; OPEN_EXISTING
+      (local.get $access)
+      (local.get $creation)
       (i32.const 0x80)        ;; FILE_ATTRIBUTE_NORMAL
       (i32.const 0)))         ;; ANSI path
     (if (local.get $arg1)
@@ -1921,6 +1931,45 @@
     (global.set $eax (call $host_fs_set_file_pointer
       (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  ;; LZCopy(hfSource, hfDest) copies the remaining expanded stream and returns
+  ;; its byte count. For an ordinary input file LZ32 defines this as a direct
+  ;; copy; that is the path used by InstallShield 5's self-extracting loader.
+  (func $handle_LZCopy (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $buffer_ga i32) (local $count_ga i32) (local $count_wa i32)
+    (local $count i32) (local $total i32)
+    (local.set $count_ga (i32.sub (global.get $esp) (i32.const 0x1004)))
+    (local.set $buffer_ga (i32.sub (global.get $esp) (i32.const 0x1000)))
+    (local.set $count_wa (call $g2w (local.get $count_ga)))
+    (block $done
+      (loop $copy
+        (i32.store (local.get $count_wa) (i32.const 0))
+        (if (i32.eqz (call $host_fs_read_file
+              (local.get $arg0) (local.get $buffer_ga) (i32.const 0x1000)
+              (local.get $count_ga)))
+          (then
+            (global.set $eax (i32.const -3)) ;; LZERROR_READ
+            (br $done)))
+        (local.set $count (i32.load (local.get $count_wa)))
+        (if (i32.eqz (local.get $count))
+          (then
+            (global.set $eax (local.get $total))
+            (br $done)))
+        (i32.store (local.get $count_wa) (i32.const 0))
+        (if (i32.eqz (call $host_fs_write_file
+              (local.get $arg1) (local.get $buffer_ga) (local.get $count)
+              (local.get $count_ga)))
+          (then
+            (global.set $eax (i32.const -4)) ;; LZERROR_WRITE
+            (br $done)))
+        (if (i32.ne (i32.load (local.get $count_wa)) (local.get $count))
+          (then
+            (global.set $eax (i32.const -4))
+            (br $done)))
+        (local.set $total (i32.add (local.get $total) (local.get $count)))
+        (br $copy)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   (func $handle_LZClose (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

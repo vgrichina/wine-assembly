@@ -22,8 +22,9 @@ const extraWat = String.raw`
   const { exports: wat } = await bootRenderHarness({ extraWat });
   const out = 0x410000;
   const iid = 0x410020;
-  const baseVtable = 0x51000000;
-  const extendedVtable = 0x52000000;
+  const baseVtable = 0x00510000;
+  const extendedVtable = 0x00510100;
+  for (let i = 0; i < 24; i++) wat.guest_write32(extendedVtable + i * 4, 0x600000 + i);
   wat.test_ddrawex_seed(baseVtable, extendedVtable);
 
   // IID_IDirectDraw7 = 15E65EC0-3B9C-11D2-B92F-00609797EA5B.
@@ -35,8 +36,17 @@ const extraWat = String.raw`
     'IDirectDraw7 creation should succeed');
   const object = wat.guest_read32(out) >>> 0;
   assert(object, 'DirectDrawCreateEx should publish an interface pointer');
-  assert.strictEqual(wat.guest_read32(object) >>> 0, extendedVtable,
-    'IDirectDraw7 should use the extended DirectDraw vtable');
+  const ddraw7Vtable = wat.guest_read32(object) >>> 0;
+  assert.notStrictEqual(ddraw7Vtable, extendedVtable,
+    'IDirectDraw7 should extend rather than alias the 24-slot IDirectDraw2 table');
+  for (let i = 0; i < 24; i++) {
+    assert.strictEqual(wat.guest_read32(ddraw7Vtable + i * 4) >>> 0, 0x600000 + i,
+      `IDirectDraw7 preserves inherited slot ${i}`);
+  }
+  assert.notStrictEqual(wat.guest_read32(ddraw7Vtable + 27 * 4) >>> 0, 0,
+    'IDirectDraw7 includes IDirectDraw4::GetDeviceIdentifier at slot 27');
+  assert.notStrictEqual(wat.guest_read32(ddraw7Vtable + 29 * 4) >>> 0, 0,
+    'IDirectDraw7 includes its EvaluateMode tail at slot 29');
   assert.strictEqual(wat.test_ddrawex_esp() >>> 0, 0x30014,
     'DirectDrawCreateEx pops its return address and four stdcall arguments');
 
