@@ -150,7 +150,7 @@ assert(/diablo_demo:\s*\{[\s\S]*?exe:\s*diabloCandidateRoot \+ 'DIABDEMO\.EXE'[\
   'Diablo debug launch should load the extracted game, Storm, and its MPQ package on C: and Z:');
 assert(pageHtml.includes('lib/vfs-persistence.js?v=1'),
   'web host should load bounded per-app VFS persistence');
-assert(pageHtml.includes('lib/browser-shell.js?v=16'),
+assert(pageHtml.includes('lib/browser-shell.js?v=17'),
   'web host should cache-bust the current launcher');
 assert(!deployJs.includes('test/binaries/candidates/diablo'),
   'public deploy should exclude the local Diablo demo payload');
@@ -300,7 +300,7 @@ assert(fs.statSync(path.join(ROOT, 'binaries', 'whatsnew.txt')).size > 0, 'Winam
 assert(!webApp.includes('wine.waitForMainHwnd(() =>'), 'Winamp web launch should not auto-drive playback through IPC');
 assert(!webApp.includes('?v=55'), 'index.html should not keep stale cache-buster v55');
 assert(webApp.includes('lib/renderer-input.js?v=195'), 'web host should cache-bust renderer input after overflow-safe DirectInput mouse edges');
-assert(webApp.includes('lib/browser-input.js?v=10'), 'web host should cache-bust reliable relative-mouse capture');
+assert(webApp.includes('lib/browser-input.js?v=12'), 'web host should cache-bust explicit Quake relative-mouse capture');
 assert(webApp.includes('lib/renderer.js?v=190'), 'web host should cache-bust renderer after the current source update');
 assert(webApp.includes('lib/pe.js?v=1'), 'web host should load the shared PE section reader');
 assert(webApp.includes('lib/process-boot.js?v=2'), 'web host should cache-bust oversized PE section hydration');

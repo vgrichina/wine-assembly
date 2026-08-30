@@ -334,6 +334,18 @@ expired, so an optionless retry cannot lock. Capture therefore uses one plain,
 synchronous request. Reliable unbounded motion takes priority over raw-device
 deltas until support can be selected before consuming the user gesture.
 
+The browser bridge accepts both the standard Pointer Lock names and WebKit's
+older prefixed request, lock-element, and change-event names. This matters on
+macOS Safari builds which support Pointer Lock but expose some or all of that
+surface under `webkit*`; the request remains synchronous in both branches.
+
+Quake is also marked `relativeMouse` in its app manifest. The browser shell
+carries that declaration onto the live app record, and the input bridge uses
+it whenever Quake owns an exclusive presentation. Its late
+`ClipCursor`/`ShowCursor` timing is therefore no longer an eligibility race:
+the capture click asks for Pointer Lock even if Safari reaches the click before
+the guest's current frame has published its cursor state.
+
 ## Threads/OpenGL throughput
 
 The severe slowdown with the browser Threads switch is not a guest lock or a

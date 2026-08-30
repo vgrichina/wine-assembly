@@ -22,7 +22,7 @@ const canvas = {
   removeEventListener() {},
   setAttribute() {},
   focus() {},
-  requestPointerLock(options) {
+  webkitRequestPointerLock(options) {
     lockRequests.push(options);
   },
 };
@@ -34,6 +34,7 @@ global.window = {
 };
 global.document = {
   pointerLockElement: null,
+  webkitPointerLockElement: null,
   body: {},
   documentElement: {},
   activeElement: canvas,
@@ -50,9 +51,11 @@ global.setInterval = () => 1;
 global.clearInterval = () => {};
 
 const calls = { absolute: [], relative: [], hover: [] };
-let wantsRelative = true;
+let wantsRelative = false;
+const runningApps = [{ name: 'quake2_demo', relativeMouse: true, wine: { running: true } }];
 const renderer = {
   windows: {},
+  _exclusiveTransform: { hwnd: 1 },
   wantsRelativeMouse: () => wantsRelative,
   wantsHiddenMouse: () => wantsRelative,
   handleMouseMove: (x, y) => calls.absolute.push([x, y]),
@@ -65,7 +68,7 @@ const renderer = {
 
 try {
   const browserInput = require('../lib/browser-input');
-  browserInput.wireCanvasInput(canvas, renderer, { runningApps: [], debugMode: false });
+  browserInput.wireCanvasInput(canvas, renderer, { runningApps, debugMode: false });
 
   canvas.onmousemove({ clientX: 520, clientY: 240, movementX: 200, movementY: 0 });
   assert.deepStrictEqual(calls.absolute, [],
@@ -78,7 +81,7 @@ try {
     ctrlKey: false, shiftKey: false, preventDefault() {},
   });
   assert.deepStrictEqual(lockRequests, [undefined],
-    'capture must make one optionless request synchronously inside the trusted click');
+    'WebKit-only capture must make one optionless request synchronously inside the trusted click');
   listeners.get('mousemove')({
     clientX: 500, clientY: 240, movementX: 180, movementY: 0, buttons: 1,
     preventDefault() {}, stopPropagation() {},
@@ -90,13 +93,13 @@ try {
     preventDefault() {}, stopPropagation() {},
   });
 
-  document.pointerLockElement = canvas;
+  document.webkitPointerLockElement = canvas;
   canvas.onmousemove({ clientX: 0, clientY: 0, movementX: 7, movementY: -3 });
   assert.deepStrictEqual(calls.relative, [[7, -3]],
     'Pointer Lock movement should still enter the relative mouse path');
 
-  document.pointerLockElement = null;
-  wantsRelative = false;
+  document.webkitPointerLockElement = null;
+  runningApps.length = 0;
   canvas.onmousemove({ clientX: 123, clientY: 234, movementX: 1, movementY: 2 });
   assert.deepStrictEqual(calls.absolute, [[123, 234]],
     'ordinary desktop guests must retain absolute mouse movement');
