@@ -25620,5 +25620,19 @@
       }
     ],
     "ret": "BOOL"
+  },
+  {
+    "id": 3070,
+    "name": "FlushConsoleInputBuffer",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3556486656,
+    "args": [
+      {
+        "name": "hConsoleInput",
+        "type": "HANDLE"
+      }
+    ],
+    "ret": "BOOL"
   }
 ]

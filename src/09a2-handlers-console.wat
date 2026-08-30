@@ -643,6 +643,20 @@
     (if (i32.eqz (i32.load (global.get $CONSOLE_INPUT)))
       (then (drop (call $host_reset_event (call $console_input_event))))))
 
+  ;; FlushConsoleInputBuffer(hConsoleInput) → BOOL. Draining through the same
+  ;; queue helper also resets the wake event seen by blocked browser Workers.
+  (func $handle_FlushConsoleInputBuffer (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.ne (local.get $arg0) (i32.const 1))
+      (then
+        (global.set $last_error (i32.const 6))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (call $console_input_drop (call $console_input_count))
+    (global.set $last_error (i32.const 0))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
   ;; Number of queued events up to and including the first Enter, or 0 when no
   ;; complete line is queued yet.
   (func $console_input_line_len (result i32)
