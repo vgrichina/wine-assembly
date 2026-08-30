@@ -255,7 +255,9 @@ UNIT=(
   test/test-global-alloc-reuse.js
   test/test-is-char-alpha.js
   test/test-iswindow-validity.js
+  test/test-baldurs-gate-compat-patches.js
   test/test-lcmapstring-wat.js
+  test/test-locale-info-wat.js
   test/test-listview-icon-mode.js
   test/test-lookup-icon-id.js
   test/test-map-view-of-file-ex.js
@@ -461,6 +463,7 @@ E2E=(
   test/test-tapi-line-init.js
   test/test-caesar3-fullscreen-metrics.js
   test/test-caesar3-gameplay.js
+  test/test-baldurs-gate-demos.js
   test/test-diablo-shareware-art.js
   test/test-diablo-shareware-gameplay.js
   test/test-heroes2-gameplay.js

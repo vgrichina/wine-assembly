@@ -66,6 +66,19 @@ assert.strictEqual(suspendTm.resumeThread(suspendedHandle), 0, 'resuming a runni
 assert.strictEqual(suspendTm.suspendThread(0xdeadbeef), 0xFFFFFFFF, 'invalid suspend handle fails');
 assert.strictEqual(suspendTm.resumeThread(0xdeadbeef), 0xFFFFFFFF, 'invalid resume handle fails');
 
+const selfSuspendTm = makeThreadManager();
+const selfSuspendHandle = selfSuspendTm.createThread(0x6080, 0, 0, 0);
+selfSuspendTm._runningThreadHandle = selfSuspendHandle;
+assert.strictEqual(selfSuspendTm.suspendThread(selfSuspendHandle), 0x80000000,
+  'a worker self-suspend privately tags the zero previous count for the WAT dispatcher');
+assert.strictEqual(selfSuspendTm._pendingThreads[0].suspendCount, 1,
+  'self-suspend increments exactly once before the guest slice yields');
+selfSuspendTm._runningThreadHandle = 0;
+assert.strictEqual(selfSuspendTm.resumeThread(selfSuspendHandle), 1,
+  'another thread observes and releases the ordinary Win32 suspend count');
+assert(handlersWat.includes('(global.set $yield_reason (i32.const 11))'),
+  'SuspendThread self-calls park the current guest slice before it can suspend again');
+
 const duplicateTm = makeThreadManager();
 const duplicatedMainA = duplicateTm.duplicateCurrentThread(1);
 const duplicatedMainB = duplicateTm.duplicateCurrentThread(1);

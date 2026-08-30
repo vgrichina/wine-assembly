@@ -54,6 +54,13 @@ async function main() {
   assert.strictEqual(e.test_system_ordinal_api_id(dllName, 17), id('InitCommonControls'));
   assert.strictEqual(e.test_system_ordinal_api_id(dllName, 18), -1,
     'unsupported COMCTL32 ordinals remain explicit diagnostics');
+
+  new Uint8Array(memory.buffer).set(Buffer.from('C:\\WINDOWS\\SYSTEM\\WS2_32.DLL\0', 'latin1'), dllNameWa);
+  assert.strictEqual(e.test_system_ordinal_api_id(dllName, 115), id('WSAStartup'),
+    'WS2_32 exposes the WinSock 1.1 WSAStartup ordinal used by Baldur\'s Gate');
+  assert.strictEqual(e.test_system_ordinal_api_id(dllName, 116), id('WSACleanup'));
+  assert.strictEqual(e.test_system_ordinal_api_id(dllName, 114), -1,
+    'unsupported WS2_32 ordinals remain explicit diagnostics');
   console.log('PASS Win98 system DLL ordinal resolution');
 }
 

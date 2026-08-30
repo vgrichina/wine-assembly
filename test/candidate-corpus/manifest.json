@@ -946,6 +946,181 @@
         "maxBatches": 650,
         "batchSize": 50000
       }
+    },
+    {
+      "id": "baldurs-gate-noninteractive-demo",
+      "name": "Baldur's Gate non-interactive demo",
+      "kind": "game-demo-presentation",
+      "version": "1998 preview",
+      "executables": [
+        "Baldur.exe"
+      ],
+      "sourcePage": "https://archive.org/details/BALDUR",
+      "license": "proprietary promotional demo; bundled README permits personal noncommercial copies shared at no cost but not commercial or bundled distribution; local ignored testing only",
+      "localOnly": true,
+      "packages": [
+        {
+          "url": "https://archive.org/download/BALDUR/BALDUR.EXE",
+          "sha1": "e7caae4255e8ed570cef3a29642432c8d28ecdb9",
+          "type": "archive"
+        }
+      ],
+      "cli": {
+        "maxBatches": 500,
+        "batchSize": 50000,
+        "vfsInclude": [
+          "**/*"
+        ]
+      }
+    },
+    {
+      "id": "baldurs-gate-interactive-demo",
+      "name": "Baldur's Gate interactive demo",
+      "kind": "game",
+      "version": "1.0.0",
+      "executables": [
+        "installed-extracted/MinimumData/BGDemo.exe"
+      ],
+      "sourcePage": "https://archive.org/details/bg-demo",
+      "license": "proprietary playable demo; bundled license prohibits copying or electronic distribution; local ignored testing only",
+      "localOnly": true,
+      "packages": [
+        {
+          "url": "https://archive.org/download/bg-demo/BG%20Demo.iso",
+          "sha1": "3796defce51a3e867aa216bc27f0be0689fdadf0",
+          "type": "archive"
+        }
+      ],
+      "postExtract": [
+        {
+          "type": "unshield",
+          "cab": "data1.cab",
+          "into": "installed-extracted",
+          "group": "MinimumData"
+        },
+        {
+          "type": "copyFile",
+          "from": "BGDemo.exe",
+          "into": "installed-extracted/MinimumData/BGDemo.exe"
+        },
+        {
+          "type": "copyTree",
+          "from": "CD1",
+          "into": "installed-extracted/MinimumData/CD1"
+        },
+        {
+          "type": "copyTree",
+          "from": "override",
+          "into": "installed-extracted/MinimumData/override"
+        },
+        {
+          "type": "replaceText",
+          "file": "installed-extracted/MinimumData/Baldur.ini",
+          "replacements": [
+            {
+              "from": "HD0:=.\\",
+              "to": "HD0:=C:\\"
+            },
+            {
+              "from": "CD1:=.\\",
+              "to": "CD1:=C:\\CD1\\"
+            },
+            {
+              "from": "CD2:=.\\",
+              "to": "CD2:=C:\\CD1\\"
+            },
+            {
+              "from": "CD3:=.\\",
+              "to": "CD3:=C:\\CD1\\"
+            },
+            {
+              "from": "CD4:=.\\",
+              "to": "CD4:=C:\\CD1\\"
+            },
+            {
+              "from": "CD5:=.\\",
+              "to": "CD5:=C:\\CD1\\"
+            }
+          ]
+        }
+      ],
+      "cli": {
+        "maxBatches": 800,
+        "batchSize": 50000,
+        "vfsInclude": [
+          "**/*"
+        ]
+      }
+    },
+    {
+      "id": "baldurs-gate-chapters-1-2-demo",
+      "name": "Baldur's Gate Chapters I & II",
+      "kind": "game",
+      "version": "1.1.0003 commercial preview",
+      "executables": [
+        "installed-extracted/MinimumData/BGMain.exe"
+      ],
+      "sourcePage": "https://archive.org/details/20230723_20230723_0858",
+      "license": "proprietary commercial preview CD-ROM; bundled license prohibits copying or electronic distribution; local ignored testing only",
+      "localOnly": true,
+      "packages": [
+        {
+          "url": "https://archive.org/download/20230723_20230723_0858/Baldur%27s%20Gate%20-%20Chapters%20I%20%26%20II%20%28USA%29%20%28Demo%29.zip",
+          "sha1": "2e5256bc8c418aec51ea39ef1a5bf8640dd3317a",
+          "type": "archive"
+        }
+      ],
+      "postExtract": [
+        {
+          "type": "extractRawMode1Cd",
+          "image": "Baldur's Gate - Chapters I & II (USA) (Demo).bin",
+          "into": "cd"
+        },
+        {
+          "type": "unshield",
+          "cab": "cd/data1.cab",
+          "into": "installed-extracted",
+          "group": "MinimumData"
+        },
+        {
+          "type": "unshield",
+          "cab": "cd/data1.cab",
+          "into": "installed-extracted",
+          "group": "English"
+        },
+        {
+          "type": "copyTree",
+          "from": "installed-extracted/English",
+          "into": "installed-extracted/MinimumData"
+        },
+        {
+          "type": "copyTree",
+          "from": "cd/cd1",
+          "into": "installed-extracted/MinimumData/cd1"
+        },
+        {
+          "type": "copyTree",
+          "from": "cd/Override",
+          "into": "installed-extracted/MinimumData/Override"
+        },
+        {
+          "type": "copyFile",
+          "from": "cd/Keymap.ini",
+          "into": "installed-extracted/MinimumData/Keymap.ini"
+        },
+        {
+          "type": "writeText",
+          "file": "installed-extracted/MinimumData/Baldur.ini",
+          "text": "[Alias]\nHD0:=C:\\\nCD1:=C:\\cd1\\\nCD2:=C:\\cd1\\\nCD3:=C:\\cd1\\\nCD4:=C:\\cd1\\\nCD5:=C:\\cd1\\\n[Program Options]\nSoftSrcKeyBltFast=0\nSoftBltFast=0\nSoftSrcKeyBlt=0\nSoftBlt=0\nSoftMirrorBlt=0\n[GameSpy]\nRegion=0\n"
+        }
+      ],
+      "cli": {
+        "maxBatches": 900,
+        "batchSize": 50000,
+        "vfsInclude": [
+          "**/*"
+        ]
+      }
     }
   ]
 }

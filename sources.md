@@ -4,6 +4,35 @@ Verified 2026-08-20. These are possible future compatibility targets for
 Wine-Assembly, with an emphasis on official demos and shareware that can be
 tested without distributing a full retail game.
 
+## Baldur's Gate demos and commercial preview
+
+Verified 2026-08-29. Three different Windows promotional builds are preserved
+on Archive.org and are useful local compatibility fixtures. None is shareware,
+and the payloads must remain out of the repository and deployed site.
+
+- The [non-interactive demo](https://archive.org/details/BALDUR) is the
+  34,296,832-byte `BALDUR.EXE` WinZip self-extractor (SHA-1
+  `e7caae4255e8ed570cef3a29642432c8d28ecdb9`). It expands to a DirectX 5
+  presentation headed by a 913,408-byte `Baldur.exe`. Its README permits
+  personal, noncommercial copies shared at no cost, but excludes commercial
+  or bundled distribution.
+- The [interactive demo](https://archive.org/details/bg-demo) is a
+  513,132,544-byte `BG Demo.iso` (SHA-1
+  `3796defce51a3e867aa216bc27f0be0689fdadf0`). Its README identifies demo
+  version 1.0.0 and explains that it omits the main quests and story, disables
+  multiplayer and character import/export, and exists to demonstrate the
+  engine. The disc installs its data cabinet but runs the 4,848,640-byte
+  `BGDemo.exe` from the CD root.
+- [*Baldur's Gate: Chapters I & II*](https://archive.org/details/20230723_20230723_0858)
+  is a separate version 1.1.0003 commercial preview. The exact preserved ZIP
+  is 612,538,616 bytes (SHA-1
+  `2e5256bc8c418aec51ea39ef1a5bf8640dd3317a`) and contains a matching CUE plus
+  a 753,844,224-byte raw MODE1/2352 BIN. Its README calls the game an abridged,
+  self-contained version of the prologue and first two chapters, with some
+  areas removed and a modified ending. The bundled license prohibits copying
+  or electronic distribution, so the corpus records only a checksum-pinned,
+  local-only fetch recipe.
+
 ## Win16 Entertainment Pack recovery
 
 The byte-level recovery ledger for Rodent's Revenge, Fuji Golf, and Tic Tac

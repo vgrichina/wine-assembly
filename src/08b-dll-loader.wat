@@ -296,6 +296,28 @@
     (call $guest_name_tail_is_dll
       (i32.add (local.get $name) (i32.add (local.get $start) (i32.const 8)))))
 
+  (func $guest_name_is_ws2_32_ci (param $name i32) (result i32)
+    (local $start i32) (local $scan i32) (local $c i32)
+    (if (i32.eqz (local.get $name)) (then (return (i32.const 0))))
+    (block $base_done (loop $base
+      (local.set $c (call $gl8 (i32.add (local.get $name) (local.get $scan))))
+      (br_if $base_done (i32.eqz (local.get $c)))
+      (if (i32.or
+            (i32.or (i32.eq (local.get $c) (i32.const 92))
+                    (i32.eq (local.get $c) (i32.const 47)))
+            (i32.eq (local.get $c) (i32.const 58)))
+        (then (local.set $start (i32.add (local.get $scan) (i32.const 1)))))
+      (local.set $scan (i32.add (local.get $scan) (i32.const 1)))
+      (br $base)))
+    (if (i32.ne (call $tolower (call $gl8 (i32.add (local.get $name) (local.get $start)))) (i32.const 0x77)) (then (return (i32.const 0)))) ;; w
+    (if (i32.ne (call $tolower (call $gl8 (i32.add (local.get $name) (i32.add (local.get $start) (i32.const 1))))) (i32.const 0x73)) (then (return (i32.const 0)))) ;; s
+    (if (i32.ne (call $gl8 (i32.add (local.get $name) (i32.add (local.get $start) (i32.const 2)))) (i32.const 0x32)) (then (return (i32.const 0)))) ;; 2
+    (if (i32.ne (call $gl8 (i32.add (local.get $name) (i32.add (local.get $start) (i32.const 3)))) (i32.const 0x5F)) (then (return (i32.const 0)))) ;; _
+    (if (i32.ne (call $gl8 (i32.add (local.get $name) (i32.add (local.get $start) (i32.const 4)))) (i32.const 0x33)) (then (return (i32.const 0)))) ;; 3
+    (if (i32.ne (call $gl8 (i32.add (local.get $name) (i32.add (local.get $start) (i32.const 5)))) (i32.const 0x32)) (then (return (i32.const 0)))) ;; 2
+    (call $guest_name_tail_is_dll
+      (i32.add (local.get $name) (i32.add (local.get $start) (i32.const 6)))))
+
   (func $system_ordinal_api_id (param $dll_name_ga i32) (param $ordinal i32) (result i32)
     ;; Authentic Win98 SE KERNEL32.DLL: ordinal 99 is unnamed, RVA 0x1e260.
     ;; Its native body takes one BOOL refresh flag and returns the current
@@ -305,7 +327,9 @@
         (if (i32.eq (local.get $ordinal) (i32.const 99))
           (then (return (call $lookup_api_id (i32.const 0x11DBD))))) ;; KERNEL32_Ordinal99
       ))
-    (if (call $dll_name_match (local.get $dll_name_ga) (i32.const 0x11300))
+    (if (i32.or
+          (call $dll_name_match (local.get $dll_name_ga) (i32.const 0x11300))
+          (call $guest_name_is_ws2_32_ci (local.get $dll_name_ga)))
       (then
         (if (i32.eq (local.get $ordinal) (i32.const 115)) (then (return (call $lookup_api_id (i32.const 0x1130C))))) ;; WSAStartup
         (if (i32.eq (local.get $ordinal) (i32.const 116)) (then (return (call $lookup_api_id (i32.const 0x11317))))) ;; WSACleanup

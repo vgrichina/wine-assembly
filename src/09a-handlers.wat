@@ -1034,21 +1034,57 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; The locale values we can answer are one character each, so the two
-  ;; spellings differ only in how wide that character is written. Returns the
-  ;; number of characters the value needs, counting the terminator, which is
-  ;; also what a cchData==0 measuring call asks for.
+  (func $locale_put_ascii (param $out_g i32) (param $index i32)
+      (param $ch i32) (param $wide i32)
+    (if (local.get $wide)
+      (then (call $gs16
+        (i32.add (local.get $out_g) (i32.mul (local.get $index) (i32.const 2)))
+        (local.get $ch)))
+      (else (call $gs8 (i32.add (local.get $out_g) (local.get $index)) (local.get $ch)))))
+
+  ;; Write the Win98 en-US English country name. Baldur's Gate Chapters I & II
+  ;; uses this standard locale query as its North-American release gate.
+  (func $locale_write_us_country (param $out_g i32) (param $cch i32)
+      (param $wide i32) (result i32)
+    (if (i32.eqz (local.get $cch)) (then (return (i32.const 14))))
+    (if (i32.or (i32.eqz (local.get $out_g)) (i32.lt_u (local.get $cch) (i32.const 14)))
+      (then
+        (global.set $last_error (i32.const 122)) ;; ERROR_INSUFFICIENT_BUFFER
+        (return (i32.const 0))))
+    (call $locale_put_ascii (local.get $out_g) (i32.const 0) (i32.const 0x55) (local.get $wide)) ;; U
+    (call $locale_put_ascii (local.get $out_g) (i32.const 1) (i32.const 0x6E) (local.get $wide)) ;; n
+    (call $locale_put_ascii (local.get $out_g) (i32.const 2) (i32.const 0x69) (local.get $wide)) ;; i
+    (call $locale_put_ascii (local.get $out_g) (i32.const 3) (i32.const 0x74) (local.get $wide)) ;; t
+    (call $locale_put_ascii (local.get $out_g) (i32.const 4) (i32.const 0x65) (local.get $wide)) ;; e
+    (call $locale_put_ascii (local.get $out_g) (i32.const 5) (i32.const 0x64) (local.get $wide)) ;; d
+    (call $locale_put_ascii (local.get $out_g) (i32.const 6) (i32.const 0x20) (local.get $wide)) ;; space
+    (call $locale_put_ascii (local.get $out_g) (i32.const 7) (i32.const 0x53) (local.get $wide)) ;; S
+    (call $locale_put_ascii (local.get $out_g) (i32.const 8) (i32.const 0x74) (local.get $wide)) ;; t
+    (call $locale_put_ascii (local.get $out_g) (i32.const 9) (i32.const 0x61) (local.get $wide)) ;; a
+    (call $locale_put_ascii (local.get $out_g) (i32.const 10) (i32.const 0x74) (local.get $wide)) ;; t
+    (call $locale_put_ascii (local.get $out_g) (i32.const 11) (i32.const 0x65) (local.get $wide)) ;; e
+    (call $locale_put_ascii (local.get $out_g) (i32.const 12) (i32.const 0x73) (local.get $wide)) ;; s
+    (call $locale_put_ascii (local.get $out_g) (i32.const 13) (i32.const 0) (local.get $wide))
+    (i32.const 14))
+
+  ;; Return a small, internally consistent en-US locale surface. The A/W
+  ;; spellings share character counts, including the terminating NUL.
   (func $locale_info (param $lctype i32) (param $out_g i32) (param $cch i32)
       (param $wide i32) (result i32)
     (local $ch i32)
+    (if (i32.eq (i32.and (local.get $lctype) (i32.const 0xFFFF)) (i32.const 0x1002)) ;; LOCALE_SENGCOUNTRY
+      (then (return (call $locale_write_us_country
+        (local.get $out_g) (local.get $cch) (local.get $wide)))))
     (local.set $ch (i32.const 0x30))                                   ;; "0"
     (if (i32.eq (local.get $lctype) (i32.const 0x0E))                  ;; LOCALE_SDECIMAL
       (then (local.set $ch (i32.const 0x2E))))                         ;; "."
     (if (i32.eq (local.get $lctype) (i32.const 0x0F))                  ;; LOCALE_STHOUSAND
       (then (local.set $ch (i32.const 0x2C))))                         ;; ","
     (if (i32.eqz (local.get $cch)) (then (return (i32.const 2))))
-    (if (i32.or (i32.eqz (local.get $out_g)) (i32.lt_s (local.get $cch) (i32.const 2)))
-      (then (return (i32.const 0))))
+    (if (i32.or (i32.eqz (local.get $out_g)) (i32.lt_u (local.get $cch) (i32.const 2)))
+      (then
+        (global.set $last_error (i32.const 122)) ;; ERROR_INSUFFICIENT_BUFFER
+        (return (i32.const 0))))
     (if (local.get $wide)
       (then
         (call $gs16 (local.get $out_g) (local.get $ch))
@@ -1058,10 +1094,7 @@
         (call $gs8 (i32.add (local.get $out_g) (i32.const 1)) (i32.const 0))))
     (i32.const 2))
 
-  ;; 11: GetLocaleInfoA(Locale, LCType, lpLCData, cchData). This returned 0 —
-  ;; "no such locale value" — for every query while the W spelling answered, so
-  ;; an ANSI app asking for the decimal separator formatted numbers with
-  ;; whatever it fell back to.
+  ;; 11: GetLocaleInfoA(Locale, LCType, lpLCData, cchData).
   (func $handle_GetLocaleInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $locale_info
       (local.get $arg1) (local.get $arg2) (local.get $arg3) (i32.const 0)))
@@ -11682,7 +11715,17 @@ HookEx — no next hook in chain, return 0
 
   ;; SuspendThread(hThread) — 1 arg stdcall, return previous suspend count (0 = not suspended)
   (func $handle_SuspendThread (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_suspend_thread (local.get $arg0)))
+    (local $result i32)
+    (local.set $result (call $host_suspend_thread (local.get $arg0)))
+    ;; The host privately tags a successful self-suspend in bit 31. Hide that
+    ;; bit from the Win32 caller and stop this guest slice immediately; Windows
+    ;; would not let the suspended thread execute its next instruction until a
+    ;; different thread resumed it.
+    (global.set $eax (i32.and (local.get $result) (i32.const 0x7FFFFFFF)))
+    (if (i32.ne (i32.and (local.get $result) (i32.const 0x80000000)) (i32.const 0))
+      (then
+        (global.set $yield_reason (i32.const 11)) ;; private self-suspend yield
+        (global.set $yield_flag (i32.const 1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 

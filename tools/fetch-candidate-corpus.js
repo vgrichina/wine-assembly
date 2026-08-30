@@ -121,6 +121,51 @@ function extractArchive(archive, destination) {
   throw new Error(`archive extraction failed (${primary}; ${secondary})${detail ? `:\n${detail}` : ''}`);
 }
 
+function extractRawMode1Cd(image, destination) {
+  const RAW_SECTOR_SIZE = 2352;
+  const ISO_SECTOR_SIZE = 2048;
+  const USER_DATA_OFFSET = 16;
+  const sectorsPerChunk = 128;
+  const size = fs.statSync(image).size;
+  if (!size || size % RAW_SECTOR_SIZE !== 0) {
+    throw new Error(`${image} is not a whole-sector MODE1/2352 image`);
+  }
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-mode1-cd-'));
+  const iso = path.join(temporary, 'disc.iso');
+  try {
+    const input = fs.openSync(image, 'r');
+    const output = fs.openSync(iso, 'wx');
+    const raw = Buffer.allocUnsafe(RAW_SECTOR_SIZE * sectorsPerChunk);
+    const cooked = Buffer.allocUnsafe(ISO_SECTOR_SIZE * sectorsPerChunk);
+    try {
+      let position = 0;
+      while (position < size) {
+        const bytes = fs.readSync(input, raw, 0, Math.min(raw.length, size - position), position);
+        if (!bytes || bytes % RAW_SECTOR_SIZE !== 0) {
+          throw new Error(`${image} has a truncated MODE1/2352 sector`);
+        }
+        const sectors = bytes / RAW_SECTOR_SIZE;
+        for (let sector = 0; sector < sectors; sector++) {
+          const rawOffset = sector * RAW_SECTOR_SIZE;
+          if (raw[rawOffset] !== 0 || raw[rawOffset + 11] !== 0 || raw[rawOffset + 15] !== 1) {
+            throw new Error(`${image} contains a non-MODE1 sector at ${position / RAW_SECTOR_SIZE + sector}`);
+          }
+          raw.copy(cooked, sector * ISO_SECTOR_SIZE,
+            rawOffset + USER_DATA_OFFSET, rawOffset + USER_DATA_OFFSET + ISO_SECTOR_SIZE);
+        }
+        fs.writeSync(output, cooked, 0, sectors * ISO_SECTOR_SIZE);
+        position += bytes;
+      }
+    } finally {
+      fs.closeSync(input);
+      fs.closeSync(output);
+    }
+    extractArchive(iso, destination);
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
+}
+
 function runPostExtract(candidate, destination) {
   for (const [index, step] of (candidate.postExtract || []).entries()) {
     if (step.type === 'unshield') {
@@ -153,6 +198,25 @@ function runPostExtract(candidate, destination) {
           force: true,
         });
       }
+    } else if (step.type === 'copyFile') {
+      assertSafeRelative(step.from, `${candidate.id}.postExtract[${index}].from`);
+      assertSafeRelative(step.into, `${candidate.id}.postExtract[${index}].into`);
+      const from = path.join(destination, step.from);
+      const into = path.join(destination, step.into);
+      fs.mkdirSync(path.dirname(into), { recursive: true });
+      fs.copyFileSync(from, into);
+    } else if (step.type === 'extractRawMode1Cd') {
+      assertSafeRelative(step.image, `${candidate.id}.postExtract[${index}].image`);
+      assertSafeRelative(step.into, `${candidate.id}.postExtract[${index}].into`);
+      extractRawMode1Cd(path.join(destination, step.image), path.join(destination, step.into));
+    } else if (step.type === 'writeText') {
+      assertSafeRelative(step.file, `${candidate.id}.postExtract[${index}].file`);
+      if (typeof step.text !== 'string') {
+        throw new Error(`${candidate.id}.postExtract[${index}].text must be a string`);
+      }
+      const file = path.join(destination, step.file);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, step.text);
     } else if (step.type === 'replaceText') {
       assertSafeRelative(step.file, `${candidate.id}.postExtract[${index}].file`);
       if (!Array.isArray(step.replacements) || !step.replacements.length) {

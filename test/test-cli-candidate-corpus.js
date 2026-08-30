@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -103,6 +104,13 @@ function runCandidate(candidate, executable, wasmPath) {
     `--batch-size=${cli.batchSize || 10000}`,
   ];
   if (cli.args) args.push(`--args=${cli.args}`);
+  if (cli.vfsInclude !== undefined) {
+    if (!Array.isArray(cli.vfsInclude) || !cli.vfsInclude.length ||
+        cli.vfsInclude.some(pattern => typeof pattern !== 'string' || !pattern.trim())) {
+      throw new Error(`${candidate.id}.cli.vfsInclude must be a non-empty string array`);
+    }
+    for (const pattern of cli.vfsInclude) args.push(`--vfs-include=${pattern}`);
+  }
   const result = spawnSync('node', args, {
     cwd: ROOT,
     encoding: 'utf8',
@@ -118,6 +126,32 @@ async function main() {
   if (manifest.schemaVersion !== 1 || !Array.isArray(manifest.candidates)) usage('unsupported candidate manifest');
   const ids = manifest.candidates.map(candidate => candidate.id);
   if (new Set(ids).size !== ids.length) usage('candidate IDs must be unique');
+  const baldursGateSources = new Map([
+    ['baldurs-gate-noninteractive-demo', [
+      'https://archive.org/download/BALDUR/BALDUR.EXE',
+      'e7caae4255e8ed570cef3a29642432c8d28ecdb9',
+    ]],
+    ['baldurs-gate-interactive-demo', [
+      'https://archive.org/download/bg-demo/BG%20Demo.iso',
+      '3796defce51a3e867aa216bc27f0be0689fdadf0',
+    ]],
+    ['baldurs-gate-chapters-1-2-demo', [
+      'https://archive.org/download/20230723_20230723_0858/Baldur%27s%20Gate%20-%20Chapters%20I%20%26%20II%20%28USA%29%20%28Demo%29.zip',
+      '2e5256bc8c418aec51ea39ef1a5bf8640dd3317a',
+    ]],
+  ]);
+  for (const [id, [url, sha1]] of baldursGateSources) {
+    const candidate = manifest.candidates.find(item => item.id === id);
+    assert(candidate && candidate.localOnly, `${id} remains an ignored local-only fixture`);
+    assert.deepStrictEqual(candidate.packages.map(pkg => [pkg.url, pkg.sha1]), [[url, sha1]],
+      `${id} keeps its exact Archive.org artifact and SHA-1`);
+    assert.deepStrictEqual(candidate.cli.vfsInclude, ['**/*'],
+      `${id} mounts the complete extracted companion-file tree`);
+  }
+  const chapters = manifest.candidates.find(candidate =>
+    candidate.id === 'baldurs-gate-chapters-1-2-demo');
+  assert(chapters.postExtract.some(step => step.type === 'extractRawMode1Cd'),
+    'Chapters I & II prepares its preserved MODE1/2352 BIN before InstallShield extraction');
   if (selectedIds) {
     const unknown = [...selectedIds].filter(id => !ids.includes(id));
     if (unknown.length) usage(`unknown candidate IDs: ${unknown.join(', ')}`);
