@@ -257,6 +257,58 @@ The `--pre=SETUP.EXE` rung in `shot-sweep.js` already runs SETUP before ANGEL
 and carries its `tempFiles` across, so a SETUP that writes the stamp lands both
 rows with no further harness work.
 
+#### SETUP is finished, and so is the CRC gate (2026-08-29)
+
+Three fixes, in the order they came off:
+
+**1. `--svga=trident` (`ba53f5dd`).** The warning above — that a vendor
+signature at C000 claims chipset registers we do not emulate — is answered by
+emulating them. `--svga=trident` gives the machine a TVGA8900: CRTC index 0x1F
+reads back CRTC 0x0C XOR 0xEA (write 0x55, read 0xBF), sequencer index 0x0E
+carries the version in its high nibble and the bank in its low nibble and is
+written XORed with 2, SR6 = 0xEA unlocks and 0xAE locks, and that bank selector
+really moves a 64KB window over a 1MB framebuffer. With the registers real, the
+`Trident TVGA8900 VGA BIOS` string at C000 is a description rather than a claim.
+SETUP then finishes in **2.1M dispatches** where it used to spend 717.8M and
+write nothing:
+
+```
+· 80386 detected..            · A Vesa bios is in memory..
+· The Irq 2 is on..           · I can see a Trident Vga card..
+· With an unknown chip..      · Amount of Video Memory: 1024k..
+SETUP DONE ! Now you can run the demo.
+```
+
+The default is `none`, deliberately: a program that finds a chipset uses its
+modes, so this is a machine configuration and not an improvement.
+
+**2. Writes into a file that was already there (`ba53f5dd`).** SETUP still did
+not land the stamp, because it does not *create* `DRIVERS.VGA` — it opens the
+one that shipped with the demo and patches the ten bytes at its end in place.
+`createFile` gave a guest-created file somewhere to live; a write into a
+host-backed handle was simply dropped, so ANGEL kept reading the author's 1995
+CRC32 over his own ROM. A write now copies the file into the in-memory file
+system first and every later read of that name sees the copy. Nothing reaches
+the host disk; the corpus directory stays read-only. The trailer moves
+`00 c0 00 80 | da 9a 95 1a` → `00 c0 00 80 | fc ab a6 26`, and the demo clears
+its gate. `--save-files=DIR` is how those bytes were read at all.
+
+**3. AH=4Dh reports how, not just what (`994c6f15`).** ANGEL then stalled at
+`23d:00f1`, two dispatches per handback, inside an instruction. That address is
+the INT FCh vector its own resident protected-mode helper installs. The demo's
+loader runs each part by hand — allocate, read, `AH=50h` set PSP, jump — and on
+the way back asks `AH=4Dh` how the part ended, freeing the block only when the
+answer is not 3 (terminate-and-stay-resident). We answered AL and left AH as
+found, so the loader freed the resident and loaded the next part on top of it.
+
+**What is left is ANGEL's own protected-mode kernel.** With all three in, the
+demo gets 3.0M dispatches further: it builds a GDT at `23d:0008`
+(`ff ff d0 23 00 9a` and `ff ff c0 28 00 9a cf 00`), `lgdt`s, `mov cr0,eax`es,
+and runs its own 32-bit code — `--trace-entry` shows `entry 8:10f base=21de0 pm`
+and `entry c:8 base=232e0 pm` before control reaches a selector we resolve to
+base 0 and the run walks the IVT. That is a DOS extender, not a missing service,
+and it is a different size of job from everything above.
+
 ### BLINKY.EXE — fixed
 
 Two bugs stacked, and each hid the next.
