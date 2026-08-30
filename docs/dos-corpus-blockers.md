@@ -313,15 +313,42 @@ Where to start on it, measured. The last honest block is the resident's
 protected-mode entry, reached as `entry c:8 base=232e0 pm` and running at
 `232e:0017`; it is 16-bit protected mode using 0x66/0x67 prefixes throughout,
 not a 32-bit segment (`--trace-entry` never reports `32-bit code` and the run
-is never `blockedOn32`). By the time control reaches the `int 21h` eight
-instructions later at `232e:0053` the machine is already wrong: AX should be
-`0x3f11` — `mov ah,0x3f` over the `0x0011` it came in with — and is `0xff0d`,
-which is why the trace shows `int 21h ax=ff0d ... UNHANDLED`, and SP has moved
-`0x0bee` → `0xfffe` with SS unchanged. So one instruction inside that single
-block corrupts the state, and the derail into `cs=0x16` and then the IVT is
-downstream of it. LGDT/LIDT/LMSW/`mov cr0,r` are all implemented, so it is not
-the mode switch itself. `--trace-entry` cannot bisect a single block, which is
-the tooling gap to close first.
+is never `blockedOn32`). By the time control reaches the `int 21h` at
+`232e:0053` the machine is already wrong: AX should be `0x3f11` — `mov ah,0x3f`
+over the `0x0011` it came in with — and is `0xff0d`, which is why the trace
+shows `int 21h ax=ff0d ... UNHANDLED`, and SP has moved `0x0bee` → `0xfffe`
+with SS unchanged.
+
+**`--dump=232e:17:64` settles it: that block is 32-bit code and we decode it as
+16-bit.** The bytes are
+
+```
+2e 0f 01 1d 00 00 00 00  fb  33 c0  8e c0  67 8b 0e 06 04  0b c9
+0f 84 78 01 00 00  81 f9 00 80 00 00  72 05  b9 00 80 00 00
+67 29 0e 06 04  b4 3f  66 67 8b 1e 04 04  1e  0f a0  1f  33 d2  cd 21
+```
+
+and as 32-bit code every one of them is a sensible instruction:
+
+```
+cs: lidt [eax] / sti / xor eax,eax / mov es,ax
+mov ecx,[0x0406]        ; 67 8b 0e 06 04 -- 16-bit ADDRESSING in a 32-bit segment
+or ecx,ecx / jz +0x178  ; 0f 84 rel32
+cmp ecx,0x8000 / jb +5 / mov ecx,0x8000
+sub [0x0406],ecx / mov ah,0x3f / mov bx,[0x0404] / push ds / push fs / pop ds
+xor edx,edx / int 21h   ; AH=3Fh, read ECX bytes
+```
+
+Read as 16-bit, the same `67 8b 0e` is `mov cx,[esi]` in three bytes and the
+stream desynchronises into `push es / add al,0x0b / leave` — and that `leave`
+is exactly the SP the trace reports, with `add al,0x0b` explaining the low byte
+of the AX it carries into the INT. So the corruption is one mis-sized decode,
+not a missing service.
+
+`$segd32` does honour the descriptor's D/B bit and `$d32` is set every time CS
+is loaded, so the question is why it answered 16 for the selector this entry
+came in on — `entry c:8 base=232e0 pm`, and `0x0C` has TI set, so that
+descriptor is being read out of the **LDT**, not the GDT. That is where to look.
 
 **The sweep is deliberately not given a `--svga` rung, and the reason is worth
 keeping.** A rung was written and measured: a program that put nothing on either
