@@ -225,6 +225,18 @@ p.note { color: var(--dim); }
 .stat .v { font-family: var(--mono); font-weight: 600; font-size: 30px; line-height: 1; font-variant-numeric: tabular-nums; }
 .stat .d { font-size: 13px; color: var(--dim); margin-top: 8px; line-height: 1.45; }
 .scroll { overflow-x: auto; margin: 20px 0 0; border: 1px solid var(--rule); background: var(--panel); }
+/* Diagrams and code listings. Monospace figures, so they scroll inside their
+   own box rather than widening the page. Kept in the .scroll frame the tables
+   already use so the two read as the same kind of object. */
+pre.fig {
+  margin: 0; padding: 16px 18px; font-family: var(--mono); font-size: 12px;
+  line-height: 1.55; color: var(--dim); white-space: pre; tab-size: 2;
+}
+pre.fig b { color: var(--cyan); font-weight: 600; }
+pre.fig i { color: var(--amber); font-style: normal; }
+pre.fig u { color: var(--accent); text-decoration: none; }
+pre.fig s { color: var(--faint); text-decoration: none; }
+.figcap { font-family: var(--mono); font-size: 11px; color: var(--faint); margin: 7px 0 0; letter-spacing: .04em; }
 table { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: 13px; }
 th, td { padding: 8px 12px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; border-bottom: 1px solid var(--rule); }
 th { color: var(--faint); font-weight: 500; text-transform: uppercase; font-size: 11px; letter-spacing: .07em; }

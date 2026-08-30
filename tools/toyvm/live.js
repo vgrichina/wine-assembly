@@ -42,6 +42,30 @@ const SCAN = {
 const LETTERS = 'qwertyuiop[]\r\0asdfghjkl;\'`\0\\zxcvbnm,./';
 const DIGITS = '1234567890-=';
 
+// Does this engine have the wasm tail-call proposal? A two-function module
+// where f0 is `return_call 1` and f1 returns a constant -- valid only if the
+// engine implements it. Memoized: the answer cannot change within a page, and
+// `validate` on a 30-byte module is cheap but not free.
+let tailCallOk = null;
+function hasTailCalls() {
+  if (tailCallOk !== null) return tailCallOk;
+  try {
+    tailCallOk = WebAssembly.validate(new Uint8Array([
+      0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,   // magic + version
+      0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7f,         // type: () -> i32
+      0x03, 0x03, 0x02, 0x00, 0x00,                     // two funcs of that type
+      0x0a, 0x0b, 0x02,                                 // code: two bodies
+      0x04, 0x00, 0x12, 0x01, 0x0b,                     //   f0: return_call 1
+      0x04, 0x00, 0x41, 0x07, 0x0b,                     //   f1: i32.const 7
+    ]));
+  } catch { tailCallOk = false; }
+  return tailCallOk;
+}
+
+function pickVariant() {
+  return hasTailCalls() ? 'tailcall' : 'calls';
+}
+
 function scancodeFor(key) {
   if (SCAN[key] !== undefined) return SCAN[key];
   if (key.length !== 1) return 0;
@@ -70,9 +94,15 @@ class LiveRun {
       onStatus = () => {}, onFrame = () => {},
       // The sweep's screen-reading menu answerer. Off here: there is a person.
       autoKey = false,
+      // Which dispatch shell to build. Default is whatever this engine can
+      // compile -- see pickVariant. Overridable so a test can exercise the
+      // fallback on an engine that would never choose it, which is the only way
+      // that path gets run outside an old Safari.
+      variant = null,
     } = opts;
     Object.assign(this, {
       canvas, exe, files, cpu, args, msPerFrame, slice, onStatus, onFrame, autoKey,
+      variant,
     });
     this.running = false;
     this.session = null;
@@ -95,6 +125,23 @@ class LiveRun {
     return this.font;
   }
 
+  // Which dispatch shell this engine can actually compile.
+  //
+  // `tailcall` is the shipped one and the fastest, but every handler in it ends
+  // in `return_call_indirect` -- the WebAssembly tail-call proposal, which
+  // JavaScriptCore only shipped in Safari 18.2. On anything older the whole
+  // module fails to compile, and from the page that is indistinguishable from a
+  // Run button that does nothing: no pixels, no dispatches, and an exception
+  // raised long before any of this code could report on it. That is exactly
+  // what a Safari on macOS Sonoma does, whose Safari tops out at 17.6.
+  //
+  // `calls` is the fallback because it is the shell with no feature
+  // requirements at all -- a plain `call_indirect` in a loop, which every wasm
+  // engine has had since 2017. It measured 3.8% slower than `tailcall` across
+  // ten demos, which is not a difference anybody watching a demo can see.
+  //
+  // Probed, not sniffed. A four-byte module that uses `return_call` is the
+  // ground truth; a user-agent string is a guess about a version table.
   async start() {
     setCpuLevel(this.cpu);
     const machine = new Machine(new Uint8Array(0), {
@@ -102,7 +149,7 @@ class LiveRun {
       fileRoot: '.',              // the mounted map IS the directory
       log: () => {},
     });
-    const vm = await makeVm('tailcall', {
+    const vm = await makeVm(this.variant || pickVariant(), {
       portIn: (p, w) => machine.portIn(p, w),
       portOut: (p, v, w) => machine.portOut(p, v, w),
     });
@@ -232,4 +279,4 @@ class LiveRun {
   }
 }
 
-module.exports = { LiveRun, scancodeFor, STUB_SEG, isa };
+module.exports = { LiveRun, scancodeFor, STUB_SEG, isa, hasTailCalls, pickVariant };

@@ -15,7 +15,27 @@
 
 const assert = require('assert');
 
-const { LiveRun, scancodeFor } = require('../tools/toyvm/live');
+const { LiveRun, scancodeFor, hasTailCalls, pickVariant } = require('../tools/toyvm/live');
+
+// The dispatch shell the page will ask for, and the probe that chooses it.
+//
+// This exists because both ways of getting it wrong are SILENT. A probe that
+// wrongly says no costs every visitor the 10% the tail-call shell is worth and
+// nothing anywhere reports it. A probe that wrongly says yes fails to compile
+// the whole module on a Safari older than 18.2, and from the page that looks
+// exactly like a Run button that does nothing -- which is how it was found.
+//
+// Node has had wasm tail calls since v12 behind a flag and on by default since
+// v22, so on any node that can run this file the answer must be true. If it is
+// false here, the hand-encoded probe module is malformed, not the engine.
+function checkVariantProbe() {
+  assert.strictEqual(hasTailCalls(), true,
+    'the tail-call probe module says this node has no tail calls, which it does'
+    + ' -- the hand-encoded bytes in live.js are malformed, and every browser'
+    + ' would silently fall back to the slower `calls` shell');
+  assert.strictEqual(pickVariant(), 'tailcall',
+    'an engine with tail calls must get the tailcall shell');
+}
 
 // A .COM that prints and exits, hand-assembled so the test needs no corpus.
 function helloCom() {
@@ -74,6 +94,7 @@ function installFrameClock() {
 }
 
 async function main() {
+  checkVariantProbe();
   const clock = installFrameClock();
 
   // --- scancodes ----------------------------------------------------------
@@ -113,8 +134,28 @@ async function main() {
   assert.ok(lit > 20, `the painted frame is blank (${lit} lit pixels)`);
 
   const { conText } = require('../tools/toyvm/framebuffer');
+  const conTextOf = (r) => conText(r.machine.con);
   assert.ok(conText(run.machine.con).includes('LIVE'),
     `the program's output is missing: ${JSON.stringify(conText(run.machine.con))}`);
+
+  // --- the same program, on the shell an old Safari gets ------------------
+  // The `calls` fallback is dead code on every engine that runs this suite, so
+  // without forcing it nothing would ever compile it and a typo in the shell
+  // name would surface only on a machine none of us has.
+  const canvasC = fakeCanvas();
+  const fallback = new LiveRun({
+    canvas: canvasC,
+    exe: 'hello.com',
+    files: { 'hello.com': helloCom() },
+    variant: 'calls',
+    msPerFrame: 16,
+  });
+  await fallback.start();
+  clock.drain();
+  assert.ok(fallback.machine.exited,
+    'the `calls` shell -- what a Safari without wasm tail calls gets -- never reached the exit');
+  assert.ok(conTextOf(fallback).includes('LIVE'),
+    `the fallback shell ran but printed nothing: ${JSON.stringify(conTextOf(fallback))}`);
 
   // --- a program that waits for a key -------------------------------------
   const canvas2 = fakeCanvas();
