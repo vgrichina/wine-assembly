@@ -4471,18 +4471,56 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
+  ;; Pack an HWND's current window origin. Child coordinates are parent-client
+  ;; relative; top-level coordinates come from the renderer-owned window rect.
+  (func $window_xy_packed (param $hwnd i32) (result i32)
+    (if (i32.ne
+          (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x40000000))
+          (i32.const 0))
+      (then (return (call $ctrl_get_xy_packed (local.get $hwnd)))))
+    (call $host_get_window_rect (local.get $hwnd) (global.get $WINDOW_RECT_SCRATCH))
+    (i32.or
+      (i32.and (i32.load (global.get $WINDOW_RECT_SCRATCH)) (i32.const 0xFFFF))
+      (i32.shl
+        (i32.and (i32.load offset=4 (global.get $WINDOW_RECT_SCRATCH)) (i32.const 0xFFFF))
+        (i32.const 16))))
+
+  ;; Queue the legacy geometry messages that USER derives from a completed
+  ;; position change. Only actual changes generate messages, and SWP_NOMOVE /
+  ;; SWP_NOSIZE suppress their respective halves.
+  (func $windowpos_post_geometry
+      (param $hwnd i32) (param $old_xy i32) (param $new_xy i32)
+      (param $old_wh i32) (param $new_wh i32) (param $flags i32)
+    (if (i32.and
+          (i32.eqz (i32.and (local.get $flags) (i32.const 2))) ;; !SWP_NOMOVE
+          (i32.ne (local.get $old_xy) (local.get $new_xy)))
+      (then (drop (call $post_queue_push
+        (local.get $hwnd) (i32.const 0x0003) (i32.const 0) (local.get $new_xy)))))
+    (if (i32.and
+          (i32.eqz (i32.and (local.get $flags) (i32.const 1))) ;; !SWP_NOSIZE
+          (i32.ne (local.get $old_wh) (local.get $new_wh)))
+      (then (drop (call $post_queue_push
+        (local.get $hwnd) (i32.const 0x0005) (i32.const 0) (local.get $new_wh))))))
+
   ;; 120: MoveWindow — hwnd(arg0), x(arg1), y(arg2), w(arg3), h(arg4), bRepaint=[esp+24]
-  ;; Real Win32 sends WM_SIZE after resizing; store pending size for ShowWindow delivery.
+  ;; MoveWindow is SetWindowPos without z-order/activation changes. A false
+  ;; bRepaint maps to SWP_NOREDRAW and suppresses update-region creation.
   ;; A same-size MoveWindow is a geometry no-op and must not enqueue another
   ;; WM_SIZE. Some applications enforce an aspect ratio from WM_SIZE by calling
   ;; MoveWindow with the dimensions they already have; requeueing in that case
   ;; creates an infinite WM_SIZE -> MoveWindow loop and starves paint/timers.
   (func $handle_MoveWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $cx i32) (local $cy i32) (local $cs i32) (local $old_cs i32) (local $dlg_rec i32)
+    (local $old_xy i32) (local $new_xy i32) (local $flags i32) (local $repaint i32)
+    (local.set $repaint (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (local.set $flags (i32.const 0x0014)) ;; SWP_NOZORDER | SWP_NOACTIVATE
+    (if (i32.eqz (local.get $repaint))
+      (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x0008))))) ;; SWP_NOREDRAW
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
     (local.set $old_cs (call $host_get_window_client_size (local.get $arg0)))
-    (call $host_move_window (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (i32.const 0))
-    (call $ctrl_geom_sync (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (i32.const 0))
+    (local.set $old_xy (call $window_xy_packed (local.get $arg0)))
+    (call $host_move_window (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $flags))
+    (call $ctrl_geom_sync (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $flags))
     (call $defwndproc_do_nccalcsize (local.get $arg0))
     (call $host_sync_window_client
       (local.get $arg0)
@@ -4495,6 +4533,7 @@
     ;; creation fallback to its authored size, so rebuild USER-visible clips
     ;; after a real client-size transition.
     (local.set $cs (call $host_get_window_client_size (local.get $arg0)))
+    (local.set $new_xy (call $window_xy_packed (local.get $arg0)))
     (if (i32.ne (local.get $cs) (local.get $old_cs))
       (then (call $gdi_refresh_window_dc_system_clips)))
     (local.set $dlg_rec (call $dlg_record_for_hwnd (local.get $arg0)))
@@ -4503,7 +4542,9 @@
             (i32.ne (local.get $dlg_rec) (i32.const 0))
             (i32.ne (i32.load offset=4 (local.get $dlg_rec)) (i32.const 0)))
           (i32.lt_s (call $wnd_get_class_slot (local.get $arg0)) (i32.const 0)))
-      (then (drop (call $host_erase_background (local.get $arg0) (i32.const 16)))))
+      (then
+        (if (local.get $repaint)
+          (then (drop (call $host_erase_background (local.get $arg0) (i32.const 16)))))))
     ;; If the main window is moved/resized before its first ShowWindow, refresh
     ;; the pending WM_SIZE that was seeded during CreateWindowExA. EmPipe does
     ;; exactly this; using the stale 0x0 create size moves its controls offscreen.
@@ -4512,11 +4553,13 @@
 	      (if (i32.ne (local.get $cs) (local.get $old_cs))
 	        (then
 	          (global.set $pending_wm_size (local.get $cs))
-	          (call $invalidate_hwnd (local.get $arg0)))))
+	          (if (local.get $repaint)
+	            (then (call $invalidate_hwnd (local.get $arg0)))))))
 	    (else
 	      (if (i32.ne (local.get $cs) (local.get $old_cs))
 	        (then
-	          (call $invalidate_hwnd (local.get $arg0))
+	          (if (local.get $repaint)
+	            (then (call $invalidate_hwnd (local.get $arg0))))
               ;; A child that grew covers parent pixels it has never erased. It
               ;; owns no surface of its own, so whatever the parent left there
               ;; stays until something fills it -- Solitaire's score bar is
@@ -4524,24 +4567,25 @@
               ;; main window widened, the widened part of the bar stayed the
               ;; grey the reallocated back-canvas came with. Queue the erase the
               ;; way USER's invalidate-on-resize does.
-              (call $nc_flags_set (local.get $arg0) (i32.const 2))
-              ;; Preserve every resized child instead of overwriting one global
-              ;; pending HWND. Paint resizes its inner canvas during dock-bar
-              ;; layout without calling ShowWindow on it afterward; the old
-              ;; single-slot path therefore never delivered its final WM_SIZE.
-              ;;
-              ;; A 16-bit window with a real far procedure is the exception:
-              ;; $win16_MoveWindow enters that procedure with WM_SIZE before it
-              ;; returns, the way Windows does, so posting here would deliver
-              ;; the same message a second time out of the pump.
-              (if (i32.eqz (i32.and
-                    (i32.ne (global.get $code16) (i32.const 0))
-                    (call $win16_is_far_proc
-                      (call $wnd_table_get (local.get $arg0)))))
-                (then
-                  (drop (call $post_queue_push
-                    (local.get $arg0) (i32.const 0x0005)
-                    (i32.const 0) (local.get $cs)))))))))
+              (if (local.get $repaint)
+                (then (call $nc_flags_set (local.get $arg0) (i32.const 2))))))))
+    ;; A 16-bit window with a real far procedure already received WM_MOVE /
+    ;; WM_SIZE synchronously from $win16_MoveWindow.
+    (if (i32.eqz (i32.and
+          (i32.ne (global.get $code16) (i32.const 0))
+          (call $win16_is_far_proc (call $wnd_table_get (local.get $arg0)))))
+      (then
+        ;; Before the main window's first ShowWindow, its pending WM_SIZE is the
+        ;; single source of startup geometry. Visible mains and every child use
+        ;; the ordinary queued geometry notifications.
+        (if (i32.or
+              (i32.ne (local.get $arg0) (global.get $main_hwnd))
+              (i32.ne
+                (i32.and (call $wnd_get_style (local.get $arg0)) (i32.const 0x10000000))
+                (i32.const 0)))
+          (then (call $windowpos_post_geometry
+            (local.get $arg0) (local.get $old_xy) (local.get $new_xy)
+            (local.get $old_cs) (local.get $cs) (local.get $flags))))))
     (global.set $eax (i32.const 1))
     (return)
   )
@@ -5098,7 +5142,7 @@
     ;; SetWindowPos(hwnd, hWndInsertAfter, X, Y, cx, cy, uFlags)
     (local $x i32) (local $y i32) (local $cx i32) (local $cy i32)
     (local $uFlags i32) (local $dlg_rec i32) (local $screen i32)
-    (local $old_wh i32) (local $new_wh i32)
+    (local $old_wh i32) (local $new_wh i32) (local $old_xy i32) (local $new_xy i32)
     (local.set $x (local.get $arg2))
     (local.set $y (local.get $arg3))
     (local.set $cx (local.get $arg4))
@@ -5139,12 +5183,14 @@
     (local.set $old_wh (call $ctrl_get_wh_packed (local.get $arg0)))
     (if (i32.eqz (local.get $old_wh))
       (then (local.set $old_wh (call $host_get_window_client_size (local.get $arg0)))))
+    (local.set $old_xy (call $window_xy_packed (local.get $arg0)))
     ;; Pass uFlags to host so it can respect SWP_NOSIZE/SWP_NOMOVE independently
     (call $host_move_window (local.get $arg0) (local.get $x) (local.get $y) (local.get $cx) (local.get $cy) (local.get $uFlags))
     (call $ctrl_geom_sync (local.get $arg0) (local.get $x) (local.get $y) (local.get $cx) (local.get $cy) (local.get $uFlags))
     (local.set $new_wh (call $ctrl_get_wh_packed (local.get $arg0)))
     (if (i32.eqz (local.get $new_wh))
       (then (local.set $new_wh (call $host_get_window_client_size (local.get $arg0)))))
+    (local.set $new_xy (call $window_xy_packed (local.get $arg0)))
     ;; Keep WAT's GWL_STYLE in sync with SetWindowPos visibility flags. Apps
     ;; such as Tetravex show custom child panels via SWP_SHOWWINDOW instead of
     ;; ShowWindow; if WS_VISIBLE stays clear here, WAT's paint selector treats
@@ -5203,6 +5249,9 @@
     ;; Last, so the window sees the geometry we have already committed.
     (call $windowpos_notify (local.get $arg0) (local.get $arg1) (local.get $x)
       (local.get $y) (local.get $cx) (local.get $cy) (local.get $uFlags))
+    (call $windowpos_post_geometry
+      (local.get $arg0) (local.get $old_xy) (local.get $new_xy)
+      (local.get $old_wh) (local.get $new_wh) (local.get $uFlags))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
   )
