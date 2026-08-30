@@ -54,12 +54,15 @@ covers both halves.
 ## Opt-in RGB565 alpha row
 
 The authentic loop at EIP `0x00528064..0x00528111` composites a bounded RGB565
-row with four source-alpha cases. H436 matches only that exact byte/signature
-shape, derives its pixel count from the guest frame's `[ebp-0x18]` bound, and
-publishes x86 state at each safety chunk. The `mw3` manifest alone enables the
-existing copy-superop gate; default behavior for every other app is unchanged.
-`test/test-mw3-rgb565-alpha-run.js` compares ordinary and fused execution over
-all alpha arms, bounds, flags, registers, and a one-byte near miss.
+row with four source-alpha cases. H436 samples its structural head/tail and
+hashes the complete 173-byte body, derives its pixel count from the guest
+frame's `[ebp-0x18]` bound, and publishes x86 state at each safety chunk. Its
+emitted back/fall operands come from the matched location rather than those
+demo VAs, so an identical loop in a differently linked build is recognized.
+The `mw3` manifest alone enables the existing copy-superop gate; default
+behavior for every other app is unchanged. `test/test-mw3-rgb565-alpha-run.js`
+compares ordinary and fused execution over all alpha arms, bounds, flags,
+registers, a relocated authentic body, and a one-byte near miss.
 
 Threads mode creates one WebAssembly instance per guest thread over shared
 memory. The gate was originally a mutable WebAssembly global, so only the main
@@ -704,8 +707,10 @@ renderer spans remain the safer acceleration boundary.
 
 ### RGB565 color-key row lowering and corpus scope
 
-H440 now recognizes the complete 19-byte sequence at `0x00528268` and only at
-that verified address, under the same process-wide MW3 COPY opt-in as H436. It
+H440 recognizes the complete verified 19-byte sequence at any guest VA, under
+the same process-wide MW3 COPY opt-in as H436. The emitter derives and records
+the loop's back/fall addresses from the matched location rather than embedding
+the demo's `0x00528268`, so differently linked game builds can reuse it. It
 loads the transparent RGB565 key from `[EBP+0x0c]`, takes the source cursor from
 EAX, destination displacement from EBX, and count from ESI. The executor is a
 scalar Wasm loop by design: every conditional store to `[EAX+EBX]` occurs
@@ -718,7 +723,9 @@ and charges the guest instruction and two-block-per-pixel budgets.
 pinned demo and compares H440 with ordinary x86 for transparent and copied
 pixels, 1/8/37-pixel counts, disjoint storage, and both overlap directions. A
 `dst = src + 2` case specifically fails any implementation which batches loads
-before stores. A valid one-byte addressing near miss remains ordinary x86.
+before stores. The same authentic bytes are also injected at a second arbitrary
+VA to prove recognition and control flow are address-independent. A valid
+one-byte addressing near miss remains ordinary x86.
 
 A static corpus scan checked 1,108 paths / 585 unique PE files in `binaries`
 and `test/binaries` for both the exact bytes and a register-flexible structural

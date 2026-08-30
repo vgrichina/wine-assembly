@@ -27,6 +27,7 @@ const EXTRA_WAT = `
 
 const LOOP_EIP = 0x00528064;
 const EXIT_EIP = 0x00528111;
+const RELOCATED_EIP = 0x0052c000;
 
 function peBytesAt(file, va, length) {
   const data = fs.readFileSync(file);
@@ -52,7 +53,7 @@ const mw3Exe = path.join(__dirname, '..', 'binaries', 'shareware', 'mw3', 'ex',
   'Program_Files', 'mech3demo.exe');
 const authenticLoop = peBytesAt(mw3Exe, LOOP_EIP, EXIT_EIP - LOOP_EIP);
 
-async function makeRuntime({ enabled, nearMiss = false }) {
+async function makeRuntime({ enabled, nearMiss = false, location = LOOP_EIP }) {
   const { exports: e, memory } = await bootRenderHarness({ extraWat: EXTRA_WAT, fonts: 'none' });
   const fixture = fs.readFileSync(path.join(__dirname, 'binaries', 'notepad.exe'));
   let bytes = new Uint8Array(memory.buffer);
@@ -67,8 +68,9 @@ async function makeRuntime({ enabled, nearMiss = false }) {
     : (guest - imageBase + guestBase) >>> 0;
   const loop = Uint8Array.from(authenticLoop);
   if (nearMiss) loop[7] = 2; // cmp cl,3 -> cmp cl,2: valid x86, not the proven loop.
-  bytes.set(loop, wa(LOOP_EIP));
-  bytes[wa(EXIT_EIP)] = 0xc3; // isolate the row from MW3's outer rectangle loop.
+  const exit = (location + authenticLoop.length) >>> 0;
+  bytes.set(loop, wa(location));
+  bytes[wa(exit)] = 0xc3; // isolate the row from MW3's outer rectangle loop.
   e.set_loop_copy_emit(enabled ? 1 : 0);
 
   const arena = e.guest_alloc(0x10000) >>> 0;
@@ -97,7 +99,7 @@ async function makeRuntime({ enabled, nearMiss = false }) {
     e.set_eax(dstBase); e.set_ecx(0xaabbccdd); e.set_edx(0x2468ace0);
     e.set_ebx(0x13579bdf); e.set_esp(stack); e.set_ebp(frame);
     e.set_esi(0x10203040); e.set_edi((srcBase - dstBase) >>> 0);
-    e.set_eip(LOOP_EIP); e.run(1000000);
+    e.set_eip(location); e.run(1000000);
     assert.strictEqual(e.get_eip() >>> 0, 0, 'isolated row returns');
     return {
       pixels: Array.from(bytes.subarray(wa(dstBase), wa(dstBase) + count * 2)),
@@ -152,6 +154,20 @@ async function makeRuntime({ enabled, nearMiss = false }) {
     'each independently supplied row bound enters H436 once');
   assert.strictEqual(fused.e.test_mw3_pixels(), 45n,
     'H436 derives exactly 8 + 37 pixels from the two guest frame bounds');
+
+  const relocated = await makeRuntime({ enabled: true, location: RELOCATED_EIP });
+  const relocatedExpected = ordinary.run(8, 5);
+  const relocatedActual = relocated.run(8, 5);
+  assert.deepStrictEqual(relocatedActual.pixels, relocatedExpected.pixels,
+    'relocated H436 pixels match ordinary x86');
+  assert.deepStrictEqual(relocatedActual.state, relocatedExpected.state,
+    'matcher-derived H436 back/fall VAs preserve relocated x86 state');
+  assert.strictEqual(relocated.e.test_mw3_matches(), 1,
+    'authentic alpha bytes match without their original absolute address');
+  assert.strictEqual(relocated.e.test_mw3_runs(), 1,
+    'relocated alpha stream reaches H436 once');
+  assert.strictEqual(relocated.e.test_mw3_pixels(), 8n,
+    'relocated H436 derives the exact guest frame bound');
 
   const near = await makeRuntime({ enabled: true, nearMiss: true });
   near.run(8, 0);

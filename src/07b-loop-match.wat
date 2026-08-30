@@ -2858,11 +2858,16 @@
   ;; publishing them after every pixel preserves the ordinary loop's visible
   ;; state even when the 4096-pixel safety quantum hands control back early.
   (func $th_rgb565_alpha_run (param $op i32)
+    (local $tp i32) (local $fall i32) (local $back i32)
     (local $bp i32) (local $eax i32) (local $ecx i32) (local $edx i32)
     (local $ebx i32) (local $esi i32) (local $edi i32)
     (local $alpha i32) (local $count i32) (local $old_count i32)
     (local $iters i32) (local $cost i32) (local $cont i32)
 
+    (local.set $tp (global.get $ip))
+    (global.set $ip (i32.add (local.get $tp) (i32.const 8)))
+    (local.set $fall (i32.load (local.get $tp)))
+    (local.set $back (i32.load offset=4 (local.get $tp)))
     (local.set $bp (global.get $ebp))
     (local.set $eax (global.get $eax))
     (local.set $ecx (global.get $ecx))
@@ -2978,7 +2983,7 @@
         (i64.extend_i32_u (local.get $iters))))
     (local.set $cont (i32.ne (local.get $count) (i32.const 0)))
     (global.set $eip
-      (select (i32.const 0x00528064) (i32.const 0x00528111) (local.get $cont)))
+      (select (local.get $back) (local.get $fall) (local.get $cont)))
     (return_call $branch_end))
 
   ;; ------------------------------------------------------------------
@@ -2988,12 +2993,17 @@
   ;; replace this with memory.copy or a SIMD load batch: [EAX+EBX] may overlap
   ;; a later [EAX], and the x86 loop observes each preceding conditional store.
   (func $th_rgb565_colorkey_run (param $op i32)
+    (local $tp i32) (local $fall i32) (local $back i32)
     (local $eax i32) (local $ecx i32) (local $esi i32)
     (local $old_eax i32) (local $old_esi i32)
     (local $key i32) (local $pixel i32)
     (local $total i32) (local $allowed i32) (local $n i32)
     (local $iters i32) (local $cost i32)
 
+    (local.set $tp (global.get $ip))
+    (global.set $ip (i32.add (local.get $tp) (i32.const 8)))
+    (local.set $fall (i32.load (local.get $tp)))
+    (local.set $back (i32.load offset=4 (local.get $tp)))
     (local.set $eax (global.get $eax))
     (local.set $ecx (global.get $ecx))
     (local.set $esi (global.get $esi))
@@ -3078,7 +3088,7 @@
       (i64.add (global.get $loop_rgb565_colorkey_pixels)
         (i64.extend_i32_u (local.get $iters))))
     (global.set $eip
-      (select (i32.const 0x00528268) (i32.const 0x0052827b)
+      (select (local.get $back) (local.get $fall)
         (i32.ne (local.get $esi) (i32.const 0))))
     (return_call $branch_end))
 

@@ -28,6 +28,7 @@ const EXTRA_WAT = `
 
 const LOOP_EIP = 0x00528268;
 const EXIT_EIP = 0x0052827b;
+const RELOCATED_EIP = 0x0052a000;
 const KEY = 0x7bef;
 const mw3Exe = path.join(__dirname, '..', 'binaries', 'shareware', 'mw3', 'ex',
   'Program_Files', 'mech3demo.exe');
@@ -42,7 +43,7 @@ assert.deepStrictEqual(Array.from(authenticLoop), [
   0x66, 0x89, 0x0c, 0x18, 0x83, 0xc0, 0x02, 0x4e, 0x75, 0xed,
 ], 'test remains pinned to the verified MW3 instruction sequence');
 
-async function makeRuntime({ enabled, nearMiss = false }) {
+async function makeRuntime({ enabled, nearMiss = false, location = LOOP_EIP }) {
   const { exports: e, memory } = await bootRenderHarness({
     extraWat: EXTRA_WAT,
     fonts: 'none',
@@ -59,8 +60,9 @@ async function makeRuntime({ enabled, nearMiss = false }) {
     : (guest - imageBase + guestBase) >>> 0;
   const loop = Uint8Array.from(authenticLoop);
   if (nearMiss) loop[6] = 0x10; // cmp cx,[ebp+0x10]: valid, equivalent test setup.
-  bytes.set(loop, wa(LOOP_EIP));
-  bytes[wa(EXIT_EIP)] = 0xc3;
+  const exit = (location + authenticLoop.length) >>> 0;
+  bytes.set(loop, wa(location));
+  bytes[wa(exit)] = 0xc3;
   e.set_loop_copy_emit(enabled ? 1 : 0);
 
   const arena = e.guest_alloc(0x8000) >>> 0;
@@ -96,7 +98,7 @@ async function makeRuntime({ enabled, nearMiss = false }) {
     e.set_ebp(frame);
     e.set_esi(count);
     e.set_edi(0x13579bdf);
-    e.set_eip(LOOP_EIP);
+    e.set_eip(location);
     e.run(1000000);
     assert.strictEqual(e.get_eip() >>> 0, 0, 'isolated row returns');
 
@@ -147,6 +149,21 @@ async function makeRuntime({ enabled, nearMiss = false }) {
     'each complete row enters H440 once');
   assert.strictEqual(fused.e.test_colorkey_pixels(), 62n,
     'H440 processed the exact sum of the guest ESI counts');
+
+  const relocated = await makeRuntime({ enabled: true, location: RELOCATED_EIP });
+  const relocatedScenario = { count: 8, offset: 2, salt: 6 };
+  const relocatedExpected = ordinary.run(relocatedScenario);
+  const relocatedActual = relocated.run(relocatedScenario);
+  assert.deepStrictEqual(relocatedActual.memory, relocatedExpected.memory,
+    'the authentic loop remains overlap-safe when linked at another VA');
+  assert.deepStrictEqual(relocatedActual.state, relocatedExpected.state,
+    'matcher-derived back/fall VAs preserve relocated register and flag state');
+  assert.strictEqual(relocated.e.test_colorkey_matches(), 1,
+    'authentic bytes match without the original MW3 absolute address');
+  assert.strictEqual(relocated.e.test_colorkey_runs(), 1,
+    'relocated stream reaches H440 once');
+  assert.strictEqual(relocated.e.test_colorkey_pixels(), 8n,
+    'relocated H440 processes the supplied count');
 
   const near = await makeRuntime({ enabled: true, nearMiss: true });
   near.run({ count: 8, offset: null, salt: 5 });

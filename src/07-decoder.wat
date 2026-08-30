@@ -584,10 +584,10 @@
   ;; The executor takes the trip count from [EBP-0x18] on every entry. That
   ;; bound is the game's clipped row width; no screen-size guess is involved.
   (func $try_emit_rgb565_alpha_run (param $start_eip i32) (result i32)
+    (local $p i32) (local $end i32) (local $hash i32)
     (if (i32.or
           (i32.eqz (call $loop_copy_emit_get))
-          (i32.or (global.get $code16)
-            (i32.ne (local.get $start_eip) (i32.const 0x00528064))))
+          (global.get $code16))
       (then (return (i32.const 0))))
     ;; Exact head and exact induction/back-edge tail. Checking both ends keeps
     ;; a partially patched binary on the ordinary decoder path.
@@ -605,21 +605,38 @@
     (if (i32.ne (call $gl16 (i32.add (local.get $start_eip) (i32.const 0xAB)))
                 (i32.const 0xFFFF))
       (then (return (i32.const 0))))
+    ;; The old matcher sampled only the head and induction tail because the
+    ;; original VA was also part of the predicate. Once relocation is allowed,
+    ;; prove every byte of the 173-byte branch-split body. FNV is a decode-time
+    ;; rejection filter layered on the sampled structural checks above.
+    (local.set $p (local.get $start_eip))
+    (local.set $end (i32.add (local.get $start_eip) (i32.const 0xAD)))
+    (local.set $hash (i32.const 0x811c9dc5))
+    (loop $hash_bytes
+      (local.set $hash
+        (i32.mul
+          (i32.xor (local.get $hash) (call $gl8 (local.get $p)))
+          (i32.const 0x01000193)))
+      (local.set $p (i32.add (local.get $p) (i32.const 1)))
+      (br_if $hash_bytes (i32.lt_u (local.get $p) (local.get $end))))
+    (if (i32.ne (local.get $hash) (i32.const 0xe93ce905))
+      (then (return (i32.const 0))))
     (global.set $loop_rgb565_alpha_matches
       (i32.add (global.get $loop_rgb565_alpha_matches) (i32.const 1)))
     (call $te (i32.const 436) (i32.const 0))
-    (global.set $d_pc (i32.const 0x00528111))
+    (call $te_raw (i32.add (local.get $start_eip) (i32.const 0xAD))) ;; fall
+    (call $te_raw (local.get $start_eip))                            ;; back
+    (global.set $d_pc (i32.add (local.get $start_eip) (i32.const 0xAD)))
     (i32.const 1))
 
   ;; MW3's transparent RGB565 row has a conditional store between its compare
   ;; and induction back edge, so no single emitted self-loop block contains the
   ;; whole operation. Match the complete authentic 19-byte sequence at its one
-  ;; verified address and keep it under MW3's process-wide COPY_RUN opt-in.
+  ;; verified encoding and keep it under MW3's process-wide COPY_RUN opt-in.
+  ;; The back/fall addresses are derived from the matched location so another
+  ;; game build can use the same exact loop at a different VA.
   (func $try_emit_rgb565_colorkey_run (param $start_eip i32) (result i32)
-    (if (i32.or
-          (i32.eqz (call $loop_copy_emit_get))
-          (i32.or (global.get $code16)
-            (i32.ne (local.get $start_eip) (i32.const 0x00528268))))
+    (if (i32.or (i32.eqz (call $loop_copy_emit_get)) (global.get $code16))
       (then (return (i32.const 0))))
     (if (i32.or
           (i32.ne (call $gl32 (local.get $start_eip))
@@ -647,7 +664,9 @@
     (global.set $loop_rgb565_colorkey_matches
       (i32.add (global.get $loop_rgb565_colorkey_matches) (i32.const 1)))
     (call $te (i32.const 440) (i32.const 0))
-    (global.set $d_pc (i32.const 0x0052827b))
+    (call $te_raw (i32.add (local.get $start_eip) (i32.const 19))) ;; fall
+    (call $te_raw (local.get $start_eip))                          ;; back
+    (global.set $d_pc (i32.add (local.get $start_eip) (i32.const 19)))
     (i32.const 1))
 
   ;; The seven words after a case record's token byte.
