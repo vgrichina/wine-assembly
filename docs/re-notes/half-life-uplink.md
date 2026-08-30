@@ -338,12 +338,16 @@ while Software is active, so context existence is not an honest mode signal.
 
 Storage now publishes successful registry writes to the owning process. The
 Half-Life browser policy watches its exact `HKCU\\Software\\Valve\\HLDemo\\Settings`
-`EngineType` value: `2` selects the 10,000-block OpenGL quantum and the other
-renderer values select 1,000. Actual GPU and DirectDraw presentations provide
-a second runtime signal. This applies while the guest is running; the emulator
-process is not restarted. A fresh browser probe observed `HLU_SOFTWARE_SLICE
-1000` immediately after Apply and `HLU_OPENGL_SLICE 10000` after selecting
-OpenGL again.
+`EngineType` value: `2` selects the 10,000-block OpenGL quantum immediately.
+A Software selection deliberately stays at 10,000 while GoldSrc tears down the
+old renderer and rebuilds its setup dialogs; the first actual DirectDraw frame
+then selects the 1,000-block CPU-renderer quantum. Switching at the earlier
+registry write made the mode-change UI rebuild at one tenth the throughput,
+published visibly incomplete dialogs, and encouraged several clicks to queue
+against the same restart. This applies while the guest is running; the emulator
+process is not restarted. A direct real-Worker OpenGL -> Software -> OpenGL
+cycle completed both restarts without `Z_Free` and returned the quantum to
+10,000 after OpenGL was selected again.
 
 The Software leg of the same-process acceptance reached a textured Lambda
 Complex corridor and HUD after a 90-second settle:

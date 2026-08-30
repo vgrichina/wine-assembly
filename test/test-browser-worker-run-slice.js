@@ -50,12 +50,17 @@ const fs = require('fs');
 const path = require('path');
 const hostSource = fs.readFileSync(path.join(__dirname, '..', 'host.js'), 'utf8');
 const indexSource = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+const shellSource = fs.readFileSync(path.join(__dirname, '..', 'lib/browser-shell.js'), 'utf8');
 assert(hostSource.includes('const activeStepsPerSlice = Math.max(1, (self.stepsPerSlice | 0) || stepsPerSlice);'),
   'the cooperative host must honor browser-shell slices below 1k');
 assert(hostSource.includes('const configuredSteps = Math.max(1000, (self.stepsPerSlice | 0) || stepsPerSlice);'),
   'the guest-Worker backend should retain its 1k messaging floor');
-assert(indexSource.includes('lib/browser-shell.js?v=15'),
+assert(indexSource.includes('lib/browser-shell.js?v=16'),
   'the page cache-busts the Uplink slice policy');
+assert(shellSource.includes("if (Number(change.data) === 2) applyRendererSlice('opengl');"),
+  'Uplink keeps the setup quantum until a real DirectDraw frame selects Software');
+assert(!shellSource.includes("applyRendererSlice(Number(change.data) === 2 ? 'opengl' : 'software')"),
+  'the registry write must not throttle Software before renderer restart completes');
 assert(indexSource.includes('host.js?v=248'),
   'the page cache-busts cooperative slice enforcement');
 
