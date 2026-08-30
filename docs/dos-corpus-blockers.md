@@ -319,8 +319,8 @@ over the `0x0011` it came in with — and is `0xff0d`, which is why the trace
 shows `int 21h ax=ff0d ... UNHANDLED`, and SP has moved `0x0bee` → `0xfffe`
 with SS unchanged.
 
-**`--dump=232e:17:64` settles it: that block is 32-bit code and we decode it as
-16-bit.** The bytes are
+**What follows was read off an at-exit dump and is WITHDRAWN — see the
+correction under it.** The bytes `--dump=232e:17:64` reports are
 
 ```
 2e 0f 01 1d 00 00 00 00  fb  33 c0  8e c0  67 8b 0e 06 04  0b c9
@@ -367,15 +367,33 @@ does after PE is cleared — reload CS as a paragraph with D=0 — makes the sec
 block undecodable either way, so one of the two premises is wrong and the
 listing above is the evidence for which.
 
-**Provenance, because it decides how much the listing is worth.** `--dump`
-fires at exit, about 2M dispatches after the derail, so those bytes are memory
-as it stood *then*; the run reports 29 self-modify breaks, and this resident
-loads itself out of the EXE at run time. Truncating the run to dump earlier
-does not work either — `--pre` hands SETUP the same `--dispatches`, so a
-smaller budget just means SETUP never finishes and ANGEL refuses at the gate.
-The tooling gap to close first is therefore a mid-run dump, the DOS twin of
-`test/run.js`'s `BATCH:dump-mem`: without one, every reading of a block that
-arrived at run time is a reading of what replaced it.
+**Correction: none of those bytes were there when the block ran.** `--dump`
+fires at exit, about 2M dispatches after the derail, and this resident loads
+itself out of the EXE at run time (the run reports 29 self-modify breaks). The
+mid-run dump added for this (`3167db19`) says so outright — at 1.07M
+dispatches, just before the derail:
+
+```
+$ run-dos ANGEL.EXE --svga=trident --pre=SETUP.EXE --pre-dispatches=50m \
+    --dump-at=1.05m:232e:0:48
+  (at 1071697 dispatches, cs:ip=100:4aa)
+  232e:0000  48 bytes
+  0000  b8 04 c0 04 c8 7b ef 04 d0 04 d8 04 e0 bd f7 04
+```
+
+against `ff 03 a8 1f 02 00 00 00 / 0f 20 c0 24 fe 0f 22 c0` at exit. So the
+`mov cr0` stub, the far jump and the 32-bit listing above are all a reading of
+whatever occupied that memory *afterwards*, and every conclusion drawn from
+them — including "the demo leaves protected mode and then runs 32-bit code" —
+is withdrawn. What survives is the measurement that does not depend on the
+bytes: the state is already wrong at `232e:0053`, AX is `0xff0d` where the
+program wants `0x3f11`, and SP has moved `0x0bee` → `0xfffe`.
+
+The lesson is general and cost a whole listing here: **on a program that loads
+code at run time, an at-exit dump is evidence about the end of the run and
+nothing else.** Use `--dump-at=` at a dispatch count inside the window being
+asked about, and `--pre-dispatches=` so cutting the main run short does not
+also starve the prerequisite.
 
 **The sweep is deliberately not given a `--svga` rung, and the reason is worth
 keeping.** A rung was written and measured: a program that put nothing on either
