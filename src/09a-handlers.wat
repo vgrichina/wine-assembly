@@ -11178,18 +11178,165 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
+  ;; Return the modifiers that are physically down in the emulated desktop.
+  ;; The registered virtual key itself is not also counted as a modifier, so a
+  ;; bare VK_SHIFT registration can fire when Shift is pressed.
+  (func $hotkey_current_modifiers (param $vk i32) (result i32)
+    (local $mods i32)
+    (if (i32.and
+          (i32.ne (local.get $vk) (i32.const 0x12))
+          (i32.ne
+            (i32.and (call $host_get_key_down_state (i32.const 0x12)) (i32.const 0x8000))
+            (i32.const 0)))
+      (then (local.set $mods (i32.or (local.get $mods) (i32.const 0x01))))) ;; MOD_ALT
+    (if (i32.and
+          (i32.ne (local.get $vk) (i32.const 0x11))
+          (i32.ne
+            (i32.and (call $host_get_key_down_state (i32.const 0x11)) (i32.const 0x8000))
+            (i32.const 0)))
+      (then (local.set $mods (i32.or (local.get $mods) (i32.const 0x02))))) ;; MOD_CONTROL
+    (if (i32.and
+          (i32.ne (local.get $vk) (i32.const 0x10))
+          (i32.ne
+            (i32.and (call $host_get_key_down_state (i32.const 0x10)) (i32.const 0x8000))
+            (i32.const 0)))
+      (then (local.set $mods (i32.or (local.get $mods) (i32.const 0x04))))) ;; MOD_SHIFT
+    (if (i32.and
+          (i32.and (i32.ne (local.get $vk) (i32.const 0x5B))
+                   (i32.ne (local.get $vk) (i32.const 0x5C)))
+          (i32.or
+            (i32.ne
+              (i32.and (call $host_get_key_down_state (i32.const 0x5B)) (i32.const 0x8000))
+              (i32.const 0))
+            (i32.ne
+              (i32.and (call $host_get_key_down_state (i32.const 0x5C)) (i32.const 0x8000))
+              (i32.const 0))))
+      (then (local.set $mods (i32.or (local.get $mods) (i32.const 0x08))))) ;; MOD_WIN
+    (local.get $mods))
+
+  ;; Match only hardware key-downs. The caller substitutes WM_HOTKEY for the
+  ;; raw key message before applying PeekMessage's message-range filter.
+  (func $hotkey_match (param $msg i32) (param $vk i32) (result i32)
+    (local $node i32) (local $mods i32)
+    (if (i32.and
+          (i32.ne (local.get $msg) (i32.const 0x0100)) ;; WM_KEYDOWN
+          (i32.ne (local.get $msg) (i32.const 0x0104))) ;; WM_SYSKEYDOWN
+      (then (return (i32.const 0))))
+    (local.set $mods (call $hotkey_current_modifiers (local.get $vk)))
+    (local.set $node (global.get $hotkey_head))
+    (block $done
+      (loop $scan
+        (br_if $done (i32.eqz (local.get $node)))
+        (if (i32.and
+              (i32.eq (call $gl32 (i32.add (local.get $node) (i32.const 12))) (local.get $mods))
+              (i32.eq (call $gl32 (i32.add (local.get $node) (i32.const 16))) (local.get $vk)))
+          (then (return (local.get $node))))
+        (local.set $node (call $gl32 (local.get $node)))
+        (br $scan)))
+    (i32.const 0))
+
+  ;; Write one MSG from a matched node. WM_HOTKEY uses the registration id as
+  ;; wParam and MAKELONG(modifiers, vk) as lParam; hwnd remains NULL for a
+  ;; thread registration instead of being rewritten to the main window.
+  (func $hotkey_store_message (param $msg_ptr i32) (param $node i32)
+    (local $hwnd i32) (local $lparam i32)
+    (local.set $hwnd (call $gl32 (i32.add (local.get $node) (i32.const 4))))
+    (local.set $lparam
+      (i32.or
+        (call $gl32 (i32.add (local.get $node) (i32.const 12)))
+        (i32.shl
+          (call $gl32 (i32.add (local.get $node) (i32.const 16)))
+          (i32.const 16))))
+    (call $gs32 (local.get $msg_ptr) (local.get $hwnd))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 4)) (i32.const 0x0312))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 8))
+      (call $gl32 (i32.add (local.get $node) (i32.const 8))))
+    (call $gs32 (i32.add (local.get $msg_ptr) (i32.const 12)) (local.get $lparam))
+    (call $msg_store_input_tail
+      (local.get $msg_ptr) (local.get $hwnd) (i32.const 0x0312) (local.get $lparam)))
+
   ;; RegisterHotKey(hwnd, id, modifiers, vk) / UnregisterHotKey(hwnd, id).
-  ;; The cooperative host has no OS-global keyboard namespace; accepting the
-  ;; registration keeps the shortcut local to the emulated desktop and avoids
-  ;; stealing a real host shortcut. Explorer registers its Win-key bindings
-  ;; while constructing the taskbar and treats FALSE as fatal.
+  ;; Registrations live in the registering guest thread's emulated desktop,
+  ;; never the host OS, so browser shortcuts are not stolen. Explorer's Win-key
+  ;; bindings and ordinary utility shortcuts still receive authentic messages.
   (func $handle_RegisterHotKey (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+    (local $node i32)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+
+    ;; Win98 recognizes only MOD_ALT/CONTROL/SHIFT/WIN. MOD_NOREPEAT is a much
+    ;; later addition and is deliberately rejected rather than silently used.
+    (if (i32.or
+          (i32.or (i32.eqz (local.get $arg3))
+                  (i32.gt_u (local.get $arg3) (i32.const 0xFF)))
+          (i32.ne (i32.and (local.get $arg2) (i32.const 0xFFFFFFF0)) (i32.const 0)))
+      (then
+        (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
+        (global.set $eax (i32.const 0))
+        (return)))
+    (if (local.get $arg0)
+      (then
+        (if (i32.lt_s (call $wnd_table_find (local.get $arg0)) (i32.const 0))
+          (then
+            (global.set $last_error (i32.const 1400)) ;; ERROR_INVALID_WINDOW_HANDLE
+            (global.set $eax (i32.const 0))
+            (return)))
+        (if (i32.ne (call $wnd_get_thread (local.get $arg0)) (global.get $current_thread_id))
+          (then
+            (global.set $last_error (i32.const 1408)) ;; ERROR_WINDOW_OF_OTHER_THREAD
+            (global.set $eax (i32.const 0))
+            (return)))))
+    ;; The desktop key chord is unique even when the receiving hwnd/id differs.
+    (local.set $node (global.get $hotkey_head))
+    (block $unique
+      (loop $scan
+        (br_if $unique (i32.eqz (local.get $node)))
+        (if (i32.and
+              (i32.eq (call $gl32 (i32.add (local.get $node) (i32.const 12))) (local.get $arg2))
+              (i32.eq (call $gl32 (i32.add (local.get $node) (i32.const 16))) (local.get $arg3)))
+          (then
+            (global.set $last_error (i32.const 1409)) ;; ERROR_HOTKEY_ALREADY_REGISTERED
+            (global.set $eax (i32.const 0))
+            (return)))
+        (local.set $node (call $gl32 (local.get $node)))
+        (br $scan)))
+    (local.set $node (call $heap_alloc (i32.const 24)))
+    (if (i32.eqz (local.get $node))
+      (then
+        (global.set $last_error (i32.const 8)) ;; ERROR_NOT_ENOUGH_MEMORY
+        (global.set $eax (i32.const 0))
+        (return)))
+    (call $gs32 (local.get $node) (global.get $hotkey_head))
+    (call $gs32 (i32.add (local.get $node) (i32.const 4)) (local.get $arg0))
+    (call $gs32 (i32.add (local.get $node) (i32.const 8)) (local.get $arg1))
+    (call $gs32 (i32.add (local.get $node) (i32.const 12)) (local.get $arg2))
+    (call $gs32 (i32.add (local.get $node) (i32.const 16)) (local.get $arg3))
+    (call $gs32 (i32.add (local.get $node) (i32.const 20)) (global.get $current_thread_id))
+    (global.set $hotkey_head (local.get $node))
+    (global.set $eax (i32.const 1)))
 
   (func $handle_UnregisterHotKey (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+    (local $node i32) (local $prev i32) (local $next i32)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    (local.set $node (global.get $hotkey_head))
+    (block $missing
+      (loop $scan
+        (br_if $missing (i32.eqz (local.get $node)))
+        (if (i32.and
+              (i32.eq (call $gl32 (i32.add (local.get $node) (i32.const 4))) (local.get $arg0))
+              (i32.eq (call $gl32 (i32.add (local.get $node) (i32.const 8))) (local.get $arg1)))
+          (then
+            (local.set $next (call $gl32 (local.get $node)))
+            (if (local.get $prev)
+              (then (call $gs32 (local.get $prev) (local.get $next)))
+              (else (global.set $hotkey_head (local.get $next))))
+            (call $heap_free (local.get $node))
+            (global.set $eax (i32.const 1))
+            (return)))
+        (local.set $prev (local.get $node))
+        (local.set $node (call $gl32 (local.get $node)))
+        (br $scan)))
+    (global.set $last_error (i32.const 1419)) ;; ERROR_HOTKEY_NOT_REGISTERED
+    (global.set $eax (i32.const 0)))
 
   ;; RegisterShellHook(hwnd, dwType) — legacy Win9x shell-window subscriber.
   ;; dwType=1 registers and dwType=0 unregisters. TASKMAN.EXE calls

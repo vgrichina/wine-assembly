@@ -2496,6 +2496,11 @@
   ;; message is the most recently allocated RegisterWindowMessage ID.
   (global $shell_hook_hwnd (mut i32) (i32.const 0))
   (global $shell_hook_message (mut i32) (i32.const 0))
+  ;; Process-local RegisterHotKey chain. Nodes live in the guest heap:
+  ;; next, hwnd, id, modifiers, vk, registering thread id (6 dwords).
+  ;; Each real guest-thread WASM instance owns the registrations made by that
+  ;; thread, matching USER's per-registering-thread WM_HOTKEY delivery.
+  (global $hotkey_head (mut i32) (i32.const 0))
   (global $guid_counter (mut i32) (i32.const 0))
   ;; waveOut audio state
   (global $wave_out_handle (mut i32) (i32.const 0))

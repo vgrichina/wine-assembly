@@ -1447,6 +1447,7 @@
   ;; 73: GetMessageA
   (func $handle_GetMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tmp i32) (local $msg_ptr i32) (local $packed i32) (local $nc_rect i32)
+    (local $hotkey i32) (local $hotkey_msg i32)
     ;; Move the virtual wire before looking for a message. WSAAsyncSelect is a
     ;; promise that the app will be TOLD about socket activity, so a server
     ;; written to that model calls no socket function at all while it waits --
@@ -1535,6 +1536,15 @@
             (global.set $pending_input_lparam (call $host_check_input_lparam))))))
     (if (i32.ne (local.get $packed) (i32.const 0))
     (then
+    (local.set $hotkey_msg (i32.and (local.get $packed) (i32.const 0xFFFF)))
+    (local.set $hotkey (call $hotkey_match
+      (local.get $hotkey_msg) (i32.shr_u (local.get $packed) (i32.const 16))))
+    (if (local.get $hotkey)
+      (then
+        (call $hotkey_store_message (local.get $msg_ptr) (local.get $hotkey))
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
     (local.set $tmp (global.get $pending_input_hwnd))
     (if (i32.eqz (local.get $tmp))
     (then (local.set $tmp (global.get $main_hwnd))))
@@ -1724,6 +1734,7 @@
   (func $handle_PeekMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $packed i32) (local $msg i32) (local $tmp i32)
     (local $qidx i32) (local $qaddr i32) (local $qmsg i32) (local $nc_rect i32)
+    (local $hotkey i32)
     ;; Same reason as GetMessageA: an idle message pump is where a
     ;; WSAAsyncSelect server spends its time, so it has to move the wire.
     (call $vsock_pump)
@@ -1884,11 +1895,21 @@
     (if (i32.ne (local.get $packed) (i32.const 0))
       (then
         (local.set $msg (i32.and (local.get $packed) (i32.const 0xFFFF)))
+        (local.set $hotkey (call $hotkey_match
+          (local.get $msg) (i32.shr_u (local.get $packed) (i32.const 16))))
+        (if (local.get $hotkey)
+          (then (local.set $msg (i32.const 0x0312))))
         ;; Check message filter range (0,0 = accept all)
         (if (i32.or (i32.and (i32.eqz (local.get $arg2)) (i32.eqz (local.get $arg3)))
               (i32.and (i32.ge_u (local.get $msg) (local.get $arg2))
                        (i32.le_u (local.get $msg) (local.get $arg3))))
           (then
+            (if (local.get $hotkey)
+              (then
+                (call $hotkey_store_message (local.get $arg0) (local.get $hotkey))
+                (global.set $eax (i32.const 1))
+                (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+                (return)))
             (local.set $tmp (global.get $pending_input_hwnd))
             (if (i32.eqz (local.get $tmp))
               (then (local.set $tmp (global.get $main_hwnd))))
