@@ -17,6 +17,7 @@
 
 const isa = require('./isa');
 const { decodeOne, H } = require('./decode');
+const { ARITY, FUSE } = require('./emit');
 
 function compileProgram(readByte, cs, entryIp, opts = {}) {
   const arenaBase = opts.arenaBase === undefined ? isa.THREAD_BASE : opts.arenaBase;
@@ -57,6 +58,48 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   // what it is: a program rewriting code that has already been compiled.
   const covered = [];
 
+  // Superinstruction formation. Off with `fuse: false` (run-dos.js --no-fuse),
+  // which is the A/B partner: fusing preserves $steps exactly (see
+  // genFusedBranches), so an unfused and a fused run must agree frame for
+  // frame, and any difference is a bug rather than a retiming.
+  // Never under oneInsn: with TF set the CPU owes the guest an INT 1 after
+  // EVERY instruction, and a fused pair is two of them. A one-instruction block
+  // cannot contain a pair to begin with, so this changes nothing today -- it is
+  // here so that stays true if a single instruction ever emits two ops.
+  const fuse = opts.fuse !== false && !opts.oneInsn;
+
+  // Rewrite a finished block's last two ops into one, when a fused handler for
+  // that pair exists. The fused body is the two bodies in sequence and each
+  // reads its own operands off $ip, so the operand words are already in the
+  // right order -- the whole edit is dropping the second op's opcode word.
+  //
+  // The walk is the only way to find where the second-to-last op starts: a
+  // block is [fn][operands...] repeated, and nothing in the arena distinguishes
+  // an opcode word from an operand without the arity table. If the walk does
+  // not land exactly on the end, the arity table and the arena disagree about
+  // something and fusing on that assumption would rewrite an operand as an
+  // opcode, so it declines instead.
+  const fuseTail = (start) => {
+    let prevStart = -1, lastStart = -1, i = start;
+    for (; i < words.length;) {
+      prevStart = lastStart;
+      lastStart = i;
+      i += 1 + ARITY[words[i]];
+    }
+    if (i !== words.length || prevStart < 0) return;
+    const fused = FUSE.get(words[prevStart] * 65536 + words[lastStart]);
+    if (fused === undefined) return;
+    words[prevStart] = fused;
+    words.splice(lastStart, 1);
+    // The branch's own fixups point at operand words that just moved down one.
+    // They are the last fixups pushed and the only ones past `lastStart` --
+    // every earlier block ended below `start` -- so the scan stops at the first
+    // one that did not move.
+    for (let k = fixups.length - 1; k >= 0 && fixups[k].wordIndex > lastStart; k--) {
+      fixups[k].wordIndex--;
+    }
+  };
+
   // The block-head bitmap wasm stops on. Kept across the whole compile and
   // cleared bit by bit at the end rather than wiped per block: CONTAGIO compiles
   // 87,000 times in one run, and zeroing 8KB each time would cost more than the
@@ -76,6 +119,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   while (pending.length) {
     const blockIp = pending.pop();
     if (blocks.has(blockIp)) continue;
+    const blockStart = words.length;
     blocks.set(blockIp, arenaBase + words.length * 4);
     markHead(blockIp);
 
@@ -212,6 +256,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
       // is the straight-line case, where `end` carries the next address out.
       if (opts.oneInsn) { words.push(H.end, cur); break; }
     }
+    if (fuse) fuseTail(blockStart);
     // The block's extent. `cur` can have wrapped past 0xFFFF on a segment that
     // runs to the top, in which case the tail is simply not marked -- a missed
     // mark costs a stale block, never a wrong one.

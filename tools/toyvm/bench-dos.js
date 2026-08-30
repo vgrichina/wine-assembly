@@ -7,6 +7,11 @@
 //   node tools/toyvm/bench-dos.js scratch/mars/mars.exe
 //   node tools/toyvm/bench-dos.js a.exe b.exe --variants=tailcall,switch --reps=5
 //   node tools/toyvm/bench-dos.js --dir=scratch/demos --dispatches=20m --json
+//   node tools/toyvm/bench-dos.js a.exe --variants=tailcall,tailcall+nofuse
+//
+// An arm is a dispatch shell plus optional `+`-suffixed switches (nofuse,
+// nowasmdecode, nocache), so a compiler change gets the same interleaved
+// treatment a shell change does.
 //
 // Every arm runs in ONE process, alternating rep by rep with the starting arm
 // rotated, and the reported number is the MINIMUM over reps. That is not
@@ -53,7 +58,31 @@ async function main() {
     process.exit(2);
   }
 
+  // An arm is a dispatch shell plus any number of `+`-suffixed switches, so
+  // the same interleaved harness can A/B a compiler change and not just a
+  // shell: `--variants=tailcall,tailcall+nofuse`. The rotation, the
+  // minimum-of-reps and the agreement check all apply unchanged, which matters
+  // more for a compiler A/B than for a shell one -- two shells run the same op
+  // stream by construction, and two compilers do not.
+  const MODS = {
+    nofuse: { fuse: false },
+    nowasmdecode: { wasmDecode: false },
+    nocache: { noCache: true },
+  };
+  const armOpts = (label) => {
+    const [shell, ...mods] = label.split('+');
+    if (!VARIANTS.includes(shell)) throw new Error(`not a dispatch shell: ${shell}`);
+    const o = { variant: shell };
+    for (const m of mods) {
+      if (!(m in MODS)) {
+        throw new Error(`unknown arm switch "${m}"; have ${Object.keys(MODS).join(', ')}`);
+      }
+      Object.assign(o, MODS[m]);
+    }
+    return o;
+  };
   const variants = arg('variants', VARIANTS.join(',')).split(',').filter(Boolean);
+  variants.forEach(armOpts);   // fail on a bad arm before any program runs
   const reps = Number(arg('reps', 5));
   const budget = count(arg('dispatches'), 20e6);
   const cpu = Number(arg('cpu', 386));
@@ -81,7 +110,7 @@ async function main() {
       for (const v of order) {
         let r;
         try {
-          r = await runDos({ exe, variant: v, budget, cpu, log: quiet, autoKey });
+          r = await runDos({ exe, ...armOpts(v), budget, cpu, log: quiet, autoKey });
         } catch (e) {
           failed = `${v}: ${(e.message || String(e)).split('\n')[0]}`;
           break;

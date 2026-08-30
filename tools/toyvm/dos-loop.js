@@ -52,7 +52,7 @@ const { STUB_SEG, STUB_OFF, STUB_BYTE } = require('./dos');
 // block map and cost nothing.
 class CodeCache {
   constructor(vm, { noCache = false, smcFlush = false, watch = [],
-                    wasmDecode = true } = {}) {
+                    wasmDecode = true, fuse = true } = {}) {
     // Watchpoints, as [lo, hi] linear byte ranges. They ride the CODE_BITMAP
     // rather than adding a range test to $wr8, because $wr8 is on the hot path
     // of every single store the guest makes and a watch that is off must cost
@@ -78,6 +78,11 @@ class CodeCache {
     // would have produced (tools/toyvm/decode-diff.js), so the two arms differ
     // only in what the decoding cost.
     this.wasmDecoder = (wasmDecode && vm.exports.compile_block) ? vm : null;
+    // Superinstruction formation in the compiler. `--no-fuse` is its A/B
+    // partner, and the two arms are meant to be indistinguishable in output:
+    // a fused pair charges the step its removed dispatch used to, so slice
+    // boundaries and interrupt timing do not move.
+    this.fuse = fuse;
     this.noCache = noCache;
     this.regions = new Map();          // cs -> [prog]
     this.arenaNext = isa.THREAD_BASE;
@@ -278,6 +283,7 @@ class CodeCache {
       arenaBase: this.arenaNext,
       maxWords: (this.arenaEnd - this.arenaNext) >> 2,
       codeBase, mask, d32, benign: this.benign, wasmDecoder: this.wasmDecoder,
+      fuse: this.fuse,
     });
     new Int32Array(vm.mem.buffer, prog.arenaBase, prog.words.length).set(prog.words);
     this.arenaNext += prog.words.length * 4;
@@ -342,7 +348,7 @@ class DosSession {
   constructor(vm, machine, opts = {}) {
     const {
       slice = 2e6, noCache = false, smcFlush = false, mouse = [0, 0],
-      wasmDecode = true,
+      wasmDecode = true, fuse = true,
       // One timer interrupt per this many dispatches. 100k is about 10ms of a
       // real 486, so it lands near the 18.2Hz the BIOS programs -- and a demo
       // that reprogrammed the PIT for music gets a slower clock than it asked
@@ -385,7 +391,7 @@ class DosSession {
     this.stuckSince = 0;
     this.cells = cells;
     this.hooks = hooks;
-    this.cache = new CodeCache(vm, { noCache, smcFlush, watch, wasmDecode });
+    this.cache = new CodeCache(vm, { noCache, smcFlush, watch, wasmDecode, fuse });
 
     this.dispatched = 0;
     this.handbacks = 0;

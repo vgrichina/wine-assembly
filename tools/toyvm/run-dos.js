@@ -159,7 +159,7 @@ async function runDos(o) {
   const {
     variant = 'tailcall', exe, budget = 200e6, slice = 2e6, seconds = 0,
     traceInt = false, traceFault = false, traceEntry = 0, traceV86 = false,
-    noCache = false, smcFlush = false, wasmDecode = true,
+    noCache = false, smcFlush = false, wasmDecode = true, fuse = true,
     smcCensus = false, watch = [],
     stopText = null,
     traceIo = null,
@@ -332,7 +332,7 @@ async function runDos(o) {
   const ipSampleLog = [];          // flat [dispatched, ip, dispatched, ip, ...]
 
   const session = new DosSession(vm, machine, {
-    slice, noCache, smcFlush, wasmDecode,
+    slice, noCache, smcFlush, wasmDecode, fuse,
     mouse, irqEvery, dispatchesPerTick, tickScale, stuckLimit,
     stuckWork,
     // A watch reports through the census, so asking for one turns it on.
@@ -684,6 +684,10 @@ async function main() {
     // behaviour -- a run that differs between the two arms is a bug in one of
     // them and tools/toyvm/decode-diff.js is where to look.
     wasmDecode: !flag('no-wasm-decode'),
+    // Superinstruction formation, on by default. Its A/B partner, and the same
+    // rule applies: a fused pair charges the step the removed dispatch used to,
+    // so the two arms must agree frame for frame and a difference is a bug.
+    fuse: !flag('no-fuse'),
     smcCensus: flag('smc-census'),
     // `--watch=0:84`, `--watch=0:84:4`, `--watch=5ab:191:2,0:84` -- report every
     // guest store into these bytes, with the CS:IP that made it, through the

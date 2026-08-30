@@ -2622,6 +2622,68 @@ genDoubleShifts();
 genBitOps();
 genArithIO();
 
+// --- Superinstructions: a flag-setting op and the branch that reads it ------
+//
+// Threaded code pays for every op twice: once to do the work and once to get
+// to it. Fusing two ops into one handler pays the second cost once, and the
+// pair worth fusing is not a guess -- the handler-pair census over the core
+// ten (8M dispatches each, counts exact) says an ALU op immediately followed
+// by a Jcc is 10,323,039 of 80,000,000 dispatches, 12.9%. Two pairs alone
+// (`cmp_ri8 -> jz`, `cmp_rm8 -> jz`) are 6.0% of everything the corpus runs.
+//
+// The fused body is the CONCATENATION of the two bodies, with nothing else
+// changed, and that is not a shortcut -- it is why this is safe. Every handler
+// reads its operands with ops(n), which loads them at offsets off $ip and then
+// advances $ip past them, so two bodies in sequence read two operand lists in
+// sequence with no re-layout and no renumbering. The arena loses exactly one
+// word: the Jcc's opcode.
+//
+// FIRST is the census's own list, top-down, cut where the tail stops paying:
+// these twelve are 88.5% of all fusable pairs. `popf` is the notable omission
+// from the top twenty -- it can end the block mid-instruction when it raises
+// TF, and a first half that hands back would leave the branch half unrun with
+// $ip parked between two operand lists. The assertion below is what enforces
+// that rather than the comment: a first op that can halt, fault or return is a
+// build error, not a silent miscompile.
+const FUSE_FIRST = [
+  'cmp_ri8', 'cmp_rm8', 'sbb_ri16', 'cmp_ri16', 'dec_r16', 'cmp_mi16',
+  'or_rr8', 'or_rr16', 'cmp_rm16', 'cmp_mi8', 'sh2_r16', 'dec_r8',
+];
+
+// alu handler index * 65536 + jcc handler index -> fused handler index. Built
+// here so the compiler never has to know the naming scheme.
+const FUSE = new Map();
+
+function genFusedBranches() {
+  const byName = new Map(HANDLERS.map(x => [x.name, x]));
+  for (const alu of FUSE_FIRST) {
+    const a = byName.get(alu);
+    if (!a) throw new Error(`FUSE_FIRST names ${alu}, which is not a handler`);
+    // A fused first half must run to its end every time. Anything that can
+    // hand back, fault or return early would strand $ip between the two
+    // operand lists, and the resume would read the branch's operands as an
+    // instruction.
+    if (/\$halt|\(return\)|\$fault|\$jlook/.test(a.body)) {
+      throw new Error(`${alu} can leave its handler early; it cannot be fused`);
+    }
+    for (const cc of Object.keys(CONDS)) {
+      const j = byName.get(`j${cc}`);
+      // The dispatch that used to sit between the two halves charged one step.
+      // Charging it here keeps $steps -- and so every slice boundary, every
+      // interrupt injection point and every frame -- bit-identical to the
+      // unfused build, which is what makes the corpus diff a real check on
+      // this rather than a vague "it still runs".
+      const idx = h(`${alu}_j${cc}`, a.args + j.args, `
+  ${a.body}
+  (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
+  ${j.body}
+`);
+      FUSE.set(a.index * 65536 + j.index, idx);
+    }
+  }
+}
+genFusedBranches();
+
 // The first six handlers were written by hand to prove the gate; genAlu()
 // covers every form they did and forty more, so they are gone rather than
 // kept as a second definition of the same arithmetic.
@@ -4303,6 +4365,10 @@ function emit(variant, opts = {}) {
 module.exports = {
   emit, HANDLERS, VARIANTS: Object.keys(VARIANTS), helpers, LOCALS, STATE,
   EXTRA_GLOBALS,
+  // The compiler walks a finished block op by op to find a fusable tail, which
+  // it can only do if it knows how many operand words each handler eats.
+  ARITY: HANDLERS.map(x => x.args),
+  FUSE,
 };
 
 // CLI: dump one variant's WAT, for eyeballing or for handing to wat2wasm.
