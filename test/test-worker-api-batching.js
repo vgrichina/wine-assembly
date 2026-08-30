@@ -22,6 +22,7 @@ const sigs = {
   log: { params: ['i32', 'i32'], results: [] },
   log_i32: { params: ['i32'], results: [] },
   log_api_exit: { params: [], results: [] },
+  dx_trace: { params: ['i32', 'i32', 'i32', 'i32', 'i32'], results: [] },
 };
 
 let posted = 0;
@@ -36,6 +37,13 @@ assert.strictEqual(posted, 0,
   'trace-disabled API hooks must not post messages to the browser');
 assert.deepStrictEqual(quiet.stats, { sync: 0, async: 0, local: 3 },
   'suppressed hooks are reported as Worker-local work');
+
+const beforeDx = posted;
+quiet.imports.host.dx_trace(15, 7, 4, 0x1c4, 12);
+assert.strictEqual(posted, beforeDx + 1,
+  'D3D trace values use ordered fire-and-forget Worker transport');
+assert.deepStrictEqual(quiet.stats, { sync: 0, async: 1, local: 3 },
+  'D3D trace must never add a synchronous Worker round trip');
 
 const tracedMessages = [];
 const traced = RPC.createWorkerImports(memory, sigs, message => tracedMessages.push(message), {
