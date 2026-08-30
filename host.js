@@ -26,7 +26,7 @@ function claimAudioSession() {
 if (typeof window !== 'undefined') window.claimAudioSession = claimAudioSession;
 
 class WineAssembly {
-  static SOURCE_VERSION = '239';
+  static SOURCE_VERSION = '240';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   static _nextProcessId = 1000;
 
@@ -1258,7 +1258,7 @@ class WineAssembly {
         module: wasmModule,
         sigs,
         hostImports: this._mainImports.host,
-        workerUrl: 'lib/guest-worker.js?v=11',
+        workerUrl: 'lib/guest-worker.js?v=12',
         forwardGlLogs: !!this.verbose || !!(window.__waTraceApiNames && window.__waTraceApiNames.size),
         d3dRenderWorker: window.WINE_D3D_RENDER_WORKER === true,
         log: msg => { console.log(msg); self.logToUI(msg); },
@@ -1354,7 +1354,12 @@ class WineAssembly {
     const _stageable = (typeof DllLoader !== 'undefined' && DllLoader.win16StageableModules) || null;
     if (!_loadWin16Dlls || !_stageable) return;
     const exports = this.instance.exports;
-    if (!exports.load_ne_dll || !exports.is_win16 || !exports.is_win16()) return;
+    if (this.guestWorker) {
+      const state = await this.guestWorker.readExports(['is_win16']);
+      if (!state.is_win16) return;
+    } else if (!exports.load_ne_dll || !exports.is_win16 || !exports.is_win16()) {
+      return;
+    }
 
     const dir = url.replace(/[^\\\/]*$/, '');
     const files = new Map();
@@ -1373,8 +1378,15 @@ class WineAssembly {
     this._win16Modules = new Map(
       [...files].map(([name, bytes]) => [name.toUpperCase(), bytes]));
 
-    _loadWin16Dlls(exports, this.memory, exeBytes, dir,
-      (_dir, name) => files.get(name) || null, (m) => console.log(m));
+    if (this.guestWorker) {
+      const result = await this.guestWorker.loadWin16Dlls(
+        exeBytes, [...files], this._win16ExtraModules || []);
+      for (const line of (result && result.lines) || []) console.log(line);
+    } else {
+      _loadWin16Dlls(exports, this.memory, exeBytes, dir,
+        (_dir, name) => files.get(name) || null, (m) => console.log(m),
+        this._win16ExtraModules || []);
+    }
   }
 
   // Answer a 16-bit LoadLibrary for a module nothing imported, out of what

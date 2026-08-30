@@ -316,11 +316,11 @@ assert(webApp.includes('lib/touch-cursor.js?v=2'), 'web host should cache-bust c
 assert(webApp.includes('lib/thread-manager.js?v=183'), 'web host should cache-bust sparse cooperative thread stacks');
 assert(webApp.includes('lib/compile-wat.js?v=169'), 'web host should cache-bust the snapshot-capable WAT compiler');
 assert(webApp.includes('lib/guest-rpc.js?v=7'), 'web host should cache-bust trace-disabled API batching');
-assert(webApp.includes('lib/guest-thread-host.js?v=6'), 'web host should cache-bust nested Worker wait pumping');
+assert(webApp.includes('lib/guest-thread-host.js?v=7'), 'web host should cache-bust Win16 Worker module loading');
 assert(webApp.includes('lib/dll-loader.js?v=170'), 'web host should cache-bust sparse DllMain stack translation');
 assert(webApp.includes('lib/debug-thread-state.js?v=7'), 'web host should cache-bust live Worker status diagnostics');
-assert(webApp.includes('host.js?v=250'), 'web host should cache-bust host.js after console mouse metadata');
-assert(hostJs.includes("static SOURCE_VERSION = '239'"), 'web host should cache-bust WASM artifacts and WAT source compilation');
+assert(webApp.includes('host.js?v=251'), 'web host should cache-bust host.js after Win16 Worker loading');
+assert(hostJs.includes("static SOURCE_VERSION = '240'"), 'web host should cache-bust WASM artifacts and WAT source compilation');
 assert(hostJs.includes("const fetchOptions = debugFetch ? { cache: 'no-store' } : undefined;"),
   'debug sessions should select a no-store fetch policy');
 assert(hostJs.includes('fetch(`${artifact}?v=${WineAssembly.SOURCE_VERSION}`, fetchOptions)'),

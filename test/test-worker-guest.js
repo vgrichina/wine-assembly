@@ -115,12 +115,42 @@ async function launch(browser, port, app, { threaded }) {
     launchApp();
   }, app);
 
-  await wait(SECONDS * 1000);
+  if (app === 'wep16_rodent') {
+    await page.waitForFunction(name => {
+      const running = (typeof runningApps !== 'undefined')
+        ? runningApps.find(item => item && item.name === name) : null;
+      const wine = running && running.wine;
+      const windows = wine && wine.renderer && wine.renderer.windows
+        ? Object.values(wine.renderer.windows) : [];
+      return !!(wine && wine.guestWorker && wine.guestWorker.sliceStats.slices > 10
+        && windows.filter(win => win && win.visible).length >= 2);
+    }, { timeout: 120000 }, app);
+    await page.waitForFunction(() => {
+      const canvas = document.getElementById('screen');
+      const pixels = canvas.getContext('2d')
+        .getImageData(0, 0, canvas.width, canvas.height).data;
+      let green = 0;
+      for (let i = 0; i < pixels.length; i += 4) {
+        if (pixels[i] < 40 && pixels[i + 1] > 90 && pixels[i + 1] < 180
+            && pixels[i + 2] < 80 && ++green > 10000) return true;
+      }
+      return false;
+    }, { timeout: 60000, polling: 250 });
+  } else {
+    await wait(SECONDS * 1000);
+  }
 
   const state = await page.evaluate(() => {
     const running = (typeof runningApps !== 'undefined' && runningApps[0]) || null;
     const wine = running ? running.wine : null;
     const gw = wine && wine.guestWorker;
+    const canvas = document.getElementById('screen');
+    const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+    let boardGreen = 0;
+    for (let i = 0; i < pixels.length; i += 4) {
+      if (pixels[i] < 40 && pixels[i + 1] > 90 && pixels[i + 1] < 180
+          && pixels[i + 2] < 80) boardGreen++;
+    }
     return {
       threaded: !!gw,
       broker: gw && gw.broker ? gw.broker.stats() : null,
@@ -129,6 +159,7 @@ async function launch(browser, port, app, { threaded }) {
         ? Object.keys(wine.renderer.windows).length : 0,
       titles: wine && wine.renderer && wine.renderer.windows
         ? Object.values(wine.renderer.windows).map(w => w && w.title).filter(Boolean).sort() : [],
+      boardGreen,
     };
   });
 
@@ -303,6 +334,21 @@ async function comLoadDllProbe(browser, port) {
       check(worker.problems.length === 0, `${app}: no errors in worker mode`,
         worker.problems.slice(0, 2).join(' | '));
     }
+
+    // Win16 is not a cooperative exception to the switch. Its NE image, DLL
+    // selector arena and far-import fixups must all be initialized inside slot
+    // 0's Worker instance; loading those DLLs into the idle main-thread token
+    // used to trap RODENT at its first VBRUN100 far jump (EIP 0x100010).
+    const win16 = await launch(browser, port, 'wep16_rodent', { threaded: true });
+    check(win16.state.threaded, 'Win16 main task stays in the guest Worker');
+    check(win16.state.slices > 10, 'Win16 Worker executes past NE startup',
+      `slices=${win16.state.slices}`);
+    check(win16.state.windows >= 8, 'Win16 Worker creates the Rodent board windows',
+      `windows=${win16.state.windows}`);
+    check(win16.state.boardGreen > 10000, 'Win16 Worker renders the live Rodent board',
+      `green=${win16.state.boardGreen}`);
+    check(win16.problems.length === 0, 'Win16 Worker has no trap or missing import',
+      win16.problems.slice(0, 2).join(' | '));
 
     // Phase 2. Skipped rather than failed without the binary, like the CLI audio
     // test: winamp.exe and demo.mp3 are not in every checkout.

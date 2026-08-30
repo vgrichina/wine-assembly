@@ -41,7 +41,7 @@ try {
     '--quiet-api', '--quiet-blocks', '--trace-fs',
     '--input=2500:mousedown:155:38,2501:mouseup:155:38,' +
       '2700:mousedown:165:58,2701:mouseup:165:58,' +
-      `4000:png:${framePath},4100:stop`,
+      `3000:dump-windows:rodent,4000:png:${framePath},4100:stop`,
   );
 
   let output;
@@ -67,6 +67,9 @@ try {
   }
   assert.match(output, /mousedown 165,58 at batch 2700/,
     'Game > New Game must travel through real menu input');
+  assert.match(output,
+    /window:rodent hwnd=65540 .* visible=true .*title="Rodent's Revenge 2000(?: - Level 1)?"/,
+    'VB6 visible form must retain its DefWindowProc WM_SETTEXT caption');
   assert(fs.existsSync(framePath), 'Rodent2000 did not capture its New Game frame');
 
   const png = PNG.sync.read(fs.readFileSync(framePath));

@@ -29,6 +29,18 @@ Options `253,71`, Help `300,71`; Game popup items at y = 92 / 112 / 133 / 173.
 A 16-bit app reports **0 API calls** and prints no host census when it is
 healthy — that is not a sign of a dead run.
 
+## Browser Worker startup (fixed 2026-08-30)
+
+With the experimental **Threads** switch enabled, the NE executable was loaded
+in slot 0's Worker but its NE DLLs were loaded into the idle main-thread WASM
+instance. That split the selector/module state: RODENT's first far import into
+VBRUN100 remained unresolved and trapped at `EIP=0x100010`.
+
+The guest-worker protocol now runs `loadWin16Dlls` beside the instance that
+loaded the NE task. Its `VBRUN100` selector, app-local modules, and far-import
+fixups therefore share one arena. `test/test-worker-guest.js` keeps Threads on,
+requires the Worker backend, and checks the rendered green Rodent board.
+
 ## Menu inventory and what each item does
 
 Driven by click, item by item, on 2026-08-25. `menu-sweep.js` cannot do this

@@ -2399,6 +2399,7 @@
 
   ;; 78: DefWindowProcA
   (func $handle_DefWindowProcA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $text_wa i32) (local $text_len i32)
     ;; USER's built-in BUTTON class has an internal default procedure. Native
     ;; comctl32 property sheets temporarily subclass their navigation buttons,
     ;; then restore a tiny DefWindowProcA thunk; treat that thunk as the class
@@ -2416,6 +2417,24 @@
     ;; depends on this result for its 640x480 front-end window.
     (if (i32.eq (local.get $arg1) (i32.const 0x0081))
       (then
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    ;; WM_SETTEXT (0x0C): DefWindowProc owns ordinary window captions. VB6
+    ;; sends this directly to the visible Thunder form after assigning the
+    ;; application title to its hidden ThunderRT6Main owner; ignoring it leaves
+    ;; a fully working form with a blank title bar.
+    (if (i32.eq (local.get $arg1) (i32.const 0x000C))
+      (then
+        (if (local.get $arg3)
+          (then
+            (local.set $text_wa (call $g2w (local.get $arg3)))
+            (local.set $text_len (call $guest_strlen (local.get $arg3)))))
+        (call $title_table_set
+          (local.get $arg0) (local.get $text_wa) (local.get $text_len))
+        (call $nc_flags_set (local.get $arg0) (i32.const 1))
+        (call $defwndproc_do_ncpaint (local.get $arg0))
+        (call $host_set_window_text (local.get $arg0) (local.get $text_wa))
         (global.set $eax (i32.const 1))
         (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
         (return)))

@@ -42,3 +42,10 @@ NULL, and OLEAUT32 translated that into `E_OUTOFMEMORY` (`0x8007000e`).
 the color bitmap. `test/test-cursor-icon-indirect.js` passes deliberately dirty
 high bits (`0x00200001` planes and `0x5a000020` depth) and requires a valid
 32-bpp icon, matching the real OLEAUT32 call rather than a sanitized surrogate.
+
+The initial black page is the remake's authored credits screen, not a failed
+board render. Its blank visible caption was separate: VB6 sends `WM_SETTEXT`
+through `DefWindowProcA` on the Thunder form, and the default procedure did not
+yet implement that message. It now stores, paints, and mirrors the caption;
+the gameplay test requires `Rodent's Revenge 2000` (or its active Level suffix)
+on the visible form before accepting the dealt board.
