@@ -673,7 +673,7 @@
       (then (local.set $max (i32.const 0))))
     (local.get $max))
 
-  (func $tv_scroll_to_for_h (param $h i32) (param $row i32) (result i32)
+  (func $tv_scroll_to_for_h (param $hwnd i32) (param $h i32) (param $row i32) (result i32)
     (local $max i32)
     (local.set $max (call $tv_max_scroll_for_h (local.get $h)))
     (if (i32.lt_s (local.get $row) (i32.const 0))
@@ -681,6 +681,9 @@
     (if (i32.gt_s (local.get $row) (local.get $max))
       (then (local.set $row (local.get $max))))
     (call $tv_view_set_row (local.get $row))
+    (call $scroll_publish_vertical_info
+      (local.get $hwnd) (local.get $row)
+      (call $tv_visible_count) (call $tv_visible_rows_for_h (local.get $h)))
     (local.get $row))
 
   (func $tv_scroll_by (param $hwnd i32) (param $delta i32) (result i32)
@@ -690,6 +693,7 @@
     (local.set $old_row (call $tv_view_row))
     (local.set $new_row
       (call $tv_scroll_to_for_h
+        (local.get $hwnd)
         (local.get $h)
         (i32.add (local.get $old_row) (local.get $delta))))
     (if (i32.ne (local.get $new_row) (local.get $old_row))
@@ -1114,7 +1118,8 @@
                 (i32.const 0) (local.get $max)))
             (if (i32.ne (local.get $new_row) (call $tv_view_row))
               (then
-                (call $tv_view_set_row (local.get $new_row))
+                (drop (call $tv_scroll_to_for_h
+                  (local.get $hwnd) (local.get $h) (local.get $new_row)))
                 (call $paint_flag_set_inv (local.get $hwnd))
                 (call $treeview_paint_wat (local.get $hwnd))))))
         (return (i32.const 1))))
@@ -1315,9 +1320,11 @@
       (then (local.set $max_scroll (i32.const 0))))
     (if (i32.gt_s (local.get $max_scroll) (i32.const 0))
       (then
-        (drop (call $tv_scroll_to_for_h (local.get $h) (call $tv_view_row))))
+        (drop (call $tv_scroll_to_for_h
+          (local.get $hwnd) (local.get $h) (call $tv_view_row))))
       (else
-        (call $tv_view_set_row (i32.const 0))))
+        (drop (call $tv_scroll_to_for_h
+          (local.get $hwnd) (local.get $h) (i32.const 0)))))
     (local.set $first_row (call $tv_view_row))
     (local.set $content_right (local.get $w))
     (if (i32.gt_s (local.get $max_scroll) (i32.const 0))
@@ -1549,6 +1556,7 @@
             (local.set $old_row (call $tv_view_row))
             (local.set $new_row
               (call $tv_scroll_to_for_h
+                (local.get $hwnd)
                 (local.get $h)
                 (i32.shr_s (local.get $wParam) (i32.const 16))))
             (if (i32.ne (local.get $new_row) (local.get $old_row))

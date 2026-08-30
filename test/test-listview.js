@@ -625,6 +625,11 @@ async function main() {
   e.send_message(lv, WM_MOUSEWHEEL, (-120 << 16), 0);
   check('mouse wheel scrolls down 3 rows', e.listview_get_top_index(lv) === 3);
   check('LVM_GETTOPINDEX follows wheel scroll', e.send_message(lv, LVM_GETTOPINDEX, 0, 0) === 3);
+  check('standard scrollbar state follows the ListView viewport',
+    e.standard_scroll_pos(lv, 1) === 3 &&
+      e.standard_scroll_min(lv, 1) === 0 &&
+      e.standard_scroll_max(lv, 1) === 11 &&
+      e.standard_scroll_page(lv, 1) === 4);
   const pos5 = getPoint(LVM_GETITEMPOSITION, 5);
   check('LVM_GETITEMPOSITION returns scrolled report y', pos5.ok === 1 && pos5.x === 0 && pos5.y === 50, JSON.stringify(pos5));
   check('LVM_SETITEMPOSITION is accepted as report no-op', e.send_message(lv, LVM_SETITEMPOSITION, 5, makeLParam(33, 44)) === 1);
@@ -693,6 +698,8 @@ async function main() {
 
   e.send_message(lv, WM_VSCROLL, (6 << 16) | SB_THUMBTRACK, 0);
   check('WM_VSCROLL thumb track sets top index', e.listview_get_top_index(lv) === 6);
+  check('standard scrollbar position follows ListView thumb track',
+    e.standard_scroll_pos(lv, 1) === 6);
 
   e.send_message(lv, WM_LBUTTONDOWN, 1, makeLParam(212, 45));
   e.send_message(lv, WM_MOUSEMOVE, 1, makeLParam(212, 65));

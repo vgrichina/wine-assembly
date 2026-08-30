@@ -6793,7 +6793,7 @@
     (i32.store8 (i32.add (local.get $dest_w) (local.get $len)) (i32.const 0))
     (local.get $len))
 
-  (func $lv_clear_items (param $sw i32)
+  (func $lv_clear_items (param $hwnd i32) (param $sw i32)
     (local $count i32) (local $i i32) (local $sub i32) (local $cell i32) (local $ptr i32)
     (local.set $count (call $lv_item_count (local.get $sw)))
     (local.set $i (i32.const 0))
@@ -6812,7 +6812,8 @@
       (br $items)))
     (call $lv_set_item_count (local.get $sw) (i32.const 0))
     (call $lv_set_selected (local.get $sw) (i32.const -1))
-    (call $lv_set_top_index (local.get $sw) (i32.const 0)))
+    (drop (call $lv_scroll_to_for_h
+      (local.get $hwnd) (local.get $sw) (call $ctrl_get_h (local.get $hwnd)) (i32.const 0))))
 
   (func $lv_free_row_text (param $sw i32) (param $idx i32)
     (local $sub i32) (local $cell i32) (local $ptr i32)
@@ -6853,7 +6854,8 @@
     (if (i32.gt_s (local.get $selected) (local.get $idx))
       (then (call $lv_set_selected (local.get $sw) (i32.sub (local.get $selected) (i32.const 1)))))
     (local.set $h (call $ctrl_get_h (local.get $hwnd)))
-    (drop (call $lv_scroll_to_for_h (local.get $sw) (local.get $h) (call $lv_top_index (local.get $sw))))
+    (drop (call $lv_scroll_to_for_h
+      (local.get $hwnd) (local.get $sw) (local.get $h) (call $lv_top_index (local.get $sw))))
     (call $paint_flag_set_inv (local.get $hwnd))
     (i32.const 1))
 
@@ -6926,7 +6928,7 @@
     (call $paint_flag_set_inv (local.get $hwnd))
     (i32.const 1))
 
-  (func $lv_scroll_to_for_h (param $sw i32) (param $h i32) (param $row i32) (result i32)
+  (func $lv_scroll_to_for_h (param $hwnd i32) (param $sw i32) (param $h i32) (param $row i32) (result i32)
     (local $max i32)
     (local.set $max (call $lv_max_scroll_for_h (local.get $sw) (local.get $h)))
     (if (i32.lt_s (local.get $row) (i32.const 0))
@@ -6934,6 +6936,10 @@
     (if (i32.gt_s (local.get $row) (local.get $max))
       (then (local.set $row (local.get $max))))
     (call $lv_set_top_index (local.get $sw) (local.get $row))
+    (call $scroll_publish_vertical_info
+      (local.get $hwnd) (local.get $row)
+      (call $lv_item_count (local.get $sw))
+      (call $lv_visible_rows_for_h (local.get $sw) (local.get $h)))
     (local.get $row))
 
   (func $lv_scroll_by (param $hwnd i32) (param $delta i32) (result i32)
@@ -6947,7 +6953,7 @@
     (local.set $old_top (call $lv_top_index (local.get $sw)))
     (local.set $new_top
       (call $lv_scroll_to_for_h
-        (local.get $sw) (local.get $h)
+        (local.get $hwnd) (local.get $sw) (local.get $h)
         (i32.add (local.get $old_top) (local.get $delta))))
     (if (i32.ne (local.get $new_top) (local.get $old_top))
       (then (call $paint_flag_set_inv (local.get $hwnd))))
@@ -7308,7 +7314,7 @@
         (if (local.get $state)
           (then
             (local.set $sw (call $g2w (local.get $state)))
-            (call $lv_clear_items (local.get $sw))
+            (call $lv_clear_items (local.get $hwnd) (local.get $sw))
             (call $lv_clear_columns (local.get $sw))
             (call $heap_free (call $lv_cells_ptr (local.get $sw)))
             (call $heap_free (call $lv_col_widths_ptr (local.get $sw)))
@@ -7453,7 +7459,7 @@
         (return (call $lv_delete_item (local.get $hwnd) (local.get $sw) (local.get $wParam)))))
     (if (i32.eq (local.get $msg) (i32.const 0x1009))
       (then
-        (call $lv_clear_items (local.get $sw))
+        (call $lv_clear_items (local.get $hwnd) (local.get $sw))
         (call $paint_flag_set_inv (local.get $hwnd))
         (return (i32.const 1))))
 
@@ -7492,6 +7498,7 @@
         (if (i32.ge_s (call $lv_selected (local.get $sw)) (local.get $wParam))
           (then (call $lv_set_selected (local.get $sw) (i32.const -1))))
         (drop (call $lv_scroll_to_for_h
+          (local.get $hwnd)
           (local.get $sw)
           (call $ctrl_get_h (local.get $hwnd))
           (call $lv_top_index (local.get $sw))))
@@ -8128,11 +8135,12 @@
         (local.set $top (call $lv_top_index (local.get $sw)))
         (local.set $visible (call $lv_visible_rows_for_h (local.get $sw) (local.get $h)))
         (if (i32.lt_s (local.get $idx) (local.get $top))
-          (then (drop (call $lv_scroll_to_for_h (local.get $sw) (local.get $h) (local.get $idx)))))
+          (then (drop (call $lv_scroll_to_for_h
+            (local.get $hwnd) (local.get $sw) (local.get $h) (local.get $idx)))))
         (if (i32.ge_s (local.get $idx) (i32.add (local.get $top) (local.get $visible)))
           (then
             (drop (call $lv_scroll_to_for_h
-              (local.get $sw) (local.get $h)
+              (local.get $hwnd) (local.get $sw) (local.get $h)
               (i32.sub (i32.add (local.get $idx) (i32.const 1)) (local.get $visible))))))
         (call $paint_flag_set_inv (local.get $hwnd))
         (return (i32.const 1))))
@@ -8220,7 +8228,7 @@
           (then
             (local.set $h (call $ctrl_get_h (local.get $hwnd)))
             (drop (call $lv_scroll_to_for_h
-              (local.get $sw) (local.get $h)
+              (local.get $hwnd) (local.get $sw) (local.get $h)
               (i32.shr_s (local.get $wParam) (i32.const 16))))
             (call $paint_flag_set_inv (local.get $hwnd))))
         (if (i32.eq (local.get $code) (i32.const 6))
@@ -8280,7 +8288,8 @@
                     (i32.const 0) (local.get $max)))
                 (if (i32.ne (local.get $new_top) (call $lv_top_index (local.get $sw)))
                   (then
-                    (call $lv_set_top_index (local.get $sw) (local.get $new_top))
+                    (drop (call $lv_scroll_to_for_h
+                      (local.get $hwnd) (local.get $sw) (local.get $h) (local.get $new_top)))
                     (call $paint_flag_set_inv (local.get $hwnd))))))
             (return (i32.const 1))))
         (return (i32.const 0))))
@@ -8399,9 +8408,11 @@
           (then (local.set $max (i32.const 0))))
         (if (i32.gt_s (local.get $max) (i32.const 0))
           (then
-            (drop (call $lv_scroll_to_for_h (local.get $sw) (local.get $h) (call $lv_top_index (local.get $sw)))))
+            (drop (call $lv_scroll_to_for_h
+              (local.get $hwnd) (local.get $sw) (local.get $h) (call $lv_top_index (local.get $sw)))))
           (else
-            (call $lv_set_top_index (local.get $sw) (i32.const 0))))
+            (drop (call $lv_scroll_to_for_h
+              (local.get $hwnd) (local.get $sw) (local.get $h) (i32.const 0)))))
         (local.set $top (call $lv_top_index (local.get $sw)))
         (local.set $header_h (call $lv_header_h (local.get $sw)))
         (local.set $content_right (local.get $w))

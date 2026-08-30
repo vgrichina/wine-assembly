@@ -1581,6 +1581,26 @@
     (i32.add (call $scroll_aux_addr (local.get $slot))
              (select (i32.const 8) (i32.const 0) (local.get $vert))))
 
+  ;; Publish a control-owned vertical viewport through the standard Win32
+  ;; scrollbar APIs. Common controls keep their row state privately, but
+  ;; GetScrollPos/GetScrollRange/GetScrollInfo still read these shared tables.
+  (func $scroll_publish_vertical_info (param $hwnd i32) (param $pos i32)
+      (param $total i32) (param $visible i32)
+    (local $slot i32) (local $base i32) (local $aux i32)
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.lt_s (local.get $slot) (i32.const 0)) (then (return)))
+    (if (i32.lt_s (local.get $total) (i32.const 1))
+      (then (local.set $total (i32.const 1))))
+    (if (i32.lt_s (local.get $visible) (i32.const 1))
+      (then (local.set $visible (i32.const 1))))
+    (local.set $base (call $scroll_bar_addr (local.get $slot) (i32.const 1)))
+    (local.set $aux (call $scroll_aux_bar_addr (local.get $slot) (i32.const 1)))
+    (i32.store          (local.get $base) (local.get $pos))
+    (i32.store offset=4 (local.get $base) (i32.const 0))
+    (i32.store offset=8 (local.get $base) (i32.sub (local.get $total) (i32.const 1)))
+    (i32.store          (local.get $aux) (local.get $visible))
+    (i32.store offset=4 (local.get $aux) (local.get $pos)))
+
   ;; Zero one slot's scroll state. Called from the slot-reset path so a reused
   ;; hwnd does not inherit the previous window's scroll range.
   (func $scroll_reset_slot (param $slot i32)

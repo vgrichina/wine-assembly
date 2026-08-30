@@ -146,6 +146,11 @@ async function main() {
   e.send_message(tv, WM_MOUSEWHEEL, (-120 << 16), 0);
   check('mouse wheel scrolls down 3 rows', e.treeview_get_first_visible_row() === 3);
   check('TVGN_FIRSTVISIBLE follows wheel scroll', firstVisibleHandle() === handles[3]);
+  check('standard scrollbar state follows the TreeView viewport',
+    e.standard_scroll_pos(tv, 1) === 3 &&
+      e.standard_scroll_min(tv, 1) === 0 &&
+      e.standard_scroll_max(tv, 1) === 11 &&
+      e.standard_scroll_page(tv, 1) === 4);
 
   e.send_message(tv, WM_LBUTTONDOWN, 1, makeLParam(152, 60));
   e.send_message(tv, WM_LBUTTONUP, 0, makeLParam(152, 60));
@@ -157,6 +162,8 @@ async function main() {
 
   e.send_message(tv, WM_VSCROLL, (6 << 16) | SB_THUMBTRACK, 0);
   check('WM_VSCROLL thumb track sets first visible row', e.treeview_get_first_visible_row() === 6);
+  check('standard scrollbar position follows TreeView thumb track',
+    e.standard_scroll_pos(tv, 1) === 6);
 
   const ht = e.guest_alloc(16);
   const htp = wa(ht);
