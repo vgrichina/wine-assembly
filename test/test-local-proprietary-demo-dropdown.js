@@ -17,7 +17,13 @@ function urlOf(file) {
   return typeof file === 'string' ? file : file.url;
 }
 
-for (const id of ['deus_ex_demo', 'icewind_dale_demo']) {
+const proprietaryLocalIds = [
+  'deus_ex_demo', 'icewind_dale_demo',
+  'baldurs_gate_noninteractive_demo', 'baldurs_gate_interactive_demo',
+  'baldurs_gate_chapters_1_2_demo',
+];
+
+for (const id of proprietaryLocalIds) {
   assert(localIds.has(id), `${id} is shown by the localhost-only dropdown`);
   assert(!publicIds.has(id), `${id} is not exposed on the deployed desktop`);
   assert(!debugIds.has(id), `${id} is not duplicated in the debug-only list`);
@@ -102,8 +108,45 @@ const icewindOverrideWavs = icewind.files.filter(file =>
 assert.strictEqual(icewindOverrideWavs.length, 188,
   'Icewind Dale mounts every loose demo narration/NPC voice that replaces the absent retail SNDVO archive');
 
+const baldursNoninteractive = APPS.baldurs_gate_noninteractive_demo;
+assert.strictEqual(baldursNoninteractive.exe,
+  'test/binaries/candidates/baldurs-gate-noninteractive-demo/Baldur.exe');
+for (const vfsPath of [
+  'c:\\CHITIN.KEY', 'c:\\NID.bif', 'c:\\NID2.bif',
+  'c:\\Music\\sst1\\sst1a.acm',
+]) {
+  assert(baldursNoninteractive.files.some(file => file.vfsPath === vfsPath),
+    `Baldur non-interactive manifest mounts ${vfsPath}`);
+}
+
+const baldursInteractive = APPS.baldurs_gate_interactive_demo;
+assert.strictEqual(baldursInteractive.exe,
+  'test/binaries/candidates/baldurs-gate-interactive-demo/installed-extracted/MinimumData/BGDemo.exe');
+for (const vfsPath of [
+  'c:\\Chitin.key', 'c:\\dialog.tlk', 'c:\\data\\Areas.bif',
+  'c:\\data\\Gui.bif', 'c:\\CD1\\data\\AREA2600.bif',
+  'c:\\CD1\\Movies\\Movies.bif', 'c:\\Scripts\\default.bs',
+]) {
+  assert(baldursInteractive.files.some(file => file.vfsPath === vfsPath),
+    `Baldur interactive manifest mounts ${vfsPath}`);
+}
+
+const baldursChapters = APPS.baldurs_gate_chapters_1_2_demo;
+assert.strictEqual(baldursChapters.exe,
+  'test/binaries/candidates/baldurs-gate-chapters-1-2-demo/installed-extracted/MinimumData/BGMain.exe');
+for (const vfsPath of [
+  'c:\\Chitin.key', 'c:\\dialog.tlk', 'c:\\data\\AreasVE.bif',
+  'c:\\data\\Gui.bif', 'c:\\cd1\\data\\AREA2600.bif',
+  'c:\\cd1\\movies\\Movies.bif', 'c:\\Override\\WorldMap.WMP',
+]) {
+  assert(baldursChapters.files.some(file => file.vfsPath === vfsPath),
+    `Baldur Chapters I & II manifest mounts ${vfsPath}`);
+}
+assert.deepStrictEqual(baldursInteractive.persistFiles, baldursChapters.persistFiles,
+  'both playable Baldur previews persist character and save-game state');
+
 // If the ignored fixtures are present, every dropdown fetch must resolve now.
-for (const id of ['deus_ex_demo', 'icewind_dale_demo']) {
+for (const id of proprietaryLocalIds) {
   if (!fs.existsSync(path.join(root, APPS[id].exe))) continue;
   for (const file of [...APPS[id].files, ...(APPS[id].dlls || [])]) {
     assert(fs.existsSync(path.join(root, urlOf(file))),
@@ -139,4 +182,13 @@ assert.deepStrictEqual(icewind.persistFiles, [
   'c:\\characters\\*.chr', 'c:\\characters\\*.res',
   'c:\\save\\*', 'c:\\mpsave\\*',
 ], 'Icewind Dale persists only authored character and save-game state');
-console.log('PASS  Deus Ex and Icewind Dale are complete localhost-only dropdown apps');
+for (const candidateId of [
+  'baldurs-gate-noninteractive-demo',
+  'baldurs-gate-interactive-demo',
+  'baldurs-gate-chapters-1-2-demo',
+]) {
+  const recipe = manifest.candidates.find(candidate => candidate.id === candidateId);
+  assert(recipe && recipe.localOnly,
+    `${candidateId} fetch recipe remains local-only`);
+}
+console.log('PASS  proprietary previews are complete localhost-only dropdown apps');
