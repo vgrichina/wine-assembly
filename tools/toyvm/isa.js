@@ -191,7 +191,29 @@ const HIST_BASE = (CODE_BITMAP + CODE_BITMAP_SIZE + 0xFFFF) & ~0xFFFF;
 const HIST_PAIRS = HIST_BASE + HIST_SLOTS * 4;     // [prev * HIST_SLOTS + cur]
 const HIST_SIZE = HIST_SLOTS * 4 + HIST_SLOTS * HIST_SLOTS * 4;
 
-const MEM_PAGES = ((HIST_BASE + HIST_SIZE + 0xFFFF) & ~0xFFFF) >> 16;
+// The wasm decoder's constant tables and its scratch. See
+// docs/toyvm-decoder-in-wasm.md.
+//
+// DEC_TAB holds tables generated from the same JS tables decode.js decodes
+// with -- (alu op, form, operand size) -> handler index, and the sixteen Jcc
+// handlers in tttn order -- so the two decoders cannot drift apart in the one
+// place a decoder is most likely to: which handler an encoding names.
+//
+// The rest is what a block compile hands back to the host cache, which keeps it
+// in JS objects: the branch fixups to resolve, and the byte ranges it decoded
+// (those feed CODE_BITMAP). There is no pending-block list here on purpose --
+// the worklist stays in compile.js, which already has one and owns the cache the
+// answers go into. Both are fixed-size and overrunning one stops the block,
+// which costs a JS compile: the thing that was going to happen anyway.
+const DEC_TAB = (HIST_BASE + HIST_SIZE + 0xFFFF) & ~0xFFFF;
+const DEC_TAB_SIZE = 0x1000;
+const DEC_FIXUPS = DEC_TAB + DEC_TAB_SIZE;              // [wordIndex, ip] pairs
+const DEC_FIXUPS_MAX = 8192;
+const DEC_COVERED = DEC_FIXUPS + DEC_FIXUPS_MAX * 8;    // [from, to) linear
+const DEC_COVERED_MAX = 4096;
+const DEC_END = DEC_COVERED + DEC_COVERED_MAX * 8;
+
+const MEM_PAGES = ((DEC_END + 0xFFFF) & ~0xFFFF) >> 16;
 
 // Effective-address kinds, in ModRM rm order for mod != 11. Kind 8 is the
 // mod=00,rm=110 special case: a bare disp16 with no base at all.
@@ -227,5 +249,7 @@ module.exports = {
   VGA_PLANES, VGA_PLANE_SIZE, VGA_KEY_OFF, VGA_KEY_ON,
   VESA_FB, VESA_FB_SIZE,
   CODE_BITMAP, CODE_BITMAP_SIZE,
+  DEC_TAB, DEC_TAB_SIZE, DEC_FIXUPS, DEC_FIXUPS_MAX,
+  DEC_COVERED, DEC_COVERED_MAX, DEC_END,
   EA, EA_DEFAULT_SEG, EA_A32,
 };

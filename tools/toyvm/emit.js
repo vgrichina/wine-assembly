@@ -3617,7 +3617,7 @@ function helpers() {
                         (i32.eq (i32.load offset=12 (local.get $a)) (global.get $csb))))
     (then (return (i32.load offset=8 (local.get $a)))))
   (i32.const 0))
-${SHIFT_FNS.join('')}${fpuHelpers()}`;
+${SHIFT_FNS.join('')}${fpuHelpers()}${require('./emit-decoder').decoderWat()}`;
   return s;
 }
 
@@ -4255,13 +4255,45 @@ const VARIANTS = {
 // not of how the shell branches, so counting it once in the shipped shell
 // answers the question for all four. A request for it on another shell is an
 // error rather than a silently uninstrumented build.
+// Every top-level (func has to start one level inside (module. A generated
+// function with one paren too many closes the module instead of itself, and
+// lib/compile-wat.js accepts that silently: the functions after it end up
+// outside the module, their bodies are dropped, and calls to them compile to
+// nothing. That is not a crash and not a warning -- it is a decoder that
+// returns zeros. This cost an hour when $dc_modrm did exactly that, so the
+// module is checked before it is ever handed to the compiler.
+//
+// src/*.wat has tools/check-parens.js for this. Generated WAT never reaches
+// that check, so it needs its own.
+function checkNesting(wat) {
+  let depth = 0, line = 1, comment = false;
+  for (let i = 0; i < wat.length; i++) {
+    const c = wat[i];
+    if (c === '\n') { line++; comment = false; continue; }
+    if (comment) continue;
+    if (c === ';' && wat[i + 1] === ';') { comment = true; continue; }
+    if (c === '(') {
+      if (depth === 0 && wat.startsWith('(func ', i)) {
+        throw new Error(`generated WAT line ${line}: a top-level (func starts outside `
+          + `(module -- an earlier function has one close-paren too many`);
+      }
+      depth++;
+    } else if (c === ')') {
+      depth--;
+      if (depth < 0) throw new Error(`generated WAT line ${line}: unbalanced close paren`);
+    }
+  }
+  if (depth !== 0) throw new Error(`generated WAT ends at nesting depth ${depth}, expected 0`);
+  return wat;
+}
+
 function emit(variant, opts = {}) {
   const fn = VARIANTS[variant];
   if (!fn) throw new Error(`unknown variant: ${variant} (have ${Object.keys(VARIANTS).join(', ')})`);
   if (opts.hist && variant !== 'tailcall') {
     throw new Error(`--handler-hist is only implemented for the tailcall shell, not ${variant}`);
   }
-  return fn(opts);
+  return checkNesting(fn(opts));
 }
 
 // helpers/LOCALS/STATE are exported for tools/toyvm/trace-jit.js, which builds
