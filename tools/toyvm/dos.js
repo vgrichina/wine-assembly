@@ -1672,8 +1672,19 @@ class Machine {
     //
     // Only the VM can answer this: the table is wherever LIDT put it, its base
     // is a linear address, and a gate counts only when its present bit is set.
+    //
+    // Vectors under 0x20 are excluded, and that is not caution -- it is what
+    // the numbers MEAN in protected mode. There they are the CPU's own
+    // exceptions, so an extender fills all 32 whatever it thinks of hardware
+    // interrupts, and vector 8, the real-mode timer, is #DF. Treating a present
+    // gate at 8 as "the guest hooked the timer" sends a pmode demo a double
+    // fault every tick: cd2.exe, daretro.exe and AMBIENT.EXE each lost a full
+    // screen of picture to a printed "Exception fault." Where a pmode program
+    // remaps its PIC to is not something we track, so above 0x20 the gate is
+    // the guest's own and below it we stay out.
     const ex = this.vmExports;
-    if (ex && ex.idtgate && ex.get_cr0 && (ex.get_cr0() & 1) && ex.idtgate(v)) {
+    if (v >= 0x20 && ex && ex.idtgate && ex.get_cr0
+      && (ex.get_cr0() & 1) && ex.idtgate(v)) {
       return true;
     }
     const at = v << 2;
