@@ -65,8 +65,18 @@ const run = (label, extra) => {
   return { result, output, events, apiCalls };
 };
 
-const worker = run('worker', ['--threads']);
-const coop = run('cooperative', ['--no-threads']);
+// Exercise values whose old hand-written guest-worker subset dropped. Several
+// are deliberately zero: a default-on decoder feature disabled by the caller
+// must not be mistaken for "nothing to inherit".
+const inheritedFlags = [
+  '--no-mmx', '--fault-null', '--trace-callstack',
+  '--trace-eip-range=ffffffff-ffffffff', '--count=ffffffff',
+  '--no-loop-superops', '--no-lut-superops', '--no-copy-superops',
+  '--no-aoe-fill', '--no-aoe-span', '--no-sib-fusion', '--no-rect-run',
+  '--no-case-chain', '--no-rle-run',
+];
+const worker = run('worker', ['--threads', ...inheritedFlags]);
+const coop = run('cooperative', ['--no-threads', ...inheritedFlags]);
 
 const spawnEvent = worker.events.find(e => e.type === 'spawn');
 const exitEvent = worker.events.find(e => e.type === 'exit');
@@ -74,6 +84,9 @@ const exitEvent = worker.events.find(e => e.type === 'exit');
 // thread's host imports were served.
 const finalLine = (worker.output.match(/^ {2}T1 .*$/m) || [''])[0];
 const rpc = finalLine.match(/rpc=(\d+)sync\/(\d+)async\/(\d+)local/);
+const inheritedLine = (worker.output.match(
+  /^\[guest-worker 1\] inherited WASM globals: (.*)$/m) || [])[1] || '';
+const inheritedSetters = new Set(inheritedLine.split(',').filter(Boolean));
 
 const checks = [
   // A completed run is itself an assertion: a worker parked in Atomics.wait that
@@ -86,6 +99,14 @@ const checks = [
     /\[threads\] guest threads will use the cooperative scheduler \(--no-threads\)/.test(coop.output)],
   ['the guest thread was instantiated in a real OS thread',
     /\[guest-worker 1\] instantiated: \d+ exports, \d+ brokered imports/.test(worker.output)],
+  ['the Worker confirms every requested runtime/debug/decoder global was applied',
+    [
+      'set_cpu_mmx', 'set_fault_unmapped', 'set_callstack_enabled',
+      'set_trace_eip_range', 'set_count', 'set_loop_emit',
+      'set_loop_lut_emit', 'set_loop_copy_emit', 'set_loop_aoe_fill_emit',
+      'set_loop_aoe_span_emit', 'set_sib_fusion', 'set_rect_run',
+      'set_case_chain', 'set_rle_run',
+    ].every(setter => inheritedSetters.has(setter))],
   ['the scheduler reports the worker backend',
     !!spawnEvent && spawnEvent.backend === 'worker'],
   ['the thread started at its own entry point, not the main thread\'s',

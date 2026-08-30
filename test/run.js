@@ -12,7 +12,10 @@ const {
   applyLaunchPreferences: applyProfileLaunchPrefs,
   onThreadExit: profileThreadExit,
 } = require('../lib/app-profiles');
-const { processSharedCtx, adoptThreadPrimitives, makeWorkerApiLogger } = require('../lib/worker-imports');
+const {
+  processSharedCtx, adoptThreadPrimitives, makeWorkerApiLogger,
+  createInheritedWasmGlobals, recordInheritedWasmGlobal,
+} = require('../lib/worker-imports');
 const { seedExeImage, win16FileCandidates } = require('../lib/vfs-seed');
 const { expandIncludePatterns } = require('../lib/vfs-host-files');
 const { saveVfsToHost } = require('../lib/vfs-export');
@@ -189,8 +192,6 @@ const COPY_SUPEROPS = hasFlag('copy-superops');
 const NO_COPY_SUPEROPS = hasFlag('no-copy-superops');
 const NO_AOE_FILL = hasFlag('no-aoe-fill');
 const NO_AOE_SPAN = hasFlag('no-aoe-span');
-const ANY_LOOP_FLAG = LOOP_SUPEROPS || NO_LOOP_SUPEROPS || LUT_SUPEROPS
-  || NO_LUT_SUPEROPS || COPY_SUPEROPS || NO_COPY_SUPEROPS;
 // --no-sib-fusion: decode indexed SIB memory operands as the unfused
 // compute_ea_sib + consumer pair. On by default in the module; this is the
 // A/B partner, so a fusion's op-count delta and its wall-clock effect can be
@@ -3334,6 +3335,23 @@ async function main() {
     return true;
   };
 
+  const inheritedWasmGlobals = createInheritedWasmGlobals();
+  const inheritWasm = (setter, ...args) =>
+    recordInheritedWasmGlobal(inheritedWasmGlobals, setter, args);
+  if (TRACE_LOOPMATCH) inheritWasm('set_loop_trace', 1, TRACE_LOOPMATCH_EIP);
+  if (LOOP_SUPEROPS) inheritWasm('set_loop_emit', 1);
+  if (NO_LOOP_SUPEROPS) inheritWasm('set_loop_emit', 0);
+  if (LUT_SUPEROPS) inheritWasm('set_loop_lut_emit', 1);
+  if (NO_LUT_SUPEROPS) inheritWasm('set_loop_lut_emit', 0);
+  if (COPY_SUPEROPS) inheritWasm('set_loop_copy_emit', 1);
+  if (NO_COPY_SUPEROPS) inheritWasm('set_loop_copy_emit', 0);
+  if (NO_AOE_FILL) inheritWasm('set_loop_aoe_fill_emit', 0);
+  if (NO_AOE_SPAN) inheritWasm('set_loop_aoe_span_emit', 0);
+  if (NO_SIB_FUSION) inheritWasm('set_sib_fusion', 0);
+  if (NO_RECT_RUN) inheritWasm('set_rect_run', 0);
+  if (NO_CASE_CHAIN) inheritWasm('set_case_chain', 0);
+  if (NO_RLE_RUN) inheritWasm('set_rle_run', 0);
+
   threadManager = new ThreadManager(wasmModule, memory, instance, makeWorkerImports, {
     workerBackend: guestThreadHost,
     serialSlices: THREADS_SERIAL,
@@ -3346,6 +3364,7 @@ async function main() {
     traceEipRange: (traceEipOn && traceEipArmed) ? { lo: traceEipLo, hi: traceEipHi } : null,
     countAddrs: countAddrs,
     faultUnmapped: FAULT_NULL,
+    inheritedWasmGlobals,
     now: () => (tickState.batch * TICK_MS_PER_BATCH) | 0,
     hasMessage: () => !!(
       inputEvent ||
@@ -7427,33 +7446,6 @@ async function main() {
     // Thread management: spawn pending threads, run worker slices
     if (threadManager._pendingThreads.length) {
       await threadManager.spawnPending();
-      // A worker is a separate WASM instance: its decoder globals start at the
-      // module defaults, so the loop-idiom flags have to be re-applied per
-      // thread or they only ever affect main.
-      if (TRACE_LOOPMATCH || ANY_LOOP_FLAG) {
-        for (const [, t] of threadManager.threads) {
-          const e = t.instance && t.instance.exports;
-          if (!e || t._loopFlagsArmed) continue;
-          t._loopFlagsArmed = true;
-          if (TRACE_LOOPMATCH && e.set_loop_trace) e.set_loop_trace(1, TRACE_LOOPMATCH_EIP);
-          if (LOOP_SUPEROPS && e.set_loop_emit) e.set_loop_emit(1);
-          if (NO_LOOP_SUPEROPS && e.set_loop_emit) e.set_loop_emit(0);
-          if (LUT_SUPEROPS && e.set_loop_lut_emit) e.set_loop_lut_emit(1);
-          if (NO_LUT_SUPEROPS && e.set_loop_lut_emit) e.set_loop_lut_emit(0);
-          if (COPY_SUPEROPS && e.set_loop_copy_emit) e.set_loop_copy_emit(1);
-          if (NO_COPY_SUPEROPS && e.set_loop_copy_emit) e.set_loop_copy_emit(0);
-          if (NO_AOE_FILL && e.set_loop_aoe_fill_emit) e.set_loop_aoe_fill_emit(0);
-          if (NO_AOE_SPAN && e.set_loop_aoe_span_emit) e.set_loop_aoe_span_emit(0);
-          // Decoder flags are plain mut globals, so a worker -- a separate
-          // instance over the same memory -- keeps the default until told
-          // otherwise. Without these two an A/B on a threaded app measures
-          // the fused build on both sides.
-          if (NO_SIB_FUSION && e.set_sib_fusion) e.set_sib_fusion(0);
-          if (NO_RECT_RUN && e.set_rect_run) e.set_rect_run(0);
-          if (NO_CASE_CHAIN && e.set_case_chain) e.set_case_chain(0);
-          if (NO_RLE_RUN && e.set_rle_run) e.set_rle_run(0);
-        }
-      }
     }
     if (WORKER_THREADS && threadManager.hasActiveThreads()) {
       // Real threads: every runnable one gets a slice at the same time, and they

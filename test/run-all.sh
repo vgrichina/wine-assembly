@@ -210,6 +210,7 @@ UNIT=(
   test/test-mem-utils-dib-g2w.js
   test/test-process-boot-yields.js
   test/test-worker-imports.js
+  test/test-worker-wasm-globals.js
   test/test-debug-midi.js
   test/test-vfs-seed.js
   test/test-vfs-miss-async.js

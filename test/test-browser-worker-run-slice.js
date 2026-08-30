@@ -55,13 +55,13 @@ assert(hostSource.includes('const activeStepsPerSlice = Math.max(1, (self.stepsP
   'the cooperative host must honor browser-shell slices below 1k');
 assert(hostSource.includes('const configuredSteps = Math.max(1000, (self.stepsPerSlice | 0) || stepsPerSlice);'),
   'the guest-Worker backend should retain its 1k messaging floor');
-assert(indexSource.includes('lib/browser-shell.js?v=17'),
+assert(indexSource.includes('lib/browser-shell.js?v=18'),
   'the page cache-busts the Uplink slice policy');
 assert(shellSource.includes("if (Number(change.data) === 2) applyRendererSlice('opengl');"),
   'Uplink keeps the setup quantum until a real DirectDraw frame selects Software');
 assert(!shellSource.includes("applyRendererSlice(Number(change.data) === 2 ? 'opengl' : 'software')"),
   'the registry write must not throttle Software before renderer restart completes');
-assert(indexSource.includes('host.js?v=251'),
+assert(indexSource.includes('host.js?v=252'),
   'the page cache-busts cooperative slice enforcement');
 
 console.log('PASS browser run-slice policy distinguishes Jazz Worker and cooperative backends');
