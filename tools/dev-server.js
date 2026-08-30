@@ -413,7 +413,19 @@ function createServer(opts) {
   // signaling calls, so they are off unless asked for.
   const verbose = !!(opts && opts.verbose);
   const server = http.createServer((req, res) => {
-    const url = new URL(req.url, 'http://localhost');
+    // Treat every request target as an origin-form path. A browser can retain
+    // a doubled leading slash while resolving `//?debug`; passing that string
+    // straight to URL interprets it as a protocol-relative URL with an empty
+    // host and throws, taking down the entire development server. Collapse
+    // only the leading slash run, then reject any other malformed target on
+    // this request instead of crashing every open emulator tab.
+    const target = String(req.url || '/').replace(/^\/{2,}/, '/');
+    let url;
+    try {
+      url = new URL(target, 'http://localhost');
+    } catch (_) {
+      return sendJson(res, 400, { error: 'malformed request target' });
+    }
 
     // Perf batches arrive ~1/sec and would bury the signaling log, so they
     // are routed before it and print their own one-line summary instead.

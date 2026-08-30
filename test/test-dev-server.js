@@ -127,6 +127,16 @@ async function main() {
       assert.ok(page.text.length > 0);
     });
 
+    const doubledSlash = await alice('GET', '//?debug');
+    check('a doubled-slash page request cannot crash the server', () => {
+      assert.strictEqual(doubledSlash.status, 200);
+      assert.ok(doubledSlash.text.includes('<!DOCTYPE html>'));
+    });
+    const afterDoubledSlash = await alice('GET', '/index.html');
+    check('the server stays alive after a doubled-slash request', () => {
+      assert.strictEqual(afterDoubledSlash.status, 200);
+    });
+
     const escapes = [
       '/../../../../etc/passwd',
       '/%2e%2e/%2e%2e/etc/passwd',
