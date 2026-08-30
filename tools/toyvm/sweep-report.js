@@ -45,12 +45,20 @@ const kind = (r) => (!drew(r) ? 'blank' : ((r.pixels || 0) > 0 ? 'vga' : 'text')
 // The demos whose bytes ship with the page, so their tiles get a Run button.
 // Written by tools/toyvm/bundle-programs.js; absent is fine, and the page is
 // then exactly what it was before -- screenshots.
+// Returns exe path -> the one script holding that demo's bytes. Keyed by path
+// because two rows can share a name (the corpus has two ASYLUM.EXEs) and only
+// one of them is packed. The older bundler wrote a bare array of names because
+// every demo lived in a single programs.js;
+// an array is still accepted so a stale live/ directory downgrades to "no Run
+// buttons" rather than throwing during a rebuild.
 function liveIndex(out) {
   const f = path.join(out, 'live', 'programs-index.json');
   try {
-    return new Set(JSON.parse(fs.readFileSync(f, 'utf8')));
+    const parsed = JSON.parse(fs.readFileSync(f, 'utf8'));
+    if (Array.isArray(parsed)) return new Map();
+    return new Map(Object.entries(parsed));
   } catch {
-    return new Set();
+    return new Map();
   }
 }
 
@@ -79,7 +87,11 @@ function tile(r, file, live) {
   return `<figure class="${k}" data-what="${esc(what.replace(/<\/?b>/g, ''))}"`
     + ` data-geom="${esc(geom)}"`
     + (prod ? ` data-prod="${esc(prod)}"` : '')
-    + (live && live.has(r.name) ? ` data-live="${esc(r.name)}"` : '')
+    // The tile carries the path to its own bytes, so pressing Run loads one
+    // demo instead of all of them -- there is no page-wide manifest to keep in
+    // step with the tiles.
+    + (live && live.has(r.exe)
+      ? ` data-live="${esc(r.name)}" data-live-src="live/${esc(live.get(r.exe))}"` : '')
     + (r.screen ? ` data-screen="${esc(r.screen)}"` : '')
     + (r.stuckAt ? ` data-stuck="${esc(r.stuckAt)}"` : '')
     + `><button class="open" type="button" title="${esc(r.name)} - full size">`
@@ -380,7 +392,7 @@ ${blankRows}
     } else { pouet.hidden = true; }
     if (fig.dataset.screen) { screen.textContent = fig.dataset.screen; screen.hidden = false; }
     else { screen.textContent = ''; screen.hidden = true; }
-    showLive(fig.dataset.live || null);
+    showLive(fig.dataset.live || null, fig.dataset.liveSrc || null);
     dlg.showModal();
   });
   dlg.addEventListener('click', function (e) { if (e.target === dlg) dlg.close(); });
@@ -398,11 +410,13 @@ ${blankRows}
   var playBtn = document.getElementById('lb-play');
   var statusEl = document.getElementById('lb-status');
   var canvas = document.getElementById('lb-canvas');
-  var current = null, run = null, loading = null;
+  var current = null, currentSrc = null, run = null, loading = null;
+  var fetched = {};
 
-  function showLive(name) {
+  function showLive(name, src) {
     stopLive();
     current = name;
+    currentSrc = src;
     playBtn.hidden = !name;
     playBtn.disabled = false;
     say('', false);
@@ -424,9 +438,8 @@ ${blankRows}
     say('', false);
   }
 
-  // One <script> tag, resolved when it has run. Sequential rather than
-  // parallel: programs.js is data the bundle's loader never touches, but the
-  // order costs nothing next to the emulator's own startup.
+  // One <script> tag, resolved when it has run. This is how the bytes arrive
+  // from a file:// URL, where fetch is refused.
   function script(src) {
     return new Promise(function (ok, fail) {
       var el = document.createElement('script');
@@ -438,17 +451,24 @@ ${blankRows}
   }
 
   function loadVm() {
-    if (loading) return loading;
-    loading = script('live/toyvm-bundle.js')
-      .then(function () { return script('live/programs.js'); });
+    if (!loading) loading = script('live/toyvm-bundle.js');
     return loading;
+  }
+
+  // Only the demo that was pressed. Every demo in one script would mean each
+  // visitor downloads the whole shipped corpus to watch one of them, which is
+  // what kept the runnable set down to a dozen tiles.
+  function loadProgram() {
+    if (!currentSrc) return Promise.reject(new Error(current + ' has no bytes with the page'));
+    if (!fetched[currentSrc]) fetched[currentSrc] = script(currentSrc);
+    return fetched[currentSrc];
   }
 
   playBtn.addEventListener('click', function () {
     if (!current || run) return;
     playBtn.disabled = true;
     say('loading the emulator...');
-    loadVm().then(function () {
+    loadVm().then(loadProgram).then(function () {
       var program = self.ToyVMPrograms && self.ToyVMPrograms[current];
       if (!program) throw new Error(current + ' was not packed with the page');
       // base64 in, bytes out: the shim's fs reads from exactly this map.
@@ -464,6 +484,12 @@ ${blankRows}
         canvas: canvas,
         exe: program.exe,
         files: files,
+        // The same menu answerer the sweep ran with. The tile above this canvas
+        // is a screenshot taken WITH it, so without it the page promises a
+        // picture and then sits on "waiting for a key" -- which is what three
+        // of these demos did. It only answers when the guest is blocked and
+        // nothing real is queued, so a visitor who types still drives.
+        autoKey: true,
         onStatus: function (s) {
           if (s.state === 'running') say('running - click the screen, then type', true);
           else if (s.state === 'exited') say('the program exited');
