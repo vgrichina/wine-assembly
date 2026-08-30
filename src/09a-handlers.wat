@@ -1965,10 +1965,15 @@
     ;; Pass dwCreationFlags into the host so CREATE_SUSPENDED is part of the
     ;; atomic creation event instead of a briefly-runnable create followed by
     ;; a separate SuspendThread call.
+    ;; A HANDLE and thread id are different Win32 namespaces. The host owns the
+    ;; worker-slot allocation, so let it write the stable id while returning the
+    ;; independently allocated handle. Writing EAX here made Abe pass 0xE1000
+    ;; to PostThreadMessage instead of the loader thread's id 2.
     (global.set $eax (call $host_create_thread
-      (local.get $arg2) (local.get $arg3) (local.get $arg1) (local.get $arg4)))
-    (if (local.get $lpThreadId)
-      (then (call $gs32 (local.get $lpThreadId) (global.get $eax))))
+      (local.get $arg2) (local.get $arg3) (local.get $arg1) (local.get $arg4)
+      (if (result i32) (local.get $lpThreadId)
+        (then (call $g2w (local.get $lpThreadId)))
+        (else (i32.const 0)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
@@ -2012,20 +2017,53 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
+  ;; Process/private heap handles are opaque, but unlike the old fixed token a
+  ;; private handle has its own live record in shared guest memory. This keeps
+  ;; identity and destruction visible across real browser Worker instances even
+  ;; though allocations still come from the emulator's one process allocator.
+  (global $PROCESS_HEAP_HANDLE i32 (i32.const 0x00BEEF00))
+  (global $PRIVATE_HEAP_MAGIC i32 (i32.const 0x50414548)) ;; "HEAP"
+
+  (func $heap_api_handle_valid (param $handle i32) (result i32)
+    (if (i32.eq (local.get $handle) (global.get $PROCESS_HEAP_HANDLE))
+      (then (return (i32.const 1))))
+    (if (i32.eqz (local.get $handle)) (then (return (i32.const 0))))
+    (i32.eq (i32.load (call $g2w (local.get $handle)))
+            (global.get $PRIVATE_HEAP_MAGIC)))
+
   ;; 33: HeapCreate(flOptions, dwInitialSize, dwMaximumSize) — 3 args stdcall
   (func $handle_HeapCreate (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x00140000))
+    (global.set $eax (call $heap_alloc (i32.const 4)))
+    (if (global.get $eax)
+      (then
+        (call $gs32 (global.get $eax) (global.get $PRIVATE_HEAP_MAGIC)))
+      (else (global.set $last_error (i32.const 8)))) ;; ERROR_NOT_ENOUGH_MEMORY
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; 34: HeapDestroy(hHeap) → BOOL. We use a single shared heap; pretend success.
+  ;; 34: HeapDestroy(hHeap) → BOOL. The process heap cannot be destroyed.
   (func $handle_HeapDestroy (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (if (i32.and
+          (i32.ne (local.get $arg0) (global.get $PROCESS_HEAP_HANDLE))
+          (call $heap_api_handle_valid (local.get $arg0)))
+      (then
+        (call $gs32 (local.get $arg0) (i32.const 0))
+        (call $heap_free (local.get $arg0))
+        (global.set $eax (i32.const 1)))
+      (else
+        (global.set $last_error (i32.const 6)) ;; ERROR_INVALID_HANDLE
+        (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
   ;; 35: HeapAlloc
   (func $handle_HeapAlloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (call $heap_api_handle_valid (local.get $arg0)))
+      (then
+        (global.set $last_error (i32.const 6)) ;; ERROR_INVALID_HANDLE
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
     (global.set $eax (call $heap_alloc (local.get $arg2)))
     ;; Zero memory if HEAP_ZERO_MEMORY (0x08) — skip on OOM (eax=0)
     (if (i32.and (i32.ne (global.get $eax) (i32.const 0))
@@ -2036,6 +2074,13 @@
 
   ;; 36: HeapFree
   (func $handle_HeapFree (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.or (i32.eqz (call $heap_api_handle_valid (local.get $arg0)))
+                (i32.eqz (local.get $arg2)))
+      (then
+        (global.set $last_error (i32.const 6)) ;; ERROR_INVALID_HANDLE
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
     (call $heap_free (local.get $arg2))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)
@@ -2058,6 +2103,12 @@
   ;; copy — there is nothing better to be had without knowing its size.
   (func $handle_HeapReAlloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tmp i32) (local $old_usable i32) (local $copy i32)
+    (if (i32.eqz (call $heap_api_handle_valid (local.get $arg0)))
+      (then
+        (global.set $last_error (i32.const 6)) ;; ERROR_INVALID_HANDLE
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
     (block $done
       (if (i32.eqz (local.get $arg2))
         (then
@@ -2370,14 +2421,15 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; Identity implementation shared by LCMapStringA/W. Lengths and return
-  ;; values are in characters; cchSrc=-1 includes the terminating NUL. Keeping
-  ;; the normalized count separate is important: passing -1 through to memcpy
-  ;; turns it into a 4GB copy and traps before VB6 can open its first window.
-  (func $lcmap_string_identity (param $src_guest i32) (param $count_in i32)
-                               (param $dst_guest i32) (param $dst_count i32)
-                               (param $wide i32) (result i32)
-    (local $src i32) (local $count i32) (local $bytes i32)
+  ;; Minimal LCMapStringA/W character mapping. Lengths and return values are in
+  ;; characters; cchSrc=-1 includes the terminating NUL. ASCII case folding is
+  ;; enough for Win9x path/alias normalization while other mapping flags retain
+  ;; the previous identity behavior.
+  (func $lcmap_string_core (param $src_guest i32) (param $count_in i32)
+                           (param $dst_guest i32) (param $dst_count i32)
+                           (param $wide i32) (param $map_flags i32) (result i32)
+    (local $src i32) (local $dst i32) (local $count i32)
+    (local $i i32) (local $ch i32) (local $step i32)
     (if (i32.or (i32.eqz (local.get $src_guest)) (i32.eqz (local.get $count_in)))
       (then (return (i32.const 0))))
     (local.set $src (call $g2w (local.get $src_guest)))
@@ -2393,28 +2445,52 @@
       (then
         (global.set $last_error (i32.const 122)) ;; ERROR_INSUFFICIENT_BUFFER
         (return (i32.const 0))))
-    (local.set $bytes
-      (if (result i32) (local.get $wide)
-        (then (i32.mul (local.get $count) (i32.const 2)))
-        (else (local.get $count))))
-    (call $memcpy (call $g2w (local.get $dst_guest)) (local.get $src) (local.get $bytes))
+    (local.set $dst (call $g2w (local.get $dst_guest)))
+    (local.set $step (select (i32.const 2) (i32.const 1) (local.get $wide)))
+    (block $done (loop $map
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $ch (call $load_char
+        (i32.add (local.get $src) (i32.mul (local.get $i) (local.get $step)))
+        (local.get $wide)))
+      (if (i32.ne (i32.and (local.get $map_flags) (i32.const 0x100)) (i32.const 0)) ;; LCMAP_LOWERCASE
+        (then
+          (if (i32.and (i32.ge_u (local.get $ch) (i32.const 65))
+                       (i32.le_u (local.get $ch) (i32.const 90)))
+            (then (local.set $ch (i32.add (local.get $ch) (i32.const 32))))))
+        (else
+          (if (i32.ne (i32.and (local.get $map_flags) (i32.const 0x200)) (i32.const 0)) ;; LCMAP_UPPERCASE
+            (then
+              (if (i32.and (i32.ge_u (local.get $ch) (i32.const 97))
+                           (i32.le_u (local.get $ch) (i32.const 122)))
+                (then (local.set $ch (i32.sub (local.get $ch) (i32.const 32)))))))))
+      (if (local.get $wide)
+        (then (i32.store16
+          (i32.add (local.get $dst) (i32.mul (local.get $i) (local.get $step)))
+          (local.get $ch)))
+        (else (i32.store8
+          (i32.add (local.get $dst) (local.get $i))
+          (local.get $ch))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $map)))
     (local.get $count))
 
   ;; 47: LCMapStringA(Locale, dwMapFlags, lpSrcStr, cchSrc, lpDestStr, cchDest)
   (func $handle_LCMapStringA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $cchDest i32)
     (local.set $cchDest (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
-    (global.set $eax (call $lcmap_string_identity
-      (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $cchDest) (i32.const 0)))
+    (global.set $eax (call $lcmap_string_core
+      (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $cchDest)
+      (i32.const 0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
-  ;; 48: LCMapStringW — wide version of the same bounded identity mapping.
+  ;; 48: LCMapStringW — wide version of the same bounded mapping.
   (func $handle_LCMapStringW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $cchDest i32)
     (local.set $cchDest (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
-    (global.set $eax (call $lcmap_string_identity
-      (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $cchDest) (i32.const 1)))
+    (global.set $eax (call $lcmap_string_core
+      (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $cchDest)
+      (i32.const 1) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
   )
 
@@ -3062,13 +3138,13 @@
   ;; click at ~62% of the position the player aimed at, and nothing in the main
   ;; menu ever highlighted or responded.
   (func $screen_metric_w (result i32)
-    (if (global.get $dx_display_mode_set)
-      (then (return (global.get $dx_display_w))))
+    (if (call $dx_display_mode_get)
+      (then (return (call $dx_display_w_get))))
     (i32.and (call $host_get_screen_size) (i32.const 0xFFFF)))
 
   (func $screen_metric_h (result i32)
-    (if (global.get $dx_display_mode_set)
-      (then (return (global.get $dx_display_h))))
+    (if (call $dx_display_mode_get)
+      (then (return (call $dx_display_h_get))))
     (i32.shr_u (call $host_get_screen_size) (i32.const 16)))
 
   (func $system_metric (param $index i32) (result i32)
@@ -3110,8 +3186,8 @@
     ;; does not have: there the full-screen client area is the whole mode.
     (if (i32.eq (local.get $index) (i32.const 17)) ;; SM_CYFULLSCREEN
       (then
-        (if (global.get $dx_display_mode_set)
-          (then (return (global.get $dx_display_h))))
+        (if (call $dx_display_mode_get)
+          (then (return (call $dx_display_h_get))))
         (return (i32.sub (i32.shr_u (call $host_get_screen_size) (i32.const 16))
                          (i32.const 46)))))
     (if (i32.eq (local.get $index) (i32.const 19)) ;; SM_MOUSEPRESENT
@@ -8405,9 +8481,9 @@ nW — STUB: unimplemented
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
-  ;; 335: GetProcessHeap — return fake heap handle — STUB: unimplemented
+  ;; 335: GetProcessHeap — stable process heap handle accepted by Heap* APIs.
   (func $handle_GetProcessHeap (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x00BEEF00))  ;; fake heap handle (HeapAlloc ignores it)
+    (global.set $eax (global.get $PROCESS_HEAP_HANDLE))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
   )
 
@@ -8780,8 +8856,13 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 380: UnhookWindowsHookEx(hhk) → BOOL — always succeed
+  ;; 380: UnhookWindowsHookEx(hhk) → BOOL
   (func $handle_UnhookWindowsHookEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; Hook handles are currently one opaque process-local value. Clear the
+    ;; keyboard callback when that value is released; CBT retains its legacy
+    ;; lifetime because its users install it for the process window factory.
+    (if (i32.eq (local.get $arg0) (i32.const 0xBEEF))
+      (then (global.set $keyboard_hook_proc (i32.const 0))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
@@ -8801,9 +8882,15 @@ HookEx — no next hook in chain, return 0
   ;; SetWindowsHookExA — return fake handle, 4 args stdcall
   (func $handle_SetWindowsHookExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; SetWindowsHookExA(idHook, lpfn, hMod, dwThreadId)
-    ;; Save CBT hook proc (WH_CBT = 5) for CreateWindowExA to call
-    (if (i32.eq (local.get $arg0) (i32.const 5))
-      (then (global.set $cbt_hook_proc (local.get $arg1))))
+    ;; Retain the two hook classes USER currently dispatches into guest code.
+    ;; WH_KEYBOARD is thread-local in the programs that use it (dwThreadId is
+    ;; their own thread); this single-process USER model therefore needs one
+    ;; callback slot, just like its existing WH_CBT slot.
+    (if (i32.eq (local.get $arg0) (i32.const 2)) ;; WH_KEYBOARD
+      (then (global.set $keyboard_hook_proc (local.get $arg1)))
+      (else
+        (if (i32.eq (local.get $arg0) (i32.const 5)) ;; WH_CBT
+          (then (global.set $cbt_hook_proc (local.get $arg1))))))
     (global.set $eax (i32.const 0xBEEF))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
@@ -9351,12 +9438,54 @@ HookEx — no next hook in chain, return 0
   )
 
   ;; 402: WindowFromPoint(POINT pt) → HWND. POINT is passed by value as two
-  ;; dwords on the stack, so arg0=x, arg1=y. We don't have a screen-wide
-  ;; top-level window registry, so return main_hwnd as the best-effort
-  ;; answer — mspaint calls this during pencil drags to verify the cursor
-  ;; is still inside the app, and returning 0 would abort the drag.
+  ;; dwords on the stack, so arg0=x, arg1=y. Pick the highest-z visible
+  ;; top-level containing the screen point, then descend through its children.
+  ;; Returning main_hwnd unconditionally is observably wrong when an app hides
+  ;; its bootstrap HWND and recreates the real surface in a second one. SDL 1.2
+  ;; checks WindowFromPoint against its current video HWND before accepting
+  ;; mouse motion; DOSBox therefore left its DOS cursor frozen over every game
+  ;; after changing video mode from hwnd 0x10001 to hwnd 0x10005.
   (func $handle_WindowFromPoint (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (global.get $main_hwnd))
+    (local $slot i32) (local $hwnd i32) (local $best i32)
+    (local $z i32) (local $best_z i32)
+    (local $x i32) (local $y i32) (local $w i32) (local $h i32)
+    (local $deep i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $slot) (global.get $MAX_WINDOWS)))
+      (local.set $hwnd (call $wnd_slot_hwnd (local.get $slot)))
+      (if (i32.and
+            (i32.and (i32.ne (local.get $hwnd) (i32.const 0))
+                     (i32.eqz (call $wnd_get_parent (local.get $hwnd))))
+            (i32.ne (i32.and (call $wnd_get_style (local.get $hwnd))
+                             (i32.const 0x10000000))
+                    (i32.const 0)))
+        (then
+          (local.set $x (call $wnd_window_screen_x (local.get $hwnd)))
+          (local.set $y (call $wnd_window_screen_y (local.get $hwnd)))
+          (local.set $w (call $wnd_screen_w (local.get $hwnd)))
+          (local.set $h (call $wnd_screen_h (local.get $hwnd)))
+          (if (i32.and
+                (i32.and (i32.ge_s (local.get $arg0) (local.get $x))
+                         (i32.lt_s (local.get $arg0)
+                           (i32.add (local.get $x) (local.get $w))))
+                (i32.and (i32.ge_s (local.get $arg1) (local.get $y))
+                         (i32.lt_s (local.get $arg1)
+                           (i32.add (local.get $y) (local.get $h)))))
+            (then
+              (local.set $z (call $wnd_z_get (local.get $hwnd)))
+              (if (i32.or (i32.eqz (local.get $best))
+                          (i32.gt_s (local.get $z) (local.get $best_z)))
+                (then
+                  (local.set $best (local.get $hwnd))
+                  (local.set $best_z (local.get $z))))))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $scan)))
+    (if (local.get $best)
+      (then
+        (local.set $deep (call $wnd_child_from_point_deep
+          (local.get $best) (local.get $arg0) (local.get $arg1)))))
+    (global.set $eax
+      (select (local.get $deep) (local.get $best) (local.get $deep)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
@@ -14169,6 +14298,12 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     ;; HeapSize(hHeap, dwFlags, lpMem) → size
     ;; Our heap stores block size (including 4-byte header) at [ptr-4]
     ;; Only valid for pointers in our heap range; return -1 for unknown pointers
+    (if (i32.eqz (call $heap_api_handle_valid (local.get $arg0)))
+      (then
+        (global.set $last_error (i32.const 6)) ;; ERROR_INVALID_HANDLE
+        (global.set $eax (i32.const 0xFFFFFFFF))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
     (if (i32.and
           (i32.ge_u (local.get $arg2) (i32.add (global.get $image_base) (global.get $exe_size_of_image)))
           (i32.lt_u (local.get $arg2) (global.get $heap_ptr)))

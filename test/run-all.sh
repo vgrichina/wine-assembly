@@ -97,11 +97,13 @@ UNIT=(
   test/test-gpu-backend.js
   test/test-keyboard-message-lparam.js
   test/test-to-ascii.js
+  test/test-keyboard-hook.js
   test/test-opengl-fixed-function.js
   test/test-opengl-frame-state.js
   test/test-opengl-command-stream.js
   test/test-gpu-atomic-present.js
   test/test-opengl-swapbuffers.js
+  test/test-renderer-dialog-button-queue.js
   test/test-dialog-button-command-queue.js
   test/test-dialog-custom-class.js
   test/test-nc-flags-message-wake.js
@@ -255,7 +257,6 @@ UNIT=(
   test/test-global-alloc-reuse.js
   test/test-is-char-alpha.js
   test/test-iswindow-validity.js
-  test/test-baldurs-gate-compat-patches.js
   test/test-lcmapstring-wat.js
   test/test-locale-info-wat.js
   test/test-listview-icon-mode.js
@@ -302,6 +303,7 @@ UNIT=(
   test/test-modal-common-dialog-worker.js
   test/test-sendmessagetimeout.js
   test/test-directdraw-cooperative-window.js
+  test/test-directdraw-enum-lowres.js
   test/test-directdraw-native-child-overlay.js
   test/test-directdraw-stale-background-restore.js
   test/test-directdraw-cursor-background-restore.js
@@ -394,6 +396,8 @@ UNIT=(
   # Recovered 2026-08-29 by the build-level manifest gate. These are fast,
   # self-contained Node/WASM checks; local-payload and browser-driver tests are
   # listed in E2E below.
+  test/test-batch-clock.js
+  test/test-browser-critical-section-yield.js
   test/test-browser-cooperative-crash-registers.js
   test/test-button-auto-check.js
   test/test-char-lower-w.js
@@ -420,13 +424,16 @@ UNIT=(
   test/test-get-environment-variable-w.js
   test/test-get-system-directory-w.js
   test/test-getprocaddress-sparse-name.js
+  test/test-heap-api-handles.js
   test/test-hidden-relative-mouse.js
   test/test-imm-is-ime.js
   test/test-is-debugger-present.js
   test/test-load-library-ex-w.js
   test/test-local-proprietary-demo-dropdown.js
   test/test-mcm-manifest-paths.js
+  test/test-mem-utils-hidden-shared-buffer.js
   test/test-midi-out-long-msg.js
+  test/test-msvcrt-ftol-native.js
   test/test-msi-query-product-state.js
   test/test-open-mutex-w.js
   test/test-process-environment-launch.js
@@ -436,6 +443,7 @@ UNIT=(
   test/test-showwindow-dialog-promotion.js
   test/test-system-enum-dispatch.js
   test/test-thread-manager-sparse-stack.js
+  test/test-timer-message-pump.js
   test/test-to-unicode.js
   test/test-token-security.js
   test/test-toyvm-browser-bundle.js
@@ -444,6 +452,8 @@ UNIT=(
   test/test-virtual-query-user-boundary.js
   test/test-wave-in-dev-caps.js
   test/test-wide-text-extent.js
+  test/test-window-from-point.js
+  test/test-fnstsw-test-jcc.js
   test/test-winsparkle-stubs.js
   test/test-worker-sparse-thread-stack.js
 )
@@ -463,6 +473,7 @@ E2E=(
   test/test-tapi-line-init.js
   test/test-caesar3-fullscreen-metrics.js
   test/test-caesar3-gameplay.js
+  test/test-abedemo-gameplay.js
   test/test-baldurs-gate-demos.js
   test/test-diablo-shareware-art.js
   test/test-diablo-shareware-gameplay.js
@@ -608,6 +619,7 @@ E2E=(
   test/test-pinball-flipper.js
   test/test-pinball-web-render.js
   test/test-aoe-menu.js
+  test/test-aoe2-gameplay.js
   test/test-tworld-launch.js
   test/test-winamp-about-web.js
   test/test-winamp-visualization-web.js
