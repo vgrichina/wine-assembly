@@ -332,8 +332,8 @@ over the `0x0011` it came in with — and is `0xff0d`, which is why the trace
 shows `int 21h ax=ff0d ... UNHANDLED`, and SP has moved `0x0bee` → `0xfffe`
 with SS unchanged.
 
-**What follows was read off an at-exit dump and is WITHDRAWN — see the
-correction under it.** The bytes `--dump=232e:17:64` reports are
+The bytes at `232e:17` — confirmed by `--dump-at=1103330:232e:0:112`, i.e. at
+the dispatch count the resident is actually running, not at exit — are
 
 ```
 2e 0f 01 1d 00 00 00 00  fb  33 c0  8e c0  67 8b 0e 06 04  0b c9
@@ -375,38 +375,50 @@ the `ea` was read as `off32 sel16` and the trace's next entry is `232e:17` at
 all. Two readings of the jump are self-consistent and they differ in exactly
 the bit that breaks the next block: entered 32-bit it is
 `jmp far 0x232e:0x00000017` and the target should keep 32-bit sizes, entered
-16-bit it is `jmp far 0x0000:0x0017` and five bytes shorter. What a real 386
-does after PE is cleared — reload CS as a paragraph with D=0 — makes the second
-block undecodable either way, so one of the two premises is wrong and the
-listing above is the evidence for which.
+16-bit it is `jmp far 0x0000:0x0017` and five bytes shorter. The `cs: lidt [0]`
+that opens the target settles it: with the `cs` override it loads the six bytes
+at `232e:0` — `ff 03 a8 1f 02 00`, limit `0x03ff`, base `0x00021fa8` — and a
+`0x3ff` limit is a 256-entry real-mode IVT and nothing else. Reloading the
+real-mode IDT is exactly what the first instruction after leaving protected
+mode should do, and only the 32-bit reading produces it. So the D bit has to
+survive the far jump, and forcing it to 0 is what broke the block.
 
-**Correction: none of those bytes were there when the block ran.** `--dump`
-fires at exit, about 2M dispatches after the derail, and this resident loads
-itself out of the EXE at run time (the run reports 29 self-modify breaks). The
-mid-run dump added for this (`3167db19`) says so outright — at 1.07M
-dispatches, just before the derail:
-
-```
-$ run-dos ANGEL.EXE --svga=trident --pre=SETUP.EXE --pre-dispatches=50m \
-    --dump-at=1.05m:232e:0:48
-  (at 1071697 dispatches, cs:ip=100:4aa)
-  232e:0000  48 bytes
-  0000  b8 04 c0 04 c8 7b ef 04 d0 04 d8 04 e0 bd f7 04
-```
-
-against `ff 03 a8 1f 02 00 00 00 / 0f 20 c0 24 fe 0f 22 c0` at exit. So the
-`mov cr0` stub, the far jump and the 32-bit listing above are all a reading of
-whatever occupied that memory *afterwards*, and every conclusion drawn from
-them — including "the demo leaves protected mode and then runs 32-bit code" —
-is withdrawn. What survives is the measurement that does not depend on the
-bytes: the state is already wrong at `232e:0053`, AX is `0xff0d` where the
-program wants `0x3f11`, and SP has moved `0x0bee` → `0xfffe`.
-
-The lesson is general and cost a whole listing here: **on a program that loads
+An aside worth keeping, because it cost a session: **on a program that loads
 code at run time, an at-exit dump is evidence about the end of the run and
-nothing else.** Use `--dump-at=` at a dispatch count inside the window being
-asked about, and `--pre-dispatches=` so cutting the main run short does not
-also starve the prerequisite.
+nothing else** — the resident's memory at exit holds something else entirely,
+and the listing above briefly stood withdrawn on the strength of a `--dump-at=`
+aimed at 1.05M dispatches when the resident does not run until 1.1033M. Use
+`--dump-at=` at a count *inside* the window, `--pre-dispatches=` so cutting the
+main run short does not also starve the prerequisite, and `--trace-int`, which
+now prints the dispatch count of every call and is where that count comes from.
+
+#### Both causes, measured (2026-08-30, branch `angel-pm`)
+
+**1. Real mode keeps the cached CS D bit.** Clearing PE does not reload CS; the
+far jump after it does, and a real-mode CS load rewrites the base and the limit
+and leaves the size alone. `$segd32` returned 0 whenever PE was clear, so the
+32-bit block above was decoded 16-bit — `--disasm` at the stop point shows the
+whole desync, `add al,0xb` / `add al,0xb4` accumulating into the `0xff0d` the
+trace reports and `leave` at `0x2a` producing the `0xfffe` stack pointer. A
+program that never entered protected mode is unaffected: `$d32` starts at 0 and
+only a descriptor can raise it.
+
+**2. Selector 4 is LDT entry 0, not the null selector.** With the D bit fixed
+the resident reads its whole file in `0x8000` chunks and then far-jumps to
+`4:60`, which we resolved to base 0 and ran as the IVT. Its GDT (at `21de8`,
+limit `0x37`) has an LDT descriptor at selector `0x28` with base `0x22df8`, and
+the extender lives at LDT entries 0 and 1 — selectors `0x04` and `0x0c`. The
+null test in `$segbase`/`$segd32`/`$descaddr` masked with `0xFFF8`, which throws
+the table indicator away, so every LDT selector with index 0 came back null. The
+mask is `0xFFFC`: only the GDT has a null slot.
+
+With both, ANGEL goes from a wild jump into the IVT at 3.0M dispatches to
+running its own loop for 300M — it reads the file, sets mode 13h and loads a
+246-entry DAC palette. **It still writes nothing to A000**, spinning in its
+extender at `22df:365`–`22df:3ee`, and that is the next question. Two gaps
+noticed on the way and not yet closed: there is no `$ldtl`, so an LDT
+selector's limit is checked against the *GDT* limit, and past that limit it
+falls back to reading the selector as a paragraph.
 
 **The sweep is deliberately not given a `--svga` rung, and the reason is worth
 keeping.** A rung was written and measured: a program that put nothing on either
