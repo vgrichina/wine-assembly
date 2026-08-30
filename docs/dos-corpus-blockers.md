@@ -359,10 +359,23 @@ is loaded, so the question is what D should be *after the jump that got here*.
 
 The run enters this stub as `entry c:8 base=232e0 pm` — 32-bit, which is why
 the `ea` was read as `off32 sel16` and the trace's next entry is `232e:17` at
-all. So the demo leaves protected mode and then runs 32-bit-sized code at the
-real-mode paragraph it jumped to, and the two readings of what D should be
-across that jump are exactly the bug: keep it and the block decodes as the
-listing above, drop it and it decodes as the `leave` that eats the stack.
+all. Two readings of the jump are self-consistent and they differ in exactly
+the bit that breaks the next block: entered 32-bit it is
+`jmp far 0x232e:0x00000017` and the target should keep 32-bit sizes, entered
+16-bit it is `jmp far 0x0000:0x0017` and five bytes shorter. What a real 386
+does after PE is cleared — reload CS as a paragraph with D=0 — makes the second
+block undecodable either way, so one of the two premises is wrong and the
+listing above is the evidence for which.
+
+**Provenance, because it decides how much the listing is worth.** `--dump`
+fires at exit, about 2M dispatches after the derail, so those bytes are memory
+as it stood *then*; the run reports 29 self-modify breaks, and this resident
+loads itself out of the EXE at run time. Truncating the run to dump earlier
+does not work either — `--pre` hands SETUP the same `--dispatches`, so a
+smaller budget just means SETUP never finishes and ANGEL refuses at the gate.
+The tooling gap to close first is therefore a mid-run dump, the DOS twin of
+`test/run.js`'s `BATCH:dump-mem`: without one, every reading of a block that
+arrived at run time is a reading of what replaced it.
 
 **The sweep is deliberately not given a `--svga` rung, and the reason is worth
 keeping.** A rung was written and measured: a program that put nothing on either
