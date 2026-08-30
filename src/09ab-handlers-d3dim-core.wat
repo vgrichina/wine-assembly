@@ -84,6 +84,19 @@
     (i32.store offset=20 (local.get $desc) (local.get $state))
     (call $host_gpu_gl_call (i32.const 0x20000) (local.get $desc) (i32.const 0)))
 
+  ;; A renderer-only instance needs guest-address translation and a private
+  ;; heap arena for its immutable command workspace, but it never decodes or
+  ;; executes x86. Do not call init_thread here: that also assigns page/cache
+  ;; partitions, and the old experimental slot 63 wrote beyond the eight-slot
+  ;; PAGE_DIR arena. The process heap cursor itself is shared and atomically
+  ;; hands this instance a non-overlapping arena on its first guest_alloc.
+  (func (export "d3dim_worker_init") (param $img_base i32)
+    (global.set $image_base (local.get $img_base))
+    (global.set $heap_ptr (i32.const 0))
+    (global.set $heap_end (i32.const 0))
+    (global.set $heap_base
+      (i32.load (i32.add (global.get $HEAP_SHARED) (i32.const 4)))))
+
   (func (export "d3dim_worker_draw")
     (param $this i32) (param $primitive i32) (param $vertex_type i32)
     (param $vertices i32) (param $count i32) (param $state i32)
@@ -2881,6 +2894,13 @@
         (then (local.set $i (i32.sub (i32.sub (local.get $period) (i32.const 1)) (local.get $i)))))
       (return (local.get $i))))
     ;; D3DTADDRESS_WRAP, and the legacy zero/default state.
+    ;; D3D3 content overwhelmingly uses power-of-two textures. For those,
+    ;; two's-complement AND is the exact wrapped remainder for positive and
+    ;; negative coordinates and avoids a signed integer divide for each of the
+    ;; four bilinear neighbours.
+    (if (i32.eqz
+          (i32.and (local.get $size) (i32.sub (local.get $size) (i32.const 1))))
+      (then (return (i32.and (local.get $i) (i32.sub (local.get $size) (i32.const 1))))))
     (local.set $i (i32.rem_s (local.get $i) (local.get $size)))
     (if (i32.lt_s (local.get $i) (i32.const 0))
       (then (local.set $i (i32.add (local.get $i) (local.get $size)))))
@@ -2970,28 +2990,32 @@
   ;; by an L/TL vertex). Keep the interpolation in packed 0xAARRGGBB form so
   ;; the scan converter only carries one additional value per edge.
   (func $d3dim_color_lerp (param $a i32) (param $b i32) (param $t f32) (result i32)
-    (local $aa i32) (local $ar i32) (local $ag i32) (local $ab i32)
-    (local $ba i32) (local $br i32) (local $bg i32) (local $bb i32)
-    (local $alpha i32) (local $r i32) (local $g i32) (local $bl i32)
-    (local.set $aa (i32.shr_u (local.get $a) (i32.const 24)))
-    (local.set $ar (i32.and (i32.shr_u (local.get $a) (i32.const 16)) (i32.const 0xff)))
-    (local.set $ag (i32.and (i32.shr_u (local.get $a) (i32.const 8)) (i32.const 0xff)))
-    (local.set $ab (i32.and (local.get $a) (i32.const 0xff)))
-    (local.set $ba (i32.shr_u (local.get $b) (i32.const 24)))
-    (local.set $br (i32.and (i32.shr_u (local.get $b) (i32.const 16)) (i32.const 0xff)))
-    (local.set $bg (i32.and (i32.shr_u (local.get $b) (i32.const 8)) (i32.const 0xff)))
-    (local.set $bb (i32.and (local.get $b) (i32.const 0xff)))
-    (local.set $alpha (i32.trunc_sat_f32_u (f32.add (f32.convert_i32_u (local.get $aa))
-      (f32.mul (f32.convert_i32_s (i32.sub (local.get $ba) (local.get $aa))) (local.get $t)))))
-    (local.set $r (i32.trunc_sat_f32_u (f32.add (f32.convert_i32_u (local.get $ar))
-      (f32.mul (f32.convert_i32_s (i32.sub (local.get $br) (local.get $ar))) (local.get $t)))))
-    (local.set $g (i32.trunc_sat_f32_u (f32.add (f32.convert_i32_u (local.get $ag))
-      (f32.mul (f32.convert_i32_s (i32.sub (local.get $bg) (local.get $ag))) (local.get $t)))))
-    (local.set $bl (i32.trunc_sat_f32_u (f32.add (f32.convert_i32_u (local.get $ab))
-      (f32.mul (f32.convert_i32_s (i32.sub (local.get $bb) (local.get $ab))) (local.get $t)))))
-    (i32.or (i32.shl (local.get $alpha) (i32.const 24))
-      (i32.or (i32.shl (local.get $r) (i32.const 16))
-        (i32.or (i32.shl (local.get $g) (i32.const 8)) (local.get $bl)))))
+    (local $va v128) (local $vb v128) (local $vr v128) (local $v16 v128)
+    ;; A splatted packed pixel repeats BGRA bytes on little-endian Wasm.
+    ;; Widen its first four bytes to i32 lanes, interpolate all channels with
+    ;; the same f32/trunc_sat semantics as the former scalar path, then narrow
+    ;; BGRA back into lane zero. Bilinear filtering calls this three times per
+    ;; output pixel; doing four channels in parallel removes twelve scalar
+    ;; int<->float conversions and the associated extract/repack chain.
+    (local.set $va
+      (i32x4.extend_low_i16x8_u
+        (i16x8.extend_low_i8x16_u (i32x4.splat (local.get $a)))))
+    (local.set $vb
+      (i32x4.extend_low_i16x8_u
+        (i16x8.extend_low_i8x16_u (i32x4.splat (local.get $b)))))
+    (local.set $vr
+      (i32x4.trunc_sat_f32x4_u
+        (f32x4.add
+          (f32x4.convert_i32x4_u (local.get $va))
+          (f32x4.mul
+            (f32x4.sub
+              (f32x4.convert_i32x4_u (local.get $vb))
+              (f32x4.convert_i32x4_u (local.get $va)))
+            (f32x4.splat (local.get $t))))))
+    (local.set $v16
+      (i16x8.narrow_i32x4_u (local.get $vr) (i32x4.splat (i32.const 0))))
+    (i32x4.extract_lane 0
+      (i8x16.narrow_i16x8_u (local.get $v16) (i16x8.splat (i32.const 0)))))
 
   ;; Exact floor(x/255) through 65534 without integer division. Texture colour
   ;; products and the rounded convex blend numerator stay in that range.

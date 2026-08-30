@@ -267,7 +267,8 @@ seconds: 26.15 seconds in WebAssembly, while
 are now the x86 engine's `$next`, register accessors, and branch machinery;
 canvas `drawImage`/`putImageData` are the largest host-side costs.
 
-SIMD is therefore not the next useful MW3 renderer optimization. Texture
+For that corrected no-threads profile, SIMD was therefore not the next useful
+MW3 renderer optimization. Texture
 addresses differ per pixel and WebAssembly SIMD has no gather operation, so a
 four-pixel sampler would still require scalar loads before any vector math.
 Potential later SIMD candidates are four-wide depth comparisons, post-gather
@@ -608,6 +609,77 @@ textured menu is browser-visible, but moving-cockpit image parity and FPS A/B
 remain required before this can be enabled by default. Menu traffic fences
 almost every draw; only gameplay's measured ~750 draws/Flip can show whether
 in-frame batching pays for the 4 KiB state copies.
+
+### Gameplay A/B, command cost, and raster-worker profile (2026-08-30)
+
+An automated real-Chrome route now selects or creates the pilot, enters instant
+action, waits for the operation map, moves MW3's own software cursor onto the
+bottom-right deployment icon, and samples ten seconds only after the cockpit
+appears. The matched initial run measured 4.105 guest fps synchronously and
+4.322 with `?d3d-worker`, a 5.3% improvement. This is evidence that producer
+and consumer overlap, not a stable end-user FPS forecast: later runs on the
+shared development host ranged from 2.17 to 11.84 fps as load changed. Per the
+browser profiling rule in `CLAUDE.md`, samples taken with load average above 4
+are load-invalid.
+
+The two gameplay captures were visually equivalent and both retained the
+textured cockpit, sky, terrain, HUD, and mech preview. Their coarse image
+metrics differed by only 0.5--1.3% (2,322 versus 2,310 exact colours; 226,892
+versus 229,844 orange pixels; 309,419 versus 308,306 dark pixels; 6,051 versus
+5,992 green pixels), consistent with rain, timer, and camera motion. The later
+post-optimization capture also has no earlier green/purple texture noise.
+
+The command counters explain what the Worker is doing during a representative
+ten-second gameplay interval:
+
+| Counter | Delta | Rate/interpretation |
+|---|---:|---|
+| queued/replayed draws | 56,411 / 56,049 | about 208 draws per submitted batch |
+| submitted batches | 271 | 27.1 wakeups/s, not one wakeup per draw |
+| fences | 540 | 54/s |
+| copied command bytes | 237,898,496 | 23.8 MB/s including each 4 KiB state snapshot |
+| producer wait | 1,143 ms | about 11.4% of the interval |
+| replay time | 2,920.96 ms | 52.11 microseconds per completed draw |
+
+This rules out a second in-memory ring rewrite as the immediate optimization.
+The ring already batches hundreds of draws, and a nested render-Worker CPU
+profile attributed only 77.4 ms (0.8%) to JavaScript replay while 3,980.7 ms
+(39.4%) was in Wasm raster code and 6,032.9 ms was idle. The original hot Wasm
+functions were `viewport_draw_textured_span` (1,734.6 ms),
+`d3dim_color_lerp` (931.1 ms), `d3dim_texture_fetch_prepared` (714.7 ms), and
+`d3dim_address_texel` (363.8 ms). Command ownership still requires copying
+temporary vertices and state before the guest frees or mutates them; removing
+those copies would be a semantic change, not an ordinary ring optimization.
+
+The measured hot operation does have useful channel-level SIMD even though the
+four texture fetches remain scalar. `d3dim_color_lerp` now widens a packed BGRA
+pixel to four i32 lanes, performs the four f32 interpolations together, and
+narrows back to the original packed value. Power-of-two WRAP addressing uses
+`i & (size-1)`, including negative two's-complement coordinates, instead of a
+signed remainder for each bilinear neighbour. In a second nested-worker
+profile, completed replay fell from 98.11 to 51.47 microseconds/draw (-47.5%)
+despite profiler overhead; `d3dim_color_lerp` itself fell from 931.1 to 227.8
+ms (-75.5%), and render-Worker idle share rose from 59.7% to 74.9%. The indexed
+texture regression retains centre-linear averaging, WRAP/CLAMP, all exercised
+texture formats, blending, and depth behavior, and the full dual build passes.
+
+Two `fable-review.md` findings were addressed at the same boundary. Encoder
+memory/slot views and consumer batch/memory views are cached, eliminating the
+per-command/per-batch `DataView` and `Uint8Array` objects. More importantly,
+the render-only instance no longer calls `init_thread(63)`, whose page-directory
+reset was outside the eight-slot arena. A narrow `d3dim_worker_init` now sets
+only image translation and its private heap-arena globals; the renderer never
+claims guest thread/cache/page slots. Surface `Lock` already fences before
+exposing CPU-writable pixels, so the subsequent `Unlock` can publish its epoch
+without an extra global stall and later draws observe it in guest order.
+
+The remaining low gameplay FPS is therefore not primarily command parsing or
+ring allocation. Even before SIMD the render Worker was idle most of the time,
+while the guest-main Worker stayed busy emulating x86 and generating commands.
+The next renderer experiment, if another representative profile still names
+it, is incremental span interpolation and specialization of the common 16-bit
+texture fetch. The larger remaining ceiling is the settled-cockpit x86 hot-loop
+work documented below.
 
 There is a separate hardware option worth retaining. The repository's OpenGL
 frontend already batches guest calls and renders through a WebGL fixed-function

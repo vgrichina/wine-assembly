@@ -146,7 +146,11 @@ assert.strictEqual(replayed[0][D3D.HEADER_BYTES], 0x5a,
 assert.strictEqual(replayed[0][D3D.HEADER_BYTES + D3D.STATE_BYTES], 0xa5,
   'canonical vertices were copied before the guest freed them');
 assert.deepStrictEqual(d3d.stats,
-  { queued: 1, submissions: 1, fences: 1, waits: 0, fallbacks: 0 },
+  {
+    queued: 1, submissions: 1, fences: 1, waits: 0, fallbacks: 0,
+    bytes: D3D.STATE_BYTES + 96, waitMs: 0,
+    maxBatchBytes: D3D.HEADER_BYTES + D3D.STATE_BYTES + 96,
+  },
   'single draw/fence command accounting is exact');
 assert.strictEqual(d3d.call(D3D.FENCE_OPCODE, 0), 1,
   'an idle fence still observes the completed sequence');
