@@ -30,8 +30,14 @@ not stuck.
   does not make a vertex near-plane-visible: MCM also produces vertices with
   `rhw > 0` but `z/w < 0`. Classifying only by RHW sends those triangles to the
   raw rasterizer and creates giant landscape wedges and repeated billboard
-  labels. Transformed vertices must satisfy both `rhw > 0` and `z/w >= 0`;
-  retain the legacy raw path only for pre-transformed UI records with `rhw=0`.
+  labels. The first correction classified those vertices correctly but still
+  intersected every rejected edge with `z=0`. That is also insufficient: when
+  a negative-RHW endpoint retains positive clip-z, the edge enters through the
+  far plane `z=w`, and a forced near intersection collapses the visible part
+  into a fan. The direct path now clips a bounded convex polygon against both
+  homogeneous depth inequalities, `z>=0` and `z<=w`; together they imply a
+  positive W. Pre-transformed UI records with `rhw=0` retain the raw path
+  because their original homogeneous coordinates cannot be reconstructed.
 - MCM enables `D3DRENDERSTATE_COLORKEYENABLE` and uses packed 16-bit source
   colour keys. A keyed sample is discarded before both colour and Z writes.
 - The HUD uses paired system/video-memory surfaces. For example, the traced

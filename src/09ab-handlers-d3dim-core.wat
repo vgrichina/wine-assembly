@@ -33,6 +33,7 @@
   ;;   +3456  D3D7 user clip planes[6]                  (96)
   ;;   +3552  extended texture-stage state[8 × 6]       (192)         → ends 3744
   ;;          types 11,13,14,16,17,18 (TCI/address/filter/mip filter)
+  ;;   +3744  direct-primitive clip polygon A (5 × 32)  (160)         → ends 3904
   ;;   +4000  D3DCLIPSTATUS round-trip storage          (24)
   ;;   +4032  vertex_project vec temp                  (16)
   ;;   +4064  vertex_project clip temp                 (16)
@@ -4571,15 +4572,25 @@
           (local.get $this) (local.get $rt) (local.get $use_z)
           (local.get $v0) (local.get $v1) (local.get $v2)))))
 
-  ;; Intersect a projected edge with D3D's homogeneous near plane (clip z=0).
-  ;; vertex_project retains screen x/y, z/w, and 1/w. Reconstructing clip
-  ;; coordinates from those four values lets the direct primitive path clip
-  ;; triangles that cross behind the eye without carrying a second vertex
-  ;; format through every rasterizer call.
-  (func $d3dim_interp_tl_near_vertex
-    (param $state i32) (param $a i32) (param $b i32) (param $out i32)
+  ;; Signed homogeneous clip distance reconstructed from a projected TL
+  ;; vertex. Plane 0 is D3D's near plane z>=0; plane 1 is its far plane z<=w.
+  ;; Both inequalities together imply positive w, so a behind-eye endpoint can
+  ;; enter through either plane and must not be forced onto z=0.
+  (func $d3dim_tl_clip_distance (param $v i32) (param $plane i32) (result f32)
+    (local $q f32) (local $z f32)
+    (local.set $q (f32.load (i32.add (local.get $v) (i32.const 12))))
+    (local.set $z (f32.load (i32.add (local.get $v) (i32.const 8))))
+    (if (i32.eqz (local.get $plane))
+      (then (return (f32.div (local.get $z) (local.get $q)))))
+    (f32.div (f32.sub (f32.const 1.0) (local.get $z)) (local.get $q)))
+
+  ;; Intersect a projected edge with one of the homogeneous depth planes.
+  ;; vertex_project retains screen x/y, z/w, and 1/w. Reconstruct clip x/y/w,
+  ;; interpolate there, then project the generated TL vertex back to screen.
+  (func $d3dim_interp_tl_clip_vertex
+    (param $state i32) (param $a i32) (param $b i32) (param $out i32) (param $plane i32)
     (local $sw i32) (local $qa f32) (local $qb f32)
-    (local $wa f32) (local $wb f32) (local $za f32) (local $zb f32)
+    (local $wa f32) (local $wb f32) (local $da f32) (local $db f32)
     (local $t f32) (local $w f32) (local $cx f32) (local $cy f32)
     (local $av f32) (local $bv f32)
     (local.set $sw (call $g2w (local.get $state)))
@@ -4587,9 +4598,9 @@
     (local.set $qb (f32.load (i32.add (local.get $b) (i32.const 12))))
     (local.set $wa (f32.div (f32.const 1.0) (local.get $qa)))
     (local.set $wb (f32.div (f32.const 1.0) (local.get $qb)))
-    (local.set $za (f32.mul (f32.load (i32.add (local.get $a) (i32.const 8))) (local.get $wa)))
-    (local.set $zb (f32.mul (f32.load (i32.add (local.get $b) (i32.const 8))) (local.get $wb)))
-    (local.set $t (f32.div (local.get $za) (f32.sub (local.get $za) (local.get $zb))))
+    (local.set $da (call $d3dim_tl_clip_distance (local.get $a) (local.get $plane)))
+    (local.set $db (call $d3dim_tl_clip_distance (local.get $b) (local.get $plane)))
+    (local.set $t (f32.div (local.get $da) (f32.sub (local.get $da) (local.get $db))))
     (if (f32.ne (local.get $t) (local.get $t)) (then (local.set $t (f32.const 0.0))))
     (if (f32.lt (local.get $t) (f32.const 0.0)) (then (local.set $t (f32.const 0.0))))
     (if (f32.gt (local.get $t) (f32.const 1.0)) (then (local.set $t (f32.const 1.0))))
@@ -4639,7 +4650,10 @@
         (f32.load (i32.add (local.get $sw) (i32.add (global.get $D3DIM_OFF_VP_ORIGIN) (i32.const 4))))
         (f32.mul (f32.div (local.get $cy) (local.get $w))
           (f32.load (i32.add (local.get $sw) (i32.add (global.get $D3DIM_OFF_VP_SCALE) (i32.const 4)))))))
-    (f32.store (i32.add (local.get $out) (i32.const 8)) (f32.const 0.0))
+    (f32.store (i32.add (local.get $out) (i32.const 8))
+      (if (result f32) (i32.eqz (local.get $plane))
+        (then (f32.const 0.0))
+        (else (f32.const 1.0))))
     (f32.store (i32.add (local.get $out) (i32.const 12)) (f32.div (f32.const 1.0) (local.get $w)))
     (i32.store (i32.add (local.get $out) (i32.const 16))
       (call $d3dim_color_lerp
@@ -4657,6 +4671,48 @@
     (local.set $bv (f32.load (i32.add (local.get $b) (i32.const 28))))
     (f32.store (i32.add (local.get $out) (i32.const 28))
       (f32.add (local.get $av) (f32.mul (f32.sub (local.get $bv) (local.get $av)) (local.get $t)))))
+
+  ;; Clip one convex TL polygon against one depth plane. The direct path starts
+  ;; with three vertices; one plane can add at most one, and the second can add
+  ;; at most one more, so both caller-owned arrays are bounded to five records.
+  (func $d3dim_clip_tl_polygon
+    (param $state i32) (param $in i32) (param $count i32)
+    (param $out i32) (param $plane i32) (result i32)
+    (local $i i32) (local $prev i32) (local $cur i32) (local $dst i32)
+    (local $prev_d f32) (local $cur_d f32)
+    (local $prev_in i32) (local $cur_in i32) (local $out_count i32)
+    (if (i32.eqz (local.get $count)) (then (return (i32.const 0))))
+    (local.set $prev (i32.add (local.get $in)
+      (i32.mul (i32.sub (local.get $count) (i32.const 1)) (i32.const 32))))
+    (local.set $prev_d (call $d3dim_tl_clip_distance (local.get $prev) (local.get $plane)))
+    (local.set $prev_in (f32.ge (local.get $prev_d) (f32.const 0.0)))
+    (local.set $i (i32.const 0))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $cur (i32.add (local.get $in) (i32.mul (local.get $i) (i32.const 32))))
+      (local.set $cur_d (call $d3dim_tl_clip_distance (local.get $cur) (local.get $plane)))
+      (local.set $cur_in (f32.ge (local.get $cur_d) (f32.const 0.0)))
+      (if (local.get $cur_in) (then
+        (if (i32.eqz (local.get $prev_in)) (then
+          (local.set $dst (i32.add (local.get $out) (i32.mul (local.get $out_count) (i32.const 32))))
+          (call $d3dim_interp_tl_clip_vertex
+            (local.get $state) (local.get $prev) (local.get $cur) (local.get $dst) (local.get $plane))
+          (local.set $out_count (i32.add (local.get $out_count) (i32.const 1)))))
+        (local.set $dst (i32.add (local.get $out) (i32.mul (local.get $out_count) (i32.const 32))))
+        (call $memcpy (local.get $dst) (local.get $cur) (i32.const 32))
+        (local.set $out_count (i32.add (local.get $out_count) (i32.const 1))))
+      (else
+        (if (local.get $prev_in) (then
+          (local.set $dst (i32.add (local.get $out) (i32.mul (local.get $out_count) (i32.const 32))))
+          (call $d3dim_interp_tl_clip_vertex
+            (local.get $state) (local.get $prev) (local.get $cur) (local.get $dst) (local.get $plane))
+          (local.set $out_count (i32.add (local.get $out_count) (i32.const 1)))))))
+      (local.set $prev (local.get $cur))
+      (local.set $prev_d (local.get $cur_d))
+      (local.set $prev_in (local.get $cur_in))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp)))
+    (local.get $out_count))
 
   ;; DrawPrimitive triangles take the same textured/flat decision as the
   ;; execute-buffer path, but they must still honour backface culling: direct
@@ -4695,100 +4751,83 @@
       (local.get $this) (local.get $rt) (local.get $tex) (local.get $use_z)
       (local.get $v0) (local.get $v1) (local.get $v2)))
 
-  ;; Direct primitive vertices still carry homogeneous 1/w. Clip triangles
-  ;; that cross the eye/near plane before integer rasterization; otherwise the
-  ;; behind-eye endpoint projects to the opposite side of the screen and leaves
-  ;; the camera-near terrain uncovered.
+  ;; Direct primitive vertices still carry homogeneous 1/w. Clip transformed
+  ;; triangles to D3D's complete depth interval 0<=z<=w before integer
+  ;; rasterization. A behind-eye endpoint may cross z=0 or z=w depending on
+  ;; clip-z's sign; forcing both cases through z=0 collapses terrain and
+  ;; billboard edges into the long screen-space fans seen in MCM.
   (func $d3dim_draw_tl_triangle_dp
     (param $this i32) (param $rt i32) (param $use_z i32)
     (param $v0 i32) (param $v1 i32) (param $v2 i32)
     (local $q0 f32) (local $q1 f32) (local $q2 f32)
     (local $z0 f32) (local $z1 f32) (local $z2 f32)
-    (local $p0 i32) (local $p1 i32) (local $p2 i32) (local $pos i32)
-    (local $state i32) (local $sw i32) (local $c0 i32) (local $c1 i32)
+    (local $state i32) (local $sw i32) (local $a i32) (local $b i32)
+    (local $count i32) (local $i i32)
     (local.set $q0 (f32.load (i32.add (local.get $v0) (i32.const 12))))
     (local.set $q1 (f32.load (i32.add (local.get $v1) (i32.const 12))))
     (local.set $q2 (f32.load (i32.add (local.get $v2) (i32.const 12))))
     (local.set $z0 (f32.load (i32.add (local.get $v0) (i32.const 8))))
     (local.set $z1 (f32.load (i32.add (local.get $v1) (i32.const 8))))
     (local.set $z2 (f32.load (i32.add (local.get $v2) (i32.const 8))))
-    ;; Pre-transformed UI commonly supplies rhw=0. Preserve that established
-    ;; path unless a genuinely transformed vertex crosses either the eye plane
-    ;; (rhw < 0) or Direct3D's near plane (z/w < 0 while rhw is non-zero).
-    ;; Testing rhw alone left positive-w, negative-z terrain and billboard
-    ;; triangles uncut as MCM's camera approached them.
-    (if (i32.eqz (i32.or
-          (i32.or
-            (i32.or (f32.lt (local.get $q0) (f32.const 0.0))
-                    (f32.lt (local.get $q1) (f32.const 0.0)))
-            (f32.lt (local.get $q2) (f32.const 0.0)))
-          (i32.or
-            (i32.or
-              (i32.and (f32.ne (local.get $q0) (f32.const 0.0))
-                       (f32.lt (local.get $z0) (f32.const 0.0)))
-              (i32.and (f32.ne (local.get $q1) (f32.const 0.0))
-                       (f32.lt (local.get $z1) (f32.const 0.0))))
-            (i32.and (f32.ne (local.get $q2) (f32.const 0.0))
-                     (f32.lt (local.get $z2) (f32.const 0.0))))))
+    ;; Pre-transformed UI commonly supplies rhw=0, which has no recoverable
+    ;; homogeneous w. Preserve that established screen-space path. A mixed
+    ;; triangle is equally unreconstructable, so leave it to viewport clipping.
+    (if (i32.or
+          (i32.or (f32.eq (local.get $q0) (f32.const 0.0))
+                  (f32.eq (local.get $q1) (f32.const 0.0)))
+          (f32.eq (local.get $q2) (f32.const 0.0)))
       (then
         (call $d3dim_draw_tl_triangle_dp_raw
           (local.get $this) (local.get $rt) (local.get $use_z)
           (local.get $v0) (local.get $v1) (local.get $v2))
         (return)))
-    (local.set $p0 (i32.and (f32.gt (local.get $q0) (f32.const 0.0))
-                            (f32.ge (local.get $z0) (f32.const 0.0))))
-    (local.set $p1 (i32.and (f32.gt (local.get $q1) (f32.const 0.0))
-                            (f32.ge (local.get $z1) (f32.const 0.0))))
-    (local.set $p2 (i32.and (f32.gt (local.get $q2) (f32.const 0.0))
-                            (f32.ge (local.get $z2) (f32.const 0.0))))
-    (local.set $pos (i32.add (local.get $p0) (i32.add (local.get $p1) (local.get $p2))))
-    (if (i32.eqz (local.get $pos)) (then (return)))
+    ;; Keep the overwhelmingly common fully-visible path allocation-free and
+    ;; bit-identical. q>0 plus 0<=z/w<=1 is equivalent to 0<=clip-z<=w.
+    (if (i32.and
+          (i32.and
+            (i32.and (f32.gt (local.get $q0) (f32.const 0.0))
+                     (f32.ge (local.get $z0) (f32.const 0.0)))
+            (f32.le (local.get $z0) (f32.const 1.0)))
+          (i32.and
+            (i32.and
+              (i32.and (f32.gt (local.get $q1) (f32.const 0.0))
+                       (f32.ge (local.get $z1) (f32.const 0.0)))
+              (f32.le (local.get $z1) (f32.const 1.0)))
+            (i32.and
+              (i32.and (f32.gt (local.get $q2) (f32.const 0.0))
+                       (f32.ge (local.get $z2) (f32.const 0.0)))
+              (f32.le (local.get $z2) (f32.const 1.0)))))
+      (then
+        (call $d3dim_draw_tl_triangle_dp_raw
+          (local.get $this) (local.get $rt) (local.get $use_z)
+          (local.get $v0) (local.get $v1) (local.get $v2))
+        (return)))
     (local.set $state (call $d3ddev_state (local.get $this)))
     (if (i32.eqz (local.get $state)) (then (return)))
     (local.set $sw (call $g2w (local.get $state)))
-    (local.set $c0 (i32.add (local.get $sw) (i32.const 3296)))
-    (local.set $c1 (i32.add (local.get $sw) (i32.const 3328)))
-    (if (i32.eq (local.get $pos) (i32.const 1)) (then
-      (if (local.get $p0) (then
-        (call $d3dim_interp_tl_near_vertex (local.get $state) (local.get $v0) (local.get $v1) (local.get $c0))
-        (call $d3dim_interp_tl_near_vertex (local.get $state) (local.get $v0) (local.get $v2) (local.get $c1))
-        (call $d3dim_draw_tl_triangle_dp_raw (local.get $this) (local.get $rt) (local.get $use_z)
-          (local.get $v0) (local.get $c0) (local.get $c1))))
-      (if (local.get $p1) (then
-        (call $d3dim_interp_tl_near_vertex (local.get $state) (local.get $v1) (local.get $v2) (local.get $c0))
-        (call $d3dim_interp_tl_near_vertex (local.get $state) (local.get $v1) (local.get $v0) (local.get $c1))
-        (call $d3dim_draw_tl_triangle_dp_raw (local.get $this) (local.get $rt) (local.get $use_z)
-          (local.get $v1) (local.get $c0) (local.get $c1))))
-      (if (local.get $p2) (then
-        (call $d3dim_interp_tl_near_vertex (local.get $state) (local.get $v2) (local.get $v0) (local.get $c0))
-        (call $d3dim_interp_tl_near_vertex (local.get $state) (local.get $v2) (local.get $v1) (local.get $c1))
-        (call $d3dim_draw_tl_triangle_dp_raw (local.get $this) (local.get $rt) (local.get $use_z)
-          (local.get $v2) (local.get $c0) (local.get $c1))))
-      (return)))
-    ;; Two visible vertices produce a clipped quad, triangulated without
-    ;; changing the original winding.
-    (if (i32.eqz (local.get $p0)) (then
-      (call $d3dim_interp_tl_near_vertex (local.get $state) (local.get $v1) (local.get $v0) (local.get $c0))
-      (call $d3dim_interp_tl_near_vertex (local.get $state) (local.get $v2) (local.get $v0) (local.get $c1))
-      (call $d3dim_draw_tl_triangle_dp_raw (local.get $this) (local.get $rt) (local.get $use_z)
-        (local.get $v1) (local.get $v2) (local.get $c1))
-      (call $d3dim_draw_tl_triangle_dp_raw (local.get $this) (local.get $rt) (local.get $use_z)
-        (local.get $v1) (local.get $c1) (local.get $c0))
-      (return)))
-    (if (i32.eqz (local.get $p1)) (then
-      (call $d3dim_interp_tl_near_vertex (local.get $state) (local.get $v2) (local.get $v1) (local.get $c0))
-      (call $d3dim_interp_tl_near_vertex (local.get $state) (local.get $v0) (local.get $v1) (local.get $c1))
-      (call $d3dim_draw_tl_triangle_dp_raw (local.get $this) (local.get $rt) (local.get $use_z)
-        (local.get $v2) (local.get $v0) (local.get $c1))
-      (call $d3dim_draw_tl_triangle_dp_raw (local.get $this) (local.get $rt) (local.get $use_z)
-        (local.get $v2) (local.get $c1) (local.get $c0))
-      (return)))
-    (call $d3dim_interp_tl_near_vertex (local.get $state) (local.get $v0) (local.get $v2) (local.get $c0))
-    (call $d3dim_interp_tl_near_vertex (local.get $state) (local.get $v1) (local.get $v2) (local.get $c1))
-    (call $d3dim_draw_tl_triangle_dp_raw (local.get $this) (local.get $rt) (local.get $use_z)
-      (local.get $v0) (local.get $v1) (local.get $c1))
-    (call $d3dim_draw_tl_triangle_dp_raw (local.get $this) (local.get $rt) (local.get $use_z)
-      (local.get $v0) (local.get $c1) (local.get $c0)))
+    ;; A reuses the otherwise-free tail; B reuses indexed-draw scratch only
+    ;; after all three caller vertices have been copied away from it.
+    (local.set $a (i32.add (local.get $sw) (i32.const 3744)))
+    (local.set $b (i32.add (local.get $sw) (i32.const 3200)))
+    (call $memcpy (local.get $a) (local.get $v0) (i32.const 32))
+    (call $memcpy (i32.add (local.get $a) (i32.const 32)) (local.get $v1) (i32.const 32))
+    (call $memcpy (i32.add (local.get $a) (i32.const 64)) (local.get $v2) (i32.const 32))
+    (local.set $count (call $d3dim_clip_tl_polygon
+      (local.get $state) (local.get $a) (i32.const 3) (local.get $b) (i32.const 0)))
+    (if (i32.lt_u (local.get $count) (i32.const 3)) (then (return)))
+    (local.set $count (call $d3dim_clip_tl_polygon
+      (local.get $state) (local.get $b) (local.get $count) (local.get $a) (i32.const 1)))
+    (if (i32.lt_u (local.get $count) (i32.const 3)) (then (return)))
+    (local.set $i (i32.const 1))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (i32.add (local.get $i) (i32.const 1)) (local.get $count)))
+      (call $d3dim_draw_tl_triangle_dp_raw
+        (local.get $this) (local.get $rt) (local.get $use_z)
+        (local.get $a)
+        (i32.add (local.get $a) (i32.mul (local.get $i) (i32.const 32)))
+        (i32.add (local.get $a) (i32.mul (i32.add (local.get $i) (i32.const 1)) (i32.const 32))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp))))
 
   ;; ── Execute-buffer triangle rasterizer ─────────────────────────
   ;; Walks wCount D3DTRIANGLE records (8 bytes each: u16 v1,v2,v3,flags) and

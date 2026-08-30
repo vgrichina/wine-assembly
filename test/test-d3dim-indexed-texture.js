@@ -84,9 +84,9 @@ const extraWat = String.raw`
     (f32.store (i32.add (local.get $sw) (global.get $D3DIM_OFF_VP_ORIGIN)) (f32.const 4.0))
     (f32.store (i32.add (local.get $sw)
       (i32.add (global.get $D3DIM_OFF_VP_ORIGIN) (i32.const 4))) (f32.const 4.0))
-    (call $d3dim_interp_tl_near_vertex
+    (call $d3dim_interp_tl_clip_vertex
       (local.get $state) (call $g2w (local.get $a)) (call $g2w (local.get $b))
-      (call $g2w (local.get $out))))
+      (call $g2w (local.get $out)) (i32.const 0)))
 
   (func (export "test_diptex_lvertex_stride") (result i32)
     (call $d3dim_vertex_type_stride (i32.const 2)))
@@ -376,6 +376,29 @@ function writeFloat(wat, addr, value) {
   assert.strictEqual(mem.getUint16(rtDib + 6 * 16 + 6 * 2, true), 0x001f,
     'positive-RHW vertex behind clip z=0 was rasterized without clipping');
 
+  // A negative-RHW endpoint can lie beyond D3D's far plane while clip-z
+  // remains positive.  Such an edge enters the visible volume at z=w, not at
+  // z=0.  Treating every negative RHW as a near-plane crossing collapses both
+  // generated endpoints onto the original vertices and loses the visible
+  // strip (the same failure turns MCM terrain into long fans at the horizon).
+  const farEntry = [
+    [1, 1, 0.5, 1.0, 0.0, 0.0],
+    [6, 1, 0.5, 1.0, 1.0, 0.0],
+    [3, 5, -0.5, -1.0, 0.5, 1.0],
+  ];
+  farEntry.forEach(([x, y, z, q, u, v], i) => {
+    const p = vertices + i * VERTEX_STRIDE;
+    writeFloat(wat, p + 0, x); writeFloat(wat, p + 4, y);
+    writeFloat(wat, p + 8, z); writeFloat(wat, p + 12, q);
+    wat.guest_write32(p + 16, 0xffffffff);
+    wat.guest_write32(p + 20, 0);
+    writeFloat(wat, p + 24, u); writeFloat(wat, p + 28, v);
+  });
+  clearRt(0x001f);
+  wat.test_diptex_draw_tl_triangle(device, rt, vertices);
+  assert.notStrictEqual(mem.getUint16(rtDib + 3 * 2, true), 0x001f,
+    'behind-eye edge was intersected with z=0 instead of the far plane z=w');
+
   // A 0..4 screen span covers pixels 0..3. Pixel 4 is the geometric edge,
   // not a fragment centre; drawing it samples u=1.0, which WRAP aliases to
   // texture column zero and exposes an opaque one-pixel seam beside MCM's
@@ -598,7 +621,7 @@ function writeFloat(wat, addr, value) {
   assert.notStrictEqual(mem.getUint16(zDib + 2 * 16 + 2 * 2, true), 0x2222,
     'opaque texture sample did not update attached depth');
 
-  console.log(`PASS D3DIM legacy LVERTEX layout, near clipping, and Texture2 indexed triangles use color keys, FVF UV sets, perspective/filter/address states, declared formats, blending, and attached reversed-Z (${textured.size} texture colours)`);
+  console.log(`PASS D3DIM legacy LVERTEX layout, homogeneous depth clipping, and Texture2 indexed triangles use color keys, FVF UV sets, perspective/filter/address states, declared formats, blending, and attached reversed-Z (${textured.size} texture colours)`);
 })().catch(error => {
   console.error(error.stack || error.message);
   process.exit(1);
