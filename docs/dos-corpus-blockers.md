@@ -12,6 +12,19 @@ node tools/toyvm/demo-status.js OUT.json [OLD.json]        # prints the moved(N)
 One row file per program, so re-taking a single flaked row is cheap and a killed
 sweep resumes losing nothing.
 
+**Keep the corpus out of `/tmp`.** macOS runs a periodic cleaner that deletes
+files under `/tmp` by age, and it does not care that a sweep is reading them:
+on 2026-08-30 at 00:00 it took `/tmp/demos` from 199 programs to 37 files and
+146 empty directories **mid-sweep**, which silently turned every row captured
+after that point into a photograph of `ENOENT`. A sweep that suddenly starts
+producing blank rows in alphabetical order is this, not a regression. The
+corpus now lives in `~/dos-demos` and `/tmp/demos` is a symlink to it, so every
+command in this file still reads the same; `tools/toyvm/fetch-demos.js`
+re-fetches it (`--dirs=1993/a,…,1995/c --max=1000 --max-kb=80`, plus one
+`--max-kb=400` pass over `1994/c` for `cw2`, whose archive is over the 80K
+cutoff). The row files under `/tmp/rows-*` are just as perishable — a sweep
+worth resuming wants them somewhere the cleaner does not reach either.
+
 This file is the work list: one entry per program that still does not show what
 it meant to, with the *measured* cause rather than a guess. Read the entry
 before starting on one — several of these have already cost a session each, and
