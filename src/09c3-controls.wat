@@ -15721,6 +15721,32 @@
                     (i32.eq (local.get $msg) (i32.const 0x0037)))))) ;; WM_QUERYDRAGICON
           (then (return (local.get $handled))))
         (return (call $dialog_extra_get (local.get $hwnd) (i32.const 0)))))
+    ;; A FALSE DLGPROC result falls through to DefDlgProc's default work. In
+    ;; particular, WM_PAINT is not merely validated: BeginPaint first erases
+    ;; an invalid dialog whose update region carries the erase bit. Keeping
+    ;; that work in ShowWindow made property-sheet pages paint before COMCTL
+    ;; hid the preceding page, so both pages briefly occupied our shared
+    ;; top-level canvas. Do the default erase here, when USER actually
+    ;; dispatches the new page's paint and the old page is already hidden.
+    (if (i32.eq (local.get $msg) (i32.const 0x0014)) ;; WM_ERASEBKGND
+      (then
+        (call $nc_flags_clear (local.get $hwnd) (i32.const 2))
+        (return (call $host_erase_background
+          (local.get $hwnd) (i32.const 16))))) ;; COLOR_BTNFACE+1
+    (if (i32.eq (local.get $msg) (i32.const 0x000F)) ;; WM_PAINT
+      (then
+        ;; Preserve the parent's update geometry long enough to expose each
+        ;; visible child. They paint after this default background pass, as
+        ;; USER's child clipping requires.
+        (drop (call $paint_seed_child_paints (local.get $hwnd)))
+        (if (i32.and (call $nc_flags_test (local.get $hwnd)) (i32.const 2))
+          (then
+            (call $nc_flags_clear (local.get $hwnd) (i32.const 2))
+            (drop (call $host_erase_background
+              (local.get $hwnd) (i32.const 16))))) ;; COLOR_BTNFACE+1
+        (call $update_clear_hwnd (local.get $hwnd))
+        (call $paint_flag_clear_hwnd (local.get $hwnd))
+        (return (i32.const 0))))
     (i32.const 0))
 
   ;; Route a client-relative mouse event to the first WAT-managed child

@@ -136,6 +136,7 @@ function saturatedCountInRect(png, left, top, right, bottom) {
   const framePath = path.join(temp, 'winrar.png');
   const installedFramePath = path.join(temp, 'winrar-installed.png');
   const integrationFramePath = path.join(temp, 'winrar-integration.png');
+  const rapidPagesFramePath = path.join(temp, 'winrar-rapid-pages.png');
   const mainFramePath = path.join(temp, 'winrar-main-after-settings.png');
   const commandsFramePath = path.join(temp, 'winrar-commands.png');
   try {
@@ -200,9 +201,14 @@ function saturatedCountInRect(png, left, top, right, bottom) {
       '--batch-size=50000',
       `--input=1:wait-title:Please_register:2000,2:dlg-click:1,5:dump-windows:registration-closed,` +
         `10:mousedown:350:76,11:mouseup:350:76,20:png:${integrationFramePath},` +
-        `30:dlg-click:2,35:dump-windows:settings-closed,36:png:${mainFramePath},` +
-        `40:mousedown:95:51,41:mouseup:95:51,` +
-        `50:png:${commandsFramePath},60:mousedown:500:400,61:mouseup:500:400`,
+        `22:mousedown:220:76,23:mouseup:220:76,` + // File list
+        `24:mousedown:275:76,25:mouseup:275:76,` + // Viewer
+        `26:mousedown:170:76,27:mouseup:170:76,` + // Paths
+        `28:mousedown:120:76,29:mouseup:120:76,` + // Compression
+        `32:png:${rapidPagesFramePath},40:dlg-click:2,` +
+        `45:dump-windows:settings-closed,46:png:${mainFramePath},` +
+        `50:mousedown:95:51,51:mouseup:95:51,` +
+        `60:png:${commandsFramePath},70:mousedown:500:400,71:mouseup:500:400`,
       `--png=${installedFramePath}`,
     ], {
       cwd: ROOT,
@@ -237,6 +243,15 @@ function saturatedCountInRect(png, left, top, right, bottom) {
       50, 87, 510, 91);
     assert(exposedPageWhite < 40,
       `WinRAR tab left its exposed property-page band white (${exposedPageWhite} white pixels)`);
+    assert(fs.existsSync(rapidPagesFramePath),
+      'WinRAR did not capture rapid property-page switching');
+    const rapidPagesPng = PNG.sync.read(fs.readFileSync(rapidPagesFramePath));
+    // Compression owns no controls in this upper-right page area. Paths,
+    // File list, or Viewer text here means a hidden page painted after the
+    // final selection—the multi-page smear visible during rapid tab changes.
+    const hiddenPageInk = darkCountInRect(rapidPagesPng, 270, 120, 490, 180);
+    assert(hiddenPageInk < 30,
+      `WinRAR rapid tab switching overpainted hidden pages (${hiddenPageInk} stale dark pixels)`);
     assert(fs.existsSync(mainFramePath),
       'WinRAR did not capture its main toolbar after Settings closed');
     const mainPng = PNG.sync.read(fs.readFileSync(mainFramePath));

@@ -1208,42 +1208,39 @@
     ;; paint+invalidate helper rather than the legacy paint bit alone.
     (if (local.get $arg1)
       (then
-        ;; Dialog/page creation already fills the client background before
-        ;; WAT-native children paint. Do not erase child pages again here:
-        ;; on our top-level backing canvas that later erase can wipe child
-        ;; controls that Win98 would leave visible through USER's clipped
-        ;; update/visible-region pass.
         (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
           (then (global.set $paint_pending (i32.const 1)))
           (else
-            ;; Child dialogs share their top-level parent's backing canvas.
-            ;; A property sheet swaps pages by hiding one child dialog and
-            ;; showing another at the same coordinates; paint the new page's
-            ;; class background synchronously before its controls drain, or
-            ;; pixels from the hidden page survive underneath (WinRAR's
-            ;; General controls remained visible on its Integration page).
-            (if (i32.eq (call $wnd_table_get (local.get $arg0))
-                        (global.get $WNDPROC_DIALOG))
-              (then
-                (drop (call $host_erase_background
-                  (local.get $arg0) (i32.const 16))))) ;; COLOR_BTNFACE+1
             (call $paint_flag_set_inv (local.get $arg0))
             ;; Showing a parent exposes its visible children. Win98's paint
-            ;; selection accounts for that visible-region relationship; seed
-            ;; it here before draining WAT-native controls.
+            ;; selection accounts for that visible-region relationship.
             (drop (call $paint_seed_child_paints (local.get $arg0)))))
-        ;; Dialogs that create/show a child page and immediately start work
-        ;; may not re-enter the normal message pump before their first visual
-        ;; capture/exit. Win98 native child controls are ready to repaint as
-        ;; part of showing the window; drain our WAT-native control queue here
-        ;; so visible statics/progress/list controls don't remain blank.
+        ;; A child dialog is commonly a property-sheet page. USER does not
+        ;; synchronously expose its WM_PAINT work from ShowWindow: COMCTL can
+        ;; still hide the old page before GetMessage selects either page's
+        ;; update region. Painting the new page here instead put both pages on
+        ;; our shared top-level canvas for one browser frame (WinRAR showed
+        ;; controls from Compression, Paths, and Viewer at once). Leave child
+        ;; dialog erasure and descendants queued so the following SW_HIDE can
+        ;; validate the old subtree first, matching Win98 visible-region order.
+        ;;
+        ;; Other windows retain the eager native-control drain. Dialogs that
+        ;; create/show ordinary controls and immediately start work may not
+        ;; re-enter the normal message pump before their first capture/exit.
         ;; The first shown top-level may have been promoted from a hidden
         ;; utility hwnd. Its canonical surface is attached/resized by the
         ;; host_show_window call above, after dialog children initially drew.
         ;; Recompose children for main windows too so the new surface does not
         ;; retain only its cleared background.
-        (drop (call $paint_drain_native_control_paints))
-        (drop (call $paint_flush_shown_native_children (local.get $arg0)))))
+        (if (i32.eqz
+              (i32.and
+                (i32.ne (i32.and (call $wnd_get_style (local.get $arg0))
+                                 (i32.const 0x40000000)) (i32.const 0))
+                (i32.eq (call $wnd_table_get (local.get $arg0))
+                        (global.get $WNDPROC_DIALOG))))
+          (then
+            (drop (call $paint_drain_native_control_paints))
+            (drop (call $paint_flush_shown_native_children (local.get $arg0)))))))
     ;; SW_MAXIMIZE (cmd=3): host already resized. Queue the actual
     ;; maximized move/size pair before paint and discard the stale
     ;; create-time pending size from CW_USEDEFAULT.
