@@ -6,6 +6,7 @@ const assert = require('assert');
 const listeners = new Map();
 const addListener = (type, fn) => listeners.set(type, fn);
 const classNames = new Set();
+const lockRequests = [];
 const canvas = {
   width: 640,
   height: 480,
@@ -21,7 +22,13 @@ const canvas = {
   removeEventListener() {},
   setAttribute() {},
   focus() {},
-  requestPointerLock() {},
+  requestPointerLock(options) {
+    lockRequests.push(options);
+    // Model a browser that knows the options signature but cannot provide raw
+    // input on this platform. The bridge should immediately retry plain lock.
+    if (options) return { catch: reject => reject(new Error('raw movement unavailable')) };
+    return undefined;
+  },
 };
 
 global.window = {
@@ -74,6 +81,8 @@ try {
     clientX: 320, clientY: 240, button: 0, buttons: 1,
     ctrlKey: false, shiftKey: false, preventDefault() {},
   });
+  assert.deepStrictEqual(lockRequests, [{ unadjustedMovement: true }, undefined],
+    'capture should prefer raw movement and fall back to ordinary Pointer Lock');
   listeners.get('mousemove')({
     clientX: 500, clientY: 240, movementX: 180, movementY: 0, buttons: 1,
     preventDefault() {}, stopPropagation() {},

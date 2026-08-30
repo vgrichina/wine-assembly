@@ -327,6 +327,13 @@ Lock. The acquisition click still reaches the guest and starts relative
 `movementX/Y`; nonexclusive desktop applications retain their ordinary
 absolute hover and move path.
 
+The capture request uses Pointer Lock's `unadjustedMovement` option so Quake
+receives raw device deltas rather than browser/OS-accelerated movement which
+then gets transformed again by the game's own sensitivity. Browsers which do
+not implement raw movement retain ordinary Pointer Lock through an optionless
+fallback; this changes mouse feel where supported without making capture a
+new compatibility requirement.
+
 ## Threads/OpenGL throughput
 
 The severe slowdown with the browser Threads switch is not a guest lock or a
