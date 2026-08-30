@@ -19,6 +19,10 @@ const extraWat = String.raw`
       (i32.const 0) (local.get $callback) (local.get $context)
       (i32.const 0) (i32.const 0) (i32.const 0))
     (global.get $esp))
+
+  (func (export "test_fill_d3d_texture_desc")
+      (param $desc i32) (param $index i32)
+    (call $d3d_fill_texture_desc (local.get $desc) (local.get $index)))
 `;
 
 (async () => {
@@ -53,7 +57,35 @@ const extraWat = String.raw`
   assert.strictEqual(wat.guest_read32(desc + 92) >>> 0, 0x07e0);
   assert.strictEqual(wat.guest_read32(desc + 96) >>> 0, 0x001f);
 
-  console.log('PASS IDirect3DDevice2 EnumTextureFormats supplies DDSURFACEDESC');
+  const probeDesc = 0x420000;
+  wat.test_fill_d3d_texture_desc(probeDesc, 1);
+  assert.strictEqual(wat.guest_read32(probeDesc + 76) >>> 0, 0x41,
+    'second advertised format should carry per-pixel alpha');
+  assert.strictEqual(wat.guest_read32(probeDesc + 84) >>> 0, 16);
+  assert.strictEqual(wat.guest_read32(probeDesc + 88) >>> 0, 0x0f00);
+  assert.strictEqual(wat.guest_read32(probeDesc + 92) >>> 0, 0x00f0);
+  assert.strictEqual(wat.guest_read32(probeDesc + 96) >>> 0, 0x000f);
+  assert.strictEqual(wat.guest_read32(probeDesc + 100) >>> 0, 0xf000,
+    'ARGB4444 alpha mask must preserve gradual texture opacity');
+
+  wat.test_fill_d3d_texture_desc(probeDesc, 2);
+  assert.strictEqual(wat.guest_read32(probeDesc + 76) >>> 0, 0x41);
+  assert.strictEqual(wat.guest_read32(probeDesc + 88) >>> 0, 0x7c00);
+  assert.strictEqual(wat.guest_read32(probeDesc + 92) >>> 0, 0x03e0);
+  assert.strictEqual(wat.guest_read32(probeDesc + 96) >>> 0, 0x001f);
+  assert.strictEqual(wat.guest_read32(probeDesc + 100) >>> 0, 0x8000,
+    'ARGB1555 should remain available for binary-alpha textures');
+
+  wat.test_fill_d3d_texture_desc(probeDesc, 3);
+  assert.strictEqual(wat.guest_read32(probeDesc + 76) >>> 0, 0x40);
+  assert.strictEqual(wat.guest_read32(probeDesc + 84) >>> 0, 32,
+    'opaque XRGB8888 should remain available after the 16-bit alpha formats');
+  assert.strictEqual(wat.guest_read32(probeDesc + 88) >>> 0, 0x00ff0000);
+  assert.strictEqual(wat.guest_read32(probeDesc + 92) >>> 0, 0x0000ff00);
+  assert.strictEqual(wat.guest_read32(probeDesc + 96) >>> 0, 0x000000ff);
+  assert.strictEqual(wat.guest_read32(probeDesc + 100) >>> 0, 0);
+
+  console.log('PASS IDirect3DDevice2 EnumTextureFormats supplies RGB and alpha DDSURFACEDESC formats');
 })().catch(error => {
   console.error(error && error.stack || error);
   process.exit(1);

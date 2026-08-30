@@ -2181,31 +2181,51 @@
     (global.set $eip (global.get $d3d_enum_zbuf_ret))
     (global.set $eax (i32.const 0)))
 
-  ;; ── IDirect3DDevice7::EnumTextureFormats — common RGB texture formats ──
+  ;; ── IDirect3DDevice7::EnumTextureFormats — common RGB/ARGB formats ──
   ;; Callback signature: EnumTextureFormatsCallback(lpDDPixelFormat, lpContext).
   (func $d3d_fill_texture_format (param $fmt i32) (param $idx i32)
     (local $wa i32)
     (local.set $wa (call $g2w (local.get $fmt)))
     (call $zero_memory (local.get $wa) (i32.const 32))
     (i32.store (local.get $wa) (i32.const 32))                         ;; dwSize
-    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x40)) ;; DDPF_RGB
     (if (i32.eq (local.get $idx) (i32.const 0))
       (then
+        (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x40)) ;; DDPF_RGB
         (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 16))
         (i32.store (i32.add (local.get $wa) (i32.const 16)) (i32.const 0xF800))
         (i32.store (i32.add (local.get $wa) (i32.const 20)) (i32.const 0x07E0))
         (i32.store (i32.add (local.get $wa) (i32.const 24)) (i32.const 0x001F)))
       (else
-        (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 32))
-        (i32.store (i32.add (local.get $wa) (i32.const 16)) (i32.const 0x00FF0000))
-        (i32.store (i32.add (local.get $wa) (i32.const 20)) (i32.const 0x0000FF00))
-        (i32.store (i32.add (local.get $wa) (i32.const 24)) (i32.const 0x000000FF)))))
+        (if (i32.eq (local.get $idx) (i32.const 1))
+          (then
+            ;; Four alpha bits preserve the gradual HUD fades used by MCM.
+            (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x41)) ;; DDPF_RGB|ALPHAPIXELS
+            (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 16))
+            (i32.store (i32.add (local.get $wa) (i32.const 16)) (i32.const 0x0F00))
+            (i32.store (i32.add (local.get $wa) (i32.const 20)) (i32.const 0x00F0))
+            (i32.store (i32.add (local.get $wa) (i32.const 24)) (i32.const 0x000F))
+            (i32.store (i32.add (local.get $wa) (i32.const 28)) (i32.const 0xF000)))
+          (else
+            (if (i32.eq (local.get $idx) (i32.const 2))
+              (then
+                (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x41)) ;; DDPF_RGB|ALPHAPIXELS
+                (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 16))
+                (i32.store (i32.add (local.get $wa) (i32.const 16)) (i32.const 0x7C00))
+                (i32.store (i32.add (local.get $wa) (i32.const 20)) (i32.const 0x03E0))
+                (i32.store (i32.add (local.get $wa) (i32.const 24)) (i32.const 0x001F))
+                (i32.store (i32.add (local.get $wa) (i32.const 28)) (i32.const 0x8000)))
+              (else
+                (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x40)) ;; DDPF_RGB
+                (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 32))
+                (i32.store (i32.add (local.get $wa) (i32.const 16)) (i32.const 0x00FF0000))
+                (i32.store (i32.add (local.get $wa) (i32.const 20)) (i32.const 0x0000FF00))
+                (i32.store (i32.add (local.get $wa) (i32.const 24)) (i32.const 0x000000FF)))))))))
 
   ;; Direct3D v1 EnumTextureFormats passes LPDDSURFACEDESC, not LPDDPIXELFORMAT.
   (func $d3d_fill_texture_desc (param $ddsd i32) (param $idx i32)
     (local $wa i32) (local $bpp i32) (local $pitch i32)
     (local.set $wa (call $g2w (local.get $ddsd)))
-    (local.set $bpp (select (i32.const 16) (i32.const 32) (i32.eq (local.get $idx) (i32.const 0))))
+    (local.set $bpp (select (i32.const 16) (i32.const 32) (i32.lt_u (local.get $idx) (i32.const 3))))
     (local.set $pitch (i32.and
       (i32.add (i32.mul (i32.const 8) (i32.div_u (local.get $bpp) (i32.const 8))) (i32.const 3))
       (i32.const 0xFFFFFFFC)))
@@ -2241,7 +2261,7 @@
     (call $d3d_enum_tex_dispatch))
 
   (func $d3d_enum_tex_dispatch
-    (if (i32.ge_u (global.get $d3d_enum_tex_idx) (i32.const 2))
+    (if (i32.ge_u (global.get $d3d_enum_tex_idx) (i32.const 4))
       (then
         (global.set $d3d_enum_tex_ret (call $gl32 (global.get $esp)))
         (global.set $esp (i32.add (global.get $esp) (i32.const 4)))

@@ -127,6 +127,19 @@ const extraWat = String.raw`
     (call $handle_IDirect3DDevice3_DrawIndexedPrimitive
       (local.get $device) (i32.const 4) (i32.const 0x3c4)
       (local.get $vertices) (i32.const 3) (i32.const 0)))
+
+  (func (export "test_diptex_draw_wrapped_span")
+      (param $rt i32) (param $texture i32)
+    (call $viewport_draw_textured_span
+      (call $dx_from_this (local.get $rt))
+      (call $dx_from_this (local.get $texture))
+      (i32.const 0) (i32.const 2) (i32.const 1)
+      (i32.const 1) (i32.const 3) (i32.const 0)
+      (i32.const 2) (i32.const 2) (i32.const 0)
+      (i32.const 0)
+      (i32.const 0) (f32.const 0.0) (f32.const 0.0) (f32.const 1.0) (i32.const 0xffffffff) (f32.const 0.5)
+      (i32.const 4) (f32.const 1.0) (f32.const 0.0) (f32.const 1.0) (i32.const 0xffffffff) (f32.const 0.5)
+      (i32.const 0) (i32.const 8) (i32.const 0)))
 `;
 
 // MW3 submits D3DFVF_XYZRHW|DIFFUSE|SPECULAR|TEX3. TEX3 makes each source
@@ -328,6 +341,21 @@ function writeFloat(wat, addr, value) {
       for (let x = 0; x < 8; x++) mem.setUint16(rtDib + y * 16 + x * 2, value, true);
     }
   };
+
+  // A 0..4 screen span covers pixels 0..3. Pixel 4 is the geometric edge,
+  // not a fragment centre; drawing it samples u=1.0, which WRAP aliases to
+  // texture column zero and exposes an opaque one-pixel seam beside MCM's
+  // right-to-transparent HUD gradient.
+  clearRt(0x001f);
+  wat.test_diptex_draw_wrapped_span(rt, texture);
+  assert.deepStrictEqual([
+    mem.getUint16(rtDib + 0, true),
+    mem.getUint16(rtDib + 2, true),
+    mem.getUint16(rtDib + 4, true),
+    mem.getUint16(rtDib + 6, true),
+    mem.getUint16(rtDib + 8, true),
+  ], [0xf800, 0xf800, 0x07e0, 0x07e0, 0x001f],
+  'right-inclusive span wrapped u=1.0 to texture column zero');
 
   // MW3 changes TEXCOORDINDEX between its base/detail/light-map passes. The
   // chosen set must survive FVF repacking, and SELECTARG1 must not darken it

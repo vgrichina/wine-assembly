@@ -3249,6 +3249,14 @@
         (local.get $tex_entry) (i32.load offset=24 (local.get $tex_entry)) (local.get $tbpp)))))
     (local.set $xs (local.get $x0))
     (local.set $xe (local.get $x1))
+    ;; Raster coverage is right-exclusive.  Sampling the geometric endpoint
+    ;; made a screen-aligned 0..128 quad draw pixel 128 with u=1.0; WRAP then
+    ;; aliases that sample to texture column zero, leaving an opaque vertical
+    ;; seam beside otherwise transparent HUD fades (MCM's race overlay).
+    ;; Preserve a one-pixel/degenerate span while excluding the far endpoint
+    ;; from every span that has positive width.
+    (if (i32.gt_s (local.get $xe) (local.get $xs))
+      (then (local.set $xe (i32.sub (local.get $xe) (i32.const 1)))))
     (if (i32.lt_s (local.get $xs) (i32.const 0)) (then (local.set $xs (i32.const 0))))
     (if (i32.ge_s (local.get $xe) (local.get $sw)) (then (local.set $xe (i32.sub (local.get $sw) (i32.const 1)))))
     (if (i32.lt_s (local.get $xe) (local.get $xs)) (then (return)))
