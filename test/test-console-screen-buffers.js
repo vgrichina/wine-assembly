@@ -160,6 +160,22 @@ const extraWat = String.raw`
       (local.get $coord) (local.get $region) (i32.const 0))
     (global.set $esp (local.get $saved))
     (global.get $eax))
+  (func (export "test_create_file_a") (param $name i32) (result i32)
+    (local $saved i32)
+    (local.set $saved (global.get $esp))
+    (call $handle_CreateFileA
+      (local.get $name) (i32.const 0xc0000000) (i32.const 3)
+      (i32.const 0) (i32.const 3) (i32.const 0))
+    (global.set $esp (local.get $saved))
+    (global.get $eax))
+  (func (export "test_create_file_w") (param $name i32) (result i32)
+    (local $saved i32)
+    (local.set $saved (global.get $esp))
+    (call $handle_CreateFileW
+      (local.get $name) (i32.const 0xc0000000) (i32.const 3)
+      (i32.const 0) (i32.const 3) (i32.const 0))
+    (global.set $esp (local.get $saved))
+    (global.get $eax))
 `;
 
 (async () => {
@@ -186,6 +202,15 @@ const extraWat = String.raw`
   const read16 = ptr => wat.guest_read8(ptr) | (wat.guest_read8(ptr + 1) << 8);
 
   const titleBuffer = wat.guest_alloc(32) >>> 0;
+  assert.strictEqual(wat.test_create_file_a(allocText('conin$')), 1,
+    'case-insensitive CONIN$ did not open console input');
+  assert.strictEqual(wat.test_create_file_a(allocText('CONOUT$')), 2,
+    'CONOUT$ did not open active console output');
+  const wideConout = wat.guest_alloc(16) >>> 0;
+  for (const [i, ch] of [...'ConOut$'].entries()) wat.guest_write16(wideConout + i * 2, ch.charCodeAt(0));
+  wat.guest_write16(wideConout + 14, 0);
+  assert.strictEqual(wat.test_create_file_w(wideConout), 2,
+    'wide mixed-case CONOUT$ did not open console output');
   assert.strictEqual(wat.test_console_title_first_byte(), 'C'.charCodeAt(0),
     'default console title storage was not initialized');
   assert.strictEqual(wat.test_get_console_title_a(titleBuffer, 32), 7);

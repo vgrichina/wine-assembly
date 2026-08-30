@@ -1571,8 +1571,47 @@
   )
 
   ;; 14: CreateFileA(lpFileName, dwDesiredAccess, dwShareMode, lpSecAttr, dwCreation, dwFlags, hTemplate) — 7 args
+  (func $console_device_name (param $name i32) (param $wide i32) (result i32)
+    (local $step i32) (local $c i32)
+    (local.set $step (select (i32.const 2) (i32.const 1) (local.get $wide)))
+    (if (i32.ne (i32.or (call $load_char (local.get $name) (local.get $wide)) (i32.const 0x20))
+                (i32.const 0x63)) (then (return (i32.const 0)))) ;; c
+    (if (i32.ne (i32.or (call $load_char (i32.add (local.get $name) (local.get $step)) (local.get $wide)) (i32.const 0x20))
+                (i32.const 0x6f)) (then (return (i32.const 0)))) ;; o
+    (if (i32.ne (i32.or (call $load_char (i32.add (local.get $name) (i32.mul (local.get $step) (i32.const 2))) (local.get $wide)) (i32.const 0x20))
+                (i32.const 0x6e)) (then (return (i32.const 0)))) ;; n
+    (local.set $c (i32.or
+      (call $load_char (i32.add (local.get $name) (i32.mul (local.get $step) (i32.const 3))) (local.get $wide))
+      (i32.const 0x20)))
+    (if (i32.eq (local.get $c) (i32.const 0x69)) ;; CONIN$
+      (then
+        (if (i32.and
+              (i32.eq (i32.or (call $load_char (i32.add (local.get $name) (i32.mul (local.get $step) (i32.const 4))) (local.get $wide)) (i32.const 0x20)) (i32.const 0x6e))
+              (i32.and
+                (i32.eq (call $load_char (i32.add (local.get $name) (i32.mul (local.get $step) (i32.const 5))) (local.get $wide)) (i32.const 0x24))
+                (i32.eqz (call $load_char (i32.add (local.get $name) (i32.mul (local.get $step) (i32.const 6))) (local.get $wide)))))
+          (then (return (i32.const 1))))))
+    (if (i32.eq (local.get $c) (i32.const 0x6f)) ;; CONOUT$
+      (then
+        (if (i32.and
+              (i32.eq (i32.or (call $load_char (i32.add (local.get $name) (i32.mul (local.get $step) (i32.const 4))) (local.get $wide)) (i32.const 0x20)) (i32.const 0x75))
+              (i32.and
+                (i32.eq (i32.or (call $load_char (i32.add (local.get $name) (i32.mul (local.get $step) (i32.const 5))) (local.get $wide)) (i32.const 0x20)) (i32.const 0x74))
+                (i32.and
+                  (i32.eq (call $load_char (i32.add (local.get $name) (i32.mul (local.get $step) (i32.const 6))) (local.get $wide)) (i32.const 0x24))
+                  (i32.eqz (call $load_char (i32.add (local.get $name) (i32.mul (local.get $step) (i32.const 7))) (local.get $wide))))))
+          (then (return (i32.const 2))))))
+    (i32.const 0))
+
   (func $handle_CreateFileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa_esp i32) (local $creation i32) (local $flags i32)
+    (local $wa_esp i32) (local $creation i32) (local $flags i32) (local $device i32)
+    (local.set $device (call $console_device_name (call $g2w (local.get $arg0)) (i32.const 0)))
+    (if (local.get $device)
+      (then
+        (global.set $eax (local.get $device))
+        (global.set $last_error (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
+        (return)))
     (local.set $wa_esp (call $g2w (global.get $esp)))
     (local.set $creation (local.get $arg4))
     (local.set $flags (i32.load (i32.add (local.get $wa_esp) (i32.const 24))))
@@ -10222,7 +10261,14 @@ HookEx — no next hook in chain, return 0
   ;; 426: CreateFileW — STUB: unimplemented
   (func $handle_CreateFileW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; CreateFileW — 7 args, same as CreateFileA but wide
-    (local $wa_esp_w i32) (local $creation_w i32) (local $flags_w i32)
+    (local $wa_esp_w i32) (local $creation_w i32) (local $flags_w i32) (local $device i32)
+    (local.set $device (call $console_device_name (call $g2w (local.get $arg0)) (i32.const 1)))
+    (if (local.get $device)
+      (then
+        (global.set $eax (local.get $device))
+        (global.set $last_error (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
+        (return)))
     (local.set $wa_esp_w (call $g2w (global.get $esp)))
     (local.set $creation_w (local.get $arg4))
     (local.set $flags_w (i32.load (i32.add (local.get $wa_esp_w) (i32.const 24))))
