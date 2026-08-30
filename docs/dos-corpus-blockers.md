@@ -418,9 +418,13 @@ running its own loop for 300M — it reads the file, sets mode 13h and loads a
 extender at `22df:365`–`22df:3ee`, and that is the next question. Those three
 blocks disassemble as a Huffman decoder — a code-length histogram, a
 first-code-per-length table, then a bit-at-a-time `shr`/`rcl` walk — so the
-loop is doing work rather than polling; it simply never finishes. 3000M
-dispatches (132s of wall clock) end in the same place as 200M, at 478K
-dispatches per handback, with the DAC loaded and the screen black. Two gaps
+loop is doing work rather than polling. 3000M dispatches (132s of wall clock)
+end in the same place as 200M, with the DAC loaded and the screen black — but
+"the same place" is not "no progress": handbacks go 2542 → 6274 over that 15x,
+so it is advancing, just far too slowly to reach a frame. Whether that is a
+budget problem or a decoder fed the wrong bytes is the open question, and the
+cheap next measurement is whether the destination buffer at `0:0437` is
+actually filling. Two gaps
 noticed on the way and not yet closed: there is no `$ldtl`, so an LDT
 selector's limit is checked against the *GDT* limit, and past that limit it
 falls back to reading the selector as a paragraph.
