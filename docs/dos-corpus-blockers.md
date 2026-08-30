@@ -415,7 +415,12 @@ mask is `0xFFFC`: only the GDT has a null slot.
 With both, ANGEL goes from a wild jump into the IVT at 3.0M dispatches to
 running its own loop for 300M — it reads the file, sets mode 13h and loads a
 246-entry DAC palette. **It still writes nothing to A000**, spinning in its
-extender at `22df:365`–`22df:3ee`, and that is the next question. Two gaps
+extender at `22df:365`–`22df:3ee`, and that is the next question. Those three
+blocks disassemble as a Huffman decoder — a code-length histogram, a
+first-code-per-length table, then a bit-at-a-time `shr`/`rcl` walk — so the
+loop is doing work rather than polling; it simply never finishes. 3000M
+dispatches (132s of wall clock) end in the same place as 200M, at 478K
+dispatches per handback, with the DAC loaded and the screen black. Two gaps
 noticed on the way and not yet closed: there is no `$ldtl`, so an LDT
 selector's limit is checked against the *GDT* limit, and past that limit it
 falls back to reading the selector as a paragraph.
