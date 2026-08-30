@@ -219,7 +219,8 @@ async function runDos(o) {
     // stars are. The demo ran; the photograph was of the question it asked on
     // the way in. The band is small enough to stay under frameScore's, so any
     // graphics frame still outranks any text one.
-    const score = s.text ? cells + (asking(text) ? 0 : 4000) : f.score;
+    // An empty page gets no band: zero has to keep meaning "nothing here".
+    const score = s.text ? (cells ? cells + (asking(text) ? 0 : 4000) : 0) : f.score;
     if (score <= bestScore) return;
     bestScore = score;
     bestContent = s.text ? cells : f.count;

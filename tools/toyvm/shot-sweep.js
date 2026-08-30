@@ -144,9 +144,18 @@ async function runOne(exe, png, o) {
 // on the way in is 192. Counting cells alone, the no-sound-card retry's menu
 // plus "failed to load MSE" outscored the running demo -- so the sweep chose
 // the frame in which the program had told it that it would not run.
+// An EMPTY screen gets no band at all, and that guard is load-bearing twice
+// over. Zero has to keep meaning "nothing on screen" -- the first retry rung
+// above tests `score(row) <= 0` to decide a program never started, and AMBIENT,
+// daretro and cd2 all lost their auto-key retry, and with it their pictures, to
+// a blank screen that scored 10000. And a program whose only output is a
+// refusal should still be photographed saying it: rage.exe wants a Gravis, and
+// an empty frame outranking its own "GUS not found!" turned an honest error row
+// into a blank one.
 const score = (row) => {
   if (row.failed) return -1;
   if (row.pixels > 0) return 1e6 + row.pixels;
+  if (!row.cells) return 0;
   return (complaint(row.screen || '') ? 0 : 1e4) + row.cells;
 };
 
