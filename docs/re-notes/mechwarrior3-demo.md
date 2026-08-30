@@ -745,10 +745,66 @@ exact colors, 423 quantized colors, 128 terrain bins,
 pixels, with zero cyan/magenta artifacts. The CLI gameplay acceptance now
 passes `--copy-superops` so it tests the same opt-in arm as the browser.
 
-This profile also bounds what x86-only work can accomplish. The two changes
-remove 9.77% of guest dispatch, but the earlier wall CPU profile attributed a
-separate roughly 20.1% named share to D3DIM/software rasterization. Both sides
-are material. A dedicated render Worker can overlap them in Threads mode, as
-designed above, but does not reduce total raster CPU; the next low-risk local
-optimization is the `0x528268` color-key row, followed by a matched moving-frame
-wall A/B rather than another startup or fixed-batch timing claim.
+### In-place terrain/grid filter lowering
+
+The next target was selected from sampled CPU time rather than block count
+alone. Corrected gameplay profiles put the interpreter's `$next`, register
+accessors, branch return path, and `$g2w` address translation ahead of any one
+software-D3D helper. The settled hot-block profile then identifies
+`0x00518f02..0x00518f67` as the strongest loop which exercises all four: it
+enters 116,300 times in the 100-batch interval and executes 37 x86 instructions
+per cell.
+
+The loop is an in-place 16-bit terrain/grid filter. Each trip performs twelve
+loads and two stores across the current, upper, lower, and parity rows. Its one
+guest `JNZ` backedge is predictable except at exit; the branch-pressure concern
+is instead the threaded interpreter's changing `return_call_indirect` target
+for each of the 37 handlers. Browser/Node V8 profiling on this macOS host does
+not expose retired-branch or branch-miss hardware counters, so no
+"mispredictions removed" number is claimed. Handler dispatch is the observable
+proxy: H441 replaces those 37 changing indirect calls with one scalar Wasm loop
+branch per cell and one handler entry per safety chunk.
+
+H441 is gated by MW3's existing COPY opt-in and proves the complete authentic
+101-byte body with a hash plus structural head/tail checks. It derives its
+back/fall addresses from the matched location. The executor preserves the
+original load/store order and ADD-then-DEC flags; vectorizing multiple cells is
+not valid because a store from cell N can feed a neighbour load at cell N+1.
+It reduces translation overhead without pretending memory traffic vanished:
+the same twelve loads and two stores still occur, while adjacent word groups
+use three affine-span translations plus the parity-byte translation instead of
+up to fourteen separate guest-memory helper translations per cell. Stack
+locals use one additional affine translation per safety chunk and are reloaded
+in their original order, so intervening stores remain observable.
+
+`test/test-mw3-grid-filter-run.js` extracts the pinned bytes and compares
+ordinary and H441 execution for 1/8/37 cells, registers, flags, full memory, a
+relocated body, and a valid one-byte near miss. Across those rows the ordinary
+stream retires 1,705 handlers and H441 retires seven (one per safety chunk plus
+the final returns). This is an isolated mechanism measurement, not an FPS
+claim.
+
+The matched settled-gameplay A/B is the useful whole-window result:
+
+| Gameplay build | Handler dispatches | Delta |
+|---|---:|---:|
+| H439 + H436/H440 COPY opt-in | 104,827,560 | — |
+| Same build + H441 grid filter | 100,531,476 | -4,296,084 (-4.10%) |
+
+`0x00518f02` disappears from the hot-block list. The cooperative gameplay gate
+still measures 2,411 exact colours, 423 quantized colours, 128 terrain bins,
+75,040 orange-sky pixels, 75,053 dark-cockpit pixels, and 2,936 green HUD
+pixels, with zero cyan/magenta corruption. Wall time and web FPS remain
+unquoted because the shared host load exceeded the repository's measurement
+threshold throughout this run.
+
+This profile also bounds what x86-only work can accomplish. H439, the COPY row
+folds, and H441 together reduce the initial matched gameplay window from
+123,275,668 to 100,531,476 guest dispatches (-18.45%), but the earlier wall CPU
+profile attributed a separate roughly 20.1% named share to D3DIM/software
+rasterization. Both sides are material. A dedicated render Worker can overlap
+them in Threads mode, as designed above, but does not reduce total raster CPU.
+The highest remaining exact block entry is the MSVCRT `_ftol` import trampoline
+at `0x005776a0`, followed by the vector gather at `0x00515a9c` and block
+`0x00518f8c`; the next decision should come from a matched moving-frame wall
+profile on a quiet host rather than another startup or fixed-batch timing claim.

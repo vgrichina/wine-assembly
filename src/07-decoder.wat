@@ -669,6 +669,46 @@
     (global.set $d_pc (i32.add (local.get $start_eip) (i32.const 19)))
     (i32.const 1))
 
+  ;; MW3's in-place 16-bit terrain/grid filter. This single basic block is a
+  ;; 101-byte, 37-instruction counted loop, so ordinary execution pays a
+  ;; changing indirect threaded dispatch for every scalar load/add/store.
+  ;; Prove the complete authentic body and derive its control-flow addresses
+  ;; from the match so differently linked copies remain eligible.
+  (func $try_emit_mw3_grid_filter_run (param $start_eip i32) (result i32)
+    (local $p i32) (local $end i32) (local $hash i32)
+    (if (i32.or (i32.eqz (call $loop_copy_emit_get)) (global.get $code16))
+      (then (return (i32.const 0))))
+    (if (i32.or
+          (i32.ne (call $gl32 (local.get $start_eip))
+            (i32.const 0x2024548b))
+          (i32.or
+            (i32.ne (call $gl32
+              (i32.add (local.get $start_eip) (i32.const 95)))
+              (i32.const 0x14244c8b))
+            (i32.ne (call $gl16
+              (i32.add (local.get $start_eip) (i32.const 99)))
+              (i32.const 0x9b75))))
+      (then (return (i32.const 0))))
+    (local.set $p (local.get $start_eip))
+    (local.set $end (i32.add (local.get $start_eip) (i32.const 101)))
+    (local.set $hash (i32.const 0x811c9dc5))
+    (loop $hash_bytes
+      (local.set $hash
+        (i32.mul
+          (i32.xor (local.get $hash) (call $gl8 (local.get $p)))
+          (i32.const 0x01000193)))
+      (local.set $p (i32.add (local.get $p) (i32.const 1)))
+      (br_if $hash_bytes (i32.lt_u (local.get $p) (local.get $end))))
+    (if (i32.ne (local.get $hash) (i32.const 0x11ad09b2))
+      (then (return (i32.const 0))))
+    (global.set $loop_mw3_grid_filter_matches
+      (i32.add (global.get $loop_mw3_grid_filter_matches) (i32.const 1)))
+    (call $te (i32.const 441) (i32.const 0))
+    (call $te_raw (i32.add (local.get $start_eip) (i32.const 101))) ;; fall
+    (call $te_raw (local.get $start_eip))                           ;; back
+    (global.set $d_pc (i32.add (local.get $start_eip) (i32.const 101)))
+    (i32.const 1))
+
   ;; The seven words after a case record's token byte.
   (func $rle_emit_body
     (call $te_raw (i32.or (global.get $rb_kind)
@@ -3064,6 +3104,10 @@
               (local.set $done (i32.const 1))
               (br $decode)))
           (if (call $try_emit_rgb565_colorkey_run (local.get $start_eip))
+            (then
+              (local.set $done (i32.const 1))
+              (br $decode)))
+          (if (call $try_emit_mw3_grid_filter_run (local.get $start_eip))
             (then
               (local.set $done (i32.const 1))
               (br $decode)))

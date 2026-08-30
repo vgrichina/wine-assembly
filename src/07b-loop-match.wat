@@ -54,6 +54,9 @@
   (global $loop_rgb565_colorkey_matches (mut i32) (i32.const 0))
   (global $loop_rgb565_colorkey_runs (mut i32) (i32.const 0))
   (global $loop_rgb565_colorkey_pixels (mut i64) (i64.const 0))
+  (global $loop_mw3_grid_filter_matches (mut i32) (i32.const 0))
+  (global $loop_mw3_grid_filter_runs (mut i32) (i32.const 0))
+  (global $loop_mw3_grid_filter_cells (mut i64) (i64.const 0))
   (global $loop_aoe_fill_matches (mut i32) (i32.const 0))
   (global $loop_aoe_fill_runs (mut i32) (i32.const 0))
   (global $loop_aoe_fill_bytes (mut i64) (i64.const 0))
@@ -3090,6 +3093,230 @@
     (global.set $eip
       (select (local.get $back) (local.get $fall)
         (i32.ne (local.get $esi) (i32.const 0))))
+    (return_call $branch_end))
+
+  ;; ------------------------------------------------------------------
+  ;; 441: MW3 in-place 16-bit terrain/grid filter row
+  ;; ------------------------------------------------------------------
+  ;; The authentic inner loop at mech3demo!0x518f02 is a scalar, in-place
+  ;; nine-neighbour filter. One trip costs 37 threaded x86 handlers and 14
+  ;; guest-memory operations. Keep its original access order: a preceding
+  ;; destination store can feed a later neighbour load in the same row, so a
+  ;; SIMD batch would change the result. The affine probes only collapse
+  ;; address translation for each adjacent 3-word neighbourhood; every load
+  ;; and store remains ordered exactly as the x86 stream.
+  (func $th_mw3_grid_filter_run (param $op i32)
+    (local $tp i32) (local $fall i32) (local $back i32)
+    (local $eax i32) (local $ecx i32) (local $edx i32) (local $ebx i32)
+    (local $esp i32) (local $ebp i32) (local $esi i32) (local $edi i32)
+    (local $stride i32) (local $width i32) (local $count i32)
+    (local $old_count i32) (local $v i32)
+    (local $eax_wa i32) (local $upper_wa i32) (local $lower_wa i32)
+    (local $stack_wa i32) (local $allowed i32) (local $block_allowed i32)
+    (local $iters i32) (local $add_lhs i32) (local $add_rhs i32)
+    (local $add_result i32)
+
+    (local.set $tp (global.get $ip))
+    (global.set $ip (i32.add (local.get $tp) (i32.const 8)))
+    (local.set $fall (i32.load (local.get $tp)))
+    (local.set $back (i32.load offset=4 (local.get $tp)))
+    (local.set $eax (global.get $eax))
+    (local.set $ecx (global.get $ecx))
+    (local.set $edx (global.get $edx))
+    (local.set $ebx (global.get $ebx))
+    (local.set $esp (global.get $esp))
+    (local.set $ebp (global.get $ebp))
+    (local.set $esi (global.get $esi))
+    (local.set $edi (global.get $edi))
+
+    ;; [ESP+10h], [ESP+14h], and [ESP+20h] are reloaded in the body in the
+    ;; authentic order. Translate their enclosing span once without caching
+    ;; values, so even a synthetic alias with the grid observes intervening
+    ;; stores exactly as x86 does.
+    (local.set $stack_wa
+      (call $g2w_affine_span
+        (i32.add (local.get $esp) (i32.const 0x10)) (i32.const 0x14)))
+    (if (i32.eq (local.get $stack_wa) (global.get $NULL_SENTINEL))
+      (then (local.set $stack_wa (i32.const 0))))
+
+    ;; $next already charged the H441 dispatch. Permit only as many complete
+    ;; 37-handler/one-basic-block trips as the ordinary stream could retire.
+    (local.set $allowed
+      (i32.div_u
+        (i32.add
+          (select (global.get $steps) (i32.const 0)
+            (i32.gt_s (global.get $steps) (i32.const 0)))
+          (i32.const 36))
+        (i32.const 37)))
+    (if (i32.eqz (local.get $allowed))
+      (then (local.set $allowed (i32.const 1))))
+    (local.set $block_allowed
+      (i32.add
+        (select (global.get $block_budget) (i32.const 0)
+          (i32.gt_s (global.get $block_budget) (i32.const 0)))
+        (i32.const 1)))
+    (if (i32.gt_u (local.get $allowed) (local.get $block_allowed))
+      (then (local.set $allowed (local.get $block_allowed))))
+
+    (block $done (loop $cells
+      (br_if $done (i32.ge_u (local.get $iters) (local.get $allowed)))
+
+      ;; mov edx,[esp+20h]
+      (local.set $stride
+        (if (result i32) (local.get $stack_wa)
+          (then (i32.load offset=16 (local.get $stack_wa)))
+          (else (call $gl32 (i32.add (local.get $esp) (i32.const 0x20))))))
+      (local.set $edx (local.get $stride))
+
+      ;; Advance the two row cursors, then derive the upper-row and parity
+      ;; addresses with the same wrapping i32 arithmetic as x86.
+      (local.set $eax (i32.add (local.get $eax) (i32.const 2)))
+      (local.set $edi (local.get $eax))
+      (local.set $ecx (i32.add (local.get $ecx) (local.get $ecx)))
+      (local.set $edi (i32.sub (local.get $edi) (local.get $ecx)))
+      (local.set $ecx (local.get $eax))
+      (local.set $ecx (i32.sub (local.get $ecx) (local.get $edx)))
+      (local.set $esi (i32.add (local.get $esi) (i32.const 2)))
+
+      ;; Prove the three adjacent word neighbourhoods once apiece. The fallback
+      ;; helpers retain sparse/unmapped behavior at a mapping boundary.
+      (local.set $eax_wa
+        (call $g2w_affine_span
+          (i32.sub (local.get $eax) (i32.const 2)) (i32.const 6)))
+      (if (i32.eq (local.get $eax_wa) (global.get $NULL_SENTINEL))
+        (then (local.set $eax_wa (i32.const 0))))
+      (local.set $upper_wa
+        (call $g2w_affine_span (local.get $edi) (i32.const 3)))
+      (if (i32.eq (local.get $upper_wa) (global.get $NULL_SENTINEL))
+        (then (local.set $upper_wa (i32.const 0))))
+      (local.set $lower_wa
+        (call $g2w_affine_span
+          (i32.sub (local.get $esi) (i32.const 2)) (i32.const 6)))
+      (if (i32.eq (local.get $lower_wa) (global.get $NULL_SENTINEL))
+        (then (local.set $lower_wa (i32.const 0))))
+
+      ;; Right neighbour, parity byte, and current word.
+      (local.set $edx
+        (i32.extend16_s
+          (if (result i32) (local.get $eax_wa)
+            (then (i32.load16_u offset=4 (local.get $eax_wa)))
+            (else (call $gl16 (i32.add (local.get $eax) (i32.const 2)))))))
+      (local.set $ecx
+        (i32.or (i32.and (local.get $ecx) (i32.const 0xffffff00))
+          (call $gl8 (local.get $ecx))))
+      (local.set $ebp
+        (i32.or (i32.and (local.get $ebp) (i32.const 0xffff0000))
+          (if (result i32) (local.get $eax_wa)
+            (then (i32.load16_u offset=2 (local.get $eax_wa)))
+            (else (call $gl16 (local.get $eax))))))
+      (local.set $ecx (i32.and (local.get $ecx) (i32.const 1)))
+      (local.set $ecx (i32.add (local.get $ecx) (local.get $edx)))
+
+      ;; Same-row left parity.
+      (local.set $edx
+        (i32.or (i32.and (local.get $edx) (i32.const 0xffffff00))
+          (if (result i32) (local.get $eax_wa)
+            (then (i32.load8_u (local.get $eax_wa)))
+            (else (call $gl8 (i32.sub (local.get $eax) (i32.const 2)))))))
+      (local.set $edx (i32.and (local.get $edx) (i32.const 1)))
+      (local.set $ecx (i32.add (local.get $ecx) (local.get $edx)))
+
+      ;; Upper-row parity bytes.
+      (local.set $edx
+        (i32.or (i32.and (local.get $edx) (i32.const 0xffffff00))
+          (if (result i32) (local.get $upper_wa)
+            (then (i32.load8_u (local.get $upper_wa)))
+            (else (call $gl8 (local.get $edi))))))
+      (local.set $edx (i32.and (local.get $edx) (i32.const 1)))
+      (local.set $ecx (i32.add (local.get $ecx) (local.get $edx)))
+      (local.set $edx
+        (i32.or (i32.and (local.get $edx) (i32.const 0xffffff00))
+          (if (result i32) (local.get $upper_wa)
+            (then (i32.load8_u offset=2 (local.get $upper_wa)))
+            (else (call $gl8 (i32.add (local.get $edi) (i32.const 2)))))))
+      (local.set $edx (i32.and (local.get $edx) (i32.const 1)))
+      (local.set $ecx (i32.add (local.get $ecx) (local.get $edx)))
+
+      ;; Lower-row left, right, and centre signed words.
+      (local.set $edx
+        (i32.extend16_s
+          (if (result i32) (local.get $lower_wa)
+            (then (i32.load16_u (local.get $lower_wa)))
+            (else (call $gl16 (i32.sub (local.get $esi) (i32.const 2)))))))
+      (local.set $ecx (i32.add (local.get $ecx) (local.get $edx)))
+      (local.set $edx
+        (i32.extend16_s
+          (if (result i32) (local.get $lower_wa)
+            (then (i32.load16_u offset=4 (local.get $lower_wa)))
+            (else (call $gl16 (i32.add (local.get $esi) (i32.const 2)))))))
+      (local.set $ecx (i32.add (local.get $ecx) (local.get $edx)))
+      (local.set $edx
+        (i32.extend16_s
+          (if (result i32) (local.get $lower_wa)
+            (then (i32.load16_u offset=2 (local.get $lower_wa)))
+            (else (call $gl16 (local.get $esi))))))
+      (local.set $ecx (i32.add (local.get $ecx) (local.get $edx)))
+
+      ;; Current word is sign-extended from BP. Preserve the last ADD's CF;
+      ;; the following LEA/MOVs do not touch flags and DEC replaces every
+      ;; arithmetic flag except CF.
+      (local.set $edx (i32.extend16_s (local.get $ebp)))
+      (local.set $add_lhs (local.get $ecx))
+      (local.set $add_rhs (local.get $edx))
+      (local.set $ecx (i32.add (local.get $ecx) (local.get $edx)))
+      (local.set $add_result (local.get $ecx))
+      (local.set $ecx
+        (i32.add (local.get $ebp) (i32.shl (local.get $ecx) (i32.const 1))))
+      (if (local.get $eax_wa)
+        (then (i32.store16 offset=2 (local.get $eax_wa) (local.get $ecx)))
+        (else (call $gs16 (local.get $eax) (local.get $ecx))))
+
+      ;; Counter load/DEC/store, then width reload. Branch on the DEC result,
+      ;; not on ECX after the width MOV.
+      (local.set $count
+        (if (result i32) (local.get $stack_wa)
+          (then (i32.load (local.get $stack_wa)))
+          (else (call $gl32 (i32.add (local.get $esp) (i32.const 0x10))))))
+      (local.set $old_count (local.get $count))
+      (local.set $count (i32.sub (local.get $count) (i32.const 1)))
+      (if (local.get $stack_wa)
+        (then (i32.store (local.get $stack_wa) (local.get $count)))
+        (else (call $gs32
+          (i32.add (local.get $esp) (i32.const 0x10)) (local.get $count))))
+      (local.set $width
+        (if (result i32) (local.get $stack_wa)
+          (then (i32.load offset=4 (local.get $stack_wa)))
+          (else (call $gl32 (i32.add (local.get $esp) (i32.const 0x14))))))
+      (local.set $ecx (local.get $width))
+      (local.set $iters (i32.add (local.get $iters) (i32.const 1)))
+      (br_if $cells
+        (i32.and (i32.ne (local.get $count) (i32.const 0))
+          (i32.lt_u (local.get $iters) (local.get $allowed))))))
+
+    (global.set $eax (local.get $eax))
+    (global.set $ecx (local.get $ecx))
+    (global.set $edx (local.get $edx))
+    (global.set $ebx (local.get $ebx))
+    (global.set $ebp (local.get $ebp))
+    (global.set $esi (local.get $esi))
+    (global.set $edi (local.get $edi))
+    (call $set_flags_add
+      (local.get $add_lhs) (local.get $add_rhs) (local.get $add_result))
+    (call $set_flags_dec (local.get $old_count) (local.get $count))
+    (global.set $steps
+      (i32.sub (global.get $steps)
+        (i32.sub (i32.mul (local.get $iters) (i32.const 37)) (i32.const 1))))
+    (global.set $block_budget
+      (i32.sub (global.get $block_budget)
+        (i32.sub (local.get $iters) (i32.const 1))))
+    (global.set $loop_mw3_grid_filter_runs
+      (i32.add (global.get $loop_mw3_grid_filter_runs) (i32.const 1)))
+    (global.set $loop_mw3_grid_filter_cells
+      (i64.add (global.get $loop_mw3_grid_filter_cells)
+        (i64.extend_i32_u (local.get $iters))))
+    (global.set $eip
+      (select (local.get $back) (local.get $fall)
+        (i32.ne (local.get $count) (i32.const 0))))
     (return_call $branch_end))
 
   ;; Called from $decode_block just before $cache_store.
