@@ -18,6 +18,20 @@
 // Read it as a work list, not as a score. A handler at the top of the flat
 // table is where the dispatches go; a PAIR at the top of the pair table with a
 // high `after` share is where a superinstruction would remove one.
+//
+// THIS TOTAL IS NOT THE RUN'S DISPATCH COUNT, and the difference is not a bug
+// in either number. A counter here bumps once per handler ENTRY. The run's
+// `dispatched` is billed from the slice budget, and the REP string handlers
+// (emit.js: genStrings/gen186StringIO) decrement $steps once per ITERATION so
+// a `rep movsw` over 60KB cannot run the host out of a slice. So one dispatch
+// of `rep_movsw` bills 30,000 and counts 1. On BOB.COM, which has no hot REP,
+// the two agree to 0.5%; on COPPER.EXE, which does, billed reads 5.0M against
+// 1.1M entries. Billed is "guest work", this is "trips through dispatch", and
+// mistaking one for the other reads as a 4.5x accounting bug that is not there.
+//
+// It is also the existing proof that a loop inside a handler pays off: REP is
+// already the whole of the microcode-loop idea for one instruction -- state in
+// locals, no dispatch per iteration -- and it is why it costs so little.
 
 const { HANDLERS } = require('./emit');
 const isa = require('./isa');
@@ -78,8 +92,11 @@ function formatHist(hist, { top = 20, pairs = 20 } = {}) {
       + ' instrumentation, or the guest never dispatched.';
   }
   const out = [];
-  out.push(`  handler histogram: ${num(hist.total)} dispatches over `
+  out.push(`  handler histogram: ${num(hist.total)} handler entries over `
     + `${num(hist.flat.length)} of ${hist.handlers} handlers`);
+  out.push('    (an entry is one trip through dispatch; a REP string op is ONE'
+    + ' however far it runs,');
+  out.push('     so the billed dispatch count above is larger by its iterations)');
 
   // How concentrated the profile is decides whether SELECTIVE specialization is
   // even a strategy: if the top 20 are 15% of dispatches, specializing them
