@@ -70,6 +70,19 @@ function check(label, fn) {
         (local.get $version) (local.get $cx) (i32.const 0))
       (global.set $esp (local.get $saved_esp))
       (global.get $eax))
+    (func (export "test_call_CreateIcon")
+          (param $width i32) (param $height i32) (param $planes i32)
+          (param $bits_pixel i32) (param $and_bits i32) (param $xor_bits i32)
+          (result i32)
+      (local $saved_esp i32)
+      (local.set $saved_esp (global.get $esp))
+      (call $gs32 (i32.add (global.get $esp) (i32.const 24)) (local.get $and_bits))
+      (call $gs32 (i32.add (global.get $esp) (i32.const 28)) (local.get $xor_bits))
+      (call $handle_CreateIcon
+        (i32.const 0) (local.get $width) (local.get $height)
+        (local.get $planes) (local.get $bits_pixel) (i32.const 0))
+      (global.set $esp (local.get $saved_esp))
+      (global.get $eax))
     (func (export "test_call_GetIconInfo") (param $icon i32) (param $info i32) (result i32)
       (local $saved_esp i32)
       (local.set $saved_esp (global.get $esp))
@@ -206,6 +219,22 @@ function check(label, fn) {
   const crossMask = () => monoBitmap(ART_AND.concat(ART_XOR));
 
   let resourceCursorA, resourceCursorB;
+
+  check('CreateIcon honors BYTE-width planes and depth from Win9x OLEAUT', () => {
+    const andBits = alloc(16);
+    const xorBits = alloc(4 * 4 * 4);
+    // OLEAUT reads the adjacent WORD fields of BITMAP in one dword. Native
+    // USER32 sees cPlanes=1; a handler that consumes all 32 bits sees
+    // 0x00200001 planes and rejects the allocation.
+    const icon = wat.test_call_CreateIcon(
+      4, 4, 0x00200001, 0x5a000020, andBits, xorBits) >>> 0;
+    assert.ok(icon, 'packed high bits made CreateIcon return NULL');
+    const info = alloc(20);
+    assert.strictEqual(wat.test_call_GetIconInfo(icon, info) >>> 0, 1);
+    assert.strictEqual(wat.guest_read32(info + 0) >>> 0, 1, 'fIcon');
+    assert.ok(wat.guest_read32(info + 12) >>> 0, 'mask bitmap');
+    assert.ok(wat.guest_read32(info + 16) >>> 0, '32bpp color bitmap');
+  });
 
   check('CreateIconFromResourceEx creates distinct cursors from Win9x resource bits', () => {
     const a = resourceImage({ xHot: 1, yHot: 2, andRows: ART_AND, xorRows: ART_XOR });

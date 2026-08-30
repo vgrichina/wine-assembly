@@ -6,10 +6,10 @@ pack's FIELD100 custom control and WEPUTIL). App id `wep16_rodent`; it is on the
 desktop (`DESKTOP_APPS`) as of 2026-08-25.
 
 There is a second Rodent's Revenge in the tree — `Rodent2000` in
-`test/binaries/wep32-community/`, a 2002 VB6 remake. It is **not** the one to
-ship: it reaches its credits splash over a black playfield with an empty title
-bar and never deals a board, whatever you drive it with (menu opens, New Game
-accepted, no pixel changes). The 16-bit original is fully playable.
+`test/binaries/wep32-community/`, a 2002 VB6 remake. Both editions are playable;
+the original remains the desktop edition and the remake is separately
+selectable as `rodent2000`. See [rodent2000.md](rodent2000.md) for the remake's
+OLE picture startup fix and gameplay command.
 
 ## Reaching gameplay headlessly
 

@@ -15556,11 +15556,19 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
   ;; two planes stack into one mask exactly as CreateCursor's do.
   (func $handle_CreateIcon (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $and_bits i32) (local $xor_bits i32) (local $mask i32) (local $color i32)
+    (local $planes i32) (local $bits_pixel i32)
     (local.set $and_bits (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
     (local.set $xor_bits (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
+    ;; These are BYTE parameters in USER32's ABI. Win9x OLEAUT loads cPlanes
+    ;; from a packed BITMAP with a dword read, so the high word can contain
+    ;; cBitsPixel as well (32bpp arrives as 0x00200001). A native callee reads
+    ;; only the declared low byte; treating the entire stack slot as planes
+    ;; makes the bitmap allocation fail and VB6 reports "Unexpected error".
+    (local.set $planes (i32.and (local.get $arg3) (i32.const 0xFF)))
+    (local.set $bits_pixel (i32.and (local.get $arg4) (i32.const 0xFF)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 32)))  ;; ret + 7 args
-    (if (i32.and (i32.le_u (local.get $arg3) (i32.const 1))
-                 (i32.le_u (local.get $arg4) (i32.const 1)))
+    (if (i32.and (i32.le_u (local.get $planes) (i32.const 1))
+                 (i32.le_u (local.get $bits_pixel) (i32.const 1)))
       (then
         (local.set $mask (call $cursor_stack_planes
           (local.get $arg1) (local.get $arg2)
@@ -15573,7 +15581,7 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
         (if (local.get $mask)
           (then
             (local.set $color (call $gdi_bitmap_create_bitmap
-              (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
+              (local.get $arg1) (local.get $arg2) (local.get $planes) (local.get $bits_pixel)
               (select (call $g2w (local.get $xor_bits)) (i32.const 0)
                 (i32.ne (local.get $xor_bits) (i32.const 0)))))
             (if (i32.eqz (local.get $color))
