@@ -920,3 +920,28 @@ The highest remaining exact block entry is the MSVCRT `_ftol` import trampoline
 at `0x005776a0`, followed by the vector gather at `0x00515a9c` and block
 `0x00518f8c`; the next decision should come from a matched moving-frame wall
 profile on a quiet host rather than another startup or fixed-batch timing claim.
+
+## Non-finite multi-texture coordinates erased near terrain (2026-08-30)
+
+The solid-black camera-near terrain was longstanding and reproduced in a
+capture from before the render-Worker work. It was not clipping, depth, missing
+texture upload, or the threaded command stream. MW3 submits the affected
+five-vertex fan as `D3DFVF_XYZRHW|DIFFUSE|SPECULAR|TEX3` (FVF `0x3c4`) in three
+passes: a valid RGB565 base texture through TEX0, a light map through TEX1,
+then an all-white no-op modulation texture through TEX2. The last coordinate
+pair contains NaN/Infinity.
+
+Point filtering already reached texel zero because Wasm's saturating float to
+integer conversion maps those values to zero. The linear path instead kept the
+non-finite values in its fractional weights. All four fetched texels were valid
+white texels, but the packed-colour lerp received NaN weights; its saturating
+channel conversions produced black, so `ZERO/SRCCOLOR` modulation changed the
+representative foreground pixel from RGB565 `0x3964` to `0x0000`.
+
+`d3dim_texture_sample_prepared` now canonicalizes non-finite U/V to zero before
+either filtering path. The same representative pixel remains `0x3964` through
+Flip, and the deterministic 640x480 gameplay capture has 10,000/10,000 lit
+pixels in the central foreground box instead of an all-black fan. The focused
+sampler regression uses a uniform RGB565 texture with NaN/Infinity coordinates;
+the gameplay test separately guards the actual near-terrain coverage in both
+cooperative and Threads modes.

@@ -148,6 +148,21 @@ const extraWat = String.raw`
       (i32.const 0) (f32.const 0.0) (f32.const 0.0) (f32.const 1.0) (i32.const 0xffffffff) (f32.const 0.5)
       (i32.const 4) (f32.const 1.0) (f32.const 0.0) (f32.const 1.0) (i32.const 0xffffffff) (f32.const 0.5)
       (i32.const 0) (i32.const 8) (i32.const 0)))
+
+  (func (export "test_diptex_sample")
+      (param $texture i32) (param $u f32) (param $v f32) (param $linear i32) (result i32)
+    (local $entry i32)
+    (local.set $entry (call $dx_from_this (local.get $texture)))
+    (call $d3dim_texture_sample_prepared
+      (i32.load16_u offset=12 (local.get $entry))
+      (i32.load16_u offset=14 (local.get $entry))
+      (i32.load16_u offset=16 (local.get $entry))
+      (i32.load16_u offset=18 (local.get $entry))
+      (i32.load offset=20 (local.get $entry))
+      (call $dx_surf_fmt_get (local.get $entry))
+      (call $dx_surf_pal_get (local.get $entry))
+      (local.get $u) (local.get $v)
+      (i32.const 1) (i32.const 1) (local.get $linear)))
 `;
 
 // MW3 submits D3DFVF_XYZRHW|DIFFUSE|SPECULAR|TEX3. TEX3 makes each source
@@ -301,6 +316,19 @@ function writeFloat(wat, addr, value) {
   mem.setUint16(texDib + 2, 0x07e0, true); // green
   mem.setUint16(texDib + 4, 0x001f, true); // blue
   mem.setUint16(texDib + 6, 0xffe0, true); // yellow
+
+  // MW3's third terrain pass selects TEX2 even when the game left that pair
+  // as NaN/Infinity. Its bound texture is uniformly white, so the pass must be
+  // a no-op. Before non-finite UV canonicalization, linear filtering fetched
+  // four valid texels but fed NaN weights into packed colour interpolation;
+  // trunc_sat converted every channel to zero and erased the foreground.
+  for (let i = 0; i < 4; i++) mem.setUint16(texDib + i * 2, 0xf800, true);
+  assert.strictEqual(wat.test_diptex_sample(texture, NaN, Infinity, 1) >>> 0, 0xffff0000,
+    'linear filtering turned a uniform texture black for non-finite UVs');
+  mem.setUint16(texDib + 0, 0xf800, true);
+  mem.setUint16(texDib + 2, 0x07e0, true);
+  mem.setUint16(texDib + 4, 0x001f, true);
+  mem.setUint16(texDib + 6, 0xffe0, true);
 
   // Three TL vertices covering the upper-left half of the 8x8 target.
   const vertex = (i, x, y, u, v) => {

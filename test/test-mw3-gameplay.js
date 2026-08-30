@@ -69,6 +69,7 @@ function analyze(filename, mode) {
   let neonCyan = 0;
   let neonMagenta = 0;
   let electricBlue = 0;
+  let foregroundLit = 0;
   for (let y = 0; y < png.height; y++) {
     for (let x = 0; x < png.width; x++) {
       const i = (y * png.width + x) * 4;
@@ -85,6 +86,13 @@ function analyze(filename, mode) {
       if (g > 160 && b > 160 && r < 80) neonCyan++;
       if (r > 160 && b > 160 && g < 80) neonMagenta++;
       if (b > 160 && r < 80 && g < 140) electricBlue++;
+      // This box sits wholly inside the camera-near terrain fan in the
+      // deterministic cockpit view. Colour diversity alone did not catch the
+      // old failure because the sky/cockpit remained textured while this
+      // entire polygon was overwritten with black by its third lightmap pass.
+      if (x >= 220 && x < 420 && y >= 300 && y < 350 && r + g + b > 24) {
+        foregroundLit++;
+      }
     }
   }
   const measured = {
@@ -97,6 +105,7 @@ function analyze(filename, mode) {
     neonCyan,
     neonMagenta,
     electricBlue,
+    foregroundLit,
   };
   console.log(`  ${mode}: ${JSON.stringify(measured)} ${filename}`);
   // Flat repro measured 135 exact / 89 quantized colors and only five terrain
@@ -108,6 +117,8 @@ function analyze(filename, mode) {
     `${mode} is missing the lit sky, textured cockpit, or readable HUD: ${JSON.stringify(measured)}`);
   assert(neonCyan < 100 && neonMagenta < 100 && electricBlue < 500,
     `${mode} contains misdecoded neon texture data: ${JSON.stringify(measured)}`);
+  assert(foregroundLit > 9000,
+    `${mode} erased the camera-near terrain fan: ${JSON.stringify(measured)}`);
 }
 
 const requested = process.argv[2] || 'both';

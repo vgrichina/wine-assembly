@@ -2947,6 +2947,18 @@
     (local $sx f32) (local $sy f32) (local $fx f32) (local $fy f32)
     (local $x0 i32) (local $x1 i32) (local $y0 i32) (local $y1 i32)
     (local $c00 i32) (local $c10 i32) (local $c01 i32) (local $c11 i32)
+    ;; Legacy hardware converts non-finite texture coordinates to its integer
+    ;; indefinite value before addressing; for the power-of-two WRAP textures
+    ;; used here that selects texel zero.  Canonicalize both coordinates before
+    ;; the linear footprint math as well: leaving NaN in the fractional weights
+    ;; makes four valid (even identical) samples interpolate to black through
+    ;; trunc_sat. MW3's third terrain pass deliberately leaves TEX2 as NaN/Inf
+    ;; while binding an all-white no-op lightmap, so that bug erased the entire
+    ;; camera-near polygon after its correctly textured base pass.
+    (if (f32.ne (f32.mul (local.get $u) (f32.const 0.0)) (f32.const 0.0))
+      (then (local.set $u (f32.const 0.0))))
+    (if (f32.ne (f32.mul (local.get $v) (f32.const 0.0)) (f32.const 0.0))
+      (then (local.set $v (f32.const 0.0))))
     (if (i32.eqz (local.get $linear)) (then
       (local.set $x0 (call $d3dim_address_texel
         (i32.trunc_sat_f32_s (f32.floor (f32.mul (local.get $u) (f32.convert_i32_u (local.get $tw)))))
