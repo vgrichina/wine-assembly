@@ -128,6 +128,14 @@ const extraWat = String.raw`
       (local.get $device) (i32.const 4) (i32.const 0x3c4)
       (local.get $vertices) (i32.const 3) (i32.const 0)))
 
+  (func (export "test_diptex_draw_tl_triangle")
+      (param $device i32) (param $rt i32) (param $vertices i32)
+    (call $d3dim_draw_tl_triangle_dp
+      (local.get $device) (call $dx_from_this (local.get $rt)) (i32.const 0)
+      (call $g2w (local.get $vertices))
+      (call $g2w (i32.add (local.get $vertices) (i32.const 48)))
+      (call $g2w (i32.add (local.get $vertices) (i32.const 96)))))
+
   (func (export "test_diptex_draw_wrapped_span")
       (param $rt i32) (param $texture i32)
     (call $viewport_draw_textured_span
@@ -341,6 +349,32 @@ function writeFloat(wat, addr, value) {
       for (let x = 0; x < 8; x++) mem.setUint16(rtDib + y * 16 + x * 2, value, true);
     }
   };
+
+  // Positive RHW only proves that a transformed vertex remains in front of
+  // the eye. Direct3D's near plane is clip-z=0: this third vertex has w=1 but
+  // z/w=-.5, so the triangle must stop halfway down the target. Classifying
+  // solely by RHW rasterized the uncut triangle through (6,6), producing the
+  // giant terrain wedges and repeated rider-name billboards seen in MCM once
+  // its moving camera approached them.
+  const nearPlane = [
+    [0, 0, 0.5, 1.0, 0.0, 0.0],
+    [7, 0, 0.5, 1.0, 1.0, 0.0],
+    [7, 7, -0.5, 1.0, 1.0, 1.0],
+  ];
+  nearPlane.forEach(([x, y, z, q, u, v], i) => {
+    const p = vertices + i * VERTEX_STRIDE;
+    writeFloat(wat, p + 0, x); writeFloat(wat, p + 4, y);
+    writeFloat(wat, p + 8, z); writeFloat(wat, p + 12, q);
+    wat.guest_write32(p + 16, 0xffffffff);
+    wat.guest_write32(p + 20, 0);
+    writeFloat(wat, p + 24, u); writeFloat(wat, p + 28, v);
+  });
+  clearRt(0x001f);
+  wat.test_diptex_draw_tl_triangle(device, rt, vertices);
+  assert.notStrictEqual(mem.getUint16(rtDib, true), 0x001f,
+    'near-plane clipping discarded the visible half of the triangle');
+  assert.strictEqual(mem.getUint16(rtDib + 6 * 16 + 6 * 2, true), 0x001f,
+    'positive-RHW vertex behind clip z=0 was rasterized without clipping');
 
   // A 0..4 screen span covers pixels 0..3. Pixel 4 is the geometric edge,
   // not a fragment centre; drawing it samples u=1.0, which WRAP aliases to

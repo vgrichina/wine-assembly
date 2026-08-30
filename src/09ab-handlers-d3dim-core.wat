@@ -4679,25 +4679,44 @@
     (param $this i32) (param $rt i32) (param $use_z i32)
     (param $v0 i32) (param $v1 i32) (param $v2 i32)
     (local $q0 f32) (local $q1 f32) (local $q2 f32)
+    (local $z0 f32) (local $z1 f32) (local $z2 f32)
     (local $p0 i32) (local $p1 i32) (local $p2 i32) (local $pos i32)
     (local $state i32) (local $sw i32) (local $c0 i32) (local $c1 i32)
     (local.set $q0 (f32.load (i32.add (local.get $v0) (i32.const 12))))
     (local.set $q1 (f32.load (i32.add (local.get $v1) (i32.const 12))))
     (local.set $q2 (f32.load (i32.add (local.get $v2) (i32.const 12))))
+    (local.set $z0 (f32.load (i32.add (local.get $v0) (i32.const 8))))
+    (local.set $z1 (f32.load (i32.add (local.get $v1) (i32.const 8))))
+    (local.set $z2 (f32.load (i32.add (local.get $v2) (i32.const 8))))
     ;; Pre-transformed UI commonly supplies rhw=0. Preserve that established
-    ;; path unless a genuinely negative (behind-eye) vertex is present.
+    ;; path unless a genuinely transformed vertex crosses either the eye plane
+    ;; (rhw < 0) or Direct3D's near plane (z/w < 0 while rhw is non-zero).
+    ;; Testing rhw alone left positive-w, negative-z terrain and billboard
+    ;; triangles uncut as MCM's camera approached them.
     (if (i32.eqz (i32.or
-          (i32.or (f32.lt (local.get $q0) (f32.const 0.0))
-                  (f32.lt (local.get $q1) (f32.const 0.0)))
-          (f32.lt (local.get $q2) (f32.const 0.0))))
+          (i32.or
+            (i32.or (f32.lt (local.get $q0) (f32.const 0.0))
+                    (f32.lt (local.get $q1) (f32.const 0.0)))
+            (f32.lt (local.get $q2) (f32.const 0.0)))
+          (i32.or
+            (i32.or
+              (i32.and (f32.ne (local.get $q0) (f32.const 0.0))
+                       (f32.lt (local.get $z0) (f32.const 0.0)))
+              (i32.and (f32.ne (local.get $q1) (f32.const 0.0))
+                       (f32.lt (local.get $z1) (f32.const 0.0))))
+            (i32.and (f32.ne (local.get $q2) (f32.const 0.0))
+                     (f32.lt (local.get $z2) (f32.const 0.0))))))
       (then
         (call $d3dim_draw_tl_triangle_dp_raw
           (local.get $this) (local.get $rt) (local.get $use_z)
           (local.get $v0) (local.get $v1) (local.get $v2))
         (return)))
-    (local.set $p0 (f32.gt (local.get $q0) (f32.const 0.0)))
-    (local.set $p1 (f32.gt (local.get $q1) (f32.const 0.0)))
-    (local.set $p2 (f32.gt (local.get $q2) (f32.const 0.0)))
+    (local.set $p0 (i32.and (f32.gt (local.get $q0) (f32.const 0.0))
+                            (f32.ge (local.get $z0) (f32.const 0.0))))
+    (local.set $p1 (i32.and (f32.gt (local.get $q1) (f32.const 0.0))
+                            (f32.ge (local.get $z1) (f32.const 0.0))))
+    (local.set $p2 (i32.and (f32.gt (local.get $q2) (f32.const 0.0))
+                            (f32.ge (local.get $z2) (f32.const 0.0))))
     (local.set $pos (i32.add (local.get $p0) (i32.add (local.get $p1) (local.get $p2))))
     (if (i32.eqz (local.get $pos)) (then (return)))
     (local.set $state (call $d3ddev_state (local.get $this)))

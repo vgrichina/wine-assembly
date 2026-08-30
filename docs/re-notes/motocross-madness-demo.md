@@ -26,7 +26,12 @@ not stuck.
   plane. Drawing those triangles without reconstructing and clipping their
   homogeneous coordinates leaves camera-near holes containing old menu pixels.
   Clipping at `z=0`, then reprojecting the generated vertices, produces
-  continuous terrain from the horizon to the rider.
+  continuous terrain from the horizon to the rider. A positive reciprocal W
+  does not make a vertex near-plane-visible: MCM also produces vertices with
+  `rhw > 0` but `z/w < 0`. Classifying only by RHW sends those triangles to the
+  raw rasterizer and creates giant landscape wedges and repeated billboard
+  labels. Transformed vertices must satisfy both `rhw > 0` and `z/w >= 0`;
+  retain the legacy raw path only for pre-transformed UI records with `rhw=0`.
 - MCM enables `D3DRENDERSTATE_COLORKEYENABLE` and uses packed 16-bit source
   colour keys. A keyed sample is discarded before both colour and Z writes.
 - The HUD uses paired system/video-memory surfaces. For example, the traced
