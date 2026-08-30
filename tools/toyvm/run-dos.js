@@ -32,7 +32,7 @@ const { makeVm } = require('./vm');
 const { setCpuLevel } = require('./decode');
 const { Machine, loadExe, vgaGeometry, parseKeys, VGA_BASE } = require('./dos');
 const { DosSession } = require('./dos-loop');
-const { asking } = require('./demo-status');
+const { asking, complaint } = require('./demo-status');
 const {
   conCells, conText, screenSurface, nonBlack, frameScore, frameHash, rgbaFrame, rgbaConsole,
 } = require('./framebuffer');
@@ -206,6 +206,14 @@ async function runDos(o) {
   // number is not a quantity: reporting the rank as the pixel count is what
   // turned ACME-VIC.EXE's full screen into "60 px" and moved it to `blank`.
   let bestScore = -1, bestContent = 0, bestSurface = null, bestText = '';
+  // What the program SAID, kept apart from what it showed. The banding below
+  // ranks a refusal under content, which is right for the photograph and wrong
+  // for the diagnosis: AMBIENT.EXE prints `MIDAS Error: NO GUS FOUND... USE
+  // "AMBIENT /NO_SND" FOR SILENT MODE` and the sweep has a rung that reads that
+  // switch back out and re-runs it -- so demoting the frame carrying those
+  // words cost the demo its whole picture. Complaints are collected here
+  // whatever their frame scored.
+  let saidText = '', saidCells = -1;
   function keepBest() {
     const s = screenSurface(machine);
     const cells = s.text ? conCells(machine.con) : 0;
@@ -220,6 +228,7 @@ async function runDos(o) {
     // the way in. The band is small enough to stay under frameScore's, so any
     // graphics frame still outranks any text one.
     // An empty page gets no band: zero has to keep meaning "nothing here".
+    if (cells > saidCells && complaint(text)) { saidCells = cells; saidText = text; }
     const score = s.text ? (cells ? cells + (asking(text) ? 0 : 4000) : 0) : f.score;
     if (score <= bestScore) return;
     bestScore = score;
@@ -408,7 +417,7 @@ async function runDos(o) {
   if (bestPng) keepBest();
   const surface = screenSurface(machine);
   return {
-    bestScore, bestContent, bestSurface, bestText,
+    bestScore, bestContent, bestSurface, bestText, saidText,
     variant, exe, vm, machine, jtab,
     secs: Number(process.hrtime.bigint() - t0) / 1e9,
     guestSecs: Number(guestNs) / 1e9,

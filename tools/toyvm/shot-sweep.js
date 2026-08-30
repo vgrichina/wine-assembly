@@ -130,6 +130,11 @@ async function runOne(exe, png, o) {
     // device", "Runtime error 100" -- and that is a different work list from
     // the one an opcode census produces.
     screen: (r.bestText || '').slice(0, 2000),
+    // Any refusal the run printed, whether or not it was on the frame that was
+    // kept. The retry rungs read this: a message naming a switch or a card is
+    // the whole reason they exist, and the frame chooser ranks exactly that
+    // kind of screen last.
+    says: (r.saidText || '').slice(0, 2000),
   };
 }
 
@@ -158,6 +163,10 @@ const score = (row) => {
   if (!row.cells) return 0;
   return (complaint(row.screen || '') ? 0 : 1e4) + row.cells;
 };
+
+// Everything a run put on the screen that a retry rung might act on: the frame
+// that was kept, plus any refusal from a frame that was not.
+const said = (row) => `${row.screen || ''}\n${row.says || ''}`;
 
 // The command-line switch a screen tells you to use, or null. Anchored on the
 // verb so that a stray slash in ANSI art is not mistaken for an option.
@@ -248,7 +257,7 @@ async function capture(exe, png, o) {
   // FOR SILENT MODE` and means every word of it -- with the switch it renders
   // its picture. Lower-cased on the way in, because the message shouts and
   // MIDAS's option parser is case sensitive.
-  const sw = !row.pixels && switchNamed(row.screen);
+  const sw = !row.pixels && switchNamed(said(row));
   if (sw) {
     const first = { ...row };
     const retry = await child(exe, png, { ...o, autoKey: true, guestArgs: sw });
@@ -301,7 +310,7 @@ async function capture(exe, png, o) {
     if (score(retry) > score(first)) { row = retry; row.pre = pre; }
     else { row = first; await child(exe, png, o); }
   }
-  if (!row.pixels && !o.env && /ultrasnd|gravis|\bgus\b/i.test(row.screen || '')) {
+  if (!row.pixels && !o.env && /ultrasnd|gravis|\bgus\b/i.test(said(row))) {
     const first = { ...row };
     const retry = await child(exe, png,
       { ...o, autoKey: true, env: 'ULTRASND=240,1,1,11,7' });

@@ -1662,31 +1662,18 @@ class Machine {
   // segment" is exactly "the program installed its own handler". No bookkeeping
   // in the INT 21h AH=25 path is needed, and a program that writes the IVT
   // directly -- which several here do, since it is two stores -- is caught too.
+  //
+  // A protected-mode program's handler is an IDT gate rather than a vector
+  // here, and consulting the IDT for these vectors was tried and reverted. It
+  // cannot work at the numbers this function is asked about: every caller below
+  // passes 0x08, 0x09, 0x0A, 0x0F or 0x1C, and in protected mode those are the
+  // CPU's own exception numbers -- 8 is #DF -- so an extender has a present
+  // gate at all of them whatever it thinks of hardware interrupts. Reading that
+  // as "the guest hooked the timer" sent a double fault every tick, and cd2.exe,
+  // daretro.exe and AMBIENT.EXE each lost a full screen of picture to a printed
+  // "Exception fault." Where a pmode program remaps its PIC to is not something
+  // we track, and until it is there is nothing here to read.
   hookedVector(v) {
-    // A protected-mode program's handler is an IDT gate, and the real-mode
-    // vector table it left behind at physical 0 still points at our stub. Read
-    // it that way and every interrupt rung in the run loop -- keyboard, timer,
-    // retrace, Sound Blaster -- concludes a pmode demo has hooked nothing and
-    // sends it nothing. DINO.EXE masks IRQ1 and polls port 0x60, and moved its
-    // menu marker one row per 775M dispatches on the polled path alone.
-    //
-    // Only the VM can answer this: the table is wherever LIDT put it, its base
-    // is a linear address, and a gate counts only when its present bit is set.
-    //
-    // Vectors under 0x20 are excluded, and that is not caution -- it is what
-    // the numbers MEAN in protected mode. There they are the CPU's own
-    // exceptions, so an extender fills all 32 whatever it thinks of hardware
-    // interrupts, and vector 8, the real-mode timer, is #DF. Treating a present
-    // gate at 8 as "the guest hooked the timer" sends a pmode demo a double
-    // fault every tick: cd2.exe, daretro.exe and AMBIENT.EXE each lost a full
-    // screen of picture to a printed "Exception fault." Where a pmode program
-    // remaps its PIC to is not something we track, so above 0x20 the gate is
-    // the guest's own and below it we stay out.
-    const ex = this.vmExports;
-    if (v >= 0x20 && ex && ex.idtgate && ex.get_cr0
-      && (ex.get_cr0() & 1) && ex.idtgate(v)) {
-      return true;
-    }
     const at = v << 2;
     return (this.mem[at + 2] | (this.mem[at + 3] << 8)) !== STUB_SEG;
   }
