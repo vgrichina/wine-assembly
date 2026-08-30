@@ -158,10 +158,14 @@ across a dispatch becomes local. That is the next thing worth pricing.
 wash on its own, and the reason is this page.** Fusion and laziness are
 substitutes for the compare/branch pair rather than complements — eager computes
 six flags and the branch reads one bit, lazy stores six globals and the branch
-computes one bit, and the work comes out the same. What is still on the table is
-the third option neither does: a fused handler knows its consumer at generation
-time, so `cmp_ri8_jz` can answer ZF from a value already in a local, with no flag
-word and no getter, while the record keeps the other five available.
+computes one bit, and the work comes out the same.
+
+**The third option is the one that pays, and it is now in.** A fused handler
+knows its flag producer at generation time, so its branch does not need a general
+getter that asks `$fop` which rule is pending: `cmp_ri8_jz` reads ZF as an
+`i32.eqz` of the recorded result, with no dispatch and no flag word, while the
+record keeps the other five flags available to a later reader. **+1.7% by
+minimum, ahead on 9 of 10 programs**, 177/177 corpus-identical.
 
 It also does not touch the block transfer, which at 3.25 ops per block is a
 large share of the remaining cost. The trace-JIT answer there is to compile

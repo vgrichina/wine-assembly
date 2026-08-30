@@ -27,7 +27,9 @@ const REGS = [...isa.REG16, ...isa.SEG, 'gip', 'flags'];
 // would hand the A/B whichever module was compiled first and report a 0%.
 async function buildModule(variant, opts = {}) {
   const wat = emit(variant, opts);
-  const suffix = (opts.hist ? '-hist' : '') + (opts.lazyFlags === false ? '-eager' : '');
+  const suffix = (opts.hist ? '-hist' : '')
+    + (opts.lazyFlags === false ? '-eager' : '')
+    + (opts.fuseCond === false ? '-genericcond' : '');
   const file = `toyvm-${variant}${suffix}.wat`;
   const bytes = await compileWat(
     (f) => { if (f !== file) throw new Error(`unexpected file ${f}`); return wat; },
@@ -38,7 +40,7 @@ async function buildModule(variant, opts = {}) {
 
 async function makeVm(variant, opts = {}) {
   const { wat, bytes } = await buildModule(variant,
-    { hist: !!opts.hist, lazyFlags: opts.lazyFlags !== false });
+    { hist: !!opts.hist, lazyFlags: opts.lazyFlags !== false, fuseCond: opts.fuseCond !== false });
   const module = await WebAssembly.compile(bytes);
   const memory = new WebAssembly.Memory({ initial: isa.MEM_PAGES, maximum: isa.MEM_PAGES });
   // Ports are a host concern: the VM has no peripherals, and the few a demo

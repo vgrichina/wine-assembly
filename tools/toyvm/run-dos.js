@@ -160,7 +160,7 @@ async function runDos(o) {
     variant = 'tailcall', exe, budget = 200e6, slice = 2e6, seconds = 0,
     traceInt = false, traceFault = false, traceEntry = 0, traceV86 = false,
     noCache = false, smcFlush = false, wasmDecode = true, fuse = true,
-    lazyFlags = true,
+    lazyFlags = true, fuseCond = true,
     smcCensus = false, watch = [],
     stopText = null,
     traceIo = null,
@@ -244,7 +244,7 @@ async function runDos(o) {
     portIn: (p, w) => machine.portIn(p, w),
     portOut: (p, v, w) => machine.portOut(p, v, w),
     hist: hist > 0 || histPairs > 0,
-    lazyFlags,
+    lazyFlags, fuseCond,
   });
   // The decoder's CPU level and the module's FLAGS shape have to move together:
   // a build that decodes 386 encodings but reports an 8086 FLAGS register fails
@@ -707,6 +707,11 @@ async function main() {
     // computing six bits -- so the two arms must agree exactly, arena included,
     // and a difference is a bug in the deferred rules rather than a retiming.
     lazyFlags: !flag('no-lazy'),
+    // A fused compare-and-branch answers its own condition from the record the
+    // compare just wrote, with no getter and no test on which rule is pending --
+    // the rule is a generation-time constant inside a fused pair. `--no-fusecond`
+    // is its A/B partner and, like the others, must agree frame for frame.
+    fuseCond: !flag('no-fusecond'),
     smcCensus: flag('smc-census'),
     // `--watch=0:84`, `--watch=0:84:4`, `--watch=5ab:191:2,0:84` -- report every
     // guest store into these bytes, with the CS:IP that made it, through the

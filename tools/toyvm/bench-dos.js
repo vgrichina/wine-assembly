@@ -67,6 +67,7 @@ async function main() {
   const MODS = {
     nofuse: { fuse: false },
     nolazy: { lazyFlags: false },
+    nofusecond: { fuseCond: false },
     nowasmdecode: { wasmDecode: false },
     nocache: { noCache: true },
   };

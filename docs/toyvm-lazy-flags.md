@@ -92,21 +92,56 @@ That is not a measurement failure, and the reason is structural:
 The programs bear that out: the swing is widest exactly on the branch-dense ones
 that fusion already won (DTM2, CONTAGIO), and it does not settle on a sign.
 
-## Why it is kept, and what it unlocks
+## Why it is kept: the fused pair answers its own condition
 
-Because the win is one step further on, and it needs this.
+Because the win is one step further on, and it needs this. That step is now in.
 
 Inside a fused `cmp_ri8_jz` the producer and the consumer are both known **at
-generation time**. The handler does not need a flag word or a general getter: it
-needs `ZF` from a subtraction it just performed, which is one `i32.eqz` on a
-value already in a local. Today it pays `$get_zf`'s test on `$fop` — and before
-this change it paid `$flags_sub`'s full six-flag computation, which is worse.
+generation time**. The general getters cannot use that: `$get_cf` has to ask
+`$fop` which rule is pending and test it against four possibilities before it can
+return a bit, because in general it does not know who wrote the record. Inside a
+fused handler there is nothing to ask — the first half is the only thing that
+could have written it, we generated it, and we know it was a subtract at 16 bits.
+
+So `genFusedBranches` rebuilds the branch half with a condition specialized to
+its partner. The `$fop` dispatch collapses to the one arm that can be taken, the
+width stops being a global load, and ZF — the most-read flag in this corpus —
+becomes an `i32.eqz` of a global with no branch at all. Across the module that
+removes **66 of 119 `$get_zf` call sites and 44 of 149 `$get_cf` sites**.
 
 The other five flags still have to be *available* to a later reader, and that
-availability is exactly what the record buys. So the shape of the next change is:
-the fused handler records its inputs, and answers its own branch directly instead
-of through a getter. That is 192 handlers where the rule is a compile-time
-constant, and it is only expressible on top of the deferred scheme.
+availability is exactly what the record buys. The specialization reads the record
+directly; it does not skip writing it.
+
+`bitFrom()` holds those bodies. They are the getters' bodies with the `$fop`
+dispatch removed and `$fw` substituted by a constant — deliberately not a second
+derivation of the flag rules, which is the thing that would rot.
+
+**Two things enforce the pairing.** The second column of `FUSE_FIRST` names what
+each first half records, and it is hand-written, so the generator checks it
+against the recorder call the body actually contains: exactly one distinct
+`$rec_*`, and it has to be the declared one. An ALU form that grew a second flag
+write, or a table row that drifted from its handler, is a build error rather than
+a branch silently reading a flag under the wrong formula. `sh2_r16` is in the
+list with no rule at all — a shift computes its flags eagerly and retires the
+record, so its branch reads the word the general way.
+
+### Measured
+
+`--no-fusecond` (and `tailcall+nofusecond`) is the A/B partner. Core ten, 20M
+dispatches, five interleaved reps, guest-slice CPU, box at load 20 climbing to
+40: **+1.7% by minimum and +1.4% paired, ahead on 9 of 10 by minimum.** Only
+DEMO5 lost, and it is the least branch-dense program in the set — CGA mode 4, the
+one non-VGA capture path.
+
+Small, but unlike the lazy A/B above the *direction* is consistent, and it was
+taken on a badly loaded box, so it is a floor.
+
+**The gate cannot check this one.** `gate.js` runs single instructions and never
+forms a fused pair, so it is blind to the specialization by construction — it
+stays at 60000/60000 whether the condition is right or wrong. The corpus is the
+check: all **177 programs identical** to the `--no-fusecond` build at 8M
+dispatches, arena size included.
 
 ## Benchmarking notes this produced
 

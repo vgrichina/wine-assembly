@@ -317,7 +317,7 @@ const bit = (b) => {
 // switches the flag scheme, and a top-level object here would keep the FIRST
 // scheme's condition tests. That is not a crash -- it is an eager-arm build
 // whose Jcc still calls the lazy getters, which quietly measures neither arm.
-const makeConds = () => ({
+const makeConds = (bit) => ({
   o: bit(F.OF),
   no: `(i32.eqz ${bit(F.OF)})`,
   b: bit(F.CF),
@@ -335,7 +335,69 @@ const makeConds = () => ({
   le: `(i32.or ${bit(F.ZF)} (i32.ne ${bit(F.SF)} ${bit(F.OF)}))`,
   g: `(i32.eqz (i32.or ${bit(F.ZF)} (i32.ne ${bit(F.SF)} ${bit(F.OF)})))`,
 });
-let CONDS = makeConds();
+let CONDS = makeConds(bit);
+
+// Reading one flag when the RULE THAT PRODUCED IT IS KNOWN AT GENERATION TIME.
+//
+// This is the whole point of fusing a compare with its branch. The general
+// getters have to ask $fop which rule is pending and dispatch on the answer --
+// $get_cf tests it against four rules before it can return a bit. Inside a fused
+// handler there is nothing to ask: the first half is the only thing that could
+// have written the record, we generated it, and we know it was a subtract at 16
+// bits. So the test collapses to the one arm that can be taken, the width stops
+// being a global load, and ZF -- the most-read flag in the corpus -- becomes an
+// `i32.eqz` of a global with no branch at all.
+//
+// The bodies below are the getters' bodies with the $fop dispatch removed and
+// $fw substituted by the constant. They are not a second derivation of the flag
+// rules, which is the thing that would rot: get one wrong and the gate's 60000
+// real-silicon vectors and the 177-program corpus diff both fail immediately.
+const bitFrom = (m, b) => {
+  const w32 = m.w === 32, msb = m.w - 1;
+  const logic = m.fop === 'LOGIC';
+  const down = m.fop === 'SUB' || m.fop === 'DEC';   // the two that borrow
+  const incdec = m.fop === 'INC' || m.fop === 'DEC';
+  switch (b) {
+    case F.ZF: return '(i32.eqz (global.get $fr))';
+    case F.SF:
+      return `(i32.and (i32.shr_u (global.get $fr) (i32.const ${msb})) (i32.const 1))`;
+    case F.PF:
+      return '(i32.and (i32.xor (i32.popcnt (i32.and (global.get $fr) (i32.const 0xFF)))'
+        + ' (i32.const 1)) (i32.const 1))';
+    case F.CF:
+      if (logic) return '(i32.const 0)';
+      // INC/DEC do not touch CF, so it is the bit from before the instruction,
+      // which the recorder resolved and parked.
+      if (incdec) return '(global.get $fcf)';
+      // At 8 and 16 bits the carry out is still sitting above the width in the
+      // unmasked result. At 32 there is nowhere above bit 31 to keep it, so it
+      // is recovered by comparison exactly as $get_cf does.
+      if (!w32) {
+        return `(i32.and (i32.shr_u (global.get $fu) (i32.const ${m.w})) (i32.const 1))`;
+      }
+      return down
+        ? '(select (i32.le_u (global.get $fa) (global.get $fb))'
+          + ' (i32.lt_u (global.get $fa) (global.get $fb)) (global.get $fcf))'
+        : '(select (i32.le_u (global.get $fr) (global.get $fa))'
+          + ' (i32.lt_u (global.get $fr) (global.get $fa)) (global.get $fcf))';
+    case F.OF:
+      if (logic) return '(i32.const 0)';
+      return down
+        ? `(i32.and (i32.shr_u (i32.and (i32.xor (global.get $fa) (global.get $fb))
+                                        (i32.xor (global.get $fa) (global.get $fr)))
+                    (i32.const ${msb})) (i32.const 1))`
+        : `(i32.and (i32.shr_u (i32.and (i32.xor (global.get $fa) (global.get $fr))
+                                        (i32.xor (global.get $fb) (global.get $fr)))
+                    (i32.const ${msb})) (i32.const 1))`;
+    case F.AF:
+      if (logic) return '(i32.const 0)';
+      return `(i32.and (i32.shr_u (i32.xor (i32.xor (global.get $fa) (global.get $fb))
+                                           (global.get $fr))
+                  (i32.const 4)) (i32.const 1))`;
+    default:
+      throw new Error(`bitFrom asked for non-arithmetic flag bit ${b}`);
+  }
+};
 
 // Shared tail: commit one successor. $arena is the arena address (0 = stop),
 // $guest is the guest IP to record either way.
@@ -368,14 +430,20 @@ const GO = (arena, guest) => `
     (then (global.set $ip ${arena}))
     (else (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))))`;
 
-function genBranches() {
-  for (const [cc, expr] of Object.entries(CONDS)) {
-    h(`j${cc}`, 4, `
+// A Jcc's body is its condition and nothing else, so it is built from the
+// condition rather than written out. genFusedBranches() rebuilds it with a
+// condition specialized to the compare it is fused with -- same operands, same
+// successors, same everything but the test.
+const jccBody = (expr) => `
   ${ops(4)}
   (if ${expr}
     (then ${GO('(local.get $t0)', '(local.get $t1)')})
     (else ${GO('(local.get $t2)', '(local.get $t3)')}))
-`);
+`;
+
+function genBranches() {
+  for (const [cc, expr] of Object.entries(CONDS)) {
+    h(`j${cc}`, 4, jccBody(expr));
   }
 
   // Unconditional jump: one successor, so two operands.
@@ -2711,10 +2779,36 @@ genArithIO();
 // $ip parked between two operand lists. The assertion below is what enforces
 // that rather than the comment: a first op that can halt, fault or return is a
 // build error, not a silent miscompile.
+//
+// The second column is WHAT THAT HANDLER LEAVES IN THE FLAG RECORD, which is
+// what lets the fused branch skip the getters entirely -- see bitFrom(). null
+// means the first half is not a recorder at all and the branch has to read the
+// word the general way: sh2_r16 is a shift, and shifts compute their flags
+// eagerly and retire the record.
+//
+// This column is written by hand, so it is checked against the body the
+// generator actually produced rather than trusted: a wrong rule here would be a
+// branch reading a flag under the wrong formula, which is exactly the failure
+// that is invisible until some program takes the other edge.
 const FUSE_FIRST = [
-  'cmp_ri8', 'cmp_rm8', 'sbb_ri16', 'cmp_ri16', 'dec_r16', 'cmp_mi16',
-  'or_rr8', 'or_rr16', 'cmp_rm16', 'cmp_mi8', 'sh2_r16', 'dec_r8',
+  ['cmp_ri8', { fop: 'SUB', w: 8 }],
+  ['cmp_rm8', { fop: 'SUB', w: 8 }],
+  ['sbb_ri16', { fop: 'SUB', w: 16 }],
+  ['cmp_ri16', { fop: 'SUB', w: 16 }],
+  ['dec_r16', { fop: 'DEC', w: 16 }],
+  ['cmp_mi16', { fop: 'SUB', w: 16 }],
+  ['or_rr8', { fop: 'LOGIC', w: 8 }],
+  ['or_rr16', { fop: 'LOGIC', w: 16 }],
+  ['cmp_rm16', { fop: 'SUB', w: 16 }],
+  ['cmp_mi8', { fop: 'SUB', w: 8 }],
+  ['sh2_r16', null],
+  ['dec_r8', { fop: 'DEC', w: 8 }],
 ];
+
+// Specialize a fused branch's condition, on by default. `--no-fusecond` is its
+// A/B partner; it needs lazy flags, since with the eager scheme there is no
+// record to read and the word is the only answer.
+let FUSE_COND = true;
 
 // alu handler index * 65536 + jcc handler index -> fused handler index. Built
 // here so the compiler never has to know the naming scheme.
@@ -2722,9 +2816,23 @@ const FUSE = new Map();
 
 function genFusedBranches() {
   const byName = new Map(HANDLERS.map(x => [x.name, x]));
-  for (const alu of FUSE_FIRST) {
+  for (const [alu, rec] of FUSE_FIRST) {
     const a = byName.get(alu);
     if (!a) throw new Error(`FUSE_FIRST names ${alu}, which is not a handler`);
+    // Check the declared rule against the recorder call the generator emitted.
+    // Exactly one distinct $rec_* in the body, and it has to be the one the
+    // table claims -- an ALU form that grew a second flag write, or a table
+    // entry that drifted from its handler, fails the build instead of silently
+    // reading a flag under the wrong formula.
+    const recs = [...new Set([...a.body.matchAll(/\$rec_[a-z0-9]+/g)].map(m => m[0]))];
+    const want = rec ? `$rec_${rec.fop.toLowerCase()}${rec.w === 32 ? '32' : ''}` : null;
+    if (LAZY && (recs.length > 1 || (recs[0] || null) !== want)) {
+      throw new Error(`FUSE_FIRST says ${alu} records ${want || 'nothing'}, `
+        + `but its body calls ${recs.join(' and ') || 'no recorder'}`);
+    }
+    // The specialized condition reads $fr, $fu, $fa, $fb and $fcf directly, so
+    // it is only correct when the recorders are what wrote them.
+    const spec = (LAZY && FUSE_COND && rec) ? makeConds(b => bitFrom(rec, b)) : null;
     // A fused first half must run to its end every time. Anything that can
     // hand back, fault or return early would strand $ip between the two
     // operand lists, and the resume would read the branch's operands as an
@@ -2742,7 +2850,7 @@ function genFusedBranches() {
       const idx = h(`${alu}_j${cc}`, a.args + j.args, `
   ${a.body}
   (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
-  ${j.body}
+  ${spec ? jccBody(spec[cc]) : j.body}
 `);
       FUSE.set(a.index * 65536 + j.index, idx);
     }
@@ -2760,12 +2868,13 @@ genFusedBranches();
 // reference from require time, so if that ever stopped being true the compiler
 // would lay out one arm's arena with the other arm's operand counts and produce
 // garbage with no error. It is asserted rather than assumed.
-function buildHandlers(lazy) {
-  if (lazy === LAZY) return;
+function buildHandlers(lazy, fuseCond) {
+  if (lazy === LAZY && fuseCond === FUSE_COND) return;
   const before = HANDLERS.map(x => `${x.name}/${x.args}`).join(',');
   const fuseBefore = [...FUSE.entries()].map(([k, v]) => `${k}:${v}`).sort().join(',');
   LAZY = lazy;
-  CONDS = makeConds();
+  FUSE_COND = fuseCond;
+  CONDS = makeConds(bit);
   HANDLERS.length = 0;
   FUSE.clear();
   // genShifts()/genDoubleShifts() append to this rather than returning, so a
@@ -4714,7 +4823,7 @@ function checkNesting(wat) {
 }
 
 function emit(variant, opts = {}) {
-  buildHandlers(opts.lazyFlags !== false);
+  buildHandlers(opts.lazyFlags !== false, opts.fuseCond !== false);
   const fn = VARIANTS[variant];
   if (!fn) throw new Error(`unknown variant: ${variant} (have ${Object.keys(VARIANTS).join(', ')})`);
   if (opts.hist && variant !== 'tailcall') {

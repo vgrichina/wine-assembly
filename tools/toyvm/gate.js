@@ -82,7 +82,8 @@ async function main() {
   // needs most -- it compares the final FLAGS word against real-silicon vectors,
   // and a deferred rule that is wrong for one operand pair is invisible in a demo
   // that never branches on that bit.
-  const vm = await makeVm(variant, { lazyFlags: !flag('no-lazy') });
+  const vm = await makeVm(variant,
+    { lazyFlags: !flag('no-lazy'), fuseCond: !flag('no-fusecond') });
   let total = 0, pass = 0, unimpl = 0, masked = 0;
   const failures = [];
 
