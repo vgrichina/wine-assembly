@@ -38,6 +38,10 @@ assert(APPS.quake2_demo.files.some(file => file.url === 'lib/quake2-modern-contr
   'Quake II mounts modern WASD/mouse controls as its first-launch config');
 assert.deepStrictEqual(APPS.quake2_demo.persistFiles, ['c:\\baseq2\\config.cfg'],
   'Quake II restores and persists later user control changes over the defaults');
+assert.deepStrictEqual(APPS.mcm.persistFiles, [
+  'c:\\ui\\uilst.ini',
+  'c:\\ui\\profile\\*\\*.prf',
+], 'Motocross Madness restores its profile index and per-player settings');
 const quake2Controls = fs.readFileSync(path.join(root, 'lib/quake2-modern-controls.ini'), 'utf8');
 for (const binding of [
   'bind w "+forward"', 'bind s "+back"', 'bind a "+moveleft"',

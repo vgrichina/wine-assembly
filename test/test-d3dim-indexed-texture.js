@@ -57,6 +57,55 @@ const extraWat = String.raw`
   (func (export "test_diptex_set_tss") (param $device i32) (param $type i32) (param $value i32)
     (call $d3dim_set_tss (local.get $device) (i32.const 0) (local.get $type) (local.get $value)))
 
+  (func (export "test_diptex_set_colorkey") (param $surface i32) (param $key i32)
+    (local $entry i32)
+    (local.set $entry (call $dx_from_this (local.get $surface)))
+    (i32.store offset=24 (local.get $entry) (local.get $key))
+    (i32.store offset=28 (local.get $entry)
+      (i32.or (i32.load offset=28 (local.get $entry)) (i32.const 0x100))))
+
+  (func (export "test_diptex_load") (param $dst i32) (param $src i32)
+    (call $d3dim_texture_load (local.get $dst) (local.get $src)))
+
+  (func (export "test_diptex_colorkey") (param $surface i32) (result i32)
+    (i32.load offset=24 (call $dx_from_this (local.get $surface))))
+
+  (func (export "test_diptex_flags") (param $surface i32) (result i32)
+    (i32.load offset=28 (call $dx_from_this (local.get $surface))))
+
+  (func (export "test_diptex_clip_near")
+      (param $device i32) (param $a i32) (param $b i32) (param $out i32)
+    (local $state i32) (local $sw i32)
+    (local.set $state (call $d3ddev_state (local.get $device)))
+    (local.set $sw (call $g2w (local.get $state)))
+    (f32.store (i32.add (local.get $sw) (global.get $D3DIM_OFF_VP_SCALE)) (f32.const 4.0))
+    (f32.store (i32.add (local.get $sw)
+      (i32.add (global.get $D3DIM_OFF_VP_SCALE) (i32.const 4))) (f32.const 4.0))
+    (f32.store (i32.add (local.get $sw) (global.get $D3DIM_OFF_VP_ORIGIN)) (f32.const 4.0))
+    (f32.store (i32.add (local.get $sw)
+      (i32.add (global.get $D3DIM_OFF_VP_ORIGIN) (i32.const 4))) (f32.const 4.0))
+    (call $d3dim_interp_tl_near_vertex
+      (local.get $state) (call $g2w (local.get $a)) (call $g2w (local.get $b))
+      (call $g2w (local.get $out))))
+
+  (func (export "test_diptex_lvertex_stride") (result i32)
+    (call $d3dim_vertex_type_stride (i32.const 2)))
+
+  (func (export "test_diptex_prepare_lvertices")
+      (param $device i32) (param $vertices i32) (param $prepared i32)
+    (local $state i32) (local $src i32) (local $dst i32) (local $stride i32)
+    (local.set $state (call $d3ddev_state (local.get $device)))
+    (call $d3ddev_composite_wvp (local.get $state))
+    (local.set $src (call $g2w (local.get $vertices)))
+    (local.set $dst (call $g2w (local.get $prepared)))
+    (local.set $stride (call $d3dim_vertex_type_stride (i32.const 2)))
+    (call $d3dim_prepare_draw_vertex
+      (local.get $state) (i32.const 2) (local.get $src) (local.get $dst))
+    (call $d3dim_prepare_draw_vertex
+      (local.get $state) (i32.const 2)
+      (i32.add (local.get $src) (local.get $stride))
+      (i32.add (local.get $dst) (i32.const 32))))
+
   (func (export "test_diptex_get_tss") (param $device i32) (param $type i32) (param $out i32) (result i32)
     (call $d3dim_get_tss (local.get $device) (i32.const 0) (local.get $type) (local.get $out))
     (global.get $eax))
@@ -123,24 +172,109 @@ function writeFloat(wat, addr, value) {
 (async () => {
   const h = await bootRenderHarness({ extraWat, fonts: 'none' });
   const { exports: wat, memory } = h;
+  const mem = new DataView(memory.buffer);
   const desc = 0x410000;
   const out = 0x410100;
   const devOut = 0x410110;
   const vertices = 0x411000;
   const indices = 0x411100;
+  const lvertices = 0x412000;
+  const lprepared = 0x412100;
+  const clipVertices = 0x412200;
 
   wat.test_diptex_seed(0x51000000, 0x52000000, 0x53000000);
   const rt = makeSurface(wat, desc, out, 8, 8);
   const texture = makeSurface(wat, desc, out + 4, 2, 2);
   assert(rt && texture);
+
+  // MCM creates its HUD in a keyed RGB565 system-memory surface, then loads
+  // it into a distinct RGB555 texture. Texture::Load must carry and convert
+  // the key metadata as well as the pixels, because only the destination is
+  // subsequently bound for rendering.
+  const loadedTexture = makeSurface(wat, desc, out + 24, 2, 2, {
+    rMask: 0x7c00,
+    gMask: 0x03e0,
+    bMask: 0x001f,
+  });
+  wat.test_diptex_set_colorkey(texture, 0xf81f);
+  wat.test_diptex_load(loadedTexture, texture);
+  assert(wat.test_diptex_flags(loadedTexture) & 0x100,
+    'Texture::Load dropped the source color-key flag');
+  assert.strictEqual(wat.test_diptex_colorkey(loadedTexture), 0x7c1f,
+    'Texture::Load did not convert the source color key to the destination format');
   assert.strictEqual(wat.test_diptex_create_device(rt, devOut) >>> 0, 0);
   const device = wat.guest_read32(devOut) >>> 0;
   assert(device);
+  const rtDib = wat.test_diptex_dib(rt) >>> 0;
+
+  // D3DLVERTEX is eight DWORDs: xyz, a reserved DWORD, diffuse, specular,
+  // then uv. MCM writes that authentic 32-byte layout. A 28-byte stride makes
+  // every vertex after the first begin at the previous vertex's tv field,
+  // while reading diffuse at +12 mistakes dwReserved for the colour.
+  const lvertex = (i, x, color, specular, u, v) => {
+    const p = lvertices + i * 32;
+    writeFloat(wat, p + 0, x);
+    writeFloat(wat, p + 4, 0);
+    writeFloat(wat, p + 8, 0.5);
+    wat.guest_write32(p + 12, i ? 0xcafebabe : 0xdeadbeef);
+    wat.guest_write32(p + 16, color);
+    wat.guest_write32(p + 20, specular);
+    writeFloat(wat, p + 24, u);
+    writeFloat(wat, p + 28, v);
+  };
+  lvertex(0, -0.5, 0xffc02010, 0x10203040, 0.25, 0.5);
+  lvertex(1, 0.5, 0xff10c020, 0x50607080, 0.75, 1.0);
+  assert.strictEqual(wat.test_diptex_lvertex_stride(), 32,
+    'D3DLVERTEX omitted its reserved DWORD from the vertex stride');
+  wat.test_diptex_prepare_lvertices(device, lvertices, lprepared);
+  assert.deepStrictEqual([
+    wat.guest_read32(lprepared + 16) >>> 0,
+    wat.guest_read32(lprepared + 20) >>> 0,
+    wat.guest_read32(lprepared + 24) >>> 0,
+    wat.guest_read32(lprepared + 28) >>> 0,
+    wat.guest_read32(lprepared + 32 + 16) >>> 0,
+    wat.guest_read32(lprepared + 32 + 20) >>> 0,
+    wat.guest_read32(lprepared + 32 + 24) >>> 0,
+    wat.guest_read32(lprepared + 32 + 28) >>> 0,
+  ], [
+    0xffc02010, 0x10203040, 0x3e800000, 0x3f000000,
+    0xff10c020, 0x50607080, 0x3f400000, 0x3f800000,
+  ], 'legacy lit vertices lost their diffuse/specular/uv fields or 32-byte boundary');
+
+  // The direct DrawPrimitive path receives projected vertices, so its near
+  // clipper reconstructs homogeneous coordinates from screen xy, z/w and
+  // 1/w. This edge crosses z=0 at t=.2 while w remains positive (.6).
+  // Missing clipping leaves camera-near MCM terrain as an old-frame hole.
+  const clipVertex = (p, z, q, u, color) => {
+    writeFloat(wat, p + 0, 0);
+    writeFloat(wat, p + 4, 4);
+    writeFloat(wat, p + 8, z);
+    writeFloat(wat, p + 12, q);
+    wat.guest_write32(p + 16, color);
+    wat.guest_write32(p + 20, 0);
+    writeFloat(wat, p + 24, u);
+    writeFloat(wat, p + 28, 0);
+  };
+  clipVertex(clipVertices, 0.25, 1.0, 0.0, 0xff000000);
+  clipVertex(clipVertices + 32, 1.0, -1.0, 1.0, 0xffffffff);
+  wat.test_diptex_clip_near(device, clipVertices, clipVertices + 32, clipVertices + 64);
+  const clipOut = clipVertices + 64;
+  const clipFloat = offset => {
+    const bits = new ArrayBuffer(4);
+    new DataView(bits).setUint32(0, wat.guest_read32(clipOut + offset), true);
+    return new DataView(bits).getFloat32(0, true);
+  };
+  assert(Math.abs(clipFloat(0) - 0) < 0.001 && Math.abs(clipFloat(4) - 4) < 0.001,
+    `near-plane intersection did not preserve the projected edge position (${clipFloat(0)},${clipFloat(4)})`);
+  assert.strictEqual(clipFloat(8), 0, 'near-plane intersection did not land at z=0');
+  assert(Math.abs(clipFloat(12) - (5 / 3)) < 0.001,
+    'near-plane intersection did not retain positive reciprocal W');
+  assert(Math.abs(clipFloat(24) - 0.2) < 0.001,
+    'near-plane intersection did not interpolate texture coordinates');
 
   // A four-colour RGB565 texture.  The surface pitch can exceed width*2, so
   // seed it through its actual DX entry metadata rather than assuming 4 bytes.
   const texDib = wat.test_diptex_dib(texture) >>> 0;
-  const mem = new DataView(memory.buffer);
   // DirectDraw's 2x2 allocation uses a DWORD-aligned 4-byte pitch.
   mem.setUint16(texDib + 0, 0xf800, true); // red
   mem.setUint16(texDib + 2, 0x07e0, true); // green
@@ -180,7 +314,6 @@ function writeFloat(wat, addr, value) {
   assert.strictEqual(wat.test_diptex_bind_handle(device, textureHandle) >>> 0, 0);
   wat.test_diptex_draw(device, vertices, indices);
 
-  const rtDib = wat.test_diptex_dib(rt) >>> 0;
   const pixels = [];
   for (let y = 0; y < 8; y++) {
     for (let x = 0; x < 8; x++) pixels.push(mem.getUint16(rtDib + y * 16 + x * 2, true));
@@ -377,7 +510,33 @@ function writeFloat(wat, addr, value) {
   assert.strictEqual(mem.getUint16(rtDib + 2 * 16 + 2 * 2, true), 0x07e0,
     'higher reversed-Z triangle did not pass GREATEREQUAL');
 
-  console.log(`PASS D3DIM Texture2 indexed triangles use FVF UV sets, perspective/filter/address states, declared formats, blending, and attached reversed-Z (${textured.size} texture colours)`);
+  // MCM's 16-bit HUD textures use 0xf81f magenta as a source color key and
+  // enable D3DRENDERSTATE_COLORKEYENABLE. A keyed texel is a discarded
+  // fragment: it must preserve both the render target and its attached Z.
+  for (let i = 0; i < 4; i++) mem.setUint16(texDib + i * 2, 0xf81f, true);
+  for (let y = 0; y < 8; y++) {
+    for (let x = 0; x < 8; x++) {
+      mem.setUint16(rtDib + y * 16 + x * 2, 0x001f, true);
+      mem.setUint16(zDib + y * 16 + x * 2, 0x2222, true);
+    }
+  }
+  for (let i = 0; i < 3; i++) writeFloat(wat, vertices + i * VERTEX_STRIDE + 8, 0.75);
+  wat.test_diptex_set_colorkey(texture, 0xf81f);
+  wat.test_diptex_set_rs(device, 41, 1); // COLORKEYENABLE
+  wat.test_diptex_draw(device, vertices, indices);
+  assert.strictEqual(mem.getUint16(rtDib + 2 * 16 + 2 * 2, true), 0x001f,
+    'enabled texture color key painted its magenta source texel');
+  assert.strictEqual(mem.getUint16(zDib + 2 * 16 + 2 * 2, true), 0x2222,
+    'discarded texture color-key fragment modified attached depth');
+
+  wat.test_diptex_set_rs(device, 41, 0);
+  wat.test_diptex_draw(device, vertices, indices);
+  assert.strictEqual(mem.getUint16(rtDib + 2 * 16 + 2 * 2, true), 0xf81f,
+    'disabled texture color key still discarded the source texel');
+  assert.notStrictEqual(mem.getUint16(zDib + 2 * 16 + 2 * 2, true), 0x2222,
+    'opaque texture sample did not update attached depth');
+
+  console.log(`PASS D3DIM legacy LVERTEX layout, near clipping, and Texture2 indexed triangles use color keys, FVF UV sets, perspective/filter/address states, declared formats, blending, and attached reversed-Z (${textured.size} texture colours)`);
 })().catch(error => {
   console.error(error.stack || error.message);
   process.exit(1);

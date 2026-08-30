@@ -41,6 +41,14 @@ const extraWat = String.raw`
     (i32.load16_u (call $test_dx_pixel_wa
       (local.get $surface) (local.get $x) (local.get $y))))
 
+  (func (export "test_dx_surface_set_src_key")
+    (param $surface i32) (param $key i32)
+    (local $entry i32)
+    (local.set $entry (call $dx_from_this (local.get $surface)))
+    (i32.store offset=24 (local.get $entry) (local.get $key))
+    (i32.store offset=28 (local.get $entry)
+      (i32.or (i32.load offset=28 (local.get $entry)) (i32.const 0x100))))
+
   (func (export "test_dx_surface_blt")
     (param $dst i32) (param $dst_rect i32) (param $src i32)
     (param $src_rect i32) (param $flags i32)
@@ -63,6 +71,7 @@ function writeRect(wat, address, left, top, right, bottom) {
   const { exports: wat } = await bootRenderHarness({ extraWat, fonts: 'none' });
   const surface = wat.test_dx_surface_new(64, 64, 2) >>> 0;
   const cursor = wat.test_dx_surface_new(32, 32, 4) >>> 0;
+  const keyedSprite = wat.test_dx_surface_new(2, 2, 4) >>> 0;
   const panelSurface = wat.test_dx_surface_new(640, 480, 2) >>> 0;
   const fullDst = 0x410000;
   const fullSrc = 0x410020;
@@ -71,12 +80,16 @@ function writeRect(wat, address, left, top, right, bottom) {
   assert(surface, 'surface fixture should allocate');
   const cursorDst = 0x410060;
   const cursorSrc = 0x410080;
+  const stretchDst = 0x4100c0;
+  const stretchSrc = 0x4100e0;
   writeRect(wat, fullDst, 0, 0, 64, 64);
   writeRect(wat, fullSrc, 0, 0, 64, 64);
   writeRect(wat, partial, 1, 1, 63, 63);
   writeRect(wat, panel, 35, 44, 306, 257);
   writeRect(wat, cursorDst, 12, 14, 44, 46);
   writeRect(wat, cursorSrc, 0, 0, 32, 32);
+  writeRect(wat, stretchDst, 20, 20, 24, 24);
+  writeRect(wat, stretchSrc, 0, 0, 2, 2);
 
   wat.test_dx_surface_set(surface, 12, 14, 0x1234);
   wat.test_dx_surface_set(cursor, 0, 0, 0x5678);
@@ -115,7 +128,36 @@ function writeRect(wat, address, left, top, right, bottom) {
   assert.strictEqual(wat.test_dx_surface_get(surface, 2, 2), 0x44,
     'effect-bearing null-source Blt must remain a successful no-op');
 
-  console.log('PASS  DirectDraw legacy null-source cursor-background restore');
+  // MCM scales its 16-bit HUD sprites while requesting DDBLT_KEYSRC. The
+  // equal-size Blt path already skipped keyed pixels; the nearest-neighbor
+  // stretch path must apply the same rule to every replicated sample.
+  wat.test_dx_surface_set_src_key(keyedSprite, 0xf81f);
+  wat.test_dx_surface_set(keyedSprite, 0, 0, 0xf81f);
+  wat.test_dx_surface_set(keyedSprite, 1, 0, 0x07e0);
+  wat.test_dx_surface_set(keyedSprite, 0, 1, 0x001f);
+  wat.test_dx_surface_set(keyedSprite, 1, 1, 0xf81f);
+  for (let y = 20; y < 24; y++) {
+    for (let x = 20; x < 24; x++) wat.test_dx_surface_set(surface, x, y, 0x1357);
+  }
+  assert.strictEqual(
+    wat.test_dx_surface_blt(surface, stretchDst, keyedSprite, stretchSrc, 0x01008000) >>> 0, 0);
+  assert.strictEqual(wat.test_dx_surface_get(surface, 20, 20), 0x1357,
+    'stretched source-key pixels must preserve the destination');
+  assert.strictEqual(wat.test_dx_surface_get(surface, 21, 21), 0x1357,
+    'every nearest-neighbor replica of a source-key pixel must remain transparent');
+  assert.strictEqual(wat.test_dx_surface_get(surface, 22, 20), 0x07e0,
+    'non-keyed stretched pixels must still copy');
+  assert.strictEqual(wat.test_dx_surface_get(surface, 23, 21), 0x07e0,
+    'nearest-neighbor replication must remain intact when source-keying is enabled');
+  assert.strictEqual(wat.test_dx_surface_get(surface, 22, 22), 0x1357,
+    'a keyed pixel in another source cell must also remain transparent');
+
+  assert.strictEqual(
+    wat.test_dx_surface_blt(surface, stretchDst, keyedSprite, stretchSrc, 0x01000000) >>> 0, 0);
+  assert.strictEqual(wat.test_dx_surface_get(surface, 20, 20), 0xf81f,
+    'the same stretched source pixel must copy when DDBLT_KEYSRC is absent');
+
+  console.log('PASS  DirectDraw legacy cursor restore and stretched source color key');
 })().catch(error => {
   console.error(error && error.stack || error);
   process.exit(1);
