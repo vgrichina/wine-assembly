@@ -346,9 +346,23 @@ of the AX it carries into the INT. So the corruption is one mis-sized decode,
 not a missing service.
 
 `$segd32` does honour the descriptor's D/B bit and `$d32` is set every time CS
-is loaded, so the question is why it answered 16 for the selector this entry
-came in on — `entry c:8 base=232e0 pm`, and `0x0C` has TI set, so that
-descriptor is being read out of the **LDT**, not the GDT. That is where to look.
+is loaded, so the question is what D should be *after the jump that got here*.
+`--dump=232e:0:32` shows what precedes it:
+
+```
+0000  ff 03 a8 1f 02 00 00 00      ; a pseudo-descriptor: limit 0x03ff, base 0x00021fa8
+0008  0f 20 c0                     ; mov eax,cr0
+000b  24 fe                        ; and al,0xfe          <-- clears PE
+000d  0f 22 c0                     ; mov cr0,eax
+0010  ea 17 00 00 00 2e 23         ; jmp far 0x232e:0x00000017
+```
+
+The run enters this stub as `entry c:8 base=232e0 pm` — 32-bit, which is why
+the `ea` was read as `off32 sel16` and the trace's next entry is `232e:17` at
+all. So the demo leaves protected mode and then runs 32-bit-sized code at the
+real-mode paragraph it jumped to, and the two readings of what D should be
+across that jump are exactly the bug: keep it and the block decodes as the
+listing above, drop it and it decodes as the `leave` that eats the stack.
 
 **The sweep is deliberately not given a `--svga` rung, and the reason is worth
 keeping.** A rung was written and measured: a program that put nothing on either
