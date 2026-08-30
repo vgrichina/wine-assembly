@@ -97,6 +97,7 @@ function tile(r, file, live) {
     + `><button class="open" type="button" title="${esc(r.name)} - full size">`
     + `<img loading="lazy" src="shots/${esc(file)}" alt="${esc(alt)}"></button>`
     + (k === 'text' ? '<span class="mx">text</span>' : '')
+    + (live && live.has(r.exe) ? '<span class="runnable">&#9654; run</span>' : '')
     + `<figcaption><span class="fn" title="${esc(r.name)}">${esc(r.name)}</span>`
     + `<span class="fp">${what}</span></figcaption></figure>`;
 }
@@ -237,6 +238,16 @@ figure .mx {
   letter-spacing: .08em; text-transform: uppercase; border: 1px solid var(--cyan);
   color: var(--cyan); padding: 1px 4px; background: rgba(8,7,13,.75);
 }
+/* A runnable tile has to say so on the tile. The Run button lives inside the
+   lightbox, so without this the only way to find out which of 199 screenshots
+   will actually start is to open them one at a time -- which reads exactly like
+   a Run button that does not work. */
+figure .runnable {
+  position: absolute; bottom: 34px; left: 12px; font-family: var(--mono); font-size: 9px;
+  letter-spacing: .08em; text-transform: uppercase; border: 1px solid var(--accent);
+  color: var(--accent); padding: 1px 5px; background: rgba(8,7,13,.8); pointer-events: none;
+}
+figure:hover .runnable, figure:focus-within .runnable { background: var(--accent); color: var(--ground); }
 button.open { display: block; width: 100%; padding: 0; border: 0; background: #000; cursor: zoom-in; }
 button.open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 figure img { display: block; width: 100%; image-rendering: pixelated; }
