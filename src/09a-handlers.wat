@@ -14576,36 +14576,86 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; OemToCharA(lpSrc, lpDst) — for US codepage, OEM ≡ ANSI; strcpy.
+  ;; Win98's en-US ANSI/OEM pair is CP1252 <-> CP437, not a byte copy.
+  ;; Keep the complete single-byte maps in a free page immediately below the
+  ;; branch histograms. Unrepresentable characters use the Windows default
+  ;; character '?'. The two 256-byte tables make the string and counted APIs
+  ;; share exactly the same conversion, including in-place calls.
+  (global $CP1252_TO_CP437 i32 (i32.const 0x07F90000))
+  (global $CP437_TO_CP1252 i32 (i32.const 0x07F90100))
+  (data (i32.const 0x07F90000)
+    "\00\01\02\03\04\05\06\07\08\09\0a\0b\0c\0d\0e\0f\10\11\12\13\14\15\16\17\18\19\1a\1b\1c\1d\1e\1f"
+    "\20\21\22\23\24\25\26\27\28\29\2a\2b\2c\2d\2e\2f\30\31\32\33\34\35\36\37\38\39\3a\3b\3c\3d\3e\3f"
+    "\40\41\42\43\44\45\46\47\48\49\4a\4b\4c\4d\4e\4f\50\51\52\53\54\55\56\57\58\59\5a\5b\5c\5d\5e\5f"
+    "\60\61\62\63\64\65\66\67\68\69\6a\6b\6c\6d\6e\6f\70\71\72\73\74\75\76\77\78\79\7a\7b\7c\7d\7e\7f"
+    "\3f\3f\3f\9f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f"
+    "\ff\ad\9b\9c\3f\9d\3f\3f\3f\3f\a6\ae\aa\3f\3f\3f\f8\f1\fd\3f\3f\e6\3f\fa\3f\3f\a7\af\ac\ab\3f\a8"
+    "\3f\3f\3f\3f\8e\8f\92\80\3f\90\3f\3f\3f\3f\3f\3f\3f\a5\3f\3f\3f\3f\99\3f\3f\3f\3f\3f\9a\3f\3f\e1"
+    "\85\a0\83\3f\84\86\91\87\8a\82\88\89\8d\a1\8c\8b\3f\a4\95\a2\93\3f\94\f6\3f\97\a3\96\81\3f\3f\98")
+  (data (i32.const 0x07F90100)
+    "\00\01\02\03\04\05\06\07\08\09\0a\0b\0c\0d\0e\0f\10\11\12\13\14\15\16\17\18\19\1a\1b\1c\1d\1e\1f"
+    "\20\21\22\23\24\25\26\27\28\29\2a\2b\2c\2d\2e\2f\30\31\32\33\34\35\36\37\38\39\3a\3b\3c\3d\3e\3f"
+    "\40\41\42\43\44\45\46\47\48\49\4a\4b\4c\4d\4e\4f\50\51\52\53\54\55\56\57\58\59\5a\5b\5c\5d\5e\5f"
+    "\60\61\62\63\64\65\66\67\68\69\6a\6b\6c\6d\6e\6f\70\71\72\73\74\75\76\77\78\79\7a\7b\7c\7d\7e\7f"
+    "\c7\fc\e9\e2\e4\e0\e5\e7\ea\eb\e8\ef\ee\ec\c4\c5\c9\e6\c6\f4\f6\f2\fb\f9\ff\d6\dc\a2\a3\a5\3f\83"
+    "\e1\ed\f3\fa\f1\d1\aa\ba\bf\3f\ac\bd\bc\a1\ab\bb\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f"
+    "\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f"
+    "\3f\df\3f\3f\3f\3f\b5\3f\3f\3f\3f\3f\3f\3f\3f\3f\3f\b1\3f\3f\3f\3f\f7\3f\b0\3f\b7\3f\3f\b2\3f\a0")
+
+  (func $char_translate_buffer (param $src_g i32) (param $dst_g i32)
+        (param $count i32) (param $table i32)
+    (local $src i32) (local $dst i32) (local $i i32) (local $ch i32)
+    (local.set $src (call $g2w (local.get $src_g)))
+    (local.set $dst (call $g2w (local.get $dst_g)))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $ch (i32.load8_u (i32.add (local.get $src) (local.get $i))))
+      (i32.store8 (i32.add (local.get $dst) (local.get $i))
+        (i32.load8_u (i32.add (local.get $table) (local.get $ch))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy))))
+
+  (func $char_translate_string (param $src_g i32) (param $dst_g i32)
+        (param $table i32)
+    (local $src i32) (local $dst i32) (local $i i32) (local $ch i32)
+    (local.set $src (call $g2w (local.get $src_g)))
+    (local.set $dst (call $g2w (local.get $dst_g)))
+    (block $done (loop $copy
+      (local.set $ch (i32.load8_u (i32.add (local.get $src) (local.get $i))))
+      (i32.store8 (i32.add (local.get $dst) (local.get $i))
+        (i32.load8_u (i32.add (local.get $table) (local.get $ch))))
+      (br_if $done (i32.eqz (local.get $ch)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy))))
+
+  ;; CharToOemA(pSrc, pDst) and the counted Buff form. ANSI callers may
+  ;; convert in place; a one-byte table lookup naturally preserves that case.
+  (func $handle_CharToOemA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $char_translate_string
+      (local.get $arg0) (local.get $arg1) (global.get $CP1252_TO_CP437))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_CharToOemBuffA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $char_translate_buffer
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (global.get $CP1252_TO_CP437))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; OemToCharA(lpSrc, lpDst) — CP437 to the process CP1252 page.
   (func $handle_OemToCharA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $src i32) (local $dst i32) (local $c i32)
-    (local.set $src (call $g2w (local.get $arg0)))
-    (local.set $dst (call $g2w (local.get $arg1)))
-    (block $done (loop $lp
-      (local.set $c (i32.load8_u (local.get $src)))
-      (i32.store8 (local.get $dst) (local.get $c))
-      (br_if $done (i32.eqz (local.get $c)))
-      (local.set $src (i32.add (local.get $src) (i32.const 1)))
-      (local.set $dst (i32.add (local.get $dst) (i32.const 1)))
-      (br $lp)))
+    (call $char_translate_string
+      (local.get $arg0) (local.get $arg1) (global.get $CP437_TO_CP1252))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-  ;; OemToCharBuffA(lpSrc, lpDst, cchDstLength) — the Win98 US codepage
-  ;; conversion is byte-identical for the installer's ASCII path buffer. The
-  ;; Buff variant copies exactly cchDstLength bytes and does not stop at NUL.
+  ;; OemToCharBuffA converts all cchDstLength bytes and does not stop at NUL.
   (func $handle_OemToCharBuffA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $src i32) (local $dst i32) (local $i i32)
-    (local.set $src (call $g2w (local.get $arg0)))
-    (local.set $dst (call $g2w (local.get $arg1)))
-    (block $done (loop $copy
-      (br_if $done (i32.ge_u (local.get $i) (local.get $arg2)))
-      (i32.store8
-        (i32.add (local.get $dst) (local.get $i))
-        (i32.load8_u (i32.add (local.get $src) (local.get $i))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $copy)))
+    (call $char_translate_buffer
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (global.get $CP437_TO_CP1252))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )

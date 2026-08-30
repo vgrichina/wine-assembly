@@ -25420,5 +25420,47 @@
     "nargs": 1,
     "convention": "stdcall",
     "hash": 479410229
+  },
+  {
+    "id": 3058,
+    "name": "CharToOemA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 316599278,
+    "args": [
+      {
+        "name": "pSrc",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "pDst",
+        "type": "LPSTR",
+        "out": true
+      }
+    ],
+    "ret": "BOOL"
+  },
+  {
+    "id": 3059,
+    "name": "CharToOemBuffA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1185846181,
+    "args": [
+      {
+        "name": "lpszSrc",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "lpszDst",
+        "type": "LPSTR",
+        "out": true
+      },
+      {
+        "name": "cchDstLength",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "BOOL"
   }
 ]
