@@ -25508,5 +25508,23 @@
       }
     ],
     "ret": "SHORT"
+  },
+  {
+    "id": 3063,
+    "name": "WaitForInputIdle",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1697318347,
+    "args": [
+      {
+        "name": "hProcess",
+        "type": "HANDLE"
+      },
+      {
+        "name": "dwMilliseconds",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
   }
 ]

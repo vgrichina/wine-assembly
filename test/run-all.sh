@@ -278,6 +278,7 @@ UNIT=(
   test/test-thread-resource-sync.js
   test/test-vfs-persistence.js
   test/test-vk-key-scan.js
+  test/test-wait-for-input-idle.js
   test/test-win16-winexec.js
   test/test-win32-dde-progman.js
   test/test-win98-scm-probe.js

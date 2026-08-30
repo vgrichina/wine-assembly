@@ -2841,6 +2841,23 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
+  ;; WaitForInputIdle(hProcess, dwMilliseconds). Win32 returns immediately for
+  ;; a console process or one without a message queue. That exactly describes
+  ;; the single process hosted by the browser, both through its -1 pseudo
+  ;; handle and the real-looking handle OpenProcess exposes for it.
+  (func $handle_WaitForInputIdle (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.or
+          (i32.eq (local.get $arg0) (i32.const -1))
+          (i32.eq (i32.and (local.get $arg0) (i32.const 0xfffff000))
+                  (i32.const 0x000e2000)))
+      (then
+        (global.set $eax (i32.const 0)) ;; WAIT_OBJECT_0
+        (global.set $last_error (i32.const 0)))
+      (else
+        (global.set $eax (i32.const -1)) ;; WAIT_FAILED
+        (global.set $last_error (i32.const 6)))) ;; ERROR_INVALID_HANDLE
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
   ;; 58: GetTickCount
   (func $handle_GetTickCount (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $tick_count (call $host_get_ticks))
