@@ -17,12 +17,16 @@ it meant to, with the *measured* cause rather than a guess. Read the entry
 before starting on one — several of these have already cost a session each, and
 two of them are not bugs at all.
 
-**Where the corpus stands (2026-08-29):** 193 of 199 rows show what the program
-meant to show — 164 graphics, 29 text art. Of the six that do not, three are
-programs behaving correctly (`001.EXE`, `002.EXE`, `rage.exe`, below), leaving
-**ANGEL.EXE + its SETUP.EXE** and **AQUAPHOB.EXE** as the open ones.
-AQUAPHOB draws now — see its entry: it needed a VESA BIOS to put anything on
-the screen at all, and it needs a mouse click to get past the screen it draws.
+**Where the corpus stands (2026-08-29, sweep v17):** 194 of 199 rows show what
+the program meant to show — 165 graphics, 29 text art. The five that do not are
+`001.EXE`, `002.EXE` and `rage.exe`, all three behaving correctly (below), and
+**ANGEL.EXE + its SETUP.EXE**, the one real blocker left.
+
+AQUAPHOB.EXE moved `blank` → `demo` in this sweep and is the whole difference
+between v16 and v17: nothing else moved in either direction, which is what
+prices the VESA support added for it over the other 198 programs. What the
+sweep photographs is its setup screen; the demo behind it needs a mouse click.
+See its entry.
 
 ## Not work items
 
