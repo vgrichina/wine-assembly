@@ -158,7 +158,41 @@ function colorCountInRect(png, rgb, left, top, right, bottom) {
     assert(selectedAppTeal > 1200,
       `Far did not select app.exe through console mouse input (${selectedAppTeal} teal pixels)`);
 
+    // A drive root has no navigable parent, so Far intentionally suppresses
+    // the enumerated `..` record there. Prove the row is not lost by entering
+    // a real child directory and observing Far enumerate its parent record.
+    const parentResult = spawnSync('node', [
+      RUN,
+      `--exe=${FAR}`,
+      '--vfs-include=*.lng,*.hlf',
+      `--wasm=${wasmPath}`,
+      '--no-build',
+      '--quiet-api',
+      '--trace-fs',
+      '--max-batches=360',
+      '--batch-size=50000',
+      '--input=70:keydown:0x23,72:keyup:0x23,80:keydown:0x0d,82:keyup:0x0d,' +
+        '150:keydown:0x24,152:keyup:0x24,160:keydown:0x0d,162:keyup:0x0d',
+    ], {
+      cwd: ROOT,
+      encoding: 'utf8',
+      timeout: 120000,
+      maxBuffer: 32 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const parentOutput = `${parentResult.stdout || ''}${parentResult.stderr || ''}`;
+    if (parentResult.error) throw parentResult.error;
+    assert(parentResult.status === 0,
+      `Far parent-row run exited ${parentResult.status}\n${parentOutput.slice(-8000)}`);
+    const childCaption = parentOutput.search(/SetWindowText.*\{C:\\[^}]+\\\} - Far/i);
+    assert(childCaption >= 0,
+      `Far did not enter a child directory through its root panel\n${parentOutput.slice(-8000)}`);
+    assert(parentOutput.includes('[fs] FindFirstFile("C:\\program files\\*.*") → "."') &&
+      parentOutput.includes('→ ".."'),
+      `child-directory enumeration did not expose its parent record\n${parentOutput.slice(-8000)}`);
+
     console.log(`PASS  Far Manager 1.70 lists files and accepts mouse/F9 (${blue} blue, ${selectedAppTeal} selected, ${menuYellow} menu pixels)`);
+    console.log('PASS  Far Manager hides root parent and enumerates subdirectory `..`');
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }
