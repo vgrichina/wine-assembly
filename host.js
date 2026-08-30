@@ -343,6 +343,10 @@ class WineAssembly {
       // browser context on the same path so short-lived Storm events release
       // their fixed-table slots instead of leaking until creation fails.
       closeSyncHandle: handle => self._closeSyncHandle(handle),
+      signalSyncHandle: handle => self.threadManager
+        ? self.threadManager.setEvent(handle >>> 0) : 0,
+      resetSyncHandle: handle => self.threadManager
+        ? self.threadManager.resetEvent(handle >>> 0) : 0,
       traceHost: opts.traceHost || (typeof window !== 'undefined' ? window.__waTraceHostNames : null),
       // Trace categories (the browser twin of test/run.js's --trace-dx etc).
       // lib/host-imports.js reads ctx.trace, so setting window.__waTraceCategories

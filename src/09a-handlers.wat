@@ -1639,51 +1639,61 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; FindFirst/Next/CloseChangeNotification. Win98 exposes directory watches as
-  ;; waitable kernel handles: creation starts nonsignalled, FindNext rearms the
-  ;; object after a reported change, and FindClose releases it. VFS mutations
-  ;; do not signal the object yet, but the handle/error/lifetime contract is
-  ;; real and avoids treating a watch as an arbitrary file-search handle.
-  (func $handle_FindFirstChangeNotificationA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $attrs i32)
-    (local.set $attrs (if (result i32) (local.get $arg0)
-      (then (call $host_fs_get_file_attributes (call $g2w (local.get $arg0)) (i32.const 0)))
+  ;; FindFirst/Next/CloseChangeNotification. The wait object is a manual-reset
+  ;; ThreadManager event; the VFS owns the watched path/filter and signals it
+  ;; when a matching mutation occurs. FindNext rearms the latch, including a
+  ;; change recorded while the prior notification was still signalled.
+  (func $find_first_change_notification (param $path_wa i32) (param $subtree i32) (param $filter i32) (param $wide i32) (result i32)
+    (local $attrs i32) (local $handle i32)
+    (local.set $attrs (if (result i32) (local.get $path_wa)
+      (then (call $host_fs_get_file_attributes (local.get $path_wa) (local.get $wide)))
       (else (i32.const -1))))
     (if (i32.or (i32.eq (local.get $attrs) (i32.const -1))
                 (i32.eqz (i32.and (local.get $attrs) (i32.const 0x10))))
       (then
         (global.set $last_error (i32.const 3)) ;; ERROR_PATH_NOT_FOUND
-        (global.set $eax (i32.const -1)))
-      (else
-        (global.set $eax (call $host_create_event
-          (i32.const 1) (i32.const 0) (i32.const 0) (i32.const 0)))
-        (if (i32.eqz (global.get $eax))
-          (then (global.set $last_error (i32.const 8))) ;; ERROR_NOT_ENOUGH_MEMORY
-          (else (global.set $last_error (i32.const 0))))))
+        (return (i32.const -1))))
+    ;; Win98 accepts the documented name/attribute/size/write/security mask.
+    (if (i32.or
+          (i32.eqz (local.get $filter))
+          (i32.ne (i32.and (local.get $filter) (i32.const 0xfffffee0)) (i32.const 0)))
+      (then
+        (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
+        (return (i32.const -1))))
+    (local.set $handle (call $host_create_event
+      (i32.const 1) (i32.const 0) (i32.const 0) (i32.const 0)))
+    (if (i32.eqz (local.get $handle))
+      (then
+        (global.set $last_error (i32.const 8)) ;; ERROR_NOT_ENOUGH_MEMORY
+        (return (i32.const -1))))
+    (if (i32.eqz (call $host_fs_register_change_notification
+          (local.get $handle) (local.get $path_wa) (local.get $subtree)
+          (local.get $filter) (local.get $wide)))
+      (then
+        (drop (call $host_fs_close_handle (local.get $handle)))
+        (global.set $last_error (i32.const 6)) ;; ERROR_INVALID_HANDLE
+        (return (i32.const -1))))
+    (global.set $last_error (i32.const 0))
+    (local.get $handle))
+
+  (func $handle_FindFirstChangeNotificationA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $find_first_change_notification
+      (if (result i32) (local.get $arg0)
+        (then (call $g2w (local.get $arg0))) (else (i32.const 0)))
+      (local.get $arg1) (local.get $arg2) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   (func $handle_FindFirstChangeNotificationW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $attrs i32)
-    (local.set $attrs (if (result i32) (local.get $arg0)
-      (then (call $host_fs_get_file_attributes (call $g2w (local.get $arg0)) (i32.const 1)))
-      (else (i32.const -1))))
-    (if (i32.or (i32.eq (local.get $attrs) (i32.const -1))
-                (i32.eqz (i32.and (local.get $attrs) (i32.const 0x10))))
-      (then
-        (global.set $last_error (i32.const 3))
-        (global.set $eax (i32.const -1)))
-      (else
-        (global.set $eax (call $host_create_event
-          (i32.const 1) (i32.const 0) (i32.const 0) (i32.const 0)))
-        (if (i32.eqz (global.get $eax))
-          (then (global.set $last_error (i32.const 8)))
-          (else (global.set $last_error (i32.const 0))))))
+    (global.set $eax (call $find_first_change_notification
+      (if (result i32) (local.get $arg0)
+        (then (call $g2w (local.get $arg0))) (else (i32.const 0)))
+      (local.get $arg1) (local.get $arg2) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   (func $handle_FindNextChangeNotification (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (call $host_reset_event (local.get $arg0)))
+    (global.set $eax (call $host_fs_next_change_notification (local.get $arg0)))
     (if (i32.eqz (global.get $eax))
       (then (global.set $last_error (i32.const 6)))
       (else (global.set $last_error (i32.const 0))))
@@ -1691,10 +1701,7 @@
   )
 
   (func $handle_FindCloseChangeNotification (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (if (result i32)
-      (i32.or (i32.eqz (local.get $arg0)) (i32.eq (local.get $arg0) (i32.const -1)))
-      (then (i32.const 0))
-      (else (call $host_fs_close_handle (local.get $arg0)))))
+    (global.set $eax (call $host_fs_close_change_notification (local.get $arg0)))
     (if (i32.eqz (global.get $eax))
       (then (global.set $last_error (i32.const 6))) ;; ERROR_INVALID_HANDLE
       (else (global.set $last_error (i32.const 0))))

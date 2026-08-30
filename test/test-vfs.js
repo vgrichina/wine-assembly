@@ -32,6 +32,76 @@ test('standard Win98 shell folders exist before an installer runs', () => {
   assert(vfs.dirs.has('c:\\windows\\desktop'));
 });
 
+function watch(vfs, handle, path, subtree, filter) {
+  const state = { signaled: false, signals: 0, resets: 0, closes: 0 };
+  assert(vfs.registerChangeNotification(handle, path, subtree, filter, {
+    signal: () => { state.signaled = true; state.signals++; return true; },
+    reset: () => { state.signaled = false; state.resets++; return true; },
+    close: () => { state.closes++; return true; },
+  }));
+  return state;
+}
+
+test('directory notification latches one change and records another until rearm', () => {
+  const vfs = new VirtualFS();
+  vfs.dirs.add('c:\\watch');
+  const state = watch(vfs, 0xE001, 'C:\\watch', false, 0x01);
+  assert(vfs.createFile('C:\\watch\\first.txt', 0x40000000, 2));
+  assert.strictEqual(state.signaled, true);
+  assert.strictEqual(state.signals, 1);
+  assert(vfs.createFile('C:\\watch\\second.txt', 0x40000000, 2));
+  assert.strictEqual(state.signals, 1, 'a signalled manual-reset watch coalesces changes');
+  assert(vfs.nextChangeNotification(0xE001));
+  assert.strictEqual(state.resets, 1);
+  assert.strictEqual(state.signaled, true,
+    'a change recorded before FindNext immediately satisfies the rearmed watch');
+  assert.strictEqual(state.signals, 2);
+  assert(vfs.nextChangeNotification(0xE001));
+  assert.strictEqual(state.signaled, false, 'a rearm with no pending change becomes nonsignalled');
+  assert(vfs.closeChangeNotification(0xE001));
+  assert.strictEqual(state.closes, 1);
+  assert.strictEqual(vfs.nextChangeNotification(0xE001), false,
+    'a closed notification handle cannot be rearmed');
+});
+
+test('directory notifications honor filter and subtree boundaries', () => {
+  const vfs = new VirtualFS();
+  vfs.dirs.add('c:\\watch');
+  vfs.dirs.add('c:\\watch\\nested');
+  const fileName = watch(vfs, 0xE011, 'C:\\watch', false, 0x01);
+  const size = watch(vfs, 0xE012, 'C:\\watch', false, 0x08);
+  const attrs = watch(vfs, 0xE013, 'C:\\watch', false, 0x04);
+  const dirName = watch(vfs, 0xE014, 'C:\\watch', false, 0x02);
+  const shallow = watch(vfs, 0xE015, 'C:\\watch', false, 0x01);
+  const tree = watch(vfs, 0xE016, 'C:\\watch', true, 0x01);
+
+  const handle = vfs.createFile('C:\\watch\\data.bin', 0x40000000, 2);
+  assert.strictEqual(fileName.signals, 1);
+  assert.strictEqual(size.signals, 0, 'creating an empty name is not a size change');
+  assert.strictEqual(attrs.signals, 0);
+  assert.strictEqual(dirName.signals, 0);
+  assert.deepStrictEqual(vfs.writeFile(handle, Uint8Array.of(1, 2, 3), 3),
+    { ok: true, bytesWritten: 3 });
+  assert.strictEqual(size.signals, 1, 'extending a file satisfies FILE_NOTIFY_CHANGE_SIZE');
+  assert(vfs.setFileAttributes('C:\\watch\\data.bin', 0x21));
+  assert.strictEqual(attrs.signals, 1);
+  assert(vfs.createDirectory('C:\\watch\\newdir'));
+  assert.strictEqual(dirName.signals, 1);
+
+  assert(vfs.nextChangeNotification(0xE015));
+  assert(vfs.nextChangeNotification(0xE016));
+  assert(vfs.createFile('C:\\watch\\nested\\deep.txt', 0x40000000, 2));
+  assert.strictEqual(shallow.signals, 1,
+    'the shallow file-name watch saw only the earlier direct child');
+  assert.strictEqual(tree.signals, 2,
+    'the rearmed subtree watch observes a nested file-name change');
+  assert(vfs.nextChangeNotification(0xE013));
+  vfs.setFileAttributes('C:\\watch', 0x10);
+  assert.strictEqual(attrs.signals, 1,
+    'changes to the watched directory itself do not satisfy its notification');
+  assert.strictEqual(attrs.signaled, false);
+});
+
 // --- findFirstFile ---
 
 test('wildcard *.* in CWD finds files in c:\\', () => {
