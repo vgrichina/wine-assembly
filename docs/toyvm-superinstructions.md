@@ -146,7 +146,11 @@ take. It is the program the *decoder* work was for.
 
 ## What this does not do
 
-It removes a dispatch. It does **not** remove the flag write: the fused body
+It removes a dispatch. It did **not** remove the flag write — that is
+[toyvm-dead-flags.md](toyvm-dead-flags.md), and a fused pair turns out to be the
+*enabler* for it rather than a beneficiary: it reads the record its own half
+just made and never the flags it was entered with, which is what makes the
+arithmetic in front of it provably dead. Within the pair itself, the fused body
 still computes and stores `$flags` in its first half and reads a bit back out of
 it in its second, because a later `adc`, `sbb`, `pushf` or second Jcc may read
 those flags and nothing here proves they are dead. Eliding that is the lazy-flag

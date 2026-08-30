@@ -2858,6 +2858,282 @@ function genFusedBranches() {
 }
 genFusedBranches();
 
+// --- Dead flag writes ------------------------------------------------------
+//
+// Most flag writes are never read. A block is typically several arithmetic ops
+// and then a compare and a branch, and only the compare's flags are ever
+// looked at -- every `add`, `sub`, `or` and `and` before it computed six flags
+// (eager) or stored six globals (lazy) for nobody.
+//
+// Whether a particular write is dead is a property of the BLOCK, which the
+// compiler has in hand: walk it backwards, and a write is dead if some later
+// op in the same block overwrites the whole flag state before anything reads
+// it. Block end counts as a reader -- the next block may read them, and a
+// handback at a block end pushes FLAGS onto the guest stack.
+//
+// So the generator supplies, for every handler it can, a second copy with the
+// flag write deleted, and the compiler swaps it in where the walk proves the
+// write dead.
+
+// What a handler does to the flag state cannot be read off its own body. A
+// rotate handler's body says `call $sh_rcl16` and the `$get_cf` is inside that
+// helper; `$rec_inc` reads CF before it records, which is exactly what stops an
+// `inc` from killing the write in front of it. So the whole module's function
+// text is parsed and the sets are propagated to a fixpoint over call edges.
+//
+// A "kill" is a write that fully determines all six arithmetic flags
+// afterwards: a recorder, an eager `$flags_*` helper, or a raw write of the
+// whole word. A `global.set` of one record field is a partial write and kills
+// nothing.
+const FLAG_KILLERS = /^(rec_[a-z0-9]+|flags_(add|sub|logic|inc|dec|mul|put|add32|sub32|inc32|dec32))$/;
+const FLAG_GLOBALS = /^(flags|fop|fa|fb|fu|fr|fw|fcf)$/;
+const EVENT_RE = /(?:return_)?call \$([A-Za-z0-9_]+)|global\.(get|set) \$([A-Za-z0-9_]+)/g;
+// Reaching the host is a flag READ at the point it happens: dos-loop.js reads
+// and writes the flags word on a hooked IRET, and an interrupt injected at a
+// handback pushes FLAGS onto the guest stack. It matters that this is placed in
+// TEXT ORDER rather than at the front of the body -- a fused `cmp_ri8_jz` hands
+// back through `$jlook` only after its own compare has already overwritten the
+// record, so what the host sees is never the previous op's flags.
+const HOST_EXIT = /^(fault|jlook)$/;
+// A body that can return early cannot be said to overwrite anything: the write
+// may be on the path not taken. Such a handler still READS what it reads; it
+// just does not count as a killer, so nothing in front of it is called dead.
+const EARLY_EXIT = /\(return\)|\(br[ _]/;
+
+function helperBodies() {
+  // The parse is over stripped text: a `;;` comment containing a lone paren
+  // would otherwise unbalance the scan.
+  const text = helpers().replace(/;;[^\n]*/g, '');
+  const out = new Map();
+  const re = /\(func \$([A-Za-z0-9_]+)/g;
+  let m;
+  while ((m = re.exec(text))) {
+    let d = 0, i = m.index;
+    for (; i < text.length; i++) {
+      if (text[i] === '(') d++;
+      else if (text[i] === ')' && --d === 0) break;
+    }
+    out.set(m[1], text.slice(m.index, i));
+    re.lastIndex = i;
+  }
+  return out;
+}
+
+// reads: does this touch the flag state at all, however deep.
+// kills: does it fully overwrite the arithmetic flags.
+// readsIn: does it read the flags it was ENTERED with -- the only one that
+//   decides whether the write in front of it is live. A fused `cmp_ri8_jz`
+//   records and then reads its own record, so it does not.
+// A write only kills what came before it if it is reached EVERY time. Every
+// body here is wrapped as `(func $name ...)`, so a statement of the body sits at
+// paren depth 2; anything deeper is inside an `(if`, a `(loop` or a `(block` and
+// is conditional. `rep_scasb` is the case that matters -- with CX=0 it records
+// nothing at all, and calling it a killer would let a real flag write in front
+// of it be deleted.
+function analyzeFlags(bodies) {
+  const events = new Map(), loops = new Map();
+  for (const [n, b] of bodies) {
+    const ev = [];
+    const bails = EARLY_EXIT.test(b);
+    // Order events by where the effect HAPPENS, which in folded WAT is the
+    // closing paren of the expression, not the operator token. `cmc` is
+    // `(global.set $flags (i32.xor (global.get $flags) (i32.const 1)))`: the
+    // write is written first and happens last, and reading it in written order
+    // makes cmc look like a killer that does not read -- which deletes the
+    // compare in front of it and inverts the wrong carry.
+    const close = new Int32Array(b.length).fill(-1);
+    const depthAt = new Int32Array(b.length);
+    const open = [];
+    let d = 0;
+    for (let i = 0; i < b.length; i++) {
+      if (b[i] === '(') { open.push(i); d++; }
+      depthAt[i] = d;
+      if (b[i] === ')') { const o = open.pop(); if (o !== undefined) close[o] = i; d--; }
+    }
+    for (const m of b.matchAll(EVENT_RE)) {
+      let o = m.index;
+      while (o > 0 && b[o] !== '(') o--;
+      const at = close[o] >= 0 ? close[o] : m.index;
+      const sure = depthAt[m.index] <= 2 && !bails;
+      if (m[1]) {
+        if (HOST_EXIT.test(m[1])) { ev.push({ t: 'R', at }); continue; }
+        if (!bodies.has(m[1])) continue;              // import, or $next
+        if (FLAG_KILLERS.test(m[1])) ev.push({ t: sure ? 'CK' : 'C?', n: m[1], at });
+        else ev.push({ t: sure ? 'C' : 'C?', n: m[1], at });
+      } else if (FLAG_GLOBALS.test(m[3])) {
+        if (m[2] === 'get') ev.push({ t: 'R', at });
+        else if (m[3] !== 'flags') ev.push({ t: 'W', at });
+        else ev.push({ t: sure ? 'K' : 'W', at });
+      } else if (m[3] === 'halt' && m[2] === 'set') {
+        ev.push({ t: 'R', at });
+      }
+    }
+    ev.sort((x, y) => x.at - y.at);
+    events.set(n, ev);
+    loops.set(n, /\(loop/.test(b));
+  }
+  const reads = new Map(), kills = new Map();
+  for (const n of bodies.keys()) { reads.set(n, false); kills.set(n, false); }
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const [n, ev] of events) {
+      let r = reads.get(n), k = kills.get(n);
+      for (const e of ev) {
+        if (e.t === 'R') r = true;
+        else if (e.t === 'K') k = true;
+        else if (e.t === 'CK') { r = r || reads.get(e.n); k = true; }
+        else if (e.t === 'C') { r = r || reads.get(e.n); k = k || kills.get(e.n); }
+        // A conditional edge can read but is not guaranteed to write.
+        else if (e.t === 'C?') r = r || reads.get(e.n);
+      }
+      if (r !== reads.get(n)) { reads.set(n, r); changed = true; }
+      if (k !== kills.get(n)) { kills.set(n, k); changed = true; }
+    }
+  }
+  const memo = new Map(), busy = new Set();
+  const readsIn = (n) => {
+    if (memo.has(n)) return memo.get(n);
+    if (busy.has(n)) return reads.get(n);        // cycle: take the safe answer
+    busy.add(n);
+    let v = false;
+    // Inside a loop text order means nothing: a read at the top of the body
+    // reads the previous iteration's write on every trip but the first, and
+    // the first trip reads whatever the block handed it.
+    if (loops.get(n) && reads.get(n)) v = true;
+    else {
+      for (const e of events.get(n)) {
+        if (e.t === 'R') { v = true; break; }
+        if (e.t === 'K') break;
+        if (e.t === 'C' || e.t === 'CK') {
+          if (readsIn(e.n)) { v = true; break; }
+          if (e.t === 'CK' || kills.get(e.n)) break;
+        }
+        // Conditional: it may read what we were entered with, and it may not
+        // have written, so it neither settles the question nor ends the walk.
+        if (e.t === 'C?' && reads.get(e.n)) { v = true; break; }
+      }
+    }
+    busy.delete(n);
+    memo.set(n, v);
+    return v;
+  };
+  // Does anything read the flag state AFTER the write? A fused `cmp_ri8_jz`
+  // does -- its branch reads the record its own compare just made -- and that
+  // is precisely the handler whose write must not be deleted, however dead the
+  // block says it is.
+  const readsAfter = (n) => {
+    if (loops.get(n) && reads.get(n)) return true;
+    let seen = false;
+    for (const e of events.get(n)) {
+      if (seen) {
+        if (e.t === 'R') return true;
+        if (e.n && reads.get(e.n)) return true;
+      } else if (e.t === 'K' || e.t === 'CK') {
+        seen = true;
+      }
+    }
+    return false;
+  };
+  const out = new Map();
+  for (const n of bodies.keys()) {
+    out.set(n, {
+      reads: reads.get(n), kills: kills.get(n),
+      readsIn: readsIn(n), readsAfter: readsAfter(n),
+    });
+  }
+  return out;
+}
+
+// handler index -> the same handler with its flag write deleted.
+const NOFLAG = new Map();
+// Per handler index: { readsIn, kills } for the handler ACTUALLY at that index.
+// Mutated in place on a rebuild rather than reassigned -- unlike ARITY this one
+// legitimately DIFFERS between the two flag schemes, and compile.js holds it by
+// reference from require time.
+const FLAG_EFFECTS = [];
+
+// Delete the one flag-writing call from a body. The call is always a statement
+// whose arguments are locals, constants and pure reads, so removing the whole
+// s-expression removes the write and nothing else.
+function stripFlagWrite(body) {
+  const m = /\(call \$([A-Za-z0-9_]+)/g;
+  let hit = -1, name = null;
+  for (let x; (x = m.exec(body));) {
+    if (!FLAG_KILLERS.test(x[1])) continue;
+    if (hit >= 0) return null;                  // more than one: leave it alone
+    hit = x.index; name = x[1];
+  }
+  if (hit < 0) return null;
+  let d = 0, i = hit;
+  for (; i < body.length; i++) {
+    if (body[i] === '(') d++;
+    else if (body[i] === ')' && --d === 0) break;
+  }
+  if (d !== 0) return null;
+  const rest = body.slice(0, hit) + body.slice(i + 1);
+  // A second flag write, or a read of the record after the point the write was,
+  // means this handler is doing something the swap would change.
+  if (/global\.set \$(flags|fop|fa|fb|fu|fr|fw|fcf)\b/.test(rest)) return null;
+  if (new RegExp('\\$(' + FLAG_KILLERS.source.slice(1, -1) + ')\\b').test(rest)) return null;
+  return { body: rest, wrote: name };
+}
+
+// Handler bodies are bare fragments; the analysis measures paren depth against
+// the `(func ...)` the shell will wrap them in, so wrap them here too.
+const wrapBody = (x) => `(func $${x.name}\n${x.body.replace(/;;[^\n]*/g, '')}\n)`;
+
+function genNoFlagVariants() {
+  const bodies = helperBodies();
+  for (const x of HANDLERS) bodies.set(x.name, wrapBody(x));
+  const base = analyzeFlags(bodies);
+  const baseCount = HANDLERS.length;
+  for (let i = 0; i < baseCount; i++) {
+    const x = HANDLERS[i];
+    const e = base.get(x.name);
+    if (!e.kills || e.readsAfter) continue;
+    const s = stripFlagWrite(x.body);
+    if (!s) continue;
+    // Every other callee must leave the flags alone, or the write we deleted
+    // was not the only one.
+    let ok = true;
+    for (const c of s.body.matchAll(/(?:return_)?call \$([A-Za-z0-9_]+)/g)) {
+      const ce = base.get(c[1]);
+      if (ce && ce.kills) { ok = false; break; }
+    }
+    if (!ok) continue;
+    NOFLAG.set(i, h(`${x.name}_nf`, x.args, s.body));
+  }
+  // Re-analyze with the variants in, so the compiler's backward walk uses the
+  // effects of the handler it just swapped in rather than the one it removed.
+  for (let i = baseCount; i < HANDLERS.length; i++) {
+    bodies.set(HANDLERS[i].name, wrapBody(HANDLERS[i]));
+  }
+  const all = analyzeFlags(bodies);
+  FLAG_EFFECTS.length = 0;
+  for (const x of HANDLERS) {
+    const e = all.get(x.name);
+    FLAG_EFFECTS.push({ readsIn: e.readsIn, kills: e.kills });
+  }
+}
+
+// Operand words per handler index. Filled by prepareTables() rather than at
+// require time, because the variants are generated late (see below) and the
+// compiler holds this array by reference.
+const ARITY = [];
+
+// The variants cannot be generated at require time: deriving them reads
+// `helpers()`, whose decoder half requires decode.js, which requires this
+// module's exports back. So the table is finished on first use instead -- from
+// emit(), and from compile.js before it lays out an arena.
+let TABLES_READY = false;
+function prepareTables() {
+  if (TABLES_READY) return;
+  TABLES_READY = true;
+  genNoFlagVariants();
+  ARITY.length = 0;
+  for (const x of HANDLERS) ARITY.push(x.args);
+}
+
 // Rebuild the whole table under the other flag scheme. Both arms live in one
 // process so bench-dos.js can interleave them rep by rep; a worktree per arm on
 // a box that sits at load 10-40 measures the box.
@@ -2870,6 +3146,7 @@ genFusedBranches();
 // garbage with no error. It is asserted rather than assumed.
 function buildHandlers(lazy, fuseCond) {
   if (lazy === LAZY && fuseCond === FUSE_COND) return;
+  prepareTables();   // so the shape check compares two FINISHED tables
   const before = HANDLERS.map(x => `${x.name}/${x.args}`).join(',');
   const fuseBefore = [...FUSE.entries()].map(([k, v]) => `${k}:${v}`).sort().join(',');
   LAZY = lazy;
@@ -2877,6 +3154,7 @@ function buildHandlers(lazy, fuseCond) {
   CONDS = makeConds(bit);
   HANDLERS.length = 0;
   FUSE.clear();
+  NOFLAG.clear();
   // genShifts()/genDoubleShifts() append to this rather than returning, so a
   // rebuild that does not clear it emits both arms' shift helpers -- same
   // function names twice, and the handler table's ARITY check cannot see it.
@@ -2887,6 +3165,8 @@ function buildHandlers(lazy, fuseCond) {
   genShifts(); genSetmo(); genShiftHandlers(); genDoubleShifts();
   genBitOps(); genArithIO();
   genFusedBranches();
+  TABLES_READY = false;
+  prepareTables();
   const after = HANDLERS.map(x => `${x.name}/${x.args}`).join(',');
   if (after !== before) {
     throw new Error('the flag scheme moved the handler table: names or arities differ');
@@ -4824,6 +5104,7 @@ function checkNesting(wat) {
 
 function emit(variant, opts = {}) {
   buildHandlers(opts.lazyFlags !== false, opts.fuseCond !== false);
+  prepareTables();
   const fn = VARIANTS[variant];
   if (!fn) throw new Error(`unknown variant: ${variant} (have ${Object.keys(VARIANTS).join(', ')})`);
   if (opts.hist && variant !== 'tailcall') {
@@ -4841,8 +5122,13 @@ module.exports = {
   EXTRA_GLOBALS,
   // The compiler walks a finished block op by op to find a fusable tail, which
   // it can only do if it knows how many operand words each handler eats.
-  ARITY: HANDLERS.map(x => x.args),
+  ARITY, prepareTables,
   FUSE,
+  // A handler index -> the same handler without its flag write, and what every
+  // handler does to the flag state. The compiler walks a finished block
+  // backwards with these and swaps in the variant where the write is dead.
+  NOFLAG,
+  FLAG_EFFECTS,
 };
 
 // CLI: dump one variant's WAT, for eyeballing or for handing to wat2wasm.

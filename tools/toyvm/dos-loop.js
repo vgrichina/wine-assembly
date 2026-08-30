@@ -52,7 +52,8 @@ const { STUB_SEG, STUB_OFF, STUB_BYTE } = require('./dos');
 // block map and cost nothing.
 class CodeCache {
   constructor(vm, { noCache = false, smcFlush = false, watch = [],
-                    wasmDecode = true, fuse = true } = {}) {
+                    wasmDecode = true, fuse = true, deadFlags = true,
+                    traceDeadFlags = null } = {}) {
     // Watchpoints, as [lo, hi] linear byte ranges. They ride the CODE_BITMAP
     // rather than adding a range test to $wr8, because $wr8 is on the hot path
     // of every single store the guest makes and a watch that is off must cost
@@ -83,6 +84,13 @@ class CodeCache {
     // a fused pair charges the step its removed dispatch used to, so slice
     // boundaries and interrupt timing do not move.
     this.fuse = fuse;
+    // Dead flag write elimination in the compiler. `--no-deadflags` is its A/B
+    // partner, and like fusion the two arms must be indistinguishable: a write
+    // is only dropped where the block proves nobody reads it, so the guest
+    // cannot tell.
+    this.deadFlags = deadFlags;
+    this.traceDeadFlags = traceDeadFlags;
+    this.deadFlagsDropped = 0;
     this.noCache = noCache;
     this.regions = new Map();          // cs -> [prog]
     this.arenaNext = isa.THREAD_BASE;
@@ -283,8 +291,9 @@ class CodeCache {
       arenaBase: this.arenaNext,
       maxWords: (this.arenaEnd - this.arenaNext) >> 2,
       codeBase, mask, d32, benign: this.benign, wasmDecoder: this.wasmDecoder,
-      fuse: this.fuse,
+      fuse: this.fuse, deadFlags: this.deadFlags, traceDeadFlags: this.traceDeadFlags,
     });
+    this.deadFlagsDropped += prog.deadFlags || 0;
     new Int32Array(vm.mem.buffer, prog.arenaBase, prog.words.length).set(prog.words);
     this.arenaNext += prog.words.length * 4;
     this.compiles++;
@@ -348,7 +357,7 @@ class DosSession {
   constructor(vm, machine, opts = {}) {
     const {
       slice = 2e6, noCache = false, smcFlush = false, mouse = [0, 0],
-      wasmDecode = true, fuse = true,
+      wasmDecode = true, fuse = true, deadFlags = true, traceDeadFlags = null,
       // One timer interrupt per this many dispatches. 100k is about 10ms of a
       // real 486, so it lands near the 18.2Hz the BIOS programs -- and a demo
       // that reprogrammed the PIT for music gets a slower clock than it asked
@@ -391,7 +400,8 @@ class DosSession {
     this.stuckSince = 0;
     this.cells = cells;
     this.hooks = hooks;
-    this.cache = new CodeCache(vm, { noCache, smcFlush, watch, wasmDecode, fuse });
+    this.cache = new CodeCache(vm,
+      { noCache, smcFlush, watch, wasmDecode, fuse, deadFlags, traceDeadFlags });
 
     this.dispatched = 0;
     this.handbacks = 0;
@@ -932,6 +942,7 @@ class DosSession {
       blockedOn32: this.blockedOn32 === undefined ? null : this.blockedOn32,
       badSelector: this.badSelector === undefined ? null : this.badSelector,
       compiles: this.cache.compiles, compiledWords: this.cache.compiledWords,
+      deadFlagsDropped: this.cache.deadFlagsDropped,
       arenaResets: this.cache.arenaResets, unimplemented: this.cache.unimplemented,
       regions: this.cache.regions, jtab: this.cache.jtab,
     };

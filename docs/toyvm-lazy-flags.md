@@ -169,6 +169,14 @@ generator can reason about, and a fused pair can now be specialized to it. The
 same lever is what a `cmp` whose flags are provably dead would need, and that is
 a static property of the block the compiler already has in hand.
 
+**That one is now in too, in [toyvm-dead-flags.md](toyvm-dead-flags.md):** the
+generator derives what every handler reads and overwrites from the WAT it just
+emitted, keeps a copy of each with the flag write deleted, and the compiler
+walks each finished block backwards and swaps them in. Up to 24% of a program's
+dispatches land on a flagless op; the throughput difference is under this box's
+noise floor, and it is kept because the two arms are the same ops doing strictly
+less work.
+
 ## Benchmarking notes this produced
 
 Two changes to `bench-dos.js`, both because this box sits at load 10-40 and the

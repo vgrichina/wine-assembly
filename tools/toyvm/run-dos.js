@@ -160,7 +160,7 @@ async function runDos(o) {
     variant = 'tailcall', exe, budget = 200e6, slice = 2e6, seconds = 0,
     traceInt = false, traceFault = false, traceEntry = 0, traceV86 = false,
     noCache = false, smcFlush = false, wasmDecode = true, fuse = true,
-    lazyFlags = true, fuseCond = true,
+    lazyFlags = true, fuseCond = true, deadFlags = true, traceDeadFlags = false,
     smcCensus = false, watch = [],
     stopText = null,
     traceIo = null,
@@ -335,7 +335,8 @@ async function runDos(o) {
   const ipSampleLog = [];          // flat [dispatched, ip, dispatched, ip, ...]
 
   const session = new DosSession(vm, machine, {
-    slice, noCache, smcFlush, wasmDecode, fuse,
+    slice, noCache, smcFlush, wasmDecode, fuse, deadFlags,
+    traceDeadFlags: traceDeadFlags ? ((s) => log(s)) : null,
     mouse, irqEvery, dispatchesPerTick, tickScale, stuckLimit,
     stuckWork,
     // A watch reports through the census, so asking for one turns it on.
@@ -539,6 +540,7 @@ async function runDos(o) {
   const {
     dispatched, handbacks, ints, irqs, smcBreaks, traps, icebps, stuckAt, blockedOn32, badSelector,
     compiles, compiledWords, arenaResets, unimplemented, regions, jtab, smcSites, retiredPatches,
+    deadFlagsDropped,
   } = session.stats();
 
   if (bestPng) keepBest();
@@ -555,7 +557,7 @@ async function runDos(o) {
     secs: Number(process.hrtime.bigint() - t0) / 1e9,
     guestSecs: Number(guestNs) / 1e9,
     guestCpuSecs: guestCpuUs / 1e6,
-    dispatched, handbacks, ints, irqs, compiles, compiledWords, arenaResets,
+    dispatched, handbacks, ints, irqs, compiles, compiledWords, arenaResets, deadFlagsDropped,
     smcBreaks, traps, icebps, smcSites, retiredPatches,
     stuckAt, blockedOn32, badSelector, ranOutOfTime,
     entryHist, unimplemented, ipSamples, ipSampleLog, regions,
@@ -712,6 +714,18 @@ async function main() {
     // the rule is a generation-time constant inside a fused pair. `--no-fusecond`
     // is its A/B partner and, like the others, must agree frame for frame.
     fuseCond: !flag('no-fusecond'),
+    // Dead flag write elimination in the compiler, on by default. Most flag
+    // writes are never read: a block is some arithmetic and then a compare and
+    // a branch, and only the compare's flags are looked at. Where the block
+    // proves nobody reads them, the op is swapped for the copy of itself that
+    // does not write them. `--no-deadflags` is its A/B partner and must agree
+    // frame for frame -- the two arms run the same ops, retire the same steps
+    // and lay out the same arena.
+    deadFlags: !flag('no-deadflags'),
+    // Every op that lost its flag write, with the whole block it was in. A
+    // wrong answer is always a later op wrongly believed to overwrite the
+    // flags, and the block is the only place that shows which one.
+    traceDeadFlags: flag('trace-deadflags'),
     smcCensus: flag('smc-census'),
     // `--watch=0:84`, `--watch=0:84:4`, `--watch=5ab:191:2,0:84` -- report every
     // guest store into these bytes, with the CS:IP that made it, through the
@@ -830,7 +844,12 @@ async function main() {
     // Every vector the host raises, not just the timer: single-step traps and
     // stepped-over ICEBPs go through the same path and are broken out below.
     + `${r.irqs ? ` (+${r.irqs} vectors raised by the host)` : ''}, ${r.compiles} traces `
-    + `(${(r.compiledWords * 4 / 1024).toFixed(0)}KB of arena, ${r.arenaResets} recycles)`
+    + `(${(r.compiledWords * 4 / 1024).toFixed(0)}KB of arena, ${r.arenaResets} recycles`
+    // Static, not dynamic: how many compiled ops lost their flag write, out of
+    // how many ops were laid down. A hot loop counts once here and every time
+    // at run time, so read --handler-hist for what it is worth in dispatches.
+    + `${r.deadFlagsDropped ? `, ${r.deadFlagsDropped} flagless ops`
+      + ` of ${r.compiledWords}` : ''})`
     // A handful of these is a packed program unpacking itself and is expected.
     // Thousands, against a compile count that keeps climbing, is recompile
     // thrash: a program storing data into a paragraph a region happens to have

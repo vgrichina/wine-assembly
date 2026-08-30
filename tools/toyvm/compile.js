@@ -17,9 +17,12 @@
 
 const isa = require('./isa');
 const { decodeOne, H } = require('./decode');
-const { ARITY, FUSE } = require('./emit');
+const { ARITY, FUSE, NOFLAG, FLAG_EFFECTS, prepareTables } = require('./emit');
 
 function compileProgram(readByte, cs, entryIp, opts = {}) {
+  // ARITY, NOFLAG and FLAG_EFFECTS are filled on first use rather than at
+  // require time (emit.js says why), and they are held here by reference.
+  prepareTables();
   const arenaBase = opts.arenaBase === undefined ? isa.THREAD_BASE : opts.arenaBase;
   const maxWords = opts.maxWords || (isa.THREAD_SIZE >> 2) - 16;
   // Where this code segment actually starts, and how far the address bus goes.
@@ -67,6 +70,11 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   // cannot contain a pair to begin with, so this changes nothing today -- it is
   // here so that stays true if a single instruction ever emits two ops.
   const fuse = opts.fuse !== false && !opts.oneInsn;
+  // Dead flag writes. Same reasoning as `fuse` for oneInsn: with TF set the
+  // guest gets an INT 1 after every instruction and the interrupt frame carries
+  // the flags word, so nothing inside a one-instruction block is dead.
+  const deadFlags = opts.deadFlags !== false && !opts.oneInsn;
+  const traceDeadFlags = opts.traceDeadFlags || null;
 
   // Rewrite a finished block's last two ops into one, when a fused handler for
   // that pair exists. The fused body is the two bodies in sequence and each
@@ -97,6 +105,52 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     // one that did not move.
     for (let k = fixups.length - 1; k >= 0 && fixups[k].wordIndex > lastStart; k--) {
       fixups[k].wordIndex--;
+    }
+  };
+
+  // Swap every op whose flag write nothing reads for the copy of itself that
+  // does not write them. Runs AFTER fuseTail, on the final word list: a fused
+  // compare-and-branch reads the record its own half just made and then never
+  // reads the flags it was entered with, which makes it the most common killer
+  // in the corpus -- the very thing that lets the arithmetic in front of it go
+  // flagless.
+  //
+  // Backwards from the end of the block, with the flags LIVE at the block end.
+  // They have to be: the next block may read them, and a handback at a block
+  // end is where an interrupt gets injected and pushes FLAGS onto the guest
+  // stack.
+  let deadFlagCount = 0;
+  const dropDeadFlags = (start) => {
+    // Same walk, and the same refusal, as fuseTail: if the arity table and the
+    // arena disagree the positions are not op boundaries and rewriting one
+    // would corrupt an operand.
+    const at = [];
+    let i = start;
+    for (; i < words.length;) { at.push(i); i += 1 + ARITY[words[i]]; }
+    if (i !== words.length) return;
+    let live = true;
+    for (let k = at.length - 1; k >= 0; k--) {
+      const p = at[k];
+      let e = FLAG_EFFECTS[words[p]];
+      if (!e) return;
+      if (e.kills && !live) {
+        const nf = NOFLAG.get(words[p]);
+        if (nf !== undefined) {
+          // The whole block, not just the op: a wrong answer here is always a
+          // later op wrongly believed to overwrite the flags, and the only way
+          // to see which one is to read the sequence. `cmp_ri16 cmc ret` is
+          // what found the folded-order bug in the analysis.
+          if (traceDeadFlags) {
+            const { HANDLERS } = require('./emit');
+            traceDeadFlags(`[deadflag] ${HANDLERS[words[p]].name} in block `
+              + at.map(q => HANDLERS[words[q]].name).join(' '));
+          }
+          words[p] = nf; deadFlagCount++; e = FLAG_EFFECTS[nf];
+        }
+      }
+      // Liveness of the flags entering this op, computed from the handler that
+      // is there NOW -- dropping the write also drops whatever read fed it.
+      live = e.readsIn ? true : (e.kills ? false : live);
     }
   };
 
@@ -257,6 +311,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
       if (opts.oneInsn) { words.push(H.end, cur); break; }
     }
     if (fuse) fuseTail(blockStart);
+    if (deadFlags) dropDeadFlags(blockStart);
     // The block's extent. `cur` can have wrapped past 0xFFFF on a segment that
     // runs to the top, in which case the tail is simply not marked -- a missed
     // mark costs a stale block, never a wrong one.
@@ -295,6 +350,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     words, blocks, fixups, unresolved, covered,
     unimplemented: [...unimplemented],
     entryAddr: blocks.get(entry),
+    deadFlags: deadFlagCount,
     arenaBase,
     byteLength: words.length * 4,
   };

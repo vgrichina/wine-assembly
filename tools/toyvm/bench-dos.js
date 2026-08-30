@@ -68,6 +68,7 @@ async function main() {
     nofuse: { fuse: false },
     nolazy: { lazyFlags: false },
     nofusecond: { fuseCond: false },
+    nodeadflags: { deadFlags: false },
     nowasmdecode: { wasmDecode: false },
     nocache: { noCache: true },
   };
