@@ -43,39 +43,14 @@ class FakeBackend {
 
 const backend = new FakeBackend();
 const gl = new FixedFunctionGL(backend);
-gl.begin(GL.QUADS);
-gl.vertex(-1, -1, 0); gl.vertex(1, -1, 0);
-gl.vertex(1, 1, 0); gl.vertex(-1, 1, 0);
-gl.end();
+const triangle = new Float32Array(3 * 9);
+gl.enqueuePacked(GL.TRIANGLES, triangle);
+gl.flushPendingDraw();
 assert.strictEqual(backend.draws.length, 1);
 assert.strictEqual(backend.draws[0].mode, GL.TRIANGLES,
-  'GL_QUADS must lower to WebGL triangles');
-assert.strictEqual(backend.draws[0].count, 6,
-  'one quad must become two complete triangles');
-
-const flatBackend = new FakeBackend();
-const flat = new FixedFunctionGL(flatBackend);
-flat.shadeModel = GL.FLAT;
-flat.begin(GL.QUADS);
-for (let i = 0; i < 4; i++) {
-  flat.color = [i + 1, 0, 0, 1];
-  flat.vertex(i, 0, 0);
-}
-flat.end();
-assert.deepStrictEqual(
-  Array.from({ length: 6 }, (_unused, i) => flatBackend.vertices[i * 9 + 3]),
-  [4, 4, 4, 4, 4, 4],
-  'direct fixed-function quads use their fourth vertex for both WebGL triangles');
-flat.begin(GL.LINE_LOOP);
-for (let i = 0; i < 3; i++) {
-  flat.color = [i + 1, 0, 0, 1];
-  flat.vertex(i, 0, 0);
-}
-flat.end();
-assert.deepStrictEqual(
-  Array.from({ length: 6 }, (_unused, i) => flatBackend.vertices[i * 9 + 3]),
-  [2, 2, 3, 3, 1, 1],
-  'direct fixed-function line loops use each endpoint, including vertex one on close');
+  'packed desktop geometry reaches the WebGL triangle backend');
+assert.strictEqual(backend.draws[0].count, 3,
+  'one packed triangle produces one complete WebGL triangle');
 
 gl.matrixMode = GL.MODELVIEW;
 gl._multMatrix(require('../lib/gl-compat').identity());
@@ -100,7 +75,6 @@ assert.strictEqual(backend.parameters.at(-1).texture, gl.defaultTexture,
 
 const mergedBackend = new FakeBackend();
 const merged = new FixedFunctionGL(mergedBackend);
-const triangle = new Float32Array(3 * 9);
 merged.enqueuePacked(GL.TRIANGLES, triangle);
 merged.enqueuePacked(GL.TRIANGLES, triangle);
 assert.strictEqual(mergedBackend.draws.length, 0, 'compatible packed draws remain deferred');
@@ -119,69 +93,37 @@ const depthFrontend = new FixedFunctionGL(depthBackend);
 depthFrontend.setDepthRange(1, 0);
 assert.deepStrictEqual(depthBackend.depthRanges, [[0, 1]],
   'desktop reversed depth range is submitted to WebGL in legal order');
-depthFrontend.begin(GL.TRIANGLES);
-depthFrontend.vertex(0, 0, 0); depthFrontend.vertex(1, 0, 0); depthFrontend.vertex(0, 1, 0);
-depthFrontend.end();
+depthFrontend.enqueuePacked(GL.TRIANGLES, triangle);
+depthFrontend.flushPendingDraw();
 assert.strictEqual(depthBackend.uniforms.get('uProjection')[10], -1,
   'reversed depth range negates clip-space Z to preserve desktop GL mapping');
 depthFrontend.setDepthRange(0, 1);
-depthFrontend.begin(GL.TRIANGLES);
-depthFrontend.vertex(0, 0, 0); depthFrontend.vertex(1, 0, 0); depthFrontend.vertex(0, 1, 0);
-depthFrontend.end();
+depthFrontend.enqueuePacked(GL.TRIANGLES, triangle);
+depthFrontend.flushPendingDraw();
 assert.strictEqual(depthBackend.uniforms.get('uProjection')[10], 1,
   'restoring forward depth range restores the original projection');
 
-// Gameplay geometry lives in Quake's high sparse VirtualAlloc arena. Verify
-// pointer-valued GL calls use the emulator's canonical translator instead of
-// assuming every guest address is image-relative linear memory.
 const bridgeMemory = new ArrayBuffer(4096);
 const bridgeView = new DataView(bridgeMemory);
-const guestVertex = 0x4e306050, vertexBacking = 0x200, stack = 0x100;
-bridgeView.setUint32(stack + 4, guestVertex, true);
-[1.25, -2.5, 3.75].forEach((value, index) =>
-  bridgeView.setFloat32(vertexBacking + index * 4, value, true));
-const seenVertices = [];
+const stack = 0x100;
 let guestPresents = 0;
 const bridge = new OpenGLHostBridge({
   getMemory: () => bridgeMemory,
-  exports: {
-    get_image_base: () => 0x00400000,
-    guest_to_wasm: pointer => pointer === guestVertex ? vertexBacking : 0xF0,
-  },
+  exports: {},
   onPresent: () => { guestPresents++; },
 });
 bridge.current = 1;
 bridge.contexts.set(1, { frontend: {
-  vertex: (...values) => seenVertices.push(values),
+  backend,
 }, backend: { present() {} }, layer: { writeSeq: 0 } });
-bridge.call(CALL_INDEX.glVertex3fv, stack, 0);
-assert.deepStrictEqual(seenVertices, [[1.25, -2.5, 3.75]],
-  'glVertex3fv resolves sparse guest pointers through guest_to_wasm');
-bridgeView.setUint32(stack + 4, 0x11, true);
-bridgeView.setUint32(stack + 8, 0x80, true);
-bridgeView.setUint32(stack + 12, 0xFE, true);
-bridgeView.setUint32(stack + 16, 0x40, true);
-bridge.contexts.get(1).frontend.color = [1, 1, 1, 1];
-bridge.call(CALL_INDEX.glColor4ub, stack, 0);
-assert.deepStrictEqual(bridge.contexts.get(1).frontend.color,
-  [0x11 / 255, 0x80 / 255, 0xFE / 255, 0x40 / 255],
-  'GoldSrc scalar unsigned-byte colour calls lower to normalized RGBA');
+assert.throws(() => bridge.call(CALL_INDEX.glVertex3fv, stack, 0),
+  /must pass through GLCommandStream\.Encoder/,
+  'raw immediate vertices cannot bypass the mandatory buffered state layer');
 bridgeView.setFloat32(stack + 4, -1, true);
 bridgeView.setFloat32(stack + 8, -2, true);
-bridge.contexts.get(1).frontend.backend = backend;
 bridge.call(CALL_INDEX.glPolygonOffset, stack, 0);
 assert.deepStrictEqual(backend.polygonOffsets, [[-1, -2]],
   'GoldSrc polygon offset reaches the WebGL backend with both float arguments');
-const guestColor3 = 0x4e306060, color3Backing = 0x220;
-new Uint8Array(bridgeMemory, color3Backing, 3).set([0x20, 0x80, 0xFE]);
-bridgeView.setUint32(stack + 4, guestColor3, true);
-const bridgeTranslator = bridge.options.exports.guest_to_wasm;
-bridge.options.exports.guest_to_wasm = pointer => pointer === guestColor3
-  ? color3Backing : bridgeTranslator(pointer);
-bridge.call(CALL_INDEX.glColor3ubv, stack, 0);
-assert.deepStrictEqual(bridge.contexts.get(1).frontend.color,
-  [0x20 / 255, 0x80 / 255, 0xFE / 255, 1],
-  'GoldSrc vector unsigned-byte colour calls lower to normalized RGB with opaque alpha');
 gl.setEnabled(GL.POLYGON_OFFSET_FILL, true);
 assert.deepStrictEqual(backend.capabilities.at(-1), [GL.POLYGON_OFFSET_FILL, true],
   'polygon-offset fill follows desktop GL enable state');
@@ -216,4 +158,4 @@ assert.deepStrictEqual(contextCounts, [1, 0, 0],
 assert.strictEqual(lifecycleWin._gpuFrameLayer, null,
   'renderer replacement detaches the old GPU presentation layer');
 
-console.log('PASS OpenGL fixed-function lowering (provoking vertices, matrix, texture)');
+console.log('PASS OpenGL packed fixed-function rendering (state, matrix, texture)');

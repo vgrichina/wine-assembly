@@ -95,28 +95,31 @@ assert.strictEqual(polygonOffsetCommand.capture.stackBytes, 12,
 assert.strictEqual(polygonOffsetStack.getFloat32(polygonOffsetCommand.capture.stackOffset + 4, true), -1.25);
 assert.strictEqual(polygonOffsetStack.getFloat32(polygonOffsetCommand.capture.stackOffset + 8, true), 2.5);
 
-// Small client pointers are copied into the stream because engines commonly
-// reuse a scratch vertex between calls.
-const vertex = 0x500;
-dv.setUint32(stack + 4, vertex, true);
-[1.25, -2.5, 3.75].forEach((value, i) => dv.setFloat32(vertex + i * 4, value, true));
-encoder.call(31, stack, 0); // glVertex3fv
-[9, 9, 9].forEach((value, i) => dv.setFloat32(vertex + i * 4, value, true));
+// Small generic client pointers are copied into the stream because engines
+// commonly reuse scratch storage between calls.
+const matrix = 0x500;
+dv.setUint32(stack + 4, matrix, true);
+for (let i = 0; i < 16; i++) dv.setFloat32(matrix + i * 4, i + 0.25, true);
+encoder.call(34, stack, 0); // glLoadMatrixf
+for (let i = 0; i < 16; i++) dv.setFloat32(matrix + i * 4, 99, true);
 encoder.call(11, stack, 0); // glFinish
-const vertexCommand = executed.find(x => x.opcode === 31);
-assert(vertexCommand.capture.pointerOffset, 'small pointer payload is stored in the batch');
-const vertexCopy = new DataView(vertexCommand.capture.buffer,
-  vertexCommand.capture.pointerOffset, vertexCommand.capture.pointerLength);
-assert.deepStrictEqual([0, 1, 2].map(i => vertexCopy.getFloat32(i * 4, true)),
-  [1.25, -2.5, 3.75], 'queued pointer input survives guest scratch reuse');
+const matrixCommand = executed.find(x => x.opcode === 34);
+assert(matrixCommand.capture.pointerOffset, 'small pointer payload is stored in the batch');
+const matrixCopy = new DataView(matrixCommand.capture.buffer,
+  matrixCommand.capture.pointerOffset, matrixCommand.capture.pointerLength);
+assert.deepStrictEqual([0, 1, 15].map(i => matrixCopy.getFloat32(i * 4, true)),
+  [0.25, 1.25, 15.25], 'queued pointer input survives guest scratch reuse');
 
 // glBegin/glEnd traffic is compiled locally into one interleaved geometry
 // record. Boundary-sensitive fans are expanded so adjacent records can later
 // be concatenated safely by the fixed-function frontend.
 const packedCalls = [];
+const sparseColor = 0x4e306060, colorBacking = 0x600;
+const sparseVertex = 0x4e306080, vertexBacking = 0x620;
 const packedEncoder = new Stream.Encoder({
   getMemory: () => memory,
-  guestToWasm: pointer => pointer,
+  guestToWasm: pointer => pointer === sparseColor ? colorBacking
+    : pointer === sparseVertex ? vertexBacking : pointer,
   capacity: 2048,
   shared: false,
   submit: batch => Stream.replay(batch, (opcode, mode, capture) => {
@@ -125,6 +128,8 @@ const packedEncoder = new Stream.Encoder({
   }),
 });
 const setFloatArgs = values => values.forEach((value, i) => dv.setFloat32(stack + 4 + i * 4, value, true));
+dv.setUint32(stack + 4, 0x1D00, true); // GL_FLAT stays encoder-local.
+packedEncoder.call(19, stack, 0);
 dv.setUint32(stack + 4, 0x0006, true); // GL_TRIANGLE_FAN
 packedEncoder.call(21, stack, 0);
 setFloatArgs([0.25, 0.5, 0.75, 1]);
@@ -134,13 +139,19 @@ packedEncoder.call(25, stack, 0);
 // forcing a Worker round trip.
 [0xFF, 0, 0xFF, 0].forEach((value, i) => dv.setUint32(stack + 4 + i * 4, value, true));
 packedEncoder.call(56, stack, 0);
-const color3ubv = 0x600;
-new Uint8Array(memory, color3ubv, 3).set([0x20, 0x80, 0xFE]);
-dv.setUint32(stack + 4, color3ubv, true);
+new Uint8Array(memory, colorBacking, 3).set([0x20, 0x80, 0xFE]);
+dv.setUint32(stack + 4, sparseColor, true);
 packedEncoder.call(58, stack, 0);
 setFloatArgs([0.125, 0.875]);
 packedEncoder.call(28, stack, 0);
-for (const vertexValues of [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]]) {
+for (const [index, vertexValues] of [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0]].entries()) {
+  if (index === 0) {
+    vertexValues.forEach((value, i) => dv.setFloat32(vertexBacking + i * 4, value, true));
+    dv.setUint32(stack + 4, sparseVertex, true);
+    packedEncoder.call(31, stack, 0);
+    [9, 9, 9].forEach((value, i) => dv.setFloat32(vertexBacking + i * 4, value, true));
+    continue;
+  }
   setFloatArgs(vertexValues);
   packedEncoder.call(30, stack, 0);
 }
@@ -155,7 +166,12 @@ const packedVertices = new Float32Array(packedCalls[0].capture.buffer,
   packedCalls[0].capture.pointerOffset, packedCalls[0].capture.pointerLength / 4);
 assert.deepStrictEqual(Array.from(packedVertices.slice(3, 9)),
   Array.from(new Float32Array([0x20 / 255, 0x80 / 255, 0xFE / 255, 1, 0.125, 0.875])),
-  'packed vertices contain vector-byte color and texture-coordinate state');
+  'sparse vector color and vertex pointers reach packed geometry through guest_to_wasm');
+const packedCommandCount = packedEncoder.commands;
+packedEncoder.call(31, stack, 0);
+packedEncoder.call(22, stack, 0);
+assert.strictEqual(packedEncoder.commands, packedCommandCount,
+  'unmatched immediate calls remain guest no-ops and cannot leak into replay');
 
 // Capacity pressure submits an execution batch but cannot publish a frame.
 let presents = 0;
@@ -171,7 +187,8 @@ const overflow = new Stream.Encoder({
     return opcode === 55 ? 1 : 0;
   }),
 });
-for (let i = 0; i < 12; i++) overflow.call(22, stack, 0); // glEnd
+dv.setUint32(stack + 4, 0x0BE2, true);
+for (let i = 0; i < 12; i++) overflow.call(10, stack, 0); // glEnable
 assert(overflow.submissions > 0, 'full command buffer submits before overflow');
 assert.strictEqual(presents, 0, 'overflow submission does not implicitly present');
 assert.strictEqual(overflow.call(55, stack, 0), 1, 'explicit presentation is a barrier');
