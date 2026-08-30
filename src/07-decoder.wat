@@ -611,6 +611,45 @@
     (global.set $d_pc (i32.const 0x00528111))
     (i32.const 1))
 
+  ;; MW3's transparent RGB565 row has a conditional store between its compare
+  ;; and induction back edge, so no single emitted self-loop block contains the
+  ;; whole operation. Match the complete authentic 19-byte sequence at its one
+  ;; verified address and keep it under MW3's process-wide COPY_RUN opt-in.
+  (func $try_emit_rgb565_colorkey_run (param $start_eip i32) (result i32)
+    (if (i32.or
+          (i32.eqz (call $loop_copy_emit_get))
+          (i32.or (global.get $code16)
+            (i32.ne (local.get $start_eip) (i32.const 0x00528268))))
+      (then (return (i32.const 0))))
+    (if (i32.or
+          (i32.ne (call $gl32 (local.get $start_eip))
+            (i32.const 0x66088b66))
+          (i32.or
+            (i32.ne (call $gl32
+              (i32.add (local.get $start_eip) (i32.const 4)))
+              (i32.const 0x740c4d3b))
+            (i32.or
+              (i32.ne (call $gl32
+                (i32.add (local.get $start_eip) (i32.const 8)))
+                (i32.const 0x0c896604))
+              (i32.ne (call $gl32
+                (i32.add (local.get $start_eip) (i32.const 12)))
+                (i32.const 0x02c08318)))))
+      (then (return (i32.const 0))))
+    (if (i32.or
+          (i32.ne (call $gl16
+            (i32.add (local.get $start_eip) (i32.const 16)))
+            (i32.const 0x754e))
+          (i32.ne (call $gl8
+            (i32.add (local.get $start_eip) (i32.const 18)))
+            (i32.const 0xed)))
+      (then (return (i32.const 0))))
+    (global.set $loop_rgb565_colorkey_matches
+      (i32.add (global.get $loop_rgb565_colorkey_matches) (i32.const 1)))
+    (call $te (i32.const 440) (i32.const 0))
+    (global.set $d_pc (i32.const 0x0052827b))
+    (i32.const 1))
+
   ;; The seven words after a case record's token byte.
   (func $rle_emit_body
     (call $te_raw (i32.or (global.get $rb_kind)
@@ -3002,6 +3041,10 @@
               (local.set $done (i32.const 1))
               (br $decode)))
           (if (call $try_emit_rgb565_alpha_run (local.get $start_eip))
+            (then
+              (local.set $done (i32.const 1))
+              (br $decode)))
+          (if (call $try_emit_rgb565_colorkey_run (local.get $start_eip))
             (then
               (local.set $done (i32.const 1))
               (br $decode)))

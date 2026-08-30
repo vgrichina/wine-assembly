@@ -122,7 +122,9 @@ for (let index = 0; index < modes.length; index++) {
   const input = [...route, `950:png:${png}`].join(',');
   const args = [
     path.join(__dirname, 'run.js'), '--app=mw3', `--${mode}`,
-    '--quiet-api', '--quiet-blocks', '--batch-size=200000',
+    // Match the browser manifest: MW3 alone opts into its exact RGB565 row
+    // lowerings. test/run.js intentionally requires the explicit CLI flag.
+    '--copy-superops', '--quiet-api', '--quiet-blocks', '--batch-size=200000',
     // The wait action shifts subsequent input by however long the transition
     // took. Batch 950 intentionally leaves 120 scheduled batches for cockpit
     // textures/HUD to settle; stop just after its shifted capture. Continuing

@@ -587,7 +587,7 @@ The allocator investigation above measured the wrong phase before its scope was
 corrected. The useful profile is a deterministic moving-cockpit interval: the
 visual wait accepted the cockpit at batch 888, `W` went down at shifted batch
 958, and handler/hot-block recording covered batches 1000 through 1100. All
-three runs used the same no-threads route, 200,000-block slices, quiet API/block
+four runs used the same no-threads route, 200,000-block slices, quiet API/block
 logging, and the public `_set_sbh_threshold(0)` fix. These counts measure guest
 threaded dispatch, not wall time or Direct3D raster cost.
 
@@ -596,6 +596,13 @@ threaded dispatch, not wall time or Direct3D raster cost.
 | Authentic MSVCRT `_ftol`, ordinary x87 branches | 123,275,668 | — | — |
 | WAT-native ABI-correct `_ftol` | 117,610,360 | -5,665,308 (-4.60%) | -4.60% |
 | Native `_ftol` plus H439 x87 status-branch fusion | 111,232,878 | -6,377,482 (-5.42%) | -12,042,790 (-9.77%) |
+| H439 plus browser-equivalent MW3 COPY opt-in | 104,827,560 | -6,405,318 (-5.76%) | -18,448,108 (-14.96%) |
+
+The first three CLI profiles did not pass `--copy-superops`. That is a real
+harness distinction: the browser reads `copySuperops: true` from MW3's app
+manifest, while `test/run.js` deliberately requires its explicit CLI switch.
+The fourth row uses the switch and therefore includes both exact MW3 lowerings,
+H436 and H440. The 6,405,318 delta must not be attributed to H440 alone.
 
 The first baseline's hottest block was runtime `0x0180cdc1`, the rebased body
 of the authentic Win98 MSVCRT `_ftol` at original `0x78004dc1`. This is not an
@@ -669,7 +676,7 @@ The new top of the x86 profile is now mostly real application work:
 | `0x00528268` | 364,175 loop entries | RGB565 color-key row: load word, compare key, conditionally copy, advance; best next exact loop-fold candidate |
 | `0x00528275` | 322,048 | tail of the same color-key loop |
 | `0x00515a9c` | 169,503 | indexed 12-byte vec3 gather into contiguous scratch; control/index arithmetic dominates and Wasm SIMD has no general gather |
-| `0x00528064` | 126,425 | already handled by the exact MW3 RGB565 alpha-run lowering |
+| `0x00528064` | 126,425 | exact MW3 RGB565 alpha-run lowering (active when the COPY opt-in is enabled) |
 | `0x0051bf10` | 108,475 | scalar trig/table-lookup helper; possible exact fold, lower priority than the color-key row |
 
 The `0x528268` candidate is especially clear:
@@ -684,16 +691,52 @@ The `0x528268` candidate is especially clear:
 528279  jne  0x528268
 ```
 
-A bounded exact row super-op can remove several dispatches per pixel without
-changing DirectDraw ownership. SIMD may help that handler compare multiple
-RGB565 words and select source/destination lanes, but it is an implementation
-detail, not the primary win: recognizing the loop removes interpreter dispatch
-even with scalar Wasm. The vec3 gather at `0x515a9c` is a weaker SIMD target
+A bounded exact row super-op removes several dispatches per pixel without
+changing DirectDraw ownership. It stays scalar because a destination store may
+overlap a later source word; speculative multiword loads would change the x86
+result. Recognizing the loop is the primary win even with scalar Wasm. The vec3
+gather at `0x515a9c` is a weaker SIMD target
 because each source is selected by an index and only the 12-byte copy is
 contiguous. The broad x87 total likewise does not justify converting the whole
 emulated stack to SIMD; its dependencies are scalar and compatibility requires
 x87 status, rounding, NaN, and 80-bit-adjacent behavior. Exact sequences and
 renderer spans remain the safer acceleration boundary.
+
+### RGB565 color-key row lowering and corpus scope
+
+H440 now recognizes the complete 19-byte sequence at `0x00528268` and only at
+that verified address, under the same process-wide MW3 COPY opt-in as H436. It
+loads the transparent RGB565 key from `[EBP+0x0c]`, takes the source cursor from
+EAX, destination displacement from EBX, and count from ESI. The executor is a
+scalar Wasm loop by design: every conditional store to `[EAX+EBX]` occurs
+before the next `[EAX]` load, so forward-overlapping source/destination ranges
+retain x86 read-after-write behavior. It also preserves ECX's upper half,
+publishes ADD-then-DEC lazy flags in the original order (DEC retains ADD's CF),
+and charges the guest instruction and two-block-per-pixel budgets.
+
+`test/test-mw3-rgb565-colorkey-run.js` extracts the authentic bytes from the
+pinned demo and compares H440 with ordinary x86 for transparent and copied
+pixels, 1/8/37-pixel counts, disjoint storage, and both overlap directions. A
+`dst = src + 2` case specifically fails any implementation which batches loads
+before stores. A valid one-byte addressing near miss remains ordinary x86.
+
+A static corpus scan checked 1,108 paths / 585 unique PE files in `binaries`
+and `test/binaries` for both the exact bytes and a register-flexible structural
+form (`load16; cmp16 key; conditional skip; store16; +2; counted back edge`).
+Only `mech3demo.exe`, file offset `0x127668`, VA `0x00528268`, matched. This does
+not mean color-key blitting is unique to MW3: the WAT-native DirectDraw
+`BltFast` path already implements ordinary source color keys, so applications
+using the API do not expose an equivalent guest x86 loop to this scan. H440 is
+therefore intentionally an MW3-only fold, not a claimed corpus-wide primitive.
+
+In the deterministic moving-cockpit interval, enabling the browser-equivalent
+COPY gate removes both `0x00528268` and `0x00528275` from the hot-block list and
+drops dispatch from 111,232,878 to 104,827,560. Fresh cooperative and real
+guest-Worker captures with that gate are pixel-identical. Each measured 2,411
+exact colors, 423 quantized colors, 128 terrain bins,
+75,040 orange-sky pixels, 75,053 dark-cockpit pixels, and 2,936 green HUD
+pixels, with zero cyan/magenta artifacts. The CLI gameplay acceptance now
+passes `--copy-superops` so it tests the same opt-in arm as the browser.
 
 This profile also bounds what x86-only work can accomplish. The two changes
 remove 9.77% of guest dispatch, but the earlier wall CPU profile attributed a

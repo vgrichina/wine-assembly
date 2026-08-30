@@ -51,6 +51,9 @@
   (global $loop_rgb565_alpha_matches (mut i32) (i32.const 0))
   (global $loop_rgb565_alpha_runs (mut i32) (i32.const 0))
   (global $loop_rgb565_alpha_pixels (mut i64) (i64.const 0))
+  (global $loop_rgb565_colorkey_matches (mut i32) (i32.const 0))
+  (global $loop_rgb565_colorkey_runs (mut i32) (i32.const 0))
+  (global $loop_rgb565_colorkey_pixels (mut i64) (i64.const 0))
   (global $loop_aoe_fill_matches (mut i32) (i32.const 0))
   (global $loop_aoe_fill_runs (mut i32) (i32.const 0))
   (global $loop_aoe_fill_bytes (mut i64) (i64.const 0))
@@ -2976,6 +2979,107 @@
     (local.set $cont (i32.ne (local.get $count) (i32.const 0)))
     (global.set $eip
       (select (i32.const 0x00528064) (i32.const 0x00528111) (local.get $cont)))
+    (return_call $branch_end))
+
+  ;; ------------------------------------------------------------------
+  ;; 440: MW3 counted RGB565 color-key row
+  ;; ------------------------------------------------------------------
+  ;; Replay mech3demo!0x528268 one pixel at a time. In particular, do not
+  ;; replace this with memory.copy or a SIMD load batch: [EAX+EBX] may overlap
+  ;; a later [EAX], and the x86 loop observes each preceding conditional store.
+  (func $th_rgb565_colorkey_run (param $op i32)
+    (local $eax i32) (local $ecx i32) (local $esi i32)
+    (local $old_eax i32) (local $old_esi i32)
+    (local $key i32) (local $pixel i32)
+    (local $total i32) (local $allowed i32) (local $n i32)
+    (local $iters i32) (local $cost i32)
+
+    (local.set $eax (global.get $eax))
+    (local.set $ecx (global.get $ecx))
+    (local.set $esi (global.get $esi))
+    (local.set $key
+      (call $gl16 (i32.add (global.get $ebp) (i32.const 12))))
+
+    ;; The authentic predecessor proves ESI > 0. Retain do-while behavior for
+    ;; a synthetic zero entry by executing one iteration and resuming at the
+    ;; back edge with ESI=0xffffffff.
+    (local.set $total
+      (select (local.get $esi) (i32.const 1)
+        (i32.ne (local.get $esi) (i32.const 0))))
+
+    ;; Six handlers for a transparent pixel, seven for a copied pixel. Budget
+    ;; for the larger arm; exact handler accounting is accumulated below.
+    (local.set $allowed
+      (i32.div_u
+        (i32.add
+          (select (global.get $steps) (i32.const 0)
+            (i32.gt_s (global.get $steps) (i32.const 0)))
+          (i32.const 6))
+        (i32.const 7)))
+    (if (i32.eqz (local.get $allowed))
+      (then (local.set $allowed (i32.const 1))))
+    (local.set $n
+      (select (local.get $total) (local.get $allowed)
+        (i32.lt_u (local.get $total) (local.get $allowed))))
+
+    ;; Each original pixel crosses the compare/JZ block and the induction
+    ;; block. The current H440 block was already charged by $run.
+    (local.set $allowed
+      (i32.div_u
+        (i32.add
+          (select (global.get $block_budget) (i32.const 0)
+            (i32.gt_s (global.get $block_budget) (i32.const 0)))
+          (i32.const 1))
+        (i32.const 2)))
+    (if (i32.eqz (local.get $allowed))
+      (then (local.set $allowed (i32.const 1))))
+    (if (i32.gt_u (local.get $n) (local.get $allowed))
+      (then (local.set $n (local.get $allowed))))
+
+    (block $done (loop $pixels
+      (br_if $done (i32.ge_u (local.get $iters) (local.get $n)))
+      (local.set $old_eax (local.get $eax))
+      (local.set $pixel (call $gl16 (local.get $eax)))
+      (local.set $ecx
+        (i32.or (i32.and (local.get $ecx) (i32.const 0xffff0000))
+                (local.get $pixel)))
+      (if (i32.ne (local.get $pixel) (local.get $key))
+        (then
+          (call $gs16
+            (i32.add (local.get $eax) (global.get $ebx))
+            (local.get $pixel))
+          (local.set $cost (i32.add (local.get $cost) (i32.const 7))))
+        (else
+          (local.set $cost (i32.add (local.get $cost) (i32.const 6)))))
+      (local.set $eax (i32.add (local.get $eax) (i32.const 2)))
+      (local.set $old_esi (local.get $esi))
+      (local.set $esi (i32.sub (local.get $esi) (i32.const 1)))
+      (local.set $iters (i32.add (local.get $iters) (i32.const 1)))
+      (br $pixels)))
+
+    (global.set $eax (local.get $eax))
+    (global.set $ecx (local.get $ecx))
+    (global.set $esi (local.get $esi))
+    ;; ADD EAX,2 sets CF; DEC ESI then replaces every arithmetic flag except
+    ;; that CF. Publish them in precisely that order for the final iteration.
+    (call $set_flags_add
+      (local.get $old_eax) (i32.const 2) (local.get $eax))
+    (call $set_flags_dec (local.get $old_esi) (local.get $esi))
+
+    (global.set $steps
+      (i32.sub (global.get $steps)
+        (i32.sub (local.get $cost) (i32.const 1))))
+    (global.set $block_budget
+      (i32.sub (global.get $block_budget)
+        (i32.sub (i32.mul (local.get $iters) (i32.const 2)) (i32.const 1))))
+    (global.set $loop_rgb565_colorkey_runs
+      (i32.add (global.get $loop_rgb565_colorkey_runs) (i32.const 1)))
+    (global.set $loop_rgb565_colorkey_pixels
+      (i64.add (global.get $loop_rgb565_colorkey_pixels)
+        (i64.extend_i32_u (local.get $iters))))
+    (global.set $eip
+      (select (i32.const 0x00528268) (i32.const 0x0052827b)
+        (i32.ne (local.get $esi) (i32.const 0))))
     (return_call $branch_end))
 
   ;; Called from $decode_block just before $cache_store.

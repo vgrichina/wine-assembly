@@ -45,6 +45,7 @@ UNIT=(
   test/test-copy32-bounded-run.js
   test/test-packed-avg-run.js
   test/test-mw3-rgb565-alpha-run.js
+  test/test-mw3-rgb565-colorkey-run.js
   test/test-lut-span.js
   test/test-load32-esp-run.js
   test/test-shift-equivalence.js
