@@ -27,6 +27,10 @@ function encodePng(icon) {
 
 for (const [id] of listed) {
   const exe = APPS[id] && APPS[id].exe;
+  if (APPS[id] && APPS[id].preExtractIcon === false) {
+    console.log(`RUNTIME ICON ${id}: package license keeps extracted icon out of tracked assets`);
+    continue;
+  }
   const exePath = exe && path.join(ROOT, exe);
   if (!exePath || !fs.existsSync(exePath)) {
     console.error(`MISSING EXE  ${id}: ${exe || '(no registry entry)'}`);

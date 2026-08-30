@@ -12,12 +12,31 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const { PNG } = require('pngjs');
 const { compileWatSnapshot } = require('../lib/compile-wat');
+const { APPS, DESKTOP_APPS, LOCAL_CANDIDATE_APPS } = require('../lib/apps');
 
 const ROOT = path.join(__dirname, '..');
 const RUN = path.join(__dirname, 'run.js');
 const FAR_ROOT = path.join(__dirname, 'binaries', 'candidates',
   'far-manager-170', 'FarManager170');
 const FAR = path.join(FAR_ROOT, 'Far.exe');
+
+const farApp = APPS.far_manager_170;
+assert(farApp, 'Far Manager has a browser app registry entry');
+assert(LOCAL_CANDIDATE_APPS.some(([id]) => id === 'far_manager_170'),
+  'Far Manager is visible on the localhost desktop and dropdown');
+assert(!DESKTOP_APPS.some(([id]) => id === 'far_manager_170'),
+  'Far Manager is not published as a deployed app');
+assert(farApp.exe ===
+  'test/binaries/candidates/far-manager-170/FarManager170/Far.exe',
+  'Far launches the ignored candidate executable');
+assert(farApp.preExtractIcon === false,
+  'Far keeps the runtime EXE-icon fallback instead of a separately bundled icon');
+assert(JSON.stringify(farApp.files.map(file => path.basename(file)).sort()) ===
+  JSON.stringify(['FarEng.hlf', 'FarEng.lng', 'FarRus.hlf', 'FarRus.lng'].sort()),
+  'Far mounts both complete language/help pairs beside Far.exe');
+const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+assert(html.includes('<option value="far_manager_170">Far Manager 1.70</option>'),
+  'Far has a concrete localhost dropdown option');
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);

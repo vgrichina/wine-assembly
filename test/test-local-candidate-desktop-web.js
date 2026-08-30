@@ -34,6 +34,17 @@ const BASE_URL = String(process.env.CANDIDATE_BASE_URL || '').trim();
 
 const ALL_CANDIDATES = [
   {
+    id: 'far_manager_170',
+    label: 'Far Manager 1.70',
+    titlePattern: 'Far',
+    keys: [
+      { vk: 120, label: 'open top menu', holdMs: 80, waitMs: 500 },
+    ],
+    minColors: 6,
+    minDiff: 50,
+    waitMs: 500,
+  },
+  {
     id: 'diablo2_demo',
     label: 'Diablo II Demo',
     titlePattern: 'Diablo II',

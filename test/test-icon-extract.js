@@ -87,6 +87,7 @@ const expectedFastIcons = new Set();
 const fastIconErrors = [];
 for (const [id] of [...DESKTOP_APPS, ...LOCAL_CANDIDATE_APPS]) {
   const app = APPS[id];
+  if (app && app.preExtractIcon === false) continue;
   const icon = app && fs.existsSync(path.join(ROOT, app.exe))
     ? extractIconRgba(fs.readFileSync(path.join(ROOT, app.exe))) : null;
   if (!icon) continue;
