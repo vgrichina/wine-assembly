@@ -1288,10 +1288,79 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $copy))))
 
+  ;; Build the ANSI CRT view of the command line beside GetCommandLineA's
+  ;; immutable string. Layout within the allocation is:
+  ;;   +0    raw command line              +504  _acmdln pointer cell
+  ;;   +508  argc                          +512  token storage
+  ;;   +1024 argv pointers                 +1532 empty envp
+  ;; Extra arguments are split on spaces/tabs except inside double quotes.
+  (func $store_fake_argv_a (param $cmd i32) (param $path_len i32)
+    (local $dst i32) (local $argv i32) (local $argc i32)
+    (local $i i32) (local $ch i32) (local $quoted i32)
+    (local.set $dst (i32.add (local.get $cmd) (i32.const 512)))
+    (local.set $argv (i32.add (local.get $cmd) (i32.const 1024)))
+    ;; argv[0] is the same full path prefix exposed by GetCommandLineA.
+    (call $gs32 (local.get $argv) (local.get $dst))
+    (block $path_done (loop $path_copy
+      (br_if $path_done (i32.ge_u (local.get $i) (local.get $path_len)))
+      (call $gs8 (local.get $dst) (call $gl8 (i32.add (local.get $cmd) (local.get $i))))
+      (local.set $dst (i32.add (local.get $dst) (i32.const 1)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $path_copy)))
+    (call $gs8 (local.get $dst) (i32.const 0))
+    (local.set $dst (i32.add (local.get $dst) (i32.const 1)))
+    (local.set $argc (i32.const 1))
+    (local.set $i (i32.const 0))
+    (block $args_done (loop $next_arg
+      ;; Skip unquoted separators between arguments.
+      (block $have_arg (loop $skip_space
+        (br_if $args_done (i32.ge_u (local.get $i) (global.get $extra_cmdline_len)))
+        (local.set $ch (i32.load8_u
+          (i32.add (global.get $EXTRA_CMDLINE_BUFFER) (local.get $i))))
+        (br_if $have_arg
+          (i32.and (i32.ne (local.get $ch) (i32.const 0x20))
+                   (i32.ne (local.get $ch) (i32.const 0x09))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $skip_space)))
+      ;; At most 126 arguments plus the terminating NULL fit in the table.
+      (br_if $args_done (i32.ge_u (local.get $argc) (i32.const 126)))
+      (call $gs32
+        (i32.add (local.get $argv) (i32.shl (local.get $argc) (i32.const 2)))
+        (local.get $dst))
+      (local.set $argc (i32.add (local.get $argc) (i32.const 1)))
+      (local.set $quoted (i32.const 0))
+      (block $arg_done (loop $copy_arg
+        (br_if $arg_done (i32.ge_u (local.get $i) (global.get $extra_cmdline_len)))
+        (local.set $ch (i32.load8_u
+          (i32.add (global.get $EXTRA_CMDLINE_BUFFER) (local.get $i))))
+        (if (i32.eq (local.get $ch) (i32.const 0x22))
+          (then
+            (local.set $quoted (i32.eqz (local.get $quoted)))
+            (local.set $i (i32.add (local.get $i) (i32.const 1)))
+            (br $copy_arg)))
+        (br_if $arg_done
+          (i32.and (i32.eqz (local.get $quoted))
+            (i32.or (i32.eq (local.get $ch) (i32.const 0x20))
+                    (i32.eq (local.get $ch) (i32.const 0x09)))))
+        (call $gs8 (local.get $dst) (local.get $ch))
+        (local.set $dst (i32.add (local.get $dst) (i32.const 1)))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $copy_arg)))
+      (call $gs8 (local.get $dst) (i32.const 0))
+      (local.set $dst (i32.add (local.get $dst) (i32.const 1)))
+      (br $next_arg)))
+    (call $gs32
+      (i32.add (local.get $argv) (i32.shl (local.get $argc) (i32.const 2)))
+      (i32.const 0))
+    (call $gs32 (i32.add (local.get $cmd) (i32.const 504)) (local.get $cmd))
+    (call $gs32 (i32.add (local.get $cmd) (i32.const 508)) (local.get $argc))
+    (call $gs32 (i32.add (local.get $cmd) (i32.const 1532)) (i32.const 0)))
+
   (func $store_fake_cmdline
     (local $ptr i32) (local $dst i32) (local $i i32) (local $len i32) (local $extra i32)
-    (local.set $ptr (call $heap_alloc (i32.const 512)))
+    (local.set $ptr (call $heap_alloc (i32.const 1536)))
     (global.set $fake_cmdline_addr (local.get $ptr))
+    (global.set $msvcrt_acmdln_ptr (local.get $ptr))
     ;; Write "C:\<exe_name>" — full path matching GetModuleFileNameA
     (local.set $dst (call $g2w (local.get $ptr)))
     (i32.store8 (local.get $dst) (i32.const 0x43))  ;; 'C'
@@ -1319,7 +1388,9 @@
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
           (br $copy2)))
         (local.set $len (i32.add (local.get $len) (local.get $extra)))))
-    (i32.store8 (i32.add (local.get $dst) (local.get $len)) (i32.const 0)))
+    (i32.store8 (i32.add (local.get $dst) (local.get $len)) (i32.const 0))
+    (call $store_fake_argv_a (local.get $ptr)
+      (i32.add (global.get $exe_name_len) (i32.const 3))))
 
   (func $store_fake_wcmdline
     (local $ptr i32) (local $i i32) (local $len i32) (local $extra i32)

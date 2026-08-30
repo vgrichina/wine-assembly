@@ -466,26 +466,14 @@
 
   ;; __GetMainArgs(argc, argv, envp) — CRT init, 3-arg variant
   (func $handle___GetMainArgs (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $i i32) (local $dst i32)
-    (call $gs32 (local.get $arg0) (i32.const 1))
-    (if (i32.eqz (global.get $msvcrt_acmdln_ptr))
-    (then
-    (global.set $msvcrt_acmdln_ptr (call $heap_alloc (i32.const 256)))
-    ;; Copy exe name
-    (local.set $dst (call $g2w (global.get $msvcrt_acmdln_ptr)))
-    (block $done (loop $copy
-      (br_if $done (i32.ge_u (local.get $i) (global.get $exe_name_len)))
-      (i32.store8 (i32.add (local.get $dst) (local.get $i))
-        (i32.load8_u (i32.add (global.get $exe_name_wa) (local.get $i))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $copy)))
-    (i32.store8 (i32.add (local.get $dst) (global.get $exe_name_len)) (i32.const 0))
-    ;; argv at +128, envp at +136
-    (i32.store (i32.add (call $g2w (global.get $msvcrt_acmdln_ptr)) (i32.const 128)) (global.get $msvcrt_acmdln_ptr))
-    (i32.store (i32.add (call $g2w (global.get $msvcrt_acmdln_ptr)) (i32.const 132)) (i32.const 0))
-    (i32.store (i32.add (call $g2w (global.get $msvcrt_acmdln_ptr)) (i32.const 136)) (i32.const 0))))
-    (call $gs32 (local.get $arg1) (i32.add (global.get $msvcrt_acmdln_ptr) (i32.const 128)))
-    (call $gs32 (local.get $arg2) (i32.add (global.get $msvcrt_acmdln_ptr) (i32.const 136)))
+    (if (i32.eqz (global.get $fake_cmdline_addr))
+      (then (call $store_fake_cmdline)))
+    (call $gs32 (local.get $arg0)
+      (call $gl32 (i32.add (global.get $fake_cmdline_addr) (i32.const 508))))
+    (call $gs32 (local.get $arg1)
+      (i32.add (global.get $fake_cmdline_addr) (i32.const 1024)))
+    (call $gs32 (local.get $arg2)
+      (i32.add (global.get $fake_cmdline_addr) (i32.const 1532)))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; cdecl
   )
