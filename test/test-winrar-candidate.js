@@ -65,6 +65,18 @@ function colorCount(png, rgb) {
   return count;
 }
 
+function darkCountInRect(png, left, top, right, bottom) {
+  let count = 0;
+  for (let y = top; y < bottom; y++) {
+    for (let x = left; x < right; x++) {
+      const i = (y * png.width + x) * 4;
+      if (png.data[i] < 100 && png.data[i + 1] < 100 &&
+          png.data[i + 2] < 100 && png.data[i + 3]) count++;
+    }
+  }
+  return count;
+}
+
 (async () => {
   const candidate = MANIFEST.candidates.find(item => item.id === 'winrar-310');
   assert(candidate, 'WinRAR 3.10 has a candidate-corpus entry');
@@ -96,6 +108,7 @@ function colorCount(png, rgb) {
   const wasmPath = path.join(temp, 'candidate.wasm');
   const framePath = path.join(temp, 'winrar.png');
   const installedFramePath = path.join(temp, 'winrar-installed.png');
+  const integrationFramePath = path.join(temp, 'winrar-integration.png');
   try {
     const wasm = await compileWatSnapshot(file =>
       fs.promises.readFile(path.join(ROOT, 'src', file), 'utf8'));
@@ -156,7 +169,9 @@ function colorCount(png, rgb) {
       '--quiet-blocks',
       '--max-batches=120',
       '--batch-size=50000',
-      '--input=1:wait-title:Please_register:2000,2:dlg-click:1,3:wait-title:Settings:2000,4:dlg-click:2',
+      `--input=1:wait-title:Please_register:2000,2:dlg-click:1,` +
+        `10:mousedown:350:76,11:mouseup:350:76,20:png:${integrationFramePath},` +
+        '30:dlg-click:2',
       `--png=${installedFramePath}`,
     ], {
       cwd: ROOT,
@@ -177,6 +192,12 @@ function colorCount(png, rgb) {
       assert(installedOutput.includes(`[LoadLibrary] ${plugin}.fmt loaded`),
         `installed WinRAR did not load ${plugin}.fmt\n${installedOutput.slice(-8000)}`);
     }
+    assert(fs.existsSync(integrationFramePath),
+      'WinRAR did not capture its Integration property page');
+    const integrationPng = PNG.sync.read(fs.readFileSync(integrationFramePath));
+    const staleGeneralInk = darkCountInRect(integrationPng, 300, 185, 480, 211);
+    assert(staleGeneralInk < 30,
+      `WinRAR property page retained hidden General controls (${staleGeneralInk} stale dark pixels)`);
     const installedPng = PNG.sync.read(fs.readFileSync(installedFramePath));
     const installedTeal = colorCount(installedPng, [0, 128, 128]);
     const installedGray = colorCount(installedPng, [192, 192, 192]);

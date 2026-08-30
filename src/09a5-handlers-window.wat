@@ -1216,6 +1216,17 @@
         (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
           (then (global.set $paint_pending (i32.const 1)))
           (else
+            ;; Child dialogs share their top-level parent's backing canvas.
+            ;; A property sheet swaps pages by hiding one child dialog and
+            ;; showing another at the same coordinates; paint the new page's
+            ;; class background synchronously before its controls drain, or
+            ;; pixels from the hidden page survive underneath (WinRAR's
+            ;; General controls remained visible on its Integration page).
+            (if (i32.eq (call $wnd_table_get (local.get $arg0))
+                        (global.get $WNDPROC_DIALOG))
+              (then
+                (drop (call $host_erase_background
+                  (local.get $arg0) (i32.const 16))))) ;; COLOR_BTNFACE+1
             (call $paint_flag_set_inv (local.get $arg0))
             ;; Showing a parent exposes its visible children. Win98's paint
             ;; selection accounts for that visible-region relationship; seed
