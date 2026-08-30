@@ -2679,16 +2679,26 @@
     (global.set $wait_timeout (i32.const 0xFFFFFFFF))
     (global.set $wait_stack_bytes (i32.const 12)))
   (func (export "resume_message_wait") (result i32)
+    (local $msg_ptr i32)
     (if (i32.ne (global.get $yield_reason) (i32.const 7))
       (then (return (i32.const 0))))
+    (local.set $msg_ptr (global.get $message_wait_msg_ptr))
+    (global.set $message_wait_msg_ptr (i32.const 0))
     (global.set $yield_reason (i32.const 0))
-    (call $handle_GetMessageA
-      (global.get $message_wait_msg_ptr)
-      (i32.const 0)
-      (i32.const 0)
-      (i32.const 0)
-      (i32.const 0)
-      (i32.const 0))
+    (if (local.get $msg_ptr)
+      (then
+        (call $handle_GetMessageA
+          (local.get $msg_ptr)
+          (i32.const 0)
+          (i32.const 0)
+          (i32.const 0)
+          (i32.const 0)
+          (i32.const 0)))
+      (else
+        ;; WaitMessage has no output buffer to fill and consumes no message.
+        ;; Complete only its zero-argument stdcall frame.
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))))
     (i32.eqz (global.get $yield_reason)))
   (func (export "get_sync_table") (result i32) (global.get $SYNC_TABLE))
   (func (export "get_yield_flag") (result i32) (global.get $yield_flag))
@@ -2703,7 +2713,7 @@
     (global.set $sleep_yielded (i32.const 0))
     (local.get $v))
   (func (export "get_sleep_timeout") (result i32) (global.get $sleep_timeout))
-  (func (export "has_pending_message") (result i32)
+  (func $has_pending_message (export "has_pending_message") (result i32)
     (if (global.get $quit_flag) (then (return (i32.const 1))))
     (if (global.get $pending_child_create) (then (return (i32.const 1))))
     (if (global.get $pending_child_size) (then (return (i32.const 1))))

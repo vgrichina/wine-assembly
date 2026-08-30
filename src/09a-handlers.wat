@@ -12890,11 +12890,20 @@ GetTopWindow(hWnd) — 1 arg stdcall
     (call $crash_unimplemented (local.get $name_ptr))
   )
 
-  ;; 645: WaitMessage — STUB: unimplemented
+  ;; 645: WaitMessage() — block until USER has queue work. The message remains
+  ;; queued; unlike GetMessage/PeekMessage, WaitMessage only waits for it.
   (func $handle_WaitMessage (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; WaitMessage() — 0 args, return TRUE (message always available in our event loop)
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
+    (if (call $has_pending_message)
+      (then
+        (global.set $eax (i32.const 1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+        (return)))
+    ;; A zero message pointer distinguishes this wait from GetMessage's live
+    ;; frame when the browser/Worker scheduler resumes yield reason 7.
+    (global.set $message_wait_msg_ptr (i32.const 0))
+    (global.set $yield_reason (i32.const 7))
+    (global.set $yield_flag (i32.const 1))
+    (global.set $steps (i32.const 0))
   )
 
   ;; 646: GetWindowThreadProcessId
