@@ -421,13 +421,39 @@ first-code-per-length table, then a bit-at-a-time `shr`/`rcl` walk — so the
 loop is doing work rather than polling. 3000M dispatches (132s of wall clock)
 end in the same place as 200M, with the DAC loaded and the screen black — but
 "the same place" is not "no progress": handbacks go 2542 → 6274 over that 15x,
-so it is advancing, just far too slowly to reach a frame. Whether that is a
-budget problem or a decoder fed the wrong bytes is the open question. One
-measurement is in: the table the loop builds at `234a:0437` is different at 40M
-and at 80M dispatches and **identical at 80M and 120M**, so whatever it is
-chewing through, it stopped producing new Huffman tables somewhere in between.
-That is the thread to pull next — either the same block is being decoded over
-and over, or the loop is past the tables and into a body that never ends. Two gaps
+so it is advancing, just far too slowly to reach a frame. That first reading was wrong about where it is: `--report` at 100M and at 200M
+gives `22df:365 x282` **both times**, so the decompressor has stopped being
+entered at all and what is still growing is only the timer ISR. The demo is
+past unpacking and waiting.
+
+**Where it waits, exactly.** The demo talks to its resident through `int 0xFFh`,
+whose handler at `2cc:2699` is one instruction — `cs: jmp [bx+0x2689]` — over an
+eight-entry table, so BX is the service number. The main loop at `5f85:0da6` is
+
+```
+5f85:0da6  bb 0e 00   mov bx,0xe    ; wait for the next frame
+5f85:0da9  cd ff      int 0xff
+5f85:0dab  bb 00 00   mov bx,0        ; read the engine's state byte
+5f85:0dae  cd ff      int 0xff
+5f85:0db0  80 fc 01   cmp ah,1
+5f85:0db3  7e f1      jle 0x0da6      ; ... until it is greater than 1
+```
+
+Service 0 (`2cc:269e`) just returns `AH = cs:[0x0f74]`, `AL = cs:[0x0f72]`, and
+the trace shows `ax=0101` every time round: **the state byte is stuck at 1.**
+The other two services are healthy — service 0xe (`2cc:27ec`) is the frame
+wait, `sti / ax=[0x3a] / inc ax / cmp ax,[0x3a] / ja $`, and its counter is
+driven by the timer ISR at `2cc:21b5`, which is a retrace synchroniser: it
+divides by `[0x2a]` (6), reprograms PIT channel 0 in mode 0x36, polls `0x3DA`
+bit 3 for both edges of vertical retrace, reads channel 2 back to measure the
+frame, and only then reaches `cs: inc [0x3a]` at `2cc:22a6`. That path is being
+taken — `[0x34]` counts 6→2 over 19M dispatches — so the frame clock works and
+`[0x3a]` reading 0 in a dump is the wait loop having just consumed it, not a
+stall.
+
+So the open question is now narrow and concrete: **what is supposed to advance
+`2cc:[0x0f74]` past 1, and why doesn't it?** Service 4 (`2cc:26ac`, a call to
+`2cc:22c2`) is the engine tick and the first place to look. Two gaps
 noticed on the way and not yet closed: there is no `$ldtl`, so an LDT
 selector's limit is checked against the *GDT* limit, and past that limit it
 falls back to reading the selector as a paragraph.
