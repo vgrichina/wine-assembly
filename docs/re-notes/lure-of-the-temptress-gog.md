@@ -34,6 +34,12 @@ Run `node test/test-lure-scummvm.js` for the bounded local acceptance. It checks
 that ScummVM selects Lure, remains live, and visibly renders the branded
 ScummVM/Revolution startup sequence rather than an empty SDL window.
 
+A longer scripted local probe reached the player-controlled dungeon cell. Its
+visually reviewed gameplay frame is
+`/private/tmp/free-gog-screenshots.EC8yad/3-lure-of-the-temptress.png`. The
+bounded automated test still claims only startup; the local frame is the
+stronger manual acceptance used by the GOG inventory.
+
 ## Compatibility findings
 
 SDL 2.0 defaults this build to its Direct3D renderer. Wine-Assembly can create

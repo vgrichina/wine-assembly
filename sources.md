@@ -806,6 +806,42 @@ grant permission to redistribute the GOG installers. They therefore remain
 local research fixtures and must not enter a public deployment merely because
 GOG offered them without charge or Archive.org hosts copies.
 
+### Local runtime acceptance status (2026-08-29)
+
+All seven downloads contain PE32/i386 Windows installers. The installed game
+payloads are not all native Windows games: Beneath a Steel Sky, Flight of the
+Amazon Queen, and Lure of the Temptress use GOG's bundled Windows ScummVM;
+Shadow Warrior, Arena, Daggerfall, and Ultima IV use GOG's bundled Windows
+DOSBox to host the original DOS game. The launch checks below execute those
+Windows runtimes directly inside Wine-Assembly. They do not use host Wine or
+DOSBox-X.
+
+The local screenshot set is
+`/private/tmp/free-gog-screenshots.EC8yad`. Six numbered frames have been
+visually checked as actual gameplay rather than logos, menus, installers, or
+load selectors:
+
+| Game | Verified local frame | Content |
+|---|---|---|
+| Beneath a Steel Sky | `1-beneath-a-steel-sky.png` | playable industrial opening scene |
+| Flight of the Amazon Queen | `2-flight-of-the-amazon-queen.png` | Joe's bedroom with the verb/inventory UI |
+| Lure of the Temptress | `3-lure-of-the-temptress.png` | player-controlled dungeon cell |
+| Shadow Warrior Classic Complete | `4-shadow-warrior.png` | first-person combat in Wang's bar |
+| The Elder Scrolls: Arena | `5-elder-scrolls-arena.png` | first-person city view with live HUD |
+| Ultima IV | `7-ultima-iv.png` | overhead world-map gameplay with party/status UI |
+
+Daggerfall is the remaining handoff item. The bundled GOG DOSBox dynamic core
+now reaches character creation, and a deterministic physical-input script has
+been visually verified through exhausted attribute and skill bonus pools,
+reflex selection, and final review. The first full capture attempt clicked
+`(60,204)` on that last page; the drawn OK button is actually at `(284,204)`,
+so its five nominal gameplay frames remained identical to final review. The
+corrected sequence is preserved by `tools/run-daggerfall-gameplay.js`; a
+partial handoff retry reached attribute allocation batch 12,770 before it was
+stopped to wrap and commit this state. Until a complete retry produces a
+first-person dungeon frame,
+`6-elder-scrolls-daggerfall.png` must not be presented as gameplay.
+
 ## Further shareware/demo/freeware game candidates
 
 Research on 2026-08-22 narrowed the next browser targets to distributions that

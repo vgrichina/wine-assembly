@@ -36,6 +36,13 @@ node test/run.js \
 that ScummVM selects `Beneath a Steel Sky (v0.0372 cd)`, remains live, and
 visibly renders the Virgin Interactive splash instead of an empty SDL window.
 
+A longer scripted local probe also passed the stronger gameplay check. The
+visually reviewed frame at
+`/private/tmp/free-gog-screenshots.EC8yad/1-beneath-a-steel-sky.png` shows the
+playable industrial opening scene with Foster and the live cursor. This does
+not widen the bounded automated test's claim; it records the manual gameplay
+evidence used for the seven-game GOG inventory.
+
 ## Installer investigation
 
 The installer is a two-process Inno Setup package. Wine-Assembly directly ran

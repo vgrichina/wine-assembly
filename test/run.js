@@ -21,6 +21,7 @@ const { formatCall: fmtApiCall, formatRet: fmtApiRet, formatOutParams: fmtApiOut
 const { fontMounts, BUNDLED_BITMAP_FONTS } = require('../lib/font-substitutions');
 const { APPS } = require('../lib/apps');
 const { CliVideoRecorder } = require('../lib/cli-recorder');
+const { createBatchClock } = require('../lib/batch-clock');
 let PNG;
 try { ({ PNG } = require('pngjs')); } catch (_) {}
 let createCanvas, Win98Renderer;
@@ -2677,7 +2678,8 @@ async function main() {
   // headless slices. Batch transitions add a larger jump (~200ms) to keep
   // the overall simulated pace realistic.
   const tickCallStepMs = Math.max(1, parseInt(process.env.TICK_CALL_STEP_MS || '1', 10) || 1);
-  const tickState = { batch: 0, callsInBatch: 0 };
+  const batchClock = createBatchClock(TICK_MS_PER_BATCH, tickCallStepMs);
+  const tickState = batchClock.state;
   ctx.sharedAudio.audioClockMs = () => (tickState.batch * TICK_MS_PER_BATCH) | 0;
   // --real-ticks hands the guest the wall clock instead. Two emulator
   // processes in one room CANNOT share a batch-driven clock: a batch is not a
@@ -2688,7 +2690,7 @@ async function main() {
   // decided against a clock the other does not share.
   h.get_ticks = REAL_TICKS
     ? () => ((((Date.now() - CLOCK_ORIGIN) * TIME_SCALE) | 0) & 0x7FFFFFFF)
-    : () => ((((tickState.batch * TICK_MS_PER_BATCH) | 0) + (tickState.callsInBatch++ * tickCallStepMs)) & 0x7FFFFFFF);
+    : batchClock.getTicks;
 
   // --- Override input for test injection ---
   let lastInputEvent = null;

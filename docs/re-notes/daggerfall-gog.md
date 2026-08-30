@@ -79,3 +79,30 @@ Before the core switch could be tested reliably, commit `37d8cf43` moved
 DirectDraw surface pixels out of Wine-Assembly's decoded-page index arena. That
 fixed the independent corruption where DOSBox's third 640x480 surface overlapped
 `PAGE_INDEX_ARENA` and invalidated live translated blocks.
+
+## Gameplay-capture handoff (2026-08-29)
+
+The dynamic core now continues past the Bethesda credit into Daggerfall's
+original character creator. These inputs must be delivered as physical
+keydown/up or held mouse events; `WM_CHAR` injection is ignored. The bonus
+allocation UI also needs long settling gaps. With 300 headless batches between
+point clicks, the verified checkpoints were:
+
+- attributes: STR increased to 58 and the bonus pool became empty;
+- skills: Mysticism 34, Illusion 24, and Medical 20, with all three category
+  counters at zero;
+- reflexes: Average selected, followed by the final character review.
+
+The first end-to-end capture used the wrong final-review coordinate:
+`(60,204)` instead of the visible OK button at `(284,204)`. Its later Escape
+events did not advance the page, and all five candidate gameplay PNGs were
+byte-identical review frames. The corrected deterministic sequence is retained
+in `tools/run-daggerfall-gameplay.js`; its partial handoff run reached attribute
+allocation batch 12,770 before being stopped to wrap and commit this work. Run
+the tool with `DAGGERFALL_SCREENSHOT_DIR` set to a persistent output directory,
+then visually inspect its five `gameplay-*.png` frames. The local numbered frame
+`/private/tmp/free-gog-screenshots.EC8yad/6-elder-scrolls-daggerfall.png`
+therefore remains unaccepted until it is replaced by a visually verified
+first-person dungeon frame. Do not substitute DOSBox-X or host Wine: this
+reproduction deliberately exercises GOG's bundled Windows `DOSBox.exe`
+directly inside Wine-Assembly.

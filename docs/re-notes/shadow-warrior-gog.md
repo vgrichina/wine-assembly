@@ -56,9 +56,13 @@ Shadow Warrior 1.2 startup banner plus keyboard/input initialization. A measured
 frame had 17,948 green title pixels, 4,943 white copy pixels, 233,109 black
 pixels, and five guest-frame colors.
 
-This is a startup acceptance, not yet a gameplay claim. The run has reached
-`CONTROL_Startup: Mouse Present` without a fault, but has not yet reached the
-game's VGA intro or interactive menu under nested execution.
+That bounded test is a startup acceptance. A subsequent longer scripted probe
+continued through the intro and menu into first-person play. The visually
+reviewed frame at
+`/private/tmp/free-gog-screenshots.EC8yad/4-shadow-warrior.png` shows active
+combat in Wang's bar, with enemies, weapon, and rendered world present. This is
+manual gameplay evidence; the shorter automated test retains its narrower
+startup assertions.
 
 ## Apparent dynamic-core hang
 

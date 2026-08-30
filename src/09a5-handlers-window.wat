@@ -1690,7 +1690,10 @@
     ;; No paint — deliver WM_TIMER if any timer is due (consume=1 for GetMessage)
     (if (call $timer_check_due (local.get $msg_ptr) (i32.const 1))
     (then
-    (global.set $yield_flag (i32.const 1)) ;; yield to host after each timer
+    ;; Do not force a batch boundary here. A draining message pump commonly
+    ;; calls PeekMessage immediately after dispatching this timer; advancing
+    ;; the headless batch clock before that peek can make the same periodic
+    ;; timer due again forever. The next empty PeekMessage yields naturally.
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))) (return)))
     ;; A producer may have posted after the earlier queue check in this handler.

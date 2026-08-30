@@ -36,6 +36,13 @@ that ScummVM selects `Flight of the Amazon Queen (Talkie/DOS/English)`, remains
 live, and visibly renders the gold Amazon Queen title plus cyan copyright copy
 instead of an empty SDL window.
 
+A longer scripted local probe reached actual gameplay. The visually reviewed
+frame at
+`/private/tmp/free-gog-screenshots.EC8yad/2-flight-of-the-amazon-queen.png`
+shows Joe standing in the bedroom with the verb and inventory interface. The
+existing bounded test remains a startup gate; this path records the stronger
+manual gameplay evidence separately.
+
 ## Installer investigation
 
 The installer is a two-process Inno Setup package. Wine-Assembly directly ran
