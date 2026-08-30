@@ -309,6 +309,19 @@ and `entry c:8 base=232e0 pm` before control reaches a selector we resolve to
 base 0 and the run walks the IVT. That is a DOS extender, not a missing service,
 and it is a different size of job from everything above.
 
+**The sweep is deliberately not given a `--svga` rung, and the reason is worth
+keeping.** A rung was written and measured: a program that put nothing on either
+surface — no pixels and not one non-blank cell, which in this corpus is
+SETUP.EXE alone — gets one retry with `--svga=trident`. It works, in the sense
+that SETUP then finishes and prints its 247-cell report. It photographs *worse*.
+The best-frame tracker keeps the fullest frame, not the last, and on the way to
+that report SETUP passes through mode 13h and leaves a 1000-pixel single-colour
+strip there. `frameScore` bands a single-index fill at 1e6 and a full text page
+at cells+4000 — any graphics beats any text, on purpose, priced across the whole
+corpus — so the tile that wins is a black screen with a blue line, filed as a
+picture. A blank row that is honestly blank beats a `demo` row that is a
+detection artifact, so the rung was dropped rather than shipped.
+
 ### BLINKY.EXE — fixed
 
 Two bugs stacked, and each hid the next.
