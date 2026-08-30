@@ -51,7 +51,8 @@ const { STUB_SEG, STUB_OFF, STUB_BYTE } = require('./dos');
 // reachable subgraph within that cs, so most entries hit an existing region's
 // block map and cost nothing.
 class CodeCache {
-  constructor(vm, { noCache = false, smcFlush = false, watch = [] } = {}) {
+  constructor(vm, { noCache = false, smcFlush = false, watch = [],
+                    wasmDecode = true } = {}) {
     // Watchpoints, as [lo, hi] linear byte ranges. They ride the CODE_BITMAP
     // rather than adding a range test to $wr8, because $wr8 is on the hot path
     // of every single store the guest makes and a watch that is off must cost
@@ -72,6 +73,11 @@ class CodeCache {
     this.benign = new Set();
     this.patchMisses = new Map();
     this.vm = vm;
+    // The wasm decoder, if this build has one. `--no-wasm-decode` turns it off
+    // for an A/B; what it decodes is byte-identical to what the JS decoder
+    // would have produced (tools/toyvm/decode-diff.js), so the two arms differ
+    // only in what the decoding cost.
+    this.wasmDecoder = (wasmDecode && vm.exports.compile_block) ? vm : null;
     this.noCache = noCache;
     this.regions = new Map();          // cs -> [prog]
     this.arenaNext = isa.THREAD_BASE;
@@ -271,7 +277,7 @@ class CodeCache {
     const prog = compileProgram((lin) => vm.mem[lin], cs, ip, {
       arenaBase: this.arenaNext,
       maxWords: (this.arenaEnd - this.arenaNext) >> 2,
-      codeBase, mask, d32, benign: this.benign,
+      codeBase, mask, d32, benign: this.benign, wasmDecoder: this.wasmDecoder,
     });
     new Int32Array(vm.mem.buffer, prog.arenaBase, prog.words.length).set(prog.words);
     this.arenaNext += prog.words.length * 4;
@@ -336,6 +342,7 @@ class DosSession {
   constructor(vm, machine, opts = {}) {
     const {
       slice = 2e6, noCache = false, smcFlush = false, mouse = [0, 0],
+      wasmDecode = true,
       // One timer interrupt per this many dispatches. 100k is about 10ms of a
       // real 486, so it lands near the 18.2Hz the BIOS programs -- and a demo
       // that reprogrammed the PIT for music gets a slower clock than it asked
@@ -378,7 +385,7 @@ class DosSession {
     this.stuckSince = 0;
     this.cells = cells;
     this.hooks = hooks;
-    this.cache = new CodeCache(vm, { noCache, smcFlush, watch });
+    this.cache = new CodeCache(vm, { noCache, smcFlush, watch, wasmDecode });
 
     this.dispatched = 0;
     this.handbacks = 0;

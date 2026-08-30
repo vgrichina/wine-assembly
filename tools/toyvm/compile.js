@@ -36,6 +36,15 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   // dos-loop.js: the decoder's rule for self-patching code is a static guess,
   // and this is the host telling it the guess was wrong here.
   const benign = opts.benign || null;
+  // The wasm decoder, when the caller has one. It decodes a RUN of instructions
+  // per call and stops at the first opcode it does not implement, at which point
+  // the loop below decodes that one instruction itself and offers wasm the next
+  // run. So coverage buys time in proportion to itself and correctness never
+  // depends on it: everything it declines is decoded exactly as before.
+  //
+  // See docs/toyvm-decoder-in-wasm.md, and tools/toyvm/decode-diff.js for the
+  // differential test that the two decoders agree where they overlap.
+  const wd = opts.wasmDecoder || null;
   const entry = d32 ? (entryIp >>> 0) : (entryIp & 0xFFFF);
 
   const blocks = new Map();      // guest IP -> arena address
@@ -48,10 +57,27 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   // what it is: a program rewriting code that has already been compiled.
   const covered = [];
 
+  // The block-head bitmap wasm stops on. Kept across the whole compile and
+  // cleared bit by bit at the end rather than wiped per block: CONTAGIO compiles
+  // 87,000 times in one run, and zeroing 8KB each time would cost more than the
+  // decoding does.
+  const heads = wd ? new Uint8Array(wd.mem.buffer, isa.DEC_HEADS, isa.DEC_HEADS_SIZE) : null;
+  const markHead = (ip) => { if (heads) heads[(ip & 0xFFFF) >> 3] |= 1 << (ip & 7); };
+  // Made once per compile, not once per block. CONTAGIO compiles 87,000 times
+  // in one run and a fresh view per block would be the allocation this whole
+  // change exists to avoid paying elsewhere. The VM's memory is a fixed
+  // MEM_PAGES and never grows, so these cannot be detached under us.
+  const scratchView = wd
+    ? new Int32Array(wd.mem.buffer, isa.DEC_SCRATCH, isa.DEC_SCRATCH_WORDS) : null;
+  const fixupView = wd
+    ? new Int32Array(wd.mem.buffer, isa.DEC_FIXUPS,
+        isa.DEC_FIXUPS_MAX * isa.DEC_FIXUP_WORDS) : null;
+
   while (pending.length) {
     const blockIp = pending.pop();
     if (blocks.has(blockIp)) continue;
     blocks.set(blockIp, arenaBase + words.length * 4);
+    markHead(blockIp);
 
     let cur = blockIp;
     // Whether anything in this block stored to memory. A block that writes and
@@ -76,6 +102,70 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
         words.push(H.jmp, 0, cur);
         fixups.push({ wordIndex: words.length - 2, ip: cur });
         break;
+      }
+
+      // Hand the rest of the block to wasm. It stops at the first opcode it does
+      // not implement, so the worst case is that it decodes nothing and this
+      // costs one call; the best case is that it decodes the whole block.
+      //
+      // The mid-block "already emitted, jump to it" check above still applies
+      // inside a wasm run: wasm reads the same block heads out of a bitmap the
+      // loop maintains and stops when straight-line code falls into one. Without
+      // that it emitted a second copy of the tail, which is not just wasteful --
+      // the blocks around it end elsewhere, the guest takes its interrupts at
+      // different instructions, and COMPOVRS.EXE rendered a different frame from
+      // 4M dispatches on while both decoders agreed instruction for instruction.
+      if (wd) {
+        const room = Math.min(isa.DEC_SCRATCH_WORDS, maxWords - words.length);
+        const n = room > 32
+          ? wd.exports.compile_block(cur, codeBase, mask, d32 ? 1 : 0,
+              isa.DEC_SCRATCH, room, 0, (wrote ? 1 : 0) | (bulkWrote ? 2 : 0))
+          : 0;
+        if (n > 0) {
+          const base = words.length;
+          for (let i = 0; i < n; i++) words.push(scratchView[i]);
+
+          // Replay the host's decryptor rule over the run, per instruction and
+          // unchanged: each fixup carries the ip of the instruction that emitted
+          // it and whether anything up to and including that instruction stored.
+          // A block-level summary cannot express this -- it would call a
+          // decryptor's own back edge a forward one and queue the ciphertext
+          // ahead of it.
+          //
+          // The rule is per INSTRUCTION and reads all of that instruction's
+          // edges at once, which matters for a conditional jump: its two fixups
+          // are the target and the fall-through, and a backward target makes the
+          // FORWARD one suspect. Deciding each fixup on its own target would
+          // find the fall-through forward, call it safe and queue exactly the
+          // ciphertext the rule exists to refuse. One instruction's fixups are
+          // consecutive, so a run of equal insnIp is that instruction's set.
+          const nf = wd.exports.dc_fixups();
+          const fx = fixupView;
+          const W = isa.DEC_FIXUP_WORDS;
+          for (let i = 0; i < nf;) {
+            const insnIp = fx[i * W + 2], flags = fx[i * W + 3];
+            let j = i;
+            while (j < nf && fx[j * W + 2] === insnIp) j++;
+            let backward = false;
+            for (let k = i; k < j; k++) if (fx[k * W + 1] <= insnIp) backward = true;
+            const loops = (flags & 2) !== 0 || ((flags & 1) !== 0 && backward);
+            for (let k = i; k < j; k++) {
+              const targetIp = fx[k * W + 1];
+              fixups.push({ wordIndex: base + fx[k * W], ip: targetIp });
+              if (!opts.oneInsn && (!loops || targetIp <= insnIp)) pending.push(targetIp);
+            }
+            i = j;
+          }
+          if (wd.exports.dc_wrote()) wrote = true;
+          if (wd.exports.dc_bulk()) bulkWrote = true;
+          cur = wd.exports.dc_stop_ip();
+          if (wd.exports.dc_stopped() === 1) break;   // STOP.ENDED
+          if (opts.oneInsn) { words.push(H.end, cur); break; }
+          // Anything else -- an unimplemented opcode, a full arena, a block head
+          // reached -- goes back to the top of the loop, which handles each of
+          // them exactly as it does for a block it decoded itself.
+          continue;
+        }
       }
 
       const d = decodeOne(readByte, cs, cur, codeBase, mask, d32, benign);
@@ -141,6 +231,11 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
       covered.push([(codeBase + blockIp) & mask, (codeBase + extent) & mask]);
     }
   }
+
+  // Hand the bitmap back the way it was found. Clearing the bits this compile
+  // set, rather than the whole 8KB, because the next compile is usually a few
+  // blocks and the wipe would dominate it.
+  if (heads) for (const ip of blocks.keys()) heads[(ip & 0xFFFF) >> 3] = 0;
 
   // Resolve. A target that never got compiled keeps its 0, which the branch
   // handlers read as "stop and hand back", so an unreachable-in-practice edge

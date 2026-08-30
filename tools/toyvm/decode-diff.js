@@ -63,7 +63,7 @@ function runCase(vm, bytes) {
   const maxWords = 1024;
 
   // The wasm side first, because it is the one that can decline.
-  const n = vm.exports.compile_block(IP, base, 0xFFFFF, 0, arena, maxWords, 1);
+  const n = vm.exports.compile_block(IP, base, 0xFFFFF, 0, arena, maxWords, 1, 0);
   if (vm.exports.dc_stopped() === STOP_UNIMPL) return { declined: true };
 
   const got = [...new Int32Array(vm.mem.buffer, arena, n)];
@@ -97,7 +97,8 @@ function runCase(vm, bytes) {
   const nfix = vm.exports.dc_fixups();
   const gotFix = [];
   for (let i = 0; i < nfix; i++) {
-    gotFix.push(new Int32Array(vm.mem.buffer, isa.DEC_FIXUPS + i * 8, 2)[0]);
+    gotFix.push(new Int32Array(vm.mem.buffer,
+      isa.DEC_FIXUPS + i * isa.DEC_FIXUP_WORDS * 4, isa.DEC_FIXUP_WORDS)[0]);
   }
   const gotBlank = blank(got, gotFix);
 

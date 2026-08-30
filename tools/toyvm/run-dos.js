@@ -159,7 +159,7 @@ async function runDos(o) {
   const {
     variant = 'tailcall', exe, budget = 200e6, slice = 2e6, seconds = 0,
     traceInt = false, traceFault = false, traceEntry = 0, traceV86 = false,
-    noCache = false, smcFlush = false,
+    noCache = false, smcFlush = false, wasmDecode = true,
     smcCensus = false, watch = [],
     stopText = null,
     traceIo = null,
@@ -332,7 +332,8 @@ async function runDos(o) {
   const ipSampleLog = [];          // flat [dispatched, ip, dispatched, ip, ...]
 
   const session = new DosSession(vm, machine, {
-    slice, noCache, smcFlush, mouse, irqEvery, dispatchesPerTick, tickScale, stuckLimit,
+    slice, noCache, smcFlush, wasmDecode,
+    mouse, irqEvery, dispatchesPerTick, tickScale, stuckLimit,
     stuckWork,
     // A watch reports through the census, so asking for one turns it on.
     smcCensus: smcCensus || watch.length > 0, watch,
@@ -678,6 +679,11 @@ async function main() {
     traceEntry: flag('trace-entry') ? 40 : count(arg('trace-entry'), 0),
     noCache: flag('no-cache'),
     smcFlush: flag('smc-flush'),
+    // The wasm decoder is on by default. Its A/B partner: what it decodes is
+    // byte-identical to the JS decoder's output, so this changes cost, not
+    // behaviour -- a run that differs between the two arms is a bug in one of
+    // them and tools/toyvm/decode-diff.js is where to look.
+    wasmDecode: !flag('no-wasm-decode'),
     smcCensus: flag('smc-census'),
     // `--watch=0:84`, `--watch=0:84:4`, `--watch=5ab:191:2,0:84` -- report every
     // guest store into these bytes, with the CS:IP that made it, through the

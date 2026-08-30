@@ -207,11 +207,37 @@ const HIST_SIZE = HIST_SLOTS * 4 + HIST_SLOTS * HIST_SLOTS * 4;
 // which costs a JS compile: the thing that was going to happen anyway.
 const DEC_TAB = (HIST_BASE + HIST_SIZE + 0xFFFF) & ~0xFFFF;
 const DEC_TAB_SIZE = 0x1000;
-const DEC_FIXUPS = DEC_TAB + DEC_TAB_SIZE;              // [wordIndex, ip] pairs
+// [wordIndex, targetIp, insnIp, wroteSoFar]. The last two are not for resolving
+// the fixup -- they are what lets the host apply its decryptor rule to a block
+// wasm decoded, unchanged and per instruction: "did anything up to HERE store,
+// and does this edge go backward from THIS instruction". Aggregating them per
+// block instead would call a decryptor's own back edge a forward one, and the
+// host would compile the ciphertext ahead of it. See compile.js.
+const DEC_FIXUPS = DEC_TAB + DEC_TAB_SIZE;
 const DEC_FIXUPS_MAX = 8192;
-const DEC_COVERED = DEC_FIXUPS + DEC_FIXUPS_MAX * 8;    // [from, to) linear
-const DEC_COVERED_MAX = 4096;
-const DEC_END = DEC_COVERED + DEC_COVERED_MAX * 8;
+const DEC_FIXUP_WORDS = 4;
+// Where a block compile writes its threaded-code words. Not the real arena:
+// compileProgram assembles a program in a JS array and installs it in one go,
+// and a decoder writing into the live arena as it went would be writing over
+// code the guest may still be inside.
+// One bit per guest ip (low 16 bits) marking an ip compileProgram has already
+// given a block head. Straight-line code that falls into one must stop there and
+// jump to it, or the same tail is emitted twice -- and two copies of a tail are
+// not merely wasteful: the blocks around them end at different places, the guest
+// takes its interrupts at different instructions, and a demo renders a different
+// frame. Measured on COMPOVRS.EXE, which diverged at 4M dispatches for exactly
+// that reason while both decoders agreed instruction for instruction.
+//
+// Indexed by ip & 0xFFFF, so a 32-bit segment can alias two ips onto one bit.
+// An alias can only cause a SPURIOUS stop, never a missed one: the host then
+// finds no block at that ip and simply carries on from there. Wrong in the safe
+// direction, for 8KB instead of a 512MB bitmap.
+const DEC_HEADS = DEC_FIXUPS + DEC_FIXUPS_MAX * DEC_FIXUP_WORDS * 4;
+const DEC_HEADS_SIZE = 0x10000 >> 3;
+
+const DEC_SCRATCH = DEC_HEADS + DEC_HEADS_SIZE;
+const DEC_SCRATCH_WORDS = 0x10000;
+const DEC_END = DEC_SCRATCH + DEC_SCRATCH_WORDS * 4;
 
 const MEM_PAGES = ((DEC_END + 0xFFFF) & ~0xFFFF) >> 16;
 
@@ -249,7 +275,7 @@ module.exports = {
   VGA_PLANES, VGA_PLANE_SIZE, VGA_KEY_OFF, VGA_KEY_ON,
   VESA_FB, VESA_FB_SIZE,
   CODE_BITMAP, CODE_BITMAP_SIZE,
-  DEC_TAB, DEC_TAB_SIZE, DEC_FIXUPS, DEC_FIXUPS_MAX,
-  DEC_COVERED, DEC_COVERED_MAX, DEC_END,
+  DEC_TAB, DEC_TAB_SIZE, DEC_FIXUPS, DEC_FIXUPS_MAX, DEC_FIXUP_WORDS,
+  DEC_HEADS, DEC_HEADS_SIZE, DEC_SCRATCH, DEC_SCRATCH_WORDS, DEC_END,
   EA, EA_DEFAULT_SEG, EA_A32,
 };

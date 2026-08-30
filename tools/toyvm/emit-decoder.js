@@ -55,7 +55,7 @@ const SHAPES = ['rr', 'rm', 'mr', 'ri', 'mi'];
 // the block is complete and needs nothing further, UNIMPL means resume the JS
 // decoder at $dc_stop_ip, and FULL means the arena filled and the caller has to
 // decide whether to grow it or split the block.
-const STOP = { ENDED: 1, UNIMPL: 2, FULL: 3, ONE: 4 };
+const STOP = { ENDED: 1, UNIMPL: 2, FULL: 3, ONE: 4, HEAD: 5 };
 
 function decoderTables(H) {
   const words = [];
@@ -151,7 +151,6 @@ function decoderWat() {
 (global $dc_blockBulk (mut i32) (i32.const 0))  ;; ...and any stored a range
 
 (global $dc_nfix (mut i32) (i32.const 0))
-(global $dc_ncov (mut i32) (i32.const 0))
 
 ;; How an instruction pointer wraps in this segment: 16 bits normally, 32 in a
 ;; segment whose descriptor has the D bit set. Getting this wrong does not
@@ -370,26 +369,32 @@ function decoderWat() {
 ;; resolves the two zero slots to arena addresses once every block head is
 ;; known. The fixup records WHICH word to patch, so the layout above and this
 ;; are one fact and have to move together.
+;;
+;; Each record is [wordIndex, targetIp, insnIp, wroteSoFar]. The last two are
+;; not needed to resolve the fixup; they are what lets the host apply its
+;; decryptor rule per instruction to a block this decoded, rather than having to
+;; re-derive it from a block-level summary that cannot express it.
 (func $dc_fixup (param $wordIndex i32) (param $ip i32)
+  (local $a i32)
   (if (i32.ge_u (global.get $dc_nfix) (i32.const ${isa.DEC_FIXUPS_MAX}))
     (then (global.set $dc_bad (i32.const 1)) (return)))
-  (i32.store (i32.add (i32.const ${isa.DEC_FIXUPS})
-                      (i32.shl (global.get $dc_nfix) (i32.const 3)))
-             (local.get $wordIndex))
-  (i32.store offset=4 (i32.add (i32.const ${isa.DEC_FIXUPS})
-                               (i32.shl (global.get $dc_nfix) (i32.const 3)))
-             (local.get $ip))
+  (local.set $a (i32.add (i32.const ${isa.DEC_FIXUPS})
+                         (i32.mul (global.get $dc_nfix)
+                                  (i32.const ${isa.DEC_FIXUP_WORDS * 4}))))
+  (i32.store (local.get $a) (local.get $wordIndex))
+  (i32.store offset=4 (local.get $a) (local.get $ip))
+  (i32.store offset=8 (local.get $a) (global.get $dc_ip))
+  ;; Bit 0 stored, bit 1 stored a RANGE, both counting the CURRENT instruction:
+  ;; an instruction that writes and branches backward is itself the decryptor,
+  ;; and a flag covering only the instructions before it would let its own
+  ;; forward exit through.
+  (i32.store offset=12 (local.get $a)
+    (i32.or
+      (select (i32.const 1) (i32.const 0)
+              (i32.or (global.get $dc_blockWrote) (global.get $dc_wrote)))
+      (select (i32.const 2) (i32.const 0)
+              (i32.or (global.get $dc_blockBulk) (global.get $dc_bulk)))))
   (global.set $dc_nfix (i32.add (global.get $dc_nfix) (i32.const 1))))
-
-(func $dc_cover (param $from i32) (param $to i32)
-  (local $a i32)
-  (if (i32.ge_u (global.get $dc_ncov) (i32.const ${isa.DEC_COVERED_MAX}))
-    (then (global.set $dc_bad (i32.const 1)) (return)))
-  (local.set $a (i32.add (i32.const ${isa.DEC_COVERED})
-                         (i32.shl (global.get $dc_ncov) (i32.const 3))))
-  (i32.store (local.get $a) (local.get $from))
-  (i32.store offset=4 (local.get $a) (local.get $to))
-  (global.set $dc_ncov (i32.add (global.get $dc_ncov) (i32.const 1))))
 
 ;; --- one instruction -------------------------------------------------------
 ;; Consumes prefixes and one opcode from $dc_ip, emits its words, and leaves
@@ -607,8 +612,8 @@ function decoderWat() {
 ;; the middle of an instruction a thousand blocks later.
 (func $dc_block (param $ip i32) (param $base i32) (param $mask i32)
                 (param $d32 i32) (param $arena i32) (param $maxWords i32)
-                (param $oneInsn i32) (result i32)
-  (local $cur i32) (local $from i32)
+                (param $oneInsn i32) (param $seed i32) (result i32)
+  (local $cur i32)
   (global.set $dc_base (local.get $base))
   (global.set $dc_mask (local.get $mask))
   (global.set $dc_d32 (local.get $d32))
@@ -617,11 +622,16 @@ function decoderWat() {
   (global.set $dc_out (i32.const 0))
   (global.set $dc_bad (i32.const 0))
   (global.set $dc_nfix (i32.const 0))
-  (global.set $dc_ncov (i32.const 0))
   (global.set $dc_stopped (i32.const 0))
   (global.set $dc_outAtInsn (i32.const 0))
-  (global.set $dc_blockWrote (i32.const 0))
-  (global.set $dc_blockBulk (i32.const 0))
+  ;; Seeded, not zeroed. One host block can take several calls -- wasm stops at
+  ;; an opcode it does not implement, the host decodes that one and calls again
+  ;; -- and "has anything in this block stored yet" has to carry across the
+  ;; seam. Starting the second call at zero would tell the host that a decryptor
+  ;; that already wrote had not, and it would compile the ciphertext ahead of it.
+  (global.set $dc_blockWrote (i32.and (local.get $seed) (i32.const 1)))
+  (global.set $dc_blockBulk (i32.shr_u (i32.and (local.get $seed) (i32.const 2))
+                                       (i32.const 1)))
   (local.set $cur (call $dc_wip (local.get $ip)))
 
   (block $done
@@ -631,9 +641,18 @@ function decoderWat() {
       ;; not an instruction boundary.
       (if (i32.gt_u (i32.add (global.get $dc_out) (i32.const 16)) (global.get $dc_max))
         (then (global.set $dc_stopped (i32.const ${STOP.FULL})) (br $done)))
+      ;; Falling into an ip the host has already given a block head: stop, so it
+      ;; can emit a jump to that block instead of a second copy of its tail. Not
+      ;; checked for the block's own first instruction, which is always a head.
+      (if (i32.and (i32.ne (local.get $cur) (local.get $ip))
+                   (i32.and (i32.shr_u
+                              (i32.load8_u (i32.add (i32.const ${isa.DEC_HEADS})
+                                (i32.shr_u (i32.and (local.get $cur) (i32.const 0xFFFF))
+                                           (i32.const 3))))
+                              (i32.and (local.get $cur) (i32.const 7)))
+                            (i32.const 1)))
+        (then (global.set $dc_stopped (i32.const ${STOP.HEAD})) (br $done)))
       (global.set $dc_ip (local.get $cur))
-      (local.set $from (i32.and (i32.add (global.get $dc_base) (local.get $cur))
-                                (global.get $dc_mask)))
       (call $dc_one)
       ;; An unimplemented opcode has emitted nothing this host can use, but it
       ;; may have emitted words before it noticed. The out cursor is rewound to
@@ -642,7 +661,10 @@ function decoderWat() {
         (then (global.set $dc_out (global.get $dc_outAtInsn))
               (global.set $dc_stopped (i32.const ${STOP.UNIMPL}))
               (br $done)))
-      (call $dc_cover (local.get $from) (i32.add (local.get $from) (global.get $dc_n)))
+      ;; Which bytes this decoded is NOT recorded here. The host derives the
+      ;; block's extent from where it started and where it stopped, which is the
+      ;; same answer and is the one it already computes for the blocks it
+      ;; decodes itself -- a second version of it here could only disagree.
       (if (global.get $dc_wrote) (then (global.set $dc_blockWrote (i32.const 1))))
       (if (global.get $dc_bulk) (then (global.set $dc_blockBulk (i32.const 1))))
       (local.set $cur (call $dc_wip (i32.add (local.get $cur) (global.get $dc_n))))
@@ -658,7 +680,6 @@ function decoderWat() {
 
 ;; Readers, so the host can pull the side tables back without knowing the map.
 (func (export "dc_fixups") (result i32) (global.get $dc_nfix))
-(func (export "dc_covered") (result i32) (global.get $dc_ncov))
 ;; The decoded ModRM, exported so decode-diff can say WHICH part of an operand
 ;; disagreed rather than only that the emitted word did.
 (func (export "dc_ea") (result i32) (global.get $dc_ea))
@@ -674,10 +695,10 @@ function decoderWat() {
 (func (export "compile_block")
       (param $ip i32) (param $base i32) (param $mask i32)
       (param $d32 i32) (param $arena i32) (param $maxWords i32)
-      (param $oneInsn i32) (result i32)
+      (param $oneInsn i32) (param $seed i32) (result i32)
   (call $dc_block (local.get $ip) (local.get $base) (local.get $mask)
                   (local.get $d32) (local.get $arena) (local.get $maxWords)
-                  (local.get $oneInsn)))
+                  (local.get $oneInsn) (local.get $seed)))
 `;
 }
 

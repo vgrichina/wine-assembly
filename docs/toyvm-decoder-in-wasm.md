@@ -146,6 +146,53 @@ all; it is a coverage figure for three opcode families, not a prediction of how
 much of a run's decode time moves. That number needs `--handler-hist` weighting
 and is not measured yet.
 
+## Wiring it in: what had to be given back to the host, and what did not
+
+`compileProgram` takes an `opts.wasmDecoder` and offers wasm the rest of each
+block; `run-dos.js --no-wasm-decode` is the A/B partner. Three host-side rules
+run over a block wasm decoded, and each one had to be *reproduced*, not
+approximated:
+
+- **The decryptor rule.** A block that stores and then branches backward is a
+  copy, a fill, or a decryptor, and the code after it is often the bytes it has
+  not written yet. The rule is per instruction and reads all of that
+  instruction's edges together — a conditional jump has two, and a backward
+  target makes the forward one suspect. So each wasm fixup record carries the ip
+  of the instruction that emitted it and whether anything up to and including
+  that instruction stored, and the host replays the identical rule. Deciding
+  each fixup on its own target would find a decryptor's fall-through forward,
+  call it safe, and queue exactly the ciphertext the rule exists to refuse.
+- **"Has anything stored yet" across a seam.** One host block can take several
+  wasm calls, so `compile_block` takes that state as a seed rather than starting
+  at zero. Zeroing it would tell the host a decryptor that had already written
+  had not.
+- **The block extent** is *not* reproduced. The host derives it from where the
+  block started and stopped, which is the same answer it already computes for
+  the blocks it decodes itself; a second version in wasm could only disagree.
+
+The one thing initially given up — the mid-block "already emitted, jump to it"
+check, which wasm could not make because it has no view of `blocks` — turned out
+not to be givable. Emitting a second copy of a tail is not merely wasteful: the
+blocks around it end at different places, the guest takes its interrupts at
+different instructions, and **COMPOVRS.EXE rendered a different frame from 4M
+dispatches onward** while both decoders agreed instruction for instruction. It
+is restored with an 8KB bitmap of block heads that wasm stops on, indexed by
+`ip & 0xFFFF`. A 32-bit segment can alias two ips onto one bit, which can only
+cause a spurious stop and never a missed one — the host then finds no block
+there and carries on.
+
+## Equivalence, corpus-wide
+
+The check that matters is not "does it still run" but "is it the same run".
+`--no-wasm-decode` against the default, 8M dispatches each, comparing handbacks,
+interrupts, traces, arena bytes, the frame hash and the stopping `cs:ip`.
+
+That comparison is what found the COMPOVRS divergence: 49 of 146 programs
+differed, and the frame hash — not a crash, not a hang — was the only thing that
+said so on most of them. Six differed in arena size alone. The runs are
+deterministic, which is what makes the comparison worth anything; that was
+verified before reading anything into a difference.
+
 ## A generated-WAT trap, now checked
 
 `$dc_modrm` shipped with one close-paren too many. It closed the *module*, not
