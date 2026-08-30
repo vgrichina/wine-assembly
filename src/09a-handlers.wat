@@ -6163,7 +6163,8 @@
   ;; 224: RegCreateKeyA(hKey, lpSubKey, phkResult) — 3 args stdcall
   (func $handle_RegCreateKeyA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $host_reg_create_key
-      (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2) (i32.const 0)))
+      (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2)
+      (i32.const 0) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
@@ -9711,7 +9712,8 @@ HookEx — no next hook in chain, return 0
         (local.set $out_g (call $heap_alloc (i32.const 4)))
         (if (i32.eqz (local.get $out_g)) (then (return (i32.const 8)))) ;; ERROR_NOT_ENOUGH_MEMORY
         (local.set $res (call $host_reg_create_key
-          (local.get $hkey) (local.get $sub_wa) (local.get $out_g) (local.get $wide)))
+          (local.get $hkey) (local.get $sub_wa) (local.get $out_g)
+          (local.get $wide) (i32.const 0)))
         (if (i32.eqz (local.get $res))
           (then (local.set $target (call $gl32 (local.get $out_g)))))
         (call $heap_free (local.get $out_g))
@@ -9779,7 +9781,8 @@ HookEx — no next hook in chain, return 0
   (func $handle_RegCreateKeyW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; RegCreateKeyW(hKey, lpSubKey, phkResult) — 3 args stdcall
     (global.set $eax (call $host_reg_create_key
-      (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2) (i32.const 1)))
+      (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $arg2)
+      (i32.const 1) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
@@ -9800,10 +9803,8 @@ HookEx — no next hook in chain, return 0
     (local.set $phkResult (i32.load (i32.add (local.get $wa_esp) (i32.const 32))))
     (local.set $lpdwDisposition (i32.load (i32.add (local.get $wa_esp) (i32.const 36))))
     (global.set $eax (call $host_reg_create_key
-      (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $phkResult) (i32.const 1)))
-    ;; Set disposition = REG_CREATED_NEW_KEY (1) if requested
-    (if (i32.ne (local.get $lpdwDisposition) (i32.const 0))
-      (then (call $gs32 (local.get $lpdwDisposition) (i32.const 1))))
+      (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $phkResult)
+      (i32.const 1) (local.get $lpdwDisposition)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 40)))
   )
 
@@ -9814,9 +9815,8 @@ HookEx — no next hook in chain, return 0
     (local.set $phkResult (i32.load (i32.add (local.get $wa_esp) (i32.const 32))))
     (local.set $lpdwDisposition (i32.load (i32.add (local.get $wa_esp) (i32.const 36))))
     (global.set $eax (call $host_reg_create_key
-      (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $phkResult) (i32.const 0)))
-    (if (i32.ne (local.get $lpdwDisposition) (i32.const 0))
-      (then (call $gs32 (local.get $lpdwDisposition) (i32.const 1))))
+      (local.get $arg0) (call $g2w (local.get $arg1)) (local.get $phkResult)
+      (i32.const 0) (local.get $lpdwDisposition)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 40)))
   )
 

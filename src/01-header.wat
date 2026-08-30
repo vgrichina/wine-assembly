@@ -595,8 +595,9 @@
   ;; Registry host imports — backed by localStorage
   (import "host" "reg_open_key" (func $host_reg_open_key (param i32 i32 i32) (result i32)))
   ;; reg_open_key(hKey, subKeyWA, isWide) → hKey or 0
-  (import "host" "reg_create_key" (func $host_reg_create_key (param i32 i32 i32 i32) (result i32)))
-  ;; reg_create_key(hKey, subKeyWA, phkResultGA, isWide) → ERROR_SUCCESS(0) or error
+  (import "host" "reg_create_key" (func $host_reg_create_key (param i32 i32 i32 i32 i32) (result i32)))
+  ;; reg_create_key(hKey, subKeyWA, phkResultGA, isWide, dispositionGA)
+  ;; writes REG_CREATED_NEW_KEY(1) or REG_OPENED_EXISTING_KEY(2) when requested.
   (import "host" "reg_query_value" (func $host_reg_query_value (param i32 i32 i32 i32 i32 i32) (result i32)))
   ;; reg_query_value(hKey, nameWA, typeGA, dataGA, cbDataGA, isWide) → error code
   (import "host" "reg_set_value" (func $host_reg_set_value (param i32 i32 i32 i32 i32 i32) (result i32)))

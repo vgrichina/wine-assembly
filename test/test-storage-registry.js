@@ -62,6 +62,7 @@ const valueGA = IMAGE_BASE + 0x1200;
 const outGA = IMAGE_BASE + 0x1300;
 const cbGA = IMAGE_BASE + 0x1400;
 const phkGA = IMAGE_BASE + 0x1500;
+const dispositionGA = IMAGE_BASE + 0x1510;
 const enumNameGA = IMAGE_BASE + 0x1900;
 const enumNameLenGA = IMAGE_BASE + 0x1A00;
 const enumTypeGA = IMAGE_BASE + 0x1B00;
@@ -77,9 +78,15 @@ writeGuestString(subKeyGA, 'Software\\WineAssemblyTest');
 writeGuestString(valueNameGA, 'PlayerName');
 writeGuestString(valueGA, 'Ada');
 
-assert.strictEqual(storage.reg_create_key(0x80000001, g2w(subKeyGA, IMAGE_BASE), phkGA, 0), 0);
+assert.strictEqual(storage.reg_create_key(
+  0x80000001, g2w(subKeyGA, IMAGE_BASE), phkGA, 0, dispositionGA), 0);
 const hKey = readGuestU32(phkGA);
 assert(hKey, 'reg_create_key should write a handle');
+assert.strictEqual(readGuestU32(dispositionGA), 1, 'new keys report REG_CREATED_NEW_KEY');
+assert.strictEqual(storage.reg_create_key(
+  0x80000001, g2w(subKeyGA, IMAGE_BASE), phkGA, 0, dispositionGA), 0);
+assert.strictEqual(readGuestU32(dispositionGA), 2,
+  'existing keys report REG_OPENED_EXISTING_KEY');
 
 assert.strictEqual(storage.reg_set_value(hKey, g2w(valueNameGA, IMAGE_BASE), 1, valueGA, 4, 0), 0);
 assert.deepStrictEqual(registryChanges.shift(), {
