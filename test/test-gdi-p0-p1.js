@@ -230,6 +230,8 @@ async function main() {
     const miter = widenedJoin(0x2000);
     assert.strictEqual(wat.test_call_EqualRgn(round, bevel), 0);
     assert.strictEqual(wat.test_call_EqualRgn(round, miter), 0);
+    assert.strictEqual(wat.test_call_EqualRgn(bevel, miter), 0,
+      'PS_JOIN_BEVEL and PS_JOIN_MITER must execute their distinct outer wedges');
     [round, bevel, miter].forEach(r => assert.strictEqual(wat.test_gdi_rgn_delete(r), 1));
   });
 

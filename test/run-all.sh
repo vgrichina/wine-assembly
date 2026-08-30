@@ -38,6 +38,7 @@ for a in "$@"; do
 done
 
 UNIT=(
+  test/test-check-parens.js
   test/test-boot-cursor.js
   test/test-x86-ops.js
   test/test-lut-run-generalized.js

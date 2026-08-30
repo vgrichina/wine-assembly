@@ -9,6 +9,7 @@
  *   node tools/check-parens.js [file] --depth N         # lines that cross depth N
  *   node tools/check-parens.js [file] --diff            # force diff vs git HEAD (all divergences)
  *   node tools/check-parens.js [file] --no-diff         # skip auto-diff
+ *   node tools/check-parens.js [file] --quiet           # errors only
  */
 'use strict';
 const fs = require('fs');
@@ -20,6 +21,7 @@ let showFuncs = false;
 let showDepth = null;
 let diffMode = false;
 let noDiff = false;
+let quiet = false;
 
 const argv = process.argv.slice(2);
 while (argv.length) {
@@ -35,19 +37,91 @@ while (argv.length) {
     diffMode = true;
   } else if (a === '--no-diff') {
     noDiff = true;
+  } else if (a === '--quiet') {
+    quiet = true;
   } else if (!a.startsWith('-')) {
     file = a;
   }
 }
 
-/** Strip ;; comments from a line */
-function stripComment(line) {
-  let inStr = false;
-  for (let i = 0; i < line.length; i++) {
-    if (line[i] === '"') inStr = !inStr;
-    if (!inStr && line[i] === ';' && line[i + 1] === ';') return line.slice(0, i);
+/**
+ * Hide WAT strings and comments while preserving line/column positions.
+ *
+ * A line regex is not sufficient here: data strings routinely contain
+ * parentheses and semicolons, quotes may be escaped, and WAT block comments
+ * can span lines and nest. The old checker counted all of those tokens as
+ * module structure, so valid combined.wat ended at depth -1 even though the
+ * compiler accepted it.
+ */
+function structuralLines(lines) {
+  const result = [];
+  const errors = [];
+  let inString = false;
+  let escaped = false;
+  let blockDepth = 0;
+
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    const line = lines[lineIndex];
+    let structural = '';
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      const next = line[i + 1];
+
+      if (blockDepth) {
+        if (ch === '(' && next === ';') {
+          blockDepth++;
+          structural += '  ';
+          i++;
+        } else if (ch === ';' && next === ')') {
+          blockDepth--;
+          structural += '  ';
+          i++;
+        } else {
+          structural += ' ';
+        }
+        continue;
+      }
+
+      if (inString) {
+        structural += ' ';
+        if (escaped) {
+          escaped = false;
+        } else if (ch === '\\') {
+          escaped = true;
+        } else if (ch === '"') {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (ch === ';' && next === ';') {
+        structural += ' '.repeat(line.length - i);
+        break;
+      }
+      if (ch === '(' && next === ';') {
+        blockDepth = 1;
+        structural += '  ';
+        i++;
+        continue;
+      }
+      if (ch === '"') {
+        inString = true;
+        escaped = false;
+        structural += ' ';
+        continue;
+      }
+      structural += ch;
+    }
+    result.push(structural);
   }
-  return line;
+
+  if (blockDepth) {
+    errors.push({ line: lines.length, msg: `unterminated block comment (depth ${blockDepth})` });
+  }
+  if (inString) {
+    errors.push({ line: lines.length, msg: 'unterminated string' });
+  }
+  return { lines: result, errors };
 }
 
 /**
@@ -55,18 +129,19 @@ function stripComment(line) {
  * When snapshotLabels is true, records the active label stack per line (slower).
  */
 function analyze(lines, { snapshotLabels = false } = {}) {
+  const structural = structuralLines(lines);
   let depth = 0;
   const profile = [];        // { before, after, labels? } per line
   const labelStack = [];     // { name, kind, depth, line }
   const scopeStack = [];     // tracks all scope openers to know when to pop labels
-  const errors = [];
+  const errors = structural.errors.slice();
   const funcBounds = [];
   let currentFunc = null;
 
   for (let i = 0; i < lines.length; i++) {
     const lineNum = i + 1;
     const raw = lines[i];
-    const stripped = stripComment(raw);
+    const stripped = structural.lines[i];
     const before = depth;
 
     let pos = 0;
@@ -295,7 +370,7 @@ if (!hasOutput && errors.length) {
   process.exit(1);
 }
 
-if (!hasOutput) {
+if (!hasOutput && !quiet) {
   for (let i = 0; i < profile.length; i++) {
     const p = profile[i];
     if (Math.abs(p.after - p.before) > 6) {
@@ -303,6 +378,6 @@ if (!hasOutput) {
     }
   }
   console.log(`OK: ${lines.length} lines, balanced, labels in scope`);
-  // Auto-diff vs HEAD — cheap, and catches misnesting that balances overall.
-  if (!noDiff) runDiff({ quiet: true });
 }
+// Auto-diff vs HEAD — cheap, and catches misnesting that balances overall.
+if (!hasOutput && !noDiff) runDiff({ quiet: true });

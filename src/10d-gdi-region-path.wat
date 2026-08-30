@@ -2797,7 +2797,7 @@
     (local $mx f64) (local $my f64) (local $t f64) (local $dx f64) (local $dy f64)
     (if (i32.eq (local.get $join) (i32.const 0))
       (then (call $gdi_path_widen_disk (local.get $mask) (local.get $mask_w) (local.get $mask_h)
-        (local.get $origin_x) (local.get $origin_y) (local.get $bx) (local.get $by) (local.get $width)))
+        (local.get $origin_x) (local.get $origin_y) (local.get $bx) (local.get $by) (local.get $width))
         (return)))
     (local.set $ux (f64.convert_i32_s (i32.sub (local.get $bx) (local.get $ax))))
     (local.set $uy (f64.convert_i32_s (i32.sub (local.get $by) (local.get $ay))))

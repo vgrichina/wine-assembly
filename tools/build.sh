@@ -65,6 +65,10 @@ echo "Concatenating WAT parts..."
 # From WAT_FILES, not a shell glob: combined.wat must be the same sequence the
 # real compile sees, or every function index in it names the wrong function.
 node tools/concat-wat.js
+# Keep the lightweight structural checker honest and useful. The compiler is
+# authoritative for syntax; this gate adds targeted diagnostics for unmatched
+# parentheses and out-of-scope branch labels before a WAT edit ships.
+node tools/check-parens.js build/combined.wat --no-diff --quiet
 
 echo "Compiling with lib/compile-wat.js..."
 node tools/build-compile-wat.js
