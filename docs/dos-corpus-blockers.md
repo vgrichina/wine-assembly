@@ -21,6 +21,8 @@ two of them are not bugs at all.
 meant to show — 164 graphics, 29 text art. Of the six that do not, three are
 programs behaving correctly (`001.EXE`, `002.EXE`, `rage.exe`, below), leaving
 **ANGEL.EXE + its SETUP.EXE** and **AQUAPHOB.EXE** as the open ones.
+AQUAPHOB draws now — see its entry: it needed a VESA BIOS to put anything on
+the screen at all, and it needs a mouse click to get past the screen it draws.
 
 ## Not work items
 
@@ -562,6 +564,56 @@ $ node tools/toyvm/run-dos.js JULTRO.EXE --seconds=15 --auto-key --png=OUT --no-
 ```
 
 ### BLIQ's neighbours in the blank bucket
+
+**AQUAPHOB.EXE draws, and the two things that were stopping it were neither
+DPMI nor speed.** Recorded above the older investigation because that
+investigation's conclusion — "a DPMI host is a large piece of work for one
+demo" — was not what stood between this program and its picture.
+
+*It draws through VESA, not through the mode-13h window.* Its first video call
+is `int 10h AX=4F00`, and answering nothing to that left it with no mode to draw
+in. `dos.js` now carries a small VBE 1.2: controller info, mode info for the
+four 8bpp modes a 1995 demo asks for, set/get mode and window control. The
+picture lives outside the guest address space and the 64KB at A000 is a window
+onto one bank of it, copied in and out as the guest switches banks. AQUAPHOB
+takes `4F00 → 4F01 (CX=0x101) → 4F02 (BX=0x101)` and then bank-switches 0..4
+through `4F05`, which is a 640x480x8 picture being painted a bank at a time.
+
+Two readers had to learn the same thing, and both were caught by the same
+symptom — a 320x200 photograph of a 640x480 screen. `screenSurface` answers with
+the VESA geometry rather than the CRTC's, which describes the window and not the
+screen; and `readFrame` took its non-planar geometry from `LINEAR` wholesale, so
+the surface was read as the first 64KB at A000 whatever the caller passed.
+
+*Its interface is drawn, and it ignores the keyboard.* What it puts up is a
+640x480 setup screen — sound cards down the left, video modes down the right,
+PORT/IRQ/DMA/KHZ along the bottom, `START DEMO` at the lower right — and it
+hit-tests it against `int 33h` fn 03. `enter`, `space`, `esc` and `s` all leave
+the frame hash unchanged. `--click=X:Y[@FRAC]` presses the left button at a
+point in the guest's mouse coordinate space, holding it for a stretch of
+handbacks because a press that is up again before the next poll never happened.
+Mind that the coordinates are the ones `int 33h` reports and not always the
+pixel grid: this program sets a 0..1278 horizontal range over 640 pixels (fn 07)
+and a 0..479 vertical one (fn 08), so its x is doubled.
+
+```
+$ node tools/toyvm/run-dos.js AQUAPHOB.EXE --tick-scale=50 --dispatches=250m \
+    --click=44:110@0.2,910:325@0.4 --png=OUT
+```
+
+— SILENCE, then START DEMO, and the demo runs: mode 13h, a lit "presents" over
+spheres. Which is the last piece: a BIOS mode set now *leaves* the VESA mode.
+Keeping it across one photographed the demo as the setup screen still sitting in
+the banks, drawn in the demo's new palette — a convincing picture of a corrupt
+framebuffer that was really a stale one.
+
+**The sweep photographs the setup screen, not the demo**, and that is where this
+stops for now. The screen is 307200 pixels of real content so the row is not a
+blank, but the rungs in `shot-sweep.js` are all evidence-driven and there is no
+evidence in a run that says *where* to click. A blind click rung would be as
+likely to press `EXIT TO DOS`.
+
+The older investigation, still accurate about what the demo costs:
 
 **AQUAPHOB.EXE** prints `DPMI v0.90 - Paging:1 RM:1 CPU:80386` — its own
 extender's banner. We implement no DPMI (INT 31h) and answer INT 2Fh AX=1687
