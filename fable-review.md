@@ -91,7 +91,7 @@ hour.
 | 8 | symbolic handler/api ids | OPEN, grew | 371 bare literals in `07-decoder.wat` (+37 in `07b`), H440/H441 added as bare `:666,:706`; stale "handler 422/424" comments still at `07-decoder.wat:50,152,416,2132` and `13-exports.wat:3037,3045` (422/424 are now `$th_mmx_rr/_mr`); `0xCACA0010` hand-stored `09a8:985,1018` |
 | 9 | app-literal gate / `copySuperops` | PARTIAL | MW3 VAs are out of the decoder (byte-hash predicates, §P3-3.9); `browser-shell.js:566` honors the flag; **`test/run.js --app=mw3` still does not** (only `--copy-superops`, `:188,4035,7429`); no allowlist tool |
 | 10 | one globals table / hwnd base / `yr===9` | PARTIAL | `lib/worker-imports.js` exists but is a *ctx-key* list, not the WASM-global table; setter sets still diverge (§P3-3.3); hwnd base still two formulas (`thread-manager.js:416-418` vs `:1040`); duplicate `yr === 9` moved to `thread-manager.js:2276-2287` / `:2303-2309` (second still unreachable) |
-| 11 | silent stubs | PARTIAL | DONE: WaitMessage `09a:13588-13600` (`5237ac44`), ReleaseMutex `09a:12056-12071` (`1e76e8ab`), HeapCreate per-call `09a:2123`, CreateConsoleScreenBuffer `09a7:2914`, CreateIconFromResourceEx `09a:11456`, DirectDrawEnumerateA CACA `09a8:1043`, EnumDisplayModes `09a8:1833`. OPEN: RegisterHotKey `09a:11097-11103`; hooks `09a7:488` / `09a:9348-9360`; DDE trio `09a:1188,1198,1245`; 13 DX enumerations returning 0 without a callback (`09a8:2410,5279,5357`…, DirectPlay `09a7:2724`); 4 viewport lights in `09aa` |
+| 11 | silent stubs | PARTIAL | DONE: WaitMessage `09a:13588-13600` (`5237ac44`), ReleaseMutex `09a:12056-12071` (`1e76e8ab`), HeapCreate per-call `09a:2123`, CreateConsoleScreenBuffer `09a7:2914`, CreateIconFromResourceEx `09a:11456`, DirectDrawEnumerateA CACA `09a8:1043`, EnumDisplayModes `09a8:1833`. RegisterHotKey FIXED `2b27e407` (real registration list, modifier matching, WM_HOTKEY through the queue — `09a:11184-11238`). OPEN: hooks `09a7:488` / `09a:9348-9360`; DDE trio `09a:1188,1198,1245`; 13 DX enumerations returning 0 without a callback (`09a8:2410,5279,5357`…, DirectPlay `09a7:2724`); 4 viewport lights in `09aa` |
 | 12 | dead code / tools / requires | PARTIAL | WAT dead list deleted (`71191bed`); `wat-func.js` still has no `--dead`; all 6 superseded tools present; 3 broken requires unchanged (`tools/trace-assert.js:6`, `render-desktop.js:9`, `test/call-func.js:10`); `win16-v86-compare.js:265` still greps `[CreateWindowEx` |
 | 13 | per-block counters / atomic gate | OPEN | `04-cache.wat:741,797`, `05-alu.wat:773`, `13-exports.wat:52-58` |
 | 14 | cached DataView / live-surface set | **WORSE** | `DX_SLOT_COUNT` 1024→**4096** (`host-imports.js:386`, `09a8:18`, `6fd7b657`); `_presentBestDxOffscreen :964-978` still walks every slot with a DataView each; GL `u32At` (`gl-command-stream.js:55-57`) now also called from the immediate path (`:129,144,215,219,231,240,269,271`) with `_memoryView()` 60 lines above it; `gl-compat.js:471-476` `_dv/_stackDv` per accessor |
@@ -217,6 +217,9 @@ ring) and `:214-221` sends one synchronously before every button-down — an
 owner-thread round trip per click in Worker mode. Nit in the same file: flat
 `GL_QUADS` take triangle 1's colour from vertex i+2 where GL's provoking vertex
 is i+3 (`gl-command-stream.js:60`); `LINE_STRIP/LOOP` ignore flat entirely.
+*(Provoking-vertex nit FIXED `758263a2` — both QUADS triangles and QUAD_STRIP
+now name provoking `i+3` explicitly, `gl-command-stream.js:141-153` — and
+`6cc2dcaa` deleted the dead immediate replay path outright.)*
 
 **3.9 The MW3 folds — good, with one gate too wide.** H436/H440/H441 are now
 address-independent byte proofs: H440 compares its entire 19-byte body
@@ -447,7 +450,8 @@ check-parens, 3.9 COPY gate, 3.11, 3.12) is verbatim open.
 
 **New in this window, ranked.**
 
-**A.1 The committed toyvm bundle is stale and can no longer be rebuilt — bug; still open at 08:20, one more `emit.js` change behind.**
+**A.1 The committed toyvm bundle is stale and can no longer be rebuilt — bug; still open at 15:21, three more `emit.js` changes behind (`f2dc80d2`,
+`4de53cb7`, `1860480e`).**
 `docs/dos-corpus/live/toyvm-bundle.js` was last generated in `6b015971`, before
 the wasm decoder existed (678,721 B committed vs 699,901 B from HEAD, first
 difference at byte 103,097). Worse: `tools/toyvm/bundle-browser.js:37-49`
@@ -459,7 +463,11 @@ green on bytes the source can no longer produce. Pass-3 rec 8 (`--check` in
 `build.sh`) would have caught this the same hour.
 
 **A.2 The D3D render Worker (`b5baede5`, `?d3d-worker`) — a good prototype
-with one unmapped write.** Design is right: `lib/d3d-command-stream.js` copies
+with one unmapped write. Slot-63 half FIXED `92b6a9b4`: `init_thread(63,…)` is
+replaced by a renderer-only `d3dim_worker_init(imageBase)` that claims no
+thread's page/cache partitions; image parity and the FPS A/B are still owed
+(re-notes :608), and the board reopened MCM terrain convergence after
+`8dddcda7`.** Design is right: `lib/d3d-command-stream.js` copies
 a 4 KiB device-state snapshot plus 32 B × N canonical vertices per
 `DrawPrimitive` into a 3-slot × 2 MiB private `SharedArrayBuffer` ring (not
 guest memory, so no map entry needed); `lib/d3d-render-worker.js` instantiates
@@ -488,7 +496,10 @@ slot with its own sized regions in the map, or an assertion that
 `init_thread`'s slot is below `PAGE_DIR_BASE_SIZE/0x4000`; a parity test before
 any FPS claim.
 
-**A.3 `FindFirstChangeNotificationA/W` is a silent stub with a body**
+**A.3 `FindFirstChangeNotificationA/W` is a silent stub with a body — FIXED
+`b260ed8c`: `lib/filesystem.js` signals the watch from every mutation
+(`_notifyChange` at write/resize/attrs/delete/mkdir), registered from WAT via
+`$host_fs_register_change_notification` (`09a:1669`)**
 (`09a:1647-1685`, `4a08c267`). It creates a manual-reset event that nothing
 ever signals ("VFS mutations do not signal the object yet"), so a guest that
 `WaitForSingleObject`s on the handle waits forever — WinRAR's directory watch
