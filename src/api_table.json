@@ -25462,5 +25462,33 @@
       }
     ],
     "ret": "BOOL"
+  },
+  {
+    "id": 3060,
+    "name": "IsCharUpperA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3038206746,
+    "args": [
+      {
+        "name": "ch",
+        "type": "CHAR"
+      }
+    ],
+    "ret": "BOOL"
+  },
+  {
+    "id": 3061,
+    "name": "IsCharLowerA",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 2280764713,
+    "args": [
+      {
+        "name": "ch",
+        "type": "CHAR"
+      }
+    ],
+    "ret": "BOOL"
   }
 ]

@@ -24,6 +24,15 @@ assert.match(handlers,
   /\(func \$handle_IsCharAlphaNumericA[\s\S]*?\(call \$ctype1_ascii_flags[\s\S]*?\(i32\.const 0x104\)[\s\S]*?\(i32\.const 8\)\)\)\)/,
   'IsCharAlphaNumericA accepts C1_ALPHA or C1_DIGIT and pops ret plus one argument');
 
+for (const [name, flag] of [['IsCharUpperA', '0x01'], ['IsCharLowerA', '0x02']]) {
+  const entry = apiTable.find(apiEntry => apiEntry.name === name);
+  assert(entry, `${name} is registered`);
+  assert.strictEqual(entry.nargs, 1, `${name} consumes one promoted CHAR argument`);
+  assert.match(handlers,
+    new RegExp(`\\(func \\$handle_${name}[\\s\\S]*?\\(call \\$ctype1_ascii_flags[\\s\\S]*?\\(i32\\.const ${flag}\\)[\\s\\S]*?\\(i32\\.const 8\\)\\)\\)\\)`),
+    `${name} reuses ANSI CTYPE1 classification and pops ret plus one argument`);
+}
+
 function isCharAlphaA(value) {
   const ch = value & 0xff;
   return (ch >= 0x41 && ch <= 0x5a) || (ch >= 0x61 && ch <= 0x7a);
@@ -37,6 +46,29 @@ function isCharAlphaNumericA(value) {
   const ch = value & 0xff;
   return isCharAlphaA(ch) || (ch >= 0x30 && ch <= 0x39);
 }
+
+function isCharUpperA(value) {
+  const ch = value & 0xff;
+  return (ch >= 0x41 && ch <= 0x5a)
+    || (ch >= 0xc0 && ch <= 0xd6)
+    || (ch >= 0xd8 && ch <= 0xde)
+    || [0x8a, 0x8c, 0x8e, 0x9f].includes(ch);
+}
+
+function isCharLowerA(value) {
+  const ch = value & 0xff;
+  return (ch >= 0x61 && ch <= 0x7a)
+    || (ch >= 0xdf && ch <= 0xf6)
+    || (ch >= 0xf8 && ch <= 0xff)
+    || [0x9a, 0x9c, 0x9e, 0xb5, 0xaa, 0xba].includes(ch);
+}
+
+for (const ch of [0x41, 0xc9, 0x8a, 0x9f]) assert.strictEqual(isCharUpperA(ch), true);
+for (const ch of [0x61, 0xe9, 0x9a, 0xdf]) assert.strictEqual(isCharLowerA(ch), true);
+for (const ch of [0x61, 0xe9, 0xd7, 0xf7]) assert.strictEqual(isCharUpperA(ch), false);
+for (const ch of [0x41, 0xc9, 0xd7, 0xf7]) assert.strictEqual(isCharLowerA(ch), false);
+assert.strictEqual(isCharUpperA(0x490041), true,
+  'only the promoted low ANSI byte is classified');
 
 for (const ch of ['A', 'z', '0', '9']) {
   assert.strictEqual(isCharAlphaNumericA(ch.charCodeAt(0)), true);

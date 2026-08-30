@@ -2338,11 +2338,11 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 36))) (return)
   )
 
-  ;; ASCII CT_CTYPE1 classification used by GetStringTypeA/W and the Ex
-  ;; variants. CT_CTYPE1 bits: C1_UPPER=1 C1_LOWER=2 C1_DIGIT=4
-  ;; C1_SPACE=8 C1_PUNCT=16 C1_CNTRL=32 C1_ALPHA=256.
+  ;; Win98 en-US CT_CTYPE1 classification used by GetStringTypeA/W, their Ex
+  ;; variants, and the IsChar family. CT_CTYPE1 bits: C1_UPPER=1 C1_LOWER=2
+  ;; C1_DIGIT=4 C1_SPACE=8 C1_PUNCT=16 C1_CNTRL=32 C1_ALPHA=256.
   (func $ctype1_ascii_flags (param $ch i32) (result i32)
-    (local $ct i32)
+    (local $ct i32) (local $upper i32) (local $lower i32)
     (if (i32.le_u (local.get $ch) (i32.const 31))
       (then (local.set $ct (i32.const 0x20))))
     (if (i32.or (i32.eq (local.get $ch) (i32.const 32))
@@ -2363,6 +2363,39 @@
       (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x10)))))
     (if (i32.and (i32.ge_u (local.get $ch) (i32.const 123)) (i32.le_u (local.get $ch) (i32.const 126)))
       (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x10)))))
+    ;; CP1252 letters outside ASCII. Every i32.and combines comparison
+    ;; results, keeping the logical-i32 gate's boolean-normalization invariant.
+    (local.set $upper
+      (i32.or
+        (i32.or
+          (i32.and (i32.ge_u (local.get $ch) (i32.const 0xc0))
+                   (i32.le_u (local.get $ch) (i32.const 0xd6)))
+          (i32.and (i32.ge_u (local.get $ch) (i32.const 0xd8))
+                   (i32.le_u (local.get $ch) (i32.const 0xde))))
+        (i32.or
+          (i32.or (i32.eq (local.get $ch) (i32.const 0x8a))
+                  (i32.eq (local.get $ch) (i32.const 0x8c)))
+          (i32.or (i32.eq (local.get $ch) (i32.const 0x8e))
+                  (i32.eq (local.get $ch) (i32.const 0x9f))))))
+    (local.set $lower
+      (i32.or
+        (i32.or
+          (i32.and (i32.ge_u (local.get $ch) (i32.const 0xdf))
+                   (i32.le_u (local.get $ch) (i32.const 0xf6)))
+          (i32.and (i32.ge_u (local.get $ch) (i32.const 0xf8))
+                   (i32.le_u (local.get $ch) (i32.const 0xff))))
+        (i32.or
+          (i32.or (i32.eq (local.get $ch) (i32.const 0x9a))
+                  (i32.eq (local.get $ch) (i32.const 0x9c)))
+          (i32.or
+            (i32.or (i32.eq (local.get $ch) (i32.const 0x9e))
+                    (i32.eq (local.get $ch) (i32.const 0xb5)))
+            (i32.or (i32.eq (local.get $ch) (i32.const 0xaa))
+                    (i32.eq (local.get $ch) (i32.const 0xba)))))))
+    (if (local.get $upper)
+      (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x101)))))
+    (if (local.get $lower)
+      (then (local.set $ct (i32.or (local.get $ct) (i32.const 0x102)))))
     (local.get $ct)
   )
 
@@ -2385,6 +2418,26 @@
         (i32.and
           (call $ctype1_ascii_flags (i32.and (local.get $arg0) (i32.const 0xff)))
           (i32.const 0x104))
+        (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; BOOL IsCharUpperA/IsCharLowerA(CHAR ch). Far 1.70 passes promoted CHAR
+  ;; values whose upper bytes are unspecified, so classify the low ANSI byte.
+  (func $handle_IsCharUpperA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax
+      (i32.ne
+        (i32.and
+          (call $ctype1_ascii_flags (i32.and (local.get $arg0) (i32.const 0xff)))
+          (i32.const 0x01))
+        (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  (func $handle_IsCharLowerA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax
+      (i32.ne
+        (i32.and
+          (call $ctype1_ascii_flags (i32.and (local.get $arg0) (i32.const 0xff)))
+          (i32.const 0x02))
         (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
