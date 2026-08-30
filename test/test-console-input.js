@@ -132,6 +132,7 @@ function readAnsi(e, buf, n) {
       },
       check_input_hwnd: () => lastHostEvent ? lastHostEvent.hwnd : 0,
       check_input_lparam: () => lastHostEvent ? lastHostEvent.lparam : 0,
+      check_input_wparam: () => lastHostEvent ? lastHostEvent.wparam : 0,
     },
   });
 
@@ -190,8 +191,8 @@ function readAnsi(e, buf, n) {
   e.test_console_reset();
   e.test_console_ensure_window();
   hostEvents.push(
-    { packed: (0x78 << 16) | 0x0100, hwnd: 0, lparam: 1 }, // F9 down
-    { packed: (0x78 << 16) | 0x0101, hwnd: 0, lparam: 1 }, // F9 up
+    { packed: (0x78 << 16) | 0x0100, wparam: 0x78, hwnd: 0, lparam: 1 }, // F9 down
+    { packed: (0x78 << 16) | 0x0101, wparam: 0x78, hwnd: 0, lparam: 1 }, // F9 up
   );
   assert.strictEqual(e.test_call_PeekConsoleInputA(buf, 1, pread), 1);
   assert.strictEqual(e.test_peek32(pread), 1, 'host F9 keydown did not become console input');
@@ -199,6 +200,57 @@ function readAnsi(e, buf, n) {
   assert.strictEqual(e.test_call_ReadConsoleInputA(buf, 1, pread), 1);
   assert.strictEqual(e.test_peek16(buf + 10), 0x78, 'queued F9 changed before read');
   assert.strictEqual(e.test_console_count(), 0, 'host keydown was not consumed');
+
+  // --- ENABLE_MOUSE_INPUT exposes real MOUSE_EVENT_RECORDs ----------------
+  e.test_console_reset();
+  e.test_console_set_mode(0);
+  hostEvents.push({ packed: 0x0200, wparam: 0, hwnd: 0x10001,
+    lparam: (24 << 16) | 40 });
+  assert.strictEqual(e.test_call_PeekConsoleInputA(buf, 1, pread), 1);
+  assert.strictEqual(e.test_peek32(pread), 0,
+    'mouse input is discarded while ENABLE_MOUSE_INPUT is clear');
+
+  e.test_console_set_mode(0x10);
+  hostEvents.push({ packed: (0x0c << 16) | 0x0200, wparam: 0x0c, hwnd: 0x10001,
+    lparam: (24 << 16) | 40 });
+  assert.strictEqual(e.test_call_PeekConsoleInputA(buf, 1, pread), 1);
+  assert.strictEqual(e.test_peek32(pread), 1);
+  assert.strictEqual(e.test_peek16(buf), 2, 'MOUSE_EVENT');
+  assert.strictEqual(e.test_peek16(buf + 4), 5, 'pixel x becomes an 8px character cell');
+  assert.strictEqual(e.test_peek16(buf + 6), 2, 'pixel y becomes a 12px character cell');
+  assert.strictEqual(e.test_peek32(buf + 8), 0, 'move has no pressed buttons');
+  assert.strictEqual(e.test_peek32(buf + 12), 0x18,
+    'MK_CONTROL/MK_SHIFT become console control-key state');
+  assert.strictEqual(e.test_peek32(buf + 16), 1, 'MOUSE_MOVED');
+  assert.strictEqual(e.test_call_ReadConsoleInputA(buf, 1, pread), 1);
+
+  hostEvents.push({ packed: (1 << 16) | 0x0201, wparam: 1, hwnd: 0x10001,
+    lparam: (36 << 16) | 80 });
+  assert.strictEqual(e.test_call_ReadConsoleInputA(buf, 1, pread), 1);
+  assert.strictEqual(e.test_peek16(buf), 2);
+  assert.strictEqual(e.test_peek16(buf + 4), 10);
+  assert.strictEqual(e.test_peek16(buf + 6), 3);
+  assert.strictEqual(e.test_peek32(buf + 8), 1,
+    'left button maps to FROM_LEFT_1ST_BUTTON_PRESSED');
+  assert.strictEqual(e.test_peek32(buf + 16), 0,
+    'button transitions have zero event flags');
+
+  hostEvents.push({ packed: (1 << 16) | 0x020A, wparam: (120 << 16) | 1,
+    hwnd: 0x10001, lparam: (12 << 16) | 16 });
+  assert.strictEqual(e.test_call_ReadConsoleInputA(buf, 1, pread), 1);
+  assert.strictEqual(e.test_peek32(buf + 8), (120 << 16) | 1,
+    'wheel delta remains in dwButtonState high word');
+  assert.strictEqual(e.test_peek32(buf + 16), 4, 'MOUSE_WHEELED');
+
+  hostEvents.push({ packed: 0x0200, wparam: 0, hwnd: 0x10001,
+    lparam: (12 << 16) | 8 });
+  e.test_console_set_mode(0x10);
+  assert.strictEqual(e.test_call_PeekConsoleInputA(buf, 1, pread), 1);
+  e.test_console_push(0x5a, 0x5a);
+  assert.strictEqual(e.test_call_ReadConsoleA(buf, 1, pread), 1);
+  assert.strictEqual(e.test_peek32(pread), 1);
+  assert.strictEqual(readAnsi(e, buf, 1), 'Z',
+    'high-level ReadConsole filters mouse records and returns keyboard text');
 
   // --- flushing drains valid input handles but preserves data on failure ---
   e.test_console_push(0x42, 0x42);

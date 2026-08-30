@@ -574,13 +574,22 @@
         (i32.rem_u
           (i32.add (i32.load (i32.add (global.get $CONSOLE_INPUT) (i32.const 4))) (local.get $i))
           (global.get $CONSOLE_INPUT_MAX))
-        (i32.const 8))))
+        (i32.const 20))))
 
-  (func $console_input_char (param $i i32) (result i32)
+  (func $console_input_type (param $i i32) (result i32)
     (i32.load (call $console_input_slot (local.get $i))))
 
-  (func $console_input_vk (param $i i32) (result i32)
+  (func $console_input_char (param $i i32) (result i32)
     (i32.load offset=4 (call $console_input_slot (local.get $i))))
+
+  (func $console_input_vk (param $i i32) (result i32)
+    (i32.load offset=8 (call $console_input_slot (local.get $i))))
+
+  (func $console_input_mouse_flags (param $i i32) (result i32)
+    (i32.load offset=16 (call $console_input_slot (local.get $i))))
+
+  (func $console_input_control_state (param $i i32) (result i32)
+    (i32.load offset=12 (call $console_input_slot (local.get $i))))
 
   ;; The mode as the *reading* thread must see it. SetConsoleMode mirrors it
   ;; into shared memory because $console_mode is per-instance and the thread
@@ -615,8 +624,11 @@
     ;; its input buffer fills.
     (if (i32.ge_u (local.get $count) (global.get $CONSOLE_INPUT_MAX)) (then (return)))
     (local.set $slot (call $console_input_slot (local.get $count)))
-    (i32.store (local.get $slot) (local.get $ch))
-    (i32.store offset=4 (local.get $slot) (local.get $vk))
+    (i32.store (local.get $slot) (i32.const 1)) ;; KEY_EVENT
+    (i32.store offset=4 (local.get $slot) (local.get $ch))
+    (i32.store offset=8 (local.get $slot) (local.get $vk))
+    (i32.store offset=12 (local.get $slot) (i32.const 0))
+    (i32.store offset=16 (local.get $slot) (i32.const 0))
     (i32.store (global.get $CONSOLE_INPUT) (i32.add (local.get $count) (i32.const 1)))
     (drop (call $host_set_event (call $console_input_event)))
     ;; ENABLE_ECHO_INPUT only echoes in line mode, as on Windows.
@@ -630,6 +642,92 @@
           (then (call $console_put_char (i32.const 10))))
         (call $console_buffer_save_loaded)
         (call $console_refresh))))
+
+  ;; Translate USER mouse state into the button bits used by
+  ;; MOUSE_EVENT_RECORD. MK_MBUTTON is 0x10, while the console structure calls
+  ;; that physical button FROM_LEFT_2ND_BUTTON_PRESSED (0x4).
+  (func $console_mouse_buttons (param $wparam i32) (result i32)
+    (i32.or
+      (i32.and (local.get $wparam) (i32.const 0x3))
+      (i32.or
+        (i32.shr_u (i32.and (local.get $wparam) (i32.const 0x10)) (i32.const 2))
+        (i32.shr_u (i32.and (local.get $wparam) (i32.const 0x60)) (i32.const 2)))))
+
+  ;; Queue a MOUSE_EVENT_RECORD payload. lParam is in console-client pixels;
+  ;; the console contract exposes screen-buffer character cells instead.
+  (func $console_input_push_mouse (param $lparam i32) (param $wparam i32)
+                                  (param $flags i32)
+    (local $count i32) (local $slot i32) (local $x i32) (local $y i32)
+    (if (i32.eqz (i32.and (call $console_input_mode) (i32.const 0x10)))
+      (then (return))) ;; ENABLE_MOUSE_INPUT
+    (local.set $count (i32.load (global.get $CONSOLE_INPUT)))
+    (if (i32.ge_u (local.get $count) (global.get $CONSOLE_INPUT_MAX)) (then (return)))
+    (local.set $x (i32.div_u
+      (i32.and (local.get $lparam) (i32.const 0xFFFF))
+      (global.get $CONSOLE_CELL_W)))
+    (local.set $y (i32.div_u
+      (i32.shr_u (local.get $lparam) (i32.const 16))
+      (global.get $CONSOLE_CELL_H)))
+    (if (i32.ge_u (local.get $x) (global.get $console_width))
+      (then (local.set $x (i32.sub (global.get $console_width) (i32.const 1)))))
+    (if (i32.ge_u (local.get $y) (global.get $console_height))
+      (then (local.set $y (i32.sub (global.get $console_height) (i32.const 1)))))
+    (local.set $slot (call $console_input_slot (local.get $count)))
+    (i32.store (local.get $slot) (i32.const 2)) ;; MOUSE_EVENT
+    (i32.store offset=4 (local.get $slot)
+      (i32.or (i32.and (local.get $x) (i32.const 0xFFFF))
+        (i32.shl (local.get $y) (i32.const 16))))
+    ;; Wheel delta lives in wParam's high word and becomes the high word of
+    ;; dwButtonState; ordinary mouse messages contribute only button bits.
+    (i32.store offset=8 (local.get $slot)
+      (i32.or
+        (i32.and (local.get $wparam) (i32.const 0xFFFF0000))
+        (call $console_mouse_buttons (local.get $wparam))))
+    ;; MK_CONTROL/MK_SHIFT map to LEFT_CTRL_PRESSED/SHIFT_PRESSED.
+    (i32.store offset=12 (local.get $slot)
+      (i32.or
+        (i32.and (local.get $wparam) (i32.const 0x8))
+        (i32.shl (i32.and (local.get $wparam) (i32.const 0x4)) (i32.const 2))))
+    (i32.store offset=16 (local.get $slot) (local.get $flags))
+    (i32.store (global.get $CONSOLE_INPUT) (i32.add (local.get $count) (i32.const 1)))
+    (drop (call $host_set_event (call $console_input_event))))
+
+  ;; Convert one USER mouse message. Return 1 when it belongs to the mouse
+  ;; family even if mouse mode is disabled (the console host discards it
+  ;; instead of leaking it into the application's USER queue).
+  (func $console_input_mouse_message (param $msg i32) (param $wparam i32)
+                                     (param $lparam i32) (result i32)
+    (if (i32.eq (local.get $msg) (i32.const 0x0200)) ;; WM_MOUSEMOVE
+      (then
+        (call $console_input_push_mouse (local.get $lparam) (local.get $wparam)
+          (i32.const 1)) ;; MOUSE_MOVED
+        (return (i32.const 1))))
+    (if (i32.or
+          (i32.or (i32.eq (local.get $msg) (i32.const 0x0201))
+                  (i32.eq (local.get $msg) (i32.const 0x0202)))
+          (i32.or
+            (i32.or (i32.eq (local.get $msg) (i32.const 0x0204))
+                    (i32.eq (local.get $msg) (i32.const 0x0205)))
+            (i32.or (i32.eq (local.get $msg) (i32.const 0x0207))
+                    (i32.eq (local.get $msg) (i32.const 0x0208)))))
+      (then
+        (call $console_input_push_mouse (local.get $lparam) (local.get $wparam)
+          (i32.const 0)) ;; button press/release
+        (return (i32.const 1))))
+    (if (i32.or
+          (i32.or (i32.eq (local.get $msg) (i32.const 0x0203))
+                  (i32.eq (local.get $msg) (i32.const 0x0206)))
+          (i32.eq (local.get $msg) (i32.const 0x0209)))
+      (then
+        (call $console_input_push_mouse (local.get $lparam) (local.get $wparam)
+          (i32.const 2)) ;; DOUBLE_CLICK
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $msg) (i32.const 0x020A)) ;; WM_MOUSEWHEEL
+      (then
+        (call $console_input_push_mouse (local.get $lparam) (local.get $wparam)
+          (i32.const 4)) ;; MOUSE_WHEELED
+        (return (i32.const 1))))
+    (i32.const 0))
 
   (func $console_input_drop (param $n i32)
     (local $count i32)
@@ -664,7 +762,9 @@
     (local.set $count (call $console_input_count))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
-      (if (i32.eq (call $console_input_char (local.get $i)) (i32.const 13))
+      (if (i32.and
+            (i32.eq (call $console_input_type (local.get $i)) (i32.const 1))
+            (i32.eq (call $console_input_char (local.get $i)) (i32.const 13)))
         (then (return (i32.add (local.get $i) (i32.const 1)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
@@ -702,7 +802,8 @@
   ;; non-console event is cached for GetMessage/PeekMessage instead of being
   ;; stolen from a GUI window owned by the process.
   (func $console_input_poll_host
-    (local $packed i32) (local $msg i32) (local $hwnd i32) (local $target i32)
+    (local $packed i32) (local $msg i32) (local $wparam i32)
+    (local $hwnd i32) (local $target i32)
     (call $console_ensure_window)
     ;; PM_NOREMOVE may already own the cached event.
     (if (global.get $pending_input_packed) (then (return)))
@@ -711,6 +812,7 @@
     (global.set $pending_input_hwnd (call $host_check_input_hwnd))
     (global.set $pending_input_lparam (call $host_check_input_lparam))
     (local.set $msg (i32.and (local.get $packed) (i32.const 0xFFFF)))
+    (local.set $wparam (call $host_check_input_wparam))
     (local.set $hwnd (global.get $pending_input_hwnd))
     (if (i32.eqz (local.get $hwnd))
       (then (local.set $hwnd (global.get $main_hwnd))))
@@ -719,17 +821,20 @@
       (then
         (global.set $pending_input_packed (local.get $packed))
         (return)))
+    (if (call $console_input_mouse_message
+          (local.get $msg) (local.get $wparam) (global.get $pending_input_lparam))
+      (then (return)))
     ;; Match $console_wndproc: printable keys arrive through WM_CHAR, while
     ;; navigation/function keys carry their virtual key in WM_KEYDOWN.
     (if (i32.eq (local.get $msg) (i32.const 0x0102))
       (then
         (call $console_input_push
-          (i32.shr_u (local.get $packed) (i32.const 16))
-          (call $console_vk_for_char (i32.shr_u (local.get $packed) (i32.const 16))))
+          (local.get $wparam)
+          (call $console_vk_for_char (local.get $wparam)))
         (return)))
     (if (i32.eq (local.get $msg) (i32.const 0x0100))
       (then
-        (local.set $hwnd (i32.shr_u (local.get $packed) (i32.const 16)))
+        (local.set $hwnd (local.get $wparam))
         (if (i32.or
               (i32.and (i32.ge_u (local.get $hwnd) (i32.const 0x21))
                        (i32.le_u (local.get $hwnd) (i32.const 0x2F)))
@@ -773,7 +878,11 @@
       (br_if $done (i32.ge_u (local.get $i) (local.get $avail)))
       (br_if $done (i32.ge_u (local.get $out) (local.get $maxch)))
       (local.set $ch (call $console_input_char (local.get $i)))
-      (if (local.get $ch)
+      ;; High-level ReadConsole filters mouse/window records out of the input
+      ;; stream even when those modes are enabled.
+      (if (i32.and
+            (i32.eq (call $console_input_type (local.get $i)) (i32.const 1))
+            (i32.ne (local.get $ch) (i32.const 0)))
         (then
           (if (local.get $wide)
             (then (i32.store16 (i32.add (local.get $dst) (i32.mul (local.get $out) (i32.const 2))) (local.get $ch)))
@@ -790,6 +899,10 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $copy)))
     (call $console_input_drop (local.get $i))
+    (if (i32.eqz (local.get $out))
+      (then
+        (call $console_input_block)
+        (return (i32.const 1))))
     (if (local.get $pread)
       (then (i32.store (call $g2w (local.get $pread)) (local.get $out))))
     (i32.const 0))
@@ -799,23 +912,35 @@
   ;; +10 wVirtualKeyCode, +12 wVirtualScanCode, +14 uChar, +16 dwControlKeyState.
   (func $console_read_input (param $buf_g i32) (param $nrec i32) (param $wide i32)
                             (result i32)
-    (local $i i32) (local $rec i32) (local $count i32)
+    (local $i i32) (local $rec i32) (local $count i32) (local $type i32)
     (local.set $count (call $console_input_count))
     (if (i32.gt_u (local.get $nrec) (local.get $count)) (then (local.set $nrec (local.get $count))))
     (local.set $rec (call $g2w (local.get $buf_g)))
     (block $done (loop $fill
       (br_if $done (i32.ge_u (local.get $i) (local.get $nrec)))
-      (i32.store16 (local.get $rec) (i32.const 1))          ;; KEY_EVENT
-      (i32.store offset=4 (local.get $rec) (i32.const 1))   ;; bKeyDown
-      (i32.store16 offset=8 (local.get $rec) (i32.const 1)) ;; wRepeatCount
-      (i32.store16 offset=10 (local.get $rec) (call $console_input_vk (local.get $i)))
-      (i32.store16 offset=12 (local.get $rec) (i32.const 0))
-      (i32.store16 offset=14 (local.get $rec)
-        (select
-          (call $console_input_char (local.get $i))
-          (i32.and (call $console_input_char (local.get $i)) (i32.const 0xFF))
-          (local.get $wide)))
-      (i32.store offset=16 (local.get $rec) (i32.const 0))
+      (local.set $type (call $console_input_type (local.get $i)))
+      (i32.store16 (local.get $rec) (local.get $type))
+      (if (i32.eq (local.get $type) (i32.const 2)) ;; MOUSE_EVENT
+        (then
+          (i32.store offset=4 (local.get $rec)
+            (call $console_input_char (local.get $i))) ;; COORD
+          (i32.store offset=8 (local.get $rec)
+            (call $console_input_vk (local.get $i))) ;; dwButtonState
+          (i32.store offset=12 (local.get $rec)
+            (call $console_input_control_state (local.get $i)))
+          (i32.store offset=16 (local.get $rec)
+            (call $console_input_mouse_flags (local.get $i))))
+        (else
+          (i32.store offset=4 (local.get $rec) (i32.const 1))   ;; bKeyDown
+          (i32.store16 offset=8 (local.get $rec) (i32.const 1)) ;; repeat
+          (i32.store16 offset=10 (local.get $rec) (call $console_input_vk (local.get $i)))
+          (i32.store16 offset=12 (local.get $rec) (i32.const 0))
+          (i32.store16 offset=14 (local.get $rec)
+            (select
+              (call $console_input_char (local.get $i))
+              (i32.and (call $console_input_char (local.get $i)) (i32.const 0xFF))
+              (local.get $wide)))
+          (i32.store offset=16 (local.get $rec) (i32.const 0))))
       (local.set $rec (i32.add (local.get $rec) (i32.const 20)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $fill)))
@@ -1279,6 +1404,9 @@
         (return (i32.const 0))))
     ;; WM_ERASEBKGND — WM_PAINT grounds the client itself.
     (if (i32.eq (local.get $msg) (i32.const 0x0014)) (then (return (i32.const 1))))
+    (if (call $console_input_mouse_message
+          (local.get $msg) (local.get $wParam) (local.get $lParam))
+      (then (return (i32.const 0))))
     ;; WM_CHAR — the character keys. TranslateMessage has already folded the
     ;; keyboard state into wParam, so this is the text the app should read.
     (if (i32.eq (local.get $msg) (i32.const 0x0102))

@@ -86,6 +86,8 @@
   ;; check_input() → packed event (0 = none)
   (import "host" "check_input_lparam" (func $host_check_input_lparam (result i32)))
   ;; check_input_lparam() → lParam of last check_input event
+  (import "host" "check_input_wparam" (func $host_check_input_wparam (result i32)))
+  ;; check_input_wparam() → full wParam of last event (packed check_input keeps only 16 bits)
   (import "host" "check_input_hwnd" (func $host_check_input_hwnd (result i32)))
   ;; check_input_hwnd() → hwnd of last check_input event (0 = use main_hwnd)
   (import "host" "get_mouse_position" (func $host_get_mouse_position (result i32)))
@@ -3115,13 +3117,17 @@
   ;;   +8  wake event handle, created on first block
   ;;   +12 console mode + 1 (0 = never set, so the $console_mode default applies)
   ;;   +16 the console window's hwnd, 0 until some thread creates it
-  ;;   +32 ring of $CONSOLE_INPUT_MAX × 8 bytes: {+0 char, +4 virtual key}
+  ;;   +32 ring of $CONSOLE_INPUT_MAX × 20 bytes:
+  ;;       {+0 event type, +4 char/COORD, +8 virtual key/button state,
+  ;;        +12 control-key state, +16 mouse event flags}
   ;; This lives in linear memory rather than in globals because memory is
   ;; shared across thread instances and globals are not: the window that reads
   ;; the keyboard and the thread that calls ReadConsole are usually different
   ;; threads, and a global would give each of them its own empty queue.
   (global $CONSOLE_INPUT i32 (i32.const 0x07E0F000))
-  (global $CONSOLE_INPUT_MAX i32 (i32.const 256))
+  ;; 102 × 20B ends at +0x818, within the original +0x820 ring end, leaving the shared
+  ;; screen-buffer table at +0x840 untouched.
+  (global $CONSOLE_INPUT_MAX i32 (i32.const 102))
 
   ;; EIP hit counters: passive per-block counter at 16 slots (8 bytes each:
   ;; +0 addr i32, +4 count i32). Run loop checks up to $hit_count_n slots per

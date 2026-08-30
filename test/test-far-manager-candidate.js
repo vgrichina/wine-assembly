@@ -75,6 +75,18 @@ function colorCountInRows(png, rgb, minY, maxY) {
   return count;
 }
 
+function colorCountInRect(png, rgb, left, top, right, bottom) {
+  let count = 0;
+  for (let y = top; y < Math.min(bottom, png.height); y++) {
+    for (let x = left; x < Math.min(right, png.width); x++) {
+      const i = (y * png.width + x) * 4;
+      if (png.data[i] === rgb[0] && png.data[i + 1] === rgb[1]
+          && png.data[i + 2] === rgb[2] && png.data[i + 3]) count++;
+    }
+  }
+  return count;
+}
+
 (async () => {
   if (!fs.existsSync(FAR)) {
     console.log('SKIP Far Manager candidate: fetch with node tools/fetch-candidate-corpus.js --id=far-manager-170');
@@ -96,9 +108,13 @@ function colorCountInRows(png, rgb, minY, maxY) {
       `--wasm=${wasmPath}`,
       '--no-build',
       '--quiet-api',
+      '--trace-fs',
       '--max-batches=400',
       '--batch-size=50000',
-      '--input=50:keydown:0x78,52:keyup:0x78', // F9 opens Far's top menu.
+      // Select app.exe through a real console MOUSE_EVENT_RECORD, then prove
+      // keyboard input still opens Far's F9 top menu.
+      '--input=60:mousemove:80:100,62:mousedown:80:100,64:mouseup:80:100,' +
+        '90:keydown:0x78,92:keyup:0x78',
       `--png=${framePath}`,
     ], {
       cwd: ROOT,
@@ -116,6 +132,9 @@ function colorCountInRows(png, rgb, minY, maxY) {
       `Far Manager hit a compatibility failure\n${output.slice(-8000)}`);
     assert(/SetWindowText.*\{C:/.test(output),
       `Far Manager never reached its live panel caption\n${output.slice(-8000)}`);
+    assert(output.includes('[fs] FindFirstFile("*.*") → "app.exe"') &&
+      output.includes('FindNextFile(0x') && output.includes('→ "far.exe"'),
+    `Far Manager did not enumerate the mounted C: files\n${output.slice(-8000)}`);
     assert(fs.existsSync(framePath), 'Far Manager did not produce a browser frame');
 
     const png = PNG.sync.read(fs.readFileSync(framePath));
@@ -127,6 +146,7 @@ function colorCountInRows(png, rgb, minY, maxY) {
     const bottomBlack = colorCountBelow(png, [0, 0, 0], 315);
     const bottomGray = colorCountBelow(png, [192, 192, 192], 315);
     const menuYellow = colorCountInRows(png, [255, 255, 0], 30, 45);
+    const selectedAppTeal = colorCountInRect(png, [0, 128, 128], 8, 92, 156, 105);
     assert(blue > 100000, `Far panel background missing (${blue} dark-blue pixels)`);
     assert(cyan > 1000, `Far panel borders/status text missing (${cyan} cyan pixels)`);
     assert(yellow > 100, `Far column headings missing (${yellow} yellow pixels)`);
@@ -134,8 +154,10 @@ function colorCountInRows(png, rgb, minY, maxY) {
       `Far bottom key bar is clipped (${bottomBlack} black, ${bottomGray} gray pixels below y=315)`);
     assert(menuYellow > 100,
       `Far did not react to browser F9 input (${menuYellow} yellow top-menu pixels)`);
+    assert(selectedAppTeal > 1200,
+      `Far did not select app.exe through console mouse input (${selectedAppTeal} teal pixels)`);
 
-    console.log(`PASS  Far Manager 1.70 console panels render and accept F9 (${blue} blue, ${cyan} cyan, ${menuYellow} menu pixels)`);
+    console.log(`PASS  Far Manager 1.70 lists files and accepts mouse/F9 (${blue} blue, ${selectedAppTeal} selected, ${menuYellow} menu pixels)`);
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }

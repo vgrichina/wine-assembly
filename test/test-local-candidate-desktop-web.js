@@ -40,6 +40,13 @@ const ALL_CANDIDATES = [
     keys: [
       { vk: 120, label: 'open top menu', holdMs: 80, waitMs: 500 },
     ],
+    clicks: [
+      { guestX: 80, guestY: 100, waitMs: 500, snapshotAfter: 'mouse-selected-file' },
+    ],
+    waitForGuestPixelAfterClicks: {
+      x: 150, y: 99, rMax: 0, gMin: 120, gMax: 136, bMin: 120, bMax: 136,
+      timeoutMs: 10000, label: 'app.exe mouse selection',
+    },
     minColors: 6,
     minDiff: 50,
     waitMs: 500,

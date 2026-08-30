@@ -6,6 +6,20 @@ const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
 
 const extraWat = String.raw`
+  (func (export "test_set_environment_variable_a") (param $name i32) (param $value i32) (result i32)
+    (global.set $image_base (i32.const 0))
+    (global.set $esp (i32.const 0x00300000))
+    (call $handle_SetEnvironmentVariableA
+      (local.get $name) (local.get $value)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_get_environment_variable_a") (param $name i32) (param $buf i32) (param $size i32) (result i32)
+    (global.set $image_base (i32.const 0))
+    (global.set $esp (i32.const 0x00300000))
+    (call $handle_GetEnvironmentVariableA
+      (local.get $name) (local.get $buf) (local.get $size)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
   (func (export "test_get_environment_variable_w") (param $name i32) (param $buf i32) (param $size i32) (result i32)
     (global.set $image_base (i32.const 0))
     (global.set $esp (i32.const 0x00300000))
@@ -19,6 +33,20 @@ const extraWat = String.raw`
   const { exports: wat, hostCtx } = await bootRenderHarness({ extraWat, fonts: 'none' });
   const name = 0x2600;
   const buffer = 0x2700;
+  const value = 0x2800;
+  const writeAscii = (address, text) => {
+    for (let i = 0; i <= text.length; i++) {
+      wat.guest_write8(address + i, i < text.length ? text.charCodeAt(i) : 0);
+    }
+  };
+  const readAscii = address => {
+    let text = '';
+    for (let i = 0; ; i++) {
+      const code = wat.guest_read8(address + i);
+      if (!code) return text;
+      text += String.fromCharCode(code);
+    }
+  };
   const writeWide = (address, value) => {
     for (let i = 0; i <= value.length; i++) {
       const code = i < value.length ? value.charCodeAt(i) : 0;
@@ -67,7 +95,16 @@ const extraWat = String.raw`
   assert.strictEqual(wat.test_get_environment_variable_w(name, buffer, 32), 0,
     'unknown variable returns zero');
 
-  console.log('PASS GetEnvironmentVariableW shares and widens the process environment');
+  writeAscii(name, '=C:');
+  writeAscii(value, 'C:\\');
+  assert.strictEqual(wat.test_set_environment_variable_a(name, value), 1,
+    'Win9x hidden per-drive current-directory variables can be installed');
+  assert.strictEqual(wat.test_get_environment_variable_a(name, buffer, 32), 3,
+    'the leading equals is part of the hidden variable name');
+  assert.strictEqual(readAscii(buffer), 'C:\\',
+    'GetEnvironmentVariable skips the second equals separator, not the first');
+
+  console.log('PASS GetEnvironmentVariable A/W handles normal and hidden drive variables');
 })().catch(error => {
   console.error(error.stack || error.message);
   process.exit(1);

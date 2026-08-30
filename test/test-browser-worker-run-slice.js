@@ -61,7 +61,7 @@ assert(shellSource.includes("if (Number(change.data) === 2) applyRendererSlice('
   'Uplink keeps the setup quantum until a real DirectDraw frame selects Software');
 assert(!shellSource.includes("applyRendererSlice(Number(change.data) === 2 ? 'opengl' : 'software')"),
   'the registry write must not throttle Software before renderer restart completes');
-assert(indexSource.includes('host.js?v=249'),
+assert(indexSource.includes('host.js?v=250'),
   'the page cache-busts cooperative slice enforcement');
 
 console.log('PASS browser run-slice policy distinguishes Jazz Worker and cooperative backends');

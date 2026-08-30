@@ -2730,6 +2730,7 @@ async function main() {
   h.check_input_hwnd = () => inputEventHwnd(lastInputEvent, instance && instance.exports,
     (why) => logs.push(`[check_input_hwnd] ${why}`));
   h.check_input_lparam = () => (lastInputEvent ? (lastInputEvent.lParam || 0) : 0);
+  h.check_input_wparam = () => (lastInputEvent ? (lastInputEvent.wParam || 0) : 0);
   let lastMouseTracePos = -1;
   let lastMouseTraceButtons = -1;
   const lastAsyncMouseTrace = Object.create(null);
@@ -3096,6 +3097,13 @@ async function main() {
     // list is shared, and adopting a name the main table does not implement
     // throws rather than leaving the return-0 stub in place.
     adoptThreadPrimitives(wh, h);
+    // A console reader may live on a guest worker (telnet does). Its low-level
+    // input buffer is process-scoped, so it must drain the same host event and
+    // metadata latch as the main instance.
+    wh.check_input = h.check_input;
+    wh.check_input_lparam = h.check_input_lparam;
+    wh.check_input_wparam = h.check_input_wparam;
+    wh.check_input_hwnd = h.check_input_hwnd;
     for (const name of profileHostNames) wrapProfileHost(wh, name);
     // Worker API tracing. The decode and the "the return belongs to the call
     // just logged" latch are shared; what stays here is the CLI's own policy —

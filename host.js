@@ -788,6 +788,9 @@ class WineAssembly {
     h.check_input_lparam = () => {
       return self._lastInputEvent ? (self._lastInputEvent.lParam | 0) : 0;
     };
+    h.check_input_wparam = () => {
+      return self._lastInputEvent ? (self._lastInputEvent.wParam | 0) : 0;
+    };
     h.check_input_hwnd = () => {
       const evt = self._lastInputEvent;
       if (!evt) return 0;

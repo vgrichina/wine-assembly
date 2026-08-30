@@ -5387,9 +5387,14 @@
       (br $copy)))
     (local.get $len))
 
-  ;; Length of the NAME part of an entry, i.e. the offset of its '='.
+  ;; Length of the NAME part of an entry, i.e. the offset of its separator
+  ;; '='. Win9x keeps each drive's current directory in a hidden entry such as
+  ;; "=C:=C:\\"; its leading '=' is part of the name, so the separator is the
+  ;; second '='. FAR reads these variables when populating its file panels.
   (func $env_name_len (param $p i32) (result i32)
     (local $i i32) (local $ch i32)
+    (if (i32.eq (call $gl8 (local.get $p)) (i32.const 0x3D))
+      (then (local.set $i (i32.const 1))))
     (block $done (loop $scan
       (local.set $ch (call $gl8 (i32.add (local.get $p) (local.get $i))))
       (br_if $done (i32.or (i32.eqz (local.get $ch)) (i32.eq (local.get $ch) (i32.const 0x3D))))
