@@ -62,6 +62,57 @@ function parseClicks(spec) {
   });
 }
 
+// Where a segment register's contents actually point. In protected mode that
+// is a descriptor base and not a paragraph, and reading it as a paragraph does
+// not land near the right place -- CONTAGIO.EXE stops at 868:13d, whose
+// paragraph reading is all zeros and whose descriptor base is in the middle of
+// the extender's error strings. The first says "the depacker never wrote here"
+// and the second says "the far jump went wrong"; only one is true.
+function segBaseOf(vm, seg) {
+  const ex = vm.exports;
+  // V86 is real-mode segmentation with PE set, so it takes the same answer.
+  if (!(ex.get_cr0() & 1) || ex.get_vm86()) return (seg << 4) & 0xFFFFF;
+  if (seg === (vm.get('cs') & 0xFFFF)) return ex.get_csb() >>> 0;
+  const at = (ex.get_gdtb() >>> 0) + (seg & ~7);
+  // Past the limit there is no descriptor to read, and a selector the guest
+  // never loaded is usually the caller naming a real-mode paragraph anyway.
+  if ((seg & ~7) + 7 > (ex.get_gdtl() >>> 0)) return (seg << 4) & 0xFFFFF;
+  const b = vm.mem;
+  return (b[at + 2] | (b[at + 3] << 8) | (b[at + 4] << 16) | (b[at + 7] << 24)) >>> 0;
+}
+
+// One hexdump, in the format --dump has always printed and tools/dump2png.js
+// parses. Shared so a mid-run dump and an at-exit one are the same picture.
+function hexdump(mem, seg, off, len, base, linmask) {
+  const at = (base + off) & linmask;
+  console.log(`\n  ${seg.toString(16)}:${off.toString(16).padStart(4, '0')}`
+    + `${base !== ((seg << 4) & 0xFFFFF) ? ` (base ${base.toString(16)})` : ''}  ${len} bytes`);
+  for (let i = 0; i < len; i += 16) {
+    const row = [...mem.subarray(at + i, at + i + Math.min(16, len - i))];
+    console.log(`  ${(off + i).toString(16).padStart(4, '0')}  `
+      + row.map(b => b.toString(16).padStart(2, '0')).join(' ').padEnd(48)
+      + row.map(b => (b >= 0x20 && b < 0x7F ? String.fromCharCode(b) : '.')).join(''));
+  }
+}
+
+// `--dump-at=2m:232e:17:64` -- the same hexdump, taken the first handback past
+// a dispatch count instead of at exit.
+//
+// Not a convenience. --dump fires when the run is over, which for a program
+// that loads code at run time is a picture of whatever replaced the thing you
+// were reading: ANGEL.EXE's resident derails around 1.1M dispatches and the
+// run goes on for 2M more with 29 self-modify breaks in it, so every reading
+// of that block off an at-exit dump is a reading of its successor. This is the
+// DOS twin of test/run.js's `BATCH:dump-mem` and exists for the same reason.
+function parseDumpAt(spec) {
+  const m = /^([0-9.]+[kmb]?):(?:([0-9a-fA-F]+):)?([0-9a-fA-F]+)(?::(\d+))?$/.exec(String(spec));
+  if (!m) throw new Error(`bad --dump-at=${spec}, want DISPATCHES:SEG:OFF[:LEN]`);
+  return {
+    at: count(m[1]), seg: m[2] === undefined ? null : parseInt(m[2], 16),
+    off: parseInt(m[3], 16), len: m[4] ? Number(m[4]) : 64, done: false,
+  };
+}
+
 const ld32 = (mem, at) =>
   (mem[at] | (mem[at + 1] << 8) | (mem[at + 2] << 16) | (mem[at + 3] << 24)) >>> 0;
 
@@ -113,7 +164,8 @@ async function runDos(o) {
     stopText = null,
     traceIo = null,
     shots = null, shotEvery = 20,
-    mouse = [0, 0], clicks = [], cpu = 386, report = false, log = console.log, autoKey = false,
+    mouse = [0, 0], clicks = [], dumpAt = [],
+    cpu = 386, report = false, log = console.log, autoKey = false,
     tickScale = 1, sample = false, sampleAfter = 0, forceChained = false,
     // How many handbacks at one address with nothing new on screen before the
     // run is called hung. 0 turns the detector off, which is what to reach for
@@ -440,6 +492,15 @@ async function runDos(o) {
       }
     }
 
+    for (const d of dumpAt) {
+      if (d.done || session.dispatched < d.at) continue;
+      d.done = true;
+      const seg = d.seg === null ? (vm.get('cs') & 0xFFFF) : d.seg;
+      console.log(`  (at ${session.dispatched} dispatches, cs:ip=`
+        + `${vm.get('cs').toString(16)}:${vm.get('gip').toString(16)})`);
+      hexdump(vm.mem, seg, d.off, d.len, segBaseOf(vm, seg), vm.exports.get_linmask());
+    }
+
     // Keep the fullest frame. Sampled rather than continuous: scanning the
     // surface is cheap next to a batch, but not next to a handback, and a
     // program can hand back every hundred dispatches.
@@ -516,14 +577,23 @@ async function runDosWithPre(o) {
   const pre = path.resolve(path.dirname(path.resolve(o.exe)), o.pre);
   if (!fs.existsSync(pre)) throw new Error(`--pre: no such program: ${o.pre}`);
   const first = await runDos({
-    ...o, exe: pre, bestPng: null, shots: null, png: null,
+    // dumpAt goes with the pictures rather than the machine: a dispatch count
+    // asked about the program means the program, and the prerequisite would
+    // otherwise reach it first and answer for it.
+    ...o, exe: pre, bestPng: null, shots: null, png: null, dumpAt: [],
     // The full budget, not a token slice of it. A configurator is not a quick
     // hello: ANGEL's SETUP.EXE sweeps C000-F000 for a video BIOS signature and
     // needs ~810M dispatches to give up and exit(0). Capped at 20M it was still
     // mid-scan when we moved on, so it wrote nothing and ANGEL still refused to
     // start. Wall clock is what bounds a pre that never exits, so that it can
     // cost at most a third of the run rather than the whole child slot.
-    budget: o.budget || 200e6,
+    // `--pre-dispatches=` when the two runs want different budgets, and the
+    // case that needs it is cutting the MAIN run short: --dump fires at exit,
+    // so reading a block before the guest overwrote it means truncating the
+    // run -- and a smaller --dispatches used to starve the prerequisite too,
+    // which just means it never writes its file and the real program refuses
+    // at the gate rather than reaching the instruction being asked about.
+    budget: o.preBudget || o.budget || 200e6,
     seconds: o.seconds ? Math.max(15, Math.floor(o.seconds / 3)) : 0,
     autoKey: true, keys: o.preKeys || [],
   });
@@ -573,6 +643,7 @@ async function main() {
     // `--pre=SETUP.EXE`, resolved next to the executable, with `--pre-keys=`
     // for a configurator that needs more than the auto-key rotation.
     pre, preKeys: parseKeys(arg('pre-keys', '')),
+    preBudget: count(arg('pre-dispatches'), 0),
     variant: arg('variant', 'tailcall'),
     budget: count(arg('dispatches'), 200e6),
     slice: count(arg('slice'), 2e6),
@@ -607,6 +678,7 @@ async function main() {
     shotEvery: count(arg('shot-every'), 20),
     mouse: (arg('mouse', '0:0')).split(':').map(Number),
     clicks: argAll('click').flatMap(parseClicks),
+    dumpAt: argAll('dump-at').map(parseDumpAt),
     cpu: Number(arg('cpu', 386)),
     report,
     // Naming a rotation is asking for one, so --auto-keys implies --auto-key.
@@ -845,18 +917,7 @@ async function main() {
   // whose descriptor base puts it in the middle of the extender's error
   // strings. The first reading says "the depacker never wrote here" and the
   // second says "the far jump went to the wrong place"; only one is true.
-  const segBase = (seg) => {
-    const ex = r.vm.exports;
-    // V86 is real-mode segmentation with PE set, so it takes the same answer.
-    if (!(ex.get_cr0() & 1) || ex.get_vm86()) return (seg << 4) & 0xFFFFF;
-    if (seg === (r.vm.get('cs') & 0xFFFF)) return ex.get_csb() >>> 0;
-    const at = (ex.get_gdtb() >>> 0) + (seg & ~7);
-    // Past the limit there is no descriptor to read, and a selector the guest
-    // never loaded is usually the caller naming a real-mode paragraph anyway.
-    if ((seg & ~7) + 7 > (ex.get_gdtl() >>> 0)) return (seg << 4) & 0xFFFFF;
-    const b = r.vm.mem;
-    return (b[at + 2] | (b[at + 3] << 8) | (b[at + 4] << 16) | (b[at + 7] << 24)) >>> 0;
-  };
+  const segBase = (seg) => segBaseOf(r.vm, seg);
   // How wide the code in that segment is, out of the same descriptor. A
   // 32-bit segment disassembled as 16-bit is not close to right: the operand
   // and address sizes are both wrong, so every instruction after the first
