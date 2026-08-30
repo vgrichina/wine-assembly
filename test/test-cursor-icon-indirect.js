@@ -2,7 +2,8 @@
 
 'use strict';
 
-// CreateIconIndirect / SetCursor for cursors the guest BUILDS itself.
+// CreateIconIndirect / CreateIconFromResourceEx / SetCursor for cursors the
+// guest builds itself or decodes from Win9x resource bits.
 //
 // Heroes of Might & Magic II never calls LoadCursor: it draws its hand pointer
 // into a pair of bitmaps and hands them to CreateIconIndirect. That used to be
@@ -54,6 +55,19 @@ function check(label, fn) {
       (call $handle_CreateIconIndirect
         (local.get $info) (i32.const 0) (i32.const 0) (i32.const 0)
         (i32.const 0) (i32.const 0))
+      (global.set $esp (local.get $saved_esp))
+      (global.get $eax))
+    (func (export "test_call_CreateIconFromResourceEx")
+          (param $bits i32) (param $size i32) (param $is_icon i32)
+          (param $version i32) (param $cx i32) (param $cy i32)
+          (param $flags i32) (result i32)
+      (local $saved_esp i32)
+      (local.set $saved_esp (global.get $esp))
+      (call $gs32 (i32.add (global.get $esp) (i32.const 24)) (local.get $cy))
+      (call $gs32 (i32.add (global.get $esp) (i32.const 28)) (local.get $flags))
+      (call $handle_CreateIconFromResourceEx
+        (local.get $bits) (local.get $size) (local.get $is_icon)
+        (local.get $version) (local.get $cx) (i32.const 0))
       (global.set $esp (local.get $saved_esp))
       (global.get $eax))
     (func (export "test_call_GetIconInfo") (param $icon i32) (param $info i32) (result i32)
@@ -125,6 +139,50 @@ function check(label, fn) {
     return p;
   };
 
+  // One classic Win9x 1-bpp RT_ICON/RT_CURSOR image. A cursor resource has a
+  // four-byte LOCALHEADER before its BITMAPINFOHEADER; an icon resource does
+  // not. The DIB height is XOR+AND (2H), and each plane is stored bottom-up in
+  // DWORD-aligned scanlines.
+  const resourceImage = ({ isIcon = false, xHot = 1, yHot = 2,
+    andRows, xorRows }) => {
+    const width = andRows[0].length;
+    const height = andRows.length;
+    const stride = ((width + 31) >> 5) << 2;
+    const prefix = isIcon ? 0 : 4;
+    const bytes = new Uint8Array(prefix + 40 + 8 + stride * height * 2);
+    const dv = new DataView(bytes.buffer);
+    if (!isIcon) {
+      dv.setUint16(0, xHot, true);
+      dv.setUint16(2, yHot, true);
+    }
+    const dib = prefix;
+    dv.setUint32(dib + 0, 40, true);              // BITMAPINFOHEADER.biSize
+    dv.setInt32(dib + 4, width, true);
+    dv.setInt32(dib + 8, height * 2, true);       // XOR + AND
+    dv.setUint16(dib + 12, 1, true);              // planes
+    dv.setUint16(dib + 14, 1, true);              // monochrome
+    dv.setUint32(dib + 16, 0, true);              // BI_RGB
+    dv.setUint32(dib + 20, stride * height * 2, true);
+    // RGBQUAD palette: black, white.
+    bytes[dib + 40 + 4] = 255;
+    bytes[dib + 40 + 5] = 255;
+    bytes[dib + 40 + 6] = 255;
+    const writePlane = (offset, rows) => {
+      for (let y = 0; y < height; y++) {
+        const row = rows[height - 1 - y];
+        for (let x = 0; x < width; x++) {
+          if (row[x] === '1') bytes[offset + y * stride + (x >> 3)] |= 0x80 >> (x & 7);
+        }
+      }
+    };
+    const xorOffset = dib + 48;
+    writePlane(xorOffset, xorRows);
+    writePlane(xorOffset + stride * height, andRows);
+    const ptr = alloc(bytes.length);
+    writeBytes(ptr, bytes);
+    return { ptr, size: bytes.length, width, height };
+  };
+
   // A 4x4 cursor that uses all four AND/XOR combinations exactly once per
   // corner, so a plane swap or a flipped row cannot pass. Stacked AND (top 4
   // rows) over XOR (bottom 4), which is how Win32 lays a mono mask out.
@@ -146,6 +204,80 @@ function check(label, fn) {
     '0001',
   ];
   const crossMask = () => monoBitmap(ART_AND.concat(ART_XOR));
+
+  let resourceCursorA, resourceCursorB;
+
+  check('CreateIconFromResourceEx creates distinct cursors from Win9x resource bits', () => {
+    const a = resourceImage({ xHot: 1, yHot: 2, andRows: ART_AND, xorRows: ART_XOR });
+    const b = resourceImage({ xHot: 3, yHot: 0, andRows: ART_AND, xorRows: ART_XOR });
+    resourceCursorA = wat.test_call_CreateIconFromResourceEx(
+      a.ptr, a.size, 0, 0x00030000, 0, 0, 0) >>> 0;
+    resourceCursorB = wat.test_call_CreateIconFromResourceEx(
+      b.ptr, b.size, 0, 0x00030000, 0, 0, 0) >>> 0;
+    assert.ok(resourceCursorA, 'first resource cursor is zero');
+    assert.ok(resourceCursorB, 'second resource cursor is zero');
+    assert.notStrictEqual(resourceCursorA, resourceCursorB, 'resource cursors shared one handle');
+    assert.strictEqual(resourceCursorA & 0xFFFF0000, 0x00CC0000);
+    assert.notStrictEqual(resourceCursorA, 0xCAFE0001, 'old fixed handle survived');
+  });
+
+  check('resource cursor pixels and LOCALHEADER hotspot reach the browser host', () => {
+    pushes.length = 0;
+    wat.test_call_SetCursor(resourceCursorA);
+    assert.strictEqual(pushes.length, 1, 'resource cursor was not presented');
+    const p = pushes[0];
+    assert.deepStrictEqual(
+      { width: p.width, height: p.height, hotX: p.hotX, hotY: p.hotY },
+      { width: 4, height: 4, hotX: 1, hotY: 2 });
+    const at = (x, y) => p.pixels[y * 4 + x];
+    assert.deepStrictEqual(at(0, 0), [0, 0, 0, 0], 'transparent resource pixel');
+    assert.deepStrictEqual(at(1, 0), [255, 255, 255, 255], 'white resource pixel');
+    assert.deepStrictEqual(at(2, 0), [0, 0, 0, 255], 'black resource pixel');
+  });
+
+  check('requested resource size and cursor hotspot are scaled together', () => {
+    const image = resourceImage({ xHot: 1, yHot: 2, andRows: ART_AND, xorRows: ART_XOR });
+    const scaled = wat.test_call_CreateIconFromResourceEx(
+      image.ptr, image.size, 0, 0x00030000, 8, 8, 0) >>> 0;
+    assert.ok(scaled, 'scaled cursor is zero');
+    pushes.length = 0;
+    wat.test_call_SetCursor(scaled);
+    assert.deepStrictEqual(
+      { width: pushes[0].width, height: pushes[0].height,
+        hotX: pushes[0].hotX, hotY: pushes[0].hotY },
+      { width: 8, height: 8, hotX: 2, hotY: 4 });
+  });
+
+  check('resource icons report icon identity and a centered hotspot', () => {
+    const image = resourceImage({ isIcon: true, andRows: ART_AND, xorRows: ART_XOR });
+    const icon = wat.test_call_CreateIconFromResourceEx(
+      image.ptr, image.size, 1, 0x00030000, 8, 8, 0) >>> 0;
+    assert.ok(icon, 'resource icon is zero');
+    const info = alloc(20);
+    assert.strictEqual(wat.test_call_GetIconInfo(icon, info) >>> 0, 1);
+    assert.strictEqual(wat.guest_read32(info + 0) >>> 0, 1, 'fIcon');
+    assert.strictEqual(wat.guest_read32(info + 4) >>> 0, 4, 'center x');
+    assert.strictEqual(wat.guest_read32(info + 8) >>> 0, 4, 'center y');
+    assert.ok(wat.guest_read32(info + 12) >>> 0, 'mask bitmap');
+  });
+
+  check('invalid resource versions and truncated DIBs fail instead of succeeding silently', () => {
+    const image = resourceImage({ andRows: ART_AND, xorRows: ART_XOR });
+    assert.strictEqual(wat.test_call_CreateIconFromResourceEx(
+      image.ptr, image.size, 0, 0x00010000, 0, 0, 0) >>> 0, 0, 'old version accepted');
+    assert.strictEqual(wat.test_call_CreateIconFromResourceEx(
+      image.ptr, image.size - 1, 0, 0x00030000, 0, 0, 0) >>> 0, 0, 'truncation accepted');
+  });
+
+  check('DestroyIcon invalidates exactly one resource-created handle', () => {
+    assert.strictEqual(wat.test_call_DestroyIcon(resourceCursorA) >>> 0, 1);
+    const info = alloc(20);
+    for (let i = 0; i < 20; i += 4) wat.guest_write32(info + i, 0xdeadbeef | 0);
+    wat.test_call_GetIconInfo(resourceCursorA, info);
+    assert.strictEqual(wat.guest_read32(info + 12) >>> 0, 0, 'destroyed resource cursor stayed live');
+    assert.strictEqual(wat.test_call_GetIconInfo(resourceCursorB, info) >>> 0, 1,
+      'destroying one resource cursor invalidated another');
+  });
 
   let handleA, handleB;
 

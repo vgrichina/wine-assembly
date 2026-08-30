@@ -396,6 +396,7 @@ UNIT=(
   # Recovered 2026-08-29 by the build-level manifest gate. These are fast,
   # self-contained Node/WASM checks; local-payload and browser-driver tests are
   # listed in E2E below.
+  test/test-baldurs-gate-compat-patches.js
   test/test-batch-clock.js
   test/test-browser-critical-section-yield.js
   test/test-browser-cooperative-crash-registers.js
