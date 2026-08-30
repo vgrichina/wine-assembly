@@ -806,7 +806,7 @@ class WineAssembly {
     h.get_exit_code_thread = (handle) => self.threadManager ? self.threadManager.getExitCodeThread(handle) : 0x103;
     const readSyncObjectName = (nameWa, wide) => {
       if (!nameWa) return '';
-      if (!wide) return self.readString(nameWa);
+      if (!(wide & 1)) return self.readString(nameWa);
       const dv = new DataView(self.memory.buffer);
       let name = '';
       for (let i = 0; i < 512; i++) {
@@ -816,11 +816,26 @@ class WineAssembly {
       }
       return name;
     };
-    h.create_event = (m, i, nameWa, wide) => self.threadManager
-      ? self.threadManager.createEvent(m, i, readSyncObjectName(nameWa, wide)) : 0;
-    h.open_event = (nameWa, wide) => self.threadManager
-      ? self.threadManager.openEvent(readSyncObjectName(nameWa, wide)) : 0;
-    h.set_event = (handle) => self.threadManager ? self.threadManager.setEvent(handle) : 1;
+    const win32ThreadId = () => ((ctx.threadId | 0) + 1) | 0;
+    h.create_event = (m, i, nameWa, wide) => {
+      if (!self.threadManager) return 0;
+      const name = readSyncObjectName(nameWa, wide);
+      return (wide & 2)
+        ? self.threadManager.createMutex(i, name, win32ThreadId())
+        : self.threadManager.createEvent(m, i, name);
+    };
+    h.open_event = (nameWa, wide) => {
+      if (!self.threadManager) return 0;
+      const name = readSyncObjectName(nameWa, wide);
+      return (wide & 2) ? self.threadManager.openMutex(name) : self.threadManager.openEvent(name);
+    };
+    h.set_event = (handle) => {
+      if (!self.threadManager) return 1;
+      const value = handle >>> 0;
+      return (value & 0x80000000)
+        ? self.threadManager.releaseMutex(value & 0x7fffffff, win32ThreadId())
+        : self.threadManager.setEvent(value);
+    };
     h.reset_event = (handle) => self.threadManager ? self.threadManager.resetEvent(handle) : 1;
     // The cooperative variant exists to run OTHER guest threads from inside a
     // nested synchronous callback, on this thread. With the worker backend
@@ -835,14 +850,14 @@ class WineAssembly {
     h.wait_single = (handle, t) => {
       if (!self.threadManager) return 0;
       return nestedSyncMessage()
-        ? self.threadManager.waitSingleCooperative(handle, t)
-        : self.threadManager.waitSingle(handle, t);
+        ? self.threadManager.waitSingleCooperative(handle, t, win32ThreadId())
+        : self.threadManager.waitSingle(handle, t, win32ThreadId());
     };
     h.wait_multiple = (n, ha, wa, t) => {
       if (!self.threadManager) return 0;
       return nestedSyncMessage()
-        ? self.threadManager.waitMultipleCooperative(n, ha, wa, t)
-        : self.threadManager.waitMultiple(n, ha, wa, t);
+        ? self.threadManager.waitMultipleCooperative(n, ha, wa, t, win32ThreadId())
+        : self.threadManager.waitMultiple(n, ha, wa, t, win32ThreadId());
     };
     h.cs_pump = () => self.threadManager ? self.threadManager.pumpThreadsOnce() : 0;
     h.create_semaphore = (initial, max) => self.threadManager ? self.threadManager.createSemaphore(initial, max) : 0;

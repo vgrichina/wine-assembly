@@ -2831,7 +2831,7 @@ async function main() {
     const dv = new DataView(memory.buffer);
     let name = '';
     for (let i = 0; i < 512; i++) {
-      const ch = wide
+      const ch = (wide & 1)
         ? dv.getUint16(nameWa + i * 2, true)
         : dv.getUint8(nameWa + i);
       if (!ch) break;
@@ -2839,10 +2839,16 @@ async function main() {
     }
     return name;
   };
-  h.create_event = (manualReset, initialState, nameWa, wide) =>
-    threadManager.createEvent(manualReset, initialState, readSyncObjectName(nameWa, wide));
-  h.open_event = (nameWa, wide) => threadManager.openEvent(readSyncObjectName(nameWa, wide));
-  h.set_event = (handle) => threadManager.setEvent(handle);
+  const win32ThreadId = () => ((ctx.threadId | 0) + 1) | 0;
+  h.create_event = (manualReset, initialState, nameWa, wide) => (wide & 2)
+    ? threadManager.createMutex(initialState, readSyncObjectName(nameWa, wide), win32ThreadId())
+    : threadManager.createEvent(manualReset, initialState, readSyncObjectName(nameWa, wide));
+  h.open_event = (nameWa, wide) => (wide & 2)
+    ? threadManager.openMutex(readSyncObjectName(nameWa, wide))
+    : threadManager.openEvent(readSyncObjectName(nameWa, wide));
+  h.set_event = (handle) => ((handle >>> 0) & 0x80000000)
+    ? threadManager.releaseMutex((handle >>> 0) & 0x7fffffff, win32ThreadId())
+    : threadManager.setEvent(handle);
   h.reset_event = (handle) => threadManager.resetEvent(handle);
   // A wait reached from inside a synchronous SendMessage cannot yield: the
   // recursive interpreter frame in $wnd_send_message would be abandoned. Give
@@ -2851,11 +2857,11 @@ async function main() {
   const nestedSyncMessage = () =>
     !!(ctx.exports && ctx.exports.get_sync_msg_depth && (ctx.exports.get_sync_msg_depth() | 0));
   h.wait_single = (handle, timeout) => nestedSyncMessage()
-    ? threadManager.waitSingleCooperative(handle, timeout)
-    : threadManager.waitSingle(handle, timeout);
+    ? threadManager.waitSingleCooperative(handle, timeout, win32ThreadId())
+    : threadManager.waitSingle(handle, timeout, win32ThreadId());
   h.wait_multiple = (nCount, handlesWA, bWaitAll, timeout) => nestedSyncMessage()
-    ? threadManager.waitMultipleCooperative(nCount, handlesWA, bWaitAll, timeout)
-    : threadManager.waitMultiple(nCount, handlesWA, bWaitAll, timeout);
+    ? threadManager.waitMultipleCooperative(nCount, handlesWA, bWaitAll, timeout, win32ThreadId())
+    : threadManager.waitMultiple(nCount, handlesWA, bWaitAll, timeout, win32ThreadId());
   // The critical-section face of the same problem: see pumpThreadsOnce().
   h.cs_pump = () => threadManager.pumpThreadsOnce();
   h.create_semaphore = (initialCount, maxCount) => threadManager.createSemaphore(initialCount, maxCount);

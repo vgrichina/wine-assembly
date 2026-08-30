@@ -11400,37 +11400,75 @@ HookEx — no next hook in chain, return 0
       (if (result i32) (local.get $arg2) (then (call $g2w (local.get $arg2))) (else (i32.const 0)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
+  ;; Mutexes reuse the shared event host ABI with private kind bits in `wide`:
+  ;; bit 0 selects A/W string decoding and bit 1 selects mutex semantics.  The
+  ;; host tags an existing named mutex in bit 31; issued handles never use it.
+  (func $create_mutex_core (param $initial_owner i32) (param $name i32) (param $wide i32) (result i32)
+    (local $name_wa i32) (local $raw i32) (local $handle i32)
+    (if (local.get $name)
+      (then (local.set $name_wa (call $g2w (local.get $name)))))
+    (local.set $raw (call $host_create_event
+      (i32.const 0) (local.get $initial_owner) (local.get $name_wa)
+      (i32.or (local.get $wide) (i32.const 2))))
+    (local.set $handle (i32.and (local.get $raw) (i32.const 0x7fffffff)))
+    (if (i32.eqz (local.get $handle))
+      (then (global.set $last_error (i32.const 8))) ;; ERROR_NOT_ENOUGH_MEMORY
+      (else
+        (global.set $last_error
+          (if (result i32) (i32.lt_s (local.get $raw) (i32.const 0))
+            (then (i32.const 183)) ;; ERROR_ALREADY_EXISTS
+            (else (i32.const 0))))))
+    (local.get $handle))
+
+  (func $open_mutex_core (param $name i32) (param $wide i32) (result i32)
+    (local $handle i32)
+    (if (local.get $name)
+      (then
+        (local.set $handle (call $host_open_event
+          (call $g2w (local.get $name))
+          (i32.or (local.get $wide) (i32.const 2))))))
+    (global.set $last_error
+      (if (result i32) (local.get $handle)
+        (then (i32.const 0))
+        (else (i32.const 2)))) ;; ERROR_FILE_NOT_FOUND
+    (local.get $handle))
+
   ;; 524: CreateMutexW(lpMutexAttributes, bInitialOwner, lpName) → HANDLE
-  ;; Returns a unique handle for the mutex. Single-threaded, so always succeeds.
   (func $handle_CreateMutexW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_CreateMutexA
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
-
-  ;; 525: ReleaseMutex(hMutex) — single-threaded, always succeeds
-  (func $handle_ReleaseMutex (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
-
-  ;; OpenMutexA(dwAccess, bInherit, lpName) — return 0 (not found) so single-instance checks
-  ;; let the app fall through to CreateMutexA. Sets last error to ERROR_FILE_NOT_FOUND (2).
-  (func $handle_OpenMutexA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $last_error (i32.const 2))
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $create_mutex_core (local.get $arg1) (local.get $arg2) (i32.const 1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; OpenMutexW has the same process-local named-object semantics. The current
-  ;; mutex model has no pre-existing cross-process objects, so report not found
-  ;; and let a Unicode caller take the ordinary CreateMutexW path.
-  (func $handle_OpenMutexW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_OpenMutexA
-      (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+  ;; 525: ReleaseMutex(hMutex) — release only the calling thread's ownership.
+  ;; Bit 31 privately distinguishes this operation from SetEvent on the shared
+  ;; one-argument host ABI.
+  (func $handle_ReleaseMutex (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $result i32)
+    (local.set $result (call $host_set_event
+      (i32.or (local.get $arg0) (i32.const 0x80000000))))
+    (if (i32.eq (local.get $result) (i32.const 1))
+      (then
+        (global.set $eax (i32.const 1))
+        (global.set $last_error (i32.const 0)))
+      (else
+        (global.set $eax (i32.const 0))
+        (global.set $last_error
+          (if (result i32) (i32.eq (local.get $result) (i32.const -1))
+            (then (i32.const 6))     ;; ERROR_INVALID_HANDLE
+            (else (i32.const 288)))))) ;; ERROR_NOT_OWNER
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
-  ;; CreateMutexA(lpAttr, bInitialOwner, lpName) — single-threaded, always succeeds with fresh handle
+  ;; OpenMutexA/W resolve named mutexes in this emulated process.
+  (func $handle_OpenMutexA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $open_mutex_core (local.get $arg2) (i32.const 0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_OpenMutexW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $open_mutex_core (local.get $arg2) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; CreateMutexA(lpAttr, bInitialOwner, lpName)
   (func $handle_CreateMutexA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
-    (global.set $eax (global.get $next_hwnd))
-    (global.set $last_error (i32.const 0))
+    (global.set $eax (call $create_mutex_core (local.get $arg1) (local.get $arg2) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; CreateSemaphoreA(lpAttr, lInit, lMax, lpName) → real counted semaphore via host.
