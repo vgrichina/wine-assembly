@@ -428,6 +428,35 @@ excluded found `uniformMatrix4fv`, `vertexAttribPointer`, attribute enable, and
 0.1% of all trace samples. This exclusion was profiling-only; runtime error
 semantics remain unchanged.
 
+### Command decode allocation cleanup (2026-08-30)
+
+The OpenGL hot-path item in `fable-review.md` was still current. The Worker-side
+encoder's `u32At()` constructed a `DataView` for every 32-bit stack argument,
+even though the WebAssembly memory buffer is fixed, and browser-thread replay
+did the same in `_u32`, `_f32`, and `_f64`. Both sides now retain one view per
+backing buffer. Immediate primitive normalization also writes vertices directly
+from source indices instead of allocating `slice()` arrays and then `splice()`ing
+flat colors into each triangle. Required expansion of quads/fans/strips and the
+command-owned packed-vertex copy remain: the former supplies WebGL-supported
+primitive topology and the latter prevents guest scratch reuse from changing an
+asynchronous batch.
+
+The identical `test/test-quake2-gl-web.js` gameplay acceptance passed before
+and after at 640x480 with textured motion. It reported 13.7 guest fps before and
+15.8 after (+15.3%). This is directional only: system load was far above the
+project's `<4` validity threshold (roughly 188 falling to 17), and the attract
+scene positions differed. The focused command-stream, fixed-function,
+frame-state, backend, and atomic-present tests all pass. Re-measure headful on
+an idle host before treating the observed delta as a user-visible gain.
+
+The stream is still a single 2 MiB buffer with a synchronous handoff per flush,
+not a producer/consumer ring. A multi-slot ring can overlap copied command and
+packed-vertex replay with guest encoding, but borrowed texture uploads and all
+query/readback/context/finish/present operations must remain fences. Profile
+batch replay versus the existing `glGetError`/SwiftShader wait before building
+that larger change; prior Quake measurements already found the explicit error
+barrier dominating the software-GPU configuration.
+
 ## Pointer-lock button release
 
 A cooperative browser regression after the GL optimization exposed a separate

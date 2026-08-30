@@ -31,6 +31,8 @@ const encoder = new Stream.Encoder({
   capacity: 256,
   shared: false,
 });
+assert.strictEqual(encoder._memoryView(), encoder._memoryView(),
+  'command argument reads reuse one DataView for fixed guest memory');
 
 // Value arguments are snapshots too: changing the guest stack while commands
 // wait for the frame barrier must not change an earlier command.
@@ -188,6 +190,8 @@ const bridge = new OpenGLHostBridge({
   getMemory: () => memory,
   exports: { guest_to_wasm: pointer => pointer },
 });
+assert.strictEqual(bridge._dv(), bridge._dv(),
+  'host replay reuses one DataView for fixed guest memory');
 bridge.current = 1;
 bridge.contexts.set(1, {
   frontend: {
