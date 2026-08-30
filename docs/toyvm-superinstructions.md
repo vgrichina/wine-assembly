@@ -154,6 +154,15 @@ change, and a fused pair is the natural place to do it — the producer and the
 consumer are now inside one handler, where a liveness question that is hard
 across a dispatch becomes local. That is the next thing worth pricing.
 
+**Priced, in [toyvm-lazy-flags.md](toyvm-lazy-flags.md): deferring the flags is a
+wash on its own, and the reason is this page.** Fusion and laziness are
+substitutes for the compare/branch pair rather than complements — eager computes
+six flags and the branch reads one bit, lazy stores six globals and the branch
+computes one bit, and the work comes out the same. What is still on the table is
+the third option neither does: a fused handler knows its consumer at generation
+time, so `cmp_ri8_jz` can answer ZF from a value already in a local, with no flag
+word and no getter, while the record keeps the other five available.
+
 It also does not touch the block transfer, which at 3.25 ops per block is a
 large share of the remaining cost. The trace-JIT answer there is to compile
 *through* a conditional branch, emitting the taken edge as a side exit and

@@ -66,6 +66,7 @@ async function main() {
   // stream by construction, and two compilers do not.
   const MODS = {
     nofuse: { fuse: false },
+    nolazy: { lazyFlags: false },
     nowasmdecode: { wasmDecode: false },
     nocache: { noCache: true },
   };
@@ -90,6 +91,14 @@ async function main() {
   // the arms all park at the prompt and the benchmark times the prompt.
   const autoKey = !process.argv.slice(2).includes('--no-auto-key');
   const quiet = () => {};
+  // `--cpu-time` measures the guest slice's USER+SYS CPU instead of its wall
+  // clock. Same fixed work either way -- the arms retire the same dispatches by
+  // construction -- but the wall clock also counts every other process on the
+  // box, and this one sits at load 10-40. Measured back to back: the same
+  // lazy-vs-eager A/B came back with 39-320% per-arm spread on wall clock, which
+  // cannot resolve a few percent no matter how many reps are averaged. Reach for
+  // it whenever `load average` in the header is not close to zero.
+  const cpuTime = flag('cpu-time');
 
   // Printed either side of the run for the same reason profile-web-frames.js
   // does it: at load 10+ these numbers describe the box, not the VM.
@@ -119,7 +128,7 @@ async function main() {
         if (!seen.has(v)) seen.set(v, { sig, r });
         else if (seen.get(v).sig !== sig) failed = `${v} is not deterministic across reps`;
         if (!samples.has(v)) samples.set(v, []);
-        samples.get(v).push(r.guestSecs * 1e9 / r.dispatched);
+        samples.get(v).push((cpuTime ? r.guestCpuSecs : r.guestSecs) * 1e9 / r.dispatched);
       }
     }
 
@@ -143,17 +152,33 @@ async function main() {
       const s = [...samples.get(v)].sort((a, b) => a - b);
       return { min: s[0], med: s[(s.length - 1) >> 1], max: s[s.length - 1] };
     };
+    // The min-of-reps ratio compares two arms' BEST moments, which need not be
+    // the same moment. Under load that is the whole problem: whichever arm
+    // happened to get a quiet rep wins, and the winner changes run to run.
+    //
+    // The paired ratio compares each arm against the baseline WITHIN one rep,
+    // where they ran seconds apart under the same load, and takes the median of
+    // those. It is the number to read when the header's load average is not
+    // close to zero -- it cannot remove contention, but it stops contention from
+    // landing entirely on one arm.
+    const pairedRel = (v) => {
+      const a = samples.get(variants[0]), b = samples.get(v);
+      const rs = a.map((x, i) => x / b[i]).sort((x, y) => x - y);
+      return rs[(rs.length - 1) >> 1];
+    };
     const base = stat(variants[0]).min;
     for (const v of variants) {
       const { min, med, max } = stat(v);
       const rel = base / min;
-      console.log(`  ${v.padEnd(14)} ${min.toFixed(2)} ns/dispatch  `
+      const prel = pairedRel(v);
+      console.log(`  ${v.padEnd(14)} ${min.toFixed(2)} ns/dispatch${cpuTime ? ' cpu' : ''}  `
         + `${(1000 / min).toFixed(1)}M/s  `
         + `${v === variants[0] ? '(baseline)'
-          : `${rel >= 1 ? '+' : ''}${((rel - 1) * 100).toFixed(1)}%`}`
+          : `${rel >= 1 ? '+' : ''}${((rel - 1) * 100).toFixed(1)}%`
+            + ` min / ${prel >= 1 ? '+' : ''}${((prel - 1) * 100).toFixed(1)}% paired`}`
         + `   [med ${med.toFixed(2)} max ${max.toFixed(2)}, spread ${((max / min - 1) * 100).toFixed(0)}%]`);
       rows.push({
-        exe: name, variant: v, rel: Number(rel.toFixed(4)),
+        exe: name, variant: v, rel: Number(rel.toFixed(4)), pairedRel: Number(prel.toFixed(4)),
         nsMin: Number(min.toFixed(3)), nsMed: Number(med.toFixed(3)), nsMax: Number(max.toFixed(3)),
       });
     }
@@ -164,11 +189,14 @@ async function main() {
   if (rows.length) {
     console.log('\ngeomean across programs (baseline = first variant):');
     for (const v of variants) {
-      const rs = rows.filter(r => r.variant === v).map(r => r.rel);
-      if (!rs.length) continue;
-      const g = Math.exp(rs.reduce((a, b) => a + Math.log(b), 0) / rs.length);
-      console.log(`  ${v.padEnd(14)} ${g >= 1 ? '+' : ''}${((g - 1) * 100).toFixed(1)}%`
-        + `   (beat baseline on ${rows.filter(r => r.variant === v && r.rel >= 1).length}/${rs.length})`);
+      const mine = rows.filter(r => r.variant === v);
+      if (!mine.length) continue;
+      const geo = (f) => Math.exp(mine.reduce((a, r) => a + Math.log(f(r)), 0) / mine.length);
+      const g = geo(r => r.rel), p = geo(r => r.pairedRel);
+      console.log(`  ${v.padEnd(14)} ${g >= 1 ? '+' : ''}${((g - 1) * 100).toFixed(1)}% min`
+        + `  /  ${p >= 1 ? '+' : ''}${((p - 1) * 100).toFixed(1)}% paired`
+        + `   (beat baseline on ${mine.filter(r => r.rel >= 1).length}/${mine.length} min,`
+        + ` ${mine.filter(r => r.pairedRel >= 1).length}/${mine.length} paired)`);
     }
   }
 

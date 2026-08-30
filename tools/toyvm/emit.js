@@ -31,6 +31,17 @@ const isa = require('./isa');
 // `args` counts operand words following the handler index in the stream.
 // ---------------------------------------------------------------------------
 const HANDLERS = [];
+
+// Lazy flags are on. This is the A/B switch for them, and it is a GENERATION-time
+// variable rather than a runtime one: the whole point of the change is that a
+// compare stores its inputs instead of computing six bits, so the two arms have
+// to be different handler bodies. buildHandlers() below rebuilds the table under
+// the other setting, which is what lets bench-dos.js interleave the two arms in
+// ONE process -- the alternative, a worktree per arm, measures this box's load.
+let LAZY = true;
+// CF as an INPUT (ADC/SBB, and the eager helpers' saved carry for INC/DEC).
+const CF_IN = () => (LAZY ? '(call $get_cf)' : '(i32.and (global.get $flags) (i32.const 1))');
+
 function h(name, args, body) {
   HANDLERS.push({ name, args, index: HANDLERS.length, body });
   return HANDLERS.length - 1;
@@ -49,7 +60,8 @@ function ops(n) {
 // End of a decoded run. Carries the guest IP the instruction stream ended at,
 // which is where the production interpreter also writes eip: at a block end,
 // not once per instruction.
-h('end', 1, `
+function genTerminators() {
+  h('end', 1, `
   ${ops(1)}
   (global.set $gip (local.get $t0))
   (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
@@ -72,12 +84,13 @@ h('end', 1, `
 // keeping a table in its code segment. The block still ends either way -- the
 // cut is what makes Turbo Pascal's Intr() work -- but the host can now tell
 // which kind it was and retire the rule where it is doing nothing.
-h('end_smc', 1, `
+  h('end_smc', 1, `
   ${ops(1)}
   (if (i32.eqz (global.get $smc)) (then (global.set $smc (i32.const 1))))
   (global.set $gip (local.get $t0))
   (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
 `);
+}
 
 // --- ALU + MOV families, generated -----------------------------------------
 // x86 encodes six of the ALU ops at 8*code + form, and every one shares the
@@ -95,7 +108,12 @@ h('end_smc', 1, `
 // `carry` folds CF into the result. ADC/SBB need no special flag rule: with
 // s = a+b+cf the carry out still lands above bit w-1, and the AF and OF
 // formulas are written on (a, b, r) and stay correct.
-const CF_IN = '(i32.and (global.get $flags) (i32.const 1))';
+// Which deferred rule $fop names. 0 is "nothing pending, the $flags word is
+// authoritative" -- the state every non-arithmetic path leaves behind.
+const FOP = {
+  NONE: 0, ADD: 1, SUB: 2, LOGIC: 3, ADD32: 4, SUB32: 5,
+  INC: 6, DEC: 7, INC32: 8, DEC32: 9,
+};
 const ALU = {
   add: { code: 0, flags: 'add', write: true, op: 'i32.add' },
   or: { code: 1, flags: 'logic', write: true, op: 'i32.or' },
@@ -114,16 +132,21 @@ const ALU = {
 // identity and the arithmetic flags go to the *32 helpers, which take a
 // carry-in and a truncated result rather than an oversized one.
 const WM = (w) => ({ 8: '0xFF', 16: '0xFFFF', 32: '-1' })[w];
-const ADD_FLAGS = (w, a, b, s) => w === 32
-  ? `(call $flags_add32 ${a} ${b} (i32.const 0) ${s})`
-  : `(call $flags_add ${a} ${b} ${s} (i32.const ${w}))`;
-const SUB_FLAGS = (w, a, b, s) => w === 32
-  ? `(call $flags_sub32 ${a} ${b} (i32.const 0) ${s})`
-  : `(call $flags_sub ${a} ${b} ${s} (i32.const ${w}))`;
-const INC_FLAGS = (w, a, s) => w === 32
-  ? `(call $flags_inc32 ${a} ${s})` : `(call $flags_inc ${a} ${s} (i32.const ${w}))`;
-const DEC_FLAGS = (w, a, s) => w === 32
-  ? `(call $flags_dec32 ${a} ${s})` : `(call $flags_dec ${a} ${s} (i32.const ${w}))`;
+// $rec_NAME and $flags_NAME take the same parameters in the same order, on
+// purpose: the recorder is exactly the eager helper with the computation
+// removed, so switching arms is a prefix substitution and cannot silently
+// reorder an argument.
+const FL = (name) => `$${LAZY ? 'rec' : 'flags'}_${name}`;
+const ADD_FLAGS = (w, a, b, s) => (w === 32
+  ? `(call ${FL('add32')} ${a} ${b} (i32.const 0) ${s})`
+  : `(call ${FL('add')} ${a} ${b} ${s} (i32.const ${w}))`);
+const SUB_FLAGS = (w, a, b, s) => (w === 32
+  ? `(call ${FL('sub32')} ${a} ${b} (i32.const 0) ${s})`
+  : `(call ${FL('sub')} ${a} ${b} ${s} (i32.const ${w}))`);
+const INC_FLAGS = (w, a, s) => (w === 32
+  ? `(call ${FL('inc32')} ${a} ${s})` : `(call ${FL('inc')} ${a} ${s} (i32.const ${w}))`);
+const DEC_FLAGS = (w, a, s) => (w === 32
+  ? `(call ${FL('dec32')} ${a} ${s})` : `(call ${FL('dec')} ${a} ${s} (i32.const ${w}))`);
 
 const EA_SETUP_PRE = `
   (local.set $t4 (call $ea (local.get $t0) (local.get $t1)))
@@ -143,15 +166,15 @@ function genAlu() {
       // reports rather than silently ignoring.
       // ADC/SBB fold CF into the result; everything else is the bare op.
       const combine = (a, b) => spec.carry
-        ? `(${spec.op} (${spec.op} ${a} ${b}) ${CF_IN})`
+        ? `(${spec.op} (${spec.op} ${a} ${b}) ${CF_IN()})`
         : `(${spec.op} ${a} ${b})`;
       // At width 32 the arithmetic flags go to the dedicated helpers, which take
       // the carry-in and the truncated result instead of an oversized sum.
-      const flags = (a, b, s) => spec.flags === 'logic'
-        ? `(call $flags_logic (i32.and ${s} (i32.const ${mask})) (i32.const ${w}))`
+      const flags = (a, b, s) => (spec.flags === 'logic'
+        ? `(call ${FL('logic')} (i32.and ${s} (i32.const ${mask})) (i32.const ${w}))`
         : (w === 32
-          ? `(call $flags_${spec.flags}32 ${a} ${b} ${spec.carry ? CF_IN : '(i32.const 0)'} ${s})`
-          : `(call $flags_${spec.flags} ${a} ${b} ${s} (i32.const ${w}))`);
+          ? `(call ${FL(`${spec.flags}32`)} ${a} ${b} ${spec.carry ? CF_IN() : '(i32.const 0)'} ${s})`
+          : `(call ${FL(spec.flags)} ${a} ${b} ${s} (i32.const ${w}))`));
 
       h(`${name}_rr${w}`, 1, `
   ${ops(1)}
@@ -268,8 +291,33 @@ const F = isa.F;
 const RESERVED = '(global.get $f_res)';
 const DEFINED = '(global.get $f_def)';
 
-const bit = (b) => `(i32.and (i32.shr_u (global.get $flags) (i32.const ${b})) (i32.const 1))`;
-const CONDS = {
+// Reading one flag. With lazy flags this is a call into the getter for that
+// bit rather than a shift out of the word, because the word may not hold the
+// answer yet -- see the $fop block in helpers(). Every condition, every SETcc
+// and INTO's overflow test go through here, so this one line is the whole
+// consumer side of the change.
+const GETTER = {
+  [F.CF]: '$get_cf', [F.PF]: '$get_pf', [F.AF]: '$get_af',
+  [F.ZF]: '$get_zf', [F.SF]: '$get_sf', [F.OF]: '$get_of',
+};
+const bit = (b) => {
+  if (LAZY && GETTER[b]) return `(call ${GETTER[b]})`;
+  if (!LAZY) {
+    return `(i32.and (i32.shr_u (global.get $flags) (i32.const ${b})) (i32.const 1))`;
+  }
+  // Everything outside FLAGS_ARITH -- DF for the string ops, IF, TF -- is never
+  // deferred and is always authoritative in the word, so it is read directly.
+  // Asserting rather than assuming: a new arithmetic flag reaching here would
+  // read a stale bit, silently and only sometimes.
+  if (isa.FLAGS_ARITH & (1 << b)) throw new Error(`no lazy getter for flag bit ${b}`);
+  return `(i32.and (i32.shr_u (global.get $flags) (i32.const ${b})) (i32.const 1))`;
+};
+// Built by a function, not frozen at require time: every other bit() call in
+// this file sits inside a gen* function and is re-evaluated when buildHandlers()
+// switches the flag scheme, and a top-level object here would keep the FIRST
+// scheme's condition tests. That is not a crash -- it is an eager-arm build
+// whose Jcc still calls the lazy getters, which quietly measures neither arm.
+const makeConds = () => ({
   o: bit(F.OF),
   no: `(i32.eqz ${bit(F.OF)})`,
   b: bit(F.CF),
@@ -286,7 +334,8 @@ const CONDS = {
   ge: `(i32.eq ${bit(F.SF)} ${bit(F.OF)})`,
   le: `(i32.or ${bit(F.ZF)} (i32.ne ${bit(F.SF)} ${bit(F.OF)}))`,
   g: `(i32.eqz (i32.or ${bit(F.ZF)} (i32.ne ${bit(F.SF)} ${bit(F.OF)})))`,
-};
+});
+let CONDS = makeConds();
 
 // Shared tail: commit one successor. $arena is the arena address (0 = stop),
 // $guest is the guest IP to record either way.
@@ -442,7 +491,7 @@ function genExtras() {
   (global.set $sp (i32.and (i32.sub (global.get $sp) (i32.const 2)) (i32.const 0xFFFF)))
   (call $wr16 (i32.const 2) (global.get $sp) (global.get $sp))
 `);
-  h('pushf', 0, `(call $push16 (global.get $flags))`);
+  h('pushf', 0, `(call $push16 (call $flags_word))`);
   // POPF must both OR in the bits that always read 1 and MASK OFF the ones that
   // always read 0 (3 and 5). Only doing the first half leaves whatever the
   // pushed value had in those bits and fails three quarters of the corpus.
@@ -454,7 +503,7 @@ function genExtras() {
   // in a run, so the cost is one compare on a POPF that leaves TF clear.
   h('popf', 1, `
   ${ops(1)}
-  (global.set $flags (i32.or
+  (call $flags_put (i32.or
     (i32.and (call $pop16) ${DEFINED})
     ${RESERVED}))
   (if (i32.and (global.get $flags) (i32.const ${1 << isa.F.TF}))
@@ -474,11 +523,11 @@ function genExtras() {
   // VM lives outside $flags (see the global), so PUSHFD has to put it back or
   // a guest that saves and restores EFLAGS around anything loses the mode --
   // and a V86 monitor reading the frame cannot tell where the trap came from.
-  h('pushf32', 0, `(call $push32 (i32.or (i32.and (global.get $flags) (i32.const 0xFFFF))
+  h('pushf32', 0, `(call $push32 (i32.or (i32.and (call $flags_word) (i32.const 0xFFFF))
                                          (i32.shl (global.get $vm86) (i32.const 17))))`);
   h('popf32', 1, `
   ${ops(1)}
-  (global.set $flags (i32.or
+  (call $flags_put (i32.or
     (i32.and (i32.and (call $pop32) (i32.const 0xFFFF)) ${DEFINED})
     ${RESERVED}))
   (if (i32.and (global.get $flags) (i32.const ${1 << isa.F.TF}))
@@ -678,12 +727,22 @@ function genExtras() {
 
   // Flag-register instructions. Each one is a single bit, but a wrong one here
   // changes which way a later branch goes, so they are spelled out.
-  const setF = (b, v) => v
-    ? `(global.set $flags (i32.or (global.get $flags) (i32.const ${1 << b})))`
-    : `(global.set $flags (i32.and (global.get $flags) (i32.const ${(~(1 << b)) & 0xFFFF})))`;
+  // CLD/STD/CLI/STI move a bit OUTSIDE the arithmetic set, and those bits are
+  // authoritative in the word whether or not an ALU result is still deferred --
+  // so they edit it in place and leave the pending record alone. CLC/STC/CMC
+  // move CF, which may still be owed by an earlier compare, so they materialize
+  // first and retire the record with the result.
+  const setF = (b, v) => {
+    const lazy = LAZY && (isa.FLAGS_ARITH & (1 << b)) !== 0;
+    const read = lazy ? '(call $flags_word)' : '(global.get $flags)';
+    const put = (x) => (lazy ? `(call $flags_put ${x})` : `(global.set $flags ${x})`);
+    return put(v
+      ? `(i32.or ${read} (i32.const ${1 << b}))`
+      : `(i32.and ${read} (i32.const ${(~(1 << b)) & 0xFFFF}))`);
+  };
   h('clc', 0, setF(F.CF, 0));
   h('stc', 0, setF(F.CF, 1));
-  h('cmc', 0, `(global.set $flags (i32.xor (global.get $flags) (i32.const ${1 << F.CF})))`);
+  h('cmc', 0, `(call $flags_put (i32.xor (call $flags_word) (i32.const ${1 << F.CF})))`);
   h('cld', 0, setF(F.DF, 0));
   h('std', 0, setF(F.DF, 1));
   h('cli', 0, setF(F.IF, 0));
@@ -692,15 +751,15 @@ function genExtras() {
 
   // SAHF/LAHF move the low byte of FLAGS through AH.
   h('sahf', 0, `
-  (global.set $flags (i32.or
-    (i32.and (global.get $flags) (i32.const 0xFF00))
+  (call $flags_put (i32.or
+    (i32.and (call $flags_word) (i32.const 0xFF00))
     (i32.or (i32.and (i32.shr_u (global.get $ax) (i32.const 8)) (i32.const 0xD5))
             (i32.const 2))))
 `);
   h('lahf', 0, `
   (call $rset16 (i32.const 0) (i32.or
     (i32.and (global.get $ax) (i32.const 0x00FF))
-    (i32.shl (i32.and (global.get $flags) (i32.const 0xFF)) (i32.const 8))))
+    (i32.shl (i32.and (call $flags_word) (i32.const 0xFF)) (i32.const 8))))
 `);
 
   // --- BCD and ASCII adjust -------------------------------------------------
@@ -764,8 +823,8 @@ function genExtras() {
         (i32.and (${add} (call $rget8 (i32.const 4)) (i32.const 1)) (i32.const 0xFF)))
       (local.set $t2 (i32.const 1))))
   (call $rset8 (i32.const 0) (i32.and (local.get $t0) (i32.const 0x0F)))
-  (global.set $flags (i32.or
-    (i32.and (global.get $flags)
+  (call $flags_put (i32.or
+    (i32.and (call $flags_word)
              (i32.const ${(~((1 << F.CF) | (1 << F.AF))) & 0xFFFF}))
     (i32.or (local.get $t2) (i32.shl (local.get $t2) (i32.const ${F.AF})))))
 `);
@@ -881,7 +940,7 @@ function genExtras() {
   h('iret', 0, `
   (global.set $gip (call $pop16))
   (call $sset (i32.const 1) (call $pop16))
-  (global.set $flags (i32.or
+  (call $flags_put (i32.or
     (i32.and (call $pop16) ${DEFINED})
     ${RESERVED}))
   (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
@@ -912,7 +971,7 @@ function genExtras() {
     (else
       (call $sset (i32.const 1) (i32.and (local.get $t1) (i32.const 0xFFFF)))
       (global.set $gip (local.get $t0))
-      (global.set $flags (i32.or (i32.and (local.get $t2) ${DEFINED}) ${RESERVED}))))
+      (call $flags_put (i32.or (i32.and (local.get $t2) ${DEFINED}) ${RESERVED}))))
   (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
 `);
 }
@@ -923,9 +982,9 @@ function genExtras() {
 // backwards when a demo sets STD -- which they do, constantly, for scrolls.
 // A compare's flags, at whichever width -- the 32-bit form needs the dedicated
 // helper because there is no room above bit 31 to keep the borrow.
-const CMP_FLAGS = (w, a, b) => w === 32
-  ? `(call $flags_sub32 ${a} ${b} (i32.const 0) (i32.sub ${a} ${b}))`
-  : `(call $flags_sub ${a} ${b} (i32.sub ${a} ${b}) (i32.const ${w}))`;
+const CMP_FLAGS = (w, a, b) => (w === 32
+  ? `(call ${FL('sub32')} ${a} ${b} (i32.const 0) (i32.sub ${a} ${b}))`
+  : `(call ${FL('sub')} ${a} ${b} (i32.sub ${a} ${b}) (i32.const ${w}))`);
 
 function genStrings() {
   const DELTA = (sz) => `(select (i32.const ${-sz}) (i32.const ${sz}) ${bit(F.DF)})`;
@@ -1082,7 +1141,10 @@ function s_shift(kind, w, one, rotate, ofExpr, mask, msb) {
 (func $sh_${kind}${w} (param $v i32) (param $n i32) (result i32)
   (local $cf i32) (local $t i32) (local $orig i32) (local $f i32)
   (local.set $orig (local.get $v))
-  (local.set $cf (i32.and (global.get $flags) (i32.const 1)))
+  ;; A rotate-through-carry reads the INCOMING CF, which under lazy flags may
+  ;; still be owed by an earlier compare -- hence the getter rather than a shift
+  ;; out of the word.
+  (local.set $cf ${CF_IN()})
   ;; How much of the count this part looks at. See \$shmask -- an 8086 shifts
   ;; the whole of it, a 186 and later masks it to five bits, and programs probe
   ;; the difference deliberately.
@@ -1096,7 +1158,7 @@ function s_shift(kind, w, one, rotate, ofExpr, mask, msb) {
   ;; A rotate touches only CF and OF; a shift also defines SF, ZF and PF. Which
   ;; bits get cleared here has to match, or a rotate silently zeroes the ZF a
   ;; preceding compare set.
-  (local.set $f (i32.and (global.get $flags)
+  (local.set $f (i32.and (call $flags_word)
     (i32.const ${(~((1 << isa.F.CF) | (1 << isa.F.OF) | (rotate ? 0
       : ((1 << isa.F.SF) | (1 << isa.F.ZF) | (1 << isa.F.PF))))) & 0xFFFF})))
   (local.set $f (i32.or (local.get $f) (i32.and (local.get $cf) (i32.const 1))))
@@ -1113,7 +1175,7 @@ function s_shift(kind, w, one, rotate, ofExpr, mask, msb) {
     (i32.shl (i32.and (i32.xor (i32.popcnt (i32.and (local.get $v) (i32.const 0xFF)))
                                (i32.const 1)) (i32.const 1))
              (i32.const ${isa.F.PF}))))`}
-  (global.set $flags (i32.or (local.get $f) ${RESERVED}))
+  (call $flags_put (i32.or (local.get $f) ${RESERVED}))
   (local.get $v))
 `);
 }
@@ -1207,7 +1269,7 @@ function genDoubleShifts() {
   (if (i32.eqz (local.get $n)) (then (return (local.get $v))))
   (local.set $q ${cat})
   (local.set $r (i32.and ${res} (i32.const ${mask})))
-  (local.set $f (i32.and (global.get $flags) (i32.const ${(~((1 << isa.F.CF)
+  (local.set $f (i32.and (call $flags_word) (i32.const ${(~((1 << isa.F.CF)
     | (1 << isa.F.OF) | (1 << isa.F.SF) | (1 << isa.F.ZF) | (1 << isa.F.PF))) & 0xFFFF})))
   (local.set $f (i32.or (local.get $f) (i32.and ${cf} (i32.const 1))))
   ;; OF is defined only for a count of one, as the sign changing.
@@ -1224,7 +1286,7 @@ function genDoubleShifts() {
     (i32.and (i32.xor (i32.popcnt (i32.and (local.get $r) (i32.const 0xFF))) (i32.const 1))
              (i32.const 1))
     (i32.const ${isa.F.PF}))))
-  (global.set $flags (i32.or (local.get $f) ${RESERVED}))
+  (call $flags_put (i32.or (local.get $f) ${RESERVED}))
   (local.get $r))
 `);
       // -1 as the count operand means "take it from CL", the same sentinel the
@@ -1275,8 +1337,8 @@ const BIT_OPS = {
   btc: (v, m) => `(i32.xor ${v} ${m})`,
 };
 function genBitOps() {
-  const CF_ONLY = (cf) => `(global.set $flags (i32.or
-    (i32.and (global.get $flags) (i32.const 0xFFFE)) (i32.and ${cf} (i32.const 1))))`;
+  const CF_ONLY = (cf) => `(call $flags_put (i32.or
+    (i32.and (call $flags_word) (i32.const 0xFFFE)) (i32.and ${cf} (i32.const 1))))`;
 
   for (const w of [16, 32]) {
     const mask = WM(w);
@@ -1326,8 +1388,8 @@ function genBitOps() {
         : `(i32.sub (i32.const 31) (i32.clz (local.get $t7)))`;
       const body = (src, dst) => `
   (local.set $t7 (i32.and ${src} (i32.const ${mask})))
-  (global.set $flags (i32.or
-    (i32.and (global.get $flags) (i32.const ${(~(1 << isa.F.ZF)) & 0xFFFF}))
+  (call $flags_put (i32.or
+    (i32.and (call $flags_word) (i32.const ${(~(1 << isa.F.ZF)) & 0xFFFF}))
     (i32.shl (i32.eqz (local.get $t7)) (i32.const ${isa.F.ZF}))))
   (if (local.get $t7) (then (call $rset${w} ${dst} ${scan})))
 `;
@@ -1928,6 +1990,10 @@ function genArithIO() {
   }
 }
 
+// The generators run once here at require time and again, in the same order,
+// from buildHandlers() when an arm asks for the other flag scheme. Order IS the
+// handler index, so this list and the one in buildHandlers() are the same list.
+genTerminators();
 genAlu();
 genMov();
 genBranches();
@@ -2084,8 +2150,8 @@ function gen386() {
     ['str', '(call $rset16 %R% (global.get $tr))'],
     ['lldt', '(global.set $ldt %V%) (global.set $ldtb (call $gdtbase %V%))'],
     ['ltr', '(global.set $tr %V%)'],
-    ['verr', `(global.set $flags (i32.or (global.get $flags) (i32.const ${1 << F.ZF})))`],
-    ['verw', `(global.set $flags (i32.or (global.get $flags) (i32.const ${1 << F.ZF})))`],
+    ['verr', `(call $flags_put (i32.or (call $flags_word) (i32.const ${1 << F.ZF})))`],
+    ['verw', `(call $flags_put (i32.or (call $flags_word) (i32.const ${1 << F.ZF})))`],
   ]) {
     const store = nm === 'sldt' || nm === 'str';
     h(`${nm}_r`, 1, `
@@ -2128,8 +2194,8 @@ function gen386() {
     const body = (src, dst) => `
   (local.set $t3 ${src})
   (local.set $t7 (call $descaddr (local.get $t3)))
-  (global.set $flags (i32.or
-    (i32.and (global.get $flags) (i32.const ${(~(1 << F.ZF)) & 0xFFFF}))
+  (call $flags_put (i32.or
+    (i32.and (call $flags_word) (i32.const ${(~(1 << F.ZF)) & 0xFFFF}))
     (i32.shl (i32.ne (local.get $t7) (i32.const 0)) (i32.const ${F.ZF}))))
   (if (local.get $t7) (then
     (local.set $t7 (i32.sub (local.get $t7) (i32.const 1)))
@@ -2684,6 +2750,42 @@ function genFusedBranches() {
 }
 genFusedBranches();
 
+// Rebuild the whole table under the other flag scheme. Both arms live in one
+// process so bench-dos.js can interleave them rep by rep; a worktree per arm on
+// a box that sits at load 10-40 measures the box.
+//
+// The handler table's SHAPE must not move: same handlers, same order, same
+// operand counts, same fusions. Only the bodies differ -- laziness changes what
+// a compare computes, not what it consumes. compile.js holds ARITY and FUSE by
+// reference from require time, so if that ever stopped being true the compiler
+// would lay out one arm's arena with the other arm's operand counts and produce
+// garbage with no error. It is asserted rather than assumed.
+function buildHandlers(lazy) {
+  if (lazy === LAZY) return;
+  const before = HANDLERS.map(x => `${x.name}/${x.args}`).join(',');
+  const fuseBefore = [...FUSE.entries()].map(([k, v]) => `${k}:${v}`).sort().join(',');
+  LAZY = lazy;
+  CONDS = makeConds();
+  HANDLERS.length = 0;
+  FUSE.clear();
+  // genShifts()/genDoubleShifts() append to this rather than returning, so a
+  // rebuild that does not clear it emits both arms' shift helpers -- same
+  // function names twice, and the handler table's ARITY check cannot see it.
+  SHIFT_FNS.length = 0;
+  genTerminators();
+  genAlu(); genMov(); genBranches(); genExtras();
+  genStrings(); gen186StringIO(); gen386(); genFpu();
+  genShifts(); genSetmo(); genShiftHandlers(); genDoubleShifts();
+  genBitOps(); genArithIO();
+  genFusedBranches();
+  const after = HANDLERS.map(x => `${x.name}/${x.args}`).join(',');
+  if (after !== before) {
+    throw new Error('the flag scheme moved the handler table: names or arities differ');
+  }
+  const fuseAfter = [...FUSE.entries()].map(([k, v]) => `${k}:${v}`).sort().join(',');
+  if (fuseAfter !== fuseBefore) throw new Error('the flag scheme changed the fusion table');
+}
+
 // The first six handlers were written by hand to prove the gate; genAlu()
 // covers every form they did and forty more, so they are gone rather than
 // kept as a second definition of the same arithmetic.
@@ -3195,6 +3297,19 @@ function helpers() {
 ;; Eager flags. $s is the UNMASKED sum, so the carry out is still in it.
 ;; Width is 8 or 16; everything below is written against it rather than
 ;; branching on it, so the two widths share one path.
+;; Publish a whole EFLAGS word and retire any pending record with it. Every
+;; eager helper below ends here, so none of them can leave a stale $fop behind
+;; to be read back over the flags it just computed.
+(func $flags_put (param $v i32)
+  (global.set $flags (local.get $v))
+  (global.set $fop (i32.const 0)))
+
+;; The whole EFLAGS word, with anything deferred folded in first. This is what
+;; PUSHF, LAHF and the interrupt frames read.
+(func $flags_word (result i32)
+  (call $flags_sync)
+  (global.get $flags))
+
 (func $flags_add (param $a i32) (param $b i32) (param $s i32) (param $w i32)
   (local $r i32) (local $msb i32) (local $f i32)
   (local.set $r (i32.and (local.get $s)
@@ -3232,7 +3347,7 @@ function helpers() {
       (i32.and (i32.xor (i32.popcnt (i32.and (local.get $r) (i32.const 0xFF))) (i32.const 1))
                (i32.const 1))
       (i32.const ${isa.F.PF}))))
-  (global.set $flags (i32.or (local.get $f) ${RESERVED})))
+  (call $flags_put (i32.or (local.get $f) ${RESERVED})))
 
 ;; SUB/CMP. Same shape as add; only CF and OF read differently.
 ;; $s is the unmasked difference, so a borrow is still visible above bit w-1.
@@ -3269,21 +3384,21 @@ function helpers() {
       (i32.and (i32.xor (i32.popcnt (i32.and (local.get $r) (i32.const 0xFF))) (i32.const 1))
                (i32.const 1))
       (i32.const ${isa.F.PF}))))
-  (global.set $flags (i32.or (local.get $f) ${RESERVED})))
+  (call $flags_put (i32.or (local.get $f) ${RESERVED})))
 
 ;; INC/DEC are add/sub by one that leave CF ALONE. Saving and restoring the
 ;; bit around the shared helper is cheaper than a second copy of the whole
 ;; flag computation, and cannot drift from it.
 (func $flags_inc (param $a i32) (param $s i32) (param $w i32)
   (local $cf i32)
-  (local.set $cf (i32.and (global.get $flags) (i32.const 1)))
+  (local.set $cf ${CF_IN()})
   (call $flags_add (local.get $a) (i32.const 1) (local.get $s) (local.get $w))
   (global.set $flags (i32.or (i32.and (global.get $flags) (i32.const 0xFFFE))
                              (local.get $cf))))
 
 (func $flags_dec (param $a i32) (param $s i32) (param $w i32)
   (local $cf i32)
-  (local.set $cf (i32.and (global.get $flags) (i32.const 1)))
+  (local.set $cf ${CF_IN()})
   (call $flags_sub (local.get $a) (i32.const 1) (local.get $s) (local.get $w))
   (global.set $flags (i32.or (i32.and (global.get $flags) (i32.const 0xFFFE))
                              (local.get $cf))))
@@ -3305,7 +3420,7 @@ function helpers() {
       (i32.and (i32.xor (i32.popcnt (i32.and (local.get $r) (i32.const 0xFF))) (i32.const 1))
                (i32.const 1))
       (i32.const ${isa.F.PF}))))
-  (global.set $flags (i32.or (local.get $f) ${RESERVED})))
+  (call $flags_put (i32.or (local.get $f) ${RESERVED})))
 
 ;; The 32-bit forms cannot share the 8/16 path: those keep the carry visible
 ;; above the operand width in an unmasked 32-bit result, and at width 32 there
@@ -3340,7 +3455,7 @@ function helpers() {
     (i32.shl (i32.and (i32.xor (i32.popcnt (i32.and (local.get $r) (i32.const 0xFF)))
                                (i32.const 1)) (i32.const 1))
       (i32.const ${isa.F.PF}))))
-  (global.set $flags (i32.or (local.get $f) ${RESERVED})))
+  (call $flags_put (i32.or (local.get $f) ${RESERVED})))
 
 (func $flags_sub32 (param $a i32) (param $b i32) (param $cin i32) (param $r i32)
   (local $f i32)
@@ -3368,18 +3483,18 @@ function helpers() {
     (i32.shl (i32.and (i32.xor (i32.popcnt (i32.and (local.get $r) (i32.const 0xFF)))
                                (i32.const 1)) (i32.const 1))
       (i32.const ${isa.F.PF}))))
-  (global.set $flags (i32.or (local.get $f) ${RESERVED})))
+  (call $flags_put (i32.or (local.get $f) ${RESERVED})))
 
 (func $flags_inc32 (param $a i32) (param $r i32)
   (local $cf i32)
-  (local.set $cf (i32.and (global.get $flags) (i32.const 1)))
+  (local.set $cf ${CF_IN()})
   (call $flags_add32 (local.get $a) (i32.const 1) (i32.const 0) (local.get $r))
   (global.set $flags (i32.or (i32.and (global.get $flags) (i32.const 0xFFFE))
                              (local.get $cf))))
 
 (func $flags_dec32 (param $a i32) (param $r i32)
   (local $cf i32)
-  (local.set $cf (i32.and (global.get $flags) (i32.const 1)))
+  (local.set $cf ${CF_IN()})
   (call $flags_sub32 (local.get $a) (i32.const 1) (i32.const 0) (local.get $r))
   (global.set $flags (i32.or (i32.and (global.get $flags) (i32.const 0xFFFE))
                              (local.get $cf))))
@@ -3388,12 +3503,205 @@ function helpers() {
 ;; and leave SF/ZF/AF/PF undefined. $nz is the caller's answer to that question.
 (func $flags_mul (param $nz i32)
   (local $f i32)
+  ;; A partial write: CF and OF come from $nz and everything else is preserved,
+  ;; so whatever is still deferred has to be folded into the word first or it
+  ;; would be preserved from before the last ALU instruction instead of after.
+  (call $flags_sync)
   (local.set $f (i32.and (global.get $flags)
     (i32.const ${(~((1 << isa.F.CF) | (1 << isa.F.OF))) & 0xFFFF})))
   (local.set $nz (i32.ne (local.get $nz) (i32.const 0)))
   (global.set $flags (i32.or (i32.or (local.get $f)
     (i32.or (local.get $nz) (i32.shl (local.get $nz) (i32.const ${isa.F.OF}))))
     ${RESERVED})))
+
+;; --- Lazy flags: record, read one bit, materialize -------------------------
+;;
+;; The recorders are what the hot ALU paths call instead of the eager helpers
+;; above. They store the inputs and stop; nothing is computed until something
+;; asks. $fr is masked here rather than in the getters so that ZF, SF and PF --
+;; which do not care which rule produced the result -- need no branch on $fop.
+;;
+;; $fu stays UNmasked because at 8 and 16 bits that is where the carry out
+;; lives. At 32 there is nowhere above the width to keep it, so those two
+;; recorders take the already-truncated result and the carry IN, and $get_cf
+;; recovers the carry by comparison -- the same split the eager helpers make,
+;; and for the same reason.
+(func $rec_add (param $a i32) (param $b i32) (param $s i32) (param $w i32)
+  (global.set $fa (local.get $a)) (global.set $fb (local.get $b))
+  (global.set $fu (local.get $s)) (global.set $fw (local.get $w))
+  (global.set $fr (i32.and (local.get $s)
+    (i32.sub (i32.shl (i32.const 1) (local.get $w)) (i32.const 1))))
+  (global.set $fop (i32.const ${FOP.ADD})))
+
+(func $rec_sub (param $a i32) (param $b i32) (param $s i32) (param $w i32)
+  (global.set $fa (local.get $a)) (global.set $fb (local.get $b))
+  (global.set $fu (local.get $s)) (global.set $fw (local.get $w))
+  (global.set $fr (i32.and (local.get $s)
+    (i32.sub (i32.shl (i32.const 1) (local.get $w)) (i32.const 1))))
+  (global.set $fop (i32.const ${FOP.SUB})))
+
+;; AND/OR/XOR/TEST: CF, OF and AF are architecturally 0 (AF is UNDEFINED and 0
+;; is the choice the eager helper already made), so only the result is kept.
+(func $rec_logic (param $r i32) (param $w i32)
+  (global.set $fr (local.get $r)) (global.set $fw (local.get $w))
+  (global.set $fop (i32.const ${FOP.LOGIC})))
+
+(func $rec_add32 (param $a i32) (param $b i32) (param $cin i32) (param $r i32)
+  (global.set $fa (local.get $a)) (global.set $fb (local.get $b))
+  (global.set $fcf (local.get $cin)) (global.set $fr (local.get $r))
+  (global.set $fw (i32.const 32))
+  (global.set $fop (i32.const ${FOP.ADD32})))
+
+(func $rec_sub32 (param $a i32) (param $b i32) (param $cin i32) (param $r i32)
+  (global.set $fa (local.get $a)) (global.set $fb (local.get $b))
+  (global.set $fcf (local.get $cin)) (global.set $fr (local.get $r))
+  (global.set $fw (i32.const 32))
+  (global.set $fop (i32.const ${FOP.SUB32})))
+
+;; INC/DEC are add/sub by one that leave CF ALONE, so the carry has to be
+;; resolved NOW -- it is the one flag whose value comes from before this
+;; instruction and cannot be recomputed from its inputs afterwards.
+(func $rec_inc (param $a i32) (param $s i32) (param $w i32)
+  (local $cf i32)
+  (local.set $cf (call $get_cf))
+  (call $rec_add (local.get $a) (i32.const 1) (local.get $s) (local.get $w))
+  (global.set $fcf (local.get $cf))
+  (global.set $fop (i32.const ${FOP.INC})))
+
+(func $rec_dec (param $a i32) (param $s i32) (param $w i32)
+  (local $cf i32)
+  (local.set $cf (call $get_cf))
+  (call $rec_sub (local.get $a) (i32.const 1) (local.get $s) (local.get $w))
+  (global.set $fcf (local.get $cf))
+  (global.set $fop (i32.const ${FOP.DEC})))
+
+(func $rec_inc32 (param $a i32) (param $r i32)
+  (local $cf i32)
+  (local.set $cf (call $get_cf))
+  (call $rec_add32 (local.get $a) (i32.const 1) (i32.const 0) (local.get $r))
+  (global.set $fcf (local.get $cf))
+  (global.set $fop (i32.const ${FOP.INC32})))
+
+(func $rec_dec32 (param $a i32) (param $r i32)
+  (local $cf i32)
+  (local.set $cf (call $get_cf))
+  (call $rec_sub32 (local.get $a) (i32.const 1) (i32.const 0) (local.get $r))
+  (global.set $fcf (local.get $cf))
+  (global.set $fop (i32.const ${FOP.DEC32})))
+
+;; The getters. $fop 0 means nothing is pending and the word is authoritative,
+;; which is the state every non-arithmetic path leaves behind.
+;;
+;; ZF, SF and PF read straight off $fr with no test on which rule produced it.
+;; That is the point of masking at record time: ZF is the most consumed flag in
+;; the corpus by a wide margin (cmp/jz is 6.0% of all dispatches on its own),
+;; and it costs a compare.
+(func $get_zf (result i32)
+  (if (i32.eqz (global.get $fop))
+    (then (return (i32.and (i32.shr_u (global.get $flags) (i32.const ${F.ZF}))
+                           (i32.const 1)))))
+  (i32.eqz (global.get $fr)))
+
+(func $get_sf (result i32)
+  (if (i32.eqz (global.get $fop))
+    (then (return (i32.and (i32.shr_u (global.get $flags) (i32.const ${F.SF}))
+                           (i32.const 1)))))
+  (i32.and (i32.shr_u (global.get $fr)
+             (i32.sub (global.get $fw) (i32.const 1)))
+           (i32.const 1)))
+
+;; Parity of the LOW BYTE only, at every width, SET for EVEN parity.
+(func $get_pf (result i32)
+  (if (i32.eqz (global.get $fop))
+    (then (return (i32.and (i32.shr_u (global.get $flags) (i32.const ${F.PF}))
+                           (i32.const 1)))))
+  (i32.and (i32.xor (i32.popcnt (i32.and (global.get $fr) (i32.const 0xFF)))
+                    (i32.const 1))
+           (i32.const 1)))
+
+;; CF is the one that has to know the rule. SUB first: cmp is the commonest
+;; recorded op in the corpus and jb/jae the commonest carry readers.
+(func $get_cf (result i32)
+  (local $op i32)
+  (local.set $op (global.get $fop))
+  (if (i32.eqz (local.get $op))
+    (then (return (i32.and (global.get $flags) (i32.const 1)))))
+  (if (i32.or (i32.eq (local.get $op) (i32.const ${FOP.SUB}))
+              (i32.eq (local.get $op) (i32.const ${FOP.ADD})))
+    (then (return (i32.and (i32.shr_u (global.get $fu) (global.get $fw))
+                           (i32.const 1)))))
+  (if (i32.eq (local.get $op) (i32.const ${FOP.LOGIC}))
+    (then (return (i32.const 0))))
+  ;; At width 32 a wrap shows up as r < a with no carry in, and r == a is also
+  ;; a wrap with one (b was all ones). Subtract compares the operands instead.
+  (if (i32.eq (local.get $op) (i32.const ${FOP.ADD32}))
+    (then (return (select (i32.le_u (global.get $fr) (global.get $fa))
+                          (i32.lt_u (global.get $fr) (global.get $fa))
+                          (global.get $fcf)))))
+  (if (i32.eq (local.get $op) (i32.const ${FOP.SUB32}))
+    (then (return (select (i32.le_u (global.get $fa) (global.get $fb))
+                          (i32.lt_u (global.get $fa) (global.get $fb))
+                          (global.get $fcf)))))
+  ;; INC/DEC in either width: the carry from before the instruction.
+  (global.get $fcf))
+
+;; OF: for a sum, both inputs differ from the result in the sign bit; for a
+;; difference, the operands differed and the result took the source's sign.
+;; INC shares ADD's rule and DEC shares SUB's, so the test is only "was this a
+;; subtract".
+(func $get_of (result i32)
+  (local $op i32) (local $msb i32)
+  (local.set $op (global.get $fop))
+  (if (i32.eqz (local.get $op))
+    (then (return (i32.and (i32.shr_u (global.get $flags) (i32.const ${F.OF}))
+                           (i32.const 1)))))
+  (if (i32.eq (local.get $op) (i32.const ${FOP.LOGIC}))
+    (then (return (i32.const 0))))
+  (local.set $msb (i32.sub (global.get $fw) (i32.const 1)))
+  (if (i32.or (i32.or (i32.eq (local.get $op) (i32.const ${FOP.SUB}))
+                      (i32.eq (local.get $op) (i32.const ${FOP.SUB32})))
+              (i32.or (i32.eq (local.get $op) (i32.const ${FOP.DEC}))
+                      (i32.eq (local.get $op) (i32.const ${FOP.DEC32}))))
+    (then (return (i32.and (i32.shr_u
+        (i32.and (i32.xor (global.get $fa) (global.get $fb))
+                 (i32.xor (global.get $fa) (global.get $fr)))
+        (local.get $msb)) (i32.const 1)))))
+  (i32.and (i32.shr_u
+      (i32.and (i32.xor (global.get $fa) (global.get $fr))
+               (i32.xor (global.get $fb) (global.get $fr)))
+      (local.get $msb)) (i32.const 1)))
+
+;; AF is the carry out of bit 3, a XOR of the three bit-4s, and the formula is
+;; the same for add and subtract.
+(func $get_af (result i32)
+  (if (i32.eqz (global.get $fop))
+    (then (return (i32.and (i32.shr_u (global.get $flags) (i32.const ${F.AF}))
+                           (i32.const 1)))))
+  (if (i32.eq (global.get $fop) (i32.const ${FOP.LOGIC}))
+    (then (return (i32.const 0))))
+  (i32.and (i32.shr_u
+      (i32.xor (i32.xor (global.get $fa) (global.get $fb)) (global.get $fr))
+      (i32.const 4)) (i32.const 1)))
+
+;; Fold a pending record into the word and clear it. Everything that reads or
+;; writes the whole EFLAGS -- PUSHF, POPF, SAHF/LAHF, the interrupt frames, and
+;; every partial writer that preserves flags it does not set -- calls this
+;; first, and then works on $flags exactly as it did before laziness existed.
+;; Those are all cold paths; they pay for the hot ones staying lazy.
+(func $flags_sync
+  (local $f i32)
+  (if (i32.eqz (global.get $fop)) (then (return)))
+  (local.set $f (i32.and (global.get $flags) (i32.const ${(~isa.FLAGS_ARITH) & 0xFFFF})))
+  (local.set $f (i32.or (local.get $f) (call $get_cf)))
+  (local.set $f (i32.or (local.get $f) (i32.shl (call $get_pf) (i32.const ${F.PF}))))
+  (local.set $f (i32.or (local.get $f) (i32.shl (call $get_af) (i32.const ${F.AF}))))
+  (local.set $f (i32.or (local.get $f) (i32.shl (call $get_zf) (i32.const ${F.ZF}))))
+  (local.set $f (i32.or (local.get $f) (i32.shl (call $get_sf) (i32.const ${F.SF}))))
+  (local.set $f (i32.or (local.get $f) (i32.shl (call $get_of) (i32.const ${F.OF}))))
+  ;; Clear the record BEFORE publishing, so the getters above cannot be re-read
+  ;; against a half-updated word by anything this calls.
+  (global.set $fop (i32.const 0))
+  (call $flags_put (i32.or (local.get $f) ${RESERVED})))
 
 ;; A CPU-raised interrupt. Same sequence as INT -- and the same handing-back to
 ;; the host, since the vector points at whatever the guest installed.
@@ -3450,14 +3758,14 @@ function helpers() {
       ;; two ends of the descriptor.
       (if (i32.and (i32.load8_u offset=5 (local.get $g)) (i32.const 8))
         (then
-          (call $push32 (global.get $flags))
+          (call $push32 (call $flags_word))
           (call $push32 (call $sget (i32.const 1)))
           (call $push32 (local.get $ip))
           (local.set $v (i32.or (i32.load16_u (local.get $g))
                                 (i32.shl (i32.load16_u offset=6 (local.get $g))
                                          (i32.const 16)))))
         (else
-          (call $push16 (global.get $flags))
+          (call $push16 (call $flags_word))
           (call $push16 (call $sget (i32.const 1)))
           (call $push16 (local.get $ip))
           (local.set $v (i32.load16_u (local.get $g)))))
@@ -3470,7 +3778,7 @@ function helpers() {
       (call $sset (i32.const 1) (i32.load16_u offset=2 (local.get $g)))
       (global.set $gip (local.get $v)))
     (else
-      (call $push16 (global.get $flags))
+      (call $push16 (call $flags_word))
       (call $push16 (call $sget (i32.const 1)))
       (call $push16 (local.get $ip))
       (global.set $flags (i32.and (global.get $flags)
@@ -3552,7 +3860,7 @@ function helpers() {
   (call $push32 (call $sget (i32.const 0)))
   (call $push32 (local.get $ss))
   (call $push32 (local.get $sp))
-  (call $push32 (i32.or (global.get $flags) (i32.const 0x20000)))
+  (call $push32 (i32.or (call $flags_word) (i32.const 0x20000)))
   (call $push32 (call $sget (i32.const 1)))
   (call $push32 (local.get $ip))
   ;; #DF, #TS, #NP, #SS, #GP, #PF and #AC carry an error code, pushed last so
@@ -3980,6 +4288,43 @@ const STATE = [...isa.REG16, ...isa.SEG, 'gip', 'flags', 'ip', 'steps', 'intno',
 // helpers() body: when these were only in preamble, every one added broke that
 // tool with `compile-wat: unknown global`, and nothing in the build says so.
 const EXTRA_GLOBALS = `
+;; --- Lazy arithmetic flags -------------------------------------------------
+;;
+;; The eager scheme this replaces computed all six arithmetic flags on every
+;; ALU instruction -- CF, AF, OF, SF, ZF and a popcnt for PF -- and threw
+;; almost all of them away: the consumer is nearly always a single Jcc reading
+;; one bit. $flags_sub was ~35 instructions behind a call, and cmp_ri8 plus
+;; cmp_rm8 alone are 7.8% of the corpus's dispatches.
+;;
+;; So an ALU op now RECORDS its inputs and defers. $fop names the rule; 0 means
+;; nothing is pending and the $flags word is authoritative, which is also the
+;; state every non-arithmetic path wants to see. This is the scheme
+;; src/03-registers.wat uses in the production interpreter, and the toy VM
+;; modelling an eager one it had already abandoned was the wrong shape to be
+;; measuring against.
+;;
+;; $fr is the result ALREADY MASKED to the operand width, which is what makes
+;; ZF, SF and PF readable without knowing which rule produced them -- only CF,
+;; OF and AF have to branch on $fop. That matters because ZF is the single most
+;; consumed flag in the corpus.
+;;
+;; A partial write -- anything that sets some flags and preserves others, like
+;; MUL touching only CF and OF, or a shift, or SAHF -- calls $flags_sync first
+;; and then works on the word. Cold paths, so they pay for the laziness of the
+;; hot ones.
+(global $fop (mut i32) (i32.const 0))
+(global $fa (mut i32) (i32.const 0))   ;; first operand
+(global $fb (mut i32) (i32.const 0))   ;; second operand
+;; NOT $fs -- that name is the FS segment register's global, and taking it here
+;; silently aliased the two: every recorded ALU result landed in FS, and the
+;; gate went to 78/60000 with "fs moved but corpus says unchanged" on every row.
+(global $fu (mut i32) (i32.const 0))   ;; UNmasked result: CF at 8/16 bits is
+                                       ;; the bit that fell off the top of it
+(global $fr (mut i32) (i32.const 0))   ;; result masked to the operand width
+(global $fw (mut i32) (i32.const 0))   ;; operand width in bits
+(global $fcf (mut i32) (i32.const 0))  ;; carry IN (32-bit adc/sbb), and the
+                                       ;; preserved CF that INC/DEC must not
+                                       ;; disturb
 ;; The previous handler index, for the --handler-hist pair table. Declared in
 ;; every build so the two share one global layout; only an instrumented one
 ;; ever writes it.
@@ -4088,6 +4433,15 @@ function preamble() {
   // it does on every interrupt dispatch and on the way into a program.
   const accessors = STATE.map(g => {
     const seg = isa.SEG.indexOf(g);
+    // The flags word is the one piece of state that may be DEFERRED rather than
+    // stored (see the lazy-flag block): a host read has to materialize it first,
+    // and a host write has to retire the pending rule, or the next in-guest read
+    // would recompute the arithmetic bits from an operation the host overwrote.
+    if (g === 'flags') {
+      return `
+(func (export "get_flags") (result i32) (call $flags_word))
+(func (export "set_flags") (param $v i32) (call $flags_put (local.get $v)))`;
+    }
     return `
 (func (export "get_${g}") (result i32) (global.get $${g}))
 (func (export "set_${g}") (param $v i32) ${seg < 0
@@ -4346,10 +4700,21 @@ function checkNesting(wat) {
     }
   }
   if (depth !== 0) throw new Error(`generated WAT ends at nesting depth ${depth}, expected 0`);
+  // Two functions with one name. This is what a rebuild under the other flag
+  // scheme produces if it forgets to clear an accumulator the generators append
+  // to (SHIFT_FNS did exactly that), and it is silent the same way the nesting
+  // bug is: the module still compiles, calls bind to whichever definition the
+  // compiler kept, and the arm being measured is neither of the two.
+  const seen = new Set();
+  for (const m of wat.matchAll(/^\(func (\$[A-Za-z0-9_]+)/gm)) {
+    if (seen.has(m[1])) throw new Error(`generated WAT defines ${m[1]} twice`);
+    seen.add(m[1]);
+  }
   return wat;
 }
 
 function emit(variant, opts = {}) {
+  buildHandlers(opts.lazyFlags !== false);
   const fn = VARIANTS[variant];
   if (!fn) throw new Error(`unknown variant: ${variant} (have ${Object.keys(VARIANTS).join(', ')})`);
   if (opts.hist && variant !== 'tailcall') {

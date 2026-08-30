@@ -22,9 +22,12 @@ const REGS = [...isa.REG16, ...isa.SEG, 'gip', 'flags'];
 // compileWat memoizes, and an instrumented build sharing the plain build's key
 // would hand back whichever was compiled first, which is a census of nothing or
 // a shipped build that counts.
+// `opts.lazyFlags: false` builds the eager-flag arm, and it gets its own key for
+// the same reason: the two differ only inside handler bodies, so a shared key
+// would hand the A/B whichever module was compiled first and report a 0%.
 async function buildModule(variant, opts = {}) {
   const wat = emit(variant, opts);
-  const suffix = opts.hist ? '-hist' : '';
+  const suffix = (opts.hist ? '-hist' : '') + (opts.lazyFlags === false ? '-eager' : '');
   const file = `toyvm-${variant}${suffix}.wat`;
   const bytes = await compileWat(
     (f) => { if (f !== file) throw new Error(`unexpected file ${f}`); return wat; },
@@ -34,7 +37,8 @@ async function buildModule(variant, opts = {}) {
 }
 
 async function makeVm(variant, opts = {}) {
-  const { wat, bytes } = await buildModule(variant, { hist: !!opts.hist });
+  const { wat, bytes } = await buildModule(variant,
+    { hist: !!opts.hist, lazyFlags: opts.lazyFlags !== false });
   const module = await WebAssembly.compile(bytes);
   const memory = new WebAssembly.Memory({ initial: isa.MEM_PAGES, maximum: isa.MEM_PAGES });
   // Ports are a host concern: the VM has no peripherals, and the few a demo

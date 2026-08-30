@@ -78,7 +78,11 @@ async function main() {
   // the whole set, so the cap is adjustable.
   const maxFails = Number(arg('fails', 10));
 
-  const vm = await makeVm(variant);
+  // `--no-lazy` gates the eager-flag arm. The gate is the check the lazy scheme
+  // needs most -- it compares the final FLAGS word against real-silicon vectors,
+  // and a deferred rule that is wrong for one operand pair is invisible in a demo
+  // that never branches on that bit.
+  const vm = await makeVm(variant, { lazyFlags: !flag('no-lazy') });
   let total = 0, pass = 0, unimpl = 0, masked = 0;
   const failures = [];
 

@@ -160,6 +160,7 @@ async function runDos(o) {
     variant = 'tailcall', exe, budget = 200e6, slice = 2e6, seconds = 0,
     traceInt = false, traceFault = false, traceEntry = 0, traceV86 = false,
     noCache = false, smcFlush = false, wasmDecode = true, fuse = true,
+    lazyFlags = true,
     smcCensus = false, watch = [],
     stopText = null,
     traceIo = null,
@@ -243,6 +244,7 @@ async function runDos(o) {
     portIn: (p, w) => machine.portIn(p, w),
     portOut: (p, v, w) => machine.portOut(p, v, w),
     hist: hist > 0 || histPairs > 0,
+    lazyFlags,
   });
   // The decoder's CPU level and the module's FLAGS shape have to move together:
   // a build that decodes 386 encodings but reports an 8086 FLAGS register fails
@@ -325,6 +327,7 @@ async function runDos(o) {
 
   const t0 = process.hrtime.bigint();
   let guestNs = 0n;
+  let guestCpuUs = 0;
   let v86Was = 0;
   let shotN = 0;
   const entryHist = new Map();
@@ -405,9 +408,18 @@ async function runDos(o) {
             + ` ss:sp=${h4(vm.get('ss'))}:${h4(vm.get('sp'))}`);
         }
       },
-      beforeSlice: () => { sliceT0 = process.hrtime.bigint(); },
+      beforeSlice: () => {
+        sliceT0 = process.hrtime.bigint();
+        sliceCpu0 = process.cpuUsage();
+      },
       afterSlice: ({ left, dispatched, cs, ip }) => {
         guestNs += process.hrtime.bigint() - sliceT0;
+        // The same fixed work on a meter the rest of the box cannot move. Wall
+        // clock inside the slice counts the scheduler too, and this machine sits
+        // at load 10-40 with other agents on it -- there the wall number's
+        // run-to-run spread is wider than any dispatch effect worth shipping.
+        const c = process.cpuUsage(sliceCpu0);
+        guestCpuUs += c.user + c.system;
         // A divide fault ends the trace inside the guest's own INT 0 handler,
         // so it never reaches the stub segment and --trace-int cannot see it.
         // The faulting address is on the guest stack, which is the only place
@@ -454,6 +466,7 @@ async function runDos(o) {
     },
   });
   let sliceT0 = 0n;
+  let sliceCpu0 = null;
 
   // A dispatch budget is not a time budget, and the difference is the whole
   // reason six programs in the corpus photographed as nothing. A run that
@@ -541,6 +554,7 @@ async function runDos(o) {
     histTop: hist, histPairs,
     secs: Number(process.hrtime.bigint() - t0) / 1e9,
     guestSecs: Number(guestNs) / 1e9,
+    guestCpuSecs: guestCpuUs / 1e6,
     dispatched, handbacks, ints, irqs, compiles, compiledWords, arenaResets,
     smcBreaks, traps, icebps, smcSites, retiredPatches,
     stuckAt, blockedOn32, badSelector, ranOutOfTime,
@@ -688,6 +702,11 @@ async function main() {
     // rule applies: a fused pair charges the step the removed dispatch used to,
     // so the two arms must agree frame for frame and a difference is a bug.
     fuse: !flag('no-fuse'),
+    // Lazy flags, on by default. `--no-lazy` builds the eager arm. Nothing about
+    // the op stream changes here -- a compare records its inputs instead of
+    // computing six bits -- so the two arms must agree exactly, arena included,
+    // and a difference is a bug in the deferred rules rather than a retiming.
+    lazyFlags: !flag('no-lazy'),
     smcCensus: flag('smc-census'),
     // `--watch=0:84`, `--watch=0:84:4`, `--watch=5ab:191:2,0:84` -- report every
     // guest store into these bytes, with the CS:IP that made it, through the
