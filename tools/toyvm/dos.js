@@ -333,7 +333,12 @@ const VGA_DAC = vgaDacTable();
 
 function newVgaState() {
   const v = {
-    seqIndex: 0, seq: new Uint8Array(8),
+    // Sixteen sequencer registers, not eight. A plain VGA has eight and the
+    // rest alias, but every SVGA of this era puts its own registers above
+    // them -- Trident's bank register is index 0x0E -- and masking the index
+    // to three bits does not "ignore" those writes, it lands them on a real
+    // register: 0x0E masked is 0x06, the memory-mode register.
+    seqIndex: 0, seq: new Uint8Array(16),
     gcIndex: 0, gc: new Uint8Array(16),
     crtcIndex: 0, crtc: new Uint8Array(32),
     // Whether the program has ASKED for the vertical-retrace interrupt. Kept as
@@ -704,6 +709,11 @@ class Machine {
     // The VESA mode in effect, or mode 0 for none. `bank` is which 64KB of the
     // picture the window at A000 is currently showing; see vesaBank.
     this.vesa = { mode: 0, width: 0, height: 0, bank: 0 };
+    // Which SVGA card this machine has, if any. 'none' is a plain VGA and is
+    // the default: presenting a chipset means presenting its registers, and a
+    // program that finds one will drive them. See svgaSetBank.
+    this.svga = opts.svga || 'none';
+    this.svgaBank = 0;
     this.con = newConsole(mem);
     this.ticks = 0;
     this.exited = false;
@@ -1081,6 +1091,20 @@ class Machine {
   // Write into a created file, growing it. `pos` is honoured, so a program that
   // seeks back to patch a header gets what it wrote there.
   writeFile(f, src, n) {
+    // A write into a file that came off the host disk copies it into the
+    // in-memory file system first, and every later read of that name sees the
+    // copy. Without this the write was simply dropped: ANGEL.EXE's SETUP.EXE
+    // opens the DRIVERS.VGA that shipped with the demo and patches the
+    // ten-byte video-BIOS signature at its end in place, so the file ANGEL
+    // then checked still carried the author's 1995 CRC and the demo refused to
+    // start with "Please run setup.exe on your computer !". Nothing here ever
+    // reaches the host disk -- the corpus directory stays read-only.
+    if (!f.rec) {
+      const rec = { data: Uint8Array.from(f.buf), len: f.buf.length };
+      f.rec = rec;
+      this.tempFiles.set(fileKey(f.name), rec);
+      this.filesCreated.push(f.name);
+    }
     const rec = f.rec;
     const end = f.pos + n;
     if (end > rec.data.length) {
@@ -1523,6 +1547,31 @@ class Machine {
     this.setVideoBda();
     this.syncKbBda();
     this.setTicks(this.ticks, { force: true });
+    this.installVideoRom();
+  }
+
+  // The video BIOS ROM at C000. Written only for a machine that HAS an SVGA,
+  // because the string in it is a claim about the registers above -- see
+  // svgaSetBank and the sequencer/CRTC read-backs in portIn_.
+  //
+  // A card of this era is identified by name, and by nothing else. ANGEL.EXE's
+  // SETUP.EXE sweeps C000 to F000 for one of 43 vendor spellings and uses the
+  // hit to pick which register probe to run; the probes are all gated on it,
+  // so with no ROM present every one of them declines, the chipset id stays 0,
+  // and SETUP indexes a routine table whose slot 0 is a null pointer. There is
+  // no default and no "standard VGA" entry -- the id is the ROM's answer or
+  // nothing.
+  installVideoRom() {
+    if (this.svga !== 'trident' || !this.mem.length) return;
+    const rom = 0xC0000;
+    // The option-ROM header every adapter has had since 1984: signature, size
+    // in 512-byte blocks, and an init entry that returns.
+    this.mem[rom] = 0x55; this.mem[rom + 1] = 0xAA;
+    this.mem[rom + 2] = 0x40;                        // 32KB
+    this.mem[rom + 3] = 0xCB;                        // retf
+    const id = 'Trident TVGA8900 VGA BIOS';
+    for (let i = 0; i < id.length; i++) this.mem[rom + 0x30 + i] = id.charCodeAt(i);
+    this.mem[rom + 0x30 + id.length] = 0;
   }
 
   // The linear address a DOS call's SEG:OFF argument names.
@@ -2043,8 +2092,22 @@ class Machine {
     // Read-back of the register files. Code that tweaks one bit of the memory
     // mode does IN/OR/OUT, so returning 0xFF here would set every other bit
     // as a side effect -- including chain-4, which would undo a mode X set.
+    // Trident: sequencer index 0x0E is the bank register, and the value read
+    // back out of it is what SETUP.EXE classifies the chip version on --
+    // 0x80..0xFE is a TVGA8900, which is what we present. The low nibble is
+    // the bank, so the byte moves as the guest pages through video memory.
+    if (port === 0x3C5 && this.svga === 'trident' && this.vga.seqIndex === 0x0E) {
+      return 0x80 | (this.svgaBank & 0x0F);
+    }
     if (port === 0x3C5) return this.vga.seq[this.vga.seqIndex];
     if (port === 0x3CF) return this.vga.gc[this.vga.gcIndex];
+    // Trident: CRTC index 0x1F reads back CRTC 0x0C exclusive-ORed with 0xEA,
+    // and that pair IS the detection every program of the era does -- write
+    // 0x55 to the start-address-high register, read 0xBF here.
+    if ((port === 0x3D5 || port === 0x3B5) && this.svga === 'trident'
+      && this.vga.crtcIndex === 0x1F) {
+      return (this.vga.crtc[CRTC_START_HI] ^ 0xEA) & 0xFF;
+    }
     if (port === 0x3D5 || port === 0x3B5) return this.vga.crtc[this.vga.crtcIndex];
     if (port === 0x3C4) return this.vga.seqIndex;
     if (port === 0x3CE) return this.vga.gcIndex;
@@ -2161,8 +2224,16 @@ class Machine {
     // the data in AH, and the recursion at the top of this function has
     // already split that into two 8-bit writes, so both spellings land here.
     switch (port) {
-      case 0x3C4: v.seqIndex = value & 0x07; return;
-      case 0x3C5: this.vgaSeqWrite(v.seqIndex, value); return;
+      case 0x3C4: v.seqIndex = value & 0x0F; return;
+      case 0x3C5:
+        // The Trident bank register. The value carries the bank exclusive-ORed
+        // with 2, which is not a quirk worth hiding: a driver that writes 3
+        // means bank 1, and reading the register back has to agree.
+        if (this.svga === 'trident' && v.seqIndex === 0x0E) {
+          this.svgaSetBank((value ^ 0x02) & 0x0F);
+          return;
+        }
+        this.vgaSeqWrite(v.seqIndex, value); return;
       case 0x3CE: v.gcIndex = value & 0x0F; return;
       case 0x3CF:
         v.gc[v.gcIndex] = value;
@@ -2895,6 +2966,27 @@ class Machine {
     this.mem.copyWithin(to, VGA_BASE, VGA_BASE + 0x10000);
   }
 
+  // Page the 64KB window at A000 onto another part of video memory, the way an
+  // SVGA of this era does. Same storage and same trick as the VESA window --
+  // the picture lives outside the guest's address space and the window is a
+  // copy -- so compiled code goes on storing to A000 knowing nothing about it.
+  // A card with 1MB has sixteen banks; a write past the end reads as blank
+  // rather than wrapping, which is what lets a program size the memory.
+  svgaSetBank(bank) {
+    if (bank === this.svgaBank) return;
+    const was = isa.VESA_FB + this.svgaBank * 0x10000;
+    if (was + 0x10000 <= isa.VESA_FB + isa.VESA_FB_SIZE) {
+      this.mem.copyWithin(was, VGA_BASE, VGA_BASE + 0x10000);
+    }
+    this.svgaBank = bank;
+    const now = isa.VESA_FB + bank * 0x10000;
+    if (now + 0x10000 <= isa.VESA_FB + isa.VESA_FB_SIZE) {
+      this.mem.copyWithin(VGA_BASE, now, now + 0x10000);
+    } else {
+      this.mem.fill(0, VGA_BASE, VGA_BASE + 0x10000);
+    }
+  }
+
   // The BIOS system services. Only the timing half matters here: AH=86h is a
   // delay of CX:DX microseconds and three programs spend a thousand calls in
   // it, so declining it left them measuring an elapsed time that never moved.
@@ -3390,7 +3482,7 @@ class Machine {
         const f = this.files.get(h);
         if (h === 1 || h === 2) {
           for (let i = 0; i < n; i++) this.conPutc(this.mem[(src + i) & 0xFFFFF]);
-        } else if (f && f.rec) {
+        } else if (f && !f.device) {
           this.writeFile(f, src, n);
         }
         r.set('ax', n);

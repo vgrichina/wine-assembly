@@ -151,7 +151,7 @@ async function runDos(o) {
     // while BIOLAN.EXE and CEN!FB.EXE drew full screens on 'none' and hang
     // forever on "Initializing ." with a card present. Being able to A/B that
     // in one command is the difference between knowing and guessing.
-    sound = 'full',
+    sound = 'full', svga = 'none',
     // Keys typed once, in order, and keys that replace the auto-key rotation.
     // The rotation exists to get past sound menus and has no ESC in it, which
     // is the key half the text-mode viewers in this corpus are waiting for --
@@ -169,7 +169,7 @@ async function runDos(o) {
   setCpuLevel(cpu);
 
   const machine = new Machine(new Uint8Array(0), {
-    log: (s) => traceInt && log(`  ${s}`), autoKey, forceChained, sound,
+    log: (s) => traceInt && log(`  ${s}`), autoKey, forceChained, sound, svga,
     keys, autoKeys, env, tempFiles,
     stopText,
     ioTrace: traceIo === null ? null : (line) => log(`  [io] ${line}`),
@@ -592,6 +592,12 @@ async function main() {
     // --dump only ever shows the state at exit.
     watch: argAll('watch').map(parseWatch),
     sound: arg('sound', 'full'),
+    // `--svga=trident` gives the machine a TVGA8900 instead of a plain VGA:
+    // the CRTC 0x1F read-back every detector of the era tests, the version
+    // byte at sequencer 0x0E, and that register as a working bank selector.
+    // Default off, and deliberately so -- a program that finds a chipset uses
+    // its modes, so this is a machine configuration and not an improvement.
+    svga: arg('svga', 'none'),
     // `--env=ULTRASND=240,1,1,11,7` -- semicolons separate variables, because
     // commas are inside the values these variables carry.
     env: arg('env', '').split(';').filter(Boolean),
@@ -632,6 +638,21 @@ async function main() {
   if (png) {
     if (r.surface.text) writeConsolePng(png, r.machine.con);
     else writePng(png, r.vm.mem, r.machine.palette, r.surface.geom);
+  }
+
+  // `--save-files=DIR` -- copy out every file the guest created. Those live in
+  // memory and never reach the host disk, which is right for a corpus and
+  // leaves a configurator's output unreadable: ANGEL.EXE rejects the
+  // drivers.vga its own SETUP.EXE just wrote, and the bytes in it are the
+  // whole question.
+  const saveFiles = arg('save-files');
+  if (saveFiles) {
+    fs.mkdirSync(saveFiles, { recursive: true });
+    for (const [name, rec] of r.machine.tempFiles) {
+      const out = path.join(saveFiles, path.basename(name));
+      fs.writeFileSync(out, Buffer.from(rec.data.subarray(0, rec.len)));
+      console.log(`  saved ${out} (${rec.len} bytes)`);
+    }
   }
 
   // The text page as text. A screenshot of a menu is a picture of words, and
