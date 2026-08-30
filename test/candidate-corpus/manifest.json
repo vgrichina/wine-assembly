@@ -1148,6 +1148,30 @@
           "*.hlf"
         ]
       }
+    },
+    {
+      "id": "winrar-310",
+      "name": "WinRAR",
+      "kind": "GUI application",
+      "version": "3.10 installer",
+      "executables": [
+        "wrar310.exe"
+      ],
+      "sourcePage": "https://ftp.zx.net.nz/pub/mirror/ftp.rarlab.com/rar/",
+      "license": "try-before-you-buy; redistribution is limited to the original unmodified installation file, so keep this intact installer as a local ignored candidate fixture",
+      "localOnly": true,
+      "packages": [
+        {
+          "url": "https://ftp.zx.net.nz/pub/mirror/ftp.rarlab.com/rar/wrar310.exe",
+          "sha1": "e7fbcc871245ef9eaf73f8c0dfb00f4b63456a91",
+          "type": "file",
+          "destination": "wrar310.exe"
+        }
+      ],
+      "cli": {
+        "maxBatches": 120,
+        "batchSize": 50000
+      }
     }
   ]
 }

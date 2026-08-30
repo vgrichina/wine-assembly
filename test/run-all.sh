@@ -710,6 +710,7 @@ E2E=(
   # vlan ones spawn a second emulator and wait for it over the wire.
   test/test-find-mouse-click.js
   test/test-far-manager-candidate.js
+  test/test-winrar-candidate.js
   test/test-liquid-war-candidate.js
   test/test-vlan-tetrinet.js
   test/test-vlan-match.js
