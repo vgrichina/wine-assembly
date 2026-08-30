@@ -132,8 +132,9 @@ function colorCountInRect(png, rgb, left, top, right, bottom) {
       `Far Manager hit a compatibility failure\n${output.slice(-8000)}`);
     assert(/SetWindowText.*\{C:/.test(output),
       `Far Manager never reached its live panel caption\n${output.slice(-8000)}`);
-    assert(output.includes('[fs] FindFirstFile("*.*") → "app.exe"') &&
-      output.includes('FindNextFile(0x') && output.includes('→ "far.exe"'),
+    assert(output.includes('[fs] FindFirstFile("*.*") → "."') &&
+      output.includes('FindNextFile(0x') && output.includes('→ ".."') &&
+      output.includes('→ "app.exe"') && output.includes('→ "far.exe"'),
     `Far Manager did not enumerate the mounted C: files\n${output.slice(-8000)}`);
     assert(fs.existsSync(framePath), 'Far Manager did not produce a browser frame');
 

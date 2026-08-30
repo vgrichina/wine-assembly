@@ -110,6 +110,22 @@ test('wildcard *.* in CWD finds files in c:\\', () => {
   assert(r.handle, 'should find files');
   assert((r.handle >>> 0) <= 0x7fffffff,
     'search handle must remain nonnegative for MSVCRT _findfirst');
+  const names = [r.entry.name];
+  let next;
+  while ((next = vfs.findNextFile(r.handle))) names.push(next.name);
+  assert.deepStrictEqual(names.slice(0, 2), ['.', '..'],
+    'Win9x wildcard enumeration exposes dot directory records first');
+});
+
+test('wildcard enumeration of an empty directory still returns . and ..', () => {
+  const vfs = makeVFS({});
+  vfs.dirs.add('c:\\empty');
+  const r = vfs.findFirstFile('C:\\empty\\*.*');
+  assert(r.handle, 'dot entries make an empty existing directory enumerable');
+  assert.strictEqual(r.entry.name, '.');
+  assert.strictEqual(r.entry.attrs, 0x10);
+  assert.strictEqual(vfs.findNextFile(r.handle).name, '..');
+  assert.strictEqual(vfs.findNextFile(r.handle), null);
 });
 
 test('wildcard *.* on different drive letter finds nothing', () => {
@@ -132,8 +148,10 @@ test('manifest parent registration makes a non-C drive enumerable', () => {
     'the mounted drive root must be a real directory');
   const root = vfs.findFirstFile('D:\\*.*');
   assert(root.handle, 'the mounted drive root must be enumerable');
-  assert.strictEqual(root.entry.name, 'cd2');
+  assert.strictEqual(root.entry.name, '.');
   assert.strictEqual(root.entry.attrs, 0x10);
+  assert.strictEqual(vfs.findNextFile(root.handle).name, '..');
+  assert.strictEqual(vfs.findNextFile(root.handle).name, 'cd2');
 });
 
 test('basename fallback finds file by name on wrong drive', () => {
