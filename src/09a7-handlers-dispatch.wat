@@ -2909,9 +2909,19 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
 
   ;; 827: CreateConsoleScreenBuffer(dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwFlags, lpScreenBufferData) → HANDLE
-  ;; Returns a fake console handle
+  ;; Create a distinct text-mode output buffer. The record and its cells live
+  ;; in shared linear memory, so browser Workers observe the same handle state.
   (func $handle_CreateConsoleScreenBuffer (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x00030001))  ;; fake console handle
+    (if (i32.or (i32.ne (local.get $arg3) (i32.const 1)) ;; CONSOLE_TEXTMODE_BUFFER
+          (i32.ne (local.get $arg4) (i32.const 0)))
+      (then
+        (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
+        (global.set $eax (i32.const 0xFFFFFFFF)))
+      (else
+        (global.set $eax (call $console_buffer_create))
+        (if (i32.eq (global.get $eax) (i32.const 0xFFFFFFFF))
+          (then (global.set $last_error (i32.const 8))) ;; ERROR_NOT_ENOUGH_MEMORY
+          (else (global.set $last_error (i32.const 0))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
   ;; 821: mixerGetID(hmxobj, puMxId, fdwId) -> MMRESULT

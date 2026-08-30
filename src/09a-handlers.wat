@@ -1812,6 +1812,15 @@
 
   ;; 26: CloseHandle(hObject) — 1 arg stdcall, return TRUE
   (func $handle_CloseHandle (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $console_result i32)
+    (local.set $console_result (call $console_buffer_close (local.get $arg0)))
+    (if (i32.ge_s (local.get $console_result) (i32.const 0))
+      (then
+        (global.set $eax (local.get $console_result))
+        (if (i32.eqz (local.get $console_result))
+          (then (global.set $last_error (i32.const 6)))) ;; ERROR_INVALID_HANDLE
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
     (drop (call $host_fs_close_handle (local.get $arg0)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
@@ -2503,15 +2512,24 @@
 
   ;; 49: GetStdHandle(nStdHandle) — return fake handles for stdin/stdout/stderr
   (func $handle_GetStdHandle (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $stored i32)
     ;; STD_INPUT_HANDLE=-10 → 1, STD_OUTPUT_HANDLE=-11 → 2, STD_ERROR_HANDLE=-12 → 3
     ;; GUI apps don't use these but CRT init checks them
     (global.set $eax
       (if (result i32) (i32.eq (local.get $arg0) (i32.const 0xFFFFFFF6)) ;; -10
         (then (i32.const 1))
         (else (if (result i32) (i32.eq (local.get $arg0) (i32.const 0xFFFFFFF5)) ;; -11
-          (then (i32.const 2))
+          (then
+            (local.set $stored (i32.load
+              (i32.add (global.get $CONSOLE_INPUT) (i32.const 24))))
+            (select (i32.sub (local.get $stored) (i32.const 1)) (i32.const 2)
+              (i32.ne (local.get $stored) (i32.const 0))))
           (else (if (result i32) (i32.eq (local.get $arg0) (i32.const 0xFFFFFFF4)) ;; -12
-            (then (i32.const 3))
+            (then
+              (local.set $stored (i32.load
+                (i32.add (global.get $CONSOLE_INPUT) (i32.const 28))))
+              (select (i32.sub (local.get $stored) (i32.const 1)) (i32.const 3)
+                (i32.ne (local.get $stored) (i32.const 0))))
             (else (i32.const 0xFFFFFFFF))))))))  ;; INVALID_HANDLE_VALUE
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
@@ -2519,7 +2537,9 @@
   ;; 50: GetFileType(hFile) — FILE_TYPE_CHAR=2 for console, FILE_TYPE_DISK=1 for files
   (func $handle_GetFileType (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax
-      (if (result i32) (i32.le_u (local.get $arg0) (i32.const 3))
+      (if (result i32) (i32.or
+            (i32.le_u (local.get $arg0) (i32.const 3))
+            (i32.ne (call $console_buffer_record (local.get $arg0)) (i32.const 0)))
         (then (i32.const 2))   ;; FILE_TYPE_CHAR (console)
         (else (i32.const 1)))) ;; FILE_TYPE_DISK (regular file)
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
@@ -2527,8 +2547,16 @@
 
   ;; 51: WriteFile(hFile, lpBuffer, nBytesToWrite, lpBytesWritten, lpOverlapped) — 5 args
   (func $handle_WriteFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Console handles (stdout=1,stderr=2) — just report bytes written
-    (if (i32.le_u (local.get $arg0) (i32.const 3))
+    ;; Output screen-buffer handles route through the same active/inactive cell
+    ;; store as WriteConsoleA; stdin retains the historical compatibility no-op.
+    (if (call $console_buffer_record (local.get $arg0))
+      (then
+        (global.set $eax (call $console_write
+          (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 0)))
+        (if (i32.and (global.get $eax) (i32.ne (local.get $arg3) (i32.const 0)))
+          (then (call $gs32 (local.get $arg3) (local.get $arg2))))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24))) (return)))
+    (if (i32.eq (local.get $arg0) (i32.const 1))
       (then
         (if (local.get $arg3) (then (call $gs32 (local.get $arg3) (local.get $arg2))))
         (global.set $eax (i32.const 1))
@@ -8774,6 +8802,12 @@ nW — STUB: unimplemented
   ;; host handle table mutation is needed; SDL/MSVCRT uses this to detach the
   ;; inherited standard handles when DOSBox starts with -noconsole.
   (func $handle_SetStdHandle (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eq (local.get $arg0) (i32.const 0xFFFFFFF5)) ;; STD_OUTPUT_HANDLE
+      (then (i32.store (i32.add (global.get $CONSOLE_INPUT) (i32.const 24))
+        (i32.add (local.get $arg1) (i32.const 1)))))
+    (if (i32.eq (local.get $arg0) (i32.const 0xFFFFFFF4)) ;; STD_ERROR_HANDLE
+      (then (i32.store (i32.add (global.get $CONSOLE_INPUT) (i32.const 28))
+        (i32.add (local.get $arg1) (i32.const 1)))))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
@@ -11585,10 +11619,12 @@ HookEx — no next hook in chain, return 0
 
   ;; 507: WriteConsoleA — delegates to console buffer write
   (func $handle_WriteConsoleA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $console_write (local.get $arg1) (local.get $arg2) (i32.const 0))
-    (if (local.get $arg3)
+    (global.set $eax (call $console_write
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 0)))
+    (if (i32.and (global.get $eax) (i32.ne (local.get $arg3) (i32.const 0)))
       (then (i32.store (call $g2w (local.get $arg3)) (local.get $arg2))))
-    (global.set $eax (i32.const 1))
+    (if (i32.eqz (global.get $eax))
+      (then (global.set $last_error (i32.const 6))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
   ;; 508: GetFileInformationByHandle(hFile, lpFileInformation) → BOOL

@@ -3399,6 +3399,22 @@
   (global $console_cursor_visible (mut i32) (i32.const 1))
   (global $console_cursor_size (mut i32) (i32.const 25))  ;; percentage
   (global $console_handle (mut i32) (i32.const 0x00030001))  ;; active screen buffer handle
+  ;; The screen-buffer object currently loaded into the legacy console globals.
+  ;; The backing pointers are mutable so handle-taking console APIs can operate
+  ;; on an inactive buffer and restore the active one before browser painting.
+  (global $console_loaded_handle (mut i32) (i32.const 0x00030001))
+  (global $console_text_base (mut i32) (i32.const 0x07E09000))
+  (global $console_attr_base (mut i32) (i32.const 0x07E0C000))
+  ;; $CONSOLE_INPUT's event ring ends at +0x820. The remaining page stores
+  ;; eight shared 48-byte screen-buffer records starting at +0x840; +0x14 is
+  ;; the active handle. Keeping this state in memory makes browser Workers see
+  ;; the same handles and activation order.
+  (global $CONSOLE_BUFFER_TABLE i32 (i32.const 0x07E0F840))
+  (global $CONSOLE_BUFFER_ACTIVE i32 (i32.const 0x07E0F014))
+  (global $CONSOLE_BUFFER_MAGIC i32 (i32.const 0x46554243)) ;; "CBUF"
+  (global $CONSOLE_BUFFER_STRIDE i32 (i32.const 48))
+  (global $CONSOLE_BUFFER_COUNT i32 (i32.const 8))
+  (global $CONSOLE_BUFFER_HANDLE_TAG i32 (i32.const 0x00310000))
   (global $ansi_code_page (mut i32) (i32.const 1252))  ;; process ANSI code page
   (global $console_cp (mut i32) (i32.const 437))  ;; input code page
   (global $console_output_cp (mut i32) (i32.const 437))  ;; output code page
