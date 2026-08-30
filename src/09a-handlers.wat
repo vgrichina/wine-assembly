@@ -13390,10 +13390,57 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
-  ;; 681: ShowOwnedPopups(hwndOwner, fShow) — single-window model has no popups
-  ;; to enumerate, so the show/hide is a no-op. Return TRUE.
+  ;; Show or hide every top-level popup directly owned by hwndOwner. OWNER_TABLE
+  ;; is separate from the child-parent hierarchy, matching USER: an owned popup
+  ;; keeps screen-relative geometry and its own browser surface.
+  (func $show_owned_popups_core (param $owner i32) (param $show i32) (result i32)
+    (local $i i32) (local $rec i32) (local $hwnd i32)
+    (local $style i32) (local $new_style i32)
+    (if (i32.lt_s (call $wnd_table_find (local.get $owner)) (i32.const 0))
+      (then (return (i32.const 0))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (local.set $rec (call $wnd_record_addr (local.get $i)))
+      (local.set $hwnd (i32.atomic.load (local.get $rec)))
+      (if (i32.and
+            (i32.ne (local.get $hwnd) (i32.const 0))
+            (i32.and
+              (i32.eq (call $wnd_get_owner (local.get $hwnd)) (local.get $owner))
+              (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd))
+                                (i32.const 0x40000000))))) ;; !WS_CHILD
+        (then
+          (local.set $style (call $wnd_get_style (local.get $hwnd)))
+          (local.set $new_style
+            (if (result i32) (i32.ne (local.get $show) (i32.const 0))
+              (then (i32.or (local.get $style) (i32.const 0x10000000)))
+              (else (i32.and (local.get $style) (i32.const 0xEFFFFFFF)))))
+          (if (i32.ne (local.get $new_style) (local.get $style))
+            (then
+              ;; WM_SHOWWINDOW reports an owner-driven transition. Win9x uses
+              ;; SW_PARENTCLOSING(1) while hiding and SW_PARENTOPENING(3) while
+              ;; restoring owned popups.
+              (drop (call $post_queue_push
+                (local.get $hwnd) (i32.const 0x0018)
+                (i32.ne (local.get $show) (i32.const 0))
+                (select (i32.const 3) (i32.const 1)
+                  (i32.ne (local.get $show) (i32.const 0)))))
+              (if (local.get $show)
+                (then
+                  (drop (call $host_show_window (local.get $hwnd) (i32.const 5))) ;; SW_SHOW
+                  (drop (call $wnd_set_style (local.get $hwnd) (local.get $new_style)))
+                  (call $nc_flags_set (local.get $hwnd) (i32.const 2)))
+                (else
+                  (call $wnd_uncover_parent (local.get $hwnd))
+                  (drop (call $host_show_window (local.get $hwnd) (i32.const 0))) ;; SW_HIDE
+                  (drop (call $wnd_set_style (local.get $hwnd) (local.get $new_style)))
+                  (call $paint_clear_subtree (local.get $hwnd))))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 1))
+
+  ;; 681: ShowOwnedPopups(hwndOwner, fShow)
   (func $handle_ShowOwnedPopups (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (global.set $eax (call $show_owned_popups_core (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
 84: CopyAcceleratorTableW — STUB: unimplemented
