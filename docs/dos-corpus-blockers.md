@@ -422,9 +422,12 @@ loop is doing work rather than polling. 3000M dispatches (132s of wall clock)
 end in the same place as 200M, with the DAC loaded and the screen black — but
 "the same place" is not "no progress": handbacks go 2542 → 6274 over that 15x,
 so it is advancing, just far too slowly to reach a frame. Whether that is a
-budget problem or a decoder fed the wrong bytes is the open question, and the
-cheap next measurement is whether the destination buffer at `0:0437` is
-actually filling. Two gaps
+budget problem or a decoder fed the wrong bytes is the open question. One
+measurement is in: the table the loop builds at `234a:0437` is different at 40M
+and at 80M dispatches and **identical at 80M and 120M**, so whatever it is
+chewing through, it stopped producing new Huffman tables somewhere in between.
+That is the thread to pull next — either the same block is being decoded over
+and over, or the loop is past the tables and into a body that never ends. Two gaps
 noticed on the way and not yet closed: there is no `$ldtl`, so an LDT
 selector's limit is checked against the *GDT* limit, and past that limit it
 falls back to reading the selector as a paragraph.
