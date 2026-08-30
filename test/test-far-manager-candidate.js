@@ -44,6 +44,18 @@ function colorCountBelow(png, rgb, minY) {
   return count;
 }
 
+function colorCountInRows(png, rgb, minY, maxY) {
+  let count = 0;
+  for (let y = minY; y < Math.min(maxY, png.height); y++) {
+    for (let x = 0; x < png.width; x++) {
+      const i = (y * png.width + x) * 4;
+      if (png.data[i] === rgb[0] && png.data[i + 1] === rgb[1]
+          && png.data[i + 2] === rgb[2] && png.data[i + 3]) count++;
+    }
+  }
+  return count;
+}
+
 (async () => {
   if (!fs.existsSync(FAR)) {
     console.log('SKIP Far Manager candidate: fetch with node tools/fetch-candidate-corpus.js --id=far-manager-170');
@@ -67,6 +79,7 @@ function colorCountBelow(png, rgb, minY) {
       '--quiet-api',
       '--max-batches=400',
       '--batch-size=50000',
+      '--input=50:keydown:0x78,52:keyup:0x78', // F9 opens Far's top menu.
       `--png=${framePath}`,
     ], {
       cwd: ROOT,
@@ -94,13 +107,16 @@ function colorCountBelow(png, rgb, minY) {
     const yellow = colorCount(png, [255, 255, 0]);
     const bottomBlack = colorCountBelow(png, [0, 0, 0], 315);
     const bottomGray = colorCountBelow(png, [192, 192, 192], 315);
+    const menuYellow = colorCountInRows(png, [255, 255, 0], 30, 45);
     assert(blue > 100000, `Far panel background missing (${blue} dark-blue pixels)`);
     assert(cyan > 1000, `Far panel borders/status text missing (${cyan} cyan pixels)`);
     assert(yellow > 100, `Far column headings missing (${yellow} yellow pixels)`);
     assert(bottomBlack > 5000 && bottomGray > 1000,
       `Far bottom key bar is clipped (${bottomBlack} black, ${bottomGray} gray pixels below y=315)`);
+    assert(menuYellow > 100,
+      `Far did not react to browser F9 input (${menuYellow} yellow top-menu pixels)`);
 
-    console.log(`PASS  Far Manager 1.70 console panels render (${blue} blue, ${cyan} cyan, ${yellow} yellow, ${bottomGray} bottom-row gray pixels)`);
+    console.log(`PASS  Far Manager 1.70 console panels render and accept F9 (${blue} blue, ${cyan} cyan, ${menuYellow} menu pixels)`);
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }

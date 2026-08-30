@@ -696,6 +696,47 @@
           (then (return (local.get $hwnd))))))
     (local.get $con))
 
+  ;; Console applications do not run a USER message pump: the system console
+  ;; host turns browser/native keyboard messages into INPUT_RECORDs outside the
+  ;; process. Poll that same host queue from the console APIs themselves. A
+  ;; non-console event is cached for GetMessage/PeekMessage instead of being
+  ;; stolen from a GUI window owned by the process.
+  (func $console_input_poll_host
+    (local $packed i32) (local $msg i32) (local $hwnd i32) (local $target i32)
+    (call $console_ensure_window)
+    ;; PM_NOREMOVE may already own the cached event.
+    (if (global.get $pending_input_packed) (then (return)))
+    (local.set $packed (call $host_check_input))
+    (if (i32.eqz (local.get $packed)) (then (return)))
+    (global.set $pending_input_hwnd (call $host_check_input_hwnd))
+    (global.set $pending_input_lparam (call $host_check_input_lparam))
+    (local.set $msg (i32.and (local.get $packed) (i32.const 0xFFFF)))
+    (local.set $hwnd (global.get $pending_input_hwnd))
+    (if (i32.eqz (local.get $hwnd))
+      (then (local.set $hwnd (global.get $main_hwnd))))
+    (local.set $target (call $console_input_target (local.get $hwnd) (local.get $msg)))
+    (if (i32.ne (local.get $target) (call $console_shared_hwnd))
+      (then
+        (global.set $pending_input_packed (local.get $packed))
+        (return)))
+    ;; Match $console_wndproc: printable keys arrive through WM_CHAR, while
+    ;; navigation/function keys carry their virtual key in WM_KEYDOWN.
+    (if (i32.eq (local.get $msg) (i32.const 0x0102))
+      (then
+        (call $console_input_push
+          (i32.shr_u (local.get $packed) (i32.const 16))
+          (call $console_vk_for_char (i32.shr_u (local.get $packed) (i32.const 16))))
+        (return)))
+    (if (i32.eq (local.get $msg) (i32.const 0x0100))
+      (then
+        (local.set $hwnd (i32.shr_u (local.get $packed) (i32.const 16)))
+        (if (i32.or
+              (i32.and (i32.ge_u (local.get $hwnd) (i32.const 0x21))
+                       (i32.le_u (local.get $hwnd) (i32.const 0x2F)))
+              (i32.and (i32.ge_u (local.get $hwnd) (i32.const 0x70))
+                       (i32.le_u (local.get $hwnd) (i32.const 0x87))))
+          (then (call $console_input_push (i32.const 0) (local.get $hwnd)))))))
+
   ;; Park the calling thread on its import thunk without consuming the stdcall
   ;; frame — the $cs_block pattern, which is the only one that survives the
   ;; inline CALL/JMP dispatch path. Resuming at the caller's decoded block
@@ -716,6 +757,7 @@
   (func $console_read (param $buf_g i32) (param $maxch i32) (param $pread i32)
                       (param $wide i32) (result i32)
     (local $avail i32) (local $i i32) (local $out i32) (local $ch i32) (local $dst i32)
+    (call $console_input_poll_host)
     (if (i32.and (call $console_input_mode) (i32.const 2))
       (then (local.set $avail (call $console_input_line_len)))
       (else (local.set $avail (call $console_input_count))))
@@ -929,6 +971,7 @@
   ;; ReadConsoleInputW(hConsole, lpBuffer, nLength, lpNumberOfEventsRead) → BOOL
   (func $handle_ReadConsoleInputW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $n i32)
+    (call $console_input_poll_host)
     (if (i32.eqz (call $console_input_count))
       (then
         (call $console_input_block)

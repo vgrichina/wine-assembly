@@ -11828,6 +11828,7 @@ HookEx — no next hook in chain, return 0
   ;; queued.
   (func $handle_ReadConsoleInputA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $n i32)
+    (call $console_input_poll_host)
     (if (i32.eqz (call $console_input_count))
       (then
         (call $console_input_block)
@@ -11842,6 +11843,7 @@ HookEx — no next hook in chain, return 0
   ;; 511: PeekConsoleInputA(hConsole, lpBuffer, nLength, lpNumberOfEventsRead) → BOOL
   ;; Non-destructive: copies without dropping, and never blocks.
   (func $handle_PeekConsoleInputA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $console_input_poll_host)
     (if (local.get $arg3)
       (then (i32.store (call $g2w (local.get $arg3))
         (call $console_read_input (local.get $arg1) (local.get $arg2) (i32.const 0))))
@@ -11851,6 +11853,7 @@ HookEx — no next hook in chain, return 0
 
   ;; 512: GetNumberOfConsoleInputEvents(hConsole, lpNumberOfEvents) → BOOL
   (func $handle_GetNumberOfConsoleInputEvents (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $console_input_poll_host)
     (i32.store (call $g2w (local.get $arg1)) (call $console_input_count))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))

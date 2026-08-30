@@ -22,6 +22,9 @@ const extraWat = String.raw`
   (func (export "test_console_push") (param $ch i32) (param $vk i32)
     (call $console_input_push (local.get $ch) (local.get $vk)))
 
+  (func (export "test_console_ensure_window")
+    (call $console_ensure_window))
+
   (func (export "test_console_count") (result i32)
     (call $console_input_count))
 
@@ -118,7 +121,19 @@ function readAnsi(e, buf, n) {
 }
 
 (async () => {
-  const { exports: e } = await bootRenderHarness({ extraWat });
+  const hostEvents = [];
+  let lastHostEvent = null;
+  const { exports: e } = await bootRenderHarness({
+    extraWat,
+    extraHostOverrides: {
+      check_input: () => {
+        lastHostEvent = hostEvents.shift() || null;
+        return lastHostEvent ? lastHostEvent.packed : 0;
+      },
+      check_input_hwnd: () => lastHostEvent ? lastHostEvent.hwnd : 0,
+      check_input_lparam: () => lastHostEvent ? lastHostEvent.lparam : 0,
+    },
+  });
 
   const buf = e.test_alloc(256);
   const pread = e.test_alloc(4);
@@ -171,11 +186,25 @@ function readAnsi(e, buf, n) {
   assert.strictEqual(e.test_peek32(pread), 1);
   assert.strictEqual(e.test_console_count(), 1, 'ReadConsoleInput drains what it returned');
 
+  // --- browser keyboard events enter the console without a USER pump ------
+  e.test_console_reset();
+  e.test_console_ensure_window();
+  hostEvents.push(
+    { packed: (0x78 << 16) | 0x0100, hwnd: 0, lparam: 1 }, // F9 down
+    { packed: (0x78 << 16) | 0x0101, hwnd: 0, lparam: 1 }, // F9 up
+  );
+  assert.strictEqual(e.test_call_PeekConsoleInputA(buf, 1, pread), 1);
+  assert.strictEqual(e.test_peek32(pread), 1, 'host F9 keydown did not become console input');
+  assert.strictEqual(e.test_peek16(buf + 10), 0x78, 'host virtual key was not preserved');
+  assert.strictEqual(e.test_call_ReadConsoleInputA(buf, 1, pread), 1);
+  assert.strictEqual(e.test_peek16(buf + 10), 0x78, 'queued F9 changed before read');
+  assert.strictEqual(e.test_console_count(), 0, 'host keydown was not consumed');
+
   // --- flushing drains valid input handles but preserves data on failure ---
   e.test_console_push(0x42, 0x42);
-  assert.strictEqual(e.test_console_count(), 2);
+  assert.strictEqual(e.test_console_count(), 1);
   assert.strictEqual(e.test_call_FlushConsoleInputBuffer(0xffffffff), 0);
-  assert.strictEqual(e.test_console_count(), 2, 'invalid flush consumed queued input');
+  assert.strictEqual(e.test_console_count(), 1, 'invalid flush consumed queued input');
   assert.strictEqual(e.test_call_FlushConsoleInputBuffer(1), 1);
   assert.strictEqual(e.test_console_count(), 0, 'valid flush did not drain the queue');
 
