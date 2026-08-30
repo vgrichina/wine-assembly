@@ -467,10 +467,21 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
-  ;; 731: _ftol — cdecl, convert float on FPU stack to i32 (special: no stack args, reads ST(0))
+  ;; 759: _ftol — cdecl MSVC helper, ST(0) -> signed i64 in EDX:EAX.
+  ;;
+  ;; Win98 MSVCRT saves the caller's control word, temporarily selects truncate
+  ;; rounding, executes FISTP qword, restores the control word, then returns the
+  ;; two halves.  Keep those observable semantics here; callers commonly use
+  ;; only EAX, but returning a 32-bit value and leaving stale EDX is not the ABI.
   (func $handle__ftol (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Pop ST(0) and truncate to i32
-    (global.set $eax (i32.trunc_sat_f64_s (call $fpu_pop)))
+    (local $saved_cw i32) (local $value i64)
+    (local.set $saved_cw (global.get $fpu_cw))
+    (global.set $fpu_cw (i32.or (local.get $saved_cw) (i32.const 0x0C00)))
+    (local.set $value (call $fpu_to_i64 (call $fpu_pop)))
+    (global.set $fpu_cw (local.get $saved_cw))
+    (global.set $eax (i32.wrap_i64 (local.get $value)))
+    (global.set $edx
+      (i32.wrap_i64 (i64.shr_u (local.get $value) (i64.const 32))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 

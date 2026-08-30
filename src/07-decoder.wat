@@ -1585,6 +1585,49 @@
     (call $te_raw (call $branch_target (local.get $disp)))
     (i32.const 1))
 
+  ;; Called immediately after decoding DF E0 (FNSTSW AX). Recognize the exact
+  ;; MSVC x87 condition tail `F6 C4 imm8; Jcc`, consume it, and replace all
+  ;; three instructions with handler 439. Other TEST forms remain ordinary x86
+  ;; so the fold cannot capture code which observes AX between the operations.
+  (func $try_emit_fnstsw_test_ah_jcc (result i32)
+    (local $p i32) (local $b i32) (local $b2 i32)
+    (local $imm i32) (local $cc i32) (local $disp i32)
+    (if (global.get $code16) (then (return (i32.const 0))))
+    (local.set $p (global.get $d_pc))
+    (if (i32.ne (call $gl8 (local.get $p)) (i32.const 0xF6))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl8 (i32.add (local.get $p) (i32.const 1))) (i32.const 0xC4))
+      (then (return (i32.const 0))))
+    (local.set $imm (call $gl8 (i32.add (local.get $p) (i32.const 2))))
+    (local.set $p (i32.add (local.get $p) (i32.const 3)))
+    (local.set $b (call $gl8 (local.get $p)))
+    (if (i32.and
+          (i32.ge_u (local.get $b) (i32.const 0x70))
+          (i32.le_u (local.get $b) (i32.const 0x7F)))
+      (then
+        (local.set $cc (i32.and (local.get $b) (i32.const 0xF)))
+        (local.set $disp
+          (call $sign_ext8 (call $gl8 (i32.add (local.get $p) (i32.const 1)))))
+        (local.set $p (i32.add (local.get $p) (i32.const 2))))
+      (else
+        (local.set $b2 (call $gl8 (i32.add (local.get $p) (i32.const 1))))
+        (if (i32.and
+              (i32.eq (local.get $b) (i32.const 0x0F))
+              (i32.and
+                (i32.ge_u (local.get $b2) (i32.const 0x80))
+                (i32.le_u (local.get $b2) (i32.const 0x8F))))
+          (then
+            (local.set $cc (i32.and (local.get $b2) (i32.const 0xF)))
+            (local.set $disp (call $gl32 (i32.add (local.get $p) (i32.const 2))))
+            (local.set $p (i32.add (local.get $p) (i32.const 6))))
+          (else (return (i32.const 0))))))
+    (global.set $d_pc (local.get $p))
+    (call $te (i32.const 439)
+      (i32.or (local.get $imm) (i32.shl (local.get $cc) (i32.const 8))))
+    (call $te_raw (global.get $d_pc))
+    (call $te_raw (call $branch_target (local.get $disp)))
+    (i32.const 1))
+
   ;; `OP dword [base+disp], imm32` whose next instruction is the Jcc reading
   ;; its flags — the compare-a-local-and-branch shape, and the largest adjacent
   ;; handler pair left in the Heroes II gameplay histogram. Called after the
@@ -4946,6 +4989,18 @@
           (call $decode_modrm)
           (if (i32.eq (global.get $mr_mod) (i32.const 3))
             (then
+              ;; DF E0 / FNSTSW AX is almost always immediately consumed by
+              ;; TEST AH + Jcc. The fused branch ends this decoded block.
+              (if (i32.and
+                    (i32.eq (local.get $op) (i32.const 0xDF))
+                    (i32.and
+                      (i32.eq (global.get $mr_reg) (i32.const 4))
+                      (i32.eqz (global.get $mr_val))))
+                (then
+                  (if (call $try_emit_fnstsw_test_ah_jcc)
+                    (then
+                      (local.set $done (i32.const 1))
+                      (br $decode)))))
               ;; Register-register: emit th_fpu_reg (189) with (group<<8)|(reg<<4)|rm
               (call $te (i32.const 189) (i32.or (i32.or
                 (i32.shl (i32.sub (local.get $op) (i32.const 0xD8)) (i32.const 8))

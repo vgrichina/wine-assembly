@@ -580,3 +580,125 @@ Implementation should be staged behind an opt-in:
 4. Re-run the command/byte/barrier census and matched moving-frame wall profile.
    Keep the Worker only if overlap exceeds queue copies, atomics, and lost-core
    cost without changing the gameplay image.
+
+### Settled-cockpit x86 profile and disassembly
+
+The allocator investigation above measured the wrong phase before its scope was
+corrected. The useful profile is a deterministic moving-cockpit interval: the
+visual wait accepted the cockpit at batch 888, `W` went down at shifted batch
+958, and handler/hot-block recording covered batches 1000 through 1100. All
+three runs used the same no-threads route, 200,000-block slices, quiet API/block
+logging, and the public `_set_sbh_threshold(0)` fix. These counts measure guest
+threaded dispatch, not wall time or Direct3D raster cost.
+
+| Gameplay build | Handler dispatches | Delta from prior | Delta from initial |
+|---|---:|---:|---:|
+| Authentic MSVCRT `_ftol`, ordinary x87 branches | 123,275,668 | — | — |
+| WAT-native ABI-correct `_ftol` | 117,610,360 | -5,665,308 (-4.60%) | -4.60% |
+| Native `_ftol` plus H439 x87 status-branch fusion | 111,232,878 | -6,377,482 (-5.42%) | -12,042,790 (-9.77%) |
+
+The first baseline's hottest block was runtime `0x0180cdc1`, the rebased body
+of the authentic Win98 MSVCRT `_ftol` at original `0x78004dc1`. This is not an
+allocator and its traffic is not startup residue:
+
+```asm
+78004dc1  push ebp
+78004dc2  mov  ebp,esp
+78004dc4  add  esp,-0xc
+78004dc7  wait
+78004dc8  fnstcw [ebp-2]
+78004dcc  mov  ax,[ebp-2]
+78004dd0  or   ah,0xc
+78004dd3  mov  [ebp-4],ax
+78004dd7  fldcw [ebp-4]
+78004dda  fistp qword [ebp-0xc]
+78004ddd  fldcw [ebp-2]
+78004de0  mov  eax,[ebp-0xc]
+78004de3  mov  edx,[ebp-8]
+```
+
+It is MSVC's signed-i64, truncate-toward-zero helper. The EXE has 489 static
+call sites, but return-address attribution accounts for 435,868 of the 435,943
+sampled calls and shows that four sites dominate:
+
+| Call instruction | Calls | Purpose from surrounding disassembly |
+|---|---:|---|
+| `0x547a58` | 86,507 | scale and pack per-vertex alpha/intensity |
+| `0x547c71` | 86,507 | scale first lit vertex color component |
+| `0x547c83` | 86,507 | scale second lit vertex color component |
+| `0x547c98` | 86,507 | scale third lit vertex color component |
+
+Those four sites are 79.4% of `_ftol` calls. The surrounding `0x5479e0`
+function walks the game's Direct3D vertex buffers, multiplies lighting values,
+clamps or converts them, and packs 32-bit diffuse colors. Keeping authentic
+`malloc/free` while routing only exported `_ftol` to native WAT is therefore a
+sound acceleration boundary. The native handler must still pop ST(0), select
+truncate rounding, produce the full signed result in EDX:EAX, restore the x87
+control word, and remove only its return address. The prior native stub returned
+only a saturated i32 and left stale EDX, so it was not safe to enable. Focused
+coverage includes positive/negative truncation, a value above 32 bits,
+NaN/infinity integer-indefinite, control-word restoration, and stack cleanup.
+
+After native `_ftol`, the largest adjacent semantic pattern was the pre-P6 x87
+condition sequence:
+
+```asm
+51bc38  fcomp  dword [0x5989d4]
+51bc3e  fnstsw ax
+51bc40  test   ah,0x41
+51bc43  jne    0x51bc4d
+```
+
+The same shape repeats through `0x51bc31..0x51bce7` and the `0x5243xx` terrain
+work. It is legitimate clamp/physics code: FCOM writes C0/C2/C3 in the x87
+status word, FNSTSW copies them into AH, TEST selects the needed conditions,
+and Jcc branches. In the native-`_ftol` profile, `H189 -> H217` alone occurred
+3,133,484 times, followed primarily by JZ/JNZ. H439 now recognizes only the
+exact contiguous byte sequence `DF E0 F6 C4 imm8 Jcc`, publishes the same AX,
+TOP/status, byte-width TEST flags and EIP, and ends the block in one dispatch.
+It executed 3,167,564 times in the follow-up window. Two dispatches saved per
+execution predict 6,335,128 removed operations; the measured 6,377,482 delta is
+within 0.04% of total work after normal frame-route variation. A focused short
+and near-Jcc regression also proves that a `TEST AL` near miss stays ordinary.
+
+The new top of the x86 profile is now mostly real application work:
+
+| Block / handler | Count | Interpretation and next action |
+|---|---:|---|
+| H190 / H189 / H188 | 17,868,915 / 10,068,856 / 8,911,103 | scalar x87 memory/register operations; optimize only from repeated verified sequences, not a blanket float rewrite |
+| `0x00528268` | 364,175 loop entries | RGB565 color-key row: load word, compare key, conditionally copy, advance; best next exact loop-fold candidate |
+| `0x00528275` | 322,048 | tail of the same color-key loop |
+| `0x00515a9c` | 169,503 | indexed 12-byte vec3 gather into contiguous scratch; control/index arithmetic dominates and Wasm SIMD has no general gather |
+| `0x00528064` | 126,425 | already handled by the exact MW3 RGB565 alpha-run lowering |
+| `0x0051bf10` | 108,475 | scalar trig/table-lookup helper; possible exact fold, lower priority than the color-key row |
+
+The `0x528268` candidate is especially clear:
+
+```asm
+528268  mov  cx,[eax]
+52826b  cmp  cx,[ebp+0xc]       ; transparent color key
+52826f  je   0x528275
+528271  mov  [eax+ebx],cx
+528275  add  eax,2
+528278  dec  esi
+528279  jne  0x528268
+```
+
+A bounded exact row super-op can remove several dispatches per pixel without
+changing DirectDraw ownership. SIMD may help that handler compare multiple
+RGB565 words and select source/destination lanes, but it is an implementation
+detail, not the primary win: recognizing the loop removes interpreter dispatch
+even with scalar Wasm. The vec3 gather at `0x515a9c` is a weaker SIMD target
+because each source is selected by an index and only the 12-byte copy is
+contiguous. The broad x87 total likewise does not justify converting the whole
+emulated stack to SIMD; its dependencies are scalar and compatibility requires
+x87 status, rounding, NaN, and 80-bit-adjacent behavior. Exact sequences and
+renderer spans remain the safer acceleration boundary.
+
+This profile also bounds what x86-only work can accomplish. The two changes
+remove 9.77% of guest dispatch, but the earlier wall CPU profile attributed a
+separate roughly 20.1% named share to D3DIM/software rasterization. Both sides
+are material. A dedicated render Worker can overlap them in Threads mode, as
+designed above, but does not reduce total raster CPU; the next low-risk local
+optimization is the `0x528268` color-key row, followed by a matched moving-frame
+wall A/B rather than another startup or fixed-batch timing claim.

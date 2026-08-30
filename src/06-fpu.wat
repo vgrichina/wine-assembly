@@ -944,5 +944,39 @@
       (i32.add (call $get_reg (i32.and (local.get $op) (i32.const 0xF))) (call $read_thread_word)))
     (return_call $next))
 
+  ;; 439: canonical x87 compare branch tail:
+  ;;   FNSTSW AX; TEST AH, imm8; Jcc
+  ;;
+  ;; MSVC emits this after FCOM/FCOMP because pre-P6 x87 comparisons publish
+  ;; C0/C2/C3 in the x87 status word rather than EFLAGS.  Keep every observable
+  ;; side effect of the three instructions, including TOP in the stored status
+  ;; word, the upper half of EAX, TEST's lazy flags, and the final EIP.  Folding
+  ;; the sequence saves two threaded dispatches at each scalar x87 comparison.
+  ;; op: imm8 in bits 0-7, condition code in bits 8-11. Words: fall, target.
+  (func $th_fnstsw_test_ah_jcc (param $op i32)
+    (local $r i32) (local $cc i32) (local $fall i32) (local $target i32)
+    (global.set $fpu_sw
+      (i32.or
+        (i32.and (global.get $fpu_sw) (i32.const 0xC7FF))
+        (i32.shl (global.get $fpu_top) (i32.const 11))))
+    (global.set $eax
+      (i32.or
+        (i32.and (global.get $eax) (i32.const 0xFFFF0000))
+        (global.get $fpu_sw)))
+    (local.set $r
+      (i32.and
+        (i32.and (i32.shr_u (global.get $eax) (i32.const 8)) (i32.const 0xFF))
+        (i32.and (local.get $op) (i32.const 0xFF))))
+    (call $set_flags_logic (local.get $r))
+    (global.set $flag_sign_shift (i32.const 7))
+    (local.set $cc
+      (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF)))
+    (local.set $fall (call $read_thread_word))
+    (local.set $target (call $read_thread_word))
+    (if (call $eval_cc (local.get $cc))
+      (then (global.set $eip (local.get $target)))
+      (else (global.set $eip (local.get $fall))))
+    (return_call $branch_end))
+
 (func $th_emms (param $op i32)
             (global.set $fpu_tag (i32.const 0)) (return_call $next))

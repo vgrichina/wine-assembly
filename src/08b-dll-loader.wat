@@ -247,6 +247,12 @@
   ;; them is loaded. The math entries route CRT float helpers to the host FPU;
   ;; the comctl32 entry papers over a genuine Win98-vs-XP version gap.
   (func $native_override_export_api_id (param $name_wa i32) (result i32)
+    ;; MSVC emits _ftol at every float/double-to-integer conversion.  Running
+    ;; the authentic 21-instruction MSVCRT wrapper through the threaded x86
+    ;; core is especially expensive in vertex-colour loops; the native handler
+    ;; implements the same x87 pop, truncation and EDX:EAX result directly.
+    (if (i32.eq (call $lookup_api_id (local.get $name_wa)) (i32.const 759))
+      (then (return (i32.const 759)))) ;; _ftol
     (if (call $str_eq (local.get $name_wa) (i32.const 0x300))
       (then (return (call $lookup_api_id (i32.const 0x300))))) ;; ceil
     (if (call $str_eq (local.get $name_wa) (i32.const 0x305))
