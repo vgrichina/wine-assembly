@@ -53,6 +53,30 @@ assert.strictEqual(backend.draws[0].mode, GL.TRIANGLES,
 assert.strictEqual(backend.draws[0].count, 6,
   'one quad must become two complete triangles');
 
+const flatBackend = new FakeBackend();
+const flat = new FixedFunctionGL(flatBackend);
+flat.shadeModel = GL.FLAT;
+flat.begin(GL.QUADS);
+for (let i = 0; i < 4; i++) {
+  flat.color = [i + 1, 0, 0, 1];
+  flat.vertex(i, 0, 0);
+}
+flat.end();
+assert.deepStrictEqual(
+  Array.from({ length: 6 }, (_unused, i) => flatBackend.vertices[i * 9 + 3]),
+  [4, 4, 4, 4, 4, 4],
+  'direct fixed-function quads use their fourth vertex for both WebGL triangles');
+flat.begin(GL.LINE_LOOP);
+for (let i = 0; i < 3; i++) {
+  flat.color = [i + 1, 0, 0, 1];
+  flat.vertex(i, 0, 0);
+}
+flat.end();
+assert.deepStrictEqual(
+  Array.from({ length: 6 }, (_unused, i) => flatBackend.vertices[i * 9 + 3]),
+  [2, 2, 3, 3, 1, 1],
+  'direct fixed-function line loops use each endpoint, including vertex one on close');
+
 gl.matrixMode = GL.MODELVIEW;
 gl._multMatrix(require('../lib/gl-compat').identity());
 gl._multMatrix(new Float32Array([1, 0, 0, 0, 0, 1, 0, 0,
@@ -192,4 +216,4 @@ assert.deepStrictEqual(contextCounts, [1, 0, 0],
 assert.strictEqual(lifecycleWin._gpuFrameLayer, null,
   'renderer replacement detaches the old GPU presentation layer');
 
-console.log('PASS OpenGL fixed-function lowering (quad, matrix, texture)');
+console.log('PASS OpenGL fixed-function lowering (provoking vertices, matrix, texture)');

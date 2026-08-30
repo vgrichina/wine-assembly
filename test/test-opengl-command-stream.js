@@ -12,6 +12,43 @@ const stack = 0x100;
 const submissions = [];
 const executed = [];
 
+const coloredVertices = count => {
+  const vertices = [];
+  for (let i = 0; i < count; i++) {
+    vertices.push(i, 0, 0, i + 1, 0, 0, 1, 0, 0);
+  }
+  return vertices;
+};
+const redChannels = geometry => Array.from(
+  { length: geometry.vertices.length / 9 },
+  (_unused, i) => geometry.vertices[i * 9 + 3]);
+const expectFlatColors = (mode, count, expected, label) => {
+  const geometry = Stream.normalizeImmediate(mode, coloredVertices(count), 0x1D00);
+  assert.deepStrictEqual(redChannels(geometry), expected, label);
+  return geometry;
+};
+
+expectFlatColors(0x0004, 6, [3, 3, 3, 6, 6, 6],
+  'independent triangles use each triangle third vertex under GL_FLAT');
+expectFlatColors(0x0001, 4, [2, 2, 4, 4],
+  'independent lines use each line second vertex under GL_FLAT');
+expectFlatColors(0x0007, 8, [4, 4, 4, 4, 4, 4, 8, 8, 8, 8, 8, 8],
+  'both triangles lowered from a quad retain its fourth provoking vertex');
+expectFlatColors(0x0008, 6, [4, 4, 4, 4, 4, 4, 6, 6, 6, 6, 6, 6],
+  'both triangles in each quad-strip polygon retain that polygon provoking vertex');
+expectFlatColors(0x0009, 5, Array(9).fill(1),
+  'a legacy GL_POLYGON uses its first vertex across the complete fan');
+expectFlatColors(0x0006, 5, [3, 3, 3, 4, 4, 4, 5, 5, 5],
+  'each triangle-fan triangle uses its own final vertex');
+expectFlatColors(0x0005, 5, [3, 3, 3, 4, 4, 4, 5, 5, 5],
+  'triangle-strip winding changes do not change its provoking vertex sequence');
+expectFlatColors(0x0003, 4, [2, 2, 3, 3, 4, 4],
+  'line strips use each segment endpoint under GL_FLAT');
+const flatLoop = expectFlatColors(0x0002, 4, [2, 2, 3, 3, 4, 4, 1, 1],
+  'the closing line-loop segment is shaded by vertex one');
+assert.strictEqual(flatLoop.mode, 0x0001,
+  'line loops lower to independent WebGL lines');
+
 const submit = batch => {
   submissions.push({ bytes: batch.bytes, commands: batch.commands });
   return Stream.replay(batch, (opcode, aux, capture) => {
