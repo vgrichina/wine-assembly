@@ -2,6 +2,19 @@
   ;; CONSOLE API HANDLERS
   ;; ============================================================
 
+  ;; The PE loader owns low staging memory, so keep mutable console-title state
+  ;; beside the shared console records rather than in the overwritten 0x11xxx
+  ;; system-string area. This 128-byte run ends before the DIB page allocator.
+  (global $CONSOLE_TITLE_STORAGE i32 (i32.const 0x07E0FA00))
+  (data (i32.const 0x07E0FA00) "Console\00")
+
+  (func $console_title_ensure
+    ;; load_pe clears mutable high-memory tables after WebAssembly data
+    ;; initialization. Restore the default title on first console use.
+    (if (i32.eqz (i32.load8_u (global.get $CONSOLE_TITLE_STORAGE)))
+      (then (i64.store (global.get $CONSOLE_TITLE_STORAGE)
+        (i64.const 0x00656c6f736e6f43))))) ;; "Console\0", little-endian
+
   ;; Shared screen-buffer record:
   ;;   +0 magic, +4 backing guest allocation (0 for the original buffer),
   ;;   +8 text WA, +12 attributes WA, +16 width, +20 height,
@@ -298,17 +311,110 @@
     (call $console_buffer_finish (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; SetConsoleTitleW(lpConsoleTitle) → BOOL
+  (func $console_title_publish
+    (local $hwnd i32) (local $len i32)
+    (call $console_ensure_window)
+    (local.set $hwnd (global.get $console_hwnd))
+    (local.set $len (call $strlen (global.get $CONSOLE_TITLE_STORAGE)))
+    (if (local.get $hwnd)
+      (then
+        (call $title_table_set (local.get $hwnd)
+          (global.get $CONSOLE_TITLE_STORAGE) (local.get $len))
+        (call $nc_flags_set (local.get $hwnd) (i32.const 1))
+        (call $defwndproc_do_ncpaint (local.get $hwnd))
+        (call $host_set_window_text (local.get $hwnd) (global.get $CONSOLE_TITLE_STORAGE)))))
+
+  ;; SetConsoleTitleW(lpConsoleTitle) → BOOL. The renderer and WAT caption
+  ;; tables use ANSI bytes, so retain the process title in its CP1252 form.
   (func $handle_SetConsoleTitleW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $src i32) (local $len i32) (local $ch i32)
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $last_error (i32.const 87))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (local.set $src (call $g2w (local.get $arg0)))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $len)
+        (i32.sub (global.get $CONSOLE_TITLE_MAX) (i32.const 1))))
+      (local.set $ch (i32.load16_u (i32.add (local.get $src)
+        (i32.shl (local.get $len) (i32.const 1)))))
+      (br_if $done (i32.eqz (local.get $ch)))
+      (i32.store8 (i32.add (global.get $CONSOLE_TITLE_STORAGE) (local.get $len))
+        (select (local.get $ch) (i32.const 0x3f)
+          (i32.le_u (local.get $ch) (i32.const 0xff))))
+      (local.set $len (i32.add (local.get $len) (i32.const 1)))
+      (br $copy)))
+    (i32.store8 (i32.add (global.get $CONSOLE_TITLE_STORAGE) (local.get $len)) (i32.const 0))
+    (call $console_title_publish)
+    (global.set $last_error (i32.const 0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; SetConsoleTitleA(lpConsoleTitle) → BOOL
-  ;; The host console window is already materialized by AllocConsole. Caption
-  ;; repaint is cosmetic; accepting the ANSI spelling matches the wide path.
   (func $handle_SetConsoleTitleA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $src i32) (local $len i32) (local $ch i32)
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $last_error (i32.const 87))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (local.set $src (call $g2w (local.get $arg0)))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $len)
+        (i32.sub (global.get $CONSOLE_TITLE_MAX) (i32.const 1))))
+      (local.set $ch (i32.load8_u (i32.add (local.get $src) (local.get $len))))
+      (br_if $done (i32.eqz (local.get $ch)))
+      (i32.store8 (i32.add (global.get $CONSOLE_TITLE_STORAGE) (local.get $len)) (local.get $ch))
+      (local.set $len (i32.add (local.get $len) (i32.const 1)))
+      (br $copy)))
+    (i32.store8 (i32.add (global.get $CONSOLE_TITLE_STORAGE) (local.get $len)) (i32.const 0))
+    (call $console_title_publish)
+    (global.set $last_error (i32.const 0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; GetConsoleTitleA/W copy at most nSize-1 characters, always terminate a
+  ;; non-empty destination, and return the count excluding that terminator.
+  (func $handle_GetConsoleTitleA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dst i32) (local $len i32) (local $copy i32)
+    (call $console_title_ensure)
+    (local.set $len (call $strlen (global.get $CONSOLE_TITLE_STORAGE)))
+    (if (i32.and (i32.ne (local.get $arg0) (i32.const 0))
+          (i32.ne (local.get $arg1) (i32.const 0)))
+      (then
+        (local.set $dst (call $g2w (local.get $arg0)))
+        (local.set $copy (local.get $len))
+        (if (i32.ge_u (local.get $copy) (local.get $arg1))
+          (then (local.set $copy (i32.sub (local.get $arg1) (i32.const 1)))))
+        (memory.copy (local.get $dst) (global.get $CONSOLE_TITLE_STORAGE) (local.get $copy))
+        (i32.store8 (i32.add (local.get $dst) (local.get $copy)) (i32.const 0))))
+    (global.set $eax (local.get $copy))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  (func $handle_GetConsoleTitleW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dst i32) (local $len i32) (local $copy i32) (local $i i32)
+    (call $console_title_ensure)
+    (local.set $len (call $strlen (global.get $CONSOLE_TITLE_STORAGE)))
+    (if (i32.and (i32.ne (local.get $arg0) (i32.const 0))
+          (i32.ne (local.get $arg1) (i32.const 0)))
+      (then
+        (local.set $dst (call $g2w (local.get $arg0)))
+        (local.set $copy (local.get $len))
+        (if (i32.ge_u (local.get $copy) (local.get $arg1))
+          (then (local.set $copy (i32.sub (local.get $arg1) (i32.const 1)))))
+        (block $done (loop $widen
+          (br_if $done (i32.ge_u (local.get $i) (local.get $copy)))
+          (i32.store16 (i32.add (local.get $dst) (i32.shl (local.get $i) (i32.const 1)))
+            (i32.load8_u (i32.add (global.get $CONSOLE_TITLE_STORAGE) (local.get $i))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $widen)))
+        (i32.store16 (i32.add (local.get $dst) (i32.shl (local.get $copy) (i32.const 1)))
+          (i32.const 0))))
+    (global.set $eax (local.get $copy))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; SetConsoleWindowInfo(hConsole, bAbsolute, lpConsoleWindow) → BOOL
   (func $handle_SetConsoleWindowInfo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -1092,6 +1198,7 @@
 
   (func $console_ensure_window
     (local $hwnd i32)
+    (call $console_title_ensure)
     (if (global.get $console_hwnd) (then (return)))
     ;; Another thread may already have created it — WND_RECORDS is shared, so
     ;; adopt that window rather than opening a second one.
@@ -1115,9 +1222,9 @@
       (i32.const 8) (i32.const 8)
       (i32.mul (global.get $console_width) (global.get $CONSOLE_CELL_W))
       (i32.mul (global.get $console_height) (global.get $CONSOLE_CELL_H))
-      (global.get $CONSOLE_TITLE) (i32.const 0)))
-    (call $title_table_set (local.get $hwnd) (global.get $CONSOLE_TITLE)
-      (call $strlen (global.get $CONSOLE_TITLE)))
+      (global.get $CONSOLE_TITLE_STORAGE) (i32.const 0)))
+    (call $title_table_set (local.get $hwnd) (global.get $CONSOLE_TITLE_STORAGE)
+      (call $strlen (global.get $CONSOLE_TITLE_STORAGE)))
     (call $defwndproc_do_nccalcsize (local.get $hwnd))
     (call $defwndproc_do_ncpaint (local.get $hwnd))
     (drop (call $gdi_dc_set_field

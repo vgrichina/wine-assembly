@@ -25526,5 +25526,43 @@
       }
     ],
     "ret": "DWORD"
+  },
+  {
+    "id": 3064,
+    "name": "GetConsoleTitleA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1406529425,
+    "args": [
+      {
+        "name": "lpConsoleTitle",
+        "type": "LPSTR",
+        "out": true
+      },
+      {
+        "name": "nSize",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
+  },
+  {
+    "id": 3065,
+    "name": "GetConsoleTitleW",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 1708526567,
+    "args": [
+      {
+        "name": "lpConsoleTitle",
+        "type": "LPWSTR",
+        "out": true
+      },
+      {
+        "name": "nSize",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "DWORD"
   }
 ]

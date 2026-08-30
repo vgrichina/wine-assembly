@@ -103,10 +103,48 @@ const extraWat = String.raw`
       (i32.const 0) (i32.const 0) (i32.const 0))
     (global.set $esp (local.get $saved))
     (global.get $eax))
+  (func (export "test_set_console_title_a") (param $title i32) (result i32)
+    (local $saved i32)
+    (local.set $saved (global.get $esp))
+    (call $handle_SetConsoleTitleA
+      (local.get $title) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved))
+    (global.get $eax))
+  (func (export "test_set_console_title_w") (param $title i32) (result i32)
+    (local $saved i32)
+    (local.set $saved (global.get $esp))
+    (call $handle_SetConsoleTitleW
+      (local.get $title) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved))
+    (global.get $eax))
+  (func (export "test_get_console_title_a") (param $title i32) (param $size i32)
+        (result i32)
+    (local $saved i32)
+    (local.set $saved (global.get $esp))
+    (call $handle_GetConsoleTitleA
+      (local.get $title) (local.get $size) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved))
+    (global.get $eax))
+  (func (export "test_get_console_title_w") (param $title i32) (param $size i32)
+        (result i32)
+    (local $saved i32)
+    (local.set $saved (global.get $esp))
+    (call $handle_GetConsoleTitleW
+      (local.get $title) (local.get $size) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved))
+    (global.get $eax))
+  (func (export "test_console_title_first_byte") (result i32)
+    (call $console_title_ensure)
+    (i32.load8_u (global.get $CONSOLE_TITLE_STORAGE)))
 `;
 
 (async () => {
   let paints = 0;
+  const hostTitles = [];
   const { exports: wat } = await bootRenderHarness({
     fonts: 'none',
     extraWat,
@@ -114,6 +152,7 @@ const extraWat = String.raw`
       gdi_text_out: () => { paints++; return 1; },
       gdi_fill_rect: () => { paints++; return 1; },
       gdi_surface_upload: () => { paints++; return 1; },
+      set_window_text: (_hwnd, title) => { hostTitles.push(title); },
     },
   });
   const allocText = text => {
@@ -124,6 +163,28 @@ const extraWat = String.raw`
   };
   const info = () => wat.guest_alloc(22) >>> 0;
   const coord = (x, y) => (x & 0xffff) | ((y & 0xffff) << 16);
+  const read16 = ptr => wat.guest_read8(ptr) | (wat.guest_read8(ptr + 1) << 8);
+
+  const titleBuffer = wat.guest_alloc(32) >>> 0;
+  assert.strictEqual(wat.test_console_title_first_byte(), 'C'.charCodeAt(0),
+    'default console title storage was not initialized');
+  assert.strictEqual(wat.test_get_console_title_a(titleBuffer, 32), 7);
+  assert.deepStrictEqual(Array.from({ length: 8 }, (_, i) => wat.guest_read8(titleBuffer + i)),
+    [...Buffer.from('Console'), 0], 'initial ANSI console title');
+  assert.strictEqual(wat.test_set_console_title_a(allocText('Far Manager')), 1);
+  assert.strictEqual(wat.test_get_console_title_a(titleBuffer, 5), 4);
+  assert.deepStrictEqual(Array.from({ length: 5 }, (_, i) => wat.guest_read8(titleBuffer + i)),
+    [...Buffer.from('Far '), 0], 'ANSI title read is bounded and terminated');
+  assert.ok(hostTitles.length > 0, 'ANSI title change did not reach browser window');
+
+  const wideTitle = wat.guest_alloc(32) >>> 0;
+  for (const [i, ch] of [...'Wide Far'].entries()) wat.guest_write16(wideTitle + i * 2, ch.charCodeAt(0));
+  wat.guest_write16(wideTitle + 16, 0);
+  assert.strictEqual(wat.test_set_console_title_w(wideTitle), 1);
+  const wideOut = wat.guest_alloc(32) >>> 0;
+  assert.strictEqual(wat.test_get_console_title_w(wideOut, 16), 8);
+  assert.deepStrictEqual(Array.from({ length: 9 }, (_, i) => read16(wideOut + i * 2)),
+    [...'Wide Far'].map(ch => ch.charCodeAt(0)).concat(0), 'wide title round-trip');
 
   const first = wat.test_create_console_buffer(1, 0) >>> 0;
   const second = wat.test_create_console_buffer(1, 0) >>> 0;
