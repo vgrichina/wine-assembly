@@ -203,6 +203,46 @@ we do not emulate — the same mistake as a default `BLASTER=`/`ULTRASND=` — s
 must be measured over a full sweep before it is kept. **Reading `[87f:256e]`'s
 writer is the cheaper route and does not claim any hardware.**
 
+**Reading it is now cheap.** `dos-disasm.js --image=FILE@SEG:OFF` lays a
+`run-dos --dump=` hexdump into the memory image after the static load, so the
+overlays can be read as the machine ran them:
+
+```bash
+node tools/toyvm/run-dos.js SETUP.EXE --dispatches=850m --dump=0100:0000:98304 > d.log
+node tools/toyvm/dos-disasm.js SETUP.EXE --image=d.log@100:0 773:0b44 --to=773:0b70
+```
+
+Three things measured with it, all of them narrowing the fix rather than
+supplying one:
+
+*Both id-indexed tables have a null slot 0.* `87f:20b0` is
+`00 00 | 0b64 0b66 0b68 0b6a 0cf4 | 00 00 | 0bc5 …` and `87f:1fe8` is
+`00 00 | 0805 0807 0809 …`. So id 0 is not "standard VGA", it is *no answer* —
+SETUP indexes both tables with it unconditionally and requires the id to be
+nonzero. `773:07d9` (into `[0x1e0a]`) and `773:0b44` (into `[0x1e0c]`) are the
+two indexers, and `773:056e` calls both between its `int 10h AX=0013` and the
+first bank switch.
+
+*Twelve of the thirteen detectors read the video BIOS ROM.* `3c9:37c0`-`37f0`
+calls them in a row, each setting its own flag byte; the first, `3c9:0e19`,
+compares five bytes at `C000:0025` against a literal. With C000-F000 zeroed
+every one of them declines, which is the same finding as before from the other
+end.
+
+*The one that does not is a Trident register probe, and it is the only path to
+a nonzero id that needs no ROM.* It writes `0xEA` to sequencer index 6 through
+`0x3C4`, reads sequencer index `0x0E` back, restores it with `0xAE`, and turns
+the value read into the id directly:
+
+```
+0x80..0xFE -> 1     0x70..0x7E -> 2     0x50..0x59 -> 3     0x41..0x49 -> 4
+```
+
+That is a TVGA revision number, and answering it with anything in those ranges
+claims a Trident 8800/8900 — including its bank-switch registers, which are
+what `[0x1e0c]` would then be installed to write. So it is a way to make SETUP
+finish, not a way to make it right; the warning above applies to it exactly.
+
 One trap this cost an hour: **segment 773 is a Turbo Pascal overlay, and
 `--disasm` fires at exit.** Disassembling `773:0573` mid-run and at exit happens
 to agree here, but the code at other 773 offsets does not, and a confident
