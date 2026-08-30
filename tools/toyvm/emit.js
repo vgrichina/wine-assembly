@@ -1602,8 +1602,44 @@ function genArithIO() {
 `);
   }
 
+  // Resolve $gip against the block cache and keep running if it is there.
+  //
+  // $jlook keys on the offset AND the selector, and it reads the selector live,
+  // so it is safe for a transfer that has just changed CS: the far forms below
+  // set CS before they get here, and the lookup is then asking the question
+  // they actually want asked -- "is THIS cs:ip compiled" -- rather than the
+  // near forms' "is this offset compiled". That is why they can share it.
+  // ...but never across a pending self-patch. $wr8 sets $smc=2 for a store into
+  // a byte something has already compiled and does NOT stop the slice; it
+  // leaves the regions standing and lets the host throw them away at the next
+  // handback, on the stated grounds that a packed program reaches its unpacked
+  // entry through a far jump and so hands back there anyway. That was true
+  // while every far transfer left wasm. Resolve one through the cache with
+  // $smc still up and the depacker jumps straight into the block compiled from
+  // its own ciphertext -- ACCIDENT.EXE stopped at 1bb5:4b2b with a black
+  // screen and one of its two data files opened, and nothing in the run named
+  // a decoder or a store as the cause. So the guard is part of the lookup, not
+  // part of any one handler: any dirty byte this slice, take the handback.
+  const GO_INDIRECT = `
+  (local.set $t3 (select (i32.const 0) (call $jlook (global.get $gip))
+                         (global.get $smc)))
+  (if ${CONT('(local.get $t3)')}
+    (then (global.set $ip (local.get $t3)))
+    (else (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))))`;
+
   // Far transfers and indirect jumps. All of them land on an address that is
   // data, so all of them leave the trace.
+  //
+  // ...leave the TRACE, which is not the same as leaving wasm, and every far
+  // form here used to do both. A far transfer is one guest instruction and it
+  // was costing a JS round trip every time, however many times the program had
+  // already been through it: DTM2.EXE re-entered 8 addresses 576,000 times
+  // between them, spent 65% of its wall clock outside wasm doing it, and the
+  // entry census said `jt=hit` on all 8 -- the target was compiled and sitting
+  // in the table the whole time, and nothing asked. Segmented code reaches for
+  // far calls constantly (overlays, a Turbo runtime's inter-unit calls), so
+  // this is not an exotic path, it is the ordinary one for a large real-mode
+  // program.
   // The last operand is the guest address the immediates were decoded from, and
   // they are read again from there rather than used as decoded. See the 0xEA
   // comment in decode.js: a depacker patches the selector of its own exit jump
@@ -1614,7 +1650,7 @@ function genArithIO() {
   (local.set $t1 (call $rd16 (i32.const 1) (i32.add (local.get $t2) (i32.const 2))))
   (call $sset (i32.const 1) (local.get $t1))
   (global.set $gip (local.get $t0))
-  (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
+  ${GO_INDIRECT}
 `);
   h('call_far', 4, `
   ${ops(4)}
@@ -1624,19 +1660,19 @@ function genArithIO() {
   (call $push16 (local.get $t2))
   (call $sset (i32.const 1) (local.get $t1))
   (global.set $gip (local.get $t0))
-  (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
+  ${GO_INDIRECT}
 `);
   h('retf', 0, `
   (global.set $gip (call $pop16))
   (call $sset (i32.const 1) (call $pop16))
-  (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
+  ${GO_INDIRECT}
 `);
   h('retf_imm', 1, `
   ${ops(1)}
   (global.set $gip (call $pop16))
   (call $sset (i32.const 1) (call $pop16))
   (global.set $sp (i32.and (i32.add (global.get $sp) (local.get $t0)) (global.get $spm)))
-  (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
+  ${GO_INDIRECT}
 `);
   // The operand-size-32 far transfers. These are how a DOS extender enters and
   // leaves its 32-bit world, and until they existed the 66-prefixed forms were
@@ -1649,14 +1685,14 @@ function genArithIO() {
   h('retf32', 0, `
   (global.set $gip (call $pop32))
   (call $sset (i32.const 1) (i32.and (call $pop32) (i32.const 0xFFFF)))
-  (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
+  ${GO_INDIRECT}
 `);
   h('retf_imm32', 1, `
   ${ops(1)}
   (global.set $gip (call $pop32))
   (call $sset (i32.const 1) (i32.and (call $pop32) (i32.const 0xFFFF)))
   (global.set $sp (i32.and (i32.add (global.get $sp) (local.get $t0)) (global.get $spm)))
-  (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
+  ${GO_INDIRECT}
 `);
   h('jmp_far32', 3, `
   ${ops(3)}
@@ -1680,11 +1716,6 @@ function genArithIO() {
   // rather than baked in. A miss hands back exactly as before; a hit keeps a
   // computed jump inside wasm, which is what mars.exe's unrolled span writer is
   // entered through several hundred thousand times a frame.
-  const GO_INDIRECT = `
-  (local.set $t3 (call $jlook (global.get $gip)))
-  (if ${CONT('(local.get $t3)')}
-    (then (global.set $ip (local.get $t3)))
-    (else (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))))`;
   h('jmp_r16', 1, `
   ${ops(1)}
   (global.set $gip (call $rget16 (local.get $t0)))
@@ -3562,6 +3593,16 @@ function helpers() {
 ;; Indirect-jump target lookup. The key is the offset and the selector, checked
 ;; separately, so a trace compiled for one segment can never be entered from
 ;; another and two offsets 64KB apart in a flat segment cannot be confused.
+;;
+;; ...and the selector's BASE, which is a third thing and not implied by the
+;; other two. A selector is a name, not an address: PMODE/W reuses the numbers
+;; it was just using as real-mode paragraphs, so 0x1faf can mean linear 0x1faf0
+;; before a mode switch and whatever a descriptor says after one. The JS-side
+;; cache has always known this -- DosCache.regions is keyed on the linear base
+;; for exactly this reason -- but this table was keyed on the selector alone,
+;; which was survivable while only the far forms that already leave wasm could
+;; reach it. Now that a far RET resolves here, a stale entry would resume the
+;; guest in whatever got compiled for the same selector in the other mode.
 (func $jlook (param $ip i32) (result i32)
   (local $k i32) (local $a i32)
   (local.set $k (i32.xor (local.get $ip)
@@ -3572,7 +3613,8 @@ function helpers() {
              (i32.const ${isa.JTAB_ENTRIES - 1}))
     (i32.const ${isa.JTAB_STRIDE}))))
   (if (i32.and (i32.eq (i32.load offset=0 (local.get $a)) (local.get $ip))
-               (i32.eq (i32.load offset=4 (local.get $a)) (call $sget (i32.const 1))))
+               (i32.and (i32.eq (i32.load offset=4 (local.get $a)) (call $sget (i32.const 1)))
+                        (i32.eq (i32.load offset=12 (local.get $a)) (global.get $csb))))
     (then (return (i32.load offset=8 (local.get $a)))))
   (i32.const 0))
 ${SHIFT_FNS.join('')}${fpuHelpers()}`;

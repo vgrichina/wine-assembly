@@ -178,6 +178,10 @@ async function runDos(o) {
     // re-decodes itself every iteration hands back at the same address for real
     // reasons and looks identical to a spin from here.
     stuckLimit = 200,
+    // ...and the guest work that has to pass under that run of handbacks with
+    // nothing observable changing. See DosSession's note: a handback is not a
+    // fixed amount of work, so the count alone stopped meaning "a while ago".
+    stuckWork = 20e6,
     // The DOS command tail, verbatim. Several demos in this corpus name their
     // own silent-mode switch on the screen they refuse to start from.
     guestArgs = '',
@@ -329,6 +333,7 @@ async function runDos(o) {
 
   const session = new DosSession(vm, machine, {
     slice, noCache, smcFlush, mouse, irqEvery, dispatchesPerTick, tickScale, stuckLimit,
+    stuckWork,
     // A watch reports through the census, so asking for one turns it on.
     smcCensus: smcCensus || watch.length > 0, watch,
     cells: conCells,
@@ -707,6 +712,7 @@ async function main() {
     irqEvery: count(arg('irq-every'), 100e3),
     dispatchesPerTick: count(arg('dispatches-per-tick'), 550e3),
     stuckLimit: count(arg('stuck'), 200),
+    stuckWork: count(arg('stuck-work'), 20e6),
     // --stop-on-text='Runtime error 200' -- end the run the instant the guest
     // prints this, so --dump and --disasm photograph the failure instead of
     // whatever reused its memory afterwards. See Machine.conWatch.
@@ -1012,8 +1018,24 @@ async function main() {
     // between "add a cache" and "the wrong handler is bailing".
     console.log(`  slice entries: ${eh.map(([k, n]) => {
       const [c, i] = k.split(':').map(x => parseInt(x, 16));
-      const slot = isa.jhash(c, i) * 2;
-      const hit = r.jtab[slot] === (((c & 0xFFFF) << 16) | (i & 0xFFFF)) && r.jtab[slot + 1] !== 0;
+      // Stride 4, and the key is two separate words -- the same layout the
+      // writer (DosCache.entryFor) and $jlook use. This probe used to assume a
+      // stride of 2 and a key packed as (cs<<16)|ip, which no longer describes
+      // the table and cannot describe it: a 32-bit code segment's IP does not
+      // fit in the low half. Every address it was asked about therefore read
+      // MISS, including the ones the cache was serving perfectly, and the
+      // column meant to separate "add a cache" from "the wrong handler bails"
+      // pointed at the first answer every time.
+      // Two of the three terms $jlook checks. The third is the linear base the
+      // block was compiled at, and this cannot check it: the only base to hand
+      // at report time is the one CS had when the run stopped, and these
+      // entries are from all over the program. So the column can say a slot is
+      // occupied by this cs:ip, which is the question it was written to answer,
+      // and would over-report a hit only for an address whose selector has
+      // since been given a new descriptor.
+      const slot = isa.jhash(c, i) * 4;
+      const hit = r.jtab[slot] === i && r.jtab[slot + 1] === (c & 0xFFFF)
+        && r.jtab[slot + 2] !== 0;
       return `${k} x${n} jt=${hit ? 'hit' : 'MISS'}`;
     }).join(', ')}`);
     const ic = [...r.machine.intCount].sort((a, b) => b[1] - a[1]);

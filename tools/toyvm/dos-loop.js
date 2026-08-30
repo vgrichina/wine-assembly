@@ -313,6 +313,11 @@ class CodeCache {
       this.jtab[slot] = bip;
       this.jtab[slot + 1] = cs & 0xFFFF;
       this.jtab[slot + 2] = addr;
+      // The linear base the block was decoded at. $jlook checks it against the
+      // live one, so a selector that has been given a new descriptor since --
+      // an extender reusing its real-mode segment numbers -- misses instead of
+      // resuming in the other mode's code. Word 3 of the stride was spare.
+      this.jtab[slot + 3] = codeBase | 0;
     }
     if (!this.regions.has(key)) this.regions.set(key, []);
     this.regions.get(key).push(prog);
@@ -340,6 +345,12 @@ class DosSession {
       // run is called hung. 0 turns the detector off, which is what to reach for
       // when the question is whether a loop is stuck or merely long.
       stuckLimit = 200,
+      // ...and how much guest work has to pass with nothing observable
+      // changing before that run of handbacks is believed. See the note at the
+      // test itself. 20M is well inside the budget a sweep gives a program
+      // (200M) so a real spin is still caught early, and well outside any
+      // timed wait seen in this corpus.
+      stuckWork = 20e6,
       // conCells(machine.con), passed in rather than imported: the console
       // scoring lives with the drivers that photograph a console.
       cells = null,
@@ -363,6 +374,8 @@ class DosSession {
     this.dispatchesPerTick = dispatchesPerTick;
     this.tickScale = tickScale;
     this.stuckLimit = stuckLimit;
+    this.stuckWork = stuckWork;
+    this.stuckSince = 0;
     this.cells = cells;
     this.hooks = hooks;
     this.cache = new CodeCache(vm, { noCache, smcFlush, watch });
@@ -590,7 +603,36 @@ class DosSession {
       ? this.cache.stepOne(cs, ip, codeBase, mask, d32)
       : this.cache.entryFor(cs, ip, codeBase, mask, d32);
     if (this.hooks.beforeSlice) this.hooks.beforeSlice();
-    vm.exports.run(entry, this.slice);
+    // Run to the next thing that wants to happen, not to the full slice.
+    //
+    // Every interrupt this harness injects goes in at a handback, because that
+    // is the only point where the guest's cs:gip is a real instruction
+    // boundary (see the timer comment in the service cycle below). The rates
+    // are all quoted in dispatches -- a retrace every irqEvery/4, a tick every
+    // irqEvery, a clock word every dispatchesPerTick -- and while a handback
+    // arrived every few hundred dispatches those rates were met by accident:
+    // there was always another boundary along before the next event was due.
+    //
+    // Linking far transfers took that away. DTM2 went from 267 dispatches per
+    // handback to 249,413, which is a tenfold overshoot of the retrace interval
+    // and a 2.5x overshoot of the tick -- so a program that had been getting 18
+    // ticks a second started getting one or two, and ACCIDENT.EXE, which paces
+    // its loader on them, stopped part-way with a black screen and half its
+    // files unopened. The linking was right; relying on handback frequency to
+    // pace time was the bug, and it was there all along waiting for the
+    // handbacks to thin out.
+    //
+    // So cap the slice at the shortest of those intervals. A quantum and not a
+    // due-date: the events are conditional -- the retrace only fires if the
+    // program hooked it, the SB IRQ only between transfers -- and an interval
+    // whose event declines to fire never advances its `last` mark, so a
+    // time-to-next-event budget goes negative and pins every later slice at the
+    // one-step floor. That is not a hypothetical; it is what the first version
+    // of this did, and ACCIDENT.EXE ran 25,000 dispatches in 239 handbacks
+    // before stopping. The quantum cannot drift because it does not remember
+    // anything.
+    const budget = Math.min(this.slice, Math.max(1, Math.floor(this.irqEvery / 4)));
+    vm.exports.run(entry, budget);
     // $left is -1 when the slice ran to exhaustion and holds the unspent budget
     // when a handler handed control back early. Billing the slice either way
     // makes a demo that bounces off an unresolved jump every few instructions
@@ -600,7 +642,7 @@ class DosSession {
     // the count it saved on the way out rather than billing the whole budget.
     const cut = this.machine.takeSliceCut ? this.machine.takeSliceCut() : -1;
     const left = cut >= 0 ? cut : vm.raw('left');
-    this.dispatched += left < 0 ? this.slice : this.slice - left;
+    this.dispatched += left < 0 ? budget : budget - left;
     this.handbacks++;
     if (this.hooks.afterSlice) this.hooks.afterSlice({ left, dispatched: this.dispatched, cs, ip });
 
@@ -765,12 +807,32 @@ class DosSession {
     for (const n of ['ax', 'bx', 'cx', 'dx', 'si', 'di', 'bp', 'sp', 'ds', 'es']) {
       regs = (Math.imul(regs, 16777619) ^ vm.get(n)) >>> 0;
     }
-    this.stuck = (key === this.lastKey && wrote === this.lastWritten && regs === this.lastRegs)
-      ? this.stuck + 1 : 0;
+    const same = key === this.lastKey && wrote === this.lastWritten && regs === this.lastRegs;
+    this.stuck = same ? this.stuck + 1 : 0;
+    if (!same) this.stuckSince = this.dispatched;
     this.lastKey = key;
     this.lastWritten = wrote;
     this.lastRegs = regs;
-    if (this.stuckLimit && this.stuck > this.stuckLimit) this.stuckAt = key;
+    // A handback count alone is not a measure of how long the guest has been
+    // getting nowhere, because a handback is not a fixed amount of guest work
+    // -- and it stopped being anything like one when far transfers started
+    // resolving in wasm. The count needs a run of IDENTICAL handbacks, so it
+    // was previously being reset by noise: every far transfer inside a loop
+    // body handed back at its own address and put the counter back to zero.
+    // Take those away and a program sitting in a perfectly ordinary timed wait
+    // -- ACCIDENT.EXE polls `int 15h ah=86h` for 10ms at a time while its
+    // loader works -- produces exactly the pattern the detector was written to
+    // catch, and the run was cut off at 7.8M dispatches with a black screen.
+    // Given 200M it draws its picture and opens both its files.
+    //
+    // So require the run of handbacks AND a floor of guest work under it. The
+    // floor is the honest unit: it asks "has this program done nothing for a
+    // while", which is the actual question, and it does not change meaning when
+    // the handback rate does. It can only ever turn a stuck verdict into a
+    // pass, never the reverse, so no run that completes today starts failing.
+    const idle = this.dispatched - (this.stuckSince || 0);
+    if (this.stuckLimit && this.stuck > this.stuckLimit
+        && idle > this.stuckWork) this.stuckAt = key;
   }
 
   // Run until the budget is spent or the program is finished. The headless
