@@ -97,7 +97,7 @@ async function downloadWithRetries(url, destination) {
   throw lastError;
 }
 
-function extractArchive(archive, destination) {
+function extractArchive(archive, destination, options = {}) {
   fs.mkdirSync(destination, { recursive: true });
   const result = spawnSync('7z', ['x', '-y', `-o${destination}`, archive], {
     encoding: 'utf8',
@@ -105,7 +105,14 @@ function extractArchive(archive, destination) {
   });
   if (result.status === 0) return;
 
-  const fallback = spawnSync('unar', ['-f', '-o', destination, archive], {
+  if (options.cleanFallback) {
+    fs.rmSync(destination, { recursive: true, force: true });
+    fs.mkdirSync(destination, { recursive: true });
+  }
+  const fallbackArgs = ['-f'];
+  if (options.noDirectory) fallbackArgs.push('-D');
+  fallbackArgs.push('-o', destination, archive);
+  const fallback = spawnSync('unar', fallbackArgs, {
     encoding: 'utf8',
     maxBuffer: 16 * 1024 * 1024,
   });
@@ -168,7 +175,16 @@ function extractRawMode1Cd(image, destination) {
 
 function runPostExtract(candidate, destination) {
   for (const [index, step] of (candidate.postExtract || []).entries()) {
-    if (step.type === 'unshield') {
+    if (step.type === 'extractArchive') {
+      assertSafeRelative(step.archive, `${candidate.id}.postExtract[${index}].archive`);
+      assertSafeRelative(step.into, `${candidate.id}.postExtract[${index}].into`);
+      const into = path.join(destination, step.into);
+      fs.rmSync(into, { recursive: true, force: true });
+      extractArchive(path.join(destination, step.archive), into, {
+        cleanFallback: true,
+        noDirectory: true,
+      });
+    } else if (step.type === 'unshield') {
       assertSafeRelative(step.cab, `${candidate.id}.postExtract[${index}].cab`);
       assertSafeRelative(step.into, `${candidate.id}.postExtract[${index}].into`);
       if (!step.group || typeof step.group !== 'string') {

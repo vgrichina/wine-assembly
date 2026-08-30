@@ -45,6 +45,14 @@ const ALL_CANDIDATES = [
     waitMs: 500,
   },
   {
+    id: 'winrar_310',
+    label: 'WinRAR 3.10',
+    titlePattern: 'WinRAR',
+    expectDialogs: ['Settings'],
+    minColors: 12,
+    waitMs: 1000,
+  },
+  {
     id: 'diablo2_demo',
     label: 'Diablo II Demo',
     titlePattern: 'Diablo II',

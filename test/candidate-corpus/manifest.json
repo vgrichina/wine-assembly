@@ -1168,6 +1168,13 @@
           "destination": "wrar310.exe"
         }
       ],
+      "postExtract": [
+        {
+          "type": "extractArchive",
+          "archive": "wrar310.exe",
+          "into": "installed"
+        }
+      ],
       "cli": {
         "maxBatches": 120,
         "batchSize": 50000
