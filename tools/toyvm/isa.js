@@ -168,7 +168,30 @@ const VESA_FB_SIZE = 0x100000;
 const CODE_BITMAP = (VESA_FB + VESA_FB_SIZE + 0xFFFF) & ~0xFFFF;
 const CODE_BITMAP_SIZE = GUEST_RAM_SIZE >> 3;      // one bit per byte
 
-const MEM_PAGES = ((CODE_BITMAP + CODE_BITMAP_SIZE + 0xFFFF) & ~0xFFFF) >> 16;
+// Dispatch histogram, for --handler-hist. Two tables: one i32 counter per
+// handler, and one per ORDERED PAIR of handlers.
+//
+// The pair table is the expensive half and it is the half worth having. What a
+// superinstruction fuses is a pair -- cmp+jcc, shift+dec+jz, load+op -- and
+// what makes replicated dispatch win is that the next opcode correlates with
+// the current one. A flat per-handler census can answer neither question: it
+// says `jz` is hot without saying what it follows, and every fusion candidate
+// is exactly that "what it follows".
+//
+// Sized for the real handler count with headroom, and reserved unconditionally
+// so there is only ever one memory layout -- two layouts would mean the
+// instrumented build measures a different machine than the one that ships.
+// 1024 slots keeps the pair index a shift rather than a multiply.
+//
+// The 4MB pair table costs address space, not memory: a wasm memory is one
+// large mapping and pages materialize when first touched, so a run without
+// --handler-hist never faults a single one of them in.
+const HIST_SLOTS = 1024;                           // >= HANDLERS.length, power of two
+const HIST_BASE = (CODE_BITMAP + CODE_BITMAP_SIZE + 0xFFFF) & ~0xFFFF;
+const HIST_PAIRS = HIST_BASE + HIST_SLOTS * 4;     // [prev * HIST_SLOTS + cur]
+const HIST_SIZE = HIST_SLOTS * 4 + HIST_SLOTS * HIST_SLOTS * 4;
+
+const MEM_PAGES = ((HIST_BASE + HIST_SIZE + 0xFFFF) & ~0xFFFF) >> 16;
 
 // Effective-address kinds, in ModRM rm order for mod != 11. Kind 8 is the
 // mod=00,rm=110 special case: a bare disp16 with no base at all.
@@ -195,6 +218,7 @@ const EA_A32 = {
 module.exports = {
   REG16, REG8, SEG, F, FLAGS_RESERVED, FLAGS_DEFINED, FLAGS_ARITH,
   GUEST_RAM, GUEST_RAM_SIZE, THREAD_BASE, THREAD_SIZE, MEM_PAGES,
+  HIST_BASE, HIST_PAIRS, HIST_SLOTS, HIST_SIZE,
   XMS_BASE, XMS_SIZE, LIN_MASK_REAL, LIN_MASK_FLAT,
   RSTACK_BASE, RSTACK_ENTRIES, RSTACK_SIZE,
   JTAB_BASE, JTAB_ENTRIES, JTAB_SIZE, JTAB_STRIDE, JTAB_HASH_MUL, jhash,

@@ -166,6 +166,11 @@ async function runDos(o) {
     shots = null, shotEvery = 20,
     mouse = [0, 0], clicks = [], dumpAt = [],
     cpu = 386, report = false, log = console.log, autoKey = false,
+    // Build the instrumented dispatch and print the census at exit. `hist` is
+    // how many handlers to list, `histPairs` how many pairs; 0 for either
+    // suppresses that table. Timings from such a run are meaningless -- three
+    // extra memory ops per dispatch -- and the summary says so.
+    hist = 0, histPairs = 0,
     tickScale = 1, sample = false, sampleAfter = 0, forceChained = false,
     // How many handbacks at one address with nothing new on screen before the
     // run is called hung. 0 turns the detector off, which is what to reach for
@@ -233,6 +238,7 @@ async function runDos(o) {
   const vm = await makeVm(variant, {
     portIn: (p, w) => machine.portIn(p, w),
     portOut: (p, v, w) => machine.portOut(p, v, w),
+    hist: hist > 0 || histPairs > 0,
   });
   // The decoder's CPU level and the module's FLAGS shape have to move together:
   // a build that decodes 386 encodings but reports an 8086 FLAGS register fails
@@ -521,6 +527,12 @@ async function runDos(o) {
   return {
     bestScore, bestContent, bestSurface, bestText, saidText,
     variant, exe, vm, machine, jtab,
+    // Read before the caller can touch guest memory again. The census lives in
+    // the same linear memory the guest runs in, so it is only meaningful while
+    // this instance is alive.
+    hist: (hist > 0 || histPairs > 0)
+      ? require('./handler-hist').readHist(vm.mem) : null,
+    histTop: hist, histPairs,
     secs: Number(process.hrtime.bigint() - t0) / 1e9,
     guestSecs: Number(guestNs) / 1e9,
     dispatched, handbacks, ints, irqs, compiles, compiledWords, arenaResets,
@@ -645,6 +657,13 @@ async function main() {
     pre, preKeys: parseKeys(arg('pre-keys', '')),
     preBudget: count(arg('pre-dispatches'), 0),
     variant: arg('variant', 'tailcall'),
+    // `--handler-hist` alone lists 20 handlers; `=N` sets the depth.
+    // `--handler-pairs[=N]` adds the pair table, which is the one worth
+    // reading -- it defaults on whenever the histogram is asked for, because a
+    // flat census on its own has already been the wrong answer twice.
+    hist: flag('handler-hist') ? 20 : Number(arg('handler-hist', 0)),
+    histPairs: flag('handler-pairs') ? 20
+      : Number(arg('handler-pairs', (flag('handler-hist') || arg('handler-hist')) ? 20 : 0)),
     budget: count(arg('dispatches'), 200e6),
     slice: count(arg('slice'), 2e6),
     seconds: Number(arg('seconds', 0)),
@@ -976,6 +995,15 @@ async function main() {
     + `${(r.dispatched / r.guestSecs / 1e6).toFixed(1)}M/s in wasm `
     + `(${(100 * r.guestSecs / r.secs).toFixed(0)}% of wall), `
     + `${(r.dispatched / r.handbacks).toFixed(0)} per handback`);
+
+  if (r.hist) {
+    console.log(require('./handler-hist')
+      .formatHist(r.hist, { top: r.histTop || 20, pairs: r.histPairs || 0 }));
+    // Said every time, because the number right above it is a throughput
+    // figure from a build carrying three extra memory ops per dispatch. It is
+    // the counts that are exact.
+    console.log('    (instrumented build -- the counts are exact, the M/s above is not)');
+  }
 
   if (report) {
     const eh = [...r.entryHist].sort((a, b) => b[1] - a[1]).slice(0, 8);

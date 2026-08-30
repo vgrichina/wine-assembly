@@ -3876,6 +3876,10 @@ const STATE = [...isa.REG16, ...isa.SEG, 'gip', 'flags', 'ip', 'steps', 'intno',
 // helpers() body: when these were only in preamble, every one added broke that
 // tool with `compile-wat: unknown global`, and nothing in the build says so.
 const EXTRA_GLOBALS = `
+;; The previous handler index, for the --handler-hist pair table. Declared in
+;; every build so the two share one global layout; only an instrumented one
+;; ever writes it.
+(global $hprev (mut i32) (i32.const 0))
 ;; The x87 register file: eight f64 values and a rotating TOP. See fpuHelpers.
 ${[...Array(8).keys()].map(i => `(global $st${i} (mut f64) (f64.const 0))`).join('\n')}
 (global $ftop (mut i32) (i32.const 0))
@@ -4059,10 +4063,34 @@ const LOCALS = '(local $t0 i32) (local $t1 i32) (local $t2 i32) (local $t3 i32) 
 // ---------------------------------------------------------------------------
 // The six shells.
 // ---------------------------------------------------------------------------
-function emitTailcall() {
+// The dispatch histogram, as WAT, or nothing at all.
+//
+// Two counters per dispatch: one for this handler, one for the ordered pair
+// (previous handler, this one). The pair is the point -- see isa.HIST_PAIRS.
+// `$hprev` is a global rather than a local because the tail-call shells never
+// return, so there is no frame to carry it in.
+//
+// This is an INSTRUMENTED build and it is not the build that ships. Three
+// extra memory ops per dispatch is a large fraction of a dispatch, so its
+// timings mean nothing; its COUNTS are exact, which is what it is for. Any
+// timing question goes to bench-loops.js.
+function histBump() {
+  const one = (addr) => `(i32.store ${addr}
+    (i32.add (i32.load ${addr}) (i32.const 1)))`;
+  const flat = `(i32.add (i32.const ${isa.HIST_BASE})
+    (i32.shl (local.get $fn) (i32.const 2)))`;
+  const pair = `(i32.add (i32.const ${isa.HIST_PAIRS})
+    (i32.shl (i32.add (i32.shl (global.get $hprev) (i32.const ${Math.log2(isa.HIST_SLOTS)}))
+                      (local.get $fn))
+             (i32.const 2)))`;
+  return `${one(flat)}\n${one(pair)}\n(global.set $hprev (local.get $fn))`;
+}
+
+function emitTailcall(opts = {}) {
   let s = preamble() + helpers();
   s += `(table $h ${HANDLERS.length} funcref)\n`;
   s += `(elem (i32.const 0) ${HANDLERS.map(x => `$${x.name}`).join(' ')})\n`;
+  const hist = opts.hist ? histBump() : '';
   s += `
 (func $next
   (local $fn i32)
@@ -4070,6 +4098,7 @@ function emitTailcall() {
   (if (global.get $halt) (then (return)))
   (local.set $fn (i32.load (global.get $ip)))
   (global.set $ip (i32.add (global.get $ip) (i32.const 4)))
+  ${hist}
   (return_call_indirect $h (type $void) (local.get $fn)))
 `;
   for (const x of HANDLERS) {
@@ -4179,10 +4208,18 @@ const VARIANTS = {
   switch: emitSwitch,
 };
 
-function emit(variant) {
+// `opts.hist` builds the instrumented dispatch. Only the tailcall shell
+// implements it: the census is a property of the guest's instruction stream,
+// not of how the shell branches, so counting it once in the shipped shell
+// answers the question for all four. A request for it on another shell is an
+// error rather than a silently uninstrumented build.
+function emit(variant, opts = {}) {
   const fn = VARIANTS[variant];
   if (!fn) throw new Error(`unknown variant: ${variant} (have ${Object.keys(VARIANTS).join(', ')})`);
-  return fn();
+  if (opts.hist && variant !== 'tailcall') {
+    throw new Error(`--handler-hist is only implemented for the tailcall shell, not ${variant}`);
+  }
+  return fn(opts);
 }
 
 // helpers/LOCALS/STATE are exported for tools/toyvm/trace-jit.js, which builds

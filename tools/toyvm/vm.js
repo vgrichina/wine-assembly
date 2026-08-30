@@ -18,18 +18,23 @@ const { compileWat } = require(path.join(__dirname, '..', '..', 'lib', 'compile-
 
 const REGS = [...isa.REG16, ...isa.SEG, 'gip', 'flags'];
 
-async function buildModule(variant) {
-  const wat = emit(variant);
-  const file = `toyvm-${variant}.wat`;
+// `opts.hist` selects the instrumented dispatch. It gets its own cacheKey --
+// compileWat memoizes, and an instrumented build sharing the plain build's key
+// would hand back whichever was compiled first, which is a census of nothing or
+// a shipped build that counts.
+async function buildModule(variant, opts = {}) {
+  const wat = emit(variant, opts);
+  const suffix = opts.hist ? '-hist' : '';
+  const file = `toyvm-${variant}${suffix}.wat`;
   const bytes = await compileWat(
     (f) => { if (f !== file) throw new Error(`unexpected file ${f}`); return wat; },
-    { files: [file], cacheKey: `toyvm:${variant}` },
+    { files: [file], cacheKey: `toyvm:${variant}${suffix}` },
   );
   return { wat, bytes };
 }
 
 async function makeVm(variant, opts = {}) {
-  const { wat, bytes } = await buildModule(variant);
+  const { wat, bytes } = await buildModule(variant, { hist: !!opts.hist });
   const module = await WebAssembly.compile(bytes);
   const memory = new WebAssembly.Memory({ initial: isa.MEM_PAGES, maximum: isa.MEM_PAGES });
   // Ports are a host concern: the VM has no peripherals, and the few a demo
