@@ -463,8 +463,12 @@ somewhere. Service 4 (`2cc:26ac` → `2cc:22c2`) is the player's reset, not its
 tick — it clears every channel and writes the tempo increment
 `[0x2c] = 0x1e79e79e`. The tick is the ISR's `call 2cc:182e` at `2cc:22b6`,
 gated on `add [0x30],eax` carrying, and `[0x30]` does move between dumps
-(`0xe79e79e0` → `0x186 6186 0c`), so the player is being ticked. What it does
-with those ticks is where this goes next. Two gaps
+(`0xe79e79e0` → `0x186 6186 0c`), so the player is being ticked, and its own
+per-row divider at `2cc:[0x0f70]` visibly counts down and reloads
+(`3 → 1 → 3`) across dumps at 60M, 90M and 120M. `[0x0f74]` in the same window
+goes `0 → 1` and then stops, with `[0x0f72]` going `0x40 → 1`. So the module
+starts, plays, reaches position 1 and stays there while everything driving it
+keeps running. What it does with those ticks is where this goes next. Two gaps
 noticed on the way and not yet closed: there is no `$ldtl`, so an LDT
 selector's limit is checked against the *GDT* limit, and past that limit it
 falls back to reading the selector as a paragraph.
