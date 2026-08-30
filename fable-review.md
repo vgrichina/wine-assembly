@@ -1,5 +1,1269 @@
 # Wine-Assembly — Architecture & Performance Review
 
+Three passes, newest first. **Pass 3 (2026-08-30)** is a delta review three
+days after Pass 2; **Pass 2 (2026-08-27)** and the **2026-08-18 pass** follow
+unchanged, each with its action log, as the record of what was found and fixed
+then.
+
+---
+
+# Pass 3 — 2026-08-30
+
+*Reviewed at HEAD `ae1d42f1`, 204 commits after Pass 2's `60097710` — three
+days, ~70 commits a day, one git author but several agent sessions coordinating
+on `messageboard.txt`. Working tree dirty (47 files, +1,712 lines, nothing
+staged); **line numbers are working-tree numbers as of 2026-08-30.** Seven
+parallel area reviews (gates/invariants, CPU core + super-ops, Worker backend +
+JS host, Win32/console/DX layer, toyvm, tools/tests, and a re-verification of
+all 24 Pass-2 recommendations) followed by a verification pass on every
+load-bearing new claim. Three reviewer claims were refuted before they reached
+this text and are listed at the end of the section.*
+
+## Verdict
+
+The Pass-2 list was worked hard and mostly honestly: of 24 recommendations,
+**6 done, 5 partial, 13 open**, and Tier 1 is closed except for the long tail of
+WAT↔JS constants. What the three days added is a different shape of risk. The
+gates that now exist are real, but two of them are being *worked around by
+process* rather than by code — the silent-stub ratchet is re-pinned one commit
+after each stub removal, so `build.sh` was red on `main` for 22 of the 204
+commits (§P3-3.4); and 250 of the 677 tiered tests carry a `SKIP` path that
+`run-all.sh` counts as `PASS`, so 37% of the suite is green on a machine with no
+fixtures without anyone seeing a SKIP column (§P3-3.5). Three real bugs landed
+with new features: `ReadConsoleOutputA/W` writes past the caller's buffer for
+any region larger than it (§P3-3.1), the new MW3 grid-filter super-op stores
+through guest memory without the self-modifying-code invalidation every scalar
+store makes (§P3-3.2), and a `--threads` run silently loses `--fault-null`,
+`--count`, `--trace-eip-range` and the MMX flag on every worker instance while
+CLAUDE.md says they are propagated (§P3-3.3). The performance items got worse
+on purpose — the DirectDraw slot walk is now 4096 wide and the GL immediate-mode
+path calls the per-word `DataView` allocator from eight more sites — and the two
+biggest WAT files both crossed 16k lines. The healthy side is also real: the
+MW3 folds are byte-proofs with differential tests against the scalar path, the
+console became a subsystem with `last_error` on every failure, and the mutex
+model is one lock across both backends.
+
+## P3-0 — Numbers
+
+| | 08-27 | 08-30 | note |
+|---|---|---|---|
+| `src/*.wat` lines / parts | 187,764 / 59 | **192,238 / 60** | +4.5k in 3 days |
+| Handler table | 437 | **442** | H439 fnstsw/test/jcc, H440 rgb565 colour-key, H441 MW3 grid filter |
+| `api_table.json` | 3,012 | **3,071** | 59 new, all with `nargs` |
+| `crash_unimplemented` sites | 98 | **137** | D3D9 flip + new DX rows |
+| Silent-stub ratchet pin | — | **324** (was 332 at creation) | see §P3-3.4 |
+| Tests / unlisted | 631 / 48 | **677 / 0** | gate in `build.sh:25` |
+| Tests with a SKIP path | — | **250** | §P3-3.5 |
+| `test/run.js` / `host.js` / `index.html` | 8,612 / 2,553 / 2,324 | 8,672 / 2,553 / **2,477** | index regrew |
+| `?v=` tags / `SOURCE_VERSION` | 44 / `234` vs `'228'` | **45 / `248` vs `'239'`** | now four counters (§P3-3.10) |
+| `lib/apps.js` entries | 141 | **146** | |
+| `tools/` files / `lib/` files | 155 / 52 | 158 / 53 | |
+| Build gates in `build.sh` | 14 | **16** | + `check-wat-js-constants`, `check-test-manifest` |
+| Full build, dirty tree | — | 17.3 s wall / 7.8 s user | |
+| Biggest WAT parts | 09a 14,888 / 09c3 ~15k | **09c3 16,782 / 09a 16,006** | both over 16k |
+| toyvm | ~15.6k lines | **18,099** | `dos.js` 4,209, `emit.js` 4,202 |
+| `docs/dos-corpus` tracked | 12 programs | **84 programs, 5.1 MB** (11 MB with shots) | |
+
+## P3-1 — What the 204 commits were
+
+By subject: ~49 Win98 API implementations (console screen buffers, titles,
+device files, OEM tables, VkKeyScanEx, WaitForInputIdle, recursive mutex,
+WaitMessage, registry disposition, owned-popup visibility, ShowScrollBar,
+listbox scrolling, Unicode CREATESTRUCT); 38 DOS/toyvm (an 18-commit ANGEL
+protected-mode diary, VESA 640x480, a Trident bank register, corpus 199→194
+passing, the corpus page from 12 to 84 runnable demos); 14 MechWarrior 3
+super-ops and profiling; 14 GOG/Baldur's Gate/Icewind Dale/Half-Life acceptance
+and Worker fixes; 9 Far Manager console work; 8 gates and fixes taken straight
+off the Pass-2 list; 5 stub-ratchet re-pins. Peak cadence 26 commits in one
+hour.
+
+## P3-2 — Pass-2 recommendations, re-verified
+
+| # | item | status | evidence |
+|---|---|---|---|
+| 1 | memory-map gate | DONE | `build.sh:15`; but see §P3-3.6 |
+| 2 | WAT↔JS constants gate | PARTIAL | `tools/check-wat-js-constants.js` (`build.sh:22`) covers GUEST_BASE at 5 named sites, RPC/SYNC, DX base/stride/MAX, WIN16_DYNAMIC_BASE, the OpenProcess tag (`:124-135`), GL `ARG_WORDS`. Not covered: `THUNK_BASE`, `CONTROL_TABLE` stride, the hwnd base literal `0x10001` (`host.js:1071`, `thread-manager.js:39-40,1040`), and ~20 more `0x12000` literals (`dll-loader.js:44,75,127,267,356,391,464,499`, `filesystem.js:551,881`, `host-imports.js:144,1437,1473,2448-2557`, `app-profiles.js:131,236`) |
+| 3 | cs_wait fall-through | DONE | `2ac6df83`, holds at `host.js:2203` |
+| 4 | test-manifest gate | DONE | `build.sh:25`; 677 files, `QUARANTINE=()` empty (`run-all.sh:748`) |
+| 5 | DLL_TABLE bound | DONE, WAT side too | `08b-dll-loader.wat:31` refuses before any write; `01-header.wat:2548` |
+| 6 | `i32.and` gate | DONE | `build.sh:45`, green |
+| 7 | A/W + family divergences | DONE | EnumDisplaySettings `09a3:1243-1310` (`d079ab95`); GetCommandLineA cached `09a:549-553`; RegisterClipboardFormatW interns `10-helpers:3602`; RegSetValue shared `09a:10443` (`1cb53d8b`); GetTextExtentPointW wide `09a4:2241-2252`; CreateWindowExW wide CREATESTRUCT `09a:7648-7689`, `09a5:569-573` (`67bc959c`); listbox WM_VSCROLL/WHEEL `09c3:11530,11543` (`84fabc9b`); MoveWindow bRepaint `09a:5083-5087` — WM_MOVE still never posted (`:5140`) |
+| 8 | symbolic handler/api ids | OPEN, grew | 371 bare literals in `07-decoder.wat` (+37 in `07b`), H440/H441 added as bare `:666,:706`; stale "handler 422/424" comments still at `07-decoder.wat:50,152,416,2132` and `13-exports.wat:3037,3045` (422/424 are now `$th_mmx_rr/_mr`); `0xCACA0010` hand-stored `09a8:985,1018` |
+| 9 | app-literal gate / `copySuperops` | PARTIAL | MW3 VAs are out of the decoder (byte-hash predicates, §P3-3.9); `browser-shell.js:566` honors the flag; **`test/run.js --app=mw3` still does not** (only `--copy-superops`, `:188,4035,7429`); no allowlist tool |
+| 10 | one globals table / hwnd base / `yr===9` | PARTIAL | `lib/worker-imports.js` exists but is a *ctx-key* list, not the WASM-global table; setter sets still diverge (§P3-3.3); hwnd base still two formulas (`thread-manager.js:416-418` vs `:1040`); duplicate `yr === 9` moved to `thread-manager.js:2276-2287` / `:2303-2309` (second still unreachable) |
+| 11 | silent stubs | PARTIAL | DONE: WaitMessage `09a:13588-13600` (`5237ac44`), ReleaseMutex `09a:12056-12071` (`1e76e8ab`), HeapCreate per-call `09a:2123`, CreateConsoleScreenBuffer `09a7:2914`, CreateIconFromResourceEx `09a:11456`, DirectDrawEnumerateA CACA `09a8:1043`, EnumDisplayModes `09a8:1833`. OPEN: RegisterHotKey `09a:11097-11103`; hooks `09a7:488` / `09a:9348-9360`; DDE trio `09a:1188,1198,1245`; 13 DX enumerations returning 0 without a callback (`09a8:2410,5279,5357`…, DirectPlay `09a7:2724`); 4 viewport lights in `09aa` |
+| 12 | dead code / tools / requires | PARTIAL | WAT dead list deleted (`71191bed`); `wat-func.js` still has no `--dead`; all 6 superseded tools present; 3 broken requires unchanged (`tools/trace-assert.js:6`, `render-desktop.js:9`, `test/call-func.js:10`); `win16-v86-compare.js:265` still greps `[CreateWindowEx` |
+| 13 | per-block counters / atomic gate | OPEN | `04-cache.wat:741,797`, `05-alu.wat:773`, `13-exports.wat:52-58` |
+| 14 | cached DataView / live-surface set | **WORSE** | `DX_SLOT_COUNT` 1024→**4096** (`host-imports.js:386`, `09a8:18`, `6fd7b657`); `_presentBestDxOffscreen :964-978` still walks every slot with a DataView each; GL `u32At` (`gl-command-stream.js:55-57`) now also called from the immediate path (`:129,144,215,219,231,240,269,271`) with `_memoryView()` 60 lines above it; `gl-compat.js:471-476` `_dv/_stackDv` per accessor |
+| 15 | SMC bitmap inline | OPEN | `03-registers.wat:374,393,404`; `$code_page_clear` deleted rather than wired |
+| 16 | `$mmx_binop` br_table | OPEN | `06c-mmx.wat:262` |
+| 17 | free lists / `_flush_if_safe` | OPEN | `13-exports.wat:64-68`; `04-cache.wat:889-896` now `fn >= 442` |
+| 18 | EditState / split wndprocs / GDI out of 09a | **WORSE** | `09c3` 16,782 lines, `$edit_wndproc` at `:13827` (~1,570 lines); `09a` 16,006 / 802 handlers; WordPad tail `10-helpers.wat:3403-4161` |
+| 19 | `renderer.windows` → WAT | OPEN | `host-window.js:344-380,596,655,681` |
+| 20 | page-viewport / settings split; one version | **WORSE** | `index.html` 2,477 (+155), ~1,095 inline JS lines after `:1382`, picker CSS inline `:84-224`; §P3-3.10 |
+| 21 | runSlice/threads in `apps.js` | OPEN | `autoRunSliceFor` 17 cases `browser-shell.js:216`, plus a new Half-Life registry-path regex there |
+| 22 | one `check_input` / `makeWorkerImports` | OPEN | `renderer-input.js:3131/3165`; `host.js:1000` / `run.js:3060` |
+| 23 | toyvm vectors + gate; `disasm.js` shared | OPEN | `toyvm/gate.js:18` still fetches; `decode.js` drifting further (§P3-6) |
+| 24 | `run.js --json-summary` | OPEN | 0 hits; scrapers unchanged |
+
+P2-2 (the 08-18 list) is unchanged except line drift: EditState `~:12900/:13827`, window rect `10-helpers:2968-3029`, scroll state `01-header:3050` vs `09c-help:441,447`, raw api ids `09b-dispatch.wat:921,932,946`.
+
+## P3-3 — New findings, ranked
+
+**3.1 `ReadConsoleOutputA/W` writes past the caller's buffer — bug (`3ba9e8ea`); FIXED `9d12c589`.**
+`$console_read_output` (`09a2-handlers-console.wat:988-1030`) takes
+`dwBufferSize` as `arg2` but uses only its low word (`$bw`, `:1000`); the
+buffer *height* is never read, and `lpReadRegion` (`:1005-1008`) is never
+clamped to it. The destination offset
+`((row-top)+by)*bw + (col-left)+bx` (`:1017-1022`) is bounded by nothing, so a
+region taller than the buffer, or a `dwBufferCoord` past its edge, stores
+CHAR_INFO cells beyond `lpBuffer` in guest memory. The source side checks only
+`soff < width*height` (`:1023`), so columns past `console_width` wrap into the
+next row instead of clipping, and `lpReadRegion` is never written back with the
+clipped rectangle (Win32 does). Same wrap in `ReadConsoleOutputAttribute`
+(`:1018-1034`). *Fix:* read `bh` from `arg2 >> 16`, intersect the region with
+both the buffer rectangle and the screen buffer, write it back.
+
+**3.2 H441 stores skip self-modifying-code invalidation — bug-class; FIXED `c5ceec02`.**
+`$th_mw3_grid_filter_run` (`07b-loop-match.wat:3108-3330`) writes through
+`i32.store16 offset=2 $eax_wa` (`:3271`) and `i32.store $stack_wa` (`:3283`)
+directly. Every scalar store goes through `$gs16/$gs32`
+(`03-registers.wat:376-395`), which call `$invalidate_code_write`; the other
+bulk folds do it explicitly (`07b:2326,2620,3502,3958`). A grid row that lives
+in a page that ever held decoded code would not invalidate it. Correct today
+only because MW3's grid is not in a code page; the fold is byte-matched, so any
+binary containing the same 101 bytes gets the same omission. The sibling H440
+stays per-pixel `gs16` and is fine.
+
+**3.3 Worker instances get none of the debug/feature flags — bug, and the docs
+say otherwise.** The cooperative spawn (`thread-manager.js:1586-1650`) sets
+`set_cpu_mmx`, `set_fault_unmapped`, `set_count`, `set_trace_eip_range`,
+`set_cs_steal_after`; `initGuestThread` in `guest-worker.js:411-466` sets only
+bp/watch/callstack/tls/vlan/dll_count/esp/eip/fs/hwnd-base. So under
+`--threads`, `--fault-null` reports unmapped accesses from the main thread only,
+`--count` never fires on a worker, MMX is whatever the module default is, and
+the new AoE decoder flags (`run.js:4041-4046` main, `:7430-7431` cooperative)
+are absent too. CLAUDE.md's `--fault-null` row says "Propagated to worker
+instances" — true of the cooperative backend only. This is the Pass-2 item 10
+table, still not built; `lib/worker-imports.js` (which now exists) is a ctx-key
+list and does not carry WASM globals. Side effect of the same class:
+`guest-rpc.js:280-283` makes `log`, `log_i32`, `log_api_exit` local no-ops in
+Workers unless `forwardGlLogs`, which `host.js:1256` sets only for
+verbose/trace-api — the `--host-census`-style `log_i32` markers from worker
+threads are gone in an ordinary browser run, under a flag whose name says GL.
+
+**3.4 The stub ratchet is bypassed by process.** `tools/check-silent-stubs.js`
+is a real ratchet — `EXPECTED_COUNT=324` plus a sha256 of the sorted stub list
+(`:41-52`), no allowlist, and the D3D9 rule (`:58-75`). But each re-pin lands as
+its own commit *after* the removal (`694e2ab2`, `1535d918`, `1a21921d`,
+`0626553b` each touch only the tool), so `build.sh` was red on `main` from
+`694e2ab2..1535d918` (4 commits) and `1a21921d..0626553b` (18 commits). A gate
+that the committer routinely commits through is a count with a lag. Second
+gap: the regex (`:33`) matches only the exact `eax=const; esp+=N` shape. A
+crude census of constant-shaped handlers (no call/if/store, ≤3 `global.set`)
+finds ~524 across 09a/09a8/09ad/09aa against 324 pinned, and the new
+`SetFileApisToOEM/ANSI` (`09a:14826-14832`, `e9e0aa2d`) shows the escape: it
+sets `$file_apis_ansi`, which nothing but `AreFileApisANSI` reads — no file API
+consults it — and it passes the gate because the body touches a global.
+
+**3.5 250 of 677 tests can pass without running.** `run-all.sh:848-852` counts
+any exit-0 as `PASS` with no SKIP row; 250 test files contain a
+`console.log('SKIP…'); process.exit(0)` path for a missing fixture — every
+candidate-corpus test (`test-icewind-dale-demo.js:35-38`,
+`test-baldurs-gate-demos.js:37-38`, `test-far-manager-candidate.js:49`, Deus Ex,
+qbob/dxball) and most of the GOG set. On a machine without the fixtures the
+suite is 37% green-by-absence and the totals do not say so. Compounding it: 34
+listed tests declare their own budget above the runner's 300 s kill
+(`run-all.sh:783`; `test-icewind-dale-demo.js:158` is 660 s with
+`--max-seconds=600`), so in a tiered run those can only SKIP or be killed as
+`TIME` — never actually pass. *Fix:* a `SKIP` exit code (say 77) that
+`run-all.sh` tallies in its own column; refuse a per-test timeout above the
+runner cap at manifest-check time.
+
+**3.6 The memory-map gate sees only `_SIZE`-paired globals.**
+`test/test-wat-memory-map.js` intersects every `$X`/`$X_SIZE` pair plus data
+segments — which is why Pass 2's five collisions were found. But 60 fixed
+high-range globals have no `_SIZE` twin (`CS_TABLE`, `LOCK_*`,
+`CODE_PAGE_BITMAP`, `WIN16_*_STAGING`, the `GDI_BITMAP_FONT_*` set, `D3DIM_*`,
+`CP1252_TO_CP437`), and two of this window's new regions are among them:
+`DX_PROCESS_STATE` 0x07F0CE90/32 B (dirty tree, `09a8:283`, only a comment at
+`01-header.wat:1330`) and `CONSOLE_TITLE_STORAGE` 0x07E0FA00 (`e3ff3e4c`,
+`09a2:8`, bounded only by `$CONSOLE_TITLE_MAX=128` at `01-header.wat:3402`,
+absent from the header map). Hand-checked against their neighbours today — no
+collision — which is exactly the check Pass 2 said should not be by hand.
+(`LOOP_PROCESS_STATE` *does* have its twin, `07b:75`.) *Fix:* the gate fails on
+any `0x07xxxxxx` global without a `_SIZE`.
+
+**3.7 `tools/check-parens.js` is red on HEAD and nothing runs it.** On a fresh
+`concat-wat.js` it reports `final depth -1` at `build/combined.wat:192307`; per
+part, `10d-gdi-region-path.wat` goes from depth 3 to -1 on a line that closes
+five (`:2849`) inside a function body — so the checker lost count *earlier* in
+that file, while the in-house compiler compiles the same text clean. `build.sh`
+never invokes it (`concat-wat.js` at `:67`, no check), CLAUDE.md lists it as the
+balance checker, and `02b`-style edits are exactly where it is reached for.
+Either its string/comment stripping (`:43-47`) is wrong or a part has a stray
+`)` the compiler tolerates; both are worth knowing.
+
+**3.8 Performance items went the wrong way, knowingly.** Item 14: the DX slot
+table grew to 4096 (`6fd7b657`) with the per-frame full walk untouched, so a
+60 fps DirectDraw app now builds up to ~4k `DataView`s per dirty frame — four
+times Pass 2. The GL immediate-mode compiler (`gl-command-stream.js:36-90,
+151-240`, good design) feeds `u32At` from eight new call sites and pushes a JS
+array per vertex (`:162`) that is copied twice (`:89,:187`); `_setColor`
+allocates per `glColor*` (`:137-149`). `gl-compat.js:298-309` does three
+`.slice(-1)` per draw. `renderer-input.js:303-306` now posts a `WM_NCHITTEST` on
+**every** mousemove ahead of `WM_SETCURSOR` (two posts per move into the 64-slot
+ring) and `:214-221` sends one synchronously before every button-down — an
+owner-thread round trip per click in Worker mode. Nit in the same file: flat
+`GL_QUADS` take triangle 1's colour from vertex i+2 where GL's provoking vertex
+is i+3 (`gl-command-stream.js:60`); `LINE_STRIP/LOOP` ignore flat entirely.
+
+**3.9 The MW3 folds — good, with one gate too wide.** H436/H440/H441 are now
+address-independent byte proofs: H440 compares its entire 19-byte body
+literally (`07-decoder.wat:638-675`), H436 and H441 anchor four dwords and then
+FNV-1a the whole body (`:586-636` == `0xe93ce905` over 0xAD bytes; `:677-718`
+== `0x11ad09b2` over 101 bytes). A different binary folds iff it contains the
+identical loop, and the handler replays exactly those bytes, so folding it is
+correct. The tests (`test/test-mw3-*-run.js`) are true differentials —
+`set_loop_copy_emit(0)` vs `(1)` on the same build, `deepStrictEqual` on memory
++ 8 registers + flags, with overlap and near-miss cases — the standard every
+fold should be held to. Two things off: the `LOOP_PROCESS_STATE` opt-in that
+enables them (`07b:74-80`, atomic, in the map) is the *same* flag that turns on
+the generic `COPY_RUN`/avg matchers at `07b:1545,1679,1846,1984,2213` for every
+MW3 block, and the header at `07b:66-68` still calls their Storm divergence
+unresolved; and `$try_emit_aoe_span_prefix` (`07b:144-197`, default on, no
+gate) proves only four sampled dwords of a 0x6a-byte prefix — weaker than the
+hash standard the MW3 folds just set. H441 also reloads its count from
+`[ESP+0x10]` each cell but H440 reads `[EBP+0xc]` once (`:3013`) where x86
+re-reads it per iteration — diverges only if the row aliases the frame. H439
+(`06-fpu.wat:947-979`) is correct and has no differential test.
+
+**3.10 Four version counters.** `index.html` has 45 hand-bumped `?v=` (20 of
+them bumped in this window); `host.js?v=248` (`index.html:1379`) vs
+`SOURCE_VERSION='239'` (`host.js:29`); `guest-worker.js:27` imports
+`gl-command-stream.js?v=3` while index says `?v=4`; `host.js:1245,1252` carry
+their own (`sigs?v=3`, `guest-worker.js?v=10`). A worker can load a different
+build of the GL encoder than the page that spawned it.
+
+**3.11 Small correctness items.** `IDirectSound3DListener_GetAllParameters`
+(`09a8:5057`) writes 64 bytes and overwrites `dwSize` without reading the
+caller's — the COM dwSize rule Pass 1 established; `SetAllParameters` (`:5117`)
+never validates it. `createMutex` for a named existing object returns
+`handle|0x80000000` through `create_event` (WAT masks it, `09a:12025`) while
+`createEvent` signals `ERROR_ALREADY_EXISTS` a different way — two conventions
+for one condition. `FlushConsoleInputBuffer` (`09a2:648`) accepts only
+handle==1, so a `DuplicateHandle`d stdin fails. `ToAscii` (`09a:8116`) reads a
+garbage `hkl` from esp+24. `CreateWindowExW` snapshots `$next_hwnd` before the A
+path runs (`09a:7648`), so a failed create sets the unicode bit on a slot that
+was never made. A non-main Worker thread in `WaitMessage`/`GetMessage` is
+`clear_yield`ed every slice (`thread-manager.js:1277-1282`) and re-enters — a
+busy poll at one RPC per slice.
+
+**3.12 Duplication and drift, new.** `readSyncObjectName` + `win32ThreadId` +
+the mutex/event trampolines are verbatim in `host.js:807-838` and
+`run.js:2826-2852`; the `wait_single/wait_multiple` switch likewise
+(`host.js:849-862` / `run.js:2856-2866`) — a dozen lines copied in the window
+that also *removed* a duplicate (`vfs.ensureParentDirs`, `host.js:1467`,
+`run.js:3518`). The thread-id is derived three ways (`host.js:820`,
+`run.js:2844`, `thread-manager.js:1814`), equal by hand. `lib/debug-app-picker.js`
+(446 lines, clean, `?debug`-only, no test) keeps its own `OTHER_APP_IDS`/
+`OTHER_GAME_IDS` lists (`:276-280`) outside `apps.js`, and `index.html:1180-1184`
+adds five `<option>`s inline. `png-pixel.js` joins `png-probe.js` as the sixth
+PNG inspector. Stale text: CLAUDE.md:223 says "128 MB flat WASM linear memory"
+— `01-header.wat:830` is `(memory 8192 8192 shared)`, 512 MB, with
+`THREAD_RPC` at 0x1FF00000; `04-cache.wat:403-409` still describes a fallback
+to the deleted hash cache; the four new build gates, `check-test-manifest.sh`,
+`png-pixel.js`, `fetch-candidate-corpus.js`, `run-daggerfall-gameplay.js` have
+no CLAUDE.md line, so the next session hits a failing gate with no pointer; the
+`--handler-hist` and `render-png.js` rows are still wrong.
+
+## P3-4 — Areas, briefly
+
+**Win32/console/DX.** The console is a subsystem now: an 8-slot screen-buffer
+table at 0x07E0F840 (`01-header.wat:3417-3422`, stride 48, handles
+`0x0031xxxx`), cells from `$heap_alloc`, `$console_buffer_create`
+(`09a2:113-140`) bounded with `ERROR_NOT_ENOUGH_MEMORY`; `CONIN$/CONOUT# Wine-Assembly — Architecture & Performance Review
+
+
+(`09a:1586-1604`) return the `GetStdHandle` numbers 1/2 and VFS handles start
+at `0xF0000001` (`filesystem.js:24`), so no collision; titles bounded on both
+Set forms. `aw-census.js`: 212 pairs, 140 shared, 55 delegating, 16 divergent
+(was 14 — the two new are census heuristics, not re-verified). New handlers set
+`$last_error` on failure uniformly; no non-saturating `i32.trunc` in any DX
+file; no copy-paste between `09a8` and `09ab`. The mutex (`thread-manager.js:
+576-646`) is one SAB record for both backends: recursion count, non-owner
+`ERROR_NOT_OWNER`, abandonment on thread exit with `WAIT_ABANDONED_0` once,
+covered by `test-open-mutex-w.js`.
+
+**Worker backend.** 208 imports, `ASYNC_SAFE` gained only `paint_begin/end`
+(`guest-rpc.js:89-90`); DirectDraw still unbatched. `_workerPeMeta` re-reads
+exports on every spawn (`:1096-1102`) — deliberate, named Diablo's Storm
+worker. `minPolls` floor now exists on the cooperative side too
+(`:2381-2387`) but the two wait state machines remain forked (`resolveWait :1339`
+vs `checkMainYield :2270+`). Main-thread `WaitMessage` cannot deadlock on a
+timer-only wake (`$has_pending_message`, `13-exports.wat:2745-2762`, checks
+timers). `activeStepsPerSlice` lost its 1000 floor (`host.js:2290`) — safe
+today only because `browser-shell.js` returns ≥1000. The `DI_MOUSE_INPUT_STATE`
+ring (`renderer-input.js:104-182`, `09a8:356-420`) is a proper single-producer
+Atomics FIFO at 0x07F20400, in the map.
+
+**toyvm.** `dos.js` is one 3,500-line `class Machine` (DOS 21h, BIOS, VESA,
+Trident, PIT/PIC, XMS, EMS, keyboard scripting) with banner comments as its only
+structure; it still shares nothing under `src/`, and `decode.js` moved further
+from `07-decoder.wat`'s 16-bit path (benign-self-patch set, lgdt/cr0/LDT). The
+WATX plan is still `Status: proposed`, zero references. The committed browser
+bundle `docs/dos-corpus/live/toyvm-bundle.js` is **stale** (regenerates
+differently; last built 08-27, sources changed 08-30) and
+`test-toyvm-browser-bundle.js:22-39` only checks it loads; `bundle-browser.js`
+has no `--check`, and `:236` `path.join(ROOT, out)` turns an absolute `--out`
+into a path inside the repo. The corpus moved to `~/dos-demos` with `/tmp/demos`
+a symlink (`84c3ad1c`) but `fetch-demos.js:7`, `sweep-dos.js:8`,
+`bundle-programs.js:7` still say `/tmp/demos`. 84 demoscene binaries (5.1 MB)
+are now tracked under `docs/` — weight and licensing worth a decision. The ANGEL
+investigation (`docs/dos-corpus-blockers.md:64-488`) is a diary with withdrawn
+readings kept inline; its actual end state — SETUP/D-bit/LDT fixes done, spins
+at `5f85:0da6` waiting on `int FFh` service 0, music channel-0 position stuck at
+1, two known LDT gaps — takes three lines and should be the section's first
+paragraph, not its last.
+
+**tools/tests.** `fetch-candidate-corpus.js` is offline-by-default, sha1-pinned
+(40 entries, `:371-379`), gitignored destination, path-traversal-guarded (`:35`);
+one `mkdtemp` in `os.tmpdir()` (`:133`). Tests pin extracted fixtures by sha256
+before asserting. Graded: `test-mw3-rgb565-colorkey-run.js` A (x86 oracle),
+`test-console-screen-buffers.js` A- (real handlers via `extraWat`; some layout
+constants are ours, not Win98's), `test-icewind-dale-demo.js` B (title + pixel
+heuristics tuned to current output; the `icewind.gam` containing `codex\0` is
+the one true oracle; rolls its own PNG analysis). 10 of 10 sampled new tests
+assert something real. No `--dead` in `wat-func.js`; the three broken requires,
+the six superseded tools and the `[CreateWindowEx` grep are untouched from
+Pass 1.
+
+## P3-5 — What's healthy (keep doing this)
+
+- Six of the Pass-2 gates were built and are green: memory-map, WAT↔JS
+  constants, test-manifest (0 strays, empty quarantine), logical-AND,
+  silent-stub ratchet with a content hash, DLL table bound on both sides.
+- The MW3 folds set a new bar: byte-hash predicates, address independence,
+  and differential tests against the scalar path with overlap and near-miss
+  cases. Apply it backward to `aoe_span_prefix` and forward to every fold.
+- Every new Win32 handler in the window sets `$last_error` on its failure
+  path; console and mutex are real subsystems, not shims.
+- Both spawn paths and the Worker stack zero-fill use `guest_to_wasm`
+  (`thread-manager.js:1514,1565`, `guest-worker.js:432-434`).
+- `resolveWait` no longer wakes a plain `WaitForMultipleObjects` on a queued
+  message (`:1348-1355`); `filesystem.js:227-236` grows geometrically.
+- The crash dump (`host.js:2506-2531`) prints prev_eip, registers and the top
+  of stack.
+- GL uniform dirty-tracking (`gl-compat.js:318-322,377-404`) and packed
+  immediate-mode draws are real savings.
+- All 59 new `api_table.json` rows carry `nargs`; ESP gates pass on them.
+- `docs/re-notes/mechwarrior3-demo.md` (+810 lines) records what was measured
+  and what was not claimed ("no FPS claim under host load").
+
+## Pass-3 recommendations
+
+**Tier 1 — bugs and the two process gaps (a day):**
+1. Clamp `$console_read_output` to `dwBufferSize` (both words) and the screen
+   buffer; write back `lpReadRegion`. (3.1)
+2. `$invalidate_code_write` after H441's two stores, or route them through
+   `$gs16/$gs32`. Add a test that puts the grid row in a code page. (3.2)
+3. One inherited-globals table consumed by both `thread-manager.js` and
+   `guest-worker.js` spawn paths; a test that diffs the two setter sets. Fix
+   the CLAUDE.md `--fault-null` claim until then. (3.3)
+4. Re-pin the stub ratchet **in the same commit** as the removal — make
+   `check-silent-stubs.js` print the new pin so it is a one-line edit — and
+   widen the regex to any handler with no call/branch/store. (3.4)
+5. A SKIP exit code tallied in its own `run-all.sh` column; manifest check
+   refuses per-test timeouts above the runner cap. (3.5)
+
+**Tier 2 — gates that are one rule short:**
+6. Memory-map gate fails on any high-range global without `_SIZE`. (3.6)
+7. Fix or delete `check-parens.js`; if kept, run it in `build.sh`. (3.7)
+8. `bundle-browser.js --check` in `build.sh`; fix the absolute `--out`. (§P3-4)
+9. One version string: generate `?v=` from `SOURCE_VERSION` at deploy, and
+   make `guest-worker.js` import the same list. (3.10)
+10. The COPY opt-in should enable the three proved folds only; the generic
+    `COPY_RUN` matchers get their own flag until the Storm divergence is
+    resolved. Hash `aoe_span_prefix`'s whole body. (3.9)
+
+**Tier 3 — carried from Pass 2, still the right list:** items 8 (symbolic
+handler/api ids — 442 handlers and 3,071 apis addressed by literal), 9 (`run.js
+--app` honors `copySuperops`), 11 (13 DX enumerations, hotkeys, hooks, DDE),
+12 (three broken requires, six dead tools), 14 (live-surface set instead of a
+4096-slot walk; `_memoryView()` for `u32At`), 18 (split `09a`/`09c3` — both over
+16k now), 20, 24.
+
+**Struck during verification.** Three reviewer claims did not survive: the
+`LOOP_PROCESS_STATE` opt-in "leaks into the next app in the same session" (no —
+`host.js:967` allocates a fresh `WebAssembly.Memory` per launch);
+`LOOP_PROCESS_STATE` "has no `_SIZE` twin" (it does, `07b:75`); and "the
+OpenProcess tag is not in the constants gate" (it is, `:124-135`). Counts that
+moved between reviewers were resolved by reading: 204 commits, 677 test files,
+250 SKIP paths, 60 unpaired globals.
+
+---
+
+## Pass-3 addendum — 2026-08-30, +24 commits (HEAD `973589a1`)
+
+*Three hours and 24 commits after the pass above. Three area reviews (Pass-3
+status, D3D render Worker + GL + input, toyvm decoder + WinRAR dialogs) and a
+verification of every new claim below. Numbers moved little: src 192,914 lines,
+api 3,075, handlers 442, tests 681 (251 with a SKIP path, 37 over the 300 s
+runner cap), stub pin 323, build 7.6 s on the dirty tree.*
+
+**Pass-3 scoreboard.** Of findings 3.1–3.12 and recommendations 1–10, two were
+closed within the hour of this addendum being written — **3.1 FIXED
+`9d12c589`** (`$console_read_output` reads `bh` from `arg2>>16`, clips to both
+the buffer and the screen, writes `lpReadRegion` back; test added) and **3.2
+FIXED `c5ceec02`** (both H441 fast-path stores now call
+`$invalidate_code_write`, `07b:3275,3289`). The rest stands; two moved. The stub ratchet was re-pinned *in the same commit* as
+its stub removal once (`4a08c267`, 324→323) — the process half of 3.4, observed
+once; the regex is unchanged and the tool still does not print its new pin. The
+GL encoder's `?v=` now agrees between page and worker (`index.html:1367`,
+`guest-worker.js:27`, both `v=5`) — one of the four counters of 3.10. H441's
+stores changed shape (`07b:3271-3286` now pick `i32.store16`/`i32.store` when
+`$g2w_affine_span` mapped the row, `gs16/gs32` otherwise) but the fast branch
+still has no `$invalidate_code_write` — the gate is "is it mapped", not "was it
+ever code", so 3.2 stands. `DX_PROCESS_STATE` gained its `_SIZE` (`09a8:284`,
+0x1C) — still in the uncommitted tree, and the header comment at
+`01-header.wat:1330` says 32 B. Everything else (3.1 console clamp, 3.3 worker
+setters and the CLAUDE.md claim, 3.5 SKIP, 3.6 unpaired-globals rule, 3.7
+check-parens, 3.9 COPY gate, 3.11, 3.12) is verbatim open.
+
+**New in this window, ranked.**
+
+**A.1 The committed toyvm bundle is stale and can no longer be rebuilt — bug.**
+`docs/dos-corpus/live/toyvm-bundle.js` was last generated in `6b015971`, before
+the wasm decoder existed (678,721 B committed vs 699,901 B from HEAD, first
+difference at byte 103,097). Worse: `tools/toyvm/bundle-browser.js:37-49`
+`MODULES` does not list `emit-decoder.js`, which `emit.js:3620` now `require`s,
+so a fresh bundle throws `cannot resolve ./emit-decoder` at `makeVm`. The
+committed one loads only because it predates the dependency, and
+`test-toyvm-browser-bundle.js:3` reads the committed artifact, so the gate is
+green on bytes the source can no longer produce. Pass-3 rec 8 (`--check` in
+`build.sh`) would have caught this the same hour.
+
+**A.2 The D3D render Worker (`b5baede5`, `?d3d-worker`) — a good prototype
+with one unmapped write.** Design is right: `lib/d3d-command-stream.js` copies
+a 4 KiB device-state snapshot plus 32 B × N canonical vertices per
+`DrawPrimitive` into a 3-slot × 2 MiB private `SharedArrayBuffer` ring (not
+guest memory, so no map entry needed); `lib/d3d-render-worker.js` instantiates
+the **same wasm module** over the shared memory with inert imports and replays
+through a new `d3dim_worker_draw` export (`09ab:88-95`) that sets a
+per-instance `$d3dim_state_override` — no second rasterizer. Opt-in from the URL
+only (`index.html:2012` → `host.js:1256` → `guest-worker.js:252`), and every
+failure path returns 0 so WAT runs `$d3dim_draw_primitive` synchronously
+(`09a8:7264-7270`); the consumer never calls the main thread, so there is no
+cycle. The problem: `d3d-render-worker.js:41` calls `init_thread(63, …)`.
+Worker slots are 1..7 (`thread-manager.js:30`) and `PAGE_DIR_BASE` is sized for
+8 (`01-header.wat:1451-1452`, 0x04900000 + 0x20000); slot 63 puts its page
+directory at 0x049FC000 and `$page_dir_reset` (`04-cache.wat:420-445`) zeroes
+16 KB there on every image-base change — an address in no map and in no gate,
+unmapped today by luck. Same slot arithmetic gives `THREAD_BASE=0x14C00000` and
+`PAGE_INDEX=0x08000000`. Also: the render instance `guest_alloc`s 4 MiB + 4 KiB
+from the shared guest heap per image-base change and never frees it; fence
+coverage is by enumeration (~25 `$d3dim_worker_fence` sites) with texture
+`Unlock` not among them; per-draw it allocates 1 + 1 `DataView` and 3
+`Uint8Array` views plus the 4 KiB state copy (~3 MB/frame at MW3's ~750
+draws); and when the mode is *off* every fence site still makes one host call
+(`09ab:63-64`). The only test (`test-worker-api-batching.js:102-152`) uses a
+synchronous fake consumer — no image parity against the synchronous path, no
+second-instance run; the re-notes admit both are still owed. *Fix:* a named
+slot with its own sized regions in the map, or an assertion that
+`init_thread`'s slot is below `PAGE_DIR_BASE_SIZE/0x4000`; a parity test before
+any FPS claim.
+
+**A.3 `FindFirstChangeNotificationA/W` is a silent stub with a body**
+(`09a:1647-1685`, `4a08c267`). It creates a manual-reset event that nothing
+ever signals ("VFS mutations do not signal the object yet"), so a guest that
+`WaitForSingleObject`s on the handle waits forever — WinRAR's directory watch
+happens to poll. It passes the stub ratchet because the body calls host
+imports, which is Pass-3 3.4's regex gap in one line. `FindCloseChangeNotification`
+closes through `$host_fs_close_handle` and works only because
+`lib/filesystem.js:1082-1087` routes sync handles first — an implicit coupling
+with no comment on the WAT side.
+
+**A.4 "Restore owners after modal dialogs close" is a heuristic, not owner
+tracking** (`$restore_destroyed_dialog_owner`, `09a:3241-3275`, `9fa3a664`). On
+`DestroyWindow` of any owned `WNDPROC_DIALOG` it clears `WS_DISABLED` on the
+owner unless another *visible*, parentless owned dialog remains. Nothing
+records *who* disabled the owner: an app that called `EnableWindow(owner,
+FALSE)` itself (`:4965-4983` is the only setter) and then destroys a modeless
+owned dialog gets its owner re-enabled behind its back, with a synthetic
+`WM_ENABLE` (`:3266`) and a paint. A hidden-but-live modal does not block the
+restore (`wnd_is_effectively_visible`, `10-helpers.wat:2017`). `EndDialog`
+already has its own restore (`:4980`) — two conventions for one state.
+
+**A.5 The toyvm now has the repo's third x86 decoder** (`45f35101`,
+`tools/toyvm/emit-decoder.js`, 706 lines of WAT text spliced in at
+`emit.js:3620`; `07-decoder.wat` 5,326 and `toyvm/decode.js` 1,098 remain).
+The design is defensible — `compile.js:104-168` tries `compile_block` and falls
+back to the JS `decodeOne` per instruction, handler ids come from one `H` map
+with -1 refusal — and it is on by default (`run-dos.js:686`, `dos-loop.js:80`).
+But equivalence is manual: `tools/toyvm/decode-diff.js` (a real differ, exit 1
+on mismatch) is in neither `run-all.sh` nor `build.sh`, the 146-program
+frame-hash sweep in `docs/toyvm-decoder-in-wasm.md:185-192` has no script, and
+`gate.js`/`bench.js:114` call `compileProgram` without the wasm decoder, so the
+8088 vector gate never exercises it. Hand-duplicated tables (`ALU_ROWS/SHAPES/
+CC_NAMES` `emit-decoder.js:38-52`; the 8-prefix limit `decode.js:208`; `STOP`
+codes as bare literals `compile.js:162`, `decode-diff.js:40`) are where a typo
+silently lowers coverage rather than failing. `1b2ba62e` "Stay in wasm across a
+far transfer" is toyvm-only (`emit.js:3606` `$jlook`) — no `src/` risk — and
+fixed a jump-table probe with the wrong stride that had reported MISS for
+everything (`run-dos.js:1018-1038`).
+
+**A.6 GL views — item 14, half done** (`f4e5b79b`). `u32At` now takes a cached
+view (`gl-command-stream.js:55,243-250`) at all eight immediate-path sites, and
+`gl-compat.js:482-497` caches `_dv/_stackDv`, with an identity test. Still per
+call: `_setColor` arrays (`:261-272`), `_pointerFloats` (`:256`), the per-vertex
+`push` then `Float32Array` copy (`:158-160,286`), `new Uint8Array` per
+`glColor3ub/4ub` (`:270,378`), and six `.slice(-1)` per draw/getFloatv in
+`gl-compat.js:305-316,731-733`.
+
+**A.7 Pointer capture — regressed and fixed inside 25 minutes.** `c2177936`
+requested `{unadjustedMovement:true}` with an async retry, which lost the
+transient user activation; `440bd27c` restored one optionless synchronous
+`requestPointerLock()` inside `onmousedown` (`lib/browser-input.js:112-127,
+324-338`) and the test pins `lockRequests === [undefined]`. Correct now. The
+every-mousemove `WM_NCHITTEST`+`WM_SETCURSOR` posts (`renderer-input.js:
+2511-2514`) and the synchronous `WM_NCHITTEST` before every button-down
+(`:1911-1916`) from Pass-3 3.8 are unchanged. Console keys (`57b05dea`) reuse
+the one input queue — console APIs poll `$host_check_input` themselves
+(`09a2:704-745`) and park GUI events in `$pending_input_packed` for
+GetMessage (`09a5:1550`) — but only WM_CHAR and VK 0x21-0x2F/0x70-0x87
+key-downs become records (`09a2:737-744`): no key-ups, no modifier state, so
+`bKeyDown=0` and `dwControlKeyState` readers see nothing; and in Worker mode a
+`PeekConsoleInput` spin is one owner-thread RPC per call.
+
+**A.8 Small.** `$menu_header_width` (`09c5-menu.wat:721`) selects the menu font
+into `hwnd+0x40000` as a side effect of a width *query* called per repaint and
+hit-test from `renderer.js`/`renderer-input.js`. `$tab_native_page_top`
+(`09c3:792`) returns a magic 21. The MCM `EnumTextureFormats` change (dirty
+tree) hand-matches an index range (`idx<3`) to a table that grew 2→4, and a
+mode-table count went 18→19 at one literal (`09a8:1916`). `dx_trace` moved to
+`ASYNC_SAFE` with an ordering test — healthy. `09a` 16,132 / `09c3` 16,849.
+
+**Addendum recommendations** (in front of the Pass-3 tiers, not instead of
+them): fix `bundle-browser.js` MODULES, regenerate the bundle, and add `--check`
+to `build.sh` (A.1); give the render Worker a real slot or assert the bound
+(A.2); signal or crash in `FindFirstChangeNotification` (A.3); record the
+disabler in `EnableWindow` and restore only what a dialog disabled (A.4); put
+`decode-diff.js` over the corpus into a tier (A.5); the 3.1/3.2/3.3 bugs are
+still the first three things to do.
+
+---
+
+# Pass 2 — 2026-08-27
+
+*Reviewed at HEAD `60097710` ("Name the code that keeps rewriting itself"), 815
+commits after the first pass. Working tree was dirty (62 modified files, +1,847
+lines, plus 14 untracked); **all line numbers are working-tree numbers as of
+2026-08-27**, not HEAD. Four parallel deep reviews again — status
+re-verification of every open item, CPU core + super-ops + the new toyvm
+subsystem, the Win32/GDI/controls WAT layer, and the JS host + Worker-thread
+backend + tools/tests — with a fifth sub-review on the Worker backend alone.
+Every claim below was read in the code; items marked PLAUSIBLE were not
+measured.*
+
+*Verified 2026-08-28 by two adversarial passes that tried to refute every
+concrete claim. Two were wrong and are struck below (the `10c-truetype.wat:4155`
+AND was benign; EnumDisplaySettingsW refuses a short struct rather than
+overwriting it), a handful of counts had drifted, and — because other sessions
+began acting on this document within hours — many findings were already fixed
+by the time they were re-checked. Those carry a **FIXED** tag with the commit;
+the full list is in "Pass-2 status" at the end of this section.*
+
+## Verdict
+
+The first pass's Tier 1–2 work held: all nine build gates still pass, the A/W
+delegation pattern is now the norm (194 of 210 pairs share a core or delegate),
+table access goes through one function per table, and none of the deleted dead
+code came back. That work was done in the first two days after the review.
+
+The following 813 commits went somewhere else entirely — real Worker threads, a
+page-based decoded-code store, twelve loop super-ops, a 15.6k-line DOS VM with
+its own 199-program corpus, GOG launchers, per-game fixes — and **every item on
+the 08-18 "Still open" list received zero commits**. That is fine as a choice;
+it is recorded here so the list stops looking like it is in progress.
+
+What the new work brought with it is the same three drift categories as before,
+in new places:
+
+1. **Hand-kept invariants without a gate, now crossing the WAT/JS boundary.**
+   Two memory-map collisions were live in the tree (§P2-3.2 — five, once the
+   map was actually intersected), a JS copy of a WAT constant was 1 MB stale
+   (§P2-3.1), and the test-manifest gate that was added on 08-18 is wired into
+   the one script nobody runs (§P2-3.6). The first two were fixed on 08-28
+   (`2959ea35`); the third is still open.
+2. **The "app-specific literal in generic code" pattern came back.** The
+   first pass removed two Diablo EIPs from the decoder; Jazz2's `0x57BAE0` and
+   MechWarrior 3's `0x528064`/`0x528111` are now in it (§P2-4.2).
+3. **Two schedulers, two hosts, two of everything.** The cooperative and Worker
+   backends fork the spawn path, the slice path, the wait policy and the set of
+   globals a thread inherits; the CLI and browser fork the yield state machine
+   and `check_input`; `renderer.windows` still shadows WND_RECORDS (§P2-5, P2-6).
+
+Plus one category the first pass under-counted: **silent success stubs.** 98
+`$crash_unimplemented` sites against ~45 confirmed return-TRUE-do-nothing
+handlers, and `git log -S` on ten of them shows every one was *born* that way
+in the commit that added the API — the fail-fast rule is in CLAUDE.md, not in
+the build (§P2-7).
+
+## P2-0 — Numbers
+
+*Working-tree snapshot on 08-27; by 08-28 morning these had already moved
+(643 tests / 55 unlisted, `run.js` 8,612, `src` 188,289 lines, api_table
+3,035, handler table 439). Read them as scale, not as invariants.*
+
+| | 2026-08-18 | 2026-08-27 |
+|---|---|---|
+| `src/*.wat` | 45 parts | 60 parts, 187,463 lines |
+| `api_table.json` | 2,462 | 3,034 |
+| Handler table | — | 437 (zero headroom; gated) |
+| `lib/*.js` | — | 51 files, 35,799 lines |
+| `index.html` | 2,671 → 1,136 after the pass | **2,322** (1,094 lines inline JS) |
+| `test/run.js` | — | 8,591 lines; `main()` is 7,850 of them; 158 flags; 109 input-DSL actions |
+| `test/test-*.js` | 352 (145 unlisted) | 631 (**48 unlisted**, ~37 committed) |
+| `tools/` | — | 153 entries, 217 files, 54,855 lines; 56 documented in CLAUDE.md |
+| `tools/toyvm/` | did not exist | 32 files, 15,591 lines, 116 handlers |
+| Build gates | 5 | 10 (`gen-host-import-sigs --check`, `esp-epilogue --check`, `wasm-data --overlaps` new) |
+| A/W pairs | 184: DIVERGENT 4 | 210: **DIVERGENT 14** |
+
+## P2-1 — What the 815 commits were (so the rest reads in context)
+
+By files touched: test/ 463, src/ 376, lib/ 261, tools/ 242, docs/ 149,
+index.html+host.js 149, tools/toyvm 84, thread-manager/worker-imports 55.
+Themes: real Worker threads (~60 commits, the `worktree-real-threads` merges);
+per-app corpus work (~76 — Diablo 31, Heroes III 11, Winamp 8, Jazz 7, Caesar
+5); the toy DOS VM (84 commits from `09fa5a40` 08-24 on); GOG/DOSBox/ScummVM
+launchers (~15 — GOG's own Win32 `DOSBox.exe`/`scummvm.exe` run *as guests*,
+payloads gitignored at 2.2 GB); super-ops and the page-compile arc (~60 —
+`c30b6bf4` → `9c257a88` "delete the hash block cache" → `6e80eb2f` chunk
+classes); DirectX/OpenGL (~43); controls/GDI/fonts (~114); iPhone/Safari (~18);
+recorder (~24); Win16 (~28); docs (149 commits). A WATX dual-compiler migration
+is proposed in `docs/watx-migration-plan.md` (audited 08-25, not started).
+
+## P2-2 — The 08-18 open list, re-verified
+
+| § | Item | State | Evidence |
+|---|---|---|---|
+| 3.7 | EditState accessors | **OPEN** | `09c3-controls.wat:12743` comment; `$edit_wndproc` (`:13744`, 1,535 lines) has 110 bare `offset=N ($sw)` reads, all `$edit_*` 157. Bare-offset census is 460 (was 740); what remains is **EditState 157, ToolbarState 89, TooltipState 43** — the last two were never on the list and never named either. |
+| 3.8 | Window rect dual-owned | OPEN | `10-helpers.wat:2852-2925` (child → CONTROL_GEOM, else `$host_get_window_rect`) mirrors `lib/host-window.js:530-595`; `sync_window_client` seam `:668-679`. |
+| 3.8 | Scroll state twice | OPEN | `$help_scroll_y` `01-header.wat:3023` mirrored at `09c-help.wat:441,447`; `$edit_publish_scroll_info` `09c3:12855`. |
+| 3.8 | WS_VISIBLE by comment | OPEN | `09a5:1102-1109`, `09a:12175`. |
+| 4.3 | Win32 semantics in JS | OPEN | `host-window.js:336-389` GW_* walk, `:416` cascade/tile, `:596-650` `move_window` (CW_USEDEFAULT, SWP flags, a dialog-template height heuristic at `:617-622`), `:651-680` `set_window_zorder`; modality decided in `renderer-input.js:209-225` and used at `:1271,1891`. WAT now exports 30 `wnd_*` accessors that JS reads in 33 places while `renderer.windows` still carries x/y/w/h (9-10 writers each), `visible` (8), `zOrder` (5), `_minimized` (6). |
+| 4.1 | Hash block cache / arena wipe | **WRONG PREMISE** | The 4,096-slot hash cache was deleted (`9c257a88`, 08-24; "not faster" on interleaved A/B). Decoded code lives in per-page chunks (`PAGE_INDEX_ARENA`, `01-header.wat:1426-1453`) through a 1,024-slot direct-mapped `PAGE_DIR` per thread (`04-cache.wat:411-416`). Invalidation is per-offset. **The arena-full policy is still a full wipe**: `13-exports.wat:64-68` and `$thread_arena_flush_if_safe` (`04-cache.wat:823-832`) reset everything, free lists included — see P2-4.4. `04-cache.wat:403-409` still documents the hash cache as the fallback. |
+| 4.1 | Memory-form ALU specialization | OPEN | `$th_alu_m32_r_ro` (`06b-core-handlers.wat:1592-1600`, handler 127) and siblings `:1602/1616/1626/1636` still unpack op+reg at runtime. What landed instead was pair fusion. |
+| 2.3 | tools hand-parsing PE | PARTIAL | 24 tools use `lib/pe.js`. Still hand-walking: `tools/disasm.js:470`, `hexdump.js:24-33`, `pe-exports.js:33-46` (written *after* pe.js), `wep32-compare.js:234-237` (pe.js exposes no data-directory accessor). NE headers walked 3× (`ne-dump.js:35`, `ne-exports.js:98`, `render-fon-benchmark.js:18`) + `lib/dll-loader.js` — no `lib/ne.js`. |
+| 5 | Raw api ids in dispatch | OPEN | `09b-dispatch.wat:896/907/921` (490/491/470); `978` at `09a8:834`. `$restore_caller_regs` now exists (`03-registers.wat:564`) but the epilogue is still copied four times in the fast paths. 491 is redundant now that PeekMessageW delegates. |
+| 1.5 | `$host_gdi_*` non-imports | OPEN, miscounted | The "249" was every function in 01-header. It is 76 `$host_gdi_*` there + 11 in `10f-gdi-dc.wat`, 528 call sites, 7 real imports left. **23 of the 76 have zero callers** (`01-header.wat:174-520`). |
+| 2.1 | Others | OPEN | `hdc = hwnd + 0x40000` literal: 30 sites in 09c3 (was 24). `$ctrl_get_wh_packed` inline unpack: 56 sites vs 7 accessor calls. 43 `$host_gdi_draw_edge` callers vs 4 through `$gdi_draw_edge_desc`. 47 `$emit_*` in the decoder. |
+| 2.1 | mixer A/W | DONE | W bodies at `09a7c-mixer.wat:153,181,238` are 4-6-line delegates. |
+
+## P2-3 — Hand-kept invariants without a gate (the next mystery bug, ranked)
+
+**3.1 A JS constant disagreed with its WAT twin — FIXED `2959ea35`, gate still
+partial.** On 08-27 `lib/mem-utils.js:12` said "must match … 01-header.wat"
+and defined `DIB_GUEST_CAPACITY = 0x04000000` while `src/01-header.wat` had
+`0x03F00000` (shrunk so the DIB pool stops overlapping `THREAD_RPC`), so JS
+`g2w` still mapped guest `0x53F00000+` onto the per-thread RPC blocks.
+`2959ea35` set the JS side to `0x03F00000` and `host-imports.js:91` now imports
+it from mem-utils rather than keeping its own. `test/test-wat-memory-map.js`
+now runs in `build.sh` and checks the DIB/RPC pair; `test-wat-rpc-region.js` is
+in `run-all.sh:182`. What is still not gated is the rest of the class, holding
+by luck: `DX_MAX` 1024/stride 32 (`09a8:16-27` vs `host-imports.js:375`,
+`run.js:8223,8499`),
+`WIN16_DYNAMIC_BASE` 13 (`08c:139` vs `dll-loader.js:666`; the comment at
+`08c:130` says 12), OpenProcess tag `0x000E2000` (`09a:2591` vs
+`thread-manager.js:658`), `gl-command-stream.js:34-39 ARG_WORDS` vs
+`gen_dispatch.js:36-56 gpuApis` (index 54 is 2 vs nargs 3, masked by
+`09a8b:20-37`), `RPC_BASE 0x1FF00000` and `0x07F14000` (`guest-rpc.js:50,55`),
+`GUEST_BASE 0x12000` inlined at `guest-worker.js:434,495` and
+`thread-manager.js:225,1399,1447,1773,1938`.
+*Fix:* extend the new gate to those pairs — parse the named globals out of
+`01-header`/`09a8`/`08c` and assert against the JS files.
+
+**3.2 Two live memory-map collisions — FIXED `2959ea35`, which found five.**
+On 08-27 `tools/wat-memory-map.js` existed, was not in `build.sh`, and printed
+no overlap markers; intersecting its sized ranges found:
+- `SCROLL_AUX_TABLE` 0x07FEB000+4KB (`01-header.wat:2071`, added `d22010df`
+  07-14) sits on `D3DIM_UNIMPL_EXEC_OP`/`_DRAW` strings at 0x07FEB000,
+  `D3DIM_EB_CACHE_PTRS` 0x07FEB040 (512×4), `D3DIM_STATEBLOCKS` 0x07FEB840,
+  `D3DIM_MATRIX_USED` 0x07FEBF00 (`09ab-handlers-d3dim-core.wat:59-68`, from
+  `f9152a37` 06-12). Both sides are written. Any window's SCROLLINFO
+  nPage/nTrackPos corrupts D3DIM state; slot 0's h_page overwrites the crash
+  message string.
+- `EXTRA_CMDLINE_BUFFER` 0x07F0A500+256 (`01-header.wat:1312`) overlaps
+  `COURIER.FON`'s path data at 0x07F0A4FC+29 and the `TERMINAL.FON` state at
+  0x07F0A5B0-0x07F0A5D4 (`10b-gdi-font.wat:22-25,49-50`, `23380fbc` 08-13).
+  Any `--args` clobbers Courier's path from byte 4; one over 176 bytes clobbers
+  Terminal's.
+Both are the mechanism the first pass found three instances of: an address
+picked from 01-header's map while the colliding table is declared in the file
+that uses it. `1151b196` (08-27, AoE2's heap growing into the page indexes at
+0x04100000) is a third instance found at runtime.
+Done on 08-28: `2959ea35` moved `SCROLL_AUX_TABLE` to 0x07F21000 and
+`EXTRA_CMDLINE_BUFFER` to 0x07F20200, and in sizing every region for the gate
+found three more live overlaps this pass had not — the TreeView family
+(`TV_TABLE`/`TV_IMAGE_TABLE`/`TV_OWNER_TABLE`, now at 0x07F22000-0x07F27000)
+and the shared timer block (`TIMER_SHARED`, 0x07F20100). `test/test-wat-memory-map.js`
+now runs as the second gate in `build.sh:15` and fails on any sized-range
+intersection (132 regions, 215 data segments at the time).
+
+**3.3 `DLL_TABLE` has 16 slots and no bound — FIXED `2959ea35`.**
+`08b-dll-loader.wat:4` (32-byte stride, 16 max); `$dll_idx = dll_count` at
+`:84`, `dll_count++` at `:103`, no check anywhere, JS included;
+`lib/dll-registry.js` lists 38 loadable DLLs. The 17th DLL wrote over
+`DLL_RSRC_TABLE` (0x07992200). Now `$DLL_TABLE_CAPACITY` (`01-header.wat:2539`)
+and `lib/dll-loader.js:27-31` throws before the write. Not verified: whether the
+WAT-side `$load_dll` (called from `09c9-winhelp-ui.wat:2032`, bypassing JS) got
+the same check.
+
+**3.4 Decoder handler indices are 368 bare literals.** `(call $te (i32.const N))`
+appears 368 times in `07-decoder.wat` (405 with `07b`'s 37, 321 distinct); the `;; N`
+comment on each `02-thread-table.wat` elem entry is the only cross-reference,
+and `07b` has three symbolic globals (`LOOP_SUPEROP_LUT/COPY/AVG`) while `07`
+has none. `check-handler-count.js` checks the *count*, so an insert before 395
+renumbers 40 handlers silently. Already-drifted comments: `13-exports.wat:3022,3030`
+and `07-decoder.wat:152,416,1991` call rect_run/rle_run "handler 422/424"; they
+are 427/429 (422/424 are now `$th_mmx_rr/_mr`).
+*Fix:* generate `src/02b-handler-ids.generated.wat` with
+`(global $H_lut_run i32 (i32.const 418))` from the elem list, gated like
+`gen_dispatch --check`; the comments then go away.
+
+**3.5 Continuation-thunk markers and api ids by hand.** 31 `0xCACA00xx`
+literals matched in `09b-dispatch.wat:62-821` against ~200 producer sites in 12
+files with no central enum; `0xCACA0010` (`09a8:846`) is not in the chain and
+dispatches only because the resolved-ordinal test at `:859` happens to catch
+bit 31. The unresolved-ordinal formatter (`:831-849`) writes digits at absolute
+`0x2DA..0x2DE` into the `0x2D0` data string — a hand offset outside
+`check-data-strings` — and labels every DLL's ordinal `KERNEL32.#`.
+*Fix:* `gen_dispatch.js` emits `$API_ID_*` and `$CACA_*` globals.
+
+**3.6 The test-manifest gate is in the wrong script.** `tools/check-test-manifest.sh`
+(added `e2bc3a31` 08-18) works and **fails today** — 48 of 631 files were in no
+tier on 08-27, 55-57 of 643 on 08-28 — but it is called only from
+`test/run-all.sh:659`, and the documented practice is to skip run-all.sh.
+`build.sh` never runs it. The toyvm tests (`test-toyvm-live.js`,
+`test-toyvm-browser-bundle.js`, `test-dos-corpus-live-page.js`) and every GOG
+launcher test are among the unlisted. Also (order of magnitude, from timeout
+literals): ~80-100 tests hard-code budgets over 120 s and 10-17 exceed the
+runner's own 300 s kill (`:689`).
+*Fix:* call it from `build.sh` (it is a 2 ms `comm`); list the strays.
+
+**3.7 A committed generated bundle with no freshness check.**
+`docs/dos-corpus/live/toyvm-bundle.js` (526 KB) is `bundle-browser.js`'s
+output, in git; `test-toyvm-browser-bundle.js` checks it *loads*, not that it
+matches `tools/toyvm/*.js`. `docs/dos-corpus/programs.js` (584 KB) embeds 12
+demo binaries. *Fix:* `bundle-browser.js --check` in build.sh.
+
+**3.8 Super-op flags reach one instance.** `run.js:7349-7369` propagates 9
+decoder flags to cooperative threads; the Worker spawn path (`thread-manager.js:904-925`
+→ `guest-worker.js:411-460`) propagates 10 globals and **none** of the decoder
+flags, `cpu_mmx`, `fault_unmapped`, `trace_eip_range`, or `count`. In the
+browser `set_rle_run` (`host.js:945`) and `set_loop_copy_emit`
+(`browser-shell.js:565`) reach slot 0 only. 53 `set_*` exports exist; the
+cooperative spawn propagates 15 (`thread-manager.js:1361-1535`). And
+`$tls_next_index` (`01-header.wat:2552`, bumped by `09a-handlers.wat:7894`) was
+copied at spawn only (`guest-worker.js:449`), so a `TlsAlloc` on any thread
+after spawn handed out an index another instance already gave away — both
+backends. **The TLS half is FIXED** (`2959ea35`: `$tls_reserve` does an atomic
+on `$TLS_NEXT_INDEX_SHARED` at 0x07F20300, and TlsGetValue/SetValue/Free now
+reject an index ≥ 64); the flag-propagation half is open.
+*Fix:* one inherited-globals table in `lib/worker-imports.js` read by both
+spawn paths, plus a test that diffs the two setter sets.
+
+**3.9 Stale invariant comments** (each names a rule that no longer exists):
+`04-cache.wat:403-409` (hash cache), `tools/toyvm/isa.js` header ("handler
+bodies here" — they are in `emit.js`), `09c3:16035-16038` (Tab traversal gated
+on a JS call that has no reference), `09a8:1711-1712` ("app-profiles.js rounds
+identically" — it does not), `09c5-menu.wat:3375` ("menu subsystem is a stub"),
+`08c:130` (12 vs 13), `09c3:12741-12746` (calls `$edit_wndproc` "STEP 4 —
+dormant … unreachable"; it is the live edit control), CLAUDE.md:263 (`run.js`
+input DSL help is at `:817-889`, not 82-159; 8 parsed actions have no help
+entry — `dblclick, dlg-paint, dlg-png, dump-msgq, dump-windows,
+hwnd-png-pixels, rclick, wait-title`; bare `--handler-hist`, which CLAUDE.md
+names five times, is a no-op — only `-thread/-start/-stop` parse,
+`run.js:371-383`).
+
+## P2-4 — CPU core and super-ops
+
+**4.1 The design changed; the fixed cost moved, and it is now dominated by
+statistics.** `$branch_end` (`04-cache.wat:781-821`) and `$jcc_end`
+(`05-alu.wat:752-770`) `return_call $next` on a resolved page hit, so `$run`
+(`13-exports.wat:8-238`) is the slow desk only. Per block on the fast path:
+one 4-global OR, `block_budget<=0`, two SBH EIP compares, `$page_resolve`, two
+`dbg_prev` stores — and **three global read-modify-writes that are pure
+counters**: `$page_hits` (`04-cache.wat:745`), `$page_fast` (`:808`), `$page_ft`
+(`05-alu.wat:765`). On the desk: ~20 conditionals including an **unconditional
+`i32.atomic.rmw.xchg` on `$THREAD_RPC+36` when `current_thread_id==1`**
+(`13-exports.wat:52-60`) — a locked RMW on every main-thread desk entry, in
+single-threaded mode too — and a 6-way `yield_reason` OR (`:143-154`).
+`--decode-stats` prints index hits/misses (`run.js:7652`); what it cannot say
+is the share of blocks that entered `$run` rather than tail-calling `$next`,
+which is the number that prices the desk.
+*Fix:* gate the three counters behind `$handler_hist_enabled` (already tested
+per block); print desk share in `--batch-stats`; gate the atomic on a
+`$threads_active` global; fold the OR into one bitmask.
+
+**4.2 App literals are back in the generic decoder.** Two removed on 08-18,
+two new: Jazz2's LUT table base `0x0057BAE0` compared at `07-decoder.wat:834`
+and emitted as an operand at `:880` (mode-2 of `$th_lut_span`, handler 431), and
+MechWarrior 3's `0x00528064`/`0x00528111` at `07-decoder.wat:590,611` and
+`07b-loop-match.wat:2904` (`$th_rgb565_alpha_run`, 436). The Diablo
+`$stack_packet_*` addresses still live as globals (`01-header.wat:2364-2376`).
+The MW3 fold is gated on `$loop_copy_emit_enabled`, which `lib/apps.js:1712`
+turns on via `copySuperops: true` and `browser-shell.js:565` honors — **and
+`test/run.js --app=mw3` ignores** (0 references), so the CLI and the browser run
+MW3 with different decoders. Two more findings from the inventory: `--no-mmx`
+only steers CPUID (`05-alu.wat:2464`), MMX handlers 422-425/432-434 always
+decode; and the Smacker/Storm folds (395/396) have no enable flag at all.
+*Fix:* the first pass's fix — a JS-populated `(addr → fold)` table from
+`app-profiles.js`, byte signatures kept as the safety check — plus a
+`tools/check-app-literals.js` that fails on any `i32.const 0x00[4-9A-F]xxxxx`
+in `07*.wat` outside an allowlist; make `run.js --app` read `copySuperops`.
+
+**4.3 Every guest store pays the self-modifying-code check three calls deep.**
+`$gs32/$gs16/$gs8` (`03-registers.wat:376-405`) → `$invalidate_code_write`
+(`:345`) → `$code_write_is_code` (`:327`) → `$code_page_test`: ~8 branches
+before the store. MMX/SSE multiply it — `$mmx_store64` is 2× `$gs32`
+(`06c-mmx.wat:249`), `$xmm_store128` 4× (`:98`), loads likewise with 2/4
+`$g2w` calls. The code-page bit is **never cleared** (`$code_page_clear`,
+`04-cache.wat:99`, zero callers), so a page that was once code pays the range
+walk on every later data store for the rest of the run (Borland CodeSeg, RCT —
+named at `03-registers.wat:353-361`). PLAUSIBLE cost; measure with
+`bench-loops.js --shapes=store_stream`.
+*Fix:* inline the bitmap test into `$gs*`; one page check per 8/16-byte MMX
+access; clear the bit in `$page_dir_drop`.
+
+**4.4 Arena-full is still a full flush, and the free lists cannot prevent it.**
+`6e80eb2f` added 4/8/12/16 KB chunk classes with free lists
+(`04-cache.wat:148-290`) — but the 4 KB margin check on `$thread_alloc`
+(`13-exports.wat:64-68`) fires regardless of what is on them and calls
+`$clear_cache` = `$page_dir_reset` (`:95-98`) for every page of every thread.
+`--decode-stats` prints `full clears`; sol shows 0, and no corpus sweep of that
+line exists. The free lists only slow the approach to the margin; they are not
+consulted once it is reached. Also: the `$next` guard `fn >= 437` (`04-cache.wat:889`;
+439 since the table grew on 08-28) flushes
+*without* the `$sync_msg_depth` deferral that `$thread_arena_flush_if_safe`
+exists to provide — a corrupt handler word inside a nested wndproc reproduces
+the wild jump that function was written to prevent.
+*Fix:* try the free lists (an LRU cursor exists at `:141`) before
+`$clear_cache`; route the guard through `$thread_arena_flush_if_safe`.
+
+**4.5 `$mmx_binop` is a 45-way if-chain on `$sub`** (`06c-mmx.wat:262-375`),
+executed per MMX op for a sub-op the decoder knew. Jazz2 and AVS are the
+MMX-heavy apps (1.53× and 23.6% of dispatches, per memory). *Fix:* `br_table`,
+or split the 6 hot subs into handlers (the histogram names them).
+
+**4.6 Dead and duplicated.** Zero references module-wide, not exported: 26 in
+the core (23 `$host_gdi_*` wrappers at `01-header.wat:174-520` — 76 defined
+against 64 distinct names called; the exact dead subset was not re-verified,
+`$code_page_clear`, `$decode_sib` `07-decoder.wat:1191`, `$cdecl_return`
+`13-exports.wat:4`) + 19 in the Win32 layer (257 lines: `$gdi_diagonal_wide_line_desc`
+`10g:1334-1430`, `$gdi_dc_path_append_mask` `10d:1123-1175`,
+`$gdi_metafile_empty_wmf/emf` `10e:506/2532`, `$find_dll_by_name`,
+`$guest_strcmp`, `$paint_flag_first`, `$clipfmt_name_of`, `$rsrc_match_eid`
+(whose comment at `10-helpers:1039` says "used"), `$lv_ctrl_id` `09c3:6413`,
+`$d3dim_viewport_clear` `09ab:2650`, 7 wrappers `12-wsprintf.wat:287-305`) + 5
+transitively dead (74 lines). Duplicates: 16 `$th_jcc_*` differing only in the
+predicate (`05-alu.wat:771-`); `$gl32/$gl16/$gs32/$gs16` each hand-roll the
+page-cross split; `$run` re-implements `$branch_end`'s guard set in a different
+order. *Fix:* `wat-func.js --dead` as a run-all step; delete the 45.
+
+**4.7 Bitwise-AND scan, core: 23 mixed sites, all benign** (each raw operand is
+clamped or 0/1 by construction). Nothing enforces that; the 60-line scanner in
+the scratchpad would have caught the SysLink and statusbar bugs the first pass
+found by hand and the 29 confirmed in P2-7.3. **Done on 08-28:**
+`tools/check-wat-logical-and.js` is a build gate (`build.sh:38`, `1c72223b`).
+
+## P2-5 — The Worker-thread backend (new since the first pass)
+
+One `ThreadManager`, `backend = workerBackend ? 'worker' : 'cooperative'`
+(`lib/thread-manager.js:82-85`, 2,284 lines; `guest-rpc.js` 575,
+`guest-thread-host.js` 706, `guest-worker.js` 694). Shared: handles, the SAB
+sync table (`:110-127`), `waitSingle`/`waitMultiple` (`:653-700, :800-855`).
+**Forked:** `spawnPending :1347-1577` vs `_spawnPendingWorkers :894-961`;
+`runSlice :1579+` vs `runWorkerSlices :970-1013`; 71 `backend ===` branch sites
+(thread-manager 22, host.js 27, run.js 22).
+
+Confirmed semantic divergences between the two:
+- Cooperative throttles a Sleep-looping thread to every 8th slice
+  (`:1637-1641`); Worker honors only `sleepUntil` (`:984`).
+- Worker-mode main waits require `minPolls` before WAIT_TIMEOUT
+  (`:1245-1247`, `bc48a84d`); cooperative `checkMainYield` (`:2118+`) does not.
+- Two hwnd-base formulas, both live: `:407-409` (`workerHwndBase`,
+  `_appHwndBase()+0x8000+(tid-1)*0x1000`, used by the cooperative spawn at
+  `:1439`) vs `:923` (`0x10001 + tid*0x10000`, sent to Workers and consumed at
+  `guest-worker.js:442`); the comment at `:1421-1428` names the second as the
+  one that leaks windows past app close.
+- `checkMainYield` handles `yr === 9` twice (`:2143-2154` ends
+  `clear_yield(); return false` unconditionally; `:2166-2172` is unreachable, so
+  `_mainWaitPolls` is never counted for CS waits).
+- `_clearWorkerCacheSlot` (`:436-446`, called from both spawn paths) zeroes
+  `0x07152000 + tid*0x8000`, a region `01-header.wat:1406-1408` says "used to be
+  CACHE_INDEX_BASE … is free". Dead work today; wrong the day something is
+  placed there.
+
+RPC: 208 imports — 9 local (GL batched, `get_ticks`, 7 math), 8 `ASYNC_SAFE`
+(`guest-rpc.js:83-103`), **191 blocking including 46 void**. DirectDraw is *not*
+batched (`371175d3` sets `_dxDirty`; the browser presents at most once per
+display frame via `host.js:483-506`, called from `:2123`; a DOM-less host
+presents every dirty slice).
+Per call: a rest-args array and a message literal; `log` builds the API-name
+string byte-by-byte on every Win32 call (`:298-308`); the slice reply is ~35
+fields / ~30 export calls (`guest-worker.js:343-392`); the f64 result is
+type-sniffed (`:500`). In the CLI, `--threads` main runs `run(N)` in-process so
+parked workers stall for the batch (`run.js:7387`).
+
+Selection is a page-global toggle (`index.html:1087`, localStorage
+`wine-assembly.threads`); on failure `host.js:1197-1234` falls back to
+cooperative with only a debug-pane `logToUI` line. No per-app
+field in `lib/apps.js`; `72fda8d8` pinned Diablo cooperative and `3984dd98`
+removed the pin and its test (`browser-shell.js:234-244` says don't re-add).
+The one per-app knob is `autoRunSliceFor`, a hand-kept switch over 17 app ids
+(`browser-shell.js:216-262`).
+
+Coverage: 16-28 worker-path tests depending on how you count, all listed; 3
+pass `--threads`, 2 compare both modes; **0 diff a
+PNG across modes**; `--threads-serial`, `--thread-batch-size`, `--rpc-census`
+have 0 tests. A notepad run in both modes is byte-identical — notepad has no
+threads.
+
+*Fixes, in order:* the inherited-globals table (P2-3.8); one hwnd-base
+function; delete `:2166-2173`; route the cooperative wait policy through
+`resolveWait`; derive `ASYNC_SAFE` from the sigs and batch DirectDraw like GL;
+`test-cli-worker-threads.js` gets `--rpc-census` + `png-diff`, and
+`test-winamp-audio.js --threads` joins E2E; `runSlice`/`threads` fields on the
+apps.js entry replace the 17-id switch.
+
+## P2-6 — JS host and the two hosts
+
+**6.1 One first-pass fix regressed — FIXED `2ac6df83`, and it was worse than a
+clamp.** The MessageChannel drive loop was in place (`host.js:2217-2240`
+`_scheduleStep`) except on the `cs_wait` yield path, where `host.js:2398`
+rescheduled with `setTimeout(step, 0)` — clamped to 4 ms once five retries
+chain (the clamp counts timer nesting, and each retry starts from a
+MessageChannel task), so a persistently contended section, not every retry.
+The real cost was that the early `return` skipped the thread-manager block
+below it, so the main thread retried and re-parked forever without the
+critical-section owner ever getting a slice — the Deus Ex demo startup hang.
+`2ac6df83` clears the yield and falls through (`host.js:2392-2400`).
+
+**6.2 index.html regrew.** 1,136 → 2,322 lines; 1,094 of inline JS at
+`:1227-2320`: page fullscreen + iOS scroll-collapse (`1229-1470`), presentation
+settings (`1585-1700`), the threads toggle (`1851-1970`), debug MIDI/input
+profiling (`2074-2147`), `resizeCanvas` (`2148-2310`). None testable from Node.
+44 hand-bumped `?v=` cache busters; `host.js?v=234` vs `SOURCE_VERSION='228'`
+(`host.js:29`) already disagree (`?v=237` vs `'231'` a day later — the two
+counters move independently). *Fix:* `lib/page-viewport.js` +
+`lib/page-settings.js`, the browser-shell pattern; one version constant.
+
+**6.3 Still-forked between browser and CLI:** 31 host imports overridden in
+both; `check_input` diverges (`host.js:747` `renderer.takeInput` vs
+`run.js:2665-2689` `renderer.checkInput` + its own queue priority, and
+`renderer-input.js` exports both, `:2982/:3016`); `makeWorkerImports`
+(`run.js:3022-3195` vs `host.js:963-1019`); the yield-reason state machine
+(`run.js:6952-7602` vs `host.js:2359-2480`); `installingFiles` NSIS sniff still
+CLI-only (`run.js:2622-2630`). Per-app policy in generic JS: `autoRunSliceFor`
+(above) and `_snapWinampEqButtonPoint` keyed on `win.title === 'Winamp
+Equalizer'` (`renderer-input.js:302-329`), called on every mouse down/up.
+
+**6.4 Still-unfixed from 08-18:** `check_input` allocates two closures per
+GetMessage poll (`host.js:728-746`) and `logToUI`s every non-mousemove event
+(`:758`); `host.js:521` builds a `TextDecoder` per traced API call;
+`browser-shell.js` has 14 `log.textContent +=` sites (`:542` fires per progress
+stride during app load) — the quadratic pattern moved, not died; `_hasOpenMenu`
+still `Object.keys(windows)` per step (`host.js:1962`, again at `:2406`).
+
+**6.5 New hot-path costs.**
+- DirectDraw present: `_presentBestDxOffscreen` (`host-imports.js:959-968`)
+  walks all 1,024 `DX_SLOT_COUNT` slots every dirty display frame, `_surfaceInfo`
+  (`:559-574`) builds a `DataView` per slot plus a second one for flags
+  (`:965`), and `_surfacePresentSignature` (`:670-692`) samples through a fresh
+  full-memory `Uint8Array` view (no copy) and builds a string key. ~1k DataViews
+  per frame for a 60 fps DX app. *Fix:* one cached view (memory is fixed-size);
+  track live surfaces on create/release.
+- OpenGL encoder: `gl-command-stream.js:58-60` `u32At` allocates a DataView
+  **per word read** (`_f32` at `:239` already uses the cached `_memoryView()`,
+  so the pattern for the fix is three lines away); `gl-compat.js:445-446`
+  `_dv()/_stackDv()` per accessor, `:216-220` `slice()` per vertex. Immediate-mode
+  guests (quake2, uplink) pay this per GL call.
+- `filesystem.js:199-204` grows exactly to `newEnd` — appending writes are
+  O(n²) (PLAUSIBLE on installers). Geometric growth.
+- Full-memory typed views per call at `host-imports.js:1815,1832,1961,2054`;
+  67 `new DataView/Uint8Array` sites in the file.
+
+**6.6 Empty `catch` census:** host-audio 53, host-imports 20, host.js 15,
+renderer-input 12, thread-manager 7. Notable: `host-imports.js:690` swallows
+inside the DX present signature (a bad `dibWa` presents nothing, silently);
+`host.js:1576,1644,1725` turn a DLL fetch 404 into a later "DLL not found";
+`host.js:1983` swallows `menu_open_hwnd` traps per step.
+
+**6.7 A second region model.** The "chain-of-Path2D (Approach A)" HRGN model
+(`host-imports.js:1003-1177`) is live via `gdi_set_region_bands` (`:1823`),
+`gdi_set_window_rgn` (`:1848`), `invalidate_rgn`/`validate_rgn` (`:1868,1875`)
+beside `src/10d-gdi-region-path.wat`. PLAUSIBLE deletion once bands are the
+only input.
+
+## P2-7 — Win32/GDI/controls layer
+
+**7.1 File names, second round.** `09c3-controls.wat` (16,657 lines, 388
+functions) is on-topic but 38% of it is six wndprocs: `$edit_wndproc` 1,535
+(`:13743`), `$listview_wndproc` 1,419 (`:7244`), `$listbox_wndproc` 1,004
+(`:10641`), combobox 813, button 789, toolbar 734. `09a-handlers.wat` (14,888)
+is still the residual bucket: of 791 handlers, 205 window/dialog/msg, 100 file,
+77 clip/atom/env/version, 70 thread/process, 68 string, 48 heap, 37 Reg, **36
+GDI-named** (GetDC, DrawText*, LoadBitmap*, ExtCreatePen, Set/GetWindowRgn,
+InvalidateRgn…) that `185afb3` missed. `10-helpers.wat` (5,476) still carries
+`richedit` 14 + `wordpad` 6 functions. `09a5` has `$handle_CreateWindowExA` at
+795 lines. *Fix:* `wat-split.js --names=` for the 36 and the wordpad tail; split
+the three 1,000+-line wndprocs by message family — every 7.4 finding is inside
+them.
+
+**7.2 A/W drift came back: DIVERGENT 4 → 14.** `git log -S` dates 10 of the 14
+W-sides to 08-25/26 (`704f1cd0`, `312d4894`, `ea2c39ba`): each was written with
+the correct contract *next to* an A that was never fixed. 7 are equivalent on
+read; **7 confirmed:**
+
+| Pair | Divergence |
+|---|---|
+| GetSystemDirectoryA `09a:11537-11548` / W `:11553-11573` — **FIXED `2959ea35`** | A wrote 18 bytes unconditionally, ignored `uSize` and NULL; `GetSystemDirectoryA(buf,0)` overflowed. W guarded. |
+| GetWindowsDirectoryA `:11576` / W `:11590` — **FIXED `2959ea35`** | same shape |
+| GetUserNameA `09a7:2619` / W `:2635`; GetComputerNameA `:2657` / W `:2672` — **FIXED `2959ea35`** | A ignored `*pcb` and NULL; W returns 122/111 |
+| EnumDisplaySettingsA `09a3:1243` / W `:1266` | A never reads `dmSize` and never zero-fills; W rejects `dmSize<220` outright (`:1278`), so a legal 156/188-byte DEVMODEW gets 0 — it is never written, but never served either |
+| GetCommandLineA `09a:549-552` / W `:6999` | A calls `$store_fake_cmdline` (`10-helpers.wat:1290`, unguarded `heap_alloc 512`) **every call** — a 512-byte leak and a new pointer per call; W is guarded. `__p__acmdln` `:6731` / `__getmainargs` `:5852` build a third command line with no `C:\` prefix and no `--args`, so `argv` ≠ `GetCommandLineA()` |
+| RegisterClipboardFormatA `10-helpers:3485` / W `:3495` | W short-circuits "Rich Text Format" to `$clipboard_get_rtf_format_id` (`:3427`), minting `0xC000+n` outside CLIPFORMAT_TABLE; A interns. W→A yields two ids for one name; `GetClipboardFormatName(0xC001)` → 0 |
+
+BOTH_STUB: `SetConsoleTitleA/W` (`09a2:91-100`) drop the title; no
+`GetConsoleTitle*` exists.
+
+**7.3 Bitwise-AND on raw values: 29 confirmed in the Win32 layer** (4,402 sites
+scanned, 245 flagged; the review first listed 30 — the `10c-truetype.wat:4155`
+row was wrong, `$tt_entry_pixel` already returned a 0/1). **All FIXED on 08-28**
+(`1c72223b`, `56bae14c`; 36 sites normalized in all). With app-visible effect:
+
+| file:line | consequence |
+|---|---|
+| `09a:3646`, `:7224` — `(i32.and (ctrl_table_get_class hwnd) (…))` | SetWindowTextA/W on **even class ids** (Edit=2, ListBox=4, TreeView=8, ListView=18) skipped WM_SETTEXT and took the caption path |
+| `09b-dispatch.wat:116` — hwnd & DLGTEMPLATE.style | post-WM_INITDIALOG native-child paint drain (NSIS pages) practically never fired |
+| `09c3:6190` — `(style & 0x100) & pred` | SBARS_SIZEGRIP grip never drawn |
+| `09d-winsock.wat:1053` — two guest pointers | FD_READ for an accepted child only when the pointers shared a bit |
+| `09a9-comctl32.wat:276` — `$buttons & $button_count` | CreateToolbarEx added no buttons unless `ptr & count` |
+| `09a:725` — `$long` is `arg1 & 2` | GetDateFormatA never produced DATE_LONGDATE from the flag (only an explicit `dddd` format reached it) |
+| `09a8` `IDirectDrawSurface3_SetSurfaceDesc` (`entry & lpDDSD`) and the palette copy (`pal_wa & src_wa`, `:3651`); `09a6:1224` (IsEqualGUID, ptr & ptr); `09a7b-ole.wat:678/707/1254/5923/6257` | no-op SetSurfaceDesc; IsEqualGUID FALSE on disjoint pointers; missed E_NOINTERFACE / leaked interfaces |
+| `09aa:1010`, `09c7:3297`, `09c8:209`, `09c9:628`, `09e:1169/3210/4524`, `09e2:438/844/894/906`, `10c1:2703`, `10d:3674`, `10g:2509` | dead validation branches; DlgDirList routed by hwnd bit 4 |
+
+The gate that keeps them out is `tools/check-wat-logical-and.js` (`build.sh:38`).
+
+**7.4 Parallel families with measured divergence** (41 confirmed across 10
+families; highest impact):
+- **RegSetValueA/W is a no-op** (`09a:9657-9660`) while RegSetValueEx stores and
+  RegQueryValue reads: set-then-query → ERROR_FILE_NOT_FOUND.
+  RegCreateKeyEx{A,W} always write disposition 1 (`:9727,:9740`) though
+  `storage.js:1166` computes it.
+- **GetTextExtentPointW / 32W don't measure**: `09a4:2244-2245`, `:3092-3093`
+  do `count × tmAveCharWidth`; A (`:541`) and GetTextExtentExPointW (`:1175`)
+  call `$host_measure_text`, which already takes `$wide` (`10f-gdi-dc.wat:1501`).
+  ExtTextOutW alone sniffs "packed ANSI" (`09a4:1909-1915`) — measure ≠ draw.
+- **CreateWindowExW** (`09a:7011`, 27 lines over the 795-line A) stores ANSI
+  heap copies into CREATESTRUCT `+0x124/+0x128` so a Unicode `OnNcCreate` reads
+  ANSI as WCHAR; leaks 768 bytes per call (`:7019,:7025`, no free).
+- **MoveWindow vs SetWindowPos** (`09a:4466` vs `:5081`): MoveWindow ignores
+  `bRepaint` (esp+=28, the 6th arg never loaded), posts WM_SIZE and never
+  WM_MOVE; SetWindowPos sends WM_WINDOWPOSCHANGED and never WM_SIZE/WM_MOVE.
+- **SHGetSpecialFolderPathA** (`09a:5502-5511`) ignores `nFolder`; SHGetFolderPathW
+  (`:5526`) has the real CSIDL table.
+- **Listbox / combo dropdown / listview / treeview** share no row, hit-test or
+  scroll code (visible-rows: 6 inline listbox copies vs `$lv_visible_rows_for_h`
+  vs tv `:659`; y→index 5 non-identical copies). Listbox has **no WM_VSCROLL
+  and no WM_MOUSEWHEEL** (`:10641-11956`); LB_SETCURSEL never scrolls into
+  view; click past the last row selects it *and closes the combo* (`:11072`,
+  `:12440`); lv/tv never write SCROLL_TABLE so `GetScrollPos` is stale; the
+  highlight colour is literal `0x800000` in lb/tv and stock brush 14 in lv.
+- **Scrollbars**: arrow layout ×3 (`09c3:16141, :16600, 09c4:524`), two WAT
+  hit/drag models (`$scrollbar_* :16180-16222` vs `$sb_page_* :16234-16336`,
+  disagreeing on track length by 4 px) plus a JS one (`renderer-input.js:834-870`)
+  that routes NC-bar clicks against the window rect while WAT paints at the
+  client rect (`09c4:682`); NC arrows never show pressed; `EnableScrollBar`/
+  `ShowScrollBar` store nothing; `$defwndproc_paint_standard_scrollbar` still
+  carries two inline thumb copies (`09c4:556-579`) beside `$paint_sb_thumb`.
+
+**7.5 Silent success stubs are the norm, not the exception.** 98
+`$crash_unimplemented` sites on 08-27 (`09ad` 54, `09a` 32; **0** in console,
+audio, gdi, window, crt, ole, mixer, opengl, comctl32, winsock, win16, `10*`;
+118 by 08-28 after the D3D9 flip, `09ad` 87 / `09a` 31) against 617
+constant-return bodies, ~45 confirmed policy violations. Every one sampled was
+born a stub in the commit that added the API. Worst:
+
+| API | where | does |
+|---|---|---|
+| EnumWindows / EnumThreadWindows / EnumSystemLocalesA / EnumSystemCodePagesA — **FIXED `1c72223b`** (`$enum_window_walk_begin`, CACA thunks) | `09a:13146/13155/10504/13163` | TRUE, callback never called (`:13141` documented the CACA fix never done) |
+| GetMenuItemInfoA / SetMenuItemInfoA — **FIXED `1c72223b`** (`$dynamic_menu_item_info_get/set`) | `09c5-menu.wat:3375/3368` | TRUE, wrote nothing; comment said "menu subsystem is a stub" |
+| RegisterHotKey | `09a:10311` (08-22) | TRUE, no WM_HOTKEY ever |
+| SetWindowsHookA | `09a7:501` | fake HHOOK `0x00DEAD02`, keeps nothing |
+| SetWindowsHookExA / CallNextHookEx | `09a:8694/8642` | HHOOK `0xBEEF`; only WH_KEYBOARD/WH_CBT kept |
+| HeapCreate / CreateConsoleScreenBuffer / CreateIconFromResourceEx | `09a:1980`, `09a7:2897`, `09a:10627` | the same fixed handle for every call |
+| WaitMessage | `09a:12619` | returns immediately — busy loop |
+| ReleaseMutex | `09a:11184` | no state; wrong under `--threads` |
+| DdeGetData / DdeNameService / DdeUninitialize | `09a:1204/1147/1157` (08-23) | 0 bytes / TRUE |
+| Shell_NotifyIconA, SetConsoleCtrlHandler, DragQueryFileA, RegisterDragDrop, SetFileTime, waveOutPause, ICInfo/ICOpen | `09a:10253/10430/5670/12719/9530`, `09a3:481`, `09a8:7116-7127` | success, nothing done |
+| DDraw/DInput enumerations, ~30 IDirectPlay3/Lobby methods `09a8:5435-5702`, viewport lights `09aa:1105-1580` | | OK, no callback / no effect |
+| **D3D9 `ret:'OK'` block, 100 methods** — CreateTexture `09ad:399`, CreateDepthStencilSurface `:429`, LockRect `:1022/1113`, GetRenderState `:604` — **FIXED `56bae14c`** | | `tools/d3d9-methods.js:13-19` said the default is CRASH *because* a NULL resource is worse — yet Create*/Get*/LockRect were tagged OK with out-pointers untouched (08-23). Now CRASH. |
+
+Done on 08-28: the D3D9 rows, the four enumerations, the menu-item pair, and
+`tools/check-silent-stubs.js` as a build gate (`build.sh:43`) so a new
+`$handle_*` whose body is `eax=const; esp+=N` with no other effect fails the
+build. Still open: RegisterHotKey, the hooks, the fixed-handle trio,
+WaitMessage, ReleaseMutex, the DDE trio, the shell/console/file row, and the
+DDraw/DInput/DirectPlay/viewport-light enumerations. *Fix:* CACA thunks for the
+remaining enumerations (the pattern now exists 35 times); per-call slots for
+the fixed handles.
+
+## P2-8 — The toy DOS VM (`tools/toyvm/`)
+
+A second x86 interpreter, 16-bit real mode + 386 extensions, decoder in JS
+(`decode.js` 1,085 lines, 92 opcode cases) with handler bodies as WAT string
+fragments (`emit.js` 3,942 lines, 116 handlers, four dispatch shells), a trace
+cache (`compile.js`), a DOS/BIOS/VGA machine (`dos.js` 2,945 lines, 105
+INT/port cases), and a browser bundle. It shares **nothing under `src/`** with
+the main emulator — only `lib/compile-wat.js`, `tools/disasm.js`,
+`tools/fnt-read.js` and `tools/fetch-cputests.js` — deliberately, as a
+dispatch-shape measurement rig (`docs/toyvm-dispatch-shootout.md`). It shares
+no decoder, flag model, or memory map with `07-decoder.wat`'s own 16-bit path
+(`$code16`, handlers 370-388), and `tools/disasm.js` is a third decode of the
+same ISA (toyvm's `dos-disasm.js` reuses it for display only). The rig has grown a product: XMS, protected-mode `d32`
+segments, an FPU, a 199-program corpus page with 12 binaries embedded in git.
+
+Correctness is checked by hand-run tools (`gate.js` against SingleStepTests
+silicon vectors, default `--ops=00-05`; `fpu-check.js` 48, `bitops-check.js`
+20), none in `run-all.sh`; its three repo tests are among the 48 unlisted
+(P2-3.6). *Fix:* vendor one opcode's vectors and gate `--ops=00-05 --limit=500`
++ fpu/bitops in run-all; `bundle-browser.js --check` (P2-3.7); make
+`tools/disasm.js` the reference for `decode.js`'s length/ModRM logic.
+
+## P2-9 — tools/ and test/
+
+- **Broken:** `tools/trace-assert.js:6`, `render-desktop.js:9` and
+  `test/call-func.js:10` require the deleted `lib/resources.js`;
+  `win16-v86-compare.js:265` greps `[CreateWindowEx` but every host prints
+  `[CreateWindow]` (`run.js:2554`, `host.js:693`, `host-window.js:195` — window
+  count always 0); `wep32-compare.js:109-118` regex-scrapes `lib/apps.js` *source*.
+- **Superseded, no code references:** `headless-run.js` (a 480-line second
+  run.js), `cdp-eval.js`, `batch-timing-stats.js`, `wasm-exports.js`, `run.sh`;
+  `render-png.js` likewise, though CLAUDE.md:368 still lists it.
+- **Duplicates:** five PNG inspectors (`png-crop/probe/rows/stats/window`);
+  `func-index.js` vs `wasm-func-name.js`; three hand-rolled CDP clients
+  (`profile-winamp-web.js` 2,302 lines, `profile-aoe-web.js` 1,432) beside
+  puppeteer-based `profile-web-frames.js`; five `aoe-*` census tools (~3k lines)
+  for an abandoned design; six tools with private app lists. Three app lists
+  coexist: `lib/apps.js` (141 entries), `corpus-apps.sh` (35), `test-all-exes.js`
+  (114 cases).
+- **9 tools regex-scrape run.js stdout** (`caller_census`, `cpuprof-sweep`,
+  `loopmatch-sweep`, `menu-sweep`, `startup-modal-sweep`, `wep32-compare`,
+  `win16-v86-compare`…); the `[CreateWindowEx` drift is what that costs.
+  *Fix:* `run.js --json-summary=FILE`.
+- `check-parens.js` fails on `build/combined.wat` (depth −1 at 187,464): the
+  artifact has 10 more lines than `src/*.wat` and every dirty part balances on
+  its own — a stale build from another session, PLAUSIBLE. Worth making
+  `check-parens` regenerate before checking.
+
+## P2-10 — What's healthy (keep doing this)
+
+- All ten build gates pass and are wired in; `check-handler-esp` covers 1,382
+  epilogues; `api_table.json` append-only holds at 3,034.
+- 194 of 210 A/W pairs share a `$wide` core or delegate. The 10 new divergences
+  are old A-sides, not new copies.
+- `$paint_scratch_take`, `$scroll_bar_addr`/`$scroll_aux_bar_addr`/
+  `$ctrl_geom_addr`, `$wnd_record_addr`: one function per table, still.
+- `tools/d3d9-methods.js` — spec-driven stubs with CRASH as the documented
+  default is the right shape; only the row tags are wrong.
+- toyvm binds handlers by *name* (`emit.js:33-36`, `decode.js:15`) — better
+  than the WAT decoder's literals (P2-3.4).
+- `$branch_end`/`$jcc_end` tail-calling `$next` on a page hit — the desk is
+  genuinely off the hot path now.
+- The trunc audit is clean: every `i32.trunc` in the core is NaN/range-guarded
+  (`06-fpu.wat:273-297, 499-506`; `06c-mmx.wat:110-117` uses `trunc_sat`).
+- `28e5830`'s sweep hygiene (signal-killed runs are not passes; per-case load
+  sampling) is the model the DOS corpus sweep should copy — it has no retry
+  and a `blank/vga/text` verdict only.
+
+## Pass-2 prioritized recommendations
+
+*Struck items were done on 08-28 — see "Pass-2 status" below.*
+
+**Tier 1 — live bugs and missing gates (a day; each is small):**
+1. ~~Move `SCROLL_AUX_TABLE` and `EXTRA_CMDLINE_BUFFER` off their collisions;
+   `wat-memory-map.js` exits non-zero on intersection and runs in build.sh.~~ (P2-3.2, `2959ea35`)
+2. ~~`mem-utils.js` `DIB_GUEST_CAPACITY` = `0x03F00000`~~ (`2959ea35`); extend the
+   new constants gate to the remaining WAT↔JS pairs listed in P2-3.1.
+3. ~~`host.js:2398` → fall through to the thread block.~~ (P2-6.1, `2ac6df83`)
+4. `check-test-manifest.sh` into build.sh; tier the ~55 strays. (P2-3.6)
+5. ~~Bound `DLL_TABLE`.~~ (P2-3.3, `2959ea35`; verify the WAT-side `$load_dll` path)
+6. ~~The 29 confirmed `i32.and` sites, then the scanner as a gate.~~ (P2-7.3, `1c72223b`/`56bae14c`)
+7. The 3 remaining A/W divergences (EnumDisplaySettings, GetCommandLineA's leak,
+   RegisterClipboardFormatW's RTF id) and the 4 worst family divergences
+   (RegSetValue, GetTextExtentPointW, CreateWindowExW's ANSI CREATESTRUCT,
+   listbox WM_VSCROLL). (P2-7.2, 7.4)
+
+**Tier 2 — the pattern fixes (each closes a class):**
+8. Generated handler-id and api-id/CACA globals; delete the drifted comments. (P2-3.4, 3.5)
+9. App-literal allowlist gate; `(addr → fold)` table from app-profiles; `run.js --app` honors `copySuperops`. (P2-4.2)
+10. One inherited-globals table for both spawn paths; ~~shared TLS cursor~~ (`2959ea35`); one hwnd-base; delete the unreachable `yr===9`. (P2-3.8, P2-5)
+11. ~~`check-silent-stubs.js`; flip the D3D9 Create/Get/LockRect rows; CACA-thunk the four system enumerations~~ (`1c72223b`, `56bae14c`); the DDraw/DInput/DirectPlay enumerations and the fixed-handle stubs remain. (P2-7.5)
+12. Delete the 45 dead functions and the 6 dead tools; fix the 3 broken requires; `wat-func.js --dead` in run-all. (P2-4.6, P2-9)
+
+**Tier 3 — performance (measure first, levers named):**
+13. Gate the three per-block counters; print desk share; gate the atomic. (P2-4.1)
+14. Cached DataView + live-surface set in the DX present path; same in the GL encoder. (P2-6.5)
+15. Inline the SMC bitmap test into `$gs*`; one check per MMX/SSE access; clear the code-page bit. (P2-4.3)
+16. `$mmx_binop` → `br_table`. (P2-4.5)
+17. Free lists before `$clear_cache`; the `$next` guard through `_flush_if_safe`. (P2-4.4)
+
+**Tier 4 — structural (the 08-18 list, unchanged, plus the new ones):**
+18. EditState/ToolbarState/TooltipState accessors; split the six wndprocs by message family; move the 36 GDI handlers and the wordpad tail. (P2-2, P2-7.1)
+19. `renderer.windows` → canvas bookkeeping only; `move_window`/`set_window_zorder`/GW_* into WAT. (P2-2 §4.3)
+20. `lib/page-viewport.js` + `lib/page-settings.js` out of index.html; one version constant. (P2-6.2)
+21. `runSlice`/`threads`/`inputHooks` on the apps.js entry; delete `autoRunSliceFor` and the Winamp title match. (P2-5, P2-6.3)
+22. One `check_input`, one yield state machine, one `makeWorkerImports` for both hosts. (P2-6.3)
+23. toyvm: vendor test vectors and gate; `disasm.js` as the shared reference decoder. (P2-8)
+24. `run.js --json-summary`; retire the stdout scrapers. (P2-9)
+
+## Pass-2 status — what was acted on
+
+*Updated 2026-08-28. Another session (coordinating on `messageboard.txt`)
+picked the document up within hours; the two verification passes then found
+these already in HEAD or staged. Commit hashes are on `main`.*
+
+| § | Item | Commit |
+|---|---|---|
+| 3.2 | Every fixed region sized and the map intersected as a build gate (`test/test-wat-memory-map.js`, `build.sh:15`). Five live overlaps moved, not two: `SCROLL_AUX_TABLE` → 0x07F21000, `EXTRA_CMDLINE_BUFFER` → 0x07F20200, and the TreeView family + `TIMER_SHARED` this pass had not seen; D3DIM's strings/caches/state declared as one sized `$D3DIM_AUX` region | `2959ea35` |
+| 3.1 | `mem-utils.js` DIB capacity 63 MB to match WAT; `host-imports.js` imports it instead of redefining; JS DIB/RPC constants checked by the same gate | `2959ea35` |
+| 3.3 | `$DLL_TABLE_CAPACITY`; the 17th DLL fails in `lib/dll-loader.js:27-31` before any write | `2959ea35` |
+| 3.8 | TLS index cursor process-wide and atomic (`$TLS_NEXT_INDEX_SHARED`, `$tls_reserve`); TlsGetValue/SetValue/Free reject index ≥ 64 instead of walking past the 256-byte vector | `2959ea35` |
+| 7.2 | GetSystemDirectoryA, GetWindowsDirectoryA, GetUserNameA, GetComputerNameA honor their buffer sizes like their W twins | `2959ea35` |
+| 7.3, 4.7 | 36 raw-value logical `i32.and` sites normalized (29 of this pass's list plus 7 more the scanner found); `tools/check-wat-logical-and.js` as a build gate (`build.sh:38`) | `1c72223b`, `56bae14c` |
+| 7.5 | EnumWindows / EnumThreadWindows / EnumSystemLocalesA / EnumSystemCodePagesA call back through CACA thunks; Get/SetMenuItemInfoA real for dynamic menus (honest FALSE otherwise); `tools/check-silent-stubs.js` as a build gate (`build.sh:43`); D3D9 Create*/Get*/LockRect rows flipped to CRASH in `tools/d3d9-methods.js` | `1c72223b`, `56bae14c` |
+| 6.1 | The `cs_wait` yield path no longer reschedules-and-returns; it falls through to the thread block so the section owner gets a slice (this was the Deus Ex startup hang) | `2ac6df83` |
+
+**Still open from Tier 1:** the test-manifest gate in `build.sh` (3.6); the
+remaining WAT↔JS constant pairs (3.1); the three A/W and four family
+divergences in item 7.
+
+**What the verification changed in this document:** the `10c-truetype.wat:4155`
+AND row was struck (the callee already returned a 0/1); EnumDisplaySettingsW
+refuses a short DEVMODEW rather than overwriting it; `$mmx_binop` is 45-way,
+not 64; the decoder literal count is 405/321, not 415/319; `$page_misses` *is*
+printed; `_f32` in the GL encoder already caches its view; `render-png.js` is
+still documented in CLAUDE.md; a third file (`test/call-func.js`) requires the
+deleted `lib/resources.js`; and a dozen line numbers had drifted by a few lines
+under the day's commits.
+
+---
+
+# Pass 1 — 2026-08-18 (unchanged, with its action log)
+
+
 *2026-08-18. Reviewed at commit `ab4aae3` ("Finish DDEML: wildconnect, busy, real timeouts, and an error code fix"). Four parallel deep reviews: CPU/emulator core, Win32/controls WAT layer, JS host layer, tools/build system — plus focused deep-dives into the three largest files (`10-helpers.wat`, `09a7-handlers-dispatch.wat`, `09c3-controls.wat`) and the state-table layer. All claims carry file:line evidence; line numbers are as of the reviewed commit.*
 
 ---
