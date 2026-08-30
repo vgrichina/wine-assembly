@@ -194,7 +194,7 @@ collision — which is exactly the check Pass 2 said should not be by hand.
 (`LOOP_PROCESS_STATE` *does* have its twin, `07b:75`.) *Fix:* the gate fails on
 any `0x07xxxxxx` global without a `_SIZE`.
 
-**3.7 `tools/check-parens.js` is red on HEAD and nothing runs it.** On a fresh
+**3.7 `tools/check-parens.js` is red on HEAD and nothing runs it — FIXED `1166907c`; it was a real stray paren, see the addendum.** On a fresh
 `concat-wat.js` it reports `final depth -1` at `build/combined.wat:192307`; per
 part, `10d-gdi-region-path.wat` goes from depth 3 to -1 on a line that closes
 five (`:2849`) inside a function body — so the checker lost count *earlier* in
@@ -416,7 +416,22 @@ closed within the hour of this addendum being written — **3.1 FIXED
 `9d12c589`** (`$console_read_output` reads `bh` from `arg2>>16`, clips to both
 the buffer and the screen, writes `lpReadRegion` back; test added) and **3.2
 FIXED `c5ceec02`** (both H441 fast-path stores now call
-`$invalidate_code_write`, `07b:3275,3289`). The rest stands; two moved. The stub ratchet was re-pinned *in the same commit* as
+`$invalidate_code_write`, `07b:3275,3289`). Three more closed by 08:20:
+**3.7 FIXED `1166907c`** — and the finding was better than written: the
+checker was *right*. Its rewritten lexer (WAT strings, nested block comments)
+kept reporting `10d-gdi-region-path.wat`, and the cause was a real stray `)`
+that closed `$gdi_path_widen_join` early, so the geometric-join branch had been
+unreachable — the in-house compiler had accepted unbalanced text without a
+word. `check-parens` is now a build gate (`build.sh:71`) with its own test,
+and the join renders again. New follow-up for `tools/build-compile-wat.js`:
+reject a module whose paren depth is not zero at EOF. **A.4 FIXED `d9bee7ca`**
+— the `$restore_destroyed_dialog_owner` heuristic is deleted; `EnableWindow`
+now returns nonzero iff the window was previously disabled (`09a:4923`), which
+is what COMCTL32's own PropertySheet loop needed, with `test-enable-window.js`.
+**A.1 WORSE** — `f2dc80d2` (toyvm ALU+Jcc fusion, 192 fused handlers, +8.3%
+geomean) changed `emit.js` again without a bundle rebuild; `bundle-browser.js`
+still omits `emit-decoder.js`, and the committed bundle is still `6b015971`'s.
+The rest stands; two moved. The stub ratchet was re-pinned *in the same commit* as
 its stub removal once (`4a08c267`, 324→323) — the process half of 3.4, observed
 once; the regex is unchanged and the tool still does not print its new pin. The
 GL encoder's `?v=` now agrees between page and worker (`index.html:1367`,
@@ -432,7 +447,7 @@ check-parens, 3.9 COPY gate, 3.11, 3.12) is verbatim open.
 
 **New in this window, ranked.**
 
-**A.1 The committed toyvm bundle is stale and can no longer be rebuilt — bug.**
+**A.1 The committed toyvm bundle is stale and can no longer be rebuilt — bug; still open at 08:20, one more `emit.js` change behind.**
 `docs/dos-corpus/live/toyvm-bundle.js` was last generated in `6b015971`, before
 the wasm decoder existed (678,721 B committed vs 699,901 B from HEAD, first
 difference at byte 103,097). Worse: `tools/toyvm/bundle-browser.js:37-49`
@@ -484,7 +499,7 @@ closes through `$host_fs_close_handle` and works only because
 with no comment on the WAT side.
 
 **A.4 "Restore owners after modal dialogs close" is a heuristic, not owner
-tracking** (`$restore_destroyed_dialog_owner`, `09a:3241-3275`, `9fa3a664`). On
+tracking — FIXED `d9bee7ca` (heuristic deleted; EnableWindow returns prior state)** (`$restore_destroyed_dialog_owner`, `09a:3241-3275`, `9fa3a664`). On
 `DestroyWindow` of any owned `WNDPROC_DIALOG` it clears `WS_DISABLED` on the
 owner unless another *visible*, parentless owned dialog remains. Nothing
 records *who* disabled the owner: an app that called `EnableWindow(owner,
