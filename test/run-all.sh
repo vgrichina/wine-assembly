@@ -709,6 +709,7 @@ E2E=(
   # Green only once their budgets stopped being shorter than the work: the two
   # vlan ones spawn a second emulator and wait for it over the wire.
   test/test-find-mouse-click.js
+  test/test-far-manager-candidate.js
   test/test-liquid-war-candidate.js
   test/test-vlan-tetrinet.js
   test/test-vlan-match.js

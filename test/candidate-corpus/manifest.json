@@ -1121,6 +1121,33 @@
           "**/*"
         ]
       }
+    },
+    {
+      "id": "far-manager-170",
+      "name": "Far Manager",
+      "kind": "console application",
+      "version": "1.70",
+      "executables": [
+        "FarManager170/Far.exe"
+      ],
+      "sourcePage": "https://ftp.zx.net.nz/pub/archive/ftp.rarlab.com/rar/obsolete/",
+      "license": "try-before-you-buy; original trial package permits unmodified redistribution but forbids bundling, so keep as a local ignored candidate fixture",
+      "localOnly": true,
+      "packages": [
+        {
+          "url": "https://ftp.zx.net.nz/pub/archive/ftp.rarlab.com/rar/obsolete/FarManager170.rar",
+          "sha1": "0cb9f553a4c5b7afd3fe5ae0fa64e18735fa1063",
+          "type": "archive"
+        }
+      ],
+      "cli": {
+        "maxBatches": 400,
+        "batchSize": 50000,
+        "vfsInclude": [
+          "*.lng",
+          "*.hlf"
+        ]
+      }
     }
   ]
 }
