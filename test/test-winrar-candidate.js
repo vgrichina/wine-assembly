@@ -197,6 +197,7 @@ function saturatedCountInRect(png, left, top, right, bottom) {
       '--no-build',
       '--quiet-api',
       '--quiet-blocks',
+      '--trace-api=EnableWindow,DestroyWindow',
       '--max-batches=120',
       '--batch-size=50000',
       `--input=1:wait-title:Please_register:2000,2:dlg-click:1,5:dump-windows:registration-closed,` +
@@ -225,6 +226,14 @@ function saturatedCountInRect(png, left, top, right, bottom) {
       `installed WinRAR hit a compatibility failure\n${installedOutput.slice(-8000)}`);
     assert(installedOutput.includes('[SetWindowText] "c:\\ - WinRAR (evaluation copy)"'),
       `installed WinRAR never reached its live file panel\n${installedOutput.slice(-8000)}`);
+    const modalDisable = installedOutput.match(
+      /\[API #[^\]]+\] EnableWindow\((0x[0-9a-f]+), 0x00000000\)/i);
+    assert(modalDisable,
+      `WinRAR COMCTL32 did not disable the property-sheet owner\n${installedOutput.slice(-8000)}`);
+    const ownerEnablePattern = new RegExp(
+      `\\[API #[^\\]]+\\] EnableWindow\\(${modalDisable[1]}, 0x00000001\\)`, 'i');
+    assert(ownerEnablePattern.test(installedOutput),
+      `WinRAR COMCTL32 did not re-enable the owner it disabled\n${installedOutput.slice(-8000)}`);
     assert(/\[input\] window:registration-closed .*enabled=false .*title="c:\\\\ - WinRAR \(evaluation copy\)"/.test(installedOutput),
       `closing WinRAR registration prematurely enabled the Settings owner\n${installedOutput.slice(-8000)}`);
     assert(/\[input\] window:settings-closed .*enabled=true .*title="c:\\\\ - WinRAR \(evaluation copy\)"/.test(installedOutput),

@@ -3232,53 +3232,10 @@
             ;; becomes the new input/paint target.
             (global.set $main_hwnd (i32.const 0)))))))
 
-  ;; A modal property sheet disables its owner before entering its private
-  ;; message loop. COMCTL32 normally restores that owner as the last owned
-  ;; dialog goes away; doing the lifecycle through our recursive DestroyWindow
-  ;; path otherwise leaves the application permanently WS_DISABLED. Do not
-  ;; restore through a nested modal: WinRAR's registration notice and Settings
-  ;; sheet are both owned by its main window.
-  (func $restore_destroyed_dialog_owner (param $owner i32)
-    (local $slot i32) (local $other i32) (local $style i32)
-    (if (i32.eqz (local.get $owner)) (then (return)))
-    (if (i32.eqz (call $wnd_table_get (local.get $owner))) (then (return)))
-    (local.set $style (call $wnd_get_style (local.get $owner)))
-    (if (i32.eqz (i32.and (local.get $style) (i32.const 0x08000000)))
-      (then (return)))
-    (local.set $slot (i32.const 0))
-    (block $none_left (loop $scan
-      (br_if $none_left (i32.ge_u (local.get $slot) (global.get $MAX_WINDOWS)))
-      (local.set $other (call $wnd_slot_hwnd (local.get $slot)))
-      (if (i32.and
-            (i32.ne (local.get $other) (i32.const 0))
-            (i32.and
-              (i32.eq (call $wnd_get_owner (local.get $other)) (local.get $owner))
-              (i32.and
-                (i32.eqz (call $wnd_get_parent (local.get $other)))
-                (i32.and
-                  (i32.eq (call $wnd_table_get (local.get $other)) (global.get $WNDPROC_DIALOG))
-                  (call $wnd_is_effectively_visible (local.get $other))))))
-        (then (return)))
-      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
-      (br $scan)))
-    (drop (call $wnd_set_style (local.get $owner)
-      (i32.and (local.get $style) (i32.const 0xF7FFFFFF))))
-    (drop (call $wnd_send_message
-      (local.get $owner) (i32.const 0x000A) (i32.const 1) (i32.const 0)))
-    ;; Exposure invalidates the owner and its registered common-control tree,
-    ;; so the first browser frame after the sheet closes is complete.
-    (call $invalidate_hwnd (local.get $owner))
-    (drop (call $paint_seed_child_paints (local.get $owner))))
-
   ;; 83: DestroyWindow
   (func $handle_DestroyWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $focus_lost i32) (local $focus_parent i32) (local $focus_guard i32)
-    (local $wndproc i32) (local $ret_addr i32) (local $owner i32) (local $restore_owner i32)
-    (local.set $owner (call $wnd_get_owner (local.get $arg0)))
-    (local.set $restore_owner
-      (i32.and
-        (i32.ne (local.get $owner) (i32.const 0))
-        (i32.eq (call $wnd_table_get (local.get $arg0)) (global.get $WNDPROC_DIALOG))))
+    (local $wndproc i32) (local $ret_addr i32)
     ;; Recursive destruction also removes every child. If any of them held
     ;; focus, that focus is lost just as surely as when the root itself held
     ;; it. Tetris closes an About dialog whose OK child has focus; retaining
@@ -3316,8 +3273,6 @@
     (call $wnd_uncover_parent (local.get $arg0))
     ;; Recursively destroy window and all its children (frees table slots)
     (call $wnd_destroy_recursive (local.get $arg0))
-    (if (local.get $restore_owner)
-      (then (call $restore_destroyed_dialog_owner (local.get $owner))))
     ;; Transfer focus to main_hwnd: deliver WM_SETFOCUS synchronously via EIP redirect.
     ;; On real Windows, destroying the focused window gives focus to the next foreground window.
     ;; Only if main_hwnd is valid and different from the destroyed window (may have been promoted).
@@ -4961,9 +4916,12 @@
   )
 
   ;; 112: EnableWindow
-  ;; EnableWindow(hWnd, bEnable) → BOOL (previous state)
+  ;; EnableWindow(hWnd, bEnable) returns nonzero only when the window was
+  ;; previously disabled. COMCTL32's modal PropertySheet loop relies on that
+  ;; exact Win32 contract: it remembers the owner only when its own disable
+  ;; changed state, then re-enables the owner after destroying the sheet.
   (func $handle_EnableWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $idx i32) (local $style i32) (local $new_style i32) (local $prev_enabled i32)
+    (local $idx i32) (local $style i32) (local $new_style i32) (local $prev_disabled i32)
     (local.set $idx (call $wnd_table_find (local.get $arg0)))
     (if (i32.eq (local.get $idx) (i32.const -1))
       (then
@@ -4971,9 +4929,10 @@
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
         (return)))
     (local.set $style (call $wnd_get_style (local.get $arg0)))
-    (local.set $prev_enabled
-      (select (i32.const 0) (i32.const 1)
-        (i32.and (local.get $style) (i32.const 0x08000000))))
+    (local.set $prev_disabled
+      (i32.ne
+        (i32.and (local.get $style) (i32.const 0x08000000))
+        (i32.const 0)))
     (if (local.get $arg1)
       (then
         (local.set $new_style
@@ -4991,7 +4950,7 @@
           (select (i32.const 1) (i32.const 0) (local.get $arg1))
           (i32.const 0)))
         (call $invalidate_hwnd (local.get $arg0))))
-    (global.set $eax (local.get $prev_enabled))
+    (global.set $eax (local.get $prev_disabled))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))  ;; stdcall, 2 args
   )
 
