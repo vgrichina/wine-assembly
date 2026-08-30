@@ -2539,6 +2539,11 @@ class Machine {
 
   int10(ah, al, r) {
     if (ah === 0x00) {
+      // A BIOS mode set leaves any VESA mode. Keeping the VESA surface across
+      // it is how AQUAPHOB.EXE's demo came out as its own setup screen in the
+      // demo's new palette: the picture had moved back to the 64KB at A000
+      // while the banks still held what the setup had drawn.
+      this.vesa = { mode: 0, width: 0, height: 0, bank: 0 };
       this.videoMode = al & 0x7F;
       this.mem[0x449] = this.videoMode;
       this.setVideoBda();      // the CRTC port follows the mode: mono vs colour

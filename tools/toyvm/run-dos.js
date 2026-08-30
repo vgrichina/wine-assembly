@@ -43,6 +43,25 @@ const {
 // screenshot and the page's canvas cannot disagree about what the screen is.
 // Only the PNG encoding stays here, because only a Node driver writes files.
 
+// --click=X:Y[@FRAC] -- press the left button at one point in the guest's
+// mouse coordinate space, FRAC of the way through the dispatch budget (0.3 by
+// default). Repeatable, and several clicks can share one flag separated by
+// commas. Colons rather than commas inside one click because that is what
+// every other coordinate flag here uses and what argAll splits on.
+// A keyboard is no use to a program whose whole interface is
+// drawn: AQUAPHOB.EXE puts up a 640x480 VESA setup screen with a START DEMO
+// button and ignores every key, so without this its picture is its menu.
+// The coordinates are the ones int 33h reports, which is not always the pixel
+// grid -- that program asks for a 0..1278 horizontal range over 640 pixels, so
+// its x is doubled. Read the range the guest sets with fn 07/08 first.
+function parseClicks(spec) {
+  return String(spec || '').split(';').filter(Boolean).map((item) => {
+    const [where, at] = item.split('@');
+    const [x, y] = where.split(':').map(Number);
+    return { x: x | 0, y: y | 0, at: at === undefined ? 0.3 : Number(at), done: false };
+  });
+}
+
 const ld32 = (mem, at) =>
   (mem[at] | (mem[at + 1] << 8) | (mem[at + 2] << 16) | (mem[at + 3] << 24)) >>> 0;
 
@@ -94,7 +113,7 @@ async function runDos(o) {
     stopText = null,
     traceIo = null,
     shots = null, shotEvery = 20,
-    mouse = [0, 0], cpu = 386, report = false, log = console.log, autoKey = false,
+    mouse = [0, 0], clicks = [], cpu = 386, report = false, log = console.log, autoKey = false,
     tickScale = 1, sample = false, sampleAfter = 0, forceChained = false,
     // How many handbacks at one address with nothing new on screen before the
     // run is called hung. 0 turns the detector off, which is what to reach for
@@ -399,6 +418,28 @@ async function runDos(o) {
       break;
     }
 
+    // Scripted clicks. The button is held for a stretch of handbacks rather
+    // than a single one because a program polling fn 03 samples it whenever it
+    // gets round to it, and a press that is up again by the next poll never
+    // happened. Release is the same event backwards -- a button the guest
+    // never sees go up leaves its button-down handler running.
+    for (const c of clicks) {
+      if (c.done) continue;
+      if (session.dispatched < c.at * budget) continue;
+      if (c.held === undefined) {
+        machine.mouse.x = c.x;
+        machine.mouse.y = c.y;
+        machine.mouse.buttons = 1;
+        machine.mouse.pressed[0]++;
+        c.held = 0;
+        log(`click at ${c.x},${c.y}`);
+      } else if (++c.held > 200) {
+        machine.mouse.buttons = 0;
+        machine.mouse.released[0]++;
+        c.done = true;
+      }
+    }
+
     // Keep the fullest frame. Sampled rather than continuous: scanning the
     // surface is cheap next to a batch, but not next to a handback, and a
     // program can hand back every hundred dispatches.
@@ -559,6 +600,7 @@ async function main() {
     shots: arg('shots'),
     shotEvery: count(arg('shot-every'), 20),
     mouse: (arg('mouse', '0:0')).split(':').map(Number),
+    clicks: argAll('click').flatMap(parseClicks),
     cpu: Number(arg('cpu', 386)),
     report,
     // Naming a rotation is asking for one, so --auto-keys implies --auto-key.
