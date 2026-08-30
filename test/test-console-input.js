@@ -15,6 +15,7 @@ const extraWat = String.raw`
     (i32.store (global.get $CONSOLE_INPUT) (i32.const 0))
     (i32.store (i32.add (global.get $CONSOLE_INPUT) (i32.const 4)) (i32.const 0))
     (i32.store (i32.add (global.get $CONSOLE_INPUT) (i32.const 12)) (i32.const 0))
+    (i32.store (i32.add (global.get $CONSOLE_INPUT) (i32.const 24)) (i32.const 0))
     (global.set $yield_flag (i32.const 0))
     (global.set $yield_reason (i32.const 0))
     (global.set $handler_set_eip (i32.const 0)))
@@ -191,15 +192,93 @@ function readAnsi(e, buf, n) {
   e.test_console_reset();
   e.test_console_ensure_window();
   hostEvents.push(
-    { packed: (0x78 << 16) | 0x0100, wparam: 0x78, hwnd: 0, lparam: 1 }, // F9 down
-    { packed: (0x78 << 16) | 0x0101, wparam: 0x78, hwnd: 0, lparam: 1 }, // F9 up
+    { packed: (0x78 << 16) | 0x0100, wparam: 0x78, hwnd: 0,
+      lparam: 1 | (0x43 << 16) }, // F9 down
+    { packed: (0x78 << 16) | 0x0101, wparam: 0x78, hwnd: 0,
+      lparam: (1 | (0x43 << 16) | 0xc0000000) >>> 0 }, // F9 up
   );
-  assert.strictEqual(e.test_call_PeekConsoleInputA(buf, 1, pread), 1);
-  assert.strictEqual(e.test_peek32(pread), 1, 'host F9 keydown did not become console input');
+  assert.strictEqual(e.test_call_PeekConsoleInputA(buf, 2, pread), 1);
+  assert.strictEqual(e.test_call_PeekConsoleInputA(buf, 2, pread), 1);
+  assert.strictEqual(e.test_peek32(pread), 2, 'host F9 edges did not become console input');
   assert.strictEqual(e.test_peek16(buf + 10), 0x78, 'host virtual key was not preserved');
-  assert.strictEqual(e.test_call_ReadConsoleInputA(buf, 1, pread), 1);
+  assert.strictEqual(e.test_peek16(buf + 12), 0x43, 'host scan code was not preserved');
+  assert.strictEqual(e.test_peek32(buf + 20 + 4), 0, 'F9 key-up reports bKeyDown=FALSE');
+  assert.strictEqual(e.test_peek16(buf + 20 + 12), 0x43, 'key-up scan code was lost');
+  assert.strictEqual(e.test_call_ReadConsoleInputA(buf, 2, pread), 1);
   assert.strictEqual(e.test_peek16(buf + 10), 0x78, 'queued F9 changed before read');
-  assert.strictEqual(e.test_console_count(), 0, 'host keydown was not consumed');
+  assert.strictEqual(e.test_console_count(), 0, 'host key edges were not consumed');
+
+  // Printable WM_CHAR augments its key-down instead of creating a duplicate;
+  // modifier state and hardware metadata survive both edges.
+  e.test_console_reset();
+  hostEvents.push(
+    { packed: (0x10 << 16) | 0x0100, wparam: 0x10, hwnd: 0,
+      lparam: 1 | (0x2a << 16) },                         // Shift down
+    { packed: (0x41 << 16) | 0x0100, wparam: 0x41, hwnd: 0,
+      lparam: 1 | (0x1e << 16) },                         // A down
+    { packed: (0x61 << 16) | 0x0102, wparam: 0x61, hwnd: 0, lparam: 1 },
+    { packed: (0x41 << 16) | 0x0101, wparam: 0x41, hwnd: 0,
+      lparam: (1 | (0x1e << 16) | 0xc0000000) >>> 0 },    // A up
+    { packed: (0x10 << 16) | 0x0101, wparam: 0x10, hwnd: 0,
+      lparam: (1 | (0x2a << 16) | 0xc0000000) >>> 0 },    // Shift up
+  );
+  for (let i = 0; i < 5; i++) e.test_call_PeekConsoleInputA(buf, 4, pread);
+  assert.strictEqual(e.test_peek32(pread), 4,
+    'WM_CHAR must merge into four hardware edges, not become a fifth record');
+  assert.strictEqual(e.test_peek32(buf + 4), 1, 'Shift down is a key-down');
+  assert.strictEqual(e.test_peek16(buf + 12), 0x2a, 'Shift scan code');
+  assert.strictEqual(e.test_peek32(buf + 16), 0x10, 'Shift-down control state');
+  assert.strictEqual(e.test_peek16(buf + 20 + 10), 0x41, 'A virtual key');
+  assert.strictEqual(e.test_peek16(buf + 20 + 12), 0x1e, 'A scan code');
+  assert.strictEqual(e.test_peek16(buf + 20 + 14), 0x61,
+    'WM_CHAR is attached to the A key-down');
+  assert.strictEqual(e.test_peek32(buf + 20 + 16), 0x10,
+    'A key-down sees Shift pressed');
+  assert.strictEqual(e.test_peek32(buf + 40 + 4), 0, 'A key-up is retained');
+  assert.strictEqual(e.test_peek32(buf + 40 + 16), 0x10,
+    'A key-up still sees Shift pressed');
+  assert.strictEqual(e.test_peek32(buf + 60 + 4), 0, 'Shift key-up is retained');
+  assert.strictEqual(e.test_peek32(buf + 60 + 16), 0,
+    'Shift key-up clears persistent modifier state');
+  e.test_call_ReadConsoleInputA(buf, 4, pread);
+
+  e.test_console_reset();
+  hostEvents.push(
+    { packed: (0x31 << 16) | 0x0100, wparam: 0x31, hwnd: 0,
+      lparam: 1 | (0x02 << 16) },
+    { packed: (0x21 << 16) | 0x0102, wparam: 0x21, hwnd: 0, lparam: 1 },
+  );
+  e.test_call_PeekConsoleInputA(buf, 2, pread);
+  e.test_call_PeekConsoleInputA(buf, 2, pread);
+  assert.strictEqual(e.test_peek32(pread), 1,
+    'shifted punctuation merges into its physical number-row key');
+  assert.strictEqual(e.test_peek16(buf + 10), 0x31, 'exclamation mark keeps VK_1');
+  assert.strictEqual(e.test_peek16(buf + 14), 0x21, 'exclamation mark character is retained');
+  e.test_call_ReadConsoleInputA(buf, 1, pread);
+
+  // Enhanced right-control is event-local; lock state is toggled once, not
+  // once per autorepeat record.
+  e.test_console_reset();
+  hostEvents.push(
+    { packed: (0x11 << 16) | 0x0100, wparam: 0x11, hwnd: 0,
+      lparam: 1 | (0x1d << 16) | 0x01000000 },
+    { packed: (0x11 << 16) | 0x0101, wparam: 0x11, hwnd: 0,
+      lparam: (1 | (0x1d << 16) | 0x01000000 | 0xc0000000) >>> 0 },
+    { packed: (0x14 << 16) | 0x0100, wparam: 0x14, hwnd: 0,
+      lparam: 1 | (0x3a << 16) },
+    { packed: (0x14 << 16) | 0x0100, wparam: 0x14, hwnd: 0,
+      lparam: 1 | (0x3a << 16) | 0x40000000 },
+  );
+  for (let i = 0; i < 4; i++) e.test_call_PeekConsoleInputA(buf, 4, pread);
+  assert.strictEqual(e.test_peek32(buf + 16), 0x104,
+    'enhanced Ctrl-down reports RIGHT_CTRL_PRESSED|ENHANCED_KEY');
+  assert.strictEqual(e.test_peek32(buf + 20 + 16), 0x100,
+    'Ctrl-up clears right-control but retains event-local ENHANCED_KEY');
+  assert.strictEqual(e.test_peek32(buf + 40 + 16), 0x80,
+    'fresh CapsLock down turns CAPSLOCK_ON on');
+  assert.strictEqual(e.test_peek32(buf + 60 + 16), 0x80,
+    'CapsLock autorepeat does not toggle CAPSLOCK_ON back off');
+  e.test_call_ReadConsoleInputA(buf, 4, pread);
 
   // --- ENABLE_MOUSE_INPUT exposes real MOUSE_EVENT_RECORDs ----------------
   e.test_console_reset();

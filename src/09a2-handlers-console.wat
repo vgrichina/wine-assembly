@@ -585,7 +585,7 @@
   (func $console_input_vk (param $i i32) (result i32)
     (i32.load offset=8 (call $console_input_slot (local.get $i))))
 
-  (func $console_input_mouse_flags (param $i i32) (result i32)
+  (func $console_input_event_flags (param $i i32) (result i32)
     (i32.load offset=16 (call $console_input_slot (local.get $i))))
 
   (func $console_input_control_state (param $i i32) (result i32)
@@ -617,21 +617,11 @@
         (i32.store (i32.add (global.get $CONSOLE_INPUT) (i32.const 8)) (local.get $h))))
     (local.get $h))
 
-  (func $console_input_push (param $ch i32) (param $vk i32)
-    (local $count i32) (local $slot i32)
-    (local.set $count (i32.load (global.get $CONSOLE_INPUT)))
-    ;; A full queue drops the keystroke, which is what a real console does once
-    ;; its input buffer fills.
-    (if (i32.ge_u (local.get $count) (global.get $CONSOLE_INPUT_MAX)) (then (return)))
-    (local.set $slot (call $console_input_slot (local.get $count)))
-    (i32.store (local.get $slot) (i32.const 1)) ;; KEY_EVENT
-    (i32.store offset=4 (local.get $slot) (local.get $ch))
-    (i32.store offset=8 (local.get $slot) (local.get $vk))
-    (i32.store offset=12 (local.get $slot) (i32.const 0))
-    (i32.store offset=16 (local.get $slot) (i32.const 0))
-    (i32.store (global.get $CONSOLE_INPUT) (i32.add (local.get $count) (i32.const 1)))
-    (drop (call $host_set_event (call $console_input_event)))
-    ;; ENABLE_ECHO_INPUT only echoes in line mode, as on Windows.
+  (func $console_input_echo (param $ch i32)
+    ;; ENABLE_ECHO_INPUT only echoes key-down characters in line mode, as on
+    ;; Windows. WM_CHAR may attach the character after the KEY_EVENT was
+    ;; queued, so echoing belongs to the character attachment path rather than
+    ;; to the ring write itself.
     (if (i32.and
           (i32.ne (local.get $ch) (i32.const 0))
           (i32.eq (i32.and (call $console_input_mode) (i32.const 6)) (i32.const 6)))
@@ -642,6 +632,139 @@
           (then (call $console_put_char (i32.const 10))))
         (call $console_buffer_save_loaded)
         (call $console_refresh))))
+
+  ;; Internal KEY_EVENT representation:
+  ;;   +4 char, +8 virtual key, +12 dwControlKeyState, +16 original key lParam.
+  ;; Keeping lParam preserves its repeat count, scan code, enhanced bit,
+  ;; previous-state bit and transition bit without widening the 20-byte ring.
+  (func $console_input_push_key
+      (param $ch i32) (param $vk i32) (param $lparam i32) (param $control i32)
+    (local $count i32) (local $slot i32)
+    (local.set $count (i32.load (global.get $CONSOLE_INPUT)))
+    ;; A full queue drops the keystroke, which is what a real console does once
+    ;; its input buffer fills.
+    (if (i32.ge_u (local.get $count) (global.get $CONSOLE_INPUT_MAX)) (then (return)))
+    (local.set $slot (call $console_input_slot (local.get $count)))
+    (i32.store (local.get $slot) (i32.const 1)) ;; KEY_EVENT
+    (i32.store offset=4 (local.get $slot) (local.get $ch))
+    (i32.store offset=8 (local.get $slot) (local.get $vk))
+    (i32.store offset=12 (local.get $slot) (local.get $control))
+    (i32.store offset=16 (local.get $slot) (local.get $lparam))
+    (i32.store (global.get $CONSOLE_INPUT) (i32.add (local.get $count) (i32.const 1)))
+    (drop (call $host_set_event (call $console_input_event)))
+    (if (i32.eqz (i32.and (local.get $lparam) (i32.const 0x80000000)))
+      (then (call $console_input_echo (local.get $ch)))))
+
+  ;; Test/direct callers enqueue an ordinary key-down. Runtime keyboard input
+  ;; goes through $console_input_push_host_key so its real hardware metadata is
+  ;; retained.
+  (func $console_input_push (param $ch i32) (param $vk i32)
+    (call $console_input_push_key
+      (local.get $ch) (local.get $vk) (i32.const 1)
+      (i32.load (i32.add (global.get $CONSOLE_INPUT) (i32.const 24)))))
+
+  ;; WM_CHAR follows WM_KEYDOWN in the browser queue. Merge it into the newest
+  ;; matching down record instead of inventing a second KEY_EVENT. If input was
+  ;; injected as a bare WM_CHAR, fall back to a synthetic down event.
+  (func $console_input_attach_char (param $ch i32) (param $vk i32)
+    (local $i i32) (local $slot i32)
+    (local.set $i (call $console_input_count))
+    (block $fallback
+      (loop $scan
+        (br_if $fallback (i32.eqz (local.get $i)))
+        (local.set $i (i32.sub (local.get $i) (i32.const 1)))
+        (local.set $slot (call $console_input_slot (local.get $i)))
+        (if (i32.and
+              (i32.and
+                (i32.eq (i32.load (local.get $slot)) (i32.const 1))
+                (i32.eq (i32.load offset=8 (local.get $slot)) (local.get $vk)))
+              (i32.and
+                (i32.eqz (i32.load offset=4 (local.get $slot)))
+                (i32.eqz (i32.and
+                  (i32.load offset=16 (local.get $slot)) (i32.const 0x80000000)))))
+          (then
+            (i32.store offset=4 (local.get $slot) (local.get $ch))
+            (call $console_input_echo (local.get $ch))
+            (return)))
+        (br $scan)))
+    (call $console_input_push (local.get $ch) (local.get $vk)))
+
+  ;; Update the process-shared modifier/toggle state at CONSOLE_INPUT+24 and
+  ;; return the dwControlKeyState snapshot for this key edge. Browser keyboard
+  ;; events use generic VK_SHIFT/VK_CONTROL/VK_MENU, so lParam's enhanced bit
+  ;; distinguishes right Ctrl/Alt from left just like USER does.
+  (func $console_input_key_control_state
+      (param $msg i32) (param $vk i32) (param $lparam i32) (result i32)
+    (local $state i32) (local $mask i32) (local $down i32)
+    (local.set $state
+      (i32.load (i32.add (global.get $CONSOLE_INPUT) (i32.const 24))))
+    (local.set $down
+      (i32.or
+        (i32.eq (local.get $msg) (i32.const 0x0100))
+        (i32.eq (local.get $msg) (i32.const 0x0104))))
+    ;; SHIFT_PRESSED
+    (if (i32.or (i32.eq (local.get $vk) (i32.const 0x10))
+                (i32.or (i32.eq (local.get $vk) (i32.const 0xA0))
+                        (i32.eq (local.get $vk) (i32.const 0xA1))))
+      (then (local.set $mask (i32.const 0x10))))
+    ;; LEFT/RIGHT_CTRL_PRESSED
+    (if (i32.or (i32.eq (local.get $vk) (i32.const 0x11))
+                (i32.or (i32.eq (local.get $vk) (i32.const 0xA2))
+                        (i32.eq (local.get $vk) (i32.const 0xA3))))
+      (then
+        (local.set $mask
+          (select (i32.const 0x4) (i32.const 0x8)
+            (i32.ne (i32.and (local.get $lparam) (i32.const 0x01000000))
+                    (i32.const 0))))))
+    ;; LEFT/RIGHT_ALT_PRESSED
+    (if (i32.or (i32.eq (local.get $vk) (i32.const 0x12))
+                (i32.or (i32.eq (local.get $vk) (i32.const 0xA4))
+                        (i32.eq (local.get $vk) (i32.const 0xA5))))
+      (then
+        (local.set $mask
+          (select (i32.const 0x1) (i32.const 0x2)
+            (i32.ne (i32.and (local.get $lparam) (i32.const 0x01000000))
+                    (i32.const 0))))))
+    (if (local.get $mask)
+      (then
+        (if (local.get $down)
+          (then (local.set $state (i32.or (local.get $state) (local.get $mask))))
+          (else (local.set $state
+            (i32.and (local.get $state) (i32.xor (local.get $mask) (i32.const -1))))))))
+    ;; NUMLOCK/CAPSLOCK/SCROLLLOCK toggle only on a fresh key-down.
+    (local.set $mask (i32.const 0))
+    (if (i32.eq (local.get $vk) (i32.const 0x90))
+      (then (local.set $mask (i32.const 0x20))))
+    (if (i32.eq (local.get $vk) (i32.const 0x14))
+      (then (local.set $mask (i32.const 0x80))))
+    (if (i32.eq (local.get $vk) (i32.const 0x91))
+      (then (local.set $mask (i32.const 0x40))))
+    (if (i32.and
+          (i32.and (local.get $down) (i32.ne (local.get $mask) (i32.const 0)))
+          (i32.eqz (i32.and (local.get $lparam) (i32.const 0x40000000))))
+      (then (local.set $state (i32.xor (local.get $state) (local.get $mask)))))
+    (i32.store (i32.add (global.get $CONSOLE_INPUT) (i32.const 24))
+      (local.get $state))
+    ;; ENHANCED_KEY belongs only to this event, not to persistent state.
+    (i32.or (local.get $state)
+      (select (i32.const 0x100) (i32.const 0)
+        (i32.ne (i32.and (local.get $lparam) (i32.const 0x01000000))
+                (i32.const 0)))))
+
+  (func $console_input_push_host_key
+      (param $msg i32) (param $vk i32) (param $lparam i32) (result i32)
+    (if (i32.eqz
+          (i32.or
+            (i32.or (i32.eq (local.get $msg) (i32.const 0x0100))
+                    (i32.eq (local.get $msg) (i32.const 0x0101)))
+            (i32.or (i32.eq (local.get $msg) (i32.const 0x0104))
+                    (i32.eq (local.get $msg) (i32.const 0x0105)))))
+      (then (return (i32.const 0))))
+    (call $console_input_push_key
+      (i32.const 0) (local.get $vk) (local.get $lparam)
+      (call $console_input_key_control_state
+        (local.get $msg) (local.get $vk) (local.get $lparam)))
+    (i32.const 1))
 
   ;; Translate USER mouse state into the button bits used by
   ;; MOUSE_EVENT_RECORD. MK_MBUTTON is 0x10, while the console structure calls
@@ -781,10 +904,15 @@
     (local.set $con (call $console_shared_hwnd))
     (if (i32.eqz (local.get $con)) (then (return (local.get $hwnd))))
     (if (i32.eqz (i32.or
-          (i32.or (i32.eq (local.get $msg) (i32.const 0x0100))   ;; WM_KEYDOWN
-                  (i32.eq (local.get $msg) (i32.const 0x0101)))  ;; WM_KEYUP
-          (i32.or (i32.eq (local.get $msg) (i32.const 0x0102))   ;; WM_CHAR
-                  (i32.eq (local.get $msg) (i32.const 0x0103))))) ;; WM_DEADCHAR
+          (i32.or
+            (i32.or (i32.eq (local.get $msg) (i32.const 0x0100))   ;; WM_KEYDOWN
+                    (i32.eq (local.get $msg) (i32.const 0x0101)))  ;; WM_KEYUP
+            (i32.or (i32.eq (local.get $msg) (i32.const 0x0102))   ;; WM_CHAR
+                    (i32.eq (local.get $msg) (i32.const 0x0103)))) ;; WM_DEADCHAR
+          (i32.or
+            (i32.or (i32.eq (local.get $msg) (i32.const 0x0104))   ;; WM_SYSKEYDOWN
+                    (i32.eq (local.get $msg) (i32.const 0x0105)))  ;; WM_SYSKEYUP
+            (i32.eq (local.get $msg) (i32.const 0x0106)))))        ;; WM_SYSCHAR
       (then (return (local.get $hwnd))))
     (if (i32.and
           (i32.ne (local.get $hwnd) (i32.const 0))
@@ -824,23 +952,17 @@
     (if (call $console_input_mouse_message
           (local.get $msg) (local.get $wparam) (global.get $pending_input_lparam))
       (then (return)))
-    ;; Match $console_wndproc: printable keys arrive through WM_CHAR, while
-    ;; navigation/function keys carry their virtual key in WM_KEYDOWN.
-    (if (i32.eq (local.get $msg) (i32.const 0x0102))
+    ;; Match $console_wndproc: retain every hardware edge, then merge the
+    ;; translated character into its preceding key-down record.
+    (if (i32.or (i32.eq (local.get $msg) (i32.const 0x0102))
+                (i32.eq (local.get $msg) (i32.const 0x0106)))
       (then
-        (call $console_input_push
+        (call $console_input_attach_char
           (local.get $wparam)
           (call $console_vk_for_char (local.get $wparam)))
         (return)))
-    (if (i32.eq (local.get $msg) (i32.const 0x0100))
-      (then
-        (local.set $hwnd (local.get $wparam))
-        (if (i32.or
-              (i32.and (i32.ge_u (local.get $hwnd) (i32.const 0x21))
-                       (i32.le_u (local.get $hwnd) (i32.const 0x2F)))
-              (i32.and (i32.ge_u (local.get $hwnd) (i32.const 0x70))
-                       (i32.le_u (local.get $hwnd) (i32.const 0x87))))
-          (then (call $console_input_push (i32.const 0) (local.get $hwnd)))))))
+    (drop (call $console_input_push_host_key
+      (local.get $msg) (local.get $wparam) (global.get $pending_input_lparam))))
 
   ;; Park the calling thread on its import thunk without consuming the stdcall
   ;; frame — the $cs_block pattern, which is the only one that survives the
@@ -929,18 +1051,27 @@
           (i32.store offset=12 (local.get $rec)
             (call $console_input_control_state (local.get $i)))
           (i32.store offset=16 (local.get $rec)
-            (call $console_input_mouse_flags (local.get $i))))
+            (call $console_input_event_flags (local.get $i))))
         (else
-          (i32.store offset=4 (local.get $rec) (i32.const 1))   ;; bKeyDown
-          (i32.store16 offset=8 (local.get $rec) (i32.const 1)) ;; repeat
+          (i32.store offset=4 (local.get $rec)
+            (i32.eqz (i32.and
+              (call $console_input_event_flags (local.get $i))
+              (i32.const 0x80000000))))                         ;; bKeyDown
+          (i32.store16 offset=8 (local.get $rec)
+            (i32.and (call $console_input_event_flags (local.get $i))
+              (i32.const 0xFFFF)))                              ;; repeat
           (i32.store16 offset=10 (local.get $rec) (call $console_input_vk (local.get $i)))
-          (i32.store16 offset=12 (local.get $rec) (i32.const 0))
+          (i32.store16 offset=12 (local.get $rec)
+            (i32.and
+              (i32.shr_u (call $console_input_event_flags (local.get $i)) (i32.const 16))
+              (i32.const 0xFF)))                                ;; scan code
           (i32.store16 offset=14 (local.get $rec)
             (select
               (call $console_input_char (local.get $i))
               (i32.and (call $console_input_char (local.get $i)) (i32.const 0xFF))
               (local.get $wide)))
-          (i32.store offset=16 (local.get $rec) (i32.const 0))))
+          (i32.store offset=16 (local.get $rec)
+            (call $console_input_control_state (local.get $i)))))
       (local.set $rec (i32.add (local.get $rec) (i32.const 20)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $fill)))
@@ -1407,23 +1538,19 @@
     (if (call $console_input_mouse_message
           (local.get $msg) (local.get $wParam) (local.get $lParam))
       (then (return (i32.const 0))))
-    ;; WM_CHAR — the character keys. TranslateMessage has already folded the
-    ;; keyboard state into wParam, so this is the text the app should read.
-    (if (i32.eq (local.get $msg) (i32.const 0x0102))
+    ;; WM_CHAR/WM_SYSCHAR supplies the translated character for the hardware
+    ;; down record already queued by WM_KEYDOWN/WM_SYSKEYDOWN.
+    (if (i32.or (i32.eq (local.get $msg) (i32.const 0x0102))
+                (i32.eq (local.get $msg) (i32.const 0x0106)))
       (then
-        (call $console_input_push
+        (call $console_input_attach_char
           (local.get $wParam) (call $console_vk_for_char (local.get $wParam)))
         (return (i32.const 0))))
-    ;; WM_KEYDOWN — only for the keys that never produce a WM_CHAR. Pushing
-    ;; every keydown would queue each printable key twice.
-    (if (i32.eq (local.get $msg) (i32.const 0x0100))
+    ;; Preserve both hardware edges. Printable WM_CHAR is merged above rather
+    ;; than becoming a duplicate record.
+    (if (call $console_input_push_host_key
+          (local.get $msg) (local.get $wParam) (local.get $lParam))
       (then
-        (if (i32.or
-              (i32.and (i32.ge_u (local.get $wParam) (i32.const 0x21))
-                       (i32.le_u (local.get $wParam) (i32.const 0x2F)))
-              (i32.and (i32.ge_u (local.get $wParam) (i32.const 0x70))
-                       (i32.le_u (local.get $wParam) (i32.const 0x87))))
-          (then (call $console_input_push (i32.const 0) (local.get $wParam))))
         (return (i32.const 0))))
     (i32.const 0))
 
@@ -1442,6 +1569,51 @@
     (if (i32.eq (local.get $ch) (i32.const 9)) (then (return (i32.const 0x09))))
     (if (i32.eq (local.get $ch) (i32.const 27)) (then (return (i32.const 0x1B))))
     (if (i32.eq (local.get $ch) (i32.const 32)) (then (return (i32.const 0x20))))
+    ;; Shifted number-row characters retain the physical digit VK.
+    (if (i32.eq (local.get $ch) (i32.const 0x29)) (then (return (i32.const 0x30)))) ;; )
+    (if (i32.eq (local.get $ch) (i32.const 0x21)) (then (return (i32.const 0x31)))) ;; !
+    (if (i32.eq (local.get $ch) (i32.const 0x40)) (then (return (i32.const 0x32)))) ;; @
+    (if (i32.eq (local.get $ch) (i32.const 0x23)) (then (return (i32.const 0x33)))) ;; #
+    (if (i32.eq (local.get $ch) (i32.const 0x24)) (then (return (i32.const 0x34)))) ;; $
+    (if (i32.eq (local.get $ch) (i32.const 0x25)) (then (return (i32.const 0x35)))) ;; %
+    (if (i32.eq (local.get $ch) (i32.const 0x5E)) (then (return (i32.const 0x36)))) ;; ^
+    (if (i32.eq (local.get $ch) (i32.const 0x26)) (then (return (i32.const 0x37)))) ;; &
+    (if (i32.eq (local.get $ch) (i32.const 0x2A)) (then (return (i32.const 0x38)))) ;; *
+    (if (i32.eq (local.get $ch) (i32.const 0x28)) (then (return (i32.const 0x39)))) ;; (
+    ;; OEM punctuation keys, shifted or unshifted.
+    (if (i32.or (i32.eq (local.get $ch) (i32.const 0x3B))
+                (i32.eq (local.get $ch) (i32.const 0x3A)))
+      (then (return (i32.const 0xBA)))) ;; ; :
+    (if (i32.or (i32.eq (local.get $ch) (i32.const 0x3D))
+                (i32.eq (local.get $ch) (i32.const 0x2B)))
+      (then (return (i32.const 0xBB)))) ;; = +
+    (if (i32.or (i32.eq (local.get $ch) (i32.const 0x2C))
+                (i32.eq (local.get $ch) (i32.const 0x3C)))
+      (then (return (i32.const 0xBC)))) ;; , <
+    (if (i32.or (i32.eq (local.get $ch) (i32.const 0x2D))
+                (i32.eq (local.get $ch) (i32.const 0x5F)))
+      (then (return (i32.const 0xBD)))) ;; - _
+    (if (i32.or (i32.eq (local.get $ch) (i32.const 0x2E))
+                (i32.eq (local.get $ch) (i32.const 0x3E)))
+      (then (return (i32.const 0xBE)))) ;; . >
+    (if (i32.or (i32.eq (local.get $ch) (i32.const 0x2F))
+                (i32.eq (local.get $ch) (i32.const 0x3F)))
+      (then (return (i32.const 0xBF)))) ;; / ?
+    (if (i32.or (i32.eq (local.get $ch) (i32.const 0x60))
+                (i32.eq (local.get $ch) (i32.const 0x7E)))
+      (then (return (i32.const 0xC0)))) ;; ` ~
+    (if (i32.or (i32.eq (local.get $ch) (i32.const 0x5B))
+                (i32.eq (local.get $ch) (i32.const 0x7B)))
+      (then (return (i32.const 0xDB)))) ;; [ {
+    (if (i32.or (i32.eq (local.get $ch) (i32.const 0x5C))
+                (i32.eq (local.get $ch) (i32.const 0x7C)))
+      (then (return (i32.const 0xDC)))) ;; \ |
+    (if (i32.or (i32.eq (local.get $ch) (i32.const 0x5D))
+                (i32.eq (local.get $ch) (i32.const 0x7D)))
+      (then (return (i32.const 0xDD)))) ;; ] }
+    (if (i32.or (i32.eq (local.get $ch) (i32.const 0x27))
+                (i32.eq (local.get $ch) (i32.const 0x22)))
+      (then (return (i32.const 0xDE)))) ;; ' "
     (i32.const 0))
 
   ;; Create the console window on first output. Console dimensions describe
