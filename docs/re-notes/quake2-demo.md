@@ -327,12 +327,12 @@ Lock. The acquisition click still reaches the guest and starts relative
 `movementX/Y`; nonexclusive desktop applications retain their ordinary
 absolute hover and move path.
 
-The capture request uses Pointer Lock's `unadjustedMovement` option so Quake
-receives raw device deltas rather than browser/OS-accelerated movement which
-then gets transformed again by the game's own sensitivity. Browsers which do
-not implement raw movement retain ordinary Pointer Lock through an optionless
-fallback; this changes mouse feel where supported without making capture a
-new compatibility requirement.
+Pointer Lock must be requested synchronously inside the trusted click. A trial
+of its `unadjustedMovement` option broke capture on browsers which reject that
+option: the Promise rejection arrives after transient user activation has
+expired, so an optionless retry cannot lock. Capture therefore uses one plain,
+synchronous request. Reliable unbounded motion takes priority over raw-device
+deltas until support can be selected before consuming the user gesture.
 
 ## Threads/OpenGL throughput
 
