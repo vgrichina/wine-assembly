@@ -432,10 +432,16 @@ async function runDos(o) {
     // is on.
     surface,
     pixels: surface.text ? 0 : nonBlack(vm.mem, surface.geom),
-    frame: frameHash(vm.mem, vgaGeometry(machine.vga)),
+    // The surface's own geometry, not the CRTC's. In a VESA mode the registers
+    // describe the 64KB window rather than the picture, so reporting them says
+    // "320x200" about a 640x480 screen and hashes a fifth of it.
+    frame: frameHash(vm.mem, surface.geom || vgaGeometry(machine.vga)),
     video: {
       mode: machine.videoMode,
-      ...vgaGeometry(machine.vga),
+      // The VBE mode number, not the BIOS one -- in a VESA mode $videoMode is
+      // still 0x13 and the geometry below is the picture's, not the CRTC's.
+      vesa: machine.vesa ? machine.vesa.mode : 0,
+      ...(surface.geom || vgaGeometry(machine.vga)),
       unchainCount: machine.vga.unchainCount,
       maskWrites: machine.vga.maskWrites,
       masksSeen: machine.vga.masksSeen,
@@ -660,13 +666,16 @@ async function main() {
   // for a chained program those differ on purpose. See readFrame.
   // CGA is neither: its picture is at B800, its geometry comes from the mode
   // number, and calling it "320x200 linear" names the wrong buffer.
-  const rw = v.planar || v.cga ? v.width : 320, rh = v.planar || v.cga ? v.height : 200;
-  console.log(`  video mode ${v.mode.toString(16)}h `
+  // A VESA mode is linear too, but its size comes from the VBE mode, not from
+  // the 320x200 the mode-13h window would imply -- print the picture's own.
+  const rw = v.planar || v.cga || v.vesa ? v.width : 320;
+  const rh = v.planar || v.cga || v.vesa ? v.height : 200;
+  console.log(`  video mode ${v.vesa ? `${v.vesa.toString(16)}h VBE` : `${v.mode.toString(16)}h`} `
     + `${v.cga ? `CGA ${v.bpp}bpp ${rw}x${rh}`
       : v.planar ? `${v.bpp === 4 ? 'EGA planar' : 'unchained'} ${rw}x${rh}` : `${rw}x${rh} linear`}`
     + `${v.planar && v.start ? ` start=${v.start}` : ''}`
     + `${v.planar && v.stride !== v.width ? ` stride=${v.stride}` : ''}`
-    + `${!v.planar && (v.width !== 320 || v.height !== 200 || v.start)
+    + `${!v.planar && !v.vesa && (v.width !== 320 || v.height !== 200 || v.start)
         ? ` (crtc says ${v.width}x${v.height}${v.start ? ` start=${v.start}` : ''})` : ''}, `
     + `${r.pixels} non-black pixels of ${rw * rh}, frame=${r.frame}`);
   if (v.planar) {

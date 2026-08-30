@@ -604,6 +604,17 @@ const CURSOR_CELLS = 40;
 // whole licence for counting rows off a `>`.
 const ARROW_HINT = (s) => /\b(arrow|cursor)\s+keys?\b/i.test(s) && /\benter\b/i.test(s);
 
+// The VBE modes we offer, as [mode number, width, height], all 256-colour and
+// all banked. These four numbers are the VESA-assigned ones every 1990s demo
+// asks for by name; a program that wants something else gets "not supported"
+// for that mode and picks another off the list.
+const VESA_MODES = [
+  [0x100, 640, 400],
+  [0x101, 640, 480],
+  [0x103, 800, 600],
+  [0x105, 1024, 768],
+];
+
 // The BIOS video modes that are text. Only on one of these does a polled key
 // check get answered out of the menu reader.
 const TEXT_MODES = new Set([0, 1, 2, 3, 7]);
@@ -690,6 +701,9 @@ class Machine {
     this.dacSubIndex = 0;
     this.retraceToggle = 0;
     this.vga = newVgaState();
+    // The VESA mode in effect, or mode 0 for none. `bank` is which 64KB of the
+    // picture the window at A000 is currently showing; see vesaBank.
+    this.vesa = { mode: 0, width: 0, height: 0, bank: 0 };
     this.con = newConsole(mem);
     this.ticks = 0;
     this.exited = false;
@@ -2699,6 +2713,7 @@ class Machine {
     if (ah === 0x0B) return true;
     if (ah === 0x08) { r.set('ax', 0x0720); return true; }   // read char+attr: a blank
     if (ah === 0x03) { r.set('cx', 0x0607); r.set('dx', 0); return true; }  // cursor at 0,0
+    if (ah === 0x4F) return this.vesaCall(al, r);
     // "You need a VGA card to run this." Seven programs in this corpus print
     // some version of that line and quit, and none of them is wrong about what
     // it was told: both of the calls a 1994 demo uses to find a VGA were being
@@ -2732,6 +2747,147 @@ class Machine {
       return true;
     }
     return false;
+  }
+
+  // VBE, the VESA BIOS Extension: INT 10h AH=4Fh.
+  //
+  // Version 1.2 and banked only, which is what the corpus asks for. A 1995 demo
+  // asks AX=4F00 first and falls back to poking a chipset it has guessed at when
+  // that fails -- AQUAPHOB.EXE probes Video7, Ahead and Oak in turn and then
+  // sets mode 5Ch, a Trident number, on a machine that is not a Trident. Saying
+  // "no VBE" is what sends it down that path.
+  //
+  // The picture lives at isa.VESA_FB and the guest sees 64KB of it at a time
+  // through the window at A000, exactly as the hardware works. Nothing about the
+  // emulated memory has to change for that: the window is copied in and out on
+  // each bank switch, which is a 64KB move a handful of times a frame.
+  //
+  // AL is the function; every reply is AX=004Fh for "supported, succeeded" and
+  // anything else for "not supported", which is the presence test too.
+  vesaCall(al, r) {
+    const m = this.mem;
+    const ok = () => { r.set('ax', 0x004F); return true; };
+    if (al === 0x00) {
+      const at = ((r.get('es') << 4) + r.get('di')) & 0xFFFFF;
+      m.fill(0, at, at + 0x100);
+      for (let i = 0; i < 4; i++) m[at + i] = 'VESA'.charCodeAt(i);
+      m[at + 4] = 0x02; m[at + 5] = 0x01;             // VBE 1.2
+      // The OEM string, the mode list and the memory size. The mode list is a
+      // word array ending in FFFFh, and it and the string go in the reserved
+      // tail of the block the caller gave us -- there is nowhere else that is
+      // guaranteed to be the caller's memory.
+      const oem = at + 0x100 - 0x40;
+      const name = 'toyvm VBE';
+      for (let i = 0; i < name.length; i++) m[oem + i] = name.charCodeAt(i);
+      const list = oem + 0x20;
+      VESA_MODES.forEach(([mode], i) => {
+        m[list + i * 2] = mode & 0xFF; m[list + i * 2 + 1] = mode >> 8;
+      });
+      m[list + VESA_MODES.length * 2] = 0xFF;
+      m[list + VESA_MODES.length * 2 + 1] = 0xFF;
+      const ptr = (dst, lin) => {
+        const seg = (lin >> 4) & 0xFFFF, off = lin & 0xF;
+        m[dst] = off & 0xFF; m[dst + 1] = off >> 8;
+        m[dst + 2] = seg & 0xFF; m[dst + 3] = seg >> 8;
+      };
+      ptr(at + 6, oem);
+      ptr(at + 14, list);
+      const kb64 = isa.VESA_FB_SIZE >> 16;
+      m[at + 18] = kb64 & 0xFF; m[at + 19] = kb64 >> 8;
+      return ok();
+    }
+    if (al === 0x01) {
+      const mode = r.get('cx') & 0x7FFF;
+      const found = VESA_MODES.find(([n]) => n === mode);
+      if (!found) return true;                        // AX unchanged: not supported
+      const [, w, h] = found;
+      const at = ((r.get('es') << 4) + r.get('di')) & 0xFFFFF;
+      m.fill(0, at, at + 0x100);
+      const w16 = (off, v) => { m[at + off] = v & 0xFF; m[at + off + 1] = (v >> 8) & 0xFF; };
+      // ModeAttributes: supported, colour, graphics, and the BIOS supports the
+      // mode's own output functions. No bit 7: this is a banked mode with no
+      // linear frame buffer, which is the whole point of the window below.
+      w16(0x00, 0x001B);
+      m[0x02 + at] = 0x07;                            // window A: exists, readable, writable
+      m[0x03 + at] = 0x00;                            // window B: none
+      w16(0x04, 64);                                  // granularity, KB
+      w16(0x06, 64);                                  // window size, KB
+      w16(0x08, 0xA000);                              // window A segment
+      w16(0x0A, 0x0000);
+      // The window-positioning far call. A program may use it instead of
+      // AX=4F05, so it has to be a real address -- and this one is a vector
+      // into our own stub segment, which is where every INT lands anyway.
+      w16(0x0C, 0x0000); w16(0x0E, 0x0000);
+      w16(0x10, w);                                   // bytes per scan line
+      w16(0x12, w); w16(0x14, h);
+      m[at + 0x16] = 8; m[at + 0x17] = 16;            // character cell
+      m[at + 0x18] = 1;                               // planes
+      m[at + 0x19] = 8;                               // bits per pixel
+      m[at + 0x1A] = 1;                               // banks
+      m[at + 0x1B] = 4;                               // packed pixel
+      m[at + 0x1C] = 1;                               // bank size, 1 = 64KB units
+      m[at + 0x1D] = Math.max(1, (isa.VESA_FB_SIZE / (w * h)) | 0);
+      return ok();
+    }
+    if (al === 0x02) {
+      const mode = r.get('bx') & 0x7FFF;
+      const found = VESA_MODES.find(([n]) => n === mode);
+      if (!found) return true;
+      const [, w, h] = found;
+      this.vesa = { mode, width: w, height: h, bank: 0 };
+      this.videoMode = 0x13;             // a 256-colour graphics mode, for the BDA
+      m[0x449] = mode & 0xFF;
+      resetVgaMode(this.vga, 0x13);
+      this.palette.set(VGA_DAC);
+      this.syncVga();
+      m.fill(0, VGA_BASE, VGA_BASE + 0x10000);
+      m.fill(0, isa.VESA_FB, isa.VESA_FB + isa.VESA_FB_SIZE);
+      return ok();
+    }
+    if (al === 0x03) {
+      r.set('bx', this.vesa.mode);
+      return ok();
+    }
+    if (al === 0x05) {
+      const bh = (r.get('bx') >> 8) & 0xFF;
+      if ((r.get('bx') & 0xFF) > 1) return true;      // window B: we have none
+      if (bh === 0x01) { r.set('dx', this.vesa.bank); return ok(); }
+      if (bh !== 0x00) return true;
+      this.vesaBank(r.get('dx') & 0xFFFF);
+      return ok();
+    }
+    return false;
+  }
+
+  // Move the guest's 64KB window onto another part of the picture.
+  //
+  // The window is real memory at A000 that the guest reads and writes directly,
+  // so moving it is a copy each way: what it wrote goes back to the picture,
+  // and the part it is about to see comes forward. Doing it this way is what
+  // lets the compiled code keep storing to A000 with no idea any of this is
+  // happening.
+  vesaBank(bank) {
+    const v = this.vesa;
+    if (!v.mode || bank === v.bank) return;
+    this.vesaFlush();
+    v.bank = bank;
+    const from = isa.VESA_FB + bank * 0x10000;
+    if (from + 0x10000 <= isa.VESA_FB + isa.VESA_FB_SIZE) {
+      this.mem.copyWithin(VGA_BASE, from, from + 0x10000);
+    } else {
+      this.mem.fill(0, VGA_BASE, VGA_BASE + 0x10000);
+    }
+  }
+
+  // Write the window back to the picture. Also what anyone reading the screen
+  // has to call first: the most recently drawn bank is the one still sitting in
+  // the window, and it is the only one not yet in the framebuffer.
+  vesaFlush() {
+    const v = this.vesa;
+    if (!v.mode) return;
+    const to = isa.VESA_FB + v.bank * 0x10000;
+    if (to + 0x10000 > isa.VESA_FB + isa.VESA_FB_SIZE) return;
+    this.mem.copyWithin(to, VGA_BASE, VGA_BASE + 0x10000);
   }
 
   // The BIOS system services. Only the timing half matters here: AH=86h is a

@@ -157,7 +157,15 @@ const VGA_KEY_ON = 0xA0001;
 // bytes at 0100:0100 were decoded while they were still the depacker's, and
 // jumping back there ran the depacker's code for ever. uman.com spent 10M
 // dispatches doing exactly that, executing its own unpacked text screen.
-const CODE_BITMAP = (VGA_PLANES + VGA_PLANE_SIZE * 4 + 0xFFFF) & ~0xFFFF;
+// The SVGA framebuffer, for the VESA modes. It lives outside the guest's
+// address space on purpose: VBE 1.2 shows a program 64KB of its picture at a
+// time through the window at A000, so the picture itself has nowhere to live
+// down there, and the window is copied in and out of here as the program moves
+// it. 1MB covers 1024x768 in 256 colours, the largest mode we offer.
+const VESA_FB = VGA_PLANES + VGA_PLANE_SIZE * 4;
+const VESA_FB_SIZE = 0x100000;
+
+const CODE_BITMAP = (VESA_FB + VESA_FB_SIZE + 0xFFFF) & ~0xFFFF;
 const CODE_BITMAP_SIZE = GUEST_RAM_SIZE >> 3;      // one bit per byte
 
 const MEM_PAGES = ((CODE_BITMAP + CODE_BITMAP_SIZE + 0xFFFF) & ~0xFFFF) >> 16;
@@ -193,6 +201,7 @@ module.exports = {
   VGA_CTL, VGA_CTL_KEY, VGA_CTL_MASK, VGA_CTL_LATCH, VGA_CTL_GC,
   VGA_CTL_WRITES, VGA_CTL_READS,
   VGA_PLANES, VGA_PLANE_SIZE, VGA_KEY_OFF, VGA_KEY_ON,
+  VESA_FB, VESA_FB_SIZE,
   CODE_BITMAP, CODE_BITMAP_SIZE,
   EA, EA_DEFAULT_SEG, EA_A32,
 };

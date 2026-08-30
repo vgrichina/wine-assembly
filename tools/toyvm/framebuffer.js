@@ -80,6 +80,20 @@ function conText(con) {
 // the message away and reported them as blank, which reads as "we have no idea
 // what happened" for a program that said exactly what happened.
 function screenSurface(machine) {
+  // A VESA mode is its own answer and does not go through the CRTC at all: the
+  // registers describe the 64KB window, not the picture. Flush first, because
+  // the bank the guest drew last is still sitting in the window.
+  if (machine.vesa && machine.vesa.mode) {
+    machine.vesaFlush();
+    const { width, height } = machine.vesa;
+    return {
+      text: false,
+      geom: {
+        width, height, stride: width, start: 0, planar: false, bpp: 8,
+        base: isa.VESA_FB,
+      },
+    };
+  }
   if (machine.vga.bpp !== 0) {
     const geom = vgaGeometry(machine.vga);
     // Ordered so the walk is usually skipped. The console check is 2000 cells
@@ -142,12 +156,22 @@ function readFrame(mem, video = LINEAR) {
   // chained side of that model is not yet worth trusting over the assumption it
   // would replace.
   if (video && video.cga) return readCga(mem, video);
-  const g = video && video.planar ? { ...LINEAR, ...video } : LINEAR;
+  // A VESA surface is unchained like mode 13h but is neither 320x200 nor at
+  // A000, so the non-planar side has to carry the caller's geometry too --
+  // taking LINEAR wholesale read AQUAPHOB.EXE's 640x480 picture as the first
+  // 64KB of the bank window and wrote a 320x200 PNG of it.
+  const g = video && (video.planar || video.base !== undefined)
+    ? { ...LINEAR, ...video } : LINEAR;
   const { width, height, stride, start, planar } = g;
   const out = new Uint8Array(width * height);
   if (!planar) {
-    const n = Math.min(width * height, 0x10000);
-    out.set(mem.subarray(VGA_BASE, VGA_BASE + n));
+    // `base` is set only by a VESA surface, which is a whole picture somewhere
+    // outside the guest's address space. Everything else is the 64KB at A000,
+    // and the cap is what keeps a CRTC that claims more than that from reading
+    // past it.
+    const base = g.base === undefined ? VGA_BASE : g.base;
+    const n = g.base === undefined ? Math.min(width * height, 0x10000) : width * height;
+    out.set(mem.subarray(base, base + n));
     return { width, height, pixels: out };
   }
   if (g.bpp === 4) {
