@@ -3268,7 +3268,12 @@
       (local.set $ecx
         (i32.add (local.get $ebp) (i32.shl (local.get $ecx) (i32.const 1))))
       (if (local.get $eax_wa)
-        (then (i32.store16 offset=2 (local.get $eax_wa) (local.get $ecx)))
+        (then
+          ;; The affine translation removes repeated $g2w calls, not the
+          ;; scalar store's SMC contract. Retire decoded bytes before writing
+          ;; through the cached WAT address just as $gs16 would.
+          (call $invalidate_code_write (local.get $eax) (i32.const 2))
+          (i32.store16 offset=2 (local.get $eax_wa) (local.get $ecx)))
         (else (call $gs16 (local.get $eax) (local.get $ecx))))
 
       ;; Counter load/DEC/store, then width reload. Branch on the DEC result,
@@ -3280,7 +3285,10 @@
       (local.set $old_count (local.get $count))
       (local.set $count (i32.sub (local.get $count) (i32.const 1)))
       (if (local.get $stack_wa)
-        (then (i32.store (local.get $stack_wa) (local.get $count)))
+        (then
+          (call $invalidate_code_write
+            (i32.add (local.get $esp) (i32.const 0x10)) (i32.const 4))
+          (i32.store (local.get $stack_wa) (local.get $count)))
         (else (call $gs32
           (i32.add (local.get $esp) (i32.const 0x10)) (local.get $count))))
       (local.set $width

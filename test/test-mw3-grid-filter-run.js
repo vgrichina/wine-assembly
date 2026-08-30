@@ -22,6 +22,8 @@ const EXTRA_WAT = `
   (func (export "test_grid_zf") (result i32) (call $get_zf))
   (func (export "test_grid_sf") (result i32) (call $get_sf))
   (func (export "test_grid_of") (result i32) (call $get_of))
+  (func (export "test_grid_cache_probe") (param $guest i32) (result i32)
+    (call $page_probe (local.get $guest)))
 `;
 
 const LOOP_EIP = 0x00518f02;
@@ -69,7 +71,7 @@ async function makeRuntime({ enabled, nearMiss = false, location = LOOP_EIP }) {
   const row = (arena + 0x5000) >>> 0;
   const lower = (arena + 0x7000) >>> 0;
 
-  function run({ count, width, stride, salt }) {
+  function run({ count, width, stride, salt, primeSmc = false }) {
     bytes = new Uint8Array(memory.buffer);
     const dv = new DataView(memory.buffer);
     const arenaWa = wa(arena);
@@ -80,6 +82,30 @@ async function makeRuntime({ enabled, nearMiss = false, location = LOOP_EIP }) {
     dv.setUint32(wa(stack + 0x10), count >>> 0, true);
     dv.setUint32(wa(stack + 0x14), width >>> 0, true);
     dv.setUint32(wa(stack + 0x20), stride >>> 0, true);
+
+    let smcHitsBefore = 0;
+    const smcProbes = [row + 2, stack + 0x10];
+    if (primeSmc) {
+      const execStack = arena + 0x3000;
+      for (const probe of smcProbes) {
+        const probeWa = wa(probe);
+        const saved = Uint8Array.from(bytes.subarray(probeWa, probeWa + 6));
+        bytes.set([0xb8, 0x78, 0x56, 0x34, 0x12, 0xc3], probeWa);
+        dv.setUint32(wa(execStack), 0, true);
+        e.set_esp(execStack);
+        e.set_eip(probe);
+        e.run(1000);
+        assert.strictEqual(e.get_eip() >>> 0, 0,
+          'SMC probe returns after populating the decoded-page cache');
+        assert.notStrictEqual(e.test_grid_cache_probe(probe) >>> 0, 0,
+          `SMC probe at 0x${probe.toString(16)} is cached`);
+        // Restore the grid/argument bytes directly. This deliberately bypasses
+        // guest-store invalidation so H441's own following stores are the only
+        // operation that can retire the two decoded blocks.
+        bytes.set(saved, probeWa);
+      }
+      smcHitsBefore = e.get_cache_inval_hits();
+    }
 
     e.set_eax(row);
     e.set_ecx(width);
@@ -117,6 +143,10 @@ async function makeRuntime({ enabled, nearMiss = false, location = LOOP_EIP }) {
         sf: e.test_grid_sf(),
         of: e.test_grid_of(),
       },
+      smc: primeSmc ? {
+        hits: e.get_cache_inval_hits() - smcHitsBefore,
+        probes: smcProbes.map(probe => e.test_grid_cache_probe(probe) >>> 0),
+      } : null,
     };
   }
   return { e, run };
@@ -156,6 +186,12 @@ async function makeRuntime({ enabled, nearMiss = false, location = LOOP_EIP }) {
     'the 37-cell row resumes once at the 1000-handler safety quantum');
   assert.strictEqual(fused.e.test_grid_cells(), 46n,
     'H441 processes the exact sum of guest loop counts');
+
+  const smc = fused.run({
+    count: 1, width: 7, stride: 0x40, salt: 6, primeSmc: true,
+  });
+  assert.deepStrictEqual(smc.smc, { hits: 2, probes: [0, 0] },
+    'H441 affine grid/counter stores retire decoded bytes like gs16/gs32');
 
   const relocated = await makeRuntime({ enabled: true, location: RELOCATED_EIP });
   const relocatedScenario = { count: 8, width: 11, stride: 0x70, salt: 4 };
