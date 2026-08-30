@@ -315,6 +315,18 @@ recorded the active `[0,0,639,480]` clip, acquired real pointer lock, routed six
 nonzero relative samples, visibly changed the camera, and saved the input queue,
 mouse deltas, and screenshots under `scratch/quake2-input-web/`.
 
+One boundary remained before capture. Pointer Lock requires a trusted click,
+but ordinary absolute `mousemove` events were still delivered after Quake hid
+and clipped its cursor and before that click occurred. Quake polls the offset
+from `(159,119)` and recenters its virtual cursor every frame; the browser's
+physical cursor does not follow that guest-only `SetCursorPos`. Each small DOM
+move therefore reintroduced the whole physical distance from centre, making
+the view rotate faster the farther the pointer wandered. The browser bridge
+now holds absolute moves while a relative exclusive guest is awaiting Pointer
+Lock. The acquisition click still reaches the guest and starts relative
+`movementX/Y`; nonexclusive desktop applications retain their ordinary
+absolute hover and move path.
+
 ## Threads/OpenGL throughput
 
 The severe slowdown with the browser Threads switch is not a guest lock or a

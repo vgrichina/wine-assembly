@@ -160,7 +160,7 @@ async function waitForGameplay(page) {
     await page.waitForFunction(() => typeof launchApp === 'function' && apps.quake2_demo,
       { timeout: 30000 });
     await page.evaluate(() => {
-      window.__q2Input = { dom: [], taken: [], relative: [] };
+      window.__q2Input = { dom: [], taken: [], relative: [], absolute: [] };
       for (const type of ['keydown', 'keyup', 'mousedown', 'mouseup']) {
         window.addEventListener(type, event => {
           window.__q2Input.dom.push({ type, trusted: event.isTrusted,
@@ -200,6 +200,11 @@ async function waitForGameplay(page) {
         window.__q2Input.relative.push({ dx, dy, before,
           after: [this._mouseX | 0, this._mouseY | 0] });
         return result;
+      };
+      const absolute = sharedRenderer.handleMouseMove;
+      sharedRenderer.handleMouseMove = function(x, y, motion) {
+        window.__q2Input.absolute.push({ x, y, relative: !!(motion && motion.relative) });
+        return absolute.apply(this, arguments);
       };
     });
     await waitForMainMenu(page);
@@ -254,6 +259,12 @@ async function waitForGameplay(page) {
       `Quake did not activate exclusive ClipCursor input: ${JSON.stringify(mouseState)}`);
     const canvas = await page.$('#screen');
     const box = await canvas.boundingBox();
+    await page.evaluate(() => { window.__q2Input.absolute.length = 0; });
+    await page.mouse.move(box.x + box.width * 0.8, box.y + box.height * 0.55,
+      { steps: 4 });
+    const preLockAbsolute = await page.evaluate(() => window.__q2Input.absolute.slice());
+    assert.deepStrictEqual(preLockAbsolute, [],
+      `pre-lock absolute mouse motion entered Quake's recenter loop: ${JSON.stringify(preLockAbsolute)}`);
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
     await page.waitForFunction(() => document.pointerLockElement === document.getElementById('screen'),
@@ -285,7 +296,7 @@ async function waitForGameplay(page) {
     });
     fs.writeFileSync(path.join(OUT, 'metrics.json'), JSON.stringify({
       args, controlConfig, heldState, mouseState, heldMouseState, releasedMouseState,
-      shotStates, shotTakenStart,
+      shotStates, shotTakenStart, preLockAbsolute,
       keyMotion, mouseMotion, input,
     }, null, 2));
 
