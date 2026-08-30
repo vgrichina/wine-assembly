@@ -22,8 +22,14 @@ const EM_GETFIRSTVISIBLELINE = 0x00CE;
 
 const WS_CHILD = 0x40000000;
 const WS_VISIBLE = 0x10000000;
+const WS_HSCROLL = 0x00100000;
 const WS_VSCROLL = 0x00200000;
 const ES_MULTILINE = 0x0004;
+
+const SB_HORZ = 0;
+const SB_VERT = 1;
+const SB_CTL = 2;
+const SB_BOTH = 3;
 
 async function main() {
   const wasmBytes = await compileWat(f => fs.promises.readFile(path.join(SRC_DIR, f), 'utf-8'));
@@ -105,6 +111,27 @@ async function main() {
   const clampedTop = e.send_message(edit, EM_GETFIRSTVISIBLELINE, 0, 0);
   check('WM_SIZE clamps first visible line to resized max', clampedTop === wideMax,
     `top=${clampedTop} wideMax=${wideMax}`);
+
+  const bars = e.test_create_edit(0, 0, 160, 80,
+    WS_CHILD | WS_VISIBLE | WS_HSCROLL | WS_VSCROLL | ES_MULTILINE, 0);
+  check('ShowScrollBar hides only the requested standard bar',
+    e.test_show_scroll_bar(bars, SB_VERT, 0) === 1 &&
+      (e.wnd_get_style_export(bars) & WS_VSCROLL) === 0 &&
+      (e.wnd_get_style_export(bars) & WS_HSCROLL) !== 0);
+  check('ShowScrollBar can hide and restore both standard bars',
+    e.test_show_scroll_bar(bars, SB_BOTH, 0) === 1 &&
+      (e.wnd_get_style_export(bars) & (WS_HSCROLL | WS_VSCROLL)) === 0 &&
+      e.test_show_scroll_bar(bars, SB_BOTH, 1) === 1 &&
+      (e.wnd_get_style_export(bars) & (WS_HSCROLL | WS_VSCROLL)) ===
+        (WS_HSCROLL | WS_VSCROLL));
+  check('ShowScrollBar SB_CTL updates window visibility',
+    e.test_show_scroll_bar(bars, SB_CTL, 0) === 1 &&
+      (e.wnd_get_style_export(bars) & WS_VISIBLE) === 0 &&
+      e.test_show_scroll_bar(bars, SB_CTL, 1) === 1 &&
+      (e.wnd_get_style_export(bars) & WS_VISIBLE) !== 0);
+  check('ShowScrollBar rejects invalid handles and bar selectors',
+    e.test_show_scroll_bar(0x7FFFFFFF, SB_VERT, 1) === 0 &&
+      e.test_show_scroll_bar(bars, 99, 1) === 0);
 
   console.log(`${checks.filter(c => c.pass).length}/${checks.length} checks passed`);
   if (checks.some(c => !c.pass)) process.exit(1);

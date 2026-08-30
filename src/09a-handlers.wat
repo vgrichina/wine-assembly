@@ -12569,9 +12569,72 @@ GetTopWindow(hWnd) — 1 arg stdcall
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
+  ;; Apply ShowScrollBar to a standard non-client bar or to a scrollbar
+  ;; control. The stored style is the source of truth for client layout,
+  ;; hit-testing, painting, and GetWindowLong.
+  (func $show_scroll_bar_core (param $hwnd i32) (param $bar i32) (param $show i32) (result i32)
+    (local $style i32) (local $new_style i32) (local $bar_bits i32)
+    (if (i32.lt_s (call $wnd_table_find (local.get $hwnd)) (i32.const 0))
+      (then (return (i32.const 0))))
+    (local.set $style (call $wnd_get_style (local.get $hwnd)))
+
+    ;; SB_CTL = 2: show or hide the scrollbar control window itself.
+    (if (i32.eq (local.get $bar) (i32.const 2))
+      (then
+        (local.set $new_style
+          (if (result i32) (i32.ne (local.get $show) (i32.const 0))
+            (then (i32.or (local.get $style) (i32.const 0x10000000)))
+            (else (i32.and (local.get $style) (i32.const 0xEFFFFFFF)))))
+        (if (i32.ne (local.get $new_style) (local.get $style))
+          (then
+            (if (local.get $show)
+              (then
+                (drop (call $host_show_window (local.get $hwnd) (i32.const 5))) ;; SW_SHOW
+                (drop (call $wnd_set_style (local.get $hwnd) (local.get $new_style)))
+                (call $nc_flags_set (local.get $hwnd) (i32.const 2)))
+              (else
+                (call $wnd_uncover_parent (local.get $hwnd))
+                (drop (call $host_show_window (local.get $hwnd) (i32.const 0))) ;; SW_HIDE
+                (drop (call $wnd_set_style (local.get $hwnd) (local.get $new_style)))
+                (call $paint_clear_subtree (local.get $hwnd))))))
+        (return (i32.const 1))))
+
+    ;; SB_HORZ = 0, SB_VERT = 1, SB_BOTH = 3.
+    (if (i32.eq (local.get $bar) (i32.const 0))
+      (then (local.set $bar_bits (i32.const 0x00100000)))
+      (else
+        (if (i32.eq (local.get $bar) (i32.const 1))
+          (then (local.set $bar_bits (i32.const 0x00200000)))
+          (else
+            (if (i32.eq (local.get $bar) (i32.const 3))
+              (then (local.set $bar_bits (i32.const 0x00300000)))
+              (else (return (i32.const 0))))))))
+    (local.set $new_style
+      (if (result i32) (i32.ne (local.get $show) (i32.const 0))
+        (then (i32.or (local.get $style) (local.get $bar_bits)))
+        (else (i32.and (local.get $style) (i32.xor (local.get $bar_bits) (i32.const -1))))))
+    (if (i32.ne (local.get $new_style) (local.get $style))
+      (then
+        (drop (call $wnd_set_style (local.get $hwnd) (local.get $new_style)))
+        (call $defwndproc_do_nccalcsize (local.get $hwnd))
+        (call $host_sync_window_client
+          (local.get $hwnd)
+          (call $wnd_client_screen_x (local.get $hwnd))
+          (call $wnd_client_screen_y (local.get $hwnd))
+          (i32.sub (call $client_rect_get_r (local.get $hwnd))
+                   (call $client_rect_get_l (local.get $hwnd)))
+          (i32.sub (call $client_rect_get_b (local.get $hwnd))
+                   (call $client_rect_get_t (local.get $hwnd))))
+        (if (call $wnd_is_effectively_visible (local.get $hwnd))
+          (then
+            (call $defwndproc_do_ncpaint (local.get $hwnd))
+            (call $nc_flags_set (local.get $hwnd) (i32.const 1))))))
+    (i32.const 1))
+
   ;; 627: ShowScrollBar(hwnd, wBar, bShow) → BOOL
   (func $handle_ShowScrollBar (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (global.set $eax (call $show_scroll_bar_core
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; 628: SetScrollInfo(hwnd, nBar, lpsi, bRedraw) → pos

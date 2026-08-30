@@ -4775,6 +4775,11 @@
   (func (export "wnd_get_style_export") (param $hwnd i32) (result i32)
     (call $wnd_get_style (local.get $hwnd)))
 
+  (func (export "test_show_scroll_bar")
+      (param $hwnd i32) (param $bar i32) (param $show i32) (result i32)
+    (call $show_scroll_bar_core
+      (local.get $hwnd) (local.get $bar) (local.get $show)))
+
   ;; ButtonState text reader (parallel to get_edit_text).
   (func (export "button_get_text")
     (param $hwnd i32) (param $dest_guest i32) (param $max i32) (result i32)
