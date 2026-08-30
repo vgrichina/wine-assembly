@@ -181,7 +181,7 @@ const extraWat = String.raw`
 (async () => {
   let paints = 0;
   const hostTitles = [];
-  const { exports: wat } = await bootRenderHarness({
+  const { exports: wat, renderer } = await bootRenderHarness({
     fonts: 'none',
     extraWat,
     extraHostOverrides: {
@@ -221,6 +221,14 @@ const extraWat = String.raw`
   assert.deepStrictEqual(Array.from({ length: 5 }, (_, i) => wat.guest_read8(titleBuffer + i)),
     [...Buffer.from('Far '), 0], 'ANSI title read is bounded and terminated');
   assert.ok(hostTitles.length > 0, 'ANSI title change did not reach browser window');
+  const consoleWindow = Object.values(renderer.windows).find(win =>
+    (win.style >>> 0) === 0x10cf0000);
+  assert.ok(consoleWindow, 'console window was not created');
+  renderer._computeClientRect(consoleWindow);
+  assert.deepStrictEqual([consoleWindow.w, consoleWindow.h], [648, 328],
+    'console cell dimensions were passed as outer window dimensions');
+  assert.deepStrictEqual([consoleWindow.clientRect.w, consoleWindow.clientRect.h], [640, 300],
+    '80x25 console client was clipped by non-client chrome');
 
   const wideTitle = wat.guest_alloc(32) >>> 0;
   for (const [i, ch] of [...'Wide Far'].entries()) wat.guest_write16(wideTitle + i * 2, ch.charCodeAt(0));

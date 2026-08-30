@@ -1220,8 +1220,15 @@
     (if (i32.eq (local.get $ch) (i32.const 32)) (then (return (i32.const 0x20))))
     (i32.const 0))
 
-  ;; Create the console window on first output. Sized to the buffer, so an app
-  ;; that resizes its screen buffer before printing gets the window it asked for.
+  ;; Create the console window on first output. Console dimensions describe
+  ;; the CLIENT in character cells, while CreateWindow receives an OUTER size.
+  ;; WS_OVERLAPPEDWINDOW has a 4px Win98 sizing frame on each side, plus the
+  ;; 19px caption and the extra 1px below it used by our DefWindowProc metrics:
+  ;; add 8 horizontally and 28 vertically. Passing the bare cell dimensions
+  ;; clipped the last two Far Manager rows behind the browser window chrome.
+  ;;
+  ;; Sized to the buffer, so an app that resizes its screen buffer before
+  ;; printing gets the window it asked for.
   ;; Blank the buffer once, before anything is written into it. Doing this at
   ;; window-creation time instead would erase the very output that triggered
   ;; the window.
@@ -1251,9 +1258,16 @@
     (drop (call $host_create_window
       (local.get $hwnd)
       (i32.const 0x10CF0000)   ;; WS_OVERLAPPEDWINDOW | WS_VISIBLE
-      (i32.const 8) (i32.const 8)
-      (i32.mul (global.get $console_width) (global.get $CONSOLE_CELL_W))
-      (i32.mul (global.get $console_height) (global.get $CONSOLE_CELL_H))
+      ;; Start flush with the left desktop edge. An 80-column 8px client is
+      ;; already screen-wide at 640px; cascading it would hide another full
+      ;; character column in addition to the unavoidable outer frame.
+      (i32.const 0) (i32.const 8)
+      (i32.add
+        (i32.mul (global.get $console_width) (global.get $CONSOLE_CELL_W))
+        (i32.const 8))
+      (i32.add
+        (i32.mul (global.get $console_height) (global.get $CONSOLE_CELL_H))
+        (i32.const 28))
       (global.get $CONSOLE_TITLE_STORAGE) (i32.const 0)))
     (call $title_table_set (local.get $hwnd) (global.get $CONSOLE_TITLE_STORAGE)
       (call $strlen (global.get $CONSOLE_TITLE_STORAGE)))
