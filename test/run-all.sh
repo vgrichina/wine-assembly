@@ -388,6 +388,7 @@ UNIT=(
   test/test-window-control-id.js
   test/test-window-exstyle.js
   test/test-compile-wat-unknown-name.js
+  test/test-compile-wat-structure.js
   test/test-gdi-public-seven.js
   test/test-combobox.js
   test/test-render-combobox.js
