@@ -322,6 +322,7 @@ UNIT=(
   test/test-directinput-device.js
   test/test-directinput8-create.js
   test/test-directx-ordinals.js
+  test/test-directplay-enumerate.js
   test/test-launch-prefs-resolution.js
   test/test-d3dim-indexed-texture.js
   test/test-d3ddevice2-texture-format-desc.js

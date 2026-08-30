@@ -2721,12 +2721,109 @@
     (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (local.get $obj_guest))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+  ;; DirectPlayEnumerate[A](lpEnumCallback, lpContext) predates the COM
+  ;; DirectPlay interfaces. Win98 applications use it to choose a registered
+  ;; service provider before DirectPlayCreate, so failing here hides the TCP/IP
+  ;; transport that the browser virtual LAN already implements.
+  ;;
+  ;; LPDPENUMDPCALLBACKA receives provider GUID, ANSI display name, provider
+  ;; major/minor version, and caller context. Win98's providers report version
+  ;; 6.0; expose the one transport this runtime can actually connect through.
+  (global $dplay_enum_tcpip_guid (mut i32) (i32.const 0))
+  (global $dplay_enum_tcpip_name (mut i32) (i32.const 0))
+
+  (func $dplay_enum_provider_init (result i32)
+    (if (i32.and
+          (i32.ne (global.get $dplay_enum_tcpip_guid) (i32.const 0))
+          (i32.ne (global.get $dplay_enum_tcpip_name) (i32.const 0)))
+      (then (return (i32.const 1))))
+    (global.set $dplay_enum_tcpip_guid (call $heap_alloc (i32.const 16)))
+    (global.set $dplay_enum_tcpip_name (call $heap_alloc (i32.const 44)))
+    (if (i32.or
+          (i32.eqz (global.get $dplay_enum_tcpip_guid))
+          (i32.eqz (global.get $dplay_enum_tcpip_name)))
+      (then
+        (if (global.get $dplay_enum_tcpip_name)
+          (then (call $heap_free (global.get $dplay_enum_tcpip_name))))
+        (if (global.get $dplay_enum_tcpip_guid)
+          (then (call $heap_free (global.get $dplay_enum_tcpip_guid))))
+        (global.set $dplay_enum_tcpip_guid (i32.const 0))
+        (global.set $dplay_enum_tcpip_name (i32.const 0))
+        (return (i32.const 0))))
+    ;; DPSPGUID_TCPIP {36E95EE0-8577-11cf-960C-0080C7534E82}.
+    (call $gs32 (global.get $dplay_enum_tcpip_guid) (i32.const 0x36E95EE0))
+    (call $gs32 (i32.add (global.get $dplay_enum_tcpip_guid) (i32.const 4))
+      (i32.const 0x11CF8577))
+    (call $gs32 (i32.add (global.get $dplay_enum_tcpip_guid) (i32.const 8))
+      (i32.const 0x80000C96))
+    (call $gs32 (i32.add (global.get $dplay_enum_tcpip_guid) (i32.const 12))
+      (i32.const 0x824E53C7))
+    ;; "Internet TCP/IP Connection For DirectPlay\0"
+    (call $gs32 (global.get $dplay_enum_tcpip_name) (i32.const 0x65746E49))
+    (call $gs32 (i32.add (global.get $dplay_enum_tcpip_name) (i32.const 4))
+      (i32.const 0x74656E72))
+    (call $gs32 (i32.add (global.get $dplay_enum_tcpip_name) (i32.const 8))
+      (i32.const 0x50435420))
+    (call $gs32 (i32.add (global.get $dplay_enum_tcpip_name) (i32.const 12))
+      (i32.const 0x2050492F))
+    (call $gs32 (i32.add (global.get $dplay_enum_tcpip_name) (i32.const 16))
+      (i32.const 0x6E6E6F43))
+    (call $gs32 (i32.add (global.get $dplay_enum_tcpip_name) (i32.const 20))
+      (i32.const 0x69746365))
+    (call $gs32 (i32.add (global.get $dplay_enum_tcpip_name) (i32.const 24))
+      (i32.const 0x46206E6F))
+    (call $gs32 (i32.add (global.get $dplay_enum_tcpip_name) (i32.const 28))
+      (i32.const 0x4420726F))
+    (call $gs32 (i32.add (global.get $dplay_enum_tcpip_name) (i32.const 32))
+      (i32.const 0x63657269))
+    (call $gs32 (i32.add (global.get $dplay_enum_tcpip_name) (i32.const 36))
+      (i32.const 0x616C5074))
+    (call $gs32 (i32.add (global.get $dplay_enum_tcpip_name) (i32.const 40))
+      (i32.const 0x00000079))
+    (i32.const 1))
+
+  (func $directplay_enumerate_ansi
+      (param $callback i32) (param $context i32) (param $ret_addr i32)
+    (if (i32.eqz (local.get $callback))
+      (then
+        (global.set $eax (i32.const 0x80070057)) ;; DPERR_INVALIDPARAMS
+        (return)))
+    (if (i32.eqz (call $dplay_enum_provider_init))
+      (then
+        (global.set $eax (i32.const 0x8007000E)) ;; DPERR_OUTOFMEMORY
+        (return)))
+    ;; Saved API return, then callback args right-to-left: context, minor,
+    ;; major, provider name, provider GUID.
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $ret_addr))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $context))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 0))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 6))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $dplay_enum_tcpip_name))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $dplay_enum_tcpip_guid))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $ddenum_ret_thunk))
+    (global.set $eip (local.get $callback))
+    (global.set $steps (i32.const 0)))
+
+  ;; The unsuffixed ordinal is the legacy ANSI export on Win98.
   (func $handle_DirectPlayEnumerate (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x80004005))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+    (local $ret_addr i32)
+    (local.set $ret_addr (call $gl32 (global.get $esp)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    (call $directplay_enumerate_ansi
+      (local.get $arg0) (local.get $arg1) (local.get $ret_addr)))
   (func $handle_DirectPlayEnumerateA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x80004005))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+    (local $ret_addr i32)
+    (local.set $ret_addr (call $gl32 (global.get $esp)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    (call $directplay_enumerate_ansi
+      (local.get $arg0) (local.get $arg1) (local.get $ret_addr)))
   (func $handle_DirectPlayLobbyCreateA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $obj_guest i32)
     (local.set $obj_guest (call $dx_create_com_obj (i32.const 27) (global.get $DX_VTBL_DPLAYLOBBY2)))
