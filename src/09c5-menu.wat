@@ -36,7 +36,7 @@
   ;;   bar item left pad     = 4 (first item starts at x+4)
   ;;   bar item text inset   = 6 (text drawn at item.x+6)
   ;;   bar item width        = measureText(label) + 12
-  ;;   dropdown width        = 180
+  ;;   dropdown width        = max(180, widest measured item)
   ;;   dropdown item height  = 20
   ;;   dropdown left/right pad = 2
   ;;   dropdown label inset  = 20 (from dropdown left)
@@ -713,6 +713,51 @@
             (i32.const 0xC20) (i32.const 0)))
     (i32.load offset=8 (local.get $rect)))
 
+  ;; Size a popup from the items Windows will actually draw. The left check
+  ;; gutter and right shortcut/arrow gutter consume 20px each; an accelerator
+  ;; gets a 24px gap after the label. Keep the former 180px layout as a floor
+  ;; so existing compact menus remain pixel-stable while long Win9x menus
+  ;; (notably WinRAR's Commands popup) grow instead of colliding text columns.
+  (func $menu_header_width
+        (param $blob_w i32) (param $hdr i32) (param $hdc i32) (result i32)
+    (local $count i32) (local $i i32) (local $it i32) (local $flags i32)
+    (local $label_w i32) (local $sc_w i32) (local $candidate i32)
+    (local $width i32) (local $sc_len i32)
+    (if (i32.eqz (local.get $hdr)) (then (return (i32.const 0))))
+    (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
+    (local.set $count (i32.load (local.get $hdr)))
+    (local.set $width (i32.const 180))
+    (local.set $i (i32.const 0))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $it (i32.add (local.get $hdr)
+                       (i32.add (i32.const 4)
+                         (i32.mul (local.get $i) (i32.const 28)))))
+      (local.set $flags (i32.load offset=16 (local.get $it)))
+      (if (i32.eqz (i32.and (local.get $flags) (i32.const 0x01)))
+        (then
+          (local.set $label_w
+            (call $measure_text (local.get $hdc)
+              (i32.add (local.get $blob_w) (i32.load (local.get $it)))
+              (i32.load offset=4 (local.get $it))))
+          (local.set $candidate
+            (i32.add (local.get $label_w) (i32.const 40)))
+          (local.set $sc_len (i32.load offset=12 (local.get $it)))
+          (if (local.get $sc_len)
+            (then
+              (local.set $sc_w
+                (call $measure_text (local.get $hdc)
+                  (i32.add (local.get $blob_w) (i32.load offset=8 (local.get $it)))
+                  (local.get $sc_len)))
+              (local.set $candidate
+                (i32.add (local.get $candidate)
+                  (i32.add (i32.const 24) (local.get $sc_w))))))
+          (if (i32.gt_u (local.get $candidate) (local.get $width))
+            (then (local.set $width (local.get $candidate))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $width))
+
   ;; ----- bar item geometry walker -----
   ;; Compute the width of bar item $idx (0-based). hdc must be set up
   ;; with the menu font already selected. Returns text-width + 12.
@@ -1013,6 +1058,29 @@
     (local.set $off (i32.load offset=24 (local.get $it)))
     (if (i32.eqz (local.get $off)) (then (return (i32.const 0))))
     (i32.add (local.get $blob_w) (local.get $off)))
+
+  ;; Widths are exports because the compositor crop, popup screen clamping,
+  ;; painting and WAT hit-testing must all agree on the same rectangles.
+  (func $menu_dropdown_width (export "menu_dropdown_width")
+        (param $hwnd i32) (param $tidx i32) (result i32)
+    (local $blob i32) (local $hdr i32) (local $hdc i32)
+    (local.set $blob (call $menu_dropdown_blob_w (local.get $hwnd)))
+    (if (i32.eqz (local.get $blob)) (then (return (i32.const 0))))
+    (local.set $hdr (call $child_hdr_w (local.get $blob) (local.get $tidx)))
+    (if (i32.eqz (local.get $hdr)) (then (return (i32.const 0))))
+    (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+    (call $menu_header_width (local.get $blob) (local.get $hdr) (local.get $hdc)))
+
+  (func $menu_submenu_width (export "menu_submenu_width")
+        (param $hwnd i32) (param $tidx i32) (param $cidx i32) (result i32)
+    (local $blob i32) (local $hdr i32) (local $hdc i32)
+    (local.set $blob (call $menu_dropdown_blob_w (local.get $hwnd)))
+    (if (i32.eqz (local.get $blob)) (then (return (i32.const 0))))
+    (local.set $hdr (call $child_sub_hdr_w
+                      (local.get $blob) (local.get $tidx) (local.get $cidx)))
+    (if (i32.eqz (local.get $hdr)) (then (return (i32.const 0))))
+    (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+    (call $menu_header_width (local.get $blob) (local.get $hdr) (local.get $hdc)))
 
   (func $submenu_item_w (param $blob_w i32) (param $tidx i32)
                         (param $cidx i32) (param $sidx i32) (result i32)
@@ -1555,7 +1623,7 @@
     (i32.const 0))
 
   (func $menu_draw_submenu_arrow (param $hdc i32) (param $dx i32)
-                                 (param $iy i32) (param $hover i32)
+                                 (param $dw i32) (param $iy i32) (param $hover i32)
     (local $glyph i32)
     ;; The '>' this draws needs a byte somewhere; it used to live just past the
     ;; single shared rect. Take a slot of its own instead of writing off the end
@@ -1569,9 +1637,11 @@
     ;; DT_CENTER|DT_VCENTER|DT_SINGLELINE = 0x25
     (drop (call $host_gdi_draw_text (local.get $hdc)
             (local.get $glyph) (i32.const 1)
-            (call $paint_rect (i32.add (local.get $dx) (i32.const 164))
+            (call $paint_rect (i32.add (local.get $dx)
+                                (i32.sub (local.get $dw) (i32.const 16)))
                               (local.get $iy)
-                              (i32.add (local.get $dx) (i32.const 176))
+                              (i32.add (local.get $dx)
+                                (i32.sub (local.get $dw) (i32.const 4)))
                               (i32.add (local.get $iy) (i32.const 20)))
             (i32.const 0x25) (i32.const 0))))
 
@@ -1603,7 +1673,7 @@
 
   ;; ============================================================
   ;; $menu_paint_dropdown — draw the dropdown for top-level item
-  ;; $tidx at (dx, dy). Width is fixed at 180, height = count*20+4.
+  ;; $tidx at (dx, dy). Width fits its measured text, height=count*20+4.
   ;; Items use itemH=20, label inset=20, hover highlight when
   ;; $hover_cidx == this child index.
   ;; ============================================================
@@ -1613,7 +1683,7 @@
     (local $blob i32) (local $hdr i32) (local $count i32) (local $i i32)
     (local $hdc i32) (local $iy i32) (local $it i32) (local $flags i32)
     (local $label_wa i32) (local $label_len i32)
-    (local $sc_wa i32) (local $sc_len i32) (local $dh i32)
+    (local $sc_wa i32) (local $sc_len i32) (local $dh i32) (local $dw i32)
     (local.set $blob (call $menu_dropdown_blob_w (local.get $hwnd)))
     (if (i32.eqz (local.get $blob)) (then (return)))
     (local.set $hdr (call $child_sub_hdr_w
@@ -1624,15 +1694,17 @@
 
     (local.set $hdc (call $gdi_menu_overlay_ensure))
     (if (i32.eqz (local.get $hdc)) (then (return)))
+    (local.set $dw
+      (call $menu_header_width (local.get $blob) (local.get $hdr) (local.get $hdc)))
     (local.set $dh (i32.add (i32.mul (local.get $count) (i32.const 20)) (i32.const 4)))
     (drop (call $host_gdi_fill_rect (local.get $hdc)
             (local.get $dx) (local.get $dy)
-            (i32.add (local.get $dx) (i32.const 180))
+            (i32.add (local.get $dx) (local.get $dw))
             (i32.add (local.get $dy) (local.get $dh))
             (i32.const 0x30011)))
     (drop (call $host_gdi_draw_edge (local.get $hdc)
             (local.get $dx) (local.get $dy)
-            (i32.add (local.get $dx) (i32.const 180))
+            (i32.add (local.get $dx) (local.get $dw))
             (i32.add (local.get $dy) (local.get $dh))
             (i32.const 0x05) (i32.const 0x0F)))
 
@@ -1651,7 +1723,7 @@
           (drop (call $host_gdi_fill_rect (local.get $hdc)
                   (i32.add (local.get $dx) (i32.const 4))
                   (i32.add (local.get $iy) (i32.const 9))
-                  (i32.add (local.get $dx) (i32.const 176))
+                  (i32.add (local.get $dx) (i32.sub (local.get $dw) (i32.const 4)))
                   (i32.add (local.get $iy) (i32.const 10))
                   (i32.const 0x30012))))
         (else
@@ -1659,7 +1731,7 @@
             (then
               (drop (call $host_gdi_fill_rect (local.get $hdc)
                       (i32.add (local.get $dx) (i32.const 2)) (local.get $iy)
-                      (i32.add (local.get $dx) (i32.const 178))
+                      (i32.add (local.get $dx) (i32.sub (local.get $dw) (i32.const 2)))
                       (i32.add (local.get $iy) (i32.const 20))
                       (i32.const 14)))
               (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0xFFFFFF))))
@@ -1678,7 +1750,7 @@
                   (local.get $label_wa) (local.get $label_len)
                   (call $paint_rect (i32.add (local.get $dx) (i32.const 20))
                                     (local.get $iy)
-                                    (i32.add (local.get $dx) (i32.const 160))
+                                    (i32.add (local.get $dx) (i32.sub (local.get $dw) (i32.const 20)))
                                     (i32.add (local.get $iy) (i32.const 20)))
                   (i32.const 0x24) (i32.const 0)))
           (local.set $sc_len (i32.load offset=12 (local.get $it)))
@@ -1690,13 +1762,13 @@
                       (local.get $sc_wa) (local.get $sc_len)
                       (call $paint_rect (i32.add (local.get $dx) (i32.const 20))
                                         (local.get $iy)
-                                        (i32.add (local.get $dx) (i32.const 160))
+                                        (i32.add (local.get $dx) (i32.sub (local.get $dw) (i32.const 20)))
                                         (i32.add (local.get $iy) (i32.const 20)))
                       (i32.const 0x26) (i32.const 0)))))
           (if (i32.load offset=24 (local.get $it))
             (then
               (call $menu_draw_submenu_arrow
-                (local.get $hdc) (local.get $dx) (local.get $iy)
+                (local.get $hdc) (local.get $dx) (local.get $dw) (local.get $iy)
                 (i32.eq (local.get $i) (local.get $hover_sidx)))))))
       (local.set $iy (i32.add (local.get $iy) (i32.const 20)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
@@ -1708,7 +1780,7 @@
     (local $blob i32) (local $hdr i32) (local $count i32) (local $i i32)
     (local $hdc i32) (local $iy i32) (local $it i32) (local $flags i32)
     (local $label_wa i32) (local $label_len i32)
-    (local $sc_wa i32) (local $sc_len i32) (local $dh i32)
+    (local $sc_wa i32) (local $sc_len i32) (local $dh i32) (local $dw i32)
     (local.set $blob (call $menu_dropdown_blob_w (local.get $hwnd)))
     (if (i32.eqz (local.get $blob)) (then (return)))
     (local.set $hdr (call $child_hdr_w (local.get $blob) (local.get $tidx)))
@@ -1718,16 +1790,18 @@
 
     (local.set $hdc (call $gdi_menu_overlay_ensure))
     (if (i32.eqz (local.get $hdc)) (then (return)))
+    (local.set $dw
+      (call $menu_header_width (local.get $blob) (local.get $hdr) (local.get $hdc)))
     (local.set $dh (i32.add (i32.mul (local.get $count) (i32.const 20)) (i32.const 4)))
     ;; Background + outset border.
     (drop (call $host_gdi_fill_rect (local.get $hdc)
             (local.get $dx) (local.get $dy)
-            (i32.add (local.get $dx) (i32.const 180))
+            (i32.add (local.get $dx) (local.get $dw))
             (i32.add (local.get $dy) (local.get $dh))
             (i32.const 0x30011)))
     (drop (call $host_gdi_draw_edge (local.get $hdc)
             (local.get $dx) (local.get $dy)
-            (i32.add (local.get $dx) (i32.const 180))
+            (i32.add (local.get $dx) (local.get $dw))
             (i32.add (local.get $dy) (local.get $dh))
             (i32.const 0x05) (i32.const 0x0F)))
 
@@ -1747,7 +1821,7 @@
           (drop (call $host_gdi_fill_rect (local.get $hdc)
                   (i32.add (local.get $dx) (i32.const 4))
                   (i32.add (local.get $iy) (i32.const 9))
-                  (i32.add (local.get $dx) (i32.const 176))
+                  (i32.add (local.get $dx) (i32.sub (local.get $dw) (i32.const 4)))
                   (i32.add (local.get $iy) (i32.const 10))
                   (i32.const 0x30012))))
         (else
@@ -1756,7 +1830,7 @@
             (then
               (drop (call $host_gdi_fill_rect (local.get $hdc)
                       (i32.add (local.get $dx) (i32.const 2)) (local.get $iy)
-                      (i32.add (local.get $dx) (i32.const 178))
+                      (i32.add (local.get $dx) (i32.sub (local.get $dw) (i32.const 2)))
                       (i32.add (local.get $iy) (i32.const 20))
                       (i32.const 14))) ;; COLOR_HIGHLIGHT brush
               (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0xFFFFFF))))
@@ -1801,7 +1875,7 @@
                   (local.get $label_wa) (local.get $label_len)
                   (call $paint_rect (i32.add (local.get $dx) (i32.const 20))
                                     (local.get $iy)
-                                    (i32.add (local.get $dx) (i32.const 160))
+                                    (i32.add (local.get $dx) (i32.sub (local.get $dw) (i32.const 20)))
                                     (i32.add (local.get $iy) (i32.const 20)))
                   (i32.const 0x24) (i32.const 0)))
           ;; Optional shortcut, right-aligned.
@@ -1815,13 +1889,13 @@
                       (local.get $sc_wa) (local.get $sc_len)
                       (call $paint_rect (i32.add (local.get $dx) (i32.const 20))
                                         (local.get $iy)
-                                        (i32.add (local.get $dx) (i32.const 160))
+                                        (i32.add (local.get $dx) (i32.sub (local.get $dw) (i32.const 20)))
                                         (i32.add (local.get $iy) (i32.const 20)))
                       (i32.const 0x26) (i32.const 0)))))
           (if (i32.load offset=24 (local.get $it))
             (then
               (call $menu_draw_submenu_arrow
-                (local.get $hdc) (local.get $dx) (local.get $iy)
+                (local.get $hdc) (local.get $dx) (local.get $dw) (local.get $iy)
                 (i32.eq (local.get $i) (local.get $hover_cidx)))))))
       (local.set $iy (i32.add (local.get $iy) (i32.const 20)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
@@ -1831,7 +1905,7 @@
       (then
         (call $menu_paint_submenu
           (local.get $hwnd) (local.get $tidx) (local.get $hover_cidx)
-          (i32.add (local.get $dx) (i32.const 180))
+          (i32.add (local.get $dx) (local.get $dw))
           (i32.add (i32.add (local.get $dy) (i32.const 2))
                    (i32.mul (local.get $hover_cidx) (i32.const 20)))
           (global.get $menu_open_sub_hover)))))
@@ -1860,16 +1934,21 @@
         (param $click_x i32) (param $click_y i32) (result i32)
     (local $blob i32) (local $hdr i32) (local $count i32) (local $cidx i32)
     (local $iy0 i32) (local $it i32) (local $flags i32) (local $dh i32)
+    (local $dw i32) (local $hdc i32)
     (local.set $blob (call $menu_dropdown_blob_w (local.get $hwnd)))
     (if (i32.eqz (local.get $blob)) (then (return (i32.const -1))))
     (local.set $hdr (call $child_hdr_w (local.get $blob) (local.get $tidx)))
     (if (i32.eqz (local.get $hdr)) (then (return (i32.const -1))))
     (local.set $count (i32.load (local.get $hdr)))
     (local.set $dh (i32.add (i32.mul (local.get $count) (i32.const 20)) (i32.const 4)))
+    (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+    (local.set $dw
+      (call $menu_header_width (local.get $blob) (local.get $hdr) (local.get $hdc)))
     ;; Outside box?
     (if (i32.lt_s (local.get $click_x) (i32.add (local.get $dx) (i32.const 2)))
       (then (return (i32.const -1))))
-    (if (i32.ge_s (local.get $click_x) (i32.add (local.get $dx) (i32.const 178)))
+    (if (i32.ge_s (local.get $click_x)
+          (i32.add (local.get $dx) (i32.sub (local.get $dw) (i32.const 2))))
       (then (return (i32.const -1))))
     (if (i32.lt_s (local.get $click_y) (i32.add (local.get $dy) (i32.const 2)))
       (then (return (i32.const -1))))
@@ -1893,6 +1972,7 @@
         (param $click_x i32) (param $click_y i32) (result i32)
     (local $blob i32) (local $hdr i32) (local $count i32) (local $sidx i32)
     (local $iy0 i32) (local $it i32) (local $flags i32) (local $dh i32)
+    (local $dw i32) (local $hdc i32)
     (local.set $blob (call $menu_dropdown_blob_w (local.get $hwnd)))
     (if (i32.eqz (local.get $blob)) (then (return (i32.const -1))))
     (local.set $hdr (call $child_sub_hdr_w
@@ -1900,6 +1980,9 @@
     (if (i32.eqz (local.get $hdr)) (then (return (i32.const -1))))
     (local.set $count (i32.load (local.get $hdr)))
     (local.set $dh (i32.add (i32.mul (local.get $count) (i32.const 20)) (i32.const 4)))
+    (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
+    (local.set $dw
+      (call $menu_header_width (local.get $blob) (local.get $hdr) (local.get $hdc)))
     ;; The box's own 2px border counts as inside. It used not to, and the left
     ;; border is precisely the column the pointer crosses when it slides right
     ;; out of the parent item: entering a cascade at its first two columns
@@ -1907,7 +1990,7 @@
     ;; to land two pixels deeper than the submenu appears to start.
     (if (i32.lt_s (local.get $click_x) (local.get $dx))
       (then (return (i32.const -1))))
-    (if (i32.ge_s (local.get $click_x) (i32.add (local.get $dx) (i32.const 180)))
+    (if (i32.ge_s (local.get $click_x) (i32.add (local.get $dx) (local.get $dw)))
       (then (return (i32.const -1))))
     (if (i32.lt_s (local.get $click_y) (i32.add (local.get $dy) (i32.const 2)))
       (then (return (i32.const -1))))
@@ -2912,7 +2995,7 @@
     (local $hwnd i32) (local $top i32)
     (local $bar_x i32) (local $bar_y i32) (local $bar_h i32)
     (local $dx i32) (local $dy i32) (local $idx i32)
-    (local $sdx i32) (local $sdy i32)
+    (local $sdx i32) (local $sdy i32) (local $dw i32)
     (local.set $hwnd (global.get $menu_open_hwnd))
     (if (i32.eqz (local.get $hwnd)) (then (return (i32.const 0))))
     (local.set $top (global.get $menu_open_top))
@@ -2921,6 +3004,7 @@
     (local.set $bar_h (call $menu_bar_screen_h))
     (local.set $dx (call $menu_dropdown_x (local.get $hwnd) (local.get $top)))
     (local.set $dy (call $menu_dropdown_y (local.get $hwnd)))
+    (local.set $dw (call $menu_dropdown_width (local.get $hwnd) (local.get $top)))
 
     (local.set $idx (call $menu_hittest_dropdown
       (local.get $hwnd) (local.get $top)
@@ -2935,7 +3019,7 @@
 
     (if (i32.ge_s (global.get $menu_open_hover) (i32.const 0))
       (then
-        (local.set $sdx (i32.add (local.get $dx) (i32.const 180)))
+        (local.set $sdx (i32.add (local.get $dx) (local.get $dw)))
         (local.set $sdy
           (i32.add (i32.add (local.get $dy) (i32.const 2))
                    (i32.mul (global.get $menu_open_hover) (i32.const 20))))
@@ -2975,6 +3059,7 @@
     (local $bar_x i32) (local $bar_y i32) (local $bar_h i32)
     (local $dx i32) (local $dy i32) (local $idx i32)
     (local $sdx i32) (local $sdy i32) (local $subn i32)
+    (local $dw i32) (local $sw i32)
     (local.set $hwnd (global.get $menu_open_hwnd))
     (if (i32.eqz (local.get $hwnd)) (then (return (i32.const -1))))
     (local.set $top (global.get $menu_open_top))
@@ -2983,6 +3068,7 @@
     (local.set $bar_h (call $menu_bar_screen_h))
     (local.set $dx (call $menu_dropdown_x (local.get $hwnd) (local.get $top)))
     (local.set $dy (call $menu_dropdown_y (local.get $hwnd)))
+    (local.set $dw (call $menu_dropdown_width (local.get $hwnd) (local.get $top)))
     ;; When a cascading submenu is open, prefer the submenu tracking region
     ;; over lower parent rows on the right side of the dropdown. Otherwise a
     ;; diagonal move toward "2 Players" can briefly hit "&Sounds" and close
@@ -2993,15 +3079,19 @@
           (local.get $hwnd) (local.get $top) (global.get $menu_open_hover)))
         (if (i32.gt_s (local.get $subn) (i32.const 0))
           (then
-            (local.set $sdx (i32.add (local.get $dx) (i32.const 180)))
+            (local.set $sdx (i32.add (local.get $dx) (local.get $dw)))
+            (local.set $sw (call $menu_submenu_width
+              (local.get $hwnd) (local.get $top) (global.get $menu_open_hover)))
             (local.set $sdy
               (i32.add (i32.add (local.get $dy) (i32.const 2))
                        (i32.mul (global.get $menu_open_hover) (i32.const 20))))
             (local.set $idx
               (i32.and
                 (i32.and
-                  (i32.ge_s (local.get $sx) (i32.add (local.get $dx) (i32.const 120)))
-                  (i32.lt_s (local.get $sx) (i32.add (local.get $sdx) (i32.const 178))))
+                  (i32.ge_s (local.get $sx)
+                    (i32.add (local.get $dx) (i32.sub (local.get $dw) (i32.const 60))))
+                  (i32.lt_s (local.get $sx)
+                    (i32.add (local.get $sdx) (i32.sub (local.get $sw) (i32.const 2)))))
                 (i32.and
                   (i32.ge_s (local.get $sy) (local.get $sdy))
                   (i32.lt_s (local.get $sy)
@@ -3028,7 +3118,9 @@
         (return (local.get $idx))))
     (if (i32.ge_s (global.get $menu_open_hover) (i32.const 0))
       (then
-        (local.set $sdx (i32.add (local.get $dx) (i32.const 180)))
+        (local.set $sdx (i32.add (local.get $dx) (local.get $dw)))
+        (local.set $sw (call $menu_submenu_width
+          (local.get $hwnd) (local.get $top) (global.get $menu_open_hover)))
         (local.set $sdy
           (i32.add (i32.add (local.get $dy) (i32.const 2))
                    (i32.mul (global.get $menu_open_hover) (i32.const 20))))
@@ -3049,8 +3141,10 @@
             (i32.gt_s (local.get $subn) (i32.const 0))
             (i32.and
               (i32.and
-                (i32.ge_s (local.get $sx) (i32.add (local.get $dx) (i32.const 178)))
-                (i32.lt_s (local.get $sx) (i32.add (local.get $sdx) (i32.const 178))))
+                (i32.ge_s (local.get $sx)
+                  (i32.add (local.get $dx) (i32.sub (local.get $dw) (i32.const 2))))
+                (i32.lt_s (local.get $sx)
+                  (i32.add (local.get $sdx) (i32.sub (local.get $sw) (i32.const 2)))))
               (i32.and
                 (i32.ge_s (local.get $sy) (local.get $sdy))
                 (i32.lt_s (local.get $sy)

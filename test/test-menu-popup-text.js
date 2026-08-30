@@ -56,6 +56,7 @@ function check(label, fn) {
     { id: 102, text: 'Spectrum &Radar' },
     { id: 103, text: 'E&&xit\tCtrl+X' },
     { id: 104, text: 'Close Plug-in\t[Escape]' },
+    { id: 105, text: 'Extract files to specified destination folder\tCtrl+Shift+E' },
   ];
   for (const it of items) {
     assert.strictEqual(wat.test_call_AppendMenuA(hmenu, MF_STRING, it.id, strA(it.text)), 1);
@@ -72,7 +73,15 @@ function check(label, fn) {
     readAt(wat.menu_child_shortcut_ptr(0, 0, i), wat.menu_child_shortcut_len(0, 0, i));
 
   check('every appended item is in the popup', () => {
-    assert.strictEqual(wat.menu_child_count(0, 0), 5);
+    assert.strictEqual(wat.menu_child_count(0, 0), 6);
+  });
+
+  check('popup width grows to keep long labels and shortcuts in separate columns', () => {
+    const width = wat.menu_dropdown_width(0, 0) | 0;
+    assert(width > 180, `long popup stayed at the legacy 180px width (${width})`);
+    assert.strictEqual(wat.menu_hittest_dropdown(0, 0, 40, 40,
+      40 + width - 3, 43), 0,
+    'the widened painted area must also belong to the first menu item');
   });
 
   check('an item shows the string it was appended with', () => {
@@ -99,7 +108,7 @@ function check(label, fn) {
   });
 
   check('the separator is marked as one', () => {
-    assert.strictEqual(wat.menu_child_flags(0, 0, 4) & 1, 1);
+    assert.strictEqual(wat.menu_child_flags(0, 0, 5) & 1, 1);
   });
 
   check('the mnemonic is the character after an un-doubled &', () => {

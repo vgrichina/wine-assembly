@@ -65,6 +65,18 @@ function colorCount(png, rgb) {
   return count;
 }
 
+function colorCountInRect(png, rgb, left, top, right, bottom) {
+  let count = 0;
+  for (let y = top; y < bottom; y++) {
+    for (let x = left; x < right; x++) {
+      const i = (y * png.width + x) * 4;
+      if (png.data[i] === rgb[0] && png.data[i + 1] === rgb[1] &&
+          png.data[i + 2] === rgb[2] && png.data[i + 3]) count++;
+    }
+  }
+  return count;
+}
+
 function darkCountInRect(png, left, top, right, bottom) {
   let count = 0;
   for (let y = top; y < bottom; y++) {
@@ -109,6 +121,7 @@ function darkCountInRect(png, left, top, right, bottom) {
   const framePath = path.join(temp, 'winrar.png');
   const installedFramePath = path.join(temp, 'winrar-installed.png');
   const integrationFramePath = path.join(temp, 'winrar-integration.png');
+  const commandsFramePath = path.join(temp, 'winrar-commands.png');
   try {
     const wasm = await compileWatSnapshot(file =>
       fs.promises.readFile(path.join(ROOT, 'src', file), 'utf8'));
@@ -171,7 +184,8 @@ function darkCountInRect(png, left, top, right, bottom) {
       '--batch-size=50000',
       `--input=1:wait-title:Please_register:2000,2:dlg-click:1,` +
         `10:mousedown:350:76,11:mouseup:350:76,20:png:${integrationFramePath},` +
-        '30:dlg-click:2',
+        `30:dlg-click:2,40:mousedown:95:51,41:mouseup:95:51,` +
+        `50:png:${commandsFramePath},60:mousedown:500:400,61:mouseup:500:400`,
       `--png=${installedFramePath}`,
     ], {
       cwd: ROOT,
@@ -198,6 +212,16 @@ function darkCountInRect(png, left, top, right, bottom) {
     const staleGeneralInk = darkCountInRect(integrationPng, 300, 185, 480, 211);
     assert(staleGeneralInk < 30,
       `WinRAR property page retained hidden General controls (${staleGeneralInk} stale dark pixels)`);
+    assert(fs.existsSync(commandsFramePath),
+      'WinRAR did not capture its Commands menu');
+    const commandsPng = PNG.sync.read(fs.readFileSync(commandsFramePath));
+    // Commands begins at x=61. Its longest label + accelerator requires about
+    // 230px, so this strip lies beyond the former fixed 180px popup yet must
+    // still be the menu's BTNFACE background rather than underlying toolbar.
+    const widenedMenuGray = colorCountInRect(commandsPng, [192, 192, 192],
+      245, 65, 288, 378);
+    assert(widenedMenuGray > 9000,
+      `WinRAR Commands menu remained clipped (${widenedMenuGray} gray extension pixels)`);
     const installedPng = PNG.sync.read(fs.readFileSync(installedFramePath));
     const installedTeal = colorCount(installedPng, [0, 128, 128]);
     const installedGray = colorCount(installedPng, [192, 192, 192]);

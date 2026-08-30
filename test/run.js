@@ -5872,18 +5872,21 @@ async function main() {
         // Where the dropdown and its cascade actually are. Without this a
         // "submenu never highlighted" report cannot be told apart from
         // "the test aimed the mouse at the wrong place": both look like
-        // subhover=-1. Widths are the fixed 180 the painter and hit-test
-        // share; the cascade hangs off the hovered row.
+        // subhover=-1. Read the measured widths shared by painting and hit
+        // testing; the cascade hangs off the hovered row.
         let geom = '';
         if (hwnd && we.menu_dropdown_x && we.menu_dropdown_y) {
           const dx = we.menu_dropdown_x(hwnd, top) | 0;
           const dy = we.menu_dropdown_y(hwnd) | 0;
           const dh = we.menu_dropdown_height ? (we.menu_dropdown_height(hwnd, top) | 0) : 0;
-          geom = ` drop=${dx},${dy} ${180}x${dh}`;
+          const dw = we.menu_dropdown_width ? (we.menu_dropdown_width(hwnd, top) | 0) : 180;
+          geom = ` drop=${dx},${dy} ${dw}x${dh}`;
           if (hover >= 0 && we.menu_child_sub_count) {
             const subn = we.menu_child_sub_count(hwnd, top, hover) | 0;
             if (subn > 0) {
-              geom += ` cascade=${dx + 180},${dy + 2 + hover * 20} 180x${subn * 20 + 4}`;
+              const sw = we.menu_submenu_width
+                ? (we.menu_submenu_width(hwnd, top, hover) | 0) : 180;
+              geom += ` cascade=${dx + dw},${dy + 2 + hover * 20} ${sw}x${subn * 20 + 4}`;
             }
           }
         }
