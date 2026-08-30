@@ -89,6 +89,21 @@ function darkCountInRect(png, left, top, right, bottom) {
   return count;
 }
 
+function saturatedCountInRect(png, left, top, right, bottom) {
+  let count = 0;
+  for (let y = top; y < bottom; y++) {
+    for (let x = left; x < right; x++) {
+      const i = (y * png.width + x) * 4;
+      const r = png.data[i];
+      const g = png.data[i + 1];
+      const b = png.data[i + 2];
+      if (Math.max(r, g, b) - Math.min(r, g, b) > 50 &&
+          Math.max(r, g, b) > 100 && png.data[i + 3]) count++;
+    }
+  }
+  return count;
+}
+
 (async () => {
   const candidate = MANIFEST.candidates.find(item => item.id === 'winrar-310');
   assert(candidate, 'WinRAR 3.10 has a candidate-corpus entry');
@@ -121,6 +136,7 @@ function darkCountInRect(png, left, top, right, bottom) {
   const framePath = path.join(temp, 'winrar.png');
   const installedFramePath = path.join(temp, 'winrar-installed.png');
   const integrationFramePath = path.join(temp, 'winrar-integration.png');
+  const mainFramePath = path.join(temp, 'winrar-main-after-settings.png');
   const commandsFramePath = path.join(temp, 'winrar-commands.png');
   try {
     const wasm = await compileWatSnapshot(file =>
@@ -182,9 +198,10 @@ function darkCountInRect(png, left, top, right, bottom) {
       '--quiet-blocks',
       '--max-batches=120',
       '--batch-size=50000',
-      `--input=1:wait-title:Please_register:2000,2:dlg-click:1,` +
+      `--input=1:wait-title:Please_register:2000,2:dlg-click:1,5:dump-windows:registration-closed,` +
         `10:mousedown:350:76,11:mouseup:350:76,20:png:${integrationFramePath},` +
-        `30:dlg-click:2,40:mousedown:95:51,41:mouseup:95:51,` +
+        `30:dlg-click:2,35:dump-windows:settings-closed,36:png:${mainFramePath},` +
+        `40:mousedown:95:51,41:mouseup:95:51,` +
         `50:png:${commandsFramePath},60:mousedown:500:400,61:mouseup:500:400`,
       `--png=${installedFramePath}`,
     ], {
@@ -202,6 +219,10 @@ function darkCountInRect(png, left, top, right, bottom) {
       `installed WinRAR hit a compatibility failure\n${installedOutput.slice(-8000)}`);
     assert(installedOutput.includes('[SetWindowText] "c:\\ - WinRAR (evaluation copy)"'),
       `installed WinRAR never reached its live file panel\n${installedOutput.slice(-8000)}`);
+    assert(/\[input\] window:registration-closed .*enabled=false .*title="c:\\\\ - WinRAR \(evaluation copy\)"/.test(installedOutput),
+      `closing WinRAR registration prematurely enabled the Settings owner\n${installedOutput.slice(-8000)}`);
+    assert(/\[input\] window:settings-closed .*enabled=true .*title="c:\\\\ - WinRAR \(evaluation copy\)"/.test(installedOutput),
+      `WinRAR owner remained disabled after Settings closed\n${installedOutput.slice(-8000)}`);
     for (const plugin of ['ace', 'arj', 'bz2', 'cab', 'gz', 'iso', 'lzh', 'tar', 'uue']) {
       assert(installedOutput.includes(`[LoadLibrary] ${plugin}.fmt loaded`),
         `installed WinRAR did not load ${plugin}.fmt\n${installedOutput.slice(-8000)}`);
@@ -216,6 +237,12 @@ function darkCountInRect(png, left, top, right, bottom) {
       50, 87, 510, 91);
     assert(exposedPageWhite < 40,
       `WinRAR tab left its exposed property-page band white (${exposedPageWhite} white pixels)`);
+    assert(fs.existsSync(mainFramePath),
+      'WinRAR did not capture its main toolbar after Settings closed');
+    const mainPng = PNG.sync.read(fs.readFileSync(mainFramePath));
+    const toolbarColor = saturatedCountInRect(mainPng, 35, 65, 411, 120);
+    assert(toolbarColor > 1000,
+      `WinRAR toolbar was still blank after Settings closed (${toolbarColor} colored pixels)`);
     assert(fs.existsSync(commandsFramePath),
       'WinRAR did not capture its Commands menu');
     const commandsPng = PNG.sync.read(fs.readFileSync(commandsFramePath));
