@@ -309,6 +309,20 @@ and `entry c:8 base=232e0 pm` before control reaches a selector we resolve to
 base 0 and the run walks the IVT. That is a DOS extender, not a missing service,
 and it is a different size of job from everything above.
 
+Where to start on it, measured. The last honest block is the resident's
+protected-mode entry, reached as `entry c:8 base=232e0 pm` and running at
+`232e:0017`; it is 16-bit protected mode using 0x66/0x67 prefixes throughout,
+not a 32-bit segment (`--trace-entry` never reports `32-bit code` and the run
+is never `blockedOn32`). By the time control reaches the `int 21h` eight
+instructions later at `232e:0053` the machine is already wrong: AX should be
+`0x3f11` — `mov ah,0x3f` over the `0x0011` it came in with — and is `0xff0d`,
+which is why the trace shows `int 21h ax=ff0d ... UNHANDLED`, and SP has moved
+`0x0bee` → `0xfffe` with SS unchanged. So one instruction inside that single
+block corrupts the state, and the derail into `cs=0x16` and then the IVT is
+downstream of it. LGDT/LIDT/LMSW/`mov cr0,r` are all implemented, so it is not
+the mode switch itself. `--trace-entry` cannot bisect a single block, which is
+the tooling gap to close first.
+
 **The sweep is deliberately not given a `--svga` rung, and the reason is worth
 keeping.** A rung was written and measured: a program that put nothing on either
 surface — no pixels and not one non-blank cell, which in this corpus is
