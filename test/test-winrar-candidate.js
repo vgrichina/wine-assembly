@@ -212,6 +212,10 @@ function darkCountInRect(png, left, top, right, bottom) {
     const staleGeneralInk = darkCountInRect(integrationPng, 300, 185, 480, 211);
     assert(staleGeneralInk < 30,
       `WinRAR property page retained hidden General controls (${staleGeneralInk} stale dark pixels)`);
+    const exposedPageWhite = colorCountInRect(integrationPng, [255, 255, 255],
+      50, 87, 510, 91);
+    assert(exposedPageWhite < 40,
+      `WinRAR tab left its exposed property-page band white (${exposedPageWhite} white pixels)`);
     assert(fs.existsSync(commandsFramePath),
       'WinRAR did not capture its Commands menu');
     const commandsPng = PNG.sync.read(fs.readFileSync(commandsFramePath));

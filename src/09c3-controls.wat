@@ -785,11 +785,43 @@
           (br $hit)))))
     )
 
+  ;; A property sheet's page dialog is a sibling of its tab control, inset
+  ;; below the tab row. The tab owns the exposed band above that sibling, but
+  ;; not the page itself: clearing the full client area here would erase
+  ;; controls that have already painted into the shared top-level surface.
+  (func $tab_native_page_top (param $hwnd i32) (param $height i32) (result i32)
+    (local $parent i32) (local $slot i32) (local $child i32)
+    (local $tab_y i32) (local $child_y i32) (local $page_top i32)
+    (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+    (if (i32.eqz (local.get $parent)) (then (return (i32.const 21))))
+    (local.set $tab_y (call $ctrl_get_y_s (local.get $hwnd)))
+    (local.set $slot (i32.const 0))
+    (block $done (loop $scan
+      (local.set $slot (call $wnd_next_child_slot (local.get $parent) (local.get $slot)))
+      (br_if $done (i32.lt_s (local.get $slot) (i32.const 0)))
+      (local.set $child (call $wnd_slot_hwnd (local.get $slot)))
+      (if (i32.and
+            (i32.eq (call $wnd_table_get (local.get $child)) (global.get $WNDPROC_DIALOG))
+            (call $wnd_is_effectively_visible (local.get $child)))
+        (then
+          (local.set $child_y
+            (i32.sub (call $ctrl_get_y_s (local.get $child)) (local.get $tab_y)))
+          (if (i32.and
+                (i32.gt_s (local.get $child_y) (i32.const 21))
+                (i32.lt_s (local.get $child_y) (local.get $height)))
+            (then
+              (if (i32.or (i32.eqz (local.get $page_top))
+                          (i32.lt_s (local.get $child_y) (local.get $page_top)))
+                (then (local.set $page_top (local.get $child_y))))))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $scan)))
+    (select (local.get $page_top) (i32.const 21) (i32.ne (local.get $page_top) (i32.const 0))))
+
   (func $tab_native_paint (param $hwnd i32) (result i32)
     (local $state i32) (local $sw i32) (local $hdc i32) (local $sz i32)
     (local $w i32) (local $h i32) (local $count i32) (local $selected i32)
     (local $i i32) (local $rec i32) (local $len i32)
-    (local $left i32) (local $right i32) (local $top i32)
+    (local $left i32) (local $right i32) (local $top i32) (local $page_top i32)
     (local.set $state (call $tab_native_state_get (local.get $hwnd) (i32.const 0)))
     (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
     (local.set $sw (call $g2w (local.get $state)))
@@ -805,6 +837,15 @@
     ;; surface too, and a late tab repaint must not erase their topic tree.
     (drop (call $host_gdi_fill_rect (local.get $hdc)
       (i32.const 0) (i32.const 0) (local.get $w) (i32.const 21) (i32.const 0x30011)))
+    ;; Clear only the page-frame band that no visible page dialog owns. This
+    ;; is the strip WinRAR exposes after switching Settings pages.
+    (local.set $page_top
+      (call $tab_native_page_top (local.get $hwnd) (local.get $h)))
+    (if (i32.gt_s (local.get $page_top) (i32.const 21))
+      (then
+        (drop (call $host_gdi_fill_rect (local.get $hdc)
+          (i32.const 2) (i32.const 21) (i32.sub (local.get $w) (i32.const 2))
+          (local.get $page_top) (i32.const 0x30011)))))
     ;; Native Win98 tabs use a 20px row and merge the selected tab into the
     ;; raised page frame beneath it.
     (drop (call $host_gdi_draw_edge (local.get $hdc)
