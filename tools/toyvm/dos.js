@@ -810,6 +810,9 @@ class Machine {
     // EXEC: the parent contexts to return to, and the code the last child
     // exited with. `transfer` is how a service hands control somewhere else.
     this.execStack = []; this.lastExitCode = 0; this.transfer = null;
+    // How the last child ended, in AH=4Dh's terms: 0 normal, 1 Ctrl-C, 2
+    // critical error, 3 terminate-and-stay-resident. See AH=4Dh.
+    this.lastExitType = 0;
     this.curPsp = PSP_SEG;             // whose PSP AH=51h/62h reports
     this.xmsBlocks = new Map(); this.xmsNext = 1; this.xmsMoved = 0;
     // Whether the guest's addresses still wrap at 1MB. They do until it takes
@@ -3202,7 +3205,7 @@ class Machine {
         const keep = ah === 0x31 ? this.curPsp + (r.get('dx') & 0xFFFF) : 0;
         if (this.execStack.length) {
           const parent = this.execStack.pop();
-          this.lastExitCode = code;
+          this.lastExitCode = code; this.lastExitType = ah === 0x31 ? 3 : 0;
           this.transfer = parent;
           this.allocTop = Math.max(parent.allocTop, keep);
           this.imageTop = Math.max(parent.imageTop, keep);
@@ -3234,7 +3237,7 @@ class Machine {
           const leaving = this.curPsp;
           const parent = (this.mem[(this.curPsp << 4) + 0x16])
             | (this.mem[(this.curPsp << 4) + 0x17] << 8);
-          this.lastExitCode = code;
+          this.lastExitCode = code; this.lastExitType = ah === 0x31 ? 3 : 0;
           this.log(`exit ${code} through the terminate vector at`
             + ` ${term.cs.toString(16)}:${term.ip.toString(16)}`);
           if (parent && parent !== this.curPsp) this.curPsp = parent;
@@ -3294,7 +3297,13 @@ class Machine {
         return true;
       }
       case 0x4D:                                // get child return code
-        r.set('ax', (this.lastExitCode || 0) & 0xFF);
+        // AL is the code, AH is *how* it ended, and the second half is not
+        // decoration: ANGEL.EXE's loader reads AH and skips freeing the child's
+        // block when it is 3 (terminate-and-stay-resident). Answering 0 there
+        // had it free the resident protected-mode helper it had just installed
+        // and then load the next overlay straight on top of it, so the INT FCh
+        // the demo makes next landed in the middle of an instruction.
+        r.set('ax', ((this.lastExitType & 0xFF) << 8) | ((this.lastExitCode || 0) & 0xFF));
         r.setResultCf(false);
         return true;
       case 0x4B: {
