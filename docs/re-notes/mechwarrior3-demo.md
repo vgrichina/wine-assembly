@@ -584,6 +584,46 @@ Implementation should be staged behind an opt-in:
    Keep the Worker only if overlap exceeds queue copies, atomics, and lost-core
    cost without changing the gameplay image.
 
+### Opt-in render-Worker prototype (2026-08-30)
+
+The first implementation is deliberately narrower than the final design. With
+browser Threads enabled, `?d3d-worker` gives the guest-main Worker a three-slot,
+2 MiB-per-slot shared batch ring and starts a renderer-only Wasm instance over
+the process memory. Device3 `DrawPrimitive` copies its canonical 32-byte
+vertices and a 4 KiB device-state snapshot into the command record before the
+handler frees its temporary FVF buffer. The consumer replays FIFO into shared
+render-target/depth/texture surfaces. `Lock`, `Blt`/`BltFast`, `Flip`, clear,
+texture load/release, palette/color-key changes, and device/surface lifetime are
+global fences; unsupported draw families fence and use the synchronous path.
+Cooperative and non-opted-in Workers return “not queued” from the private GPU
+opcode and therefore execute the unchanged renderer.
+
+This version proves ownership, sequencing, and the second-instance mechanism;
+it does not yet implement surface generations, per-surface dependency fences,
+or direct-to-ring FVF packing. A normal Threads smoke accepted 159 real MW3
+draws with zero fallbacks and zero Worker errors. It also caught and fixed a
+ring bug where an idle fence could republish the stale bytes of a rotated slot:
+after the fix, 159 accepted draws produced exactly 159 submissions. The fully
+textured menu is browser-visible, but moving-cockpit image parity and FPS A/B
+remain required before this can be enabled by default. Menu traffic fences
+almost every draw; only gameplay's measured ~750 draws/Flip can show whether
+in-frame batching pays for the 4 KiB state copies.
+
+There is a separate hardware option worth retaining. The repository's OpenGL
+frontend already batches guest calls and renders through a WebGL fixed-function
+compatibility layer. A future `software-direct | software-worker | webgl`
+backend choice could translate D3D draw/state packets into that renderer. It is
+most attractive for later D3D versions where applications cannot freely lock
+the render target. It is not a drop-in optimization for MW3: D3D3 surface
+locking, color keys, palettized/RGB565 textures, fixed-function blend/fog/light
+rules, depth precision, and readback still require an explicit compatibility
+contract and the same fences. Keep it independent from the software-worker
+transport so hardware translation bugs cannot weaken the known-correct CPU
+fallback. `fable-review.md` also identifies per-word `DataView` allocation in
+`gl-command-stream.js` and per-vertex copying in `gl-compat.js`; remove those
+costs and measure the native OpenGL path before treating it as a performant D3D
+backend substrate.
+
 ### Settled-cockpit x86 profile and disassembly
 
 The allocator investigation above measured the wrong phase before its scope was

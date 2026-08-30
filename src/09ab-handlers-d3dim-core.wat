@@ -40,6 +40,10 @@
   ;; 16. Only a change is logged, so a per-triangle call site stays quiet while
   ;; still showing every rebind. -1 can never collide with a real pair.
   (global $d3dim_dbg_tex_last (mut i32) (i32.const -1))
+  ;; Per-instance only. The render Worker points this at its command-owned
+  ;; 4KB snapshot while replaying; the guest instance keeps zero and therefore
+  ;; continues to use the live device entry.
+  (global $d3dim_state_override (mut i32) (i32.const 0))
   (global $D3DIM_OFF_CUR_VP    i32 (i32.const 2816))
   (global $D3DIM_OFF_CUR_MAT   i32 (i32.const 2820))
   (global $D3DIM_OFF_TEX_STAGE i32 (i32.const 2824))
@@ -55,6 +59,38 @@
   (global $D3DIM_OFF_D3D7_CLIP_PLANES i32 (i32.const 3456))
   (global $D3DIM_OFF_TSS_EXT i32 (i32.const 3552))
   (global $D3DIM_OFF_CLIP_STATUS i32 (i32.const 4000))
+  ;; Producer-only descriptor scratch in the unused gap before CLIP_STATUS.
+  (global $D3DIM_OFF_WORKER_DESC i32 (i32.const 3968))
+
+  (func $d3dim_worker_fence
+    (drop (call $host_gpu_gl_call (i32.const 0x20001) (i32.const 0) (i32.const 0))))
+
+  ;; Snapshot ownership is established by the JS encoder before this returns.
+  ;; Result 1 means a render Worker accepted the draw; 0 selects the existing
+  ;; synchronous rasterizer without changing non-Threads behavior.
+  (func $d3dim_worker_try_draw
+    (param $this i32) (param $primitive i32) (param $vertex_type i32)
+    (param $vertices i32) (param $count i32) (result i32)
+    (local $state i32) (local $desc i32)
+    (local.set $state (call $d3ddev_state (local.get $this)))
+    (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+    (local.set $desc (i32.add (call $g2w (local.get $state))
+      (global.get $D3DIM_OFF_WORKER_DESC)))
+    (i32.store offset=0 (local.get $desc) (local.get $this))
+    (i32.store offset=4 (local.get $desc) (local.get $primitive))
+    (i32.store offset=8 (local.get $desc) (local.get $vertex_type))
+    (i32.store offset=12 (local.get $desc) (local.get $vertices))
+    (i32.store offset=16 (local.get $desc) (local.get $count))
+    (i32.store offset=20 (local.get $desc) (local.get $state))
+    (call $host_gpu_gl_call (i32.const 0x20000) (local.get $desc) (i32.const 0)))
+
+  (func (export "d3dim_worker_draw")
+    (param $this i32) (param $primitive i32) (param $vertex_type i32)
+    (param $vertices i32) (param $count i32) (param $state i32)
+    (global.set $d3dim_state_override (local.get $state))
+    (call $d3dim_draw_primitive (local.get $this) (local.get $primitive)
+      (local.get $vertex_type) (local.get $vertices) (local.get $count))
+    (global.set $d3dim_state_override (i32.const 0)))
 
   ;; Crash-name strings for unimplemented D3DIM paths live in the high
   ;; WAT-private scratch area so they cannot collide with low system strings
@@ -1718,6 +1754,7 @@
           (i32.ne (i32.load (local.get $dst)) (i32.const 2))
           (i32.ne (i32.load (local.get $src)) (i32.const 2)))
       (then (return)))
+    (call $d3dim_worker_fence)
     (local.set $dw (i32.and (i32.load (i32.add (local.get $dst) (i32.const 12))) (i32.const 0xFFFF)))
     (local.set $dh (i32.shr_u (i32.load (i32.add (local.get $dst) (i32.const 12))) (i32.const 16)))
     (local.set $dbpp (i32.and (i32.load (i32.add (local.get $dst) (i32.const 16))) (i32.const 0xFFFF)))

@@ -1555,6 +1555,7 @@
   ;; IDirect3DTexture_Release — 1 args (incl. this)
   (func $handle_IDirect3DTexture_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $rc i32)
+    (call $d3dim_worker_fence)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $rc (i32.sub (i32.load (i32.add (local.get $entry) (i32.const 4))) (i32.const 1)))
     (if (i32.le_s (local.get $rc) (i32.const 0))
@@ -1588,6 +1589,7 @@
 
   ;; IDirect3DTexture_Unload — 1 args (incl. this)
   (func $handle_IDirect3DTexture_Unload (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $d3dim_worker_fence)
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
@@ -1610,6 +1612,7 @@
   ;; IDirect3DTexture2_Release — 1 args (incl. this)
   (func $handle_IDirect3DTexture2_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $rc i32)
+    (call $d3dim_worker_fence)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $rc (i32.sub (i32.load (i32.add (local.get $entry) (i32.const 4))) (i32.const 1)))
     (if (i32.le_s (local.get $rc) (i32.const 0))

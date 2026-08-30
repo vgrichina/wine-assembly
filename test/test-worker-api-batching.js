@@ -10,6 +10,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const RPC = require('../lib/guest-rpc');
+const D3D = require('../lib/d3d-command-stream');
 const { createWindowHost } = require('../lib/host-window');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -98,4 +99,58 @@ assert.deepStrictEqual(generated.sigs.get_keyboard_state,
   { params: ['i32'], results: ['i32'] },
   'generated Worker signature includes the snapshot import');
 
-console.log('PASS Worker API logging and keyboard snapshots are batched');
+// D3DIM's opt-in Worker transport must own every byte before the guest handler
+// frees/reuses its temporary packed vertices. A synchronous fake consumer also
+// exercises sequence publication and the mandatory fence without timing races.
+const d3dMemory = { buffer: new SharedArrayBuffer(16384) };
+const d3dBytes = new Uint8Array(d3dMemory.buffer);
+const descriptor = 64;
+const state = 512;
+const vertices = 8192;
+new Uint32Array(d3dMemory.buffer, descriptor, 6).set([
+  0x1000, 4, 3, vertices, 3, state,
+]);
+d3dBytes.fill(0x5a, state, state + D3D.STATE_BYTES);
+d3dBytes.fill(0xa5, vertices, vertices + 96);
+const replayed = [];
+class FakeRenderWorker {
+  postMessage(message) {
+    if (message.t === 'init') {
+      this.control = new Int32Array(message.control);
+      this.buffers = message.buffers;
+      Atomics.store(this.control, D3D.CTRL.READY, 1);
+      return;
+    }
+    if (message.t === 'batch') {
+      replayed.push(new Uint8Array(this.buffers[message.index], 0, message.bytes).slice());
+      Atomics.store(this.control, D3D.CTRL.COMPLETED, message.seq);
+      Atomics.notify(this.control, D3D.CTRL.COMPLETED);
+    }
+  }
+  terminate() {}
+}
+const d3d = new D3D.Encoder({
+  memory: d3dMemory, module: {}, sigs: {}, capacity: 8192, bufferCount: 2,
+  guestToWasm: value => value, getImageBase: () => 0x400000,
+  workerFactory: () => new FakeRenderWorker(),
+});
+assert.strictEqual(d3d.call(D3D.DRAW_OPCODE, descriptor), 1,
+  'valid D3DIM draw is accepted by the render command stream');
+d3dBytes.fill(0, state, state + D3D.STATE_BYTES);
+d3dBytes.fill(0, vertices, vertices + 96);
+assert.strictEqual(d3d.call(D3D.FENCE_OPCODE, 0), 1,
+  'D3DIM fence waits through the last submitted sequence');
+assert.strictEqual(replayed.length, 1, 'fence submitted exactly one pending batch');
+assert.strictEqual(replayed[0][D3D.HEADER_BYTES], 0x5a,
+  'device state was copied before the guest reused it');
+assert.strictEqual(replayed[0][D3D.HEADER_BYTES + D3D.STATE_BYTES], 0xa5,
+  'canonical vertices were copied before the guest freed them');
+assert.deepStrictEqual(d3d.stats,
+  { queued: 1, submissions: 1, fences: 1, waits: 0, fallbacks: 0 },
+  'single draw/fence command accounting is exact');
+assert.strictEqual(d3d.call(D3D.FENCE_OPCODE, 0), 1,
+  'an idle fence still observes the completed sequence');
+assert.strictEqual(replayed.length, 1,
+  'an idle fence must not resubmit stale bytes from a rotated ring slot');
+
+console.log('PASS Worker API logging, keyboard snapshots, and D3D draws are batched');

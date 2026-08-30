@@ -2748,6 +2748,7 @@
 
   (func $handle_IDirectDrawSurface_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $rc i32) (local $surf_bytes i32) (local $dib_wa i32)
+    (call $d3dim_worker_fence)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $rc (i32.sub (i32.load (i32.add (local.get $entry) (i32.const 4))) (i32.const 1)))
     (i32.store (i32.add (local.get $entry) (i32.const 4)) (local.get $rc))
@@ -2770,6 +2771,7 @@
   ;; too and are ordinary colour surfaces.
   (func $handle_IDirectDrawSurface_AddAttachedSurface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $parent i32) (local $child i32)
+    (call $d3dim_worker_fence)
     (local.set $parent (call $dx_from_this (local.get $arg0)))
     (local.set $child (call $dx_from_this (local.get $arg1)))
     (if (i32.and
@@ -2811,6 +2813,7 @@
         (else (i32.const -1)))
       (i32.load (i32.add (local.get $dst_entry) (i32.const 20)))
       (local.get $arg4))
+    (call $d3dim_worker_fence)
     (local.set $dst_dib (i32.load (i32.add (local.get $dst_entry) (i32.const 20))))
     (local.set $dst_w (i32.load16_u (i32.add (local.get $dst_entry) (i32.const 12))))
     (local.set $dst_h (i32.load16_u (i32.add (local.get $dst_entry) (i32.const 14))))
@@ -3172,6 +3175,7 @@
     (local $sx i32) (local $sy i32) (local $sw i32) (local $sh i32)
     (local $bps i32) (local $row i32) (local $trans i32)
     (local $ckey i32) (local $col i32) (local $x i32)
+    (call $d3dim_worker_fence)
     (local.set $dst_entry (call $dx_from_this (local.get $arg0)))
     (local.set $dst_dib (i32.load (i32.add (local.get $dst_entry) (i32.const 20))))
     (local.set $dst_w (i32.load16_u (i32.add (local.get $dst_entry) (i32.const 12))))
@@ -3320,6 +3324,7 @@
   (func $handle_IDirectDrawSurface_Flip (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $back_guest i32) (local $back_entry i32)
     (local $tmp_dib i32)
+    (call $d3dim_worker_fence)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $back_guest (i32.load (i32.add (local.get $entry) (i32.const 8))))
     (if (local.get $back_guest)
@@ -3573,6 +3578,7 @@
       (i32.load (i32.add (local.get $entry) (i32.const 28)))
       (i32.load (i32.add (local.get $entry) (i32.const 20)))
       (i32.const 0))
+    (call $d3dim_worker_fence)
     (local.set $wa (call $g2w (local.get $arg2)))
     ;; Fill DDSURFACEDESC
     (call $zero_memory (local.get $wa) (i32.const 108))
@@ -3593,6 +3599,7 @@
   ;; GDI output directly into the surface's native DIB.
   (func $handle_IDirectDrawSurface_ReleaseDC (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $slot i32)
+    (call $d3dim_worker_fence)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $slot (call $dx_slot_of (local.get $entry)))
     (call $gdi_dx_dc_release (local.get $arg1))
@@ -3617,6 +3624,7 @@
   ;; SetColorKey(this, dwFlags, lpDDColorKey)
   (func $handle_IDirectDrawSurface_SetColorKey (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $ck i32) (local $bpp i32)
+    (call $d3dim_worker_fence)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     ;; DDCKEY_SRCBLT = 0x8, DDCKEY_DESTBLT = 0x2
     ;; Mask the key to the surface bit-depth: apps sometimes pass 0x0000FFFF
@@ -3642,6 +3650,7 @@
   ;; SetPalette(this, lpDDPalette) — associate palette with surface
   (func $handle_IDirectDrawSurface_SetPalette (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $pal_entry i32) (local $surf_entry i32) (local $pal_wa i32)
+    (call $d3dim_worker_fence)
     ;; arg0 = this (surface), arg1 = palette COM object guest ptr
     ;; Look up the palette entry and store its data pointer for 8bpp present
     (if (local.get $arg1)
@@ -4056,6 +4065,7 @@
 
   (func $handle_IDirectDrawPalette_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $rc i32)
+    (call $d3dim_worker_fence)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $rc (i32.sub (i32.load (i32.add (local.get $entry) (i32.const 4))) (i32.const 1)))
     (i32.store (i32.add (local.get $entry) (i32.const 4)) (local.get $rc))
@@ -4088,6 +4098,7 @@
   (func $handle_IDirectDrawPalette_SetEntries (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $pal_wa i32) (local $src_wa i32) (local $skip_copy i32)
     (local $prim i32)
+    (call $d3dim_worker_fence)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $pal_wa (i32.load (i32.add (local.get $entry) (i32.const 20))))
     (if (local.get $arg4)
@@ -6426,6 +6437,8 @@
   ;; Helper: given device "this", return guest addr of its state block (or 0).
   (func $d3ddev_state (param $this_guest i32) (result i32)
     (local $entry i32) (local $wa i32) (local $slot i32)
+    (if (global.get $d3dim_state_override)
+      (then (return (global.get $d3dim_state_override))))
     (local.set $wa (call $g2w (local.get $this_guest)))
     (local.set $slot (i32.load (i32.add (local.get $wa) (i32.const 4))))
     (if (i32.ge_u (local.get $slot) (global.get $DX_MAX)) (then
@@ -7057,6 +7070,7 @@
 
   (func $handle_IDirect3DDevice3_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $rc i32)
+    (call $d3dim_worker_fence)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $rc (i32.sub (i32.load (i32.add (local.get $entry) (i32.const 4))) (i32.const 1)))
     (i32.store (i32.add (local.get $entry) (i32.const 4)) (local.get $rc))
@@ -7129,6 +7143,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IDirect3DDevice3_SetRenderTarget (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $d3dim_worker_fence)
     (call $d3dim_set_render_target (local.get $arg0) (local.get $arg1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
@@ -7246,14 +7261,19 @@
         (local.get $arg2) (local.get $arg3) (local.get $dwVertexCount)
         (call $d3dim_texcoord_index (local.get $arg0))))
     (if (local.get $packed) (then
-      (call $d3dim_draw_primitive (local.get $arg0) (local.get $arg1) (local.get $vtxType)
-        (local.get $packed) (local.get $dwVertexCount))
+      (if (i32.eqz (call $d3dim_worker_try_draw
+            (local.get $arg0) (local.get $arg1) (local.get $vtxType)
+            (local.get $packed) (local.get $dwVertexCount)))
+        (then
+          (call $d3dim_draw_primitive (local.get $arg0) (local.get $arg1) (local.get $vtxType)
+            (local.get $packed) (local.get $dwVertexCount))))
       (call $heap_free (local.get $packed))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
 
   (func $handle_IDirect3DDevice3_DrawIndexedPrimitive (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $dwVertexCount i32) (local $lpwIndices i32) (local $dwIndexCount i32) (local $vtxType i32) (local $packed i32)
+    (call $d3dim_worker_fence)
     (local.set $dwVertexCount (call $gl32 (i32.add (global.get $esp) (i32.const 20))))
     (local.set $lpwIndices    (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
     (local.set $dwIndexCount  (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
@@ -7280,11 +7300,13 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IDirect3DDevice3_DrawPrimitiveStrided (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $d3dim_worker_fence)
     (call $d3dim_draw_primitive_strided
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4))
     (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
 
   (func $handle_IDirect3DDevice3_DrawIndexedPrimitiveStrided (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $d3dim_worker_fence)
     (call $d3dim_draw_indexed_primitive_strided
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
       (call $gl32 (i32.add (global.get $esp) (i32.const 20)))
@@ -7400,6 +7422,7 @@
 
   ;; Clear(this, dwCount, lpRects, dwFlags) — 4 args. No color/z (uses background).
   (func $handle_IDirect3DViewport3_Clear (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $d3dim_worker_fence)
     (call $d3dim_viewport_clear_full (local.get $arg0) (local.get $arg3)
       (call $d3dim_viewport_background_color (local.get $arg0)) (f32.const 1.0))
     (global.set $eax (i32.const 0))
@@ -7437,6 +7460,7 @@
   ;; arg3=dwFlags, arg4=dwColor; dvZ and dwStencil are deeper on the stack.
   (func $handle_IDirect3DViewport3_Clear2 (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $dvZ_bits i32)
+    (call $d3dim_worker_fence)
     ;; dvZ sits 1 dword past arg4 on the caller stack: [retaddr][a0][a1][a2][a3][a4=dwColor][dvZ][stencil]
     ;; esp currently still points at retaddr (we haven't popped yet).
     (local.set $dvZ_bits (call $gl32 (i32.add (global.get $esp) (i32.const 24))))

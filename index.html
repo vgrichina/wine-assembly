@@ -1364,8 +1364,8 @@ Resource-aware Win98 emulator
   <script src="lib/host-audio.js?v=1"></script>
   <script src="lib/host-window.js?v=5"></script>
   <script src="lib/gpu-backend.js?v=4"></script>
-  <script src="lib/gl-command-stream.js?v=4"></script>
-  <script src="lib/gl-compat.js?v=6"></script>
+  <script src="lib/gl-command-stream.js?v=5"></script>
+  <script src="lib/gl-compat.js?v=7"></script>
   <script src="lib/worker-imports.js?v=1"></script>
   <script src="lib/vfs-seed.js?v=1"></script>
   <script src="lib/debug-midi.js?v=1"></script>
@@ -2007,6 +2007,9 @@ Resource-aware Win98 emulator
     // isolation: worker startup may still fail and fall back cooperatively.
     const THREADS_KEY = 'wine-assembly.threads';
     window.WINE_THREADS = false;
+    // Experimental D3DIM software raster Worker. Keep it URL-opt-in until its
+    // ordered command/fence path has image parity across the D3D corpus.
+    window.WINE_D3D_RENDER_WORKER = new URLSearchParams(location.search).has('d3d-worker');
     // Diagnostic: serialize Worker slices to distinguish shared-state races
     // from incorrect per-thread state.
     window.WINE_THREADS_SERIAL = /[?&]threads-serial\b/.test(location.search);
