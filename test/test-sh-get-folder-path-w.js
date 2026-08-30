@@ -12,6 +12,14 @@ const extraWat = String.raw`
       (i32.const 0) (local.get $csidl) (i32.const 0) (i32.const 0)
       (local.get $buf) (i32.const 0))
     (global.get $eax))
+  (func (export "test_sh_get_special_folder_path_a")
+      (param $csidl i32) (param $create i32) (param $buf i32) (result i32)
+    (global.set $image_base (i32.const 0))
+    (global.set $esp (i32.const 0x00300000))
+    (call $handle_SHGetSpecialFolderPathA
+      (i32.const 0) (local.get $buf) (local.get $csidl) (local.get $create)
+      (i32.const 0) (i32.const 0))
+    (global.get $eax))
 `;
 
 (async () => {
@@ -26,6 +34,15 @@ const extraWat = String.raw`
       value += String.fromCharCode(code);
     }
     throw new Error('unterminated special-folder path');
+  };
+  const readAnsi = () => {
+    let value = '';
+    for (let i = 0; i < 260; i++) {
+      const code = e.guest_read8(buffer + i);
+      if (!code) return value;
+      value += String.fromCharCode(code);
+    }
+    throw new Error('unterminated ANSI special-folder path');
   };
 
   assert.strictEqual(e.test_sh_get_folder_path_w(0x26, buffer) | 0, 0,
@@ -57,7 +74,25 @@ const extraWat = String.raw`
   assert.strictEqual(e.get_esp(), 0x00300018,
     'five-argument stdcall pops return address plus arguments');
 
-  console.log('PASS  SHGetFolderPathW returns canonical Win2k special folders');
+  assert.strictEqual(e.test_sh_get_special_folder_path_a(0x26, 0, buffer), 1,
+    'ANSI CSIDL_PROGRAM_FILES succeeds');
+  assert.strictEqual(readAnsi(), 'C:\\Program Files',
+    'ANSI API uses the same CSIDL mapping as SHGetFolderPathW');
+  assert.strictEqual(e.test_sh_get_special_folder_path_a(0x17, 1, buffer), 1,
+    'ANSI fCreate succeeds');
+  assert.strictEqual(readAnsi(), 'C:\\WINDOWS\\All Users\\Application Data');
+  assert.strictEqual(hostCtx.vfs.getFileAttributes(
+    'C:\\WINDOWS\\All Users\\Application Data'), 0x10,
+  'ANSI fCreate materializes the returned directory');
+  e.guest_write8(buffer, 0x7f);
+  assert.strictEqual(e.test_sh_get_special_folder_path_a(0x7f, 0, buffer), 0,
+    'unknown ANSI CSIDL fails');
+  assert.strictEqual(e.guest_read8(buffer), 0,
+    'failed ANSI lookup clears the output path');
+  assert.strictEqual(e.get_esp(), 0x00300014,
+    'four-argument ANSI stdcall pops return address plus arguments');
+
+  console.log('PASS SHGetFolderPathW/A return canonical CSIDL paths and create on request');
 })().catch(error => {
   console.error(error && error.stack || error);
   process.exit(1);

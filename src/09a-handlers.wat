@@ -5565,16 +5565,40 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; 195: SHGetSpecialFolderPathA(hwnd, pszPath, csidl, fCreate) — write fake path, return TRUE
+  ;; 195: SHGetSpecialFolderPathA(hwnd, pszPath, csidl, fCreate) -> BOOL.
+  ;; Use SHGetFolderPathW's canonical CSIDL table, then narrow its result. This
+  ;; keeps the ANSI legacy export aligned with the Win2k shfolder forwarder.
   (func $handle_SHGetSpecialFolderPathA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32)
-    (local.set $wa (call $g2w (local.get $arg1)))
-    ;; Write "C:\WINDOWS" as the special folder path
-    (i32.store (local.get $wa) (i32.const 0x575C3A43))          ;; "C:\W"
-    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x4F444E49))  ;; "INDO"
-    (i32.store16 (i32.add (local.get $wa) (i32.const 8)) (i32.const 0x5357))    ;; "WS"
-    (i32.store8 (i32.add (local.get $wa) (i32.const 10)) (i32.const 0))         ;; null term
-    (global.set $eax (i32.const 1))  ;; TRUE
+    (local $saved_esp i32) (local $wide i32) (local $hr i32) (local $folder i32)
+    (local.set $saved_esp (global.get $esp))
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (local.set $wide (call $heap_alloc (i32.const 520)))
+    (if (i32.eqz (local.get $wide))
+      (then
+        (call $gs8 (local.get $arg1) (i32.const 0))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (local.set $folder (local.get $arg2))
+    (if (local.get $arg3)
+      (then (local.set $folder (i32.or (local.get $folder) (i32.const 0x8000)))))
+    (call $handle_SHGetFolderPathW
+      (local.get $arg0) (local.get $folder) (i32.const 0) (i32.const 0)
+      (local.get $wide) (local.get $name_ptr))
+    (local.set $hr (global.get $eax))
+    (global.set $esp (local.get $saved_esp))
+    (if (i32.eqz (local.get $hr))
+      (then
+        (drop (call $wide_to_ansi (local.get $wide) (local.get $arg1) (i32.const 260)))
+        (global.set $eax (i32.const 1)))
+      (else
+        (call $gs8 (local.get $arg1) (i32.const 0))
+        (global.set $eax (i32.const 0))))
+    (call $heap_free (local.get $wide))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
