@@ -927,9 +927,9 @@
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
-  ;; ReadConsoleOutputW(hConsole, lpBuffer, dwBufferSize, dwBufferCoord, lpReadRegion) → BOOL
-  ;; Read CHAR_INFO from console buffer
-  (func $handle_ReadConsoleOutputW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  ;; Shared ReadConsoleOutputA/W rectangle reader. CHAR_INFO is four bytes in
+  ;; both forms; the A form exposes the low console-codepage byte of Char.
+  (func $console_read_output (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $wide i32)
     (local $dst i32) (local $bw i32) (local $bx i32) (local $by i32)
     (local $rgn i32) (local $left i32) (local $top i32) (local $right i32) (local $bottom i32)
     (local $row i32) (local $col i32) (local $doff i32) (local $soff i32)
@@ -937,8 +937,8 @@
       (then
         (global.set $last_error (i32.const 6))
         (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
         (return)))
+    (call $console_cells_ensure)
     (local.set $dst (call $g2w (local.get $arg1)))
     (local.set $bw (i32.and (local.get $arg2) (i32.const 0xFFFF)))
     (local.set $bx (i32.and (local.get $arg3) (i32.const 0xFFFF)))
@@ -963,7 +963,12 @@
         (if (i32.lt_u (local.get $soff) (i32.mul (global.get $console_width) (global.get $console_height)))
           (then
             (i32.store16 (local.get $doff)
-              (i32.load16_u (i32.add (global.get $console_text_base) (i32.mul (local.get $soff) (i32.const 2)))))
+              (select
+                (i32.load16_u (i32.add (global.get $console_text_base)
+                  (i32.mul (local.get $soff) (i32.const 2))))
+                (i32.and (i32.load16_u (i32.add (global.get $console_text_base)
+                  (i32.mul (local.get $soff) (i32.const 2)))) (i32.const 0xff))
+                (local.get $wide)))
             (i32.store16 (i32.add (local.get $doff) (i32.const 2))
               (i32.load16_u (i32.add (global.get $console_attr_base) (i32.mul (local.get $soff) (i32.const 2))))))
           (else
@@ -973,7 +978,20 @@
       (local.set $row (i32.add (local.get $row) (i32.const 1)))
       (br $rows)))
     (global.set $eax (i32.const 1))
-    (call $console_buffer_finish (i32.const 0))
+    (call $console_buffer_finish (i32.const 0)))
+
+  ;; ReadConsoleOutputW(hConsole, lpBuffer, dwBufferSize, dwBufferCoord, lpReadRegion) → BOOL
+  (func $handle_ReadConsoleOutputW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $console_read_output
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+
+  ;; ReadConsoleOutputA(hConsole, lpBuffer, dwBufferSize, dwBufferCoord, lpReadRegion) → BOOL
+  (func $handle_ReadConsoleOutputA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $console_read_output
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
   ;; ReadConsoleOutputAttribute(hConsole, lpAttribute, nLength, dwReadCoord, lpNumberOfAttrsRead) → BOOL

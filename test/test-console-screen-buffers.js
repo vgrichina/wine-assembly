@@ -140,6 +140,26 @@ const extraWat = String.raw`
   (func (export "test_console_title_first_byte") (result i32)
     (call $console_title_ensure)
     (i32.load8_u (global.get $CONSOLE_TITLE_STORAGE)))
+  (func (export "test_read_console_output_a")
+        (param $handle i32) (param $buf i32) (param $size i32)
+        (param $coord i32) (param $region i32) (result i32)
+    (local $saved i32)
+    (local.set $saved (global.get $esp))
+    (call $handle_ReadConsoleOutputA
+      (local.get $handle) (local.get $buf) (local.get $size)
+      (local.get $coord) (local.get $region) (i32.const 0))
+    (global.set $esp (local.get $saved))
+    (global.get $eax))
+  (func (export "test_read_console_output_w")
+        (param $handle i32) (param $buf i32) (param $size i32)
+        (param $coord i32) (param $region i32) (result i32)
+    (local $saved i32)
+    (local.set $saved (global.get $esp))
+    (call $handle_ReadConsoleOutputW
+      (local.get $handle) (local.get $buf) (local.get $size)
+      (local.get $coord) (local.get $region) (i32.const 0))
+    (global.set $esp (local.get $saved))
+    (global.get $eax))
 `;
 
 (async () => {
@@ -243,6 +263,24 @@ const extraWat = String.raw`
   assert.strictEqual(paints, paintBeforeSecondWrite, 'inactive second buffer repainted');
   assert.strictEqual(wat.test_console_char(first, 0), 'O'.charCodeAt(0));
   assert.strictEqual(wat.test_console_char(second, 4 * 80 + 5), 'T'.charCodeAt(0));
+
+  const readRegion = wat.guest_alloc(8) >>> 0;
+  wat.guest_write16(readRegion, 5);
+  wat.guest_write16(readRegion + 2, 4);
+  wat.guest_write16(readRegion + 4, 7);
+  wat.guest_write16(readRegion + 6, 4);
+  const charInfoA = wat.guest_alloc(12) >>> 0;
+  assert.strictEqual(wat.test_read_console_output_a(second, charInfoA,
+    coord(3, 1), coord(0, 0), readRegion), 1);
+  assert.deepStrictEqual([0, 1, 2].map(i => wat.guest_read8(charInfoA + i * 4)),
+    [...'TWO'].map(ch => ch.charCodeAt(0)), 'ANSI CHAR_INFO characters');
+  const charInfoW = wat.guest_alloc(12) >>> 0;
+  assert.strictEqual(wat.test_read_console_output_w(second, charInfoW,
+    coord(3, 1), coord(0, 0), readRegion), 1);
+  assert.deepStrictEqual([0, 1, 2].map(i => read16(charInfoW + i * 4)),
+    [...'TWO'].map(ch => ch.charCodeAt(0)), 'wide CHAR_INFO characters');
+  assert.strictEqual(wat.test_read_console_output_a(0xffffffff, charInfoA,
+    coord(3, 1), coord(0, 0), readRegion), 0, 'invalid console handle accepted');
 
   assert.strictEqual(wat.test_set_std_output(second), 1);
   assert.strictEqual(wat.test_get_std_output() >>> 0, second,

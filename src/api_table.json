@@ -25588,5 +25588,37 @@
     "convention": "stdcall",
     "hash": 1445163989,
     "ret": "BOOL"
+  },
+  {
+    "id": 3069,
+    "name": "ReadConsoleOutputA",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1498119022,
+    "args": [
+      {
+        "name": "hConsoleOutput",
+        "type": "HANDLE"
+      },
+      {
+        "name": "lpBuffer",
+        "type": "PCHAR_INFO",
+        "out": true
+      },
+      {
+        "name": "dwBufferSize",
+        "type": "COORD"
+      },
+      {
+        "name": "dwBufferCoord",
+        "type": "COORD"
+      },
+      {
+        "name": "lpReadRegion",
+        "type": "PSMALL_RECT",
+        "out": true
+      }
+    ],
+    "ret": "BOOL"
   }
 ]
