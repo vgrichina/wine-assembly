@@ -91,7 +91,7 @@ hour.
 | 8 | symbolic handler/api ids | OPEN, grew | 371 bare literals in `07-decoder.wat` (+37 in `07b`), H440/H441 added as bare `:666,:706`; stale "handler 422/424" comments still at `07-decoder.wat:50,152,416,2132` and `13-exports.wat:3037,3045` (422/424 are now `$th_mmx_rr/_mr`); `0xCACA0010` hand-stored `09a8:985,1018` |
 | 9 | app-literal gate / `copySuperops` | PARTIAL | MW3 VAs are out of the decoder (byte-hash predicates, §P3-3.9); `browser-shell.js:566` honors the flag; **`test/run.js --app=mw3` still does not** (only `--copy-superops`, `:188,4035,7429`); no allowlist tool |
 | 10 | one globals table / hwnd base / `yr===9` | PARTIAL | `lib/worker-imports.js` exists but is a *ctx-key* list, not the WASM-global table; setter sets still diverge (§P3-3.3); hwnd base still two formulas (`thread-manager.js:416-418` vs `:1040`); duplicate `yr === 9` moved to `thread-manager.js:2276-2287` / `:2303-2309` (second still unreachable) |
-| 11 | silent stubs | PARTIAL | DONE: WaitMessage `09a:13588-13600` (`5237ac44`), ReleaseMutex `09a:12056-12071` (`1e76e8ab`), HeapCreate per-call `09a:2123`, CreateConsoleScreenBuffer `09a7:2914`, CreateIconFromResourceEx `09a:11456`, DirectDrawEnumerateA CACA `09a8:1043`, EnumDisplayModes `09a8:1833`. RegisterHotKey FIXED `2b27e407` (real registration list, modifier matching, WM_HOTKEY through the queue — `09a:11184-11238`). OPEN: hooks `09a7:488` / `09a:9348-9360`; DDE trio `09a:1188,1198,1245`; 13 DX enumerations returning 0 without a callback (`09a8:2410,5279,5357`…, DirectPlay `09a7:2724`); 4 viewport lights in `09aa` |
+| 11 | silent stubs | PARTIAL | DONE: WaitMessage `09a:13588-13600` (`5237ac44`), ReleaseMutex `09a:12056-12071` (`1e76e8ab`), HeapCreate per-call `09a:2123`, CreateConsoleScreenBuffer `09a7:2914`, CreateIconFromResourceEx `09a:11456`, DirectDrawEnumerateA CACA `09a8:1043`, EnumDisplayModes `09a8:1833`. RegisterHotKey FIXED `2b27e407` (real registration list, modifier matching, WM_HOTKEY through the queue — `09a:11184-11238`). OPEN: hooks `09a7:488` / `09a:9348-9360`; DDE trio `09a:1188,1198,1245`; 12 DX enumerations returning 0 without a callback (`09a8:2410,5279,5357`…) — DirectPlayEnumerate[A] FIXED `0064c7fc`, pushing the real DPSPGUID_TCPIP provider through the guest callback (`09a7:2810-2905`), ratchet re-pinned in the same commit; 4 viewport lights in `09aa` |
 | 12 | dead code / tools / requires | PARTIAL | WAT dead list deleted (`71191bed`); `wat-func.js` still has no `--dead`; all 6 superseded tools present; 3 broken requires unchanged (`tools/trace-assert.js:6`, `render-desktop.js:9`, `test/call-func.js:10`); `win16-v86-compare.js:265` still greps `[CreateWindowEx` |
 | 13 | per-block counters / atomic gate | OPEN | `04-cache.wat:741,797`, `05-alu.wat:773`, `13-exports.wat:52-58` |
 | 14 | cached DataView / live-surface set | **WORSE** | `DX_SLOT_COUNT` 1024→**4096** (`host-imports.js:386`, `09a8:18`, `6fd7b657`); `_presentBestDxOffscreen :964-978` still walks every slot with a DataView each; GL `u32At` (`gl-command-stream.js:55-57`) now also called from the immediate path (`:129,144,215,219,231,240,269,271`) with `_memoryView()` 60 lines above it; `gl-compat.js:471-476` `_dv/_stackDv` per accessor |
@@ -427,7 +427,10 @@ that closed `$gdi_path_widen_join` early, so the geometric-join branch had been
 unreachable — the in-house compiler had accepted unbalanced text without a
 word. `check-parens` is now a build gate (`build.sh:71`) with its own test,
 and the join renders again. New follow-up for `tools/build-compile-wat.js`:
-reject a module whose paren depth is not zero at EOF. **A.4 FIXED `d9bee7ca`**
+reject a module whose paren depth is not zero at EOF — closed same day by
+`9faa2299`, which makes `lib/compile-wat.js` throw on the imbalance with
+file:line and adds `test/test-compile-wat-structure.js` to the tier. **A.4
+FIXED `d9bee7ca`**
 — the `$restore_destroyed_dialog_owner` heuristic is deleted; `EnableWindow`
 now returns nonzero iff the window was previously disabled (`09a:4923`), which
 is what COMCTL32's own PropertySheet loop needed, with `test-enable-window.js`.
@@ -447,6 +450,21 @@ ever code", so 3.2 stands. `DX_PROCESS_STATE` gained its `_SIZE` (`09a8:284`,
 `01-header.wat:1330` says 32 B. Everything else (3.1 console clamp, 3.3 worker
 setters and the CLAUDE.md claim, 3.5 SKIP, 3.6 unpaired-globals rule, 3.7
 check-parens, 3.9 COPY gate, 3.11, 3.12) is verbatim open.
+
+**By 16:16 (+5 commits, HEAD `e43a4699`)** three more closed from the board:
+the compile-wat strictness follow-up under 3.7 (`9faa2299`), the console-key
+half of A.7 (`e43a4699`), and item 11's DirectPlay enumeration (`0064c7fc` —
+the stub ratchet again re-pinned in the same commit, the second observation of
+3.4's process fix). `f8382045` closes an MW3 terrain-erasure bug next door to
+A.2's reopened convergence report: `d3dim_texture_sample_prepared` now
+canonicalizes non-finite U/V to zero before the packed-colour lerp receives
+NaN fractional weights, with a re-note and test. `2a5d979f` runs both Rodent
+editions under browser threads. On the board: GTA2's COM_WRAPPERS_AUX
+relocation claim was retracted (crash identical after the move — honest
+process), and a new stub lead — `IDirect3DDevice_Pick`/`GetPickRecords` empty
+successes leave Viewer object selection inert — already has a 148-line real
+implementation sitting uncommitted in the dirty tree (not reviewed here).
+A.1's stale toyvm bundle stands untouched.
 
 **New in this window, ranked.**
 
@@ -559,7 +577,12 @@ the one input queue — console APIs poll `$host_check_input` themselves
 GetMessage (`09a5:1550`) — but only WM_CHAR and VK 0x21-0x2F/0x70-0x87
 key-downs become records (`09a2:737-744`): no key-ups, no modifier state, so
 `bKeyDown=0` and `dwControlKeyState` readers see nothing; and in Worker mode a
-`PeekConsoleInput` spin is one owner-thread RPC per call.
+`PeekConsoleInput` spin is one owner-thread RPC per call. **Console half FIXED
+`e43a4699`:** records keep the original key lParam at +16, so `bKeyDown`
+down/up edges, repeat counts, scan codes, the enhanced bit and a
+`dwControlKeyState` snapshot all survive (`09a2:637-693`);
+`test-console-input.js` pins an F9 up/down pair, Shift+A scan codes, autorepeat
+and `RIGHT_CTRL_PRESSED|ENHANCED_KEY`. The Worker-mode RPC spin stands.
 
 **A.8 Small.** `$menu_header_width` (`09c5-menu.wat:721`) selects the menu font
 into `hwnd+0x40000` as a side effect of a width *query* called per repaint and
