@@ -452,8 +452,19 @@ taken — `[0x34]` counts 6→2 over 19M dispatches — so the frame clock works
 stall.
 
 So the open question is now narrow and concrete: **what is supposed to advance
-`2cc:[0x0f74]` past 1, and why doesn't it?** Service 4 (`2cc:26ac`, a call to
-`2cc:22c2`) is the engine tick and the first place to look. Two gaps
+`2cc:[0x0f74]` past 1, and why doesn't it?** `--watch=2cc:f74:1` names three
+writers over 120M dispatches, one write each: `100:346` (the launcher, loading
+the resident) and two inside the resident, `2cc:2650` and `2cc:1b23` — and
+`2cc:1b23` is `mov [di+0x20],bl` with `di=0x0f54`, i.e. offset 0x20 of a
+32-byte-strided structure the code walks in a `add di,0x32` loop. So `0x0f74`
+is not a status flag the demo sets deliberately; it is a field of the music
+player's first channel, and the demo is waiting on the *module* to get
+somewhere. Service 4 (`2cc:26ac` → `2cc:22c2`) is the player's reset, not its
+tick — it clears every channel and writes the tempo increment
+`[0x2c] = 0x1e79e79e`. The tick is the ISR's `call 2cc:182e` at `2cc:22b6`,
+gated on `add [0x30],eax` carrying, and `[0x30]` does move between dumps
+(`0xe79e79e0` → `0x186 6186 0c`), so the player is being ticked. What it does
+with those ticks is where this goes next. Two gaps
 noticed on the way and not yet closed: there is no `$ldtl`, so an LDT
 selector's limit is checked against the *GDT* limit, and past that limit it
 falls back to reading the selector as a paragraph.
