@@ -987,8 +987,9 @@
   ;; Shared ReadConsoleOutputA/W rectangle reader. CHAR_INFO is four bytes in
   ;; both forms; the A form exposes the low console-codepage byte of Char.
   (func $console_read_output (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $wide i32)
-    (local $dst i32) (local $bw i32) (local $bx i32) (local $by i32)
+    (local $dst i32) (local $bw i32) (local $bh i32) (local $bx i32) (local $by i32)
     (local $rgn i32) (local $left i32) (local $top i32) (local $right i32) (local $bottom i32)
+    (local $src_left i32) (local $src_top i32) (local $bound i32)
     (local $row i32) (local $col i32) (local $doff i32) (local $soff i32)
     (if (i32.eqz (call $console_buffer_enter (local.get $arg0)))
       (then
@@ -997,14 +998,69 @@
         (return)))
     (call $console_cells_ensure)
     (local.set $dst (call $g2w (local.get $arg1)))
-    (local.set $bw (i32.and (local.get $arg2) (i32.const 0xFFFF)))
-    (local.set $bx (i32.and (local.get $arg3) (i32.const 0xFFFF)))
-    (local.set $by (i32.shr_u (local.get $arg3) (i32.const 16)))
+    ;; COORD members are signed SHORTs. The destination is a true 2-D array;
+    ;; treating Y as absent (and X/Y as unsigned) lets a clipped read walk past
+    ;; the caller's CHAR_INFO allocation.
+    (local.set $bw (i32.extend16_s (local.get $arg2)))
+    (local.set $bh (i32.shr_s (local.get $arg2) (i32.const 16)))
+    (local.set $bx (i32.extend16_s (local.get $arg3)))
+    (local.set $by (i32.shr_s (local.get $arg3) (i32.const 16)))
     (local.set $rgn (call $g2w (local.get $arg4)))
     (local.set $left (i32.load16_s (local.get $rgn)))
     (local.set $top (i32.load16_s (i32.add (local.get $rgn) (i32.const 2))))
     (local.set $right (i32.load16_s (i32.add (local.get $rgn) (i32.const 4))))
     (local.set $bottom (i32.load16_s (i32.add (local.get $rgn) (i32.const 6))))
+    (local.set $src_left (local.get $left))
+    (local.set $src_top (local.get $top))
+
+    ;; Intersect the requested screen rectangle with both coordinate spaces.
+    ;; A source x maps to destination x = bx + (x - src_left), hence the
+    ;; destination bounds map back to [src_left-bx, src_left+bw-bx-1].
+    (if (i32.lt_s (local.get $left) (i32.const 0))
+      (then (local.set $left (i32.const 0))))
+    (local.set $bound (i32.sub (local.get $src_left) (local.get $bx)))
+    (if (i32.lt_s (local.get $left) (local.get $bound))
+      (then (local.set $left (local.get $bound))))
+    (if (i32.lt_s (local.get $top) (i32.const 0))
+      (then (local.set $top (i32.const 0))))
+    (local.set $bound (i32.sub (local.get $src_top) (local.get $by)))
+    (if (i32.lt_s (local.get $top) (local.get $bound))
+      (then (local.set $top (local.get $bound))))
+    (local.set $bound (i32.sub (global.get $console_width) (i32.const 1)))
+    (if (i32.gt_s (local.get $right) (local.get $bound))
+      (then (local.set $right (local.get $bound))))
+    (local.set $bound
+      (i32.sub
+        (i32.add (local.get $src_left) (local.get $bw))
+        (i32.add (local.get $bx) (i32.const 1))))
+    (if (i32.gt_s (local.get $right) (local.get $bound))
+      (then (local.set $right (local.get $bound))))
+    (local.set $bound (i32.sub (global.get $console_height) (i32.const 1)))
+    (if (i32.gt_s (local.get $bottom) (local.get $bound))
+      (then (local.set $bottom (local.get $bound))))
+    (local.set $bound
+      (i32.sub
+        (i32.add (local.get $src_top) (local.get $bh))
+        (i32.add (local.get $by) (i32.const 1))))
+    (if (i32.gt_s (local.get $bottom) (local.get $bound))
+      (then (local.set $bottom (local.get $bound))))
+
+    ;; Win32 reports the actual screen-buffer rectangle copied. For a wholly
+    ;; clipped operation it returns success with an empty rectangle.
+    (if (i32.or
+          (i32.or (i32.le_s (local.get $bw) (i32.const 0))
+                  (i32.le_s (local.get $bh) (i32.const 0)))
+          (i32.or (i32.gt_s (local.get $left) (local.get $right))
+                  (i32.gt_s (local.get $top) (local.get $bottom))))
+      (then
+        (local.set $left (i32.const 0))
+        (local.set $top (i32.const 0))
+        (local.set $right (i32.const -1))
+        (local.set $bottom (i32.const -1))))
+    (i32.store16 (local.get $rgn) (local.get $left))
+    (i32.store16 offset=2 (local.get $rgn) (local.get $top))
+    (i32.store16 offset=4 (local.get $rgn) (local.get $right))
+    (i32.store16 offset=6 (local.get $rgn) (local.get $bottom))
     (local.set $row (local.get $top))
     (block $rdone (loop $rows
       (br_if $rdone (i32.gt_s (local.get $row) (local.get $bottom)))
@@ -1015,21 +1071,18 @@
         (local.set $doff (i32.add (local.get $dst)
           (i32.mul (i32.const 4)
             (i32.add
-              (i32.mul (i32.add (i32.sub (local.get $row) (local.get $top)) (local.get $by)) (local.get $bw))
-              (i32.add (i32.sub (local.get $col) (local.get $left)) (local.get $bx))))))
-        (if (i32.lt_u (local.get $soff) (i32.mul (global.get $console_width) (global.get $console_height)))
-          (then
-            (i32.store16 (local.get $doff)
-              (select
-                (i32.load16_u (i32.add (global.get $console_text_base)
-                  (i32.mul (local.get $soff) (i32.const 2))))
-                (i32.and (i32.load16_u (i32.add (global.get $console_text_base)
-                  (i32.mul (local.get $soff) (i32.const 2)))) (i32.const 0xff))
-                (local.get $wide)))
-            (i32.store16 (i32.add (local.get $doff) (i32.const 2))
-              (i32.load16_u (i32.add (global.get $console_attr_base) (i32.mul (local.get $soff) (i32.const 2))))))
-          (else
-            (i32.store (local.get $doff) (i32.const 0))))
+              (i32.mul (i32.add (i32.sub (local.get $row) (local.get $src_top)) (local.get $by)) (local.get $bw))
+              (i32.add (i32.sub (local.get $col) (local.get $src_left)) (local.get $bx))))))
+        (i32.store16 (local.get $doff)
+          (select
+            (i32.load16_u (i32.add (global.get $console_text_base)
+              (i32.mul (local.get $soff) (i32.const 2))))
+            (i32.and (i32.load16_u (i32.add (global.get $console_text_base)
+              (i32.mul (local.get $soff) (i32.const 2)))) (i32.const 0xff))
+            (local.get $wide)))
+        (i32.store16 (i32.add (local.get $doff) (i32.const 2))
+          (i32.load16_u (i32.add (global.get $console_attr_base)
+            (i32.mul (local.get $soff) (i32.const 2)))))
         (local.set $col (i32.add (local.get $col) (i32.const 1)))
         (br $cols)))
       (local.set $row (i32.add (local.get $row) (i32.const 1)))

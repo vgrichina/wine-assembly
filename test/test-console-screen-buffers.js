@@ -200,6 +200,14 @@ const extraWat = String.raw`
   const info = () => wat.guest_alloc(22) >>> 0;
   const coord = (x, y) => (x & 0xffff) | ((y & 0xffff) << 16);
   const read16 = ptr => wat.guest_read8(ptr) | (wat.guest_read8(ptr + 1) << 8);
+  const readS16 = ptr => (read16(ptr) << 16) >> 16;
+  const writeRect = (ptr, left, top, right, bottom) => {
+    wat.guest_write16(ptr, left);
+    wat.guest_write16(ptr + 2, top);
+    wat.guest_write16(ptr + 4, right);
+    wat.guest_write16(ptr + 6, bottom);
+  };
+  const readRect = ptr => [0, 2, 4, 6].map(offset => readS16(ptr + offset));
 
   const titleBuffer = wat.guest_alloc(32) >>> 0;
   assert.strictEqual(wat.test_create_file_a(allocText('conin$')), 1,
@@ -312,6 +320,58 @@ const extraWat = String.raw`
     coord(3, 1), coord(0, 0), readRegion), 1);
   assert.deepStrictEqual([0, 1, 2].map(i => read16(charInfoW + i * 4)),
     [...'TWO'].map(ch => ch.charCodeAt(0)), 'wide CHAR_INFO characters');
+
+  for (const [label, readOutput] of [
+    ['ANSI', wat.test_read_console_output_a],
+    ['wide', wat.test_read_console_output_w],
+  ]) {
+    // Request a 5x4 source block into a 3x2 destination starting at (1,1).
+    // Only two cells on the destination's final row correspond to storage.
+    // Guard bytes on both sides turn the old unchecked Y walk into a stable
+    // executable failure instead of relying on where guest_alloc lands next.
+    const guarded = wat.guest_alloc(40) >>> 0;
+    for (let i = 0; i < 40; i++) wat.guest_write8(guarded + i, 0xa5);
+    const clippedBuffer = guarded + 8;
+    writeRect(readRegion, 4, 3, 8, 6);
+    assert.strictEqual(readOutput(second, clippedBuffer,
+      coord(3, 2), coord(1, 1), readRegion), 1, `${label} clipped read failed`);
+    assert.deepStrictEqual(readRect(readRegion), [4, 3, 5, 3],
+      `${label} read did not report the actual copied screen rectangle`);
+    assert.deepStrictEqual(
+      Array.from({ length: 8 }, (_, i) => wat.guest_read8(guarded + i)),
+      Array(8).fill(0xa5), `${label} read overwrote its leading guard`);
+    assert.deepStrictEqual(
+      Array.from({ length: 8 }, (_, i) => wat.guest_read8(guarded + 32 + i)),
+      Array(8).fill(0xa5), `${label} read exceeded dwBufferSize.Y`);
+    assert.deepStrictEqual(
+      Array.from({ length: 16 }, (_, i) => wat.guest_read8(clippedBuffer + i)),
+      Array(16).fill(0xa5), `${label} read changed non-corresponding destination cells`);
+    assert.notStrictEqual(wat.guest_read32(clippedBuffer + 16) >>> 0, 0xa5a5a5a5,
+      `${label} read omitted its first in-bounds cell`);
+    assert.notStrictEqual(wat.guest_read32(clippedBuffer + 20) >>> 0, 0xa5a5a5a5,
+      `${label} read omitted its second in-bounds cell`);
+  }
+
+  const edgeBuffer = wat.guest_alloc(16) >>> 0;
+  for (let i = 0; i < 16; i++) wat.guest_write8(edgeBuffer + i, 0xa5);
+  writeRect(readRegion, -1, 4, 2, 4);
+  assert.strictEqual(wat.test_read_console_output_a(second, edgeBuffer,
+    coord(4, 1), coord(0, 0), readRegion), 1, 'source-edge clipped read failed');
+  assert.deepStrictEqual(readRect(readRegion), [0, 4, 2, 4],
+    'source clipping did not update lpReadRegion');
+  assert.strictEqual(wat.guest_read32(edgeBuffer) >>> 0, 0xa5a5a5a5,
+    'off-screen source cell should leave its corresponding destination unchanged');
+
+  for (let i = 0; i < 16; i++) wat.guest_write8(edgeBuffer + i, 0xa5);
+  writeRect(readRegion, 90, 30, 93, 30);
+  assert.strictEqual(wat.test_read_console_output_w(second, edgeBuffer,
+    coord(4, 1), coord(0, 0), readRegion), 1, 'fully clipped read failed');
+  assert.deepStrictEqual(readRect(readRegion), [0, 0, -1, -1],
+    'fully clipped read did not return an empty rectangle');
+  assert.deepStrictEqual(
+    Array.from({ length: 16 }, (_, i) => wat.guest_read8(edgeBuffer + i)),
+    Array(16).fill(0xa5), 'fully clipped read changed destination cells');
+
   assert.strictEqual(wat.test_read_console_output_a(0xffffffff, charInfoA,
     coord(3, 1), coord(0, 0), readRegion), 0, 'invalid console handle accepted');
 
