@@ -25490,5 +25490,23 @@
       }
     ],
     "ret": "BOOL"
+  },
+  {
+    "id": 3062,
+    "name": "VkKeyScanExA",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2152186684,
+    "args": [
+      {
+        "name": "ch",
+        "type": "CHAR"
+      },
+      {
+        "name": "dwhkl",
+        "type": "HKL"
+      }
+    ],
+    "ret": "SHORT"
   }
 ]

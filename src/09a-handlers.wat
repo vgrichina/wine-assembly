@@ -1729,11 +1729,51 @@
     (if (i32.eq (local.get $ch) (i32.const 0x0D)) (then (return (i32.const 0x0D))))
     (if (i32.eq (local.get $ch) (i32.const 0x1B)) (then (return (i32.const 0x1B))))
     (if (i32.eq (local.get $ch) (i32.const 0x08)) (then (return (i32.const 0x08))))
+    ;; Unshifted punctuation on the Win98 US keyboard.
+    (if (i32.eq (local.get $ch) (i32.const 0x60)) (then (return (i32.const 0xc0)))) ;; `
+    (if (i32.eq (local.get $ch) (i32.const 0x2d)) (then (return (i32.const 0xbd)))) ;; -
+    (if (i32.eq (local.get $ch) (i32.const 0x3d)) (then (return (i32.const 0xbb)))) ;; =
+    (if (i32.eq (local.get $ch) (i32.const 0x5b)) (then (return (i32.const 0xdb)))) ;; [
+    (if (i32.eq (local.get $ch) (i32.const 0x5d)) (then (return (i32.const 0xdd)))) ;; ]
+    (if (i32.eq (local.get $ch) (i32.const 0x5c)) (then (return (i32.const 0xdc)))) ;; backslash
+    (if (i32.eq (local.get $ch) (i32.const 0x3b)) (then (return (i32.const 0xba)))) ;; ;
+    (if (i32.eq (local.get $ch) (i32.const 0x27)) (then (return (i32.const 0xde)))) ;; '
+    (if (i32.eq (local.get $ch) (i32.const 0x2c)) (then (return (i32.const 0xbc)))) ;; ,
+    (if (i32.eq (local.get $ch) (i32.const 0x2e)) (then (return (i32.const 0xbe)))) ;; .
+    (if (i32.eq (local.get $ch) (i32.const 0x2f)) (then (return (i32.const 0xbf)))) ;; /
+    ;; Shifted number row and shifted punctuation. Modifier bit 0 means SHIFT.
+    (if (i32.eq (local.get $ch) (i32.const 0x21)) (then (return (i32.const 0x0131)))) ;; !
+    (if (i32.eq (local.get $ch) (i32.const 0x40)) (then (return (i32.const 0x0132)))) ;; @
+    (if (i32.eq (local.get $ch) (i32.const 0x23)) (then (return (i32.const 0x0133)))) ;; #
+    (if (i32.eq (local.get $ch) (i32.const 0x24)) (then (return (i32.const 0x0134)))) ;; $
+    (if (i32.eq (local.get $ch) (i32.const 0x25)) (then (return (i32.const 0x0135)))) ;; %
+    (if (i32.eq (local.get $ch) (i32.const 0x5e)) (then (return (i32.const 0x0136)))) ;; ^
+    (if (i32.eq (local.get $ch) (i32.const 0x26)) (then (return (i32.const 0x0137)))) ;; &
+    (if (i32.eq (local.get $ch) (i32.const 0x2a)) (then (return (i32.const 0x0138)))) ;; *
+    (if (i32.eq (local.get $ch) (i32.const 0x28)) (then (return (i32.const 0x0139)))) ;; (
+    (if (i32.eq (local.get $ch) (i32.const 0x29)) (then (return (i32.const 0x0130)))) ;; )
+    (if (i32.eq (local.get $ch) (i32.const 0x7e)) (then (return (i32.const 0x01c0)))) ;; ~
+    (if (i32.eq (local.get $ch) (i32.const 0x5f)) (then (return (i32.const 0x01bd)))) ;; _
+    (if (i32.eq (local.get $ch) (i32.const 0x2b)) (then (return (i32.const 0x01bb)))) ;; +
+    (if (i32.eq (local.get $ch) (i32.const 0x7b)) (then (return (i32.const 0x01db)))) ;; {
+    (if (i32.eq (local.get $ch) (i32.const 0x7d)) (then (return (i32.const 0x01dd)))) ;; }
+    (if (i32.eq (local.get $ch) (i32.const 0x7c)) (then (return (i32.const 0x01dc)))) ;; |
+    (if (i32.eq (local.get $ch) (i32.const 0x3a)) (then (return (i32.const 0x01ba)))) ;; :
+    (if (i32.eq (local.get $ch) (i32.const 0x22)) (then (return (i32.const 0x01de)))) ;; "
+    (if (i32.eq (local.get $ch) (i32.const 0x3c)) (then (return (i32.const 0x01bc)))) ;; <
+    (if (i32.eq (local.get $ch) (i32.const 0x3e)) (then (return (i32.const 0x01be)))) ;; >
+    (if (i32.eq (local.get $ch) (i32.const 0x3f)) (then (return (i32.const 0x01bf)))) ;; ?
     (i32.const 0xFFFF))
 
   (func $handle_VkKeyScanA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $vk_key_scan (i32.and (local.get $arg0) (i32.const 0xFF))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; VkKeyScanExA(CHAR ch, HKL dwhkl). This runtime exposes the Win98 en-US
+  ;; keyboard layout, so the explicit-layout form shares the same mapping.
+  (func $handle_VkKeyScanExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $vk_key_scan (i32.and (local.get $arg0) (i32.const 0xFF))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; LZ32's file APIs also accept ordinary, uncompressed files. Font Viewer
   ;; uses that path for font-resource files, so map the handle operations onto
