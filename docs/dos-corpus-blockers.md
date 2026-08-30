@@ -17,6 +17,11 @@ it meant to, with the *measured* cause rather than a guess. Read the entry
 before starting on one — several of these have already cost a session each, and
 two of them are not bugs at all.
 
+**Where the corpus stands (2026-08-29):** 193 of 199 rows show what the program
+meant to show — 164 graphics, 29 text art. Of the six that do not, three are
+programs behaving correctly (`001.EXE`, `002.EXE`, `rage.exe`, below), leaving
+**ANGEL.EXE + its SETUP.EXE** and **AQUAPHOB.EXE** as the open ones.
+
 ## Not work items
 
 **001.EXE / 002.EXE** print `Type CYANIDE to run this demo.` and `Please run
@@ -744,12 +749,17 @@ program in protected mode as one that has hooked nothing. Whatever else is
 throttling the polled path, that is the general gap underneath it, and it is
 shared with COCAHOLC and AQUAPHOB.
 
-**That gap is now closed** (`04aefe57`). The VM already knew how to read an IDT
-— `$idtgate` walks it for `$fault`, checking `cr0`, the limit and the present
-bit — and only the VM can, because the table's base is a linear address that
-LIDT put somewhere the host cannot guess. Exporting it and consulting it from
-`hookedVector` took DINO from one handback per 1.1M dispatches to one per
-~177k, and it applies to every rung: keyboard, timer, retrace, Sound Blaster.
+**Reading the IDT there was tried and reverted** (`04aefe57`, undone in
+`a2e19dec`), and the reason is worth keeping. Consulting `$idtgate` from
+`hookedVector` did make a pmode demo look "hooked" — but every caller passes
+0x08, 0x09, 0x0A, 0x0F or 0x1C, and in protected mode those are the CPU's own
+exception numbers (8 is `#DF`), so an extender has a present gate at all of them
+whatever it thinks of hardware interrupts. It was not a way to see a hooked
+interrupt; it was a way to send a double fault every tick. cd2.exe, daretro.exe
+and AMBIENT.EXE each went from a full screen to a printed "Exception fault."
+Restricting the read to vectors above 0x20 makes it inert, since no caller
+passes one, so the gap is still open: **where a pmode program remaps its PIC to
+is not something we track, and until it is there is nothing to read.**
 
 **DINO renders** (`94fe23b0`): 64000 of 64000 pixels of mode 13h at the sweep's
 own budget, with `dino.s3m` and `dino.dat` open. Two steps got it there.
@@ -800,3 +810,19 @@ keeping a second copy of the words. The band sits under `frameScore`'s, so "any
 graphics frame beats any text frame" is unchanged. **The lesson generalises: a
 row in `error` or `prompt` whose program is known to run is a claim about the
 chooser, not about the program.**
+
+Two guards on that band, each of which cost a demo its picture before it was
+added, and both found only by sweeping the whole corpus:
+
+- **An empty screen gets no band** (`02e8bf3b`). Zero has to keep meaning
+  "nothing on screen": `capture` decides a program never started with
+  `score(row) <= 0`, and a blank page scoring 10000 cost AMBIENT, daretro and
+  cd2 their auto-key retry. A program whose only output *is* a refusal must also
+  still be photographed saying it — an empty frame outranking rage.exe's own
+  "GUS not found!" turned an honest `error` row into a `blank` one.
+- **What a run said is kept apart from what it showed** (`a2e19dec`). The band
+  is right for the photograph and wrong for the diagnosis: AMBIENT's
+  `USE "AMBIENT /NO_SND" FOR SILENT MODE` is the input to a retry rung, and
+  demoting the frame that carried it lost the rung its switch and the demo its
+  64000 pixels. Rows now carry a `says` field with any refusal the run printed,
+  whatever that frame scored, and the rungs read it alongside the kept screen.
