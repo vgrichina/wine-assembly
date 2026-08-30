@@ -95,7 +95,10 @@ Alignment, Abilities, Skills, and Appearance, then requires the populated
 The local acceptance skips the intro, requires the detailed menu frame, clicks
 Create Game, requires the large transition to Party Formation, opens a
 party slot, and drives character creation through the Sound panel. An error
-modal or a generic menu-frame change can no longer satisfy the test.
+modal or a generic menu-frame change can no longer satisfy the test. The CLI
+capture must retain the menu labels and the Prologue title/buttons as real
+light GUI-font glyphs; detailed stone artwork without dynamic text is a
+failure, even if the same run later reaches gameplay.
 
 `test/test-icewind-dale-menu-web.js` applies the same label-band gate to a
 fresh, no-cache Chrome page and also requires the browser VFS to contain the

@@ -19,7 +19,8 @@ const INSTALL = path.join(ROOT, 'test/binaries/candidates/icewind-dale-demo',
 const EXE = path.join(INSTALL, 'IDDemo.exe');
 const KEY = path.join(INSTALL, 'CHITIN.KEY');
 const DISC_MARKER = path.join(INSTALL, 'Data/IWDCD.2');
-const OUT = path.join(ROOT, 'build/local-candidate-smoke/icewind-dale-demo');
+const OUT = process.env.IWD_OUT || path.join(ROOT,
+  'build/local-candidate-smoke/icewind-dale-demo');
 const BEFORE = path.join(OUT, 'menu.png');
 const PARTY = path.join(OUT, 'party-formation.png');
 const CHARACTER = path.join(OUT, 'character-generation.png');
@@ -179,6 +180,18 @@ assert.strictEqual(`${gameplayStart.width}x${gameplayStart.height}`, '640x480');
 assert.strictEqual(`${gameplayMoved.width}x${gameplayMoved.height}`, '640x480');
 assert.strictEqual(`${gameplay.width}x${gameplay.height}`, '640x480');
 
+function lightGlyphPixels(png, x0, y0, x1, y1) {
+  let count = 0;
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      const i = (y * png.width + x) * 4;
+      const r = png.data[i], g = png.data[i + 1], b = png.data[i + 2];
+      if (Math.min(r, g, b) > 145 && Math.max(r, g, b) - Math.min(r, g, b) < 70) count++;
+    }
+  }
+  return count;
+}
+
 let partyChanged = 0;
 let colorful = 0;
 const colors = new Set();
@@ -191,22 +204,16 @@ for (let i = 0; i < before.data.length; i += 4) {
   if (delta > 36) partyChanged++;
 }
 const pixels = before.width * before.height;
+const menuLabels = [
+  [86, 101], [168, 184], [214, 230],
+  [258, 274], [342, 358], [386, 402],
+].reduce((count, [y0, y1]) => count + lightGlyphPixels(before, 420, y0, 548, y1), 0);
 assert(colorful / pixels > 0.25 && colors.size > 250,
   'the Icewind Dale menu did not render as a detailed color frame');
+assert(menuLabels > 500,
+  `the Icewind Dale menu button labels are missing (${menuLabels} light glyph pixels)`);
 assert(partyChanged / pixels > 0.75,
   `Create Game did not reach party formation (${(partyChanged / pixels * 100).toFixed(1)}% frame change)`);
-
-function lightGlyphPixels(png, x0, y0, x1, y1) {
-  let count = 0;
-  for (let y = y0; y < y1; y++) {
-    for (let x = x0; x < x1; x++) {
-      const i = (y * png.width + x) * 4;
-      const r = png.data[i], g = png.data[i + 1], b = png.data[i + 2];
-      if (Math.min(r, g, b) > 145 && Math.max(r, g, b) - Math.min(r, g, b) < 70) count++;
-    }
-  }
-  return count;
-}
 
 const generationTitle = lightGlyphPixels(character, 100, 20, 540, 75);
 const generationInstructions = lightGlyphPixels(character, 205, 125, 430, 420);
@@ -258,6 +265,10 @@ for (let y = 416; y < 458; y++) {
 assert(chapterChanged / pixels > 0.65 && chapterColors.size > 300 &&
   chapterDarkPanel > 30000 && chapterButtonChrome > 1000,
   `the Prologue completion screen did not render (${(chapterChanged / pixels * 100).toFixed(1)}% frame change, ${chapterColors.size} colors, ${chapterDarkPanel} panel pixels, ${chapterButtonChrome} button pixels)`);
+const chapterTitle = lightGlyphPixels(chapter, 235, 20, 405, 58);
+const chapterButtons = lightGlyphPixels(chapter, 170, 410, 470, 462);
+assert(chapterTitle > 250 && chapterButtons > 140,
+  `the Prologue dynamic text did not render (${chapterTitle} title, ${chapterButtons} button glyph pixels)`);
 
 let movementPixels = 0;
 for (let y = 180; y < 290; y++) {
