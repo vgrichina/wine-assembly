@@ -14693,6 +14693,7 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
   ;; share exactly the same conversion, including in-place calls.
   (global $CP1252_TO_CP437 i32 (i32.const 0x07F90000))
   (global $CP437_TO_CP1252 i32 (i32.const 0x07F90100))
+  (global $file_apis_ansi (mut i32) (i32.const 1))
   (data (i32.const 0x07F90000)
     "\00\01\02\03\04\05\06\07\08\09\0a\0b\0c\0d\0e\0f\10\11\12\13\14\15\16\17\18\19\1a\1b\1c\1d\1e\1f"
     "\20\21\22\23\24\25\26\27\28\29\2a\2b\2c\2d\2e\2f\30\31\32\33\34\35\36\37\38\39\3a\3b\3c\3d\3e\3f"
@@ -14769,6 +14770,21 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
+
+  ;; The file-API character-set selector is process global on Win98. FAR uses
+  ;; the OEM mode so names received from the console and names passed to the
+  ;; ANSI file APIs stay in the same byte domain.
+  (func $handle_SetFileApisToOEM (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $file_apis_ansi (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
+
+  (func $handle_SetFileApisToANSI (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $file_apis_ansi (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
+
+  (func $handle_AreFileApisANSI (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (global.get $file_apis_ansi))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
 
   ;; 697: ??1type_info@@UAE@XZ — soft-stub — STUB: unimplemented
   (func $handle_??1type_info@@UAE@XZ (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

@@ -25564,5 +25564,29 @@
       }
     ],
     "ret": "DWORD"
+  },
+  {
+    "id": 3066,
+    "name": "SetFileApisToOEM",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 624818204,
+    "ret": "VOID"
+  },
+  {
+    "id": 3067,
+    "name": "SetFileApisToANSI",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 2237838010,
+    "ret": "VOID"
+  },
+  {
+    "id": 3068,
+    "name": "AreFileApisANSI",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 1445163989,
+    "ret": "BOOL"
   }
 ]

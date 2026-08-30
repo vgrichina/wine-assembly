@@ -250,6 +250,7 @@ UNIT=(
   test/test-directdraw-palette-format.js
   test/test-directsound-play-cursor.js
   test/test-expand-environment-strings.js
+  test/test-file-api-codepage.js
   test/test-find-first-last-error.js
   test/test-font-render-history.js
   test/test-get-number-format.js
