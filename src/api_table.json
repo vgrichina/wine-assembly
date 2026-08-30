@@ -25634,5 +25634,77 @@
       }
     ],
     "ret": "BOOL"
+  },
+  {
+    "id": 3071,
+    "name": "FindCloseChangeNotification",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 430338225,
+    "args": [
+      {
+        "name": "hChangeHandle",
+        "type": "HANDLE"
+      }
+    ],
+    "ret": "BOOL"
+  },
+  {
+    "id": 3072,
+    "name": "FindFirstChangeNotificationA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1646491954,
+    "args": [
+      {
+        "name": "lpPathName",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "bWatchSubtree",
+        "type": "BOOL"
+      },
+      {
+        "name": "dwNotifyFilter",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "HANDLE"
+  },
+  {
+    "id": 3073,
+    "name": "FindFirstChangeNotificationW",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1814268144,
+    "args": [
+      {
+        "name": "lpPathName",
+        "type": "LPCWSTR"
+      },
+      {
+        "name": "bWatchSubtree",
+        "type": "BOOL"
+      },
+      {
+        "name": "dwNotifyFilter",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "HANDLE"
+  },
+  {
+    "id": 3074,
+    "name": "FindNextChangeNotification",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3818242860,
+    "args": [
+      {
+        "name": "hChangeHandle",
+        "type": "HANDLE"
+      }
+    ],
+    "ret": "BOOL"
   }
 ]

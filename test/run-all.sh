@@ -445,7 +445,9 @@ UNIT=(
   test/test-open-mutex-w.js
   test/test-process-environment-launch.js
   test/test-set-std-handle.js
+  test/test-find-close-change-notification.js
   test/test-sh-get-folder-path-w.js
+  test/test-shell-malloc.js
   test/test-shell-execute-ex-w.js
   test/test-showwindow-dialog-promotion.js
   test/test-system-enum-dispatch.js

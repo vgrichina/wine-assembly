@@ -1209,6 +1209,24 @@ const extra = [
   { name: 'IDirectInput7_CreateDeviceEx', nargs: 5 },
   // KERNEL32 — GoldSrc compares filesystem timestamps while loading a map.
   { name: 'CompareFileTime', nargs: 2 },
+  // KERNEL32 — WinRAR closes its optional directory-watch handle during
+  // startup cleanup even when creation left INVALID_HANDLE_VALUE behind.
+  { name: 'FindCloseChangeNotification', nargs: 1, args: [
+    { name: 'hChangeHandle', type: 'HANDLE' },
+  ], ret: 'BOOL' },
+  { name: 'FindFirstChangeNotificationA', nargs: 3, args: [
+    { name: 'lpPathName', type: 'LPCSTR' },
+    { name: 'bWatchSubtree', type: 'BOOL' },
+    { name: 'dwNotifyFilter', type: 'DWORD' },
+  ], ret: 'HANDLE' },
+  { name: 'FindFirstChangeNotificationW', nargs: 3, args: [
+    { name: 'lpPathName', type: 'LPCWSTR' },
+    { name: 'bWatchSubtree', type: 'BOOL' },
+    { name: 'dwNotifyFilter', type: 'DWORD' },
+  ], ret: 'HANDLE' },
+  { name: 'FindNextChangeNotification', nargs: 1, args: [
+    { name: 'hChangeHandle', type: 'HANDLE' },
+  ], ret: 'BOOL' },
 ];
 for (const api of extra) {
   if (!seen.has(api.name)) {

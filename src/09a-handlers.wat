@@ -1639,6 +1639,68 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
+  ;; FindFirst/Next/CloseChangeNotification. Win98 exposes directory watches as
+  ;; waitable kernel handles: creation starts nonsignalled, FindNext rearms the
+  ;; object after a reported change, and FindClose releases it. VFS mutations
+  ;; do not signal the object yet, but the handle/error/lifetime contract is
+  ;; real and avoids treating a watch as an arbitrary file-search handle.
+  (func $handle_FindFirstChangeNotificationA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $attrs i32)
+    (local.set $attrs (if (result i32) (local.get $arg0)
+      (then (call $host_fs_get_file_attributes (call $g2w (local.get $arg0)) (i32.const 0)))
+      (else (i32.const -1))))
+    (if (i32.or (i32.eq (local.get $attrs) (i32.const -1))
+                (i32.eqz (i32.and (local.get $attrs) (i32.const 0x10))))
+      (then
+        (global.set $last_error (i32.const 3)) ;; ERROR_PATH_NOT_FOUND
+        (global.set $eax (i32.const -1)))
+      (else
+        (global.set $eax (call $host_create_event
+          (i32.const 1) (i32.const 0) (i32.const 0) (i32.const 0)))
+        (if (i32.eqz (global.get $eax))
+          (then (global.set $last_error (i32.const 8))) ;; ERROR_NOT_ENOUGH_MEMORY
+          (else (global.set $last_error (i32.const 0))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  (func $handle_FindFirstChangeNotificationW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $attrs i32)
+    (local.set $attrs (if (result i32) (local.get $arg0)
+      (then (call $host_fs_get_file_attributes (call $g2w (local.get $arg0)) (i32.const 1)))
+      (else (i32.const -1))))
+    (if (i32.or (i32.eq (local.get $attrs) (i32.const -1))
+                (i32.eqz (i32.and (local.get $attrs) (i32.const 0x10))))
+      (then
+        (global.set $last_error (i32.const 3))
+        (global.set $eax (i32.const -1)))
+      (else
+        (global.set $eax (call $host_create_event
+          (i32.const 1) (i32.const 0) (i32.const 0) (i32.const 0)))
+        (if (i32.eqz (global.get $eax))
+          (then (global.set $last_error (i32.const 8)))
+          (else (global.set $last_error (i32.const 0))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+  )
+
+  (func $handle_FindNextChangeNotification (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $host_reset_event (local.get $arg0)))
+    (if (i32.eqz (global.get $eax))
+      (then (global.set $last_error (i32.const 6)))
+      (else (global.set $last_error (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
+  (func $handle_FindCloseChangeNotification (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (if (result i32)
+      (i32.or (i32.eqz (local.get $arg0)) (i32.eq (local.get $arg0) (i32.const -1)))
+      (then (i32.const 0))
+      (else (call $host_fs_close_handle (local.get $arg0)))))
+    (if (i32.eqz (global.get $eax))
+      (then (global.set $last_error (i32.const 6))) ;; ERROR_INVALID_HANDLE
+      (else (global.set $last_error (i32.const 0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+  )
+
   ;; 17: MulDiv
   (func $handle_MulDiv (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; RichEdit uses 32767 twips as an internal "effectively infinite" size
@@ -11047,10 +11109,26 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; SHGetMalloc(ppMalloc) — return E_NOTIMPL, 1 arg
+  ;; SHGetMalloc(ppMalloc) — the shell allocator is the task's OLE allocator.
+  ;; Explorer-era applications use it to release PIDLs returned by shell APIs;
+  ;; returning E_NOTIMPL with a null output leaves callers such as WinRAR with
+  ;; no IMalloc::Free target after a successful SHGetSpecialFolderLocation.
   (func $handle_SHGetMalloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store (call $g2w (local.get $arg0)) (i32.const 0))
-    (global.set $eax (i32.const 0x80004001))  ;; E_NOTIMPL
+    (local $obj_guest i32)
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $eax (i32.const 0x80004003)) ;; E_POINTER
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (local.set $obj_guest
+      (call $dx_create_com_obj (i32.const 30) (global.get $DX_VTBL_IMALLOC)))
+    (if (i32.eqz (local.get $obj_guest))
+      (then
+        (call $gs32 (local.get $arg0) (i32.const 0))
+        (global.set $eax (i32.const 0x8007000E))) ;; E_OUTOFMEMORY
+      (else
+        (call $gs32 (local.get $arg0) (local.get $obj_guest))
+        (global.set $eax (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
