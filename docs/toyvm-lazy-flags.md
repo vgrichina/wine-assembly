@@ -143,6 +143,32 @@ stays at 60000/60000 whether the condition is right or wrong. The corpus is the
 check: all **177 programs identical** to the `--no-fusecond` build at 8M
 dispatches, arena size included.
 
+## End to end: the whole stack against plain eager
+
+The two A/Bs above are internal. The question that decides whether any of this
+earned its keep is the shipped build — record *and* specialized fused conditions
+— against the eager scheme it replaced. Core ten, 10M dispatches, five
+interleaved reps, guest-slice CPU, box at load 33 falling to 19:
+
+**-0.1% by minimum, +3.0% by paired ratio; ahead on 4 of 10 by minimum and 7 of
+10 paired.** The two metrics disagree, so the honest range is "somewhere between
+a wash and +3%", and this box cannot narrow it further.
+
+That is smaller than the +1.7% the specialization scored against generic getters,
+and the arithmetic is the point rather than a disappointment:
+
+> Eager pays a full six-flag computation and then reads its bit with one shift.
+> Lazy pays five or six global stores and then reads its bit through a getter.
+> Those roughly cancel — which is the wash measured before specialization
+> existed. **The specialization mostly buys back the overhead laziness
+> introduced**, and comes out a little ahead.
+
+So the deferred scheme is not, by itself, the win it looks like on paper here.
+What it is worth is what it makes *expressible*: the flag rule became a value the
+generator can reason about, and a fused pair can now be specialized to it. The
+same lever is what a `cmp` whose flags are provably dead would need, and that is
+a static property of the block the compiler already has in hand.
+
 ## Benchmarking notes this produced
 
 Two changes to `bench-dos.js`, both because this box sits at load 10-40 and the
