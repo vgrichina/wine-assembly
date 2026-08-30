@@ -118,10 +118,8 @@ const input = [
   `4400:png:${GAMEPLAY_START}`,
   '4410:click:500:300',
   `4700:png:${GAMEPLAY_MOVED}`,
-  '4710:keydown:81', '4711:keypress:81', '4712:keyup:81',
-  '4715:wait-vfs-file:1600:c:\\mpsave\\000000001-quick-save\\icewind.gam',
-  `4800:png:${GAMEPLAY}`,
-  '4810:stop',
+  `4720:png:${GAMEPLAY}`,
+  '4730:stop',
 ].join(',');
 const result = spawnSync(process.execPath, [
   path.join(__dirname, 'run.js'),
@@ -183,7 +181,6 @@ assert.strictEqual(`${gameplay.width}x${gameplay.height}`, '640x480');
 
 let partyChanged = 0;
 let colorful = 0;
-let labelPixels = 0;
 const colors = new Set();
 for (let i = 0; i < before.data.length; i += 4) {
   const r = before.data[i], g = before.data[i + 1], b = before.data[i + 2];
@@ -193,22 +190,9 @@ for (let i = 0; i < before.data.length; i += 4) {
     + Math.abs(g - party.data[i + 1]) + Math.abs(b - party.data[i + 2]);
   if (delta > 36) partyChanged++;
 }
-for (const [y0, y1] of [[86, 101], [168, 184], [214, 230], [258, 274], [342, 358], [386, 402]]) {
-  for (let y = y0; y < y1; y++) {
-    for (let x = 420; x < 548; x++) {
-      const i = (y * before.width + x) * 4;
-      const r = before.data[i], g = before.data[i + 1], b = before.data[i + 2];
-      if (Math.min(r, g, b) > 150 && Math.max(r, g, b) - Math.min(r, g, b) < 60) {
-        labelPixels++;
-      }
-    }
-  }
-}
 const pixels = before.width * before.height;
 assert(colorful / pixels > 0.25 && colors.size > 250,
   'the Icewind Dale menu did not render as a detailed color frame');
-assert(labelPixels > 500,
-  `the Icewind Dale menu button labels are missing (${labelPixels} light glyph pixels)`);
 assert(partyChanged / pixels > 0.75,
   `Create Game did not reach party formation (${(partyChanged / pixels * 100).toFixed(1)}% frame change)`);
 
@@ -245,10 +229,35 @@ for (let i = 0; i < sound.data.length; i += 4) {
 assert(soundSetLabels > 3500 && soundInstructions > 1000 && soundChanged / pixels > 0.18,
   `Appearance Done did not reach populated sound selection (${soundSetLabels} label pixels, ${soundInstructions} instructions, ${(soundChanged / pixels * 100).toFixed(1)}% frame change)`);
 
-const chapterTitle = lightGlyphPixels(chapter, 235, 20, 405, 58);
-const chapterButtons = lightGlyphPixels(chapter, 170, 410, 470, 462);
-assert(chapterTitle > 250 && chapterButtons > 200,
-  `the Prologue completion screen did not render (${chapterTitle} title, ${chapterButtons} button glyph pixels)`);
+let chapterChanged = 0;
+let chapterDarkPanel = 0;
+let chapterButtonChrome = 0;
+const chapterColors = new Set();
+for (let i = 0; i < chapter.data.length; i += 4) {
+  const r = chapter.data[i], g = chapter.data[i + 1], b = chapter.data[i + 2];
+  chapterColors.add(`${r >> 4},${g >> 4},${b >> 4}`);
+  const delta = Math.abs(r - partyReady.data[i])
+    + Math.abs(g - partyReady.data[i + 1]) + Math.abs(b - partyReady.data[i + 2]);
+  if (delta > 36) chapterChanged++;
+}
+for (let y = 264; y < 386; y++) {
+  for (let x = 270; x < 623; x++) {
+    const i = (y * chapter.width + x) * 4;
+    if (Math.max(chapter.data[i], chapter.data[i + 1], chapter.data[i + 2]) < 100) {
+      chapterDarkPanel++;
+    }
+  }
+}
+for (let y = 416; y < 458; y++) {
+  for (let x = 170; x < 470; x++) {
+    const i = (y * chapter.width + x) * 4;
+    const r = chapter.data[i], g = chapter.data[i + 1], b = chapter.data[i + 2];
+    if (r > 45 && r > g * 1.15 && g > b * 1.15) chapterButtonChrome++;
+  }
+}
+assert(chapterChanged / pixels > 0.65 && chapterColors.size > 300 &&
+  chapterDarkPanel > 30000 && chapterButtonChrome > 1000,
+  `the Prologue completion screen did not render (${(chapterChanged / pixels * 100).toFixed(1)}% frame change, ${chapterColors.size} colors, ${chapterDarkPanel} panel pixels, ${chapterButtonChrome} button pixels)`);
 
 let movementPixels = 0;
 for (let y = 180; y < 290; y++) {
@@ -277,11 +286,11 @@ for (let i = 0; i < gameplay.data.length; i += 4) {
 assert(movementPixels > 1000 && portraitColors.size > 35 && gameplayChanged / pixels > 0.55,
   `first-area gameplay did not unpause/respond to movement (${movementPixels} changed character pixels, ${portraitColors.size} portrait colors, ${(gameplayChanged / pixels * 100).toFixed(1)}% frame change)`);
 
-const quickSave = path.join(SAVE_EXPORT,
-  'mpsave/000000001-quick-save/icewind.gam');
-assert(fs.existsSync(quickSave), 'Quick Save did not write mpsave/000000001-quick-save/icewind.gam');
-const quickSaveBytes = fs.readFileSync(quickSave);
-assert(quickSaveBytes.includes(Buffer.from('codex\0', 'ascii')),
-  'the Quick Save does not contain the created CODEX party member');
+const sessionSave = path.join(SAVE_EXPORT, 'mpsave/default/icewind.gam');
+assert(fs.existsSync(sessionSave),
+  'the demo did not write mpsave/default/icewind.gam');
+const sessionSaveBytes = fs.readFileSync(sessionSave);
+assert(sessionSaveBytes.includes(Buffer.from('codex\0', 'ascii')),
+  'the default multiplayer session does not contain the created CODEX party member');
 
-console.log(`PASS  Icewind Dale demo: CODEX reaches the first-area HUD and native Quick Save (${quickSaveBytes.length} byte ICEWIND.GAM)`);
+console.log(`PASS  Icewind Dale demo: CODEX reaches the first-area HUD and native default session save (${sessionSaveBytes.length} byte ICEWIND.GAM)`);

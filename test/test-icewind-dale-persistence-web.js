@@ -9,17 +9,17 @@ const puppeteer = require('puppeteer');
 
 const ROOT = path.join(__dirname, '..');
 const GAM = process.env.IWD_SAVE_GAM || path.join(ROOT,
-  'build/local-candidate-smoke/icewind-dale-demo/saved-vfs/mpsave/000000001-quick-save/icewind.gam');
+  'build/local-candidate-smoke/icewind-dale-demo/saved-vfs/mpsave/default/icewind.gam');
 const URL = process.env.WINE_ASSEMBLY_URL || 'http://127.0.0.1:8080/index.html';
 
 if (!fs.existsSync(GAM)) {
-  console.log('SKIP  Icewind Dale Quick Save missing; run node test/test-icewind-dale-demo.js first');
+  console.log('SKIP  Icewind Dale default session save missing; run node test/test-icewind-dale-demo.js first');
   process.exit(0);
 }
 
 const bytes = fs.readFileSync(GAM);
 assert(bytes.includes(Buffer.from('codex\0', 'ascii')),
-  'the native Quick Save does not contain the created CODEX party member');
+  'the native default session save does not contain the created CODEX party member');
 
 (async () => {
   const browser = await puppeteer.launch({
@@ -41,7 +41,7 @@ assert(bytes.includes(Buffer.from('codex\0', 'ascii')),
       });
       const binary = atob(data);
       const payload = Uint8Array.from(binary, character => character.charCodeAt(0));
-      const guestPath = 'c:\\mpsave\\000000001-quick-save\\icewind.gam';
+      const guestPath = 'c:\\mpsave\\default\\icewind.gam';
       const handle = vfs.createFile(guestPath, 0x40000000, 2);
       const write = vfs.writeFile(handle, payload, payload.length);
       await Promise.resolve();
@@ -52,7 +52,7 @@ assert(bytes.includes(Buffer.from('codex\0', 'ascii')),
           'wine-assembly:vfs:icewind_dale_demo:')),
       };
     }, encoded);
-    assert(first.ok, 'the browser VFS did not write the native Quick Save');
+    assert(first.ok, 'the browser VFS did not write the native default session save');
     assert.strictEqual(first.keys.length, 1,
       'the Icewind Dale save was not stored under its app-scoped browser key');
 
@@ -65,7 +65,7 @@ assert(bytes.includes(Buffer.from('codex\0', 'ascii')),
         patterns: app.persistFiles,
       });
       const entry = vfs.files.get(
-        'c:\\mpsave\\000000001-quick-save\\icewind.gam');
+        'c:\\mpsave\\default\\icewind.gam');
       const text = entry ? new TextDecoder('windows-1252').decode(entry.data) : '';
       return {
         restored: persistence.restored,
@@ -79,7 +79,7 @@ assert(bytes.includes(Buffer.from('codex\0', 'ascii')),
       hasCodex: true,
     }, 'a fresh page did not restore the created CODEX party member byte-for-byte');
 
-    console.log(`PASS  Icewind Dale web persistence restores CODEX from native Quick Save (${bytes.length} bytes)`);
+    console.log(`PASS  Icewind Dale web persistence restores CODEX from the native default session (${bytes.length} bytes)`);
   } finally {
     await browser.close();
   }

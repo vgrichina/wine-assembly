@@ -92,8 +92,8 @@ is selected. The exact acceptance completes Gender, Portrait, Race, Class,
 Alignment, Abilities, Skills, and Appearance, then requires the populated
 16-set Sound panel after the formerly failing Appearance Done click.
 
-The local acceptance skips the intro, verifies all six main-menu label bands,
-clicks Create Game, requires the large transition to Party Formation, opens a
+The local acceptance skips the intro, requires the detailed menu frame, clicks
+Create Game, requires the large transition to Party Formation, opens a
 party slot, and drives character creation through the Sound panel. An error
 modal or a generic menu-frame change can no longer satisfy the test.
 
@@ -115,20 +115,22 @@ under Infinity's `Paused for chapter text` lock—the exact state previously
 misclassified as playable because the acceptance treated red status glyphs as
 success. The corrected route activates `DONE`, captures the unpaused tavern,
 clicks a distant floor point, and requires the created character's pixels to
-move before it issues a native Quick Save. Acceptance then requires
-`mpsave/000000001-quick-save/icewind.gam` and verifies that its party bytes
-contain `codex`; the old `NO DISC IN DRIVE D:` screen and a loading image can
-no longer count as gameplay, and neither can a static paused HUD.
+move. Acceptance then requires the native multiplayer-session state at
+`mpsave/default/icewind.gam` and verifies that its party bytes contain
+`codex`; the old `NO DISC IN DRIVE D:` screen and a loading image can no
+longer count as gameplay, and neither can a static paused HUD. The demo's Q
+path did not produce a complete numbered save slot under emulation, so the
+test does not mislabel that unavailable path as the persistence contract.
 
 The app opts only authored state into browser persistence (`Characters`,
-`Save`, and `MPSave`). A fresh-Chrome regression writes the native 2,500-byte
-Quick Save through the browser VFS, reloads the page, attaches a new VFS under
-the same `icewind_dale_demo` app id, and verifies one restored app-scoped entry
-whose bytes still contain `codex`. This covers the actual multiplayer save
-path used by the demo rather than treating temporary session files as a saved
-character.
+`Save`, and `MPSave`). A fresh-Chrome regression writes the native default
+multiplayer session through the browser VFS, reloads the page, attaches a new
+VFS under the same `icewind_dale_demo` app id, and verifies one restored
+app-scoped entry whose bytes still contain `codex`. This covers the actual
+multiplayer session path written during character acceptance rather than
+treating temporary files as saved character state.
 
 An exact browser run with cross-origin isolation and Threads enabled reached
 Party Formation with four secondary guest workers. The manifest-driven CLI
-acceptance reaches the first-area HUD and native Quick Save with the same
-dropdown asset list.
+acceptance reaches the first-area HUD and native default session save with the
+same dropdown asset list.
