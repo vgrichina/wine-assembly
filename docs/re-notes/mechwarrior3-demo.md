@@ -401,41 +401,74 @@ path as MSVCRT helper `0x780013f2` -> `free` -> EXE `0x00483110` (a small
 `0x00559dxx` update loop. The high count is many temporary-object frees, not one
 infinite list traversal.
 
-The later byte-run scan is more concerning. A histogram armed only after the
-first accepted cockpit frame stopped at `0x780012af` when the diagnostic
-same-EIP watchdog observed eleven full batches there. It had recorded 2,369,615
-entries at that byte scan (69.67% of recorded blocks), plus 515,105 and 515,104
-at the two page-range blocks. Moving the arm point to batch 930 reproduced the
-same condition: 2,236,409 entries at `0x780012af` (62.12%), with the range pair
-at 14.31% each. Static code increments a byte pointer until it finds a nonzero
-run length; the inner loop has no local end test because the CRT page metadata
-is expected to contain a terminating nonzero byte. More than two million zero
-bytes is not ordinary allocation churn. The instrumented watchdog makes the
-episode end visibly, while an uninstrumented run eventually progresses and
-presents frames; it does not make the scan legitimate.
+The later byte-run scan initially looked more concerning, but a memory trace
+disproved that interpretation. A histogram armed only after the first accepted
+cockpit frame stopped at `0x780012af` when the diagnostic same-EIP watchdog saw
+eleven full batches end there. It had recorded 2,369,615 entries at that byte
+scan (69.67% of recorded blocks), plus 515,105 and 515,104 at the two page-range
+blocks. Moving the arm point to batch 930 reproduced the distribution. Those
+are aggregate *block entries across many allocations*, however, not one scan
+advancing through millions of bytes. The watchdog compared only EIP across
+batch boundaries and ignored the changing `EAX`/`ECX` loop progress.
 
-Before adding an accelerator, trace the page descriptor's construction and the
-arguments at `0x7800121e`, then compare its bounds/run-map sentinel with the
-same DLL under native Wine or Windows. The possibilities are an earlier x86
-semantic error, a damaged CRT small-block-heap descriptor, or an initialization
-contract we have not reproduced. A wide WAT/SIMD “find nonzero” fold would make
-the symptom faster while concealing which invariant failed.
+At the first traced post-cockpit entry (batch 904), the authentic CRT state was
+coherent: page base `EDI=0x4f586000`, run-map cursor `ESI=0x4f58604d`, scan
+cursor `EAX=0x4f58604e`, requested run `EDX=0x1e`, and the next real nonzero
+run marker (`0xff`) was at `0x4f58607b`. This individual search crossed only 46
+zero bytes, remained inside the page's 248-byte run map, and then took the
+normal successor. `EBP=0x4f58606b` was `ESI+EDX`, the prospective requested-run
+end used by the outer algorithm, not the end of mapped metadata. There is no
+evidence here of an x86 semantic error, overwritten heap metadata, a missing
+sentinel, or an infinite CRT loop. The earlier “millions of zero bytes” claim
+was a profiling-unit error and must not be used as a correctness diagnosis.
+
+There was a separate real loader bug. `initMsvcrtGlobals` intended to disable
+the authentic small-block heap, but recognized only a private implementation
+starting `55 8b ec a1` and then wrote a guessed `__active_heap` address. MW3's
+Win98 `MSVCRT.DLL` exports `_set_sbh_threshold` at `0x78018512` with body
+`8b 44 24 04 ... a3 68 d1 03 78`; its live threshold was `0x1e0` at runtime
+address `0x01845168`. The private byte pattern therefore silently matched
+nothing. The loader now resolves and calls the authentic public export as
+`_set_sbh_threshold(0)` after DLL initialization. This is the CRT-supported
+operation: future small allocations use its HeapAlloc path, while any SBH pages
+created during `DllMain` remain registered so later `free` calls can still
+recognize their owners.
+
+With that call active, the same 892..950 post-cockpit histogram contains none
+of `0x780012af`, `0x780011d2`, or `0x7800120c`; its leading handlers are the
+game's FPU-heavy transform work and its leading MSVCRT block is only 2.63%.
+Both cooperative and real-Worker routes still match the textured-cockpit visual
+predicate (133,341 dark pixels). A same-host fixed-950-batch A/B took about
+59.5 seconds with the ineffective patch and 57.0 seconds through the public
+threshold call, but this approximately 4% wall difference is directional only:
+fixed batches do not represent fixed work and host load is uncontrolled. At
+batch 950 the new path had issued 279,589 `HeapAlloc` and 44,131 `HeapFree`
+calls, so eliminating the emulated SBH search exposes API/thunk and WAT-native
+heap cost rather than making allocation free. Further allocator optimization
+must profile that path directly; SIMD for `0x780012af` is no longer justified
+as an MW3 correctness fix.
 
 A wholesale WAT-native `malloc/free` interposition is not a safe shortcut.
 MSVCRT, MSVCP50, MFC42, and the EXE exchange allocator-owned pointers, while
 direct calls inside each authentic DLL bypass the EXE import table. Replacing
 only imported `malloc/free` would create two incompatible heaps. Replacing the
 complete allocation family would also need `calloc`, `realloc`, C++ new/delete,
-small-block ownership, locking, and every internal direct-call edge. Once the
-metadata is proven correct, an exact decode-time fold of the verified CRT loops
-is the lower-risk optimization: it continues to read and update MSVCRT's own
-heap structures and resumes at the authentic x86 successor with identical
-registers and flags. The existing `$fast_msvc_sbh_scan` is precedent, not a
-solution to these addresses: it recognizes one exact descriptor/page-range
-shape at decode time; it does not replace CRT allocation generally or cover the
-`free` ownership walk and zero-byte run scan measured here.
+small-block ownership, locking, and every internal direct-call edge. Calling
+the CRT's own threshold API is different: authentic MSVCRT still owns the
+allocation contract and deliberately selects its existing HeapAlloc fallback.
+If its SBH is ever retained for performance, an exact decode-time fold of a
+verified CRT loop remains lower risk than interposition: it continues to read
+and update MSVCRT's structures and resumes at the authentic x86 successor with
+identical registers and flags. The existing `$fast_msvc_sbh_scan` is precedent,
+not a solution to these addresses: it recognizes one exact descriptor/range
+shape and does not replace CRT allocation generally.
 
 ### Command mix after the first accepted cockpit frame
+
+These command counts were collected before the public threshold-call fix, while
+the loader's ineffective private-pattern patch still left SBH enabled. They
+remain useful as a per-present render-command mix; fixed-batch totals before and
+after changing allocator code must not be compared as equal gameplay work.
 
 Three otherwise identical no-threads runs ended at batches 830, 892, and 950.
 The cockpit predicate matched at batch 891. Subtracting the batch-892 census

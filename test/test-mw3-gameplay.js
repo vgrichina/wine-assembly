@@ -123,14 +123,19 @@ for (let index = 0; index < modes.length; index++) {
   const args = [
     path.join(__dirname, 'run.js'), '--app=mw3', `--${mode}`,
     '--quiet-api', '--quiet-blocks', '--batch-size=200000',
-    '--max-batches=1600', '--no-close', '--dx-slot=5',
+    // The wait action shifts subsequent input by however long the transition
+    // took. Batch 950 intentionally leaves 120 scheduled batches for cockpit
+    // textures/HUD to settle; stop just after its shifted capture. Continuing
+    // to 1600 tested no additional state and made the Worker leg time out after
+    // it had already written the passing image.
+    '--max-batches=1020', '--no-close', '--dx-slot=5',
     ...(index ? ['--no-build'] : []),
     `--input=${input}`,
   ];
   const result = spawnSync(process.execPath, args, {
     cwd: ROOT,
     encoding: 'utf8',
-    timeout: 300000,
+    timeout: mode === 'threads' ? 360000 : 300000,
     maxBuffer: 32 * 1024 * 1024,
   });
   const output = `${result.stdout || ''}\n${result.stderr || ''}`;
@@ -139,6 +144,8 @@ for (let index = 0; index < modes.length; index++) {
     `${mode} MW3 route failed (${result.signal || result.status})`);
   assert(!/ERROR:|UNHANDLED EXCEPTION|UNIMPLEMENTED API/.test(output),
     `${mode} MW3 route reported a runtime failure`);
+  assert(/MSVCRT small-block heap disabled through _set_sbh_threshold\(0\)/.test(output),
+    `${mode} silently left the authentic CRT small-block heap enabled`);
   const visualWaits = output.match(/\[input\] wait-canvas-dark-pixels matched/g) || [];
   assert.strictEqual(visualWaits.length, 2,
     `${mode} did not visibly synchronize on both operation-map and cockpit states`);
