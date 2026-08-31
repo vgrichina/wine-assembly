@@ -51,7 +51,7 @@ model is one lock across both backends.
 | Handler table | 437 | **442** | H439 fnstsw/test/jcc, H440 rgb565 colour-key, H441 MW3 grid filter |
 | `api_table.json` | 3,012 | **3,071** | 59 new, all with `nargs` |
 | `crash_unimplemented` sites | 98 | **137** | D3D9 flip + new DX rows |
-| Silent-stub ratchet pin | — | **316** (was 332 at creation) | see §P3-3.4 |
+| Silent-stub ratchet pin | — | **315** (was 332 at creation) | see §P3-3.4 |
 | Tests / unlisted | 631 / 48 | **677 / 0** | gate in `build.sh:25` |
 | Tests with a SKIP path | — | **250** | §P3-3.5 |
 | `test/run.js` / `host.js` / `index.html` | 8,612 / 2,553 / 2,324 | 8,672 / 2,553 / **2,477** | index regrew |
@@ -154,7 +154,7 @@ the opt-in, the no-RPC fast path, the compatibility alias, and both Worker host
 constructors.
 
 **3.4 The stub ratchet is bypassed by process — PARTIAL.**
-`tools/check-silent-stubs.js` is a real ratchet — now `EXPECTED_COUNT=316` plus
+`tools/check-silent-stubs.js` is a real ratchet — now `EXPECTED_COUNT=315` plus
 a sha256 of the sorted stub list (`:39-52`), no allowlist, and the D3D9 rule
 (`:54-75`). The original finding remains in history: four older re-pins landed
 as separate commits *after* their removals (`694e2ab2`, `1535d918`,
@@ -166,6 +166,10 @@ commit. `32590db9` also repairs the omitted pin for `c6d52424` while replacing
 range/full decoded-code invalidation, and a shared generation that reaches all
 real Workers. The two-instance generated-code regression proves that a sibling
 Worker cannot keep executing a stale decoded block after the flush.
+`SetConsoleWindowInfo` removes the next silent success: its per-buffer viewport
+now validates absolute/relative inclusive rectangles, round-trips through
+`GetConsoleScreenBufferInfo`, clips painting and mouse coordinates to the
+viewport, and resizes the browser console client like the Win98 console.
 
 The process fix is still convention rather than enforcement, and the coverage
 gap remains: the regex (`:33`) matches only the exact `eax=const; esp+=N` shape.
@@ -471,9 +475,9 @@ geomean) changed `emit.js` again without a bundle rebuild; `bundle-browser.js`
 still omits `emit-decoder.js`, and the committed bundle is still `6b015971`'s.
 The rest stands; two moved. The stub ratchet has now been re-pinned *in the same
 commit* as its removals repeatedly (`4a08c267`, `e3ff3e4c`, `2b27e407`,
-`0064c7fc`, and `32590db9`, reaching 316). This improves the process half of
-3.4 without enforcing it; the regex is unchanged and the tool still does not
-print a ready-to-paste pin. The
+`0064c7fc`, `32590db9`, and the `SetConsoleWindowInfo` fix, reaching 315). This
+improves the process half of 3.4 without enforcing it; the regex is unchanged
+and the tool still does not print a ready-to-paste pin. The
 GL encoder's `?v=` now agrees between page and worker (`index.html:1367`,
 `guest-worker.js:27`, both `v=5`) — one of the four counters of 3.10. H441's
 stores changed shape (`07b:3271-3286` now pick `i32.store16`/`i32.store` when

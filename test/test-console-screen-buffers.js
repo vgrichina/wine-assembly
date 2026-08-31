@@ -49,6 +49,17 @@ const extraWat = String.raw`
       (i32.const 0) (i32.const 0) (i32.const 0))
     (global.set $esp (local.get $saved))
     (global.get $eax))
+  (func (export "test_set_console_window") (param $handle i32) (param $absolute i32)
+        (param $rect i32) (result i32)
+    (local $saved i32)
+    (local.set $saved (global.get $esp))
+    (call $handle_SetConsoleWindowInfo
+      (local.get $handle) (local.get $absolute) (local.get $rect)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved))
+    (global.get $eax))
+  (func (export "test_last_error") (result i32)
+    (global.get $last_error))
   (func (export "test_get_console_info") (param $handle i32) (param $info i32)
         (result i32)
     (local $saved i32)
@@ -256,11 +267,47 @@ const extraWat = String.raw`
   assert.notStrictEqual(first, 0x00030001, 'old fixed handle survived');
   assert.strictEqual(wat.test_get_file_type(first), 2, 'screen buffer is FILE_TYPE_CHAR');
 
-  assert.strictEqual(wat.test_set_console_size(first, coord(40, 20)), 1);
+  const windowRect = wat.guest_alloc(8) >>> 0;
+  writeRect(windowRect, 0, 0, 39, 19);
+  assert.strictEqual(wat.test_set_console_window(first, 1, windowRect), 1,
+    'absolute viewport shrink failed');
   const resizedInfo = info();
+  assert.strictEqual(wat.test_get_console_info(first, resizedInfo), 1);
+  assert.deepStrictEqual(readRect(resizedInfo + 10), [0, 0, 39, 19],
+    'GetConsoleScreenBufferInfo omitted the independent viewport');
+  assert.strictEqual(wat.test_set_console_size(first, coord(40, 20)), 1,
+    'buffer did not shrink after its viewport');
   assert.strictEqual(wat.test_get_console_info(first, resizedInfo), 1);
   assert.strictEqual(wat.guest_read32(resizedInfo) >>> 0, coord(40, 20) >>> 0,
     'private buffer size did not change independently');
+
+  writeRect(windowRect, 0, 0, 40, 19);
+  assert.strictEqual(wat.test_set_console_window(first, 1, windowRect), 0,
+    'viewport extending beyond the backing buffer succeeded');
+  assert.strictEqual(wat.test_last_error(), 87, 'bad viewport did not set ERROR_INVALID_PARAMETER');
+  assert.strictEqual(wat.test_get_console_info(first, resizedInfo), 1);
+  assert.deepStrictEqual(readRect(resizedInfo + 10), [0, 0, 39, 19],
+    'failed viewport update changed the previous rectangle');
+  assert.strictEqual(wat.test_set_console_window(first, 1, 0), 0,
+    'NULL viewport pointer succeeded');
+  assert.strictEqual(wat.test_last_error(), 87, 'NULL viewport did not set ERROR_INVALID_PARAMETER');
+  assert.strictEqual(wat.test_set_console_window(0xffffffff, 1, windowRect), 0,
+    'invalid console handle accepted a viewport');
+  assert.strictEqual(wat.test_last_error(), 6, 'invalid viewport handle did not set ERROR_INVALID_HANDLE');
+
+  assert.strictEqual(wat.test_set_console_size(first, coord(60, 30)), 1,
+    'buffer enlargement failed');
+  writeRect(windowRect, 5, 2, 5, 2);
+  assert.strictEqual(wat.test_set_console_window(first, 0, windowRect), 1,
+    'relative viewport move failed');
+  assert.strictEqual(wat.test_get_console_info(first, resizedInfo), 1);
+  assert.deepStrictEqual(readRect(resizedInfo + 10), [5, 2, 44, 21],
+    'relative viewport did not offset all four current sides');
+  assert.strictEqual(wat.test_set_console_size(first, coord(40, 20)), 0,
+    'buffer shrank underneath an offset viewport');
+  writeRect(windowRect, 0, 0, 39, 19);
+  assert.strictEqual(wat.test_set_console_window(first, 1, windowRect), 1);
+  assert.strictEqual(wat.test_set_console_size(first, coord(40, 20)), 1);
   assert.strictEqual(wat.test_set_console_size(first, coord(0xffff, 0xffff)), 0);
   assert.strictEqual(wat.test_get_console_info(first, resizedInfo), 1);
   assert.strictEqual(wat.guest_read32(resizedInfo) >>> 0, coord(40, 20) >>> 0,
@@ -291,6 +338,11 @@ const extraWat = String.raw`
   assert.strictEqual(wat.test_set_active_console_buffer(first), 1);
   assert.strictEqual(wat.test_active_console_buffer() >>> 0, first);
   assert.ok(paints > paintBeforeActivate, 'activation did not repaint browser console');
+  renderer._computeClientRect(consoleWindow);
+  assert.deepStrictEqual([consoleWindow.w, consoleWindow.h], [328, 268],
+    'active viewport did not resize the console outer window');
+  assert.deepStrictEqual([consoleWindow.clientRect.w, consoleWindow.clientRect.h], [320, 240],
+    '40x20 viewport did not become the browser console client');
   const inherited = wat.test_create_console_buffer(1, 0) >>> 0;
   const inheritedInfo = info();
   assert.strictEqual(wat.test_get_console_info(inherited, inheritedInfo), 1);

@@ -40,8 +40,8 @@ const digest = crypto.createHash('sha256').update(simple.join('\n')).digest('hex
 // This is a ratchet, not approval of the old entries. Any addition or mutation
 // changes the digest and stops the build; deleting/fixing an entry deliberately
 // lowers the count and updates the digest after review.
-const EXPECTED_COUNT = 316;
-const EXPECTED_SHA256 = 'ad7f8e7b9218240d2267831ebad4a3aeea4b03adb9fae418976a54f635a5f73c';
+const EXPECTED_COUNT = 315;
+const EXPECTED_SHA256 = '9d32b1a0d25b98392a66719f39b71a018a69eae22dce6dff600a044164a25715';
 
 if (simple.length !== EXPECTED_COUNT || digest !== EXPECTED_SHA256) {
   console.error(`Silent-stub inventory changed: count=${simple.length}, sha256=${digest}`);
