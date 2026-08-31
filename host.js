@@ -226,6 +226,19 @@ class WineAssembly {
     return tick;
   }
 
+  _advanceGuestTickMs(ms, sharedAudio) {
+    const requested = Number(ms);
+    const delta = Number.isFinite(requested)
+      ? Math.min(0x7FFFFFFF, Math.max(0, Math.floor(requested))) : 0;
+    if (!delta) return;
+    const st = this._guestTickState(sharedAudio);
+    const current = Math.max(Number.isFinite(st.batchMs) ? st.batchMs : 0,
+      Number.isFinite(st.lastReturnedMs) ? st.lastReturnedMs : 0);
+    const advanced = (current + delta) % 0x80000000;
+    st.batchMs = advanced;
+    st.lastReturnedMs = advanced;
+  }
+
   _guestAudioClockMs(sharedAudio) {
     const st = this._guestTickState(sharedAudio);
     return Number.isFinite(st.batchMs) ? st.batchMs : 0;
@@ -1583,6 +1596,8 @@ class WineAssembly {
       results = await this.guestWorker.loadDlls(readyConfigs, exeBytes, opts);
       if (register) register(readyConfigs, results);
     } else {
+      opts.advanceGuestTime = ms => this._advanceGuestTickMs(ms,
+        this.hostCtx && this.hostCtx.sharedAudio);
       results = _loadDlls(this.instance.exports, this.memory.buffer, exeBytes, readyConfigs, console.log, opts);
     }
     // Cooperative threads get their DLL set (and the DllMain entry caller) from
@@ -1636,6 +1651,8 @@ class WineAssembly {
       exeBytes: this._exeBytes || null,
       resourceHost: this,
       log: console.log,
+      advanceGuestTime: ms => this._advanceGuestTickMs(ms,
+        this.hostCtx && this.hostCtx.sharedAudio),
       findDll: (fileName, fullName) => this._findDllBytes(fileName, fullName, {
         vfsPaths: [fullName.toLowerCase(), 'c:\\' + fileName, 'c:\\plugins\\' + fileName],
       }),
@@ -1798,6 +1815,8 @@ class WineAssembly {
       memoryBuffer: this.memory.buffer,
       resourceHost: this,
       log: console.log,
+      advanceGuestTime: ms => this._advanceGuestTickMs(ms,
+        this.hostCtx && this.hostCtx.sharedAudio),
       findDll: (fileName, fullName) => this._findDllBytes(fileName, fullName, { exeDir: true }),
     });
   }

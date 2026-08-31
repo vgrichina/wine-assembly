@@ -82,3 +82,34 @@ assert(tutorialGold > 900, `tutorial dialogue is missing (${tutorialGold} gold p
 
 console.log('PASS  installed GTA2 demo loads its authentic DLLs and enters Wild Demo gameplay');
 console.log(`PASS  gameplay frame has grass=${grass}, hearts=${heartRed}, tutorial=${tutorialGold}`);
+
+const chrome = process.env.CHROME ||
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+if (fs.existsSync(chrome)) {
+  const browserLog = path.join(temporary, 'browser-console.txt');
+  const browser = spawnSync(process.execPath, [
+    'tools/web-input-probe.js', '--app=gta2_demo',
+    '--steps=wait:5000;eval:({running:runningApps.length,stopped:runningApps[0]?.wine?.stopped||false,eip:runningApps[0]?.wine?.instance?.exports?.get_eip?.()>>>0,titles:Object.values(sharedRenderer.windows).filter(w=>w.visible).map(w=>w.title)})',
+    `--console-out=${browserLog}`,
+  ], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    timeout: 150000,
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  const browserOutput = `${browser.stdout || ''}\n${browser.stderr || ''}`;
+  const browserConsole = fs.existsSync(browserLog) ? fs.readFileSync(browserLog, 'utf8') : '';
+  assert.strictEqual(browser.error, undefined, browser.error && browser.error.message);
+  assert.strictEqual(browser.status, 0, `${browserOutput}\n${browserConsole.slice(-6000)}`);
+  assert(browserOutput.includes('"running":1') && browserOutput.includes('"stopped":false'),
+    `the browser dropdown launch did not remain alive\n${browserOutput}\n${browserConsole.slice(-6000)}`);
+  assert(browserOutput.includes('"GTA2 Demo"'),
+    `the browser lost GTA2's visible window\n${browserOutput}`);
+  assert(browserConsole.includes('[LoadLibrary] d3ddll.dll loaded') &&
+    browserConsole.includes('DllMain resumed after cooperative Sleep (1)') &&
+    browserConsole.includes('DllMain returned, EAX=0x1'),
+  `the browser did not complete d3ddll's timed initializer\n${browserConsole.slice(-6000)}`);
+  assert(!browserConsole.includes('[ExitProcess]'),
+    `the browser re-entered GTA2's corrupt calibration exit path\n${browserConsole.slice(-6000)}`);
+  console.log('PASS  browser dropdown launch survives d3ddll Sleep calibration');
+}
