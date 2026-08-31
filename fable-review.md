@@ -1,9 +1,265 @@
 # Wine-Assembly — Architecture & Performance Review
 
-Three passes, newest first. **Pass 3 (2026-08-30)** is a delta review three
-days after Pass 2; **Pass 2 (2026-08-27)** and the **2026-08-18 pass** follow
-unchanged, each with its action log, as the record of what was found and fixed
-then.
+Four passes, newest first. **Pass 4 (2026-08-31)** reviews the day the WATX
+migration completed and the BYO-media subsystem in full; **Pass 3
+(2026-08-30)** is a delta review three days after Pass 2, with a dated
+addendum verifying each commit window as it landed; **Pass 2 (2026-08-27)**
+and the **2026-08-18 pass** follow unchanged, each with its action log, as the
+record of what was found and fixed then.
+
+---
+
+# Pass 4 — 2026-08-31
+
+*Reviewed at HEAD `763bcc44` (+2 toyvm commits by write time), 301 commits
+after Pass 3's `ae1d42f1` — one calendar day, ~10 agent sessions coordinating
+on `messageboard.txt` (4,730 lines). Method: the six dated tick paragraphs in
+the Pass-3 addendum verified every commit window as it landed; this pass adds
+two parallel area reviews — the first full review of the BYO-media subsystem
+(its headline finding reproduced empirically against the live libs, not read
+off the code), and a re-verification of every analytical item still open —
+plus a full `tools/build.sh` run at HEAD: **exit 0**, 17 gates, WATX
+canonical, 174 declared regions.*
+
+## Verdict
+
+The day's output is finished infrastructure, not features. The WATX migration
+ran M0→M6 to completion — vendored sealed compiler, gap census, byte-level
+differential matrix, per-milestone exit gates, cutover at byte identity
+(`23ed9639`), legacy retirement (`24b79256`; rollback is now a revert, not an
+env var) — and the differential machinery paid for itself on the way: six
+shipped Wine-source defects (bare tails in else-less `(if)`s that
+`compile-wat.js` silently discarded — EnumMenuItem's MF_GRAYED store, a
+texture fallback, a treeview free, five CreateWindowExA seeds), plus
+export-order, negative-hex-i64, type-interning and literal-parsing compiler
+bugs, every one found by two compilers disagreeing about the same source. The
+region-safety wave then started deleting the magic numbers this review has
+complained about since Pass 1: 174 regions declared in `src/00-regions.wat`,
+a per-file raw-literal **ratchet** in the build, ~200 literals converted with
+per-commit byte proofs, 361 banked. Every finding this review carried as
+"open, owner silent" was closed within the day, most within hours of being
+named — including by this session on user direction (`96bb3bc3`,
+`b967a547`). The cost side is process: **five shared-worktree contamination
+incidents in ~36 hours**, one leaving HEAD unbuildable in a clean checkout
+for two hours and one poisoning the symbolization wave's own byte-identity
+oracle. The pattern now has a name and a drift-immune oracle, but nothing
+structural prevents the sixth incident (§P4-4).
+
+The BYO-media subsystem (§P4-2, first full review) is better than its age
+suggests — loud-refusal discipline everywhere in the zip path, fixtures
+mastered by real tools, an honest pending-read contract — but it has two
+capacity cliffs (a browser-imported exe over 16 MB cannot launch at all;
+sources at or past 2 GB silently read wrong bytes), it applies its own
+untrusted-input rule to zip but not to ISO, and in the browser it quietly
+loses installer output, because the writable overlay exists only in the CLI.
+
+## P4-0 — Numbers
+
+| | 08-30 (P3) | 08-31 | note |
+|---|---|---|---|
+| `src/*.wat` lines / parts | 192,238 / 60 | **198,273 / 61** | `00-regions.wat` new |
+| Compiler | `lib/compile-wat.js` | **WATX, vendored + sealed** | legacy = hard error |
+| Declared regions / raw literals | — | **174 / 361 banked** | `region-census --gate` |
+| Handler table | 442 | **443** | |
+| `api_table.json` | 3,071 | **3,108** | MSVCRT shims latest |
+| `crash_unimplemented` call sites | 137 | **131** | |
+| Silent-handler ratchet pin | 506 | **505** | re-pinned in-commit throughout |
+| Test files | 677 | **738** (+15 `watx-compiler-*.test.js`) | all tiered |
+| Build gates | 16 | **17** | + fragment parens, region decls, census ratchet, region-map `--check`, provenance, toyvm bundle `--check` |
+| `run.js` / `host.js` / `index.html` | 8,672 / 2,553 / 2,477 | **9,023 / 2,775 / 2,536** | |
+| Biggest WAT parts | 09c3 16,849 / 09a 16,132 | **09c3 16,855 / 09a 16,700** | item 18 unaddressed |
+| `?v=` script tags | 45 | **58** | §P4-3, still all by hand |
+| `lib/apps.js` entries | 146 | **156** | |
+| toyvm lines | 18,099 | **26,379** | trace-JIT tiers 1–3 |
+| BYO-media | — | **~5.2k lib + 2.6k test LOC** | §P4-2 |
+
+## P4-1 — What the 301 commits were
+
+Overlapping buckets from the subjects: WATX migration and its gates ~50;
+region declaration + symbolization ~28; DX fidelity ~24 (DirectInput trio,
+EnumSurfaces/EnumAttachedSurfaces, viewport lights, D3DIM Pick and render
+options, process-state conversion); tests/gates ~32; toyvm trace-JIT ~13;
+BYO-media and installers ~19 (ISO/ZIP/CUE, writable C:\ overlay, chain
+launches, TerminateThread, MSVCRT shims); app fixes ~15 (Diablo fErase,
+Rodent, Civ2, Liquid War, StarCraft RE). The notable reversals are in the
+addendum ticks: G8's load-bearing `(drop)`, the toyvm 2x-then-null
+retraction, the 40-SKIPs-read-as-passes sweep correction, and two corrections
+to this review's own earlier paragraphs.
+
+## P4-2 — BYO-media subsystem (first full review)
+
+Shape: `byte-provider.js` (provider interface + 64×256 KB LRU ChunkCache) under
+`iso9660.js` / `zip-mount.js` / `cdrom.js` (CUE/BIN), mounted into `VirtualFS`
+via provider/lazy files with a pending-read contract (a cache miss is a
+distinguishable `pending`, never a short read; a dead provider becomes
+`ERROR_READ_FAULT`, not a hang). `vfs-overlay.js` + `overlay-store.js` journal
+writes (CLI `--overlay-dir` only); `save-bundle.js` is a deterministic
+store-only zip with hash-verified import filtered by the *running app's* globs
+rather than the bundle's claims; `media-sniff/import/import-ui/library.js` run
+the browser import flow with OPFS bytes + an IndexedDB catalog and staged-copy
+crash consistency. All nine tests are tiered.
+
+**HIGH, ranked:**
+
+1. **`vfs.materialize()` cannot deliver any async-provider file larger than
+   the 16 MB ChunkCache bound — reproduced empirically.**
+   `filesystem.js:946-953` fills the whole range then reads `entry.data` as
+   one `tryRead(0, size)`; the LRU evicts *during* the fill
+   (`byte-provider.js:247-251`), so chunk 0 is gone and the read throws
+   `VfsPendingError` after having done all the work. A 20 MB async provider
+   fails; the same bytes behind a sync provider succeed. Blast radius:
+   `media-import.js:506-513` launches every browser-imported game through
+   `materialize(exePath)` — **an imported ISO/zip whose exe is >16 MB cannot
+   launch**; ShellExecute chain-launch and every `entry.data` consumer hit
+   the same wall. Fix shape already exists in-tree: loop `readRange` into an
+   output buffer as `media-import.readAll` does.
+2. **32-bit `| 0` truncation in provider math — silent wrong bytes at ≥2 GB.**
+   `clampRange` (`byte-provider.js:42-46`), `SliceProvider` (`:76`), and
+   `setProviderFile` (`filesystem.js:907-909`) all truncate; a DVD-sized ISO
+   or a 2–4 GB zip (legally Zip64-free below 4 GB, so the refusal at
+   `zip-mount.js:248-252` never fires) wraps negative, clamps to 0, and reads
+   the wrong bytes **with no error**. `cdrom.js:133-137` does the same math
+   correctly with `Number.isSafeInteger` — the fix is to make the others
+   match. Era CDs never hit it, which is exactly why no test does either.
+3. **ISO names are mounted unsanitized — the subsystem's own untrusted-input
+   rule, applied to zip, is absent for ISO.** `iso9660.js:149-157` strips only
+   `;version` and a trailing dot; a crafted image can carry `/`, `\`, `..`,
+   control chars or DOS device names. `_normPath` keeps everything inside the
+   drive, but two records can fold to one path and silently overwrite (zip
+   *refuses* this, `zip-mount.js:551-555`), separators fabricate directories,
+   and `CON`/`NUL` land in the VFS (zip refuses via DOS_DEVICES). Zero
+   hostile-ISO fixtures exist.
+
+**MEDIUM (condensed):** save-bundle's export probes `entry.data` on every
+glob match, so a lazy mount entry gets materialized-and-bundled and an
+unresident provider entry **throws out of `exportBundle`**
+(`save-bundle.js:322` — its "lazy entries are skipped" comment is false);
+overlay durability is exit-only (`run.js:8562` — and this project's own rule
+is `timeout -s KILL`, which skips exit handlers, so a killed installer run
+persists nothing), `flush()` clears `dirty` before the store write so a
+failed batch is dropped forever (`vfs-overlay.js:242-244`), and snapshots
+alias live buffers that `writeFile` mutates in place; **the browser has no
+writable overlay at all** — installer output is RAM-only and vanishes on
+reload with nothing in the UI saying so; `media-library.cleanupOrphans`
+deletes every row (and its OPFS file) whose `schema !== SCHEMA_VERSION`
+(`media-library.js:411-414`) directly under a comment promising a schema bump
+never drops a library — a time bomb that costs nothing to defuse now;
+CUE/BIN accepts exactly one shape (`MODE1/2352`; the very common
+`MODE1/2048` is refused, and the cue fixture mirrors the implementation's
+16-byte assumption rather than parsing a real dump); deflated zips inflate
+fully at mount; `OPEN_EXISTING`+`GENERIC_ALL` bypasses copy-on-write intent
+detection (`vfs-overlay.js:128`) and turns into a `VfsPendingError` inside a
+WAT handler; ChunkCache trusts chunk length, so a short Range response
+becomes silent zero-filled reads on the one path (guest ReadFile) that
+doesn't re-check, and `HttpRangeProvider` has zero tests.
+
+**Test honesty is strong** — fixtures mastered with real `hdiutil`/`zip`
+(the fixture README itself rejects self-mirroring), hostile zips exercise
+the checks rather than the writer, save-bundle round-trips are byte-exact
+against an independent writer plus seven tamper classes, and the overlay
+installer test is a genuine two-process proof through the real Winamp NSIS
+installer. The gaps line up exactly with the findings: nothing >16 MB behind
+an async provider, nothing ≥2 GB, no hostile ISO, no real CUE dump. Worth
+keeping verbatim: both-endian cross-checks on every ECMA-119 number, inflate
+output ceilings charged before allocation, the pending-read contract, provider
+windows shared across `copyFile` so a 600 MB install stays lazy, and refusal
+(never repair) as the uniform answer to a bad name.
+
+## P4-3 — The analytical tail, re-verified
+
+- **3.10 version counters — mechanism still open; one new latent drift.** 58
+  hand-bumped `?v=` tags; `SOURCE_VERSION='250'` governs what `host.js`
+  *fetches* while host.js itself ships at `?v=263` — two counters, by hand.
+  The page/worker pairs currently agree, but
+  `lib/d3d-command-stream.js:55` defaults to `d3d-render-worker.js?v=1`
+  while `guest-worker.js:261` passes `?v=2` — any encoder constructed
+  without an explicit `workerUrl` loads a stale render worker. Nothing
+  enforces agreement anywhere.
+- **3.12 — largely open.** `readSyncObjectName`/thread-id/wait-mode logic
+  still duplicated `host.js:866-922` vs `run.js:3003-3038`;
+  `debug-app-picker.js:10-11` still keeps app-id lists outside `apps.js`;
+  the six PNG inspectors persist; `04-cache.wat:433` still describes a
+  fallback into the deleted hash cache; **CLAUDE.md:223 still says "128 MB"
+  while `01-header.wat:870` is 8192 pages = 512 MB**; three newer tools are
+  absent from CLAUDE.md while retired `render-png.js` is still listed.
+- **Item 8 — worse.** 386 bare handler-id literals in `07-decoder.wat`
+  (was 371) + 37 in `07b`. The stale comments are now *provably* stale: the
+  live table says 427=`$th_rect_run`, 428=`$th_case_chain`,
+  429=`$th_rle_run`, while comments at `07-decoder.wat:40,50,152,416,2151`
+  and `13-exports.wat:3092,3100` still say 422/423/424. `0xCACA0010` still
+  hand-stored twice (`09a8:1021,1054`).
+- **Item 9 — CLI half still open.** `run.js` has zero references to
+  `app.copySuperops`; `--app=mw3` still needs the manual flag. The browser
+  honors it (`browser-shell.js:641-646`).
+- **Item 12 — one of three fixed.** `render-desktop.js` requires resolve
+  now; `trace-assert.js:6` and `call-func.js:10` still require the deleted
+  `lib/resources`; `win16-v86-compare.js:265` still greps
+  `[CreateWindowEx` against hosts that print `[CreateWindow]`; all six
+  superseded tools still present.
+- **Item 18 — both files grew again** (09a 16,700 / 09c3 16,855).
+- **A.5 open** (`decode-diff.js` in no tier), **A.8 mixed** (EnumTextureFormats
+  bound now matches its table — fixed; the menu-width font-select side effect
+  `09c5:729` and tab magic-21 ×6 `09c3:792-844` remain), **A.2**: the slot-63
+  fix holds in code, the D3D-worker image-parity test and FPS A/B are still
+  owed and still honestly admitted in the re-notes.
+
+## P4-4 — Process
+
+The multi-agent burst is spectacularly productive — the entire silent-owner
+backlog closed in one day, review findings routinely fixed within hours,
+corrections posted against *their own* results (toyvm twice, the sweep
+SKIPs, two by this review) — and it has exactly one systemic weakness:
+**uncommitted state in the one shared worktree**. Five incidents in ~36
+hours: three stale-index sweeps (all author-corrected), one half-committed
+refactor that left HEAD unbuildable in a clean checkout for two hours, and
+one where the symbolization wave's byte-identity *oracle* had a peer's
+uncommitted host import baked into its canonical pair — verification
+infrastructure silently verifying the wrong tree. Mitigations exist
+(drift-immune paired oracle, clean-worktree sweeps, the board naming the
+pattern) but they are all detection, not prevention. The structural fix is
+known and already practiced by two agents: work in per-agent worktrees and
+merge (`0d718678` did exactly this). Recommendation 2 below.
+
+## P4-5 — What's healthy (keep doing this)
+
+The differential matrix as a bug-finder — two independent compilers
+disagreeing about the same source found six shipped defects that seven
+review passes and 738 tests had not. Ratchets over reviews: silent-stub pin,
+region census, test manifest, timeout caps — each makes the *next* regression
+a build failure instead of a finding. The correction culture: retractions are
+posted with the same rigor as results, and this review's own overstatements
+were corrected in print. Gates that name the bug: the WATX build's single
+remaining warning pointed at the last known dropped-code site until it was
+fixed. And byte-identity proofs per symbolization commit — the standard for
+"refactor changed nothing" is bytes, not vibes.
+
+## Pass-4 recommendations
+
+**Tier 1 — bugs someone will hit:**
+1. Fix `materialize()` to loop `readRange` (H1) — until then, browser-imported
+   games with >16 MB exes are unlaunchable with a misleading error.
+2. Adopt per-agent worktrees + merge as the default working mode (§P4-4);
+   the five incidents were all one shared mutable tree.
+3. Safe-integer provider math (H2) — copy `cdrom.js`'s own checks.
+4. Sanitize ISO names through the zip sanitizer (H3); add one hostile-ISO
+   fixture.
+5. Defuse `cleanupOrphans` before SCHEMA_VERSION ever bumps (M4).
+6. Save-bundle: skip unresident provider entries instead of throwing (M1).
+
+**Tier 2 — drift that will become a bug:**
+7. One version constant (3.10): derive every `?v=` from `SOURCE_VERSION`, or
+   gate agreement; fix the `d3d-render-worker` v=1/v=2 pair now.
+8. Browser overlay (M3) or an honest "installer output is not persisted"
+   notice in the import UI.
+9. `--app` should apply `copySuperops` in `run.js` (item 9, one line).
+10. Fix the six stale handler-id comments or emit symbolically (item 8);
+    correct CLAUDE.md's 128 MB (3.12).
+11. Overlay: flush on signal/interval, re-mark failed batches (M2).
+
+**Tier 3 — carried:** split 09a/09c3 (item 18), the two broken requires +
+dead tools (item 12), `decode-diff` tier row (A.5), menu-font side effect and
+magic 21 (A.8), D3D-worker parity + FPS A/B (A.2), MODE1/2048 CUE support
+(M5), the remaining 361 census literals (banked, ratcheted).
 
 ---
 
