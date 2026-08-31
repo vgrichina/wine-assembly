@@ -284,5 +284,202 @@ console.log('── (4) STANDARD-WAT / COMPAT MODE ──');
   ck('compiles without tail calls', compat.success === true, compat.error);
 }
 
+console.log('── (5) SPANS: a named address LIMIT, transparent to overlap ──');
+//
+// §5.1. `$g2w`'s direct guest window has an upper bound written as the bare
+// literal 0x8000000 in three places in src/03-registers.wat. It is not a
+// storage region — it CONTAINS $GUEST_BASE, the stack, the thunks and PE
+// staging — so declaring it with any other head makes the compiler reject the
+// whole map as overlapping. `region.declare-span` is the head whose one
+// distinguishing property is that it does not participate in the overlap sweep.
+//
+// The risk this suite has to hold down is that transparency spreads: a span
+// that could be nested, aligned, allocated or shaken would be a hole in the
+// overlap check with a friendly name, which is strictly worse than the literal.
+const SPAN = '(region.declare-span $WINDOW (base 0x0) (end 0x8000) ' +
+  '(owner "the direct window $g2w tests against"))';
+{
+  // Transparency, both directions: a span may contain regions, and regions
+  // inside it are still checked against EACH OTHER.
+  const inside = build(`${SPAN}
+(region.declare-fixed $A (base 0x1000) (size 0x100))
+(region.declare-fixed $B (base 0x2000) (size 0x100))
+(func $f (result i32) (effects heap) (i32.const 0))
+(wasm-export "f" $f)`);
+  ck('regions live INSIDE a span without overlapping it', inside.success === true, inside.error);
+
+  const collide = build(`${SPAN}
+(region.declare-fixed $A (base 0x1000) (size 0x100))
+(region.declare-fixed $B (base 0x1080) (size 0x100))
+(func $f (result i32) (effects heap) (i32.const 0))
+(wasm-export "f" $f)`);
+  ck('a span does not suppress the overlap check between the regions it covers',
+    collide.success === false && /overlaps \$A/.test(collide.error || ''), collide.error);
+
+  // Two spans may nest — a window inside a window is a real shape, and the
+  // sweep drops spans entirely rather than special-casing them.
+  const nested = build(`${SPAN}
+(region.declare-span $INNER (base 0x1000) (size 0x1000) (owner "a sub-window"))
+(func $f (result i32) (effects heap) (i32.const 0))
+(wasm-export "f" $f)`);
+  ck('two spans may overlap each other', nested.success === true, nested.error);
+}
+{
+  // The point of the head: the literal goes away. `(region.end $WINDOW)` is the
+  // 0x8000000 that `$g2w` compares against, and it is one i32.const.
+  const e = run(`${SPAN}
+(func $base (result i32) (effects heap) $WINDOW)
+(func $end (result i32) (effects heap) (region.end $WINDOW))
+(func $size (result i32) (effects heap) (region.size $WINDOW))
+(func $mid (result i32) (effects heap) (region.addr $WINDOW 0x40))
+(wasm-export "base" $base) (wasm-export "end" $end)
+(wasm-export "size" $size) (wasm-export "mid" $mid)`);
+  ck('a span symbol resolves like a fixed region\'s',
+    e.base() === 0 && e.end() === 0x8000 && e.size() === 0x8000 && e.mid() === 0x40,
+    [e.base(), e.end(), e.size(), e.mid()]);
+}
+{
+  // Identity: like every other declaration head, a span emits nothing.
+  const body = `
+(func $f (result i32) (effects heap) (i32.const 7))
+(wasm-export "f" $f)`;
+  const bare = build(body);
+  const withSpan = build(`${SPAN}\n${body}`);
+  ck('a span declaration emits no bytes',
+    bare.success && withSpan.success &&
+    Buffer.from(bare.wasmBinary).equals(Buffer.from(withSpan.wasmBinary)),
+    withSpan.error);
+}
+{
+  // A span is not an obstacle: the allocator places straight through it. If it
+  // were treated as a pin, the direct window would push all 160 of Wine's
+  // regions above 0x08000000 and invert the map.
+  const r = build(`${SPAN}
+(region.floor 0x1000)
+(region.declare $A (size 0x100) (align 0x100))
+(func $f (result i32) (effects heap) $A)
+(wasm-export "f" $f)`);
+  ck('the allocator places INTO a span rather than skipping it',
+    r.success === true && r.regions.regions.find(x => x.name === '$A').base === 0x1000,
+    r.success ? r.regions.regions : r.error);
+  ck('a span reports itself as kind "span" in the layout',
+    r.success === true && r.regions.regions.find(x => x.name === '$WINDOW').kind === 'span',
+    r.success ? r.regions.regions : r.error);
+  // …and it is not counted as allocated, so it can never be shaken.
+  ck('a span is not part of the allocated sequence',
+    r.success === true && r.regions.allocated === 1, r.success ? r.regions.allocated : r.error);
+}
+mustFail('a span with no (base N)',
+  `${'(region.declare-span $W (size 0x1000) (owner "x"))'}
+   (func $f (result i32) (effects heap) (i32.const 0)) (wasm-export "f" $f)`,
+  'needs a (base N) clause');
+mustFail('a span with no (owner "…")',
+  `(region.declare-span $W (base 0x0) (size 0x1000))
+   (func $f (result i32) (effects heap) (i32.const 0)) (wasm-export "f" $f)`,
+  'needs an (owner "text") clause');
+mustFail('a span with BOTH (size) and (end)',
+  `(region.declare-span $W (base 0x0) (size 0x1000) (end 0x2000) (owner "x"))
+   (func $f (result i32) (effects heap) (i32.const 0)) (wasm-export "f" $f)`,
+  'needs exactly one of (size N) or (end N)');
+mustFail('a span with NEITHER (size) nor (end)',
+  `(region.declare-span $W (base 0x0) (owner "x"))
+   (func $f (result i32) (effects heap) (i32.const 0)) (wasm-export "f" $f)`,
+  'needs exactly one of (size N) or (end N)');
+mustFail('a span whose (end) is below its (base)',
+  `(region.declare-span $W (base 0x1000) (end 0x800) (owner "x"))
+   (func $f (result i32) (effects heap) (i32.const 0)) (wasm-export "f" $f)`,
+  'is not above (base');
+mustFail('a zero-extent span',
+  `(region.declare-span $W (base 0x0) (size 0) (owner "x"))
+   (func $f (result i32) (effects heap) (i32.const 0)) (wasm-export "f" $f)`,
+  '(size 0)');
+mustFail('a span ending past initial memory',
+  `(region.declare-span $W (base 0x0) (size 0x40000) (owner "x"))
+   (func $f (result i32) (effects heap) (i32.const 0)) (wasm-export "f" $f)`,
+  'past the');
+mustFail('a span declared twice',
+  `${SPAN}
+   ${SPAN}
+   (func $f (result i32) (effects heap) (i32.const 0)) (wasm-export "f" $f)`,
+  'is already declared at');
+mustFail('a span sharing a name with a fixed region',
+  `${SPAN}
+   (region.declare-fixed $WINDOW (base 0x1000) (size 0x100))
+   (func $f (result i32) (effects heap) (i32.const 0)) (wasm-export "f" $f)`,
+  'is already declared at');
+mustFail('a span with a non-integer extent',
+  `(region.declare-span $W (base 0x0) (size "big") (owner "x"))
+   (func $f (result i32) (effects heap) (i32.const 0)) (wasm-export "f" $f)`,
+  'is not an integer literal');
+mustFail('region.addr past a span\'s extent',
+  `${SPAN}
+   (func $f (result i32) (effects heap) (region.addr $WINDOW 0x8000))
+   (wasm-export "f" $f)`,
+  "runs past the region's");
+// The clauses a span REFUSES, one per clause, because each one would smuggle a
+// property back in that a transparent range cannot honestly have.
+for (const [label, clause] of [
+  ['alignment', '(align 0x1000)'],
+  ['nesting', '(within $OUTER)'],
+  ['a stride law', '(stride 4 (count 2))'],
+  ['a mask law', '(mask $M)'],
+  ['a power-of-two law', '(size-is-power-of-2)'],
+]) {
+  mustFail(`a span carrying ${label}`,
+    `(region.declare-span $W (base 0x0) (size 0x1000) ${clause} (owner "x"))
+     (func $f (result i32) (effects heap) (i32.const 0)) (wasm-export "f" $f)`,
+    'is not a span clause');
+}
+mustFail('a span with a misspelled clause names SPAN clauses, not every clause',
+  `(region.declare-span $W (base 0x0) (sixe 0x1000) (owner "x"))
+   (func $f (result i32) (effects heap) (i32.const 0)) (wasm-export "f" $f)`,
+  '(sixe ...) is not a span clause');
+mustFail('a span with a duplicate clause',
+  `(region.declare-span $W (base 0x0) (size 0x1000) (size 0x10) (owner "x"))
+   (func $f (result i32) (effects heap) (i32.const 0)) (wasm-export "f" $f)`,
+  'duplicate (size ...) clause');
+
+console.log('── (6) DATA SEGMENT OFFSETS: region.addr is the ONLY region form ──');
+//
+// Failure mode 20 checks a segment's payload LENGTH against its region's
+// extent, and only `region.addr` has an offset for that check to be about.
+// `(region.end $R)` and `(region.size $R)` were previously accepted as data
+// offsets and reached the emitter with the bounds check skipped — the exact
+// hole §4.4 exists to close, wearing the syntax of the fix.
+{
+  const R = '(region.declare-fixed $R (base 0x1000) (size 0x10))';
+  const ok = build(`${R}
+(data (region.addr $R 0xF) "X")
+(func $f (result i32) (effects heap) (i32.const 0)) (wasm-export "f" $f)`);
+  ck('a region-relative segment that FITS compiles', ok.success === true, ok.error);
+}
+mustFail('a segment whose payload runs past its region',
+  `(region.declare-fixed $R (base 0x1000) (size 0x10))
+   (data (region.addr $R 0x10) "X")
+   (func $f (result i32) (effects heap) (i32.const 0)) (wasm-export "f" $f)`,
+  "runs past the region's");
+mustFail('a segment at (region.end $R)',
+  `(region.declare-fixed $R (base 0x1000) (size 0x10))
+   (data (region.end $R) "X")
+   (func $f (result i32) (effects heap) (i32.const 0)) (wasm-export "f" $f)`,
+  'is not an addressable location');
+mustFail('a segment at (region.size $R)',
+  `(region.declare-fixed $R (base 0x1000) (size 0x10))
+   (data (region.size $R) "X")
+   (func $f (result i32) (effects heap) (i32.const 0)) (wasm-export "f" $f)`,
+  'is not an addressable location');
+{
+  // The bytes a region-relative segment produces are the bytes the absolute
+  // form produces — that is what makes converting one a no-op.
+  const abs = build(`(data (i32.const 0x1004) "hello")
+(func $f (result i32) (effects heap) (i32.const 0)) (wasm-export "f" $f)`);
+  const rel = build(`(region.declare-fixed $R (base 0x1000) (size 0x10))
+(data (region.addr $R 0x4) "hello")
+(func $f (result i32) (effects heap) (i32.const 0)) (wasm-export "f" $f)`);
+  ck('a region-relative segment emits the absolute form\'s bytes',
+    abs.success && rel.success &&
+    Buffer.from(abs.wasmBinary).equals(Buffer.from(rel.wasmBinary)), rel.error || abs.error);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

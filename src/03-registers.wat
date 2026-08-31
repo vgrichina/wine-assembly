@@ -78,7 +78,7 @@
     (local $rec i32) (local $base i32) (local $size i32) (local $backing i32)
     (local.set $wa (i32.add (i32.sub (local.get $ga) (global.get $image_base)) (global.get $GUEST_BASE)))
     (if (i32.eqz (i32.or (i32.lt_s (local.get $wa) (i32.const 0))
-                (i32.ge_u (local.get $wa) (i32.const 0x8000000)))) ;; direct guest window
+                (i32.ge_u (local.get $wa) (region.end $DIRECT_WINDOW))))
       (then (return (local.get $wa))))
     ;; CreateDIBSection pointers live in a dedicated high guest range backed by
     ;; the final 64MB of linear memory. Test it only after the normal direct
@@ -174,9 +174,9 @@
       (i32.add (i32.sub (local.get $ga) (global.get $image_base))
         (global.get $GUEST_BASE)))
     (if (i32.and
-          (i32.lt_u (local.get $wa) (i32.const 0x8000000))
+          (i32.lt_u (local.get $wa) (region.end $DIRECT_WINDOW))
           (i32.le_u (local.get $len)
-            (i32.sub (i32.const 0x8000000) (local.get $wa))))
+            (i32.sub (region.end $DIRECT_WINDOW) (local.get $wa))))
       (then (return (local.get $wa))))
 
     (local.set $off

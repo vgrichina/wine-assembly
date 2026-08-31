@@ -846,10 +846,24 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     const HEADS = new Map([
       ['region.declare-fixed', 'fixed'],
       ['region.declare-derived', 'derived'],
+      ['region.declare-span', 'span'],
       ['region.declare', 'alloc'],
     ]);
     const REGION_CLAUSES = new Set(['base', 'size', 'end', 'align', 'owner', 'within',
       'stride', 'mask', 'size-is-power-of-2']);
+    // §5.1: a SPAN is an address-range LIMIT, not storage. `$g2w`'s direct
+    // guest window is the motivating case — its upper bound is the bare literal
+    // `0x8000000` in three places, which is a union of regions with no name.
+    // A span differs from every other head in exactly one way, and it is the
+    // whole point: it is TRANSPARENT to the overlap check, because the regions
+    // it bounds live inside it. Everything else follows from that — it is never
+    // allocated (there is nothing to place), never shaken (a limit that moves
+    // under a shake is testing the wrong thing), and carries no alignment,
+    // nesting or (stride)/(mask) law, because it owns no bytes for one to hold.
+    // What it DOES get is the fixed head's symbol resolution: `$DIRECT_WINDOW`,
+    // `(region.end $DIRECT_WINDOW)` and `(region.addr $DIRECT_WINDOW 0x…)` all
+    // work, which is what lets the literal be deleted.
+    const SPAN_CLAUSES = new Set(['base', 'size', 'end', 'owner']);
 
     // The constant globals, read straight off the top-level forms. The laws in
     // §4.2 tie a region's extent to globals the code already reads
@@ -962,6 +976,15 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
             `(stride N (count N)) (mask $G) (size-is-power-of-2)`);
         }
         const key = V(part[1]);
+        // Checked ahead of REGION_CLAUSES so a span's diagnostic lists a span's
+        // clauses: telling somebody that `align` and `stride` were expected,
+        // when the head accepts neither, is a worse error than no error.
+        if (kind === 'span' && !SPAN_CLAUSES.has(key)) {
+          throw located(form, `${head} ${name}: (${key} ...) is not a span clause; ` +
+            `a span is a named address LIMIT, not storage, so it takes only ` +
+            `(base N), one of (size N)/(end N), and (owner "text") — it owns no ` +
+            `bytes for an alignment, a nesting or a (stride)/(mask) law to hold`);
+        }
         if (!REGION_CLAUSES.has(key)) {
           throw located(form, `${head} ${name}: unknown clause (${key} ...); ` +
             `expected base, size, end, align, owner, within, stride, mask, size-is-power-of-2`);
@@ -1004,7 +1027,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       }
       let base = null, guestVa = null, size;
 
-      if (kind === 'fixed') {
+      if (kind === 'fixed' || kind === 'span') {
         if (!clause.has('base')) throw located(form, `${head} ${name} needs a (base N) clause`);
         base = intClause('base');
       } else if (kind === 'derived') {
@@ -1024,7 +1047,7 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       if (clause.has('size')) {
         size = intClause('size');
       } else {
-        if (kind !== 'fixed') {
+        if (kind !== 'fixed' && kind !== 'span') {
           throw located(form, `${head} ${name}: (end N) states an absolute address, ` +
             `which an allocated region does not have; use (size N)`);
         }
@@ -1037,7 +1060,23 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       if (size === 0) {
         throw located(form, `${head} ${name}: (size 0) — a region must have an extent`);
       }
-      const align = clause.has('align') ? intClause('align') : 4;
+      // A span is transparent to the overlap check, so nothing else in the
+      // module can catch one that was declared by accident or left behind after
+      // the limit it named was deleted. `(owner "…")` is therefore mandatory
+      // here for the same reason `(reason "…")` is mandatory on `region.gap`: an
+      // undocumented transparent range IS the unnamed constant this head exists
+      // to replace, only now it has a name and still explains nothing.
+      if (kind === 'span' && !clause.has('owner')) {
+        throw located(form, `${head} ${name} needs an (owner "text") clause naming the ` +
+          `limit it stands for; a transparent range that documents nothing is the ` +
+          `unnamed constant this head exists to delete`);
+      }
+      // Spans carry no alignment: the address they name is a boundary somebody
+      // else's arithmetic tests against, not the start of an object, so there is
+      // nothing for an alignment to be a property OF. `align 1` keeps them out
+      // of checkPlaced's modulo without giving them a rule that reads as real.
+      const align = kind === 'span' ? 1
+        : clause.has('align') ? intClause('align') : 4;
       if (align < 1 || (align & (align - 1)) !== 0) {
         throw located(form, `${head} ${name}: (align ${align}) is not a power of two`);
       }
@@ -1069,8 +1108,11 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
           `${hx(memoryBytes)} bytes of initial memory (${memoryDecl.min} pages)`);
       }
     };
+    // Spans are bound-checked like a pin: a limit that names an address past the
+    // memory that exists at instantiation is a bug wherever it is tested, and
+    // the transparency only excuses it from OVERLAP, never from the map's edge.
     for (const r of regions.values()) {
-      if (r.kind === 'fixed') checkPlaced(r);
+      if (r.kind === 'fixed' || r.kind === 'span') checkPlaced(r);
     }
     for (const r of regions.values()) {
       if (r.kind !== 'derived') continue;
@@ -1106,8 +1148,12 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       placedSequence = shakeRegionSequence(sequence, shake);
       shakenCount = sequence.filter(item => item.kind === 'region').length;
     }
+    // Obstacles the cursor must skip. Spans are NOT obstacles — the direct guest
+    // window contains $GUEST_BASE, the stack, the thunks and PE staging, so
+    // treating it as occupied would push every allocated region above it and
+    // invert the map. That is the transparency, stated as code.
     const pins = [...regions.values()]
-      .filter(r => r.kind !== 'alloc')
+      .filter(r => r.kind !== 'alloc' && r.kind !== 'span')
       .sort((a, b) => a.base - b.base);
     let cursor = floor === null ? 0 : floor;
     let lastPlaced = null;
@@ -1155,7 +1201,15 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     // Overlap-freedom. Sort by base and compare each region with the ones still
     // open at its start; an interval list is small enough that the obvious
     // O(n log n) sweep is the whole algorithm.
-    const ordered = [...regions.values()].sort((a, b) => (a.base - b.base) || (a.size - b.size));
+    //
+    // Spans do not take part, in EITHER direction: a span's whole job is to name
+    // a range other regions live inside, so it can neither overlap them nor be
+    // overlapped by them. Two spans may also nest (a window inside a window), so
+    // dropping them from the sweep entirely is the honest rule rather than a
+    // special case bolted onto `nested()`.
+    const ordered = [...regions.values()]
+      .filter(r => r.kind !== 'span')
+      .sort((a, b) => (a.base - b.base) || (a.size - b.size));
     const nested = (a, b) => a.within === b.name || b.within === a.name;
     for (let i = 0; i < ordered.length; i++) {
       for (let j = i + 1; j < ordered.length; j++) {
@@ -1313,9 +1367,36 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
     if (Array.isArray(form[i + 1]) && V(form[i + 1][1]) === 'memory') i++; // explicit memory selector
     const offsetForm = form[(i++) + 1];
     const offsetHead = Array.isArray(offsetForm) ? V(offsetForm[1]) : null;
-    const regionRelative = offsetHead === 'region.addr' || offsetHead === 'region.end' || offsetHead === 'region.size';
+    // A data offset carries a location so the diagnostic names the segment.
+    const dataErr = (message) => {
+      const e = new Error(message);
+      const loc = watxFormLoc(offsetForm) ?? watxFormLoc(form);
+      if (loc !== undefined) {
+        e.line = watxNodeLine(loc); e.col = watxNodeCol(loc); e.file = watxNodeFile(loc);
+      }
+      return e;
+    };
+    // §4.4 admits exactly ONE region-relative spelling, and the restriction is
+    // load-bearing rather than tidy: failure mode 20 checks a segment's own
+    // payload LENGTH against the region's extent, and only `region.addr` has an
+    // offset for that check to be about. `(region.end $R)` is by definition
+    // one past the last byte — a segment starting there is out of bounds no
+    // matter how long it is — and `(region.size $R)` is an extent, not an
+    // address at all; it only ever named a plausible offset by the accident of
+    // a region based at zero. Both previously reached the emitter with the
+    // bounds check silently skipped, which is the exact hole this feature
+    // exists to close.
+    const regionRelative = offsetHead === 'region.addr';
+    if (offsetHead === 'region.end' || offsetHead === 'region.size') {
+      throw dataErr(`active data offset (${offsetHead} ...) is not an addressable ` +
+        `location: ${offsetHead === 'region.end'
+          ? 'a region\'s end is one past its last byte, so a segment there is out of bounds by construction'
+          : 'a region\'s size is an extent, not an address'}. ` +
+        `Write (data (region.addr $R OFF) …), which is the only form whose ` +
+        `payload length is checked against the region`);
+    }
     if (!regionRelative && (!Array.isArray(offsetForm) || offsetHead !== 'i32.const')) {
-      throw new Error('Active data requires an i32.const offset or a (region.addr $R OFF) offset');
+      throw dataErr('Active data requires an i32.const offset or a (region.addr $R OFF) offset');
     }
     const bytes = [];
     for (; i < (form.length - 1); i++) {

@@ -608,3 +608,104 @@ checks.
 New manifest digest:
 
   4b1b8a0321f09da79b98801df2e892627e19facfeb847ce40012ffb28e52461f
+
+## 2026-08-31 — `region.declare-span`, and one data offset that skipped its bounds check
+
+Two changes to `compiler-codegen.js`, both in the Milestone 6 region family.
+
+### `region.declare-span` — a named address LIMIT (design §5.1)
+
+```wat
+(region.declare-span $DIRECT_WINDOW (base 0x00000000) (end 0x08000000)
+  (owner "03-registers.wat — $g2w's direct-window limit"))
+```
+
+`$g2w`'s direct guest window is the motivating case and the design names it:
+its upper bound is the bare literal `0x8000000`, written three times in
+`src/03-registers.wat`, and it is `$VIRTUAL_BACKING_BASE`'s base spelled as a
+number. It could not be declared with any existing head, because it is not
+storage — it *contains* `$GUEST_BASE`, the guest heap, the stack, the thunk
+zone, PE staging and the whole WAT-private high map, so every other head would
+have made the compiler reject the map as 150-way overlapping.
+
+So a span has exactly one distinguishing property, and everything else about it
+follows from that property rather than being a separate decision:
+
+- **It is transparent to the overlap sweep**, in both directions. Regions live
+  inside it (that is its point), and two spans may nest, so spans are dropped
+  from the interval sweep entirely rather than bolted onto `nested()`. The
+  regions it covers are still checked against *each other*.
+- **It is not an allocator obstacle.** Treating the direct window as a pin
+  would push all 167 of Wine's regions above `0x08000000` and invert the map.
+- **It is never allocated and never shaken**: it is not in the allocation
+  sequence at all, so `WINE_REGION_SHAKE` cannot move a limit — a shake that
+  moved the boundary would be testing arithmetic, not addressing.
+- **It carries no alignment, nesting or `(stride)`/`(mask)` law**, because it
+  owns no bytes for one to be a property of. Its clause set is exactly `(base
+  N)`, one of `(size N)`/`(end N)`, and `(owner "text")`; anything else is a
+  hard error that lists a *span's* clauses, not the family's.
+- **`(owner "…")` is MANDATORY** — the one clause rule a span does not inherit.
+  Nothing else in the module can catch a transparent range declared by accident
+  or left behind after the limit it named was deleted, so it is required for the
+  same reason `(reason "…")` is required on `region.gap`: an undocumented
+  transparent range *is* the unnamed constant this head exists to replace, only
+  now it has a name and still explains nothing.
+
+What it *does* inherit is the fixed head's symbol resolution, which is the
+entire payoff: `$DIRECT_WINDOW`, `(region.end $DIRECT_WINDOW)` and
+`(region.addr $DIRECT_WINDOW 0x…)` all resolve through the family's existing
+name→base map, with no new resolution path. A span is bound-checked against
+initial memory like a pin — transparency excuses it from overlap, never from the
+map's edge — and it emits nothing, like every other declaration head.
+
+Failure modes, all hard errors carrying `file`/`line`/`col`: no `(base N)`; no
+`(owner "…")`; both or neither of `(size)`/`(end)`; `(end)` at or below
+`(base)`; zero extent; a non-integer literal; an extent past initial memory; a
+duplicate name (including one shared with a fixed region); a forbidden clause
+(`align`, `within`, `stride`, `mask`, `size-is-power-of-2`) or a misspelled one;
+a duplicate clause; and `region.addr` past the span's extent.
+
+### Active data segments: `region.addr` is the only region-relative offset
+
+Round-7 review finding, and it was a hole wearing the syntax of the fix. The
+data scan treated `region.addr`, `region.end` and `region.size` alike as
+region-relative offsets, but failure mode 20 — checking a segment's payload
+LENGTH against its region's extent — is applied only in the `region.addr`
+branch. So `(data (region.addr $R 0x10) "X")` correctly failed for a 0x10-byte
+region while `(data (region.end $R) "X")` and `(data (region.size $R) "X")`
+both compiled with no bounds check at all.
+
+Neither is an addressable location, which is why neither has an offset for the
+check to be about: a region's end is one past its last byte, so a segment
+starting there is out of bounds by construction, and a region's *size* is an
+extent, not an address — it only ever named a plausible offset by the accident
+of a region based at zero. Both are now hard errors naming
+`(data (region.addr $R OFF) …)` as the form to write, and data-offset
+diagnostics now carry a source location instead of being bare `Error`s.
+
+### Verification
+
+`test/watx-compiler-regions.test.js` 67 → **119** checks: a `(5) SPANS` section
+(transparency in both directions, two nested spans, symbol resolution,
+zero-byte emission, the allocator placing *into* a span, the layout kind, and
+every failure mode above) and a `(6) DATA SEGMENT OFFSETS` section (the two new
+negatives, the payload-length positive and negative, and byte identity between
+a region-relative segment and its absolute twin).
+
+All 18 `test/watx-compiler-*.test.js` suites green, `test/test-watx-matrix.js`
+48/48. **The compiler change moves no bytes**: `node tools/build-compile-wat.js`
+over the same working tree with HEAD's `compiler-codegen.js` and with this one
+produces identical artifacts —
+`e4b048bab442c28d…` / `fb8116fa10077135…`. The
+`src/00-regions.wat` + `src/03-registers.wat` conversion that follows is
+byte-identical too, proven the way wave 1 proved its conversions: the HEAD
+source closure compiled twice in one process, once pristine and once with only
+these two hunks swapped in, equal in both tail-call modes.
+
+One cosmetic note for whoever owns `tools/build-compile-wat.js`: its banner
+counts a span in the `(N pinned/derived, M allocated)` tally, where it is
+neither. Not touched here — that file is outside this change.
+
+New manifest digest:
+
+  a5c40a9c52e4d3e1024c8e2932f6dd3089192d9cacaf6fb947e40fc80cf71f0b

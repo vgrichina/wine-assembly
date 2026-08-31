@@ -82,7 +82,7 @@ at the bottom of this file, not left to whoever is editing.
 cc9dfe2962214e5da09162844e98d359b825009a8388bb7726edaed729b37ee2  tools/watx.js
 17a14c6c447cdee48dcbd6212047d86c88087c50277b141b8d44136672732280  tools/watx-src/compiler-parser.js
 5c6641524ffdc8b97db247c4b3fb0d7fe4526df071186a3dcaf903dba2f2e0e9  tools/watx-src/compiler-stages.js
-ba0871d6fd30c841899c5b1c628ef164c4c6d0fc851403b33e7658bfb19ba28f  tools/watx-src/compiler-codegen.js
+f58c38f0e24d4d09c2ebfa59eb270a8ff813fd47ef8b0245380b67189244a5cc  tools/watx-src/compiler-codegen.js
 b85a780ec3d53fa0a9a9b335839504f24c5ca7288a75885c2c0823b8bd9dd550  tools/watx-src/compiler.js
 293c1a233359bf142bf5badceb3399c92b79a653a86085681142b2037d80fce4  test/watx-compiler-wine-parity.test.js
 aaea455c646e4db3e1b60c034b32bda842c06babd29d8de3b810d73181ecf2c8  test/watx-compiler-production.test.js
@@ -100,7 +100,7 @@ c8b1f6a5361212e835ba7f4478800008c41c53041f380bf21b6a6a11cfb43e5d  test/watx-comp
 a1b425dc42f4fd3458cf983710c00c028c11f99afab51bd9b5c90046df0ae15b  test/watx-compiler-i64-literal.test.js
 9fe942a56d279a77840a9ca6d04c358186c9a51ffae9bff0ca5fe02b5269f4c4  test/watx-compiler-literals.test.js
 4bcc836d2a63143457c4f8edb5678920bf204db13201d58580fbe64499aed21b  test/watx-compiler-type-index.test.js
-a363cd0306542fca429c930c003b03057559e50c05822a8da84b231acbef1c9b  test/watx-compiler-regions.test.js
+7be02d455fadb12bb4e19860a9545871a85d434ea662ef0b8502a02f34ae76d4  test/watx-compiler-regions.test.js
 07596a8750d10d747487c59aae5ae57cf664f42cfb32de4e43143a4bf635dadc  test/watx-compiler-alloc.test.js
 ```
 
@@ -146,6 +146,6 @@ without re-sealing. Both lines are rewritten together by
 CHANGELOG already names the new digest.
 
 ```seal
-manifest-sha256   4b1b8a0321f09da79b98801df2e892627e19facfeb847ce40012ffb28e52461f
-changelog-sha256  9782d68d15b197fddc20540cc4edb2f40a4a8987e3be0718cedde6d899a9a43f
+manifest-sha256   a5c40a9c52e4d3e1024c8e2932f6dd3089192d9cacaf6fb947e40fc80cf71f0b
+changelog-sha256  d59b3eca45e9d1de1095298940535d32e042e65d7e2b99c6e5aee944424be351
 ```
