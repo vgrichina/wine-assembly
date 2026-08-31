@@ -13,6 +13,204 @@
   (global $D3DIM_PICK_OFFSET (mut i32) (i32.const 0))
   (global $D3DIM_PICK_Z (mut f32) (f32.const 0.0))
 
+  ;; One ordered light-list head per DX object slot.  Viewport entries already
+  ;; use all 32 bytes (device, rectangle, background), while light entries have
+  ;; room for their viewport owner, light index and next/previous links.  The
+  ;; list therefore needs only this one shared pointer per possible viewport.
+  ;; D3D v1-v3 expose at most eight lights on a viewport.
+  (global $D3DIM_VIEWPORT_LIGHT_HEAD i32 (i32.const 0x07F16000))
+  (global $D3DIM_VIEWPORT_LIGHT_HEAD_SIZE i32 (i32.const 0x00004000))
+
+  (func $d3dim_viewport_light_head_addr (param $this i32) (result i32)
+    (i32.add (global.get $D3DIM_VIEWPORT_LIGHT_HEAD)
+      (i32.shl (call $dx_slot_of (call $dx_from_this (local.get $this))) (i32.const 2))))
+
+  ;; Drop one reference while LOCK_DX is held.  Viewport attachment owns a COM
+  ;; reference just like Win98 Direct3D, so DeleteLight / viewport destruction
+  ;; can be the operation that finally destroys a light.
+  (func $d3dim_light_release_locked (param $entry i32)
+    (local $rc i32) (local $buf i32)
+    (local.set $rc
+      (i32.sub (i32.load (i32.add (local.get $entry) (i32.const 4))) (i32.const 1)))
+    (if (i32.le_s (local.get $rc) (i32.const 0))
+      (then
+        (local.set $buf (i32.load (i32.add (local.get $entry) (i32.const 8))))
+        (if (local.get $buf) (then (call $heap_free (local.get $buf))))
+        (call $dx_free (local.get $entry)))
+      (else
+        (i32.store (i32.add (local.get $entry) (i32.const 4)) (local.get $rc)))))
+
+  (func $d3dim_viewport_add_light (param $this i32) (param $light i32) (result i32)
+    (local $vp_entry i32) (local $light_entry i32) (local $head_addr i32)
+    (local $head i32) (local $cur i32) (local $cur_entry i32)
+    (local $count i32) (local $used i32) (local $index i32)
+    (local $hr i32)
+    (if (i32.or (i32.eqz (local.get $this)) (i32.eqz (local.get $light)))
+      (then (return (i32.const 0x80070057)))) ;; DDERR_INVALIDPARAMS
+    (local.set $vp_entry (call $dx_from_this (local.get $this)))
+    (local.set $light_entry (call $dx_from_this (local.get $light)))
+    (if (i32.or
+          (i32.ne (i32.load (local.get $vp_entry)) (i32.const 23))
+          (i32.ne (i32.load (local.get $light_entry)) (i32.const 24)))
+      (then (return (i32.const 0x80070057))))
+    (local.set $head_addr (call $d3dim_viewport_light_head_addr (local.get $this)))
+    (call $lock_acquire (global.get $LOCK_DX))
+    (if (i32.load (i32.add (local.get $light_entry) (i32.const 12)))
+      (then
+        (local.set $hr (i32.const 0x887602EF))) ;; D3DERR_LIGHTHASVIEWPORT
+      (else
+        (local.set $head (i32.load (local.get $head_addr)))
+        (local.set $cur (local.get $head))
+        (block $scanned (loop $scan
+          (br_if $scanned (i32.eqz (local.get $cur)))
+          (br_if $scanned (i32.ge_u (local.get $count) (i32.const 8)))
+          (local.set $cur_entry (call $dx_from_this (local.get $cur)))
+          (local.set $used
+            (i32.or (local.get $used)
+              (i32.shl (i32.const 1)
+                (i32.load (i32.add (local.get $cur_entry) (i32.const 16))))))
+          (local.set $count (i32.add (local.get $count) (i32.const 1)))
+          (local.set $cur (i32.load (i32.add (local.get $cur_entry) (i32.const 20))))
+          (br $scan)))
+        (if (i32.ge_u (local.get $count) (i32.const 8))
+          (then (local.set $hr (i32.const 0x80070057)))
+          (else
+            (block $index_found (loop $find_index
+              (br_if $index_found
+                (i32.eqz (i32.and (local.get $used)
+                  (i32.shl (i32.const 1) (local.get $index)))))
+              (local.set $index (i32.add (local.get $index) (i32.const 1)))
+              (br $find_index)))
+            ;; Light entry: +12 owner viewport, +16 driver light index,
+            ;; +20 next, +24 previous.  Add at the head, matching Win9x.
+            (i32.store (i32.add (local.get $light_entry) (i32.const 12)) (local.get $this))
+            (i32.store (i32.add (local.get $light_entry) (i32.const 16)) (local.get $index))
+            (i32.store (i32.add (local.get $light_entry) (i32.const 20)) (local.get $head))
+            (i32.store (i32.add (local.get $light_entry) (i32.const 24)) (i32.const 0))
+            (if (local.get $head) (then
+              (local.set $cur_entry (call $dx_from_this (local.get $head)))
+              (i32.store (i32.add (local.get $cur_entry) (i32.const 24)) (local.get $light))))
+            (i32.store (local.get $head_addr) (local.get $light))
+            (i32.store (i32.add (local.get $light_entry) (i32.const 4))
+              (i32.add (i32.load (i32.add (local.get $light_entry) (i32.const 4)))
+                (i32.const 1)))))))
+    (call $lock_release (global.get $LOCK_DX))
+    (local.get $hr))
+
+  (func $d3dim_viewport_delete_light (param $this i32) (param $light i32) (result i32)
+    (local $vp_entry i32) (local $entry i32) (local $head_addr i32)
+    (local $next i32) (local $prev i32) (local $link_entry i32)
+    (local $hr i32)
+    (if (i32.or (i32.eqz (local.get $this)) (i32.eqz (local.get $light)))
+      (then (return (i32.const 0x80070057))))
+    (local.set $vp_entry (call $dx_from_this (local.get $this)))
+    (local.set $entry (call $dx_from_this (local.get $light)))
+    (if (i32.or
+          (i32.ne (i32.load (local.get $vp_entry)) (i32.const 23))
+          (i32.ne (i32.load (local.get $entry)) (i32.const 24)))
+      (then (return (i32.const 0x80070057))))
+    (local.set $head_addr (call $d3dim_viewport_light_head_addr (local.get $this)))
+    (call $lock_acquire (global.get $LOCK_DX))
+    (if (i32.ne (i32.load (i32.add (local.get $entry) (i32.const 12))) (local.get $this))
+      (then
+        (local.set $hr (i32.const 0x887602F0))) ;; D3DERR_LIGHTNOTINTHISVIEWPORT
+      (else
+        (local.set $next (i32.load (i32.add (local.get $entry) (i32.const 20))))
+        (local.set $prev (i32.load (i32.add (local.get $entry) (i32.const 24))))
+        (if (local.get $prev)
+          (then
+            (local.set $link_entry (call $dx_from_this (local.get $prev)))
+            (i32.store (i32.add (local.get $link_entry) (i32.const 20)) (local.get $next)))
+          (else (i32.store (local.get $head_addr) (local.get $next))))
+        (if (local.get $next) (then
+          (local.set $link_entry (call $dx_from_this (local.get $next)))
+          (i32.store (i32.add (local.get $link_entry) (i32.const 24)) (local.get $prev))))
+        (i32.store (i32.add (local.get $entry) (i32.const 12)) (i32.const 0))
+        (i32.store (i32.add (local.get $entry) (i32.const 16)) (i32.const 0))
+        (i32.store (i32.add (local.get $entry) (i32.const 20)) (i32.const 0))
+        (i32.store (i32.add (local.get $entry) (i32.const 24)) (i32.const 0))
+        (call $d3dim_light_release_locked (local.get $entry))))
+    (call $lock_release (global.get $LOCK_DX))
+    (local.get $hr))
+
+  (func $d3dim_viewport_next_light
+    (param $this i32) (param $light i32) (param $out i32) (param $flags i32) (result i32)
+    (local $vp_entry i32) (local $entry i32) (local $result i32)
+    (local $result_entry i32) (local $steps i32) (local $hr i32)
+    (if (i32.or (i32.eqz (local.get $this)) (i32.eqz (local.get $out)))
+      (then (return (i32.const 0x80070057))))
+    (local.set $vp_entry (call $dx_from_this (local.get $this)))
+    (if (i32.ne (i32.load (local.get $vp_entry)) (i32.const 23))
+      (then (return (i32.const 0x80070057))))
+    (call $lock_acquire (global.get $LOCK_DX))
+    (if (i32.eq (local.get $flags) (i32.const 2)) ;; D3DNEXT_HEAD
+      (then
+        (local.set $result
+          (i32.load (call $d3dim_viewport_light_head_addr (local.get $this)))))
+      (else (if (i32.eq (local.get $flags) (i32.const 4)) ;; D3DNEXT_TAIL
+        (then
+          (local.set $result
+            (i32.load (call $d3dim_viewport_light_head_addr (local.get $this))))
+          (block $tail_done (loop $tail
+            (br_if $tail_done (i32.eqz (local.get $result)))
+            (local.set $result_entry (call $dx_from_this (local.get $result)))
+            (br_if $tail_done
+              (i32.eqz (i32.load (i32.add (local.get $result_entry) (i32.const 20)))))
+            (local.set $result
+              (i32.load (i32.add (local.get $result_entry) (i32.const 20))))
+            (local.set $steps (i32.add (local.get $steps) (i32.const 1)))
+            (br_if $tail_done (i32.ge_u (local.get $steps) (i32.const 8)))
+            (br $tail))))
+        (else (if (i32.eq (local.get $flags) (i32.const 1)) ;; D3DNEXT_NEXT
+          (then
+            (if (local.get $light) (then
+              (local.set $entry (call $dx_from_this (local.get $light)))
+              (if (i32.and
+                    (i32.eq (i32.load (local.get $entry)) (i32.const 24))
+                    (i32.eq (i32.load (i32.add (local.get $entry) (i32.const 12)))
+                      (local.get $this)))
+                (then (local.set $result
+                  (i32.load (i32.add (local.get $entry) (i32.const 20)))))))))
+          (else (local.set $hr (i32.const 0x80070057))))))))
+    (if (i32.and
+          (i32.eqz (local.get $hr))
+          (i32.ne (local.get $result) (i32.const 0)))
+      (then
+        (local.set $result_entry (call $dx_from_this (local.get $result)))
+        (i32.store (i32.add (local.get $result_entry) (i32.const 4))
+          (i32.add (i32.load (i32.add (local.get $result_entry) (i32.const 4)))
+            (i32.const 1)))
+        (call $gs32 (local.get $out) (local.get $result)))
+      (else
+        (call $gs32 (local.get $out) (i32.const 0))
+        (if (i32.eqz (local.get $hr))
+          (then (local.set $hr (i32.const 0x80070057))))))
+    (call $lock_release (global.get $LOCK_DX))
+    (local.get $hr))
+
+  (func $d3dim_viewport_release_lights (param $this i32)
+    (local $head_addr i32) (local $light i32) (local $entry i32)
+    (local $next i32) (local $count i32)
+    (if (i32.eqz (local.get $this)) (then (return)))
+    (local.set $head_addr (call $d3dim_viewport_light_head_addr (local.get $this)))
+    (call $lock_acquire (global.get $LOCK_DX))
+    (local.set $light (i32.load (local.get $head_addr)))
+    (i32.store (local.get $head_addr) (i32.const 0))
+    (block $done (loop $release
+      (br_if $done (i32.eqz (local.get $light)))
+      (br_if $done (i32.ge_u (local.get $count) (i32.const 8)))
+      (local.set $entry (call $dx_from_this (local.get $light)))
+      (local.set $next (i32.load (i32.add (local.get $entry) (i32.const 20))))
+      (i32.store (i32.add (local.get $entry) (i32.const 12)) (i32.const 0))
+      (i32.store (i32.add (local.get $entry) (i32.const 16)) (i32.const 0))
+      (i32.store (i32.add (local.get $entry) (i32.const 20)) (i32.const 0))
+      (i32.store (i32.add (local.get $entry) (i32.const 24)) (i32.const 0))
+      (call $d3dim_light_release_locked (local.get $entry))
+      (local.set $light (local.get $next))
+      (local.set $count (i32.add (local.get $count) (i32.const 1)))
+      (br $release)))
+    (call $lock_release (global.get $LOCK_DX)))
+
   ;; ── IDirect3D2 — 9 methods ─────────────
   ;; IDirect3D2_QueryInterface — 3 args (incl. this)
   (func $handle_IDirect3D2_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -1248,7 +1446,10 @@
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $rc (i32.sub (i32.load (i32.add (local.get $entry) (i32.const 4))) (i32.const 1)))
     (if (i32.le_s (local.get $rc) (i32.const 0))
-      (then (call $dx_free (local.get $entry)) (global.set $eax (i32.const 0)))
+      (then
+        (call $d3dim_viewport_release_lights (local.get $arg0))
+        (call $dx_free (local.get $entry))
+        (global.set $eax (i32.const 0)))
       (else (i32.store (i32.add (local.get $entry) (i32.const 4)) (local.get $rc)) (global.set $eax (local.get $rc))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
@@ -1276,7 +1477,7 @@
 
   ;; IDirect3DViewport_LightElements — 3 args (incl. this)
   (func $handle_IDirect3DViewport_LightElements (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (i32.const 0x80004001)) ;; E_NOTIMPL / DDERR_UNSUPPORTED
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DViewport_SetBackground — 2 args (incl. this)
@@ -1307,17 +1508,19 @@
 
   ;; IDirect3DViewport_AddLight — 2 args (incl. this)
   (func $handle_IDirect3DViewport_AddLight (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $d3dim_viewport_add_light (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3DViewport_DeleteLight — 2 args (incl. this)
   (func $handle_IDirect3DViewport_DeleteLight (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $d3dim_viewport_delete_light (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3DViewport_NextLight — 4 args (incl. this)
   (func $handle_IDirect3DViewport_NextLight (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax
+      (call $d3dim_viewport_next_light
+        (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
 
@@ -1342,7 +1545,10 @@
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $rc (i32.sub (i32.load (i32.add (local.get $entry) (i32.const 4))) (i32.const 1)))
     (if (i32.le_s (local.get $rc) (i32.const 0))
-      (then (call $dx_free (local.get $entry)) (global.set $eax (i32.const 0)))
+      (then
+        (call $d3dim_viewport_release_lights (local.get $arg0))
+        (call $dx_free (local.get $entry))
+        (global.set $eax (i32.const 0)))
       (else (i32.store (i32.add (local.get $entry) (i32.const 4)) (local.get $rc)) (global.set $eax (local.get $rc))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
@@ -1370,7 +1576,7 @@
 
   ;; IDirect3DViewport2_LightElements — 3 args (incl. this)
   (func $handle_IDirect3DViewport2_LightElements (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (i32.const 0x80004001)) ;; E_NOTIMPL / DDERR_UNSUPPORTED
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; IDirect3DViewport2_SetBackground — 2 args (incl. this)
@@ -1401,17 +1607,19 @@
 
   ;; IDirect3DViewport2_AddLight — 2 args (incl. this)
   (func $handle_IDirect3DViewport2_AddLight (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $d3dim_viewport_add_light (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3DViewport2_DeleteLight — 2 args (incl. this)
   (func $handle_IDirect3DViewport2_DeleteLight (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $d3dim_viewport_delete_light (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; IDirect3DViewport2_NextLight — 4 args (incl. this)
   (func $handle_IDirect3DViewport2_NextLight (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax
+      (call $d3dim_viewport_next_light
+        (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; IDirect3DViewport2_GetViewport2 — 2 args (incl. this)

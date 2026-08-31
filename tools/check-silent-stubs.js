@@ -74,8 +74,8 @@ const digest = crypto.createHash('sha256')
 // This is a ratchet, not approval of the old entries. Any addition or mutation
 // changes the digest and stops the build; deleting/fixing an entry deliberately
 // lowers the count and updates the digest after review.
-const EXPECTED_COUNT = 524;
-const EXPECTED_SHA256 = '7df183e38ab5bb04e2be76269825868e8724ebaf5c58563ff2c4a8a3f079d3d9';
+const EXPECTED_COUNT = 514;
+const EXPECTED_SHA256 = 'd0d614c572452aa4db6bcd62a651a8ee864710e8add41fd3b1d20201d1f33c96';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

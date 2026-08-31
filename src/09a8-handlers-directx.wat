@@ -7557,7 +7557,9 @@
     (local.set $rc (i32.sub (i32.load (i32.add (local.get $entry) (i32.const 4))) (i32.const 1)))
     (i32.store (i32.add (local.get $entry) (i32.const 4)) (local.get $rc))
     (if (i32.le_s (local.get $rc) (i32.const 0))
-      (then (call $dx_free (local.get $entry))))
+      (then
+        (call $d3dim_viewport_release_lights (local.get $arg0))
+        (call $dx_free (local.get $entry))))
     (global.set $eax (select (local.get $rc) (i32.const 0) (i32.gt_s (local.get $rc) (i32.const 0))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
@@ -7580,7 +7582,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
   (func $handle_IDirect3DViewport3_LightElements (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (i32.const 0x80004001)) ;; E_NOTIMPL / DDERR_UNSUPPORTED
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   (func $handle_IDirect3DViewport3_SetBackground (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -7608,15 +7610,17 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   (func $handle_IDirect3DViewport3_AddLight (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $d3dim_viewport_add_light (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IDirect3DViewport3_DeleteLight (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax (call $d3dim_viewport_delete_light (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IDirect3DViewport3_NextLight (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (global.set $eax
+      (call $d3dim_viewport_next_light
+        (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   (func $handle_IDirect3DViewport3_GetViewport2 (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
