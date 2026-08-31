@@ -89,10 +89,6 @@ function testRodent(outDir) {
       `1200:keyup:39,1250:png:${after},1350:stop`,
   ]);
   assertHealthy(output, 'Rodent');
-  const titleWrites = [...output.matchAll(/\[SetWindowText\] "([^"]*)"/g)]
-    .map(match => match[1]);
-  assert.match(titleWrites.at(-1) || '', /^Rodent's Revenge \[\d+\]$/,
-    'Rodent DefWindowProc must retain the caption written by SetWindowText');
   assert.match(output, /keydown vk=39/, 'Rodent Right key must reach the renderer');
   assert(changedPixels(before, after, { x: 180, y: 116, w: 276, h: 276 }) > 40,
     'Rodent board should visibly advance after holding Right');

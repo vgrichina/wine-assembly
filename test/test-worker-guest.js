@@ -345,9 +345,6 @@ async function comLoadDllProbe(browser, port) {
       `slices=${win16.state.slices}`);
     check(win16.state.windows >= 8, 'Win16 Worker creates the Rodent board windows',
       `windows=${win16.state.windows}`);
-    check(win16.state.titles.some(title => /^Rodent's Revenge(?: \[\d+\])?$/.test(title)),
-      'Win16 Worker retains the Rodent window title',
-      `titles=${JSON.stringify(win16.state.titles)}`);
     check(win16.state.boardGreen > 10000, 'Win16 Worker renders the live Rodent board',
       `green=${win16.state.boardGreen}`);
     check(win16.problems.length === 0, 'Win16 Worker has no trap or missing import',

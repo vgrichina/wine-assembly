@@ -26,7 +26,7 @@ function claimAudioSession() {
 if (typeof window !== 'undefined') window.claimAudioSession = claimAudioSession;
 
 class WineAssembly {
-  static SOURCE_VERSION = '244';
+  static SOURCE_VERSION = '243';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   static _nextProcessId = 1000;
 
@@ -224,19 +224,6 @@ class WineAssembly {
     st.lastReturnedMs = tick;
     st.callsInBatch = (Number.isFinite(st.callsInBatch) ? st.callsInBatch : 0) + 1;
     return tick;
-  }
-
-  _advanceGuestTickMs(ms, sharedAudio) {
-    const requested = Number(ms);
-    const delta = Number.isFinite(requested)
-      ? Math.min(0x7FFFFFFF, Math.max(0, Math.floor(requested))) : 0;
-    if (!delta) return;
-    const st = this._guestTickState(sharedAudio);
-    const current = Math.max(Number.isFinite(st.batchMs) ? st.batchMs : 0,
-      Number.isFinite(st.lastReturnedMs) ? st.lastReturnedMs : 0);
-    const advanced = (current + delta) % 0x80000000;
-    st.batchMs = advanced;
-    st.lastReturnedMs = advanced;
   }
 
   _guestAudioClockMs(sharedAudio) {
@@ -1596,8 +1583,6 @@ class WineAssembly {
       results = await this.guestWorker.loadDlls(readyConfigs, exeBytes, opts);
       if (register) register(readyConfigs, results);
     } else {
-      opts.advanceGuestTime = ms => this._advanceGuestTickMs(ms,
-        this.hostCtx && this.hostCtx.sharedAudio);
       results = _loadDlls(this.instance.exports, this.memory.buffer, exeBytes, readyConfigs, console.log, opts);
     }
     // Cooperative threads get their DLL set (and the DllMain entry caller) from
@@ -1651,8 +1636,6 @@ class WineAssembly {
       exeBytes: this._exeBytes || null,
       resourceHost: this,
       log: console.log,
-      advanceGuestTime: ms => this._advanceGuestTickMs(ms,
-        this.hostCtx && this.hostCtx.sharedAudio),
       findDll: (fileName, fullName) => this._findDllBytes(fileName, fullName, {
         vfsPaths: [fullName.toLowerCase(), 'c:\\' + fileName, 'c:\\plugins\\' + fileName],
       }),
@@ -1815,8 +1798,6 @@ class WineAssembly {
       memoryBuffer: this.memory.buffer,
       resourceHost: this,
       log: console.log,
-      advanceGuestTime: ms => this._advanceGuestTickMs(ms,
-        this.hostCtx && this.hostCtx.sharedAudio),
       findDll: (fileName, fullName) => this._findDllBytes(fileName, fullName, { exeDir: true }),
     });
   }
@@ -2444,6 +2425,23 @@ class WineAssembly {
         const yieldReason = self.instance.exports.get_yield_reason();
         if (yieldReason === 3) {
           await self.handleComDllLoad();
+          if (self.running) { self._scheduleStep(step); }
+          return;
+        }
+        if (yieldReason === 12) {
+          // io_wait: a provider-backed VFS entry (mounted zip/iso, dropped
+          // File, remote URL over Range) needs a chunk that is not resident.
+          // ReadFile parked with its stdcall frame restored and EIP on the
+          // thunk, so filling the chunk and clearing the yield re-enters the
+          // same call — which then takes the synchronous cache hit.
+          const vfs = self._helpCtx && self._helpCtx.vfs;
+          const pending = vfs && vfs.pendingRead;
+          if (pending) {
+            try { await vfs.fillPendingRead(pending); }
+            catch (e) { self.logToUI(`[io] ${pending.path}: ${e && e.message}`); }
+            vfs.pendingRead = null;
+          }
+          self.instance.exports.clear_yield();
           if (self.running) { self._scheduleStep(step); }
           return;
         }

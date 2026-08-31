@@ -2000,15 +2000,6 @@
   ;; chance to get a background.
   (func $paint_flag_test_hwnd (param $hwnd i32) (result i32)
     (local $idx i32)
-    ;; Main-window invalidations use the historical global until the unified
-    ;; selector mirrors it into PAINT_FLAGS. The erase scan runs before that
-    ;; selector, so ignoring the global makes it hand WM_ERASEBKGND out ahead
-    ;; of the paint it belongs to. Hearts then clears the entire table through
-    ;; the compatibility erase HDC before its partial WM_PAINT can redraw it.
-    (if (i32.and
-          (i32.eq (local.get $hwnd) (global.get $main_hwnd))
-          (i32.ne (global.get $paint_pending) (i32.const 0)))
-      (then (return (i32.const 1))))
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1)) (then (return (i32.const 0))))
     (i32.load8_u (i32.add (global.get $PAINT_FLAGS) (local.get $idx))))

@@ -1800,14 +1800,7 @@
         (if (local.get $back_obj) (then
           (local.set $back_entry (call $dx_from_this (local.get $back_obj)))
           (call $zero_memory (call $dx_surf_meta_ptr (local.get $back_entry)) (i32.const 8))
-          ;; The attached back buffer inherits the primary chain's allocation
-          ;; and rendering caps.  Only its FRONT/PRIMARY identity changes.
-          ;; SDK samples query this exact object and reject a hardware device
-          ;; when VIDEOMEMORY or 3DDEVICE has been discarded here.
-          (i32.store (call $dx_surf_meta_ptr (local.get $back_entry))
-            (i32.or
-              (i32.and (local.get $caps) (i32.const -513)) ;; ~DDSCAPS_PRIMARYSURFACE
-              (i32.const 0x4)))                           ;; DDSCAPS_BACKBUFFER
+          (i32.store (call $dx_surf_meta_ptr (local.get $back_entry)) (i32.const 0x1c))
           (i32.store16 (i32.add (local.get $back_entry) (i32.const 12)) (local.get $w))
           (i32.store16 (i32.add (local.get $back_entry) (i32.const 14)) (local.get $h))
           (i32.store16 (i32.add (local.get $back_entry) (i32.const 16)) (local.get $bpp))
@@ -3685,9 +3678,9 @@
     (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.load16_u (i32.add (local.get $entry) (i32.const 12))))
     (i32.store (i32.add (local.get $wa) (i32.const 16)) (i32.load16_u (i32.add (local.get $entry) (i32.const 18))))
     (call $dx_fill_surface_pixel_format (i32.add (local.get $wa) (i32.const 72)) (local.get $entry))
-    ;; Return the caps recorded from the creation descriptor. Applications use
-    ;; these to decide whether a 3D render target really resides in video
-    ;; memory, so synthesizing a generic surface class here is not equivalent.
+    ;; Caps — DDSCAPS_PRIMARYSURFACE for primary; else DDSCAPS_VIDEOMEMORY|DDSCAPS_OFFSCREENPLAIN.
+    ;; Apps gate z-buffer / render-target acceptance on DDSCAPS_VIDEOMEMORY when a hardware
+    ;; device is selected — returning SYSTEMMEMORY would cause CreateZBuffer to reject.
     (if (i32.and (i32.load (i32.add (local.get $entry) (i32.const 28))) (i32.const 1))
       (then
         (if (i32.load (i32.add (local.get $entry) (i32.const 8)))
@@ -3696,9 +3689,13 @@
             ;; linked by CreateSurface for PRIMARY|FLIP|COMPLEX requests.
             (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x102F))
             (i32.store (i32.add (local.get $wa) (i32.const 20)) (i32.const 1))
-            ))))
-    (i32.store (i32.add (local.get $wa) (i32.const 104))
-      (i32.load (call $dx_surf_meta_ptr (local.get $entry))))
+            (i32.store (i32.add (local.get $wa) (i32.const 104)) (i32.const 0x218)))
+          (else
+            (i32.store (i32.add (local.get $wa) (i32.const 104)) (i32.const 0x200)))))
+      (else
+        (if (i32.and (i32.load (i32.add (local.get $entry) (i32.const 28))) (i32.const 2))
+          (then (i32.store (i32.add (local.get $wa) (i32.const 104)) (i32.const 0x1C)))
+          (else (i32.store (i32.add (local.get $wa) (i32.const 104)) (i32.const 0x4040))))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 

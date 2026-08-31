@@ -4524,13 +4524,11 @@
   (func $win16_ctrl_lparam32 (param $class i32) (param $message i32)
         (param $lparam i32) (result i32)
     (local $convert i32)
-    ;; WM_SETTEXT carries a string for every window, including a top-level
-    ;; form whose control class is zero. A guest window procedure commonly
-    ;; forwards it to DefWindowProc/CallWindowProc, so convert the packed
-    ;; selector:offset before the 32-bit default procedure sees it. Passing the
-    ;; packed value through made it read an empty string and immediately clear
-    ;; the valid caption SetWindowText had just installed (Rodent's Revenge).
-    (if (i32.eq (local.get $message) (i32.const 0x000C))
+    ;; WM_SETTEXT carries a string for every built-in control class. A guest
+    ;; subclass commonly forwards it to the saved native procedure, so handle
+    ;; it here as well as in the class-specific LB_/CB_ cases below.
+    (if (i32.and (i32.ne (local.get $class) (i32.const 0))
+                 (i32.eq (local.get $message) (i32.const 0x000C)))
       (then (local.set $convert (i32.const 1))))
     (if (i32.eq (local.get $class) (i32.const 4))
       (then
@@ -4583,8 +4581,6 @@
       (then
         (local.set $hwnd32 (call $win16_h32 (local.get $hwnd)))
         (local.set $class (call $ctrl_table_get_class (local.get $hwnd32)))
-        (local.set $lparam (call $win16_ctrl_lparam32
-          (local.get $class) (local.get $message) (local.get $lparam)))
         ;; USER returns a sentinel rather than a callable far procedure when a
         ;; Win16 app subclasses one of the controls implemented by the WAT
         ;; runtime. Some libraries keep that value and later pass it back to
@@ -4593,6 +4589,8 @@
         ;;
         (if (local.get $class)
           (then
+            (local.set $lparam (call $win16_ctrl_lparam32
+              (local.get $class) (local.get $message) (local.get $lparam)))
             (call $win16_call32_begin (i32.const 4))
             ;; This is the procedure *under* the guest subclass, so bypass the
             ;; window table (which still names that subclass) and invoke the
@@ -5413,7 +5411,6 @@
   ;; did nothing at all until this was here.
   (func $win16_DefWindowProc
     (local $hwnd i32) (local $message i32) (local $wparam i32) (local $lparam i32)
-    (local $class i32)
     (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 4))))
     (local.set $message (call $win16_arg16 (i32.const 3)))
     (local.set $wparam (call $win16_arg16 (i32.const 2)))
@@ -5429,9 +5426,6 @@
     ;; the default procedure is on the 32-bit side, where a 16-bit handle names
     ;; nothing. The invariant is that the 16-bit side holds narrow handles and
     ;; this side holds wide ones, and every crossing converts.
-    (local.set $class (call $ctrl_table_get_class (local.get $hwnd)))
-    (local.set $lparam (call $win16_ctrl_lparam32
-      (local.get $class) (local.get $message) (local.get $lparam)))
     (call $win16_call32_begin (i32.const 4))
     (call $handle_DefWindowProcA (local.get $hwnd) (local.get $message)
       (call $win16_msg_wparam32 (local.get $message) (local.get $wparam))
