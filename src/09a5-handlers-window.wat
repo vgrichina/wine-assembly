@@ -221,12 +221,12 @@
           (else
             (if (global.get $wndproc_addr)
               (then (call $wnd_table_set (local.get $hwnd) (global.get $wndproc_addr)))
-              (else (call $wnd_table_set (local.get $hwnd) (global.get $WNDPROC_BUILTIN)))))))
+              (else (call $wnd_table_set (local.get $hwnd) (global.get $WNDPROC_BUILTIN))))))
         (drop (call $wnd_set_style (local.get $hwnd) (local.get $arg3)))
         (call $wnd_set_class_bg_brush_from_name (local.get $hwnd) (local.get $arg1))
         (call $wnd_set_class_cursor_from_name (local.get $hwnd) (local.get $arg1))
         (call $wnd_set_class_slot_from_name (local.get $hwnd) (local.get $arg1))
-        (call $wnd_set_own_dc_from_name (local.get $hwnd) (local.get $arg1)))
+        (call $wnd_set_own_dc_from_name (local.get $hwnd) (local.get $arg1))))
     ;; Call host: create_window(hwnd, style, x, y, cx, cy, title_ptr, menu_id)
     (drop (call $host_create_window
     (local.get $hwnd)                                    ;; hwnd
