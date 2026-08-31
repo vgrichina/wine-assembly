@@ -23,6 +23,7 @@
 //
 // Usage:
 //   node tools/menu-sweep.js <exe> [--json=out.json] [--settle=N] [--gap=N]
+//        [--batch-size=N]
 //   node tools/menu-sweep.js <exe> --seed-text=Hello   # type before sweeping
 //   node tools/menu-sweep.js <exe> --no-build          # reuse the last build
 //   node tools/menu-sweep.js <exe> --verbose        # keep run.js output
@@ -66,6 +67,7 @@ if (!fs.existsSync(exe)) {
 
 let SETTLE = parseInt(opt('settle', '1200'), 10);
 const GAP = parseInt(opt('gap', '800'), 10);
+const BATCH_SIZE = parseInt(opt('batch-size', '100'), 10);
 const VERBOSE = flag('verbose');
 const CONFIRM = !flag('no-confirm');
 const TIMEOUT = parseInt(opt('timeout', '300'), 10) * 1000;
@@ -198,8 +200,12 @@ function drive(list) {
     spec.push(`${at + Math.floor(GAP * 0.8)}:dlg-cmd:2`);
     spec.push(`${at + Math.floor(GAP * 0.85)}:dlg-cmd:1`);
     spec.push(`${at + Math.floor(GAP * 0.9)}:dlg-cmd:2`);
-    spec.push(`${at + Math.floor(GAP * 0.94)}:keydown:27`);
-    spec.push(`${at + Math.floor(GAP * 0.97)}:keyup:27`);
+    // Do not send a global Escape after the dialog commands. If IDOK or
+    // IDCANCEL already closed the dialog, Escape reaches the application's
+    // main window instead. The DX5 D3D samples bind Escape to Exit, so their
+    // perfectly working About box made every later menu item look like a
+    // crash. Commands that remain modal are detected as `blocked` and get a
+    // fresh-process confirmation below.
   });
   const lastBatch = start + GAP * (list.length + 1);
   spec.push(`${lastBatch}:dump-windows:final`);
@@ -210,7 +216,7 @@ function drive(list) {
   try {
     out = execFileSync('node', [
       RUN, `--exe=${exe}`, '--no-close', `--input=${spec.join(',')}`,
-      `--max-batches=${lastBatch + 100}`, '--batch-size=100',
+      `--max-batches=${lastBatch + 100}`, `--batch-size=${BATCH_SIZE}`,
       '--quiet-api', '--quiet-blocks',
       ...(NO_BUILD ? ['--no-build'] : []),
     ], {

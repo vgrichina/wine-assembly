@@ -61,7 +61,6 @@ UNIT=(
   test/test-bignum-mul.js
   test/test-mat4.js
   test/test-vfs.js
-  test/test-zip-mount.js
   test/test-flush-view-of-file.js
   test/test-heap-free-block-validation.js
   test/test-vfs-host-files.js
@@ -221,6 +220,7 @@ UNIT=(
   test/test-pinball-web-lifecycle.js
   test/test-web-touch-input.js
   test/test-perf-hud-input.js
+  test/test-perf-hud-frame-source.js
   test/test-web-fullscreen-consent.js
   test/test-web-page-fullscreen.js
   test/test-single-app-mode.js
@@ -324,15 +324,19 @@ UNIT=(
   test/test-directdraw-mode-change-primary.js
   test/test-directdraw-present-force.js
   test/test-directdraw-retained-primary.js
+  test/test-directdraw-surface-caps.js
   test/test-directanimation-image-render.js
   test/test-directinput-device.js
   test/test-directinput8-create.js
   test/test-directx-ordinals.js
   test/test-directplay-enumerate.js
   test/test-launch-prefs-resolution.js
+  test/test-d3dim-browser-assets.js
+  test/test-d3dim-flip3dtl-render.js
   test/test-d3dim-indexed-texture.js
   test/test-d3ddevice2-texture-format-desc.js
   test/test-d3dim-line-primitives.js
+  test/test-d3dim-pick-records.js
   test/test-d3dim-viewport-background-texture.js
   test/test-dx-blank-primary-holdover.js
   test/test-dx-present-window-placement.js
@@ -754,6 +758,9 @@ E2E=(
 
 SMOKE=(
   test/test-all-exes.js
+  test/test-d3dim-globe-go-menu.js
+  test/test-d3dim-globe-render-menu.js
+  test/test-d3dim-viewer-selection.js
   test/test-notepad-dialogs.js
 )
 

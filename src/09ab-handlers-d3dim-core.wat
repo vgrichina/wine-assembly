@@ -118,9 +118,12 @@
   (global $D3DIM_UNIMPL_EXEC_OP i32 (i32.const 0x07FEB000))
   (global $D3DIM_UNIMPL_DRAW    i32 (i32.const 0x07FEB020))
   ;; 512 i32 guest pointers, keyed by DX_OBJECTS slot. Each cached execute
-  ;; buffer block is [buf_guest, buf_size, reserved, reserved, original bytes...].
+  ;; buffer block is [buf_guest, buf_size, D3DSTATUS (24 bytes), original
+  ;; bytes...]. D3DRM reads the status extents back through GetExecuteData to
+  ;; decide whether its windowed render target needs another primary Blt.
   (global $D3DIM_EB_CACHE_PTRS i32 (i32.const 0x07FEB040))
   (global $D3DIM_EB_CACHE_MAX  i32 (i32.const 512))
+  (global $D3DIM_EB_CACHE_HEADER i32 (i32.const 32))
   ;; D3D7 state blocks: 32 entries × [snapshot_guest, dev_slot, reserved].
   (global $D3DIM_STATEBLOCKS i32 (i32.const 0x07FEB840))
   (global $D3DIM_STATEBLOCK_MAX i32 (i32.const 32))
@@ -612,21 +615,74 @@
       (if (i32.and
             (i32.eq (i32.load (local.get $cache_wa)) (local.get $buf_guest))
             (i32.eq (i32.load (i32.add (local.get $cache_wa) (i32.const 4))) (local.get $buf_size)))
-        (then (return (i32.add (local.get $cache_wa) (i32.const 16)))))))
-    (local.set $cache_g (call $heap_alloc (i32.add (local.get $buf_size) (i32.const 16))))
+        (then (return (i32.add (local.get $cache_wa) (global.get $D3DIM_EB_CACHE_HEADER)))))))
+    (local.set $cache_g (call $heap_alloc
+      (i32.add (local.get $buf_size) (global.get $D3DIM_EB_CACHE_HEADER))))
     (if (i32.eqz (local.get $cache_g))
       (then (return (call $g2w (local.get $buf_guest)))))
     (local.set $cache_wa (call $g2w (local.get $cache_g)))
     (i32.store (local.get $cache_wa) (local.get $buf_guest))
     (i32.store (i32.add (local.get $cache_wa) (i32.const 4)) (local.get $buf_size))
-    (i32.store (i32.add (local.get $cache_wa) (i32.const 8)) (i32.const 0))
-    (i32.store (i32.add (local.get $cache_wa) (i32.const 12)) (i32.const 0))
+    (call $zero_memory (i32.add (local.get $cache_wa) (i32.const 8)) (i32.const 24))
     (call $memcpy
-      (i32.add (local.get $cache_wa) (i32.const 16))
+      (i32.add (local.get $cache_wa) (global.get $D3DIM_EB_CACHE_HEADER))
       (call $g2w (local.get $buf_guest))
       (local.get $buf_size))
     (i32.store (local.get $tbl) (local.get $cache_g))
-    (i32.add (local.get $cache_wa) (i32.const 16)))
+    (i32.add (local.get $cache_wa) (global.get $D3DIM_EB_CACHE_HEADER)))
+
+  ;; Return the cache header for one execute-buffer COM object. Unlock creates
+  ;; this before SetExecuteData, which is the order used by the DX1 runtime.
+  (func $d3dim_execbuf_cache_header (param $this i32) (result i32)
+    (local $entry i32) (local $slot i32) (local $cache_g i32) (local $cache_wa i32)
+    (if (i32.eqz (local.get $this)) (then (return (i32.const 0))))
+    (local.set $entry (call $dx_from_this (local.get $this)))
+    (if (i32.eqz (local.get $entry)) (then (return (i32.const 0))))
+    (local.set $slot (call $dx_slot_of (local.get $entry)))
+    (if (i32.ge_u (local.get $slot) (global.get $D3DIM_EB_CACHE_MAX))
+      (then (return (i32.const 0))))
+    (local.set $cache_g (i32.load (i32.add (global.get $D3DIM_EB_CACHE_PTRS)
+      (i32.mul (local.get $slot) (i32.const 4)))))
+    (if (i32.eqz (local.get $cache_g)) (then (return (i32.const 0))))
+    (local.set $cache_wa (call $g2w (local.get $cache_g)))
+    (if (i32.or
+          (i32.ne (i32.load (local.get $cache_wa))
+            (i32.load (i32.add (local.get $entry) (i32.const 8))))
+          (i32.ne (i32.load (i32.add (local.get $cache_wa) (i32.const 4)))
+            (i32.load (i32.add (local.get $entry) (i32.const 12)))))
+      (then (return (i32.const 0))))
+    (local.get $cache_wa))
+
+  ;; D3DOP_SETSTATUS seeds dsStatus, then the driver replaces its sentinel
+  ;; extent with the pixels affected by the execute buffer. The software
+  ;; rasterizer currently draws the complete retained-mode viewport, so its
+  ;; viewport rectangle is the conservative dirty extent D3DRM needs.
+  (func $d3dim_exec_set_status
+    (param $dev_this i32) (param $eb_this i32) (param $rec_wa i32)
+    (local $header i32) (local $status i32) (local $state i32) (local $sw i32)
+    (local $x i32) (local $y i32) (local $w i32) (local $h i32)
+    (local.set $header (call $d3dim_execbuf_cache_header (local.get $eb_this)))
+    (if (i32.eqz (local.get $header)) (then (return)))
+    (local.set $status (i32.add (local.get $header) (i32.const 8)))
+    (call $memcpy (local.get $status) (local.get $rec_wa) (i32.const 24))
+    ;; D3DSETSTATUS_EXTENTS = 2.
+    (if (i32.and (i32.load (local.get $status)) (i32.const 2)) (then
+      (local.set $state (call $d3ddev_state (local.get $dev_this)))
+      (if (local.get $state) (then
+        (local.set $sw (call $g2w (local.get $state)))
+        (local.set $x (i32.load (i32.add (local.get $sw) (global.get $D3DIM_OFF_VP_RECT))))
+        (local.set $y (i32.load (i32.add (local.get $sw)
+          (i32.add (global.get $D3DIM_OFF_VP_RECT) (i32.const 4)))))
+        (local.set $w (i32.load (i32.add (local.get $sw)
+          (i32.add (global.get $D3DIM_OFF_VP_RECT) (i32.const 8)))))
+        (local.set $h (i32.load (i32.add (local.get $sw)
+          (i32.add (global.get $D3DIM_OFF_VP_RECT) (i32.const 12)))))
+        (i32.store (i32.add (local.get $status) (i32.const 8)) (local.get $x))
+        (i32.store (i32.add (local.get $status) (i32.const 12)) (local.get $y))
+        (i32.store (i32.add (local.get $status) (i32.const 16))
+          (i32.add (local.get $x) (local.get $w)))
+        (i32.store (i32.add (local.get $status) (i32.const 20))
+          (i32.add (local.get $y) (local.get $h))))))))
 
   (func $d3dim_execbuf_cache_clear (param $this i32)
     (local $entry i32) (local $slot i32) (local $tbl i32) (local $cache_g i32)
@@ -667,18 +723,18 @@
           (i32.store (local.get $tbl) (i32.const 0))
           (local.set $cache_g (i32.const 0))))))
     (if (i32.eqz (local.get $cache_g)) (then
-      (local.set $cache_g (call $heap_alloc (i32.add (local.get $buf_size) (i32.const 16))))
+      (local.set $cache_g (call $heap_alloc
+        (i32.add (local.get $buf_size) (global.get $D3DIM_EB_CACHE_HEADER))))
       (if (i32.eqz (local.get $cache_g)) (then (return)))
       (i32.store (local.get $tbl) (local.get $cache_g))
       (local.set $cache_wa (call $g2w (local.get $cache_g)))
       (i32.store (local.get $cache_wa) (local.get $buf_guest))
       (i32.store (i32.add (local.get $cache_wa) (i32.const 4)) (local.get $buf_size))
-      (i32.store (i32.add (local.get $cache_wa) (i32.const 8)) (i32.const 0))
-      (i32.store (i32.add (local.get $cache_wa) (i32.const 12)) (i32.const 0))))
+      (call $zero_memory (i32.add (local.get $cache_wa) (i32.const 8)) (i32.const 24))))
     (if (i32.eqz (local.get $cache_wa)) (then
       (local.set $cache_wa (call $g2w (local.get $cache_g)))))
     (call $memcpy
-      (i32.add (local.get $cache_wa) (i32.const 16))
+      (i32.add (local.get $cache_wa) (global.get $D3DIM_EB_CACHE_HEADER))
       (call $g2w (local.get $buf_guest))
       (local.get $buf_size)))
 
@@ -4530,7 +4586,8 @@
     (local $state i32) (local $zbuf i32) (local $zfunc i32) (local $zwrite i32)
     (local $blend i32) (local $src_blend i32) (local $dst_blend i32)
     (local $address_u i32) (local $address_v i32) (local $linear i32)
-    (local $colorop i32) (local $alphaop i32) (local $filter i32)
+    (local $colorop i32) (local $alphaop i32) (local $filter i32) (local $shade i32)
+    (local $c0 i32) (local $c1 i32) (local $c2 i32)
     (local $color_key_enable i32)
     (if (i32.eqz (local.get $tex)) (then
       (call $d3dim_draw_tl_triangle
@@ -4550,6 +4607,14 @@
       (local.set $filter (call $d3dim_tss_load (local.get $state) (i32.const 0) (i32.const 16)))
       (if (i32.eqz (local.get $filter))
         (then (local.set $filter (call $d3dim_tss_load (local.get $state) (i32.const 0) (i32.const 17)))))
+      ;; DX1 execute buffers predate texture-stage state. Their filtering
+      ;; controls are D3DRENDERSTATE_TEXTUREMAG/MIN (17/18), which is exactly
+      ;; what the retained-mode Render menu emits.
+      (if (i32.eqz (local.get $filter))
+        (then (local.set $filter (call $gl32 (i32.add (local.get $state) (i32.const 324))))))
+      (if (i32.eqz (local.get $filter))
+        (then (local.set $filter (call $gl32 (i32.add (local.get $state) (i32.const 328))))))
+      (local.set $shade (call $gl32 (i32.add (local.get $state) (i32.const 292))))
       (if (i32.eq (local.get $filter) (i32.const 2)) (then (local.set $linear (i32.const 1))))))
     (if (i32.eqz (local.get $address_u)) (then (local.set $address_u (i32.const 1))))
     (if (i32.eqz (local.get $address_v)) (then (local.set $address_v (i32.const 1))))
@@ -4566,6 +4631,14 @@
           (i32.eq (local.get $zfunc) (i32.const 8))
           (i32.eqz (local.get $zwrite)))
       (then (local.set $zbuf (i32.const 0))))
+    (local.set $c0 (i32.load (i32.add (local.get $v0) (i32.const 16))))
+    (local.set $c1 (i32.load (i32.add (local.get $v1) (i32.const 16))))
+    (local.set $c2 (i32.load (i32.add (local.get $v2) (i32.const 16))))
+    ;; D3DSHADE_FLAT = 1. The provoking vertex supplies the face colour;
+    ;; Gouraud and legacy Phong quality continue through the interpolator.
+    (if (i32.eq (local.get $shade) (i32.const 1)) (then
+      (local.set $c1 (local.get $c0))
+      (local.set $c2 (local.get $c0))))
     (call $rasterize_triangle_textured
       (local.get $rt) (local.get $tex)
       (local.get $blend) (local.get $src_blend) (local.get $dst_blend)
@@ -4576,21 +4649,21 @@
       (f32.load (i32.add (local.get $v0) (i32.const 24)))
       (f32.load (i32.add (local.get $v0) (i32.const 28)))
       (f32.load (i32.add (local.get $v0) (i32.const 12)))
-      (i32.load (i32.add (local.get $v0) (i32.const 16)))
+      (local.get $c0)
       (f32.load (i32.add (local.get $v0) (i32.const 8)))
       (call $d3dim_coord_i (f32.load (local.get $v1)))
       (call $d3dim_coord_i (f32.load (i32.add (local.get $v1) (i32.const 4))))
       (f32.load (i32.add (local.get $v1) (i32.const 24)))
       (f32.load (i32.add (local.get $v1) (i32.const 28)))
       (f32.load (i32.add (local.get $v1) (i32.const 12)))
-      (i32.load (i32.add (local.get $v1) (i32.const 16)))
+      (local.get $c1)
       (f32.load (i32.add (local.get $v1) (i32.const 8)))
       (call $d3dim_coord_i (f32.load (local.get $v2)))
       (call $d3dim_coord_i (f32.load (i32.add (local.get $v2) (i32.const 4))))
       (f32.load (i32.add (local.get $v2) (i32.const 24)))
       (f32.load (i32.add (local.get $v2) (i32.const 28)))
       (f32.load (i32.add (local.get $v2) (i32.const 12)))
-      (i32.load (i32.add (local.get $v2) (i32.const 16)))
+      (local.get $c2)
       (f32.load (i32.add (local.get $v2) (i32.const 8)))
       (local.get $zbuf) (local.get $zfunc) (local.get $zwrite)))
 
@@ -4806,6 +4879,22 @@
     (local.set $z0 (f32.load (i32.add (local.get $v0) (i32.const 8))))
     (local.set $z1 (f32.load (i32.add (local.get $v1) (i32.const 8))))
     (local.set $z2 (f32.load (i32.add (local.get $v2) (i32.const 8))))
+    ;; Some DX5-era pre-transformed samples use the old viewport-space depth
+    ;; convention: every vertex in a face carries the same positive viewport
+    ;; depth instead of normalized z/w. Flip3DTL uses sz=300 throughout. Real
+    ;; hardware rasterizes those faces; treating 300 as homogeneous far-plane
+    ;; overflow discards its whole animated cube. Keep the exception narrow to
+    ;; one constant, positive, out-of-range plane so genuine crossing geometry
+    ;; still takes the complete near/far clipping path below.
+    (if (i32.and
+          (i32.and (f32.gt (local.get $z0) (f32.const 1.0))
+                   (f32.eq (local.get $z0) (local.get $z1)))
+          (f32.eq (local.get $z1) (local.get $z2)))
+      (then
+        (call $d3dim_draw_tl_triangle_dp_raw
+          (local.get $this) (local.get $rt) (local.get $use_z)
+          (local.get $v0) (local.get $v1) (local.get $v2))
+        (return)))
     ;; Pre-transformed UI commonly supplies rhw=0, which has no recoverable
     ;; homogeneous w. Preserve that established screen-space path. A mixed
     ;; triangle is equally unreconstructable, so leave it to viewport clipping.
@@ -4879,10 +4968,18 @@
     (local $v0 i32) (local $v1 i32) (local $v2 i32)
     (local $p0 i32) (local $p1 i32) (local $p2 i32) (local $pos i32)
     (local $state i32) (local $sw i32) (local $c0 i32) (local $c1 i32)
+    (local $fillmode i32)
     (if (i32.or (i32.eqz (local.get $buf_guest)) (i32.eqz (local.get $wCount))) (then (return)))
     (local.set $rt (call $d3ddev_rt_entry (local.get $dev_this)))
     (if (i32.eqz (local.get $rt)) (then (return)))
     (local.set $vbase (call $g2w (local.get $buf_guest)))
+    (local.set $state (call $d3ddev_state (local.get $dev_this)))
+    (if (local.get $state) (then
+      (local.set $sw (call $g2w (local.get $state)))
+      (local.set $c0 (i32.add (local.get $sw) (i32.const 3296)))
+      ;; D3DRENDERSTATE_FILLMODE = 8; 1 point, 2 wireframe, 3 solid.
+      (local.set $fillmode (call $gl32 (i32.add (local.get $state) (i32.const 288))))))
+    (if (i32.eqz (local.get $fillmode)) (then (local.set $fillmode (i32.const 3))))
     (local.set $i (i32.const 0))
     (block $done (loop $lp
       (br_if $done (i32.ge_u (local.get $i) (local.get $wCount)))
@@ -4900,17 +4997,41 @@
         (local.set $rec_wa (i32.add (local.get $rec_wa) (i32.const 8)))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $lp)))
+      (if (i32.eq (local.get $fillmode) (i32.const 1)) (then
+        ;; Point fill mode plots each visible triangle vertex. Shared vertices
+        ;; may be written more than once, matching immediate-mode overdraw.
+        (if (local.get $p0) (then (call $viewport_fill_rect (local.get $rt)
+          (call $d3dim_coord_i (f32.load (local.get $v0)))
+          (call $d3dim_coord_i (f32.load (i32.add (local.get $v0) (i32.const 4))))
+          (i32.const 2) (i32.const 2) (i32.load (i32.add (local.get $v0) (i32.const 16))))))
+        (if (local.get $p1) (then (call $viewport_fill_rect (local.get $rt)
+          (call $d3dim_coord_i (f32.load (local.get $v1)))
+          (call $d3dim_coord_i (f32.load (i32.add (local.get $v1) (i32.const 4))))
+          (i32.const 2) (i32.const 2) (i32.load (i32.add (local.get $v1) (i32.const 16))))))
+        (if (local.get $p2) (then (call $viewport_fill_rect (local.get $rt)
+          (call $d3dim_coord_i (f32.load (local.get $v2)))
+          (call $d3dim_coord_i (f32.load (i32.add (local.get $v2) (i32.const 4))))
+          (i32.const 2) (i32.const 2) (i32.load (i32.add (local.get $v2) (i32.const 16))))))
+        (local.set $rec_wa (i32.add (local.get $rec_wa) (i32.const 8)))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $lp)))
+      (if (i32.eq (local.get $fillmode) (i32.const 2)) (then
+        ;; The line helper clips edges crossing the retained-mode near plane.
+        (call $d3dim_draw_tl_line (local.get $rt) (local.get $v0) (local.get $v1) (local.get $c0))
+        (call $d3dim_draw_tl_line (local.get $rt) (local.get $v1) (local.get $v2) (local.get $c0))
+        (call $d3dim_draw_tl_line (local.get $rt) (local.get $v2) (local.get $v0) (local.get $c0))
+        (local.set $rec_wa (i32.add (local.get $rec_wa) (i32.const 8)))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $lp)))
       (if (i32.eq (local.get $pos) (i32.const 3)) (then
         (call $d3dim_draw_tl_triangle_maybe_textured
           (local.get $dev_this) (local.get $rt) (i32.const 1)
           (local.get $v0) (local.get $v1) (local.get $v2))))
       (if (i32.ne (local.get $pos) (i32.const 3)) (then
-        (local.set $state (call $d3ddev_state (local.get $dev_this)))
         (if (i32.eqz (local.get $state)) (then
           (local.set $rec_wa (i32.add (local.get $rec_wa) (i32.const 8)))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
           (br $lp)))
-        (local.set $sw (call $g2w (local.get $state)))
         (local.set $c0 (i32.add (local.get $sw) (i32.const 3296)))
         (local.set $c1 (i32.add (local.get $sw) (i32.const 3328)))
         (if (i32.eq (local.get $pos) (i32.const 1)) (then

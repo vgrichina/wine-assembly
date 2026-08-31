@@ -405,44 +405,6 @@ const VFS_INCLUDE = getArgs('vfs-include'); // --vfs-include=GLOB: mount matchin
 // visualizer kept in binaries/plugins/candidates has to be seen at
 // c:\plugins\vis_avs.dll before Winamp will enumerate it at all.
 const VFS_MOUNT = getArgs('vfs-mount');
-// --zip=PATH (repeatable): mount a read-only ZIP archive into the VFS before
-// launch, under c:\program files\<zipname>\ (override with --zip-root=DIR); a
-// single top-level folder in the archive is unwrapped. Stored and deflated
-// entries only -- anything else fails loudly rather than handing the guest
-// garbage. Entries stay lazy: the catalog supplies each size, so enumerating a
-// mount inflates nothing. Coexists with --exe/--app, which still choose what
-// runs. See lib/zip-mount.js and docs/design-byo-media.md phase 2.
-const ZIP_MOUNTS = getArgs('zip');
-const ZIP_ROOT = getArg('zip-root', null);
-// --zip-exe=NAME: launch an executable that lives inside the archive. The
-// guest reads through the lazy zip mount, but the PE and DLL loaders are
-// host-path based -- `--exe` is a file and sibling DLLs are discovered next to
-// it -- so the archive is also unpacked to a temp directory to give them one.
-// The guest CWD becomes the mount root, so everything the app opens at runtime
-// still comes from the mounted archive.
-const ZIP_EXE = getArg('zip-exe', null);
-const ZIP_LAUNCH = (() => {
-  if (!ZIP_EXE) return null;
-  if (!ZIP_MOUNTS.length) throw new Error('--zip-exe needs --zip=PATH');
-  const zipMount = require('../lib/zip-mount');
-  const want = ZIP_EXE.toLowerCase().replace(/\//g, '\\');
-  for (const zipPath of ZIP_MOUNTS) {
-    const bytes = new Uint8Array(fs.readFileSync(zipPath));
-    const plan = zipMount.mountPlan(zipMount.readCatalogSync(bytes),
-      { zipPath, root: ZIP_ROOT || undefined });
-    const hit = plan.mapped.find(m => m.rel.toLowerCase() === want
-      || m.rel.toLowerCase().replace(/^.*\\/, '') === want);
-    if (!hit) continue;
-    const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'wine-zip-'));
-    for (const m of plan.mapped) {
-      const out = path.join(dir, ...m.rel.split('\\'));
-      fs.mkdirSync(path.dirname(out), { recursive: true });
-      fs.writeFileSync(out, zipMount.extractSync(bytes, m.entry));
-    }
-    return { exePath: path.join(dir, ...hit.rel.split('\\')), root: plan.root, zipPath, dir };
-  }
-  throw new Error(`--zip-exe=${ZIP_EXE} not found in ${ZIP_MOUNTS.join(', ')}`);
-})();
 // --dll-seed=PATH[,PATH]: preload one more DLL as if the app registry had
 // listed it in `dlls:`. LoadLibraryA resolves a guest path against modules
 // that are already loaded and never opens the VFS itself, so a plugin the app
@@ -476,8 +438,7 @@ const APP_ENTRY = (() => {
 // Registry paths are repo-relative and lean on the top-level `binaries`
 // symlink, so they resolve the same from the page and from here.
 const appAsset = p => (path.isAbsolute(p) ? p : path.join(ROOT, p));
-const EXE_PATH = getArg('exe', ZIP_LAUNCH ? ZIP_LAUNCH.exePath
-  : (APP_ENTRY ? appAsset(APP_ENTRY.exe) : 'test/binaries/notepad.exe'));
+const EXE_PATH = getArg('exe', APP_ENTRY ? appAsset(APP_ENTRY.exe) : 'test/binaries/notepad.exe');
 const canonicalPath = p => {
   try { return fs.realpathSync(p); } catch (_) { return path.resolve(p); }
 };
@@ -3671,26 +3632,6 @@ async function main() {
           fs.statSync(file.hostPath).size);
       }
       ctx.vfs.setDriveReadOnly(drive, true);
-    }
-
-    // Read-only ZIP mounts (docs/design-byo-media.md phase 2). Mounted after
-    // the app manifest so a registered app's own files still win a collision,
-    // and before the guest runs, so the archive is simply part of the VFS.
-    if (ZIP_MOUNTS.length) {
-      const { mountZipSync } = require('../lib/zip-mount');
-      for (const zipPath of ZIP_MOUNTS) {
-        const bytes = new Uint8Array(fs.readFileSync(zipPath));
-        const result = mountZipSync(ctx.vfs, bytes,
-          { zipPath, root: ZIP_ROOT || undefined });
-        console.log(`[zip] mounted ${zipPath} -> ${result.root} ` +
-          `(${result.mounted.length} files of ${result.entries.length} entries)`);
-      }
-      if (ZIP_LAUNCH) {
-        // An app launched out of the archive expects its own directory to be
-        // the working directory, the way a shortcut's "Start in" would set it.
-        ctx.vfs.setCurrentDirectory(ZIP_LAUNCH.root);
-        console.log(`[zip] launching ${ZIP_EXE} from ${ZIP_LAUNCH.root}`);
-      }
     }
 
     // A --reg-import snapshot stands in for the browser's localStorage: it is

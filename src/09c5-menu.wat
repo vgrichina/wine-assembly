@@ -2598,8 +2598,8 @@
   ;; here. State is in $menu_open_hwnd / $menu_open_top /
   ;; $menu_open_hover (one menu open at a time, system-wide).
   ;;
-  ;; Activations post WM_COMMAND (or WM_CLOSE for File→Exit, id=28)
-  ;; into the existing post queue at WASM addr 0x400 (same one
+  ;; Activations post WM_COMMAND into the existing post queue at WASM addr
+  ;; 0x400 (same one
   ;; PostMessageA writes to). The host pump dequeues and dispatches
   ;; on the next iteration.
   ;; ============================================================
@@ -2981,9 +2981,9 @@
       (then (return (i32.const 0))))
     (local.set $id (call $menu_bar_id (local.get $hwnd) (local.get $top_idx)))
     (if (i32.eqz (local.get $id)) (then (return (i32.const 0))))
-    (if (i32.eq (local.get $id) (i32.const 28))
-      (then (call $menu_post (local.get $hwnd) (i32.const 0x0010) (i32.const 0) (i32.const 0)))
-      (else (call $menu_post (local.get $hwnd) (i32.const 0x0111) (local.get $id) (i32.const 0))))
+    ;; Command IDs are application-defined. Let the window procedure decide
+    ;; whether a command exits; Globe, for example, uses 28 for File -> Go.
+    (call $menu_post (local.get $hwnd) (i32.const 0x0111) (local.get $id) (i32.const 0))
     (call $menu_close)
     (i32.const 1))
 
@@ -3307,8 +3307,7 @@
     (global.set $post_queue_count (i32.add (global.get $post_queue_count) (i32.const 1))))
 
   ;; Activate the currently-hovered child of the open menu. Posts a
-  ;; WM_COMMAND (or WM_CLOSE for the File→Exit id=28 special case)
-  ;; to the parent hwnd, then closes the menu. Returns the command
+  ;; WM_COMMAND to the parent hwnd, then closes the menu. Returns the command
   ;; id that was posted (0 if nothing happened).
   (func $menu_activate (export "menu_activate") (result i32)
     (local $hwnd i32) (local $top i32) (local $hover i32)
@@ -3333,17 +3332,13 @@
                          (local.get $hwnd) (local.get $top) (local.get $hover) (local.get $sub)))
         (if (call $menu_try_edit_command (local.get $id))
           (then (nop))
-          (else (if (i32.eq (local.get $id) (i32.const 28))
-            (then (call $menu_post (local.get $hwnd) (i32.const 0x0010) (i32.const 0) (i32.const 0)))
-            (else (call $menu_post (local.get $hwnd) (i32.const 0x0111) (local.get $id) (i32.const 0))))))
+          (else (call $menu_post (local.get $hwnd) (i32.const 0x0111) (local.get $id) (i32.const 0))))
         (call $menu_close)
         (return (local.get $id))))
     (local.set $id (call $menu_child_id (local.get $hwnd) (local.get $top) (local.get $hover)))
     (if (call $menu_try_edit_command (local.get $id))
       (then (nop))
-      (else (if (i32.eq (local.get $id) (i32.const 28))
-      (then (call $menu_post (local.get $hwnd) (i32.const 0x0010) (i32.const 0) (i32.const 0)))
-      (else (call $menu_post (local.get $hwnd) (i32.const 0x0111) (local.get $id) (i32.const 0))))))
+      (else (call $menu_post (local.get $hwnd) (i32.const 0x0111) (local.get $id) (i32.const 0))))
     (call $menu_close)
     (local.get $id))
 
