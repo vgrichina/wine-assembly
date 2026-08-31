@@ -61,6 +61,7 @@ UNIT=(
   test/test-bignum-mul.js
   test/test-mat4.js
   test/test-vfs.js
+  test/test-zip-mount.js
   test/test-flush-view-of-file.js
   test/test-heap-free-block-validation.js
   test/test-vfs-host-files.js
