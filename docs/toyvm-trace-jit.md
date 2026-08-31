@@ -1318,3 +1318,91 @@ Two process notes worth keeping, because both cost time here:
   cut over to WATX mid-session (`23ed9639`, `24b79256`). Any region measurement
   taken across that boundary is two different compilers, so re-baseline rather
   than compare across it.
+
+## CORRECTION: the two ladders above were read through a broken shell loop
+
+Both ladders in the previous two sections were driven by a `for a in "--x --y"`
+loop that passed `$a` unquoted. **zsh does not word-split an unquoted parameter
+expansion.** So every row whose arm had more than one flag reached
+`region-jit.js` as a single argv entry — `"--passes=constprop --no-lower"` — which
+matches no flag it knows, and the row silently reports the **default** arm's
+verdict under a label claiming otherwise. Single-flag rows were fine; every
+multi-flag row was fiction. Write `${=a}`, or spell each arm out.
+
+That is the second time a ladder here has been read wrong, after the blank-row
+`printf` problem recorded above, and both cost a conclusion. The rule that
+covers both: **a bisector row is only evidence if the invocation that produced
+it is visible in the transcript.**
+
+Re-measured on the current tree, one invocation per arm:
+
+### ACCIDENT: it really is the lowering, and it is the fall-through arm
+
+| arm | frame |
+|---|---|
+| `--succ-only` (region not installed) | IDENTICAL |
+| `--no-lower` | IDENTICAL |
+| `--no-lower --once` | IDENTICAL |
+| default | **DIFFERS** `38c165c5` 0px, `ints 1567/148`, `smc 1/0` |
+| `--once` | **DIFFERS**, same hash |
+| `--no-promote` / `--passes=` / `--passes=constprop` / `--no-fuse` / `--no-spin` / `--no-traced` / `--keep-arena-operands` / `--no-region-code-bits` | **DIFFERS**, same hash, every one |
+
+Every optimization is exonerated by its own switch, and the wrong frame is
+bit-identical across all of them, so nothing about *what the ops compute* is in
+play. `--once` fails and `--no-lower --once` passes, which pins it further: the
+back edge is not it either.
+
+What is left between those two arms is one thing. ACCIDENT's region is a 34-op
+block whose op 13 is a `loop`, and the two arms differ only in what happens when
+that `loop` is **not** taken:
+
+- unlowered — `(br $out)`, the region hands `$gip = 0x2d6a` back and the host
+  decodes the fall-through as an ordinary block;
+- lowered — the `(else )` arm is empty and ops 14–33 run inline.
+
+Continuing inline is what breaks it. The obvious repair — give that arm the
+`CONT`/`$smc` test the interpreter's transfer protocol would have applied — was
+implemented in a scratch worktree as `--no-fallthrough-guard` and A/B'd properly
+this time: **both arms still DIFFER**, so the missing slice-boundary test is not
+the mechanism. That theory is dead for the second time, now on a measurement
+that can be trusted.
+
+### CONTACT: not a lowering bug at all
+
+The earlier section's headline (`--no-lower` fixes it) does not survive. On the
+current tree only ONE arm is identical:
+
+| arm | frame |
+|---|---|
+| `--succ-only` (region not installed) | IDENTICAL |
+| `--no-lower` | **DIFFERS** `dc683527` 61081px |
+| `--passes=` | **DIFFERS** `dc683527` |
+| `--passes= --no-promote --no-lower --once` | **DIFFERS** `dc683527` |
+| default | **DIFFERS** `7dc0c28d` 51014px |
+| `--once` / `--no-promote` / `--assume-fallthrough` | **DIFFERS** `7dc0c28d` |
+
+The fourth row is the one that matters. `--passes= --no-promote --no-lower
+--once` is the most degenerate region this file can build: the shipped handler
+bodies concatenated verbatim, operands unfolded, no registers in locals, the
+interpreter's own transfer protocol at every branch, no loop around it, entered
+and left exactly where the interpreter enters and leaves the block. It still
+diverges. So CONTACT is **not** a lowering bug and not an optimization bug —
+what is wrong is in the install/entry/exit protocol itself, which every
+configuration shares, and which `--succ-only` is the only arm to switch off.
+
+Two supporting facts. `--agree` runs the interpreter and all three tiers over
+CONTACT's 17 ops from one seeded state and reports **ALL THREE MATCH**, so the
+bodies mean the same thing. And the unlowered arm lands on the baseline's exact
+pixel COUNT (61081) with a different hash, while the lowered arm lands on
+neither — two distinct wrong pictures, not one bug seen twice.
+
+So the two programs are no longer one story: **ACCIDENT is the branch lowering's
+inline fall-through; CONTACT is the region protocol.** Fixing either one will not
+fix the other.
+
+### `--dump`, not `--dump-wat`
+
+The body dump is `--dump`. `--dump-wat` is not a flag, it writes nothing, and it
+fails silently — so the `/tmp/region-<exe>.wat` left over from an earlier session
+reads as the current build's output. A diff of two arms taken that way showed
+them identical when they are not.
