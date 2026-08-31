@@ -108,4 +108,47 @@ assert.strictEqual(badSymbol.success, false);
 assert.strictEqual(badSymbol.errorLine, 3);
 assert.strictEqual(badSymbol.errorCol, 9);
 
+// Macro arity, both directions. It was unchecked both ways and silently: a
+// surplus argument was dropped by `params.forEach` (which iterates the
+// PARAMETERS, so it never looks at an argument past the last one), and a
+// missing one bound `undefined`, which substitute spliced into the body as a
+// hole. Either way the module compiled and computed as if the extra argument
+// had never been written — the exact failure an edit that reorders or renames a
+// macro's parameters leaves behind at every call site. A macro invocation is a
+// call, and `call $callee: expected 1 args, got 0` above is the standard this
+// now meets.
+const macroTooMany = rejectsProduction(`
+(defmacro (DOUBLE $x) (i32.add $x $x))
+(func $f (result i32) (effects) (DOUBLE (i32.const 1) (i32.const 2)))
+`);
+assert.strictEqual(macroTooMany.success, false, 'a macro given too MANY arguments must be rejected');
+assert.match(macroTooMany.error, /macro DOUBLE takes 1 argument\(s\).*got 2/);
+
+const macroTooFew = rejectsProduction(`
+(defmacro (ADD3 $a $b $c) (i32.add $a (i32.add $b $c)))
+(func $f (result i32) (effects) (ADD3 (i32.const 1) (i32.const 2)))
+`);
+assert.strictEqual(macroTooFew.success, false, 'a macro given too FEW arguments must be rejected');
+assert.match(macroTooFew.error, /macro ADD3 takes 3 argument\(s\).*got 2/);
+
+// The error names the line it was written on, not the expansion's.
+assert.strictEqual(macroTooFew.errorLine, 3, `errorLine was ${macroTooFew.errorLine}`);
+
+// A zero-parameter macro is still a macro: it must take zero arguments, and
+// invoking it correctly must keep working.
+const macroNullaryExtra = rejectsProduction(`
+(defmacro (ONE) (i32.const 1))
+(func $f (result i32) (effects) (ONE (i32.const 9)))
+`);
+assert.strictEqual(macroNullaryExtra.success, false);
+
+const macroOk = rejectsProduction(`
+(defmacro (DOUBLE $x) (i32.add $x $x))
+(defmacro (ONE) (i32.const 1))
+(func $f (export "f") (result i32) (effects) (DOUBLE (ONE)))
+`);
+assert.strictEqual(macroOk.success, true, macroOk.error);
+assert.strictEqual(
+  new WebAssembly.Instance(new WebAssembly.Module(macroOk.wasmBinary), {}).exports.f(), 2);
+
 console.log('watx-compiler-production: PASS');

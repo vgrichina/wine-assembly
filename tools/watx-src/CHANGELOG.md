@@ -1029,3 +1029,37 @@ Artifacts unchanged: `71ea98f134a486cd` / `d569961e3e7d6325`.
 New manifest digest:
 
   5aa98a2aa48835dfa4d20a6d61d7e13299ba3752c0f76fd5a688e762cc17bb72
+
+## 2026-08-31 — macro arity is checked, in both directions
+
+`expandForm` bound arguments with `macro.params.forEach((p, i) => bindings[p] =
+args[i])`. That iterates the **parameters**, so it never looks at an argument
+past the last one: a surplus argument was dropped without a word, and a missing
+one bound `undefined`, which `substitute` then spliced into the body as a hole.
+Either way the module compiled and computed as if the extra argument had never
+been written — precisely what an edit that reorders or renames a macro's
+parameters leaves behind at every call site it did not update.
+
+A macro invocation is a call, and the compiler already holds calls to this
+standard (`call $callee: expected 1 args, got 0`). An arity mismatch is now a
+located error naming the macro, its parameter list and the count it got.
+
+`watx-compiler-production` grows five assertions: too many, too few, the line
+number being the *invocation's* rather than the expansion's, a nullary macro
+given an argument, and a correct nested invocation that still compiles and
+returns the right value.
+
+`tools/watx-rejection-pairs.js` moves both macro rules onto the new behaviour:
+the too-MANY pair loses its `notEnforced` marker, and the too-FEW pair, which
+was recorded with a `weakDiagnostic` reading "the refusal should name the macro
+and its arity, not report an unresolved symbol inside the caller", now expects
+exactly that message. `test/test-watx-rejections.js` goes 86/87 with one rule
+unenforced to **87/87 with none**. Verified byte-identical the strict
+way — a clean detached worktree at `d3466fac` built twice, once as checked out
+and once with only `compiler-stages.js` replaced — because peer edits were live
+in `src/` at the time and a working-tree build would have measured those instead:
+`71ea98f134a486cd` / `d569961e3e7d6325` both runs.
+
+New manifest digest:
+
+  356d8f714b66112d322c188fef807fef1a42d62e7b8263aa7a0e6fef947e6717

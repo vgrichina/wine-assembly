@@ -419,28 +419,27 @@ PAIRS[PAIRS.length - 1].goodOptions = { strictDeclarations: true };
 PAIRS[PAIRS.length - 1].badOptions = { strictDeclarations: true };
 
 // ── Macros ────────────────────────────────────────────────────────────────
-// Macro arity is NOT checked. A missing argument is caught only downstream, by
-// the parameter symbol failing to resolve — which names `$x` and the calling
-// function, not the macro or the call site — and a SURPLUS argument is dropped
-// in silence. Both are recorded rather than papered over: `says` pins the
-// message that is actually produced, and `weakDiagnostic` states what a reader
-// should have been told instead.
-pair('macro', 'a macro invoked with too FEW arguments is refused (by an unrelated message)',
+// Macro arity is checked in both directions as of 2026-08-31. Before that a
+// missing argument was caught only downstream, by the parameter symbol failing
+// to resolve — which named `$x` and the CALLING function, not the macro or the
+// call site — and this entry carried a `weakDiagnostic` saying the refusal
+// "should name the macro and its arity". It does now, so the expected message
+// is that one; a surplus argument was dropped in silence and is the pair below.
+pair('macro', 'a macro invoked with too FEW arguments',
   '(defmacro (double $x) (i32.mul $x (i32.const 2)))\n' +
   '(func $f (result i32) (double (i32.const 21)))\n(export "f" (func $f))',
   '(defmacro (double $x) (i32.mul $x (i32.const 2)))\n' +
   '(func $f (result i32) (double))\n(export "f" (func $f))',
-  "Unknown symbol '$x'");
-PAIRS[PAIRS.length - 1].weakDiagnostic =
-  'the refusal should name the macro and its arity, not report an unresolved symbol inside the caller';
-pair('macro', 'a macro invoked with too MANY arguments is silently accepted',
+  'macro double takes 1 argument(s)');
+pair('macro', 'a macro invoked with too MANY arguments',
   '(defmacro (double $x) (i32.mul $x (i32.const 2)))\n' +
   '(func $f (result i32) (double (i32.const 21)))\n(export "f" (func $f))',
   '(defmacro (double $x) (i32.mul $x (i32.const 2)))\n' +
   '(func $f (result i32) (double (i32.const 21) (i32.const 3)))\n(export "f" (func $f))',
   'macro double');
-PAIRS[PAIRS.length - 1].notEnforced =
-  'surplus macro arguments are dropped without a word; the module compiles and computes as if they were not written';
+// Was `notEnforced` until 2026-08-31: surplus arguments were dropped by
+// `params.forEach`, which iterates the parameters and so never looks at an
+// argument past the last one. Arity is checked in both directions now.
 pair('macro', 'an include must resolve',
   '(func $f (result i32) (i32.const 1))\n(export "f" (func $f))',
   '(include "nowhere.watx")\n(func $f (result i32) (i32.const 1))',

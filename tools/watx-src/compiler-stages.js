@@ -103,6 +103,21 @@ function expandMacros(forms) {
     if (head && macros.has(head)) {
       const macro = macros.get(head);
       const args = form.slice(2);
+      // Macro arity was unchecked in BOTH directions, and both silently: a
+      // surplus argument was dropped by `params.forEach` (which iterates the
+      // parameters, never the arguments), and a missing one bound `undefined`,
+      // which `substitute` then spliced into the body as a hole. The module
+      // compiled either way and computed as if the extra argument had never been
+      // written — the shape of an edit that reorders or renames a macro's
+      // parameters and leaves every call site quietly one behind.
+      if (args.length !== macro.params.length) {
+        const e = new Error(
+          `macro ${head} takes ${macro.params.length} argument(s) ` +
+          `(${macro.params.join(' ') || '—'}), got ${args.length}`);
+        const loc = watxFormLoc(form);
+        if (loc !== undefined) { e.line = watxNodeLine(loc); e.col = watxNodeCol(loc); e.file = watxNodeFile(loc); }
+        throw e;
+      }
       const bindings = {};
       macro.params.forEach((p, i) => { bindings[p] = args[i]; });
       const expanded = macro.body.map(b => substitute(b, bindings));
