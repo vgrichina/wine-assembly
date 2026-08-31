@@ -1,6 +1,10 @@
 # Bring Your Own Media — design
 
-Status: **design, with phases ①–③ in flight.** How the browser build grows
+Status: **all six phases landed** (4d7497ed provider/lazy-VFS, 6a876ff0 zip,
+60407f55 iso + WAT parking, 29dab90a/9c1003b9 overlay, 0995b5a7 save
+bundles/sync, ed3d7b72 import UI + media library); this doc now records the
+as-built contracts plus the remaining follow-ups in the risk register and
+"Overlay semantics". How the browser build grows
 from "server-supplied apps" to "drop in your own ISOs, installers, zips and
 game folders" — the storage backends, the lazy VFS machinery, the containers,
 save sync, and the UI. Written 2026-08-30; corrected the same day from an
