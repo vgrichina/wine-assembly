@@ -241,11 +241,9 @@ fold should be held to. Two things off: the `LOOP_PROCESS_STATE` opt-in that
 enables them (`07b:74-80`, atomic, in the map) is the *same* flag that turns on
 the generic `COPY_RUN`/avg matchers at `07b:1545,1679,1846,1984,2213` for every
 MW3 block, and the header at `07b:66-68` still calls their Storm divergence
-unresolved. **AoE span proof FIXED `6bbf1543`:** the cheap register-layout
-anchors are now followed by FNV-1a over every byte of the authentic 0x6b-byte
-AoE I or 0x6a-byte AoE II prefix; an interior-byte mutation that the sampled
-matcher accepted is pinned as a near miss in the differential regression.
-H441 also reloads its count from
+unresolved; and `$try_emit_aoe_span_prefix` (`07b:144-197`, default on, no
+gate) proves only four sampled dwords of a 0x6a-byte prefix — weaker than the
+hash standard the MW3 folds just set. H441 also reloads its count from
 `[ESP+0x10]` each cell but H440 reads `[EBP+0xc]` once (`:3013`) where x86
 re-reads it per iteration — diverges only if the row aliases the frame. H439
 (`06-fpu.wat:947-979`) is correct and has no differential test.
@@ -398,7 +396,7 @@ Pass 1.
    make `guest-worker.js` import the same list. (3.10)
 10. The COPY opt-in should enable the three proved folds only; the generic
     `COPY_RUN` matchers get their own flag until the Storm divergence is
-    resolved. ~~Hash `aoe_span_prefix`'s whole body.~~ (`6bbf1543`; 3.9)
+    resolved. Hash `aoe_span_prefix`'s whole body. (3.9)
 
 **Tier 3 — carried from Pass 2, still the right list:** items 8 (symbolic
 handler/api ids — 442 handlers and 3,071 apis addressed by literal), 9 (`run.js

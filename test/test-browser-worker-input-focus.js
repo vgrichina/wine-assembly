@@ -15,6 +15,7 @@ const root = path.join(__dirname, '..');
 const host = fs.readFileSync(path.join(root, 'host.js'), 'utf8');
 const worker = fs.readFileSync(path.join(root, 'lib', 'guest-worker.js'), 'utf8');
 const input = fs.readFileSync(path.join(root, 'lib', 'renderer-input.js'), 'utf8');
+const menus = fs.readFileSync(path.join(root, 'src', '09c5-menu.wat'), 'utf8');
 
 assert(worker.includes('focusHwnd: ex.get_focus_hwnd ? ex.get_focus_hwnd() >>> 0 : 0'),
   'guest Worker slice result should publish its live focus hwnd');
@@ -30,6 +31,8 @@ assert(input.includes('if (this._keyboardOwnerRunsInGuestWorker())'),
   'Worker-backed keyboard events should bypass direct calls into the idle instance');
 assert(host.includes("workerUrl: 'lib/guest-worker.js?v=14'"),
   'guest Worker cache key should change with its slice result protocol');
+assert(/\(func \$menu_post[\s\S]*?\$shared_post_queue_enqueue[\s\S]*?\n\s*\)/.test(menus),
+  'browser-side menu commands must enter the shared owning-thread queue');
 
 class RendererProbe {
   constructor(wasm) {
@@ -81,6 +84,8 @@ const menuRenderer = new Win98Renderer(canvas);
 let shadowFocus = 0;
 let liveFocusCalls = 0;
 let menuClicks = 0;
+let menuOpenHwnd = 0;
+let menuActivations = 0;
 const workerOwnedWasm = {
   exports: {
     get_focus_hwnd: () => shadowFocus,
@@ -90,6 +95,12 @@ const workerOwnedWasm = {
     },
     set_focus_hwnd(hwnd) { shadowFocus = hwnd | 0; },
     menu_handle_bar_click() { menuClicks++; return 1; },
+    menu_open_hwnd() { return menuOpenHwnd; },
+    menu_handle_mouse_open() {
+      menuActivations++;
+      menuOpenHwnd = 0;
+      return 1;
+    },
   },
 };
 menuRenderer.wasm = workerOwnedWasm;
@@ -108,5 +119,20 @@ assert.strictEqual(shadowFocus, 0x10002,
   'renderer shadow focus should still follow the clicked Worker-owned window');
 assert.strictEqual(menuClicks, 1,
   'Worker-backed Win16 menu click should reach the menu tracker after focus routing');
+
+// Menu activation runs synchronously in the renderer's idle ownership token.
+// The WAT helper puts WM_COMMAND into shared memory, but a Worker parked in
+// GetMessage still needs an explicit slice wake because no JS input was queued.
+menuRenderer.handleMouseUp(40, 30, 0);
+menuOpenHwnd = 0x10002;
+const wakes = [];
+menuRenderer._inputPendingPublishers = new Set([
+  (depth, wake) => wakes.push({ depth, wake }),
+]);
+menuRenderer.handleMouseDown(40, 60, 0);
+assert.strictEqual(menuActivations, 1,
+  'open Worker-owned menu should route selection through the menu tracker');
+assert(wakes.some(item => item.depth === 0 && item.wake === true),
+  'menu WM_COMMAND should force a Worker slice even with no browser input queued');
 
 console.log('PASS browser Worker keyboard and menu input avoid the idle WASM instance');

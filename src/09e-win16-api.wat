@@ -688,12 +688,45 @@
   ;; thinks it is, found Rattler Race's header instead, and reported "a virus
   ;; has been detected during program initialization".
   (func $win16_GetModuleFileName
-    (local $buf i32) (local $size i32) (local $mod i32) (local $id i32)
+    (local $buf i32) (local $size i32) (local $raw_mod i32) (local $mod i32) (local $id i32)
     (local $slot i32) (local $n i32) (local $i i32)
+    (local $index i32) (local $rec i32) (local $base i32)
     (local.set $buf (call $win16_far_to_guest
       (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
     (local.set $size (call $win16_arg16 (i32.const 0)))
-    (local.set $mod (call $win16_h32 (call $win16_arg16 (i32.const 3))))
+    (local.set $raw_mod (call $win16_arg16 (i32.const 3)))
+    ;; A Win16 hModule/hInstance may be a live segment selector instead of a
+    ;; narrowed 32-bit handle. NULL and the task's DGROUP mean the current EXE.
+    ;; A DLL may likewise pass one of its own selectors (VBRUN100 does this),
+    ;; so resolve live selectors through the loader's segment-owner records.
+    ;; Only non-selector handles go through the 16->32 handle table.
+    (if (i32.ne (local.get $raw_mod) (i32.const 0))
+      (then
+        (local.set $index (call $win16_sel_to_index (local.get $raw_mod)))
+        (if (call $win16_seg_base (local.get $index))
+          (then
+            (if (i32.ne (local.get $raw_mod)
+                        (call $win16_index_to_sel (global.get $win16_auto_data)))
+              (then
+                (local.set $id (i32.const 1))
+                (block $owner_done (loop $owner_scan
+                  (br_if $owner_done (i32.ge_u (local.get $id)
+                    (i32.add (global.get $WIN16_DYNAMIC_BASE)
+                             (global.get $WIN16_DYNAMIC_MODULES))))
+                  (local.set $rec (call $win16_dll_rec (local.get $id)))
+                  (local.set $n (i32.load offset=12 (local.get $rec)))
+                  (local.set $base (i32.load offset=4 (local.get $rec)))
+                  (if (i32.and (i32.ne (local.get $n) (i32.const 0))
+                        (i32.and (i32.gt_u (local.get $index) (local.get $base))
+                                 (i32.le_u (local.get $index)
+                                   (i32.add (local.get $base) (local.get $n)))))
+                    (then
+                      (local.set $mod (i32.or (i32.const 0x00D10000)
+                                              (local.get $id)))
+                      (br $owner_done)))
+                  (local.set $id (i32.add (local.get $id) (i32.const 1)))
+                  (br $owner_scan)))))
+          (else (local.set $mod (call $win16_h32 (local.get $raw_mod))))))))
     (if (i32.eq (i32.and (local.get $mod) (i32.const 0xFFFF0000)) (i32.const 0x00D10000))
       (then
         (local.set $id (i32.and (local.get $mod) (i32.const 0xFFFF)))

@@ -2598,10 +2598,10 @@
   ;; here. State is in $menu_open_hwnd / $menu_open_top /
   ;; $menu_open_hover (one menu open at a time, system-wide).
   ;;
-  ;; Activations post WM_COMMAND into the existing post queue at WASM addr
-  ;; 0x400 (same one
-  ;; PostMessageA writes to). The host pump dequeues and dispatches
-  ;; on the next iteration.
+  ;; Activations post WM_COMMAND into the shared owning-thread queue. Menu
+  ;; tracking may execute in the browser-side shadow instance while the live
+  ;; guest runs in a Worker, so the instance-local queue/count at 0x400 is not
+  ;; a valid handoff. The guest pump dequeues the shared message next slice.
   ;; ============================================================
 
   (func (export "menu_open_hwnd")  (result i32) (global.get $menu_open_hwnd))
@@ -3292,19 +3292,13 @@
           (then (return (i32.const 1))))))
     (i32.const 0))
 
-  ;; Internal: enqueue a posted message for hwnd. Mirrors the body of
-  ;; $handle_PostMessageA. Used by $menu_post_command on activation.
+  ;; Internal: enqueue a posted message for hwnd. This is a UI-originated
+  ;; command and may be produced outside the owning guest instance, so always
+  ;; use the shared per-thread queue rather than the local post-count global.
   (func $menu_post (param $hwnd i32) (param $msg i32)
                     (param $wp i32) (param $lp i32)
-    (local $tmp i32)
-    (if (i32.ge_u (global.get $post_queue_count) (i32.const 64)) (then (return)))
-    (local.set $tmp (i32.add (i32.const 0x400)
-                      (i32.mul (global.get $post_queue_count) (i32.const 16))))
-    (i32.store           (local.get $tmp) (local.get $hwnd))
-    (i32.store offset=4  (local.get $tmp) (local.get $msg))
-    (i32.store offset=8  (local.get $tmp) (local.get $wp))
-    (i32.store offset=12 (local.get $tmp) (local.get $lp))
-    (global.set $post_queue_count (i32.add (global.get $post_queue_count) (i32.const 1))))
+    (drop (call $shared_post_queue_enqueue
+      (local.get $hwnd) (local.get $msg) (local.get $wp) (local.get $lp))))
 
   ;; Activate the currently-hovered child of the open menu. Posts a
   ;; WM_COMMAND to the parent hwnd, then closes the menu. Returns the command
