@@ -381,9 +381,10 @@ async function runBrowserProbe() {
             `raw.zeroSpread=${capture.source.raw.zeroSpread} ` +
             `source.blackSpread=${capture.source.rgba.blackSpread} ` +
             `target.blackSpread=${capture.target.metrics.blackSpread}`);
-          // Production intentionally jumps straight to Share1.j2l. Its only
-          // J2V/GDI work is the loading splash, whose third upload contains
-          // the copied image rather than the target's initial black backing.
+          // The fast production-launch gate stops at the loading splash. Its
+          // third upload contains the copied image rather than the target's
+          // initial black backing. The stock shareware executable proceeds to
+          // its J2V logo sequence before consuming any level request.
           if (capture.ordinal >= 3) resolveMatched(capture);
         } catch (error) {
           errors.push(`invalid jazz-layer payload: ${error.message}`);
@@ -438,7 +439,7 @@ async function runBrowserProbe() {
       captures: captures.length };
     fs.writeFileSync(path.join(OUT, 'result.json'), JSON.stringify(result, null, 2));
     assert.strictEqual(errors.length, 0, errors.join('\n'));
-    console.log('PASS Jazz production direct-level splash is matched and clean through GDI');
+    console.log('PASS Jazz production launch splash is matched and clean through GDI');
     console.log(`Artifacts: ${OUT}`);
   } finally {
     if (watchdog) clearTimeout(watchdog);
@@ -466,12 +467,16 @@ async function runLogoDiagnostic() {
   const child = spawnSync(process.execPath, [
     '-r', __filename,
     path.join(ROOT, 'test', 'run.js'),
-    '--app=jazz2_demo', '--args=', '--quiet-api', '--batch-size=1000',
+    // The production route now keeps low-resolution J2V in the authentic
+    // 320x200x8 exclusive mode. This layer diagnostic intentionally selects
+    // Jazz's own windowed mode so the decoder DIB and matched StretchBlt target
+    // remain synchronously observable through the GDI hook.
+    '--app=jazz2_demo', '--args=-windowed', '--quiet-api', '--batch-size=1000',
     '--max-batches=1230',
   ], {
     cwd: ROOT,
     env: { ...process.env, WA_JAZZ_CLI_HOOK: '1', WA_JAZZ_LAYER_OUT: OUT,
-      WA_JAZZ_CAPTURE_ORDINAL: '148' },
+      WA_JAZZ_CAPTURE_ORDINAL: '120' },
     encoding: 'utf8',
     timeout: 70000,
     killSignal: 'SIGKILL',
@@ -482,24 +487,24 @@ async function runLogoDiagnostic() {
   assert.strictEqual(child.status, 0,
     `Jazz logo CLI exited ${child.status}; see ${path.join(OUT, 'cli.log')}`);
   const resultFile = path.join(OUT, 'result.json');
-  assert(fs.existsSync(resultFile), 'Jazz logo did not reach matched GDI ordinal 148');
+  assert(fs.existsSync(resultFile), 'Jazz logo did not reach matched GDI ordinal 120');
   const matched = JSON.parse(fs.readFileSync(resultFile, 'utf8'));
-  assert.strictEqual(matched.ordinal, 148,
-    `Jazz exposed periodic corruption before ordinal 148 (ordinal ${matched.ordinal})`);
+  assert.strictEqual(matched.ordinal, 120,
+    `Jazz exposed periodic corruption before ordinal 120 (ordinal ${matched.ordinal})`);
   const rawPeriodic = matched.source.raw.zeroSpread >= 0.35 ||
     matched.source.raw.meanSpread >= 35;
   const sourcePeriodic = matched.source.rgba.blackSpread >= 0.35 ||
     matched.source.rgba.lumaSpread >= 35;
   const targetPeriodic = matched.target.rgba.blackSpread >= 0.35 ||
     matched.target.rgba.lumaSpread >= 35;
-  assert(!rawPeriodic, 'Jazz ordinal 148 raw indices retain period-eight corruption');
-  assert(!sourcePeriodic, 'Jazz ordinal 148 palette expansion retains period-eight corruption');
-  assert(!targetPeriodic, 'Jazz ordinal 148 StretchBlt target retains period-eight corruption');
+  assert(!rawPeriodic, 'Jazz ordinal 120 raw indices retain period-eight corruption');
+  assert(!sourcePeriodic, 'Jazz ordinal 120 palette expansion retains period-eight corruption');
+  assert(!targetPeriodic, 'Jazz ordinal 120 StretchBlt target retains period-eight corruption');
   const classification = 'clean-after-fxch-raw64';
   fs.writeFileSync(path.join(OUT, 'classification.json'), JSON.stringify({
     classification, matched,
   }, null, 2));
-  console.log('PASS Jazz logo ordinal 148 is clean through raw indices, palette, and StretchBlt');
+  console.log('PASS Jazz windowed logo ordinal 120 is clean through raw indices, palette, and StretchBlt');
   console.log(`Artifacts: ${OUT}`);
 }
 

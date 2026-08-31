@@ -115,8 +115,15 @@ if (!ANALYZE_ONLY) {
   // timeGetTime, so at the default budget the Blizzard North logo alone eats
   // tens of thousands of batches. --no-close is required for any PNG to be
   // written at all.
+  //
+  // --quiet-api is not cosmetic. Diablo makes 724,015 Win32 calls before this
+  // run ends, and the default one-line-per-call log is blocking stdout I/O on
+  // the thread the guest runs on: measured back to back, the same command line
+  // takes 3:53 without it and 1:17 with it at identical user CPU. Nothing here
+  // reads that log except the crash check below, which only needs the tail.
   const cmd = `node "${RUN}" --app=diablo_shareware --batch-size=200000`
     + ` --tick-ms-per-batch=50 --max-batches=4100 --no-close --repaint-every=20`
+    + ` --quiet-api`
     + ` --input='${input.join(',')}' > "${LOG}" 2>&1`;
   console.log('$', cmd);
   try {

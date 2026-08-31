@@ -108,8 +108,12 @@ if (!ANALYZE_ONLY) {
   // --no-close is required for any PNG to be written at all, and
   // --repaint-every=200 is required for the Choose Class capture not to be a
   // stale frame. --trace-thread is what prints the [thread-event] lines.
+  // --quiet-api drops only the unconditional per-call [API] one-liner, which
+  // nothing here parses; it is worth roughly 3x wall clock on this app because
+  // that log is blocking stdout I/O on the guest's own thread.
   const cmd = `node "${RUN}" --app=diablo_shareware --time-scale=30`
     + ` --max-batches=${MAX_BATCHES} --no-close --repaint-every=200 --trace-thread`
+    + ` --quiet-api`
     + ` --input='${input.join(',')}' > "${LOG}" 2>&1`;
   console.log('$', cmd);
   try {
