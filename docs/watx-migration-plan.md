@@ -236,18 +236,27 @@ acceptable; two independently edited lists are not.
 Update manifest checks so they cover `src/main.watx`, every `src/*.wat` part and
 generated sources. Preserve filename order.
 
+Done 2026-08-31 (`38ef42b4`): `src/main.watx` holds 60 real WATX
+`(include "...")` forms — the form `resolveIncludes()` in the vendored compiler
+actually implements — and is the authoritative order; `WAT_FILES` stays a
+literal array but `tools/check-wat-manifest.js` now fails the build if the two
+sequences (not sets) differ.
+
 ### 2.2 Independently balanced fragments
 
-- Remove the source-level module opener from `01-header.wat` and the matching
-  final close from `13-exports.wat`.
-- Make `tools/concat-wat.js` add the outer module wrapper when producing
-  `build/combined.wat` for standard WAT/debug tools.
+- ~~Remove the source-level module opener from `01-header.wat` and the matching
+  final close from `13-exports.wat`.~~ Done 2026-08-31 (`b1c221d8`) with a
+  four-hash identity proof in a clean worktree at `3a4332bc` — no
+  `lib/compile-wat.js` change was needed; its `iterTopLevel()` already accepted
+  bare top-level fields.
+- ~~Make `tools/concat-wat.js` add the outer module wrapper when producing
+  `build/combined.wat` for standard WAT/debug tools.~~ Done in the same commit;
+  `build/combined.wat` is byte-identical modulo added comment lines.
 - ~~Add a gate that parses every included fragment independently~~ Done
-  2026-08-31 in commit `e5327df2`: `tools/check-wat-fragments.js` checks all 60
-  fragments (58 self-balanced; the `01-header`/`13-exports` wrapper pair is a
-  frozen, explicitly TEMPORARY allow-list that fails on any third entrant, and a
-  mid-file negative-depth dip is rejected even when it nets to zero). Standalone
-  for now — wire into `tools/build.sh` together with the wrapper removal above.
+  2026-08-31 (`e5327df2`, promoted in `b1c221d8`): `tools/check-wat-fragments.js`
+  is strict — the wrapper allow-list is deleted, all 60 fragments net zero, a
+  mid-file negative-depth dip is rejected even when it nets to zero — and it
+  runs in `tools/build.sh` right after the manifest check.
 - ~~Fix the known `10d-gdi-region-path.wat` surplus close~~ Resolved by
   `1166907c` before this plan started executing (see finding 1 — it was a real
   bug fix, not a neutral cleanup).
@@ -431,10 +440,9 @@ Conversions happen in place in the single source tree — no `.watx` twin files.
 
 - [x] Prepared WATX compiler vendored with provenance. (`903ca110`)
 - [x] Compiler regression suites run entirely inside this repository. (`903ca110`)
-- [ ] `src/main.watx` is the single source-order manifest.
-- [ ] Every source fragment parses independently. (Gate exists — `e5327df2` —
-      and passes with the temporary wrapper exception; done when the wrapper
-      moves to `concat-wat.js`.)
+- [x] `src/main.watx` is the single source-order manifest. (`38ef42b4`)
+- [x] Every source fragment parses independently. (`b1c221d8` — wrapper moved
+      to `concat-wat.js`, gate strict and wired into the build.)
 - [ ] Full Wine source compiles in both WATX modes.
 - [ ] Four-artifact ABI/data/table comparison is green.
 - [ ] Full behavior matrix is green for both WATX artifacts.
