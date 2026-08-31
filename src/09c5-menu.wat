@@ -1335,11 +1335,11 @@
           (if (i32.eq (local.get $ret) (i32.const -1))
             (then (local.set $ret
               (select (i32.const 1) (i32.const 0)
-                (i32.ne (i32.and (local.get $flags) (i32.const 2)) (i32.const 0)))))))
+                (i32.ne (i32.and (local.get $flags) (i32.const 2)) (i32.const 0))))))
           (i32.store offset=16 (local.get $it)
             (select (i32.or (local.get $flags) (i32.const 2))
                     (i32.and (local.get $flags) (i32.const -3))
-                    (local.get $disabled))))
+                    (local.get $disabled)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (return (local.get $ret))

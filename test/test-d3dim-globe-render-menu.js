@@ -93,15 +93,21 @@ try {
   const menuLines = out.split('\n').filter(s => s.includes('menu-dump:hover:'));
   const beforeHover = hover => menuLines.find(s => s.includes(`hover=${hover}`)) || '';
   const checked = (line, item) => new RegExp(`#${item} id=\\d+ flags=0x4(?: |$)`).test(line);
+  const grayed = (line, item) => new RegExp(`#${item} id=\\d+ flags=0x2(?: |$)`).test(line);
   assert(checked(beforeHover(1), 0), 'Flat selection was not reflected by the menu checkmark');
   assert(checked(beforeHover(2), 1), 'Gouraud selection was not reflected by the menu checkmark');
-  assert(checked(beforeHover(4), 2), 'Phong selection was not reflected by the menu checkmark');
+  // Globe asks for Phong and Anti-aliasing to be grayed at startup — no real
+  // D3D driver ever implemented D3DSHADE_PHONG, and our software device does
+  // not anti-alias either. So clicking those rows must do nothing and the
+  // checkmark must stay where it was (Gouraud from the click before).
+  assert(grayed(beforeHover(4), 2), 'Globe grayed Phong but the menu did not honour it');
+  assert(checked(beforeHover(4), 1), 'a click on the grayed Phong row moved the shade-mode checkmark');
   assert(!checked(beforeHover(6), 4), 'Lighting toggle did not clear its menu checkmark');
   assert(checked(beforeHover(7), 6), 'Point selection was not reflected by the menu checkmark');
   assert(checked(beforeHover(8), 7), 'Wireframe selection was not reflected by the menu checkmark');
   assert(checked(beforeHover(10), 8), 'Solid selection was not reflected by the menu checkmark');
   assert(checked(beforeHover(11), 10), 'Dithering toggle did not set its menu checkmark');
-  assert(checked(beforeHover(13), 11), 'Anti-aliasing toggle did not set its menu checkmark');
+  assert(grayed(beforeHover(13), 11), 'Globe grayed Anti-aliasing but the menu did not honour it');
   assert(checked(beforeHover(14), 13), 'Point filtering selection was not reflected by the menu checkmark');
   const finalMenu = out.split('\n').find(s => s.includes('menu-dump:final:')) || '';
   assert(checked(finalMenu, 14), 'Bi-Linear filtering selection was not reflected by the menu checkmark');
