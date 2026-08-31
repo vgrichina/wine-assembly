@@ -2684,15 +2684,94 @@ function generateWasm(forms, loweredForms, checkResult, options = {}) {
       return bytes;
     }
 
-    // v128.const — 16 immediate bytes. WATX form: (v128.const b0 b1 ... b15).
-    // Useful for tests + compile-time lane masks (e.g. shuffle helpers, 0xff sentinels).
+    // v128.const — the 16 immediate bytes of a SIMD constant, in TWO spellings.
+    //
+    //   WATX byte-wise:  (v128.const b0 b1 ... b15)          -- 16 bytes, as written
+    //   standard WAT:    (v128.const i32x4 0x80000000 ... )  -- a SHAPE token, then
+    //                                                           one literal per lane
+    //
+    // The shape spelling used to be a SILENT MISCOMPILE (found 2026-08-31 by the
+    // wabt differential oracle; reproducer tools/watx-repro/v128-const-shape.js).
+    // This branch read exactly 16 operands and wrote each one `& 0xff`, with no
+    // idea a shape token could be there: the token itself landed in lane 0 as a
+    // 0 (immVal ran parseInt('i8x16') -> NaN -> the default), every later lane
+    // shifted one position, the 16th was DROPPED, and under a shape wider than
+    // i8x16 each lane was truncated to a single byte — so `i32x4 ... 0xffffffff`
+    // put one 0xff byte where four belong and the other three bytes of that lane
+    // came from the neighbouring operands. It compiled, it validated, it ran; it
+    // just computed with a constant nobody wrote.
+    //
+    // Both spellings are accepted, and they are unambiguous: a shape token is a
+    // symbol atom, and a byte-wise operand is always a number (or an (i32.const N)
+    // subform). Anything else in the first position — a misspelled shape such as
+    // `i16x4`, or any other symbol — is a LOCATED error rather than a guess.
     if (head === 'v128.const') {
+      const where = `v128.const in function ${func.name}`;
+      // lanes, and bytes per lane; the product is always 16.
+      const V128_SHAPES = {
+        i8x16: [16, 1], i16x8: [8, 2], i32x4: [4, 4], i64x2: [2, 8],
+        f32x4: [4, 4], f64x2: [2, 8],
+      };
+      const v128Fail = (msg) => {
+        const e = new Error(`${where}: ${msg}`);
+        const loc = watxFormLoc(expr);
+        if (loc !== undefined) { e.line = watxNodeLine(loc); e.col = watxNodeCol(loc); e.file = watxNodeFile(loc); }
+        return e;
+      };
+      const first = expr[2];
+      const shapeName = (!Array.isArray(first) && T(first) === 'symbol') ? V(first) : null;
+      const nOperands = watxFormLength(expr) - 1;
+
+      let lanes;
+      if (shapeName !== null) {
+        const shape = V128_SHAPES[shapeName];
+        if (shape === undefined) {
+          throw v128Fail(
+            `'${shapeName}' is not a v128 shape — expected one of ` +
+            `${Object.keys(V128_SHAPES).join(', ')} (or the WATX byte-wise form, ` +
+            `16 bare byte values with no shape token)`);
+        }
+        const [count, width] = shape;
+        if (nOperands - 1 !== count) {
+          throw v128Fail(
+            `shape ${shapeName} takes exactly ${count} lane value(s), got ${nOperands - 1}`);
+        }
+        lanes = [];
+        const isFloat = shapeName.charCodeAt(0) === 102; // 'f'
+        for (let i = 0; i < count; i++) {
+          const raw = V(expr[3 + i]);
+          if (Array.isArray(expr[3 + i]) || raw == null || T(expr[3 + i]) === 'string') {
+            throw v128Fail(`lane ${i} of ${shapeName} is not a numeric literal`);
+          }
+          if (isFloat) {
+            const f = watxParseFloatLiteral(raw, where);
+            const buf = new DataView(new ArrayBuffer(8));
+            if (width === 4) buf.setFloat32(0, f, true); else buf.setFloat64(0, f, true);
+            for (let b = 0; b < width; b++) lanes.push(buf.getUint8(b));
+          } else {
+            // Every integer shape goes through the i64 literal path, so a lane
+            // written 0x80000000 or -1 lands as the two's-complement bit pattern
+            // rather than a JS Number that has already lost the sign bit.
+            const v = BigInt.asUintN(64, parseI64Literal(raw));
+            for (let b = 0; b < width; b++) lanes.push(Number((v >> BigInt(8 * b)) & 0xffn));
+          }
+        }
+      } else {
+        // WATX byte-wise form. Strict on arity for the same reason every other
+        // literal position here is: a missing operand used to zero-pad and an
+        // extra one used to be dropped, both silently.
+        if (nOperands !== 16) {
+          throw v128Fail(
+            `the byte-wise form takes exactly 16 byte values, got ${nOperands} ` +
+            `(a standard-WAT constant starts with a shape token: i8x16, i32x4, …)`);
+        }
+        lanes = [];
+        for (let i = 0; i < 16; i++) lanes.push(immVal(expr[2 + i], 0) & 0xff);
+      }
+
       bytes.byte(0xFD);
       bytes.uleb(0x0C);
-      for (let i = 0; i < 16; i++) {
-        const b = immVal(expr[2 + i], 0);
-        bytes.push(b & 0xff);
-      }
+      for (let i = 0; i < 16; i++) bytes.push(lanes[i]);
       return bytes;
     }
 

@@ -82,14 +82,14 @@ at the bottom of this file, not left to whoever is editing.
 cc9dfe2962214e5da09162844e98d359b825009a8388bb7726edaed729b37ee2  tools/watx.js
 17a14c6c447cdee48dcbd6212047d86c88087c50277b141b8d44136672732280  tools/watx-src/compiler-parser.js
 5c6641524ffdc8b97db247c4b3fb0d7fe4526df071186a3dcaf903dba2f2e0e9  tools/watx-src/compiler-stages.js
-a2196f660a659100e29d49285889177a01634eb50273538e47151cc6060210ce  tools/watx-src/compiler-codegen.js
+410bdc771fe162d172812fd9495126923c928a09e67c32ccccf8a3fd0deb02fb  tools/watx-src/compiler-codegen.js
 b85a780ec3d53fa0a9a9b335839504f24c5ca7288a75885c2c0823b8bd9dd550  tools/watx-src/compiler.js
 293c1a233359bf142bf5badceb3399c92b79a653a86085681142b2037d80fce4  test/watx-compiler-wine-parity.test.js
 aaea455c646e4db3e1b60c034b32bda842c06babd29d8de3b810d73181ecf2c8  test/watx-compiler-production.test.js
 a62f1ab8fc157e97fa0ed2bb9ce321464a0b792c4d218e6bbd649c29b06c6519  test/watx-compiler-emit-stack.test.js
 5dc16a25724f8a77179a45cc5113de820c35dfaf2b620d8a940ba6c1aca275f8  test/watx-compiler-br-table.test.js
 afd4baa36b08662bbba4bc6c0ae6fa695165f9b8a2bfe2d4798d78bdfb3cadbe  test/watx-compiler-bulk-memory.test.js
-12ae3c4940039d44b02205d8144a94b321b93ca394b9923396d4da3fdcd54ecc  test/watx-compiler-simd.test.js
+d3b11de0f87fdd1bdd839ea391aa551ab70d01fb917f6c696fa11559ff1fe805  test/watx-compiler-simd.test.js
 8f3d40789b71d0b93892aa6117362ab5eb171101f794df680d95e34fe20a57e1  test/watx-compiler-atomics.test.js
 044022190b5888f5c69f2c480a7501bbeb75de543a7b9ec0c1c34c9a7def6036  test/watx-compiler-simd-ops.test.js
 29cf15495c2232e61c104e070054b26c8c63ac141fa29c3ce19c2cba014c8fea  test/watx-compiler-simd-memarg.test.js
@@ -146,6 +146,6 @@ without re-sealing. Both lines are rewritten together by
 CHANGELOG already names the new digest.
 
 ```seal
-manifest-sha256   72b5cc4a809076c4cb769a32e6b3ccaac869fb83b1bbb86d7c577e32096200d7
-changelog-sha256  413b4c7382007a3ce95858372fa121d49c9477bad39adad48c8cb3e57c23a376
+manifest-sha256   c3554e582ff41d577c28137cce7e67eedfa5821359d81d7cd01dd3c12a05fe7e
+changelog-sha256  4476bc6d909e3f7a68c5420c4f04fe875cdd0afcdb8de250f5217a875f767e64
 ```

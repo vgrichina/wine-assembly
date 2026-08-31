@@ -816,3 +816,59 @@ non-i32 global).
 New manifest digest:
 
   72b5cc4a809076c4cb769a32e6b3ccaac869fb83b1bbb86d7c577e32096200d7
+
+## 2026-08-31 — `(v128.const <shape> …)` was a silent miscompile
+
+Found by the wabt differential oracle (`tools/watx-differential.js`), which is
+exactly the class of bug an independent encoder oracle exists to find: no test
+failed, no diagnostic fired, and the tree was unaffected — WATX's own byte-wise
+spelling is what `src/*.wat` uses, and it was always correct.
+
+Standard WAT writes a SIMD constant with a shape token saying how wide its lanes
+are:
+
+```wat
+(v128.const i8x16 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16)
+(v128.const i32x4 0x80000000 0x7fffffff 0xffffffff 1)
+```
+
+The `head === 'v128.const'` branch read exactly 16 operands and wrote each one
+`& 0xff`. It had no idea a shape token could be there, so:
+
+* the token itself became **lane 0** — `immVal` ran `parseInt('i8x16')`, got
+  `NaN`, and took the documented fall-through to the default `0`;
+* every later lane **shifted one position** and the sixteenth was **dropped**;
+* under any shape wider than `i8x16` each lane was **truncated to one byte**, so
+  `i32x4 … 0xffffffff` put a single `0xff` where four bytes belong and the other
+  three bytes of that lane came from the neighbouring operands.
+
+The module compiled, validated and ran. It simply computed with a constant
+nobody wrote. `0x80000000` is the second half of the same trap: a lane that goes
+through a JS `Number` has already lost the sign bit before anything masks it.
+
+Both spellings are now accepted and they are unambiguous — a shape token is a
+symbol atom, a byte-wise operand is always a number (or an `(i32.const N)`
+subform). All six standard shapes are handled (`i8x16`, `i16x8`, `i32x4`,
+`i64x2`, `f32x4`, `f64x2`), each lane encoded little-endian at its own width.
+Every integer shape goes through `parseI64Literal`, so a lane written
+`0x80000000` or `-1` lands as its two's-complement bit pattern rather than as
+whatever a `Number` had left; the float shapes encode through a `DataView` at
+the lane's own width.
+
+A malformed constant is a **located error**, not a guess: an unknown shape token
+names the six that exist, a lane count that disagrees with its shape says which
+shape and how many it got, and the byte-wise form is now strict at 16 operands —
+it used to zero-pad a short one and drop the tail of a long one, both silently.
+
+The canonical artifacts cannot move: `src/*.wat` contains **zero** `v128.const`
+sites, and `build/wine-assembly.wasm` / `.compat.wasm` hash to
+`737ff788821985d8` / `fcc1b67506ea9c49` on both sides. `watx-compiler-simd`
+37 → 51: the eight shape cases assert the **stored 16 bytes** rather than a
+derived scalar (a wrong lane cannot hide behind an extract that happens to land
+on a correct byte), including the byte-wise/`i8x16` pairing that is the whole
+bug in one line, plus six rejections. The reproducer
+`tools/watx-repro/v128-const-shape.js` flips from exit 1 to exit 0.
+
+New manifest digest:
+
+  c3554e582ff41d577c28137cce7e67eedfa5821359d81d7cd01dd3c12a05fe7e

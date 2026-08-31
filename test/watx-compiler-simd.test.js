@@ -395,5 +395,75 @@ ck('extract_lane: (i32.const 1) === bare 1 (spellings agree)',
    laneViaIconst === laneViaBare,
    '(iconst=' + laneViaIconst.toString(16) + ', bare=' + laneViaBare.toString(16) + ')');
 
+// ── (16) v128.const, standard-WAT SHAPE spelling ──────────────────────────────
+// Regression for the 2026-08-31 HIGH found by the wabt differential oracle:
+// (v128.const <shape> ...) was SILENTLY MISCOMPILED. The emitter read 16
+// operands and masked each `& 0xff` without ever looking for a shape token, so
+// the token itself became lane 0 (parseInt('i8x16') -> NaN -> default 0), every
+// later lane shifted one position, the 16th was dropped, and a shape wider than
+// i8x16 had each lane truncated to a single byte. Nothing diagnosed it.
+//
+// These cases assert the BYTES, not a derived scalar: each module stores one
+// constant to memory and the test reads the 16 bytes back, so a wrong lane
+// cannot hide behind an extract that happens to land on a correct byte. The
+// expected byte strings are written out by hand, little-endian per lane.
+function shapeBytes(constExpr) {
+  // compile() supplies and exports the module's memory as "memory", the same one
+  // the main module above reads through ex.memory; 0x3000 is past every buffer it uses.
+  const r = compile(`
+    (func $st (effects) (v128.store (i32.const 0x3000) ${constExpr}))
+    (wasm-export "st" $st)
+  `, {});
+  if (!r || !r.success || !r.wasmBinary) return { error: String((r && (r.error || r.message)) || 'compile failed') };
+  try {
+    const ex = new WebAssembly.Instance(new WebAssembly.Module(r.wasmBinary), {}).exports;
+    ex.st();
+    return { bytes: Array.from(new Uint8Array(ex.memory.buffer, 0x3000, 16)).join(',') };
+  } catch (e) { return { error: String(e.message || e) }; }
+}
+
+const SHAPE_CASES = [
+  // The byte-wise WATX spelling and the i8x16 shape spelling of the same
+  // constant must produce the same 16 bytes — that pairing is what the old code
+  // got wrong, and it is the whole bug in one line.
+  ['byte-wise 1..16', '(v128.const 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16)',
+   '1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16'],
+  ['i8x16 1..16 (no lane dropped, no shift)', '(v128.const i8x16 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16)',
+   '1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16'],
+  ['i8x16 sign-extends -1 to 0xff', '(v128.const i8x16 -1 0 -1 0 -1 0 -1 0 -1 0 -1 0 -1 0 -1 0)',
+   '255,0,255,0,255,0,255,0,255,0,255,0,255,0,255,0'],
+  ['i16x8 two bytes per lane, little-endian', '(v128.const i16x8 0x0201 0x0403 0x0605 0x0807 0x0a09 0x0c0b 0x0e0d 0x100f)',
+   '1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16'],
+  // 0x80000000 and 0xffffffff are the two literals a Number-based path loses:
+  // one is > 2^31-1, the other truncates to a single 0xff byte.
+  ['i32x4 four bytes per lane, full 32-bit range', '(v128.const i32x4 0x80000000 0x7fffffff 0xffffffff 1)',
+   '0,0,0,128,255,255,255,127,255,255,255,255,1,0,0,0'],
+  ['i64x2 eight bytes per lane', '(v128.const i64x2 0x0807060504030201 -1)',
+   '1,2,3,4,5,6,7,8,255,255,255,255,255,255,255,255'],
+  ['f32x4 IEEE-754 single lanes', '(v128.const f32x4 1.0 -2.0 0.0 0.5)',
+   '0,0,128,63,0,0,0,192,0,0,0,0,0,0,0,63'],
+  ['f64x2 IEEE-754 double lanes', '(v128.const f64x2 1.0 -2.0)',
+   '0,0,0,0,0,0,240,63,0,0,0,0,0,0,0,192'],
+];
+for (const [name, expr, want] of SHAPE_CASES) {
+  const got = shapeBytes(expr);
+  ck(`v128.const ${name}`, got.bytes === want, got.error || got.bytes);
+}
+
+// Malformed shapes and lane counts must be a compile error, never a guess: every
+// one of these used to compile to a plausible-looking wrong constant.
+const SHAPE_REJECTS = [
+  ['an unknown shape token', '(v128.const i16x4 1 2 3 4)'],
+  ['too few lanes for i32x4', '(v128.const i32x4 1 2 3)'],
+  ['too many lanes for i32x4', '(v128.const i32x4 1 2 3 4 5)'],
+  ['too few lanes for i8x16', '(v128.const i8x16 1 2 3)'],
+  ['a byte-wise form with 15 operands', '(v128.const 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15)'],
+  ['a byte-wise form with 17 operands', '(v128.const 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17)'],
+];
+for (const [name, expr] of SHAPE_REJECTS) {
+  const got = shapeBytes(expr);
+  ck(`v128.const rejects ${name}`, !!got.error, got.bytes);
+}
+
 console.log(`\nwatx-compiler-simd: ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);
