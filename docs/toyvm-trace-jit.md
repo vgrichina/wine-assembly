@@ -1286,3 +1286,35 @@ the guest is not stuck — it runs the same surrounding code and paints a
 different picture. The snapshot bench cannot see any of this: `--agree` reports
 all three tiers matching over 400,000 iterations, because the thing that is
 wrong is the region's re-entry, which a straight-line snapshot never performs.
+
+### ...and ACCIDENT is the same headline with a different tail
+
+The same ladder on ACCIDENT.EXE (34-op region at `1bb5:2d41`, 12M dispatches)
+splits one row differently:
+
+| arm | CONTACT | ACCIDENT |
+|---|---|---|
+| default | DIFFERS | DIFFERS |
+| `--no-lower` | IDENTICAL | IDENTICAL |
+| `--once` | DIFFERS | DIFFERS |
+| `--no-lower --once` | DIFFERS | **IDENTICAL** |
+
+So the head-exit rule above is CONTACT's, not a corpus law: ACCIDENT is
+indifferent to the back edge and cares only about the lowering. What both
+programs agree on is the headline — **`--no-lower` makes each of them
+frame-identical to the interpreter, and nothing else does.** Branch lowering
+(`splitBranch` / `splitJump` and the `act()` that decides which arm falls
+through inline) is the one thing on the failure path for both, which is where
+the next pass over this should start.
+
+Two process notes worth keeping, because both cost time here:
+
+- **Read the whole ladder from separate invocations.** A shell loop that prints
+  a program's verdict with `printf` and no newline silently shows a *blank* for
+  a run that declined or crashed, and a blank next to a label reads as the
+  previous row's answer. Two rows of the first ACCIDENT ladder were declines,
+  not results, and they inverted the conclusion.
+- **`tools/toyvm` compiles through `lib/compile-wat.js`**, which another agent
+  cut over to WATX mid-session (`23ed9639`, `24b79256`). Any region measurement
+  taken across that boundary is two different compilers, so re-baseline rather
+  than compare across it.
