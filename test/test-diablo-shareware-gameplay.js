@@ -124,7 +124,7 @@ if (!ANALYZE_ONLY) {
     // agents sweeping, where the same run takes several times that, so the cap
     // is generous on purpose: a tight one turns a busy box into a "Diablo
     // regressed" report, which is a far more alarming claim than the truth.
-    execSync(cmd, { encoding: 'utf-8', timeout: 600000, cwd: ROOT });
+    execSync(cmd, { encoding: 'utf-8', timeout: 300000, cwd: ROOT });
   } catch (e) {
     const tail = fs.existsSync(LOG)
       ? fs.readFileSync(LOG, 'utf-8').split('\n').slice(-40).join('\n') : '';

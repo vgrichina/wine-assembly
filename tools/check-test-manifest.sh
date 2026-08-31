@@ -38,5 +38,9 @@ if [ -n "$stale" ]; then
   rc=1
 fi
 
+if ! node tools/check-test-timeouts.js; then
+  rc=1
+fi
+
 [ $rc -eq 0 ] && echo "check-test-manifest: OK ($(echo "$actual" | wc -l | tr -d ' ') files, all accounted for)"
 exit $rc

@@ -130,7 +130,7 @@ const result = spawnSync(process.execPath, [
   '--batch-size=200000',
   '--time-scale=10',
   '--repaint-every=10',
-  '--max-seconds=600',
+  '--max-seconds=300',
   '--quiet-api',
   '--quiet-blocks',
   `--save-vfs=${SAVE_EXPORT}`,
@@ -140,7 +140,7 @@ const result = spawnSync(process.execPath, [
 ], {
   cwd: ROOT,
   encoding: 'utf8',
-  timeout: 660000,
+  timeout: 300000,
   maxBuffer: 32 * 1024 * 1024,
 });
 const output = `${result.stdout || ''}\n${result.stderr || ''}`;

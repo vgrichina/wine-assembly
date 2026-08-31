@@ -164,7 +164,7 @@ async function main() {
       ...characterCreationInput(gameplay),
     ].join(',');
     const output = run('interactive demo', fixtures.interactive, [
-      '--max-batches=760', '--batch-size=200000', '--max-seconds=900',
+      '--max-batches=760', '--batch-size=200000', '--max-seconds=300',
       '--time-scale=10', `--input=${input}`,
     ], 950000);
     assert(output.includes('title="JigSawedME"'), 'the interactive game window was not created');
@@ -194,7 +194,7 @@ async function main() {
       ...characterCreationInput(gameplay),
     ].join(',');
     const output = run('Chapters I & II preview', fixtures.chapters, [
-      '--max-batches=760', '--batch-size=200000', '--max-seconds=900',
+      '--max-batches=760', '--batch-size=200000', '--max-seconds=300',
       '--time-scale=10', `--input=${input}`,
     ], 950000);
     assert(output.includes('title="JigSawedME"'), 'the Chapters I & II game window was not created');

@@ -54,7 +54,7 @@ const run = spawnSync(process.execPath, [
 ], {
   cwd: root,
   encoding: 'utf8',
-  timeout: 900000,
+  timeout: 300000,
   maxBuffer: 32 * 1024 * 1024,
 });
 const output = `${run.stdout || ''}\n${run.stderr || ''}`;

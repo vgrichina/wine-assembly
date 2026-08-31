@@ -53,7 +53,7 @@ function main() {
     '--max-batches=6000', '--batch-size=25000', '--vlan-ip=10.77.0.2',
     `--input=${INPUT}`,
     '--trace-api=socket,connect,WSAAsyncSelect,getservbyname,getprotobyname,inet_addr'], {
-    cwd: ROOT, encoding: 'utf8', timeout: 600000, maxBuffer: 96 * 1024 * 1024,
+    cwd: ROOT, encoding: 'utf8', timeout: 300000, maxBuffer: 96 * 1024 * 1024,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   if (result.error) throw result.error;

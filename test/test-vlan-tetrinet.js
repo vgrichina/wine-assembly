@@ -99,7 +99,7 @@ const extra = v => (v ? v.split(' ').filter(Boolean) : []);
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-async function waitFor(state, pattern, what, timeoutMs = 600000) {
+async function waitFor(state, pattern, what, timeoutMs = 300000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (state.hits.has(pattern)) return true;

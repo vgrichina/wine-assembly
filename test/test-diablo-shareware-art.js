@@ -119,7 +119,7 @@ if (!ANALYZE_ONLY) {
     // the cap is generous on purpose: a tight one turns a busy machine into a
     // "Diablo regressed" report, which is a much more alarming claim than the
     // truth. Only a genuine hang should reach it.
-    execSync(cmd, { encoding: 'utf-8', timeout: 900000, cwd: ROOT });
+    execSync(cmd, { encoding: 'utf-8', timeout: 300000, cwd: ROOT });
   } catch (e) {
     const tail = fs.existsSync(LOG)
       ? fs.readFileSync(LOG, 'utf-8').split('\n').slice(-40).join('\n') : '';

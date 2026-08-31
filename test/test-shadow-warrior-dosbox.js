@@ -36,7 +36,7 @@ const args = [
   `--vfs-mount=${gogConfig}=c:\\dosbox_swarrior.conf`,
   `--vfs-mount=${waConfig}=c:\\dosbox-wa.conf`,
   '--no-build', '--screen=800x600', '--max-batches=10000',
-  '--max-seconds=360', '--batch-size=5000000', '--real-ticks',
+  '--max-seconds=300', '--batch-size=5000000', '--real-ticks',
   '--repaint-every=20', '--stuck-after=1000000', '--quiet-api',
   '--quiet-blocks', '--no-close', `--png=${startup}`,
 ];
@@ -45,7 +45,7 @@ try {
   const run = spawnSync(process.execPath, args, {
     cwd: root,
     encoding: 'utf8',
-    timeout: 420000,
+    timeout: 300000,
     maxBuffer: 32 * 1024 * 1024,
   });
   const output = `${run.stdout || ''}\n${run.stderr || ''}`;

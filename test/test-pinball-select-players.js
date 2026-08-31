@@ -60,7 +60,7 @@ try {
     const r = spawnSync(process.execPath, runArgs, {
       cwd: ROOT,
       stdio: ['ignore', fd, fd],
-      timeout: 360000,
+      timeout: 300000,
       maxBuffer: 64 * 1024 * 1024,
     });
     status = r.status === null ? 1 : r.status;

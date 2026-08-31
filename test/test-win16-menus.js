@@ -52,7 +52,7 @@ function sweep(exe) {
   const json = path.join(os.tmpdir(), `win16-menus-${process.pid}-${path.basename(exe)}.json`);
   try {
     execFileSync('node', [path.join(ROOT, 'tools', 'menu-sweep.js'), exe, `--json=${json}`],
-      { encoding: 'utf8', timeout: 600000, stdio: ['ignore', 'pipe', 'pipe'] });
+      { encoding: 'utf8', timeout: 300000, stdio: ['ignore', 'pipe', 'pipe'] });
   } catch (e) {
     // A nonzero exit is how the sweep reports bad verdicts; the JSON is still
     // written, and it says which ones. Only a missing file is fatal here.

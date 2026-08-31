@@ -55,7 +55,7 @@ function menu(id, shot, batches = 26000) {
     path.join(ROOT, 'test', 'run.js'), `--exe=${EXE}`,
     `--max-batches=${batches}`,
     `--input=${ANSWER_STARTUP},12000:post-cmd:${id},${batches - 4000}:png:${shot}`,
-  ], { encoding: 'utf8', timeout: 600000, maxBuffer: 64 * 1024 * 1024 });
+  ], { encoding: 'utf8', timeout: 300000, maxBuffer: 64 * 1024 * 1024 });
   return {
     log,
     clean: !/CRASH|UNIMPLEMENTED API|STUCK/.test(log),
@@ -127,7 +127,7 @@ function main() {
   const help = execFileSync('node', [
     path.join(ROOT, 'test', 'run.js'), `--exe=${EXE}`, '--max-batches=26000',
     '--trace-win16', `--input=${ANSWER_STARTUP},12000:post-cmd:106`,
-  ], { encoding: 'utf8', timeout: 600000, maxBuffer: 256 * 1024 * 1024 });
+  ], { encoding: 'utf8', timeout: 300000, maxBuffer: 256 * 1024 * 1024 });
   check('Help Topics did not crash', !/CRASH|UNIMPLEMENTED API|STUCK/.test(help));
   check('Help Topics asked WinHelp for the index',
     /USER\.171 WINHELP\(0x00000000, 0x00000000, 0x00000003/.test(help));
@@ -140,7 +140,7 @@ function main() {
     path.join(ROOT, 'test', 'run.js'), `--exe=${EXE}`, '--max-batches=80000',
     `--input=${ANSWER_STARTUP},30000:post-cmd:102,60000:post-cmd:125,` +
       `72000:png:${table}`,
-  ], { encoding: 'utf8', timeout: 900000, maxBuffer: 64 * 1024 * 1024 });
+  ], { encoding: 'utf8', timeout: 300000, maxBuffer: 64 * 1024 * 1024 });
   check('New Game then Score did not crash',
     !/CRASH|UNIMPLEMENTED API|STUCK/.test(played));
   check('the in-game Score Sheet lists the computer players too',

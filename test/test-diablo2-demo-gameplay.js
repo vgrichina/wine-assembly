@@ -43,7 +43,7 @@ const run = spawnSync(process.execPath, [
   '--no-build',
   '--batch-size=1000000',
   '--max-batches=1680',
-  '--max-seconds=330',
+  '--max-seconds=300',
   '--repaint-every=10000',
   '--quiet-api',
   '--quiet-blocks',

@@ -28,10 +28,10 @@ gates that now exist are real, but two of them were initially *worked around by
 process* rather than by code. The silent-stub ratchet was re-pinned one commit
 after each stub removal, so `build.sh` was red on `main` for 22 of the 204
 reviewed commits; §P3-3.4 now closes that gap with broad body hashing, a
-ready-to-paste pin, and a clean-commit boundary check. The other remains: 250
-of the 677 tiered tests carry a `SKIP` path that
-`run-all.sh` counts as `PASS`, so 37% of the suite is green on a machine with no
-fixtures without anyone seeing a SKIP column (§P3-3.5). Three real bugs landed
+ready-to-paste pin, and a clean-commit boundary check. Section P3-3.5 now closes
+the other gap too: fixture absence becomes exit 77, `run-all.sh` reports a
+separate SKIP column, and the manifest gate rejects child budgets above its
+300-second wall-clock cap. Three real bugs landed
 with new features and are now fixed: `ReadConsoleOutputA/W` wrote past the
 caller's buffer for an oversized region (§P3-3.1), the MW3 grid-filter super-op
 stored through guest memory without scalar-store SMC invalidation (§P3-3.2),
@@ -54,7 +54,7 @@ model is one lock across both backends.
 | `crash_unimplemented` sites | 98 | **137** | D3D9 flip + new DX rows |
 | Silent-handler ratchet pin | — | **524 broad** (was 315 exact-shape) | see §P3-3.4 |
 | Tests / unlisted | 631 / 48 | **677 / 0** | gate in `build.sh:25` |
-| Tests with a SKIP path | — | **250** | §P3-3.5 |
+| SKIP accounting | — | **exit 77, separate total** | §P3-3.5 |
 | `test/run.js` / `host.js` / `index.html` | 8,612 / 2,553 / 2,324 | 8,672 / 2,553 / **2,477** | index regrew |
 | `?v=` tags / `SOURCE_VERSION` | 44 / `234` vs `'228'` | **45 / `248` vs `'239'`** | now four counters (§P3-3.10) |
 | `lib/apps.js` entries | 141 | **146** | |
@@ -184,19 +184,27 @@ inventories with `HEAD^` and rejects a pin-only catch-up commit unless the
 classifier itself changed (`:99-157`). Source archives and dirty development
 trees retain the ordinary content ratchet without depending on Git.
 
-**3.5 250 of 677 tests can pass without running.** `run-all.sh:848-852` counts
-any exit-0 as `PASS` with no SKIP row; 250 test files contain a
-`console.log('SKIP…'); process.exit(0)` path for a missing fixture — every
-candidate-corpus test (`test-icewind-dale-demo.js:35-38`,
-`test-baldurs-gate-demos.js:37-38`, `test-far-manager-candidate.js:49`, Deus Ex,
-qbob/dxball) and most of the GOG set. On a machine without the fixtures the
-suite is 37% green-by-absence and the totals do not say so. Compounding it: 34
-listed tests declare their own budget above the runner's 300 s kill
-(`run-all.sh:783`; `test-icewind-dale-demo.js:158` is 660 s with
-`--max-seconds=600`), so in a tiered run those can only SKIP or be killed as
-`TIME` — never actually pass. *Fix:* a `SKIP` exit code (say 77) that
-`run-all.sh` tallies in its own column; refuse a per-test timeout above the
-runner cap at manifest-check time.
+**3.5 250 of 677 tests can pass without running — FIXED.** Historically,
+fixture tests logged a leading `SKIP` and then returned or called
+`process.exit(0)`, which `run-all.sh` counted as PASS; the reviewed tree could
+therefore report 37% green-by-absence. `test/skip-exit.js` now defines that
+existing log convention as a process protocol: natural completion and explicit
+exit 0 become status 77 after a leading SKIP, while any real nonzero failure is
+preserved (`:5-32`). The tier runner preloads it for each direct child
+(`run-all.sh:828-864`), classifies 77 separately (`:895-908`), and carries
+per-tier and global skipped counters through the summary (`:918-949`). The
+focused regression covers natural completion, explicit exit, failure
+precedence, and non-protocol prose (`test-skip-exit.js`).
+
+The impossible timeout half is closed by the manifest gate too.
+`tools/check-test-timeouts.js` reads the runner's named 300-second default,
+scans every listed test for numeric `timeout*` declarations and
+`--max-seconds=N`, ignores JS comments, and fails on values above the cap
+(`:11-94`). `check-test-manifest.sh:41-43` runs it before reporting a complete
+suite. Seventeen listed files whose 330–900 second child budgets could never
+outlive the runner were reduced to the already-enforced 300-second ceiling;
+the checker regression covers equality, both over-cap forms, comments, and
+manifest wiring (`test-test-timeout-manifest.js`).
 
 **3.6 The memory-map gate sees only `_SIZE`-paired globals — FIXED `8ed5ae8c`.**
 Every `0x07xxxxxx` constant-address global must now either publish its own
@@ -412,8 +420,8 @@ Pass 1.
    setter sets in a test.~~ **FIXED** (3.3)
 4. ~~Re-pin the stub ratchet in the same commit, print the replacement pin,
    and widen coverage to handlers with no call/branch/store.~~ **FIXED** (3.4)
-5. A SKIP exit code tallied in its own `run-all.sh` column; manifest check
-   refuses per-test timeouts above the runner cap. (3.5)
+5. ~~Use a SKIP exit code with its own runner column and refuse per-test
+   timeouts above the runner cap.~~ **FIXED** (3.5)
 
 **Tier 2 — gates that are one rule short:**
 6. Memory-map gate fails on any high-range global without `_SIZE`. (3.6)
@@ -486,9 +494,9 @@ stores changed shape (`07b:3271-3286` now pick `i32.store16`/`i32.store` when
 still has no `$invalidate_code_write` — the gate is "is it mapped", not "was it
 ever code", so 3.2 stands. `DX_PROCESS_STATE` gained its `_SIZE` (`09a8:284`,
 0x1C) — still in the uncommitted tree, and the header comment at
-`01-header.wat:1330` says 32 B. Everything else (3.1 console clamp, 3.3 worker
-setters and the CLAUDE.md claim, 3.5 SKIP, 3.6 unpaired-globals rule, 3.7
-check-parens, 3.9 COPY gate, 3.11, 3.12) is verbatim open.
+`01-header.wat:1330` says 32 B. At this addendum checkpoint, 3.1, 3.3, 3.5,
+3.6, 3.7, 3.9, 3.11, and 3.12 were still open; the current statuses above
+supersede this historical snapshot.
 
 **By 16:16 (+5 commits, HEAD `e43a4699`)** three more closed from the board:
 the compile-wat strictness follow-up under 3.7 (`9faa2299`), the console-key

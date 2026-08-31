@@ -38,6 +38,8 @@ for a in "$@"; do
 done
 
 UNIT=(
+  test/test-skip-exit.js
+  test/test-test-timeout-manifest.js
   test/test-check-parens.js
   test/test-boot-cursor.js
   test/test-x86-ops.js
@@ -493,7 +495,6 @@ UNIT=(
   test/test-window-from-point.js
   test/test-fnstsw-test-jcc.js
   test/test-winsparkle-stubs.js
-  test/test-worker-load-dll-clone.js
   test/test-worker-sparse-thread-stack.js
 )
 
@@ -824,7 +825,9 @@ TEST_HEAP_MB="${TEST_HEAP_MB:-2048}"
 # counts as a failure -- a suite that stalls is a suite nobody waits for.
 # The cap is deliberately far above what any test needs (the slowest gameplay
 # test measures 8.5s) so it catches hangs, not slow machines.
-TEST_TIMEOUT="${TEST_TIMEOUT:-300}"
+DEFAULT_TEST_TIMEOUT=300
+TEST_TIMEOUT="${TEST_TIMEOUT:-$DEFAULT_TEST_TIMEOUT}"
+SKIP_EXIT_STATUS=77
 
 # bash 3.2 (what macOS ships) has no `wait -n`, so slots are polled.
 run_tier() {
@@ -832,7 +835,7 @@ run_tier() {
   local files=("$@")
   local log_dir="$LOG_ROOT/$tier_name"
   mkdir -p "$log_dir"
-  local passed=0 failed=0
+  local passed=0 skipped=0 failed=0
   local fail_list=()
   echo "=== $tier_name (${#files[@]} files, ${JOBS} at a time) ==="
   local start_tier=$SECONDS
@@ -857,7 +860,8 @@ run_tier() {
         slot_log[$i]="$log_dir/$name.log"
         slot_start[$i]=$SECONDS
         NODE_OPTIONS="${NODE_OPTIONS:-} --max-old-space-size=$TEST_HEAP_MB" \
-          node "$f" >"${slot_log[$i]}" 2>&1 &
+          WA_TEST_SKIP_EXIT="$SKIP_EXIT_STATUS" \
+          node --require "$PWD/test/skip-exit.js" "$f" >"${slot_log[$i]}" 2>&1 &
         slot_pid[$i]=$!
         running=$((running + 1))
         next=$((next + 1))
@@ -894,6 +898,9 @@ run_tier() {
         if [ $status -eq 0 ]; then
           printf "PASS  %-40s  %3ds\n" "${slot_name[$i]}" "$((SECONDS - slot_start[$i]))"
           passed=$((passed + 1))
+        elif [ $status -eq "$SKIP_EXIT_STATUS" ]; then
+          printf "SKIP  %-40s  %3ds  %s\n" "${slot_name[$i]}" "$((SECONDS - slot_start[$i]))" "${slot_log[$i]}"
+          skipped=$((skipped + 1))
         else
           printf "FAIL  %-40s  %3ds  %s\n" "${slot_name[$i]}" "$((SECONDS - slot_start[$i]))" "${slot_log[$i]}"
           failed=$((failed + 1))
@@ -908,16 +915,18 @@ run_tier() {
     [ $reaped -eq 0 ] && [ $running -gt 0 ] && sleep 0.2
   done
   trap - INT TERM
-  echo "--- $tier_name: $passed passed, $failed failed in $((SECONDS - start_tier))s"
+  echo "--- $tier_name: $passed passed, $skipped skipped, $failed failed in $((SECONDS - start_tier))s"
   if [ ${#fail_list[@]} -gt 0 ]; then
     TOTAL_FAILS+=("${fail_list[@]}")
   fi
   TOTAL_PASS=$((TOTAL_PASS + passed))
+  TOTAL_SKIP=$((TOTAL_SKIP + skipped))
   TOTAL_FAIL=$((TOTAL_FAIL + failed))
   echo
 }
 
 TOTAL_PASS=0
+TOTAL_SKIP=0
 TOTAL_FAIL=0
 TOTAL_FAILS=()
 
@@ -937,7 +946,7 @@ case "$TIER" in
 esac
 
 echo "======================================"
-echo "TOTAL: $TOTAL_PASS passed, $TOTAL_FAIL failed"
+echo "TOTAL: $TOTAL_PASS passed, $TOTAL_SKIP skipped, $TOTAL_FAIL failed"
 if [ $TOTAL_FAIL -gt 0 ]; then
   printf '  fail: %s\n' "${TOTAL_FAILS[@]}"
   exit 1

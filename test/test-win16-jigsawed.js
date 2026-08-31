@@ -54,7 +54,7 @@ try {
     `1300:mouseup:353:288,1450:png:${afterScreenshot}`);
 
   const output = execFileSync(process.execPath, args, {
-    cwd: ROOT, encoding: 'utf8', timeout: 360000,
+    cwd: ROOT, encoding: 'utf8', timeout: 300000,
     maxBuffer: 16 * 1024 * 1024,
   });
   assert.doesNotMatch(output,

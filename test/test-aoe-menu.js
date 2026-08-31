@@ -109,7 +109,7 @@ try {
   out = execFileSync('node', args, {
     cwd: ROOT,
     encoding: 'utf-8',
-    timeout: 480000,
+    timeout: 300000,
     stdio: ['ignore', 'pipe', 'pipe'],
     maxBuffer: 64 * 1024 * 1024,
   });

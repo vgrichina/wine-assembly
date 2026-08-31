@@ -84,7 +84,7 @@ console.log('$', cmd);
 
 let out = '';
 try {
-  out = execSync(cmd, { encoding: 'utf-8', timeout: 360000, cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
+  out = execSync(cmd, { encoding: 'utf-8', timeout: 300000, cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
 } catch (e) {
   out = (e.stdout || '').toString() + (e.stderr || '').toString();
   console.log('(run.js exited non-zero — output captured)');

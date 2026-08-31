@@ -40,7 +40,7 @@ const run = (input) => {
   const cmd = `node "${RUN}" --exe="${EXE}" --no-close --batch-size=50000 ` +
     `--max-batches=700 --quiet-blocks --quiet-api --input=${input}`;
   try {
-    return execSync(cmd, { encoding: 'utf-8', timeout: 600000, cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+    return execSync(cmd, { encoding: 'utf-8', timeout: 300000, cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
   } catch (e) {
     return (e.stdout || '').toString() + (e.stderr || '').toString();
   }
