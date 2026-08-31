@@ -106,6 +106,14 @@ growth-factor budget cannot decline it. The two arguments are independent — on
 is about the branch predictor, one is about the compiler's budget — and they
 point the same way.
 
+There is a third, and it is the most concrete of the three. `tools/wasm-native.js`
+was pointed at this exact function and recorded that **`$next` compiles to 193
+native instructions, and opens every dispatch with a frame setup, a stack-limit
+check and an interrupt check.** Those three are the price of `$next` being a
+separate function at all. Replication does not optimize them — it deletes them,
+because there is no longer a function being entered. That is a per-dispatch cost
+independent of anything the branch predictor does.
+
 ## 5. What could go wrong, and why it must be measured rather than assumed
 
 **`$next` is much fatter here than in the toy VM.** The main emulator's version
@@ -121,6 +129,30 @@ Replicating all four 406 times trades branch-predictor pressure for instruction
 cache pressure — the opposite direction from the thing being bought. The toy
 VM's `$next` is a fraction of this, so its +10.6% was measured on a thinner
 tail than a naive port would produce.
+
+**But the fat is separable, and that is the whole design.** Replicate the fast
+path; leave the slow paths behind a cold call. Part by part:
+
+| part of `$next` | disposition | what stays in the replicated tail |
+|---|---|---|
+| 1. `steps--`, `resume_ip` escape | **inline** | ~3 instructions. It cannot be outlined: it is a `return`, not a call, and the return has to happen in the handler's own frame to land back in `$run`. Outlining the body would still leave the branch, so there is nothing to win. |
+| 2. `fn >= 443` recovery | **split** | the compare and branch (2 instructions). The `0xCAC4BAD0` log, `$clear_cache` and the return move into a cold `$dispatch_bad`. Same trick as above: the branch stays, the body leaves. |
+| 3. `$handler_hist_enabled` | **remove, not outline** | nothing. This is a global load plus a branch on every dispatch to serve a debug flag. Build the replicated tails without it and let a `--handler-hist` build fall back to the shared `$next`. Zero cost in the shipping build. |
+| 4. load / advance / `return_call_indirect` | **inline** | the point of the exercise. |
+
+That lands the tail at roughly two loads, an add, a store, three branches and
+the indirect call — close to the shape the +10.6% was measured on.
+
+**The trap in this plan is that the engine may inline the cold callee back
+in.** If V8 decides `$dispatch_bad` fits its budget, it reappears in all 406
+copies and the split silently did nothing. `$clear_cache` is probably large
+enough to be refused, but "probably" is not a measurement, and this repo has
+the tool that settles it: `node tools/wasm-native.js --func='$th_add_r_i32'`
+(and `--top` for a size census) shows the machine code the JIT actually
+produced. Check two things there before trusting any timing — that the
+replicated tail is small, and that the cold path stayed out of line. Note the
+tool is SpiderMonkey Ion, not V8 TurboFan: read it for structure, never for a
+cycle count attributed to Chrome.
 
 **Code growth is not monotonic, and the same document proves it.** `switch`, the
 other code-growth arm, is bimodal: **+40.1%** on DSTNFO and **−26.0%** on
@@ -148,10 +180,12 @@ version is unmaintainable and un-revertable.
 
 Staged, cheapest experiment first:
 
-1. **Replicate the thin tail only.** Inline the `$steps` escape, the
-   load/advance and the `return_call_indirect`. Leave the bounds-check recovery
-   and the histogram branch behind `$next` (or behind a build flag), so the
-   replicated tail resembles the shape the +10.6% was measured on.
+1. **Replicate the thin tail only**, per the split table in §5: inline the
+   `$steps` escape, the bounds *compare*, the load/advance and the
+   `return_call_indirect`; move the recovery body into a cold `$dispatch_bad`;
+   drop the histogram branch and let `--handler-hist` builds use the shared
+   `$next`. Verify with `tools/wasm-native.js` that the cold path really stayed
+   out of line before timing anything.
 2. **Top-N before all-406.** Take the hot handler list from `--handler-hist` and
    replicate only those. That captures most of the predictor benefit at almost
    no icache cost. If the partial build wins and the full build does not, that
