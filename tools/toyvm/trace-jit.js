@@ -1242,8 +1242,12 @@ function emitTier2(ops, passes = { constprop: true, regfold: true, deadflags: tr
 function emitTier3(ops, passes) {
   const t2 = emitTier2(ops, passes);
   let eaFolded = 0, eaA32 = 0, eaDynamic = 0, segFolded = 0, segDynamic = 0, arith = 0;
+  // `passes.ea: false` / `passes.seg: false` exist to be turned OFF while
+  // bisecting a wrong region. Everything else in tier 3 was already switchable
+  // and these two were not, so a bisect that reached "no passes at all" was
+  // still folding addresses and segments and could not clear them.
   let bodies = t2.bodies.map((b) => {
-    const r = foldEa(b);
+    const r = passes.ea === false ? { out: b, changed: 0, a32: 0, dynamic: 0 } : foldEa(b);
     eaFolded += r.changed; eaA32 += r.a32; eaDynamic += r.dynamic;
     // Before foldSeg, not after: a segment index that is still an unevaluated
     // constant expression is indistinguishable from a dynamic one, and that is
@@ -1252,13 +1256,13 @@ function emitTier3(ops, passes) {
     arith += c.changed;
     const l = propagateLocalConsts(c.out);
     arith += l.changed;
-    const s = foldSeg(l.out);
+    const s = passes.seg === false ? { out: l.out, changed: 0, dynamic: 0 } : foldSeg(l.out);
     segFolded += s.changed; segDynamic += s.dynamic;
     return s.out;
   });
   // Register-file calls that only became foldable once $ea stopped hiding them.
   let folded = t2.folded;
-  bodies = bodies.map((b) => {
+  bodies = passes.regfold === false ? bodies : bodies.map((b) => {
     const r = foldRegisterFile(b); folded += r.changed;
     const w = foldRegisterFileWide(r.out); folded += w.changed;
     // Again after the register-file folds, which unpack their own index the

@@ -1034,3 +1034,53 @@ each block covered, read out of the compiler's own `covered` extents at build
 time and re-checked before every install, with the substitution declined if a
 byte has moved. That is a real hole closed — but it is not this one. The guard
 installs 41 bytes over ACCIDENT's single block and the divergence is unchanged.
+
+### Narrowing ACCIDENT: eight bisectors and what each one cleared
+
+The wrong frame above is reproducible and budget-dependent, so the first thing
+built was `--head=0xIP`, which pins the region to one guest ip. Without it the
+pick is a function of the profiling *budget*, and sweeping the budget to find
+where a region first goes wrong silently changes which region is being
+measured — ACCIDENT's 34-op loop at `0x2d41` looked benign at 2.2M and
+catastrophic at 12M partly because the two runs had chosen different loops.
+
+Pinned to `0x2d41`, the divergence appears between 5M and 8M dispatches: the
+baseline's interrupt count jumps 88 → 1206 as the program enters a new phase,
+and the region run stays at ~110. It never gets there.
+
+What has been cleared, each by a switch that is now in the tool:
+
+| bisector | result |
+|---|---|
+| `--trap` (region body is `unreachable`) | traps — so the region **is** entered |
+| `--succ-only` (successor list, no region) | **identical** — the extra decoded blocks are innocent |
+| `--no-succ` (region, no successor list) | unchanged — not the successors either way |
+| `--passes=` + `--no-promote` (no optimization at all) | unchanged |
+| `--no-spin --no-traced --no-cross-flags --no-dead-flags --no-fuse` | unchanged — the compiler's own assumptions about the arena words are not being violated |
+| `--irq-every=1b` (no timer interrupts) | unchanged — and it proved `ints` counts *guest* `int` instructions, so the region really is executing different code, not just drifting the clock |
+| `regionBytes` guard (self-modified code) | unchanged |
+| `--agree` (trace-jit's snapshot bench over the region's own ops) | **ALL THREE MATCH** — every register and every byte of guest memory agree between the interpreter and the compiled form |
+| `--once` (no back edge: a straight-line block replacement) | unchanged |
+
+So the ops are proven equivalent and the loop protocol is not the fault: a
+region that runs the same 34 ops exactly once per entry, with every optimization
+off, still diverges. What is left is what a region does at its **edges** — the
+state it is entered with, or what it publishes on the way out — for this block
+in particular. It is the only region in the corpus containing `movsb` and
+`mov_sr_r`, and it hands back at its own head 230 times, which no other region
+does.
+
+One thing the `--agree` run settled on the way past: for this op mix **tier 3 is
+0.94x of tier 0** — the compiled form is *slower* than the threaded code. This
+region should never have been installed on merit, and a snapshot-bench gate in
+front of the installer would have declined it before correctness ever came up.
+
+A related bug was found and fixed while looking: `splitBranch` took the
+textually last `(if` in a body rather than the last **top-level** one. A branch
+whose arms each contain an `(if` (every `CONT` resolve does) therefore failed
+its balance check, declined lowering, and fell back to the interpreter protocol
+— with a *profiling-run arena address* baked in as a constant. ACCIDENT's `loop`
+was exactly that shape. Lowering it changes the run (dispatches, handbacks and
+interrupt count all move) but does not fix the divergence, so the stale address
+was a second bug and not this one. The four demos whose frames match still
+match with it lowered.

@@ -66,7 +66,7 @@ const path = require('path');
 const { performance } = require('perf_hooks');
 const { runDos } = require('./run-dos');
 const { makeVm } = require('./vm');
-const { findHotTrace, readTrace, emitTier3 } = require('./trace-jit');
+const { findHotTrace, readTrace, emitTier3, benchTiers } = require('./trace-jit');
 const { HANDLERS, TAKEN_AT, prepareTables, sexpAt } = require('./emit');
 const isa = require('./isa');
 
@@ -228,6 +228,12 @@ function pickRegion(rr, ranked, minOps, maxOps = 400) {
       tried.add(h);
       const blk = headByAddr.get(h);
       if (!blk) { why(`0x${h.toString(16)}: not a block head`); continue; }
+      // `--head=0xIP` pins the region to one guest ip. The pick is otherwise a
+      // function of the profiling BUDGET, so sweeping the budget to find where
+      // a region first goes wrong silently changes which region is being
+      // measured -- which is how ACCIDENT's 34-op region looked benign at 2.2M
+      // and catastrophic at 12M when the two runs had picked different loops.
+      if (arg('head') !== undefined && blk.ip !== Number(arg('head'))) continue;
       const chain = chainFrom(h, headByAddr, traceAt, maxOps, why);
       if (!chain) continue;
       if (chain.ops.length < minOps) {
@@ -320,9 +326,21 @@ function balanced(s) {
 }
 
 function splitBranch(body) {
-  // Last `(if` first: the transfer is the tail of the body, and anything
-  // earlier belongs to the operation itself.
-  const at = body.lastIndexOf('(if ');
+  // The LAST TOP-LEVEL `(if`: the transfer is the tail of the body, and
+  // anything earlier belongs to the operation itself. Depth matters and a plain
+  // lastIndexOf gets it wrong in both directions -- an ALU body has its own
+  // `(if` before the transfer, and the transfer's own arms each contain one
+  // (the `CONT` resolve). Taking the textually last one lands INSIDE the else
+  // arm, the balance check then rejects it, and the whole branch falls back to
+  // the interpreter protocol with a profiling-run arena address baked into it.
+  // That is ACCIDENT.EXE's `loop`, and it is why a partially lowered region is
+  // worse than either a fully lowered one or none.
+  let at = -1;
+  for (let d = 0, i = 0; i < body.length; i++) {
+    if (d === 0 && body.startsWith('(if ', i)) at = i;
+    if (body[i] === '(') d++;
+    else if (body[i] === ')') d--;
+  }
   if (at < 0) return null;
   if (!balanced(body.slice(0, at))) return null;
   if (!balanced(body.slice(at))) return null;
@@ -366,8 +384,15 @@ function buildRegion(ops, nexts, headIp, name) {
   // `--no-promote` keeps the registers in globals. It is a bisector, not a
   // tuning knob: it separates "the region's control flow is wrong" from "a
   // promoted register was read stale", which look identical from the outside.
-  const t3 = emitTier3(ops, { constprop: true, regfold: true, deadflags: false,
-    promote: !flag('no-promote') });
+  // `--passes=` is the other half of that bisector: `--passes=` alone builds the
+  // region out of tier-1 bodies (operands folded, nothing else), so a region
+  // that is right there and wrong with a pass on names the pass.
+  const spec = arg('passes', 'constprop,regfold,ea,seg').split(',').filter(Boolean);
+  const t3 = emitTier3(ops, {
+    constprop: spec.includes('constprop'), regfold: spec.includes('regfold'),
+    deadflags: spec.includes('deadflags'), promote: !flag('no-promote'),
+    ea: spec.includes('ea'), seg: spec.includes('seg'),
+  });
   const parts = [];
   let pending = 0;            // ops retired since $steps was last charged
   let exits = 0;
@@ -382,9 +407,17 @@ function buildRegion(ops, nexts, headIp, name) {
   // May the loop go round again? Everything the interpreter's own block
   // boundary tests, in one place instead of once per branch: budget left, not
   // halted, and no byte of compiled code patched this slice.
-  const okToLoop = `(i32.and (i32.gt_s (global.get $steps) (i32.const 0))`
+  // `--once` never takes the back edge: the region becomes a straight-line
+  // replacement for the block, entered and left exactly as the interpreter
+  // enters and leaves it. It is a bisector -- it separates "an op body or the
+  // stitching is wrong" from "the looping protocol is wrong", which produce the
+  // same wrong frame. It is slower than the interpreter by construction.
+  const once = flag('once');
+  const okToLoop = once ? '(i32.const 0)'
+    : `(i32.and (i32.gt_s (global.get $steps) (i32.const 0))`
     + ` (i32.eqz (i32.or (global.get $halt) (global.get $smc))))`;
-  const backEdge = `(br_if $again (i32.and (i32.and`
+  const backEdge = once ? ';; --once: no back edge'
+    : `(br_if $again (i32.and (i32.and`
     + ` (i32.eq (global.get $gip) (i32.const ${headIp}))`
     + ` (i32.eqz (global.get $halt)))`
     + ` (i32.gt_s (global.get $steps) (i32.const 0))))`;
@@ -485,7 +518,12 @@ function buildRegion(ops, nexts, headIp, name) {
   // interrupts to the interpreter's 107 on the same dispatch budget: the region
   // was not slower at the work, it was being charged for work it had not done.
   const entry = '(global.set $steps (i32.add (global.get $steps) (i32.const 1)))';
-  const body = `${entry}\n${t3.pro}\n(block $out (loop $again\n${parts.join('\n')}\n))\n${t3.epi}\n${leave}`;
+  // `--trap` replaces the whole body with `unreachable`. It answers the one
+  // question no A/B on the body can: is this region being ENTERED at all. A run
+  // that finishes normally with it on has never dispatched the region -- and
+  // every measurement of that region is a measurement of something else.
+  const body = flag('trap') ? '(unreachable)'
+    : `${entry}\n${t3.pro}\n(block $out (loop $again\n${parts.join('\n')}\n))\n${t3.epi}\n${leave}`;
   return {
     name, body, locals: t3.locals, exits,
     promoted: t3.promoted, declined: t3.promoted ? null : t3.declined,
@@ -520,7 +558,24 @@ async function once(exe, o, extra) {
   // keeps leaving wasm at, and whether that address was in the jump table).
   // That census is the first thing to read when a region is slower than the
   // interpreter: the cost is nearly always round trips, not the body.
+  // The emulated clock is driven by the DISPATCH COUNT -- a timer IRQ every
+  // `irqEvery` dispatches, a clock word every `dispatchesPerTick` -- so it is
+  // the one thing a region can move without executing anything differently.
+  // Both arms get the same values, and `--irq-every=1b` switches interrupts off
+  // entirely, which is what tells "the region ran the wrong code" apart from
+  // "the region moved the clock".
+  // A region is built out of the ARENA WORDS the compiler emitted, and those
+  // words carry the compiler's own assumptions: a traced conditional has its
+  // fall-through stitched in behind it, a spin block has been rewritten, and
+  // dead-flag elimination can pick a no-flags twin because it knows what
+  // follows. Replaying them somewhere else is only sound if those assumptions
+  // still hold, so each is switchable in BOTH arms -- that is what tells an
+  // unsound region apart from a wrong one.
   const r = await runDos({ exe, budget: o.budget, slice: o.slice, cpu: o.cpu,
+    irqEvery: o.irqEvery, dispatchesPerTick: o.dispatchesPerTick,
+    spinLoops: !flag('no-spin'), traceBlocks: !flag('no-traced'),
+    crossFlags: !flag('no-cross-flags'), fuse: !flag('no-fuse'),
+    deadFlags: !flag('no-dead-flags'),
     autoKey: true, report: flag('entries'), log: () => {}, ...extra });
   if (flag('entries')) {
     const eh = [...r.entryHist].sort((a, b) => b[1] - a[1]).slice(0, 6);
@@ -548,6 +603,8 @@ async function main() {
     reps: Number(arg('reps', 3)),
     minOps: Number(arg('min-ops', 4)),
     sampleFrom: Number(arg('sample-from', 0.5)),
+    irqEvery: count(arg('irq-every'), 100e3),
+    dispatchesPerTick: count(arg('dispatches-per-tick'), 550e3),
   };
   console.log(`${path.basename(exe)} -- profiling ${(o.budget / 1e6).toFixed(0)}M dispatches`);
 
@@ -570,6 +627,28 @@ async function main() {
     const f = `/tmp/region-${path.basename(exe)}.wat`;
     fs.writeFileSync(f, `(func $${region.name} ${region.locals}\n${region.body}\n)`);
     console.log(`  body written to ${f}`);
+  }
+
+  // `--agree` asks a question the whole-run comparison cannot separate: do
+  // THESE ops mean the same thing to the interpreter and to the compiler,
+  // independent of the loop protocol wrapped around them? It hands the region's
+  // op list to trace-jit's snapshot bench, which runs the shipped interpreter
+  // over them and the compiled tiers over them from one seeded state and
+  // compares every register and every byte of guest memory afterwards. A
+  // MISMATCH here is a lowering bug; ALL THREE MATCH moves the search to the
+  // control flow this file supplies.
+  if (flag('agree')) {
+    const hot = { bip: pick.headIp, memSnapshot: rr.vm.mem.slice(), regSnapshot: {},
+      machineSnapshot: {} };
+    for (const g of require('./emit').STATE) {
+      if (rr.vm.exports[`get_${g}`]) hot.regSnapshot[g] = rr.vm.raw(g);
+    }
+    for (const g of require('./emit').MACHINE_STATE) {
+      const get = rr.vm.exports[`mget_${g}`];
+      if (get) hot.machineSnapshot[g] = get();
+    }
+    await benchTiers(exe, hot, pick.ops, { iters: Number(arg('agree-iters', 200)), reps: 1 });
+    return;
   }
 
   const guarded = guardBytes(rr, pick);
@@ -595,16 +674,23 @@ async function main() {
     }
   }
 
+  // Two more bisectors, both about the INSTALL rather than the body.
+  // `--no-succ` withholds the successor list (expect a handback storm).
+  // `--succ-only` supplies the successor list and no region at all: the
+  // decoder walks the extra addresses and the guest runs the interpreter
+  // everywhere, so anything that still moves is the successors' doing, not the
+  // compiled loop's.
   const install = {
-    jitRegions: [region],
+    jitRegions: flag('succ-only') ? null : [region],
     // WHICH region, not where it sits in the table: only the built module knows
     // that, and it reports it as `vm.regionBase`.
-    regionAt: new Map([[`${pick.cs}:${pick.headIp}`, 0]]),
+    regionAt: flag('succ-only') ? new Map() : new Map([[`${pick.cs}:${pick.headIp}`, 0]]),
     // Every guest ip a branch in the region names, so the decoder still walks
     // out of a block whose body it never decodes. Over-approximating is free:
     // an address that turns out to be unreachable just gets compiled and never
     // entered, which is what a decoder that guesses a fall-through already does.
-    regionSucc: new Map([[`${pick.cs}:${pick.headIp}`, successorIps(pick.ops)]]),
+    regionSucc: flag('no-succ') ? new Map()
+      : new Map([[`${pick.cs}:${pick.headIp}`, successorIps(pick.ops)]]),
     // The guest bytes this region was compiled from, one entry per block the
     // walk covered. compile.js checks them before installing, so a program that
     // rewrites its own loop gets the decoder back instead of a stale region.
