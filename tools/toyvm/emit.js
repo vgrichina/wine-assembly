@@ -5572,6 +5572,14 @@ module.exports = {
   // A handler index -> the eight twins of it with the register index pinned to
   // a literal, plus which arena word holds that index and how to read it out.
   SPEC, applyExtract, enableRegSpec,
+  // The index resolver itself, which is the reusable half of the register
+  // specialization work: given a handler body it walks an index expression
+  // backwards through the locals to the ARENA WORD it came from. Register
+  // specialization uses it to pin one index to a literal;
+  // tools/toyvm/handler-effects.js uses it to say which guest register a
+  // handler reads and writes, which is what a loop matcher needs before it can
+  // talk about induction variables at all.
+  indexDefs, resolveIndex, sexpAt,
   // A handler index -> the same handler without its flag write, and what every
   // handler does to the flag state. The compiler walks a finished block
   // backwards with these and swaps in the variant where the write is dead.
