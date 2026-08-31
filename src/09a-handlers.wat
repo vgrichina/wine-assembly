@@ -7774,8 +7774,7 @@
   (global $createwnd_wide_name (mut i32) (i32.const 0))
   (global $createwnd_wide_class (mut i32) (i32.const 0))
   (func $handle_CreateWindowExW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $class_a i32) (local $title_a i32) (local $hwnd i32)
-    (local.set $hwnd (global.get $next_hwnd))
+    (local $class_a i32) (local $title_a i32)
     (local.set $class_a (local.get $arg1))
     (if (i32.ge_u (local.get $arg1) (i32.const 0x10000))
       (then
@@ -7809,7 +7808,6 @@
     (if (i32.and (i32.ne (local.get $class_a) (i32.const 0))
                  (i32.ne (local.get $class_a) (local.get $arg1)))
       (then (call $heap_free (local.get $class_a))))
-    (call $wnd_unicode_set (local.get $hwnd) (i32.const 1))
     (return)
   )
 

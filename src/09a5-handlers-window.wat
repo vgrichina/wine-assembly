@@ -410,6 +410,14 @@
     (call $wnd_set_own_dc_from_name (local.get $hwnd) (local.get $arg1))
     (call $wnd_set_hinstance (local.get $hwnd)
       (call $gl32 (i32.add (global.get $esp) (i32.const 44))))
+    ;; CreateWindowExW reuses this ANSI core, but the core is where the real
+    ;; HWND is allocated and published. Mark that exact record before any
+    ;; creation callback runs so IsWindowUnicode is already true during
+    ;; WM_NCCREATE/WM_CREATE. The W wrapper must not predict $next_hwnd: a
+    ;; rejected creation consumes a handle without leaving a live window.
+    (if (i32.or (global.get $createwnd_wide_name)
+                (global.get $createwnd_wide_class))
+      (then (call $wnd_unicode_set (local.get $hwnd) (i32.const 1))))
     ;; hWndParent means geometry parent only for WS_CHILD. For top-level
     ;; popup/overlapped windows it is an owner; keep that separate so owned
     ;; modal dialogs do not inherit the owner's client coordinates.

@@ -2,6 +2,55 @@
   ;; WIN32 API DISPATCH — hand-written thunk handlers + arg loading
   ;; Calls $dispatch_api_table for the generated br_table portion.
   ;; ============================================================
+  ;; Creation failure is not ordinary DestroyWindow. USER tears down any
+  ;; descendants, sends WM_NCDESTROY (but not WM_DESTROY), unpublishes the
+  ;; HWND, and returns NULL from CreateWindowEx. This is recursive because a
+  ;; WM_CREATE handler may have made children before rejecting its own window.
+  (func $create_window_abort (param $hwnd i32)
+    (local $i i32) (local $ptr i32) (local $child i32)
+    (if (i32.eqz (call $wnd_table_get (local.get $hwnd)))
+      (then (return)))
+    (block $children_done
+      (loop $rescan
+        (local.set $i (i32.const 0))
+        (loop $scan
+          (br_if $children_done
+            (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+          (local.set $ptr (call $wnd_record_addr (local.get $i)))
+          (local.set $child (i32.atomic.load (local.get $ptr)))
+          (if (i32.and
+                (i32.ne (local.get $child) (i32.const 0))
+                (i32.eq (i32.load offset=8 (local.get $ptr))
+                        (local.get $hwnd)))
+            (then
+              (call $create_window_abort (local.get $child))
+              (br $rescan)))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $scan))))
+    (drop (call $wnd_send_message
+      (local.get $hwnd) (i32.const 0x0082) (i32.const 0) (i32.const 0)))
+    (call $timer_kill_hwnd (local.get $hwnd))
+    (if (i32.eq (global.get $focus_hwnd) (local.get $hwnd))
+      (then (global.set $focus_hwnd (i32.const 0))))
+    (if (i32.eq (global.get $capture_hwnd) (local.get $hwnd))
+      (then (global.set $capture_hwnd (i32.const 0))))
+    (call $post_queue_purge_hwnd (local.get $hwnd))
+    (if (i32.eq (global.get $pending_child_create) (local.get $hwnd))
+      (then (global.set $pending_child_create (i32.const 0))))
+    (if (i32.eq (global.get $pending_child_size_hwnd) (local.get $hwnd))
+      (then
+        (global.set $pending_child_size_hwnd (i32.const 0))
+        (global.set $pending_child_size (i32.const 0))))
+    (if (i32.eq (global.get $child_cbt_saved_hwnd) (local.get $hwnd))
+      (then (global.set $child_cbt_saved_hwnd (i32.const 0))))
+    (if (i32.eq (global.get $main_hwnd) (local.get $hwnd))
+      (then
+        (global.set $main_hwnd (i32.const 0))
+        (global.set $pending_wm_size (i32.const 0))
+        (global.set $createwnd_implicit_show (i32.const 0))))
+    (call $host_destroy_window (local.get $hwnd))
+    (call $wnd_table_remove (local.get $hwnd)))
+
   (func $win32_dispatch (param $thunk_idx i32)
     (local $api_id i32) (local $name_rva i32) (local $name_ptr i32)
     (local $arg0 i32) (local $arg1 i32) (local $arg2 i32) (local $arg3 i32)
@@ -82,6 +131,23 @@
     ;; Stack layout: [ESP] = saved_ret, [ESP+4] = saved_hwnd (pushed before WndProc args)
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0001))
       (then
+        ;; CACA0029 puts a private marker in front of the ordinary saved frame
+        ;; only while WM_CREATE is outstanding. This keeps the shared thunk's
+        ;; ShowWindow/dialog uses from interpreting their LRESULT as a create
+        ;; decision. On success discard the marker and retain the old layout.
+        (if (i32.eq (call $gl32 (global.get $esp)) (i32.const 0x43524541)) ;; "CREA"
+          (then
+            (if (i32.eq (global.get $eax) (i32.const -1))
+              (then
+                (local.set $arg0
+                  (call $gl32 (i32.add (global.get $esp) (i32.const 8))))
+                (call $create_window_abort (local.get $arg0))
+                (global.set $eip
+                  (call $gl32 (i32.add (global.get $esp) (i32.const 4))))
+                (global.set $eax (i32.const 0))
+                (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+                (return)))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 4)))))
         ;; If WS_VISIBLE was set on main_hwnd's style, kick off the implicit-show
         ;; activation chain (matches real Win32 CreateWindowEx behavior). Leaves
         ;; saved_ret/saved_hwnd in place at [ESP]/[ESP+4]; the chain ends by
@@ -293,6 +359,17 @@
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA002E))
       (then
         (local.set $arg0 (call $gl32 (i32.add (global.get $esp) (i32.const 4))))
+        (if (i32.eqz (global.get $eax))
+          (then
+            (call $create_window_abort (local.get $arg0))
+            (global.set $eip (call $gl32 (global.get $esp)))
+            (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+            (return)))
+        ;; Distinguish the following WM_CREATE result from the WM_SIZE result
+        ;; that re-enters CACA0027 with the same ordinary saved frame.
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (i32.const 0x43524541)) ;; "CREA"
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
         (call $gs32 (global.get $esp) (i32.add (global.get $image_base) (i32.const 0x100)))
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
@@ -313,6 +390,19 @@
     ;; initial WM_SIZE, then pop saved state and hand hwnd back.
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0027))
       (then
+        (if (i32.eq (call $gl32 (global.get $esp)) (i32.const 0x43524541))
+          (then
+            (if (i32.eq (global.get $eax) (i32.const -1))
+              (then
+                (local.set $arg0
+                  (call $gl32 (i32.add (global.get $esp) (i32.const 8))))
+                (call $create_window_abort (local.get $arg0))
+                (global.set $eip
+                  (call $gl32 (i32.add (global.get $esp) (i32.const 4))))
+                (global.set $eax (i32.const 0))
+                (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+                (return)))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 4)))))
         (local.set $arg0 (call $gl32 (i32.add (global.get $esp) (i32.const 4))))
         (local.set $arg1 (call $gl32 (i32.add (global.get $esp) (i32.const 8))))
         (if (local.get $arg1)
@@ -349,6 +439,17 @@
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0029))
       (then
         (local.set $arg0 (call $gl32 (i32.add (global.get $esp) (i32.const 4))))
+        (if (i32.eqz (global.get $eax))
+          (then
+            (call $create_window_abort (local.get $arg0))
+            (global.set $eip (call $gl32 (global.get $esp)))
+            (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+            (return)))
+        ;; This marker survives the stdcall WndProc frame and tells the shared
+        ;; CACA0001 return thunk that its EAX is specifically WM_CREATE's.
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (i32.const 0x43524541)) ;; "CREA"
         ;; Push WndProc args: hwnd, WM_CREATE, 0, &CREATESTRUCT.
         ;; saved_ret + saved_hwnd remain below these args for CACA0001.
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
