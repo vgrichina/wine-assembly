@@ -128,6 +128,8 @@ Three things are visible without touching the compiler:
    as one transferable `ArrayBuffer` of UTF-8 bytes and decode per file inside
    the Worker — roughly a 2× saving on the snapshot alone, at the cost of the
    caller no longer being able to reuse the snapshot for the second mode.
+   **Done, 2026-08-31 (`49f30eff`) — see §4.1.** The reuse cost turned out to
+   be avoidable: ownership decides copy vs move, so both properties hold.
 2. **The cache key used to cost 35 MB.** The first version hashed one
    concatenation of the whole closure, i.e. built an 11 MB temporary string.
    It is now a digest-of-digests (hash each file, hash the list), which cut
@@ -136,8 +138,62 @@ Three things are visible without touching the compiler:
 3. Everything after that is the compiler itself: ~130 MB above the resident
    snapshot at its peak.
 
-**Optimization is explicitly left as future work.** It belongs to whoever owns
-the vendored compiler, not to this plumbing.
+**Optimization of point 3 is explicitly left as future work.** It belongs to
+whoever owns the vendored compiler, not to this plumbing. Points 1 and 2 were
+plumbing and are now both done.
+
+### 4.1 The handoff is UTF-8 bytes, transferred (2026-08-31, `49f30eff`)
+
+The snapshot is `Uint8Array`s end to end — read that way (`fs.readFileSync`
+with no encoding, `response.arrayBuffer()` rather than `.text()`), hashed that
+way, and posted to the Worker as transferable `ArrayBuffer`s, one per file. The
+Worker decodes them one at a time and nulls each buffer slot as it goes, so the
+compiler's own interface is untouched: it still gets
+`compile(entryText, vfsMapOfStrings, options)`.
+
+A transferred buffer is detached in the sender, so **ownership** decides copy
+vs move, and `compileDetailed()` knows which case it is in: a *caller-supplied*
+snapshot is copied per attempt (it will be compiled again in the other dispatch
+mode), a snapshot the launcher read for this one compile — `host.js`'s path —
+is transferred as it is. So the "cost" the note above predicted, losing snapshot
+reuse, is not paid: both modes still compile from one read, and the browser path
+still never allocates the extra copy. Sources are read exactly once per attempt
+either way; nothing is re-read to recover a detached buffer.
+
+**The cache key did not move.** It always hashed each file's UTF-8 encoding;
+hashing the bytes directly is the same digest with one fewer full copy
+materialised, and the test asserts that a text-form snapshot of the same content
+still lands on the same key, so any persisted cache survives the change.
+
+Measured on this box, **interleaved** A/B (both arms alternating, order rotated,
+one cold compile per process, 4 reps × 2 dispatch modes per arm), whole-process
+max RSS from `/usr/bin/time -l`:
+
+| path | before | after | Δ |
+|---|---|---|---|
+| caller supplies the snapshot (the test's shape) | 253.6 MB | 226.1 MB | **−27.5 MB**, AFTER wins 8/8 |
+| launcher reads its own (`host.js` / the browser) | 250.8 MB | 214.6 MB | **−36.2 MB**, AFTER wins 8/8 |
+
+and, per phase, against the table in §4:
+
+```
+1. + 11.38 MB source snapshot read (parent)    +29.2 MB  ->  +11.8 MB
+2. + sha256 over compiler and sources        +2.7..6.2 MB -> +2.1..2.5 MB
+3. after the worker is terminated, i.e. the
+   reading immediately before Wine's 512 MB     ~165 MB  ->   ~126 MB
+```
+
+Interleaving is not optional here: three consecutive non-interleaved runs of one
+arm on this (shared, loaded) box spread 34 MB, wider than the effect. The
+sequential first attempt made the compatibility mode look like a *regression*;
+alternating the arms turned it into a −27 MB win that holds in every pairing.
+
+**Byte identity.** `build/wine-assembly.wasm` `737ff788…` and
+`build/wine-assembly.compat.wasm` `fcc1b675…` are unchanged — `tools/build.sh`
+never loads either file — and the compiler Worker's own output hashes to those
+same two digests, in node and in headless Chrome through `?compile-wat`, where
+Solitaire launched from the in-browser-compiled module and reached its message
+loop with a clean page log.
 
 ## 5. What is still unmeasurable here, and what the gate says
 
