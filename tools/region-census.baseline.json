@@ -1,7 +1,7 @@
 {
   "recorded": "2026-08-31",
   "note": "Per-file counts of raw literals inside declared regions. This is a RATCHET: counts may fall, never rise. `converted` regions must stay at 0.",
-  "total": 355,
+  "total": 353,
   "converted": [],
   "byFile": {
     "src/09a7c-mixer.wat": 19,
@@ -64,7 +64,6 @@
     "test/test-page-chunk-sizing.js": 2,
     "test/test-sib-load8-handler.js": 2,
     "test/test-wat-gdi-bitmap.js": 2,
-    "test/test-wat-gdi-region.js": 2,
     "test/test-wat-gdi-state.js": 2,
     "test/test-win16-civ2-apis.js": 2,
     "test/test-x86-ops.js": 2,

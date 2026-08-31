@@ -16,8 +16,13 @@ const RegionMap = require('../lib/region-map.generated.js');
 
 const ROOT = path.join(__dirname, '..');
 const SRC = path.join(ROOT, 'src');
-const RECT_SCRATCH = 0x07E09000;
-const POINT_SCRATCH = 0x07E0A000;
+// $TEST_SCRATCH, from the map declared in src/00-regions.wat. These two used to
+// be 0x07E09000 and 0x07E0A000, which are not scratch at all: that is
+// $CONSOLE_TEXT, the console screen buffer. Nothing noticed because no console
+// runs in this test — until the allocator moves $CONSOLE_TEXT, at which point
+// the addresses stop being coincidentally free.
+const RECT_SCRATCH = RegionMap.BASE.TEST_SCRATCH + 0x20;   // one RECT
+const POINT_SCRATCH = RegionMap.BASE.TEST_SCRATCH + 0x40;  // up to 24 POINTs
 const GDI_REGION_BANDS = RegionMap.BASE.GDI_REGION_BANDS;
 const GDI_REGION_MAX_RECTS = 208;
 const GDI_REGION_RECT_STRIDE = GDI_REGION_MAX_RECTS * 16;
