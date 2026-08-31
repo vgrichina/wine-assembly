@@ -23,7 +23,7 @@ current major regions; the memory-map comment and sized globals in
 0x07992000 ├────────────────────────┤
            │  PE staging (8MB)      │  Temporary PE/DLL load buffer
 0x07192000 ├────────────────────────┤
-           │  Cache indexes (256KB) │  8 x 4096 decoded-block indexes
+           │  (free, 256KB)         │  was CACHE_INDEX_BASE; pages replaced it
 0x07152000 ├────────────────────────┤
            │  IAT thunk zone (256KB)│  API import trampolines
 0x07112000 ├────────────────────────┤

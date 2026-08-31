@@ -602,5 +602,32 @@ quo. Rows 1-14 are implemented; rows 15-20 accompany their feature.
 4. `tools/region-census.js` — the odometer, calibrated in §7.
 5. Byte identity proven in both compiler modes (§11).
 
-**Next, in order:** §4.1 allocator (+ `--diff` empty), §4.2-4.4, §6 generators,
-then stage B's fan-out, then §8's shake.
+**Landed (stage A + wave 1, 2026-08-31):**
+
+6. §4.1 allocator (`region.declare` first-fit, deterministic; `tools/region-alloc.js
+   --emit/--diff/--prove`, `--diff` EMPTY against the hand-placed map), §4.2
+   constraints (stride/mask/size-is-power-of-2, global operands for the derived
+   assertions), §4.3 derived bases (`(base (g2w VA))` + `region.image-base`),
+   §4.4 region-relative data segments, §8 shake (`WINE_REGION_SHAKE=`, banner,
+   refuses a proves-nothing all-pinned shake), failure modes 15-20, and the
+   round-6 collision lints. `test/watx-compiler-alloc.test.js` (76) +
+   regions suite at 67.
+7. §6 JS mirror: `tools/gen-region-map.js` → `lib/region-map.generated.js`
+   (single reader via check-region-decls; `--check` gated in the build).
+8. Wave 1 of stage B: ~96 sites symbolized across 14 src files + 11 lib files,
+   every conversion proven byte-identical by paired HEAD-vs-HEAD+file compiles;
+   census banked 662→566. Legacy compiler retired (§11, taken).
+
+**Wave-1 corrections to this design:** the census's per-file counts ran ~44%
+false positives in flag-heavy files (`0x1000/0x2000/0x4000` VT_/OF_/style
+constants colliding with low region bases) — §7's "evidence, never proof"
+understated it; treat counts as leads only. Seven real fixed addresses matched
+only as an adjacent region's *exclusive end* (`0xD160`, `0x5110`, `0x11500`,
+`0x11D80`, `0x3E00`, `0x3180`…) — per §5.1 those need their own declarations,
+never `(region.end $NEIGHBOR)`. `$CLASS_NAME_STRINGS` is under-declared (0x80
+declared, block runs past 0x3240).
+
+**Next, in order:** wave 2 (peer-dirty files, test/ conversions via the mirror,
+the orphan declarations above), gap reclamation so the real map can shake
+(regions + preserved gaps currently fill the 512MB span end-to-end), then §8's
+shake against the full pool, then natural allocation.
