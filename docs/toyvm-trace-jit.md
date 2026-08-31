@@ -1529,3 +1529,101 @@ geomean over 175 programs that ran >=1M dispatches (baseline tailcall):
 - The 7 `shells:timeout` are higher than the single one on the pre-cutover run,
   and that run was not sharing the box with a region census. Treat the count as
   a load artifact until it is reproduced on a quiet machine.
+
+## The region JIT's dominant bug: a block that ran past its own terminator
+
+Everything above is about the *micro-op* backend (`trace-jit.js` tiers priced on
+a memory snapshot). The *jit* backend — a region compiled by `region-jit.js` and
+installed into a real whole-program run — had no corpus measurement at all until
+`tools/toyvm/region-census.js` (`15986337`, `c25bc887`). The first census over
+the 199-program DOS corpus, on the post-WATX tree:
+
+```
+no-loop 101, identical 54, no-samples 23, differs 9, frozen 6, phase 2, timeout 2, crash 2
+```
+
+That is **15 wrong frames out of 71 installed regions** — a one-in-five defect
+rate, not a tail of edge cases.
+
+### Narrowing it
+
+Re-running only those 15 with `--args=--no-lower` (which keeps every branch on
+the interpreter's transfer protocol instead of lowering it to `br $again` /
+`br $out`) gave `identical 10, differs 4, phase 1`. So **11 of 15 were the
+lowering**, one bug and not eleven.
+
+`DADEMO2.EXE` was the small reproducer: a 7-op region whose lowered form
+executed two ops that are not in the loop at all. Its `--dump` shows the shape —
+a `loop` op, then `xor_rr32_nf`, then `jmp`, where the guest loop ends at the
+`loop`.
+
+### Root cause
+
+`readTrace` (`trace-jit.js`) ends a block on a **name** test:
+
+```js
+/^(end|jmp|jcc|call|ret|int)/.test(h.name)
+```
+
+That regex misses `loop`, `loop32`, and every fused pair (`dec_r8_jnz`, the
+traced twins). A block terminated by one of those keeps reading, and what it
+reads next is the *next decoded block's* arena words, which it then reports as
+this block's own fall-through ops. While the region left the branch unlowered
+that tail was unreachable — the interpreter protocol jumped away before reaching
+it — so the bug was invisible. Lowering makes the tail inline, and it runs.
+
+### The fix (`8bd1cd39`)
+
+Rather than re-deriving the terminator set by name (which is what created the
+problem), `region-jit.js` now truncates a chained trace at the first op whose
+recorded **fall-through arena address** is not the arena address of the op that
+follows it:
+
+```js
+function fallArena(op) {
+  const at = TAKEN_AT.get(op.fn);
+  if (at === undefined) return null;
+  if (op.args.length - (at - 1) !== 4) return null;   // 4 words = own fall-through block
+  return op.args[at + 1];
+}
+```
+
+This reads the operands the decoder actually emitted, so a new fused pair or a
+renamed handler cannot silently reopen the hole. A truncated chain is allowed to
+end on something other than `jmp`; an untruncated one still is not.
+
+### After
+
+```
+no-loop 83, identical 81, no-samples 23, differs 6, phase 3, crash 3
+```
+
+Installed regions went 71 → 90 (truncated chains close on their head where the
+over-long ones did not), `identical` went 54 → 81, and wrong frames went
+**15 → 6**. `frozen` — a region drawing a byte-identical frame at every budget
+while the interpreter moved on — went to zero.
+
+### The six survivors are not this bug
+
+| program | head | base px | jit px | smc breaks (base/jit) |
+|---|---|---|---|---|
+| acme-sns.exe | 0x80 | 98234 | 98234 | 40576 / 40568 |
+| CARRIE.EXE | 0x986 | 64000 | 64000 | 2004 / 2004 |
+| BMGLP.EXE | 0x235 | 40767 | 40868 | 54973 / 54650 |
+| COMPOVRS.EXE | 0x338 | 63814 | 63814 | 1 / 1 |
+| UNTITLED.EXE | 0xc9d | 128000 | 128000 | 125203 / 125197 |
+| AUTUMN.EXE | 0x87a2 | 0 | 0 | 455 / 464 |
+
+Same pixel count, different hash, at three budgets each. The two with tens of
+thousands of self-modify breaks (`acme-sns`, `BMGLP`) point at region staleness
+rather than lowering: the install guard is computed once at compile time, and
+`guardBytes` silently `continue`s past a block whose covered span it cannot
+find. That is the next thing to dig into.
+
+Coverage, not correctness, is now the jit's limit: **106 of 199 programs get no
+region at all** (`no-loop` 83 + `no-samples` 23). `--why`'s decline histogram is
+the work list.
+
+**None of the speed columns in either census are quotable** — both ran on a box
+at load 4+, and the fix also changed region shape, so the throughput picture has
+to be re-measured on a quiet machine.
