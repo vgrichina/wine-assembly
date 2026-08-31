@@ -468,6 +468,174 @@ Running the pool under a shaken build is not free, so it is a
 `tools/shake-sweep.sh` job and an acceptance gate for stage C, not a
 per-commit gate. What ships afterwards is the natural allocation.
 
+## 8.1 Gap reclamation — what has to happen before §8 can run at all
+
+Stage A finished with a blocker: **every shake mode overflows.** The regions and
+their preserved gaps fill the 512 MB span end to end, so the allocator has
+nowhere to put the displacement a shake exists to create. This section is the
+measurement behind that sentence and the reclamation plan that clears it. It
+proposes **no change to any region's placement** — the whole point is that the
+shake is what moves things, and it cannot start from a map with no slack.
+
+### The arithmetic
+
+Measured over the current declaration set (167 regions), floor `0x00000100`:
+
+| | |
+|---|---|
+| region bytes | `0x1F79BC8D` |
+| the map's last byte | `0x20000000` — **exactly** the end of memory |
+| headroom above the map | **0** |
+| holes inside the map | 45, totalling `0x00864273` (≈ 8.39 MiB) |
+
+That is the entire budget. There is no other slack anywhere: three regions —
+`$VIRTUAL_BACKING_BASE` (320 MB), `$DIB_BACKING_BASE` (63 MB) and `$THREAD_RPC`
+(1 MB) — run from `0x08000000` to the last byte of memory with nothing between
+them, because they were sized to consume whatever was left. **So the ~8.39 MiB
+of holes below `0x08000000` is not merely the cheapest reclamation, it is the
+only one.** Growing the memory is not an alternative: `(memory 8192 8192 shared)`
+is an ABI the JS side allocates and every `$g2w` bound is stated against.
+
+### The 45 holes, classified
+
+A hole is a stretch between one region's end and the next region's base. Twenty
+of them need no action at all — the next region's declared `(align N)` already
+accounts for the whole gap, so the allocator reproduces them for free and no
+`(region.gap …)` form is written. The other 25 are the ones stage A had to spell
+out explicitly, and they are what this plan is about.
+
+| class | holes | bytes | reclaim? |
+|---|---|---|---|
+| round-address hand placement | 6 | `0x006F9780` | **yes** — 81% of the budget |
+| guest-ABI hole | 2 | `0x00112000` | **no — derive instead** |
+| retired region | 1 | `0x00040000` | **yes** |
+| hand-rounding / growth headroom | 16 | `0x00013204` | **yes** |
+| alignment padding | 20 | `0x000058EF` | n/a — no gap form exists |
+
+**Round-address hand placement (6 holes, `0x006F9780`).** The successor sits at
+an address somebody typed because it was round, and the hole is the distance
+from wherever the previous region happened to end. Six holes carry 81% of the
+whole budget:
+
+| hole | size | between |
+|---|---|---|
+| `0x079DE000` | `0x00422000` | `$WIN16_SEG_TABLE` → `$API_HASH_TABLE` (at a round `0x07E00000`) |
+| `0x03E12000` | `0x001EE000` | `$GUEST_HEAP_BASE` → `$HANDLER_PAIR_HIST_COUNTS` (at a round `0x04000000`) |
+| `0x04920000` | `0x000E0000` | `$PAGE_DIR_BASE` → `$WIN16_APP_DLL_STAGING` (at `0x04A00000`) |
+| `0x07F1A000` | `0x00006000` | `$D3DIM_VIEWPORT_LIGHT_HEAD` → `$HIT_COUNT_BASE` (at `0x07F20000`) |
+| `0x07F5E000` | `0x00002000` | `$DX_CURSOR_SAVE` → `$DX_OBJECTS` (at `0x07F60000`) |
+| `0x079CE880` | `0x00001780` | `$THREAD_MSG_QUEUES` → `$GDI_NEAREST_CACHE` (at `0x079D0000`) |
+
+A round base is §3's test failing out loud: none of these six successors has a
+guest-visible ABI or a derivation law, so the address is decoration. Reclaimed by
+deleting the gap form and letting the allocator pack.
+
+**Guest-ABI holes (2, `0x00112000`) — the ones that must NOT be deleted.**
+
+| hole | size | between |
+|---|---|---|
+| `0x03C12000` | `0x00100000` | `$GUEST_BASE` → `$GUEST_HEAP_BASE` |
+| `0x07000000` | `0x00012000` | `$THREAD_CACHE_BASE` → `$GUEST_STACK` |
+
+Both successors are anchored by a *guest* address, so their wasm base is
+`g2w(VA)` and the hole in front of them is the translation skew, not a decision.
+The second one says so numerically: `0x07012000 − 0x07000000` is `0x00012000`,
+which is `$GUEST_BASE` exactly. Deleting these gaps would move a base the guest
+holds. **They are reclaimed by §4.3 instead** — declare the successor
+`(region.declare-derived $GUEST_STACK (base (g2w 0x…)) …)` and the hole becomes
+*computed* from `$GUEST_BASE` rather than preserved as a mystery. That is
+strictly better than reclaiming it: the space is still consumed, but nothing has
+to remember why.
+
+**Retired region (1, `0x00040000`).** `0x07152000`, between `$THUNK_BASE` and
+`$PE_STAGING`, is the retired block-cache index — `src/01-header.wat:1460` says
+page compilation retired it, and §4.1 already names this hole as the example of
+one that should carry a `(reason …)`. `docs/memory-map.md` still draws "Cache
+indexes (256KB)" there, which is §5's pattern 12 in the flesh. Reclaiming it and
+deleting that row from the hand-drawn map are one change.
+
+**Hand-rounding / growth headroom (16, `0x00013204`).** Small holes where the
+author left room beside a table. Individually trivial; the honest fix is that
+room for a table to grow belongs in that table's `(size N)`, where a bound gets
+checked, not in an anonymous hole beside it where nothing does.
+
+### First, a blocker the wave-2 declarations introduced
+
+`node tools/region-alloc.js --diff` — the gate §4.1 says must be empty before
+stage A ships — is **currently red**:
+
+```
+$STRING_CONSTANTS at 0x00000100 is BELOW where the cursor already reached
+(0x00001000); the declaration order is not ascending and first-fit cannot
+reproduce it without backfilling
+```
+
+`$STRING_CONSTANTS` (`0x100`) and `$VK_SCAN_TABLES` (`0x380`) were declared in
+wave 2 and both live below `ALLOC_FLOOR = 0x1000`. The floor was chosen for
+`NULL_SENTINEL` at `0xF0` and the decoder scratch; the string pool starts at
+`0x100`, immediately above the sentinel, so **the floor should be
+`0x00000100`**, and `tools/region-alloc.js`'s `ALLOC_FLOOR` with it. With that
+one change `--diff` is empty again and the allocated form reproduces the map
+exactly, ending at `0x20000000` with zero bytes to spare — which is the stage-A
+finding, reproduced rather than assumed.
+
+### Feasibility, measured
+
+Three reclamation policies over the same 167 regions, each asked of the compiler
+under each shake mode. `OVERFLOW` is failure mode 15; a number is the slack left
+below `0x08000000` after the allocated map is placed.
+
+| policy | none | gap | pad | rotate | reverse | seed `0x9E3779B9` |
+|---|---|---|---|---|---|---|
+| **preserve** (today: every hole an explicit `region.gap`) | fits, 0 B | OVERFLOW | OVERFLOW | OVERFLOW | OVERFLOW | OVERFLOW |
+| **reclaim** (no gap forms; all 167 allocated) | 8.36 MB | 4.48 MB | 4.52 MB | 8.36 MB | 8.32 MB | 8.25 MB |
+| **reclaim + pin** (the recommendation below) | 4.48 MB | 2.08 MB | 2.06 MB | 4.48 MB | 5.60 MB | 6.49 MB |
+
+Two things fall out of that table. First, the `preserve` row is the stage-A
+blocker stated exactly: the unshaken map fits with **zero** bytes left, so every
+permutation overflows and no amount of cleverness in the shake changes it.
+Second, **reclaiming the gaps is not merely necessary, it is sufficient** — the
+worst mode (`pad`, which spaces all 167 regions by a prime) needs ≈ 3.9 MB and
+the budget is 8.39 MB. There is no third step to find.
+
+### Recommended shake configuration
+
+```wat
+(region.floor 0x00000100)          ;; not 0x1000 — the string pool is at 0x100
+```
+
+1. **Floor `0x00000100`.** Above `NULL_SENTINEL`, below `$STRING_CONSTANTS`.
+   Fixes `region-alloc --diff` as a side effect.
+2. **No `(region.gap …)` forms at all.** All 25 explicit gaps are deleted, and
+   the 20 alignment-only holes never needed a form. The two guest-ABI holes come
+   back *computed* through §4.3, not preserved.
+3. **Pin exactly seven regions — the shake must not touch them:**
+   - `$VIRTUAL_BACKING_BASE`, `$DIB_BACKING_BASE`, `$THREAD_RPC` — the backing
+     windows. These are the two §8 names plus the RPC block wedged between them.
+     They are guest-visible (the DIB window has its own translation class in
+     `$g2w`; the sparse map hands guest pointers into the virtual backing) *and*
+     they are sized to fill memory, so there is no layout in which they move.
+   - `$GUEST_BASE`, `$GUEST_HEAP_BASE`, `$GUEST_STACK`, `$THUNK_BASE` — the
+     guest-VA-anchored set, as `region.declare-derived (base (g2w VA))`.
+     Derived regions are already excluded from the shake (§8), which is the
+     right rule: moving these changes the guest ABI, a different experiment.
+4. **Everything else — 160 regions — allocates and shakes.**
+
+Measured, that configuration fits under every mode with 2.06–6.49 MB clear of
+`0x08000000`, so §8's "at least three distinct permutations" is available
+immediately: `gap`, `rotate` and one numeric seed, with `pad` and `reverse` as
+spares. The tight modes are `gap` and `pad` at ≈ 2 MB; if a later region grows
+past that, the next reclamation is not another hole — it is
+`$VIRTUAL_BACKING_BASE`'s 320 MB, which is the only place left with room.
+
+**One property of this plan worth stating separately**, because it is what makes
+it safe to run at all: reclamation *deletes* declarations, it does not move
+regions. Under `WINE_REGION_SHAKE` unset the allocator packs to a different map
+than today's — that is stage D, not stage C — so the reclamation commit and the
+shake commit must be separated by a byte-identity check that is *expected to
+fail*, and the acceptance evidence for it is the test pool, never the hashes.
+Until stage D ships, what builds is the pinned map.
+
 ## 9. The migration: big bang, verified by byte identity
 
 Not a gradual per-region staging. The staging was rejected because a
@@ -515,10 +683,16 @@ verdict for each:
 | the high private map (`0x07E…`–`0x07FF…`: GDI regions, DX objects, COM wrappers, TV tables, histograms) | various | **allocate** | emulator-private; this is also where the census's 202 near-certain literals live |
 | string constants at `0x100`+ | undeclared | **declare, then allocate** | 171 data segments sit here with no region at all (§4.4) |
 
-## 11. Rollback — VERDICT
+## 11. Rollback — VERDICT (the door has since been taken)
 
-`WINE_WAT_COMPILER=legacy bash tools/build.sh` works because `src/` is standard
-WAT. Does a declaration end that?
+> **Read this section as history.** Everything below was true of the tree at
+> step 1, and it is kept because it records *why* the retirement was safe to
+> schedule and what was measured before it. `WINE_WAT_COMPILER=legacy` is a hard
+> error as of `24b79256` — see the addendum at the end of this section. Present
+> tense below means "at step 1", not "today".
+
+`WINE_WAT_COMPILER=legacy bash tools/build.sh` worked at step 1 because `src/`
+was standard WAT. Did a declaration end that?
 
 **Investigated, not assumed.** `lib/compile-wat.js` dispatches top-level forms
 through a flat `if (head === '…')` chain (lines 913-1037) over
@@ -537,7 +711,8 @@ watx    tail 984347 B 01daf6ccfbd115e3   compat 984796 B 0ee6414668129ac4
 legacy  tail 984347 B 01daf6ccfbd115e3   compat 984796 B 0ee6414668129ac4
 ```
 
-**VERDICT: declarations are legacy-safe and rollback survives step 1 intact.**
+**VERDICT AT STEP 1: declarations were legacy-safe, and rollback survived step 1
+intact.** It did not survive stage B, by design — see immediately below.
 
 **The retirement is scheduled, not avoided.** Rollback survives *top-level*
 declarations. It cannot survive either addressing spelling: a bare `$REGION` or
@@ -627,7 +802,23 @@ only as an adjacent region's *exclusive end* (`0xD160`, `0x5110`, `0x11500`,
 never `(region.end $NEIGHBOR)`. `$CLASS_NAME_STRINGS` is under-declared (0x80
 declared, block runs past 0x3240).
 
-**Next, in order:** wave 2 (peer-dirty files, test/ conversions via the mirror,
-the orphan declarations above), gap reclamation so the real map can shake
-(regions + preserved gaps currently fill the 512MB span end-to-end), then §8's
-shake against the full pool, then natural allocation.
+**Landed (wave 2, 2026-08-31):**
+
+9. §5.1's `region.declare-span` — a named address LIMIT, transparent to the
+   overlap check because the regions it bounds live inside it, never allocated
+   and never shaken, with `(owner "…")` mandatory for the reason `(reason "…")`
+   is mandatory on `region.gap`. `$DIRECT_WINDOW` `[0, 0x08000000)` is declared,
+   and `$g2w`'s three `0x8000000` literals in `src/03-registers.wat` now read
+   `(region.end $DIRECT_WINDOW)`. Byte-identical, `regions` suite 67 → 119.
+10. A hole in §4.4 closed on the way past: active data segments accepted
+    `(region.end $R)` and `(region.size $R)` as offsets with failure mode 20's
+    payload-length bounds check silently skipped. Neither is an addressable
+    location; `region.addr` is now the only region-relative data offset.
+11. §8.1 — the gap-reclamation plan, measured: 45 holes, 8.39 MiB, and the
+    empirical finding that reclaiming them is both necessary and *sufficient*
+    for every shake mode.
+
+**Next, in order:** finish wave 2 (peer-dirty files, test/ conversions via the
+mirror), then §8.1's reclamation — floor to `0x100` (which also un-reds
+`region-alloc --diff`), delete all 25 gap forms, pin the seven ABI-anchored
+regions — then §8's shake against the full pool, then natural allocation.
